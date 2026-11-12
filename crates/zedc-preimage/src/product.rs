@@ -2073,10 +2073,91 @@ struct Part {
     with: PartWith,
     of: Option<Arc<Formula>>,
     names: Vec<Arc<str>>,
-    /// Whether the conjunct is a two-name threshold row.
-    stair: bool,
-    /// One arm has an integer support of the form x = d + j*y, j >= 0.
-    ray: bool,
+    role: Role,
+}
+
+/// What reads a part's conjunct besides its own projection, found once as the part is added.
+/// The shapes are disjoint: a threshold row's arms have one name each, an upper disjunction's
+/// arms two names with negative coefficients, and a ray's arms the coefficient 1 on the first
+/// name, which one arm of a threshold row lacks.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Role {
+    /// The constraints' own part.
+    Constraints,
+    /// A conjunct no aggregate reads; while one is in the block no aggregate holds.
+    Other,
+    /// A two-name threshold row `x >= a || y <= b` ([`stair_row`]), read by
+    /// [`Scope::cover_staircase`].
+    Stair,
+    /// A disjunction of `p*x + q*y <= c`, p and q positive ([`upper_disjunction`]), read by
+    /// [`Scope::cover_staircase`] through [`UpperBounds`].
+    Upper,
+    /// A disjunction with an integer support x = d + j*y ([`ray_row`]), read by
+    /// [`Block::ray_high`].
+    Ray,
+}
+
+impl Role {
+    fn of(g: Option<&Formula>) -> Role {
+        match g {
+            None => Role::Constraints,
+            Some(g) if stair_row(g).is_some() => Role::Stair,
+            Some(g) if upper_disjunction(g) => Role::Upper,
+            Some(g) if ray_row(g).is_some() => Role::Ray,
+            Some(_) => Role::Other,
+        }
+    }
+
+    /// Whether the threshold aggregate stands for the part while it holds.
+    fn stair(self) -> bool {
+        matches!(self, Role::Stair | Role::Upper)
+    }
+}
+
+/// The parts that mention a name, apart by the aggregate that stands for them: those of no
+/// aggregate, the threshold rows and upper disjunctions, and the rays. Each part is in one set.
+#[derive(Clone, Default)]
+struct Users {
+    plain: imbl::OrdSet<PartAt>,
+    stair: imbl::OrdSet<PartAt>,
+    ray: imbl::OrdSet<PartAt>,
+}
+
+impl Users {
+    fn of_role(&mut self, role: Role) -> &mut imbl::OrdSet<PartAt> {
+        match role {
+            Role::Constraints | Role::Other => &mut self.plain,
+            Role::Stair | Role::Upper => &mut self.stair,
+            Role::Ray => &mut self.ray,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.plain.is_empty() && self.stair.is_empty() && self.ray.is_empty()
+    }
+
+    /// The parts but those of the aggregates that hold, in order.
+    // Complexity tradeoff: a map of users kept for each of the four ways the two aggregates
+    // can hold made each part enter up to four maps per name; one set per aggregate and a
+    // merge of at most three sorted sets reads the same parts in the same order, O(u) for u
+    // parts, and skips the sets of the aggregates that hold without reading them.
+    fn due(&self, stair: bool, ray: bool) -> impl Iterator<Item = &PartAt> {
+        // A part has one role, so no part is in two of the sets and the merge gives each once.
+        let mut heads = [
+            Some(self.plain.iter()),
+            (!stair).then(|| self.stair.iter()),
+            (!ray).then(|| self.ray.iter()),
+        ]
+        .map(|set| set.map(|mut it| (it.next(), it)));
+        std::iter::from_fn(move || {
+            let (head, rest) = heads
+                .iter_mut()
+                .flatten()
+                .filter(|(head, _)| head.is_some())
+                .min_by(|a, b| a.0.cmp(&b.0))?;
+            std::mem::replace(head, rest.next())
+        })
+    }
 }
 
 /// Where a part stands among its block's parts, in the order [`split`] gives them: the part of
@@ -2095,21 +2176,17 @@ struct Block {
     id: BlockId,
     /// Each part ([`PartAt`]).
     parts: imbl::OrdMap<PartAt, Arc<Part>>,
-    /// The parts that mention each name, the leaf among them.
-    users: imbl::OrdMap<Arc<str>, imbl::OrdSet<PartAt>>,
-    /// Users other than threshold rows, used when the rows are solved together.
-    ordinary_users: imbl::OrdMap<Arc<str>, imbl::OrdSet<PartAt>>,
-    /// Users left when the shared integer-support certificate holds, with and without
-    /// threshold rows. Each map is updated only as a part enters or leaves.
-    ray_other_users: imbl::OrdMap<Arc<str>, imbl::OrdSet<PartAt>>,
-    active_users: imbl::OrdMap<Arc<str>, imbl::OrdSet<PartAt>>,
+    /// The parts that mention each name, the leaf among them ([`Users`]).
+    users: imbl::OrdMap<Arc<str>, Users>,
+    /// The parts of each [`Role`] but the constraints' part.
+    roles: imbl::OrdMap<Role, imbl::OrdSet<PartAt>>,
+    /// The rays, grouped by their two names ([`RayGroup`]).
     rays: imbl::OrdMap<(Arc<str>, Arc<str>), RayGroup>,
-    ray_parts: imbl::OrdSet<PartAt>,
+    /// The rays' bound held ([`Block::ray_high`]) at the last update or projection; the rays
+    /// were not projected one by one then.
     ray_managed: bool,
+    /// One ray part carrying the demand to read the rays' bound again.
     ray_due: Option<PartAt>,
-    /// A component with other ordinary operators keeps the original queue order.
-    aggregate_unsupported: imbl::OrdSet<PartAt>,
-    aggregate_uppers: imbl::OrdSet<PartAt>,
     /// What the upper disjunctions give in [`Scope::cover_staircase`] at the staircase and
     /// lower ends of its last call, taking in each upper disjunction as it enters.
     upper_bounds: Option<UpperBounds>,
@@ -2166,7 +2243,6 @@ struct Block {
     bounds: imbl::OrdMap<BoundsKey, imbl::OrdMap<Turn, imbl::OrdSet<PartAt>>>,
     /// Threshold parts, grouped by their lower and upper names.
     stairs: imbl::OrdMap<(Arc<str>, Arc<str>), Staircase>,
-    stair_parts: imbl::OrdSet<PartAt>,
     /// The parts the two-name rule of [`Block::reframe`] made due at the last update, projected
     /// whatever their records say.
     fired: BTreeSet<PartAt>,
@@ -2231,15 +2307,10 @@ impl Block {
             id: b,
             parts: imbl::OrdMap::new(),
             users: imbl::OrdMap::new(),
-            ordinary_users: imbl::OrdMap::new(),
-            ray_other_users: imbl::OrdMap::new(),
-            active_users: imbl::OrdMap::new(),
+            roles: imbl::OrdMap::new(),
             rays: imbl::OrdMap::new(),
-            ray_parts: imbl::OrdSet::new(),
             ray_managed: false,
             ray_due: None,
-            aggregate_unsupported: imbl::OrdSet::new(),
-            aggregate_uppers: imbl::OrdSet::new(),
             upper_bounds: None,
             ray_least: OnceLock::new(),
 
@@ -2257,7 +2328,6 @@ impl Block {
             vars: imbl::OrdMap::new(),
             bounds: imbl::OrdMap::new(),
             stairs: imbl::OrdMap::new(),
-            stair_parts: imbl::OrdSet::new(),
             fired: BTreeSet::new(),
             spends: Vec::new(),
             forgot: imbl::OrdSet::new(),
@@ -2356,58 +2426,30 @@ impl Block {
         formula: &Formula,
     ) {
         let names = syms(formula);
-        let stair = of.as_ref().and_then(|g| stair_row(g)).is_some();
-        let ray = of.as_ref().and_then(|g| ray_row(g));
-        // An upper disjunction is read by the threshold aggregate (`cover_staircase`) like a
-        // threshold row, so it joins neither the active nor the ordinary users.
-        let is_upper = of.as_ref().is_some_and(|g| upper_disjunction(g));
-        let is_stair_or_upper = stair || is_upper;
-        if is_upper {
-            self.aggregate_uppers.insert(at.clone());
-            if let (Some(u), Some(g)) = (&mut self.upper_bounds, &of) {
-                u.take(g);
-            }
+        let role = Role::of(of.as_deref());
+        if role != Role::Constraints {
+            self.roles.entry(role).or_default().insert(at.clone());
         }
-        if of.is_some() && !stair && ray.is_none() && !is_upper {
-            self.aggregate_unsupported.insert(at.clone());
+        if role == Role::Upper
+            && let (Some(u), Some(g)) = (&mut self.upper_bounds, &of)
+        {
+            u.take(g);
         }
-
-        if let Some((x, y, j, d)) = &ray {
-            self.ray_parts.insert(at.clone());
+        if role == Role::Ray
+            && let Some((x, y, j, d)) = of.as_ref().and_then(|g| ray_row(g))
+        {
             let pair = (x.clone(), y.clone());
             if !self.rays.contains_key(&pair) {
                 self.ray_least.take();
             }
-            self.rays.entry(pair).or_default().add(j, d);
+            self.rays.entry(pair).or_default().add(&j, &d);
             if let Some(least) = self.ray_least.get_mut() {
-                least.take_ray(&self.cons, x, y, j, d);
+                least.take_ray(&self.cons, &x, &y, &j, &d);
             }
-        }
-
-        if stair {
-            self.stair_parts.insert(at.clone());
         }
         for n in &names {
-            self.users.entry(n.clone()).or_default().insert(at.clone());
-            if ray.is_none() {
-                self.ray_other_users
-                    .entry(n.clone())
-                    .or_default()
-                    .insert(at.clone());
-                if !is_stair_or_upper {
-                    self.active_users
-                        .entry(n.clone())
-                        .or_default()
-                        .insert(at.clone());
-                }
-            }
-
-            if !is_stair_or_upper {
-                self.ordinary_users
-                    .entry(n.clone())
-                    .or_default()
-                    .insert(at.clone());
-            }
+            let users = self.users.entry(n.clone()).or_default();
+            users.of_role(role).insert(at.clone());
         }
         if let Some(g) = &of {
             for t in terms(g) {
@@ -2444,8 +2486,7 @@ impl Block {
             with,
             of,
             names,
-            stair,
-            ray: ray.is_some(),
+            role,
         };
         self.parts.insert(at, Arc::new(part));
     }
@@ -2455,16 +2496,18 @@ impl Block {
         let Some(part) = self.parts.remove(at) else {
             return;
         };
-        self.stair_parts.remove(at);
-        self.ray_parts.remove(at);
-        self.aggregate_unsupported.remove(at);
-        self.aggregate_uppers.remove(at);
-        let is_upper = part.of.as_ref().is_some_and(|g| upper_disjunction(g));
-        let is_stair_or_upper = part.stair || is_upper;
-        if is_upper {
+        if let Some(set) = self.roles.get_mut(&part.role) {
+            set.remove(at);
+            if set.is_empty() {
+                self.roles.remove(&part.role);
+            }
+        }
+        if part.role == Role::Upper {
             self.upper_bounds = None;
         }
-        if let Some((x, y, j, d)) = part.of.as_ref().and_then(|g| ray_row(g)) {
+        if part.role == Role::Ray
+            && let Some((x, y, j, d)) = part.of.as_ref().and_then(|g| ray_row(g))
+        {
             self.ray_least.take();
             let pair = (x, y);
             if let Some(group) = self.rays.get_mut(&pair) {
@@ -2474,27 +2517,11 @@ impl Block {
                 }
             }
         }
-
         for n in &part.names {
-            for users in [&mut self.ray_other_users, &mut self.active_users] {
-                if let Some(us) = users.get_mut(n) {
-                    us.remove(at);
-                    if us.is_empty() {
-                        users.remove(n);
-                    }
-                }
-            }
-
             if let Some(us) = self.users.get_mut(n) {
-                us.remove(at);
+                us.of_role(part.role).remove(at);
                 if us.is_empty() {
                     self.users.remove(n);
-                }
-            }
-            if !is_stair_or_upper && let Some(us) = self.ordinary_users.get_mut(n) {
-                us.remove(at);
-                if us.is_empty() {
-                    self.ordinary_users.remove(n);
                 }
             }
         }
@@ -2889,40 +2916,35 @@ impl Block {
         // demand. Only ordinary users are walked, O(u log k) for u such users, plus the
         // O((r+1) log k) aggregate query for r base rows. Leaving the handled shape restores
         // every individual row to the ordinary due rule, O(k) on that transition.
+        // An aggregate that holds is read again, through one part of its role, when it did
+        // not hold before or when anything it reads may have changed. A block an aggregate
+        // holds for has two names, so the names are compared in O(1).
+        let renewed = |was: bool, next: &Block| {
+            !was || !changed.is_empty()
+                || !next.added.is_empty()
+                || (next.users.keys()).any(|n| self.names_at.get(n) != names.get(n))
+        };
         if manages {
-            let names_changed = next
-                .users
-                .keys()
-                .any(|n| self.names_at.get(n) != names.get(n));
-            if !self.stair_managed || names_changed || !changed.is_empty() || !next.added.is_empty()
-            {
-                next.stair_due = next.stair_parts.iter().next().cloned();
+            if renewed(self.stair_managed, &next) {
+                let first = next.of_role(Role::Stair).next().cloned();
+                next.stair_due = first;
                 due.extend(next.stair_due.iter().cloned());
             }
         } else if self.stair_managed {
-            due.extend(next.stair_parts.iter().cloned());
+            due.extend(next.of_role(Role::Stair).cloned());
         }
         next.stair_managed = manages;
         next.ray_due = None;
         next.ray_managed = next.ray_high(names).is_some();
-        if next.ray_managed
-            && (!self.ray_managed
-                || !changed.is_empty()
-                || !next.added.is_empty()
-                || next
-                    .users
-                    .keys()
-                    .any(|n| self.names_at.get(n) != names.get(n)))
-        {
-            next.ray_due = next.ray_parts.iter().next().cloned();
+        if next.ray_managed && renewed(self.ray_managed, &next) {
+            let first = next.of_role(Role::Ray).next().cloned();
+            next.ray_due = first;
             due.extend(next.ray_due.iter().cloned());
         }
-
         if self.ray_managed && !next.ray_managed {
-            due.extend(next.ray_parts.iter().cloned());
+            due.extend(next.of_role(Role::Ray).cloned());
         }
 
-        let users = next.due_users();
         // The names whose products changed: the changes since the block was kept while they
         // are no more than its names, else each of its names compared.
         let mut walked = 0;
@@ -2934,14 +2956,12 @@ impl Block {
             let (DiffItem::Add(n, _)
             | DiffItem::Remove(n, _)
             | DiffItem::Update { new: (n, _), .. }) = d;
-            if let Some(us) = users.get(n) {
-                due.extend(us.iter().cloned());
-            }
+            due.extend(next.due_users(n).cloned());
         }
         if walked > next.users.len() {
-            for (n, us) in users {
+            for n in next.users.keys() {
                 if self.names_at.get(n) != names.get(n) {
-                    due.extend(us.iter().cloned());
+                    due.extend(next.due_users(n).cloned());
                 }
             }
         }
@@ -2950,9 +2970,7 @@ impl Block {
         // A part made due above may be gone since, with its conjunct.
         due.retain(|at| {
             next.parts.get(at).is_some_and(|p| {
-                let is_stair_or_upper =
-                    p.stair || p.of.as_ref().is_some_and(|g| upper_disjunction(g));
-                !manages || !is_stair_or_upper || next.stair_due.as_ref() == Some(at)
+                !(manages && p.role.stair()) || next.stair_due.as_ref() == Some(at)
             })
         });
         Some((next, due))
@@ -3395,7 +3413,7 @@ impl Scope {
             .into_iter()
             .filter(|at| {
                 let p = &block.parts[at];
-                if block.ray_managed && p.ray && block.ray_due.as_ref() != Some(at) {
+                if block.ray_managed && p.role == Role::Ray && block.ray_due.as_ref() != Some(at) {
                     return false;
                 }
 
@@ -6812,10 +6830,10 @@ impl Scope {
         b.ray_managed = self.cover_rays(&b);
         let mut due = due;
         if was_stair && !b.stair_managed {
-            due.extend(b.stair_parts.iter().cloned());
+            due.extend(b.of_role(Role::Stair).cloned());
         }
         if was_ray && !b.ray_managed {
-            due.extend(b.ray_parts.iter().cloned());
+            due.extend(b.of_role(Role::Ray).cloned());
         }
         let mut moved: BTreeSet<Arc<str>> = BTreeSet::new();
 
@@ -6826,16 +6844,7 @@ impl Scope {
                 | DiffItem::Remove(n, _)
                 | DiffItem::Update { new: (n, _), .. }) = d;
                 moved.insert(n.clone());
-                if let Some(us) = (match (b.stair_managed, b.ray_managed) {
-                    (true, true) => &b.active_users,
-                    (true, false) => &b.ordinary_users,
-                    (false, true) => &b.ray_other_users,
-                    (false, false) => &b.users,
-                })
-                .get(n)
-                {
-                    due.extend(us.iter().cloned());
-                }
+                due.extend(b.due_users(n).cloned());
             }
             due.into_iter().collect()
         } else {
@@ -6869,12 +6878,10 @@ impl Scope {
         // The aggregate is the exact solution of the entire component when every part
         // other than the constraints is a threshold row. Reading and solving that same
         // component again would rebuild a k-row system in each of k cases, O(k^2 log k).
-        // The stored row count and the constraints' last key establish coverage in O(log k).
+        // The roles of the block's parts ([`Block::roles`]) establish coverage in O(1).
         // Complexity tradeoff: keep the general solver for components with other parts;
         // the wholly covered shape uses the persistent O(log k) threshold queries above.
-        let all_stairs = covered.is_some()
-            && b.stair_parts.len()
-                == b.parts.len() - usize::from(b.parts.keys().next_back().is_some_and(|at| at.0));
+        let all_stairs = covered.is_some() && b.roles.keys().all(|r| *r == Role::Stair);
         if b.unshaped.is_empty() && !all_stairs {
             let core: Vec<Arc<Formula>> = b.core.keys().cloned().collect();
             if let Some(shape) = &threshold::shape(&core)
@@ -6900,17 +6907,7 @@ impl Scope {
         while let Some(i) = work.pop_front() {
             queued.remove(&i);
             let part = &b.parts[&i].clone();
-            if b.ray_managed && part.ray {
-                continue;
-            }
-            if let Some((x, y)) = &covered
-                && (part
-                    .of
-                    .as_ref()
-                    .and_then(|g| stair_row(g))
-                    .is_some_and(|(u, v, _, _)| &u == x && &v == y)
-                    || part.of.as_ref().is_some_and(|g| upper_disjunction(g)))
-            {
+            if b.managed(part) {
                 continue;
             }
             let check_names = if covered.is_some() {
@@ -6950,13 +6947,7 @@ impl Scope {
                     continue;
                 }
                 again |= !moved.insert(n.clone());
-                let users = match (b.stair_managed, b.ray_managed) {
-                    (true, true) => &b.active_users,
-                    (true, false) => &b.ordinary_users,
-                    (false, true) => &b.ray_other_users,
-                    (false, false) => &b.users,
-                };
-                for j in users.get(n).into_iter().flatten() {
+                for j in b.due_users(n) {
                     if (j != &i || aggregated.contains(n)) && queued.insert(j.clone()) {
                         work.push_back(j.clone());
                     }
@@ -6989,26 +6980,13 @@ impl Scope {
     /// O((d + c) log k) for `d` parts due and `c` changed names' parts. Tradeoffs: the
     /// clone of the names' map at the start, O(1) by sharing. COMPLEXITY.md row C26.
     fn record(&mut self, b: Block, start: &imbl::OrdMap<Arc<str>, Product>, due: &[PartAt]) {
-        let mut writes: BTreeSet<&PartAt> = due
-            .iter()
-            .filter(|at| {
-                let p = &b.parts[*at];
-                let is_stair_or_upper =
-                    p.stair || p.of.as_ref().is_some_and(|g| upper_disjunction(g));
-                (!b.stair_managed || !is_stair_or_upper) && (!b.ray_managed || !p.ray)
-            })
-            .collect();
+        let mut writes: BTreeSet<&PartAt> =
+            due.iter().filter(|at| !b.managed(&b.parts[*at])).collect();
         for d in start.diff(&self.names) {
             let (DiffItem::Add(n, _)
             | DiffItem::Remove(n, _)
             | DiffItem::Update { new: (n, _), .. }) = d;
-            let users = match (b.stair_managed, b.ray_managed) {
-                (true, true) => &b.active_users,
-                (true, false) => &b.ordinary_users,
-                (false, true) => &b.ray_other_users,
-                (false, false) => &b.users,
-            };
-            writes.extend(users.get(n).into_iter().flatten());
+            writes.extend(b.due_users(n));
         }
         for at in writes {
             let p = &b.parts[at];
@@ -9841,13 +9819,7 @@ impl Scope {
     // users, leaving the handled shape, and the existing raw projection still cost their
     // entries; this is not a global bound on the reduced product (R1-CODEX-01).
     fn cover_staircase(&mut self, b: &mut Block) -> Option<(Arc<str>, Arc<str>)> {
-        if !b.aggregate_unsupported.is_empty() {
-            return None;
-        }
-        if b.stairs.len() != 1 || b.users.len() != 2 {
-            return None;
-        }
-        let ((x, y), tree) = b.stairs.iter().next()?;
+        let ((x, y), tree) = b.stair_pair()?;
         let (x, y, tree) = (&x.clone(), &y.clone(), &tree.clone());
         let px = self.get(x);
         let py = self.get(y);
@@ -9858,22 +9830,8 @@ impl Scope {
         let (mut yl, mut yh) = py.ints().bounds().map(|(l, h)| (l.clone(), h.clone()))?;
         let mut planes = Vec::new();
         for g in &b.cons {
-            let Formula::Con(c) = &**g else {
-                return None;
-            };
-            if c.rel != Rel::Ge {
-                return None;
-            }
-            let mut p = Int::ZERO;
-            let mut q = Int::ZERO;
-            for (a, k) in &c.lin.terms {
-                match a {
-                    Atom::Sym(n) if n == x => p = -k,
-                    Atom::Sym(n) if n == y => q = -k,
-                    _ => return None,
-                }
-            }
-            let v = &c.lin.constant;
+            let (p, q, v) = stair_con(g, x, y)?;
+            let v = &v;
             match (p.is_zero(), q.is_zero()) {
                 (true, true) => {
                     if v.is_negative() {
@@ -9895,10 +9853,7 @@ impl Scope {
                         yl = yl.max(End::Fin(Num::from(&-&v.div_floor(&-&q))));
                     }
                 }
-                (false, false) if p.is_positive() && q.is_positive() => {
-                    planes.push((p, q, v.clone()))
-                }
-                _ => return None,
+                (false, false) => planes.push((p, q, v.clone())),
             }
         }
         if let End::Fin(l) = &yl {
@@ -9944,7 +9899,7 @@ impl Scope {
                 y: None,
                 x: None,
             };
-            for at in &b.aggregate_uppers {
+            for at in b.of_role(Role::Upper) {
                 u.take(&at.1);
             }
             b.upper_bounds = Some(u);
@@ -9986,13 +9941,7 @@ impl Scope {
 impl Block {
     /// Whether the exact threshold calculation handles every base row and both name domains.
     fn manages_stairs(&self, names: &imbl::OrdMap<Arc<str>, Product>) -> bool {
-        if !self.aggregate_unsupported.is_empty() {
-            return false;
-        }
-        if self.stairs.len() != 1 || self.users.len() != 2 {
-            return false;
-        }
-        let Some(((x, y), _)) = self.stairs.iter().next() else {
+        let Some(((x, y), _)) = self.stair_pair() else {
             return false;
         };
         for n in [x, y] {
@@ -10003,26 +9952,41 @@ impl Block {
                 return false;
             }
         }
-        for g in &self.cons {
-            let Formula::Con(c) = &**g else {
-                return false;
-            };
-            if c.rel != Rel::Ge {
-                return false;
-            }
-            if c.lin.terms.len() > 1 && c.lin.terms.values().any(|k| k.is_positive()) {
-                return false;
-            }
-            if c.lin
-                .terms
-                .keys()
-                .any(|a| !matches!(a,Atom::Sym(n) if n == x || n == y))
-            {
-                return false;
-            }
-        }
-        true
+        self.cons.iter().all(|g| stair_con(g, x, y).is_some())
     }
+
+    /// The names and staircase of the threshold aggregate when it may hold: every part but
+    /// the constraints' is a threshold row or an upper disjunction on two names, and the
+    /// threshold rows are on one pair of them.
+    fn stair_pair(&self) -> Option<(&(Arc<str>, Arc<str>), &Staircase)> {
+        if !self.aggregable() || self.stairs.len() != 1 {
+            return None;
+        }
+        self.stairs.iter().next()
+    }
+}
+
+/// The constraint `g` of a threshold block on the names `x` and `y` as `(p, q, c)` for
+/// `p*x + q*y <= c`, when [`Scope::cover_staircase`] reads it: an inequality on no names but
+/// these, with `p` and `q` both positive when it has both. Its coefficients are never zero
+/// ([`Lin`]).
+fn stair_con(g: &Formula, x: &Arc<str>, y: &Arc<str>) -> Option<(Int, Int, Int)> {
+    let Formula::Con(c) = g else {
+        return None;
+    };
+    if c.rel != Rel::Ge {
+        return None;
+    }
+    let (mut p, mut q) = (Int::ZERO, Int::ZERO);
+    for (a, k) in &c.lin.terms {
+        match a {
+            Atom::Sym(n) if n == x => p = -k,
+            Atom::Sym(n) if n == y => q = -k,
+            _ => return None,
+        }
+    }
+    let both = !p.is_zero() && !q.is_zero();
+    (!both || (p.is_positive() && q.is_positive())).then(|| (p, q, c.lin.constant.clone()))
 }
 
 /// An integer support shared by ordinary parts on one ordered pair. An arm
@@ -10097,13 +10061,25 @@ fn ray_row(g: &Formula) -> Option<(Arc<str>, Arc<str>, Int, Int)> {
 }
 
 impl Block {
-    fn due_users(&self) -> &imbl::OrdMap<Arc<str>, imbl::OrdSet<PartAt>> {
-        match (self.stair_managed, self.ray_managed) {
-            (true, true) => &self.active_users,
-            (true, false) => &self.ordinary_users,
-            (false, true) => &self.ray_other_users,
-            (false, false) => &self.users,
-        }
+    /// The parts of `role`, in order.
+    fn of_role(&self, role: Role) -> impl Iterator<Item = &PartAt> {
+        self.roles.get(&role).into_iter().flatten()
+    }
+
+    /// Whether an aggregate may hold: the block has two names, and every part but the
+    /// constraints' is read by one ([`Role`]).
+    fn aggregable(&self) -> bool {
+        !self.roles.contains_key(&Role::Other) && self.users.len() == 2
+    }
+
+    /// Whether an aggregate that holds stands for `p`, which is then not projected by itself.
+    fn managed(&self, p: &Part) -> bool {
+        (self.stair_managed && p.role.stair()) || (self.ray_managed && p.role == Role::Ray)
+    }
+
+    /// The parts that mention `n` and that no aggregate that holds stands for, in order.
+    fn due_users(&self, n: &str) -> impl Iterator<Item = &PartAt> {
+        (self.users.get(n).into_iter()).flat_map(|u| u.due(self.stair_managed, self.ray_managed))
     }
 
     /// Common-ray bound while y <= 0: each member is equivalent to x >= d+j*y,
@@ -10116,7 +10092,7 @@ impl Block {
     /// leaves makes the next run read them all again, O(r R). Construction and removals
     /// cost O(log k) per member.
     fn ray_high(&self, names: &imbl::OrdMap<Arc<str>, Product>) -> Option<(Arc<str>, Int)> {
-        if !self.aggregate_unsupported.is_empty() || self.rays.len() != 1 || self.users.len() != 2 {
+        if !self.aggregable() || self.rays.len() != 1 {
             return None;
         }
         let ((x, y), group) = self.rays.iter().next()?;
@@ -10360,4 +10336,46 @@ fn upper_arms(g: &Formula, x: &Arc<str>, y: &Arc<str>) -> Option<Vec<(Int, Int, 
             (p.is_positive() && q.is_positive()).then(|| (p, q, c.lin.constant.clone()))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The due users of a name are the parts of every set but those of the aggregates that
+    /// hold, each once, in the order of the parts: the order the worklist takes them in.
+    #[test]
+    fn due_users_are_the_parts_of_the_aggregates_that_do_not_hold_in_order() {
+        let at = |k: i64| -> PartAt {
+            let x = Lin::atom(Atom::Sym("x".into()));
+            (
+                false,
+                Arc::new(Formula::Con(Con::ge(&x, &Lin::constant(k)))),
+            )
+        };
+        let mut users = Users::default();
+        for (k, role) in [
+            (5, Role::Other),
+            (1, Role::Stair),
+            (3, Role::Ray),
+            (0, Role::Constraints),
+            (4, Role::Upper),
+            (2, Role::Ray),
+            (6, Role::Stair),
+        ] {
+            users.of_role(role).insert(at(k));
+        }
+        for (stair, ray) in [(false, false), (true, false), (false, true), (true, true)] {
+            let mut want: BTreeSet<PartAt> = users.plain.iter().cloned().collect();
+            if !stair {
+                want.extend(users.stair.iter().cloned());
+            }
+            if !ray {
+                want.extend(users.ray.iter().cloned());
+            }
+            let got: Vec<PartAt> = users.due(stair, ray).cloned().collect();
+            assert_eq!(got, want.into_iter().collect::<Vec<_>>(), "{stair} {ray}");
+        }
+        assert_eq!(users.due(false, false).count(), 7);
+    }
 }
