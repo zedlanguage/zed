@@ -1519,13 +1519,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                     "name resolution rejects every struct, type, method, import, local and annotated definition before the checker reads the program"
                 )
             }
-            StmtKind::Mutable(_)
-            | StmtKind::IndexedDef(_)
+            StmtKind::IndexedDef(_)
             | StmtKind::Initial(_)
             | StmtKind::While(_)
             | StmtKind::Until(_)
             | StmtKind::Expr(_) => unreachable!(
-                "name resolution rejects every mutable variable, indexed definition, while, until and expression statement before the checker reads the program"
+                "name resolution rejects every `initial` statement, indexed definition, while, until and expression statement before the checker reads the program"
             ),
             StmtKind::Bind { value, .. } => {
                 m.k(Frame::Bind(s, self.errors.len()));

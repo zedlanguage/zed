@@ -17,8 +17,8 @@
 //! parameter `((a, b)) -> e`, `type` declarations, and record, applied and atom-payload types.
 //! A name written twice in one struct, display, `with` clause or type parameter list is an
 //! error. From step L6.1 the generation forms are built: `loop`, `break`, the call `c*.m`,
-//! and in `stmts` the guards `while` and `until`, `mutable`, indexed definitions, boundary
-//! `with` clauses and expression statements. A primed name `x'` is one token, so it is a name
+//! and in `stmts` the guards `while` and `until`, `initial` statements with `with carryForward`,
+//! indexed definitions, boundary `with` clauses and expression statements. A primed name `x'` is one token, so it is a name
 //! like any other here. A form of a later layer is an error naming that layer.
 
 mod body;
@@ -40,10 +40,10 @@ use num_bigint::BigUint;
 use zed_kernel::num::TooLarge;
 
 pub use node::{
-    Annot, Arm, BinaryOp, BoundaryItem, Error, Every, Expr, ExprKind, Field, Function, Import,
-    ImportKind, IndexKey, IndexedDef, Initial, MainHeader, Method, Note, Param, Pattern, Port,
-    RangeEnd, Stmt, StmtKind, StrPart, Struct, Target, Type, TypeBound, TypeDecl, TypeKind,
-    TypeParam, UnaryOp, Update,
+    Annot, Arm, BinaryOp, BoundaryItem, CARRY_FORWARD, Error, Every, Expr, ExprKind, Field,
+    Function, Import, ImportKind, IndexKey, IndexedDef, Initial, MainHeader, Method, Note, Param,
+    Pattern, Port, RangeEnd, Stmt, StmtKind, StrPart, Struct, Target, Type, TypeBound, TypeDecl,
+    TypeKind, TypeParam, UnaryOp, Update,
 };
 
 use crate::lex::{Part, Span, Tok, Token};

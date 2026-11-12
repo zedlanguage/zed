@@ -449,9 +449,6 @@ pub enum StmtKind {
     /// `initial p[-2] = e;` (DESIGN.md sec:generations). Boxed: inline it is the largest kind
     /// and would make every statement 8 bytes larger.
     Initial(Box<Initial>),
-    /// `mutable x = e;`: the binding, whose variable carries forward when a step leaves it
-    /// unassigned.
-    Mutable(Box<Stmt>),
     /// `local d`: the declaration `d`, visible in its unit only (DESIGN.md sec:units).
     Local(Box<Stmt>),
     /// `x[i in s] = e;` or `x[i] = e;`, an indexed definition, one piece of a piecewise one.
@@ -676,7 +673,15 @@ pub struct Initial {
     pub keys: Vec<IndexKey>,
     /// The value.
     pub value: Expr,
+    /// Whether `with carryForward` ends the statement (DESIGN.md sec:generations): on a path of a step
+    /// that does not update a name it lists, the step defines `x' = x;`.
+    pub carry: bool,
 }
+
+/// The word after `with` that marks an `initial` statement's names as carried,
+/// `initial x = 0 with carryForward;` (rule `Carry` of DESIGN.md sec:grammar). Every message and
+/// printer writes the word from here, so renaming it is one change here and one in the grammar.
+pub const CARRY_FORWARD: &str = "carryForward";
 
 /// A boundary entry of an indexed definition's `with` clause, `with d[-1] = e`.
 #[derive(Debug)]
@@ -711,7 +716,6 @@ impl StmtKind {
             StmtKind::While(_) => 0,
             StmtKind::Bind { .. }
             | StmtKind::Initial(_)
-            | StmtKind::Mutable(_)
             | StmtKind::Local(_)
             | StmtKind::IndexedDef(_)
             | StmtKind::Push { .. }

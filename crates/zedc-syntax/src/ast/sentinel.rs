@@ -1,6 +1,6 @@
 //! The entries each sentinel site of a loop body gives, by the values of their keys, and the
 //! check that no two sites give one entry (DESIGN.md sec:generations, row "Two sentinel values
-//! for one variable"). `initial x = e;` and `mutable x = e;` give the entry `x[-1]`;
+//! for one variable"). `initial x = e;` gives the entry `x[-1]`;
 //! `initial x[-2] = e;` gives `x[-2]`; `initial x[i in -3..<0] = e;` gives `x[-3]`, `x[-2]`
 //! and `x[-1]`; and a further bracket, `initial g[-1][j in 0..<2] = j;`, gives entries inside
 //! the frame `g[-1]`, which a site that gives the whole frame `g[-1]` gives too. Keys written

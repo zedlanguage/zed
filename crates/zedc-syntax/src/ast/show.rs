@@ -4,8 +4,8 @@
 use std::fmt;
 
 use super::{
-    Annot, BoundaryItem, Every, Expr, ExprKind, Field, Function, ImportKind, IndexKey, Param,
-    Pattern, Stmt, StmtKind, StrPart, Target, Type, TypeKind, TypeParam,
+    Annot, BoundaryItem, CARRY_FORWARD, Every, Expr, ExprKind, Field, Function, ImportKind,
+    IndexKey, Param, Pattern, Stmt, StmtKind, StrPart, Target, Type, TypeKind, TypeParam,
 };
 
 /// What is left to write.
@@ -333,7 +333,7 @@ fn params_spaced<'a>(params: &'a [Param], out: &mut Vec<Show<'a>>) {
 /// `(struct P (x: f64) (y: f64 = 0.0) (import a.B))`, a type `(type T (A) (| A #b))`, an import
 /// `(import a.b)`, `(import a.b as c)` or `(import a.b (x y) @hash(…))`, and an annotated
 /// declaration `(annotated @log (@cost n (k: 1)) (def …))`, a bare annotation without
-/// parentheses; from layer L6, `(mutable (= (c) e))`, the start values `(initial (x) 0)`,
+/// parentheses; from layer L6, the start values `(initial (x) 0)`, `(initial (c) e carryForward)`,
 /// `(initial (a b) e)` and `(initial (x: f64) 0.0)` and the boundary entry
 /// `(initial p ((at -2)) -1)`, an indexed definition
 /// `(indexed x ((in i s) (at k)) e (with (= x ((at -1)) 0)))`, `(while c)`, `(until c)`, and an
@@ -366,9 +366,12 @@ fn stmt<'a>(s: &'a Stmt, out: &mut Vec<Show<'a>>) {
                 out.extend([Text(&i.names[0].0), Text(" ")]);
                 keys(&i.keys, out);
             }
-            out.extend([Text(" "), Show::Expr(&i.value), Text(")")]);
+            out.extend([Text(" "), Show::Expr(&i.value)]);
+            if i.carry {
+                out.extend([Text(" "), Text(CARRY_FORWARD)]);
+            }
+            out.push(Text(")"));
         }
-        StmtKind::Mutable(decl) => out.extend([Text("(mutable "), Show::Stmt(decl), Text(")")]),
         StmtKind::Local(decl) => out.extend([Text("(local "), Show::Stmt(decl), Text(")")]),
         StmtKind::IndexedDef(d) => {
             out.extend([Text("(indexed "), Text(&d.name), Text(" ")]);

@@ -11,7 +11,7 @@
 //! parser matches them by their text.
 
 /// The keywords, as the grammar lists them.
-pub const KEYWORDS: [&str; 38] = [
+pub const KEYWORDS: [&str; 37] = [
     "struct",
     "type",
     "interface",
@@ -34,7 +34,6 @@ pub const KEYWORDS: [&str; 38] = [
     "if",
     "else",
     "is",
-    "mutable",
     "positional",
     "without",
     "with",

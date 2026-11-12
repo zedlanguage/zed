@@ -19,7 +19,7 @@ p4, w2  = bump(p, 2);            //   ≡ the same call, written without UFCS
 p*.bump(3);                   // ✗ `*.` call on a receiver that is not a state variable: p is a value binding — no next generation to write
 
 run = loop {
-  mutable c = Counter(n: 0, hi: 9); // state receiver: carry-forward, boundary at t = -1
+  initial c = Counter(n: 0, hi: 9); // state receiver: updated every step, boundary at t = -1
   prev = c*.bump(3);                // `*.` calls and mutates: writes c', yields the return
   until prev > 20;                  //   — one write of c' per step, as always
 

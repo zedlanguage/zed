@@ -2,9 +2,9 @@
 //! declarations (step L1.12): functions with their `test` tables, and the push `p <- e`; and
 //! from step L2.1, the declarations of structs, of types, and of methods `T.m`; and from step
 //! L2.2, imports with their `@hash` pins, and the annotations `@name` written before a
-//! declaration; and from step L6.1, the guards `while c;` and `until c;`, `mutable x = e;`,
+//! declaration; and from step L6.1, the guards `while c;` and `until c;`,
 //! indexed definitions `x[i in s] = e;` with their boundary entries
-//! `with x[k] = e0`, the start values `initial x = e;`, and expression statements `e;`; and from step L7.3, the unit items
+//! `with x[k] = e0`, the start values `initial x = e;` with their `with carryForward`, and expression statements `e;`; and from step L7.3, the unit items
 //! `@name;` and `@name(args);`, as `@log(#off);`.
 
 use std::collections::{HashMap, HashSet};
@@ -259,8 +259,12 @@ impl Builder<'_, '_> {
                 }
             }
             "Initial" => {
-                let [target, value] = *kids else {
-                    unreachable!("Initial = 'initial' InitTarget '=' Expr ';'")
+                // `Carry`, when written, is the third kid; the word is read from the grammar's rule,
+                // not from the text.
+                let (target, value, carry) = match *kids {
+                    [target, value] => (target, value, false),
+                    [target, value, _] => (target, value, true),
+                    _ => unreachable!("Initial = 'initial' InitTarget '=' Expr Carry? ';'"),
                 };
                 let kids = self.kids(target);
                 let (mut names, mut ty, mut keys) = (Vec::new(), None, Vec::new());
@@ -280,12 +284,9 @@ impl Builder<'_, '_> {
                     ty,
                     keys,
                     value: self.node(value)?,
+                    carry,
                 }))
             }
-            "Mutable" => StmtKind::Mutable(Box::new(Stmt {
-                kind: self.decl(kids[0])?,
-                span: self.span(kids[0]),
-            })),
             // `local local d` parses; the chain is walked in a loop, the declaration at its end
             // built, and the chain wrapped around it from the inside out.
             "Local" => {

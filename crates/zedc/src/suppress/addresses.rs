@@ -88,9 +88,7 @@ fn declared(s: &Stmt) -> Option<&str> {
             Target::Name(name, _) => Some(name.as_str()),
             _ => None,
         }),
-        StmtKind::Mutable(d) | StmtKind::Local(d) | StmtKind::Annotated { decl: d, .. } => {
-            declared(d)
-        }
+        StmtKind::Local(d) | StmtKind::Annotated { decl: d, .. } => declared(d),
         _ => None,
     }
 }

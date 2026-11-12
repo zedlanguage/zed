@@ -272,6 +272,39 @@ const NEAR_MISSES: &[NearMiss] = &[
         Some("keep the first, `initial x = 0;`, and delete this one, `initial x = 0;`"),
     ),
     (
+        Row::NotEveryPath,
+        "r = loop t {\n  while t < 3;\n",
+        "  initial c = 0 with carryForward;\n  if t > 1 { c*.bump(1) } else { 0 };\n};\n",
+        "  initial c = 0;\n  if t > 1 { c*.bump(1) } else { 0 };\n};\n",
+        "4:14",
+        Some(
+            "`initial c = 0 with carryForward;` in place of `initial c = 0;`, so a step that \
+             does not update `c` keeps its value",
+        ),
+    ),
+    (
+        Row::CarryOnKeyedEntry,
+        "r = loop t {\n  while t < 3;\n  p' = p + 1;\n",
+        "  initial p[-1] = -1;\n};\n",
+        "  initial p[-1] = -1 with carryForward;\n};\n",
+        "4:3",
+        Some(
+            "`initial p = -1 with carryForward;`, the statement without keys, which gives the \
+             entry `p[-1]`",
+        ),
+    ),
+    (
+        Row::MutableDeclaration,
+        "r = loop t {\n  while t < 3;\n",
+        "  initial x = 0 with carryForward;\n  x' = x + 1;\n};\n",
+        "  mutable x = 0;\n  x' = x + 1;\n};\n",
+        "3:3",
+        Some(
+            "`initial x = 0 with carryForward;`, its value before step 0, carried forward on a \
+             step that does not update `x`",
+        ),
+    ),
+    (
         Row::NameAboveDefinition,
         "f(n) {\n",
         "  b = n * 2;\n  a = b + 1;\n  a\n}\n",
@@ -306,6 +339,9 @@ const LATER: &[Row] = &[
     Row::InitialNotUpdated,
     Row::InitialReadsLoop,
     Row::TwoSentinels,
+    Row::NotEveryPath,
+    Row::CarryOnKeyedEntry,
+    Row::MutableDeclaration,
 ];
 
 /// The `.rs` files under `dir`, in no order.

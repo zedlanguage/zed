@@ -28,6 +28,9 @@ An `initial` statement outside a loop, or under `local`
 An `initial` statement for a name the loop does not update
 An `initial` value that reads a name of its own loop
 Two sentinel values for one variable
+A loop variable not updated on every path of a step
+`with carryForward` on a keyed boundary entry
+A `mutable` declaration
 Cross-unit overlapping incomparable arrows
 Ambiguous imported name
 Name used above its definition

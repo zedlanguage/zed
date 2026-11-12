@@ -237,13 +237,6 @@ impl<'t, 'a> Walk<'t, 'a> {
                 }
             }
             StmtKind::Annotated { decl, .. } => self.stmt(decl),
-            // A `mutable` binding's variable changes from step to step, so its name is any
-            // `int`; its first value is still walked.
-            StmtKind::Mutable(decl) => {
-                if let StmtKind::Bind { value, .. } = &decl.kind {
-                    self.root(value, Label::Other);
-                }
-            }
             StmtKind::IndexedDef(d) => {
                 self.root(&d.value, Label::Other);
             }

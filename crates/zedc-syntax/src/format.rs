@@ -20,8 +20,9 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use crate::ast::{
-    Annot, Arm, BinaryOp, BoundaryItem, Every, Expr, ExprKind, Field, Function, ImportKind,
-    IndexKey, Param, Pattern, Stmt, StmtKind, Target, Type, TypeKind, TypeParam, Update,
+    Annot, Arm, BinaryOp, BoundaryItem, CARRY_FORWARD, Every, Expr, ExprKind, Field, Function,
+    ImportKind, IndexKey, Param, Pattern, Stmt, StmtKind, Target, Type, TypeKind, TypeParam,
+    Update,
 };
 use crate::lex::{self, Span, Token};
 
@@ -961,19 +962,16 @@ impl<'a> Formatter<'a> {
             StmtKind::Initial(i) => {
                 let names: Vec<&str> = i.names.iter().map(|(n, _)| n.as_str()).collect();
                 self.put(format!("initial {}", names.join(", ")));
-                then![stack; put(" = "), value(&i.value), put(";")];
+                let end: Cow<str> = if i.carry {
+                    format!(" with {CARRY_FORWARD};").into()
+                } else {
+                    ";".into()
+                };
+                then![stack; put(" = "), value(&i.value), put(end)];
                 match &i.ty {
                     Some(t) => then![stack; put(": "), Job::Ty { t, min: 0 }],
                     None => stack.push(Job::Keys { keys: &i.keys, ind }),
                 }
-            }
-            StmtKind::Mutable(decl) => {
-                self.put("mutable ");
-                stack.push(Job::Stmt {
-                    s: decl,
-                    ind,
-                    bare: false,
-                });
             }
             StmtKind::Local(decl) => {
                 self.put("local ");

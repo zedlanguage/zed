@@ -1,6 +1,6 @@
 //! The messages for a parse that stops in a `with` clause that gives a sentinel value, and for
-//! a reserved word written where a name stands (DESIGN.md sec:generations, sec:lexical,
-//! sec:diagnostics).
+//! a reserved word written where a name stands, and for the removed declaration `mutable x = e;`
+//! (DESIGN.md sec:generations, sec:lexical, sec:diagnostics).
 //!
 //! Since 2026-11-11 the sentinel value of a variable a loop updates is the statement `initial x
 //! = e;`, and a `with` clause stands only on an indexed definition, each item with its key,
@@ -162,7 +162,7 @@ impl Toks<'_, '_> {
 
     /// The statement of the block that starts at token `open`, other than the one at `skip`,
     /// that gives `name` its sentinel value: `initial name = …;`, `initial a, name = …;`,
-    /// `initial name: T = …;`, `initial name[-1] = …;` or `mutable name = …;`. One scan of the
+    /// `initial name: T = …;` or `initial name[-1] = …;`. One scan of the
     /// block.
     fn site(&self, open: usize, skip: usize, name: &str) -> Option<(usize, usize)> {
         let mut s = open;
@@ -170,7 +170,6 @@ impl Toks<'_, '_> {
             let e = self.stmt_stop(s);
             let k = self.decl_first(s);
             let gives = match self.t(k) {
-                "mutable" => self.t(k + 1) == name && self.t(k + 2) == "=",
                 "initial" => {
                     let mut j = k + 1;
                     let mut found = false;
@@ -313,11 +312,13 @@ impl Toks<'_, '_> {
 }
 
 /// The [`Clause`] for a parse that stopped at token `far` in a `with` clause that gives a
-/// sentinel value, or at or after a reserved word written where a name stands. The scans run
-/// over the statement, its block or its line, and each check of a word or a repair is one more
-/// parse: linear in the unit, on the error path only.
+/// sentinel value, at or after a reserved word written where a name stands, or at the removed
+/// declaration `mutable x = e;`. The scans run over the statement, its block or its line, and
+/// each check of a word or a repair is one more parse: linear in the unit, on the error path only.
 pub(super) fn clause(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
-    with_item(t, far).or_else(|| reserved(t, far))
+    with_item(t, far)
+        .or_else(|| reserved(t, far))
+        .or_else(|| mutable_decl(t, far))
 }
 
 fn with_item(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
@@ -801,6 +802,96 @@ fn reserved(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
             ),
             (span, repair),
         ],
+    })
+}
+
+/// The [`Clause`] for the removed declaration `mutable x = e;` (row "A `mutable` declaration",
+/// DESIGN.md sec:generations): `mutable` is an ordinary name, so the parse stops at the name
+/// after it. In the body of a loop the repair is `initial x = e with carryForward;`, `local`
+/// moved to the update where one was written; elsewhere it is the plain binding `x = e;`. The
+/// repair is parsed once: linear in the statement, on the error path only.
+fn mutable_decl(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
+    let k = if t.t(far) == "mutable" {
+        far
+    } else if far > 0 && t.t(far - 1) == "mutable" {
+        far - 1
+    } else {
+        return None;
+    };
+    // `mutable` and a name, then what a binding has after its first name: `=`, `:` or `,`.
+    if t.toks.get(k)?.0 != Kind::Ident
+        || t.toks.get(k + 1)?.0 != Kind::Ident
+        || !matches!(t.t(k + 2), "=" | ":" | ",")
+    {
+        return None;
+    }
+    let first = t.stmt_first(k);
+    if t.decl_first(first) != k {
+        return None;
+    }
+    let close = t.stmt_stop(k);
+    if t.t(close) != ";" {
+        return None;
+    }
+    let local = k > first && t.t(k - 1) == "local";
+    let name = t.t(k + 1);
+    let binding = t.between(k + 1, close - 1);
+    let start = if local { k - 1 } else { k };
+    let written = t.between(start, close);
+    let span = Span {
+        start: t.span(start).start,
+        end: t.span(close).end,
+    };
+    let (_, looped) = t.block_of(first);
+    let carry = crate::ast::CARRY_FORWARD;
+    let (rule, repair, why) = match looped {
+        Some(_) => (
+            format!(
+                "the loop whose body holds the declaration: a variable a loop updates is a \
+                 recurrence, defined on every frame, so each step updates it on every path; one \
+                 that keeps its value on a step that does not update it is given its value \
+                 before step 0 by an `initial` statement with `with {carry}`"
+            ),
+            format!("initial {binding} with {carry};"),
+            if local {
+                format!(
+                    "its value before step 0, carried forward on a step that does not update \
+                     `{name}`, with `local` moved to the update of `{name}`, `local {name}' = …;`"
+                )
+            } else {
+                format!(
+                    "its value before step 0, carried forward on a step that does not update \
+                     `{name}`"
+                )
+            },
+        ),
+        None => (
+            format!(
+                "outside the body of a loop a name is bound once, with no `mutable`; in a loop, \
+                 a variable that keeps its value on a step that does not update it is given its \
+                 value before step 0 by an `initial` statement with `with {carry}`"
+            ),
+            if local {
+                format!("local {binding};")
+            } else {
+                format!("{binding};")
+            },
+            "a plain binding".to_string(),
+        ),
+    };
+    // The headline shows the declaration and ends with the first repair; the rule is a note.
+    let mut notes = vec![(looped.map_or(span, |l| t.span(l)), rule)];
+    let message = if t.parses(start, close, &repair) {
+        notes.push((span, format!("repair: `{repair}`, {why}")));
+        format!("Zed has no `mutable`: `{written}`. Try `{repair}` instead.")
+    } else {
+        format!("Zed has no `mutable`: `{written}`.")
+    };
+    Some(Clause {
+        row: Some(Row::MutableDeclaration),
+        message,
+        span,
+        notes,
     })
 }
 

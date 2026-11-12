@@ -11,7 +11,6 @@ UnitAnnot     = Annot ';'                                                       
 Annot         = ANNOT ('(' nest(Args?) ')')?                                       L2
 
 Decl          = ~Local                                                             L2
-              | ~Mutable                                                           L6
               | ~Initial                                                           L6
               | ~Import                                                            L2
               | ~Struct                                                            L2
@@ -30,8 +29,8 @@ Decl          = ~Local                                                          
               | ~Signature                                                         L7
               | ~ExprStmt                                                          L6
 Local         = 'local' Decl                                                       L2
-Mutable       = 'mutable' Binding                                                  L6
-Initial       = 'initial' InitTarget '=' Expr ';'                                  L6
+Initial       = 'initial' InitTarget '=' Expr Carry? ';'                           L6
+Carry         = 'with' 'carryForward'                                              L6
 InitTarget    = Name ':' Type                                                      L10
               | Name ('[' IndexKey ']')+                                           L6
               | Name % ','                                                         L6

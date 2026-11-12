@@ -535,7 +535,7 @@ Forms, confirmed in DESIGN.md:
 - `&mut self` becomes a method with a primed receiver, whose fields are the frame (line 2387),
   called by `c*.m(a)` (line 2395). `Ck` (`check/mod.rs:234`), `Elab`, `Evaluator`, `Gen` port
   this way. It needs L6 (step L6.3), which the bootstrap subset has.
-- A `let mut` outside a loop becomes new names. In a loop, `mutable` and `x'`, or a `foldl`.
+- A `let mut` outside a loop becomes new names. In a loop, `initial x = e with carryForward;` and `x'`, or a `foldl`.
 - Field and index writes become `with { … }` (L2) and `patch`, or a scatter `hist[i] <- e` (line 437) in a frame.
 - `&mut` on a non-receiver argument returns the new value. `each_edge_mut` (`zir/canon.rs:285`)
   and `rename` (`zir/lower.rs:1196`) become maps. A visitor taking `&mut dyn FnMut` (`visit`,
@@ -900,7 +900,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | `trait Files` with `Dir` and `Memory`, a `&dyn Files` read through a vtable | `unit::load` | None | A function value passed in, `read: (String) -> Option<…>` |
-| `Vec`s of met numbers, low links, components and stack places written in place during Tarjan's search, a tuple assigned to three of them at once (`(met[v], low[v], at[v]) = (count, count, stack.len())`), and the explicit path's top counter incremented through `last_mut` (CYCLE-root-order) | `unit::order` | Mutation | A loop with `mutable` maps and stack, or a fold over the search's steps; three assignments for the tuple |
+| `Vec`s of met numbers, low links, components and stack places written in place during Tarjan's search, a tuple assigned to three of them at once (`(met[v], low[v], at[v]) = (count, count, stack.len())`), and the explicit path's top counter incremented through `last_mut` (CYCLE-root-order) | `unit::order` | Mutation | A loop whose maps and stack are carried by `initial … with carryForward;`, or a fold over the search's steps; three assignments for the tuple |
 | A breadth-first search's arrays kept across components in a struct passed `&mut`, each entry marked with the component number so none is cleared (CYCLE-root-order) | `unit::Search`, `unit::report` | Mutation | A state receiver over maps from unit to component, or a map made new for each component (its own units only) |
 | A labeled `loop` left by `break 'search (u, span)` with a value from inside a nested `for` (CYCLE-root-order) | `unit::report` | Early exit (gap 12) | A recursive function over the queue that returns the closing import |
 | `let [c0, _, ..] = *members else { return; }`, a slice pattern testing for two units or more (CYCLE-root-order) | `unit::report` | Slice patterns | Test the length, then index |
@@ -3589,3 +3589,11 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | A persistent treap of `Option<Arc<Node>>` changed through `Arc::make_mut`, which copies a node on the path only when another hull shares it, and taken apart by `Option::take` and `Arc::try_unwrap` on removal | `Rows::get_mut`, `Rows::insert`, `Rows::remove`, `split`, `merge` | Mutation in place of a shared value | a persistent treap value whose insert and remove return the new tree; the runtime shares the subtrees off the path |
 | Priorities from `std`'s `DefaultHasher` of the pivot, mixed by splitmix64, so one set of pivots gives one shape | `prio_of` | Hashing input (gap 5) | any fixed hash of the atom's bytes; only that equal pivots get equal priorities matters |
 | A difference of two treaps on two explicit `Vec` stacks of `Step::Tree` and `Step::Entry`, passing over a subtree both hold by `std::ptr::eq` and over a row both hold by `Arc::ptr_eq` before comparing it by value | `Rows::diff` | Identity (gap 1); mutation (gap 11) | recursion on the two trees with the runtime's identity shortcut on shared values; without one, a join costs the size of the hulls |
+
+## Entries from MUTABLE-to-initial-facet (`crates/zedc-syntax/src/ast/initial.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A work list `Vec<Task>` and a stack of results `Vec<(Role, Must)>`, pushed and popped in a `while let` loop, a `Join` task combining the last `kids` results | `every_path` | Mutation (gap 11) | Recursion on the expression and statement trees, each node returning its `Must` and its updates; the explicit stack exists only so the depth of the code costs no Rust stack |
+| `HashSet<&str>` sets merged in place, the smaller added to the larger by `extend` and kept by `retain` | `Must::union`, `Must::meet` | Mutation (gap 11); borrowed `&str` keys | Persistent sets of names, the union inserting the smaller into the larger, the meet a filter of the smaller |
+| A closure `always` that pushes onto a `Vec` it borrows mutably, called through `for_each(&mut always)` | `every_path` | Mutation (gap 11) | The list of a node's parts built as a value, each part tagged with its role |

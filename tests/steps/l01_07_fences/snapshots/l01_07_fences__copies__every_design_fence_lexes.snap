@@ -572,7 +572,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  16 | p3 , was = p . bump ( 2₍10₎ ) ;
  17 | p4 , w2 = bump ( p , 2₍10₎ ) ;
  20 | run = «loop» {
- 21 | «mutable» c = Counter ( n : 0₍10₎ , hi : 9₍10₎ ) ;
+ 21 | «initial» c = Counter ( n : 0₍10₎ , hi : 9₍10₎ ) ;
  22 | prev = c *. bump ( 3₍10₎ ) ;
  23 | «until» prev > 20₍10₎ ;
  32 | } ;

@@ -85,7 +85,7 @@ Shelf.sell(positional n: int) {
 
 stock = loop t {
   while t < eastPenDays::len;
-  mutable s = Shelf(pens: 20);
+  initial s = Shelf(pens: 20);
   before = s*.sell(eastPenDays[t]);
 };
 ```

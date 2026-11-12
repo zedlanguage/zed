@@ -3,10 +3,11 @@
 //! variable. Each check is one of the rows of sec:diagnostics: "An `initial` statement outside
 //! a loop, or under `local`", "An `initial` statement for a name the loop does not update",
 //! "An `initial` value that reads a name of its own loop", "Two sentinel values for one
-//! variable", and, for an entry written as a bare statement, "A boundary entry of a loop
-//! written without `initial`". The forms the parser stops at, `with x = e`, `with initial x =
-//! e` and `with x[-2] = e` on a statement of a loop, are found by the parser
-//! (`crate::parse`).
+//! variable", "`with carryForward` on a keyed boundary entry", "A loop variable not updated on
+//! every path of a step", and, for an entry written as a bare statement, "A boundary entry of a
+//! loop written without `initial`". The forms the parser stops at, `with x = e`, `with initial x
+//! = e` and `with x[-2] = e` on a statement of a loop, and the removed form `mutable x = e;`,
+//! are found by the parser (`crate::parse`).
 
 use std::collections::HashSet;
 
@@ -15,8 +16,8 @@ use num_bigint::BigInt;
 use super::builder::Builder;
 use super::sentinel::{End, Entry, Keys, Sentinels, keys_of};
 use super::{
-    Error, Expr, ExprKind, Field, IndexKey, Initial, Note, Pattern, RangeEnd, Stmt, StmtKind,
-    StrPart, Target, UnaryOp,
+    CARRY_FORWARD, Error, Expr, ExprKind, Field, IndexKey, Initial, Note, Pattern, RangeEnd, Stmt,
+    StmtKind, StrPart, Target, UnaryOp,
 };
 use crate::lex::Span;
 use zedc_base::rejection::Row;
@@ -32,22 +33,18 @@ fn initial_of(mut s: &Stmt) -> Option<&Initial> {
     }
 }
 
-/// The declaration under the `local`, `mutable` and annotations that wrap `s`, and whether a
-/// `local` and a `mutable` wrap it.
-fn unwrapped(mut s: &Stmt) -> (&Stmt, bool, bool) {
-    let (mut local, mut mutable) = (false, false);
+/// The declaration under the `local` and annotations that wrap `s`, and whether a `local` wraps
+/// it.
+fn unwrapped(mut s: &Stmt) -> (&Stmt, bool) {
+    let mut local = false;
     loop {
         match &s.kind {
             StmtKind::Local(d) => {
                 local = true;
                 s = d;
             }
-            StmtKind::Mutable(d) => {
-                mutable = true;
-                s = d;
-            }
             StmtKind::Annotated { decl, .. } => s = decl,
-            _ => return (s, local, mutable),
+            _ => return (s, local),
         }
     }
 }
@@ -72,14 +69,14 @@ fn below_zero(k: &IndexKey) -> bool {
     }
 }
 
-/// The entries each sentinel site among `stmts` gives, in written order: `mutable x = e;`,
-/// `initial x = e;` and `initial a, b = e;` give the frame `x[-1]` of each name, and an
-/// `initial` statement with keys the entries its keys give. A site whose literal range holds
-/// no key, `initial x[i in -1..<-1] = 0;`, gives none.
+/// The entries each sentinel site among `stmts` gives, in written order: `initial x = e;` and
+/// `initial a, b = e;` give the frame `x[-1]` of each name, and an `initial` statement with
+/// keys the entries its keys give. A site whose literal range holds no key, `initial x[i in
+/// -1..<-1] = 0;`, gives none.
 fn entries_of<'s>(stmts: &'s [Stmt]) -> Vec<Entry<'s>> {
     let mut out = Vec::new();
     for (stmt, s) in stmts.iter().enumerate() {
-        let (d, _, is_mutable) = unwrapped(s);
+        let d = unwrapped(s).0;
         let frame = |name: &'s str| Entry {
             name,
             line: None,
@@ -88,13 +85,6 @@ fn entries_of<'s>(stmts: &'s [Stmt]) -> Vec<Entry<'s>> {
             inner: Vec::new(),
             stmt,
         };
-        if is_mutable && let StmtKind::Bind { targets, .. } = &d.kind {
-            for t in targets {
-                if let Target::Name(n, _) = t {
-                    out.push(frame(n));
-                }
-            }
-        }
         let Some(i) = initial_of(d) else {
             continue;
         };
@@ -160,11 +150,11 @@ fn pattern_names<'e>(p: &'e Pattern, out: &mut HashSet<&'e str>) {
     }
 }
 
-/// A sentinel site, an `initial` statement or a `mutable` declaration: the target of each
-/// component, `None` for `_`, with its span; the value; and the value's parts when it is a
-/// tuple written out with one part for each of several targets.
+/// A sentinel site, an `initial` statement: the name of each component with its span; the
+/// value; and the value's parts when it is a tuple written out with one part for each of
+/// several names.
 struct Site<'s> {
-    targets: Vec<Option<(&'s str, Span)>>,
+    targets: &'s [(String, Span)],
     value: &'s Expr,
     parts: Option<&'s [Expr]>,
 }
@@ -352,7 +342,7 @@ fn stmt_kids<'e>(
         | StmtKind::While(value)
         | StmtKind::Until(value)
         | StmtKind::Expr(value) => exprs.push(value),
-        StmtKind::Mutable(d) | StmtKind::Local(d) => todo.push(d),
+        StmtKind::Local(d) => todo.push(d),
         StmtKind::Annotated { annots, decl } => {
             for a in annots {
                 exprs.extend(&a.positional);
@@ -391,9 +381,369 @@ fn stmt_kids<'e>(
     }
 }
 
+/// A construct of a step whose parts run on some paths only (DESIGN.md sec:generations,
+/// "Recurrences and `with carryForward`").
+#[derive(Clone, Copy)]
+enum Construct {
+    If,
+    Match,
+    Else,
+    And,
+    Or,
+    For,
+    Lambda,
+}
+
+impl Construct {
+    /// The construct as a message names it: "`if`".
+    fn name(self) -> &'static str {
+        match self {
+            Construct::If => "`if`",
+            Construct::Match => "`match`",
+            Construct::Else => "`else`",
+            Construct::And => "`&&`",
+            Construct::Or => "`||`",
+            Construct::For => "`for`",
+            Construct::Lambda => "lambda",
+        }
+    }
+
+    /// The part of it that runs on some paths only: "a branch of the `if`".
+    fn part(self) -> &'static str {
+        match self {
+            Construct::If => "a branch of the `if`",
+            Construct::Match => "an arm of the `match`",
+            Construct::Else => "the default of the `else`",
+            Construct::And => "the right side of the `&&`",
+            Construct::Or => "the right side of the `||`",
+            Construct::For => "the body of the `for`",
+            Construct::Lambda => "the body of the lambda",
+        }
+    }
+}
+
+/// The innermost construct whose part holds a node, and that construct's span.
+#[derive(Clone, Copy)]
+struct Branch {
+    span: Span,
+    what: Construct,
+}
+
+/// A `*.` call that updates a variable: the variable, the call's span, and the innermost
+/// construct whose part holds it (none when it runs on every path of the step).
+struct Update<'e> {
+    name: &'e str,
+    span: Span,
+    branch: Option<Branch>,
+}
+
+/// The variables every path through a node updates: all of them when every path ends in
+/// `break`, and otherwise a set.
+enum Must<'e> {
+    All,
+    Names(HashSet<&'e str>),
+}
+
+impl<'e> Must<'e> {
+    fn none() -> Self {
+        Must::Names(HashSet::new())
+    }
+
+    /// The variables updated by a node that runs both parts, one after the other. The smaller
+    /// set is added to the larger, so a variable moves O(log n) times over a walk of n nodes.
+    fn union(self, other: Self) -> Self {
+        match (self, other) {
+            (Must::All, _) | (_, Must::All) => Must::All,
+            (Must::Names(a), Must::Names(b)) => {
+                let (mut big, small) = if a.len() >= b.len() { (a, b) } else { (b, a) };
+                big.extend(small);
+                Must::Names(big)
+            }
+        }
+    }
+
+    /// The variables updated by a node that runs one part or the other. The smaller set keeps
+    /// its members the larger holds: O(min) for the two sizes.
+    fn meet(self, other: Self) -> Self {
+        match (self, other) {
+            (Must::All, m) | (m, Must::All) => m,
+            (Must::Names(a), Must::Names(b)) => {
+                let (big, mut small) = if a.len() >= b.len() { (a, b) } else { (b, a) };
+                small.retain(|n| big.contains(n));
+                Must::Names(small)
+            }
+        }
+    }
+}
+
+/// How a part of a node combines into the node's [`Must`]: run on every path through the node,
+/// one of several alternatives of which a path runs exactly one, or run on some paths only.
+#[derive(Clone, Copy)]
+enum Role {
+    Always,
+    Alt,
+    Some,
+}
+
+/// A step of the walk of [`every_path`]: an expression or statement to visit, with the branch
+/// it stands in and its role in its parent; or the combination of the last `kids` results into
+/// one, with what the node itself updates.
+enum Task<'e> {
+    Expr(&'e Expr, Option<Branch>, Role),
+    Stmt(&'e Stmt, Option<Branch>, Role),
+    Join {
+        kids: usize,
+        own: Must<'e>,
+        role: Role,
+    },
+}
+
+/// The variables among `candidates` that every path of a step through `stmts`, the statements
+/// of a loop's body, updates by a `*.` call, and each `*.` call on a candidate with the branch
+/// it stands in (DESIGN.md sec:generations, *must-assign*). Top-level statements run on every
+/// path; a branch of an `if`, an arm of a `match`, the default of an `else`, the right side of
+/// `&&` and `||`, the body of a `for` and the body of a lambda run on some paths only; a path
+/// that ends in `break` needs no update. Nested loops, whose names are their own, are not
+/// entered, nor are the values of `initial` statements and indexed definitions, or the bodies
+/// of functions and methods.
+///
+/// One visit of each node, by a work list with a stack of results, so the depth of the code
+/// costs no stack. A node's result is the union of its parts that always run with the meet of
+/// its alternatives.
+// Complexity tradeoff: the naive walk copies the sets of a node's parts into a new set at each
+// node, O(n^2) for n variables each updated on its own paths (31 times the bytes at 8n, row
+// MUTABLE-to-initial-facet); here a union adds the smaller set to the larger, so a name moves
+// O(log n) times, and a meet keeps the smaller set's members the larger holds, O(min): O(n log
+// n) expected for n nodes.
+fn every_path<'e>(stmts: &'e [Stmt], candidates: &HashSet<&'e str>) -> (Must<'e>, Vec<Update<'e>>) {
+    let mut updates = Vec::new();
+    let mut results: Vec<(Role, Must<'e>)> = Vec::new();
+    let mut tasks: Vec<Task<'e>> = vec![Task::Join {
+        kids: stmts.len(),
+        own: Must::none(),
+        role: Role::Always,
+    }];
+    tasks.extend(stmts.iter().map(|s| Task::Stmt(s, None, Role::Always)));
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Join { kids, own, role } => {
+                let mut acc = own;
+                let mut alt: Option<Must> = None;
+                for _ in 0..kids {
+                    let Some((r, m)) = results.pop() else {
+                        unreachable!("each kid of a node leaves one result");
+                    };
+                    match r {
+                        Role::Always => acc = acc.union(m),
+                        Role::Alt => {
+                            alt = Some(match alt {
+                                Some(a) => a.meet(m),
+                                None => m,
+                            })
+                        }
+                        Role::Some => {}
+                    }
+                }
+                if let Some(a) = alt {
+                    acc = acc.union(a);
+                }
+                results.push((role, acc));
+            }
+            Task::Stmt(s, branch, role) => {
+                let kids: Vec<&Expr> = match &s.kind {
+                    StmtKind::Bind { value, .. }
+                    | StmtKind::Push { value, .. }
+                    | StmtKind::While(value)
+                    | StmtKind::Until(value)
+                    | StmtKind::Expr(value) => vec![value],
+                    StmtKind::Return(es) => es.iter().collect(),
+                    StmtKind::Local(d) | StmtKind::Annotated { decl: d, .. } => {
+                        tasks.push(Task::Stmt(d, branch, role));
+                        continue;
+                    }
+                    StmtKind::Initial(_)
+                    | StmtKind::IndexedDef(_)
+                    | StmtKind::Function(_)
+                    | StmtKind::Method(_)
+                    | StmtKind::Struct(_)
+                    | StmtKind::Type(_)
+                    | StmtKind::Import(_)
+                    | StmtKind::UnitAnnot(_) => vec![],
+                };
+                tasks.push(Task::Join {
+                    kids: kids.len(),
+                    own: Must::none(),
+                    role,
+                });
+                tasks.extend(
+                    kids.into_iter()
+                        .map(|e| Task::Expr(e, branch, Role::Always)),
+                );
+            }
+            Task::Expr(e, branch, role) => {
+                let inside = |what| Some(Branch { span: e.span, what });
+                let mut own = Must::none();
+                let mut kids: Vec<Task<'e>> = Vec::new();
+                let mut always = |x: &'e Expr| kids.push(Task::Expr(x, branch, Role::Always));
+                match &e.kind {
+                    ExprKind::Int { .. }
+                    | ExprKind::Float { .. }
+                    | ExprKind::Rat(_)
+                    | ExprKind::Bool(_)
+                    | ExprKind::Atom(_)
+                    | ExprKind::This
+                    | ExprKind::Section(_)
+                    | ExprKind::Name(_)
+                    | ExprKind::Loop { .. } => {}
+                    ExprKind::Str(parts) => {
+                        for p in parts {
+                            if let StrPart::Hole(x) = p {
+                                always(x);
+                            }
+                        }
+                    }
+                    ExprKind::Spread { of, .. } => {
+                        if let ExprKind::Name(n) = &of.kind
+                            && let Some(&n) = candidates.get(unprimed(n))
+                        {
+                            own = Must::Names(HashSet::from([n]));
+                            updates.push(Update {
+                                name: n,
+                                span: e.span,
+                                branch,
+                            });
+                        }
+                        always(of);
+                    }
+                    ExprKind::Break(a) => {
+                        own = Must::All;
+                        always(a);
+                    }
+                    ExprKind::Unary(_, a)
+                    | ExprKind::Is { of: a, .. }
+                    | ExprKind::Member { of: a, .. }
+                    | ExprKind::Read { of: a, .. } => always(a),
+                    ExprKind::SortKey { key, .. } => {
+                        if let Some(k) = key {
+                            always(k);
+                        }
+                    }
+                    ExprKind::Binary(op, a, b) if *op == "&&" || *op == "||" => {
+                        let what = if *op == "&&" {
+                            Construct::And
+                        } else {
+                            Construct::Or
+                        };
+                        always(a);
+                        kids.push(Task::Expr(b, inside(what), Role::Some));
+                    }
+                    ExprKind::Binary(_, a, b)
+                    | ExprKind::Index(a, b)
+                    | ExprKind::In { of: a, set: b, .. }
+                    | ExprKind::Reduce { of: a, op: b } => {
+                        always(a);
+                        always(b);
+                    }
+                    ExprKind::Else { of, default, .. } => {
+                        always(of);
+                        kids.push(Task::Expr(default, inside(Construct::Else), Role::Some));
+                    }
+                    ExprKind::Call {
+                        callee,
+                        positional,
+                        named,
+                        ..
+                    } => {
+                        always(callee);
+                        positional.iter().for_each(&mut always);
+                        named.iter().for_each(|(_, x)| always(x));
+                    }
+                    ExprKind::Tuple(es) | ExprKind::Array(es) | ExprKind::Set(es) => {
+                        es.iter().for_each(&mut always);
+                    }
+                    ExprKind::Map(entries) => {
+                        for (k, v) in entries {
+                            always(k);
+                            always(v);
+                        }
+                    }
+                    ExprKind::Range(from, to) => {
+                        always(from);
+                        match to {
+                            RangeEnd::Below(b) | RangeEnd::Through(b) => always(b),
+                            RangeEnd::Open => {}
+                        }
+                    }
+                    ExprKind::For {
+                        source,
+                        guard,
+                        body,
+                        ..
+                    } => {
+                        always(source);
+                        let b = inside(Construct::For);
+                        kids.extend(guard.iter().map(|g| Task::Expr(g, b, Role::Some)));
+                        kids.push(Task::Expr(body, b, Role::Some));
+                    }
+                    ExprKind::Lambda { params, body } => {
+                        let b = inside(Construct::Lambda);
+                        kids.extend(
+                            params
+                                .iter()
+                                .filter_map(|p| p.default.as_ref())
+                                .map(|d| Task::Expr(d, b, Role::Some)),
+                        );
+                        kids.push(Task::Expr(body, b, Role::Some));
+                    }
+                    ExprKind::Block(stmts) => {
+                        kids.extend(stmts.iter().map(|s| Task::Stmt(s, branch, Role::Always)));
+                    }
+                    ExprKind::Match { of, arms } => {
+                        always(of);
+                        let b = inside(Construct::Match);
+                        for a in arms {
+                            kids.extend(a.guard.iter().map(|g| Task::Expr(g, b, Role::Some)));
+                            kids.push(Task::Expr(&a.body, b, Role::Alt));
+                        }
+                    }
+                    ExprKind::Record(fields) => fields.iter().for_each(|(_, x)| always(x)),
+                    ExprKind::With { of, updates } => {
+                        always(of);
+                        updates.iter().for_each(|u| always(&u.value));
+                    }
+                    ExprKind::If {
+                        cond,
+                        then,
+                        otherwise,
+                    } => {
+                        always(cond);
+                        let b = inside(Construct::If);
+                        kids.push(Task::Expr(then, b, Role::Alt));
+                        kids.push(Task::Expr(otherwise, b, Role::Alt));
+                    }
+                }
+                if kids.is_empty() {
+                    results.push((role, own));
+                } else {
+                    tasks.push(Task::Join {
+                        kids: kids.len(),
+                        own,
+                        role,
+                    });
+                    tasks.append(&mut kids);
+                }
+            }
+        }
+    }
+    let Some((_, must)) = results.pop() else {
+        unreachable!("the walk of a body leaves one result");
+    };
+    (must, updates)
+}
+
 /// What a name of a loop is, for the message of an `initial` value that reads it.
 enum LoopName {
-    /// A variable the loop updates or declares `mutable`.
+    /// A variable the loop updates.
     Generation,
     /// A value the body defines on each step.
     StepLocal,
@@ -424,7 +774,7 @@ impl Builder<'_, '_> {
     ) -> Result<(), Error> {
         let mut in_loop = None;
         for s in stmts {
-            let (d, local, _) = unwrapped(s);
+            let (d, local) = unwrapped(s);
             let Some(i) = initial_of(d) else {
                 continue;
             };
@@ -571,14 +921,16 @@ impl Builder<'_, '_> {
         }
     }
 
-    /// The checks of the `initial` statements of the body of a loop (`label` its step index,
-    /// `at` its text): each names a variable the loop updates, reads no name of the loop, and
-    /// gives a sentinel value no other statement or `mutable` declaration gives; and an entry
-    /// below generation 0 is not written as a bare statement. One walk of the body lists what it
-    /// updates and defines, then one pass over its statements, which checks the entries each
-    /// site gives against those of the sites before it by the values of their keys
-    /// (`Sentinels`): O(n + k log k) for a body of n nodes and k sites, where comparing each
-    /// pair of sites would be O(k^2).
+    /// The checks of the body of a loop (`label` its step index, `at` its text). Each `initial`
+    /// statement names a variable the loop updates, reads no name of the loop, gives a sentinel
+    /// value no other statement gives, and has `with carryForward` only when it has no keys; an
+    /// entry below generation 0 is not written as a bare statement; and every variable the loop
+    /// updates is updated on every path of a step, unless it is carried (*must-assign*,
+    /// sec:generations). One walk of the body lists what it updates and defines, then one pass
+    /// over its statements checks the entries each site gives against those of the sites before
+    /// it by the values of their keys (`Sentinels`): O(n + k log k) for a body of n nodes and k
+    /// sites, where comparing each pair of sites would be O(k^2). The must-assign check is one
+    /// more walk, run only when some variable is updated by a `*.` call alone ([`every_path`]).
     pub(super) fn loop_initials(
         &self,
         label: Option<&str>,
@@ -588,25 +940,19 @@ impl Builder<'_, '_> {
         let ExprKind::Block(stmts) = &body.kind else {
             return Ok(());
         };
-        if !stmts.iter().any(|s| {
-            let d = unwrapped(s).0;
-            initial_of(d).is_some() || matches!(d.kind, StmtKind::IndexedDef(_))
-        }) {
-            return Ok(());
-        }
-        // What the body updates, declares `mutable`, and defines on each step.
+        // What the body's own statements update, on every path of a step, and define on each
+        // step; and the names carried forward.
         let mut updated: HashSet<&str> = HashSet::new();
-        let mut mutable: HashSet<&str> = HashSet::new();
         let mut locals: HashSet<&str> = HashSet::new();
+        let mut carried: HashSet<&str> = HashSet::new();
+        let mut sites = false;
         for s in stmts {
-            let (d, _, is_mutable) = unwrapped(s);
+            let d = unwrapped(s).0;
             match &d.kind {
                 StmtKind::Bind { targets, .. } => {
                     for t in targets {
                         let Target::Name(n, _) = t else { continue };
-                        if is_mutable {
-                            mutable.insert(n);
-                        } else if n.ends_with('\'') {
+                        if n.ends_with('\'') {
                             updated.insert(unprimed(n));
                         } else {
                             locals.insert(n);
@@ -618,9 +964,11 @@ impl Builder<'_, '_> {
                 }
                 // `d'[v in nodes] = …` updates `d` key by key.
                 StmtKind::IndexedDef(x) if x.name.ends_with('\'') => {
+                    sites = true;
                     updated.insert(unprimed(&x.name));
                 }
                 StmtKind::IndexedDef(x) => {
+                    sites = true;
                     locals.insert(&x.name);
                 }
                 StmtKind::Function(f) => {
@@ -628,9 +976,53 @@ impl Builder<'_, '_> {
                 }
                 _ => {}
             }
+            if let Some(i) = initial_of(d) {
+                sites = true;
+                if i.carry && i.keys.is_empty() {
+                    carried.extend(i.names.iter().map(|(n, _)| n.as_str()));
+                }
+            }
         }
-        updated.extend(walk(&[], stmts).spread);
-        let generation = |n: &str| updated.contains(n) || mutable.contains(n);
+        // The names a `*.` call updates; those the statements above do not update, and that are
+        // not carried, must be updated on every path.
+        let spread = walk(&[], stmts).spread;
+        let candidates: HashSet<&str> = spread
+            .iter()
+            .copied()
+            .filter(|n| !updated.contains(n) && !carried.contains(n))
+            .collect();
+        updated.extend(spread);
+        if sites {
+            self.initial_sites(label, at, stmts, &updated, &locals)?;
+        }
+        if candidates.is_empty() {
+            return Ok(());
+        }
+        let (must, mut updates) = every_path(stmts, &candidates);
+        let Must::Names(must) = must else {
+            return Ok(());
+        };
+        updates.sort_by_key(|u| u.span.start);
+        match updates.iter().find(|u| !must.contains(u.name)) {
+            Some(first) => {
+                let name = first.name;
+                let of_name: Vec<&Update> = updates.iter().filter(|u| u.name == name).collect();
+                Err(self.not_every_path(name, &of_name, stmts, at))
+            }
+            None => Ok(()),
+        }
+    }
+
+    /// The checks of [`Self::loop_initials`] on the `initial` statements and indexed definitions
+    /// among `stmts`, given what the body updates and defines on each step.
+    fn initial_sites(
+        &self,
+        label: Option<&str>,
+        at: Span,
+        stmts: &[Stmt],
+        updated: &HashSet<&str>,
+        locals: &HashSet<&str>,
+    ) -> Result<(), Error> {
         // The entries each site gives, compared by the values of their keys.
         let mut sentinels = Sentinels::new(entries_of(stmts));
         let mut next = 0;
@@ -643,8 +1035,11 @@ impl Builder<'_, '_> {
                 return Err(self.bare_entry(s, &x.name, at));
             }
             if let Some(i) = initial_of(d) {
+                if i.carry && !i.keys.is_empty() {
+                    return Err(self.carry_on_keyed(s, i, stmts));
+                }
                 for (n, _) in &i.names {
-                    if !generation(n) {
+                    if !updated.contains(n.as_str()) {
                         return Err(self.not_updated(s, n, at));
                     }
                 }
@@ -656,7 +1051,7 @@ impl Builder<'_, '_> {
                     let base = unprimed(n);
                     let what = if Some(n) == label {
                         LoopName::Index
-                    } else if generation(base) {
+                    } else if updated.contains(base) {
                         LoopName::Generation
                     } else if locals.contains(n) {
                         LoopName::StepLocal
@@ -675,6 +1070,170 @@ impl Builder<'_, '_> {
             }
         }
         Ok(())
+    }
+
+    /// Row "`with carryForward` on a keyed boundary entry", for the `initial` statement `s`.
+    fn carry_on_keyed(&self, s: &Stmt, i: &Initial, stmts: &[Stmt]) -> Error {
+        let written = self.text_of(s.span);
+        let name = &i.names[0].0;
+        let value = self.text_of(i.value.span);
+        let bare = format!("{};", &self.text[s.span.start..i.value.span.end]);
+        // The statement without keys that gives `name` its frame `name[-1]`, if there is one.
+        let keyless = stmts.iter().find(|t| {
+            initial_of(unwrapped(t).0)
+                .is_some_and(|j| j.keys.is_empty() && j.names.iter().any(|(n, _)| n == name))
+        });
+        // Whether this statement gives the entry `name[-1]` alone.
+        let frame = i.keys.len() == 1
+            && matches!(keys_of(&i.keys[0]), Some(Keys::Ints(lo, End::At(hi)))
+                if lo == BigInt::from(-1) && hi == lo);
+        // The first repair, as the code that replaces the statement, and why it is one.
+        let (code, why) = match keyless {
+            Some(t) => {
+                let tw = self.text_of(t.span);
+                let head = tw.strip_suffix(';').unwrap_or(tw).trim_end();
+                if initial_of(unwrapped(t).0).is_some_and(|j| j.carry) {
+                    (
+                        bare.clone(),
+                        format!("since `{tw}` already carries `{name}` forward"),
+                    )
+                } else {
+                    (
+                        format!("{head} with {CARRY_FORWARD}; {bare}"),
+                        format!("`with {CARRY_FORWARD}` moved to the statement without keys"),
+                    )
+                }
+            }
+            None if frame => (
+                format!("initial {name} = {value} with {CARRY_FORWARD};"),
+                format!("the statement without keys, which gives the entry `{name}[-1]`"),
+            ),
+            None => (
+                format!("initial {name} = … with {CARRY_FORWARD}; {bare}"),
+                format!("with the value of `{name}[-1]` in place of `…`"),
+            ),
+        };
+        Error {
+            row: Some(Row::CarryOnKeyedEntry),
+            menu: String::new(),
+            span: s.span,
+            message: format!(
+                "`with {CARRY_FORWARD}` on an `initial` statement with keys: `{written}`. Try \
+                 `{code}` instead."
+            ),
+            notes: vec![
+                Note {
+                    span: s.span,
+                    text: format!(
+                        "`with {CARRY_FORWARD}` makes a step that does not update `{name}` keep \
+                         `{name}[t-1]`, which at step 0 is the entry `{name}[-1]`; the `initial` \
+                         statement without keys gives that entry, so `with {CARRY_FORWARD}` \
+                         stands on it"
+                    ),
+                },
+                Note {
+                    span: s.span,
+                    text: format!("repair: `{code}`, {why}"),
+                },
+            ],
+        }
+    }
+
+    /// Row "A loop variable not updated on every path of a step", for `name`, whose updates,
+    /// each a `*.` call, are `updates`, in written order.
+    fn not_every_path(&self, name: &str, updates: &[&Update], stmts: &[Stmt], at: Span) -> Error {
+        let branch = |u: &Update| {
+            let Some(b) = u.branch else {
+                unreachable!("an update on every path leaves no path without one")
+            };
+            b
+        };
+        let where_ = match updates {
+            [one] => format!(
+                "`{}` updates `{name}` only in {}",
+                self.text_of(one.span),
+                branch(one).what.part()
+            ),
+            [rest @ .., last] => {
+                let calls: Vec<String> = rest
+                    .iter()
+                    .map(|u| format!("`{}`", self.text_of(u.span)))
+                    .collect();
+                format!(
+                    "{} and `{}` update `{name}` only on some paths",
+                    calls.join(", "),
+                    self.text_of(last.span)
+                )
+            }
+            [] => unreachable!("a variable updated on no path is not a candidate"),
+        };
+        let mut notes = vec![Note {
+            span: at,
+            text: format!(
+                "the loop, which updates `{name}`: a variable a loop updates is a recurrence, \
+                 defined on every frame, so each step updates it on every path; `with \
+                 {CARRY_FORWARD}` on its `initial` statement keeps its value on a step that does \
+                 not update it"
+            ),
+        }];
+        for u in updates {
+            let call = self.text_of(u.span);
+            let b = branch(u);
+            notes.push(Note {
+                span: u.span,
+                text: format!(
+                    "`{call}` updates `{name}` only on the paths through {}",
+                    b.what.part()
+                ),
+            });
+            notes.push(Note {
+                span: b.span,
+                text: format!("the {} that `{call}` stands in", b.what.name()),
+            });
+        }
+        let keyless = stmts.iter().find(|t| {
+            initial_of(unwrapped(t).0)
+                .is_some_and(|j| j.keys.is_empty() && j.names.iter().any(|(n, _)| n == name))
+        });
+        let (code, note) = match keyless {
+            Some(t) => {
+                let tw = self.text_of(t.span);
+                let head = tw.strip_suffix(';').unwrap_or(tw).trim_end();
+                let code = format!("{head} with {CARRY_FORWARD};");
+                let text = format!(
+                    "repair: `{code}` in place of `{tw}`, so a step that does not update \
+                     `{name}` keeps its value"
+                );
+                (code, Note { span: t.span, text })
+            }
+            None => {
+                let code = format!("initial {name} = … with {CARRY_FORWARD};");
+                let text = format!(
+                    "repair: `{code}` among the statements of the loop's body, with the value of \
+                     `{name}` before step 0 in place of `…`, so a step that does not update \
+                     `{name}` keeps its value"
+                );
+                (code, Note { span: at, text })
+            }
+        };
+        notes.push(note);
+        notes.push(Note {
+            span: updates[0].span,
+            text: format!(
+                "repair: update `{name}` on every path, with the update written where the branch \
+                 is chosen and `{name}` itself on the paths that leave it as it is: `{name}' = if \
+                 … {{ … }} else {{ {name} }};`"
+            ),
+        });
+        Error {
+            row: Some(Row::NotEveryPath),
+            menu: String::new(),
+            span: updates[0].span,
+            message: format!(
+                "Not updated on every path of a step: {where_}. Try `{code}` instead."
+            ),
+            notes,
+        }
     }
 
     /// Row "A boundary entry of a loop written without `initial`", for the bare statement `s`
@@ -710,16 +1269,30 @@ impl Builder<'_, '_> {
     /// Row "An `initial` statement for a name the loop does not update".
     fn not_updated(&self, s: &Stmt, name: &str, at: Span) -> Error {
         let written = self.text_of(s.span);
-        let value = initial_of(unwrapped(s).0).map_or("…", |i| self.text_of(i.value.span));
+        let i = initial_of(unwrapped(s).0);
+        let value = i.map_or("…", |i| self.text_of(i.value.span));
+        // A carried variable is still one the loop updates: `with carryForward` keeps its value
+        // on a step that does not update it, and makes no name a loop variable by itself.
+        let why = if i.is_some_and(|i| i.carry) {
+            format!(
+                "`with {CARRY_FORWARD}` keeps the value of a variable the loop updates on a step \
+                 that does not update it, and does not make `{name}` a variable of the loop: a \
+                 value no step changes is a constant, written as a binding before the loop."
+            )
+        } else {
+            format!(
+                "An `initial` statement gives a value before the first step only, so `{name}` \
+                 would have no value at any later step."
+            )
+        };
         Error {
             row: Some(Row::InitialNotUpdated),
             menu: String::new(),
             span: s.span,
             message: format!(
                 "`{written}` gives `{name}` a value before step 0, and no statement of this loop \
-                 updates `{name}`: none writes `{name}' = …`, `{name}' <- e` or `{name}*.m(…)`. An \
-                 `initial` statement gives a value before the first step only, so `{name}` would \
-                 have no value at any later step."
+                 updates `{name}`: none writes `{name}' = …`, `{name}' <- e` or \
+                 `{name}*.m(…)`. {why}"
             ),
             notes: vec![
                 Note {
@@ -731,13 +1304,6 @@ impl Builder<'_, '_> {
                     text: format!(
                         "repair: add the update the loop is meant to make, `{name}' = …;`, to \
                          its body"
-                    ),
-                },
-                Note {
-                    span: s.span,
-                    text: format!(
-                        "repair: `mutable {name} = {value};` in place of `{written}`, for a \
-                         variable that keeps its value at a step that does not assign it"
                     ),
                 },
                 Note {
@@ -789,28 +1355,22 @@ impl Builder<'_, '_> {
                 ),
             },
         ];
-        // The start value of the variable read, when an `initial` statement or a `mutable`
-        // declaration of this body gives one, written in place of the read.
-        let start = stmts.iter().find_map(|t| {
-            let (d, _, m) = unwrapped(t);
-            match &d.kind {
-                StmtKind::Initial(j) if j.keys.is_empty() && j.names.len() == 1 => {
-                    (j.names[0].0 == base).then_some(&j.value)
-                }
-                StmtKind::Bind { targets, value } if m && targets.len() == 1 => {
-                    matches!(&targets[0], Target::Name(x, _) if x == base).then_some(value)
-                }
-                _ => None,
+        // The start value of the variable read, when an `initial` statement of this body gives
+        // one, written in place of the read.
+        let start = stmts.iter().find_map(|t| match initial_of(unwrapped(t).0) {
+            Some(j) if j.keys.is_empty() && j.names.len() == 1 && j.names[0].0 == base => {
+                Some(&j.value)
             }
+            _ => None,
         });
         if let Some(v) = start.filter(|v| walk(&[v], &[]).reads.is_empty()) {
             let v = self.text_of(v.span);
             let value = &self.text[i.value.span.start..span.start];
-            let rest = &self.text[span.end..i.value.span.end];
+            let rest = &self.text[span.end..s.span.end];
             notes.push(Note {
                 span: s.span,
                 text: format!(
-                    "repair: `{}{value}{v}{rest};`, the start value of `{base}` written in place \
+                    "repair: `{}{value}{v}{rest}`, the start value of `{base}` written in place \
                      of `{n}`",
                     &self.text[s.span.start..i.value.span.start]
                 ),
@@ -829,39 +1389,18 @@ impl Builder<'_, '_> {
         }
     }
 
-    /// The sentinel site `s`, an `initial` statement or a `mutable` declaration, read as a
-    /// [`Site`].
+    /// The sentinel site `s`, an `initial` statement, read as a [`Site`].
     fn site<'s>(&self, s: &'s Stmt) -> Site<'s> {
-        let d = unwrapped(s).0;
-        let (targets, value): (Vec<Option<(&str, Span)>>, &Expr) = match (initial_of(d), &d.kind) {
-            (Some(i), _) => (
-                i.names
-                    .iter()
-                    .map(|(n, sp)| Some((n.as_str(), *sp)))
-                    .collect(),
-                &i.value,
-            ),
-            (None, StmtKind::Bind { targets, value }) => (
-                targets
-                    .iter()
-                    .map(|t| match t {
-                        Target::Name(n, sp) => Some((n.as_str(), *sp)),
-                        Target::Wild => None,
-                    })
-                    .collect(),
-                value,
-            ),
-            _ => {
-                unreachable!("a sentinel site is an `initial` statement or a `mutable` declaration")
-            }
+        let Some(i) = initial_of(unwrapped(s).0) else {
+            unreachable!("a sentinel site is an `initial` statement")
         };
-        let parts = match &value.kind {
-            ExprKind::Tuple(es) if targets.len() > 1 && es.len() == targets.len() => Some(&es[..]),
+        let parts = match &i.value.kind {
+            ExprKind::Tuple(es) if i.names.len() > 1 && es.len() == i.names.len() => Some(&es[..]),
             _ => None,
         };
         Site {
-            targets,
-            value,
+            targets: &i.names,
+            value: &i.value,
             parts,
         }
     }
@@ -877,9 +1416,7 @@ impl Builder<'_, '_> {
         if targets.len() == 1 {
             return Some(value.span);
         }
-        let k = targets
-            .iter()
-            .position(|t| t.is_some_and(|(n, _)| n == name))?;
+        let k = targets.iter().position(|(n, _)| n == name)?;
         parts.map(|ps| ps[k].span)
     }
 
@@ -901,7 +1438,7 @@ impl Builder<'_, '_> {
             Some(v) => format!("`{name}` the value `{}`", self.text_of(v)),
             None => {
                 let Site { targets, value, .. } = self.site(s);
-                let names: Vec<&str> = targets.iter().map(|t| t.map_or("_", |(n, _)| n)).collect();
+                let names: Vec<&str> = targets.iter().map(|(n, _)| n.as_str()).collect();
                 format!(
                     "`{}` the value `{}`",
                     names.join(", "),
@@ -914,7 +1451,8 @@ impl Builder<'_, '_> {
     /// The repair that takes `name` out of the site `s`, called `this` in its text ("this
     /// one", "the first"): the whole statement deleted when `name` is its one target, the
     /// statement rewritten without `name` when its value is a tuple written out, and otherwise
-    /// the statement without `name` with `…` for the value of the other targets.
+    /// the statement without `name` with `…` for the value of the other targets. A rewritten
+    /// statement keeps what follows its value, ` with carryForward;` or `;`.
     fn drop_name(&self, s: &Stmt, name: &str, this: &str) -> String {
         let whole = self.text_of(s.span);
         let Site {
@@ -925,15 +1463,14 @@ impl Builder<'_, '_> {
         if targets.len() == 1 {
             return format!("delete {this}, `{whole}`");
         }
-        let Some((_, first)) = targets.iter().flatten().next() else {
-            unreachable!("a site with no name gives no sentinel value");
-        };
+        let first = targets[0].1;
         let head = &self.text[s.span.start..first.start];
+        let tail = &self.text[value.span.end..s.span.end];
         let rest: Vec<(&str, Option<&Expr>)> = targets
             .iter()
             .enumerate()
-            .filter(|(_, t)| !t.is_some_and(|(n, _)| n == name))
-            .map(|(k, t)| (t.map_or("_", |(n, _)| n), parts.map(|ps| &ps[k])))
+            .filter(|(_, (n, _))| n != name)
+            .map(|(k, (n, _))| (n.as_str(), parts.map(|ps| &ps[k])))
             .collect();
         let names: Vec<&str> = rest.iter().map(|r| r.0).collect();
         let names = names.join(", ");
@@ -951,11 +1488,11 @@ impl Builder<'_, '_> {
                 } else {
                     format!("({})", vals.join(", "))
                 };
-                format!("write {this} without `{name}`: `{head}{names} = {v};`")
+                format!("write {this} without `{name}`: `{head}{names} = {v}{tail}`")
             }
             _ => format!(
-                "write {this} without `{name}`: `{head}{names} = …;`, with the value of `{names}` \
-                 alone in place of `…`"
+                "write {this} without `{name}`: `{head}{names} = …{tail}`, with the value of \
+                 `{names}` alone in place of `…`"
             ),
         }
     }
@@ -1093,7 +1630,6 @@ impl Builder<'_, '_> {
         let name = eb.name;
         let (a, b) = (&stmts[ea.stmt], &stmts[eb.stmt]);
         let (aw, bw) = (self.text_of(a.span), self.text_of(b.span));
-        let mutable = |s: &Stmt| unwrapped(s).2;
         // Whether the entry gives the frame `x[-1]` alone, as `initial x = e;` does.
         let frame = |e: &Entry| {
             e.line.is_none()
@@ -1111,58 +1647,36 @@ impl Builder<'_, '_> {
                 text: format!("the second site, which gives {}", self.gives(b, name)),
             },
         ];
-        match (mutable(a), mutable(b)) {
-            // A `mutable` declaration and an `initial` statement: the declaration stays, and
-            // the `initial` statement's value may move into it when it gives `x[-1]` alone.
-            (true, false) | (false, true) => {
-                let (m, i, mw, ei) = if mutable(a) {
-                    (a, b, aw, eb)
-                } else {
-                    (b, a, bw, ea)
-                };
-                notes.push(Note {
-                    span: i.span,
-                    text: format!(
-                        "repair: keep `{mw}` and {}",
-                        self.drop_name(i, name, "this statement")
-                    ),
-                });
-                if frame(ei)
-                    && let (Some(iv), Some(mv)) = (self.value_for(i, name), self.value_for(m, name))
-                {
-                    let moved = format!(
-                        "{}{}{}",
-                        &self.text[m.span.start..mv.start],
-                        self.text_of(iv),
-                        &self.text[mv.end..m.span.end]
-                    );
-                    notes.push(Note {
-                        span: i.span,
-                        text: format!(
-                            "repair: {}, and write its value of `{name}` in the declaration: \
-                             `{moved}`",
-                            self.drop_name(i, name, "this statement")
-                        ),
-                    });
-                }
+        // Where the statement deleted carries `name` forward and the one kept has no keys, the
+        // kept one gets `with carryForward`, so `name` stays carried (row "Two sentinel values
+        // for one variable").
+        let kept = |keep: &Stmt, drop: &Stmt| -> String {
+            let carried = |s: &Stmt| initial_of(unwrapped(s).0).is_some_and(|i| i.carry);
+            let keyless = initial_of(unwrapped(keep).0).is_some_and(|i| i.keys.is_empty());
+            let written = self.text_of(keep.span);
+            if carried(drop) && !carried(keep) && keyless {
+                let head = written.strip_suffix(';').unwrap_or(written).trim_end();
+                format!("`{head} with {CARRY_FORWARD};`, which now carries `{name}` forward")
+            } else {
+                format!("`{written}`")
             }
-            _ => {
-                notes.push(Note {
-                    span: b.span,
-                    text: format!(
-                        "repair: keep the first, `{aw}`, and {}",
-                        self.drop_name(b, name, "this one")
-                    ),
-                });
-                notes.push(Note {
-                    span: a.span,
-                    text: format!(
-                        "repair: keep the second, `{bw}`, and {}",
-                        self.drop_name(a, name, "this one")
-                    ),
-                });
-            }
-        }
+        };
+        notes.push(Note {
+            span: b.span,
+            text: format!(
+                "repair: keep the first, {}, and {}",
+                kept(a, b),
+                self.drop_name(b, name, "this one")
+            ),
+        });
+        notes.push(Note {
+            span: a.span,
+            text: format!(
+                "repair: keep the second, {}, and {}",
+                kept(b, a),
+                self.drop_name(a, name, "this one")
+            ),
+        });
         for (e, other, s) in [(eb, ea, b), (ea, eb, a)] {
             if let Some(text) = self.narrowed(e, other, s) {
                 notes.push(Note {
@@ -1185,9 +1699,7 @@ impl Builder<'_, '_> {
                 .iter()
                 .any(|s| initial_of(unwrapped(s).0).is_none_or(|i| i.keys.is_empty()));
             let frame_rule = if unkeyed {
-                format!(
-                    " `initial {name} = e;` and `mutable {name} = e;` give the entry `{name}[-1]`."
-                )
+                format!(" `initial {name} = e;` gives the entry `{name}[-1]`.")
             } else {
                 String::new()
             };

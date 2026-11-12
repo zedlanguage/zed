@@ -499,7 +499,7 @@ Shelf.sell(positional n: int) {
 
 stock = loop t {
   while t < eastPenDays::len;
-  mutable s = Shelf(pens: 20);
+  initial s = Shelf(pens: 20);
   before = s*.sell(eastPenDays[t]);
 };
 ```
@@ -519,7 +519,7 @@ A method is a function you call on a struct with a dot.
 In a loop, `*.` makes the new struct the value of `s` in the next step.
 
 > [!NOTE]
-> **`mutable x = e;`** declares a loop variable that starts as `e` and keeps its value in any step that doesn't write `x'`. **`x*.method()`** calls the method and also makes the struct it returns the value of `x` in the next step: `before = s*.sell(3);` is short for `s', before = s.sell(3);`, where **`a, b = e;`** binds each name to one part of a result that has several parts.
+> **`initial x = e;`** gives a loop variable its value before the first step. A loop variable must get a new value on every step; writing **`initial x = e with carryForward;`** instead lets a step that doesn't update `x` keep its old value. **`x*.method()`** calls the method and also makes the struct it returns the value of `x` in the next step: `before = s*.sell(3);` is short for `s', before = s.sell(3);`, where **`a, b = e;`** binds each name to one part of a result that has several parts.
 
 So each step of `stock` sells one day's pens, records the count before the sale in `before`, and hands the shelf with its new count to the next step.
 

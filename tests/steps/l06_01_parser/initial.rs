@@ -16,7 +16,7 @@ use zedc::query::Db;
 use zedc::rejection::Row;
 
 /// The error the unit `text` is refused with, from the parser or from building its statements.
-fn refusal(text: &str) -> Error {
+pub(super) fn refusal(text: &str) -> Error {
     let tokens = lex(text).unwrap();
     match parse(text, &tokens, "Unit", TOP) {
         Err(e) => Error::from(e),
@@ -29,7 +29,7 @@ fn refusal(text: &str) -> Error {
 
 /// The text of each note of `e`, with the text of `src` it points at: its first line, and `…`
 /// for the rest when there is more.
-fn notes(src: &str, e: &Error) -> Vec<String> {
+pub(super) fn notes(src: &str, e: &Error) -> Vec<String> {
     e.notes
         .iter()
         .map(|n| {
@@ -46,7 +46,7 @@ fn notes(src: &str, e: &Error) -> Vec<String> {
 /// for a loop, which this zedc does not compile yet (step L6.2), refused only with the message
 /// that says so.
 #[track_caller]
-fn accepted(text: &str) {
+pub(super) fn accepted(text: &str) {
     if let Err(ds) = &*Db::new().front(text) {
         assert!(
             ds.iter()
@@ -60,7 +60,7 @@ fn accepted(text: &str) {
 /// message `message`, when given), and that each unit of `repaired`, one for each repair the
 /// notes offer, is accepted.
 #[track_caller]
-fn refused(
+pub(super) fn refused(
     src: &str,
     row: Row,
     at: &str,
@@ -493,14 +493,11 @@ fn an_initial_statement_for_a_name_not_updated_is_refused() {
             "the loop, none of whose statements updates `y` [loop t { …]",
             "repair: add the update the loop is meant to make, `y' = …;`, to its body [initial y \
              = 0;]",
-            "repair: `mutable y = 0;` in place of `initial y = 0;`, for a variable that keeps its \
-             value at a step that does not assign it [initial y = 0;]",
             "repair: `y = 0;` written before the loop, and `initial y = 0;` deleted, for a value \
              that does not change [loop t { …]",
         ],
         &[
             "r = loop t {\n  while t < 3;\n  initial y = 0;\n  y' = y + 1;\n  x' = t;\n};\n",
-            "r = loop t {\n  while t < 3;\n  mutable y = 0;\n  x' = t;\n};\n",
             "y = 0;\nr = loop t {\n  while t < 3;\n  x' = t;\n};\n",
         ],
     );
@@ -625,25 +622,6 @@ fn two_sentinel_values_for_one_variable_are_refused() {
     }
     // Distinct entries of one variable are two sites of two entries, and accepted.
     accepted("r = loop { initial x = 0; initial x[-2] = 5; x' = x + 1; until x > 3; };");
-    // A `mutable` declaration is a site too: its value may take the `initial` statement's.
-    refused(
-        "r = loop t {\n  while t < 3;\n  mutable x = 1;\n  x' = x + 1;\n  initial x = 0;\n};\n",
-        Row::TwoSentinels,
-        "initial x = 0;",
-        None,
-        &[
-            "the first site, which gives `x` the value `1` [mutable x = 1;]",
-            "the second site, which gives `x` the value `0` [initial x = 0;]",
-            "repair: keep `mutable x = 1;` and delete this statement, `initial x = 0;` [initial \
-             x = 0;]",
-            "repair: delete this statement, `initial x = 0;`, and write its value of `x` in the \
-             declaration: `mutable x = 0;` [initial x = 0;]",
-        ],
-        &[
-            "r = loop t {\n  while t < 3;\n  mutable x = 1;\n  x' = x + 1;\n};\n",
-            "r = loop t {\n  while t < 3;\n  mutable x = 0;\n  x' = x + 1;\n};\n",
-        ],
-    );
     // A site of several names keeps the others when the repair takes one name out of it.
     refused(
         "r = loop {\n  initial a, b = (0, 1);\n  a', b' = (b, a + b);\n  until a > 9;\n  \
@@ -725,36 +703,6 @@ fn entries_given_twice_are_found_by_the_values_of_their_keys() {
             "r = loop t {\n  while t < 3;\n  x' = x + 1;\n  initial x[-2] = 1;\n};\n",
             "r = loop t {\n  while t < 3;\n  initial x[i in -3..<-2] = 0;\n  initial x[i in \
              -1..<0] = 0;\n  x' = x + 1;\n  initial x[-2] = 1;\n};\n",
-        ],
-    );
-    // A `mutable` declaration gives `x[-1]`, inside the range; its value takes the place of the
-    // range's entry `x[-1]` only, so moving the range's value into it is not offered.
-    refused(
-        "r = loop t {\n  while t < 3;\n  mutable x = 1;\n  x' = x + 1;\n  \
-         initial x[i in -2..=-1] = 0;\n};\n",
-        Row::TwoSentinels,
-        "initial x[i in -2..=-1] = 0;",
-        Some(
-            "`x` is given the entry `x[-1]` twice in this loop: first by `mutable x = 1;`, then \
-             by `initial x[i in -2..=-1] = 0;`. `initial x = e;` and `mutable x = e;` give the \
-             entry `x[-1]`. The statements of a loop's body run in the order their data \
-             dependencies fix, not the order they are written, so one statement gives a \
-             sentinel value wherever it stands, and a second one is a second writer of the same \
-             entry, even where the two values agree. Give each entry once.",
-        ),
-        &[
-            "the first site, which gives `x` the value `1` [mutable x = 1;]",
-            "the second site, which gives `x[i in -2..=-1]` the value `0` [initial x[i in \
-             -2..=-1] = 0;]",
-            "repair: keep `mutable x = 1;` and delete this statement, `initial x[i in -2..=-1] = \
-             0;` [initial x[i in -2..=-1] = 0;]",
-            "repair: narrow this one to the keys the other does not give: `initial x[i in \
-             -2..=-2] = 0;` [initial x[i in -2..=-1] = 0;]",
-        ],
-        &[
-            "r = loop t {\n  while t < 3;\n  mutable x = 1;\n  x' = x + 1;\n};\n",
-            "r = loop t {\n  while t < 3;\n  mutable x = 1;\n  x' = x + 1;\n  \
-             initial x[i in -2..=-2] = 0;\n};\n",
         ],
     );
     // How each pair names the entries it gives twice.

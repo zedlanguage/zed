@@ -6,8 +6,8 @@ UnitAnnot     : annotates the enclosing unit
 Annot         : an annotation record whose arguments are compile-time-stage values (sec:staging)
 Decl          : the declaration or statement of its alternative
 Local         : ⟦D⟧ visible in its unit only
-Mutable       : declares a generation variable of the enclosing loop
-Initial       : the boundary entries of generation variables of the enclosing loop, part of the init of its gen: `initial x = e;` is the entry `x[-1] = ⟦e⟧`, ⟦e⟧ evaluated once before the first step in the scope outside the loop
+Initial       : the boundary entries of generation variables of the enclosing loop, part of the init of its gen: `initial x = e;` is the entry `x[-1] = ⟦e⟧`, ⟦e⟧ evaluated once before the first step in the scope outside the loop; with Carry, each name it lists is carried
+Carry         : marks the names of its `initial` statement as carried: on a path of a step that does not update `x`, the step defines `x' = x`, so `x[t] = x[t-1]`; on a statement with keys, a static error
 InitTarget    : `x: T` is the entry of x, also checking e against T; `x[k]` the entry at k, and `x[i in D]` the entries at the keys of ⟦D⟧, each ⟦e⟧ with i bound to its key; `a, b` the entries `a[-1]` and `b[-1]`, with t = ⟦e⟧, a = t[0], b = t[1]
 Return        : the result tuple(⟦e1⟧, …), or ⟦e1⟧ alone
 Emit          : adds ⟦e⟧ at the body's next emission rank, so a body with emits is the family {0 -> ⟦e0⟧, 1 -> ⟦e1⟧, …}

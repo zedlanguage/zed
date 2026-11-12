@@ -29,8 +29,12 @@ fn each_form_round_trips() {
         ),
         ("f(x) = loop { x };", "f(x) = loop { x };\n"),
         (
-            "f(c)={mutable d=c;prev=d *. bump(3);prev};",
-            "f(c) = {\n  mutable d = c;\n  prev = d*.bump(3);\n  prev\n};\n",
+            "f(c)={d=c;prev=d *. bump(3);prev};",
+            "f(c) = {\n  d = c;\n  prev = d*.bump(3);\n  prev\n};\n",
+        ),
+        (
+            "f(n)=loop{initial c=z   with   carryForward;c'=c+1;until c>n;};",
+            "f(n) = loop {\n  initial c = z with carryForward;\n  c' = c + 1;\n  until c > n;\n};\n",
         ),
         (
             "cdf[ i ]=cdf[i-1]+hist[i]with cdf[-1]=0;",

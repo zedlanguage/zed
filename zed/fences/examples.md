@@ -423,7 +423,7 @@ Point.scale(k) = Point(x: x * k, y: y * k);          // pure: returns a new Poin
 Point.move(positional dx, positional dy) { x' = x + dx; y' = y + dy; }  // (Point, f64, f64) -> Point
 p3 = p.move(1, 0);                                   // the moved point; p is unchanged
 walk = loop {
-  mutable pt = Point(x: 0, y: 0);
+  initial pt = Point(x: 0, y: 0);
   pt*.move(1, 1);                                    // pt' = pt.move(1, 1)
   until pt.x > 5;
 };
@@ -569,9 +569,9 @@ history = sim::frames;                    // int[0..<sim::len] -> Frame, kept on
 
 <!-- EXAMPLES.md:598 layer L6: ring L6, word none, label none; section [13. Loops and state] 2 -->
 ```zed
-// [d4] sec:tour_methods — a mutable receiver inside a loop
+// [d4] sec:tour_methods — a state receiver inside a loop
 run = loop {
-  mutable c = Counter(n: 0, hi: 9);
+  initial c = Counter(n: 0, hi: 9);
   prev = c*.bump(3);                      // c', prev = c.bump(3)
   until prev > 20;
 };

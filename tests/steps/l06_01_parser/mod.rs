@@ -1,8 +1,9 @@
 //! Step L6.1: the parser of the forms of layer L6: `loop` with primes, `with` boundaries,
-//! `mutable`, the guards `while` and `until` and `break`; indexed definitions, generation
-//! pushes `x' <- e`, expression statements `e;` and the call `*.`. Each form builds and formats;
-//! name resolution refuses it, naming the step that compiles it.
+//! `initial x = e with carryForward;`, the guards `while` and `until` and `break`; indexed
+//! definitions, generation pushes `x' <- e`, expression statements `e;` and the call `*.`. Each
+//! form builds and formats; name resolution refuses it, naming the step that compiles it.
 
+mod carry_forward;
 mod corners;
 mod formatting;
 mod forms;

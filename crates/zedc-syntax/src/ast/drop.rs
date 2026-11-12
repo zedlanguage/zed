@@ -138,8 +138,6 @@ fn stmt_kids(kind: StmtKind, out: &mut Vec<Expr>) {
             out.push(value);
             boundary_kids(boundary, out);
         }
-        // A `mutable` holds a binding, so this recursion is one level deep.
-        StmtKind::Mutable(decl) => stmt_kids(decl.kind, out),
         // `local local d` is refused by resolution, but a chain of them is still unwrapped in
         // a loop, so the recursion below is one level deep.
         StmtKind::Local(mut decl) => {

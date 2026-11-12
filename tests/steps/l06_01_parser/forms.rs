@@ -46,21 +46,14 @@ fn breaks_build_as_expressions() {
 }
 
 #[test]
-fn mutable_bindings_and_spread_calls_build() {
+fn spread_calls_build() {
     check(&[
         (
-            "f(c) = { mutable d = c; prev = d*.bump(3); prev };",
-            "(def f (c) = (block (mutable (= (d) c)) (= (prev) (call (*. d bump) 3)) (return \
-             prev)))",
-        ),
-        (
-            "f(n) = loop { mutable c = z; c' = Counter(n: 0); until c > n; };",
-            "(def f (n) = (loop (block (mutable (= (c) z)) (= (c') (call Counter (n: 0))) \
-             (until (> c n)))))",
+            "f(c) = { d = c; prev = d*.bump(3); prev };",
+            "(def f (c) = (block (= (d) c) (= (prev) (call (*. d bump) 3)) (return prev)))",
         ),
         ("f(x) = g(x)*.h;", "(def f (x) = (*. (call g x) h))"),
         ("f(x) = x*.h*.k;", "(def f (x) = (*. (*. x h) k))"),
-        ("mutable x;", "syntax"),
     ]);
 }
 

@@ -265,7 +265,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   4 | Point . move ( «positional» dx , «positional» dy ) { x' = x + dx ; y' = y + dy ; }
   5 | p3 = p . move ( 1₍10₎ , 0₍10₎ ) ;
   6 | walk = «loop» {
-  7 | «mutable» pt = Point ( x : 0₍10₎ , y : 0₍10₎ ) ;
+  7 | «initial» pt = Point ( x : 0₍10₎ , y : 0₍10₎ ) ;
   8 | pt *. move ( 1₍10₎ , 1₍10₎ ) ;
   9 | «until» pt . x > 5₍10₎ ;
  10 | } ;
@@ -355,7 +355,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
  11 | history = sim :: frames ;
 == EXAMPLES.md [13. Loops and state] 2 L6
   2 | run = «loop» {
-  3 | «mutable» c = Counter ( n : 0₍10₎ , hi : 9₍10₎ ) ;
+  3 | «initial» c = Counter ( n : 0₍10₎ , hi : 9₍10₎ ) ;
   4 | prev = c *. bump ( 3₍10₎ ) ;
   5 | «until» prev > 20₍10₎ ;
   6 | } ;

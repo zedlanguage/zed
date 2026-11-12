@@ -408,8 +408,7 @@ impl<'a> Elab<'a> {
             | StmtKind::Annotated { .. } => {
                 unreachable!("resolve rejects the forms of layer L2")
             }
-            StmtKind::Mutable(_)
-            | StmtKind::IndexedDef(_)
+            StmtKind::IndexedDef(_)
             | StmtKind::Initial(_)
             | StmtKind::While(_)
             | StmtKind::Until(_)

@@ -176,7 +176,7 @@ pub struct Resolution {
     /// What the unit's top level defines, which other units may import.
     pub exports: Exports,
     /// Where each declaration statement starts, in every scope: a binding, a function, a
-    /// struct, a type, a method, an import, a `mutable`, a `local`, a piece of an indexed
+    /// struct, a type, a method, an import, a `local`, a piece of an indexed
     /// definition, or an annotated one. A doc comment attaches to the declaration that follows
     /// it (DESIGN.md sec:grammar, comments).
     pub decls: HashSet<usize>,
@@ -1620,10 +1620,8 @@ impl Resolver<'_> {
                 );
             }
             StmtKind::Import(i) => self.import(i, s.span),
-            // The declaration is not annotated again, and a `mutable` holds a binding, so this
-            // recursion is one level deep.
+            // The declaration is not annotated again, so this recursion is one level deep.
             StmtKind::Annotated { decl, .. } => self.declare(decl, whole, families),
-            StmtKind::Mutable(decl) => self.declare(decl, true, families),
             // A `local` before a `local` is refused and not walked into, so this recursion is
             // one level deep. A definition `local` marks in a block is refused but still bound
             // there, so its uses are not reported again.
@@ -1701,7 +1699,6 @@ impl Resolver<'_> {
             StmtKind::Initial(_) => "an `initial` statement, which belongs to a loop body",
             StmtKind::Import(_) => "an import, whose names are not definitions of the unit",
             StmtKind::Local(_) => "a `local` declaration again",
-            StmtKind::Mutable(_) => "a `mutable` binding, which belongs to a loop body",
             StmtKind::IndexedDef(_) => "an indexed definition",
             StmtKind::While(_) | StmtKind::Until(_) => "a loop guard",
             StmtKind::Expr(_) => "an expression statement",
@@ -1800,7 +1797,6 @@ impl Resolver<'_> {
                 self.later(s.span, "a `local` declaration");
                 todo.push(Task::Stmt(decl, top));
             }
-            StmtKind::Mutable(_) => self.later(s.span, "a `mutable` binding"),
             StmtKind::IndexedDef(_) => self.later(s.span, "an indexed definition"),
             StmtKind::While(_) => self.later(s.span, "a `while` guard"),
             StmtKind::Until(_) => self.later(s.span, "an `until` guard"),
@@ -2340,9 +2336,9 @@ impl Resolver<'_> {
                 });
                 todo.push(Task::Expr(source));
             }
-            // A loop body's bare and primed names are the frames of step L6.3, which a
-            // `mutable` or an `initial` statement declares and resolution does not bind yet, so the
-            // body is not walked: its names would be reported as not defined.
+            // A loop body's bare and primed names are the frames of step L6.3, which its updates
+            // declare and resolution does not bind yet, so the body is not walked: its names would
+            // be reported as not defined.
             ExprKind::Loop { .. } => self.later(e.span, "a `loop`"),
             ExprKind::Break(value) => {
                 self.later(e.span, "a `break`");

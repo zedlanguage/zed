@@ -267,7 +267,7 @@ fn stmt_kids<'a>(kind: &'a StmtKind, out: &mut Vec<&'a Expr>, work: &mut Vec<&'a
                 out.push(&b.value);
             }
         }
-        StmtKind::Mutable(decl) | StmtKind::Local(decl) => work.push(&decl.kind),
+        StmtKind::Local(decl) => work.push(&decl.kind),
         StmtKind::Return(es) => out.extend(es),
         StmtKind::Function(f) | StmtKind::Method(zedc::ast::Method { function: f, .. }) => {
             out.extend(f.params.iter().filter_map(|p| p.default.as_ref()));

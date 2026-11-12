@@ -37,13 +37,6 @@ fn each_form_names_the_step_that_compiles_it() {
             )],
         ),
         (
-            "f(x) = { mutable y = x; y };",
-            &[concat!(
-                zed_tests::not_yet!("a `mutable` binding"),
-                " [mutable y = x;]"
-            )],
-        ),
-        (
             "f(x) = { while x; 0 };",
             &[concat!(
                 zed_tests::not_yet!("a `while` guard"),
@@ -132,13 +125,6 @@ fn declared_names_are_bound_and_refused_once() {
             &[concat!(
                 zed_tests::not_yet!("an indexed definition"),
                 " [x[i in 0..<4] = x[i - 1] + 1 with x[-1] = 0;]"
-            )],
-        ),
-        (
-            "f(x) = { mutable y' = x; 0 };",
-            &[concat!(
-                zed_tests::not_yet!("a `mutable` binding"),
-                " [mutable y' = x;]"
             )],
         ),
         (
