@@ -9953,8 +9953,7 @@ impl Block {
     /// The names and staircase of the threshold aggregate when it may hold: every part but
     /// the constraints' is a threshold row or an upper disjunction on two names, and the
     /// threshold rows are on one pair of them.
-    #[allow(clippy::type_complexity)]
-    fn stair_pair(&self) -> Option<(&(Arc<str>, Arc<str>), &Staircase)> {
+    fn stair_pair(&self) -> Option<(&NamePair, &Staircase)> {
         if !self.aggregable() || self.stairs.len() != 1 {
             return None;
         }
