@@ -1975,16 +1975,15 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| BUILD-const | impl attempt 1 | 2026-11-05 04:07 | rebased on origin/main as 155629f7e (COMPLEXITY conflict resolved, both rows kept); spec b8b7562 + DOCS-TODO 131 3305e76 rebased on zed c838362; building all ta |
+| BUILD-const | impl attempt 1 | 2026-11-05 04:07 | build all-targets 0, fmt check 0, grammar check OK, sync --check OK; running the affected groups with --doc (220 pieces) / load 64.24 62.38 55.55 |
 | GSX-unsolved | hybrid-xr attempt  | 2026-11-11 16:53 | round 2 recorded (Opus pf1 moved it: sweep 3, lost 3, prints 3; CD best still 29); round 3 launched |
 | LOAD-max-div-unsolved | hybrid-xr attempt 1 | 2026-11-11 17:11 | round 1: difference rule meets A + scored C at R 8.1-8.2; aperiodic open; merging part |
 | MSG-split-imports | impl attempt 1 | 2026-11-11 01:43 | started; worktree /home/luke/Work/wt/msg-split-imports on origin/main d41b005c1 |
 | NAME-ascii-library | running | 2026-11-12 13:53 |  |
 | NAME-nonprinting | impl attempt 1 | 2026-11-12 13:28 | NAME-ascii-library: l01_02 with ascii tests (load 71.52 57.51 51.99) |
-| POLY-nf-power | impl attempt 1 | 2026-11-12 13:01 | witness search fixed (x ^ P == x ran past 60 s, now Differs at once); QUESTIONS A98 written (spec 0abf7b8); checks before commit |
 | SOUND-random | impl attempt 1 | 2026-11-05 04:07 | after rebase on c8e8a37f3: l01_26 + zedc_check with docs 133 pieces, 1 timeout (deep_ops::diff_of_deep_types_runs_on_a_2_mib_stack at load 106 with a 67 s limit |
 | TESTS-L1.19-line-ends | impl attempt 1 | 2026-11-08 23:59 | found: main fails clippy -D warnings in tests/steps/m0_06_cost_scalarization/overlap.rs:93 (cloned_ref_to_slice_refs) and :551 (manual_is_multiple_of), from 6aa |
-| TESTS-L1.40d-surface-kinds | impl attempt 1 | 2026-11-08 23:59 | red run without the fix: kinds:: 5 pass, 1 fail (an_atom_with_an_empty_payload_is_refused_for_now: unsound program accepted); fix reapplied, building |
+| TESTS-L1.40d-surface-kinds | impl attempt 1 | 2026-11-08 23:59 | green: kinds:: 6 pass; 165 pieces (l01_29, l01_16, l01_17, l01_22, l01_26, zedc_resolve) 0 failed; clippy clean; rebased on d6662b78f, plan --fix running |
 | TESTS-scaling-gaps | impl attempt 1 | 2026-11-08 23:59 | started; worktree /home/luke/Work/wt/tests-scaling-gaps at d41b005c1, load 39.71 46.43 48.91 |
 | TRIVIAL-walk-branches | orchestrator attempt  | 2026-11-12 11:58 | R2 own attempt: memoized shared-split picks; K3 3.43x->1.28x main, J3 1.14x->0.68x, hashes equal main |
 | WARN-refused | impl attempt 1 | 2026-11-05 04:07 | negative controls: dropping the elab merge of the checker's refusals fails 5 of 7 refused_warning tests; dropping the placement in no_state_reaches fails the re |
