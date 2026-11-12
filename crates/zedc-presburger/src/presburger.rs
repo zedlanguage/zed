@@ -114,12 +114,11 @@ mod values;
 use forced::{Facts, Forced};
 pub use formula::{Atom, Con, Factor, Formula, Id, Lin, Model, Rel, Shared};
 use formula::{Ends, one_bound};
+pub use slack::ROW_ORDER_SCAN;
 use slack::{
-    DisjInfo, DisjointWide, HitKind, RowPlan, fill_row_model, has_product_con, meet_ends, no_batch,
-    no_slack, reduce_subset_wide_eqs, row_order, signed_ends, sweep_row, sweep_row_unbounded,
-    unary_bound,
+    DisjInfo, DisjointWide, HitKind, RowPlan, fill_row_model, has_product_con, meet_ends,
+    reduce_subset_wide_eqs, row_order, signed_ends, sweep_row, sweep_row_unbounded, unary_bound,
 };
-pub use slack::{ROW_ORDER_SCAN, SLACKLESS, UNBATCHED};
 
 /// Why a question lies outside the fragment the solver decides. Each is reported in its own
 /// words (sec:diagnostics), and each is a property of the system's shape, never of its size
@@ -943,12 +942,6 @@ fn reduced(facts: &Facts) -> Option<Formula> {
     ))
 }
 
-thread_local! {
-    /// Test control for I19: retain the public entry's old solver-first model construction.
-    /// This is a configuration switch only; no answer travels between calls through it.
-    pub static SOLVER_MODEL_FIRST: Cell<bool> = const { Cell::new(false) };
-}
-
 /// Whether `f` holds somewhere, and where. A formula whose forced equations fix its atoms one
 /// after another, as the preimage of a chain of `if` at a point gives, is answered by
 /// propagation alone in time linear in its size (module `forced`, PRES-small-cost), with every
@@ -1003,27 +996,16 @@ fn satisfiable_written(f: &Formula) -> Result<Option<Model>, Refusal> {
             // pick and probe are unchanged. A caller receives a valid point, possibly a
             // different point from the old public entry. Arbitrary-precision arithmetic
             // retains its bit cost. Test: one_row::a_box_and_an_extreme_row_build_their_models_in_near_linear_work.
-            // The thread-local switch is used only as a negative control.
             let conjuncts = f.conjunct_list();
             if let Some(b) = one_row::OneRow::of(&conjuncts) {
                 if !b.exists() {
                     return Ok(None);
                 }
-                return if SOLVER_MODEL_FIRST.with(Cell::get) {
-                    solver().or_else(|e| b.point().map(Some).ok_or(e))
-                } else {
-                    Ok(b.point())
-                };
+                return Ok(b.point());
             }
             match row_domains::settle(&conjuncts) {
                 Some(row_domains::Settled::Empty) => Ok(None),
-                Some(row_domains::Settled::Point(m)) => {
-                    if SOLVER_MODEL_FIRST.with(Cell::get) {
-                        solver().or(Ok(Some(m)))
-                    } else {
-                        Ok(Some(m))
-                    }
-                }
+                Some(row_domains::Settled::Point(m)) => Ok(Some(m)),
                 None => solver(),
             }
         }
@@ -2830,7 +2812,7 @@ fn has_point(p: Parts) -> Result<bool, Refusal> {
         },
         Err(why) => (why, p),
     };
-    if ONE_PROBE.with(Cell::get) || old_path() {
+    if old_path() {
         return Err(refused);
     }
     let mut points = Vec::new();
@@ -3078,8 +3060,7 @@ fn local_repair(acc: &[Con], near: &Near, model: &Model, extra: &[Con]) -> Optio
     // `model` uniquely forces `a == model[a]`. Checking `extra` at `model` in `O(|extra|)` skips
     // `specialize_con` whenever `extra` already fails there, with identical result. Test:
     // `l01_38_presburger::slack_scale::ss_decide_scales`.
-    if !slack::no_slack()
-        && seed.len() == 1
+    if seed.len() == 1
         && ids.iter().any(|&id| {
             acc[id].rel == Rel::Eq
                 && !acc[id]
@@ -4656,7 +4637,6 @@ fn probe_kept_status(
                 // thread-local result channel connects this probe to a later hull question.
                 immune = report_immunity
                     && !HULL_BISECT.with(Cell::get)
-                    && !HULL_NO_IMMUNITY.with(Cell::get)
                     && slack_idx.as_ref().is_some_and(|si| {
                         p.ors.iter().zip(&held).all(|(ds, hs)| {
                             ds.iter()
@@ -5417,7 +5397,7 @@ fn search_by_halves(
                 fs.iter().for_each(|&at| q.put(&o[at]));
                 continue;
             }
-            if !slack::no_batch() && o.len() == 1 && o[0].ors.is_empty() {
+            if o.len() == 1 && o[0].ors.is_empty() {
                 q.put(&o[0]);
                 unit_took.push(&o[0]);
                 continue;
@@ -6575,15 +6555,13 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
         // into `base` upfront evaluates `solve(&base.cons, ...)` once (`O(k)`) with identical
         // semantics because unary bounds never widen row arity or introduce eliminations. Test:
         // `l01_38_presburger::slack_scale::ss_decide_scales`.
-        if !slack::no_slack() {
-            let drained = if UNIT_RESCAN.with(Cell::get) {
-                drain_unary_rescan(&mut p.ors, &mut base, &mut near)
-            } else {
-                drain_unary(&mut p.ors, &mut base, &mut near)
-            };
-            if !drained {
-                return Ok(None);
-            }
+        let drained = if UNIT_RESCAN.with(Cell::get) {
+            drain_unary_rescan(&mut p.ors, &mut base, &mut near)
+        } else {
+            drain_unary(&mut p.ors, &mut base, &mut near)
+        };
+        if !drained {
+            return Ok(None);
         }
         // A point of the base serves only to keep, unasked, the disjuncts that meet the base,
         // so none is built when no disjunction is left.
@@ -6611,7 +6589,6 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
             // Whether a disjunct of these disjunctions may be asked of the solver: one that does
             // not hold at the point, in a disjunction that the point does not serve.
             let dw_old = old_path()
-                && !slack::no_slack()
                 && base.cons.iter().any(|c| c.lin.terms.len() > 2)
                 && slack::DisjointWide::of_cons(&base.cons).is_some();
             let asks = (!old_path() || dw_old)
@@ -6804,7 +6781,7 @@ fn solve<C: std::borrow::Borrow<Con>>(cons: &[C], want: bool) -> Result<Option<M
         // `cons` is reduced above wherever a reduction applies (one needs an equation of three
         // terms or more), so it is read as it stands, not reduced again.
         if cons.iter().any(|c| c.lin.terms.len() > 2)
-            && let Some(dw) = slack::DisjointWide::of_reduced_refs(&cons)
+            && let Some(dw) = slack::DisjointWide::of_reduced(&cons)
         {
             return Ok((!dw.empty()).then(Model::new));
         }
@@ -7162,9 +7139,6 @@ type Part = (Vec<usize>, Vec<(Row, Rel)>);
 /// Non-laminar overlapping equations stay unreduced. Test:
 /// `l01_38_presburger::slack_scale::two_rows_scales`.
 fn reduce_subset_row_eqs(mut base: Vec<(Row, Rel)>, vars: usize) -> Vec<(Row, Rel)> {
-    if slack::no_batch() {
-        return base;
-    }
     let candidate = |(r, rel): &(Row, Rel)| {
         *rel == Rel::Eq && r.a.len() >= 2 && r.a.iter().all(|(_, c)| c.is_unit())
     };
@@ -7414,9 +7388,6 @@ fn try_search_bounded_unit_eq(
     keys: &[usize],
     want: bool,
 ) -> Option<Result<Option<Vec<Int>>, Refusal>> {
-    if slack::no_slack() || slack::no_batch() {
-        return None;
-    }
     let mut wide_eq: Option<&Row> = None;
     for (r, rel) in base {
         if r.a.len() >= 2 {
@@ -9081,8 +9052,6 @@ fn pivots(e: &Row, sys: &System, others: impl Fn(usize) -> usize) -> Vec<usize> 
         .collect()
 }
 
-/// The row or its negation, whichever is less, as its coefficients and its constant: two
-/// equalities with the same one are the same equality.
 /// Whether `a` and `b` are one row up to sign, `unsigned(a) == unsigned(b)`, read in place.
 fn same_up_to_sign(a: &Row, b: &Row) -> bool {
     a.a.len() == b.a.len()
@@ -9091,6 +9060,8 @@ fn same_up_to_sign(a: &Row, b: &Row) -> bool {
                 && (a.a.iter().zip(b.a.iter())).all(|((i, c), (j, d))| i == j && *c == -d)))
 }
 
+/// The row or its negation, whichever is less, as its coefficients and its constant: two
+/// equalities with the same one are the same equality.
 fn unsigned(r: &Row) -> (Vec<Term>, Int) {
     let neg = opposite(&r.a);
     if *r.a <= *neg {
@@ -9417,93 +9388,91 @@ impl Omega {
         // The wide equations are compared only when a unary one is there to substitute, and
         // in place, with no row copied: a system with none, or with two wide equations that
         // differ, takes the general queue without a copy of each wide equation made first.
-        if !slack::no_batch() {
-            let has_unary_eq = (base.iter()).any(|(r, rel)| *rel == Rel::Eq && r.a.len() == 1);
-            let mut wide_eqs = (base.iter()).filter(|(r, rel)| *rel == Rel::Eq && r.a.len() >= 2);
-            let multi_ok = has_unary_eq
-                && wide_eqs
-                    .next()
-                    .is_none_or(|(first, _)| wide_eqs.all(|(r, _)| same_up_to_sign(first, r)));
-            if has_unary_eq && multi_ok {
-                let mut fixed: Vec<Option<Int>> = vec![None; keys.len()];
-                let mut fixed_vars: Vec<usize> = Vec::new();
+        let has_unary_eq = (base.iter()).any(|(r, rel)| *rel == Rel::Eq && r.a.len() == 1);
+        let mut wide_eqs = (base.iter()).filter(|(r, rel)| *rel == Rel::Eq && r.a.len() >= 2);
+        let multi_ok = has_unary_eq
+            && wide_eqs
+                .next()
+                .is_none_or(|(first, _)| wide_eqs.all(|(r, _)| same_up_to_sign(first, r)));
+        if has_unary_eq && multi_ok {
+            let mut fixed: Vec<Option<Int>> = vec![None; keys.len()];
+            let mut fixed_vars: Vec<usize> = Vec::new();
+            for (r, rel) in base {
+                if *rel == Rel::Eq && r.a.len() == 1 {
+                    match r.clone().normal(true) {
+                        Norm::False => {
+                            sys.empty = true;
+                            break;
+                        }
+                        Norm::True => {}
+                        Norm::Row(nr) => {
+                            let (j, ref c) = nr.a[0];
+                            let val = if c.is_positive() {
+                                -&nr.k
+                            } else {
+                                nr.k.clone()
+                            };
+                            if let Some(prev) = &fixed[j] {
+                                if *prev != val {
+                                    sys.empty = true;
+                                    break;
+                                }
+                            } else {
+                                fixed[j] = Some(val);
+                                fixed_vars.push(j);
+                            }
+                        }
+                    }
+                }
+            }
+            if !sys.empty && !fixed_vars.is_empty() {
+                fixed_vars.sort_unstable_by_key(|&j| (keys[j], j));
+                for &j in &fixed_vars {
+                    sys.take(j);
+                    let val = fixed[j].as_ref().expect("fixed").clone();
+                    steps.push(Step::Defined(
+                        j,
+                        Row {
+                            a: Vec::new().into(),
+                            k: val,
+                        },
+                    ));
+                }
                 for (r, rel) in base {
                     if *rel == Rel::Eq && r.a.len() == 1 {
-                        match r.clone().normal(true) {
-                            Norm::False => {
-                                sys.empty = true;
-                                break;
-                            }
-                            Norm::True => {}
-                            Norm::Row(nr) => {
-                                let (j, ref c) = nr.a[0];
-                                let val = if c.is_positive() {
-                                    -&nr.k
-                                } else {
-                                    nr.k.clone()
-                                };
-                                if let Some(prev) = &fixed[j] {
-                                    if *prev != val {
-                                        sys.empty = true;
-                                        break;
-                                    }
-                                } else {
-                                    fixed[j] = Some(val);
-                                    fixed_vars.push(j);
-                                }
-                            }
+                        continue;
+                    }
+                    let mut new_a: Vec<Term> = Vec::with_capacity(r.a.len());
+                    let mut new_k = r.k.clone();
+                    for (j, c) in r.a.iter() {
+                        if let Some(val) = &fixed[*j] {
+                            new_k = &new_k + &(c * val);
+                        } else {
+                            new_a.push((*j, c.clone()));
                         }
                     }
-                }
-                if !sys.empty && !fixed_vars.is_empty() {
-                    fixed_vars.sort_unstable_by_key(|&j| (keys[j], j));
-                    for &j in &fixed_vars {
-                        sys.take(j);
-                        let val = fixed[j].as_ref().expect("fixed").clone();
-                        steps.push(Step::Defined(
-                            j,
-                            Row {
-                                a: Vec::new().into(),
-                                k: val,
-                            },
-                        ));
-                    }
-                    for (r, rel) in base {
-                        if *rel == Rel::Eq && r.a.len() == 1 {
-                            continue;
-                        }
-                        let mut new_a: Vec<Term> = Vec::with_capacity(r.a.len());
-                        let mut new_k = r.k.clone();
-                        for (j, c) in r.a.iter() {
-                            if let Some(val) = &fixed[*j] {
-                                new_k = &new_k + &(c * val);
-                            } else {
-                                new_a.push((*j, c.clone()));
-                            }
-                        }
-                        let subst_r = Row {
-                            a: new_a.into(),
-                            k: new_k,
-                        };
-                        match rel {
-                            Rel::Eq => es.push(subst_r, &mut sys),
-                            Rel::Ge => sys.add(subst_r),
-                        }
-                    }
-                    return Omega {
-                        sys,
-                        es,
-                        steps,
-                        pending: Vec::new(),
-                        want,
-                        tested: false,
-                        gray: Vec::new(),
-                        exact3: false,
-                        loose_tie: None,
-                        working: Vec::new(),
-                        cycled: false,
+                    let subst_r = Row {
+                        a: new_a.into(),
+                        k: new_k,
                     };
+                    match rel {
+                        Rel::Eq => es.push(subst_r, &mut sys),
+                        Rel::Ge => sys.add(subst_r),
+                    }
                 }
+                return Omega {
+                    sys,
+                    es,
+                    steps,
+                    pending: Vec::new(),
+                    want,
+                    tested: false,
+                    gray: Vec::new(),
+                    exact3: false,
+                    loose_tie: None,
+                    working: Vec::new(),
+                    cycled: false,
+                };
             }
         }
         for (r, rel) in base {
@@ -9706,11 +9675,7 @@ impl Omega {
             // as `System::least` gives them; when two of least count share a row, none is taken
             // here and the stages below go on, so no name decides.
             if tie.is_none() {
-                match if !slack::no_batch() {
-                    self.batch_pendant()
-                } else {
-                    None
-                } {
+                match self.batch_pendant() {
                     Some(true) => continue,
                     Some(false) => {}
                     None => {
@@ -10571,11 +10536,6 @@ thread_local! {
     pub static UNIT_RESCAN: Cell<bool> = const { Cell::new(false) };
     /// Test control: retain hull bisection without the I22 endpoint shortcuts.
     pub static HULL_BISECT: Cell<bool> = const { Cell::new(false) };
-    /// Test control: use gap jumps but ignore the returned endpoint-immunity certificate.
-    pub static HULL_NO_IMMUNITY: Cell<bool> = const { Cell::new(false) };
-    /// Whether [`decide`] and [`satisfiable`] each make only their own probe, as before
-    /// PRES-stop-prefix: for the tests that measure what the other probe costs.
-    pub static ONE_PROBE: Cell<bool> = const { Cell::new(false) };
 }
 
 /// `f` with each shared part `u` that every disjunct of a disjunction holds as a conjunct
@@ -12077,11 +12037,8 @@ fn project_parts(
         let ask: Ask = if sets {
             |f, _, status| {
                 let answer = decide(f);
-                let immune = status
-                    && answer.is_err()
-                    && !HULL_BISECT.with(Cell::get)
-                    && !HULL_NO_IMMUNITY.with(Cell::get)
-                    && hull_immunity(f);
+                let immune =
+                    status && answer.is_err() && !HULL_BISECT.with(Cell::get) && hull_immunity(f);
                 (answer, immune)
             }
         } else {
@@ -15709,7 +15666,7 @@ impl SlackIndex {
     // `settle` unchanged, losing zero inferences. Test:
     // `l01_38_presburger::slack_scale::ss_decide_scales`.
     fn of(cons: &[Con], implied: &Near, ors: &[Vec<std::rc::Rc<Parts>>]) -> Option<SlackIndex> {
-        if no_slack() || cons.iter().any(has_product_con) {
+        if cons.iter().any(has_product_con) {
             return None;
         }
         let mut all_cons = cons.to_vec();
@@ -16059,9 +16016,6 @@ fn find_probe_points(
     stop: bool,
     points: &mut Vec<Model>,
 ) -> (bool, bool) {
-    if no_slack() {
-        return (false, false);
-    }
     let k = p.ors.len();
     let num_rows = si.dw.rows.len();
     if k < 2 || num_rows == 0 {
@@ -16282,7 +16236,7 @@ fn find_probe_points(
 // arbitrary tied subset-sum instances apart is NP-complete). Test:
 // `l01_38_presburger::slack_scale::sat_half_tied_512_is_deterministic_and_scales`.
 fn find_tied_point(p: &Parts, color: &HashMap<Atom, usize>, want: bool) -> Option<Model> {
-    if no_slack() || p.ors.len() < 2 {
+    if p.ors.len() < 2 {
         return None;
     }
     let implied = disjunction_hulls(&p.ors, &mut DeepHulls::default());
@@ -16619,7 +16573,7 @@ fn try_pick_disjoint_wide<'a>(
     p: &'a Parts,
     deep: bool,
 ) -> Option<Result<(Model, Vec<&'a Parts>), Refusal>> {
-    if no_slack() || no_batch() || p.ors.is_empty() {
+    if p.ors.is_empty() {
         return None;
     }
     let red_cons = reduce_subset_wide_eqs(&p.cons);

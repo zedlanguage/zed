@@ -3,9 +3,9 @@
 //!
 //! Every scaling check runs at `n = 64` and `8n = 512` (or `16` and `128` for the pre-density
 //! immune subset-sum gap) under `scaling::check_order(..., 1, ...)`, holding both instruction
-//! count and heap allocation within `1.1 * 8 * log(8n) / log(n)`. Negative controls: the
-//! thread-local switches `presburger::SLACKLESS` and `presburger::UNBATCHED`, set to `true`
-//! on the measuring thread, turn the summaries and the batched searches off.
+//! count and heap allocation within `1.1 * 8 * log(8n) / log(n)`. A negative control is a
+//! temporary build with the summaries or the batched searches taken out, run once and not
+//! committed.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;

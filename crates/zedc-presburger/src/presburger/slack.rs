@@ -37,24 +37,6 @@ use super::formula::{Atom, Con, Lin, Model, Rel};
 thread_local! {
     /// Test control: retain full global-order scans in the two I23 row paths.
     pub static ROW_ORDER_SCAN: Cell<bool> = const { Cell::new(false) };
-    /// Whether the summaries of this module (wide-row slack, laminar subtraction, the
-    /// greedy subset-sum walk, the forced search of one disjunction) are left unused, so that
-    /// every question takes the path it takes without them: for the tests that compare the
-    /// two and measure the work the summaries save (PRES-disj-cost-xr).
-    pub static SLACKLESS: Cell<bool> = const { Cell::new(false) };
-    /// Whether the batched forms of the searches (one disjunction of one disjunct taken in
-    /// every search, the bounded single-equation solver) are left unused, for the same tests.
-    pub static UNBATCHED: Cell<bool> = const { Cell::new(false) };
-}
-
-/// Whether the summaries here are left unused ([`SLACKLESS`]).
-pub(super) fn no_slack() -> bool {
-    SLACKLESS.with(Cell::get)
-}
-
-/// Whether the batched searches are left unused ([`UNBATCHED`]).
-pub(super) fn no_batch() -> bool {
-    UNBATCHED.with(Cell::get)
 }
 
 pub(super) fn has_product_con(c: &Con) -> bool {
@@ -76,9 +58,6 @@ pub(super) fn has_product_con(c: &Con) -> bool {
 /// overlapping equations equivalent and intact. Test:
 /// `l01_38_presburger::slack_scale::two_rows_scales`.
 pub(super) fn try_reduce_subset_wide_eqs_refs(cons: &[&Con]) -> Option<Vec<Con>> {
-    if no_slack() {
-        return None;
-    }
     // The equations of two or more terms, by their lengths alone, with no term read: the
     // equations of unit coefficients and no product are among them, so fewer than two, or all
     // of one length, leave nothing to reduce. O(c) for c constraints, where the test below
@@ -219,9 +198,6 @@ pub(super) fn try_reduce_subset_wide_eqs_refs(cons: &[&Con]) -> Option<Vec<Con>>
 }
 
 pub(super) fn try_reduce_subset_wide_eqs(cons: &[Con]) -> Option<Vec<Con>> {
-    if no_slack() {
-        return None;
-    }
     let mut total_wide = 0usize;
     let mut min_len = usize::MAX;
     let mut max_len = 0usize;
@@ -368,7 +344,7 @@ impl DisjointWide {
     // and use the general solver unchanged. Test:
     // `l01_38_presburger::slack_scale::two_rows_scales`.
     pub(super) fn of_cons(cons: &[Con]) -> Option<DisjointWide> {
-        if no_slack() || cons.iter().any(has_product_con) {
+        if cons.iter().any(has_product_con) {
             return None;
         }
         if let Some(reduced) = try_reduce_subset_wide_eqs(cons) {
@@ -379,23 +355,11 @@ impl DisjointWide {
     }
 
     pub(super) fn of_refs(cons: &[&Con]) -> Option<DisjointWide> {
-        if no_slack() {
-            return None;
-        }
         if let Some(reduced) = try_reduce_subset_wide_eqs_refs(cons) {
             Self::of_reduced(&reduced)
         } else {
             Self::of_reduced(cons)
         }
-    }
-
-    /// [`DisjointWide::of_refs`] of rows that [`try_reduce_subset_wide_eqs_refs`] already
-    /// reduced, or that hold no equation of three terms or more, which it leaves as they are.
-    pub(super) fn of_reduced_refs(cons: &[&Con]) -> Option<DisjointWide> {
-        if no_slack() {
-            return None;
-        }
-        Self::of_reduced(cons)
     }
 
     pub(super) fn of_reduced<C: std::borrow::Borrow<Con>>(cons: &[C]) -> Option<DisjointWide> {
@@ -1855,7 +1819,7 @@ impl WidePointRepairer {
     // `solve` on any non-unary or non-unit-coefficient system. Test:
     // `l01_38_presburger::slack_scale::ss_decide_scales`.
     pub(super) fn of_cons(cons: &[Con], pt: &Model) -> Option<Self> {
-        if no_slack() || !cons.iter().any(|c| c.lin.terms.len() > 2) {
+        if !cons.iter().any(|c| c.lin.terms.len() > 2) {
             return None;
         }
         let dw = DisjointWide::of_cons(cons)?;
