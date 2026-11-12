@@ -3,7 +3,7 @@
 // by the domain it ranges over, so `sq` is keyed 1..=n; line 1997: lookup outside the domain is
 // `#notFound`; line 4057: `::card` reads a family's number of entries.
 main(m: MainArgs) {
-  n = int(trim(m.stdin[1] else "")) else 0;
+  n = int(trim(m.stdin[0] else "")) else 0;
   sq = for i in 1..=n { i * i };
   m.stdout <- "${sq.sum} ${sq[3] else 0} ${sq[11] else -1} ${sq::card}";
 }

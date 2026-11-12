@@ -1,4 +1,4 @@
-//! The arguments after `--`, read by position, and the usage errors of the command line.
+//! The arguments after `--`, keyed from 0, and the usage errors of the command line.
 
 use std::ffi::OsString;
 use std::os::unix::ffi::OsStringExt;
@@ -6,23 +6,31 @@ use std::os::unix::ffi::OsStringExt;
 use super::{ECHO, program, run, run_words, zedc};
 
 #[test]
-fn arguments_are_keyed_by_position_from_one() {
+fn arguments_are_keyed_from_zero() {
     // `zedc run greet.zed -- Ada "Grace Hopper"`: each argument is one word, spaces kept.
     let src = "main(m: MainArgs) {\n  \
-               m.stdout <- \"${m.args[1] else \"-\"}|${m.args[2] else \"-\"}\";\n}\n";
+               m.stdout <- \"${m.args[0] else \"-\"}|${m.args[1] else \"-\"}\";\n}\n";
     let out = run("position", src, &["--", "Ada", "Grace Hopper"]);
     assert_eq!((out.status, out.stdout.as_str()), (0, "Ada|Grace Hopper\n"));
-    // The family itself is `{1: "a", 2: "b c"}`, written one entry per line in key order.
+    // The family itself is `{0: "a", 1: "b c"}`, written one entry per line in key order.
     let out = run("family", ECHO, &["--", "a", "b c"]);
     assert_eq!((out.status, out.stdout.as_str()), (0, "a\nb c\n"));
+    assert_eq!(
+        zedc::run::arguments(&["a".into(), "b c".into()]).to_string(),
+        "{0 -> \"a\", 1 -> \"b c\"}"
+    );
+    assert_eq!(zedc::run::arguments(&[]).to_string(), "{}");
 }
 
 #[test]
-fn a_position_past_the_last_argument_is_not_found() {
+fn a_key_past_the_last_argument_or_below_0_is_out_of_bounds() {
     let src = "main(m: MainArgs) {\n  \
-               m.stdout <- \"${m.args[0] else \"none\"}|${m.args[2] else \"none\"}|${m.args[3] else \"none\"}\";\n}\n";
+               m.stdout <- \"${m.args[-1] else #outOfBounds -> \"none\"}|${m.args[0] else #outOfBounds -> \"none\"}|${m.args[1] else #outOfBounds -> \"none\"}|${m.args[2] else #outOfBounds -> \"none\"}\";\n}\n";
     let out = run("missing", src, &["--", "one", "two"]);
-    assert_eq!((out.status, out.stdout.as_str()), (0, "none|two|none\n"));
+    assert_eq!(
+        (out.status, out.stderr.as_str(), out.stdout.as_str()),
+        (0, "", "none|one|two|none\n")
+    );
 }
 
 #[test]
@@ -33,7 +41,7 @@ fn with_no_arguments_the_family_is_empty() {
         assert_eq!((out.status, out.stdout.as_str()), (0, ""), "{more:?}");
     }
     let src = "main(m: MainArgs) {\n  \
-               m.stdout <- m.args[1] else \"no arguments\";\n}\n";
+               m.stdout <- m.args[0] else \"no arguments\";\n}\n";
     assert_eq!(run("none", src, &[]).stdout, "no arguments\n");
 }
 
@@ -52,7 +60,7 @@ fn every_word_after_the_first_dashes_is_an_argument() {
 #[test]
 fn standard_input_and_the_arguments_are_read_together() {
     let src = "main(m: MainArgs) {\n  \
-               m.stdout <- \"${m.stdin[1] else \"\"} ${m.args[1] else \"\"}\";\n}\n";
+               m.stdout <- \"${m.stdin[0] else \"\"} ${m.args[0] else \"\"}\";\n}\n";
     let out = zed_tests::step_helpers::l01_19_whole_file_ports::run(
         "l01_19a_together",
         src,
@@ -69,12 +77,12 @@ fn a_program_without_the_port_ignores_its_arguments() {
     assert_eq!((out.status, out.stdout.as_str()), (0, "hello\n"));
 }
 
-/// The message for argument `n` after `--` that is not UTF-8.
+/// The message for the argument at key `n` of `m.args` that is not UTF-8.
 fn not_utf8(n: usize) -> String {
     format!(
-        "command-line argument {n} (counted from the first word after `--`) is not UTF-8, and a \
-         `CommandLine` port gives the program each argument as a string, which must be UTF-8 \
-         text. Pass the argument as UTF-8 text, or pass the path of a file that holds it.\n"
+        "the command-line argument at key {n} of `m.args` (the first word after `--` is key 0) \
+         is not UTF-8, and `m.args` gives the program each argument as a string, which must be \
+         UTF-8 text. Pass the argument as UTF-8 text, or pass the path of a file that holds it.\n"
     )
 }
 
@@ -88,19 +96,19 @@ fn with_bad_argument(prog: &OsString, before: &[&str], after: &[&str]) -> Vec<Os
 }
 
 #[test]
-fn an_argument_that_is_not_utf8_is_a_usage_error_naming_its_position() {
+fn an_argument_that_is_not_utf8_is_a_usage_error_naming_its_key() {
     let prog = program("not_utf8", ECHO);
     let out = zedc(&with_bad_argument(&prog, &[], &[]));
     assert_eq!(
         (out.status, out.stderr.as_str(), out.stdout.as_str()),
-        (2, &*not_utf8(1), "")
+        (2, &*not_utf8(0), "")
     );
     let out = zedc(&with_bad_argument(
         &prog,
         &["fine", "also fine"],
         &["later"],
     ));
-    assert_eq!((out.status, out.stderr.as_str()), (2, &*not_utf8(3)));
+    assert_eq!((out.status, out.stderr.as_str()), (2, &*not_utf8(2)));
     // Before `--` a word that is not UTF-8 is named by its place among the words.
     let mut words = vec![OsString::from("run"), OsString::from_vec(vec![255])];
     words.push(prog);
@@ -118,7 +126,7 @@ fn an_argument_that_is_not_utf8_is_a_usage_error_naming_its_position() {
 
 #[test]
 fn a_read_may_be_out_of_bounds_so_the_checker_asks_for_its_disposal() {
-    let src = "main(m: MainArgs) {\n  m.stdout <- m.args[1];\n}\n";
+    let src = "main(m: MainArgs) {\n  m.stdout <- m.args[0];\n}\n";
     let out = run("undisposed", src, &["--", "a"]);
     assert_eq!(out.status, 1);
     assert!(
@@ -179,5 +187,48 @@ fn a_push_target_has_at_most_one_view_and_it_comes_last() {
             err.starts_with(&format!("{at}: expected ")),
             "{target}: {err}"
         );
+    }
+}
+
+/// A program that writes the argument at the key on its first line of input, or says the
+/// read missed (DESIGN step L1.19a: the keys are `0..<n`, and a read outside them is
+/// `#outOfBounds`).
+const ARG_AT: &str = "main(m: MainArgs) {\n  \
+     k = int(m.stdin[0] else \"\") else 0;\n  \
+     m.stdout <- m.args[k] else #outOfBounds -> \"out of bounds\";\n}\n";
+
+/// What `ARG_AT` writes for the key `k` and the words `more` after the program's file. Each run
+/// has its own directory, since the tests run at once and a shared one would be rewritten under a
+/// running program.
+fn arg_at(k: &str, more: &[&str]) -> String {
+    static RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let out = zed_tests::step_helpers::l01_19_whole_file_ports::run(
+        &format!("l01_19a_arg_at_{n}"),
+        ARG_AT,
+        &format!("{k}\n"),
+        more,
+    );
+    assert_eq!((out.status, out.stderr.as_str()), (0, ""), "{k} {more:?}");
+    out.stdout
+}
+
+#[test]
+fn the_keys_of_n_arguments_are_0_to_n_minus_1() {
+    let more = ["--", "first", "middle", "last"];
+    assert_eq!(arg_at("0", &more), "first\n");
+    assert_eq!(arg_at("2", &more), "last\n");
+    // Key n, one past the last argument, and key -1, one before the first, are outside.
+    assert_eq!(arg_at("3", &more), "out of bounds\n");
+    assert_eq!(arg_at("-1", &more), "out of bounds\n");
+    // Only the first `--` ends the options: a later one is the argument at key 0.
+    assert_eq!(arg_at("0", &["--", "--", "x"]), "--\n");
+}
+
+#[test]
+fn without_dashes_or_with_nothing_after_them_no_key_is_present() {
+    for more in [&[][..], &["--"][..]] {
+        assert_eq!(arg_at("0", more), "out of bounds\n", "{more:?}");
+        assert_eq!(arg_at("-1", more), "out of bounds\n", "{more:?}");
     }
 }

@@ -16,7 +16,7 @@ fn the_result_of_main_is_the_exit_status() {
     );
     // The status may depend on the input; `-> int` may be left out.
     let src = "main(m: MainArgs) {\n  m.stdout <- \"x\";\n  \
-               if (m.stdin[1] else \"\") == \"fail\" { 7 } else { 0 }\n}\n";
+               if (m.stdin[0] else \"\") == \"fail\" { 7 } else { 0 }\n}\n";
     let out = run("status_if", src, "fail\n", &[]);
     assert_eq!((out.status, out.stdout.as_str()), (7, "x\n"));
     let out = run("status_if", src, "ok\n", &[]);
@@ -54,7 +54,7 @@ fn a_body_that_exports_nothing_exits_with_0() {
 #[test]
 fn a_failure_that_bubbles_out_of_main_exits_with_1_and_writes_nothing() {
     let src = "main(m: MainArgs) -> int {\n  m.stdout <- \"x\";\n  \
-               int(m.stdin[1] else \"\") mod 256\n}\n";
+               int(m.stdin[0] else \"\") mod 256\n}\n";
     let out = run("bubble", src, "4\n", &[]);
     assert_eq!(
         (out.status, out.stdout.as_str()),
@@ -80,14 +80,14 @@ fn a_status_not_proved_to_be_a_byte_is_rejected_with_the_menu() {
             out.stderr
         );
     }
-    let read = "int(m.stdin[1] else \"\") else 1";
+    let read = "int(m.stdin[0] else \"\") else 1";
     let src = format!("main(m: MainArgs) -> int {{\n  {read}\n}}\n");
     let out = run("unbounded", &src, "", &[]);
     assert_eq!(out.status, 1);
     for repair in [
-        "code = int(m.stdin[1] else \"\"); if code < 0 { 0 } else if code > 255 { 255 } else { code }",
-        "(int(m.stdin[1] else \"\")) mod 256",
-        "code = int(m.stdin[1] else \"\"); if code >= 0 && code <= 255 { code } else { 1 }",
+        "code = int(m.stdin[0] else \"\"); if code < 0 { 0 } else if code > 255 { 255 } else { code }",
+        "(int(m.stdin[0] else \"\")) mod 256",
+        "code = int(m.stdin[0] else \"\"); if code >= 0 && code <= 255 { code } else { 1 }",
     ] {
         assert!(out.stderr.contains(repair), "{repair}: {}", out.stderr);
     }
@@ -187,7 +187,7 @@ fn a_field_is_used_only_in_its_direction() {
 /// `main` whose result is an `if` chain of `n` branches, each giving a status from 0 to 255.
 fn chain(n: usize) -> String {
     let mut src =
-        String::from("main(m: MainArgs) -> int {\n  x = int(m.stdin[1] else \"\") else 0;\n  ");
+        String::from("main(m: MainArgs) -> int {\n  x = int(m.stdin[0] else \"\") else 0;\n  ");
     for i in 0..n {
         src.push_str(&format!("if x == {i} {{ {} }} else ", i % 256));
     }
@@ -211,7 +211,7 @@ fn the_status_of_a_long_if_chain_is_checked_in_linear_time() {
 /// `n` `main`s, each reading `m.stdin`, then `n` functions that each read a field of their
 /// parameter: the builder asks of each read whether a `main`'s body holds it.
 fn mains_then_reads(n: usize) -> String {
-    let mut src = "main(m: MainArgs) {\n  m.stdout <- m.stdin[1] else \"\";\n}\n".repeat(n);
+    let mut src = "main(m: MainArgs) {\n  m.stdout <- m.stdin[0] else \"\";\n}\n".repeat(n);
     for i in 0..n {
         src.push_str(&format!("f{i}(positional p) = p.x;\n"));
     }

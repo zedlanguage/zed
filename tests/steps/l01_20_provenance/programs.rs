@@ -37,7 +37,7 @@ fn trace(src: &str, stdin: &str, files: &[(&'static str, &'static str)]) -> zed_
 #[test]
 fn a_failed_total_names_the_bad_quantity_and_the_missing_price_file() {
     let src = "main(m: MainArgs) {\n  fs = files();\n  \
-               qty = int(m.stdin[1]);\n  unit = int(fs[\"price.txt\"]);\n  \
+               qty = int(m.stdin[0]);\n  unit = int(fs[\"price.txt\"]);\n  \
                total = qty * unit;\n  m.stdout <- String(total) else \"no total\";\n}\n";
     let p = trace(src, "three\n", &[]);
     let i = p
@@ -50,7 +50,7 @@ fn a_failed_total_names_the_bad_quantity_and_the_missing_price_file() {
         o,
         [
             ("fs(\"price.txt\")".into(), "#notFound".into()),
-            ("int(m.stdin[1])".into(), "#invalid".into()),
+            ("int(m.stdin[0])".into(), "#invalid".into()),
         ]
     );
 }
@@ -58,7 +58,7 @@ fn a_failed_total_names_the_bad_quantity_and_the_missing_price_file() {
 #[test]
 fn every_keypath_of_a_wave_starts_with_its_stamp() {
     let src = "main(m: MainArgs) {\n  \
-               m.stdout <- \"${int(m.stdin[1]) else 0}\";\n}\n";
+               m.stdout <- \"${int(m.stdin[0]) else 0}\";\n}\n";
     let p = trace(src, "4\n", &[]);
     assert!(
         p.facts()

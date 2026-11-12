@@ -8,6 +8,6 @@ gcd(positional a: int, positional b: int) {
   if b == 0 { a } else { gcd(b, a mod b) }
 }
 main(m: MainArgs) {
-  n = int(trim(m.stdin[1] else "")) else 0;
+  n = int(trim(m.stdin[0] else "")) else 0;
   m.stdout <- "${fib(n)} ${gcd(84, 36)}";
 }

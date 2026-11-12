@@ -8,6 +8,6 @@ clamp(positional v, positional lo, positional hi) {
   if v < lo { lo } else if v > hi { hi } else { v }
 }
 main(m: MainArgs) {
-  n = int(trim(m.stdin[1] else "")) else 0;
+  n = int(trim(m.stdin[0] else "")) else 0;
   m.stdout <- "${n.double.clamp(0, 8)} ${5.double.clamp(0, 8)} ${(0 - 3).double.clamp(0, 8)}";
 }

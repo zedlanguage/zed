@@ -85,7 +85,7 @@ fn the_arguments_of_a_record_round_trip() {
 #[test]
 fn a_main_row_gives_the_arguments_one_per_line() {
     let src = "main(m: MainArgs) {\n  \
-               m.stdout <- \"${m.args[1] else \"-\"}+${m.args[2] else \"-\"}\";\n}\n\
+               m.stdout <- \"${m.args[0] else \"-\"}+${m.args[1] else \"-\"}\";\n}\n\
                test { (\"\", \"a\\nb c\\n\") -> \"a+b c\\n\", (\"\", \"only\") -> \"only+-\\n\", \
                \"\" -> \"-+-\\n\", (\"\", 3) -> \"\" }\n";
     assert_eq!(
@@ -103,7 +103,7 @@ fn a_main_row_gives_the_arguments_one_per_line() {
 #[test]
 fn a_main_rows_arguments_drop_every_cr_before_a_line_end() {
     let src = "main(m: MainArgs) {\n  \
-               m.stdout <- \"${m.args[1] else \"-\"}+${m.args[2] else \"-\"}\";\n}\n\
+               m.stdout <- \"${m.args[0] else \"-\"}+${m.args[1] else \"-\"}\";\n}\n\
                test { (\"\", \"a\\r\\r\\nb\\rc\\r\\n\") -> \"a+b\\rc\\n\", (\"\", \"a\\r\") -> \"a+-\\n\" }\n";
     assert_eq!(checks(src), ["4:8: ok", "4:47: ok"]);
 }

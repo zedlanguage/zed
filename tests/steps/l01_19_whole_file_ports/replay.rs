@@ -16,7 +16,7 @@ fn a_replay_reads_the_record_not_the_world() {
     std::fs::write(&prices, "4\n").unwrap();
     let src = format!(
         "main(m: MainArgs) {{\n  fs = files();\n  \
-         unit = int(trim(fs[\"{}\"])) else 0;\n  qty = int(m.stdin[1]) else 0;\n  \
+         unit = int(trim(fs[\"{}\"])) else 0;\n  qty = int(m.stdin[0]) else 0;\n  \
          m.stdout <- \"total ${{unit * qty}}\";\n}}\n",
         prices.display()
     );
@@ -119,7 +119,7 @@ fn a_damaged_record_is_rejected() {
 
 #[test]
 fn a_record_that_lacks_the_input_of_a_port_stops_the_replay() {
-    let p = load(b"main(m: MainArgs) {\n  m.stdout <- m.stdin[1] else \"\";\n}\n").unwrap();
+    let p = load(b"main(m: MainArgs) {\n  m.stdout <- m.stdin[0] else \"\";\n}\n").unwrap();
     // Every run records the input of `m.stdin`, so only a changed record lacks it.
     let record = Record {
         program: Some(p.address().unwrap()),

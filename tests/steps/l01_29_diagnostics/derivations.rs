@@ -7,7 +7,7 @@ use super::{rejected, steps};
 fn a_report_line_that_concatenates_a_number_shows_the_chain_back_to_the_input_port() {
     let out = rejected(
         "main(m: MainArgs) {
-  n = int(m.stdin[1]) else 0;
+  n = int(m.stdin[0]) else 0;
   total = n * 2;
   m.stdout <- \"total: \" ++ total;
 }
@@ -30,7 +30,7 @@ fn a_report_line_that_concatenates_a_number_shows_the_chain_back_to_the_input_po
   [4]  3:11: this `*` gives int
   [5]  3:11: `n` is int here
   [6]  2:7: `n` is defined as this expression, int
-       2 |   n = int(m.stdin[1]) else 0;
+       2 |   n = int(m.stdin[0]) else 0;
          |       ^^^^^^^^^^^^^^^^^^^^^^ [6, 7]
          |           ^^^^^^^ [10]     ^ [12]
          |           ^^^^^^^^^^ [9]

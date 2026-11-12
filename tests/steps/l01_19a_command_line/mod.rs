@@ -1,6 +1,6 @@
 //! Step L1.19a: the command-line arguments as an input port. A `CommandLine` input is the
-//! family of the words after `--`, keyed by position from 1, each a `String`; an argument that
-//! is not UTF-8 is a usage error naming its position; `--record` saves the arguments and
+//! family of the words after `--`, keyed from 0, each a `String`; an argument that
+//! is not UTF-8 is a usage error naming its key; `--record` saves the arguments and
 //! `zedc replay` reads them from the record.
 
 // binary.rs is not a module of this target: crates/zed-native/Cargo.toml builds it as the test

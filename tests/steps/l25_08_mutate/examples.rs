@@ -136,7 +136,7 @@ fn a_row_of_main_runs_the_mutant_wave() {
 fahrenheit(positional c) = c * 9 div 5 + 32;
 
 main(m: MainArgs) {
-  m.stdout <- \"${fahrenheit(int(trim(m.stdin[1] else \"\")))}F\" else \"not a number\";
+  m.stdout <- \"${fahrenheit(int(trim(m.stdin[0] else \"\")))}F\" else \"not a number\";
 }
 test { \"21\\n\" -> \"69F\\n\" }
 ";

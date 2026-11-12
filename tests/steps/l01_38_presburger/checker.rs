@@ -6,14 +6,14 @@ use zed_tests::step_helpers::l01_19_whole_file_ports::run;
 use zed_tests::step_helpers::l01_25_preimage_catalog::int_defs;
 
 /// A program whose `main` calls `ok`, defined by `def`, at `args`, and prints whether it held;
-/// `a` in `args` is the integer on the first line of the input (lines count from 1), or 0. Each
+/// `a` in `args` is the integer on the first line of the input (key 0 of the lines), or 0. Each
 /// parameter `def` writes without a type is declared `int` ([`int_defs`]): the checker asks a
 /// linear question only of a function whose parameters are all `int`, and a bare literal takes
 /// the carrier of its use (L1.26a), so it no longer makes a parameter `int`.
 fn program(def: &str, args: &str) -> String {
     let def = int_defs(def);
     format!(
-        "{def}\nmain(m: MainArgs) {{\n  a = int(m.stdin[1] else \"0\") else 0;\n  \
+        "{def}\nmain(m: MainArgs) {{\n  a = int(m.stdin[0] else \"0\") else 0;\n  \
          r = if ok({args}) {{ \"in\" }} else {{ \"out\" }};\n  m.stdout <- \"${{r}}\";\n}}\n"
     )
 }
@@ -202,7 +202,7 @@ fn menu(v: &str, order: Option<(&str, &str)>, body: &str, split: [&str; 2]) -> S
 fn program_testing(defs: &str, test: &str) -> String {
     let defs = int_defs(defs);
     format!(
-        "{defs}\nmain(m: MainArgs) {{\n  a = int(m.stdin[1] else \"0\") else 0;\n  \
+        "{defs}\nmain(m: MainArgs) {{\n  a = int(m.stdin[0] else \"0\") else 0;\n  \
          r = if {test} {{ \"in\" }} else {{ \"out\" }};\n  m.stdout <- \"${{r}}\";\n}}\n"
     )
 }

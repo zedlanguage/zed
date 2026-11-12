@@ -119,9 +119,9 @@ fn every_enabled_fence_program_agrees() {
 
 /// Reads the files its three arguments name, and says which are missing or unreadable.
 const READER: &str = "main(m: MainArgs) {\n  fs = files();\n  \
-    a = (fs[m.args[1] else \"\"] else #notFound -> \"missing\") else #ioError -> \"unreadable\";\n  \
-    b = (fs[m.args[2] else \"\"] else #notFound -> \"missing\") else #ioError -> \"unreadable\";\n  \
-    c = (fs[m.args[3] else \"\"] else #notFound -> \"missing\") else #ioError -> \"unreadable\";\n  \
+    a = (fs[m.args[0] else \"\"] else #notFound -> \"missing\") else #ioError -> \"unreadable\";\n  \
+    b = (fs[m.args[1] else \"\"] else #notFound -> \"missing\") else #ioError -> \"unreadable\";\n  \
+    c = (fs[m.args[2] else \"\"] else #notFound -> \"missing\") else #ioError -> \"unreadable\";\n  \
     m.stdout <- \"${a}|${b}|${c}\";\n}\n";
 
 #[test]
@@ -166,11 +166,12 @@ fn files_named_by_arguments_agree() {
             Ran {
                 status: 2,
                 stdout: String::new(),
-                stderr: "command-line argument 2 (counted from the first word after `--`) is not \
-                         UTF-8, and a `CommandLine` port gives the program each argument as a \
-                         string, which must be UTF-8 text. Pass the argument as UTF-8 text, or \
+                stderr:
+                    "the command-line argument at key 1 of `m.args` (the first word after `--` \
+                         is key 0) is not UTF-8, and `m.args` gives the program each argument as \
+                         a string, which must be UTF-8 text. Pass the argument as UTF-8 text, or \
                          pass the path of a file that holds it.\n"
-                    .into(),
+                        .into(),
             },
         ),
     ];
@@ -217,8 +218,8 @@ fn files_named_by_arguments_agree() {
 /// Compares its first two arguments by `>` and `>=`, which legalization rewrites for this back
 /// end, the comparison not known before the run.
 const ORDER: &str = "main(m: MainArgs) {\n  \
-    a = m.args[1] else \"\";\n  \
-    b = m.args[2] else \"\";\n  \
+    a = m.args[0] else \"\";\n  \
+    b = m.args[1] else \"\";\n  \
     x = if a > b { \"after\" } else { \"not after\" };\n  \
     y = if a >= b { \"at or after\" } else { \"before\" };\n  \
     m.stdout <- \"${x}|${y}\";\n}\n";
@@ -286,7 +287,7 @@ fn a_tuple_indexed_by_a_computed_key_agrees() {
         &src,
         "main(m: MainArgs) {\n  \
          person = (\"Ada\", 1815, \"London\");\n  \
-         column = int(m.stdin[1]) else 0;\n  \
+         column = int(m.stdin[0]) else 0;\n  \
          m.stdout <- \"${person[column] else \"no such column\"}\";\n}\n",
     )
     .unwrap();

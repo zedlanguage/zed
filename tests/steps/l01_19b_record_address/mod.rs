@@ -40,14 +40,14 @@ fn write(name: &str, file: &str, src: &str) -> String {
 
 /// Doubles the number on its first line.
 const DOUBLE: &str =
-    "main(m: MainArgs) {\n  n = int(m.stdin[1]) else 0;\n  m.stdout <- \"${n * 2}\";\n}\n";
+    "main(m: MainArgs) {\n  n = int(m.stdin[0]) else 0;\n  m.stdout <- \"${n * 2}\";\n}\n";
 
 /// [`DOUBLE`] with another local name and another layout.
-const DOUBLE_AGAIN: &str = "main(m: MainArgs) {\n\n    count = int(m.stdin[1])   else 0;\n    m.stdout <- \"${count * 2}\";\n}\n";
+const DOUBLE_AGAIN: &str = "main(m: MainArgs) {\n\n    count = int(m.stdin[0])   else 0;\n    m.stdout <- \"${count * 2}\";\n}\n";
 
 /// Triples it: the same ports, another meaning.
 const TRIPLE: &str =
-    "main(m: MainArgs) {\n  n = int(m.stdin[1]) else 0;\n  m.stdout <- \"${n * 3}\";\n}\n";
+    "main(m: MainArgs) {\n  n = int(m.stdin[0]) else 0;\n  m.stdout <- \"${n * 3}\";\n}\n";
 
 /// Records a run of `src` on standard input `7` in test directory `name`, and gives the
 /// paths of the program and of the record.
@@ -160,7 +160,7 @@ fn a_record_that_names_no_program_is_refused() {
 #[test]
 fn the_inputs_a_program_reads_are_part_of_the_address() {
     // The two terms give the same line; one reads standard input and the other a file.
-    let lines = "main(m: MainArgs) {\n  m.stdout <- m.stdin[1] else \"a\";\n}\n";
+    let lines = "main(m: MainArgs) {\n  m.stdout <- m.stdin[0] else \"a\";\n}\n";
     let files = "main(m: MainArgs) {\n  fs = files();\n  m.stdout <- fs[\"1\"] else \"a\";\n}\n";
     let (a, b) = (
         load(lines.as_bytes()).unwrap(),

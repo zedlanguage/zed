@@ -40,9 +40,9 @@ fn zedc_names_the_argument_that_is_not_utf8() {
     assert_eq!(out.status.code(), Some(2));
     assert_eq!(
         String::from_utf8_lossy(&out.stderr),
-        "command-line argument 2 (counted from the first word after `--`) is not UTF-8, and a \
-         `CommandLine` port gives the program each argument as a string, which must be UTF-8 \
-         text. Pass the argument as UTF-8 text, or pass the path of a file that holds it.\n"
+        "the command-line argument at key 1 of `m.args` (the first word after `--` is key 0) is \
+         not UTF-8, and `m.args` gives the program each argument as a string, which must be \
+         UTF-8 text. Pass the argument as UTF-8 text, or pass the path of a file that holds it.\n"
     );
     assert!(out.stdout.is_empty());
 }

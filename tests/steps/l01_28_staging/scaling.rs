@@ -21,7 +21,7 @@ use zed_tests::step_helpers::l01_16_elaboration::elab;
 /// writes their sum, so the last term reads every one.
 fn chain(n: usize, all: bool) -> String {
     let mut s = String::from("main(m: MainArgs) {\n");
-    s += "  x0 = int(m.stdin[1]) else 0;\n";
+    s += "  x0 = int(m.stdin[0]) else 0;\n";
     for i in 1..=n {
         s += &format!("  x{i} = x{} + {i};\n", i - 1);
     }

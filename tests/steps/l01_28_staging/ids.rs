@@ -167,7 +167,7 @@ fn units() -> Vec<(String, Vec<u8>)> {
     out.sort();
     // The files of later layers do not load yet; every program written below does.
     out.retain(|(_, src)| load(src).is_ok());
-    let mut chain = String::from("main(m: MainArgs) {\n  x0 = int(m.stdin[1]) else 0;\n");
+    let mut chain = String::from("main(m: MainArgs) {\n  x0 = int(m.stdin[0]) else 0;\n");
     for i in 1..=40 {
         chain += &format!(
             "  x{i} = if x{} >= {i} {{ x{} }} else {{ x{} + {i} * 2 }};\n",
@@ -180,7 +180,7 @@ fn units() -> Vec<(String, Vec<u8>)> {
     out.extend([
         (
             "a log filter".into(),
-            b"day = 60 * 60 * 24;\nweek = 7 * day;\nmain(m: MainArgs) {\n  secs = int(m.stdin[1]) else 0;\n  m.stdout <- String(week - secs) ++ \" left of \" ++ String(week);\n}\n".to_vec(),
+            b"day = 60 * 60 * 24;\nweek = 7 * day;\nmain(m: MainArgs) {\n  secs = int(m.stdin[0]) else 0;\n  m.stdout <- String(week - secs) ++ \" left of \" ++ String(week);\n}\n".to_vec(),
         ),
         ("a chain of ifs".into(), chain.into_bytes()),
         (

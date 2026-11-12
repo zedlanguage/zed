@@ -190,7 +190,7 @@ fn a_value_already_past_the_word_warns_once() {
 #[test]
 fn an_if_gives_the_interval_of_its_branches() {
     let src = main_with(
-        "  n = if m.stdin[1] == \"x\" { 10 } else { 3037000500 };\n  sq = n * n;\n",
+        "  n = if m.stdin[0] == \"x\" { 10 } else { 3037000500 };\n  sq = n * n;\n",
         "sq",
     );
     assert_eq!(
@@ -204,7 +204,7 @@ fn an_if_gives_the_interval_of_its_branches() {
          |            ^ [9]
   [2]  3:8: `n` is int[10..=3037000500] here
   [3]  2:7: `n` is defined as this expression, int[10..=3037000500]
-       2 |   n = if m.stdin[1] == \"x\" { 10 } else { 3037000500 };
+       2 |   n = if m.stdin[0] == \"x\" { 10 } else { 3037000500 };
          |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [3, 4]
          |                            ^^^^^^ [5]    ^^^^^^^^^^ [8]
          |                              ^^ [6]    ^^^^^^^^^^^^^^ [7]
@@ -253,12 +253,12 @@ fn a_difference_of_a_value_with_itself_is_read_as_a_range() {
     // int[-10..=10] here, and near the ends of the word that range leaves it, so the
     // warning is given although the value is 0.
     let small = main_with(
-        "  x = if m.stdin[1] == \"x\" { 0 } else { 10 };\n  y = x - x;\n",
+        "  x = if m.stdin[0] == \"x\" { 0 } else { 10 };\n  y = x - x;\n",
         "y",
     );
     assert_eq!(messages(&small), Vec::<String>::new());
     let large = main_with(
-        "  x = if m.stdin[1] == \"x\" { -9223372036854775807 } else { 9223372036854775807 };\n  \
+        "  x = if m.stdin[0] == \"x\" { -9223372036854775807 } else { 9223372036854775807 };\n  \
          y = x - x;\n",
         "y",
     );

@@ -4,7 +4,7 @@
 struct Order { orderId: int, item: Utf8String }
 struct Payment { amount: int }
 main(m: MainArgs) {
-  orders = [Order(orderId: 1, item: "pen"), Order(orderId: 2, item: trim(m.stdin[1] else "")), Order(orderId: 3, item: "pad")];
+  orders = [Order(orderId: 1, item: "pen"), Order(orderId: 2, item: trim(m.stdin[0] else "")), Order(orderId: 3, item: "pad")];
   payments = { 1 -> Payment(amount: 4), 3 -> Payment(amount: 9) };
   paid = orders.join(payments, on: #orderId, kind: #left);
   m.stdout <- for id -> pair in paid { o, p = pair; if p is #none { "${id} ${o.item} unpaid" } else { "${id} ${o.item} ${p.amount}" } };

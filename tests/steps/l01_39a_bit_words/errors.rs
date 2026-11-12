@@ -77,7 +77,7 @@ fn an_x_wider_than_its_width_is_rejected() {
 fn an_operand_not_shown_in_its_domain_is_rejected() {
     // `int(s)` may be any int, so it may be negative.
     let out = rejected(
-        "main(m: MainArgs) {\n  n = int(m.stdin[1]) else 0;\n  \
+        "main(m: MainArgs) {\n  n = int(m.stdin[0]) else 0;\n  \
          m.stdout <- String(popCount(n));\n}\n",
     );
     assert!(
@@ -87,7 +87,7 @@ fn an_operand_not_shown_in_its_domain_is_rejected() {
     // A test narrows the operand in the arm where it holds (`narrowing`), and in the other arm
     // shows it is negative.
     let out = rejected(
-        "main(m: MainArgs) {\n  n = int(m.stdin[1]) else 0;\n  \
+        "main(m: MainArgs) {\n  n = int(m.stdin[0]) else 0;\n  \
          m.stdout <- if n >= 0 { \"\" } else { String(popCount(n)) };\n}\n",
     );
     assert!(

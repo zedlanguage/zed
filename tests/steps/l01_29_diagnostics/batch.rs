@@ -30,7 +30,7 @@ fn units() -> Vec<(String, Vec<u8>)> {
     out.sort();
     out.push((
         "concatenates a number".into(),
-        b"main(m: MainArgs) {\n  n = int(m.stdin[1]) else 0;\n  m.stdout <- \"n: \" ++ n;\n}\n"
+        b"main(m: MainArgs) {\n  n = int(m.stdin[0]) else 0;\n  m.stdout <- \"n: \" ++ n;\n}\n"
             .to_vec(),
     ));
     out.push((

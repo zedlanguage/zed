@@ -1005,7 +1005,7 @@ fn pncx_sat_reduction() {
         conditions.extend(excluded.iter().map(|(m, c)| format!("x mod {m} != {c}")));
         conditions.extend(["x >= 0".into(), format!("x < {big_p}")]);
         let source = format!(
-            "ok(x:int)={};\nmain(m:MainArgs) {{ a=int(m.stdin[1] else \"0\") else 0; r=if ok(x:a) {{ \"in\" }} else {{ \"out\" }}; m.stdout <- \"${{r}}\"; }}\n",
+            "ok(x:int)={};\nmain(m:MainArgs) {{ a=int(m.stdin[0] else \"0\") else 0; r=if ok(x:a) {{ \"in\" }} else {{ \"out\" }}; m.stdout <- \"${{r}}\"; }}\n",
             conditions.join(" && ")
         );
         std::fs::write(path, source).expect("probe source file");

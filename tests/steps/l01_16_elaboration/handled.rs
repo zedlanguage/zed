@@ -77,7 +77,7 @@ fn a_lambda_that_trims_a_line_or_the_empty_string_runs_for_a_missing_line() {
 fn a_program_trimming_a_missing_line_runs_the_body() {
     let src = "r(positional line) = trim(line else \"\");\n\
                main(m: MainArgs) {\n\
-               \x20 m.stdout <- if r(m.stdin[9]) is #notFound { \"the body did not run\" } else { \"the body ran\" };\n\
+               \x20 m.stdout <- if r(m.stdin[8]) is #notFound { \"the body did not run\" } else { \"the body ran\" };\n\
                }\n";
     let out = run("missing_line", src, "x\n", &[]);
     assert_eq!((out.status, out.stderr.as_str()), (0, ""));
@@ -128,12 +128,12 @@ fn a_function_whose_atoms_reach_its_result_gives_a_string_for_a_string() {
 
 #[test]
 fn an_argument_that_may_be_an_atom_selects_the_arrow_that_takes_it() {
-    // `stdin[2]` is `#outOfBounds` on one line, and the body maps it to "empty"; `stdin[1]` is
+    // `stdin[1]` is `#outOfBounds` on one line, and the body maps it to "empty"; `stdin[0]` is
     // the line. The lambda is the same function written as a value.
     let src = "r(positional line) = if (line else \"\") == \"\" { \"empty\" } else { trim(line) };\n\
                main(m: MainArgs) {\n\
                \x20 f = (positional x) -> if (x else \"\") == \"\" { \"e\" } else { trim(x) };\n\
-               \x20 m.stdout <- (r(m.stdin[2]) else \"gone\") ++ \",\" ++ (r(m.stdin[1]) else \"gone\") ++ \",\" ++ f(\" b \") ++ \",\" ++ (f(m.stdin[2]) else \"gone\");\n\
+               \x20 m.stdout <- (r(m.stdin[1]) else \"gone\") ++ \",\" ++ (r(m.stdin[0]) else \"gone\") ++ \",\" ++ f(\" b \") ++ \",\" ++ (f(m.stdin[1]) else \"gone\");\n\
                }\n";
     assert_eq!(output("selects_arrow", src), "empty,x,b,e\n");
     let body = "if (line else \"\") == \"\" { \"empty\" } else { trim(line) }";
@@ -148,7 +148,7 @@ fn a_function_that_calls_it_with_its_own_parameter_gives_a_string_for_a_string()
     let r = "r(positional line) = if (line else \"\") == \"\" { \"empty\" } else { trim(line) };\n\
              g(positional x) = r(x);\n";
     let src = format!(
-        "{r}main(m: MainArgs) {{\n  m.stdout <- g(\" a \") ++ \",\" ++ (g(m.stdin[2]) else \"passed by\");\n}}\n"
+        "{r}main(m: MainArgs) {{\n  m.stdout <- g(\" a \") ++ \",\" ++ (g(m.stdin[1]) else \"passed by\");\n}}\n"
     );
     assert_eq!(output("wrapper", &src), "a,passed by\n");
 }
@@ -160,7 +160,7 @@ fn a_function_that_handles_its_parameter_and_passes_it_to_one_that_does_too() {
     // `(String) -> String`, and `g(" a ")` goes to a `Lines` port. A missing line takes both
     // functions' second arrows: `g`'s `else` and then `r`'s map it to a string.
     let r = "r(positional line) = if (line else \"\") == \"\" { \"empty\" } else { trim(line) };\n";
-    let main = "main(m: MainArgs) {\n  m.stdout <- g(\" a \") ++ \",\" ++ g(\"-\") ++ \",\" ++ (g(m.stdin[2]) else \"gone\");\n}\n";
+    let main = "main(m: MainArgs) {\n  m.stdout <- g(\" a \") ++ \",\" ++ g(\"-\") ++ \",\" ++ (g(m.stdin[1]) else \"gone\");\n}\n";
     for (name, g, want) in [
         (
             "handles_then_passes_on",
@@ -186,7 +186,7 @@ fn a_method_call_passes_its_receiver_as_the_first_argument() {
     // name of a function or of a lambda.
     let r = "r(positional line) = if (line else \"\") == \"\" { \"empty\" } else { trim(line) };\n\
              r2(positional line, positional d) = if (line else \"\") == \"\" { d } else { trim(line) };\n";
-    let main = "main(m: MainArgs) {\n  m.stdout <- g(\" a \") ++ \",\" ++ g(\"-\") ++ \",\" ++ (g(m.stdin[2]) else \"gone\");\n}\n";
+    let main = "main(m: MainArgs) {\n  m.stdout <- g(\" a \") ++ \",\" ++ g(\"-\") ++ \",\" ++ (g(m.stdin[1]) else \"gone\");\n}\n";
     for (name, g, want) in [
         ("method_wrapper", "g(positional x) = x.r();\n", "a,-,gone\n"),
         (
@@ -258,7 +258,7 @@ fn a_function_value_called_with_a_handled_parameter_gives_a_string_for_a_string(
     // line passes its call by.
     let r = "r(positional line) = if (line else \"\") == \"\" { \"empty\" } else { trim(line) };\n\
              ap(positional f, positional v) = f(v);\n";
-    let main = "main(m: MainArgs) {\n  m.stdout <- g(\" a \") ++ \",\" ++ g(\"-\") ++ \",\" ++ (g(m.stdin[2]) else \"gone\");\n}\n";
+    let main = "main(m: MainArgs) {\n  m.stdout <- g(\" a \") ++ \",\" ++ g(\"-\") ++ \",\" ++ (g(m.stdin[1]) else \"gone\");\n}\n";
     for (name, g, want) in [
         (
             "higher_order",
@@ -289,12 +289,12 @@ fn output_on(name: &str, src: &str, input: &str) -> String {
 
 #[test]
 fn a_line_that_may_be_missing_or_unreadable_runs_the_body_that_tests_for_a_missing_one() {
-    // `stdin[2]` is `String | #outOfBounds | #ioError(..)`. A parameter tested only for
+    // `stdin[1]` is `String | #outOfBounds | #ioError(..)`. A parameter tested only for
     // `#outOfBounds`, by `is` or by a pattern `else`, takes that atom and omits `#ioError`:
     // rule 6 treats each region of the argument apart, so `#ioError` passes the call by and
     // `#outOfBounds` runs the body. The call was rejected, since the atoms passed by only when
     // no arrow took any of them; a declared parameter was rejected the same way.
-    let main = "main(m: MainArgs) {\n  m.stdout <- g(m.stdin[2]) else \"gone\";\n}\n";
+    let main = "main(m: MainArgs) {\n  m.stdout <- g(m.stdin[1]) else \"gone\";\n}\n";
     for (name, g, missing) in [
         (
             "is_only",
@@ -327,7 +327,7 @@ fn a_line_that_may_be_missing_or_unreadable_runs_the_body_that_tests_for_a_missi
 fn an_atom_the_parameter_omits_passes_by_while_the_one_it_tests_runs_the_body() {
     let g = "g(positional x) = if x is #outOfBounds { \"nf\" } else { trim(x) };\n";
     let main = "main(m: MainArgs) {\n  \
-                m.stdout <- if g(if m.stdin[1] == \"o\" { #other } else { m.stdin[2] }) is #other { \"other passed\" } else { \"ran\" };\n}\n";
+                m.stdout <- if g(if m.stdin[0] == \"o\" { #other } else { m.stdin[1] }) is #other { \"other passed\" } else { \"ran\" };\n}\n";
     let src = format!("{g}{main}");
     assert_eq!(output_on("other", &src, "o\n"), "other passed\n");
     assert_eq!(output_on("other", &src, "x\n"), "ran\n");
@@ -340,7 +340,7 @@ fn a_lambda_given_a_handled_parameter_through_a_function_passes_its_atoms_by_at_
     // call whose argument gave it, so `g` gives a string for a string. The call was rejected
     // at `g`'s definition, `f` taking no atom.
     let ap = "ap(positional f, positional v) = f(v);\n";
-    let main = "main(m: MainArgs) {\n  m.stdout <- g(\" a \") ++ \",\" ++ g(\"-\") ++ \",\" ++ (g(m.stdin[2]) else \"gone\");\n}\n";
+    let main = "main(m: MainArgs) {\n  m.stdout <- g(\" a \") ++ \",\" ++ g(\"-\") ++ \",\" ++ (g(m.stdin[1]) else \"gone\");\n}\n";
     for (name, g, want) in [
         (
             "lambda_in_a_test",
@@ -363,7 +363,7 @@ fn a_lambda_given_a_handled_parameter_through_a_function_passes_its_atoms_by_at_
     }
     // A missing line given to `ap` directly passes by at that call too.
     let direct = format!(
-        "{ap}main(m: MainArgs) {{\n  m.stdout <- ap((positional y) -> trim(y), m.stdin[2]) else \"gone\";\n}}\n"
+        "{ap}main(m: MainArgs) {{\n  m.stdout <- ap((positional y) -> trim(y), m.stdin[1]) else \"gone\";\n}}\n"
     );
     assert_eq!(output("lambda_direct", &direct), "gone\n");
 }

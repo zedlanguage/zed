@@ -1,10 +1,10 @@
 // layer L1
-// Output fixed by DESIGN.md (at 843be85) line 1819: a `Lines` input is keyed by line number from
-// 1, so a missing line is `#notFound`; line 1817: `int(s)` reads an optional `-` and decimal
+// Output fixed by DESIGN.md step L1.19: a `Lines` input is keyed from 0, so a missing line is
+// `#outOfBounds`; DESIGN.md (at 843be85) line 1817: `int(s)` reads an optional `-` and decimal
 // digits, anything else `#invalid`; line 504: `x div 0` is `#divByZero`; `else` replaces each.
 main(m: MainArgs) {
-  a = int(trim(m.stdin[1] else "")) else -1;
-  b = int(trim(m.stdin[2] else "")) else -2;
-  c = int(trim(m.stdin[9] else "none")) else -3;
+  a = int(trim(m.stdin[0] else "")) else -1;
+  b = int(trim(m.stdin[1] else "")) else -2;
+  c = int(trim(m.stdin[8] else "none")) else -3;
   m.stdout <- "${a} ${b} ${c} ${(a div b) else 0} ${(7 div (a - 12)) else 99}";
 }

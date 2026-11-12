@@ -12,7 +12,10 @@ use zedc::testing::test;
 
 /// Writes the last of its `n` lines, so the wave reads the whole input.
 fn last_line(n: usize) -> Program {
-    let src = format!("main(m: MainArgs) {{\n  m.stdout <- m.stdin[{n}] else \"\";\n}}\n");
+    let src = format!(
+        "main(m: MainArgs) {{\n  m.stdout <- m.stdin[{}] else \"\";\n}}\n",
+        n - 1
+    );
     load(src.as_bytes()).unwrap()
 }
 
@@ -87,7 +90,7 @@ fn rows_still_run_when_the_program_is_refused() {
     // that read different fields have different parameter types: the unit is accepted,
     // `run::program` refuses it as a program, and the table of `next` still runs.
     let text = "main(m: MainArgs) {\n  m.stdout <- \"x\";\n}\n\
-                main(m: MainArgs) {\n  m.stdout <- m.args[1] else \"\";\n}\n\
+                main(m: MainArgs) {\n  m.stdout <- m.args[0] else \"\";\n}\n\
                 next(positional x) = x + 1\ntest {\n  1 -> 2,\n  2 -> 4\n}\n";
     let outcomes: Vec<(usize, Option<String>)> = test(text)
         .into_iter()
@@ -149,7 +152,7 @@ fn zedc_run_reading_a_file_of_n_lines_on_stdin_scales() {
     let program = dir.join("first.zed");
     std::fs::write(
         &program,
-        "main(m: MainArgs) {\n  m.stdout <- m.stdin[1] else \"\";\n}\n",
+        "main(m: MainArgs) {\n  m.stdout <- m.stdin[0] else \"\";\n}\n",
     )
     .unwrap();
     let files = inputs(20_000, |n| {

@@ -77,7 +77,7 @@ step that uses it.
 | Need | Feature of the subset | Layer | Where |
 |---|---|---|---|
 | read the source units | the `Files` port, `fs[path]`; an import names its unit's path, so no directory listing is needed | L1 | DESIGN.md "Ports are the only outside world", the words table |
-| read the command line | the `CommandLine` input port: the arguments after `--`, keyed by position from 1 | L1 | step L1.19a |
+| read the command line | the `CommandLine` input port: the arguments after `--`, keyed from 0 | L1 | step L1.19a |
 | write an executable | `zedc build file -o out`, a deterministic link with the runtime (`zed-rt`, and libzed after step S.7a) | L1 | step L1.36a |
 | lex by code point | the `String` functions, and `codePoint`, `scalar`, `utf8`, `fromUtf8` | L1 | step L1.39c |
 | identifier and normalization tables | XID_Start, XID_Continue, the scripts and the NFC data as sorted range tables, each lookup O(log n) by `upTo` | L5 | step S.1c, with step L5.8a |

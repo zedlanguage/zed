@@ -4,7 +4,7 @@
 // `Utf8String` writes (`3r`, `-1r/3r`) or the same without the `r`s, and `f64` of a `rat` "is the
 // float equal to it or `#inexact`".
 main(m: MainArgs) {
-  d = rat(trim(m.stdin[1] else "")) else 1r;
+  d = rat(trim(m.stdin[0] else "")) else 1r;
   third = 1r / 3r;
   m.stdout <- "${third + 1r / 6r} ${0.1r + 0.2r} ${third * 3r} ${f64(third) else -1.0} ${(1r / d) else 0r}";
 }

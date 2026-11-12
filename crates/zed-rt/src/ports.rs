@@ -4,9 +4,9 @@
 
 use zed_kernel::{Family, Value};
 
-/// The lines of `bytes`, the input of port `port`, keyed from 1: a line ends at `\n`, which a
+/// The lines of `bytes`, the input of port `port`, keyed from 0: a line ends at `\n`, which a
 /// last line may lack; every `\r` right before a line's end is not part of the line; a line
-/// that is not UTF-8 is `#ioError(op: "read", path: port, why: "line N is not UTF-8")`.
+/// that is not UTF-8 is `#ioError(op: "read", path: port, why: "the line at key K is not UTF-8")`.
 pub fn lines(port: &str, bytes: &[u8]) -> Value {
     let mut out = Vec::new();
     let mut start = 0;
@@ -24,10 +24,10 @@ pub fn lines(port: &str, bytes: &[u8]) -> Value {
             Err(_) => Value::io_error(
                 "read",
                 port,
-                &format!("line {} is not UTF-8", out.len() + 1),
+                &format!("the line at key {} is not UTF-8", out.len()),
             ),
         };
-        out.push((Value::Int(out.len() as i64 + 1), v));
+        out.push((Value::Int(out.len() as i64), v));
         start = end + 1;
     }
     Value::Family(Family::of(out))
@@ -88,7 +88,7 @@ mod tests {
             f(b"ok\n\xff\n"),
             vec![
                 Value::str("ok"),
-                Value::io_error("read", "stdin", "line 2 is not UTF-8")
+                Value::io_error("read", "stdin", "the line at key 1 is not UTF-8")
             ]
         );
         assert_eq!(write("o", &Value::str("x")).unwrap(), b"x\n");

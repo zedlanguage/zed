@@ -39,7 +39,10 @@ fn a_long_lines_input_is_split_and_joined_in_linear_time() {
 #[test]
 fn a_wave_reading_the_last_of_many_lines_scales() {
     let waves = inputs(20_000, |n| {
-        let src = format!("main(m: MainArgs) {{\n  m.stdout <- m.stdin[{n}] else \"\";\n}}\n");
+        let src = format!(
+            "main(m: MainArgs) {{\n  m.stdout <- m.stdin[{}] else \"\";\n}}\n",
+            n - 1
+        );
         let input = BTreeMap::from([("m.stdin".to_string(), Arc::from(lines(n)))]);
         (load(src.as_bytes()).unwrap(), input)
     });

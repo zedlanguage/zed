@@ -15,7 +15,7 @@ fn the_offered_repair_applied_makes_the_program_check() {
     let cases = [
         (
             "main(m: MainArgs) {
-  n = int(m.stdin[1]) else 0;
+  n = int(m.stdin[0]) else 0;
   m.stdout <- \"count: \" ++ n * 2;
 }
 ",

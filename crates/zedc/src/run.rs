@@ -1,7 +1,7 @@
 //! Running a program against its ports (step L1.19): `main`'s header names the ports, each
 //! input is read once, whole, the wave runs, and each output is written once, at the end.
 //!
-//! An input `Lines` port is the family of its lines, keyed by line number from 1; a `Files`
+//! An input `Lines` port is the family of its lines, keyed by line from 0; a `Files`
 //! port is a lookup, `Path ->? String | #ioError(op:, path:, why:)`, answered by the world at each path read and
 //! kept, so the wave sees one value per path. An output `Lines` port takes one whole-value
 //! push, a `String` (one line) or a family of them (one line per entry, in key order); keyed
@@ -37,7 +37,7 @@ pub enum PortKind {
     Lines,
     /// `Files`, a lookup by path.
     Files,
-    /// `CommandLine`, the arguments after `--`, keyed by position from 1 (step L1.19a).
+    /// `CommandLine`, the arguments after `--`, keyed from 0 (step L1.19a).
     CommandLine,
     /// `String ->? String`, the environment variables, a lookup by name (step L1.19c).
     Env,
@@ -628,7 +628,7 @@ pub fn commit(
     acks
 }
 
-/// The lines of `bytes`, the input of `Lines` port `port`, keyed from 1. A line ends at `\n`,
+/// The lines of `bytes`, the input of `Lines` port `port`, keyed from 0. A line ends at `\n`,
 /// every `\r` right before its end is dropped, and a last line needs no `\n`; a `\r` inside a
 /// line is kept. Each line costs O(its length). A line that is not UTF-8 is
 /// `#ioError(op: "read", path: port, why:)`, its path the port's name, since standard input
@@ -645,19 +645,19 @@ pub fn split_lines(port: &str, bytes: &[u8]) -> Value {
         }
         let v = match std::str::from_utf8(line) {
             Ok(s) => Value::str(s),
-            Err(_) => Value::io_error("read", port, &not_utf8(i + 1)),
+            Err(_) => Value::io_error("read", port, &not_utf8(i)),
         };
-        (Value::Int(i as i64 + 1), v)
+        (Value::Int(i as i64), v)
     });
     Value::Family(Family::of(lines))
 }
 
-/// The value of a `CommandLine` input: the family of `args`, keyed by position from 1.
+/// The value of a `CommandLine` input: the family of `args`, keyed from 0.
 pub fn arguments(args: &[String]) -> Value {
     let args = args
         .iter()
         .enumerate()
-        .map(|(i, a)| (Value::Int(i as i64 + 1), Value::str(a)));
+        .map(|(i, a)| (Value::Int(i as i64), Value::str(a)));
     Value::Family(Family::of(args))
 }
 
@@ -797,8 +797,8 @@ fn stopped(env: &Environment, why: String) -> (u8, String) {
 
 /// Why line `n` of a `Lines` input is `#ioError`. The port runtime (`zed_rt::ports`) gives
 /// the same text.
-fn not_utf8(n: usize) -> String {
-    format!("line {n} is not UTF-8")
+fn not_utf8(key: usize) -> String {
+    format!("the line at key {key} is not UTF-8")
 }
 
 /// A `Files` port answered from a [`Record`].
@@ -1003,8 +1003,8 @@ struct Words<'a> {
 }
 
 /// The words `args` of a command line as text, or why one is not UTF-8: a word before `--`
-/// is named by its place among the words after `zedc`, an argument after it by its position
-/// from 1, the key a `CommandLine` port gives it.
+/// is named by its place among the words after `zedc`, an argument after it by its key
+/// from 0, the key `m.args` gives it.
 fn words(args: &[impl AsRef<std::ffi::OsStr>]) -> Result<Words<'_>, String> {
     let args: Vec<&std::ffi::OsStr> = args.iter().map(AsRef::as_ref).collect();
     let split = args.iter().position(|w| *w == "--");
@@ -1033,11 +1033,10 @@ fn words(args: &[impl AsRef<std::ffi::OsStr>]) -> Result<Words<'_>, String> {
         .map(|(i, w)| {
             w.to_str().map(str::to_string).ok_or_else(|| {
                 format!(
-                    "command-line argument {} (counted from the first word after `--`) is \
-                         not UTF-8, and a `CommandLine` port gives the program each argument \
-                         as a string, which must be UTF-8 text. Pass the argument as UTF-8 \
-                         text, or pass the path of a file that holds it.",
-                    i + 1
+                    "the command-line argument at key {i} of `m.args` (the first word after \
+                         `--` is key 0) is not UTF-8, and `m.args` gives the program each \
+                         argument as a string, which must be UTF-8 text. Pass the argument as \
+                         UTF-8 text, or pass the path of a file that holds it.",
                 )
             })
         })

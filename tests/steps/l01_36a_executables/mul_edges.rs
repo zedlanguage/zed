@@ -12,8 +12,8 @@ use super::{built, dir, executable, interpreter};
 
 const MUL: &str = "\
 main(m: MainArgs) {
-  x = int(m.args[1] else \"\") else 0;
-  y = int(m.args[2] else \"\") else 0;
+  x = int(m.args[0] else \"\") else 0;
+  y = int(m.args[1] else \"\") else 0;
   m.stdout <- \"${x * y}\";
 }
 ";

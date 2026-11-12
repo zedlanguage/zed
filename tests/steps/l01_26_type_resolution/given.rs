@@ -13,8 +13,8 @@ use zed_tests::step_helpers::l01_19a_command_line::{dir, run};
 /// `main` reading the files its first two arguments name through `r`, `missing` for a file
 /// that is not there.
 const MAIN: &str = "main(m: MainArgs) {\n  fs = files();\n  \
-    a = (r(fs: fs, args: m.args, k: 1) else #notFound -> \"missing\") else #ioError -> \"unreadable\";\n  \
-    b = (r(fs: fs, args: m.args, k: 2) else #notFound -> \"missing\") else #ioError -> \"unreadable\";\n  \
+    a = (r(fs: fs, args: m.args, k: 0) else #notFound -> \"missing\") else #ioError -> \"unreadable\";\n  \
+    b = (r(fs: fs, args: m.args, k: 1) else #notFound -> \"missing\") else #ioError -> \"unreadable\";\n  \
     m.stdout <- \"${a}|${b}\";\n}\n";
 
 /// Runs `r`, defined as `helper`, with `main` on the arguments `present.txt absent.txt` of a
@@ -71,7 +71,7 @@ fn a_test_that_leaves_the_atom_is_still_rejected() {
     // `else #ioError -> ""` and `is #ioError` handle an atom `args[k]` never gives, so its
     // `#notFound` still reaches `fs`, which does not take it.
     let expected = "this function, which `r` applies, does not take #notFound, and no argument \
-                    of this call gives it [r(fs: fs, args: m.args, k: 1)]";
+                    of this call gives it [r(fs: fs, args: m.args, k: 0)]";
     for helper in [
         "r(fs, args, k) = fs[args[k] else #ioError -> \"\"];",
         "r(fs, args, k) { p = args[k]; return if p is #ioError { \"\" } else { fs[p] }; }",
@@ -96,7 +96,7 @@ fn helpers(n: usize) -> String {
         src.push_str(&format!(
             "  a{i} = (r{i}(fs: fs, args: m.args, k: {}) else #notFound -> \"m\") \
              else #ioError -> \"u\";\n",
-            i + 1
+            i
         ));
     }
     src.push_str("  m.stdout <- \"${a0}\";\n}\n");
@@ -130,18 +130,18 @@ fn a_key_handled_beside_the_read_is_followed_too() {
 fn an_else_on_a_parameter_of_any_value_leaves_no_atom_at_a_call() {
     // `r else d` on a parameter of any value leaves a value of its own, which a call gives as
     // the argument without its loose atoms (DESIGN.md sec:failure: "loose atoms ... are
-    // stripped"). Before, it kept the parameter's type variable whole, so `g(args[1])` was
+    // stripped"). Before, it kept the parameter's type variable whole, so `g(args[0])` was
     // `0 | String | #notFound` and a `Lines` port rejected it (CHECK-else-notfound, QUESTIONS.md
     // A11's side observation).
     for (src, want) in [
         (
             "g(positional r) = r else 0;\n\
-             main(m: MainArgs) { m.stdout <- \"${g(m.args[1])}\"; }\n",
+             main(m: MainArgs) { m.stdout <- \"${g(m.args[0])}\"; }\n",
             "0\n",
         ),
         (
             "g(positional r) = r else \"zero\";\n\
-             main(m: MainArgs) { m.stdout <- g(m.args[1]) ++ \"a\"; }\n",
+             main(m: MainArgs) { m.stdout <- g(m.args[0]) ++ \"a\"; }\n",
             "zeroa\n",
         ),
         (

@@ -30,7 +30,7 @@ fn unit_of(front: &Front) -> &Unit {
     u
 }
 
-const ECHO: &str = "main(m: MainArgs) {\n  m.stdout <- m.stdin[1] else \"\";\n}\n";
+const ECHO: &str = "main(m: MainArgs) {\n  m.stdout <- m.stdin[0] else \"\";\n}\n";
 
 /// `n` lines of input.
 fn lines(n: usize) -> Vec<u8> {

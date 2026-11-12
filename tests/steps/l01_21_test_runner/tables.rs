@@ -43,7 +43,7 @@ fn a_row_that_stops_the_evaluator_fails() {
 
 #[test]
 fn a_main_row_compares_the_bytes_each_port_writes() {
-    let src = "main(m: MainArgs) {\n  m.stdout <- upper(m.stdin[1] else \"\");\n}\n\
+    let src = "main(m: MainArgs) {\n  m.stdout <- upper(m.stdin[0] else \"\");\n}\n\
                test { \"abc\\n\" -> \"ABC\\n\", \"abc\" -> \"ABC\" }\n";
     assert_eq!(
         checks(src),
@@ -57,7 +57,7 @@ fn a_main_row_compares_the_bytes_each_port_writes() {
 #[test]
 fn a_port_not_pushed_writes_nothing() {
     let src = "main(m: MainArgs) {\n  \
-               m.stdout <- m.stdin[1] else \"\";\n}\n\
+               m.stdout <- m.stdin[0] else \"\";\n}\n\
                test { \"a\" -> (\"a\\n\", \"\"), \"a\" -> (\"a\\n\", \"warning\\n\") }\n";
     assert_eq!(
         checks(src),
@@ -128,7 +128,7 @@ fn a_main_with_a_wrong_header_reports_once_and_runs_no_row() {
 fn a_main_row_may_give_the_exit_status() {
     // The third item of the value is the status the run exits with, from 0 to 255.
     let src = "main(m: MainArgs) -> int {\n  m.stdout <- \"x\";\n  \
-               if (m.stdin[1] else \"\") == \"no\" { 3 } else { 0 }\n}\n\
+               if (m.stdin[0] else \"\") == \"no\" { 3 } else { 0 }\n}\n\
                test { \"no\" -> (\"x\\n\", \"\", 3), \"yes\" -> (\"x\\n\", \"\", 3), \
                \"no\" -> (\"x\\n\", \"\", 256) }\n";
     assert_eq!(

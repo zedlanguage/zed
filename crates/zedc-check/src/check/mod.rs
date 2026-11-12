@@ -6907,7 +6907,7 @@ fn word_sig(w: &str) -> Arc<Sig> {
 
 /// The type of the bytes `utf8` gives and `fromUtf8` reads (step L1.39c): a family of ints keyed
 /// by ints. The checker has no int-range types before step L10, so neither the keys
-/// from 1 nor the bytes in `0 ..< 256` are stated here; the kernel gives `#badUtf8` for an int
+/// from 0 nor the bytes in `0 ..< 256` are stated here; the kernel gives `#badUtf8` for an int
 /// that is not a byte.
 fn bytes() -> Ty {
     Ty::set(KType::partial(KType::int(), KType::int()))
@@ -7512,12 +7512,12 @@ fn io_error() -> Ty {
     t
 }
 
-/// The type of a port of `main` (L1.19): a `Lines` input is the family of its lines by number
-/// from 1, each a `String` or `#ioError(op:, path:, why:)`, and a `Files` input answers a path
+/// The type of a port of `main` (L1.19): a `Lines` input is the family of its lines keyed
+/// from 0, each a `String` or `#ioError(op:, path:, why:)`, and a `Files` input answers a path
 /// with its text, `#notFound` or `#ioError(op:, path:, why:)`; a lookup outside the family's
 /// keys is `#notFound` in its arrows, and `#outOfBounds` at a read `v[k]` of an `int`-keyed
 /// port, whose keys are one interval, every key present ([`Sig::dense`]). A `CommandLine`
-/// input (L1.19a) is the family of the arguments by position from 1, each a `String`. `key` is the key's carrier and `io` whether a read can be
+/// input (L1.19a) is the family of the arguments keyed from 0, each a `String`. `key` is the key's carrier and `io` whether a read can be
 /// `#ioError`; a port keyed by `int` is a family, data, and one keyed by path a lookup.
 fn port(key: Carrier, io: bool) -> Ty {
     let mut result = Ty::carrier(Carrier::Str).union(&Ty::set(KType::atom("notFound")));

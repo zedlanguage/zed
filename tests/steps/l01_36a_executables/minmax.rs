@@ -13,9 +13,9 @@ const MINMAX: &str = "\
 clamp(positional x, positional lo, positional hi) { max(lo, min(x, hi)) }
 
 main(m: MainArgs) {
-  x = f64(m.args[1] else \"\") else 0.0;
-  y = f64(m.args[2] else \"\") else 0.0;
-  z = f64(m.args[3] else \"\") else 0.0;
+  x = f64(m.args[0] else \"\") else 0.0;
+  y = f64(m.args[1] else \"\") else 0.0;
+  z = f64(m.args[2] else \"\") else 0.0;
   m.stdout <- \"${min(x, y)} ${min(y, x)} ${max(x, y)} ${max(y, x)} ${clamp(x, y, z)}\";
 }
 ";

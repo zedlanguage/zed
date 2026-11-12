@@ -133,6 +133,8 @@ so a different decision changes the named `.out` files.
 
 1. **stdin keys.** `stdin[t]` and `stdin.drop(1)` treat Lines as a rank-keyed
    family from 0 (EXAMPLES' todo example indexes `cmds[t]` the same way).
+   DESIGN now fixes it: every family read forward is keyed from 0 (sec:ports,
+   step L1.19, item KEYS-from-zero).
    Programs 14, 15, 24, 25, 26 depend on it.
 2. **`int(s)` and `f64(s)`** are the String casts, giving `int | #invalid`
    (EXAMPLES, sec:domains) and `f64 | #invalid`; `else` supplies the default.

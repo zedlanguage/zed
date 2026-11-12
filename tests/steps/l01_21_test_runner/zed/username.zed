@@ -4,7 +4,7 @@ normal(positional name) = lower(trim(name))
 test { "Ada" -> "ada", " bo " -> "bo", "eve" -> "eve" }
 
 main(m: MainArgs) {
-  line = m.stdin[1] else "";
+  line = m.stdin[0] else "";
   name = normal(line);
   m.stdout <- name;
   m.stderr <- if name == line { "unchanged" } else { "normalized \"${line}\"" };

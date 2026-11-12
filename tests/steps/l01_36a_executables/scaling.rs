@@ -13,8 +13,9 @@ fn reader(n: usize) -> String {
     let mut src = "main(m: MainArgs) {\nfs = files();\n".to_string();
     for k in 1..=n {
         src += &format!(
-            "  r{k} = (fs[m.args[{k}] else \"\"] else #notFound -> \"missing\") \
-             else #ioError -> \"unreadable\";\n"
+            "  r{k} = (fs[m.args[{}] else \"\"] else #notFound -> \"missing\") \
+             else #ioError -> \"unreadable\";\n",
+            k - 1
         );
     }
     let holes: Vec<String> = (1..=n).map(|k| format!("${{r{k}}}")).collect();

@@ -88,10 +88,10 @@ fn both_print(src: &Path, exe: &Path, words: &[OsString], want: &str) {
 /// wrong line.
 const ROUTES: &str = r#"
 main(m: MainArgs) {
-  z = f64(m.args[1] else "") else 1.0;
-  one = f64(m.args[2] else "") else 0.0;
-  m = f64(m.args[3] else "") else 0.0;
-  r = f64(m.args[4] else "") else 0.0;
+  z = f64(m.args[0] else "") else 1.0;
+  one = f64(m.args[1] else "") else 0.0;
+  m = f64(m.args[2] else "") else 0.0;
+  r = f64(m.args[3] else "") else 0.0;
   nan = z / z;
   inf = one / z;
   m.stdout <- """
@@ -222,8 +222,8 @@ fn nans_of_literal_operands_give_the_canonical_nan_in_the_interpreter_and_the_ex
 fn a_nan_operand_of_an_addition_does_not_carry_its_sign_into_the_executable() {
     let src_text = r#"
 main(m: MainArgs) {
-  z = f64(m.args[1] else "") else 1.0;
-  one = f64(m.args[2] else "") else 0.0;
+  z = f64(m.args[0] else "") else 1.0;
+  one = f64(m.args[1] else "") else 0.0;
   m.stdout <- "${f64Bits(z / z + one)} ${f64Bits(one + -(z / z))}";
 }
 "#;

@@ -108,14 +108,14 @@ fn a_comparison_of_two_kinds_is_rejected() {
 
 #[test]
 fn a_line_of_a_lines_port_is_a_string_or_an_error() {
-    rejected("", r#""${m.stdin[1] + 1}""#);
-    assert_eq!(runs("", r#""${len(m.stdin[1]) else 0}""#, "abc"), "3\n");
+    rejected("", r#""${m.stdin[0] + 1}""#);
+    assert_eq!(runs("", r#""${len(m.stdin[0]) else 0}""#, "abc"), "3\n");
 }
 
 #[test]
 fn an_int_power_needs_an_exponent_of_at_least_zero() {
     rejected("", r#""${2^-1}""#);
-    rejected("", r#""${(2^(int(m.stdin[1]) else 0)) div 1}""#);
+    rejected("", r#""${(2^(int(m.stdin[0]) else 0)) div 1}""#);
     assert_eq!(runs("", r#""${2^3}""#, ""), "8\n");
 }
 

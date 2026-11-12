@@ -10,10 +10,10 @@ use super::{sig, type_errors};
 use zed_tests::step_helpers::l01_19_whole_file_ports::run;
 
 /// A program that reads the line, the argument and the tuple component at the number on its
-/// first line, each read written with the handler of its atom.
+/// first line, key 0, each read written with the handler of its atom.
 const READS: &str = "main(m: MainArgs) {\n  \
      t = (10, 20, 30);\n  \
-     i = int(m.stdin[1]) else 0;\n  \
+     i = int(m.stdin[0]) else 0;\n  \
      line = m.stdin[i] else #outOfBounds -> \"no line\" else #ioError -> \"unreadable\";\n  \
      arg = m.args[i] else #outOfBounds -> \"no argument\";\n  \
      next = t[i] + 1 else #outOfBounds -> -1;\n  \
@@ -28,16 +28,16 @@ fn reads(name: &str, line: &str) -> String {
 
 #[test]
 fn a_read_inside_the_interval_gives_the_entry() {
-    assert_eq!(reads("oob_inside", "1"), "1 | a | 21\n");
-    assert_eq!(reads("oob_inside", "2"), "second | b | 31\n");
+    assert_eq!(reads("oob_inside", "0"), "0 | a | 11\n");
+    assert_eq!(reads("oob_inside", "1"), "second | b | 21\n");
 }
 
 #[test]
 fn a_read_outside_the_interval_is_out_of_bounds() {
-    // Past the end of the lines and the arguments, and of the tuple at 3.
+    // Past the end of the two lines and the two arguments at 2, and of the tuple at 3.
+    assert_eq!(reads("oob_outside", "2"), "no line | no argument | 31\n");
     assert_eq!(reads("oob_outside", "3"), "no line | no argument | -1\n");
-    // Below the first key of each: 0 for the lines and the arguments, -1 for the tuple.
-    assert_eq!(reads("oob_outside", "0"), "no line | no argument | 11\n");
+    // Below the first key of each, which is 0 for all three.
     assert_eq!(reads("oob_outside", "-1"), "no line | no argument | -1\n");
 }
 
@@ -68,7 +68,7 @@ fn a_handler_for_not_found_leaves_out_of_bounds_in_the_type() {
         "(t: (int, int, int), i: int) -> int | #outOfBounds"
     );
     let src = "main(m: MainArgs) {\n  \
-               m.stdout <- m.args[1] else #notFound -> \"none\";\n}\n";
+               m.stdout <- m.args[0] else #notFound -> \"none\";\n}\n";
     let out = run("oob_old_handler", src, "", &["--", "a"]);
     assert_eq!(out.status, 1);
     assert!(
@@ -91,7 +91,7 @@ fn a_map_parameter_and_a_generic_read_keep_not_found() {
     let src = "get(m: int ->? String, k: int) = m(k);\n\
                pick(a, k) = a[k];\n\
                main(m: MainArgs) {\n  \
-               i = int(m.stdin[1]) else 0;\n  \
+               i = int(m.stdin[0]) else 0;\n  \
                viaMap = get(m: m.args, k: i) else #notFound -> \"map miss\";\n  \
                viaPick = pick(a: m.args, k: i) else #notFound -> \"generic miss\";\n  \
                m.stdout <- \"${viaMap} | ${viaPick}\";\n}\n";
@@ -100,8 +100,8 @@ fn a_map_parameter_and_a_generic_read_keep_not_found() {
         assert_eq!((out.status, out.stderr.as_str()), (0, ""), "{line}");
         out.stdout
     };
-    assert_eq!(at("1"), "a | a\n");
-    assert_eq!(at("2"), "map miss | generic miss\n");
+    assert_eq!(at("0"), "a | a\n");
+    assert_eq!(at("1"), "map miss | generic miss\n");
 }
 
 #[test]

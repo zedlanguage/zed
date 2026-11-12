@@ -3,6 +3,6 @@
 // line 2961: `^` binds tighter than unary minus; line 331: "semantic `int` widens its
 // domain instead of overflowing".
 main(m: MainArgs) {
-  n = int(trim(m.stdin[1] else "")) else 0;
+  n = int(trim(m.stdin[0] else "")) else 0;
   m.stdout <- "${(0 - 7) div 2} ${(0 - 7) mod 2} ${7 div (0 - 2)} ${7 mod (0 - 2)} ${n mod 3} ${-2^2} ${2^100}";
 }

@@ -3,7 +3,7 @@
 // with domain {"a","b"}; line 501: a lookup is `T | #notFound`; line 1997: `in` on a range.
 main(m: MainArgs) {
   m = { "a" -> 1, "b" -> 2 };
-  v = m[trim(m.stdin[1] else "")] else 0;
+  v = m[trim(m.stdin[0] else "")] else 0;
   w = m["c"] else -1;
   m.stdout <- "${v} ${w} ${m::card} ${if v in 1..=2 { "yes" } else { "no" }}";
 }

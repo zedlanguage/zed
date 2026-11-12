@@ -229,7 +229,7 @@ fn a_program_with_a_remainder_by_a_symbol_is_checked_and_runs() {
     // deciding them rejects nothing (front.rs, `linear_questions`).
     let src = "ok(i, len) = len >= 1 && 0 <= i mod len && i mod len < len;\n\
                main(m: MainArgs) {\n  \
-               a = int(m.stdin[1] else \"0\") else 0;\n  \
+               a = int(m.stdin[0] else \"0\") else 0;\n  \
                held = ok(i: a, len: a - 2) else false;\n  \
                r = if held { \"in\" } else { \"out\" };\n  m.stdout <- \"${r}\";\n}\n";
     for (input, out) in [("7\n", "in\n"), ("-3\n", "out\n")] {

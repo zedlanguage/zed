@@ -9,7 +9,7 @@ use super::{dir, run};
 #[test]
 fn a_port_bound_on_the_command_line_is_a_usage_error() {
     let src = "main(m: MainArgs) {\n  \
-               m.stdout <- \"${m.stdin[1] else \"\"}\\n${m.stdin[2] else \"\"}\";\n}\n";
+               m.stdout <- \"${m.stdin[0] else \"\"}\\n${m.stdin[1] else \"\"}\";\n}\n";
     let out = run("report", src, "total: 42\nitems: 3\n", &[]);
     assert_eq!(
         (out.status, out.stdout.as_str()),
@@ -66,7 +66,7 @@ fn a_port_pushed_twice_in_one_wave_is_an_error() {
     assert_eq!(out.stdout, "", "nothing is written");
     // Two push sites on different branches are fine: one of them runs.
     let src = "main(m: MainArgs) {\n  \
-               done = if m.stdin[1] == \"yes\" {\n    m.stdout <- \"accepted\";\n    1\n  } \
+               done = if m.stdin[0] == \"yes\" {\n    m.stdout <- \"accepted\";\n    1\n  } \
                else {\n    m.stdout <- \"declined\";\n    0\n  };\n}\n";
     assert_eq!(run("branches", src, "no\n", &[]).stdout, "declined\n");
 }
@@ -207,7 +207,7 @@ const USAGE: &str = "The forms are:\n  \
 
 #[test]
 fn usage_errors_exit_2() {
-    let src = "main(m: MainArgs) {\n  m.stdout <- m.stdin[1] else \"\";\n}\n";
+    let src = "main(m: MainArgs) {\n  m.stdout <- m.stdin[0] else \"\";\n}\n";
     let out = run("usage", src, "", &["nosuch=x"]);
     assert_eq!(
         (out.status, out.stderr.as_str()),
@@ -275,7 +275,7 @@ fn an_empty_level_pushed_writes_no_line() {
 #[test]
 fn a_file_zedc_cannot_use_is_named_with_the_reason() {
     let missing = "/nonexistent-dir-l01-19/in.txt";
-    let src = "main(m: MainArgs) {\n  m.stdout <- m.stdin[1] else \"\";\n}\n";
+    let src = "main(m: MainArgs) {\n  m.stdout <- m.stdin[0] else \"\";\n}\n";
     let out = super::zedc(&["run", missing], "");
     assert_eq!(
         (out.status, out.stderr.as_str()),

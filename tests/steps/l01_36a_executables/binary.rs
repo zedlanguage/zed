@@ -86,7 +86,7 @@ fn a_built_executable_runs() {
     std::fs::write(
         &src,
         "main(m: MainArgs) {\n  \
-         m.stdout <- \"Hello, ${m.args[1] else \"world\"}!\";\n}\n",
+         m.stdout <- \"Hello, ${m.args[0] else \"world\"}!\";\n}\n",
     )
     .unwrap();
     let exe = d.join("hello");

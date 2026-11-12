@@ -8,7 +8,7 @@ use super::{out, staged, term};
 /// A log filter: the day length and the cutoff are computed at build, the rest per line.
 const UPTIME: &str = "day = 60 * 60 * 24;\nweek = 7 * day;\n\
     main(m: MainArgs) {\n  \
-    secs = int(m.stdin[1]) else 0;\n  \
+    secs = int(m.stdin[0]) else 0;\n  \
     m.stdout <- String(week - secs) ++ \" left of \" ++ String(week);\n}\n";
 
 #[test]
@@ -170,7 +170,7 @@ fn the_form_rule_reads_calls_and_family_operators() {
 #[test]
 fn a_dead_branch_is_cut_at_build() {
     let src = "verbose = false;\nmain(m: MainArgs) {\n  \
-               line = m.stdin[1] else \"\";\n  \
+               line = m.stdin[0] else \"\";\n  \
                m.stdout <- if verbose { \"read: \" ++ line } else { line };\n}\n";
     let (p, s, _) = staged(src);
     let main = term(&s, "main");
@@ -183,7 +183,7 @@ fn a_local_definition_is_computed_where_it_is_read() {
     // `k` is build-stage, so its reads are computed and its definition dropped; `inc`, a
     // function nothing reads, is never evaluated; `n` reads the port and stays.
     let src = "main(m: MainArgs) {\n  k = 6 * 7;\n  \
-               inc(y: int) = y + 1;\n  n = int(m.stdin[1]) else 0;\n  \
+               inc(y: int) = y + 1;\n  n = int(m.stdin[0]) else 0;\n  \
                m.stdout <- String(n + k);\n}\n";
     let (p, s, report) = staged(src);
     let main = term(&s, "main");
@@ -222,7 +222,7 @@ fn a_staged_program_keeps_the_warnings_of_its_source() {
 #[test]
 fn an_unread_local_definition_is_reported_by_its_written_name() {
     let src = "twice(positional inc: int) = inc * 2;\nmain(m: MainArgs) {\n  \
-               inc(y: int) = y + 1;\n  n = int(m.stdin[1]) else 0;\n  \
+               inc(y: int) = y + 1;\n  n = int(m.stdin[0]) else 0;\n  \
                m.stdout <- String(twice(n));\n}\n";
     let (p, s, report) = staged(src);
     assert_eq!(report.unread, ["inc"], "{report:?}");

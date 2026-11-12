@@ -162,7 +162,7 @@ fn a_split_function_gives_what_the_function_gives_on_every_value() {
 const PORT: &str = "rate = 8;\n\
     ship(zone: int, kg: int) = if zone == 0 { kg } else { kg * zone + rate };\n\
     main(m: MainArgs) {\n  \
-    z = int(m.stdin[1]) else 0;\n  \
+    z = int(m.stdin[0]) else 0;\n  \
     m.stdout <- String(ship(zone: 0, kg: z) + ship(zone: 3, kg: z) + ship(zone: z, kg: 7));\n}\n";
 
 /// What `main` of `p`, closed over `u` in place of `p`'s unit, writes on `stdin`.

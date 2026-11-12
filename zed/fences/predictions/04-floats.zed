@@ -6,6 +6,6 @@
 // `1.0 / 0.0` is `inf`.
 // Each decimal literal that nothing else gives a carrier is written with `f64` (L1.26b).
 main(m: MainArgs) {
-  x = f64(trim(m.stdin[1] else "")) else 0.0;
+  x = f64(trim(m.stdin[0] else "")) else 0.0;
   m.stdout <- "${x + 0.2} ${1.0f64 / 3.0} ${1e21f64} ${1e20f64} ${1.5e-7f64} ${0.000001f64} ${-0.0f64} ${1.0f64 / 0.0} ${2.5f64 * 2.0}";
 }

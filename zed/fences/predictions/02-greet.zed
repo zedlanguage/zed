@@ -4,7 +4,7 @@
 // called hiAnn(punct: "?") or hiAnn()".
 greet(positional name: Utf8String, punct = "!") = "Hi, " ++ name ++ punct;
 main(m: MainArgs) {
-  who = trim(m.stdin[1] else "nobody");
+  who = trim(m.stdin[0] else "nobody");
   hi = greet(who, ...);
   m.stdout <- greet(who) ++ " " ++ greet(who, punct: "?") ++ " " ++ hi(punct: ".") ++ " " ++ hi();
 }
