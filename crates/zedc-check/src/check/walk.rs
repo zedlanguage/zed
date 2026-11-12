@@ -8186,7 +8186,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         // is read. Bound to the arguments' own values, `f(x, p) = x + p[0]` called as
         // `f(x: 1r, p: (2r, 1))` gave `1r | 2r`, the two literals the call passes, for a value
         // `3r` outside it (LIT-generic-parts-type). Classes, variables and other values stay
-        // as they are. Complexity tradeoff (COMPLEXITY.md F165): naive, a second walk over the
+        // as they are. Complexity tradeoff (COMPLEXITY.md F170): naive, a second walk over the
         // binding after this check, O(p) for p pieces, reading each piece's class and carrier
         // again; used, the widened binding built in the pass this check makes already, O(p),
         // one union per piece.

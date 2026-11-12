@@ -201,7 +201,7 @@ fn the_static_type_of_each_generated_call_holds_its_value() {
 
 /// A function that reads `n` parts of its tuple parameter, called with a tuple of `n` distinct
 /// `r` literals: the binding of its bounded variable has `n + 1` pieces, each widened to `rat`
-/// once (COMPLEXITY.md F165).
+/// once (COMPLEXITY.md F170).
 fn parts(n: usize) -> String {
     let reads: Vec<String> = (0..n).map(|i| format!("p[{i}]")).collect();
     let tuple: Vec<String> = (0..n).map(|i| format!("{}r", i + 2)).collect();
@@ -212,7 +212,7 @@ fn parts(n: usize) -> String {
     )
 }
 
-/// `n` calls of one function, each with its own `r` literals (COMPLEXITY.md F165).
+/// `n` calls of one function, each with its own `r` literals (COMPLEXITY.md F170).
 fn calls(n: usize) -> String {
     let ys: Vec<String> = (0..n)
         .map(|i| format!("y{i} = f(x: {}r, p: ({}r, 1));\n", i + 1, i + 2))
