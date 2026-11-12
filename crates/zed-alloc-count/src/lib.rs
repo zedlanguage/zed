@@ -56,47 +56,74 @@ struct Count {
     parent: Option<Arc<Count>>,
 }
 
-#[cfg(target_os = "linux")]
-thread_local! {
+/// What the allocator keeps for each thread, in one thread-local, so that an allocation and a
+/// free find all of it from one address. A `const` value of a type with no destructor, so reading
+/// it allocates nothing, has no check of a first use, and works while the thread ends.
+struct Local {
     /// This thread's [`Count`], or null on a thread not started by `pthread_create`. The `Arc`
     /// that keeps it lives in [`start`] on this thread's stack, and is dropped only after this
-    /// is set back to null. A `const` cell of a type with no destructor, so reading it allocates
-    /// nothing and works while the thread ends.
-    static COUNT: Cell<*const Count> = const { Cell::new(std::ptr::null()) };
+    /// is set back to null.
+    #[cfg(target_os = "linux")]
+    count: Cell<*const Count>,
     /// The bytes allocated on a thread with no [`Count`]: the main thread, and any thread after
-    /// [`start`] has set its [`COUNT`] back to null while it ends.
-    static OWN: Cell<u64> = const { Cell::new(0) };
+    /// [`start`] has set its `count` back to null while it ends.
+    #[cfg(target_os = "linux")]
+    own: Cell<u64>,
+    /// Whether a measurement of [`live`] is running on this thread: the one field a free reads
+    /// when none is.
+    on: Cell<bool>,
+    /// The bytes allocated less the bytes freed since the measurement started.
+    net: Cell<i64>,
+    /// The largest `net` has been.
+    peak: Cell<i64>,
+}
+
+thread_local! {
+    /// This thread's [`Local`].
+    static LOCAL: Local = const {
+        Local {
+            #[cfg(target_os = "linux")]
+            count: Cell::new(std::ptr::null()),
+            #[cfg(target_os = "linux")]
+            own: Cell::new(0),
+            on: Cell::new(false),
+            net: Cell::new(0),
+            peak: Cell::new(0),
+        }
+    };
 }
 
 #[cfg(target_os = "linux")]
-/// This thread's [`Count`], if it has one.
-fn this_count() -> Option<&'static Count> {
-    let count = COUNT.get();
-    #[expect(
-        unsafe_code,
-        reason = "the count is shared with the threads this one starts, which it must outlive"
-    )]
-    // SAFETY: `COUNT` is null or points into the `Arc` that `start` holds on this thread's stack
-    // while it is set (see `COUNT`). The reference does not leave the caller's use on this
-    // thread, which happens while that `Arc` lives.
-    unsafe {
-        count.as_ref()
+impl Local {
+    /// This thread's [`Count`], if it has one.
+    fn count(&self) -> Option<&Count> {
+        let count = self.count.get();
+        #[expect(
+            unsafe_code,
+            reason = "the count is shared with the threads this one starts, which it must outlive"
+        )]
+        // SAFETY: `count` is null or points into the `Arc` that `start` holds on this thread's
+        // stack while it is set (see `Local::count`). The reference lives no longer than `self`,
+        // a borrow of this thread's `Local` taken inside `LOCAL.with`, which ends before `start`
+        // drops that `Arc`.
+        unsafe {
+            count.as_ref()
+        }
     }
 }
 
 #[cfg(target_os = "linux")]
 /// The bytes this thread and the threads it started have allocated so far.
 pub fn allocated() -> u64 {
-    match this_count() {
+    LOCAL.with(|local| match local.count() {
         Some(count) => count.bytes.load(Relaxed),
-        None => OWN.get(),
-    }
+        None => local.own.get(),
+    })
 }
 
 #[cfg(target_os = "linux")]
-/// Adds `bytes` to this thread's count and its parents', from inside the allocator, when the
-/// system gave the block (`block` is not null) and returns `block`. The walk is as long as the
-/// chain of threads that started this one, a handful in any test.
+/// Adds `bytes`, which the system gave, to this thread's count and its parents'. The walk is as
+/// long as the chain of threads that started this one, a handful in any test.
 ///
 /// Complexity tradeoff: the other version, one count per thread with a thread's descendants
 /// summed at each read, is O(1) per allocation but O(threads) per read and needs the live
@@ -104,18 +131,15 @@ pub fn allocated() -> u64 {
 /// O(d) for a chain `d` threads long, and a read is O(1). Tradeoffs: allocation costs grow
 /// with `d`, which only a test's own threads set, about three; the compiler and runtime start
 /// none. COMPLEXITY.md row "`zed_alloc_count` `count`".
-fn count(block: *mut u8, bytes: usize) -> *mut u8 {
-    if !block.is_null() {
-        let mut count = this_count();
-        if count.is_none() {
-            OWN.set(OWN.get() + bytes as u64);
-        }
-        while let Some(c) = count {
-            c.bytes.fetch_add(bytes as u64, Relaxed);
-            count = c.parent.as_deref();
-        }
+fn count(local: &Local, bytes: usize) {
+    let mut count = local.count();
+    if count.is_none() {
+        local.own.set(local.own.get() + bytes as u64);
     }
-    block
+    while let Some(c) = count {
+        c.bytes.fetch_add(bytes as u64, Relaxed);
+        count = c.parent.as_deref();
+    }
 }
 
 /// The bytes every thread of the process has allocated, off Linux.
@@ -129,45 +153,32 @@ pub fn allocated() -> u64 {
     ALL.load(Relaxed)
 }
 
-/// Adds `bytes` to the count of the process, from inside the allocator, when the system gave the
-/// block (`block` is not null), and returns `block`.
+/// Adds `bytes`, which the system gave, to the count of the process.
 #[cfg(not(target_os = "linux"))]
-fn count(block: *mut u8, bytes: usize) -> *mut u8 {
-    if !block.is_null() {
-        ALL.fetch_add(bytes as u64, Relaxed);
+fn count(_: &Local, bytes: usize) {
+    ALL.fetch_add(bytes as u64, Relaxed);
+}
+
+/// Adds `added` bytes and takes away `freed` bytes from the measurement running on this thread,
+/// if one is. Both are worked out only when one is, so a free with none running reads one flag.
+fn track(local: &Local, added: usize, freed: usize) {
+    if local.on.get() {
+        let net = local.net.get() + added as i64 - freed as i64;
+        local.net.set(net);
+        local.peak.set(local.peak.get().max(net));
     }
-    block
 }
 
-/// The live bytes of the measurement running on this thread (see [`live`]).
-#[derive(Clone, Copy)]
-struct Tracked {
-    /// Whether a measurement is running.
-    on: bool,
-    /// The bytes allocated less the bytes freed since it started.
-    net: i64,
-    /// The largest `net` has been.
-    peak: i64,
-}
-
-thread_local! {
-    /// The measurement of [`live`] on this thread. A `const` cell of a type with no destructor,
-    /// so the allocator reads it without allocating, and a free reads one flag when no
-    /// measurement runs.
-    static TRACKED: Cell<Tracked> = const { Cell::new(Tracked { on: false, net: 0, peak: 0 }) };
-}
-
-/// Adds `bytes`, which may be negative, to the measurement running on this thread, if one is.
-fn track(bytes: i64) {
-    let t = TRACKED.get();
-    if t.on {
-        let net = t.net + bytes;
-        TRACKED.set(Tracked {
-            on: true,
-            net,
-            peak: t.peak.max(net),
+/// Counts a block of `bytes` the system gave (`block` is not null) and returns `block`; `freed`
+/// is the size of the block it replaced, 0 for a new block.
+fn allocated_block(block: *mut u8, bytes: usize, freed: usize) -> *mut u8 {
+    if !block.is_null() {
+        LOCAL.with(|local| {
+            count(local, bytes);
+            track(local, bytes, freed);
         });
     }
+    block
 }
 
 /// What [`live`] measured.
@@ -185,33 +196,38 @@ pub struct Live {
 /// not counted, and a block `f` frees that was allocated before it counts as negative. A
 /// measurement inside another adds its bytes to the outer one.
 pub fn live<R>(f: impl FnOnce() -> R) -> (R, Live) {
-    /// Puts the outer measurement back when `f` returns or unwinds.
-    struct Restore(Tracked);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            TRACKED.set(self.0);
-        }
+    /// A measurement's state: whether it runs, its `net` and its `peak`.
+    type State = (bool, i64, i64);
+    fn get() -> State {
+        LOCAL.with(|l| (l.on.get(), l.net.get(), l.peak.get()))
     }
-    let outer = TRACKED.get();
-    let restore = Restore(outer);
-    TRACKED.set(Tracked {
-        on: true,
-        net: 0,
-        peak: 0,
-    });
-    let out = f();
-    let inner = TRACKED.get();
-    drop(restore);
-    if outer.on {
-        TRACKED.set(Tracked {
-            on: true,
-            net: outer.net + inner.net,
-            peak: outer.peak.max(outer.net + inner.peak),
+    fn set((on, net, peak): State) {
+        LOCAL.with(|l| {
+            l.on.set(on);
+            l.net.set(net);
+            l.peak.set(peak);
         });
     }
+    /// Puts the outer measurement back when `f` returns or unwinds.
+    struct Restore(State);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            set(self.0);
+        }
+    }
+    let outer = get();
+    let restore = Restore(outer);
+    set((true, 0, 0));
+    let out = f();
+    let (_, net, peak) = get();
+    drop(restore);
+    let (outer_on, outer_net, outer_peak) = outer;
+    if outer_on {
+        set((true, outer_net + net, outer_peak.max(outer_net + peak)));
+    }
     let live = Live {
-        net: inner.net,
-        peak: inner.peak.unsigned_abs(),
+        net,
+        peak: peak.unsigned_abs(),
     };
     (out, live)
 }
@@ -228,35 +244,24 @@ pub struct Counting;
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         // SAFETY: the caller's guarantees about `layout` are passed on unchanged.
-        let block = count(unsafe { System.alloc(layout) }, layout.size());
-        if !block.is_null() {
-            track(layout.size() as i64);
-        }
-        block
+        allocated_block(unsafe { System.alloc(layout) }, layout.size(), 0)
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         // SAFETY: as in `alloc`.
-        let block = count(unsafe { System.alloc_zeroed(layout) }, layout.size());
-        if !block.is_null() {
-            track(layout.size() as i64);
-        }
-        block
+        allocated_block(unsafe { System.alloc_zeroed(layout) }, layout.size(), 0)
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        track(-(layout.size() as i64));
+        LOCAL.with(|local| track(local, 0, layout.size()));
         // SAFETY: `ptr` and `layout` come from this allocator, which is `System`.
         unsafe { System.dealloc(ptr, layout) }
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         // SAFETY: as in `dealloc`; the caller's guarantees about `new_size` are passed on.
-        let block = count(unsafe { System.realloc(ptr, layout, new_size) }, new_size);
-        if !block.is_null() {
-            track(new_size as i64 - layout.size() as i64);
-        }
-        block
+        let block = unsafe { System.realloc(ptr, layout, new_size) };
+        allocated_block(block, new_size, layout.size())
     }
 }
 
@@ -323,14 +328,17 @@ pub unsafe extern "C" fn pthread_create(
     routine: Routine,
     arg: *mut c_void,
 ) -> c_int {
-    let parent = this_count().map(|count| {
-        // SAFETY: `count` points into the `Arc` that `start` holds on this thread's stack (see
-        // `COUNT`), so the `Arc` has a strong count while this adds one more for the new thread.
-        unsafe {
-            let ptr: *const Count = count;
-            Arc::increment_strong_count(ptr);
-            Arc::from_raw(ptr)
-        }
+    let parent = LOCAL.with(|local| {
+        local.count().map(|count| {
+            // SAFETY: `count` points into the `Arc` that `start` holds on this thread's stack
+            // (see `Local::count`), so the `Arc` has a strong count while this adds one more for
+            // the new thread.
+            unsafe {
+                let ptr: *const Count = count;
+                Arc::increment_strong_count(ptr);
+                Arc::from_raw(ptr)
+            }
+        })
     });
     let start_arg = Box::into_raw(Box::new(Start {
         routine,
@@ -364,9 +372,9 @@ extern "C" fn start(start_arg: *mut c_void) -> *mut c_void {
         bytes: AtomicU64::new(0),
         parent,
     });
-    COUNT.set(Arc::as_ptr(&count));
+    LOCAL.with(|local| local.count.set(Arc::as_ptr(&count)));
     let out = routine(arg);
-    COUNT.set(std::ptr::null());
+    LOCAL.with(|local| local.count.set(std::ptr::null()));
     drop(count);
     out
 }
@@ -482,7 +490,7 @@ mod tests {
     fn a_measurement_that_panics_leaves_none_running() {
         let caught = std::panic::catch_unwind(|| live(|| panic!("inside")));
         assert!(caught.is_err());
-        assert!(!TRACKED.get().on);
+        assert!(!LOCAL.with(|local| local.on.get()));
     }
 
     #[test]
@@ -594,5 +602,84 @@ mod tests {
             }
         });
         assert!(bytes >= 3000, "{bytes}");
+    }
+
+    /// A fixed workload of every kind of request: 100 blocks of 1 to 100 bytes, all held at
+    /// once (`alloc`); 100 zeroed blocks of 10 to 1,000 bytes, each freed at once
+    /// (`alloc_zeroed`); and a vector of 16 bytes grown in place or by a copy to 64, 256 and
+    /// 1,024 bytes (`realloc`).
+    fn workload() {
+        let held: Vec<Box<[u8]>> = (1..=100u8)
+            .map(|n| black_box(vec![n; usize::from(n)]).into_boxed_slice())
+            .collect();
+        drop(black_box(held));
+        for n in 1..=100 {
+            drop(black_box(vec![0u8; 10 * n]));
+        }
+        let mut v = Vec::<u8>::with_capacity(16);
+        for size in [64, 256, 1024] {
+            v.reserve_exact(size);
+            assert_eq!(v.capacity(), size);
+        }
+        drop(black_box(v));
+    }
+
+    /// The bytes [`workload`] allocates: its blocks, the vector of 100 boxes that holds the
+    /// first ones (16 bytes a box), and the four sizes of the grown vector.
+    const WORKLOAD_BYTES: u64 = 5050 + 100 * 16 + 10 * 5050 + 16 + 64 + 256 + 1024;
+
+    /// The most bytes [`workload`] holds at once: the first 100 blocks and the vector of boxes.
+    const WORKLOAD_PEAK: u64 = 5050 + 100 * 16;
+
+    #[test]
+    fn a_fixed_workload_counts_its_bytes_exactly() {
+        for _ in 0..3 {
+            assert_eq!(bytes_of(workload), WORKLOAD_BYTES);
+            let ((), l) = live(workload);
+            assert_eq!(
+                l,
+                Live {
+                    net: 0,
+                    peak: WORKLOAD_PEAK
+                }
+            );
+        }
+    }
+
+    // Off Linux the count is of the whole process, which other threads add to.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_fixed_workload_counts_its_bytes_exactly_on_each_of_many_threads() {
+        // Eight threads run the workload at once, ten times each, each measured on its own
+        // thread; the thread that started them counts all of their bytes and their starts.
+        let threads = 8;
+        let mut each = Vec::new();
+        let all = bytes_of(|| {
+            std::thread::scope(|s| {
+                let runs: Vec<_> = (0..threads)
+                    .map(|_| {
+                        s.spawn(|| {
+                            (0..10)
+                                .map(|_| (bytes_of(workload), live(workload).1))
+                                .collect::<Vec<_>>()
+                        })
+                    })
+                    .collect();
+                each = runs.into_iter().map(|r| r.join().unwrap()).collect();
+            });
+        });
+        for runs in &each {
+            for &(bytes, l) in runs {
+                assert_eq!(bytes, WORKLOAD_BYTES);
+                assert_eq!(
+                    l,
+                    Live {
+                        net: 0,
+                        peak: WORKLOAD_PEAK
+                    }
+                );
+            }
+        }
+        assert!(all >= threads * 20 * WORKLOAD_BYTES, "{all}");
     }
 }
