@@ -22,6 +22,7 @@ mod listing;
 mod meet_join_oracle;
 mod one_pass;
 mod oracle;
+mod payload_scaling;
 mod r6_reduction;
 mod rec;
 mod rec_order;

@@ -429,6 +429,21 @@ fn a_test_the_relation_carries_to_each_reading_names_the_path_to_it_only() {
 }
 
 #[test]
+fn readings_each_related_to_a_hub_or_a_constant_are_checked_in_linear_work() {
+    // `k` readings `ai`, each under `ai >= n || ai >= 5`, then `n >= -1` and `popCount(ai)` of
+    // each: every read is rejected, since `ai` may be -1. The `||` family of the probes of item
+    // NARROW-if (verify 6) that no test held, at 100 and 800 (test audit 2026-11-08). Only the
+    // work is held here: the checker gives each `ai` the type `int`, not `int[-1..]`, and names
+    // no test, since the relation `ai >= n` of the first side is not used once `n` is bounded
+    // after the `||` (TESTS-scaling-gaps, 2026-11-12).
+    check_rejected_in_linear_work(
+        "checking k readings each related to n or to 5, under a test on n",
+        100,
+        |k| hub(k, "", "a# >= n || a# >= 5", &|i| i),
+    );
+}
+
+#[test]
 fn a_test_the_relation_carries_to_each_reading_names_the_path_to_it_in_any_order() {
     // The same in the other order, the last reading outermost.
     check_notes(

@@ -894,14 +894,21 @@ mod tests {
         std::thread::scope(|s| s.spawn(f).join().unwrap());
     }
 
+    /// Cubic work on a thread a run starts, at 50 and 400: 512 times the work, against the limit
+    /// of 13.5 (27 by time). A meter that missed the thread's work would find only the cost of
+    /// starting it, the same at both sizes. The quadratic work this test ran before, at 1000 and
+    /// 8000 (64 times, limit 11.4, 22.9 by time), took as long and measured 49 to 61 times by
+    /// time, but only 26 to 31 times with the small run made twice as slow, near the limit. The
+    /// cubic work measured 179 to 239 times by time, and 138 to 154 times with the small run
+    /// twice as slow (by instructions 502 and 253 times), at load 62 to 66 (2026-11-12).
     #[test]
     fn the_work_of_a_thread_a_run_starts_counts() {
-        let quadratic = |n| on_a_bare_thread(|| work(n, 2, 2));
+        let cubic = |n| on_a_bare_thread(|| work(n, 3, 2));
         assert!(fails(|| check_instructions_only(
-            "quadratic work on a thread",
-            1000,
+            "cubic work on a thread",
+            50,
             1,
-            quadratic
+            cubic
         )));
         // Only Linux has a meter of processor time.
         #[cfg(target_os = "linux")]
@@ -910,10 +917,10 @@ mod tests {
             assert!(fails(|| check_by(
                 cpu,
                 Measures::WorkOnly,
-                "quadratic, by time",
-                1000,
+                "cubic, by time",
+                50,
                 (1, 1),
-                quadratic
+                cubic
             )));
         }
     }

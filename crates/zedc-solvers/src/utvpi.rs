@@ -975,6 +975,50 @@ mod tests {
     }
 
     #[test]
+    fn many_small_graphs_get_the_answers_of_bellman_ford_moore() {
+        // The battery item UTVPI-GOR's verifier ran and the tests above hold only in part
+        // (test audit 2026-11-08): 300,000 random directed graphs of 1 to 12 nodes, self loops
+        // allowed, 0 to 3n edges of weights -8 to 12. Each search alone, the race of them and
+        // `potential` must find a negative cycle exactly when Bellman–Ford–Moore does, and
+        // otherwise give a potential that holds on every edge. The counts show both answers.
+        let mut state = 11u64;
+        let (mut negative, mut feasible) = (0, 0);
+        for graph in 0..300_000 {
+            let n = 1 + (next(&mut state) % 12) as usize;
+            let mut out: Vec<Vec<(usize, Int)>> = vec![Vec::new(); n];
+            for _ in 0..next(&mut state) % (3 * n as u64 + 1) {
+                let (u, v) = (
+                    (next(&mut state) % n as u64) as usize,
+                    (next(&mut state) % n as u64) as usize,
+                );
+                out[u].push((v, Int::from((next(&mut state) % 21) as i64 - 8)));
+            }
+            let reference = bellman_ford_moore(&out);
+            for (name, found) in [
+                ("potential", potential(&out)),
+                ("Goldberg and Radzik", goldberg_radzik(&out)),
+                ("BF-Dijkstra", bf_dijkstra(&out)),
+                ("Duong", negsssp::potential_alone(&out)),
+                ("race", race(&out)),
+            ] {
+                assert_eq!(
+                    found.is_some(),
+                    reference.is_some(),
+                    "{name} on graph {graph}: {out:?}"
+                );
+                if let Some(p) = found {
+                    assert!(holds(&out, &p), "{name} on graph {graph}: {out:?}");
+                }
+            }
+            match reference {
+                None => negative += 1,
+                Some(_) => feasible += 1,
+            }
+        }
+        assert!(negative > 0 && feasible > 0, "{negative} {feasible}");
+    }
+
+    #[test]
     fn bad_gor_augmented_has_a_potential_that_holds_on_every_edge() {
         // BAD-GOR of Cherkassky and Goldberg as Cassis et al. 2025 (arXiv 2502.11999, appendix)
         // give it, k = 64, with its nodes 1 to 2k + 1 at 0 to 2k: the graph on which the passes
