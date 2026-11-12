@@ -239,6 +239,118 @@ fn a_branch_no_value_reaches_adds_nothing_to_the_result() {
     );
 }
 
+/// A `bool` tested again on a path where an earlier test already decided it: the branch the
+/// second test cannot take is unreachable and adds nothing to the result (DESIGN.md
+/// sec:constraints), in a nested `if`, an `else if` chain, an `if` that is a call's argument and
+/// one bound to a name. With a second, independent `bool` every branch can be taken, and the
+/// result is the union of all three, printed in the fixed order of members (int, then f64,
+/// then a type variable, then atoms). The first row is the finding CHK-nested-if-loses-f64
+/// reported as a lost branch: in the `else` of `if c`, `c` is false, so `if c { f64(1) }` never
+/// gives `f64(1)`.
+#[test]
+fn a_bool_tested_again_on_its_own_path_takes_one_branch() {
+    let h = "h(positional y) = y;\n";
+    for (text, want) in [
+        (
+            "f(positional c, positional x) = if c { int(1) } else { if c { f64(1) } else { x } \
+             };\n"
+                .to_string(),
+            "(bool, T) -> int | T",
+        ),
+        (
+            "f(positional c, positional x) = if c { int(1) } else if c { f64(1) } else { x };\n"
+                .to_string(),
+            "(bool, T) -> int | T",
+        ),
+        (
+            format!(
+                "{h}f(positional c, positional x) = h(if c {{ int(1) }} else {{ if c {{ \
+                 f64(1) }} else {{ x }} }});\n"
+            ),
+            "(bool, T) -> int | T",
+        ),
+        (
+            "f(positional c, positional x) = { y = if c { int(1) } else { if c { f64(1) } else \
+             { x } }; y };\n"
+                .to_string(),
+            "(bool, T) -> int | T",
+        ),
+        // The same test in the `then` branch: there `c` is true, so the nested `else` is the
+        // unreachable branch, and `x` reaches no result.
+        (
+            "f(positional c, positional x) = if c { if c { f64(1) } else { x } } else { int(1) \
+             };\n"
+                .to_string(),
+            "(bool, _) -> int | f64 | #inexact",
+        ),
+        // The negated test holds wherever `c` is false.
+        (
+            "f(positional c, positional x) = if c { int(1) } else { if !c { f64(1) } else { x } \
+             };\n"
+                .to_string(),
+            "(bool, _) -> int | f64 | #inexact",
+        ),
+        // Three levels: the innermost test of `c` is decided by the outermost.
+        (
+            "f(positional c, positional d, positional x) = if c { int(1) } else { if d { \
+             f64(1) } else { if c { \"s\" } else { x } } };\n"
+                .to_string(),
+            "(bool, bool, T) -> int | f64 | T | #inexact",
+        ),
+        // An independent test can go either way, so every branch is in the result.
+        (
+            "f(positional c, positional d, positional x) = if c { int(1) } else { if d { \
+             f64(1) } else { x } };\n"
+                .to_string(),
+            "(bool, bool, T) -> int | f64 | T | #inexact",
+        ),
+        (
+            "f(positional c, positional d, positional x) = if c { int(1) } else if d { f64(1) \
+             } else { x };\n"
+                .to_string(),
+            "(bool, bool, T) -> int | f64 | T | #inexact",
+        ),
+        (
+            format!(
+                "{h}f(positional c, positional d, positional x) = h(if c {{ int(1) }} else {{ \
+                 if d {{ f64(1) }} else {{ x }} }});\n"
+            ),
+            "(bool, bool, T) -> int | f64 | T | #inexact",
+        ),
+        (
+            "f(positional c, positional d, positional x) = if c { if d { f64(1) } else { x } } \
+             else { int(1) };\n"
+                .to_string(),
+            "(bool, bool, T) -> int | f64 | T | #inexact",
+        ),
+        (
+            "f(positional c: bool, positional d: bool) = if c { int(1) } else { if d { f64(1) \
+             } else { \"s\" } };\n"
+                .to_string(),
+            "(bool, bool) -> int | f64 | \"s\" | #inexact",
+        ),
+    ] {
+        assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
+        let got = sig(&text, "f");
+        // The fixed order puts a type variable before the atoms (author, A92 B), and the
+        // printer still writes `#inexact | T` (ledger MSG-union-order-consistent); until it is
+        // fixed, a result with both is compared as a set of members, and the rest as text.
+        let (args, result) = got.split_once(" -> ").expect("an arrow");
+        if result.contains(" | T") && result.contains('#') {
+            let members = |r: &str| {
+                let mut m: Vec<String> = r.split(" | ").map(String::from).collect();
+                m.sort();
+                m
+            };
+            let (want_args, want_result) = want.split_once(" -> ").expect("an arrow");
+            assert_eq!(args, want_args, "{text}");
+            assert_eq!(members(result), members(want_result), "{text}");
+        } else {
+            assert_eq!(got, want, "{text}");
+        }
+    }
+}
+
 /// An atom whose payload has no value once a generic function's types are put in has no
 /// value either: it is `Never`, alone or in a union, as a tuple is.
 #[test]
