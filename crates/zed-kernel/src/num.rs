@@ -732,7 +732,7 @@ impl Rat {
     /// Complexity tradeoff (COMPLEXITY.md K108): naive is `|e|` products of the base, O(e)
     /// products. Used: a base of `0`, `1` or `-1` costs O(1) from `e`'s kept form; any other
     /// base costs [`Rat::pow`], O(log e) products with its kept prime exponents multiplied by
-    /// `e`, plus O(bits of `e`) to build `e`; a negative `e` adds O(1) moves in [`Rat::recip`].
+    /// `e`, plus O(bits of `e`) to build `e`; a negative `e` adds O(1) moves in `Rat::recip`.
     pub fn pow_int(&self, e: &Rat) -> Result<Option<Rat>, TooLarge> {
         let one = || Rat::int(BigInt::one());
         if e.is_zero() {
