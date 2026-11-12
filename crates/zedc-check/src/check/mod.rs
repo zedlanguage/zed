@@ -7050,6 +7050,24 @@ fn word_sig(w: &str) -> Arc<Sig> {
     })
 }
 
+/// The largest magnitude of the contiguous run of integers every one of which `f64` holds
+/// exactly, 2^53 (DESIGN.md "Casts are domain proofs": "`f64(n)` is exact when `|n| ≤ 2^53`").
+const F64_EXACT_INT: i64 = 1 << 53;
+
+/// `f64`'s signature at an operand whose ints the checker proves lie within ±2^53: its arrow at
+/// `int` gives no `#inexact`, since each such int has an exact `f64` (DESIGN.md "Casts are
+/// domain proofs"). Its other arrows are those of [`word_sig`].
+fn f64_of_exact_int_sig() -> Arc<Sig> {
+    let mut sig = word_sig("f64");
+    let int = Ty::carrier(Carrier::Int);
+    for a in &mut Arc::make_mut(&mut sig).arrows {
+        if a.params[0] == int {
+            a.result = Ty::carrier(Carrier::F64);
+        }
+    }
+    sig
+}
+
 /// The type of the bytes `utf8` gives and `fromUtf8` reads (step L1.39c): a family of ints keyed
 /// by ints. The checker has no int-range types before step L10, so neither the keys
 /// from 0 nor the bytes in `0 ..< 256` are stated here; the kernel gives `#badUtf8` for an int

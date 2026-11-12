@@ -281,53 +281,60 @@ fn a_bool_tested_again_on_its_own_path_takes_one_branch() {
             "f(positional c, positional x) = if c { if c { f64(1) } else { x } } else { int(1) \
              };\n"
                 .to_string(),
-            "(bool, _) -> int | f64 | #inexact",
+            "(bool, _) -> int | f64",
         ),
         // The negated test holds wherever `c` is false.
         (
             "f(positional c, positional x) = if c { int(1) } else { if !c { f64(1) } else { x } \
              };\n"
                 .to_string(),
-            "(bool, _) -> int | f64 | #inexact",
+            "(bool, _) -> int | f64",
         ),
         // Three levels: the innermost test of `c` is decided by the outermost.
         (
             "f(positional c, positional d, positional x) = if c { int(1) } else { if d { \
              f64(1) } else { if c { \"s\" } else { x } } };\n"
                 .to_string(),
-            "(bool, bool, T) -> int | f64 | T | #inexact",
+            "(bool, bool, T) -> int | f64 | T",
         ),
         // An independent test can go either way, so every branch is in the result.
         (
             "f(positional c, positional d, positional x) = if c { int(1) } else { if d { \
              f64(1) } else { x } };\n"
                 .to_string(),
-            "(bool, bool, T) -> int | f64 | T | #inexact",
+            "(bool, bool, T) -> int | f64 | T",
         ),
         (
             "f(positional c, positional d, positional x) = if c { int(1) } else if d { f64(1) \
              } else { x };\n"
                 .to_string(),
-            "(bool, bool, T) -> int | f64 | T | #inexact",
+            "(bool, bool, T) -> int | f64 | T",
         ),
         (
             format!(
                 "{h}f(positional c, positional d, positional x) = h(if c {{ int(1) }} else {{ \
                  if d {{ f64(1) }} else {{ x }} }});\n"
             ),
-            "(bool, bool, T) -> int | f64 | T | #inexact",
+            "(bool, bool, T) -> int | f64 | T",
         ),
         (
             "f(positional c, positional d, positional x) = if c { if d { f64(1) } else { x } } \
              else { int(1) };\n"
                 .to_string(),
-            "(bool, bool, T) -> int | f64 | T | #inexact",
+            "(bool, bool, T) -> int | f64 | T",
         ),
         (
             "f(positional c: bool, positional d: bool) = if c { int(1) } else { if d { f64(1) \
              } else { \"s\" } };\n"
                 .to_string(),
-            "(bool, bool) -> int | f64 | \"s\" | #inexact",
+            "(bool, bool) -> int | f64 | \"s\"",
+        ),
+        // `f64(1)` is exact; a cast of an int no test bounds keeps `#inexact`.
+        (
+            "f(positional c, positional d, positional x, positional n: int) = if c { int(1) } \
+             else { if d { f64(n) } else { x } };\n"
+                .to_string(),
+            "(bool, bool, T, int) -> int | f64 | T | #inexact",
         ),
     ] {
         assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");

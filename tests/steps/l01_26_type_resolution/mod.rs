@@ -15,6 +15,7 @@ mod deep_scaling;
 mod deep_types;
 mod divisors;
 mod docs;
+mod exact_casts;
 mod fits;
 mod given;
 mod handled;

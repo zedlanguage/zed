@@ -3128,7 +3128,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.reject(Some(Row::UnfixedDecimal), l.site, m, notes);
             }
         }
-        let sig = word_sig(w);
+        let sig = match w {
+            "f64" if self.exact_in_f64(&x) => f64_of_exact_int_sig(),
+            _ => word_sig(w),
+        };
         let values = self.operand_values(&x);
         let at = x.at.unwrap_or(span);
         let r = self
@@ -3138,6 +3141,22 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.always_fails_word(w, values, &r, at, span);
         }
         r
+    }
+
+    /// Whether every int the operand `x` of `f64` may be lies within ±2^53, so that its cast is
+    /// exact (DESIGN.md "Casts are domain proofs"): the ints its text shows, met with what the
+    /// tests the walk is in show of it and with the values its type lists ([`Self::ints_of`]).
+    /// An operand with no int part, or with no expression to read, is not shown to be. Unlike
+    /// [`Self::int_range`], it builds no text to show the ints. Cost: one read of what the text
+    /// shows and one narrowing by the enclosing tests (COMPLEXITY.md C26, F175), the work a bit
+    /// word's operand takes; building the text as well would print a type at each cast.
+    fn exact_in_f64(&mut self, x: &Arg<'a>) -> bool {
+        let ns = &x.ty.set & &KType::int();
+        let Some(e) = x.expr.filter(|_| !ns.is_empty()) else {
+            return false;
+        };
+        let (ints, _, _) = self.ints_of(&ns, e);
+        ints.is_subset(&IntervalSet::of(-F64_EXACT_INT, F64_EXACT_INT))
     }
 
     /// A call of the bit word `w`, the primitive `p` (step L1.39a): its arguments placed by
@@ -7661,21 +7680,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             return None;
         }
         let k = self.known(e);
-        let (mut ints, narrowed) = self.ints_here(e);
-        let listed = ns.ints_listed();
+        let (ints, narrowed, listed) = self.ints_of(&ns, e);
         let shown_as_type = listed.is_some();
-        let values = match listed {
-            Some(vs) => {
-                let piece = |v: &Value| match v {
-                    Value::Int(n) => (End::of(*n), End::of(*n)),
-                    Value::Big(n) => (Fin(Num::from(&**n)), Fin(Num::from(&**n))),
-                    _ => (NegInf, PosInf),
-                };
-                ints = ints.meet(&IntervalSet::from_pieces(vs.iter().map(piece).collect()));
-                Some(vs)
-            }
-            None => k.value.map(|v| vec![v]),
-        };
+        let values = listed.or_else(|| k.value.map(|v| vec![v]));
         let shown = match &values {
             _ if shown_as_type || ints == IntervalSet::top() => self.show(&Ty::set(ns)),
             Some(vs) => vs[0].to_string(),
@@ -7687,6 +7694,22 @@ impl<'t, 'a> Ck<'t, 'a> {
             shown,
             narrowed,
         })
+    }
+
+    /// The interval of [`Self::int_range`] for an operand `e` whose type's int part is `ns`,
+    /// whether the tests the walk is in narrowed it, and the values `ns` lists.
+    fn ints_of(&mut self, ns: &KType, e: &'a Expr) -> (IntervalSet, bool, Option<Vec<Value>>) {
+        let (mut ints, narrowed) = self.ints_here(e);
+        let listed = ns.ints_listed();
+        if let Some(vs) = &listed {
+            let piece = |v: &Value| match v {
+                Value::Int(n) => (End::of(*n), End::of(*n)),
+                Value::Big(n) => (Fin(Num::from(&**n)), Fin(Num::from(&**n))),
+                _ => (NegInf, PosInf),
+            };
+            ints = ints.meet(&IntervalSet::from_pieces(vs.iter().map(piece).collect()));
+        }
+        (ints, narrowed, listed)
     }
     /// `sig`, named `what`, applied at `span` to `args`, which leave out the parameters
     /// `missing`: the function of those parameters, each a positional one with no default
