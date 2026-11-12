@@ -271,6 +271,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  10 | long = s :: len > 3₍10₎ ;
  11 | bytesLong = s :: u8 :: len > 5₍10₎ ;
  12 | first = s :: u8 [ 0₍10₎ ] ;
+ 13 | small = s :: u8 :: len < ( 1₍10₎ «with» units ( str["kB"] ) ) ;
 == DESIGN.md [sec:facets] 4 L12
   1 | force = 3.0f64 «with» units ( str["N"] ) ;
   2 | arm = 2.0f64 «with» units ( str["m"] ) ;
@@ -289,6 +290,15 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   6 | later2 = ( 25.0f64 «with» units ( str["degC"] ) ) + ( 5.0f «with» units ( str["K"] ) ) ;
   7 | warmer = noon > morning ;
 == DESIGN.md [sec:facets] 6 L12
+  1 | size = 3₍10₎ «with» units ( str["GiB"] ) ;
+  2 | disk = 3₍10₎ «with» units ( str["GB"] ) ;
+  3 | bigger = size > disk ;
+  4 | flag = ( 9₍10₎ «with» units ( str["bit"] ) ) > ( 1₍10₎ «with» units ( str["B"] ) ) ;
+  5 | walk = 900.0f64 «with» units ( str["m"] ) ;
+  6 | near = walk < ( 1.0f «with» units ( str["km"] ) ) ;
+  7 | noon = 20.0f64 «with» units ( str["°C"] ) ;
+  8 | hot = noon . to ( str["K"] ) > ( 290.0f «with» units ( str["K"] ) ) ;
+== DESIGN.md [sec:facets] 7 L12
   1 | len = 5.0f64 «with» units ( str["m"] ) ;
   2 | y = log ( len ) ;
   3 | sq = log ( len * len ) ;
@@ -299,7 +309,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   8 | nearKm = far . to ( str["log10(km)"] ) ;
   9 | inE = log ( 1.0f «with» units ( str["km"] ) ) . to ( str["log(m)"] ) ;
  10 | ratio = y - log ( 1.0f «with» units ( str["m"] ) ) ;
-== DESIGN.md [sec:facets] 7 L12
+== DESIGN.md [sec:facets] 8 L12
   1 | n = 1200₍10₎ «with» units ( str["m"] ) ;
   2 | x = f64 ( n ) «else» round ( n ) ;
   3 | label = str[${n}] ;

@@ -157,8 +157,8 @@ rows! {
     UncommutedPortOps => "Two operations on one port that may not commute, with nothing ordering them",
     NoArrowAtCarrier => "Operator with no arrow at its operands' carrier",
     UnitsDiffer => "Units that differ where an operation requires equal ones",
-    // No diagnostic uses the next eleven rows yet: plan rows L12.2a-L12.2d and
-    // UNITS-assumed-args emit them.
+    // No diagnostic uses the next twelve rows yet: plan rows L12.2a-L12.2d,
+    // UNITS-assumed-args and UNITS-compare emit them.
     UnitNameNotDeclared => "Unit name not declared",
     UnitDeclarationCycle => "Cycle of unit declarations",
     UnitDeclaredTwice => "Two different declarations of one unit name, or of one spelling",
@@ -171,6 +171,7 @@ rows! {
         "`assumedUnits` beside `units` on one declaration, or written where it does not attach",
     SumOfPointReadings => "No `+` of two point readings",
     PointUnitInProduct => "Point unit in a product, quotient or power",
+    PointReadingComparedWithNonReading => "Point reading compared with a value that is not a reading",
     // No diagnostic uses the next six rows yet: plan rows L12.2h-L12.2k emit them.
     FactDiffersFromCarried => "Fact written on a value that carries a different one",
     RemovedFactNotCarried => "Fact removed that the value does not carry",

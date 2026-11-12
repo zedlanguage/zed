@@ -106,6 +106,47 @@ fn a_comparison_offers_the_same_casts() {
 }
 
 #[test]
+fn an_int_compared_with_an_f64_is_offered_the_widening_cast_where_it_is_exact() {
+    // The author's example (DESIGN.md sec:facets, comparisons across units): an int whose
+    // values the checker proves lie within ±2^53, here by the test around the comparison, is
+    // offered `f64(tempC)`, which holds each of them exactly.
+    let src = program(
+        "warm(tempC: int, tempK: f64) = \
+         if tempC >= -273 && tempC <= 1000 { tempC < tempK } else { false };",
+    );
+    let out = rejected(&src);
+    assert!(
+        out.starts_with(
+            "1:68: Cannot compare unequal types: `tempC : int < tempK : f64`. \
+             Try `f64(tempC) < tempK` instead.\n"
+        ),
+        "{out}"
+    );
+    checks(&edited(&src, "{ tempC < tempK }", "{ f64(tempC) < tempK }"));
+    // The example as DESIGN writes it, `int[-273..=1000]`, waits for refinements; the step
+    // that compiles them changes this pin to the headline above with that type.
+    let out = rejected(&program(
+        "warm(tempC: int[-273..=1000], tempK: f64) = tempC < tempK;",
+    ));
+    assert_eq!(
+        out.lines().next(),
+        Some(concat!(
+            "1:16: ",
+            zed_tests::not_yet!("the refinement `[-273..=1000]`")
+        )),
+        "{out}"
+    );
+    // An unbounded `int` is offered no cast: `f64(n)` carries `#inexact` above 2^53.
+    let src = program("warm(tempC: int, tempK: f64) = tempC < tempK;");
+    let out = rejected(&src);
+    assert!(
+        out.starts_with("1:32: Cannot compare unequal types: `tempC : int < tempK : f64`.\n"),
+        "{out}"
+    );
+    assert!(!out.contains("f64(tempC)"), "{out}");
+}
+
+#[test]
 fn parameters_without_declared_types_are_shown_with_the_uses_that_gave_their_carriers() {
     let src = program("mix(positional a, positional b) = (a * 1r, b * 2.5f64, a + b);");
     let out = rejected(&src);

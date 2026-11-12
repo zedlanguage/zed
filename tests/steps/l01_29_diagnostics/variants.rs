@@ -162,6 +162,21 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
                 zed_tests::not_yet!("the reduction `with units(\"GiB\")`")
             ),
         ),
+        // The comparisons across units of sec:facets (plan row UNITS-compare).
+        (
+            "unit-comparison-sum-still-strict",
+            format!(
+                "2: {}",
+                zed_tests::not_yet!("the reduction `with units(\"GiB\")`")
+            ),
+        ),
+        (
+            "point-reading-against-kelvin",
+            format!(
+                "2: {}",
+                zed_tests::not_yet!("the reduction `with units(\"GiB\")`")
+            ),
+        ),
     ];
     let names: Vec<String> = std::fs::read_dir(DIR)
         .unwrap()

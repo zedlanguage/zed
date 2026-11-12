@@ -1,0 +1,11 @@
+// variant: // odd = noon > (290.0 with units("K"));     // ✗ Point reading compared with a value that is not a reading: noon : °C > 290.0 : K; write noon.to("K") > (290.0 with units("K"))
+size = 3 with units("GiB");
+disk = 3 with units("GB");
+bigger = size > disk;                        // true: 3221225472 B > 3000000000 B, compared in B
+flag = (9 with units("bit")) > (1 with units("B"));   // true: 9 bit > 8 bit, compared in bit
+walk = 900.0f64 with units("m");
+near = walk < (1.0 with units("km"));        // true: 900 m < 1000 m, compared in m
+noon = 20.0f64 with units("°C");
+hot = noon.to("K") > (290.0 with units("K"));  // true: 293.15 K > 290 K
+// far = walk + (1.0 with units("km"));      // ✗ Units that differ where an operation requires equal ones: walk : m + 1.0 : km; write walk + (1.0 with units("km")).to("m")
+odd = noon > (290.0 with units("K"));     // ✗ Point reading compared with a value that is not a reading: noon : °C > 290.0 : K; write noon.to("K") > (290.0 with units("K"))

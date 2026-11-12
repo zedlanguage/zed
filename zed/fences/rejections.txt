@@ -107,6 +107,7 @@ Number with no unit for a parameter declared `units(u)`
 `assumedUnits` beside `units` on one declaration, or written where it does not attach
 No `+` of two point readings
 Point unit in a product, quotient or power
+Point reading compared with a value that is not a reading
 Fact written on a value that carries a different one
 Fact removed that the value does not carry
 Fact removed from a facet that does not allow it
