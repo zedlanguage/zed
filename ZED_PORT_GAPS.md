@@ -3632,6 +3632,15 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 |---|---|---|---|
 | A `loop` that reassigns the parameter `of` to the base of each index until it reaches a name | `receiver` | Mutation (gap 11) | Recursion on the base of the index: a name gives itself, an index gives the receiver of its base, anything else none |
 
+## Entries from MSG-indexed-spread-one-writer (`crates/zedc-syntax/src/ast/initial.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `while let` over the parent links of the enclosing definitions, left by `break 'out` from the inner `for` over a definition's domains, with the miss written to a `mut Option` | `several` | Early exit (gap 12), Mutation (gap 11) | A recursion on the parent link that returns the first domain missed, with the hidden map as its argument |
+| A `HashMap` of hidden key names filled in place as the walk passes each domain | `several` | Mutation (gap 11) | The map threaded through the recursion as a state value |
+| A `while` loop that advances a `&str` slice word by word and pushes into a `String` | `rename` | Mutation (gap 11) | A fold over the words and gaps of the text, joined at the end |
+| An unbounded iterator `(1..).map(…).find(…)` for the first unused name | `Builder::several_writers` | Laziness | A recursion on the counter that stops at the first name not in the set; it ends because the set is finite |
+
 ## Entries from IMPORTS-untyped-join (`crates/zed-tools/src/imports.rs`)
 
 | Rust construct | Sites | Gap | At the port |
