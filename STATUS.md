@@ -1920,7 +1920,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FIX-sort-no-key | impl attempt 1 | 2026-11-11 16:34 | pushed 6f14f73c6, 69ca80c93 to zed-impl main; local main fast-forwarded; worktree and branch removed; load 41.00 |
 | GROUP-search-canon-key-xr | impl attempt 1 | 2026-11-10 04:40 | round 1 closed: Gemini carbon rerun stopped by the 5 h timeout (rc=124, no report); its 16:03 state measured (sweep inhabited 0/0, exact 6/3, BELOW-BEST 5, CLAS |
 | GSX-unsolved | impl attempt 1 | 2026-11-11 16:53 | CD round 1 launched (experiment 4374754456781193217, baseline 66010); port worktree gsx-cd has the I6.7 memo move and I6.8 control fix, building |
-| IMPORTS-untyped-join | impl attempt 1 | 2026-11-11 01:43 | committed grouped untyped join + triangle reduction in F103; rebasing; load 64.33 54.13 52.97 |
+| IMPORTS-untyped-join | impl attempt 1 | 2026-11-12 | done: calls grouped by pair of file and name, methods by module span (k^2 per name removed); the join stays O(p √p), proven triangle-hard in COMPLEXITY F103 (reduction from triangle detection; Triangle Conjecture, combinatorial BMM); tests s_01f_import_graph 20/21, the one failure (`no_crate_has_an_import_cycle_but_the_known_ones`, zedc-presburger) present on the base with identical edges |
 | INITIAL-two-sentinels-overlap | impl attempt 1 | 2026-11-11 17:21 | worktrees initial-overlap and initial-overlap-spec and their branches removed; done |
 | KERNEL-alloc-count-cost | impl attempt 1 | 2026-11-09 11:48 | started on 58979d7f6, load 56.57 55.43 56.03 |
 | KEYWORD-without-37 | impl attempt 1 | 2026-11-11 16:59 | done: worktrees keyword-without and keyword-without-spec and both branches removed |
