@@ -4328,6 +4328,10 @@ pub(super) fn read_ty(t: &Ty, p: &Ty) -> Option<Result<(Ty, Carrier), (Value, Ca
     Some(read_at(t, c)?.map(|t| (t, c)).map_err(|v| (v, c)))
 }
 
+/// An argument read at a carrier ([`Ck::read_arg`]): its type read there, the carrier and the
+/// literals adopted at it, or the value no value of the carrier equals and the carrier.
+type ReadArg = Result<(Ty, Carrier, Adoptions), (Value, Carrier)>;
+
 /// The carrier [`read_ty`] reads at, where `p` holds numbers of one carrier, `f64` or `rat`,
 /// and no type variable or `_`.
 fn read_carrier(p: &Ty) -> Option<Carrier> {
@@ -12017,11 +12021,7 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// The argument `a` read at the parameter `p` where [`Self::readable`] finds it is read
     /// at a carrier: [`read_ty`] of its type, with the adoptions of [`Self::read_adopting`].
-    pub(super) fn read_arg(
-        &self,
-        a: &Arg,
-        p: &Ty,
-    ) -> Option<Result<(Ty, Carrier, Adoptions), (Value, Carrier)>> {
+    pub(super) fn read_arg(&self, a: &Arg, p: &Ty) -> Option<ReadArg> {
         // The cheap tests first: every operator application with an argument of no literal
         // asks, and few such arguments list a number. Complexity tradeoff (COMPLEXITY.md
         // F181): whether the argument is a call or an `if` ([`Self::readable`]) is O(1) for
