@@ -403,7 +403,7 @@ fn what(s: &Stmt) -> String {
         StmtKind::Push { .. } | StmtKind::Return(_) => {
             unreachable!("a push or an export binds no name, so it is in no cycle")
         }
-        StmtKind::UnitAnnot(a) => format!("the unit item `@{}`", a.name),
+        StmtKind::UnitAnnot(_) => unreachable!("a unit item binds no name, so it is in no cycle"),
         StmtKind::Struct(_)
         | StmtKind::Type(_)
         | StmtKind::Method(_)
