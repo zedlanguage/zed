@@ -2924,14 +2924,10 @@ impl Block {
                 || !next.added.is_empty()
                 || (next.users.keys()).any(|n| self.names_at.get(n) != names.get(n))
         };
-        if manages {
-            if renewed(self.stair_managed, &next) {
-                let first = next.of_role(Role::Stair).next().cloned();
-                next.stair_due = first;
-                due.extend(next.stair_due.iter().cloned());
-            }
-        } else if self.stair_managed {
-            due.extend(next.of_role(Role::Stair).cloned());
+        if manages && renewed(self.stair_managed, &next) {
+            let first = next.of_role(Role::Stair).next().cloned();
+            next.stair_due = first;
+            due.extend(next.stair_due.iter().cloned());
         }
         next.stair_managed = manages;
         next.ray_due = None;
@@ -2941,9 +2937,7 @@ impl Block {
             next.ray_due = first;
             due.extend(next.ray_due.iter().cloned());
         }
-        if self.ray_managed && !next.ray_managed {
-            due.extend(next.of_role(Role::Ray).cloned());
-        }
+        due.extend(next.released(self.stair_managed, self.ray_managed).cloned());
 
         // The names whose products changed: the changes since the block was kept while they
         // are no more than its names, else each of its names compared.
@@ -6829,12 +6823,7 @@ impl Scope {
         b.stair_managed = covered.is_some();
         b.ray_managed = self.cover_rays(&b);
         let mut due = due;
-        if was_stair && !b.stair_managed {
-            due.extend(b.of_role(Role::Stair).cloned());
-        }
-        if was_ray && !b.ray_managed {
-            due.extend(b.of_role(Role::Ray).cloned());
-        }
+        due.extend(b.released(was_stair, was_ray).cloned());
         let mut moved: BTreeSet<Arc<str>> = BTreeSet::new();
 
         let due = if covered.is_some() || b.ray_managed {
@@ -6918,11 +6907,17 @@ impl Scope {
             let before = self.snapshot(&check_names);
             self.project_part(&b.formula(part));
             let after_part = self.names.clone();
+            let was = (b.stair_managed, b.ray_managed);
             if covered.is_some() {
                 covered = self.cover_staircase(&mut b);
                 b.stair_managed = covered.is_some();
             }
             b.ray_managed = self.cover_rays(&b);
+            for j in b.released(was.0, was.1) {
+                if queued.insert(j.clone()) {
+                    work.push_back(j.clone());
+                }
+            }
             // An aggregate move is a projection of other parts. It must wake this part
             // again too, just as projecting a threshold row separately would. The diff
             // touches at most the two aggregate names and skips shared map structure.
@@ -9958,6 +9953,7 @@ impl Block {
     /// The names and staircase of the threshold aggregate when it may hold: every part but
     /// the constraints' is a threshold row or an upper disjunction on two names, and the
     /// threshold rows are on one pair of them.
+    #[allow(clippy::type_complexity)]
     fn stair_pair(&self) -> Option<(&(Arc<str>, Arc<str>), &Staircase)> {
         if !self.aggregable() || self.stairs.len() != 1 {
             return None;
@@ -10075,6 +10071,15 @@ impl Block {
     /// Whether an aggregate that holds stands for `p`, which is then not projected by itself.
     fn managed(&self, p: &Part) -> bool {
         (self.stair_managed && p.role.stair()) || (self.ray_managed && p.role == Role::Ray)
+    }
+
+    /// The parts an aggregate stood for while it held (`stair`, `ray`) and that none stands for
+    /// now: each is projected by itself again, the upper disjunctions as the threshold rows.
+    fn released(&self, stair: bool, ray: bool) -> impl Iterator<Item = &PartAt> {
+        let (stair, ray) = (stair && !self.stair_managed, ray && !self.ray_managed);
+        (self.roles.iter())
+            .filter(move |(r, _)| (stair && r.stair()) || (ray && **r == Role::Ray))
+            .flat_map(|(_, ats)| ats)
     }
 
     /// The parts that mention `n` and that no aggregate that holds stands for, in order.

@@ -455,6 +455,21 @@ fn family(name: &str, k: usize) -> Family {
             ));
             around(&xy, 150)
         }
+        // A step, a test whose arms bound `x + y` from above, then a test the threshold
+        // aggregate does not read, which ends the aggregate and moves no name. For `y >= 0`
+        // the second test gives `x <= -1`, and then neither arm of the third holds.
+        "upper_release" => {
+            tests.push(step(6, 5));
+            tests.push(or(
+                le(add(times(2, "x"), var("y")), int(-2)),
+                le(add(var("x"), times(3, "y")), int(-5)),
+            ));
+            tests.push(or(
+                ge(add(var("x"), var("y")), int(6)),
+                ge(sub(var("x"), times(2, "y")), int(1)),
+            ));
+            around(&xy, 40)
+        }
         // `x`, `y` in 0..=10, then `x == 0 || y == 0`, `x == 1 || y == 1`, two steps, and
         // `x + y <= 10`.
         "exit_order" => {
@@ -1223,6 +1238,13 @@ fn chain_against_the_oracle() {
     exact("chain", 1, "a=[-7..] x=[-3..=3] y=[-4..=-1, 1..=4]");
     exact("chain", 2, "a=[-15..] x=[-7..=6] y=[-8..=-2, 2..=8]");
     exact("chain", 3, "a=[-23..] x=[-11..=9] y=[-12..=-2, 2..=12]");
+}
+
+#[test]
+fn upper_release_against_the_oracle() {
+    // When the threshold aggregate stops holding, the upper disjunction it read is projected
+    // by itself again, as the step is.
+    exact("upper_release", 1, "a=[..] x=[..] y=[..=-1]");
 }
 
 #[test]
