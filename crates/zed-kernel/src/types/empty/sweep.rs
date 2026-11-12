@@ -1140,7 +1140,7 @@ impl Sweep {
 
     /// Whether the link `x` alone holds a value, and its list: the chain walked until a bare
     /// atom, a link with no tuple type, or a repeat, each link's answer kept. `None` when a
-    /// head has no value [`pick`] makes.
+    /// head has no value `pick` makes.
     fn walk(&mut self, x: usize) -> Option<Option<(Vec<Value>, Arc<str>)>> {
         if self.walked.len() < self.links.len() {
             self.walked.resize(self.links.len(), None);

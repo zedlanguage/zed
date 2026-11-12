@@ -601,8 +601,8 @@ impl Type {
         }
     }
 
-    /// The verdict of `self` by the front sweep ([`sweep::front_sweep`]), else by the
-    /// prefix-chain sweep ([`Searching::sweep_verdict`]); `None` when `self` is outside both
+    /// The verdict of `self` by the front sweep (`sweep::front_sweep`), else by the
+    /// prefix-chain sweep (`Searching::sweep_verdict`); `None` when `self` is outside both
     /// classes or both leave it to the search. For tests, which check it against an oracle of
     /// their own.
     pub fn sweep_verdict(&self) -> Option<Verdict> {
