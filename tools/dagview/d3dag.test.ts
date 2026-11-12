@@ -573,3 +573,15 @@ test("on the plan balanceCounts leaves sources above their highest child (it mov
   console.log(`plan: K = ${K}; sources above their highest child by more than one layer after balanceCounts ${before}; ${fallbacks} moves out of rows over K into rows at K or more`);
   assert.ok(before > 0, "control: balanceCounts leaves sources where they were while their children move");
 });
+
+test("a long row whose nodes all go to one half is not split, so no row is left empty", () => {
+  // Row 0 holds six sources, rows 1 to 3 two nodes each: median 2, and 6 > 3.
+  // Every source of a split row goes to its lower half, so splitting row 0
+  // would leave its upper half with no node and no edge through it, a layer
+  // d3-dag rejects ("didn't assign a node to every layer").
+  const y = Int32Array.from([0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 3, 3]);
+  const children = [[6], [6], [7], [7], [6], [7], [8], [9], [10], [11], [], []];
+  const parents: number[][] = children.map(() => []);
+  children.forEach((cs, i) => cs.forEach((c) => parents[c].push(i)));
+  assert.equal(splitRows(y, y.map((_, i) => i), undefined, parents, children), null);
+});

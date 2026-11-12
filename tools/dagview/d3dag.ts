@@ -996,14 +996,8 @@ export function splitRows(y: Int32Array, x: ArrayLike<number>, half?: Int8Array,
   for (const v of y) c[v]++;
   const sorted = Int32Array.from(c).sort();
   const median = L % 2 ? sorted[(L - 1) / 2] : (sorted[L / 2 - 1] + sorted[L / 2]) / 2;
-  const shift = new Int32Array(L);
-  let s = 0;
-  for (let l = 0; l < L; l++) { shift[l] = s; if (c[l] > 1.5 * median) s++; }
-  if (!s) return null;
-  const out = new Int32Array(n);
   const rows = new Map<number, number[]>();
   for (let i = 0; i < n; i++) {
-    out[i] = y[i] + shift[y[i]];
     if (c[y[i]] > 1.5 * median) {
       let r = rows.get(y[i]);
       if (!r) rows.set(y[i], (r = []));
@@ -1050,7 +1044,18 @@ export function splitRows(y: Int32Array, x: ArrayLike<number>, half?: Int8Array,
       j++;
     }
   }
-  for (const r of rows.values()) for (const i of r) out[i] += lower[i];
+  // A row is split only if both halves get a node. A row whose nodes all go
+  // to one half (a row of sources all go to the lower) stays one row: split,
+  // it would leave an empty row, and over row 0 no edge passes through it,
+  // a layer d3-dag rejects.
+  const both = new Uint8Array(L);
+  for (const [l, r] of rows) if (r.some((i) => lower[i] === 0) && r.some((i) => lower[i] === 1)) both[l] = 1;
+  const shift = new Int32Array(L);
+  let s = 0;
+  for (let l = 0; l < L; l++) { shift[l] = s; s += both[l]; }
+  if (!s) return null;
+  const out = new Int32Array(n);
+  for (let i = 0; i < n; i++) out[i] = y[i] + shift[y[i]] + (both[y[i]] ? lower[i] : 0);
   return out;
 }
 
