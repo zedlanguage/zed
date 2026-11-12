@@ -1167,7 +1167,8 @@ LR4 added 27 tests (`lr4_assoc.rs` in `l01_08_parser`) and 23 bracketing cases t
   argument, run as `cargo run -q -p zed-tools --bin TOOL -- ../zed ...`: `check`, `cases`,
   `fences`, `fuzz`, `layer`, `ring`, `audit`, `sync`, `progress`, `cite`, which checks the
   spec's `sec:` labels and step ids cited in DESIGN.md and here, and `plan`, which checks
-  `docs/plan_dag.md` and takes no spec directory. They share the grammar rules
+  `docs/plan_dag.md` and takes no spec directory (`plan --fix` first rewrites its level column
+  and the counts of its first paragraph from the needs). They share the grammar rules
   and the engine of `zedc::parse`. The corpus references are the crate `zed/corpus/ref`
   (`ref NN INPUT`, `ref --write`), which depends on no compiler crate; the step test
   `m0_04_corpus_references` compares every `.out` with it in the local suite, so CI needs no

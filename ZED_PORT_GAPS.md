@@ -3732,3 +3732,11 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | A `Vec<bool>` of the brackets open, kept across the pieces of one rewrite, telling whether a `(` follows a name | `Renames::apply`, `Builder::rewrite` | Mutation (gap 11) | the stack threaded through the pieces as a value |
 | `Option::get_or_insert_with` to list the names around the loop on the first repair that needs them | `Builder::dot_fixes` | Lazy cells (gap 3) | a lazy value of the item's names |
 | `let … else { continue }` passing over a call with no repair | `Builder::dot_fixes`, `Builder::keyed` | Early exit (gap 12) | a filter over the calls before the map |
+
+## Entries from MAIN-m0_03-plan (`zed-tools/src/plan.rs`, `plan --fix`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| Kahn's topological order with a `Vec` of rows ready, a `Vec<usize>` of needs still waiting and a `Vec` of levels, all changed in place in a `while let` loop | `fix_plan` | Mutation (gap 11) | a fold over the rows in topological order, carrying the levels and the waiting counts as map values |
+| `Peekable::next_if` taking the next row only when it is on the current line, while the text is rebuilt line by line into one `String` | `fix_plan` | Mutation, iterators | a fold over the lines that carries the rest of the row list and returns the joined text |
+| `HashMap::entry` keeping the first row of each id and reporting later ones | `index_rows` | Mutation (gap 11) | a fold into a map that keeps the existing value |
