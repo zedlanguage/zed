@@ -2006,14 +2006,14 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | GSX-unsolved | hybrid-xr attempt  | 2026-11-11 16:53 | round 2 recorded (Opus pf1 moved it: sweep 3, lost 3, prints 3; CD best still 29); round 3 launched |
-| MSG-article-atom-value | impl attempt 1 | 2026-11-12 03:01 | is_one_value extended (Row/Shape keep 'one'); new tests green; commands_binary had 2 stale pre-existing failures on main (period, parse step), expectations upda |
+| MSG-article-atom-value | impl attempt 1 | 2026-11-12 03:01 | affected groups 139 pieces 0 failed, doc check passes; committed and rebased twice (STATUS conflicts only); building for merge |
 | MSG-derive-print-per-message | impl attempt 1 | 2026-11-12 04:27 | l01_29 354 pass; kernel 268, zedc-types 16, zedc-check 11 unit pass; rustdoc -D warnings clean after one fix; COMPLEXITY row + K108 MAKER-file-chain, plan_dag D |
 | MSG-domain-repairs-v | impl attempt 1 | 2026-11-12 00:53 | running affected groups; load 44.01 39.14 34.67 |
 | NAME-ascii-only | impl attempt 1 | 2026-11-12 16:11 | start: worktrees name-ascii-only (zed-impl) and name-ascii-only-spec (zed) |
 | NARROW-or-order | impl attempt 1 | 2026-11-12 15:40 | started; worktree /home/luke/Work/wt/narrow-or-order on cdd557f13 |
 | POLY-nf-sparse-product | impl attempt 1 | 2026-11-12 14:17 | negative controls run once: main dispatch 140.6x bytes (limit 96.8), sparse only >60 s, dense only >60 s killed; restored |
 | T11-preimage-rest | impl attempt 1 | 2026-11-05 04:07 | run2 236 pieces 0 failed; unit recheck now compares closed terms (Option<Shared>), zedc-preimage --lib 127 passed |
-| T6-refusal-cost | running | 2026-11-05 04:07 |  |
+| T6-refusal-cost | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/t6-refusal-cost from origin/main 8d0bfe954 |
 | TRIVIAL-walk-picks | impl attempt 1 | 2026-11-12 14:54 | code commit 0613b6f9c rebased; docs edited; building tests for m0_03 before docs commit and merge / load 78.93 64.48 50.98 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
