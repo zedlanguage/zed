@@ -3426,6 +3426,193 @@ fn the_questions_of_a_chain_of_residue_maps_scale() {
     );
 }
 
+/// The steps of `steps` in turn, `H` the link below, one question `h{i}(x: x) == 9` for each
+/// link (LOAD-max-div-unsolved).
+fn residue_cycle_chain(steps: &[&str], n: usize) -> String {
+    let mut src = String::from("h0(x: int) = x;\n");
+    for i in 1..n {
+        let below = format!("h{}(x: x)", i - 1);
+        let step = steps[(i - 1) % steps.len()];
+        src += &format!("h{i}(x: int) = {};\n", step.replace('H', &below));
+        src += &format!("t{i}(x: int) = h{i}(x: x) == 9;\n");
+    }
+    src
+}
+
+fn gap_chain(n: usize) -> String {
+    residue_cycle_chain(
+        &["if H mod 1000000000000000009 < 500000000000000004 { H + 2 } else { H + 3 }"],
+        n,
+    )
+}
+
+fn gap_wide_chain(n: usize) -> String {
+    residue_cycle_chain(
+        &["if H mod 2147483647 <= 256212016 { H + 1078571416 } else { H + 1078862839 }"],
+        n,
+    )
+}
+
+fn cuts_reversed_chain(n: usize) -> String {
+    residue_cycle_chain(
+        &["if H mod 2147483647 > 1052672391 { H - 3 } else { \
+           if H mod 2147483647 >= 836588177 { H - 1 } else { H + 4 } }"],
+        n,
+    )
+}
+
+fn two_cut_steps_chain(n: usize) -> String {
+    residue_cycle_chain(
+        &[
+            "if H mod 2147483647 <= 123816978 { H + 4 } else { \
+             if H mod 2147483647 <= 802667210 { H - 2 } else { \
+             if H mod 2147483647 < 1292311792 { H - 1 } else { H + 1 } } }",
+            "if H mod 2147483647 >= 1189548973 { H + 1 } else { \
+             if H mod 2147483647 > 6544298 { H - 2 } else { H + 3 } }",
+        ],
+        n,
+    )
+}
+
+fn overlap_chain(n: usize) -> String {
+    residue_cycle_chain(
+        &[
+            "if H mod 2147483647 <= 1482723311 { H + 639840854 } else { \
+             if H mod 2147483647 >= 1707665179 { H + 1185233016 } else { \
+             if H mod 2147483647 == 2023896565 { H - 2022907152 } else { H - 1050355654 } } }",
+            "if H mod 2147483647 <= 243107963 { H - 512140849 } else { \
+             if H mod 2147483647 >= 798420159 { H + 1582461185 } else { H - 1924775623 } }",
+            "if H mod 2147483647 <= 1232529314 { H - 2091158630 } else { H + 187951465 }",
+        ],
+        n,
+    )
+}
+
+/// A random step on the remainder by `m`: nested ifs on `H mod m` against a constant, by any
+/// of the six comparisons, each arm `H` plus a constant.
+fn random_interval_step(rng: &mut zed_tests::instances::Rng, m: i64, depth: usize) -> String {
+    if depth == 0 || rng.below(3) == 0 {
+        return format!("H + {}", lit(rng.int(-m - 3, m + 3)));
+    }
+    let op = rng.pick(&["<", "<=", ">", ">=", "==", "!="]);
+    format!(
+        "if H mod {m} {op} {} {{ {} }} else {{ {} }}",
+        rng.int(-1, m),
+        random_interval_step(rng, m, depth - 1),
+        random_interval_step(rng, m, depth - 1)
+    )
+}
+
+#[test]
+fn each_answer_of_a_random_chain_of_residue_intervals_is_the_answer_of_the_relation_whole() {
+    // LOAD-max-div-unsolved: chains of one to three random steps repeated, on a small
+    // modulus, so the images of the intervals of residues are checked against the relations
+    // decided whole, and against those read with the bodies, in both orders.
+    let mut rng = zed_tests::instances::Rng::new(0x1a7e5);
+    for _ in 0..30 {
+        let m = rng.int(1, 12);
+        let steps: Vec<String> = (0..rng.int(1, 3))
+            .map(|_| random_interval_step(&mut rng, m, 3))
+            .collect();
+        let steps: Vec<&str> = steps.iter().map(String::as_str).collect();
+        answers_are_those_reading_bodies(&residue_cycle_chain(&steps, 4));
+    }
+}
+
+fn overlap0_chain(n: usize) -> String {
+    residue_cycle_chain(
+        &[
+            "if H mod 1000000000039 > 283641720628 { H + 658457579784 } else { \
+             if H mod 1000000000039 <= 444468675045 { H - 692889708465 } else { \
+             if H mod 1000000000039 > 562492388602 { H + 961010693720 } else { \
+             if H mod 1000000000039 > 862937245619 { H + 52128689504 } else { H + 957465508997 } } } }",
+            "if H mod 1000000000039 < 339933610793 { H - 44997738144 } else { \
+             if H mod 1000000000039 > 892086922017 { H + 230388484144 } else { \
+             if H mod 1000000000039 < 990427627782 { H - 837951606572 } else { H + 357616960509 } } }",
+        ],
+        n,
+    )
+}
+
+fn overlap6_chain(n: usize) -> String {
+    residue_cycle_chain(
+        &[
+            "if H mod 1000000000039 >= 158152503 { H + 185026886314 } else { \
+             if H mod 1000000000039 <= 286741537907 { H + 918689987739 } else { \
+             if H mod 1000000000039 < 517915006927 { H + 74913053309 } else { \
+             if H mod 1000000000039 > 726474725831 { H + 693588865577 } else { H - 820376075153 } } } }",
+            "if H mod 1000000000039 == 619304154366 { H + 772530957399 } else { H + 501259649241 }",
+            "if H mod 1000000000039 > 467482632953 { H - 793883504583 } else { H - 417048865213 }",
+        ],
+        n,
+    )
+}
+
+fn overlap19_chain(n: usize) -> String {
+    residue_cycle_chain(
+        &[
+            "if H mod 1000000000000000009 >= 230004752257195712 { H - 332769866151521114 } else { \
+             H + 809882348088634981 }",
+            "if H mod 1000000000000000009 == 300263638026952312 { H - 737383897398611170 } else { \
+             if H mod 1000000000000000009 > 308880175046548076 { H + 312578100660941194 } else { \
+             if H mod 1000000000000000009 < 377428464882423185 { H - 249448706446524513 } else { \
+             H - 658136200048325540 } } }",
+            "if H mod 1000000000000000009 <= 114552447213317321 { H + 468989834948122270 } else { \
+             if H mod 1000000000000000009 > 477814012591389870 { H + 922627741251193726 } else { \
+             if H mod 1000000000000000009 >= 845634005800345802 { H + 517911770091984596 } else { \
+             if H mod 1000000000000000009 == 925864605666647035 { H - 24213642317013158 } else { \
+             H + 50558164096615570 } } } }",
+        ],
+        n,
+    )
+}
+
+#[test]
+fn the_questions_of_a_chain_of_residue_intervals_scale() {
+    // LOAD-max-div-unsolved: steps that move h by a constant on each interval of h mod M. The
+    // image is a union of intervals of residues; once the steps repeat with period L, the
+    // image differs from the one L links back only by the parts the step moved into or out of
+    // it, and each link keeps its image in a persistent map, so a link costs the size of that
+    // difference and not of the image.
+    questions_scale_unit("a chain of two intervals, by 10^18 + 9", 40, gap_chain);
+    questions_scale_unit(
+        "a chain of two wide intervals, by 2^31 - 1",
+        40,
+        gap_wide_chain,
+    );
+    questions_scale_unit(
+        "a chain of nested cuts, by 2^31 - 1",
+        40,
+        cuts_reversed_chain,
+    );
+    questions_scale_unit(
+        "two alternating steps of cuts, by 2^31 - 1",
+        40,
+        two_cut_steps_chain,
+    );
+    questions_scale_unit(
+        "three steps of overlapping cuts, by 2^31 - 1",
+        40,
+        overlap_chain,
+    );
+    // Steps with offsets near M, whose shifted parts overlap across most of the residues.
+    questions_scale_unit(
+        "two steps of wide overlaps, by 10^12 + 39",
+        40,
+        overlap0_chain,
+    );
+    questions_scale_unit(
+        "three steps of wide overlaps, by 10^12 + 39",
+        40,
+        overlap6_chain,
+    );
+    questions_scale_unit(
+        "three steps of wide overlaps, by 10^18 + 9",
+        40,
+        overlap19_chain,
+    );
+}
+
 fn r6_local_source(family: &str, m: usize) -> String {
     let mut src = String::new();
     if family == "leaves" {

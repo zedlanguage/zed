@@ -871,3 +871,160 @@ fn residue_map_images_at_a_large_modulus_agree_with_a_backward_search() {
     }
     assert!(missing > 0);
 }
+
+/// A step of shifts: guards `h mod m op s` nested to any depth, leaves h + c. The ops are
+/// <, <=, >, >=, ==, != by 0 to 5.
+#[derive(Clone)]
+enum ShiftStep {
+    Leaf(i64),
+    If(u8, i64, Box<ShiftStep>, Box<ShiftStep>),
+}
+
+impl ShiftStep {
+    fn random(next: &mut dyn FnMut(i64, i64) -> i64, m: i64, depth: u32) -> ShiftStep {
+        if depth == 0 || next(0, 2) == 0 {
+            return ShiftStep::Leaf(next(-2 * m, 2 * m));
+        }
+        ShiftStep::If(
+            next(0, 5) as u8,
+            next(-1, m),
+            Box::new(Self::random(next, m, depth - 1)),
+            Box::new(Self::random(next, m, depth - 1)),
+        )
+    }
+
+    fn residue(&self, r: i64, m: i64) -> i64 {
+        match self {
+            ShiftStep::Leaf(c) => (r + c).rem_euclid(m),
+            ShiftStep::If(op, s, yes, no) => {
+                let holds = [r < *s, r <= *s, r > *s, r >= *s, r == *s, r != *s][*op as usize];
+                if holds { yes } else { no }.residue(r, m)
+            }
+        }
+    }
+
+    /// Pushes the definitions of this step's choices below the remainder pair, as the front
+    /// end writes a nested if: one definition for each if, its branches read as values.
+    fn value(&self, defs: &mut Vec<Formula>, h: &Lin, r: &Lin) -> Lin {
+        match self {
+            ShiftStep::Leaf(c) => h.plus(&Lin::constant(*c)),
+            ShiftStep::If(op, s, yes, no) => {
+                let (yes, no) = (yes.value(defs, h, r), no.value(defs, h, r));
+                let s = Lin::constant(*s);
+                let one = Lin::constant(1);
+                let guard = match op {
+                    0 => Formula::Con(Con::ge(&s.minus(&one), r)),
+                    1 => Formula::Con(Con::ge(&s, r)),
+                    2 => Formula::Con(Con::ge(r, &s.plus(&one))),
+                    3 => Formula::Con(Con::ge(r, &s)),
+                    4 => Formula::Con(Con::eq(r, &s)),
+                    _ => Formula::negate(Formula::Con(Con::eq(r, &s))),
+                };
+                let out = Lin::atom(Atom::Aux(defs.len() as u32));
+                defs.push(Formula::Or(Shared::new(vec![
+                    Formula::and(vec![guard.clone(), Formula::Con(Con::eq(&out, &yes))]),
+                    Formula::and(vec![
+                        Formula::negate(guard),
+                        Formula::Con(Con::eq(&out, &no)),
+                    ]),
+                ])));
+                out
+            }
+        }
+    }
+}
+
+/// The definitions and outputs of a chain of shift steps from x; a step that is a lone leaf
+/// is given the guard `h mod m == -1`, which never holds.
+fn shift_chain(steps: &[ShiftStep], m: i64) -> (Vec<Formula>, Vec<Atom>) {
+    let mut defs = Vec::new();
+    let mut outputs = Vec::new();
+    let mut input = Lin::atom(Atom::Sym("x".into()));
+    for step in steps {
+        let n = defs.len() as u32;
+        let q = Lin::atom(Atom::Aux(n));
+        let r = Lin::atom(Atom::Aux(n + 1));
+        let pair = Formula::And(Shared::new(vec![
+            Formula::Con(Con::eq(&input, &q.times(m).plus(&r))),
+            Formula::Con(Con::ge(&r, &Lin::constant(0))),
+            Formula::Con(Con::ge(&Lin::constant(m - 1), &r)),
+        ]));
+        defs.push(pair.clone());
+        defs.push(pair);
+        let step = match step {
+            ShiftStep::Leaf(c) => ShiftStep::If(
+                4,
+                -1,
+                Box::new(ShiftStep::Leaf(*c)),
+                Box::new(ShiftStep::Leaf(*c)),
+            ),
+            s => s.clone(),
+        };
+        let value = step.value(&mut defs, &input, &r);
+        let out = lone_atom(&value).unwrap().clone();
+        input = value;
+        outputs.push(out);
+    }
+    (defs, outputs)
+}
+
+#[test]
+fn shift_chain_images_agree_with_the_image_of_every_residue() {
+    // LOAD-max-div-unsolved: chains of nested guards on h mod m with every branch h + c, a
+    // pattern of one to four steps repeated, broken now and then by another step, so that the
+    // images are found by the difference rule as well as step by step. Each step commutes
+    // with h + m, so the image is that of Z_m, computed residue by residue; every question
+    // must be answered, and equal it.
+    let mut rng = 0x5_1f7_u64;
+    let mut next = |lo: i64, hi: i64| {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        lo + (rng % (hi - lo + 1) as u64) as i64
+    };
+    let (mut inside, mut asked) = (0, 0);
+    for chain in 0..400 {
+        let m = next(1, 40);
+        let depth = [1, 2, 3][chain % 3];
+        let pattern: Vec<ShiftStep> = (0..next(1, 4))
+            .map(|_| ShiftStep::random(&mut next, m, depth))
+            .collect();
+        let steps: Vec<ShiftStep> = (0..48)
+            .map(|i| {
+                if next(0, 15) == 0 {
+                    ShiftStep::random(&mut next, m, depth)
+                } else {
+                    pattern[i % pattern.len()].clone()
+                }
+            })
+            .collect();
+        let (defs, outputs) = shift_chain(&steps, m);
+        let def = |n: u32| defs[n as usize].clone();
+        let mut images = ScalarImages::default();
+        let mut image: BTreeSet<i64> = (0..m).collect();
+        let order: Vec<usize> = if chain % 2 == 0 {
+            (0..steps.len()).collect()
+        } else {
+            (0..steps.len()).rev().collect()
+        };
+        let mut sets = Vec::new();
+        for step in &steps {
+            image = image.iter().map(|&r| step.residue(r, m)).collect();
+            sets.push(image.clone());
+        }
+        for i in order {
+            for c in -m..2 * m {
+                let q = Formula::Con(Con::eq(&Lin::atom(outputs[i].clone()), &Lin::constant(c)));
+                let expected = sets[i].contains(&c.rem_euclid(m));
+                assert_eq!(
+                    images.answer(&q, &def),
+                    Some(expected),
+                    "chain {chain} m={m} step {i} c={c}"
+                );
+                inside += usize::from(expected);
+                asked += 1;
+            }
+        }
+    }
+    assert!(inside > 0 && inside < asked);
+}

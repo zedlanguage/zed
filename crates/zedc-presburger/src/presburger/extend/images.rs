@@ -27,6 +27,9 @@ enum Image {
     /// a chain of residue-map steps, or of affine remainder steps (a frame with no missing
     /// or extra residues: the coset c + d Z) (I49).
     Residues(Arc<Frame>),
+    /// The integers whose residue by the modulus is in the intervals: the image of a chain
+    /// of shifts on residue intervals (`shifts`).
+    Intervals(Arc<Int>, shifts::Intervals),
 }
 
 /// A step's residue map on Z_m from its input h, for a value p h + w (h mod m) + C with
@@ -526,6 +529,7 @@ impl Image {
             Self::Power(e) => c.is_zero() || twos(c).is_some_and(|z| z >= *e),
             Self::Clamp(b, k) => b.contains(c, *k),
             Self::Residues(f) => f.contains(&c.mod_floor(&f.m)),
+            Self::Intervals(m, set) => shifts::holds(set, &c.mod_floor(m)),
             Self::Skipping(m, k) => {
                 let r = c.mod_floor(m);
                 r.is_odd()
@@ -563,6 +567,13 @@ pub(super) struct ScalarImages {
     excepted: HashMap<Atom, (Atom, Arc<Exception>, Int)>,
     /// Residue maps of single-output definitions from their input (I49).
     maps: HashMap<Atom, Arc<ResidueMap>>,
+    /// Shifts on residue intervals of single-output choices: their h, map and the map's
+    /// identity (`shifts`).
+    shifts: HashMap<Atom, (Atom, Arc<shifts::Shift>, u32)>,
+    shift_ids: HashMap<Arc<shifts::Shift>, u32>,
+    /// The images of links of chains of shifts, `None` where the chain does not start from
+    /// all integers.
+    runs: HashMap<Atom, Option<Arc<shifts::Run>>>,
 }
 
 #[derive(Clone)]
@@ -755,7 +766,10 @@ impl ScalarImages {
         if let Atom::Aux(n) = a {
             self.ensure(def(*n), def);
         }
-        let image = self.fact(a, def)?.image?;
+        let image = match self.fact(a, def)?.image {
+            Some(image) => image,
+            None => self.shift_image(a, def)?,
+        };
         // Every supported image is infinite, so it always has a value unequal to c.
         if negated {
             return Some(true);
@@ -1081,6 +1095,7 @@ impl ScalarImages {
                     None
                 };
                 let mut fact = fact.unwrap_or_default();
+                self.record_shift(&d.f, &output, def);
                 let map = self.residue_map(&d.f, &output, def);
                 if let Some(map) = map {
                     if fact.image.is_none() {
@@ -1578,6 +1593,8 @@ fn zero_atom(e: &Lin) -> Option<&Atom> {
     let (a, k) = e.terms.first_key_value()?;
     (!k.is_zero()).then_some(a)
 }
+
+mod shifts;
 
 #[cfg(test)]
 mod tests;
