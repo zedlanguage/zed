@@ -3,7 +3,8 @@
 //
 // Reads, on each request for the state: docs/plan_dag.md, wt/running-log.md,
 // wt/ledger.jsonl, wt/dag-overrides.json, the author's open questions in
-// wt/zed0-review/pass2/QUESTIONS.md, wt/merge.lock/owner, /proc/loadavg and git. Lays the plan out when the page posts its graph to /api/layout (see
+// wt/zed0-review/pass2/QUESTIONS.md, wt/merge.lock/owner, /proc/loadavg and git
+// (five small commands, and one rev-list of new commits when origin/main moves). Lays the plan out when the page posts its graph to /api/layout (see
 // layout.ts). It watches those files and the main and origin/main refs, and
 // tells the page over /api/events when one changes or a layout finishes, so an
 // idle page and server do no work.
@@ -16,7 +17,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { stripTypeScriptTypes } from "node:module";
 import { basename, dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { buildGraph, shapeProblems, ledgerCommits, overrideWarnings, parseLedger, parseLog, parsePlan, parseQuestions, resolveId } from "./state.ts";
+import { buildGraph, CommitList, shapeProblems, overrideWarnings, parseLedger, parseLog, parsePlan, parseQuestions, resolveId } from "./state.ts";
 import type { Override } from "./state.ts";
 import { Layouts, layoutInWorker } from "./layout.ts";
 import type { Graph } from "./layout.ts";
@@ -50,25 +51,32 @@ async function gitIn(dir: string, ...args: string[]): Promise<string | null> {
   }
 }
 
-// Whether a commit is on origin/main never changes back, so a yes is kept.
-const onOriginMemo = new Set<string>();
-let originSeen = "";
+// The commits on origin/main of each repository (see CommitList). When the
+// tip moves forward only the commits since the old tip are listed; a tip
+// that does not descend from the old one (a forced push) lists them all.
+// Updates run one at a time, so two requests never list the same range twice.
+const onOrigin = new Map([repo, spec].map((dir) => [dir, new CommitList()]));
+let originUpdate: Promise<void> = Promise.resolve();
 
-async function originCommits(commits: string[], origin: string): Promise<void> {
-  if (origin === originSeen && commits.every((c) => onOriginMemo.has(c))) return;
-  originSeen = origin;
-  await Promise.all(
-    commits
-      .filter((c) => !onOriginMemo.has(c))
-      .map(async (c) => {
-        for (const dir of [repo, spec]) {
-          if ((await gitIn(dir, "merge-base", "--is-ancestor", c, "origin/main")) !== null) {
-            onOriginMemo.add(c);
-            break;
-          }
+function updateOrigin(): Promise<void> {
+  originUpdate = originUpdate.then(() =>
+    Promise.all(
+      [...onOrigin].map(async ([dir, list]) => {
+        const tip = await gitIn(dir, "rev-parse", "origin/main");
+        if (tip === null || tip === list.tip) return;
+        const forward = list.tip !== "" && (await gitIn(dir, "merge-base", "--is-ancestor", list.tip, tip)) !== null;
+        try {
+          const { stdout } = await run("git", ["-C", dir, "rev-list", forward ? `${list.tip}..${tip}` : tip], { maxBuffer: 1 << 28 });
+          const hashes = stdout.split("\n");
+          if (forward) list.add(hashes, tip);
+          else list.reset(hashes, tip);
+        } catch (err) {
+          console.error(`listing origin/main in ${dir} failed:`, err);
         }
       }),
+    ).then(() => {}),
   );
+  return originUpdate;
 }
 
 async function state() {
@@ -92,14 +100,14 @@ async function state() {
   } catch {
     // No file, or one being written: the next poll reads it.
   }
-  await originCommits(ledger.flatMap(ledgerCommits), origin ?? "");
+  await updateOrigin();
   const now = Date.now();
   const { nodes, problems, dropped } = buildGraph({
     plan: parsePlan(plan),
     log,
     ledger,
     overrides,
-    onOrigin: (c) => onOriginMemo.has(c),
+    onOrigin: (c) => [...onOrigin.values()].some((l) => l.has(c)),
     now,
     held: parseQuestions(questionsText),
   });

@@ -172,6 +172,55 @@ export function ledgerCommits(e: LedgerEntry): string[] {
   return [...out];
 }
 
+// The commits on a branch (origin/main), as a sorted list of full hashes, so
+// that an abbreviated hash from the ledger is looked up by its prefix.
+// Complexity tradeoff: asking git `merge-base --is-ancestor` for each commit
+// forks a process per commit and repository on every request for the state
+// (about 1,100 forks and 38 s at load 60 on 2026-11-12, for the 543 ledger
+// commits never pushed); this list costs one `git rev-list` of the commits new
+// since the last tip when the branch moves, O(n + k log k) to merge k new ones
+// into n, and O(log n) per lookup.
+export class CommitList {
+  tip = "";
+  private sorted: string[] = [];
+
+  // Replaces the list, as after a branch moved to a tip that does not descend
+  // from the old one.
+  reset(hashes: string[], tip: string): void {
+    this.sorted = [];
+    this.add(hashes, tip);
+  }
+
+  // Merges new hashes in; one already in the list is kept once.
+  add(hashes: string[], tip: string): void {
+    const add = hashes.map((h) => h.trim().toLowerCase()).filter((h) => h !== "").sort();
+    const out: string[] = [];
+    let i = 0, j = 0;
+    while (i < this.sorted.length || j < add.length) {
+      const next = j === add.length || (i < this.sorted.length && this.sorted[i] <= add[j]) ? this.sorted[i++] : add[j++];
+      if (out[out.length - 1] !== next) out.push(next);
+    }
+    this.sorted = out;
+    this.tip = tip;
+  }
+
+  // Whether a commit on the branch starts with this hash of 7 to 40 hex digits.
+  has(hash: string): boolean {
+    if (!/^[0-9a-f]{7,40}$/.test(hash)) return false;
+    let lo = 0, hi = this.sorted.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (this.sorted[mid] < hash) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo < this.sorted.length && this.sorted[lo].startsWith(hash);
+  }
+
+  get size(): number {
+    return this.sorted.length;
+  }
+}
+
 // A line with state "note", or with no state, does not change the node's state.
 const stateless = (e: LedgerEntry) => typeof e.state !== "string" || e.state === "note";
 

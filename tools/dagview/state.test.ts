@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { buildGraph, buildNodes, ledgerCommits, overrideWarnings, parseLedger, parseQuestions, parseLog, parsePlan, resolveId, shapeProblems, shortLabel } from "./state.ts";
+import { buildGraph, buildNodes, CommitList, ledgerCommits, overrideWarnings, parseLedger, parseQuestions, parseLog, parsePlan, resolveId, shapeProblems, shortLabel } from "./state.ts";
 
 const plan = `# Plan
 ## Items by level
@@ -504,4 +505,42 @@ test("with a fixture QUESTIONS.md, every plan row an open question holds is bloc
   // L7.5 waits through its need, not on a question.
   assert.equal(nodes.get("L7.5")!.state, "unstarted");
   assert.equal(nodes.get("L7.5")!.ready, false);
+});
+
+test("the commit list finds a commit by any prefix of 7 or more hex digits, and nothing else", () => {
+  const l = new CommitList();
+  const a = "8646a2b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6", b = "8646a2c000000000000000000000000000000000", c = "ffff000011112222333344445555666677778888";
+  l.reset([b, a, ""], "t1");
+  assert.equal(l.size, 2);
+  assert.equal(l.has("8646a2b"), true);
+  assert.equal(l.has("8646a2c0"), true);
+  assert.equal(l.has(a), true);
+  // A prefix of a commit not in the list, and words that are not hashes.
+  assert.equal(l.has("8646a2d"), false);
+  assert.equal(l.has("ffff000"), false);
+  assert.equal(l.has("8646a2"), false);
+  assert.equal(l.has("8646A2B"), false);
+  assert.equal(l.has("zzzzzzz"), false);
+  // An add after the tip moved merges the new commits in, each kept once.
+  l.add([c, a + "\n"], "t2");
+  assert.equal(l.size, 3);
+  assert.equal(l.tip, "t2");
+  assert.equal(l.has("ffff000"), true);
+  // A reset after a forced push forgets the old commits.
+  l.reset([c], "t3");
+  assert.equal(l.size, 1);
+  assert.equal(l.has("8646a2b"), false);
+  assert.equal(l.has("ffff0000111"), true);
+});
+
+test("the commit list agrees with a scan on random hashes", () => {
+  // SHA-1 of the index: distinct, well-mixed hashes.
+  const hex = (_: unknown, i: number) => createHash("sha1").update(String(i)).digest("hex");
+  const all = Array.from({ length: 2000 }, hex);
+  const l = new CommitList();
+  l.reset(all.slice(0, 1000), "a");
+  l.add(all.slice(900, 1500), "b");
+  const on = new Set(all.slice(0, 1500));
+  assert.equal(l.size, 1500);
+  for (const h of all) for (const k of [7, 12, 40]) assert.equal(l.has(h.slice(0, k)), [...on].some((o) => o.startsWith(h.slice(0, k))), h.slice(0, k));
 });
