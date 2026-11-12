@@ -377,6 +377,118 @@ fn the_split_repair_names_functions_the_program_does_not_define() {
     }
 }
 
+/// The split repair of a refused question in a unit `pricing` that a unit `app` imports, where
+/// `app` already defines `ok1` and `ok2` with the parameters of `ok`: the repair still names its
+/// functions `ok1` and `ok2`, as it does for `pricing` checked alone, and followed as printed it
+/// clashes with nothing in `app` (DESIGN.md sec:diagnostics, "Names the split repair adds").
+/// An importer reaches a unit's names only through the names its imports and qualified uses
+/// write, since there is no wildcard import (sec:units), so `app`'s own `ok1` and `pricing.ok1`
+/// stay two names. Were the repair to avoid `app`'s names as well, it would print `ok3` and
+/// `ok4` here, and `ok1` and `ok2` when `pricing` is checked alone: two answers for one text.
+#[test]
+fn the_split_repair_in_an_imported_unit_ignores_the_names_its_importers_define() {
+    use zedc::query::Db;
+    use zedc::resolve::Ref;
+    use zedc::unit::{Memory, Package, load};
+
+    let [first, second] = REFUSED[2].rows;
+    let pricing = int_defs(&format!("ok(x, y, z, w) = {first} && {second};"));
+    let own = "ok1(x: int, y: int, z: int, w: int) = x <= y;\n\
+               ok2(x: int, y: int, z: int, w: int) = y <= z;\n";
+    let all = "x: a, y: a, z: a, w: a";
+    let app = |imports: &str, test: &str| {
+        format!(
+            "{imports}{own}main(m: MainArgs) {{\n  a = int(m.stdin[0] else \"0\") else 0;\n  \
+             r = if {test} {{ \"in\" }} else {{ \"out\" }};\n  m.stdout <- \"${{r}}\";\n}}\n"
+        )
+    };
+    let package = |db: &mut Db, pricing: &str, app: &str| -> Package {
+        let files = [("pricing.zed", pricing), ("app.zed", app)]
+            .map(|(f, t)| (f.to_string(), std::sync::Arc::from(t)));
+        load(db, &Memory(files.into_iter().collect()), &["app"])
+    };
+    // The problems of a package, but for the forms a later step links.
+    let problems = |p: &Package| -> Vec<String> {
+        (p.report(std::path::Path::new("")).into_iter())
+            .filter(|m| !zed_tests::is_not_yet(m))
+            .collect()
+    };
+    let refusal = |db: &mut Db| match &*db.front(&pricing) {
+        Err(ds) => ds.clone(),
+        Ok(_) => panic!("`ok` is refused in\n{pricing}"),
+    };
+
+    // `pricing` checked alone, with no importer.
+    let alone = refusal(&mut Db::new());
+    // `pricing` in the build of `app`, which imports it in each form and defines `ok1` and `ok2`.
+    let mut db = Db::new();
+    let before = app(
+        "import pricing;\nimport pricing as p;\nimport pricing.{ok};\n",
+        &format!("ok({all}) && ok1({all}) && ok2({all})"),
+    );
+    let built = package(&mut db, &pricing, &before);
+    assert_eq!(problems(&built), Vec::<String>::new(), "{before}");
+    let imported = refusal(&mut db);
+    assert_eq!(imported, alone);
+    let [d] = &alone[..] else {
+        panic!("one refusal: {alone:?}")
+    };
+    let printed = d.to_string();
+    let split = *repairs(&printed).last().expect("a menu");
+    assert!(
+        split.starts_with(
+            "split the conditions between two functions, `ok1` and `ok2`, and where `ok` is \
+             called, call `ok1(…) && ok2(…)` with the same arguments"
+        ),
+        "{split}"
+    );
+
+    // Followed as printed: `pricing` holds the two functions, `app` calls them through its
+    // qualifiers where it called `ok`, and its own `ok1` and `ok2` are unchanged.
+    let repaired = definitions(split).join("\n");
+    let after = app(
+        "import pricing;\nimport pricing as p;\n",
+        &format!("pricing.ok1({all}) && p.ok2({all}) && ok1({all}) && ok2({all})"),
+    );
+    let mut db = Db::new();
+    assert!(db.front(&repaired).is_ok(), "{repaired}");
+    let built = package(&mut db, &repaired, &after);
+    assert_eq!(problems(&built), Vec::<String>::new(), "{after}");
+    let r = (built.unit("app").and_then(|u| u.resolved.as_ref())).expect("`app` resolved");
+    // What the use of `name` at the `n`-th place `name(` is written in `app` resolves to.
+    let use_at = |name: &str, n: usize| {
+        let (at, _) = (after.match_indices(&format!("{name}(")))
+            .filter(|(i, _)| !after[..*i].ends_with(|c: char| c == '.' || c.is_alphanumeric()))
+            .nth(n)
+            .unwrap_or_else(|| panic!("no use {n} of `{name}` in\n{after}"));
+        let (_, used) = (r.res.uses.iter())
+            .find(|(s, _)| (s.start, s.end) == (at, at + name.len()))
+            .unwrap_or_else(|| panic!("`{name}` at {at} is no recorded use"));
+        used.clone()
+    };
+    for (qualified, name) in [("pricing.ok1", "ok1"), ("p.ok2", "ok2")] {
+        let used = use_at(qualified, 0);
+        assert!(
+            matches!(&used, Ref::Unit { unit, name: n } if &**unit == "pricing" && n == name),
+            "{qualified}: {used:?}"
+        );
+    }
+    // The bare `ok1` and `ok2` of `main` (the second place each is written, after its
+    // definition) are `app`'s own definitions, one arrow each, imported from nowhere.
+    for name in ["ok1", "ok2"] {
+        let Ref::Bound(ids) = use_at(name, 1) else {
+            panic!("`{name}` is not bound in `app`")
+        };
+        let ids: Vec<usize> = ids.into_iter().collect();
+        let [i] = ids[..] else {
+            panic!("`{name}` is an overload set of {ids:?}")
+        };
+        let b = &r.res.binders[i];
+        assert!(after[b.span.start..].starts_with(name), "{name}: {b:?}");
+        assert_eq!(r.res.imports.get(&i), None, "{name}");
+    }
+}
+
 #[test]
 fn a_function_that_joins_the_split_questions_asks_the_joined_question_again() {
     // The second half of the split repair's line: joining `first` and `second` in a function

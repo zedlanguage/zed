@@ -780,7 +780,9 @@ pub fn linear_questions(
     use crate::store::{preimage, presburger};
     // The names the program writes, which the split repair's new functions must not take
     // (`presburger::free_names`): read from `tokens` at the first refused question, once for
-    // the unit, and the split's names once for each function name refused.
+    // the unit, and the split's names once for each function name refused. Only this unit's
+    // names: an importer reaches them only by writing them, and the front end, memoized by the
+    // unit's text, cannot know its importers.
     let mut taken: Option<std::collections::HashSet<&str>> = None;
     let mut split_names: std::collections::HashMap<&str, [String; 2]> =
         std::collections::HashMap::new();

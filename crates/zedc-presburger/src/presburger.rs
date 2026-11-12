@@ -222,7 +222,11 @@ pub struct Split<'a> {
 /// or, where `taken` holds either, `f` with the two least numbers from 1 up that `taken` does
 /// not hold, so a program that already has `ok1` gets `ok2` and `ok3`. `taken` holds every
 /// name the program writes, so a new top-level function shadows none of its names and none of
-/// its local names hides one at a call. Each candidate is one lookup in `taken`, and at most
+/// its local names hides one at a call. The names of units that import the program are not
+/// counted: an importer reaches the program's names only by writing them, in a qualified use
+/// or a selective import, so its own `ok1` and a new `pricing.ok1` stay two names (DESIGN.md
+/// sec:units, sec:diagnostics), and the repair depends on the unit's text alone, the same
+/// whether it is checked alone or in a build. Each candidate is one lookup in `taken`, and at most
 /// two more are tried than `taken` holds names of the form `f` and a number.
 pub fn free_names(f: &str, taken: &HashSet<&str>) -> [String; 2] {
     let mut k = 0usize;
