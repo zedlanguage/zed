@@ -43,9 +43,11 @@ use super::{
 };
 use zedc_int::int::Int;
 
+mod def;
 mod holes;
 mod images;
 mod residues;
+use def::{Def, free, reads};
 use holes::{Holes, hole_of};
 use images::ScalarImages;
 use residues::{Reading, unit_classes};
@@ -290,15 +292,14 @@ impl Extending {
             todo.push((g, true));
             todo.extend(kids.into_iter().rev().map(|h| (h, false)));
         }
-        let answer = match f {
+
+        match f {
             Formula::And(_) => self.known[&Id::any(f)].answers.clone(),
             _ => Answers {
                 holds: decide_defined(&mut self.sums, f.clone(), def),
                 fails: decide_defined(&mut self.sums, Formula::negate(f.clone()), def),
             },
-        };
-
-        answer
+        }
     }
 
     /// The answers of the conjunction `g`, from those of its kept part when it has one: the
@@ -2627,10 +2628,10 @@ impl Rays {
             if a == output || k.is_zero() {
                 continue;
             }
-            if let Some(r) = right.lin.terms.get(a).filter(|r| !r.is_zero()) {
-                if (kl.is_positive() != k.is_positive()) != (kr.is_positive() != r.is_positive()) {
-                    return false;
-                }
+            if let Some(r) = right.lin.terms.get(a).filter(|r| !r.is_zero())
+                && (kl.is_positive() != k.is_positive()) != (kr.is_positive() != r.is_positive())
+            {
+                return false;
             }
         }
         true
@@ -3963,48 +3964,6 @@ impl Summary {
         Formula::or(self.pieces.iter().map(and).collect())
     }
 }
-
-/// A definition as the summaries read it: its formula and key, the variables it defines in
-/// order, the variables of other definitions it reads, and every atom it reads.
-struct Def {
-    f: Formula,
-    id: Id,
-    own: Vec<u32>,
-    inputs: Vec<u32>,
-    reads: BTreeSet<Atom>,
-}
-
-impl Def {
-    /// The definition `f`, `None` where no summary is made of it: one that defines no variable it
-    /// reads. A product of variables is read as an atom of its own, as the solver reads it
-    /// ([`decide`]), and the definitions of its factors as inputs. Time of `f`.
-    fn of(f: Formula, def: &dyn Fn(u32) -> Formula) -> Option<Def> {
-        let id = Id::any(&f);
-        let reads = reads(&f);
-        let (mut own, mut inputs) = (Vec::new(), Vec::new());
-        for a in &reads {
-            match a {
-                Atom::Product(..) | Atom::Sym(_) => {}
-                Atom::Aux(n) => {
-                    let d = def(*n);
-                    if Id::any(&d) == id {
-                        own.push(*n);
-                    } else if !free(&d) {
-                        inputs.push(*n);
-                    }
-                }
-            }
-        }
-        (!own.is_empty()).then_some(Def {
-            f,
-            id,
-            own,
-            inputs,
-            reads,
-        })
-    }
-}
-
 /// Whether `d` is a single-valued symbol leaf: `d` reads no other definition or product, and
 /// defines either one variable by a unit linear equation `v == e(syms)` or a Euclidean quotient
 /// and remainder `e(syms) == m * q + r, 0 <= r <= m - 1`. Such variables are uniquely determined
@@ -4050,6 +4009,10 @@ fn is_func_sym_leaf(d: &Def) -> bool {
 
 type Terms = BTreeMap<Atom, Int>;
 type LineGroup = (Atom, Terms, bool);
+// The lines `e * y >= m * f + b` of each group `(y, f, lower)`: `m`, `b` and the row index.
+type LineRows = BTreeMap<LineGroup, Vec<(Int, Int, usize)>>;
+// The lower and upper bound of each primitive form (`None` none).
+type FormBounds = BTreeMap<Terms, (Option<Int>, Option<Int>)>;
 
 /// The lines `e * y >= m * f + b` of `rows` by `(y, f, lower)`, the explicit 1-form bounds
 /// `[lo, hi]` on each primitive form `f`, and whether those bounds are consistent. The groups
@@ -4059,15 +4022,9 @@ type LineGroup = (Atom, Terms, bool);
 // iteration changes from run to run, so the rows `lean` keeps, and the summary's key and cost,
 // could too (LOAD-max-div-xr I23). Used: ordered maps, O(t log g) a row for g groups, O(r t
 // log r) in all. Tradeoffs: a log factor on the grouping.
-fn group_lines(
-    rows: &[Con],
-) -> (
-    BTreeMap<LineGroup, Vec<(Int, Int, usize)>>,
-    BTreeMap<Terms, (Option<Int>, Option<Int>)>,
-    bool,
-) {
-    let mut groups: BTreeMap<LineGroup, Vec<(Int, Int, usize)>> = BTreeMap::new();
-    let mut bounds: BTreeMap<Terms, (Option<Int>, Option<Int>)> = BTreeMap::new();
+fn group_lines(rows: &[Con]) -> (LineRows, FormBounds, bool) {
+    let mut groups: LineRows = BTreeMap::new();
+    let mut bounds: FormBounds = BTreeMap::new();
     let mut ok = true;
     let tighten = |b: &mut (Option<Int>, Option<Int>), lo: Option<Int>, hi: Option<Int>| {
         if let Some(l) = lo {
@@ -5289,7 +5246,7 @@ fn quotient_offsets(
             for (a, raw_k) in &lin.terms {
                 let k = if neg_q { -raw_k } else { raw_k.clone() };
                 if let Some((lo_a, hi_a)) = rem_bounds.get(a) {
-                    if &(hi_a - lo_a) >= &m {
+                    if (hi_a - lo_a) >= m {
                         bounded = false;
                         break;
                     }
@@ -5563,6 +5520,10 @@ fn merge_pieces(pieces: BTreeSet<Vec<Con>>) -> Vec<Vec<Con>> {
     type Group = (Vec<Con>, Terms);
     // The pieces of one group by lower bound: upper bound and index in `live`.
     type Intervals = BTreeMap<Option<Int>, (Option<Int>, usize)>;
+    // The forms of one piece, as `forms` gives them.
+    type PieceForms = Vec<(Group, Option<Int>, Option<Int>)>;
+    // For each form, the pieces holding a bound of it, by upper bound and by lower bound.
+    type Sides = HashMap<Terms, (BTreeMap<Int, usize>, BTreeMap<Int, usize>)>;
     // Each form of piece `p`: `p` without its rows of the form, the form, and the lower and
     // upper bounds the rows give it (`None` none).
     fn forms(p: &[Con]) -> Vec<(Group, Option<Int>, Option<Int>)> {
@@ -5658,36 +5619,35 @@ fn merge_pieces(pieces: BTreeSet<Vec<Con>>) -> Vec<Vec<Con>> {
         merged.dedup();
         merged
     };
-    let unindex =
-        |id: usize,
-         forms_of: &mut [Vec<(Group, Option<Int>, Option<Int>)>],
-         groups: &mut HashMap<Group, Intervals>,
-         sides: &mut HashMap<Terms, (BTreeMap<Int, usize>, BTreeMap<Int, usize>)>| {
-            for (gq, lq, hq) in std::mem::take(&mut forms_of[id]) {
-                if let Some(m) = groups.get_mut(&gq) {
-                    m.remove(&lq);
+    let unindex = |id: usize,
+                   forms_of: &mut [PieceForms],
+                   groups: &mut HashMap<Group, Intervals>,
+                   sides: &mut Sides| {
+        for (gq, lq, hq) in std::mem::take(&mut forms_of[id]) {
+            if let Some(m) = groups.get_mut(&gq) {
+                m.remove(&lq);
+            }
+            // Another piece with the same bound may hold the entry since.
+            if let Some((u, w)) = sides.get_mut(&gq.1) {
+                if let Some(hq) = hq
+                    && u.get(&hq) == Some(&id)
+                {
+                    u.remove(&hq);
                 }
-                // Another piece with the same bound may hold the entry since.
-                if let Some((u, w)) = sides.get_mut(&gq.1) {
-                    if let Some(hq) = hq
-                        && u.get(&hq) == Some(&id)
-                    {
-                        u.remove(&hq);
-                    }
-                    if let Some(lq) = lq
-                        && w.get(&lq) == Some(&id)
-                    {
-                        w.remove(&lq);
-                    }
+                if let Some(lq) = lq
+                    && w.get(&lq) == Some(&id)
+                {
+                    w.remove(&lq);
                 }
             }
-        };
+        }
+    };
     // For each form, the pieces holding a bound of it, by upper bound and by lower bound (an
     // entry of a piece merged since is skipped where read).
-    let mut sides: HashMap<Terms, (BTreeMap<Int, usize>, BTreeMap<Int, usize>)> = HashMap::new();
+    let mut sides: Sides = HashMap::new();
     let mut live: Vec<Option<Vec<Con>>> = Vec::new();
     // The forms of each piece put in, by its index in `live`, made once when it is put in.
-    let mut forms_of: Vec<Vec<(Group, Option<Int>, Option<Int>)>> = Vec::new();
+    let mut forms_of: Vec<PieceForms> = Vec::new();
     let mut groups: HashMap<Group, Intervals> = HashMap::new();
     let mut work: Vec<Vec<Con>> = pieces.into_iter().collect();
     while let Some(p) = work.pop() {
@@ -5760,22 +5720,22 @@ fn merge_pieces(pieces: BTreeSet<Vec<Con>>) -> Vec<Vec<Con>> {
                         ok.then(|| (both, lo.clone(), hi.clone(), l, h, id))
                     })
             });
-            if let Some((both, lo, hi, l, h, id)) = cross {
-                if live[id].take().is_some() {
-                    unindex(id, &mut forms_of, &mut groups, &mut sides);
-                    let mut m = lean(joined(
-                        &both,
-                        lo.min(l),
-                        match (hi, h) {
-                            (Some(a), Some(b)) => Some(a.max(b)),
-                            _ => None,
-                        },
-                    ));
-                    m.sort();
-                    m.dedup();
-                    work.push(m);
-                    continue;
-                }
+            if let Some((both, lo, hi, l, h, id)) = cross
+                && live[id].take().is_some()
+            {
+                unindex(id, &mut forms_of, &mut groups, &mut sides);
+                let mut m = lean(joined(
+                    &both,
+                    lo.min(l),
+                    match (hi, h) {
+                        (Some(a), Some(b)) => Some(a.max(b)),
+                        _ => None,
+                    },
+                ));
+                m.sort();
+                m.dedup();
+                work.push(m);
+                continue;
             }
             for (g, lo, hi) in &fs {
                 let (u, w) = sides.entry(g.1.clone()).or_default();
@@ -5801,26 +5761,6 @@ fn merge_pieces(pieces: BTreeSet<Vec<Con>>) -> Vec<Vec<Con>> {
     }
     live.into_iter().flatten().collect()
 }
-
-/// Whether `f` is the definition of a variable with no definition: `true`.
-fn free(f: &Formula) -> bool {
-    matches!(f, Formula::And(gs) if gs.is_empty())
-}
-
-/// The atoms `f` reads, a product with its factors: the solver reads a product as an atom of
-/// its own ([`decide`]), and its factors' definitions are among those `f` reaches ([`reached`]).
-fn reads(f: &Formula) -> BTreeSet<Atom> {
-    let mut out = BTreeSet::new();
-    for a in f.atoms() {
-        if let Atom::Product(g, h) = &a {
-            out.insert(g.atom());
-            out.insert(h.atom());
-        }
-        out.insert(a);
-    }
-    out
-}
-
 /// The cases of `f`: conjunctions of constraints whose disjunction holds where `f` holds, a
 /// negated constraint written as the constraints of the points it leaves (`!(e >= 0)` is `-e -
 /// 1 >= 0`, `!(e == 0)` the two cases `e >= 1` and `-e >= 1`); `None` for a negation of
@@ -7759,7 +7699,7 @@ mod tests {
                 &e,
             ))]))
         };
-        let defs = vec![
+        let defs = [
             eq(0, Lin::constant(5)),
             eq(1, x.plus(&Lin::atom(a(0)))),
             eq(2, y),
@@ -7982,7 +7922,7 @@ mod tests {
                 &e,
             ))]))
         };
-        let reflected = vec![eq(0, x.clone()), eq(1, x.times(-1))];
+        let reflected = [eq(0, x.clone()), eq(1, x.times(-1))];
         let def = |n: u32| reflected[n as usize].clone();
         let sum = Formula::Con(con(&[(0, 1), (1, 1)], -1, Rel::Ge));
         assert!(!Rays::default().holds(&sum, &def));
@@ -7994,7 +7934,7 @@ mod tests {
             Formula::Con(Con::eq(&Lin::atom(a(0)), &x)),
             Formula::Con(Con::ge(&x, &Lin::constant(0))),
         ]));
-        let defs = vec![partial, eq(1, x.plus(&Lin::constant(1)))];
+        let defs = [partial, eq(1, x.plus(&Lin::constant(1)))];
         let def = |n: u32| defs[n as usize].clone();
         let sum = Formula::Con(con(&[(0, -1), (1, -1)], -1, Rel::Ge));
         assert!(!Rays::default().holds(&sum, &def));
@@ -8002,7 +7942,7 @@ mod tests {
             decide_defined(&mut Summaries::default(), sum, &def),
             Ok(false)
         );
-        let defs = vec![eq(0, x.clone()), eq(1, x.plus(&Lin::constant(1)))];
+        let defs = [eq(0, x.clone()), eq(1, x.plus(&Lin::constant(1)))];
         let def = |n: u32| defs[n as usize].clone();
         let sum = Formula::Con(con(&[(0, 1), (1, 1)], -1000, Rel::Ge));
         assert!(Rays::default().holds(&sum, &def));

@@ -1,0 +1,591 @@
+//! Tests of the scalar images. They are in their own file, not inline in
+//! images.rs, since they call `decide_defined` and `Summaries` from
+//! extend.rs: inline they would make an import cycle (step S.1f).
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use super::super::super::formula::{Factor, Shared};
+use super::super::{Summaries, decide_defined};
+use super::*;
+
+#[test]
+fn descriptors_agree_with_explicit_residue_images() {
+    let mut checked = 0;
+    let mut wrong_all = 0;
+    for m in 1i64..=41 {
+        let modulus = Arc::new(Int::from(m));
+        let mut skipping: BTreeSet<i64> = (0..m).collect();
+        let mut doubling = skipping.clone();
+        let mut exponent = 0;
+        for k in 0..=2 * m {
+            let skip = Image::Skipping(Arc::clone(&modulus), Int::from(k));
+            let power = Image::Power(exponent);
+            for c in -2 * m..=2 * m {
+                let r = c.rem_euclid(m);
+                assert_eq!(
+                    skip.contains(&Int::from(c)),
+                    skipping.contains(&r),
+                    "skip M={m}, k={k}, c={c}"
+                );
+                assert_eq!(
+                    power.contains(&Int::from(c)),
+                    doubling.contains(&r),
+                    "double M={m}, k={k}, c={c}"
+                );
+                wrong_all +=
+                    usize::from(!skipping.contains(&r)) + usize::from(!doubling.contains(&r));
+                checked += 2;
+            }
+            skipping = skipping
+                .into_iter()
+                .map(|r| (r + if r == 0 { 1 } else { 2 }) % m)
+                .collect();
+            doubling = doubling.into_iter().map(|r| 2 * r % m).collect();
+            let z = m.trailing_zeros() as usize;
+            if exponent < z {
+                exponent += 1;
+            }
+        }
+    }
+    assert!(wrong_all > 0);
+    eprintln!("scalar descriptor checks={checked}, false all-integers control={wrong_all}");
+}
+
+fn chain(m: i64, count: usize, skip: bool) -> (Vec<Formula>, Vec<Atom>) {
+    let mut defs = Vec::new();
+    let mut outputs = Vec::new();
+    let mut input = Lin::atom(Atom::Sym("x".into()));
+    for _ in 0..count {
+        let n = defs.len() as u32;
+        let q = Lin::atom(Atom::Aux(n));
+        let r = Lin::atom(Atom::Aux(n + 1));
+        let pair = Formula::And(Shared::new(vec![
+            Formula::Con(Con::eq(&input, &q.times(m).plus(&r))),
+            Formula::Con(Con::ge(&r, &Lin::constant(0))),
+            Formula::Con(Con::ge(&Lin::constant(m - 1), &r)),
+        ]));
+        defs.push(pair.clone());
+        defs.push(pair);
+        let output = Atom::Aux(n + 2);
+        let out = Lin::atom(output.clone());
+        let f = if skip {
+            let guard = Formula::Con(Con::eq(&r, &Lin::constant(0)));
+            Formula::Or(Shared::new(vec![
+                Formula::and(vec![
+                    guard.clone(),
+                    Formula::Con(Con::eq(&out, &input.plus(&Lin::constant(1)))),
+                ]),
+                Formula::and(vec![
+                    Formula::negate(guard),
+                    Formula::Con(Con::eq(&out, &input.plus(&Lin::constant(2)))),
+                ]),
+            ]))
+        } else {
+            Formula::And(Shared::new(vec![Formula::Con(Con::eq(
+                &out,
+                &input.plus(&r),
+            ))]))
+        };
+        defs.push(f);
+        outputs.push(output);
+        input = out;
+    }
+    (defs, outputs)
+}
+
+#[test]
+fn images_are_scalar_only_and_do_not_forget_correlations() {
+    for skip in [false, true] {
+        for m in [2, 7, 8, 1000, 1_000_000_007] {
+            let (defs, outputs) = chain(m, 7, skip);
+            let def = |n: u32| defs[n as usize].clone();
+            let mut images = ScalarImages::default();
+            for (i, a) in outputs.iter().enumerate() {
+                for c in -17i64..=17 {
+                    let q = Formula::Con(Con::eq(&Lin::atom(a.clone()), &Lin::constant(c)));
+                    let mut predecessors = BTreeSet::from([c]);
+                    for _ in 0..=i {
+                        let mut next = BTreeSet::new();
+                        for y in predecessors {
+                            if skip {
+                                if (y - 1).rem_euclid(m) == 0 {
+                                    next.insert(y - 1);
+                                }
+                                if (y - 2).rem_euclid(m) != 0 {
+                                    next.insert(y - 2);
+                                }
+                            } else {
+                                let top = y.div_euclid(m);
+                                for q in [top - 1, top] {
+                                    let twice_r = y - m * q;
+                                    if twice_r >= 0 && twice_r <= 2 * (m - 1) && twice_r % 2 == 0 {
+                                        next.insert(m * q + twice_r / 2);
+                                    }
+                                }
+                            }
+                        }
+                        predecessors = next;
+                    }
+                    let expected = !predecessors.is_empty();
+                    assert_eq!(
+                        images.answer(&q, &def),
+                        Some(expected),
+                        "M={m}, k={}, skip={skip}, c={c}",
+                        i + 1
+                    );
+                    let joint = Formula::and(vec![
+                        q,
+                        Formula::Con(Con::eq(
+                            &Lin::atom(Atom::Sym("x".into())),
+                            &Lin::constant(0),
+                        )),
+                    ]);
+                    assert_eq!(images.answer(&joint, &def), None);
+                }
+            }
+        }
+    }
+    // The guard D|M is necessary: the image of 2Z under h+h mod 3 is not a lattice.
+    let r = Atom::Aux(1);
+    let h = Atom::Aux(0);
+    let mut images = ScalarImages::default();
+    images.by.insert(
+        h.clone(),
+        Fact {
+            image: Some(Image::Power(1)),
+            division: None,
+        },
+    );
+    images.by.insert(
+        r.clone(),
+        Fact {
+            image: None,
+            division: Some((false, Lin::atom(h.clone()), Arc::new(Int::from(3)))),
+        },
+    );
+    assert!(
+        images
+            .linear(&Lin::atom(h).plus(&Lin::atom(r)), &|_| Formula::bottom())
+            .is_none()
+    );
+}
+
+#[test]
+fn partial_and_product_definitions_do_not_get_scalar_images() {
+    let x = Lin::atom(Atom::Sym("x".into()));
+    let v = Atom::Aux(0);
+    let partial = Formula::And(Shared::new(vec![
+        Formula::Con(Con::eq(&Lin::atom(v), &x)),
+        Formula::Con(Con::ge(&x, &Lin::constant(0))),
+    ]));
+    let question = Formula::Con(Con::eq(&Lin::atom(Atom::Aux(0)), &Lin::constant(9)));
+    assert_eq!(
+        ScalarImages::default().answer(&question, &|_| partial.clone()),
+        None
+    );
+    let (defs, _) = chain(7, 1, true);
+    let def = |n: u32| defs[n as usize].clone();
+    assert!(
+        ScalarImages::default()
+            .answer(
+                &Formula::Con(Con::eq(&Lin::atom(Atom::Aux(2)), &Lin::constant(1))),
+                &def
+            )
+            .is_some()
+    );
+    let product = Lin::atom(Atom::Product(
+        Factor::Sym("x".into()),
+        Factor::Sym("y".into()),
+    ));
+    let f = Formula::And(Shared::new(vec![Formula::Con(Con::eq(
+        &Lin::atom(Atom::Aux(0)),
+        &product,
+    ))]));
+    assert_eq!(
+        ScalarImages::default().answer(&question, &|_| f.clone()),
+        None
+    );
+}
+
+#[test]
+fn orbit_questions_keep_the_original_input_residue() {
+    let mut checked = 0;
+    for m in [7i64, 1000, 1_000_000_007] {
+        for skip in [false, true] {
+            let (defs, outputs) = chain(m, 640, skip);
+            let def = |n: u32| defs[n as usize].clone();
+            let mut images = ScalarImages::default();
+            let mut values = BTreeMap::from([(0i64, 0i64), (3, 3), (m - 1, m - 1)]);
+            for output in outputs {
+                for (&r, y) in &mut values {
+                    *y = if skip {
+                        *y + if y.rem_euclid(m) == 0 { 1 } else { 2 }
+                    } else {
+                        *y + y.rem_euclid(m)
+                    };
+                    // Keep the independently evaluated orbit modulo M, avoiding
+                    // overflow in this native test as well as in the certificate.
+                    *y = y.rem_euclid(m);
+                    for c in [0i64, 9] {
+                        let q = Formula::and(vec![
+                            Formula::Con(Con::eq(&Lin::atom(output.clone()), &Lin::constant(c))),
+                            Formula::Con(Con::eq(&Lin::atom(Atom::Aux(1)), &Lin::constant(r))),
+                        ]);
+                        assert_eq!(
+                            images.answer(&q, &def),
+                            Some(*y == c.rem_euclid(m)),
+                            "M={m}, skip={skip}, r={r}, c={c}"
+                        );
+                        assert_eq!(images.answer(&Formula::negate(q), &def), Some(true));
+                        checked += 2;
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("exact joint orbit checks={checked}");
+}
+#[test]
+fn monotone_clamp_images_match_independent_inverse_cuts() {
+    let mut checked = 0;
+    for a in [1i128, 2, 5, 7] {
+        for b in [3i128, 7, 11] {
+            if a == b {
+                continue;
+            }
+            for offset in [-9i128, 0, 4] {
+                for k in 1..=8 {
+                    let basis = ClampBasis {
+                        axis: Atom::Sym("x".into()),
+                        a: Int::from(a),
+                        b: Int::from(b),
+                        constant: Int::from(offset),
+                    };
+                    let value = |x: i128| {
+                        let bound = x.div_euclid(a) + x.div_euclid(b) + offset;
+                        let mut h = x;
+                        for _ in 0..k {
+                            h = h.div_euclid(2).max(bound);
+                        }
+                        h
+                    };
+                    let cut = |c: i128| {
+                        let mut lo = -1i128;
+                        let mut hi = 1i128;
+                        while value(lo) >= c {
+                            lo *= 2;
+                        }
+                        while value(hi) < c {
+                            hi *= 2;
+                        }
+                        while hi - lo > 1 {
+                            let mid = (hi + lo).div_euclid(2);
+                            if value(mid) >= c {
+                                hi = mid;
+                            } else {
+                                lo = mid;
+                            }
+                        }
+                        hi
+                    };
+                    for c in -30i128..=30 {
+                        assert_eq!(
+                            basis.contains(&Int::from(c), k),
+                            cut(c) < cut(c + 1),
+                            "a={a} b={b} C={offset} k={k} c={c}"
+                        );
+                        checked += 1;
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("two-quotient monotone-clamp image comparisons={checked}");
+}
+
+#[test]
+fn a_changed_modulus_requires_the_divisibility_guard() {
+    let (mut defs, outputs) = chain(2, 1, false);
+    let input = Lin::atom(outputs[0].clone());
+    let n = defs.len() as u32;
+    let q = Lin::atom(Atom::Aux(n));
+    let r = Lin::atom(Atom::Aux(n + 1));
+    let pair = Formula::And(Shared::new(vec![
+        Formula::Con(Con::eq(&input, &q.times(3).plus(&r))),
+        Formula::Con(Con::ge(&r, &Lin::constant(0))),
+        Formula::Con(Con::ge(&Lin::constant(2), &r)),
+    ]));
+    defs.push(pair.clone());
+    defs.push(pair);
+    let output = Atom::Aux(n + 2);
+    defs.push(Formula::And(Shared::new(vec![Formula::Con(Con::eq(
+        &Lin::atom(output.clone()),
+        &input.plus(&r),
+    ))])));
+    let def = |n: u32| defs[n as usize].clone();
+    let mut images = ScalarImages::default();
+    for c in -12i64..=12 {
+        let query = Formula::Con(Con::eq(&Lin::atom(output.clone()), &Lin::constant(c)));
+        assert_eq!(images.answer(&query, &def), None);
+        assert_eq!(
+            decide_defined(&mut Summaries::default(), query, &def),
+            Ok([0, 4, 5].contains(&c.rem_euclid(6)))
+        );
+    }
+}
+#[test]
+fn orbit_questions_keep_previous_and_future_residues_and_the_earlier_image() {
+    let mut checked = 0;
+    for m in [7i64, 1000, 1_000_000_007] {
+        for skip in [false, true] {
+            let (defs, outputs) = chain(m, 16, skip);
+            let def = |n: u32| defs[n as usize].clone();
+            let mut images = ScalarImages::default();
+            let step = |h: i64| {
+                if skip {
+                    h + if h.rem_euclid(m) == 0 { 1 } else { 2 }
+                } else {
+                    h + h.rem_euclid(m)
+                }
+            };
+            for k in [0usize, 3, 7, 14] {
+                for c in [-1i64, 0, 2, 5, 6, 9] {
+                    let mut pre = BTreeSet::from([c]);
+                    for _ in 0..=k {
+                        let mut next = BTreeSet::new();
+                        for y in pre {
+                            if skip {
+                                if (y - 1).rem_euclid(m) == 0 {
+                                    next.insert(y - 1);
+                                }
+                                if (y - 2).rem_euclid(m) != 0 {
+                                    next.insert(y - 2);
+                                }
+                            } else {
+                                let q = y.div_euclid(m);
+                                for quotient in [q - 1, q] {
+                                    let twice = y - m * quotient;
+                                    if twice >= 0 && twice <= 2 * (m - 1) && twice % 2 == 0 {
+                                        next.insert(m * quotient + twice / 2);
+                                    }
+                                }
+                            }
+                        }
+                        pre = next;
+                    }
+                    for j in [0usize, 2, 7, 14] {
+                        for r in [0i64, 3, m - 1] {
+                            let expected = pre.iter().any(|x| {
+                                let mut h = *x;
+                                for _ in 0..=j {
+                                    h = step(h);
+                                }
+                                h.rem_euclid(m) == r
+                            });
+                            let remainder = Atom::Aux((3 * (j + 1) + 1) as u32);
+                            let query = Formula::and(vec![
+                                Formula::Con(Con::eq(
+                                    &Lin::atom(outputs[k].clone()),
+                                    &Lin::constant(c),
+                                )),
+                                Formula::Con(Con::eq(&Lin::atom(remainder), &Lin::constant(r))),
+                            ]);
+                            assert_eq!(
+                                images.answer(&query, &def),
+                                Some(expected),
+                                "m={m} skip={skip} k={k} j={j} c={c} r={r}"
+                            );
+                            checked += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for skip in [false, true] {
+        let (defs, outputs) = chain(1000, 640, skip);
+        let def = |n: u32| defs[n as usize].clone();
+        let (c, r) = if skip { (1, 0) } else { (6, 3) };
+        let query = Formula::and(vec![
+            Formula::Con(Con::eq(&Lin::atom(outputs[639].clone()), &Lin::constant(c))),
+            Formula::Con(Con::eq(
+                &Lin::atom(Atom::Aux(3 * 639 + 1)),
+                &Lin::constant(r),
+            )),
+        ]);
+        assert_eq!(ScalarImages::default().answer(&query, &def), Some(false));
+    }
+    eprintln!("relative-period/earlier-image checks={checked}, plus two depth-640 exclusions");
+}
+#[test]
+fn scalar_images_keep_moduli_beyond_signed_i128_and_saturate_the_exponent() {
+    let boundary = &Int::from(i128::MAX) + &Int::ONE;
+    let mut checked = 0;
+    for odd in [false, true] {
+        let modulus = if odd {
+            &boundary + &Int::ONE
+        } else {
+            boundary.clone()
+        };
+        let mut defs = Vec::new();
+        let mut outputs = Vec::new();
+        let mut input = Lin::atom(Atom::Sym("x".into()));
+        for _ in 0..130 {
+            let n = defs.len() as u32;
+            let q = Lin::atom(Atom::Aux(n));
+            let r = Lin::atom(Atom::Aux(n + 1));
+            let pair = Formula::And(Shared::new(vec![
+                Formula::Con(Con::eq(&input, &q.times(modulus.clone()).plus(&r))),
+                Formula::Con(Con::ge(&r, &Lin::constant(0))),
+                Formula::Con(Con::ge(&Lin::constant(&modulus - &Int::ONE), &r)),
+            ]));
+            defs.push(pair.clone());
+            defs.push(pair);
+            let output = Atom::Aux(n + 2);
+            defs.push(Formula::And(Shared::new(vec![Formula::Con(Con::eq(
+                &Lin::atom(output.clone()),
+                &input.plus(&r),
+            ))])));
+            input = Lin::atom(output.clone());
+            outputs.push(output);
+        }
+        let def = |n: u32| defs[n as usize].clone();
+        let mut images = ScalarImages::default();
+        let mut divisor = Int::ONE;
+        for (k, a) in outputs.iter().enumerate() {
+            if k < 127 {
+                divisor = &divisor * &Int::from(2);
+            }
+            for c in [
+                Int::ZERO,
+                boundary.clone(),
+                -&boundary,
+                &boundary + &Int::ONE,
+                -&(&boundary + &Int::ONE),
+                &boundary + &Int::from(256),
+            ] {
+                let query = Formula::Con(Con::eq(&Lin::atom(a.clone()), &Lin::constant(c.clone())));
+                assert_eq!(
+                    images.answer(&query, &def),
+                    Some(odd || c.mod_floor(&divisor).is_zero()),
+                    "odd={odd} k={k} c={c}"
+                );
+                checked += 1;
+            }
+        }
+    }
+    eprintln!("beyond-i128 scalar image checks={checked}, moduli 2^127 and 2^127+1, depth 130");
+}
+
+#[test]
+fn prefix_record_certificates_have_concrete_witnesses_for_signed_remainders() {
+    fn pair(defs: &mut Vec<Formula>, arg: &Lin, m: i64) -> (Lin, Lin) {
+        let n = defs.len() as u32;
+        let q = Lin::atom(Atom::Aux(n));
+        let r = Lin::atom(Atom::Aux(n + 1));
+        let f = Formula::And(Shared::new(vec![
+            Formula::Con(Con::eq(arg, &q.times(m).plus(&r))),
+            Formula::Con(Con::ge(&r, &Lin::constant(0))),
+            Formula::Con(Con::ge(&Lin::constant(m - 1), &r)),
+        ]));
+        defs.extend([f.clone(), f]);
+        (q, r)
+    }
+    let mut checked = 0;
+    for (m, d, w, c) in [
+        (5i64, 7i64, 1i64, -9i64),
+        (7, 7, -3, 4),
+        (3, 11, 4, -2),
+        (1, 1, 9, 0),
+        (2, 3, -1, 0),
+    ] {
+        let mut defs = Vec::new();
+        let x = Lin::atom(Atom::Sym("x".into()));
+        let (_, r) = pair(&mut defs, &x, m);
+        let (q, _) = pair(&mut defs, &x, d);
+        let b = r.times(w).plus(&q).plus(&Lin::constant(c));
+        let mut previous = x.clone();
+        let mut outputs = Vec::new();
+        for _ in 0..6 {
+            let (half, _) = pair(&mut defs, &previous, 2);
+            let out = Atom::Aux(defs.len() as u32);
+            let guard = Formula::Con(Con::ge(&half, &b));
+            let f = Formula::Or(Shared::new(vec![
+                Formula::and(vec![
+                    guard.clone(),
+                    Formula::Con(Con::eq(&Lin::atom(out.clone()), &half)),
+                ]),
+                Formula::and(vec![
+                    Formula::negate(guard),
+                    Formula::Con(Con::eq(&Lin::atom(out.clone()), &b)),
+                ]),
+            ]));
+            defs.push(f);
+            previous = Lin::atom(out.clone());
+            outputs.push(out);
+        }
+        let def = |n: u32| defs[n as usize].clone();
+        let mut images = ScalarImages::default();
+        let radius = d * (64 * (8 + c.abs() + 3) + w.abs() * (m - 1) + 3);
+        let mut witnesses: Vec<BTreeSet<i64>> = vec![BTreeSet::new(); 6];
+        for x in -radius..=radius {
+            let bound = w * x.rem_euclid(m) + x.div_euclid(d) + c;
+            let mut h = x;
+            for ws in &mut witnesses {
+                h = h.div_euclid(2).max(bound);
+                if (-8..=8).contains(&h) {
+                    ws.insert(h);
+                }
+            }
+        }
+        for (k, out) in outputs.into_iter().enumerate() {
+            for target in -8..=8 {
+                assert!(
+                    witnesses[k].contains(&target),
+                    "m={m},d={d},w={w},c={c},k={k},target={target}"
+                );
+                let query = Formula::Con(Con::eq(&Lin::atom(out.clone()), &Lin::constant(target)));
+                assert_eq!(images.answer(&query, &def), Some(true));
+                checked += 1;
+            }
+        }
+    }
+    eprintln!(
+        "prefix-record concrete witness checks={checked}, five signed/modulus configurations, depth 6"
+    );
+}
+
+#[test]
+fn a_condition_cannot_combine_independent_scalar_images_into_a_joint_image() {
+    let x = Lin::atom(Atom::Sym("x".into()));
+    let out = Lin::atom(Atom::Aux(0));
+    let guard = Formula::Con(Con::ge(&x, &Lin::constant(0)));
+    let f = Formula::Or(Shared::new(vec![
+        Formula::and(vec![
+            guard.clone(),
+            Formula::Con(Con::eq(&out, &x.plus(&Lin::constant(100)))),
+        ]),
+        Formula::and(vec![
+            Formula::negate(guard),
+            Formula::Con(Con::eq(&out, &x)),
+        ]),
+    ]));
+    let def = |_| f.clone();
+    let mut images = ScalarImages::default();
+    for c in [9i64, -1, 100] {
+        let query = Formula::Con(Con::eq(&out, &Lin::constant(c)));
+        let scalar = images.answer(&query, &def);
+        if let Some(answer) = scalar {
+            assert_eq!(
+                answer,
+                !(0..100).contains(&c),
+                "an accepted certificate must be exact"
+            );
+        }
+        assert_eq!(scalar, None);
+        assert_eq!(
+            decide_defined(&mut Summaries::default(), query, &def),
+            Ok(!(0..100).contains(&c))
+        );
+    }
+}

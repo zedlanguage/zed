@@ -9354,6 +9354,373 @@ fn retyped(t: &Ty, e: &Expr, new: &HashMap<Span, Ty>) -> Ty {
     out.pop().expect("one type")
 }
 
+// Operands::adoptions, Ck::generic_parts, Ck::fewest and parts are here, not in mod.rs, since they call
+// branch_lits, read_call and Ck::branch_joins: in mod.rs they would make an import cycle (step S.1f).
+impl Operands {
+    /// Pairs the operands as `x == e` does, in a checker of the empty unit, and gives the
+    /// number of literals that adopt a carrier.
+    #[doc(hidden)]
+    pub fn adoptions(&self) -> usize {
+        let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
+        let t = Tables::new(&[], &res);
+        let mut ck = Ck::new(&t);
+        let (lit, parts) = (
+            literal(&self.e, None),
+            parts(&self.e, None, &HashMap::new()),
+        );
+        let y = (vec![&self.et], lit.as_ref(), parts.as_deref());
+        ck.pair((vec![&self.x], None, None), y);
+        ck.info.adopt.len()
+    }
+}
+
+impl<'t, 'a> Ck<'t, 'a> {
+    /// The type of the tuple argument `a` at a parameter that is a type variable, with each
+    /// literal without a suffix written as a component of it, at any depth, made a class of
+    /// its own that the literal joins, generic (L1.26a): the component joins the class of what
+    /// it meets in
+    /// the function's body, and takes int where it meets no carrier. Outside every function
+    /// the class is one of the application's, and takes its type when the application ends
+    /// ([`Self::resolve_top_parts`]): the `2` in `y = f(x: 1r, p: (2, 1))`, with
+    /// `f(x, p) = x + p[0]`, is a `rat`. `None` where no such literal is written.
+    ///
+    /// The tuples nest as deep as the text, so the walk keeps its own stack, as [`adopted`]
+    /// does; it costs the size of the tuple's text.
+    ///
+    /// An `if` of literals written as a component, `(x, if c { 2 + 1 } else { 1 })`, is made a
+    /// class of its own in the same way, which each branch joins as the branches of an
+    /// argument join the class of a parameter ([`Ck::branch_joins`]). `Err` where a branch
+    /// cannot join it, which `what` at `span` reports.
+    fn generic_parts(&mut self, a: &Arg, what: &str, span: Span) -> Result<Option<Ty>, ()> {
+        let Some(parts) = (a.parts.as_deref()).filter(|_| self.replaying == 0) else {
+            return Ok(None);
+        };
+        let Some(comps) = only_tuple(&a.ty, parts.len()) else {
+            return Ok(None);
+        };
+        let mut stack = vec![OpenTuple {
+            parts,
+            comps,
+            want: Vec::new(),
+            out: Vec::new(),
+        }];
+        let mut made = false;
+        loop {
+            let open = stack.last_mut().expect("an open tuple");
+            let i = open.out.len();
+            if i == open.parts.len() {
+                let t = Ty::tuple(stack.pop().expect("an open tuple").out);
+                match stack.last_mut() {
+                    None => return Ok(made.then_some(t)),
+                    Some(up) => up.out.push(t),
+                }
+                continue;
+            }
+            let c = &open.comps[i];
+            match &open.parts[i] {
+                Part::Lit(l) if l.bare => {
+                    let k = self.generic_class(l);
+                    if self.level == 0 {
+                        self.top_parts.push(k);
+                    }
+                    made = true;
+                    let open = stack.last_mut().expect("an open tuple");
+                    open.out.push(Ty::var(format!("${k}").into()));
+                }
+                Part::Branches(bs) => {
+                    let k = self.class();
+                    self.classes[k].generic = true;
+                    for b in bs.iter() {
+                        if !self.branch_joins(k, b, what, span) {
+                            return Err(());
+                        }
+                    }
+                    if self.level == 0 {
+                        self.top_parts.push(k);
+                    }
+                    made = true;
+                    let open = stack.last_mut().expect("an open tuple");
+                    open.out.push(Ty::var(format!("${k}").into()));
+                }
+                Part::Tuple(inner) => match only_tuple(c, inner.len()) {
+                    Some(cs) => stack.push(OpenTuple {
+                        parts: inner,
+                        comps: cs,
+                        want: Vec::new(),
+                        out: Vec::new(),
+                    }),
+                    None => open.out.push(c.clone()),
+                },
+                _ => open.out.push(c.clone()),
+            }
+        }
+    }
+
+    /// The arrows of `sig` whose adoptions of the literal arguments are fewest, all the
+    /// same, with those adoptions made and the arguments retyped.
+    /// `None` when a literal adopts no arrow's carrier exactly, which is reported.
+    fn fewest(
+        &mut self,
+        what: &str,
+        sig: &Sig,
+        args: &mut [Option<Arg>],
+    ) -> Result<Option<Vec<usize>>, String> {
+        // Per arrow: its adoptions, the calls of literal values it reads at a carrier, and
+        // each argument a literal of which adopts or a call that is read, retyped.
+        type Best = (Adoptions, Vec<(Span, Carrier)>, Vec<(usize, Ty)>);
+        let mut best: Option<Best> = None;
+        let mut kept = Vec::new();
+        let mut adopt_error = None;
+        // A call of literal values that gives a value the carrier of an arrow the other
+        // arguments fit does not hold: the argument, the value and the carrier.
+        let mut unread = None;
+        // Per literal argument without a suffix: the carriers of its parameter on the arrows
+        // the other arguments fit, `None` once one of them is generic.
+        let mut takes: BTreeMap<usize, Option<u8>> = BTreeMap::new();
+        for (k, arrow) in sig.arrows.iter().enumerate() {
+            let mut need = Adoptions::new();
+            let mut retyped = Vec::new();
+            // An arrow no other argument can fit is no candidate, and its literals are not
+            // adopted: a decimal literal's adoption at `rat` reads its digits (COMPLEXITY.md
+            // K41), as at the `rat` arrow of `n + 0.5` with `n` an int.
+            // A call of literal values alone, `g(c)` of type `1 | 2`, is read at the
+            // parameter's carrier, `f64` or `rat`, as at a declared parameter ([`read_call`];
+            // L1.26a: "each keeps its own value and is fixed where the result is used"): in
+            // `x * g(c)` with `x: f64` it is an `f64` at the `f64` arrow. Complexity
+            // tradeoff: each such argument is read once per arrow, O(A v log v) for A arrows
+            // and v values its type lists; A is at most five for an operator.
+            let mut reads = Vec::new();
+            let mut called = Vec::new();
+            let mut ok = (args.iter().zip(&arrow.params).enumerate()).all(|(i, (a, p))| match a {
+                // Read before the type meets `p`: `1 | 2.5` meets `f64` at its `2.5`, and its
+                // `1` is read.
+                Some(a) if a.lit.is_none() && a.parts.is_none() && a.branches.is_none() => {
+                    match read_call(a, p) {
+                        Some(r) => {
+                            called.push((i, r));
+                            true
+                        }
+                        None => a.ty.is_empty() || a.ty.meets(p),
+                    }
+                }
+                _ => true,
+            });
+            if !ok {
+                continue;
+            }
+            let mut error = None;
+            // The calls read, in the order of their arguments, met again in that order.
+            let mut called = called.into_iter().peekable();
+            for (i, (a, p)) in args.iter().zip(&arrow.params).enumerate() {
+                let Some(a) = a else {
+                    continue;
+                };
+                if a.lit.is_none() && a.parts.is_none() && a.branches.is_none() {
+                    match called.next_if(|(j, _)| *j == i).map(|(_, r)| r) {
+                        Some(Ok((t, c))) => {
+                            let e = a.expr.expect("a call read at a carrier");
+                            reads.push((e.span, c));
+                            retyped.push((i, t));
+                        }
+                        Some(Err((v, c))) => {
+                            unread.get_or_insert((i, v, c));
+                            ok = false;
+                        }
+                        None => {}
+                    }
+                    continue;
+                }
+                if self.subtype(&a.ty, p) || p.dynamic {
+                    continue;
+                }
+                match adopted(a, p, self.rough) {
+                    Ok(Some((t, ads))) if self.subtype(&t, p) => {
+                        need.extend(ads);
+                        retyped.push((i, t));
+                    }
+                    Err(e) => {
+                        error.get_or_insert(e);
+                    }
+                    // Kept as it is, the argument is checked as any argument is.
+                    _ => ok &= a.ty.meets(p),
+                }
+            }
+            // The message names a literal's rejection at an arrow the other arguments fit:
+            // `x + 0.1` with `x: rat` at rat, not at int; and of two literals of two
+            // carriers, as at `==`, the integer's, or else the decimal's: `1 + 0.5` at `1`.
+            // A literal of a branch counts as one: in
+            // `min(if c { 9007199254740993 } else { 1 }, 0.5f64)` the message names the
+            // integer, which has no exact `f64`, not the `0.5f64` the `int` arrow rejects.
+            if let Some(e) = error {
+                let rank = |s: Span| {
+                    args.iter()
+                        .flatten()
+                        .flat_map(|a| {
+                            let bs = a.branches.iter().flat_map(|bs| bs.iter());
+                            a.lit.iter().chain(bs.flat_map(|b| match b {
+                                Branch::Lit(l) => std::slice::from_ref(l),
+                                Branch::Op { lits, .. } => &lits[..],
+                            }))
+                        })
+                        .find(|l| l.site == s)
+                        .map_or(3, |l| match lit_carrier(&l.value) {
+                            Carrier::Int => 0,
+                            Carrier::F64 => 1,
+                            _ => 2,
+                        })
+                };
+                if ok
+                    && adopt_error
+                        .as_ref()
+                        .is_none_or(|(t, _)| rank(e.0) < rank(*t))
+                {
+                    adopt_error = Some(e);
+                }
+                continue;
+            }
+            if !ok {
+                continue;
+            }
+            for (i, (a, p)) in args.iter().zip(&arrow.params).enumerate() {
+                if let Some(a) = a
+                    && a.lit.as_ref().is_some_and(|l| l.bare)
+                {
+                    let m = takes.entry(i).or_insert(Some(0));
+                    *m = m
+                        .filter(|_| !p.dynamic && p.vars.is_empty())
+                        .map(|m| m | mask_of(p));
+                }
+            }
+            // A read counts as an adoption: `g(c) * g(c)` takes the `int` arrow, which
+            // reads nothing.
+            let count = need.len() + reads.len();
+            match &best {
+                Some((n, r, _)) if n.len() + r.len() < count => {}
+                Some((n, r, _)) if *n == need && *r == reads => kept.push(k),
+                Some((n, r, _)) if n.len() + r.len() == count => {}
+                _ => {
+                    best = Some((need, reads, retyped));
+                    kept = vec![k];
+                }
+            }
+        }
+        let Some((need, reads, retyped)) = best else {
+            if let Some((i, v, c)) = unread {
+                let a = args[i].as_ref().expect("a call read at a carrier");
+                return Err(self.unread_call(what, args, a, &v, c, true));
+            }
+            if let Some((s, m)) = adopt_error {
+                self.lit_refused.push((s, m));
+                return Ok(None);
+            }
+            // No arrow met an argument, which may rest on a refused check that it is empty.
+            let tys: Vec<Option<&Ty>> = args
+                .iter()
+                .map(|a| a.as_ref().filter(|a| a.lit.is_none()).map(|a| &a.ty))
+                .collect();
+            let all: Vec<usize> = (0..sig.arrows.len()).collect();
+            let why = refused_among(sig, &all, &tys);
+            return Err(self.rejected_because(what, args, &why));
+        };
+        // A literal that two or more of the word's numeric carriers take, and that nothing
+        // else here gives one, as `abs(0.5)` or `String(0.5)`: an integer literal is `int`
+        // where `int` is among them, and otherwise it is rejected (steps L1.26a and L1.26b).
+        // One value gives one error: of two such operands, as in `0.5 * 2.0`, the first
+        // decimal literal, or else the first literal, is rejected.
+        let unfixed_lits = takes.iter().filter_map(|(&i, m)| {
+            let (Some(m), Some(Some(a))) = (m, args.get(i)) else {
+                return None;
+            };
+            let l = a.lit.as_ref()?;
+            let left: Vec<Carrier> = Carrier::of_mask(*m).filter(|c| c.numeric()).collect();
+            let int = lit_carrier(&l.value) == Carrier::Int && left.contains(&Carrier::Int);
+            (!int && left.len() > 1).then_some((l, left))
+        });
+        let mut first = None;
+        for (l, left) in unfixed_lits {
+            let decimal = lit_carrier(&l.value) == Carrier::F64;
+            if first.is_none() || decimal {
+                first = Some((l.clone(), left));
+            }
+            if decimal {
+                break;
+            }
+        }
+        if let Some((l, left)) = first {
+            let notes = self.derive(&[l.site]);
+            self.reject(
+                Some(Row::UnfixedDecimal),
+                l.site,
+                unfixed(&l, &left, None),
+                notes,
+            );
+        }
+        for (i, t) in retyped {
+            if let Some(a) = &mut args[i] {
+                a.ty = t;
+            }
+        }
+        for (s, v) in need {
+            self.put(Undo::Adopt(s, Some(v)));
+        }
+        for (s, c) in reads {
+            self.put(Undo::Fit(s, Some(Fit::Read(c))));
+        }
+        Ok(Some(kept))
+    }
+}
+
+/// The literals written in the tuple `e`, by component, at any depth, and the `if`s of
+/// literals there ([`branch_lits`], whose operations `kept` gives); `None` when `e` is not a
+/// tuple or holds neither. The tuples nest as deep as the text, so the walk keeps its own
+/// stack: each open tuple's items, the next one, its parts so far, and whether one is a
+/// literal or an `if` of them at some depth.
+// Complexity tradeoff: each component is read once, and [`branch_lits`] walks only a
+// component that is an `if`, once, O(its size), so the walk is O(the tuple's text). The
+// naive form, the component's type `1 | 3` tested against the parameter's `f64`, needs no
+// walk but rejects the call, since that type holds the values, not the literals that wrote
+// them.
+fn parts<'e>(
+    e: &'e Expr,
+    src: Option<&str>,
+    kept: &HashMap<Span, usize>,
+) -> Option<Rc<[Part<'e>]>> {
+    let ExprKind::Tuple(items) = &e.kind else {
+        return None;
+    };
+    let mut stack: Vec<(&[Expr], usize, Vec<Part>, bool)> = vec![(items, 0, Vec::new(), false)];
+    loop {
+        let (items, next, ps, any) = stack.last_mut().expect("an open tuple");
+        let Some(item) = items.get(*next) else {
+            let (_, _, ps, any) = stack.pop().expect("an open tuple");
+            let ps: Rc<[Part]> = ps.into();
+            match stack.last_mut() {
+                None => return any.then_some(ps),
+                Some(up) => {
+                    up.2.push(if any { Part::Tuple(ps) } else { Part::Other });
+                    up.3 |= any;
+                }
+            }
+            continue;
+        };
+        *next += 1;
+        match (literal(item, src), &item.kind) {
+            (Some(l), _) => {
+                ps.push(Part::Lit(l));
+                *any = true;
+            }
+            (None, ExprKind::Tuple(inner)) => stack.push((inner, 0, Vec::new(), false)),
+            (None, _) => match branch_lits(item, src, kept) {
+                Some(bs) => {
+                    ps.push(Part::Branches(bs));
+                    *any = true;
+                }
+                None => ps.push(Part::Other),
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
