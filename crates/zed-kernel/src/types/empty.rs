@@ -9432,7 +9432,9 @@ impl Placing {
 /// a key: two types of different classes are disjoint. The keys sit in a trie: the atoms of
 /// one name are keyed by their payload's keys under the node of the name, and the tuples of one
 /// length by the keys of their first component under the node of the length, so `#a((1,))` and
-/// `#a((2,))`, or `(1,)` and `(2,)`, share no key. A type that holds every value under a node,
+/// `#a((2,))`, or `(1,)` and `(2,)`, share no key. The classes are then cut by one more run
+/// for each later component `c`, in which the tuples longer than `c` are keyed by component
+/// `c`, so `(1, 2)` and `(1, 3)` are apart too. A type that holds every value under a node,
 /// such as every tuple of a length, shares a key with each type that holds a key under it. At
 /// each node, the cofinite types of a universe share it whole. A finite type meets one of them
 /// exactly when it holds a key that one does not list, so it shares the whole universe when it
@@ -9448,33 +9450,58 @@ impl Placing {
 /// types. The work is the size of the tries read times the log of the keys, and each child of
 /// a merged node moves O(log n) times.
 // Complexity tradeoff: the keys are coarser than the meet of two types in three cases, each of
-// which joins disjoint types: tuples are keyed by their first component only, so `(1, 2)` and
-// `(1, 3)` land in one class; a tuple part that is not within its tuple types (a negated tuple
-// type outside any other) holds every tuple of its length, so it joins every type under that
-// node; and a type met at two nodes inside one type merges the two, so `(2,)` and `#e((2,))`
-// are joined beside `(1,) | #e((1,))`. Joined types get the later steps of `tuples` on the part
-// whole; where those steps do not decide it, the part counts as inhabited for `is_empty`, and
-// `verdict` answers `Refused(TupleSplit)` (a subtyping check fails and names the types). The
-// cost of a joined class is that of deciding it whole: k pinwheels joined in one class by the
-// first two cases cost order k^2 (78,974M instructions at k = 128 with one end outside every
-// tuple type, 19,555M at k = 64; 62,927M and 15,893M with one first component), while merged
-// nodes join only types that hold one key under them, and k pinwheels whose ends repeat one
-// integer under a tuple and a payload stay k classes (4,508M instructions at k = 512, 9.0
-// times k = 64). Why: the meet of two tuple types
-// is an emptiness check in each component, and testing it for each pair costs their square and
-// a search each, while one component's keys cost the size of the types; a tuple part outside
-// its tuple types meets another type exactly when that type is not within the union of the
-// part's negated tuple types, which is itself an emptiness check; walking a type inside a type
-// once per node it is met at would unfold a shared type, exponential in its nesting. Trigger:
-// cells on the split component that differ only after the first component of a tuple, a
-// negated tuple type, or one type reached by two paths inside a cell. Tests:
-// `types::empty::tests::classes_are_exact_on_cofinite_sets_names_and_lengths_and_join_tuples_by_first_component`
-// (`(1, 2)` and `(1, 3)` in one class, `#a((1,))` and `#a((2,))` apart, cofinite sets joined
-// only where they meet),
+// which joins disjoint types: tuples that share a key on every component, each in a different
+// tuple type, as `(1, 1) | (2, 2)` and `(1, 2)`; a tuple part of length two or more that is
+// not within its tuple types (a negated tuple type outside any other) holds every tuple of its
+// length, so it joins every type under that node, and so does one of length one whose first
+// components are not read off it (below); and a type met at two nodes inside one type merges
+// the two, so `(2,)` and `#e((2,))` are joined beside `(1,) | #e((1,))`. Joined types get the
+// later steps of `tuples` on the part whole; where those steps do not decide it, the part
+// counts as inhabited for `is_empty`, and `verdict` answers `Refused(TupleSplit)` (a subtyping
+// check fails and names the types). The cost of a joined class is that of deciding it whole:
+// k pinwheels joined in one class cost order k^2. The naive way keyed tuples by their first
+// component only, and placed a tuple part of length one outside its tuple types whole, so k
+// pinwheels whose ends share a first component, or with one end every tuple but the other
+// ends, fell in one class; a check whose top is a meet, so that `disjoint_disjuncts` does not
+// split the union first (the full union a subtype of the one with its middles, the union less
+// a box it does not meet), cost from k = 16 to 128 59.7 times the bytes allocated (subtypes,
+// one end outside), 57.9 times (one first component), and 49.5 and 47.3 times (less a box,
+// full). Here the classes are the common refinement of one run per component `c`: run 0 is
+// the trie above; run `c ≥ 1` places only the types that hold a tuple longer than `c`, their
+// tuples of those lengths keyed by component `c`, and puts the types that hold anything else,
+// or meet a type cofinite in tuples there, in one class with the types outside the run. Two
+// types that meet share a value, which every run keys alike, so each run's partition is
+// sound, and so is their common refinement. A part of one-tuples is placed at the first
+// components it can hold ([`first_components`]): those of the tuple types it takes toward
+// `true`, and with those false, those of a meet of tuple types and their complements, so
+// `(int,) \ (1,)` is apart from `(1,)`. A part `false` with no tuple type holding places only
+// the tuple types it takes toward `true`, not those it refuses on every path. Each tuple type
+// is placed once per component, so the runs cost the size of the types, O(S log S) with the
+// sort by longest length and the tries. Measured in instructions, with the bytes allocated in
+// parentheses: from k = 64 to 512 the subtype checks cost 8.7 times (8.3; one end outside,
+// 268.6M to 2,346.7M) and 8.4 times (8.1; one first component, 212.4M to 1,783.8M); from
+// k = 16 to 128 the union less a box, full, 7.9 times (7.7; 399.7M to 3,148.3M) and 7.9 times
+// (7.9; 351.5M to 2,769.2M); from k = 32 to 256 the empty verdict 8.7 times (8.2; 852.4M to
+// 7,395.0M) and 8.0 times (8.0; 688.6M to 5,503.3M). Merged nodes join only types that hold
+// one key under them, and k pinwheels whose ends repeat one integer under a tuple and a
+// payload stay k classes (4,508M instructions at k = 512, 9.0 times k = 64). Why the three
+// cases remain: the meet of two tuple types is an emptiness check in each component, and
+// testing it for each pair costs their square and a search each, while one component's keys
+// cost the size of the types; a tuple part outside its tuple types meets another type exactly
+// when that type is not within the union of the part's negated tuple types, which is itself
+// an emptiness check; walking a type inside a type once per node it is met at would unfold a
+// shared type, exponential in its nesting. Trigger: cells on the split component whose tuples
+// share a key on every component, a negated tuple type of length two or more, or one type
+// reached by two paths inside a cell. Tests:
+// `types::empty::tests::classes_are_exact_on_cofinite_sets_names_lengths_and_components`
+// (`(1, 2)` and `(1, 3)` apart, `(7, 7) | (8, 8)` and `(7, 8)` joined, a type cofinite in
+// tuples joined with the pairs it meets),
 // `types::empty::tests::classes_join_under_a_tuple_part_outside_its_types_and_merge_the_nodes_of_a_type_met_twice`,
-// and in `l01_23_subtyping::scaling`: `pinwheels_whose_ends_share_a_first_component_are_decided`,
-// `pinwheels_with_an_end_outside_every_tuple_type_are_decided`,
-// `pinwheels_joined_in_one_class_are_decided_at_quadratic_cost` (order k^2 at k = 8 and 64),
+// `types::empty::tests::types_that_meet_are_joined_in_random_unions_and_negations_of_tuples`
+// (1,000 random cases against the meets), and in `l01_23_subtyping::scaling`:
+// `pinwheels_whose_ends_share_a_first_component_are_decided` and `…_scale`,
+// `pinwheels_with_an_end_outside_every_tuple_type_are_decided` and `…_scale` (the verdict
+// at k = 32 and 256, the subtype checks at 64 and 512, the union less a box at 16 and 128),
 // `pinwheels_whose_ends_repeat_an_integer_agree_with_the_model` and `…_scale` (k = 64 and 512,
 // shared and built apart), and `payload_and_one_tuple_pinwheels_scale`. COMPLEXITY.md K36. A
 // complete solution needs the connected parts of the graph in which two types meet: for tuples
@@ -9517,31 +9544,203 @@ impl Placing {
 fn overlaps<'a>(ts: impl Iterator<Item = &'a Type>) -> Vec<Vec<usize>> {
     let none = Type::empty();
     let held = Held::default();
+    let parts: Vec<&Parts> = ts.map(|t| t.p_held(&held)).collect();
+    let n = parts.len();
+    // Per type: its tuple lengths of two or more, each with whether its part holds every tuple
+    // of the length and its tuple types; whether it holds anything but those or meets a type
+    // cofinite in tuples at one of them; and the run 0.
+    let mut longer: Vec<Vec<(usize, bool, Vec<&Row>)>> = Vec::with_capacity(n);
+    let mut other = Vec::with_capacity(n);
+    let mut tops = Vec::with_capacity(n);
+    // The tuple lengths listed by every type that is cofinite in tuples. Such a type holds every
+    // tuple of a length it does not list, so a type with a length outside this set meets one
+    // and is put with the rest in every run. `None` when no type is cofinite in tuples.
+    let mut listed_by_all: Option<BTreeSet<usize>> = None;
+    for p in &parts {
+        if p.tuples.rest {
+            let lens = p.tuples.lens.keys().copied();
+            listed_by_all = Some(match listed_by_all {
+                None => lens.collect(),
+                Some(s) => lens.filter(|m| s.contains(m)).collect(),
+            });
+        }
+        let l = local(p, &none);
+        let mut mine = Vec::new();
+        let mut kids = Vec::with_capacity(l.kids.len());
+        for kid in l.kids {
+            let mut top = (kid.edge, kid.bare, kid.whole, Vec::new());
+            match top.0 {
+                Edge::Len(1) => match first_components(&p.tuples.lens[&1]) {
+                    Some(q) => {
+                        top.2 = false;
+                        top.3.push(q);
+                    }
+                    None => top.3.extend(kid.inside.into_iter().cloned()),
+                },
+                Edge::Len(m) => {
+                    // A part that is `false` with no tuple type holding holds only tuples of
+                    // the tuple types its paths to `true` take (`Part::taken_toward`), not
+                    // those it refuses on every path, as `(1, 1)` in `(int, int) \ (1, 1)`.
+                    let mut rows = Vec::new();
+                    if !kid.whole {
+                        let mut seen = DigestSet::default();
+                        let f = &p.tuples.lens[&m];
+                        f.taken_toward(true, &mut seen, &mut |row| rows.push(row));
+                    }
+                    top.3.extend(rows.iter().map(|r| r[0].clone()));
+                    if m >= 2 {
+                        mine.push((m, kid.whole, rows));
+                    }
+                }
+                Edge::Atom(_) => top.3.extend(kid.inside.into_iter().cloned()),
+            }
+            kids.push(top);
+        }
+        let held_else = !l.points.is_empty()
+            || l.lists.iter().any(|&(_, cofinite, _)| cofinite)
+            || kids.iter().any(|k| !matches!(k.0, Edge::Len(m) if m >= 2));
+        other.push(held_else);
+        longer.push(mine);
+        tops.push(Top {
+            points: l.points,
+            lists: l.lists,
+            kids,
+        });
+    }
+    if let Some(s) = &listed_by_all {
+        for (o, l) in other.iter_mut().zip(&longer) {
+            *o |= l.iter().any(|e| !s.contains(&e.0));
+        }
+    }
+    let mut parent = joined(tops);
+    let mut label: Vec<usize> = (0..n).map(|i| root(&mut parent, i)).collect();
+    // Run `c` for each component `c` of a tuple length `m > c` that some type holds: such a
+    // type puts its tuples of those lengths in, keyed by component `c`, and every type that
+    // holds anything else is joined with each other such type and with the types that hold no
+    // tuple of those lengths; the types are then cut into the classes of both runs.
+    let mut by_len: Vec<usize> = (0..n).filter(|&i| !longer[i].is_empty()).collect();
+    by_len.sort_by_key(|&i| std::cmp::Reverse(longer[i].last().map_or(0, |e| e.0)));
+    let most = by_len
+        .first()
+        .map_or(0, |&i| longer[i].last().map_or(0, |e| e.0));
+    let mut next = n;
+    for c in 1..most {
+        let these: Vec<usize> = (by_len.iter().copied())
+            .take_while(|&i| longer[i].last().is_some_and(|e| e.0 > c))
+            .collect();
+        let mut rest = Vec::new();
+        let tops = these.iter().enumerate().map(|(x, &i)| {
+            if other[i] || longer[i].first().is_some_and(|e| e.0 <= c) {
+                rest.push(x);
+            }
+            let kids = longer[i].iter().rev().take_while(|e| e.0 > c);
+            let kids = kids.map(|(m, whole, rows)| {
+                let inside = rows.iter().map(|r| r[c].clone()).collect();
+                (Edge::Len(*m), false, *whole, inside)
+            });
+            Top {
+                points: Vec::new(),
+                lists: Vec::new(),
+                kids: kids.collect(),
+            }
+        });
+        let tops: Vec<Top> = tops.collect();
+        let mut parent = joined(tops);
+        for w in rest.windows(2) {
+            join(&mut parent, w[0], w[1]);
+        }
+        let shared = rest.first().map(|&x| root(&mut parent, x));
+        let mut fresh: HashMap<(usize, usize), usize> = HashMap::new();
+        for (x, &i) in these.iter().enumerate() {
+            let r = root(&mut parent, x);
+            if Some(r) != shared {
+                label[i] = *fresh.entry((label[i], r)).or_insert_with(|| {
+                    next += 1;
+                    next - 1
+                });
+            }
+        }
+    }
+    let mut index: HashMap<usize, usize> = HashMap::new();
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    for (i, l) in label.into_iter().enumerate() {
+        let g = *index.entry(l).or_insert_with(|| {
+            groups.push(Vec::new());
+            groups.len() - 1
+        });
+        groups[g].push(i);
+    }
+    groups
+}
+
+/// What one type puts at the root of a run of [`overlaps`]: its keys and lists there, and per
+/// edge below, whether it holds the bare atom of the name, whether it holds every value there,
+/// and the types inside.
+struct Top {
+    points: Vec<Key>,
+    lists: Vec<Listed>,
+    kids: Vec<(Edge, bool, bool, Vec<Type>)>,
+}
+
+/// A type that holds the first component of every one-tuple of the part `f` of one-tuples, when
+/// one is read off `f` in time linear in it: when `f` is a meet of tuple types and complements
+/// of tuple types (`Part::clause`), those of the first tuple type it takes less those of the
+/// ones it refuses ([`within_outside`]); otherwise those of the tuple types `T` that `f` takes
+/// toward `true`, and those of what `f` holds with `T` false, when that is such a meet. A
+/// one-tuple of `f` lies in a tuple type of `T`, or `f` holds it with every tuple type of `T`
+/// false, which is the meet. `None` when the meet is no such part.
+fn first_components(f: &Part<Row>) -> Option<Type> {
+    if let Some((takes, refused)) = f.clause() {
+        return Some(within_outside(&takes, &refused));
+    }
+    let mut seen = DigestSet::default();
+    let mut taken: Vec<&Row> = Vec::new();
+    f.taken_toward(true, &mut seen, &mut |r| taken.push(r));
+    let set: BTreeSet<&Row> = taken.iter().copied().collect();
+    let out = Type::union_all(taken.iter().map(|r| r[0].clone()));
+    let left = f.restrict(&|r| set.contains(r).then_some(false));
+    if left.is_leaf() == Some(false) {
+        return Some(out);
+    }
+    let (takes, refused) = left.clause()?;
+    Some(&out | &within_outside(&takes, &refused))
+}
+
+/// A type that holds the first component of every one-tuple in the one-tuple types `takes` and
+/// in none of `refused`: the first take's, or every value, less those of `refused`. A one-tuple
+/// is in a one-tuple type exactly when its component is in the type's.
+fn within_outside(takes: &[Row], refused: &[Row]) -> Type {
+    let within = takes.first().map_or_else(Type::top, |r| r[0].clone());
+    let outside = Type::union_all(refused.iter().map(|r| r[0].clone()));
+    &within - &outside
+}
+
+/// One run of [`overlaps`]: the types of `tops` placed in one trie from its root; the
+/// union-find of their indices, joined where two share a key.
+fn joined(tops: Vec<Top>) -> Vec<usize> {
     let mut trie = Trie::new();
     let mut s = Placing::default();
     s.sync(&trie);
-    let mut parent: Vec<usize> = Vec::new();
+    let mut parent: Vec<usize> = (0..tops.len()).collect();
     // The groups placed for each cell, by cell and group number, with their placements. A
     // type of a group placed for the cell is placed: met again, its node and the new one are
     // merged.
     let mut placed: HashMap<(usize, usize), usize> = HashMap::new();
     let mut work: Vec<Work> = Vec::new();
-    for (i, t) in ts.enumerate() {
-        parent.push(i);
-        let l = local(t.p_held(&held), &none);
+    for (i, l) in tops.into_iter().enumerate() {
         s.points.extend(l.points.into_iter().map(|k| (0, k, i)));
         s.lists.extend(l.lists.into_iter().map(|li| (0, li, i)));
-        for kid in l.kids {
-            let y = trie.child(0, kid.edge);
+        for (edge, bare, whole, inside) in l.kids {
+            let y = trie.child(0, edge);
             s.sync(&trie);
             s.reach(&mut trie, y, &mut work);
-            if kid.bare {
+            if bare {
                 s.points.push((y, Key::Bare, i));
             }
-            if kid.whole {
+            if whole {
                 s.wholes.push((y, i));
             }
-            work.extend(kid.inside.into_iter().map(|t| Work::Place(y, t.clone(), i)));
+            work.extend(inside.into_iter().map(|t| Work::Place(y, t, i)));
         }
         while let Some(w) = work.pop() {
             match w {
@@ -9690,12 +9889,7 @@ fn overlaps<'a>(ts: impl Iterator<Item = &'a Type>) -> Vec<Vec<usize>> {
             join(&mut parent, i, w);
         }
     }
-    let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-    for i in 0..parent.len() {
-        let r = root(&mut parent, i);
-        groups.entry(r).or_default().push(i);
-    }
-    groups.into_values().collect()
+    parent
 }
 
 /// Whether `k` is known empty for good without a search: the empty type, or a recursive type

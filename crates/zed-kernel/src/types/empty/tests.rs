@@ -9,10 +9,12 @@ fn region(r: Vec<Type>, f: &Part<Row>) -> Region {
 /// The classes of `overlaps` on everyday types: a finite set and a cofinite one are joined
 /// exactly when they meet, at the top and inside an atom payload; two types of one atom
 /// name or tuple length are apart when they are disjoint inside it, a payload of a payload
-/// too; two tuples that share a first component are joined even when they are disjoint
-/// (the tradeoff at `overlaps`).
+/// too, and two tuples that share a first component are apart when they are disjoint on
+/// another; tuples that share a key on every component are joined even when they are
+/// disjoint, as `(7, 7) | (8, 8)` and `(7, 8)` (the tradeoff at `overlaps`). A type that holds
+/// every tuple of the lengths it does not list is joined with the pairs it meets.
 #[test]
-fn classes_are_exact_on_cofinite_sets_names_and_lengths_and_join_tuples_by_first_component() {
+fn classes_are_exact_on_cofinite_sets_names_lengths_and_components() {
     let lit = |i: i64| Type::lit(&Value::Int(i)).expect("an integer literal");
     let one = |t: Type| Type::tuple(vec![t]);
     let ts = [
@@ -30,11 +32,15 @@ fn classes_are_exact_on_cofinite_sets_names_and_lengths_and_join_tuples_by_first
             - &Type::atom("a"))
             - &Type::atom_with("b", &Type::top()))
             - &Type::atom("b"),
-        Type::tuple(vec![lit(1), lit(2)]), // 10, disjoint from 11 and joined with it
+        Type::tuple(vec![lit(1), lit(2)]), // 10, disjoint from 11, 15 and 16
         Type::tuple(vec![lit(1), lit(3)]), // 11
         Type::atom_with("b", &one(Type::atom_with("c", &one(lit(1))))), // 12, apart from 13
         Type::atom_with("b", &one(Type::atom_with("c", &one(lit(2))))), // 13
         Type::atom_with("a", &one(&Type::int() - &lit(1))), // 14, meets 4, not 3
+        Type::tuple(vec![lit(1), &Type::int() - &lit(2)]), // 15, meets 11, not 10
+        // 16, disjoint from 17 and joined with it
+        &Type::tuple(vec![lit(7), lit(7)]) | &Type::tuple(vec![lit(8), lit(8)]),
+        Type::tuple(vec![lit(7), lit(8)]), // 17
     ];
     let classes = overlaps(ts.iter());
     let expected: Vec<Vec<usize>> = vec![
@@ -45,18 +51,29 @@ fn classes_are_exact_on_cofinite_sets_names_and_lengths_and_join_tuples_by_first
         vec![5],
         vec![6],
         vec![9],
-        vec![10, 11],
+        vec![10],
+        vec![11, 15],
         vec![12],
         vec![13],
+        vec![16, 17],
     ];
     assert_eq!(classes, expected);
+    let pairs = [
+        Type::tuple(vec![lit(1), lit(2)]),
+        Type::tuple(vec![lit(1), lit(3)]),
+    ];
+    let tuples = Type::universe(crate::types::Universe::Tuple);
+    let but_one_tuples = &tuples - &one(Type::int());
+    let ts = [but_one_tuples, pairs[0].clone(), pairs[1].clone()];
+    assert_eq!(overlaps(ts.iter()), vec![vec![0, 1, 2]]);
 }
 
-/// The other two cases of the tradeoff at `overlaps`. A tuple part outside its tuple types,
-/// `(int,) \ (1,)`, holds every one-tuple, so it is joined with `(1,)` although the two are
-/// disjoint. A type met at two nodes inside one type, the `1` of `(1,) | #e((1,))`, merges
-/// the two nodes, so `(2,)` and `#e((2,))` are joined although they are disjoint; `(3,)`
-/// stays apart, and so do the classes of disjoint types under the merged node. The classes
+/// The other two cases of the tradeoff at `overlaps`. A negated pair type, `(int, int) \ (1, 1)`,
+/// is keyed by the components of `(int, int)`, so it is joined with `(1, 1)` although the two
+/// are disjoint; a negated one-tuple type, `(int,) \ (1,)`, is placed at the first components
+/// it can hold, `int \ 1`, so it is apart from `(1,)` and joined with `(2,)`. A type met at
+/// two nodes inside one type, the `1` of `(1,) | #e((1,))`, merges the two nodes, so `(2,)`
+/// and `#e((2,))` are joined although they are disjoint; `(3,)` stays apart, and so do the classes of disjoint types under the merged node. The classes
 /// do not depend on whether the two `1`s are one shared type or two equal ones. A recursive
 /// type that holds itself as a first component merges a node with one below it.
 #[test]
@@ -66,6 +83,14 @@ fn classes_join_under_a_tuple_part_outside_its_types_and_merge_the_nodes_of_a_ty
     let one = |t: Type| Type::tuple(vec![t]);
     let e = |t: Type| Type::atom_with("e", &one(t));
     let negated = [one(lit(1)), &one(Type::int()) - &one(lit(1)), one(lit(2))];
+    let classes = overlaps(negated.iter());
+    assert_eq!(classes, vec![vec![0], vec![1, 2]]);
+    let two = |a: Type, b: Type| Type::tuple(vec![a, b]);
+    let negated = [
+        two(lit(1), lit(1)),
+        &two(Type::int(), Type::int()) - &two(lit(1), lit(1)),
+        two(lit(2), lit(2)),
+    ];
     let classes = overlaps(negated.iter());
     assert_eq!(classes, vec![vec![0, 1, 2]]);
     let shared = lit(1);
@@ -636,42 +661,93 @@ fn random_cells(s: &mut u64) -> Vec<Type> {
         .collect()
 }
 
-/// `overlaps` on random groups whose members hold types of lower groups, recursive ones too:
-/// two types whose meet is shown inhabited are in one class, and the classes are the same with
-/// the types in the other order.
+/// Checks the classes of `overlaps` on `ts`: two types whose meet is shown inhabited are in one
+/// class, and the classes are the same with the types in the other order. Adds the pairs that
+/// meet to `met` and the pairs in different classes to `apart`.
+fn check_classes(case: usize, ts: &[Type], met: &mut usize, apart: &mut usize) {
+    let classes = overlaps(ts.iter());
+    let mut class = vec![usize::MAX; ts.len()];
+    for (c, is) in classes.iter().enumerate() {
+        for &i in is {
+            class[i] = c;
+        }
+    }
+    for i in 0..ts.len() {
+        for j in i + 1..ts.len() {
+            if (&ts[i] & &ts[j]).verdict() == Verdict::Inhabited {
+                *met += 1;
+                assert_eq!(class[i], class[j], "case {case}: {i} and {j} meet");
+            } else if class[i] != class[j] {
+                *apart += 1;
+            }
+        }
+    }
+    let n = ts.len();
+    let mut reversed = overlaps(ts.iter().rev());
+    for is in &mut reversed {
+        for i in is.iter_mut() {
+            *i = n - 1 - *i;
+        }
+        is.sort();
+    }
+    reversed.sort();
+    assert_eq!(reversed, classes, "case {case} in the other order");
+}
+
+/// `overlaps` on random groups whose members hold types of lower groups, recursive ones too
+/// ([`check_classes`]).
 #[test]
 fn types_that_meet_are_joined_in_random_groups_holding_lower_types() {
     let mut s = 0x2545_f491_4f6c_dd1d;
     let (mut met, mut apart) = (0, 0);
     for case in 0..400 {
         let ts = random_cells(&mut s);
-        let classes = overlaps(ts.iter());
-        let mut class = vec![usize::MAX; ts.len()];
-        for (c, is) in classes.iter().enumerate() {
-            for &i in is {
-                class[i] = c;
-            }
-        }
-        for i in 0..ts.len() {
-            for j in i + 1..ts.len() {
-                if (&ts[i] & &ts[j]).verdict() == Verdict::Inhabited {
-                    met += 1;
-                    assert_eq!(class[i], class[j], "case {case}: {i} and {j} meet");
-                } else if class[i] != class[j] {
-                    apart += 1;
-                }
-            }
-        }
-        let n = ts.len();
-        let mut reversed = overlaps(ts.iter().rev());
-        for is in &mut reversed {
-            for i in is.iter_mut() {
-                *i = n - 1 - *i;
-            }
-            is.sort();
-        }
-        reversed.sort();
-        assert_eq!(reversed, classes, "case {case} in the other order");
+        check_classes(case, &ts, &mut met, &mut apart);
+    }
+    assert!(met > 0 && apart > 0, "{met} pairs met, {apart} apart");
+}
+
+/// A random component: one of the integers 0 to 2, every integer, or every integer but one.
+fn random_component(s: &mut u64) -> Type {
+    let lit = |i: usize| Type::lit(&Value::Int(i as i64)).expect("a literal");
+    match below(s, 5) {
+        3 => Type::int(),
+        4 => &Type::int() - &lit(below(s, 3)),
+        i => lit(i),
+    }
+}
+
+/// A random tuple type of length one to three.
+fn random_tuple(s: &mut u64) -> Type {
+    let m = 1 + below(s, 3);
+    Type::tuple((0..m).map(|_| random_component(s)).collect())
+}
+
+/// Three to eight random types of tuples: tuple types, unions of two, one less another, and
+/// every tuple less one or two tuple types.
+fn random_tuples(s: &mut u64) -> Vec<Type> {
+    let tuples = Type::universe(crate::types::Universe::Tuple);
+    (0..3 + below(s, 6))
+        .map(|_| match below(s, 6) {
+            0 => &random_tuple(s) | &random_tuple(s),
+            1 => &random_tuple(s) - &random_tuple(s),
+            2 => &tuples - &random_tuple(s),
+            3 => &(&tuples - &random_tuple(s)) - &random_tuple(s),
+            _ => random_tuple(s),
+        })
+        .collect()
+}
+
+/// `overlaps` on random types of tuples of one to three components, negated ones and the
+/// tuples of every length less some among them ([`check_classes`]): the runs on later
+/// components and the first components of a negated one-tuple type.
+#[test]
+fn types_that_meet_are_joined_in_random_unions_and_negations_of_tuples() {
+    let mut s = 0x9e37_79b9_7f4a_7c15;
+    let (mut met, mut apart) = (0, 0);
+    for case in 0..1000 {
+        let ts = random_tuples(&mut s);
+        check_classes(case, &ts, &mut met, &mut apart);
     }
     assert!(met > 0 && apart > 0, "{met} pairs met, {apart} apart");
 }

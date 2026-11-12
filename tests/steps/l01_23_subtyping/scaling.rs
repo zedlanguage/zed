@@ -1131,58 +1131,112 @@ fn first_component_ends(k: usize) -> Vec<[Type; 3]> {
     (0..k as i64).map(|i| end(10 * i)).collect()
 }
 
+/// The union of the pinwheels on `ends`, full or with their middles.
+fn pinwheels_on(ends: Vec<[Type; 3]>, full: bool) -> Type {
+    Type::union_all(ends.into_iter().map(|e| pinwheel(full, e)))
+}
+
+/// A box of pairs disjoint from every end of [`negated_ends`] (`outside`) or of
+/// [`first_component_ends`], whose ends it is shaped like.
+fn far_box(outside: bool) -> Type {
+    let end = match outside {
+        true => Type::tuple(vec![lit_i(-5)]),
+        false => Type::tuple(vec![lit_i(0), lit_i(-5)]),
+    };
+    Type::tuple(vec![end; 2])
+}
+
+/// [`check_against_model`], and the union full and not compared as subtypes, and less a box
+/// it does not meet. The box is a tuple type, so the top of the union less it is a meet, and
+/// the union is not split into its pinwheels at its top.
+fn check_pinwheels(what: &str, ends: Vec<[Type; 3]>, outside: bool) {
+    check_against_model(what, &ends);
+    let (full, open) = (
+        pinwheels_on(ends.clone(), true),
+        pinwheels_on(ends.clone(), false),
+    );
+    assert!(full.subtype(&open) && !open.subtype(&full), "{what}");
+    let model = Type::union_all(ends.iter().map(|e| pinwheel_model(false, e)));
+    let less = &open - &far_box(outside);
+    assert_eq!(less.verdict(), Verdict::Inhabited, "{what}");
+    assert!(less.equiv(&model), "{what}");
+    let less = &full - &far_box(outside);
+    assert_eq!(less.verdict(), Verdict::Empty, "{what}");
+}
+
 #[test]
 fn pinwheels_whose_ends_share_a_first_component_are_decided() {
-    // The tradeoff at `overlaps`: tuples are keyed by their first component, so all the ends
-    // `(0, b + j)` are in one class and the pinwheels are decided together.
-    for k in [1, 2, 4] {
-        check_against_model(
+    // The ends `(0, b + j)` share their first component, and the pinwheels are told apart on
+    // the second (`overlaps`).
+    for k in [1, 2, 4, 7] {
+        check_pinwheels(
             &format!("one first component, k = {k}"),
-            &first_component_ends(k),
+            first_component_ends(k),
+            false,
         );
     }
 }
 
 #[test]
 fn pinwheels_with_an_end_outside_every_tuple_type_are_decided() {
-    for k in [1, 2, 4] {
-        check_against_model(&format!("an end outside, k = {k}"), &negated_ends(k));
+    // The end outside every other is a tuple type less a union of one-tuples, which meets
+    // only the last pinwheel's ends (`overlaps`).
+    for k in [1, 2, 4, 7] {
+        check_pinwheels(&format!("an end outside, k = {k}"), negated_ends(k), true);
+    }
+}
+
+/// The checks of [`check_pinwheels`] as scaling checks on `k` pinwheels on `ends(k)`: the
+/// verdict of the full union at k = 32 and 256, the two subtype checks at 64 and 512, and the
+/// union less a box, empty and not, at 16 and 128.
+fn pinwheels_scale(what: &str, ends: fn(usize) -> Vec<[Type; 3]>, outside: bool) {
+    scaling::check(&format!("k pinwheels, {what}, empty, by k"), 32, |k| {
+        Type::forget_emptiness();
+        assert_eq!(pinwheels_on(ends(k), true).verdict(), Verdict::Empty);
+    });
+    scaling::check(&format!("k pinwheels, {what}, subtypes, by k"), 64, |k| {
+        Type::forget_emptiness();
+        let (full, open) = (pinwheels_on(ends(k), true), pinwheels_on(ends(k), false));
+        assert!(full.subtype(&open) && !open.subtype(&full));
+    });
+    for full in [true, false] {
+        let name = format!("k pinwheels, {what}, full = {full}, less a box, by k");
+        scaling::check(&name, 16, |k| {
+            Type::forget_emptiness();
+            let want = match full {
+                true => Verdict::Empty,
+                false => Verdict::Inhabited,
+            };
+            assert_eq!(
+                (&pinwheels_on(ends(k), full) - &far_box(outside)).verdict(),
+                want
+            );
+        });
     }
 }
 
 #[test]
-fn pinwheels_joined_in_one_class_are_decided_at_quadratic_cost() {
-    // The tradeoff at `overlaps`: an end outside every tuple type holds every one-tuple, and
-    // ends that share a first component share its key, so all k pinwheels fall in one class
-    // and are decided together. Measured for the empty unions, order k^2: one end outside,
-    // 1,478M, 19,555M and 78,974M instructions at k = 16, 64 and 128 (with middles 63M, 391M
-    // and 803M); one first component, 1,170M, 15,893M and 62,927M. COMPLEXITY.md K36. The
-    // family of one first component is the test below, so each test runs under 30 s.
+fn pinwheels_with_an_end_outside_every_tuple_type_scale() {
+    // An end outside every tuple type held every one-tuple, so all k pinwheels fell in one
+    // class, and the checks below whose top is a meet cost order k^2: from k = 16 to 128,
+    // 59.7 times the bytes allocated for the subtype checks and 49.5 times for the union
+    // less a box, full. `overlaps` now places such an end at the first components it can
+    // hold, which meet only its own pinwheel. COMPLEXITY.md K36.
     std::thread::Builder::new()
-        .spawn(|| {
-            scaling::check_order("k pinwheels, one end outside, empty, by k", 8, 2, |k| {
-                Type::forget_emptiness();
-                let t = Type::union_all(negated_ends(k).into_iter().map(|e| pinwheel(true, e)));
-                assert_eq!(t.verdict(), Verdict::Empty);
-            });
-        })
+        .spawn(|| pinwheels_scale("one end outside", negated_ends, true))
         .unwrap()
         .join()
         .unwrap();
 }
 
 #[test]
-fn pinwheels_sharing_a_first_component_are_decided_at_quadratic_cost() {
-    // As above, for the family of one first component.
+fn pinwheels_whose_ends_share_a_first_component_scale() {
+    // Ends that share a first component shared its key, so all k pinwheels fell in one
+    // class: from k = 16 to 128, 57.9 times the bytes for the subtype checks and 47.3 times
+    // for the union less a box, full. `overlaps` now refines the classes on each later
+    // component. COMPLEXITY.md K36.
     std::thread::Builder::new()
-        .spawn(|| {
-            scaling::check_order("k pinwheels, one first component, empty, by k", 8, 2, |k| {
-                Type::forget_emptiness();
-                let ends = first_component_ends(k).into_iter();
-                let t = Type::union_all(ends.map(|e| pinwheel(true, e)));
-                assert_eq!(t.verdict(), Verdict::Empty);
-            });
-        })
+        .spawn(|| pinwheels_scale("one first component", first_component_ends, false))
         .unwrap()
         .join()
         .unwrap();
