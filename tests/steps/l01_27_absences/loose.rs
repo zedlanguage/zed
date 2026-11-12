@@ -200,12 +200,13 @@ fn a_loose_atom_enters_a_parameter_whose_bound_may_take_other_values() {
 fn a_loose_atom_enters_the_first_arrow_at_a_parameter_that_may_take_other_values() {
     // `x`'s atoms reach the result, so `r` has two arrows; `v` may take other values, so in
     // both arrows its type holds every atom and `#nf` enters it, where `size` refuses it. The
-    // first arrow takes the call, as its other parameter takes the plain `1`.
+    // first arrow takes the call, as its other parameter takes the plain `1`. `v`'s variable
+    // stands in both arrows, so it prints by name, `T` (DESIGN sec:diagnostics, UNDERSCORE-print).
     let t = "size(positional v: int | (int, int)) = 1;\n\
              r(positional x, positional v) = if (x else 0) == 0 { size(v) } else { x + size(v) };\n";
     assert_eq!(
         sig(t, "r"),
-        "type T1 = int | #_;\n((int, _) -> int) & ((T1, _) -> T1)"
+        "type T1 = int | #_;\n((int, T) -> int) & ((T1, T) -> T1)"
     );
     let bad = format!("{t}h(positional y: int | #nf) = r(1, y);\n");
     assert_eq!(
