@@ -236,7 +236,10 @@ export function resolveId(raw: string, known: Map<string, string>): { id: string
   if (raw === "orchestrator") return null;
   const xv = /^XV-(.+)$/.exec(raw);
   if (xv) return { id: "XE2", sub: xv[1] };
-  const bare = raw.replace(/-repair$/, "").replace(/^T14-plan$/, "T14");
+  // "-repair" is dropped only when the rest is a plan row, so an item named "MSG-forwarded-repair" keeps its name.
+  const plan = (id: string) => id.replace(/^T14-plan$/, "T14");
+  const unrepaired = plan(raw.replace(/-repair$/, ""));
+  const bare = known.has(unrepaired.toLowerCase()) ? unrepaired : plan(raw);
   return { id: known.get(bare.toLowerCase()) ?? bare, sub: "" };
 }
 

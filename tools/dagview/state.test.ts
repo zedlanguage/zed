@@ -45,6 +45,8 @@ test("aliases reach the plan's ids", () => {
   const known = new Map([["lr2", "LR2"], ["t2-eval", "T2-eval"]]);
   assert.equal(resolveId("lr2", known)?.id, "LR2");
   assert.equal(resolveId("T2-eval-repair", known)?.id, "T2-eval");
+  // An item whose own name ends in "-repair" keeps it: only a repair of a plan row is that row.
+  assert.equal(resolveId("MSG-forwarded-repair", known)?.id, "MSG-forwarded-repair");
   assert.deepEqual(resolveId("XV-Q8", known), { id: "XE2", sub: "Q8" });
   assert.equal(resolveId("orchestrator", known), null);
 });
