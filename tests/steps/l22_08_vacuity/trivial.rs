@@ -26,6 +26,7 @@
 //! work proportional to the models it lists. Any other group may (hardness tests); the default
 //! report stops at the first such choice.
 
+use std::cell::OnceCell;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fmt::Write as _;
 
@@ -784,9 +785,8 @@ impl Theory {
     /// - it follows each side's fields the other side's path already fixed;
     /// - a leaf against a subtree is the subtree's `KeyIndex` walk under its entry for the
     ///   leaf's key (O(min(chosen, needed) log) a check at each branch point);
-    /// - on a field both test it splits the side with fewer children to walk and the other side
-    ///   follows the choice, entering only the children whose keys meet the other side's child
-    ///   of the same choice (`Picks`, made once for each pair of classes);
+    /// - on a field both test it enters the two children of each choice together, only for the
+    ///   choices whose children may hold a pair (a list made once for each pair of classes);
     /// - on different fields it splits the side whose field the other side tests further down
     ///   (`Reach::first`), so the side tested sooner is split by the other side's fields first;
     /// - children are walked by class (`Tree::classes`): when the other side never tests the
@@ -798,17 +798,22 @@ impl Theory {
     ///   engine's lists of the fields above do not start with the group's pairs.
     ///
     /// Measured (instructions of the default report, m = 128 and 1024): brief, wide, same, ne and
-    /// their mirrors grow 7.5 to 7.8 times for a limit of 12.6, at 0.14 to 1.6 times the naive
-    /// walk; d = 50 and 400: 5 d^2 + 7 d + 2 steps and 3 d^2 + d runs, 5.6 and 261 million
-    /// instructions (naive 6.9 and 510), 47 times for a limit of 108 (d^2 log d). Cost: O(S log S)
-    /// for the trees, S the paths' choices, O(E log^2 E) for the indexes, O(N log N) for the
-    /// classes, groups and depth tables of the N nodes, the steps, then O(R + D) for the
-    /// engine's lists of the R runs. Not proved: a bound of the steps by pairs plus tree size on
-    /// every tree. Structural trigger: an atom whose sides share a field. Tests:
+    /// their mirrors grow 7.5 to 7.8 times for a limit of 12.6, at most 1.3 times the naive walk
+    /// (wide mirrored, 29.4 against 22.9 million at 1024); d = 50 and 400: 5 d^2 + 7 d + 2 steps
+    /// and 3 d^2 + d runs, 5.2 and 252 million instructions (naive 6.9 and 510), 49 times for a
+    /// limit of 108 (d^2 log d). Cost: O(S log S) for the trees, S the paths' choices,
+    /// O(E log^2 E) for an index, built only when a lookup first needs it, O(N log N) for the
+    /// classes, groups and depth tables of the N nodes, the steps, then O(R + D) for the engine's
+    /// lists of the R runs. Open: the choice lists cost the pairs of classes that meet times the
+    /// children tested: m^3 when m classes of each side meet on m-child nodes, m^1.5 in an input
+    /// of size m^2 (plan row TRIVIAL-walk-picks; measured at m = 8 and 64, such atoms take 50 to
+    /// 68 times the instructions for an input 140 to 200 times larger). Not proved: a bound of
+    /// the steps by pairs plus tree size on every tree. Structural trigger: an atom whose sides
+    /// share a field. Tests:
     /// `scaling::a_shared_field_atom_scales`, `scaling::a_shared_field_atom_with_cut_subtrees_scales`,
     /// `scaling::the_shared_field_families_scale`, `scaling::the_joint_splits_scale`, with `brute`
     /// and the corpus for the verdicts; COMPLEXITY.md C32; plan rows TRIVIAL-shared-atom,
-    /// TRIVIAL-walk-index, TRIVIAL-walk-branches.
+    /// TRIVIAL-walk-index, TRIVIAL-walk-branches, TRIVIAL-walk-picks.
     fn pair_form(&self, a: &Atom, lf: &[usize], rf: &[usize]) -> PairForm {
         let mut scope = Vec::with_capacity(lf.len() + rf.len());
         scope.extend_from_slice(lf);
@@ -825,7 +830,14 @@ impl Theory {
         let left = self.tree(a.lhs, &scope, key(false));
         let right = self.tree(a.rhs, &scope, key(true));
         let trees = [&left, &right];
-        let index = [left.index(), right.index()];
+        // Complexity tradeoff: an index costs O(E log^2 E) for its E entries, and E is bounded
+        // only by the leaves' depths (a chain of d nodes above k keys has d k entries), while
+        // the walk may never look a key up in one of the trees (one whose leaves all meet the
+        // other side's leaves in joint splits: m^2 entries for a walk of O(m) pairs). So each
+        // index is built at the walk's first lookup in it; whether the other tree has a key at
+        // all is read from a sorted list of its keys, O(N log N) to build, O(log K) a lookup.
+        let built = [OnceCell::new(), OnceCell::new()];
+        let index = |side: usize| built[side].get_or_init(|| trees[side].index());
         let reach = [left.reach(scope.len()), right.reach(scope.len())];
         let keys = [left.keys(), right.keys()];
         let class = [
@@ -833,12 +845,10 @@ impl Theory {
             right.classes(&left, &keys[0], scope.len()),
         ];
         let groups = [left.groups(&keys[1]), right.groups(&keys[0])];
-        // The children a split of node n of side `side` walks: its live children, a group of
-        // leaves counted once.
-        let units = |side: usize, n: usize| {
-            let gs = &groups[side].group[groups[side].at[n].clone()];
-            class[side].live[n] - gs.last().map_or(0, |l| l.end - gs[0].start) + gs.len()
-        };
+        // For a left class and a right class whose nodes test one field: the choices whose two
+        // children may hold a pair, in `joint_kids[joint[&(left class, right class)]]`, sorted.
+        let mut joint: HashMap<(usize, usize), std::ops::Range<usize>> = HashMap::new();
+        let mut joint_kids: Vec<Choice> = Vec::new();
         enum Step {
             /// A node of each side, reached by the choices fixed so far.
             Prod(usize, usize),
@@ -858,12 +868,20 @@ impl Theory {
                 g: usize,
                 i: usize,
                 last: Option<(Choice, usize)>,
-                /// On a field both sides test: the places in class order (`picks.kid`) and the
-                /// groups (`picks.group`) still to walk, the others holding no pair.
-                pick: Option<Pick>,
+            },
+            /// The children of `u` and `v`, which both test field `s`, entered together: the
+            /// choices `joint_kids[list]`, from place `i`.
+            Joint {
+                s: usize,
+                u: usize,
+                v: usize,
+                start: usize,
+                list: std::ops::Range<usize>,
+                i: usize,
+                last: Option<(Choice, usize)>,
             },
             /// The children of entry `e` of side `side`'s node of field `s` that a leaf of its
-            /// key below them, from place `i` of `index[side].kids`.
+            /// key below them, from place `i` of `index(side).kids`.
             OneKids {
                 side: usize,
                 s: usize,
@@ -908,7 +926,6 @@ impl Theory {
                         .is_none_or(|i| member.binary_search(&needs[i].1).is_ok())
                 })
         };
-        let mut picks = Picks::default();
         let (mut pairs, mut runs, mut steps) = (0, Vec::new(), 0u64);
         let mut stack = vec![Step::Prod(0, 0)];
         while let Some(step) = stack.pop() {
@@ -935,25 +952,75 @@ impl Theory {
                         } else {
                             (0, u, right.key[v])
                         };
-                        if let Some(e) = k.and_then(|k| index[side].entry(n, k))
-                            && index[side].agrees(e, &fixed, &chosen)
+                        if let Some(e) = k.and_then(|k| index(side).entry(n, k))
+                            && index(side).agrees(e, &fixed, &chosen)
                         {
                             stack.push(Step::One(side, n, e));
                         }
                         continue;
                     }
+                    if fu == fv {
+                        // Both test one field: enter the two children of each choice together,
+                        // for the choices whose children may hold a pair. A class fixes, choice
+                        // by choice, its children's classes, so which those are depends only on
+                        // the two classes and is worked out once for each pair of classes.
+                        //
+                        // Complexity tradeoff: splitting one side and letting the other follow
+                        // examines every live child of the split side at each pair of nodes, m^3
+                        // steps for m^2 pairs of nodes of m children each holding O(1) pairs
+                        // (`s(h(x0..xm)^m, y0..ym) == t(h(y0..ym)^m, x0..xm)`). Here a pair of
+                        // nodes costs a hash lookup and one step per choice entered; a pair of
+                        // classes costs, once, the smaller side's live children, each an O(1)
+                        // test or an O(log E) index lookup.
+                        let classes = (class[0].number[u], class[1].number[v]);
+                        let list = match joint.get(&classes) {
+                            Some(list) => list.clone(),
+                            None => {
+                                let begin = joint_kids.len();
+                                let side = usize::from(class[1].live[v] < class[0].live[u]);
+                                let n = [u, v][side];
+                                let at = trees[side].kid_at[n].start;
+                                let (lu, rv) = (left.kid_at[u].start, right.kid_at[v].start);
+                                for &c in &class[side].order[at..at + class[side].live[n]] {
+                                    let (a, b) =
+                                        (left.kid[lu + c as usize], right.kid[rv + c as usize]);
+                                    let may = class[0].number[a] != DEAD
+                                        && class[1].number[b] != DEAD
+                                        && match (left.test[a] == NONE, right.test[b] == NONE) {
+                                            (true, true) => left.key[a] == right.key[b],
+                                            (true, false) => left.key[a]
+                                                .is_some_and(|k| index(1).entry(b, k).is_some()),
+                                            (false, true) => right.key[b]
+                                                .is_some_and(|k| index(0).entry(a, k).is_some()),
+                                            (false, false) => true,
+                                        };
+                                    if may {
+                                        joint_kids.push(c);
+                                    }
+                                }
+                                steps += class[side].live[n] as u64;
+                                joint_kids[begin..].sort_unstable();
+                                joint.insert(classes, begin..joint_kids.len());
+                                begin..joint_kids.len()
+                            }
+                        };
+                        chosen.push(fu);
+                        stack.push(Step::Joint {
+                            s: fu,
+                            u,
+                            v,
+                            start: pairs,
+                            list,
+                            i: 0,
+                            last: None,
+                        });
+                        continue;
+                    }
                     // Split the side whose field the other side tests further down (or never),
                     // so that the side tested sooner is split by the other side's fields before
-                    // it is walked alone. On a field both test, split the side with fewer
-                    // children to walk (a group of leaves walks once); the other side follows.
-                    let side = if fu == fv {
-                        usize::from(units(1, v) < units(0, u))
-                    } else {
-                        usize::from(reach[0].first(fv, u) > reach[1].first(fu, v))
-                    };
+                    // it is walked alone.
+                    let side = usize::from(reach[0].first(fv, u) > reach[1].first(fu, v));
                     let s = [fu, fv][side];
-                    let pick =
-                        (fu == fv).then(|| picks.of(side, [u, v], trees, &index, &class, &groups));
                     chosen.push(s);
                     stack.push(Step::Split {
                         s,
@@ -964,8 +1031,46 @@ impl Theory {
                         g: 0,
                         i: 0,
                         last: None,
-                        pick,
                     });
+                }
+                Step::Joint {
+                    s,
+                    u,
+                    v,
+                    start,
+                    list,
+                    i,
+                    last,
+                } => {
+                    if let Some((c, first)) = last
+                        && pairs > first
+                    {
+                        runs.push((s, c, first, pairs));
+                    }
+                    if i == list.len() {
+                        fixed[s] = MENTION;
+                        chosen.pop();
+                        if pairs > start {
+                            runs.push((s, MENTION, start, pairs));
+                        }
+                        continue;
+                    }
+                    let c = joint_kids[list.start + i];
+                    fixed[s] = c;
+                    let (a, b) = (
+                        left.kid[left.kid_at[u].start + c as usize],
+                        right.kid[right.kid_at[v].start + c as usize],
+                    );
+                    stack.push(Step::Joint {
+                        s,
+                        u,
+                        v,
+                        start,
+                        list,
+                        i: i + 1,
+                        last: Some((c, pairs)),
+                    });
+                    stack.push(Step::Prod(a, b));
                 }
                 Step::Split {
                     s,
@@ -973,10 +1078,9 @@ impl Theory {
                     v,
                     side,
                     start,
-                    mut g,
+                    g,
                     mut i,
                     last,
-                    mut pick,
                 } => {
                     let n = [u, v][side];
                     let at = trees[side].kid_at[n].clone();
@@ -989,13 +1093,6 @@ impl Theory {
                             // choice of `s`, which the other side never reads: no pair either.
                             i = class[side].end[at.start + i - 1] - at.start;
                         }
-                    }
-                    if let Some((kids, gs)) = &pick {
-                        i = kids
-                            .clone()
-                            .next()
-                            .map_or(class[side].live[n], |k| picks.kid[k]);
-                        g = gs.clone().next().map_or(gat.len(), |k| picks.group[k]);
                     }
                     // The groups' leaves are walked after the other children; a group is a whole class.
                     while i < class[side].live[n]
@@ -1011,9 +1108,6 @@ impl Theory {
                         let leaf =
                             trees[side].kid[at.start + groups[side].member[member.start] as usize];
                         let (o, w) = (1 - side, [u, v][1 - side]);
-                        if let Some((_, gs)) = &mut pick {
-                            gs.start += 1;
-                        }
                         stack.push(Step::Split {
                             s,
                             u,
@@ -1023,13 +1117,12 @@ impl Theory {
                             g: g + 1,
                             i,
                             last: None,
-                            pick,
                         });
                         fixed[s] = MENTION;
                         chosen.pop();
-                        if let Some(e) = trees[side].key[leaf].and_then(|k| index[o].entry(w, k))
+                        if let Some(e) = trees[side].key[leaf].and_then(|k| index(o).entry(w, k))
                             && fits(
-                                &index[o],
+                                index(o),
                                 e,
                                 &fixed,
                                 &chosen,
@@ -1057,9 +1150,6 @@ impl Theory {
                     fixed[s] = c;
                     let kid = trees[side].kid[at.start + c as usize];
                     let (ku, kv) = if side == 0 { (kid, v) } else { (u, kid) };
-                    if let Some((kids, _)) = &mut pick {
-                        kids.start += 1;
-                    }
                     stack.push(Step::Split {
                         s,
                         u,
@@ -1069,7 +1159,6 @@ impl Theory {
                         g,
                         i: i + 1,
                         last: Some((c, pairs)),
-                        pick,
                     });
                     stack.push(Step::Prod(ku, kv));
                 }
@@ -1095,7 +1184,7 @@ impl Theory {
                         }
                         continue;
                     }
-                    let ix = &index[side];
+                    let ix = index(side);
                     let kids = &ix.kids[ix.kids_at[e].clone()];
                     if fixed[s] == MENTION {
                         chosen.push(s);
@@ -1139,7 +1228,7 @@ impl Theory {
                     {
                         runs.push((s, c, first, pairs));
                     }
-                    let ix = &index[side];
+                    let ix = index(side);
                     let kids = &ix.kids[ix.kids_at[e].clone()];
                     while i < kids.len()
                         && kids.len() > 1
@@ -1180,7 +1269,7 @@ impl Theory {
                     {
                         runs.push((s, c, first, pairs));
                     }
-                    let ix = &index[side];
+                    let ix = index(side);
                     let kids = &ix.kids[ix.kids_at[e].clone()];
                     let (_, gside, member) = held.clone().expect("a group is held");
                     let member = &groups[gside].member[member];
@@ -1250,9 +1339,12 @@ struct Tree {
 }
 
 impl Tree {
-    /// The keys of the leaves. O(N) hash insertions for the N nodes.
-    fn keys(&self) -> HashSet<Sym> {
-        self.key.iter().flatten().copied().collect()
+    /// The keys of the leaves, sorted, each once: O(N log N) for the N nodes.
+    fn keys(&self) -> Vec<Sym> {
+        let mut keys: Vec<Sym> = self.key.iter().flatten().copied().collect();
+        keys.sort_unstable();
+        keys.dedup();
+        keys
     }
 
     /// Where each field is tested: the end of each node's subtree in preorder, each node's
@@ -1317,7 +1409,7 @@ impl Tree {
     /// Children with no keyed leaf below (no pair below either) come last, after `live[n]`
     /// others, so that a split never enters them. O(N + C) hash lookups for the N nodes and C
     /// children.
-    fn classes(&self, other: &Tree, keys: &HashSet<Sym>, places: usize) -> Classes {
+    fn classes(&self, other: &Tree, keys: &[Sym], places: usize) -> Classes {
         #[derive(PartialEq, Eq, Hash)]
         enum Shape {
             Leaf(Sym),
@@ -1337,7 +1429,7 @@ impl Tree {
         for n in (0..self.test.len()).rev() {
             // A leaf is numbered by its key alone, with no child to order.
             if self.test[n] == NONE {
-                number[n] = match self.key[n].filter(|k| keys.contains(k)) {
+                number[n] = match self.key[n].filter(|k| keys.binary_search(k).is_ok()) {
                     None => DEAD,
                     Some(k) => {
                         let next = numbers.len();
@@ -1394,7 +1486,7 @@ impl Tree {
     /// Each node's leaf children grouped by key: the groups of two or more leaves of one key
     /// (not `None`), each a sorted list of choices, and whether each child is in a group.
     /// O(C log C) for the C children.
-    fn groups(&self, keys: &HashSet<Sym>) -> Groups {
+    fn groups(&self, keys: &[Sym]) -> Groups {
         let mut groups = Groups {
             at: vec![0..0; self.test.len()],
             group: Vec::new(),
@@ -1411,7 +1503,7 @@ impl Tree {
                     .enumerate()
                     .filter_map(|(c, &k)| {
                         self.key[k]
-                            .filter(|key| self.test[k] == NONE && keys.contains(key))
+                            .filter(|key| self.test[k] == NONE && keys.binary_search(key).is_ok())
                             .map(|key| (key, c as Choice))
                     }),
             );
@@ -1564,101 +1656,6 @@ struct Classes {
 
 /// The class number of the subtrees with no keyed leaf (`Tree::classes`), after all others.
 const DEAD: usize = usize::MAX;
-
-/// For a split on a field both sides test, the children of the split side that can hold a pair:
-/// those whose keys meet the keys of the other side's child of the same choice, and the groups
-/// of leaves whose key is below the other side's node. Both nodes test the field, so their
-/// classes fix each choice's child class and so its keys: the lists depend only on the pair of
-/// classes and are made once for each, in `kid` and `group`.
-///
-/// Complexity tradeoff: walking every child of the split side costs its C children at each
-/// pair of nodes, so m^2 pairs of nodes of m children, each pair of nodes with O(1) pairs, cost
-/// m^3 (`s(h(x0..xm)^m, y0..ym) == t(h(y0..ym)^m, x0..xm)`: 878,414 steps at m = 64 for 16,642
-/// pairs, 3.4 times the naive walk's instructions). Here a pair of nodes costs a hash lookup plus
-/// the children that meet (91,982 steps, 1.3 times the naive walk); each pair of classes costs, once, one
-/// intersection of sorted key lists per child, O(a log(b / a)) for lengths a <= b (`meets`).
-/// Open: when the pairs of nodes are of distinct pairs of classes, each list is still made at
-/// its C children, m^3 again on `s(h(g(x0), x0, ..)^m, y0..ym) == t(h(y0, g(y0), ..)^m, x0..xm)`
-/// with each `h` at its own binder (163 million instructions at m = 64, the naive walk 171
-/// million; plan row TRIVIAL-walk-picks).
-#[derive(Default)]
-struct Picks {
-    at: HashMap<(usize, usize, usize), Pick>,
-    kid: Vec<usize>,
-    group: Vec<usize>,
-}
-
-/// The places in class order of the children to walk, and the groups to walk (`Picks::of`).
-type Pick = (std::ops::Range<usize>, std::ops::Range<usize>);
-
-impl Picks {
-    /// The places in class order and the groups of node `n[side]` to walk against `n[1 - side]`.
-    fn of(
-        &mut self,
-        side: usize,
-        n: [usize; 2],
-        trees: [&Tree; 2],
-        index: &[KeyIndex; 2],
-        class: &[Classes; 2],
-        groups: &[Groups; 2],
-    ) -> Pick {
-        let o = 1 - side;
-        let (u, w) = (n[side], n[o]);
-        let key = (side, class[side].number[u], class[o].number[w]);
-        if let Some(r) = self.at.get(&key) {
-            return r.clone();
-        }
-        let (t, at, wat) = (
-            trees[side],
-            trees[side].kid_at[u].clone(),
-            trees[o].kid_at[w].clone(),
-        );
-        let keys = |side: usize, n: usize| &index[side].key[index[side].below[n].clone()];
-        let start = self.kid.len();
-        for i in 0..class[side].live[u] {
-            let c = class[side].order[at.start + i] as usize;
-            if !groups[side].grouped[at.start + c]
-                && meets(
-                    keys(side, t.kid[at.start + c]),
-                    keys(o, trees[o].kid[wat.start + c]),
-                )
-            {
-                self.kid.push(i);
-            }
-        }
-        let gstart = self.group.len();
-        for (g, member) in groups[side].group[groups[side].at[u].clone()]
-            .iter()
-            .enumerate()
-        {
-            let leaf = t.kid[at.start + groups[side].member[member.start] as usize];
-            if t.key[leaf].is_some_and(|k| index[o].entry(w, k).is_some()) {
-                self.group.push(g);
-            }
-        }
-        let r = (start..self.kid.len(), gstart..self.group.len());
-        self.at.insert(key, r.clone());
-        r
-    }
-}
-
-/// Whether two sorted lists share an element: each element of the shorter list is found in the
-/// longer one by galloping from the last place, O(a log(b / a)) for lengths a <= b.
-fn meets(a: &[Sym], b: &[Sym]) -> bool {
-    let (a, mut b) = if a.len() <= b.len() { (a, b) } else { (b, a) };
-    for x in a {
-        let mut step = 1;
-        while step < b.len() && b[step - 1] < *x {
-            step *= 2;
-        }
-        let i = b[..step.min(b.len())].partition_point(|y| y < x);
-        if b.get(i) == Some(x) {
-            return true;
-        }
-        b = &b[i..];
-    }
-    false
-}
 
 /// One side's tree indexed by the keys of its leaves, for the walk of `pair_form`. An entry is a
 /// node and one key of a leaf below it. The entries of a node with two or more children of its

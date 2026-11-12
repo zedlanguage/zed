@@ -306,7 +306,7 @@ fn a_shared_field_atom_scales() {
 /// `x` on the right needs `f` at its last projection. The walk follows the right side's k
 /// fields once with the left side's whole tree, which tests none of them, splits at `g0`, and at
 /// each pair of `f` nodes enters only the projections whose keys meet, instead of walking the k
-/// fields down to each `f` once for each left leaf: 2 k + 8 pairs, 8 k + 17 runs, 15 k + 48
+/// fields down to each `f` once for each left leaf: 2 k + 8 pairs, 8 k + 17 runs, 15 k + 41
 /// steps, and work linear in k, not k^2.
 #[test]
 fn a_shared_field_atom_with_cut_subtrees_scales() {
@@ -335,7 +335,7 @@ fn a_shared_field_atom_with_cut_subtrees_scales() {
         eprintln!("a cut shared-field atom at k = {k}: {pairs} pairs, {runs} runs, {steps} steps");
         assert_eq!(
             (pairs, runs, steps),
-            (2 * k + 8, 8 * k + 17, 15 * k as u64 + 48),
+            (2 * k + 8, 8 * k + 17, 15 * k as u64 + 41),
             "the walk takes only steps that reach a pair"
         );
     }
@@ -409,7 +409,7 @@ fn branches(family: &str, mirror: bool, m: usize) -> Theory {
 
 /// The default report on each family of [`branches`] and its mirror is of order m log m, by m at
 /// m and 8m: the walk over pairs of nodes, one of each side, follows a field the other side
-/// fixed, splits one side on a field both test and enters only the children that can hold a
+/// fixed, splits both sides on a field both test and enters only the choices that can hold a
 /// pair, and skips the rest of a class of children after one gave no pair, so its steps and runs
 /// are linear in m, the same on a family and its mirror (`Theory::pair_form`). The walk before
 /// plan row TRIVIAL-walk-branches, of the left side's tree and at each of its leaves the right
@@ -421,9 +421,9 @@ fn the_shared_field_families_scale() {
     // The pairs, runs and steps of each family at m, the same for its mirror.
     let size = |family: &str, m: usize| match family {
         "brief" => (6 * m + 15, 20 * m + 40, 35 * m + 85),
-        "wide" => (3 * m + 2, 9 * m + 3, 17 * m + 14),
+        "wide" => (3 * m + 2, 9 * m + 3, 19 * m + 10),
         "same" => (2 * m + 1, 4 * m, 12 * m + 2),
-        _ => (4 * m + 2, 14 * m + 7, 28 * m + 14),
+        _ => (4 * m + 2, 14 * m + 7, 28 * m + 16),
     };
     for family in ["brief", "wide", "same", "ne"] {
         for mirror in [false, true] {
@@ -450,8 +450,8 @@ fn the_shared_field_families_scale() {
 /// .., xm)`, m copies of `h` and m distinct binders on each side: `s` and `t` split into m^2
 /// pairs of `h` nodes, each with the two constant pairs only, and each `x_i` of the left `h`
 /// pairs with the right side's leaf `x_i`. Pairs, runs and steps are quadratic in m, the input's
-/// size: a pair of `h` nodes enters only its children whose keys meet (`Picks`), not all m
-/// (m^3 steps before).
+/// size: a pair of `h` nodes enters both sides together, only at the choices whose children may
+/// hold a pair, worked out once for each pair of classes, not all m (m^3 steps before).
 #[test]
 fn the_joint_splits_scale() {
     let joint = |m: usize| {
@@ -482,7 +482,7 @@ fn the_joint_splits_scale() {
             (
                 4 * m * m + 4 * m + 2,
                 10 * m * m + 16 * m + 7,
-                (22 * m * m + 29 * m + 14) as u64
+                (20 * m * m + 30 * m + 16) as u64
             )
         );
     }
