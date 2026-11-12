@@ -8,14 +8,18 @@
 //! take their last atom and rewrite none, where taking `x1` would rewrite every row before.
 //! Two hulls of one set may then have different rows. A row `t` means `t == 0`. The rows are in persistent maps, so a hull made from another
 //! by a few changes shares the rest with it, and the join of the two finds the rows that
-//! differ in time near their number. Coefficients are unbounded integers.
+//! differ in time near their number: the rows by pivot are a treap whose shape its pivots fix
+//! (module `rows`), so the subtrees two such hulls share sit at the same places in both.
+//! Coefficients are unbounded integers.
+
+mod rows;
 
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
 use imbl::OrdMap;
-use imbl::ordmap::DiffItem;
+use rows::Rows;
 
 use super::presburger::{Atom, Con, Formula, Lin, Rel};
 use zedc_int::int::Int;
@@ -24,7 +28,7 @@ use zedc_int::int::Int;
 #[derive(Clone, Debug, Default)]
 pub struct Hull {
     /// The rows by their pivots.
-    rows: OrdMap<Atom, Arc<Lin>>,
+    rows: Rows,
     /// The pivots of the rows that mention each atom other than their pivot.
     uses: OrdMap<Atom, OrdMap<Atom, ()>>,
     /// Whether the set has no point.
@@ -162,12 +166,7 @@ impl Hull {
             return self;
         }
         let (mut gone, mut a, mut b) = (Vec::new(), Vec::new(), Vec::new());
-        for d in self.rows.diff(&other.rows) {
-            let (s, t) = match d {
-                DiffItem::Add(_, t) => (None, Some(t)),
-                DiffItem::Remove(p, s) => (Some((p, s)), None),
-                DiffItem::Update { old, new } => (Some(old), Some(new.1)),
-            };
+        self.rows.diff(&other.rows, |s, t| {
             if let Some((p, s)) = s {
                 gone.push(p.clone());
                 a.push(s.clone());
@@ -175,7 +174,7 @@ impl Hull {
             if let Some(t) = t {
                 b.push(t.clone());
             }
-        }
+        });
         for (p, s) in gone.iter().zip(&a) {
             self.rows.remove(p);
             used(&mut self.uses, s, p, false);

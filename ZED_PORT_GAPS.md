@@ -3580,3 +3580,11 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | Work lists and depth-first searches on an explicit `Vec` stack popped by `while let`, filling `HashMap` and `Vec` tables in place (`index`, `low`, the visited cores, the interned stacks) | `Splitter::new`, `Sets::of`, `Cfg::prune`, `Cfg::unleft`, `components` (Tarjan), `check` | Mutation (gap 11) | recursion that threads the tables as a state receiver; `components` as the recursive Tarjan with the index map threaded through |
 | `&mut` out-parameters as optional sinks, `Option<&mut Vec<Bits>>` and `Option<&mut BTreeSet<String>>`, so one walk fills the pairs and the problems only when asked | `Out` in split.rs (`Reading::walk`, `seq`, `choice`, `repeat`) | Mutation (gap 11) | the walk returns the pairs and problems with its summary, and the caller drops what it did not ask for |
 | `let … else { return … }` | `Conv::seq`, `Llp::steps` | Early exit (gap 12) | a `match` with the early result as one arm |
+
+## Entries from HULL-join-depth (`crates/zedc-presburger/src/hull/rows.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A persistent treap of `Option<Arc<Node>>` changed through `Arc::make_mut`, which copies a node on the path only when another hull shares it, and taken apart by `Option::take` and `Arc::try_unwrap` on removal | `Rows::get_mut`, `Rows::insert`, `Rows::remove`, `split`, `merge` | Mutation in place of a shared value | a persistent treap value whose insert and remove return the new tree; the runtime shares the subtrees off the path |
+| Priorities from `std`'s `DefaultHasher` of the pivot, mixed by splitmix64, so one set of pivots gives one shape | `prio_of` | Hashing input (gap 5) | any fixed hash of the atom's bytes; only that equal pivots get equal priorities matters |
+| A difference of two treaps on two explicit `Vec` stacks of `Step::Tree` and `Step::Entry`, passing over a subtree both hold by `std::ptr::eq` and over a row both hold by `Arc::ptr_eq` before comparing it by value | `Rows::diff` | Identity (gap 1); mutation (gap 11) | recursion on the two trees with the runtime's identity shortcut on shared values; without one, a join costs the size of the hulls |

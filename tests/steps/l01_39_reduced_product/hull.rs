@@ -139,11 +139,12 @@ fn rows_of(n: usize) -> Hull {
     Hull::of(&rows)
 }
 
-/// `n` joins as at a loop head, each of the hull `h` of `n` rows with itself and one more row.
-fn loop_joins(h: &Hull, n: usize) {
+/// `n` joins as at a loop head, each of the hull `h` of `n` rows with itself and one more row,
+/// `name(i) == i` at the `i`th.
+fn loop_joins(h: &Hull, n: usize, name: impl Fn(usize) -> String) {
     let mut h = h.clone();
     for i in 0..n {
-        let b = h.clone().and(&lin(&[(&format!("x{i}"), 1)], -(i as i128)));
+        let b = h.clone().and(&lin(&[(&name(i), 1)], -(i as i128)));
         h = h.join(&b);
     }
     assert_eq!(h.rows().count(), n);
@@ -232,14 +233,97 @@ fn a_join_of_hulls_that_differ_in_a_few_names_is_exact() {
 }
 
 #[test]
-#[ignore = "HULL-join-depth: 12.2 times the work at 256 and 2,048 rows, over the n log n limit 12.1 since SCALE-ratio; open"]
 fn a_join_costs_near_the_rows_that_differ() {
-    // n joins of hulls of n rows differing in one: near n log² n in all.
+    // n joins of hulls of n rows differing in one, whose pivot sorts before every other: near
+    // n log n in all.
     let hulls: BTreeMap<usize, Hull> = [256, scaling::FACTOR * 256]
         .into_iter()
         .map(|m| (m, rows_of(m)))
         .collect();
-    scaling::check("the join of hulls", 256, |m| loop_joins(&hulls[&m], m));
+    scaling::check("the join of hulls", 256, |m| {
+        loop_joins(&hulls[&m], m, |i| format!("x{i}"))
+    });
+}
+
+#[test]
+fn a_join_costs_near_the_rows_that_differ_wherever_they_sort() {
+    // As above, with the new row's pivot among the rows' pivots `y…` (`y12a` sorts between
+    // `y12` and `y120`) and after all of them.
+    let hulls: BTreeMap<usize, Hull> = [256, scaling::FACTOR * 256]
+        .into_iter()
+        .map(|m| (m, rows_of(m)))
+        .collect();
+    scaling::check("the join of hulls, a row among the others", 256, |m| {
+        loop_joins(&hulls[&m], m, |i| format!("y{i}a"))
+    });
+    scaling::check("the join of hulls, a row after the others", 256, |m| {
+        loop_joins(&hulls[&m], m, |i| format!("zz{i}"))
+    });
+}
+
+#[test]
+fn a_join_with_a_hull_narrowed_from_it_is_the_first_hull() {
+    // A loop head joins the hull at entry with the hull after the body; here the body narrows
+    // the hull by a few equalities, which may rewrite many of its rows, so the second hull
+    // shares part of its rows with the first and holds others rewritten. Either way round, the
+    // join is the hull of the first's points.
+    let mut rnd = Rng(23);
+    for _ in 0..200 {
+        let d = 3 + rnd.below(8) as usize;
+        let k = rnd.below(4) as usize;
+        let names: Vec<String> = (0..d).map(|i| format!("x{i}")).collect();
+        let pts = on_plane(&mut rnd, d, k, k + 2);
+        let a = pts
+            .iter()
+            .map(|p| point(&names, p))
+            .reduce(|x, y| x.join(&y))
+            .expect("a point");
+        let mut b = a.clone();
+        for _ in 0..1 + rnd.below(3) {
+            let i = rnd.below(d as u64) as usize;
+            let j = rnd.below(d as u64) as usize;
+            b = b.and(&lin(&[(&names[i], 1), (&names[j], -2)], rnd.below(3) - 1));
+        }
+        is_hull_of(&a.clone().join(&b), &names, &pts);
+        is_hull_of(&b.join(&a), &names, &pts);
+    }
+}
+
+#[test]
+fn a_join_of_hulls_built_apart_is_exact() {
+    // Two hulls of one set built in different orders share no rows in memory; the join
+    // compares their rows by value and keeps the hull.
+    let mut rnd = Rng(31);
+    for _ in 0..100 {
+        let d = 3 + rnd.below(8) as usize;
+        let k = rnd.below(4) as usize;
+        let names: Vec<String> = (0..d).map(|i| format!("x{i}")).collect();
+        let pts = on_plane(&mut rnd, d, k, k + 2);
+        let of = |ps: &mut dyn Iterator<Item = &Vec<i128>>| {
+            ps.map(|p| point(&names, p))
+                .reduce(|x, y| x.join(&y))
+                .expect("a point")
+        };
+        let a = of(&mut pts.iter());
+        let b = of(&mut pts.iter().rev());
+        is_hull_of(&a.clone().join(&b), &names, &pts);
+        let rebuilt = Hull::of(a.rows());
+        is_hull_of(&a.join(&rebuilt), &names, &pts);
+    }
+}
+
+#[test]
+fn a_join_after_a_row_that_rewrites_every_row_keeps_the_line() {
+    // `x0 - x1, …, x0 - xn` hold on the line where every name is equal; `x0 - 7` then fixes
+    // each, rewriting every row. The join of the two is the line again.
+    let n = 40;
+    let line = Hull::of(&star(n)[..n]);
+    let fixed = line.clone().and(&lin(&[("x0", 1)], -7));
+    assert_eq!(fixed.rows().count(), n + 1);
+    let names: Vec<String> = (0..=n).map(|i| format!("x{i}")).collect();
+    let pts = vec![vec![0; n + 1], vec![1; n + 1]];
+    is_hull_of(&line.clone().join(&fixed), &names, &pts);
+    is_hull_of(&fixed.join(&line), &names, &pts);
 }
 
 /// The rows `x0 - x1`, `x0 - x2`, …, `x0 - xn`, then `x0 - 7`, which rewrites the rows that
