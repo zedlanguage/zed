@@ -610,7 +610,8 @@ impl Type {
         sweep::front_sweep(self).or_else(|| self.chain_verdict())
     }
 
-    /// Diagnostic counts of candidate and empty cell reads in the independent escape parse.
+    /// Diagnostic counts of cell reads and of empty cells among them in the independent escape
+    /// parse (see `escape::cell_counts`).
     #[doc(hidden)]
     pub fn escape_cell_counts(&self) -> (usize, usize) {
         escape::cell_counts(self)

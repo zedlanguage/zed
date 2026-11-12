@@ -5824,12 +5824,17 @@ fn r7_congruence(n: usize, outside: bool, tag: &str) -> Type {
     &ts[n + 1] - &u
 }
 
+/// The escape reads no more empty cells on the parity family at 256 than at 16: the pair listing
+/// never reads an empty cell, and method A counts each empty pair of a place class and a node
+/// class once, a number fixed by the family (2 here), not by `n`.
 #[test]
 fn r7_height_congruence_skips_only_empty_cells() {
     big(|| {
+        let mut first = None;
         for n in [16, 64, 256] {
             let t = r6_parity(n, &format!("_r7p{n}"));
-            assert_eq!(t.escape_cell_counts().1, 0, "parity at {n}");
+            let e = t.escape_cell_counts().1;
+            assert_eq!(*first.get_or_insert(e), e, "parity at {n}: {e} empty");
             assert_eq!(t.chain_verdict(), Some(Verdict::Inhabited));
             for outside in [false, true] {
                 let t = r7_congruence(n, outside, &format!("_r7g{n}_{outside}"));
@@ -6349,10 +6354,12 @@ fn r8_residues(n: usize, outside: bool, tag: &str) -> Type {
 /// with the per-value residue filter alone, `r8residuesout` was 65,535 at 1024 (the suffix gcd
 /// of the root heights lowers it to `n / 2`), and with both filters `r8heightout` was 174,249 at
 /// 1024 (counting only the rows of a value's class not yet retired lowers it to 0).
-/// `r8residues` is the inside of the boundary: no empty read.
+/// `r8residues` is the inside of the boundary: as many empty reads at 512 as at 64 (method A
+/// counts each empty pair of a place class and a node class once; the pair listing reads none).
 #[test]
 fn r8_escape_empty_reads_are_linear() {
     big(|| {
+        let mut first = None;
         for n in [64, 512] {
             for case in [
                 "r7congruenceout",
@@ -6366,7 +6373,8 @@ fn r8_escape_empty_reads_are_linear() {
                 assert_eq!(t.verdict(), Verdict::Inhabited, "{case} at {n}");
             }
             let t = rfx_case("r8residues", n, &format!("_r8e_in_{n}"));
-            assert_eq!(t.escape_cell_counts().1, 0, "r8residues at {n}");
+            let e = t.escape_cell_counts().1;
+            assert_eq!(*first.get_or_insert(e), e, "r8residues at {n}: {e} empty");
             assert_eq!(t.verdict(), Verdict::Inhabited);
         }
     });
@@ -7549,6 +7557,37 @@ main() = f(x: {text});
                 .join()
                 .unwrap();
             assert_eq!(alone, Some(batch));
+        }
+    });
+}
+
+/// The escape's cell discovery stays within n log n from 1024 to 8192 on the families where the
+/// sweep it replaced grew faster: `r9cosets` (place and head types both of period 7, every cell
+/// empty by alignment; the sweep took 595.9M and 33,746M instructions at 8192 and 65,536, 57x for
+/// 8x), and the Boolean-product chains `r9bmmlate` (11.9x) and `r10alternating` (10.7x, above the
+/// 9.8x of n log n). The windows of block summaries and residue pair listing take 85.1M and 760.2M
+/// on `r9cosets` (8.9x), 8.1x and 8.3x on the other two.
+#[test]
+fn escape_cells_scale_on_the_coset_and_product_chains() {
+    big(|| {
+        let base = 1024;
+        for case in ["r9cosets", "r9bmmlate", "r10alternating"] {
+            let (s_runs, l_runs) = scaling::Meter::new().runs();
+            let small: Vec<Type> = (0..s_runs)
+                .map(|i| rfx_case(case, base, &format!("_esc_{case}_{base}_{i}")))
+                .collect();
+            let large: Vec<Type> = (0..l_runs)
+                .map(|i| rfx_case(case, 8 * base, &format!("_esc_{case}_{}_{i}", 8 * base)))
+                .collect();
+            let (si, li) = (AtomicUsize::new(0), AtomicUsize::new(0));
+            scaling::check(&format!("escape cells of {case}"), base, |n| {
+                let t = if n == base {
+                    &small[si.fetch_add(1, Relaxed)]
+                } else {
+                    &large[li.fetch_add(1, Relaxed)]
+                };
+                std::hint::black_box(t.escape_cell_counts());
+            });
         }
     });
 }
