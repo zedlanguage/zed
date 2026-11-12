@@ -52,7 +52,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use zed_kernel::num::{TooLarge, literal_f64};
-use zed_kernel::types::{Spell, Type as KType, Universes, Verdict, defs};
+use zed_kernel::types::{Spell, Spelled, Type as KType, Universes, Verdict, defs};
 use zed_kernel::{Prim, Rat, Term, Universe, Value, eval};
 
 use zedc_base::rejection::Row;
@@ -1189,6 +1189,10 @@ struct Ck<'t, 'a> {
     // way, keeping each literal's text in its type, would make equal types print apart and the
     // printed text depend on which literal was met first.
     spelled: HashMap<Value, BTreeMap<usize, usize>>,
+    /// The literal values the program spells in more than one way, as `31` and `0x1F`: a
+    /// message prints such a value as written near it, so a type printed with one is printed
+    /// anew for each message ([`zed_kernel::types::Spelled::everywhere`]).
+    mixed: HashSet<Value>,
     /// The span of the text a message being written is about, whose own literals it prints as
     /// they are written there ([`Self::near`]).
     near: std::cell::Cell<Option<Span>>,
@@ -1340,6 +1344,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             refused_at: BTreeMap::new(),
             reads: HashMap::new(),
             spelled: HashMap::new(),
+            mixed: HashSet::new(),
             near: std::cell::Cell::new(None),
         }
     }
@@ -1348,9 +1353,24 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// for a zero under one `-`, as `-0r`, with its `-`, at the span of the `-` and the
     /// literal: zero is its own negation, so the value alone does not keep the sign the
     /// program writes ([`signed_number_at`]).
+    /// A value it records spelled otherwise than at its first record is mixed ([`Self::mixed`]),
+    /// and the parts printed so far are forgotten, since they spell literals as they were
+    /// ([`defs::forget_printed`]).
+    // Complexity tradeoff: the new spelling is compared with the first, O(the literal's length),
+    // which reading it cost already; comparing it with every spelling recorded would cost O(k)
+    // for the k recorded, and the first is enough to tell one spelling from two.
     fn spells(&mut self, v: &Value, span: Span) {
+        defs::forget_printed();
         match self.spelled.get_mut(v) {
-            Some(at) => at.insert(span.start, span.end),
+            Some(at) => {
+                if let Some(text) = self.t.text.filter(|_| !self.mixed.contains(v)) {
+                    let (&start, &end) = at.first_key_value().expect("an entry holds a span");
+                    if signed_number_at(text, Span { start, end }) != signed_number_at(text, span) {
+                        self.mixed.insert(v.clone());
+                    }
+                }
+                at.insert(span.start, span.end)
+            }
             None => (self.spelled.entry(v.clone()).or_default()).insert(span.start, span.end),
         };
     }
@@ -1425,7 +1445,19 @@ impl<'t, 'a> Ck<'t, 'a> {
     // Complexity tradeoff: two hash lookups, O(the value's size), which printing it costs
     // anyway, and in each two range lookups, O(log n) in the n literals of the value. The naive
     // way, a scan of the literals for one inside the span, costs O(n) per value printed.
-    fn spelling(&self, v: &Value) -> Option<Cow<'a, str>> {
+    /// It is the spelling wherever a message is written unless the program spells the value,
+    /// or its negation, in more than one way ([`Self::mixed`]).
+    fn spelling(&self, v: &Value) -> Spelled<'a> {
+        let everywhere = self.mixed.is_empty()
+            || !(self.mixed.contains(v) || self.mixed.contains(&neg_value(v, true)));
+        Spelled {
+            text: self.spelled_text(v),
+            everywhere,
+        }
+    }
+
+    /// The text of [`Self::spelling`].
+    fn spelled_text(&self, v: &Value) -> Option<Cow<'a, str>> {
         let text = self.t.text?;
         if !matches!(
             v,

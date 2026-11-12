@@ -4,7 +4,9 @@
 //! and the sentence writes each of its types whole at the top level. Before,
 //! `t_i = (t_{i-1}, t_{i-1})` over n levels printed 2^n components in each of its steps, and a
 //! chain of n names, each holding the one before, printed the type at each of its n links in
-//! full, O(n²) in all.
+//! full, O(n²) in all. Each step now takes the parts an earlier step printed by their names
+//! rather than print them again, so printing them is linear in n too
+//! (MSG-derive-print-per-message).
 
 use super::rejected;
 
@@ -382,9 +384,8 @@ fn a_chain_of_names_of_one_type_writes_the_type_whole_at_each_link() {
 }
 
 /// Checks that the rejection of `make(8n)` is at most about 8 times as long as that of
-/// `make(n)`. The work is not held to this: each step prints its type alone, walking the whole
-/// of that type, so the work is of order n² though the text is linear (COMPLEXITY.md row
-/// MSG-derive-print-per-message).
+/// `make(n)`. [`works`] holds the work to the same order, on the same derivations without the
+/// repair of `+` ([`compared_with_1`]).
 fn scales(what: &str, n: usize, make: fn(usize) -> String) {
     use zed_tests::scaling;
     let large = scaling::FACTOR * n;
@@ -430,5 +431,271 @@ fn rejecting_a_chain_of_n_names_of_one_type_writes_a_text_linear_in_n() {
         "rejecting a chain of n names of one type of five components",
         40,
         |n| same(n, 5),
+    );
+}
+
+/// Checks that rejecting `make(8n)` does at most about 8 times the work and allocates at most
+/// about 8 times the bytes of rejecting `make(n)`: the derivation prints the parts of its types
+/// once per message, not once per step (MSG-derive-print-per-message).
+fn works(what: &str, n: usize, make: fn(usize) -> String) {
+    use zed_tests::scaling;
+    let srcs = scaling::inputs(n, make);
+    scaling::check(what, n, |k| {
+        rejected(&srcs[&k]);
+    });
+}
+
+/// `src` with its last line's `+ 1` made `< 1`. The derivation is the one `+` gives, but `<`
+/// tries no repair: the repair of `t_n + 1` lists the values of `t_n` (`Type::values_listed`),
+/// whose maker files the first components of each level again, O(n²) in a chain of n levels,
+/// a cost of the type's values and not of printing (COMPLEXITY.md row MAKER-file-chain).
+fn compared_with_1(src: String) -> String {
+    let at = src.rfind(" + 1;").expect("the last line adds 1");
+    src[..at].to_string() + " < 1;\n"
+}
+
+#[test]
+fn rejecting_a_comparison_of_a_tuple_doubled_n_times_with_1_does_work_linear_in_n() {
+    works(
+        "rejecting a comparison of a tuple doubled n times with 1",
+        40,
+        |n| compared_with_1(doubling(n)),
+    );
+}
+
+#[test]
+fn rejecting_a_comparison_of_tuples_doubled_n_times_does_work_linear_in_n() {
+    works(
+        "rejecting a comparison of tuples doubled n times",
+        40,
+        compared,
+    );
+}
+
+#[test]
+fn rejecting_a_comparison_of_a_chain_of_n_names_each_holding_the_one_before_with_1_does_work_linear_in_n()
+ {
+    works(
+        "rejecting a comparison of a chain of n names each holding the one before with 1",
+        40,
+        |n| compared_with_1(growing(n)),
+    );
+}
+
+// A part a step takes from an earlier step's print is the text a print anew would give it
+// (MSG-derive-print-per-message). The texts below are those each step printing its type alone
+// gave.
+
+#[test]
+fn a_value_written_in_two_ways_is_written_as_each_step_writes_it() {
+    // `31` is `0x1F` where `a0` is written and `31` where `a1` is: the steps that show `a1`
+    // write it as `a1`'s line does, though `a0`'s type was printed before them.
+    assert_eq!(
+        rejected("a0 = (0x1F, 1);\na1 = (a0, 31);\na2 = (a1, a1);\nu = a2 + 1;\n"),
+        r#"4:5: `+` does not take ((T1, T1), 1): no arrow of `+` takes these types.
+  T1 stands for a part written more than once:
+    type T1 = ((0x1F, 1), 0x1F);
+  [1]  4:5: `a2` is (T1, T1) here
+       4 | u = a2 + 1;
+         |     ^^ [1]
+         |     ^^^^^^ [15, 16, 17]
+         |          ^ [14]
+  [2]  3:6: `a2` is defined as this expression, (T1, T1)
+       3 | a2 = (a1, a1);
+         |      ^^^^^^^^ [2, 3]
+         |       ^^ [4]
+         |           ^^ [13]
+  [3]  3:6: this expression gives (T1, T1)
+  [4]  3:7: `a1` is ((31, 1), 31) here
+  [5]  2:6: `a1` is defined as this expression, ((31, 1), 31)
+       2 | a1 = (a0, 31);
+         |      ^^^^^^^^ [5, 6]
+         |       ^^ [7]
+         |           ^^ [12]
+  [6]  2:6: this expression gives ((31, 1), 31)
+  [7]  2:7: `a0` is (0x1F, 1) here
+  [8]  1:6: `a0` is defined as this expression, (0x1F, 1)
+       1 | a0 = (0x1F, 1);
+         |      ^^^^^^^^^ [8, 9]
+         |       ^^^^ [10]
+         |             ^ [11]
+  [9]  1:6: this expression gives (0x1F, 1)
+  [10] 1:7: this literal, 0x1F, is 31
+  [11] 1:13: this literal, 1, is 1
+  [12] 2:11: this literal, 31, is 31
+  [13] 3:11: `a1` is ((31, 1), 31) here
+  [14] 4:10: this literal, 1, is 1
+  [15] 4:5: `+` takes (int, int) -> int
+  [16] 4:5: `+` takes (f64, f64) -> f64
+  [17] 4:5: `+` takes (rat, rat) -> rat"#
+    );
+}
+
+#[test]
+fn a_zero_written_with_and_without_its_sign_is_written_as_each_step_writes_it() {
+    // `-0r` and `0r` are one value, written with its sign where `a0` is and without it where
+    // `a1` is.
+    assert_eq!(
+        rejected("a0 = (-0r, 1);\na1 = (a0, 0r);\na2 = (a1, a1);\nu = a2 + 1;\n"),
+        r#"4:5: `+` does not take ((T1, T1), 1): no arrow of `+` takes these types.
+  T1 stands for a part written more than once:
+    type T1 = ((-0r, 1), -0r);
+  [1]  4:5: `a2` is (T1, T1) here
+       4 | u = a2 + 1;
+         |     ^^ [1]
+         |     ^^^^^^ [16, 17, 18]
+         |          ^ [15]
+  [2]  3:6: `a2` is defined as this expression, (T1, T1)
+       3 | a2 = (a1, a1);
+         |      ^^^^^^^^ [2, 3]
+         |       ^^ [4]
+         |           ^^ [14]
+  [3]  3:6: this expression gives (T1, T1)
+  [4]  3:7: `a1` is ((0r, 1), 0r) here
+  [5]  2:6: `a1` is defined as this expression, ((0r, 1), 0r)
+       2 | a1 = (a0, 0r);
+         |      ^^^^^^^^ [5, 6]
+         |       ^^ [7]
+         |           ^^ [13]
+  [6]  2:6: this expression gives ((0r, 1), 0r)
+  [7]  2:7: `a0` is (-0r, 1) here
+  [8]  1:6: `a0` is defined as this expression, (-0r, 1)
+       1 | a0 = (-0r, 1);
+         |      ^^^^^^^^ [8, 9]
+         |       ^^^ [10]
+         |        ^^ [11]
+         |            ^ [12]
+  [9]  1:6: this expression gives (-0r, 1)
+  [10] 1:7: this `-` gives -0r
+  [11] 1:8: this expression is 0r
+  [12] 1:12: this literal, 1, is 1
+  [13] 2:11: this expression is 0r
+  [14] 3:11: `a1` is ((0r, 1), 0r) here
+  [15] 4:10: this literal, 1, is 1
+  [16] 4:5: `+` takes (int, int) -> int
+  [17] 4:5: `+` takes (f64, f64) -> f64
+  [18] 4:5: `+` takes (rat, rat) -> rat"#
+    );
+}
+
+#[test]
+fn a_union_of_tuples_printed_before_keeps_the_order_of_its_members() {
+    // The members of the union `g` gives are ordered by their contents, which the tuples `x`
+    // and `b0` printed in earlier steps would hide behind their references.
+    assert_eq!(
+        rejected(
+            "b0 = (9, \"z\");\na0 = (1, true);\nx = (b0, a0);\n\
+             g(positional c: bool) = if c { (x, b0) } else { (x, a0) };\n\
+             v = (g(true), x);\nw = (v, v);\nu = w + 1;\n"
+        ),
+        r#"7:5: `+` does not take ((T3, T3), 1): no arrow of `+` takes these types.
+  T1, T2 and T3 stand for parts written more than once:
+    type T1 = (1, true);
+    type T2 = ((9, "z"), T1);
+    type T3 = ((T2, T1) | (T2, (9, "z")), T2);
+  [1]  7:5: `w` is (T3, T3) here
+       7 | u = w + 1;
+         |     ^ [1]
+         |     ^^^^^ [24, 25, 26]
+         |         ^ [23]
+  [2]  6:5: `w` is defined as this expression, (T3, T3)
+       6 | w = (v, v);
+         |     ^^^^^^ [2, 3]
+         |      ^ [4]
+         |         ^ [22]
+  [3]  6:5: this expression gives (T3, T3)
+  [4]  6:6: `v` is T3 here
+  [5]  5:5: `v` is defined as this expression, T3
+       5 | v = (g(true), x);
+         |     ^^^^^^^^^^^^ [5, 6]
+         |      ^^^^^^^ [7]
+         |               ^ [9]
+  [6]  5:5: this expression gives T3
+  [7]  5:6: this call of `g` gives (T2, (9, "z")) | (T2, T1)
+  [8]  4:1: `g` is declared here with no type written for its result; the type the checker found for `g` is `(bool) -> (T2, (9, "z")) | (T2, T1)`
+       4 | g(positional c: bool) = if c { (x, b0) } else { (x, a0) };
+         | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  [9]  5:15: `x` is T2 here
+  [10] 3:5: `x` is defined as this expression, T2
+       3 | x = (b0, a0);
+         |     ^^^^^^^^ [10, 11]
+         |      ^^ [12]
+         |          ^^ [17]
+  [11] 3:5: this expression gives T2
+  [12] 3:6: `b0` is (9, "z") here
+  [13] 1:6: `b0` is defined as this expression, (9, "z")
+       1 | b0 = (9, "z");
+         |      ^^^^^^^^ [13, 14]
+         |       ^ [15]
+         |          ^^^ [16]
+  [14] 1:6: this expression gives (9, "z")
+  [15] 1:7: this literal, 9, is 9
+  [16] 1:10: this expression is "z"
+  [17] 3:10: `a0` is T1 here
+  [18] 2:6: `a0` is defined as this expression, T1
+       2 | a0 = (1, true);
+         |      ^^^^^^^^^ [18, 19]
+         |       ^ [20]
+         |          ^^^^ [21]
+  [19] 2:6: this expression gives T1
+  [20] 2:7: this literal, 1, is 1
+  [21] 2:10: this expression is true
+  [22] 6:9: `v` is T3 here
+  [23] 7:9: this literal, 1, is 1
+  [24] 7:5: `+` takes (int, int) -> int
+  [25] 7:5: `+` takes (f64, f64) -> f64
+  [26] 7:5: `+` takes (rat, rat) -> rat"#
+    );
+}
+
+#[test]
+fn a_union_inside_a_tuple_printed_before_is_named_as_the_later_type_uses_it() {
+    // `1 | 2` is written once in `a0`'s type and twice in `a1`'s, so `a1`'s steps name it,
+    // and `a0`'s tuple inside `a1` is written with that name, not as `a0`'s steps wrote it.
+    assert_eq!(
+        rejected(
+            "g(positional c: bool) = if c { 1 } else { 2 };\na0 = (g(true), 3);\n\
+             a1 = (a0, g(false));\na2 = (a1, a1);\nu = a2 + 1;\n"
+        ),
+        r#"5:5: `+` does not take ((T2, T2), 1): no arrow of `+` takes these types.
+  T1 and T2 stand for parts written more than once:
+    type T1 = 1 | 2;
+    type T2 = ((T1, 3), T1);
+  [1]  5:5: `a2` is (T2, T2) here
+       5 | u = a2 + 1;
+         |     ^^ [1]
+         |     ^^^^^^ [16, 17, 18]
+         |          ^ [15]
+  [2]  4:6: `a2` is defined as this expression, (T2, T2)
+       4 | a2 = (a1, a1);
+         |      ^^^^^^^^ [2, 3]
+         |       ^^ [4]
+         |           ^^ [14]
+  [3]  4:6: this expression gives (T2, T2)
+  [4]  4:7: `a1` is T2 here
+  [5]  3:6: `a1` is defined as this expression, T2
+       3 | a1 = (a0, g(false));
+         |      ^^^^^^^^^^^^^^ [5, 6]
+         |       ^^ [7]
+         |           ^^^^^^^^ [13]
+  [6]  3:6: this expression gives T2
+  [7]  3:7: `a0` is (1 | 2, 3) here
+  [8]  2:6: `a0` is defined as this expression, (1 | 2, 3)
+       2 | a0 = (g(true), 3);
+         |      ^^^^^^^^^^^^ [8, 9]
+         |       ^^^^^^^ [10]
+         |                ^ [12]
+  [9]  2:6: this expression gives (1 | 2, 3)
+  [10] 2:7: this call of `g` gives 1 | 2
+  [11] 1:1: `g` is declared here with no type written for its result; the type the checker found for `g` is `(bool) -> 1 | 2`
+       1 | g(positional c: bool) = if c { 1 } else { 2 };
+         | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  [12] 2:16: this literal, 3, is 3
+  [13] 3:11: this call of `g` gives 1 | 2
+  [14] 4:11: `a1` is T2 here
+  [15] 5:10: this literal, 1, is 1
+  [16] 5:5: `+` takes (int, int) -> int
+  [17] 5:5: `+` takes (f64, f64) -> f64
+  [18] 5:5: `+` takes (rat, rat) -> rat"#
     );
 }

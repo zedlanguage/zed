@@ -169,8 +169,27 @@ impl Printer<'_> {
             p.uses[i] -= 1;
         }
         p.exact = true;
+        // A root is written as itself, never as a reference from an earlier print: one printed
+        // apart is written out where it stands, and a message's sentence writes a tuple whole.
+        p.reuse = defs::active() && !p.anew;
         for &(i, _) in &roots {
             p.walk(i);
+        }
+        // The elements of a group are ordered by their contents ([`Printer::canon`]), which a
+        // reference from an earlier print hides: such a print is made again with every part
+        // printed anew, in the time of the print before this step.
+        let grouped = |t: &Option<Text>| {
+            (t.as_ref().expect("visited").segs.iter()).any(|s| matches!(s, Seg::Group(_)))
+        };
+        if p.reused.contains(&true) && p.texts.iter().any(grouped) {
+            return Printer {
+                by_name: p.by_name,
+                spell: p.spell,
+                apart: std::mem::take(&mut p.apart),
+                anew: true,
+                ..Printer::default()
+            }
+            .print(types);
         }
         p.canon(&roots);
         p.render(&roots)
@@ -423,7 +442,7 @@ enum Item {
 }
 
 /// An item's key: its contents, with a diagram node by its interned id.
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Key {
     Ty(Ctx, Type),
     TupleNode(Ctx, usize, u64),
@@ -495,6 +514,48 @@ struct Printer<'s> {
     /// Whether each root is printed apart, written out where it stands
     /// ([`Type::surfaces_apart`]); a root past its end is not.
     apart: Vec<bool>,
+    /// Whether a part met now is taken from an earlier print of the message where it was
+    /// printed ([`printed`]): on while the walk runs, and never in a print made again
+    /// with every part printed anew ([`Printer::print`]).
+    reuse: bool,
+    /// Whether this print is made again with every part printed anew.
+    anew: bool,
+    /// Whether each node is a part taken from an earlier print, its text that print's reference.
+    reused: Vec<bool>,
+    /// Whether each node's own literals are spelled so wherever a message is written
+    /// ([`super::Spelled::everywhere`]); and that of the node being given its text.
+    fixed: Vec<bool>,
+    fixed_now: bool,
+}
+
+/// A part's key in the table of parts printed so far ([`printed`]): whether written by name,
+/// whether with the program's spellings, and the item's key.
+type Printed = (bool, bool, Key);
+
+/// The parts printed so far for the message's table of definitions, each with its reference
+/// and class, kept in that table ([`defs::with_kept`]) so that they end with it.
+#[derive(Default)]
+struct Kept(BTreeMap<Printed, (String, Class)>);
+
+/// The reference and class of a part an earlier print of the message wrote, and which prints
+/// the same in any type ([`Printer::remember`]): a type that holds it writes the reference
+/// rather than print it again, so the steps of a derivation that each print the next of a
+/// chain print each part once (step MSG-derive-print-per-message).
+fn printed(key: &Printed) -> Option<(String, Class)> {
+    defs::with_kept(|kept| kept.as_ref()?.downcast_ref::<Kept>()?.0.get(key).cloned()).flatten()
+}
+
+/// Keeps `parts` for [`printed`], each with its reference and class.
+fn keep(parts: impl Iterator<Item = (Printed, String, Class)>) {
+    defs::with_kept(|kept| {
+        let kept = kept.get_or_insert_with(|| Box::new(Kept::default()));
+        let kept = kept
+            .downcast_mut::<Kept>()
+            .expect("only the printer keeps parts");
+        for (key, name, class) in parts {
+            kept.0.entry(key).or_insert((name, class));
+        }
+    });
 }
 
 enum Step {
@@ -515,17 +576,35 @@ fn push_children(stack: &mut Vec<Step>, segs: &[Seg]) {
 
 impl Printer<'_> {
     /// The text that refers to `item`, counting the use; `put` says where it stands.
+    /// A part an earlier print of the message wrote, and which prints the same in any type
+    /// ([`Printer::remember`]), is the reference that print gave it, a node with no item to
+    /// visit.
     fn refer(&mut self, item: Item) -> Text {
         let key = item.key();
         let i = match self.index.get(&key) {
             Some(&i) => i,
             None => {
                 let i = self.texts.len();
-                self.index.insert(key, i);
-                self.texts.push(None);
+                let probe = (self.by_name, self.spell.is_some(), key);
+                let found = match self.reuse {
+                    true => printed(&probe),
+                    false => None,
+                };
+                self.index.insert(probe.2, i);
                 self.uses.push(0);
                 self.forced.push(None);
-                self.items.push(Some(item));
+                self.fixed.push(true);
+                self.reused.push(found.is_some());
+                match found {
+                    Some((name, class)) => {
+                        self.texts.push(Some(Text::word(name, class)));
+                        self.items.push(None);
+                    }
+                    None => {
+                        self.texts.push(None);
+                        self.items.push(Some(item));
+                    }
+                }
                 i
             }
         };
@@ -548,7 +627,9 @@ impl Printer<'_> {
                     let Some(item) = self.items[i].take() else {
                         continue;
                     };
+                    self.fixed_now = true;
                     let text = self.text(&item);
+                    self.fixed[i] = self.fixed_now;
                     stack.push(Step::Leave(i));
                     push_children(&mut stack, &text.segs);
                     self.texts[i] = Some(text);
@@ -806,7 +887,9 @@ impl Printer<'_> {
             ("f64", &p.floats, Member::NumberType(NumberType::F64)),
             ("String", &p.strings, Member::Named("String")),
         ] {
-            lits(&mut items, name, l, whole, self.spell);
+            if !lits(&mut items, name, l, whole, self.spell) {
+                self.fixed_now = false;
+            }
         }
         if p.atoms.cofinite {
             let mut except = Vec::new();
@@ -1406,6 +1489,7 @@ impl Printer<'_> {
         let collecting = defs::active();
         if collecting {
             self.collect(&same, &mut named);
+            self.remember(&named);
         } else {
             let mut k = 0;
             for &i in &self.post {
@@ -1530,6 +1614,63 @@ impl Printer<'_> {
         }
     }
 
+    /// Puts each part of an exact print that prints the same in any type of the message into
+    /// the table of parts printed so far, by its reference ([`printed`]), so that a later
+    /// type holding it takes the reference rather than print it again. A part prints the same
+    /// in any type when nothing in it is named by how often one type uses it: each node in it
+    /// is a tuple, which is always a reference ([`Printer::collect`]), a text that is one
+    /// reference to another such node, one token, which is never named, or a part taken from
+    /// an earlier print; and none is a recursive type or spells a literal as written near one
+    /// message only ([`super::Spelled::everywhere`]). A tuple's reference is its body's place
+    /// in the message's table, so the part taken again is the text a print anew would give.
+    // Complexity tradeoff (MSG-derive-print-per-message): naive, each type of a message printed
+    // in full, O(m) for a type of m parts, so a derivation of n steps that each print the next
+    // of a chain `t2 = (t1, t1); t3 = (t2, t2); …` costs O(n²); keeping use counts for one
+    // print of the whole message would name a part by how often the message, not the type,
+    // uses it, and counting per type needs each type's parts, O(n²) again. Used: the parts kept
+    // by their keys, one ordered map for the message, so each step prints only its new parts,
+    // O(log n) each, and the message O(m log m) in the m parts it prints in all.
+    fn remember(&self, named: &[Option<String>]) {
+        if !self.exact {
+            return;
+        }
+        let mut same = vec![false; self.texts.len()];
+        for &i in &self.post {
+            let segs = &self.texts[i].as_ref().expect("visited").segs;
+            let token = matches!(&segs[..], [Seg::Str(s)] if !s.contains([' ', '(', ',']));
+            let tuple = self.is_row(i) && named[i].as_deref().is_some_and(defs::is_soft);
+            let one = matches!(&segs[..], [Seg::Node(..)]);
+            same[i] = self.reused[i]
+                || ((token || tuple || one)
+                    && self.forced[i].is_none()
+                    && self.fixed[i]
+                    && Pieces::new(segs).all(|p| match p {
+                        Piece::Node(j, _) => same[j],
+                        Piece::Str(_) => true,
+                    }));
+        }
+        // The reference node `i` is written as, if it is a tuple or one reference to one.
+        let reference = |mut i: usize| loop {
+            if let Some(name) = named[i].as_deref().filter(|n| defs::is_soft(n)) {
+                return Some(name);
+            }
+            match &self.texts[i].as_ref().expect("visited").segs[..] {
+                [Seg::Node(j, _)] => i = *j,
+                [Seg::Str(s)] if self.reused[i] => return Some(s.as_str()),
+                _ => return None,
+            }
+        };
+        let spelled = self.spell.is_some();
+        keep(self.index.iter().filter_map(|(key, &i)| {
+            if !same[i] || self.reused[i] {
+                return None;
+            }
+            let name = reference(i)?;
+            let printed = (self.by_name, spelled, key.clone());
+            Some((printed, name.to_string(), self.own_class(i)))
+        }));
+    }
+
     /// Writes node `i` at `at` by its own text, not by a name, following a text that is one
     /// reference to another node to that node's text: a root printed apart ([`Type::surfaces_apart`]).
     /// The nodes inside are written by [`Printer::write`].
@@ -1583,21 +1724,28 @@ impl Printer<'_> {
 }
 
 /// The literals of `l` as items of a union, each with its member: `whole`, the base type
-/// `name`, or what is left of it, or each literal by its value.
+/// `name`, or what is left of it, or each literal by its value. Whether each is spelled so
+/// wherever a message is written ([`super::Spelled::everywhere`]).
 fn lits<'a>(
     items: &mut Vec<(Member<'a>, Text)>,
     name: &str,
     l: &'a Lits,
     whole: Member<'a>,
     spell: Option<Spell<'_>>,
-) {
+) -> bool {
+    let fixed = std::cell::Cell::new(true);
+    let everywhere = &fixed;
     // Complexity tradeoff: a value with a spelling is written as the program spells it, one
     // lookup each, O(log s) in the s spellings (`Spell`), and its text copied once, as the
     // canonical text it replaces is made once; the text stays linear in what it prints. Naively
     // reparsing the printed text to swap each literal back would cost a second pass and a copy.
     let each = || {
         l.values.iter().map(move |v| {
-            let text = match spell.and_then(|s| s(v)) {
+            let spelled = spell.map(|s| s(v));
+            if spelled.as_ref().is_some_and(|s| !s.everywhere) {
+                everywhere.set(false);
+            }
+            let text = match spelled.and_then(|s| s.text) {
                 Some(s) => s.into_owned(),
                 None => super::lit_text(v),
             };
@@ -1619,6 +1767,7 @@ fn lits<'a>(
             (member, t)
         })),
     }
+    fixed.get()
 }
 
 /// `word \ t`.

@@ -135,9 +135,22 @@ fn scalar(v: &Value) -> u64 {
 }
 
 /// The program's own spelling of a literal value, if it has one: the text of a literal it
-/// wrote, which reads back to that value ([`Type::surfaces_spelled`]). Borrowed where the
-/// program's text holds it, made where it adds a sign.
-pub type Spell<'a> = &'a dyn Fn(&Value) -> Option<std::borrow::Cow<'a, str>>;
+/// wrote, which reads back to that value ([`Type::surfaces_spelled`]), with whether it is the
+/// spelling wherever a message is written ([`Spelled`]).
+pub type Spell<'a> = &'a dyn Fn(&Value) -> Spelled<'a>;
+
+/// A literal value as the program spells it ([`Spell`]).
+pub struct Spelled<'a> {
+    /// The text of a literal the program wrote with the value, or `None` when it wrote none
+    /// and the value is printed in canonical form. Borrowed where the program's text holds it,
+    /// made where it adds a sign.
+    pub text: Option<std::borrow::Cow<'a, str>>,
+    /// Whether every message, written about any part of the program, spells the value so: a
+    /// program that writes `0x1F` in one place and `31` in another spells `31` as written near
+    /// each, so a printed type that holds it is printed again for each message rather than
+    /// taken from an earlier one (MSG-derive-print-per-message).
+    pub everywhere: bool,
+}
 
 /// A literal as a type prints it: a `rat` in canonical form ([`Rat::literal_text`]), so its
 /// text costs the literal's length; any other as the value prints.

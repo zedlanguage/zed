@@ -36,6 +36,7 @@
 //! which a printed type marks with the noncharacters U+FDD9 to U+FDDE ([`VARS`]), so that no name
 //! it takes is a word the message writes elsewhere ([`name_vars`]).
 
+use std::any::Any;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt::{self, Write as _};
@@ -149,6 +150,9 @@ struct Table {
     /// Whether each definition is named however often it is written: one a printed type
     /// names itself ([`add`], [`reserve`]), not only one [`add_soft`] placed.
     hard: Vec<bool>,
+    /// What the printer keeps of the parts it printed for this table ([`with_kept`]); this
+    /// module never reads it.
+    kept: Option<Box<dyn Any>>,
 }
 
 thread_local! {
@@ -249,6 +253,23 @@ pub(super) fn reserve() -> usize {
 /// Gives the place `k` from [`reserve`] its body.
 pub(super) fn fill(k: usize, body: String) {
     TABLE.with_borrow_mut(|t| t.as_mut().expect("collecting").bodies[k] = body);
+}
+
+/// Runs `f` on what the printer keeps of the parts it printed while [`collect`] is on (step
+/// MSG-derive-print-per-message), which lives and ends with the table; `None` when no table is
+/// on.
+pub(super) fn with_kept<R>(f: impl FnOnce(&mut Option<Box<dyn Any>>) -> R) -> Option<R> {
+    TABLE.with_borrow_mut(|t| t.as_mut().map(|t| f(&mut t.kept)))
+}
+
+/// Forgets the printed parts kept for reuse: a checker calls it when the spellings of its
+/// program's literals change, since a part kept spells them as they were.
+pub fn forget_printed() {
+    TABLE.with_borrow_mut(|t| {
+        if let Some(t) = t.as_mut() {
+            t.kept = None;
+        }
+    });
 }
 
 /// The references in `text`, in order.
