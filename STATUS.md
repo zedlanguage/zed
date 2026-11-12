@@ -1966,7 +1966,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FOOTPRINT-overlap | impl attempt 1 | 2026-11-05 04:07 | start; making worktrees footprint-overlap and footprint-overlap-spec |
 | GSX-unsolved | hybrid-xr attempt 1 | 2026-11-11 16:53 | round H1 seats launched: Opus 5.5 medium (h1/claude, tree gsxh-claude), gpt-6.1-sol medium (h1/codex, tree gsxh-codex), 5 h limit; load 25.46 30.53 39.26 |
 | K36-study | impl attempt 1 | 2026-11-11 01:43 | baseline on 9e4f454bd: both 'quadratic' pinwheel tests now 8.4x and 7.7x from k 8 to 64 (155M->1296M, 171M->1310M instr; was 15,893M at k 64); measuring 64->512 |
-| LOAD-max-div-unsolved | impl attempt 1 | 2026-11-11 17:11 | worktree /home/luke/Work/wt/lmd-cd (wt/lmd-cd at 7d96d3826) made for the Rust port; CD round 1 best 58 = 28.71 |
+| LOAD-max-div-unsolved | impl attempt 1 | 2026-11-11 17:11 | non-unit default multipliers merged (residues outside the coset moved only on non-unit blocks, nonunit_persist 8.7x at 256 to 2048 links, was 13.75x; COMPLEXITY.md LOAD-max-div-images); open: interval guards with wide or overlapping offsets (CD round 3 stalled at k 1.235, cross-review next) |
 | MAIN-l01_38-failures | impl attempt 1 | 2026-11-12 12:00 | nest_empty cause: project_parts recursion per nest level (262 frames at 1 MiB, ~3.9 kB/level); rewriting as explicit stack of Level frames / load 24.04 27.88 37 |
 | MSG-many-args-decimal | running | 2026-11-12 07:32 |  |
 | MSG-many-args-one-error | running | 2026-11-12 07:32 |  |
