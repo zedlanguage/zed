@@ -384,10 +384,9 @@ fn extract(x: u64, mut mask: u64) -> u64 {
     out
 }
 
-/// `pdep` on built digits, `x` below `2^popCount(mask)`: the loop of [`deposit`] over the
-/// 32-digit words of `mask`, O(digits of `mask`).
-fn deposit_big(x: &BigUint, mask: &BigUint) -> BigUint {
-    let xs = x.to_u32_digits();
+/// `pdep` on the low 32-digit words `xs` of `x`, at least the `popCount(mask)` low digits of
+/// `x`: the loop of [`deposit`] over the 32-digit words of `mask`, O(digits of `mask`).
+fn deposit_big(xs: &[u32], mask: &BigUint) -> BigUint {
     let digit = |j: u64| {
         xs.get((j / 32) as usize)
             .is_some_and(|w| (w >> (j % 32)) & 1 == 1)
@@ -411,10 +410,9 @@ fn deposit_big(x: &BigUint, mask: &BigUint) -> BigUint {
     BigUint::new(out)
 }
 
-/// `pext` on built digits: the loop of [`extract`] over the 32-digit words of `mask`, O(digits
-/// of `mask`).
-fn extract_big(x: &BigUint, mask: &BigUint) -> BigUint {
-    let xs = x.to_u32_digits();
+/// `pext` on the low 32-digit words `xs` of `x`, at least as many as `mask` has: the loop of
+/// [`extract`] over the 32-digit words of `mask`, O(digits of `mask`).
+fn extract_big(xs: &[u32], mask: &BigUint) -> BigUint {
     let ones = mask.count_ones();
     let mut out = vec![0u32; ones.div_ceil(32) as usize];
     let mut j = 0u64;
@@ -430,6 +428,35 @@ fn extract_big(x: &BigUint, mask: &BigUint) -> BigUint {
         }
     }
     BigUint::new(out)
+}
+
+/// The 32-digit words of the int `x >= 0` that hold its `k` low digits, `ceil(k / 32)` of them
+/// or fewer; the digits of the top word above `k` are kept, and [`deposit_big`] and
+/// [`extract_big`] read none of them.
+//
+// Complexity tradeoff: the standard reduction, `x mod 2^k` by the general remainder
+// (`Rat::rem_euclid`), builds `2^k` and divides by it, num-bigint's division below 512 words
+// and a Newton reciprocal above: O(M(k)) time, and its bytes jump where the method changes, so
+// `pdep` and `pext` on random masks of 16,384 and 131,072 digits allocated 2,941,600 and
+// 43,977,920 bytes, 15.0 times, above the n log n limit 10.7 (PDEP-bytes). A built `x` needs
+// no division: its low words are copied, O(k) time and bytes, at most the width of `mask`,
+// which is already built. Only an `x` kept as powers (`3 ^ 10 ^ 6`) still takes the
+// remainder, which builds no more of `x` than its `k` low digits. Nothing is given up; both
+// give the same words. Tested by `l01_39f_int_machine_ops::scaling::
+// pdep_and_pext_are_linear_in_the_digits_of_the_mask` and `reference::
+// pdep_and_pext_agree_on_wide_and_kept_operands` (COMPLEXITY.md, the `zed_kernel::bits` row).
+fn low_words(x: &Rat, k: u64) -> Result<Vec<u32>, TooLarge> {
+    match x.integer_factors() {
+        (built, []) => Ok(built
+            .magnitude()
+            .iter_u32_digits()
+            .take(k.div_ceil(32) as usize)
+            .collect()),
+        _ => {
+            let low = x.rem_euclid(&two_pow(&Rat::int(BigInt::from(k)))?)?;
+            Ok(low.to_integer()?.magnitude().to_u32_digits())
+        }
+    }
 }
 
 /// The words on exact numbers, every operand in its domain.
@@ -499,13 +526,13 @@ fn big(p: Prim, ns: &[Cow<'_, Rat>]) -> Result<Value, TooLarge> {
         Prim::Pdep => {
             let mask = built(&ns[1])?;
             // Only the `popCount(mask)` low digits of `x` are read; the rest are never built.
-            let x = built(&ns[0].rem_euclid(&two_pow(&count(mask.count_ones()))?)?)?;
-            int(BigInt::from(deposit_big(&x, &mask)))
+            let xs = low_words(&ns[0], mask.count_ones())?;
+            int(BigInt::from(deposit_big(&xs, &mask)))
         }
         Prim::Pext => {
             let mask = built(&ns[1])?;
-            let x = built(&ns[0].rem_euclid(&two_pow(&count(mask.bits()))?)?)?;
-            int(BigInt::from(extract_big(&x, &mask)))
+            let xs = low_words(&ns[0], mask.bits())?;
+            int(BigInt::from(extract_big(&xs, &mask)))
         }
         Prim::FunnelShl | Prim::FunnelShr => {
             let (hi, lo, k, w) = (&ns[0], &ns[1], &ns[2], &ns[3]);

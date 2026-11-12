@@ -209,3 +209,102 @@ fn pdep_and_pext_read_only_the_digits_the_mask_reaches() {
         assert_eq!(run(Prim::Pext, &[xv.clone(), big(all)]), big(want), "{d}");
     }
 }
+
+/// Digit `i` of `x`, for a `BigUint`.
+fn big_digit(x: &BigUint, i: u64) -> bool {
+    x.bit(i)
+}
+
+/// `pdep` digit by digit on `BigUint`s.
+fn big_pdep(x: &BigUint, mask: &BigUint) -> BigUint {
+    let mut out = BigUint::from(0u8);
+    let mut j = 0;
+    for i in 0..mask.bits() {
+        if big_digit(mask, i) {
+            out.set_bit(i, big_digit(x, j));
+            j += 1;
+        }
+    }
+    out
+}
+
+/// `pext` digit by digit on `BigUint`s.
+fn big_pext(x: &BigUint, mask: &BigUint) -> BigUint {
+    let mut out = BigUint::from(0u8);
+    let mut j = 0;
+    for i in 0..mask.bits() {
+        if big_digit(mask, i) {
+            out.set_bit(j, big_digit(x, i));
+            j += 1;
+        }
+    }
+    out
+}
+
+/// A random `BigUint` of exactly `d` digits (0 for `d = 0`).
+fn wide(rng: &mut Rng, d: u64) -> BigUint {
+    let mut x = BigUint::from(0u8);
+    for i in 0..d {
+        x.set_bit(i, i + 1 == d || rng.next_u64() & 1 == 1);
+    }
+    x
+}
+
+#[test]
+fn pdep_and_pext_agree_on_wide_and_kept_operands() {
+    // Wide operands on either side of a 32-digit word and of each other: `x` shorter than the
+    // digits the mask reads, as long, and longer, and masks of every density.
+    let mut rng = Rng::new(0x9de9);
+    let sizes = [0u64, 1, 31, 32, 33, 63, 64, 65, 200, 1000, 3001];
+    for &dx in &sizes {
+        for &dm in &sizes {
+            let x = wide(&mut rng, dx);
+            let dense = wide(&mut rng, dm);
+            let sparse = &dense & wide(&mut rng, dm) & wide(&mut rng, dm);
+            let all = (BigUint::from(1u8) << dm) - 1u8;
+            for mask in [dense, sparse, all] {
+                let what = format!("x of {dx} digits, mask of {dm} digits");
+                let (xv, mv) = (big(x.clone()), big(mask.clone()));
+                assert_eq!(
+                    run(Prim::Pdep, &[xv.clone(), mv.clone()]),
+                    big(big_pdep(&x, &mask)),
+                    "pdep {what}"
+                );
+                assert_eq!(
+                    run(Prim::Pext, &[xv, mv]),
+                    big(big_pext(&x, &mask)),
+                    "pext {what}"
+                );
+            }
+        }
+    }
+    // An `x` kept as a power gives what its built digits give, and a huge one is never built.
+    let three = zed_kernel::Rat::int(BigInt::from(3));
+    let kept = three.pow(&BigUint::from(700u32)).expect("3^700");
+    assert!(
+        !kept.integer_factors().1.is_empty(),
+        "3^700 is kept as a power"
+    );
+    let built = BigUint::from(3u8).pow(700);
+    for dm in [5u64, 64, 1109, 1110, 2000] {
+        let mask = wide(&mut rng, dm);
+        let mv = big(mask.clone());
+        let kv = Value::integer(kept.clone());
+        assert_eq!(
+            run(Prim::Pdep, &[kv.clone(), mv.clone()]),
+            big(big_pdep(&built, &mask)),
+            "pdep 3^700, mask of {dm} digits"
+        );
+        assert_eq!(
+            run(Prim::Pext, &[kv, mv]),
+            big(big_pext(&built, &mask)),
+            "pext 3^700, mask of {dm} digits"
+        );
+    }
+    let huge = zed_kernel::Rat::int(BigInt::from(2))
+        .pow(&BigUint::from(10u32).pow(12))
+        .expect("2^10^12 kept");
+    let hv = Value::integer(huge);
+    assert_eq!(run(Prim::Pdep, &[hv.clone(), v(0b1011)]), v(0));
+    assert_eq!(run(Prim::Pext, &[hv, v(u128::MAX)]), v(0));
+}

@@ -50,7 +50,6 @@ fn each_word_is_linear_in_the_number_of_u64_values() {
 }
 
 #[test]
-#[ignore = "PDEP-bytes: 15.4 times the bytes at 16,384 and 131,072 mask digits, over the n log n limit 10.7 since SCALE-ratio; open"]
 fn pdep_and_pext_are_linear_in_the_digits_of_the_mask() {
     let n = 1 << 14;
     let ops = scaling::inputs(n, |m| {
