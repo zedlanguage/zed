@@ -289,7 +289,7 @@ const NEAR_MISSES: &[NearMiss] = &[
         "  d[i in 0..<2] = c*.bump(1);\n};\n",
         "4:19",
         Some(
-            "`r = c*.bump(1);` before the definition writes `c'` once on a step, and each key \
+            "`r1 = c*.bump(1);` before the definition writes `c'` once on a step, and each key \
              reads the result",
         ),
     ),
