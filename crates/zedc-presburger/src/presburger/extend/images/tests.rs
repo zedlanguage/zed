@@ -589,3 +589,223 @@ fn a_condition_cannot_combine_independent_scalar_images_into_a_joint_image() {
         );
     }
 }
+
+/// One step of a residue-map chain: guards (s, p, w, c) tried in order, then the default
+/// (p, w, c); a branch's value is p h + w (h mod m) + c.
+#[derive(Clone)]
+struct MapStep {
+    guards: Vec<(i64, i64, i64, i64)>,
+    default: (i64, i64, i64),
+}
+
+impl MapStep {
+    fn value(&self, h: i64, m: i64) -> i64 {
+        let r = h.rem_euclid(m);
+        let (p, w, c) = self
+            .guards
+            .iter()
+            .find(|g| g.0 == r)
+            .map_or(self.default, |&(_, p, w, c)| (p, w, c));
+        p * h + w * r + c
+    }
+
+    /// Pushes the definitions of this step on `input` and gives its output: the remainder
+    /// pair, then one choice for each guard from the innermost out, as the front end writes
+    /// a nested if.
+    fn push(&self, defs: &mut Vec<Formula>, input: &Lin, m: i64) -> Atom {
+        let n = defs.len() as u32;
+        let q = Lin::atom(Atom::Aux(n));
+        let r = Lin::atom(Atom::Aux(n + 1));
+        let pair = Formula::And(Shared::new(vec![
+            Formula::Con(Con::eq(input, &q.times(m).plus(&r))),
+            Formula::Con(Con::ge(&r, &Lin::constant(0))),
+            Formula::Con(Con::ge(&Lin::constant(m - 1), &r)),
+        ]));
+        defs.push(pair.clone());
+        defs.push(pair);
+        let arm = |p: i64, w: i64, c: i64| input.times(p).plus(&r.times(w)).plus(&Lin::constant(c));
+        let (p, w, c) = self.default;
+        let mut value = arm(p, w, c);
+        if self.guards.is_empty() {
+            let out = Atom::Aux(defs.len() as u32);
+            defs.push(Formula::And(Shared::new(vec![Formula::Con(Con::eq(
+                &Lin::atom(out.clone()),
+                &value,
+            ))])));
+            return out;
+        }
+        let mut out = None;
+        for &(s, p, w, c) in self.guards.iter().rev() {
+            let o = Atom::Aux(defs.len() as u32);
+            let ol = Lin::atom(o.clone());
+            let guard = Formula::Con(Con::eq(&r, &Lin::constant(s)));
+            defs.push(Formula::Or(Shared::new(vec![
+                Formula::and(vec![
+                    guard.clone(),
+                    Formula::Con(Con::eq(&ol, &arm(p, w, c))),
+                ]),
+                Formula::and(vec![
+                    Formula::negate(guard),
+                    Formula::Con(Con::eq(&ol, &value)),
+                ]),
+            ])));
+            value = ol;
+            out = Some(o);
+        }
+        out.unwrap()
+    }
+}
+
+/// The definitions and outputs of a chain of steps from x.
+fn map_chain(steps: &[MapStep], m: i64) -> (Vec<Formula>, Vec<Atom>) {
+    let mut defs = Vec::new();
+    let mut outputs = Vec::new();
+    let mut input = Lin::atom(Atom::Sym("x".into()));
+    for step in steps {
+        let out = step.push(&mut defs, &input, m);
+        input = Lin::atom(out.clone());
+        outputs.push(out);
+    }
+    (defs, outputs)
+}
+
+#[test]
+fn residue_map_images_agree_with_the_values_of_a_window_of_inputs() {
+    // I49: chains of nested choices on h mod m with branch values +-h + w (h mod m) + c.
+    // Each answer the scalar images give equals the one read from the values of every input
+    // in a window wide enough that no input outside it reaches the questions asked; where
+    // every default multiplier p + w is a unit mod m and no step is the skipping step, every
+    // question is answered.
+    let mut rng = 0x5eed_u64;
+    let mut next = |lo: i64, hi: i64| {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        lo + (rng % (hi - lo + 1) as u64) as i64
+    };
+    let (mut answered, mut required, mut found, mut trials) = (0, 0, 0, 0);
+    for _ in 0..1500 {
+        let m = next(1, 12);
+        let mut steps = Vec::new();
+        for _ in 0..next(1, 6) {
+            let branch = |next: &mut dyn FnMut(i64, i64) -> i64| {
+                (
+                    if next(0, 1) == 0 { 1 } else { -1 },
+                    next(-3, 3),
+                    next(-2 * m, 2 * m),
+                )
+            };
+            let guards = (0..next(0, 3))
+                .map(|_| {
+                    let (p, w, c) = branch(&mut next);
+                    (next(-1, m), p, w, c)
+                })
+                .collect();
+            steps.push(MapStep {
+                guards,
+                default: branch(&mut next),
+            });
+        }
+        let (defs, outputs) = map_chain(&steps, m);
+        let def = |n: u32| defs[n as usize].clone();
+        let mut images = ScalarImages::default();
+        // Each step moves a value by at most 5 m + 2 m from +-h.
+        let reach = 7 * m * steps.len() as i64;
+        let window = 3 * m + reach + 1;
+        let mut values: Vec<i64> = (-window..=window).collect();
+        let mut all_unit = true;
+        for (i, (step, out)) in steps.iter().zip(&outputs).enumerate() {
+            values = values.iter().map(|&h| step.value(h, m)).collect();
+            let (p, w, _) = step.default;
+            all_unit &= Int::from(p + w).gcd(&Int::from(m)) == Int::ONE;
+            let skipping = step.guards.first().is_some_and(|g| *g == (0, 1, 0, 1))
+                && step.default == (1, 0, 2);
+            all_unit &= !skipping;
+            let seen: BTreeSet<i64> = values.iter().copied().collect();
+            for c in -3 * m..=3 * m {
+                let q = Formula::Con(Con::eq(&Lin::atom(out.clone()), &Lin::constant(c)));
+                let got = images.answer(&q, &def);
+                let expected = seen.contains(&c);
+                trials += 1;
+                found += usize::from(expected);
+                if let Some(got) = got {
+                    answered += 1;
+                    assert_eq!(got, expected, "m={m} step {i} c={c}");
+                } else {
+                    assert!(!all_unit, "m={m} step {i} c={c} unanswered");
+                }
+                required += usize::from(all_unit);
+            }
+        }
+    }
+    assert!(found > 0 && found < trials);
+    assert!(required > trials / 3, "{required} of {trials}");
+    eprintln!(
+        "residue map answers={answered} required={required} trials={trials} in image={found}"
+    );
+}
+
+#[test]
+fn residue_map_images_at_a_large_modulus_agree_with_a_backward_search() {
+    // I49 at m = 10^9 + 7: the image of k steps, from all integers, holds y iff some residue
+    // reaches y in k steps backward; a backward step from y keeps u^-1 (y - c) unless it is
+    // an exception and every exception s with value y. Searched over a few hundred residues.
+    let m = 1_000_000_007i64;
+    let steps = [
+        MapStep {
+            guards: vec![(0, 1, 0, 1), (3, 1, 0, 2)],
+            default: (1, 0, 3),
+        },
+        MapStep {
+            guards: vec![(2, 1, 0, 5)],
+            default: (1, 2, 1),
+        },
+        MapStep {
+            guards: vec![(5, -1, 0, 4), (6, 1, 1, 0)],
+            default: (1, 0, 3),
+        },
+    ];
+    let k = 90;
+    let chain: Vec<MapStep> = (0..k).map(|i| steps[i % steps.len()].clone()).collect();
+    let (defs, outputs) = map_chain(&chain, m);
+    let def = |n: u32| defs[n as usize].clone();
+    let mut images = ScalarImages::default();
+    let modulus = Int::from(m);
+    let back = |step: &MapStep, y: i64| -> Vec<i64> {
+        let (p, w, c) = step.default;
+        let (inv, _) = congruence(&Int::from(p + w), &Int::ONE, &modulus).unwrap();
+        let r = (&inv * &Int::from(y - c))
+            .mod_floor(&modulus)
+            .to_i128()
+            .unwrap() as i64;
+        let mut out: Vec<i64> = step
+            .guards
+            .iter()
+            .filter(|g| g.0 >= 0 && g.0 < m && step.value(g.0, m).rem_euclid(m) == y)
+            .map(|g| g.0)
+            .collect();
+        if !step.guards.iter().any(|g| g.0 == r) {
+            out.push(r);
+        }
+        out
+    };
+    let mut missing = 0;
+    for (i, out) in outputs.iter().enumerate() {
+        for y in (0..40).chain((m - 40)..m).chain([m / 2]) {
+            let mut level = vec![y];
+            for step in chain[..=i].iter().rev() {
+                let mut prev: Vec<i64> = level.iter().flat_map(|&v| back(step, v)).collect();
+                prev.sort();
+                prev.dedup();
+                level = prev;
+            }
+            let expected = !level.is_empty();
+            missing += usize::from(!expected);
+            for c in [y, y - m, y + 3 * m] {
+                let q = Formula::Con(Con::eq(&Lin::atom(out.clone()), &Lin::constant(c)));
+                assert_eq!(images.answer(&q, &def), Some(expected), "step {i} y={y}");
+            }
+        }
+    }
+    assert!(missing > 0);
+}

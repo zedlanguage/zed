@@ -2,8 +2,10 @@
 //! value; the orbit certificate additionally retains its original input remainder.
 //! Other joint questions continue to use the relational summaries with all their inputs.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
+
+use imbl::OrdSet;
 
 use super::super::formula::{Atom, Con, Formula, Id, Lin, Rel};
 use super::def::{Def, free, reads};
@@ -21,6 +23,244 @@ enum Image {
     /// Image of k repetitions of h + (if h mod m == 0 then 1 else 2).
     Skipping(Arc<Int>, Int),
     Clamp(Arc<ClampBasis>, usize),
+    /// Exactly c + d Z with 0 <= c < d: an affine remainder step's image of such a coset
+    /// whose d divides the step's modulus (I49).
+    Coset(Arc<Int>, Int),
+    /// The integers whose residue by the frame's modulus is not missing: the image of a chain
+    /// of residue-map steps (I49).
+    Missing(Arc<Frame>),
+}
+
+/// A step's residue map on Z_m from its input h, for a value p h + w (h mod m) + C with
+/// p = +-1 in each branch of a choice on h mod m == s: r -> u r + c (mod m) except at the
+/// residues listed, which map to their listed values. Each residue class of h maps onto
+/// one whole class, since p = +-1, so an m-periodic input image has an m-periodic image.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ResidueMap {
+    h: Atom,
+    m: Arc<Int>,
+    u: Int,
+    c: Int,
+    exceptions: BTreeMap<Int, Int>,
+}
+
+impl ResidueMap {
+    fn at(&self, r: &Int) -> Int {
+        match self.exceptions.get(r) {
+            Some(v) => v.clone(),
+            None => (&(&self.u * r) + &self.c).mod_floor(&self.m),
+        }
+    }
+}
+
+/// The missing residues of an m-periodic image, stored in the frame of the composed default
+/// maps F(x) = U x + T (U a unit mod m): residue y is missing iff U^-1 (y - T) is in `d`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Frame {
+    m: Arc<Int>,
+    u_inv: Int,
+    t: Int,
+    d: OrdSet<Int>,
+}
+
+impl Frame {
+    fn identity(m: &Arc<Int>) -> Self {
+        Frame {
+            m: Arc::clone(m),
+            u_inv: Int::ONE,
+            t: Int::ZERO,
+            d: OrdSet::new(),
+        }
+    }
+
+    /// The frame value of residue y.
+    fn back(&self, y: &Int) -> Int {
+        (&self.u_inv * &(y - &self.t)).mod_floor(&self.m)
+    }
+
+    fn missing(&self, y: &Int) -> bool {
+        self.d.contains(&self.back(y))
+    }
+
+    // Complexity tradeoff: the image of a step by explicit residue sets is O(m), and the
+    // graph path splits on residues, quadratic or worse in the depth (I49). With f the
+    // default map r -> u r + c, u a unit, and E the exceptions s -> b_s, the step's
+    // missing set is f(D + E) less {b_s : s in E, s not in D}. In the moving frame f(D)
+    // costs nothing: the exceptions enter as frame values and the hits leave by the
+    // composed frame. O(|E| log |D|) set operations on a persistent ordered set, whose
+    // clone shares the input's tree, plus O(1) arithmetic on O(log m)-bit values per step,
+    // independent of m; `u_inv` is u's inverse, O(log m) by extended Euclid.
+    /// The frame of the step's image.
+    fn step(&self, map: &ResidueMap, u_inv: &Int) -> Frame {
+        let m = &self.m;
+        let mut d = self.d.clone();
+        let mut hits = Vec::new();
+        for (s, b) in &map.exceptions {
+            if d.insert(self.back(s)).is_none() {
+                hits.push(b);
+            }
+        }
+        let mut next = Frame {
+            m: Arc::clone(m),
+            u_inv: (&self.u_inv * u_inv).mod_floor(m),
+            t: (&(&map.u * &self.t) + &map.c).mod_floor(m),
+            d,
+        };
+        for b in hits {
+            let x = next.back(b);
+            next.d.remove(&x);
+        }
+        next
+    }
+
+    /// The frame of k h + C over this image, k = +-1: O(1) arithmetic operations.
+    fn translate(&self, k: &Int, constant: &Int) -> Frame {
+        Frame {
+            m: Arc::clone(&self.m),
+            u_inv: (k * &self.u_inv).mod_floor(&self.m),
+            t: (&(k * &self.t) + constant).mod_floor(&self.m),
+            d: self.d.clone(),
+        }
+    }
+}
+
+/// The step h + (if h mod m == s then b1 else b2), with m > 0 and 0 <= s < m. It commutes
+/// with h + m, so its residue map rho(r) = r + (b1 if r == s else b2) mod m decides it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Exception {
+    m: Int,
+    s: Int,
+    b1: Int,
+    b2: Int,
+}
+
+/// The least t >= 0 with a*t == b (mod m), m > 0, and the period m / gcd(a, m) of all
+/// solutions; `None` where there is none. Extended Euclid on the original O(log m)-bit
+/// values: O(log m) arithmetic operations.
+fn congruence(a: &Int, b: &Int, m: &Int) -> Option<(Int, Int)> {
+    let a = a.mod_floor(m);
+    let g = a.gcd(m);
+    if !b.mod_floor(&g).is_zero() {
+        return None;
+    }
+    let period = m.div_floor(&g);
+    if period == Int::ONE {
+        return Some((Int::ZERO, period));
+    }
+    // Inverse of a/g modulo the period by the extended Euclidean algorithm.
+    let (mut r0, mut r1) = (a.div_floor(&g), period.clone());
+    let (mut s0, mut s1) = (Int::ONE, Int::ZERO);
+    while !r1.is_zero() {
+        let q = r0.div_floor(&r1);
+        let r2 = &r0 - &(&q * &r1);
+        let s2 = &s0 - &(&q * &s1);
+        (r0, r1, s0, s1) = (r1, r2, s1, s2);
+    }
+    let t = (&b.div_floor(&g) * &s0).mod_floor(&period);
+    Some((t, period))
+}
+
+impl Exception {
+    // Complexity tradeoff: the image of k steps on Z_m by explicit residue sets is O(k m),
+    // and the graph path splits on residues (I34, I49). Proved closed form instead (R7
+    // Claude): in the frame moving by b2 the missing residues are the orbit points
+    // p_i = s - (i-1) b2 added at step i, each removing p_i + (b1 - b2); so they are the
+    // first min(k, L) orbit points when b1 - b2 is off the orbit's subgroup, otherwise the
+    // last min(k, e) of them, b1 - b2 == e b2. O(log m) arithmetic operations on
+    // O(log m + log k)-bit values per question, independent of m and of the depth.
+    /// Whether residue class y is missing from the image of k >= 1 steps over all integers.
+    fn missing(&self, k: &Int, y: &Int) -> bool {
+        let m = &self.m;
+        let delta = (&self.b1 - &self.b2).mod_floor(m);
+        if delta.is_zero() {
+            return false;
+        }
+        let y0 = (y - &(k * &self.b2)).mod_floor(m);
+        // Index (0-based) of y0 on the orbit s, s - b2, s - 2 b2, ...
+        let Some((i0, orbit)) = congruence(&self.b2, &(&self.s - &y0), m) else {
+            return false;
+        };
+        let window = match congruence(&self.b2, &(-&delta), m) {
+            // b1 - b2 == -(-e) b2: the removed point lies e places before the added one.
+            Some((back, _)) => {
+                let e = (-&back).mod_floor(&orbit);
+                if e.is_zero() {
+                    return false;
+                }
+                e
+            }
+            None => orbit.clone(),
+        };
+        let w = k.clone().min(window);
+        (&(k - &Int::ONE) - &i0).mod_floor(&orbit) < w
+    }
+
+    /// The residue after k >= 0 steps from residue r: r + k b2 + v (b1 - b2), v the visits
+    /// to s, from the first hit and the return period. O(log m) arithmetic operations.
+    fn residue(&self, k: &Int, r: &Int) -> Int {
+        let m = &self.m;
+        let moved = (r + &(k * &self.b2)).mod_floor(m);
+        let Some((t0, _)) = congruence(&self.b2, &(&self.s - r), m) else {
+            return moved;
+        };
+        if t0 >= *k {
+            return moved;
+        }
+        let back = (&self.s + &self.b1).mod_floor(m);
+        let visits = match congruence(&self.b2, &(&self.s - &back), m) {
+            None => Int::ONE,
+            Some((t1, _)) => &Int::ONE + &(&(k - &Int::ONE) - &t0).div_floor(&(&t1 + &Int::ONE)),
+        };
+        (&moved + &(&visits * &(&self.b1 - &self.b2))).mod_floor(m)
+    }
+}
+
+/// The residue map r -> a r + b (mod m) from an input axis's residue to an atom's, for a
+/// chain of affine remainder steps h' = +-h + w (h mod m) + c of one modulus m (I49).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Affine {
+    axis: Atom,
+    m: Arc<Int>,
+    a: Int,
+    b: Int,
+}
+
+/// The coset c + d Z of an image, where it is one; Power(e) is 2^e Z.
+fn coset_of(image: &Image) -> Option<(Int, Int)> {
+    match image {
+        Image::Prefix(_) | Image::All => Some((Int::ONE, Int::ZERO)),
+        Image::Power(e) => Some((Int::from(&Num::pow2(&Num::from(&Int::from(*e)))), Int::ZERO)),
+        Image::Coset(d, c) => Some(((**d).clone(), c.clone())),
+        _ => None,
+    }
+}
+
+/// An affine remainder step: value == p*h + w*(h mod m) + c with p = +-1 and w != 0, the
+/// remainder's dividend the lone atom h. Gives (h, p, w, c, |m|).
+fn affine_step(
+    e: &Lin,
+    fact: &dyn Fn(&Atom) -> Option<Fact>,
+) -> Option<(Atom, Int, Int, Int, Int)> {
+    let terms: Vec<_> = e.terms.iter().collect();
+    let [(a, ka), (b, kb)] = terms.as_slice() else {
+        return None;
+    };
+    for (r, kr, other, ko) in [(*a, *ka, *b, *kb), (*b, *kb, *a, *ka)] {
+        let Some((false, arg, m)) = fact(r).and_then(|v| v.division) else {
+            continue;
+        };
+        if !ko.is_unit() || arg != Lin::atom(other.clone()) || m.is_zero() {
+            continue;
+        }
+        return Some((
+            other.clone(),
+            ko.clone(),
+            kr.clone(),
+            e.constant.clone(),
+            m.abs(),
+        ));
+    }
+    None
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -101,6 +341,8 @@ impl Image {
             Self::Prefix(_) | Self::All => true,
             Self::Power(e) => c.is_zero() || twos(c).is_some_and(|z| z >= *e),
             Self::Clamp(b, k) => b.contains(c, *k),
+            Self::Coset(d, r) => (c - r).mod_floor(d).is_zero(),
+            Self::Missing(f) => !f.missing(&c.mod_floor(&f.m)),
             Self::Skipping(m, k) => {
                 let r = c.mod_floor(m);
                 r.is_odd()
@@ -132,6 +374,12 @@ pub(super) struct ScalarImages {
     by: HashMap<Atom, Fact>,
     orbits: HashMap<Atom, Orbit>,
     orbit_done: HashSet<Id>,
+    /// Residue maps of affine remainder chains from their axis (I49).
+    affine: HashMap<Atom, Affine>,
+    /// Exceptional-residue chains: their axis, step and depth (I49).
+    excepted: HashMap<Atom, (Atom, Arc<Exception>, Int)>,
+    /// Residue maps of single-output definitions from their input (I49).
+    maps: HashMap<Atom, Arc<ResidueMap>>,
 }
 
 #[derive(Clone)]
@@ -360,6 +608,13 @@ impl ScalarImages {
                 let image = match fact.image? {
                     Image::Prefix(axis) if k.is_positive() => Image::Prefix(axis),
                     Image::Prefix(_) | Image::All | Image::Power(0) => Image::All,
+                    // +-(c + dZ) + C is (C +- c) + dZ.
+                    i @ (Image::Power(_) | Image::Coset(..)) => {
+                        let (d, c) = coset_of(&i)?;
+                        let c = (&(*k * &c) + &e.constant).mod_floor(&d);
+                        Image::Coset(Arc::new(d), c)
+                    }
+                    Image::Missing(f) => Image::Missing(Arc::new(f.translate(k, &e.constant))),
                     _ => return None,
                 };
                 return Some(Fact {
@@ -410,6 +665,177 @@ impl ScalarImages {
                 image: Some(Image::Prefix(axis.clone())),
                 division: None,
             });
+        }
+        self.affine_image(e, def)
+    }
+
+    // Complexity tradeoff: the graph path splits each link on its residues, n*min(n, M) or
+    // worse (I49). An affine remainder step g(h) = p h + w (h mod M) + C, p = +-1, has
+    // g(h + M) = g(h) + p M and g(h) mod M = (p + w) (h mod M) + C mod M. Over an input
+    // image c + dZ with d | M (so invariant under +M), the image is therefore the union of
+    // the residue classes (p + w)(c + dZ_M) + C: the coset ((p + w) c + C) + gcd((p + w) d, M) Z.
+    // O(1) arithmetic operations on O(log M)-bit values per link, independent of M.
+    fn affine_image(&self, e: &Lin, def: &dyn Fn(u32) -> Formula) -> Option<Fact> {
+        let (h, p, w, constant, m) = affine_step(e, &|a| self.fact(a, def))?;
+        let (d, c) = coset_of(&self.fact(&h, def)?.image?)?;
+        if !m.mod_floor(&d).is_zero() {
+            return None;
+        }
+        let u = &p + &w;
+        let d = (&u * &d).gcd(&m);
+        let c = (&(&u * &c) + &constant).mod_floor(&d);
+        Some(Fact {
+            image: Some(Image::Coset(Arc::new(d), c)),
+            division: None,
+        })
+    }
+
+    /// One exceptional-residue step `if h mod m == s then h + b1 else h + b2`: (h, step).
+    fn exception_step(
+        &self,
+        guard: &Formula,
+        left: &Lin,
+        right: &Lin,
+        def: &dyn Fn(u32) -> Formula,
+    ) -> Option<(Atom, Exception)> {
+        let Formula::Con(c) = guard else { return None };
+        if c.rel != Rel::Eq || c.lin.terms.len() != 1 {
+            return None;
+        }
+        let (r, kr) = c.lin.terms.first_key_value()?;
+        if !kr.is_unit() {
+            return None;
+        }
+        let (false, arg, m) = self.fact(r, def)?.division? else {
+            return None;
+        };
+        let h = lone_atom(&arg)?.clone();
+        let (b1, b2) = (left.minus(&arg), right.minus(&arg));
+        if !b1.terms.is_empty() || !b2.terms.is_empty() || m.is_zero() {
+            return None;
+        }
+        // kr * r + constant == 0: r == -constant / kr.
+        let s = -&(kr * &c.lin.constant);
+        Some((
+            h,
+            Exception {
+                m: m.abs(),
+                s,
+                b1: b1.constant,
+                b2: b2.constant,
+            },
+        ))
+    }
+
+    /// Records the residue map or exceptional-residue depth of a single-output definition
+    /// for the joint questions (I49): O(1) arithmetic operations per definition.
+    fn record_step(&mut self, output: &Atom, f: &Formula, def: &dyn Fn(u32) -> Formula) {
+        let is_axis =
+            |a: &Atom| matches!(a, Atom::Sym(_)) || matches!(a, Atom::Aux(n) if free(&def(*n)));
+        if let Some(e) = value_equation(f, output) {
+            if let Some((h, p, w, constant, m)) = affine_step(&e, &|a| self.fact(a, def)) {
+                let old = if is_axis(&h) {
+                    Some(Affine {
+                        axis: h.clone(),
+                        m: Arc::new(m.clone()),
+                        a: Int::ONE,
+                        b: Int::ZERO,
+                    })
+                } else {
+                    self.affine.get(&h).cloned().filter(|o| *o.m == m)
+                };
+                if let Some(old) = old {
+                    let u = &p + &w;
+                    let a = (&u * &old.a).mod_floor(&m);
+                    let b = (&(&u * &old.b) + &constant).mod_floor(&m);
+                    self.affine.insert(output.clone(), Affine { a, b, ..old });
+                }
+            } else if let [(h, p)] = e.terms.iter().collect::<Vec<_>>().as_slice()
+                && p.is_unit()
+                && let Some(old) = self.affine.get(*h).cloned()
+            {
+                let a = (*p * &old.a).mod_floor(&old.m);
+                let b = (&(*p * &old.b) + &e.constant).mod_floor(&old.m);
+                self.affine.insert(output.clone(), Affine { a, b, ..old });
+            }
+        } else if let Some((guard, left, right)) = choice(f, output)
+            && let Some((h, step)) = self.exception_step(&guard, &left, &right, def)
+            && !step.s.is_negative()
+            && step.s < step.m
+        {
+            let entry = if is_axis(&h) {
+                Some((h.clone(), Arc::new(step), Int::ONE))
+            } else {
+                match self.excepted.get(&h) {
+                    Some((axis, old, k)) if **old == step => {
+                        Some((axis.clone(), Arc::clone(old), k + &Int::ONE))
+                    }
+                    _ => None,
+                }
+            };
+            if let Some(entry) = entry {
+                self.excepted.insert(output.clone(), entry);
+            }
+        }
+    }
+
+    // Complexity tradeoff: the graph path splits on residues (I49). A joint question
+    // `R == s && V == c`, R = W mod M, with W and V on one axis x: for affine chains both
+    // residues are affine maps of x mod M and V is +-M-translation invariant over a fixed
+    // residue, so it holds iff the two congruences A_W r + B_W == s, A_V r + B_V == c
+    // (mod M) have a common r: O(log M) arithmetic operations. For exceptional-residue
+    // chains of one step the later residue is `Exception::residue` of the earlier one.
+    fn joint_general(&self, a: &Atom, c: &Int, b: &Atom, s: &Int) -> Option<bool> {
+        for (output, c, remainder, s) in [(a, c, b, s), (b, s, a, c)] {
+            let Some(Fact {
+                division: Some((false, arg, m)),
+                ..
+            }) = self.by.get(remainder)
+            else {
+                continue;
+            };
+            let m = m.abs();
+            let Some(w) = lone_atom(arg) else { continue };
+            if let Some(v) = self.affine.get(output).filter(|v| *v.m == m) {
+                let (aw, bw) = if *w == v.axis {
+                    (Int::ONE, Int::ZERO)
+                } else {
+                    match self.affine.get(w).filter(|o| o.axis == v.axis && *o.m == m) {
+                        Some(o) => (o.a.clone(), o.b.clone()),
+                        None => continue,
+                    }
+                };
+                if s.is_negative() || *s >= m {
+                    return Some(false);
+                }
+                // r == r0 (mod q) from the first; then A_V (r0 + q t) + B_V == c.
+                let Some((r0, q)) = congruence(&aw, &(s - &bw), &m) else {
+                    return Some(false);
+                };
+                let rest = &(c - &v.b) - &(&v.a * &r0);
+                return Some(congruence(&(&v.a * &q), &rest, &m).is_some());
+            }
+            if let Some((axis, step, k)) = self.excepted.get(output)
+                && step.m == m
+            {
+                let j = if w == axis {
+                    Int::ZERO
+                } else {
+                    match self.excepted.get(w) {
+                        Some((x, old, j)) if x == axis && old == step => j.clone(),
+                        _ => continue,
+                    }
+                };
+                if s.is_negative() || *s >= m {
+                    return Some(false);
+                }
+                let seen = |i: &Int, y: &Int| i.is_zero() || !step.missing(i, y);
+                return Some(if *k >= j {
+                    seen(&j, s) && step.residue(&(k - &j), s) == c.mod_floor(&m)
+                } else {
+                    seen(k, &c.mod_floor(&m)) && step.residue(&(&j - k), &c.mod_floor(&m)) == *s
+                });
+            }
         }
         None
     }
@@ -480,7 +906,15 @@ impl ScalarImages {
                 } else {
                     None
                 };
-                self.by.insert(output, fact.unwrap_or_default());
+                let mut fact = fact.unwrap_or_default();
+                let map = self.residue_map(&d.f, &output, def);
+                if let Some(map) = map {
+                    if fact.image.is_none() {
+                        fact.image = self.residue_image(&map, def);
+                    }
+                    self.maps.insert(output.clone(), Arc::new(map));
+                }
+                self.by.insert(output, fact);
             }
             self.done.insert(id);
         }
@@ -520,6 +954,11 @@ impl ScalarImages {
                 open.remove(&id);
                 if let [n] = d.own.as_slice() {
                     self.record_orbit(Atom::Aux(*n), &d.f, def);
+                    // Codex's orbit already decides this link; the general maps are only
+                    // for links it does not record (I49).
+                    if !self.orbits.contains_key(&Atom::Aux(*n)) {
+                        self.record_step(&Atom::Aux(*n), &d.f, def);
+                    }
                 }
                 self.orbit_done.insert(id);
             }
@@ -707,7 +1146,13 @@ impl ScalarImages {
                 return Some(output_image.contains(c) && relative.residue(&c.mod_floor(&m)) == *s);
             }
         }
-        None
+        for atom in [&a, &b] {
+            if let Atom::Aux(n) = atom {
+                self.ensure_orbits(def(*n), def);
+            }
+        }
+        let answer = self.joint_general(&a, &c, &b, &s)?;
+        Some(if negated { true } else { answer })
     }
 
     // Complexity tradeoff: graph summaries of this clamp retain growing dyadic
@@ -767,7 +1212,142 @@ impl ScalarImages {
         None
     }
 
+    /// The input h, modulus |m| and residue s of a guard h mod m == s.
+    fn residue_guard(
+        &self,
+        guard: &Formula,
+        def: &dyn Fn(u32) -> Formula,
+    ) -> Option<(Atom, Arc<Int>, Int)> {
+        let Formula::Con(c) = guard else { return None };
+        if c.rel != Rel::Eq || c.lin.terms.len() != 1 {
+            return None;
+        }
+        let (r, kr) = c.lin.terms.first_key_value()?;
+        if !kr.is_unit() {
+            return None;
+        }
+        let (false, arg, m) = self.fact(r, def)?.division? else {
+            return None;
+        };
+        if m.is_zero() {
+            return None;
+        }
+        // kr * r + constant == 0: r == -constant / kr.
+        Some((
+            lone_atom(&arg)?.clone(),
+            Arc::new(m.abs()),
+            -&(kr * &c.lin.constant),
+        ))
+    }
+
+    /// The residue map of a branch value: p h + w (h mod m) + C, or k q + C with q a
+    /// definition with a map from the same h and m, p and k = +-1. `at` is the guard's h and
+    /// m, which a value k h + C needs. O(|E|) for q's exceptions E.
+    fn arm_map(
+        &self,
+        e: &Lin,
+        at: Option<(&Atom, &Arc<Int>)>,
+        def: &dyn Fn(u32) -> Formula,
+    ) -> Option<ResidueMap> {
+        let map = if let Some((h, p, w, c, m)) = affine_step(e, &|a| self.fact(a, def)) {
+            let m = Arc::new(m);
+            ResidueMap {
+                h,
+                u: (&p + &w).mod_floor(&m),
+                c: c.mod_floor(&m),
+                m,
+                exceptions: BTreeMap::new(),
+            }
+        } else {
+            let terms: Vec<_> = e.terms.iter().collect();
+            let [(a, k)] = terms.as_slice() else {
+                return None;
+            };
+            if !k.is_unit() {
+                return None;
+            }
+            match at {
+                Some((h, m)) if *a == h => ResidueMap {
+                    h: h.clone(),
+                    m: Arc::clone(m),
+                    u: k.mod_floor(m),
+                    c: e.constant.mod_floor(m),
+                    exceptions: BTreeMap::new(),
+                },
+                _ => {
+                    let q = self.maps.get(*a)?;
+                    let m = &q.m;
+                    let value = |v: &Int| (&(*k * v) + &e.constant).mod_floor(m);
+                    ResidueMap {
+                        h: q.h.clone(),
+                        m: Arc::clone(m),
+                        u: (*k * &q.u).mod_floor(m),
+                        c: value(&q.c),
+                        exceptions: q
+                            .exceptions
+                            .iter()
+                            .map(|(r, v)| (r.clone(), value(v)))
+                            .collect(),
+                    }
+                }
+            }
+        };
+        match at {
+            Some((h, m)) if map.h != *h || map.m != *m => None,
+            _ => Some(map),
+        }
+    }
+
+    /// The residue map of a single-output definition: a value or a choice on h mod m == s
+    /// whose branches have maps from that h and m. O(|E| log |E|) for E exceptions.
+    fn residue_map(
+        &self,
+        f: &Formula,
+        output: &Atom,
+        def: &dyn Fn(u32) -> Formula,
+    ) -> Option<ResidueMap> {
+        if let Some(e) = value_equation(f, output) {
+            return self.arm_map(&e, None, def);
+        }
+        let (guard, left, right) = choice(f, output)?;
+        let (h, m, s) = self.residue_guard(&guard, def)?;
+        let mut map = self.arm_map(&right, Some((&h, &m)), def)?;
+        if s.is_negative() || s >= *m {
+            // The guard never holds.
+            return Some(map);
+        }
+        let value = self.arm_map(&left, Some((&h, &m)), def)?.at(&s);
+        map.exceptions.remove(&s);
+        if map.at(&s) != value {
+            map.exceptions.insert(s, value);
+        }
+        Some(map)
+    }
+
+    /// The image of a residue-map step whose default multiplier is a unit, from an input
+    /// image that is all integers or missing residues of the same modulus. Cost as
+    /// `Frame::step`.
+    fn residue_image(&self, map: &ResidueMap, def: &dyn Fn(u32) -> Formula) -> Option<Image> {
+        let (u_inv, _) = congruence(&map.u, &Int::ONE, &map.m)?;
+        let frame = match self.fact(&map.h, def)?.image? {
+            Image::Missing(f) if f.m == map.m => f,
+            i if coset_of(&i) == Some((Int::ONE, Int::ZERO)) => Arc::new(Frame::identity(&map.m)),
+            _ => return None,
+        };
+        Some(Image::Missing(Arc::new(frame.step(map, &u_inv))))
+    }
+
     fn choice_image(
+        &self,
+        guard: &Formula,
+        left: &Lin,
+        right: &Lin,
+        def: &dyn Fn(u32) -> Formula,
+    ) -> Option<Fact> {
+        self.choice_image_shapes(guard, left, right, def)
+    }
+
+    fn choice_image_shapes(
         &self,
         guard: &Formula,
         left: &Lin,

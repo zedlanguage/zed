@@ -3206,6 +3206,48 @@ fn the_questions_of_a_chain_of_remainders_scale() {
     );
 }
 
+/// A chain of steps on the remainder by 10^9 + 7 (I49): `h{i}(x) = {step}` with `H` the link
+/// below, one question `h{i}(x: x) == 9` for each link.
+fn residue_step_chain(step: &str, n: usize) -> String {
+    let mut src = String::from("h0(x: int) = x;\n");
+    for i in 1..n {
+        let below = format!("h{}(x: x)", i - 1);
+        src += &format!("h{i}(x: int) = {};\n", step.replace('H', &below));
+        src += &format!("t{i}(x: int) = h{i}(x: x) == 9;\n");
+    }
+    src
+}
+
+fn two_guards_chain(n: usize) -> String {
+    residue_step_chain(
+        "if H mod 1000000007 == 0 { H + 1 } else { if H mod 1000000007 == 3 { H + 2 } else { H + 3 } }",
+        n,
+    )
+}
+
+fn affine_default_chain(n: usize) -> String {
+    residue_step_chain(
+        "if H mod 1000000007 == 2 { H + 5 } else { H mod 1000000007 * 2 + H + 1 }",
+        n,
+    )
+}
+
+#[test]
+fn the_questions_of_a_chain_of_residue_maps_scale() {
+    // I49. Each link moves h by an amount set by h mod M, with two exceptional residues or an
+    // affine default 3 r + 1 on the remainder r; its image is the integers whose residue is
+    // not missing, the missing residues kept in the frame of the composed default maps.
+    // Before, the graph path split on residues: two guards 3.08e9 instructions at 10 links,
+    // 5.14e10 at 40 (exponent 2.0); the affine default 1.17e9 at 5 links (exponent 4.5).
+    // Now 2.0e7 and 8.4e7 for two guards, 1.4e8 at 80 links for the affine default.
+    questions_scale_unit("a chain of two exceptional residues", 40, two_guards_chain);
+    questions_scale_unit(
+        "a chain of an affine default with an exception",
+        40,
+        affine_default_chain,
+    );
+}
+
 fn r6_local_source(family: &str, m: usize) -> String {
     let mut src = String::new();
     if family == "leaves" {
