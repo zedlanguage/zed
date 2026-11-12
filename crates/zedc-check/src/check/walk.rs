@@ -6462,6 +6462,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let domain = IntDomain {
                         what: "`^` on an int takes an exponent in int[0..]".into(),
                         below_two_pow: None,
+                        name: "exponent".into(),
                     };
                     let need = Need {
                         on: Ty::empty(),
@@ -6624,11 +6625,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// floats, which take a negative exponent, with an int literal base or exponent written as
     /// a float literal, or with a base parameter declared a float; where the exponent may be
     /// at least 0 (`negative` false) and is no class of literals, which a test does not narrow,
-    /// a test of it, of a name bound in the body or of a new name that holds it; and, last, on
-    /// a `rat`, exact for an exponent of either sign, with an int base written `2r` for the
-    /// literal `2` and `rat(x)` for anything else, a cast that cannot fail. No repair casts an
-    /// int to a float: `f64(k)` may fail, with `#inexact`. Without the program's text, the
-    /// test in words.
+    /// a test of it, of a name bound in the body or of a new name that holds it ([`fresh`]);
+    /// and, last, on a `rat`, exact for an exponent of either sign, with an int base written
+    /// `2r` for the literal `2` and `rat(x)` for anything else, a cast that cannot fail. No
+    /// repair casts an int to a float: `f64(k)` may fail, with `#inexact`. Without the
+    /// program's text, the test in words.
     fn power_repairs(
         &self,
         x: &Arg<'a>,
@@ -6708,10 +6709,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                     String::new(),
                 )),
                 None => {
-                    if let Some(p) = rewrite(&[(ns, "exponent")]) {
+                    // `exponent = exponent - 1` would define the name in terms of itself.
+                    let q = fresh("exponent", &[et, power]);
+                    if let Some(p) = rewrite(&[(ns, &q)]) {
                         let et = unparen(et);
                         out.push((
-                            format!("exponent = {et}; if exponent >= 0 {{ {p} }} else {{ … }}"),
+                            format!("{q} = {et}; if {q} >= 0 {{ {p} }} else {{ … }}"),
                             String::new(),
                         ));
                     }
@@ -6827,16 +6830,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         let ints = &t.set & &KType::int();
         if !ints.is_empty() && !listed_in(d, &ints) {
             let shown = self.show(&Ty::set(ints));
-            let what = &d.what;
             let domain = domain_text(d);
-            self.error_offering(
-                span,
-                format!(
-                    "{what}, and this value may be {shown}: the checker cannot show that it lies \
-                     in {domain}"
-                ),
-                domain_repairs(&domain),
-            );
+            let why = format!("the checker cannot show that this value lies in {domain}");
+            self.domain_error(d, &shown, why, span);
         }
         self.no_int_vars(t, d, span);
         if t.dynamic {
@@ -6844,21 +6840,40 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
+    /// The error of a value at `span`, of the type `shown`, that the checker cannot show lies
+    /// in the ints `d` its use takes, for the reason `why`: the headline shows the value's code
+    /// and type and the test that keeps it in `d`, of a new name `d.name` bound to it. The value
+    /// is of a type variable here, or of a class resolved since, and a test narrows only a name
+    /// whose values are all ints, so the repair declares `int` each parameter it is computed from.
+    fn domain_error(&mut self, d: &IntDomain, shown: &str, why: String, span: Span) {
+        let mut notes = self.derive(&[span]);
+        notes.push(Note { span, text: why });
+        let code = self.code(Some(span));
+        let first = code.map(|c| {
+            let (test, _) = test_repair(&d.name, d, (c, false), None);
+            let tail = format!(
+                ", with each parameter in `{}` declared `int` and `{}` passed inside the branch",
+                unparen(c),
+                fresh(&d.name, &[c])
+            );
+            (test, tail)
+        });
+        let pass = format!("repair: pass as `{}` a value in {}", d.name, domain_text(d));
+        let menu = (first.iter().map(repair_note)).chain([pass]);
+        notes.extend(menu.map(|text| Note { span, text }));
+        let piece = format!("{} : {shown}", code.unwrap_or("…"));
+        self.error_with(span, domain_message(&d.what, &piece, first.as_ref()), notes);
+    }
+
     /// The need of [`Self::no_int`] on each type variable of `t`: on a class, recorded and
     /// checked on what flows into it; on its type, if it has one by now.
     fn no_int_vars(&mut self, t: &Ty, d: &IntDomain, span: Span) {
         for v in &t.vars {
             let Some(r) = self.class_root(v) else {
-                let what = &d.what;
-                let domain = domain_text(d);
-                self.error_offering(
-                    span,
-                    format!(
-                        "{what}, and this value has the type `{v}`, which stands \
-                         for whatever type the caller passes and may be any int: the checker cannot show that it lies in {domain}"
-                    ),
-                    domain_repairs(&domain),
+                let why = format!(
+                    "`{v}` stands for whatever type the caller passes, which may be any int"
                 );
+                self.domain_error(d, v.as_ref(), why, span);
                 continue;
             };
             match self.classes[r].resolved.clone() {
@@ -6924,6 +6939,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let passed = IntDomain {
                 what: takes.as_str().into(),
                 below_two_pow: domain.below_two_pow.clone(),
+                name: (*p).into(),
             };
             // The calls that passed the value on, down to the use: O(calls), so made only for an
             // error, never at a call that meets the need.
@@ -6947,13 +6963,17 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // A parameter left out takes its default, whose value the call does not show.
                 if sig.params.get(*param).is_some_and(|p| p.default.is_some()) {
                     let dom = domain_text(domain);
-                    let message = format!(
-                        "{takes}, and this call leaves `{p}` out, so `{p}` takes its default, \
-                         which the checker cannot show lies in {dom}"
-                    );
+                    let message = match self.code(Some(span)) {
+                        Some(call) => format!("{takes}: `{call}` leaves out `{p}`."),
+                        None => format!("{takes}: this call leaves out `{p}`."),
+                    };
                     let mut notes = chain();
                     notes.extend(
                         [
+                            format!(
+                                "`{p}` takes its default, which the checker cannot show lies \
+                                 in {dom}"
+                            ),
                             format!("repair: pass `{p}` in this call, with a value in {dom}"),
                             format!("repair: give `{p}` a default in {dom}"),
                         ]
@@ -6980,41 +7000,32 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let given = (from.and_then(|f| f.get(*param).copied().flatten()))
                         .and_then(|f| Some((f, self.code(Some(f.at))?)));
                     let Some((f, code)) = given else {
-                        let message =
-                            format!("{takes}, and this `{p}` is {shown}{}", outside(domain));
                         let mut notes = chain();
-                        notes.extend(passed_repairs(&p, domain, None, None, false, None, span));
+                        notes.push(outside(domain, span));
+                        let (first, repairs) =
+                            passed_repairs(&p, domain, None, None, false, None, span);
+                        notes.extend(repairs);
+                        let piece = format!("{p} : {shown}");
+                        let message = domain_message(&takes, &piece, first.as_ref());
                         self.error_with(span, message, notes);
                         continue;
                     };
-                    let is = match code == shown.as_str() {
-                        true => String::new(),
-                        false => format!(", which is {shown},"),
-                    };
-                    let message = format!(
-                        "{takes}, and this call passes `{code}`{is} on to it as `{p}`{}",
-                        outside(domain)
-                    );
                     let mut notes = vec![Note {
                         span: f.at,
                         text: format!("`{code}` reaches {what} as `{p}`"),
                     }];
                     notes.extend(chain());
+                    notes.push(outside(domain, span));
                     let outside_all = (ns.ints_listed())
                         .is_some_and(|vs| vs.iter().all(|v| !value_in(domain, v)));
                     let arg =
                         Some(code).map(|c| (c, f.expr.is_some_and(|e| self.tested(e).is_some())));
-                    let call = self.call_with(f.call, f.at, &p);
-                    notes.extend(passed_repairs(
-                        &p,
-                        domain,
-                        arg,
-                        call,
-                        outside_all,
-                        Some(code),
-                        f.call,
-                    ));
-                    self.error_with(span, message, notes);
+                    let call = self.call_parts(f.call, f.at);
+                    let (first, repairs) =
+                        passed_repairs(&p, domain, arg, call, outside_all, Some(code), f.call);
+                    notes.extend(repairs);
+                    let piece = self.annotated(f.call, f.at, &shown);
+                    self.error_with(span, domain_message(&takes, &piece, first.as_ref()), notes);
                 }
                 continue;
             };
@@ -7067,30 +7078,40 @@ impl<'t, 'a> Ck<'t, 'a> {
                 None => r.ints.meet(&at_least_zero()).is_empty(),
             };
             let arg = self.code(Some(at)).map(|c| (c, self.tested(e).is_some()));
-            let call = self.call_with(span, at, &p);
+            let call = self.call_parts(span, at);
             notes.extend(chain());
-            notes.extend(passed_repairs(
-                &p,
-                domain,
-                arg,
-                call,
-                outside_all,
-                None,
-                span,
-            ));
-            let message = format!("{takes}, and this `{p}` is {shown}{}", outside(domain));
-            self.error_with(span, message, notes);
+            notes.push(outside(domain, span));
+            let (first, repairs) = passed_repairs(&p, domain, arg, call, outside_all, None, span);
+            notes.extend(repairs);
+            let piece = self.annotated(span, at, shown);
+            self.error_with(span, domain_message(&takes, &piece, first.as_ref()), notes);
         }
     }
 
-    /// The call at `span` as written, and with its argument at `at` replaced by `p`.
-    fn call_with(&self, span: Span, at: Span, p: &str) -> Option<(&'a str, String)> {
+    /// The code at `span` with its part at `at` annotated with the type `shown`, as
+    /// `popCount(n : int)`; the part alone where `at` does not lie in `span`, and `… : int`
+    /// where the checker has no code. A literal whose type shows as the literal itself is
+    /// annotated `int`, as `bitAnd(-1 : int, 1)`.
+    fn annotated(&self, span: Span, at: Span, shown: &str) -> String {
+        let part = match self.code(Some(at)) {
+            Some(c) if c == shown => format!("{c} : int"),
+            Some(c) => format!("{c} : {shown}"),
+            None => return format!("… : {shown}"),
+        };
+        match self.call_parts(span, at) {
+            Some((_, before, after)) => format!("{before}{part}{after}"),
+            None => part,
+        }
+    }
+
+    /// The call at `span` as written, and its code before and after its argument at `at`.
+    fn call_parts(&self, span: Span, at: Span) -> Option<Call<'a>> {
         if at.start < span.start || span.end < at.end {
             return None;
         }
         let src = self.t.text?;
         let (before, after) = (src.get(span.start..at.start)?, src.get(at.end..span.end)?);
-        Some((self.code(Some(span))?, format!("{before}{p}{after}")))
+        Some((self.code(Some(span))?, before, after))
     }
 
     /// Checks that a value of `t` is data, as `what` at `span` needs (L1.17): it holds no
@@ -8065,6 +8086,15 @@ impl<'t, 'a> Ck<'t, 'a> {
         let nonneg = IntervalSet::range(End::of(0), PosInf);
         let ranges: Vec<Option<IntRange>> =
             slots.iter().map(|(a, e)| self.int_range(a, e)).collect();
+        let last = slots.len() - 1;
+        // The operands read as `width` digits, and the smallest width, if the width is of an
+        // int type and at least 0: a test that keeps such an operand at least 0 keeps it below
+        // `2 ^ w` too, so that the width check that follows takes it.
+        let two_pow = zed_kernel::bits::below_two_pow_width(p);
+        let smallest = match slots[last].0.ty.vars.is_empty() {
+            true => (ranges[last].as_ref()).and_then(|r| r.extreme(std::cmp::Ordering::Less)),
+            false => None,
+        };
         let mut fine = true;
         for (i, (((a, e), r), name)) in slots.iter().zip(&ranges).zip(names).enumerate() {
             if shift && i == 0 {
@@ -8074,6 +8104,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let d = IntDomain {
                     what: format!("`{w}` takes `{name}` in int[0..]").into(),
                     below_two_pow: None,
+                    name: (*name).into(),
                 };
                 self.floor(&a.ty, e, d, span);
             }
@@ -8092,34 +8123,48 @@ impl<'t, 'a> Ck<'t, 'a> {
                 notes.extend(self.deciding_notes(e));
             }
             self.derive_into(&[at], &mut notes);
-            notes.extend(
-                domain_repairs("int[0..]")
-                    .into_iter()
-                    .map(|text| Note { span, text }),
-            );
-            self.error_with(
+            notes.push(Note {
                 span,
-                format!(
-                    "`{w}` takes `{name}` in int[0..], and this `{name}` is {shown}: `{w}` reads \
-                     `{name}` as binary digits, and an int below 0 has no finite row of them"
+                text: format!(
+                    "`{w}` reads `{name}` as binary digits, and an int below 0 has no finite \
+                     row of them"
                 ),
-                notes,
-            );
+            });
+            // The test keeps an operand read as `width` digits below `2 ^ w` as well; none is
+            // offered where the width check would still refuse what it keeps: for such an
+            // operand under a width not shown to be at least 0, the `k` of a funnel shift, which
+            // lies below the width, and the width itself, which bounds the operands read as
+            // `width` digits and, for `byteSwap`, is a multiple of 8.
+            let below_two_pow = (smallest.as_ref())
+                .filter(|s| {
+                    two_pow.contains(&i) && s.surface_cmp(&Value::Int(0)).is_some_and(|o| o.is_ge())
+                })
+                .map(|s| Width(s.clone()));
+            let testable = (below_two_pow.is_some() || !two_pow.contains(&i))
+                && zed_kernel::bits::below_width(p) != Some(i)
+                && !(zed_kernel::bits::has_width(p) && i == last);
+            let d = IntDomain {
+                what: format!("`{w}` takes `{name}` in int[0..]").into(),
+                below_two_pow,
+                name: (*name).into(),
+            };
+            let arg =
+                (self.code(Some(at)).filter(|_| testable)).map(|c| (c, self.tested(e).is_some()));
+            let call = self.call_parts(span, at);
+            let outside_all = r.ints.meet(&at_least_zero()).is_empty();
+            let (first, repairs) = passed_repairs(name, &d, arg, call, outside_all, None, span);
+            notes.extend(repairs);
+            let piece = self.annotated(span, at, shown);
+            self.error_with(span, domain_message(&d.what, &piece, first.as_ref()), notes);
         }
         if !fine || !zed_kernel::bits::has_width(p) {
             return;
         }
-        let last = slots.len() - 1;
         // An operand of a type variable read as `width` digits, under a width of an int type,
         // takes the ints below `2 ^ w`, `w` the smallest width, as a need on its parameter.
         // The other relations to `width` are between two operands, which a need on one
         // parameter does not carry: an operand of a type variable in one is rejected here
         // (CHK-need-bound).
-        let two_pow = zed_kernel::bits::below_two_pow_width(p);
-        let smallest = match slots[last].0.ty.vars.is_empty() {
-            true => (ranges[last].as_ref()).and_then(|r| r.extreme(std::cmp::Ordering::Less)),
-            false => None,
-        };
         let related = (two_pow.iter().copied())
             .chain(zed_kernel::bits::below_width(p))
             .chain([last]);
@@ -8133,6 +8178,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let d = IntDomain {
                     what: format!("`{w}` takes `{name}` in int[0..<2^width]").into(),
                     below_two_pow: Some(Width(s.clone())),
+                    name: name.into(),
                 };
                 self.floor(&a.ty, e, d, span);
                 continue;
@@ -11503,17 +11549,6 @@ fn unparen(s: &str) -> &str {
     inner
 }
 
-/// The repairs of a value that may lie outside the ints `domain` a use needs.
-fn domain_repairs(domain: &str) -> Vec<String> {
-    vec![
-        format!(
-            "repair: test the value first, as `if v is {domain} {{ … }} else {{ … }}`, so that \
-             inside the branch it lies in {domain}"
-        ),
-        format!("repair: declare the value with a type in {domain}, as `v: {domain}`"),
-    ]
-}
-
 /// The callee of a call as a message names it: a name in code quotes, and the words that
 /// stand for a callee written as an expression as they are.
 fn callee(what: &str) -> String {
@@ -11539,61 +11574,119 @@ fn data_repairs(span: Span) -> Vec<Note> {
 }
 
 /// Why an argument outside the ints `d` is refused: the use it reaches needs ints in `d`.
-fn outside(d: &IntDomain) -> String {
-    format!(
-        ": a value outside {} would reach a use that does not take it",
+fn outside(d: &IntDomain, span: Span) -> Note {
+    let text = format!(
+        "a value outside {} would reach a use that does not take it",
         domain_text(d)
-    )
+    );
+    Note { span, text }
 }
+
+/// A call's code as written, and its code before and after one argument.
+type Call<'s> = (&'s str, &'s str, &'s str);
 
 /// The repairs of an argument `p` that may lie outside the ints `d` its use needs, each in the
 /// program's code: `arg` is the argument's code, with whether it is a name a test narrows
 /// ([`Ck::tested`]), and `outside_all` says that no value of it lies in `d`, so that a test of
 /// it leaves nothing to pass. A name a test does not narrow, or an expression, is first bound
-/// to a new name, `p`'s own. `call` is the call's code as written and with the argument
-/// replaced by `p`, which the test then holds in full. `given` is the argument of the call that a function's parameter `p`
-/// takes the value from, where the call passes it on (MSG-forwarded-repair).
+/// to a new name ([`test_repair`]). `call` is the call's code, which the test then holds in
+/// full. `given` is the argument of the call that a function's parameter `p` takes the value
+/// from, where the call passes it on (MSG-forwarded-repair). Gives the test, the repair a
+/// headline shows, if there is one, and the notes of every repair.
 fn passed_repairs(
     p: &str,
     d: &IntDomain,
     arg: Option<(&str, bool)>,
-    call: Option<(&str, String)>,
+    call: Option<Call<'_>>,
     outside_all: bool,
     given: Option<&str>,
     span: Span,
-) -> Vec<Note> {
+) -> (Option<Repair>, Vec<Note>) {
     let dom = domain_text(d);
-    let test = |a: &str| match d.below_two_pow {
-        None => format!("{a} >= 0"),
-        Some(_) => format!("{a} is {dom}"),
-    };
-    let mut out = Vec::new();
-    match (arg, outside_all, call) {
-        (Some((a, true)), false, Some((call, _))) => out.push(format!(
-            "repair: `if {} {{ {call} }} else {{ … }}`",
-            test(a)
-        )),
-        (Some((a, true)), false, None) => out.push(format!(
-            "repair: `if {} {{ … }} else {{ … }}`, with `{a}` passed as `{p}` inside the branch",
-            test(a)
-        )),
-        (Some((a, false)), false, Some((_, renamed))) => out.push(format!(
-            "repair: `{p} = {}; if {} {{ {renamed} }} else {{ … }}`",
-            unparen(a),
-            test(p)
-        )),
-        (Some((a, false)), false, None) => out.push(format!(
-            "repair: `{p} = {}; if {} {{ … }} else {{ … }}`, with `{p}` passed inside the branch",
-            unparen(a),
-            test(p)
-        )),
-        _ => {}
-    }
-    out.push(match given {
+    let test = (!outside_all)
+        .then(|| arg.map(|a| test_repair(p, d, a, call)))
+        .flatten();
+    let pass = match given {
         Some(code) => format!("repair: pass a value in {dom} where this call passes `{code}`"),
         None => format!("repair: pass as `{p}` a value in {dom}"),
-    });
-    out.into_iter().map(|text| Note { span, text }).collect()
+    };
+    let notes = (test.iter().map(repair_note))
+        .chain([pass])
+        .map(|text| Note { span, text })
+        .collect();
+    (test, notes)
+}
+
+/// The test of the argument `a` of `p` that keeps it in the ints `d` inside its branch, in the
+/// program's code: of `a` itself where it is a name a test narrows (the flag), else of a new
+/// name bound to it, `p` or `p` with a number ([`fresh`]); holding `call` with `a`, or the new
+/// name, in place, where the call is known.
+fn test_repair(
+    p: &str,
+    d: &IntDomain,
+    (a, narrows): (&str, bool),
+    call: Option<Call<'_>>,
+) -> Repair {
+    // A width domain is tested by its two bounds: this zedc does not compile a refinement
+    // such as `is int[0..<2^8]`.
+    let test = |a: &str| match &d.below_two_pow {
+        None => format!("{a} >= 0"),
+        Some(w) => format!("{a} >= 0 && {a} < 2^{}", w.0),
+    };
+    if narrows {
+        return match call {
+            Some((call, ..)) => (
+                format!("if {} {{ {call} }} else {{ … }}", test(a)),
+                String::new(),
+            ),
+            None => (
+                format!("if {} {{ … }} else {{ … }}", test(a)),
+                format!(", with `{a}` passed as `{p}` inside the branch"),
+            ),
+        };
+    }
+    let q = fresh(p, &[a, call.map_or("", |(c, ..)| c)]);
+    let bound = format!("{q} = {}; if {}", unparen(a), test(&q));
+    match call {
+        Some((_, before, after)) => (
+            format!("{bound} {{ {before}{q}{after} }} else {{ … }}"),
+            String::new(),
+        ),
+        None => (
+            format!("{bound} {{ … }} else {{ … }}"),
+            format!(", with `{q}` passed inside the branch"),
+        ),
+    }
+}
+
+/// `p`, or `p` followed by the least number from 2 that makes a name no word of `texts`
+/// spells, as `n2` for `n = n - 1`, which would define `n` in terms of itself: a name bound
+/// to the argument then neither reads itself nor shadows a name the call reads.
+///
+/// Complexity tradeoff: testing each number against the texts afresh costs their length per
+/// number tried, O(L·k); one pass collecting their words, then one hash lookup per number,
+/// costs O(L + k), and k is at most one more than the number of words.
+fn fresh(p: &str, texts: &[&str]) -> String {
+    let words: HashSet<&str> = (texts.iter())
+        .flat_map(|t| t.split(|c: char| !(c.is_alphanumeric() || c == '_')))
+        .collect();
+    if !words.contains(p) {
+        return p.to_string();
+    }
+    (2..)
+        .map(|k| format!("{p}{k}"))
+        .find(|q| !words.contains(q.as_str()))
+        .expect("a number past the words of the texts")
+}
+
+/// The headline of a use that takes the ints of a domain, `takes` as "`popCount` takes `x` in
+/// int[0..]", at the code `piece` annotated with its type, as `popCount(n : int)`, then the
+/// first repair, if there is one, as "Try `if n >= 0 { popCount(n) } else { … }` instead.".
+fn domain_message(takes: &str, piece: &str, first: Option<&Repair>) -> String {
+    match first {
+        Some((code, tail)) => format!("{takes}: `{piece}`. Try `{code}` instead{tail}."),
+        None => format!("{takes}: `{piece}`."),
+    }
 }
 
 /// Why a divisor is always zero, as [`Ck::zero_divisor`] finds it.

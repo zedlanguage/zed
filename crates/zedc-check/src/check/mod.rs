@@ -3320,15 +3320,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 notes.push(format!("`v` is the value {what} reads"));
             }
             let c = code.unwrap_or("v");
-            // The value in parentheses unless it is a name, a call or an access, so that
-            // `else` applies to all of it.
-            let v = match c
-                .chars()
-                .all(|ch| ch.is_alphanumeric() || "_.:[]()".contains(ch))
-            {
-                true => c.to_string(),
-                false => format!("({c})"),
-            };
+            let v = else_operand(c);
             notes.push(format!(
                 "an atom of a named family is data, not a failure, so it does not pass through \
                  {what}"
@@ -3532,22 +3524,39 @@ impl<'t, 'a> Ck<'t, 'a> {
                  pushed here may be something other than text",
                 self.show(t)
             );
-            // The example handler names an atom the value holds, so that it applies as written.
-            let atom = t
-                .set
-                .atom_names()
-                .and_then(|mut names| names.find(|&(_, bare)| bare).map(|(n, _)| n))
-                .unwrap_or("notFound");
-            let menu = [
-                format!(
-                    "repair: write the value into a string, as `{port} <- \"${{v}}\";`, where `v` \
-                     is the value"
-                ),
-                format!(
-                    "repair: handle the values that are not text first, with `match` or with \
-                     `else`, as `v else #{atom} -> \"\"`"
-                ),
-            ];
+            // Each repair is written with the value's code, where the checker has it on one line:
+            // an `else` with no pattern writes an empty line for every atom, whichever atoms
+            // the value holds, and a string interpolation writes any data as text.
+            let code = (self.t.text)
+                .and_then(|s| s.get(span.start..span.end))
+                .map(str::trim)
+                .filter(|c| !c.is_empty() && !c.contains('\n'));
+            let atoms = !t.atoms().is_empty();
+            let rest = t.without_atoms();
+            let text = strings(&rest.set) && plain(&rest) && rest.fns.is_empty();
+            let mut menu = Vec::new();
+            match code {
+                Some(c) if atoms && text => menu.push(format!(
+                    "repair: write an empty line in place of each atom, as `{port} <- {} else \
+                     \"\";`",
+                    else_operand(c)
+                )),
+                Some(c) if atoms && t.fns.is_empty() => menu.push(format!(
+                    "repair: write the value into a string, and an empty line in place of each \
+                     atom, as `{port} <- \"${{{c}}}\" else \"\";`"
+                )),
+                Some(c) if t.fns.is_empty() => menu.push(format!(
+                    "repair: write the value into a string, as `{port} <- \"${{{c}}}\";`"
+                )),
+                _ => menu.push("repair: write the value into a string with `\"${…}\"`".into()),
+            }
+            if atoms {
+                menu.push(
+                    "repair: handle each atom of the value with `match`, giving the line to \
+                     write for it"
+                        .into(),
+                );
+            }
             self.error_offering(span, message, menu);
         }
     }
@@ -7277,6 +7286,18 @@ fn at_least_zero() -> IntervalSet {
     IntervalSet::range(End::of(0), PosInf)
 }
 
+/// The code `c` as the operand of an `else`: as written where it is a name, a call or an
+/// access, else in parentheses, so that the `else` applies to all of it.
+fn else_operand(c: &str) -> String {
+    match c
+        .chars()
+        .all(|ch| ch.is_alphanumeric() || "_.:[]()".contains(ch))
+    {
+        true => c.to_string(),
+        false => format!("({c})"),
+    }
+}
+
 /// The domain `d` as a type, `int[0..]` or `int[0..<2^w]`.
 fn domain_text(d: &IntDomain) -> String {
     match &d.below_two_pow {
@@ -7491,7 +7512,7 @@ impl<'a> Ck<'_, 'a> {
     // Complexity tradeoff: only a call of `codePoint` written in the text, as the operand or as
     // the value of a `name =` binder, gets the interval `0 ..= 1114111`; one that reaches a bit
     // word through a function's result or a parameter is read as any int, and the bit word
-    // rejects it ("`bitAnd` takes `a` in int[0..], and this `a` is int"). Why: as for C26, the
+    // rejects it ("`bitAnd` takes `a` in int[0..]: `… : int`"). Why: as for C26, the
     // checker runs before the store's iteration, and following each call into the body it
     // returns would check that body once per call site, where reading the text is O(1) per
     // node. A memo per function would make that linear, but it would cover only a result that

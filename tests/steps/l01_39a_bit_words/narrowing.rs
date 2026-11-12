@@ -105,12 +105,12 @@ fn a_name_bound_in_an_arm_holds_what_the_test_shows_of_its_value() {
 fn the_arm_where_the_test_gives_no_bound_is_rejected() {
     let out = rejected("bits(positional n: int) = if n >= 0 { 0 } else { popCount(n) };\n");
     assert!(
-        out.contains("`popCount` takes `x` in int[0..], and this `x` is int[..=-1]"),
+        out.contains("`popCount` takes `x` in int[0..]: `popCount(n : int[..=-1])`.\n"),
         "{out}"
     );
     assert!(out.contains("this test is false here"), "{out}");
     let out = rejected("many(positional n: int) = n < 0 && popCount(n) > 1;\n");
-    assert!(out.contains("this `x` is int[..=-1]"), "{out}");
+    assert!(out.contains(" : int[..=-1])`"), "{out}");
     assert!(out.contains("this test is true here"), "{out}");
 }
 
@@ -120,7 +120,10 @@ fn a_test_on_another_name_is_rejected() {
         "bits(positional n: int, positional m: int) = if m >= 0 { popCount(n) } else { 0 };\n",
     );
     assert!(
-        out.contains("`popCount` takes `x` in int[0..], and this `x` is int: "),
+        out.contains(
+            "`popCount` takes `x` in int[0..]: `popCount(n : int)`. Try \
+             `if n >= 0 { popCount(n) } else { … }` instead.\n"
+        ),
         "{out}"
     );
     assert!(!out.contains("this test is"), "{out}");
@@ -137,7 +140,7 @@ fn a_name_bound_again_in_the_arm_is_rejected() {
     // A value bound in the arm that the test does not bound below 0.
     let out =
         rejected("bits(positional n: int) = if n > 0 { k = n - 2; popCount(k) } else { 0 };\n");
-    assert!(out.contains("this `x` is int[-1..]"), "{out}");
+    assert!(out.contains(" : int[-1..])`"), "{out}");
 }
 
 #[test]
@@ -152,7 +155,7 @@ fn a_test_that_bounds_too_little_is_rejected_with_the_bound_it_gives() {
     // Either side of `||` may hold, so the arm holds the join of their cases.
     let out =
         rejected("bits(positional n: int) = if n >= 0 || n > -5 { popCount(n) } else { 0 };\n");
-    assert!(out.contains("this `x` is int[-4..]"), "{out}");
+    assert!(out.contains(" : int[-4..])`"), "{out}");
     assert!(out.contains("this test is true in one case here"), "{out}");
 }
 
@@ -165,7 +168,10 @@ fn a_test_on_a_call_the_operand_repeats_is_rejected_and_its_named_value_accepted
          f(positional n: int) = if g(n) >= 0 { popCount(g(n)) } else { 0 };\n",
     );
     assert!(
-        out.contains("`popCount` takes `x` in int[0..], and this `x` is int: "),
+        out.contains(
+            "`popCount` takes `x` in int[0..]: `popCount(g(n) : int)`. Try \
+             `x = g(n); if x >= 0 { popCount(x) } else { … }` instead.\n"
+        ),
         "{out}"
     );
     assert!(rows_pass(
@@ -195,7 +201,7 @@ fn a_case_no_value_reaches_adds_nothing_to_the_join() {
         "big(positional n: int, positional m: int) =\n  \
            if n < 0 && n < 4 { 0 } else { if m >= 0 || m == -2 { popCount(m) } else { 1 } };\n",
     );
-    assert!(out.contains("this `x` is int[-2..=-2, 0..]"), "{out}");
+    assert!(out.contains(" : int[-2..=-2, 0..])`"), "{out}");
     assert!(out.contains("this test is true in one case here"), "{out}");
     // Of two tests on two names, the failing `&&` leaves either name negative.
     let out = rejected(
@@ -203,7 +209,10 @@ fn a_case_no_value_reaches_adds_nothing_to_the_join() {
            if n < 0 && m < 0 { 0 } else { popCount(n) };\n",
     );
     assert!(
-        out.contains("`popCount` takes `x` in int[0..], and this `x` is int: "),
+        out.contains(
+            "`popCount` takes `x` in int[0..]: `popCount(n : int)`. Try \
+             `if n >= 0 { popCount(n) } else { … }` instead.\n"
+        ),
         "{out}"
     );
 }
@@ -216,7 +225,7 @@ fn a_rejection_names_the_tests_that_bear_on_its_operand_and_no_others() {
         "f(positional n: int, positional m: int) =\n  \
            if m >= 0 {\n    if n >= -2 { popCount(n) } else { 0 }\n  } else { 0 };\n",
     );
-    assert!(out.contains("this `x` is int[-2..]"), "{out}");
+    assert!(out.contains(" : int[-2..])`"), "{out}");
     assert_eq!(out.matches("this test is").count(), 1, "{out}");
     assert!(out.contains("3:8: this test is true here"), "{out}");
     // `a == b` relates `b` to the test on `a`, so both are named; the test on `c` is not.
@@ -225,7 +234,7 @@ fn a_rejection_names_the_tests_that_bear_on_its_operand_and_no_others() {
            if c > 5 {\n    if a == b {\n      if a >= -2 { popCount(b) } else { 0 }\n    \
            } else { 0 }\n  } else { 0 };\n",
     );
-    assert!(out.contains("this `x` is int[-2..]"), "{out}");
+    assert!(out.contains(" : int[-2..])`"), "{out}");
     assert_eq!(out.matches("this test is").count(), 2, "{out}");
     assert!(out.contains("4:10: this test is true here"), "{out}");
     assert!(out.contains("3:8: this test is true here"), "{out}");
@@ -234,7 +243,7 @@ fn a_rejection_names_the_tests_that_bear_on_its_operand_and_no_others() {
         "g(positional n: int, positional m: int) =\n  \
            if m > 1 {\n    if n > 0 { k = n - 2; popCount(k) } else { 0 }\n  } else { 0 };\n",
     );
-    assert!(out.contains("this `x` is int[-1..]"), "{out}");
+    assert!(out.contains(" : int[-1..])`"), "{out}");
     assert_eq!(out.matches("this test is").count(), 1, "{out}");
     assert!(out.contains("3:8: this test is true here"), "{out}");
     // `a == b` and `b == c` carry the test on `c` to `a`: all three are named.
@@ -243,7 +252,7 @@ fn a_rejection_names_the_tests_that_bear_on_its_operand_and_no_others() {
            if a == b {\n    if b == c {\n      if c >= -2 { popCount(a) } else { 0 }\n    \
            } else { 0 }\n  } else { 0 };\n",
     );
-    assert!(out.contains("this `x` is int[-2..]"), "{out}");
+    assert!(out.contains(" : int[-2..])`"), "{out}");
     assert_eq!(out.matches("this test is").count(), 3, "{out}");
     for at in ["2:6", "3:8", "4:10"] {
         assert!(
@@ -259,7 +268,7 @@ fn a_rejection_names_the_tests_that_bear_on_its_operand_and_no_others() {
            if n >= -1 { popCount(a0) } else { 0 }\n      } else { 0 }\n    } else { 0 }\n  \
            } else { 0 };\n",
     );
-    assert!(out.contains("this `x` is int[-1..]"), "{out}");
+    assert!(out.contains(" : int[-1..])`"), "{out}");
     assert_eq!(out.matches("this test is").count(), 2, "{out}");
     for at in ["2:6", "5:12"] {
         assert!(
@@ -278,14 +287,14 @@ fn a_rejection_names_the_tests_that_bear_on_its_operand_and_no_others() {
         "g(positional n: int) =\n  \
            if n > 0 {\n    k = n - 3;\n    if n > 1 { popCount(k) } else { 0 }\n  } else { 0 };\n",
     );
-    assert!(out.contains("this `x` is int[-1..]"), "{out}");
+    assert!(out.contains(" : int[-1..])`"), "{out}");
     assert!(out.contains("4:8: this test is true here"), "{out}");
     // A test on `n` that bounds it no further than the one around it is not named.
     let out = rejected(
         "f(positional n: int) =\n  \
            if n >= -1 {\n    if n >= -2 { popCount(n) } else { 0 }\n  } else { 0 };\n",
     );
-    assert!(out.contains("this `x` is int[-1..]"), "{out}");
+    assert!(out.contains(" : int[-1..])`"), "{out}");
     assert_eq!(out.matches("this test is").count(), 1, "{out}");
     assert!(out.contains("2:6: this test is true here"), "{out}");
     // Under a join, each side of the `||` on `n` is named, the test on `m` around it not.
@@ -293,7 +302,7 @@ fn a_rejection_names_the_tests_that_bear_on_its_operand_and_no_others() {
         "h(positional n: int, positional m: int) =\n  \
            if m < 9 {\n    if n >= 0 || n > -5 { popCount(n) } else { 0 }\n  } else { 0 };\n",
     );
-    assert!(out.contains("this `x` is int[-4..]"), "{out}");
+    assert!(out.contains(" : int[-4..])`"), "{out}");
     assert_eq!(out.matches("this test is").count(), 3, "{out}");
     assert!(!out.contains("2:6: this test"), "{out}");
 }
@@ -334,13 +343,13 @@ fn a_test_of_a_name_bound_by_let_gives_its_input_the_bound_it_shows() {
     let out = rejected(
         "bits(positional n: int) = { m = n + 3; if m >= 2 { popCount(n) } else { 0 } };\n",
     );
-    assert!(out.contains("this `x` is int[-1..]"), "{out}");
+    assert!(out.contains(" : int[-1..])`"), "{out}");
     assert!(out.contains("1:43: this test is true here"), "{out}");
     // A summary that decreases: `5 - n >= 0` holds where `n <= 5`.
     let out = rejected(
         "bits(positional n: int) = { m = 5 - n; if m >= 0 { popCount(n) } else { 0 } };\n",
     );
-    assert!(out.contains("this `x` is int[..=5]"), "{out}");
+    assert!(out.contains(" : int[..=5])`"), "{out}");
 }
 
 #[test]
@@ -355,7 +364,10 @@ fn a_value_with_no_summary_or_an_unbounded_other_input_narrows_no_input() {
     ] {
         let out = rejected(src);
         assert!(
-            out.contains("`popCount` takes `x` in int[0..], and this `x` is int: "),
+            out.contains(
+                "`popCount` takes `x` in int[0..]: `popCount(n : int)`. Try \
+             `if n >= 0 { popCount(n) } else { … }` instead.\n"
+            ),
             "{out}"
         );
     }
@@ -389,7 +401,7 @@ fn a_name_its_tested_name_reads_is_narrowed_by_its_summary() {
         "bits(positional n: int) =\n  \
            { y = n + 1; x = y + n; if x >= -1 { popCount(y - 1) } else { 0 } };\n",
     );
-    assert!(out.contains("this `x` is int[-1..]"), "{out}");
+    assert!(out.contains(" : int[-1..])`"), "{out}");
 }
 
 #[test]
@@ -416,7 +428,10 @@ fn a_parameter_narrowed_by_is_has_a_summary() {
            if x is int { m = x + 3; if m >= 3 { popCount(n) } else { 0 } } else { 0 };\n",
     );
     assert!(
-        out.contains("`popCount` takes `x` in int[0..], and this `x` is int: "),
+        out.contains(
+            "`popCount` takes `x` in int[0..]: `popCount(n : int)`. Try \
+             `if n >= 0 { popCount(n) } else { … }` instead.\n"
+        ),
         "{out}"
     );
 }
@@ -450,7 +465,7 @@ fn a_value_over_two_inputs_narrows_both() {
         "bits(positional n: int, positional k: int) =\n  \
            if k >= 0 && k <= 10 { m = n + k; if m >= 7 { popCount(n) } else { 0 } } else { 0 };\n",
     );
-    assert!(out.contains("this `x` is int[-3..]"), "{out}");
+    assert!(out.contains(" : int[-3..])`"), "{out}");
 }
 
 /// Formerly a known precision limit (COMPLEXITY.md S25, B4), closed by item ST-B4: where

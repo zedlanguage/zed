@@ -10,7 +10,7 @@ use super::{accepted, rejected, x};
 fn a_negative_operand_is_rejected_and_the_derivation_names_it() {
     let out = rejected("x = bitAnd(-1, 1);\n");
     assert!(
-        out.starts_with("1:5: `bitAnd` takes `a` in int[0..], and this `a` is -1"),
+        out.starts_with("1:5: `bitAnd` takes `a` in int[0..]: `bitAnd(-1 : int, 1)`.\n"),
         "{out}"
     );
     assert!(out.contains("`a` is this operand, -1"), "{out}");
@@ -21,7 +21,7 @@ fn a_negative_operand_is_rejected_and_the_derivation_names_it() {
 fn the_derivation_follows_a_name_to_its_definition() {
     let out = rejected("offset = -8;\nx = shr(16, offset);\n");
     assert!(
-        out.contains("`shr` takes `k` in int[0..], and this `k` is -8"),
+        out.contains("`shr` takes `k` in int[0..]: `shr(16, offset : -8)`.\n"),
         "{out}"
     );
     assert!(
@@ -81,7 +81,10 @@ fn an_operand_not_shown_in_its_domain_is_rejected() {
          m.stdout <- String(popCount(n));\n}\n",
     );
     assert!(
-        out.contains("`popCount` takes `x` in int[0..], and this `x` is int"),
+        out.contains(
+            "`popCount` takes `x` in int[0..]: `popCount(n : int)`. Try \
+             `if n >= 0 { popCount(n) } else { … }` instead.\n"
+        ),
         "{out}"
     );
     // A test narrows the operand in the arm where it holds (`narrowing`), and in the other arm
@@ -91,7 +94,7 @@ fn an_operand_not_shown_in_its_domain_is_rejected() {
          m.stdout <- if n >= 0 { \"\" } else { String(popCount(n)) };\n}\n",
     );
     assert!(
-        out.contains("`popCount` takes `x` in int[0..], and this `x` is int[..=-1]"),
+        out.contains("`popCount` takes `x` in int[0..]: `popCount(n : int[..=-1])`.\n"),
         "{out}"
     );
 }
@@ -172,7 +175,7 @@ fn a_name_carries_what_its_text_shows() {
     assert!(accepted("k = 2 + 1;\ny = 2^k;\n"));
     let out = rejected("k = 2 - 3;\ny = popCount(k);\n");
     assert!(
-        out.contains("`popCount` takes `x` in int[0..], and this `x` is -1"),
+        out.contains("`popCount` takes `x` in int[0..]: `popCount(k : -1)`.\n"),
         "{out}"
     );
     let out = rejected("w = 4 + 0;\ny = bitNot(16, width: w);\n");
@@ -190,7 +193,9 @@ fn bit_words_nested_in_each_other_are_each_checked_with_the_inner_values() {
     // `bitXor(6, 3)` is 5, so the outer `a` is -1.
     let out = rejected("x = bitAnd(bitXor(6, 3) - 6, 1);\n");
     assert!(
-        out.starts_with("1:5: `bitAnd` takes `a` in int[0..], and this `a` is -1"),
+        out.starts_with(
+            "1:5: `bitAnd` takes `a` in int[0..]: `bitAnd(bitXor(6, 3) - 6 : -1, 1)`.\n"
+        ),
         "{out}"
     );
     // The width is 2, and 15 does not lie below `2 ^ 2`.

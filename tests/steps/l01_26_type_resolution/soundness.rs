@@ -311,7 +311,7 @@ fn an_int_power_whose_exponent_may_be_below_zero_offers_a_test_of_it() {
         "{out}"
     );
     let out = rejected(p, r#""${p(2, -1)}""#);
-    assert!(out.contains("and this `e` is -1"), "{out}");
+    assert!(out.contains(": `p(2, -1 : int)`.\n"), "{out}");
     assert!(
         out.contains("repair: pass as `e` a value in int[0..]"),
         "{out}"

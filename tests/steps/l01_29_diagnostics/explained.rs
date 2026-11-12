@@ -31,15 +31,16 @@ fn each_rejection_explains_itself_and_offers_its_repairs() {
             "3:15: a `Lines` port takes a `String` or a family of strings, not int: the port \
              `m.stdout` writes each value pushed to it as one line of text, and the value pushed \
              here may be something other than text.",
-            vec!["repair: write the value into a string, as `m.stdout <- \"${v}\";`"],
+            vec!["repair: write the value into a string, as `m.stdout <- \"${n}\";`"],
         ),
         (
             reading("  m.stdout <- String(popCount(n));"),
-            "3:22: `popCount` takes `x` in int[0..], and this `x` is int: `popCount` reads `x` \
-             as binary digits, and an int below 0 has no finite row of them.",
+            "3:22: `popCount` takes `x` in int[0..]: `popCount(n : int)`. Try \
+             `if n >= 0 { popCount(n) } else { … }` instead.",
             vec![
-                "repair: test the value first, as `if v is int[0..] { … } else { … }`",
-                "repair: declare the value with a type in int[0..], as `v: int[0..]`",
+                "repair: `if n >= 0 { popCount(n) } else { … }`",
+                "repair: pass as `x` a value in int[0..]",
+                "`popCount` reads `x` as binary digits, and an int below 0 has no finite row of them",
             ],
         ),
         (

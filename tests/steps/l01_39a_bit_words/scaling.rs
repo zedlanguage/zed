@@ -617,7 +617,7 @@ fn two_hubs_on_one_block_settle_to_the_eager_answer() {
         let src = two_hubs(k);
         let e = scaling::on_a_thread(1 << 29, || zedc::run::load(src.as_bytes()).err())
             .expect("a0 may be negative");
-        assert!(e.contains("this `x` is int[-1..]"), "k = {k}:\n{e}");
+        assert!(e.contains(" : int[-1..])`"), "k = {k}:\n{e}");
         assert!(e.contains("if n >= -1 {"), "k = {k}:\n{e}");
         assert_eq!(
             e.matches("this test is true here").count(),
@@ -667,7 +667,7 @@ fn a_bound_on_a_sum_of_two_hubs_settles_to_the_eager_answer() {
         let src = hub_sum(k);
         let e = scaling::on_a_thread(1 << 29, || zedc::run::load(src.as_bytes()).err())
             .expect("a0 may be negative");
-        assert!(e.contains("this `x` is int[-2..]"), "k = {k}:\n{e}");
+        assert!(e.contains(" : int[-2..])`"), "k = {k}:\n{e}");
         sum_notes(&e, &format!("k = {k}"));
     }
 }
@@ -727,10 +727,7 @@ fn a_bound_on_a_sum_of_any_signs_or_a_wider_coefficient_settles_to_the_eager_ans
         let e = zedc::run::load(src.as_bytes())
             .err()
             .expect("a0 may be negative");
-        assert!(
-            e.contains(&format!("this `x` is int[{low}..]")),
-            "{test}:\n{e}"
-        );
+        assert!(e.contains(&format!(" : int[{low}..])`")), "{test}:\n{e}");
         assert!(e.contains(&format!("if {test} {{")), "{test}:\n{e}");
     }
 }
@@ -785,7 +782,7 @@ fn related_hubs_settle_to_the_eager_answer() {
                 let e =
                     e.unwrap_or_else(|| panic!("k = {k}, {link}, sum {sum}: a0 may be negative"));
                 assert!(
-                    e.contains(&format!("this `x` is int[{low}..]")),
+                    e.contains(&format!(" : int[{low}..])`")),
                     "k = {k}, {link}, sum {sum}:\n{e}"
                 );
                 let test = if sum {
@@ -856,7 +853,7 @@ fn a_longer_path_names_the_tests_that_bound_a_name() {
         let e = zedc::run::load(src.as_bytes())
             .err()
             .expect("x may be negative");
-        assert!(e.contains("this `x` is int[-1..]"), "{a}, {b}, {c}:\n{e}");
+        assert!(e.contains(" : int[-1..])`"), "{a}, {b}, {c}:\n{e}");
         notes_are(
             &e,
             &["n >= -1", "y >= n", "x >= y"],
@@ -909,7 +906,7 @@ fn the_longer_paths_to_a_name_are_searched_in_linear_time() {
     let e = zedc::run::load(longer_paths(3).as_bytes())
         .err()
         .expect("x may be negative");
-    assert!(e.contains("this `x` is int[-1..]"), "{e}");
+    assert!(e.contains(" : int[-1..])`"), "{e}");
     let tests = [
         "n >= -1", "y1 >= n", "y2 >= y1", "y3 >= y2", "y4 >= y3", "x >= y4",
     ];

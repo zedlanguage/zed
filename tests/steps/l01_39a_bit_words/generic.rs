@@ -65,9 +65,7 @@ fn a_negative_argument_is_rejected_at_the_call_for_each_word() {
         let src = format!("f(positional n) = {body};\nx = f(-1);\n");
         let out = rejected(&src);
         assert!(
-            out.starts_with(&format!(
-                "2:5: `f` takes `n` in {domain}, and this `n` is -1"
-            )),
+            out.starts_with(&format!("2:5: `f` takes `n` in {domain}: `f(-1 : int)`.\n")),
             "{body}: {out}"
         );
         assert!(out.contains("`n` is this argument, -1"), "{body}: {out}");
@@ -96,9 +94,7 @@ fn a_wrapper_passes_the_need_on_and_the_message_shows_each_call() {
         let defs = format!("f(positional n) = {body};\nw(positional k) = f(k);\n");
         let out = rejected(&format!("{defs}x = w(-1);\n"));
         assert!(
-            out.starts_with(&format!(
-                "3:5: `w` takes `k` in {domain}, and this `k` is -1"
-            )),
+            out.starts_with(&format!("3:5: `w` takes `k` in {domain}: `w(-1 : int)`.\n")),
             "{body}: {out}"
         );
         assert!(
@@ -116,7 +112,7 @@ fn a_chain_of_wrappers_names_every_call_in_order() {
         "f(positional n) = 2^n;\ng(positional m) = f(m);\nh(positional k) { j = k; return g(j); }\nx = h(-3);\n",
     );
     assert!(
-        out.starts_with("4:5: `h` takes `k` in int[0..], and this `k` is -3"),
+        out.starts_with("4:5: `h` takes `k` in int[0..]: `h(-3 : int)`.\n"),
         "{out}"
     );
     let first = out.find("`j` is passed on as `m` of `g` here").expect(&out);
@@ -141,7 +137,10 @@ fn an_unknown_int_is_rejected_and_the_kernel_would_stop_on_it() {
     let src = "f(positional n) = 2^n;\nmain(m: MainArgs) {\n  m.stdout <- String(f(int(m.stdin[0]) else 0));\n}\n";
     let out = rejected(src);
     assert!(
-        out.starts_with("3:22: `f` takes `n` in int[0..], and this `n` is int"),
+        out.starts_with(
+            "3:22: `f` takes `n` in int[0..]: `f(int(m.stdin[0]) else 0 : int)`. Try \
+             `n = int(m.stdin[0]) else 0; if n >= 0 { f(n) } else { … }` instead.\n"
+        ),
         "{out}"
     );
     assert!(!out.contains("type error"), "{out}");
@@ -165,7 +164,10 @@ fn an_unknown_int_is_rejected_and_the_kernel_would_stop_on_it() {
 fn an_argument_of_a_declared_int_type_is_rejected() {
     let out = rejected("h(positional x) = popCount(x);\nf(positional n: int) = h(n);\n");
     assert!(
-        out.starts_with("2:24: `h` takes `x` in int[0..], and this `x` is int"),
+        out.starts_with(
+            "2:24: `h` takes `x` in int[0..]: `h(n : int)`. Try `if n >= 0 { h(n) } else { … }` \
+             instead.\n"
+        ),
         "{out}"
     );
     // A range type, `n: int[0..]`, is a form of L10; at L1 a test shows the range.
@@ -178,12 +180,16 @@ fn an_argument_of_a_declared_int_type_is_rejected() {
 fn an_expression_of_a_parameter_is_checked_at_the_wrapper() {
     let out = rejected("f(positional x) = popCount(x);\ng(positional y) = f(y + 1);\n");
     assert!(
-        out.starts_with("2:21: `f` takes `x` in int[0..], and this value may be int"),
+        out.starts_with(
+            "2:21: `f` takes `x` in int[0..]: `y + 1 : int`. Try \
+             `x = y + 1; if x >= 0 { … } else { … }` instead, with each parameter in `y + 1` \
+             declared `int` and `x` passed inside the branch.\n"
+        ),
         "{out}"
     );
     let out = rejected("f(positional x) = popCount(x);\nx = f(5 - 7);\n");
     assert!(
-        out.starts_with("2:5: `f` takes `x` in int[0..], and this `x` is -2"),
+        out.starts_with("2:5: `f` takes `x` in int[0..]: `f(5 - 7 : -2)`.\n"),
         "{out}"
     );
 }
@@ -206,7 +212,7 @@ fn a_guarded_use_gives_0_directly_and_through_a_helper() {
 fn a_lambda_and_a_curried_call_take_the_need() {
     let out = rejected("pc = x -> popCount(x);\ny = pc(-1);\n");
     assert!(
-        out.starts_with("2:5: `pc` takes `x` in int[0..], and this `x` is -1"),
+        out.starts_with("2:5: `pc` takes `x` in int[0..]: `pc(-1 : int)`.\n"),
         "{out}"
     );
     assert_eq!(
@@ -219,7 +225,7 @@ fn a_lambda_and_a_curried_call_take_the_need() {
     let defs = "p(b, e) = b^e;\nq = p(b: 2, ...);";
     let out = rejected(&format!("{defs}\ny = q(e: -1);\n"));
     assert!(
-        out.starts_with("3:5: `q` takes `e` in int[0..], and this `e` is -1"),
+        out.starts_with("3:5: `q` takes `e` in int[0..]: `q(e: -1 : int)`.\n"),
         "{out}"
     );
     assert_eq!(
@@ -234,13 +240,13 @@ fn the_smallest_width_decides() {
         "g(positional x) = bitNot(x, width: 16);\nf(positional x) = g(x) + bitNot(x, width: 8);\n";
     let out = rejected(&format!("{defs}y = f(300);\n"));
     assert!(
-        out.starts_with("3:5: `f` takes `x` in int[0..<2^8], and this `x` is 300"),
+        out.starts_with("3:5: `f` takes `x` in int[0..<2^8]: `f(300 : int)`.\n"),
         "{out}"
     );
     assert!(accepted(&format!("{defs}y = f(255);\n")));
     let out = rejected("f(positional x) = bitNot(x, width: 4);\ny = f(16);\n");
     assert!(
-        out.contains("`f` takes `x` in int[0..<2^4], and this `x` is 16"),
+        out.contains("`f` takes `x` in int[0..<2^4]: `f(16 : int)`.\n"),
         "{out}"
     );
 }

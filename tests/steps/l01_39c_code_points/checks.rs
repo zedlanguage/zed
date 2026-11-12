@@ -81,7 +81,10 @@ fn a_local_function_named_code_point_is_not_the_word() {
             out.contains("`bitAnd` takes `a` in int[0..]"),
             "{src}: {out}"
         );
-        assert!(out.contains("this `a` is -1"), "{src}: {out}");
+        assert!(
+            out.contains(&format!("`bitAnd({call} : -1, 1)`.\n")),
+            "{src}: {out}"
+        );
     }
 }
 
@@ -91,7 +94,10 @@ fn a_code_point_returned_by_a_function_is_read_as_any_int() {
     // name by `=`, is known to lie in `0 ..= 1114111`; through a function's result it is any int.
     let out = rejected("f(s) = codePoint(s);\nx = bitAnd(f(s: \"a\"), 1);\n");
     assert!(
-        out.contains("`bitAnd` takes `a` in int[0..], and this `a` is int"),
+        out.contains(
+            "`bitAnd` takes `a` in int[0..]: `bitAnd(f(s: \"a\") : int, 1)`. Try \
+             `a2 = f(s: \"a\"); if a2 >= 0 { bitAnd(a2, 1) } else { … }` instead.\n"
+        ),
         "{out}"
     );
     assert!(accepted(

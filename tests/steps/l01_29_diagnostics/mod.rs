@@ -12,6 +12,7 @@ mod bug;
 mod casts;
 mod declared;
 mod derivations;
+mod domain_repairs;
 mod emptied;
 mod explained;
 mod fresh_names;

@@ -2682,6 +2682,9 @@ pub struct PowerUse {
 pub struct IntDomain {
     /// The use, in words, as an error states it.
     pub what: Arc<str>,
+    /// The name of the operand or parameter the use takes, as `x` of `popCount`: a repair
+    /// that binds the value to a name before testing it uses this one.
+    pub name: Arc<str>,
     /// The smallest width of the use, for an operand read as that many digits.
     pub below_two_pow: Option<Width>,
 }
