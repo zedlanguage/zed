@@ -262,12 +262,14 @@ fn the_families_report_what_they_should() {
 }
 
 /// The family of plan row TRIVIAL-shared-atom: `f1(..fd(x)..) == fd(..f1(x)..)` over fields of
-/// one argument. Its sides share every field, so the atom is written as the pairs of paths that
-/// agree: d^2 + d + 1 pairs, holding about 2 d^3 / 3 choices, cubic in the atom. This test pins
-/// those counts; when the row finds an O(p log p) form it becomes a scaling test at d and 8d.
+/// one argument. Its sides share every field, so the atom is held as the pairs of paths that
+/// agree: d^2 + d + 1 pairs, which hold about 2 d^3 / 3 choices. The pairs are numbered and
+/// written as runs, never one by one with their choices, so the default report is of order
+/// d^2 log d, the pairs times a log, by d at d and 8d; the walk that numbers the pairs takes
+/// 2 d^2 + 6 d + 2 steps and writes 3 d^2 + d runs.
 #[test]
-fn a_shared_field_atom_is_cubic() {
-    let atom_size = |d: usize| {
+fn a_shared_field_atom_scales() {
+    let shared = |d: usize| {
         let mut t = Theory::new("Shared");
         for i in 1..=d {
             t.field(&format!("f{i}"), 1);
@@ -278,16 +280,21 @@ fn a_shared_field_atom_is_cubic() {
         };
         let body = format!("{} == {}", nest(&mut (1..=d)), nest(&mut (1..=d).rev()));
         t.law("shared", "x", &body);
-        let atom = t.laws[0].clauses()[0][0];
-        t.shared_atom_size(&atom).expect("the sides share fields")
+        t
     };
-    let sizes: Vec<(usize, usize)> = [25, 50, 100].into_iter().map(atom_size).collect();
-    for (&d, &(pairs, _)) in [25, 50, 100].iter().zip(&sizes) {
+    let d = 50;
+    let inputs = scaling::inputs(d, shared);
+    for (&d, t) in &inputs {
+        let atom = t.laws[0].clauses()[0][0];
+        let (pairs, runs, steps) = t.shared_atom_size(&atom).expect("the sides share fields");
         assert_eq!(pairs, d * d + d + 1);
+        assert_eq!(
+            (runs, steps),
+            (3 * d * d + d, (2 * d * d + 6 * d + 2) as u64)
+        );
+        eprintln!("a shared-field atom at d = {d}: {pairs} pairs, {runs} runs, {steps} steps");
     }
-    assert_eq!(
-        sizes.iter().map(|s| s.1).collect::<Vec<_>>(),
-        [11_675, 88_350, 686_700]
-    );
-    eprintln!("a shared-field atom at d = 25, 50, 100: {sizes:?} (pairs, choices)");
+    scaling::check_order("a shared-field atom, Default, by fields", d, 2, |n| {
+        run(&inputs[&n], Mode::Default)
+    });
 }

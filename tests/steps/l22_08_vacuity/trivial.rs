@@ -590,23 +590,10 @@ impl Theory {
     /// One atom as constraints. Each side's paths are sorted by the symbol they end at, keyed so
     /// that the atom holds exactly when the two keys agree: for `==` the symbol itself, for `!=`
     /// the left constant and the other constant on the right, and no key for a binder. Then
-    /// the sides are joined on the key, in O(p log p) for p paths.
+    /// the sides are joined on the key, in O(p log p) for p paths. When the sides name a common
+    /// field the join is also on that field's choice, and the atom is held as pairs of paths
+    /// (`pair_form`).
     fn atom_form(&self, a: &Atom) -> AtomForm {
-        let key = |side: Vec<(Sym, Vec<(usize, Choice)>)>, flip: bool| {
-            let mut out: Vec<(Sym, Vec<(usize, Choice)>)> = side
-                .into_iter()
-                .filter_map(|(s, cond)| match (a.rel, s) {
-                    (Rel::Eq, _) => Some((s, cond)),
-                    (Rel::Ne, Sym::Const(c)) => {
-                        Some((Sym::Const(if flip { 1 - c } else { c }), cond))
-                    }
-                    (Rel::Ne, Sym::Var(_)) => None,
-                })
-                .collect();
-            out.sort_by_key(|&(s, _)| s);
-            out
-        };
-        let (left, right) = (key(self.exits(a.lhs), false), key(self.exits(a.rhs), true));
         let (mut lf, mut rf) = (Vec::new(), Vec::new());
         self.term_fields(a.lhs, &mut lf);
         self.term_fields(a.rhs, &mut rf);
@@ -625,6 +612,24 @@ impl Theory {
             }
             any
         };
+        if shared {
+            return AtomForm::Pairs(self.pair_form(a, &lf, &rf));
+        }
+        let key = |side: Vec<(Sym, Vec<(usize, Choice)>)>, flip: bool| {
+            let mut out: Vec<(Sym, Vec<(usize, Choice)>)> = side
+                .into_iter()
+                .filter_map(|(s, cond)| match (a.rel, s) {
+                    (Rel::Eq, _) => Some((s, cond)),
+                    (Rel::Ne, Sym::Const(c)) => {
+                        Some((Sym::Const(if flip { 1 - c } else { c }), cond))
+                    }
+                    (Rel::Ne, Sym::Var(_)) => None,
+                })
+                .collect();
+            out.sort_by_key(|&(s, _)| s);
+            out
+        };
+        let (left, right) = (key(self.exits(a.lhs), false), key(self.exits(a.rhs), true));
         // The runs of equal keys on each side, walked together.
         let runs = |side: &[(Sym, Vec<(usize, Choice)>)]| {
             let mut out: Vec<(Sym, std::ops::Range<usize>)> = Vec::new();
@@ -650,7 +655,7 @@ impl Theory {
                 }
             }
         }
-        if !shared && !common.is_empty() {
+        if !common.is_empty() {
             // The sides name different fields, so every pair of paths is consistent and the
             // atom is exactly "the left side ends at s and the right side ends at s" for one
             // end symbol s: two constraints joined by s, linear in the paths. The field–constraint
@@ -679,43 +684,282 @@ impl Theory {
                 right: (rf, r),
             };
         }
-        // Complexity tradeoff: when the two sides of an atom name a common field, the atom is
-        // the pairs of paths whose ends agree and whose choices of the common fields agree, and
-        // these pairs are written out: O(p log p) for the join plus the pairs, at most the
-        // product of the sides' path counts, each pair as long as its two paths together.
-        // `f1(..fd(x)..) == fd(..f1(x)..)` with fields of one argument has d^2 + d + 1 pairs and
-        // about 2 d^3 / 3 choices in them, cubic in the atom (measured: d = 100 and 200, 10,101
-        // and 40,201 pairs, 686,700 and 5,413,400 choices, 58 ms and 447 ms for the report).
-        // What is given up: time and space cubic in an atom whose two sides are long and share
-        // fields; the set is exact. The split by end symbol alone, used when the sides share no
-        // field, loses the common fields' agreement: tried here, it gives the forest fragment
-        // of `brute` dead ends and Lattice 2. Structural trigger: an atom whose sides share a
-        // field and have many paths each. Test: `brute` and the corpus; the cubic growth is
-        // pinned by `scaling::a_shared_field_atom_is_cubic`, not yet a scaling test;
-        // COMPLEXITY.md C32; plan row TRIVIAL-shared-atom.
-        let mut out = Vec::new();
-        for (lrange, rrange) in common {
-            for (_, lc) in &left[lrange] {
-                for (_, rc) in &right[rrange.clone()] {
-                    if let Some(m) = merge(lc, rc) {
-                        out.push(m);
+        // The sides end at no common symbol: the atom never holds.
+        AtomForm::Never
+    }
+
+    /// The decision tree of term `t`, as `exits` walks it: a node tests a field not chosen above
+    /// it and has a child for each of its choices, and a leaf ends a path, with the key `key`
+    /// gives the symbol it ends at. Fields are numbered by their place in `scope`. Built by an
+    /// explicit stack in O(paths' choices), each node once.
+    fn tree(&self, t: usize, scope: &[usize], key: impl Fn(Sym) -> Option<Sym>) -> Tree {
+        enum Step {
+            /// A node to make, reached by the choices on the stack, and the place in `kid`
+            /// that holds it, `NONE` for the root.
+            Visit(Result<Sym, usize>, usize),
+            Fix(usize, Choice),
+            Unfix(usize),
+        }
+        let mut tree = Tree::default();
+        let mut fixed = vec![MENTION; scope.len()];
+        let mut stack = vec![Step::Visit(Err(t), NONE)];
+        while let Some(step) = stack.pop() {
+            let (mut at, place) = match step {
+                Step::Fix(s, c) => {
+                    fixed[s] = c;
+                    continue;
+                }
+                Step::Unfix(s) => {
+                    fixed[s] = MENTION;
+                    continue;
+                }
+                Step::Visit(at, place) => (at, place),
+            };
+            if place != NONE {
+                tree.kid[place] = tree.test.len();
+            }
+            // Follow the fields chosen above to a symbol or to a field not chosen.
+            let open = loop {
+                let Err(term) = at else { break None };
+                match &self.terms[term] {
+                    Term::Var(v) => at = Ok(Sym::Var(*v)),
+                    Term::App { field, args } => {
+                        let s = scope.binary_search(field).expect("a field of the atom");
+                        match fixed[s] {
+                            MENTION => break Some((s, args)),
+                            c if c < 2 => at = Ok(Sym::Const(c)),
+                            c => at = Err(args[(c - 2) as usize]),
+                        }
+                    }
+                }
+            };
+            match (open, at) {
+                (Some((s, args)), _) => {
+                    let first = tree.kid.len();
+                    tree.test.push(s);
+                    tree.key.push(None);
+                    tree.kid_at.push(first..first + args.len() + 2);
+                    tree.kid.resize(first + args.len() + 2, NONE);
+                    stack.push(Step::Unfix(s));
+                    for c in (0..choices(args.len())).rev() {
+                        let target = if c < 2 {
+                            Ok(Sym::Const(c))
+                        } else {
+                            Err(args[(c - 2) as usize])
+                        };
+                        stack.push(Step::Visit(target, first + c as usize));
+                        stack.push(Step::Fix(s, c));
+                    }
+                }
+                (None, Ok(sym)) => {
+                    tree.test.push(NONE);
+                    tree.key.push(key(sym));
+                    tree.kid_at.push(0..0);
+                }
+                (None, Err(_)) => unreachable!("the loop ends at a symbol or an open field"),
+            }
+        }
+        tree
+    }
+
+    /// An atom whose sides name a common field, as the pairs of paths that agree: numbered and
+    /// written as runs of pair numbers, never one by one with their choices.
+    ///
+    /// Complexity tradeoff: the naive method writes out each pair of paths with equal keys that
+    /// agree on the common fields, with the choices of both: the pairs times their length, cubic
+    /// in the atom (`f1(..fd(x)..) == fd(..f1(x)..)` has d^2 + d + 1 pairs and about 2 d^3 / 3
+    /// choices; d = 50 and 400: 42 and 18,711 million instructions for the default report, 442
+    /// times). Here the left side's tree is walked and, at each of its leaves, the right side's
+    /// tree, following the fields the leaf chose and skipping the subtrees with no leaf of the
+    /// leaf's key; a pair is a number, and each node of the walk writes one run, the pairs below
+    /// it. The runs of one field's nodes do not nest, so a pair's cube holds a choice exactly
+    /// when the pair lies in a run of that choice, and names a field exactly when it lies in a
+    /// run of a node of that field. The engine keeps the runs, not the cubes (`Engine`). Cost:
+    /// O(S log S) for the trees, S the paths' choices, plus the steps of the walk, each of which
+    /// writes a run or ends at a pair except where a field the left leaf chose leads the right
+    /// tree to a subtree with no leaf of the key; then O(R log R) for the engine's lists of the
+    /// R runs. On the family: 2 d^2 + 6 d + 2 steps and 3 d^2 + d runs, and 7.6 and 539 million
+    /// instructions at d = 50 and 400, 71 times for a limit of 108 (d^2 log d). What is given
+    /// up: the walk's steps that end at no pair, on an atom whose right side tests many fields
+    /// the left leaf chose otherwise, at most the left leaves times the right tree. Structural
+    /// trigger: an atom whose sides share a field. Test: `scaling::a_shared_field_atom_scales`,
+    /// with `brute` and the corpus for the verdicts; COMPLEXITY.md C32; plan row
+    /// TRIVIAL-shared-atom.
+    fn pair_form(&self, a: &Atom, lf: &[usize], rf: &[usize]) -> PairForm {
+        let mut scope = Vec::with_capacity(lf.len() + rf.len());
+        scope.extend_from_slice(lf);
+        scope.extend_from_slice(rf);
+        scope.sort_unstable();
+        scope.dedup();
+        let key = |flip: bool| {
+            move |s: Sym| match (a.rel, s) {
+                (Rel::Eq, _) => Some(s),
+                (Rel::Ne, Sym::Const(c)) => Some(Sym::Const(if flip { 1 - c } else { c })),
+                (Rel::Ne, Sym::Var(_)) => None,
+            }
+        };
+        let left = self.tree(a.lhs, &scope, key(false));
+        let right = self.tree(a.rhs, &scope, key(true));
+        let (below, keys) = right.keys_below();
+        let has = |n: usize, k: Sym| keys[below[n].clone()].binary_search(&k).is_ok();
+        enum Step {
+            Left(usize),
+            Right(usize),
+            Fix(usize, Choice),
+            Unfix(usize),
+            /// The start of a run: the pairs numbered so far.
+            Open,
+            /// The end of the run of a node of field `.0` (choice `MENTION`) or of its child of
+            /// choice `.1`.
+            Close(usize, Choice),
+        }
+        // The choices of the left leaf being walked, by place in `scope`.
+        let mut fixed = vec![MENTION; scope.len()];
+        let (mut pairs, mut runs, mut steps) = (0, Vec::new(), 0);
+        let mut starts: Vec<usize> = Vec::new();
+        let mut leaf_key = Sym::Const(0);
+        let mut stack = vec![Step::Left(0)];
+        while let Some(step) = stack.pop() {
+            match step {
+                Step::Fix(s, c) => fixed[s] = c,
+                Step::Unfix(s) => fixed[s] = MENTION,
+                Step::Open => starts.push(pairs),
+                Step::Close(s, c) => {
+                    let start = starts.pop().expect("a run is opened before it is closed");
+                    if pairs > start {
+                        runs.push((s, c, start, pairs));
+                    }
+                }
+                Step::Left(n) => {
+                    steps += 1;
+                    match left.test[n] {
+                        NONE => {
+                            if let Some(k) = left.key[n].filter(|&k| has(0, k)) {
+                                leaf_key = k;
+                                stack.push(Step::Right(0));
+                            }
+                        }
+                        s => {
+                            let first = left.kid_at[n].start;
+                            let dom = choices(self.fields[scope[s]].arity);
+                            stack.push(Step::Close(s, MENTION));
+                            stack.push(Step::Unfix(s));
+                            for c in (0..dom).rev() {
+                                stack.push(Step::Close(s, c));
+                                stack.push(Step::Left(left.kid[first + c as usize]));
+                                stack.push(Step::Fix(s, c));
+                                stack.push(Step::Open);
+                            }
+                            stack.push(Step::Open);
+                        }
+                    }
+                }
+                Step::Right(n) => {
+                    steps += 1;
+                    match right.test[n] {
+                        NONE => pairs += 1,
+                        s => {
+                            let first = right.kid_at[n].start;
+                            match fixed[s] {
+                                MENTION => {
+                                    let dom = choices(self.fields[scope[s]].arity);
+                                    stack.push(Step::Close(s, MENTION));
+                                    for c in (0..dom).rev() {
+                                        let kid = right.kid[first + c as usize];
+                                        if has(kid, leaf_key) {
+                                            stack.push(Step::Close(s, c));
+                                            stack.push(Step::Right(kid));
+                                            stack.push(Step::Open);
+                                        }
+                                    }
+                                    stack.push(Step::Open);
+                                }
+                                c => {
+                                    let kid = right.kid[first + c as usize];
+                                    if has(kid, leaf_key) {
+                                        stack.push(Step::Right(kid));
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
-        AtomForm::Cubes(out)
+        PairForm {
+            scope,
+            pairs,
+            runs,
+            steps,
+        }
     }
 }
 
 impl Theory {
-    /// For an atom whose sides name a common field, the count of pairs of paths that agree and
-    /// of the choices they hold; `None` for an atom split by end symbol.
-    pub fn shared_atom_size(&self, a: &Atom) -> Option<(usize, usize)> {
+    /// For an atom whose sides name a common field: the pairs of paths that agree, the runs
+    /// that hold them, and the steps of the walk that numbered them; `None` for an atom split by
+    /// end symbol.
+    pub fn shared_atom_size(&self, a: &Atom) -> Option<(usize, usize, u64)> {
         match self.atom_form(a) {
-            AtomForm::Split { .. } => None,
-            AtomForm::Cubes(cubes) => Some((cubes.len(), cubes.iter().map(Vec::len).sum())),
+            AtomForm::Pairs(form) => Some((form.pairs, form.runs.len(), form.steps)),
+            AtomForm::Split { .. } | AtomForm::Never => None,
         }
     }
+}
+
+/// No node, place, list or pair.
+const NONE: usize = usize::MAX;
+
+/// The choice of a run of a node, holding the pairs whose cubes name its field; also no choice.
+const MENTION: Choice = Choice::MAX;
+
+/// The decision tree of one side of an atom, in preorder, so that a node's children come after
+/// it. A node tests a field, by its place in the atom's scope, or is a leaf (`NONE`).
+#[derive(Default)]
+struct Tree {
+    test: Vec<usize>,
+    /// For each leaf, the key of the symbol it ends at.
+    key: Vec<Option<Sym>>,
+    /// For each node: its children, one for each choice of its field, in `kid`; none for a leaf.
+    kid_at: Vec<std::ops::Range<usize>>,
+    kid: Vec<usize>,
+}
+
+impl Tree {
+    /// For each node, the range in the returned list of the keys of the leaves below it, sorted.
+    /// The children of a node come after it, so one pass from the last node merges each node's
+    /// children: O(S log S) for S the leaves' depths, which bound the keys listed.
+    fn keys_below(&self) -> (Vec<std::ops::Range<usize>>, Vec<Sym>) {
+        let mut below = vec![0..0; self.test.len()];
+        let (mut keys, mut merged) = (Vec::new(), Vec::new());
+        for n in (0..self.test.len()).rev() {
+            merged.clear();
+            if self.test[n] == NONE {
+                merged.extend(self.key[n]);
+            } else {
+                for &kid in &self.kid[self.kid_at[n].clone()] {
+                    merged.extend_from_slice(&keys[below[kid].clone()]);
+                }
+                merged.sort_unstable();
+                merged.dedup();
+            }
+            let start = keys.len();
+            keys.extend_from_slice(&merged);
+            below[n] = start..keys.len();
+        }
+        (below, keys)
+    }
+}
+
+/// An atom whose sides name a common field, as `pair_form` writes it.
+struct PairForm {
+    scope: Vec<usize>,
+    pairs: usize,
+    /// `(place in scope, choice, start, end)`: the pairs `start..end` below one node of the
+    /// walk, whose cubes name the field (`MENTION`), or below one child, whose cubes hold that
+    /// choice.
+    runs: Vec<(usize, Choice, usize, usize)>,
+    steps: u64,
 }
 
 /// One side of a split atom: its fields, and its paths, each with the value of the end symbol it
@@ -727,8 +971,10 @@ enum AtomForm {
     /// Sides that name no common field: an end symbol of `dom` values, and for each side its
     /// fields and its paths, each with the value of the end symbol it ends at.
     Split { dom: u32, left: Side, right: Side },
-    /// Sides that name a common field: the partial choices under which the atom holds.
-    Cubes(Vec<Vec<(usize, Choice)>>),
+    /// Sides that name a common field.
+    Pairs(PairForm),
+    /// Sides that end at no common symbol.
+    Never,
 }
 
 /// A variable and one of its choices.
@@ -767,35 +1013,6 @@ impl CubeSet {
             CubeSet::Ended(end, paths) => (&paths[i].1, Some((*end, paths[i].0))),
         }
     }
-}
-
-/// The union of two sorted partial choices, or `None` when they choose one field two ways.
-fn merge(a: &[(usize, Choice)], b: &[(usize, Choice)]) -> Option<Vec<(usize, Choice)>> {
-    let mut out = Vec::with_capacity(a.len() + b.len());
-    let (mut i, mut j) = (0, 0);
-    while i < a.len() && j < b.len() {
-        match a[i].0.cmp(&b[j].0) {
-            std::cmp::Ordering::Less => {
-                out.push(a[i]);
-                i += 1;
-            }
-            std::cmp::Ordering::Greater => {
-                out.push(b[j]);
-                j += 1;
-            }
-            std::cmp::Ordering::Equal => {
-                if a[i].1 != b[j].1 {
-                    return None;
-                }
-                out.push(a[i]);
-                i += 1;
-                j += 1;
-            }
-        }
-    }
-    out.extend_from_slice(&a[i..]);
-    out.extend_from_slice(&b[j..]);
-    Some(out)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1049,6 +1266,8 @@ enum Check {
     /// The partial choices under which it holds, kept in the engine: one atom, or one side of
     /// an atom with its end symbol.
     Cubes,
+    /// One atom whose sides name a common field, as pairs of paths kept in the engine.
+    Pairs,
     /// Clause `k` of the law, an `||` of several atoms, checked whole once at most one of its
     /// fields is open.
     Whole(usize),
@@ -1078,6 +1297,135 @@ struct Conflict {
     field: Option<usize>,
 }
 
+/// A change to the cubes and pairs, logged so that it can be undone.
+enum Undo {
+    /// Cube `.0` was removed.
+    Cube(usize),
+    /// Pair `.0` was removed.
+    Pair(usize),
+    /// The chain of lists watching pair `.0`, which started at list `.1`, was emptied.
+    Head(usize, usize),
+    /// `list` watched pair `wit`, in run `run`, before the next list `next`, and moved on.
+    Watch {
+        list: usize,
+        wit: usize,
+        run: usize,
+        next: usize,
+    },
+}
+
+/// A set of numbers below a bound, as bits in levels of 64-bit words: a bit of a level above
+/// the first says whether a word of the level below has a bit set. Finding the next number in
+/// the set, adding one and removing one take O(log_64 n).
+struct LiveSet {
+    levels: Vec<Vec<u64>>,
+}
+
+impl LiveSet {
+    /// The set of every number below `n`.
+    fn new(n: usize) -> Self {
+        let mut levels = Vec::new();
+        let mut bits = n;
+        loop {
+            let words = bits.div_ceil(64);
+            let mut level = vec![u64::MAX; words];
+            if !bits.is_multiple_of(64) {
+                level[words - 1] = (1 << (bits % 64)) - 1;
+            }
+            levels.push(level);
+            if words <= 1 {
+                return LiveSet { levels };
+            }
+            bits = words;
+        }
+    }
+
+    /// The least number in the set not below `x`, `NONE` when there is none.
+    fn next(&self, x: usize) -> usize {
+        let (mut i, mut lvl) = (x, 0);
+        // Up until a word holds a bit at or after the place reached...
+        loop {
+            let w = i / 64;
+            let Some(&word) = self.levels[lvl].get(w) else {
+                return NONE;
+            };
+            let bits = word & (u64::MAX << (i % 64));
+            if bits != 0 {
+                i = w * 64 + bits.trailing_zeros() as usize;
+                break;
+            }
+            lvl += 1;
+            if lvl == self.levels.len() {
+                return NONE;
+            }
+            i = w + 1;
+        }
+        // ...then down by the first bit of each word.
+        while lvl > 0 {
+            lvl -= 1;
+            i = i * 64 + self.levels[lvl][i].trailing_zeros() as usize;
+        }
+        i
+    }
+
+    fn remove(&mut self, x: usize) {
+        let mut i = x;
+        for level in &mut self.levels {
+            level[i / 64] &= !(1 << (i % 64));
+            if level[i / 64] != 0 {
+                return;
+            }
+            i /= 64;
+        }
+    }
+
+    fn insert(&mut self, x: usize) {
+        let mut i = x;
+        for level in &mut self.levels {
+            let was = level[i / 64];
+            level[i / 64] |= 1 << (i % 64);
+            if was != 0 {
+                return;
+            }
+            i /= 64;
+        }
+    }
+}
+
+/// `LiveSet` against a list of flags, by random removals and insertions from sets that keep
+/// every number, one in 8 and one in 50,000, at sizes on both sides of each level's width (64,
+/// 64^2 and 64^3 numbers).
+#[test]
+fn the_live_set_finds_the_next_number() {
+    let mut rng = zed_tests::instances::Rng::new(0x011f_e5e7);
+    for n in [0, 1, 63, 64, 65, 4095, 4096, 4097, 262_143, 262_145] {
+        for keep in [1, 8, 50_000] {
+            let mut set = LiveSet::new(n);
+            let mut flags = vec![true; n];
+            for (x, flag) in flags.iter_mut().enumerate() {
+                if rng.below(keep) != 0 {
+                    set.remove(x);
+                    *flag = false;
+                }
+            }
+            for _ in 0..1000 {
+                if n > 0 {
+                    let x = rng.below(n);
+                    if flags[x] {
+                        set.remove(x);
+                    } else {
+                        set.insert(x);
+                    }
+                    flags[x] = !flags[x];
+                }
+                let from = rng.below(n + 2);
+                let next = (from..n).find(|&y| flags[y]).unwrap_or(NONE);
+                assert_eq!(set.next(from), next, "next from {from} of {n}");
+            }
+        }
+    }
+}
+
 /// The constraints of a theory and the choices left for each variable, with a trail to undo them.
 /// The variables are the fields, then the end symbols, which the search never chooses: once
 /// every field of an atom is chosen, each side has one path left, which fixes its end symbol.
@@ -1091,6 +1439,17 @@ struct Conflict {
 /// live cubes mention them, so those that every live cube mentions are found without a scan. So
 /// along one descent of the search each cube is removed at most once, and the work is linear in
 /// the cubes, however many choices the descent makes.
+///
+/// A constraint of pairs, an atom whose sides name a common field, is kept arc consistent the
+/// same way without writing its cubes out. Its pairs are numbers, and for each slot and choice a
+/// list of runs holds the pairs whose cubes use that choice; one more list holds the pairs whose
+/// cubes do not mention the slot's variable. A choice is supported while its list or that last
+/// one has a live pair. Each list watches one live pair, its first, and the lists watching a
+/// pair are chained from it. Removing a choice removes the live pairs of its list, found by a
+/// set of live pairs that gives the next live one in O(log P), and moves each list that watched
+/// one of them forward to its next live pair; a list with none left removes the choices it
+/// supported. Along one descent a list's watch only moves forward, so its runs are passed once:
+/// the work is the runs plus the pairs and the moves, each O(log P), not the cubes' choices.
 struct Engine<'t> {
     theory: &'t Theory,
     /// The number of values of each variable.
@@ -1104,9 +1463,9 @@ struct Engine<'t> {
     offset: Vec<usize>,
     alive: Vec<bool>,
     size: Vec<u32>,
-    /// The removals, in order: variable, choice, reason, and the length of `killed` then.
+    /// The removals, in order: variable, choice, reason, and the length of `undo` then.
     trail: Vec<(usize, Choice, Reason, usize)>,
-    /// The removals of `trail` whose cubes are already removed.
+    /// The removals of `trail` whose cubes and pairs are already removed.
     head: usize,
     /// Every cube: its constraint and its choices, each with its count in `count` and the slot
     /// of its variable.
@@ -1114,8 +1473,30 @@ struct Engine<'t> {
     cube_start: Vec<usize>,
     cube_lits: Vec<(usize, Choice, usize, usize)>,
     cube_alive: Vec<bool>,
-    /// The cubes removed, in order, to undo them.
-    killed: Vec<usize>,
+    /// The removals undone in reverse to undo the removals of `trail`.
+    undo: Vec<Undo>,
+    /// The pairs of every constraint of pairs, numbered from that constraint's first, and
+    /// which of them are live.
+    pair_live: LiveSet,
+    /// For each slot of a constraint of pairs (`NONE` for one of cubes), its first list: one for
+    /// each choice of its variable, then the list of the pairs that do not mention it. A list is
+    /// the runs of pairs `runs[list_at[l]..list_at[l + 1]]`, and `list_slot[l]` is its slot.
+    slot_list: Vec<usize>,
+    list_slot: Vec<usize>,
+    list_at: Vec<usize>,
+    runs: Vec<(usize, usize)>,
+    /// For each list, the first live pair in it, `NONE` when there is none, the run that holds
+    /// it, and the next list watching the same pair; for each pair, the first list watching it.
+    wit: Vec<usize>,
+    wit_run: Vec<usize>,
+    wit_next: Vec<usize>,
+    watch_head: Vec<usize>,
+    /// For each variable, the constraints of pairs it is in, each with its slot there.
+    pair_slots: Vec<Vec<(usize, usize)>>,
+    /// Buffers of `kill_pairs`: the pairs it removed that lists watched, and the lists it left
+    /// with no live pair.
+    unwatched: Vec<usize>,
+    emptied: Vec<usize>,
     /// For each choice of each variable, by index like `alive`: the cubes that use it, in
     /// `uses[uses_at[i]..uses_at[i + 1]]`.
     uses: Vec<usize>,
@@ -1123,8 +1504,8 @@ struct Engine<'t> {
     /// For each constraint of cubes and each choice of a variable in its scope: the live cubes
     /// that use it.
     count: Vec<u32>,
-    /// A slot is a variable in the scope of a constraint of cubes: its variable and the index in
-    /// `count` of its first choice. `slots_of[c]` is the range of constraint `c`.
+    /// A slot is a variable in the scope of a constraint of cubes or of pairs: its variable and
+    /// the index in `count` of its first choice. `slots_of[c]` is the range of constraint `c`.
     slot_var: Vec<(usize, usize)>,
     slots_of: Vec<std::ops::Range<usize>>,
     /// For each slot, the live cubes of its constraint that mention its variable.
@@ -1151,22 +1532,36 @@ impl<'t> Engine<'t> {
         let mut cons = Vec::new();
         let mut dom: Vec<u32> = theory.fields.iter().map(|f| choices(f.arity)).collect();
         let mut cubes_of: Vec<CubeSet> = Vec::new();
-        let mut push = |cons: &mut Vec<Constraint>, c: Constraint, cubes| {
+        let mut forms: Vec<Option<PairForm>> = Vec::new();
+        let mut push = |cons: &mut Vec<Constraint>, c: Constraint, cubes, form| {
             cons.push(c);
             cubes_of.push(cubes);
+            forms.push(form);
         };
         for (l, law) in theory.laws.iter().enumerate() {
             for (k, clause) in law.cnf.iter().flatten().enumerate() {
                 match clause.as_slice() {
                     [a] => match theory.atom_form(a) {
-                        AtomForm::Cubes(cubes) => push(
+                        AtomForm::Pairs(form) if form.pairs > 0 => push(
+                            &mut cons,
+                            Constraint {
+                                law: l,
+                                scope: form.scope.clone(),
+                                check: Check::Pairs,
+                            },
+                            CubeSet::Listed(Vec::new()),
+                            Some(form),
+                        ),
+                        // No pair: no cube, so every choice of the scope is removed at the start.
+                        AtomForm::Pairs(_) | AtomForm::Never => push(
                             &mut cons,
                             Constraint {
                                 law: l,
                                 scope: theory.atom_scope(a),
                                 check: Check::Cubes,
                             },
-                            CubeSet::Listed(cubes),
+                            CubeSet::Listed(Vec::new()),
+                            None,
                         ),
                         AtomForm::Split {
                             dom: values,
@@ -1185,6 +1580,7 @@ impl<'t> Engine<'t> {
                                         check: Check::Cubes,
                                     },
                                     CubeSet::Ended(end, paths),
+                                    None,
                                 );
                             }
                         }
@@ -1197,6 +1593,7 @@ impl<'t> Engine<'t> {
                             check: Check::Whole(k),
                         },
                         CubeSet::Listed(Vec::new()),
+                        None,
                     ),
                 }
             }
@@ -1234,6 +1631,9 @@ impl<'t> Engine<'t> {
         );
         // The slot of each variable in the constraint being built.
         let mut slot = vec![usize::MAX; dom.len()];
+        let (mut n_pairs, mut pair_slots) = (0, vec![Vec::new(); dom.len()]);
+        let (mut slot_list, mut list_slot, mut list_at, mut runs) =
+            (Vec::new(), Vec::new(), vec![0], Vec::new());
         for (c, con) in cons.iter().enumerate() {
             cons_of_law[con.law].push(c);
             let first_slot = slot_var.len();
@@ -1249,6 +1649,7 @@ impl<'t> Engine<'t> {
                     for &f in &con.scope {
                         slot[f] = slot_var.len();
                         slot_var.push((f, n_counts));
+                        slot_list.push(NONE);
                         n_counts += dom[f] as usize;
                     }
                     let cubes = &cubes_of[c];
@@ -1268,8 +1669,64 @@ impl<'t> Engine<'t> {
                     // One bin for each count of mentions, 0 to the cubes, and one past the last.
                     bin.extend(std::iter::repeat_n(0, cubes.len() + 2));
                 }
+                Check::Pairs => {
+                    let form = forms[c].take().expect("a constraint of pairs has its form");
+                    let base = n_pairs;
+                    n_pairs += form.pairs;
+                    // The runs of each choice of each slot, gathered by one sort, then the gaps
+                    // between the runs of the slot's nodes, which hold the pairs whose cubes do
+                    // not mention it: O(R log R) for R runs.
+                    let mut held = form.runs;
+                    held.sort_unstable_by_key(|&(place, v, start, _)| (place, v, start));
+                    let mut i = 0;
+                    for (place, &f) in con.scope.iter().enumerate() {
+                        let s = slot_var.len();
+                        slot_var.push((f, n_counts));
+                        n_counts += dom[f] as usize;
+                        pair_slots[f].push((c, s));
+                        slot_list.push(list_slot.len());
+                        for v in 0..dom[f] {
+                            while i < held.len() && (held[i].0, held[i].1) == (place, v) {
+                                runs.push((base + held[i].2, base + held[i].3));
+                                i += 1;
+                            }
+                            list_slot.push(s);
+                            list_at.push(runs.len());
+                        }
+                        let mut end = 0;
+                        while i < held.len() && (held[i].0, held[i].1) == (place, MENTION) {
+                            if held[i].2 > end {
+                                runs.push((base + end, base + held[i].2));
+                            }
+                            end = held[i].3;
+                            i += 1;
+                        }
+                        if end < form.pairs {
+                            runs.push((base + end, base + form.pairs));
+                        }
+                        list_slot.push(s);
+                        list_at.push(runs.len());
+                    }
+                    debug_assert_eq!(i, held.len(), "every run is of a slot of the scope");
+                }
             }
             slots_of.push(first_slot..slot_var.len());
+        }
+        // Each list watches its first pair.
+        let n_lists = list_slot.len();
+        let (mut wit, mut wit_next, mut watch_head) = (
+            vec![NONE; n_lists],
+            vec![NONE; n_lists],
+            vec![NONE; n_pairs],
+        );
+        let wit_run = list_at[..n_lists].to_vec();
+        for l in 0..n_lists {
+            if list_at[l] < list_at[l + 1] {
+                let x = runs[list_at[l]].0;
+                wit[l] = x;
+                wit_next[l] = watch_head[x];
+                watch_head[x] = l;
+            }
         }
         // The cubes that use each choice, in one array by choice: count them, then fill each
         // choice's run from its end, the cubes from the last, so each run is in cube order.
@@ -1336,7 +1793,19 @@ impl<'t> Engine<'t> {
             cube_start,
             cube_lits,
             cube_alive: vec![true; n_cubes],
-            killed: Vec::new(),
+            undo: Vec::new(),
+            pair_live: LiveSet::new(n_pairs),
+            slot_list,
+            list_slot,
+            list_at,
+            runs,
+            wit,
+            wit_run,
+            wit_next,
+            watch_head,
+            pair_slots,
+            unwatched: Vec::new(),
+            emptied: Vec::new(),
             uses,
             uses_at,
             count,
@@ -1369,22 +1838,42 @@ impl<'t> Engine<'t> {
                 self.open[w] -= 1;
             }
         }
-        self.trail.push((f, c, why, self.killed.len()));
+        self.trail.push((f, c, why, self.undo.len()));
     }
 
     /// Undoes the removals after the first `mark`, which must be a point where every removal
-    /// before it had its cubes removed: the start of a choice or of a group.
+    /// before it had its cubes and pairs removed: the start of a choice or of a group.
     fn undo_to(&mut self, mark: usize) {
-        if let Some(&(_, _, _, killed)) = self.trail.get(mark) {
-            while self.killed.len() > killed {
-                let k = self.killed.pop().expect("the list is longer than its mark");
-                self.cube_alive[k] = true;
-                let c = self.cube_con[k];
-                self.live[c] += 1;
-                for j in self.cube_start[k]..self.cube_start[k + 1] {
-                    let (_, _, i, s) = self.cube_lits[j];
-                    self.count[i] += 1;
-                    self.raise(c, s);
+        if let Some(&(_, _, _, undone)) = self.trail.get(mark) {
+            while self.undo.len() > undone {
+                match self.undo.pop().expect("the list is longer than its mark") {
+                    Undo::Cube(k) => {
+                        self.cube_alive[k] = true;
+                        let c = self.cube_con[k];
+                        self.live[c] += 1;
+                        for j in self.cube_start[k]..self.cube_start[k + 1] {
+                            let (_, _, i, s) = self.cube_lits[j];
+                            self.count[i] += 1;
+                            self.raise(c, s);
+                        }
+                    }
+                    Undo::Pair(x) => self.pair_live.insert(x),
+                    Undo::Head(x, l) => self.watch_head[x] = l,
+                    // The list was put first on the chain of its new pair, and every change
+                    // made after it is undone already, so it is still first there.
+                    Undo::Watch {
+                        list,
+                        wit,
+                        run,
+                        next,
+                    } => {
+                        if self.wit[list] != NONE {
+                            self.watch_head[self.wit[list]] = self.wit_next[list];
+                        }
+                        self.wit[list] = wit;
+                        self.wit_run[list] = run;
+                        self.wit_next[list] = next;
+                    }
                 }
             }
         }
@@ -1415,11 +1904,19 @@ impl<'t> Engine<'t> {
         }
     }
 
-    /// Starts constraint `c`: a choice no cube of it uses is removed, and a whole clause is
-    /// queued.
+    /// Starts constraint `c`: a choice no cube or pair of it supports is removed, and a whole
+    /// clause is queued.
     fn start(&mut self, c: usize) -> Result<(), Conflict> {
         match self.cons[c].check {
             Check::Whole(_) => self.enqueue(c),
+            Check::Pairs => {
+                for s in self.slots_of[c].clone() {
+                    let none = self.slot_list[s] + self.dom[self.slot_var[s].0] as usize;
+                    if self.wit[none] == NONE {
+                        self.remove_unsupported(c, none)?;
+                    }
+                }
+            }
             Check::Cubes => {
                 if self.slots_of[c].is_empty() && self.live[c] == 0 {
                     return Err(Conflict {
@@ -1466,6 +1963,10 @@ impl<'t> Engine<'t> {
                         self.kill(k)?;
                     }
                 }
+                for p in 0..self.pair_slots[f].len() {
+                    let (c, s) = self.pair_slots[f][p];
+                    self.kill_pairs(c, self.slot_list[s] + v as usize)?;
+                }
                 // A whole clause is checked again only when one of its fields is fixed: once at
                 // most one is open, the choices it allows the open field do not change as that
                 // field loses others, so checking it again then would be the choices times the
@@ -1487,11 +1988,115 @@ impl<'t> Engine<'t> {
         }
     }
 
+    /// Removes the live pairs of list `l` of constraint `c` of pairs, moves each list that
+    /// watched one of them to its next live pair, and removes the choices left with no support
+    /// by the lists left with none, in the order of the lists.
+    fn kill_pairs(&mut self, c: usize, l: usize) -> Result<(), Conflict> {
+        let mut unwatched = std::mem::take(&mut self.unwatched);
+        let mut emptied = std::mem::take(&mut self.emptied);
+        for r in self.list_at[l]..self.list_at[l + 1] {
+            let (mut x, end) = self.runs[r];
+            loop {
+                x = self.pair_live.next(x);
+                if x >= end {
+                    break;
+                }
+                self.work += 1;
+                self.pair_live.remove(x);
+                self.undo.push(Undo::Pair(x));
+                if self.watch_head[x] != NONE {
+                    unwatched.push(x);
+                }
+                x += 1;
+            }
+        }
+        // Every pair removed first, so that a list moves straight to a pair that stays live.
+        for &x in &unwatched {
+            let mut m = self.watch_head[x];
+            self.undo.push(Undo::Head(x, m));
+            self.watch_head[x] = NONE;
+            while m != NONE {
+                let next = self.wit_next[m];
+                self.undo.push(Undo::Watch {
+                    list: m,
+                    wit: x,
+                    run: self.wit_run[m],
+                    next,
+                });
+                // Forward from `x` in its run, then through the runs after it.
+                let (mut r, mut from, mut found) = (self.wit_run[m], x + 1, NONE);
+                while r < self.list_at[m + 1] {
+                    let (start, end) = self.runs[r];
+                    let y = self.pair_live.next(from.max(start));
+                    if y < end {
+                        found = y;
+                        break;
+                    }
+                    r += 1;
+                    from = 0;
+                }
+                self.wit[m] = found;
+                self.wit_run[m] = r;
+                if found == NONE {
+                    self.wit_next[m] = NONE;
+                    emptied.push(m);
+                } else {
+                    self.wit_next[m] = self.watch_head[found];
+                    self.watch_head[found] = m;
+                }
+                m = next;
+            }
+        }
+        unwatched.clear();
+        self.unwatched = unwatched;
+        emptied.sort_unstable();
+        let mut result = Ok(());
+        for &m in &emptied {
+            result = self.remove_unsupported(c, m);
+            if result.is_err() {
+                break;
+            }
+        }
+        emptied.clear();
+        self.emptied = emptied;
+        result
+    }
+
+    /// Removes the choices that list `l` of constraint `c` of pairs supported, now that it has
+    /// no live pair: its own choice when the list of pairs that do not mention the variable has
+    /// none either, or, when `l` is that list, every choice whose own list has none.
+    fn remove_unsupported(&mut self, c: usize, l: usize) -> Result<(), Conflict> {
+        let s = self.list_slot[l];
+        let f = self.slot_var[s].0;
+        let first = self.slot_list[s];
+        let none = first + self.dom[f] as usize;
+        if self.wit[none] != NONE {
+            return Ok(());
+        }
+        let lost = if l == none {
+            0..self.dom[f]
+        } else {
+            (l - first) as Choice..(l - first + 1) as Choice
+        };
+        for v in lost {
+            if self.wit[first + v as usize] == NONE && self.is_alive(f, v) {
+                self.remove(f, v, Reason::Law(c));
+                if self.size[f] == 0 {
+                    return Err(Conflict {
+                        constraint: c,
+                        field: Some(f),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Removes cube `k` and every choice it leaves unsupported.
     fn kill(&mut self, k: usize) -> Result<(), Conflict> {
         self.work += 1;
         self.cube_alive[k] = false;
-        self.killed.push(k);
+        self.undo.push(Undo::Cube(k));
         let c = self.cube_con[k];
         let lits = self.cube_start[k]..self.cube_start[k + 1];
         // Every count first, so that an undo, which restores them all, finds them all lowered.
