@@ -11957,16 +11957,21 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// the argument, as `u` of type `int | true` at `/`, whose whole type is then named. A
     /// literal, a tuple or an `if` of literals takes its type from the arrow, and a class, a
     /// variable and the unknown may be any value, so none of them gives one; a parameter that
-    /// is a bounded variable takes the numbers of its bound. O(A p) tests for A arrows and p
-    /// pieces.
+    /// is a bounded variable takes the numbers of its bound. A value whose check at an arrow
+    /// was refused, not decided, may be taken there: a refusal claims nothing about the
+    /// types ([`Ty::refused`]), so the application's message gives the refusal's cause
+    /// instead (`refused_among`). O(A p) tests for A arrows and p pieces.
     fn taken_by_none(&self, sig: &Sig, args: &[Option<Arg<'a>>]) -> Option<(usize, Option<Piece>)> {
-        let takes = |t: &Ty, q: &Piece, p: &Ty| {
+        let may_take = |t: &Ty, q: &Piece, p: &Ty| {
             p.dynamic
                 || match p.as_var() {
                     Some(v) => (sig.bounds.get(v))
                         .is_none_or(|&m| q.carrier().is_some_and(|c| c.bit() & m != 0)),
                     None if !p.vars.is_empty() => true,
-                    None => t.of_piece(q).sub(p, &mut Binds::new()),
+                    None => {
+                        let s = t.of_piece(q);
+                        s.sub(p, &mut Binds::new()) || !s.refused(p).is_empty()
+                    }
                 }
         };
         args.iter().enumerate().find_map(|(i, a)| {
@@ -11977,7 +11982,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 !matches!(q, Piece::Dyn | Piece::Var(_))
                     && self.class_of(q).is_none()
                     && (sig.arrows.iter())
-                        .all(|ar| ar.params.get(i).is_some_and(|p| !takes(&a.ty, q, p)))
+                        .all(|ar| ar.params.get(i).is_some_and(|p| !may_take(&a.ty, q, p)))
             };
             let pieces = a.ty.pieces();
             let q = pieces.iter().find(|q| none(q))?;
