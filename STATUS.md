@@ -1963,14 +1963,14 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | LIT-two-union-headline | running | 2026-11-12 11:17 |  |
 | LIT-two-union-unread-wording | running | 2026-11-12 11:17 |  |
 | LOAD-max-div-unsolved | impl attempt 1 | 2026-11-11 17:11 | worktree /home/luke/Work/wt/lmd-cd (wt/lmd-cd at 7d96d3826) made for the Rust port; CD round 1 best 58 = 28.71 |
-| MAIN-l01_38-failures | running | 2026-11-12 12:00 |  |
+| MAIN-l01_38-failures | impl attempt 1 | 2026-11-12 12:00 | start: worktree /home/luke/Work/wt/main-l01-38 from origin/main a69d78a9e |
 | MSG-many-args-decimal | running | 2026-11-12 07:32 |  |
 | MSG-many-args-one-error | running | 2026-11-12 07:32 |  |
 | MSG-many-args-repair-loop | impl attempt 1 | 2026-11-12 07:32 | started with MSG-many-args-decimal and MSG-many-args-one-error; worktree /home/luke/Work/wt/msg-many-args2, spec /home/luke/Work/wt/msg-many-args2-spec; load 36 |
 | POLY-nf | impl attempt 1 | 2026-11-11 01:43 | started; worktree /home/luke/Work/wt/poly-nf from origin/main |
 | PRODUCT-lin-rows | hybrid-xr attempt 1 | 2026-11-11 01:43 | round 0 started: own attempt at a potential design before seats |
 | REFUSAL-front-unsolved | running | 2026-11-11 17:03 |  |
-| SWAR-read-literals | impl attempt 1 | 2026-11-12 11:34 | negative control (every text read whole, O(n^2), not committed): l01_18 4 reading scaling tests fail, int(s) 352.2M to 22,399.4M instr 63.6x (limit 12.1), rat(s |
+| TRIVIAL-walk-branches | impl attempt 1 | 2026-11-12 11:58 | started; worktree /home/luke/Work/wt/trivial-walk-branches on origin/main a69d78a9e |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
