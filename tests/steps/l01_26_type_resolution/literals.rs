@@ -667,6 +667,61 @@ fn a_number_literal_compared_with_a_bool_or_a_tuple_is_rejected() {
 }
 
 #[test]
+fn a_type_of_one_value_is_written_with_no_article() {
+    // `t` holds one value, so the message names it as that value, "`t` is `true`", where a
+    // type of many values takes an article, "`x` is a `String`" (MSG-literal-type-article).
+    let fixes = truth(|b| format!("less = t == {b};"));
+    let fixes = refs(&fixes);
+    assert_eq!(
+        type_errors("t = true;\nless = t == 1;\n"),
+        [format!(
+            "the literal `1` is a number, and `t` is `true` here, which no number equals, so the \
+             comparison always gives the same answer{}{} [1]",
+            tried(&fixes),
+            menu(&fixes)
+        )]
+    );
+    let fixes = [
+        ("less = t == \"1\";", "compares the text"),
+        ("less = int(t) == 1;", "compares the number the text holds"),
+    ];
+    assert_eq!(
+        type_errors("t = \"km\";\nless = t == 1;\n"),
+        [format!(
+            "the literal `1` is a number, and `t` is `\"km\"` here, which no number equals, so \
+             the comparison always gives the same answer{}{} [1]",
+            tried(&fixes),
+            menu(&fixes)
+        )]
+    );
+    // A component of one value, met by the literal inside a tuple.
+    let fixes = truth(|b| format!("less = t == ({b}, 2);"));
+    let fixes = refs(&fixes);
+    assert_eq!(
+        type_errors("t = (true, 2);\nless = t == (1, 2);\n"),
+        [format!(
+            "the literal `1` is a number, and the component of `t` it is compared with by `==` is \
+             `true` here, which no number equals, so the comparison always gives the same \
+             answer{}{} [1]",
+            tried(&fixes),
+            menu(&fixes)
+        )]
+    );
+    // A type of many values keeps its article.
+    let fixes = [
+        ("f(positional x: String) = x == \"1\";", "compares the text"),
+        (
+            "f(positional x: String) = int(x) == 1;",
+            "compares the number the text holds",
+        ),
+    ];
+    assert_eq!(
+        type_errors("f(positional x: String) = x == 1;\n"),
+        [never_equal("String", &fixes)]
+    );
+}
+
+#[test]
 fn a_number_literal_in_a_tuple_compared_with_a_component_that_holds_no_number_is_rejected() {
     // Component by component, as a literal in a tuple reads a declared tuple type.
     assert_eq!(

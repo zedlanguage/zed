@@ -3531,7 +3531,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         _ => write!(f, "component `{}` of the {} operand", Place(path), ends[s])?,
                     }
                     let t = &shown[s];
-                    write!(f, " is {} `{t}`", article_of(t))?;
+                    write!(f, " is {}`{t}`", article_of(t, t))?;
                 }
                 f.write_str(" here, and no value is both, so the comparison always gives ")?;
                 if answer {
@@ -3671,18 +3671,19 @@ impl<'t, 'a> Ck<'t, 'a> {
         let groups = [texts(&u), casts, bools(&u), components];
         let answer = groups.iter().all(|rs| rs.is_empty());
         let ty = self.shown(&values);
+        let a = article_of(&ty, &ty);
         let lit = l.written();
         let message = quoting(
             &fmt::from_fn(|f| {
                 match name {
                     Some(n) => write!(
                         f,
-                        "the literal `{lit}` is a number, and `{n}` is a `{ty}` here, which \
+                        "the literal `{lit}` is a number, and `{n}` is {a}`{ty}` here, which \
                          no number equals, so the comparison always gives "
                     )?,
                     None => write!(
                         f,
-                        "the literal `{lit}` is a number, compared by `{op}` with a `{ty}`, \
+                        "the literal `{lit}` is a number, compared by `{op}` with {a}`{ty}`, \
                          which no number equals, so the comparison always gives "
                     )?,
                 }
@@ -3693,7 +3694,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }),
             || {
                 format!(
-                    "this literal is a number, compared by `{op}` with a `{ty}`, which no \
+                    "this literal is a number, compared by `{op}` with {a}`{ty}`, which no \
                      number equals"
                 )
             },
@@ -3788,6 +3789,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let u = values.set.universes();
         let repairs: Vec<Repair> = texts(&u).into_iter().chain(bools(&u)).collect();
         let shown = self.shown(&values);
+        let a = article_of(&shown, &shown);
         let lit = l.written();
         let message = quoting(
             &fmt::from_fn(|f| {
@@ -3797,7 +3799,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 write!(
                     f,
-                    "it is compared with by `{op}` is a `{shown}` here, which no number equals, \
+                    "it is compared with by `{op}` is {a}`{shown}` here, which no number equals, \
                      so the comparison always gives the same answer"
                 )?;
                 match repairs.is_empty() {
@@ -5379,8 +5381,14 @@ impl fmt::Display for Place<'_> {
     }
 }
 
-/// `an` before a type written with a vowel sound first, `int`, `f64`, `(..)` not; `a` else.
-fn article_of(t: &impl fmt::Display) -> &'static str {
+/// The article, with the space after it, that a message writes before the text `text` of the
+/// type `t`: none for a type of one value, as `true`, `3`, `"km"` or `#a`, which the text names
+/// as that value (`x` is `true`); `an ` before a type written with a vowel sound first,
+/// `int`, `f64`, `(..)` not; `a ` else.
+fn article_of(t: &Ty, text: &impl fmt::Display) -> &'static str {
+    if t.is_one_value() {
+        return "";
+    }
     /// Keeps the first two characters written, then stops the writing.
     struct First(Vec<char>);
     impl fmt::Write for First {
@@ -5394,10 +5402,10 @@ fn article_of(t: &impl fmt::Display) -> &'static str {
     }
     let mut first = First(Vec::with_capacity(2));
     // The writing stops with an error once it has the two characters.
-    let _ = fmt::write(&mut first, format_args!("{t}"));
+    let _ = fmt::write(&mut first, format_args!("{text}"));
     match first.0[..] {
-        ['a' | 'e' | 'i' | 'o', ..] | ['f', '0'..='9', ..] => "an",
-        _ => "a",
+        ['a' | 'e' | 'i' | 'o', ..] | ['f', '0'..='9', ..] => "an ",
+        _ => "a ",
     }
 }
 

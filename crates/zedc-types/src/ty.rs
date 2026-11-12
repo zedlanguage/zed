@@ -5933,6 +5933,21 @@ impl Ty {
         self.function_in(|r| r.0.held.as_ref(), |s| s.held.as_ref())
     }
 
+    /// Whether it holds exactly one value that its text writes as that value: one scalar
+    /// literal, one tuple of such values (`Ty::point`), or one bare atom, `#a`. A message
+    /// writes such a type with no article: `x` is `true`, not `x` is a `true`. It reads the
+    /// outer level only: each row keeps its own one value, and at most two atom names are read.
+    pub fn is_one_value(&self) -> bool {
+        if self.point().is_some() {
+            return true;
+        }
+        let lone =
+            !self.dynamic && self.vars.is_empty() && self.fns.is_empty() && self.tuples.is_empty();
+        lone && self.set.atom_names().is_some_and(|mut names| {
+            matches!((names.next(), names.next()), (Some((n, true)), None) if self.set == KType::atom(n))
+        })
+    }
+
     /// Its one value, when it is one scalar literal, or one tuple shape each of whose
     /// components is one value, and nothing else: no variable, function, unknown or payload
     /// listed. Each row keeps its own, so this reads the outer level.
