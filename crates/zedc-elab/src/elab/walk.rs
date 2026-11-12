@@ -1826,7 +1826,7 @@ impl<'a> Elab<'a> {
             "mod" => Prim::Mod,
             "^" => Prim::Pow,
             "++" => Prim::Concat,
-            _ => return self.error(e.span, not_yet(&format!("the operator `{op}`"))),
+            _ => unreachable!("the grammar's binary operators are those above, not `{op}`"),
         };
         let mut args = vec![a, b];
         if let Some(marks) = &mut self.marks
