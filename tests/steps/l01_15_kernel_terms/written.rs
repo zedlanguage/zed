@@ -107,7 +107,7 @@ fn a_type_pattern_writes_its_type_in_type_syntax() {
     assert_eq!(
         shown,
         "match v { is Never -> \"none\", is int \\ 0 -> \"nonzero\", \
-         is bool | int -> \"scalar\" }"
+         is int | bool -> \"scalar\" }"
     );
     assert!(!shown.contains("(|") && !shown.contains("(\\"), "{shown}");
     // `int \ 0` holds a literal type, a form of layer L10 that sec:grammar reads and this
@@ -186,7 +186,7 @@ fn a_type_test_inside_other_patterns_reads_back() {
     let shown = written(&t, before_at);
     assert_eq!(
         shown,
-        "match v { is (int -> bool) -> \"function\", (is bool | int, _) -> \"pair\", \
+        "match v { is (int -> bool) -> \"function\", (is int | bool, _) -> \"pair\", \
          (is (int -> bool),) -> \"one\", #ok(is String) -> \"ok\", #err(code: is int) -> \"err\", \
          w -> \"other\" }"
     );

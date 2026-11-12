@@ -10072,11 +10072,12 @@ impl<'a> Ck<'_, 'a> {
             Value::Str(_) => "String".to_string(),
             v => lit_carrier(v).name().to_string(),
         };
-        let atoms = fails
-            .iter()
-            .map(|(_, a)| a.to_string())
-            .collect::<BTreeSet<_>>();
-        let atoms = atoms.into_iter().collect::<Vec<_>>().join(" | ");
+        // In the order of a union (`order::cmp`, DESIGN.md sec:diagnostics), each once.
+        let mut atoms: Vec<&Value> = fails.iter().map(|(_, a)| a).collect();
+        atoms.sort_by(|a, b| zed_kernel::types::order::cmp_values(a, b));
+        atoms.dedup();
+        let atoms = atoms.iter().map(|a| a.to_string()).collect::<Vec<_>>();
+        let atoms = atoms.join(" | ");
         let written = written.or_else(|| match &fails[..] {
             [(v, _)] => Some(self.text(&Ty::lit(v))),
             _ => None,

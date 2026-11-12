@@ -48,7 +48,7 @@ fn each_menu_names_the_signed_forms_the_type_holds() {
     };
     let two_carriers = |lit: &str| {
         format!(
-            "2:7: the literal `{lit}` can be a `rat` or an `f64` at `rat | f64`, and nothing here \
+            "2:7: the literal `{lit}` can be a `rat` or an `f64` at `f64 | rat`, and nothing here \
              chooses one"
         )
     };

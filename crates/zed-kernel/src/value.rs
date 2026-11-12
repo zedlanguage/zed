@@ -687,7 +687,7 @@ fn key_leaf(v: &Value) -> Value {
 
 /// Two numbers by value; equal values by kind, `int` before `rat` before a float, and two
 /// floats by their total order, which puts `-0.0` before `0.0` and NaN last.
-fn number_cmp(a: &Value, b: &Value) -> Ordering {
+pub(crate) fn number_cmp(a: &Value, b: &Value) -> Ordering {
     match (a, b) {
         (Value::Int(x), Value::Int(y)) => x.cmp(y),
         (Value::Float(x), Value::Float(y)) => x.cmp(y),

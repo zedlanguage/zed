@@ -303,7 +303,7 @@ fn the_kernel_sets_in_a_compiler_type_put_their_definitions_first() {
         ),
         (
             Ty::set(&shared | &Type::atom("y")),
-            "type T1 = int | #x;\n#y | (T1, T1)",
+            "type T1 = int | #x;\n(T1, T1) | #y",
             true,
         ),
         (
@@ -328,7 +328,7 @@ fn the_kernel_sets_in_a_compiler_type_put_their_definitions_first() {
         ),
         (
             ty("(bool, bool)").union(&Ty::set(partial.clone())),
-            "(int ->? int) | (bool, bool)",
+            "(bool, bool) | (int ->? int)",
             false,
         ),
     ] {
@@ -541,11 +541,11 @@ fn a_kind_wide_part_met_with_a_shape_that_holds_one_may_hold_a_function() {
     for (text, value) in [
         (
             "f(p: ((..) \\ (#a, #a)) & ((..) | #a, int | #a)) = String(p);\n",
-            "(#a | (..), int | #a) \\ (#a, #a)",
+            "((..) | #a, int | #a) \\ (#a, #a)",
         ),
         (
             "f(p: ((..) \\ (#a, #a)) & ((int, (..)) | #a, int | #a)) = String(p);\n",
-            "(#a | (int, (..)), int | #a) \\ (#a, #a)",
+            "((int, (..)) | #a, int | #a) \\ (#a, #a)",
         ),
     ] {
         let want = format!(

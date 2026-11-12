@@ -50,7 +50,7 @@ fn an_operator_with_one_carrier_fixes_it() {
 fn comparison_checks_at_every_ordered_carrier() {
     assert_eq!(
         sig("lt(a, b) = a < b;\n", "lt"),
-        "(a: T, b: T) -> bool for T in int | f64 | rat | String | bool"
+        "(a: T, b: T) -> bool for T in int | f64 | rat | bool | String"
     );
 }
 

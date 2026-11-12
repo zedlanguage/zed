@@ -2477,7 +2477,7 @@ impl Resolver<'_> {
                 match Type::overload(&ts) {
                     // The arrows of an overload are one function's, so a variable its bounds
                     // clause binds stands in that one function type in each of them, as the
-                    // checker prints `((T) -> T) & ((#_ | T) -> #_ | T) for T in int | f64`.
+                    // checker prints `((T) -> T) & ((T | #_) -> T | #_) for T in int | f64`.
                     Ok(true) => {
                         self.arrows.push(t.span);
                         todo.push(Task::ArrowEnd);

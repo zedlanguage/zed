@@ -75,8 +75,8 @@ use zedc_syntax::lex::{Span, Tok, lex, unread_literal};
 use kernel_type::kernel_type;
 use ty::{
     Arrow, Binds, Carrier, EVERY, IntDomain, Names, Narrow, Need, NeedKind, NodeId, OTHER, Piece,
-    PowerUse, SParam, Shape, Sig, Slot, Ty, VarFacts, Vars, Via, Width, atoms, class_id, errs,
-    fresh_name, mask_text,
+    PowerUse, SParam, Shape, Sig, Slot, Ty, VarFacts, Vars, Via, Width, atoms, carriers_text,
+    class_id, errs, fresh_name, mask_text,
 };
 
 /// How a function argument fits the function type its slot expects.
@@ -654,26 +654,16 @@ fn show_with(t: &Ty, masks: &Masks, spell: Spell<'_>) -> String {
     if masks.is_empty() {
         return t.text_spelled(false, spell);
     }
+    // One union, printed in the order of a union (`order::cmp`, DESIGN.md sec:diagnostics), so
+    // that the carriers stand among the other members as in a type written with them.
     let mut rest = t.clone();
-    let mut parts = Vec::new();
     let mut narrowed = 0;
     for (v, m) in masks {
-        parts.push(mask_text(*m));
         narrowed |= m;
         rest.vars.remove(v);
     }
-    if !rest.is_empty() {
-        parts.push(rest.text_spelled(true, spell));
-    }
-    let text = parts.join(" | ");
-    #[cfg(feature = "printed-types")]
-    {
-        let carriers: Vec<Ty> = Carrier::of_mask(narrowed).map(Ty::carrier).collect();
-        ty::printed::record(&rest.union(&Ty::union_all(&carriers)), &text);
-    }
-    #[cfg(not(feature = "printed-types"))]
-    let _ = narrowed;
-    text
+    rest.union(&Ty::of_mask(narrowed))
+        .text_spelled(false, spell)
 }
 
 /// Where a repair note that writes types in code says to declare the definitions those
@@ -3587,8 +3577,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     false => menu(l, &held),
                     true => {
                         let own = lit_carrier(&l.value);
-                        let names: Vec<&str> = Carrier::of_mask(mask).map(|c| c.name()).collect();
-                        let (what, carrier, names) = (article(own), own.name(), names.join(" | "));
+                        let names = carriers_text(Carrier::of_mask(mask));
+                        let (what, carrier) = (article(own), own.name());
                         let text = l.written();
                         quoting(
                             &format_args!(
@@ -5767,7 +5757,7 @@ fn literal_message(
 
 /// The carriers `cs` written as a type, `int` or `f64 | rat`.
 fn carrier_names(cs: &[Carrier]) -> String {
-    cs.iter().map(|c| c.name()).collect::<Vec<_>>().join(" | ")
+    carriers_text(cs.iter().copied())
 }
 
 /// The value of the literal `l`, with its `-`, at the carrier `c`; `None` where it is not

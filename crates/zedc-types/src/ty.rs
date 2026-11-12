@@ -19,6 +19,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use zed_kernel::digest::Digest;
 use zed_kernel::frames::{Deep, Stack};
 pub use zed_kernel::types::names::{Names, ProgramNames, fresh_name};
+use zed_kernel::types::order;
 use zed_kernel::types::{Refusal, Spell, TextPlace, Type as KType, Verdict, defs};
 use zed_kernel::{Items, Universe, Value};
 
@@ -3054,8 +3055,13 @@ pub fn mask_text(m: u8) -> String {
     if m == 0 {
         return "Never".into();
     }
-    let names: Vec<&str> = Carrier::of_mask(m).map(Carrier::name).collect();
-    names.join(" | ")
+    carriers_text(Carrier::of_mask(m))
+}
+
+/// The carriers `cs` written as a type, in the order of a union (`order::cmp`, DESIGN.md
+/// sec:diagnostics), each once: `int`, `f64 | rat`, `int | bool | String`.
+pub fn carriers_text(cs: impl IntoIterator<Item = Carrier>) -> String {
+    order::union_of_names(cs.into_iter().map(Carrier::name))
 }
 
 /// Every atom.
@@ -8762,14 +8768,6 @@ impl Scope {
     }
 }
 
-/// Writes `sep` to `out` before every item but the first, which `first` tells.
-fn separate(out: &mut String, first: &mut bool, sep: &str) {
-    if !*first {
-        out.push_str(sep);
-    }
-    *first = false;
-}
-
 impl Ty {
     /// Writes its text, in type syntax, to `out`. Each part is written in place, not built as a
     /// string and copied into the whole: copying cost the depth of each part, so O(n^2) for a
@@ -8811,19 +8809,11 @@ impl Ty {
         out
     }
 
-    /// Puts its kernel set in `kernel`, to be written at offset `written` of the text, and pushes
-    /// the parts that follow to `parts`, in order; with `found`, without its atom `#notFound`, as
+    /// Pushes the parts of its text to `parts`, in order, its kernel sets as holes that
+    /// [`write_parts`] fills; with `found`, without its atom `#notFound`, as
     /// the value type of a morphism type is written ([`Sig::morphism`]). It stands at `at`, which
     /// decides its parentheses; of two members or more, each stands as an operand of `|`.
-    fn parts<'a>(
-        &'a self,
-        written: usize,
-        kernel: &mut Kernel,
-        parts: &mut Vec<Print<'a>>,
-        found: bool,
-        at: PrintAt,
-    ) {
-        let mut first = true;
+    fn parts<'a>(&'a self, parts: &mut Vec<Print<'a>>, found: bool, at: PrintAt) {
         // An atom whose payloads are known prints each payload's type, `#ioError(op: String,
         // path: String, why: String)` (L29-print); the kernel set holds it with any payload.
         let shaped: Vec<(&Arc<str>, &Vec<Shape>)> = self
@@ -8845,7 +8835,36 @@ impl Ty {
         let set = rest.as_ref().unwrap_or(&self.set);
         let kept = found.then(|| set - &KType::atom("notFound"));
         let set = kept.as_ref().unwrap_or(set);
-        let members = usize::from(!set.is_empty())
+        // The members print in the order of a union (`order::cmp`, DESIGN.md
+        // sec:diagnostics): the kernel set's numbers, booleans and string literals; `String`
+        // among the type variables by name; the set's tuples, then the tuple shapes; the set's
+        // functions, then the functions; the atoms by name, each atom with a known payload
+        // after the set's atoms up to its name; `_` last. A set alone is ordered by the kernel.
+        let others = !shaped.is_empty()
+            || !self.tuples.is_empty()
+            || !self.fns.is_empty()
+            || !self.vars.is_empty()
+            || self.dynamic;
+        let cuts: Vec<&str> = shaped.iter().map(|(n, _)| &***n).collect();
+        let groups = match others && !set.is_empty() {
+            true => set.print_groups(&cuts),
+            false => None,
+        };
+        // A set that prints as one text whatever stands beside it, a recursive type's name
+        // or `_ \ c`, stands first, as a set alone does.
+        let whole = match (&groups, set.is_empty()) {
+            (None, false) => Some(set.clone()),
+            _ => None,
+        };
+        let holes = groups.as_ref().map_or(0, |g| {
+            [&g.low, &g.string, &g.tuples, &g.morphisms]
+                .into_iter()
+                .chain(&g.atoms)
+                .filter(|t| !t.is_empty())
+                .count()
+        });
+        let members = holes
+            + usize::from(whole.is_some())
             + shaped.iter().map(|(_, ss)| ss.len()).sum::<usize>()
             + self.tuples.len()
             + self.fns.len()
@@ -8854,28 +8873,36 @@ impl Ty {
             0 | 1 => at,
             _ => PrintAt::Union,
         };
-        if !set.is_empty() {
-            first = false;
-            // Written once the rest is, with the other kernel sets of the text ([`write_parts`]).
-            kernel.at.push(written);
-            kernel.sets.push((
-                set.clone(),
-                match at {
-                    PrintAt::Any | PrintAt::Listed | PrintAt::Result => TextPlace::Any,
-                    PrintAt::Key => TextPlace::Key,
-                    PrintAt::Bound => TextPlace::Bound,
-                    PrintAt::Union => TextPlace::Union,
-                },
-            ));
-        }
-        for (n, ss) in shaped {
-            for s in ss {
-                between(parts, &mut first, " | ");
-                s.parts(n, parts);
+        let place = match at {
+            PrintAt::Any | PrintAt::Listed | PrintAt::Result => TextPlace::Any,
+            PrintAt::Key => TextPlace::Key,
+            PrintAt::Bound => TextPlace::Bound,
+            PrintAt::Union => TextPlace::Union,
+        };
+        // Each kernel set is written once the rest is, with the other kernel sets of the text
+        // ([`write_parts`]); here its place is kept. A set split into two holes or more is
+        // written out in each, never as a whole by a name of its own, since its parts would not
+        // be in one hole (`KType::surfaces_apart`).
+        let apart = holes >= 2;
+        let hole = |parts: &mut Vec<Print<'a>>, t: &KType| {
+            if !t.is_empty() {
+                parts.push(Print::Sep);
+                parts.push(Print::Set(t.clone(), place, apart));
             }
+        };
+        if let Some(t) = &whole {
+            hole(parts, t);
+        }
+        let string = groups.as_ref().and_then(|g| {
+            hole(parts, &g.low);
+            (!g.string.is_empty()).then(|| (g.string.clone(), place, apart))
+        });
+        parts.push(Print::Vars(self, string));
+        if let Some(g) = &groups {
+            hole(parts, &g.tuples);
         }
         for cs in &self.tuples {
-            between(parts, &mut first, " | ");
+            parts.push(Print::Sep);
             // A tuple alone as an arrow's key is parenthesized, `((int, int)) ->? V`, since
             // `(int, int) ->? V` has two parameters; `(int,) ->? V` has one.
             let wrap = at == PrintAt::Key && cs.len() != 1;
@@ -8895,24 +8922,45 @@ impl Ty {
                 (false, false) => ")",
             }));
         }
+        if let Some(g) = &groups {
+            hole(parts, &g.morphisms);
+        }
         for s in &self.fns {
-            between(parts, &mut first, " | ");
+            parts.push(Print::Sep);
             parts.push(Print::Sig(s, at));
         }
-        parts.push(Print::Vars(self, first));
+        let mut atoms = groups.as_ref().map(|g| g.atoms.iter());
+        for (n, ss) in shaped {
+            if let Some(t) = atoms.as_mut().and_then(Iterator::next) {
+                hole(parts, t);
+            }
+            for s in ss {
+                parts.push(Print::Sep);
+                s.parts(n, parts);
+            }
+        }
+        for t in atoms.into_iter().flatten() {
+            hole(parts, t);
+        }
+        let others = members > usize::from(!self.vars.is_empty() || self.dynamic);
+        parts.push(Print::End(self, others));
     }
 
-    /// Writes the end of its text to `out`, which closes it as the type `walk` last entered:
-    /// the variables printed by name, in code-point order, then `_` for the variables printed
-    /// so and the unknown, or `Never` if `first` says nothing is written yet and nothing is to
-    /// be. On the first pass of `walk` each unbounded variable is recorded and printed `_`; on
-    /// the second, one that stands in two places or more is written as a mark that
-    /// [`defs::name_vars`] names.
-    fn write_vars(&self, mut first: bool, out: &mut String, scope: &Scope, walk: &mut Walk) {
-        let node = walk
-            .open
-            .pop()
-            .expect("a type's end closes the type walk entered");
+    /// Writes its type variables to `out`, those printed by name in code-point order, with
+    /// `string`, the kernel set `String` or what is left of it, among them by its name (the
+    /// order of a union, `order::cmp`), and keeps in `walk` what [`Ty::write_end`] needs. On
+    /// the first pass of `walk` each unbounded variable is recorded and left to be printed `_`;
+    /// on the second, one that stands in two places or more is written as a mark that
+    /// [`defs::name_vars`] names, in one union with the names after `String`: a mark is named by
+    /// [`fresh_name`], from `T` on, which comes after `String`.
+    fn write_vars(
+        &self,
+        string: Option<(KType, TextPlace, bool)>,
+        out: &mut String,
+        scope: &Scope,
+        walk: &mut Walk,
+        kernel: &mut Kernel,
+    ) {
         let mut names: Vec<&Arc<str>> = Vec::new();
         let mut marks = Vec::new();
         let mut blank = self.dynamic;
@@ -8933,30 +8981,46 @@ impl Ty {
                 (None, _) => blank = true,
             }
         }
-        if walk.plan.is_none() {
-            walk.nodes[node] = PrintNode {
-                end: walk.nodes.len(),
-                inst_end: scope.same.len(),
-                others: !first || !names.is_empty(),
-                blank,
-                occ: at..walk.occ.len(),
-            };
-            blank |= walk.occ.len() > at;
-        }
+        let end = walk
+            .ends
+            .last_mut()
+            .expect("a type's variables are in the type");
+        end.named = !names.is_empty();
+        end.blank = blank;
+        end.occ = at..walk.occ.len();
         names.sort_unstable();
+        // The names before `String`, then `String`, then the others with the marks.
+        let split = match string {
+            Some(_) => names.partition_point(|n| {
+                order::cmp(&order::Member::Named(n), &order::Member::Named("String")).is_lt()
+            }),
+            None => 0,
+        };
+        let (before, after) = names.split_at(split);
+        for name in before {
+            walk.sep(out);
+            out.push_str(name);
+        }
+        if let Some(s) = string {
+            walk.sep(out);
+            let (set, place, apart) = s;
+            kernel.at.push(out.len());
+            kernel.sets.push((set, place));
+            kernel.apart.push(apart);
+        }
         match marks.is_empty() {
             true => {
-                for name in names {
-                    separate(out, &mut first, " | ");
+                for name in after {
+                    walk.sep(out);
                     out.push_str(name);
                 }
             }
             false => {
-                separate(out, &mut first, " | ");
+                walk.sep(out);
                 marks.sort_unstable();
                 marks.dedup();
                 out.push(defs::UNION);
-                for name in names {
+                for name in after {
                     out.push_str(name);
                     out.push(defs::NEXT);
                 }
@@ -8969,12 +9033,37 @@ impl Ty {
                 out.push(defs::UNION_END);
             }
         }
-        if blank {
-            separate(out, &mut first, " | ");
-            out.push('_');
+    }
+
+    /// Writes the end of its text to `out`, which closes it as the type `walk` last entered:
+    /// `_` for the variables printed so and the unknown, or `Never` if nothing of it is
+    /// written and nothing is to be. With `others` its union holds members that are not type
+    /// variables.
+    fn write_end(&self, others: bool, out: &mut String, scope: &Scope, walk: &mut Walk) {
+        let node = walk
+            .open
+            .pop()
+            .expect("a type's end closes the type walk entered");
+        let end = walk
+            .ends
+            .pop()
+            .expect("a type's end closes the type walk entered");
+        let mut blank = end.blank;
+        if walk.plan.is_none() {
+            walk.nodes[node] = PrintNode {
+                end: walk.nodes.len(),
+                inst_end: scope.same.len(),
+                others: others || end.named,
+                blank,
+                occ: end.occ.clone(),
+            };
+            blank |= !end.occ.is_empty();
         }
-        if first {
-            out.push_str("Never");
+        match (blank, end.wrote) {
+            (true, true) => out.push_str(" | _"),
+            (true, false) => out.push('_'),
+            (false, true) => {}
+            (false, false) => out.push_str("Never"),
         }
     }
 }
@@ -9012,6 +9101,21 @@ struct Walk {
     occ: Vec<usize>,
     /// The number of the next type the second pass enters.
     next: usize,
+    /// For each type of [`Walk::open`], what its end is written by ([`Ty::write_end`]).
+    ends: Vec<OpenEnd>,
+}
+
+/// What the end of a type entered and not yet closed is written by ([`Ty::write_end`]).
+#[derive(Default)]
+struct OpenEnd {
+    /// Whether a member of its union is written yet, so that the next is written after ` | `.
+    wrote: bool,
+    /// Whether a type variable of it is printed by name.
+    named: bool,
+    /// Whether its union holds `_` whatever the names ([`PrintNode::blank`]).
+    blank: bool,
+    /// Its unbounded variables, in [`Walk::occ`].
+    occ: std::ops::Range<usize>,
 }
 
 /// What the second walk of a text writes ([`Walk`]).
@@ -9026,6 +9130,15 @@ struct Plan {
 }
 
 impl Walk {
+    /// Writes ` | ` to `out` before a member of the type last entered, unless it is the first.
+    fn sep(&mut self, out: &mut String) {
+        let end = self.ends.last_mut().expect("a member is in a type");
+        if end.wrote {
+            out.push_str(" | ");
+        }
+        end.wrote = true;
+    }
+
     /// Enters a type at `out`: whether its parts are to be written. On the second pass a type
     /// whose union is written `_` is written so here, and the walk steps over the types and
     /// variables inside it.
@@ -9033,6 +9146,7 @@ impl Walk {
         let Some(plan) = &self.plan else {
             self.open.push(self.nodes.len());
             self.nodes.push(PrintNode::default());
+            self.ends.push(OpenEnd::default());
             return true;
         };
         let k = self.next;
@@ -9046,6 +9160,7 @@ impl Walk {
         }
         self.next += 1;
         self.open.push(k);
+        self.ends.push(OpenEnd::default());
         true
     }
 
@@ -9149,8 +9264,17 @@ enum Print<'a> {
     Found(&'a Ty),
     /// A signature written as a family ([`Sig::family_parts`]), standing as a payload.
     Family(&'a Sig, PrintAt),
-    /// The end of a type's text ([`Ty::write_vars`]), and whether nothing of it is written yet.
-    Vars(&'a Ty, bool),
+    /// The type variables of a type, with the kernel set `String` it holds, to be written
+    /// among them ([`Ty::write_vars`]).
+    Vars(&'a Ty, Option<(KType, TextPlace, bool)>),
+    /// The end of a type's text ([`Ty::write_end`]), and whether its union holds members
+    /// other than type variables.
+    End(&'a Ty, bool),
+    /// A kernel set, written once the rest of the text is ([`write_parts`]), at its place, and
+    /// whether it is printed apart from the rest of its set ([`Kernel`]).
+    Set(KType, TextPlace, bool),
+    /// ` | ` before a member of the union being written, but its first.
+    Sep,
     /// The bounds clause of a signature, which closes the variables it opened.
     Bounds(&'a Sig, Vec<(Arc<str>, u8)>),
 }
@@ -9272,8 +9396,8 @@ fn write_parts<'a>(
     let mut def_names = HashSet::new();
     if !kernel.sets.is_empty() {
         let texts = match spell {
-            Some(spell) => KType::surfaces_spelled(&kernel.sets, spell),
-            None => KType::surfaces_by_name(&kernel.sets),
+            Some(spell) => KType::surfaces_apart(&kernel.sets, &kernel.apart, Some(spell)),
+            None => KType::surfaces_apart(&kernel.sets, &kernel.apart, None),
         };
         let rest = out.split_off(base);
         for (name, body) in &texts.defs {
@@ -9314,17 +9438,24 @@ fn walk_parts<'a>(
             Print::Text(text) => out.push_str(text),
             Print::Ty(t, at) => {
                 if walk.enter(out, scope) {
-                    t.parts(out.len(), &mut kernel, &mut stack, false, at);
+                    t.parts(&mut stack, false, at);
                 }
             }
             Print::Found(t) => {
                 if walk.enter(out, scope) {
-                    t.parts(out.len(), &mut kernel, &mut stack, true, PrintAt::Result);
+                    t.parts(&mut stack, true, PrintAt::Result);
                 }
             }
             Print::Sig(s, at) => s.parts(scope, &mut stack, at),
             Print::Family(s, at) => s.family_parts(scope, &mut stack, at),
-            Print::Vars(t, first) => t.write_vars(first, out, scope, walk),
+            Print::Vars(t, string) => t.write_vars(string, out, scope, walk, &mut kernel),
+            Print::End(t, others) => t.write_end(others, out, scope, walk),
+            Print::Set(set, place, apart) => {
+                kernel.at.push(out.len());
+                kernel.sets.push((set, place));
+                kernel.apart.push(apart);
+            }
+            Print::Sep => walk.sep(out),
             Print::Bounds(s, bounds) => {
                 for (i, (v, m)) in bounds.iter().enumerate() {
                     out.push_str(if i == 0 { " for " } else { ", " });
@@ -9341,11 +9472,13 @@ fn walk_parts<'a>(
 }
 
 /// The kernel sets of a text still to be written ([`write_parts`]): where each stands in the
-/// text, and the set with its place.
+/// text, the set with its place, and whether it is printed apart from the rest of its set,
+/// written out where it stands and never by a name of its own ([`KType::surfaces_apart`]).
 #[derive(Default)]
 struct Kernel {
     at: Vec<usize>,
     sets: Vec<(KType, TextPlace)>,
+    apart: Vec<bool>,
 }
 
 /// Pushes `sep` to `parts` before every item but the first, which `first` tells.

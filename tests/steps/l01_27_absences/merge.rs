@@ -10,7 +10,7 @@ fn different_failures_on_two_operands_merge_into_errs() {
     let t = "f(positional x: int | #notFound, positional y: int | #invalid) = x + y;\n";
     assert_eq!(
         sig(t, "f"),
-        "type T1 = #invalid | #notFound;\n(int | #notFound, int | #invalid) -> int | #invalid | #notFound | #errs(T1 ->? T1)"
+        "type T1 = #invalid | #notFound;\n(int | #notFound, int | #invalid) -> int | #errs(T1 ->? T1) | #invalid | #notFound"
     );
     let run = format!("{t}a = f(#notFound, #invalid);\nb = f(#invalid, 1);\n");
     assert_eq!(value(&run, "a"), "#errs({#invalid, #notFound})");
@@ -42,7 +42,7 @@ fn one_operand_that_can_fail_two_ways_meets_one_of_them() {
     let t = "f(positional x: int | #none | #notFound, positional y: int | #notFound) = x + y;\n";
     assert_eq!(
         sig(t, "f"),
-        "type T1 = int | #none | #notFound;\ntype T2 = #none | #notFound;\n(T1, int | #notFound) -> T1 | #errs(T2 ->? T2)"
+        "type T1 = #none | #notFound;\n(int | #none | #notFound, int | #notFound) -> int | #errs(T1 ->? T1) | #none | #notFound"
     );
     let run = format!("{t}a = f(#none, #notFound);\nb = f(#notFound, #notFound);\n");
     assert_eq!(value(&run, "a"), "#errs({#none, #notFound})");

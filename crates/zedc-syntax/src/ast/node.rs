@@ -913,7 +913,7 @@ impl Type {
         matches!(t.kind, TypeKind::And(_))
     }
 
-    /// The carrier names of a bound, a union of them, sorted and each once, so two bounds
+    /// The carrier names of a bound, a union of them, in the order of a union and each once, so two bounds
     /// written in different orders compare equal.
     fn carrier_names(&self) -> Vec<&str> {
         let mut out = Vec::new();
@@ -926,7 +926,10 @@ impl Type {
                 _ => {}
             }
         }
-        out.sort_unstable();
+        // In the order of a union (DESIGN.md sec:diagnostics), which is also the order the
+        // message prints them in.
+        let member = zed_kernel::types::order::Member::of_name;
+        zed_kernel::types::order::sort_by_member(&mut out, |n| member(n));
         out.dedup();
         out
     }

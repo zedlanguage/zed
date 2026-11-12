@@ -39,7 +39,7 @@ const FORMS: [(&str, &str, &str, &str); 19] = [
     ("+", "u", "true", "w"),
     ("-", "u", "true", "w"),
     ("*", "u", "true", "w"),
-    ("/", "u", "true | int", "1.5f64"),
+    ("/", "u", "int | true", "1.5f64"),
     ("^", "u", "true", "w"),
     ("<", "v", "(int) -> int", "w"),
     (">", "v", "(int) -> int", "u"),
@@ -106,7 +106,7 @@ fn the_rejection_shows_its_derivation() {
         "`+` does not take (Never, true): these are the types of its arguments here, and `+` \
          has no arrow that takes them all",
         "this call of `h` gives Never",
-        "`u` is true | int here",
+        "`u` is int | true here",
         "this block gives true",
         "`+` takes (int, int) -> int",
         "`+` takes (f64, f64) -> f64",
@@ -181,7 +181,7 @@ fn an_untyped_parameter_beside_never_takes_what_the_operator_takes() {
         ),
         (
             "h(1) < x",
-            "((int) -> Never, T) -> Never for T in int | f64 | rat | String | bool",
+            "((int) -> Never, T) -> Never for T in int | f64 | rat | bool | String",
         ),
         (
             "max(h(1), x)",

@@ -119,10 +119,10 @@ fn batch_and_single_file_checking_agree() {
     assert_eq!(
         batch[at].as_deref(),
         Some(
-            "2:7: the literal `1` can be a `rat` or an `f64` at `rat | f64`, and nothing here \
+            "2:7: the literal `1` can be a `rat` or an `f64` at `f64 | rat`, and nothing here \
              chooses one. Try `r = f(1r)` instead.\n  \
              T1 stands for a part written more than once:\n    \
-             type T1 = rat | f64;\n  \
+             type T1 = f64 | rat;\n  \
              [1] 1:1: `f` is declared here with no type written for its result; the type the \
              checker found for `f` is `(T1) -> T1`\n      \
              1 | f(positional x: f64 | rat) = x;\n        \
@@ -142,7 +142,7 @@ fn batch_and_single_file_checking_agree() {
     let answer = batch[at].as_deref().expect("a rejection");
     assert!(
         answer.starts_with(
-            "1:35: the literal `1` can be a `rat` or an `f64` at `rat | f64`, and nothing here \
+            "1:35: the literal `1` can be a `rat` or an `f64` at `f64 | rat`, and nothing here \
              chooses one"
         ),
         "{answer}"

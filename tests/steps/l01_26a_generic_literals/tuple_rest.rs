@@ -332,14 +332,14 @@ fn a_literal_branch_joins_a_class_beside_atoms() {
     // other branch is of a class"; the other branch may also give `#divByZero`.
     assert_eq!(
         sig("f(positional x) = if x > 0 { 1 / x } else { -1.5 };\n", "f"),
-        "(T) -> #divByZero | T for T in f64 | rat"
+        "(T) -> T | #divByZero for T in f64 | rat"
     );
     assert_eq!(
         sig(
             "f(positional x) = if x > 0 { x / x } else { 1 + 1 };\n",
             "f"
         ),
-        "(T) -> #divByZero | T for T in f64 | rat"
+        "(T) -> T | #divByZero for T in f64 | rat"
     );
 }
 

@@ -258,7 +258,7 @@ fn a_binding_passes_atoms_from_its_name_to_its_value_and_not_back() {
     let text = "r(positional a, positional b) = { s = a + b; s else 0 };\n";
     assert_eq!(
         sig(text, "r"),
-        "(#_ | T, #_ | T) -> 0 | T for T in int | f64 | rat"
+        "(T | #_, T | #_) -> 0 | T for T in int | f64 | rat"
     );
     let text = "r(positional a, positional b) = { s = a + b; (a else 0) + s };\n";
     assert_eq!(
@@ -281,12 +281,12 @@ fn a_handler_on_a_computed_value_prints_its_atoms_on_the_parameter_only() {
         ),
         (
             "(line + 1) else 0",
-            "(#_ | T) -> 0 | T for T in int | f64 | rat",
+            "(T | #_) -> 0 | T for T in int | f64 | rat",
         ),
         ("line?.trim() else \"dflt\"", "(String | #_) -> String"),
         (
             "\"${line + 1}\" else \"dflt\"",
-            "(#_ | T) -> String for T in int | f64 | rat",
+            "(T | #_) -> String for T in int | f64 | rat",
         ),
         (
             "if trim(line) is #nf { \"dflt\" } else { \"s\" }",
@@ -456,7 +456,7 @@ fn each_row_of_the_issue_prints_as_a_type_the_user_can_write() {
         ),
         (
             "if line is #notFound { #absent } else { line else \"\" }",
-            "(T) -> \"\" | #absent | T",
+            "(T) -> \"\" | T | #absent",
         ),
         (
             "if line is #notFound { #absent } else { trim(line else \"\") }",
@@ -492,7 +492,7 @@ fn each_row_of_the_issue_prints_as_a_type_the_user_can_write() {
     let text = "add(positional a, positional b) = (a else b) + b;\n";
     assert_eq!(
         sig(text, "add"),
-        "(#_ | T, T) -> T for T in int | f64 | rat"
+        "(T | #_, T) -> T for T in int | f64 | rat"
     );
     let text = "r(positional line: String | #notFound) = trim(line else \"\");\n";
     assert_eq!(sig(text, "r"), "(String | #notFound) -> String");
@@ -517,7 +517,7 @@ fn a_function_whose_handled_atoms_also_reach_its_result_has_two_arrows() {
         (
             "r(positional n)",
             "{ d = n else 0; if n > 3 { \"big\" } else { \"small\" } }",
-            "((T) -> \"big\" | \"small\") & ((#_ | T) -> \"big\" | \"small\" | #_) \
+            "((T) -> \"big\" | \"small\") & ((T | #_) -> \"big\" | \"small\" | #_) \
              for T in int | f64 | rat",
         ),
     ] {

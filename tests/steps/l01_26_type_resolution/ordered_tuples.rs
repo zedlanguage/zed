@@ -233,7 +233,7 @@ fn a_component_that_does_not_compare_is_reported() {
             "f(positional x: (int, bool) | (f64, bool), positional y: (bool, bool) | (rat, bool)) \
              = x < y;\n",
             vec![
-                "Cannot compare unequal types: `x[0] : int | f64 < y[0] : bool | rat` in `x < y`. \
+                "Cannot compare unequal types: `x[0] : int | f64 < y[0] : rat | bool` in `x < y`. \
                  [x < y]",
             ],
         ),

@@ -36,9 +36,9 @@ fn a_report_line_that_concatenates_a_number_shows_the_chain_back_to_the_input_po
          |           ^^^^^^^^^^ [9]
          |       ^-------------^ [8]
   [7]  2:7: this `else` gives int
-  [8]  2:7: this call of `int` gives int | #invalid | #outOfBounds | #ioError(op: String, path: String, why: String)
-  [9]  2:11: this expression gives String | #outOfBounds | #ioError(op: String, path: String, why: String)
-  [10] 2:11: `m.stdin` is (int) -> String | #notFound | #ioError(op: String, path: String, why: String) here
+  [8]  2:7: this call of `int` gives int | #invalid | #ioError(op: String, path: String, why: String) | #outOfBounds
+  [9]  2:11: this expression gives String | #ioError(op: String, path: String, why: String) | #outOfBounds
+  [10] 2:11: `m.stdin` is (int) -> String | #ioError(op: String, path: String, why: String) | #notFound here
   [11] 1:9: `m.stdin` is declared `Lines`
        1 | main(m: MainArgs) {
          |         ^^^^^^^^

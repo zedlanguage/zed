@@ -25,7 +25,7 @@ fn f64(x: f64) -> Value {
     Value::Float(F64::new(x))
 }
 
-/// The rejection of the literal `lit` at `rat | f64`, which can be either, with a fix for
+/// The rejection of the literal `lit` at `f64 | rat`, which can be either, with a fix for
 /// each: the line `line` gives with the literal written with that carrier.
 fn two_carriers(lit: &str, line: impl Fn(&str) -> String) -> String {
     let float = match lit.contains('.') {
@@ -39,7 +39,7 @@ fn two_carriers(lit: &str, line: impl Fn(&str) -> String) -> String {
     );
     let fixes = [(r.as_str(), rh.as_str()), (f.as_str(), fh.as_str())];
     format!(
-        "the literal `{lit}` can be a `rat` or an `f64` at `rat | f64`, and nothing here chooses \
+        "the literal `{lit}` can be a `rat` or an `f64` at `f64 | rat`, and nothing here chooses \
          one{}{} [{lit}]",
         tried(&fixes),
         menu(&fixes)
@@ -137,7 +137,7 @@ fn a_literal_at_a_union_of_two_carriers() {
     for lit in ["1", "-1", "0.5"] {
         let defined = two_carriers(lit, |w| format!("y = f({w});")).replacen(
             "\n  fixes, each checked here:",
-            "\n  T1 stands for a part written more than once:\n    type T1 = rat | f64;\n  \
+            "\n  T1 stands for a part written more than once:\n    type T1 = f64 | rat;\n  \
              fixes, each checked here:",
             1,
         );

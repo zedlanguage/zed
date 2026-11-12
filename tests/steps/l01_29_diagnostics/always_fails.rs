@@ -71,7 +71,7 @@ fn a_key_outside_the_keys_shows_both_types_and_the_menu() {
   [4] 1:46: `m` is int .. int | String -> bool here
   [5] 1:3: `m` is declared `int .. int | String -> bool`
   [6] 1:46: repair: read the map with a key in `int | String`
-  [7] 1:46: repair: declare the map with the wider keys `bool | int | String ->? bool`, and handle `#notFound` where the key is missing
+  [7] 1:46: repair: declare the map with the wider keys `int | bool | String ->? bool`, and handle `#notFound` where the key is missing
   [8] 1:46: repair: write `#notFound` in place of this read, where the miss is meant
   [9] 1:46: repair: write `#bug(\"…\")` in place of this read, where it is never meant to be reached
 "

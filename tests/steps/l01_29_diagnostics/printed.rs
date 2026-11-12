@@ -376,7 +376,7 @@ fn an_intersection_of_function_types_reads_back_as_one_overload() {
     );
     // One variable may stand in several arrows: they are one function's, which a call binds,
     // as the checker prints a generic function that takes its parameter's atoms.
-    let text = "((T) -> \"big\" | \"small\") & ((#_ | T) -> \"big\" | \"small\" | #_) \
+    let text = "((T) -> \"big\" | \"small\") & ((T | #_) -> \"big\" | \"small\" | #_) \
                 for T in int | f64 | rat";
     let r = back(text);
     assert_eq!(r.fns.len(), 1);
@@ -835,7 +835,7 @@ fn a_bounds_clause_before_a_comma_is_parenthesized() {
         ),
         (
             "((T) -> T for T in int | f64, (U) -> U for U in String | bool)",
-            "(((T) -> T for T in int | f64), (U) -> U for U in String | bool)",
+            "(((T) -> T for T in int | f64), (U) -> U for U in bool | String)",
         ),
         // The same places with no bounds clause: no parentheses added.
         ("((int) -> int, int)", "((int) -> int, int)"),
@@ -880,11 +880,11 @@ fn a_bounds_clause_before_a_comma_is_parenthesized() {
         // parameter, and as the result of one in a tuple.
         (
             "((T) -> ((U) -> U for U in String | bool) for T in int | f64, int)",
-            "(((T) -> ((U) -> U for U in String | bool) for T in int | f64), int)",
+            "(((T) -> ((U) -> U for U in bool | String) for T in int | f64), int)",
         ),
         (
             "((T) -> ((U) -> U for U in String | bool) for T in int | f64, int) -> int",
-            "(((T) -> ((U) -> U for U in String | bool) for T in int | f64), int) -> int",
+            "(((T) -> ((U) -> U for U in bool | String) for T in int | f64), int) -> int",
         ),
         (
             "((int) -> ((T) -> T for T in int | f64, int), bool)",

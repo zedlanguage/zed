@@ -115,7 +115,7 @@ fn the_three_absences_stay_three_facts() {
             "f(positional x: int | #notFound, positional y: int | #none) = x + y;\n",
             "f"
         ),
-        "type T1 = #none | #notFound;\n(int | #notFound, int | #none) -> int | #none | #notFound | #errs(T1 ->? T1)"
+        "type T1 = #none | #notFound;\n(int | #notFound, int | #none) -> int | #errs(T1 ->? T1) | #none | #notFound"
     );
     let run = "f(positional x: int | #notFound, positional y: int | #none) = x + y;\n\
                a = f(#notFound, 1);\nb = f(1, #none);\nc = f(#notFound, #none);\n";
@@ -169,7 +169,7 @@ fn a_call_takes_the_arrow_of_a_generic_function_that_takes_its_atoms() {
     assert!(type_errors(t).is_empty());
     assert_eq!(
         sig(t, "r"),
-        "((T, T) -> T) & ((#_ | T, T) -> #_ | T) for T in int | f64 | rat"
+        "((T, T) -> T) & ((T | #_, T) -> T | #_) for T in int | f64 | rat"
     );
     assert_eq!(sig(t, "h"), "(int | #nf) -> int | #_");
     let run = format!("{t}a = h(#nf);\nb = h(2);\n");

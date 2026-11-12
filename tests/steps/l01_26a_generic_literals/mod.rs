@@ -248,9 +248,9 @@ fn a_literal_at_one_declared_carrier_takes_it_exactly_or_not_at_all() {
     assert_eq!(
         type_errors("f(positional x: f64 | rat) = x;\ny = f(1);\n"),
         [
-            "the literal `1` can be a `rat` or an `f64` at `rat | f64`, and nothing here chooses \
+            "the literal `1` can be a `rat` or an `f64` at `f64 | rat`, and nothing here chooses \
              one. Try `y = f(1r)` instead.\n  T1 stands for a part written more than once:\n    \
-             type T1 = rat | f64;\n  fixes, each checked here:\n    y = f(1r);        the literal \
+             type T1 = f64 | rat;\n  fixes, each checked here:\n    y = f(1r);        the literal \
              is then exactly 1, a rat\n    y = f(1.0f64);    the literal is then the f64 1.0 [1]"
         ]
     );
@@ -267,9 +267,8 @@ fn a_literal_compared_with_a_class_leaves_its_carriers() {
 
 #[test]
 fn a_literal_survives_an_if() {
-    // DESIGN.md step L1.26a writes this type `2 | 1`, the branches in the order written;
-    // zedc prints the values in ascending order, `1 | 2`. DESIGN states no order for the
-    // members of a printed union, so this is open (items LIT-if-print, LIT-print-order).
+    // The members of a union print in one order fixed by the type, numeric literals
+    // ascending by value (DESIGN.md sec:diagnostics), whatever order the branches are in.
     assert_eq!(
         sig("g(positional c: bool) = if c { 2 } else { 1 };\n", "g"),
         "(bool) -> 1 | 2"
@@ -341,7 +340,7 @@ fn an_operation_on_literals_keeps_its_value_in_an_if() {
     // The order zedc prints today, `int` values before `f64` ones. The author's answer B to
     // A92 (2026-11-11) puts numeric literals ascending, `1.5 | 2`; ledger item LIT-print-order
     // changes the printer and this pin with it.
-    assert_eq!(sig(src, "g"), "(bool) -> 2 | 1.5");
+    assert_eq!(sig(src, "g"), "(bool) -> 1.5 | 2");
 }
 
 #[test]
@@ -448,7 +447,7 @@ fn batch_and_single_file_checking_agree() {
     assert_eq!(
         first(1),
         Some(
-            "2:42: the literal `1` can be a `rat` or an `f64` at `rat | f64`, and nothing here \
+            "2:42: the literal `1` can be a `rat` or an `f64` at `f64 | rat`, and nothing here \
              chooses one. Try `main(m: MainArgs) { m.stdout <- String(f(1r)); }` instead."
         )
     );

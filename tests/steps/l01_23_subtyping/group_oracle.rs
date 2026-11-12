@@ -2333,14 +2333,14 @@ fn a_member_whose_tuple_part_its_body_shares_prints_as_definitions() {
     let r0 = kernel(&sys, "shares").remove(0).expect("admitted");
     assert_eq!(
         prints_as_syntax(&r0, "R0"),
-        "type T1 = #a | #b | T2;\ntype T2 = (#a | #b, T1) \\ (#b, #a);\nT2"
+        "type T1 = T2 | #a | #b;\ntype T2 = (#a | #b, T1) \\ (#b, #a);\nT2"
     );
     // Two such cycles: the shared `#a | #b` is named once, and each part names the other.
     assert_eq!(
         prints_as_syntax(&shared_chain(2, "chain-two"), "a chain of 2"),
         concat!(
-            "type T1 = #a | #b;\ntype T2 = #a | #b | T4;\n",
-            "type T3 = #a | #b | ((T1, T2) \\ (#b, #a));\ntype T4 = (T1, T3) \\ (#b, #a);\nT4"
+            "type T1 = #a | #b;\ntype T2 = T4 | #a | #b;\n",
+            "type T3 = ((T1, T2) \\ (#b, #a)) | #a | #b;\ntype T4 = (T1, T3) \\ (#b, #a);\nT4"
         )
     );
 }

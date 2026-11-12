@@ -27,9 +27,12 @@ use std::sync::Arc;
 use super::TextPlace as At;
 use super::bdd::{Bdd, Form, Part};
 use super::{Lits, Morphism, Node, Row, Spell, Surface, Surfaces, Tuples, Type};
+use crate::value::Value;
+use order::{Member, NumberType};
 
 pub mod defs;
 pub mod names;
+pub mod order;
 
 impl Type {
     /// The type in the surface syntax (module `print`).
@@ -64,7 +67,7 @@ impl Type {
 
     /// The type in the surface syntax after `is`, where sec:grammar reads a `TypeUnion` (in
     /// `IsTest` and `IsPat`), parenthesized where it would not be one: an arrow. A union, a
-    /// difference and an intersection are written bare, `is bool | int`; a bound of
+    /// difference and an intersection are written bare, `is int | bool`; a bound of
     /// `L .. U -> V` is the same place ([`Type::surface_bound`]).
     pub(crate) fn surface_after_is(&self) -> Surface {
         self.surface_at(At::Bound)
@@ -113,6 +116,26 @@ impl Type {
         }
         .print(types)
     }
+
+    /// Several types written as [`Type::surfaces_by_name`] writes them, or as
+    /// [`Type::surfaces_spelled`] with `spell`, each type `k` for which `apart[k]` holds
+    /// written out where it stands, never by a name of its own, and not counted as a use of
+    /// it: a part of a set that a compiler type prints apart from the rest of the set, in the
+    /// order of a union (`order`), such as the atoms of `int | #a | #b` after a tuple. The
+    /// parts inside it are named as usual. Time as [`Type::surfaces_by_name`].
+    pub fn surfaces_apart(
+        types: &[(Type, At)],
+        apart: &[bool],
+        spell: Option<Spell<'_>>,
+    ) -> Surfaces {
+        Printer {
+            by_name: true,
+            spell,
+            apart: apart.to_vec(),
+            ..Printer::default()
+        }
+        .print(types)
+    }
 }
 
 impl Surfaces {
@@ -141,6 +164,10 @@ impl Printer<'_> {
                 },
             )
             .collect();
+        // A set printed apart is written out where it stands, so it is no use of its node.
+        for (&(i, _), _) in roots.iter().zip(&p.apart).filter(|(_, apart)| **apart) {
+            p.uses[i] -= 1;
+        }
         p.exact = true;
         for &(i, _) in &roots {
             p.walk(i);
@@ -465,6 +492,9 @@ struct Printer<'s> {
     /// The program's own spelling of a literal value, where a message has one
     /// ([`Type::surfaces_spelled`]).
     spell: Option<Spell<'s>>,
+    /// Whether each root is printed apart, written out where it stands
+    /// ([`Type::surfaces_apart`]); a root past its end is not.
+    apart: Vec<bool>,
 }
 
 enum Step {
@@ -754,65 +784,98 @@ impl Printer<'_> {
         }
     }
 
-    /// The items of a type's union, kind by kind.
+    /// The items of a type's union, in the order a union prints its members
+    /// ([`order::cmp`], DESIGN.md sec:diagnostics).
+    // Complexity tradeoff: the items are made kind by kind and then sorted by their places in
+    // the order, O(m log m) for m items, each comparison O(1) but for two numbers, compared
+    // exactly. A merge of the three sorted literal sets would be O(m), but the kinds would then
+    // need an order of their own written out here, a second statement of the order that
+    // `order::cmp` is the one statement of.
     fn items(&mut self, ctx: &Ctx, t: &Type) -> Vec<Text> {
         let p = t.p();
-        let mut items = Vec::new();
+        let mut items: Vec<(Member<'_>, Text)> = Vec::new();
         match p.bools {
-            1 => items.push(Text::word("false", Class::Prim)),
-            2 => items.push(Text::word("true", Class::Prim)),
-            3 => items.push(Text::word("bool", Class::Prim)),
+            1 => items.push((Member::False, Text::word("false", Class::Prim))),
+            2 => items.push((Member::True, Text::word("true", Class::Prim))),
+            3 => items.push((Member::Bool, Text::word("bool", Class::Prim))),
             _ => {}
         }
-        for (name, l) in [
-            ("int", &p.ints),
-            ("rat", &p.rats),
-            ("f64", &p.floats),
-            ("String", &p.strings),
+        for (name, l, whole) in [
+            ("int", &p.ints, Member::NumberType(NumberType::Int)),
+            ("rat", &p.rats, Member::NumberType(NumberType::Rat)),
+            ("f64", &p.floats, Member::NumberType(NumberType::F64)),
+            ("String", &p.strings, Member::Named("String")),
         ] {
-            lits(&mut items, name, l, self.spell);
+            lits(&mut items, name, l, whole, self.spell);
         }
         if p.atoms.cofinite {
-            let mut except: Vec<Text> = Vec::new();
+            let mut except = Vec::new();
             for (name, part) in p.atoms.names.iter() {
                 self.atom(&mut except, name, &part.not());
             }
-            items.push(match except.is_empty() {
-                true => Text::word("#_", Class::Prim),
-                false => minus(
-                    "#_",
-                    Text::joined(except, " | ", At::Union, Class::Union, ""),
-                ),
-            });
+            let except: Vec<Text> = except.into_iter().map(|(_, t)| t).collect();
+            items.push((
+                Member::AnyAtom,
+                match except.is_empty() {
+                    true => Text::word("#_", Class::Prim),
+                    false => minus(
+                        "#_",
+                        Text::joined(except, " | ", At::Union, Class::Union, ""),
+                    ),
+                },
+            ));
         } else {
             for (name, part) in p.atoms.names.iter() {
                 self.atom(&mut items, name, part);
             }
         }
-        self.tuples(&mut items, ctx, &p.tuples);
+        let mut tuples = Vec::new();
+        self.tuples(&mut tuples, ctx, &p.tuples);
+        items.extend(tuples.into_iter().map(|t| (Member::Tuple, t)));
         if p.structs {
-            items.push(match ctx {
-                None => Text::word("{..}", Class::Prim),
-                Some(a) => {
-                    self.exact = false;
-                    Text::word(format!("#{a}(struct)"), Class::Prim)
-                }
-            });
+            items.push((
+                Member::Struct,
+                match ctx {
+                    None => Text::word("{..}", Class::Prim),
+                    Some(a) => {
+                        self.exact = false;
+                        Text::word(format!("#{a}(struct)"), Class::Prim)
+                    }
+                },
+            ));
         }
         match p.morphisms.is_leaf() {
             Some(false) => {}
-            Some(true) => items.push(every_morphism()),
-            None => items.push(self.refer(Item::Morphisms(p.morphisms.clone(), false))),
+            Some(true) => items.push((Member::Function, every_morphism())),
+            None => items.push((
+                Member::Function,
+                self.refer(Item::Morphisms(p.morphisms.clone(), false)),
+            )),
         }
-        items
+        order::sort_by_member(&mut items, |(m, _)| *m);
+        items.into_iter().map(|(_, t)| t).collect()
     }
 
-    fn atom(&mut self, items: &mut Vec<Text>, name: &Arc<str>, part: &super::AtomPart) {
+    fn atom<'a>(
+        &mut self,
+        items: &mut Vec<(Member<'a>, Text)>,
+        name: &'a Arc<str>,
+        part: &super::AtomPart,
+    ) {
         if part.bare {
-            items.push(Text::word(format!("#{name}"), Class::Prim));
+            let member = Member::Atom {
+                name,
+                payload: false,
+            };
+            items.push((member, Text::word(format!("#{name}"), Class::Prim)));
         }
         if part.payload != Type::empty() {
-            items.push(self.refer(Item::Ty(Some(name.clone()), part.payload.clone())));
+            let member = Member::Atom {
+                name,
+                payload: true,
+            };
+            let text = self.refer(Item::Ty(Some(name.clone()), part.payload.clone()));
+            items.push((member, text));
         }
     }
 
@@ -1346,9 +1409,13 @@ impl Printer<'_> {
         }
         let roots = roots
             .iter()
-            .map(|&(i, at)| {
+            .enumerate()
+            .map(|(k, &(i, at))| {
                 let mut out = String::new();
-                self.write(&[Seg::Node(i, at)], &named, &mut out);
+                match self.apart.get(k).copied().unwrap_or(false) {
+                    true => self.write_out(i, at, &named, &mut out),
+                    false => self.write(&[Seg::Node(i, at)], &named, &mut out),
+                }
                 out
             })
             .collect();
@@ -1406,6 +1473,29 @@ impl Printer<'_> {
         }
     }
 
+    /// Writes node `i` at `at` by its own text, not by a name, following a text that is one
+    /// reference to another node to that node's text: a root printed apart ([`Type::surfaces_apart`]).
+    /// The nodes inside are written by [`Printer::write`].
+    fn write_out(&self, mut i: usize, at: At, named: &[Option<String>], out: &mut String) {
+        let mut text = self.texts[i].as_ref().expect("visited");
+        while let [Seg::Node(j, _)] = text.segs[..] {
+            i = j;
+            text = self.texts[i].as_ref().expect("visited");
+        }
+        let class = match text.class {
+            Class::Of(j) => self.class(j, named),
+            c => c,
+        };
+        let wrap = !at.admits(class);
+        if wrap {
+            out.push('(');
+        }
+        self.write(&text.segs, named, out);
+        if wrap {
+            out.push(')');
+        }
+    }
+
     /// Writes `segs`, a node by its name or else its own text, with a stack of its own.
     fn write(&self, segs: &[Seg], named: &[Option<String>], out: &mut String) {
         let mut pieces = Pieces::new(segs);
@@ -1428,7 +1518,15 @@ impl Printer<'_> {
     }
 }
 
-fn lits(items: &mut Vec<Text>, name: &str, l: &Lits, spell: Option<Spell<'_>>) {
+/// The literals of `l` as items of a union, each with its member: `whole`, the base type
+/// `name`, or what is left of it, or each literal by its value.
+fn lits<'a>(
+    items: &mut Vec<(Member<'a>, Text)>,
+    name: &str,
+    l: &'a Lits,
+    whole: Member<'a>,
+    spell: Option<Spell<'_>>,
+) {
     // Complexity tradeoff: a value with a spelling is written as the program spells it, one
     // lookup each, O(log s) in the s spellings (`Spell`), and its text copied once, as the
     // canonical text it replaces is made once; the text stays linear in what it prints. Naively
@@ -1439,16 +1537,23 @@ fn lits(items: &mut Vec<Text>, name: &str, l: &Lits, spell: Option<Spell<'_>>) {
                 Some(s) => s.into_owned(),
                 None => super::lit_text(v),
             };
-            Text::word(text, Class::Prim)
+            (v, Text::word(text, Class::Prim))
         })
     };
     match (l.cofinite, l.values.is_empty()) {
-        (true, true) => items.push(Text::word(name, Class::Prim)),
+        (true, true) => items.push((whole, Text::word(name, Class::Prim))),
         (true, false) => {
-            let taken = Text::joined(each().collect(), " | ", At::Union, Class::Union, "Never");
-            items.push(minus(name, taken));
+            let taken = each().map(|(_, t)| t).collect();
+            let taken = Text::joined(taken, " | ", At::Union, Class::Union, "Never");
+            items.push((whole, minus(name, taken)));
         }
-        (false, _) => items.extend(each()),
+        (false, _) => items.extend(each().map(|(v, t)| {
+            let member = match v {
+                Value::Str(s) => Member::Str(s),
+                v => Member::Number(v),
+            };
+            (member, t)
+        })),
     }
 }
 
@@ -1637,6 +1742,37 @@ mod tests {
                     s.root.matches(" \\ ").count() + s.root.matches(" | ").count(),
                     m - 1
                 );
+            },
+        );
+    }
+
+    #[test]
+    fn a_union_of_many_numeric_literals_prints_ascending_in_m_log_m() {
+        // `0 | 0.5 | 2r/3r | 1 | 1.5 | 5r/3r | …`: m literals of each of int, f64 and rat, which
+        // the fixed order interleaves by value (DESIGN.md sec:diagnostics, decision A92).
+        let build = |m: usize| {
+            Type::with(|p| {
+                for i in 0..m as i64 {
+                    p.ints.insert(&Value::Int(i));
+                    p.floats.insert(&Value::float(i as f64 + 0.5));
+                    let r = crate::num::Rat::new((3 * i + 2).into(), 3.into()).expect("a ratio");
+                    p.rats.insert(&Value::rat(r));
+                }
+            })
+        };
+        let n = 1 << 10;
+        let built: BTreeMap<usize, Type> = [n, scaling::FACTOR * n]
+            .into_iter()
+            .map(|m| (m, build(m)))
+            .collect();
+        let small = build(2).surface().root.to_string();
+        assert_eq!(small, "0 | 0.5 | 2r/3r | 1 | 1.5 | 5r/3r");
+        scaling::check(
+            "the text of a union of literals of three carriers, ascending",
+            n,
+            |m| {
+                let s = built[&m].surface();
+                assert_eq!(s.root.matches(" | ").count(), 3 * m - 1);
             },
         );
     }

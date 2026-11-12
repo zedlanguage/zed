@@ -786,7 +786,7 @@ fn a_call_of_literal_values_at_a_union_of_carriers_is_rejected_whole() {
         vec![
             "`h` does not take (1 | 2): these are the types of its arguments here, and `h` has \
              no arrow that takes them all\n  T1 stands for a part written more than once:\n    \
-             type T1 = rat | f64; [h(g(c))]"
+             type T1 = f64 | rat; [h(g(c))]"
                 .to_string()
         ]
     );

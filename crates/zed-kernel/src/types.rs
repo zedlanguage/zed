@@ -31,7 +31,7 @@ mod hash;
 use hash::SALT;
 pub(crate) use hash::mix;
 mod print;
-pub use print::{defs, names};
+pub use print::{defs, names, order};
 
 use imbl::ordmap::DiffItem;
 use imbl::{OrdMap, OrdSet};
@@ -1088,6 +1088,21 @@ fn walk<'a, A: Ordered>(w: Walk<'a, A>, steps: &mut Vec<Step<'a>>, equal: &Equal
     }
 }
 
+/// A type split by the places its members take in a union ([`Type::print_groups`]); each part
+/// may be empty.
+pub struct PrintGroups {
+    /// Its numbers, booleans and string literals.
+    pub low: Type,
+    /// `String`, or what is left of it after some literals are taken out.
+    pub string: Type,
+    /// Its tuples and structs.
+    pub tuples: Type,
+    /// Its functions.
+    pub morphisms: Type,
+    /// Its atoms, cut by name at the cuts given.
+    pub atoms: Vec<Type>,
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 struct Parts {
     /// The hash of the other fields, set by [`Type::new`].
@@ -2107,6 +2122,63 @@ impl Type {
         };
         let map = map.into_iter().flatten().map(|(n, a)| (&**n, a.bare));
         Some(map.chain(list.into_iter().flatten().map(|(n, b)| (&**n, *b))))
+    }
+
+    /// `self` split by the places its members take in a union ([`order`], DESIGN.md
+    /// sec:diagnostics), for a printer that writes members of its own among them: the checker's
+    /// type, whose type variables, tuple shapes, functions and atoms with known payloads stand
+    /// between these parts. `cuts` are names in ascending order, where the atoms are cut: the
+    /// atoms of [`PrintGroups::atoms`] at `i` have names after `cuts[i - 1]` and up to `cuts[i]`,
+    /// so that an atom another printer writes with the name `cuts[i]` follows them. `None` when
+    /// `self` prints as one text whatever stands beside it: a recursive type, by its name, and a
+    /// type of every atom, tuple and struct, `_` or `_ \ c`. Linear in its parts, with
+    /// O(log a) for each of its a atom names.
+    pub fn print_groups(&self, cuts: &[&str]) -> Option<PrintGroups> {
+        let Node::Parts(p, _) = &*self.0 else {
+            return None;
+        };
+        if p.atoms.cofinite && p.tuples.rest && p.structs {
+            return None;
+        }
+        let low = Type::with(|q| {
+            q.bools = p.bools;
+            q.ints = p.ints.clone();
+            q.rats = p.rats.clone();
+            q.floats = p.floats.clone();
+            if !p.strings.cofinite {
+                q.strings = p.strings.clone();
+            }
+        });
+        let string = match p.strings.cofinite {
+            true => Type::with(|q| q.strings = p.strings.clone()),
+            false => Type::empty(),
+        };
+        let tuples = Type::with(|q| {
+            q.tuples = p.tuples.clone();
+            q.structs = p.structs;
+        });
+        let morphisms = Type::with(|q| q.morphisms = p.morphisms.clone());
+        let mut buckets = vec![Atoms::default(); cuts.len() + 1];
+        match p.atoms.cofinite {
+            true => buckets[0] = p.atoms.clone(),
+            false => {
+                for (name, part) in p.atoms.names.iter() {
+                    let i = cuts.partition_point(|c| *c < &**name);
+                    buckets[i].set(name, part.clone());
+                }
+            }
+        }
+        let atoms = buckets
+            .into_iter()
+            .map(|a| Type::with(|q| q.atoms = a))
+            .collect();
+        Some(PrintGroups {
+            low,
+            string,
+            tuples,
+            morphisms,
+            atoms,
+        })
     }
 }
 

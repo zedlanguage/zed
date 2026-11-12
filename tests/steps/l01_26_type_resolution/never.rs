@@ -125,7 +125,7 @@ fn an_unreachable_branch_adds_nothing_to_the_result() {
         // A test that may hold keeps both branches.
         (
             "f(positional x: int | bool) = if x is int { 1 } else { 2 };\n",
-            "(bool | int) -> 1 | 2",
+            "(int | bool) -> 1 | 2",
         ),
     ] {
         assert_eq!(type_errors(text), Vec::<String>::new(), "{text}");
@@ -338,23 +338,9 @@ fn a_bool_tested_again_on_its_own_path_takes_one_branch() {
         ),
     ] {
         assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
-        let got = sig(&text, "f");
-        // The fixed order puts a type variable before the atoms (author, A92 B), and the
-        // printer still writes `#inexact | T` (ledger MSG-union-order-consistent); until it is
-        // fixed, a result with both is compared as a set of members, and the rest as text.
-        let (args, result) = got.split_once(" -> ").expect("an arrow");
-        if result.contains(" | T") && result.contains('#') {
-            let members = |r: &str| {
-                let mut m: Vec<String> = r.split(" | ").map(String::from).collect();
-                m.sort();
-                m
-            };
-            let (want_args, want_result) = want.split_once(" -> ").expect("an arrow");
-            assert_eq!(args, want_args, "{text}");
-            assert_eq!(members(result), members(want_result), "{text}");
-        } else {
-            assert_eq!(got, want, "{text}");
-        }
+        // The members print in the fixed order of a union (DESIGN.md sec:diagnostics): a type
+        // variable before the atoms.
+        assert_eq!(sig(&text, "f"), want, "{text}");
     }
 }
 

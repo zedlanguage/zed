@@ -256,7 +256,7 @@ fn a_printed_bounded_type_reads_back() {
         ("(T) -> T for T in int | f64", "(T) -> T for T in int | f64"),
         (
             "(T, U) -> T for T in int, U in String | bool",
-            "(T, U) -> T for T in int, U in String | bool",
+            "(T, U) -> T for T in int, U in bool | String",
         ),
         (
             "((T) -> T for T in rat) -> int",
@@ -793,7 +793,7 @@ fn a_lambda_whose_uses_the_bound_does_not_allow_is_an_error() {
         // A comparison gives a bool, not the carrier passed.
         (
             "y = p_wide(g: (x) -> x < x);\n",
-            "the lambda is `(x: T) -> bool for T in int | f64 | rat | String | bool`, \
+            "the lambda is `(x: T) -> bool for T in int | f64 | rat | bool | String`, \
              not `(x: T) -> T for T in int | f64`: it is passed where a function of that type is expected, and its own type does not fit that one [(x) -> x < x]",
         ),
         // `a` and `b` take different carriers, so `a + b` is no sum of one carrier.

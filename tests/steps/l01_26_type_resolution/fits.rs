@@ -247,7 +247,7 @@ fn arrows_that_cover_only_across_two_parameters_are_refused_with_the_reason() {
     assert_eq!(
         type_errors(text),
         [
-            "`p` does not take (((x: int, y: int) -> String) & ((x: bool, y: bool) -> String) & ((x: int, y: bool) -> String) & ((x: bool, y: int) -> String)): at `(x: T1, y: T1) -> String`, the arrow `(x: int, y: int) -> String` takes a part of more than one parameter, and arrows are combined only when they differ at one parameter: telling whether arrows that each split several parameters cover them all can take time exponential in the number of parameters, so the checker does not try; to repair it, write the arrows so that they differ at one parameter\n  T1 stands for a part written more than once:\n    type T1 = bool | int; [p(f: g)]"
+            "`p` does not take (((x: int, y: int) -> String) & ((x: bool, y: bool) -> String) & ((x: int, y: bool) -> String) & ((x: bool, y: int) -> String)): at `(x: T1, y: T1) -> String`, the arrow `(x: int, y: int) -> String` takes a part of more than one parameter, and arrows are combined only when they differ at one parameter: telling whether arrows that each split several parameters cover them all can take time exponential in the number of parameters, so the checker does not try; to repair it, write the arrows so that they differ at one parameter\n  T1 stands for a part written more than once:\n    type T1 = int | bool; [p(f: g)]"
         ]
     );
     let text = "p(f: (x: int | bool, y: int) -> String) = f(x: 1, y: 2);\n\
@@ -329,7 +329,7 @@ fn arrows_whose_results_intersect_within_only_on_different_sets_are_refused_with
     assert_eq!(
         type_errors(text),
         [
-            "`p` does not take (((x: bool | int) -> String | #a) & ((x: int) -> String | #b) & ((x: bool) -> String | #c)): at `(x: bool | int) -> String`, the arrows `(x: bool | int) -> String | #a`, `(x: int) -> String | #b`, `(x: bool) -> String | #c` each return outside `String`; where several take one value, the result is what their results share, and the checker works that out only for arrows that each take all that the arrows returning within `String` leave of one parameter, since finding the values each group of arrows shares takes time that grows with the product of their number; to repair it, write the arrows so that each returns within `String` [p(f: g)]"
+            "`p` does not take (((x: int | bool) -> String | #a) & ((x: int) -> String | #b) & ((x: bool) -> String | #c)): at `(x: int | bool) -> String`, the arrows `(x: int | bool) -> String | #a`, `(x: int) -> String | #b`, `(x: bool) -> String | #c` each return outside `String`; where several take one value, the result is what their results share, and the checker works that out only for arrows that each take all that the arrows returning within `String` leave of one parameter, since finding the values each group of arrows shares takes time that grows with the product of their number; to repair it, write the arrows so that each returns within `String` [p(f: g)]"
         ]
     );
 }
@@ -419,7 +419,7 @@ fn results_that_hold_a_function_or_a_variable_are_intersected() {
     assert_eq!(
         type_errors(text),
         [
-            "`p` does not take (((x: int) -> String | #a | ((y: int) -> int)) & ((x: int) -> String | ((y: int) -> int))): at `(x: int) -> String`, the arrows `(x: int) -> String | #a | ((y: int) -> int)`, `(x: int) -> String | ((y: int) -> int)` each take all of it, and the intersection of their results, as the checker builds it (a function in one result is left out where another holds no function, and a variable bounded by carriers where each carrier of its bound is missing from some other result; every other piece that holds a function, a variable or the unknown is kept whole), is not within `String` [p(f: g)]"
+            "`p` does not take (((x: int) -> String | ((y: int) -> int) | #a) & ((x: int) -> String | ((y: int) -> int))): at `(x: int) -> String`, the arrows `(x: int) -> String | ((y: int) -> int) | #a`, `(x: int) -> String | ((y: int) -> int)` each take all of it, and the intersection of their results, as the checker builds it (a function in one result is left out where another holds no function, and a variable bounded by carriers where each carrier of its bound is missing from some other result; every other piece that holds a function, a variable or the unknown is kept whole), is not within `String` [p(f: g)]"
         ]
     );
     let text = "p(f: (x: U) -> U for U in int | f64) = f(x: 1);\n\
