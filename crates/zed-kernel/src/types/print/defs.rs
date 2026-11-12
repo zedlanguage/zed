@@ -16,7 +16,7 @@
 //! A tuple that one type writes once may be written again by another type of the message, or
 //! inside another tuple there: a chain `a1 = (a0, 1); a2 = (a1, 2); …` whose steps each print
 //! the next. Each such tuple goes into the table too, as a part that may be named
-//! (`\u{FDD4}k\u{FDD6}`, [`add_soft`]), and [`lift`] names it only when one of its uses is
+//! (`\u{FDD4}k\u{FDD6}`, `add_soft`), and [`lift`] names it only when one of its uses is
 //! inside another part. A tuple holding a part of its own is named when the message writes it
 //! twice or more, once inside another part. A tuple holding none is named when its uses inside
 //! other parts make naming shorter: written there n times, its declaration `type Tk = …;` and
@@ -304,7 +304,7 @@ fn spell(
 /// variables the texts mark are named, skipping every word of the texts ([`name_vars`]). `texts`
 /// with no mark or reference are left as they are, and give no definition.
 ///
-/// A part placed by [`add_soft`] is counted where it is written: n times in all, counting each
+/// A part placed by `add_soft` is counted where it is written: n times in all, counting each
 /// reference in a text and each in a body reached, each body once, and n_b of them in bodies.
 /// One whose body holds a reference is named when n_b ≥ 1 and n ≥ 2: so a part held at each
 /// level of a nesting, or by each link of a chain whose steps print each link, is written once.

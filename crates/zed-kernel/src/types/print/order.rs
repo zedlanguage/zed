@@ -1,7 +1,7 @@
 //! The order in which the members of a union print (DESIGN.md sec:diagnostics, author decision
 //! A92): one order fixed by the type, so that equal types print alike whatever order the
 //! program wrote them in, and two messages that print one union print it alike. Every printer
-//! of a union, the kernel's ([`super::Printer`]) and the checker's, places its members by
+//! of a union, the kernel's (`super::Printer`) and the checker's, places its members by
 //! [`cmp`]:
 //!
 //! 1. numeric literals, ascending by value, two of one value by their carrier in the order of

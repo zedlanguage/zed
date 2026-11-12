@@ -657,7 +657,7 @@ impl Literal for Morphism {
     }
 }
 
-/// The steps of [`order`] for the atoms of a universe and the nodes of its diagrams.
+/// The steps of [`order()`] for the atoms of a universe and the nodes of its diagrams.
 trait Ordered: Literal {
     /// The step that compares two atoms.
     fn atoms<'a>(a: &'a Self, b: &'a Self) -> Step<'a>;
@@ -689,7 +689,7 @@ type AtomNames = imbl::OrdMap<Arc<str>, AtomPart>;
 /// The tuple lengths of a type with their parts.
 type Lens = BTreeMap<usize, Part<Row>>;
 
-/// A pair to compare in [`order`], the rest of two sequences compared in order, the order of two
+/// A pair to compare in [`order()`], the rest of two sequences compared in order, the order of two
 /// fields already compared, or two nodes or expressions whose contents compared equal.
 enum Step<'a> {
     Types(&'a Type, &'a Type),
@@ -709,7 +709,7 @@ enum Step<'a> {
     Equal(u64, u64),
 }
 
-/// The pairs of node ids [`order`] found equal, hashed by `digest::Digest`: the default hasher
+/// The pairs of node ids [`order()`] found equal, hashed by `digest::Digest`: the default hasher
 /// seeds itself per set and runs SipHash on each pair (EMPTY-morphism-next).
 type Equal = HashSet<(u64, u64), std::hash::BuildHasherDefault<crate::digest::Digest>>;
 
@@ -793,7 +793,7 @@ fn order(first: Step<'_>) -> Ordering {
     Ordering::Equal
 }
 
-/// One step of [`order`] on the remaining components of two rows: each pair of components is
+/// One step of [`order()`] on the remaining components of two rows: each pair of components is
 /// read at once by [`types`] where its fields decide it, so that two rows told apart without
 /// reading a nested type push nothing; at the first pair that needs one, the rest of the rows is
 /// pushed below what [`types`] pushed. [`types`] calls neither this nor itself, so the depth of
@@ -822,7 +822,7 @@ fn items<'a>(
     }
 }
 
-/// One step of [`order`] on two types: the fields in order, each read at once where it can be,
+/// One step of [`order()`] on two types: the fields in order, each read at once where it can be,
 /// so that two types told apart without reading a nested type push nothing; at the first field
 /// that needs a nested comparison (an atom's payload, a tuple length's part, the morphism part)
 /// the fields after it are pushed in reverse and the nested comparison above them, so that they
@@ -903,7 +903,7 @@ fn types<'a>(a: &'a Type, b: &'a Type, steps: &mut Vec<Step<'a>>, equal: &Equal)
         .then_with(|| walk(Walk::Parts(&p.morphisms, &q.morphisms), steps, equal))
 }
 
-/// One step of [`order`] on the atom names of two types after `from`, each with its part, read
+/// One step of [`order()`] on the atom names of two types after `from`, each with its part, read
 /// at once where the names, the bare atoms or the payloads' digests decide them; at the first
 /// payload that ties in digest, the rest of the names is pushed (as the last name read) and the
 /// two payloads above it. Resuming takes `O(log n)` in the names, read only after a nested
@@ -970,7 +970,7 @@ fn atom_names<'a>(
     }
 }
 
-/// One step of [`order`] on the tuple lengths of two types after `from`, each with its part,
+/// One step of [`order()`] on the tuple lengths of two types after `from`, each with its part,
 /// read at once where the lengths or the parts' digests decide them; at the first pair of parts
 /// that ties in digest, the rest of the lengths is pushed (as the last length read) below what
 /// [`walk`] pushed. Resuming takes `O(log n)` in the lengths, read only after a nested
@@ -1008,7 +1008,7 @@ fn tuple_lens<'a>(
     }
 }
 
-/// One step of [`order`] on two diagrams, expressions or parts of one universe.
+/// One step of [`order()`] on two diagrams, expressions or parts of one universe.
 fn walk<'a, A: Ordered>(w: Walk<'a, A>, steps: &mut Vec<Step<'a>>, equal: &Equal) -> Ordering {
     match w {
         Walk::Parts(Part::Bdd(a), Part::Bdd(b)) => walk(Walk::Bdds(a, b), steps, equal),
@@ -2124,7 +2124,7 @@ impl Type {
         Some(map.chain(list.into_iter().flatten().map(|(n, b)| (&**n, *b))))
     }
 
-    /// `self` split by the places its members take in a union ([`order`], DESIGN.md
+    /// `self` split by the places its members take in a union ([`mod@order`], DESIGN.md
     /// sec:diagnostics), for a printer that writes members of its own among them: the checker's
     /// type, whose type variables, tuple shapes, functions and atoms with known payloads stand
     /// between these parts. `cuts` are names in ascending order, where the atoms are cut: the
