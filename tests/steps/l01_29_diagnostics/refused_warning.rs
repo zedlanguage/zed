@@ -1,6 +1,6 @@
 //! A question the checker refuses in a unit it accepts reaches `zedc` output as a placed
-//! warning with its derivation (DESIGN.md L1.39; WARN-refused): on standard error, at the test
-//! or read that asked it, in order of place and then of question, from `zedc run` and `zedc test`
+//! warning with its derivation (DESIGN.md L1.39; WARN-refused): on standard error, at the test,
+//! read or bound value that asked it, in order of place and then of question, from `zedc run` and `zedc test`
 //! alike, the same in a batch as alone, and only for a unit with no rejection.
 
 use zed_tests::scaling;
@@ -229,6 +229,154 @@ fn a_rejected_unit_prints_no_warning() {
     assert_eq!(status, 1);
     assert!(out.contains("`y`"), "{out}");
     assert_eq!(err, "");
+}
+
+/// A function `name` of a leaf `a` above four hubs held by [`GROWTH`], whose branch is the lines
+/// `body`. The test asks nothing of `a`, so its question about `a` waits until a read of `a` in
+/// `body` asks it, and is refused there.
+fn star(name: &str, body: &str) -> String {
+    format!(
+        "{name}(a: int, x: int, y: int, z: int, w: int) =\n  \
+         if a - w - x - y - z >= 0 && {GROWTH} {{\n{body}  }} else {{\n    0\n  }};\n"
+    )
+}
+
+/// The conditions on `a` and its hubs that a read of `a` in a [`star`] branch asks about.
+const STAR: &str = "a >= w + x + y + z && 12 * w + 10 * y + 12 * z <= 4 * x + 11 && \
+                    8 * w + 5 * x + z <= 12 * y + 31 && 4 * w + 10 * x >= 10 * y + 11 * z + 28 && \
+                    11 * w + 4 * x + 12 * z >= y + 28";
+
+/// The warning of [`STAR`] refused at line `line`, column `col` of `file`, under `width` carets.
+fn star_warning(file: &str, src: &str, line: usize, col: usize, width: usize, i: usize) -> String {
+    let text = src.lines().nth(line - 1).unwrap();
+    let carets = format!("{}{}", " ".repeat(col - 1), "^".repeat(width));
+    let address = zedc::suppress::InFile::of(file.as_ref())
+        .unwrap()
+        .address(&zedc::run::load(src.as_bytes()).unwrap().warnings()[i]);
+    format!(
+        "\
+{file}:{line}:{col}: Cannot find exactly which values meet the conditions here.
+  [1] {line}:{col}: here the conditions `{STAR}` hold
+      {line} | {text}
+        | {carets}
+  [2] {line}:{col}: the checker could not work out which values each of their variables can take: \
+to find whole numbers that meet these conditions, the checker removes one variable at a time, \
+putting in place of the conditions on it conditions on the variables left. Here four variables \
+or more are left, and removing any one of them would leave more conditions than there are now, \
+so the work could grow without end. The checker stopped there, and the bounds that each \
+condition gives each variable from the bounds of the others rule out no value: `a`, `w`, `x`, \
+`y` and `z` may still be any whole number
+  [3] {line}:{col}: so here each of their variables keeps only those bounds, which may be wider \
+than the conditions allow; so the checker may reject or warn about code here that is correct, \
+and it does not accept code that is wrong
+  [4] {line}:{col}: repair: if `a` is meant to take only one value in the conditions, state that \
+value, and the checker removes `a` from the question: `a == 0 && {STAR}`, with the value in \
+place of `0`
+  address: {address}
+"
+    )
+}
+
+/// The place `line:col` of each warning in the standard error `err` of `file`.
+fn places<'a>(file: &str, err: &'a str) -> Vec<&'a str> {
+    firsts(err)
+        .iter()
+        .map(|l| l[file.len() + 1..].split(": ").next().unwrap())
+        .collect()
+}
+
+#[test]
+fn a_question_refused_by_a_read_is_placed_at_the_read() {
+    // The test's own question about the hubs is refused at its last conjunct; the question
+    // about `a`, asked when `100 div a` reads `a`, is refused at that read, not at the test.
+    let src = program(&star("f", "    100 div a\n"));
+    let file = unit("read", "read.zed", &src);
+    let (status, out, err) = test(&[&file]);
+    assert_eq!(status, 0, "{out}");
+    assert_eq!(out, "2 passed, 0 failed, 0 rejection units\n");
+    assert_eq!(places(&file, &err), ["2:165", "3:13"]);
+    let read = &err[err.find(&format!("{file}:3:")).unwrap()..];
+    assert_eq!(read, star_warning(&file, &src, 3, 13, 1, 1));
+    assert_eq!(run(&file, &["--addresses"]), (0, err));
+}
+
+#[test]
+fn a_question_refused_by_a_bound_value_is_placed_at_the_value() {
+    // `b = a * 2` reads `a` to bound `b`; the refusal is at `a * 2`, not at the later read of
+    // `b` and not at the test.
+    let body = "    {\n      b = a * 2;\n      100 div b\n    }\n";
+    let src = program(&star("g", body));
+    let file = unit("bound", "bound.zed", &src);
+    let (status, out, err) = test(&[&file]);
+    assert_eq!(status, 0, "{out}");
+    assert_eq!(places(&file, &err), ["2:165", "4:11"]);
+    let bound = &err[err.find(&format!("{file}:4:")).unwrap()..];
+    assert_eq!(bound, star_warning(&file, &src, 4, 11, "a * 2".len(), 1));
+    assert_eq!(run(&file, &["--addresses"]), (0, err));
+}
+
+#[test]
+fn each_read_and_each_bound_value_has_its_own_warning() {
+    // One question asked at several places is one warning at each place, in order of place:
+    // two reads on one line, reads in the two arms of an `if`, and two bound values.
+    for (name, body, expected) in [
+        (
+            "two_reads",
+            "    100 div a + 100 div a\n",
+            &["2:165", "3:13", "3:25"][..],
+        ),
+        (
+            "two_arms",
+            "    if x >= 3 { 100 div a } else { 100 div (a + 1) }\n",
+            &["2:165", "3:25", "3:44"],
+        ),
+        (
+            "two_values",
+            "    {\n      b = a * 2;\n      c = a * 3;\n      100 div b + 100 div c\n    }\n",
+            &["2:165", "4:11", "5:11"],
+        ),
+    ] {
+        let file = unit(
+            "several",
+            &format!("{name}.zed"),
+            &program(&star("f", body)),
+        );
+        let (status, _, err) = test(&[&file]);
+        assert_eq!(status, 0, "{name}");
+        assert_eq!(places(&file, &err), expected, "{name}");
+        assert_eq!(run(&file, &["--addresses"]), (0, err), "{name}");
+    }
+}
+
+/// One [`star`] function with `n` bound values `b0 = a * 2`, ... and a sum of `n` reads of `a`
+/// and one read of each value: `2 n` questions refused in one scope, one at each value and read.
+fn many_placed_refusals(n: usize) -> String {
+    let values: String = (0..n).map(|i| format!("      b{i} = a * 2;\n")).collect();
+    let reads: Vec<String> = (0..n)
+        .map(|i| format!("100 div b{i}"))
+        .chain((0..n).map(|_| "100 div a".to_string()))
+        .collect();
+    let body = format!("    {{\n{values}      {}\n    }}\n", reads.join(" + "));
+    program(&star("f", &body))
+}
+
+/// `zedc test` on a function whose scope places `2 n` refused questions, at its bound values
+/// and its reads: placing them all is within n log n.
+#[test]
+fn many_placed_refusals_scale() {
+    let n = 40;
+    let files = scaling::inputs(n, |m| {
+        unit("scale", &format!("placed{m}.zed"), &many_placed_refusals(m))
+    });
+    scaling::check(
+        "zedc test on n refused values and n refused reads",
+        n,
+        |m| {
+            let (status, _, err) = test(&[&files[&m]]);
+            assert_eq!(status, 0);
+            assert_eq!(firsts(&err).len(), 2 * m + 1);
+        },
+    );
 }
 
 /// A unit of `n` functions, each with a test whose question the checker refuses.
