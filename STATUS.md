@@ -1906,7 +1906,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CHK-f64-bounded-int | impl attempt 1 | 2026-11-12 00:53 | committed on wt/chk-f64-bounded-int, rebased on 40e73127e; scaling 7.93x/8.00x and 7.99x/7.99x (limit 12.25), neg control (ints_of again per node index) 52.7x b |
+| C2-local-tier | impl attempt 1 | 2026-11-11 01:43 | started; worktree /home/luke/Work/wt/c2-local-tier on origin/main |
 | DELETE-msg-cycle-push | running | 2026-11-11 13:43 |  |
 | DELETE-msg-cycle-unit-item | running | 2026-11-11 13:43 |  |
 | DELETE-msg-elab-operator | running | 2026-11-11 13:43 |  |
@@ -1918,8 +1918,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FIX-sort-no-key | impl attempt 1 | 2026-11-11 16:34 | pushed 6f14f73c6, 69ca80c93 to zed-impl main; local main fast-forwarded; worktree and branch removed; load 41.00 |
 | GROUP-search-canon-key-xr | impl attempt 1 | 2026-11-10 04:40 | round 1 closed: Gemini carbon rerun stopped by the 5 h timeout (rc=124, no report); its 16:03 state measured (sweep inhabited 0/0, exact 6/3, BELOW-BEST 5, CLAS |
 | GSX-unsolved | impl attempt 1 | 2026-11-11 16:53 | CD round 1 launched (experiment 4374754456781193217, baseline 66010); port worktree gsx-cd has the I6.7 memo move and I6.8 control fix, building |
-| HULL-join-depth | impl attempt 1 | 2026-11-11 01:43 | affected groups pass: l01_39_reduced_product 249/249 pieces, l01_38_presburger omega/slack_scale/preimage 38/38, zedc_preimage 57/57, zedc_presburger 194 passed |
-| IMPORTS-untyped-join | impl attempt 1 | 2026-11-11 01:43 | started in /home/luke/Work/wt/imports-untyped-join; load 53.31 55.21 55.76 |
+| IMPORTS-untyped-join | impl attempt 1 | 2026-11-11 01:43 | committed grouped untyped join + triangle reduction in F103; rebasing; load 64.33 54.13 52.97 |
 | INITIAL-two-sentinels-overlap | impl attempt 1 | 2026-11-11 17:21 | worktrees initial-overlap and initial-overlap-spec and their branches removed; done |
 | KERNEL-alloc-count-cost | impl attempt 1 | 2026-11-09 11:48 | started on 58979d7f6, load 56.57 55.43 56.03 |
 | KEYWORD-without-37 | impl attempt 1 | 2026-11-11 16:59 | done: worktrees keyword-without and keyword-without-spec and both branches removed |
@@ -1928,7 +1927,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | LIT-unfixed-decimal-binding | impl attempt 1 | 2026-11-11 14:59 | pushed db5cc1405 (tests only); l01_26a 148 passed 0 failed at load 43; follow-up LIT-cast-of-literal-union queued; removing worktree |
 | MINMAX-chain-rows | impl attempt 1 | 2026-11-11 01:43 | started; worktree on origin/main 40e73127e |
 | MSG-compare-components | impl attempt 1 | 2026-11-11 13:43 | fixed: pushed 25d87b8d3 + STATUS a71967299; follow-up MSG-derive-type-size queued; load 50.34 52.44 49.78 |
-| MSG-concise-style | impl attempt 1 | 2026-11-11 23:43 | pushed zed 6d4a276 and zed-impl 11f18a705 (literal headlines end with Try first fix; no f64 cast of int); l01_17/18/26/27/29/37a 137 pieces pass; menu_order 3 p |
+| MSG-concise-style | impl attempt 1 | 2026-11-11 23:43 | Part 2 ordering message: depth test 200/1600 levels 40.4M/302.6M instr 7.5x (limit 12.25); repair-at-depth test 100/800 23.6M/289.1M 12.2x (limit 102.19, power  |
 | MUTABLE-to-initial-facet | impl attempt 1 | 2026-11-11 23:16 | started; making worktrees mutable-carry and mutable-carry-spec |
 | PERF-negated-chain-unsolved | impl attempt 1 | 2026-11-11 17:41 | worktree wt/pncx-cd made to port CD candidate 45 (7-8% fewer instructions on 23..711 words, same growth) for the instruction-count comparison |
 | PRES-disj-regressions | running | 2026-11-11 23:37 |  |
@@ -1937,7 +1936,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PRODUCT-superlinear-main | impl attempt 1 | 2026-11-12 00:05 | blocked, no commit (load1 56.17): shared cause = case split re-projects every earlier part on a moved hub, Theta(k) projections per test, 90-98% no-ops; persist |
 | RADIX-depth | impl attempt 1 | 2026-11-11 01:43 | started; worktree /home/luke/Work/wt/radix-depth on origin/main d69e2376a; load 60.92 |
 | REFUSAL-front-unsolved | running | 2026-11-11 17:03 |  |
-| RENDER-line-per-error-quadratic | impl attempt 1 | 2026-11-11 23:59 | green: l01_29 303 pass (menu_order known fail); 15 affected groups (l01_06,07,13,16,21,23,24,25,26,28,30,38,39_reduced_product,l02_03,l02_08) 1023 pieces 0 fail |
+| STAGE-joined-eq | impl attempt 1 | 2026-11-11 01:43 | started; worktree /home/luke/Work/wt/stage-joined-eq on origin/main |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
