@@ -385,7 +385,8 @@ pub fn recursion(items: &[&Stmt], cycle: &[usize]) -> (Span, String) {
     )
 }
 
-/// How a message names the statement `s`: by the names it binds.
+/// How a message names the statement `s` of a cycle: by the names it binds. Only a statement
+/// that binds a name is in a cycle, since only such a statement is waited on (`deps`).
 fn what(s: &Stmt) -> String {
     match &s.kind {
         StmtKind::Bind { targets, .. } => {
@@ -399,8 +400,9 @@ fn what(s: &Stmt) -> String {
             names.join(" and ")
         }
         StmtKind::Function(f) => format!("`{}`", f.name),
-        StmtKind::Push { port, .. } => format!("the push to `{port}`"),
-        StmtKind::Return(_) => "the export".into(),
+        StmtKind::Push { .. } | StmtKind::Return(_) => {
+            unreachable!("a push or an export binds no name, so it is in no cycle")
+        }
         StmtKind::UnitAnnot(a) => format!("the unit item `@{}`", a.name),
         StmtKind::Struct(_)
         | StmtKind::Type(_)
