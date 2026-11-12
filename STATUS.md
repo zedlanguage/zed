@@ -1960,17 +1960,18 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| FOOTPRINT-overlap | impl attempt 1 | 2026-11-05 04:07 | start; making worktrees footprint-overlap and footprint-overlap-spec |
 | GSX-unsolved | hybrid-xr attempt 1 | 2026-11-11 16:53 | round H1 seats launched: Opus 5.5 medium (h1/claude, tree gsxh-claude), gpt-6.1-sol medium (h1/codex, tree gsxh-codex), 5 h limit; load 25.46 30.53 39.26 |
 | K36-study | impl attempt 1 | 2026-11-11 01:43 | baseline on 9e4f454bd: both 'quadratic' pinwheel tests now 8.4x and 7.7x from k 8 to 64 (155M->1296M, 171M->1310M instr; was 15,893M at k 64); measuring 64->512 |
-| LIT-two-union-headline | running | 2026-11-12 11:17 |  |
-| LIT-two-union-unread-wording | running | 2026-11-12 11:17 |  |
 | LOAD-max-div-unsolved | impl attempt 1 | 2026-11-11 17:11 | worktree /home/luke/Work/wt/lmd-cd (wt/lmd-cd at 7d96d3826) made for the Rust port; CD round 1 best 58 = 28.71 |
 | MAIN-l01_38-failures | impl attempt 1 | 2026-11-12 12:00 | start: worktree /home/luke/Work/wt/main-l01-38 from origin/main a69d78a9e |
+| MAIN-m0_03-plan | impl attempt 1 | 2026-11-12 12:16 | started; worktree /home/luke/Work/wt/m0-03-plan on origin/main |
 | MSG-many-args-decimal | running | 2026-11-12 07:32 |  |
 | MSG-many-args-one-error | running | 2026-11-12 07:32 |  |
 | MSG-many-args-repair-loop | impl attempt 1 | 2026-11-12 07:32 | started with MSG-many-args-decimal and MSG-many-args-one-error; worktree /home/luke/Work/wt/msg-many-args2, spec /home/luke/Work/wt/msg-many-args2-spec; load 36 |
 | POLY-nf | impl attempt 1 | 2026-11-11 01:43 | started; worktree /home/luke/Work/wt/poly-nf from origin/main |
 | PRODUCT-lin-rows | hybrid-xr attempt 1 | 2026-11-11 01:43 | round 0 started: own attempt at a potential design before seats |
+| RUNG2-bit | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/rung2-bit on origin/main 4fc432347 |
 | TRIVIAL-walk-branches | impl attempt 1 | 2026-11-12 11:58 | started; worktree /home/luke/Work/wt/trivial-walk-branches on origin/main a69d78a9e |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
