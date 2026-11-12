@@ -1980,7 +1980,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | RUNG2-bit | impl attempt 1 | 2026-11-05 04:07 | reached groups: 963 pieces, 1 failed (s22 touched_cases fixture printed the new empty bit_ands field; regenerated, only that field differs, now passes) / load 4 |
 | SOUND-random | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/sound-random on origin/main 6c1e01a6b |
 | T11-preimage-log | impl attempt 1 | 2026-11-05 04:07 | read Tx::forget (memo log) and Tr::truncate (made/cased/claimed logs), both called only at call_key and failed comparisons; drafted l01_38 one_scope test tests_ |
+| TESTS-L1.19-line-ends | orchestrator attempt  | 2026-11-08 23:59 | spawned impl agent (brief cd-xr/TESTS-L1.19-line-ends.md) |
 | TRIVIAL-walk-branches | cd-r1 attempt  | 2026-11-12 11:58 | CD experiment 7022871037675044865 launched (RUN_TYPE_SHORT), starter metric 13466296 |
+| WARN-refused | orchestrator attempt  | 2026-11-05 04:07 | spawned impl agent (brief cd-xr/WARN-refused.md) |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
