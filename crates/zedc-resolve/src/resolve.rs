@@ -517,7 +517,7 @@ fn later_type_layer(name: &str) -> Option<u32> {
 
 /// The annotations, each with the layer it belongs to (DESIGN.md, "Defined words by layer").
 /// `@hash`, of layer L2, pins an import and annotates no declaration.
-const ANNOTATIONS: &[(&str, u32)] = &[
+pub const ANNOTATIONS: &[(&str, u32)] = &[
     ("hash", 2),
     ("foreign", 7),
     ("export", 7),
@@ -560,7 +560,7 @@ fn is_off(a: &Annot) -> bool {
 }
 
 /// The type names of the prelude at L1; a unit declares no type before L2.
-const TYPES: &[&str] = &[
+pub const TYPES: &[&str] = &[
     "int",
     "rat",
     "f64",
