@@ -1971,14 +1971,15 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| BUILD-const | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/build-const from origin/main |
+| DIAG-control | impl attempt 1 | 2026-11-05 04:07 | started; creating worktree |
 | GSX-unsolved | hybrid-xr attempt 1 | 2026-11-11 16:53 | round H1 seats launched: Opus 5.5 medium (h1/claude, tree gsxh-claude), gpt-6.1-sol medium (h1/codex, tree gsxh-codex), 5 h limit; load 25.46 30.53 39.26 |
 | LOAD-max-div-unsolved | hybrid-xr attempt 1 | 2026-11-11 17:11 | round 1 launched: Codex gpt-6.1-sol + Opus medium on own difference-rule attempt (all A/C k<=1.04 in Python); Gemini 429; CD 7779475775073288193 continues (best |
 | MAIN-l01_38-failures | impl attempt 1 | 2026-11-12 12:00 | committed 2bd40ad3a, rebased as 39fc294b5 on 7940088be; building workspace all-targets / load 49.97 |
-| POLY-nf-power | impl attempt 1 | 2026-11-12 13:01 | started; worktree /home/luke/Work/wt/poly-nf-power seeded |
+| POLY-nf-power | impl attempt 1 | 2026-11-12 13:01 | rule A (terms bound per node) and gcd step for the dense product written; building |
 | RUNG2-bit | impl attempt 1 | 2026-11-05 04:07 | reached groups: 963 pieces, 1 failed (s22 touched_cases fixture printed the new empty bit_ands field; regenerated, only that field differs, now passes) / load 4 |
 | SOUND-random | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/sound-random on origin/main 6c1e01a6b |
 | T11-preimage-log | impl attempt 1 | 2026-11-05 04:07 | read Tx::forget (memo log) and Tr::truncate (made/cased/claimed logs), both called only at call_key and failed comparisons; drafted l01_38 one_scope test tests_ |
-| TESTS-L1.1-invisible | impl attempt 1 | 2026-11-08 23:59 | green: l01_01 12, l01_02 20, l01_06 16, l01_29 344 (+3 ignored), l01_37a 20, zedc unit 11, all pass; writing QUESTIONS A97 (joiners in names) |
 | TRIVIAL-walk-branches | cd-r1 attempt  | 2026-11-12 11:58 | CD experiment 7022871037675044865 launched (RUN_TYPE_SHORT), starter metric 13466296 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
