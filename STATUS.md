@@ -1909,6 +1909,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | C2-local-tier | impl attempt 1 | 2026-11-11 01:43 | reproduced on origin/main 2eecdbe4b: joined chain k=8 32 sides 319M instr 0.14 s, k=64 234 sides 13129M instr 5.7 s (41x instr, limit 24x); load 46 |
+| CHK-update-every-path-cases | impl attempt 1 | 2026-11-12 02:08 | started; reading spec and the must-assign walk |
 | DELETE-msg-cycle-push | running | 2026-11-11 13:43 |  |
 | DELETE-msg-cycle-unit-item | running | 2026-11-11 13:43 |  |
 | DELETE-msg-elab-operator | running | 2026-11-11 13:43 |  |
@@ -1933,7 +1934,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | MSG-derive-type-size | impl attempt 1 | 2026-11-11 23:35 | started; worktree /home/luke/Work/wt/msg-derive-type-size on origin/main 6874a6ea0 |
 | MSG-literal-type-article | impl attempt 1 | 2026-11-11 23:37 | started; worktree wt/msg-literal-article |
 | MSG-union-order-consistent | impl attempt 1 | 2026-11-11 13:26 | started; worktree wt/lit-print-order at 6874a6ea0; load 55.48 55.81 54.34 |
-| MUTABLE-to-initial-facet | impl attempt 1 | 2026-11-11 23:16 | done: spec af4dc8d; code b8e7bb281 2c09cbebe dec65ffeb; STATUS 639d30064, ledger 6f963c503; affected groups 195/195 pieces pass, clippy and fmt clean; worktrees |
 | PERF-negated-chain-unsolved | impl attempt 1 | 2026-11-11 17:41 | worktree wt/pncx-cd made to port CD candidate 45 (7-8% fewer instructions on 23..711 words, same growth) for the instruction-count comparison |
 | PRES-disj-regressions | running | 2026-11-11 23:37 |  |
 | PRINT-own-shape-1tuple | impl attempt 1 | 2026-11-09 10:56 | done; worktree and branch removed / load 33.55 27.72 27.93 |
