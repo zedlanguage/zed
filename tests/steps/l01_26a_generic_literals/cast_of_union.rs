@@ -67,23 +67,20 @@ fn a_cast_takes_each_value_of_a_call_at_its_own_arrow() {
     // The case of the item: `f64` has arrows at `int` and at `f64`, and each value has one.
     for (c, f, i) in [("true", "1.0", "1"), ("false", "2.5", "#inexact")] {
         let src = format!("{FORCED}\ny = f64(g({c}));\n");
-        assert_eq!(y_type(&src), "f64 | #inexact");
+        assert_eq!(y_type(&src), "f64");
         assert_eq!(value(&src, "y"), f);
         let src = format!("{FORCED}\ny = int(g({c}));\n");
         assert_eq!(y_type(&src), "int | #inexact | #invalid");
         assert_eq!(value(&src, "y"), i);
     }
     // As the `if` itself is, and as a `rat` value is at the `rat` arrow.
-    assert_eq!(
-        y_type("y = f64(if true { 1 } else { 2.5f64 });\n"),
-        "f64 | #inexact"
-    );
+    assert_eq!(y_type("y = f64(if true { 1 } else { 2.5f64 });\n"), "f64");
     let src = format!("{RAT}\ny = f64(g(false));\n");
     assert_eq!(y_type(&src), "f64 | #inexact");
     assert_eq!(value(&src, "y"), "2.5");
-    // Integer values alone stay at the `int` arrow, as before.
+    // Integer values alone stay at the `int` arrow, as before; an `int` within ±2^53 casts exactly.
     let src = "g(positional c: bool) = if c { 1 } else { 2 };\ny = f64(g(false));\n";
-    assert_eq!(y_type(src), "f64 | #inexact");
+    assert_eq!(y_type(src), "f64");
     assert_eq!(value(src, "y"), "2.0");
 }
 
@@ -142,10 +139,7 @@ fn a_cast_gives_no_carrier_to_a_decimal_branch() {
         fixes_check(&src, &old, [&f64, &rat]);
     }
     // An integer literal is an `int` there, as alone.
-    assert_eq!(
-        y_type("y = f64(if true { 1 } else { 2 });\n"),
-        "f64 | #inexact"
-    );
+    assert_eq!(y_type("y = f64(if true { 1 } else { 2 });\n"), "f64");
 }
 
 #[test]
