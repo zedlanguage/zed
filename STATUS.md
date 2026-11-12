@@ -1978,11 +1978,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | LOAD-max-div-unsolved | hybrid-xr attempt 1 | 2026-11-11 17:11 | round 1 launched: Codex gpt-6.1-sol + Opus medium on own difference-rule attempt (all A/C k<=1.04 in Python); Gemini 429; CD 7779475775073288193 continues (best |
 | MAIN-l01_38-failures | impl attempt 1 | 2026-11-12 12:00 | committed 2bd40ad3a, rebased as 39fc294b5 on 7940088be; building workspace all-targets / load 49.97 |
 | POLY-nf-power | impl attempt 1 | 2026-11-12 13:01 | rule A (terms bound per node) and gcd step for the dense product written; building |
-| RUNG2-bit | impl attempt 1 | 2026-11-05 04:07 | reached groups: 963 pieces, 1 failed (s22 touched_cases fixture printed the new empty bit_ands field; regenerated, only that field differs, now passes) / load 4 |
 | SOUND-random | impl attempt 1 | 2026-11-05 04:07 | negative control 2 (InDomain need checks off in floors_at): 17 kernel type errors in seeds 0..32 (seed 4 overflows the stack, investigating); load 37.17 41.16 4 |
 | T11-preimage-log | impl attempt 1 | 2026-11-05 04:07 | read Tx::forget (memo log) and Tr::truncate (made/cased/claimed logs), both called only at call_key and failed comparisons; drafted l01_38 one_scope test tests_ |
-| TESTS-L1.19-line-ends | impl attempt 1 | 2026-11-08 23:59 | 4 new tests (line_ends.rs) + 5 runtime-comparison inputs; group 54/54 pass, no code change needed (behavior already matched DESIGN); negative controls, not comm |
-| TRIVIAL-walk-branches | cd-r1 attempt  | 2026-11-12 11:58 | CD experiment 7022871037675044865 launched (RUN_TYPE_SHORT), starter metric 13466296 |
+| TESTS-L1.19-line-ends | impl attempt 1 | 2026-11-08 23:59 | found: main fails clippy -D warnings in tests/steps/m0_06_cost_scalarization/overlap.rs:93 (cloned_ref_to_slice_refs) and :551 (manual_is_multiple_of), from 6aa |
+| TRIVIAL-walk-branches | cd attempt  | 2026-11-12 11:58 | round-2 CD restart launched: experiment 3564106523854503937 (14 families + mirrors, seeded with the product walk; seed metric 3337022.7); round-1 experiment 702 |
 | WARN-refused | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/warn-refused on origin/main, seeded; load 26.44 34.04 49.89 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
