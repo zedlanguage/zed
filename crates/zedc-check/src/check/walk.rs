@@ -7288,7 +7288,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             // A pair with literals written in it is checked each time, since each literal
             // adopts a carrier of its own.
             let lits = at.iter().any(Option::is_some);
-            if !lits && seen.contains(&pair) {
+            // A pair with no tuple on either side is checked each time as well: it pushes no
+            // pair, so `seen` neither ends the walk nor saves more than its own check, whose
+            // errors and needs are kept once (`errors.dedup`, `need`'s `known`).
+            // Complexity tradeoff (COMPLEXITY.md F113): looking such a pair up in `seen` costs
+            // the size of its sets when an equal pair made apart is there, as the components
+            // `0 | 1 | ... | n` at the two ends of `(n, 0.5f64, n)` in a chain of `n` tuple
+            // `min`s are, so `n` per link and `n^2` for the chain. Used: checking it again,
+            // as the chain's links would cost anyway.
+            let scalar = pair.0.tuples.is_empty() && pair.1.tuples.is_empty();
+            if !lits && !scalar && seen.contains(&pair) {
                 continue;
             }
             let (a, b) = &pair;
@@ -7498,7 +7507,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                     }
                 }
             }
-            seen.insert(pair);
+            if !scalar {
+                seen.insert(pair);
+            }
         }
         unfixed_found.sort_by_key(|(s, _)| s.start);
         self.reject_unfixed(&format_args!("the arguments of {what}"), unfixed_found);

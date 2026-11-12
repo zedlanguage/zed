@@ -2115,10 +2115,7 @@ impl Lits {
     fn disjoint(&self, other: &Lits) -> bool {
         let (a, b) = (self, other);
         match (a.cofinite, b.cofinite) {
-            (false, false) if a.values.len() > b.values.len() => {
-                !b.values.iter().any(|v| a.values.contains(v))
-            }
-            (false, false) => !a.values.iter().any(|v| b.values.contains(v)),
+            (false, false) => Lits::apart(&a.values, &b.values),
             (false, true) => a.values.iter().all(|v| b.values.contains(v)),
             (true, false) => b.values.iter().all(|v| a.values.contains(v)),
             (true, true) => false,
@@ -2130,10 +2127,22 @@ impl Lits {
         let (a, b) = (self, other);
         match (a.cofinite, b.cofinite) {
             (false, false) => a.values.iter().all(|v| b.values.contains(v)),
-            (false, true) => !a.values.iter().any(|v| b.values.contains(v)),
+            (false, true) => Lits::apart(&a.values, &b.values),
             (true, false) => false,
             (true, true) => b.values.iter().all(|v| a.values.contains(v)),
         }
+    }
+
+    /// Whether no value is in both sets, read by walking the smaller set and looking each of
+    /// its values up in the larger.
+    // Complexity tradeoff (COMPLEXITY.md F113): the naive test walks the first set whatever the
+    // sizes, `O(s log l)` for its `s` values; a set of `n` literals tested against a cofinite
+    // set that leaves out none, as `0 | 1 | ... | n` within `int` in each link of a chain of
+    // `n` tuple `min`s, costs `n` each and `n^2` for the chain. Used: the smaller walked,
+    // `O(min(s, l) log max(s, l))`, `O(1)` against an empty set; the answer is the same.
+    fn apart(a: &OrdSet<Value>, b: &OrdSet<Value>) -> bool {
+        let (small, large) = if a.len() <= b.len() { (a, b) } else { (b, a) };
+        !small.iter().any(|v| large.contains(v))
     }
 
     fn contains(&self, v: &Value) -> bool {

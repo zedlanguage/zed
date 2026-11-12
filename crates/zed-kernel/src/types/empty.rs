@@ -825,17 +825,14 @@ impl Simulation {
 
     /// What `a` under `b` needs of pairs, or none if it fails here.
     fn rows(&mut self, a: &Parts, b: &Parts) -> Option<Vec<Vec<Vec<usize>>>> {
-        let within = |x: &Lits, y: &Lits| match (x.cofinite, y.cofinite) {
-            (false, false) => x.values.iter().all(|v| y.values.contains(v)),
-            (false, true) => x.values.iter().all(|v| !y.values.contains(v)),
-            (true, true) => y.values.iter().all(|v| x.values.contains(v)),
-            (true, false) => false,
-        };
+        // Each set of literals of `a` within that of `b` by [`Lits::within`], which tests a
+        // finite set against a cofinite one by walking the smaller of the finite set and the
+        // values the cofinite one leaves out (COMPLEXITY.md F113).
         let same = a.bools & !b.bools == 0
-            && within(&a.ints, &b.ints)
-            && within(&a.rats, &b.rats)
-            && within(&a.floats, &b.floats)
-            && within(&a.strings, &b.strings)
+            && a.ints.within(&b.ints)
+            && a.rats.within(&b.rats)
+            && a.floats.within(&b.floats)
+            && a.strings.within(&b.strings)
             && (!a.structs || b.structs)
             && (a.morphisms.is_leaf() == Some(false) || a.morphisms == b.morphisms)
             && (!a.atoms.cofinite || a.atoms == b.atoms)
