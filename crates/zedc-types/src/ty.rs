@@ -4428,15 +4428,20 @@ fn unchosen_text(
     second: &str,
     bucket: &str,
     apart: &str,
-    own: Option<(String, String)>,
+    own: Option<(Option<String>, String)>,
 ) -> String {
     let own = match own {
         // A shape that files `first` under a key of its own is the first shape of its bucket,
         // so only `second` searches past a first shape, and the comparison is decided.
-        Some((place, shape)) => format!(
+        Some((Some(place), shape)) => format!(
             "give {first} a shape of its own, written just before the shape that should hold \
              it and the same as that shape except at {place}: `{shape}`, with that shape's \
              other components in place of each `…`; or "
+        ),
+        // A shape of one component has no other components, so it is written whole.
+        Some((None, shape)) => format!(
+            "give {first} a shape of its own, written just before the shape that should hold \
+             it: `{shape}`; or "
         ),
         None => String::new(),
     };
@@ -4453,14 +4458,15 @@ fn unchosen_text(
 /// the first component where `first` has a class ([`class`]) that `second` does not have
 /// there, and the shape with `first`'s component there and `…` elsewhere, written by `write`
 /// from its components. Filed under that key, the shape holds `first` and not `second`.
-/// None when no component tells the two apart so.
+/// The place is None when `first` has one component, as the shape is then that component
+/// whole. None when no component tells the two apart so.
 fn own_shape(
     first: &[&Ty],
     second: &[&Ty],
     items: usize,
     names: &[&Arc<str>],
     write: impl FnOnce(String) -> String,
-) -> Option<(String, String)> {
+) -> Option<(Option<String>, String)> {
     let key = |c: &Ty| class(c).map(|(k, point)| point.map_or(k, ShapeKey::Point));
     let j = (0..first.len()).find(|&j| key(first[j]).is_some_and(|k| key(second[j]) != Some(k)))?;
     let comps: Vec<String> = (0..first.len())
@@ -4476,10 +4482,10 @@ fn own_shape(
             }
         })
         .collect();
-    let place = match j.checked_sub(items) {
+    let place = (first.len() > 1).then(|| match j.checked_sub(items) {
         None => format!("component {}, where it is {}", j + 1, first[j]),
         Some(f) => format!("field {}, where it is {}", names[f], first[j]),
-    };
+    });
     Some((place, write(comps.join(", "))))
 }
 
@@ -4915,7 +4921,15 @@ impl<'m, 's> Comparing<'m, 's> {
                     let apart = choices.apart(k, &id, cs.len(), &[]);
                     let xs: Vec<&Ty> = first.iter().collect();
                     let ys: Vec<&Ty> = cs.iter().collect();
-                    let own = own_shape(&xs, &ys, cs.len(), &[], |cs| format!("({cs})"));
+                    // A tuple of one component is written `(T,)`, as `(T)` reads as `T`.
+                    let one = cs.len() == 1;
+                    let own = own_shape(&xs, &ys, cs.len(), &[], |s| {
+                        if one {
+                            format!("({s},)")
+                        } else {
+                            format!("({s})")
+                        }
+                    });
                     unchosen_text(
                         "tuples",
                         &Ty::of_row(first.clone()).to_string(),

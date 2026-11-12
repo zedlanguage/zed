@@ -1188,6 +1188,81 @@ fn a_repair_by_a_shape_of_its_own_is_offered_only_where_a_component_tells_the_tw
     );
 }
 
+#[test]
+fn a_shape_of_its_own_of_one_component_is_written_whole_with_its_comma() {
+    // Tuples of one component: the shape of its own is `((3, 5),)`, as `((3, 5))` reads as
+    // `(3, 5)`, and it has no other components to fill in.
+    let one = |a: Ty, b: Ty| Ty::tuple(vec![Ty::tuple(vec![a, b])]);
+    let rows = Ty::union_all(&[one(ty("1 | 2"), var("T")), one(ty("int"), var("U"))]);
+    let l = ty("((3, 5),) | ((4, 6),)");
+    assert_eq!(bound(&l, &rows), None);
+    let why = l.refused(&rows);
+    assert!(
+        why.contains(
+            "to repair it, give ((3, 5),) a shape of its own, written just before the shape \
+             that should hold it: `((3, 5),)`; or test the value with `is` first"
+        ),
+        "{why}"
+    );
+    // The repair applied is decided.
+    let repaired = Ty::union_all(&[
+        one(ty("1 | 2"), var("T")),
+        ty("((3, 5),)"),
+        one(ty("int"), var("U")),
+    ]);
+    assert_eq!(l.refused(&repaired), "");
+    assert_eq!(bound(&l, &repaired), Some(vec![("U".into(), "6".into())]));
+    // A payload of one component: `#a((3, 5))` is already written so, and is offered whole.
+    let r = with_payloads(
+        "a",
+        vec![
+            vec![Ty::tuple(vec![ty("1 | 2"), var("T")])],
+            vec![Ty::tuple(vec![ty("int"), var("U")])],
+        ],
+    );
+    let l = with_payloads("a", vec![vec![ty("(3, 5)")], vec![ty("(4, 6)")]]);
+    assert_eq!(bound(&l, &r), None);
+    let why = l.refused(&r);
+    assert!(
+        why.contains(
+            "to repair it, give #a((3, 5)) a shape of its own, written just before the shape \
+             that should hold it: `#a((3, 5))`; or test the value with `is` first"
+        ),
+        "{why}"
+    );
+}
+
+#[test]
+fn a_program_is_offered_a_one_component_shape_as_a_type_it_can_write() {
+    use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    // `g` takes tuples of one pair or triple, which may each be held by a later shape of the
+    // bucket of pairs and triples: the repair writes the shape of its own as a tuple of one.
+    let src = "p(f: (x: ((int, int),) | ((int, int, int),)) -> int) = 0;\n\
+               q(g: (x: ((int, bool) | (int, bool, bool),) | ((int, U) | (int, U, U),)) -> int \
+               for U in int) = p(f: g);\n";
+    let errs = type_errors(src);
+    assert_eq!(errs.len(), 1, "{errs:?}");
+    assert!(
+        errs[0].contains(
+            "the tuples ((int, int),) and ((int, int, int),) may each be held by one of the \
+             shapes"
+        ),
+        "{errs:?}"
+    );
+    assert!(
+        errs[0].contains(
+            "to repair it, give ((int, int),) a shape of its own, written just before the shape \
+             that should hold it: `((int, int),)`; or test the value with `is` first"
+        ),
+        "{errs:?}"
+    );
+    // The repair written into the program is accepted.
+    let repaired = "p(f: (x: ((int, int),) | ((int, int, int),)) -> int) = 0;\n\
+                    q(g: (x: ((int, bool) | (int, bool, bool),) | ((int, int),) \
+                    | ((int, U) | (int, U, U),)) -> int for U in int) = p(f: g);\n";
+    assert_eq!(type_errors(repaired), Vec::<String>::new());
+}
+
 /// `n` tuples on each side, in pairs `(t, u)` with what is left of `t` without `u` and what
 /// of `t` is in `u`, as tuple counts: each tuple of `t` may share a value with at most one of
 /// `u`, found by key lookup, which meeting or subtracting every pair of tuples compared in
