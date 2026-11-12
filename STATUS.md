@@ -1977,8 +1977,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | GSX-unsolved | hybrid-xr attempt 1 | 2026-11-11 16:53 | round H1 seats launched: Opus 5.5 medium (h1/claude, tree gsxh-claude), gpt-6.1-sol medium (h1/codex, tree gsxh-codex), 5 h limit; load 25.46 30.53 39.26 |
 | LOAD-max-div-unsolved | hybrid-xr attempt 1 | 2026-11-11 17:11 | round 1 launched: Codex gpt-6.1-sol + Opus medium on own difference-rule attempt (all A/C k<=1.04 in Python); Gemini 429; CD 7779475775073288193 continues (best |
 | MAIN-l01_38-failures | impl attempt 1 | 2026-11-12 12:00 | committed 2bd40ad3a, rebased as 39fc294b5 on 7940088be; building workspace all-targets / load 49.97 |
+| NAME-nonprinting | orchestrator attempt  | 2026-11-12 13:28 | A97 answered; row added, queued for the next free slot |
 | POLY-nf-power | impl attempt 1 | 2026-11-12 13:01 | rule A (terms bound per node) and gcd step for the dense product written; building |
-| SOUND-random | impl attempt 1 | 2026-11-05 04:07 | negative control 2 (InDomain need checks off in floors_at): 17 kernel type errors in seeds 0..32 (seed 4 overflows the stack, investigating); load 37.17 41.16 4 |
+| SOUND-random | impl attempt 1 | 2026-11-05 04:07 | random generator found a checker stack overflow (sum/^ on a class resolved to its own variable, walk.rs sum/power_vars/no_int_vars); fixed with Ck::class_root;  |
 | T11-preimage-log | impl attempt 1 | 2026-11-05 04:07 | read Tx::forget (memo log) and Tr::truncate (made/cased/claimed logs), both called only at call_key and failed comparisons; drafted l01_38 one_scope test tests_ |
 | TESTS-L1.19-line-ends | impl attempt 1 | 2026-11-08 23:59 | found: main fails clippy -D warnings in tests/steps/m0_06_cost_scalarization/overlap.rs:93 (cloned_ref_to_slice_refs) and :551 (manual_is_multiple_of), from 6aa |
 | TRIVIAL-walk-branches | cd attempt  | 2026-11-12 11:58 | round-2 CD restart launched: experiment 3564106523854503937 (14 families + mirrors, seeded with the product walk; seed metric 3337022.7); round-1 experiment 702 |
