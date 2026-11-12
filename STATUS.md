@@ -1965,15 +1965,17 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| FOOTPRINT-overlap | impl attempt 1 | 2026-11-05 04:07 | start; making worktrees footprint-overlap and footprint-overlap-spec |
+| FOOTPRINT-overlap | impl attempt 1 | 2026-11-05 04:07 | cost.rs Schedule (Timed sweep, Nested SP pass), overlap.rs tests, cost.zed mirror, DESIGN M0.6a clause written; first run m0_06 30/30, l01_13 36/36, zedc_base 1 |
 | GSX-unsolved | hybrid-xr attempt 1 | 2026-11-11 16:53 | round H1 seats launched: Opus 5.5 medium (h1/claude, tree gsxh-claude), gpt-6.1-sol medium (h1/codex, tree gsxh-codex), 5 h limit; load 25.46 30.53 39.26 |
 | K36-study | impl attempt 1 | 2026-11-11 01:43 | baseline on 9e4f454bd: both 'quadratic' pinwheel tests now 8.4x and 7.7x from k 8 to 64 (155M->1296M, 171M->1310M instr; was 15,893M at k 64); measuring 64->512 |
-| LOAD-max-div-unsolved | impl attempt 1 | 2026-11-11 17:11 | non-unit default multipliers merged (residues outside the coset moved only on non-unit blocks, nonunit_persist 8.7x at 256 to 2048 links, was 13.75x; COMPLEXITY.md LOAD-max-div-images); open: interval guards with wide or overlapping offsets (CD round 3 stalled at k 1.235, cross-review next) |
-| MAIN-l01_38-failures | impl attempt 1 | 2026-11-12 12:00 | nest_empty cause: project_parts recursion per nest level (262 frames at 1 MiB, ~3.9 kB/level); rewriting as explicit stack of Level frames / load 24.04 27.88 37 |
+| LOAD-max-div-unsolved | impl attempt 1 | 2026-11-11 17:11 | worktree /home/luke/Work/wt/lmd-cd (wt/lmd-cd at 7d96d3826) made for the Rust port; CD round 1 best 58 = 28.71 |
+| MAIN-l01_38-failures | impl attempt 1 | 2026-11-12 12:00 | committed 2bd40ad3a, rebased as 39fc294b5 on 7940088be; building workspace all-targets / load 49.97 |
+| POLY-nf-power | impl attempt 1 | 2026-11-12 13:01 | started; worktree /home/luke/Work/wt/poly-nf-power seeded |
 | PRODUCT-lin-rows | hybrid-xr attempt 1 | 2026-11-11 01:43 | round 0 started: own attempt at a potential design before seats |
-| RUNG2-bit | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/rung2-bit on origin/main 4fc432347 |
-| T11-preimage-log | running | 2026-11-05 04:07 |  |
-| TRIVIAL-walk-branches | impl attempt 1 | 2026-11-12 11:58 | UNSOLVED: no proved design; probe families brief/wide/same quadratic, ne linear; no commits; ledger blocked; load 23.00 32.29 41.07 |
+| RUNG2-bit | impl attempt 1 | 2026-11-05 04:07 | reached groups: 963 pieces, 1 failed (s22 touched_cases fixture printed the new empty bit_ands field; regenerated, only that field differs, now passes) / load 4 |
+| T11-preimage-log | impl attempt 1 | 2026-11-05 04:07 | read Tx::forget (memo log) and Tr::truncate (made/cased/claimed logs), both called only at call_key and failed comparisons; drafted l01_38 one_scope test tests_ |
+| TESTS-L1.1-invisible | impl attempt 1 | 2026-11-08 23:59 | red confirmed (6 new tests fail on old code); fixes restored, green run |
+| TRIVIAL-walk-branches | cd-r1 attempt  | 2026-11-12 11:58 | CD experiment 7022871037675044865 launched (RUN_TYPE_SHORT), starter metric 13466296 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
