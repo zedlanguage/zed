@@ -50,7 +50,8 @@ fn word(p: Prim, x: Value) -> Value {
     zed_kernel::eval(&t).unwrap_or_else(|e| panic!("{p:?}: {e}"))
 }
 
-/// The family of `bytes` keyed by position from 1, as `utf8` gives it.
+/// The family of `bytes` keyed from 1: keys other than an array's, which `fromUtf8` reads in key
+/// order all the same.
 fn from_one(bytes: &[i64]) -> Value {
     Value::Family(Family::of(
         bytes
@@ -60,7 +61,7 @@ fn from_one(bytes: &[i64]) -> Value {
     ))
 }
 
-/// The family of `bytes` keyed from 0, as the array display `[b0, b1, …]` gives it.
+/// The family of `bytes` keyed from 0, as `utf8` and the array display `[b0, b1, …]` give it.
 fn from_zero(bytes: &[i64]) -> Value {
     Value::Family(Family::of(
         bytes

@@ -337,7 +337,7 @@ result have no step.
 ### Gap 7. Code points and text tables (code points built; text tables missing)
 
 Built by step L1.39c: `codePoint : String -> int | #notScalar`, `scalar : int -> String |
-#notScalar`, `utf8 : String -> (int ->? int)` (keys `1 ..= n`) and `fromUtf8 : (int ->? int) ->
+#notScalar`, `utf8 : String -> (int ->? int)` (keys `0 ..< n`) and `fromUtf8 : (int ->? int) ->
 String | #badUtf8` are kernel primitives (`zed_kernel::words`, `Prim`) and prelude words of layer
 L1 (COMPLEXITY.md, Kept). So `\u{…}` decoding (`lex/string.rs:149`, `:292`) and
 `zir/text.rs:983` can be written in Zed. The implementation uses `char::from_u32`, `str::chars`,

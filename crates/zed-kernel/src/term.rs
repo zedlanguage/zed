@@ -135,7 +135,7 @@ pub enum Prim {
     /// `scalar(n)`: the string of the one scalar `n`; `#notScalar` for a surrogate or an `n`
     /// outside `0 ..= 1114111`.
     Scalar,
-    /// `utf8(s)`: the family of the UTF-8 bytes of `s`, keyed by position from 1.
+    /// `utf8(s)`: the family of the UTF-8 bytes of `s`, keyed by byte offset from 0.
     Utf8,
     /// `fromUtf8(b)`: the string the bytes of `b`, in key order, encode; `#badUtf8` when they
     /// are not well-formed UTF-8.

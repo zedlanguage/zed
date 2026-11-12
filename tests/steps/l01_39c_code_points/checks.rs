@@ -61,7 +61,7 @@ fn a_code_point_is_in_the_domain_of_the_bit_words() {
         ("226".into(), "130".into(), "172".into())
     );
     assert_eq!(v("wide"), "16728");
-    assert_eq!(x("utf8(\"€\")"), "{1 -> 226, 2 -> 130, 3 -> 172}");
+    assert_eq!(x("utf8(\"€\")"), "{0 -> 226, 1 -> 130, 2 -> 172}");
 }
 
 #[test]

@@ -20,7 +20,7 @@ fn every_boundary_round_trips_with_its_bytes() {
         assert_eq!(s, Value::str(&ch.to_string()), "{c:#x}");
         let want: Vec<i64> = ch.to_string().bytes().map(i64::from).collect();
         let b = word(Prim::Utf8, s.clone());
-        assert_eq!(b, from_one(&want), "{c:#x}");
+        assert_eq!(b, from_zero(&want), "{c:#x}");
         assert_eq!(word(Prim::FromUtf8, b), s, "{c:#x}");
         assert_eq!(word(Prim::CodePoint, s), Value::Int(i64::from(c)), "{c:#x}");
     }
@@ -86,6 +86,23 @@ fn every_scalar_at_a_stride_round_trips() {
     }
 }
 
+/// `utf8` keys each byte by its offset from 0, as an array and every other byte family are, so
+/// the keys are exactly `0 ..< n` for `n` bytes, the first byte at key 0 and the last at `n - 1`.
+#[test]
+fn the_keys_are_the_byte_offsets_from_zero() {
+    for s in ["", "a", "é", "a😀b", &"aé€😀".repeat(100)] {
+        let f = match word(Prim::Utf8, Value::str(s)) {
+            Value::Family(f) => f,
+            v => panic!("{v}"),
+        };
+        let keys: Vec<Value> = f.iter().map(|(k, _)| k.clone()).collect();
+        let offsets: Vec<Value> = (0..s.len()).map(|i| Value::Int(i as i64)).collect();
+        assert_eq!(keys, offsets, "{s}");
+        let bytes: Vec<i64> = s.bytes().map(i64::from).collect();
+        assert_eq!(Value::Family(f), from_zero(&bytes), "{s}");
+    }
+}
+
 #[test]
 fn the_named_overlong_pair_is_bad() {
     // `fromUtf8([192, 128])`: the array display keys from 0; the bytes are read in key order.
@@ -113,19 +130,19 @@ fn overlong_forms_are_bad() {
         &[0xF0, 0x80, 0x80, 0x80],
         &[0xF0, 0x8F, 0xBF, 0xBF],
     ] {
-        assert_eq!(word(Prim::FromUtf8, from_one(b)), bad(), "{b:x?}");
+        assert_eq!(word(Prim::FromUtf8, from_zero(b)), bad(), "{b:x?}");
     }
     // The shortest forms of the same ends are good.
     assert_eq!(
-        word(Prim::FromUtf8, from_one(&[0xC2, 0x80])),
+        word(Prim::FromUtf8, from_zero(&[0xC2, 0x80])),
         Value::str("\u{80}")
     );
     assert_eq!(
-        word(Prim::FromUtf8, from_one(&[0xE0, 0xA0, 0x80])),
+        word(Prim::FromUtf8, from_zero(&[0xE0, 0xA0, 0x80])),
         Value::str("\u{800}")
     );
     assert_eq!(
-        word(Prim::FromUtf8, from_one(&[0xF0, 0x90, 0x80, 0x80])),
+        word(Prim::FromUtf8, from_zero(&[0xF0, 0x90, 0x80, 0x80])),
         Value::str("\u{10000}")
     );
 }
@@ -140,14 +157,14 @@ fn surrogates_and_scalars_past_the_last_are_bad() {
         &[0xFF],
         &[0xFE],
     ] {
-        assert_eq!(word(Prim::FromUtf8, from_one(b)), bad(), "{b:x?}");
+        assert_eq!(word(Prim::FromUtf8, from_zero(b)), bad(), "{b:x?}");
     }
     assert_eq!(
-        word(Prim::FromUtf8, from_one(&[0xED, 0x9F, 0xBF])),
+        word(Prim::FromUtf8, from_zero(&[0xED, 0x9F, 0xBF])),
         Value::str("\u{D7FF}")
     );
     assert_eq!(
-        word(Prim::FromUtf8, from_one(&[0xF4, 0x8F, 0xBF, 0xBF])),
+        word(Prim::FromUtf8, from_zero(&[0xF4, 0x8F, 0xBF, 0xBF])),
         Value::str("\u{10FFFF}")
     );
 }
@@ -165,14 +182,14 @@ fn truncated_and_stray_continuation_bytes_are_bad() {
         &[0xC3, 0xA9, 0xA9],
         &[0xC3, 0x41],
     ] {
-        assert_eq!(word(Prim::FromUtf8, from_one(b)), bad(), "{b:x?}");
+        assert_eq!(word(Prim::FromUtf8, from_zero(b)), bad(), "{b:x?}");
     }
 }
 
 #[test]
 fn an_int_that_is_not_a_byte_is_bad() {
     for b in [&[256][..], &[-1], &[97, 300]] {
-        assert_eq!(word(Prim::FromUtf8, from_one(b)), bad(), "{b:?}");
+        assert_eq!(word(Prim::FromUtf8, from_zero(b)), bad(), "{b:?}");
     }
     let big = Value::int(num_bigint::BigInt::from(1u8) << 80);
     let f = Value::Family(Family::of([(Value::Int(1), big)]));
@@ -181,8 +198,8 @@ fn an_int_that_is_not_a_byte_is_bad() {
 
 #[test]
 fn the_empty_family_is_the_empty_string() {
-    assert_eq!(word(Prim::FromUtf8, from_one(&[])), Value::str(""));
-    assert_eq!(word(Prim::Utf8, Value::str("")), from_one(&[]));
+    assert_eq!(word(Prim::FromUtf8, from_zero(&[])), Value::str(""));
+    assert_eq!(word(Prim::Utf8, Value::str("")), from_zero(&[]));
 }
 
 #[test]

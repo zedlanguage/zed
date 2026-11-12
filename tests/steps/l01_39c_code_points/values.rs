@@ -30,12 +30,12 @@ fn scalar_refuses_every_int_that_is_not_a_scalar_value() {
 }
 
 #[test]
-fn utf8_gives_the_bytes_keyed_from_one() {
-    assert_eq!(x("utf8(\"aé\")"), "{1 -> 97, 2 -> 195, 3 -> 169}");
-    assert_eq!(x("utf8(\"€\")"), "{1 -> 226, 2 -> 130, 3 -> 172}");
+fn utf8_gives_the_bytes_keyed_from_zero() {
+    assert_eq!(x("utf8(\"aé\")"), "{0 -> 97, 1 -> 195, 2 -> 169}");
+    assert_eq!(x("utf8(\"€\")"), "{0 -> 226, 1 -> 130, 2 -> 172}");
     assert_eq!(
         x("utf8(\"😀\")"),
-        "{1 -> 240, 2 -> 159, 3 -> 152, 4 -> 128}"
+        "{0 -> 240, 1 -> 159, 2 -> 152, 3 -> 128}"
     );
     assert_eq!(x("utf8(\"\")"), "{}");
 }
@@ -65,7 +65,7 @@ fn a_receiver_is_the_string() {
 fn a_rope_is_read_as_its_text() {
     assert_eq!(x("codePoint(\"\" ++ \"é\" ++ \"\")"), "233");
     assert_eq!(x("codePoint(\"a\" ++ \"b\")"), "#notScalar");
-    assert_eq!(x("utf8(\"a\" ++ \"é\")"), "{1 -> 97, 2 -> 195, 3 -> 169}");
+    assert_eq!(x("utf8(\"a\" ++ \"é\")"), "{0 -> 97, 1 -> 195, 2 -> 169}");
 }
 
 #[test]

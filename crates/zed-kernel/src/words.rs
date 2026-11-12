@@ -231,14 +231,14 @@ fn first_char(s: &Text) -> char {
     first.expect("a string of one scalar")
 }
 
-/// The family of the UTF-8 bytes of `s`, keyed by position from 1. The keys are made in
-/// increasing order, so the map is built in `O(n log n)` for `n` bytes; the text is read by
-/// blocks.
+/// The family of the UTF-8 bytes of `s`, keyed by byte offset from 0, as an array is. The keys
+/// are made in increasing order, so the map is built in `O(n log n)` for `n` bytes; the text is
+/// read by blocks.
 fn utf8(s: &Text) -> Family {
     Family::from_map(
         s.chunks()
             .flat_map(str::bytes)
-            .zip(1i64..)
+            .zip(0i64..)
             .map(|(b, i)| (Value::Int(i), Value::Int(i64::from(b))))
             .collect(),
     )
