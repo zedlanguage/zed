@@ -551,7 +551,7 @@ fn with_item(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
 /// Each reserved word, in the order of [`crate::lex::KEYWORDS`], with what it begins (the
 /// note "`word` is reserved: ...") and a name of like meaning that the repair offers in its
 /// place.
-pub const RESERVED: [(&str, &str, &str); 38] = [
+pub const RESERVED: [(&str, &str, &str); 37] = [
     (
         "struct",
         "it begins a struct declaration, as `struct Point { x: f64, y: f64 }`",
@@ -664,11 +664,6 @@ pub const RESERVED: [(&str, &str, &str); 38] = [
         "is",
         "it tests a value against a type, as `x is int`",
         "matches",
-    ),
-    (
-        "mutable",
-        "it marks a binding the program changes, as `mutable total = 0;`",
-        "changing",
     ),
     (
         "positional",

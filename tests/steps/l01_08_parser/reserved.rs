@@ -85,7 +85,7 @@ fn a_binding() {
     reserved("without = 3;", "without", 0, "rest = 3;");
     reserved("law = 3;", "law", 0, "rule = 3;");
     reserved("initial = 0;", "initial", 0, "start = 0;");
-    reserved("mutable for = 0;", "for", 8, "mutable each = 0;");
+    reserved("local for = 0;", "for", 6, "local each = 0;");
 }
 
 #[test]
