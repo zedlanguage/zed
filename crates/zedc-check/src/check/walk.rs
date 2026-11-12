@@ -61,6 +61,32 @@ pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
     ck.info
 }
 
+/// [`check_text`] with the name the unit's first statement binds given the type `given`, and
+/// that statement not checked: how a test gives a name the type of a named atom family
+/// (`Ty::named`), which no source form gives until `type` declarations do (step L2.5).
+#[doc(hidden)]
+pub fn check_given(unit: &[Stmt], res: &Resolution, text: &str, given: Ty) -> Info {
+    let t = Tables::with_text(unit, res, Some(text));
+    KType::forget_emptiness();
+    let _defs = defs::collect();
+    let _names = ty::ProgramNames::hold(
+        (t.res.binders.iter())
+            .filter(|b| b.kind != zedc_resolve::resolve::Kind::Field)
+            .map(|b| b.name.as_str()),
+    );
+    let (first, rest) = unit.split_first().expect("a unit with a first statement");
+    let id = (res.binders.iter())
+        .position(|b| b.span == first.span)
+        .expect("the first statement binds a name");
+    let mut ck = Ck::new(&t);
+    ck.env.insert(id, given);
+    ck.bounds();
+    ck.walk(rest);
+    ck.finish();
+    ck.info.errors.dedup();
+    ck.info
+}
+
 /// The type of the operator `op` applied to arguments of the types `args`, with the errors the
 /// application reports: how an operator treats loose and family atoms.
 pub fn operator(op: Operator, args: &[Ty]) -> (Ty, Vec<String>) {

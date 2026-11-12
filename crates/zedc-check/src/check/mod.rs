@@ -3014,35 +3014,65 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The loose atoms of `t`, which flow through `what` unchanged: an atom of a named family
-    /// is data, and data that selects no arrow is an error (sec:failure).
+    /// is data, and data that selects no arrow is an error (sec:failure). The repairs handle
+    /// every atom of the family the value may be, one `else` pattern or one `match` arm each,
+    /// so their text is linear in the number of those atoms.
     fn passing(&mut self, t: &Ty, what: &str, span: Span) -> Ty {
         if !t.family.is_empty() {
             let atoms = Ty::set(t.family.clone());
-            // The first atom, written as a pattern, for the repair.
-            let first = t
-                .family
-                .atom_names()
-                .and_then(|mut names| names.next())
-                .map(|(name, bare)| match bare {
-                    true => format!("#{name}"),
-                    false => format!("#{name}(_)"),
-                });
             let message = format!(
                 "{what} does not take {atoms}, which the value here may be: an atom of a named \
                  family is data like any other value, not a failure that passes through {what} \
                  untouched, and {what} has no case for it"
             );
             let mut menu = Vec::new();
-            if let Some(a) = first {
-                menu.push(format!(
-                    "repair: replace `{a}` by a value {what} takes before the value gets here, as \
-                     `v else {a} -> d`, where `v` is the value and `d` the value to use instead"
-                ));
+            // Each atom as a bare pattern, which handles the atom with any payload or none;
+            // a pattern with a payload would leave the atom in the type (step L1.27).
+            match t.family.atom_names() {
+                Some(names) => {
+                    let names: Vec<String> = names.map(|(name, _)| format!("#{name}")).collect();
+                    let quoted: Vec<String> = names.iter().map(|a| format!("`{a}`")).collect();
+                    let chain: String = names.iter().map(|a| format!(" else {a} -> d")).collect();
+                    let mut arms: Vec<String> = names.iter().map(|a| format!("{a} -> d")).collect();
+                    let (each, before, arm_for, its_arm) = match names.len() {
+                        1 => (
+                            "",
+                            "`d` the value to use instead",
+                            "an arm for the atom",
+                            "`d` the value to use in place of the atom",
+                        ),
+                        _ => (
+                            "each of ",
+                            "each `d` the value to use in place of the atom before it",
+                            "one arm for each atom",
+                            "each `d` the value to use in place of the atom of its arm",
+                        ),
+                    };
+                    menu.push(format!(
+                        "repair: replace {each}{} by a value {what} takes before the value gets \
+                         here, as `(v{chain})`, where `v` is the value and {before}",
+                        and_list(&quoted)
+                    ));
+                    // The value may hold more than the family's atoms: a last arm keeps the rest.
+                    let and_rest = match t.diff(&atoms).is_empty() {
+                        true => "",
+                        false => {
+                            arms.push("rest -> rest".to_string());
+                            " and one for the rest"
+                        }
+                    };
+                    menu.push(format!(
+                        "repair: test the value with `match`, with {arm_for}{and_rest}, as \
+                         `match v {{ {} }}`, where `v` is the value and {its_arm}",
+                        arms.join(", ")
+                    ));
+                }
+                // A family of every atom but some cannot be listed.
+                None => menu.push(
+                    "repair: test the value with `match` and handle each atom in its own arm"
+                        .to_string(),
+                ),
             }
-            menu.push(
-                "repair: test the value with `match` and handle each atom in its own arm"
-                    .to_string(),
-            );
             self.error_offering(span, message, menu);
         }
         t.loose_ty()
@@ -8997,11 +9027,15 @@ mod tests {
                  through a call untouched, and a call has no case for it"
                     .to_string(),
                 vec![
-                    "repair: replace `#blue` by a value a call takes before the value gets \
-                     here, as `v else #blue -> d`, where `v` is the value and `d` the value to \
-                     use instead"
+                    "repair: replace each of `#blue`, `#green` and `#red` by a value a call takes \
+                     before the value gets here, as `(v else #blue -> d else #green -> d else \
+                     #red -> d)`, where `v` is the value and each `d` the value to use in place \
+                     of the atom before it"
                         .to_string(),
-                    "repair: test the value with `match` and handle each atom in its own arm"
+                    "repair: test the value with `match`, with one arm for each atom and one for \
+                     the rest, as `match v { #blue -> d, #green -> d, #red -> d, rest -> rest }`, \
+                     where `v` is the value and each `d` the value to use in place of the atom of \
+                     its arm"
                         .to_string(),
                 ]
             )]

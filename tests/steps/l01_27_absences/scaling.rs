@@ -262,3 +262,32 @@ fn merging_the_failures_of_a_long_chain_scales() {
             .unwrap()
     })
 }
+
+/// `#a0 | #a1 | … | #a(n-1) | bool` as a named family.
+fn family(n: usize) -> zedc::check::ty::Ty {
+    use zedc::check::ty::{Carrier, Ty};
+    (0..n)
+        .fold(Ty::carrier(Carrier::Bool), |t, i| {
+            t.union(&Ty::set(zed_kernel::types::Type::atom(&format!("a{i}"))))
+        })
+        .named()
+}
+
+#[test]
+fn the_repairs_for_a_family_of_many_atoms_scale() {
+    // The repairs hold one `else` pattern and one `match` arm for each atom of the family, so
+    // the error's text is linear in the number of atoms.
+    let text = "v = 0;\ny = if v { 1 } else { 2 };\n";
+    let u = ready(text);
+    let families: BTreeMap<usize, zedc::check::ty::Ty> = [1000, FACTOR * 1000]
+        .into_iter()
+        .map(|n| (n, family(n)))
+        .collect();
+    scaling::check_order("the repairs for a family of n atoms", 1000, 1, |n| {
+        let given = families[&n].clone();
+        let errors = zedc::check::walk::check_given(&u.stmts, &u.res, text, given).errors;
+        assert_eq!(errors.len(), 1);
+        let last = format!(" else #a{} -> d", n - 1);
+        assert!(errors[0].notes.iter().any(|note| note.text.contains(&last)));
+    });
+}
