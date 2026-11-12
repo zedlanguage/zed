@@ -3358,7 +3358,8 @@ impl<'b> IntoIterator for &'b Binds {
 /// How a comparison reads a variable of the types on one side ([`Env`]).
 #[derive(Clone, Debug, PartialEq)]
 enum Read {
-    /// As the rigid variable of this name, in [`Cx::rigid`].
+    /// As the variable of this name: a rigid one, in [`Cx::rigid`], or an own variable given a
+    /// new name as a comparison around it reads its name ([`Cx::own_name`]).
     Rigid(Arc<str>),
     /// As every value of the carriers of the mask, [`Ty::of_mask`].
     Mask(u8),
@@ -3429,10 +3430,17 @@ struct Cx<'s> {
     /// before it ends, so they are keyed by number, which no later node takes, not by address.
     filed: HashMap<(NodeId, usize), Arc<Filed>>,
     /// The own variables of the function types the open comparisons are inside that each
-    /// reads as itself ([`Cx::open`]), innermost last, each with its bound, `None` when it has
-    /// none: a message about the comparison prints them as the program wrote them
+    /// reads as itself or, when a comparison around it already reads that name so, as a new
+    /// name ([`Cx::open`]), innermost last, each with its bound, `None` when it has none: a
+    /// message about the comparison prints them as the program wrote them
     /// ([`Scope::of_comparison`]).
     own: Vec<(Arc<str>, Option<u8>)>,
+    /// How many entries of `own` each name has.
+    // Complexity tradeoff (COMPLEXITY.md F174): naive version, `own` searched for each own
+    // variable opened, O(depth) each and O(depth^2) for a nest of function types that deep.
+    // Used: the count of each name, O(1) expected per variable. Tradeoff: one map entry per
+    // name kept, dropped with the last entry of that name.
+    owned: HashMap<Arc<str>, usize>,
 }
 
 impl Cx<'_> {
@@ -3540,7 +3548,67 @@ impl Cx<'_> {
             self.rigid.remove(&w);
             self.fns.remove(&w);
         }
-        self.own.truncate(mark.own);
+        for (w, _) in self.own.drain(mark.own..) {
+            if let Some(n) = self.owned.get_mut(&w) {
+                *n -= 1;
+                if *n == 0 {
+                    self.owned.remove(&w);
+                }
+            }
+        }
+    }
+
+    /// `t`, made by [`Self::read`], with each variable of `fns` in it put back as the function
+    /// it stands for, read as its side reads it: each variable of that side's reading replaced
+    /// as [`Self::read_outer`] replaces it outside functions, so that a message prints the
+    /// function where the comparison holds it, in a tuple too, and not `_`. Only on the way to
+    /// an error. The cost is that of `t` and of each function put back.
+    fn unread<'t>(&self, t: &'t Ty) -> Cow<'t, Ty> {
+        let mut vs = Vars::default();
+        t.vars_in(&mut vs);
+        let mut fns = Binds::new();
+        for w in vs.order {
+            let Some((s, env)) = self.fns.get(&w) else {
+                continue;
+            };
+            let mut inner = Vars::default();
+            for a in &s.arrows {
+                a.params.iter().for_each(|p| p.vars_in(&mut inner));
+                a.result.vars_in(&mut inner);
+            }
+            s.needs.iter().for_each(|n| n.vars_in(&mut inner));
+            // The signature's own variables are its own here, and the replacement keeps them.
+            let mut binds = Binds::new();
+            for v in inner.order {
+                let read = match env.get(&v) {
+                    Some(Read::Rigid(r)) => Some(Ty::var(r.clone())),
+                    Some(&Read::Mask(m)) => Some(Ty::of_mask(m)),
+                    None => self.solve.and_then(|f| f(&v)),
+                };
+                if let Some(u) = read {
+                    binds.insert(v, u);
+                }
+            }
+            fns.insert(w, Ty::func(Arc::new(s.replace(&binds))));
+        }
+        match fns.is_empty() {
+            true => Cow::Borrowed(t),
+            false => Cow::Owned(t.replace_outside(&fns)),
+        }
+    }
+
+    /// The variables of `t` as a message prints it ([`Self::unread`]).
+    fn vars_unread(&self, t: &Ty) -> Vars {
+        let mut vs = Vars::default();
+        self.unread(t).vars_in(&mut vs);
+        vs
+    }
+
+    /// Whether each variable of `c` is one of `into`, the variables of both those a message
+    /// prints ([`Self::vars_unread`]). Linear in the two and the functions put back.
+    fn vars_within(&self, c: &Ty, into: &Ty) -> bool {
+        let within = self.vars_unread(into);
+        self.vars_unread(c).order.iter().all(|v| within.contains(v))
     }
 }
 
@@ -4515,22 +4583,20 @@ fn unchosen_text(
 /// from its components, the component printed by `text`. Filed under that key, the shape
 /// holds `first` and not `second`. The place is None when `first` has one component, as the
 /// shape is then that component whole. None when no component tells the two apart so, or
-/// when the component holds a type variable that the type the shape is written into, whose
-/// variables are `within`, does not: no signature binds it there.
+/// when `bound` says the type the shape is written into does not hold each type variable of
+/// the component: no signature binds it there.
 fn own_shape(
     first: &[&Ty],
     second: &[&Ty],
     items: usize,
     names: &[&Arc<str>],
-    within: &Vars,
+    bound: impl FnOnce(&Ty) -> bool,
     text: impl FnOnce(&Ty) -> String,
     write: impl FnOnce(String) -> String,
 ) -> Option<(Option<String>, String)> {
     let key = |c: &Ty| class(c).map(|(k, point)| point.map_or(k, ShapeKey::Point));
     let j = (0..first.len()).find(|&j| key(first[j]).is_some_and(|k| key(second[j]) != Some(k)))?;
-    let mut vs = Vars::default();
-    first[j].vars_in(&mut vs);
-    if !vs.order.iter().all(|v| within.contains(v)) {
+    if !bound(first[j]) {
         return None;
     }
     let at = text(first[j]);
@@ -4929,14 +4995,12 @@ impl<'m, 's> Comparing<'m, 's> {
                             let shapes = choices.bucket(k, &id).iter().map(|&r| rs[r].clone());
                             let names: Vec<&Arc<str>> = l.fields.keys().collect();
                             let apart = choices.apart(k, &id, l.items.len(), &names);
-                            let mut within = Vars::default();
-                            t.vars_in(&mut within);
                             let own = own_shape(
                                 &comps(&first),
                                 &comps(l),
                                 l.items.len(),
                                 &names,
-                                &within,
+                                |c| cx.vars_within(c, t),
                                 |c| scope.text(c, &cx),
                                 |cs| format!("#{n}({cs})"),
                             );
@@ -4995,16 +5059,22 @@ impl<'m, 's> Comparing<'m, 's> {
                     let ys: Vec<&Ty> = cs.iter().collect();
                     // A tuple of one component is written `(T,)`, as `(T)` reads as `T`.
                     let one = cs.len() == 1;
-                    let mut within = Vars::default();
-                    t.vars_in(&mut within);
                     let text = |c: &Ty| scope.text(c, &cx);
-                    let own = own_shape(&xs, &ys, cs.len(), &[], &within, text, |s| {
-                        if one {
-                            format!("({s},)")
-                        } else {
-                            format!("({s})")
-                        }
-                    });
+                    let own = own_shape(
+                        &xs,
+                        &ys,
+                        cs.len(),
+                        &[],
+                        |c| cx.vars_within(c, t),
+                        text,
+                        |s| {
+                            if one {
+                                format!("({s},)")
+                            } else {
+                                format!("({s})")
+                            }
+                        },
+                    );
                     let first = scope.text(&Ty::of_row(first.clone()), &cx);
                     let second = scope.text(&Ty::of_row(cs.clone()), &cx);
                     let bucket = scope.text(&bucket, &cx);
@@ -7000,7 +7070,10 @@ impl Cx<'_> {
             own: cx.own.len(),
         };
         // Each own variable names its own binder here, so the reading of the same name around it
-        // is dropped, or replaced as above.
+        // is dropped, or replaced as above. The own variables read as themselves are counted
+        // in `owned` only once both sides are read, so a variable of `s` and one of `q` of the
+        // same name still meet by name, as before.
+        let mut kept = Vec::new();
         let mut qe = qe.clone();
         for v in &q.own {
             match q.bounds.get(v) {
@@ -7012,10 +7085,7 @@ impl Cx<'_> {
                 Some(&m) => {
                     qe.insert(v.clone(), Read::Mask(m));
                 }
-                None => {
-                    qe.remove(v);
-                    cx.own.push((v.clone(), None));
-                }
+                None => kept.push((cx.own_name(v, &mut qe), None)),
             }
         }
         let mut se = se.clone();
@@ -7024,11 +7094,12 @@ impl Cx<'_> {
                 Some(&m) if !s.held.contains(v) => {
                     se.insert(v.clone(), Read::Mask(m));
                 }
-                bound => {
-                    se.remove(v);
-                    cx.own.push((v.clone(), bound.copied()));
-                }
+                bound => kept.push((cx.own_name(v, &mut se), bound.copied())),
             }
+        }
+        for (w, bound) in kept {
+            *cx.owned.entry(w.clone()).or_default() += 1;
+            cx.own.push((w, bound));
         }
         let read = |a: &Arrow, env: &Env, cx: &mut Cx| Arrow {
             params: a.params.iter().map(|p| cx.read(p, env)).collect(),
@@ -7037,6 +7108,22 @@ impl Cx<'_> {
         let sas: Vec<Arrow> = s.arrows.iter().map(|a| read(a, &se, cx)).collect();
         let qas: Vec<Arrow> = q.arrows.iter().map(|a| read(a, &qe, cx)).collect();
         (mark, sas, qas)
+    }
+
+    /// The name an own variable `v` of a function type opened is read as, in `env`, the
+    /// reading of its side: `v` itself, or, when a comparison around this one already reads
+    /// `v` as itself (`owned`), a new name made from `v`. Without the new name, the two
+    /// variables, bound by different signatures, would be one variable in the types compared,
+    /// and a message would print them as one.
+    fn own_name(&mut self, v: &Arc<str>, env: &mut Env) -> Arc<str> {
+        if self.owned.contains_key(v) {
+            let w = self.fresh(v);
+            env.insert(v.clone(), Read::Rigid(w.clone()));
+            w
+        } else {
+            env.remove(v);
+            v.clone()
+        }
     }
 }
 
@@ -8564,8 +8651,8 @@ impl Scope {
     /// variable of `q` so bounded is that variable, and shares its name. Each other own
     /// variable of the open comparisons is unbounded, printed by name where it stands twice or
     /// more in one text and `_` where once (DESIGN.md sec:diagnostics, "Types in a message").
-    /// The functions the comparison put in its types as variables ([`Cx::fns`]) have no slot,
-    /// and print `_`.
+    /// The functions the comparison put in its types as variables ([`Cx::fns`]) have no slot:
+    /// [`Scope::text`] prints each as the function it stands for.
     fn of_comparison(cx: &Cx, q: Option<&Sig>) -> Scope {
         let carriers = |m: u8| m & OTHER == 0;
         let in_q = |v: &str| q.is_some_and(|q| q.bounds.get(v).is_some_and(|&m| carriers(m)));
@@ -8583,10 +8670,12 @@ impl Scope {
             let (v, _) = w.rsplit_once('\'')?;
             Some((w.clone(), Arc::from(v), Some(m), in_q(v)))
         });
-        let own = cx
-            .own
-            .iter()
-            .map(|(v, m)| (v.clone(), v.clone(), *m, false));
+        // An own variable given a new name ([`Cx::own_name`]) prints as the name it was made
+        // from.
+        let own = cx.own.iter().map(|(v, m)| {
+            let written = v.rsplit_once('\'').map_or(v.as_ref(), |(w, _)| w);
+            (v.clone(), Arc::from(written), *m, false)
+        });
         let mut scope = Scope::default();
         for (v, written, bound, shared) in qs.chain(rigid).chain(own) {
             let slot = match bound {
@@ -8618,14 +8707,16 @@ impl Scope {
         name
     }
 
-    /// `t`'s text in this scope. A variable no slot names that is not a function of `cx`
-    /// ([`Cx::fns`]) belongs to no signature the comparison opened, and is printed as an
-    /// unbounded one. Linear in `t`, as [`Ty::vars_in`] and [`Ty::write`] are.
+    /// `t`'s text in this scope, each variable of `cx` that stands for a function ([`Cx::fns`])
+    /// printed as that function ([`Cx::unread`]). A variable no slot names belongs to no
+    /// signature the comparison opened, and is printed as an unbounded one. Linear in `t` and
+    /// the functions put back, as [`Cx::unread`], [`Ty::vars_in`] and [`Ty::write`] are.
     fn text(&mut self, t: &Ty, cx: &Cx) -> String {
+        let t = cx.unread(t);
         let mut vs = Vars::default();
         t.vars_in(&mut vs);
         for v in vs.order {
-            if self.slot(&v).is_none() && !cx.fns.contains_key(&v) {
+            if self.slot(&v).is_none() {
                 let slot = self.free();
                 self.names.entry(v).or_default().push(slot);
             }

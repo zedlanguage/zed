@@ -1352,7 +1352,12 @@ fn a_bounded_type_variable_in_a_refused_bucket_prints_by_name_with_where_it_is_b
              for U in int)",
         ),
     ] {
-        let src = format!("{p}q(g: (x: {bucket}) -> int for U in int) = p(f: g);\n");
+        let tail = if bucket.contains("U") {
+            " for U in int"
+        } else {
+            ""
+        };
+        let src = format!("{p}q(g: (x: {bucket}) -> int{tail}) = p(f: g);\n");
         assert_eq!(
             type_errors(&src),
             vec![format!(
@@ -2297,6 +2302,275 @@ fn the_difference_of_many_wide_tuple_types_scales() {
         |n| {
             let (l, r) = &inputs[&n];
             assert!(!l.diff(r).is_empty());
+        },
+    );
+}
+
+/// The clause of a refused bucket of two shapes, after "`p` does not take (…)": the tuples
+/// `first` and `second` held by `shapes`, the type variables named by `here`, and the repair
+/// `own`, a shape of its own for `first`, when one is offered.
+fn bucket_refused(first: &str, second: &str, shapes: &str, here: &str, own: bool) -> String {
+    let repair = match own {
+        true => format!(
+            "give {first} a shape of its own, written just before the shape that should hold \
+             it: `{first}`; or "
+        ),
+        false => String::new(),
+    };
+    format!(
+        "; this is not proved wrong: the checker could not decide whether it fits, because the \
+         tuples {first} and {second} may each be held by one of the shapes {shapes}, which have \
+         no component that is one value, of one carrier, of one atom name or of one tuple \
+         length, and neither is held by the first of those shapes; which shape holds each \
+         decides what the type variables are bound to, and the checker looks through those \
+         shapes for one of the two only; here {here}; to repair it, {repair}test the value with \
+         `is` first, so that each test meets one of the two [p(f: g)]"
+    )
+}
+
+#[test]
+fn a_function_in_a_tuple_of_a_refused_bucket_prints_as_its_type() {
+    use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    // The comparison holds each function as a variable of its own; the message prints the
+    // function, as it prints it outside a tuple, and not `_`: a function, a tuple that holds
+    // one, a function with a bounded variable of its own, and a curried function.
+    for h in [
+        "(y: int) -> int",
+        "((y: int) -> int, int)",
+        "(y: W) -> W for W in int",
+        "(y: int) -> (z: int) -> int",
+    ] {
+        let shapes = format!(
+            "((int, bool, {h}) | (int, bool, bool, {h}),) | ((int, U, {h}) | (int, U, U, {h}),)"
+        );
+        let src = format!(
+            "p(f: (x: ((int, int, {h}),) | ((int, int, int, {h}),)) -> int) = 0;\n\
+             q(g: (x: {shapes}) -> int for U in int) = p(f: g);\n"
+        );
+        let first = format!("((int, int, {h}),)");
+        let clause = bucket_refused(
+            &first,
+            &format!("((int, int, int, {h}),)"),
+            &shapes,
+            "`U` is the type variable of `for U in int`",
+            true,
+        );
+        assert_eq!(
+            type_errors(&src),
+            vec![format!(
+                "`p` does not take ((x: {shapes}) -> int for U in int){clause}"
+            )],
+            "{h}"
+        );
+        let repaired = format!(
+            "p(f: (x: ((int, int, {h}),) | ((int, int, int, {h}),)) -> int) = 0;\n\
+             q(g: (x: ((int, bool, {h}) | (int, bool, bool, {h}),) | {first} \
+             | ((int, U, {h}) | (int, U, U, {h}),)) -> int for U in int) = p(f: g);\n"
+        );
+        assert_eq!(type_errors(&repaired), Vec::<String>::new(), "{h}");
+    }
+}
+
+#[test]
+fn functions_in_several_places_of_a_tuple_of_a_refused_bucket_print_as_their_types() {
+    use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    let (a, b) = ("(y: int) -> int", "(z: bool) -> int");
+    let shapes = format!(
+        "(({a}, bool, {b}) | ({a}, bool, bool, {b}),) | (({a}, U, {b}) | ({a}, U, U, {b}),)"
+    );
+    let src = format!(
+        "p(f: (x: (({a}, int, {b}),) | (({a}, int, int, {b}),)) -> int) = 0;\n\
+         q(g: (x: {shapes}) -> int for U in int) = p(f: g);\n"
+    );
+    let clause = bucket_refused(
+        &format!("(({a}, int, {b}),)"),
+        &format!("(({a}, int, int, {b}),)"),
+        &shapes,
+        "`U` is the type variable of `for U in int`",
+        true,
+    );
+    assert_eq!(
+        type_errors(&src),
+        vec![format!(
+            "`p` does not take ((x: {shapes}) -> int for U in int){clause}"
+        )]
+    );
+}
+
+#[test]
+fn a_function_as_a_tuple_of_one_component_in_a_refused_bucket_prints_as_its_type() {
+    use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    let shapes =
+        "((int, bool) | (int, bool, bool),) | ((int, U) | (int, U, U),) | ((y: int) -> int,)";
+    let src = format!(
+        "p(f: (x: ((int, int),) | ((int, int, int),)) -> int) = 0;\n\
+         q(g: (x: {shapes}) -> int for U in int) = p(f: g);\n"
+    );
+    let clause = bucket_refused(
+        "((int, int),)",
+        "((int, int, int),)",
+        shapes,
+        "`U` is the type variable of `for U in int`",
+        true,
+    );
+    assert_eq!(
+        type_errors(&src),
+        vec![format!(
+            "`p` does not take ((x: {shapes}) -> int for U in int){clause}"
+        )]
+    );
+}
+
+#[test]
+fn a_function_in_a_refused_bucket_prints_the_rigid_variable_it_holds_by_name() {
+    use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    // `V` of `f`'s type is rigid in the comparison; the function that holds it is read as the
+    // comparison reads `f`'s type, and prints `V`.
+    let h = "(y: int) -> int";
+    let shapes = format!(
+        "((int, bool, {h}) | (int, bool, bool, {h}),) | ((int, W, {h}) | (int, W, W, {h}),)"
+    );
+    let src = format!(
+        "p(f: (x: ((int, int, (y: V) -> int),) | ((int, int, int, (y: V) -> int),)) -> int \
+         for V in int) = 0;\n\
+         q(g: (x: {shapes}) -> int for W in int) = p(f: g);\n"
+    );
+    let clause = bucket_refused(
+        "((int, int, (y: V) -> int),)",
+        "((int, int, int, (y: V) -> int),)",
+        &shapes,
+        "`V` is the type variable of `for V in int`, and `W` is the type variable of `for W in \
+         int`",
+        false,
+    );
+    assert_eq!(
+        type_errors(&src),
+        vec![format!(
+            "`p` does not take ((x: {shapes}) -> int for W in int){clause}"
+        )]
+    );
+}
+
+#[test]
+fn a_rigid_variable_of_an_outer_comparison_and_an_own_variable_of_the_same_name_print_apart() {
+    use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    // `V` of `f`'s type is rigid in the outermost comparison; the comparison of the functions
+    // `k` two levels in meets `V` of `g`'s `k`, an own variable of the same name, which prints
+    // as `T`.
+    let shapes = "((int, bool) | (int, bool, bool),) | ((V, V) | (V, V, V),)";
+    let src = format!(
+        "p(f: (h: (k: (x: ((V, int),) | ((V, int, int),)) -> int) -> int) -> int for V in int) = 0;\n\
+         q(g: (h: (k: (x: {shapes}) -> int for V in int) -> int) -> int) = p(f: g);\n"
+    );
+    let clause = bucket_refused(
+        "((V, int),)",
+        "((V, int, int),)",
+        "((int, bool) | (int, bool, bool),) | ((T, T) | (T, T, T),)",
+        "`T` is the type variable `V` of `for V in int`, and `V` is the type variable of `for V \
+         in int`",
+        false,
+    );
+    assert_eq!(
+        type_errors(&src),
+        vec![format!(
+            "`p` does not take ((h: (k: (x: {shapes}) -> int for V in int) -> int) -> int){clause}"
+        )]
+    );
+}
+
+#[test]
+fn an_own_variable_of_an_outer_comparison_and_one_of_the_same_name_inside_print_apart() {
+    use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    // `V` of `g`'s type reads as itself in the outer comparison, and so does `V` of `f`'s `h`
+    // in the comparison of the functions `h`: the second is given a new name there, so the
+    // two are two variables, and print apart, `V` and `T`.
+    let shapes = "((int, bool) | (int, bool, bool),) | ((V, V) | (V, V, V),)";
+    let src = format!(
+        "p(f: (h: (x: {shapes}) -> int for V in int) -> int) = 0;\n\
+         q(g: (h: (x: ((V, int),) | ((V, int, int),)) -> int) -> int for V in int) = p(f: g);\n"
+    );
+    let clause = bucket_refused(
+        "((V, int),)",
+        "((V, int, int),)",
+        "((int, bool) | (int, bool, bool),) | ((T, T) | (T, T, T),)",
+        "`T` is the type variable `V` of `for V in int`, and `V` is the type variable of `for V \
+         in int`",
+        false,
+    );
+    assert_eq!(
+        type_errors(&src),
+        vec![format!(
+            "`p` does not take ((h: (x: ((V, int),) | ((V, int, int),)) -> int) -> int for V in \
+             int){clause}"
+        )]
+    );
+}
+
+#[test]
+fn a_refused_bucket_of_tuples_of_many_functions_prints_in_linear_time() {
+    use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    // Tuples of the bucket grown to `n` functions: each is put back once for each text that
+    // prints it, so the message grows with `n`.
+    let inputs = scaling::inputs(64, |n| {
+        let hs = ", (y: int) -> int".repeat(n);
+        let shapes = format!(
+            "((int, bool{hs}) | (int, bool, bool{hs}),) | ((int, U{hs}) | (int, U, U{hs}),)"
+        );
+        let src = format!(
+            "p(f: (x: ((int, int{hs}),) | ((int, int, int{hs}),)) -> int) = 0;\n\
+             q(g: (x: {shapes}) -> int for U in int) = p(f: g);\n"
+        );
+        (src, format!("one of the shapes {shapes}, which"))
+    });
+    scaling::check("a refused bucket of tuples of n functions", 64, |n| {
+        let (src, shapes) = &inputs[&n];
+        let errors = type_errors(src);
+        assert!(
+            errors.len() == 1 && errors[0].contains(shapes.as_str()),
+            "{errors:?}"
+        );
+    });
+}
+
+#[test]
+fn function_types_nested_deep_whose_variables_share_names_across_the_two_fit_in_linear_time() {
+    use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    // Level `k` from the inside of `g`'s type binds `A{k}_0` to `A{k}_7`, of `f`'s type
+    // `A{k + 1}_0` to `A{k + 1}_7`: the same type up to the names, each variable held by a
+    // parameter. The comparison of the two levels `k` meets the names of `f`'s, which the
+    // comparison around it, of the levels `k + 1`, may already read as themselves for `g`'s,
+    // and then gives them new names. The type fits at every depth, as it does without the
+    // clash. Eight variables a level make a search of the names kept, instead of their count,
+    // cost the square of the depth times 64.
+    let nest = |n: usize, from: usize| {
+        (0..=n).fold(String::new(), |t, k| {
+            let vs: Vec<String> = (0..8).map(|j| format!("A{}_{j}", k + from)).collect();
+            let params = vs.iter().enumerate().map(|(j, v)| format!("y{j}: {v}"));
+            let bounds = vs.iter().map(|v| format!("{v} in int"));
+            let params: Vec<String> = match k {
+                0 => params.collect(),
+                _ => std::iter::once(format!("h: {t}")).chain(params).collect(),
+            };
+            format!(
+                "({}) -> {} for {}",
+                params.join(", "),
+                vs[0],
+                bounds.collect::<Vec<_>>().join(", ")
+            )
+        })
+    };
+    let inputs = scaling::inputs(256, |n| {
+        format!(
+            "p(f: {}) = 0;\nq(g: {}) = p(f: g);\n",
+            nest(n, 1),
+            nest(n, 0)
+        )
+    });
+    scaling::check(
+        "function types nested n deep, names shared across",
+        256,
+        |n| {
+            assert_eq!(type_errors(&inputs[&n]), Vec::<String>::new());
         },
     );
 }
