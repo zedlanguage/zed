@@ -266,7 +266,7 @@ fn the_families_report_what_they_should() {
 /// agree: d^2 + d + 1 pairs, which hold about 2 d^3 / 3 choices. The pairs are numbered and
 /// written as runs, never one by one with their choices, so the default report is of order
 /// d^2 log d, the pairs times a log, by d at d and 8d; the walk that numbers the pairs takes
-/// 2 d^2 + 6 d + 2 steps and writes 3 d^2 + d runs.
+/// 5 d^2 + 7 d + 2 steps and writes 3 d^2 + d runs.
 #[test]
 fn a_shared_field_atom_scales() {
     let shared = |d: usize| {
@@ -290,7 +290,7 @@ fn a_shared_field_atom_scales() {
         assert_eq!(pairs, d * d + d + 1);
         assert_eq!(
             (runs, steps),
-            (3 * d * d + d, (2 * d * d + 6 * d + 2) as u64)
+            (3 * d * d + d, (5 * d * d + 7 * d + 2) as u64)
         );
         eprintln!("a shared-field atom at d = {d}: {pairs} pairs, {runs} runs, {steps} steps");
     }
@@ -303,9 +303,11 @@ fn a_shared_field_atom_scales() {
 /// `f(x, .., x) == g1(..gk(g0(f(y, .., y, x), f(y, .., y, x)))..)` with `f` of k arguments. The
 /// left side has k leaves at `x`, one for each projection of `f`, and only the last projection
 /// reaches an `x` on the right, below k fields the left side does not name. Every path to an
-/// `x` on the right needs `f` at its last projection, so the walk refuses the right side at its
-/// root for each of the other k - 1 leaves instead of walking the k fields down to each `f`:
-/// 2 k + 8 pairs, and work linear in k, not k^2.
+/// `x` on the right needs `f` at its last projection. The walk follows the right side's k
+/// fields once with the left side's whole tree, which tests none of them, splits at `g0`, and at
+/// each pair of `f` nodes enters only the projections whose keys meet, instead of walking the k
+/// fields down to each `f` once for each left leaf: 2 k + 8 pairs, 8 k + 17 runs, 15 k + 48
+/// steps, and work linear in k, not k^2.
 #[test]
 fn a_shared_field_atom_with_cut_subtrees_scales() {
     let cut = |k: usize| {
@@ -331,10 +333,9 @@ fn a_shared_field_atom_with_cut_subtrees_scales() {
         let atom = t.laws[0].clauses()[0][0];
         let (pairs, runs, steps) = t.shared_atom_size(&atom).expect("the sides share `f`");
         eprintln!("a cut shared-field atom at k = {k}: {pairs} pairs, {runs} runs, {steps} steps");
-        assert_eq!(pairs, 2 * k + 8);
         assert_eq!(
-            steps,
-            6 * k as u64 + 20,
+            (pairs, runs, steps),
+            (2 * k + 8, 8 * k + 17, 15 * k as u64 + 48),
             "the walk takes only steps that reach a pair"
         );
     }
@@ -343,4 +344,149 @@ fn a_shared_field_atom_with_cut_subtrees_scales() {
         k,
         |n| run(&inputs[&n], Mode::Default),
     );
+}
+
+/// The four families of plan row TRIVIAL-walk-branches, each an atom whose sides share a field,
+/// of m fields or arguments; `mirror` swaps the sides. Pairs, tree nodes and the depths of the
+/// leaves are linear in m, and so must be the walk's steps and runs:
+/// - brief: `f1(f2(w(x, .., x), x), x) == c1(..cm(g(f1(y, x), f2(y, x)))..)`, `w` of m
+///   arguments: a right branch point whose children each need a different field the left leaf
+///   fixed;
+/// - wide: `h(x, .., x) == g1(..gm(h(x, .., x))..)`: a wide node below a long chain;
+/// - same: `f1(..fm(x)..) == f1(..fm(x)..)`: a chain the left leaf fixed throughout;
+/// - ne: `g(f(x, z), ..) != h(f(z, x), ..)`, `g` and `h` of m arguments: under `!=` the same
+///   field on both sides owns no pair.
+fn branches(family: &str, mirror: bool, m: usize) -> Theory {
+    let mut t = Theory::new("Branches");
+    let xs = vec!["x"; m].join(", ");
+    let chain = |p: &str, inner: &str| {
+        let names: Vec<String> = (1..=m).map(|i| format!("{p}{i}")).collect();
+        format!("{}({inner}{}", names.join("("), ")".repeat(m))
+    };
+    let (binders, lhs, rel, rhs) = match family {
+        "brief" => {
+            t.field("f1", 2).field("f2", 2).field("w", m).field("g", 2);
+            for i in 1..=m {
+                t.field(&format!("c{i}"), 1);
+            }
+            let rhs = chain("c", "g(f1(y, x), f2(y, x))");
+            ("x y", format!("f1(f2(w({xs}), x), x)"), "==", rhs)
+        }
+        "wide" => {
+            t.field("h", m);
+            for i in 1..=m {
+                t.field(&format!("g{i}"), 1);
+            }
+            (
+                "x",
+                format!("h({xs})"),
+                "==",
+                chain("g", &format!("h({xs})")),
+            )
+        }
+        "same" => {
+            for i in 1..=m {
+                t.field(&format!("f{i}"), 1);
+            }
+            ("x", chain("f", "x"), "==", chain("f", "x"))
+        }
+        "ne" => {
+            t.field("g", m).field("h", m).field("f", 2);
+            let l = vec!["f(x, z)"; m].join(", ");
+            let r = vec!["f(z, x)"; m].join(", ");
+            ("x z", format!("g({l})"), "!=", format!("h({r})"))
+        }
+        _ => unreachable!("one of the four families"),
+    };
+    let body = if mirror {
+        format!("{rhs} {rel} {lhs}")
+    } else {
+        format!("{lhs} {rel} {rhs}")
+    };
+    t.law("branches", binders, &body);
+    t
+}
+
+/// The default report on each family of [`branches`] and its mirror is of order m log m, by m at
+/// m and 8m: the walk over pairs of nodes, one of each side, follows a field the other side
+/// fixed, splits one side on a field both test and enters only the children that can hold a
+/// pair, and skips the rest of a class of children after one gave no pair, so its steps and runs
+/// are linear in m, the same on a family and its mirror (`Theory::pair_form`). The walk before
+/// plan row TRIVIAL-walk-branches, of the left side's tree and at each of its leaves the right
+/// side's, took steps or runs quadratic in m on brief, wide, same and ne, 26 to 72 times the
+/// instructions at m = 128 and 1024 (COMPLEXITY.md C32).
+#[test]
+fn the_shared_field_families_scale() {
+    let m = 128;
+    // The pairs, runs and steps of each family at m, the same for its mirror.
+    let size = |family: &str, m: usize| match family {
+        "brief" => (6 * m + 15, 20 * m + 40, 35 * m + 85),
+        "wide" => (3 * m + 2, 9 * m + 3, 17 * m + 14),
+        "same" => (2 * m + 1, 4 * m, 12 * m + 2),
+        _ => (4 * m + 2, 14 * m + 7, 28 * m + 14),
+    };
+    for family in ["brief", "wide", "same", "ne"] {
+        for mirror in [false, true] {
+            let inputs = scaling::inputs(m, |m| branches(family, mirror, m));
+            let name = format!("{family}{}", if mirror { "-m" } else { "" });
+            for (&m, t) in &inputs {
+                let atom = t.laws[0].clauses()[0][0];
+                let (pairs, runs, steps) =
+                    t.shared_atom_size(&atom).expect("the sides share fields");
+                eprintln!("{name} at m = {m}: {pairs} pairs, {runs} runs, {steps} steps");
+                let (p, r, s) = size(family, m);
+                assert_eq!((pairs, runs, steps), (p, r, s as u64), "{name} at m = {m}");
+            }
+            scaling::check(
+                &format!("the shared-field family {name}, Default, by m"),
+                m,
+                |n| run(&inputs[&n], Mode::Default),
+            );
+        }
+    }
+}
+
+/// `s(h(x0, .., xm), .., h(x0, .., xm), y0, .., ym) == t(h(y0, .., ym), .., h(y0, .., ym), x0,
+/// .., xm)`, m copies of `h` and m distinct binders on each side: `s` and `t` split into m^2
+/// pairs of `h` nodes, each with the two constant pairs only, and each `x_i` of the left `h`
+/// pairs with the right side's leaf `x_i`. Pairs, runs and steps are quadratic in m, the input's
+/// size: a pair of `h` nodes enters only its children whose keys meet (`Picks`), not all m
+/// (m^3 steps before).
+#[test]
+fn the_joint_splits_scale() {
+    let joint = |m: usize| {
+        let mut t = Theory::new("Joint");
+        t.field("s", 2 * m).field("t", 2 * m).field("h", m);
+        let xs: Vec<String> = (0..m).map(|i| format!("x{i}")).collect();
+        let ys: Vec<String> = (0..m).map(|i| format!("y{i}")).collect();
+        let side = |f: &str, inner: &[String], outer: &[String]| {
+            let h = format!("h({})", inner.join(", "));
+            format!("{f}({}, {})", vec![h; m].join(", "), outer.join(", "))
+        };
+        let body = format!("{} == {}", side("s", &xs, &ys), side("t", &ys, &xs));
+        t.law(
+            "joint",
+            &format!("{} {}", xs.join(" "), ys.join(" ")),
+            &body,
+        );
+        t
+    };
+    let m = 16;
+    let inputs = scaling::inputs(m, joint);
+    for (&m, t) in &inputs {
+        let atom = t.laws[0].clauses()[0][0];
+        let (pairs, runs, steps) = t.shared_atom_size(&atom).expect("the sides share `h`");
+        eprintln!("the joint family at m = {m}: {pairs} pairs, {runs} runs, {steps} steps");
+        assert_eq!(
+            (pairs, runs, steps),
+            (
+                4 * m * m + 4 * m + 2,
+                10 * m * m + 16 * m + 7,
+                (22 * m * m + 29 * m + 14) as u64
+            )
+        );
+    }
+    scaling::check_order("the joint family, Default, by m", m, 2, |n| {
+        run(&inputs[&n], Mode::Default)
+    });
 }
