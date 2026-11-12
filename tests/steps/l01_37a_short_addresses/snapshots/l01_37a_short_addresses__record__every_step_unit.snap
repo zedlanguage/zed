@@ -19,7 +19,7 @@ l01_21_test_runner/zed/labels.zed
     Diagnostic {
         line: 5,
         col: 5,
-        message: "this call of `label` gives no value to its parameter `city`, and `city` has no default, so the call cannot be made",
+        message: "this call of `label` gives no value to its parameter `city`, and `city` has no default, so the call cannot be made.",
         steps: [
             Step {
                 line: 3,
@@ -65,7 +65,7 @@ l01_21_test_runner/zed/labels.zed
     Diagnostic {
         line: 5,
         col: 5,
-        message: "this call of `label` gives no value to its parameter `name`, and `name` has no default, so the call cannot be made",
+        message: "this call of `label` gives no value to its parameter `name`, and `name` has no default, so the call cannot be made.",
         steps: [
             Step {
                 line: 3,
@@ -104,7 +104,7 @@ l01_21_test_runner/zed/labels.zed
     Diagnostic {
         line: 6,
         col: 17,
-        message: "this argument is passed by name, as `name: …`, and `name` of `label` is positional, so a call passes it only by position",
+        message: "this argument is passed by name, as `name: …`, and `name` of `label` is positional, so a call passes it only by position.",
         steps: [
             Step {
                 line: 3,
@@ -136,7 +136,7 @@ l01_21_test_runner/zed/labels.zed
     Diagnostic {
         line: 7,
         col: 5,
-        message: "this call of `label` ends in `...`, which makes a function of the named parameters the call leaves out, and the call gives every named parameter a value, so `...` has no parameter to leave out",
+        message: "this call of `label` ends in `...`, which makes a function of the named parameters the call leaves out, and the call gives every named parameter a value, so `...` has no parameter to leave out.",
         steps: [
             Step {
                 line: 3,
@@ -161,7 +161,7 @@ l01_21_test_runner/zed/labels.zed
     Diagnostic {
         line: 8,
         col: 25,
-        message: "the lambda's parameter `g` is not a parameter of `(grams: int) -> String`: rename it `grams`. The lambda is passed where a function of type `(grams: int) -> String` is expected, and a call of it passes each named argument by its name, so each parameter the lambda does not take by position must have a name of `(grams: int) -> String` or a default",
+        message: "the lambda's parameter `g` is not a parameter of `(grams: int) -> String`: rename it `grams`. The lambda is passed where a function of type `(grams: int) -> String` is expected, and a call of it passes each named argument by its name, so each parameter the lambda does not take by position must have a name of `(grams: int) -> String` or a default.",
         steps: [
             Step {
                 line: 4,
@@ -216,7 +216,7 @@ l01_29_diagnostics/zed/narrowed.zed
     Diagnostic {
         line: 3,
         col: 22,
-        message: "`++` does not take (int, \"x\"): no arrow of `++` takes these types",
+        message: "`++` does not take (int, \"x\"): no arrow of `++` takes these types.",
         steps: [
             Step {
                 line: 3,

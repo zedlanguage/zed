@@ -168,16 +168,16 @@ fn a_unit_with_no_main_is_refused_at_its_start_with_an_address() {
     let file = unit("addresses", "nomain.zed", "helper = 1;\n");
     let (status, _, err) = zedc(&["run", &file]);
     assert_eq!(status, 1);
-    let a = address_after(&err, &format!("{file}:1:1: this file is run as a program"));
+    let a = address_after(&err, &format!("{file}:1:1: This file declares no `main`"));
     assert_eq!(
         err,
         format!(
-            "{file}:1:1: this file is run as a program, and a program starts at a function named \
-             `main`, which this file does not declare. Declare one, such as\n    \
-             main(m: MainArgs) {{\n      \
-             m.stdout <- \"hello\";\n    \
-             }}\nor, if the file holds definitions to test and is not a program, run `zedc test` \
-             on it instead of `zedc run`.\n  \
+            "{file}:1:1: This file declares no `main` to start the program at. Try adding \
+             `main(m: MainArgs) {{ m.stdout <- \"hello\"; }}`.\n  \
+             [1] 1:1: `zedc run` runs a program, which starts at the function `main`; a file of \
+             definitions to test runs with `zedc test`\n      \
+             1 | helper = 1;\n        \
+             | ^\n  \
              address: {a}\n"
         )
     );

@@ -77,7 +77,7 @@ fn a_cycle_of_two_is_reported_at_the_same_import_from_either_unit() {
         [
             "orders.zed:1:1: the unit `stock` cannot be imported: the imports form a cycle, so its \
           units have no order to be resolved in: `orders` imports `stock` at orders.zed:1:1, \
-          `stock` imports `orders` at stock.zed:2:1"
+          `stock` imports `orders` at stock.zed:2:1."
         ]
     );
     each_alone_agrees(&fs, &["orders", "stock"], &m);
@@ -97,10 +97,10 @@ fn two_disjoint_cycles_are_each_reported_once() {
         [
             "catalog.zed:1:1: the unit `pricing` cannot be imported: the imports form a cycle, so \
              its units have no order to be resolved in: `catalog` imports `pricing` at \
-             catalog.zed:1:1, `pricing` imports `catalog` at pricing.zed:1:1",
+             catalog.zed:1:1, `pricing` imports `catalog` at pricing.zed:1:1.",
             "invoices.zed:1:1: the unit `payments` cannot be imported: the imports form a cycle, \
              so its units have no order to be resolved in: `invoices` imports `payments` at \
-             invoices.zed:1:1, `payments` imports `invoices` at payments.zed:1:1",
+             invoices.zed:1:1, `payments` imports `invoices` at payments.zed:1:1.",
         ]
     );
     // A unit alone reaches its own cycle only, reported as in the batch.
@@ -135,7 +135,7 @@ fn a_cycle_of_three_with_a_chord_is_reported_once_by_its_shortest_cycle() {
         [
             "cart.zed:2:1: the unit `stock` cannot be imported: the imports form a cycle, so its \
           units have no order to be resolved in: `cart` imports `stock` at cart.zed:2:1, `stock` \
-          imports `cart` at stock.zed:1:1"
+          imports `cart` at stock.zed:1:1."
         ]
     );
     each_alone_agrees(&fs, &roots, &m);
@@ -172,7 +172,7 @@ fn of_two_shortest_cycles_the_one_whose_import_comes_first_in_the_text_is_report
             [format!(
                 "app.zed:{at}:1: the unit `{first}` cannot be imported: the imports form a cycle, \
                  so its units have no order to be resolved in: `app` imports `{first}` at \
-                 app.zed:{at}:1, `{first}` imports `app` at {first}.zed:1:1"
+                 app.zed:{at}:1, `{first}` imports `app` at {first}.zed:1:1."
             )],
             "{app}"
         );
@@ -198,10 +198,10 @@ fn a_unit_that_imports_itself_on_a_cycle_is_reported_for_both() {
         [
             "audit.zed:1:1: the unit `ledger` cannot be imported: the imports form a cycle, so its \
              units have no order to be resolved in: `audit` imports `ledger` at audit.zed:1:1, \
-             `ledger` imports `audit` at ledger.zed:1:1",
+             `ledger` imports `audit` at ledger.zed:1:1.",
             "ledger.zed:2:1: the unit `ledger` cannot be imported: the imports form a cycle, so \
              its units have no order to be resolved in: `ledger` imports `ledger` at \
-             ledger.zed:2:1",
+             ledger.zed:2:1.",
         ]
     );
     each_alone_agrees(&fs, &["ledger", "audit"], &m);
@@ -380,7 +380,7 @@ fn expected_cycles(graph: &HashMap<&str, Vec<(&str, usize)>>, units: &[String]) 
         let named: Vec<String> = steps.iter().map(|&(f, t, l)| step(f, t, l)).collect();
         format!(
             "{}:{line}:1: the unit `{to}` cannot be imported: the imports form a cycle, so its \
-             units have no order to be resolved in: {}",
+             units have no order to be resolved in: {}.",
             file_of(from),
             named.join(", ")
         )
@@ -503,7 +503,7 @@ fn a_cycle_beside_a_unit_that_does_not_parse_and_a_root_with_no_file_is_reported
     let m = every_order(&fs, &roots);
     let cycle = "orders.zed:1:1: the unit `stock` cannot be imported: the imports form a cycle, \
                  so its units have no order to be resolved in: `orders` imports `stock` at \
-                 orders.zed:1:1, `stock` imports `orders` at stock.zed:1:1";
+                 orders.zed:1:1, `stock` imports `orders` at stock.zed:1:1.";
     let files_of: Vec<&str> = m.iter().map(|l| l.split(':').next().unwrap()).collect();
     assert_eq!(
         files_of,
@@ -550,10 +550,10 @@ fn a_cycle_that_imports_another_cycle_is_reported_once_with_it_from_every_unit()
         [
             "accounts.zed:1:1: the unit `billing` cannot be imported: the imports form a cycle, \
              so its units have no order to be resolved in: `accounts` imports `billing` at \
-             accounts.zed:1:1, `billing` imports `accounts` at billing.zed:1:1",
+             accounts.zed:1:1, `billing` imports `accounts` at billing.zed:1:1.",
             "audit.zed:1:1: the unit `ledger` cannot be imported: the imports form a cycle, so \
              its units have no order to be resolved in: `audit` imports `ledger` at \
-             audit.zed:1:1, `ledger` imports `audit` at ledger.zed:1:1",
+             audit.zed:1:1, `ledger` imports `audit` at ledger.zed:1:1.",
         ]
     );
     // The importing cycle's units reach both; the imported cycle's units only their own.
@@ -597,7 +597,7 @@ fn of_two_shortest_cycles_that_share_their_first_import_the_next_import_in_the_t
         [
             "app.zed:1:1: the unit `core` cannot be imported: the imports form a cycle, so its \
              units have no order to be resolved in: `app` imports `core` at app.zed:1:1, `core` \
-             imports `db` at core.zed:1:1, `db` imports `app` at db.zed:1:1"
+             imports `db` at core.zed:1:1, `db` imports `app` at db.zed:1:1."
         ]
     );
     each_alone_agrees(&fs, &roots, &m);
@@ -623,7 +623,7 @@ fn a_shorter_cycle_wins_over_one_whose_imports_come_first() {
         [
             "app.zed:2:1: the unit `tabs` cannot be imported: the imports form a cycle, so its \
              units have no order to be resolved in: `app` imports `tabs` at app.zed:2:1, `tabs` \
-             imports `app` at tabs.zed:1:1"
+             imports `app` at tabs.zed:1:1."
         ]
     );
     each_alone_agrees(&fs, &roots, &m);
@@ -662,10 +662,7 @@ fn names_brought_in_on_a_cycle_are_bound_and_other_imports_are_still_checked() {
         m[1].starts_with("report.zed:1:1: the unit `stock` defines no `refund`"),
         "{m:?}"
     );
-    assert_eq!(
-        m[2],
-        "report.zed:2:22: `missing` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `missing`, or correct the name if it is misspelled."
-    );
+    assert_eq!(m[2], "report.zed:2:22: `missing` is not defined.");
     assert!(
         m[3].starts_with("stock.zed:2:1: the unit `tax` defines no `levy`"),
         "{m:?}"

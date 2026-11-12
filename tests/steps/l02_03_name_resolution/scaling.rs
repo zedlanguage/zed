@@ -249,7 +249,7 @@ fn a_long_cycle_is_named_whole_in_linear_time() {
                 m[0]
             );
             assert!(
-                m[0].ends_with("`c1` imports `c0` at c1.zed:1:1"),
+                m[0].ends_with("`c1` imports `c0` at c1.zed:1:1."),
                 "{}",
                 m[0]
             );
@@ -274,7 +274,7 @@ fn a_chain_with_one_import_back_is_named_in_linear_time() {
                 m[0]
             );
             assert!(
-                m[0].ends_with("`c1` imports `c0` at c1.zed:1:1"),
+                m[0].ends_with("`c1` imports `c0` at c1.zed:1:1."),
                 "{}",
                 m[0]
             );
@@ -345,7 +345,7 @@ fn many_disjoint_cycles_are_each_named_in_linear_time() {
                     &format!(
                         "p{i}/a.zed:1:1: the unit `p{i}.b` cannot be imported: the imports form a \
                          cycle, so its units have no order to be resolved in: `p{i}.a` imports \
-                         `p{i}.b` at p{i}/a.zed:1:1, `p{i}.b` imports `p{i}.a` at p{i}/b.zed:1:1"
+                         `p{i}.b` at p{i}/a.zed:1:1, `p{i}.b` imports `p{i}.a` at p{i}/b.zed:1:1."
                     )
                 );
             }

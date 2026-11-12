@@ -15,7 +15,7 @@ fn a_default_whose_type_its_uses_exclude_is_rejected() {
     // of that type.
     assert_eq!(
         shown("f(positional y = (y + 1, 2)) = y;\n"),
-        r#"1:18: the default of `y` is (_, 2), not int | f64 | rat: a default is a value of its parameter's type
+        r#"1:18: the default of `y` is (_, 2), not int | f64 | rat: a default is a value of its parameter's type.
   [1] 1:18: this expression gives (_, 2)
       1 | f(positional y = (y + 1, 2)) = y;
         |   ^^^^^^^^^^^^^^^^^^^^^^^^^ [4]
@@ -38,7 +38,7 @@ fn a_default_whose_type_its_uses_exclude_is_rejected() {
 fn a_default_the_checker_cannot_place_in_a_range_is_rejected_at_the_call() {
     assert_eq!(
         shown("f(positional a, positional b = a) = bitAnd(b, 1);\nmain = f(1);\n"),
-        r#"2:8: `f` takes `b` in int[0..], and this call leaves `b` out, so `b` takes its default, which the checker cannot show lies in int[0..]
+        r#"2:8: `f` takes `b` in int[0..], and this call leaves `b` out, so `b` takes its default, which the checker cannot show lies in int[0..].
   [1] 1:37: `bitAnd` takes `a` in int[0..] here
       1 | f(positional a, positional b = a) = bitAnd(b, 1);
         | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [2]
@@ -60,7 +60,7 @@ fn an_argument_forwarded_to_a_function_parameter_is_checked_against_its_range() 
             "ap(positional g, positional v) = g(v);\nh(positional a) = bitAnd(a, 1);\n\
              main = ap(h, -1);\n"
         ),
-        r#"3:8: `g` takes `a` in int[0..], and this `a` is -1: a value outside int[0..] would reach a use that does not take it
+        r#"3:8: `g` takes `a` in int[0..], and this `a` is -1: a value outside int[0..] would reach a use that does not take it.
   [1] 2:19: `bitAnd` takes `a` in int[0..] here
       2 | h(positional a) = bitAnd(a, 1);
         |                   ^^^^^^^^^^^^
@@ -79,7 +79,7 @@ fn an_argument_forwarded_to_a_function_parameter_is_checked_against_its_range() 
 fn sum_of_a_value_that_is_not_a_tuple_is_rejected() {
     assert_eq!(
         shown("x = sum(3);\n"),
-        r#"1:5: `sum` does not take (3): it adds only numbers
+        r#"1:5: `sum` does not take (3): it adds only numbers.
   [1] 1:5: repair: pass a tuple whose components are all numbers, as `sum((1, 2, 3))`
       1 | x = sum(3);
         |     ^^^^^^"#
@@ -94,7 +94,7 @@ fn a_component_of_a_destructured_tuple_is_named_with_its_place() {
     // rejected.
     assert_eq!(
         shown("p = (1, \"x\");\na, b = p;\nc = a + b;\n"),
-        r#"3:5: `+` does not take (1, "x"): no arrow of `+` takes these types
+        r#"3:5: `+` does not take (1, "x"): no arrow of `+` takes these types.
   [1]  3:5: `a` is 1 here
        3 | c = a + b;
          |     ^ [1]
@@ -125,7 +125,7 @@ fn a_parameter_typed_by_its_default_says_so() {
     // Before, step [2] read "`n` is String, the carrier of its default".
     assert_eq!(
         shown("f(positional n = \"a\") = n + 1;\n"),
-        r#"1:25: `+` does not take (String, 1): no arrow of `+` takes these types
+        r#"1:25: `+` does not take (String, 1): no arrow of `+` takes these types.
   [1] 1:25: `n` is String here
       1 | f(positional n = "a") = n + 1;
         |   ^^^^^^^^^^^^^^^^^^ [2]    ^ [3]

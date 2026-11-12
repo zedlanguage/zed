@@ -20,13 +20,13 @@ constructor-called-by-position
     Diagnostic {
         line: 6,
         col: 5,
-        message: "`Point` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `Point`, or correct the name if it is misspelled.",
+        message: "`Point` is not defined.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 6, col: 5, failure: Some("the mark names the row \"Positional constructor call or pattern\", and the diagnostic is in no row of the rejection table: `Point` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `Point`, or correct the name if it is misspelled.") }]
+  checks: [Outcome { line: 6, col: 5, failure: Some("the mark names the row \"Positional constructor call or pattern\", and the diagnostic is in no row of the rejection table: `Point` is not defined.") }]
 
 decimal-literal-at-int
   rejected: [
@@ -99,7 +99,7 @@ decimal-literal-at-int
                 width: 1,
             },
         ],
-        menu: "\n  fixes, each checked here:\n    bad = x * 2;           2 takes the int of x\n    bad = rat(x) * 2.0;    x is cast to rat, and `*` takes two rat",
+        menu: "\n  fixes, each checked here:\n    bad = x * 2;           2 takes the int of x\n    bad = rat(x) * 2.0;    x is cast to rat, and `*` takes two rat\n    bad = f64(x) * 2.0;    x is cast to f64, exactly, since it lies within ±2^53",
         row: Some(
             LiteralCarrier,
         ),
@@ -275,26 +275,26 @@ nullable-column-missing-none
     Diagnostic {
         line: 51,
         col: 1,
-        message: "expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'",
+        message: "expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 36, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 51, col: 1, failure: Some("expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'") }]
+  checks: [Outcome { line: 36, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 51, col: 1, failure: Some("expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'.") }]
 
 numeric-is-not-binary-float
   rejected: [
     Diagnostic {
         line: 51,
         col: 1,
-        message: "expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'",
+        message: "expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 36, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 51, col: 1, failure: Some("expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'") }]
+  checks: [Outcome { line: 36, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 51, col: 1, failure: Some("expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'.") }]
 
 payload-built-by-position
   rejected: [
@@ -317,7 +317,7 @@ payload-built-by-position
     Diagnostic {
         line: 3,
         col: 41,
-        message: "the type `Utf8String` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`.",
+        message: "The type `Utf8String` is not defined.",
         steps: [],
         menu: "",
         row: None,
@@ -331,7 +331,7 @@ payload-built-by-position
         row: None,
     },
 ]
-  checks: [Outcome { line: 3, col: 1, failure: Some("a type declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 3, col: 13, failure: Some("an atom type with a payload is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 3, col: 41, failure: Some("the type `Utf8String` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`.") }, Outcome { line: 5, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 6, col: 21, failure: Some("a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }]
+  checks: [Outcome { line: 3, col: 1, failure: Some("a type declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 3, col: 13, failure: Some("an atom type with a payload is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 3, col: 41, failure: Some("The type `Utf8String` is not defined.") }, Outcome { line: 5, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 6, col: 21, failure: Some("a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }]
 
 point-unit-in-quotient
   rejected: [
@@ -457,13 +457,13 @@ taint-reaches-clean-sink
     Diagnostic {
         line: 50,
         col: 1,
-        message: "expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'",
+        message: "expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 50, col: 1, failure: Some("the mark names the row \"Taint at a sink whose parameter does not take it\", and the diagnostic is in no row of the rejection table: expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'") }]
+  checks: [Outcome { line: 50, col: 1, failure: Some("the mark names the row \"Taint at a sink whose parameter does not take it\", and the diagnostic is in no row of the rejection table: expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'.") }]
 
 taint-through-concatenation
   rejected: [
@@ -546,13 +546,13 @@ unit-mismatch-in-sum
     Diagnostic {
         line: 51,
         col: 1,
-        message: "expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'",
+        message: "expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 47, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 51, col: 1, failure: Some("expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'") }]
+  checks: [Outcome { line: 47, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 51, col: 1, failure: Some("expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'.") }]
 
 units-differ-by-kind
   rejected: [

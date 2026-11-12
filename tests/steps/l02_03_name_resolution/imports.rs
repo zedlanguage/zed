@@ -42,7 +42,7 @@ fn a_name_the_unit_does_not_define_is_rejected_at_the_import() {
     assert_eq!(
         mistakes(&p),
         [
-            "main.zed:1:1: the unit `geometry.shapes` defines no `volume`\n  \
+            "main.zed:1:1: the unit `geometry.shapes` defines no `volume`.\n  \
           [1] 1:1: the import of the unit `geometry.shapes`\n      \
           1 | import geometry.shapes.{area, volume};\n        \
           | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
@@ -116,7 +116,7 @@ fn a_qualifier_is_no_value() {
         mistakes(&p),
         [
             "main.zed:2:7: `shapes` names the unit `geometry.shapes`, which is no value; a \
-          definition of the unit is written `shapes.f`"
+          definition of the unit is written `shapes.f`."
         ]
     );
 }
@@ -134,9 +134,8 @@ fn a_name_two_units_bring_in_is_ambiguous_where_it_is_used() {
     assert_eq!(
         mistakes(&p),
         [
-            "main.zed:3:13: `scale` is ambiguous: two imports bring it into scope from different \
-          units; name the one meant through a qualifier, as `metric.scale` after \
-          `import metric;`\n  \
+            "main.zed:3:13: `scale` is ambiguous between two imports. Try `metric.scale` after \
+          `import metric;` instead.\n  \
           [1] 1:1: this import brings `scale` in from the unit `metric`\n      \
           1 | import metric.{scale};\n        \
           | ^^^^^^^^^^^^^^^^^^^^^^\n  \
@@ -208,12 +207,7 @@ fn an_import_in_a_block_is_seen_in_that_block_only() {
              disk(r) = area(r);\n",
         ),
     ]);
-    assert_eq!(
-        mistakes(&p),
-        [
-            "main.zed:5:11: `area` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `area`, or correct the name if it is misspelled."
-        ]
-    );
+    assert_eq!(mistakes(&p), ["main.zed:5:11: `area` is not defined."]);
     assert_eq!(
         use_of(&p, "main", "area", 1),
         ["function import geometry.shapes.{area}; from geometry.shapes"]
@@ -249,8 +243,7 @@ fn a_binding_after_a_block_import_of_its_name_is_a_rebinding() {
     assert_eq!(
         mistakes(&p),
         [
-            "main.zed:3:3: `unitRadius` is already bound in this scope, by an import, and a scope \
-             binds each name once\n  \
+            "main.zed:3:3: `unitRadius` is already bound in this scope by an import.\n  \
              [1] 2:3: the import that brings `unitRadius` into this scope\n      \
              2 |   import geometry.shapes.{unitRadius};\n        \
              |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  \
@@ -274,8 +267,7 @@ fn an_import_after_a_block_binding_of_its_name_is_a_rebinding() {
     assert_eq!(
         mistakes(&p),
         [
-            "main.zed:3:3: `unitRadius` is already bound in this scope, and a scope binds each \
-             name once\n  \
+            "main.zed:3:3: `unitRadius` is already bound in this scope.\n  \
              [1] 2:3: the binding of `unitRadius` the import would hide\n      \
              2 |   unitRadius = 2.0;\n        \
              |   ^^^^^^^^^^^^^^^^^\n  \

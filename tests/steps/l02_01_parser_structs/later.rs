@@ -18,7 +18,7 @@ fn each_form_names_the_step_that_compiles_it() {
             "Point.norm = 1;",
             &[
                 concat!(zed_tests::not_yet!("a method"), " [Point.norm = 1;]"),
-                "the type `Point` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`. [Point.norm = 1;]",
+                "The type `Point` is not defined. [Point.norm = 1;]",
             ],
         ),
         (
@@ -70,7 +70,7 @@ fn each_form_names_the_step_that_compiles_it() {
         (
             "f(t: Tree(int)) = t;",
             &[
-                "the type `Tree` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`. [Tree]",
+                "The type `Tree` is not defined. [Tree]",
                 concat!(zed_tests::not_yet!("an applied type"), " [Tree(int)]"),
             ],
         ),

@@ -87,12 +87,12 @@ fn numbers_of_different_kinds_do_not_mix() {
     // Values of two kinds do not mix; the checker finds it before anything runs.
     assert_eq!(
         errors("x = 1r;\na = x + f64(1);\n"),
-        ["`+` does not take (1r, f64): no arrow of `+` takes these types [x + f64(1)]"]
+        ["`+` does not take (1r, f64): no arrow of `+` takes these types. [x + f64(1)]"]
     );
     // A name bound to an integer literal is an `int`, and does not mix with a `rat`.
     assert_eq!(
         errors("i = 1;\na = 1r + i;\n"),
-        ["`+` does not take (1r, 1): no arrow of `+` takes these types [1r + i]"]
+        ["`+` does not take (1r, 1): no arrow of `+` takes these types. [1r + i]"]
     );
     // A literal with a suffix keeps its carrier, and is rejected with the forms to write; a
     // literal without one takes the carrier the other side expects, exactly (steps L1.26,
@@ -100,8 +100,9 @@ fn numbers_of_different_kinds_do_not_mix() {
     assert_eq!(
         errors("b = 1r < 2.0f64;\n"),
         [
-            "The suffix makes the literal `2.0f64` an `f64`, never `rat`. Try `b = 1r < 2.0r` instead.\n  fixes, each checked \
-             here:\n    b = 1r < 2.0r;    the literal is then exactly 2.0, a rat [2.0f64]"
+            "The suffix makes the literal `2.0f64` an `f64`, never `rat`. Try `b = 1r < 2.0` instead.\n  fixes, each checked \
+             here:\n    b = 1r < 2.0;     the literal is then exactly 2.0, a rat\n    b = 1r < 2.0r;    \
+             the literal is then exactly 2.0, a rat [2.0f64]"
         ]
     );
     // Two literals without a suffix, one a decimal, have nothing to give them a carrier.

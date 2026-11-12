@@ -91,9 +91,7 @@ fn every_unit_but_the_prelude_and_what_it_reaches_sees_the_prelude_unit() {
     assert_eq!(use_of(&p, "main", "double", 0), ["std.prelude.double"]);
     assert_eq!(
         mistakes(&p),
-        [
-            "std/math.zed:2:11: `double` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `double`, or correct the name if it is misspelled."
-        ]
+        ["std/math.zed:2:11: `double` is not defined."]
     );
 }
 
@@ -107,7 +105,7 @@ fn a_prelude_unit_with_no_file_is_reported_at_the_manifest() {
         mistakes(&p),
         [
             "zed.manifest:1:11: the prelude unit `std.prelude` is missing: there is no file \
-          `std/prelude.zed` under the root"
+          `std/prelude.zed` under the root."
         ]
     );
 }
@@ -119,7 +117,7 @@ fn a_manifest_that_is_refused_stops_the_package() {
         mistakes(&p),
         [
             "zed.manifest:1:11: the manifest entry `prelude` is bound to a string literal with no \
-          hole, as `prelude = \"std.prelude\";`"
+          hole, as `prelude = \"std.prelude\";`."
         ]
     );
     assert!(p.units.is_empty());
@@ -138,7 +136,7 @@ fn a_prelude_unit_name_that_is_no_type_stands_where_a_type_is_written() {
         mistakes(&p),
         [
             "main.zed:1:17: `scale` stands where a type is written, and the prelude unit \
-             `std.prelude` declares `scale` as the binding target, which is no type"
+             `std.prelude` declares `scale` as the binding target, which is no type."
         ]
     );
 }

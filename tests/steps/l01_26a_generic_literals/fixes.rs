@@ -232,7 +232,10 @@ fn a_negative_literal_keeps_its_minus_in_each_fix() {
     // The value is the number the fix writes, without the suffix of the rejected literal.
     assert_eq!(
         checked(&at("rat", "-2.5f64")),
-        pairs(&[("y = f(-2.5r);", "the literal is then exactly -2.5, a rat")])
+        pairs(&[
+            ("y = f(-2.5);", "the literal is then exactly -2.5, a rat"),
+            ("y = f(-2.5r);", "the literal is then exactly -2.5, a rat"),
+        ])
     );
     assert_eq!(
         checked(&at("f64 | rat", "-3")),

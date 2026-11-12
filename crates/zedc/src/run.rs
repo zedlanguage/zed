@@ -350,11 +350,8 @@ pub(crate) fn program(stmts: &[Stmt], unit: Arc<Unit>) -> Result<Program, ast::E
         .collect();
     let [(_, main)] = mains[..] else {
         let message = match mains.len() {
-            0 => "this file is run as a program, and a program starts at a function named \
-                  `main`, which this file does not declare. Declare one, such as\n    \
-                  main(m: MainArgs) {\n      m.stdout <- \"hello\";\n    }\n\
-                  or, if the file holds definitions to test and is not a program, run `zedc \
-                  test` on it instead of `zedc run`."
+            0 => "This file declares no `main` to start the program at. Try adding \
+                  `main(m: MainArgs) { m.stdout <- \"hello\"; }`."
                 .to_string(),
             n => format!(
                 "this file declares {n} functions named `main`, at the places listed below, and \
@@ -369,13 +366,21 @@ pub(crate) fn program(stmts: &[Stmt], unit: Arc<Unit>) -> Result<Program, ast::E
                 .get(1)
                 .map_or(Span { start: 0, end: 0 }, |(s, _)| s.span),
             message,
-            notes: mains
-                .iter()
-                .map(|(s, _)| ast::Note {
-                    span: s.span,
-                    text: "`main` is declared here".into(),
-                })
-                .collect(),
+            notes: match mains.len() {
+                0 => vec![ast::Note {
+                    span: Span { start: 0, end: 0 },
+                    text: "`zedc run` runs a program, which starts at the function `main`; a \
+                           file of definitions to test runs with `zedc test`"
+                        .into(),
+                }],
+                _ => mains
+                    .iter()
+                    .map(|(s, _)| ast::Note {
+                        span: s.span,
+                        text: "`main` is declared here".into(),
+                    })
+                    .collect(),
+            },
         });
     };
     let kind = |p: &ast::Param| match p.ty.as_ref().map(|t| &t.kind) {

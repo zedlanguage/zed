@@ -172,12 +172,12 @@ fn a_key_not_inside_the_permission_is_a_static_error() {
     assert_eq!(
         type_errors("f(m: int .. int | String -> bool, k: bool) = m[k];"),
         [
-            "this read can never find its key: the key is `bool` and the map's keys are `int | String`, which share no value, so the read can only give `#notFound` [m[k]]"
+            "this read can never find its key: the key is `bool` and the map's keys are `int | String`, which share no value, so the read can only give `#notFound`. [m[k]]"
         ]
     );
     assert_eq!(
         type_errors("f(m: int .. int | String -> bool, k: int | bool) = m[k];"),
-        ["this function does not take (bool): no arrow of this function takes these types [m[k]]"]
+        ["this function does not take (bool): no arrow of this function takes these types. [m[k]]"]
     );
 }
 
@@ -210,7 +210,7 @@ fn a_function_that_answers_on_the_permission_fits_a_bounded_map() {
     assert_eq!(
         type_errors(&format!("{pass}g = f(m: (k) -> #notFound);")),
         [
-            "the lambda returns #notFound, and `int .. int | String -> bool` returns bool: the lambda is passed where a function of type `int .. int | String -> bool` is expected, so its result must be bool\n  T1 stands for a part written more than once:\n    type T1 = int | String; [#notFound]"
+            "the lambda returns #notFound, and `int .. int | String -> bool` returns bool: the lambda is passed where a function of type `int .. int | String -> bool` is expected, so its result must be bool.\n  T1 stands for a part written more than once:\n    type T1 = int | String; [#notFound]"
         ]
     );
 }

@@ -584,7 +584,7 @@ fn a_unit_reversed_and_rotated_gives_the_same_types_and_diagnostics() {
     let want = findings(&text(&(0..n).collect::<Vec<_>>()));
     assert_eq!(
         want.1,
-        ["`*` does not take (\"a\", 2): no arrow of `*` takes these types [\"a\" * 2]"]
+        ["`*` does not take (\"a\", 2): no arrow of `*` takes these types. [\"a\" * 2]"]
     );
     // A bare literal takes the carrier of its use (L1.26a), so `bump` is generic.
     assert!(

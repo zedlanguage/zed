@@ -199,22 +199,23 @@ fn offered(src: &str) -> String {
 }
 
 const GI: &str = "gi(positional c: bool) = if c { 1 } else { true };\n";
+const GR: &str = "gr(positional c: bool) = if c { 1r } else { true };\n";
 
-/// The menu of a literal with a suffix: `y = 1 + gi(true)` does not check, as `gi(true)` may
-/// be `true`, so it is no longer offered, and the message says no fix is; a menu fix that
-/// checks is kept.
+/// The menu of a literal with a suffix: `y = 1.0 + gr(true)` and `y = 1.0r + gr(true)` do not
+/// check, as `gr(true)` may be `true`, so they are no longer offered, and the message says no
+/// fix is; a menu fix that checks is kept.
 #[test]
 fn a_menu_fix_that_does_not_check_is_dropped() {
-    for line in ["y = 1.0f64 + gi(true);", "y = min(1.0f64, gi(true));"] {
-        let got = offered(&format!("{GI}{line}"));
-        assert!(!got.contains("gi(true);    "), "{got}");
+    for line in ["y = 1.0f64 + gr(true);", "y = min(1.0f64, gr(true));"] {
+        let got = offered(&format!("{GR}{line}"));
+        assert!(!got.contains("gr(true);    "), "{got}");
         assert!(
             got.contains("No fix is offered: each one the checker tried is rejected too."),
             "{got}"
         );
     }
     let got = offered("y = 1.5f64 + 2r;");
-    assert!(got.contains("Try `y = 1.5r + 2r` instead."), "{got}");
+    assert!(got.contains("Try `y = 1.5 + 2r` instead."), "{got}");
     assert!(!got.contains("No fix is offered"), "{got}");
 }
 
@@ -270,25 +271,25 @@ fn a_cast_beside_a_decimal_that_checks_is_kept() {
 /// fix rather than none.
 #[test]
 fn each_rejected_argument_of_a_call_offers_its_own_fix() {
-    let f = "f(positional p0: int, positional p1: int, positional p2: int) = 1;\n";
+    let f = "f(positional p0: rat, positional p1: rat, positional p2: rat) = 1;\n";
     let got = offered(&format!("{f}y = f(1.0f64, 1.0f64, 1.0f64);"));
     assert!(!got.contains("No fix is offered"), "{got}");
-    assert!(got.contains("y = f(1, 1.0f64, 1.0f64);"), "{got}");
-    assert!(got.contains("y = f(1.0f64, 1, 1.0f64);"), "{got}");
-    assert!(got.contains("y = f(1.0f64, 1.0f64, 1);"), "{got}");
+    assert!(got.contains("y = f(1.0, 1.0f64, 1.0f64);"), "{got}");
+    assert!(got.contains("y = f(1.0f64, 1.0, 1.0f64);"), "{got}");
+    assert!(got.contains("y = f(1.0f64, 1.0f64, 1.0);"), "{got}");
 }
 
-/// A fix of an argument that the call rejects for another argument too: `h(1, 0.5)` checks
-/// once the decimal `0.5` has its own repair, so the fix of `1.0f64` is kept; where the other
-/// argument can never be an `int`, as `0.5r`, no fix is offered.
+/// A fix of an argument that the call rejects for another argument too: `h(1.0, 0.5f64)`
+/// checks once `0.5f64` has its own repair, so the fix of `1.0f64` is kept; where the other
+/// argument can never be a `rat`, as `true`, no fix is offered.
 #[test]
 fn a_fix_beside_another_rejected_argument_is_kept() {
-    let h = "h(positional a: int, positional b: int) = a + b;\n";
-    let got = offered(&format!("{h}y = h(1.0f64, 0.5);"));
-    assert!(got.contains("Try `y = h(1, 0.5)` instead."), "{got}");
-    let got = offered(&format!("{h}y = h(1.0f64, 0.5r);"));
+    let h = "h(positional a: rat, positional b: rat) = a + b;\n";
+    let got = offered(&format!("{h}y = h(1.0f64, 0.5f64);"));
+    assert!(got.contains("Try `y = h(1.0, 0.5f64)` instead."), "{got}");
+    let got = offered(&format!("{h}y = h(1.0f64, true);"));
     assert!(got.contains("No fix is offered"), "{got}");
-    assert!(!got.contains("h(1, 0.5r)"), "{got}");
+    assert!(!got.contains("h(1.0, true)"), "{got}");
 }
 
 /// A fix that leaves its own rejection fixes nothing: `int(n)` in `min(1.0f64, n)` and in
@@ -313,7 +314,7 @@ fn a_fix_the_construct_around_it_rejects_is_dropped() {
     assert!(!got.contains("No fix is offered"), "{got}");
     let got = offered("y = min(1.0f64, 0.5r) + 2.5r;");
     assert!(
-        got.contains("Try `y = min(1.0r, 0.5r) + 2.5r` instead."),
+        got.contains("Try `y = min(1.0, 0.5r) + 2.5r` instead."),
         "{got}"
     );
     let got = offered("n = 1;\nr = 2.5r;\ny = (n + r) * 2.5r;");

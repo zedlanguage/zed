@@ -54,6 +54,8 @@ pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
     ck.finish();
     #[cfg(debug_assertions)]
     clean_check::flush();
+    // Every headline is a sentence, so two errors that differ only by its period are one.
+    ck.info.errors.iter_mut().for_each(Error::sentence);
     ck.info
         .errors
         .sort_by(|a, b| (a.span, &a.message, &a.menu).cmp(&(b.span, &b.message, &b.menu)));
@@ -83,6 +85,7 @@ pub fn check_given(unit: &[Stmt], res: &Resolution, text: &str, given: Ty) -> In
     ck.bounds();
     ck.walk(rest);
     ck.finish();
+    ck.info.errors.iter_mut().for_each(Error::sentence);
     ck.info.errors.dedup();
     ck.info
 }
@@ -3025,10 +3028,24 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let from = self.errors.len();
                 self.data(&x.ty, &format!("`{op}`"), span, x.at.unwrap_or(span));
                 self.data(&y.ty, &format!("`{op}`"), span, y.at.unwrap_or(span));
+                // Whether each operand's cast to `f64` is exact, for the repairs of a rejected
+                // comparison ([`Comparison::exact`]). Cost: one read of what the text shows of an
+                // operand ([`Self::exact_in_f64`]), only where it has an int part and the other
+                // side may be an `f64` or is a decimal literal, the one case a cast to `f64`
+                // repairs; `n == 1` or `n == m` of ints reads nothing.
+                let mut exact = [false; 2];
+                for (s, (a, b)) in [(&x, &y), (&y, &x)].into_iter().enumerate() {
+                    let f64_side = !(&b.ty.set & &KType::f64()).is_empty()
+                        || b.lit
+                            .as_ref()
+                            .is_some_and(|l| matches!(l.value, Value::Float(_)));
+                    exact[s] = f64_side && self.exact_in_f64(a);
+                }
                 self.comparing = Some(Comparison {
                     op,
                     ats: [x.at, y.at],
                     exprs: [x.expr, y.expr],
+                    exact,
                     span,
                     from,
                 });
@@ -5212,16 +5229,18 @@ impl<'t, 'a> Ck<'t, 'a> {
                              only where a test with `is` has shown it to be a tuple"
                                 .to_string(),
                         ];
-                        self.error_offering(
-                            span,
-                            format!(
-                                "this value is {}, not a tuple of {n}: it is taken apart into {n} \
-                                 names, one for each component, so it must be a tuple of {n} \
-                                 components",
-                                self.show(&p.ty())
+                        let shown = self.show(&p.ty());
+                        let message = match self.code(Some(span)) {
+                            Some(code) => format!(
+                                "Cannot take `{code} : {shown}` apart into {n} names: it is not a \
+                                 tuple of {n}"
                             ),
-                            menu,
-                        );
+                            None => format!(
+                                "Cannot take a value of {shown} apart into {n} names: it is not a \
+                                 tuple of {n}"
+                            ),
+                        };
+                        self.error_offering(span, message, menu);
                     }
                 }
             }
@@ -5971,10 +5990,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 ];
                 self.error_offering(
                     span,
-                    format!(
-                        "{what} does not take {p}, which is not {ty}: {what} takes only values of \
-                         {ty}{why}"
-                    ),
+                    format!("{what} does not take {p}, only {ty}{why}"),
                     menu,
                 );
             }
@@ -7611,7 +7627,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let (s, t) = (self.text(a), self.text(b));
                 self.error_offering(
                     span,
-                    format!("{who} does not take {s} and {t}: it takes two tuples or two numbers"),
+                    format!("{who} does not take {s} and {t}, only two tuples or two numbers"),
                     ["repair: pass two numbers, or two tuples of the same length".to_string()],
                 );
             } else {
@@ -7628,8 +7644,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         self.error_offering(
                             span,
                             format!(
-                                "{who} does not take {s} and {t}: a tuple of {n} components has \
-                                 none of its length to compare with"
+                                "{who} does not take {s} and {t}: no tuple of {n} on the other side"
                             ),
                             [format!(
                                 "repair: pass two tuples of the same length, both of {n} \
@@ -9207,7 +9222,6 @@ impl<'t, 'a> Ck<'t, 'a> {
             .flatten()
             .find(|a| a.lit.is_none() && int(self, &a.ty));
         if let (Some(l), Some(o)) = (lit, other)
-            && l.bare
             && lit_carrier(&l.value) == Carrier::F64
         {
             let t = self.t;
@@ -9216,10 +9230,18 @@ impl<'t, 'a> Ck<'t, 'a> {
                 _ => None,
             };
             // The operator's symbol, and whether the literal is its left operand, where it is
-            // a binary arithmetic operator.
+            // a binary arithmetic operator or an ordering, each of which has arrows at `rat`
+            // and at `f64`.
             let op = match Operator::of_label(what) {
                 Some(Operator::Binary(
-                    o @ (BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div),
+                    o @ (BinaryOp::Add
+                    | BinaryOp::Sub
+                    | BinaryOp::Mul
+                    | BinaryOp::Div
+                    | BinaryOp::Lt
+                    | BinaryOp::Le
+                    | BinaryOp::Gt
+                    | BinaryOp::Ge),
                 )) if args.len() == 2 => Some(o),
                 Some(Operator::Binary(
                     BinaryOp::Or
@@ -9251,7 +9273,17 @@ impl<'t, 'a> Ck<'t, 'a> {
                         .is_some_and(|a| a.site == s),
                 )
             });
-            m = decimal_at_int(l, what, name, op);
+            // `f64(n)` is offered where the checker proves `n` lies within ±2^53, where it is
+            // exact (DESIGN.md "Casts are domain proofs"); it is never offered otherwise.
+            let exact = name.is_some() && op.is_some() && self.exact_in_f64(o);
+            match l.bare {
+                true => m = decimal_at_int(l, what, name, op, exact),
+                false => {
+                    if let (true, Some((n, at)), Some((op, left))) = (exact, name, op) {
+                        m.fixes.extend(f64_cast_fix(l, n, at, op, left));
+                    }
+                }
+            }
         }
         if self.no_arrow_at_carrier(what, sig, args) {
             let notes = self.derive(&[s]);

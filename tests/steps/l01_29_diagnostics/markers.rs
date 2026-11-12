@@ -31,7 +31,7 @@ fn a_string_with_the_marks_is_written_escaped_beside_the_definitions() {
                 lines.next(),
                 Some(
                     format!(
-                        "2:7: `ap` does not take ({shown}): no arrow of `ap` takes these types"
+                        "2:7: `ap` does not take ({shown}): no arrow of `ap` takes these types."
                     )
                     .as_str()
                 ),

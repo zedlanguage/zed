@@ -79,7 +79,7 @@ fn a_payload_pattern_that_binds_its_field_keeps_the_atom_for_underscore() {
         [
             "`_` drops a loose failure this value may be, #e(code: 1): `_` drops only a failure \
              the program names, as the default of an `else` names it, and this one would be \
-             dropped with nothing in the text saying so [_ = pick(c) else #e(code:) -> code;]"
+             dropped with nothing in the text saying so. [_ = pick(c) else #e(code:) -> code;]"
         ]
     );
     assert_eq!(
@@ -187,8 +187,8 @@ fn a_loose_atom_enters_a_parameter_whose_bound_may_take_other_values() {
     assert_eq!(
         type_errors(&bad),
         [
-            "`k` does not take (int | #nf): no arrow of `k` takes these types [k(y)]",
-            "`size` does not take #nf, which is not int | (int, int): `size` takes only values of int | (int, int) [k(y)]"
+            "`k` does not take (int | #nf): no arrow of `k` takes these types. [k(y)]",
+            "`size` does not take #nf, only int | (int, int). [k(y)]"
         ]
     );
     let ok = format!("{t}h(positional y: int) = k(y);\nb = h(2);\n");
@@ -212,8 +212,8 @@ fn a_loose_atom_enters_the_first_arrow_at_a_parameter_that_may_take_other_values
     assert_eq!(
         type_errors(&bad),
         [
-            "`r` does not take (1, int | #nf): no arrow of `r` takes these types\n  T1 stands for a part written more than once:\n    type T1 = int | #_; [r(1, y)]",
-            "`size` does not take #nf, which is not int | (int, int): `size` takes only values of int | (int, int)\n  T1 stands for a part written more than once:\n    type T1 = int | #_; [r(1, y)]"
+            "`r` does not take (1, int | #nf): no arrow of `r` takes these types.\n  T1 stands for a part written more than once:\n    type T1 = int | #_; [r(1, y)]",
+            "`size` does not take #nf, only int | (int, int).\n  T1 stands for a part written more than once:\n    type T1 = int | #_; [r(1, y)]"
         ]
     );
     let ok = format!("{t}h(positional y: int | #nf) = r(y, 2);\na = h(#nf);\nb = h(2);\n");
@@ -272,7 +272,7 @@ fn the_is_repair_on_a_shared_part_declares_it_at_the_top_level() {
     };
     assert!(
         out.contains(
-            "`ap` does not take #nf, which is not (T1, T1): `ap` takes only values of (T1, T1)\n  \
+            "`ap` does not take #nf, only (T1, T1).\n  \
              T1 stands for a part written more than once:\n    type T1 = int | #x;\n"
         ),
         "{out}"

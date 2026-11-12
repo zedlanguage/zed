@@ -345,7 +345,7 @@ fn a_function_is_not_shown_and_not_put_in_a_tuple() {
     assert_eq!(
         rejected(INC, "String(inc)"),
         "3:15: `String` takes data, and this value may hold a function, `(T) -> T for T in int \
-         | f64 | rat`: data is a value that holds no function at any depth\n  \
+         | f64 | rat`: data is a value that holds no function at any depth.\n  \
          [1] 3:22: `inc` is (T) -> T for T in int | f64 | rat here\n      \
          3 |   m.stdout <- String(inc);\n        \
          |               ^^^^^^^^^^^ [3, 4]\n        \
@@ -616,7 +616,9 @@ fn a_destructured_parameter_takes_only_a_tuple_of_its_length() {
     ] {
         let e = kind_refused(call);
         assert!(
-            e.contains(&format!("this value is {given}, not a tuple of 2")),
+            e.contains(&format!(
+                " : {given}` apart into 2 names: it is not a tuple of 2"
+            )),
             "{e}"
         );
         assert!(e.contains("`f` needs this of its argument here"), "{e}");
@@ -624,7 +626,10 @@ fn a_destructured_parameter_takes_only_a_tuple_of_its_length() {
     }
     // Through a function that passes its argument on, the need is `g`'s.
     let e = kind_refused("g(5)");
-    assert!(e.contains("this value is 5, not a tuple of 2"), "{e}");
+    assert!(
+        e.contains(" : 5` apart into 2 names: it is not a tuple of 2"),
+        "{e}"
+    );
     assert!(e.contains("`g` needs this of its argument here"), "{e}");
     // A pair passes, of any component types, and gives its first component's type.
     let is = r#"m.stdout <- if f((1, 2)) is int { "int" } else { "other" };"#;
@@ -641,7 +646,7 @@ fn a_tuple_default_used_as_a_number_is_rejected() {
     let f = "f(positional x, y = (x, 1)) = y + 1;";
     assert_eq!(
         super::type_errors(f),
-        ["`+` does not take (_, 1): no arrow of `+` takes these types [y + 1]"]
+        ["`+` does not take (_, 1): no arrow of `+` takes these types. [y + 1]"]
     );
     rejected(f, r#"String(f(1)) else "atom""#);
     let ok = "f(positional x, y = x) = y + 1;";
@@ -654,7 +659,7 @@ fn a_tuple_default_of_a_nested_function_used_as_a_number_is_rejected() {
         "outer(positional x) = {\n  inner(positional y, w = (y, 1)) = w + 1;\n  inner(x)\n};";
     assert_eq!(
         super::type_errors(outer),
-        ["`+` does not take (_, 1): no arrow of `+` takes these types [w + 1]"]
+        ["`+` does not take (_, 1): no arrow of `+` takes these types. [w + 1]"]
     );
     rejected(outer, r#"String(outer(1)) else "atom""#);
     let ok = "outer(positional x) = {\n  inner(positional y, w = y) = w + 1;\n  inner(x)\n};";

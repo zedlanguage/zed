@@ -1024,7 +1024,9 @@ pub(crate) fn placed(
     errors
         .into_iter()
         .zip(addresses)
-        .map(|(e, address)| {
+        .map(|(mut e, address)| {
+            // Every headline is a sentence (DESIGN.md sec:diagnostics, "A short headline").
+            e.sentence();
             let (line, col) = read.place(e.span.start);
             Diagnostic {
                 line,

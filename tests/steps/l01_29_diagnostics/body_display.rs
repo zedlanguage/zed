@@ -44,7 +44,7 @@ fn a_ledger_arm_whose_brace_holds_one_entry_is_rejected_with_both_readings() {
     let out = rejected(LEDGER);
     assert_eq!(out, "4:17: a brace after a match arm's `->` whose one content is the lambda `id -> #insert(0)`: a \
 brace there is a block, so this is a block whose value is that lambda, while `{ id -> #insert(0) }` reads as a \
-one-entry map; write the reading you mean
+one-entry map; write the reading you mean.
   [1] 4:14: the brace follows a match arm's `->`, so it is a block whatever it contains (sec:lexical)
       4 |   #open(id:) -> { id -> #insert(0) },
         |              ^^ [1]
@@ -59,7 +59,7 @@ one-entry map; write the reading you mean
 fn a_fallback_whose_default_is_a_set_is_rejected_with_both_readings() {
     let out = rejected("tags(positional s) = s.split(\",\") else { \"none\", \"all\" };\n");
     assert_eq!(out, "1:40: a set display in body position: the brace after a fallback's `else` is a block whatever \
-it contains, and `{ \"none\", \"all\" }` reads as a set display; write the reading you mean
+it contains, and `{ \"none\", \"all\" }` reads as a set display; write the reading you mean.
   [1] 1:35: the brace follows a fallback's `else`, so it is a block whatever it contains (sec:lexical)
       1 | tags(positional s) = s.split(\",\") else { \"none\", \"all\" };
         |                                   ^^^^ [1]     ^ [2]
@@ -73,7 +73,7 @@ it contains, and `{ \"none\", \"all\" }` reads as a set display; write the readi
 fn a_function_body_written_as_a_record_is_rejected() {
     let out = rejected("origin() { x: 0.0, y: 0.0 }\n");
     assert_eq!(out, "1:10: a record display in body position: the brace after a signature is a block whatever it \
-contains, and `{ x: 0.0, y: 0.0 }` reads as a record display; write the reading you mean
+contains, and `{ x: 0.0, y: 0.0 }` reads as a record display; write the reading you mean.
   [1] 1:8: the brace follows a signature, so it is a block whatever it contains (sec:lexical)
       1 | origin() { x: 0.0, y: 0.0 }
         |        ^ [1]     ^ [2]

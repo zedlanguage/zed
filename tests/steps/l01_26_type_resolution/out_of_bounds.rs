@@ -109,7 +109,7 @@ fn a_key_outside_every_key_is_rejected() {
     assert_eq!(
         type_errors("sixth(t: (int, int, int)) = t[5];"),
         [
-            "(int, int, int) has no component 5: its components are at the positions 0 to 2, and this index is 5 [t[5]]"
+            "(int, int, int) has no component 5: its components are at the positions 0 to 2, and this index is 5. [t[5]]"
         ]
     );
     let src = "main(m: MainArgs) {\n  \

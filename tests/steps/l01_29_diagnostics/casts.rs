@@ -40,7 +40,7 @@ fn a_rat_and_an_f64_are_shown_with_their_carriers_and_offered_no_cast() {
     let out = rejected(&src);
     assert_eq!(
         out.lines().next(),
-        Some("1:25: `+` does not take (rat, f64): no arrow of `+` takes these types"),
+        Some("1:25: `+` does not take (rat, f64): no arrow of `+` takes these types."),
         "{out}"
     );
     let s = steps(&out);
@@ -94,7 +94,7 @@ fn parameters_without_declared_types_are_shown_with_the_uses_that_gave_their_car
     let src = program("mix(positional a, positional b) = (a * 1r, b * 2.5f64, a + b);");
     let out = rejected(&src);
     assert!(
-        out.starts_with("1:56: `+` does not take (rat, f64): no arrow of `+` takes these types"),
+        out.starts_with("1:56: `+` does not take (rat, f64): no arrow of `+` takes these types."),
         "{out}"
     );
     let s = steps(&out);

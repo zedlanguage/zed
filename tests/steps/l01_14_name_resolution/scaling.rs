@@ -42,10 +42,10 @@ fn declaring_many_overloads_scales() {
     assert_eq!(
         errors("f(x: int) = x;\nf(y: int) = 1;\ng = 1;\ng(x) = x;\n"),
         [
-            "`f` is already declared in this scope with these parameter types, and a scope declares a function once for each list of parameter types \
+            "`f` is already declared in this scope with these parameter types \
              [f(y: int) = 1;]; the first `f` with these parameter types [f(x: int) = x;]; \
              repair: give this binding a new name [f(y: int) = 1;]",
-            "`g` is already bound in this scope, and a scope binds each name once [g(x) = x;]; the first binding of `g` [g = 1;]; \
+            "`g` is already bound in this scope [g(x) = x;]; the first binding of `g` [g = 1;]; \
              repair: give this binding a new name [g(x) = x;]",
         ]
     );

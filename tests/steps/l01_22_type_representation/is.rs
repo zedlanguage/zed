@@ -40,7 +40,7 @@ fn port_types_and_function_bounds_are_rejected() {
     assert_eq!(
         elab("f(x) = x is Lines;").unwrap_err(),
         [
-            "`Lines` is the type of a port, which only a port parameter has; no value has it, so it cannot be written here. To repair it, write the type of the values the port carries, such as `String` [Lines]"
+            "`Lines` is the type of a port, which only a port parameter has; no value has it, so it cannot be written here. To repair it, write the type of the values the port carries, such as `String`. [Lines]"
         ]
     );
     assert_eq!(
@@ -68,7 +68,7 @@ fn a_one_tuple_and_a_morphism_type_with_two_bounds_elaborate() {
         elab("f(x) = x is (#a | #c .. #a | #b -> int);").unwrap_err(),
         [
             "`is` tests a value against a type when the program runs, and a function value does not show its type then. Test against a type that is not a function type, or remove the `is`. [(#a | #c .. #a | #b -> int)]",
-            "in a function type `L .. U -> V`, every function the guarantee `L`, left of `..`, describes must also be allowed by the permission `U`, right of `..`, and in this one the guarantee allows functions the permission does not. To repair it, narrow the type left of `..`, or widen the type right of it [(#a | #c .. #a | #b -> int)]"
+            "in a function type `L .. U -> V`, every function the guarantee `L`, left of `..`, describes must also be allowed by the permission `U`, right of `..`, and in this one the guarantee allows functions the permission does not. To repair it, narrow the type left of `..`, or widen the type right of it. [(#a | #c .. #a | #b -> int)]"
         ]
     );
 }

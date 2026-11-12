@@ -77,7 +77,7 @@ fn the_underline_covers_a_multibyte_span_by_characters() {
     );
     assert_eq!(
         out,
-        "3:3: `größe` is already bound in this scope, and a scope binds each name once
+        "3:3: `größe` is already bound in this scope.
   [1] 2:3: the first binding of `größe`
       2 |   größe = 3;
         |   ^^^^^^^^^^

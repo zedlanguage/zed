@@ -13,11 +13,7 @@ fn recursion(names: &str, at: &str) -> String {
         true => format!("{names} are defined in terms of each other"),
         false => format!("{names} is defined in terms of itself"),
     };
-    format!(
-        "{what}, which is recursion. Recursion is part of the Zed language, and this version of \
-         zedc does not compile it yet. Write the program without it, with the forms this zedc \
-         compiles. [{at}]"
-    )
+    format!("{what}, which is recursion: this version of zedc does not compile it yet. [{at}]")
 }
 
 /// The message for the definitions `names` of values that read each other's values, at the
@@ -27,10 +23,7 @@ fn values(names: &str, at: &str) -> String {
         true => format!("{names} are defined in terms of each other's values"),
         false => format!("{names} is defined in terms of its own value"),
     };
-    format!(
-        "{what}. A value cannot be defined in terms of itself, since no step of the program makes \
-         the earlier value. [{at}]"
-    )
+    format!("{what}. [{at}]")
 }
 
 const F: &str = "f(positional c: int) = 1 + c;\n";
@@ -101,7 +94,7 @@ fn a_cycle_inside_a_body_is_rejected_and_the_rest_of_the_body_checked() {
         type_errors(&text),
         [
             recursion("`x`", "x(positional k: int) = x(k);"),
-            "`f` does not take (true): no arrow of `f` takes these types [f(true)]".into(),
+            "`f` does not take (true): no arrow of `f` takes these types. [f(true)]".into(),
         ]
     );
     // A recursive function declared inside another.
@@ -122,7 +115,7 @@ fn an_error_beside_a_cycle_is_reported() {
         type_errors(&text),
         [
             recursion("`spin`", "spin(positional n: int) = spin(n + 1);"),
-            "`f` does not take (true): no arrow of `f` takes these types [f(true)]".into(),
+            "`f` does not take (true): no arrow of `f` takes these types. [f(true)]".into(),
         ]
     );
 }
@@ -138,7 +131,7 @@ fn a_function_that_calls_a_recursive_one_is_checked() {
         type_errors(&text),
         [
             recursion("`spin`", "spin(positional n: int) = spin(n + 1);"),
-            "`f` does not take (true): no arrow of `f` takes these types [f(true)]".into(),
+            "`f` does not take (true): no arrow of `f` takes these types. [f(true)]".into(),
         ]
     );
     assert_eq!(sig(&text, "f"), "(int) -> int");

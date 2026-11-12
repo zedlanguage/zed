@@ -51,12 +51,7 @@ fn a_type_parameter_is_in_scope_in_its_declaration_only() {
         describe(text, &r, "Pair", 1),
         ["type type Pair(T) = (T, T);"]
     );
-    assert_eq!(
-        errors(text),
-        [
-            "the type `T` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`. [T]"
-        ]
-    );
+    assert_eq!(errors(text), ["The type `T` is not defined. [T]"]);
 }
 
 #[test]
@@ -78,9 +73,7 @@ fn a_method_binds_its_receiver_this_in_its_body() {
 fn a_method_of_a_type_no_declaration_names_is_rejected() {
     assert_eq!(
         errors("Square.area() = this.side * this.side;\n"),
-        [
-            "the type `Square` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`. [Square.area() = this.side * this.side;]"
-        ]
+        ["The type `Square` is not defined. [Square.area() = this.side * this.side;]"]
     );
 }
 
@@ -92,12 +85,7 @@ fn a_match_arm_binds_its_names_in_its_guard_and_value_only() {
     assert_eq!(describe(text, &r, "n", 1), ["pattern n"]);
     assert_eq!(describe(text, &r, "n", 2), ["pattern n"]);
     assert_eq!(describe(text, &r, "e", 1), ["pattern #err(e:)"]);
-    assert_eq!(
-        errors(text),
-        [
-            "`n` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `n`, or correct the name if it is misspelled. [n]"
-        ]
-    );
+    assert_eq!(errors(text), ["`n` is not defined. [n]"]);
     assert_eq!(r.res.patterns.len(), 3);
 }
 
@@ -152,15 +140,12 @@ fn a_tuple_destructuring_parameter_binds_its_names_in_the_body() {
     assert_eq!(describe(text, &r, "max", 0), ["prelude max"]);
     assert_eq!(
         errors(text),
-        [
-            "`total` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `total`, or correct the name if it is misspelled. [total]",
-            "`s` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `s`, or correct the name if it is misspelled. [s]"
-        ]
+        ["`total` is not defined. [total]", "`s` is not defined. [s]"]
     );
     assert_eq!(
         errors("f = ((a, a)) -> a;\n"),
         [
-            "`a` is already bound in this scope, and a scope binds each name once [a]; the first binding of `a` [a]; repair: give \
+            "`a` is already bound in this scope [a]; the first binding of `a` [a]; repair: give \
              this binding a new name [a]; repair: move this binding into a nested block, where \
              it shadows the first [a]"
         ]

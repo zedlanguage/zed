@@ -17,7 +17,7 @@ use super::{sig, type_errors};
 fn div_zero(op: &str, reason: &str, kind: &str, at: &str) -> String {
     format!(
         "`{op}` here always fails with `#divByZero`: {reason}, so no value that reaches it gives \
-         {kind} [{at}]"
+         {kind}. [{at}]"
     )
 }
 
@@ -131,7 +131,7 @@ fn a_divisor_that_may_be_other_than_zero_keeps_its_atom() {
 fn cast_fails(w: &str, lit: &str, atom: &str) -> String {
     format!(
         "`{w}` here always fails: its operand `{lit}` gives `{atom}`, so this call never gives a \
-         value [{w}({lit})]"
+         value. [{w}({lit})]"
     )
 }
 
@@ -161,7 +161,7 @@ fn a_cast_of_a_literal_that_never_converts_is_rejected() {
     }
     // A name bound to a literal has the literal's type, so its cast is judged the same way.
     let named = "`int` here always fails: its operand `\"n/a\"` gives `#invalid`, so this call \
-                 never gives a value [int(s)]";
+                 never gives a value. [int(s)]";
     for src in [
         "s = \"n/a\";\nf(x: int) = int(s);",
         "f(x: int) = { s = \"n/a\"; int(s) };",
@@ -199,12 +199,12 @@ fn a_key_that_shares_no_value_with_the_keys_is_rejected() {
         (
             "f(m: #a -> int) = m[#b];",
             "this read can never find its key: the key is `#b` and the map's keys are `#a`, \
-             which share no value, so the read can only give `#notFound` [m[#b]]",
+             which share no value, so the read can only give `#notFound`. [m[#b]]",
         ),
         (
             "f(m: int .. int | String -> bool, k: bool) = m[k];",
             "this read can never find its key: the key is `bool` and the map's keys are \
-             `int | String`, which share no value, so the read can only give `#notFound` [m[k]]",
+             `int | String`, which share no value, so the read can only give `#notFound`. [m[k]]",
         ),
     ];
     for (src, message) in cases {

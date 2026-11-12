@@ -314,7 +314,7 @@ fn a_call_through_a_value_naming_many_arguments_scales() {
     assert_eq!(
         e,
         [
-            "this argument is passed by the name `d2`, and `(d0: int, d1: int) -> int` has no parameter of that name, so the argument has no parameter to go to [1]"
+            "this argument is passed by the name `d2`, and `(d0: int, d1: int) -> int` has no parameter of that name, so the argument has no parameter to go to. [1]"
         ]
     );
 }
@@ -625,7 +625,7 @@ fn else_patterns_10000_deep_elaborate_on_a_2_mib_stack() {
 fn errors_inside_types_and_patterns_keep_their_order() {
     // Every part of a type is elaborated, and its errors reported in written order; the first
     // refused part of a pattern ends it. The expected output is the recursive code's.
-    let port = "`Lines` is the type of a port, which only a port parameter has; no value has it, so it cannot be written here. To repair it, write the type of the values the port carries, such as `String` [Lines]";
+    let port = "`Lines` is the type of a port, which only a port parameter has; no value has it, so it cannot be written here. To repair it, write the type of the values the port carries, such as `String`. [Lines]";
     assert_eq!(
         super::errors("x = 1;\nt = x is (Lines, int \\ Lines) | Lines;\n"),
         [port, port, port]

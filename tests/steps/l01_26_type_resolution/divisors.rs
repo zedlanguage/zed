@@ -22,7 +22,7 @@ fn drops_div_by_zero(stmt: &str) -> String {
     format!(
         "`_` drops a loose failure this value may be, #divByZero: `_` drops only a failure the \
          program names, as the default of an `else` names it, and this one would be dropped \
-         with nothing in the text saying so [{stmt}]"
+         with nothing in the text saying so. [{stmt}]"
     )
 }
 

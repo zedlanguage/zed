@@ -110,14 +110,14 @@ fn a_key_that_selects_no_component_is_rejected() {
     assert_eq!(
         type_errors("pick(t: (int, int, int), b: bool) = t[if b { 5 } else { 7 }];"),
         [
-            "(int, int, int) has no component 5 | 7: its components are at the positions 0 to 2, and this index is 5 | 7 [t[if b { 5 } else { 7 }]]"
+            "(int, int, int) has no component 5 | 7: its components are at the positions 0 to 2, and this index is 5 | 7. [t[if b { 5 } else { 7 }]]"
         ]
     );
     // The empty tuple has no component at all.
     assert_eq!(
         type_errors("first(t: (), i: int) = t[i];"),
         [
-            "() has no component int: the empty tuple has no components at all, and this index is int [t[i]]"
+            "() has no component int: the empty tuple has no components at all, and this index is int. [t[i]]"
         ]
     );
 }

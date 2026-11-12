@@ -77,9 +77,7 @@ fn a_facet_word_is_reported_as_not_compiled_yet() {
     // A facet a program defines is its own name: not defined until the program binds it.
     assert_eq!(
         errors("f() = parity;\n"),
-        [
-            "`parity` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `parity`, or correct the name if it is misspelled. [parity]"
-        ]
+        ["`parity` is not defined. [parity]"]
     );
     // A parameter or a binding shadows a facet word at any layer.
     assert_eq!(
@@ -121,9 +119,7 @@ fn a_later_type_is_reported_as_not_compiled_yet() {
     );
     assert_eq!(
         errors("f() = Facett(1);\n"),
-        [
-            "`Facett` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `Facett`, or correct the name if it is misspelled. [Facett]"
-        ]
+        ["`Facett` is not defined. [Facett]"]
     );
 }
 
@@ -148,15 +144,13 @@ fn the_fixed_width_aliases_are_types_of_l7_and_byte_is_none() {
     );
     assert_eq!(
         errors("checksum(b: byte) = b;\n"),
-        [
-            "the type `byte` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`. [byte]"
-        ]
+        ["The type `byte` is not defined. [byte]"]
     );
     assert_eq!(
         errors("checksum(b: u8 | byte) = b;\n"),
         [
             concat!(zed_tests::not_yet!("the prelude type `u8`"), " [u8]"),
-            "the type `byte` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`. [byte]"
+            "The type `byte` is not defined. [byte]"
         ]
     );
     // The aliases are no value words: `u8(300)` builds nothing, so it is told the layer of the

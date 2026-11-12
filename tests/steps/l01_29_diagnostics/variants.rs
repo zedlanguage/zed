@@ -24,17 +24,23 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
     let cases = [
         (
             "block-binding-never-read",
-            format!("2: {}", zed_tests::not_yet!("the declared result type `-> int`")),
+            format!(
+                "2: {}",
+                zed_tests::not_yet!("the declared result type `-> int`")
+            ),
         ),
         (
             "constructor-called-by-position",
             "6: the mark names the row \"Positional constructor call or pattern\", and the \
-             diagnostic is in no row of the rejection table: `Point` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `Point`, or correct the name if it is misspelled."
+             diagnostic is in no row of the rejection table: `Point` is not defined."
                 .into(),
         ),
         (
             "dot-never-mutates",
-            format!("8: {}", zed_tests::not_yet!("the declared result type `-> int`")),
+            format!(
+                "8: {}",
+                zed_tests::not_yet!("the declared result type `-> int`")
+            ),
         ),
         ("nullable-column-missing-none", none(36)),
         // Rejected in the row its mark names (plan row LIT-bare).
@@ -51,12 +57,15 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
             "50: the mark names the row \"Taint at a sink whose parameter does not take it\", \
              and the diagnostic is in no row of the rejection table: expected '&' or '(' or '->' \
              or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or \
-             'with' or '|'"
+             'with' or '|'."
                 .into(),
         ),
         (
             "point-unit-in-quotient",
-            format!("2: {}", zed_tests::not_yet!("the reduction `with units(\"°C\")`")),
+            format!(
+                "2: {}",
+                zed_tests::not_yet!("the reduction `with units(\"°C\")`")
+            ),
         ),
         ("taint-through-concatenation", none(44)),
         (
@@ -68,38 +77,62 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
         ),
         (
             "two-writers-of-one-generation",
-            format!("8: {}", zed_tests::not_yet!("the declared result type `-> int`")),
+            format!(
+                "8: {}",
+                zed_tests::not_yet!("the declared result type `-> int`")
+            ),
         ),
         ("unit-mismatch-force-energy", none(49)),
         ("unit-mismatch-in-sum", none(47)),
         (
             "units-differ-by-kind",
-            format!("2: {}", zed_tests::not_yet!("the reduction `with units(\"N\")`")),
+            format!(
+                "2: {}",
+                zed_tests::not_yet!("the reduction `with units(\"N\")`")
+            ),
         ),
         (
             "value-binding-has-no-next-generation",
-            format!("8: {}", zed_tests::not_yet!("the declared result type `-> int`")),
+            format!(
+                "8: {}",
+                zed_tests::not_yet!("the declared result type `-> int`")
+            ),
         ),
         // The logarithmic units and `without` of sec:facets (plan rows L12.2h and L12.2i).
         (
             "log-unit-product",
-            format!("2: {}", zed_tests::not_yet!("the reduction `with units(\"m\")`")),
+            format!(
+                "2: {}",
+                zed_tests::not_yet!("the reduction `with units(\"m\")`")
+            ),
         ),
         (
             "log-unit-compared-with-number",
-            format!("2: {}", zed_tests::not_yet!("the reduction `with units(\"m\")`")),
+            format!(
+                "2: {}",
+                zed_tests::not_yet!("the reduction `with units(\"m\")`")
+            ),
         ),
         (
             "exponential-base-differs",
-            format!("2: {}", zed_tests::not_yet!("the reduction `with units(\"m\")`")),
+            format!(
+                "2: {}",
+                zed_tests::not_yet!("the reduction `with units(\"m\")`")
+            ),
         ),
         (
             "removed-fact-not-carried",
-            format!("2: {}", zed_tests::not_yet!("the reduction `with units(\"m\")`")),
+            format!(
+                "2: {}",
+                zed_tests::not_yet!("the reduction `with units(\"m\")`")
+            ),
         ),
         (
             "removed-fact-not-removable",
-            format!("2: {}", zed_tests::not_yet!("the reduction `with units(\"m\")`")),
+            format!(
+                "2: {}",
+                zed_tests::not_yet!("the reduction `with units(\"m\")`")
+            ),
         ),
     ];
     let names: Vec<String> = std::fs::read_dir(DIR)
@@ -128,7 +161,7 @@ fn two_variants_are_rejected_for_a_reason_other_than_their_documented_error() {
     };
     assert_eq!(
         rejected("constructor-called-by-position"),
-        "6:5: `Point` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `Point`, or correct the name if it is misspelled."
+        "6:5: `Point` is not defined."
     );
     let e = rejected("taint-reaches-clean-sink");
     assert!(e.starts_with("50:1: expected "), "{e}");

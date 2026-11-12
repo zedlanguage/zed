@@ -134,7 +134,7 @@ fn a_cycle_is_reported_alike_by_each_of_its_units_run_alone_and_by_the_whole_pac
         [format!(
             "{root}/orders.zed:1:1: the unit `stock` cannot be imported: the imports form a cycle, \
              so its units have no order to be resolved in: `orders` imports `stock` at \
-             orders.zed:1:1, `stock` imports `orders` at stock.zed:2:1"
+             orders.zed:1:1, `stock` imports `orders` at stock.zed:2:1."
         )]
     );
     for unit in ["main.zed", "orders.zed", "stock.zed"] {

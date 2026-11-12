@@ -30,7 +30,7 @@ fn a_default_that_reads_other_parameters_needs_the_declared_function() {
         [
             "this call goes through a function value and leaves out `rate`, whose default reads \
           the function's other parameters; only a call of the declared function by its name \
-          fills such a default, so here `rate` has no value [t(price: 10.0)]"
+          fills such a default, so here `rate` has no value. [t(price: 10.0)]"
         ]
     );
 }
@@ -55,13 +55,13 @@ fn destructuring_gives_each_name_its_component() {
     assert_eq!(
         type_errors("a, b = (1, 2, 3);\n"),
         [
-            "this value is (1, 2, 3), not a tuple of 2: it is taken apart into 2 names, one for each component, so it must be a tuple of 2 components [(1, 2, 3)]"
+            "Cannot take `(1, 2, 3) : (1, 2, 3)` apart into 2 names: it is not a tuple of 2. [(1, 2, 3)]"
         ]
     );
     assert_eq!(
         type_errors("t = (1, 2)[2];\n"),
         [
-            "(1, 2) has no component 2: its components are at the positions 0 to 1, and this index is 2 [(1, 2)[2]]"
+            "(1, 2) has no component 2: its components are at the positions 0 to 1, and this index is 2. [(1, 2)[2]]"
         ]
     );
 }

@@ -21,7 +21,7 @@ const PENDING: [(&str, &str, &str); 2] = [
     (
         "02-greet.zed",
         "STR-types",
-        "the type `Utf8String` is not defined",
+        "The type `Utf8String` is not defined",
     ),
     // DESIGN.md line 1850: a `div` or `mod` whose divisor's type holds no zero adds no
     // `#divByZero`, and line 639: `int[0..=255] + int[0..=255]` is `int[0..=510]`; zedc gives

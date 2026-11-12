@@ -52,8 +52,8 @@ fn package(fs: &[(&str, &str)]) -> Package {
 /// the checked cast, which zedc does not define until STR-types lands. Then each test that
 /// expects one of these errors fails, and the expectation goes.
 const STR_TYPES_PENDING: &[&str] = &[
-    "the type `Utf8String` is not defined",
-    "the type `char32` is not defined",
+    "The type `Utf8String` is not defined",
+    "The type `char32` is not defined",
     "`char32` is not defined",
 ];
 

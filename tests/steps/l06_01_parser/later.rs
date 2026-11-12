@@ -130,7 +130,7 @@ fn declared_names_are_bound_and_refused_once() {
         (
             "x = 1;\nx[0] = 2;",
             &[
-                "`x` is already bound in this scope, and a scope binds each name once [x[0] = 2;]",
+                "`x` is already bound in this scope [x[0] = 2;]",
                 concat!(zed_tests::not_yet!("an indexed definition"), " [x[0] = 2;]"),
             ],
         ),

@@ -659,9 +659,7 @@ odd(positional n) = if n == 0 { false } else { even(n - 1) };
     let messages: Vec<(Place, &str)> = (answer.diagnostics.iter())
         .map(|d| (d.at, d.message.as_str()))
         .collect();
-    let message = "`even`, `odd` are defined in terms of each other, which is recursion. Recursion \
-                   is part of the Zed language, and this version of zedc does not compile it \
-                   yet. Write the program without it, with the forms this zedc compiles.";
+    let message = "`even`, `odd` are defined in terms of each other, which is recursion: this version of zedc does not compile it yet.";
     assert_eq!(messages, [((0, 43), message)]);
 }
 
@@ -674,12 +672,7 @@ fn every_cycle_is_reported_in_every_order() {
     let messages: Vec<(Place, &str)> = (answer.diagnostics.iter())
         .map(|d| (d.at, d.message.as_str()))
         .collect();
-    let each = |names| {
-        format!(
-            "{names} are defined in terms of each other's values. A value cannot be defined in \
-             terms of itself, since no step of the program makes the earlier value."
-        )
-    };
+    let each = |names| format!("{names} are defined in terms of each other's values.");
     let (ab, cd) = (each("`a`, `b`"), each("`c`, `d`"));
     assert_eq!(messages, [((0, 0), ab.as_str()), ((2, 0), cd.as_str())]);
 }
@@ -701,7 +694,7 @@ tens(positional balance) = balance div 10 * 10;
     let messages: Vec<(Place, &str)> = (answer.diagnostics.iter())
         .map(|d| (d.at, d.message.as_str()))
         .collect();
-    let message = "this doc comment documents no declaration; it is at the end of the unit";
+    let message = "this doc comment documents no declaration; it is at the end of the unit.";
     assert_eq!(messages, [((2, 0), message)]);
 }
 

@@ -44,7 +44,7 @@ fn a_doc_block_before_no_declaration_is_reported() {
     let src = format!("total(price: f64, qty: f64) = price * qty;\n{MAIN}/// Unfinished.\n");
     assert_eq!(
         load_errors(&src),
-        "5:1: this doc comment documents no declaration; it is at the end of the unit"
+        "5:1: this doc comment documents no declaration; it is at the end of the unit."
     );
     // Before a push, which declares nothing.
     let src = "total(price: f64, qty: f64) = price * qty;\n\
@@ -54,7 +54,7 @@ fn a_doc_block_before_no_declaration_is_reported() {
     assert_eq!(
         load_errors(src),
         "3:3: this doc comment documents no declaration; a `///` block comes right before a \
-         binding, a function or another declaration"
+         binding, a function or another declaration."
     );
 }
 
@@ -77,9 +77,7 @@ fn a_link_that_names_nothing_is_rejected() {
     );
     assert_eq!(
         load_errors(&src),
-        "1:22: the doc link `[discount]` names nothing: no binding or function of this unit and \
-         no prelude word or type is `discount`. Correct the name if it is misspelled, or write \
-         `discount` in backticks if it is not meant as a link."
+        "1:22: The doc link `[discount]` names nothing in scope."
     );
 }
 
@@ -101,7 +99,7 @@ fn doc_errors_join_the_elaboration_errors() {
     );
     let e = load_errors(&src);
     assert_eq!(e.lines().count(), 2, "{e}");
-    assert!(e.starts_with("1:9: the doc link `[nowhere]`"), "{e}");
+    assert!(e.starts_with("1:9: The doc link `[nowhere]`"), "{e}");
     assert!(
         e.contains("3:7: `1e400` is larger than the largest f64"),
         "{e}"

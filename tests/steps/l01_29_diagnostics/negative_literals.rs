@@ -17,7 +17,7 @@ fn a_negative_decimal_at_an_int_parameter_is_rejected_at_its_minus() {
     let out = rejected("scale(positional x: int) = x * 2;\ny = scale(-2.5);\n");
     assert_eq!(
         out,
-        "2:11: A decimal literal is never an `int`: the literal `-2.5`
+        "2:11: A decimal literal is never an `int`: the literal `-2.5`.
   [1] 1:1: `scale` is declared here with no type written for its result; the type the checker found \
 for `scale` is `(int) -> int`
       1 | scale(positional x: int) = x * 2;
@@ -49,7 +49,7 @@ fn each_menu_names_the_signed_forms_the_type_holds() {
     // A headline with a menu ends with its first fix (DESIGN.md sec:diagnostics).
     let tried = |head: String, fix: &str| format!("{head}. Try `y = f({fix})` instead.");
     let cases = [
-        ("int", "-2.5", decimal_at_int("-2.5", "")),
+        ("int", "-2.5", decimal_at_int("-2.5", "") + "."),
         (
             "int",
             "-3.0",
@@ -60,7 +60,7 @@ fn each_menu_names_the_signed_forms_the_type_holds() {
             "-2.5f64",
             tried(
                 "2:7: The suffix makes the literal `-2.5f64` an `f64`, never `rat`".to_string(),
-                "-2.5r",
+                "-2.5",
             ),
         ),
         ("f64 | rat", "-3", tried(two_carriers("-3"), "-3r")),
@@ -70,7 +70,11 @@ fn each_menu_names_the_signed_forms_the_type_holds() {
             "-9007199254740993",
             tried(no_exact("-9007199254740993"), "-9007199254740992"),
         ),
-        ("f64", "-0x20000000000001", no_exact("-0x20000000000001")),
+        (
+            "f64",
+            "-0x20000000000001",
+            no_exact("-0x20000000000001") + ".",
+        ),
     ];
     let wrong: Vec<String> = cases
         .iter()
@@ -96,7 +100,7 @@ fn an_operand_and_an_argument_at_a_fixed_class_point_at_the_minus() {
     );
     assert_eq!(
         head("isTwo(positional x) = x div 2 == 1;\ny = isTwo(-2.5);\n"),
-        "2:11: A decimal literal is never an `int`: the literal `-2.5`"
+        "2:11: A decimal literal is never an `int`: the literal `-2.5`."
     );
 }
 

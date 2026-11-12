@@ -420,6 +420,19 @@ pub struct Note {
     pub text: String,
 }
 
+impl Error {
+    /// Ends the headline, the message's first line, with a period: a headline is a sentence,
+    /// with a repair or without one (DESIGN.md sec:diagnostics, "A short headline"). The lines
+    /// after it, as the definitions of the names a printed type uses, stay as they are. O(h)
+    /// for a headline of h bytes, and O(m) to insert for a message of m bytes.
+    pub fn sentence(&mut self) {
+        let end = self.message.find('\n').unwrap_or(self.message.len());
+        if !self.message[..end].ends_with('.') {
+            self.message.insert(end, '.');
+        }
+    }
+}
+
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.message)

@@ -14,7 +14,7 @@ fn every_l1_fence_passes_but_for_its_free_names() {
     {
         let outcomes = test(&f.text.replace('…', "elided"));
         let failures: Vec<&String> = outcomes.iter().filter_map(|o| o.failure.as_ref()).collect();
-        let free = |w: &&String| w.contains(" is not defined: no ");
+        let free = |w: &&String| w.contains(" is not defined.");
         if failures.is_empty() {
             rejection += usize::from(!zedc::fence::marks(&f.text).lines.is_empty());
             clean.push((f.key.clone(), outcomes.len()));

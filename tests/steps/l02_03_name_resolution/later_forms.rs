@@ -11,9 +11,7 @@ fn the_operator_of_a_reduction_is_resolved() {
     assert_eq!(describe(text, &alone(text), "max", 0), ["prelude max"]);
     assert_eq!(
         errors("f(xs) = xs >< maks;\n"),
-        [
-            "`maks` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `maks`, or correct the name if it is misspelled. [maks]"
-        ]
+        ["`maks` is not defined. [maks]"]
     );
 }
 
@@ -49,9 +47,7 @@ fn a_sort_key_is_resolved() {
     assert_eq!(describe(text, &alone(text), "x", 1), ["param x"]);
     assert_eq!(
         errors("g(k) = k;\nf(x) = g(asc y);\n"),
-        [
-            "`y` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `y`, or correct the name if it is misspelled. [y]"
-        ]
+        ["`y` is not defined. [y]"]
     );
 }
 
@@ -66,20 +62,14 @@ fn a_for_binds_its_pattern_in_its_where_and_body_only() {
     // The source is read outside the pattern's scope, and the pattern binds nothing after it.
     assert_eq!(
         errors("f() = for v in v { v };\n"),
-        [
-            "`v` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `v`, or correct the name if it is misspelled. [v]"
-        ]
+        ["`v` is not defined. [v]"]
     );
     assert_eq!(
         errors("f(m) = for k -> _ in m { k };\ng() = k;\n"),
-        [
-            "`k` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `k`, or correct the name if it is misspelled. [k]"
-        ]
+        ["`k` is not defined. [k]"]
     );
     assert_eq!(
         errors("f(m) = for v in m { w };\n"),
-        [
-            "`w` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `w`, or correct the name if it is misspelled. [w]"
-        ]
+        ["`w` is not defined. [w]"]
     );
 }

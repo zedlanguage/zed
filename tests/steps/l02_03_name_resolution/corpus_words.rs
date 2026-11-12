@@ -75,9 +75,7 @@ fn stream_is_the_prelude_type_of_l7() {
     );
     assert_eq!(
         errors("f(s: Strem) = s;\n"),
-        [
-            "the type `Strem` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`. [Strem]"
-        ]
+        ["The type `Strem` is not defined. [Strem]"]
     );
 }
 

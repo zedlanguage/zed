@@ -147,6 +147,7 @@ fn finish(
     if errors.is_empty() {
         Ok((out, marks))
     } else {
+        errors.iter_mut().for_each(Error::sentence);
         errors.sort_by(|a, b| (a.span, &a.message, &a.menu).cmp(&(b.span, &b.message, &b.menu)));
         errors.dedup_by(|a, b| {
             (a.span, &a.message, &a.menu, a.row) == (b.span, &b.message, &b.menu, b.row)

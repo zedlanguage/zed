@@ -21,7 +21,7 @@ fn body(e: &str) -> String {
 
 /// The headline of the rejection of `e`, in which `op` does not take `(x, y)`.
 fn refused(op: &str, x: &str, y: &str, e: &str) -> String {
-    format!("`{op}` does not take ({x}, {y}): no arrow of `{op}` takes these types [{e}]")
+    format!("`{op}` does not take ({x}, {y}): no arrow of `{op}` takes these types. [{e}]")
 }
 
 const SIG: &str = "((int) -> Never, int, bool, (int) -> int, String) -> Never";
@@ -100,7 +100,7 @@ fn the_rejection_shows_its_derivation() {
         panic!("accepted")
     };
     for step in [
-        "`+` does not take (Never, true): no arrow of `+` takes these types",
+        "`+` does not take (Never, true): no arrow of `+` takes these types.",
         "this call of `h` gives Never",
         "`u` is int | true here",
         "this block gives true",
@@ -155,7 +155,7 @@ fn a_tuple_beside_never_is_checked_by_component() {
             vec![
                 refused("<", "Never", "(int) -> int", "h(1) < (n, g)"),
                 "a tuple takes data, and this value may hold a function, `(int) -> int`: data \
-                 is a value that holds no function at any depth [g]"
+                 is a value that holds no function at any depth. [g]"
                     .into(),
             ],
         ),
@@ -275,7 +275,7 @@ fn the_examples_of_the_guide() {
             vec![
                 refused("<", "Never", "(int) -> int", "h(1) < (1, g)"),
                 "a tuple takes data, and this value may hold a function, `(int) -> int`: data \
-                 is a value that holds no function at any depth [g]"
+                 is a value that holds no function at any depth. [g]"
                     .into(),
             ],
         ),

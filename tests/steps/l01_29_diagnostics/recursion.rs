@@ -14,10 +14,8 @@ fn an_error_beside_a_recursion_is_reported_with_it() {
     assert_eq!(
         heads,
         [
-            "1:1: `spin` is defined in terms of itself, which is recursion. Recursion is part of \
-             the Zed language, and this version of zedc does not compile it yet. Write the \
-             program without it, with the forms this zedc compiles.",
-            "3:8: `f` does not take (true): no arrow of `f` takes these types",
+            "1:1: `spin` is defined in terms of itself, which is recursion: this version of zedc does not compile it yet.",
+            "3:8: `f` does not take (true): no arrow of `f` takes these types.",
         ],
         "{out}"
     );
@@ -53,12 +51,10 @@ fn a_call_of_a_recursion_adds_no_error() {
 /// MSG-recursion-chain: the message of a cycle shows each use that closes it, at its site, in
 /// the order of the cycle from its first definition by name, then the repairs
 /// (DESIGN.md sec:diagnostics). Before, it named the definitions only.
-const NOT_YET: &str = "Recursion is part of the Zed language, and this version of zedc does \
-                       not compile it yet. Write the program without it, with the forms this \
-                       zedc compiles.";
+const NOT_YET: &str = ": this version of zedc does not compile it yet.";
 
-const NO_STEP: &str = "A value cannot be defined in terms of itself, since no step of the \
-                       program makes the earlier value.";
+const NO_STEP: &str = "a value cannot be defined in terms of itself, since no step of the \
+                       program makes the earlier value";
 
 /// The repair that steps the value `x` from its earlier one, `next` the new value and
 /// `indexed` the value with each read of `x` made `x[i-1]`.
@@ -87,7 +83,7 @@ fn a_self_recursive_function_shows_its_use() {
     assert_eq!(
         out,
         format!(
-            "1:1: `spin` is defined in terms of itself, which is recursion. {NOT_YET}\n  \
+            "1:1: `spin` is defined in terms of itself, which is recursion{NOT_YET}\n  \
              [1] 1:27: `spin` uses itself here\n      \
              1 | spin(positional n: int) = spin(n);\n        \
              | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [2]\n        \
@@ -107,7 +103,7 @@ fn a_two_cycle_shows_each_use_in_the_order_of_the_cycle() {
     assert_eq!(
         out,
         format!(
-            "2:1: `even`, `odd` are defined in terms of each other, which is recursion. \
+            "2:1: `even`, `odd` are defined in terms of each other, which is recursion\
              {NOT_YET}\n  \
              [1] 2:53: `even` uses `odd` here\n      \
              2 | even(positional n: int) = if n == 0 {{ true }} else {{ odd(n - 1) }};\n        \
@@ -129,10 +125,10 @@ fn a_three_cycle_of_values_shows_each_read_in_the_order_of_the_cycle() {
     assert_eq!(
         out,
         format!(
-            "1:1: `a`, `c`, `b` are defined in terms of each other's values. {NO_STEP}\n  \
+            "1:1: `a`, `c`, `b` are defined in terms of each other's values.\n  \
              [1] 1:5: `a` reads `c` here\n      \
              1 | a = c + 1;\n        \
-             | ^^^^^^^^^^ [4, 5]\n        \
+             | ^^^^^^^^^^ [4, 5, 6]\n        \
              |     ^ [1]\n  \
              [2] 3:5: `c` reads `b` here\n      \
              3 | c = b - 3;\n        \
@@ -140,8 +136,9 @@ fn a_three_cycle_of_values_shows_each_read_in_the_order_of_the_cycle() {
              [3] 2:5: `b` reads `a` here\n      \
              2 | b = a * 2;\n        \
              |     ^\n  \
-             [4] 1:1: {}\n  \
-             [5] 1:1: {}",
+             [4] 1:1: {NO_STEP}\n  \
+             [5] 1:1: {}\n  \
+             [6] 1:1: {}",
             step_repair("a", "a + 1", "a[i-1] + 1"),
             function_repair("a"),
         )
@@ -157,7 +154,7 @@ fn a_cycle_through_a_nested_call_shows_the_inner_use() {
     assert_eq!(
         out,
         format!(
-            "1:1: `f` is defined in terms of itself, which is recursion. {NOT_YET}\n  \
+            "1:1: `f` is defined in terms of itself, which is recursion{NOT_YET}\n  \
              [1] 1:49: `f` uses itself here\n      \
              1 | f(positional n: int) = {{ h(positional m: int) = f(m); h(n) }};\n        \
              | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [2]\n        \
@@ -177,7 +174,7 @@ fn two_separate_cycles_are_each_shown_with_their_uses() {
     assert_eq!(
         out,
         format!(
-            "1:1: `f`, `g` are defined in terms of each other, which is recursion. {NOT_YET}\n  \
+            "1:1: `f`, `g` are defined in terms of each other, which is recursion{NOT_YET}\n  \
              [1] 1:24: `f` uses `g` here\n      \
              1 | f(positional n: int) = g(n);\n        \
              | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [3]\n        \
@@ -186,16 +183,17 @@ fn two_separate_cycles_are_each_shown_with_their_uses() {
              2 | g(positional n: int) = f(n);\n        \
              |                        ^\n  \
              [3] 1:1: repair: remove one of the uses shown, which ends the cycle\n\
-             3:1: `x`, `y` are defined in terms of each other's values. {NO_STEP}\n  \
+             3:1: `x`, `y` are defined in terms of each other's values.\n  \
              [1] 3:5: `x` reads `y` here\n      \
              3 | x = y + 1;\n        \
-             | ^^^^^^^^^^ [3, 4]\n        \
+             | ^^^^^^^^^^ [3, 4, 5]\n        \
              |     ^ [1]\n  \
              [2] 4:5: `y` reads `x` here\n      \
              4 | y = x;\n        \
              |     ^\n  \
-             [3] 3:1: {}\n  \
-             [4] 3:1: {}",
+             [3] 3:1: {NO_STEP}\n  \
+             [4] 3:1: {}\n  \
+             [5] 3:1: {}",
             step_repair("x", "x + 1", "x[i-1] + 1"),
             function_repair("x"),
         )
@@ -211,17 +209,18 @@ fn a_value_that_reads_itself_is_offered_the_other_definition_of_its_name() {
     assert_eq!(
         out,
         format!(
-            "2:10: `x` is defined in terms of its own value. {NO_STEP}\n  \
+            "2:10: `x` is defined in terms of its own value.\n  \
              [1] 2:14: `x` reads itself here\n      \
              2 | main = {{ x = x * 2 + 1; x }};\n        \
-             |          ^^^^^^^^^^^^^^ [2, 4]\n        \
+             |          ^^^^^^^^^^^^^^ [2, 3, 5]\n        \
              |              ^ [1]\n  \
-             [2] 2:10: {}\n  \
-             [3] 1:1: repair: to read the `x` defined here, give the `x` that reads its own \
+             [2] 2:10: {NO_STEP}\n  \
+             [3] 2:10: {}\n  \
+             [4] 1:1: repair: to read the `x` defined here, give the `x` that reads its own \
              value another name\n      \
              1 | x = 3;\n        \
              | ^^^^^^\n  \
-             [4] 2:10: {}",
+             [5] 2:10: {}",
             step_repair("x", "x * 2 + 1", "x[i-1] * 2 + 1"),
             function_repair("x"),
         )

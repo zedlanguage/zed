@@ -391,16 +391,42 @@ fn the_lexer_reads_no_suffix_on_an_integer() {
     );
     assert_eq!(
         err("1f64"),
-        "`1f64` is the integer `1` with the format suffix `f64`, and only a decimal literal \
-         takes a format suffix. Write `1.0f64` for an `f64`, or `1`, which takes the carrier of \
-         its use."
+        "A format suffix needs a decimal literal: `1f64`. Try `1.0f64` instead."
     );
     assert_eq!(
-        err("2bf16"),
-        "`2bf16` is the integer `2` with the format suffix `bf16`, and only a decimal literal \
-         takes a format suffix. Write `2.0bf16` for a `bf16`, or `2`, which takes the carrier \
-         of its use."
+        err("1_000f64"),
+        "A format suffix needs a decimal literal: `1_000f64`. Try `1_000.0f64` instead."
     );
+    // `bf16`, `f16` and `f32` are no formats yet, so neither an integer nor a decimal takes
+    // them; the repair is never the integer with `.0` and the same suffix, which is rejected
+    // too (item LEX-decimal-format-suffix).
+    assert_eq!(
+        err("2bf16"),
+        "The format suffix `bf16` is not available: `2bf16`. Try `2.0f64` instead."
+    );
+    assert_eq!(
+        err("1.5f32"),
+        "The format suffix `f32` is not available: `1.5f32`. Try `1.5f64` instead."
+    );
+    assert_eq!(
+        err("1e3f16"),
+        "The format suffix `f16` is not available: `1e3f16`. Try `1e3f64` instead."
+    );
+    assert_eq!(
+        err("2.5e-3f32"),
+        "The format suffix `f32` is not available: `2.5e-3f32`. Try `2.5e-3f64` instead."
+    );
+    // Each repair lexes as one literal.
+    for t in [
+        "1.0f64",
+        "1_000.0f64",
+        "2.0f64",
+        "1.5f64",
+        "1e3f64",
+        "2.5e-3f64",
+    ] {
+        assert!(lex_fence(t).is_ok(), "{t}");
+    }
 }
 
 /// The step's unit given a `main` that writes a value, rejected programs, and a generic

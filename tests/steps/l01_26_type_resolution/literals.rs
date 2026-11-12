@@ -47,7 +47,7 @@ fn two_carriers(lit: &str, line: impl Fn(&str) -> String) -> String {
 
 /// The rejection of the decimal literal `lit` where `int` is expected.
 fn decimal_at_int(lit: &str) -> String {
-    format!("A decimal literal is never an `int`: the literal `{lit}` [{lit}]")
+    format!("A decimal literal is never an `int`: the literal `{lit}`. [{lit}]")
 }
 
 #[test]
@@ -821,7 +821,7 @@ fn a_literal_at_each_kind_of_declared_type() {
     assert_eq!(
         type_errors("scaled(x: f64, scale: f64 = \"x\") = x * scale;\n"),
         [
-            "the default of `scale` is \"x\", not f64: a default is a value of its parameter's type [\"x\"]"
+            "the default of `scale` is \"x\", not f64: a default is a value of its parameter's type. [\"x\"]"
         ]
     );
     // A literal in another base, and a negative literal.

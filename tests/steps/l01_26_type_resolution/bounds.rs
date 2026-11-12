@@ -144,7 +144,7 @@ fn an_unbounded_name_is_an_error() {
     assert_eq!(
         resolve_errors("f(g: (T) -> U for T in int) = 0;\n"),
         [
-            "the type `U` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`. [U]; a type variable is bounded by the clause after its \
+            "The type `U` is not defined. [U]; a type variable is bounded by the clause after its \
              type, as `for U in int | f64`; this clause does not bound `U` \
              [(T) -> U for T in int]"
         ]
@@ -360,14 +360,14 @@ fn an_argument_must_take_every_carrier_of_the_bound() {
     assert_eq!(
         type_errors(&shout),
         [
-            "`shout` is `(x: String) -> String`, not `(x: T) -> T for T in int | f64`: it is passed where a function of that type is expected, and its own type does not fit that one [shout]"
+            "`shout` is `(x: String) -> String`, not `(x: T) -> T for T in int | f64`: it is passed where a function of that type is expected, and its own type does not fit that one. [shout]"
         ]
     );
     let inc = format!("{TWICE}inc(x: int) = x + 1;\ny = twice(3, g: inc);\n");
     assert_eq!(
         type_errors(&inc),
         [
-            "`inc` is `(x: int) -> int`, not `(x: T) -> T for T in int | f64`: it is passed where a function of that type is expected, and its own type does not fit that one [inc]"
+            "`inc` is `(x: int) -> int`, not `(x: T) -> T for T in int | f64`: it is passed where a function of that type is expected, and its own type does not fit that one. [inc]"
         ]
     );
     let neg = format!("{TWICE}neg(x) = -x;\ny = twice(3, g: neg);\n");
@@ -772,47 +772,47 @@ fn a_lambda_whose_uses_the_bound_does_not_allow_is_an_error() {
         // `int(1)` makes `x` an int, and `p_wide` passes an f64 too.
         (
             "y = p_wide(g: (x) -> x + int(1));\n",
-            "the lambda is `(x: int) -> int`, not `(x: T) -> T for T in int | f64`: it is passed where a function of that type is expected, and its own type does not fit that one \
+            "the lambda is `(x: int) -> int`, not `(x: T) -> T for T in int | f64`: it is passed where a function of that type is expected, and its own type does not fit that one. \
              [(x) -> x + int(1)]",
         ),
         (
             "y = p_wide(g: (x, k = 2) -> x + k);\n",
-            "the lambda is `(x: int) -> int`, not `(x: T) -> T for T in int | f64`: it is passed where a function of that type is expected, and its own type does not fit that one \
+            "the lambda is `(x: int) -> int`, not `(x: T) -> T for T in int | f64`: it is passed where a function of that type is expected, and its own type does not fit that one. \
              [(x, k = 2) -> x + k]",
         ),
         (
             "y = p_wide(g: (x) -> upper(x));\n",
-            "the lambda is `(x: String) -> String`, not `(x: T) -> T for T in int | f64`: it is passed where a function of that type is expected, and its own type does not fit that one \
+            "the lambda is `(x: String) -> String`, not `(x: T) -> T for T in int | f64`: it is passed where a function of that type is expected, and its own type does not fit that one. \
              [(x) -> upper(x)]",
         ),
         (
             "y = p_wide(g: (x: int) -> x);\n",
-            "the lambda is `(x: int) -> int`, not `(x: T) -> T for T in int | f64`: it is passed where a function of that type is expected, and its own type does not fit that one \
+            "the lambda is `(x: int) -> int`, not `(x: T) -> T for T in int | f64`: it is passed where a function of that type is expected, and its own type does not fit that one. \
              [(x: int) -> x]",
         ),
         // A comparison gives a bool, not the carrier passed.
         (
             "y = p_wide(g: (x) -> x < x);\n",
             "the lambda is `(x: T) -> bool for T in int | f64 | rat | bool | String`, \
-             not `(x: T) -> T for T in int | f64`: it is passed where a function of that type is expected, and its own type does not fit that one [(x) -> x < x]",
+             not `(x: T) -> T for T in int | f64`: it is passed where a function of that type is expected, and its own type does not fit that one. [(x) -> x < x]",
         ),
         // `a` and `b` take different carriers, so `a + b` is no sum of one carrier.
         (
             "y = two(g: (a, b) -> a + b);\n",
             "the lambda is `(a: T, b: T) -> T for T in int | f64 | rat`, \
-             not `(a: T, b: U) -> T for T in int | f64, U in int`: it is passed where a function of that type is expected, and its own type does not fit that one [(a, b) -> a + b]",
+             not `(a: T, b: U) -> T for T in int | f64, U in int`: it is passed where a function of that type is expected, and its own type does not fit that one. [(a, b) -> a + b]",
         ),
         // `b` and the result have one type at each call, a variable; it is named `U`, since
         // the message writes `T` for the type `mix` declares.
         (
             "y = mix(g: (a, b) -> b);\n",
-            "the lambda is `(a: _, b: U) -> U`, not `(a: T, b: int) -> T for T in int | f64`: it is passed where a function of that type is expected, and its own type does not fit that one \
+            "the lambda is `(a: _, b: U) -> U`, not `(a: T, b: int) -> T for T in int | f64`: it is passed where a function of that type is expected, and its own type does not fit that one. \
              [(a, b) -> b]",
         ),
         // The inner `p_wide` gives an f64, so `x` is an f64, and `p_wide` passes an int too.
         (
             "y = p_wide(g: (x) -> p_wide(g: (x) -> x + x) + x);\n",
-            "the lambda is `(x: f64) -> f64`, not `(x: T) -> T for T in int | f64`: it is passed where a function of that type is expected, and its own type does not fit that one \
+            "the lambda is `(x: f64) -> f64`, not `(x: T) -> T for T in int | f64`: it is passed where a function of that type is expected, and its own type does not fit that one. \
              [(x) -> p_wide(g: (x) -> x + x) + x]",
         ),
     ];

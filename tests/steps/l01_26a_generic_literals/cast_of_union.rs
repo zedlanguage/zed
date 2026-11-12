@@ -150,7 +150,7 @@ fn a_value_no_arrow_of_the_cast_takes_is_rejected_and_named() {
         assert_eq!(
             type_errors(&src),
             [format!(
-                "`{word}` does not take (true): no arrow of `{word}` takes these types [{word}(g(true))]"
+                "`{word}` does not take (true): no arrow of `{word}` takes these types. [{word}(g(true))]"
             )]
         );
         // The one repair, a wrap in `String`, checks.
@@ -190,7 +190,7 @@ fn every_repair_offered_checks_as_written() {
         type_errors("p = (1, \"x\");\na, b = p;\nc = a + int(b);\n"),
         [
             "`int` here always fails: its operand `\"x\"` gives `#invalid`, so this call never \
-          gives a value [int(b)]"
+          gives a value. [int(b)]"
         ]
     );
 }

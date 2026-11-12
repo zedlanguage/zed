@@ -50,7 +50,7 @@ fn a_lambda_parameter_named_for_the_cast_it_was_meant_to_be_is_rejected() {
     assert_eq!(
         out,
         "1:29: the parameter `String` names the type `String`, which the prelude declares: a \
-binder may not name a type in scope
+binder may not name a type in scope.
   [1] 1:29: the parameter `String`, which binds `String` in this scope
       1 | label(positional n: int) = (String -> String + 1)(n);
         |                             ^^^^^^
@@ -68,7 +68,7 @@ fn a_statement_target_named_for_a_type_is_rejected_and_its_cast_is_not_reported_
     assert_eq!(
         out,
         "2:3: the binding target `String` names the type `String`, which the prelude declares: \
-a binder may not name a type in scope
+a binder may not name a type in scope.
   [1] 2:3: the binding target `String`, which binds `String` in this scope
       2 |   String = y + 1;
         |   ^^^^^^ [2]
@@ -426,7 +426,7 @@ fn a_parameter_named_never_is_rejected_with_the_one_repair() {
     assert_eq!(
         out,
         "1:14: the parameter `Never` names the type `Never`, which the prelude declares: a \
-binder may not name a type in scope
+binder may not name a type in scope.
   [1] 1:3: the parameter `Never`, which binds `Never` in this scope
       1 | f(positional Never: int) = Never;
         |   ^^^^^^^^^^^^^^^^^^^^^ [1]

@@ -77,12 +77,23 @@ fn a_suffixed_literal_is_quoted_with_its_suffix() {
           checker tried is rejected too. [0.5f64]"
         ]
     );
+    // Without its suffix `2.0f64` is `2.0`, which is never an `int` either, so nothing is
+    // offered, `2` least of all: the suffix says the program means an `f64` (DESIGN.md
+    // sec:diagnostics, row "Two numeric values with no common carrier").
+    assert_eq!(
+        type_errors("f(x: int) = x + 2.0f64;\n"),
+        [
+            "The suffix makes the literal `2.0f64` an `f64`, never `int`. No fix is offered: each \
+             one the checker tried is rejected too. [2.0f64]"
+        ]
+    );
     // The fix writes the digits as the program does, and names the number by them.
     assert_eq!(
         type_errors("f(x: rat) = x + 1_000.5f64;\n"),
         [
-            "The suffix makes the literal `1_000.5f64` an `f64`, never `rat`. Try `f(x: rat) = x + 1_000.5r` instead.\n  fixes, \
-             each checked here:\n    f(x: rat) = x + 1_000.5r;    the literal is then exactly \
+            "The suffix makes the literal `1_000.5f64` an `f64`, never `rat`. Try `f(x: rat) = x + 1_000.5` instead.\n  fixes, \
+             each checked here:\n    f(x: rat) = x + 1_000.5;     the literal is then exactly \
+             1_000.5, a rat\n    f(x: rat) = x + 1_000.5r;    the literal is then exactly \
              1_000.5, a rat [1_000.5f64]"
         ]
     );
@@ -182,7 +193,7 @@ fn a_literal_in_parentheses_is_quoted_without_them() {
     // A type that holds the literal's value spells it as the program does.
     assert_eq!(
         type_errors("f(x: int) = x / (0_0);\n"),
-        ["`/` does not take (int, 0_0): no arrow of `/` takes these types [x / (0_0)]"]
+        ["`/` does not take (int, 0_0): no arrow of `/` takes these types. [x / (0_0)]"]
     );
 }
 
@@ -203,21 +214,21 @@ fn a_divisor_literal_is_quoted_as_written() {
         type_errors("f(x: int) = x mod 0_0;\n"),
         [
             "`mod` here always fails with `#divByZero`: its divisor is the literal 0_0, so no \
-          value that reaches it gives an int [x mod 0_0]"
+          value that reaches it gives an int. [x mod 0_0]"
         ]
     );
     assert_eq!(
         type_errors("f(x: rat) = x / 0_0r;\n"),
         [
             "`/` here always fails with `#divByZero`: its divisor is the literal 0_0r, so no value \
-          that reaches it gives a rat [x / 0_0r]"
+          that reaches it gives a rat. [x / 0_0r]"
         ]
     );
     assert_eq!(
         type_errors("f(x: int) = 1_000 div 0;\n"),
         [
             "`div` here always fails with `#divByZero`: its divisor is the literal 0, so no value \
-          that reaches it gives an int [1_000 div 0]"
+          that reaches it gives an int. [1_000 div 0]"
         ]
     );
 }

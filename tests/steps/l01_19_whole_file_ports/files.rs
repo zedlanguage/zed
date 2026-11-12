@@ -119,12 +119,12 @@ fn main_takes_one_main_args() {
     assert_eq!(
         e.as_deref(),
         Some(
-            "1:1: this file is run as a program, and a program starts at a function named \
-             `main`, which this file does not declare. Declare one, such as\n    \
-             main(m: MainArgs) {\n      \
-             m.stdout <- \"hello\";\n    \
-             }\nor, if the file holds definitions to test and is not a program, run `zedc test` on \
-             it instead of `zedc run`."
+            "1:1: This file declares no `main` to start the program at. Try adding \
+             `main(m: MainArgs) { m.stdout <- \"hello\"; }`.\n  \
+             [1] 1:1: `zedc run` runs a program, which starts at the function `main`; a file of \
+             definitions to test runs with `zedc test`\n      \
+             1 | helper = 1;\n        \
+             | ^"
         )
     );
 }

@@ -311,12 +311,7 @@ const VARIANT_PINS: &[(&str, usize, &str)] = &[
         7,
         concat!("line 1: ", zed_tests::not_yet!("an array display")),
     ),
-    (
-        "README.md:1139",
-        3,
-        "line 2: `users` is not defined: no definition, parameter or binding in scope has this \
-         name, and the prelude has none. Define `users`, or correct the name if it is misspelled.",
-    ),
+    ("README.md:1139", 3, "line 2: `users` is not defined."),
     (
         "README.md:1175",
         4,

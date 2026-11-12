@@ -188,7 +188,7 @@ fn a_call_of_an_integer_with_no_exact_f64_is_rejected() {
              `f64` that `h` takes here; an integer a call gives is read at `f64` only where \
              `f64` holds it exactly, as an integer literal is. Make that value one `f64` holds \
              exactly where it is written, or give this parameter of `h` a type that holds \
-             9007199254740993, such as `int` [h(g(c))]"
+             9007199254740993, such as `int`. [h(g(c))]"
                 .to_string()
         ]
     );
@@ -212,7 +212,7 @@ fn a_call_of_a_decimal_is_not_read_at_rat() {
              where it is written, so it is an `f64` there; an `f64` is not read as the `rat` \
              that `h` takes here, since a call gives that `f64`, not the decimal written. Write \
              that decimal with the suffix `r` where it is written, as 2.5r, or give this \
-             parameter of `h` the type `f64` [h(g(c))]"
+             parameter of `h` the type `f64`. [h(g(c))]"
                 .to_string()
         ]
     );
@@ -229,7 +229,7 @@ fn a_call_is_not_read_where_the_parameter_takes_no_one_carrier() {
                    f(positional c: bool) = h(g(c));\n";
     assert_eq!(
         type_errors(at_bool),
-        vec!["`h` does not take (1 | 2): no arrow of `h` takes these types [h(g(c))]".to_string()]
+        vec!["`h` does not take (1 | 2): no arrow of `h` takes these types. [h(g(c))]".to_string()]
     );
     let two = "g(positional c: bool) = if c { 2 } else { 1 };\nh(positional z: f64 | rat) = z;\n\
                f(positional c: bool) = h(g(c));\n";
@@ -249,7 +249,7 @@ fn a_name_and_a_call_of_a_parameter_are_not_read() {
         format!("{H}f(positional c: bool) = {{ y = if c {{ 2 + 1 }} else {{ 1 }}; h(y) }};\n");
     assert_eq!(
         type_errors(&name),
-        vec!["`h` does not take (1 | 3): no arrow of `h` takes these types [h(y)]".to_string()]
+        vec!["`h` does not take (1 | 3): no arrow of `h` takes these types. [h(y)]".to_string()]
     );
     let param = format!(
         "k(positional x: int) = if x == 1 {{ x }} else {{ 2 }};\n{H}\
@@ -257,7 +257,7 @@ fn a_name_and_a_call_of_a_parameter_are_not_read() {
     );
     assert_eq!(
         type_errors(&param),
-        vec!["`h` does not take (int): no arrow of `h` takes these types [h(k(x))]".to_string()]
+        vec!["`h` does not take (int): no arrow of `h` takes these types. [h(k(x))]".to_string()]
     );
 }
 
@@ -355,7 +355,7 @@ fn a_call_of_a_value_the_other_operand_cannot_hold_is_rejected() {
                  read as the `f64` of the other arguments of `{other}` here; an integer a call \
                  gives is read at `f64` only where `f64` holds it exactly, as an integer literal \
                  is. Make that value one `f64` holds exactly where it is written, or give the \
-                 other arguments of `{other}` a type that holds 9007199254740993, such as `int` \
+                 other arguments of `{other}` a type that holds 9007199254740993, such as `int`. \
                  [x {op} g(c)]"
             )]
         );
@@ -369,7 +369,7 @@ fn a_call_of_a_value_the_other_operand_cannot_hold_is_rejected() {
              fixes where it is written, so it is an `f64` there; an `f64` is not read as the \
              `rat` of the other arguments of `*` here, since a call gives that `f64`, not the \
              decimal written. Write that decimal with the suffix `r` where it is written, as \
-             2.5r, or give the other arguments of `*` the type `f64` [x * g(c)]"
+             2.5r, or give the other arguments of `*` the type `f64`. [x * g(c)]"
                 .to_string()
         ]
     );
@@ -391,14 +391,15 @@ fn a_name_bound_to_a_call_of_literal_values_is_not_read() {
     let name = format!("{G}{H}f(positional c: bool) = {{ y = g(c); h(y) }};\n");
     assert_eq!(
         type_errors(&name),
-        vec!["`h` does not take (1 | 2): no arrow of `h` takes these types [h(y)]".to_string()]
+        vec!["`h` does not take (1 | 2): no arrow of `h` takes these types. [h(y)]".to_string()]
     );
     // The same at an operator.
     let op = format!("{G}f(positional c: bool, x: f64) = {{ y = g(c); x * y }};\n");
     assert_eq!(
         type_errors(&op),
         vec![
-            "`*` does not take (f64, 1 | 2): no arrow of `*` takes these types [x * y]".to_string()
+            "`*` does not take (f64, 1 | 2): no arrow of `*` takes these types. [x * y]"
+                .to_string()
         ]
     );
     // The call itself is read, and so is the name where its declared type fixes the values.
@@ -414,7 +415,7 @@ fn a_name_bound_to_a_call_of_literal_values_is_not_read() {
     let top = format!("{G}{H}y = g(true);\na = h(y);\n");
     assert_eq!(
         type_errors(&top),
-        vec!["`h` does not take (1 | 2): no arrow of `h` takes these types [h(y)]".to_string()]
+        vec!["`h` does not take (1 | 2): no arrow of `h` takes these types. [h(y)]".to_string()]
     );
 }
 
@@ -731,7 +732,7 @@ fn an_operation_on_literals_past_two_to_the_53_differs_by_where_it_is_fixed() {
              `f64` that `h` takes here; an integer a call gives is read at `f64` only where \
              `f64` holds it exactly, as an integer literal is. Make that value one `f64` holds \
              exactly where it is written, or give this parameter of `h` a type that holds \
-             9007199254740993, such as `int` [h(g(c))]"
+             9007199254740993, such as `int`. [h(g(c))]"
                 .to_string()
         ]
     );
@@ -760,7 +761,7 @@ fn a_call_of_literal_values_at_a_union_of_carriers_is_rejected_whole() {
     assert_eq!(
         type_errors(src),
         vec![
-            "`h` does not take (1 | 2): no arrow of `h` takes these types\n  T1 stands for a part written more than once:\n    \
+            "`h` does not take (1 | 2): no arrow of `h` takes these types.\n  T1 stands for a part written more than once:\n    \
              type T1 = f64 | rat; [h(g(c))]"
                 .to_string()
         ]

@@ -46,7 +46,7 @@ fn a_dropped_lookup_miss_is_rejected_with_its_derivation_and_repairs() {
     let (message, span, notes) = the_error(&t);
     assert_eq!(
         message,
-        "`_` drops a loose failure this value may be, #notFound: `_` drops only a failure the program names, as the default of an `else` names it, and this one would be dropped with nothing in the text saying so"
+        "`_` drops a loose failure this value may be, #notFound: `_` drops only a failure the program names, as the default of an `else` names it, and this one would be dropped with nothing in the text saying so."
     );
     assert_eq!(span, "_ = lookup(3);");
     assert_eq!(
@@ -99,7 +99,7 @@ fn an_else_default_inside_an_if_branch_or_a_block_names_what_is_dropped() {
     let (message, _, notes) = the_error(&t);
     assert_eq!(
         message,
-        "`_` drops a loose failure this value may be, #notFound: `_` drops only a failure the program names, as the default of an `else` names it, and this one would be dropped with nothing in the text saying so"
+        "`_` drops a loose failure this value may be, #notFound: `_` drops only a failure the program names, as the default of an `else` names it, and this one would be dropped with nothing in the text saying so."
     );
     assert_eq!(
         notes[0],
@@ -114,7 +114,7 @@ fn the_pattern_form_drops_only_the_atom_it_handles() {
     let (message, span, notes) = the_error(&t);
     assert_eq!(
         message,
-        "`_` drops a loose failure this value may be, #none: `_` drops only a failure the program names, as the default of an `else` names it, and this one would be dropped with nothing in the text saying so"
+        "`_` drops a loose failure this value may be, #none: `_` drops only a failure the program names, as the default of an `else` names it, and this one would be dropped with nothing in the text saying so."
     );
     assert_eq!(span, "_ = x else #notFound -> 0;");
     // `#none` enters at the parameter, and is not blamed on the default.
@@ -140,7 +140,7 @@ fn every_dropped_atom_is_named_with_where_it_enters() {
     let (message, span, notes) = the_error(&t);
     assert_eq!(
         message,
-        "`_` drops a loose failure this value may be, #notFound: `_` drops only a failure the program names, as the default of an `else` names it, and this one would be dropped with nothing in the text saying so"
+        "`_` drops a loose failure this value may be, #notFound: `_` drops only a failure the program names, as the default of an `else` names it, and this one would be dropped with nothing in the text saying so."
     );
     assert_eq!(span, "_ = b;");
     // Followed through `b` and `a` to the call that gives it.
@@ -152,7 +152,7 @@ fn every_dropped_atom_is_named_with_where_it_enters() {
     let (message, _, notes) = the_error(&t);
     assert_eq!(
         message,
-        "`_` drops a loose failure this value may be, #none | #notFound: `_` drops only a failure the program names, as the default of an `else` names it, and this one would be dropped with nothing in the text saying so"
+        "`_` drops a loose failure this value may be, #none | #notFound: `_` drops only a failure the program names, as the default of an `else` names it, and this one would be dropped with nothing in the text saying so."
     );
     assert_eq!(
         notes[0],
@@ -163,7 +163,7 @@ fn every_dropped_atom_is_named_with_where_it_enters() {
     let (message, _, notes) = the_error(t);
     assert_eq!(
         message,
-        "`_` drops a loose failure this value may be, T1 | #errs(T1 ->? T1): `_` drops only a failure the program names, as the default of an `else` names it, and this one would be dropped with nothing in the text saying so\n  T1 stands for a part written more than once:\n    type T1 = #a | #b;"
+        "`_` drops a loose failure this value may be, T1 | #errs(T1 ->? T1): `_` drops only a failure the program names, as the default of an `else` names it, and this one would be dropped with nothing in the text saying so.\n  T1 stands for a part written more than once:\n    type T1 = #a | #b;"
     );
     assert!(notes.contains(&"the loose failure #a enters here [positional x: int | #a]".into()));
     assert!(notes.contains(&"the loose failure #b enters here [positional y: int | #b]".into()));
@@ -197,7 +197,7 @@ fn a_discarded_component_is_checked_alone() {
     let (message, span, notes) = the_error(&t);
     assert_eq!(
         message,
-        "`_` drops a loose failure component 0 of this value may be, #notFound: `_` drops only a failure the program names, as the default of an `else` names it, and this one would be dropped with nothing in the text saying so"
+        "`_` drops a loose failure component 0 of this value may be, #notFound: `_` drops only a failure the program names, as the default of an `else` names it, and this one would be dropped with nothing in the text saying so."
     );
     assert_eq!(span, "_, x = pair(1);");
     assert_eq!(
@@ -233,7 +233,7 @@ fn a_failure_of_the_whole_tuple_reaches_each_named_component() {
     let (message, span, _) = the_error(&t);
     assert_eq!(
         message,
-        "`_` drops a loose failure this value may be, #notFound: `_` drops only a failure the program names, as the default of an `else` names it, and this one would be dropped with nothing in the text saying so"
+        "`_` drops a loose failure this value may be, #notFound: `_` drops only a failure the program names, as the default of an `else` names it, and this one would be dropped with nothing in the text saying so."
     );
     assert_eq!(span, "_, _ = maybe(1);");
 }

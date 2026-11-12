@@ -66,9 +66,7 @@ fn a_cycle_through_an_overload_set() {
     assert_eq!(
         errors(src),
         [
-            "`f(x: int)`, `g` are defined in terms of each other, which is recursion. Recursion is \
-           part of the Zed language, and this version of zedc does not compile it yet. Write the \
-           program without it, with the forms this zedc compiles. [f(x: int) = g;]"
+            "`f(x: int)`, `g` are defined in terms of each other, which is recursion: this version of zedc does not compile it yet. [f(x: int) = g;]"
         ]
     );
 }
@@ -207,11 +205,8 @@ fn every_cycle_is_reported_each_by_name() {
     assert_eq!(
         errors(src),
         [
-            "`even`, `odd` are defined in terms of each other, which is recursion. Recursion is \
-              part of the Zed language, and this version of zedc does not compile it yet. Write the \
-              program without it, with the forms this zedc compiles. [even(positional n) = if n == 0 { true } else { odd(n - 1) };]",
-            "`a`, `b` are defined in terms of each other's values. A value cannot be defined in \
-              terms of itself, since no step of the program makes the earlier value. [a = b + 1;]",
+            "`even`, `odd` are defined in terms of each other, which is recursion: this version of zedc does not compile it yet. [even(positional n) = if n == 0 { true } else { odd(n - 1) };]",
+            "`a`, `b` are defined in terms of each other's values. [a = b + 1;]",
         ]
     );
 }

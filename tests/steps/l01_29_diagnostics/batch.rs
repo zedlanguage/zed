@@ -108,7 +108,7 @@ fn batch_and_single_file_checking_agree() {
             "1:6: in a function type `L .. U -> V`, every function the guarantee `L`, left of \
              `..`, describes must also be allowed by the permission `U`, right of `..`, and in \
              this one the guarantee allows functions the permission does not. To repair it, \
-             narrow the type left of `..`, or widen the type right of it"
+             narrow the type left of `..`, or widen the type right of it."
         )
     );
     // A literal at a type that names no one carrier is rejected the same way on both paths.

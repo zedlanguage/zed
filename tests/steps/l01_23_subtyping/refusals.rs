@@ -343,14 +343,14 @@ fn a_call_whose_check_was_refused_says_why() {
         rejected(&box_program(7)),
         format!(
             "2:52: `g` does not take ({shown}); this is not proved wrong: the checker could not \
-             decide whether it fits, because {}",
+             decide whether it fits, because {}.",
             Refusal::TupleSplit.message()
         )
     );
     // A decided failure names no cause.
     assert_eq!(
         rejected(&box_program(6)),
-        format!("2:52: `g` does not take ({shown}): no arrow of `g` takes these types")
+        format!("2:52: `g` does not take ({shown}): no arrow of `g` takes these types.")
     );
     // The declared type is printed with the same definition, written once for the message.
     // Before: `` `y` is declared `(#a | #b | #c, #a | #b | #c, #a | #b | #c)` ``.
@@ -375,7 +375,7 @@ fn a_tuple_that_shapes_hold_only_together_is_taken() {
     let src = "g(x: (#a, #c) | (#b, #c)) = x;\nh(y: (#a | #b | #c, #c)) = g(x: y);\nmain() = 0;\n";
     assert_eq!(
         rejected(src),
-        "2:28: `g` does not take ((#a | #b | #c, #c)): no arrow of `g` takes these types"
+        "2:28: `g` does not take ((#a | #b | #c, #c)): no arrow of `g` takes these types."
     );
 }
 
@@ -396,7 +396,7 @@ fn a_morphism_type_whose_bound_check_was_refused_says_why() {
                  `..`, describes must also be allowed by the permission `U`, right of `..`, and \
                  the checker could not show that this one's guarantee is within its permission; \
                  this is not proved wrong: the checker could not decide whether it fits, because \
-                 {}. To repair it, narrow the type left of `..`, or widen the type right of it \
+                 {}. To repair it, narrow the type left of `..`, or widen the type right of it. \
                  [((int -> #a | #b) .. ((int -> #a) | (int -> #b)) -> int)]",
                 Refusal::MorphismSplit.message()
             )
@@ -460,10 +460,15 @@ fn an_overload_whose_check_was_refused_says_why() {
                 Some(r) => {
                     let tail = format!(
                         "; this is not proved wrong: the checker could not decide whether it \
-                         fits, because {}",
+                         fits, because {}.",
                         r.message()
                     );
-                    assert!(first.ends_with(&tail), "{op} on {t}: {first}");
+                    // `walk::operator` gives the message as the checker builds it, before the place it
+                    // is printed adds the final period where it lacks one.
+                    assert!(
+                        format!("{}.", first.trim_end_matches('.')).ends_with(&tail),
+                        "{op} on {t}: {first}"
+                    );
                 }
                 None => assert!(
                     !first.contains("this is not proved wrong"),
@@ -480,7 +485,7 @@ fn a_literal_argument_and_a_need_result_name_no_cause_when_decided() {
     // it does not meet: it is always decided, so no refused input reaches this path.
     assert_eq!(
         rejected("g(x: #a | (int, int)) = x;\nmain() = g(x: 1);\n"),
-        "2:10: `g` does not take (1): no arrow of `g` takes these types"
+        "2:10: `g` does not take (1): no arrow of `g` takes these types."
     );
     // What a use of an argument gives against what the use needs: decided here. The
     // checker's own types hold no difference of tuples (a written `\` of tuples is dropped
@@ -489,7 +494,7 @@ fn a_literal_argument_and_a_need_result_name_no_cause_when_decided() {
     // the call would be refused by each carrier's arrow instead.
     assert_eq!(
         rejected("n = 1;\nf(x) = x[1] + n;\nmain() = f(x: (1, \"s\"));\n"),
-        "3:10: `f` gives \"s\" here, which is not int: the use requires a value of int"
+        "3:10: `f` gives \"s\" here, which is not int: the use requires a value of int."
     );
 }
 

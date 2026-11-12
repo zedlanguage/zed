@@ -598,7 +598,7 @@ fn the_rest_of_k30_is_exact_when_its_ask_is_given() {
         messages,
         [format!(
             "A decimal literal is never an `int`: `n : int + 0.{nines}`. Try `rat(n) + 0.{nines}` \
-             instead."
+             or `f64(n) + 0.{nines}` instead."
         )]
     );
 }

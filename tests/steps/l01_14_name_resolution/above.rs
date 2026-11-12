@@ -32,10 +32,11 @@ fn above(text: &str) -> Vec<String> {
         .collect()
 }
 
-const BLOCK: &str = "`b` is used on line 2, above its definition on line 3. In a block a name is used \
-                     only below its definition, so that the text reads from the top. The order of \
-                     the lines changes no result, since evaluation follows the dependencies, so \
-                     moving the definition above its first use changes nothing else.";
+const BLOCK: &str = "`b` is used on line 2, above its definition on line 3 [b]; in a block a name is \
+                     used only below its definition, so that the text reads from the top; the \
+                     order of the lines changes no result, since evaluation follows the \
+                     dependencies, so moving the definition above its first use changes nothing \
+                     else";
 
 #[test]
 fn a_block_binding_used_above_its_definition_is_rejected() {
@@ -58,7 +59,7 @@ fn each_binding_is_reported_once_at_its_first_use() {
     let text = "f(n) {\n  a = b + b;\n  c = b;\n  b = n;\n  a + c\n}\n";
     let errors = above(text);
     assert_eq!(errors.len(), 1, "{errors:?}");
-    assert!(errors[0].starts_with("`b` is used on line 2, above its definition on line 4."));
+    assert!(errors[0].starts_with("`b` is used on line 2, above its definition on line 4 ["));
     // The move puts `b` above line 2, so both uses are below it.
     assert!(
         errors[0].contains("repair: move `b = n;` above line 2"),
@@ -74,7 +75,7 @@ fn a_use_inside_a_nested_block_or_lambda_is_checked_against_the_outer_binding() 
     ] {
         let errors = above(text);
         assert_eq!(errors.len(), 1, "{text}");
-        assert!(errors[0].starts_with("`b` is used on line 2, above its definition on line 3."));
+        assert!(errors[0].starts_with("`b` is used on line 2, above its definition on line 3 ["));
     }
 }
 
@@ -114,10 +115,10 @@ fn a_parameter_default_naming_a_later_parameter_is_rejected() {
     assert_eq!(
         above(text),
         [
-            "`m` is used on line 1, before its definition later on that line. In a parameter list \
-          a name is used only below its definition, so that the text reads from the top. The \
-          order of the parameters changes no result, since evaluation follows the \
-          dependencies, so moving the parameter above its first use changes nothing else. [m]; \
+            "`m` is used on line 1, before its definition later on that line [m]; in a parameter \
+          list a name is used only below its definition, so that the text reads from the \
+          top; the order of the parameters changes no result, since evaluation follows the \
+          dependencies, so moving the parameter above its first use changes nothing else [m]; \
           `m` is used here, above its definition [m]; the parameter `m`, below its first use \
           [m = 2]; repair: move `m = 2` in front of `k = m` [m = 2]"
         ]
@@ -132,7 +133,7 @@ fn a_field_default_naming_a_later_field_is_rejected() {
     // L10.4b on (`int[lo..]` and `where` are later forms here), and its test covers them.
     let errors = above("struct Box { h: f64 = w, w: f64 }\n");
     assert_eq!(errors.len(), 1, "{errors:?}");
-    assert!(errors[0].contains("In a field list a name is used only below its definition"));
+    assert!(errors[0].contains("in a field list a name is used only below its definition"));
     assert!(
         errors[0].ends_with("repair: move `w: f64` in front of `h: f64 = w` [w: f64]"),
         "{errors:?}"

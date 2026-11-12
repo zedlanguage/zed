@@ -718,6 +718,12 @@ impl<'a> Tables<'a> {
             };
             notes.push(Note {
                 span: at,
+                text: "a value cannot be defined in terms of itself, since no step of the program \
+                       makes the earlier value"
+                    .into(),
+            });
+            notes.push(Note {
+                span: at,
                 text: self.step_repair(items[start], cycle.len() == 1),
             });
             // A value read where another binder of the same name was meant.
@@ -753,10 +759,7 @@ impl<'a> Tables<'a> {
             CycleReport {
                 span: at,
                 row: Some(Row::ReadsOwnValue),
-                message: format!(
-                    "{head}. A value cannot be defined in terms of itself, since no step of the \
-                     program makes the earlier value."
-                ),
+                message: head,
                 notes,
             }
         } else {
@@ -781,9 +784,7 @@ impl<'a> Tables<'a> {
                 span: at,
                 row: None,
                 message: format!(
-                    "{head}, which is recursion. Recursion is part of the Zed language, and this \
-                     version of zedc does not compile it yet. Write the program without it, with \
-                     the forms this zedc compiles."
+                    "{head}, which is recursion: this version of zedc does not compile it yet"
                 ),
                 notes,
             }

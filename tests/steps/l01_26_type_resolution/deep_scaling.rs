@@ -302,7 +302,7 @@ fn curried_refusal_message(d: usize, uses: usize, at: usize, result: &str) -> St
     });
     format!(
         "`g` is `{given}`, not `{expected}`: it is passed where a function of that type is \
-         expected, and its own type does not fit that one [g]"
+         expected, and its own type does not fit that one. [g]"
     )
 }
 

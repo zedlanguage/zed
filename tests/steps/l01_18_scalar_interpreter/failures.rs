@@ -66,7 +66,7 @@ fn euclidean_division_keeps_the_remainder_non_negative() {
 fn mixed_kinds_select_no_arrow() {
     assert_eq!(
         errors("x = \"a\" ++ 1;\n"),
-        ["`++` does not take (\"a\", 1): no arrow of `++` takes these types [\"a\" ++ 1]"]
+        ["`++` does not take (\"a\", 1): no arrow of `++` takes these types. [\"a\" ++ 1]"]
     );
     // A literal keeps its kind: `1.5` is no int, and no form of it is (DESIGN.md L1.26b).
     assert_eq!(
@@ -74,14 +74,15 @@ fn mixed_kinds_select_no_arrow() {
         [
             "A decimal literal is never an `int`: `n : int + 1.5`. Try `x = rat(n) + 1.5` \
              instead.\n  fixes, each checked here:\n    x = rat(n) + 1.5;    n is cast to rat, and \
-             `+` takes two rat [1.5]"
+             `+` takes two rat\n    x = f64(n) + 1.5;    n is cast to f64, exactly, since it lies within ±2^53 [1.5]"
         ]
     );
     assert_eq!(
         errors("x = 1r/2r * 2.5f64;\n"),
         [
-            "The suffix makes the literal `2.5f64` an `f64`, never `rat`. Try `x = 1r/2r * 2.5r` instead.\n  fixes, each checked \
-             here:\n    x = 1r/2r * 2.5r;    the literal is then exactly 2.5, a rat [2.5f64]"
+            "The suffix makes the literal `2.5f64` an `f64`, never `rat`. Try `x = 1r/2r * 2.5` instead.\n  fixes, each checked \
+             here:\n    x = 1r/2r * 2.5;     the literal is then exactly 2.5, a rat\n    \
+             x = 1r/2r * 2.5r;    the literal is then exactly 2.5, a rat [2.5f64]"
         ]
     );
     // A generic literal takes the other operand's kind (step L1.26a).

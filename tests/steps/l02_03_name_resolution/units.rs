@@ -25,7 +25,7 @@ fn a_local_declaration_is_visible_in_its_unit_and_not_through_an_import() {
         mistakes(&p),
         [
             "main.zed:1:1: `taxRate` is declared `local` in the unit `billing`, so no other unit \
-          sees it\n  \
+          sees it.\n  \
           [1] 1:1: the import of the unit `billing`\n      \
           1 | import billing.{total, taxRate};\n        \
           | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
@@ -79,7 +79,7 @@ fn an_import_of_a_unit_with_no_file_names_the_file_looked_for() {
         mistakes(&p),
         [
             "main.zed:1:1: the unit `geometry.solids` cannot be imported: there is no file \
-          `geometry/solids.zed` under the root"
+          `geometry/solids.zed` under the root."
         ]
     );
 }
@@ -96,7 +96,7 @@ fn a_unit_that_does_not_parse_reports_its_own_error_and_its_importer_one() {
     assert_eq!(
         m[1],
         "main.zed:1:1: the unit `broken` cannot be imported: the file `broken.zed` does not \
-         parse, so the names it defines are not known"
+         parse, so the names it defines are not known."
     );
 }
 
@@ -115,7 +115,7 @@ fn a_cycle_is_rejected_once_at_the_import_of_its_first_unit_naming_every_unit_on
         [
             "orders.zed:1:1: the unit `stock` cannot be imported: the imports form a cycle, so its \
           units have no order to be resolved in: `orders` imports `stock` at orders.zed:1:1, \
-          `stock` imports `orders` at stock.zed:2:1"
+          `stock` imports `orders` at stock.zed:2:1."
         ]
     );
     // The order puts each unit after the units it imports outside its component, and the units
@@ -131,7 +131,7 @@ fn a_unit_that_imports_itself_is_a_cycle_of_one() {
         mistakes(&p),
         [
             "main.zed:1:1: the unit `main` cannot be imported: the imports form a cycle, so its \
-          units have no order to be resolved in: `main` imports `main` at main.zed:1:1"
+          units have no order to be resolved in: `main` imports `main` at main.zed:1:1."
         ]
     );
 }

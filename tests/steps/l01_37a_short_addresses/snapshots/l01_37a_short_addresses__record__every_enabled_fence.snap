@@ -11,7 +11,7 @@ EXAMPLES.md [2. Bindings and values] 2
     Diagnostic {
         line: 4,
         col: 3,
-        message: "`y` is already bound in this scope, and a scope binds each name once",
+        message: "`y` is already bound in this scope.",
         steps: [
             Step {
                 line: 3,
@@ -61,7 +61,7 @@ EXAMPLES.md [5. Conditionals] 2
     Diagnostic {
         line: 2,
         col: 11,
-        message: "`age` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `age`, or correct the name if it is misspelled.",
+        message: "`age` is not defined.",
         steps: [],
         menu: "",
         row: None,
@@ -69,7 +69,7 @@ EXAMPLES.md [5. Conditionals] 2
     Diagnostic {
         line: 2,
         col: 24,
-        message: "`country` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `country`, or correct the name if it is misspelled.",
+        message: "`country` is not defined.",
         steps: [],
         menu: "",
         row: None,
@@ -77,7 +77,7 @@ EXAMPLES.md [5. Conditionals] 2
     Diagnostic {
         line: 3,
         col: 11,
-        message: "`age` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `age`, or correct the name if it is misspelled.",
+        message: "`age` is not defined.",
         steps: [],
         menu: "",
         row: None,
@@ -85,7 +85,7 @@ EXAMPLES.md [5. Conditionals] 2
     Diagnostic {
         line: 3,
         col: 24,
-        message: "`member` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `member`, or correct the name if it is misspelled.",
+        message: "`member` is not defined.",
         steps: [],
         menu: "",
         row: None,
@@ -93,13 +93,13 @@ EXAMPLES.md [5. Conditionals] 2
     Diagnostic {
         line: 3,
         col: 34,
-        message: "`override` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `override`, or correct the name if it is misspelled.",
+        message: "`override` is not defined.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 2, col: 11, failure: Some("`age` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `age`, or correct the name if it is misspelled.") }, Outcome { line: 2, col: 24, failure: Some("`country` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `country`, or correct the name if it is misspelled.") }, Outcome { line: 3, col: 11, failure: Some("`age` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `age`, or correct the name if it is misspelled.") }, Outcome { line: 3, col: 24, failure: Some("`member` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `member`, or correct the name if it is misspelled.") }, Outcome { line: 3, col: 34, failure: Some("`override` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `override`, or correct the name if it is misspelled.") }]
+  checks: [Outcome { line: 2, col: 11, failure: Some("`age` is not defined.") }, Outcome { line: 2, col: 24, failure: Some("`country` is not defined.") }, Outcome { line: 3, col: 11, failure: Some("`age` is not defined.") }, Outcome { line: 3, col: 24, failure: Some("`member` is not defined.") }, Outcome { line: 3, col: 34, failure: Some("`override` is not defined.") }]
 
 EXAMPLES.md [6. Functions] 2
   warnings: []
@@ -112,7 +112,7 @@ EXAMPLES.md [6. Functions] 3
     Diagnostic {
         line: 2,
         col: 8,
-        message: "`greet` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `greet`, or correct the name if it is misspelled.",
+        message: "`greet` is not defined.",
         steps: [],
         menu: "",
         row: None,
@@ -120,7 +120,7 @@ EXAMPLES.md [6. Functions] 3
     Diagnostic {
         line: 3,
         col: 8,
-        message: "`add` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `add`, or correct the name if it is misspelled.",
+        message: "`add` is not defined.",
         steps: [],
         menu: "",
         row: None,
@@ -128,7 +128,7 @@ EXAMPLES.md [6. Functions] 3
     Diagnostic {
         line: 4,
         col: 14,
-        message: "`add` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `add`, or correct the name if it is misspelled.",
+        message: "`add` is not defined.",
         steps: [],
         menu: "",
         row: None,
@@ -136,7 +136,7 @@ EXAMPLES.md [6. Functions] 3
     Diagnostic {
         line: 5,
         col: 8,
-        message: "`greet` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `greet`, or correct the name if it is misspelled.",
+        message: "`greet` is not defined.",
         steps: [],
         menu: "",
         row: None,
@@ -144,7 +144,7 @@ EXAMPLES.md [6. Functions] 3
     Diagnostic {
         line: 6,
         col: 8,
-        message: "`greet` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `greet`, or correct the name if it is misspelled.",
+        message: "`greet` is not defined.",
         steps: [],
         menu: "",
         row: None,
@@ -152,7 +152,7 @@ EXAMPLES.md [6. Functions] 3
     Diagnostic {
         line: 7,
         col: 36,
-        message: "the type `Utf8String` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`.",
+        message: "The type `Utf8String` is not defined.",
         steps: [],
         menu: "",
         row: None,
@@ -160,13 +160,13 @@ EXAMPLES.md [6. Functions] 3
     Diagnostic {
         line: 7,
         col: 51,
-        message: "the type `Utf8String` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`.",
+        message: "The type `Utf8String` is not defined.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 2, col: 8, failure: Some("`greet` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `greet`, or correct the name if it is misspelled.") }, Outcome { line: 3, col: 8, failure: Some("`add` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `add`, or correct the name if it is misspelled.") }, Outcome { line: 4, col: 14, failure: Some("`add` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `add`, or correct the name if it is misspelled.") }, Outcome { line: 5, col: 8, failure: Some("the mark names the row \"Missing argument\", and the diagnostic is in no row of the rejection table: `greet` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `greet`, or correct the name if it is misspelled.") }, Outcome { line: 6, col: 8, failure: Some("the mark names the row \"Argument in the wrong form\", and the diagnostic is in no row of the rejection table: `greet` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `greet`, or correct the name if it is misspelled.") }, Outcome { line: 7, col: 36, failure: Some("the type `Utf8String` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`.") }, Outcome { line: 7, col: 51, failure: Some("the type `Utf8String` is not defined: no type in scope has this name, and the prelude has none. Correct the name if it is misspelled, or write a type of the prelude, such as `int` or `String`.") }, Outcome { line: 9, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 14, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }]
+  checks: [Outcome { line: 2, col: 8, failure: Some("`greet` is not defined.") }, Outcome { line: 3, col: 8, failure: Some("`add` is not defined.") }, Outcome { line: 4, col: 14, failure: Some("`add` is not defined.") }, Outcome { line: 5, col: 8, failure: Some("the mark names the row \"Missing argument\", and the diagnostic is in no row of the rejection table: `greet` is not defined.") }, Outcome { line: 6, col: 8, failure: Some("the mark names the row \"Argument in the wrong form\", and the diagnostic is in no row of the rejection table: `greet` is not defined.") }, Outcome { line: 7, col: 36, failure: Some("The type `Utf8String` is not defined.") }, Outcome { line: 7, col: 51, failure: Some("The type `Utf8String` is not defined.") }, Outcome { line: 9, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 14, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }]
 
 EXAMPLES.md [18. Files, stores, and the world] 8
   warnings: []
@@ -177,7 +177,7 @@ EXAMPLES.md [18. Files, stores, and the world] 11
     Diagnostic {
         line: 2,
         col: 8,
-        message: "`http` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `http`, or correct the name if it is misspelled.",
+        message: "`http` is not defined.",
         steps: [],
         menu: "",
         row: None,
@@ -185,10 +185,10 @@ EXAMPLES.md [18. Files, stores, and the world] 11
     Diagnostic {
         line: 2,
         col: 17,
-        message: "`url` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `url`, or correct the name if it is misspelled.",
+        message: "`url` is not defined.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 2, col: 8, failure: Some("`http` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `http`, or correct the name if it is misspelled.") }, Outcome { line: 2, col: 17, failure: Some("`url` is not defined: no definition, parameter or binding in scope has this name, and the prelude has none. Define `url`, or correct the name if it is misspelled.") }]
+  checks: [Outcome { line: 2, col: 8, failure: Some("`http` is not defined.") }, Outcome { line: 2, col: 17, failure: Some("`url` is not defined.") }]

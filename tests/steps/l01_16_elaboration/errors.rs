@@ -29,7 +29,7 @@ fn above(src: &str) -> String {
 fn recursion_is_layer_l6() {
     let e = one("countdown(positional n) = if n == 0 { 0 } else { countdown(n - 1) };\n");
     assert!(
-        e.starts_with("`countdown` is defined in terms of itself, which is recursion."),
+        e.starts_with("`countdown` is defined in terms of itself, which is recursion:"),
         "{e}"
     );
     let e = one("a = b + 1;\nb = a + 1;\n");
@@ -41,10 +41,7 @@ fn recursion_is_layer_l6() {
     // read each other are rejected by name resolution, before elaboration (DESIGN.md
     // sec:lexical).
     let e = above("total = { x = y; y = x; x };\n");
-    assert!(
-        e.starts_with("`y` is used. In a block a name is used only below"),
-        "{e}"
-    );
+    assert!(e.starts_with("`y` is used above its definition"), "{e}");
 }
 
 #[test]
@@ -53,31 +50,31 @@ fn call_rules() {
     let cases = [
         (
             "x = greet(name: \"Al\");",
-            "this argument is passed by name, as `name: …`, and `name` of `greet` is positional, so a call passes it only by position [\"Al\"]",
+            "this argument is passed by name, as `name: …`, and `name` of `greet` is positional, so a call passes it only by position. [\"Al\"]",
         ),
         (
             "x = greet(punct: \"?\");",
-            "this call of `greet` gives no value to its parameter `name`, and `name` has no default, so the call cannot be made [greet(punct: \"?\")]",
+            "this call of `greet` gives no value to its parameter `name`, and `name` has no default, so the call cannot be made. [greet(punct: \"?\")]",
         ),
         (
             "x = greet(\"Al\", \"?\");",
-            "this argument is passed by position, and the parameter it reaches, `punct` of `greet`, is a named parameter, which a call passes only by name, as `punct: …` [\"?\"]",
+            "this argument is passed by position, and the parameter it reaches, `punct` of `greet`, is a named parameter, which a call passes only by name, as `punct: …`. [\"?\"]",
         ),
         (
             "x = greet(\"Al\", tone: 1);",
-            "this argument is passed by the name `tone`, and `greet` has no parameter of that name, so the argument has no parameter to go to [1]",
+            "this argument is passed by the name `tone`, and `greet` has no parameter of that name, so the argument has no parameter to go to. [1]",
         ),
         (
             "x = greet(\"Al\", punct: \"?\", ...);",
-            "this call of `greet` ends in `...`, which makes a function of the named parameters the call leaves out, and the call gives every named parameter a value, so `...` has no parameter to leave out [greet(\"Al\", punct: \"?\", ...)]",
+            "this call of `greet` ends in `...`, which makes a function of the named parameters the call leaves out, and the call gives every named parameter a value, so `...` has no parameter to leave out. [greet(\"Al\", punct: \"?\", ...)]",
         ),
         (
             "x = greet(punct: \"?\", ...);",
-            "this call of `greet` ends in `...`, which makes a function of the named parameters the call leaves out, and the call also leaves out `name`, a positional parameter, which `...` cannot leave out [greet(punct: \"?\", ...)]",
+            "this call of `greet` ends in `...`, which makes a function of the named parameters the call leaves out, and the call also leaves out `name`, a positional parameter, which `...` cannot leave out. [greet(punct: \"?\", ...)]",
         ),
         (
             "x = \"Al\".greet(\"?\");",
-            "this argument is passed by position, and the parameter it reaches, `punct` of `greet`, is a named parameter, which a call passes only by name, as `punct: …` [\"?\"]",
+            "this argument is passed by position, and the parameter it reaches, `punct` of `greet`, is a named parameter, which a call passes only by name, as `punct: …`. [\"?\"]",
         ),
     ];
     for (call, want) in cases {
@@ -90,7 +87,7 @@ fn too_many_arguments() {
     let e = one("pair(positional a, positional b) = (a, b);\nx = 1.pair(2, 3);\n");
     assert_eq!(
         e,
-        "this argument is one more than `pair` takes: `pair` takes 2 arguments by position, and the arguments before this one already fill them all [3]"
+        "this argument is one more than `pair` takes: `pair` takes 2 arguments by position, and the arguments before this one already fill them all. [3]"
     );
 }
 
@@ -100,10 +97,7 @@ fn defaults_that_read_each_other() {
     // cannot read each other in a cycle: the first that reads a later one is rejected by name
     // resolution, before elaboration.
     let e = above("f(a = b, b = a) = a;\ny = f();\n");
-    assert!(
-        e.starts_with("`b` is used. In a parameter list a name is used only below"),
-        "{e}"
-    );
+    assert!(e.starts_with("`b` is used above its definition"), "{e}");
 }
 
 #[test]
@@ -112,11 +106,11 @@ fn named_arguments_through_a_value_need_its_parameter_names() {
     let e = one("inc = x -> x + 1;\ny = inc(x: 1);\n");
     assert_eq!(
         e,
-        "this argument is passed by name, as `x: …`, and `x` of `(T) -> T for T in int | f64 | rat` is positional, so a call passes it only by position [1]"
+        "this argument is passed by name, as `x: …`, and `x` of `(T) -> T for T in int | f64 | rat` is positional, so a call passes it only by position. [1]"
     );
     // A prelude word, and a value of unknown type, give no parameter names.
     let want = "named arguments and `...` need the parameter names of the function called, \
-                which a prelude word and a value of unknown type do not give";
+                which a prelude word and a value of unknown type do not give.";
     let e = one("y = len(s: \"ab\");\n");
     assert_eq!(e, format!("{want} [len(s: \"ab\")]"));
     let e = one("g(f) = f(x: 1);\n");
@@ -137,7 +131,7 @@ fn forms_of_later_steps_and_layers() {
         (
             "f = (x = 1) -> x;",
             "a lambda's parameter has a default only where an expected function type leaves \
-             it out [1]",
+             it out. [1]",
         ),
         (
             "f(x: int) = 1;\nf(x: String) = 2;\ny = f(x: 1);",
@@ -154,7 +148,7 @@ fn test_tables() {
     let e = one("area(w, h) = w * h test { 2 -> 6 }\n");
     assert_eq!(
         e,
-        "a test key of `area` is the tuple of its 2 arguments [2]"
+        "a test key of `area` is the tuple of its 2 arguments. [2]"
     );
     let e = one("outer = { sq(positional x) = x * x test { 2 -> 4 } sq(3) };\n");
     assert!(

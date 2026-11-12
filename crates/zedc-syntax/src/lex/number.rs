@@ -169,14 +169,22 @@ fn run_on(text: &str, pos: usize, end: usize, radix: u32) -> Error {
              is not one of them. Write the number with those digits, or in decimal without \
              `{prefix}`."
         )
-    } else if radix == 10 && ["f16", "bf16", "f32", "f64"].contains(&&text[end..run]) {
-        // An integer takes no format suffix (DESIGN.md L1.26b): `1f64`.
+    } else if radix == 10 && &text[end..run] == "f64" {
+        // An integer takes no format suffix (DESIGN.md L1.26b): `1f64`. A decimal with `f64`
+        // is a literal, so `d` here is an integer.
+        format!("A format suffix needs a decimal literal: `{d}f64`. Try `{d}.0f64` instead.")
+    } else if radix == 10 && ["f16", "bf16", "f32"].contains(&&text[end..run]) {
+        // The grammar's other format suffixes come with their formats (steps FLOAT-f32 and
+        // L1.18a): `1.5f32`, `2bf16`. `d` is an integer or a decimal, so the repair keeps its
+        // digits and makes it a decimal where it is not one.
         let name = &text[end..run];
-        let a = if name == "bf16" { "a" } else { "an" };
+        let decimal = if d.contains(['.', 'e', 'E']) {
+            d.to_string()
+        } else {
+            format!("{d}.0")
+        };
         format!(
-            "`{d}{name}` is the integer `{d}` with the format suffix `{name}`, and only a decimal \
-             literal takes a format suffix. Write `{d}.0{name}` for {a} `{name}`, or `{d}`, which \
-             takes the carrier of its use."
+            "The format suffix `{name}` is not available: `{d}{name}`. Try `{decimal}f64` instead."
         )
     } else {
         let name = &text[end..run];

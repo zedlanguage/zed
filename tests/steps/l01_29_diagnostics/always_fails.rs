@@ -17,7 +17,7 @@ fn a_divisor_that_cancels_shows_the_divisor_and_the_menu() {
     assert_eq!(
         shown("f(positional x: int) = x mod (x - x);\n"),
         "\
-1:24: `mod` here always fails with `#divByZero`: its divisor adds `x` as often as it subtracts it, which makes it 0 for every value of `x`, so no value that reaches it gives an int
+1:24: `mod` here always fails with `#divByZero`: its divisor adds `x` as often as it subtracts it, which makes it 0 for every value of `x`, so no value that reaches it gives an int.
   [1] 1:30: this divisor is always 0
       1 | f(positional x: int) = x mod (x - x);
         |   ^^^^^^^^^^^^^^^^^ [4]      ^^^^^^^ [1, 2]
@@ -41,7 +41,7 @@ fn a_cast_of_a_literal_shows_the_operand_and_the_menu() {
     assert_eq!(
         shown("f(positional x: int) = int(\"n/a\");\n"),
         "\
-1:24: `int` here always fails: its operand `\"n/a\"` gives `#invalid`, so this call never gives a value
+1:24: `int` here always fails: its operand `\"n/a\"` gives `#invalid`, so this call never gives a value.
   [1] 1:28: `int` cannot convert this operand
       1 | f(positional x: int) = int(\"n/a\");
         |                        ^^^^^^^^^^ [3, 4, 5]
@@ -60,7 +60,7 @@ fn a_key_outside_the_keys_shows_both_types_and_the_menu() {
     assert_eq!(
         shown("f(m: int .. int | String -> bool, k: bool) = m[k];\n"),
         "\
-1:46: this read can never find its key: the key is `bool` and the map's keys are `int | String`, which share no value, so the read can only give `#notFound`
+1:46: this read can never find its key: the key is `bool` and the map's keys are `int | String`, which share no value, so the read can only give `#notFound`.
   [1] 1:46: this map has the keys `int | String`, which hold no `bool`
       1 | f(m: int .. int | String -> bool, k: bool) = m[k];
         |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [5]         ^ [1, 4]
@@ -107,7 +107,7 @@ fn a_negated_zero_rat_divisor_prints_as_written() {
     assert_eq!(
         shown("f(x: rat) = x / -0r;\n"),
         "\
-1:13: `/` here always fails with `#divByZero`: its divisor is the literal -0r, so no value that reaches it gives a rat
+1:13: `/` here always fails with `#divByZero`: its divisor is the literal -0r, so no value that reaches it gives a rat.
   [1] 1:17: this divisor is always 0
       1 | f(x: rat) = x / -0r;
         |             ^^^^^^^ [4, 5, 6]
@@ -129,7 +129,7 @@ fn a_negated_zero_rat_in_parentheses_prints_as_written() {
     assert_eq!(
         shown("f(x: rat) = x / -(0r);\n"),
         "\
-1:13: `/` here always fails with `#divByZero`: its divisor is the literal -0r, so no value that reaches it gives a rat
+1:13: `/` here always fails with `#divByZero`: its divisor is the literal -0r, so no value that reaches it gives a rat.
   [1] 1:17: this divisor is always 0
       1 | f(x: rat) = x / -(0r);
         |             ^^^^^^^^^ [4, 5, 6]
@@ -151,7 +151,7 @@ fn a_constant_defined_as_a_negated_zero_rat_prints_as_written() {
     assert_eq!(
         shown("z = -0r;\nf(x: rat) = x / z;\n"),
         "\
-2:13: `/` here always fails with `#divByZero`: its divisor has the type `-0r`, whose only value is 0, so no value that reaches it gives a rat
+2:13: `/` here always fails with `#divByZero`: its divisor has the type `-0r`, whose only value is 0, so no value that reaches it gives a rat.
   [1] 2:17: this divisor is always 0
       2 | f(x: rat) = x / z;
         |             ^^^^^ [6, 7, 8]
@@ -178,7 +178,7 @@ fn a_constant_defined_as_zero_rat_prints_its_own_literal() {
     assert_eq!(
         shown("a = -0r;\nz = 0r;\nf(x: rat) = x / z;\n"),
         "\
-3:13: `/` here always fails with `#divByZero`: its divisor has the type `0r`, whose only value is 0, so no value that reaches it gives a rat
+3:13: `/` here always fails with `#divByZero`: its divisor has the type `0r`, whose only value is 0, so no value that reaches it gives a rat.
   [1] 3:17: this divisor is always 0
       3 | f(x: rat) = x / z;
         |             ^^^^^ [5, 6, 7]
@@ -203,7 +203,7 @@ fn a_branch_of_two_zero_rat_spellings_prints_the_first_written() {
     assert_eq!(
         shown("f(x: rat, c: bool) = x / (if c { -0r } else { 0r });\n"),
         "\
-1:22: `/` here always fails with `#divByZero`: its divisor has the type `-0r`, whose only value is 0, so no value that reaches it gives a rat
+1:22: `/` here always fails with `#divByZero`: its divisor has the type `-0r`, whose only value is 0, so no value that reaches it gives a rat.
   [1]  1:26: this divisor is always 0
        1 | f(x: rat, c: bool) = x / (if c { -0r } else { 0r });
          |           ^^^^^^^ [4]    ^^^^^^^^^^^^^^^^^^^^^^^^^^ [1, 2]
@@ -234,7 +234,7 @@ fn a_branch_of_two_zero_rat_spellings_in_the_other_order() {
     assert_eq!(
         shown("f(x: rat, c: bool) = x / (if c { 0r } else { -0r });\n"),
         "\
-1:22: `/` here always fails with `#divByZero`: its divisor has the type `0r`, whose only value is 0, so no value that reaches it gives a rat
+1:22: `/` here always fails with `#divByZero`: its divisor has the type `0r`, whose only value is 0, so no value that reaches it gives a rat.
   [1]  1:26: this divisor is always 0
        1 | f(x: rat, c: bool) = x / (if c { 0r } else { -0r });
          |           ^^^^^^^ [4]    ^^^^^^^^^^^^^^^^^^^^^^^^^^ [1, 2]
@@ -266,7 +266,7 @@ fn a_chain_of_two_names_to_a_negated_zero_rat_prints_as_written() {
     assert_eq!(
         shown("a = 0r;\ny = -0r;\nz = y;\nf(x: rat) = x / z;\n"),
         "\
-4:13: `/` here always fails with `#divByZero`: its divisor has the type `-0r`, whose only value is 0, so no value that reaches it gives a rat
+4:13: `/` here always fails with `#divByZero`: its divisor has the type `-0r`, whose only value is 0, so no value that reaches it gives a rat.
   [1]  4:17: this divisor is always 0
        4 | f(x: rat) = x / z;
          |             ^^^^^ [8, 9, 10]
@@ -296,7 +296,7 @@ fn a_chain_of_three_names_to_a_negated_zero_rat_prints_as_written() {
     assert_eq!(
         shown("a = 0r;\nw = -0r;\ny = w;\nz = y;\nf(x: rat) = x / z;\n"),
         "\
-5:13: `/` here always fails with `#divByZero`: its divisor has the type `-0r`, whose only value is 0, so no value that reaches it gives a rat
+5:13: `/` here always fails with `#divByZero`: its divisor has the type `-0r`, whose only value is 0, so no value that reaches it gives a rat.
   [1]  5:17: this divisor is always 0
        5 | f(x: rat) = x / z;
          |             ^^^^^ [10, 11, 12]
@@ -330,7 +330,7 @@ fn a_chain_of_names_to_zero_rat_prints_its_own_literal() {
     assert_eq!(
         shown("a = -0r;\ny = 0r;\nz = y;\nf(x: rat) = x / z;\n"),
         "\
-4:13: `/` here always fails with `#divByZero`: its divisor has the type `0r`, whose only value is 0, so no value that reaches it gives a rat
+4:13: `/` here always fails with `#divByZero`: its divisor has the type `0r`, whose only value is 0, so no value that reaches it gives a rat.
   [1] 4:17: this divisor is always 0
       4 | f(x: rat) = x / z;
         |             ^^^^^ [7, 8, 9]
@@ -359,7 +359,7 @@ fn of_two_chains_the_one_that_reaches_the_divisor_prints() {
     assert_eq!(
         shown("b = 0r;\nc = b;\ny = -0r;\nz = y;\nf(x: rat) = x / z;\n"),
         "\
-5:13: `/` here always fails with `#divByZero`: its divisor has the type `-0r`, whose only value is 0, so no value that reaches it gives a rat
+5:13: `/` here always fails with `#divByZero`: its divisor has the type `-0r`, whose only value is 0, so no value that reaches it gives a rat.
   [1]  5:17: this divisor is always 0
        5 | f(x: rat) = x / z;
          |             ^^^^^ [8, 9, 10]
@@ -393,7 +393,7 @@ fn a_chain_through_a_shadowed_name_prints_as_written() {
              return x / y;\n    }\n  }\n};\n"
         ),
         "\
-8:14: `/` here always fails with `#divByZero`: its divisor has the type `-0r`, whose only value is 0, so no value that reaches it gives a rat
+8:14: `/` here always fails with `#divByZero`: its divisor has the type `-0r`, whose only value is 0, so no value that reaches it gives a rat.
   [1]  8:18: this divisor is always 0
        8 |       return x / y;
          |              ^^^^^ [10, 11, 12]
@@ -429,7 +429,7 @@ fn a_chain_through_a_tuple_component_prints_the_component_as_written() {
     let out = shown("a = 0r;\nf(x: rat) = {\n  p, q = (0r, -0r);\n  z = q;\n  return x / z;\n};\n");
     for line in [
         "5:10: `/` here always fails with `#divByZero`: its divisor has the type `-0r`, whose \
-         only value is 0, so no value that reaches it gives a rat",
+         only value is 0, so no value that reaches it gives a rat.",
         "  [2]  5:14: `z` is -0r here",
         "  [3]  4:7: `z` is defined as this expression, -0r",
         "  [4]  4:7: `q` is -0r here",
@@ -446,7 +446,7 @@ fn the_other_tuple_component_prints_its_own_literal() {
     let out = shown("a = -0r;\nf(x: rat) = {\n  p, q = (0r, -0r);\n  return x / p;\n};\n");
     for line in [
         "4:10: `/` here always fails with `#divByZero`: its divisor has the type `0r`, whose \
-         only value is 0, so no value that reaches it gives a rat",
+         only value is 0, so no value that reaches it gives a rat.",
         "  [2]  4:14: `p` is 0r here",
         "  [3]  3:10: `p` is 0r, component 0 of this tuple",
     ] {

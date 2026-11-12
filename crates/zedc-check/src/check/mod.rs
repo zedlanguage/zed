@@ -3394,7 +3394,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The tuples nest as deep as the text, so the pairs wait on a stack, each with whether it
     /// is inside a tuple. Each side borrows its component types, one per shape, so a tuple
     /// nested d deep at s shapes costs O(d·s) and not a copy of each level's type.
-    fn equal(&mut self, x: &Arg, y: &Arg) {
+    fn equal(&mut self, x: &Arg<'a>, y: &Arg<'a>) {
         let from = self.errors.len();
         self.pair(side(x), side(y));
         if !self.trying {
@@ -3408,7 +3408,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// literal at a carrier it cannot take (`n == 1.5` with `n: int`): `v`'s derivation, the
     /// literal, and each cast of `v` with which the comparison checks, tried with the
     /// checker's state restored after, `f64(n)`. One trial per cast word.
-    fn equal_repairs(&mut self, from: usize, l: &Arg, v: &Arg) {
+    fn equal_repairs(&mut self, from: usize, l: &Arg<'a>, v: &Arg<'a>) {
         let (Some(lit), None, Some(at)) = (&l.lit, &v.lit, v.at) else {
             return;
         };
@@ -3432,8 +3432,18 @@ impl<'t, 'a> Ck<'t, 'a> {
             Some((_, Src::Name(id))) => Some(&t.res.binders[*id].name),
             _ => None,
         };
+        let op = self.comparing.as_ref().map(|c| c.op);
+        // `v` is one of the operands of the comparison, found by its expression.
+        let exact = self.comparing.as_ref().is_some_and(|c| {
+            (0..2).any(|s| {
+                c.exact[s]
+                    && matches!((v.expr, c.exprs[s]), (Some(a), Some(b)) if std::ptr::eq(a, b))
+            })
+        });
+        let lit_text = lit.written().to_string();
+        let mut fixes = Vec::new();
         for w in ["int", "rat", "f64"] {
-            let Some(r) = cast_widening(w, &held) else {
+            let Some(r) = widening(w, &held, exact) else {
                 continue;
             };
             // As written where the comparison is the construct being checked: the cast
@@ -3456,9 +3466,44 @@ impl<'t, 'a> Ck<'t, 'a> {
                     None => format!("repair: wrap this in `{w}(…)`; the checker accepts that"),
                 };
                 notes.push(Note { span: at, text });
+                // The comparison rewritten with the cast, `rat(n) == 1.5`, where the operand
+                // is a name; the headline ends with the first.
+                if let (Some(n), Some(op)) = (name, op) {
+                    let alone = match lit.span.start < at.start {
+                        true => format!("{lit_text} {op} {w}({n})"),
+                        false => format!("{w}({n}) {op} {lit_text}"),
+                    };
+                    fixes.push(Rewrite::new(
+                        &[
+                            (point(at.start), &format_args!("{w}(")),
+                            (point(at.end), &")"),
+                        ],
+                        &format_args!("{n} is cast to {w}"),
+                        &alone,
+                    ));
+                }
             }
         }
-        self.errors[k].notes = notes;
+        // The headline shows the comparison as code, `n : int == 1.5`, where the operand is a
+        // name and the headline names the literal alone.
+        let pair = match (name, op) {
+            (Some(n), Some(op)) => {
+                let shown = self.text(&held);
+                Some(match lit.span.start < at.start {
+                    true => format!("`{lit_text} {op} {n} : {shown}`"),
+                    false => format!("`{n} : {shown} {op} {lit_text}`"),
+                })
+            }
+            _ => None,
+        };
+        let e = &mut self.errors[k];
+        e.notes = notes;
+        if let Some(pair) = pair
+            && let Some((head, _)) = e.m.text.split_once(": the literal `")
+        {
+            e.m.text = format!("{head}: {pair}.");
+        }
+        e.m.fixes.extend(fixes.into_iter().flatten());
     }
 
     /// [`Ck::equal`] of the two sides `x` and `y`. Inside an `==` or `!=` ([`Ck::comparing`]),
@@ -3564,6 +3609,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             op,
             ats,
             exprs,
+            exact,
             span,
             from,
         }) = self.comparing
@@ -3589,7 +3635,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     continue;
                 };
                 for w in ["int", "rat", "f64"] {
-                    if let Some(r) = cast_widening(w, sides[s])
+                    if let Some(r) = widening(w, sides[s], exact[s])
                         && widened_meets(&r, other)
                     {
                         fixes[0].push(Fix::Cast(s, w));
@@ -3849,8 +3895,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }),
             || {
                 format!(
-                    "this literal is a number, compared by `{op}` with {a}`{ty}`, which no \
-                     number equals"
+                    "No number equals {a}`{ty}`: this literal compared by `{op}` with it always gives the same answer"
                 )
             },
         );
@@ -3953,8 +3998,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             }),
             || {
                 format!(
-                    "this literal is a number, compared by `{op}` with a component that is a \
-                     `{shown}`, which no number equals"
+                    "No number equals {a}`{shown}`: this literal compared by `{op}` with a \
+                     component always gives the same answer"
                 )
             },
         );
@@ -4585,6 +4630,19 @@ fn converted(sig: &Sig, t: &Ty) -> Option<Ty> {
 /// an `int`; this version reads the cast's arrows once per piece of `t` ([`converted`]) and
 /// compares the atoms of the result with those of `t`, O(the size of `t`), the cost of printing
 /// `t` in the message that offers the cast.
+/// The type of the cast `w` of a value of the type `t`, where the cast cannot fail or lose
+/// information on any value of `t` ([`cast_widening`]), with `f64` of an int the checker proves
+/// lies within ±2^53 (`exact`, [`Comparison::exact`]) exact, as [`Ck::word_end`] applies it:
+/// `f64(n)` of an `int` under `if n >= 0 && n <= 100`, which a repair menu then offers
+/// (DESIGN.md sec:diagnostics, "A repair never narrows a type"). Cost: [`cast_widening`], or
+/// one conversion by the signature of the exact cast.
+fn widening(w: &str, t: &Ty, exact: bool) -> Option<Ty> {
+    match w == "f64" && exact {
+        true => converted(&f64_of_exact_int_sig(), t).filter(|r| r.atoms() == t.atoms()),
+        false => cast_widening(w, t),
+    }
+}
+
 fn cast_widening(w: &str, t: &Ty) -> Option<Ty> {
     converted(&word_sig(w), t).filter(|r| r.atoms() == t.atoms())
 }
@@ -5057,6 +5115,10 @@ struct Comparison<'a> {
     op: BinaryOp,
     ats: [Option<Span>; 2],
     exprs: [Option<&'a Expr>; 2],
+    /// Whether each operand is an int the checker proves lies within ±2^53, so its cast to
+    /// `f64` is exact and a repair may offer it ([`widening`]); computed where the walk sets
+    /// [`Ck::comparing`], and only where such a cast could repair the comparison.
+    exact: [bool; 2],
     span: Span,
     from: usize,
 }
@@ -5804,7 +5866,12 @@ impl Msg {
     /// the length of the message and of the lines the fixes touch. Where every fix the
     /// checker made was dropped, since none checks where it is written
     /// ([`Ck::fixes_checked`]), the message says that it offers none.
-    fn written(self, source: Option<&str>) -> (String, String) {
+    fn written(mut self, source: Option<&str>) -> (String, String) {
+        // A headline is a sentence and ends with a period, with a repair or without one
+        // (DESIGN.md sec:diagnostics, "A short headline").
+        if !self.text.ends_with('.') {
+            self.text.push('.');
+        }
         if self.fixes.is_empty() {
             let text = match self.dropped {
                 true => {
@@ -6096,7 +6163,7 @@ fn with_carrier(l: &Lit, c: Carrier) -> impl fmt::Display + '_ {
 /// carrier; or an integer literal at a format that holds no value equal to it, as
 /// `9007199254740993` at `f64` (DESIGN.md sec:domains). Zed converts no value, so the literal
 /// is rejected, with the fixes that write a literal of the same number instead: the integer
-/// literal where `int` is expected and the decimal has only zeros after its point, the `r`
+/// literal where `int` is expected and a decimal without a suffix has only zeros after its point, the `r`
 /// form where `rat` is, and at `f64`, for an integer, the nearest `f64` as an integer
 /// literal, by ties to even.
 fn menu(l: &Lit, held: &[Carrier]) -> Msg {
@@ -6121,7 +6188,11 @@ fn menu(l: &Lit, held: &[Carrier]) -> Msg {
         let m = literal_message(l, |f, w| write!(f, "No `{names}` equals {w}"), "");
         return Msg::new(m, fixes);
     }
-    if has(Carrier::Int)
+    // Only a decimal without a suffix: `2.0f64` without its suffix is `2.0`, which is never
+    // an `int`, so a forced literal at `int` is offered nothing (DESIGN.md sec:diagnostics, row
+    // "Two numeric values with no common carrier").
+    if l.bare
+        && has(Carrier::Int)
         && let Some(whole) = whole_part(l)
     {
         fixes.push(Rewrite::lit(
@@ -6143,11 +6214,12 @@ fn menu(l: &Lit, held: &[Carrier]) -> Msg {
         return Msg::new(m, fixes);
     }
     if has(Carrier::Rat) {
-        fixes.push(Rewrite::lit(
-            l,
-            &with_carrier(l, Carrier::Rat),
-            &lit_holds(l, Carrier::Rat),
-        ));
+        // The same literal without its suffix first, `1.5` for `1.5f64` beside a `rat`: a
+        // decimal literal without a suffix is exactly a `rat` (DESIGN.md sec:diagnostics, row
+        // "Two numeric values with no common carrier"); then the `r` form, `1.5r`.
+        let holds = lit_holds(l, Carrier::Rat);
+        fixes.push(Rewrite::lit(l, &spelled_digits(l), &holds));
+        fixes.push(Rewrite::lit(l, &with_carrier(l, Carrier::Rat), &holds));
     }
     let m = literal_message(
         l,
@@ -6163,12 +6235,15 @@ fn menu(l: &Lit, held: &[Carrier]) -> Msg {
 /// operator's symbol and whether the literal is its left operand. Where both are known, the
 /// fixes rewrite the operation: `x * 2` where the literal's value is an integer and the
 /// operator has an arrow at `int`, then `rat(x) * 2.0`; otherwise the fix is the integer literal
-/// alone, `2`. The headline shows the operation as code with the operand's type.
+/// alone, `2`. With `exact`, where the checker proves the operand lies within ±2^53, also
+/// `f64(x) * 2.0` ([`f64_cast_fix`]). The headline shows the operation as code with the
+/// operand's type.
 fn decimal_at_int(
     l: &Lit,
     what: &str,
     name: Option<(&str, Span)>,
     op: Option<(BinaryOp, bool)>,
+    exact: bool,
 ) -> Msg {
     let sign = if l.neg() { "-" } else { "" };
     let lit = l.written();
@@ -6189,9 +6264,9 @@ fn decimal_at_int(
                 ));
             }
             // The cast of the operand to `rat`, which a decimal literal takes (DESIGN.md L1.26b)
-            // and which takes `+`, `-`, `*` and `/` at two of it. Not `f64(x)`, which is inexact
-            // above 2^53 in magnitude: a repair never narrows a type (DESIGN.md
-            // sec:diagnostics).
+            // and which takes `+`, `-`, `*`, `/` and the orderings at two of it. `f64(x)` only
+            // where `exact` holds, since it is inexact above 2^53 in magnitude: a repair never
+            // narrows a type (DESIGN.md sec:diagnostics).
             let alone = fmt::from_fn(|f| match left {
                 true => write!(f, "{lit} {op} rat({n})"),
                 false => write!(f, "rat({n}) {op} {lit}"),
@@ -6201,6 +6276,9 @@ fn decimal_at_int(
                 &format_args!("{n} is cast to rat, and {what} takes two rat"),
                 &alone,
             ));
+            if exact {
+                fixes.push(f64_cast_fix(l, n, at, op, left));
+            }
         }
         _ => fixes.extend(whole_part(l).map(|w| {
             Rewrite::lit(
@@ -6230,6 +6308,24 @@ fn decimal_at_int(
         || format!("A decimal literal is never an `int`, and {what} expects `int`."),
     );
     Msg::new(m, fixes)
+}
+
+/// The fix that casts the operand `n`, at `at`, to `f64` beside the decimal literal `l` of the
+/// operator `op`, `f64(n) * 2.0` or `f64(n) + 1.5f64`, where `l` is the left operand when
+/// `left` holds. Offered only where the checker proves `n` lies within ±2^53, where the cast is
+/// exact (DESIGN.md "Casts are domain proofs"); `op` is an arithmetic operator or an ordering,
+/// each of which has an arrow at two `f64`.
+fn f64_cast_fix(l: &Lit, n: &str, at: Span, op: BinaryOp, left: bool) -> Option<Rewrite> {
+    let lit = l.written();
+    let alone = fmt::from_fn(|f| match left {
+        true => write!(f, "{lit} {op} f64({n})"),
+        false => write!(f, "f64({n}) {op} {lit}"),
+    });
+    Rewrite::new(
+        &[(point(at.start), &"f64("), (point(at.end), &")")],
+        &format_args!("{n} is cast to f64, exactly, since it lies within ±2^53"),
+        &alone,
+    )
 }
 
 /// The message for the literal `l`, which nothing gives a carrier, of the carriers `cs` that

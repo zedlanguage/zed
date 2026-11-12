@@ -25,9 +25,7 @@
 use super::rejected;
 use zedc::resolve::tables::Tables;
 
-const NOT_YET: &str = "Recursion is part of the Zed language, and this version of zedc does \
-                       not compile it yet. Write the program without it, with the forms this \
-                       zedc compiles.";
+const NOT_YET: &str = ": this version of zedc does not compile it yet.";
 
 /// The rejection of a call of an overload set, which this zedc does not compile yet.
 fn no_dispatch(at: &str) -> String {
@@ -91,7 +89,7 @@ fn an_overload_that_calls_itself_is_recursion() {
     assert_eq!(
         out,
         format!(
-            "1:1: `f(positional n: int)` is defined in terms of itself, which is recursion. \
+            "1:1: `f(positional n: int)` is defined in terms of itself, which is recursion\
              {NOT_YET}\n  \
              [1] 1:24: `f(positional n: int)` uses itself here\n      \
              1 | f(positional n: int) = f(n);\n        \
@@ -109,7 +107,7 @@ fn an_overload_that_calls_itself_as_a_member_is_recursion() {
     assert_eq!(
         heads(&out),
         [format!(
-            "1:1: `f(positional n: int)` is defined in terms of itself, which is recursion. \
+            "1:1: `f(positional n: int)` is defined in terms of itself, which is recursion\
              {NOT_YET}"
         )],
         "{out}"
@@ -130,7 +128,7 @@ fn two_overloads_that_call_each_other_are_recursion() {
         out,
         format!(
             "1:1: `f(positional n: int)`, `f(positional b: bool)` are defined in terms of each \
-             other, which is recursion. {NOT_YET}\n  \
+             other, which is recursion{NOT_YET}\n  \
              [1] 1:24: `f(positional n: int)` uses `f(positional b: bool)` here\n      \
              1 | f(positional n: int) = f(n > 0);\n        \
              | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [3]\n        \
@@ -151,7 +149,7 @@ fn two_overloads_that_call_each_other_by_name_are_recursion() {
         heads(&out),
         [format!(
             "1:1: `f(x: int)`, `f(b: bool, k: int)` are defined in terms of each other, which \
-             is recursion. {NOT_YET}"
+             is recursion{NOT_YET}"
         )],
         "{out}"
     );
@@ -168,7 +166,7 @@ fn a_typed_parameter_selects_its_overload_through_another_function() {
         out,
         format!(
             "2:1: `f(positional b: bool)`, `g` are defined in terms of each other, which is \
-             recursion. {NOT_YET}\n  \
+             recursion{NOT_YET}\n  \
              [1] 2:25: `f(positional b: bool)` uses `g` here\n      \
              2 | f(positional b: bool) = g(b);\n        \
              | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [3]\n        \
@@ -219,7 +217,7 @@ fn an_overload_set_passed_as_a_value_refers_to_every_overload() {
         heads(&out),
         [format!(
             "2:1: `f(positional b: bool)`, `h` are defined in terms of each other, which is \
-             recursion. {NOT_YET}"
+             recursion{NOT_YET}"
         )],
         "{out}"
     );

@@ -102,7 +102,7 @@ fn a_rejected_unit_is_kept_with_its_diagnostics() {
     // The outcome carries the diagnostic's derivation, as `zedc test` prints it.
     assert!(
         first[0]
-            .starts_with("1:30: `*` does not take (int, \"8\"): no arrow of `*` takes these types\n  [1] 1:30: `cents` is int here\n"),
+            .starts_with("1:30: `*` does not take (int, \"8\"): no arrow of `*` takes these types.\n  [1] 1:30: `cents` is int here\n"),
         "{first:?}"
     );
     assert_eq!(checks(&mut db, bad), first);

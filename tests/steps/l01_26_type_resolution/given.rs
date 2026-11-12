@@ -71,7 +71,7 @@ fn a_test_that_leaves_the_atom_is_still_rejected() {
     // `else #ioError -> ""` and `is #ioError` handle an atom `args[k]` never gives, so its
     // `#notFound` still reaches `fs`, which does not take it.
     let expected = "this function, which `r` applies, does not take #notFound, and no argument \
-                    of this call gives it [r(fs: fs, args: m.args, k: 0)]";
+                    of this call gives it. [r(fs: fs, args: m.args, k: 0)]";
     for helper in [
         "r(fs, args, k) = fs[args[k] else #ioError -> \"\"];",
         "r(fs, args, k) { p = args[k]; return if p is #ioError { \"\" } else { fs[p] }; }",
@@ -166,7 +166,7 @@ fn a_value_left_by_a_test_used_against_the_tested_value_is_rejected_at_the_test(
         type_errors(src),
         [
             "the value this test leaves is used as int, and the value it tests as String: the test \
-          narrows the value it tests, so both uses are of one value, and no value is both [r else 0]"
+          narrows the value it tests, so both uses are of one value, and no value is both. [r else 0]"
         ]
     );
 }

@@ -34,7 +34,7 @@ fn the_area_of_a_large_square_warns_with_its_derivation() {
     assert_eq!(
         warned(&src),
         "\
-3:10: `area` widens past a machine word: this `*` of an i64 and an i64 gives a big integer
+3:10: `area` widens past a machine word: this `*` of an i64 and an i64 gives a big integer.
   [1] 3:10: this `*` gives 9223372037000250000, past i64
       3 |   area = side * side;
         |          ^^^^ [2]
@@ -81,10 +81,10 @@ fn the_exact_boundary_of_the_word() {
         messages(&past),
         [
             "2:10: `over` widens past a machine word: this `+` of an i64 and an i8 gives a big \
-             integer",
+             integer.",
             "3:11: `under` widens past a machine word: this `-` of an i64 and an i8 gives a big \
-             integer",
-            "4:10: `flip` widens past a machine word: this `-` of an i64 gives a big integer",
+             integer.",
+            "4:10: `flip` widens past a machine word: this `-` of an i64 gives a big integer.",
         ]
     );
     let shown = warned(&past);
@@ -103,12 +103,12 @@ fn each_operand_width_is_named() {
     assert_eq!(
         messages(&src),
         [
-            "2:7: `a` widens past a machine word: this `^` of an i8 and an i8 gives a big integer",
-            "3:7: `b` widens past a machine word: this `^` of an i16 and an i8 gives a big integer",
-            "4:7: `c` widens past a machine word: this `^` of an i32 and an i8 gives a big integer",
-            "5:7: `d` widens past a machine word: this `*` of an i64 and an i64 gives a big integer",
-            "6:7: `e` widens past a machine word: this `*` of an i16 and an i64 gives a big integer",
-            "7:7: `f` widens past a machine word: this `*` of an i8 and an i64 gives a big integer",
+            "2:7: `a` widens past a machine word: this `^` of an i8 and an i8 gives a big integer.",
+            "3:7: `b` widens past a machine word: this `^` of an i16 and an i8 gives a big integer.",
+            "4:7: `c` widens past a machine word: this `^` of an i32 and an i8 gives a big integer.",
+            "5:7: `d` widens past a machine word: this `*` of an i64 and an i64 gives a big integer.",
+            "6:7: `e` widens past a machine word: this `*` of an i16 and an i64 gives a big integer.",
+            "7:7: `f` widens past a machine word: this `*` of an i8 and an i64 gives a big integer.",
         ]
     );
     let shown = warned(&src);
@@ -142,9 +142,9 @@ fn a_reduction_that_does_not_wrap_still_warns() {
         messages(&src),
         [
             "2:10: `half` widens past a machine word: this `*` of an i64 and an i64 gives a big \
-             integer",
+             integer.",
             "3:10: `last` widens past a machine word: this `*` of an i64 and an i64 gives a big \
-             integer",
+             integer.",
         ]
     );
 }
@@ -163,11 +163,11 @@ fn a_power_or_a_quotient_inside_a_wrapping_reduction_still_warns() {
         messages(&src),
         [
             "2:8: `a` widens past a machine word: this `^` of an i8 and an i8 gives a big \
-             integer",
+             integer.",
             "3:7: `c` widens past a machine word: this `^` of an i8 and an i8 gives a big \
-             integer",
+             integer.",
             "4:7: `b` widens past a machine word: this `div` of an i64 and an i8 gives a big \
-             integer",
+             integer.",
         ]
     );
 }
@@ -180,7 +180,9 @@ fn a_value_already_past_the_word_warns_once() {
     );
     assert_eq!(
         messages(&src),
-        ["2:9: `big` widens past a machine word: this `+` of an i64 and an i8 gives a big integer"]
+        [
+            "2:9: `big` widens past a machine word: this `+` of an i64 and an i8 gives a big integer."
+        ]
     );
     // A literal past the word is a big integer already.
     let lit = main_with("  big = 9223372036854775808;\n  more = big * 2;\n", "more");
@@ -196,7 +198,7 @@ fn an_if_gives_the_interval_of_its_branches() {
     assert_eq!(
         warned(&src),
         "\
-3:8: `sq` widens past a machine word: this `*` of an i64 and an i64 gives a big integer
+3:8: `sq` widens past a machine word: this `*` of an i64 and an i64 gives a big integer.
   [1]  3:8: this `*` gives int[100..=9223372037000250000], past i64
        3 |   sq = n * n;
          |        ^ [2]
@@ -225,7 +227,7 @@ fn top_level_definitions_are_read_in_any_order() {
     assert_eq!(
         messages(src),
         [
-            "1:8: `area` widens past a machine word: this `*` of an i64 and an i64 gives a big integer"
+            "1:8: `area` widens past a machine word: this `*` of an i64 and an i64 gives a big integer."
         ]
     );
     assert!(warned(src).contains("2:8: `side` is defined as this expression, 3037000500"));
@@ -264,7 +266,7 @@ fn a_difference_of_a_value_with_itself_is_read_as_a_range() {
     );
     assert_eq!(
         messages(&large),
-        ["3:7: `y` widens past a machine word: this `-` of an i64 and an i64 gives a big integer"]
+        ["3:7: `y` widens past a machine word: this `-` of an i64 and an i64 gives a big integer."]
     );
 }
 
@@ -278,7 +280,7 @@ fn zedc_run_prints_the_warning_and_runs_the_program() {
     assert!(
         first.ends_with(
             "prog.zed:3:10: `area` widens past a machine word: this `*` of an i64 and an i64 \
-             gives a big integer"
+             gives a big integer."
         ),
         "{}",
         out.stderr

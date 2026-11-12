@@ -856,22 +856,16 @@ impl Resolver<'_> {
                 let (message, note) = match &signature {
                     Some(_) if first.kind == Kind::Function => (
                         format!(
-                            "`{name}` is already declared in this scope with these parameter types, and a \
-                             scope declares a function once for each list of parameter types"
+                            "`{name}` is already declared in this scope with these parameter types"
                         ),
                         format!("the first `{name}` with these parameter types"),
                     ),
                     _ if b.imported => (
-                        format!(
-                            "`{name}` is already bound in this scope, by an import, and a scope \
-                             binds each name once"
-                        ),
+                        format!("`{name}` is already bound in this scope by an import"),
                         format!("the import that brings `{name}` into this scope"),
                     ),
                     _ => (
-                        format!(
-                            "`{name}` is already bound in this scope, and a scope binds each name once"
-                        ),
+                        format!("`{name}` is already bound in this scope"),
                         format!("the first binding of `{name}`"),
                     ),
                 };
@@ -953,9 +947,7 @@ impl Resolver<'_> {
                     row: Some(Row::Rebinding),
                     menu: String::new(),
                     span,
-                    message: format!(
-                        "`{name}` is already bound in this scope, and a scope binds each name once"
-                    ),
+                    message: format!("`{name}` is already bound in this scope"),
                     notes: vec![
                         Note {
                             span: self.out.binders[first].span,
@@ -1042,6 +1034,8 @@ impl Resolver<'_> {
     /// The error that `name`, used at `span`, names the binders `a` and `b`, which two imports
     /// from different units bring in.
     fn ambiguous(&mut self, name: &str, span: Span, a: usize, b: usize) {
+        let unit = &self.out.imports[&a];
+        let q = unit.rsplit('.').next().unwrap_or_default();
         let notes = [a, b]
             .map(|i| Note {
                 span: self.out.binders[i].span,
@@ -1056,10 +1050,8 @@ impl Resolver<'_> {
             menu: String::new(),
             span,
             message: format!(
-                "`{name}` is ambiguous: two imports bring it into scope from different units; \
-                 name the one meant through a qualifier, as `{q}.{name}` after `import {unit};`",
-                unit = self.out.imports[&a],
-                q = self.out.imports[&a].rsplit('.').next().unwrap_or_default(),
+                "`{name}` is ambiguous between two imports. Try `{q}.{name}` after `import {unit};` \
+                 instead"
             ),
             notes,
         });
@@ -1109,7 +1101,7 @@ impl Resolver<'_> {
             let block = what == "definition";
             let (lu, ld) = (line(used.start), line(d.start));
             let place = match self.text {
-                None => String::new(),
+                None => " above its definition".to_string(),
                 Some(_) if lu == ld => {
                     format!(" on line {lu}, before its definition later on that line")
                 }
@@ -1120,13 +1112,17 @@ impl Resolver<'_> {
             } else {
                 format!("the {what}s")
             };
-            let message = format!(
-                "`{name}` is used{place}. In {list} a name is used only below its definition, \
-                 so that the text reads from the top. The order of {order} changes no result, \
-                 since evaluation follows the dependencies, so moving the {what} above its \
-                 first use changes nothing else."
+            let message = format!("`{name}` is used{place}");
+            let rule = format!(
+                "in {list} a name is used only below its definition, so that the text reads from \
+                 the top; the order of {order} changes no result, since evaluation follows the \
+                 dependencies, so moving the {what} above its first use changes nothing else"
             );
             let mut notes = vec![
+                Note {
+                    span: used,
+                    text: rule,
+                },
                 Note {
                     span: used,
                     text: format!("`{name}` is used here, above its definition"),
@@ -2850,10 +2846,7 @@ enum Task<'a> {
 
 /// The message for the use of `name`, which nothing in scope and nothing in the prelude defines.
 fn undefined(name: &str) -> String {
-    format!(
-        "`{name}` is not defined: no definition, parameter or binding in scope has this name, and \
-         the prelude has none. Define `{name}`, or correct the name if it is misspelled."
-    )
+    format!("`{name}` is not defined.")
 }
 
 /// The message for a use of `m`, the parameter of `main(m: MainArgs)`, other than a read of one
@@ -2878,9 +2871,5 @@ fn main_args_elsewhere() -> String {
 
 /// The message for the type `name`, which no type in scope and no prelude type has as its name.
 fn undefined_type(name: &str) -> String {
-    format!(
-        "the type `{name}` is not defined: no type in scope has this name, and the prelude has \
-         none. Correct the name if it is misspelled, or write a type of the prelude, such as \
-         `int` or `String`."
-    )
+    format!("The type `{name}` is not defined.")
 }

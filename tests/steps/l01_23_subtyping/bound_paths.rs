@@ -13,11 +13,11 @@ use zedc::resolve::resolve;
 const BOUND: &str = "in a function type `L .. U -> V`, every function the guarantee `L`, left of \
                      `..`, describes must also be allowed by the permission `U`, right of `..`, ";
 /// The repairs that message ends with.
-const REPAIR: &str = ". To repair it, narrow the type left of `..`, or widen the type right of it";
+const REPAIR: &str = ". To repair it, narrow the type left of `..`, or widen the type right of it.";
 const BAD: &str = "in a function type `L .. U -> V`, every function the guarantee `L`, left of \
                    `..`, describes must also be allowed by the permission `U`, right of `..`, \
                    and in this one the guarantee allows functions the permission does not. To \
-                   repair it, narrow the type left of `..`, or widen the type right of it";
+                   repair it, narrow the type left of `..`, or widen the type right of it.";
 
 /// The diagnostics of `src` through `zedc::run::load`, one per line.
 fn through_load(src: &str) -> Vec<String> {

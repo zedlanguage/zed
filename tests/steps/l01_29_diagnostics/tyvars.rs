@@ -42,7 +42,7 @@ pub(super) fn writes_back(text: &str) {
     let literal =
         |l: &str| l.contains(": the literal type `") && l.ends_with(zed_tests::not_yet!(""));
     let free = |l: &str| {
-        l.split_once("the type `")
+        l.split_once("The type `")
             .and_then(|(_, rest)| rest.split_once("` is not defined"))
             .is_some_and(|(name, _)| {
                 name.starts_with(|c: char| c.is_ascii_uppercase())

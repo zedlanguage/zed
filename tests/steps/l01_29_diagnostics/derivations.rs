@@ -15,7 +15,7 @@ fn a_report_line_that_concatenates_a_number_shows_the_chain_back_to_the_input_po
     );
     assert_eq!(
         out,
-        r#"4:15: `++` does not take ("total: ", int): no arrow of `++` takes these types
+        r#"4:15: `++` does not take ("total: ", int): no arrow of `++` takes these types.
   [1]  4:15: this expression is "total: "
        4 |   m.stdout <- "total: " ++ total;
          |               ^^^^^^^^^ [1]
@@ -104,7 +104,7 @@ fn a_rebinding_points_at_the_first_binding() {
     );
     assert_eq!(
         out,
-        "3:3: `rate` is already bound in this scope, and a scope binds each name once
+        "3:3: `rate` is already bound in this scope.
   [1] 2:3: the first binding of `rate`
       2 |   rate = 3;
         |   ^^^^^^^^^
@@ -127,7 +127,7 @@ main(m: MainArgs) {
     let first = out.lines().next().unwrap();
     assert_eq!(
         first,
-        "1:23: `++` does not take (\"#\", int | f64 | rat): no arrow of `++` takes these types"
+        "1:23: `++` does not take (\"#\", int | f64 | rat): no arrow of `++` takes these types."
     );
     let s = steps(&out);
     for step in [
@@ -152,7 +152,7 @@ main(m: MainArgs) {
     );
     assert_eq!(
         out.lines().next().unwrap(),
-        "1:36: `++` does not take (\"#\", int | f64 | rat): no arrow of `++` takes these types"
+        "1:36: `++` does not take (\"#\", int | f64 | rat): no arrow of `++` takes these types."
     );
     let s = steps(&out);
     for step in [
@@ -265,7 +265,7 @@ fn a_rejected_nested_tuple_shows_each_tuple_and_its_type() {
     let out = rejected("x = \"pair: \" ++ ((1, 2.5), \"a\");\n");
     assert_eq!(
         out,
-        r#"1:5: `++` does not take ("pair: ", ((1, 2.5), "a")): no arrow of `++` takes these types
+        r#"1:5: `++` does not take ("pair: ", ((1, 2.5), "a")): no arrow of `++` takes these types.
   [1] 1:5: this expression is "pair: "
       1 | x = "pair: " ++ ((1, 2.5), "a");
         |     ^^^^^^^^ [1] ^^^^^^^^ [3]
@@ -306,7 +306,7 @@ fn equality_on_an_atom_whose_payload_holds_a_function_shows_where_the_function_c
     let out = rejected("inc = x -> x + 1;\nboxed = #box(inc);\nsame = boxed == boxed;\n");
     assert_eq!(
         out,
-        "3:8: `==` takes data, and this value may hold a function, `(T) -> T for T in int | f64 | rat`: data is a value that holds no function at any depth
+        "3:8: `==` takes data, and this value may hold a function, `(T) -> T for T in int | f64 | rat`: data is a value that holds no function at any depth.
   [1] 3:8: `boxed` is #box((T) -> T for T in int | f64 | rat) here
       3 | same = boxed == boxed;
         |        ^^^^^ [1]
@@ -340,7 +340,7 @@ s = g(h);
     );
     assert_eq!(
         out,
-        "4:5: `==` takes data, and this value may hold a function, `(T) -> T for T in int | f64 | rat`: data is a value that holds no function at any depth
+        "4:5: `==` takes data, and this value may hold a function, `(T) -> T for T in int | f64 | rat`: data is a value that holds no function at any depth.
   [1] 3:36: `g` needs this of its argument here
       3 | g(positional x) { p = f(x); return p == p; }
         | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [2]

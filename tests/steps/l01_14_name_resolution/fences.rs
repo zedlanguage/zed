@@ -22,7 +22,7 @@ fn every_building_fence_resolves_but_for_its_free_names() {
             Ok(_) => resolved += 1,
             Err(es) => {
                 for e in es {
-                    let free = e.contains(" is not defined: no ");
+                    let free = e.contains(" is not defined.");
                     let marked = e.contains("already bound") && f.text.contains('✗');
                     let later = zed_tests::is_not_yet(&e);
                     // A fragment read alone has no package around it, so it imports no unit.

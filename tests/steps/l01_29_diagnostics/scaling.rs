@@ -165,17 +165,17 @@ fn a_chain_of_names_to_a_negated_zero_prints_in_linear_time() {
     );
 }
 
-/// `n` rejections whose fixes are each checked as written (MSG-converted-claims-checked): a
-/// menu fix, `y = 1 + gi(true)`, dropped; a comparison cast, `int(r)`, dropped; a cast beside
+/// `n` rejections whose fixes are each checked as written (MSG-converted-claims-checked): the
+/// menu fixes `1.0 + gr(true)` and `1.0r + gr(true)`, dropped; a comparison cast, `int(r)`, dropped; a cast beside
 /// a decimal literal, `f64(k)`, dropped. Each costs a few checks of its own construct, so the
 /// whole is linear in `n`.
 fn checked_fixes(n: usize) -> String {
     let mut src = String::from(
-        "gi(positional c: bool) = if c { 1 } else { true };\nn = 1;\nr = 2.5r;\n\
+        "gr(positional c: bool) = if c { 1r } else { true };\nn = 1;\nr = 2.5r;\n\
          k = 1152921504606846977;\n",
     );
     for i in 0..n {
-        src += &format!("a{i} = 1.0f64 + gi(true);\nb{i} = n == r;\nc{i} = k == 0.5;\n");
+        src += &format!("a{i} = 1.0f64 + gr(true);\nb{i} = n == r;\nc{i} = k == 0.5;\n");
     }
     src
 }

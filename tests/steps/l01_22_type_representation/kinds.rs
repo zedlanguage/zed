@@ -469,14 +469,14 @@ fn a_use_that_takes_data_refuses_every_tuple() {
     ] {
         let text = format!("f(x: (..)) = {body};\n{call}");
         let want = format!(
-            "{what} takes data, and this value, of `(..)`, may hold a function: data is a value that holds no function at any depth, and `(..)` holds every value of its shape, functions too [{at}]"
+            "{what} takes data, and this value, of `(..)`, may hold a function: data is a value that holds no function at any depth, and `(..)` holds every value of its shape, functions too. [{at}]"
         );
         assert_eq!(errors(&text), [want], "{text}");
     }
     assert_eq!(
         errors("f(x: (int, (..))) = x == x;\n"),
         [
-            "`==` takes data, and this value, of `(int, (..))`, may hold a function: data is a value that holds no function at any depth, and `(int, (..))` holds `(..)`, which holds every value of its shape, functions too [x == x]"
+            "`==` takes data, and this value, of `(int, (..))`, may hold a function: data is a value that holds no function at any depth, and `(int, (..))` holds `(..)`, which holds every value of its shape, functions too. [x == x]"
         ]
     );
     // A tuple whose shape is written holds what its components hold.
@@ -549,7 +549,7 @@ fn a_kind_wide_part_met_with_a_shape_that_holds_one_may_hold_a_function() {
         ),
     ] {
         let want = format!(
-            "`String` takes data, and this value, of `{value}`, may hold a function: data is a value that holds no function at any depth, and `{value}` holds `(..)`, which holds every value of its shape, functions too [String(p)]"
+            "`String` takes data, and this value, of `{value}`, may hold a function: data is a value that holds no function at any depth, and `{value}` holds `(..)`, which holds every value of its shape, functions too. [String(p)]"
         );
         assert_eq!(errors(text), [want], "{text}");
     }
@@ -596,7 +596,7 @@ fn a_tuple_type_subtracted_twice_or_left_beside_a_difference_may_hold_a_function
         ),
     ] {
         let want = format!(
-            "`String` takes data, and this value, of `{value}`, may hold a function: data is a value that holds no function at any depth, and `{value}` holds `(..)`, which holds every value of its shape, functions too [String(p)]"
+            "`String` takes data, and this value, of `{value}`, may hold a function: data is a value that holds no function at any depth, and `{value}` holds `(..)`, which holds every value of its shape, functions too. [String(p)]"
         );
         assert_eq!(errors(text), [want], "{text}");
     }
@@ -1370,7 +1370,7 @@ fn a_bounded_type_variable_in_a_refused_bucket_prints_by_name_with_where_it_is_b
                  shapes for one of the two only; here `U` is the type variable of `for U in \
                  int`; to repair it, give ((int, int),) a shape of its own, written just before \
                  the shape that should hold it: `((int, int),)`; or test the value with `is` \
-                 first, so that each test meets one of the two [p(f: g)]"
+                 first, so that each test meets one of the two. [p(f: g)]"
             )],
             "{src}"
         );
@@ -1399,7 +1399,7 @@ fn a_rigid_type_variable_in_a_refused_bucket_prints_by_name_in_the_shape_offered
              two only; here `V` is the type variable of `for V in int`; to repair it, give \
              ((V, V),) a shape of its own, written just before the shape that should hold it: \
              `((V, V),)`; or test the value with `is` first, so that each test meets one of the \
-             two [p(f: g)]"
+             two. [p(f: g)]"
                 .to_string()
         ]
     );
@@ -2332,7 +2332,7 @@ fn bucket_refused(first: &str, second: &str, shapes: &str, here: &str, own: bool
          length, and neither is held by the first of those shapes; which shape holds each \
          decides what the type variables are bound to, and the checker looks through those \
          shapes for one of the two only; here {here}; to repair it, {repair}test the value with \
-         `is` first, so that each test meets one of the two [p(f: g)]"
+         `is` first, so that each test meets one of the two. [p(f: g)]"
     )
 }
 

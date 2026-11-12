@@ -139,3 +139,63 @@ fn many_bounded_casts_scale() {
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
 }
+
+/// Item CHK-f64-bounded-int-menus: a rejection beside an `int` the checker bounds within
+/// ±2^53 offers `f64(n)` among its fixes, and one beside an unbounded `int` does not
+/// (DESIGN.md sec:diagnostics, row "Two numeric values with no common carrier").
+#[test]
+fn a_bounded_int_beside_a_decimal_is_offered_both_casts() {
+    let src = "f(positional n: int) = if n >= 0 && n <= 100 { n + 1.5 } else { 0.0 };\n";
+    let errors = type_errors(src);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    for fix in [
+        "{ rat(n) + 1.5 } else { 0.0 };    n is cast to rat, and `+` takes two rat",
+        "{ f64(n) + 1.5 } else { 0.0 };    n is cast to f64, exactly, since it lies within ±2^53",
+    ] {
+        assert!(errors[0].contains(fix), "{fix}\n{}", errors[0]);
+    }
+    let errors = type_errors("f(positional n: int) = n + 1.5;\n");
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("rat(n) + 1.5"), "{}", errors[0]);
+    assert!(!errors[0].contains("f64(n)"), "{}", errors[0]);
+}
+
+#[test]
+fn a_bounded_int_compared_with_an_f64_is_offered_its_cast() {
+    let src = "f(positional n: int, positional y: f64) = \
+               if n >= 0 && n <= 100 { y == n } else { false };\n";
+    let errors = type_errors(src);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(
+        errors[0].starts_with(
+            "No value is both `f64` and `int`: `y : f64 == n : int` always gives the same \
+             answer. Try `y == f64(n)` to compare the numbers instead."
+        ),
+        "{}",
+        errors[0]
+    );
+    let errors = type_errors("f(positional n: int, positional y: f64) = y == n;\n");
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(!errors[0].contains("f64(n)"), "{}", errors[0]);
+}
+
+#[test]
+fn many_bounded_comparisons_scale() {
+    // n functions, each comparing an f64 with an int a test bounds: n rejections, each
+    // offering `f64(n)`. The bound of each is proved from the tests above it alone.
+    let functions = |n: usize| -> String {
+        (0..n)
+            .map(|i| {
+                format!(
+                    "g{i}(positional n: int, positional y: f64) = \
+                     if n >= 0 && n <= {i} {{ y == n }} else {{ false }};\n"
+                )
+            })
+            .collect()
+    };
+    let units = resolved(200, functions);
+    scaling::check("n rejected comparisons, each of a bounded int", 200, |n| {
+        let info = units[&n].check();
+        assert_eq!(info.errors.len(), n);
+    });
+}

@@ -73,19 +73,12 @@ pub const IMPORT_NOT_YET: &str = import_not_yet!();
 
 /// The message for the use of `name`, which nothing in scope and nothing in the prelude defines.
 pub fn undefined(name: &str) -> String {
-    format!(
-        "`{name}` is not defined: no definition, parameter or binding in scope has this name, and \
-         the prelude has none. Define `{name}`, or correct the name if it is misspelled."
-    )
+    format!("`{name}` is not defined.")
 }
 
 /// The message for the type `name`, which no type in scope and no prelude type has as its name.
 pub fn undefined_type(name: &str) -> String {
-    format!(
-        "the type `{name}` is not defined: no type in scope has this name, and the prelude has \
-         none. Correct the name if it is misspelled, or write a type of the prelude, such as \
-         `int` or `String`."
-    )
+    format!("The type `{name}` is not defined.")
 }
 
 /// Whether `message` reports a form or a link this zedc does not compile yet ([`not_yet()`],
