@@ -17,10 +17,14 @@
 //! products of sums are expanded and like monomials merged; equal normal forms prove the
 //! identity in every commutative ring, since the expansion uses only the ring laws.
 //!
-//! A product of four or more sums over two or more names is refused ([`Refusal`]), counting
-//! `s ^ n` as `n` sums and a sum inside a factor as one more sum of the product: the expansion
-//! of `s` sums of `t` terms has up to `t^s` monomials. The refusal is the written shape of the
-//! product, never the number of terms (see `REFUSED_SUMS`).
+//! A product of four or more sums over two or more names is refused ([`Refusal`]), a sum inside
+//! a factor counting as one more sum of the product: the expansion of `s` sums of `t` terms has
+//! up to `t^s` monomials. A power `a ^ n` whose base, as written, has at most `T` monomials
+//! counts as the fewer of `n` times the sums of `a` and `T - 1`: its expansion has at most
+//! `C(T + n - 1, T - 1) <= (n + 1) ^ (T - 1)` monomials, as many as a product of `T - 1` sums of
+//! `n + 1` terms, so `(x + y) ^ n` counts one sum and `(a + b + c + d + f) ^ 4` four. The
+//! refusal is the written shape of the product, never the number of terms it expands to (see
+//! `REFUSED_SUMS`).
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -51,22 +55,39 @@ pub enum Carrier {
     Ring,
 }
 
-/// The fewest sums, counted with the exponents of their powers, of a product over two or more
-/// names that is refused.
+/// The fewest sums of a product over two or more names that is refused, a power counted as
+/// below.
 ///
 /// Complexity tradeoff: what is given up is every identity with a product of four or more sums
-/// over two or more names (`(a + b) * (c + d) * (e + f) * (g + h)`, `(x + y) ^ 4`), refused
-/// with [`Refusal`]: an error naming the product, with a written proof (rung 8) in its menu and
-/// the note that every point agreed; a false one is still refuted at a point first. Why: the
-/// expansion of a product of `s` sums of `t` terms has up to `t^s` monomials, exponential in
-/// the written `s`, and deciding polynomial identities of formulas in deterministic polynomial
-/// time is an open problem (polynomial identity testing), so some written shape must be
-/// refused. The count is a property of the written product, never of the number of terms; a
-/// product whose sums are all in one name is never refused, since its expansion has at most
-/// its degree plus one terms. Four is one above the most the corpus's obligations need: the
-/// measurement (`l00_poly_nf::measure`, COMPLEXITY.md POLY-nf-sums) found at most three, in
-/// `(a + b) ^ 3`, over the spec's laws and the associativity and commutativity obligations of
-/// the studies' reducers, and the plan's row needs `(a + b) * (c + d) * (e + f)`. Tested by
+/// over two or more names (`(a + b) * (c + d) * (e + f) * (g + h)`, `(a + b + c + d + f) ^ 4`),
+/// refused with [`Refusal`]: an error naming the product, with a written proof (rung 8) in its
+/// menu and the note that every point agreed; a false one is still refuted at a point first.
+/// Why: the expansion of a product of `s` sums of `t` terms has up to `t^s` monomials,
+/// exponential in the written `s`, and deciding polynomial identities of formulas in
+/// deterministic polynomial time is an open problem (polynomial identity testing), so some
+/// written shape must be refused. The count is a property of the written product, never of the
+/// number of terms; a product whose sums are all in one name is never refused, since its
+/// expansion has at most its degree plus one terms.
+///
+/// A power `a ^ n` counts `min(n * sums(a), T - 1)` sums, where `T` bounds the monomials of
+/// `a` from its written shape (a name or a number 1; a sum the sum of its parts' bounds; a
+/// product their product; a power the bound below). Both counts bound the expansion by the same
+/// rule as a product of sums. The first: `a ^ n` is a product of `n` copies of `a`. The second:
+/// the monomials of `a ^ n` are the products of `n` of the `T` monomials of `a` with repetition,
+/// at most `C(T + n - 1, T - 1) <= (n + 1) ^ (T - 1)` (each of the first `T - 1` monomials
+/// taken 0 to `n` times, the last making up the rest), the count of a product of `T - 1` sums
+/// of `n + 1` terms. So `(x + y) ^ n` counts one sum and expands to `n + 1` monomials, and
+/// `(a + b + c + d + f) ^ 4` counts four (`C(8, 4)` = 70 monomials). The former count, `n *
+/// sums(a)` alone, refused `(x + y) ^ 4`, which has five monomials. The bound is polynomial in
+/// the exponent's value, not in its written digits: an exponent of `2^20` on a sum of two terms
+/// expands to `2^20 + 1` monomials of up to `2^20` bits, which no count of sums refuses, in one
+/// name as in two (measured: `(1 + x) ^ 32768` 1.16 GB and 13.8 s, `2^16` past 60 s;
+/// COMPLEXITY.md POLY-nf-power-value, open as QUESTIONS A98).
+///
+/// Four is one above the most the corpus's obligations need: the measurement
+/// (`l00_poly_nf::measure`, COMPLEXITY.md POLY-nf-sums) found at most two, in `(a + b) * (a +
+/// b)`, over the spec's laws and the associativity and commutativity obligations of the
+/// studies' reducers, and the plan's row needs `(a + b) * (c + d) * (e + f)`, three. Tested by
 /// `l00_poly_nf::refusal`. A complete solution would decide identity of arithmetic formulas
 /// deterministically in polynomial time, which no known algorithm does.
 pub const REFUSED_SUMS: u64 = 4;
@@ -157,7 +178,7 @@ impl Refusal {
         };
         match &self.why {
             Refused::Sums(_) => out.push_str(&format!(
-                "\n  note: a product of {REFUSED_SUMS} or more sums is expanded only when its sums are all in one name, as `(1 + x) ^ 2 * (1 + x ^ 2) ^ 2`."
+                "\n  note: a product of {REFUSED_SUMS} or more sums is expanded only when its sums are all in one name, as `(1 + x) ^ 2 * (1 + x ^ 2) ^ 2`, and a power of a sum of `t` terms counts as at most `t - 1` sums, as `(x + y) ^ 9` counts 1."
             )),
             Refused::Exponent => {}
         }
@@ -232,11 +253,13 @@ impl Names {
 }
 
 /// The written shape of a node: its total degree at most (`None` past `u64::MAX`), the sums
-/// it multiplies, and the names of the whole node and of the sums it multiplies.
+/// it multiplies, its number of monomials at most (`u64::MAX` past it), and the names of the
+/// whole node and of the sums it multiplies.
 #[derive(Clone, Copy, Debug)]
 struct Shape {
     degree: Option<u64>,
     sums: u64,
+    terms: u64,
     names: Names,
     sum_names: Names,
 }
@@ -440,12 +463,14 @@ impl<'t> Identity<'t> {
                 Node::Const(..) => Shape {
                     degree: Some(0),
                     sums: 0,
+                    terms: 1,
                     names: Names::None,
                     sum_names: Names::None,
                 },
                 Node::Leaf(l) => Shape {
                     degree: Some(1),
                     sums: 0,
+                    terms: 1,
                     names: Names::One(*l),
                     sum_names: Names::None,
                 },
@@ -456,6 +481,7 @@ impl<'t> Identity<'t> {
                     Shape {
                         degree: a.degree.zip(b.degree).map(|(x, y)| x.max(y)),
                         sums: a.sums.max(b.sums).max(1),
+                        terms: a.terms.saturating_add(b.terms),
                         names,
                         sum_names: names,
                     }
@@ -465,6 +491,7 @@ impl<'t> Identity<'t> {
                     Shape {
                         degree: a.degree.zip(b.degree).and_then(|(x, y)| x.checked_add(y)),
                         sums: a.sums.saturating_add(b.sums),
+                        terms: a.terms.saturating_mul(b.terms),
                         names: a.names.join(b.names),
                         sum_names: a.sum_names.join(b.sum_names),
                     }
@@ -472,17 +499,21 @@ impl<'t> Identity<'t> {
                 Node::Pow(a, e) => {
                     let a = s[*a];
                     let e64 = e.to_u64();
+                    // An exponent past `u64::MAX` is refused unless the base is 0, 1 or -1,
+                    // so reading it as `u64::MAX` only keeps the bounds below upper bounds.
+                    let n = e64.unwrap_or(u64::MAX);
                     Shape {
                         degree: match (a.degree, e64) {
                             (Some(0), _) => Some(0),
                             (Some(d), Some(e)) => d.checked_mul(e),
                             _ => None,
                         },
-                        sums: match (a.sums, e64) {
-                            (0, _) => 0,
-                            (x, Some(e)) => x.saturating_mul(e),
-                            (_, None) => u64::MAX,
-                        },
+                        // `a ^ n` is a product of `a.sums * n` sums, and also, expanded, a
+                        // sum of at most C(T + n - 1, T - 1) <= (n + 1) ^ (T - 1) monomials
+                        // for `T = a.terms`: as many as a product of `T - 1` sums of `n + 1`
+                        // terms. The smaller count bounds it; see `REFUSED_SUMS`.
+                        sums: a.sums.saturating_mul(n).min(a.terms - 1),
+                        terms: power_terms(a.terms, n),
                         names: a.names,
                         sum_names: a.sum_names,
                     }
@@ -676,10 +707,8 @@ impl<'t> Identity<'t> {
             return decision(Verdict::Refused(r), None);
         }
         match self.keys(&reach) {
-            Keys::Packed(ctx) => self.compare::<u128>(&ctx, &reach, refutable, degree, decision),
-            Keys::Sparse => {
-                self.compare::<Sparse>(&Packing::none(), &reach, refutable, degree, decision)
-            }
+            Keys::Packed(ctx) => self.compare::<u128>(&ctx, &reach, refutable, decision),
+            Keys::Sparse => self.compare::<Sparse>(&Packing::none(), &reach, refutable, decision),
         }
     }
 
@@ -689,7 +718,6 @@ impl<'t> Identity<'t> {
         ctx: &Packing,
         reach: &[bool],
         refutable: bool,
-        degree: Option<u64>,
         decision: impl Fn(Verdict, Option<[usize; 2]>) -> Decision,
     ) -> Decision {
         let [l, r] = self.expand::<K>(ctx, reach);
@@ -701,7 +729,7 @@ impl<'t> Identity<'t> {
         if !refutable {
             return decision(Verdict::Differs, terms);
         }
-        match self.expanded_witness(&diff, ctx, degree) {
+        match self.expanded_witness(&diff, ctx) {
             Some(w) => decision(Verdict::Refuted(w), terms),
             None => decision(Verdict::Differs, terms),
         }
@@ -845,18 +873,20 @@ impl<'t> Identity<'t> {
     /// `None` only when every value leaves it zero, which needs an exponent of `P` or more
     /// (`x ^ (2^61 - 1) - x` is zero at every point modulo `P`).
     ///
-    /// Complexity tradeoff: a difference of degree `P` or more in a binder may have no witness
+    /// Each exponent `e >= P` of the binder is read as `1 + (e - 1) mod (P - 1)`, which has the
+    /// same value at every point modulo `P` (Fermat), so the difference has degree below `P` in
+    /// the binder: when it is then zero, `None` is returned at once, and otherwise one of its
+    /// first `d + 1` values leaves it nonzero, `d` that reduced degree.
+    ///
+    /// Complexity tradeoff: a difference that is zero at every point modulo `P` has no witness
     /// found here, and is then [`Verdict::Differs`]; finding one would need arithmetic with
     /// numbers of `P` bits or a second prime. The cost is a pass over the terms per value
-    /// tried, at most `degree + 1` values a binder. Reached only when both points agreed and
-    /// the normal forms differ, a chance of at most `degree / P` for each point. Tested by
-    /// `l00_poly_nf::witness` (COMPLEXITY.md POLY-nf-wide-root).
-    fn expanded_witness<K: Key>(
-        &self,
-        diff: &Poly<K>,
-        ctx: &Packing,
-        degree: Option<u64>,
-    ) -> Option<Point> {
+    /// tried, at most `d + 1` values a binder; without the reduction, `x ^ (2^61 - 1) - x`
+    /// tried all `2^61 - 1` values. Reached only when both points agreed and the normal forms
+    /// differ, a chance of at most `degree / P` for each point. Tested by
+    /// `l00_poly_nf::witness` and `poly::tests::a_difference_zero_modulo_p_has_no_witness`
+    /// (COMPLEXITY.md POLY-nf-wide-root).
+    fn expanded_witness<K: Key>(&self, diff: &Poly<K>, ctx: &Packing) -> Option<Point> {
         // The numerators modulo P, after dividing out their content, so not all zero.
         let content = diff.terms.iter().fold(BigInt::zero(), |g, (_, c)| g.gcd(c));
         let mut cur: Vec<(K, u64)> = diff
@@ -868,19 +898,30 @@ impl<'t> Identity<'t> {
         if cur.is_empty() {
             return None;
         }
-        let tries = degree.map_or(u64::MAX, |d| d.saturating_add(1)).min(P - 1);
         let mut found = Vec::with_capacity(self.binders);
         for b in 0..self.binders {
             let v = u32::try_from(b).expect("fewer than 2^32 binders");
+            let mut reduced: HashMap<(K, u64), u64> = HashMap::new();
+            for (k, c) in &cur {
+                let (e, rest) = k.without(ctx, v);
+                let e = if e < P { e } else { 1 + (e - 1) % (P - 1) };
+                let s = reduced.entry((rest, e)).or_insert(0);
+                *s = addmod(*s, *c);
+            }
+            let split: Vec<(K, u64, u64)> = reduced
+                .into_iter()
+                .filter(|(_, c)| *c != 0)
+                .map(|((rest, e), c)| (rest, e, c))
+                .collect();
+            let tries = split.iter().map(|(_, e, _)| e + 1).max()?;
             let mut next = None;
             for i in 0..tries {
                 let x = small(i);
                 let xm = small_mod(x);
                 let mut acc: HashMap<K, u64> = HashMap::new();
-                for (k, c) in &cur {
-                    let (e, rest) = k.without(ctx, v);
-                    let t = mulmod(*c, powmod(xm, &BigUint::from(e)));
-                    let s = acc.entry(rest).or_insert(0);
+                for (rest, e, c) in &split {
+                    let t = mulmod(*c, powmod(xm, &BigUint::from(*e)));
+                    let s = acc.entry(rest.clone()).or_insert(0);
                     *s = addmod(*s, t);
                 }
                 let mut left: Vec<(K, u64)> = acc.into_iter().filter(|(_, c)| *c != 0).collect();
@@ -1005,6 +1046,28 @@ fn exponent(v: &Value) -> Option<BigUint> {
         Value::Big(r) => r.to_integer().ok()?.to_biguint(),
         _ => None,
     }
+}
+
+/// The most monomials `a ^ n` expands to when `a` has at most `t` monomials (`t >= 1`): the
+/// number of ways to write `n` as a sum of `t` exponents, C(t + n - 1, k) for
+/// `k = min(t - 1, n)`, or `u64::MAX` past it. Each step `i` multiplies by
+/// `(t + n - 1 - k + i) / i`, at least 2, since `t + n - 1 - k = max(t - 1, n) >= k >= i`: so
+/// at most 64 steps reach `u64::MAX`.
+fn power_terms(t: u64, n: u64) -> u64 {
+    let m = u128::from(t) + u128::from(n) - 1;
+    let k = (t - 1).min(n);
+    let mut r: u128 = 1;
+    for i in 1..=u128::from(k) {
+        // C(m - k + i, i) = C(m - k + i - 1, i - 1) * (m - k + i) / i, exact.
+        r = match r.checked_mul(m - u128::from(k) + i) {
+            Some(x) => x / i,
+            None => return u64::MAX,
+        };
+        if r > u128::from(u64::MAX) {
+            return u64::MAX;
+        }
+    }
+    u64::try_from(r).expect("checked against u64::MAX")
 }
 
 /// The `i`-th of `0, 1, -1, 2, -2, …`.
@@ -1312,18 +1375,42 @@ impl<K: Key> Poly<K> {
             };
         }
         let terms = match self.dense_cost(o) {
-            Some(plan) => self.dense_mul(o, plan),
+            Some((slot, step)) => self.dense_mul(o, slot, step),
             None => self.sparse_mul(o),
         };
         Poly { den, terms }.reduced()
     }
 
     /// The slot width in 32-bit words of the dense product with `o`, when it is cheaper than
-    /// the sparse one.
-    fn dense_cost(&self, o: &Poly<K>) -> Option<u64> {
+    /// the sparse one, and the step between the indices that may hold a term: the greatest
+    /// common divisor of every index's distance from its side's lowest.
+    ///
+    /// Complexity tradeoff: the naive dense product gives every index between the lowest and
+    /// the highest a slot, but a homogeneous polynomial of degree `d` in `x` and `y` uses only
+    /// every `radix - 1`-th index (`x^i y^(d-i)` is at `d radix - i (radix - 1)`), so its packed
+    /// integer is `radix` times longer than its terms and the product of two such sums costs
+    /// `O(radix t log(radix t))` for an output of `t` terms: superlinear in the output, since the
+    /// radix grows with the degree. Dividing every distance by its greatest common divisor `g`
+    /// removes those empty slots exactly, as the product's distances are sums of the sides'
+    /// and so multiples of `g` too: one `O(t1 + t2)` pass of word-sized gcds per product, which
+    /// the packing's own `O(t1 + t2)` pass already costs. Kept: a sum with empty indices that no
+    /// common step removes (`x^5 y^2 + x y + 1`) still pays its span.
+    fn dense_cost(&self, o: &Poly<K>) -> Option<(u64, u128)> {
         let (lo_a, hi_a) = (self.terms[0].0.index()?, self.terms.last()?.0.index()?);
         let (lo_b, hi_b) = (o.terms[0].0.index()?, o.terms.last()?.0.index()?);
-        let span = (hi_a - lo_a).checked_add(hi_b - lo_b)?.checked_add(1)?;
+        let mut step = 0u128;
+        for (p, lo) in [(self, lo_a), (o, lo_b)] {
+            for (k, _) in &p.terms {
+                if step == 1 {
+                    break;
+                }
+                step = step.gcd(&(k.index()? - lo));
+            }
+        }
+        let step = step.max(1);
+        let span = ((hi_a - lo_a) / step)
+            .checked_add((hi_b - lo_b) / step)?
+            .checked_add(1)?;
         let bits = |p: &Poly<K>| p.terms.iter().map(|(_, c)| c.bits()).max().unwrap_or(0);
         let (ta, tb) = (self.terms.len() as u64, o.terms.len() as u64);
         // |c| < 2^(ba + bb + bits(min(ta, tb))), and one bit more for the sign.
@@ -1334,7 +1421,7 @@ impl<K: Key> Poly<K> {
         let wa = bits(self).div_ceil(64).max(1) as f64;
         let wb = bits(o).div_ceil(64).max(1) as f64;
         let sparse = ta as f64 * tb as f64 * wa * wb;
-        (dense <= sparse).then_some(slot_words)
+        (dense <= sparse).then_some((slot_words, step))
     }
 
     /// The sparse product: every pair's product, sorted by monomial and merged.
@@ -1357,14 +1444,14 @@ impl<K: Key> Poly<K> {
         out
     }
 
-    /// The dense product, `slot` 32-bit words a monomial index.
-    fn dense_mul(&self, o: &Poly<K>, slot: u64) -> Vec<(K, BigInt)> {
+    /// The dense product, `slot` 32-bit words for every `step`-th monomial index.
+    fn dense_mul(&self, o: &Poly<K>, slot: u64, step: u128) -> Vec<(K, BigInt)> {
         let slot = usize::try_from(slot).expect("a slot fits in memory");
         let base_a = self.terms[0].0.index().expect("a packed key");
         let base_b = o.terms[0].0.index().expect("a packed key");
         let product = mul_int(
-            &pack(&self.terms, base_a, slot),
-            &pack(&o.terms, base_b, slot),
+            &pack(&self.terms, base_a, step, slot),
+            &pack(&o.terms, base_b, step, slot),
         );
         let negative = product.is_negative();
         let words = product.magnitude().to_u32_digits();
@@ -1382,7 +1469,8 @@ impl<K: Key> Poly<K> {
             .0
             .index()
             .expect("packed");
-        let span = usize::try_from(hi_a - base_a + hi_b - base_b + 1).expect("fits in memory");
+        let span = usize::try_from((hi_a - base_a) / step + (hi_b - base_b) / step + 1)
+            .expect("fits in memory");
         let half = BigUint::one() << (slot * 32 - 1);
         let full = BigUint::one() << (slot * 32);
         let mut out = Vec::new();
@@ -1407,7 +1495,7 @@ impl<K: Key> Poly<K> {
             };
             if !c.is_zero() {
                 let c = if negative { -c } else { c };
-                out.push((K::at(base_a + base_b + j as u128), c));
+                out.push((K::at(base_a + base_b + j as u128 * step), c));
             }
         }
         out
@@ -1492,14 +1580,15 @@ impl<K: Key> Poly<K> {
     }
 }
 
-/// The terms as one integer, `sum c * 2^(32 slot (index - base))`: the positive and the
-/// negative coefficients written into two digit vectors and subtracted, linear in the words.
-fn pack<K: Key>(terms: &[(K, BigInt)], base: u128, slot: usize) -> BigInt {
+/// The terms as one integer, `sum c * 2^(32 slot (index - base) / step)`, `step` dividing every
+/// `index - base`: the positive and the negative coefficients written into two digit vectors
+/// and subtracted, linear in the words.
+fn pack<K: Key>(terms: &[(K, BigInt)], base: u128, step: u128, slot: usize) -> BigInt {
     let hi = terms.last().expect("not empty").0.index().expect("packed");
-    let len = usize::try_from(hi - base + 1).expect("fits in memory") * slot;
+    let len = usize::try_from((hi - base) / step + 1).expect("fits in memory") * slot;
     let (mut pos, mut neg) = (vec![0u32; len], Vec::new());
     for (k, c) in terms {
-        let at = usize::try_from(k.index().expect("packed") - base).expect("fits") * slot;
+        let at = usize::try_from((k.index().expect("packed") - base) / step).expect("fits") * slot;
         let digits = c.magnitude().to_u32_digits();
         let into = if c.is_negative() {
             if neg.is_empty() {

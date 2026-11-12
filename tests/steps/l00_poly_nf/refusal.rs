@@ -1,4 +1,5 @@
-//! The refused shapes: a product of four or more sums over two or more names, and an exponent
+//! The refused shapes: a product of four or more sums over two or more names, a power of a sum
+//! counting the fewer of its exponent times its sums and its terms less one, and an exponent
 //! past `u64::MAX` (`poly::REFUSED_SUMS`). A true identity of such a shape is rejected with
 //! the refusal; a false one is refuted at a point first.
 
@@ -41,7 +42,7 @@ fn a_true_identity_of_four_sums_is_rejected() {
     );
     assert_eq!(
         lines[1],
-        "  note: a product of 4 or more sums is expanded only when its sums are all in one name, as `(1 + x) ^ 2 * (1 + x ^ 2) ^ 2`."
+        "  note: a product of 4 or more sums is expanded only when its sums are all in one name, as `(1 + x) ^ 2 * (1 + x ^ 2) ^ 2`, and a power of a sum of `t` terms counts as at most `t - 1` sums, as `(x + y) ^ 9` counts 1."
     );
     assert!(
         lines[2].starts_with("  note: the two sides agree at every point tried: `a = "),
@@ -68,22 +69,75 @@ fn a_false_identity_of_four_sums_is_refuted() {
 }
 
 #[test]
-fn a_power_counts_its_exponent() {
+fn a_power_of_a_sum_counts_its_terms() {
+    // A base of two monomials counts one sum at any exponent: `(x + y) ^ n` has n + 1 terms.
     let d = law(
         "x: int, y: int",
         "(x + y) ^ 4",
         "x ^ 4 + 4 * x ^ 3 * y + 6 * x ^ 2 * y ^ 2 + 4 * x * y ^ 3 + y ^ 4",
         Carrier::Int,
     );
-    assert!(matches!(d.verdict, Verdict::Refused(ref r) if r.why == Refused::Sums(4)));
-    // Three is not refused.
+    assert_eq!(d.verdict, Verdict::Proved);
+    assert_eq!(d.sums, 1);
     let d = law(
         "x: int, y: int",
-        "(x + y) ^ 3",
-        "x ^ 3 + 3 * x ^ 2 * y + 3 * x * y ^ 2 + y ^ 3",
+        "(x + y) ^ 64",
+        "(x + y) ^ 32 * (y + x) ^ 32",
         Carrier::Int,
     );
     assert_eq!(d.verdict, Verdict::Proved);
+    assert_eq!(d.terms, Some([65, 65]));
+    // A false one is refuted at a point: every binder at 0 but `x` at 1 gives 1 against 2.
+    let d = law(
+        "x: int, y: int",
+        "(x + y) ^ 64",
+        "(x + y) ^ 32 * (y + x) ^ 32 + x",
+        Carrier::Int,
+    );
+    let Verdict::Refuted(p) = d.verdict else {
+        panic!("{:?}", d.verdict)
+    };
+    assert_eq!(p.to_string(), "x = 1, y = 0");
+    // A base of five monomials to the 4th counts the fewer of 4 and 5 - 1: refused.
+    const FIVE: &str = "a: int, b: int, c: int, d: int, f: int";
+    let (lhs, rhs) = (
+        "(a + b + c + d + f) ^ 4",
+        "(f + d + c + b + a) ^ 2 * (a + b + c + d + f) ^ 2",
+    );
+    let d = law(FIVE, lhs, rhs, Carrier::Int);
+    let Verdict::Refused(r) = d.verdict else {
+        panic!("{:?}", d.verdict)
+    };
+    assert_eq!(r.why, Refused::Sums(4));
+    let law_text = format!("law five({FIVE}) = {lhs} == {rhs}");
+    let m = r.message(&law_text);
+    let lines: Vec<&str> = m.lines().collect();
+    assert_eq!(
+        lines[0],
+        "Cannot expand `(((((a + b) + c) + d) + f)^4)`: it multiplies 4 sums of more than one name."
+    );
+    assert_eq!(
+        lines[1],
+        "  note: a product of 4 or more sums is expanded only when its sums are all in one name, as `(1 + x) ^ 2 * (1 + x ^ 2) ^ 2`, and a power of a sum of `t` terms counts as at most `t - 1` sums, as `(x + y) ^ 9` counts 1."
+    );
+    assert!(
+        lines[2].starts_with("  note: the two sides agree at every point tried: `a = "),
+        "{m}"
+    );
+    assert_eq!(
+        lines[3],
+        format!("  Try `{law_text} proof {{ … }}` instead.")
+    );
+    assert_eq!(lines.len(), 4);
+    // To the 3rd it counts three, and is expanded.
+    let d = law(
+        FIVE,
+        "(a + b + c + d + f) ^ 3",
+        "(f + d + c + b + a) ^ 2 * (a + b + c + d + f)",
+        Carrier::Int,
+    );
+    assert_eq!(d.verdict, Verdict::Proved);
+    assert_eq!(d.sums, 3);
 }
 
 #[test]

@@ -39,8 +39,9 @@ fn sum_square_is_proved() {
     );
     assert_eq!(d.verdict, Verdict::Proved);
     assert_eq!((d.terms, d.degree), (Some([7, 7]), Some(6)));
-    // Six sums in all on the right, but all in `x`: not refused.
-    assert_eq!(d.sums, 4);
+    // Each side counts two sums: a power of a sum of two terms counts one, and the left's
+    // base of four terms squared counts two, the fewer of 2 and 4 - 1.
+    assert_eq!(d.sums, 2);
 }
 
 #[test]

@@ -133,3 +133,25 @@ fn a_grid_of_n_squared_monomials() {
         proved(&ins[&n])
     });
 }
+
+/// `(x + y) ^ k == (x + y) ^ (k / 2) * (y + x) ^ (k - k / 2)`: a power of a sum of two names
+/// counts one sum (POLY-nf-power), and expands to `k + 1` monomials of up to `k` bits, so order
+/// 2 in `k`, linear in the output's bits. Each side's squarings multiply homogeneous sums, whose
+/// packed indices are a common step apart (`Poly::dense_cost`).
+fn binomial(k: usize) -> Id {
+    let s = |a: &str, b: &str| sum(&[var(a), var(b)]);
+    let h = k / 2;
+    Id {
+        lhs: pow(s("x", "y"), k as i64),
+        rhs: mul(pow(s("x", "y"), h as i64), pow(s("y", "x"), (k - h) as i64)),
+        names: vec!["x".into(), "y".into()],
+    }
+}
+
+#[test]
+fn a_power_of_a_sum_of_two_names() {
+    let ins = scaling::inputs(500, binomial);
+    scaling::check_order("(x + y) ^ k, k + 1 monomials of k bits", 500, 2, |n| {
+        proved(&ins[&n])
+    });
+}

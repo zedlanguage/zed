@@ -290,16 +290,54 @@ fn refused_shapes() {
         verdict(lhs, &wrong, names, Carrier::Int),
         Verdict::Refuted(_)
     ));
-    // `(x + y) ^ 4` counts four sums.
+    // `(x + y) ^ 4` counts one sum: its base has two monomials, so it expands to five.
+    assert_eq!(
+        verdict(
+            "(x + y) ^ 4",
+            "x^4 + 4*x^3*y + 6*x^2*y^2 + 4*x*y^3 + y^4",
+            &["x", "y"],
+            Carrier::Int,
+        ),
+        Verdict::Proved
+    );
+    // A base of five monomials to the 4th counts the fewer of 4 and 5 - 1: four sums.
+    let names5 = &["a", "b", "c", "d", "f"];
     let Verdict::Refused(r) = verdict(
-        "(x + y) ^ 4",
-        "x^4 + 4*x^3*y + 6*x^2*y^2 + 4*x*y^3 + y^4",
-        &["x", "y"],
+        "(a + b + c + d + f) ^ 4",
+        "(f + d + c + b + a) ^ 4",
+        names5,
         Carrier::Int,
     ) else {
         panic!()
     };
     assert_eq!(r.why, Refused::Sums(4));
+    assert_eq!(r.product, "(((((a + b) + c) + d) + f)^4)");
+    // To the 3rd it counts three, and to the 4th a base of four monomials counts three too.
+    for (l, r, n) in [
+        (
+            "(a + b + c + d + f) ^ 3",
+            "(f + d + c + b + a) ^ 3",
+            &names5[..],
+        ),
+        ("(a + b + c + d) ^ 4", "(d + c + b + a) ^ 4", &names5[..4]),
+        (
+            "((a + b) * (c + d)) ^ 9",
+            "(a * c + a * d + b * c + b * d) ^ 9",
+            &names5[..4],
+        ),
+    ] {
+        assert_eq!(verdict(l, r, n, Carrier::Int), Verdict::Proved, "{l}");
+    }
+    // A product of a base of three sums squared: the fewer of 6 and 8 - 1, refused.
+    let Verdict::Refused(r) = verdict(
+        "((a + b) * (c + d) * (f + a)) ^ 2",
+        "((a + b) * (c + d) * (a + f)) ^ 2",
+        names5,
+        Carrier::Int,
+    ) else {
+        panic!()
+    };
+    assert_eq!(r.why, Refused::Sums(6));
     // Sums all in one name are never refused, at any count.
     assert_eq!(
         verdict(
@@ -348,12 +386,13 @@ fn the_points_are_deterministic() {
 
 #[test]
 fn the_dense_and_sparse_products_agree() {
-    // Univariate sums of many terms take the dense product; check it against the sparse one.
-    let p = |n: i64, s: i64| -> Poly<u128> {
+    // Sums of many terms at every `step`-th index from `base` take the dense product; check it
+    // against the sparse one.
+    let p = |n: i64, s: i64, base: u128, step: u128| -> Poly<u128> {
         let mut terms: Vec<(u128, BigInt)> = (0..n)
             .map(|i| {
                 let c = (i * 7919 + s) % 1009 - 504;
-                (i as u128, BigInt::from(c) << (i % 70))
+                (base + i as u128 * step, BigInt::from(c) << (i % 70))
             })
             .filter(|(_, c)| !c.is_zero())
             .collect();
@@ -364,16 +403,25 @@ fn the_dense_and_sparse_products_agree() {
         }
     };
     for n in [1, 2, 3, 17, 300] {
-        let (a, b) = (p(n, 3), p(n + 5, 11));
-        let sparse = a.sparse_mul(&b);
-        if let Some(slot) = a.dense_cost(&b) {
-            assert_eq!(a.dense_mul(&b, slot), sparse, "n = {n}");
+        for (base_a, step_a, base_b, step_b) in [(0, 1, 0, 1), (3, 5, 7, 5), (2, 6, 1, 10)] {
+            let a = p(n, 3, base_a, step_a);
+            let b = p(n + 5, 11, base_b, step_b);
+            let sparse = a.sparse_mul(&b);
+            if let Some((slot, step)) = a.dense_cost(&b) {
+                assert_eq!(a.dense_mul(&b, slot, step), sparse, "n = {n}");
+            }
+            // Force the dense product at a slot wide enough, at the common step and at 1.
+            let common = if n == 1 { step_b } else { step_a.gcd(&step_b) };
+            assert_eq!(a.dense_mul(&b, 8, common), sparse, "n = {n}");
+            assert_eq!(a.dense_mul(&b, 8, 1), sparse, "n = {n}");
         }
-        // Force the dense product at a slot wide enough.
-        let wide = a.dense_mul(&b, 8);
-        assert_eq!(wide, sparse, "n = {n}");
     }
-    assert!(p(300, 3).dense_cost(&p(300, 4)).is_some());
+    assert!(p(300, 3, 0, 1).dense_cost(&p(300, 4, 0, 1)).is_some());
+    // The step is the greatest common divisor of the distances from each side's lowest index.
+    let step = |a: Poly<u128>, b: Poly<u128>| a.dense_cost(&b).map(|(_, s)| s);
+    assert_eq!(step(p(300, 3, 3, 5), p(300, 4, 7, 5)), Some(5));
+    assert_eq!(step(p(300, 3, 2, 6), p(300, 4, 1, 10)), Some(2));
+    assert_eq!(step(p(300, 3, 2, 7), p(300, 4, 1, 1)), Some(1));
 }
 
 #[test]
@@ -404,4 +452,24 @@ fn modular_arithmetic() {
     assert_eq!(powmod(3, &BigUint::from(P - 1)), 1);
     assert_eq!(small_mod(-1), P - 1);
     assert_eq!((0..5).map(small).collect::<Vec<_>>(), [0, 1, -1, 2, -2]);
+}
+
+/// `x ^ P - x` and `x ^ (2 * P - 1) - x` are zero at every point modulo `P` (Fermat): the two
+/// points agree, the normal forms differ, and the search for a witness reads each exponent
+/// below `P` and stops at once, where it tried `P - 1` values before.
+#[test]
+fn a_difference_zero_modulo_p_has_no_witness() {
+    assert_eq!(
+        verdict("x ^ 2305843009213693951", "x", &["x"], Carrier::Int),
+        Verdict::Differs
+    );
+    assert_eq!(
+        verdict(
+            "x ^ 4611686018427387901 + y",
+            "x + y",
+            &["x", "y"],
+            Carrier::Int
+        ),
+        Verdict::Differs
+    );
 }
