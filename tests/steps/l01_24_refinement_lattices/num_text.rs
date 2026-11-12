@@ -106,10 +106,9 @@ fn a_text_that_is_not_an_integer_gets_num_bigints_error() {
 /// the sizes of the kernel's own reading test (`l01_18_scalar_interpreter`), above the width
 /// where the kernel's product leaves num-bigint's Toom-3 for its transform; from 20,000 to
 /// 160,000 digits the products are Toom-3's, about n^1.46, and the reading measured 30.5 times.
-/// It still fails, 15.4 times against 12.1 (2026-11-09), as the kernel's reading test does
-/// (COMPLEXITY.md C31).
+/// It passes, 11.8 times against 12.1 (2026-11-12, RADIX-depth); it failed at 15.4 (2026-11-09),
+/// as the kernel's reading test did (COMPLEXITY.md C31).
 #[test]
-#[ignore = "RADIX-depth: 14.4 times the work at 160,000 and 1,280,000 digits, over the n log² n limit 12.1 since SCALE-ratio (2026-11-12); at 1,280,000 and 10,240,000 digits it passes, 11.3 against 11.59, in 9 s; open"]
 fn reading_a_long_decimal_end_scales() {
     let texts = scaling::inputs(160_000, |n| digits(&mut Rng::new(n as u64), n));
     scaling::check_log_squared("reading a decimal end of n digits", 160_000, |n| {

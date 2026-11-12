@@ -71,7 +71,6 @@ fn check_reading(what: &str, n: usize, texts: impl Fn(usize) -> Vec<String>) {
 }
 
 #[test]
-#[ignore = "RADIX-depth: 14.4 times the work at 160,000 and 1,280,000 digits, over the n log² n limit 12.1 since SCALE-ratio (2026-11-12); at 8 times these sizes it passes (11.3 against 11.59 at 1,280,000 digits, 2026-11-12) but takes over 60 s; open"]
 fn reading_a_rat_of_n_digits_scales() {
     // num-bigint reads decimal digits one word at a time into the whole number so far, O(n^2);
     // the kernel reads the text by halves (`num::read_decimal`), and checks lowest terms by one
@@ -98,14 +97,14 @@ fn reading_a_rat_of_n_digits_scales() {
     });
 }
 
-/// `int(s)` reads by halves, O(n log^2 n) (COMPLEXITY.md C31). It still fails, 15.5 times the
-/// work against 12.1 (2026-11-09): the split is `log2(n / 1024)` levels deep, and the products
+/// `int(s)` reads by halves, O(n log^2 n) (COMPLEXITY.md C31). It passes, 11.8 times the work
+/// against 12.1 (2026-11-12, RADIX-depth). It failed at 15.5 (2026-11-09): the split is
+/// `log2(n / 1024)` levels deep, and the products
 /// wider than `fast::MUL_LEAF` (512 words) are those of levels 4 and up, 4 levels at 160,000
 /// digits and 7 at 1,280,000, so their number grows 1.75 times where the limit allows 1.17 for
 /// each log; the ratio was 14.0 from 320,000 and 12.9 from 640,000
 /// (limits 11.9 and 11.8), falling toward the limit as n grows.
 #[test]
-#[ignore = "RADIX-depth: 14.5 times the work at 160,000 and 1,280,000 digits, over the n log² n limit 12.1 since SCALE-ratio (2026-11-12); at 1,280,000 and 10,240,000 digits it passes, 11.3 against 11.59, in 5 s; open"]
 fn reading_an_int_of_n_digits_scales() {
     let built: std::collections::HashMap<usize, Term> = [160_000, 1_280_000]
         .into_iter()
@@ -127,11 +126,10 @@ fn reading_an_int_of_n_digits_scales() {
 /// was O(n^2). At 80,000 digits, 4,153 words, both sizes are well above the gcd's leaf of 512
 /// words, num-bigint's gcd, so both run the half gcd; the ratio of the work, 22.4 at 20,000
 /// digits and 21.7 at 40,000, is 18.6 here as the leaf's share falls (2026-11-07), held to the
-/// limit of work of order n log^2 n, 12.3 (COMPLEXITY.md C31). It still fails, on the bytes, 15.2
-/// times (2026-11-09): the recursion is `log2(n / leaf)` deep, not `log2 n`, so at these sizes
-/// the depth grows by more than the limit's log factor allows (COMPLEXITY.md C31).
+/// limit of work of order n log^2 n, 12.3 (COMPLEXITY.md C31). It passes, 12.3 times the work
+/// and 11.1 times the bytes (2026-11-12, RADIX-depth); it failed on the bytes, 15.2 times
+/// (2026-11-09), as the recursion's deeper levels were dear.
 #[test]
-#[ignore = "RADIX-depth: 15.0 times the bytes at 80,000 and 640,000 digits, over the n log² n limit 12.3 since SCALE-ratio (2026-11-12); open"]
 fn reading_a_rat_of_two_wide_parts_scales() {
     check_reading("rat(s) of two parts of n digits each", 80_000, |n| {
         // A pair of random numbers is coprime with probability 6 / pi^2; seeds are tried in
@@ -222,7 +220,6 @@ type Family = (&'static str, Vec<String>, Vec<String>);
 /// cost grows as the square of the width, and the family with both powers grew 32.5 times to
 /// 640,000 digits; from 160,000, 13.8 to 20.8 times (2026-11-07).
 #[test]
-#[ignore = "RADIX-depth: 13.4 times the work at 160,000 and 1,280,000 digits, over the n log² n limit 12.1 since SCALE-ratio (2026-11-12); at 8 times these sizes it passes (10.9 against 11.59) but takes over 60 s; open"]
 fn reading_a_decimal_with_high_powers_of_2_and_5_scales() {
     let n = 160_000;
     let built = zed_tests::scaling::inputs(n, valuation_families);

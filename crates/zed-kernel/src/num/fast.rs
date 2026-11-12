@@ -119,6 +119,7 @@
 //! with no crossover.
 
 use std::borrow::Cow;
+use std::rc::{Rc, Weak};
 
 use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
@@ -130,8 +131,11 @@ use num_traits::{One, Signed, ToPrimitive, Zero};
 /// words, 1.30 at 512 by 512, 1.16 at 256 by 65536 and 1.07 at 512 by 65536, slower at every
 /// shape measured with the narrower at 512 words or fewer; above, [`TOOM_COST`] decides. It
 /// was 1024 from 2026-11-05 (load 68), when the transform's constant was higher (COMPLEXITY.md,
-/// "Crossovers"). The product does not depend on it; the unit tests use a smaller leaf, so
-/// that they reach the transforms at small sizes.
+/// "Crossovers"). Measured again on 2026-11-12 (RADIX-depth) in instructions, in the test
+/// build, after the transform's constant fell to 7: at 512 by 512 words the transform takes
+/// 1.24 million against num-bigint's 1.02, at 1024 by 1024 2.68 against 2.76, so the
+/// instruction counts cross between, and 512 stands. The product does not depend on it; the
+/// unit tests use a smaller leaf, so that they reach the transforms at small sizes.
 #[cfg(not(test))]
 const MUL_LEAF: usize = 512;
 #[cfg(test)]
@@ -141,19 +145,19 @@ const MUL_LEAF: usize = 48;
 /// units of [`TRANSFORM_COST`]. Its multiplication is Toom-3 above 256 words, `s^log3(5)` =
 /// `s^1.465` for balanced factors, and cuts the longer factor in halves while it has twice
 /// the other's words (`biguint/multiplication.rs` lines 102 to 166), so `l / s` such products.
-/// Measured on 2026-11-07 at load 34 to 41 (BIGINT-fast-mul): 9.1 to 13.4 ns per `l s^0.465`,
-/// 10.7 on average from 1024 words, over balanced factors of 256 to 16384 words and 256 to
-/// 8192 by 65536 words, against 1.03 ns a word product of `sparse_mul`. With it [`mul`] takes
-/// num-bigint's product at 1536 by 1536 words (measured 1.23 times faster than the transform)
-/// and 2560 by 2560 (1.19), just above a power of two of the transform's points, and the
-/// transform at 2048 by 2048 (0.81 of num-bigint's time), 4096 (0.64) and 16384 (0.40). At
-/// 3072 by 3072 the two costs differ by 5% and the transform is taken; its time there was
-/// bimodal over repeated runs at load 15 to 29, 1.01 or 1.38 times num-bigint's, with the
-/// same transform steady at 4096 by 4096 (cause not measured; COMPLEXITY.md, "Crossovers"). The
-/// product does not depend on it; the unit tests never take num-bigint's product above
-/// [`MUL_LEAF`], so that they reach the transforms. Measured again at the port to Zed.
+/// It was 10.4 from times measured on 2026-11-07 (BIGINT-fast-mul). Measured again on
+/// 2026-11-12 (RADIX-depth) in instructions, in the test build, over balanced factors of 512
+/// to 24,576 words: 6.48 to 7.19 units per `l s^0.465`, 6.8 on average. With it and
+/// [`TRANSFORM_COST`] the two methods' instruction counts cross where they are measured to:
+/// num-bigint's product is taken at 768 by 768 words (1.80 million instructions against the
+/// transform's 2.53) and the transform at 1024 by 1024 (2.68 against 2.76) and from 2048
+/// (5.54 against 8.12). Between, the two are near: the transform is taken at 1280 by 1280
+/// (3.99 against 3.92) and 1536 by 1536 (5.42 against 5.17), where the wrapped plan of
+/// [`points`] is estimated within 1% of num-bigint's product. The product does not depend on
+/// it; the unit tests never take num-bigint's product above [`MUL_LEAF`], so that they reach
+/// the transforms.
 #[cfg(not(test))]
-const TOOM_COST: f64 = 10.4;
+const TOOM_COST: f64 = 6.8;
 #[cfg(test)]
 const TOOM_COST: f64 = f64::INFINITY;
 
@@ -226,14 +230,13 @@ const PRINT_WHOLE: usize = 60_000;
 const PRINT_WHOLE: usize = 1;
 
 /// The cost of a transform product on `n` points, per `n log2(n)`, in units of one word
-/// product of [`sparse_mul`]: measured on 2026-11-05 at 1024 to 8192 words a factor, 23 to
-/// 28 ns per `n log2(n)` against 1.2 to 2 ns a word product (load 45 to 55). Only which of
-/// two equal results is computed depends on it. Measured again at the port to Zed, with the
-/// leaves above. After BIGINT-fast-mul (twiddles and loaded words reduced with no division,
-/// Garner's constants computed at compile time, the stages whose only root is 1 with no
-/// product), measured on 2026-11-07 at load 34 to 41: 10.8 to 13.1 ns per `n log2(n)` over
-/// 512 to 262,144 points (12.2 on average), against 1.03 ns a word product: 12.
-const TRANSFORM_COST: u128 = 12;
+/// product of [`sparse_mul`]. Only which of two equal results is computed depends on it. It was
+/// 12 from times measured on 2026-11-07 (BIGINT-fast-mul). Measured again on 2026-11-12
+/// (RADIX-depth) in instructions, after the butterflies' reductions by a sign test, in the
+/// test build: a word product of `sparse_mul` takes 16.42 instructions, and a balanced product
+/// of `m` by `m` words on `n = 2m` points 7.37, 7.25, 6.86, 6.83, 6.54 and 6.53 units per
+/// `n log2(n)` at `m` = 512, 1024, 2048, 4096, 8192 and 16,384: 7.
+const TRANSFORM_COST: u128 = 7;
 
 /// The cost of a word of a step of [`sparse_div_rem`], and of a step besides its words (the
 /// quotient word's estimate is a 128-bit division), in the units of [`TRANSFORM_COST`]:
@@ -286,7 +289,7 @@ impl Field {
         let t = u128::from(a) * u128::from(b);
         let m = (t as u64).wrapping_mul(self.neg_inv);
         let u = ((t + u128::from(m) * u128::from(self.p)) >> 64) as u64;
-        if u >= self.p { u - self.p } else { u }
+        below(u, self.p)
     }
 
     /// `x mod p` for any 64-bit `x`, without a division: with `q = floor(x / 2^62) <= 3`,
@@ -295,18 +298,19 @@ impl Field {
     #[inline]
     fn reduce(&self, x: u64) -> u64 {
         let r = x - (x >> 62) * self.p;
-        if r >= self.p { r - self.p } else { r }
+        below(r, self.p)
     }
 
     #[inline]
     fn add(&self, a: u64, b: u64) -> u64 {
         let s = a + b;
-        if s >= self.p { s - self.p } else { s }
+        below(s, self.p)
     }
 
     #[inline]
     fn sub(&self, a: u64, b: u64) -> u64 {
-        if a >= b { a - b } else { a + self.p - b }
+        // `a - b` lies in `(-p, p)` for `a, b < p`; `a + p - b` in `(0, 2p)` is below `2^64`.
+        below(a.wrapping_add(self.p).wrapping_sub(b), self.p)
     }
 
     /// `x * 2^64 mod p`, the Montgomery form of `x < p`.
@@ -327,22 +331,40 @@ impl Field {
         r
     }
 
-    /// The powers `w^j`, `j < n/2`, of a primitive `n`-th root `w`, each with its Shoup
-    /// quotient (see [`Field::shoup`]). The stage of half-width `h` uses the `2h`-th root
-    /// `w^(n/2h)`, so it reads every `n/2h`-th entry: one table of `n/2` pairs serves every
-    /// stage, which keeps a product's memory at five words a point (see [`mul`]).
+    /// The roots of the stages of a transform on `n` points, a power of two, in bit-reversed
+    /// order: entry `k < n/2` is `w^brv(k)`, `w` a primitive `n`-th root and `brv` the reversal
+    /// of `log2(n) - 1` bits, each with its Shoup quotient (see [`Field::shoup`]). For
+    /// `k < 2^s` that is `w_(2^(s+1))^brv_s(k)`, the root of block `k` of the stage with `2^s`
+    /// blocks ([`Field::forward`]), so every stage reads a prefix of the table, one root a
+    /// block, and the table of a larger power of two serves a smaller one. Built by doubling:
+    /// `brv(2^s + i) = brv(i) + n/2^(s+2)`, so entries `2^s .. 2^(s+1)` are entries
+    /// `0 .. 2^s` times `w_(2^(s+2))`. `n/2` pairs, as before, so a product's memory is
+    /// unchanged.
     fn twiddles(&self, n: usize) -> Vec<(u64, u64)> {
-        // A primitive n-th root: the generator to the power (p - 1) / n.
-        let w = self.pow(self.to_mont(self.root), (self.p - 1) / n as u64);
-        let mut tw = vec![(0, 0); n / 2];
+        // `w_(2^t)` for `t` from 2 to `log2(n)`, in Montgomery form, by squaring down from a
+        // primitive `n`-th root, the generator to the power `(p - 1) / n`.
+        let mut step = Vec::with_capacity(n.trailing_zeros() as usize);
+        let mut w = self.pow(self.to_mont(self.root), (self.p - 1) / n as u64);
+        for _ in 2..=n.trailing_zeros() {
+            step.push(w);
+            w = self.mul(w, w);
+        }
         // `mul(t, w)` of `t` in plain form and `w` in Montgomery form is `t w` in plain form.
         // The Shoup quotient `s = floor(t 2^64 / p)` is found without a division: with
         // `r = t 2^64 mod p` (`to_mont(t)`), `s p = t 2^64 - r` is exact, so
         // `s = -r p^-1 mod 2^64 = r neg_inv`, and `s < 2^64` since `t < p`.
-        let mut t = 1;
-        for x in &mut tw {
-            *x = (t, self.to_mont(t).wrapping_mul(self.neg_inv));
-            t = self.mul(t, w);
+        let mut tw = Vec::with_capacity(n / 2);
+        tw.push((1, 0));
+        // `step` holds `w_n, w_(n/2), ..., w_4`; doubling from 1 entry uses `w_4` first.
+        for &r in step.iter().rev() {
+            let have = tw.len();
+            for i in 0..have {
+                let t = self.mul(tw[i].0, r);
+                tw.push((t, 0));
+            }
+        }
+        for (t, s) in &mut tw {
+            *s = self.to_mont(*t).wrapping_mul(self.neg_inv);
         }
         tw
     }
@@ -356,118 +378,318 @@ impl Field {
     }
 
     /// The transform of `a`, in place, `a.len()` a power of two: the evaluations at the
-    /// powers of a primitive `a.len()`-th root, in bit-reversed order (decimation in
-    /// frequency), with `tw` from [`Field::twiddles`] of `a.len()` points or of any larger
-    /// power of two, whose every `2 tw.len() / a.len()`-th entry is a power of that root.
-    /// Values below `p` go in, and values below `2p` come out, the same residues (Harvey's
-    /// lazy reduction; `4p < 2^64`).
-    fn forward(&self, a: &mut [u64], tw: &[(u64, u64)]) {
+    /// powers of a primitive `a.len()`-th root, in bit-reversed order, by Cooley and Tukey's
+    /// butterflies `(x + r y, x - r y)`, one root `r` a block ([`Field::twiddles`]), with `tw`
+    /// from [`Field::twiddles`] of `a.len()` points or of any larger power of two. The entries
+    /// from `filled` up are zero. Values below `4p` go in, and values below `2p` come out, the
+    /// same residues (Harvey's lazy reduction: between stages every value is below
+    /// `4p < 2^64`).
+    ///
+    /// A stage whose blocks' upper halves are all zero, as the first is for a factor padded to
+    /// the points of a product, makes each block's upper half a copy of its lower half, so the
+    /// leading stages of half `filled` or more are done at once by copying the first block.
+    /// The other stages are done two at a time ([`Field::forward_pair`]), which loads and stores
+    /// each value once for both, and an odd one left over at the end alone.
+    fn forward(&self, a: &mut [u64], filled: usize, tw: &[(u64, u64)]) {
         let p2 = 2 * self.p;
-        let mut half = a.len() / 2;
-        debug_assert!(2 * tw.len() >= a.len(), "a table of at least the points");
-        while half > 1 {
-            // Every `tw.len() / half`-th entry is a power of the `2 half`-th root.
-            let stride = tw.len() / half;
-            for block in a.chunks_exact_mut(2 * half) {
-                let (lo, hi) = block.split_at_mut(half);
-                let roots = tw.iter().step_by(stride);
-                for ((x, y), w) in lo.iter_mut().zip(hi.iter_mut()).zip(roots) {
-                    let (u, v) = (*x, *y);
-                    let s = u + v;
-                    *x = if s >= p2 { s - p2 } else { s };
-                    *y = self.shoup(u + p2 - v, *w);
+        let n = a.len();
+        debug_assert!(2 * tw.len() >= n, "a table of at least the points");
+        debug_assert!(
+            a[filled.min(n)..].iter().all(|&x| x == 0),
+            "zeros from `filled` up"
+        );
+        let mut len = n / 2;
+        while len > 0 && len >= filled {
+            len /= 2;
+        }
+        let size = (2 * len).max(1);
+        if size < n {
+            let (first, rest) = a.split_at_mut(size);
+            for block in rest.chunks_exact_mut(size) {
+                block.copy_from_slice(first);
+            }
+        }
+        let mut blocks = n / size;
+        while len >= 2 {
+            // Block `k` of the first stage of the two has root `tw[k]`; its two halves are
+            // blocks `2k` and `2k + 1` of the second, with roots `tw[2k]` and `tw[2k + 1]`.
+            // Index loops, not `zip`: the test build has no inlining across codegen units, so
+            // `Zip::new` there is a call per block. With it, the larger run of
+            // `reading_a_rat_of_two_wide_parts_scales` took 8349 M instructions; without, 7571 M.
+            let first = &tw[..blocks];
+            let second = tw[..2 * blocks].as_chunks::<2>().0;
+            for k in 0..blocks {
+                let block = &mut a[2 * len * k..2 * len * (k + 1)];
+                let (wa, [wb, wc]) = (first[k], second[k]);
+                match len == 2 {
+                    true => self.forward_pair::<true>(block, wa, wb, wc),
+                    false => self.forward_pair::<false>(block, wa, wb, wc),
                 }
             }
-            half /= 2;
+            len /= 4;
+            blocks *= 4;
         }
-        // The last stage's only root is 1.
-        if half == 1 {
-            for pair in a.as_chunks_mut::<2>().0 {
-                lazy_butterfly(p2, pair);
+        if len == 1 {
+            for (pair, &w) in a.as_chunks_mut::<2>().0.iter_mut().zip(&tw[..blocks]) {
+                // As in [`Field::butterfly`], then each output brought below `2p` by one
+                // subtraction.
+                let (s, d) = self.butterfly(pair[0], pair[1], w);
+                pair[0] = below(s, p2);
+                pair[1] = below(d, p2);
+            }
+        }
+    }
+
+    /// Cooley and Tukey's butterfly `(x + w y, x - w y)` for `x, y < 4p`, each output below
+    /// `4p`: `u = x mod 2p < 2p` and Shoup's `t = w y < 2p`, so `u + t < 4p` and `u + 2p - t`
+    /// lies in `(0, 4p)`; `4p < 2^64`, so nothing wraps.
+    #[inline]
+    fn butterfly(&self, x: u64, y: u64, w: (u64, u64)) -> (u64, u64) {
+        let p2 = 2 * self.p;
+        let u = below(x, p2);
+        let t = self.shoup(y, w);
+        (u.wrapping_add(t), u.wrapping_add(p2).wrapping_sub(t))
+    }
+
+    /// Two stages of [`Field::forward`] on one block of the first, of `2 len` values, `len`
+    /// at least 2: the first's butterflies of root `wa` across its halves, then the second's
+    /// of roots `wb` and `wc` across each half's halves. With `LAST`, each output is brought
+    /// below `2p`.
+    #[inline]
+    fn forward_pair<const LAST: bool>(
+        &self,
+        block: &mut [u64],
+        wa: (u64, u64),
+        wb: (u64, u64),
+        wc: (u64, u64),
+    ) {
+        let p2 = 2 * self.p;
+        let half = block.len() / 4;
+        let (lo, hi) = block.split_at_mut(2 * half);
+        let (q0, q1) = lo.split_at_mut(half);
+        let (q2, q3) = hi.split_at_mut(half);
+        let q3 = &mut q3[..half];
+        // An index loop, not `zip`, as in [`Field::forward`].
+        for i in 0..half {
+            let (a0, a2) = self.butterfly(q0[i], q2[i], wa);
+            let (a1, a3) = self.butterfly(q1[i], q3[i], wa);
+            let (b0, b1) = self.butterfly(a0, a1, wb);
+            let (b2, b3) = self.butterfly(a2, a3, wc);
+            match LAST {
+                // Each below `4p`, so one subtraction brings it below `2p`.
+                true => {
+                    q0[i] = below(b0, p2);
+                    q1[i] = below(b1, p2);
+                    q2[i] = below(b2, p2);
+                    q3[i] = below(b3, p2);
+                }
+                false => (q0[i], q1[i], q2[i], q3[i]) = (b0, b1, b2, b3),
             }
         }
     }
 
     /// The inverse of [`Field::forward`] times `a.len()`, from bit-reversed order to natural
-    /// order (decimation in time), by the inverse roots `w_2h^-j = p - w_2h^(h - j)`, whose
-    /// Shoup quotient is the complement of the other's, with `tw` as for [`Field::forward`].
-    /// Values below `2p` go in, and values below `p` come out.
+    /// order, by Gentleman and Sande's butterflies `(x + y, (x - y) / r)`, with `tw` as for
+    /// [`Field::forward`]. The stage with `2^s` blocks undoes the forward stage with as many:
+    /// block 0 has root 1, and for block `k` in `[2^t, 2^(t+1))`, `t < s`, `1/r` is
+    /// `-tw[3 2^t - 1 - k]`. (With `r = w^b`, `w` of order `2^(s+1)`, `b = 2^(s-1-t) (2m + 1)`
+    /// for `m = brv_t(k - 2^t)`, `1/r = w^(2^(s+1) - b) = -w^(2^s - b)`, and `2^s - b` is
+    /// `2^(s-1-t) (2 (2^t - 1 - m) + 1)`, the exponent of entry `3 2^t - 1 - k`, since bit
+    /// reversal commutes with complementing the bits.) So the blocks of group `t` read the
+    /// table's entries `2^t .. 2^(t+1)` from the top down, and the sign goes into the
+    /// difference: `(y - x) r'` for `r' = tw[3 2^t - 1 - k]`. The stages are done two at a
+    /// time ([`Field::inverse_pair`]), an odd one left over at the end alone. Values below
+    /// `2p` go in, and values below `p` come out.
     fn inverse(&self, a: &mut [u64], tw: &[(u64, u64)]) {
-        let p2 = 2 * self.p;
-        let butterfly = |x: &mut u64, y: &mut u64, v: u64| {
-            let u = *x;
-            let s = u + v;
-            let d = u + p2 - v;
-            *x = if s >= p2 { s - p2 } else { s };
-            *y = if d >= p2 { d - p2 } else { d };
-        };
+        let p = self.p;
         let n = a.len();
-        // The first stage's only root is 1.
-        if n >= 2 {
-            for pair in a.as_chunks_mut::<2>().0 {
-                lazy_butterfly(p2, pair);
-            }
-        }
-        let mut half = 2;
         debug_assert!(2 * tw.len() >= n, "a table of at least the points");
-        while half < n {
-            let stride = tw.len() / half;
-            // Complexity tradeoff: the entries `stride` to `(half - 1) stride` of the table,
-            // cut once a stage and walked from the top down by a plain step, so each butterfly
-            // reads its root as [`Field::forward`] does. Indexing the table by `(half - j)
-            // stride` cost a checked product and a bounds check per butterfly in the test
-            // build, and walking the pairs backward against the roots kept the iterators in
-            // memory: either made an inverse take about twice a forward's instructions (perf,
-            // 2026-11-12, RADIX-depth). Stepping a table backward with `rev` after `step_by`
-            // computes its length by a division, once a block. Same values, same order.
-            let roots = &tw[stride..=(half - 1) * stride];
-            for block in a.chunks_exact_mut(2 * half) {
-                let (lo, hi) = block.split_at_mut(half);
-                let (lo0, lo) = lo.split_first_mut().expect("half is at least 2");
-                let (hi0, hi) = hi.split_first_mut().expect("half is at least 2");
-                let v = *hi0;
-                butterfly(lo0, hi0, v);
-                // Root `j` of the block, `0 < j < half`, is entry `(half - j) stride` of the
-                // table: the entries of `roots` from its top down, every `stride`-th.
-                for ((x, y), &(w, s)) in lo
-                    .iter_mut()
-                    .zip(hi.iter_mut())
-                    .zip(roots.iter().rev().step_by(stride))
-                {
-                    let v = self.shoup(*y, (self.p - w, !s));
-                    butterfly(x, y, v);
-                }
+        let mut len = 1;
+        while 4 * len <= n {
+            let size = 4 * len;
+            // Block 0: roots 1 and `1/tw[1]` in the first stage, 1 in the second.
+            match size == n {
+                true => self.inverse_pair::<true>(&mut a[..size], None, tw[1], None),
+                false => self.inverse_pair::<false>(&mut a[..size], None, tw[1], None),
             }
-            half *= 2;
+            // Block `k` of group `t` (`2^t <= k < 2^(t+1)`): halves `2k` and `2k + 1` of
+            // group `t + 1` read entries `3 2^(t+1) - 1 - 2k` and the one below it, a pair
+            // of the table's entries `2^(t+1) .. 2^(t+2)` from the top down. Index loops, not
+            // `zip`, as in [`Field::forward`].
+            let mut group = 1;
+            while group < n / size {
+                let halves = tw[2 * group..4 * group].as_chunks::<2>().0;
+                let whole = &tw[group..2 * group];
+                for j in 0..group {
+                    let k = group + j;
+                    let [wb, wa] = halves[group - 1 - j];
+                    let wc = whole[group - 1 - j];
+                    let block = &mut a[size * k..size * (k + 1)];
+                    self.inverse_pair::<false>(block, Some(wa), wb, Some(wc));
+                }
+                group *= 2;
+            }
+            len *= 4;
         }
-        for x in a.iter_mut() {
-            if *x >= self.p {
-                *x -= self.p;
+        if len < n {
+            // The last stage, one block of root 1, each output brought below `p`.
+            let (lo, hi) = a.split_at_mut(len);
+            for (x, y) in lo.iter_mut().zip(hi.iter_mut()) {
+                let (s, d) = self.inverse_one(*x, *y);
+                *x = below(s, p);
+                *y = below(d, p);
+            }
+        } else if n == 1 && a[0] >= p {
+            a[0] -= p;
+        }
+    }
+
+    /// Gentleman and Sande's butterfly of root 1, `(x + y, x - y)`, for `x, y < 2p`: `x + y <
+    /// 4p` and `x + 2p - y` in `(0, 4p)`, each brought below `2p` by one subtraction; `4p <
+    /// 2^64`, so nothing wraps.
+    #[inline]
+    fn inverse_one(&self, x: u64, y: u64) -> (u64, u64) {
+        let p2 = 2 * self.p;
+        let (s, d) = (x.wrapping_add(y), x.wrapping_add(p2).wrapping_sub(y));
+        (below(s, p2), below(d, p2))
+    }
+
+    /// Gentleman and Sande's butterfly `(x + y, (x - y) / r)` with `-1/r = w`, for `x, y <
+    /// 2p`: `x + y < 4p`, brought below `2p` by one subtraction, and `(y + 2p - x) w`, Shoup's
+    /// product of a value in `(0, 4p)`, below `2p`; `4p < 2^64`, so nothing wraps.
+    #[inline]
+    fn inverse_root(&self, x: u64, y: u64, w: (u64, u64)) -> (u64, u64) {
+        let p2 = 2 * self.p;
+        let s = x.wrapping_add(y);
+        (
+            below(s, p2),
+            self.shoup(y.wrapping_add(p2).wrapping_sub(x), w),
+        )
+    }
+
+    /// Two stages of [`Field::inverse`] on one block of the second, of `4 len` values: the
+    /// first's butterflies across each half's halves, the lower half's with `-1/r = wa` (root
+    /// 1 for `None`) and the upper's with `wb`, then the second's across the halves, with `wc`
+    /// (root 1 for `None`). With `LAST`, each output is brought below `p`.
+    #[inline]
+    fn inverse_pair<const LAST: bool>(
+        &self,
+        block: &mut [u64],
+        wa: Option<(u64, u64)>,
+        wb: (u64, u64),
+        wc: Option<(u64, u64)>,
+    ) {
+        let p = self.p;
+        let half = block.len() / 4;
+        let (lo, hi) = block.split_at_mut(2 * half);
+        let (q0, q1) = lo.split_at_mut(half);
+        let (q2, q3) = hi.split_at_mut(half);
+        let q3 = &mut q3[..half];
+        let pair = |x: u64, y: u64, w: Option<(u64, u64)>| match w {
+            Some(w) => self.inverse_root(x, y, w),
+            None => self.inverse_one(x, y),
+        };
+        // An index loop, not `zip`, as in [`Field::forward`].
+        for i in 0..half {
+            let (a0, a1) = pair(q0[i], q1[i], wa);
+            let (a2, a3) = self.inverse_root(q2[i], q3[i], wb);
+            let (b0, b2) = pair(a0, a2, wc);
+            let (b1, b3) = pair(a1, a3, wc);
+            match LAST {
+                // Each below `2p`, so one subtraction brings it below `p`.
+                true => {
+                    q0[i] = below(b0, p);
+                    q1[i] = below(b1, p);
+                    q2[i] = below(b2, p);
+                    q3[i] = below(b3, p);
+                }
+                false => (q0[i], q1[i], q2[i], q3[i]) = (b0, b1, b2, b3),
             }
         }
     }
 
-    /// The cyclic convolution of `a` and `b` modulo `p` on `n` points, each coefficient
-    /// reduced below `p`; `b` is `None` for a square.
-    fn convolve(&self, a: &BigUint, b: Option<&BigUint>, n: usize) -> Vec<u64> {
-        let tw = self.twiddles(n);
-        // One word more than the points, for the product's top word (see [`mul`]).
-        let load = |x: &BigUint| {
-            let mut v: Vec<u64> = Vec::with_capacity(n + 1);
-            v.extend(x.iter_u64_digits().map(|d| self.reduce(d)));
+    /// The coefficients of the product of the words of `a` from `sa` up and those of `b` from
+    /// `sb` up (`b` is `None` for a square of `a`'s), `la + lb - 1` of them, each below `p`,
+    /// with room for one more. `tw` as for [`Field::forward`], of at least the points used,
+    /// and `fb` a buffer as for [`Field::convolve`].
+    ///
+    /// With `n` the power of two of points at or above the coefficients, `N = n / 2` and `r`
+    /// the coefficients above `N`, the product is taken on `n` points, or, when the costs of
+    /// [`transform_cost`] say it is cheaper, on `N`: the cyclic product modulo `x^N - 1` holds
+    /// `c_t + c_(N+t)` at `t < r`, and the top `r` coefficients `c_(N+t)` are those of the
+    /// product of the top `min(la, r)` and `min(lb, r)` words alone (a word `a_i` reaches
+    /// `c_(N+t)` only with some `b_j`, `j <= lb - 1`, so `i >= N - lb + 1 = la - r`, and the
+    /// same for `b`), found by this function on at most `2 r - 1` coefficients and subtracted.
+    /// So no product pays for up to twice its points, as one just above a power of two did.
+    fn linear(
+        &self,
+        a: &BigUint,
+        sa: usize,
+        b: Option<(&BigUint, usize)>,
+        tw: &[(u64, u64)],
+        fb: &mut Vec<u64>,
+    ) -> Vec<u64> {
+        let la = words(a) - sa;
+        let lb = b.map_or(la, |(b, sb)| words(b) - sb);
+        let coeffs = la + lb - 1;
+        let (n, wrap) = points(la, lb);
+        if !wrap {
+            let mut v = self.convolve(a, sa, b, n, coeffs + 1, tw, fb);
+            v.truncate(coeffs);
+            return v;
+        }
+        let mut v = self.convolve(a, sa, b, n, coeffs + 1, tw, fb);
+        let r = coeffs - n;
+        let (ra, rb) = (la.min(r), lb.min(r));
+        let top = b.map(|(b, sb)| (b, sb + lb - rb));
+        let d = self.linear(a, sa + la - ra, top, tw, fb);
+        // `d_k` is the coefficient at `la - ra + lb - rb + k = N + t` for
+        // `k = t + ra + rb - 1 - r`, and `ra + rb >= r + 1` since both are at least 1 and one is
+        // `r`.
+        let high = &d[ra + rb - 1 - r..];
+        debug_assert_eq!(high.len(), r, "the top `r` coefficients");
+        for (x, &h) in v.iter_mut().zip(high) {
+            *x = self.sub(*x, h);
+        }
+        // Within the capacity `coeffs + 1` asked of `convolve`.
+        v.extend_from_slice(high);
+        v
+    }
+
+    /// The cyclic convolution modulo `p` of the words of `a` from `sa` up and those of `b`
+    /// from `sb` up (`b` is `None` for a square of `a`'s) on `n` points, each coefficient
+    /// reduced below `p`, in a vector of capacity at least `room`; each has at most `n` words. `tw`
+    /// as for [`Field::forward`]; `b`'s
+    /// transform is written into `fb`, so that one buffer serves the three primes.
+    #[allow(clippy::too_many_arguments)]
+    fn convolve(
+        &self,
+        a: &BigUint,
+        sa: usize,
+        b: Option<(&BigUint, usize)>,
+        n: usize,
+        room: usize,
+        tw: &[(u64, u64)],
+        fb: &mut Vec<u64>,
+    ) -> Vec<u64> {
+        let load = |x: &BigUint, s: usize, v: &mut Vec<u64>| {
+            v.clear();
+            v.extend(x.iter_u64_digits().skip(s).map(|d| self.reduce(d)));
+            let filled = v.len();
+            debug_assert!(filled <= n, "at most `n` words");
             v.resize(n, 0);
-            self.forward(&mut v, &tw);
-            v
+            self.forward(v, filled, tw);
         };
-        let mut fa = load(a);
+        let mut fa = Vec::with_capacity(room.max(n));
+        load(a, sa, &mut fa);
         // The pointwise product is `a b / 2^64`; the inverse multiplies by `n`; the scale
         // `2^128 / n`, in Montgomery form, undoes both.
         let n_inv = self.p - (self.p - 1) / n as u64;
         let scale = self.to_mont(self.to_mont(n_inv));
         match b {
-            Some(b) => {
-                let fb = load(b);
-                for (x, y) in fa.iter_mut().zip(&fb) {
+            Some((b, sb)) => {
+                load(b, sb, fb);
+                for (x, y) in fa.iter_mut().zip(fb.iter()) {
                     *x = self.mul(self.mul(*x, *y), scale);
                 }
             }
@@ -477,7 +699,7 @@ impl Field {
                 }
             }
         }
-        self.inverse(&mut fa, &tw);
+        self.inverse(&mut fa, tw);
         fa
     }
 
@@ -489,7 +711,7 @@ impl Field {
         let mut v = Vec::with_capacity(n);
         v.extend(x.iter().map(|&d| self.reduce(d)));
         v.resize(n, 0);
-        self.forward(&mut v, tw);
+        self.forward(&mut v, x.len(), tw);
         // As in [`Field::convolve`]: `2^128 / n` in Montgomery form, so that the pointwise
         // product `x s / 2^64` is `x y / n`, and the inverse's factor `n` cancels.
         let n_inv = self.p - (self.p - 1) / n as u64;
@@ -500,13 +722,41 @@ impl Field {
         v
     }
 
+    /// The transform of the words of `x` on `n` points, a power of two, each value below `2p`,
+    /// written into `v`, with `tw` as for [`Field::forward`]. Word `i` goes to point `i mod n`,
+    /// added to those before it there: the transform of `x(z) mod (z^n - 1)`, which is `x`'s
+    /// itself when `n` is at or above its words.
+    fn transform_into(&self, x: &BigUint, n: usize, tw: &[(u64, u64)], v: &mut Vec<u64>) {
+        v.clear();
+        let mut digits = x.iter_u64_digits();
+        v.extend(digits.by_ref().take(n).map(|d| self.reduce(d)));
+        let filled = v.len();
+        v.resize(n, 0);
+        for (i, d) in digits.enumerate() {
+            v[i % n] = self.add(v[i % n], self.reduce(d));
+        }
+        self.forward(v, filled, tw);
+    }
+
+    /// `x 2^128 / n` in Montgomery form for each `x` of `v`, each below `p`: as
+    /// [`Field::spectrum`] scales a transform, so that the pointwise products are those of
+    /// the cyclic product.
+    fn scale(&self, v: &mut [u64], n: usize) {
+        let n_inv = self.p - (self.p - 1) / n as u64;
+        let scale = self.to_mont(self.to_mont(n_inv));
+        for y in v {
+            *y = self.mul(*y, scale);
+        }
+    }
+
     /// The cyclic convolution modulo `p` of the words `x` and the number whose
     /// [`Field::spectrum`] is `s`, on `s.len() >= x.len()` points, each coefficient below `p`.
     fn cyclic(&self, x: &[u64], s: &[u64], tw: &[(u64, u64)]) -> Vec<u64> {
-        let mut v = Vec::with_capacity(s.len());
+        // Two words more than the points, for the carry [`Factor::mul`] appends.
+        let mut v = Vec::with_capacity(s.len() + 2);
         v.extend(x.iter().map(|&d| self.reduce(d)));
         v.resize(s.len(), 0);
-        self.forward(&mut v, tw);
+        self.forward(&mut v, x.len(), tw);
         for (a, b) in v.iter_mut().zip(s) {
             *a = self.mul(*a, *b);
         }
@@ -545,13 +795,14 @@ const GARNER: Garner = {
     }
 };
 
-/// A butterfly whose root is 1 on values below `p2 = 2p`: `(u + v, u - v)`, each in `[0, 2p)`.
+/// `x mod m` for `x < 2m`, `m < 2^63`, `x < 2^64`: `x - m` read as signed is negative exactly
+/// when `x < m` (it is then at least `2^64 - m > 2^63`, and otherwise below `m < 2^63`), and a
+/// test of the sign compiles to a subtraction and a conditional move, two instructions fewer
+/// than a comparison with `m`.
 #[inline]
-fn lazy_butterfly(p2: u64, pair: &mut [u64; 2]) {
-    let [u, v] = *pair;
-    let (s, d) = (u + v, u + p2 - v);
-    pair[0] = if s >= p2 { s - p2 } else { s };
-    pair[1] = if d >= p2 { d - p2 } else { d };
+fn below(x: u64, m: u64) -> u64 {
+    let d = x.wrapping_sub(m);
+    if (d as i64) < 0 { x } else { d }
 }
 
 /// Three primes `c * 2^50 + 1` with a generator each; their product exceeds `2^185`, above
@@ -563,11 +814,46 @@ const FIELDS: [Field; 3] = [
 ];
 
 /// The cost of a product by transforms whose coefficients number `coeffs`, in units of one
-/// word product of [`sparse_mul`]: `TRANSFORM_COST n log2(n)` for `n` points, the constant
-/// measured (see [`TRANSFORM_COST`]).
+/// word product of [`sparse_mul`], as [`Field::linear`] takes it: `TRANSFORM_COST n log2(n)`
+/// for `n` points, the constant measured (see [`TRANSFORM_COST`]), on the power of two of
+/// points at or above the coefficients, or on half as many plus the cost of the top
+/// coefficients' product when that is less (see [`points`]).
 fn transform_cost(coeffs: usize) -> u128 {
-    let n = coeffs.next_power_of_two() as u128;
-    TRANSFORM_COST * n * u128::from(n.trailing_zeros().max(1))
+    let (n, wrap) = points(coeffs.div_ceil(2), coeffs / 2 + 1);
+    let top = match wrap {
+        true => transform_cost(2 * (coeffs - n) - 1),
+        false => 0,
+    };
+    TRANSFORM_COST * points_cost(n) + top
+}
+
+/// `n log2(n)`, at least `n`, the steps of a transform on `n` points.
+fn points_cost(n: usize) -> u128 {
+    let n = n as u128;
+    n * u128::from(n.trailing_zeros().max(1))
+}
+
+/// The points of a product of `la` and `lb` words by [`Field::linear`], and whether it wraps
+/// its top coefficients around: `n`, the power of two at or above the `la + lb - 1`
+/// coefficients, or `n / 2` when that plus the product of the top words (the `r = la + lb -
+/// 1 - n / 2` coefficients above `n / 2` need at most `min(la, r) + min(lb, r) - 1`) costs
+/// less by [`transform_cost`]. The choice is the cheaper of two computed costs, with no size
+/// constant. Both factors must fit in `n / 2` words to wrap: a wider one would have to be
+/// folded by coefficients, and [`spectra`] folds by words.
+fn points(la: usize, lb: usize) -> (usize, bool) {
+    let coeffs = la + lb - 1;
+    let n = coeffs.next_power_of_two();
+    if coeffs <= 2 || n == coeffs || la.max(lb) > n / 2 {
+        return (n, false);
+    }
+    let r = coeffs - n / 2;
+    let top = la.min(r) + lb.min(r) - 1;
+    match TRANSFORM_COST * points_cost(n / 2) + transform_cost(top)
+        < TRANSFORM_COST * points_cost(n)
+    {
+        true => (n / 2, true),
+        false => (n, false),
+    }
 }
 
 /// The cheapest way to multiply a factor of `short` words by one of `long >= short` words by
@@ -647,13 +933,13 @@ pub fn mul(a: &BigUint, b: &BigUint) -> BigUint {
 pub(crate) struct Factor {
     x: BigUint,
     other: usize,
-    spectra: Option<([Vec<u64>; 3], Roots)>,
+    spectra: Option<([Vec<u64>; 3], Rc<Roots>)>,
 }
 
 impl Factor {
     /// `x`, for `uses` products with numbers of at most `other` words.
     pub(crate) fn new(x: BigUint, other: usize, uses: usize) -> Factor {
-        let points = (words(&x) + other - 1).next_power_of_two();
+        let (points, _) = self::points(words(&x), other);
         // Complexity tradeoff: the spectra cost a third of a product's transforms, once, and
         // each product by them then costs `cached_cost` (two of its three transforms, measured
         // as `CACHED_COST`), so they are kept when the computed costs, in the
@@ -661,7 +947,8 @@ impl Factor {
         // cheapest method for dense factors; else `mul` alone, with no memory held. Both give
         // the same products. Kept, they hold three words a point, about six of `x`'s words for
         // each, for as long as the factor lives (COMPLEXITY.md C31, RADIX-depth).
-        let spectra = (uses as f64 * (cached_cost(points) - dense_cost(words(&x), other))
+        let spectra = (uses as f64
+            * (cached_total(points, words(&x), other) - dense_cost(words(&x), other))
             + transform_cost(points) as f64 / 3.0
             < 0.0)
             .then(|| {
@@ -677,12 +964,36 @@ impl Factor {
         let wy = words(y);
         match &self.spectra {
             Some((s, tw))
-                if wy <= self.other && cached_cost(s[0].len()) < dense_cost(wy, words(&self.x)) =>
+                if wy <= self.other
+                    && cached_total(s[0].len(), words(&self.x), wy)
+                        < dense_cost(wy, words(&self.x)) =>
             {
-                // `y x` has at most `words(x) + other - 1` coefficients, within the points, so
-                // the cyclic product wraps nothing: it is the product, with the carry out of
-                // its top word as in `transform_mul`.
-                let (mut out, carry) = cyclic_product(&y.to_u64_digits(), s, tw);
+                // The cyclic product on the points, less the top coefficients above them, which
+                // wrapped around, as in [`Field::linear`]; then the carry out of its top word
+                // as in `transform_mul`.
+                let wx = words(&self.x);
+                let coeffs = wx + wy - 1;
+                let n = s[0].len();
+                let yw = y.to_u64_digits();
+                let mut fb = Vec::new();
+                let [mut r0, r1, r2] = [0, 1, 2].map(|k| {
+                    let mut v = FIELDS[k].cyclic(&yw, &s[k], &tw[k]);
+                    if coeffs > n {
+                        let r = coeffs - n;
+                        let (rx, ry) = (wx.min(r), wy.min(r));
+                        let top = Some((y, wy - ry));
+                        let d = FIELDS[k].linear(&self.x, wx - rx, top, &tw[k], &mut fb);
+                        let high = &d[rx + ry - 1 - r..];
+                        for (x, &h) in v.iter_mut().zip(high) {
+                            *x = FIELDS[k].sub(*x, h);
+                        }
+                        v.extend_from_slice(high);
+                    }
+                    v
+                });
+                let carry = garner(&mut r0, &r1, &r2);
+                drop((r1, r2));
+                let mut out = r0;
                 out.extend([carry as u64, (carry >> 64) as u64]);
                 trim(&mut out);
                 from_words(out)
@@ -698,19 +1009,30 @@ impl Factor {
 }
 
 /// The cost of a product by a [`Factor`]'s spectra on `n` points, per `n log2(n)`, in the
-/// units of [`TRANSFORM_COST`]. Two of the three transforms of a product would make it two
-/// thirds of [`TRANSFORM_COST`], 8; measured on 2026-11-12 at load 50 (RADIX-depth, 20
-/// products, best of five, cycles), it is 11.2 and 10.6 at 2048 and 4096 points and 7.9 and
-/// 8.0 at 8192 and 16,384, against num-bigint's product at 4.9 cycles a unit (from
-/// [`TOOM_COST`]'s 51 cycles per `l s^0.465` at 851 and 1701 words). With 8, products of 851
-/// by 851 words took the spectra, 1.20 times num-bigint's cycles; with 11 they take
-/// num-bigint's, and those of 1701 words and up the spectra (0.86 of num-bigint's cycles at
-/// 1701, 0.58 at 3402). Only which of two equal products is computed depends on it. The unit
-/// tests use 8, so that two uses keep the spectra at small sizes.
+/// units of [`TRANSFORM_COST`]: two of the three transforms of a product, so about two thirds
+/// of it. It was 11 from cycles measured on 2026-11-12 (load 50). Measured again the same day
+/// (RADIX-depth) in instructions, in the test build: 4.89, 4.82, 4.57, 4.54, 4.35, 4.35 and
+/// 4.15 units per `n log2(n)` at 1024 to 65,536 points: 5. Only which of two equal products is
+/// computed depends on it; the unit tests use the same value.
 #[cfg(not(test))]
-const CACHED_COST: u128 = 11;
+const CACHED_COST: u128 = 5;
 #[cfg(test)]
-const CACHED_COST: u128 = 8;
+const CACHED_COST: u128 = 5;
+
+/// The cost of a product of `wx` and `wy` words by spectra on `points` points: the cached
+/// product, plus, when the coefficients pass the points, the product of the top words that
+/// wrapped (see [`Field::linear`]).
+fn cached_total(points: usize, wx: usize, wy: usize) -> f64 {
+    let coeffs = wx + wy - 1;
+    let top = match coeffs > points {
+        true => {
+            let r = coeffs - points;
+            transform_cost(wx.min(r) + wy.min(r) - 1) as f64
+        }
+        false => 0.0,
+    };
+    cached_cost(points) + top
+}
 
 /// The cost of a product by a [`Factor`]'s spectra on `points` points, in the units of
 /// [`TRANSFORM_COST`]: [`CACHED_COST`] `n log2(n)` for `n` points.
@@ -783,29 +1105,24 @@ fn pieces_mul(a: &BigUint, b: &BigUint, piece: usize) -> BigUint {
 fn transform_mul(a: &BigUint, b: &BigUint) -> BigUint {
     let (la, lb) = (words(a), words(b));
     // The product has `la + lb - 1` coefficients and `la + lb` words: the top word is the
-    // last carry.
-    let coeffs = la + lb - 1;
-    let n = coeffs.next_power_of_two();
+    // last carry, pushed into the room [`Field::linear`] leaves.
+    let (n, _) = points(la, lb);
     assert!(n <= 1 << 50, "a product of at most 2^50 words");
     let square = std::ptr::eq(a, b) || a == b;
-    let other = (!square).then_some(b);
-    let [f0, f1, f2] = &FIELDS;
-    // Each residue vector is cut to its coefficients before the next is computed, so the
-    // peak, during the last transform, is two vectors of `coeffs` words and three of `n`.
-    let mut r0 = f0.convolve(a, other, n);
-    r0.truncate(coeffs);
-    r0.shrink_to(coeffs + 1);
-    let mut r1 = f1.convolve(a, other, n);
-    r1.truncate(coeffs);
-    r1.shrink_to_fit();
-    let r2 = f2.convolve(a, other, n);
+    let other = (!square).then_some((b, 0));
+    let tw = roots(n);
+    // `b`'s transform for each prime in turn, in one buffer; the peak, during the last
+    // transform, is four vectors of `n` words (two residues, `a`'s transform and `b`'s), and
+    // the roots, kept by [`roots`] for later products.
+    let mut fb = Vec::with_capacity(if square { 0 } else { n });
+    let [mut r0, r1, r2] = [0, 1, 2].map(|k| FIELDS[k].linear(a, 0, other, &tw[k], &mut fb));
+    drop(fb);
     let carry = garner(&mut r0, &r1, &r2);
     debug_assert!(
         carry >> 64 == 0,
         "the product fits in the words of both factors"
     );
     drop((r1, r2));
-    // Within the capacity `coeffs + 1` kept above.
     r0.push(carry as u64);
     from_words(r0)
 }
@@ -843,7 +1160,64 @@ fn garner(r0: &mut [u64], r1: &[u64], r2: &[u64]) -> u128 {
     carry
 }
 
+/// [`garner`] for coefficients that may be negative, each of absolute value below `P / 2`,
+/// `P = p0 p1 p2`: the residue `v2 = c / (p0 p1)` of a coefficient `c` in `[0, P)` is taken
+/// as `v2 - p2` when it is above `p2 / 2`, which gives `c - P`, the negative coefficient. With
+/// `s = v0 + v1 p0 < p0 p1 < 2^125` and `|v2| < 2^62`, `s + v2 p01_lo` lies within `2^127`
+/// and `v2 p01_hi` within `2^122`, and the carry stays within `2^123`. The words written over
+/// `r0` and the carry returned are the sum's two's complement.
+fn garner_signed(r0: &mut [u64], r1: &[u64], r2: &[u64]) -> i128 {
+    let [f0, f1, f2] = &FIELDS;
+    let Garner {
+        inv01,
+        inv012,
+        p0_in_2,
+        p01,
+    } = GARNER;
+    let (p01_lo, p01_hi) = (i128::from(p01 as u64), i128::from((p01 >> 64) as u64));
+    let mut carry = 0i128;
+    for i in 0..r0.len() {
+        let v0 = r0[i];
+        let v1 = f1.mul(f1.sub(r1[i], f1.reduce(v0)), inv01);
+        let low = f2.add(f2.reduce(v0), f2.mul(v1, p0_in_2));
+        let v2 = f2.mul(f2.sub(r2[i], low), inv012);
+        let v2 = match v2 > f2.p / 2 {
+            true => i128::from(v2) - i128::from(f2.p),
+            false => i128::from(v2),
+        };
+        let s = u128::from(v0) + u128::from(v1) * u128::from(f0.p);
+        let x = s as i128 + v2 * p01_lo;
+        let t = u128::from(x as u64) + u128::from(carry as u64);
+        r0[i] = t as u64;
+        carry = (x >> 64) + v2 * p01_hi + (carry >> 64) + (t >> 64) as i128;
+    }
+    carry
+}
+
+/// The number whose two's complement is the words `w`, lowest first, followed by those of
+/// `carry`.
+fn signed_from_words(mut w: Vec<u64>, carry: i128) -> BigInt {
+    w.extend([carry as u64, (carry >> 64) as u64]);
+    if carry >= 0 {
+        trim(&mut w);
+        return BigInt::from_biguint(Sign::Plus, from_words(w));
+    }
+    // The magnitude is the two's complement: the words inverted, plus one.
+    let mut one = true;
+    for d in &mut w {
+        (*d, one) = (!*d).overflowing_add(u64::from(one));
+    }
+    trim(&mut w);
+    BigInt::from_biguint(Sign::Minus, from_words(w))
+}
+
 /// The number whose 64-bit words, lowest first, are `w`.
+///
+/// num-bigint takes only 32-bit digits, which it copies into its own vector, so the halves
+/// go through a vector made and dropped here. A buffer kept for the thread would save that
+/// allocation but stay live, as wide as the widest number made, after the operation ended,
+/// counted against the memory limit (test
+/// `a_wide_number_modulo_a_wide_one_answers_when_its_peak_is_given`).
 fn from_words(w: Vec<u64>) -> BigUint {
     let halves: Vec<u32> = w
         .iter()
@@ -1309,21 +1683,183 @@ impl Mat {
     fn times(&self, other: &Mat) -> Mat {
         let [a, b, c, d] = &self.0;
         let [e, f, g, h] = &other.0;
-        Mat([
-            mul_int(a, e) + mul_int(b, g),
-            mul_int(a, f) + mul_int(b, h),
-            mul_int(c, e) + mul_int(d, g),
-            mul_int(c, f) + mul_int(d, h),
-        ])
+        let [w, x, y, z] = matrix_product([a, b, c, d], &[e, f, g, h], None)
+            .try_into()
+            .expect("a 2x2 product");
+        Mat([w, x, y, z])
     }
 
     /// `self * (a, b) / 2^2j`, exact.
     fn apply(&self, a: &BigInt, b: &BigInt, j: u64) -> (BigInt, BigInt) {
         let [m00, m01, m10, m11] = &self.0;
-        let c = (mul_int(m00, a) + mul_int(m01, b)) >> (2 * j);
-        let d = (mul_int(m10, a) + mul_int(m11, b)) >> (2 * j);
+        let [c, d] = matrix_product([m00, m01, m10, m11], &[a, b], Some(2 * j))
+            .try_into()
+            .expect("a 2x1 product");
         (c, d)
     }
+}
+
+/// `l r` for the 2x2 matrix `l` and the 2 x `c` matrix `r`, both by rows (`r` has `2 c`
+/// entries), its `2 c` entries by rows.
+///
+/// Each entry is a sum of two products, and each factor is in two products. By transforms,
+/// on points enough for the widest product, each nonzero factor is transformed once and each
+/// sum is formed among the transforms and transformed back once: `4 + 2 c` transforms forward
+/// and `2 c` back, where the products one by one take three each, `12 c`. That is 8 in place
+/// of 12 for `c = 1` ([`Mat::apply`]) and 12 in place of 24 for `c = 2` ([`Mat::times`]). It is
+/// taken when its cost, `TRANSFORM_COST / 3` [`points_cost`] a transform (a third of a
+/// product's), is less than the sum of the costs [`mul`] computes for the products, and every
+/// product is above `MUL_LEAF`, where `mul` takes num-bigint's with no cost computed; else the
+/// products are taken one by one by [`mul_int`]. Both give the same entries.
+///
+/// With `shift` `Some(s)`, each entry, known to be a multiple of `2^s`, is divided by it, and
+/// the points are planned for the quotient, not the product: the transforms give the entry
+/// modulo `2^(64 n) - 1`, enough to find a quotient of fewer than `64 n - 2` bits (see
+/// [`unrotate`]). [`Mat::apply`] after `j` steps has entries below `2^(2 j)` and the shift
+/// `2 j`, so for numbers of `b` bits the quotients have about `b` bits where the products have
+/// `b + 2 j`: in [`half`], with `b` about `2 k` and `2 j` about `k`, the points are planned for
+/// about `2 k` bits in place of `3 k`.
+fn matrix_product(l: [&BigInt; 4], r: &[&BigInt], shift: Option<u64>) -> Vec<BigInt> {
+    let c = r.len() / 2;
+    let width = |x: &BigInt| x.magnitude().iter_u64_digits().len();
+    let terms = || {
+        (0..2 * c).flat_map(move |out| {
+            let (i, j) = (out / c, out % c);
+            [(l[2 * i], r[j]), (l[2 * i + 1], r[c + j])]
+        })
+    };
+    let (mut separate, mut widest, mut leaf) = (0.0, 0, false);
+    for (x, y) in terms().filter(|(x, y)| !x.is_zero() && !y.is_zero()) {
+        let (wx, wy) = (width(x), width(y));
+        leaf |= wx.min(wy) <= MUL_LEAF;
+        separate += dense_cost(wx, wy);
+        widest = widest.max(wx + wy - 1);
+    }
+    let factors = l.iter().chain(r).filter(|x| !x.is_zero()).count();
+    let n = match shift {
+        None => widest.next_power_of_two(),
+        // Each entry `e = 2^s q`, `|q| < 2^(bl + br + 1 - s)` for factors below `2^bl` and
+        // `2^br`; with `64 n >= bl + br + 3 - s` its residue modulo `2^(64 n) - 1` gives `q`
+        // (see [`unrotate`]). A factor of more than `n` words is folded into `n` (see
+        // [`Field::transform_into`]); with `n` at least a quarter of the widest, each point
+        // holds at most four words, and each coefficient, a sum of at most `2 n` products of
+        // two points, is below `2 n 16 2^128 <= 2^183` for `n <= 2^50`: within `P / 2`, as
+        // [`garner_signed`] needs.
+        Some(s) => {
+            let bits = |x: &[&BigInt]| x.iter().map(|x| x.bits()).max().unwrap_or(0);
+            let q = (bits(&l) + bits(r) + 3).saturating_sub(s).div_ceil(64) as usize;
+            let wide = l.iter().chain(r).map(|x| width(x)).max().unwrap_or(0);
+            q.max(wide.div_ceil(4)).next_power_of_two()
+        }
+    };
+    let shared = ((factors + 2 * c) as u128 * TRANSFORM_COST * points_cost(n)) as f64 / 3.0;
+    if leaf || widest == 0 || shared >= separate {
+        return (0..2 * c)
+            .map(|out| {
+                let (i, j) = (out / c, out % c);
+                (mul_int(l[2 * i], r[j]) + mul_int(l[2 * i + 1], r[c + j])) >> shift.unwrap_or(0)
+            })
+            .collect();
+    }
+    #[cfg(test)]
+    SHARED_PRODUCTS.with(|v| {
+        let folded = l.iter().chain(r).any(|x| width(x) > n);
+        let (shared, folds) = v.get();
+        v.set((shared + 1, folds + u32::from(folded)));
+    });
+    let tw = roots(n);
+    // For each prime, the left factors' transforms, scaled, the right factors' transforms, in
+    // buffers kept for the three primes, and each entry's sum of pointwise products, signed,
+    // transformed back, with room for the two words of the carry.
+    let mut residues: Vec<[Vec<u64>; 3]> = (0..2 * c).map(|_| Default::default()).collect();
+    let mut ls: Vec<Vec<u64>> = (0..4).map(|_| Vec::with_capacity(n)).collect();
+    let mut rs: Vec<Vec<u64>> = (0..2 * c).map(|_| Vec::with_capacity(n)).collect();
+    for (k, field) in FIELDS.iter().enumerate() {
+        for (x, v) in l.iter().zip(&mut ls).filter(|(x, _)| !x.is_zero()) {
+            field.transform_into(x.magnitude(), n, &tw[k], v);
+            field.scale(v, n);
+        }
+        for (y, v) in r.iter().zip(&mut rs).filter(|(y, _)| !y.is_zero()) {
+            field.transform_into(y.magnitude(), n, &tw[k], v);
+        }
+        for (out, slot) in residues.iter_mut().enumerate() {
+            let (i, j) = (out / c, out % c);
+            let mut acc = Vec::with_capacity(n + 2);
+            acc.resize(n, 0);
+            for (t, (x, y)) in [(2 * i, j), (2 * i + 1, c + j)].into_iter().enumerate() {
+                let (lx, ry) = (l[2 * i + t], r[y]);
+                if lx.is_zero() || ry.is_zero() {
+                    continue;
+                }
+                let plus = lx.is_negative() == ry.is_negative();
+                for ((a, &u), &v) in acc.iter_mut().zip(&ls[x]).zip(&rs[y]) {
+                    let p = field.mul(u, v);
+                    *a = match plus {
+                        true => field.add(*a, p),
+                        false => field.sub(*a, p),
+                    };
+                }
+            }
+            field.inverse(&mut acc, &tw[k]);
+            slot[k] = acc;
+        }
+    }
+    residues
+        .into_iter()
+        .map(|[mut r0, r1, r2]| {
+            let carry = garner_signed(&mut r0, &r1, &r2);
+            drop((r1, r2));
+            match shift {
+                None => signed_from_words(r0, carry),
+                Some(s) => unrotate(r0, carry, s),
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The products [`matrix_product`] took by shared transforms, and how many of them folded
+    /// a factor.
+    static SHARED_PRODUCTS: std::cell::Cell<(u32, u32)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+/// `q` from the words `w` (two's complement, `n` of them) and the signed `carry` of
+/// `v = w + carry 2^(64 n)`, where `v = 2^s q mod M`, `M = 2^(64 n) - 1`, and `|q| < 2^(64 n - 2)`.
+/// As `2^(64 n)` is 1 modulo `M`, `v` is `w + carry` there, and `2^s` turns the words round by
+/// `s` bits, so turning them back by `s` bits gives `q mod M`, read as negative when its top
+/// bit is set: `q - M`, whose magnitude is the complement of the words.
+fn unrotate(mut w: Vec<u64>, carry: i128, s: u64) -> BigInt {
+    let n = w.len();
+    match carry >= 0 {
+        true => add_around(&mut w, carry as u128),
+        false => {
+            let c = carry.unsigned_abs();
+            // `w - c + 2^(64 n) >= 1` when it borrows, `c < 2^123` being below `2^(64 n)`;
+            // `n` is above `MUL_LEAF`, so at least the two words of `c`.
+            if sub_words(&mut w, &[c as u64, (c >> 64) as u64]) {
+                sub_at(&mut w, 0, 1);
+            }
+        }
+    }
+    let (words, bits) = ((s / 64) as usize % n, (s % 64) as u32);
+    w.rotate_left(words);
+    if bits != 0 {
+        let low = w[0] << (64 - bits);
+        for i in 0..n - 1 {
+            w[i] = (w[i] >> bits) | (w[i + 1] << (64 - bits));
+        }
+        w[n - 1] = (w[n - 1] >> bits) | low;
+    }
+    let sign = match w[n - 1] >> 63 {
+        0 => Sign::Plus,
+        _ => {
+            w.iter_mut().for_each(|d| *d = !*d);
+            Sign::Minus
+        }
+    };
+    trim(&mut w);
+    BigInt::from_biguint(sign, from_words(w))
 }
 
 /// `x` modulo `2^w`, centered: in `[-2^(w-1), 2^(w-1))`.
@@ -1713,6 +2249,7 @@ fn gcd_using(a: &BigUint, b: &BigUint, handoff: bool) -> BigUint {
     }
     let mut x = BigInt::from(a >> za);
     let mut y = BigInt::from(b >> zb) - &x;
+    let _hold = HoldRoots::open();
     // Complexity tradeoff: the half gcd costs O(M(n) log n) = O(n log^2 n), a log factor above
     // a product, accepted because no faster gcd is known: the subquadratic gcds (Schönhage 1971;
     // the binary recursive gcd of Stehlé and Zimmermann, ANTS 2004, used here; Möller 2008)
@@ -1941,7 +2478,7 @@ pub(crate) struct Divisor<'a> {
 enum By {
     Leaf,
     Sparse,
-    Reciprocal(Box<Level>, Roots),
+    Reciprocal(Box<Level>, Rc<Roots>),
 }
 
 /// The points of the transforms a [`Divisor`] of `d` keeps, the most of its [`level_points`],
@@ -2062,9 +2599,77 @@ impl<'a> Divisor<'a> {
 /// One table of roots for each prime of [`FIELDS`] (see [`Field::twiddles`]).
 type Roots = [Vec<(u64, u64)>; 3];
 
+/// The roots [`roots`] built last on a thread, and the scopes that keep them.
+struct Kept {
+    /// The table, while something holds it: a product while it runs, a [`Factor`] or a
+    /// printer's level that keeps spectra, or `held`. A table serves every smaller power of
+    /// two (see [`Field::twiddles`]), so while it is held it is not built again. Only a weak
+    /// reference is kept for the thread: a table of three words a point of the widest
+    /// transform, held for the thread's life, would stay counted against the memory limit
+    /// after the operation that built it ended (and failed
+    /// `a_wide_number_modulo_a_wide_one_answers_when_its_peak_is_given`).
+    table: Weak<Roots>,
+    /// The table, held while `holds` is above zero.
+    held: Option<Rc<Roots>>,
+    /// How many [`HoldRoots`] scopes are open on the thread.
+    holds: u32,
+}
+
+thread_local! {
+    static ROOTS: std::cell::RefCell<Kept> = const {
+        std::cell::RefCell::new(Kept { table: Weak::new(), held: None, holds: 0 })
+    };
+}
+
+/// While it lives, [`roots`] keeps the table it built last, so that products run one after
+/// another, as the gcd's matrix products are, share one table instead of each building its
+/// own. Opened for one operation and dropped at its end, which frees the table once nothing
+/// else holds it. Measured, `reading_a_rat_of_two_wide_parts_scales` at 640,000 digits:
+/// 7,620 M instructions without it, 7,558 M with it.
+struct HoldRoots;
+
+impl HoldRoots {
+    fn open() -> HoldRoots {
+        ROOTS.with(|kept| kept.borrow_mut().holds += 1);
+        HoldRoots
+    }
+}
+
+impl Drop for HoldRoots {
+    fn drop(&mut self) {
+        ROOTS.with(|kept| {
+            let mut kept = kept.borrow_mut();
+            kept.holds -= 1;
+            if kept.holds == 0 {
+                kept.held = None;
+            }
+        });
+    }
+}
+
 /// The roots of [`FIELDS`] for transforms of up to `n` points, a power of two: those of two
 /// points for `n = 1`, whose transform is itself but whose table [`Field::forward`] checks.
-fn roots(n: usize) -> Roots {
+/// The table [`ROOTS`] refers to when it is still held and wide enough, else a new one,
+/// which an open [`HoldRoots`] keeps.
+fn roots(n: usize) -> Rc<Roots> {
+    ROOTS.with(|kept| {
+        let mut kept = kept.borrow_mut();
+        match kept.table.upgrade() {
+            Some(tw) if 2 * tw[0].len() >= n => tw,
+            _ => {
+                let tw = Rc::new(roots_of(n));
+                kept.table = Rc::downgrade(&tw);
+                if kept.holds > 0 {
+                    kept.held = Some(Rc::clone(&tw));
+                }
+                tw
+            }
+        }
+    })
+}
+
+/// The roots of [`FIELDS`] for transforms of exactly `n.max(2)` points, built.
+fn roots_of(n: usize) -> Roots {
     FIELDS.each_ref().map(|f| f.twiddles(n.max(2)))
 }
 
@@ -2975,6 +3580,79 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// [`matrix_product`] equals num-bigint's products, by shared transforms (above
+    /// `MUL_LEAF`, here 48 words) and one by one: 2x2 by 2x2 and 2x2 by 2x1, signed, with zero
+    /// entries, edge words and unbalanced widths, and with a shift, from entries made
+    /// divisible by `2^s` and from the half gcd's own matrices, which divide factors wider
+    /// than the result, so that factors are folded.
+    #[test]
+    fn matrix_products_agree_with_num_bigint() {
+        SHARED_PRODUCTS.with(|v| v.set((0, 0)));
+        let plain = |l: &[BigInt; 4], r: &[BigInt]| -> Vec<BigInt> {
+            let c = r.len() / 2;
+            (0..2 * c)
+                .map(|out| {
+                    let (i, j) = (out / c, out % c);
+                    &l[2 * i] * &r[j] + &l[2 * i + 1] * &r[c + j]
+                })
+                .collect()
+        };
+        let pick = |s: u64, w: usize| -> BigInt {
+            let x = match s % 3 {
+                0 => random(s, w),
+                1 => edgy(s, w),
+                _ => forms(w, s)[(s / 3 % 4) as usize].clone(),
+            };
+            match (s >> 2) & 1 {
+                1 => -BigInt::from(x),
+                _ => BigInt::from(x),
+            }
+        };
+        for &(wl, wr) in &[
+            (49usize, 49usize),
+            (64, 64),
+            (60, 200),
+            (200, 60),
+            (50, 700),
+            (300, 301),
+        ] {
+            for seed in 0..6u64 {
+                let mut l: [BigInt; 4] = std::array::from_fn(|i| pick(seed * 8 + i as u64, wl));
+                let mut r: [BigInt; 4] = std::array::from_fn(|i| pick(seed * 8 + 4 + i as u64, wr));
+                if seed == 5 {
+                    (l[1], r[2]) = (BigInt::zero(), BigInt::zero());
+                }
+                let (lr, rr) = (l.each_ref(), r.each_ref());
+                assert_eq!(
+                    matrix_product(lr, &rr, None),
+                    plain(&l, &r),
+                    "{wl} by {wr} words"
+                );
+                for s in [0u64, 1, 63, 64, 1000, 64 * wl as u64 + 5] {
+                    let ls = l.each_ref().map(|x| x << s);
+                    let got = matrix_product(ls.each_ref(), &[&r[0], &r[1]], Some(s));
+                    assert_eq!(got, plain(&l, &r[..2]), "{wl} by {wr} words, shift {s}");
+                }
+            }
+        }
+        // The half gcd's matrices, applied to the whole of numbers wider than their residues.
+        for (words, seed) in [(120usize, 1u64), (400, 2), (700, 3)] {
+            let a = BigInt::from(random(seed, words) | BigUint::one());
+            let b = BigInt::from(random(seed + 10, words) << 1u32);
+            for k in [64 * words as u64 / 4, 64 * words as u64 / 2] {
+                let (j, m) = half(&a, &b, k);
+                let [m00, m01, m10, m11] = &m.0;
+                let want = (
+                    (m00 * &a + m01 * &b) >> (2 * j),
+                    (m10 * &a + m11 * &b) >> (2 * j),
+                );
+                assert_eq!(m.apply(&a, &b, j), want, "{words} words, k = {k}");
+            }
+        }
+        let (shared, folded) = SHARED_PRODUCTS.with(|v| v.get());
+        assert!(shared > 0 && folded > 0, "{shared} shared, {folded} folded");
     }
 
     #[test]

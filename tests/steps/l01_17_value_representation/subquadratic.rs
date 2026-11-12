@@ -131,10 +131,9 @@ fn dividing_a_wide_number_scales() {
 
 /// `(a c) / (b c)` reduced to lowest terms, `a`, `b` and `c` of n/2 words: the half gcd, O(n
 /// log^2 n), and two exact quotients by it, held to that order's limit (COMPLEXITY.md C31). It
-/// still fails, 16.4 times the work against 13.3 (2026-11-09): the half gcd recurses
-/// `log2(n / GCD_LEAF)` deep, 4 levels at 8,192 words and 7 at 65,536, not `log2 n`.
+/// passes, 11.4 times the work against 13.3 (2026-11-12, RADIX-depth); it failed at 16.4
+/// (2026-11-09), as the transforms were dear.
 #[test]
-#[ignore = "RADIX-depth: 16.1 times the work at 8,192 and 65,536 words, over the n log² n limit 13.3 since SCALE-ratio (2026-11-12); open"]
 fn a_gcd_of_wide_numbers_scales() {
     let n = 1 << 13;
     let inputs = built(n, |m| {
