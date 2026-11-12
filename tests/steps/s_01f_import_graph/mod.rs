@@ -4,7 +4,7 @@
 
 use std::collections::HashSet;
 
-use zed_tests::scaling::check;
+use zed_tests::scaling::{check, check_order};
 use zed_tools::imports::{self, Graph};
 
 use zed_tests::step_helpers::m0_03_grammar_tools::{Dir, tool};
@@ -675,5 +675,229 @@ fn typing_the_calls_scales_with_the_number_of_files() {
         let found = g.cycles();
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].len(), m);
+    });
+}
+
+#[test]
+fn a_method_open_to_a_module_inside_the_calling_file_reaches_only_the_calls_in_it() {
+    // `go` is open only to `user::a`, a module written inside `user.rs`, so of the two untyped
+    // calls only the one in `a` may call it: the import is cited at that call's line, though the
+    // other call comes first, and one call imports a file.
+    let g = graph(&[
+        ("lib.rs", "mod t;\nmod m;\nmod user;\n"),
+        ("t.rs", "pub struct T;\n"),
+        (
+            "m.rs",
+            "use crate::t::T;\nimpl T {\n    pub(in crate::user::a) fn go(&self) {}\n}\n",
+        ),
+        (
+            "user.rs",
+            "use crate::t::T;\npub fn f(_: &T) {\n    let z = other::make();\n    z.go();\n}\n\
+             mod a {\n    pub fn g() {\n        let z = other::make();\n        z.go();\n    }\n}\n",
+        ),
+    ]);
+    let cites: Vec<String> = g.imports[g.files.iter().position(|f| f == "user.rs").unwrap()]
+        .iter()
+        .map(|(t, c)| format!("{} {}:{}", g.files[*t], c.line, c.path))
+        .collect();
+    assert_eq!(cites, ["t.rs 1:crate::t::T", "m.rs 9:?.go"]);
+    assert_eq!(g.unknown_calls, 1);
+    // Open to `user` itself, the method is open to both calls, and the import is cited at the
+    // first; two calls of other names on one line are cited at the earlier of them.
+    let g = graph(&[
+        ("lib.rs", "mod t;\nmod m;\nmod user;\n"),
+        ("t.rs", "pub struct T;\n"),
+        (
+            "m.rs",
+            "use crate::t::T;\nimpl T {\n    pub(crate) fn go(&self) {}\n    \
+             pub(in crate::user) fn run(&self) {}\n}\n",
+        ),
+        (
+            "user.rs",
+            "use crate::t::T;\npub fn f(_: &T) {\n    let z = other::make();\n    \
+             z.run(); z.go();\n}\nmod a {\n    pub fn g() {\n        let z = other::make();\n        \
+             z.go();\n    }\n}\n",
+        ),
+    ]);
+    let cites: Vec<String> = g.imports[g.files.iter().position(|f| f == "user.rs").unwrap()]
+        .iter()
+        .map(|(t, c)| format!("{} {}:{}", g.files[*t], c.line, c.path))
+        .collect();
+    assert_eq!(cites, ["t.rs 1:crate::t::T", "m.rs 4:?.run"]);
+    assert_eq!(g.unknown_calls, 3);
+    // Methods open to the crate, to `user` and to `other`, written in three files, and in
+    // `m1.rs` a second one open to `user`, inside the module the first is open to: `user.rs`
+    // imports `m1.rs` once and `m2.rs`, never `m3.rs`.
+    let g = graph(&[
+        (
+            "lib.rs",
+            "mod t;\nmod m1;\nmod m2;\nmod m3;\nmod other;\nmod user;\n",
+        ),
+        ("t.rs", "pub struct T;\npub struct U;\n"),
+        (
+            "m1.rs",
+            "use crate::t::{T, U};\nimpl T {\n    pub(crate) fn go(&self) {}\n}\n\
+             mod inner {\n    impl crate::t::U {\n        pub(in crate::user) fn go(&self) {}\n    \
+             }\n}\nimpl U {\n    pub(crate) fn go(&self) {}\n}\n",
+        ),
+        (
+            "m2.rs",
+            "use crate::t::U;\nimpl U {\n    pub(in crate::user) fn go(&self) {}\n}\n",
+        ),
+        (
+            "m3.rs",
+            "use crate::t::T;\nimpl T {\n    pub(in crate::other) fn go(&self) {}\n}\n",
+        ),
+        ("other.rs", "pub fn f() {}\n"),
+        (
+            "user.rs",
+            "use crate::t::T;\npub fn f(_: &T) {\n    let z = other::make();\n    z.go();\n}\n",
+        ),
+    ]);
+    let from_user: Vec<String> = edges(&g)
+        .into_iter()
+        .filter(|e| e.starts_with("user.rs"))
+        .collect();
+    assert_eq!(
+        from_user,
+        ["user.rs -> t.rs", "user.rs -> m1.rs", "user.rs -> m2.rs"]
+    );
+    assert_eq!(g.unknown_calls, 1);
+}
+
+/// A crate of `k` types in `t.rs`, each with its method `go` written apart in `m{i}.rs`, open to
+/// the crate when `open`, else to `m{i}.rs` alone, and a file `user.rs` that names `T0` and calls
+/// `go` `k` times on values the tool does not type.
+fn many_calls(k: usize, open: bool) -> Vec<(String, String)> {
+    let vis = if open { "pub " } else { "" };
+    let mut files = Vec::new();
+    let types: String = (0..k).map(|i| format!("pub struct T{i};\n")).collect();
+    files.push(("t.rs".to_string(), types));
+    for i in 0..k {
+        files.push((
+            format!("m{i}.rs"),
+            format!("use crate::t::T{i};\nimpl T{i} {{\n    {vis}fn go(&self) {{}}\n}}\n"),
+        ));
+    }
+    let calls: String = (0..k).map(|_| "    z.go();\n").collect();
+    files.push((
+        "user.rs".to_string(),
+        format!("use crate::t::T0;\npub fn f(_: &T0) {{\n    let z = other::make();\n{calls}}}\n"),
+    ));
+    let lib: String = std::iter::once("mod t;\nmod user;\n".to_string())
+        .chain((0..k).map(|i| format!("mod m{i};\n")))
+        .collect();
+    files.push(("lib.rs".to_string(), lib));
+    files.sort();
+    files
+}
+
+/// A crate of `k` types in `t.rs`, each with a private method `go` written apart in its own
+/// module `h{i}` inside `m.rs`, and a file `user.rs` that names `T0` and calls `go` `k` times on
+/// values the tool does not type, none of which may call any of them.
+fn many_hidden(k: usize) -> Vec<(String, String)> {
+    let types: String = (0..k).map(|i| format!("pub struct T{i};\n")).collect();
+    let hidden: String = (0..k)
+        .map(|i| format!("mod h{i} {{\n    use crate::t::T{i};\n    impl T{i} {{\n        fn go(&self) {{}}\n    }}\n}}\n"))
+        .collect();
+    let calls: String = (0..k).map(|_| "    z.go();\n").collect();
+    let mut files = vec![
+        (
+            "lib.rs".to_string(),
+            "mod t;\nmod m;\nmod user;\n".to_string(),
+        ),
+        ("m.rs".to_string(), hidden),
+        ("t.rs".to_string(), types),
+        (
+            "user.rs".to_string(),
+            format!(
+                "use crate::t::T0;\npub fn f(_: &T0) {{\n    let z = other::make();\n{calls}}}\n"
+            ),
+        ),
+    ];
+    files.sort();
+    files
+}
+
+#[test]
+fn many_calls_of_a_name_cost_no_more_than_their_methods() {
+    // k calls of `go` in one file meet k methods of `go` through `t.rs`. Taken once for the pair
+    // of file and name, they cost O(k log k), not one walk over the k methods per call (k^2),
+    // whether the methods are open to the calls or not.
+    let n = 200;
+    let inputs = [many_calls(n, true), many_calls(8 * n, true)];
+    check("imports, by many untyped calls of one name", n, |m| {
+        let files = inputs
+            .iter()
+            .find(|f| f.len() == m + 3)
+            .expect("a size that was built");
+        let g = Graph::of(files).expect("the crate's graph");
+        assert_eq!(g.unknown_calls, m);
+        assert_eq!(g.imports.iter().map(Vec::len).sum::<usize>(), 2 * m + 1);
+    });
+    // Each hidden method costs the k^2 walk one check of a range, cheap beside reading its
+    // lines, so the walk shows in the ratio only from k = 600 on (14.1 times at 600 and 4800).
+    let n = 600;
+    let inputs = [many_hidden(n), many_hidden(8 * n)];
+    check("imports, by many untyped calls of hidden methods", n, |m| {
+        let g = Graph::of(&inputs[usize::from(m != n)]).expect("the crate's graph");
+        assert_eq!(g.unknown_calls, 0);
+    });
+    // Private methods in files of their own: no import either.
+    let g = Graph::of(&many_calls(3, false)).expect("the crate's graph");
+    assert_eq!(g.unknown_calls, 0);
+}
+
+/// A crate of `s` files `c{i}.rs` that each import the `s` files `d{k}.rs` and call each of `s`
+/// methods `n{j}` on a value the tool does not type, and of `s` types `E{k}`, in `e{k}.rs`, each
+/// with all the methods `n{j}`, written apart in `e.rs`. No file of a type with a method `n{j}`
+/// is imported by a caller, so no call imports a file (the graph of callers, type files and names
+/// has no triangle), but each of the `s^2` pairs of caller and name meets `s` type files on each
+/// side of the join: `s^3` = `n^1.5` steps for an input of `n` = `s^2` lines.
+fn no_triangle(s: usize) -> Vec<(String, String)> {
+    let mut files = Vec::new();
+    let uses: String = (0..s)
+        .map(|k| format!("use crate::d{k}::D{k};\n"))
+        .collect();
+    let calls: String = (0..s).map(|j| format!("    z.n{j}();\n")).collect();
+    for i in 0..s {
+        files.push((
+            format!("c{i}.rs"),
+            format!("{uses}pub fn f(_: &D0) {{\n    let z = other::make();\n{calls}}}\n"),
+        ));
+        files.push((format!("d{i}.rs"), format!("pub struct D{i};\n")));
+        files.push((format!("e{i}.rs"), format!("pub struct E{i};\n")));
+    }
+    let methods: String = (0..s)
+        .map(|j| format!("    pub fn n{j}(&self) {{}}\n"))
+        .collect();
+    let impls: String = (0..s)
+        .map(|k| format!("impl crate::e{k}::E{k} {{\n{methods}}}\n"))
+        .collect();
+    files.push(("e.rs".to_string(), impls));
+    let lib: String = std::iter::once("mod e;\n".to_string())
+        .chain((0..s).map(|i| format!("mod c{i};\nmod d{i};\nmod e{i};\n")))
+        .collect();
+    files.push(("lib.rs".to_string(), lib));
+    files.sort();
+    files
+}
+
+#[test]
+fn untyped_calls_without_a_triangle_scale_at_the_proven_bound() {
+    // The join of the pairs of caller and name with the type files costs p √p for p pairs,
+    // imports and type files, and no method is near-linear unless triangles can be found in
+    // near-linear time (COMPLEXITY.md F103). At `s` and `8s` the input grows 64 times and the
+    // work by at most 8^3 = 512, held to n^3 log n in `s`, that is n^1.5 log n in the input.
+    let s = 24;
+    let inputs = [no_triangle(s), no_triangle(8 * s)];
+    check_order("imports, by untyped calls with no triangle", s, 3, |m| {
+        let files = inputs
+            .iter()
+            .find(|f| f.len() == 3 * m + 2)
+            .expect("a size that was built");
+        let g = Graph::of(files).expect("the crate's graph");
+        assert_eq!(g.unknown_calls, 0);
+        assert_eq!(g.imports.iter().map(Vec::len).sum::<usize>(), m * m + m);
     });
 }

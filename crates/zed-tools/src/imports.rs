@@ -39,8 +39,10 @@
 //! Sorting each file's imports, for the report and the citations, makes the whole
 //! O(n + e log e) (COMPLEXITY F103), but for the calls whose receiver is not typed: each pair of
 //! a file and a method name they call is joined with the type files of the methods of that name
-//! once, from the smaller side, and that join has no bound below the square root of n per pair
-//! (`untyped_imports`).
+//! once, from the smaller side, at most O(p √p) for p pairs, imports and type files. No
+//! near-linear method exists unless a triangle can be found in near-linear time, since whether
+//! any such call imports a file is whether a graph has a triangle (`untyped_imports`,
+//! COMPLEXITY F103).
 
 mod lex;
 
@@ -1628,8 +1630,14 @@ impl<'a> Builder<'a> {
                     .map(|(here, name, line)| (file, here, name, line)),
             );
         }
-        let (drawn, unknown) =
-            untyped_imports(&found, self.files.len(), &untyped, (&apart, &homes), &span);
+        let (drawn, unknown) = untyped_imports(
+            &found,
+            self.files.len(),
+            &self.modules,
+            &untyped,
+            (&apart, &homes),
+            &span,
+        );
         for (from, to, line, name) in drawn {
             found.add(from, to, line, || format!("?.{name}"));
         }
@@ -1766,13 +1774,17 @@ type Calls<'a> = HashMap<&'a str, Vec<(usize, usize)>>;
 /// the file it is written in and the module its visibility opens it to.
 type Apart<'a> = HashMap<(&'a str, usize), Vec<(usize, usize)>>;
 
+/// The methods open to a module written inline in a file, by name, type file and that file, each
+/// with the file it is written in and that module.
+type Inside<'a> = HashMap<(&'a str, usize, usize), Vec<(usize, usize)>>;
+
 /// The imports of the calls whose receiver is not typed, each as the calling file, the file of
 /// the method, the line and the method's name, and the number of calls that import a file.
 /// `untyped` holds the calls, each with its file, the number of its module in the module tree,
-/// its name and its line; `found` the imports
-/// drawn from paths and typed calls; `apart` and `homes` the methods written apart from their
-/// types, by name and type file, and the type files of each name; `span` the span of each module
-/// in the module tree (`Builder::spans`).
+/// its name and its line; `found` the imports drawn from paths and typed calls; `apart` and
+/// `homes` the methods written apart from their types, by name and type file, and the type files
+/// of each name; `modules` the module tree, and `span` the span of each module in it
+/// (`Builder::spans`).
 ///
 /// A call of `name` in file `c` imports the file `f` of a method `name` written apart from its
 /// type, and open to the call's module, only when `c` imports the file `d` of that type by a path
@@ -1780,6 +1792,17 @@ type Apart<'a> = HashMap<(&'a str, usize), Vec<(usize, usize)>>;
 /// or something else of its file, in the code this tool reads. The name alone is no import:
 /// `stack.is_empty()` on a `Vec` in a file that imports nothing of `types.rs` does not import the
 /// file where `Type::is_empty` is written.
+///
+/// The calls are taken by pair of calling file and name, each pair once. The pair's type files
+/// `d` are found from the smaller side, the imports of `c` or the type files of `name`, one hash
+/// lookup each. A call's module is `c`'s own module or a module written inline in `c`, so a
+/// method of `name` and `d` is open to every call of the pair when the module it is open to holds
+/// `c`'s own module, which one binary search finds with the modules around it (`Opens`); and to
+/// only some of the calls when that module is written inline in `c`: those methods are kept by
+/// file and only this pair visits them. Each method open to a call draws one import for the pair,
+/// cited at the earliest call it is open to (a range minimum over the pair's calls sorted by
+/// module). Of a file's methods of one name and type file, only those open to a module that no
+/// other one's holds are kept, since the others reach no call those do not.
 ///
 /// Complexity tradeoff: two cases are given up, and a cycle through such a call is not reported:
 /// a file that holds a value of the type only through another file (`c` imports `g`, `g` gives
@@ -1791,20 +1814,25 @@ type Apart<'a> = HashMap<(&'a str, usize), Vec<(usize, usize)>>;
 /// imports exactly, so the cases left are calls whose chain the scan does not type (a tuple
 /// `let`, a value of a generic's associated function). Test
 /// `s_01f_import_graph::an_untyped_receiver_imports_only_through_its_type_file`; COMPLEXITY.md
-/// F103. Each (file, name) pair is joined with the type files once, from the smaller side: the
-/// imports of `c` or the type files of `name`. That join is O(p √p) in the worst case, p the
-/// pairs and imports, above O(n log n), because each call asks a triangle question: is there a
-/// file `d` that `c` imports and that defines a type with a method `name` written apart? Over
-/// all calls that is a join of three relations (calls, imports, method definitions), and exact
-/// triangle detection has no known near-linear method; O(p √p) is the worst-case bound for that
-/// join (the AGM bound), and the smaller-side join meets it. Real crates are far from the worst
-/// case: `s_01f_import_graph::untyped_calls_scale_with_the_number_of_files` measures 9.1 times
-/// the work at 8n. Every method a call then visits is one it would draw an import of, but for
-/// its visibility. Plan item IMPORTS-untyped-join: a near-linear method, or a proof that the
-/// question is as hard as triangle detection.
+/// F103.
+///
+/// Complexity tradeoff: the cost is O(u log u + p √p + t log m + h), u the calls, p the pairs,
+/// the imports and the type files of the names together, t the type files the pairs find, m the
+/// methods written apart, and h the imports drawn before those of one pair of files are merged.
+/// The p √p, the join of the pairs with the type files, is above O(n log n), and no method is
+/// near-linear unless triangles can be found in near-linear time: whether any untyped call draws
+/// an import is whether a graph of p edges has a triangle (COMPLEXITY.md F103 gives the
+/// reduction, the conditional lower bounds and the proof of the p √p bound). The naive join,
+/// each call against every method of its name, is O(u × m); the per-call loop this replaced cost
+/// each call every method of its pair's type files and was k^2 for k calls of a name in one file
+/// with k methods written apart, visible to them or not. Tests
+/// `s_01f_import_graph::untyped_calls_scale_with_the_number_of_files` (real crates' shape, n log
+/// n), `many_calls_of_a_name_cost_no_more_than_their_methods` (n log n) and
+/// `untyped_calls_without_a_triangle_scale_at_the_proven_bound` (p √p).
 fn untyped_imports<'a>(
     found: &Found,
     files: usize,
+    modules: &[Module<'a>],
     untyped: &[(usize, usize, &'a str, usize)],
     (apart, homes): (&Apart<'a>, &HashMap<&'a str, Vec<usize>>),
     span: &[(usize, usize)],
@@ -1813,38 +1841,228 @@ fn untyped_imports<'a>(
     for &(from, to) in found.0.keys() {
         out_of[from].push(to);
     }
-    let mut joined: HashMap<(usize, &'a str), Vec<usize>> = HashMap::new();
-    let mut drawn = Vec::new();
+    let inline = |m: usize| {
+        modules[m]
+            .parent
+            .is_some_and(|p| modules[p].file == modules[m].file)
+    };
+    // The number of each file's own module in the module tree.
+    let mut top = vec![usize::MAX; files];
+    for (m, module) in modules.iter().enumerate() {
+        if !inline(m) {
+            top[module.file] = span[m].0;
+        }
+    }
+    let mut opens: HashMap<(&'a str, usize), Opens> = HashMap::with_capacity(apart.len());
+    let mut inside: Inside<'a> = HashMap::new();
+    for (&(name, d), methods) in apart {
+        let kept = widest(methods, span);
+        for &(f, o) in &kept {
+            if inline(o) {
+                inside
+                    .entry((name, d, modules[o].file))
+                    .or_default()
+                    .push((f, o));
+            }
+        }
+        opens.insert((name, d), Opens::new(&kept, span));
+    }
+    let mut group_of: HashMap<(usize, &'a str), usize> = HashMap::new();
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    for (i, &(c, _, name, _)) in untyped.iter().enumerate() {
+        let g = *group_of.entry((c, name)).or_insert_with(|| {
+            groups.push(Vec::new());
+            groups.len() - 1
+        });
+        groups[g].push(i);
+    }
+    // Each import drawn, with the call it is cited at first.
+    let mut drawn: Vec<(usize, usize, usize, usize, &'a str)> = Vec::new();
     let mut calls = 0;
-    for &(c, here, name, line) in untyped {
-        let before = drawn.len();
-        let kept = joined.entry((c, name)).or_insert_with(|| {
-            let types = homes.get(name).map_or(&[][..], Vec::as_slice);
-            if out_of[c].len() < types.len() {
+    let mut types = Vec::new();
+    let mut ranges = Vec::new();
+    for group in &mut groups {
+        let (c, _, name, _) = untyped[group[0]];
+        types.clear();
+        let homes = homes.get(name).map_or(&[][..], Vec::as_slice);
+        if out_of[c].len() < homes.len() {
+            types.extend(
                 out_of[c]
                     .iter()
                     .copied()
-                    .filter(|&d| apart.contains_key(&(name, d)))
-                    .collect()
-            } else {
-                types
+                    .filter(|&d| apart.contains_key(&(name, d))),
+            );
+        } else {
+            types.extend(
+                homes
                     .iter()
                     .copied()
-                    .filter(|&d| found.0.contains_key(&(c, d)))
-                    .collect()
+                    .filter(|&d| found.0.contains_key(&(c, d))),
+            );
+        }
+        if types.is_empty() {
+            continue;
+        }
+        let (first_line, first) = group
+            .iter()
+            .map(|&i| (untyped[i].3, i))
+            .min()
+            .expect("a pair has a call");
+        group.sort_unstable_by_key(|&i| (untyped[i].1, i));
+        let mut every = false;
+        let mut least: Option<RangeMin> = None;
+        ranges.clear();
+        for &d in &types {
+            for here in opens[&(name, d)].around(top[c]) {
+                for &f in here.iter().filter(|&&f| f != c) {
+                    drawn.push((first, c, f, first_line, name));
+                    every = true;
+                }
             }
-        });
-        for &d in kept.iter() {
-            for &(f, open) in &apart[&(name, d)] {
-                let (s, e) = span[open];
-                if f != c && (s..e).contains(&here) {
-                    drawn.push((c, f, line, name));
+            let Some(within) = inside.get(&(name, d, c)) else {
+                continue;
+            };
+            for &(f, o) in within.iter().filter(|&&(f, _)| f != c) {
+                let (s, e) = span[o];
+                let lo = group.partition_point(|&i| untyped[i].1 < s);
+                let hi = group.partition_point(|&i| untyped[i].1 < e);
+                if lo < hi {
+                    let least = least.get_or_insert_with(|| {
+                        RangeMin::new(group.iter().map(|&i| (untyped[i].3, i)).collect())
+                    });
+                    let (line, i) = least.min(lo, hi);
+                    drawn.push((i, c, f, line, name));
+                    ranges.push((lo, hi));
                 }
             }
         }
-        calls += usize::from(drawn.len() > before);
+        calls += if every {
+            group.len()
+        } else {
+            covered(&mut ranges)
+        };
     }
+    // In the order of the calls, so that of two imports of one pair of files cited at one line,
+    // the earlier call's is kept, as when each call drew its own.
+    drawn.sort_by_key(|&(i, ..)| i);
+    let drawn = drawn
+        .into_iter()
+        .map(|(_, c, f, line, name)| (c, f, line, name))
+        .collect();
     (drawn, calls)
+}
+
+/// Of `methods`, each a file and the module the method is open to, sorted by file, those whose
+/// module no other module of the same file's methods holds. The modules of the module tree nest
+/// or are apart, so sorted by number, a module is held by an earlier one exactly when it starts
+/// before the end of the last one kept.
+fn widest(methods: &[(usize, usize)], span: &[(usize, usize)]) -> Vec<(usize, usize)> {
+    let mut by_start: Vec<(usize, usize, usize)> =
+        methods.iter().map(|&(f, o)| (f, span[o].0, o)).collect();
+    by_start.sort_unstable();
+    let mut kept = Vec::with_capacity(by_start.len());
+    let mut end: Option<(usize, usize)> = None;
+    for (f, start, o) in by_start {
+        if end.is_none_or(|(g, e)| g != f || start >= e) {
+            kept.push((f, o));
+            end = Some((f, span[o].1));
+        }
+    }
+    kept
+}
+
+/// The methods of one name and type file, by the module each is open to: those modules, each
+/// with the nearest of them that holds it and the files of its methods, and, from each module
+/// number on to the next listed, the innermost of them that holds it.
+struct Opens {
+    nodes: Vec<(Option<usize>, Vec<usize>)>,
+    cuts: Vec<(usize, Option<usize>)>,
+}
+
+impl Opens {
+    /// The modules of `methods`, each a file and a module, by one sweep over them in the order of
+    /// their numbers with a stack of the modules still open: O(m log m) for m methods.
+    fn new(methods: &[(usize, usize)], span: &[(usize, usize)]) -> Opens {
+        let mut by_start: Vec<(usize, usize, usize)> = methods
+            .iter()
+            .map(|&(f, o)| (span[o].0, span[o].1, f))
+            .collect();
+        by_start.sort_unstable();
+        let (mut nodes, mut ends, mut cuts) = (Vec::new(), Vec::new(), Vec::new());
+        let mut stack: Vec<usize> = Vec::new();
+        for run in by_start.chunk_by(|a, b| a.0 == b.0) {
+            let (start, end, _) = run[0];
+            while let Some(&inner) = stack.last() {
+                if ends[inner] > start {
+                    break;
+                }
+                stack.pop();
+                cuts.push((ends[inner], stack.last().copied()));
+            }
+            nodes.push((stack.last().copied(), run.iter().map(|r| r.2).collect()));
+            ends.push(end);
+            cuts.push((start, Some(nodes.len() - 1)));
+            stack.push(nodes.len() - 1);
+        }
+        while let Some(inner) = stack.pop() {
+            cuts.push((ends[inner], stack.last().copied()));
+        }
+        Opens { nodes, cuts }
+    }
+
+    /// The files of the methods open to the module numbered `at`, innermost module first: one
+    /// binary search, then one step per module that holds `at`.
+    fn around(&self, at: usize) -> impl Iterator<Item = &[usize]> {
+        let k = self.cuts.partition_point(|&(from, _)| from <= at);
+        let mut node = k.checked_sub(1).and_then(|k| self.cuts[k].1);
+        std::iter::from_fn(move || {
+            let n = node?;
+            node = self.nodes[n].0;
+            Some(self.nodes[n].1.as_slice())
+        })
+    }
+}
+
+/// The least of each range of a list: the least of each stretch of a power of two in length,
+/// O(k log k) to build for k items and O(1) a range.
+struct RangeMin(Vec<Vec<(usize, usize)>>);
+
+impl RangeMin {
+    fn new(items: Vec<(usize, usize)>) -> RangeMin {
+        let n = items.len();
+        let mut levels = vec![items];
+        let mut width = 1;
+        while 2 * width <= n {
+            let below = &levels[levels.len() - 1];
+            let next = (0..below.len() - width)
+                .map(|j| below[j].min(below[j + width]))
+                .collect();
+            levels.push(next);
+            width *= 2;
+        }
+        RangeMin(levels)
+    }
+
+    /// The least item from `lo` up to `hi`, which is above `lo`.
+    fn min(&self, lo: usize, hi: usize) -> (usize, usize) {
+        let k = (hi - lo).ilog2() as usize;
+        self.0[k][lo].min(self.0[k][hi - (1 << k)])
+    }
+}
+
+/// The number of positions within at least one of `ranges`, each from its first position up to
+/// its end; sorts them.
+fn covered(ranges: &mut [(usize, usize)]) -> usize {
+    ranges.sort_unstable();
+    let (mut total, mut reached) = (0, 0);
+    for &(lo, hi) in ranges.iter() {
+        let lo = lo.max(reached);
+        if hi > lo {
+            total += hi - lo;
+            reached = hi;
+        }
+    }
+    total
 }
 
 /// Names bound together, each with its type.

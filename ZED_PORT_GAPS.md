@@ -3597,3 +3597,12 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | A work list `Vec<Task>` and a stack of results `Vec<(Role, Must)>`, pushed and popped in a `while let` loop, a `Join` task combining the last `kids` results | `every_path` | Mutation (gap 11) | Recursion on the expression and statement trees, each node returning its `Must` and its updates; the explicit stack exists only so the depth of the code costs no Rust stack |
 | `HashSet<&str>` sets merged in place, the smaller added to the larger by `extend` and kept by `retain` | `Must::union`, `Must::meet` | Mutation (gap 11); borrowed `&str` keys | Persistent sets of names, the union inserting the smaller into the larger, the meet a filter of the smaller |
 | A closure `always` that pushes onto a `Vec` it borrows mutably, called through `for_each(&mut always)` | `every_path` | Mutation (gap 11) | The list of a node's parts built as a value, each part tagged with its role |
+
+## Entries from IMPORTS-untyped-join (`crates/zed-tools/src/imports.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `std::iter::from_fn` with a captured `Option<usize>` advanced in place, returned as `impl Iterator` | `Opens::around` | Mutation (gap 11), laziness | a list of the modules on the chain, built by a recursion on the parent link; the chain is no longer than the output it gives |
+| A stack of open modules as a `Vec` popped by `while let` in a sweep over the modules sorted by number | `Opens::new` | Mutation (gap 11) | a fold over the sorted modules with the stack and the cuts as its accumulator |
+| `Option::get_or_insert_with` to build the range-minimum table on the first module written inline in the calling file | `untyped_imports` | Lazy cells (gap 3) | build the table before the loop when the pair's file has such modules (`inside` holds the pair's key), or fold with it as an optional accumulator |
+| `let … else { continue; }` | `untyped_imports` | Early exit (gap 12) | a `match` with the empty case as one arm |
