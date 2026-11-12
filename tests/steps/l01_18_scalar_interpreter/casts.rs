@@ -84,15 +84,11 @@ fn a_float_reads_correctly_rounded_and_overflow_is_inexact() {
 fn a_cast_of_a_kind_it_does_not_take_is_a_type_error() {
     assert_eq!(
         errors("x = int(true);\n"),
-        [
-            "`int` does not take (true): these are the types of its arguments here, and `int` has no arrow that takes them all [int(true)]"
-        ]
+        ["`int` does not take (true): no arrow of `int` takes these types [int(true)]"]
     );
     assert_eq!(
         errors("x = len(3);\n"),
-        [
-            "`len` does not take (3): these are the types of its arguments here, and `len` has no arrow that takes them all [len(3)]"
-        ]
+        ["`len` does not take (3): no arrow of `len` takes these types [len(3)]"]
     );
 }
 

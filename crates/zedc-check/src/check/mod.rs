@@ -3305,7 +3305,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             _ => None,
         };
         for w in ["int", "rat", "f64"] {
-            let Some(r) = converted(&word_sig(w), &held) else {
+            let Some(r) = cast_widening(w, &held) else {
                 continue;
             };
             let cast = Arg {
@@ -3457,7 +3457,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     continue;
                 };
                 for w in ["int", "rat", "f64"] {
-                    if let Some(r) = converted(&word_sig(w), sides[s])
+                    if let Some(r) = cast_widening(w, sides[s])
                         && widened_meets(&r, other)
                     {
                         fixes[0].push(Fix::Cast(s, w));
@@ -3509,28 +3509,43 @@ impl<'t, 'a> Ck<'t, 'a> {
                 None => f.write_str("the comparison"),
             }
         };
+        // The headline (DESIGN.md sec:diagnostics, "A short headline"): the comparison as code
+        // with the type of each side, `x : int == y : f64`, where both sides are named; else
+        // each side described with its type. It ends with the first repair, or the answer.
         let message = quoting(
             &fmt::from_fn(|f| {
-                for s in 0..2 {
-                    if s == 1 {
-                        f.write_str(" and ")?;
+                write!(f, "No value is both `{}` and `{}`: ", shown[0], shown[1])?;
+                let code = |s: usize| match (&labels[s], path) {
+                    (Some(l), []) => Some(format!("{l} : {}", shown[s])),
+                    (Some(l @ Operand::Name(_)), _) => {
+                        Some(format!("{l}{} : {}", Place(path), shown[s]))
                     }
-                    match (&labels[s], path) {
-                        (Some(l), []) => write!(f, "`{l}`")?,
-                        (None, []) => write!(f, "the {} operand of `{op}`", ends[s])?,
-                        (Some(l @ Operand::Name(_)), _) => write!(f, "`{l}{}`", Place(path))?,
-                        _ => write!(f, "component `{}` of the {} operand", Place(path), ends[s])?,
+                    _ => None,
+                };
+                match (code(0), code(1)) {
+                    (Some(a), Some(b)) => write!(f, "`{a} {op} {b}`")?,
+                    _ => {
+                        for (s, end) in ends.iter().enumerate() {
+                            if s == 1 {
+                                write!(f, " compared by `{op}` with ")?;
+                            }
+                            match (code(s), path) {
+                                (Some(c), _) => write!(f, "`{c}`")?,
+                                (None, []) => write!(f, "the {} operand", end)?,
+                                (None, _) => {
+                                    write!(f, "component `{}` of the {} operand", Place(path), end)?
+                                }
+                            }
+                        }
                     }
-                    let t = &shown[s];
-                    write!(f, " is {}`{t}`", article_of(t, t))?;
                 }
-                f.write_str(" here, and no value is both, so the comparison always gives ")?;
                 if answer {
                     let a = op != BinaryOp::Eq;
-                    return write!(f, "`{a}`; write {}", fmt::from_fn(in_place));
+                    return write!(f, " is always `{a}`. Try `{a}` instead.");
                 }
-                f.write_str("the same answer; write ")?;
-                write_repairs(f, &groups, form)
+                f.write_str(" always gives the same answer. Try ")?;
+                write_repairs(f, &groups, form)?;
+                f.write_str(" instead.")
             }),
             || {
                 format!(
@@ -3623,8 +3638,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// value of `t`, which holds values and no number ([`holds_no_number`]): no carrier of a
     /// number literal is a string, a `bool` or a tuple, so the comparison always gives the
     /// same answer (author decision, 2026-11-09, A15). The fixes fit what `t` holds, and the
-    /// checker accepts each: the text, `x == "1"`, and the number the text holds,
-    /// `int(x) == 1`, where `t` holds strings; `x == true` and `x == false` where it holds
+    /// checker accepts each: the text, `x == "1"`, where `t` holds strings, and no cast of the
+    /// string, which `#invalid` makes narrowing (DESIGN.md sec:diagnostics); `x == true` and `x == false` where it holds
     /// `bool`; `x[i] == 1` for each component `i` of its tuples that may be the number; and,
     /// where none of these fits, the answer the comparison always gives in its place. Each is
     /// the corrected source line ([`Msg::written`]). A comparison with an atom stays legal and
@@ -3643,12 +3658,6 @@ impl<'t, 'a> Ck<'t, 'a> {
         });
         let values = t.without_atoms();
         let u = values.set.universes();
-        let decimal = lit_carrier(&l.value) == Carrier::F64;
-        let words: &[&str] = if decimal { &["f64", "rat"] } else { &["int"] };
-        let casts = (words.iter().copied())
-            .filter(|w| converted(&word_sig(w), t).is_some())
-            .map(Repair::Cast)
-            .collect();
         // `x[i]` takes a tuple of more than `i` components, and no other value but a loose
         // atom, which passes by.
         let tuples_only = !u.bases.iter().any(|&b| b) && !u.rest && t.family.is_empty();
@@ -3659,28 +3668,24 @@ impl<'t, 'a> Ck<'t, 'a> {
             .filter(|&i| takes_number(l, &values.tuples.iter().map(|r| &r[i]).collect::<Vec<_>>()))
             .map(Repair::Component)
             .collect();
-        let groups = [texts(&u), casts, bools(&u), components];
+        let groups = [texts(&u), bools(&u), components];
         let answer = groups.iter().all(|rs| rs.is_empty());
         let ty = self.shown(&values);
         let a = article_of(&ty, &ty);
         let lit = l.written();
         let message = quoting(
             &fmt::from_fn(|f| {
-                match name {
-                    Some(n) => write!(
-                        f,
-                        "the literal `{lit}` is a number, and `{n}` is {a}`{ty}` here, which \
-                         no number equals, so the comparison always gives "
-                    )?,
-                    None => write!(
-                        f,
-                        "the literal `{lit}` is a number, compared by `{op}` with {a}`{ty}`, \
-                         which no number equals, so the comparison always gives "
-                    )?,
+                // The comparison as code, the literal where the program writes it,
+                // `n : Utf8String == 1`.
+                write!(f, "No number equals {a}`{ty}`: ")?;
+                match (name, left) {
+                    (Some(n), true) => write!(f, "`{lit} {op} {n} : {ty}`")?,
+                    (Some(n), false) => write!(f, "`{n} : {ty} {op} {lit}`")?,
+                    (None, _) => write!(f, "`{lit}` compared by `{op}` with {a}`{ty}`")?,
                 }
                 match answer {
-                    true => write!(f, "`{}`", op != BinaryOp::Eq),
-                    false => f.write_str("the same answer"),
+                    true => write!(f, " is always `{}`", op != BinaryOp::Eq),
+                    false => f.write_str(" always gives the same answer"),
                 }
             }),
             || {
@@ -3717,17 +3722,6 @@ impl<'t, 'a> Ck<'t, 'a> {
                     &match name {
                         Some(n) => pair(&n, &b),
                         None => b.to_string(),
-                    },
-                ),
-                (Repair::Cast(c), Some(at)) => Rewrite::new(
-                    &[
-                        (point(at.start), &format_args!("{c}(")),
-                        (point(at.end), &")"),
-                    ],
-                    &"compares the number the text holds",
-                    &match name {
-                        Some(n) => pair(&format_args!("{c}({n})"), &lit),
-                        None => format!("{c}(…)"),
                     },
                 ),
                 (Repair::Component(i), Some(at)) => Rewrite::new(
@@ -3784,17 +3778,17 @@ impl<'t, 'a> Ck<'t, 'a> {
         let lit = l.written();
         let message = quoting(
             &fmt::from_fn(|f| {
-                write!(f, "the literal `{lit}` is a number, and the component ")?;
-                if let Some(n) = name {
-                    write!(f, "of `{n}` ")?;
-                }
                 write!(
                     f,
-                    "it is compared with by `{op}` is {a}`{shown}` here, which no number equals, \
-                     so the comparison always gives the same answer"
+                    "No number equals {a}`{shown}`: `{lit}` compared by `{op}` with "
                 )?;
+                match name {
+                    Some(n) => write!(f, "a component of `{n}`")?,
+                    None => f.write_str("a component")?,
+                }
+                f.write_str(" always gives the same answer")?;
                 match repairs.is_empty() {
-                    true => write!(f, "; write a value of `{shown}` in its place"),
+                    true => write!(f, ". Write a value of `{shown}` in place of `{lit}`."),
                     false => Ok(()),
                 }
             }),
@@ -4426,6 +4420,12 @@ fn converted(sig: &Sig, t: &Ty) -> Option<Ty> {
 /// any value of `t`, as `rat(n)` of an `int`: none where it may give an atom `t` does not hold,
 /// as `f64(n)` (`#inexact`) or `int(r)` (`#inexact`), so that a repair never narrows a type
 /// (DESIGN.md sec:diagnostics).
+///
+/// Complexity tradeoff (COMPLEXITY.md row MSG-concise-casts): naive version, apply the cast to
+/// each value `t` may hold and check each result exactly, O(the values of `t`), unbounded for
+/// an `int`; this version reads the cast's arrows once per piece of `t` ([`converted`]) and
+/// compares the atoms of the result with those of `t`, O(the size of `t`), the cost of printing
+/// `t` in the message that offers the cast.
 fn cast_widening(w: &str, t: &Ty) -> Option<Ty> {
     converted(&word_sig(w), t).filter(|r| r.atoms() == t.atoms())
 }
@@ -5421,19 +5421,17 @@ fn takes_number(l: &Lit, cs: &[&Ty]) -> bool {
 }
 
 /// A repair of a number literal compared with a value that holds no number
-/// ([`Ck::never_equal`]): the literal written as text, a cast of the other operand by the
-/// word, the literal replaced by a `bool`, or the other operand's component at an index
-/// compared in its place.
+/// ([`Ck::never_equal`]): the literal written as text, the literal replaced by a `bool`, or
+/// the other operand's component at an index compared in its place.
 #[derive(Clone, Copy)]
-enum Repair<'w> {
+enum Repair {
     Text,
-    Cast(&'w str),
     Bool(bool),
     Component(usize),
 }
 
 /// The text repair where the values of the universes `u` hold strings.
-fn texts(u: &Universes) -> Vec<Repair<'static>> {
+fn texts(u: &Universes) -> Vec<Repair> {
     match u.bases[Carrier::Str.base()] {
         true => vec![Repair::Text],
         false => Vec::new(),
@@ -5441,7 +5439,7 @@ fn texts(u: &Universes) -> Vec<Repair<'static>> {
 }
 
 /// The two `bool` repairs where the values of the universes `u` hold `bool`.
-fn bools(u: &Universes) -> Vec<Repair<'static>> {
+fn bools(u: &Universes) -> Vec<Repair> {
     match u.bases[Carrier::Bool.base()] {
         true => vec![Repair::Bool(true), Repair::Bool(false)],
         false => Vec::new(),
@@ -5910,17 +5908,9 @@ fn menu(l: &Lit, held: &[Carrier]) -> Msg {
                 &format_args!("the literal is then {v}, the nearer f64 by ties to even"),
             ));
         }
-        let why = "; an integer literal takes a carrier only where it is exact";
-        let m = literal_message(
-            l,
-            |f, w| {
-                write!(
-                    f,
-                    "{w} has no exact `{names}`, and `{names}` is expected here"
-                )
-            },
-            why,
-        );
+        // The reason, that an integer literal takes a carrier only where it is exact, is the
+        // derivation's first note.
+        let m = literal_message(l, |f, w| write!(f, "No `{names}` equals {w}"), "");
         return Msg::new(m, fixes);
     }
     if has(Carrier::Int)
@@ -5933,14 +5923,14 @@ fn menu(l: &Lit, held: &[Carrier]) -> Msg {
         ));
     }
     if l.bare {
-        let why = match fixes.is_empty() {
-            true => "; a decimal literal is never an `int`",
-            false => "; a decimal literal is never an `int`, even when its value is an integer",
+        let even = match fixes.is_empty() {
+            true => "",
+            false => ", even with an integer value",
         };
         let m = literal_message(
             l,
-            |f, w| write!(f, "{w} is a decimal, and `{names}` is expected here"),
-            why,
+            |f, w| write!(f, "A decimal literal is never an `{names}`{even}: {w}"),
+            "",
         );
         return Msg::new(m, fixes);
     }
@@ -5953,13 +5943,8 @@ fn menu(l: &Lit, held: &[Carrier]) -> Msg {
     }
     let m = literal_message(
         l,
-        |f, w| {
-            write!(
-                f,
-                "{w} is an `f64` by its suffix, and `{names}` is expected here"
-            )
-        },
-        "; a suffix fixes a literal's carrier",
+        |f, w| write!(f, "The suffix makes {w} an `f64`, never `{names}`"),
+        "",
     );
     Msg::new(m, fixes)
 }
@@ -6070,13 +6055,7 @@ fn unfixed(l: &Lit, cs: &[Carrier], bound: Option<(&str, &Expr)>) -> Msg {
         true => literal_message(l, |f, w| write!(f, "Nothing gives {w} a carrier"), ""),
         false => literal_message(
             l,
-            |f, w| {
-                write!(
-                    f,
-                    "{w} takes the carrier of its use, and nothing here chooses one \
-                     of `{names}`, the carriers what it meets takes"
-                )
-            },
+            |f, w| write!(f, "Nothing gives {w} a carrier of `{names}`"),
             "",
         ),
     };
@@ -6846,19 +6825,9 @@ fn no_one_carrier(l: &Lit, want: &Ty, cs: &[Carrier]) -> Msg {
     let fixes = (carriers.filter(|c| cs.contains(c)))
         .map(|c| Rewrite::lit(l, &with_carrier(l, c), &lit_holds(l, c)))
         .collect();
-    let names = cs
-        .iter()
-        .map(|&c| format!("{} `{}`", article(c), c.name()))
-        .collect::<Vec<_>>()
-        .join(" or ");
     let m = literal_message(
         l,
-        |f, w| {
-            write!(
-                f,
-                "{w} can be {names} at `{want}`, and nothing here chooses one"
-            )
-        },
+        |f, w| write!(f, "Nothing chooses one carrier of `{want}` for {w}"),
         "",
     );
     Msg::new(m, fixes)
@@ -8746,10 +8715,7 @@ fn one_shape_per_length(t: &Ty) -> Ty {
 /// which the derivation then shows arrow by arrow.
 pub(crate) fn does_not_take(what: &str, shown: &str, why: &str) -> String {
     match why.is_empty() {
-        true => format!(
-            "{what} does not take ({shown}): these are the types of its arguments here, and \
-             {what} has no arrow that takes them all"
-        ),
+        true => format!("{what} does not take ({shown}): no arrow of {what} takes these types"),
         false => format!("{what} does not take ({shown}){why}"),
     }
 }

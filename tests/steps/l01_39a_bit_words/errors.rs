@@ -128,7 +128,7 @@ fn a_call_that_does_not_fit_is_rejected() {
     // A float literal is rejected at the literal, a float value at the call.
     let out = rejected("x = bitAnd(1.5, 1);\n");
     assert!(
-        out.contains("the literal `1.5` is a decimal, and `int` is expected here"),
+        out.contains("A decimal literal is never an `int`: the literal `1.5`"),
         "{out}"
     );
     let out = rejected("f = 1.5f64;\nx = bitAnd(f, 1);\n");

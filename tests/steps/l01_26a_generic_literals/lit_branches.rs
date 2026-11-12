@@ -50,7 +50,7 @@ fn a_decimal_branch_is_still_rejected_at_int() {
     let errors = type_errors(src);
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(
-        errors[0].starts_with("the literal `1.5` is a decimal, and `int` is expected here")
+        errors[0].starts_with("A decimal literal is never an `int`: the literal `1.5`")
             && errors[0].ends_with("[1.5]"),
         "{errors:?}"
     );

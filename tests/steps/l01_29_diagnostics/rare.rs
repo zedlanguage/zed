@@ -79,7 +79,7 @@ fn an_argument_forwarded_to_a_function_parameter_is_checked_against_its_range() 
 fn sum_of_a_value_that_is_not_a_tuple_is_rejected() {
     assert_eq!(
         shown("x = sum(3);\n"),
-        r#"1:5: `sum` does not take (3): `sum` adds the components of a tuple, and they must all be numbers
+        r#"1:5: `sum` does not take (3): it adds only numbers
   [1] 1:5: repair: pass a tuple whose components are all numbers, as `sum((1, 2, 3))`
       1 | x = sum(3);
         |     ^^^^^^"#
@@ -94,7 +94,7 @@ fn a_component_of_a_destructured_tuple_is_named_with_its_place() {
     // rejected.
     assert_eq!(
         shown("p = (1, \"x\");\na, b = p;\nc = a + b;\n"),
-        r#"3:5: `+` does not take (1, "x"): these are the types of its arguments here, and `+` has no arrow that takes them all
+        r#"3:5: `+` does not take (1, "x"): no arrow of `+` takes these types
   [1]  3:5: `a` is 1 here
        3 | c = a + b;
          |     ^ [1]
@@ -125,20 +125,17 @@ fn a_parameter_typed_by_its_default_says_so() {
     // Before, step [2] read "`n` is String, the carrier of its default".
     assert_eq!(
         shown("f(positional n = \"a\") = n + 1;\n"),
-        r#"1:25: `+` does not take (String, 1): these are the types of its arguments here, and `+` has no arrow that takes them all
+        r#"1:25: `+` does not take (String, 1): no arrow of `+` takes these types
   [1] 1:25: `n` is String here
       1 | f(positional n = "a") = n + 1;
         |   ^^^^^^^^^^^^^^^^^^ [2]    ^ [3]
-        |                         ^ [1, 7, 8, 9]
+        |                         ^ [1]
         |                         ^^^^^ [4, 5, 6]
   [2] 1:3: `n` is String, the type of its default
   [3] 1:29: this literal, 1, is 1
   [4] 1:25: `+` takes (int, int) -> int
   [5] 1:25: `+` takes (f64, f64) -> f64
-  [6] 1:25: `+` takes (rat, rat) -> rat
-  [7] 1:25: repair: write `int(n)`; the checker accepts that
-  [8] 1:25: repair: write `rat(n)`; the checker accepts that
-  [9] 1:25: repair: write `f64(n)`; the checker accepts that"#
+  [6] 1:25: `+` takes (rat, rat) -> rat"#
     );
 }
 

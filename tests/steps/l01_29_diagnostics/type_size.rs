@@ -51,7 +51,7 @@ fn same(n: usize, m: usize) -> String {
 fn a_tuple_doubled_at_each_level_is_named_once_per_level() {
     assert_eq!(
         rejected(&doubling(6)),
-        r#"8:5: `+` does not take ((T5, T5), 1): these are the types of its arguments here, and `+` has no arrow that takes them all
+        r#"8:5: `+` does not take ((T5, T5), 1): no arrow of `+` takes these types
   T1, T2, T3, T4 and T5 stand for parts written more than once:
     type T1 = ((1, 1), (1, 1));
     type T2 = (T1, T1);
@@ -277,7 +277,7 @@ fn comparing_two_doubled_tuples_names_each_level_once() {
 fn a_chain_of_names_each_holding_the_one_before_names_each_link() {
     assert_eq!(
         rejected(&growing(4)),
-        r#"6:5: `+` does not take ((T3, 4), 1): these are the types of its arguments here, and `+` has no arrow that takes them all
+        r#"6:5: `+` does not take ((T3, 4), 1): no arrow of `+` takes these types
   T1, T2 and T3 stand for parts written more than once:
     type T1 = ((0, 0), 1);
     type T2 = (T1, 2);
@@ -340,7 +340,7 @@ fn a_chain_of_names_of_one_type_writes_the_type_whole_at_each_link() {
     // components writes n × m (COMPLEXITY.md row MSG-derive-same-chain).
     assert_eq!(
         rejected(&same(4, 5)),
-        r#"6:5: `+` does not take ((0, 1, 2, 3, 4), 1): these are the types of its arguments here, and `+` has no arrow that takes them all
+        r#"6:5: `+` does not take ((0, 1, 2, 3, 4), 1): no arrow of `+` takes these types
   [1]  6:5: `x4` is (0, 1, 2, 3, 4) here
        6 | u = x4 + 1;
          |     ^^ [1]

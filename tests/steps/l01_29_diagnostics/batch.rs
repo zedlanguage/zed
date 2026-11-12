@@ -119,8 +119,8 @@ fn batch_and_single_file_checking_agree() {
     assert_eq!(
         batch[at].as_deref(),
         Some(
-            "2:7: the literal `1` can be a `rat` or an `f64` at `f64 | rat`, and nothing here \
-             chooses one. Try `r = f(1r)` instead.\n  \
+            "2:7: Nothing chooses one carrier of `f64 | rat` for the literal `1`. Try `r = \
+             f(1r)` instead.\n  \
              T1 stands for a part written more than once:\n    \
              type T1 = f64 | rat;\n  \
              [1] 1:1: `f` is declared here with no type written for its result; the type the \
@@ -141,10 +141,7 @@ fn batch_and_single_file_checking_agree() {
         .expect("the unit");
     let answer = batch[at].as_deref().expect("a rejection");
     assert!(
-        answer.starts_with(
-            "1:35: the literal `1` can be a `rat` or an `f64` at `f64 | rat`, and nothing here \
-             chooses one"
-        ),
+        answer.starts_with("1:35: Nothing chooses one carrier of `f64 | rat` for the literal `1`"),
         "{answer}"
     );
 }

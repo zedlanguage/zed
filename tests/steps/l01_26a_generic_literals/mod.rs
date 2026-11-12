@@ -237,19 +237,15 @@ fn a_literal_at_one_declared_carrier_takes_it_exactly_or_not_at_all() {
     assert_eq!(value(&id("rat", "0.1"), "x"), "1r/10r");
     assert_eq!(
         type_errors(&id("f64", "9007199254740993")),
-        [
-            "the literal `9007199254740993` has no exact `f64`, and `f64` is expected here; an \
-             integer literal takes a carrier only where it is exact. Try `x = \
+        ["No `f64` equals the literal `9007199254740993`. Try `x = \
              id(9007199254740992)` instead.\n  fixes, each checked here:\n    x = \
              id(9007199254740992);    the literal is then 9007199254740992.0, the nearer f64 by \
-             ties to even [9007199254740993]"
-        ]
+             ties to even [9007199254740993]"]
     );
     assert_eq!(
         type_errors("f(positional x: f64 | rat) = x;\ny = f(1);\n"),
         [
-            "the literal `1` can be a `rat` or an `f64` at `f64 | rat`, and nothing here chooses \
-             one. Try `y = f(1r)` instead.\n  T1 stands for a part written more than once:\n    \
+            "Nothing chooses one carrier of `f64 | rat` for the literal `1`. Try `y = f(1r)` instead.\n  T1 stands for a part written more than once:\n    \
              type T1 = f64 | rat;\n  fixes, each checked here:\n    y = f(1r);        the literal \
              is then exactly 1, a rat\n    y = f(1.0f64);    the literal is then the f64 1.0 [1]"
         ]
@@ -447,8 +443,7 @@ fn batch_and_single_file_checking_agree() {
     assert_eq!(
         first(1),
         Some(
-            "2:42: the literal `1` can be a `rat` or an `f64` at `f64 | rat`, and nothing here \
-             chooses one. Try `main(m: MainArgs) { m.stdout <- String(f(1r)); }` instead."
+            "2:42: Nothing chooses one carrier of `f64 | rat` for the literal `1`. Try `main(m: MainArgs) { m.stdout <- String(f(1r)); }` instead."
         )
     );
     assert_eq!(alone[2], None);

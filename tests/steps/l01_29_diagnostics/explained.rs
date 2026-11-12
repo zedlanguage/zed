@@ -83,8 +83,7 @@ fn each_rejection_explains_itself_and_offers_its_repairs() {
         ),
         (
             reading("  m.stdout <- String(sum((n, \"a\")));"),
-            "3:22: `sum` does not take (int, \"a\"): `sum` adds the components of a tuple, and \
-             they must all be numbers",
+            "3:22: `sum` does not take (int, \"a\"): it adds only numbers",
             vec!["repair: pass a tuple whose components are all numbers, as `sum((1, 2, 3))`"],
         ),
         (
@@ -92,8 +91,8 @@ fn each_rejection_explains_itself_and_offers_its_repairs() {
                 "scale(positional k: int) = (x: int) -> k * x;\n{}",
                 reading("  m.stdout <- String(scale(n)(\"a\"));")
             ),
-            "4:22: the function called here does not take (\"a\"): these are the types of its \
-             arguments here, and the function called here has no arrow that takes them all",
+            "4:22: the function called here does not take (\"a\"): no arrow of the function \
+             called here takes these types",
             vec!["the function called here takes"],
         ),
     ];

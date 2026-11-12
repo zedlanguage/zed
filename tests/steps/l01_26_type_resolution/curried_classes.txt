@@ -17,7 +17,7 @@ sig take = (f: (String) -> (int) -> (int, int, int)) -> (int, int, int)
 top r = Never
 call "f(\"a\")" = (String) -> (int) -> (int, int, int)
 call "f(\"a\")(2)" = (int) -> (int, int, int)
-err `take` does not take ((int) -> (int) -> (int, int, int)): these are the types of its arguments here, and `take` has no arrow that takes them all [take(f: g(0))]
+err `take` does not take ((int) -> (int) -> (int, int, int)): no arrow of `take` takes these types [take(f: g(0))]
   note this call of `g` gives (int) -> (int) -> (int, int, int)
   note `g` is declared here with no type written for `a0` or its result; the type the checker found for `g` is `(int) -> (int) -> (int) -> (int, int, int)`
   note `take` takes (f: (String) -> (int) -> (int, int, int)) -> (int, int, int)
@@ -27,7 +27,7 @@ sig g = (int) -> (int) -> (int) -> (int, int, int)
 top h = (int) -> (int) -> (int, int, int)
 top k = Never
 call "h(\"x\")" = (int) -> (int) -> (int, int, int)
-err `h` does not take ("x"): these are the types of its arguments here, and `h` has no arrow that takes them all [h("x")]
+err `h` does not take ("x"): no arrow of `h` takes these types [h("x")]
   note this expression is "x"
   note `h` takes (int) -> (int) -> (int, int, int)
 === "h = g(0)(1);\nk = h(\"x\");\n"
@@ -36,7 +36,7 @@ top h = (int) -> (int, int, int)
 top k = Never
 call "g(0)(1)" = (int) -> (int) -> (int, int, int)
 call "h(\"x\")" = (int) -> (int, int, int)
-err `h` does not take ("x"): these are the types of its arguments here, and `h` has no arrow that takes them all [h("x")]
+err `h` does not take ("x"): no arrow of `h` takes these types [h("x")]
   note this expression is "x"
   note `h` takes (int) -> (int, int, int)
 === "u(n: int) = g(n);\nv(n: int) = u(n)(n)(n);\n"
@@ -57,7 +57,7 @@ call "w(f: g(0))(1)(2)" = (int) -> (int, int, int)
 sig g = (int) -> (int) -> (int) -> (int, int, int)
 sig w = (f: (f64) -> (int) -> (int, int, int)) -> (f64) -> (int) -> (int, int, int)
 top r = Never
-err `w` does not take ((int) -> (int) -> (int, int, int)): these are the types of its arguments here, and `w` has no arrow that takes them all [w(f: g(0))]
+err `w` does not take ((int) -> (int) -> (int, int, int)): no arrow of `w` takes these types [w(f: g(0))]
   note this call of `g` gives (int) -> (int) -> (int, int, int)
   note `g` is declared here with no type written for `a0` or its result; the type the checker found for `g` is `(int) -> (int) -> (int) -> (int, int, int)`
   note `w` takes (f: (f64) -> (int) -> (int, int, int)) -> (f64) -> (int) -> (int, int, int)
@@ -107,7 +107,7 @@ sig g = (int) -> (int) -> (int) -> (int, int, int)
 sig k = (x: int) -> (int) -> (int) -> (int, int, int)
 sig m = (f: (f64) -> (int) -> (int, int, int)) -> 0
 top r = Never
-err `m` does not take ((int) -> (int) -> (int, int, int)): these are the types of its arguments here, and `m` has no arrow that takes them all [m(f: k(x: 1))]
+err `m` does not take ((int) -> (int) -> (int, int, int)): no arrow of `m` takes these types [m(f: k(x: 1))]
   note this call of `k` gives (int) -> (int) -> (int, int, int)
   note `k` is declared here with no type written for its result; the type the checker found for `k` is `(x: int) -> (int) -> (int) -> (int, int, int)`
   note `m` takes (f: (f64) -> (int) -> (int, int, int)) -> 0
@@ -117,7 +117,7 @@ sig g = (int) -> (int) -> (int) -> (int, int, int)
 top h = (int) -> (int, int, int)
 top q = Never
 call "g(0)(1)" = (int) -> (int) -> (int, int, int)
-err `+` does not take ((int) -> (int, int, int), 1): these are the types of its arguments here, and `+` has no arrow that takes them all [h + 1]
+err `+` does not take ((int) -> (int, int, int), 1): no arrow of `+` takes these types [h + 1]
   note `h` is (int) -> (int, int, int) here
   note `h` is defined as this expression, (int) -> (int, int, int)
   note this call gives (int) -> (int, int, int)
@@ -132,7 +132,7 @@ top h = (int) -> (int) -> (int) -> (int, int, int)
 top k = Never
 call "h(0)" = (int) -> (int) -> (int) -> (int, int, int)
 call "h(0)(\"a\")" = (int) -> (int) -> (int, int, int)
-err the function called here does not take ("a"): these are the types of its arguments here, and the function called here has no arrow that takes them all [h(0)("a")]
+err the function called here does not take ("a"): no arrow of the function called here takes these types [h(0)("a")]
   note this expression is "a"
   note the function called here takes (int) -> (int) -> (int, int, int)
 === "p(x) = (y) -> x + y;\nq = p(1)(2.5);\n"

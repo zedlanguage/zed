@@ -74,10 +74,10 @@ const NEAR_MISSES: &[NearMiss] = &[
     (
         Row::NoCommonCarrier,
         "",
-        "total(r: rat, x: f64) = f64(r) + x;\n",
-        "total(r: rat, x: f64) = r + x;\n",
+        "total(n: int, r: rat) = rat(n) + r;\n",
+        "total(n: int, r: rat) = n + r;\n",
         "1:25",
-        Some("write `f64(r)`; the checker accepts that"),
+        Some("write `rat(n)`; the checker accepts that"),
     ),
     (
         Row::EqNoCommonCarrier,
@@ -85,7 +85,7 @@ const NEAR_MISSES: &[NearMiss] = &[
         "same(s: String, n: int) = int(s) == n;\n",
         "same(s: String, n: int) = s == n;\n",
         "1:27",
-        Some("write `int(s) == n`"),
+        Some("write `false` in place of `s == n`"),
     ),
     (
         Row::NamedBeforePositional,

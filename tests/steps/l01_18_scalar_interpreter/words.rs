@@ -59,9 +59,7 @@ fn summing_an_order() {
     );
     assert_eq!(
         errors("x = sum((1, \"a\"));\n"),
-        [
-            "`sum` does not take (1, \"a\"): `sum` adds the components of a tuple, and they must all be numbers [sum((1, \"a\"))]"
-        ]
+        ["`sum` does not take (1, \"a\"): it adds only numbers [sum((1, \"a\"))]"]
     );
 }
 
@@ -122,14 +120,12 @@ fn min_and_max_take_two_numbers_of_one_kind() {
     assert_eq!(
         errors("x = min(\"a\", \"b\");\n"),
         [
-            "`min` does not take (\"a\", \"b\"): these are the types of its arguments here, and `min` has no arrow that takes them all [min(\"a\", \"b\")]"
+            "`min` does not take (\"a\", \"b\"): no arrow of `min` takes these types [min(\"a\", \"b\")]"
         ]
     );
     assert_eq!(
         errors("x = min(1, true);\n"),
-        [
-            "`min` does not take (1, true): these are the types of its arguments here, and `min` has no arrow that takes them all [min(1, true)]"
-        ]
+        ["`min` does not take (1, true): no arrow of `min` takes these types [min(1, true)]"]
     );
     let both = "((int, int) -> int) & ((f64, f64) -> f64) & ((rat, rat) -> rat)";
     assert_eq!(

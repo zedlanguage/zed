@@ -317,7 +317,7 @@ fn each_kernel_type_error_has_a_rejected_generic_use() {
         (
             "f(positional x) = popCount(x);",
             "f(2.0)",
-            "is a decimal, and `int` is expected here",
+            "A decimal literal is never an `int`",
         ),
         (
             "f(positional x) = int(x);",

@@ -17,8 +17,7 @@ fn an_error_beside_a_recursion_is_reported_with_it() {
             "1:1: `spin` is defined in terms of itself, which is recursion. Recursion is part of \
              the Zed language, and this version of zedc does not compile it yet. Write the \
              program without it, with the forms this zedc compiles.",
-            "3:8: `f` does not take (true): these are the types of its arguments here, and `f` \
-             has no arrow that takes them all",
+            "3:8: `f` does not take (true): no arrow of `f` takes these types",
         ],
         "{out}"
     );

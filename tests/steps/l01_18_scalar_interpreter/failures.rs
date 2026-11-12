@@ -66,9 +66,7 @@ fn euclidean_division_keeps_the_remainder_non_negative() {
 fn mixed_kinds_select_no_arrow() {
     assert_eq!(
         errors("x = \"a\" ++ 1;\n"),
-        [
-            "`++` does not take (\"a\", 1): these are the types of its arguments here, and `++` has no arrow that takes them all [\"a\" ++ 1]"
-        ]
+        ["`++` does not take (\"a\", 1): no arrow of `++` takes these types [\"a\" ++ 1]"]
     );
     // A literal keeps its kind: `1.5` is no int, and no form of it is (DESIGN.md L1.26b).
     assert_eq!(
@@ -82,8 +80,7 @@ fn mixed_kinds_select_no_arrow() {
     assert_eq!(
         errors("x = 1r/2r * 2.5f64;\n"),
         [
-            "the literal `2.5f64` is an `f64` by its suffix, and `rat` is expected here; a suffix \
-             fixes a literal's carrier. Try `x = 1r/2r * 2.5r` instead.\n  fixes, each checked \
+            "The suffix makes the literal `2.5f64` an `f64`, never `rat`. Try `x = 1r/2r * 2.5r` instead.\n  fixes, each checked \
              here:\n    x = 1r/2r * 2.5r;    the literal is then exactly 2.5, a rat [2.5f64]"
         ]
     );

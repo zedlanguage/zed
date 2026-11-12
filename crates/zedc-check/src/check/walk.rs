@@ -8221,7 +8221,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             let a = a.as_ref().expect("an argument");
             for w in ["String", "int", "rat", "f64"] {
-                let Some(r) = self.wrapped(w, a, &held, *at) else {
+                let Some(r) = self
+                    .wrapped(w, a, &held, *at)
+                    .filter(|r| r.atoms() == held.atoms())
+                else {
                     continue;
                 };
                 if self.repaired(what, sig, args, (i, r, kept.then_some(*at)), pass, span) {
@@ -9470,10 +9473,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn sum_refused(&mut self, shown: &str, span: Span) {
         self.error_offering(
             span,
-            format!(
-                "`sum` does not take ({shown}): `sum` adds the components of a tuple, and they \
-                 must all be numbers"
-            ),
+            format!("`sum` does not take ({shown}): it adds only numbers"),
             [
                 "repair: pass a tuple whose components are all numbers, as `sum((1, 2, 3))`"
                     .to_string(),

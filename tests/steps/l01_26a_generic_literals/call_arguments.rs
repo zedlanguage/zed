@@ -61,7 +61,7 @@ fn a_division_of_literals_at_an_int_or_untyped_parameter_is_still_rejected() {
         assert!(
             errors
                 .iter()
-                .any(|e| e.starts_with("the literal `1` takes the carrier of its use")),
+                .any(|e| e.starts_with("Nothing gives the literal `1` a carrier")),
             "{src}: {errors:?}"
         );
     }

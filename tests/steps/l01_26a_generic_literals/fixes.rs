@@ -211,13 +211,7 @@ fn a_comparison_no_number_can_equal_lists_what_fits() {
     );
     assert_eq!(
         checked("f(s: String) = s == 1;\n"),
-        pairs(&[
-            ("f(s: String) = s == \"1\";", "compares the text"),
-            (
-                "f(s: String) = int(s) == 1;",
-                "compares the number the text holds"
-            ),
-        ])
+        pairs(&[("f(s: String) = s == \"1\";", "compares the text")])
     );
     assert_eq!(
         checked("f(p: (String, int)) = p == (1, 2);\n"),

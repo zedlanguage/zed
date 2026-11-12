@@ -26,10 +26,7 @@ fn a_parameter_of_type_never_takes_no_argument() {
     let text = "take(positional x: Never) = x;\nr = take(1);\n";
     assert_eq!(
         type_errors(text),
-        [
-            "`take` does not take (1): these are the types of its arguments here, and `take` has \
-          no arrow that takes them all [take(1)]"
-        ]
+        ["`take` does not take (1): no arrow of `take` takes these types [take(1)]"]
     );
     assert_eq!(sig(text, "take"), "(Never) -> Never");
 }
@@ -139,19 +136,13 @@ fn an_unreachable_branch_is_still_checked() {
     let text = "f(positional x: int) = { y = (x, 1); if x is Never { y } else { y + 1 } };\n";
     assert_eq!(
         type_errors(text),
-        [
-            "`+` does not take ((int, 1), 1): these are the types of its arguments here, and `+` \
-             has no arrow that takes them all [y + 1]"
-        ]
+        ["`+` does not take ((int, 1), 1): no arrow of `+` takes these types [y + 1]"]
     );
     // `x` is `Never` there, and `true` is still no operand of `+`.
     let text = "f(positional x: int) = if x is Never { x + true } else { 2 };\n";
     assert_eq!(
         type_errors(text),
-        [
-            "`+` does not take (Never, true): these are the types of its arguments here, and \
-             `+` has no arrow that takes them all [x + true]"
-        ]
+        ["`+` does not take (Never, true): no arrow of `+` takes these types [x + true]"]
     );
 }
 
@@ -232,10 +223,7 @@ fn a_branch_no_value_reaches_adds_nothing_to_the_result() {
     let text = "f(positional x: int) = if x > 0 && x < 0 { x + true } else { 2 };\n";
     assert_eq!(
         type_errors(text),
-        [
-            "`+` does not take (int, true): these are the types of its arguments here, and `+` \
-             has no arrow that takes them all [x + true]"
-        ]
+        ["`+` does not take (int, true): no arrow of `+` takes these types [x + true]"]
     );
 }
 

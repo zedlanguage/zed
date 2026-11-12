@@ -641,9 +641,7 @@ fn a_tuple_default_used_as_a_number_is_rejected() {
     let f = "f(positional x, y = (x, 1)) = y + 1;";
     assert_eq!(
         super::type_errors(f),
-        [
-            "`+` does not take (_, 1): these are the types of its arguments here, and `+` has no arrow that takes them all [y + 1]"
-        ]
+        ["`+` does not take (_, 1): no arrow of `+` takes these types [y + 1]"]
     );
     rejected(f, r#"String(f(1)) else "atom""#);
     let ok = "f(positional x, y = x) = y + 1;";
@@ -656,9 +654,7 @@ fn a_tuple_default_of_a_nested_function_used_as_a_number_is_rejected() {
         "outer(positional x) = {\n  inner(positional y, w = (y, 1)) = w + 1;\n  inner(x)\n};";
     assert_eq!(
         super::type_errors(outer),
-        [
-            "`+` does not take (_, 1): these are the types of its arguments here, and `+` has no arrow that takes them all [w + 1]"
-        ]
+        ["`+` does not take (_, 1): no arrow of `+` takes these types [w + 1]"]
     );
     rejected(outer, r#"String(outer(1)) else "atom""#);
     let ok = "outer(positional x) = {\n  inner(positional y, w = y) = w + 1;\n  inner(x)\n};";

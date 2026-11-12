@@ -15,7 +15,7 @@ fn a_report_line_that_concatenates_a_number_shows_the_chain_back_to_the_input_po
     );
     assert_eq!(
         out,
-        r#"4:15: `++` does not take ("total: ", int): these are the types of its arguments here, and `++` has no arrow that takes them all
+        r#"4:15: `++` does not take ("total: ", int): no arrow of `++` takes these types
   [1]  4:15: this expression is "total: "
        4 |   m.stdout <- "total: " ++ total;
          |               ^^^^^^^^^ [1]
@@ -127,7 +127,7 @@ main(m: MainArgs) {
     let first = out.lines().next().unwrap();
     assert_eq!(
         first,
-        "1:23: `++` does not take (\"#\", int | f64 | rat): these are the types of its arguments here, and `++` has no arrow that takes them all"
+        "1:23: `++` does not take (\"#\", int | f64 | rat): no arrow of `++` takes these types"
     );
     let s = steps(&out);
     for step in [
@@ -152,7 +152,7 @@ main(m: MainArgs) {
     );
     assert_eq!(
         out.lines().next().unwrap(),
-        "1:36: `++` does not take (\"#\", int | f64 | rat): these are the types of its arguments here, and `++` has no arrow that takes them all"
+        "1:36: `++` does not take (\"#\", int | f64 | rat): no arrow of `++` takes these types"
     );
     let s = steps(&out);
     for step in [
@@ -265,7 +265,7 @@ fn a_rejected_nested_tuple_shows_each_tuple_and_its_type() {
     let out = rejected("x = \"pair: \" ++ ((1, 2.5), \"a\");\n");
     assert_eq!(
         out,
-        r#"1:5: `++` does not take ("pair: ", ((1, 2.5), "a")): these are the types of its arguments here, and `++` has no arrow that takes them all
+        r#"1:5: `++` does not take ("pair: ", ((1, 2.5), "a")): no arrow of `++` takes these types
   [1] 1:5: this expression is "pair: "
       1 | x = "pair: " ++ ((1, 2.5), "a");
         |     ^^^^^^^^ [1] ^^^^^^^^ [3]

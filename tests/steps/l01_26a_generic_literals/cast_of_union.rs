@@ -150,8 +150,7 @@ fn a_value_no_arrow_of_the_cast_takes_is_rejected_and_named() {
         assert_eq!(
             type_errors(&src),
             [format!(
-                "`{word}` does not take (true): these are the types of its arguments here, and \
-                 `{word}` has no arrow that takes them all [{word}(g(true))]"
+                "`{word}` does not take (true): no arrow of `{word}` takes these types [{word}(g(true))]"
             )]
         );
         // The one repair, a wrap in `String`, checks.

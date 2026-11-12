@@ -22,29 +22,17 @@ use super::type_errors;
 fn answer(a: &str, ta: &str, op: &str, b: &str, tb: &str) -> String {
     let ans = op != "==";
     format!(
-        "`{a}` is {} `{ta}` and `{b}` is {} `{tb}` here, and no value is both, so the \
-         comparison always gives `{ans}`; write `{ans}` in place of `{a} {op} {b}` \
-         [{a} {op} {b}]",
-        article(ta),
-        article(tb)
+        "No value is both `{ta}` and `{tb}`: `{a} : {ta} {op} {b} : {tb}` is always `{ans}`. \
+         Try `{ans}` instead. [{a} {op} {b}]"
     )
 }
 
 /// The rejection of `a op b`, of the types `ta` and `tb`, with the repairs `repairs`.
 fn repaired(a: &str, ta: &str, op: &str, b: &str, tb: &str, repairs: &str) -> String {
     format!(
-        "`{a}` is {} `{ta}` and `{b}` is {} `{tb}` here, and no value is both, so the \
-         comparison always gives the same answer; write {repairs} [{a} {op} {b}]",
-        article(ta),
-        article(tb)
+        "No value is both `{ta}` and `{tb}`: `{a} : {ta} {op} {b} : {tb}` always gives the same \
+         answer. Try {repairs} instead. [{a} {op} {b}]"
     )
-}
-
-fn article(t: &str) -> &'static str {
-    match t.as_bytes() {
-        [b'a' | b'e' | b'i' | b'o', ..] | [b'f', b'0'..=b'9', ..] => "an",
-        _ => "a",
-    }
 }
 
 #[test]
@@ -62,28 +50,15 @@ fn a_literal_with_a_suffix_compared_with_a_value_that_holds_no_number_is_rejecte
         type_errors("f(positional x: bool) = -2r == x;\n"),
         [answer("-2r", "rat", "==", "x", "bool")]
     );
-    // Text holds a number its cast reads.
+    // A cast of the text is no repair: `#invalid` makes it narrowing (DESIGN.md
+    // sec:diagnostics).
     assert_eq!(
         type_errors("f(positional x: String) = x == 1r;\n"),
-        [repaired(
-            "x",
-            "String",
-            "==",
-            "1r",
-            "rat",
-            "`rat(x) == 1r` to compare the numbers"
-        )]
+        [answer("x", "String", "==", "1r", "rat")]
     );
     assert_eq!(
         type_errors("f(positional x: String) = 2.5f64 == x;\n"),
-        [repaired(
-            "2.5f64",
-            "f64",
-            "==",
-            "x",
-            "String",
-            "`2.5f64 == f64(x)` to compare the numbers"
-        )]
+        [answer("2.5f64", "f64", "==", "x", "String")]
     );
     // A tuple: only the components that may equal the literal are offered.
     assert_eq!(
@@ -108,27 +83,25 @@ fn a_component_of_a_written_tuple_is_named_by_its_place() {
     assert_eq!(
         type_errors("f(positional p: (bool, int)) = p == (1r, 2);\n"),
         [
-            "`p[0]` is a `bool` and component `[0]` of the right operand is a `rat` here, and \
-             no value is both, so the comparison always gives `false`; write `false` in place \
-             of the comparison [p == (1r, 2)]"
+            "No value is both `bool` and `rat`: `p[0] : bool` compared by `==` with component `[0]` \
+             of the right operand is always `false`. Try `false` instead. [p == (1r, 2)]"
         ]
     );
     // Of two components that share no value, the first written is named.
     assert_eq!(
         type_errors("f(positional p: (bool, int, String)) = (1r, 2, true) != p;\n"),
         [
-            "component `[0]` of the left operand is a `rat` and `p[0]` is a `bool` here, and \
-             no value is both, so the comparison always gives `true`; write `true` in place of \
-             the comparison [(1r, 2, true) != p]"
+            "No value is both `rat` and `bool`: component `[0]` of the left operand compared by `!=` \
+             with `p[0] : bool` is always `true`. Try `true` instead. [(1r, 2, true) != p]"
         ]
     );
     // Nested: the place goes down each level.
     assert_eq!(
         type_errors("f(positional p: (int, (int, bool))) = p == (1, (2, 1r));\n"),
         [
-            "`p[1][1]` is a `bool` and component `[1][1]` of the right operand is a `rat` here, \
-             and no value is both, so the comparison always gives `false`; write `false` in \
-             place of the comparison [p == (1, (2, 1r))]"
+            "No value is both `bool` and `rat`: `p[1][1] : bool` compared by `==` with component \
+             `[1][1]` of the right operand is always `false`. Try `false` instead. \
+             [p == (1, (2, 1r))]"
         ]
     );
 }
@@ -175,58 +148,26 @@ fn two_values_that_no_value_is_both_of_are_rejected() {
     // A name bound to a literal is a value of the literal's carrier.
     assert_eq!(
         type_errors("f(positional s: String) = { a = 1r; a == s };\n"),
-        [repaired(
-            "a",
-            "rat",
-            "==",
-            "s",
-            "String",
-            "`a == rat(s)` to compare the numbers"
-        )]
+        [answer("a", "rat", "==", "s", "String")]
     );
 }
 
 #[test]
-fn two_numbers_of_no_common_carrier_get_the_casts_that_make_them_meet() {
-    // No value is converted implicitly, and an `int` is never equal to an `f64`.
+fn two_numbers_of_no_common_carrier_get_no_narrowing_cast() {
+    // No value is converted implicitly, and an `int` is never equal to an `f64`. Each cast that
+    // would make them meet narrows (`f64(n)` of an unbounded `int`, `int(y)`, `f64(r)`,
+    // `rat(y)`), so none is offered.
     let text = "f(positional n: int, positional y: f64) = n == y;\n";
-    assert_eq!(
-        type_errors(text),
-        [repaired(
-            "n",
-            "int",
-            "==",
-            "y",
-            "f64",
-            "`f64(n) == y` or `n == int(y)` to compare the numbers"
-        )]
-    );
+    assert_eq!(type_errors(text), [answer("n", "int", "==", "y", "f64")]);
     let (info, _) = zed_tests::step_helpers::l01_26_type_resolution::info(text);
     assert_eq!(info.errors[0].row, Some(Row::NoCommonCarrier));
     assert_eq!(
         type_errors("f(positional r: rat, positional y: f64) = r != y;\n"),
-        [repaired(
-            "r",
-            "rat",
-            "!=",
-            "y",
-            "f64",
-            "`f64(r) != y` or `r != rat(y)` to compare the numbers"
-        )]
+        [answer("r", "rat", "!=", "y", "f64")]
     );
-    // A string and a number: the cast of the text.
+    // A string and a number: no cast of the text, which `#invalid` makes narrowing.
     let text = "f(positional s: String, positional n: int) = s == n;\n";
-    assert_eq!(
-        type_errors(text),
-        [repaired(
-            "s",
-            "String",
-            "==",
-            "n",
-            "int",
-            "`int(s) == n` to compare the numbers"
-        )]
-    );
+    assert_eq!(type_errors(text), [answer("s", "String", "==", "n", "int")]);
     let (info, _) = zed_tests::step_helpers::l01_26_type_resolution::info(text);
     assert_eq!(info.errors[0].row, Some(Row::EqNoCommonCarrier));
 }
@@ -269,7 +210,7 @@ fn repairs(text: &str) -> Vec<String> {
 #[test]
 fn the_menu_is_given_again_as_repair_steps_in_its_order() {
     let casts = repairs("f(positional n: int, positional y: f64) = n == y;\n");
-    assert_eq!(casts, ["write `f64(n) == y`", "write `n == int(y)`"]);
+    assert_eq!(casts, ["write `false` in place of `n == y`"]);
     let parts = repairs("f(positional x: (int, int), positional y: int) = x == y;\n");
     assert_eq!(parts, ["write `x[0] == y`", "write `x[1] == y`"]);
     let none = repairs("f(positional b: bool, positional s: String) = b != s;\n");
@@ -308,7 +249,10 @@ fn a_literal_rejected_by_its_carrier_is_not_rejected_twice() {
     // The literal's own rejection names the comparison; this one adds nothing.
     let errors = type_errors("f(positional x: int) = x == 1.5f64;\n");
     assert_eq!(errors.len(), 1, "{errors:?}");
-    assert!(errors[0].starts_with("the literal `1.5f64`"), "{errors:?}");
+    assert!(
+        errors[0].starts_with("The suffix makes the literal `1.5f64`"),
+        "{errors:?}"
+    );
 }
 
 fn int(n: i64) -> Ty {
@@ -445,9 +389,8 @@ fn rejecting_two_wide_types_that_share_no_value_scales() {
     assert_eq!(
         type_errors(&wide_written(3)),
         [
-            "`p[2]` is a `bool` and component `[2]` of the right operand is a `rat` here, and \
-             no value is both, so the comparison always gives `false`; write `false` in place \
-             of the comparison [p == (0, 0, 1r)]"
+            "No value is both `bool` and `rat`: `p[2] : bool` compared by `==` with component `[2]` \
+             of the right operand is always `false`. Try `false` instead. [p == (0, 0, 1r)]"
         ]
     );
     rejects_linearly(

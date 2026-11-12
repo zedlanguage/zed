@@ -39,8 +39,7 @@ fn two_carriers(lit: &str, line: impl Fn(&str) -> String) -> String {
     );
     let fixes = [(r.as_str(), rh.as_str()), (f.as_str(), fh.as_str())];
     format!(
-        "the literal `{lit}` can be a `rat` or an `f64` at `f64 | rat`, and nothing here chooses \
-         one{}{} [{lit}]",
+        "Nothing chooses one carrier of `f64 | rat` for the literal `{lit}`{}{} [{lit}]",
         tried(&fixes),
         menu(&fixes)
     )
@@ -48,10 +47,7 @@ fn two_carriers(lit: &str, line: impl Fn(&str) -> String) -> String {
 
 /// The rejection of the decimal literal `lit` where `int` is expected.
 fn decimal_at_int(lit: &str) -> String {
-    format!(
-        "the literal `{lit}` is a decimal, and `int` is expected here; a decimal literal is never \
-         an `int` [{lit}]"
-    )
+    format!("A decimal literal is never an `int`: the literal `{lit}` [{lit}]")
 }
 
 #[test]
@@ -165,8 +161,7 @@ fn literals_in_a_tuple_take_its_components_carriers() {
     assert_eq!(
         type_errors("f(positional p: (f64, f64)) = p;\ny = f((9007199254740993, 1));\n"),
         [format!(
-            "the literal `9007199254740993` has no exact `f64`, and `f64` is expected here; an \
-             integer literal takes a carrier only where it is exact. Try `y = f((9007199254740992, \
+            "No `f64` equals the literal `9007199254740993`. Try `y = f((9007199254740992, \
              1))` instead.{} [9007199254740993]",
             menu(&[(
                 "y = f((9007199254740992, 1));",
@@ -429,17 +424,13 @@ fn a_literal_compared_with_a_union() {
 #[test]
 fn a_number_literal_compared_with_a_string_is_rejected() {
     // Author decision A15 (2026-11-09): no carrier of `1` is a string, so `x == 1` is never
-    // true; the fixes compare the text or read the number it holds.
+    // true; the fix compares the text. A cast of the string is no fix: `#invalid` makes it
+    // narrowing (DESIGN.md sec:diagnostics).
     let want = |head: &str, tail: &str| {
         never_equal(
             "String",
-            &[
-                (&format!("{head}x == \"1\"{tail}"), "compares the text"),
-                (
-                    &format!("{head}int(x) == 1{tail}"),
-                    "compares the number the text holds",
-                ),
-            ],
+            "x == 1",
+            &[(&format!("{head}x == \"1\"{tail}"), "compares the text")],
         )
     };
     assert_eq!(
@@ -463,23 +454,12 @@ fn a_number_literal_compared_with_a_string_is_rejected() {
     assert_eq!(
         type_errors("f(positional x: String) = 1.5 != x;\n"),
         [format!(
-            "the literal `1.5` is a number, and `x` is a `String` here, which no number equals, so \
-             the comparison always gives the same answer. Try `f(positional x: String) = \"1.5\" \
-             != x` instead.{} [1.5]",
-            menu(&[
-                (
-                    "f(positional x: String) = \"1.5\" != x;",
-                    "compares the text"
-                ),
-                (
-                    "f(positional x: String) = 1.5 != f64(x);",
-                    "compares the number the text holds"
-                ),
-                (
-                    "f(positional x: String) = 1.5 != rat(x);",
-                    "compares the number the text holds"
-                ),
-            ])
+            "No number equals a `String`: `1.5 != x : String` always gives the same answer. Try \
+             `f(positional x: String) = \"1.5\" != x` instead.{} [1.5]",
+            menu(&[(
+                "f(positional x: String) = \"1.5\" != x;",
+                "compares the text"
+            )])
         )]
     );
     // Each fix checks, and so does a comparison with an atom.
@@ -505,11 +485,11 @@ fn a_number_literal_compared_with_a_string_is_rejected() {
 }
 
 /// The rejection of `1` compared by `==` or `!=` with `x` of the type `ty`, which holds no
-/// number, with the fixes `fixes`.
-fn never_equal(ty: &str, fixes: &[(&str, &str)]) -> String {
+/// number, as `cmp` writes it, with the fixes `fixes`.
+fn never_equal(ty: &str, cmp: &str, fixes: &[(&str, &str)]) -> String {
+    let shown = cmp.replace('x', &format!("x : {ty}"));
     format!(
-        "the literal `1` is a number, and `x` is a `{ty}` here, which no number equals, so the \
-         comparison always gives the same answer{}{} [1]",
+        "No number equals a `{ty}`: `{shown}` always gives the same answer{}{} [1]",
         tried(fixes),
         menu(fixes)
     )
@@ -534,6 +514,7 @@ fn a_number_literal_compared_with_a_bool_or_a_tuple_is_rejected() {
         type_errors("f(positional x: bool) = x == 1;\n"),
         [never_equal(
             "bool",
+            "x == 1",
             &refs(&truth(|b| format!("f(positional x: bool) = x == {b};")))
         )]
     );
@@ -541,6 +522,7 @@ fn a_number_literal_compared_with_a_bool_or_a_tuple_is_rejected() {
         type_errors("f(positional x: bool | #none) = 1 != x;\n"),
         [never_equal(
             "bool",
+            "1 != x",
             &refs(&truth(|b| format!(
                 "f(positional x: bool | #none) = {b} != x;"
             )))
@@ -556,7 +538,7 @@ fn a_number_literal_compared_with_a_bool_or_a_tuple_is_rejected() {
     };
     let menu_of = |ty: &str, p: [(String, String); 2]| {
         let p: Vec<(&str, &str)> = p.iter().map(|(l, h)| (l.as_str(), h.as_str())).collect();
-        never_equal(ty, &p)
+        never_equal(ty, "x == 1", &p)
     };
     assert_eq!(
         type_errors("f(positional x: (int, int)) = x == 1;\n"),
@@ -569,6 +551,7 @@ fn a_number_literal_compared_with_a_bool_or_a_tuple_is_rejected() {
         type_errors("f(positional x: (int, String)) = 1 == x;\n"),
         [never_equal(
             "(int, String)",
+            "1 == x",
             &[(
                 "f(positional x: (int, String)) = 1 == x[0];",
                 "compares component 0"
@@ -588,13 +571,8 @@ fn a_number_literal_compared_with_a_bool_or_a_tuple_is_rejected() {
         type_errors("f(positional x: String) = 1 == x;\n"),
         [never_equal(
             "String",
-            &[
-                ("f(positional x: String) = \"1\" == x;", "compares the text"),
-                (
-                    "f(positional x: String) = 1 == int(x);",
-                    "compares the number the text holds"
-                ),
-            ]
+            "1 == x",
+            &[("f(positional x: String) = \"1\" == x;", "compares the text")]
         )]
     );
     let either = "f(positional x: bool | String) = x == ";
@@ -602,6 +580,7 @@ fn a_number_literal_compared_with_a_bool_or_a_tuple_is_rejected() {
         type_errors("f(positional x: bool | String) = x == 1;\n"),
         [never_equal(
             "bool | String",
+            "x == 1",
             &[
                 (&format!("{either}\"1\";"), "compares the text"),
                 (&format!("{either}true;"), "compares with a truth value"),
@@ -614,6 +593,7 @@ fn a_number_literal_compared_with_a_bool_or_a_tuple_is_rejected() {
         type_errors("f(positional x) = (x && true) || x == 1;\n"),
         [never_equal(
             "bool",
+            "x == 1",
             &refs(&truth(|b| format!(
                 "f(positional x) = (x && true) || x == {b};"
             )))
@@ -623,6 +603,7 @@ fn a_number_literal_compared_with_a_bool_or_a_tuple_is_rejected() {
         type_errors("f(positional x) = 1 == x || (x && true);\n"),
         [never_equal(
             "bool",
+            "1 == x",
             &refs(&truth(|b| format!(
                 "f(positional x) = {b} == x || (x && true);"
             )))
@@ -632,8 +613,8 @@ fn a_number_literal_compared_with_a_bool_or_a_tuple_is_rejected() {
     assert_eq!(
         type_errors("f(positional x: bool) = (x && x) == 1;\n"),
         [format!(
-            "the literal `1` is a number, compared by `==` with a `bool`, which no number \
-             equals, so the comparison always gives the same answer. Try `f(positional x: bool) = (x && x) == true` instead.{} [1]",
+            "No number equals a `bool`: `1` compared by `==` with a `bool` always gives the same \
+             answer. Try `f(positional x: bool) = (x && x) == true` instead.{} [1]",
             menu(&refs(&truth(|b| format!(
                 "f(positional x: bool) = (x && x) == {b};"
             ))))
@@ -643,8 +624,7 @@ fn a_number_literal_compared_with_a_bool_or_a_tuple_is_rejected() {
     assert_eq!(
         type_errors("f(positional x: (String, bool)) = x != 1;\n"),
         [format!(
-            "the literal `1` is a number, and `x` is a `(String, bool)` here, which no number \
-             equals, so the comparison always gives `true`. Try `f(positional x: (String, bool)) = \
+            "No number equals a `(String, bool)`: `x : (String, bool) != 1` is always `true`. Try `f(positional x: (String, bool)) = \
              true` instead.{} [1]",
             menu(&[(
                 "f(positional x: (String, bool)) = true;",
@@ -655,8 +635,7 @@ fn a_number_literal_compared_with_a_bool_or_a_tuple_is_rejected() {
     assert_eq!(
         type_errors("f(positional x: (int, int)) = 1.5 == x;\n"),
         [format!(
-            "the literal `1.5` is a number, and `x` is a `(int, int)` here, which no number \
-             equals, so the comparison always gives `false`. Try `f(positional x: (int, int)) = \
+            "No number equals a `(int, int)`: `1.5 == x : (int, int)` is always `false`. Try `f(positional x: (int, int)) = \
              false` instead.{} [1.5]",
             menu(&[(
                 "f(positional x: (int, int)) = false;",
@@ -675,21 +654,16 @@ fn a_type_of_one_value_is_written_with_no_article() {
     assert_eq!(
         type_errors("t = true;\nless = t == 1;\n"),
         [format!(
-            "the literal `1` is a number, and `t` is `true` here, which no number equals, so the \
-             comparison always gives the same answer{}{} [1]",
+            "No number equals `true`: `t : true == 1` always gives the same answer{}{} [1]",
             tried(&fixes),
             menu(&fixes)
         )]
     );
-    let fixes = [
-        ("less = t == \"1\";", "compares the text"),
-        ("less = int(t) == 1;", "compares the number the text holds"),
-    ];
+    let fixes = [("less = t == \"1\";", "compares the text")];
     assert_eq!(
         type_errors("t = \"km\";\nless = t == 1;\n"),
         [format!(
-            "the literal `1` is a number, and `t` is `\"km\"` here, which no number equals, so \
-             the comparison always gives the same answer{}{} [1]",
+            "No number equals `\"km\"`: `t : \"km\" == 1` always gives the same answer{}{} [1]",
             tried(&fixes),
             menu(&fixes)
         )]
@@ -700,24 +674,17 @@ fn a_type_of_one_value_is_written_with_no_article() {
     assert_eq!(
         type_errors("t = (true, 2);\nless = t == (1, 2);\n"),
         [format!(
-            "the literal `1` is a number, and the component of `t` it is compared with by `==` is \
-             `true` here, which no number equals, so the comparison always gives the same \
-             answer{}{} [1]",
+            "No number equals `true`: `1` compared by `==` with a component of `t` always gives \
+             the same answer{}{} [1]",
             tried(&fixes),
             menu(&fixes)
         )]
     );
     // A type of many values keeps its article.
-    let fixes = [
-        ("f(positional x: String) = x == \"1\";", "compares the text"),
-        (
-            "f(positional x: String) = int(x) == 1;",
-            "compares the number the text holds",
-        ),
-    ];
+    let fixes = [("f(positional x: String) = x == \"1\";", "compares the text")];
     assert_eq!(
         type_errors("f(positional x: String) = x == 1;\n"),
-        [never_equal("String", &fixes)]
+        [never_equal("String", "x == 1", &fixes)]
     );
 }
 
@@ -727,9 +694,8 @@ fn a_number_literal_in_a_tuple_compared_with_a_component_that_holds_no_number_is
     assert_eq!(
         type_errors("f(positional p: (String, int)) = p == (1, 2);\n"),
         [format!(
-            "the literal `1` is a number, and the component of `p` it is compared with by `==` is \
-             a `String` here, which no number equals, so the comparison always gives the same \
-             answer. Try `f(positional p: (String, int)) = p == (\"1\", 2)` instead.{} [1]",
+            "No number equals a `String`: `1` compared by `==` with a component of `p` always gives \
+             the same answer. Try `f(positional p: (String, int)) = p == (\"1\", 2)` instead.{} [1]",
             menu(&[(
                 "f(positional p: (String, int)) = p == (\"1\", 2);",
                 "compares the text"
@@ -739,9 +705,8 @@ fn a_number_literal_in_a_tuple_compared_with_a_component_that_holds_no_number_is
     assert_eq!(
         type_errors("f(positional p: (bool, int)) = (1, 2) != p;\n"),
         [format!(
-            "the literal `1` is a number, and the component of `p` it is compared with by `!=` \
-             is a `bool` here, which no number equals, so the comparison always gives the same \
-             answer. Try `f(positional p: (bool, int)) = (true, 2) != p` instead.{} [1]",
+            "No number equals a `bool`: `1` compared by `!=` with a component of `p` always gives \
+             the same answer. Try `f(positional p: (bool, int)) = (true, 2) != p` instead.{} [1]",
             menu(&refs(&truth(|b| format!(
                 "f(positional p: (bool, int)) = ({b}, 2) != p;"
             ))))
@@ -751,9 +716,8 @@ fn a_number_literal_in_a_tuple_compared_with_a_component_that_holds_no_number_is
     assert_eq!(
         type_errors("f(positional p: ((int, int), int)) = p == (1, 2);\n"),
         [
-            "the literal `1` is a number, and the component of `p` it is compared with by `==` \
-             is a `(int, int)` here, which no number equals, so the comparison always gives the \
-             same answer; write a value of `(int, int)` in its place [1]"
+            "No number equals a `(int, int)`: `1` compared by `==` with a component of `p` always \
+             gives the same answer. Write a value of `(int, int)` in place of `1`. [1]"
         ]
     );
     // A component that holds a number in one shape of a union takes it there.

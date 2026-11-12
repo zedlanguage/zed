@@ -923,8 +923,7 @@ fn a_rejection_writes_the_empty_type_as_never() {
     let (seen, out) = printed_by("take(positional x: Never) = x;\nr = take(1);\n");
     assert_eq!(
         out,
-        "2:5: `take` does not take (1): these are the types of its arguments here, and `take` \
-has no arrow that takes them all
+        "2:5: `take` does not take (1): no arrow of `take` takes these types
   [1] 2:10: this literal, 1, is 1
       2 | r = take(1);
         |     ^^^^^^^ [2]
@@ -977,8 +976,7 @@ fn a_rejection_writes_an_empty_product_as_never() {
     let (seen, out) = printed_by("f(positional x: (Never, int)) = x;\nr = f((1, 2));\n");
     assert_eq!(
         out,
-        "2:5: `f` does not take ((1, 2)): these are the types of its arguments here, and `f` \
-has no arrow that takes them all
+        "2:5: `f` does not take ((1, 2)): no arrow of `f` takes these types
   [1] 2:7: this expression gives (1, 2)
       2 | r = f((1, 2));
         |     ^^^^^^^^^ [4]

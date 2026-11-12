@@ -21,10 +21,7 @@ fn body(e: &str) -> String {
 
 /// The headline of the rejection of `e`, in which `op` does not take `(x, y)`.
 fn refused(op: &str, x: &str, y: &str, e: &str) -> String {
-    format!(
-        "`{op}` does not take ({x}, {y}): these are the types of its arguments here, and `{op}` \
-         has no arrow that takes them all [{e}]"
-    )
+    format!("`{op}` does not take ({x}, {y}): no arrow of `{op}` takes these types [{e}]")
 }
 
 const SIG: &str = "((int) -> Never, int, bool, (int) -> int, String) -> Never";
@@ -103,8 +100,7 @@ fn the_rejection_shows_its_derivation() {
         panic!("accepted")
     };
     for step in [
-        "`+` does not take (Never, true): these are the types of its arguments here, and `+` \
-         has no arrow that takes them all",
+        "`+` does not take (Never, true): no arrow of `+` takes these types",
         "this call of `h` gives Never",
         "`u` is int | true here",
         "this block gives true",

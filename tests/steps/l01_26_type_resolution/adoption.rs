@@ -31,8 +31,7 @@ fn unfixed(d: &str, fixes: &[(&str, &str)]) -> String {
 fn decimal_at_int(d: &str, line: &str, int: &str) -> String {
     let fixes = [(line, &*format!("the literal is then the int {int}"))];
     format!(
-        "the literal `{d}` is a decimal, and `int` is expected here; a decimal literal is never \
-         an `int`, even when its value is an integer{}{} [{d}]",
+        "A decimal literal is never an `int`, even with an integer value: the literal `{d}`{}{} [{d}]",
         tried(&fixes),
         menu(&fixes)
     )
@@ -301,8 +300,7 @@ fn an_integer_literal_that_cannot_take_a_carrier_exactly_is_an_error() {
     assert_eq!(
         type_errors(&format!("{f}y = f(9007199254740993);\n")),
         [format!(
-            "the literal `9007199254740993` has no exact `f64`, and `f64` is expected here; an \
-             integer literal takes a carrier only where it is exact. Try `y = f(9007199254740992)` \
+            "No `f64` equals the literal `9007199254740993`. Try `y = f(9007199254740992)` \
              instead.{} [9007199254740993]",
             menu(&[(
                 "y = f(9007199254740992);",

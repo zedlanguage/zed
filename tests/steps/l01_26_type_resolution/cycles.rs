@@ -101,9 +101,7 @@ fn a_cycle_inside_a_body_is_rejected_and_the_rest_of_the_body_checked() {
         type_errors(&text),
         [
             recursion("`x`", "x(positional k: int) = x(k);"),
-            "`f` does not take (true): these are the types of its arguments here, and `f` has \
-             no arrow that takes them all [f(true)]"
-                .into(),
+            "`f` does not take (true): no arrow of `f` takes these types [f(true)]".into(),
         ]
     );
     // A recursive function declared inside another.
@@ -124,9 +122,7 @@ fn an_error_beside_a_cycle_is_reported() {
         type_errors(&text),
         [
             recursion("`spin`", "spin(positional n: int) = spin(n + 1);"),
-            "`f` does not take (true): these are the types of its arguments here, and `f` has \
-             no arrow that takes them all [f(true)]"
-                .into(),
+            "`f` does not take (true): no arrow of `f` takes these types [f(true)]".into(),
         ]
     );
 }
@@ -142,9 +138,7 @@ fn a_function_that_calls_a_recursive_one_is_checked() {
         type_errors(&text),
         [
             recursion("`spin`", "spin(positional n: int) = spin(n + 1);"),
-            "`f` does not take (true): these are the types of its arguments here, and `f` has \
-             no arrow that takes them all [f(true)]"
-                .into(),
+            "`f` does not take (true): no arrow of `f` takes these types [f(true)]".into(),
         ]
     );
     assert_eq!(sig(&text, "f"), "(int) -> int");

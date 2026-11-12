@@ -15,8 +15,6 @@ fn rejected(src: &str) -> String {
 }
 
 const DIVIDES: &str = "Nothing gives the integer literals a carrier, and `/` has none at `int`";
-const STRING: &str = "is a `String` here, which no number equals, so the comparison always \
-                      gives the same answer";
 
 #[test]
 fn a_decimal_with_underscores_is_quoted_with_them() {
@@ -74,17 +72,13 @@ fn an_exponent_is_quoted_as_written() {
 fn a_suffixed_literal_is_quoted_with_its_suffix() {
     assert_eq!(
         type_errors("f(x: int) = x + 0.5f64;\n"),
-        [
-            "the literal `0.5f64` is an `f64` by its suffix, and `int` is expected here; a suffix \
-          fixes a literal's carrier [0.5f64]"
-        ]
+        ["The suffix makes the literal `0.5f64` an `f64`, never `int` [0.5f64]"]
     );
     // The fix writes the digits as the program does, and names the number by them.
     assert_eq!(
         type_errors("f(x: rat) = x + 1_000.5f64;\n"),
         [
-            "the literal `1_000.5f64` is an `f64` by its suffix, and `rat` is expected here; a \
-             suffix fixes a literal's carrier. Try `f(x: rat) = x + 1_000.5r` instead.\n  fixes, \
+            "The suffix makes the literal `1_000.5f64` an `f64`, never `rat`. Try `f(x: rat) = x + 1_000.5r` instead.\n  fixes, \
              each checked here:\n    f(x: rat) = x + 1_000.5r;    the literal is then exactly \
              1_000.5, a rat [1_000.5f64]"
         ]
@@ -137,12 +131,11 @@ fn a_literal_in_another_base_is_quoted_with_its_prefix_and_underscores() {
     );
     assert_eq!(
         type_errors("f(x: String) = x == 0xF_F;\n"),
-        [format!(
-            "the literal `0xF_F` is a number, and `x` {STRING}. Try `f(x: String) = x == \
-             \"0xF_F\"` instead.\n  fixes, each checked here:\n    f(x: String) = x == \
-             \"0xF_F\";       compares the text\n    f(x: String) = int(x) == 0xF_F;    compares \
-             the number the text holds [0xF_F]"
-        )]
+        [
+            "No number equals a `String`: `x : String == 0xF_F` always gives the same answer. Try \
+             `f(x: String) = x == \"0xF_F\"` instead.\n  fixes, each checked here:\n    f(x: \
+             String) = x == \"0xF_F\";    compares the text [0xF_F]"
+        ]
     );
 }
 
@@ -150,19 +143,17 @@ fn a_literal_in_another_base_is_quoted_with_its_prefix_and_underscores() {
 fn the_text_fix_of_a_number_compared_with_a_string_is_the_literal_as_written() {
     assert_eq!(
         type_errors("f(x: String) = x == 1_000;\n"),
-        [format!(
-            "the literal `1_000` is a number, and `x` {STRING}. Try `f(x: String) = x == \
-             \"1_000\"` instead.\n  fixes, each checked here:\n    f(x: String) = x == \
-             \"1_000\";       compares the text\n    f(x: String) = int(x) == 1_000;    compares \
-             the number the text holds [1_000]"
-        )]
+        [
+            "No number equals a `String`: `x : String == 1_000` always gives the same answer. Try \
+             `f(x: String) = x == \"1_000\"` instead.\n  fixes, each checked here:\n    f(x: \
+             String) = x == \"1_000\";    compares the text [1_000]"
+        ]
     );
     assert_eq!(
         type_errors("f(x: (int, String)) = x == (1, 2_0);\n"),
         [
-            "the literal `2_0` is a number, and the component of `x` it is compared with by `==` \
-             is a `String` here, which no number equals, so the comparison always gives the same \
-             answer. Try `f(x: (int, String)) = x == (1, \"2_0\")` instead.\n  fixes, each checked \
+            "No number equals a `String`: `2_0` compared by `==` with a component of `x` always \
+             gives the same answer. Try `f(x: (int, String)) = x == (1, \"2_0\")` instead.\n  fixes, each checked \
              here:\n    f(x: (int, String)) = x == (1, \"2_0\");    compares the text [2_0]"
         ]
     );
@@ -181,18 +172,14 @@ fn a_literal_in_parentheses_is_quoted_without_them() {
     assert_eq!(
         type_errors("f(x: String) = x == -(1_000r);\n"),
         [
-            "`x` is a `String` and `-1_000r` is a `rat` here, and no value is both, so the \
-          comparison always gives the same answer; write `rat(x) == -1_000r` to compare the \
-          numbers [x == -(1_000r)]"
+            "No value is both `String` and `rat`: `x : String == -1_000r : rat` is always \
+             `false`. Try `false` instead. [x == -(1_000r)]"
         ]
     );
     // A type that holds the literal's value spells it as the program does.
     assert_eq!(
         type_errors("f(x: int) = x / (0_0);\n"),
-        [
-            "`/` does not take (int, 0_0): these are the types of its arguments here, and `/` has \
-          no arrow that takes them all [x / (0_0)]"
-        ]
+        ["`/` does not take (int, 0_0): no arrow of `/` takes these types [x / (0_0)]"]
     );
 }
 
@@ -201,9 +188,8 @@ fn an_operand_of_a_comparison_is_quoted_as_written() {
     assert_eq!(
         type_errors("f(x: f64) = x == 0.5_0r;\n"),
         [
-            "`x` is an `f64` and `0.5_0r` is a `rat` here, and no value is both, so the comparison \
-          always gives the same answer; write `rat(x) == 0.5_0r` or `x == f64(0.5_0r)` to \
-          compare the numbers [x == 0.5_0r]"
+            "No value is both `f64` and `rat`: `x : f64 == 0.5_0r : rat` is always `false`. Try \
+             `false` instead. [x == 0.5_0r]"
         ]
     );
 }
@@ -263,7 +249,9 @@ fn quoting_a_literal_of_n_digits_with_underscores_scales() {
     let errors = type_errors(&long(3));
     assert_eq!(errors.len(), 1);
     assert!(
-        errors[0].starts_with(&format!("the literal `{lit}` is a number")),
+        errors[0].starts_with(&format!(
+            "No number equals a `String`: `x : String == {lit}`"
+        )),
         "{errors:?}"
     );
     assert!(errors[0].contains(&format!("\"{lit}\"")), "{errors:?}");

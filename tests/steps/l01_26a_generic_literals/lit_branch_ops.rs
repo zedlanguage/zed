@@ -94,8 +94,7 @@ fn an_inexact_literal_in_an_operation_branch_is_its_own_error() {
     assert_eq!(
         type_errors(&src),
         vec![
-            "the literal `9007199254740993` has no exact `f64`, and `f64` is expected here; an \
-             integer literal takes a carrier only where it is exact. Try `f(positional c: bool) = \
+            "No `f64` equals the literal `9007199254740993`. Try `f(positional c: bool) = \
              h(if c { 9007199254740992 + 0 } else { 1 })` instead.\n  \
              fixes, each checked here:\n    \
              f(positional c: bool) = h(if c { 9007199254740992 + 0 } else { 1 });    the \
@@ -114,8 +113,8 @@ fn a_division_in_an_if_is_still_not_kept() {
     assert_eq!(
         type_errors(src),
         vec![
-            "the literal `1` takes the carrier of its use, and nothing here chooses one of `f64 \
-             | rat`, the carriers what it meets takes. Try `g(positional c: bool) = if c { 1.0f64 \
+            "Nothing gives the literal `1` a carrier of `f64 \
+             | rat`. Try `g(positional c: bool) = if c { 1.0f64 \
              / 2 } else { 1 }` instead.\n  \
              fixes, each checked here:\n    \
              g(positional c: bool) = if c { 1.0f64 / 2 } else { 1 };    the literal is then the \
@@ -230,11 +229,7 @@ fn a_call_is_not_read_where_the_parameter_takes_no_one_carrier() {
                    f(positional c: bool) = h(g(c));\n";
     assert_eq!(
         type_errors(at_bool),
-        vec![
-            "`h` does not take (1 | 2): these are the types of its arguments here, and `h` has \
-             no arrow that takes them all [h(g(c))]"
-                .to_string()
-        ]
+        vec!["`h` does not take (1 | 2): no arrow of `h` takes these types [h(g(c))]".to_string()]
     );
     let two = "g(positional c: bool) = if c { 2 } else { 1 };\nh(positional z: f64 | rat) = z;\n\
                f(positional c: bool) = h(g(c));\n";
@@ -254,11 +249,7 @@ fn a_name_and_a_call_of_a_parameter_are_not_read() {
         format!("{H}f(positional c: bool) = {{ y = if c {{ 2 + 1 }} else {{ 1 }}; h(y) }};\n");
     assert_eq!(
         type_errors(&name),
-        vec![
-            "`h` does not take (1 | 3): these are the types of its arguments here, and `h` has \
-             no arrow that takes them all [h(y)]"
-                .to_string()
-        ]
+        vec!["`h` does not take (1 | 3): no arrow of `h` takes these types [h(y)]".to_string()]
     );
     let param = format!(
         "k(positional x: int) = if x == 1 {{ x }} else {{ 2 }};\n{H}\
@@ -266,11 +257,7 @@ fn a_name_and_a_call_of_a_parameter_are_not_read() {
     );
     assert_eq!(
         type_errors(&param),
-        vec![
-            "`h` does not take (int): these are the types of its arguments here, and `h` has \
-             no arrow that takes them all [h(k(x))]"
-                .to_string()
-        ]
+        vec!["`h` does not take (int): no arrow of `h` takes these types [h(k(x))]".to_string()]
     );
 }
 
@@ -404,20 +391,14 @@ fn a_name_bound_to_a_call_of_literal_values_is_not_read() {
     let name = format!("{G}{H}f(positional c: bool) = {{ y = g(c); h(y) }};\n");
     assert_eq!(
         type_errors(&name),
-        vec![
-            "`h` does not take (1 | 2): these are the types of its arguments here, and `h` has \
-             no arrow that takes them all [h(y)]"
-                .to_string()
-        ]
+        vec!["`h` does not take (1 | 2): no arrow of `h` takes these types [h(y)]".to_string()]
     );
     // The same at an operator.
     let op = format!("{G}f(positional c: bool, x: f64) = {{ y = g(c); x * y }};\n");
     assert_eq!(
         type_errors(&op),
         vec![
-            "`*` does not take (f64, 1 | 2): these are the types of its arguments here, and `*` \
-             has no arrow that takes them all [x * y]"
-                .to_string()
+            "`*` does not take (f64, 1 | 2): no arrow of `*` takes these types [x * y]".to_string()
         ]
     );
     // The call itself is read, and so is the name where its declared type fixes the values.
@@ -433,11 +414,7 @@ fn a_name_bound_to_a_call_of_literal_values_is_not_read() {
     let top = format!("{G}{H}y = g(true);\na = h(y);\n");
     assert_eq!(
         type_errors(&top),
-        vec![
-            "`h` does not take (1 | 2): these are the types of its arguments here, and `h` has \
-             no arrow that takes them all [h(y)]"
-                .to_string()
-        ]
+        vec!["`h` does not take (1 | 2): no arrow of `h` takes these types [h(y)]".to_string()]
     );
 }
 
@@ -653,8 +630,7 @@ fn an_inexact_literal_of_an_if_in_a_tuple_is_its_own_error() {
     // message named the `0.5f64` that the `int` arrow rejects, also for the `if` alone.
     let inexact = |src: &str, fixed: &str| {
         vec![format!(
-            "the literal `9007199254740993` has no exact `f64`, and `f64` is expected here; an \
-             integer literal takes a carrier only where it is exact. Try `{}` instead.\n  fixes, \
+            "No `f64` equals the literal `9007199254740993`. Try `{}` instead.\n  fixes, \
              each checked here:\n    {fixed}    the literal is then 9007199254740992.0, the nearer f64 by \
              ties to even [9007199254740993]",
             fixed.trim_end_matches(';')
@@ -784,8 +760,7 @@ fn a_call_of_literal_values_at_a_union_of_carriers_is_rejected_whole() {
     assert_eq!(
         type_errors(src),
         vec![
-            "`h` does not take (1 | 2): these are the types of its arguments here, and `h` has \
-             no arrow that takes them all\n  T1 stands for a part written more than once:\n    \
+            "`h` does not take (1 | 2): no arrow of `h` takes these types\n  T1 stands for a part written more than once:\n    \
              type T1 = f64 | rat; [h(g(c))]"
                 .to_string()
         ]

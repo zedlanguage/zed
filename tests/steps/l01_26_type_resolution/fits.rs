@@ -112,9 +112,7 @@ fn a_slot_written_as_an_intersection_of_function_types_takes_each_arrow() {
     let text = "both(f: ((x: int) -> int) & ((x: f64) -> f64)) = f(x: \"a\");\n";
     assert_eq!(
         type_errors(text),
-        [
-            "`f` does not take (\"a\"): these are the types of its arguments here, and `f` has no arrow that takes them all [f(x: \"a\")]"
-        ]
+        ["`f` does not take (\"a\"): no arrow of `f` takes these types [f(x: \"a\")]"]
     );
 }
 
@@ -221,7 +219,7 @@ fn arrows_that_cover_together_must_each_return_within_the_slots_result() {
     assert_eq!(
         type_errors(text),
         [
-            "`p` does not take (((x: int) -> String) & ((x: bool) -> int)): these are the types of its arguments here, and `p` has no arrow that takes them all [p(f: g)]"
+            "`p` does not take (((x: int) -> String) & ((x: bool) -> int)): no arrow of `p` takes these types [p(f: g)]"
         ]
     );
     // Nor do arrows that leave part of the parameter out.
@@ -230,7 +228,7 @@ fn arrows_that_cover_together_must_each_return_within_the_slots_result() {
     assert_eq!(
         type_errors(text),
         [
-            "`p` does not take (((x: int) -> String) & ((x: bool) -> String)): these are the types of its arguments here, and `p` has no arrow that takes them all [p(f: g)]"
+            "`p` does not take (((x: int) -> String) & ((x: bool) -> String)): no arrow of `p` takes these types [p(f: g)]"
         ]
     );
 }
@@ -389,7 +387,7 @@ fn an_overload_whose_arrows_overlap_is_checked_by_the_arrows_it_names() {
     assert_eq!(
         type_errors(text),
         [
-            "`p` does not take (((x: bool) -> String) & ((x: int) -> int)): these are the types of its arguments here, and `p` has no arrow that takes them all [p(f: g)]"
+            "`p` does not take (((x: bool) -> String) & ((x: int) -> int)): no arrow of `p` takes these types [p(f: g)]"
         ]
     );
     let text = "p(f: (x: int | bool) -> String | int) = f(x: 1);\n\

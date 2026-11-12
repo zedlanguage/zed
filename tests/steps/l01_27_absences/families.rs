@@ -74,9 +74,7 @@ fn a_family_atom_that_selects_no_arrow_is_an_error() {
     let (_, errors) = operator(Operator::Binary(BinaryOp::Add), &[int.clone(), color()]);
     assert_eq!(
         errors,
-        [
-            "`+` does not take (int, #blue | #green | #red): these are the types of its arguments here, and `+` has no arrow that takes them all"
-        ]
+        ["`+` does not take (int, #blue | #green | #red): no arrow of `+` takes these types"]
     );
     // Loose, the same atoms flow through.
     let (out, errors) = operator(

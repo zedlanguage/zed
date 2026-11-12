@@ -350,9 +350,7 @@ fn a_call_whose_check_was_refused_says_why() {
     // A decided failure names no cause.
     assert_eq!(
         rejected(&box_program(6)),
-        format!(
-            "2:52: `g` does not take ({shown}): these are the types of its arguments here, and `g` has no arrow that takes them all"
-        )
+        format!("2:52: `g` does not take ({shown}): no arrow of `g` takes these types")
     );
     // The declared type is printed with the same definition, written once for the message.
     // Before: `` `y` is declared `(#a | #b | #c, #a | #b | #c, #a | #b | #c)` ``.
@@ -377,7 +375,7 @@ fn a_tuple_that_shapes_hold_only_together_is_taken() {
     let src = "g(x: (#a, #c) | (#b, #c)) = x;\nh(y: (#a | #b | #c, #c)) = g(x: y);\nmain() = 0;\n";
     assert_eq!(
         rejected(src),
-        "2:28: `g` does not take ((#a | #b | #c, #c)): these are the types of its arguments here, and `g` has no arrow that takes them all"
+        "2:28: `g` does not take ((#a | #b | #c, #c)): no arrow of `g` takes these types"
     );
 }
 
@@ -482,7 +480,7 @@ fn a_literal_argument_and_a_need_result_name_no_cause_when_decided() {
     // it does not meet: it is always decided, so no refused input reaches this path.
     assert_eq!(
         rejected("g(x: #a | (int, int)) = x;\nmain() = g(x: 1);\n"),
-        "2:10: `g` does not take (1): these are the types of its arguments here, and `g` has no arrow that takes them all"
+        "2:10: `g` does not take (1): no arrow of `g` takes these types"
     );
     // What a use of an argument gives against what the use needs: decided here. The
     // checker's own types hold no difference of tuples (a written `\` of tuples is dropped

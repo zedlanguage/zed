@@ -17,8 +17,7 @@ fn a_negative_decimal_at_an_int_parameter_is_rejected_at_its_minus() {
     let out = rejected("scale(positional x: int) = x * 2;\ny = scale(-2.5);\n");
     assert_eq!(
         out,
-        "2:11: the literal `-2.5` is a decimal, and `int` is expected here; a decimal literal is \
-never an `int`
+        "2:11: A decimal literal is never an `int`: the literal `-2.5`
   [1] 1:1: `scale` is declared here with no type written for its result; the type the checker found \
 for `scale` is `(int) -> int`
       1 | scale(positional x: int) = x * 2;
@@ -40,24 +39,13 @@ fn a_negative_literal_a_carrier_holds_takes_it() {
 fn each_menu_names_the_signed_forms_the_type_holds() {
     // The first line of each rejection; the fixes under it, each the corrected line with its
     // signed literal, are pinned and checked in l01_26a_generic_literals/fixes.rs.
-    let decimal_at_int = |lit: &str, forms: &str| {
-        format!(
-            "2:7: the literal `{lit}` is a decimal, and `int` is expected here; a decimal literal \
-             is never an `int`{forms}"
-        )
+    let decimal_at_int = |lit: &str, even: &str| {
+        format!("2:7: A decimal literal is never an `int`{even}: the literal `{lit}`")
     };
     let two_carriers = |lit: &str| {
-        format!(
-            "2:7: the literal `{lit}` can be a `rat` or an `f64` at `f64 | rat`, and nothing here \
-             chooses one"
-        )
+        format!("2:7: Nothing chooses one carrier of `f64 | rat` for the literal `{lit}`")
     };
-    let no_exact = |lit: &str| {
-        format!(
-            "2:7: the literal `{lit}` has no exact `f64`, and `f64` is expected here; an integer \
-             literal takes a carrier only where it is exact"
-        )
-    };
+    let no_exact = |lit: &str| format!("2:7: No `f64` equals the literal `{lit}`");
     // A headline with a menu ends with its first fix (DESIGN.md sec:diagnostics).
     let tried = |head: String, fix: &str| format!("{head}. Try `y = f({fix})` instead.");
     let cases = [
@@ -65,18 +53,13 @@ fn each_menu_names_the_signed_forms_the_type_holds() {
         (
             "int",
             "-3.0",
-            tried(
-                decimal_at_int("-3.0", ", even when its value is an integer"),
-                "-3",
-            ),
+            tried(decimal_at_int("-3.0", ", even with an integer value"), "-3"),
         ),
         (
             "rat",
             "-2.5f64",
             tried(
-                "2:7: the literal `-2.5f64` is an `f64` by its suffix, and `rat` is expected \
-                 here; a suffix fixes a literal's carrier"
-                    .to_string(),
+                "2:7: The suffix makes the literal `-2.5f64` an `f64`, never `rat`".to_string(),
                 "-2.5r",
             ),
         ),
@@ -113,8 +96,7 @@ fn an_operand_and_an_argument_at_a_fixed_class_point_at_the_minus() {
     );
     assert_eq!(
         head("isTwo(positional x) = x div 2 == 1;\ny = isTwo(-2.5);\n"),
-        "2:11: the literal `-2.5` is a decimal, and `int` is expected here; a decimal literal is \
-         never an `int`"
+        "2:11: A decimal literal is never an `int`: the literal `-2.5`"
     );
 }
 
@@ -202,7 +184,7 @@ fn rejecting_negative_literals_at_their_minus_scales() {
                 let info = zedc::check::walk::check(stmts, res);
                 assert_eq!(info.errors.len(), 2 * m);
                 assert!(info.errors.iter().all(|e| {
-                    e.message.starts_with("the literal `-") && src[e.span.start..].starts_with('-')
+                    e.message.contains("the literal `-") && src[e.span.start..].starts_with('-')
                 }));
             },
         );

@@ -177,9 +177,7 @@ fn a_key_not_inside_the_permission_is_a_static_error() {
     );
     assert_eq!(
         type_errors("f(m: int .. int | String -> bool, k: int | bool) = m[k];"),
-        [
-            "this function does not take (bool): these are the types of its arguments here, and this function has no arrow that takes them all [m[k]]"
-        ]
+        ["this function does not take (bool): no arrow of this function takes these types [m[k]]"]
     );
 }
 
