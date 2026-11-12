@@ -1740,7 +1740,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             return self.reject(Some(Row::UnfixedDecimal), at, m, notes);
         }
         let sites: Vec<Span> = parts.iter().map(|(s, _)| *s).collect();
-        let (m, steps) = grouped(what, parts);
+        let n = parts.len();
+        let head = format!(
+            "{n} parts of {what} are literals that nothing here gives a carrier, and Zed does \
+             not choose one for them; the steps below give each one"
+        );
+        let (m, steps) = grouped(head, parts);
         // A part's derivation that only shows the part itself repeats its step, and is left
         // out; the rest follow the part's step, each once.
         let mut shown = HashSet::new();
@@ -8605,7 +8610,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     ) {
         let settled = self.pending_fixes.split_off(pending);
         let from = errors.min(self.errors.len());
-        let found: HashSet<Span> = self.errors[from..].iter().map(|e| e.span).collect();
+        let found: HashSet<Span> = (self.errors[from..].iter())
+            .flat_map(|e| std::iter::once(e.span).chain(e.also.iter().copied()))
+            .collect();
         let mut up = HashMap::new();
         for p in settled {
             // A fix that leaves its own rejection, as `int(n) * 0.5` for `n * 0.5`, fixes nothing.
@@ -9234,7 +9241,6 @@ impl<'t, 'a> Ck<'t, 'a> {
         if span.start < w.span.start || w.span.end < span.end {
             return;
         }
-        let within = |at: Span, s: Span| at.start <= s.start && s.end <= at.end;
         let fixes = std::mem::take(&mut m.fixes);
         let made = fixes.len();
         for fix in fixes {
@@ -9246,11 +9252,20 @@ impl<'t, 'a> Ck<'t, 'a> {
                     // its check rejects them too, which is known when it ends; and the type
                     // the fix gives the construct is checked where the construct is used then.
                     let (ty, needs) = self.trial(|ck| ck.construct(form, args, at));
-                    let others: Vec<Span> = (w.args.iter().flatten())
+                    // Complexity tradeoff: the naive test of each argument against each edit,
+                    // and of each error against each argument, costs their products, the
+                    // square of the width where one fix rewrites every argument of a wide
+                    // call (`f(1.0f64, …, 1.0f64)`, [`Self::literals_refused`]). Used: the
+                    // edits and the arguments sorted by where they start, each looked up by
+                    // binary search, O((a + e + n) log(a + e)) for `a` arguments, `e` edits
+                    // and `n` errors.
+                    let sorted = in_text_order(&fix.edits);
+                    let mut others: Vec<Span> = (w.args.iter().flatten())
                         .filter_map(|a| a.at)
-                        .filter(|&a| !fix.edits.iter().any(|(s, _)| within(a, *s)))
+                        .filter(|&a| edits_in(&sorted, a).next().is_none())
                         .collect();
-                    let apart = |s: &Span| others.iter().any(|&a| within(a, *s));
+                    others.sort_by_key(|a| (a.start, a.end));
+                    let apart = |s: &Span| lies_in(&others, *s);
                     let keep = needs.as_ref().is_some_and(|n| n.iter().all(apart));
                     if keep {
                         self.pending_fixes.push(Pending {
@@ -9276,22 +9291,32 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `src`, where each of its edits lies in an argument and rewrites it to one the checker
     /// reads alone ([`Self::written_arg`]).
     fn fix_args(&mut self, w: &Written<'a>, fix: &Rewrite, src: &str) -> Mapped<'a> {
-        let within = |at: Span, s: Span| at.start <= s.start && s.end <= at.end;
-        let ats: Vec<Span> = w.args.iter().flatten().filter_map(|a| a.at).collect();
-        let in_arg = |s: Span| ats.iter().any(|&at| within(at, s));
-        if !fix.edits.iter().all(|(s, _)| in_arg(*s)) {
-            return Mapped::Unread;
-        }
-        let mut args = w.args.clone();
+        // Complexity tradeoff: the naive test of each edit against each argument costs their
+        // product, the square of the width where one fix rewrites every argument of a wide
+        // call. Used: the edits sorted by where they start, and those of each argument found
+        // by binary search, O((a + e) log e) for `a` arguments and `e` edits.
+        let sorted = in_text_order(&fix.edits);
+        let mut placed = vec![false; sorted.len()];
+        let mut each = Vec::new();
         for (i, a) in w.args.iter().enumerate() {
             let Some((a, at)) = a.as_ref().and_then(|a| Some((a, a.at?))) else {
                 continue;
             };
-            let edits: Vec<&(Span, String)> =
-                fix.edits.iter().filter(|(s, _)| within(at, *s)).collect();
-            if edits.is_empty() {
-                continue;
+            let edits: Vec<&(Span, String)> = edits_in(&sorted, at)
+                .map(|(k, e)| {
+                    placed[k] = true;
+                    e
+                })
+                .collect();
+            if !edits.is_empty() {
+                each.push((i, a, at, edits));
             }
+        }
+        if placed.contains(&false) {
+            return Mapped::Unread;
+        }
+        let mut args = w.args.clone();
+        for (i, a, at, edits) in each {
             let Some(text) = edited(src, at, &edits) else {
                 return Mapped::Unread;
             };
@@ -9551,10 +9576,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         // What a check of a need left when the application failed before taking it.
         self.need_passed.truncate(passing);
-        // A literal refused is its own error, and the application's none.
-        for refused in self.lit_refused.split_off(refusals) {
-            self.literal_refused(what, sig, &args, refused, pass, span);
-        }
+        // The literals refused are their own error, and the application's none.
+        let refused = self.lit_refused.split_off(refusals);
+        self.literals_refused(what, sig, &args, refused, pass, span);
         match r {
             Ok((t, kept)) => (out.union(&t), kept),
             Err(message) => {
@@ -9581,30 +9605,43 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
-    /// Reports a literal of `args` rejected at a parameter of `sig` with the message `m` at
-    /// `s`: in the row of an operator with no arrow at its operands' carrier where that holds
-    /// (`x / 2` with `x: int`); in the row of a literal at a carrier it cannot take where the
-    /// operands have no common carrier (`q * 2.0` with `q: int`), with the application's
+    /// Reports the literals of `args` rejected at parameters of `sig`, each with its place and
+    /// its message: in the row of an operator with no arrow at its operands' carrier where that
+    /// holds (`x / 2` with `x: int`); in the row of a literal at a carrier it cannot take where
+    /// the operands have no common carrier (`q * 2.0` with `q: int`), with the application's
     /// derivation and the casts of the other operands the checker accepts, `f64(q)`, where the
     /// message holds the literal's own forms, and with the message naming the operator and
     /// the operand of carrier `int` where a decimal literal meets one (DESIGN.md
-    /// sec:diagnostics, the worked example at an operator); and in no row otherwise.
-    fn literal_refused(
+    /// sec:diagnostics, the worked example at an operator); and in no row otherwise. One
+    /// literal is its own error; two or more of one application are one error, whose steps
+    /// are each literal's message and whose fixes make the fix of each literal at once
+    /// ([`grouped`]), `f(1.0f64, 1.0f64)` at two `int` parameters.
+    ///
+    /// Complexity tradeoff: the naive way, each literal its own error with the rows and the
+    /// application's notes decided for it, costs O(n) per literal for `n` arguments, as does
+    /// finding the literal among them, so O(n²) per application; and each error's fix,
+    /// checked by checking the whole call again ([`Self::fixes_checked`]) where the other
+    /// literals are refused again, makes `f(1.0f64, …, 1.0f64)` cost O(n³) and write the call
+    /// once per literal, Θ(n²) bytes. Used: the rows, the operand of carrier `int` and a map
+    /// from each literal's place to it are made once per application, O(n), and the literals
+    /// are one error with one fix of each rank, checked by one check of the call; the message
+    /// writes the call once per fix. Test:
+    /// `l01_29_diagnostics::scaling::many_literal_arguments_refused_at_their_parameters_scale`.
+    fn literals_refused(
         &mut self,
         what: &str,
         sig: &Sig,
         args: &[Option<Arg<'a>>],
-        (s, mut m): (Span, Msg),
+        mut refused: Vec<(Span, Msg)>,
         pass: bool,
         span: Span,
     ) {
+        if refused.is_empty() {
+            return;
+        }
         // A decimal literal beside an operand that is an `int` gets the worked message of
         // sec:diagnostics, which names the operand: an operand whose numbers are `int`s, as
         // `n` bound to `1`, or of a class that holds `int` alone.
-        let lit = args
-            .iter()
-            .flatten()
-            .find_map(|a| a.lit.as_ref().filter(|l| l.site == s));
         let int = |ck: &Self, t: &Ty| {
             t.numeric_carrier() == Some(Carrier::Int)
                 || ck.class_of_ty(t).is_some_and(|r| {
@@ -9616,93 +9653,135 @@ impl<'t, 'a> Ck<'t, 'a> {
             .iter()
             .flatten()
             .find(|a| a.lit.is_none() && int(self, &a.ty));
-        if let (Some(l), Some(o)) = (lit, other)
-            && lit_carrier(&l.value) == Carrier::F64
-        {
-            let t = self.t;
-            let name = match o.at.and_then(|at| Some((at, self.seen.get(&at)?))) {
-                Some((at, (_, Src::Name(id)))) => Some((t.res.binders[*id].name.as_str(), at)),
+        let t = self.t;
+        let name = other
+            .and_then(|o| o.at)
+            .and_then(|at| match self.seen.get(&at) {
+                Some((_, Src::Name(id))) => Some((t.res.binders[*id].name.as_str(), at)),
                 _ => None,
-            };
-            // The operator's symbol, and whether the literal is its left operand, where it is
-            // a binary arithmetic operator or an ordering, each of which has arrows at `rat`
-            // and at `f64`.
-            let op = match Operator::of_label(what) {
-                Some(Operator::Binary(
-                    o @ (BinaryOp::Add
-                    | BinaryOp::Sub
-                    | BinaryOp::Mul
-                    | BinaryOp::Div
-                    | BinaryOp::Lt
-                    | BinaryOp::Le
-                    | BinaryOp::Gt
-                    | BinaryOp::Ge),
-                )) if args.len() == 2 => Some(o),
-                Some(Operator::Binary(
-                    BinaryOp::Or
-                    | BinaryOp::And
-                    | BinaryOp::Eq
-                    | BinaryOp::Ne
-                    | BinaryOp::Lt
-                    | BinaryOp::Le
-                    | BinaryOp::Gt
-                    | BinaryOp::Ge
-                    | BinaryOp::Add
-                    | BinaryOp::Sub
-                    | BinaryOp::Concat
-                    | BinaryOp::Mul
-                    | BinaryOp::Div
-                    | BinaryOp::IntDiv
-                    | BinaryOp::Mod
-                    | BinaryOp::Pow,
-                ))
-                | Some(Operator::Unary(UnaryOp::Neg | UnaryOp::Not))
-                | None => None,
-            }
-            .map(|o| {
-                (
-                    o,
-                    args[0]
-                        .as_ref()
-                        .and_then(|a| a.lit.as_ref())
-                        .is_some_and(|a| a.site == s),
-                )
             });
+        // The operator's symbol, where it is a binary arithmetic operator or an ordering, each
+        // of which has arrows at `rat` and at `f64`.
+        let op = match Operator::of_label(what) {
+            Some(Operator::Binary(
+                o @ (BinaryOp::Add
+                | BinaryOp::Sub
+                | BinaryOp::Mul
+                | BinaryOp::Div
+                | BinaryOp::Lt
+                | BinaryOp::Le
+                | BinaryOp::Gt
+                | BinaryOp::Ge),
+            )) if args.len() == 2 => Some(o),
+            Some(Operator::Binary(
+                BinaryOp::Or
+                | BinaryOp::And
+                | BinaryOp::Eq
+                | BinaryOp::Ne
+                | BinaryOp::Lt
+                | BinaryOp::Le
+                | BinaryOp::Gt
+                | BinaryOp::Ge
+                | BinaryOp::Add
+                | BinaryOp::Sub
+                | BinaryOp::Concat
+                | BinaryOp::Mul
+                | BinaryOp::Div
+                | BinaryOp::IntDiv
+                | BinaryOp::Mod
+                | BinaryOp::Pow,
+            ))
+            | Some(Operator::Unary(UnaryOp::Neg | UnaryOp::Not))
+            | None => None,
+        };
+        let lits: HashMap<Span, &Lit> = (args.iter().flatten())
+            .filter_map(|a| a.lit.as_ref().map(|l| (l.site, l)))
+            .collect();
+        let left = args[0]
+            .as_ref()
+            .and_then(|a| a.lit.as_ref())
+            .map(|l| l.site);
+        if let Some(o) = other {
             // `f64(n)` is offered where the checker proves `n` lies within ±2^53, where it is
-            // exact (DESIGN.md "Casts are domain proofs"); it is never offered otherwise.
-            let exact = name.is_some() && op.is_some() && self.exact_in_f64(o);
-            match l.bare {
-                true => m = decimal_at_int(l, what, name, op, exact),
-                false => {
-                    if let (true, Some((n, at)), Some((op, left))) = (exact, name, op) {
-                        m.fixes.extend(f64_cast_fix(l, n, at, op, left));
+            // exact (DESIGN.md "Casts are domain proofs"); it is never offered otherwise. The
+            // proof is asked once, at the first decimal literal, for all of them.
+            let mut exact = None;
+            for (s, m) in &mut refused {
+                let Some(l) = lits
+                    .get(s)
+                    .filter(|l| lit_carrier(&l.value) == Carrier::F64)
+                else {
+                    continue;
+                };
+                let exact = *exact
+                    .get_or_insert_with(|| name.is_some() && op.is_some() && self.exact_in_f64(o));
+                let op = op.map(|o| (o, left == Some(*s)));
+                match l.bare {
+                    true => *m = decimal_at_int(l, what, name, op, exact),
+                    false => {
+                        if let (true, Some((n, at)), Some((op, left))) = (exact, name, op) {
+                            m.fixes.extend(f64_cast_fix(l, n, at, op, left));
+                        }
                     }
                 }
             }
         }
-        if self.no_arrow_at_carrier(what, sig, args) {
-            let notes = self.derive(&[s]);
-            self.reject(Some(Row::NoArrowAtCarrier), s, m, notes);
-        } else if self.no_common_carrier(sig, args) {
-            let mut notes = Vec::new();
-            if !self.trying {
-                notes = self.applied(what, sig, args, span);
-                let mut seen: HashSet<Note> = notes.iter().cloned().collect();
-                for a in args.iter().flatten() {
-                    for n in self.reasons(&a.ty) {
-                        if seen.insert(n.clone()) {
-                            notes.push(n);
-                        }
+        let row = match self.no_arrow_at_carrier(what, sig, args) {
+            true => Row::NoArrowAtCarrier,
+            false => Row::LiteralCarrier,
+        };
+        // Where the operands have no common carrier, the application's derivation and
+        // repairs, once for all its literals; otherwise each literal's own derivation.
+        let applied = row == Row::LiteralCarrier && self.no_common_carrier(sig, args);
+        let mut notes = Vec::new();
+        if applied && !self.trying {
+            notes = self.applied(what, sig, args, span);
+            let mut seen: HashSet<Note> = notes.iter().cloned().collect();
+            for a in args.iter().flatten() {
+                for n in self.reasons(&a.ty) {
+                    if seen.insert(n.clone()) {
+                        notes.push(n);
                     }
                 }
-                notes.extend(self.repairs(what, sig, args, pass, span));
             }
-            self.reject(Some(Row::LiteralCarrier), s, m, notes);
-        } else {
-            // A refused literal is a literal at a carrier it cannot take, whatever else the
-            // application holds.
-            let notes = self.derive(&[s]);
-            self.reject(Some(Row::LiteralCarrier), s, m, notes);
+            notes.extend(self.repairs(what, sig, args, pass, span));
+        }
+        if refused.len() == 1 {
+            let (s, m) = refused.pop().expect("one literal");
+            if !applied {
+                notes = self.derive(&[s]);
+            }
+            return self.reject(Some(row), s, m, notes);
+        }
+        refused.sort_by_key(|(s, _)| (s.start, s.end));
+        let at = refused[0].0;
+        let sites: Vec<Span> = refused.iter().map(|(s, _)| *s).collect();
+        let also = sites[1..].to_vec();
+        let n = refused.len();
+        let whose = match Operator::of_label(what) {
+            Some(_) => "operands",
+            None => "arguments",
+        };
+        let head = format!("{n} {whose} of {what} are literals at carriers they cannot take");
+        let (m, steps) = grouped(head, refused);
+        // Each literal's step, then its derivation, with no step written twice and none that
+        // only shows the literal again; the application's notes after them all.
+        let mut shown: HashSet<Note> = notes.iter().cloned().collect();
+        let mut all = Vec::with_capacity(steps.len() + notes.len());
+        for (site, step) in sites.into_iter().zip(steps) {
+            all.push(step);
+            if !applied {
+                for n in self.derive(&[site]) {
+                    if n.span != site && shown.insert(n.clone()) {
+                        all.push(n);
+                    }
+                }
+            }
+        }
+        all.extend(notes);
+        self.reject(Some(row), at, m, all);
+        if let Some(e) = self.errors.last_mut() {
+            e.also = also;
         }
     }
 
@@ -10068,6 +10147,24 @@ impl<'t, 'a> Ck<'t, 'a> {
                     },
                 };
                 if !ok {
+                    // A call of values whose numbers the parameter would read at its carrier
+                    // but for a value that is no number, as `h(gi(true))` with `h` taking an
+                    // `f64` and `gi(true)` of type `1 | true` ([`read_call`]): the message
+                    // names the value that is no number and that the parameter does not
+                    // take, `true`, not the `1` it would read.
+                    let piece = match piece.carrier() {
+                        Some(c) if c.numeric() && call_values(a).is_some() => {
+                            (ty.pieces().into_iter())
+                                .find(|q| {
+                                    !q.carrier().is_some_and(Carrier::numeric)
+                                        && self.class_of(q).is_none()
+                                        && !matches!(q, Piece::Dyn | Piece::Var(_))
+                                        && !self.sub(&ty.of_piece(q), p, &mut Binds::new())
+                                })
+                                .unwrap_or(piece)
+                        }
+                        _ => piece,
+                    };
                     return Err(self.rejected_at(what, args, Some((i, &piece, p))));
                 }
             }
@@ -11488,6 +11585,41 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
+    /// The first value of an argument of `args` that no arrow of `sig` takes at its place,
+    /// with the argument's index: a piece of its type, as `true` of `gi(true)` of type
+    /// `1 | true` at `+`, or `None` in place of the piece where no arrow takes any value of
+    /// the argument, as `u` of type `int | true` at `/`, whose whole type is then named. A
+    /// literal, a tuple or an `if` of literals takes its type from the arrow, and a class, a
+    /// variable and the unknown may be any value, so none of them gives one; a parameter that
+    /// is a bounded variable takes the numbers of its bound. O(A p) tests for A arrows and p
+    /// pieces.
+    fn taken_by_none(&self, sig: &Sig, args: &[Option<Arg<'a>>]) -> Option<(usize, Option<Piece>)> {
+        let takes = |t: &Ty, q: &Piece, p: &Ty| {
+            p.dynamic
+                || match p.as_var() {
+                    Some(v) => (sig.bounds.get(v))
+                        .is_none_or(|&m| q.carrier().is_some_and(|c| c.bit() & m != 0)),
+                    None if !p.vars.is_empty() => true,
+                    None => t.of_piece(q).sub(p, &mut Binds::new()),
+                }
+        };
+        args.iter().enumerate().find_map(|(i, a)| {
+            let a = a
+                .as_ref()
+                .filter(|a| a.lit.is_none() && a.parts.is_none() && a.branches.is_none())?;
+            let none = |q: &Piece| {
+                !matches!(q, Piece::Dyn | Piece::Var(_))
+                    && self.class_of(q).is_none()
+                    && (sig.arrows.iter())
+                        .all(|ar| ar.params.get(i).is_some_and(|p| !takes(&a.ty, q, p)))
+            };
+            let pieces = a.ty.pieces();
+            let q = pieces.iter().find(|q| none(q))?;
+            let all = pieces.iter().all(none);
+            Some((i, (!all).then(|| q.clone())))
+        })
+    }
+
     /// The arrows of `sig` whose adoptions of the literal arguments are fewest, all the
     /// same, with those adoptions made and the arguments retyped.
     /// `None` when a literal adopts no arrow's carrier exactly, which is reported.
@@ -11684,6 +11816,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             if let Some((i, v, c)) = unread {
                 let a = args[i].as_ref().expect("a call read at a carrier");
                 return Err(self.unread_call(what, args, a, &v, c, true));
+            }
+            // A value of an argument that no arrow takes, as `true` of `gi(true)` of type
+            // `1 | true` in `1.0f64 + gi(true)`: the application fails whatever carrier its
+            // literals take, so the message is the application's and names that value, not a
+            // literal refused at the arrow the argument's other value, `1`, chose.
+            if let Some((i, piece)) = self.taken_by_none(sig, args) {
+                let p = &sig.arrows[0].params[i];
+                return Err(self.rejected_at(what, args, piece.as_ref().map(|q| (i, q, p))));
             }
             if let Some((s, m)) = adopt_error {
                 self.lit_refused.push((s, m));
@@ -11911,6 +12051,36 @@ fn carry_joined(up: &mut HashMap<Ty, Vec<Pending>>, ty: Ty, mut fixes: Vec<Pendi
         std::mem::swap(group, &mut fixes);
     }
     group.append(&mut fixes);
+}
+
+/// The edits `edits` sorted by where they start, and then by where they end, as a corrected
+/// line writes them ([`Rewrite::line`]). O(e log e).
+fn in_text_order(edits: &[(Span, String)]) -> Vec<&(Span, String)> {
+    let mut sorted: Vec<&(Span, String)> = edits.iter().collect();
+    sorted.sort_by_key(|(s, _)| (s.start, s.end));
+    sorted
+}
+
+/// The edits of `sorted` ([`in_text_order`]) that lie in `at`, each with its place in
+/// `sorted`: a binary search for the first that starts in `at`, then those after it that do.
+/// O(log e + the edits that start in `at`).
+fn edits_in<'s, 'e>(
+    sorted: &'s [&'e (Span, String)],
+    at: Span,
+) -> impl Iterator<Item = (usize, &'e (Span, String))> + 's {
+    let from = sorted.partition_point(|(s, _)| s.start < at.start);
+    (sorted[from..].iter().enumerate())
+        .take_while(move |(_, (s, _))| s.start <= at.end)
+        .filter(move |(_, (s, _))| s.end <= at.end)
+        .map(move |(k, e)| (from + k, *e))
+}
+
+/// Whether `s` lies in one of the spans `sorted`, sorted by where they start and then by where
+/// they end, that lie apart in the text, as the arguments of one construct do: the last of
+/// them that starts at or before `s` is the one it may lie in. O(log n).
+fn lies_in(sorted: &[Span], s: Span) -> bool {
+    let k = sorted.partition_point(|a| a.start <= s.start);
+    (k.checked_sub(1)).is_some_and(|k| s.end <= sorted[k].end)
 }
 
 #[cfg(test)]

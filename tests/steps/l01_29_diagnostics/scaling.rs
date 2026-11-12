@@ -166,7 +166,8 @@ fn a_chain_of_names_to_a_negated_zero_prints_in_linear_time() {
 }
 
 /// `n` rejections whose fixes are each checked as written (MSG-converted-claims-checked): the
-/// menu fixes `1.0 + gr(true)` and `1.0r + gr(true)`, dropped; a comparison cast, `int(r)`, dropped; a cast beside
+/// menu fixes `1.0 + gr(true)` and `1.0r + gr(true)`, dropped, the message naming `true`; a
+/// comparison cast, `int(r)`, dropped; a cast beside
 /// a decimal literal, `f64(k)`, dropped. Each costs a few checks of its own construct, so the
 /// whole is linear in `n`.
 fn checked_fixes(n: usize) -> String {
@@ -184,7 +185,12 @@ fn checked_fixes(n: usize) -> String {
 fn checking_each_offered_fix_as_written_scales() {
     scaling::check("checking the fixes of 3n rejections as written", 200, |n| {
         let out = rejected(&checked_fixes(n));
-        assert_eq!(out.matches("No fix is offered").count(), n, "{out}");
+        assert_eq!(
+            out.matches("does not take (1.0f64, true)").count(),
+            n,
+            "{out}"
+        );
+        assert!(!out.contains("gr(true);    "), "{out}");
         assert!(!out.contains("int(r)"), "{out}");
         assert!(!out.contains("f64(k)"), "{out}");
     });
@@ -209,4 +215,51 @@ fn checking_the_components_offered_for_a_wide_tuple_scales() {
             assert!(out.contains(&last), "{out}");
         },
     );
+}
+
+/// A function of `n` parameters of carrier `c` called with `n` literals `1.0f64`
+/// (MSG-many-arguments-output): one message for the call, whose steps name each literal once.
+/// At `rat` its one fix writes the call once, `y = f(1.0, …)`; at `int` there is no fix, as
+/// no literal `1.0f64` takes an `int` (DESIGN row "Two numeric values with no common
+/// carrier"). Each literal its own message, each with its fix checked by checking the call
+/// again with the other literals refused again, cost O(n³) and wrote the call n times, Θ(n²)
+/// bytes.
+fn many_literal_arguments(n: usize, c: &str) -> String {
+    let ps: Vec<String> = (0..n).map(|i| format!("positional p{i}: {c}")).collect();
+    let xs = vec!["1.0f64"; n];
+    format!("f({}) = 1;\ny = f({});\n", ps.join(", "), xs.join(", "))
+}
+
+/// The checks of [`many_literal_arguments`] at the carrier `c`, whose fixed call writes each
+/// literal as `fixed`, or that has no fixed call.
+fn many_literal_arguments_scale(c: &str, fixed: Option<&str>) {
+    let srcs = scaling::inputs(200, |n| many_literal_arguments(n, c));
+    scaling::check(
+        &format!("the message of a call of n literals at n {c} parameters"),
+        200,
+        |n| {
+            let out = rejected(&srcs[&n]);
+            let head = format!("{n} arguments of `f` are literals at carriers they cannot take.");
+            assert!(out.contains(&head), "{out}");
+            assert_eq!(out.matches(&format!("never `{c}`")).count(), n);
+            if let Some(x) = fixed {
+                let fixed = format!("y = f({});", vec![x; n].join(", "));
+                assert_eq!(out.matches(fixed.as_str()).count(), 1);
+            } else {
+                assert!(!out.contains("Try"), "{out}");
+            }
+            let call = format!("y = f({});", vec!["1.0f64"; n].join(", "));
+            assert_eq!(out.matches(call.as_str()).count(), 1);
+        },
+    );
+}
+
+#[test]
+fn many_literal_arguments_refused_at_their_parameters_scale() {
+    many_literal_arguments_scale("rat", Some("1.0"));
+}
+
+#[test]
+fn many_literal_arguments_refused_at_int_parameters_scale() {
+    many_literal_arguments_scale("int", None);
 }

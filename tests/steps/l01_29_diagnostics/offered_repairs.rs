@@ -202,17 +202,19 @@ const GI: &str = "gi(positional c: bool) = if c { 1 } else { true };\n";
 const GR: &str = "gr(positional c: bool) = if c { 1r } else { true };\n";
 
 /// The menu of a literal with a suffix: `y = 1.0 + gr(true)` and `y = 1.0r + gr(true)` do not
-/// check, as `gr(true)` may be `true`, so they are no longer offered, and the message says no
-/// fix is; a menu fix that checks is kept.
+/// check, as `gr(true)` may be `true`, which no arrow takes whatever the literal, so the
+/// message names `true` and offers no fix (MSG-call-union-headline); a menu fix that checks is
+/// kept.
 #[test]
 fn a_menu_fix_that_does_not_check_is_dropped() {
-    for line in ["y = 1.0f64 + gr(true);", "y = min(1.0f64, gr(true));"] {
+    for (line, what) in [
+        ("y = 1.0f64 + gr(true);", "`+`"),
+        ("y = min(1.0f64, gr(true));", "`min`"),
+    ] {
         let got = offered(&format!("{GR}{line}"));
         assert!(!got.contains("gr(true);    "), "{got}");
-        assert!(
-            got.contains("No fix is offered: each one the checker tried is rejected too."),
-            "{got}"
-        );
+        let head = format!("{what} does not take (1.0f64, true): no arrow of {what} takes");
+        assert!(got.starts_with(&head), "{got}");
     }
     let got = offered("y = 1.5f64 + 2r;");
     assert!(got.contains("Try `y = 1.5 + 2r` instead."), "{got}");
@@ -266,27 +268,36 @@ fn a_cast_beside_a_decimal_that_checks_is_kept() {
     assert!(got.contains("repair: write `rat(n)`"), "{got}");
 }
 
-/// A call with several arguments rejected: each argument's fix is checked with the others
-/// left as written, which the call's own check rejects too, so each argument offers its own
-/// fix rather than none.
+/// A call with several literal arguments rejected: one message for them all, whose fix
+/// rewrites each of them at once (MSG-many-arguments-output).
 #[test]
-fn each_rejected_argument_of_a_call_offers_its_own_fix() {
+fn the_rejected_literal_arguments_of_a_call_are_one_message_with_one_fix() {
     let f = "f(positional p0: rat, positional p1: rat, positional p2: rat) = 1;\n";
     let got = offered(&format!("{f}y = f(1.0f64, 1.0f64, 1.0f64);"));
     assert!(!got.contains("No fix is offered"), "{got}");
-    assert!(got.contains("y = f(1.0, 1.0f64, 1.0f64);"), "{got}");
-    assert!(got.contains("y = f(1.0f64, 1.0, 1.0f64);"), "{got}");
-    assert!(got.contains("y = f(1.0f64, 1.0f64, 1.0);"), "{got}");
+    assert!(
+        got.starts_with(
+            "3 arguments of `f` are literals at carriers they cannot take. Try `y = f(1.0, 1.0, \
+             1.0)` instead."
+        ),
+        "{got}"
+    );
+    assert!(!got.contains("1.0f64)"), "{got}");
 }
 
-/// A fix of an argument that the call rejects for another argument too: `h(1.0, 0.5f64)`
-/// checks once `0.5f64` has its own repair, so the fix of `1.0f64` is kept; where the other
-/// argument can never be a `rat`, as `true`, no fix is offered.
+/// A fix of an argument that the call rejects for another argument too: `h(1.0f64, 0.5f64)`
+/// is one message whose one fix, `h(1.0, 0.5)`, writes both literals; `k(1.0f64, 0.5)` at
+/// `(rat, int)` offers `k(1.0, 0.5)` and `k(1.0r, 0.5)`, `0.5` unchanged, as it has no fix;
+/// where the other argument can never be a `rat`, as `true`, no fix is offered.
 #[test]
 fn a_fix_beside_another_rejected_argument_is_kept() {
     let h = "h(positional a: rat, positional b: rat) = a + b;\n";
     let got = offered(&format!("{h}y = h(1.0f64, 0.5f64);"));
-    assert!(got.contains("Try `y = h(1.0, 0.5f64)` instead."), "{got}");
+    assert!(got.contains("Try `y = h(1.0, 0.5)` instead."), "{got}");
+    let k = "k(positional a: rat, positional b: int) = 1;\n";
+    let got = offered(&format!("{k}y = k(1.0f64, 0.5);"));
+    assert!(got.contains("Try `y = k(1.0, 0.5)` instead."), "{got}");
+    assert!(got.contains("y = k(1.0r, 0.5);"), "{got}");
     let got = offered(&format!("{h}y = h(1.0f64, true);"));
     assert!(got.contains("No fix is offered"), "{got}");
     assert!(!got.contains("h(1.0, true)"), "{got}");
@@ -328,4 +339,40 @@ fn a_rejection_whose_notes_are_all_dropped_says_so() {
     let got = offered("n = 1;\nr = 2.5r;\ny = (n + r) + 1.0f64;");
     assert!(!got.contains("repair:"), "{got}");
     assert!(got.contains("No fix is offered"), "{got}");
+}
+
+/// A call whose type holds a value no arrow takes beside numbers, `gi(true)` of type
+/// `1 | true`: the headline names that value, `true`, whatever the literals beside it, at an
+/// operator, at a prelude word and at a parameter of type `f64`; where no arrow takes any
+/// value of the call, its whole type is named (MSG-call-union-headline).
+#[test]
+fn a_value_no_arrow_takes_is_named_in_the_headline() {
+    let gt = "gt(positional c: bool) = if c { true } else { \"s\" };\n";
+    let h = "h(positional x: f64) = x;\n";
+    for (src, head) in [
+        (
+            format!("{GI}y = 1.0f64 + gi(true);"),
+            "`+` does not take (1.0f64, true)",
+        ),
+        (
+            format!("{GI}y = min(1.0f64, gi(true));"),
+            "`min` does not take (1.0f64, true)",
+        ),
+        (
+            format!("{GI}x = 2.5f64;\ny = x + gi(true);"),
+            "`+` does not take (2.5f64, true)",
+        ),
+        (
+            format!("{GI}{h}y = h(gi(true));"),
+            "`h` does not take (true)",
+        ),
+        (
+            format!("{gt}y = 1.0f64 + gt(true);"),
+            "`+` does not take (1.0f64, true | \"s\")",
+        ),
+    ] {
+        let got = offered(&src);
+        assert!(got.starts_with(head), "{src}\n{got}");
+        assert!(!got.contains("never `int`"), "{src}\n{got}");
+    }
 }

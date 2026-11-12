@@ -3711,3 +3711,13 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | `wrapping_mul` and `wrapping_add` on `u64` while reading digits, the value discarded when there are more than 19 | `float_text::decimal` | Missing primitive | Arithmetic modulo 2^64 on a 64-bit integer level |
 | `num_bigint::BigUint` for the halfway point's digits, at most 767 of them for `f64` | `float_text::compare_halfway` | None | Zed's `int` and its decimal text |
 | A stack buffer `[u8; 32]` written through a `FnMut` closure that copies a slice at an offset, then one `String` | `float_text::show_f64` | Mutation | A list of byte strings joined into one string at the end, one allocation |
+
+## Entries from MSG-many-arguments-output, MSG-call-union-headline (`crates/zedc-check/src/check/walk.rs`, `mod.rs`; `crates/zedc/src/front.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `Vec<bool>` of placed edits filled in place while each argument's edits are found, then tested for an unplaced one | `Ck::fix_args` | Mutation (gap 11) | a fold over the arguments that returns each argument's edits and the count placed, compared with the edits' count |
+| The error just pushed by `Ck::reject` changed through `self.errors.last_mut()` to record the other literals' places | `Ck::literals_refused` | Mutation (gap 11) | `reject` takes the places as an argument and builds the error with them |
+| `Vec::split_off` taking the literals refused in this application off the queue `lit_refused` | `Ck::apply_demanding` | Mutation (gap 11) | the queue as a value split at the mark and returned |
+| `partition_point` then `take_while` over a slice sorted by start, as a range lookup | `edits_in`, `lies_in` | None | a binary search on the sorted sequence and a slice of it |
+| A loop of `fmt::Write::write_char` in place of a format width, since a width is at most 2^16 − 1 | `repeat` in `front.rs`, the menu pad in `Msg::written` | Formatting (no width limit in Zed) | a string of `n` copies, or a width with no limit |

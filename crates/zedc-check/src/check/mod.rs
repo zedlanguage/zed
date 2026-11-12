@@ -1677,6 +1677,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             span,
             m,
             notes,
+            also: Vec::new(),
         });
         // A trial's errors are undone after it, so they take no number of their own: the
         // number of the error a repair checked before it is found stays the one it gets.
@@ -5411,6 +5412,10 @@ struct Found {
     span: Span,
     m: Msg,
     notes: Vec<Note>,
+    /// The places of the other literals of an error that reports several in one call
+    /// ([`grouped`]): a fix of one of them, checked as written, rejects the others alone
+    /// ([`Ck::pending_settled`]).
+    also: Vec<Span>,
 }
 
 impl Found {
@@ -5515,7 +5520,9 @@ impl Msg {
                             write!(f, "\n    {}", part.trim_end())?;
                         }
                         let pad = width - last(l);
-                        write!(f, "{:pad$}{}", "", x.holds)?;
+                        // Not a width in the format, which takes at most 2^16 - 1.
+                        (0..pad).try_for_each(|_| fmt::Write::write_char(f, ' '))?;
+                        f.write_str(&x.holds)?;
                     }
                     Ok(())
                 }));
@@ -5551,22 +5558,30 @@ impl Msg {
     }
 }
 
-/// The one message for the rejections `parts` of literals that nothing gives a carrier, two
-/// or more, each its place and its message, in the order of the text, all in `what`: the
-/// value of a binding, the arguments of a call or the holes of a string (step L1.26b). The
+/// The one message `head` for the rejections `parts` of literals in one construct, two or
+/// more, each its place and its message, in the order of the text: literals that nothing
+/// gives a carrier in the value of a binding, the arguments of a call or the holes of a
+/// string (step L1.26b), or literal arguments of one call at carriers they cannot take. The
 /// head counts the parts; each part's own message is a step at its place; and each fix makes
 /// the fix of that rank of every part at once, `y = (0.5f64, 0.25f64);    y[0] is 0.5; y[1]
 /// is 0.25`, which checks since the parts are apart. A part with fewer fixes than another
-/// leaves the fixes it lacks out.
+/// leaves the fixes it lacks out, and a part with none, as the decimal `0.5` at an `int`, has
+/// only its step, so `k(1.0f64, 0.5)` at `(rat, int)` offers `k(1.0, 0.5)` with `0.5` still
+/// named. What a fix holds is written once where the parts before it hold the same; an edit
+/// two parts make alike is made once, and a fix whose edits of two parts overlap otherwise
+/// is left out.
 ///
 /// Complexity tradeoff: the naive way, one message for each part, quotes the line once per
 /// message and rewrites it once per fix, so `n` decimals on one line of length `O(n)` give
 /// `Θ(n²)` bytes. One message shows each line once for all its steps (the diagnostic's
 /// layout), and each fix rewrites the line once, so the bytes are linear in the parts and
-/// the line.
-fn grouped(what: &dyn fmt::Display, parts: Vec<(Span, Msg)>) -> (Msg, Vec<Note>) {
+/// the line. The edits of a fix are sorted once, O(e log e) for `e` edits.
+fn grouped(head: String, parts: Vec<(Span, Msg)>) -> (Msg, Vec<Note>) {
     let n = parts.len();
-    let ranks = parts.iter().map(|(_, m)| m.fixes.len()).min().unwrap_or(0);
+    let ranks = (parts.iter().map(|(_, m)| m.fixes.len()))
+        .filter(|&k| k > 0)
+        .min()
+        .unwrap_or(0);
     let mut fixes: Vec<Rewrite> = (0..ranks)
         .map(|_| Rewrite {
             edits: Vec::new(),
@@ -5574,14 +5589,22 @@ fn grouped(what: &dyn fmt::Display, parts: Vec<(Span, Msg)>) -> (Msg, Vec<Note>)
             alone: String::new(),
         })
         .collect();
+    let mut held: Vec<String> = vec![String::new(); ranks];
     let mut notes = Vec::with_capacity(n);
-    for (i, (at, m)) in parts.into_iter().enumerate() {
+    for (at, m) in parts {
         for (k, x) in m.fixes.into_iter().take(ranks).enumerate() {
-            let sep = if i == 0 { "" } else { "; " };
             fixes[k].edits.extend(x.edits);
-            fixes[k].holds.push_str(sep);
-            fixes[k].holds.push_str(&x.holds);
-            let sep = if i == 0 { "" } else { "`, `" };
+            if x.holds != held[k] {
+                let sep = if fixes[k].holds.is_empty() { "" } else { "; " };
+                fixes[k].holds.push_str(sep);
+                fixes[k].holds.push_str(&x.holds);
+                held[k] = x.holds;
+            }
+            let sep = if fixes[k].alone.is_empty() {
+                ""
+            } else {
+                "`, `"
+            };
             fixes[k].alone.push_str(sep);
             fixes[k].alone.push_str(&x.alone);
         }
@@ -5590,15 +5613,18 @@ fn grouped(what: &dyn fmt::Display, parts: Vec<(Span, Msg)>) -> (Msg, Vec<Note>)
             text: m.text,
         });
     }
-    let text = format!(
-        "{n} parts of {what} are literals that nothing here gives a carrier, and Zed does not \
-         choose one for them; the steps below give each one"
-    );
+    // The edits in the order of the text, as a corrected line writes them ([`Rewrite::line`]).
+    for x in &mut fixes {
+        x.edits.sort_by_key(|(s, _)| (s.start, s.end));
+        x.edits.dedup();
+    }
+    fixes.retain(|x| x.edits.windows(2).all(|w| w[0].0.end <= w[1].0.start));
+    let dropped = ranks > 0 && fixes.is_empty();
     (
         Msg {
-            text,
+            text: head,
             fixes,
-            dropped: false,
+            dropped,
         },
         notes,
     )

@@ -485,7 +485,9 @@ fn draw(f: &mut std::fmt::Formatter<'_>, margin: &str, l: &Layout) -> std::fmt::
         let mut done = 0;
         for &k in row {
             let (from, width, label) = &l.full[k];
-            write!(f, "{:gap$}{:^<width$}{label}", "", "", gap = from - done)?;
+            repeat(f, ' ', from - done)?;
+            repeat(f, '^', *width)?;
+            f.write_str(label)?;
             done = from + width + label.len();
         }
     }
@@ -507,9 +509,9 @@ fn draw(f: &mut std::fmt::Formatter<'_>, margin: &str, l: &Layout) -> std::fmt::
             let ticks = &l.rulers[k];
             for (j, (col, label)) in ticks.iter().enumerate() {
                 if j == 0 {
-                    write!(f, "{:gap$}", "", gap = col - done)?;
+                    repeat(f, ' ', col - done)?;
                 } else {
-                    write!(f, "{:-<gap$}", "", gap = col - done)?;
+                    repeat(f, '-', col - done)?;
                 }
                 f.write_str("^")?;
                 done = col + 1;
@@ -530,7 +532,8 @@ fn draw(f: &mut std::fmt::Formatter<'_>, margin: &str, l: &Layout) -> std::fmt::
             let mut done = 0;
             for k in under {
                 let (col, label) = below[k];
-                write!(f, "{:gap$}{label}", "", gap = col - done)?;
+                repeat(f, ' ', col - done)?;
+                f.write_str(label)?;
                 done = col + label.len();
             }
         }
@@ -1138,4 +1141,10 @@ pub(crate) fn parse_unit(text: &str) -> Parsed {
     let mut imports = resolve::resolve_in(&stmts, &Alone).res.units;
     imports.sort_by_key(|i| i.1);
     Ok((stmts, imports))
+}
+
+/// Writes `n` copies of `c`. A width in a format string takes at most 2^16 - 1, so a mark at a
+/// column past that, on a line of 65,536 characters or more, cannot be placed by one. O(n).
+fn repeat(f: &mut std::fmt::Formatter<'_>, c: char, n: usize) -> std::fmt::Result {
+    (0..n).try_for_each(|_| std::fmt::Write::write_char(f, c))
 }
