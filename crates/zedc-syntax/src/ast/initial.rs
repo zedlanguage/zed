@@ -16,8 +16,8 @@ use num_bigint::BigInt;
 use super::builder::Builder;
 use super::sentinel::{End, Entry, Keys, Sentinels, keys_of};
 use super::{
-    CARRY_FORWARD, Error, Expr, ExprKind, Field, IndexKey, Initial, Note, Pattern, RangeEnd, Stmt,
-    StmtKind, StrPart, Target, UnaryOp,
+    BinaryOp, CARRY_FORWARD, Error, Expr, ExprKind, Field, IndexKey, Initial, Note, Pattern,
+    RangeEnd, Stmt, StmtKind, StrPart, Target, UnaryOp,
 };
 use crate::lex::Span;
 use zedc_base::rejection::Row;
@@ -628,8 +628,8 @@ fn every_path<'e>(stmts: &'e [Stmt], candidates: &HashSet<&'e str>) -> (Must<'e>
                             always(k);
                         }
                     }
-                    ExprKind::Binary(op, a, b) if *op == "&&" || *op == "||" => {
-                        let what = if *op == "&&" {
+                    ExprKind::Binary(op @ (BinaryOp::And | BinaryOp::Or), a, b) => {
+                        let what = if *op == BinaryOp::And {
                             Construct::And
                         } else {
                             Construct::Or
