@@ -306,10 +306,15 @@ impl<'a, 's> Builder<'a, 's> {
                     span: self.span(n),
                 })
             }
-            "OpFunction" => Ok(Expr {
-                kind: ExprKind::Section(self.op(self.tree.nodes[n].start + 1)),
-                span: self.span(n),
-            }),
+            "OpFunction" => {
+                let op = self.op(self.tree.nodes[n].start + 1);
+                let op = BinaryOp::of_token(op)
+                    .expect("OpFunction = '(' BinOp ')', each BinOp a binary operator");
+                Ok(Expr {
+                    kind: ExprKind::Section(op),
+                    span: self.span(n),
+                })
+            }
             "ArrayExpr" => Ok(Expr {
                 kind: ExprKind::Array(
                     kids.iter()

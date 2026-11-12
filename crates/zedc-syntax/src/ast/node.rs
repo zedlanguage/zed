@@ -158,7 +158,7 @@ pub enum ExprKind {
         name: String,
     },
     /// An operator section `(+)`: the binary operator as a function.
-    Section(&'static str),
+    Section(BinaryOp),
     /// An array display `[a, b, c]`, its elements in written order: the array
     /// `{0 -> a, 1 -> b, 2 -> c}` of type `int[0..<3] -> T`, keyed by rank, each element's
     /// rank its position (sec:grammar, `ArrayExpr`). It is not a `Seq` (sec:order), whose keys
