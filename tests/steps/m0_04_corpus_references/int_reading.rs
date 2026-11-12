@@ -115,7 +115,10 @@ fn a_long_text_that_is_not_an_integer_is_refused() {
 /// by halves with the transform product is O(n log^2 n), held to 8 (ln 8n / ln n)^2 x 1.1 = 12.27;
 /// measured 2026-11-12, 12.0 times the work and 8.4 times the bytes. With num-bigint's Toom-3
 /// product each level costs about n^1.46 and the reading took 20.5 times the work; num-bigint
-/// reading the text whole, O(n^2), fails it by far (COMPLEXITY.md F38).
+/// reading the text whole, O(n^2), fails it by far (COMPLEXITY.md F38). The sizes start at
+/// 100,000 digits: below the product's crossover (`TRANSFORM_WORDS`, about 43,000 digits) the
+/// joins use num-bigint's n^1.46 product and 20,000 to 160,000 digits grow 15.89 times, a range the
+/// author accepted (2026-11-12; measurements at `TRANSFORM_WORDS`).
 #[test]
 fn reading_a_long_number_scales() {
     let texts = scaling::inputs(100_000, |n| {

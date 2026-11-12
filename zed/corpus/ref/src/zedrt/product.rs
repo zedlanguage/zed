@@ -58,6 +58,16 @@ const P_NEG_INV: u64 = {
 // 9.13 M, transform 9.34 M; 4,352 words 9.31 M, 9.38 M; 4,608 words 9.52 M, 9.42 M; 5,120 words
 // 10.34 M, 9.49 M; break-even about 4,450 words. Two factors of 4,608 words: 9.32 M, 9.39 M;
 // 5,120 words 10.49 M, 9.54 M.
+//
+// Below this crossover the reading pays num-bigint's n^1.46 at its top joins, so its growth over
+// 8 times the digits exceeds the O(n log^2 n) limit when the smaller size lies below about
+// 100,000 digits (4,450 words is about 43,000 digits): 20,000 to 160,000 digits 15.89 times the
+// instructions (4.8 M to 76.2 M) against 12.88, 10,000 to 80,000 17.89 against 13.22, 40,000
+// to 320,000 14.07 against 12.59; 80,000 to 640,000 12.61 against 12.34 and from 100,000 on
+// within the limit (probe, not committed, release, 2026-11-12, load 49). Accepted by the author
+// (2026-11-12): the cost there is a few milliseconds, numbers of that length are rare in
+// programs, and a lower crossover would add instructions to pass a ratio. A faster product
+// from 1,000 to 4,450 words would remove it (COMPLEXITY F38).
 pub const TRANSFORM_WORDS: u64 = 4450;
 
 /// The fewest 32-bit words of a factor of a reading that keeps its transform ([`Factor::new`]).
