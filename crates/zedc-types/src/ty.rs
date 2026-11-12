@@ -4180,6 +4180,17 @@ impl<'g> Near<'g> {
     }
 }
 
+/// Whether two tuples of one length with the component keys `a` and `b` share no value by the
+/// rule of [`near_pairs`]: at some place both have a class and the classes differ, or both are
+/// one value and the values differ. [`near_pairs`] lists for a tuple exactly the tuples not
+/// apart from it.
+fn apart(a: &[CompKey], b: &[CompKey]) -> bool {
+    a.iter().zip(b).any(|(x, y)| match (x, y) {
+        (Some((k, v)), Some((l, w))) => k != l || matches!((v, w), (Some(v), Some(w)) if v != w),
+        _ => false,
+    })
+}
+
 /// The keys of the components `keys` of a tuple of the group `p` at the places where the tuples
 /// of the group `q` of the other side have a class too, with the value where both are one value.
 fn project<'k>(
@@ -5042,9 +5053,32 @@ impl<'m, 's> Comparing<'m, 's> {
             if self.cx.borrow().decided(held) && b.is_empty() {
                 continue;
             }
-            // The rest left in the set keeps the shape's payloads, as in `Self::meet_rest`.
-            match (&tk, a.0.exact.clone().or_else(|| a.kernel())) {
-                (Some(tk), Some(k)) if !(&k & &w).is_empty() => rest.push(&k - tk),
+            // A row that `u` holds in part leaves the rest in the set, where the kernel holds it
+            // exactly, keeping the shape's payloads, as in `Self::meet_rest`. Before
+            // (FIX-ty-diff-wide-row), only a row that met `u`'s kind-wide part did, and a row
+            // that `u`'s tuples held in part was kept whole: `((..), (..)) \ ((..), (int, int))`
+            // was read as `((..), (..))`, and a parameter of that type took `((1, 2), (3, 4))`.
+            // A row with no kernel type, or beside a tuple of `u` with none, is still kept whole
+            // when `u` holds it in part, so the type may hold more than the difference.
+            let k = a.0.exact.clone().or_else(|| a.kernel());
+            // What of `u` may share a value with the row: its kind-wide part and the kernel
+            // types, payloads read, of its tuples near the row. None when one of those tuples
+            // has no kernel type (it holds a function, a variable or the unknown), or `u` holds
+            // a variable or the unknown, which may be any tuple. The tuples near the row are
+            // those not [`apart`] from it, which are those [`near_pairs`] lists, so the cut is
+            // the same however many more it lists (the test of every pair lists them all); the
+            // test reads the keys the row keeps, O(w) a pair.
+            let cut = match (&k, u.dynamic || !u.vars.is_empty()) {
+                (Some(_), false) => (near.tuples.iter())
+                    .filter(|r| !apart(&a.keys().comps, &r.keys().comps))
+                    .map(|r| r.0.exact.clone())
+                    .collect::<Option<Vec<_>>>()
+                    .map(|ks| KType::union_all(std::iter::once(w.clone()).chain(ks))),
+                _ => None,
+            };
+            match (k, cut, &tk) {
+                (Some(k), Some(cut), _) if !(&k & &cut).is_empty() => rest.push(&k - &cut),
+                (Some(k), None, Some(tk)) if !(&k & &w).is_empty() => rest.push(&k - tk),
                 _ => kept.push(a),
             }
         }
@@ -6140,9 +6174,10 @@ impl Ty {
 
     /// What of `self` is not in `t`, as `is not` narrows: scalars are subtracted, and so is
     /// all of `t` from the kind-wide part when `t` has a kernel type; tuples wholly inside `t`
-    /// are dropped, a tuple that `t`'s kind-wide part holds in part leaves its rest in the set,
-    /// and the other tuples are kept. The payload shapes of an atom whose payloads `t` lists
-    /// are dropped as tuples are, and the atom with them when none is left.
+    /// are dropped, a tuple that `t` holds in part leaves its rest in the set, less `t`'s
+    /// kind-wide part and the tuples of `t` near it, and the other tuples are kept. The
+    /// payload shapes of an atom whose payloads `t` lists are dropped as tuples are, and the
+    /// atom with them when none is left.
     pub fn diff(&self, t: &Ty) -> Ty {
         self.diff_in(t, None)
     }

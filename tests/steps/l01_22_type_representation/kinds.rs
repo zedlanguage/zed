@@ -588,7 +588,7 @@ fn a_tuple_type_subtracted_twice_or_left_beside_a_difference_may_hold_a_function
         ),
         (
             "f(p: (int, (..)) \\ (int, (int, int))) = String(p);\n",
-            "(int, (..))",
+            "(int, (..)) \\ (int, (int, int))",
         ),
         (
             "f(p: (((..) \\ (int | (..), int)) & (int, int | #a)) | (#a, (..))) = String(p);\n",
@@ -2130,6 +2130,173 @@ fn the_difference_of_many_payloads_of_one_atom_scales() {
         |n| {
             let (l, r) = &inputs[&n];
             assert!(l.diff(r).is_empty());
+        },
+    );
+}
+
+/// The type errors of `text`, each its message and its steps.
+fn errors_with_steps(text: &str) -> Vec<(String, Vec<String>)> {
+    let info = zed_tests::step_helpers::l01_26_type_resolution::Resolved::new(text).check();
+    (info.errors.iter())
+        .map(|e| {
+            (
+                e.message.clone(),
+                e.notes.iter().map(|n| n.text.clone()).collect(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_tuple_type_taken_away_in_part_from_a_wide_tuple_type_leaves_its_values_out() {
+    // DESIGN.md sec:type_language: "`t \ t` // difference (t1 \ t2 is sugar for t1 & !t2)",
+    // and "types denote sets of values". So `((..), (..)) \ ((..), (int, int))` holds no pair
+    // whose second component is a pair of `int`s, and a parameter of that type takes none.
+    // Before FIX-ty-diff-wide-row a tuple type of the left side that a tuple type of the
+    // right side held only in part was kept whole: the difference read as `((..), (..))`, and
+    // `f(p: ((1, 2), (3, 4)))` was accepted. The parameter's type is written as declared, the
+    // call takes one argument in the part `\` takes away and one outside it.
+    for (param, taken, outside, removed) in [
+        (
+            "((..), (..)) \\ ((..), (int, int))",
+            "((1, 2), (3, 4))",
+            "((1, 2), (3, 4, 5))",
+            "((..), (int, int))",
+        ),
+        (
+            "((..), (..)) \\ ((int, int), (..))",
+            "((1, 2), (3, 4))",
+            "((1, 2, 0), (3, 4))",
+            "((int, int), (..))",
+        ),
+        (
+            "((..), (..)) \\ ((int, int), (int, int))",
+            "((1, 2), (3, 4))",
+            "((1, 2), (3, 4, 5))",
+            "((int, int), (int, int))",
+        ),
+        (
+            "(int, (..)) \\ (int, (int, int))",
+            "(1, (3, 4))",
+            "(1, (3, 4, 5))",
+            "(int, (int, int))",
+        ),
+        (
+            "(((..), int), int) \\ (((int, int), int), int)",
+            "(((1, 2), 3), 4)",
+            "(((1, 2, 0), 3), 4)",
+            "(((int, int), int), int)",
+        ),
+    ] {
+        let t = ty(param);
+        assert!(
+            !ty(taken).subtype(&t),
+            "{taken} is not in {param}, read as {t}"
+        );
+        assert!(
+            ty(outside).subtype(&t),
+            "{outside} is in {param}, read as {t}"
+        );
+        let step =
+            format!("`{taken} : {removed}` is in the part `\\` takes away from `p : {param}`");
+        let text = format!("f(p: {param}) = p;\ng() = f(p: {taken});\nh() = f(p: {outside});\n");
+        let errs = errors_with_steps(&text);
+        assert_eq!(errs.len(), 1, "{text}{errs:#?}");
+        let (message, steps) = &errs[0];
+        assert!(
+            message.starts_with(&format!("`f` does not take ({taken})")),
+            "{text}{message}"
+        );
+        assert!(steps.contains(&step), "{text}{steps:#?}");
+        // A positional parameter takes its argument by place.
+        let text = format!("f(positional p: {param}) = p;\ng() = f({taken});\n");
+        let errs = errors_with_steps(&text);
+        assert_eq!(errs.len(), 1, "{text}{errs:#?}");
+        assert!(errs[0].1.contains(&step), "{text}{errs:#?}");
+    }
+}
+
+#[test]
+fn a_tuple_type_taken_away_in_whole_leaves_never() {
+    // DESIGN.md sec:type_language: "`t1 <: t2` iff `t1 & !t2` is empty", and the empty type is
+    // `Never`. A difference whose right side holds every value of its left side has no value,
+    // and a parameter of that type takes no argument; the message says both why the type has
+    // no value and that the argument is in the part taken away.
+    for (param, arg, removed) in [
+        (
+            "((..), (..)) \\ ((..), (..))",
+            "((1, 2), (3, 4))",
+            "((..), (..))",
+        ),
+        ("((..), (..)) \\ (..)", "((1, 2), 3)", "(..)"),
+        (
+            "(int, (..)) \\ (int | bool, (..))",
+            "(1, (3, 4))",
+            "(int | bool, (..))",
+        ),
+    ] {
+        assert!(ty(param).is_empty(), "{param} is {}", ty(param));
+        let text = format!("f(p: {param}) = p;\ng() = f(p: {arg});\n");
+        let errs = errors_with_steps(&text);
+        assert_eq!(errs.len(), 1, "{text}{errs:#?}");
+        let steps = &errs[0].1;
+        assert!(
+            steps
+                .iter()
+                .any(|s| s.starts_with("this difference has no value")),
+            "{text}{steps:#?}"
+        );
+        let step = format!("`{arg} : {removed}` is in the part `\\` takes away from `p : {param}`");
+        assert!(steps.contains(&step), "{text}{steps:#?}");
+    }
+}
+
+#[test]
+fn only_an_argument_in_the_part_taken_away_gets_the_step_about_it() {
+    // An argument refused for being outside the left side of the difference, or a call refused
+    // for another argument, says nothing of the part `\` takes away.
+    let param = "((..), (..)) \\ ((..), (int, int))";
+    for (call, why) in [
+        ("f(p: 3, q: 1)", "the argument is outside the left side"),
+        (
+            "f(p: ((1, 2), (3, 4, 5)), q: true)",
+            "another argument is refused",
+        ),
+    ] {
+        let text = format!("f(p: {param}, q: int) = p;\ng() = {call};\n");
+        let errs = errors_with_steps(&text);
+        assert_eq!(errs.len(), 1, "{why}: {text}{errs:#?}");
+        assert!(
+            !errs[0]
+                .1
+                .iter()
+                .any(|s| s.contains("is in the part `\\` takes away")),
+            "{why}: {text}{errs:#?}"
+        );
+    }
+}
+
+/// `n` tuple types `(i, (..))` and `n` tuple types `(i, (int, int))`, `i` from 0.
+fn wide_pairs(n: usize) -> (Ty, Ty) {
+    let each = |c: &Ty| -> Ty {
+        let ts: Vec<Ty> = (0..n).map(|i| Ty::tuple(vec![int(i), c.clone()])).collect();
+        Ty::union_all(&ts)
+    };
+    (each(&ty("(..)")), each(&ty("(int, int)")))
+}
+
+#[test]
+fn the_difference_of_many_wide_tuple_types_scales() {
+    // Each tuple type of the left side that the right side holds in part loses what the right
+    // side's tuple types near it hold, found as for the meet: n tuple types less n costs n
+    // differences of one tuple type with one, not n with n (FIX-ty-diff-wide-row).
+    let inputs = scaling::inputs(256, wide_pairs);
+    scaling::check(
+        "the difference of n tuple types (i, (..)) and n tuple types (i, (int, int))",
+        256,
+        |n| {
+            let (l, r) = &inputs[&n];
+            assert!(!l.diff(r).is_empty());
         },
     );
 }

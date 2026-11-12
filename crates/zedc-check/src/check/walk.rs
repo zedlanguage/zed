@@ -325,6 +325,9 @@ pub(super) enum Frame<'a> {
         id: usize,
         from: usize,
         sig: Arc<Sig>,
+        positional: &'a [Expr],
+        named: &'a [(String, Expr)],
+        span: Span,
     },
     Callee {
         callee: &'a Expr,
@@ -1102,9 +1105,20 @@ impl<'t, 'a> Ck<'t, 'a> {
                 m.ret = Ret::Sig(sig);
             }
             Frame::AtomArgs(s) => self.atom_step(m, s),
-            Frame::CallAlso { id, from, sig } => {
+            Frame::CallAlso {
+                id,
+                from,
+                sig,
+                positional,
+                named,
+                span,
+            } => {
                 let out = m.take_ty();
                 if let Some(o) = self.whence.get(&id).map(|o| o.span) {
+                    // Only the call's own refusal, not an error inside an argument, says
+                    // which argument is in a part a parameter's type takes away.
+                    let refused = (self.errors.get(from..))
+                        .is_some_and(|es| es.iter().any(|e| e.span == span));
                     self.also_notes(from, |ck| {
                         built(1);
                         let mut notes = vec![Note {
@@ -1112,6 +1126,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                             text: ck.declared_step(id, &sig),
                         }];
                         ck.declared_emptied(id, &mut notes);
+                        if refused {
+                            ck.subtracted_args(id, positional, named, &mut notes);
+                        }
                         notes
                     });
                 }
@@ -2925,6 +2942,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 id,
                 from,
                 sig: sig.clone(),
+                positional,
+                named,
+                span,
             });
             let what: Rc<str> = self.t.funcs[&id].name.as_str().into();
             let args = Args::of(positional, named);

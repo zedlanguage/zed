@@ -1876,6 +1876,62 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
+    /// The steps that say which arguments of a refused call of the function `id`, written
+    /// `positional` and `named`, are in the part a difference takes away: for a parameter
+    /// whose type is written `a \ b`, an argument whose value is a value of `b`. Positional
+    /// arguments fill the parameters in order and named ones the parameter of their name, as
+    /// the call placed them. `b` with a variable is skipped, since it holds no value fixed
+    /// here. Built only for a message that is printed: one denotation of each `b`, linear in
+    /// its size, and one subtype check per such parameter.
+    fn subtracted_args(
+        &self,
+        id: usize,
+        positional: &[Expr],
+        named: &[(String, Expr)],
+        out: &mut Vec<Note>,
+    ) {
+        let Some(f) = self.t.funcs.get(&id) else {
+            return;
+        };
+        for (j, p) in f.params.iter().enumerate() {
+            let Some(w) = &p.ty else {
+                continue;
+            };
+            let TypeKind::Diff(_, b) = &bare(w).kind else {
+                continue;
+            };
+            let e = match named.iter().find(|(n, _)| *n == p.name) {
+                Some((_, e)) => e,
+                None => match positional.get(j) {
+                    Some(e) => e,
+                    None => continue,
+                },
+            };
+            let v = match self.seen.get(&e.span) {
+                Some((Some(t), _)) => t.clone(),
+                _ => match self.tuple_seen(e) {
+                    Some(t) => t,
+                    None => continue,
+                },
+            };
+            let taken = denoted(b);
+            if v.is_empty() || taken.dynamic || !taken.vars.is_empty() || !self.subtype(&v, &taken)
+            {
+                continue;
+            }
+            let shown = self.near(Some(e.span), |ck| ck.show(&v));
+            out.push(Note {
+                span: e.span,
+                text: format!(
+                    "`{shown} : {}` is in the part `\\` takes away from `{} : {}`",
+                    format_type(b),
+                    p.name,
+                    format_type(w)
+                ),
+            });
+        }
+    }
+
     fn id(&self, span: Span, name: &str) -> usize {
         self.t.id(span, name)
     }
