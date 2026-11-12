@@ -673,6 +673,273 @@ fn two_sentinel_values_for_one_variable_are_refused() {
     );
 }
 
+/// `r = loop t { while t < 3; x' = x + 1; … };` with the statements `sites` in its body.
+fn x_loop(sites: &str) -> String {
+    format!("r = loop t {{ while t < 3; x' = x + 1; {sites} }};")
+}
+
+/// Two sites give one entry when their keys meet by value, not by text: a key inside a range,
+/// two ranges that share a key, and one key written in two ways. Ranges that only touch, keys
+/// apart, and a range that holds no key give no entry twice.
+#[test]
+fn entries_given_twice_are_found_by_the_values_of_their_keys() {
+    refused(
+        "r = loop t {\n  while t < 3;\n  initial x[i in -3..<0] = 0;\n  x' = x + 1;\n  \
+         initial x[-2] = 1;\n};\n",
+        Row::TwoSentinels,
+        "initial x[-2] = 1;",
+        Some(
+            "`x` is given the entry `x[-2]` twice in this loop: first by `initial x[i in \
+             -3..<0] = 0;`, then by `initial x[-2] = 1;`. The statements of a loop's body run in \
+             the order their data dependencies fix, not the order they are written, so one \
+             statement gives a sentinel value wherever it stands, and a second one is a second \
+             writer of the same entry, even where the two values agree. Give each entry once.",
+        ),
+        &[
+            "the first site, which gives `x[i in -3..<0]` the value `0` [initial x[i in -3..<0] \
+             = 0;]",
+            "the second site, which gives `x[-2]` the value `1` [initial x[-2] = 1;]",
+            "repair: keep the first, `initial x[i in -3..<0] = 0;`, and delete this one, \
+             `initial x[-2] = 1;` [initial x[-2] = 1;]",
+            "repair: keep the second, `initial x[-2] = 1;`, and delete this one, `initial x[i in \
+             -3..<0] = 0;` [initial x[i in -3..<0] = 0;]",
+            "repair: split this one into two, around the keys the other gives: `initial x[i in \
+             -3..<-2] = 0;` and `initial x[i in -1..<0] = 0;` [initial x[i in -3..<0] = 0;]",
+        ],
+        &[
+            "r = loop t {\n  while t < 3;\n  initial x[i in -3..<0] = 0;\n  x' = x + 1;\n};\n",
+            "r = loop t {\n  while t < 3;\n  x' = x + 1;\n  initial x[-2] = 1;\n};\n",
+            "r = loop t {\n  while t < 3;\n  initial x[i in -3..<-2] = 0;\n  initial x[i in \
+             -1..<0] = 0;\n  x' = x + 1;\n  initial x[-2] = 1;\n};\n",
+        ],
+    );
+    // A `mutable` declaration gives `x[-1]`, inside the range; its value takes the place of the
+    // range's entry `x[-1]` only, so moving the range's value into it is not offered.
+    refused(
+        "r = loop t {\n  while t < 3;\n  mutable x = 1;\n  x' = x + 1;\n  \
+         initial x[i in -2..=-1] = 0;\n};\n",
+        Row::TwoSentinels,
+        "initial x[i in -2..=-1] = 0;",
+        Some(
+            "`x` is given the entry `x[-1]` twice in this loop: first by `mutable x = 1;`, then \
+             by `initial x[i in -2..=-1] = 0;`. `initial x = e;` and `mutable x = e;` give the \
+             entry `x[-1]`. The statements of a loop's body run in the order their data \
+             dependencies fix, not the order they are written, so one statement gives a \
+             sentinel value wherever it stands, and a second one is a second writer of the same \
+             entry, even where the two values agree. Give each entry once.",
+        ),
+        &[
+            "the first site, which gives `x` the value `1` [mutable x = 1;]",
+            "the second site, which gives `x[i in -2..=-1]` the value `0` [initial x[i in \
+             -2..=-1] = 0;]",
+            "repair: keep `mutable x = 1;` and delete this statement, `initial x[i in -2..=-1] = \
+             0;` [initial x[i in -2..=-1] = 0;]",
+            "repair: narrow this one to the keys the other does not give: `initial x[i in \
+             -2..=-2] = 0;` [initial x[i in -2..=-1] = 0;]",
+        ],
+        &[
+            "r = loop t {\n  while t < 3;\n  mutable x = 1;\n  x' = x + 1;\n};\n",
+            "r = loop t {\n  while t < 3;\n  mutable x = 1;\n  x' = x + 1;\n  \
+             initial x[i in -2..=-2] = 0;\n};\n",
+        ],
+    );
+    // How each pair names the entries it gives twice.
+    for (sites, entries) in [
+        // A key in a range, either one first, and `initial x = e;` inside a range.
+        (
+            "initial x[-2] = 1; initial x[i in -3..<0] = 0;",
+            "the entry `x[-2]`",
+        ),
+        (
+            "initial x[i in -3..<0] = 0; initial x = 1;",
+            "the entry `x[-1]`",
+        ),
+        (
+            "initial x = 1; initial x[i in -3..<0] = 0;",
+            "the entry `x[-1]`",
+        ),
+        // Ranges that share keys: one key, where `..=` holds the key `..<` would not, and more.
+        (
+            "initial x[i in -3..=-1] = 0; initial x[i in -1..<0] = 1;",
+            "the entry `x[-1]`",
+        ),
+        (
+            "initial x[i in -5..<-1] = 0; initial x[i in -3..<0] = 1;",
+            "the entries `x[-3]` to `x[-2]`",
+        ),
+        (
+            "initial x[i in -2..<0] = 0; initial x[i in -5..<-1] = 1;",
+            "the entry `x[-2]`",
+        ),
+        // A range inside another, and a range with no last key.
+        (
+            "initial x[i in -9..<0] = 0; initial x[i in -4..<-2] = 1;",
+            "the entries `x[-4]` to `x[-3]`",
+        ),
+        (
+            "initial x[i in -3..] = 0; initial x[i in -6..<-1] = 1;",
+            "the entries `x[-3]` to `x[-2]`",
+        ),
+        (
+            "initial x[i in -6..] = 0; initial x[i in -3..] = 1;",
+            "the entries from `x[-3]` up",
+        ),
+        // One key written in two ways: spaces, another base, a range of one key, a range
+        // written with each end.
+        (
+            "initial x[-2] = 0; initial x[- 2] = 1;",
+            "the entry `x[-2]`",
+        ),
+        (
+            "initial x[-2] = 0; initial x[-0x2] = 1;",
+            "the entry `x[-2]`",
+        ),
+        (
+            "initial x[-2] = 0; initial x[i in -2..=-2] = 1;",
+            "the entry `x[-2]`",
+        ),
+        (
+            "initial x[i in -3..<-1] = 0; initial x[j in -3..=-2] = 1;",
+            "the entries `x[-3]` to `x[-2]`",
+        ),
+        // A key the text does not fix as an integer, written the same way twice.
+        (
+            "initial x[-t0] = 0; initial x[-t0] = 1;",
+            "the entry `x[-t0]`",
+        ),
+    ] {
+        let src = format!("t0 = 2; {}", x_loop(sites));
+        let e = refusal(&src);
+        assert_eq!(e.row, Some(Row::TwoSentinels), "{src}: {e:?}");
+        assert!(
+            e.message
+                .starts_with(&format!("`x` is given {entries} twice")),
+            "{src}: {}",
+            e.message
+        );
+    }
+    // Entries apart: ranges that touch but share no key, keys apart, a range that holds no
+    // key, and keys around a range.
+    for sites in [
+        "initial x[i in -3..<-1] = 0; initial x[i in -1..<0] = 1;",
+        "initial x[i in -3..=-2] = 0; initial x = 1;",
+        "initial x[i in -9..<-5] = 0; initial x[i in -3..<0] = 1;",
+        "initial x[-3] = 0; initial x[-2] = 1; initial x = 2;",
+        "initial x[i in -1..<-1] = 0; initial x = 1;",
+        "initial x[-4] = 0; initial x[i in -3..<-1] = 1; initial x[-1] = 2;",
+    ] {
+        accepted(&x_loop(sites));
+    }
+}
+
+/// A later bracket gives entries inside a frame: a site that gives the whole frame gives those
+/// too, and two sites with the same later brackets meet by their first keys; sites whose later
+/// brackets have other values are apart.
+#[test]
+fn entries_inside_a_frame_are_found_against_the_whole_frame() {
+    let g_loop = |sites: &str| format!("r = loop t {{ while t < 3; g' = g; {sites} }};");
+    for (sites, entries) in [
+        (
+            "initial g[-1][j in 0..<2] = j; initial g = 0;",
+            "the entries `g[-1][j in 0..<2]`",
+        ),
+        (
+            "initial g = 0; initial g[-1][j in 0..<2] = j;",
+            "the entries `g[-1][j in 0..<2]`",
+        ),
+        (
+            "initial g[i in -3..<0] = 0; initial g[-2][0] = 1;",
+            "the entry `g[-2][0]`",
+        ),
+        (
+            "initial g[-2][0] = 1; initial g[i in -3..<0] = 0;",
+            "the entry `g[-2][0]`",
+        ),
+        (
+            "initial g[i in -3..<0][1] = 0; initial g[-1][1] = 1;",
+            "the entry `g[-1][1]`",
+        ),
+    ] {
+        let src = g_loop(sites);
+        let e = refusal(&src);
+        assert_eq!(e.row, Some(Row::TwoSentinels), "{src}: {e:?}");
+        assert!(
+            e.message
+                .starts_with(&format!("`g` is given {entries} twice")),
+            "{src}: {}",
+            e.message
+        );
+    }
+    // The range of a whole-frame site is narrowed around the frame the other gives in full,
+    // and not around one entry inside a frame.
+    let e = refusal(&g_loop("initial g[i in -3..<0][0] = 0; initial g[-2] = 1;"));
+    assert!(
+        e.notes
+            .iter()
+            .any(|n| n.text.contains("split this one into two")),
+        "{e:?}"
+    );
+    let e = refusal(&g_loop("initial g[i in -3..<0] = 0; initial g[-2][0] = 1;"));
+    assert!(
+        !e.notes.iter().any(|n| n.text.contains("this one into two")),
+        "{e:?}"
+    );
+    for sites in [
+        "initial g[-1][0] = 0; initial g[-1][1] = 1;",
+        "initial g[-2][0] = 0; initial g[-1][0] = 1; initial g[-3] = 2;",
+    ] {
+        accepted(&g_loop(sites));
+    }
+}
+
+/// `f(n) = loop t { while t < n; x' = x + t; … }` with `3n` keys of `x` given by `2n` sites
+/// apart, `initial x[i in -3k-3..=-3k-2] = 0;` and `initial x[-3k-1] = 0;` for each `k`
+/// below `n`, written from the farthest key in, and `tail` last.
+fn many_entries(n: usize, tail: &str) -> String {
+    let sites: String = (0..n)
+        .rev()
+        .map(|k| {
+            format!(
+                "initial x[i in -{}..=-{}] = 0; initial x[-{}] = 0; ",
+                3 * k + 3,
+                3 * k + 2,
+                3 * k + 1
+            )
+        })
+        .collect();
+    format!("f(n) = loop t {{ while t < n; x' = x + t; {sites}{tail} }};\n")
+}
+
+/// Each site is one query and one insertion into a Fenwick tree over the first keys of its
+/// class (`crate::ast::sentinel` in zedc-syntax), so `2n` sites of one variable whose entries
+/// are apart are checked in time of order `n log n`, and a site after them that meets one is
+/// found in the same time.
+#[test]
+fn overlapping_entries_scale() {
+    for (what, tail, ok) in [
+        ("2n sites of one variable, apart", "", true),
+        (
+            "a site after 2n that meets one",
+            "initial x[i in -2..<0] = 1;",
+            false,
+        ),
+    ] {
+        let units = scaling::inputs(500, |n| {
+            let text = many_entries(n, tail);
+            let tokens = lex(&text).unwrap();
+            let tree = parse(&text, &tokens, "Unit", TOP).unwrap();
+            (text, tokens, tree)
+        });
+        scaling::check(what, 500, |n| {
+            let (text, tokens, tree) = &units[&n];
+            match unit(text, tokens, tree) {
+                Ok(_) => assert!(ok, "{what}: accepted"),
+                Err(e) => assert_eq!((ok, e.row), (false, Some(Row::TwoSentinels)), "{e:?}"),
+            }
+        });
+    }
+}
+
 /// `f(n) = loop t { while t < n; initial x0 = 0; x0' = x0 + t; … }` with `n` variables, and
 /// `tail` last.
 fn one_body(n: usize, tail: &str) -> String {
@@ -689,9 +956,10 @@ fn many_loops(n: usize) -> String {
         .collect()
 }
 
-/// The checks of a loop body are one pass over its statements with a map from each entry to
-/// its first site, so `n` `initial` statements in one body, and `n` loops with one each, are
-/// built in time linear in `n`; and a second site after `n` is found in linear time too.
+/// The checks of a loop body are one pass over its statements, with a Fenwick tree over the
+/// first keys of the sites of each variable, so `n` `initial` statements in one body, and `n`
+/// loops with one each, are built in time of order `n log n`; and a second site after `n` is
+/// found in the same time.
 #[test]
 fn initial_statements_scale() {
     for (what, make) in [

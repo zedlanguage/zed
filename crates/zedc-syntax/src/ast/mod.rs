@@ -27,6 +27,7 @@ mod drop;
 mod initial;
 mod neglit;
 mod node;
+mod sentinel;
 mod show;
 mod stmts;
 mod types;
