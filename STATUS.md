@@ -1974,15 +1974,17 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| BUILD-const | impl attempt 1 | 2026-11-05 04:07 | l02_08d 14/14 pass (load 49); negative controls run once: pins at live build fails pins test, per-read rescan fails scaling 25.3x > 11.2x |
+| BUILD-const | impl attempt 1 | 2026-11-05 04:07 | rebased on origin/main as 155629f7e (COMPLEXITY conflict resolved, both rows kept); spec b8b7562 + DOCS-TODO 131 3305e76 rebased on zed c838362; building all ta |
 | GSX-unsolved | hybrid-xr attempt  | 2026-11-11 16:53 | round 2 recorded (Opus pf1 moved it: sweep 3, lost 3, prints 3; CD best still 29); round 3 launched |
 | LOAD-max-div-unsolved | hybrid-xr attempt 1 | 2026-11-11 17:11 | round 1: difference rule meets A + scored C at R 8.1-8.2; aperiodic open; merging part |
+| MSG-split-imports | running | 2026-11-11 01:43 |  |
 | NAME-ascii-library | running | 2026-11-12 13:53 |  |
 | NAME-nonprinting | impl attempt 1 | 2026-11-12 13:28 | NAME-ascii-library: l01_02 with ascii tests (load 71.52 57.51 51.99) |
 | POLY-nf-power | impl attempt 1 | 2026-11-12 13:01 | witness search fixed (x ^ P == x ran past 60 s, now Differs at once); QUESTIONS A98 written (spec 0abf7b8); checks before commit |
-| SOUND-random | impl attempt 1 | 2026-11-05 04:07 | tests l01_26_type_resolution + l01_39a_bit_words + zedc_check (with docs): 181 pieces, 0 failed; load 46.75 to 58.44 |
+| SOUND-random | impl attempt 1 | 2026-11-05 04:07 | after rebase on c8e8a37f3: l01_26 + zedc_check with docs 133 pieces, 1 timeout (deep_ops::diff_of_deep_types_runs_on_a_2_mib_stack at load 106 with a 67 s limit |
 | TESTS-L1.19-line-ends | impl attempt 1 | 2026-11-08 23:59 | found: main fails clippy -D warnings in tests/steps/m0_06_cost_scalarization/overlap.rs:93 (cloned_ref_to_slice_refs) and :551 (manual_is_multiple_of), from 6aa |
 | TESTS-L1.40d-surface-kinds | impl attempt 1 | 2026-11-08 23:59 | started; worktree /home/luke/Work/wt/tests-l1.40d at 4851dab66 |
+| TESTS-scaling-gaps | running | 2026-11-08 23:59 |  |
 | TRIVIAL-walk-branches | orchestrator attempt  | 2026-11-12 11:58 | round 1 judged (META1); combined walk within R* on 18 families, K3/J3 open; starting round-2 seats |
 | WARN-refused | impl attempt 1 | 2026-11-05 04:07 | placing done (tests, reaches, ints_in_scope, bound); headlines shortened; new tests l01_29_diagnostics::refused_warning; spec text in wt/warn-refused-spec; buil |
 
