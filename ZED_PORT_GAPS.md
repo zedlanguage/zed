@@ -3558,6 +3558,15 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | Maps `HashMap<usize, usize>` from statement to cycle and from binder to statement, a `HashSet<usize>` of the lists seen, and a `HashMap<usize, Vec<Edge>>` of each statement's edges, all filled by `insert` and `entry` in loops over the uses | `Tables::cycle_reports` | Mutation (gap 11) | a fold over the uses into persistent maps |
-| An edge updated in place through `last_mut` when a later use of the same statement is the first read outside a lambda | `Tables::cycle_reports` | Mutation (gap 11) | the fold replaces the map entry with the updated edge |
+| An edge updated in place through `&mut es[k]` (by its index, since MSG-overload-false-cycle) when a later use of the same statement is the first read outside a lambda | `Tables::cycle_reports` | Mutation (gap 11) | the fold replaces the map entry with the updated edge |
 | A depth-first search on an explicit `Vec` stack with `HashSet<usize>` visited and expanded sets, pushing to an order `Vec`; the cycle's edges taken out of the shared map by `remove` | `Tables::cycle_report` | Mutation (gap 11) | recursion on the statement that threads the two sets and returns the order; the edges read from a persistent map |
 | A `HashMap<&str, Vec<usize>>` from each name to its binding statements, built by `entry().or_default().push` | `Tables::with_text` (`by_name`) | Mutation (gap 11); borrowed `&str` keys | a persistent map built by a fold, keyed by the name's text |
+
+## Entries from MSG-overload-false-cycle (`crates/zedc-resolve/src/resolve/pick.rs`, `tables.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| Carrier sets as `u16` bit masks, tested with `&` and `\|` and walked bit by bit with `1 << bit` | `pick::of_type`, `pick::of_arg`, `Index::admitting`, `pick::add` | Bit operations on a machine integer | a `u16` with `bitAnd`, `bitOr` and shifts, or a set of carrier atoms; the number of carriers is fixed, so either is O(1) per operation |
+| An index `Vec<[Two; BITS]>` and `HashMap<&str, [Two; BITS]>` filled in place, each `Two` a fixed array of two `Option<u32>` updated by `add` | `Index::new`, `Two::add` | Mutation (gap 11); borrowed `&str` keys | a fold over the overloads into persistent maps keyed by place and carrier, each entry a tuple of at most two overloads |
+| Closures that capture `&mut HashMap` and `&mut Vec` while the collecting walk runs, and a `HashSet<Span>` of callees already met | `Tables::collect_functions` | Mutation (gap 11) | the walk returns the calls and parameter types as part of its fold state |
+| A `HashMap<(usize, usize), usize>` from statement and list to the index of its edge in a `Vec`, the edge updated through `&mut es[k]` | `Tables::cycle_reports` | Mutation (gap 11) | a persistent map from (statement, list) to the edge, replaced when a later use is the first read |
