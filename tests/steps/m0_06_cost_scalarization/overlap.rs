@@ -90,7 +90,7 @@ fn the_same_regions_one_after_another_fit() {
     let touching = timed(2, both(), &[(0, 10), (10, 10)]);
     assert_eq!(footprints(&touching, &t), vec![10 * GIB]);
     assert!(feasible(&touching, &t));
-    assert_eq!(pick(&[touching.clone()], &t), Some(touching));
+    assert_eq!(pick(std::slice::from_ref(&touching), &t), Some(touching));
 }
 
 #[test]
@@ -548,7 +548,7 @@ fn balanced(lo: usize, hi: usize, depth: usize, out: &mut Vec<Nest>) {
     let mid = lo + (hi - lo) / 2;
     balanced(lo, mid, depth + 1, out);
     balanced(mid, hi, depth + 1, out);
-    out.push(if depth % 2 == 0 {
+    out.push(if depth.is_multiple_of(2) {
         Sequence(2)
     } else {
         Parallel(2)
