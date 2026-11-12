@@ -110,6 +110,7 @@ Stored collection whose type and schema disagree
 Levels of one name with different domains
 Argument outside its parameter's refinement
 Loose atom inside an argument at a position from which it cannot pass out of the call
+Atom of a named family reaching a call, an index, the condition of `if`, `sum`, destructuring or an ordering of tuples, none of which has a case for it
 Level names that do not fit the type
 Two levels of one map with one name at the instantiation of a generic type
 Named slice of a name the value's type does not have, or of one level twice

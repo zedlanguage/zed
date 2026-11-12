@@ -3073,6 +3073,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                         .to_string(),
                 ),
             }
+            // In the row "Atom of a named family reaching …" of the rejection table, named from
+            // L2.5, when a source program can raise it and so have a near miss (step L1.29).
             self.error_offering(span, message, menu);
         }
         t.loose_ty()

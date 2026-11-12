@@ -172,6 +172,9 @@ rows! {
     LevelDomainsDiffer => "Levels of one name with different domains",
     OutsideRefinement => "Argument outside its parameter's refinement",
     AtomCannotPassOut => "Loose atom inside an argument at a position from which it cannot pass out of the call",
+    // No diagnostic names the next row yet: `Ck::passing` raises it, and names it once a `type`
+    // declaration gives a value a named family (plan row L2.5), when a near miss can raise it.
+    FamilyAtomUnhandled => "Atom of a named family reaching a call, an index, the condition of `if`, `sum`, destructuring or an ordering of tuples, none of which has a case for it",
     // No diagnostic uses the next four rows yet: plan rows L7.1b, L8.2c and L20.3c emit them.
     LevelNamesMisfit => "Level names that do not fit the type",
     LevelNameClash => "Two levels of one map with one name at the instantiation of a generic type",
