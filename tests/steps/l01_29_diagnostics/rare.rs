@@ -90,6 +90,8 @@ fn sum_of_a_value_that_is_not_a_tuple_is_rejected() {
 fn a_component_of_a_destructured_tuple_is_named_with_its_place() {
     // Before, step [2] read "`a` is component 0 of this, 1", which did not say what "this"
     // is or which of the two is the type.
+    // No repair is offered: `int(b)` always fails, at `#invalid`, so `c = a + int(b)` is
+    // rejected.
     assert_eq!(
         shown("p = (1, \"x\");\na, b = p;\nc = a + b;\n"),
         r#"3:5: `+` does not take (1, "x"): these are the types of its arguments here, and `+` has no arrow that takes them all
@@ -97,7 +99,7 @@ fn a_component_of_a_destructured_tuple_is_named_with_its_place() {
        3 | c = a + b;
          |     ^ [1]
          |     ^^^^^ [10, 11, 12]
-         |         ^ [8, 13]
+         |         ^ [8]
   [2]  2:8: `a` is 1, component 0 of this tuple
        2 | a, b = p;
          |        ^
@@ -114,8 +116,7 @@ fn a_component_of_a_destructured_tuple_is_named_with_its_place() {
   [9]  2:8: `b` is "x", component 1 of this tuple
   [10] 3:5: `+` takes (int, int) -> int
   [11] 3:5: `+` takes (f64, f64) -> f64
-  [12] 3:5: `+` takes (rat, rat) -> rat
-  [13] 3:9: repair: write `int(b)`; the checker accepts that"#
+  [12] 3:5: `+` takes (rat, rat) -> rat"#
     );
 }
 

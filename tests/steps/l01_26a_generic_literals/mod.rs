@@ -8,6 +8,7 @@
 //! these signatures with item FLOAT-f32.
 
 mod call_arguments;
+mod cast_of_union;
 mod design_menus;
 mod fixes;
 mod lazy_carrier;

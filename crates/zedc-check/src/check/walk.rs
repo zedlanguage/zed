@@ -3126,6 +3126,21 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let m = unfixed(l, &[Carrier::F64, Carrier::Rat], None);
                 self.reject(Some(Row::UnfixedDecimal), l.site, m, notes);
             }
+            // So is one a branch of an `if` of literals gives, `String(if c { 1 } else
+            // { 2.5 })`, and one a call gives through its body, `String(g(c))` with
+            // `g(positional c: bool) = if c { 1 } else { 2.5 }` ([`Self::unfixed_calls`]).
+            let bs = x.branches.iter().flat_map(|bs| bs.iter());
+            let found: Vec<(Span, Msg)> = (bs.filter_map(|b| match b {
+                Branch::Lit(l) if l.bare && lit_carrier(&l.value) != Carrier::Int => Some(l),
+                _ => None,
+            }))
+            .map(|l| (l.site, unfixed(l, &[Carrier::F64, Carrier::Rat], None)))
+            .collect();
+            self.reject_unfixed(&"the argument of `String`", found);
+            if x.lit.is_none() {
+                let args = [Some(x.clone())];
+                self.unfixed_calls("`String`", &word_sig(w), &args);
+            }
         }
         let sig = match w {
             "f64" if self.exact_in_f64(&x) => f64_of_exact_int_sig(),
@@ -8193,8 +8208,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 continue;
             }
+            let a = a.as_ref().expect("an argument");
             for w in ["String", "int", "rat", "f64"] {
-                let Some(r) = converted(&word_sig(w), &held) else {
+                let Some(r) = self.wrapped(w, a, &held, *at) else {
                     continue;
                 };
                 if self.repaired(what, sig, args, (i, r, kept.then_some(*at)), pass, span) {
@@ -8207,6 +8223,35 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         out
+    }
+
+    /// The type of the argument `a` at `at`, of type `held`, wrapped in the prelude word `w`, where
+    /// that application checks as written, tried with the checker's state restored after;
+    /// `None` where it does not. The wrap is applied as the checker applies it where the
+    /// repair is written ([`Self::word_end`]), so a repair is offered only where its own call
+    /// checks too: with `g(positional c: bool) = if c { 1 } else { 2.5 }`, `int(g(c))` is
+    /// rejected at the `2.5`, which nothing gives a carrier, and is not offered for
+    /// `scalar(g(c))`, although each value of `g(c)` has an arrow of `int` ([`converted`], the
+    /// naive form, which splits the type alone and cannot tell `2.5` from `2.5f64`); and
+    /// `String(g(c))` is rejected there too, as `String(0.5)` is. Complexity tradeoff: one
+    /// application of a word of at most five arrows to one argument, the cost of checking the
+    /// call as written, for each of the four words at each rejected application.
+    fn wrapped(&mut self, w: &str, a: &Arg<'a>, held: &Ty, at: Span) -> Option<Ty> {
+        let arg = Arg {
+            ty: held.clone(),
+            ..a.clone()
+        };
+        let saved = self.mark();
+        let refused = self.lit_refused.len();
+        let trying = std::mem::replace(&mut self.trying, true);
+        let rough = std::mem::replace(&mut self.rough, true);
+        let t = self.word_end(w, arg, at);
+        let ok = self.errors.len() == saved.errors && self.lit_refused.len() == refused;
+        self.rough = rough;
+        self.trying = trying;
+        self.lit_refused.truncate(refused);
+        self.undo(&saved);
+        ok.then_some(t)
     }
 
     /// Whether the application of `sig` to `args` checks with argument `i` replaced by a
@@ -10304,7 +10349,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         &mut self,
         what: &str,
         sig: &Sig,
-        args: &mut [Option<Arg>],
+        args: &mut [Option<Arg<'a>>],
     ) -> Result<Option<Vec<usize>>, String> {
         // Per arrow: its adoptions, the calls of literal values it reads at a carrier, and
         // each argument a literal of which adopts or a call that is read, retyped.
@@ -10318,6 +10363,45 @@ impl<'t, 'a> Ck<'t, 'a> {
         // Per literal argument without a suffix: the carriers of its parameter on the arrows
         // the other arguments fit, `None` once one of them is generic.
         let mut takes: BTreeMap<usize, Option<u8>> = BTreeMap::new();
+        // A call of literal values alone each value of which an arrow the other arguments
+        // meet takes as it is, as `g(c)` of type `1 | 2.5` for `g(positional c: bool) = if
+        // c { 1 } else { 2.5f64 }` at `f64(…)`, whose `1` the `int` arrow takes and whose
+        // `2.5` the `f64` arrow does, is split among those arrows value by value, as
+        // `f64(if c { 1 } else { 2.5f64 })` is, and is read at no carrier: the `int` arrow,
+        // which reads nothing, would otherwise be the one arrow kept, and the `2.5` would
+        // find none. A call some value of which no such arrow takes is read: in `x * g(c)`
+        // with `x: f64`, the `1` of `g(c)` is read at `f64`, and so in `1.0f64 + g(c)`. A
+        // literal with no suffix among the other arguments, or a tuple or an `if` of them,
+        // takes its carrier from the arrow, so no arrow is known to take a value of the call
+        // beside it, and the call is read as before: `1 + g(c)`.
+        // Complexity tradeoff: O(A v) subtype tests of one value each, for the A arrows and
+        // the v values the call's type lists, as the reads below cost; the naive form, the
+        // reads alone, keeps the arrow that reads nothing and rejects the call.
+        let generic = |a: &Arg| {
+            a.lit.as_ref().is_some_and(|l| l.bare) || a.parts.is_some() || a.branches.is_some()
+        };
+        let split: Vec<bool> = (args.iter().enumerate())
+            .map(|(i, a)| {
+                let Some(vs) = a.as_ref().and_then(call_values) else {
+                    return false;
+                };
+                if args.iter().flatten().any(generic) {
+                    return false;
+                }
+                let meeting: Vec<&Ty> = (sig.arrows.iter())
+                    .filter(|arrow| {
+                        (args.iter().zip(&arrow.params)).all(|(a, p)| {
+                            a.as_ref().is_none_or(|a| a.ty.is_empty() || a.ty.meets(p))
+                        })
+                    })
+                    .map(|arrow| &arrow.params[i])
+                    .collect();
+                vs.iter().all(|v| {
+                    let t = Ty::lit(v);
+                    meeting.iter().any(|p| p.dynamic || t.subtype(p))
+                })
+            })
+            .collect();
         for (k, arrow) in sig.arrows.iter().enumerate() {
             let mut need = Adoptions::new();
             let mut retyped = Vec::new();
@@ -10334,7 +10418,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             let mut called = Vec::new();
             let mut ok = (args.iter().zip(&arrow.params).enumerate()).all(|(i, (a, p))| match a {
                 // Read before the type meets `p`: `1 | 2.5` meets `f64` at its `2.5`, and its
-                // `1` is read.
+                // `1` is read; a call split among the arrows (`split`) is not.
+                Some(a)
+                    if a.lit.is_none() && a.parts.is_none() && a.branches.is_none() && split[i] =>
+                {
+                    a.ty.is_empty() || a.ty.meets(p)
+                }
                 Some(a) if a.lit.is_none() && a.parts.is_none() && a.branches.is_none() => {
                     match read_call(a, p) {
                         Some(r) => {
@@ -10424,7 +10513,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             for (i, (a, p)) in args.iter().zip(&arrow.params).enumerate() {
                 if let Some(a) = a
-                    && a.lit.as_ref().is_some_and(|l| l.bare)
+                    && (a.lit.as_ref().is_some_and(|l| l.bare) || a.branches.is_some())
                 {
                     let m = takes.entry(i).or_insert(Some(0));
                     *m = m
@@ -10467,15 +10556,24 @@ impl<'t, 'a> Ck<'t, 'a> {
         // else here gives one, as `abs(0.5)` or `String(0.5)`: an integer literal is `int`
         // where `int` is among them, and otherwise it is rejected (steps L1.26a and L1.26b).
         // One value gives one error: of two such operands, as in `0.5 * 2.0`, the first
-        // decimal literal, or else the first literal, is rejected.
-        let unfixed_lits = takes.iter().filter_map(|(&i, m)| {
-            let (Some(m), Some(Some(a))) = (m, args.get(i)) else {
-                return None;
-            };
-            let l = a.lit.as_ref()?;
-            let left: Vec<Carrier> = Carrier::of_mask(*m).filter(|c| c.numeric()).collect();
-            let int = lit_carrier(&l.value) == Carrier::Int && left.contains(&Carrier::Int);
-            (!int && left.len() > 1).then_some((l, left))
+        // decimal literal, or else the first literal, is rejected. A branch of an `if` of
+        // literals is a literal there as it is alone: `f64(if c { 1 } else { 2.5 })` is
+        // rejected at the `2.5`, as `f64(0.5)` is, and `f64(if c { 1 } else { 2 })` is an
+        // `int` at the `int` arrow.
+        let unfixed_lits = takes.iter().flat_map(|(&i, m)| {
+            let found = (m.zip(args.get(i).and_then(Option::as_ref))).map(|(m, a)| {
+                let bs = a.branches.iter().flat_map(|bs| bs.iter());
+                let ls = a.lit.iter().chain(bs.filter_map(|b| match b {
+                    Branch::Lit(l) if l.bare => Some(l),
+                    _ => None,
+                }));
+                let left: Vec<Carrier> = Carrier::of_mask(m).filter(|c| c.numeric()).collect();
+                ls.filter_map(move |l| {
+                    let int = lit_carrier(&l.value) == Carrier::Int && left.contains(&Carrier::Int);
+                    (!int && left.len() > 1).then(|| (l, left.clone()))
+                })
+            });
+            found.into_iter().flatten()
         });
         let mut first = None;
         for (l, left) in unfixed_lits {
@@ -10487,6 +10585,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 break;
             }
         }
+        let rejected = first.is_some();
         if let Some((l, left)) = first {
             let notes = self.derive(&[l.site]);
             self.reject(
@@ -10495,6 +10594,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 unfixed(&l, &left, None),
                 notes,
             );
+        }
+        // A call rejected so gives no value, as a rejected application gives, so that the
+        // arrows it then meets do not report it again: `1 + g(c)`.
+        if !rejected && self.unfixed_calls(what, sig, args) {
+            return Ok(None);
         }
         for (i, t) in retyped {
             if let Some(a) = &mut args[i] {
@@ -10508,6 +10612,70 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.put(Undo::Fit(s, Some(Fit::Read(c))));
         }
         Ok(Some(kept))
+    }
+
+    /// Rejects the decimal literals with no suffix that a call among `args` may give through
+    /// its body, where the arrows of `sig` that the other arguments meet hold both `f64` and
+    /// `rat` at its place, so that nothing gives them a carrier: `f64(g(c))` with `g(positional c: bool) = if c { 1 } else { 2.5 }` is
+    /// rejected at the `2.5`, as `f64(0.5)` is (L1.26b: "Where nothing fixes its carrier a
+    /// decimal literal is rejected"), and as `y = g(c)` is (L1.26a). One arrow at one
+    /// carrier fixes it: `x * g(c)` with `x: f64` reads the call at `f64`. A generic
+    /// parameter fixes none here; the call is the function's, whose use fixes it.
+    /// Inside a function too: `k(positional d: bool) = f64(g(d))` is rejected, since only a
+    /// call whose type lists values alone is read, and a value `g` gives from a parameter of
+    /// `k` would make its type list that parameter's class, as in `f64(g(d, x))` with
+    /// `g(positional c: bool, positional x) = if c { x } else { 0.5 }`. Whether it rejected
+    /// one.
+    // Complexity tradeoff: the arguments' types are met with the A arrows' parameters,
+    // O(A k) meets for k arguments, only for a call whose type lists a decimal value; the
+    // literals are found as a binding finds them ([`Self::unfixed_tails`], which reads each
+    // body once per function and type). The naive form, the call's type alone, cannot tell
+    // `2.5` from `2.5f64`, since both are the value `2.5`.
+    fn unfixed_calls(&mut self, what: &str, sig: &Sig, args: &[Option<Arg<'a>>]) -> bool {
+        let mut any = false;
+        for (i, a) in args.iter().enumerate() {
+            let Some(a) = a else { continue };
+            let Some(e) = lone_call(a) else { continue };
+            let decimal = |vs: Vec<Value>| vs.iter().any(|v| matches!(v, Value::Float(_)));
+            if !call_values(a).is_some_and(decimal) {
+                continue;
+            }
+            let (mut f64, mut rat) = (false, false);
+            let mut generic = false;
+            for arrow in &sig.arrows {
+                let others = (args.iter().zip(&arrow.params).enumerate()).all(|(j, (b, p))| {
+                    j == i
+                        || b.as_ref().is_none_or(|b| {
+                            b.lit.is_some()
+                                || b.parts.is_some()
+                                || b.branches.is_some()
+                                || b.ty.is_empty()
+                                || b.ty.meets(p)
+                        })
+                });
+                if !others {
+                    continue;
+                }
+                let p = &arrow.params[i];
+                if !p.vars.is_empty() {
+                    generic = true;
+                    break;
+                }
+                // A parameter of every type, as of `String`, takes every carrier, so it gives
+                // none: `String(g(c))` is rejected at the `2.5`, as `String(0.5)` is.
+                f64 |= p.dynamic || !(&p.set & &Carrier::F64.ty()).is_empty();
+                rat |= p.dynamic || !(&p.set & &Carrier::Rat.ty()).is_empty();
+            }
+            if generic || !(f64 && rat) {
+                continue;
+            }
+            let found: Vec<(Span, Msg)> = (self.unfixed_tails(e, &a.ty).into_iter())
+                .map(|(_, at, m)| (at, m))
+                .collect();
+            any |= !found.is_empty();
+            self.reject_unfixed(&format!("the argument of {what}"), found);
+        }
+        any
     }
 }
 

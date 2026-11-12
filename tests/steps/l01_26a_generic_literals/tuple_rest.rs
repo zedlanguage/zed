@@ -17,7 +17,7 @@ use zed_tests::step_helpers::l01_26_type_resolution::{Resolved, sig, type_errors
 /// write it as an `f64`, the line `f64`, and as a `rat`, the line `rat`, each naming the value
 /// the literal then is; `call` names the function whose body holds the literal, where the
 /// value holds it through a call.
-fn unfixed(lit: &str, f64: &str, rat: &str, call: Option<&str>) -> String {
+pub(super) fn unfixed(lit: &str, f64: &str, rat: &str, call: Option<&str>) -> String {
     let through = call.map_or(String::new(), |c| {
         format!("; the value holds it through a call of `{c}`")
     });
@@ -32,7 +32,7 @@ fn unfixed(lit: &str, f64: &str, rat: &str, call: Option<&str>) -> String {
 
 /// Each fix of the one rejection of `src`, written as `f64` and as `rat`, gives a program with
 /// no error: `src` with its line `old` replaced by the fix.
-fn fixes_check(src: &str, old: &str, fixes: [&str; 2]) {
+pub(super) fn fixes_check(src: &str, old: &str, fixes: [&str; 2]) {
     for fix in fixes {
         let fixed = src.replace(old, fix);
         assert_ne!(fixed, src, "{old:?} is not a line of {src:?}");
