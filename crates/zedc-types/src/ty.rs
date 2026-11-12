@@ -1066,6 +1066,7 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
         | NeedKind::Payload { .. }
         | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_))
         | NeedKind::NoInt(_)
+        | NeedKind::Power(_)
         | NeedKind::Sum
         | NeedKind::InDomain { .. }) => parts.push(Dbg::Leaf(k)),
     }
@@ -2621,6 +2622,10 @@ pub enum NeedKind {
     /// of a value whose ints the body shows no bound of and which is no parameter: the value
     /// holds no int, or only ints listed in the domain (CHK-need-bound).
     NoInt(IntDomain),
+    /// `^` on ints with an exponent not shown to be at least 0, of its base or its exponent:
+    /// the base holds no int, and the exponent holds no int or only ints listed at least 0
+    /// (CHK-need-bound). The error's words are made where the `^` is.
+    Power(Arc<PowerUse>),
     /// `sum` of the value: a tuple of numbers, whose sum the use gives (CHK-need-bound).
     Sum,
     /// A use that takes an int in its domain, of the value of the parameter at position
@@ -2636,6 +2641,25 @@ pub enum NeedKind {
         /// The calls that passed the parameter on, the last first.
         via: Option<Arc<Via>>,
     },
+}
+
+/// The words of the error of a [`NeedKind::Power`] need.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PowerUse {
+    /// The exponent as the error shows it, for a need on the base; `None` on the exponent,
+    /// whose ints are shown when they flow in.
+    pub exponent: Option<Arc<str>>,
+    /// The base's code.
+    pub base: Option<Arc<str>>,
+    /// The exponent's code.
+    pub exponent_code: Option<Arc<str>>,
+    /// Whether every value of the exponent is below 0, for a need on the base.
+    pub negative: bool,
+    /// The steps of the derivation of the exponent, for a need on the base.
+    pub steps: Arc<[zedc_syntax::ast::Note]>,
+    /// The repairs, each the rewritten code and the words that follow it, as `, and pass a
+    /// float as `b` at each call`, or none.
+    pub repairs: Arc<[(String, String)]>,
 }
 
 /// The ints a use takes, as `^`'s exponent and a bit word's operand do: those at least 0, and
@@ -2785,6 +2809,7 @@ impl Need {
                 },
                 NeedKind::Data(what) => NeedKind::Data(what.clone()),
                 NeedKind::NoInt(d) => NeedKind::NoInt(d.clone()),
+                NeedKind::Power(p) => NeedKind::Power(p.clone()),
                 NeedKind::Sum => NeedKind::Sum,
                 NeedKind::InDomain { domain, param, via } => NeedKind::InDomain {
                     domain: domain.clone(),
@@ -2829,6 +2854,7 @@ impl Need {
             | NeedKind::Destructure { .. }
             | NeedKind::Data(_)
             | NeedKind::NoInt(_)
+            | NeedKind::Power(_)
             | NeedKind::InDomain { .. }
             | NeedKind::Sum
             | NeedKind::Into { .. }
@@ -2852,6 +2878,7 @@ impl Need {
             NeedKind::Destructure { .. }
             | NeedKind::Data(_)
             | NeedKind::NoInt(_)
+            | NeedKind::Power(_)
             | NeedKind::InDomain { .. }
             | NeedKind::Sum
             | NeedKind::Payload { .. }
@@ -2880,6 +2907,7 @@ impl Need {
             NeedKind::Destructure { .. }
             | NeedKind::Data(_)
             | NeedKind::NoInt(_)
+            | NeedKind::Power(_)
             | NeedKind::InDomain { .. }
             | NeedKind::Sum
             | NeedKind::Payload { .. }

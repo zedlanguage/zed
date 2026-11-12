@@ -120,23 +120,218 @@ fn an_int_power_needs_an_exponent_of_at_least_zero() {
 }
 
 #[test]
-#[ignore = "MSG-power-exponent: the rejection of `2^-1` does not show the exponent -1, and its repairs put the base, already 2, in int[0..] through a value `v` the program does not have; open"]
 fn an_int_power_rejection_shows_the_negative_exponent() {
-    // Today: "3:18: `^` with an exponent not shown to be at least 0 takes no int base, and
-    // this value may be int: the checker cannot show that it lies in int[0..]", with the
-    // steps "this use needs it here" and the repairs "test the value first, as `if v is
-    // int[0..] { … } else { … }`, …" and "declare the value with a type in int[0..], as
-    // `v: int[0..]`".
     let out = rejected("", r#""${2^-1}""#);
-    // The first line or a step names the exponent; the source line shown always holds it.
-    let source = |l: &str| {
-        let l = l.trim_start();
-        l.starts_with('|')
-            || l.split_once(" |")
-                .is_some_and(|(n, _)| n.parse::<u32>().is_ok())
-    };
-    assert!(out.lines().any(|l| !source(l) && l.contains("-1")), "{out}");
+    // The first line names the exponent, in the power's code annotated with types.
+    assert!(
+        out.contains(
+            "Int power with a negative exponent: `2 : int ^ -1 : int`. Try `2.0f64^-1` instead."
+        ),
+        "{out}"
+    );
+    assert!(out.contains("the base `2` is int here"), "{out}");
     assert!(!out.contains("`v"), "{out}");
+    // Each repair is the power rewritten in full, and each runs.
+    for fix in ["2.0f64^-1", "2^-1.0"] {
+        assert!(out.contains(&format!("repair: `{fix}`")), "{out}");
+        assert_eq!(runs("", &format!(r#""${{{fix}}}""#), ""), "0.5\n");
+    }
+    // Every value of the exponent is below 0, so no test of it is offered.
+    assert!(!out.contains("repair: `if"), "{out}");
+}
+
+/// The diagnostics of the program whose `main` has the body `body` after `defs`, which must
+/// be rejected, and the program with `body` in place of the fixes in `fixed`, each run on
+/// its input with the output it must give. No repair names a value the program does not
+/// have, and none casts an int to a float, a cast that may fail with `#inexact`.
+fn power_case(defs: &str, body: &str, fixed: &[(&str, &str, &str)]) -> String {
+    let main = |body: &str| format!("{defs}\nmain(m: MainArgs) {{\n{body}\n}}\n");
+    let src = main(body);
+    let out = match load(src.as_bytes()) {
+        Err(e) => e,
+        Ok(_) => panic!("accepted:\n{src}"),
+    };
+    assert!(!out.contains("`v"), "{out}");
+    assert!(!out.contains("`n: int[0..]`"), "{out}");
+    assert!(!out.contains("f64("), "{out}");
+    for (b, stdin, want) in fixed {
+        assert_eq!(run(&main(b), stdin), *want, "{b}");
+    }
+    out
+}
+
+#[test]
+fn an_int_power_rejection_through_a_name_shows_its_value() {
+    let out = power_case("", "  k = -1;\n  m.stdout <- \"${2^k}\";", &[]);
+    assert!(
+        out.contains("Int power with a negative exponent: `2 : int ^ k : -1`.\n"),
+        "{out}"
+    );
+    assert!(out.contains("`k` is -1 here"), "{out}");
+    assert!(
+        out.contains("`k` is defined as this expression, -1"),
+        "{out}"
+    );
+    // `2.0f64^k` is no repair, as `k` is an int, and `f64(k)` may fail: none is offered,
+    // and no test, which would leave nothing to raise.
+    assert!(!out.contains("repair:"), "{out}");
+    // A name of the top level, the same.
+    let top = rejected("k = -1;", r#""${2^k}""#);
+    assert!(top.contains("`2 : int ^ k : -1`"), "{top}");
+    assert!(!top.contains("repair:"), "{top}");
+    // An int base that is a name: its derivation, and no repair either.
+    let out = power_case("", "  x = 2;\n  m.stdout <- \"${x^-1}\";", &[]);
+    assert!(
+        out.contains("Int power with a negative exponent: `x : 2 ^ -1 : int`.\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("`x` is defined as this expression, 2"),
+        "{out}"
+    );
+    assert!(!out.contains("repair:"), "{out}");
+}
+
+#[test]
+fn an_int_power_rejection_through_an_expression_shows_its_derivation() {
+    let out = rejected("", r#""${2^(1 - 3)}""#);
+    assert!(
+        out.contains("Int power with an exponent that may be negative: `2 : int ^ (1 - 3) : int`. Try `2.0f64^(1 - 3)` instead."),
+        "{out}"
+    );
+    assert!(out.contains("this `-` gives int"), "{out}");
+    assert!(out.contains("repair: `2.0f64^(1 - 3)`"), "{out}");
+    assert!(!out.contains("`v"), "{out}");
+    assert_eq!(runs("", r#""${2.0f64^(1 - 3)}""#, ""), "0.25\n");
+    // An expression of an int that may be at least 0: a test of a name that holds it, and
+    // no float, which only a cast that may fail would give.
+    let read = "  n = int(m.stdin[0]) else 0;\n";
+    let named = format!(
+        "{read}  exponent = n - 5;\n  m.stdout <- \"${{if exponent >= 0 {{ 2^exponent }} else {{ 0 }}}}\";"
+    );
+    let out = power_case(
+        "",
+        &format!("{read}  m.stdout <- \"${{2^(n - 5)}}\";"),
+        &[(&named, "7", "4\n"), (&named, "3", "0\n")],
+    );
+    assert!(out.contains("`2 : int ^ (n - 5) : int`"), "{out}");
+    assert!(out.contains("this `-` gives int"), "{out}");
+    assert!(
+        out.contains("repair: `exponent = n - 5; if exponent >= 0 { 2^exponent } else { … }`"),
+        "{out}"
+    );
+    assert!(!out.contains("repair: `2.0f64"), "{out}");
+}
+
+#[test]
+fn an_int_power_whose_exponent_may_be_below_zero_offers_a_test_of_it() {
+    let read = "  k = int(m.stdin[0]) else 0;\n";
+    let tested = format!("{read}  m.stdout <- \"${{if k >= 0 {{ 2^k }} else {{ 0 }}}}\";");
+    let out = power_case(
+        "",
+        &format!("{read}  m.stdout <- \"${{2^k}}\";"),
+        &[(&tested, "3", "8\n"), (&tested, "-3", "0\n")],
+    );
+    assert!(
+        out.contains("Int power with an exponent that may be negative: `2 : int ^ k : int`. Try `if k >= 0 { 2^k } else { … }` instead."),
+        "{out}"
+    );
+    assert!(out.contains("`k` is int here"), "{out}");
+    assert!(
+        out.contains("repair: `if k >= 0 { 2^k } else { … }`"),
+        "{out}"
+    );
+    // A parameter declared `int`: the same test, of the parameter.
+    let out = power_case(
+        "f(positional n: int) = 2^n;",
+        "  m.stdout <- \"${f(-2)}\";",
+        &[],
+    );
+    assert!(out.contains("`2 : int ^ n : int`"), "{out}");
+    assert!(
+        out.contains("repair: `if n >= 0 { 2^n } else { … }`"),
+        "{out}"
+    );
+    assert_eq!(
+        runs(
+            "f(positional n: int) = if n >= 0 { 2^n } else { 0 };",
+            r#""${f(-2)} ${f(3)}""#,
+            ""
+        ),
+        "0 8\n"
+    );
+    // The power of a parameter of no declared type, at a call: the test of the argument,
+    // around the call.
+    let p = "p(positional b, positional e) = b ^ e;";
+    let tested = format!("{read}  m.stdout <- \"${{if k >= 0 {{ p(2, k) }} else {{ 0 }}}}\";");
+    let out = power_case(
+        p,
+        &format!("{read}  m.stdout <- \"${{p(2, k)}}\";"),
+        &[(&tested, "3", "8\n"), (&tested, "-3", "0\n")],
+    );
+    assert!(
+        out.contains("repair: `if k >= 0 { p(2, k) } else { … }`"),
+        "{out}"
+    );
+    // An expression as the argument: a new name, `e`, holds it.
+    let named =
+        format!("{read}  e = k - 1;\n  m.stdout <- \"${{if e >= 0 {{ p(2, e) }} else {{ 0 }}}}\";");
+    let out = power_case(
+        p,
+        &format!("{read}  m.stdout <- \"${{p(2, k - 1)}}\";"),
+        &[(&named, "4", "8\n"), (&named, "0", "0\n")],
+    );
+    assert!(
+        out.contains("repair: `e = k - 1; if e >= 0 { p(2, e) } else { … }`"),
+        "{out}"
+    );
+    let out = rejected(p, r#""${p(2, -1)}""#);
+    assert!(out.contains("and this `e` is -1"), "{out}");
+    assert!(
+        out.contains("repair: pass as `e` a value in int[0..]"),
+        "{out}"
+    );
+    assert!(!out.contains("repair: `if"), "{out}");
+    assert!(!out.contains("`v"), "{out}");
+}
+
+#[test]
+fn a_power_of_a_parameter_under_a_negative_exponent_takes_no_int() {
+    // The base takes no int at all: a base whose ints are all at least 0 is refused too, as
+    // `2 ^ -1` is a fraction. This program once passed and stopped in the evaluator.
+    let p = "p(positional b) = b ^ -1;";
+    for (arg, shown) in [("c", "2"), ("2", "int")] {
+        let out = rejected(&format!("{p}\nc = 2;"), &format!(r#""${{p({arg})}}""#));
+        assert!(
+            out.contains(&format!(
+                "Int power with a negative exponent: `b : {shown} ^ -1 : int`. Try `b: f64` instead, and pass a float as `b` at each call."
+            )),
+            "{out}"
+        );
+        assert!(
+            out.contains(&format!("the base `b` is {shown} here")),
+            "{out}"
+        );
+        assert!(
+            out.contains("repair: `b: f64`, and pass a float as `b` at each call"),
+            "{out}"
+        );
+        assert!(
+            out.contains("repair: `b ^ -1.0`, and pass a float as `b` at each call"),
+            "{out}"
+        );
+        assert!(!out.contains("`v"), "{out}");
+        assert!(!out.contains("f64("), "{out}");
+    }
+    let fixed = [
+        "p(positional b: f64) = b ^ -1;\nc = 2.0f64;",
+        "p(positional b) = b ^ -1.0;\nc = 2.0f64;",
+    ];
+    for f in fixed {
+        assert_eq!(runs(f, r#""${p(c)}""#, ""), "0.5\n", "{f}");
+    }
+    // A float argument passes as it is.
+    assert_eq!(runs(p, r#""${p(2.0f64)}""#, ""), "0.5\n");
 }
 
 #[test]

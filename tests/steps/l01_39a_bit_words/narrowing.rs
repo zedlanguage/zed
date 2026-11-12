@@ -145,7 +145,7 @@ fn a_test_that_bounds_too_little_is_rejected_with_the_bound_it_gives() {
     let out =
         rejected("power(positional x: int, positional n: int) = if n > -3 { x^n } else { 0 };\n");
     assert!(
-        out.contains("`^` on an int needs an exponent of at least 0, and this one is int[-2..]"),
+        out.contains("Int power with an exponent that may be negative: `x : int ^ n : int[-2..]`"),
         "{out}"
     );
     assert!(out.contains("this test is true here"), "{out}");

@@ -53,9 +53,8 @@ fn a_default_the_checker_cannot_place_in_a_range_is_rejected_at_the_call() {
 
 #[test]
 fn an_argument_forwarded_to_a_function_parameter_is_checked_against_its_range() {
-    // MSG-forwarded-repair: repairs [4] and [5] name `v` and "the value passed as `a`",
-    // which belong to `ap` and `h`, not to the call at 3:8; the derivation [1] to [3] is
-    // right.
+    // MSG-forwarded-repair: repair [4] names `a`, which belongs to `h`, not to the call at
+    // 3:8, which passes -1 as `v` of `ap`; the derivation [1] to [3] is right.
     assert_eq!(
         shown(
             "ap(positional g, positional v) = g(v);\nh(positional a) = bitAnd(a, 1);\n\
@@ -70,10 +69,9 @@ fn an_argument_forwarded_to_a_function_parameter_is_checked_against_its_range() 
         | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [3]
         |                                  ^^^^ [2]
   [3] 1:1: `ap` is declared here with no type written for `g`, `v` or its result; the type the checker found for `ap` is `(_, _) -> _`
-  [4] 3:8: repair: test the argument first, as `if v is int[0..] { … } else { … }`, and pass it as `a` inside the branch
+  [4] 3:8: repair: pass as `a` a value in int[0..]
       3 | main = ap(h, -1);
-        |        ^^^^^^^^^
-  [5] 3:8: repair: declare the value passed as `a` with a type in int[0..]"#
+        |        ^^^^^^^^^"#
     );
 }
 

@@ -5560,6 +5560,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.no_int(&on, d, span);
                 Ty::empty()
             }
+            NeedKind::Power(p) => {
+                self.power_on(&on, p, span);
+                Ty::empty()
+            }
             NeedKind::InDomain { .. } => Ty::empty(),
             NeedKind::Into { what, ty } => {
                 self.into(&on, ty, what, span);
@@ -6017,53 +6021,302 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// `x ^ n` on an `int` `x` needs `n : int[0..]`, decided from the interval of `n`'s
     /// expression or the listed `int` values of its type. A class's values are not known here:
-    /// an exponent of a type variable takes its ints at least 0 ([`Self::floor`]), and a base
-    /// of one, under an exponent not shown to be at least 0, takes no int (CHK-need-bound).
+    /// an exponent of a type variable takes its ints at least 0, at each call where it is a
+    /// parameter ([`Self::floor_on`]) and otherwise as listed ints, and a base of one, under an
+    /// exponent not shown to be at least 0, takes no int at all (CHK-need-bound). Each
+    /// rejection shows the exponent, and its repairs are written in the program's code
+    /// ([`Self::power_repairs`]).
     fn exponent(&mut self, x: &Arg<'a>, n: &Arg<'a>, e: &'a Expr, span: Span) {
         let int = KType::int();
         let ns = &n.ty.set & &int;
         let x_int = !(&x.ty.set & &int).is_empty();
         let x_generic = !x.ty.vars.is_empty();
-        if !n.ty.vars.is_empty() && (x_int || x_generic) {
-            let d = IntDomain {
-                what: "`^` on an int takes an exponent in int[0..]".into(),
-                below_two_pow: None,
-            };
-            self.floor(&n.ty, e, d, span);
-        }
-        if ns.is_empty() {
+        let floor = !n.ty.vars.is_empty() && (x_int || x_generic);
+        if !floor && ns.is_empty() {
             return;
         }
         let (ints, narrowed) = self.ints_here(e);
-        let at_least_zero =
-            ints.is_subset(&IntervalSet::range(End::of(0), PosInf)) || listed_at_least_zero(&ns);
-        if !at_least_zero && x_generic {
-            let d = IntDomain {
-                what: "`^` with an exponent not shown to be at least 0 takes no int base".into(),
-                below_two_pow: None,
-            };
-            self.no_int_vars(&x.ty, &d, x.at.unwrap_or(span));
-        }
-        if !at_least_zero && x_int {
-            let shown = match narrowed {
-                true => format!("int{ints}"),
-                false => self.show(&Ty::set(ns)),
-            };
-            let mut notes = Vec::new();
-            if narrowed {
-                notes.extend(self.deciding_notes(e));
+        let shown_at_least_zero = ints.is_subset(&at_least_zero());
+        if floor && !shown_at_least_zero {
+            match self.open_param(e) {
+                // A trial application is undone; the application that stays records the need.
+                Some(_) if self.trying => {}
+                Some(id) => {
+                    let domain = IntDomain {
+                        what: "`^` on an int takes an exponent in int[0..]".into(),
+                        below_two_pow: None,
+                    };
+                    let need = Need {
+                        on: Ty::empty(),
+                        kind: NeedKind::InDomain {
+                            domain,
+                            param: 0,
+                            via: None,
+                        },
+                        result: None,
+                        span,
+                    };
+                    self.floor_on(id, need);
+                }
+                None => {
+                    let p = PowerUse {
+                        exponent: None,
+                        base: self.code(x.at).map(Into::into),
+                        exponent_code: self.code(n.at).map(Into::into),
+                        negative: false,
+                        steps: Arc::new([]),
+                        repairs: self.power_repairs(x, n, e, span, false).into(),
+                    };
+                    self.power_vars(&n.ty, &Arc::new(p), e.span);
+                }
             }
-            notes.extend(self.derive(&[n.at.unwrap_or(span)]));
-            notes.extend(exponent_repairs(span));
-            self.error_with(
-                span,
-                format!(
-                    "`^` on an int needs an exponent of at least 0, and this one is {shown}: an \
-                     int raised to a negative power is a fraction, not an int"
-                ),
-                notes,
-            );
         }
+        if ns.is_empty() || shown_at_least_zero || listed_at_least_zero(&ns) {
+            return;
+        }
+        let shown = match narrowed {
+            true => format!("int{ints}"),
+            false => self.show(&Ty::set(ns.clone())),
+        };
+        // Every value of the exponent below 0: a test of it leaves nothing to raise.
+        let negative = ints.meet(&at_least_zero()).is_empty()
+            || ns.ints_listed().is_some_and(|vs| {
+                vs.iter()
+                    .all(|v| v.surface_cmp(&Value::Int(0)) == Some(std::cmp::Ordering::Less))
+            });
+        let repairs = self.power_repairs(x, n, e, span, negative);
+        let mut steps = Vec::new();
+        if narrowed {
+            steps.extend(self.deciding_notes(e));
+        }
+        steps.extend(self.derive(&[n.at.unwrap_or(span)]));
+        if x_generic {
+            let p = PowerUse {
+                exponent: Some(shown.as_str().into()),
+                base: self.code(x.at).map(Into::into),
+                exponent_code: self.code(n.at).map(Into::into),
+                negative,
+                steps: steps.clone().into(),
+                repairs: repairs.clone().into(),
+            };
+            self.power_vars(&x.ty, &Arc::new(p), x.at.unwrap_or(span));
+        }
+        if x_int {
+            let base = self.show(&Ty::set(&x.ty.set & &int));
+            // A base that is no literal has its own derivation, as `x` defined as `2`.
+            if x.lit.is_none()
+                && let Some(xs) = x.at
+            {
+                steps.extend(self.derive(&[xs]));
+            }
+            let message = power_message(
+                (self.code(x.at), &base),
+                (self.code(n.at), &shown),
+                negative,
+                repairs.first(),
+            );
+            steps.extend(repairs.iter().map(|r| Note {
+                span,
+                text: repair_note(r),
+            }));
+            self.error_with(span, message, steps);
+        }
+    }
+
+    /// The need `p` of an int `^` on each type variable of `t`, its base or its exponent
+    /// (CHK-need-bound): on a class, recorded and checked on what flows into it
+    /// ([`Self::power_on`]); on its type, if it has one by now. A variable of a signature
+    /// stands for whatever type the caller passes, an int among them.
+    fn power_vars(&mut self, t: &Ty, p: &Arc<PowerUse>, span: Span) {
+        for v in &t.vars {
+            let k = class_id(v).filter(|&k| k < self.classes.len());
+            let Some(r) = k.map(|k| self.find(k)) else {
+                let what = match (&p.exponent, &p.base) {
+                    (Some(_), Some(b)) => format!("the base `{b}`"),
+                    (Some(_), None) => "the base".into(),
+                    (None, _) => "the exponent".into(),
+                };
+                let note = format!(
+                    "{what} has the type `{v}`, which stands for whatever type the caller passes \
+                     and may be any int"
+                );
+                self.power_error(p, "int", note, span);
+                continue;
+            };
+            match self.classes[r].resolved.clone() {
+                Some(t) => self.power_on(&t, p, span),
+                None => {
+                    self.need(r, NeedKind::Power(p.clone()), false, span);
+                }
+            }
+        }
+    }
+
+    /// Checks the need `p` of an int `^` on a value of `t` that is its base or its exponent
+    /// (CHK-need-bound): a base holds no int, and an exponent holds no int or only ints listed
+    /// at least 0.
+    fn power_on(&mut self, t: &Ty, p: &Arc<PowerUse>, span: Span) {
+        let ints = &t.set & &KType::int();
+        let refused = match p.exponent {
+            Some(_) => !ints.is_empty(),
+            None => !ints.is_empty() && !listed_at_least_zero(&ints),
+        };
+        if refused {
+            let shown = self.show(&Ty::set(ints));
+            let note = match (&p.exponent, &p.base) {
+                (Some(_), Some(b)) => format!("the base `{b}` is {shown} here"),
+                (Some(_), None) => format!("the base is {shown} here"),
+                (None, _) => format!("the exponent is {shown} here"),
+            };
+            self.power_error(p, &shown, note, span);
+        }
+        self.power_vars(t, p, span);
+        if t.dynamic {
+            self.any("`^` on an int", span);
+        }
+    }
+
+    /// The error of the need `p` of an int `^` at `span`, where its base or its exponent, as
+    /// `note` says, may be `shown`: the exponent the `^` shows, or else `shown`, then the
+    /// steps of the exponent's derivation, or else of the value at `span`, and the repairs.
+    fn power_error(&mut self, p: &PowerUse, shown: &str, note: String, span: Span) {
+        let mut notes = vec![Note { span, text: note }];
+        match p.exponent {
+            Some(_) => notes.extend(p.steps.iter().cloned()),
+            None => self.derive_into(&[span], &mut notes),
+        }
+        notes.extend(p.repairs.iter().map(|r| Note {
+            span,
+            text: repair_note(r),
+        }));
+        // On the base, `shown` is the base's ints; on the exponent, the exponent's.
+        let (base, exponent) = match p.exponent.as_deref() {
+            Some(e) => (shown, e),
+            None => ("int", shown),
+        };
+        let message = power_message(
+            (p.base.as_deref(), base),
+            (p.exponent_code.as_deref(), exponent),
+            p.negative,
+            p.repairs.first(),
+        );
+        self.error_with(span, message, notes);
+    }
+
+    /// The repairs of the int `x ^ n` at `span` whose exponent `n`, the expression `e`, is not
+    /// shown to be at least 0, each the power rewritten in full in the program's code: on
+    /// floats, which take a negative exponent, with an int literal base or exponent written as
+    /// a float literal, or with a base parameter declared a float; and, where the exponent may
+    /// be at least 0 (`negative` false) and is no class of literals, which a test does not
+    /// narrow, a test of it, of a name bound in the body or of a new name that holds it. No
+    /// repair casts an int to a float: `f64(k)` may fail, with `#inexact`, so a name or an
+    /// expression that is an int gets the test alone. Without the program's text, the test in
+    /// words.
+    fn power_repairs(
+        &self,
+        x: &Arg<'a>,
+        n: &Arg<'a>,
+        e: &'a Expr,
+        span: Span,
+        negative: bool,
+    ) -> Vec<Repair> {
+        let test = !negative && n.ty.vars.is_empty();
+        let words = || match test {
+            true => vec![(
+                "if … >= 0 { … } else { … }".to_string(),
+                ", with the exponent tested and raised to inside the branch".to_string(),
+            )],
+            false => Vec::new(),
+        };
+        let (Some(xs), Some(ns)) = (x.at, n.at) else {
+            return words();
+        };
+        let (Some(bt), Some(et), Some(power)) = (
+            self.code(Some(xs)),
+            self.code(Some(ns)),
+            self.code(Some(span)),
+        ) else {
+            return words();
+        };
+        if xs.end > ns.start {
+            return words();
+        }
+        // The power with each part at a span written as its text, the parts in the order of
+        // the text and inside the power.
+        let rewrite = |parts: &[(Span, &str)]| -> Option<String> {
+            let src = self.t.text?;
+            let mut out = String::new();
+            let mut at = span.start;
+            for (s, with) in parts {
+                out.push_str(src.get(at..s.start)?);
+                out.push_str(with);
+                at = s.end;
+            }
+            out.push_str(src.get(at..span.end)?);
+            Some(out)
+        };
+        // An exponent that is a literal or holds a type variable takes a float as it is.
+        let takes_float = n.lit.is_some() || !n.ty.vars.is_empty();
+        let mut out = Vec::new();
+        let param = (x.expr)
+            .filter(|b| self.open_param(b).is_some())
+            .and_then(|b| match &b.kind {
+                ExprKind::Name(name) => Some(name.to_string()),
+                _ => None,
+            });
+        let pass = match &param {
+            Some(b) => format!(", and pass a float as `{b}` at each call"),
+            None => String::new(),
+        };
+        match &param {
+            Some(b) if takes_float => out.push((format!("{b}: f64"), pass.clone())),
+            None if takes_float && int_literal(bt) => {
+                if let Some(p) = rewrite(&[(xs, &format!("{bt}.0f64"))]) {
+                    out.push((p, String::new()));
+                }
+            }
+            _ => {}
+        }
+        let base_takes_float = !x.ty.vars.is_empty() || x.lit.is_some();
+        if base_takes_float
+            && int_literal(et.strip_prefix('-').unwrap_or(et))
+            && let Some(p) = rewrite(&[(ns, &format!("{et}.0"))])
+        {
+            out.push((p, pass));
+        }
+        if test {
+            match self.tested(e) {
+                Some(k) => out.push((
+                    format!("if {k} >= 0 {{ {power} }} else {{ … }}"),
+                    String::new(),
+                )),
+                None => {
+                    if let Some(p) = rewrite(&[(ns, "exponent")]) {
+                        let et = unparen(et);
+                        out.push((
+                            format!("exponent = {et}; if exponent >= 0 {{ {p} }} else {{ … }}"),
+                            String::new(),
+                        ));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The program's code at `at`, if the checker has the program's text.
+    fn code(&self, at: Option<Span>) -> Option<&'a str> {
+        let at = at?;
+        self.t.text?.get(at.start..at.end)
+    }
+
+    /// The name `e` is, where it is bound once, so that a test of it narrows it.
+    fn tested(&self, e: &Expr) -> Option<String> {
+        let ExprKind::Name(name) = &e.kind else {
+            return None;
+        };
+        matches!(self.t.res.uses.get(&e.span), Some(Ref::Bound(ids)) if ids.len() == 1)
+            .then(|| name.to_string())
     }
 
     /// Records that the use at `span` takes the ints of the operand `e`, of type `t`, which
@@ -6292,7 +6545,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let shown = self.show(&Ty::set(ns));
                     let message = format!("{takes}, and this `{p}` is {shown}{}", outside(domain));
                     let mut notes = chain();
-                    notes.extend(passed_repairs(&p, domain, span));
+                    notes.extend(passed_repairs(&p, domain, None, None, false, span));
                     self.error_with(span, message, notes);
                 }
                 continue;
@@ -6341,8 +6594,22 @@ impl<'t, 'a> Ck<'t, 'a> {
                 notes.extend(self.deciding_notes(e));
             }
             self.derive_into(&[at], &mut notes);
+            let outside_all = match &r.values {
+                Some(vs) => vs.iter().all(|v| !value_in(domain, v)),
+                None => r.ints.meet(&at_least_zero()).is_empty(),
+            };
+            let arg = self.code(Some(at)).map(|c| (c, self.tested(e).is_some()));
+            // The call as written, and with the argument replaced by `p`.
+            let call = (span.start <= at.start && at.end <= span.end)
+                .then(|| {
+                    let src = self.t.text?;
+                    let (before, after) =
+                        (src.get(span.start..at.start)?, src.get(at.end..span.end)?);
+                    Some((self.code(Some(span))?, format!("{before}{p}{after}")))
+                })
+                .flatten();
             notes.extend(chain());
-            notes.extend(passed_repairs(&p, domain, span));
+            notes.extend(passed_repairs(&p, domain, arg, call, outside_all, span));
             let message = format!("{takes}, and this `{p}` is {shown}{}", outside(domain));
             self.error_with(span, message, notes);
         }
@@ -9167,19 +9434,68 @@ fn default_repairs(name: &str, got: &str, want: &str, both: &str, span: Span) ->
     .collect()
 }
 
-/// The repairs of an int `^` whose exponent may be below 0, at `span`.
-fn exponent_repairs(span: Span) -> Vec<Note> {
-    [
-        "repair: test the exponent first, as `if n >= 0 { x^n } else { … }`, so that inside \
-         the branch it is at least 0",
-        "repair: declare the exponent with a type of no int below 0, as `n: int[0..]`",
-    ]
-    .into_iter()
-    .map(|text| Note {
-        span,
-        text: text.to_string(),
-    })
-    .collect()
+/// A repair of an int `^`: the rewritten code, and the words that follow it, or none.
+type Repair = (String, String);
+
+/// The note of the repair `r`, as "repair: `b: f64`, and pass a float as `b` at each call".
+fn repair_note((code, tail): &Repair) -> String {
+    format!("repair: `{code}`{tail}")
+}
+
+/// The headline of an int `^` whose exponent is not shown to be at least 0: the power's code,
+/// each part annotated with its type, as `2 : int ^ k : -1`, then the first repair, if there
+/// is one, as "Try `2.0f64^-1` instead.". Each part is its code, if the checker has it, and
+/// its type as shown; a literal whose type shows as the literal itself is annotated `int`.
+/// `negative` says that every value of the exponent is below 0.
+fn power_message(
+    base: (Option<&str>, &str),
+    exponent: (Option<&str>, &str),
+    negative: bool,
+    first: Option<&Repair>,
+) -> String {
+    let part = |(code, ty): (Option<&str>, &str)| match code {
+        Some(c) if c == ty => format!("{c} : int"),
+        Some(c) => format!("{c} : {ty}"),
+        None => format!("… : {ty}"),
+    };
+    let what = match negative {
+        true => "a negative exponent",
+        false => "an exponent that may be negative",
+    };
+    let try_ = match first {
+        Some((code, tail)) => format!(" Try `{code}` instead{tail}."),
+        None => String::new(),
+    };
+    format!(
+        "Int power with {what}: `{} ^ {}`.{try_}",
+        part(base),
+        part(exponent)
+    )
+}
+
+/// Whether `s` is an integer literal in decimal digits, as `2` or `1_000`, which a float
+/// literal of the same value writes with `.0` after it.
+fn int_literal(s: &str) -> bool {
+    s.bytes().next().is_some_and(|b| b.is_ascii_digit())
+        && s.bytes().all(|b| b.is_ascii_digit() || b == b'_')
+}
+
+/// The code `s` without the parentheses around the whole of it, if it has them, as `n - 5`
+/// for `(n - 5)`; `(a) + (b)` is kept. One pass over `s`.
+fn unparen(s: &str) -> &str {
+    let Some(inner) = s.strip_prefix('(').and_then(|s| s.strip_suffix(')')) else {
+        return s;
+    };
+    let mut depth = 0usize;
+    for b in inner.bytes() {
+        match b {
+            b'(' => depth += 1,
+            b')' if depth == 0 => return s,
+            b')' => depth -= 1,
+            _ => {}
+        }
+    }
+    inner
 }
 
 /// The repairs of a value that may lie outside the ints `domain` a use needs.
@@ -9225,19 +9541,49 @@ fn outside(d: &IntDomain) -> String {
     )
 }
 
-/// The repairs of an argument `p` that may lie outside the ints `d` its use needs.
-fn passed_repairs(p: &str, d: &IntDomain, span: Span) -> Vec<Note> {
+/// The repairs of an argument `p` that may lie outside the ints `d` its use needs, each in the
+/// program's code: `arg` is the argument's code, with whether it is a name a test narrows
+/// ([`Ck::tested`]), and `outside_all` says that no value of it lies in `d`, so that a test of
+/// it leaves nothing to pass. A name a test does not narrow, or an expression, is first bound
+/// to a new name, `p`'s own. `call` is the call's code as written and with the argument
+/// replaced by `p`, which the test then holds in full.
+fn passed_repairs(
+    p: &str,
+    d: &IntDomain,
+    arg: Option<(&str, bool)>,
+    call: Option<(&str, String)>,
+    outside_all: bool,
+    span: Span,
+) -> Vec<Note> {
     let dom = domain_text(d);
-    [
-        format!(
-            "repair: test the argument first, as `if v is {dom} {{ … }} else {{ … }}`, and pass \
-             it as `{p}` inside the branch"
-        ),
-        format!("repair: declare the value passed as `{p}` with a type in {dom}"),
-    ]
-    .into_iter()
-    .map(|text| Note { span, text })
-    .collect()
+    let test = |a: &str| match d.below_two_pow {
+        None => format!("{a} >= 0"),
+        Some(_) => format!("{a} is {dom}"),
+    };
+    let mut out = Vec::new();
+    match (arg, outside_all, call) {
+        (Some((a, true)), false, Some((call, _))) => out.push(format!(
+            "repair: `if {} {{ {call} }} else {{ … }}`",
+            test(a)
+        )),
+        (Some((a, true)), false, None) => out.push(format!(
+            "repair: `if {} {{ … }} else {{ … }}`, with `{a}` passed as `{p}` inside the branch",
+            test(a)
+        )),
+        (Some((a, false)), false, Some((_, renamed))) => out.push(format!(
+            "repair: `{p} = {}; if {} {{ {renamed} }} else {{ … }}`",
+            unparen(a),
+            test(p)
+        )),
+        (Some((a, false)), false, None) => out.push(format!(
+            "repair: `{p} = {}; if {} {{ … }} else {{ … }}`, with `{p}` passed inside the branch",
+            unparen(a),
+            test(p)
+        )),
+        _ => {}
+    }
+    out.push(format!("repair: pass as `{p}` a value in {dom}"));
+    out.into_iter().map(|text| Note { span, text }).collect()
 }
 
 /// Why a divisor is always zero, as [`Ck::zero_divisor`] finds it.
