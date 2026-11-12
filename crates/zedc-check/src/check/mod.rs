@@ -8837,4 +8837,54 @@ mod tests {
         );
         assert_eq!(why_none("(a, (int, bool)) for a in int | f64"), []);
     }
+
+    /// An atom of a named family is data: where a call, an index, a condition or `sum` takes
+    /// a value that may be one, [`Ck::passing`] rejects it with a repair, and passes on only
+    /// the loose atoms beside it. No source form names a family until `type` declarations
+    /// do (step L2.5), so the rule is read from a type `Ty::named` makes, as `l01_27_absences`
+    /// reads the other family rules.
+    #[test]
+    fn a_family_atom_reaching_a_call_is_rejected_with_its_repairs() {
+        let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
+        let t = Tables::new(&[], &res);
+        let mut ck = Ck::new(&t);
+        let atoms = |names: &[&str]| {
+            (names.iter()).fold(Ty::empty(), |t, n| t.union(&Ty::set(KType::atom(n))))
+        };
+        let color = atoms(&["red", "green", "blue"]).named();
+        let read = color.union(&atoms(&["ioError"]));
+        let out = ck.passing(&read, "a call", span(0));
+        assert_eq!(out, atoms(&["ioError"]));
+        let messages: Vec<(String, Vec<String>)> = (ck.errors.into_iter())
+            .map(|f| {
+                let mut e = f.written(t.text);
+                lay_out(&mut e.message, &mut e.notes, &mut e.menu);
+                (e.message, e.notes.into_iter().map(|n| n.text).collect())
+            })
+            .collect();
+        assert_eq!(
+            messages,
+            [(
+                "a call does not take #blue | #green | #red, which the value here may be: an \
+                 atom of a named family is data like any other value, not a failure that passes \
+                 through a call untouched, and a call has no case for it"
+                    .to_string(),
+                vec![
+                    "repair: replace `#blue` by a value a call takes before the value gets \
+                     here, as `v else #blue -> d`, where `v` is the value and `d` the value to \
+                     use instead"
+                        .to_string(),
+                    "repair: test the value with `match` and handle each atom in its own arm"
+                        .to_string(),
+                ]
+            )]
+        );
+        // The same atoms written inline are loose: they pass through with no error.
+        let mut ck = Ck::new(&t);
+        assert_eq!(
+            ck.passing(&read.written(), "a call", span(0)),
+            read.written()
+        );
+        assert!(ck.errors.is_empty());
+    }
 }
