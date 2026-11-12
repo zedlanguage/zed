@@ -219,8 +219,16 @@ recursion memoizes within one fix: `define_on_demand` (`eval.rs:1129`) does this
 covers `Cx`'s memos during one translation (inferred; confirm by writing `lin_at` in Zed). Tables
 that must outlive a call, like `MEMO`, go in a state struct passed by primed receiver, or vanish
 with gap 1's digests, which remove `TUPLES` and `MORPHISMS` altogether. The undo logs
-(`Cx::forget`, `preimage.rs:871`; `Ck::log`, `check/mod.rs:240`) simplify: with persistent maps,
-keep the old value (the same holds for the Rust; a candidate for T11).
+(`Tx::forget` in `zedc-preimage/src/preimage.rs`; `Ck::log`, `check/mod.rs:240`) could become
+persistent maps that keep the old value, but for `Tx::forget` this was measured and rejected
+(T11-preimage-log, 2026-11-12): with the seven translation tables as `imbl::HashMap`, snapshot
+and restore cost O(1), yet every lookup and insert costs O(log n) with a larger constant, and
+the log is still needed to put back the failures `forget` keeps. By instruction counts at n and
+8n the snapshot version took 1.10x and 1.16x the instructions of the undo log on a test that
+undoes 800 to 6400 entries per `forget`, 1.41x and 1.43x on chains of `&&` and `||`, 1.01x
+(geometric mean) over all 134 scaling rows of l01_25, l01_38 and l01_39, and 1.5x to 2.2x the
+bytes on the first two. A Zed port keeps the log: a list of keys appended per entry and replayed
+at `forget`, which Zed writes as a primed receiver.
 
 `Type`'s `&`, `|`, `!`, `-` write to these tables through operator syntax, which is why the
 choice in gap 1 decides this one.

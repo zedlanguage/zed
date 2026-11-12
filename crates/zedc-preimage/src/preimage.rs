@@ -4788,6 +4788,20 @@ impl<'t> Tx<'t> {
     /// stays in the table for the scope's later bodies, as a success does. Test:
     /// `l01_38_presburger::one_scope::separate_tests_over_a_chain_of_products_scale`;
     /// COMPLEXITY.md row LOAD-chain-sep-nonlinear.
+    ///
+    /// Undo log or persistent snapshot (T11-preimage-log, measured 2026-11-12). The undo log
+    /// costs O(1) per entry made (one push) and O(k) at `forget` for the k entries made since
+    /// the mark, each already paid once to make. A persistent snapshot (the seven tables as
+    /// `imbl::HashMap`) takes the snapshot and restores it in O(1), but pays O(log n) with a
+    /// larger constant on every lookup and insert, and still needs the log to put back the
+    /// kept failures above. Measured by instruction counts at n and 8n, the snapshot was
+    /// no faster anywhere (at best 0.99x, within noise): 1.10x and 1.16x the instructions on
+    /// `tests_that_forget_deep_and_wide_translations_scale` (where each `forget` undoes 800 to
+    /// 6400 entries), 1.41x and 1.43x on chains of `&&` and `||` reading one shared chain,
+    /// 1.01x (geometric mean) over all 134 scaling rows of l01_25, l01_38 and l01_39, and 1.5x
+    /// to 2.2x the bytes on the two tests named. So the log stays. Test of the undo itself:
+    /// `a_test_after_a_failed_test_reading_the_same_call_keeps_its_answer` (with a `forget`
+    /// that removes nothing it panics on the stale auxiliary pair).
     fn forget(&mut self, mark: usize) {
         fn undo<K: Hash + Eq, V>(t: &mut HashMap<K, Entry<Option<V>>>, k: &K) {
             if t.get(k)

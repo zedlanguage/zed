@@ -1680,6 +1680,98 @@ fn separate_tests_over_a_chain_of_products_scale() {
 }
 
 #[test]
+fn tests_that_forget_deep_and_wide_translations_scale() {
+    // T11-preimage-log: each test reads four chains `n` links deep, and the translation of
+    // all of them is undone (`Tx::forget`, `Tr::truncate`), since the right side `q(x: x)` is
+    // the product `x * x * x`, which has no linear term. The next test translates the chains
+    // again, so each test makes and undoes about `32n` entries, linear in `n`.
+    let tests = 4;
+    let units: std::collections::BTreeMap<usize, _> = [25, 25 * zed_tests::scaling::FACTOR]
+        .into_iter()
+        .map(|m| {
+            let mut src = String::from("q(x: int) = x * x * x;\n");
+            for a in 0..4 {
+                src += &format!("g{a}_0(x: int) = x + {a};\n");
+                for i in 1..m {
+                    src += &format!("g{a}_{i}(x: int) = g{a}_{}(x: x) + {i};\n", i - 1);
+                }
+            }
+            let sum = (0..4)
+                .map(|a| format!("g{a}_{}(x: x)", m - 1))
+                .collect::<Vec<_>>()
+                .join(" + ");
+            for j in 0..tests {
+                src += &format!("t{j}(x: int) = {sum} < q(x: x) + {j};\n");
+            }
+            (
+                m,
+                (
+                    zed_tests::deep::statements(&src),
+                    zedc::lex::lex_fence(&src).unwrap(),
+                    elab(&src).unwrap(),
+                    src,
+                ),
+            )
+        })
+        .collect();
+    zed_tests::scaling::check_order(
+        "tests that undo the translation of four chains",
+        25,
+        1,
+        |m| {
+            let (stmts, tokens, unit, src) = &units[&m];
+            let refused = zedc::front::linear_questions(src, tokens, stmts, unit);
+            assert!(refused.is_empty(), "{refused:?}");
+        },
+    );
+}
+
+#[test]
+fn a_test_after_a_failed_test_reading_the_same_call_keeps_its_answer() {
+    // T11-preimage-log: `t1` reads `m(x: x)`, which makes an auxiliary pair, and fails at the
+    // product `q(x: x)`; its translation is undone (`Tx::forget`, `Tr::truncate`). `t2` reads
+    // the same call again and must translate it afresh. With a `forget` that removes nothing,
+    // `t2` reads the stale key of the pair that `truncate` took away and panics.
+    use zedc::store::presburger::{Formula, decide};
+    let units = [
+        "m(x: int) = x mod 7;\nq(x: int) = x * x * x;\nt1(x: int) = m(x: x) + q(x: x) > 0;\nt2(x: int) = m(x: x) == 9;\n",
+        "m(x: int) = x mod 7;\nq(x: int) = x * x * x;\nt1(x: int) = m(x: x) + q(x: x) > 0;\nu(x: int) = x div 5 == 1;\nt2(x: int) = m(x: x) == 9;\n",
+        "m(x: int) = x div 7;\nq(x: int) = x * x * x;\nt1(x: int) = m(x: x) + q(x: x) > 0;\nu(x: int) = x mod 5 == 1;\nt2(x: int) = m(x: x) == 2 && x < 14;\n",
+        "q(x: int) = x * x * x;\nt1(x: int) = x mod 7 + q(x: x) > 0;\nt2(x: int) = x mod 7 == 9;\n",
+        "m(x: int) = x mod 7;\nq(x: int) = x * x * x;\nt1(x: int) = m(x: x + 1) + q(x: x) > 0;\nt2(x: int) = m(x: x + 1) == 9;\n",
+    ];
+    for src in units {
+        let unit = elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
+        let lets = lets(&unit);
+        let mut scoped = Scoped::new(&lets);
+        let mut answered = 0;
+        for (name, ps, body) in functions(&unit) {
+            let r = scoped.relation(body, ps, ps, true);
+            if name != "u" && name != "t2" {
+                // `m` and `q` give an `int`, and `t1` reads a product.
+                assert!(r.is_none(), "{src}{name} has a relation");
+                continue;
+            }
+            let r = r.unwrap_or_else(|| panic!("{src}{name} has no relation"));
+            let w = scoped.written(&r);
+            let with = |f: Formula| Formula::and(vec![w.defined(), f]);
+            let somewhere = decide(&with(w.body.clone()));
+            let fails_somewhere = decide(&with(Formula::negate(w.body.clone())));
+            if name == "t2" {
+                // `x mod 7 == 9` and `x div 7 == 2 && x < 14` hold for no `x`.
+                assert_eq!(
+                    (somewhere, fails_somewhere),
+                    (Ok(false), Ok(true)),
+                    "{src}{w}"
+                );
+                answered += 1;
+            }
+        }
+        assert_eq!(answered, 1, "{src}");
+    }
+}
+
+#[test]
 fn separate_tests_over_a_chain_of_nonunit_steps_scale() {
     // 0.032 s at 50 links, 0.127 s at 400: the remainder, read by no other link, is projected
     // out with the input, so `2 * H == 3 * q + r` leaves no congruence.
