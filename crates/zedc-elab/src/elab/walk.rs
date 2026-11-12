@@ -18,7 +18,6 @@ use zed_kernel::{Pattern as KPattern, Prim, Rat, Shared, Term, Value};
 
 use zedc_base::rejection::not_yet;
 use zedc_check::check::{self, Fit, Misfit};
-use zedc_resolve::resolve::tables::recursion;
 use zedc_resolve::resolve::topo::topo;
 use zedc_resolve::resolve::{Ref, prelude_layer};
 use zedc_stage::defs::Test;
@@ -355,9 +354,14 @@ impl<'a> Elab<'a> {
             Err(cycles) => {
                 // The checker reports each cycle too, in the same words, and checks the rest of
                 // the scope; a unit keeps one copy of each error.
-                for cycle in cycles {
-                    let (span, message) = recursion(&items, &cycle);
-                    self.error::<()>(span, message);
+                for report in self.t.cycle_reports(&items, &cycles) {
+                    self.errors.push(Error {
+                        menu: String::new(),
+                        row: report.row,
+                        span: report.span,
+                        message: report.message,
+                        notes: report.notes,
+                    });
                 }
                 m.ret = Ret::Scope(None);
                 return;

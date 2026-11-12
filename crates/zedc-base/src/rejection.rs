@@ -46,7 +46,8 @@ rows! {
     // No diagnostic uses this row yet: plan rows ASSOC-lattice, ASSOC-mod, ASSOC-gf2, ASSOC-gcd
     // and ENUM-quotient emit it.
     OutsideNormalForms => "Operator outside the normal forms",
-    // No diagnostic uses this row yet: plan row TERM-stall emits it.
+    // A cycle of values each read as the next is computed (`Tables::cycle_reports`); plan row
+    // TERM-stall compiles the loops and indexed definitions its repairs offer.
     ReadsOwnValue => "A definition that reads its own value",
     QuantifierNotFinite => "Quantifier in a law over a domain that is not finite",
     BelowProofGrade =>

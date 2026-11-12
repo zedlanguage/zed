@@ -661,7 +661,7 @@ odd(positional n) = if n == 0 { false } else { even(n - 1) };
         .collect();
     let message = "`even`, `odd` are defined in terms of each other, which is recursion. Recursion \
                    is part of the Zed language, and this version of zedc does not compile it \
-                   yet. Write the computation without a definition that uses itself.";
+                   yet. Write the program without it, with the forms this zedc compiles.";
     assert_eq!(messages, [((0, 43), message)]);
 }
 
@@ -676,9 +676,8 @@ fn every_cycle_is_reported_in_every_order() {
         .collect();
     let each = |names| {
         format!(
-            "{names} are defined in terms of each other, which is recursion. Recursion is part of \
-             the Zed language, and this version of zedc does not compile it yet. Write the \
-             computation without a definition that uses itself."
+            "{names} are defined in terms of each other's values. A value cannot be defined in \
+             terms of itself, since no step of the program makes the earlier value."
         )
     };
     let (ab, cd) = (each("`a`, `b`"), each("`c`, `d`"));

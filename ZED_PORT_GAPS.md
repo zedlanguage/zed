@@ -3552,3 +3552,12 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | A Fenwick tree per class in a `Vec<Option<usize>>` changed in place, stepped with `isolate_lowest_one` and `r &= r - 1`, its nodes indices into the list of sites | `Class::insert`, `Class::meets` | Mutation | A Zed value threaded through the fold over the sites in written order, or a persistent tree over the sorted first keys, `O(log k)` per step either way; the steps are `bitAnd(r, 0 - r)` and `bitAnd(r, r - 1)` on bit words (L1.39a) |
 | A `HashMap` keyed by `(&str, Option<&str>)` and by `(usize, &[Keys])`, a borrowed slice of the site's later brackets, numbering the classes as they are first met | `Sentinels::new` | Borrowed keys | A map keyed by the values themselves: `(name, line)` and `(line, keys)` as Zed values |
 | `BigInt` from `num-bigint` for the keys | `End`, `Keys`, `int_literal` | External crate | Vanishes: a key is an `int` |
+
+## Entries from MSG-recursion-chain (`crates/zedc-resolve/src/resolve/tables.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| Maps `HashMap<usize, usize>` from statement to cycle and from binder to statement, a `HashSet<usize>` of the lists seen, and a `HashMap<usize, Vec<Edge>>` of each statement's edges, all filled by `insert` and `entry` in loops over the uses | `Tables::cycle_reports` | Mutation (gap 11) | a fold over the uses into persistent maps |
+| An edge updated in place through `last_mut` when a later use of the same statement is the first read outside a lambda | `Tables::cycle_reports` | Mutation (gap 11) | the fold replaces the map entry with the updated edge |
+| A depth-first search on an explicit `Vec` stack with `HashSet<usize>` visited and expanded sets, pushing to an order `Vec`; the cycle's edges taken out of the shared map by `remove` | `Tables::cycle_report` | Mutation (gap 11) | recursion on the statement that threads the two sets and returns the order; the edges read from a persistent map |
+| A `HashMap<&str, Vec<usize>>` from each name to its binding statements, built by `entry().or_default().push` | `Tables::with_text` (`by_name`) | Mutation (gap 11); borrowed `&str` keys | a persistent map built by a fold, keyed by the name's text |

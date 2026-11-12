@@ -17,7 +17,6 @@ use zedc_lattice::cell::Premises;
 use zedc_lattice::lattice::Lattice;
 use zedc_preimage::preimage::{Domains, LetIn, Lets, let_summary};
 use zedc_preimage::product::{self, Product, Scope};
-use zedc_resolve::resolve::tables::recursion;
 
 /// Checks a resolved unit.
 pub fn check(unit: &[Stmt], res: &Resolution) -> Info {
@@ -1310,10 +1309,17 @@ impl<'t, 'a> Ck<'t, 'a> {
         // unreported. Each name the cycle defines has no value, as a rejected expression gives
         // (`Frame::Fail`), so a use of it adds no error of its own.
         let (order, cycles) = self.t.order_around_cycles(&items);
-        for cycle in cycles {
-            let (span, message) = recursion(&items, &cycle);
-            self.error_with(span, message, Vec::new());
-            for &k in &cycle {
+        for (report, cycle) in self
+            .t
+            .cycle_reports(&items, &cycles)
+            .into_iter()
+            .zip(&cycles)
+        {
+            match report.row {
+                Some(row) => self.rejects_with(row, report.span, report.message, report.notes),
+                None => self.error_with(report.span, report.message, report.notes),
+            }
+            for &k in cycle {
                 let st = items[k];
                 match &st.kind {
                     StmtKind::Function(f) => {

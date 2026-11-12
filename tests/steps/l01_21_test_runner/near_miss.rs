@@ -271,6 +271,20 @@ const NEAR_MISSES: &[NearMiss] = &[
         "2:7",
         Some("move `b = n * 2;` above line 2, where `b` is first used"),
     ),
+    (
+        Row::ReadsOwnValue,
+        "y = 3;\n",
+        "x = y + 1;\n",
+        "x = x + 1;\n",
+        "2:1",
+        Some(
+            "to step `x` from its earlier value, write a `loop` with a start value, as `loop t { \
+             while t < 10; initial x = 0; x' = x + 1; }`, or an indexed definition, as `x[i in \
+             0..<10] = x[i-1] + 1 with x[-1] = 0`, with the start value in place of 0 and the \
+             number of steps in place of 10. Loops and indexed definitions are part of the Zed \
+             language, and this version of zedc does not compile them yet.",
+        ),
+    ),
 ];
 
 /// Rows whose accepted program holds a form name resolution does not compile yet (a boundary

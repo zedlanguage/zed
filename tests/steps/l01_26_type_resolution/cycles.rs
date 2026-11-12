@@ -15,8 +15,21 @@ fn recursion(names: &str, at: &str) -> String {
     };
     format!(
         "{what}, which is recursion. Recursion is part of the Zed language, and this version of \
-         zedc does not compile it yet. Write the computation without a definition that uses \
-         itself. [{at}]"
+         zedc does not compile it yet. Write the program without it, with the forms this zedc \
+         compiles. [{at}]"
+    )
+}
+
+/// The message for the definitions `names` of values that read each other's values, at the
+/// statement written `at`.
+fn values(names: &str, at: &str) -> String {
+    let what = match names.contains(", ") {
+        true => format!("{names} are defined in terms of each other's values"),
+        false => format!("{names} is defined in terms of its own value"),
+    };
+    format!(
+        "{what}. A value cannot be defined in terms of itself, since no step of the program makes \
+         the earlier value. [{at}]"
     )
 }
 
@@ -38,40 +51,39 @@ fn a_function_beside_a_recursive_one_is_checked() {
 /// Each shape of cycle, with `f` written before it and after it.
 #[test]
 fn every_shape_of_cycle_leaves_the_other_definitions_checked() {
-    for (cycle, names, at) in [
+    for (cycle, want) in [
         (
             "spin(positional n: int) = spin(n + 1);\n",
-            "`spin`",
-            "spin(positional n: int) = spin(n + 1);",
+            recursion("`spin`", "spin(positional n: int) = spin(n + 1);"),
         ),
         // Mutual recursion.
         (
             "ping(positional n: int) = pong(n);\npong(positional n: int) = ping(n);\n",
-            "`ping`, `pong`",
-            "ping(positional n: int) = pong(n);",
+            recursion("`ping`, `pong`", "ping(positional n: int) = pong(n);"),
         ),
         // Values defined in terms of each other.
-        ("a = b + 1;\nb = a * 2;\n", "`a`, `b`", "a = b + 1;"),
+        ("a = b + 1;\nb = a * 2;\n", values("`a`, `b`", "a = b + 1;")),
         // A value that holds itself.
-        ("pair = (1, pair);\n", "`pair`", "pair = (1, pair);"),
+        ("pair = (1, pair);\n", values("`pair`", "pair = (1, pair);")),
         // A function that reaches itself through a tuple.
         (
             "h(positional n: int) = { g, k = (h, n); g(k) };\n",
-            "`h`",
-            "h(positional n: int) = { g, k = (h, n); g(k) };",
+            recursion("`h`", "h(positional n: int) = { g, k = (h, n); g(k) };"),
         ),
         // A lambda that calls the name it is bound to.
-        ("go = (x) -> go(x);\n", "`go`", "go = (x) -> go(x);"),
+        (
+            "go = (x) -> go(x);\n",
+            recursion("`go`", "go = (x) -> go(x);"),
+        ),
         // A default that calls its own function.
         (
             "d(positional n: int = d(1)) = n;\n",
-            "`d`",
-            "d(positional n: int = d(1)) = n;",
+            recursion("`d`", "d(positional n: int = d(1)) = n;"),
         ),
     ] {
         for text in [format!("{cycle}{F}"), format!("{F}{cycle}")] {
             assert_eq!(sig(&text, "f"), "(int) -> int", "{text}");
-            assert_eq!(type_errors(&text), [recursion(names, at)], "{text}");
+            assert_eq!(type_errors(&text), std::slice::from_ref(&want), "{text}");
         }
     }
 }

@@ -7,7 +7,10 @@ use std::hash::{Hash, Hasher};
 use imbl::Vector;
 
 use crate::resolve::{Ref, Resolution};
-use zedc_syntax::ast::{Expr, ExprKind, Function, Param, Stmt, StmtKind, StrPart, Target, Type};
+use zedc_base::rejection::Row;
+use zedc_syntax::ast::{
+    Expr, ExprKind, Function, Note, Param, Stmt, StmtKind, StrPart, Target, Type,
+};
 use zedc_syntax::lex::Span;
 
 use super::topo::{topo_around_cycles, topo_joined};
@@ -33,6 +36,8 @@ pub struct Tables<'a> {
     /// The unit's text, when it is known, which a message quotes: the line a fix rewrites
     /// (DESIGN.md sec:diagnostics).
     pub text: Option<&'a str>,
+    /// The binders of each name, in the order of the binders.
+    by_name: HashMap<&'a str, Vec<usize>>,
 }
 
 /// The uses of one list of binders.
@@ -136,6 +141,10 @@ impl<'a> Tables<'a> {
             .enumerate()
             .map(|(i, b)| ((b.span, b.name.as_str()), i))
             .collect();
+        let mut by_name: HashMap<&str, Vec<usize>> = HashMap::new();
+        for (i, b) in res.binders.iter().enumerate() {
+            by_name.entry(b.name.as_str()).or_default().push(i);
+        }
         let mut uses: Vec<Uses> = Vec::new();
         let mut groups_of = vec![Vec::new(); res.binders.len()];
         let mut group: HashMap<ListKey, usize> = HashMap::new();
@@ -161,6 +170,7 @@ impl<'a> Tables<'a> {
             groups_of,
             written: Vec::new(),
             text,
+            by_name,
         };
         t.collect_functions(unit);
         t
@@ -361,28 +371,384 @@ fn in_tests(s: &Stmt, u: Span) -> bool {
         .is_some_and(|k| u.end <= f.tests[k].1.span.end)
 }
 
-/// The rejection of the cycle `cycle` among the statements `items` of one scope, a recursion,
-/// which zedc compiles from layer L6 on: where to report it and the message. The cycle names
-/// its statements by name and is reported at the first by name; the declarations of one name
-/// keep their written order, so neither depends on where the items stand in the unit (DESIGN.md
-/// L1.29b). The checker and elaboration both report it, in the same words, so that a unit
-/// reports it once.
-pub fn recursion(items: &[&Stmt], cycle: &[usize]) -> (Span, String) {
-    let mut named: Vec<(String, usize)> = cycle.iter().map(|&i| (what(items[i]), i)).collect();
-    named.sort_unstable();
-    let names: Vec<&str> = named.iter().map(|(n, _)| n.as_str()).collect();
-    let message = match &names[..] {
-        [one] => format!("{one} is defined in terms of itself"),
-        _ => format!("{} are defined in terms of each other", names.join(", ")),
-    };
-    (
-        items[named[0].1].span,
+/// Whether `u` lies in one of the sorted, disjoint spans `spans`.
+fn inside(spans: &[Span], u: Span) -> bool {
+    let k = spans.partition_point(|s| s.start <= u.start);
+    k.checked_sub(1).is_some_and(|k| u.end <= spans[k].end)
+}
+
+/// The spans of the value `e` whose uses do not read a value when `e` is computed: each
+/// lambda and each function declared in a block, outermost ones only, so the spans are
+/// disjoint; sorted.
+fn deferred_spans(e: &Expr) -> Vec<Span> {
+    let mut out = Vec::new();
+    let mut todo = vec![Collect::Expr(e)];
+    while let Some(c) = todo.pop() {
+        match c {
+            Collect::Expr(e) if matches!(e.kind, ExprKind::Lambda { .. }) => out.push(e.span),
+            Collect::Expr(e) => collect_expr(e, &mut todo),
+            Collect::Stmt(s) => match &s.kind {
+                StmtKind::Function(_) => out.push(s.span),
+                StmtKind::Bind { value, .. } | StmtKind::Push { value, .. } => {
+                    todo.push(Collect::Expr(value))
+                }
+                StmtKind::Return(es) => todo.extend(es.iter().map(Collect::Expr)),
+                _ => {}
+            },
+            Collect::Type(_) => {}
+        }
+    }
+    out.sort_unstable();
+    out
+}
+
+/// The rejection of one cycle among the statements of a scope ([`Tables::cycle_reports`]).
+#[derive(Debug)]
+pub struct CycleReport {
+    /// Where it is reported: the statement of the cycle that comes first by name.
+    pub span: Span,
+    /// The row of the rejection table it is a case of, if any.
+    pub row: Option<Row>,
+    /// The message.
+    pub message: String,
+    /// Each use that closes the cycle, in the order of the cycle, then the repairs.
+    pub notes: Vec<Note>,
+}
+
+/// The uses by one statement of a cycle of one list of binders that names statements of the
+/// same cycle.
+struct Edge<'n> {
+    /// The first of the uses.
+    first: Span,
+    /// The first of the uses outside the lambdas and the functions of the statement's value,
+    /// which reads the value as the statement is computed, if any.
+    read: Option<Span>,
+    /// The statements of the cycle the list names, as an index into the lists of
+    /// [`Tables::cycle_reports`].
+    list: usize,
+    /// The name it uses.
+    name: &'n str,
+}
+
+impl<'a> Tables<'a> {
+    /// The rejection of each cycle `cycles` among the statements `items` of one scope, as
+    /// [`Tables::order`] gives them. A cycle of values each read as the next is computed is
+    /// the row "A definition that reads its own value"; any other cycle is a recursion, which
+    /// zedc compiles from layer L6 on. The message shows each use that closes the cycle, at
+    /// its site, in the order of the cycle, then the repairs (DESIGN.md sec:diagnostics). The
+    /// cycle starts at its statement that comes first by name, the declarations of one name in
+    /// written order, and each statement's uses are taken in the order of the text, so nothing
+    /// depends on where the statements stand in the unit (DESIGN.md L1.29b). The checker and
+    /// elaboration both report each cycle, in the same words, so that a unit reports it once.
+    // Complexity tradeoff: the naive search names each use of a cycle's statements once per
+    // statement its list of binders names, O(U·K) for U uses of a set of K overloads, and
+    // finds the order of the cycle by a search from each statement, O(n·(n + e)) for a cycle
+    // of n statements and e uses. Here each use is placed in its statement by binary search
+    // and kept once per (statement, list), the lists grouped by cycle once per list, O(U log n
+    // + K) in all; one search with a visited set over statements and lists, which takes each
+    // statement's uses in the order of the text, gives the order, O((n + e) log e).
+    pub fn cycle_reports(&self, items: &[&'a Stmt], cycles: &[Vec<usize>]) -> Vec<CycleReport> {
+        let mut cycle_of: HashMap<usize, usize> = HashMap::new();
+        let mut item_of: HashMap<usize, usize> = HashMap::new();
+        let mut member_binders: Vec<usize> = Vec::new();
+        for (c, cycle) in cycles.iter().enumerate() {
+            for &i in cycle {
+                cycle_of.insert(i, c);
+                for b in self.binders_of(items[i]) {
+                    item_of.insert(b, i);
+                    member_binders.push(b);
+                }
+            }
+        }
+        let deferred: HashMap<usize, Vec<Span>> = (cycle_of.keys())
+            .filter_map(|&i| match &items[i].kind {
+                StmtKind::Bind { value, .. } => Some((i, deferred_spans(value))),
+                _ => None,
+            })
+            .collect();
+        let mut lists: Vec<Vec<usize>> = Vec::new();
+        let mut edges: HashMap<usize, Vec<Edge>> = HashMap::new();
+        let mut seen: HashSet<usize> = HashSet::new();
+        for &b in &member_binders {
+            for &g in &self.groups_of[b] {
+                if !seen.insert(g) {
+                    continue;
+                }
+                let group = &self.uses[g];
+                // The statements of each cycle the list names.
+                let mut named: HashMap<usize, usize> = HashMap::new();
+                for b in &group.binders {
+                    let Some(&i) = item_of.get(b) else { continue };
+                    let l = *named.entry(cycle_of[&i]).or_insert_with(|| {
+                        lists.push(Vec::new());
+                        lists.len() - 1
+                    });
+                    lists[l].push(i);
+                }
+                for &l in named.values() {
+                    lists[l].sort_unstable();
+                    lists[l].dedup();
+                }
+                let name = self.res.binders[group.binders[0]].name.as_str();
+                // The uses are in the order of the text and the statements do not overlap, so
+                // the uses of one statement stand together.
+                let mut last = None;
+                for u in &group.at {
+                    let k = items.partition_point(|s| s.span.start <= u.start);
+                    let Some(user) = k.checked_sub(1) else {
+                        continue;
+                    };
+                    let at = items[user];
+                    if u.end > at.span.end || in_tests(at, *u) {
+                        continue;
+                    }
+                    let Some(&list) = cycle_of.get(&user).and_then(|c| named.get(c)) else {
+                        continue;
+                    };
+                    let es = edges.entry(user).or_default();
+                    if last != Some(user) {
+                        last = Some(user);
+                        es.push(Edge {
+                            first: *u,
+                            read: None,
+                            list,
+                            name,
+                        });
+                    }
+                    let e = es.last_mut().expect("pushed above");
+                    if e.read.is_none() && !deferred.get(&user).is_some_and(|d| inside(d, *u)) {
+                        e.read = Some(*u);
+                    }
+                }
+            }
+        }
+        (cycles.iter())
+            .map(|cycle| self.cycle_report(items, cycle, &mut edges, &lists, &item_of))
+            .collect()
+    }
+
+    /// The rejection of the cycle `cycle`, whose statements' uses `edges` holds
+    /// ([`Tables::cycle_reports`]).
+    fn cycle_report(
+        &self,
+        items: &[&'a Stmt],
+        cycle: &[usize],
+        edges: &mut HashMap<usize, Vec<Edge>>,
+        lists: &[Vec<usize>],
+        item_of: &HashMap<usize, usize>,
+    ) -> CycleReport {
+        let mut own: HashMap<usize, Vec<Edge>> = (cycle.iter())
+            .map(|i| (*i, edges.remove(i).unwrap_or_default()))
+            .collect();
+        let value = cycle.iter().all(|&i| {
+            matches!(items[i].kind, StmtKind::Bind { .. })
+                && own[&i].iter().all(|e| e.read.is_some())
+        });
+        let shown = |e: &Edge| {
+            if value {
+                e.read.unwrap_or(e.first)
+            } else {
+                e.first
+            }
+        };
+        for es in own.values_mut() {
+            es.sort_unstable_by_key(|e| shown(e));
+        }
+        let start = (cycle.iter())
+            .map(|&i| (what(items[i]), i))
+            .min()
+            .expect("a cycle has a statement")
+            .1;
+        // The cycle's order: a search from `start` that takes each statement's uses in the
+        // order of the text, each statement and each list once.
+        let mut order: Vec<usize> = Vec::with_capacity(cycle.len());
+        let mut visited: HashSet<usize> = HashSet::new();
+        let mut expanded: HashSet<usize> = HashSet::new();
+        let mut todo = vec![start];
+        while let Some(i) = todo.pop() {
+            if !visited.insert(i) {
+                continue;
+            }
+            order.push(i);
+            for e in own[&i].iter().rev() {
+                if expanded.insert(e.list) {
+                    todo.extend(lists[e.list].iter().rev());
+                }
+            }
+        }
+        debug_assert_eq!(
+            order.len(),
+            cycle.len(),
+            "a cycle reaches each of its statements"
+        );
+
+        let mut notes = Vec::new();
+        let mut uses = 0;
+        for &i in &order {
+            let who = what(items[i]);
+            let several = names_bound(items[i]) > 1;
+            let verb = match (value, several) {
+                (true, false) => "reads",
+                (true, true) => "read",
+                (false, false) => "uses",
+                (false, true) => "use",
+            };
+            for e in &own[&i] {
+                uses += 1;
+                let whom = if lists[e.list] == [i] && !several {
+                    "itself".to_string()
+                } else {
+                    format!("`{}`", e.name)
+                };
+                notes.push(Note {
+                    span: shown(e),
+                    text: format!("{who} {verb} {whom} here"),
+                });
+            }
+        }
+        let first = what(items[start]);
+        let several = names_bound(items[start]) > 1;
+        let names: Vec<String> = order.iter().map(|&i| what(items[i])).collect();
+        let at = items[start].span;
+        if value {
+            let head = match (&names[..], several) {
+                ([_], false) => format!("{first} is defined in terms of its own value"),
+                ([_], true) => format!("{first} are defined in terms of their own values"),
+                _ => format!(
+                    "{} are defined in terms of each other's values",
+                    names.join(", ")
+                ),
+            };
+            notes.push(Note {
+                span: at,
+                text: self.step_repair(items[start], cycle.len() == 1),
+            });
+            // A value read where another binder of the same name was meant.
+            let mut renamed: HashSet<&str> = HashSet::new();
+            for &i in &order {
+                for b in self.binders_of(items[i]) {
+                    let name = self.res.binders[b].name.as_str();
+                    if !renamed.insert(name) {
+                        continue;
+                    }
+                    let other = (self.by_name.get(name).into_iter().flatten())
+                        .find(|o| !item_of.contains_key(o));
+                    if let Some(&o) = other {
+                        notes.push(Note {
+                            span: self.res.binders[o].span,
+                            text: format!(
+                                "repair: to read the `{name}` defined here, give the `{name}` \
+                                 that reads its own value another name"
+                            ),
+                        });
+                    }
+                }
+            }
+            let each = if several { "each of " } else { "" };
+            notes.push(Note {
+                span: at,
+                text: format!(
+                    "repair: to define a recursive function, write {each}{first} as a function \
+                     with a parameter. Recursion is part of the Zed language, and this version of \
+                     zedc does not compile it yet."
+                ),
+            });
+            CycleReport {
+                span: at,
+                row: Some(Row::ReadsOwnValue),
+                message: format!(
+                    "{head}. A value cannot be defined in terms of itself, since no step of the \
+                     program makes the earlier value."
+                ),
+                notes,
+            }
+        } else {
+            let head = match (&names[..], several) {
+                ([_], false) => format!("{first} is defined in terms of itself"),
+                ([_], true) => format!("{first} are defined in terms of themselves"),
+                _ => format!("{} are defined in terms of each other", names.join(", ")),
+            };
+            let text = if uses == 1 {
+                "repair: remove the use shown, which ends the cycle"
+            } else if uses == cycle.len() {
+                "repair: remove one of the uses shown, which ends the cycle"
+            } else {
+                "repair: remove uses shown until no definition uses itself, directly or through \
+                 the others"
+            };
+            notes.push(Note {
+                span: at,
+                text: text.into(),
+            });
+            CycleReport {
+                span: at,
+                row: None,
+                message: format!(
+                    "{head}, which is recursion. Recursion is part of the Zed language, and this \
+                     version of zedc does not compile it yet. Write the program without it, with \
+                     the forms this zedc compiles."
+                ),
+                notes,
+            }
+        }
+    }
+
+    /// The repair of a value that reads its own value: step it from its earlier value, in a
+    /// `loop` or an indexed definition. When `s` alone binds one name and the text is known,
+    /// both are written with the statement's own value, `x' = e` and `e` with each read of `x`
+    /// made `x[i-1]`; otherwise with the example of DESIGN.md sec:diagnostics and the name.
+    fn step_repair(&self, s: &Stmt, alone: bool) -> String {
+        let StmtKind::Bind { targets, value } = &s.kind else {
+            unreachable!("a value's statement")
+        };
+        let mut names = targets.iter().filter_map(|t| match t {
+            Target::Name(n, _) => Some(n.as_str()),
+            Target::Wild => None,
+        });
+        let x = names.next().expect("a value has a name");
+        let own = (self.text)
+            .filter(|_| alone && names.next().is_none())
+            .map(|text| {
+                let b = self.id(s.span, x);
+                let mut indexed = String::new();
+                let mut from = value.span.start;
+                let from_start = Span {
+                    start: value.span.start,
+                    end: 0,
+                };
+                for (u, r) in self.res.uses.range(from_start..) {
+                    if u.start >= value.span.end {
+                        break;
+                    }
+                    if matches!(r, Ref::Bound(ids) if ids.contains(&b)) {
+                        indexed.push_str(&text[from..u.start]);
+                        indexed.push_str(&format!("{x}[i-1]"));
+                        from = u.end;
+                    }
+                }
+                indexed.push_str(&text[from..value.span.end]);
+                (text[value.span.start..value.span.end].to_string(), indexed)
+            });
+        let (next, indexed) = own.unwrap_or_else(|| (format!("{x} + 1"), format!("{x}[i-1] + 1")));
         format!(
-            "{message}, which is recursion. Recursion is part of the Zed language, and this \
-             version of zedc does not compile it yet. Write the computation without a definition \
-             that uses itself."
-        ),
-    )
+            "repair: to step `{x}` from its earlier value, write a `loop` with a start value, as \
+             `loop t {{ while t < 10; initial {x} = 0; {x}' = {next}; }}`, or an indexed \
+             definition, as `{x}[i in 0..<10] = {indexed} with {x}[-1] = 0`, with the start value \
+             in place of 0 and the number of steps in place of 10. Loops and indexed definitions \
+             are part of the Zed language, and this version of zedc does not compile them yet."
+        )
+    }
+}
+
+/// The number of names the statement `s` binds.
+fn names_bound(s: &Stmt) -> usize {
+    match &s.kind {
+        StmtKind::Bind { targets, .. } => targets
+            .iter()
+            .filter(|t| matches!(t, Target::Name(..)))
+            .count(),
+        _ => 1,
+    }
 }
 
 /// How a message names the statement `s` of a cycle: by the names it binds. Only a statement
