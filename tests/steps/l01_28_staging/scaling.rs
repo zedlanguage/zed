@@ -154,21 +154,47 @@ fn splitting_many_functions_of_one_unit_scales() {
     });
 }
 
-/// `main(p) = t` for each run-stage shape `t`, `n` deep, with the build-stage sum
+/// A run-stage shape of `main`'s body, `n` deep.
+#[derive(Clone, Copy)]
+enum Shape {
+    /// A `let` chain from `p`.
+    Chain,
+    /// A left-nested sum on `p`.
+    Sum,
+    /// `if`s on `p` nested in their `else`.
+    Ifs,
+    /// Nested lambdas over `p`.
+    Lams,
+}
+
+impl Shape {
+    fn name(self) -> &'static str {
+        match self {
+            Shape::Chain => "a `let` chain",
+            Shape::Sum => "a left-nested sum",
+            Shape::Ifs => "`if`s nested in their `else`",
+            Shape::Lams => "nested lambdas",
+        }
+    }
+}
+
+/// `main(p) = t` for the run-stage `shape` `t`, `n` deep, with the build-stage sum
 /// `0 + 1 + … + 1` of `n` terms whose form shows that it ends.
-fn deep_units(n: usize) -> Vec<(&'static str, Unit, Term)> {
+fn deep_unit(shape: Shape, n: usize) -> (Unit, Term) {
     let x = |i: usize| format!("x{i}");
-    let chain = (0..n).rev().fold(var(&x(n - 1)), |body, i| {
-        let e = match i {
-            0 => var("p"),
-            _ => prim(Prim::Add, vec![var(&x(i - 1)), lit(1)]),
-        };
-        let_(&x(i), e, body)
-    });
-    let sum = (0..n).fold(var("p"), |a, _| prim(Prim::Add, vec![a, lit(1)]));
-    let ifs = (0..n).fold(lit(0), |b, _| if_(var("p"), lit(1), b));
-    let lams = (0..n).rev().fold(var("p"), |body, i| lam(&[&x(i)], body));
-    let unit = |t: Term| Unit {
+    let t = match shape {
+        Shape::Chain => (0..n).rev().fold(var(&x(n - 1)), |body, i| {
+            let e = match i {
+                0 => var("p"),
+                _ => prim(Prim::Add, vec![var(&x(i - 1)), lit(1)]),
+            };
+            let_(&x(i), e, body)
+        }),
+        Shape::Sum => (0..n).fold(var("p"), |a, _| prim(Prim::Add, vec![a, lit(1)])),
+        Shape::Ifs => (0..n).fold(lit(0), |b, _| if_(var("p"), lit(1), b)),
+        Shape::Lams => (0..n).rev().fold(var("p"), |body, i| lam(&[&x(i)], body)),
+    };
+    let unit = Unit {
         defs: vec![Def {
             name: "main".into(),
             kernel: "main".into(),
@@ -180,39 +206,55 @@ fn deep_units(n: usize) -> Vec<(&'static str, Unit, Term)> {
         int_params: Default::default(),
     };
     // Built once per shape: cloning a term recursed (step T2-types).
-    let ends = || (0..n).fold(lit(0), |a, _| prim(Prim::Add, vec![a, lit(1)]));
-    vec![
-        ("a `let` chain", unit(chain), ends()),
-        ("a left-nested sum", unit(sum), ends()),
-        ("`if`s nested in their `else`", unit(ifs), ends()),
-        ("nested lambdas", unit(lams), ends()),
-    ]
+    let ends = (0..n).fold(lit(0), |a, _| prim(Prim::Add, vec![a, lit(1)]));
+    (unit, ends)
+}
+
+/// Checks that mixing and coloring `shape`, and deciding that the sum ends, take time linear
+/// in the depth, 12,500 and 100,000 deep, on a stack of 2 MiB. Reading the free names, the
+/// effects and whether a term ends, indexing it and mixing it each recursed once per level of
+/// the term, and overflowed this stack near 10,000 levels. One test per shape: the four
+/// together took 28 s alone at load 41, near half the 60 s limit of a test piece.
+fn staged_on_a_2_mib_stack(shape: Shape) {
+    let n = 12_500;
+    let deep = 8 * n;
+    let what = shape.name();
+    zed_tests::deep::on_small_stack(move || {
+        let (s, se) = deep_unit(shape, n);
+        let (l, le) = deep_unit(shape, deep);
+        let pick = |k: usize| if k == n { (&s, &se) } else { (&l, &le) };
+        scaling::check_order(&format!("mixing {what}"), n, 1, |k| {
+            let (mixed, report) = mix(pick(k).0, &["main"]);
+            assert!(report.left.is_empty(), "{what}");
+            assert!(free(&mixed.defs[0].term).is_empty(), "{what}");
+        });
+        scaling::check_order(&format!("coloring {what}"), n, 1, |k| {
+            assert_eq!(color(pick(k).0), [("main".to_string(), Stage::Build)]);
+        });
+        scaling::check_order("deciding that a sum ends", n, 1, |k| {
+            assert!(ends(pick(k).1));
+        });
+    });
 }
 
 #[test]
-fn terms_100000_deep_are_staged_on_a_2_mib_stack() {
-    // Reading the free names, the effects and whether a term ends, indexing it and mixing it
-    // each recursed once per level of the term, and overflowed this stack near 10,000 levels.
-    let n = 12_500;
-    let deep = 8 * n;
-    zed_tests::deep::on_small_stack(|| {
-        let small = deep_units(n);
-        let large = deep_units(deep);
-        for ((what, s, se), (_, l, le)) in small.into_iter().zip(large) {
-            let pick = |k: usize| if k == n { (&s, &se) } else { (&l, &le) };
-            scaling::check_order(&format!("mixing {what}"), n, 1, |k| {
-                let (mixed, report) = mix(pick(k).0, &["main"]);
-                assert!(report.left.is_empty(), "{what}");
-                assert!(free(&mixed.defs[0].term).is_empty(), "{what}");
-            });
-            scaling::check_order(&format!("coloring {what}"), n, 1, |k| {
-                assert_eq!(color(pick(k).0), [("main".to_string(), Stage::Build)]);
-            });
-            scaling::check_order("deciding that a sum ends", n, 1, |k| {
-                assert!(ends(pick(k).1));
-            });
-        }
-    });
+fn a_let_chain_100000_deep_is_staged_on_a_2_mib_stack() {
+    staged_on_a_2_mib_stack(Shape::Chain);
+}
+
+#[test]
+fn a_left_nested_sum_100000_deep_is_staged_on_a_2_mib_stack() {
+    staged_on_a_2_mib_stack(Shape::Sum);
+}
+
+#[test]
+fn ifs_100000_deep_are_staged_on_a_2_mib_stack() {
+    staged_on_a_2_mib_stack(Shape::Ifs);
+}
+
+#[test]
+fn lambdas_100000_deep_are_staged_on_a_2_mib_stack() {
+    staged_on_a_2_mib_stack(Shape::Lams);
 }
 
 /// `main` with `n` bindings, each the square of a machine-word integer, so each is warned.

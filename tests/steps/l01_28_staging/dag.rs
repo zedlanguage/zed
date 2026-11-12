@@ -441,8 +441,10 @@ fn nodes(d: usize, same: bool) -> usize {
     }
 }
 
+// The cases of one built value and of two are two tests: together they took 20 s alone at
+// load 42, a third of the 60 s limit of a test piece.
 #[test]
-fn mixing_nested_lets_of_a_built_value_over_one_body_scales() {
+fn mixing_nested_lets_of_one_built_value_over_one_body_scales() {
     deep(|| {
         let n = 1000;
         let same: BTreeMap<usize, Unit> = [n, FACTOR * n]
@@ -458,6 +460,12 @@ fn mixing_nested_lets_of_a_built_value_over_one_body_scales() {
                 assert_eq!(distinct(&mixed.defs[0].term), nodes(d, true));
             },
         );
+    });
+}
+
+#[test]
+fn mixing_nested_lets_of_two_built_values_over_one_body_scales() {
+    deep(|| {
         // The mixed term has a node for each value of `x` at each level, d(d + 7)/2 in all.
         let n = 50;
         let apart: BTreeMap<usize, Unit> = [n, FACTOR * n]
