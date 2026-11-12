@@ -593,6 +593,47 @@ fn an_untyped_receiver_imports_only_through_its_type_file() {
     assert_eq!(own.unknown_calls, 0);
 }
 
+#[test]
+fn a_word_after_a_range_starts_a_chain() {
+    // The false cycle of zed-kernel's `text/names.rs` (IMPORT-cycle-kernel-text): `ids` is a
+    // slice parameter, and `..ids.len()` calls the slice's `len`, never `A::len`, written apart
+    // in `am.rs`, though `user.rs` imports `t.rs`. Nor is `..count()` a method call.
+    let crate_with = |body: &str| {
+        graph(&[
+            ("lib.rs", "mod t;\nmod am;\nmod user;\n"),
+            ("t.rs", "pub struct A;\n"),
+            (
+                "am.rs",
+                "use crate::t::A;\nimpl A {\n    pub fn len(&self) -> usize { 0 }\n    \
+                 pub fn count(&self) -> usize { 0 }\n}\n",
+            ),
+            (
+                "user.rs",
+                &format!(
+                    "use crate::t::A;\npub fn count() -> usize {{ 1 }}\n\
+                     pub fn f(_: &A, ids: &[u64]) -> usize {{\n    {body}\n}}\n"
+                ),
+            ),
+        ])
+    };
+    for body in [
+        "ids[..ids.len()].len()",
+        "ids[0..ids.len()].len()",
+        "ids[..=ids.len() - 1].len()",
+        "ids[..count()].len()",
+    ] {
+        let g = crate_with(body);
+        assert_eq!(edges(&g), ["am.rs -> t.rs", "user.rs -> t.rs"], "{body}");
+        assert_eq!(g.unknown_calls, 0, "{body}");
+    }
+    // A receiver the tool cannot type after `..` still imports `am.rs` through `t.rs`.
+    let g = crate_with("let (y, _) = (other::make(), 0);\n    (0..y.len()).count()");
+    assert_eq!(
+        edges(&g),
+        ["am.rs -> t.rs", "user.rs -> t.rs", "user.rs -> am.rs"]
+    );
+}
+
 /// A crate of `n` types `T0` to `T{n-1}`, each in a file `t{i}.rs` with its one method `go`
 /// written apart in `m{i}.rs`, which names `T{i+1}` (the last `T0`) and calls `go` on a value
 /// the tool does not type: through `t{i+1}.rs`, the call imports `m{i+1}.rs`, and the `m` files

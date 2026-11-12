@@ -39,12 +39,11 @@ use num_bigint::BigUint;
 use crate::num::{TooLarge, room};
 
 mod names;
+mod tree;
 
 pub use names::{Name, Names};
-
-/// A string's text, shared.
-#[derive(Clone)]
-pub struct Text(Arc<Tree>);
+pub use tree::Text;
+use tree::{Digit, Size, Tree};
 
 /// `++` of two strings whose lengths in bytes add up past `usize::MAX`, the most a length holds:
 /// the lengths of the two, which the kernel reports as
@@ -55,57 +54,6 @@ pub struct TooLong {
     pub left: usize,
     /// The right string's length in bytes.
     pub right: usize,
-}
-
-/// A length in bytes and in characters (Unicode scalar values).
-// Complexity tradeoff: the naive `len` counts the characters of the text at each call
-// (`s.chars().count()`), O(n) per call, O(n²) for a loop that reads the length of a growing
-// string (COMPLEXITY.md R4: 39.1 to 63.9 times for 8 times the size). Here each tree and node
-// keeps its length in bytes and in characters, counted once when a block is made and added at
-// a join, so `len` and `char_count` are O(1) and read no text. Tradeoff: two words more per
-// node, and one character count per block made. Nothing is refused. Tests
-// `l01_36_cranelift::string_scaling` and `l01_36_cranelift::strings`.
-#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
-struct Size {
-    len: usize,
-    chars: usize,
-}
-
-impl Add for Size {
-    type Output = Size;
-
-    /// The size of two parts of one text: the join that made the text checked that its length
-    /// in bytes is representable, and it has no more characters than bytes.
-    fn add(self, other: Size) -> Size {
-        Size {
-            len: self.len + other.len,
-            chars: self.chars + other.chars,
-        }
-    }
-}
-
-/// One to four parts of one height, in order, the first `Some` and no `Some` after a `None`.
-type Digit = [Option<Text>; 4];
-
-enum Tree {
-    /// The empty text, and the middle of a deep tree that has nothing between its ends.
-    Empty,
-    /// A block of text, not empty, and its number of characters: a part of height 0.
-    Block { block: Arc<str>, chars: usize },
-    /// Two or three parts of one height `h`, in order, the third `None` when there are two: a
-    /// part of height `h + 1`.
-    Node {
-        size: Size,
-        parts: [Option<Text>; 3],
-    },
-    /// A tree of parts of height `h`: `front`, then the parts of the nodes of height `h + 1`
-    /// that `middle` holds, then `back`. A tree of one part is that part itself.
-    Deep {
-        size: Size,
-        front: Digit,
-        middle: Text,
-        back: Digit,
-    },
 }
 
 // Complexity tradeoff: a join of two texts whose bytes fit in `LEAF` together, or of a short

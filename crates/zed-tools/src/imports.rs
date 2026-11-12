@@ -2212,20 +2212,29 @@ impl<'b, 'a> Walk<'b, 'a> {
                 Tok::Ident("for") if self.tok(i + 1) != Some(Tok::Lt) => self.for_loop(i),
                 Tok::Ident("match") => self.match_arms(i),
                 Tok::Pipe if closure_start(self.toks, i) => self.closure(i),
+                // A word after `.` or `::` continues a chain, but one after `..` starts one: it
+                // is the end of a range (`..xs.len()`, `0..xs.len()`) or the base of a struct
+                // update, not a field.
                 Tok::Ident(_)
                     if !self.chained[i]
-                        && !matches!(
+                        && (!matches!(
                             i.checked_sub(1).and_then(|p| self.tok(p)),
                             Some(Tok::Dot | Tok::Sep)
-                        ) =>
+                        ) || (i >= 2
+                            && self.tok(i - 1) == Some(Tok::Dot)
+                            && self.tok(i - 2) == Some(Tok::Dot))) =>
                 {
                     self.chain(i);
                 }
                 Tok::Num(_) | Tok::Str if !self.chained[i] => {
                     self.value(i);
                 }
-                // A method called on what no chain types: `(a + b).m()`, a block, a literal.
-                Tok::Dot if !self.typed[i] => {
+                // A method called on what no chain types: `(a + b).m()`, a block, a literal. The
+                // second dot of `..` calls nothing: `..f()` is a range to a function's value.
+                Tok::Dot
+                    if !self.typed[i]
+                        && i.checked_sub(1).and_then(|p| self.tok(p)) != Some(Tok::Dot) =>
+                {
                     if let Some(Tok::Ident(name)) = self.tok(i + 1)
                         && self.tok(self.after_name(i + 1)) == Some(Tok::LParen)
                     {

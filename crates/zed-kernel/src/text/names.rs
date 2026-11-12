@@ -37,7 +37,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::{Text, Tree};
+use super::tree::{Text, Tree};
 
 /// How many symbols to the left a block start reads.
 const CL: usize = 8;

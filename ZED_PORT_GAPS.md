@@ -536,6 +536,24 @@ recursion. The moves, with no copy and no change in behavior:
 `imports crates/zedc-presburger/src` now reports no cycle (25 files, 58 imports), and
 `s_01f_import_graph` checks that.
 
+**The `zed-kernel` cycle STAGE-joined-eq-build brought is broken (IMPORT-cycle-kernel-text).**
+The tool reported one component of two files: `text.rs` re-exports `names::{Name, Names}` (a
+re-export is an import of the defining file), and `text/names.rs` imported `Text` and `Tree`
+from `text.rs`, since `Names::sum` reads a text's tree node by node. The move, with no copy and
+no change in behavior:
+
+| Edge | Move |
+|---|---|
+| `text/names` to `text` | The type definitions `Text`, `Size` (with its `Add`), `Digit` and `Tree` moved from `text.rs` to a new file below both, `text/tree.rs`. Their methods stay in `text.rs`; `names.rs` reads only the tree's variants and the field `Text.0`, and calls no method of `text.rs`. `text.rs` re-exports `Text`, so the path `zed_kernel::text::Text` is unchanged. Visibility widened from private to `pub(super)` (the module `text` and its children) for `Text.0`, `Size` and its fields, `Digit` and `Tree`, which `text.rs` and `names.rs` read |
+
+With the types apart from their methods, the tool drew a second, false edge from `names.rs` to
+`text.rs`: in `syms.get_mut(..ids.len())` it read the word after `..` as a field, left `ids` (a
+`&[u64]` parameter) untyped, and took `.len()` for `Text::len`, a method written apart from its
+type in a file whose type file `names.rs` imports. The tool now starts a chain at a word after
+`..` (the end of a range or the base of a struct update) and reads no method call at the second
+dot of `..` (`..f()`); test `s_01f_import_graph::a_word_after_a_range_starts_a_chain`.
+`imports crates/zed-kernel/src` now reports no cycle.
+
 `zed-kernel` and `zedc` read the shared scaling test through `#[path]` (`zed-kernel` `lib.rs:28`, `zedc` `lib.rs:45`); the tool reports such
 a module and does not read it, since its file is outside the crate.
 
