@@ -266,7 +266,7 @@ fn the_families_report_what_they_should() {
 /// agree: d^2 + d + 1 pairs, which hold about 2 d^3 / 3 choices. The pairs are numbered and
 /// written as runs, never one by one with their choices, so the default report is of order
 /// d^2 log d, the pairs times a log, by d at d and 8d; the walk that numbers the pairs takes
-/// 5 d^2 + 7 d + 2 steps and writes 3 d^2 + d runs.
+/// 5 d^2 + 10 d steps and writes 3 d^2 + d runs.
 #[test]
 fn a_shared_field_atom_scales() {
     let shared = |d: usize| {
@@ -288,10 +288,7 @@ fn a_shared_field_atom_scales() {
         let atom = t.laws[0].clauses()[0][0];
         let (pairs, runs, steps) = t.shared_atom_size(&atom).expect("the sides share fields");
         assert_eq!(pairs, d * d + d + 1);
-        assert_eq!(
-            (runs, steps),
-            (3 * d * d + d, (5 * d * d + 7 * d + 2) as u64)
-        );
+        assert_eq!((runs, steps), (3 * d * d + d, (5 * d * d + 10 * d) as u64));
         eprintln!("a shared-field atom at d = {d}: {pairs} pairs, {runs} runs, {steps} steps");
     }
     scaling::check_order("a shared-field atom, Default, by fields", d, 2, |n| {
@@ -306,7 +303,7 @@ fn a_shared_field_atom_scales() {
 /// `x` on the right needs `f` at its last projection. The walk follows the right side's k
 /// fields once with the left side's whole tree, which tests none of them, splits at `g0`, and at
 /// each pair of `f` nodes enters only the projections whose keys meet, instead of walking the k
-/// fields down to each `f` once for each left leaf: 2 k + 8 pairs, 8 k + 17 runs, 15 k + 41
+/// fields down to each `f` once for each left leaf: 2 k + 8 pairs, 8 k + 17 runs, 18 k + 46
 /// steps, and work linear in k, not k^2.
 #[test]
 fn a_shared_field_atom_with_cut_subtrees_scales() {
@@ -335,7 +332,7 @@ fn a_shared_field_atom_with_cut_subtrees_scales() {
         eprintln!("a cut shared-field atom at k = {k}: {pairs} pairs, {runs} runs, {steps} steps");
         assert_eq!(
             (pairs, runs, steps),
-            (2 * k + 8, 8 * k + 17, 15 * k as u64 + 41),
+            (2 * k + 8, 8 * k + 17, 18 * k as u64 + 46),
             "the walk takes only steps that reach a pair"
         );
     }
@@ -420,10 +417,10 @@ fn the_shared_field_families_scale() {
     let m = 128;
     // The pairs, runs and steps of each family at m, the same for its mirror.
     let size = |family: &str, m: usize| match family {
-        "brief" => (6 * m + 15, 20 * m + 40, 35 * m + 85),
-        "wide" => (3 * m + 2, 9 * m + 3, 19 * m + 10),
+        "brief" => (6 * m + 15, 20 * m + 40, 38 * m + 95),
+        "wide" => (3 * m + 2, 9 * m + 3, 22 * m + 11),
         "same" => (2 * m + 1, 4 * m, 12 * m + 2),
-        _ => (4 * m + 2, 14 * m + 7, 28 * m + 16),
+        _ => (4 * m + 2, 14 * m + 7, 30 * m + 21),
     };
     for family in ["brief", "wide", "same", "ne"] {
         for mirror in [false, true] {
@@ -482,11 +479,204 @@ fn the_joint_splits_scale() {
             (
                 4 * m * m + 4 * m + 2,
                 10 * m * m + 16 * m + 7,
-                (20 * m * m + 30 * m + 16) as u64
+                (20 * m * m + 34 * m + 21) as u64
             )
         );
     }
     scaling::check_order("the joint family, Default, by m", m, 2, |n| {
         run(&inputs[&n], Mode::Default)
     });
+}
+
+/// The families of plan row TRIVIAL-walk-picks, m copies of `h` of m arguments on each side,
+/// each copy of its own class, so that a node of `s` or `t` meets m^2 pairs of `h` nodes of
+/// distinct pairs of classes:
+///
+/// - `alternate`: `s(h(g(x0), x0, g(x0), ..), .., y0, .., ym) == t(h(y0, g(y0), y0, ..), ..,
+///   x0, .., xm)`, the i-th `h` at binder `x_i` (or `y_i`), `g` where the left side has a leaf
+///   and the reverse, so a leaf meets a subtree at every choice;
+/// - `tagged`: `s(h(x0, .., xm, z_i)^m, y.., w..) == t(h(y0, .., ym, w_j)^m, x.., z..)`, leaves
+///   of distinct keys at all but the last choice;
+/// - `rotations`: `s(h(x_i, .., x_{i-1})^m) == t(h(x_j, .., x_{j-1})^m)`, the m rotations of
+///   `h(x0, .., xm)` on each side;
+/// - `inner`: `alternate` with `g` at the same choices on both sides, so two subtrees meet;
+/// - `keyed`: `alternate` with `x_j` for `y_j` in the right side's `h`, so a leaf meets a
+///   subtree that holds its key at the pairs of classes i = j;
+/// - `deep`: `tagged` with each right `h` below a unary field of its own, `q_j(h(..))`;
+/// - `crossed`: `s(h(g(x_i), x_i, g(x_i), ..)^m, y..) == t(h(x_j, p(x0, .., xm), x_j, ..)^m, y..)`,
+///   so a leaf meets a subtree that holds its key at some pairs of classes and not at others, and
+///   a subtree of one key or of all; `mirror` is `crossed` with its sides swapped.
+fn picks(family: &str, m: usize) -> Theory {
+    let mut t = Theory::new("Picks");
+    let names = |p: &str| (0..m).map(|i| format!("{p}{i}")).collect::<Vec<String>>();
+    let (xs, ys, zs, ws) = (names("x"), names("y"), names("z"), names("w"));
+    let side = |f: &str, hs: Vec<String>, rest: &[&[String]]| {
+        let mut args = hs;
+        for r in rest {
+            args.extend(r.iter().cloned());
+        }
+        format!("{f}({})", args.join(", "))
+    };
+    // `h` of m arguments at binder `v`: `g(v)` at the choices of this parity, else `v`.
+    let alternate = |v: &str, parity: usize| {
+        let args: Vec<String> = (0..m)
+            .map(|c| {
+                if c % 2 == parity {
+                    format!("g({v})")
+                } else {
+                    v.to_string()
+                }
+            })
+            .collect();
+        format!("h({})", args.join(", "))
+    };
+    let tagged = |a: &[String], last: &str| format!("h({}, {last})", a.join(", "));
+    let all = |sets: &[&[String]]| {
+        sets.iter()
+            .map(|s| s.join(" "))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let (binders, l, r) = match family {
+        "crossed" | "mirror" => {
+            t.field("s", 2 * m)
+                .field("t", 2 * m)
+                .field("h", m)
+                .field("g", 1)
+                .field("p", m);
+            let l = side("s", xs.iter().map(|x| alternate(x, 0)).collect(), &[&ys]);
+            let every = format!("p({})", xs.join(", "));
+            let crossed = |x: &String| {
+                let args: Vec<&str> = (0..m)
+                    .map(|c| {
+                        if c % 2 == 0 {
+                            x.as_str()
+                        } else {
+                            every.as_str()
+                        }
+                    })
+                    .collect();
+                format!("h({})", args.join(", "))
+            };
+            let r = side("t", xs.iter().map(crossed).collect(), &[&ys]);
+            let (l, r) = if family == "mirror" { (r, l) } else { (l, r) };
+            (all(&[&xs, &ys]), l, r)
+        }
+        "alternate" | "inner" | "keyed" => {
+            t.field("s", 2 * m)
+                .field("t", 2 * m)
+                .field("h", m)
+                .field("g", 1);
+            let p = usize::from(family != "inner");
+            let r = if family == "keyed" { &xs } else { &ys };
+            let l = side("s", xs.iter().map(|x| alternate(x, 0)).collect(), &[&ys]);
+            let r = side("t", r.iter().map(|y| alternate(y, p)).collect(), &[&xs]);
+            (all(&[&xs, &ys]), l, r)
+        }
+        "tagged" | "deep" => {
+            t.field("s", 3 * m).field("t", 3 * m).field("h", m + 1);
+            let l = side(
+                "s",
+                zs.iter().map(|z| tagged(&xs, z)).collect(),
+                &[&ys, &ws],
+            );
+            let hs = ws.iter().enumerate().map(|(j, w)| {
+                if family == "deep" {
+                    format!("q{j}({})", tagged(&ys, w))
+                } else {
+                    tagged(&ys, w)
+                }
+            });
+            if family == "deep" {
+                for j in 0..m {
+                    t.field(&format!("q{j}"), 1);
+                }
+            }
+            let r = side("t", hs.collect(), &[&xs, &zs]);
+            (all(&[&xs, &ys, &zs, &ws]), l, r)
+        }
+        _ => {
+            t.field("s", m).field("t", m).field("h", m);
+            let rotation = |i: usize| {
+                let a: Vec<String> = (0..m).map(|c| xs[(c + i) % m].clone()).collect();
+                format!("h({})", a.join(", "))
+            };
+            let l = side("s", (0..m).map(rotation).collect(), &[]);
+            let r = side("t", (0..m).map(rotation).collect(), &[]);
+            (all(&[&xs]), l, r)
+        }
+    };
+    t.law("picks", &binders, &format!("{l} == {r}"));
+    t
+}
+
+/// On each family of [`picks`] the walk's pairs, runs and steps are quadratic in m, linear in
+/// the input's size, and the default report is of that order, by m at m and 8m: at a node split
+/// against a node of `h`, the lists of the choices of all the pairs of classes it meets are made
+/// together from the other node's live children, a lookup each (`Theory::pair_form`). Before
+/// plan row TRIVIAL-walk-picks each list was made alone from the smaller side's live children,
+/// m^3 steps: at m = 64, 387214, 367246 and 321102 steps and 156, 93 and 81 million
+/// instructions, where these take 141970, 105874 and 63442 steps (COMPLEXITY.md C32).
+#[test]
+fn the_picks_scale() {
+    let m = 8;
+    let size = |family: &str, m: usize| match family {
+        "alternate" => (
+            6 * m * m + 4 * m + 2,
+            14 * m * m + 20 * m + 7,
+            34 * m * m + 42 * m + 18,
+        ),
+        "tagged" => (
+            4 * m * m + 6 * m + 2,
+            10 * m * m + 24 * m + 7,
+            25 * m * m + 54 * m + 18,
+        ),
+        _ => (
+            3 * m * m + 4 * m + 2,
+            5 * m * m + 14 * m + 7,
+            15 * m * m + 31 * m + 18,
+        ),
+    };
+    for family in ["alternate", "tagged", "rotations"] {
+        let inputs = scaling::inputs(m, |m| picks(family, m));
+        for (&m, t) in &inputs {
+            let atom = t.laws[0].clauses()[0][0];
+            let (pairs, runs, steps) = t.shared_atom_size(&atom).expect("the sides share `h`");
+            eprintln!("{family} at m = {m}: {pairs} pairs, {runs} runs, {steps} steps");
+            let (p, r, s) = size(family, m);
+            assert_eq!(
+                (pairs, runs, steps),
+                (p, r, s as u64),
+                "{family} at m = {m}"
+            );
+        }
+        scaling::check_order(
+            &format!("the picks family {family}, Default, by m"),
+            m,
+            2,
+            |n| run(&inputs[&n], Mode::Default),
+        );
+    }
+}
+
+/// The lists made together keep exactly the choices the lists made one by one keep: the report
+/// on each family of [`picks`] at m = 2 and 3 agrees with brute force, and on `keyed` at m = 4,
+/// which reaches the lookup of each key below a subtree, as m = 2 and 3 do not.
+#[test]
+fn the_picks_agree_with_brute_force() {
+    for family in [
+        "alternate",
+        "tagged",
+        "rotations",
+        "inner",
+        "keyed",
+        "deep",
+        "crossed",
+        "mirror",
+    ] {
+        for m in [2, 3] {
+            super::brute::check(&picks(family, m));
+        }
+    }
+    super::brute::check(&picks("keyed", 4));
 }

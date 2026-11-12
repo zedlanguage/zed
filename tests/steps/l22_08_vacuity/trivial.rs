@@ -27,6 +27,7 @@
 //! report stops at the first such choice.
 
 use std::cell::OnceCell;
+use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fmt::Write as _;
 
@@ -786,7 +787,9 @@ impl Theory {
     /// - a leaf against a subtree is the subtree's `KeyIndex` walk under its entry for the
     ///   leaf's key (O(min(chosen, needed) log) a check at each branch point);
     /// - on a field both test it enters the two children of each choice together, only for the
-    ///   choices whose children may hold a pair (a list made once for each pair of classes);
+    ///   choices whose children may hold a pair (a list made once for each pair of classes; at a
+    ///   node split against a node of that field, the lists of all the pairs of classes the
+    ///   split node's children of the field make with it are made together);
     /// - on different fields it splits the side whose field the other side tests further down
     ///   (`Reach::first`), so the side tested sooner is split by the other side's fields first;
     /// - children are walked by class (`Tree::classes`): when the other side never tests the
@@ -799,20 +802,22 @@ impl Theory {
     ///
     /// Measured (instructions of the default report, m = 128 and 1024): brief, wide, same, ne and
     /// their mirrors grow 7.5 to 7.8 times for a limit of 12.6, at most 1.3 times the naive walk
-    /// (wide mirrored, 29.4 against 22.9 million at 1024); d = 50 and 400: 5 d^2 + 7 d + 2 steps
+    /// (wide mirrored, 29.4 against 22.9 million at 1024); d = 50 and 400: 5 d^2 + 10 d steps
     /// and 3 d^2 + d runs, 5.2 and 252 million instructions (naive 6.9 and 510), 49 times for a
     /// limit of 108 (d^2 log d). Cost: O(S log S) for the trees, S the paths' choices,
     /// O(E log^2 E) for an index, built only when a lookup first needs it, O(N log N) for the
     /// classes, groups and depth tables of the N nodes, the steps, then O(R + D) for the engine's
-    /// lists of the R runs. Open: the choice lists cost the pairs of classes that meet times the
-    /// children tested: m^3 when m classes of each side meet on m-child nodes, m^1.5 in an input
-    /// of size m^2 (plan row TRIVIAL-walk-picks; measured at m = 8 and 64, such atoms take 50 to
-    /// 68 times the instructions for an input 140 to 200 times larger). Not proved: a bound of
-    /// the steps by pairs plus tree size on every tree. Structural trigger: an atom whose sides
+    /// lists of the R runs. On the families of plan row TRIVIAL-walk-picks (`scaling::picks`),
+    /// m^2 pairs of `h` nodes of distinct pairs of classes, the steps are 5 to 6.4 times the
+    /// pairs. Open (plan row TRIVIAL-walk-frontier): when the split node's children of the field
+    /// lie deeper, below fields of their own (`q_j(h(..))`), each pair of classes still makes its
+    /// list alone, m^3 steps (`deep` at m = 64: 446482 steps for 25090 pairs). Not proved: a
+    /// bound of the steps by pairs plus tree size on every tree. Structural trigger: an atom whose sides
     /// share a field. Tests:
     /// `scaling::a_shared_field_atom_scales`, `scaling::a_shared_field_atom_with_cut_subtrees_scales`,
-    /// `scaling::the_shared_field_families_scale`, `scaling::the_joint_splits_scale`, with `brute`
-    /// and the corpus for the verdicts; COMPLEXITY.md C32; plan rows TRIVIAL-shared-atom,
+    /// `scaling::the_shared_field_families_scale`, `scaling::the_joint_splits_scale`,
+    /// `scaling::the_picks_scale`, with `brute`, `scaling::the_picks_agree_with_brute_force` and
+    /// the corpus for the verdicts; COMPLEXITY.md C32; plan rows TRIVIAL-shared-atom,
     /// TRIVIAL-walk-index, TRIVIAL-walk-branches, TRIVIAL-walk-picks.
     fn pair_form(&self, a: &Atom, lf: &[usize], rf: &[usize]) -> PairForm {
         let mut scope = Vec::with_capacity(lf.len() + rf.len());
@@ -849,6 +854,27 @@ impl Theory {
         // children may hold a pair, in `joint_kids[joint[&(left class, right class)]]`, sorted.
         let mut joint: HashMap<(usize, usize), std::ops::Range<usize>> = HashMap::new();
         let mut joint_kids: Vec<Choice> = Vec::new();
+        // For a node split against nodes of a field: the classes of its children of that field,
+        // in `kin_class[kin_classes[..]]`, and their live children by choice and key (`Kin`),
+        // sorted, in `kin[kin_records[..]]`.
+        #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+        enum Kin {
+            /// A child that tests a field.
+            Inner,
+            /// A leaf of this key.
+            Leaf(Sym),
+            /// A child that tests a field, with a leaf of this key below.
+            Below(Sym),
+        }
+        let mut kin_classes: HashMap<(usize, usize, usize), std::ops::Range<usize>> =
+            HashMap::new();
+        let mut kin_records: HashMap<(usize, usize, usize), std::ops::Range<usize>> =
+            HashMap::new();
+        let mut kin: Vec<(Choice, Kin, usize)> = Vec::new();
+        let mut kin_class: Vec<(usize, usize)> = Vec::new();
+        // The (side, class of the other side's node, node) whose lists were made together.
+        let mut batched: HashSet<(usize, usize, usize)> = HashSet::new();
+        let mut found: Vec<(usize, Choice)> = Vec::new();
         enum Step {
             /// A node of each side, reached by the choices fixed so far.
             Prod(usize, usize),
@@ -1021,6 +1047,153 @@ impl Theory {
                     // it is walked alone.
                     let side = usize::from(reach[0].first(fv, u) > reach[1].first(fu, v));
                     let s = [fu, fv][side];
+                    // The other side's node w meets each child of the split node n that tests
+                    // its field f: make the lists of all those pairs of classes at once.
+                    //
+                    // Complexity tradeoff: one by one, each pair of classes (class of w, class
+                    // of a child b) costs min(live w, live b), so w against m children of m
+                    // classes, each with m live children, costs m^2, and m such w cost m^3 for
+                    // m^2 pairs of nodes (plan row TRIVIAL-walk-picks). Together, the children
+                    // of n's children of f are indexed once for (n, f) by choice and key (`Kin`),
+                    // O(K log K) for their K records, each internal child with the keys below
+                    // it that the other tree has; then each live child of w is looked up in
+                    // that index, O(log K) each plus the records it finds.
+                    // A leaf below a child of w meets the index by its key; an internal child
+                    // of w meets the leaves at its choice through the fewer of the keys below
+                    // it and those leaves, at most one leaf per class of b live at that choice.
+                    // So a batch costs O((live w + its choices kept + the smaller of the keys
+                    // below and the leaves at each internal choice of w) log K), never more
+                    // than the lists of all of n's classes of f made one by one, times a log;
+                    // it runs only when those not made yet would cost one by one (`apart`)
+                    // more than live w. The index is built once for (n, f) and only when
+                    // a batch first needs it, and each node is a grandchild of one n, with one
+                    // record per entry of its own (`KeyIndex::below`), so all these indexes
+                    // together cost O((N + E) log(N + E)) for the N nodes and E index entries.
+                    // Counting the classes of n costs its children, once for (n, f), and the
+                    // classes, once for (class of w, n): the split that follows pays as much.
+                    let (o, n, w) = (1 - side, [u, v][side], [u, v][1 - side]);
+                    let (f, a) = (trees[o].test[w], class[o].number[w]);
+                    if batched.insert((side, a, n)) {
+                        let (t, cl) = (trees[side], &class[side]);
+                        let classes = kin_classes
+                            .entry((side, n, f))
+                            .or_insert_with(|| {
+                                let start = kin_class.len();
+                                for &b in &t.kid[t.kid_at[n].clone()] {
+                                    if t.test[b] == f && cl.number[b] != DEAD {
+                                        kin_class.push((cl.number[b], b));
+                                    }
+                                }
+                                kin_class[start..].sort_unstable();
+                                let mut j = start;
+                                for i in start..kin_class.len() {
+                                    if j == start || kin_class[i].0 != kin_class[j - 1].0 {
+                                        kin_class[j] = kin_class[i];
+                                        j += 1;
+                                    }
+                                }
+                                kin_class.truncate(j);
+                                steps += t.kid_at[n].len() as u64;
+                                start..kin_class.len()
+                            })
+                            .clone();
+                        let key = |b: usize| if side == 1 { (a, b) } else { (b, a) };
+                        // Per pair of classes, the smaller side's live children; together, the
+                        // other side's node's children once and a lookup for each.
+                        steps += classes.len() as u64;
+                        let apart: usize = kin_class[classes.clone()]
+                            .iter()
+                            .filter(|&&(b, _)| !joint.contains_key(&key(b)))
+                            .map(|&(_, bn)| class[o].live[w].min(cl.live[bn]))
+                            .sum();
+                        if apart > class[o].live[w] {
+                            let records = kin_records
+                                .entry((side, n, f))
+                                .or_insert_with(|| {
+                                    let start = kin.len();
+                                    for &(bc, b) in &kin_class[classes.clone()] {
+                                        let at = t.kid_at[b].start;
+                                        for &c in &cl.order[at..at + cl.live[b]] {
+                                            let k = t.kid[at + c as usize];
+                                            if t.test[k] == NONE {
+                                                let key = t.key[k].expect("a live leaf has a key");
+                                                kin.push((c, Kin::Leaf(key), bc));
+                                            } else {
+                                                kin.push((c, Kin::Inner, bc));
+                                                let ix = index(side);
+                                                for e in ix.below[k].clone() {
+                                                    if keys[o].binary_search(&ix.key[e]).is_ok() {
+                                                        kin.push((c, Kin::Below(ix.key[e]), bc));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    kin[start..].sort_unstable();
+                                    steps += (kin.len() - start) as u64;
+                                    start..kin.len()
+                                })
+                                .clone();
+                            let (records, classes) = (&kin[records], &kin_class[classes]);
+                            found.clear();
+                            let find = |c: Choice, k: Kin| {
+                                let lo = records.partition_point(|&(rc, rk, _)| (rc, rk) < (c, k));
+                                let hi = lo
+                                    + records[lo..]
+                                        .partition_point(|&(rc, rk, _)| (rc, rk) == (c, k));
+                                lo..hi
+                            };
+                            let at = trees[o].kid_at[w].start;
+                            for &c in &class[o].order[at..at + class[o].live[w]] {
+                                let k = trees[o].kid[at + c as usize];
+                                steps += 1;
+                                if trees[o].test[k] == NONE {
+                                    let key = trees[o].key[k].expect("a live leaf has a key");
+                                    for r in [find(c, Kin::Leaf(key)), find(c, Kin::Below(key))] {
+                                        found.extend(records[r].iter().map(|&(_, _, b)| (b, c)));
+                                    }
+                                    continue;
+                                }
+                                let r = find(c, Kin::Inner);
+                                found.extend(records[r].iter().map(|&(_, _, b)| (b, c)));
+                                // Leaves of the split side's children at `c` with a key below
+                                // `k`: the fewer of those leaves and of the keys below `k`.
+                                let lo = find(c, Kin::Inner).end;
+                                let hi = lo
+                                    + records[lo..].partition_point(|&(rc, rk, _)| {
+                                        rc == c && matches!(rk, Kin::Leaf(_))
+                                    });
+                                let ix = index(o);
+                                if ix.below[k].len() < hi - lo {
+                                    for e in ix.below[k].clone() {
+                                        let r = find(c, Kin::Leaf(ix.key[e]));
+                                        steps += 1;
+                                        found.extend(records[r].iter().map(|&(_, _, b)| (b, c)));
+                                    }
+                                } else {
+                                    for &(_, rk, b) in &records[lo..hi] {
+                                        steps += 1;
+                                        if let Kin::Leaf(key) = rk
+                                            && ix.entry(k, key).is_some()
+                                        {
+                                            found.push((b, c));
+                                        }
+                                    }
+                                }
+                            }
+                            found.sort_unstable();
+                            let mut i = 0;
+                            for &(b, _) in classes {
+                                let j = i + found[i..].partition_point(|&(fb, _)| fb == b);
+                                if let Entry::Vacant(slot) = joint.entry(key(b)) {
+                                    let begin = joint_kids.len();
+                                    joint_kids.extend(found[i..j].iter().map(|&(_, c)| c));
+                                    slot.insert(begin..joint_kids.len());
+                                }
+                                i = j;
+                            }
+                        }
+                    }
                     chosen.push(s);
                     stack.push(Step::Split {
                         s,
