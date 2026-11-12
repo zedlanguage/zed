@@ -20,6 +20,7 @@ mod scaling;
 mod spelling;
 mod tuple_rest;
 mod tuples;
+mod two_union_operands;
 mod written;
 
 use zed_tests::tokens;
