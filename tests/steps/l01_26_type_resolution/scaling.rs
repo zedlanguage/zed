@@ -943,9 +943,12 @@ fn shared_rows(n: usize, call: bool) -> String {
 fn rows_shared_on_many_paths_are_replaced_once() {
     let (info, _) = info(&shared_rows(2, true));
     assert!(info.errors.is_empty(), "{:?}", info.errors);
+    // MSG-derive-type-size: the row `(0, (0, 1))`, written twice and once inside another, is
+    // named, so the type of `y` at n steps is written in O(n), not O(2^n). Before:
+    // `((0, (0, 1)), ((0, (0, 1)), 2))`.
     assert_eq!(
         info.tops["y"].to_string(),
-        "((0, (0, 1)), ((0, (0, 1)), 2))"
+        "type T1 = (0, (0, 1));\n(T1, (T1, 2))"
     );
     assert_eq!(
         sig(&shared_rows(2, false), "f"),

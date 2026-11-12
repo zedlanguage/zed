@@ -35,6 +35,7 @@ mod scaling;
 mod stable;
 mod sum_plus;
 mod suppress;
+mod type_size;
 mod tyvars;
 mod untracked;
 mod variants;

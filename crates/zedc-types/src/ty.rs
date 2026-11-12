@@ -8903,6 +8903,14 @@ impl Ty {
         }
         for cs in &self.tuples {
             parts.push(Print::Sep);
+            // A row whose kernel type is the whole of it is written as a kernel set, with the
+            // others of the text ([`write_parts`]), so a part it holds in two places or more is
+            // written once, as `type Tk = …;`: `t_i = (t_{i-1}, t_{i-1})` over n levels writes
+            // n definitions, not 2^n components (MSG-derive-type-size).
+            if let (Some(k), false) = (&cs.0.kernel, cs.0.listed) {
+                parts.push(Print::Set(k.clone(), place, false));
+                continue;
+            }
             // A tuple alone as an arrow's key is parenthesized, `((int, int)) ->? V`, since
             // `(int, int) ->? V` has two parameters; `(int,) ->? V` has one.
             let wrap = at == PrintAt::Key && cs.len() != 1;
@@ -9365,15 +9373,21 @@ impl<'a> Morphism<'a> {
 /// ([`defs::name_vars`]).
 ///
 /// The kernel sets in the text are written last, all together by name
-/// ([`KType::surfaces_by_name`]), each where it stands: a part used more than once among them
-/// gets a definition `type Tk = …;`, declared on a line of its own before the whole text
-/// ([`zed_kernel::types::defs::declare`]), so the text stays linear in the sets' graph.
+/// ([`KType::surfaces_by_name`]), each where it stands. Printed alone, the text is then finished
+/// by [`defs::lift`]: a part the sets name, and a tuple written more than once, once inside
+/// another part, as [`defs::lift`] gives, gets a definition `type Tk = …;`, declared on a line
+/// of its own before the whole text ([`defs::declare`]), so the text stays linear in the sets'
+/// graph. In a message the message finishes it.
 fn write_parts<'a>(
     start: Print<'a>,
     out: &mut String,
     scope: &mut Scope,
     spell: Option<Spell<'_>>,
 ) {
+    // Outside a message the text is finished here as a message's are ([`defs::lift`]), so a
+    // type printed alone writes the parts it repeats as a message writes them
+    // (MSG-derive-type-size).
+    let alone = defs::local();
     let base = out.len();
     let (fresh, opened) = (scope.fresh, scope.same.len());
     let mut walk = Walk::default();
@@ -9393,17 +9407,13 @@ fn write_parts<'a>(
             out.push(defs::VARS_END);
         }
     }
-    let mut def_names = HashSet::new();
     if !kernel.sets.is_empty() {
         let texts = match spell {
             Some(spell) => KType::surfaces_apart(&kernel.sets, &kernel.apart, Some(spell)),
             None => KType::surfaces_apart(&kernel.sets, &kernel.apart, None),
         };
+        debug_assert!(texts.defs.is_empty(), "the table holds the definitions");
         let rest = out.split_off(base);
-        for (name, body) in &texts.defs {
-            zed_kernel::types::defs::declare(out, name, body).expect("a String takes any text");
-            def_names.insert(name.clone());
-        }
         let mut from = 0;
         for (at, text) in kernel.at.iter().zip(&texts.roots) {
             let at = at - base;
@@ -9413,12 +9423,15 @@ fn write_parts<'a>(
         }
         out.push_str(&rest[from..]);
     }
-    // Inside a message the marks stay, and the message names them with its own words
-    // (`defs::lift`), so that a variable is never named as another type of the message is.
-    if marked && !defs::active() {
-        defs::name_vars(out, base, &|w| {
-            scope.bound.contains(w) || def_names.contains(w)
-        });
+    // Inside a message the marks and references stay, and the message names them with its own
+    // words, so that a variable is never named as another type of the message is.
+    if alone.is_some() && (marked || !kernel.sets.is_empty()) {
+        let mut text = out.split_off(base);
+        let lifted = defs::lift(&mut [&mut text], &|w| scope.bound.contains(w));
+        for (name, body) in &lifted {
+            defs::declare(out, name, body).expect("a String takes any text");
+        }
+        out.push_str(&text);
     }
 }
 

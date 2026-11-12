@@ -139,13 +139,13 @@ fn a_mixed_component_is_refused_with_its_own_message() {
         site.defs,
         [
             "type A = (#k, C & A) | (B & (_, _), (int) -> C);",
-            // PRINT-fmt-audit: a body that uses `(_, _)` twice names it `T1`. Item
-            // PRINT-group-site-defs: outside a message `T1` is declared after the definitions,
-            // each line a declaration; before, the line was
-            // `type B = type T1 = (_, _); ((int) -> C & T1) | …`, which no parser reads.
-            "type B = ((int) -> C & T1) | (B & ((int) -> C), B) | (A & T1,);",
+            // MSG-derive-type-size: a tuple with no part of its own is written in full wherever
+            // it stands, as `A` and `C` write it. Before, `B`, which writes `(_, _)` twice,
+            // named it `T1`, declared after the definitions (PRINT-fmt-audit,
+            // PRINT-group-site-defs): `type B = ((int) -> C & T1) | (B & ((int) -> C), B) |
+            // (A & T1,);` and `type T1 = (_, _);`.
+            "type B = ((int) -> C & (_, _)) | (B & ((int) -> C), B) | (A & (_, _),);",
             "type C = (B & (_, _), B) | ((int) -> A);",
-            "type T1 = (_, _);",
         ]
     );
     // The lines read as declarations at the top level of a file.
@@ -626,8 +626,8 @@ fn refused_members_sharing_a_decided_part_scale() {
         assert_eq!(t.verdict(), Verdict::Refused(Refusal::Group));
         let site = t.refusal_site(Refusal::Group).expect("a refused member");
         assert!(site.head.starts_with("Box"), "{site:?}");
-        // The definitions, and `T1` declared after them: the `(_, _)` that `B` writes twice.
-        assert_eq!(site.defs.len(), SIZE + 2, "{site:?}");
+        // The definitions alone: `B` writes its `(_, _)` in full (MSG-derive-type-size).
+        assert_eq!(site.defs.len(), SIZE + 1, "{site:?}");
     }
     scaling::check_order("m refused members sharing a decided part of n", n, 1, |n| {
         Type::forget_emptiness();
@@ -782,8 +782,8 @@ fn refused_members_reaching_many_refused_components_scale() {
         assert_eq!(t.verdict(), Verdict::Refused(Refusal::Group));
         let site = t.refusal_site(Refusal::Group).expect("a refused member");
         assert!(site.head.starts_with("Box"), "{site:?}");
-        // The definitions, and `T1` declared after them: the `(_, _)` that `B` writes twice.
-        assert_eq!(site.defs.len(), SIZE + 2, "{site:?}");
+        // The definitions alone: `B` writes its `(_, _)` in full (MSG-derive-type-size).
+        assert_eq!(site.defs.len(), SIZE + 1, "{site:?}");
     }
     scaling::check_order(
         "m refused members reaching n refused components",

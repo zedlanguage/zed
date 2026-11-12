@@ -2202,14 +2202,22 @@ fn a_tuple_type_taken_away_in_part_from_a_wide_tuple_type_leaves_its_values_out(
             ty(outside).subtype(&t),
             "{outside} is in {param}, read as {t}"
         );
+        // MSG-derive-type-size: in the last case `((1, 2), 3)` is the type of a step of its own
+        // and a part of the argument, and it holds a part, so the message names it `T1` and
+        // writes the argument `(T1, 4)`; the shorter `(1, 2)` stays in full.
+        let written = if taken == "(((1, 2), 3), 4)" {
+            "(T1, 4)"
+        } else {
+            taken
+        };
         let step =
-            format!("`{taken} : {removed}` is in the part `\\` takes away from `p : {param}`");
+            format!("`{written} : {removed}` is in the part `\\` takes away from `p : {param}`");
         let text = format!("f(p: {param}) = p;\ng() = f(p: {taken});\nh() = f(p: {outside});\n");
         let errs = errors_with_steps(&text);
         assert_eq!(errs.len(), 1, "{text}{errs:#?}");
         let (message, steps) = &errs[0];
         assert!(
-            message.starts_with(&format!("`f` does not take ({taken})")),
+            message.starts_with(&format!("`f` does not take ({written})")),
             "{text}{message}"
         );
         assert!(steps.contains(&step), "{text}{steps:#?}");

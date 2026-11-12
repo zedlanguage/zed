@@ -679,12 +679,13 @@ const DECLARE: &str = "\u{FDD8}";
 /// wrote [`DECLARE`], to declare them at the top level; elsewhere [`DECLARE`] is dropped. A
 /// message with no part written twice is as it was.
 fn lay_out(message: &mut String, notes: &mut [Note], menu: &mut String) {
-    let code: Vec<bool> = notes.iter().map(|n| defs::holds(&n.text)).collect();
     let mut texts: Vec<&mut String> = std::iter::once(&mut *message)
         .chain(notes.iter_mut().map(|n| &mut n.text))
         .chain(std::iter::once(menu))
         .collect();
-    let lifted = defs::lift(&mut texts, &|_| false);
+    let (lifted, holding) = defs::lift_holding(&mut texts, true, &|_| false);
+    // Whether each note names a definition: the texts are the message, the notes, the menu.
+    let code: Vec<bool> = holding[1..=notes.len()].to_vec();
     let these = match lifted.len() {
         1 => "the declaration above",
         _ => "the declarations above",

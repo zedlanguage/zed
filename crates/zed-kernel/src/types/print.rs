@@ -1313,16 +1313,41 @@ impl Printer<'_> {
         }
     }
 
-    /// The class a node shows: a name is a primary.
+    /// The class a node shows: a name is a primary, and a tuple the message may write in full
+    /// ([`defs::add_soft`]) that of its text.
     fn class(&self, mut i: usize, named: &[Option<String>]) -> Class {
         loop {
-            if named[i].is_some() {
-                return Class::Prim;
+            if let Some(name) = &named[i] {
+                return match defs::is_soft(name) {
+                    true => self.own_class(i),
+                    false => Class::Prim,
+                };
             }
             match self.texts[i].as_ref().expect("visited").class {
                 Class::Of(j) => i = j,
                 c => return c,
             }
+        }
+    }
+
+    /// The class of node `i`'s own text, through the nodes it is one reference to.
+    fn own_class(&self, mut i: usize) -> Class {
+        loop {
+            match self.texts[i].as_ref().expect("visited").class {
+                Class::Of(j) => i = j,
+                c => return c,
+            }
+        }
+    }
+
+    /// Whether node `i`'s text is a tuple type, `(A, B)` or `(A,)`. A one-tuple is a primary
+    /// ([`Printer::row`]), and the only text that ends `,)`.
+    fn is_row(&self, i: usize) -> bool {
+        let text = self.texts[i].as_ref().expect("visited");
+        match text.class {
+            Class::Tuple => true,
+            Class::Prim => matches!(text.segs.last(), Some(Seg::Str(s)) if s == ",)"),
+            _ => false,
         }
     }
 
@@ -1450,10 +1475,42 @@ impl Printer<'_> {
         };
         let mut waiting = Vec::new();
         for &i in &self.post {
-            if !defined(i) {
+            if self.named(i) && !defined(i) {
+                // Named by the node of equal text it is an alias of.
+                continue;
+            }
+            // A tuple goes into the table as a part that `defs::lift` names only if it is
+            // written inside another part, by the rule `defs::lift` gives, as when each
+            // step of a chain `a2 = (a1, 2)` writes the one before, or each level of
+            // `t2 = (t1, t1)` the level below; elsewhere it is written in full, so
+            // `(p: (int,)) -> (int,)` keeps its two `(int,)` (MSG-derive-type-size). A
+            // one-tuple is a tuple here too, though it binds as a primary. Whether this type
+            // writes it twice does not decide: another type of the message may write it again.
+            // One whose body waits on a definition of a cycle is named as before if this type
+            // names it, and else written in full.
+            let tuple = self.forced[i].is_none() && self.is_row(i);
+            if !tuple && !self.named(i) {
                 continue;
             }
             let b = body(i, named);
+            // A node whose text is one name, as a union of one tuple or a type that is one
+            // tuple, writes that name, so it is named only if that part is: else a tuple used
+            // once in each of two types would be named by the type that holds it.
+            let alias = self.forced[i].is_none() && defs::only_reference(&b).is_some();
+            if alias || (tuple && !b.contains(defs::WAIT)) {
+                let r = match alias {
+                    true => b,
+                    false => defs::soft_reference(defs::add_soft(b)),
+                };
+                for &a in &aliases[i] {
+                    named[a] = Some(r.clone());
+                }
+                named[i] = Some(r);
+                continue;
+            }
+            if !self.named(i) {
+                continue;
+            }
             let k = match b.contains(defs::WAIT) {
                 true => {
                     let k = defs::reserve();
@@ -1503,6 +1560,13 @@ impl Printer<'_> {
             match piece {
                 Piece::Str(s) => out.push_str(s),
                 Piece::Node(i, at) => match &named[i] {
+                    // A part the message may write in full ([`defs::add_soft`]) binds as its
+                    // text does.
+                    Some(name) if defs::is_soft(name) && !at.admits(self.own_class(i)) => {
+                        out.push('(');
+                        out.push_str(name);
+                        out.push(')');
+                    }
                     Some(name) => out.push_str(name),
                     None => {
                         if !at.admits(self.class(i, named)) {
@@ -1586,7 +1650,7 @@ mod tests {
 
     use super::super::bdd::Part;
     use super::super::{Op, Row, SALT, Type};
-    use super::defs::{collect, holds, lift, plain};
+    use super::defs::{collect, lift, plain};
     use crate::scaling;
     use crate::value::Value;
 
@@ -1789,7 +1853,7 @@ mod tests {
         let _on = collect();
         let s = t.surface();
         assert!(s.defs.is_empty());
-        assert!(holds(&s.root));
+        assert_ne!(s.root, alone, "the root holds a reference");
         assert_eq!(plain(&s.root), alone);
         // A type with no part used twice holds no reference.
         assert_eq!(defs_abc().surface().root, "#a | #b | #c");
