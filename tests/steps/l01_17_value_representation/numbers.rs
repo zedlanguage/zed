@@ -89,10 +89,16 @@ fn numbers_of_different_kinds_do_not_mix() {
         errors("x = 1r;\na = x + f64(1);\n"),
         ["`+` does not take (1r, f64): no arrow of `+` takes these types. [x + f64(1)]"]
     );
-    // A name bound to an integer literal is an `int`, and does not mix with a `rat`.
+    // A name bound to an integer literal is an `int`, and does not mix with a `rat`; the
+    // literal whose suffix forces the `rat` is named, with the line rewritten without it
+    // (DESIGN sec:diagnostics, "A short headline").
     assert_eq!(
         errors("i = 1;\na = 1r + i;\n"),
-        ["`+` does not take (1r, 1): no arrow of `+` takes these types. [1r + i]"]
+        [
+            "The suffix makes the literal `1r` a `rat`, never `int`. Try `a = 1 + i` instead.\n  \
+             fixes, each checked here:\n    a = 1 + i;          the literal is then the int 1\n    \
+             a = 1r + rat(i);    i is cast to rat [1r]"
+        ]
     );
     // A literal with a suffix keeps its carrier, and is rejected with the forms to write; a
     // literal without one takes the carrier the other side expects, exactly (steps L1.26,
