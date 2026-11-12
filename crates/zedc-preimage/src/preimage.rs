@@ -2045,7 +2045,7 @@ impl<'t> Scoped<'t> {
     }
 
     /// Whether the last [`Scoped::relation`] met a constant written as a power that could not be
-    /// built in the memory the system gave ([`Walk::built`]), so that a relation of `None` is a
+    /// built in the memory the system gave (`Walk::built`), so that a relation of `None` is a
     /// refused question, not a body outside the domain. O(1).
     pub fn unbuilt(&self) -> bool {
         self.tx.unbuilt

@@ -82,7 +82,7 @@ fn vertices(edges: &[Edge]) -> Vec<usize> {
 
 /// Tarjan's edge stack, with explicit DFS frames. All indices below come from
 /// rows checked by color, or from its own local adjacency lists. The clock is
-/// at most the length of an allocated Vec<Vec<usize>>, hence cannot overflow.
+/// at most the length of an allocated `Vec<Vec<usize>>`, hence cannot overflow.
 fn blocks(adj: &[Vec<usize>], excluded: Option<usize>) -> Option<Vec<Vec<Edge>>> {
     let n = adj.len();
     let mut entered = vec![usize::MAX; n];

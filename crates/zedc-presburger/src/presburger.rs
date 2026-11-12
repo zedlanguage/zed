@@ -1735,7 +1735,7 @@ fn modular_answer(f: &Formula, want_model: bool) -> Option<Option<Model>> {
 }
 
 /// The record of a run under [`with_modular_empty_checked`]: of the answers of
-/// [`modular::solve_modular`] that a formula has no point, the number the path without it also
+/// `modular::solve_modular` that a formula has no point, the number the path without it also
 /// gave (`agreed`), the formulas that path found a point of (`wrong`), and those it refused
 /// (`refused`), which a caller can check by other means.
 #[derive(Debug, Default)]
