@@ -1973,16 +1973,17 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| BUILD-const | impl attempt 1 | 2026-11-05 04:07 | design: build word with build.target and build.options.<name>, AST rewrite after resolve, manifest options entry, --option; spec worktree made |
-| DIAG-control | impl attempt 1 | 2026-11-05 04:07 | started; creating worktree |
+| BUILD-const | impl attempt 1 | 2026-11-05 04:07 | l02_08d 14/14 pass (load 49); negative controls run once: pins at live build fails pins test, per-read rescan fails scaling 25.3x > 11.2x |
+| DIAG-control | impl attempt  | 2026-11-05 04:07 | DESIGN 86f8d9a on wt/diag-control-spec; running affected pieces with --doc |
 | GSX-unsolved | hybrid-xr attempt 1 | 2026-11-11 16:53 | round H1 seats launched: Opus 5.5 medium (h1/claude, tree gsxh-claude), gpt-6.1-sol medium (h1/codex, tree gsxh-codex), 5 h limit; load 25.46 30.53 39.26 |
 | LOAD-max-div-unsolved | hybrid-xr attempt 1 | 2026-11-11 17:11 | round 1 launched: Codex gpt-6.1-sol + Opus medium on own difference-rule attempt (all A/C k<=1.04 in Python); Gemini 429; CD 7779475775073288193 continues (best |
-| NAME-nonprinting | orchestrator attempt  | 2026-11-12 13:28 | A97 answered; row added, queued for the next free slot |
+| NAME-ascii-library | running | 2026-11-12 13:53 |  |
+| NAME-nonprinting | impl attempt 1 | 2026-11-12 13:28 | started; worktrees wt/name-nonprinting and wt/name-nonprinting-spec made and seeded |
 | POLY-nf-power | impl attempt 1 | 2026-11-12 13:01 | rule A (terms bound per node) and gcd step for the dense product written; building |
-| SOUND-random | impl attempt 1 | 2026-11-05 04:07 | random generator found a checker stack overflow (sum/^ on a class resolved to its own variable, walk.rs sum/power_vars/no_int_vars); fixed with Ck::class_root;  |
+| SOUND-random | impl attempt 1 | 2026-11-05 04:07 | tests l01_26_type_resolution + l01_39a_bit_words + zedc_check (with docs): 181 pieces, 0 failed; load 46.75 to 58.44 |
 | TESTS-L1.19-line-ends | impl attempt 1 | 2026-11-08 23:59 | found: main fails clippy -D warnings in tests/steps/m0_06_cost_scalarization/overlap.rs:93 (cloned_ref_to_slice_refs) and :551 (manual_is_multiple_of), from 6aa |
 | TRIVIAL-walk-branches | cd attempt  | 2026-11-12 11:58 | round-2 CD restart launched: experiment 3564106523854503937 (14 families + mirrors, seeded with the product walk; seed metric 3337022.7); round-1 experiment 702 |
-| WARN-refused | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/warn-refused on origin/main, seeded; load 26.44 34.04 49.89 |
+| WARN-refused | impl attempt 1 | 2026-11-05 04:07 | placing done (tests, reaches, ints_in_scope, bound); headlines shortened; new tests l01_29_diagnostics::refused_warning; spec text in wt/warn-refused-spec; buil |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
