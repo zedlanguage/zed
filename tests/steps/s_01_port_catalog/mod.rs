@@ -257,10 +257,9 @@ fn check_zed_takes_missing_plan_rows_and_zed_texts_in_zed0_only() {
             "calls `where` with 3 positional; it takes 2",
         ),
         ("`min(a)`", "it takes 2 or more positional"),
-        ("`xs.sort()`", "it takes its receiver and sort keys"),
         (
             "`xs.sort(asc f, by: f)`",
-            "it takes its receiver and sort keys",
+            "both sort keys and a comparator `by:`; it takes its receiver alone",
         ),
         ("`xs.map(asc f)`", "calls `map` with 2 positional"),
         ("`xs.indexOf(a)`", "reads `.indexOf`, which is no word"),
@@ -277,6 +276,84 @@ fn check_zed_takes_missing_plan_rows_and_zed_texts_in_zed0_only() {
     for (cell, want) in bad {
         let p = check_zed(cell, &spec, &words, &rows).unwrap_or_default();
         assert!(p.contains(want), "{cell:?}: {p:?} lacks {want:?}");
+    }
+}
+
+/// `.sort` with no argument but its receiver sorts the values themselves in ascending order
+/// (DESIGN.md sec:order, A37: `xs.sort()` and `xs.sort(asc)` are `xs.sort(asc x -> x)`, and
+/// `xs.sort(desc)` is `xs.sort(desc x -> x)`), so the catalog check takes it, as it takes sort
+/// keys and a comparator `by:`. It still refuses sort keys and `by:` together, a positional
+/// argument that is not a sort key, and a call with no receiver, each saying which.
+#[test]
+fn check_zed_takes_a_sort_with_no_key_and_refuses_the_other_wrong_sorts() {
+    let dir = spec_dir("catalog_zed_sort");
+    let spec = Spec::open(&dir.root()).expect("the test spec");
+    let words = WordTable::read(&spec.design).expect("its table");
+    let rows = HashSet::new();
+    let ok = [
+        "`xs.sort()`",
+        "`sort(xs)`",
+        "`xs.sort`",
+        "`xs.sort(asc)`",
+        "`xs.sort(desc)`",
+        "`xs.sort(desc, asc x -> x)`",
+        "`xs.sort().first`",
+        "`xs.map(y -> y + 1).sort()`",
+        "`sort(xs, desc f)`",
+    ];
+    for cell in ok {
+        assert_eq!(check_zed(cell, &spec, &words, &rows), None, "{cell}");
+    }
+    let takes = "it takes its receiver alone, which sorts the values themselves in ascending \
+                 order (`xs.sort()` is `xs.sort(asc x -> x)`), its receiver and sort keys, \
+                 each `asc …` or `desc …`, or its receiver and a comparator `by:`";
+    let bad = [
+        (
+            "`xs.sort(asc f, by: f)`",
+            "calls `sort` with 2 positional and `by:`, both sort keys and a comparator `by:`",
+        ),
+        (
+            "`xs.sort(desc, by: f)`",
+            "calls `sort` with 2 positional and `by:`, both sort keys and a comparator `by:`",
+        ),
+        (
+            "`xs.sort(f)`",
+            "calls `sort` with 2 positional, and a positional argument after the receiver that \
+             is not a sort key `asc …` or `desc …`",
+        ),
+        (
+            "`xs.sort(f, by: f)`",
+            "calls `sort` with 2 positional and `by:`, and a positional argument after the \
+             receiver that is not a sort key",
+        ),
+        (
+            "`xs.sort(asc f, f)`",
+            "calls `sort` with 3 positional, and a positional argument after the receiver",
+        ),
+        (
+            "`sort(xs, f)`",
+            "calls `sort` with 2 positional, and a positional argument after the receiver",
+        ),
+        (
+            "`sort()`",
+            "calls `sort` with 0 positional, and no receiver",
+        ),
+        (
+            "`sort(asc f)`",
+            "calls `sort` with 1 positional, and no receiver",
+        ),
+        (
+            "`xs.sort(key: f)`",
+            "calls `sort` with 1 positional and `key:`",
+        ),
+    ];
+    for (cell, want) in bad {
+        let p = check_zed(cell, &spec, &words, &rows).unwrap_or_default();
+        assert!(p.contains(want), "{cell:?}: {p:?} lacks {want:?}");
+        assert!(
+            p.ends_with(takes),
+            "{cell:?}: {p:?} does not end with {takes:?}"
+        );
     }
 }
 

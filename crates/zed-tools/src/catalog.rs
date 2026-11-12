@@ -636,7 +636,7 @@ const fn sig(word: &'static str, positional: Count) -> Sig {
 /// gives them and the integer machine operations as step L1.39f does, with `width:` on the
 /// words whose result depends on a width; the views of a string one (L1.39c); the family
 /// operations their receiver and the operands of the kernel table (sec:kernel): `foldl(init,
-/// op)`, `foldr(op, init)`, `.sort(asc f, …)` or `.sort(by: le)`, and one operand for the
+/// op)`, `foldr(op, init)`, `.sort(asc f, …)`, `.sort()` (the key `x -> x`, sec:order) or `.sort(by: le)`, and one operand for the
 /// others.
 const SIGS: &[Sig] = &[
     sig("String", Count::Exactly(1)),
@@ -739,23 +739,23 @@ const OPERANDS: [&str; 14] = [
 ];
 
 /// One call in a Zed text: the word, its positional arguments (the receiver counted), the
-/// names of its named arguments, and whether any positional argument is a sort key.
+/// names of its named arguments, and how many of its positional arguments are sort keys.
 struct Call<'t> {
     word: &'t str,
     positional: usize,
     named: Vec<&'t str>,
-    keys: bool,
+    keys: usize,
 }
 
-/// The arguments of the call suffix `call`: positional, named, and whether a sort key is
-/// among them.
+/// The arguments of the call suffix `call`: how many are positional, the names of the named
+/// ones, and how many of the positional ones are sort keys.
 fn args<'t>(
     call: usize,
     nodes: &[Node],
     rule_of: &dyn Fn(usize) -> &'t str,
     name_of: &dyn Fn(usize) -> &'t str,
-) -> (usize, Vec<&'t str>, bool) {
-    let (mut positional, mut named, mut keys) = (0, Vec::new(), false);
+) -> (usize, Vec<&'t str>, usize) {
+    let (mut positional, mut named, mut keys) = (0, Vec::new(), 0);
     for &a in &nodes[call].kids {
         if rule_of(a) != "Args" {
             continue;
@@ -765,7 +765,7 @@ fn args<'t>(
                 "NamedArg" => named.push(name_of(nodes[arg].kids[0])),
                 "SortArg" => {
                     positional += 1;
-                    keys = true;
+                    keys += 1;
                 }
                 _ => positional += 1,
             }
@@ -865,7 +865,7 @@ fn check_words(
                         let (p, named, keys) = args(c, nodes, &rule_of, &name_of);
                         (p + 1, named, keys)
                     }
-                    None => (1, Vec::new(), false),
+                    None => (1, Vec::new(), 0),
                 };
                 if !defined(w) {
                     return Some(format!("{} reads `.{w}`, which is no word", repr(t)));
@@ -917,17 +917,34 @@ fn check_words(
             .copied()
             .filter(|n| !s.required.contains(n) && !s.optional.contains(n))
             .collect();
-        // `.sort` takes sort keys or one comparator `by:`, not both and not neither.
-        let sort_wrong = c.word == "sort" && (c.keys == c.named.contains(&"by"));
-        let keys_wrong = c.keys && c.word != "sort";
+        // `.sort` takes its receiver and then sort keys, one comparator `by:`, or neither,
+        // which is the key `x -> x` (DESIGN.md sec:order: `xs.sort()` is
+        // `xs.sort(asc x -> x)`); never both, and no other positional argument.
+        let (plain, by) = (c.positional - c.keys, c.named.contains(&"by"));
+        let sort_why = if c.word != "sort" {
+            ""
+        } else if plain == 0 {
+            ", and no receiver"
+        } else if plain > 1 {
+            ", and a positional argument after the receiver that is not a sort key `asc …` or `desc …`"
+        } else if c.keys > 0 && by {
+            ", both sort keys and a comparator `by:`"
+        } else {
+            ""
+        };
+        let keys_wrong = c.keys > 0 && c.word != "sort";
         if !s.positional.admits(c.positional)
             || !missing.is_empty()
             || !extra.is_empty()
-            || sort_wrong
+            || !sort_why.is_empty()
             || keys_wrong
         {
             let want = match (s.word, s.positional) {
-                ("sort", _) => "its receiver and sort keys, or its receiver and `by:`".to_owned(),
+                ("sort", _) => "its receiver alone, which sorts the values themselves in \
+                                ascending order (`xs.sort()` is `xs.sort(asc x -> x)`), its \
+                                receiver and sort keys, each `asc …` or `desc …`, or its \
+                                receiver and a comparator `by:`"
+                    .to_owned(),
                 (_, Count::Exactly(k)) => format!("{k} positional"),
                 (_, Count::AtLeast(k)) => format!("{k} or more positional"),
             };
@@ -938,7 +955,7 @@ fn check_words(
                 format!(" and `{}:`", c.named.join(":`, `"))
             };
             return Some(format!(
-                "{} calls `{}` with {} positional{named}; it takes {want}{req}",
+                "{} calls `{}` with {} positional{named}{sort_why}; it takes {want}{req}",
                 repr(t),
                 c.word,
                 c.positional
