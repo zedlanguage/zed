@@ -1204,7 +1204,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 |---|---|---|---|
 | `slice::partition_point` with a closure, a binary search over the token list | `docs::check` | None | A binary search over a sequence by a predicate, from the L3 library |
 | `Option<(usize, Span)>` matched as `Some((n, span)) if *n == next` through `&mut`, then extended in place | `docs::check` | Mutation | A fold over the doc comments whose state is the open block, returned with each step |
-| `str::parse::<f64>()` and `str::parse::<f32>()`, correctly rounded by the standard library | `num::literal_f64`, `num::literal_f32` | Missing primitive | A prelude cast `f64(text)` that rounds to nearest with ties to even, as `num::literal_f64` does |
+| `str::parse::<f64>()` and `str::parse::<f32>()`, correctly rounded by the standard library (replaced by `num::float_text::read_float` in SCALE-fix-round-literal; see that section) | `num::literal_f64`, `num::literal_f32` | None since SCALE-fix-round-literal | Port `num::float_text` |
 | A sink typed `FnMut(&str, &str) -> Result<(), (String, String)>` for the path and reason of a failed write | `run::commit` | Mutation | A function returning the acknowledgment atom `#ioError(op:, path:, why:)` directly |
 
 ## Entries from T11-fix-store (`zedc-presburger/src/hull.rs`)
@@ -3684,3 +3684,13 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | A `const LAST: bool` generic on the radix-4 stage pair, so the last pair's reduction is chosen at compile time | `Field::forward_pair`, `Field::inverse_pair` | None | A `bool` parameter that partial evaluation specializes |
 | Index loops over blocks in place of `zip`, because the test build (no inlining across codegen units) calls `Zip::new` once per block | `Field::forward`, `forward_pair`, `inverse`, `inverse_pair` | None | Plain loops over indices; the Zed compiler inlines or not by its own rules, so re-measure there |
 | A `#[cfg(test)]` `thread_local!` `Cell<(u32, u32)>` counting the matrix products taken by shared transforms and how many folded a factor | `SHARED_PRODUCTS`, `matrix_product` | Mutation (gap 11), no test-only state | A count returned with the product in a test build |
+
+## Entries from SCALE-fix-round-literal (`crates/zed-kernel/src/num/float_text.rs`, `float_text/pow5.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `u128` products of two `u64`, and of a `u128` by a `u64` kept to its high 128 bits, with `u128::leading_zeros` | `float_text::scaled`, `high_product`, `round_odd` | Missing primitive | A 64 x 64 to 128-bit product (high and low words) at the machine level, as the L3 library gives `int` arithmetic of fixed width |
+| A `const` table of 667 `u128` powers of five, generated once and written into the source | `float_text::pow5::POW5` | None | A prelude constant built by partial evaluation from `5 ^ q`, cut to 128 bits |
+| `wrapping_mul` and `wrapping_add` on `u64` while reading digits, the value discarded when there are more than 19 | `float_text::decimal` | Missing primitive | Arithmetic modulo 2^64 on a 64-bit integer level |
+| `num_bigint::BigUint` for the halfway point's digits, at most 767 of them for `f64` | `float_text::compare_halfway` | None | Zed's `int` and its decimal text |
+| A stack buffer `[u8; 32]` written through a `FnMut` closure that copies a slice at an offset, then one `String` | `float_text::show_f64` | Mutation | A list of byte strings joined into one string at the end, one allocation |

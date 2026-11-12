@@ -256,16 +256,13 @@ fn rounding_near_a_boundary_is_refused_when_memory_is_short() {
     );
 }
 
-/// An `f64` literal just below the point halfway between 1 and the next `f64`, `1 + 2^-53`
-/// less `10^-(54 + n)`: its digits to `...203124`, `n = 2^22` nines and `f64`, parsed, resolved
-/// and checked, then elaborated under a limit `margin` bytes above what the child holds.
-/// Returns the one error the elaborator reports, at the literal; it does not abort. Reading
-/// the digits (`Rat::decimal`) asks for 64 bits of memory a digit, about 32 MiB; rounding the
-/// number then reads about `3.3 n` bits of it to tell which side of the boundary it lies on,
-/// and above about 64 MiB the literal rounds (COMPLEXITY.md K30).
-fn a_literal_near_a_boundary_refused_under(margin: u64) -> String {
+/// A literal just below the point halfway between 1 and the next `f64`, `1 + 2^-53` less
+/// `10^-(54 + n)`: its digits to `...203124`, `n = 2^22` nines and `suffix`, parsed, resolved and
+/// checked, then elaborated under a limit `margin` bytes above what the child holds. Returns
+/// the error the elaborator reports, at the literal, if any; it does not abort.
+fn a_literal_near_a_boundary_under(suffix: &str, margin: u64) -> Option<String> {
     let literal = format!(
-        "1.00000000000000011102230246251565404236316680908203124{}f64",
+        "1.00000000000000011102230246251565404236316680908203124{}{suffix}",
         "9".repeat(1 << 22)
     );
     let text = format!("x = {literal};\n");
@@ -276,12 +273,10 @@ fn a_literal_near_a_boundary_refused_under(margin: u64) -> String {
     let info = zedc::check::walk::check(&stmts, &res);
     assert!(info.errors.is_empty());
     lower_limit_by(margin);
-    let Err(mut errs) = zedc::elab::elaborate_checked(&stmts, &res, &info) else {
-        panic!("elaborated without error")
-    };
+    let mut errs = zedc::elab::elaborate_checked(&stmts, &res, &info).err()?;
     assert_eq!(errs.len(), 1);
     assert!(text[errs[0].span.start..errs[0].span.end] == *literal);
-    errs.pop().expect("one error").message
+    Some(errs.pop().expect("one error").message)
 }
 
 /// The memory asked to read the literal's 54 digits and `2^22` nines, 64 bits a digit, in bytes.
@@ -289,47 +284,33 @@ fn literal_read_bytes() -> u64 {
     8 * (54 + (1 << 22))
 }
 
-/// [`a_literal_near_a_boundary_refused_under`] 16 MiB, where reading the digits, which asked
-/// for nothing, aborted the child; it asks first and is refused.
+/// The exact rational of [`a_literal_near_a_boundary_under`] 16 MiB, where reading the digits
+/// (`Rat::decimal`), which asked for nothing, aborted the child; it asks first and is refused.
 #[test]
 fn a_long_decimal_literal_is_refused_when_memory_is_short() {
     if !in_child("a_long_decimal_literal_is_refused_when_memory_is_short") {
         return;
     }
     assert_eq!(
-        a_literal_near_a_boundary_refused_under(16 << 20),
-        format!(
+        a_literal_near_a_boundary_under("r", 16 << 20),
+        Some(format!(
             "this literal has so many digits that the system refused the {} bytes of memory \
              zedc asked for to read it. A literal has no size limit, but this machine cannot \
              hold this one's value. Write it with fewer digits.",
             literal_read_bytes()
-        )
+        ))
     );
 }
 
-/// [`a_literal_near_a_boundary_refused_under`] 48 MiB: the digits are read, and a round of the
-/// rounding that asked for `16k` bits was given them, rose above them in num-bigint's division
-/// and aborted the child; it asks for `32k` and is refused (the Complexity tradeoff in
-/// `bound::round`).
+/// The `f64` literal of [`a_literal_near_a_boundary_under`] 16 MiB: it is read straight to its
+/// format with no rational built, comparing its digits with the halfway point's, so it asks
+/// for no memory and rounds to 1 (it was refused below 64 MiB while read through its rational).
 #[test]
-fn a_literal_near_a_rounding_boundary_is_refused_below_the_peak_of_a_round() {
-    if !in_child("a_literal_near_a_rounding_boundary_is_refused_below_the_peak_of_a_round") {
+fn a_float_literal_near_a_rounding_boundary_needs_no_memory() {
+    if !in_child("a_float_literal_near_a_rounding_boundary_needs_no_memory") {
         return;
     }
-    let message = a_literal_near_a_boundary_refused_under(48 << 20);
-    let bytes = message
-        .strip_prefix(
-            "this literal lies so near the midpoint of two f64 values that zedc must read more of \
-             its digits to tell which is nearer, and the system refused the ",
-        )
-        .and_then(|e| {
-            e.strip_suffix(
-                " bytes of memory zedc asked for to read them. Write the literal with fewer digits.",
-            )
-        })
-        .unwrap_or_else(|| panic!("another message: {message}"));
-    let bytes: u64 = bytes.parse().expect("a size in bytes");
-    assert!(bytes > 1 << 19, "{bytes} bytes");
+    assert_eq!(a_literal_near_a_boundary_under("f64", 16 << 20), None);
 }
 
 /// With memory to spare the same operations give the exact answers.

@@ -19,6 +19,7 @@
 mod bound;
 mod factor;
 mod fast;
+mod float_text;
 mod room;
 
 use std::borrow::Cow;
@@ -34,6 +35,7 @@ use bound::{Format, Product};
 pub use factor::is_prime;
 use fast::built;
 pub use fast::{mul as mul_uint, mul_int, pow as pow_uint, to_decimal};
+pub use float_text::{FloatFormat, read_f64_ieee, read_float, show_f64};
 pub use room::{LiteralRounding, TooLarge, bytes_of, room};
 
 /// An exact number `num/den * prod p^e`: `num/den` reduced with `den` positive, the primes
@@ -1792,63 +1794,23 @@ impl Exact<'_> {
     }
 }
 
-/// How `String` writes a float (DESIGN.md sec:reduction): the shortest digits that read back
-/// to it, in fixed notation when the decimal exponent is in -6..<21 and with an exponent
-/// otherwise, so `f64(String(x))` is `x`, bit for bit.
-pub fn show_f64(x: f64) -> String {
-    if x.is_nan() {
-        return "nan".into();
-    }
-    if x.is_infinite() {
-        return if x > 0.0 { "inf" } else { "-inf" }.into();
-    }
-    // `{:e}` gives the shortest digits: `-1.25e-7`, `5e0`.
-    let sci = format!("{x:e}");
-    let (mantissa, exp) = sci.split_once('e').expect("an exponent");
-    let exp: i32 = exp.parse().expect("an integer exponent");
-    let (sign, mantissa) = match mantissa.strip_prefix('-') {
-        Some(m) => ("-", m),
-        None => ("", mantissa),
-    };
-    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
-    let n = digits.len() as i32;
-    let body = if (-6..21).contains(&exp) {
-        if exp < 0 {
-            format!("0.{}{digits}", "0".repeat((-exp - 1) as usize))
-        } else if n <= exp + 1 {
-            format!("{digits}{}.0", "0".repeat((exp + 1 - n) as usize))
-        } else {
-            let (whole, frac) = digits.split_at(exp as usize + 1);
-            format!("{whole}.{frac}")
-        }
-    } else {
-        let (first, rest): (&str, &str) = digits.split_at(1);
-        let rest = if rest.is_empty() { "0" } else { rest };
-        format!("{first}.{rest}e{exp}")
-    };
-    format!("{sign}{body}")
-}
-
 /// The float literal `text` at `f64`: decimal digits with an optional fraction and exponent,
-/// no sign and no `_`, as the lexer keeps it (`0.1`, `1e9`, `2.5E-3`). It is the exact
-/// decimal [`Rat::decimal`] projected by [`Rat::to_f64`], correctly rounded, to nearest with
-/// ties to even; it is an error when that rounds to infinity, or to zero while the literal is
-/// not zero, so `0e999` is zero and `1e-400` is an error.
+/// no sign and no `_`, as the lexer keeps it (`0.1`, `1e9`, `2.5E-3`), read straight to the
+/// format by [`read_float`], correctly rounded, to nearest with ties to even; it is
+/// [`LiteralRounding::Infinite`] when that rounds to infinity and [`LiteralRounding::Zero`] when
+/// it rounds to zero while the literal is not zero, so `0e999` is zero and `1e-400` is an error.
 pub fn literal_f64(text: &str) -> Result<f64, LiteralRounding> {
-    literal(text)?.to_f64()
+    read_float(text, FloatFormat::F64)
+        .expect("the lexer's float text is a decimal")
+        .map(f64::from_bits)
 }
 
 /// The float literal `text` at `f32`, by the rule of [`literal_f64`]: `1e39` rounds to
 /// infinity and `1e-46` to zero.
 pub fn literal_f32(text: &str) -> Result<f32, LiteralRounding> {
-    literal(text)?.to_f32()
-}
-
-/// The exact value of the float literal `text`.
-fn literal(text: &str) -> Result<Rat, LiteralRounding> {
-    Ok(Rat::decimal(text)
-        .map_err(LiteralRounding::Unread)?
-        .expect("the lexer's float text is a decimal"))
+    read_float(text, FloatFormat::F32)
+        .expect("the lexer's float text is a decimal")
+        .map(|bits| f32::from_bits(bits as u32))
 }
 
 /// The float equal to `r`, when there is one; [`TooLarge`] when rounding `r` was refused the
@@ -1863,7 +1825,7 @@ pub(crate) fn exact_f64(r: &Rat) -> Result<Option<f64>, TooLarge> {
     }
     let x = match r.to_f64() {
         Ok(x) => x,
-        Err(LiteralRounding::TooLarge(e) | LiteralRounding::Unread(e)) => return Err(e),
+        Err(LiteralRounding::TooLarge(e)) => return Err(e),
         Err(LiteralRounding::Infinite | LiteralRounding::Zero) => return Ok(None),
     };
     Ok(match Exact::float(x) {

@@ -57,7 +57,4 @@ pub enum LiteralRounding {
     /// It lies so near a rounding boundary that telling which side it is on needs more
     /// memory than the system gives.
     TooLarge(TooLarge),
-    /// The literal has so many digits that reading them needs more memory than the system
-    /// gives.
-    Unread(TooLarge),
 }

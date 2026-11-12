@@ -14,7 +14,7 @@ use num_bigint::{BigInt, BigUint, Sign};
 use num_traits::{ToPrimitive, Zero};
 
 use crate::KernelError;
-use crate::num::{Exact, Rat, TooLarge, exact_f64, read_decimal, room, show_f64};
+use crate::num::{Exact, Rat, TooLarge, exact_f64, read_decimal, read_f64_ieee, room, show_f64};
 use crate::term::Prim;
 use crate::text::Text;
 use crate::value::Family;
@@ -515,7 +515,7 @@ fn read_f64(s: &str) -> Option<f64> {
     if !mantissa_ok || !exp_ok {
         return None;
     }
-    s.parse().ok()
+    read_f64_ieee(s)
 }
 
 #[cfg(test)]

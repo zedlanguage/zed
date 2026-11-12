@@ -11,7 +11,7 @@ use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use zed_kernel::num::{TooLarge, bytes_of};
+use zed_kernel::num::{TooLarge, bytes_of, literal_f64};
 use zed_kernel::{Rat, Value};
 
 use super::ty::{Binds, NodeId, Row, Shape, Sig, Ty};
@@ -352,8 +352,7 @@ fn leaves(
             (Tok::Int { radix, digits }, _) => (Ty::lit(&int(*radix, digits, false, text)?), 1),
             (Tok::Float { digits: s, .. }, _) => (
                 Ty::lit(&Value::float(
-                    s.parse()
-                        .map_err(|_| format!("`{text}`: the float `{s}`"))?,
+                    literal_f64(s).map_err(|_| format!("`{text}`: the float `{s}`"))?,
                 )),
                 1,
             ),

@@ -12,7 +12,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::mem;
 use std::sync::Arc;
 
-use zed_kernel::num::{LiteralRounding, bytes_of, literal_f64, show_f64};
+use zed_kernel::num::{LiteralRounding, literal_f64, show_f64};
 use zed_kernel::types::Type as KType;
 use zed_kernel::{Pattern as KPattern, Prim, Rat, Shared, Term, Value};
 
@@ -683,17 +683,9 @@ impl<'a> Elab<'a> {
                         show_f64(f64::from_bits(1))
                     ),
                 ),
-                Err(LiteralRounding::TooLarge(t)) => self.error(
-                    e.span,
-                    format!(
-                        "this literal lies so near the midpoint of two f64 values that zedc \
-                         must read more of its digits to tell which is nearer, and the system \
-                         refused the {} bytes of memory zedc asked for to read them. Write the \
-                         literal with fewer digits.",
-                        bytes_of(&t.bits)
-                    ),
-                ),
-                Err(LiteralRounding::Unread(r)) => self.error(e.span, unread_literal(&r)),
+                Err(LiteralRounding::TooLarge(_)) => {
+                    unreachable!("a float literal is read with no memory asked for")
+                }
             },
             ExprKind::Rat(s) => match Rat::decimal(s) {
                 Ok(r) => lit(Value::rat(r.expect("the lexer's rat text is a decimal"))),

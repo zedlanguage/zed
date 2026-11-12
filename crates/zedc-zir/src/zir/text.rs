@@ -32,7 +32,7 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 
 use unicode_ident::{is_xid_continue, is_xid_start};
-use zed_kernel::num::{Rat, TooLarge, bytes_of};
+use zed_kernel::num::{Rat, TooLarge, bytes_of, read_f64_ieee};
 use zed_kernel::term::{Evidence, Grade, GuardPos, Pattern, Prim, Witness};
 use zed_kernel::types::{Type, Universe};
 use zed_kernel::value::Family;
@@ -1648,7 +1648,7 @@ fn number(t: &str) -> Result<Value, String> {
         };
     }
     if t.contains(['.', 'e']) {
-        return t.parse().map(Value::float).map_err(|_| not());
+        return read_f64_ieee(t).map(Value::float).ok_or_else(not);
     }
     if t.is_empty()
         || !t

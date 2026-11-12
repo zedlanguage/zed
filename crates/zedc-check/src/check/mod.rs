@@ -51,7 +51,7 @@ use std::fmt;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use zed_kernel::num::TooLarge;
+use zed_kernel::num::{TooLarge, literal_f64};
 use zed_kernel::types::{Spell, Type as KType, Universes, Verdict, defs};
 use zed_kernel::{Prim, Rat, Term, Universe, Value, eval};
 
@@ -4962,7 +4962,7 @@ fn read_literal(e: &Expr, src: Option<&str>) -> Result<Option<Lit>, TooLarge> {
             Some(v) => (v, true),
             None => return Ok(None),
         },
-        ExprKind::Float { digits: s, forced } => match s.parse() {
+        ExprKind::Float { digits: s, forced } => match literal_f64(s) {
             Ok(x) => (Value::float(x), !forced),
             Err(_) => return Ok(None),
         },
@@ -6107,7 +6107,7 @@ fn menu(l: &Lit, held: &[Carrier]) -> Msg {
     if lit_carrier(&l.value) == Carrier::Int {
         let nearest = Some(lit_digits(l))
             .filter(|d| has(Carrier::F64) && d.bytes().all(|b| b.is_ascii_digit()))
-            .and_then(|d| Rat::decimal(d).ok().flatten()?.to_f64().ok());
+            .and_then(|d| literal_f64(d).ok());
         if let Some(x) = nearest {
             let v = neg_value(&Value::float(x), l.neg());
             fixes.push(Rewrite::lit(
