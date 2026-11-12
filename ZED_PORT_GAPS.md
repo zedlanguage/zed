@@ -554,6 +554,23 @@ type in a file whose type file `names.rs` imports. The tool now starts a chain a
 dot of `..` (`..f()`); test `s_01f_import_graph::a_word_after_a_range_starts_a_chain`.
 `imports crates/zed-kernel/src` now reports no cycle.
 
+**The `zedc-check` cycle MSG-converted-claims-checked brought is broken
+(IMPORT-cycle-check-fixes).** The tool reported one component of two files: `check/walk.rs`
+imports `check/mod.rs` (`use super::*`), and MSG-converted-claims-checked (61590f5c5) made
+`check/mod.rs` call methods of `Ck` written in `walk.rs`: `Ck::reject` called
+`Ck::fixes_checked`, and the comparison checks `Ck::equal_repairs` and `Ck::apart` called
+`Ck::operand_replaced`, `Ck::wrapped`, `Ck::component_read` and `Ck::tried`, which try a repair
+by checking the construct again with the walk. The tool reports one import per pair of files,
+so only `fixes_checked` was named until it was gone. The changes, with no copy and no change in
+behavior:
+
+| Edge | Move |
+|---|---|
+| `Ck::equal_repairs`, `Ck::apart` to `walk` | `Ck::equal`, `Ck::equal_repairs`, `Ck::pair` and `Ck::apart`, the check of `==` and `!=` and its repairs, moved unchanged from `check/mod.rs` to `check/walk.rs`, after `Ck::operand_replaced`. Only `walk.rs` calls them (the `==` and `!=` operators, and the comparison of a test case's result with the value it expects); they call helpers of `mod.rs`, an edge in the direction `walk.rs` already has |
+| `Ck::reject` to `walk` | `reject` is where every error of the checker is pushed, from both files, so it stays in `mod.rs`. Its check of the fixes as written is a field of `Ck`, `check_fixes`, a function value that `Ck::new` takes from its caller: the entry points and tests of `walk.rs` pass `Ck::fixes_checked`. The tests of `mod.rs` record no construct, so they pass a function that keeps the fixes as they are, which is what `fixes_checked` does with no construct recorded. In Zed this is a function value in the checker's record |
+
+`imports crates/zedc-check/src` now reports no cycle (6 files, 5 imports).
+
 `zed-kernel` and `zedc` read the shared scaling test through `#[path]` (`zed-kernel` `lib.rs:28`, `zedc` `lib.rs:45`); the tool reports such
 a module and does not read it, since its file is outside the crate.
 

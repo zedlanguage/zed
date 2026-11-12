@@ -48,7 +48,7 @@ pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
             .filter(|b| b.kind != zedc_resolve::resolve::Kind::Field)
             .map(|b| b.name.as_str()),
     );
-    let mut ck = Ck::new(t);
+    let mut ck = Ck::new(t, Ck::fixes_checked);
     ck.bounds();
     ck.walk(unit);
     ck.finish();
@@ -80,7 +80,7 @@ pub fn check_given(unit: &[Stmt], res: &Resolution, text: &str, given: Ty) -> In
     let id = (res.binders.iter())
         .position(|b| b.span == first.span)
         .expect("the first statement binds a name");
-    let mut ck = Ck::new(&t);
+    let mut ck = Ck::new(&t, Ck::fixes_checked);
     ck.env.insert(id, given);
     ck.bounds();
     ck.walk(rest);
@@ -96,7 +96,7 @@ pub fn operator(op: Operator, args: &[Ty]) -> (Ty, Vec<String>) {
     let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
     let t = Tables::new(&[], &res);
     let _defs = defs::collect();
-    let mut ck = Ck::new(&t);
+    let mut ck = Ck::new(&t, Ck::fixes_checked);
     let args = args.iter().map(|a| Some(Arg::of(a.clone()))).collect();
     let demand = match op {
         Operator::Binary(BinaryOp::And | BinaryOp::Or) => Demand::First,
@@ -8774,6 +8774,401 @@ impl<'t, 'a> Ck<'t, 'a> {
         Some(self.tried(|ck| ck.construct(form, args, span)).is_some())
     }
 
+    /// `==` and `!=`: any two values; a literal meets the other side's type by the rule of a
+    /// parameter ([`Ck::follow`], [`expected`]), so `x == 1` is true at `x = 1.0` and
+    /// `x == 1.5` with `x: int` is rejected; of two literals one without a suffix takes the
+    /// other's carrier, and two without one are rejected where one is a decimal (`1 == 1.0`),
+    /// since nothing gives it a carrier. Two tuples of one length are
+    /// paired component by component, at any depth, across every tuple shape of that length a
+    /// side's type holds, as [`adopted`] pairs them: `p == (1, 2)` with
+    /// `p: (f64, f64) | (String, f64)` reads both literals at `f64`.
+    ///
+    /// The tuples nest as deep as the text, so the pairs wait on a stack, each with whether it
+    /// is inside a tuple. Each side borrows its component types, one per shape, so a tuple
+    /// nested d deep at s shapes costs O(d·s) and not a copy of each level's type.
+    fn equal(&mut self, x: &Arg<'a>, y: &Arg<'a>) {
+        let from = self.errors.len();
+        self.pair(side(x), side(y));
+        if !self.trying {
+            self.equal_repairs(from, x, y);
+            self.equal_repairs(from, y, x);
+        }
+    }
+
+    /// The derivation and repairs of the rejection, among the errors from the `from`th on, of
+    /// the literal `l` compared by `==` with the value `v` of other carriers in the row of a
+    /// literal at a carrier it cannot take (`n == 1.5` with `n: int`): `v`'s derivation, the
+    /// literal, and each cast of `v` with which the comparison checks, tried with the
+    /// checker's state restored after, `f64(n)`. One trial per cast word.
+    fn equal_repairs(&mut self, from: usize, l: &Arg<'a>, v: &Arg<'a>) {
+        let (Some(lit), None, Some(at)) = (&l.lit, &v.lit, v.at) else {
+            return;
+        };
+        let Some(k) = (from..self.errors.len()).find(|&k| {
+            let e = &self.errors[k];
+            e.span == lit.site && e.row == Some(Row::LiteralCarrier)
+        }) else {
+            return;
+        };
+        let mut notes = self.derive(&[at]);
+        notes.push(Note {
+            span: lit.span,
+            text: literal_note(lit.written(), lit_ty(&lit.value, lit.neg())),
+        });
+        let held = match self.class_of_ty(&v.ty) {
+            Some(r) if self.classes[r].mask & OTHER == 0 => Ty::of_mask(self.classes[r].mask),
+            _ => v.ty.clone(),
+        };
+        let t = self.t;
+        let name = match self.seen.get(&at) {
+            Some((_, Src::Name(id))) => Some(&t.res.binders[*id].name),
+            _ => None,
+        };
+        let op = self.comparing.as_ref().map(|c| c.op);
+        // `v` is one of the operands of the comparison, found by its expression.
+        let exact = self.comparing.as_ref().is_some_and(|c| {
+            (0..2).any(|s| {
+                c.exact[s]
+                    && matches!((v.expr, c.exprs[s]), (Some(a), Some(b)) if std::ptr::eq(a, b))
+            })
+        });
+        let lit_text = lit.written().to_string();
+        let mut fixes = Vec::new();
+        for w in ["int", "rat", "f64"] {
+            let Some(r) = widening(w, &held, exact) else {
+                continue;
+            };
+            // As written where the comparison is the construct being checked: the cast
+            // applied to the operand, then the comparison with it in place
+            // ([`Ck::operand_replaced`]); else the comparison with a value of the cast's type.
+            let written = match self.comparing {
+                Some(c) => self.operand_replaced(c.span, at, |ck, a| ck.wrapped(w, a, &held, at)),
+                None => None,
+            };
+            let ok = written.unwrap_or_else(|| {
+                let cast = Arg {
+                    at: Some(at),
+                    ..Arg::of(r)
+                };
+                self.tried(|ck| ck.equal(l, &cast)).is_some()
+            });
+            if ok {
+                let text = match name {
+                    Some(n) => format!("repair: write `{w}({n})`; the checker accepts that"),
+                    None => format!("repair: wrap this in `{w}(…)`; the checker accepts that"),
+                };
+                notes.push(Note { span: at, text });
+                // The comparison rewritten with the cast, `rat(n) == 1.5`, where the operand
+                // is a name; the headline ends with the first.
+                if let (Some(n), Some(op)) = (name, op) {
+                    let alone = match lit.span.start < at.start {
+                        true => format!("{lit_text} {op} {w}({n})"),
+                        false => format!("{w}({n}) {op} {lit_text}"),
+                    };
+                    fixes.push(Rewrite::new(
+                        &[
+                            (point(at.start), &format_args!("{w}(")),
+                            (point(at.end), &")"),
+                        ],
+                        &format_args!("{n} is cast to {w}"),
+                        &alone,
+                    ));
+                }
+            }
+        }
+        // The headline shows the comparison as code, `n : int == 1.5`, where the operand is a
+        // name and the headline names the literal alone.
+        let pair = match (name, op) {
+            (Some(n), Some(op)) => {
+                let shown = self.text(&held);
+                Some(match lit.span.start < at.start {
+                    true => format!("`{lit_text} {op} {n} : {shown}`"),
+                    false => format!("`{n} : {shown} {op} {lit_text}`"),
+                })
+            }
+            _ => None,
+        };
+        let e = &mut self.errors[k];
+        e.notes = notes;
+        if let Some(pair) = pair
+            && let Some((head, _)) = e.m.text.split_once(": the literal `")
+        {
+            e.m.text = format!("{head}: {pair}.");
+        }
+        e.m.fixes.extend(fixes.into_iter().flatten());
+    }
+
+    /// [`Ck::equal`] of the two sides `x` and `y`. Inside an `==` or `!=` ([`Ck::comparing`]),
+    /// each pair of components with no literal on either side, and each literal with a suffix
+    /// with what it is compared with, is checked for a common carrier
+    /// ([`no_common_carrier`]); of the pairs that have none, the first in written order is
+    /// rejected ([`Ck::apart`]). The stack pops a tuple's components last first, so that pair
+    /// is the last one met. Each pair keeps its place as an entry of `places`, the place of
+    /// its tuple and its index there, so only the place of the pair rejected is put in words.
+    fn pair(&mut self, x: Side<'_>, y: Side<'_>) {
+        // The place of the operands themselves.
+        const TOP: usize = usize::MAX;
+        let mut places: Vec<(usize, usize)> = Vec::new();
+        let mut last: Option<(usize, Ty, Ty)> = None;
+        let checking = self.comparing.is_some();
+        let mut leaf = |at: usize, xt: &[&Ty], yt: &[&Ty]| {
+            if checking {
+                let a = Ty::union_all(xt.iter().copied());
+                let b = Ty::union_all(yt.iter().copied());
+                if no_common_carrier(&a, &b) {
+                    last = Some((at, a, b));
+                }
+            }
+        };
+        let mut stack = vec![(x, y, false, TOP)];
+        while let Some(((xt, xl, xp), (yt, yl, yp), inner, at)) = stack.pop() {
+            match (xl, yl) {
+                (Some(l), Some(m)) => {
+                    let (lc, mc) = (lit_carrier(&l.value), lit_carrier(&m.value));
+                    // A literal with a suffix fixes the other's carrier. Of two without one,
+                    // two integers are `int`, and a decimal is given no carrier by the
+                    // other, which takes the carrier of its use too: it is rejected.
+                    match (l.bare, m.bare) {
+                        (true, true) if lc == Carrier::Int && mc == Carrier::Int => {}
+                        (true, true) => {
+                            let d = if lc == Carrier::F64 { l } else { m };
+                            let notes = [l, m]
+                                .map(|l| Note {
+                                    span: l.span,
+                                    text: literal_note(l.written(), lit_ty(&l.value, l.neg())),
+                                })
+                                .to_vec();
+                            let m = unfixed(d, &[Carrier::F64, Carrier::Rat], None);
+                            self.reject(Some(Row::UnfixedDecimal), d.site, m, notes);
+                        }
+                        (true, false) => {
+                            self.adopt_to(l, mc);
+                        }
+                        (false, true) => {
+                            self.adopt_to(m, lc);
+                        }
+                        (false, false) => {}
+                    }
+                }
+                // A literal with a suffix is a value of its carrier like any other.
+                (Some(l), None) => {
+                    if !l.bare {
+                        leaf(at, &[&Ty::carrier(lit_carrier(&l.value))], &yt);
+                    }
+                    self.follow(l, &yt, inner, 1);
+                }
+                (None, Some(m)) => {
+                    if !m.bare {
+                        leaf(at, &xt, &[&Ty::carrier(lit_carrier(&m.value))]);
+                    }
+                    self.follow(m, &xt, inner, 0);
+                }
+                (None, None) if xp.is_none() && yp.is_none() => leaf(at, &xt, &yt),
+                (None, None) => {
+                    let n = xp.or(yp).map_or(0, <[Part]>::len);
+                    let (Some(xs), Some(ys)) = (sides(&xt, xp, n), sides(&yt, yp, n)) else {
+                        leaf(at, &xt, &yt);
+                        continue;
+                    };
+                    for (i, (a, b)) in xs.zip(ys).enumerate() {
+                        places.push((at, i));
+                        stack.push((a, b, true, places.len() - 1));
+                    }
+                }
+            }
+        }
+        if let Some((mut at, a, b)) = last {
+            let mut path = Vec::new();
+            while at != TOP {
+                let (up, i) = places[at];
+                path.push(i);
+                at = up;
+            }
+            path.reverse();
+            self.apart(&path, &a, &b);
+        }
+    }
+
+    /// Rejects the `==` or `!=` being checked ([`Ck::comparing`]) whose operands, or whose
+    /// components at the place `path` (indices from the operands down), are of the types `a`
+    /// and `b`, which share no value at any carrier ([`no_common_carrier`]), unless the
+    /// operands' own checks rejected something first. The comparison always gives the same
+    /// answer. At the operands themselves the repairs are each cast of one operand that
+    /// makes the two meet, then each component of a tuple operand that may equal the other
+    /// operand; with none, or inside the operands, the answer it always gives.
+    fn apart(&mut self, path: &[usize], a: &Ty, b: &Ty) {
+        let Some(Comparison {
+            op,
+            ats,
+            exprs,
+            exact,
+            span,
+            from,
+        }) = self.comparing
+        else {
+            return;
+        };
+        if self.errors.len() != from {
+            return;
+        }
+        let tables = self.t;
+        let labels = [0, 1].map(|s| match ats[s].and_then(|at| self.seen.get(&at)) {
+            Some((_, Src::Name(id))) => Some(Operand::Name(&tables.res.binders[*id].name)),
+            _ => exprs[s]
+                .filter(|e| path.is_empty() && is_literal(e))
+                .map(|e| Operand::Literal(e, tables.text)),
+        });
+        let sides = [a, b];
+        let mut fixes = [Vec::new(), Vec::new()];
+        if path.is_empty() {
+            let widened = sides.map(widened);
+            for s in 0..2 {
+                let Some(other) = &widened[1 - s] else {
+                    continue;
+                };
+                for w in ["int", "rat", "f64"] {
+                    if let Some(r) = widening(w, sides[s], exact[s])
+                        && widened_meets(&r, other)
+                    {
+                        fixes[0].push(Fix::Cast(s, w));
+                    }
+                }
+            }
+            for s in 0..2 {
+                let Some(other) = &widened[1 - s] else {
+                    continue;
+                };
+                let values = sides[s].without_atoms();
+                let u = values.set.universes();
+                let tuples_only = !u.bases.iter().any(|&b| b) && !u.rest;
+                let width = (values.tuples.iter().map(|r| r.len()).min())
+                    .filter(|_| tuples_only)
+                    .unwrap_or(0);
+                for i in 0..width {
+                    let c = Ty::union_all(values.tuples.iter().map(|r| &r[i]));
+                    if widened_meets(&c, other) {
+                        fixes[1].push(Fix::Component(s, i));
+                    }
+                }
+            }
+        }
+        // Each fix checked as written: the comparison checked again with the cast operand, or
+        // its component, in place of the operand ([`Ck::operand_replaced`]); a fix with which
+        // it is rejected is dropped, and with none left the answer is offered.
+        // Complexity tradeoff: at most six casts and one component per index of the narrower
+        // tuple, each one trial of the comparison with one operand replaced, which costs the
+        // size of the other operand and of the replacement, never the replaced tuple again
+        // (test `l01_29_diagnostics::scaling::checking_the_components_offered_for_a_wide_tuple_scales`).
+        // The naive way, checking the program again with each fix written in, costs the
+        // size of the program per fix.
+        if !self.trying {
+            for group in &mut fixes {
+                let mut kept = Vec::new();
+                for fix in std::mem::take(group) {
+                    let (Fix::Cast(s, _) | Fix::Component(s, _)) = fix;
+                    let checks = ats[s].and_then(|at| {
+                        self.operand_replaced(span, at, |ck, a| match fix {
+                            Fix::Cast(_, w) => ck.wrapped(w, a, &a.ty, at),
+                            Fix::Component(_, i) => ck.component_read(a, i, at),
+                        })
+                    });
+                    if checks != Some(false) {
+                        kept.push(fix);
+                    }
+                }
+                *group = kept;
+            }
+        }
+        let [fixes, components] = fixes;
+        let groups = [
+            (fixes, "to compare the numbers"),
+            (components, "to compare a component"),
+        ];
+        let answer = groups.iter().all(|(rs, _)| rs.is_empty());
+        let shown = sides.map(|t| self.shown(&t.carriers()));
+        let ends = ["left", "right"];
+        let named = match &labels {
+            [Some(l), Some(m)] if path.is_empty() => Some((l, m)),
+            _ => None,
+        };
+        let form = |f: &mut fmt::Formatter<'_>, r: Fix| match (named, r) {
+            (Some((l, m)), Fix::Cast(0, w)) => write!(f, "`{w}({l}) {op} {m}`"),
+            (Some((l, m)), Fix::Cast(_, w)) => write!(f, "`{l} {op} {w}({m})`"),
+            (Some((l, m)), Fix::Component(0, i)) => write!(f, "`{l}[{i}] {op} {m}`"),
+            (Some((l, m)), Fix::Component(_, i)) => write!(f, "`{l} {op} {m}[{i}]`"),
+            (None, Fix::Cast(s, w)) => write!(f, "`{w}(…)` around the {} operand", ends[s]),
+            (None, Fix::Component(s, i)) => write!(f, "`[{i}]` after the {} operand", ends[s]),
+        };
+        let in_place = |f: &mut fmt::Formatter<'_>| {
+            write!(f, "`{}` in place of ", op != BinaryOp::Eq)?;
+            match named {
+                Some((l, m)) => write!(f, "`{l} {op} {m}`"),
+                None => f.write_str("the comparison"),
+            }
+        };
+        // The headline (DESIGN.md sec:diagnostics, "A short headline"): the comparison as code
+        // with the type of each side, `x : int == y : f64`, where both sides are named; else
+        // each side described with its type. It ends with the first repair, or the answer.
+        let message = quoting(
+            &fmt::from_fn(|f| {
+                write!(f, "No value is both `{}` and `{}`: ", shown[0], shown[1])?;
+                let code = |s: usize| match (&labels[s], path) {
+                    (Some(l), []) => Some(format!("{l} : {}", shown[s])),
+                    (Some(l @ Operand::Name(_)), _) => {
+                        Some(format!("{l}{} : {}", Place(path), shown[s]))
+                    }
+                    _ => None,
+                };
+                match (code(0), code(1)) {
+                    (Some(a), Some(b)) => write!(f, "`{a} {op} {b}`")?,
+                    _ => {
+                        for (s, end) in ends.iter().enumerate() {
+                            if s == 1 {
+                                write!(f, " compared by `{op}` with ")?;
+                            }
+                            match (code(s), path) {
+                                (Some(c), _) => write!(f, "`{c}`")?,
+                                (None, []) => write!(f, "the {} operand", end)?,
+                                (None, _) => {
+                                    write!(f, "component `{}` of the {} operand", Place(path), end)?
+                                }
+                            }
+                        }
+                    }
+                }
+                if answer {
+                    let a = op != BinaryOp::Eq;
+                    return write!(f, " is always `{a}`. Try `{a}` instead.");
+                }
+                f.write_str(" always gives the same answer. Try ")?;
+                write_repairs(f, &groups, form)?;
+                f.write_str(" instead.")
+            }),
+            || {
+                format!(
+                    "the two sides of this `{op}` share no value, so the comparison always \
+                     gives the same answer"
+                )
+            },
+        );
+        let row = match sides.iter().all(|t| only_numbers(t)) {
+            true => Row::NoCommonCarrier,
+            false => Row::EqNoCommonCarrier,
+        };
+        let mut notes = self.derive(&ats.into_iter().flatten().collect::<Vec<_>>());
+        // The menu again as repair steps, in the order the message lists it.
+        let repairs = groups.iter().flat_map(|(rs, _)| rs.iter());
+        notes.extend(repairs.map(|&r| Note {
+            span,
+            text: format!("repair: write {}", fmt::from_fn(|f| form(f, r))),
+        }));
+        if answer {
+            let text = format!("repair: write {}", fmt::from_fn(in_place));
+            notes.push(Note { span, text });
+        }
+        self.rejects_with(row, span, message, notes);
+    }
+
     /// Whether the application of `sig` to `args`, named `what`, checks with argument `i`
     /// replaced by `with`, tried with the checker's state restored after: as written, where
     /// it is the construct being checked ([`Self::written_with`]), with the type it then has
@@ -11000,7 +11395,7 @@ impl Operands {
     pub fn adoptions(&self) -> usize {
         let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
         let t = Tables::new(&[], &res);
-        let mut ck = Ck::new(&t);
+        let mut ck = Ck::new(&t, Ck::fixes_checked);
         let (lit, parts) = (
             literal(&self.e, None),
             parts(&self.e, None, &HashMap::new()),
@@ -11532,7 +11927,7 @@ mod tests {
     fn a_trial_undone_after_the_memo_entered_a_row_leaves_no_memo() {
         let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
         let t = Tables::new(&[], &res);
-        let mut ck = Ck::new(&t);
+        let mut ck = Ck::new(&t, Ck::fixes_checked);
         let k = ck.class();
         let row = Ty::tuple(vec![
             Ty::var(format!("${k}").into()),
@@ -11565,7 +11960,7 @@ mod tests {
     fn a_row_found_clean_is_walked_again_after_its_level_ends() {
         let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
         let t = Tables::new(&[], &res);
-        let mut ck = Ck::new(&t);
+        let mut ck = Ck::new(&t, Ck::fixes_checked);
         ck.level += 1;
         ck.pending.push(Vec::new());
         let k = ck.class();
