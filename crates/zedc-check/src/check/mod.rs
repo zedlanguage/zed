@@ -4429,6 +4429,14 @@ fn converted(sig: &Sig, t: &Ty) -> Option<Ty> {
     Some(out)
 }
 
+/// The type of the cast `w` applied to `t` where the cast cannot fail or lose information on
+/// any value of `t`, as `rat(n)` of an `int`: none where it may give an atom `t` does not hold,
+/// as `f64(n)` (`#inexact`) or `int(r)` (`#inexact`), so that a repair never narrows a type
+/// (DESIGN.md sec:diagnostics).
+fn cast_widening(w: &str, t: &Ty) -> Option<Ty> {
+    converted(&word_sig(w), t).filter(|r| r.atoms() == t.atoms())
+}
+
 /// `out` with the atoms of `ts` added, with their payloads: when two of them can carry
 /// different failures at once ([`ty::merges`]), also `#errs(E ->? E)`, which they merge into,
 /// with `E` the failures that meet and the members of an operand's own `#errs` in place of
