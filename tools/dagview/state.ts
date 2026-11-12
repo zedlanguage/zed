@@ -414,6 +414,9 @@ export function buildGraph(inp: Inputs): BoardState {
     // Only a merge or the orchestrator finishes a node: an impl, repair, verify or probe agent's
     // "done" means its own attempt ended, and the item may still be rejected and repaired.
     else if ((ls === "fixed" || ls === "done") && !/:(impl|repair|verify|probe)#/.test(last!.by ?? last!.agent ?? "")) s = "done";
+    // Since 2026-11-12 an impl agent merges its own work, so its "fixed" line finishes the node
+    // once every commit it names is on origin/main.
+    else if ((ls === "fixed" || ls === "done") && ledgerCommits(last!).length > 0 && ledgerCommits(last!).every((c) => inp.onOrigin(c))) s = "done";
     else if (ls === "fixed" || ls === "done" || ls === "verified") s = "active";
     else if (ls === "merged") s = "done";
     else if (ls === "blocked") s = "blocked";

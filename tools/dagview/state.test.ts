@@ -107,13 +107,22 @@ test("a repair after a fixed line makes the node active again", () => {
   assert.equal(by(buildNodes(inputs("", led))).get("A")!.state, "active");
 });
 
-test("a done line from a repair or verify agent does not finish the node; a merge's does", () => {
+test("a done line from a repair or verify agent with a commit not on origin does not finish the node; a merge's does", () => {
   const rep = '{"id":"A","state":"done","by":"A:repair#2","commit":"c111111"}\n';
-  assert.equal(by(buildNodes(inputs("", rep))).get("A")!.state, "active");
+  assert.equal(by(buildNodes(inputs("", rep, () => false))).get("A")!.state, "active");
   const imp = '{"id":"A","status":"done","state":"fixed","agent":"A:impl#1"}\n';
   assert.equal(by(buildNodes(inputs("", imp))).get("A")!.state, "active");
   const mer = rep + '{"id":"A","state":"fixed","by":"A:merge#1","commit":"c222222"}\n';
   assert.equal(by(buildNodes(inputs("", mer))).get("A")!.state, "done");
+});
+
+test("an impl agent's fixed line finishes the node once all its commits are on origin", () => {
+  const led = '{"id":"A","state":"fixed","by":"A:impl#1","commits":["c111111","zed:c222222"]}\n';
+  const on = (set: string[]) => (c: string) => set.includes(c);
+  assert.equal(by(buildNodes(inputs("", led, on(["c111111", "c222222"])))).get("A")!.state, "done");
+  assert.equal(by(buildNodes(inputs("", led, on(["c111111"])))).get("A")!.state, "active");
+  const bare = '{"id":"A","state":"fixed","by":"A:impl#1"}\n';
+  assert.equal(by(buildNodes(inputs("", bare, () => true))).get("A")!.state, "active");
 });
 
 test("retries, rejections, runtime and last tests come from the log", () => {
