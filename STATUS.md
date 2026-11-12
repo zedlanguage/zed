@@ -1982,6 +1982,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | POLY-nf-power | impl attempt 1 | 2026-11-12 13:01 | rule A (terms bound per node) and gcd step for the dense product written; building |
 | SOUND-random | impl attempt 1 | 2026-11-05 04:07 | tests l01_26_type_resolution + l01_39a_bit_words + zedc_check (with docs): 181 pieces, 0 failed; load 46.75 to 58.44 |
 | TESTS-L1.19-line-ends | impl attempt 1 | 2026-11-08 23:59 | found: main fails clippy -D warnings in tests/steps/m0_06_cost_scalarization/overlap.rs:93 (cloned_ref_to_slice_refs) and :551 (manual_is_multiple_of), from 6aa |
+| TESTS-L1.40d-surface-kinds | running | 2026-11-08 23:59 |  |
 | TRIVIAL-walk-branches | cd attempt  | 2026-11-12 11:58 | round-2 CD restart launched: experiment 3564106523854503937 (14 families + mirrors, seeded with the product walk; seed metric 3337022.7); round-1 experiment 702 |
 | WARN-refused | impl attempt 1 | 2026-11-05 04:07 | placing done (tests, reaches, ints_in_scope, bound); headlines shortened; new tests l01_29_diagnostics::refused_warning; spec text in wt/warn-refused-spec; buil |
 
