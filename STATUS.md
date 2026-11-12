@@ -1927,7 +1927,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| C2-pairs-long-row | impl attempt 1 | 2026-11-12 02:51 | reproduced on 4bd0dd03c: brief family (sum on b{i}) 8->64 fails 35.9x bytes (28.2M->1012.8M, limit 17.6); w{i}==b{i} variant 9.7x instr passes; load 93 |
 | CHK-f64-bounded-int-menus | running | 2026-11-12 01:41 |  |
 | CHK-update-field-receiver | impl attempt 1 | 2026-11-12 02:53 | done: build namespace stopped; both worktrees and branches removed (impl tree needed chmod u+rwx on the overlay build/work/work dir, mode 000, before rm) |
 | DELETE-msg-cycle-push | running | 2026-11-11 13:43 |  |
@@ -1967,7 +1966,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PRINT-own-shape-1tuple | impl attempt 1 | 2026-11-09 10:56 | done; worktree and branch removed / load 33.55 27.72 27.93 |
 | PRODUCT-superlinear-main | impl attempt 1 | 2026-11-12 00:05 | blocked, no commit (load1 56.17): shared cause = case split re-projects every earlier part on a moved hub, Theta(k) projections per test, 90-98% no-ops; persist |
 | REFUSAL-front-unsolved | running | 2026-11-11 17:03 |  |
-| STAGE-joined-eq-build | impl attempt 1 | 2026-11-12 02:24 | CD seat stopped at 44 candidates (best 0.335 M calls, one-round rule, unbounded blocks, not adopted); new test keying_a_call_at_a_join_and_a_tuple_of_n_parts_sc |
+| STAGE-joined-eq-build | impl attempt 1 | 2026-11-12 02:24 | merged ef4fbe883 to main after 3 rebases (one conflict, stage.rs imports with KERNEL-randomstate-cost); build, fmt, clippy -D warnings, cargo doc -D warnings pa |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
