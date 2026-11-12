@@ -3693,6 +3693,14 @@ fn every_question_of_a_random_chain_with_negations_matches_enumeration() {
     assert_eq!(total_decided, 344);
 }
 
+// A renaming of a test formula: its label, the name of alias `k`, and the new index of
+// auxiliary atom `i`.
+type Naming<'a> = (&'a str, &'a dyn Fn(usize) -> String, &'a dyn Fn(u32) -> u32);
+// A case of `easy_clause_systems_over_several_moduli_keep_their_answers`: pairs of moduli `(a, b)`,
+// each with its residues `r` (one clause `x mod a == r || x mod b == r` per `r`), an optional
+// interval of `x`, and whether the solver answers `holds`.
+type ResidueCase<'a> = (Vec<((i64, i64), &'a [i64])>, Option<(i64, i64)>, bool);
+
 /// One formula of `one_variable_modular_formulas_match_enumeration`: the formula, the copies
 /// `x_k = s_k * x + off_k` of `x`, the divisions `(q, r, m, s, off)` of `s * x + off` by `m`,
 /// and the interval of `x` (bounded above when the flag is set).
@@ -4049,10 +4057,7 @@ fn renamed(
             };
             lin = lin.plus(&Lin::atom(b).times(k.clone()));
         }
-        Formula::Con(Con {
-            lin,
-            rel: c.rel.clone(),
-        })
+        Formula::Con(Con { lin, rel: c.rel })
     })
 }
 
@@ -4070,16 +4075,16 @@ fn one_variable_answers_do_not_depend_on_names() {
         let (a, b) = s.split_once("..").unwrap();
         (a.parse().unwrap(), b.parse().unwrap())
     });
-    let namings: [(&str, &dyn Fn(usize) -> String, &dyn Fn(u32) -> u32); 4] = [
+    let namings: [Naming<'_>; 4] = [
         ("aliases after", &|k| format!("x{k}"), &|i| i),
         (
             "aliases before",
-            &|k| format!("{}", ["z", "a", "b", "c"][k]),
+            &|k| ["z", "a", "b", "c"][k].to_string(),
             &|i| i,
         ),
         (
             "interleaved",
-            &|k| format!("{}", ["m", "z", "a", "n"][k]),
+            &|k| ["m", "z", "a", "n"][k].to_string(),
             &|i| 99 - i,
         ),
         ("reversed", &|k| format!("v{}", 9 - k), &|i| 99 - i),
@@ -4137,10 +4142,7 @@ fn moved(f: &zedc::store::presburger::Formula, s: i64, d: i64) -> zedc::store::p
                 lin = lin.plus(&Lin::atom(a.clone()).times(k.clone()));
             }
         }
-        Formula::Con(Con {
-            lin,
-            rel: c.rel.clone(),
-        })
+        Formula::Con(Con { lin, rel: c.rel })
     })
 }
 
@@ -4202,16 +4204,16 @@ fn one_bound_or_none_names(only: Option<&str>, from: usize, to: usize) {
     // `x` with period `L`.
     use zedc::store::int::Int;
     use zedc::store::presburger::{Model, decide, satisfiable};
-    let namings: [(&str, &dyn Fn(usize) -> String, &dyn Fn(u32) -> u32); 4] = [
+    let namings: [Naming<'_>; 4] = [
         ("aliases after", &|k| format!("x{k}"), &|i| i),
         (
             "aliases before",
-            &|k| format!("{}", ["z", "a", "b", "c"][k]),
+            &|k| ["z", "a", "b", "c"][k].to_string(),
             &|i| i,
         ),
         (
             "interleaved",
-            &|k| format!("{}", ["m", "z", "a", "n"][k]),
+            &|k| ["m", "z", "a", "n"][k].to_string(),
             &|i| 99 - i,
         ),
         ("reversed", &|k| format!("v{}", 9 - k), &|i| 99 - i),
@@ -4393,7 +4395,7 @@ fn easy_clause_systems_over_several_moduli_keep_their_answers() {
     // The third field: whether the solver answers `holds`. The two cases with `false` hold
     // nowhere in a range shorter than the period of their moduli; the general path refuses them,
     // as it did before the one-variable path (measured on d5714627).
-    let cases: Vec<(Vec<((i64, i64), &[i64])>, Option<(i64, i64)>, bool)> = vec![
+    let cases: Vec<ResidueCase<'_>> = vec![
         (vec![p57, p1113], None, true),
         (vec![p57, p1113], Some((0, 100_000)), true),
         (vec![p34, p57, p1113], None, true),
@@ -4761,16 +4763,16 @@ fn one_variable_boundary_modes_do_not_depend_on_names() {
         let (a, b) = s.split_once("..").unwrap();
         (a.parse().unwrap(), b.parse().unwrap())
     });
-    let namings: [(&str, &dyn Fn(usize) -> String, &dyn Fn(u32) -> u32); 4] = [
+    let namings: [Naming<'_>; 4] = [
         ("aliases after", &|k| format!("x{k}"), &|i| i),
         (
             "aliases before",
-            &|k| format!("{}", ["z", "a", "b", "c"][k]),
+            &|k| ["z", "a", "b", "c"][k].to_string(),
             &|i| i,
         ),
         (
             "interleaved",
-            &|k| format!("{}", ["m", "z", "a", "n"][k]),
+            &|k| ["m", "z", "a", "n"][k].to_string(),
             &|i| 99 - i,
         ),
         ("reversed", &|k| format!("v{}", 9 - k), &|i| 99 - i),
@@ -5048,7 +5050,7 @@ fn remainder_alias_answers_do_not_depend_on_names() {
         let (a, b) = s.split_once("..").unwrap();
         (a.parse().unwrap(), b.parse().unwrap())
     });
-    let namings: [(&str, &dyn Fn(usize) -> String, &dyn Fn(u32) -> u32); 4] = [
+    let namings: [Naming<'_>; 4] = [
         (
             "alias a",
             &|k| if k == 9 { "a".into() } else { format!("m{k}") },

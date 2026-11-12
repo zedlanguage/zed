@@ -758,9 +758,7 @@ fn solve_modular_whole(
             continue;
         }
         if c.rel == Rel::Eq && lin.terms.len() == 1 {
-            let Some((a, k)) = lin.terms.iter().next() else {
-                return None;
-            };
+            let (a, k) = lin.terms.iter().next()?;
             let d = k.abs();
             if !lin.constant.mod_floor_wide(&d).is_zero() {
                 return Some(None);
@@ -780,12 +778,8 @@ fn solve_modular_whole(
             }
         } else if c.rel == Rel::Eq && lin.terms.len() == 2 {
             let mut it = lin.terms.iter();
-            let Some((a, ka)) = it.next() else {
-                return None;
-            };
-            let Some((b, kb)) = it.next() else {
-                return None;
-            };
+            let (a, ka) = it.next()?;
+            let (b, kb) = it.next()?;
             if ka.is_unit() && kb.is_unit() {
                 // ka * a + kb * b + constant == 0  =>  a = (-ka*kb) * b + (-ka * constant)
                 let sa: i8 = if ka.is_positive() { 1 } else { -1 };
@@ -839,9 +833,7 @@ fn solve_modular_whole(
     for c in &top_cons {
         let lin = rewrite_lin_full(&c.lin, &fixed, &uf, &empty_rems);
         if lin.terms.len() == 1 {
-            let Some((a, k)) = lin.terms.iter().next() else {
-                return None;
-            };
+            let (a, k) = lin.terms.iter().next()?;
             let d = k.abs();
             let entry = root_bounds.entry(a.clone()).or_insert((None, None));
             match c.rel {
@@ -898,7 +890,7 @@ fn solve_modular_whole(
         let rem_key = |a: &Atom| -> Option<(bool, Int)> {
             if let Some((Some(lo), Some(hi))) = root_bounds.get(a)
                 && lo <= hi
-                && &(hi - lo) < &m
+                && (hi - lo) < m
             {
                 let width = hi - lo;
                 Some((&width + &Int::ONE == m, width))
@@ -966,12 +958,8 @@ fn solve_modular_whole(
         }
         if lin.terms.len() == 2 {
             let mut it = lin.terms.iter();
-            let Some((a1, k1)) = it.next() else {
-                return None;
-            };
-            let Some((a2, k2)) = it.next() else {
-                return None;
-            };
+            let (a1, k1) = it.next()?;
+            let (a2, k2) = it.next()?;
             let (x_cand, q_coef) = match (k1.is_unit(), k2.is_unit()) {
                 (true, false) => (a1, k2),
                 (false, true) => (a2, k1),
@@ -1013,15 +1001,11 @@ fn solve_modular_whole(
         if lin.terms.len() != 2 {
             continue;
         }
-        let Some(c_x) = lin.terms.get(&x_root) else {
-            return None;
-        };
+        let c_x = lin.terms.get(&x_root)?;
         if !c_x.is_unit() {
             return None;
         }
-        let Some((q_root, c_q)) = lin.terms.iter().find(|(a, _)| *a != &x_root) else {
-            return None;
-        };
+        let (q_root, c_q) = lin.terms.iter().find(|(a, _)| *a != &x_root)?;
         let m = c_q.abs();
         if m < Int::from(2) {
             return None;
@@ -1111,9 +1095,7 @@ fn solve_modular_whole(
     for c in &all_cons {
         let lin = rewrite_lin_full(&c.lin, &fixed, &uf, &rem_defs);
         if lin.terms.len() == 1 {
-            let Some(a) = lin.terms.keys().next() else {
-                return None;
-            };
+            let a = lin.terms.keys().next()?;
             if *a != x_root && !global_quots.contains_key(a) {
                 return None;
             }
@@ -1206,9 +1188,7 @@ fn solve_modular_whole(
                 return Some(None);
             }
         } else if cl.bounds.is_empty() && cl.mods.len() == 1 {
-            let Some((m, s)) = cl.mods.into_iter().next() else {
-                return None;
-            };
+            let (m, s) = cl.mods.into_iter().next()?;
             unit_inputs.entry(m).or_default().push(s);
         } else {
             raw_clauses.push(cl);
@@ -1232,9 +1212,7 @@ fn solve_modular_whole(
         let bounds = intersect_domains(bounds);
         if bounds.is_empty() {
             if mods.len() == 1 {
-                let Some((m, s)) = mods.into_iter().next() else {
-                    return None;
-                };
+                let (m, s) = mods.into_iter().next()?;
                 unit_inputs.entry(m).or_default().push(s);
             } else {
                 mixed_clauses.push(FlatClause {
@@ -1518,7 +1496,7 @@ fn walk_segments(
             RegimeOut::Found(x) if leaf || holds_everywhere(&x) => return RegimeOut::Found(x),
             // The point of the other writing, where the regime reads the same from both ends
             // (`solve_regime`): which of the two comes first depends on the names.
-            RegimeOut::Found(_) if other.as_ref().is_some_and(&holds_everywhere) => {
+            RegimeOut::Found(_) if other.as_ref().is_some_and(holds_everywhere) => {
                 return other.map_or(RegimeOut::Undecided, RegimeOut::Found);
             }
             RegimeOut::Undecided if leaf => {
@@ -2235,15 +2213,15 @@ fn solve_regime_step(
     // Failure gives no verdict and the
     // existing exact steps continue. Tests: pncx_lower_witness_scale and the
     // bounded enumeration tests; `names::answers_do_not_depend_on_the_names_of_aliases`.
-    if let Some(l) = lo {
-        if let Some(x) = lower_witness(l, hi, &unit_mods, &clauses) {
-            return RegimeOut::Found(x);
-        }
+    if let Some(l) = lo
+        && let Some(x) = lower_witness(l, hi, &unit_mods, &clauses)
+    {
+        return RegimeOut::Found(x);
     }
-    if let Some(h) = hi {
-        if let Some(x) = upper_witness(lo, h, &unit_mods, &clauses) {
-            return RegimeOut::Found(x);
-        }
+    if let Some(h) = hi
+        && let Some(x) = upper_witness(lo, h, &unit_mods, &clauses)
+    {
+        return RegimeOut::Found(x);
     }
 
     if let Some(x) = separate_pair_witness(lo, hi, &unit_mods, &clauses) {
@@ -3299,13 +3277,16 @@ fn cb_merge(p: Vec<Int>, q: Vec<Int>) -> Option<Vec<Int>> {
     Some(s_active)
 }
 
+// The coprime base, each modulus as base indices with powers, and the powers of each base.
+type CoprimeBase = (Vec<Int>, BTreeMap<Int, Vec<(usize, Int)>>, Vec<Vec<Int>>);
+// A slice of moduli with the bases still to split over it (Algorithm 21.2).
+type FactorJob<'a> = (&'a [Int], Vec<(usize, Int)>);
+
 /// Algorithm 18.1 + 21.2 of Bernstein (2005): computes the sorted natural coprime base `bases` of
 /// `moduli`, the prime-power-like factor list `mod_factors[m] = [(base_idx, q_{m, idx})]` for each
 /// `m`, and `base_all_powers[base_idx]` (sorted powers dividing any `m`).
 // None only where a product tree is not as built (see `split_sparse`).
-fn coprime_base_and_factors(
-    mut moduli: Vec<Int>,
-) -> Option<(Vec<Int>, BTreeMap<Int, Vec<(usize, Int)>>, Vec<Vec<Int>>)> {
+fn coprime_base_and_factors(mut moduli: Vec<Int>) -> Option<CoprimeBase> {
     moduli.retain(|m| *m > Int::ONE);
     moduli.sort();
     moduli.dedup();
@@ -3338,7 +3319,7 @@ fn coprime_base_and_factors(
 
     // Simultaneous divide-and-conquer factorization (Algorithm 21.2).
     let initial_p: Vec<(usize, Int)> = bases.iter().cloned().enumerate().collect();
-    let mut stack: Vec<(&[Int], Vec<(usize, Int)>)> = vec![(&moduli[..], initial_p)];
+    let mut stack: Vec<FactorJob<'_>> = vec![(&moduli[..], initial_p)];
 
     while let Some((s_slice, p_sub)) = stack.pop() {
         if s_slice.is_empty() || p_sub.is_empty() {
@@ -3584,10 +3565,12 @@ fn solve_coprime_system(
             }
         }
     }
-    if lo.is_none() && hi.is_none() && allow_split {
-        if let Some(point) = independent_component_witness(bases_info, &allowed, &clauses) {
-            return RegimeOut::Found(point);
-        }
+    if lo.is_none()
+        && hi.is_none()
+        && allow_split
+        && let Some(point) = independent_component_witness(bases_info, &allowed, &clauses)
+    {
+        return RegimeOut::Found(point);
     }
     solve_coprime_connected(lo, hi, bases_info, allowed, clauses, allow_split)
 }
@@ -4144,8 +4127,8 @@ fn solve_coprime_connected(
         }
 
         // Check if `total_share < 1`:
-        if total_share.0 < total_share.1 {
-            if let Some(x_val) = find_point_by_conditional_expectations(
+        if total_share.0 < total_share.1
+            && let Some(x_val) = find_point_by_conditional_expectations(
                 lo,
                 hi,
                 &r0,
@@ -4156,9 +4139,9 @@ fn solve_coprime_connected(
                 &a_counts,
                 &boxes,
                 &shares,
-            ) {
-                return RegimeOut::Found(x_val);
-            }
+            )
+        {
+            return RegimeOut::Found(x_val);
         }
 
         if !allow_split {
@@ -4500,8 +4483,7 @@ fn combine_crt_tree(mut pairs: Vec<(Int, Int)>) -> Option<(Int, Int)> {
         }
     }
     if let Some(mut vals) = vals {
-        for level in 0..tree.len() - 1 {
-            let prods = &tree[level];
+        for prods in &tree[..tree.len() - 1] {
             vals = vals
                 .chunks(2)
                 .zip(prods.chunks(2))
@@ -4681,6 +4663,9 @@ fn build_model(
 
     model
 }
+// Clauses of two moduli grouped by their span and moduli, each with its two residues.
+type PairGroups<'a> = BTreeMap<(Option<&'a Span>, &'a Int, &'a Int), Vec<(&'a Int, &'a Int)>>;
+
 /// The bounds that triples of clauses force (Codex's R3-CODEX-6, proved there): three clauses
 /// `x mod a == a_j || x mod b == b_j || x in D`, with one interval or empty `D`, the three `a_j` distinct
 /// and the three `b_j` distinct, force `x` into `D`, since outside `D` the one value of `x mod a`
@@ -4692,7 +4677,7 @@ fn build_model(
 /// regimes3 family (23x per 8x, Gemini's round-3 control); it finds only bounds forced by three
 /// two-modulus clauses, not every implied bound. Test: the regimes3 axis of `pncx_probe`.
 fn forced_pair_bounds(clauses: &[FlatClause]) -> Domain {
-    let mut groups: BTreeMap<(Option<&Span>, &Int, &Int), Vec<(&Int, &Int)>> = BTreeMap::new();
+    let mut groups: PairGroups<'_> = BTreeMap::new();
     for cl in clauses {
         if cl.mods.len() != 2 {
             continue;
@@ -4937,13 +4922,13 @@ impl ScalarWitness<'_> {
             |_, ()| (),
             |g, (), values: Vec<bool>| match g {
                 Formula::Con(c) => {
-                    if let Some(specs) = &specs {
-                        if let Some(v) = self.reduced_value(c, specs) {
-                            return match c.rel {
-                                Rel::Eq => v.is_zero(),
-                                Rel::Ge => !v.is_negative(),
-                            };
-                        }
+                    if let Some(specs) = &specs
+                        && let Some(v) = self.reduced_value(c, specs)
+                    {
+                        return match c.rel {
+                            Rel::Eq => v.is_zero(),
+                            Rel::Ge => !v.is_negative(),
+                        };
                     }
                     let v = c
                         .lin
