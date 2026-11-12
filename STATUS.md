@@ -2004,6 +2004,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | POW-rat | impl attempt 1 | 2026-11-12 00:53 | started; worktree /home/luke/Work/wt/pow-rat on origin/main |
 | STAGE-commands | impl attempt 1 | 2026-11-12 15:39 | started; worktree /home/luke/Work/wt/stage-commands at cdd557f13, load 16.72 |
 | T11-preimage-rest | impl attempt 1 | 2026-11-05 04:07 | started; worktree at cdd557f13, design read |
+| T6-pinwheel-split-guard | running | 2026-11-12 15:53 |  |
 | TRIVIAL-walk-picks | impl attempt 1 | 2026-11-12 14:54 | started; making worktree |
 | UNITS-info | spec attempt 1 | 2026-11-12 15:31 | DESIGN and DOCS-TODO 136 committed on wt/units-info-spec; impl worktree created |
 
