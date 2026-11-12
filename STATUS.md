@@ -1908,7 +1908,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| C2-local-tier | impl attempt 1 | 2026-11-11 01:43 | started; worktree /home/luke/Work/wt/c2-local-tier on origin/main |
+| C2-local-tier | impl attempt 1 | 2026-11-11 01:43 | reproduced on origin/main 2eecdbe4b: joined chain k=8 32 sides 319M instr 0.14 s, k=64 234 sides 13129M instr 5.7 s (41x instr, limit 24x); load 46 |
 | DELETE-msg-cycle-push | running | 2026-11-11 13:43 |  |
 | DELETE-msg-cycle-unit-item | running | 2026-11-11 13:43 |  |
 | DELETE-msg-elab-operator | running | 2026-11-11 13:43 |  |
@@ -1920,25 +1920,28 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FIX-sort-no-key | impl attempt 1 | 2026-11-11 16:34 | pushed 6f14f73c6, 69ca80c93 to zed-impl main; local main fast-forwarded; worktree and branch removed; load 41.00 |
 | GROUP-search-canon-key-xr | impl attempt 1 | 2026-11-10 04:40 | round 1 closed: Gemini carbon rerun stopped by the 5 h timeout (rc=124, no report); its 16:03 state measured (sweep inhabited 0/0, exact 6/3, BELOW-BEST 5, CLAS |
 | GSX-unsolved | impl attempt 1 | 2026-11-11 16:53 | CD round 1 launched (experiment 4374754456781193217, baseline 66010); port worktree gsx-cd has the I6.7 memo move and I6.8 control fix, building |
-| IMPORTS-untyped-join | impl attempt 1 | 2026-11-12 | done: calls grouped by pair of file and name, methods by module span (k^2 per name removed); the join stays O(p √p), proven triangle-hard in COMPLEXITY F103 (reduction from triangle detection; Triangle Conjecture, combinatorial BMM); tests s_01f_import_graph 20/21, the one failure (`no_crate_has_an_import_cycle_but_the_known_ones`, zedc-presburger) present on the base with identical edges |
 | INITIAL-two-sentinels-overlap | impl attempt 1 | 2026-11-11 17:21 | worktrees initial-overlap and initial-overlap-spec and their branches removed; done |
-| KERNEL-alloc-count-cost | impl attempt 1 | 2026-11-09 11:48 | started on 58979d7f6, load 56.57 55.43 56.03 |
+| KERNEL-alloc-count-cost | impl attempt 1 | 2026-11-09 11:48 | callgrind parity test 33.51G -> 31.17G Ir (7.0% fewer): salt read 6.0% removed (mix 39 -> 19 Ir/call), allocator own code 5.73% -> 5.07%; groups zed_alloc_count |
 | KEYWORD-without-37 | impl attempt 1 | 2026-11-11 16:59 | done: worktrees keyword-without and keyword-without-spec and both branches removed |
 | LAZY-hub-unsolved | running | 2026-11-11 16:53 |  |
 | LIT-cast-of-literal-union | impl attempt 1 | 2026-11-11 22:33 | started, worktree lit-cast-union |
+| LIT-print-order | impl attempt 1 | 2026-11-11 12:38 | started; worktree wt/lit-print-order at 6874a6ea0; load 55.48 55.81 54.34 |
 | LIT-unfixed-decimal-binding | impl attempt 1 | 2026-11-11 14:59 | pushed db5cc1405 (tests only); l01_26a 148 passed 0 failed at load 43; follow-up LIT-cast-of-literal-union queued; removing worktree |
 | MINMAX-chain-rows | impl attempt 1 | 2026-11-11 01:43 | started; worktree on origin/main 40e73127e |
 | MSG-compare-components | impl attempt 1 | 2026-11-11 13:43 | fixed: pushed 25d87b8d3 + STATUS a71967299; follow-up MSG-derive-type-size queued; load 50.34 52.44 49.78 |
 | MSG-concise-style | impl attempt 1 | 2026-11-11 23:43 | Part 2 ordering message: depth test 200/1600 levels 40.4M/302.6M instr 7.5x (limit 12.25); repair-at-depth test 100/800 23.6M/289.1M 12.2x (limit 102.19, power  |
-| MUTABLE-to-initial-facet | impl attempt 1 | 2026-11-12 02:08 | done: spec af4dc8d, code b8e7bb281 2c09cbebe dec65ffeb, STATUS 639d30064; worktrees mutable-carry and mutable-carry-spec and both branches removed; load 39.89 42.13 48.24 |
+| MSG-derive-type-size | impl attempt 1 | 2026-11-11 23:35 | started; worktree /home/luke/Work/wt/msg-derive-type-size on origin/main 6874a6ea0 |
+| MSG-literal-type-article | impl attempt 1 | 2026-11-11 23:37 | started; worktree wt/msg-literal-article |
+| MSG-union-order-consistent | impl attempt 1 | 2026-11-11 13:26 | started; worktree wt/lit-print-order at 6874a6ea0; load 55.48 55.81 54.34 |
+| MUTABLE-to-initial-facet | impl attempt 1 | 2026-11-11 23:16 | done: spec af4dc8d; code b8e7bb281 2c09cbebe dec65ffeb; STATUS 639d30064, ledger 6f963c503; affected groups 195/195 pieces pass, clippy and fmt clean; worktrees |
 | PERF-negated-chain-unsolved | impl attempt 1 | 2026-11-11 17:41 | worktree wt/pncx-cd made to port CD candidate 45 (7-8% fewer instructions on 23..711 words, same growth) for the instruction-count comparison |
 | PRES-disj-regressions | running | 2026-11-11 23:37 |  |
 | PRINT-own-shape-1tuple | impl attempt 1 | 2026-11-09 10:56 | done; worktree and branch removed / load 33.55 27.72 27.93 |
-| PROBE-guards | impl attempt 1 | 2026-11-11 01:43 | decide on guards already 9.6x (limit 15.4) via drop_by_bounds; real quadratic is project_each onto i: search_by_halves halved to each of ~3k/4 failing disjuncts |
+| PROBE-guards | impl attempt 1 | 2026-11-11 01:43 | suite run 1 found 3 order failures (reversed_parts_give_the_same_boxes_1, _3; 3250 count) from learned bounds handed back to probe_kept_status; bounds now kept  |
 | PRODUCT-superlinear-main | impl attempt 1 | 2026-11-12 00:05 | blocked, no commit (load1 56.17): shared cause = case split re-projects every earlier part on a moved hub, Theta(k) projections per test, 90-98% no-ops; persist |
-| RADIX-depth | impl attempt 1 | 2026-11-11 01:43 | started; worktree /home/luke/Work/wt/radix-depth on origin/main d69e2376a; load 60.92 |
+| RADIX-depth | impl attempt 2 | 2026-11-11 01:43 | started hybrid cross-review; checking gcd test setup claim first; load 51.36 45.12 48.35 |
 | REFUSAL-front-unsolved | running | 2026-11-11 17:03 |  |
-| STAGE-joined-eq | impl attempt 1 | 2026-11-11 01:43 | started; worktree /home/luke/Work/wt/stage-joined-eq on origin/main |
+| STAGE-joined-eq | impl attempt 1 | 2026-11-11 01:43 | part 1 written (Text::is_joined, compared drops the 128-byte switch, test calls_at_joins_of_100_and_200_bytes_stage_alike red 9 vs 10 before fix); study docs/jo |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
