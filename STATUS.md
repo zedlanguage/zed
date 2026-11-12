@@ -1939,23 +1939,22 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | C2-pairs-exact | impl attempt 1 | 2026-11-12 05:01 | started; reading f0ce6ac5e and the CD-audit model |
 | CHK-f64-bounded-int-menus | running | 2026-11-12 01:41 |  |
-| CHK-for-body-writers | running | 2026-11-12 05:37 |  |
+| CHK-for-body-writers | impl attempt 1 | 2026-11-12 05:37 | started; worktree /home/luke/Work/wt/indexed-followups at 6381f7ad7; load 38.51 |
 | GSX-unsolved | hybrid-xr attempt 1 | 2026-11-11 16:53 | round H1 seats launched: Opus 5.5 medium (h1/claude, tree gsxh-claude), gpt-6.1-sol medium (h1/codex, tree gsxh-codex), 5 h limit; load 25.46 30.53 39.26 |
 | LAZY-hub-unsolved | hybrid-xr attempt  | 2026-11-11 16:53 | round 1 merged 83079757e (finite ends fire the in-case direction index): 8 of 11 targets; audit 85:8, 108:3, 115:3 open |
 | LEX-decimal-format-suffix | running | 2026-11-12 04:41 |  |
+| LIT-call-union-at-f64 | impl attempt 1 | 2026-11-12 03:11 | started; worktree wt/lit-call-union from origin/main 6381f7ad7 |
 | LOAD-max-div-unsolved | impl attempt 1 | 2026-11-11 17:11 | worktree /home/luke/Work/wt/lmd-cd (wt/lmd-cd at 7d96d3826) made for the Rust port; CD round 1 best 58 = 28.71 |
 | MSG-call-union-headline | running | 2026-11-12 05:51 |  |
 | MSG-concise-rest | impl attempt 1 | 2026-11-12 04:41 | start: MSG-concise-rest, MSG-forced-literal-menu, CHK-f64-bounded-int-menus, LEX-decimal-format-suffix in wt/msg-concise-rest (+ -spec) / load 41.42 35.32 38.13 |
-| MSG-dot-repair-in-indexed | running | 2026-11-12 05:37 |  |
+| MSG-dot-repair-in-indexed | impl attempt 1 | 2026-11-12 05:37 | started; worktree /home/luke/Work/wt/indexed-followups at 6381f7ad7; load 38.51 |
 | MSG-forced-literal-menu | running | 2026-11-12 04:41 |  |
-| MSG-hoist-name-outer | running | 2026-11-12 05:37 |  |
+| MSG-hoist-name-outer | impl attempt 1 | 2026-11-12 05:37 | started; worktree /home/luke/Work/wt/indexed-followups at 6381f7ad7; load 38.51 |
 | MSG-many-arguments-output | impl attempt 1 | 2026-11-12 05:51 | started with MSG-call-union-headline in /home/luke/Work/wt/msg-many-args |
 | PERF-negated-chain-unsolved | hybrid-xr attempt 1 | 2026-11-11 17:41 | started; CD r1 completed best 17.276 (cand 250, ratio lowered by raising bytes at n, no real gain), r2 running 188 cands best = seed 17.216 |
-| PLAN-sync | running | 2026-11-05 04:07 |  |
 | PRINT-below-whole | impl attempt 1 | 2026-11-11 01:43 | blocked on RADIX-depth; WIP 939f3a2a6 on wt/print-below-whole (pushed branch, not main); split 22.9x instr / 13.6x bytes at 20k/160k digits, never-slower test f |
 | PRINT-split-fixed-cost | impl attempt 1 | 2026-11-12 05:40 | started; PRINT-below-whole branch rebased on origin/main (e07fb450b), restacking |
 | REFUSAL-front-unsolved | running | 2026-11-11 17:03 |  |
-| SCALE-fix-round-literal | impl attempt 2 | 2026-11-07 12:13 | every f32 bit pattern (2^32, 8 ignored parts every_float_read_back_0..7): shortest text reads back exactly, all pass |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
