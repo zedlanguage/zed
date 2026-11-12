@@ -1883,17 +1883,30 @@ fn error_as_written(e: KernelError, calls: &Run) -> Option<String> {
 }
 
 /// Whether the value `v` is compared in time linear in the memory it holds: each leaf is a
-/// boolean, a number or a string held as one block, in tuples and keypaths. Floats compare by
+/// boolean, a number or a string no join made, in tuples and keypaths. Floats compare by
 /// their bits, so `-0.0` and `0.0` are told apart. A join of strings may be exponentially
-/// longer than its nodes, and comparing it reads every byte. A family's or an atom's parts
-/// are not walked.
+/// longer than its nodes, and comparing it reads every byte, so a string a join made is not
+/// compared at any length (QUESTIONS A7): a short join, which the text holds as one block, is
+/// refused as a long one is (`Text::is_joined`), and how a call stages does not switch at a
+/// length. A family's or an atom's parts are not walked.
+// Complexity tradeoff: a call at a joined string is run as written, so a part calling two
+// functions that answer alike at a join is mixed once under each rather than once; the value is
+// the same. What is given up is that sharing, for every join, short or long. Why: comparing a
+// join reads every byte, exponential in its nodes for a string doubled again and again, and an
+// exact comparison of two joins in time near their nodes (equality of compressed strings) is
+// the open study of item STAGE-joined-eq (docs/joined-strings-study.md). Before, a join of
+// at most 128 bytes, held as one block, was compared, so the plan switched at that length.
+// Trigger: a string built by `++`. Tests
+// `l01_28_staging::dag::calls_at_joins_of_100_and_200_bytes_stage_alike` and
+// `l01_28_staging::dag::a_call_at_a_long_join_is_mixed_as_written`; COMPLEXITY.md row
+// STAGE-joined-eq.
 fn compared(v: &Value) -> bool {
     let mut todo = vec![v];
     while let Some(v) = todo.pop() {
         match v {
             Value::Bool(_) | Value::Int(_) | Value::Big(_) | Value::Rat(_) | Value::Float(_) => {}
             Value::Str(s) => {
-                if !s.is_flat() {
+                if s.is_joined() {
                     return false;
                 }
             }
@@ -2560,8 +2573,8 @@ impl Mixer {
     // function's calls are shown to end (each function it calls through a name has a stub,
     // and the other bindings it reads are literals, primitives or names), when the calls are
     // made outside a family operation or a `fix` (a pure region, which reads no port), and
-    // when each run succeeds with arguments that hold no family, no atom and no string held
-    // in more than one block ([`compared`]) and with answers of those kinds; otherwise the
+    // when each run succeeds with arguments that hold no family, no atom and no string a join
+    // made, of any length ([`compared`]) and with answers of those kinds; otherwise the
     // part is keyed by what the function is, its term and the bindings it reads, and is mixed
     // once under each such function, as before. A float is keyed by its bits, so `-0.0` and
     // `0.0` are two answers, and an argument that is a function bound to a stub by that stub's
@@ -2577,8 +2590,10 @@ impl Mixer {
     // m + 1 times. Why: whether two functions compute the same values is undecidable in
     // general, so a part is keyed by the answers it took, which mixing can compare; a pure
     // region reads no port, a family's entries are keys, and comparing a join of strings
-    // reads every byte, which may take time exponential in its nodes. The runs start again
-    // rather than nest, so the thread's stack does not grow with the depth of the functions.
+    // reads every byte, which may take time exponential in its nodes; a join of any length is
+    // so run as written, so how a call stages never switches at a length (QUESTIONS A7). The
+    // runs start again rather than nest, so the thread's stack does not grow with the depth of
+    // the functions.
     // Trigger: a part shared below `let`s of functions that differ on each path and are
     // called inside a family operation, through a parameter, or with such an argument; for
     // the restart, a function that calls many earlier functions at many new arguments in one
@@ -2598,7 +2613,7 @@ impl Mixer {
     // (one part under two functions, keyed by what each gives at `0.0`),
     // `l01_28_staging::cone::calls_at_minus_zero_of_a_long_chain_are_answered_in_linear_time`,
     // `l01_28_staging::cone::calls_passing_functions_of_a_long_chain_are_answered_in_linear_time`
-    // (each at n and 8n),
+    // (each at n and 8n), `l01_28_staging::dag::calls_at_joins_of_100_and_200_bytes_stage_alike`,
     // `l01_28_staging::cone::calls_at_float_zeros_and_at_functions_give_what_they_give_as_written`
     // and `l01_28_staging::mix::an_evaluation_error_is_left_to_run`. COMPLEXITY.md row F83. A
     // complete solution would read a part's calls inside a pure region through a pure lookup,

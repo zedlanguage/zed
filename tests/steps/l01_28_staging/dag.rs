@@ -628,6 +628,50 @@ fn a_call_at_a_long_join_is_mixed_as_written() {
     );
     assert!(report.left.is_empty(), "{report:?}");
 }
+
+/// `main = (c, n) -> if c { let f = (s) -> 1; p } else { let f = (s) -> 1 + 0; p }` with the
+/// part `p = n + f(x ++ y)` one node, and the number of distinct nodes of the mixed body. When
+/// the call is answered by each `f`'s stub, `p` is keyed by the answer, which both functions
+/// give alike, and is mixed once, so the two arms share it; when the call is run as written,
+/// `p` is keyed by what each `f` is and is mixed once under each.
+fn mixed_nodes_at(x: Term, y: Term) -> usize {
+    let call = Term::App(Shared::new(var("f")), vec![prim(Prim::Concat, vec![x, y])]);
+    let part = Shared::new(prim(Prim::Add, vec![var("n"), call]));
+    let arm = |f: Term| Shared::new(Term::Let("f".into(), Shared::new(f), part.clone()));
+    let one = lam(&["s"], lit(1i64));
+    let sum = lam(&["s"], prim(Prim::Add, vec![lit(1i64), lit(0i64)]));
+    let body = Term::If(Shared::new(var("c")), arm(one), arm(sum));
+    let main = Term::Lam(vec!["c".into(), "n".into()], Shared::new(body));
+    let unit = Unit {
+        defs: vec![def("main", main)],
+        tests: Arc::from([]),
+        warnings: Vec::new(),
+        int_params: Default::default(),
+    };
+    let (mixed, report) = stage::mix(&unit, &["main"]);
+    assert!(report.left.is_empty(), "{report:?}");
+    distinct(&mixed.defs[0].term)
+}
+
+/// A call at a joined string is run as written whatever its length (QUESTIONS A7, item
+/// STAGE-joined-eq): a part calling two functions at a join of 100 bytes and one calling them
+/// at a join of 200 bytes stage alike, each mixed once under each function. Before, a join of
+/// at most 128 bytes was held as one block and answered by the functions' stubs, so the part
+/// at 100 bytes was mixed once and shared, and the one at 200 bytes twice. A call at a string
+/// of 200 bytes that is no join (the empty string joined to a literal gives the literal) is
+/// still answered: what decides is the join, not the length.
+#[test]
+fn calls_at_joins_of_100_and_200_bytes_stage_alike() {
+    let half = |n: usize| lit("a".repeat(n).as_str());
+    let short = mixed_nodes_at(half(50), half(50));
+    let long = mixed_nodes_at(half(100), half(100));
+    let answered = mixed_nodes_at(lit(""), half(200));
+    assert_eq!(short, long);
+    assert!(
+        answered < long,
+        "{answered} nodes answered, {long} as written"
+    );
+}
 /// `main = (n) -> n + td` with `t0 = w(w)`, `w = (f) -> f(f)`, and `tj = if j >= 1 { t(j-1) }
 /// else { t(j-1) }`, the two arms one node: a build-stage term whose form does not show that
 /// it ends, so mixing leaves it to run and records it in the report. The report holds the term
