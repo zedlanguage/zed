@@ -2,6 +2,7 @@
 //! number has no equal `T`, and `#invalid` when the source is not a `T` at all.
 
 use super::x;
+use num_bigint::BigUint;
 use zed_kernel::{Prim, Term, Value};
 use zed_tests::step_helpers::l01_16_elaboration::errors;
 
@@ -78,6 +79,85 @@ fn a_float_reads_correctly_rounded_and_overflow_is_inexact() {
     assert_eq!(x("f64(text(\"1,5\"))"), "#invalid");
     assert_eq!(x("f64(text(\"infinity\"))"), "#invalid");
     assert_eq!(x("f64(text(\"1e\"))"), "#invalid");
+}
+
+#[test]
+fn an_int_read_from_text_takes_leading_zeros_and_a_minus_zero() {
+    // A meter reading padded to a fixed width: `int(s)` reads an optional `-` and decimal
+    // digits, any number of them, so leading zeros are read (unlike `rat`, which reads only
+    // what `String` writes; see rat_text.rs).
+    assert_eq!(x("int(\"007\")"), "7");
+    assert_eq!(x("int(\"-007\")"), "-7");
+    assert_eq!(x("int(\"000\")"), "0");
+    // The integers have one zero, so `-0` is that zero.
+    assert_eq!(x("int(\"-0\")"), "0");
+    assert_eq!(x("int(\"-0\") == int(\"0\")"), "true");
+    assert_eq!(x("String(int(\"-00\"))"), "\"0\"");
+}
+
+#[test]
+fn digits_of_other_scripts_are_not_read() {
+    // Decimal digits are the ASCII `0` to `9` (DESIGN.md step L1.18), so 42 written in
+    // Arabic-Indic digits (U+0664 U+0662) is no number, nor are Devanagari or fullwidth
+    // digits, nor ASCII and Arabic-Indic digits mixed.
+    assert_eq!(x("int(text(\"\u{664}\u{662}\"))"), "#invalid");
+    assert_eq!(x("int(text(\"-\u{664}\u{662}\"))"), "#invalid");
+    assert_eq!(x("int(text(\"4\u{662}\"))"), "#invalid");
+    assert_eq!(x("int(text(\"\u{96a}\u{968}\"))"), "#invalid");
+    assert_eq!(x("int(text(\"\u{ff14}\u{ff12}\"))"), "#invalid");
+    assert_eq!(x("rat(text(\"\u{664}\u{662}\"))"), "#invalid");
+    assert_eq!(x("f64(text(\"\u{664}\u{662}\"))"), "#invalid");
+    assert_eq!(x("f64(text(\"1e\u{662}\"))"), "#invalid");
+}
+
+/// The sign bit of an `f64`.
+const NEGATIVE: u64 = 1 << 63;
+
+/// The bits of `f64(text)` as the kernel reads it, so that `0.0` and `-0.0`, which `==` takes
+/// as equal, are told apart.
+fn f64_bits(text: &str) -> u64 {
+    match zed_kernel::eval(&Term::Prim(
+        Prim::CastF64,
+        vec![Term::Lit(Value::str(text))],
+    ))
+    .unwrap()
+    {
+        Value::Float(f) => f.get().to_bits(),
+        other => panic!("f64({text:?}) gave {other}"),
+    }
+}
+
+#[test]
+fn a_float_read_from_text_keeps_the_sign_of_zero() {
+    assert_eq!(f64_bits("-0"), NEGATIVE);
+    assert_eq!(f64_bits("-0.0"), NEGATIVE);
+    assert_eq!(f64_bits("-0e9"), NEGATIVE);
+    assert_eq!(f64_bits("0"), 0);
+    assert_eq!(f64_bits("0.0"), 0);
+    // The same through a program: `String` writes the sign of a zero.
+    assert_eq!(x("f64(\"-0\")"), "-0.0");
+    assert_eq!(x("String(f64(text(\"-0\")))"), "\"-0.0\"");
+    assert_eq!(x("f64(\"0\")"), "0.0");
+}
+
+#[test]
+fn a_float_text_below_the_least_subnormal_reads_as_a_signed_zero() {
+    // A sensor log that writes a reading of 1e-400 has written a number too small for an
+    // f64: it is correctly rounded like any other, to zero with the text's sign, and no atom.
+    assert_eq!(f64_bits("1e-400"), 0);
+    assert_eq!(f64_bits("-1e-400"), NEGATIVE);
+    assert_eq!(x("f64(\"1e-400\")"), "0.0");
+    assert_eq!(x("f64(\"-1e-400\")"), "-0.0");
+    assert_eq!(x("f64(text(\"-1e-400\"))"), "-0.0");
+    // At most half the least subnormal is zero. 2^-1075 = 5^1075 * 10^-1075 exactly, half of
+    // 2^-1074, a tie that rounds to the even neighbor, zero; one more digit past its last
+    // makes it nearer to 2^-1074, the least subnormal, whose bits are 1.
+    let half = format!("{}e-1075", BigUint::from(5u32).pow(1075));
+    assert_eq!(f64_bits(&half), 0);
+    assert_eq!(f64_bits(&format!("-{half}")), NEGATIVE);
+    let above = format!("{}1e-1076", BigUint::from(5u32).pow(1075));
+    assert_eq!(f64_bits(&above), 1);
+    assert_eq!(f64_bits(&format!("-{above}")), NEGATIVE | 1);
 }
 
 #[test]
