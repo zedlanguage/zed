@@ -1004,8 +1004,8 @@ all  = for x -> y -> _ in grid { grid[x][y] };   // total, by construction: the 
 <!-- EXAMPLES.md:1027 layer L13: ring L7, word L13 (taint), label none, documentation notation; section [22. Facets] 1 -->
 ```zed
 // [d4] sec:tour_grammar, sec:facets
-v = 3.0 with units("m/s");
-t = 2.0 with units("s");
+v = 3.0f64 with units("m/s");
+t = 2.0f64 with units("s");
 d = v * t;                                 // f16 with units("m"), since 3.0 and 2.0 are f16
 bad = v + t;                               // ✗ Units that differ where an operation requires equal ones: m/s + s
 u = d::units;

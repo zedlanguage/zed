@@ -36,7 +36,7 @@ Result        : declares the result type; on `main` the type is `int`, the exit 
 Body          : the λ body ⟦e⟧ or ⟦Block⟧; trailers add no term
 Trailer       : the trailer of its alternative
 TestTable     : a list of test cases
-TestCase      : `a -> b` asserts ⟦f(a)⟧ == ⟦b⟧ for the enclosing f, run by `zed test` (step L1.21); for `main`, that a wave reading the ports ⟦a⟧ writes the bytes ⟦b⟧
+TestCase      : `a -> b` asserts ⟦f(a)⟧ == ⟦b⟧ for the enclosing f, run by `zedc test` (step L1.21); for `main`, that a wave reading the ports ⟦a⟧ writes the bytes ⟦b⟧
 Proof         : a derivation checked by the proof checker (sec:verification); no run-time term
 IndexedDef    : `f[i in D] = e` is fam(⟦D⟧, i -> ⟦e⟧) when e does not read f, the definedness fix(⟦D⟧, step, ev) with `this` = f when it does, and gen when the reads are a bounded number of steps back in a time order, the gen's state being the window of that many frames (sec:generations); several `[ ]` nest; the boundary's entries are defined before the first round
 IndexKey      : `i in D` binds i over the keys of ⟦D⟧; an expression is the key of one case of a piecewise definition
