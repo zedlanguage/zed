@@ -31,6 +31,7 @@ mod rejection_addresses;
 mod repairs;
 mod scaling;
 mod stable;
+mod sum_plus;
 mod suppress;
 mod tyvars;
 mod untracked;

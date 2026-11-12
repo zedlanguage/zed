@@ -8971,9 +8971,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             match p {
                 Piece::Tuple(cs) => {
                     // A component that holds a value of no number is the tuple's fault, not
-                    // that of one `+`, so the message names the tuple.
+                    // that of one `+`, so the message names the tuple. A component of `_`,
+                    // whose values the checker does not track, is left to `+`, which decides
+                    // it as it decides `x.a + 1`: `sum` takes what a chain of `+` takes.
                     let not_number = |p: &Piece| {
-                        !matches!(p, Piece::Var(_))
+                        !matches!(p, Piece::Var(_) | Piece::Dyn)
                             && !p.is_atoms()
                             && !p.carrier().is_some_and(Carrier::numeric)
                     };
@@ -8985,9 +8987,17 @@ impl<'t, 'a> Ck<'t, 'a> {
                     // The components as `+` takes them: a literal written in the tuple stays
                     // one, and adopts the carrier of the others, which are added first. Each
                     // `+` takes its two operands in the order they are written, as a message
-                    // shows them.
-                    let args = components(&x, cs.len())
+                    // shows them. A component of a tuple written here, as in `sum((a, b))`,
+                    // is an operand as written, with its own derivation.
+                    let mut args = components(&x, cs.len())
                         .unwrap_or_else(|| cs.iter().cloned().map(Arg::of).collect());
+                    if let Some(ExprKind::Tuple(es)) = x.expr.map(|e| &e.kind)
+                        && es.len() == args.len()
+                    {
+                        for (a, e) in args.iter_mut().zip(es) {
+                            (a.at, a.expr) = (Some(e.span), Some(e));
+                        }
+                    }
                     let mut args: Vec<(usize, Arg)> = args.into_iter().enumerate().collect();
                     args.sort_by_key(|(_, a)| a.lit.is_some());
                     let mut args = args.into_iter();
@@ -8995,12 +9005,26 @@ impl<'t, 'a> Ck<'t, 'a> {
                         out = out.union(&Ty::lit(&Value::Int(0)));
                         continue;
                     };
+                    // Each `+` is reported where its operands are written, from the first to
+                    // the last of the components it adds, as a written `+` is from its left
+                    // operand to its right one; at the call when the tuple is not written.
+                    let mut written = acc.at;
                     for (i, c) in args {
+                        let site = written.zip(c.at).map(|(a, b)| Span {
+                            start: a.start.min(b.start),
+                            end: a.end.max(b.end),
+                        });
                         let pair = if i < at { [c, acc] } else { [acc, c] };
                         let ty = self
-                            .apply("`+` in `sum`", &add, pair.map(Some).to_vec(), true, span)
+                            .apply(
+                                "`+` in `sum`",
+                                &add,
+                                pair.map(Some).to_vec(),
+                                true,
+                                site.unwrap_or(span),
+                            )
                             .0;
-                        (at, acc) = (at.min(i), Arg::of(ty));
+                        (at, acc, written) = (at.min(i), Arg::of(ty), site);
                     }
                     // The sum is a number: each `+` gives a number, a class or the atoms that
                     // pass, and a `+` that fails reports its own error and gives only the atoms.
