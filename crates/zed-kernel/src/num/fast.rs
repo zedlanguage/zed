@@ -2774,9 +2774,10 @@ fn remainder(x: &[u64], d: &[u64], dc: &[Vec<u64>; 3], q: &[u64], tw: &Roots) ->
 
 /// The decimal digits of `x`, by halves: `x = high * 10^(L 2^i) + low`, `L` being 597, each
 /// half written alone and the low half padded with zeros to its width. The widest power, which
-/// divides once, is divided by a reciprocal of only the precision that division and the level
-/// below need; each power below it has its reciprocal derived from the one above by one
-/// product and one cyclic product, transformed once and reused by every division at its level.
+/// divides once, is divided by a reciprocal of only the quotient's precision; the next power
+/// down has one Newton reciprocal, and each power below it has its reciprocal derived from the
+/// one above by one product and one cyclic product, transformed once and reused by every
+/// division at its level.
 /// O(M(n) log n), the recursion `log2(n / L)` deep, at every size; only the leaves, below
 /// powers of at most `PRINT_HANDOFF` words, are written by num-bigint. The text is
 /// num-bigint's.
@@ -2792,7 +2793,10 @@ pub fn to_decimal(x: &BigUint) -> String {
     // to 1.8 times num-bigint's instructions from about 1,000 to 33,000 words (1.64 at 1,040,
     // 1.58 at 8,300, 1.09 at 33,200, 0.86 at 66,400; 2026-11-12), where the powers, the levels'
     // transforms and the one Newton reciprocal are not yet repaid (COMPLEXITY.md K81). A number of at most
-    // `PRINT_LEAF_BITS` bits is a single leaf and builds no power.
+    // `PRINT_LEAF_BITS` bits is a single leaf and builds no power. PRINT-split-fixed-cost
+    // (2026-11-12) took the top reciprocal to the quotient's bits only and gave the widest level
+    // its own approximate Newton reciprocal: 1.01, 1.19, 1.07 and 0.88 times num-bigint's
+    // instructions at 20,000, 40,000, 80,000 and 160,000 digits.
     if x.bits() <= PRINT_LEAF_BITS {
         return x.to_string();
     }
@@ -2828,13 +2832,11 @@ pub fn to_decimal(x: &BigUint) -> String {
     // `printing_a_wide_number_scales` and `writing_a_wide_end_scales` (COMPLEXITY.md K30,
     // K81).
     let n = top.bits();
-    // The quotient has at most `k` bits. The reciprocal of `top` is taken to `p` bits, enough
-    // for the quotient and for the level below (see [`derive()`]), which needs `p >= w + 3`
-    // for its `w` bits of words, its square being `top`.
+    // The quotient has at most `k` bits, and the reciprocal of `top` is taken to `p = k`
+    // bits, only what it needs: the levels below do not derive theirs from it (see
+    // [`Printer::new`]).
     let k = x.bits() - n + 1;
-    let p = powers
-        .last()
-        .map_or(k, |d| k.max(d.bits().next_multiple_of(64) + 4));
+    let p = k;
     // `r = 2^2p / t`, floored, for `t` the top `p` bits of `top` (or `top 2^(p - n)`), lies in
     // `[R, R + 4]`, `R = 2^(p + n) / top` floored: `t <= top / 2^(n - p) < t + 1`, and
     // `2^2p / t - 2^2p / (t + 1) < 2^2p / t^2 <= 4`.
@@ -2851,7 +2853,7 @@ pub fn to_decimal(x: &BigUint) -> String {
     let product = mul(&estimate, &top);
     let (high, low) = settle(x, &top, estimate, product);
     drop(top);
-    let printer = Printer::new(powers, (r, p + n));
+    let printer = Printer::new(powers);
     // `log10(2) < 1234 / 4096`.
     let digits = usize::try_from(x.bits() * 1234 / 4096 + 2).expect("a text that fits in memory");
     let mut out = String::with_capacity(digits);
@@ -3045,10 +3047,11 @@ fn derive(
 
 impl Printer {
     /// The levels of the powers `10^(L 2^i)` listed, each the square of the one before,
-    /// those of at most [`PRINT_HANDOFF`] words left to leaves, given `above = (ya, ea)`, the
-    /// reciprocal of the square of the widest as [`derive()`] takes it; each level's reciprocal
-    /// is derived from the one above.
-    fn new(powers: Vec<BigUint>, above: (BigUint, u64)) -> Printer {
+    /// those of at most [`PRINT_HANDOFF`] words left to leaves. The widest level's reciprocal
+    /// is [`approx_reciprocal`]'s `X`, at most one below the floor, which [`Level::div_rem`]
+    /// allows; each level below derives its own from the one above ([`derive()`]), given `X + 1`
+    /// for the widest, at most one above the floor.
+    fn new(powers: Vec<BigUint>) -> Printer {
         let first = powers
             .iter()
             .position(|p| words(p) > PRINT_HANDOFF)
@@ -3075,16 +3078,26 @@ impl Printer {
         let tw = FIELDS.each_ref().map(|f| f.twiddles(most));
         let spectra = |x: &[u64], n: usize| [0, 1, 2].map(|k| FIELDS[k].spectrum(x, n, &tw[k]));
         let mut levels = Vec::with_capacity(powers.len());
-        // The reciprocal `floor(2^e / d)` of the level above, and `e`.
-        let mut above = above;
+        // The reciprocal `floor(2^e / d)` of the level above, or one above it, and `e`.
+        let mut above: Option<(BigUint, u64)> = None;
         for d in powers.iter().rev() {
             let (linear, cyclic) = points(d);
             let bits = d.bits();
             let w = bits.next_multiple_of(64);
             let dw = d.to_u64_digits();
             let dc = spectra(&dw, cyclic);
-            // `y = 2^2w / (d 2^s)` = `2^(w + n) / d`, floored.
-            let y = derive(d, &dw, &dc, &tw, &above.0, above.1);
+            // `y = 2^2w / (d 2^s)` = `2^(w + n) / d`, floored, or one below for the widest.
+            // `d` has more than `PRINT_HANDOFF` words, so the `e` above it is at least
+            // `w + 2n + 3`, as [`derive()`] needs for a reciprocal one above the floor.
+            let y = match &above {
+                Some((ya, ea)) => {
+                    debug_assert!(*ea >= w + 2 * bits + 3, "the level above is precise enough");
+                    derive(d, &dw, &dc, &tw, ya, *ea)
+                }
+                None => approx_reciprocal(&(d << (w - bits)), w, &tw),
+            };
+            // `X + 1` for the widest: `X` is at most one below the floor.
+            let over = u32::from(above.is_none());
             let low = (&y - (BigUint::one() << w)).to_u64_digits();
             levels.push(Level {
                 y: spectra(&low, linear),
@@ -3093,7 +3106,7 @@ impl Printer {
                 d: dw,
                 bits,
             });
-            above = (y, w + bits);
+            above = Some((y + over, w + bits));
         }
         levels.reverse();
         Printer { first, levels, tw }

@@ -122,11 +122,13 @@ fn reading_a_long_decimal_end_scales() {
 /// as `writing_a_wide_end_scales` is. Both sizes are split by the kernel's printer
 /// (PRINT-below-whole); before, they were below the 60,000 words where it took over from
 /// num-bigint's printing, which grows about 2.85 times per doubling (23.6 times the bytes
-/// here). The split still takes 22.9 times the work and 13.6 times the bytes here (2026-11-12),
-/// growing 3.14, 2.92 and 2.49 times per doubling from 20,000 to 160,000 digits, faster than
-/// n log^2 n (RADIX-depth).
+/// here). The split still takes 20.8 times the instructions and 14.0 times the bytes here
+/// (2026-11-12, PRINT-split-fixed-cost: 7.75 and 161.5 million instructions): 20,000 digits is
+/// one split by the widest power and num-bigint's leaves, nearly linear, while 160,000 digits
+/// also builds and divides by three levels; the leaves alone are 51.4 million instructions at
+/// 160,000 digits, 6.6 times all of 20,000 digits.
 #[test]
-#[ignore = "RADIX-depth: 22.9 times the work and 13.6 times the bytes at 20,000 and 160,000 digits through the kernel's printer, over the n log² n limit 12.9; open"]
+#[ignore = "PRINT-split-fixed-cost: 20.8 times the instructions and 14.0 times the bytes at 20,000 and 160,000 digits through the kernel's printer, over the n log² n limit 12.9; open"]
 fn writing_a_long_decimal_end_scales() {
     let ends = scaling::inputs(20_000, |n| {
         let text = digits(&mut Rng::new(n as u64), n);
@@ -240,10 +242,11 @@ fn writing_a_wide_end_scales() {
 
 /// Item NUM-print-fast: writing an end takes at most 1.1 times num-bigint's processor time at
 /// each size of COMPLEXITY.md K81, 10,000 to 1,280,000 digits (519 to 66,439 words), the
-/// fastest of five runs each, in up to three tries. Below 60,000 words the end is written by
-/// num-bigint itself; at 66,439 the kernel's printer took 0.93 to 0.96 times its time
-/// (2026-11-08). Processor time, not instructions: there the printer runs 1.06 times
-/// num-bigint's instructions in less time.
+/// fastest of five runs each, in up to three tries. Every end of at least `10^(597 32)`, 992
+/// words, is split by the kernel's printer (PRINT-below-whole); its closest size is 40,000
+/// digits, where a try took 1.02 to 1.18 times num-bigint's time at load 33 to 43
+/// (2026-11-12, PRINT-split-fixed-cost), so the test may fail under load. Processor time, not
+/// instructions: there the printer runs 1.19 times num-bigint's instructions.
 #[test]
 fn writing_an_end_is_never_slower_than_num_bigint() {
     let mut meter = scaling::Meter::of_cpu_time();
