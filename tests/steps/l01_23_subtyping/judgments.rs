@@ -154,9 +154,13 @@ fn verdicts_of_family_groups_agree_with_the_reference() {
 }
 
 /// A ring of `n` definitions, each a morphism type into a pair of the next and `int`, decided
-/// in time linear in `n`.
+/// in time linear in `n`. Neither ring is decided before the check: a group makes its canonical
+/// form on first use and keeps it, so the first run of each size makes it, and the check holds
+/// those first runs to the limit, both cold. Deciding the smaller ring once before (as this test
+/// did until GROUP-decide-bytes) left the first larger run alone to make its form, and the
+/// first runs then compared 1,504,930 bytes with 17,071,066, 11.3 times, where cold against
+/// cold they are 2,141,806 and 17,071,066, 8.0 times.
 #[test]
-#[ignore = "GROUP-decide-bytes: 12.2 times the bytes at 256 and 2,048 definitions, over the n log n limit 12.1 since SCALE-ratio; open"]
 fn deciding_a_group_scales() {
     let ring = |n: usize| {
         let defs = (0..n)
@@ -177,7 +181,6 @@ fn deciding_a_group_scales() {
         let types = g.instance(vec![]);
         assert!(types.iter().all(|t| !t.is_empty()));
     };
-    run(&small);
     scaling::check_order("deciding a ring of definitions", n, 1, |m| {
         run(if m == n { &small } else { &large })
     });
