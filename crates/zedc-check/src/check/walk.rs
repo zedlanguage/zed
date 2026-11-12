@@ -6400,7 +6400,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             (true, _) => self.compared_alone(&what, &b, true, span),
             (_, true) => self.compared_alone(&what, &a, false, span),
             _ => {
-                self.components(&what, &a, &b, span);
+                let tables = self.t;
+                let name = |at: Option<Span>| match at.and_then(|at| self.seen.get(&at)) {
+                    Some((_, Src::Name(id))) => Some(tables.res.binders[*id].name.as_str()),
+                    _ => None,
+                };
+                let sides = OrderSides {
+                    names: [name(x.at), name(y.at)],
+                    ats: [x.at, y.at],
+                };
+                self.components(&what, &sides, &a, &b, span);
                 return out.union(&Ty::carrier(Carrier::Bool));
             }
         }
@@ -6441,7 +6450,8 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// Checks that each value of `a` compares with each of `b` (sec:order): two numbers of one
     /// carrier or two values of one other kind, the atoms as data, and two tuples component by
-    /// component as far as the shorter goes, since a proper prefix comes first.
+    /// component as far as the shorter goes, since a proper prefix comes first. `sides` names
+    /// the operands of the comparison `what`, whose values `a` and `b` are, for the message.
     ///
     /// Two tuples both reach position `i` exactly when each has more than `i` components, so
     /// the pairs of components met at `i` are every component `i` of `a`'s tuples against
@@ -6451,43 +6461,55 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// read again: `n` levels that each hold the one below twice cost `n`, not `2^n`
     /// (CHK-components-pairs). The pairs are checked on a heap stack in the order a recursion
     /// would: a pair's own pieces, then its components position by position, then its rest.
+    /// Each pair read keeps the pair it was met in and its position there, so that a pair that
+    /// does not compare is reported with the place that reaches it ([`Ck::not_compared`]).
     ///
     /// Complexity tradeoff: naive version, every pair of tuples read and each pair's
     /// components recursively, with no visited set: O(n²) pairs for `n` tuples a side (`x < x`
     /// over 800 shapes took 39.9 s), O(n³) for lengths 1 to `n`, `2^n` through shared rows.
     /// Used: one union of each side's components per position and a set of the pairs of
     /// component types read, O(n) in the types read. Tradeoffs: the set's memory, one pair of
-    /// types per pair read; a failure is reported for the two unions met, as for `x < y` with
-    /// `x: int | f64`, each piece that does not compare named once, not once per pair of
-    /// tuples. COMPLEXITY.md row F140.
-    fn components(&mut self, what: &str, a: &Ty, b: &Ty, span: Span) {
+    /// types per pair read, and an entry of the list of pairs met, one position and one index
+    /// each, from which the place of a failure is read back only when one is found; a failure
+    /// is reported once for the two unions met, as for `x < y` with `x: int | f64`, not once
+    /// per pair of tuples. COMPLEXITY.md row F140.
+    fn components(&mut self, what: &str, sides: &OrderSides, a: &Ty, b: &Ty, span: Span) {
         enum Step {
-            Pair(Ty, Ty),
-            Rest(Ty, Ty),
+            Pair(usize),
+            Rest(usize, Box<(Ty, Ty)>),
         }
         let rest = |t: &Ty| Ty {
             tuples: Vec::new(),
             ..t.without_atoms()
         };
         let mut seen = HashSet::from([(a.clone(), b.clone())]);
-        let mut todo = vec![Step::Pair(a.clone(), b.clone())];
+        let mut met = vec![Met {
+            up: usize::MAX,
+            at: 0,
+            ty: [a.clone(), b.clone()],
+        }];
+        let mut todo = vec![Step::Pair(0)];
         while let Some(step) = todo.pop() {
-            let (a, b) = match step {
-                Step::Rest(x, y) => {
-                    self.apply(
-                        what,
-                        &op_sig("<"),
-                        vec![Some(Arg::of(x)), Some(Arg::of(y))],
-                        true,
-                        span,
-                    );
+            let k = match step {
+                Step::Rest(k, rests) => {
+                    let (x, y) = *rests;
+                    let mark = self.mark();
+                    let args = vec![Some(Arg::of(x.clone())), Some(Arg::of(y.clone()))];
+                    self.apply(what, &op_sig("<"), args, true, span);
+                    if self.errors.len() > mark.errors {
+                        // The arrows of `<` alone say only that none takes the two; the
+                        // message names the place and the repairs instead.
+                        self.undo(&mark);
+                        self.not_compared(what, sides, &met, k, Unordered::Kinds(x, y), span);
+                    }
                     continue;
                 }
-                Step::Pair(a, b) => (a, b),
+                Step::Pair(k) => k,
             };
-            // Each piece refused is reported once, since a pair here may join many pairs of tuples.
-            let (mut refused, mut said) = (Vec::new(), HashSet::new());
-            for (s, t) in [(&a, &b), (&b, &a)] {
+            let [a, b] = &met[k].ty;
+            // Each piece refused is named once, since a pair here may join many pairs of tuples.
+            let (mut refused, mut said) = ([Vec::new(), Vec::new()], HashSet::new());
+            for (s, t) in [(a, b), (b, a)] {
                 let atoms = !s.atoms().is_empty();
                 for p in t.pieces() {
                     let ok = match self.class_of(&p) {
@@ -6501,32 +6523,22 @@ impl<'t, 'a> Ck<'t, 'a> {
                         },
                     };
                     if !ok {
-                        let q = if s.tuples.is_empty() {
-                            "an atom"
-                        } else {
-                            "a tuple"
-                        };
+                        let with = usize::from(s.tuples.is_empty());
                         let p = self.text(&p.ty());
-                        let message = format!("{what} does not compare {p} with {q}");
-                        if said.insert(message.clone()) {
-                            refused.push(message);
+                        if said.insert((with, p.clone())) {
+                            refused[with].push(p);
                         }
                     }
                 }
             }
-            if !refused.is_empty() {
-                for message in refused {
-                    self.error(span, message);
-                }
+            if refused.iter().any(|r| !r.is_empty()) {
+                self.not_compared(what, sides, &met, k, Unordered::Refused(refused), span);
                 continue;
             }
-            let (x, y) = (rest(&a), rest(&b));
-            if !x.is_empty() && !y.is_empty() {
-                todo.push(Step::Rest(x, y));
-            }
+            let (x, y) = (rest(a), rest(b));
             // The components at each position, of the tuples of each side long enough to have one.
             let mut at: Vec<[Vec<&Ty>; 2]> = Vec::new();
-            for (side, t) in [&a, &b].into_iter().enumerate() {
+            for (side, t) in [a, b].into_iter().enumerate() {
                 for row in &t.tuples {
                     if at.len() < row.len() {
                         at.resize_with(row.len(), Default::default);
@@ -6536,16 +6548,253 @@ impl<'t, 'a> Ck<'t, 'a> {
                     }
                 }
             }
-            let met = at
-                .into_iter()
-                .filter(|[s, t]| !s.is_empty() && !t.is_empty());
-            for [s, t] in met.rev() {
-                let pair = (Ty::union_all(s), Ty::union_all(t));
-                if seen.insert(pair.clone()) {
-                    todo.push(Step::Pair(pair.0, pair.1));
+            let pairs: Vec<_> = (at.into_iter().enumerate())
+                .filter(|(_, [s, t])| !s.is_empty() && !t.is_empty())
+                .map(|(i, [s, t])| (i, [Ty::union_all(s), Ty::union_all(t)]))
+                .collect();
+            if !x.is_empty() && !y.is_empty() {
+                todo.push(Step::Rest(k, Box::new((x, y))));
+            }
+            for (i, [s, t]) in pairs.into_iter().rev() {
+                if seen.insert((s.clone(), t.clone())) {
+                    todo.push(Step::Pair(met.len()));
+                    met.push(Met {
+                        up: k,
+                        at: i,
+                        ty: [s, t],
+                    });
                 }
             }
         }
+    }
+
+    /// Whether each value of `a` compares with each of `b` under the ordering `what`
+    /// ([`Ck::components`]), tried and undone.
+    fn compares(&mut self, what: &str, a: &Ty, b: &Ty, span: Span) -> bool {
+        let (mark, was) = (self.mark(), self.trying);
+        self.trying = true;
+        let sides = OrderSides {
+            names: [None; 2],
+            ats: [None; 2],
+        };
+        self.components(what, &sides, a, b, span);
+        let ok = self.errors.len() == mark.errors;
+        self.trying = was;
+        self.undo(&mark);
+        ok
+    }
+
+    /// Rejects the ordering `what`, whose operands `sides` names, at the pair `met[k]` of
+    /// values that do not compare for the reason `why`: the place of the pair, reached
+    /// through the tuples compared component by component, each step, and the repairs. A
+    /// repair casts one side's numbers to the other's kind, or compares a component of a
+    /// tuple met by a value that is not one; each is tried before it is offered.
+    ///
+    /// Complexity tradeoff: naive version, the comparison written again with the one place
+    /// changed, `(x[0], int(x[1][0]))`, writes every other component of each tuple on the
+    /// way, each with the indices that reach it, O(w·d²) for `d` levels of `w` components.
+    /// Used: the repair names the place and what to write there, `int(x[1][0])` in place of
+    /// `x[1][0]`, and a step names only the position it goes down by, so the message is
+    /// O(d) in the depth beside the types of the pair, which it prints once. Each repair is a
+    /// trial of [`Ck::components`] on the pair, at most three casts a side and one trial per
+    /// component of a tuple met by a value that is not one, which is a tuple of none; so each
+    /// trial reads only pieces that are not tuples. Tradeoff: the whole comparison is not
+    /// written out at a nested place. COMPLEXITY.md row F140.
+    fn not_compared(
+        &mut self,
+        what: &str,
+        sides: &OrderSides,
+        met: &[Met],
+        k: usize,
+        why: Unordered,
+        span: Span,
+    ) {
+        const ENDS: [&str; 2] = ["left", "right"];
+        if self.trying {
+            // A trial only counts the errors.
+            self.error_with(
+                span,
+                format!("{what} does not compare its operands"),
+                Vec::new(),
+            );
+            return;
+        }
+        let mut path = Vec::new();
+        let mut i = k;
+        while met[i].up != usize::MAX {
+            path.push(met[i].at);
+            i = met[i].up;
+        }
+        path.reverse();
+        let path = &path[..];
+        let ty = &met[k].ty;
+        // The value at `p` on side `s`, as code where the operand is a name.
+        let code = |s: usize, p: &[usize]| sides.names[s].map(|n| format!("{n}{}", Place(p)));
+        let label = |s: usize, p: &[usize]| match (code(s, p), p) {
+            (Some(c), _) => format!("`{c}`"),
+            (None, []) => format!("the {} operand", ENDS[s]),
+            (None, _) => format!("component `{}` of the {} operand", Place(p), ENDS[s]),
+        };
+        // The repairs, each tried on the pair: a cast of one side's values that are not
+        // tuples, or a component of one side that is one tuple shape, against the other
+        // side, which holds no tuple.
+        let mut mends = [Vec::new(), Vec::new()];
+        if let Unordered::Kinds(x, y) = &why {
+            let rests = [x, y];
+            for (s, rest) in rests.into_iter().enumerate() {
+                for w in ["int", "rat", "f64"] {
+                    // A cast that may fail, as `f64(n)` with `#inexact`, puts the atom in the
+                    // component, where an atom is data, so the trial offers only one that
+                    // cannot fail there, as `rat(n)`.
+                    if let Some(r) = converted(&word_sig(w), rest)
+                        && r != *rest
+                    {
+                        let pair = if s == 0 { [&r, y] } else { [x, &r] };
+                        if self.compares(what, pair[0], pair[1], span) {
+                            mends[0].push(Mend::Cast(s, w));
+                        }
+                    }
+                }
+            }
+        }
+        for s in 0..2 {
+            let other = &ty[1 - s];
+            let row = match &ty[s].tuples[..] {
+                [row] if ty[s].pieces().len() == 1 && other.tuples.is_empty() => row,
+                _ => continue,
+            };
+            for (i, c) in row.iter().enumerate() {
+                if c.tuples.is_empty() && self.compares(what, c, other, span) {
+                    mends[1].push(Mend::Part(s, i));
+                }
+            }
+        }
+        let groups = [
+            (std::mem::take(&mut mends[0]), "to compare the numbers"),
+            (std::mem::take(&mut mends[1]), "to compare a component"),
+        ];
+        let op = what.trim_matches('`');
+        let form = |f: &mut fmt::Formatter<'_>, m: Mend| {
+            let s = match m {
+                Mend::Cast(s, _) | Mend::Part(s, _) => s,
+            };
+            let whole = match (path, sides.names) {
+                ([], [Some(l), Some(r)]) => Some((l, r)),
+                _ => None,
+            };
+            match (whole, code(s, path), m) {
+                (Some((l, r)), _, Mend::Cast(0, w)) => write!(f, "`{w}({l}) {op} {r}`"),
+                (Some((l, r)), _, Mend::Cast(_, w)) => write!(f, "`{l} {op} {w}({r})`"),
+                (Some((l, r)), _, Mend::Part(0, i)) => write!(f, "`{l}[{i}] {op} {r}`"),
+                (Some((l, r)), _, Mend::Part(_, i)) => write!(f, "`{l} {op} {r}[{i}]`"),
+                (None, Some(c), Mend::Cast(_, w)) => write!(f, "`{w}({c})` in place of `{c}`"),
+                (None, Some(c), Mend::Part(_, i)) => write!(f, "`{c}[{i}]` in place of `{c}`"),
+                (None, None, Mend::Cast(_, w)) => write!(f, "`{w}(…)` around {}", label(s, path)),
+                (None, None, Mend::Part(_, i)) => write!(f, "`[{i}]` after {}", label(s, path)),
+            }
+        };
+        let none = groups.iter().all(|(ms, _)| ms.is_empty());
+        let shown = ty.each_ref().map(|t| self.text(t));
+        let (l, r) = (label(0, path), label(1, path));
+        let reason = fmt::from_fn(|f| match &why {
+            Unordered::Kinds(x, y) => {
+                f.write_str(
+                    "it compares only two numbers of one kind or two values of one other kind",
+                )?;
+                if x != &ty[0] || y != &ty[1] {
+                    let (x, y) = (self.text(x), self.text(y));
+                    write!(f, ", so it does not compare `{x}` with `{y}`")?;
+                }
+                Ok(())
+            }
+            Unordered::Refused(refused) => {
+                let mut first = true;
+                for (ps, with) in refused.iter().zip(["a tuple", "an atom"]) {
+                    if ps.is_empty() {
+                        continue;
+                    }
+                    if !first {
+                        f.write_str(", and ")?;
+                    }
+                    first = false;
+                    write!(
+                        f,
+                        "it compares {with} only with {with}, so it does not compare "
+                    )?;
+                    for (j, p) in ps.iter().enumerate() {
+                        if j > 0 {
+                            f.write_str(if j + 1 == ps.len() { " or " } else { ", " })?;
+                        }
+                        write!(f, "`{p}`")?;
+                    }
+                    write!(f, " with {with}")?;
+                }
+                Ok(())
+            }
+        });
+        // An operand compared with itself, as `x < x`, is named once.
+        let one = l == r;
+        let types = fmt::from_fn(|f| {
+            let (t, u) = (&shown[0], &shown[1]);
+            write!(f, "{l} is {} `{t}`", article_of(t))?;
+            match one && t == u {
+                true => Ok(()),
+                false => write!(f, " and {r} is {} `{u}`", article_of(u)),
+            }
+        });
+        let (l0, r0) = (label(0, &[]), label(1, &[]));
+        // With no repair to write, the type of an operand has to change.
+        let change = match (one, path) {
+            (true, []) => {
+                format!("change the type of {l} so that its values compare with each other")
+            }
+            (true, _) => {
+                format!("change the type of {l0} so that the values of {l} compare with each other")
+            }
+            (false, []) => format!("change the type of {l} or {r} so that the two compare"),
+            (false, _) => format!("change the type of {l0} or {r0} so that {l} and {r} compare"),
+        };
+        let menu = fmt::from_fn(|f| match none {
+            false => {
+                f.write_str("; write ")?;
+                write_repairs(f, &groups, form)
+            }
+            true => write!(f, "; {change}"),
+        });
+        let message = match path {
+            [] => format!("{what} does not compare {l} with {r}: {types} here, and {reason}{menu}"),
+            _ => format!(
+                "{what} does not compare {l0} with {r0}: it compares them component by \
+                 component, {types} there, and {reason}{menu}"
+            ),
+        };
+        let mut notes = self.derive(&sides.ats.into_iter().flatten().collect::<Vec<_>>());
+        let mut step = |text: String| notes.push(Note { span, text });
+        if let Some((&last, inner)) = path.split_last() {
+            step(format!(
+                "{what} compares {l0} with {r0} component by component, as far as the shorter \
+                 tuple goes"
+            ));
+            for i in inner {
+                step(format!(
+                    "both components `[{i}]` are tuples, so {what} compares them component by \
+                     component"
+                ));
+            }
+            step(format!("{what} compares components `[{last}]`: {types}"));
+        }
+        step(match path {
+            [] => format!("{what} does not compare {l} with {r}: {reason}"),
+            _ => format!("{what} does not compare them: {reason}"),
+        });
+        let repairs = groups.iter().flat_map(|(ms, _)| ms.iter());
+        for &m in repairs {
+            step(format!("repair: write {}", fmt::from_fn(|f| form(f, m))));
+        }
+        if none {
+            step(format!("repair: {change}"));
+        }
+        self.error_with(span, message, notes);
     }
 
     /// `min` or `max`, whose signature is `sig`, applied to `x` and `y`, one of them holding a
@@ -9805,4 +10054,35 @@ mod tests {
         dynamic.insert(v, Ty::dynamic());
         assert_eq!(ck.bound(&row, &mut Binds::new()), row.replace(&dynamic));
     }
+}
+
+/// The operands of an ordering, for its messages: each one's name where it is a name, and
+/// where it is.
+struct OrderSides<'n> {
+    names: [Option<&'n str>; 2],
+    ats: [Option<Span>; 2],
+}
+
+/// A pair of component types an ordering compares ([`Ck::components`]): the types, and the
+/// index of the pair it was met in, `usize::MAX` for the operands, with its position there.
+struct Met {
+    up: usize,
+    at: usize,
+    ty: [Ty; 2],
+}
+
+/// Why a pair of values does not compare under an ordering.
+enum Unordered {
+    /// The values of each side that are not tuples, numbers of two kinds or two values of two
+    /// other kinds.
+    Kinds(Ty, Ty),
+    /// The pieces of either side met by a tuple, then those met by an atom.
+    Refused([Vec<String>; 2]),
+}
+
+/// A repair of an ordering: a cast of one side, or one component of a tuple on one side.
+#[derive(Clone, Copy)]
+enum Mend {
+    Cast(usize, &'static str),
+    Part(usize, usize),
 }
