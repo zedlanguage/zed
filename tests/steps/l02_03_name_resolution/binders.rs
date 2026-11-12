@@ -33,7 +33,8 @@ fn a_field_named_twice_is_rejected_when_the_struct_is_read() {
     let e = zedc::ast::unit(text, &tokens, &tree).unwrap_err();
     assert_eq!(
         e.to_string(),
-        "the field `x` is declared twice, and each field is declared once. Remove one of the two."
+        "the struct `Point` has the field `x` twice, and a struct has each field once. Remove one \
+         of the two."
     );
 }
 

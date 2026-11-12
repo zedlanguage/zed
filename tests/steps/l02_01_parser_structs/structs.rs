@@ -48,8 +48,8 @@ fn a_field_type_is_any_type_of_layer_2() {
 fn a_field_declared_twice_is_an_error() {
     check(&[(
         "struct Point { x: f64, y: f64, x: int }",
-        "error: the field `x` is declared twice, and each field is declared once. Remove one of \
-         the two.; the first field `x` at byte 15",
+        "error: the struct `Point` has the field `x` twice, and a struct has each field once. \
+         Remove one of the two.; the first field `x` at byte 15",
     )]);
 }
 

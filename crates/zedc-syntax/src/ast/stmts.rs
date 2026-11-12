@@ -442,10 +442,17 @@ impl Builder<'_, '_> {
                     fields.push(Field::Import { path, span });
                 }
             } else {
-                let name = self.word(self.tree.nodes[fk[0]].start);
-                self.once(&mut names, name, fk[0], "field", "declared")?;
+                let field = self.word(self.tree.nodes[fk[0]].start);
+                if let Err(mut e) = self.once(&mut names, field, fk[0], "field", "declared") {
+                    e.message = format!(
+                        "the struct `{}` has the field `{field}` twice, and a struct has each \
+                         field once. Remove one of the two.",
+                        self.word(self.tree.nodes[name].start)
+                    );
+                    return Err(e);
+                }
                 fields.push(Field::Typed {
-                    name: name.into(),
+                    name: field.into(),
                     ty: self.ty(fk[1])?,
                     default: default.map(|d| self.node(d)).transpose()?,
                     span,

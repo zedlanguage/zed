@@ -1819,7 +1819,6 @@ impl Resolver<'_> {
     /// the list a field is named only through a value of the struct.
     fn fields<'a>(&mut self, st: &'a Struct, span: Span, todo: &mut Vec<Task<'a>>) {
         let start = self.out.binders.len();
-        let mut seen: HashMap<&str, Span> = HashMap::new();
         self.open();
         todo.push(Task::Close);
         let level = self.scopes.len();
@@ -1832,38 +1831,21 @@ impl Resolver<'_> {
                     default,
                     span: at,
                 } => {
-                    if let Some(&first) = seen.get(name.as_str()) {
-                        self.errors.push(Error {
-                            row: None,
-                            menu: String::new(),
-                            span: *at,
-                            message: format!(
-                                "the struct `{}` has the field `{name}` twice, and a struct has each field once. \
-                                 Remove one of the two.",
-                                st.name
-                            ),
-                            notes: vec![Note {
-                                span: first,
-                                text: format!("the first field `{name}`"),
-                            }],
-                        });
-                    } else {
-                        seen.insert(name, *at);
-                        let id = self.out.binders.len();
-                        let mut b = Bound::new(level, Kind::Field, false);
-                        b.ids.push_back(id);
-                        self.visible.entry(name.clone()).or_default().push(b);
-                        self.scopes
-                            .last_mut()
-                            .expect("opened above")
-                            .push(name.clone());
-                        self.out.binders.push(Binder {
-                            name: name.clone(),
-                            span: *at,
-                            kind: Kind::Field,
-                        });
-                        items.push((*at, Some(id)));
-                    }
+                    // The builder rejects a field declared twice, so each name is new here.
+                    let id = self.out.binders.len();
+                    let mut b = Bound::new(level, Kind::Field, false);
+                    b.ids.push_back(id);
+                    self.visible.entry(name.clone()).or_default().push(b);
+                    self.scopes
+                        .last_mut()
+                        .expect("opened above")
+                        .push(name.clone());
+                    self.out.binders.push(Binder {
+                        name: name.clone(),
+                        span: *at,
+                        kind: Kind::Field,
+                    });
+                    items.push((*at, Some(id)));
                     todo.extend(default.as_ref().map(Task::Expr));
                     todo.push(Task::Ty(ty));
                 }
