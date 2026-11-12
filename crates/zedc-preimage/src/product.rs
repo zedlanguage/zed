@@ -3521,6 +3521,17 @@ pub struct Refused {
 /// alternative set aside, or the ends of names with holes.
 pub type Kept = Arc<BTreeMap<Arc<str>, IntervalSet>>;
 
+/// The sets of one refused question met twice, each of whose sets holds every value the
+/// question allows: their meet for each variable both hold, and the set of a variable only
+/// one holds. So the sets kept do not depend on the order the two were met in. O(m log m) in
+/// the m variables; `a` itself, shared, when the two are equal.
+pub fn kept_meet(a: &Kept, b: &Kept) -> Kept {
+    match a == b {
+        true => a.clone(),
+        false => Arc::new(merged(a, b, IntervalSet::meet, true)),
+    }
+}
+
 /// The sets of `a` and `b` combined by `f` for each variable both hold; with `either`, a
 /// variable only one holds keeps its set, and otherwise it is left out. O(m log m) in the m
 /// variables.
@@ -3676,17 +3687,24 @@ fn shown(kept: &Kept) -> Shown {
     }
 }
 
+/// What a refused question costs the program, which closes the step that says what the scope
+/// keeps: the scope is wider than the program's conditions, never narrower.
+const SOUND: &str = "so the checker may reject or warn about code here that is correct, and it \
+                     does not accept code that is wrong";
+
 impl Refused {
     /// The warning that reports this refusal, with its derivation and its repairs, and the sets
     /// `sets` it left its variables.
-    fn warning(&self, sets: &Kept) -> Warning {
+    pub fn warning(&self, sets: &Kept) -> Warning {
         let c = &self.constraint;
         let cause = match &self.cause {
             Cause::Solver(r) => r,
             Cause::Holes { holed, names } => {
                 let holed: Vec<String> = holed.iter().map(|n| format!("`{n}`")).collect();
                 return Warning {
-                    message: "the ends of names with holes are not found exactly".to_string(),
+                    message: "Cannot find exactly the least and greatest values the conditions \
+                              here allow"
+                        .to_string(),
                     steps: vec![
                         format!("the constraints `{c}` hold in the scope"),
                         format!(
@@ -3696,9 +3714,10 @@ impl Refused {
                             holed.len(),
                             holed.join(", ")
                         ),
-                        "the names of the constraints are narrowed one block at a time, and \
-                         their ends may be wider than the constraints make them"
-                            .to_string(),
+                        format!(
+                            "the names of the constraints are narrowed one block at a time, and \
+                             their ends may be wider than the constraints make them; {SOUND}"
+                        ),
                     ],
                 };
             }
@@ -3727,8 +3746,9 @@ impl Refused {
                 ))
                 .to_string(),
         };
-        let (given, asked, kept) = match &self.asked {
+        let (message, given, asked, kept) = match &self.asked {
             Asked::Test { outcome } => (
+                format!("Cannot find exactly which values make `{c}` {outcome}"),
                 format!("here the test `{c}` is {outcome}"),
                 format!(
                     "the checker could not work out which values its variables can take when \
@@ -3739,6 +3759,7 @@ impl Refused {
                  which may be wider than it allows",
             ),
             Asked::Projection => (
+                "Cannot find exactly which values meet the conditions here".to_string(),
                 format!("here the conditions `{c}` hold"),
                 format!(
                     "the checker could not work out which values each of their variables can \
@@ -3751,6 +3772,7 @@ impl Refused {
                  than the conditions allow",
             ),
             Asked::Disjunct => (
+                "Cannot find exactly which values meet one side of a `||` here".to_string(),
                 format!("here the conditions `{c}` hold"),
                 format!(
                     "the checker could not work out which values one case of an alternative \
@@ -3759,6 +3781,7 @@ impl Refused {
                 "so the conditions narrow the values of their variables without that case",
             ),
             Asked::Onto(n) => (
+                format!("Cannot find exactly which values `{n}` can take here"),
                 format!("here the conditions `{c}` hold"),
                 format!(
                     "the checker could not work out which values `{n}` can take: {}",
@@ -3793,11 +3816,8 @@ impl Refused {
             names: &names,
         });
         Warning {
-            message: "the checker knows less here about the values of some variables than \
-                      the program's conditions say, so it may reject or warn about code that \
-                      is correct; it does not accept code that is wrong"
-                .to_string(),
-            steps: [given, asked, kept.to_string()]
+            message,
+            steps: [given, asked, format!("{kept}; {SOUND}")]
                 .into_iter()
                 .chain(repairs)
                 .collect(),
@@ -4509,8 +4529,8 @@ impl Scope {
     /// Every refused test and part of the relation is kept through here.
     pub fn refuse(&mut self, r: Refused, kept: Kept) {
         let kept = match self.refusals.get(&r) {
-            Some(old) if *old != kept => Arc::new(merged(old, &kept, IntervalSet::meet, true)),
-            _ => kept,
+            Some(old) => kept_meet(old, &kept),
+            None => kept,
         };
         self.refusals.insert(r, kept);
     }
@@ -5063,27 +5083,40 @@ impl Scope {
     /// [`Scope::assume_case`] would be bottom, and then not always, since the test's relation
     /// taken whole is not kept. A test that splits into cases, as `!(a >= n && a >= m)`, stops
     /// at the first case some state reaches and joins none: a join reads the relation of
-    /// both cases, which under `k` stars at a hub is `k` conjuncts.
-    pub fn reaches(&self, test: &Term, outcome: bool, premises: &Premises) -> bool {
+    /// both cases, which under `k` stars at a hub is `k` conjuncts. With the answer, the
+    /// refusals of the narrowed copy, those of this scope among them, so that the caller can
+    /// report the questions the test asked (DESIGN.md L1.39): a refused question never shows a
+    /// case empty, so it can only make the answer true.
+    pub fn reaches(
+        &self,
+        test: &Term,
+        outcome: bool,
+        premises: &Premises,
+    ) -> (bool, imbl::OrdMap<Refused, Kept>) {
         if self.bottom {
-            return false;
+            return (false, self.refusals.clone());
         }
         let mut s = self.clone();
         s.settle_test(test);
         let plain = plain_test(test, &s);
         let (tree, pol) = Tree::of(plain.as_ref().unwrap_or(test));
         let value = outcome == pol;
-        match &tree.nodes[0].kind {
-            Kind::Nest(and, _) if *and != value => s
-                .cases(&tree, 0, value, premises, true, &mut Vec::new())
-                .is_some(),
-            Kind::If(_) => s
-                .cases(&tree, 0, value, premises, true, &mut Vec::new())
-                .is_some(),
-            _ => {
+        let split = match &tree.nodes[0].kind {
+            Kind::Nest(and, _) => *and != value,
+            Kind::If(_) => true,
+            _ => false,
+        };
+        match split {
+            // The first case some state may reach, with what it refused; with none, the
+            // questions of the cases shown empty changed no answer.
+            true => match s.cases(&tree, 0, value, premises, true, &mut Vec::new()) {
+                Some(case) => (true, case.refusals),
+                None => (false, s.refusals),
+            },
+            false => {
                 s.narrow_node(&tree, 0, value, premises);
                 s.reduce_case();
-                !s.bottom
+                (!s.bottom, s.refusals)
             }
         }
     }

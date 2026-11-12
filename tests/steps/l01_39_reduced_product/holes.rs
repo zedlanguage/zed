@@ -322,20 +322,22 @@ fn holes_on_three_names_of_two_cycles_are_refused() {
         names: &[("x", 0, 6, &[2]), ("y", 0, 6, &[1, 3]), ("z", 0, 6, &[4])],
         differences: DIFFERENCES,
     };
-    let head = "warning: the ends of names with holes are not found exactly\n  \
+    let head = "warning: Cannot find exactly the least and greatest values the conditions \
+        here allow\n  \
         [1] the constraints `";
     let tail = "` hold in the scope\n  \
         [2] they join their 3 names both ways in more than one cycle, and 3 of them have \
         holes: `x`, `y`, `z`; the ends of such names are found exactly when at most two of \
         them have holes\n  \
         [3] the names of the constraints are narrowed one block at a time, and their ends may \
-        be wider than the constraints make them";
+        be wider than the constraints make them; so the checker may reject or warn \
+        about code here that is correct, and it does not accept code that is wrong";
     let all = format!("{head}x <= y + 1 && x <= z + 1 && x >= y && x >= z && y >= z{tail}");
     for s in [a, b] {
         for (order, ws) in s.warnings() {
             let found: Vec<&String> = ws
                 .iter()
-                .filter(|w| w.contains("the ends of names with holes"))
+                .filter(|w| w.contains("the least and greatest values"))
                 .collect();
             if order == "one conjunction" {
                 assert!(found.is_empty(), "{order}: {found:?}");

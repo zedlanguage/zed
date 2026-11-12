@@ -4734,11 +4734,15 @@ impl<'a> Ck<'_, 'a> {
             match self.arms.nodes[k] {
                 Node::Root => return false,
                 Node::Join(a, b) => work.extend([a, b]),
-                Node::Assume { outcome, .. } => {
+                Node::Assume { test, outcome, .. } => {
                     let wanted = self.waits(Item::Scope(k));
                     self.settle(wanted);
                     let (p, t) = self.assumed(k);
-                    if p.reaches(&t.term, outcome, &Premises::new()) {
+                    // The questions the test asked and the solver refused are the test's,
+                    // as when its arm's scope is stored (DESIGN.md L1.39).
+                    let (reached, refused) = p.reaches(&t.term, outcome, &Premises::new());
+                    self.place_refusals(test.span, &p.refusals, &refused);
+                    if reached {
                         return false;
                     }
                 }
@@ -4755,9 +4759,41 @@ impl<'a> Ck<'_, 'a> {
         wanted.extend(t.binders.iter().map(|&b| Item::Bound(b)));
         self.settle(wanted);
         let s = self.arms.scopes[here].clone().expect("settled");
+        let before = s.refusals.clone();
         let mut s = self.with_bound(s, &t.binders);
         s.eager_on(&t.term);
-        product::forward(&t.term, &mut s).ints().clone()
+        let ints = product::forward(&t.term, &mut s).ints().clone();
+        self.place_refusals(e.span, &before, &s.refusals);
+        ints
+    }
+
+    /// Keeps each question refused in `after`, the refusals of a scope, and not in `before`,
+    /// those of the scope it was made from, as asked at `at`: the test that narrowed it, or the
+    /// read that settled it (DESIGN.md L1.39, a refused question is reported where the program
+    /// asks it). The same question asked again at `at` keeps the meet of its sets
+    /// ([`product::kept_meet`]), whatever order the two were met in. Costs what the two maps
+    /// do not share, as `imbl`'s diff skips shared subtrees: O(d log k) for `d` new questions
+    /// among `k`, so a scope with many refusals each read once is not read again in full.
+    fn place_refusals(
+        &mut self,
+        at: Span,
+        before: &imbl::OrdMap<Refused, Kept>,
+        after: &imbl::OrdMap<Refused, Kept>,
+    ) {
+        for d in before.diff(after) {
+            let imbl::ordmap::DiffItem::Add(r, kept) = d else {
+                continue;
+            };
+            match self.refused_at.entry((at, r.clone())) {
+                std::collections::btree_map::Entry::Vacant(v) => {
+                    v.insert(kept.clone());
+                }
+                std::collections::btree_map::Entry::Occupied(mut o) => {
+                    let met = product::kept_meet(o.get(), kept);
+                    o.insert(met);
+                }
+            }
+        }
     }
 
     /// `s` told of the values of `binders` it has no product of, each with the summary of its
@@ -5107,7 +5143,12 @@ impl<'a> Ck<'_, 'a> {
             Item::Scope(n) => {
                 let s = match self.arms.nodes[n] {
                     Node::Root => Scope::new([]).lazy(),
-                    Node::Assume { outcome, .. } => {
+                    Node::Assume {
+                        parent,
+                        test,
+                        outcome,
+                        ..
+                    } => {
                         let (p, t) = self.assumed(n);
                         // Not shown, so a failing test leaves the names as they were
                         // (`assume_case`): emptying each costs the names in scope.
@@ -5151,6 +5192,14 @@ impl<'a> Ck<'_, 'a> {
                         // settles the cone of a read on demand (the design note of
                         // NARROW-hub-settle, revision of 2026-11-04).
                         let s = p.assume_case(&t.term, outcome, &Premises::new());
+                        // The questions refused here and not in the parent's scope are this
+                        // test's: those the binders it reads asked as they were told of, and
+                        // its own narrowing's. A join asks none of its own; it keeps both
+                        // sides' ([`Scope::join`]).
+                        let before = (self.arms.scopes[parent].as_ref())
+                            .map(|q| q.refusals.clone())
+                            .unwrap_or_default();
+                        self.place_refusals(test.span, &before, &s.refusals);
                         self.arms.before[n] = Some(p);
                         s
                     }
@@ -5165,6 +5214,7 @@ impl<'a> Ck<'_, 'a> {
                 let t = self.term(value);
                 let at = self.arms.bound_at.get(&b).copied().unwrap_or(0);
                 let s = self.scope_or_root(at);
+                let before = s.refusals.clone();
                 let mut s = self.with_bound_read(s, &t.binders);
                 // A parameter the value reads that the scope has no product of is any value of
                 // its type where `b` is bound ([`Ck::param_type`]), as [`Ck::summarize_value`]
@@ -5185,6 +5235,7 @@ impl<'a> Ck<'_, 'a> {
                 if let Some(ty) = self.arms.bound_ty.get(&b) {
                     p.ty.element = p.ty.element.meet(ty);
                 }
+                self.place_refusals(value.span, &before, &s.refusals);
                 self.arms.bound.insert(b, p);
             }
         }

@@ -95,10 +95,12 @@ const EACH: &str =
 /// The bounds a refused test keeps.
 const FOUND: &str = "the bounds it found on the test's variables";
 
-/// The first line of every warning.
-const WIDER: &str = "warning: the checker knows less here about the values of some variables \
-                     than the program's conditions say, so it may reject or warn about code that \
-                     is correct; it does not accept code that is wrong";
+/// The first line of a warning about the conditions that hold in a scope.
+const WIDER: &str = "warning: Cannot find exactly which values meet the conditions here";
+
+/// What the step that says what a scope keeps ends with.
+const SOUND: &str = "; so the checker may reject or warn about code here that is correct, and it \
+                     does not accept code that is wrong";
 
 /// The repair a warning ends with: a value stated for `v`, put before `conditions`, which the
 /// warning calls `what`.
@@ -124,7 +126,7 @@ fn a_refused_test_gives_one_warning_at_its_test() {
             "{WIDER}\
              \n  [1] here the conditions `{constraints}` hold\
              \n  [2] the checker could not work out which values each of their variables can take: {}\
-             \n  [3] so here each of their variables keeps only those bounds, which may be wider than the conditions allow{}",
+             \n  [3] so here each of their variables keeps only those bounds, which may be wider than the conditions allow{SOUND}{}",
             none_ruled_out(EACH, "`w`, `x`, `y` and `z`"),
             value("w", "the conditions", constraints)
         )]
@@ -148,10 +150,10 @@ fn a_refused_test_through_a_helper_names_the_test_and_its_outcome() {
     let test = "g(x, y, z, w)";
     let at = |outcome: bool| {
         format!(
-            "{WIDER}\
+            "warning: Cannot find exactly which values make `{test}` {outcome}\
                  \n  [1] here the test `{test}` is {outcome}\
                  \n  [2] the checker could not work out which values its variables can take when it is {outcome}: {}\
-                 \n  [3] so the test narrows the values of its variables here only to those bounds, which may be wider than it allows{}",
+                 \n  [3] so the test narrows the values of its variables here only to those bounds, which may be wider than it allows{SOUND}{}",
             none_ruled_out(FOUND, "`w`, `x`, `y` and `z`"),
             value("x", "the test", test)
         )
@@ -166,7 +168,7 @@ fn a_refused_test_through_a_helper_names_the_test_and_its_outcome() {
         "{WIDER}\
          \n  [1] here the conditions `{constraints}` hold\
          \n  [2] the checker could not work out which values each of their variables can take: {}\
-         \n  [3] so here each of their variables keeps only those bounds, which may be wider than the conditions allow{}",
+         \n  [3] so here each of their variables keeps only those bounds, which may be wider than the conditions allow{SOUND}{}",
         none_ruled_out(EACH, "`w`, `x`, `y` and `z`"),
         value("w", "the conditions", constraints)
     );
@@ -195,10 +197,10 @@ fn a_refused_projection_onto_each_name_gives_one_warning_for_each() {
     let expected: Vec<String> = ["w", "x", "y", "z"]
         .map(|n| {
             format!(
-                "{WIDER}\
+                "warning: Cannot find exactly which values `{n}` can take here\
                  \n  [1] here the conditions `{constraints}` hold\
                  \n  [2] the checker could not work out which values `{n}` can take: {}\
-                 \n  [3] so here that variable keeps only those bounds, which may be wider than the conditions allow{}",
+                 \n  [3] so here that variable keeps only those bounds, which may be wider than the conditions allow{SOUND}{}",
                 none_ruled_out(
                     &format!("the bounds that each condition gives `{n}` from the bounds of the others"),
                     &format!("`{n}`")
@@ -485,7 +487,7 @@ fn a_refused_projection_names_the_bounds_it_kept() {
             "{WIDER}\
              \n  [1] here the conditions `{constraints}` hold\
              \n  [2] the checker could not work out which values each of their variables can take: {GROWTH}. The checker stopped there, with {EACH}: {bounds}\
-             \n  [3] so here each of their variables keeps only those bounds, which may be wider than the conditions allow{}",
+             \n  [3] so here each of their variables keeps only those bounds, which may be wider than the conditions allow{SOUND}{}",
             value("w", "the conditions", constraints)
         )
     };

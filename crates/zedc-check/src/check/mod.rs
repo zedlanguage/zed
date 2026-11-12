@@ -63,6 +63,7 @@ use zedc_lattice::interval::{
 };
 use zedc_lattice::revision::{Op, forward};
 use zedc_preimage::images;
+use zedc_preimage::product::{Kept, Refused};
 use zedc_resolve::resolve::tables::Tables;
 use zedc_resolve::resolve::{Handle, Ref, Resolution};
 use zedc_syntax::ast::{
@@ -324,6 +325,23 @@ fn plural(n: usize) -> &'static str {
     }
 }
 
+/// The warning for `r`, a question the integer solver left undecided, asked at `span`, with
+/// the sets `kept` it left its variables: its headline, and each step of its derivation and
+/// each repair as a note at `span`. The question is printed as the program wrote it, with no
+/// position of its own, so every note points at the test or read that asked it.
+fn refused_warning(span: Span, r: &Refused, kept: &Kept) -> Error {
+    let w = r.warning(kept);
+    Error {
+        span,
+        message: w.message,
+        notes: (w.steps.into_iter())
+            .map(|text| Note { span, text })
+            .collect(),
+        menu: String::new(),
+        row: None,
+    }
+}
+
 /// What the checker finds.
 #[derive(Clone, Debug, Default)]
 pub struct Info {
@@ -366,6 +384,10 @@ pub struct Info {
     pub dense: HashMap<Span, bool>,
     /// The type errors.
     pub errors: Vec<Error>,
+    /// A warning for each question the integer solver left undecided while the checker
+    /// narrowed by a test or read under one, placed at that test or read, with its derivation:
+    /// in order of place, then of the question (DESIGN.md L1.39).
+    pub warnings: Vec<Error>,
 }
 
 /// The two operands of `==` that [`Ck::equal`] pairs, built before a scaling test, so that
@@ -1144,6 +1166,10 @@ struct Ck<'t, 'a> {
     /// The scopes the tests the walk is in make, which narrow the ints a bit word or `^`
     /// reads.
     arms: arms::Arms<'a>,
+    /// Each question the integer solver left undecided while a scope of [`Self::arms`] was
+    /// narrowed or read, by where the program asks it and the question, with the sets it left
+    /// its variables ([`Ck::place_refusals`]): a warning each once the walk is done.
+    refused_at: BTreeMap<(Span, Refused), Kept>,
     /// For each binder read by a binder's value, what its summary read in the scope of its
     /// last such read ([`images::Read`]), from which the next is found.
     reads: HashMap<usize, images::Read<Rc<arms::Summarized>, zedc_preimage::product::Product>>,
@@ -1306,6 +1332,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             widened_only: HashMap::new(),
             tried: HashMap::new(),
             arms: arms::Arms::new(),
+            refused_at: BTreeMap::new(),
             reads: HashMap::new(),
             spelled: HashMap::new(),
             near: std::cell::Cell::new(None),
@@ -3155,6 +3182,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             lay_out(&mut e.message, &mut e.notes, &mut e.menu);
         }
         self.info.errors = errors;
+        self.info.warnings = (std::mem::take(&mut self.refused_at).into_iter())
+            .map(|((span, r), kept)| refused_warning(span, &r, &kept))
+            .collect();
     }
 
     /// [`Self::finished`] on `s` settled, which is `s` itself when it holds no class variable.

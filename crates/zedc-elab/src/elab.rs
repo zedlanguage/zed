@@ -80,8 +80,14 @@ fn elaborate_in<'a>(
     // that fills no parameter, the checker's, which carries its notes, is the one kept: the
     // sort is stable.
     let checked = std::mem::take(&mut info.errors);
+    let refused = std::mem::take(&mut info.warnings);
     let (mut out, marks, errors) = lower(t, &info, unit, marks, checked);
+    // The widening warnings and the checker's refused questions, each list in order of place,
+    // merged in order of place: the sort is stable, so of two at one place the widening comes
+    // first, then the questions in their own order.
     out.warnings = warnings;
+    out.warnings.extend(refused);
+    out.warnings.sort_by_key(|w| w.span);
     finish(out, marks, errors)
 }
 
