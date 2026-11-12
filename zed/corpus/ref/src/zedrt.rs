@@ -29,6 +29,8 @@ use std::sync::LazyLock;
 use num_bigint::{BigInt, BigUint, Sign};
 use num_traits::{ToPrimitive, Zero};
 
+pub mod product;
+
 /// The element of `xs` at `i`, or an error as for an index out of range.
 pub fn at<T>(xs: &[T], i: usize) -> Result<&T, String> {
     xs.get(i)
@@ -237,23 +239,53 @@ const LEAF_DIGITS: usize = 1024;
 ///
 /// num-bigint reads a text one machine word of digits at a time into the whole number read so
 /// far, O(n^2) for `n` digits. This reads the text in two parts, the low part `LEAF_DIGITS *
-/// 2^i` digits long and the high part no longer, and joins them as `high * 10^(LEAF_DIGITS *
-/// 2^i) + low`, with the powers `10^(LEAF_DIGITS * 2^i)` built once by squaring: O(M(n) log n)
-/// for the cost M(n) of a product of n digits, the method of `zed_kernel::num::read_digits`
-/// (Brent and Zimmermann, Modern Computer Arithmetic, section 1.7). The references do not use
-/// the kernel, so the products are num-bigint's, Toom-3 at these sizes, M(n) about n^1.46; the
-/// recursion then costs O(M(n)), its levels' costs falling geometrically (COMPLEXITY.md F38).
+/// 2^i` digits long and the high part no longer, and joins them as `high * 10^d + low`, `d =
+/// LEAF_DIGITS * 2^i`, with the powers built once by squaring: O(M(n) log n) for the cost M(n) of
+/// a product of n digits, the method of `zed_kernel::num::read_digits` (Brent and Zimmermann,
+/// Modern Computer Arithmetic, section 1.7). The references do not use the kernel, so the long
+/// products are [`product`]'s transform, M(n) = O(n log n), and the reading is O(n log^2 n)
+/// (COMPLEXITY.md F38).
+///
+/// `high * 10^d` is `(high * 5^d) << d`: the power of five has 2.32 bits a digit against 3.32 for
+/// the power of ten, so the products and the squarings that build the powers are 30 % shorter,
+/// for one shift of the product. A power of at least [`product::KEPT_WORDS`] words that is squared
+/// into the next keeps its transform, which gives its square and its products; the last power is
+/// used once, so its product goes through [`product::TRANSFORM_WORDS`]'s crossover. The table of
+/// twiddle factors is built once, for the longest transform the reading takes, and not at all
+/// when it takes none.
 fn read_digits(digits: &str) -> BigUint {
     let Some(top) = split_depth(digits.len()) else {
         return digits.parse().expect("ASCII decimal digits");
     };
-    let mut tens = vec![BigUint::from(10u32).pow(LEAF_DIGITS as u32)];
-    while tens.len() <= top {
-        let last = tens.last().expect("the first power is built");
-        let next = last * last;
-        tens.push(next);
+    let first = BigUint::from(5u32).pow(LEAF_DIGITS as u32);
+    // Upper bounds on the bits of the factors: `5^(LEAF_DIGITS * 2^i)` has at most `2^i` times
+    // the bits of `first`, and a part of `d` digits fewer than 3.322 d bits.
+    let first_bits = first.bits();
+    let power_bits = |i: usize| first_bits << i;
+    let digit_bits = |d: usize| (d as u64 * 3322).div_ceil(1000);
+    let top_high = digit_bits(digits.len() - (LEAF_DIGITS << top));
+    let kept = |i: usize| i < top && power_bits(i).div_ceil(32) >= product::KEPT_WORDS;
+    let kept_len = (0..top)
+        .filter(|i| kept(*i))
+        .map(|i| product::transform_len(power_bits(i), digit_bits(LEAF_DIGITS << i)))
+        .max();
+    let top_len = (power_bits(top).min(top_high).div_ceil(32) >= product::TRANSFORM_WORDS)
+        .then(|| product::transform_len(power_bits(top), top_high));
+    let roots = kept_len
+        .max(top_len)
+        .map_or_else(Vec::new, product::twiddles);
+    let mut fives = Vec::with_capacity(top + 1);
+    let mut power = first;
+    for i in 0..top {
+        let factor = match kept(i) {
+            true => product::Factor::new(power, digit_bits(LEAF_DIGITS << i), &roots),
+            false => product::Factor::plain(power),
+        };
+        power = factor.square(&roots);
+        fives.push(factor);
     }
-    read_parts(digits, &tens)
+    fives.push(product::Factor::plain(power));
+    read_parts(digits, &fives, &roots)
 }
 
 /// The `i` for which a text of `len` digits splits into a low part of `LEAF_DIGITS * 2^i`
@@ -262,13 +294,15 @@ fn split_depth(len: usize) -> Option<usize> {
     (len > LEAF_DIGITS).then(|| ((len - 1) / LEAF_DIGITS).ilog2() as usize)
 }
 
-/// [`read_digits`] of a part, `tens[i]` being `10^(LEAF_DIGITS * 2^i)`.
-fn read_parts(digits: &str, tens: &[BigUint]) -> BigUint {
+/// [`read_digits`] of a part, `fives[i]` being `5^(LEAF_DIGITS * 2^i)`.
+fn read_parts(digits: &str, fives: &[product::Factor], roots: &[product::Twiddle]) -> BigUint {
     let Some(i) = split_depth(digits.len()) else {
         return digits.parse().expect("ASCII decimal digits");
     };
-    let (high, low) = digits.split_at(digits.len() - (LEAF_DIGITS << i));
-    read_parts(high, tens) * &tens[i] + read_parts(low, tens)
+    let low_digits = LEAF_DIGITS << i;
+    let (high, low) = digits.split_at(digits.len() - low_digits);
+    (fives[i].times(&read_parts(high, fives, roots), roots) << low_digits)
+        + read_parts(low, fives, roots)
 }
 
 /// `s` read as a float, or an error.

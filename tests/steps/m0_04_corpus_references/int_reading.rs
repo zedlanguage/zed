@@ -1,10 +1,14 @@
 //! The references' reading of an integer (`zedrt::try_parse_int`) at any number of digits
 //! (item CORPUS-int-cap). It refused more than 4300 digits, a limit DESIGN does not have; it now
-//! reads the digits by halves, the method of `zed_kernel::num::read_digits`, with num-bigint's
-//! product (the references do not use the kernel). Each value is checked against num-bigint's
-//! own reading and against the kernel's reader.
+//! reads the digits by halves, the method of `zed_kernel::num::read_digits`, joining the halves
+//! with powers of five and a number-theoretic transform product (`zedrt::product`; the references
+//! do not use the kernel). Each value is checked against num-bigint's own reading and against the
+//! kernel's reader, and the product against num-bigint's.
 
-use num_bigint::{BigInt, Sign};
+use num_bigint::{BigInt, BigUint, Sign};
+use zed_corpus_ref::zedrt::product::{
+    Factor, KEPT_WORDS, TRANSFORM_WORDS, mul, transform_len, transform_mul, twiddles,
+};
 use zed_corpus_ref::zedrt::{parse_int, try_parse_int};
 use zed_kernel::num::read_digits;
 use zed_tests::instances::Rng;
@@ -108,18 +112,148 @@ fn a_long_text_that_is_not_an_integer_is_refused() {
 }
 
 /// Reading a number of 100,000 and of 800,000 digits, each text built before timing. The reading
-/// by halves is O(M(n) log n), and O(M(n)) with num-bigint's Toom-3 product, about n^1.46, whose
-/// levels' costs fall geometrically: 8^1.46 is 20.9, within the limit of 24 for power 1. num-bigint
-/// reading the text whole, O(n^2), fails it (COMPLEXITY.md F38).
+/// by halves with the transform product is O(n log^2 n), held to 8 (ln 8n / ln n)^2 x 1.1 = 12.27;
+/// measured 2026-11-12, 12.0 times the work and 8.4 times the bytes. With num-bigint's Toom-3
+/// product each level costs about n^1.46 and the reading took 20.5 times the work; num-bigint
+/// reading the text whole, O(n^2), fails it by far (COMPLEXITY.md F38).
 #[test]
-#[ignore = "CORPUS-read-radix: 22.7 times the bytes at 100,000 and 800,000 digits, over the n log n limit 10.4 since SCALE-ratio; open"]
 fn reading_a_long_number_scales() {
     let texts = scaling::inputs(100_000, |n| {
         let mut rng = Rng::new(n as u64);
         format!("-{}", digits(&mut rng, n))
     });
-    scaling::check("reading an integer of n digits", 100_000, |n| {
+    scaling::check_log_squared("reading an integer of n digits", 100_000, |n| {
         let value = try_parse_int(&texts[&n]).expect("digits");
         assert!(value < BigInt::from(0));
     });
+}
+
+/// A natural of `words` random 32-bit words, the top one not 0.
+fn natural(rng: &mut Rng, words: usize) -> BigUint {
+    let mut digits: Vec<u32> = (0..words)
+        .map(|_| rng.int(0, i64::from(u32::MAX)) as u32)
+        .collect();
+    if let Some(top) = digits.last_mut() {
+        *top = (*top).max(1);
+    }
+    BigUint::new(digits)
+}
+
+/// The transform's product equals num-bigint's: zero, one word, factors whose coefficients are
+/// all ones (the largest sums the transform holds), lengths that fill a power of two exactly
+/// and one past it, squares (two transforms in place of three), unbalanced factors, and `mul`
+/// on both sides of its crossover. The squares of all ones at 754, 2,900 and 11,136 words have
+/// the largest sums of coefficients of 26, 25 and 24 bits, and one word more takes a bit less.
+#[test]
+fn the_transform_product_equals_num_bigint() {
+    let mut rng = Rng::new(2048);
+    let ones = |words: usize| BigUint::new(vec![u32::MAX; words]);
+    let zero = BigUint::default();
+    let mut pairs = vec![
+        (zero.clone(), zero.clone()),
+        (zero.clone(), natural(&mut rng, 300)),
+        (BigUint::from(1u32), BigUint::from(1u32)),
+        (BigUint::from(u32::MAX), BigUint::from(u32::MAX)),
+        (BigUint::from(1u32), natural(&mut rng, 777)),
+        (ones(4096), ones(4096)),
+        (ones(1), ones(5000)),
+        (natural(&mut rng, 3), natural(&mut rng, 9001)),
+    ];
+    for words in [754, 755, 2900, 2901, 11_136, 11_137] {
+        pairs.push((ones(words), ones(words)));
+    }
+    for words in [1, 2, 3, 7, 8, 9, 255, 256, 257, 1000, 1024, 1025] {
+        pairs.push((natural(&mut rng, words), natural(&mut rng, words)));
+        let square = natural(&mut rng, words);
+        pairs.push((square.clone(), square));
+        pairs.push((natural(&mut rng, words), natural(&mut rng, 2 * words + 1)));
+    }
+    let crossover = TRANSFORM_WORDS as usize;
+    for words in [crossover - 1, crossover, crossover + 1] {
+        pairs.push((natural(&mut rng, words), natural(&mut rng, words)));
+        pairs.push((natural(&mut rng, words), natural(&mut rng, 3 * words)));
+    }
+    for (a, b) in pairs {
+        let expected = &a * &b;
+        let what = format!("{} and {} bits", a.bits(), b.bits());
+        assert_eq!(transform_mul(&a, &b), expected, "transform_mul, {what}");
+        assert_eq!(
+            transform_mul(&b, &a),
+            expected,
+            "transform_mul swapped, {what}"
+        );
+        assert_eq!(mul(&a, &b), expected, "mul, {what}");
+    }
+}
+
+/// A factor's square and its products equal num-bigint's, kept and plain, for factors below and
+/// at each crossover and above them, random and with every coefficient all ones; the other
+/// factor zero, one, as long as the kept one (the kept transform's length), half as long or
+/// much shorter (a new length).
+#[test]
+fn a_kept_factor_multiplies_as_num_bigint_does() {
+    let mut rng = Rng::new(4096);
+    let ones = |words: usize| BigUint::new(vec![u32::MAX; words]);
+    let (kept, crossover) = (KEPT_WORDS as usize, TRANSFORM_WORDS as usize);
+    for words in [
+        1,
+        kept - 1,
+        kept,
+        kept + 1,
+        crossover - 1,
+        crossover,
+        crossover + 1,
+        3 * crossover,
+    ] {
+        for value in [natural(&mut rng, words), ones(words)] {
+            let roots = twiddles(transform_len(value.bits(), value.bits()));
+            let factors = [
+                Factor::new(value.clone(), value.bits(), &roots),
+                Factor::plain(value.clone()),
+            ];
+            for factor in factors {
+                assert_eq!(factor.value(), &value);
+                let what = format!("a factor of {} bits", value.bits());
+                assert_eq!(factor.square(&roots), &value * &value, "square of {what}");
+                let others = [
+                    BigUint::default(),
+                    BigUint::from(1u32),
+                    natural(&mut rng, kept.min(words)),
+                    natural(&mut rng, words.div_ceil(2)),
+                    natural(&mut rng, words),
+                    ones(words),
+                ];
+                for a in others {
+                    let expected = &a * &value;
+                    assert_eq!(
+                        factor.times(&a, &roots),
+                        expected,
+                        "{} bits times {what}",
+                        a.bits()
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Texts long enough that the reading's products go through the transform read as num-bigint
+/// reads them: random digits, nines (every coefficient of the parts at its largest), and a
+/// length of a power of two times `LEAF_DIGITS` (1024) and one past it.
+#[test]
+fn a_number_read_by_the_transform_reads_as_num_bigint_read_it() {
+    let mut rng = Rng::new(40);
+    // A power `5^d` has about 0.073 d words and a part of d digits about 0.104 d. At 40 digits a
+    // word of `TRANSFORM_WORDS`, the powers below the last from about 1.2 times `KEPT_WORDS` up
+    // keep their transforms; at the power of two the last product, of two factors of more than
+    // `TRANSFORM_WORDS` words, is by the transform too; one past it, the last power is squared
+    // by its kept transform and multiplies a part of one digit.
+    let long = 40 * TRANSFORM_WORDS as usize;
+    let power = 1024 * (long / 1024).next_power_of_two();
+    for len in [long, power, power + 1] {
+        for text in [digits(&mut rng, len), "9".repeat(len)] {
+            let expected: BigInt = text.parse().expect("digits");
+            assert_eq!(try_parse_int(&text), Some(expected), "{len} digits");
+        }
+    }
 }
