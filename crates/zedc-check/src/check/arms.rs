@@ -44,7 +44,7 @@ use zed_kernel::{Prim, Term};
 use zedc_lattice::cell::Premises;
 use zedc_preimage::preimage::LetPa;
 use zedc_preimage::product::{Product, Scope};
-use zedc_syntax::ast::Expr;
+use zedc_syntax::ast::{BinaryOp, Expr};
 use zedc_syntax::lex::Span;
 
 /// One node: a scope the walk is in, or was.
@@ -983,22 +983,22 @@ fn joined(
 }
 
 /// The kernel primitive of the operator `o` of the text, for the operators a test is read by.
-pub(super) fn prim_of(o: &str) -> Option<Prim> {
+pub(super) fn prim_of(o: BinaryOp) -> Option<Prim> {
     Some(match o {
-        "+" => Prim::Add,
-        "-" => Prim::Sub,
-        "*" => Prim::Mul,
-        "div" => Prim::IntDiv,
-        "mod" => Prim::Mod,
-        "==" => Prim::Eq,
-        "!=" => Prim::Ne,
-        "<" => Prim::Lt,
-        "<=" => Prim::Le,
-        ">" => Prim::Gt,
-        ">=" => Prim::Ge,
-        "&&" => Prim::And,
-        "||" => Prim::Or,
-        _ => return None,
+        BinaryOp::Add => Prim::Add,
+        BinaryOp::Sub => Prim::Sub,
+        BinaryOp::Mul => Prim::Mul,
+        BinaryOp::IntDiv => Prim::IntDiv,
+        BinaryOp::Mod => Prim::Mod,
+        BinaryOp::Eq => Prim::Eq,
+        BinaryOp::Ne => Prim::Ne,
+        BinaryOp::Lt => Prim::Lt,
+        BinaryOp::Le => Prim::Le,
+        BinaryOp::Gt => Prim::Gt,
+        BinaryOp::Ge => Prim::Ge,
+        BinaryOp::And => Prim::And,
+        BinaryOp::Or => Prim::Or,
+        BinaryOp::Div | BinaryOp::Pow | BinaryOp::Concat => return None,
     })
 }
 

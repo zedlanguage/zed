@@ -61,17 +61,33 @@ pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
     ck.info
 }
 
-/// The type of the binary operator `op` applied to arguments of the types `args`, with the
-/// errors the application reports: how an operator treats loose and family atoms.
-pub fn operator(op: &str, args: &[Ty]) -> (Ty, Vec<String>) {
+/// The type of the operator `op` applied to arguments of the types `args`, with the errors the
+/// application reports: how an operator treats loose and family atoms.
+pub fn operator(op: Operator, args: &[Ty]) -> (Ty, Vec<String>) {
     let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
     let t = Tables::new(&[], &res);
     let _defs = defs::collect();
     let mut ck = Ck::new(&t);
     let args = args.iter().map(|a| Some(Arg::of(a.clone()))).collect();
     let demand = match op {
-        "&&" | "||" => Demand::First,
-        _ => Demand::All,
+        Operator::Binary(BinaryOp::And | BinaryOp::Or) => Demand::First,
+        Operator::Binary(
+            BinaryOp::Eq
+            | BinaryOp::Ne
+            | BinaryOp::Lt
+            | BinaryOp::Le
+            | BinaryOp::Gt
+            | BinaryOp::Ge
+            | BinaryOp::Add
+            | BinaryOp::Sub
+            | BinaryOp::Concat
+            | BinaryOp::Mul
+            | BinaryOp::Div
+            | BinaryOp::IntDiv
+            | BinaryOp::Mod
+            | BinaryOp::Pow,
+        )
+        | Operator::Unary(UnaryOp::Neg | UnaryOp::Not) => Demand::All,
     };
     let (out, _) = ck.apply_demanding(
         &format!("`{op}`"),
@@ -253,7 +269,7 @@ pub(super) enum Frame<'a> {
     /// Reports the error, if any, with its repairs, and gives nothing.
     Fail(Option<(Span, String, Vec<String>)>),
     Str(Box<StrF<'a>>),
-    Unary(&'static str, Span),
+    Unary(UnaryOp, Span),
     Tuple(Box<TupleF<'a>>),
     Else1(&'a Expr),
     Else2(&'a Expr, Ty),
@@ -281,29 +297,29 @@ pub(super) enum Frame<'a> {
     CondIs(&'a Expr),
     CondNot(Span),
     CondAnd1 {
-        op: &'static str,
+        op: BinaryOp,
         b: &'a Expr,
         span: Span,
     },
     CondAnd2(Box<CondAnd<'a>>),
     CondOf(&'a Expr),
     Logic1 {
-        op: &'static str,
+        op: BinaryOp,
         b: &'a Expr,
         span: Span,
     },
     Logic2 {
-        op: &'static str,
+        op: BinaryOp,
         span: Span,
         ta: Ty,
     },
     Bin1 {
-        op: &'static str,
+        op: BinaryOp,
         b: &'a Expr,
         span: Span,
     },
     Bin2 {
-        op: &'static str,
+        op: BinaryOp,
         b: &'a Expr,
         span: Span,
         x: Box<Arg<'a>>,
@@ -398,7 +414,7 @@ pub(super) struct TupleF<'a> {
 }
 
 pub(super) struct CondAnd<'a> {
-    op: &'static str,
+    op: BinaryOp,
     span: Span,
     ta: Ty,
     ya: Facts,
@@ -709,7 +725,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // `3r` is 3, so a divisor `-3r` holds no zero. An `int` or `f64` literal under
                 // `-` is read whole by `read_literal`; a `rat` literal keeps its carrier and
                 // comes here.
-                if op == "-"
+                if op == UnaryOp::Neg
                     && let Some(ExprKind::Rat(d)) = x.expr.map(|e| &e.kind)
                     && let Ok(Some(r)) = Rat::decimal(d)
                 {
@@ -721,7 +737,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // ([`Self::lit_op_meets`]).
                 let from = self.errors.len();
                 if self.level == 0
-                    && op == "-"
+                    && op == UnaryOp::Neg
                     && x.expr.is_some_and(|e| self.lit_ops.contains(&e.span))
                 {
                     self.lit_ops.insert(span);
@@ -729,7 +745,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         self.lit_open.insert(span);
                     }
                 }
-                let sig = op_sig(op);
+                let sig = op_sig(Operator::Unary(op));
                 let t = self
                     .apply(&format!("`{op}`"), &sig, vec![Some(x)], true, span)
                     .0;
@@ -911,7 +927,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             Frame::CondNot(span) => {
                 let c = m.take_cond();
-                let sig = op_sig("!");
+                let sig = op_sig(Operator::Unary(UnaryOp::Not));
                 let t = self
                     .apply("`!`", &sig, vec![Some(Arg::of(c.t))], true, span)
                     .0;
@@ -925,7 +941,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             Frame::CondAnd1 { op, b, span } => {
                 let a = m.take_cond();
-                let and = op == "&&";
+                let and = op == BinaryOp::And;
                 let saved = self.narrow_side(a.held, if and { &a.yes } else { &a.no }, and);
                 self.arms.enter(if and { a.sides.0 } else { a.sides.1 });
                 m.k(Frame::CondAnd2(Box::new(CondAnd {
@@ -952,7 +968,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 } = *s;
                 // `a`'s side stays narrowed and `b`'s is narrowed on top, as a frame reading
                 // the whole condition would narrow them, in their order.
-                let and = op == "&&";
+                let and = op == BinaryOp::And;
                 let more = self.narrow_side(b.held, if and { &b.yes } else { &b.no }, and);
                 let saved = joined(saved, more);
                 self.arms.leave();
@@ -963,7 +979,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     true => (sb.0, self.arms.join(sa.1, sb.1)),
                     false => (self.arms.join(sa.0, sb.0), sb.1),
                 };
-                let sig = op_sig("&&");
+                let sig = op_sig(Operator::Binary(BinaryOp::And));
                 let t = self
                     .apply_demanding(
                         &format!("`{op}`"),
@@ -994,7 +1010,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             Frame::Logic1 { op, b, span } => {
                 let a = m.take_cond();
-                let and = op == "&&";
+                let and = op == BinaryOp::And;
                 let (first, at) = match and {
                     true => (a.yes, a.sides.0),
                     false => (a.no, a.sides.1),
@@ -1005,7 +1021,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             Frame::Logic2 { op, span, ta } => {
                 let tb = m.take_ty();
-                let sig = op_sig("&&");
+                let sig = op_sig(Operator::Binary(BinaryOp::And));
                 let t = self
                     .apply_demanding(
                         &format!("`{op}`"),
@@ -2223,15 +2239,15 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             ExprKind::Unary(op, a) => {
                 // `-0r` is the value `0r`; its `-` is kept for the messages that print it.
-                if *op == "-" && zero_rat(a) {
+                if *op == UnaryOp::Neg && zero_rat(a) {
                     self.spells(&Value::rat(Rat::int(0.into())), e.span);
                 }
-                m.k(Frame::Unary(op, e.span));
+                m.k(Frame::Unary(*op, e.span));
                 m.job(Job::Arg(a, Want::default()));
             }
-            ExprKind::Binary(op @ ("&&" | "||"), a, b) => {
+            ExprKind::Binary(op @ (BinaryOp::And | BinaryOp::Or), a, b) => {
                 m.k(Frame::Logic1 {
-                    op,
+                    op: *op,
                     b,
                     span: e.span,
                 });
@@ -2239,7 +2255,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             ExprKind::Binary(op, a, b) => {
                 m.k(Frame::Bin1 {
-                    op,
+                    op: *op,
                     b,
                     span: e.span,
                 });
@@ -2370,13 +2386,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                 m.k(Frame::CondIs(e));
                 m.job(Job::Expr(of));
             }
-            ExprKind::Unary("!", a) => {
+            ExprKind::Unary(UnaryOp::Not, a) => {
                 m.k(Frame::CondNot(e.span));
                 m.job(Job::Cond(a));
             }
-            ExprKind::Binary(op @ ("&&" | "||"), a, b) => {
+            ExprKind::Binary(op @ (BinaryOp::And | BinaryOp::Or), a, b) => {
                 m.k(Frame::CondAnd1 {
-                    op,
+                    op: *op,
                     b,
                     span: e.span,
                 });
@@ -2506,12 +2522,15 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// when it takes its carrier: after that the operand is of that carrier, and the operation
     /// around it holds a value of a carrier, not literals alone. The walk that folds an
     /// operation holding a `/` or a `^` costs its size again, once.
-    fn lit_op_meets(&mut self, op: &str, x: &mut Arg<'a>, y: &mut Arg<'a>, span: Span) {
+    fn lit_op_meets(&mut self, op: BinaryOp, x: &mut Arg<'a>, y: &mut Arg<'a>, span: Span) {
         let op_of = |a: &Arg| a.expr.is_some_and(|e| self.lit_ops.contains(&e.span));
         let bare = |a: &Arg| a.lit.as_ref().is_some_and(|l| l.bare);
         let (ox, oy) = (op_of(x), op_of(y));
         if (ox || bare(x)) && (oy || bare(y)) {
-            if matches!(op, "+" | "-" | "*" | "/" | "^") {
+            if matches!(
+                op,
+                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Pow
+            ) {
                 self.lit_ops.insert(span);
                 // Its value has no type until it meets a carrier where it holds a `/` or a
                 // decimal ([`Ck::lit_open`]): one lookup per operand.
@@ -2520,7 +2539,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         || (a.lit.as_ref())
                             .is_some_and(|l| l.bare && lit_carrier(&l.value) == Carrier::F64)
                 };
-                if op == "/" || open(x) || open(y) {
+                if op == BinaryOp::Div || open(x) || open(y) {
                     self.lit_open.insert(span);
                     for e in [x.expr, y.expr].into_iter().flatten() {
                         self.lit_open_within(e);
@@ -2529,7 +2548,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             return;
         }
-        if op == "^" {
+        if op == BinaryOp::Pow {
             return;
         }
         let (side, other) = match (ox, oy) {
@@ -2566,7 +2585,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             match &e.kind {
                 ExprKind::Binary(_, a, b) => todo.extend([&**a, &**b]),
-                ExprKind::Unary("-", a) => todo.push(a),
+                ExprKind::Unary(UnaryOp::Neg, a) => todo.push(a),
                 _ => {}
             }
         }
@@ -2590,11 +2609,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             match &e.kind {
                 ExprKind::Binary(op, a, b) => {
-                    div |= *op == "/";
-                    pow |= *op == "^";
+                    div |= *op == BinaryOp::Div;
+                    pow |= *op == BinaryOp::Pow;
                     todo.extend([&**b, &**a]);
                 }
-                ExprKind::Unary("-", a) => todo.push(a),
+                ExprKind::Unary(UnaryOp::Neg, a) => todo.push(a),
                 _ => {}
             }
         }
@@ -2760,7 +2779,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// second written `b`.
     fn binary_end(
         &mut self,
-        op: &'static str,
+        op: BinaryOp,
         mut x: Arg<'a>,
         mut y: Arg<'a>,
         b: &'a Expr,
@@ -2769,7 +2788,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         // An operand that is a literal without a suffix is generic: it takes the carrier of the
         // other operand, at run time where that is a type variable (step L1.26a). Under `==`
         // it follows as any literal.
-        if !matches!(op, "==" | "!=") {
+        if !matches!(op, BinaryOp::Eq | BinaryOp::Ne) {
             for l in [&mut x.lit, &mut y.lit].into_iter().flatten() {
                 l.generic = l.bare;
             }
@@ -2793,13 +2812,23 @@ impl<'t, 'a> Ck<'t, 'a> {
         if self.level == 0
             && matches!(
                 op,
-                "+" | "-" | "*" | "/" | "^" | "<" | "<=" | ">" | ">=" | "==" | "!="
+                BinaryOp::Add
+                    | BinaryOp::Sub
+                    | BinaryOp::Mul
+                    | BinaryOp::Div
+                    | BinaryOp::Pow
+                    | BinaryOp::Lt
+                    | BinaryOp::Le
+                    | BinaryOp::Gt
+                    | BinaryOp::Ge
+                    | BinaryOp::Eq
+                    | BinaryOp::Ne
             )
         {
             self.lit_op_meets(op, &mut x, &mut y, span);
         }
         match op {
-            "==" | "!=" => {
+            BinaryOp::Eq | BinaryOp::Ne => {
                 if self.level == 0 {
                     self.lit_pairs(&mut x, &mut y);
                 }
@@ -2833,7 +2862,6 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let from = self.errors.len();
                 self.data(&x.ty, &format!("`{op}`"), span, x.at.unwrap_or(span));
                 self.data(&y.ty, &format!("`{op}`"), span, y.at.unwrap_or(span));
-                let op = if op == "==" { "==" } else { "!=" };
                 self.comparing = Some(Comparison {
                     op,
                     ats: [x.at, y.at],
@@ -2855,22 +2883,36 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 Ty::carrier(Carrier::Bool)
             }
-            "<" | "<=" | ">" | ">=" => self.compare(op, x, y, span),
-            _ => {
+            BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
+                self.compare(op, x, y, span)
+            }
+            BinaryOp::And | BinaryOp::Or => {
+                unreachable!("`&&` and `||` are walked as conditions, by `Frame::Logic1`")
+            }
+            BinaryOp::Add
+            | BinaryOp::Sub
+            | BinaryOp::Concat
+            | BinaryOp::Mul
+            | BinaryOp::Div
+            | BinaryOp::IntDiv
+            | BinaryOp::Mod
+            | BinaryOp::Pow => {
                 let from = self.errors.len();
                 // A divisor whose type holds no zero cannot fail with `#divByZero`.
-                let nonzero = matches!(op, "/" | "div" | "mod")
+                let divides = matches!(op, BinaryOp::Div | BinaryOp::IntDiv | BinaryOp::Mod);
+                let nonzero = divides
                     && !y.ty.contains(&Value::Int(0))
                     && !y.ty.contains(&Value::rat(Rat::int(0.into())));
                 let carried = [&x.ty, &y.ty]
                     .iter()
                     .any(|t| t.atoms().contains(&Value::atom("divByZero")));
-                if op == "^" {
+                if op == BinaryOp::Pow {
                     self.exponent(&x, &y, b, span);
                 }
-                let zero = match op {
-                    "/" | "div" | "mod" => self.zero_divisor(op, &x, &y, b),
-                    _ => None,
+                let zero = if divides {
+                    self.zero_divisor(op, &x, &y, b)
+                } else {
+                    None
                 };
                 // The dividend as the program writes it, for the repair.
                 let dividend = match (&x.lit, x.expr.map(|e| &e.kind)) {
@@ -2878,7 +2920,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     (None, Some(ExprKind::Name(n))) => n.clone(),
                     _ => "…".to_string(),
                 };
-                let sig = op_sig(op);
+                let sig = op_sig(Operator::Binary(op));
                 let r = self.apply(&format!("`{op}`"), &sig, vec![Some(x), Some(y)], true, span);
                 if let Some(why) = zero
                     && r.0.atoms().contains(&Value::atom("divByZero"))
@@ -2886,7 +2928,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     self.divides_by_zero(op, why, &dividend, b, span);
                 }
                 self.lit_wrote(span, from);
-                if op == "*" {
+                if op == BinaryOp::Mul {
                     // `*` and `/` take the same (f64, f64) and (rat, rat), and only `*` takes
                     // (int, int): `/` is defined where the product holds no `int`.
                     let quotient = !r.0.set.is_empty() && (&r.0.set & &KType::int()).is_empty();
@@ -4869,13 +4911,16 @@ impl<'a> Ck<'_, 'a> {
                 let t = match &x.kind {
                     ExprKind::Unary(o, _) => {
                         let a = done.pop().expect("an operand");
-                        let p = if *o == "-" { Prim::Neg } else { Prim::Not };
+                        let p = match o {
+                            UnaryOp::Neg => Prim::Neg,
+                            UnaryOp::Not => Prim::Not,
+                        };
                         Term::Prim(p, vec![a])
                     }
                     ExprKind::Binary(o, _, _) => {
                         let b = done.pop().expect("a second operand");
                         let a = done.pop().expect("a first operand");
-                        Term::Prim(prim_of(o).expect("a translated operator"), vec![a, b])
+                        Term::Prim(prim_of(*o).expect("a translated operator"), vec![a, b])
                     }
                     _ => unreachable!("only operators wait on their operands"),
                 };
@@ -4901,11 +4946,11 @@ impl<'a> Ck<'_, 'a> {
                     }
                     _ => done.push(opaque()),
                 },
-                ExprKind::Unary("-" | "!", a) => {
+                ExprKind::Unary(UnaryOp::Neg | UnaryOp::Not, a) => {
                     stack.push((x, true));
                     stack.push((a, false));
                 }
-                ExprKind::Binary(o, a, b) if prim_of(o).is_some() => {
+                ExprKind::Binary(o, a, b) if prim_of(*o).is_some() => {
                     stack.push((x, true));
                     stack.push((b, false));
                     stack.push((a, false));
@@ -5902,7 +5947,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// its other values where not, as `x is #a` does (DESIGN.md sec:type_resolution: an `==`
     /// or `!=` handles the atom). Any other condition makes none.
     fn atom_eq(&mut self, e: &Expr) -> (Facts, Facts) {
-        let ExprKind::Binary(op @ ("==" | "!="), a, b) = &e.kind else {
+        let ExprKind::Binary(op @ (BinaryOp::Eq | BinaryOp::Ne), a, b) = &e.kind else {
             return (Facts::new(), Facts::new());
         };
         let (name, atom) = match (&a.kind, &b.kind) {
@@ -5922,7 +5967,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let t = Ty::set(KType::atom(atom));
         let yes = Facts::from([(id, v.meet(&t), e.span)]);
         let no = Facts::from([(id, self.narrowed(&v, &Narrow::Not(t), e.span), e.span)]);
-        match *op == "==" {
+        match *op == BinaryOp::Eq {
             true => (yes, no),
             false => (no, yes),
         }
@@ -6404,11 +6449,17 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// An ordering: two values of one carrier, or two tuples of one length; atoms pass.
-    fn compare(&mut self, op: &str, x: Arg<'a>, y: Arg<'a>, span: Span) -> Ty {
+    fn compare(&mut self, op: BinaryOp, x: Arg<'a>, y: Arg<'a>, span: Span) -> Ty {
         let what = format!("`{op}`");
         if x.ty.tuples.is_empty() && y.ty.tuples.is_empty() {
             return self
-                .apply(&what, &op_sig("<"), vec![Some(x), Some(y)], true, span)
+                .apply(
+                    &what,
+                    &op_sig(Operator::Binary(BinaryOp::Lt)),
+                    vec![Some(x), Some(y)],
+                    true,
+                    span,
+                )
                 .0;
         }
         let out = self.passing(&x.ty, &what, span);
@@ -6442,7 +6493,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `Never`, so that a function among them is rejected. Atoms pass. A row shared by many
     /// paths is visited once, so the check is linear in the rows of `t`.
     fn compared_alone(&mut self, what: &str, t: &Ty, none_first: bool, span: Span) {
-        let sig = op_sig("<");
+        let sig = op_sig(Operator::Binary(BinaryOp::Lt));
         // Keyed by the row's address (`Row::addr`): every row met is borrowed from `t`, which
         // stays borrowed for the whole walk, so no key names a freed row, and the set is only
         // read by `insert`, never iterated; the order of the checks is the stack's.
@@ -6515,7 +6566,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let (x, y) = *rests;
                     let mark = self.mark();
                     let args = vec![Some(Arg::of(x.clone())), Some(Arg::of(y.clone()))];
-                    self.apply(what, &op_sig("<"), args, true, span);
+                    self.apply(
+                        what,
+                        &op_sig(Operator::Binary(BinaryOp::Lt)),
+                        args,
+                        true,
+                        span,
+                    );
                     if self.errors.len() > mark.errors {
                         // The arrows of `<` alone say only that none takes the two; the
                         // message names the place and the repairs instead.
@@ -8029,19 +8086,40 @@ impl<'t, 'a> Ck<'t, 'a> {
             };
             // The operator's symbol, and whether the literal is its left operand, where it is
             // a binary arithmetic operator.
-            let op = what
-                .strip_prefix('`')
-                .and_then(|w| w.strip_suffix('`'))
-                .filter(|o| matches!(*o, "+" | "-" | "*" | "/") && args.len() == 2)
-                .map(|o| {
-                    (
-                        o,
-                        args[0]
-                            .as_ref()
-                            .and_then(|a| a.lit.as_ref())
-                            .is_some_and(|a| a.site == s),
-                    )
-                });
+            let op = match Operator::of_label(what) {
+                Some(Operator::Binary(
+                    o @ (BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div),
+                )) if args.len() == 2 => Some(o),
+                Some(Operator::Binary(
+                    BinaryOp::Or
+                    | BinaryOp::And
+                    | BinaryOp::Eq
+                    | BinaryOp::Ne
+                    | BinaryOp::Lt
+                    | BinaryOp::Le
+                    | BinaryOp::Gt
+                    | BinaryOp::Ge
+                    | BinaryOp::Add
+                    | BinaryOp::Sub
+                    | BinaryOp::Concat
+                    | BinaryOp::Mul
+                    | BinaryOp::Div
+                    | BinaryOp::IntDiv
+                    | BinaryOp::Mod
+                    | BinaryOp::Pow,
+                ))
+                | Some(Operator::Unary(UnaryOp::Neg | UnaryOp::Not))
+                | None => None,
+            }
+            .map(|o| {
+                (
+                    o,
+                    args[0]
+                        .as_ref()
+                        .and_then(|a| a.lit.as_ref())
+                        .is_some_and(|a| a.site == s),
+                )
+            });
             m = decimal_at_int(l, what, name, op);
         }
         if self.no_arrow_at_carrier(what, sig, args) {
@@ -8986,7 +9064,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn sum(&mut self, x: Arg<'a>, span: Span) -> Ty {
         let t = &x.ty;
         let mut out = self.passing(t, "`sum`", span);
-        let add = op_sig("+");
+        let add = op_sig(Operator::Binary(BinaryOp::Add));
         for p in t.pieces() {
             match p {
                 Piece::Tuple(cs) => {
@@ -9217,16 +9295,22 @@ impl<'a> Ck<'_, 'a> {
     /// Why the divisor `y` of `x op y` (`b` as written) is always zero, if the checker shows it.
     /// `/` on `f64` has no `#divByZero`, so a divisor that may be `f64` is not judged, nor is
     /// an operand whose type lists nothing (the operation is never reached).
-    fn zero_divisor(&mut self, op: &str, x: &Arg<'a>, y: &Arg<'a>, b: &'a Expr) -> Option<Zero> {
+    fn zero_divisor(
+        &mut self,
+        op: BinaryOp,
+        x: &Arg<'a>,
+        y: &Arg<'a>,
+        b: &'a Expr,
+    ) -> Option<Zero> {
         if x.ty.lists_nothing() || y.ty.lists_nothing() {
             return None;
         }
         let f64 = Ty::carrier(Carrier::F64);
-        if op == "/" && (x.ty.meets(&f64) || y.ty.meets(&f64)) {
+        if op == BinaryOp::Div && (x.ty.meets(&f64) || y.ty.meets(&f64)) {
             return None;
         }
         let unsigned = match &b.kind {
-            ExprKind::Unary("-", a) => a,
+            ExprKind::Unary(UnaryOp::Neg, a) => a,
             _ => b,
         };
         if y.lit.as_ref().is_some_and(|l| is_zero(&l.value)) || zero_rat(unsigned) {
@@ -9279,11 +9363,11 @@ impl<'a> Ck<'_, 'a> {
         let mut stack = vec![(e, false)];
         while let Some((x, neg)) = stack.pop() {
             match &x.kind {
-                ExprKind::Binary(o @ ("+" | "-"), a, b) => {
-                    stack.push((b, neg ^ (*o == "-")));
+                ExprKind::Binary(o @ (BinaryOp::Add | BinaryOp::Sub), a, b) => {
+                    stack.push((b, neg ^ (*o == BinaryOp::Sub)));
                     stack.push((a, neg));
                 }
-                ExprKind::Unary("-", a) => stack.push((a, !neg)),
+                ExprKind::Unary(UnaryOp::Neg, a) => stack.push((a, !neg)),
                 ExprKind::Rat(d) => {
                     let r = Rat::decimal(d).ok()??;
                     constants.push(if neg { r.neg() } else { r });
@@ -9331,10 +9415,30 @@ impl<'a> Ck<'_, 'a> {
     /// Rejects `x op y` at `span`, `dividend` the dividend as the program writes it (its literal
     /// or its name, else `…`) and `b` the divisor as written, whose divisor is always zero for
     /// the reason `why`: every value that reaches it fails with `#divByZero`.
-    fn divides_by_zero(&mut self, op: &str, why: Zero, dividend: &str, b: &'a Expr, span: Span) {
+    fn divides_by_zero(
+        &mut self,
+        op: BinaryOp,
+        why: Zero,
+        dividend: &str,
+        b: &'a Expr,
+        span: Span,
+    ) {
         let (result, kind) = match op {
-            "/" => ("a rat", "rat"),
-            _ => ("an int", "int"),
+            BinaryOp::Div => ("a rat", "rat"),
+            BinaryOp::IntDiv | BinaryOp::Mod => ("an int", "int"),
+            BinaryOp::Or
+            | BinaryOp::And
+            | BinaryOp::Eq
+            | BinaryOp::Ne
+            | BinaryOp::Lt
+            | BinaryOp::Le
+            | BinaryOp::Gt
+            | BinaryOp::Ge
+            | BinaryOp::Add
+            | BinaryOp::Sub
+            | BinaryOp::Concat
+            | BinaryOp::Mul
+            | BinaryOp::Pow => unreachable!("only a division has a divisor"),
         };
         let mut notes = Vec::new();
         let reason = match why {

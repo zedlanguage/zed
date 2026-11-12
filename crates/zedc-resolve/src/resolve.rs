@@ -38,7 +38,7 @@ use zedc_syntax::ast::{
     Annot, Arm, Error, Expr, ExprKind, Field, Import, ImportKind, Param, Pattern, Port, RangeEnd,
     Stmt, StmtKind, StrPart, Struct, Target, TypeDecl,
 };
-use zedc_syntax::ast::{Every, Note, Type, TypeBound, TypeKind};
+use zedc_syntax::ast::{BinaryOp, Every, Note, Type, TypeBound, TypeKind};
 use zedc_syntax::lex::Span;
 
 pub mod tables;
@@ -1980,7 +1980,7 @@ impl Resolver<'_> {
             match &e.kind {
                 ExprKind::Name(_) => self.out.flows.push((e.span, region)),
                 ExprKind::Unary(_, a) | ExprKind::Member { of: a, .. } => stack.push(a),
-                ExprKind::Binary("==" | "!=", ..) => {}
+                ExprKind::Binary(BinaryOp::Eq | BinaryOp::Ne, ..) => {}
                 ExprKind::Index(a, k) => {
                     stack.push(k);
                     stack.push(a);
@@ -2158,7 +2158,7 @@ impl Resolver<'_> {
             ExprKind::Unary(_, a) => todo.push(Task::Expr(a)),
             ExprKind::Binary(_, a, b) | ExprKind::Index(a, b) => {
                 // `e == #a` and `e != #a`, either way round, handle `#a` for `e`.
-                if matches!(e.kind, ExprKind::Binary("==" | "!=", ..)) {
+                if matches!(e.kind, ExprKind::Binary(BinaryOp::Eq | BinaryOp::Ne, ..)) {
                     let other = match (&a.kind, &b.kind) {
                         (ExprKind::Atom(n), _) => Some((n, b)),
                         (_, ExprKind::Atom(n)) => Some((n, a)),

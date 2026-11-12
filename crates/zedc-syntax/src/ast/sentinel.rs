@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 use num_bigint::BigInt;
 
-use super::{Expr, ExprKind, IndexKey, RangeEnd};
+use super::{Expr, ExprKind, IndexKey, RangeEnd, UnaryOp};
 
 /// The last key of a run of keys, or `Above` for `lo..`, which has none.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -43,7 +43,7 @@ pub(super) enum Keys {
 /// The value of `e` when it is an integer literal, `2`, `0x2`, or one negated, `-2`.
 pub(super) fn int_literal(e: &Expr) -> Option<BigInt> {
     let (negated, e) = match &e.kind {
-        ExprKind::Unary("-", x) => (true, &**x),
+        ExprKind::Unary(UnaryOp::Neg, x) => (true, &**x),
         _ => (false, e),
     };
     let ExprKind::Int { radix, digits } = &e.kind else {

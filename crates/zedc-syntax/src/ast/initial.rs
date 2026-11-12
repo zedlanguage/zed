@@ -16,7 +16,7 @@ use super::builder::Builder;
 use super::sentinel::{End, Entry, Keys, Sentinels, keys_of};
 use super::{
     Error, Expr, ExprKind, Field, IndexKey, Initial, Note, Pattern, RangeEnd, Stmt, StmtKind,
-    StrPart, Target,
+    StrPart, Target, UnaryOp,
 };
 use crate::lex::Span;
 use zedc_base::rejection::Row;
@@ -59,7 +59,7 @@ fn unprimed(name: &str) -> &str {
 
 /// Whether `e` is a negative integer literal, `-2`.
 fn negative_literal(e: &Expr) -> bool {
-    matches!(&e.kind, ExprKind::Unary("-", x) if matches!(x.kind, ExprKind::Int { .. }))
+    matches!(&e.kind, ExprKind::Unary(UnaryOp::Neg, x) if matches!(x.kind, ExprKind::Int { .. }))
 }
 
 /// Whether the key `k` lies below index 0 by its text: `-2`, or `i in -3..<0`.

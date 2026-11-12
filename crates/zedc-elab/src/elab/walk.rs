@@ -22,7 +22,8 @@ use zedc_resolve::resolve::topo::topo;
 use zedc_resolve::resolve::{Ref, prelude_layer};
 use zedc_stage::defs::Test;
 use zedc_syntax::ast::{
-    Error, Expr, ExprKind, Function, Note, Pattern, Stmt, StmtKind, StrPart, Target,
+    BinaryOp, Error, Expr, ExprKind, Function, Note, Pattern, Stmt, StmtKind, StrPart, Target,
+    UnaryOp,
 };
 use zedc_syntax::lex::{Span, unread_literal};
 
@@ -712,7 +713,10 @@ impl<'a> Elab<'a> {
             }
             ExprKind::Name(n) => self.name(n, e.span),
             ExprKind::Unary(op, a) => {
-                let p = if *op == "-" { Prim::Neg } else { Prim::Not };
+                let p = match op {
+                    UnaryOp::Neg => Prim::Neg,
+                    UnaryOp::Not => Prim::Not,
+                };
                 m.k(Frame::Unary(p));
                 m.stack.push(Job::Expr(a));
                 return;
@@ -1814,23 +1818,22 @@ impl<'a> Elab<'a> {
         let (a, b) = (a?, b?);
         let t = |v: bool| Term::Lit(Value::Bool(v));
         let p = match *op {
-            "||" => return Some(if_(a, t(true), b)),
-            "&&" => return Some(if_(a, b, t(false))),
-            "==" => Prim::Eq,
-            "!=" => Prim::Ne,
-            "<" => Prim::Lt,
-            "<=" => Prim::Le,
-            ">" => Prim::Gt,
-            ">=" => Prim::Ge,
-            "+" => Prim::Add,
-            "-" => Prim::Sub,
-            "*" => Prim::Mul,
-            "/" => Prim::Div,
-            "div" => Prim::IntDiv,
-            "mod" => Prim::Mod,
-            "^" => Prim::Pow,
-            "++" => Prim::Concat,
-            _ => unreachable!("the grammar's binary operators are those above, not `{op}`"),
+            BinaryOp::Or => return Some(if_(a, t(true), b)),
+            BinaryOp::And => return Some(if_(a, b, t(false))),
+            BinaryOp::Eq => Prim::Eq,
+            BinaryOp::Ne => Prim::Ne,
+            BinaryOp::Lt => Prim::Lt,
+            BinaryOp::Le => Prim::Le,
+            BinaryOp::Gt => Prim::Gt,
+            BinaryOp::Ge => Prim::Ge,
+            BinaryOp::Add => Prim::Add,
+            BinaryOp::Sub => Prim::Sub,
+            BinaryOp::Mul => Prim::Mul,
+            BinaryOp::Div => Prim::Div,
+            BinaryOp::IntDiv => Prim::IntDiv,
+            BinaryOp::Mod => Prim::Mod,
+            BinaryOp::Pow => Prim::Pow,
+            BinaryOp::Concat => Prim::Concat,
         };
         let mut args = vec![a, b];
         if let Some(marks) = &mut self.marks
@@ -1988,7 +1991,7 @@ fn string(parts: &[StrPart], holes: Vec<Term>) -> Term {
 /// The span of the numeric literal `e` is, under any `-`, as the checker records it.
 fn lit_span(e: &Expr) -> Option<Span> {
     let inner = match &e.kind {
-        ExprKind::Unary("-", a) => &**a,
+        ExprKind::Unary(UnaryOp::Neg, a) => &**a,
         _ => e,
     };
     matches!(inner.kind, ExprKind::Int { .. } | ExprKind::Float { .. }).then_some(inner.span)

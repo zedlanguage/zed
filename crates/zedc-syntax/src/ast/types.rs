@@ -11,7 +11,7 @@ use std::mem;
 use super::builder::{Builder, Built};
 use super::{
     Error, Every, Expr, ExprKind, Note, Param, Pattern, Target, Type, TypeBound, TypeKind,
-    TypeParam,
+    TypeParam, UnaryOp,
 };
 use crate::lex::{Span, Tok};
 use zedc_base::rejection::Row;
@@ -363,7 +363,7 @@ impl Builder<'_, '_> {
                 let i = node.start + 1;
                 let value = self.literal_at(i, self.tokens[i].span)?;
                 return Ok(Pattern::Lit(Box::new(Expr {
-                    kind: ExprKind::Unary("-", Box::new(value)),
+                    kind: ExprKind::Unary(UnaryOp::Neg, Box::new(value)),
                     span,
                 })));
             }

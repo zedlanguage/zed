@@ -32,7 +32,9 @@ use crate::check::Info;
 use crate::check::ty::Carrier;
 use zedc_resolve::resolve::tables::Tables;
 use zedc_resolve::resolve::{Ref, Resolution};
-use zedc_syntax::ast::{Error, Expr, ExprKind, Note, Param, Stmt, StmtKind, StrPart, Target};
+use zedc_syntax::ast::{
+    BinaryOp, Error, Expr, ExprKind, Note, Param, Stmt, StmtKind, StrPart, Target, UnaryOp,
+};
 use zedc_syntax::lex::Span;
 
 /// A closed interval of integers, both ends in the word.
@@ -273,48 +275,60 @@ impl<'t, 'a> Walk<'t, 'a> {
         };
         let kind = match &e.kind {
             ExprKind::Int { .. } => Kind::Lit(self.literal(e, false)),
-            ExprKind::Unary("-", a) if matches!(a.kind, ExprKind::Int { .. }) => {
+            ExprKind::Unary(UnaryOp::Neg, a) if matches!(a.kind, ExprKind::Int { .. }) => {
                 Kind::Lit(self.literal(a, true))
             }
-            ExprKind::Unary("-", a) => {
+            ExprKind::Unary(UnaryOp::Neg, a) => {
                 kids(self, &[a], wrap);
                 Kind::Neg
             }
-            ExprKind::Binary(o, a, b) => {
-                let ring = match *o {
-                    "+" => Some(Ring::Add),
-                    "-" => Some(Ring::Sub),
-                    "*" => Some(Ring::Mul),
-                    _ => None,
-                };
-                match (ring, *o, power_of_two(b)) {
-                    (Some(r), _, _) => {
-                        kids(self, &[a, b], wrap);
-                        Kind::Ring(r)
-                    }
-                    (None, "mod", Some(k)) => {
-                        kids(self, &[a], true);
-                        self.node(b, Some(root), true);
-                        Kind::Wrap(k)
-                    }
-                    (None, "mod", None) => {
-                        kids(self, &[a, b], false);
-                        Kind::Mod
-                    }
-                    (None, "div", _) => {
-                        kids(self, &[a, b], false);
-                        Kind::Div
-                    }
-                    (None, "^", _) => {
-                        kids(self, &[a, b], false);
-                        Kind::Pow
-                    }
-                    _ => {
-                        kids(self, &[a, b], false);
-                        Kind::Top
-                    }
+            ExprKind::Binary(o, a, b) => match (o, power_of_two(b)) {
+                (BinaryOp::Add, _) => {
+                    kids(self, &[a, b], wrap);
+                    Kind::Ring(Ring::Add)
                 }
-            }
+                (BinaryOp::Sub, _) => {
+                    kids(self, &[a, b], wrap);
+                    Kind::Ring(Ring::Sub)
+                }
+                (BinaryOp::Mul, _) => {
+                    kids(self, &[a, b], wrap);
+                    Kind::Ring(Ring::Mul)
+                }
+                (BinaryOp::Mod, Some(k)) => {
+                    kids(self, &[a], true);
+                    self.node(b, Some(root), true);
+                    Kind::Wrap(k)
+                }
+                (BinaryOp::Mod, None) => {
+                    kids(self, &[a, b], false);
+                    Kind::Mod
+                }
+                (BinaryOp::IntDiv, _) => {
+                    kids(self, &[a, b], false);
+                    Kind::Div
+                }
+                (BinaryOp::Pow, _) => {
+                    kids(self, &[a, b], false);
+                    Kind::Pow
+                }
+                (
+                    BinaryOp::Or
+                    | BinaryOp::And
+                    | BinaryOp::Eq
+                    | BinaryOp::Ne
+                    | BinaryOp::Lt
+                    | BinaryOp::Le
+                    | BinaryOp::Gt
+                    | BinaryOp::Ge
+                    | BinaryOp::Concat
+                    | BinaryOp::Div,
+                    _,
+                ) => {
+                    kids(self, &[a, b], false);
+                    Kind::Top
+                }
+            },
             ExprKind::If {
                 cond,
                 then,
@@ -677,7 +691,9 @@ impl<'t, 'a> Walk<'t, 'a> {
 fn wraps(e: &Expr) -> bool {
     matches!(
         e.kind,
-        ExprKind::Binary("+" | "-" | "*", ..) | ExprKind::Unary("-", _) | ExprKind::Int { .. }
+        ExprKind::Binary(BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul, ..)
+            | ExprKind::Unary(UnaryOp::Neg, _)
+            | ExprKind::Int { .. }
     )
 }
 
@@ -699,7 +715,7 @@ fn power_of_two(e: &Expr) -> Option<u32> {
             }
             v.trailing_zeros()
         }
-        ExprKind::Binary("^", b, k) => match (&b.kind, &k.kind) {
+        ExprKind::Binary(BinaryOp::Pow, b, k) => match (&b.kind, &k.kind) {
             (
                 ExprKind::Int { radix, digits, .. },
                 ExprKind::Int {
@@ -718,7 +734,8 @@ fn power_of_two(e: &Expr) -> Option<u32> {
 /// The operator of an operation node.
 fn op_text(e: &Expr) -> &'static str {
     match &e.kind {
-        ExprKind::Binary(o, ..) | ExprKind::Unary(o, _) => o,
+        ExprKind::Binary(o, ..) => o.as_str(),
+        ExprKind::Unary(o, _) => o.as_str(),
         _ => "?",
     }
 }

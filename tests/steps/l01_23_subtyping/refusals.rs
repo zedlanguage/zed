@@ -12,6 +12,8 @@ use zed_kernel::Value;
 use zed_kernel::types::rec::{Def, Expr, Group};
 use zed_kernel::types::{Refusal, Type, Verdict};
 use zed_tests::scaling;
+use zedc::ast::{BinaryOp, UnaryOp};
+use zedc::check::Operator;
 use zedc::check::ty::Ty;
 
 fn r(i: usize) -> Expr {
@@ -405,7 +407,7 @@ fn a_morphism_type_whose_bound_check_was_refused_says_why() {
 }
 
 /// The errors of the operator `op` applied to `args`, through the checker's `apply`.
-fn operator_errors(op: &str, args: &[Ty]) -> Vec<String> {
+fn operator_errors(op: Operator, args: &[Ty]) -> Vec<String> {
     zedc::check::walk::operator(op, args).1
 }
 
@@ -413,7 +415,7 @@ fn operator_errors(op: &str, args: &[Ty]) -> Vec<String> {
 fn an_overload_whose_check_was_refused_says_why() {
     // No source program reaches these paths with a refused check: the arrows of operators
     // and prelude words take carriers, and the checker's own types hold no difference of
-    // tuples. The kernel types are given to the checker's `apply` directly. `neg`, `+` and
+    // tuples. The kernel types are given to the checker's `apply` directly. `-`, `+` and
     // `<` have several arrows, `!` one. The seven-box cover's emptiness is refused
     // (`TupleSplit`); the six-box cover is inhabited, so its checks are decided.
     let cover6 = [
@@ -428,7 +430,12 @@ fn an_overload_whose_check_was_refused_says_why() {
     .fold(Type::tuple(vec![small(7); 3]), |t, b| {
         &t - &Type::tuple(b.iter().map(|&m| small(m)).collect())
     });
-    for (op, n) in [("neg", 1), ("+", 2), ("<", 2), ("!", 1)] {
+    for (op, n) in [
+        (Operator::Unary(UnaryOp::Neg), 1),
+        (Operator::Binary(BinaryOp::Add), 2),
+        (Operator::Binary(BinaryOp::Lt), 2),
+        (Operator::Unary(UnaryOp::Not), 1),
+    ] {
         for (t, why) in [
             // No arrow meets the argument ...
             (box_cover(), Some(Refusal::TupleSplit)),
@@ -437,7 +444,7 @@ fn an_overload_whose_check_was_refused_says_why() {
             // `bool`, and `int` is a decided witness against it.
             (
                 &box_cover() | &Type::int(),
-                (op != "!").then_some(Refusal::TupleSplit),
+                (op != Operator::Unary(UnaryOp::Not)).then_some(Refusal::TupleSplit),
             ),
             (cover6.clone(), None),
             (&cover6 | &Type::int(), None),
@@ -513,7 +520,7 @@ fn a_cofinite_set_of_rationals_or_floats_has_a_value() {
 fn an_overload_rejected_by_a_decided_check_names_no_cause() {
     // The first argument's check is refused against every arrow, but the second is decided not
     // to be of any arrow's parameter, so the rejection rests on no refusal.
-    for op in ["+", "*"] {
+    for op in [BinaryOp::Add, BinaryOp::Mul].map(Operator::Binary) {
         Type::forget_emptiness();
         let errors = operator_errors(op, &[Ty::set(box_cover()), Ty::set(Type::bool())]);
         let first = errors.first().unwrap_or_else(|| panic!("`{op}` took it"));

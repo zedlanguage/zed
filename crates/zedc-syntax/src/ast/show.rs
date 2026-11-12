@@ -90,10 +90,12 @@ fn expr<'a>(e: &'a Expr, out: &mut Vec<Show<'a>>) {
         ExprKind::Bool(b) => out.push(Text(if *b { "true" } else { "false" })),
         ExprKind::Atom(a) => out.extend([Text("#"), Text(a)]),
         ExprKind::Name(n) => out.push(Text(n)),
-        ExprKind::Unary(op, e) => out.extend([Text("("), Text(op), Text(" "), at(e), Text(")")]),
+        ExprKind::Unary(op, e) => {
+            out.extend([Text("("), Text(op.as_str()), Text(" "), at(e), Text(")")])
+        }
         ExprKind::Binary(op, a, b) => out.extend([
             Text("("),
-            Text(op),
+            Text(op.as_str()),
             Text(" "),
             at(a),
             Text(" "),

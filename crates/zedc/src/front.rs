@@ -588,7 +588,7 @@ fn conjuncts(text: &str, e: &ast::Expr) -> Vec<String> {
     let mut stack = vec![e];
     while let Some(e) = stack.pop() {
         match &e.kind {
-            ast::ExprKind::Binary("&&", l, r) => {
+            ast::ExprKind::Binary(ast::BinaryOp::And, l, r) => {
                 stack.push(r);
                 stack.push(l);
             }
@@ -596,7 +596,7 @@ fn conjuncts(text: &str, e: &ast::Expr) -> Vec<String> {
                 let written = &text[e.span.start..e.span.end];
                 let loose = matches!(
                     kind,
-                    ast::ExprKind::Binary("||", ..)
+                    ast::ExprKind::Binary(ast::BinaryOp::Or, ..)
                         | ast::ExprKind::Else { .. }
                         | ast::ExprKind::Lambda { .. }
                         | ast::ExprKind::For { .. }

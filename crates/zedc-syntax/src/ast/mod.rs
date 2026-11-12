@@ -40,9 +40,10 @@ use num_bigint::BigUint;
 use zed_kernel::num::TooLarge;
 
 pub use node::{
-    Annot, Arm, BoundaryItem, Error, Every, Expr, ExprKind, Field, Function, Import, ImportKind,
-    IndexKey, IndexedDef, Initial, MainHeader, Method, Note, Param, Pattern, Port, RangeEnd, Stmt,
-    StmtKind, StrPart, Struct, Target, Type, TypeBound, TypeDecl, TypeKind, TypeParam, Update,
+    Annot, Arm, BinaryOp, BoundaryItem, Error, Every, Expr, ExprKind, Field, Function, Import,
+    ImportKind, IndexKey, IndexedDef, Initial, MainHeader, Method, Note, Param, Pattern, Port,
+    RangeEnd, Stmt, StmtKind, StrPart, Struct, Target, Type, TypeBound, TypeDecl, TypeKind,
+    TypeParam, UnaryOp, Update,
 };
 
 use crate::lex::{Part, Span, Tok, Token};
@@ -253,6 +254,8 @@ impl<'a, 's> Builder<'a, 's> {
             "Or" | "And" | "Additive" | "Multiplicative" | "Equality" | "Compare" => {
                 // The operator is the token before the right operand.
                 let op = self.op(self.tree.nodes[kids[1]].start - 1);
+                let op =
+                    BinaryOp::of_token(op).expect("Or to Multiplicative join by a binary operator");
                 self.binary(op, kids[0], kids[1])
             }
             "IsTest" => {
@@ -321,6 +324,7 @@ impl<'a, 's> Builder<'a, 's> {
             "Prefix" if self.tree.name(kids[0]) == "AnnotExpr" => self.node(kids[0]),
             "Prefix" => {
                 let op = self.op(self.tree.nodes[n].start);
+                let op = UnaryOp::of_token(op).expect("Prefix = ('-' | '!') Prefix");
                 let e = self.node(kids[0])?;
                 if let Some(err) = self.negated_literal_chain(n, &e) {
                     return Err(err);
@@ -330,7 +334,7 @@ impl<'a, 's> Builder<'a, 's> {
                     span: self.span(n),
                 })
             }
-            "Power" => self.binary("^", kids[0], kids[1]),
+            "Power" => self.binary(BinaryOp::Pow, kids[0], kids[1]),
             "Postfix" => {
                 let e = self.node(kids[0])?;
                 self.suffix(e, kids[1])
@@ -399,7 +403,7 @@ impl<'a, 's> Builder<'a, 's> {
         }
     }
 
-    fn binary(&mut self, op: &'static str, l: usize, r: usize) -> Result<Expr, Error> {
+    fn binary(&mut self, op: BinaryOp, l: usize, r: usize) -> Result<Expr, Error> {
         let (a, b) = (self.node(l)?, self.node(r)?);
         let span = Span {
             start: a.span.start,

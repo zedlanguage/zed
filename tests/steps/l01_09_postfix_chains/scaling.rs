@@ -4,7 +4,7 @@
 
 use zed_tests::scaling::{check, inputs};
 use zed_tests::trees::parsed;
-use zedc::ast::{ExprKind, build};
+use zedc::ast::{ExprKind, UnaryOp, build};
 
 #[test]
 fn a_long_chain_scales() {
@@ -29,7 +29,7 @@ fn deep_nesting_scales() {
         let (mut e, mut depth) = (&e, 0);
         while let ExprKind::Call { positional, .. } = &e.kind
             && let [arg] = positional.as_slice()
-            && let ExprKind::Unary("-", inner) = &arg.kind
+            && let ExprKind::Unary(UnaryOp::Neg, inner) = &arg.kind
         {
             (e, depth) = (inner, depth + 1);
         }

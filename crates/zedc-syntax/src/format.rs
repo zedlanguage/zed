@@ -20,8 +20,8 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use crate::ast::{
-    Annot, Arm, BoundaryItem, Every, Expr, ExprKind, Field, Function, ImportKind, IndexKey, Param,
-    Pattern, Stmt, StmtKind, Target, Type, TypeKind, TypeParam, Update,
+    Annot, Arm, BinaryOp, BoundaryItem, Every, Expr, ExprKind, Field, Function, ImportKind,
+    IndexKey, Param, Pattern, Stmt, StmtKind, Target, Type, TypeKind, TypeParam, Update,
 };
 use crate::lex::{self, Span, Token};
 
@@ -79,7 +79,7 @@ fn level(e: &Expr) -> u8 {
         // A sort key stands only as an argument, whose level is `LAMBDA`, and its key is any `Expr`.
         ExprKind::Lambda { .. } | ExprKind::Break(_) | ExprKind::SortKey { .. } => LAMBDA,
         ExprKind::Else { .. } => ELSE,
-        ExprKind::Binary(op, ..) => binary_level(op),
+        ExprKind::Binary(op, ..) => binary_level(*op),
         ExprKind::Is { .. } | ExprKind::In { .. } => RELATION,
         ExprKind::With { .. } | ExprKind::Reduce { .. } => REDUCE,
         ExprKind::Range(..) => RANGE,
@@ -114,16 +114,15 @@ fn level(e: &Expr) -> u8 {
     }
 }
 
-fn binary_level(op: &str) -> u8 {
+fn binary_level(op: BinaryOp) -> u8 {
     match op {
-        "||" => OR,
-        "&&" => OR + 1,
-        "==" | "!=" => EQUALITY,
-        "<" | "<=" | ">" | ">=" => RELATION,
-        "+" | "-" | "++" => ADDITIVE,
-        "*" | "/" | "div" | "mod" => ADDITIVE + 1,
-        "^" => POWER,
-        _ => unreachable!("{op} is no binary operator of layer L1"),
+        BinaryOp::Or => OR,
+        BinaryOp::And => OR + 1,
+        BinaryOp::Eq | BinaryOp::Ne => EQUALITY,
+        BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => RELATION,
+        BinaryOp::Add | BinaryOp::Sub | BinaryOp::Concat => ADDITIVE,
+        BinaryOp::Mul | BinaryOp::Div | BinaryOp::IntDiv | BinaryOp::Mod => ADDITIVE + 1,
+        BinaryOp::Pow => POWER,
     }
 }
 
@@ -1168,15 +1167,15 @@ impl<'a> Formatter<'a> {
                     then![stack; Job::Raw { e: x, ind }, put(")")];
                 }
                 _ => {
-                    self.put(*op);
+                    self.put(op.as_str());
                     stack.push(at(x, PREFIX));
                 }
             },
             ExprKind::Binary(op, a, b) => {
-                let l = binary_level(op);
+                let l = binary_level(*op);
                 // `^` is written with no spaces, as in mathematics: `0..=2^48`, `x * 2^k`.
                 let (lmin, rmin, op) = match l {
-                    POWER => (POSTFIX, PREFIX, Cow::Borrowed(*op)),
+                    POWER => (POSTFIX, PREFIX, Cow::Borrowed(op.as_str())),
                     EQUALITY | RELATION => (l + 1, l + 1, Cow::Owned(format!(" {op} "))),
                     _ => (l, l + 1, Cow::Owned(format!(" {op} "))),
                 };

@@ -66,8 +66,8 @@ use zedc_preimage::images;
 use zedc_resolve::resolve::tables::Tables;
 use zedc_resolve::resolve::{Handle, Ref, Resolution};
 use zedc_syntax::ast::{
-    Error, Every, Expr, ExprKind, Function, Note, Param, Pattern, Stmt, StmtKind, StrPart, Target,
-    Type, TypeKind, shown,
+    BinaryOp, Error, Every, Expr, ExprKind, Function, Note, Param, Pattern, Stmt, StmtKind,
+    StrPart, Target, Type, TypeKind, UnaryOp, shown,
 };
 use zedc_syntax::format::format_type;
 use zedc_syntax::lex::{Span, Tok, lex, unread_literal};
@@ -865,7 +865,7 @@ struct Ck<'t, 'a> {
     /// class of strings or `bool` follows is rejected when the class takes its type
     /// ([`Ck::never_equal`]); the entry only names the comparison, so an entry a repair's
     /// trial wrote is harmless.
-    eq_sides: HashMap<Span, (&'static str, Option<Span>, bool)>,
+    eq_sides: HashMap<Span, (BinaryOp, Option<Span>, bool)>,
     /// The span of each operation on bare literals alone, as `1 + 2`, `7 / 2`, `2 ^ 3` or
     /// `(1 + 2) * 3`: at the top level it is typed as it is walked, `int` where its arrows take
     /// one, and where it then meets an operand of one other numeric carrier, the carrier
@@ -1663,9 +1663,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                         _ => Vec::new(),
                     };
                     let what = match &e.kind {
-                        ExprKind::Unary(op, _) | ExprKind::Binary(op, _, _) => {
-                            format!("this `{op}`")
-                        }
+                        ExprKind::Unary(op, _) => format!("this `{op}`"),
+                        ExprKind::Binary(op, _, _) => format!("this `{op}`"),
                         ExprKind::Else { .. } => "this `else`".into(),
                         ExprKind::If { .. } => "this `if`".into(),
                         ExprKind::Block(_) => "this block".into(),
@@ -1683,7 +1682,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     // of integer literals").
                     let text = match (&e.kind, self.lit_open.contains(&span)) {
                         (_, false) => format!("{what} {verb} {ty}"),
-                        (ExprKind::Binary("/", ..), true) => format!(
+                        (ExprKind::Binary(BinaryOp::Div, ..), true) => format!(
                             "{what} is an operation on literals alone, so it is a literal too \
                              and takes the carrier of what it meets; `/` has no arrow at `int`"
                         ),
@@ -2026,7 +2025,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 (&kept | &d, None)
             }
             (ExprKind::If { .. } | ExprKind::Block(_), _) => (union(flows(e)), None),
-            (ExprKind::Unary(op, _) | ExprKind::Binary(op, _, _), _) => made(&op_sig(op).arrows),
+            (ExprKind::Unary(op, _), _) => made(&op_sig(Operator::Unary(*op)).arrows),
+            (ExprKind::Binary(op, _, _), _) => made(&op_sig(Operator::Binary(*op)).arrows),
             (_, Src::Call(id, _)) => match self.env.get(id).and_then(only_fn) {
                 Some(sig) => made(&sig.arrows),
                 None => (loose.clone(), Some(loose)),
@@ -2105,8 +2105,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 &kept | &o(default.span)
             }
             (ExprKind::If { .. } | ExprKind::Block(_), _) => union(flows(e)),
-            (ExprKind::Unary(op, _) | ExprKind::Binary(op, _, _), _) => {
-                made(&op_sig(op).arrows, flows(e))
+            (ExprKind::Unary(op, _), _) => made(&op_sig(Operator::Unary(*op)).arrows, flows(e)),
+            (ExprKind::Binary(op, _, _), _) => {
+                made(&op_sig(Operator::Binary(*op)).arrows, flows(e))
             }
             // A call [`Self::try_outside`] applied again from outside gives what that gave, and
             // what reaches its value around the application: the callee's own atoms, and a
@@ -3480,7 +3481,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             (None, Fix::Component(s, i)) => write!(f, "`[{i}]` after the {} operand", ends[s]),
         };
         let in_place = |f: &mut fmt::Formatter<'_>| {
-            write!(f, "`{}` in place of ", op != "==")?;
+            write!(f, "`{}` in place of ", op != BinaryOp::Eq)?;
             match named {
                 Some((l, m)) => write!(f, "`{l} {op} {m}`"),
                 None => f.write_str("the comparison"),
@@ -3503,7 +3504,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 f.write_str(" here, and no value is both, so the comparison always gives ")?;
                 if answer {
-                    let a = op != "==";
+                    let a = op != BinaryOp::Eq;
                     return write!(f, "`{a}`; write {}", fmt::from_fn(in_place));
                 }
                 f.write_str("the same answer; write ")?;
@@ -3608,11 +3609,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// does not come here. Each component is read once in each shape, so the cost is linear
     /// in the size of `t`'s tuples.
     fn never_equal(&mut self, l: &Lit, t: &Ty) {
-        let (op, at, left) = self
-            .eq_sides
-            .get(&l.site)
-            .copied()
-            .unwrap_or(("==", None, false));
+        let (op, at, left) =
+            self.eq_sides
+                .get(&l.site)
+                .copied()
+                .unwrap_or((BinaryOp::Eq, None, false));
         let tables = self.t;
         let name = at.and_then(|at| match self.seen.get(&at) {
             Some((_, Src::Name(id))) => Some(tables.res.binders[*id].name.as_str()),
@@ -3655,7 +3656,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     )?,
                 }
                 match answer {
-                    true => write!(f, "`{}`", op != "=="),
+                    true => write!(f, "`{}`", op != BinaryOp::Eq),
                     false => f.write_str("the same answer"),
                 }
             }),
@@ -3723,7 +3724,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 start: at.start.min(l.site.start),
                 end: at.end.max(l.site.end),
             };
-            let a = op != "==";
+            let a = op != BinaryOp::Eq;
             fixes.push(Rewrite::new(
                 &[(whole, &a)],
                 &"the answer the comparison always gives",
@@ -3746,7 +3747,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// fixes write in the literal's place the text, `"1"`, where the component holds
     /// strings, and `true` or `false` where it holds `bool`; with neither, the message asks
     /// for a value of the component's type.
-    fn never_equal_component(&mut self, l: &Lit, ts: &[&Ty], op: &str, at: Option<Span>) {
+    fn never_equal_component(&mut self, l: &Lit, ts: &[&Ty], op: BinaryOp, at: Option<Span>) {
         let tables = self.t;
         let name = at.and_then(|at| match self.seen.get(&at) {
             Some((_, Src::Name(id))) => Some(tables.res.binders[*id].name.as_str()),
@@ -4027,24 +4028,27 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// of `/` takes, and not `r + x` of a `rat` and an `f64`, each of which an arrow takes.
     /// One meet per operand and arrow.
     fn no_arrow_at_carrier(&self, what: &str, sig: &Sig, args: &[Option<Arg>]) -> bool {
-        let op = what.trim_matches('`');
-        let operator = matches!(
-            op,
-            "+" | "-"
-                | "*"
-                | "/"
-                | "div"
-                | "mod"
-                | "^"
-                | "++"
-                | "<"
-                | "<="
-                | ">"
-                | ">="
-                | "&&"
-                | "||"
-                | "!"
-        );
+        // `==` and `!=` are not in the row: [`Ck::equal`] checks them, not their arrows.
+        let operator = match Operator::of_label(what) {
+            None | Some(Operator::Binary(BinaryOp::Eq | BinaryOp::Ne)) => false,
+            Some(Operator::Unary(UnaryOp::Neg | UnaryOp::Not))
+            | Some(Operator::Binary(
+                BinaryOp::Or
+                | BinaryOp::And
+                | BinaryOp::Lt
+                | BinaryOp::Le
+                | BinaryOp::Gt
+                | BinaryOp::Ge
+                | BinaryOp::Add
+                | BinaryOp::Sub
+                | BinaryOp::Concat
+                | BinaryOp::Mul
+                | BinaryOp::Div
+                | BinaryOp::IntDiv
+                | BinaryOp::Mod
+                | BinaryOp::Pow,
+            )) => true,
+        };
         operator
             && args.iter().enumerate().any(|(i, a)| {
                 a.as_ref().is_some_and(|a| {
@@ -4759,7 +4763,7 @@ fn literal(e: &Expr, src: Option<&str>) -> Option<Lit> {
 /// text, writes it is kept where it has a `_` ([`Lit::spelled`]).
 fn read_literal(e: &Expr, src: Option<&str>) -> Result<Option<Lit>, TooLarge> {
     let inner = match &e.kind {
-        ExprKind::Unary("-", a) => &**a,
+        ExprKind::Unary(UnaryOp::Neg, a) => &**a,
         _ => e,
     };
     let (value, bare) = match &inner.kind {
@@ -4859,7 +4863,7 @@ fn with_adoptions(t: &Ty, parts: &[Part], adopt: &HashMap<Span, Value>) -> Ty {
 /// nothing else rejected the comparison first ([`Ck::apart`]).
 #[derive(Clone, Copy)]
 struct Comparison<'a> {
-    op: &'static str,
+    op: BinaryOp,
     ats: [Option<Span>; 2],
     exprs: [Option<&'a Expr>; 2],
     span: Span,
@@ -5285,7 +5289,7 @@ impl fmt::Display for Operand<'_> {
             Operand::Name(n) => return f.write_str(n),
             Operand::Literal(e, src) => (*e, *src),
         };
-        if let ExprKind::Unary("-", a) = &e.kind {
+        if let ExprKind::Unary(UnaryOp::Neg, a) = &e.kind {
             f.write_str("-")?;
             e = a;
         }
@@ -5318,7 +5322,7 @@ impl fmt::Display for Operand<'_> {
 /// names as written ([`Operand::Literal`]).
 fn is_literal(e: &Expr) -> bool {
     let e = match &e.kind {
-        ExprKind::Unary("-", a) => a,
+        ExprKind::Unary(UnaryOp::Neg, a) => a,
         _ => e,
     };
     matches!(
@@ -5777,22 +5781,26 @@ fn folded(e: &Expr, c: Carrier) -> Option<Value> {
                 match &x.kind {
                     ExprKind::Binary(op, a, b) => {
                         let p = match *op {
-                            "+" => Prim::Add,
-                            "-" => Prim::Sub,
-                            "*" => Prim::Mul,
-                            "/" => Prim::Div,
-                            "^" => Prim::Pow,
-                            "==" => Prim::Eq,
-                            "!=" => Prim::Ne,
-                            "<" => Prim::Lt,
-                            "<=" => Prim::Le,
-                            ">" => Prim::Gt,
-                            ">=" => Prim::Ge,
-                            _ => return None,
+                            BinaryOp::Add => Prim::Add,
+                            BinaryOp::Sub => Prim::Sub,
+                            BinaryOp::Mul => Prim::Mul,
+                            BinaryOp::Div => Prim::Div,
+                            BinaryOp::Pow => Prim::Pow,
+                            BinaryOp::Eq => Prim::Eq,
+                            BinaryOp::Ne => Prim::Ne,
+                            BinaryOp::Lt => Prim::Lt,
+                            BinaryOp::Le => Prim::Le,
+                            BinaryOp::Gt => Prim::Gt,
+                            BinaryOp::Ge => Prim::Ge,
+                            BinaryOp::Or
+                            | BinaryOp::And
+                            | BinaryOp::Concat
+                            | BinaryOp::IntDiv
+                            | BinaryOp::Mod => return None,
                         };
                         todo.extend([Step::Apply(p, 2), Step::Visit(b), Step::Visit(a)]);
                     }
-                    ExprKind::Unary("-", a) => {
+                    ExprKind::Unary(UnaryOp::Neg, a) => {
                         todo.extend([Step::Apply(Prim::Neg, 1), Step::Visit(a)]);
                     }
                     // A `rat` literal, `2r`, is a value of `rat` alone.
@@ -5921,14 +5929,14 @@ fn decimal_at_int(
     l: &Lit,
     what: &str,
     name: Option<(&str, Span)>,
-    op: Option<(&str, bool)>,
+    op: Option<(BinaryOp, bool)>,
 ) -> Msg {
     let sign = if l.neg() { "-" } else { "" };
     let lit = l.written();
     let mut fixes = Vec::new();
     match (name, op) {
         (Some((n, at)), Some((op, left))) => {
-            if op != "/"
+            if op != BinaryOp::Div
                 && let Some(w) = whole_part(l)
             {
                 let alone = fmt::from_fn(|f| match left {
@@ -6062,11 +6070,15 @@ fn literals_alone(e: &Expr, src: Option<&str>) -> Option<(Vec<Lit>, bool, bool)>
         }
         match &x.kind {
             ExprKind::Rat(_) => rat = true,
-            ExprKind::Binary(op @ ("+" | "-" | "*" | "^"), a, b) => {
-                pow |= *op == "^";
+            ExprKind::Binary(
+                op @ (BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Pow),
+                a,
+                b,
+            ) => {
+                pow |= *op == BinaryOp::Pow;
                 todo.extend([&**b, &**a]);
             }
-            ExprKind::Unary("-", a) => todo.push(a),
+            ExprKind::Unary(UnaryOp::Neg, a) => todo.push(a),
             _ => return None,
         }
     }
@@ -6091,7 +6103,7 @@ fn unfixed_comparison(
     place: &dyn fmt::Display,
     src: Option<&str>,
 ) -> Option<(Span, Msg)> {
-    let ExprKind::Binary(op @ ("==" | "!="), a, b) = &e.kind else {
+    let ExprKind::Binary(op @ (BinaryOp::Eq | BinaryOp::Ne), a, b) = &e.kind else {
         return None;
     };
     let pairs = paired(a, b)?;
@@ -6153,7 +6165,7 @@ fn unfixed_comparison(
             all &= eval(&Term::Prim(Prim::Eq, vec![Term::Lit(u), Term::Lit(v)])).ok()?
                 == Value::Bool(true);
         }
-        Some(if *op == "==" { all } else { !all })
+        Some(if *op == BinaryOp::Eq { all } else { !all })
     };
     let mut m = unfixed(l, &[], None);
     let sign = if l.neg() { "-" } else { "" };
@@ -6207,7 +6219,7 @@ fn unreached(roots: &[&Expr], written: Span, src: Option<&str>) -> Vec<Lit> {
                     false => (&**b, &**a),
                 };
                 todo.push((with, at));
-                if *op == "^"
+                if *op == BinaryOp::Pow
                     && literal(other, None).is_none()
                     && let Some(l) = first_literal(other, src)
                 {
@@ -6215,7 +6227,7 @@ fn unreached(roots: &[&Expr], written: Span, src: Option<&str>) -> Vec<Lit> {
                     out.push(l);
                 }
             }
-            ExprKind::Unary("-", a) => todo.push((a, at)),
+            ExprKind::Unary(UnaryOp::Neg, a) => todo.push((a, at)),
             _ => {}
         }
     }
@@ -6273,7 +6285,11 @@ fn unfixed_binding(
         return Some(r);
     }
     let mut stack = match &e.kind {
-        ExprKind::Binary("==" | "!=" | "<" | "<=" | ">" | ">=", a, b) => vec![&**b, &**a],
+        ExprKind::Binary(
+            BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge,
+            a,
+            b,
+        ) => vec![&**b, &**a],
         _ => vec![e],
     };
     let roots = stack.clone();
@@ -6282,14 +6298,19 @@ fn unfixed_binding(
     let mut pow = false;
     while let Some(x) = stack.pop() {
         match &x.kind {
-            ExprKind::Binary(op @ ("+" | "-" | "*" | "/" | "^"), a, b) => {
-                if *op == "/" && div.is_none() {
+            ExprKind::Binary(
+                op
+                @ (BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Pow),
+                a,
+                b,
+            ) => {
+                if *op == BinaryOp::Div && div.is_none() {
                     div = Some(x);
                 }
-                pow |= *op == "^";
+                pow |= *op == BinaryOp::Pow;
                 stack.extend([&**b, &**a]);
             }
-            ExprKind::Unary("-", a) if literal(x, None).is_none() => stack.push(a),
+            ExprKind::Unary(UnaryOp::Neg, a) if literal(x, None).is_none() => stack.push(a),
             _ => {
                 let l = literal(x, src).filter(|l| l.bare)?;
                 lits.push(l);
@@ -6743,7 +6764,7 @@ fn leaves_with(
 /// ([`quoting`]).
 fn rat_forms(e: &Expr, src: Option<&str>) -> Option<Vec<(Ty, String)>> {
     let (neg, inner) = match &e.kind {
-        ExprKind::Unary("-", a) => (true, &**a),
+        ExprKind::Unary(UnaryOp::Neg, a) => (true, &**a),
         _ => (false, e),
     };
     let ExprKind::Rat(digits) = &inner.kind else {
@@ -6851,26 +6872,66 @@ fn positional(n: usize) -> Vec<SParam> {
         .collect()
 }
 
+/// An operator of an expression, binary or unary, as [`op_sig`] types it. It prints as the
+/// operator is written.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Operator {
+    /// An operator between two operands, `a + b`.
+    Binary(BinaryOp),
+    /// An operator before one operand, `-a` or `!a`.
+    Unary(UnaryOp),
+}
+
+impl Operator {
+    /// The text of the operator, as it is written.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Operator::Binary(o) => o.as_str(),
+            Operator::Unary(o) => o.as_str(),
+        }
+    }
+
+    /// The operator that `what`, the label [`Ck::apply`] is given, names as `` `op` ``: the
+    /// binary one where a symbol is both, `-`.
+    fn of_label(what: &str) -> Option<Self> {
+        let op = what.strip_prefix('`')?.strip_suffix('`')?;
+        (BinaryOp::of_token(op).map(Operator::Binary))
+            .or_else(|| UnaryOp::of_token(op).map(Operator::Unary))
+    }
+}
+
+impl fmt::Display for Operator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// An operator's arrows.
-fn op_sig(op: &str) -> Sig {
+fn op_sig(op: Operator) -> Sig {
     use Carrier::*;
     let same = |c: Carrier| Ty::carrier(c);
     let bool_ = |_| Ty::carrier(Bool);
     let div0 = |c: Carrier| Ty::carrier(c).union(&Ty::set(KType::atom("divByZero")));
     let (n, arrows) = match op {
-        "+" | "-" | "*" => (2, arrows(&[Int, F64, Rat], 2, same)),
-        "/" => (
+        Operator::Binary(BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul) => {
+            (2, arrows(&[Int, F64, Rat], 2, same))
+        }
+        Operator::Binary(BinaryOp::Div) => (
             2,
             [arrows(&[F64], 2, same), arrows(&[Rat], 2, div0)].concat(),
         ),
-        "div" | "mod" => (2, arrows(&[Int], 2, div0)),
-        "^" => (2, arrows(&[Int, F64], 2, same)),
-        "++" => (2, arrows(&[Str], 2, same)),
-        "<" => (2, arrows(&[Int, F64, Rat, Str, Bool], 2, bool_)),
-        "&&" => (2, arrows(&[Bool], 2, bool_)),
-        "!" => (1, arrows(&[Bool], 1, bool_)),
-        "neg" => (1, arrows(&[Int, F64, Rat], 1, same)),
-        _ => return op_sig("neg"),
+        Operator::Binary(BinaryOp::IntDiv | BinaryOp::Mod) => (2, arrows(&[Int], 2, div0)),
+        Operator::Binary(BinaryOp::Pow) => (2, arrows(&[Int, F64], 2, same)),
+        Operator::Binary(BinaryOp::Concat) => (2, arrows(&[Str], 2, same)),
+        // The order of the carriers, and whether two values may be equal: the operator makes
+        // no atom. `==` and `!=` are checked by [`Ck::equal`]; these arrows say only what they
+        // make.
+        Operator::Binary(
+            BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge,
+        ) => (2, arrows(&[Int, F64, Rat, Str, Bool], 2, bool_)),
+        Operator::Binary(BinaryOp::And | BinaryOp::Or) => (2, arrows(&[Bool], 2, bool_)),
+        Operator::Unary(UnaryOp::Not) => (1, arrows(&[Bool], 1, bool_)),
+        Operator::Unary(UnaryOp::Neg) => (1, arrows(&[Int, F64, Rat], 1, same)),
     };
     Sig {
         params: positional(n),
@@ -7174,15 +7235,26 @@ impl Known {
     }
 }
 
-/// The integer operator `o` of the text, with its interval transfer and its kernel primitive.
-fn int_op(o: &str) -> Option<(Op, Prim)> {
+/// The integer operator `o`, with its interval transfer and its kernel primitive; `None` for
+/// an operator with no `int` arithmetic, and for `^`, whose transfer takes its exponent.
+fn int_op(o: BinaryOp) -> Option<(Op, Prim)> {
     match o {
-        "+" => Some((Op::Add, Prim::Add)),
-        "-" => Some((Op::Sub, Prim::Sub)),
-        "*" => Some((Op::Mul, Prim::Mul)),
-        "div" => Some((Op::Div, Prim::IntDiv)),
-        "mod" => Some((Op::Mod, Prim::Mod)),
-        _ => None,
+        BinaryOp::Add => Some((Op::Add, Prim::Add)),
+        BinaryOp::Sub => Some((Op::Sub, Prim::Sub)),
+        BinaryOp::Mul => Some((Op::Mul, Prim::Mul)),
+        BinaryOp::IntDiv => Some((Op::Div, Prim::IntDiv)),
+        BinaryOp::Mod => Some((Op::Mod, Prim::Mod)),
+        BinaryOp::Or
+        | BinaryOp::And
+        | BinaryOp::Eq
+        | BinaryOp::Ne
+        | BinaryOp::Lt
+        | BinaryOp::Le
+        | BinaryOp::Gt
+        | BinaryOp::Ge
+        | BinaryOp::Concat
+        | BinaryOp::Div
+        | BinaryOp::Pow => None,
     }
 }
 
@@ -7233,8 +7305,10 @@ impl<'a> Ck<'_, 'a> {
     fn reads(&self, e: &'a Expr) -> Vec<&'a Expr> {
         match &e.kind {
             ExprKind::Name(_) => self.bound_value(e).into_iter().collect(),
-            ExprKind::Unary("-", a) => vec![&**a],
-            ExprKind::Binary(o, a, b) if *o == "^" || int_op(o).is_some() => vec![&**a, &**b],
+            ExprKind::Unary(UnaryOp::Neg, a) => vec![&**a],
+            ExprKind::Binary(o, a, b) if *o == BinaryOp::Pow || int_op(*o).is_some() => {
+                vec![&**a, &**b]
+            }
             _ => self.bit_call(e).map_or_else(Vec::new, |(_, es)| es),
         }
     }
@@ -7332,7 +7406,7 @@ impl<'a> Ck<'_, 'a> {
             ExprKind::Name(_) => self
                 .bound_value(e)
                 .map_or_else(Known::top, |v| self.memo(v)),
-            ExprKind::Unary("-", a) => {
+            ExprKind::Unary(UnaryOp::Neg, a) => {
                 let a = self.memo(a);
                 match a.value {
                     Some(v) => fold(Prim::Neg, vec![v]).unwrap_or_else(Known::top),
@@ -7342,7 +7416,7 @@ impl<'a> Ck<'_, 'a> {
                     },
                 }
             }
-            ExprKind::Binary("^", a, b) => {
+            ExprKind::Binary(BinaryOp::Pow, a, b) => {
                 let (x, n) = (self.memo(a), self.memo(b));
                 if let (Some(x), Some(n)) = (&x.value, &n.value) {
                     return fold(Prim::Pow, vec![x.clone(), n.clone()]).unwrap_or_else(Known::top);
@@ -7358,7 +7432,7 @@ impl<'a> Ck<'_, 'a> {
                 };
                 Known { ints, value: None }
             }
-            ExprKind::Binary(o, a, b) => match int_op(o) {
+            ExprKind::Binary(o, a, b) => match int_op(*o) {
                 Some((o, p)) => {
                     let (a, b) = (self.memo(a), self.memo(b));
                     if let (Some(x), Some(y)) = (&a.value, &b.value) {

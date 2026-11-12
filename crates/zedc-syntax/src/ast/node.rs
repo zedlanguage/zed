@@ -47,9 +47,9 @@ pub enum ExprKind {
     /// A name.
     Name(String),
     /// A prefix operator, `-` or `!`, and its operand.
-    Unary(&'static str, Box<Expr>),
+    Unary(UnaryOp, Box<Expr>),
     /// A binary operator and its operands.
-    Binary(&'static str, Box<Expr>, Box<Expr>),
+    Binary(BinaryOp, Box<Expr>, Box<Expr>),
     /// A call `f(…)`.
     Call {
         /// The function.
@@ -205,6 +205,130 @@ pub enum ExprKind {
         /// itself (`xs.sort(desc)`).
         key: Option<Box<Expr>>,
     },
+}
+
+/// A prefix operator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum UnaryOp {
+    /// `-`, negation.
+    Neg,
+    /// `!`, logical not.
+    Not,
+}
+
+impl UnaryOp {
+    /// The operator as written.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            UnaryOp::Neg => "-",
+            UnaryOp::Not => "!",
+        }
+    }
+
+    /// The prefix operator written as the token `text`, if it is one.
+    pub fn of_token(text: &str) -> Option<UnaryOp> {
+        Some(match text {
+            "-" => UnaryOp::Neg,
+            "!" => UnaryOp::Not,
+            _ => return None,
+        })
+    }
+}
+
+impl fmt::Display for UnaryOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// A binary operator of the grammar (`Or` to `Power`); `^` is power.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BinaryOp {
+    /// `||`.
+    Or,
+    /// `&&`.
+    And,
+    /// `==`.
+    Eq,
+    /// `!=`.
+    Ne,
+    /// `<`.
+    Lt,
+    /// `<=`.
+    Le,
+    /// `>`.
+    Gt,
+    /// `>=`.
+    Ge,
+    /// `+`.
+    Add,
+    /// `-`.
+    Sub,
+    /// `++`, concatenation.
+    Concat,
+    /// `*`.
+    Mul,
+    /// `/`.
+    Div,
+    /// `div`, integer division.
+    IntDiv,
+    /// `mod`.
+    Mod,
+    /// `^`, power.
+    Pow,
+}
+
+impl BinaryOp {
+    /// The operator as written.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BinaryOp::Or => "||",
+            BinaryOp::And => "&&",
+            BinaryOp::Eq => "==",
+            BinaryOp::Ne => "!=",
+            BinaryOp::Lt => "<",
+            BinaryOp::Le => "<=",
+            BinaryOp::Gt => ">",
+            BinaryOp::Ge => ">=",
+            BinaryOp::Add => "+",
+            BinaryOp::Sub => "-",
+            BinaryOp::Concat => "++",
+            BinaryOp::Mul => "*",
+            BinaryOp::Div => "/",
+            BinaryOp::IntDiv => "div",
+            BinaryOp::Mod => "mod",
+            BinaryOp::Pow => "^",
+        }
+    }
+
+    /// The binary operator written as the token `text`, if it is one.
+    pub fn of_token(text: &str) -> Option<BinaryOp> {
+        Some(match text {
+            "||" => BinaryOp::Or,
+            "&&" => BinaryOp::And,
+            "==" => BinaryOp::Eq,
+            "!=" => BinaryOp::Ne,
+            "<" => BinaryOp::Lt,
+            "<=" => BinaryOp::Le,
+            ">" => BinaryOp::Gt,
+            ">=" => BinaryOp::Ge,
+            "+" => BinaryOp::Add,
+            "-" => BinaryOp::Sub,
+            "++" => BinaryOp::Concat,
+            "*" => BinaryOp::Mul,
+            "/" => BinaryOp::Div,
+            "div" => BinaryOp::IntDiv,
+            "mod" => BinaryOp::Mod,
+            "^" => BinaryOp::Pow,
+            _ => return None,
+        })
+    }
+}
+
+impl fmt::Display for BinaryOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 /// How a range ends: below `b` (`..<b`), through `b` (`..=b`), or not at all (`..`).

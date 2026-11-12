@@ -3,6 +3,8 @@
 //! read the rules from the type representation and the operator rule directly.
 
 use zed_kernel::types::Type as KType;
+use zedc::ast::BinaryOp;
+use zedc::check::Operator;
 use zedc::check::ty::{Carrier, Ty};
 use zedc::check::walk::operator;
 
@@ -69,7 +71,7 @@ fn narrowing_keeps_the_marking() {
 #[test]
 fn a_family_atom_that_selects_no_arrow_is_an_error() {
     let int = Ty::carrier(Carrier::Int);
-    let (_, errors) = operator("+", &[int.clone(), color()]);
+    let (_, errors) = operator(Operator::Binary(BinaryOp::Add), &[int.clone(), color()]);
     assert_eq!(
         errors,
         [
@@ -77,11 +79,17 @@ fn a_family_atom_that_selects_no_arrow_is_an_error() {
         ]
     );
     // Loose, the same atoms flow through.
-    let (out, errors) = operator("+", &[int.clone(), color().written()]);
+    let (out, errors) = operator(
+        Operator::Binary(BinaryOp::Add),
+        &[int.clone(), color().written()],
+    );
     assert!(errors.is_empty(), "{errors:?}");
     assert_eq!(out.to_string(), "#blue | #green | #red");
     // The loose failure beside a family still flows; the family is still rejected.
-    let (out, errors) = operator("+", &[int.clone(), int.union(&read_color())]);
+    let (out, errors) = operator(
+        Operator::Binary(BinaryOp::Add),
+        &[int.clone(), int.union(&read_color())],
+    );
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(out.atoms().contains(&zed_kernel::Value::atom("ioError")));
 }
