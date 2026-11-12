@@ -103,14 +103,24 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, Accepted
                     address,
                 });
             }
-            for d in diagnostics.iter().filter(|d| !is_marked.contains(&d.line)) {
+            // The unmarked diagnostics in the order they are printed, which the stable sort of
+            // the outcomes below keeps, so that each source line is shown once over them, at
+            // the first (`front::Quoted`).
+            let mut unmarked: Vec<&front::Diagnostic> = diagnostics
+                .iter()
+                .filter(|d| !is_marked.contains(&d.line))
+                .collect();
+            unmarked.sort_by_key(|d| (d.line, d.col));
+            let mut quoted = front::Quoted::default();
+            for d in unmarked {
                 out.push(Outcome {
                     line: d.line,
                     col: d.col,
                     // The message and its derivation (DESIGN.md "Diagnostics"), after the place
                     // the outcome already gives.
                     failure: Some(
-                        d.to_string()
+                        quoted
+                            .show(d)
                             .split_once(": ")
                             .expect("`line:col: `")
                             .1

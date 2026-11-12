@@ -23,7 +23,7 @@ use zed_kernel::{Evaluator, Family, Lookup, Provenance, Shared, Term, Value, Wor
 use crate::address::ContentAddress;
 use crate::ast::{self, Function, Stmt, StmtKind, TypeKind};
 use crate::elab::Unit;
-use crate::front::{Diagnostic, Unloaded, compile};
+use crate::front::{Diagnostic, Quoted, Unloaded, compile};
 use crate::lex::Span;
 use crate::source::io_reason;
 use crate::suppress::{InFile, Severity, Suppress};
@@ -313,7 +313,8 @@ pub(crate) fn refusal(text: &str, stmts: &[Stmt], e: ast::Error) -> Vec<Diagnost
 
 /// Writes each warning of `warnings`, of the unit read from `file`, which is `at`, that
 /// `suppress` does not name to `out` as `file:` then the warning, then, under `--addresses`, its address on a
-/// line of its own: what `zedc run` and `zedc test` print before they run the unit.
+/// line of its own: what `zedc run` and `zedc test` print before they run the unit. Each source
+/// line is shown once over the warnings printed ([`Quoted`]).
 pub(crate) fn write_warnings(
     out: &mut dyn Write,
     file: &str,
@@ -321,9 +322,11 @@ pub(crate) fn write_warnings(
     warnings: &[Diagnostic],
     suppress: &mut Suppress,
 ) -> std::io::Result<()> {
+    let mut quoted = Quoted::default();
     for w in warnings {
         let address = at.address(w);
         if !suppress.hides(address) {
+            let w = quoted.show(w);
             writeln!(out, "{file}:{w}{}", suppress.address_line(address))?;
         }
     }

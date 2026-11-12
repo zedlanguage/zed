@@ -403,10 +403,13 @@ impl Package {
             let lines = source::Lines::new(text.as_bytes());
             let d: Vec<Diagnostic> =
                 front::placed(text, &lines, stmts, Severity::Rejection, errors);
+            // `at` is in the order the problems are printed, so each source line of the file is
+            // shown once, at its first problem (`front::Quoted`).
+            let mut quoted = front::Quoted::default();
             for (i, d) in at.into_iter().zip(d) {
                 out[i] = Some(Reported {
                     place: format!("{file}:{}:{}", d.line, d.col),
-                    text: format!("{file}:{d}"),
+                    text: format!("{file}:{}", quoted.show(&d)),
                     part: d.address,
                 });
             }

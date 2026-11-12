@@ -5,7 +5,7 @@
 //! (`crate::run`) read them through the queries, so this file is below all three.
 
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::Arc;
 
 use zed_kernel::{Shared, Term};
@@ -75,12 +75,64 @@ pub struct Step {
 impl std::fmt::Display for Diagnostic {
     /// The message on one line; then each step numbered; then the menu of fixes. The first
     /// step on a line is followed by that line, shown once for all the steps of the diagnostic
-    /// on it (`shown`), with the
-    /// text each covers marked below it (`layout`, `draw`); a step that `layout` leaves undrawn
-    /// is given by its range, `3:11 to 3:19`, instead. Each line of the source is shown once and each row under it is at most as long
-    /// as it and the numbers in the row, so k steps on one line of L characters print
-    /// O(k log k + L·r) characters, r the rows under it (`layout` bounds r), not O(k·L).
+    /// on it (`shown`), with the text each covers marked below it (`layout`, `draw`); a step
+    /// that `layout` leaves undrawn is given by its range, `3:11 to 3:19`, instead. Each line
+    /// of the source is shown once and each row under it is at most as long as it and the
+    /// numbers in the row, so k steps on one line of L characters print O(k log k + L·r)
+    /// characters, r the rows under it (`layout` bounds r), not O(k·L). A listing of several
+    /// diagnostics shows each line once over all of them ([`Quoted`]).
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.write(f, &HashSet::new())
+    }
+}
+
+/// The source lines a listing of diagnostics of one file has shown, so that it shows each line
+/// once: the first diagnostic with a step on a line shows the line, with its marks, as
+/// [`Diagnostic`]'s `Display` does, and each later diagnostic gives its steps on that line by
+/// their ranges, `1:20 to 1:52`, under the note that the line is shown above. A diagnostic
+/// shown first, or alone, prints as `Display` prints it.
+#[derive(Default)]
+pub struct Quoted {
+    /// The lines shown, each by its number.
+    lines: HashSet<usize>,
+}
+
+impl Quoted {
+    /// `d` as the listing prints it after the diagnostics shown so far; its lines count as
+    /// shown from now on. O(L + s log s) for the s steps of `d` and the L characters of the
+    /// lines it shows first, O(s) for steps on lines shown before.
+    //
+    // Complexity tradeoff: the naive listing prints each diagnostic as `Display` does, the
+    // whole line under every one, so n diagnostics on one line of L characters print O(n·L)
+    // characters, Θ(n²) when each error is one of n parts of the line (a `sum` of n untracked
+    // components gives about 3n errors on a line of about 5n characters). A window of the
+    // line around each diagnostic's marks is no better, since the marked stretches themselves
+    // grow with n (the k-th `+` of a sum covers its first k components). This shows each line
+    // once per listing, so the listing prints O(L + S) characters for S steps in all, and
+    // lays out no line twice. The cost: a later diagnostic on a shown line is not readable
+    // without the earlier one's quote, so its steps carry their ranges; a single diagnostic
+    // and the first on each line print as before (COMPLEXITY.md RENDER-line-per-error).
+    pub fn show(&mut self, d: &Diagnostic) -> String {
+        let text = Shown(d, &self.lines).to_string();
+        self.lines.extend(d.steps.iter().map(|s| s.line));
+        text
+    }
+}
+
+/// A diagnostic written with the lines `.1` already shown above it.
+struct Shown<'a>(&'a Diagnostic, &'a HashSet<usize>);
+
+impl std::fmt::Display for Shown<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.write(f, self.1)
+    }
+}
+
+impl Diagnostic {
+    /// Writes the diagnostic as `Display` does, except that each step on a line of `above` is
+    /// given by its range, and the line is not shown again: in its place, after the first step
+    /// on it, a note says it is shown above.
+    fn write(&self, f: &mut std::fmt::Formatter<'_>, above: &HashSet<usize>) -> std::fmt::Result {
         write!(f, "{}:{}: {}", self.line, self.col, self.message)?;
         let gutter = self
             .steps
@@ -97,18 +149,23 @@ impl std::fmt::Display for Diagnostic {
             on.entry(s.line).or_default().push(i + 1);
         }
         // How each line is drawn, worked out before any step is written, since a step given by
-        // its range may come before the line is shown.
+        // its range may come before the line is shown. A line shown above is not drawn, and
+        // each of its steps is given by its range.
         let mut ranged = vec![false; self.steps.len()];
-        let drawn: HashMap<usize, Layout> = on
-            .iter()
-            .map(|(&line, here)| {
+        let mut drawn: HashMap<usize, Layout> = HashMap::new();
+        for (&line, here) in &on {
+            if above.contains(&line) {
+                for &n in here {
+                    ranged[n - 1] = true;
+                }
+            } else {
                 let l = layout(&self.steps[here[0] - 1].source, &self.steps, here);
                 for &n in &l.ranged {
                     ranged[n - 1] = true;
                 }
-                (line, l)
-            })
-            .collect();
+                drawn.insert(line, l);
+            }
+        }
         for (i, s) in self.steps.iter().enumerate() {
             let n = format!("[{}]", i + 1);
             write!(f, "\n  {n:<w$} {}:{}", s.line, s.col, w = number + 2)?;
@@ -118,10 +175,13 @@ impl std::fmt::Display for Diagnostic {
             write!(f, ": {}", s.text)?;
             if let Some(here) = on.get(&s.line)
                 && here[0] == i + 1
-                && let Some(l) = drawn.get(&s.line)
             {
-                write!(f, "\n{pad} {:>gutter$} | {}", s.line, l.text)?;
-                draw(f, &margin, l)?;
+                if let Some(l) = drawn.get(&s.line) {
+                    write!(f, "\n{pad} {:>gutter$} | {}", s.line, l.text)?;
+                    draw(f, &margin, l)?;
+                } else {
+                    write!(f, "\n{pad} line {} is shown above", s.line)?;
+                }
             }
         }
         f.write_str(&self.menu)
@@ -514,6 +574,7 @@ impl Unloaded {
     /// What zedc prints for it: the refusal, or each diagnostic, its derivation and its menu of
     /// fixes, then what `after` gives for it (the address line of `--addresses`), one after
     /// the other on lines of their own; each after `file` and a colon when `file` is given.
+    /// Each source line is shown once over all the diagnostics ([`Quoted`]).
     pub fn report(
         &self,
         file: Option<&str>,
@@ -523,9 +584,10 @@ impl Unloaded {
         match self {
             Unloaded::Refused(why) => format!("{place}{why}"),
             Unloaded::Rejected(ds) => {
+                let mut quoted = Quoted::default();
                 let lines: Vec<String> = ds
                     .iter()
-                    .map(|d| format!("{place}{d}{}", after(d)))
+                    .map(|d| format!("{place}{}{}", quoted.show(d), after(d)))
                     .collect();
                 lines.join("\n")
             }

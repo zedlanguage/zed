@@ -26,6 +26,7 @@ mod neglit;
 mod order;
 mod overload_cycles;
 mod printed;
+mod quoted;
 mod rare;
 mod recursion;
 mod rejection_addresses;
