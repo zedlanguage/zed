@@ -631,8 +631,6 @@ enum Why<'a> {
     Defined(Ty),
     /// `b` is this component of a tuple, of this type.
     Component(usize, Ty),
-    /// `b` is an output port.
-    Port,
     /// `b` is a parameter declared with this type, whose values the checker does not track.
     Untracked(&'a Type),
     /// `b` is a parameter declared with this type, which the checker takes as the given one.
@@ -1802,7 +1800,6 @@ impl<'t, 'a> Ck<'t, 'a> {
             Why::Component(i, c) => {
                 format!("`{b}` is {}, component {i} of this tuple", self.text(c))
             }
-            Why::Port => format!("`{b}` is an output port"),
             Why::Untracked(a) => {
                 let shown = declared_text(a).unwrap_or_else(|| Ty::dynamic().to_string());
                 format!(

@@ -1940,13 +1940,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             return m.job(Job::Expr(d));
         }
         let f = s.f;
+        // A port has no origin for a derivation to show: the builder rejects every read of an
+        // output port, as `m.stdout` written as a value, so no expression names one.
         if let Some(ports) = f.ports() {
             for p in ports {
                 let id = self.id(p.span, &p.name);
                 if matches!(&p.ty.kind, TypeKind::Name(n) if n == "Lines") {
                     self.lines_out.insert(p.name.clone());
                 }
-                self.origin(id, p.span, Why::Port, None);
                 self.env.insert(id, Ty::dynamic());
             }
         }

@@ -172,7 +172,16 @@ fn a_field_is_used_only_in_its_direction() {
         &[],
     );
     assert_eq!((out.status, out.stdout.as_str()), (1, ""));
-    assert!(out.stderr.contains("m.stdout"), "{}", out.stderr);
+    // The builder rejects the read before the checker runs, so no derivation of the checker
+    // names an output port.
+    assert!(
+        out.stderr.contains(
+            "2:15: `m.stdout` is read here, and `m.stdout` is an output of the program: `main` \
+             writes lines to it with a push, as `m.stdout <- lines;`, and never reads it."
+        ),
+        "{}",
+        out.stderr
+    );
 }
 
 /// `main` whose result is an `if` chain of `n` branches, each giving a status from 0 to 255.
