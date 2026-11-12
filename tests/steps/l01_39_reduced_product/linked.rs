@@ -922,7 +922,6 @@ fn a_constraint_taken_from_a_block_beside_a_name_of_many_blocks_takes_time_near_
 }
 
 #[test]
-#[ignore = "PRODUCT-lin-rows: 15.5 times the work at 50 and 400 if statements, over the n log n limit 13.5 since SCALE-ratio; open"]
 fn if_statements_joined_one_after_another_on_a_linked_chain_take_time_near_their_number() {
     // x0 - x1 >= 1, x1 - x2 >= 1, … then, for each link, an `if x_i - x_{i+1} >= 2` whose two
     // arms are joined. The arms differ in the link's conjunct, which the join replaces in its
@@ -1141,7 +1140,6 @@ fn a_join_whose_arms_leave_a_gap_keeps_the_disjunction() {
 }
 
 #[test]
-#[ignore = "PRODUCT-lin-rows: 14.8 times the work at 50 and 400 if statements, over the n log n limit 13.5 since SCALE-ratio; open"]
 fn if_statements_on_skip_links_of_a_chain_take_time_near_their_number() {
     // The chain, then for each i an `if x_i - x_{i+2} >= 3` whose two arms are joined. The
     // test and its complement made a disjunction `true` at every point that each later test
@@ -1197,7 +1195,6 @@ fn one_test_on_a_ladder_takes_time_near_its_size() {
 }
 
 #[test]
-#[ignore = "PRODUCT-lin-rows: 15.2 times the work at 40 and 320 if statements, over the n log n limit 13.8 since SCALE-ratio; open"]
 fn a_ladder_grown_by_k_if_statements_is_linear() {
     // Each `if x_i - x_(i+2) >= 2` on the chain is implied, so its join keeps the true arm and
     // the block grows by one rung. The chain holds difference constraints alone, so each test
@@ -1280,7 +1277,6 @@ fn if_statements_that_leave_a_ladder_block_by_block_between_rungs_are_linear() {
 }
 
 #[test]
-#[ignore = "PRODUCT-lin-rows: 13.8 times the bytes at 40 and 320 if statements, over the n log n limit 13.76 since SCALE-ratio; open"]
 fn if_statements_that_put_a_hole_in_a_ladder_between_rungs_are_linear() {
     // The chain from x0 with each x_i within its own ten values, 10 (k - i) to 10 (k - i) + 9,
     // so that no edge moves a bound, each rung's `if` after an `if` that puts a hole in a name,
@@ -1288,8 +1284,8 @@ fn if_statements_that_put_a_hole_in_a_ladder_between_rungs_are_linear() {
     // (`Scope::assume_case`), since the arm where a rung fails is empty. The arm where the
     // hole holds projects the tree by shortest paths, the gap of the name with the hole held in
     // the potential (`Scope::raise`), and the join keeps that arm's last projection, whose tree
-    // had a hole and is still read by shortest paths (`Seeds::unsure`). 9.4 times the work and
-    // 8.5 times the bytes from k = 40 to 320; on the code before, which projected the tree's
+    // had a hole and is still read by shortest paths (`Seeds::unsure`). 9.6 times the work and
+    // 8.6 times the bytes from k = 40 to 320; on the code before, which projected the tree's
     // blocks one by one at each test, 62.2 times the bytes (COMPLEXITY.md row S25).
     let p = Premises::new();
     let built: BTreeMap<usize, (Scope, Vec<Term>)> = [40, 320]
@@ -1317,6 +1313,96 @@ fn if_statements_that_put_a_hole_in_a_ladder_between_rungs_are_linear() {
             let mut j = s
                 .assume_case(t, true, &p)
                 .join(&s.assume_case(t, false, &p));
+            j.reduce();
+            j
+        });
+    });
+}
+
+#[test]
+fn holes_put_in_a_ladder_built_first_are_linear() {
+    // The ladder of the test above, every rung in place before the first hole, so that its
+    // names lie in one block from the start; then an `if x_i != 10 (k - i) + 5` for each name,
+    // in either order, whose arms are joined. Each hole raises the gap of one name, which the
+    // potential repairs within that name's component alone (`Scope::raise`). The bounds of
+    // every name stay as they were.
+    let p = Premises::new();
+    for reverse in [false, true] {
+        let built: BTreeMap<usize, (Scope, Vec<Term>)> = [40, 320]
+            .into_iter()
+            .map(|k| {
+                let n = named(k + 1, "x");
+                let base = |i: usize| (10 * (k - i)) as i64;
+                let s = (0..=k).fold(ints(&n), |s, i| {
+                    s.assume(&prim(Prim::Ge, var(&n[i]), int(base(i))), true, &p)
+                        .assume(&prim(Prim::Le, var(&n[i]), int(base(i) + 9)), true, &p)
+                });
+                let s = (0..k).fold(s, |s, i| s.assume(&ge(&n[i], &n[i + 1], 1), true, &p));
+                let s = (0..k - 1).fold(s, |s, i| s.assume(&ge(&n[i], &n[i + 2], 2), true, &p));
+                let mut tests: Vec<Term> = (0..=k)
+                    .map(|i| prim(Prim::Ne, var(&n[i]), int(base(i) + 5)))
+                    .collect();
+                if reverse {
+                    tests.reverse();
+                }
+                (k, (s, tests))
+            })
+            .collect();
+        let name = if reverse {
+            "holes put in a ladder built first, the last name first"
+        } else {
+            "holes put in a ladder built first"
+        };
+        scaling::check_order(name, 40, 1, |k| {
+            let (s, tests) = &built[&k];
+            let s = tests.iter().fold(s.clone(), |s, t| {
+                let mut j = s
+                    .assume_case(t, true, &p)
+                    .join(&s.assume_case(t, false, &p));
+                j.reduce();
+                j
+            });
+            assert!(!s.bottom);
+            for i in 0..=k {
+                let base = (10 * (k - i)) as i64;
+                assert_eq!(
+                    s.get(&format!("x{i}")).ints(),
+                    &zedc::store::interval::IntervalSet::range(End::of(base), End::of(base + 9))
+                );
+            }
+        });
+    }
+}
+
+#[test]
+fn a_chain_linked_from_a_source_made_later_is_linear() {
+    // The chain of the first test, then u - v >= 0 and v - x0 >= 0: u and v are named after
+    // the chain, so their edge into its head runs against the order the potential keeps its
+    // names in, and every later repair at the chain's head must not search the chain through
+    // them. u and v are pinned, as a bounded name is, so that they stay in the potential.
+    // Each if statement is the chain test's `if x_i - x_{i+1} >= 2`. 9.2 times the work and 8.4
+    // times the bytes from k = 50 to 400; on the code before, 17.7 times the work.
+    let p = Premises::new();
+    let built: BTreeMap<usize, (Scope, Vec<Term>)> = [50, 400]
+        .into_iter()
+        .map(|k| {
+            let n = named(k + 1, "x");
+            let mut s = ints(&[n.clone(), vec!["u".into(), "v".into()]].concat());
+            s.relation.pin(&"u".into(), true);
+            s.relation.pin(&"v".into(), true);
+            let s = (0..k).fold(s, |s, i| s.assume(&ge(&n[i], &n[i + 1], 1), true, &p));
+            let s = s
+                .assume(&ge("u", "v", 0), true, &p)
+                .assume(&ge("v", "x0", 0), true, &p);
+            assert!(!s.bottom);
+            let tests = (0..k).map(|i| ge(&n[i], &n[i + 1], 2)).collect();
+            (k, (s, tests))
+        })
+        .collect();
+    scaling::check_order("a chain linked from a source made later", 50, 1, |k| {
+        let (s, tests) = &built[&k];
+        tests.iter().fold(s.clone(), |s, t| {
+            let mut j = s.assume(t, true, &p).join(&s.assume(t, false, &p));
             j.reduce();
             j
         });

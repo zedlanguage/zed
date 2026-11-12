@@ -1421,21 +1421,50 @@ impl fmt::Debug for Seen {
     }
 }
 
-/// A value of names at which every difference constraint among them holds, each edge's weight
-/// lowered by the gap of the name it enters: under it no edge has a negative reduced weight,
-/// so a Dijkstra search finds the bounds of a tree of blocks projected by shortest paths
-/// ([`Scope::shortest`]). It holds at every edge of the relation as of its last projection,
-/// except the edges of names it lacks: each edge added is put in it at the next projection,
-/// whichever way its tree is projected ([`Scope::repair`]), and a projection of every block
-/// ([`Due::All`]) empties it. A cache, equal in every scope, and checked at every edge it is
-/// read at.
+/// The names in components, ranked so that every edge from one component to another goes to a
+/// higher rank, with a value of each name at which every difference constraint within one
+/// component holds, each edge's weight lowered by the gap of the name it enters: under it no
+/// edge has a negative reduced weight within a component, and every cycle lies within one, so
+/// a Dijkstra search on the rank of a name's component first and its reduced distance second
+/// finds the bounds of a tree of blocks projected by shortest paths ([`Scope::shortest`]). A
+/// component holds each strongly connected component of the edges, and may hold more: an edge
+/// that goes leaves its components as they were. It holds at every edge of the relation as of
+/// its last projection, except the edges of names it lacks: each edge added is put in it at
+/// the next projection, whichever way its tree is projected ([`Scope::repair`]), and a
+/// projection of every block ([`Due::All`]) empties it. A cache, equal in every scope, and
+/// checked at every edge it is read at.
 ///
 /// A name's gap is the length of the longest run of integers its interval leaves out between
 /// its ends ([`hole_gap`]); the potential holds with the gap in `gap`, which is at least the
 /// name's own unless the relation records the name as keeping its tree from shortest paths
-/// ([`Conjuncts::gapped`], [`Scope::sync_bounds`]). Every cycle `C` of edges then has a
-/// weight of at least the sum of the gaps of its names, which is what makes shortest paths
-/// with holes the projection ([`Scope::shortest`]).
+/// ([`Conjuncts::gapped`], [`Scope::sync_bounds`]). Every cycle `C` of edges, which lies in
+/// one component, then has a weight of at least the sum of the gaps of its names, which is
+/// what makes shortest paths with holes the projection ([`Scope::shortest`]).
+///
+/// Complexity tradeoff: naive version, one value for every name with the potential holding at
+/// every edge, as before item PRODUCT-lin-rows; built edge by edge it ends with no slack along
+/// a chain, so each edge made heavier or gap raised lowered every name below it, O(k) a test
+/// and O(k²) for `k` tests on a chain or a ladder, used for nothing when no bound moves. Used:
+/// the value holds within each component alone, and the components keep a topological order
+/// (Pearce and Kelly, "A dynamic topological sort algorithm for directed acyclic graphs", ACM
+/// JEA 11, 2006): an edge to a later component costs O(1), an edge within one or a gap raised
+/// searches that component alone, and an edge against the order searches the components ranked
+/// between its ends from the end with fewer names first, merging those on a cycle; when every
+/// component that search finds is on the cycle the other search is skipped ([`reorder`]), and a
+/// merge reads the edge ends of the components it moves, never those of the largest
+/// ([`merge`]). A new name with an edge back to a component joins it rather than taking a
+/// component of its own ([`put_in`]). Tradeoffs: a component is never split when an
+/// edge goes, so a join that keeps the side whose edges closed cycles leaves the components
+/// larger than the strongly connected ones, and a later search of one reads all of it; an edge
+/// against the order costs the components ranked between its ends, O(n) at worst for one edge.
+/// Tests: `l01_39_reduced_product::linked::if_statements_joined_one_after_another_on_a_linked_chain_take_time_near_their_number`,
+/// `…::if_statements_on_skip_links_of_a_chain_take_time_near_their_number`,
+/// `…::if_statements_that_put_a_hole_in_a_ladder_between_rungs_are_linear`,
+/// `…::a_ladder_grown_by_k_if_statements_is_linear`,
+/// `…::holes_put_in_a_ladder_built_first_are_linear`,
+/// `…::a_chain_linked_from_a_source_made_later_is_linear`,
+/// `l01_39_reduced_product::scaling::a_join_keeps_the_equalities_of_its_sides_and_scales`.
+/// COMPLEXITY.md S25.
 ///
 /// Each value is a pair, compared first by its first part: an edge of weight `k` weighs
 /// `(k, -1)`, or `(k, 0)` when it is tied, less the gap in both cases, and no edge has a
@@ -1451,6 +1480,14 @@ struct Potential {
     tied: imbl::OrdSet<(Arc<Formula>, bool)>,
     /// The gap each name's edges in are lowered by; none for 0.
     gap: imbl::OrdMap<Arc<str>, Int>,
+    /// Each name's component, for each name with a value.
+    comp: imbl::OrdMap<Arc<str>, u64>,
+    /// Each component; no two share a rank.
+    parts: imbl::OrdMap<u64, Component>,
+    /// The number of the next component, and the least and greatest ranks given.
+    next: u64,
+    low: i64,
+    high: i64,
 }
 
 impl Potential {
@@ -1458,6 +1495,90 @@ impl Potential {
     fn gap_of(&self, n: &str) -> Int {
         self.gap.get(n).cloned().unwrap_or(Int::ZERO)
     }
+
+    /// The rank of component `c`, one of `parts`.
+    fn rank(&self, c: u64) -> i64 {
+        self.parts[&c].rank
+    }
+
+    /// Records that `u` and `v`, with values, are the ends of an edge, which goes between
+    /// components unless they share one ([`Component::ends`]).
+    fn link(&mut self, u: &Arc<str>, v: &Arc<str>) {
+        let (Some(&cu), Some(&cv)) = (self.comp.get(u), self.comp.get(v)) else {
+            return;
+        };
+        if cu == cv {
+            return;
+        }
+        for (c, n) in [(cu, u), (cv, v)] {
+            if let Some(p) = self.parts.get_mut(&c) {
+                p.ends.insert(n.clone());
+            }
+        }
+    }
+
+    /// The component of `n`, which the potential lacks unless it has a value.
+    fn comp_of(&self, n: &str) -> Result<u64, Fall> {
+        self.comp.get(n).copied().ok_or(Fall::Potential)
+    }
+
+    /// Gives `n`, new to the potential, the value `at` and a component of its own, ranked
+    /// before every other with `first`, after every other otherwise.
+    fn fresh(&mut self, n: &Arc<str>, at: (Int, i64), first: bool) {
+        let r = if first {
+            self.low -= 1;
+            self.low
+        } else {
+            self.high += 1;
+            self.high
+        };
+        self.at.insert(n.clone(), at);
+        self.comp.insert(n.clone(), self.next);
+        let part = Component {
+            rank: r,
+            names: imbl::OrdSet::unit(n.clone()),
+            ends: imbl::OrdSet::new(),
+        };
+        self.parts.insert(self.next, part);
+        self.next += 1;
+    }
+
+    /// Gives `n`, new to the potential, the value `at` in component `c`, one of `parts`.
+    fn enter(&mut self, n: &Arc<str>, at: (Int, i64), c: u64) {
+        self.at.insert(n.clone(), at);
+        self.comp.insert(n.clone(), c);
+        if let Some(p) = self.parts.get_mut(&c) {
+            p.names.insert(n.clone());
+        }
+    }
+
+    /// Takes `n` out of the potential and out of its component, which is dropped once empty.
+    fn leave(&mut self, n: &Arc<str>) {
+        self.at.remove(n);
+        let Some(c) = self.comp.remove(n) else {
+            return;
+        };
+        if let Some(p) = self.parts.get_mut(&c) {
+            p.names.remove(n);
+            p.ends.remove(n);
+            if p.names.is_empty() {
+                self.parts.remove(&c);
+            }
+        }
+    }
+}
+
+/// A strongly connected component of the edges of a [`Potential`], or several merged.
+#[derive(Clone)]
+struct Component {
+    /// Its place in the order of the components.
+    rank: i64,
+    /// Its names.
+    names: imbl::OrdSet<Arc<str>>,
+    /// Its names at an edge to or from another component, and maybe names no longer at one,
+    /// which a search that reads their edges drops ([`reorder`]): a search of the order then
+    /// reads the edges of these alone, not of every name of a large component.
+    ends: imbl::OrdSet<Arc<str>>,
 }
 
 /// The weight in a [`Potential`] of the edge `e` of conjunct `g`, its back edge with `back`,
@@ -1485,6 +1606,13 @@ fn pair_plus(a: &(Int, i64), b: &(Int, i64)) -> (Int, i64) {
 fn pair_minus(a: &(Int, i64), b: &(Int, i64)) -> (Int, i64) {
     (&a.0 - &b.0, a.1 - b.1)
 }
+
+/// An edge between two components of a [`Potential`]: its tail, its head and its value.
+type CompEdge = (Arc<str>, Arc<str>, (Int, i64));
+
+/// A name in the queue of [`Scope::bound_pass`], by the rank of its component, then its label
+/// less its potential.
+type Queued = Reverse<((i64, Int), Arc<str>)>;
 
 impl PartialEq for Potential {
     fn eq(&self, _: &Potential) -> bool {
@@ -1588,33 +1716,64 @@ fn tree_edges(relation: &Conjuncts, t: BlockId, name: &str) -> Vec<(Arc<Formula>
 }
 
 /// The search of [`Scope::repair`]: puts each edge of `pending` in the potential `pot` of
-/// tree `t` of the forest, with the tied edges `tied` and the gaps `gap` ([`Potential`]). A
-/// name `pot` lacks takes a value from an edge only when every edge at it is among `added`.
-/// `Ok(Some(u))` when an edge closes a cycle of negative weight, and `Err` when the search
-/// reads a name `pot` lacks, an edge of negative reduced weight, or a cycle negative only
-/// with the gaps; `pot` and `tied` are then to be dropped.
+/// tree `t` of the forest ([`Potential`]). A name `pot` lacks takes a value and a component of
+/// its own from an edge only when every edge at it is among `added`, ranked before the
+/// components of its edge's other end when it is the edge's tail and after them when it is
+/// its head. An edge between components ranked in its direction needs nothing; one against
+/// that order reorders the components or merges those on a cycle it closes ([`reorder`]); one
+/// within a component is put in by a search of that component alone. `Ok(Some(u))` when an
+/// edge closes a cycle of negative weight, and `Err` when the search reads a name `pot` lacks,
+/// an edge of negative reduced weight, an edge against the order, or a cycle negative only
+/// with the gaps; `pot` is then to be dropped.
 fn put_in(
     relation: &Conjuncts,
     t: BlockId,
     added: &BTreeSet<Arc<Formula>>,
     pending: &[(Arc<Formula>, bool, Edge)],
-    pot: &mut imbl::OrdMap<Arc<str>, (Int, i64)>,
-    tied: &mut imbl::OrdSet<(Arc<Formula>, bool)>,
-    gap: &imbl::OrdMap<Arc<str>, Int>,
+    pot: &mut Potential,
 ) -> Result<Option<Arc<str>>, Fall> {
     // A name the potential lacks may take a value from an edge added only when every edge
     // at it was added: those are put in after.
-    let new_name = |n: &Arc<str>| -> Result<(), Fall> {
-        let all_added = tree_edges(relation, t, n)
+    let new_name = |n: &Arc<str>| -> Result<Vec<(Arc<Formula>, bool, Edge)>, Fall> {
+        let edges = tree_edges(relation, t, n);
+        let all_added = edges
             .iter()
             .all(|(g, _, e)| e.from.is_none() || e.to.is_none() || added.contains(g));
         if all_added {
-            Ok(())
+            Ok(edges)
         } else {
             Err(Fall::Potential)
         }
     };
-    let gap_of = |n: &Arc<str>| gap.get(n).cloned().unwrap_or(Int::ZERO);
+    // A new name `n` that takes its value from an edge from or to component `c` joins `c`
+    // when another of its edges, to be put in after, goes back to `c`, for the two close a
+    // cycle; it takes a component of its own otherwise.
+    // Complexity tradeoff: naive version, a component of its own, which the edge back then
+    // merges into `c` after a search of the order that reads the edges of the ends of `c`,
+    // O(d) for a hub of `d` edges in `c`, O(d²) for a hub of `d` equalities each to a new name
+    // (`l01_39_reduced_product::scaling::a_join_keeps_the_equalities_of_its_sides_and_scales`).
+    // Used: the edges of `n`, read already, are looked at for one back to `c`, O(e log n) for
+    // its `e` edges.
+    let place = |pot: &mut Potential,
+                 n: &Arc<str>,
+                 at: (Int, i64),
+                 c: u64,
+                 head: bool,
+                 edges: &[(Arc<Formula>, bool, Edge)]| {
+        let back = edges.iter().any(|(_, _, e)| {
+            let (near, far) = if head {
+                (&e.from, &e.to)
+            } else {
+                (&e.to, &e.from)
+            };
+            near.as_ref() == Some(n) && far.as_ref().is_some_and(|f| pot.comp.get(f) == Some(&c))
+        });
+        if back {
+            pot.enter(n, at, c);
+        } else {
+            pot.fresh(n, at, !head);
+        }
+    };
     let zero = (Int::ZERO, 0i64);
     let mut waiting: BTreeSet<(Arc<Formula>, bool)> = pending
         .iter()
@@ -1625,37 +1784,50 @@ fn put_in(
         let (Some(u), Some(v)) = (&e.from, &e.to) else {
             continue;
         };
-        // Each round puts the edge in, or finds a cycle of weight 0 through it, whose
-        // edges are then tied, and the edge is put in again with their weights raised.
+        // Each round puts the edge in, or merges the components on a cycle it closes, or finds
+        // a cycle of weight 0 through it, whose edges are then tied; the edge is then put in
+        // again.
         'round: loop {
-            let w = pair_weight(tied, gap, g, *back, e);
-            let gamma = match (pot.get(u).cloned(), pot.get(v).cloned()) {
+            let w = pair_weight(&pot.tied, &pot.gap, g, *back, e);
+            let gamma = match (pot.at.get(u).cloned(), pot.at.get(v).cloned()) {
                 (None, None) => {
                     new_name(u)?;
-                    new_name(v)?;
-                    pot.insert(u.clone(), zero.clone());
-                    pot.insert(v.clone(), w);
+                    let edges = new_name(v)?;
+                    pot.fresh(u, zero.clone(), true);
+                    let c = pot.comp_of(u)?;
+                    place(pot, v, w, c, true, &edges);
                     break 'round;
                 }
                 (Some(pu), None) => {
-                    new_name(v)?;
-                    pot.insert(v.clone(), pair_plus(&pu, &w));
+                    let edges = new_name(v)?;
+                    let c = pot.comp_of(u)?;
+                    place(pot, v, pair_plus(&pu, &w), c, true, &edges);
                     break 'round;
                 }
                 (None, Some(pv)) => {
-                    new_name(u)?;
-                    pot.insert(u.clone(), pair_minus(&pv, &w));
+                    let edges = new_name(u)?;
+                    let c = pot.comp_of(v)?;
+                    place(pot, u, pair_minus(&pv, &w), c, false, &edges);
                     break 'round;
                 }
                 (Some(pu), Some(pv)) => pair_minus(&pair_plus(&pu, &w), &pv),
             };
+            let (cu, cv) = (pot.comp_of(u)?, pot.comp_of(v)?);
+            if cu != cv {
+                if pot.rank(cu) < pot.rank(cv) || !reorder(relation, t, &waiting, pot, cu, cv)? {
+                    break 'round;
+                }
+                continue 'round;
+            }
             if gamma >= zero {
                 break 'round;
             }
-            // Each name's potential falls by the least reduced distance from `v` below
-            // zero; the new values are kept apart until the search ends, so that the old
-            // ones check the edges read. Each name reached keeps the edge it was last
-            // reached by, so that a cycle found can be followed back.
+            // Each name of the component whose potential falls falls by the least reduced
+            // distance from `v` below zero; the new values are kept apart until the search
+            // ends, so that the old ones check the edges read. Each name reached keeps the
+            // edge it was last reached by, so that a cycle found can be followed back. An edge
+            // to another component is only checked to go to a higher rank: every cycle through
+            // the new edge lies in its component.
             let mut fall: BTreeMap<Arc<str>, (Int, i64)> =
                 BTreeMap::from([(v.clone(), gamma.clone())]);
             let mut via: BTreeMap<Arc<str>, (Arc<str>, Arc<Formula>, bool)> = BTreeMap::new();
@@ -1665,7 +1837,7 @@ fn put_in(
                 if new.contains_key(&s) || fall.get(&s) != Some(&gs) {
                     continue;
                 }
-                let ps = pot.get(&s).ok_or(Fall::Potential)?;
+                let ps = pot.at.get(&s).ok_or(Fall::Potential)?;
                 let to_s = pair_plus(ps, &gs);
                 for (h, hb, f) in tree_edges(relation, t, &s) {
                     let (Some(from), Some(x)) = (&f.from, &f.to) else {
@@ -1674,8 +1846,15 @@ fn put_in(
                     if *from != s || new.contains_key(x) || waiting.contains(&(h.clone(), hb)) {
                         continue;
                     }
-                    let px = pot.get(x).ok_or(Fall::Potential)?;
-                    let fw = pair_weight(tied, gap, &h, hb, &f);
+                    let cx = pot.comp_of(x)?;
+                    if cx != cu {
+                        if pot.rank(cx) < pot.rank(cu) {
+                            return Err(Fall::Potential);
+                        }
+                        continue;
+                    }
+                    let px = pot.at.get(x).ok_or(Fall::Potential)?;
+                    let fw = pair_weight(&pot.tied, &pot.gap, &h, hb, &f);
                     if pair_minus(&pair_plus(ps, &fw), px) < zero {
                         return Err(Fall::Potential);
                     }
@@ -1687,12 +1866,12 @@ fn put_in(
                         if gx.0 < Int::ZERO {
                             // The cycle's weight without the gaps: each of its names
                             // lowered the edge into it by its gap.
-                            let mut weight = &gx.0 + &gap_of(u);
+                            let mut weight = &gx.0 + &pot.gap_of(u);
                             let mut at = s.clone();
-                            weight = &weight + &gap_of(&at);
+                            weight = &weight + &pot.gap_of(&at);
                             while let Some((before, _, _)) = via.get(&at) {
                                 at = before.clone();
-                                weight = &weight + &gap_of(&at);
+                                weight = &weight + &pot.gap_of(&at);
                             }
                             return if weight < Int::ZERO {
                                 Ok(Some(u.clone()))
@@ -1702,11 +1881,11 @@ fn put_in(
                         }
                         // A cycle of weight 0: the edge, the one into `u`, and those
                         // back to `v`.
-                        tied.insert((g.clone(), *back));
-                        tied.insert((h, hb));
+                        pot.tied.insert((g.clone(), *back));
+                        pot.tied.insert((h, hb));
                         let mut at = s.clone();
                         while let Some((before, k, kb)) = via.get(&at) {
-                            tied.insert((k.clone(), *kb));
+                            pot.tied.insert((k.clone(), *kb));
                             at = before.clone();
                         }
                         continue 'round;
@@ -1720,12 +1899,310 @@ fn put_in(
                 new.insert(s, to_s);
             }
             for (s, ps) in new {
-                pot.insert(s, ps);
+                pot.at.insert(s, ps);
             }
             break 'round;
         }
+        pot.link(u, v);
     }
     Ok(None)
+}
+
+/// Restores the order of the components of the potential `pot` of tree `t` of the forest
+/// after an edge from component `cu` to component `cv`, ranked before it, was put in, the
+/// edges `waiting` not yet (Pearce and Kelly): the components ranked from `cv` to `cu` that
+/// `cv` reaches, and those that reach `cu`, take the ranks they held, those that reach `cu`
+/// alone the least, those `cv` reaches alone the greatest. Those that both reach `cu` and are
+/// reached from `cv` lie on a cycle with the edge, and are merged into one component ranked
+/// between ([`merge`]): whether there were any, so that the edge is then put in within it.
+/// The search from the end with fewer names runs first, and when each component it finds is
+/// on such a cycle, these are merged into one with the rank of the other end, and the other
+/// search is not run: no other component ranked between the two ends has an edge to or from
+/// them that the new rank turns against the order. The names the searches find at no edge to
+/// another component leave the components' ends. `Err` when the search reads a name the
+/// potential lacks or an edge against the order. In O(m log n) for the `m` edges at the ends
+/// of the components ranked from `cv` to `cu` that the searches reach, of `n` names.
+// Complexity tradeoff: naive version, both searches each time, as Pearce and Kelly, so an
+// edge back from a new name to a hub of `d` edges in a large component read all `d`, O(d²)
+// for `d` equalities to the hub (`l01_39_reduced_product::scaling::a_join_keeps_the_equalities_of_its_sides_and_scales`).
+// Used: the search from the smaller end first, the other only when a component it finds is
+// off the cycle: O(e log n) for the `e` edges at the new name, and the hub read only when
+// the cycle leaves out a component between.
+fn reorder(
+    relation: &Conjuncts,
+    t: BlockId,
+    waiting: &BTreeSet<(Arc<Formula>, bool)>,
+    pot: &mut Potential,
+    cu: u64,
+    cv: u64,
+) -> Result<bool, Fall> {
+    let (lo, hi) = (pot.rank(cv), pot.rank(cu));
+    let mut idle: Vec<Arc<str>> = Vec::new();
+    let back_first = pot.parts[&cu].names.len() <= pot.parts[&cv].names.len();
+    let (start, other) = if back_first { (cu, cv) } else { (cv, cu) };
+    let mut links: Vec<(u64, u64)> = Vec::new();
+    let first = reach(
+        relation,
+        t,
+        waiting,
+        pot,
+        start,
+        !back_first,
+        (lo, hi),
+        &mut idle,
+        &mut links,
+    )?;
+    if first.contains(&other) {
+        // Those found on a cycle with the edge: found from `other` back along the search.
+        let mut from: BTreeMap<u64, Vec<u64>> = BTreeMap::new();
+        for (d, c) in links {
+            from.entry(d).or_default().push(c);
+        }
+        let mut on = BTreeSet::from([other]);
+        let mut stack = vec![other];
+        while let Some(d) = stack.pop() {
+            for &c in from.get(&d).into_iter().flatten() {
+                if on.insert(c) {
+                    stack.push(c);
+                }
+            }
+        }
+        if on.len() == first.len() {
+            let rank = pot.rank(other);
+            let keep = merge(relation, t, waiting, pot, &first);
+            if let Some(p) = pot.parts.get_mut(&keep) {
+                p.rank = rank;
+            }
+            drop_idle(pot, idle);
+            return Ok(true);
+        }
+    }
+    let (end, forward) = if back_first { (cv, true) } else { (cu, false) };
+    let second = reach(
+        relation,
+        t,
+        waiting,
+        pot,
+        end,
+        forward,
+        (lo, hi),
+        &mut idle,
+        &mut Vec::new(),
+    )?;
+    let (ahead, behind) = if back_first {
+        (second, first)
+    } else {
+        (first, second)
+    };
+    let mut ranks: Vec<i64> = ahead.union(&behind).map(|&c| pot.rank(c)).collect();
+    ranks.sort_unstable();
+    let by_rank = |cs: &mut Vec<u64>| cs.sort_unstable_by_key(|&c| pot.rank(c));
+    let mut before: Vec<u64> = behind.difference(&ahead).copied().collect();
+    let mut after: Vec<u64> = ahead.difference(&behind).copied().collect();
+    by_rank(&mut before);
+    by_rank(&mut after);
+    let cycle: BTreeSet<u64> = ahead.intersection(&behind).copied().collect();
+    let merged = !cycle.is_empty();
+    if merged {
+        before.push(merge(relation, t, waiting, pot, &cycle));
+    }
+    let late = ranks.len() - after.len();
+    for (c, r) in before
+        .iter()
+        .zip(&ranks)
+        .chain(after.iter().zip(&ranks[late..]))
+    {
+        if let Some(p) = pot.parts.get_mut(c) {
+            p.rank = *r;
+        }
+    }
+    drop_idle(pot, idle);
+    Ok(merged)
+}
+
+/// Takes the names `idle`, found at no edge to another component, out of their components'
+/// ends ([`Component::ends`]).
+fn drop_idle(pot: &mut Potential, idle: Vec<Arc<str>>) {
+    for x in idle {
+        if let Some(c) = pot.comp.get(&x).copied()
+            && let Some(p) = pot.parts.get_mut(&c)
+        {
+            p.ends.remove(&x);
+        }
+    }
+}
+
+/// The components of the potential `pot` of tree `t` of the forest ranked within `window`,
+/// both ends included, that component `start` reaches along the edges, or against them when
+/// not `forward`, `start` among them, the edges `waiting` and the edge just put in, against
+/// the order, left out. Only the edges at each component's ends are read ([`Component`]); an
+/// end with no edge to another component is added to `idle`, and each edge followed adds to
+/// `links` the component found and the one it was found from. The component at the far end of
+/// the window is not searched from, for no edge goes on from it within the window. `Err` when
+/// the search reads a name the potential lacks or another edge against the order. In
+/// O(m log n) for the `m` edges at the ends of the components reached.
+#[allow(clippy::too_many_arguments)]
+fn reach(
+    relation: &Conjuncts,
+    t: BlockId,
+    waiting: &BTreeSet<(Arc<Formula>, bool)>,
+    pot: &Potential,
+    start: u64,
+    forward: bool,
+    window: (i64, i64),
+    idle: &mut Vec<Arc<str>>,
+    links: &mut Vec<(u64, u64)>,
+) -> Result<BTreeSet<u64>, Fall> {
+    let mut seen = BTreeSet::from([start]);
+    let mut stack = vec![start];
+    while let Some(c) = stack.pop() {
+        let rc = pot.rank(c);
+        // No edge goes on within the window from the component at its far end, which may be
+        // a large one with a hub: it is not read.
+        if rc == if forward { window.1 } else { window.0 } {
+            continue;
+        }
+        for x in &pot.parts[&c].ends {
+            let mut linked = false;
+            for (g, back, e) in tree_edges(relation, t, x) {
+                let (Some(a), Some(b)) = (&e.from, &e.to) else {
+                    continue;
+                };
+                let other = if a == x { b } else { a };
+                linked |= pot.comp.get(other) != Some(&c);
+                let (near, far) = if forward { (a, b) } else { (b, a) };
+                if near != x || waiting.contains(&(g, back)) {
+                    continue;
+                }
+                let d = pot.comp_of(far)?;
+                let rd = pot.rank(d);
+                if d == c || !(window.0..=window.1).contains(&rd) {
+                    continue;
+                }
+                // Within the window an edge goes on in the search's direction, but for the
+                // edge just put in, from the window's last component to its first.
+                if (rd > rc) != forward {
+                    if (rc, rd)
+                        == if forward {
+                            (window.1, window.0)
+                        } else {
+                            window
+                        }
+                    {
+                        continue;
+                    }
+                    return Err(Fall::Potential);
+                }
+                links.push((d, c));
+                if seen.insert(d) {
+                    stack.push(d);
+                }
+            }
+            if !linked {
+                idle.push(x.clone());
+            }
+        }
+    }
+    Ok(seen)
+}
+
+/// Merges the components `cycle` of the potential `pot` of tree `t` of the forest, each on a
+/// cycle with an edge just put in, into the largest of them, which it returns. Each is first
+/// given a shift, in the order of their ranks, the least reduced weight below zero of the
+/// edges into it from those before with their shifts, the edges `waiting` left out: every
+/// edge between them but the new one goes up the order, so the potential, each component
+/// moved by its shift, holds at each of them. The shifts less the largest one's are applied,
+/// so that its names keep their values. In O(m log n) for the `m` edges at the ends of all
+/// but the largest component and their names, of `n` names.
+// Complexity tradeoff: the names of the smaller components move into the largest and take
+// the shifts, and the edges between the components are read at the ends of the smaller ones
+// alone, so a name is read and moved only into a component at least twice the size of its
+// own, O(log n) times in all; naive version, all into the first and each shifted, O(n) a
+// merge, and the ends of the largest read at each merge, O(d) for a hub of `d` edges in it,
+// O(n²) for a chain of `n` equalities, each closing a cycle with the component of those
+// before (`l01_39_reduced_product::scaling::a_join_keeps_the_equalities_of_its_sides_and_scales`).
+fn merge(
+    relation: &Conjuncts,
+    t: BlockId,
+    waiting: &BTreeSet<(Arc<Formula>, bool)>,
+    pot: &mut Potential,
+    cycle: &BTreeSet<u64>,
+) -> u64 {
+    let mut order: Vec<u64> = cycle.iter().copied().collect();
+    order.sort_unstable_by_key(|&c| pot.rank(c));
+    let keep = *order
+        .iter()
+        .max_by_key(|&&c| pot.parts[&c].names.len())
+        .expect("a cycle has a component");
+    // The edges between the components, each with its tail, its head and its weight, by the
+    // component of its head; each has an end outside the largest, so only the ends of the
+    // others are read, each edge once, from its head unless that is in the largest.
+    let mut into: BTreeMap<u64, Vec<CompEdge>> = BTreeMap::new();
+    for &c in &order {
+        if c == keep {
+            continue;
+        }
+        for x in &pot.parts[&c].ends {
+            for (g, back, e) in tree_edges(relation, t, x) {
+                let (Some(a), Some(b)) = (&e.from, &e.to) else {
+                    continue;
+                };
+                let (Some(&ca), Some(&cb)) = (pot.comp.get(a), pot.comp.get(b)) else {
+                    continue;
+                };
+                if ca == cb
+                    || !(b == x || cb == keep)
+                    || !cycle.contains(&ca)
+                    || !cycle.contains(&cb)
+                    || waiting.contains(&(g.clone(), back))
+                {
+                    continue;
+                }
+                let w = pair_weight(&pot.tied, &pot.gap, &g, back, &e);
+                into.entry(cb).or_default().push((a.clone(), b.clone(), w));
+            }
+        }
+    }
+    let zero = (Int::ZERO, 0i64);
+    let mut shift: BTreeMap<u64, (Int, i64)> = BTreeMap::new();
+    for &c in &order {
+        let mut by = zero.clone();
+        for (a, b, w) in into.get(&c).into_iter().flatten() {
+            let (Some(sa), Some(pa), Some(pb)) =
+                (shift.get(&pot.comp[a]), pot.at.get(a), pot.at.get(b))
+            else {
+                continue;
+            };
+            let reduced = pair_minus(&pair_plus(&pair_plus(pa, sa), w), pb);
+            if reduced < by {
+                by = reduced;
+            }
+        }
+        shift.insert(c, by);
+    }
+    let base = shift[&keep].clone();
+    for c in order {
+        if c == keep {
+            continue;
+        }
+        let Some(part) = pot.parts.remove(&c) else {
+            continue;
+        };
+        let by = pair_minus(&shift[&c], &base);
+        for x in &part.names {
+            if by != zero
+                && let Some(p) = pot.at.get_mut(x)
+            {
+                *p = pair_plus(p, &by);
+            }
+            pot.comp.insert(x.clone(), keep);
+        }
+        if let Some(p) = pot.parts.get_mut(&keep) {
+            p.names.extend(part.names);
+            p.ends.extend(part.ends);
+        }
+    }
+    keep
 }
 
 /// The intervals and classes of a part's names when it was last projected, shared, so that a
@@ -6366,8 +6843,9 @@ impl Scope {
     /// without them is no bottom: no potential holds with those gaps, and the tree is found
     /// again from the solver ([`Scope::reseed`]).
     ///
-    /// In O(m log n) for the `m` edges at the names whose potential falls, of `n` names, and
-    /// once more for each cycle of weight 0 tied.
+    /// In O(m log n) for the `m` edges at the names of the component of each edge whose
+    /// potential falls, of `n` names, and once more for each cycle of weight 0 tied; an edge
+    /// against the order of the components costs those ranked between its ends ([`reorder`]).
     fn repair(
         &mut self,
         relation: &Conjuncts,
@@ -6375,8 +6853,7 @@ impl Scope {
         added: &BTreeSet<Arc<Formula>>,
     ) -> Result<Option<Arc<str>>, Fall> {
         let blocks = relation.blocks();
-        let mut pot = self.potential.at.clone();
-        let mut tied = self.potential.tied.clone();
+        let mut pot = self.potential.clone();
         let gap = &self.potential.gap;
         let lowered = |e: &Edge| match e.to.as_ref().and_then(|v| gap.get(v)) {
             Some(d) => &e.weight - d,
@@ -6400,18 +6877,17 @@ impl Scope {
                 && e.to.is_some()
                 && (&lowered(&e) + &lowered(b)).is_zero()
             {
-                tied.insert((g.clone(), false));
-                tied.insert((g.clone(), true));
+                pot.tied.insert((g.clone(), false));
+                pot.tied.insert((g.clone(), true));
             }
             pending.push((g.clone(), false, e));
             if let Some(e) = back {
                 pending.push((g.clone(), true, e));
             }
         }
-        let found = put_in(relation, t, added, &pending, &mut pot, &mut tied, gap)?;
+        let found = put_in(relation, t, added, &pending, &mut pot)?;
         if found.is_none() {
-            self.potential.at = pot;
-            self.potential.tied = tied;
+            self.potential = pot;
         }
         Ok(found)
     }
@@ -6426,11 +6902,10 @@ impl Scope {
     /// the gap alone, with no edge to read. Whether `x` is now within its gap, or has a class
     /// or no product, which no raise changes.
     ///
-    /// In O((r + their edges) log n) for the `r` names whose potential falls, which is every
-    /// name below `x` on a chain with no slack in the potential: `k` raises that each hold on
-    /// a chain of `k` names cost O(k² log k), open, item O7 of the cross-review xst
-    /// (COMPLEXITY.md row S25). A projection stops raising a tree at the first raise that
-    /// fails ([`Scope::project`]).
+    /// In O((r + their edges) log n) for the `r` names of the component of `x` whose
+    /// potential falls ([`Potential`]): O(log n) for a name on no cycle, as each name of a
+    /// chain or a ladder is. A projection stops raising a tree at the first raise that fails
+    /// ([`Scope::project`]).
     fn raise(&mut self, relation: &Conjuncts, t: BlockId, x: &Arc<str>) -> bool {
         let Some(p) = self.names.get(x).filter(|p| !classed(p)) else {
             return true;
@@ -6444,27 +6919,15 @@ impl Scope {
             self.potential.gap.insert(x.clone(), g);
             return true;
         };
-        let mut pot = self.potential.at.clone();
-        let mut tied = self.potential.tied.clone();
-        let mut gap = self.potential.gap.clone();
-        pot.insert(x.clone(), (&px.0 - &(&g - &was), px.1));
-        gap.insert(x.clone(), g);
+        let mut pot = self.potential.clone();
+        pot.at.insert(x.clone(), (&px.0 - &(&g - &was), px.1));
+        pot.gap.insert(x.clone(), g);
         let out: Vec<(Arc<Formula>, bool, Edge)> = tree_edges(relation, t, x)
             .into_iter()
             .filter(|(_, _, e)| e.from.as_ref() == Some(x) && e.to.is_some())
             .collect();
-        if let Ok(None) = put_in(
-            relation,
-            t,
-            &BTreeSet::new(),
-            &out,
-            &mut pot,
-            &mut tied,
-            &gap,
-        ) {
-            self.potential.at = pot;
-            self.potential.tied = tied;
-            self.potential.gap = gap;
+        if let Ok(None) = put_in(relation, t, &BTreeSet::new(), &out, &mut pot) {
+            self.potential = pot;
             return true;
         }
         false
@@ -6509,11 +6972,13 @@ impl Scope {
     /// each name popped at its latest bound lowers along each of its edges, so the search
     /// stops at a fixed point of the edges at the names it lowers, and the others' bounds were
     /// one already. The potential bounds the cost: a bound moved to an integer of `x` falls by
-    /// at most the gap `g_x` the potential holds with, so the key of a name is its bound less
-    /// `q`, the potential up, and the potential plus the gap, negated, down; an edge `s → x`
-    /// of weight `k` read is checked to have `q_s + k - q_x - g_x` of zero or more, which is
-    /// its reduced weight in the potential on either side ([`Potential`]). Each key pushed is
-    /// then at least the key popped, and each name is popped at its latest bound once.
+    /// at most the gap `g_x` the potential holds with, so the key of a name is the rank of its
+    /// component on this side, then its bound less `q`, the potential up, and the potential
+    /// plus the gap, negated, down; an edge `s → x` of weight `k` read within a component is
+    /// checked to have `q_s + k - q_x - g_x` of zero or more, which is its reduced weight in the
+    /// potential on either side, and one between components to go up in rank on this side
+    /// ([`Potential`]). Each key pushed is then at least the key popped, and each name is
+    /// popped at its latest bound once.
     // Complexity tradeoff: naive version, every seed reads all its edges in and the Dijkstra
     // search starts from every seed, so a hub `n` with 2k edges from k tests `ai == n` is read
     // twice per side at each test, O(k²) (37.4 times the instructions from k = 150 to 1200).
@@ -6544,6 +7009,13 @@ impl Scope {
             let v = &self.potential.at.get(n).ok_or(Fall::Potential)?.0;
             Ok(if up { v.clone() } else { -&(v + &gap(n)) })
         };
+        // The component of `n` and its rank on this side: an edge between components goes up
+        // in rank, so against the edges down in rank.
+        let rank = |n: &Arc<str>| -> Result<(u64, i64), Fall> {
+            let c = self.potential.comp_of(n)?;
+            let r = self.potential.rank(c);
+            Ok((c, if up { r } else { -r }))
+        };
         // A bound `by` on this side of `n` taken to the nearest integer of `n` inside it.
         let snap = |n: &Arc<str>, by: Int| -> Int {
             let Some(p) = self.names.get(n) else {
@@ -6567,7 +7039,7 @@ impl Scope {
             Ok(l)
         };
         let mut moved: BTreeMap<Arc<str>, Int> = BTreeMap::new();
-        let mut heap: BinaryHeap<Reverse<(Int, Arc<str>)>> = BinaryHeap::new();
+        let mut heap: BinaryHeap<Queued> = BinaryHeap::new();
         for s in &seeds.names {
             read(&mut label, s)?;
         }
@@ -6622,10 +7094,10 @@ impl Scope {
                 continue;
             }
             if let Some(Some(l)) = label.get(s) {
-                heap.push(Reverse((l - &q(s)?, s.clone())));
+                heap.push(Reverse(((rank(s)?.1, l - &q(s)?), s.clone())));
             }
         }
-        while let Some(Reverse((k, s))) = heap.pop() {
+        while let Some(Reverse(((_, k), s))) = heap.pop() {
             let Some(Some(ls)) = label.get(&s).cloned() else {
                 continue;
             };
@@ -6633,6 +7105,7 @@ impl Scope {
             if &ls - &qs != k {
                 continue;
             }
+            let rs = rank(&s)?;
             for (_, _, e) in tree_edges(relation, t, &s) {
                 let (a, b) = way(&e);
                 let (Some(a), Some(x)) = (a, b) else {
@@ -6642,14 +7115,20 @@ impl Scope {
                     continue;
                 }
                 let qx = q(&x)?;
-                if &(&(&qs + &e.weight) - &qx) - &gap(&x) < Int::ZERO {
+                let rx = rank(&x)?;
+                let holds = if rx.0 == rs.0 {
+                    &(&(&qs + &e.weight) - &qx) - &gap(&x) >= Int::ZERO
+                } else {
+                    rx.1 > rs.1
+                };
+                if !holds {
                     return Err(Fall::Potential);
                 }
                 let by = &ls + &e.weight;
                 if read(&mut label, &x)?.is_none_or(|c| by < c) {
                     let at = snap(&x, by);
                     moved.insert(x.clone(), at.clone());
-                    heap.push(Reverse((&at - &qx, x.clone())));
+                    heap.push(Reverse(((rx.1, &at - &qx), x.clone())));
                     label.insert(x, Some(at));
                 }
             }
@@ -6790,9 +7269,54 @@ impl Scope {
                 }
             }
             let mut out: Vec<Vec<usize>> = vec![Vec::new(); main.len()];
+            let mut all: Vec<Vec<usize>> = vec![Vec::new(); main.len()];
             for (i, j, _, _) in &tight {
                 out[*i].push(*j);
             }
+            for g in &cons {
+                let Some((e, back)) = conjuncts::edges(g) else {
+                    continue;
+                };
+                for e in std::iter::once(e).chain(back) {
+                    if let (Some(u), Some(v)) = (&e.from, &e.to)
+                        && let (Some(&i), Some(&j)) = (at.get(u), at.get(v))
+                    {
+                        all[i].push(j);
+                    }
+                }
+            }
+            // The components of every edge, numbered with each after those it reaches, so a
+            // rank that falls with the number goes up along each edge between them.
+            let parts = zedc_solvers::utvpi::components(&all, |j| *j);
+            let count = parts.iter().map(|c| c + 1).max().unwrap_or(0);
+            for n in &names {
+                self.potential.leave(n);
+            }
+            for (k, (n, _)) in main.iter().enumerate() {
+                let c = parts[k];
+                let id = self.potential.next + c as u64;
+                let rank = self.potential.high + (count - c) as i64;
+                self.potential.comp.insert(n.clone(), id);
+                let part = self.potential.parts.entry(id).or_insert_with(|| Component {
+                    rank,
+                    names: imbl::OrdSet::new(),
+                    ends: imbl::OrdSet::new(),
+                });
+                part.names.insert(n.clone());
+            }
+            // The ends of each edge between components.
+            for (i, heads) in all.iter().enumerate() {
+                for &j in heads.iter().filter(|&&j| parts[j] != parts[i]) {
+                    for k in [i, j] {
+                        let id = self.potential.next + parts[k] as u64;
+                        if let Some(part) = self.potential.parts.get_mut(&id) {
+                            part.ends.insert(main[k].0.clone());
+                        }
+                    }
+                }
+            }
+            self.potential.next += count as u64;
+            self.potential.high += count as i64;
             // Numbered with each component after those it reaches.
             let comp = zedc_solvers::utvpi::components(&out, |j| *j);
             tight.sort_unstable_by_key(|(i, _, _, _)| comp[*i]);
