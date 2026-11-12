@@ -2563,7 +2563,6 @@ impl Block {
         changed: &BTreeSet<BTreeMap<Atom, Int>>,
         due: &mut BTreeSet<PartAt>,
         groups: bool,
-        names: &imbl::OrdMap<Arc<str>, Product>,
         spent: &imbl::OrdSet<(Arc<str>, bool)>,
     ) -> bool {
         let cons: Vec<&Arc<Formula>> = self.cons.iter().collect();
@@ -2666,10 +2665,14 @@ impl Block {
         // on staircase parts). COMPLEXITY.md C52.
         // Inside the cases, a case's constraint on two names `u` and `v` reaches the
         // disjunctions on them whose arms it all makes bound an end of `u` or `v` that some arm
-        // does not bound alone and the names' products leave open, found in [`Block::bounds`]
-        // ([`bounds_at`]). Projected with the case's constraints, such a part bounds that end in
-        // every arm. Such a part is projected (`fired`), keyed as outside the cases so that the
-        // join keeps its record, and the end is spent on this path of tests ([`Scope::spent`]).
+        // does not bound alone, found in [`Block::bounds`] ([`bounds_at`]). Projected with the
+        // case's constraints, such a part bounds that end in every arm. The end may be finite
+        // already: with `0 <= x <= 10` and `0 <= y <= 10`, the disjunction
+        // `x <= 1 || (y == 5 && 4 <= x <= 6) || (y >= 10 && x >= 7)` keeps `x` in 0..=10, and
+        // its last arm does not bound `x` above alone; in the case `x + y <= 10` that arm is
+        // empty and the second gives `x <= 5`, so `x` is in 0..=5 there. Such a part is
+        // projected (`fired`), keyed as outside the cases so that the join keeps its record,
+        // and the end is spent on this path of tests ([`Scope::spent`]).
         // Complexity tradeoff: naive version, the parts found projected in each case, O(k) per
         // case when k parts are found and the end stays open, O(k^2) over k tests on the parts
         // `x >= i || y <= -1000 + i` and the tests `x + y <= -j || z >= j`, whose second case
@@ -2677,7 +2680,8 @@ impl Block {
         // end and direction of a case's constraint, and O(log k + f) for the f parts found the
         // one time, so O(n log n) in all for n parts and constraints; lost against the naive
         // version: a part that would bound the end again in a later test, after a join that
-        // dropped the first bound. COMPLEXITY.md C52.
+        // dropped the first bound, or after a firing on a finite end that moved nothing.
+        // COMPLEXITY.md C52, LAZY-hub-finite.
         if !groups {
             for t in changed {
                 for c in self.split.on.get(t).into_iter().flatten() {
@@ -2687,25 +2691,13 @@ impl Block {
                     let (Factor::Sym(un), Factor::Sym(vn)) = (&u, &v) else {
                         continue;
                     };
-                    // Each end, [lower u, upper u, lower v, upper v], when it is open.
+                    // Each end: [lower u, upper u, lower v, upper v].
                     let ends = [(un, true), (un, false), (vn, true), (vn, false)];
-                    let open = ends.map(|(n, low)| {
-                        names
-                            .get(n)
-                            .and_then(|p| p.ints().bounds())
-                            .is_none_or(|(lo, hi)| {
-                                if low {
-                                    *lo == End::NegInf
-                                } else {
-                                    *hi == End::PosInf
-                                }
-                            })
-                    });
                     let mut qs = vec![q.clone()];
                     if c.rel == Rel::Eq {
                         qs.push([-&q[0], -&q[1]]);
                     }
-                    for end in (0..4u8).filter(|&e| open[usize::from(e)]) {
+                    for end in 0..4u8 {
                         let (n, low) = ends[usize::from(end)];
                         if spent.contains(&(n.clone(), low)) {
                             continue;
@@ -2877,8 +2869,7 @@ impl Block {
         // Outside the cases of a test, the groups are read again when they were last read within
         // them ([`Block::outer`]), though no constraint changed since.
         let stale = groups && next.outer_cons.diff(&next.cons).next().is_some();
-        if (!changed.is_empty() || stale) && !next.reframe(&changed, &mut due, groups, names, spent)
-        {
+        if (!changed.is_empty() || stale) && !next.reframe(&changed, &mut due, groups, spent) {
             return None;
         }
         let others = delta

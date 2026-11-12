@@ -529,8 +529,19 @@ fn family(name: &str, k: usize) -> Family {
             around(&xy, 150)
         }
         // `x`, `y` in 0..=10 and the two hole tests (hole_end0); then `x + y <= 10 || 3x + y
-        // >= 37` (hole_end1); then `x <= 8` (hole_end2).
-        "hole_end0" | "hole_end1" | "hole_end2" => {
+        // >= 37` (hole_end1); then `x <= 8` (hole_end2). The `_pad` forms first add `k`
+        // disjunctions `x + j*y >= -1000j || x - j*y >= 1000j` that the box makes redundant,
+        // so the block that holds the hole has `k` more parts.
+        "hole_end0" | "hole_end1" | "hole_end2" | "hole_end1_pad" | "hole_end2_pad" => {
+            if name.ends_with("_pad") {
+                tests.extend((1..=ki).map(|j| {
+                    or(
+                        ge(add(var("x"), times(j, "y")), int(-1000 * j)),
+                        ge(sub(var("x"), times(j, "y")), int(1000 * j)),
+                    )
+                }));
+            }
+            let name = name.trim_end_matches("_pad");
             tests.extend(boxed_from(&xy, 0, 10));
             tests.push(hole_test(10));
             tests.push(hole_test(9));
@@ -1318,27 +1329,27 @@ fn hole_end0_against_the_oracle() {
 
 #[test]
 fn hole_end1_against_the_oracle() {
-    // Lost: the hole `6..=8` in `x`. The two hole tests leave `x = 6` only with `y = 5`, and
-    // `x` = 7 or 8 only with `y = 10`; the last test needs `x + y <= 10` or `3x + y >= 37`,
-    // which fails at (6, 5) (11 and 23), (7, 10) (17 and 31) and (8, 10) (18 and 34).
-    check(
-        "hole_end1",
-        1,
-        "a=[..] x=[0..=10] y=[0..=10]",
-        "a=[..] x=[0..=5, 9..=10] y=[0..=10]",
-    );
+    // The hole `6..=8` in `x`. The two hole tests leave `x = 6` only with `y = 5`, and `x` =
+    // 7 or 8 only with `y = 10`; the last test needs `x + y <= 10` or `3x + y >= 37`, which
+    // fails at (6, 5) (11 and 23), (7, 10) (17 and 31) and (8, 10) (18 and 34). Each case
+    // of the last test projects the first hole test with its arm: the arm `x + y <= 10`
+    // bounds `x` above in the hole test's last arm, which alone does not.
+    exact("hole_end1", 1, "a=[..] x=[0..=5, 9..=10] y=[0..=10]");
 }
 
 #[test]
 fn hole_end2_against_the_oracle() {
-    // Lost: `x <= 5`. With hole_end1's hole `6..=8` and `x <= 8`, the greatest `x` is 5;
-    // the scope keeps 8.
-    check(
-        "hole_end2",
-        1,
-        "a=[..] x=[0..=8] y=[0..=10]",
-        "a=[..] x=[0..=5] y=[0..=10]",
-    );
+    // With hole_end1's hole `6..=8` and `x <= 8`, the greatest `x` is 5.
+    exact("hole_end2", 1, "a=[..] x=[0..=5] y=[0..=10]");
+}
+
+/// The padded forms give the same answers: the `k` redundant parts change nothing.
+#[test]
+fn hole_end_pad_against_the_oracle() {
+    for k in [1, 4] {
+        exact("hole_end1_pad", k, "a=[..] x=[0..=5, 9..=10] y=[0..=10]");
+        exact("hole_end2_pad", k, "a=[..] x=[0..=5] y=[0..=10]");
+    }
 }
 
 #[test]
@@ -1580,6 +1591,16 @@ fn coordmix_shift_scales() {
 #[test]
 fn coordmix_unmatched_scales() {
     scales("coordmix_unmatched", 8, 1);
+}
+
+#[test]
+fn hole_end1_pad_scales() {
+    scales("hole_end1_pad", 8, 1);
+}
+
+#[test]
+fn hole_end2_pad_scales() {
+    scales("hole_end2_pad", 8, 1);
 }
 
 #[test]
