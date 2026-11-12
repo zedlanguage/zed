@@ -3931,4 +3931,94 @@ mod tests {
             eprintln!("gcd boundary shift={shift}, accepted={accepted}, rejected={rejected}");
         }
     }
+
+    /// Plain extended Euclid on nonnegative numbers: `(g, s, t)` with `s a + t b = g`.
+    fn euclid(a: &BigUint, b: &BigUint) -> (BigUint, BigInt, BigInt) {
+        let (mut r0, mut r1) = (BigInt::from(a.clone()), BigInt::from(b.clone()));
+        let (mut s0, mut s1) = (BigInt::one(), BigInt::zero());
+        let (mut t0, mut t1) = (BigInt::zero(), BigInt::one());
+        while !r1.is_zero() {
+            let q = &r0 / &r1;
+            let r2 = &r0 - &q * &r1;
+            let s2 = &s0 - &q * &s1;
+            let t2 = &t0 - &q * &t1;
+            r0 = std::mem::replace(&mut r1, r2);
+            s0 = std::mem::replace(&mut s1, s2);
+            t0 = std::mem::replace(&mut t1, t2);
+        }
+        (r0.into_parts().1, s0, t0)
+    }
+
+    /// [`step`] with `b = 2^j b'` for `j` on both sides of 127, where `q` is found in 128-bit
+    /// registers below and from `b'^-1 mod 2^(j+1)` of `j + 1` bits from there on: `q` is
+    /// centered, `|q| < 2^j`, `a + q b'` is a multiple of `2^(j+1)`, and the new second number
+    /// is `(a + q b') / 2^j`; for odd `a` of either sign and of fewer or more bits than
+    /// `2^(j+1)`.
+    #[test]
+    fn a_step_of_127_halvings_or_more_meets_its_definition() {
+        for j in [126u64, 127, 128, 191, 200, 1000] {
+            let words = j as usize / 64 + 2;
+            for seed in 1..=4 {
+                let b1 = BigInt::from(random(seed, words) | BigUint::one());
+                let b = &b1 << j;
+                let narrow = BigInt::from(random(seed + 50, 1) | BigUint::one());
+                let wide = BigInt::from(random(seed + 90, 2 * words) | BigUint::one());
+                for a in [
+                    BigInt::one(),
+                    -BigInt::one(),
+                    narrow.clone(),
+                    -narrow,
+                    wide.clone(),
+                    -wide,
+                ] {
+                    let (q, b1_out, r) = step(&a, &b, j);
+                    assert_eq!(b1_out, b1, "j={j}, seed={seed}");
+                    assert!(q.magnitude() < &(BigUint::one() << j), "j={j}, seed={seed}");
+                    let sum = &a + mul_int(&q, &b1);
+                    assert!(
+                        sum.trailing_zeros().is_none_or(|z| z > j),
+                        "j={j}, seed={seed}: a + q b' is not a multiple of 2^(j+1)"
+                    );
+                    assert_eq!(r << j, sum, "j={j}, seed={seed}");
+                }
+            }
+        }
+    }
+
+    /// [`bezout`] of an odd number and `2^j` times an odd number, `j` from 126 to 4097, in
+    /// both orders and with a common power of two, and with odd parts of 1 to 40 words, all
+    /// ones among them: a valuation of 127 or more reaches the step whose `q` is found from
+    /// an inverse of `j + 1` bits. The gcd is that of plain extended Euclid, and the
+    /// coefficients satisfy `s a + t b = g`.
+    #[test]
+    fn bezout_of_a_number_with_127_or_more_factors_of_two_matches_euclid() {
+        let all_ones = |words: usize| (BigUint::one() << (64 * words)) - 1u32;
+        for j in [126u64, 127, 128, 129, 200, 255, 256, 1000, 4097] {
+            for seed in 1..=3 {
+                for (wa, wb) in [(1, 1), (1, 4), (4, 1), (40, 3), (3, 40)] {
+                    let odd_a = random(seed, wa) | BigUint::one();
+                    let odd_b = random(seed + 30, wb) | BigUint::one();
+                    let wide = &odd_b << j;
+                    let shared = &odd_a * 3u32 * 5u32 * 7u32;
+                    for (a, b) in [
+                        (odd_a.clone(), wide.clone()),
+                        (wide.clone(), odd_a.clone()),
+                        (&odd_a << 5u32, &wide << 5u32),
+                        (all_ones(wa), wide.clone()),
+                        (shared.clone(), &odd_a << j),
+                        (&odd_a << j, shared),
+                    ] {
+                        let at = format!("j={j}, seed={seed}, words=({wa}, {wb})");
+                        let (g, s, t) = bezout(&a, &b).expect("bezout answers");
+                        let (want, es, et) = euclid(&a, &b);
+                        let (ia, ib) = (BigInt::from(a), BigInt::from(b));
+                        let want_int = BigInt::from(want.clone());
+                        assert_eq!(&es * &ia + &et * &ib, want_int, "Euclid, {at}");
+                        assert_eq!(g, want, "{at}");
+                        assert_eq!(mul_int(&s, &ia) + mul_int(&t, &ib), want_int, "{at}");
+                    }
+                }
+            }
+        }
+    }
 }
