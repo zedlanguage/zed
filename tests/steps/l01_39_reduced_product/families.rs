@@ -12,7 +12,8 @@
 //!   (`scaling::check`); a family on which main grows faster than linearly is ignored with
 //!   the item that would fix it;
 //! - and the 1152 records of the review's random audit, each checked for soundness, with the
-//!   three records no candidate of the review recovered pinned.
+//!   three records that no candidate of the review recovered pinned (all three found since,
+//!   LAZY-hub-unsolved).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -469,6 +470,37 @@ fn family(name: &str, k: usize) -> Family {
                 ge(sub(var("x"), times(2, "y")), int(1)),
             ));
             around(&xy, 40)
+        }
+        // Audit record 108:3 cut down: every name in -8..=8, `3a <= z + 2`, then
+        // `a >= -3 || y == z - 1`, then `(a + x >= -3 || x == z) && (x >= 4 || z >= 2a)`. In
+        // the case `z >= 2a` the first part gives `z >= -7`: its first arm gives `z >= -6`
+        // there, its second `z >= -7` from `y >= -8`; then `x == z` gives `x >= -7`, as
+        // `a + x >= -3` with `a <= 3` gives `x >= -6`. drop_ends repeats the two disjunctions
+        // `k` times, the `j`-th moved by `j`.
+        "drop_end" | "drop_ends" => {
+            names.push("z".into());
+            tests.extend(boxed_from(&["a", "x", "y", "z"], -8, 8));
+            tests.push(le(times(3, "a"), add(var("z"), int(2))));
+            let js = if name == "drop_end" { 0..1 } else { 0..ki };
+            for j in js.clone() {
+                tests.push(or(
+                    ge(var("a"), int(-3 - j)),
+                    eq(var("y"), sub(var("z"), int(1 + j))),
+                ));
+            }
+            for j in js {
+                tests.push(and(
+                    or(
+                        ge(add(var("a"), var("x")), int(-3 - j)),
+                        eq(var("x"), var("z")),
+                    ),
+                    or(
+                        ge(var("x"), int(4 + j)),
+                        ge(var("z"), add(times(2, "a"), int(j))),
+                    ),
+                ));
+            }
+            around(&["a", "x", "y", "z"], 9)
         }
         // `x`, `y` in 0..=10, then `x == 0 || y == 0`, `x == 1 || y == 1`, two steps, and
         // `x + y <= 10`.
@@ -1248,6 +1280,13 @@ fn upper_release_against_the_oracle() {
 }
 
 #[test]
+fn drop_end_against_the_oracle() {
+    // A disjunction is projected in a case when an arm bounds an end only through a name
+    // whose end is finite (`y == z - 1` with `y >= -8`).
+    exact("drop_end", 1, "a=[-8..=3] x=[-7..=8] y=[-8..=8] z=[-8..=8]");
+}
+
+#[test]
 fn coord3_against_the_oracle() {
     // `y <= 4`: for `y >= 5` the step gives `x >= 10`, so `x + y >= 15` and `x + 2 * y >= 20`,
     // and neither arm of the last test holds; (10, 4) meets every test. The threshold
@@ -1516,7 +1555,7 @@ fn audit_seeds_64_to_95() {
 
 #[test]
 fn audit_seeds_96_to_127() {
-    audit_counts(96..128, 135, 110);
+    audit_counts(96..128, 136, 111);
 }
 
 /// The record of the audit at `seed` and `step`, as the scope and the oracle give it.
@@ -1529,43 +1568,44 @@ fn record(seed: u64, step: usize) -> (String, String) {
     (r.got, r.found)
 }
 
-/// Audit record 85:8 (85:7 is the same). Lost: `y >= -1`, which the tests up to step 7
-/// prove and (a, x, y, z) = (1, -1, -1, -1) attains. Seed 85 is odd, so the oracle lists
-/// `-12..=12` only; its `z <= 5` comes from step 7's `y - 2z >= 1` with `y <= 12` and is not
-/// a fact of the unbounded names.
+/// Audit record 85:8 (85:7 is the same): `y >= -1`, which the tests up to step 7 prove and
+/// (a, x, y, z) = (1, -1, -1, -1) attains, found by a part whose arms bound `y` only with
+/// rows derived through what it is projected with (LAZY-hub-unsolved). Seed 85 is odd, so the
+/// oracle lists `-12..=12` only; its `z <= 5` comes from step 7's `y - 2z >= 1` with `y <= 12`
+/// and is not a fact of the unbounded names.
 #[test]
 fn audit_record_85_8() {
     assert_eq!(
         record(85, 8),
         (
-            "a=[..] x=[..] y=[..] z=[..]".into(),
+            "a=[..] x=[..] y=[-1..] z=[..]".into(),
             "a=[..] x=[..] y=[-1..] z=[..=5]".into()
         )
     );
 }
 
-/// Audit record 108:3. Lost: `x >= -7`. Step 0 bounds `a <= 3` in the box `-8..=8`, so at
-/// `x = -8` the first part of step 3 needs `x == z`, and its second part `z >= 2a`, so
-/// `a <= -4`; step 1 then needs `z - y == 1`, so `y = -9`, outside the box.
+/// Audit record 108:3: `x >= -7`, found as in the family drop_end. Step 0 bounds `a <= 3` in the
+/// box `-8..=8`, so at `x = -8` the first part of step 3 needs `x == z`, and its second part
+/// `z >= 2a`, so `a <= -4`; step 1 then needs `z - y == 1`, so `y = -9`, outside the box.
 #[test]
 fn audit_record_108_3() {
     assert_eq!(
         record(108, 3),
         (
-            "a=[-8..=3] x=[-8..=8] y=[-8..=8] z=[-8..=8]".into(),
+            "a=[-8..=3] x=[-7..=8] y=[-8..=8] z=[-8..=8]".into(),
             "a=[-8..=3] x=[-7..=8] y=[-8..=8] z=[-8..=8]".into()
         )
     );
 }
 
-/// Audit record 115:3. Lost: `y >= -3`. Step 3's first arm gives it directly; its second arm
+/// Audit record 115:3: `y >= -3`. Step 3's first arm gives it directly; its second arm
 /// `y >= 2z + 2`, with steps 0 and 1, gives `y >= 3`.
 #[test]
 fn audit_record_115_3() {
     assert_eq!(
         record(115, 3),
         (
-            "a=[..] x=[..] y=[..] z=[..]".into(),
+            "a=[..] x=[..] y=[-3..] z=[..]".into(),
             "a=[..] x=[..] y=[-3..] z=[..]".into()
         )
     );
@@ -1633,6 +1673,11 @@ fn rows_one_pair_scales() {
 #[test]
 fn wide_pairs_scale() {
     scales("wide_pairs", 8, 1);
+}
+
+#[test]
+fn drop_ends_scale() {
+    scales("drop_ends", 8, 1);
 }
 
 #[test]

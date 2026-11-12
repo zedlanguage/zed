@@ -569,9 +569,9 @@ pub struct Scope {
     /// joined with the other cases and never shown: a constraint of the case that joins a
     /// group of linked constraints makes no part due ([`Block::outer`]).
     in_case: bool,
-    /// The ends the two-name rule of [`Block::reframe`] has projected for on this path of
-    /// tests, each a name and whether its lower end: each is projected for once.
-    spent: imbl::OrdSet<(Arc<str>, bool)>,
+    /// The entries of [`Block::bounds`] the two-name rule of [`Block::reframe`] has projected
+    /// for on this path of tests: each is projected for once.
+    spent: imbl::OrdSet<BoundsKey>,
 }
 
 /// A name's `let` binding in a [`Scope`]; the order of its binding is in [`Scope::orders`].
@@ -2074,6 +2074,8 @@ struct Part {
     of: Option<Arc<Formula>>,
     names: Vec<Arc<str>>,
     role: Role,
+    /// Its entries in [`Block::bounds`] ([`bounds_at`]).
+    bounds: Vec<(BoundsKey, Turn)>,
 }
 
 /// What reads a part's conjunct besides its own projection, found once as the part is added.
@@ -2246,9 +2248,9 @@ struct Block {
     /// The parts the two-name rule of [`Block::reframe`] made due at the last update, projected
     /// whatever their records say.
     fired: BTreeSet<PartAt>,
-    /// The ends the two-name rule of [`Block::reframe`] projected for at the last update, each
-    /// a name and whether its lower end, spent once the block is kept ([`Scope::spent`]).
-    spends: Vec<(Arc<str>, bool)>,
+    /// The entries of [`Block::bounds`] the two-name rule of [`Block::reframe`] projected for
+    /// at the last update, spent once the block is kept ([`Scope::spent`]).
+    spends: Vec<BoundsKey>,
     /// The parts whose records were taken away or changed since the block was kept
     /// ([`Seen::drop_part`]), due at its next projection.
     forgot: imbl::OrdSet<PartAt>,
@@ -2475,11 +2477,9 @@ impl Block {
                 let tree = self.stairs.entry((x, y)).or_default();
                 *tree = tree.insert((b, a));
             }
-            for (key, turn) in bounds_at(g) {
-                let by = self.bounds.entry(key).or_default();
-                by.entry(turn).or_default().insert(at.clone());
-            }
         }
+        let bounds = (of.as_ref()).map_or_else(Vec::new, |g| bounds_at(g, &with, &self.names_at));
+        self.index_bounds(&at, &bounds);
         self.added.push(key.clone());
         let part = Part {
             key,
@@ -2487,6 +2487,7 @@ impl Block {
             of,
             names,
             role,
+            bounds,
         };
         self.parts.insert(at, Arc::new(part));
     }
@@ -2561,18 +2562,31 @@ impl Block {
                 }
             }
         }
-        for (key, turn) in bounds_at(g) {
-            let Some(by) = self.bounds.get_mut(&key) else {
+        self.unindex_bounds(at, &part.bounds);
+    }
+
+    /// Puts `entries` of the part at `at` in [`Block::bounds`].
+    fn index_bounds(&mut self, at: &PartAt, entries: &[(BoundsKey, Turn)]) {
+        for (key, turn) in entries {
+            let by = self.bounds.entry(key.clone()).or_default();
+            by.entry(turn.clone()).or_default().insert(at.clone());
+        }
+    }
+
+    /// Takes them out again.
+    fn unindex_bounds(&mut self, at: &PartAt, entries: &[(BoundsKey, Turn)]) {
+        for (key, turn) in entries {
+            let Some(by) = self.bounds.get_mut(key) else {
                 continue;
             };
-            if let Some(ps) = by.get_mut(&turn) {
+            if let Some(ps) = by.get_mut(turn) {
                 ps.remove(at);
                 if ps.is_empty() {
-                    by.remove(&turn);
+                    by.remove(turn);
                 }
             }
             if by.is_empty() {
-                self.bounds.remove(&key);
+                self.bounds.remove(key);
             }
         }
     }
@@ -2590,7 +2604,7 @@ impl Block {
         changed: &BTreeSet<BTreeMap<Atom, Int>>,
         due: &mut BTreeSet<PartAt>,
         groups: bool,
-        spent: &imbl::OrdSet<(Arc<str>, bool)>,
+        spent: &imbl::OrdSet<BoundsKey>,
     ) -> bool {
         let cons: Vec<&Arc<Formula>> = self.cons.iter().collect();
         let split = Split::new(&cons, self.leaf.as_ref());
@@ -2692,23 +2706,29 @@ impl Block {
         // on staircase parts). COMPLEXITY.md C52.
         // Inside the cases, a case's constraint on two names `u` and `v` reaches the
         // disjunctions on them whose arms it all makes bound an end of `u` or `v` that some arm
-        // does not bound alone, found in [`Block::bounds`] ([`bounds_at`]). Projected with the
+        // does not bound alone, with the constraints the part is projected with, found in
+        // [`Block::bounds`] ([`bounds_at`]). Projected with the
         // case's constraints, such a part bounds that end in every arm. The end may be finite
         // already: with `0 <= x <= 10` and `0 <= y <= 10`, the disjunction
         // `x <= 1 || (y == 5 && 4 <= x <= 6) || (y >= 10 && x >= 7)` keeps `x` in 0..=10, and
         // its last arm does not bound `x` above alone; in the case `x + y <= 10` that arm is
         // empty and the second gives `x <= 5`, so `x` is in 0..=5 there. Such a part is
         // projected (`fired`), keyed as outside the cases so that the join keeps its record,
-        // and the end is spent on this path of tests ([`Scope::spent`]).
+        // and the entry of the index the end was found by (the two names, the end and the side
+        // of it) is spent on this path of tests ([`Scope::spent`]).
         // Complexity tradeoff: naive version, the parts found projected in each case, O(k) per
         // case when k parts are found and the end stays open, O(k^2) over k tests on the parts
         // `x >= i || y <= -1000 + i` and the tests `x + y <= -j || z >= j`, whose second case
-        // never bounds `y`. Used: each end projected for once on a path of tests, O(log k) per
-        // end and direction of a case's constraint, and O(log k + f) for the f parts found the
-        // one time, so O(n log n) in all for n parts and constraints; lost against the naive
-        // version: a part that would bound the end again in a later test, after a join that
-        // dropped the first bound, or after a firing on a finite end that moved nothing.
-        // COMPLEXITY.md C52, LAZY-hub-finite.
+        // never bounds `y`. Used: each entry projected for once on a path of tests, O(log k)
+        // per end and direction of a case's constraint, and O(log k + f) for the f parts found
+        // the one time, so O(n log n) in all for n parts and constraints, as each part has
+        // O(m) entries for its m rows; lost against the naive version: a part that would bound
+        // the end again by the same entry in a later test, after a join that dropped the first
+        // bound, or after a firing on a finite end that moved nothing. Spending the end itself
+        // for both sides and every pair of names lost more: at seed 85, `y`'s lower end spent
+        // by `a + 2 * y >= 3` hid the part `x + y >= -1 || x + 3 * z >= -4` from the later
+        // `y >= 2 * a - 1`, which bounds it from the other side. COMPLEXITY.md C52,
+        // LAZY-hub-finite, LAZY-hub-unsolved.
         if !groups {
             for t in changed {
                 for c in self.split.on.get(t).into_iter().flatten() {
@@ -2718,17 +2738,11 @@ impl Block {
                     let (Factor::Sym(un), Factor::Sym(vn)) = (&u, &v) else {
                         continue;
                     };
-                    // Each end: [lower u, upper u, lower v, upper v].
-                    let ends = [(un, true), (un, false), (vn, true), (vn, false)];
                     let mut qs = vec![q.clone()];
                     if c.rel == Rel::Eq {
                         qs.push([-&q[0], -&q[1]]);
                     }
                     for end in 0..4u8 {
-                        let (n, low) = ends[usize::from(end)];
-                        if spent.contains(&(n.clone(), low)) {
-                            continue;
-                        }
                         for q in &qs {
                             let q = turned(end, q);
                             // Both coefficients of a constraint on two names are nonzero.
@@ -2737,6 +2751,9 @@ impl Block {
                             }
                             let left = q[1].is_positive();
                             let key = (un.clone(), vn.clone(), end, left);
+                            if spent.contains(&key) {
+                                continue;
+                            }
                             let Some(by) = self.bounds.get(&key) else {
                                 continue;
                             };
@@ -2747,7 +2764,7 @@ impl Block {
                                 (std::ops::Bound::Unbounded, std::ops::Bound::Excluded(q))
                             };
                             for (_, ps) in by.range(range) {
-                                self.spends.push((n.clone(), low));
+                                self.spends.push(key.clone());
                                 self.fired.extend(ps.iter().cloned());
                                 due.extend(ps.iter().cloned());
                             }
@@ -2756,6 +2773,7 @@ impl Block {
                 }
             }
         }
+        let names_at = self.names_at.clone();
         for at in on {
             let Some(part) = self.parts.get_mut(&at) else {
                 continue;
@@ -2765,7 +2783,16 @@ impl Block {
             };
             let with = self.split.with(g, &self.outer);
             if with != part.with {
-                Arc::make_mut(part).with = with;
+                // The part's entries in `bounds` read what it is projected with.
+                let bounds = bounds_at(g, &with, &names_at);
+                let part = Arc::make_mut(part);
+                part.with = with;
+                let was = (bounds != part.bounds)
+                    .then(|| std::mem::replace(&mut part.bounds, bounds.clone()));
+                if let Some(was) = was {
+                    self.unindex_bounds(&at, &was);
+                    self.index_bounds(&at, &bounds);
+                }
                 due.insert(at);
             }
         }
@@ -2802,7 +2829,7 @@ impl Block {
         relation: &Conjuncts,
         names: &imbl::OrdMap<Arc<str>, Product>,
         groups: bool,
-        spent: &imbl::OrdSet<(Arc<str>, bool)>,
+        spent: &imbl::OrdSet<BoundsKey>,
     ) -> Option<(Block, BTreeSet<PartAt>)> {
         let blocks = relation.blocks();
         if blocks.is_apart(self.id) != self.apart {
@@ -4454,13 +4481,12 @@ impl Scope {
             lazy: self.lazy || other.lazy,
             in_case: self.in_case && other.in_case,
             spent: {
-                // An end either side spent is spent on the join, so that no later test
+                // An entry either side spent is spent on the join, so that no later test
                 // projects for it again on this path: a bound on the work, not a fact of the
                 // products.
-                // Complexity tradeoff: O(d log s) for the d ends spent on one side only, of s
-                // spent, at most two per name, as the diff of `names` above; the naive
-                // version, the intersection, would let each side of every later test spend
-                // the end again.
+                // Complexity tradeoff: O(d log s) for the d entries spent on one side only, of
+                // s spent, as the diff of `names` above; the naive version, the intersection,
+                // would let each side of every later test spend the entry again.
                 let mut spent = self.spent.clone();
                 for d in self.spent.diff(&other.spent) {
                     if let imbl::ordset::DiffItem::Add(e) = d {
@@ -9300,6 +9326,79 @@ fn in_cone(t: &[Int; 2], gens: &[[Int; 2]]) -> bool {
     matches!((right, left), (Some(r), Some(l)) if cross(r, l).is_positive())
 }
 
+/// The constraints among the conjuncts of `f`.
+fn rows(f: &Formula) -> impl Iterator<Item = &Con> + Clone {
+    let gs = match f {
+        Formula::And(gs) => gs,
+        _ => std::slice::from_ref(f),
+    };
+    gs.iter().filter_map(|g| match g {
+        Formula::Con(c) => Some(c),
+        _ => None,
+    })
+}
+
+/// The directions `d` holds with one name's term left out, each with that name: the name's
+/// end that the direction reads is finite in `names`, so the rest of the row is bounded in
+/// that direction too. `z - y - 1 >= 0` with `y >= -8` holds `z >= -7`, a row on `z` alone; an
+/// equality gives both directions. The constant is kept as it was: [`Block::bounds`] reads
+/// only the directions of rows. LAZY-hub-unsolved (seed 108).
+fn dropped(d: &Con, names: &imbl::OrdMap<Arc<str>, Product>) -> Vec<(Con, Atom)> {
+    if d.lin.terms.len() < 2 {
+        return Vec::new();
+    }
+    let signs: &[i64] = if d.rel == Rel::Eq { &[1, -1] } else { &[1] };
+    let mut out = Vec::new();
+    for &s in signs {
+        let lin = d.lin.times(Int::from(s));
+        for (w, k) in &lin.terms {
+            let Atom::Sym(n) = w else { continue };
+            let Some((lo, hi)) = names.get(n).and_then(|p| p.ints().bounds()) else {
+                continue;
+            };
+            // `k * w` is at most `k` times `w`'s upper end when `k` is positive.
+            if matches!(if k.is_positive() { hi } else { lo }, End::Fin(_)) {
+                let mut lin = lin.clone();
+                lin.terms.remove(w);
+                out.push((Con { lin, rel: Rel::Ge }, w.clone()));
+            }
+        }
+    }
+    out
+}
+
+/// Each sum of `r` and a row of `with` that holds a name `r` lacks, times
+/// positive numbers (of either sign for an equality), in which a name they share cancels.
+fn cancelled<'a>(r: &Con, with: impl Iterator<Item = &'a Con>) -> Vec<(Con, Atom)> {
+    let mut out = Vec::new();
+    let new = |c: &&Con| c.lin.terms.keys().any(|x| !r.lin.terms.contains_key(x));
+    for c in with.filter(new) {
+        for (x, a) in &r.lin.terms {
+            let Some(b) = c.lin.terms.get(x) else {
+                continue;
+            };
+            let (l, m) = if a.is_positive() != b.is_positive() {
+                (b.abs(), a.abs())
+            } else if c.rel == Rel::Eq {
+                (b.abs(), -&a.abs())
+            } else if r.rel == Rel::Eq {
+                (-&b.abs(), a.abs())
+            } else {
+                continue;
+            };
+            let rel = if r.rel == c.rel { r.rel } else { Rel::Ge };
+            out.push((
+                Con {
+                    lin: r.lin.times(l).plus(&c.lin.times(m)),
+                    rel,
+                },
+                x.clone(),
+            ));
+        }
+    }
+    out
+}
+
 /// Where a disjunction stands in [`Block::bounds`]: two names in order, an end of one of them
 /// (0 and 1 the lower and upper end of the first, 2 and 3 of the second), and whether a
 /// constraint that bounds it turns from that end to the left (`true`) or to the right.
@@ -9372,58 +9471,95 @@ fn turned(end: u8, n: &[Int; 2]) -> [Int; 2] {
 #[derive(Default)]
 struct ArmNormals {
     pairs: BTreeMap<NamePair, Normals>,
-    unary: BTreeMap<Arc<str>, (bool, bool)>,
+    unary: BTreeMap<Arc<str>, Signs>,
+}
+
+/// How many rows on one name bound it below and above, in all and among those reached by
+/// eliminating each other name ([`ArmNormals::of`]).
+#[derive(Default)]
+struct Signs {
+    all: [usize; 2],
+    cut: BTreeMap<Atom, [usize; 2]>,
+}
+
+/// A row and the names eliminated to reach it.
+type Derived = (Con, Vec<Atom>);
+
+/// Each row of `rows` with each row `step` makes from it added, which also eliminates its name.
+fn derive(rows: &mut Vec<Derived>, step: impl Fn(&Con) -> Vec<(Con, Atom)>) {
+    let more: Vec<Derived> = (rows.iter())
+        .flat_map(|(d, cut)| {
+            let step = step(d).into_iter();
+            step.map(|(e, x)| (e, cut.iter().cloned().chain([x]).collect()))
+        })
+        .collect();
+    rows.extend(more);
 }
 
 impl ArmNormals {
-    fn of(arm: &Formula) -> Self {
+    /// The rows of `arm`, each also added to a row of `context` and then to an equality of
+    /// `context`, cancelling a name they share ([`cancelled`]), and then each of those with a
+    /// name left out whose end it reads is finite in `names` ([`dropped`]).
+    fn of(arm: &Formula, context: &[&Con], names: &imbl::OrdMap<Arc<str>, Product>) -> Self {
+        let eqs = || context.iter().copied().filter(|c| c.rel == Rel::Eq);
         let mut out = Self::default();
-        let mut add = |c: &Con| {
-            let mut it = c.lin.terms.iter();
-            match (it.next(), it.next(), it.next()) {
-                (Some((Atom::Sym(u), a)), Some((Atom::Sym(v), b)), None) => {
-                    let ns = out.pairs.entry((u.clone(), v.clone())).or_default();
-                    ns.push([a.clone(), b.clone()]);
-                    if c.rel == Rel::Eq {
-                        ns.push([-a, -b]);
-                    }
-                }
-                (Some((Atom::Sym(u), a)), None, None) => {
-                    if a.is_zero() {
-                        return;
-                    }
-                    let signs = out.unary.entry(u.clone()).or_default();
-                    signs.0 |= a.is_positive() || c.rel == Rel::Eq;
-                    signs.1 |= a.is_negative() || c.rel == Rel::Eq;
-                }
-                _ => {}
+        for r in rows(arm) {
+            let mut ds = vec![(r.clone(), Vec::new())];
+            derive(&mut ds, |d| cancelled(d, context.iter().copied()));
+            derive(&mut ds, |d| cancelled(d, eqs()));
+            derive(&mut ds, |d| dropped(d, names));
+            for (c, cut) in &ds {
+                out.add(c, cut);
             }
-        };
-        match arm {
-            Formula::Con(c) => add(c),
-            Formula::And(gs) => {
-                for g in gs.iter() {
-                    if let Formula::Con(c) = g {
-                        add(c);
-                    }
+        }
+        out
+    }
+
+    fn add(&mut self, c: &Con, cut: &[Atom]) {
+        let mut it = c.lin.terms.iter();
+        match (it.next(), it.next(), it.next()) {
+            (Some((Atom::Sym(u), a)), Some((Atom::Sym(v), b)), None) => {
+                let ns = self.pairs.entry((u.clone(), v.clone())).or_default();
+                ns.push([a.clone(), b.clone()]);
+                if c.rel == Rel::Eq {
+                    ns.push([-a, -b]);
+                }
+            }
+            (Some((Atom::Sym(u), a)), None, None) if !a.is_zero() => {
+                let below = a.is_positive() || c.rel == Rel::Eq;
+                let above = a.is_negative() || c.rel == Rel::Eq;
+                let count = |counts: &mut [usize; 2]| {
+                    counts[0] += usize::from(below);
+                    counts[1] += usize::from(above);
+                };
+                let signs = self.unary.entry(u.clone()).or_default();
+                count(&mut signs.all);
+                for x in cut {
+                    count(signs.cut.entry(x.clone()).or_default());
                 }
             }
             _ => {}
         }
-        out
     }
+
+    /// The normals of the arm's rows on `u` and `v`: those on the pair, and those on one of
+    /// them alone that were not reached by eliminating the other. On the pair, a row on `u`
+    /// reached by eliminating `v` through `with` reads `with`'s bound on `v`, which a
+    /// constraint on `u` and `v` may narrow: at seed 108, the arm `a >= -3` with
+    /// `3 * a <= z + 2` holds `z >= -11`, which the case `z >= 2 * a` narrows to `z >= -6`.
     fn on(&self, u: &Arc<str>, v: &Arc<str>) -> Vec<[Int; 2]> {
         let mut out = self
             .pairs
             .get(&(u.clone(), v.clone()))
             .cloned()
             .unwrap_or_default();
-        for (n, axis) in [(u, 0), (v, 1)] {
-            if let Some(&(positive, negative)) = self.unary.get(n) {
-                for sign in [positive.then_some(1), negative.then_some(-1)]
-                    .into_iter()
-                    .flatten()
-                {
+        for (axis, n, other) in [(0, u, v), (1, v, u)] {
+            let Some(signs) = self.unary.get(n) else {
+                continue;
+            };
+            let cut = signs.cut.get(&Atom::Sym(other.clone()));
+            for (side, sign) in [(0, 1), (1, -1)] {
+                if signs.all[side] > cut.map_or(0, |c| c[side]) {
                     let mut p = [Int::ZERO, Int::ZERO];
                     p[axis] = Int::from(sign);
                     out.push(p);
@@ -9434,10 +9570,20 @@ impl ArmNormals {
     }
 }
 
-/// The entries of the disjunction `g` in [`Block::bounds`]: for two names of a constraint of
-/// `g` on two names (or the two names of `g`'s constraints on one name, when there are two),
-/// and each end of each, when some arm does not bound that end by its constraints on the two
-/// names alone, the directions of a constraint on them that makes every arm bound it.
+/// The entries of the disjunction `g`, projected with `with`, in [`Block::bounds`]: for two
+/// names of a row of an arm on two names (or two names of the arms' rows on one name: when
+/// there are just two, or when a row of `with` is on them), and each end of each, when some
+/// arm does not bound that end by its rows on the two names alone, the directions of a
+/// constraint on them that makes every arm bound it. An arm's rows are its constraints, each
+/// also added to a constraint of `with` and then to an equality of `with` so that a name
+/// cancels, and then with a name left out whose end the row reads is finite
+/// ([`ArmNormals::of`]): rows that hold in the arm
+/// projected with `with`, so that a constraint reaches the part through `with` as through the
+/// arm. With `x + 3 * z >= 1`, the arm `3 * x <= y` holds `y + 9 * z >= 3`, so in the case
+/// `y >= 2 * z + 2` it bounds `y` below, as the arm `z >= 1` does. The constraints of `with`
+/// so used are those on the names of `g`, and for each name of `g` one equality of two names
+/// that holds it, which gives the arm's rows on the other name: with `a == x + 2`, the arm
+/// `2 * a <= y + 1` holds `2 * x <= y - 3`, a row on `x` and `y`.
 ///
 /// In the frame of the end ([`turned`]), an arm whose normals `N` do not hold `(1, 0)` in their
 /// cone holds it in the cone of `N` and `q` exactly when `(1, 0)` lies in the cone of `q` and
@@ -9448,78 +9594,108 @@ impl ArmNormals {
 /// the axis, so the arcs of the arms meet in one arc, from the greatest `-l` to the least `-r`.
 /// The entry of a side is that end of the arc, none when the arc stops at the axis there.
 // Complexity tradeoff: rescanning m rows for p pairs costs O(p*m); even grouping rows and
-// then reading a slots per pair costs O(p*a). Grouping each arm once and accumulating only
-// present pair/arm entries costs O(m log m). Without unary rows, a missing arm contributes
-// no entry: a non-axis query alone cannot bound an axis. With unary rows the index handles
-// disjunctions wholly on the same two names (p=1), again O(m log m). Mixed unary supports
-// on three or more names keep M1's scheduling; their additional pair firings are omitted.
-fn bounds_at(g: &Formula) -> Vec<(BoundsKey, Turn)> {
+// then reading a slots per pair costs O(p*a). Grouping each arm once and counting the arms
+// with rows on each pair and on each name alone costs O(m log m), and the arms are read only
+// for a pair whose counts reach a, O(a) each. A missing arm contributes no entry: a non-axis
+// query alone cannot bound an axis. The rows added from `with`: naive version, Fourier-Motzkin
+// elimination of every other name from the arm and `with` for each pair, exponential in the
+// names; or each row of the arm added to every row of `with`, O(m * w) for w rows of `with`,
+// which made `persist` grow faster (R 51.0 to 55.9: its w rows `x + j * y >= -1000` sit on the
+// arm's own pair), and then to every equality, O(m * w * e): a block made anew at each of k
+// tests `a + b - zi == i` (its equalities change) held k of them in `with`, O(k^2) rows per
+// test and O(k^3) in all (the pendants scale test, 172 times the bytes at 8n). Used: the rows
+// of `with` on the names of `g` and one equality of two names for each name of `g`, chosen in
+// one pass, O(w * t log s) for rows of t names and s names of `g`, so that what is added does
+// not grow with the rows of `with` on other names; of those, the w' that hold a name the
+// arm's row lacks, which are the ones that can carry it to a new pair, give O(m * w') rows,
+// then one equality each, O(m * w' * e'), then each of those with one name left out,
+// O(m * w' * e' * t). Lost: a bound that needs two inequalities of `with` chained, or a row
+// of `with` with a name outside `g` other than an equality of two names (`b - zi` from
+// `a + b - zi == i` and the arm `a <= 2`), or another such equality of the same name.
+// Pairs of names that only rows on one name reach: naive version, every pair
+// of such names, O(s^2) for s names, quadratic on two arms of s bounds each. Used: the pair
+// when there are just two, and the pairs a row of `with` is on, O(w log s); lost: a pair no
+// row of `with` relates, which a case's constraint on it alone would make bound. The entries
+// are kept with the part and made again when `with` changes, which already makes the part
+// due (`Block::reframe`); lost: an end that becomes finite after that, until `with` changes
+// again. LAZY-hub-unsolved.
+fn bounds_at(
+    g: &Formula,
+    with: &PartWith,
+    names: &imbl::OrdMap<Arc<str>, Product>,
+) -> Vec<(BoundsKey, Turn)> {
     let Formula::Or(arms) = g else {
         return Vec::new();
     };
-    let mut pairs: BTreeSet<(Arc<str>, Arc<str>)> = BTreeSet::new();
-    let mut ones: BTreeSet<Arc<str>> = BTreeSet::new();
-    for c in g.cons() {
-        let mut syms = c.lin.terms.keys().map(|a| match a {
-            Atom::Sym(n) => Some(n.clone()),
-            _ => None,
-        });
-        match (syms.next(), syms.next(), syms.next()) {
-            (Some(Some(u)), Some(Some(v)), None) => {
-                // Both orders: a lookup by either order of the two names finds the entry.
-                pairs.insert((u.clone(), v.clone()));
-                pairs.insert((v, u));
-            }
-            (Some(Some(u)), None, None) => {
-                ones.insert(u);
-            }
-            _ => {}
+    let own = g.atoms();
+    let mut context = Vec::new();
+    let mut renamed = BTreeSet::new();
+    for c in with.0.iter().chain(with.1.iter().flat_map(|f| rows(f))) {
+        let mut on = c.lin.terms.keys();
+        if on.clone().all(|x| own.contains(x))
+            || (c.rel == Rel::Eq
+                && c.lin.terms.len() == 2
+                && on.any(|x| own.contains(x) && renamed.insert(x.clone())))
+        {
+            context.push(c);
         }
     }
-    if let [u, v] = &ones.into_iter().collect::<Vec<_>>()[..] {
-        pairs.insert((u.clone(), v.clone()));
+    let grouped: Vec<ArmNormals> = arms
+        .iter()
+        .map(|a| ArmNormals::of(a, &context, names))
+        .collect();
+    // The number of arms with rows on each pair of names, and on each name alone.
+    let mut held: BTreeMap<NamePair, usize> = BTreeMap::new();
+    let mut ones: BTreeMap<&Arc<str>, usize> = BTreeMap::new();
+    for a in &grouped {
+        a.pairs
+            .keys()
+            .for_each(|p| *held.entry(p.clone()).or_default() += 1);
+        a.unary
+            .keys()
+            .for_each(|n| *ones.entry(n).or_default() += 1);
     }
-    let grouped: Vec<ArmNormals> = arms.iter().map(ArmNormals::of).collect();
-    let unary = grouped.iter().any(|a| !a.unary.is_empty());
-    if unary && syms(g).len() != 2 {
-        return Vec::new();
-    }
-    let mut sparse: BTreeMap<NamePair, Vec<Normals>> = BTreeMap::new();
-    if !unary {
-        for arm in &grouped {
-            for (pair, ns) in &arm.pairs {
-                sparse.entry(pair.clone()).or_default().push(ns.clone());
-            }
+    // The pairs of names of rows on one name that a row of `with` is on.
+    for c in &context {
+        let mut it = c.lin.terms.keys();
+        if let (Some(Atom::Sym(u)), Some(Atom::Sym(v)), None) = (it.next(), it.next(), it.next())
+            && ones.contains_key(u)
+            && ones.contains_key(v)
+        {
+            held.entry((u.clone(), v.clone())).or_default();
         }
+    }
+    if let [u, v] = &ones.keys().collect::<Vec<_>>()[..] {
+        held.entry((Arc::clone(u), Arc::clone(v))).or_default();
     }
     let mut out = Vec::new();
-    for (u, v) in pairs {
-        let normals: Vec<Vec<[Int; 2]>> = if unary {
-            grouped.iter().map(|a| a.on(&u, &v)).collect()
-        } else {
-            let Some(ns) = sparse.remove(&(u.clone(), v.clone())) else {
-                continue;
-            };
-            if ns.len() != arms.len() {
-                continue;
-            }
-            ns
-        };
+    for ((u, v), k) in held {
+        // An arm with no row on `u` and `v` is bounded at no end by a constraint on them.
+        let alone = |n: &Arc<str>| ones.get(n).copied().unwrap_or(0);
+        if k + alone(&u) + alone(&v) < arms.len() {
+            continue;
+        }
+        let normals: Vec<Normals> = grouped.iter().map(|a| a.on(&u, &v)).collect();
+        if normals.iter().any(Vec::is_empty) {
+            continue;
+        }
+        // The direction of each end, which [`turned`] turns to the positive first axis.
+        let axes = [[1, 0], [-1, 0], [0, 1], [0, -1]];
         for end in 0..4u8 {
-            let axis = [Int::from(1), Int::from(0)];
+            let axis = axes[usize::from(end)].map(Int::from);
             let (mut lo, mut hi) = (Some(None::<Turn>), Some(None::<Turn>));
             let mut gained = false;
             for ns in &normals {
-                let ns: Vec<[Int; 2]> = ns.iter().map(|n| turned(end, n)).collect();
-                if in_cone(&axis, &ns) {
+                if in_cone(&axis, ns) {
                     continue;
                 }
                 gained = true;
-                let above = ns.iter().filter(|n| n[1].is_positive());
-                let below = ns.iter().filter(|n| n[1].is_negative());
+                let ns = ns.iter().map(|n| turned(end, n));
+                let above = ns.clone().filter(|n| n[1].is_positive());
+                let below = ns.filter(|n| n[1].is_negative());
                 // The nearest normal above the axis is the one no other is clockwise of.
-                let l = above.min_by(|a, b| Turn((*a).clone()).cmp(&Turn((*b).clone())));
-                let r = below.max_by(|a, b| Turn((*a).clone()).cmp(&Turn((*b).clone())));
+                let l = above.min_by(|a, b| Turn(a.clone()).cmp(&Turn(b.clone())));
+                let r = below.max_by(|a, b| Turn(a.clone()).cmp(&Turn(b.clone())));
                 let lo_arm = l.map(|n| Turn([-&n[0], -&n[1]]));
                 let hi_arm = r.map(|n| Turn([-&n[0], -&n[1]]));
                 lo = match (lo, lo_arm) {
