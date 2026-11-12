@@ -2851,6 +2851,17 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.classes[r].resolved.is_none().then_some(r)
     }
 
+    /// The root of the class of the variable `v`, unless that class was made a type variable
+    /// of a signature ([`Self::resolve`] gave it its own variable as its type): `v` then stands
+    /// for whatever type the caller passes, as a variable of a signature does, and a use that
+    /// read the class's type in its place would read `v` again without end.
+    fn class_root(&self, v: &str) -> Option<usize> {
+        let r = self.find(class_id(v).filter(|&k| k < self.classes.len())?);
+        let resolved = self.classes[r].resolved.as_ref();
+        let own = resolved.and_then(Ty::as_var).and_then(|w| class_id(w));
+        (own.map(|k| self.find(k)) != Some(r)).then_some(r)
+    }
+
     /// The class `t` is, if it is one and nothing else.
     fn class_of_ty(&self, t: &Ty) -> Option<usize> {
         match t.pieces().as_slice() {

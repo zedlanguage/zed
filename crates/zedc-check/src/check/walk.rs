@@ -6465,8 +6465,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// stands for whatever type the caller passes, an int among them.
     fn power_vars(&mut self, t: &Ty, p: &Arc<PowerUse>, span: Span) {
         for v in &t.vars {
-            let k = class_id(v).filter(|&k| k < self.classes.len());
-            let Some(r) = k.map(|k| self.find(k)) else {
+            let Some(r) = self.class_root(v) else {
                 let what = match (&p.exponent, &p.base) {
                     (Some(_), Some(b)) => format!("the base `{b}`"),
                     (Some(_), None) => "the base".into(),
@@ -6754,8 +6753,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// checked on what flows into it; on its type, if it has one by now.
     fn no_int_vars(&mut self, t: &Ty, d: &IntDomain, span: Span) {
         for v in &t.vars {
-            let k = class_id(v).filter(|&k| k < self.classes.len());
-            let Some(r) = k.map(|k| self.find(k)) else {
+            let Some(r) = self.class_root(v) else {
                 let what = &d.what;
                 let domain = domain_text(d);
                 self.error_offering(
@@ -11312,8 +11310,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // A class takes the use as a need, checked on each value that flows into it
                 // and at each call of a generic function (CHK-need-bound).
                 Piece::Var(v) => {
-                    let r = class_id(&v).filter(|&k| k < self.classes.len());
-                    let r = r.map(|k| self.find(k));
+                    let r = self.class_root(&v);
                     let given = match r.map(|r| (r, self.classes[r].resolved.clone())) {
                         Some((_, Some(t))) => self.sum(Arg::of(t), span),
                         Some((r, None)) => self.need(r, NeedKind::Sum, true, span),

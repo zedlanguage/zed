@@ -417,6 +417,23 @@ fn a_function_applied_to_itself_is_checked_once() {
     rejected("w(positional f) = f(f);", r#""${w(5)}""#);
 }
 
+#[test]
+fn a_type_variable_left_by_a_rejected_call_ends_the_check() {
+    // `h((0, 1))` is rejected, and its result keeps the type variable of `h`'s result, which
+    // stands for itself; `sum` and `^` on it once read the variable as its own type without
+    // end, and the checker overflowed its stack.
+    let h = "h(positional p) = p(len(p));";
+    for out in [r#""${sum(h((0, 1)))}""#, r#""${2^h((0, 1))}""#] {
+        let e = rejected(h, out);
+        assert!(e.contains("`h` does not take ((0, 1))"), "{e}");
+    }
+    // A class not yet given a type still takes `sum` and `^` as needs.
+    let s = "s(positional t) = sum(t);\npw(positional n) = 2^n;";
+    rejected(s, r#""${s(("a", 1))}""#);
+    rejected(s, r#""${pw(-1)}""#);
+    assert_eq!(runs(s, r#""${s((1, 2))} ${pw(3)}""#, ""), "3 8\n");
+}
+
 /// The program with these definitions and this body of `main`.
 fn program(defs: &str, body: &str) -> String {
     format!("{defs}\nmain(m: MainArgs) {{\n  {body}\n}}\n")
