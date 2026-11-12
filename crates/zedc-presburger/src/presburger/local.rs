@@ -27,8 +27,7 @@ use std::collections::HashMap;
 
 use zedc_int::int::Int;
 
-use super::formula::{Atom, Con, Formula, Lin, Model, Rel};
-use super::{Ends, hull_side};
+use super::formula::{Atom, Con, Ends, Formula, Lin, Model, Rel};
 
 /// One cluster of a part ([`super::clusters`]): its general rows and disjunctions with the
 /// difference rows on its atoms alone (`items`), and the bounds of each of its atoms (`ends`).
@@ -52,6 +51,11 @@ type Msg = (Option<Int>, Option<Int>);
 /// 1 for the greatest) of the hull of the atom over `cl`, given `m`, a point of `cl`; `None`
 /// where none is found. Each bound holds at every point of `cl` (see the module comment).
 ///
+/// `and` is [`Formula::and`], and `side` is the solver's search for one side of the hull of an
+/// atom over a formula, given a point of it (the parent module's `hull_side`). Both are written
+/// in the parent module and passed in, since called from here they would make an import cycle
+/// of this file and the parent (step S.1f).
+///
 /// Complexity tradeoff: one solver search for a side over the whole cluster cost
 /// O(sides × cluster) (one cluster of k links joined by a sum of one atom of each: 234 sides at
 /// k = 64, 41 times the instructions of k = 8). Here each block `B` is searched once for the
@@ -71,6 +75,8 @@ pub(super) fn cluster_sides(
     cl: &Cluster,
     m: &Model,
     asked: &[(Atom, i64)],
+    and: impl Fn(Vec<Formula>) -> Formula,
+    side: impl Fn(&Formula, &Atom, &Model, i64) -> Option<Int>,
 ) -> HashMap<(Atom, i64), Option<Int>> {
     let n_atoms = cl.ends.len();
     let index: HashMap<&Atom, usize> = (cl.ends.iter().enumerate())
@@ -263,11 +269,10 @@ pub(super) fn cluster_sides(
             .max()
             .map_or(0, |k| k + 1),
     );
-    let side = |f: &Formula, a: &Atom, m: &Model, dir: i64| hull_side(f, a, m, dir).ok().flatten();
     // What block `b`, with the constraints `fs`, gives about its cut node `x`.
     let message = |b: usize, x: usize, fs: &[Formula]| -> Msg {
         if !is_row(x) {
-            let f = Formula::and(fs.to_vec());
+            let f = and(fs.to_vec());
             let a = &cl.ends[x].0;
             return (side(&f, a, m, -1), side(&f, a, m, 1));
         }
@@ -279,7 +284,7 @@ pub(super) fn cluster_sides(
             lin: Lin::atom(fresh.clone()).minus(p),
             rel: Rel::Eq,
         }));
-        let f = Formula::and(fs);
+        let f = and(fs);
         let at: Model = [(fresh.clone(), p.eval_linear(m))].into_iter().collect();
         let inf = if c.rel == Rel::Eq {
             side(&f, &fresh, &at, -1)
@@ -344,7 +349,7 @@ pub(super) fn cluster_sides(
         for &y in &child_cuts[b] {
             constrain(b, y, &child_info[&y], &mut fs);
         }
-        let f = Formula::and(fs.clone());
+        let f = and(fs.clone());
         for &x in &nodes[b] {
             if is_cut(x) {
                 continue;

@@ -19,13 +19,13 @@
 // COMPLEXITY.md row S27.
 
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::mem;
 use std::slice;
 
-use super::formula::{Con, Formula, Id, Lin, Model, Names, Rel, Shared, Sig, as_is};
+use super::formula::{Atom, Con, Formula, Id, Lin, Model, Names, Rel, Shared, Sig, as_is};
 
 mod canon;
 
@@ -242,6 +242,26 @@ impl Formula {
                 }
             }
         }
+    }
+
+    /// Each constraint, in order, the constraints of a part held in more than one place listed
+    /// at its first place alone (`Formula::walk`), so the list is at most the number of
+    /// distinct parts and not the size of the formula written out. A caller that needs each
+    /// place, for a count or a position, cannot use it. Its callers in the compiler read it as
+    /// a set (`atoms`) or as a conjunction (`unbounded`), which a repeated constraint does not
+    /// change; `conjuncts::Conjuncts::cons` passes it on, conjunct by conjunct.
+    pub fn cons(&self) -> Vec<&Con> {
+        let mut out = Vec::new();
+        self.walk(&mut |c| out.push(c));
+        out
+    }
+
+    /// Each atom, in order.
+    pub fn atoms(&self) -> BTreeSet<Atom> {
+        self.cons()
+            .into_iter()
+            .flat_map(|c| c.lin.terms.keys().cloned())
+            .collect()
     }
 
     /// Whether the formula has a disjunction or a negation, which pushed in may make one.

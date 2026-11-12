@@ -36,8 +36,7 @@ use std::collections::BTreeMap;
 use zedc_int::int::Int;
 use zedc_lattice::interval::{End, IntervalSet, Num};
 
-use super::Conjuncts;
-use super::formula::{Atom, Con, Formula, Model, Rel};
+use super::formula::{Atom, Con, Conjuncts, Formula, Model, Rel};
 
 /// The least or the greatest value of a sum over a box: its finite part, and how many of its
 /// terms are unbounded on that side.

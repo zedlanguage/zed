@@ -52,8 +52,7 @@ use std::hash::BuildHasherDefault;
 use rustc_hash::FxHasher;
 use zedc_int::int::Int;
 
-use super::Conjuncts;
-use super::formula::{Atom, Con, Formula, Id, Model, Rel};
+use super::formula::{Atom, Con, Conjuncts, Formula, Id, Model, Rel, one_bound};
 use state::{Countdown, Interval, Latch, Meet, Once};
 use trial::Trial;
 
@@ -198,7 +197,7 @@ fn may_start(conjuncts: &Conjuncts) -> bool {
         match g {
             Formula::Con(c) if c.lin.terms.is_empty() => return true,
             Formula::Con(c) if c.rel == Rel::Eq && c.lin.terms.len() == 1 => return true,
-            Formula::Con(c) => ends.extend(super::one_bound(c)),
+            Formula::Con(c) => ends.extend(one_bound(c)),
             Formula::Or(ds) if ds.len() <= 1 => return true,
             Formula::Or(_) | Formula::And(_) | Formula::Not(_) => {}
         }

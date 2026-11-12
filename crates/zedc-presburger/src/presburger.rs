@@ -112,6 +112,13 @@ mod values;
 
 use forced::{Facts, Forced};
 pub use formula::{Atom, Con, Factor, Formula, Id, Lin, Model, Rel, Shared};
+use formula::{Ends, one_bound};
+use slack::{
+    DisjInfo, DisjointWide, HitKind, RowPlan, fill_row_model, has_product_con, meet_ends, no_batch,
+    no_slack, reduce_subset_wide_eqs, row_order, signed_ends, sweep_row, sweep_row_unbounded,
+    unary_bound,
+};
+pub use slack::{ROW_ORDER_SCAN, SLACKLESS, UNBATCHED};
 
 /// Why a question lies outside the fragment the solver decides. Each is reported in its own
 /// words (sec:diagnostics), and each is a property of the system's shape, never of its size
@@ -661,99 +668,12 @@ impl Formula {
         }
     }
 
-    /// Each constraint, in order, the constraints of a part held in more than one place listed
-    /// at its first place alone (`Formula::walk`), so the list is at most the number of
-    /// distinct parts and not the size of the formula written out. A caller that needs each
-    /// place, for a count or a position, cannot use it. Its callers in the compiler read it as
-    /// a set (`atoms`) or as a conjunction (`unbounded`), which a repeated constraint does not
-    /// change; `conjuncts::Conjuncts::cons` passes it on, conjunct by conjunct.
-    pub fn cons(&self) -> Vec<&Con> {
-        let mut out = Vec::new();
-        self.walk(&mut |c| out.push(c));
-        out
-    }
-
-    /// Each atom, in order.
-    pub fn atoms(&self) -> BTreeSet<Atom> {
-        self.cons()
-            .into_iter()
-            .flat_map(|c| c.lin.terms.keys().cloned())
-            .collect()
-    }
-
     /// Whether the formula holds at `values`; an absent atom is zero, and a product atom is
     /// read as the product of its factors' values.
     /// Each product is read where it is met, so a disjunct that is decided by its first part is
     /// not walked through.
     pub fn holds(&self, values: &Model) -> bool {
         self.holds_as(values)
-    }
-
-    /// The top-level conjuncts, with a conjunction kept among them ([`Formula::and_keeping`])
-    /// read as flattened into it; a conjunction kept at more than one place is read at its first.
-    fn conjuncts(&self) -> Vec<&Formula> {
-        match self.conjunct_list() {
-            Conjuncts::Read(out) => out,
-            flat => flat.iter().collect(),
-        }
-    }
-
-    /// [`Formula::conjuncts`], borrowed from the formula where no list need be made.
-    // A conjunction that holds no conjunction, or a formula that is none, is read as it stands,
-    // with no set of the conjunctions seen and no list made: O(1), where a list costs an
-    // allocation on each call. Only a conjunction that holds one is read into a list, O(c).
-    fn conjunct_list(&self) -> Conjuncts<'_> {
-        match self {
-            Formula::And(gs) if !gs.iter().any(|g| matches!(g, Formula::And(_))) => {
-                return Conjuncts::Flat(gs);
-            }
-            Formula::And(_) => {}
-            g => return Conjuncts::Flat(std::slice::from_ref(g)),
-        }
-        let mut out = Vec::new();
-        // An id is one number, so the seen set is hashed by `FxHasher`, not by the default
-        // hasher, which reads a per-thread seed on each call and costs more per id.
-        let mut seen: HashSet<Id, std::hash::BuildHasherDefault<rustc_hash::FxHasher>> =
-            HashSet::default();
-        let mut stack = vec![self];
-        while let Some(g) = stack.pop() {
-            match g {
-                Formula::And(gs) => {
-                    if seen.insert(Id::any(g)) {
-                        stack.extend(gs.iter().rev());
-                    }
-                }
-                g => out.push(g),
-            }
-        }
-        Conjuncts::Read(out)
-    }
-}
-
-/// The top-level conjuncts of a formula ([`Formula::conjunct_list`]): the operands of a
-/// conjunction that holds none, or the formula alone, as written; or a list read from nested
-/// conjunctions.
-enum Conjuncts<'f> {
-    Flat(&'f [Formula]),
-    Read(Vec<&'f Formula>),
-}
-
-impl<'f> Conjuncts<'f> {
-    /// Each conjunct, in order.
-    fn iter(&self) -> impl Iterator<Item = &'f Formula> + '_ {
-        let (flat, read): (&'f [Formula], &[&'f Formula]) = match self {
-            Conjuncts::Flat(gs) => (gs, &[]),
-            Conjuncts::Read(gs) => (&[], gs),
-        };
-        flat.iter().chain(read.iter().copied())
-    }
-
-    /// The number of conjuncts.
-    fn len(&self) -> usize {
-        match self {
-            Conjuncts::Flat(gs) => gs.len(),
-            Conjuncts::Read(gs) => gs.len(),
-        }
     }
 }
 
@@ -2478,7 +2398,7 @@ fn settle_as_sets(mut p: Parts) -> Result<Option<AsSets>, Refusal> {
             // `SlackStatus::Refuted` disjuncts is order- and renaming-invariant in `O(k log k)`.
             // Test: `l01_38_presburger::slack_scale::ss_project_scales`.
             let si = (!old_path() && stage.len() > 1 && dw.is_some())
-                .then(|| slack::SlackIndex::of(&base.cons, &Near::default(), &stage))
+                .then(|| SlackIndex::of(&base.cons, &Near::default(), &stage))
                 .flatten();
             let kernels = stage_kernels(&base, &stage, at_model.then_some(&model));
             for (ds, kernel) in stage.into_iter().zip(kernels) {
@@ -2488,7 +2408,7 @@ fn settle_as_sets(mut p: Parts) -> Result<Option<AsSets>, Refusal> {
                     .filter_map(|d| {
                         if si
                             .as_ref()
-                            .is_some_and(|s| s.classify(&d) == slack::SlackStatus::Refuted)
+                            .is_some_and(|s| s.classify(&d) == SlackStatus::Refuted)
                         {
                             return None;
                         }
@@ -2664,7 +2584,7 @@ fn settle_tied(f: &Formula, color: &HashMap<Atom, usize>, want: bool) -> Result<
         return Ok(Settled::Point(Model::new()));
     }
     let try_tied_point = |p: &Parts| -> Option<Model> {
-        let mut m = slack::find_tied_point(p, color, true)?;
+        let mut m = find_tied_point(p, color, true)?;
         repair(&mut m, &gone);
         if !f.holds(&m) {
             return None;
@@ -3274,7 +3194,7 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<(Model, Vec<&Parts>), Re
     // exact active suffix maximum (`BTreeSet`) or Fenwick prefix split over `DisjointWide` unit rows in
     // `O(k log k)` total time; formulas outside that two-point disjoint-unit-row shape return `None`
     // and run `pick_by` unchanged. Test: `l01_38_presburger::slack_scale::sat_half_decide_scales`.
-    if !fast && let Some(res) = slack::try_pick_disjoint_wide(p, deep) {
+    if !fast && let Some(res) = try_pick_disjoint_wide(p, deep) {
         return res;
     }
     // The disjuncts taken, each with its constraints among those taken, which the model is a
@@ -3514,33 +3434,6 @@ impl Near {
         }
     }
 }
-
-/// The atom of a constraint of one atom, with the least and the greatest value it allows that
-/// atom; a least above the greatest allows none.
-fn one_bound(c: &Con) -> Option<(&Atom, Option<Int>, Option<Int>)> {
-    let mut terms = c.lin.terms.iter();
-    let (Some((a, coef)), None) = (terms.next(), terms.next()) else {
-        return None;
-    };
-    // `coef·a + k` compared with zero.
-    let k = &c.lin.constant;
-    let m = coef.abs();
-    let (lo, hi) = match c.rel {
-        // `a >= -k / coef`, rounded up.
-        Rel::Ge if coef.is_positive() => (Some(-&k.div_floor(&m)), None),
-        // `a <= k / |coef|`, rounded down.
-        Rel::Ge => (None, Some(k.div_floor(&m))),
-        Rel::Eq if k.mod_floor(&m).is_zero() => {
-            let v = -&k.div_floor(&m);
-            let v = if coef.is_positive() { v } else { -&v };
-            (Some(v.clone()), Some(v))
-        }
-        // No integer `a` has `coef·a == -k`.
-        Rel::Eq => (Some(Int::ONE), Some(Int::ZERO)),
-    };
-    Some((a, lo, hi))
-}
-
 /// Constraints grouped by the variables they share, so that a question about a few variables
 /// solves only the constraints it can meet: variables that share no constraint do not interact,
 /// and the rest are known to have a point.
@@ -4565,11 +4458,9 @@ fn probe_kept_status(
                 }
                 private_links(&p)
             };
-            let slack_idx = slack::SlackIndex::of(&p.cons, &implied, &p.ors);
+            let slack_idx = SlackIndex::of(&p.cons, &implied, &p.ors);
             let (stopped_early, all_probes_checked) = match &slack_idx {
-                Some(si) => {
-                    slack::find_probe_points(si, &p, &order, &mut held, &implied, stop, points)
-                }
+                Some(si) => find_probe_points(si, &p, &order, &mut held, &implied, stop, points),
                 None => (false, false),
             };
             if stopped_early {
@@ -4645,13 +4536,13 @@ fn probe_kept_status(
                         continue;
                     }
                     let slack_status = slack_idx.as_ref().map(|si| si.classify(&d));
-                    if slack_status == Some(slack::SlackStatus::Refuted) {
+                    if slack_status == Some(SlackStatus::Refuted) {
                         let rest: Vec<Rc<Parts>> =
                             live.iter().chain(&ds[at + 1..]).cloned().collect();
                         learn(&p, rest, &d, &mut implied);
                         continue;
                     }
-                    if slack_status == Some(slack::SlackStatus::Immune) && all_probes_checked {
+                    if slack_status == Some(SlackStatus::Immune) && all_probes_checked {
                         live.push(d);
                         live_held.push(false);
                         continue;
@@ -4664,7 +4555,7 @@ fn probe_kept_status(
                         point_with(&p, &held, &d, &implied, false)
                     };
                     if point.is_none() {
-                        if slack_status != Some(slack::SlackStatus::Immune) {
+                        if slack_status != Some(SlackStatus::Immune) {
                             // Complexity tradeoff: a disjunct that no point holds, no implied bound and
                             // no linked test ([`refuted_by_links`]) removes is still tested by one
                             // propagation of all the parts, so `r` such
@@ -4769,7 +4660,7 @@ fn probe_kept_status(
                         p.ors.iter().zip(&held).all(|(ds, hs)| {
                             ds.iter()
                                 .zip(hs)
-                                .all(|(d, h)| *h || si.classify(d) == slack::SlackStatus::Immune)
+                                .all(|(d, h)| *h || si.classify(d) == SlackStatus::Immune)
                         })
                     });
                 return Ok(Some(p));
@@ -5698,7 +5589,7 @@ type Learning<'a> = (&'a dyn Fn(usize, usize), &'a dyn Fn(usize, usize) -> bool)
 /// [`search_by_halves`]'s searches of one round: all the disjuncts of `round` forced, and on
 /// a failure each half in turn, down to one, which is then marked in `failed`. `waiting` is
 /// handed to each search. Without `split_halves` (every disjunct no point holds was already
-/// probed by [`slack::find_probe_points`]), the halves are split two levels deep and no
+/// probed by [`find_probe_points`]), the halves are split two levels deep and no
 /// further, and nothing is marked in `failed`.
 /// A disjunct whose search alone fails is handed to `learning.0` ([`learn`]), and a disjunct
 /// that `learning.1` finds excluded by the bounds learned is dropped from the searches.
@@ -10675,22 +10566,12 @@ thread_local! {
     /// Whether [`factored`] takes no part out, so that [`project_each`] and [`decide`] ask
     /// every formula as it is written: for the tests that compare the two (ST-formula-sibling).
     pub static UNFACTORED: Cell<bool> = const { Cell::new(false) };
-    /// Test control: retain full global-order scans in the two I23 row paths.
-    pub static ROW_ORDER_SCAN: Cell<bool> = const { Cell::new(false) };
     /// Test control: retain the repeated survivor scans of the I23 unary drain.
     pub static UNIT_RESCAN: Cell<bool> = const { Cell::new(false) };
     /// Test control: retain hull bisection without the I22 endpoint shortcuts.
     pub static HULL_BISECT: Cell<bool> = const { Cell::new(false) };
     /// Test control: use gap jumps but ignore the returned endpoint-immunity certificate.
     pub static HULL_NO_IMMUNITY: Cell<bool> = const { Cell::new(false) };
-    /// Whether the summaries of module `slack` (wide-row slack, laminar subtraction, the
-    /// greedy subset-sum walk, the forced search of one disjunction) are left unused, so that
-    /// every question takes the path it takes without them: for the tests that compare the
-    /// two and measure the work the summaries save (PRES-disj-cost-xr).
-    pub static SLACKLESS: Cell<bool> = const { Cell::new(false) };
-    /// Whether the batched forms of the searches (one disjunction of one disjunct taken in
-    /// every search, the bounded single-equation solver) are left unused, for the same tests.
-    pub static UNBATCHED: Cell<bool> = const { Cell::new(false) };
     /// Whether [`decide`] and [`satisfiable`] each make only their own probe, as before
     /// PRES-stop-prefix: for the tests that measure what the other probe costs.
     pub static ONE_PROBE: Cell<bool> = const { Cell::new(false) };
@@ -12372,14 +12253,14 @@ fn hull_immunity(f: &Formula) -> bool {
     };
     let mut cons = p.cons.clone();
     cons.extend(disjunction_hulls(&p.ors, &mut DeepHulls::default()));
-    let Some(si) = slack::SlackIndex::of(&cons, &Near::default(), &p.ors) else {
+    let Some(si) = SlackIndex::of(&cons, &Near::default(), &p.ors) else {
         return false;
     };
     !p.ors.is_empty()
         && p.ors
             .iter()
             .flatten()
-            .all(|d| si.classify(d) == slack::SlackStatus::Immune)
+            .all(|d| si.classify(d) == SlackStatus::Immune)
 }
 
 /// Each hull of `out` at the places `ks` (the projection of `f` onto the symbol of `syms` at
@@ -13715,9 +13596,6 @@ fn forest_row_hulls(cons: &[&Con]) -> Option<HashMap<Atom, IntervalSet>> {
     }
     Some(out)
 }
-
-/// The least and greatest value of each atom, `None` where there is none.
-type Ends = (Option<Int>, Option<Int>);
 
 /// [`difference_hulls`] with each hull as its two ends.
 fn difference_ends(cons: &[&Con], m: &Model) -> Option<HashMap<Atom, Ends>> {
@@ -15681,7 +15559,13 @@ fn products(
         }
         for ((root, k), sides) in &asked {
             if let Some((m, b, _)) = &given[root] {
-                found.extend(local::cluster_sides(&b.local.all[*k], m, sides));
+                found.extend(local::cluster_sides(
+                    &b.local.all[*k],
+                    m,
+                    sides,
+                    Formula::and,
+                    |f, a, m, dir| hull_side(f, a, m, dir).ok().flatten(),
+                ));
             }
         }
     }
@@ -15838,6 +15722,1387 @@ fn products(
         }
     }
     Ok((out.into_iter().map(Formula::Con).collect(), loose))
+}
+
+// The searches over unary disjunctions coupled by wide rows (PRES-disj-cost-xr), on the row
+// summaries of module `slack`. They read the parts of a search (`Parts`), the bounds taken so
+// far (`Near`), the rows the disjunctions imply (`disjunction_hulls`) and the solver (`solve`),
+// and the searches of this file call them, so they are written here: in a file of their own
+// they would form an import cycle with this one (step S.1f).
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SlackStatus {
+    Refuted,
+    Immune,
+    Unknown,
+}
+
+struct RowSwing {
+    max1: Option<Int>,
+    max1_count: usize,
+    max2: Option<Int>,
+}
+
+struct TwoPointRowProp {
+    swings: Vec<Int>,
+    psum: Vec<Int>,
+    atom_pos: HashMap<Atom, usize>,
+}
+
+/// Pairwise and multi-round fixed-point slack classifier over a `DisjointWide` base and unary
+/// disjunctions.
+struct SlackIndex {
+    dw: DisjointWide,
+    swings: Vec<RowSwing>,
+    two_point_prop: Vec<Option<TwoPointRowProp>>,
+    disj_count: HashMap<Atom, usize>,
+}
+
+impl SlackIndex {
+    // Complexity tradeoff: naive failed-literal probing calls `settle` on every unheld disjunct,
+    // `O(k^2)` (or `O(k^3)` on `OLD_PATH`) over `k` disjunctions coupled by wide unit-coefficient
+    // rows. Here each disjoint row precomputes `RowSwing` (`O(1)` 1-round immunity) and, on
+    // two-point disjunction rows, sorted swings + prefix sums (`TwoPointRowProp`, `O(k log k)`
+    // build) that simulate the exact multi-round unit-propagation fixed point of `settle(q, false)`
+    // in `O(log W log k)` binary-search steps (`most` strictly more than halves every two rounds).
+    // Overlapping non-laminar rows and multi-atom disjuncts return `None` / `Unknown` and run
+    // `settle` unchanged, losing zero inferences. Test:
+    // `l01_38_presburger::slack_scale::ss_decide_scales`.
+    fn of(cons: &[Con], implied: &Near, ors: &[Vec<std::rc::Rc<Parts>>]) -> Option<SlackIndex> {
+        if no_slack() || cons.iter().any(has_product_con) {
+            return None;
+        }
+        let mut all_cons = cons.to_vec();
+        all_cons.extend(disjunction_hulls(ors, &mut DeepHulls::default()));
+        for a in implied.one.keys() {
+            implied.bounds(a, &mut all_cons);
+        }
+        let dw = DisjointWide::of_cons(&all_cons)?;
+        if dw.empty() {
+            return None;
+        }
+        let mut disj_count: HashMap<Atom, usize> = HashMap::new();
+        let mut two_point_atoms: HashMap<Atom, (Int, Int)> = HashMap::new();
+        for o in ors {
+            let mut touched: BTreeSet<Atom> = BTreeSet::new();
+            for d in o {
+                for a in d.atoms() {
+                    touched.insert(a.clone());
+                }
+            }
+            for a in touched {
+                *disj_count.entry(a).or_default() += 1;
+            }
+            if let Some((a, v0, v1)) = parse_two_point_disj(o, &dw, implied) {
+                let (lo, hi) = if v0 <= v1 { (v0, v1) } else { (v1, v0) };
+                two_point_atoms.insert(a, (lo, hi));
+            }
+        }
+
+        let default_e = (None, None);
+        let mut swings = Vec::with_capacity(dw.rows.len());
+        let mut two_point_prop = Vec::with_capacity(dw.rows.len());
+        for wr in &dw.rows {
+            let mut max1: Option<Int> = Some(Int::ZERO);
+            let mut max1_count = 0usize;
+            let mut max2: Option<Int> = Some(Int::ZERO);
+            let mut unbounded_swing = 0usize;
+            let mut tp_ok = wr.most.open == 0 && wr.least.open == 0;
+            let mut tp_items: Vec<(Int, Atom)> = Vec::new();
+
+            for (a, coef) in &wr.con.lin.terms {
+                let (lo, hi) = dw.ends.get(a).unwrap_or(&default_e);
+                match (lo, hi) {
+                    (Some(l), Some(h)) => {
+                        let sw = &coef.abs() * &(h - l);
+                        if let Some(m1) = &max1 {
+                            if sw > *m1 {
+                                max2 = max1.clone();
+                                max1 = Some(sw.clone());
+                                max1_count = 1;
+                            } else if sw == *m1 {
+                                max1_count += 1;
+                            } else if max2.as_ref().is_none_or(|m2| sw > *m2) {
+                                max2 = Some(sw.clone());
+                            }
+                        }
+                        if tp_ok {
+                            let dc = disj_count.get(a).copied().unwrap_or(0);
+                            if dc == 0 {
+                                if l != h {
+                                    tp_ok = false;
+                                }
+                            } else if dc == 1 {
+                                if let Some((tl, th)) = two_point_atoms.get(a)
+                                    && tl == l
+                                    && th == h
+                                    && l < h
+                                {
+                                    tp_items.push((sw, a.clone()));
+                                } else {
+                                    tp_ok = false;
+                                }
+                            } else {
+                                tp_ok = false;
+                            }
+                        }
+                    }
+                    _ => {
+                        unbounded_swing += 1;
+                        tp_ok = false;
+                    }
+                }
+            }
+            if unbounded_swing >= 2 {
+                max1 = None;
+                max2 = None;
+            } else if unbounded_swing == 1 {
+                max2 = max1.clone();
+                max1 = None;
+                max1_count = 1;
+            }
+            swings.push(RowSwing {
+                max1,
+                max1_count,
+                max2,
+            });
+            if tp_ok {
+                tp_items.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+                let mut sorted_sw = Vec::with_capacity(tp_items.len());
+                let mut psum = Vec::with_capacity(tp_items.len() + 1);
+                let mut atom_pos = HashMap::with_capacity(tp_items.len());
+                psum.push(Int::ZERO);
+                for (pos, (sw, atom)) in tp_items.into_iter().enumerate() {
+                    let next = psum.last().unwrap() + &sw;
+                    psum.push(next);
+                    sorted_sw.push(sw);
+                    atom_pos.insert(atom, pos);
+                }
+                two_point_prop.push(Some(TwoPointRowProp {
+                    swings: sorted_sw,
+                    psum,
+                    atom_pos,
+                }));
+            } else {
+                two_point_prop.push(None);
+            }
+        }
+
+        Some(SlackIndex {
+            dw,
+            swings,
+            two_point_prop,
+            disj_count,
+        })
+    }
+
+    fn classify(&self, d: &Parts) -> SlackStatus {
+        if !d.ors.is_empty() {
+            return SlackStatus::Unknown;
+        }
+        let mut target_atom: Option<Atom> = None;
+        let mut add_ends: Ends = (None, None);
+        for c in &d.cons {
+            let Some((atom, b, bad)) = unary_bound(c) else {
+                return SlackStatus::Unknown;
+            };
+            if bad {
+                return SlackStatus::Refuted;
+            }
+            if let Some(a) = atom {
+                match &target_atom {
+                    None => target_atom = Some(a),
+                    Some(prev) if *prev == a => {}
+                    Some(_) => return SlackStatus::Unknown,
+                }
+                if meet_ends(&mut add_ends, b) {
+                    return SlackStatus::Refuted;
+                }
+            }
+        }
+        let Some(a) = target_atom else {
+            return SlackStatus::Immune;
+        };
+        let old_e = self.dw.ends.get(&a).cloned().unwrap_or((None, None));
+        let mut new_e = old_e.clone();
+        if meet_ends(&mut new_e, add_ends) {
+            return SlackStatus::Refuted;
+        }
+        // If another disjunction also constrains `a`, fixing `d` could directly narrow `a` for it.
+        let shared_atom = self.disj_count.get(&a).copied().unwrap_or(0) > 1;
+        let Some(&r_idx) = self.dw.atom_row.get(&a) else {
+            return if shared_atom && new_e != old_e {
+                SlackStatus::Unknown
+            } else {
+                SlackStatus::Immune
+            };
+        };
+
+        let wr = &self.dw.rows[r_idx];
+        let coef = &wr.con.lin.terms[&a];
+        let (ol, oh) = signed_ends(&old_e, coef);
+        let (nl, nh) = signed_ends(&new_e, coef);
+        let mut least = wr.least.clone();
+        let mut most = wr.most.clone();
+        least.remove(ol.as_ref());
+        most.remove(oh.as_ref());
+        least.add(nl.as_ref());
+        most.add(nh.as_ref());
+
+        if (most.open == 0 && most.finite.is_negative())
+            || (wr.con.rel == Rel::Eq && least.open == 0 && least.finite.is_positive())
+        {
+            return SlackStatus::Refuted;
+        }
+        if shared_atom && new_e != old_e {
+            return SlackStatus::Unknown;
+        }
+
+        let sw = &self.swings[r_idx];
+        let own_swing = match (&old_e.0, &old_e.1) {
+            (Some(l), Some(h)) => Some(&coef.abs() * &(h - l)),
+            _ => None,
+        };
+        let max_other: Option<&Int> = match (&sw.max1, &own_swing) {
+            (None, None) if sw.max1_count == 1 => sw.max2.as_ref(),
+            (None, _) => None,
+            (Some(m1), Some(own)) if own == m1 && sw.max1_count == 1 => sw.max2.as_ref(),
+            (Some(m1), _) => Some(m1),
+        };
+        if let Some(m_other) = max_other {
+            let hi_immune = most.open > 0 || most.finite >= *m_other;
+            let lo_immune =
+                wr.con.rel != Rel::Eq || least.open > 0 || &least.finite + m_other <= Int::ZERO;
+            if hi_immune && lo_immune {
+                return SlackStatus::Immune;
+            }
+        }
+
+        if let Some(tp) = &self.two_point_prop[r_idx]
+            && new_e.0.is_some()
+            && new_e.0 == new_e.1
+            && most.open == 0
+            && least.open == 0
+        {
+            let skip = tp.atom_pos.get(&a).copied();
+            let range_sum = |l: usize, r: usize| -> Int {
+                let mut s = &tp.psum[r] - &tp.psum[l];
+                if let Some(sk) = skip
+                    && l <= sk
+                    && sk < r
+                {
+                    s = &s - &tp.swings[sk];
+                }
+                s
+            };
+            let mut limit = tp.swings.len();
+            loop {
+                if most.finite.is_negative()
+                    || (wr.con.rel == Rel::Eq && least.finite.is_positive())
+                {
+                    return SlackStatus::Refuted;
+                }
+                let mx = if limit == 0 {
+                    None
+                } else if Some(limit - 1) != skip {
+                    Some(&tp.swings[limit - 1])
+                } else if limit >= 2 {
+                    Some(&tp.swings[limit - 2])
+                } else {
+                    None
+                };
+                let Some(mx) = mx else {
+                    return SlackStatus::Immune;
+                };
+                let lose_lo = *mx > most.finite;
+                let lose_hi = wr.con.rel == Rel::Eq && *mx > -&least.finite;
+                if !lose_lo && !lose_hi {
+                    return SlackStatus::Immune;
+                }
+                if lose_lo && lose_hi {
+                    return SlackStatus::Refuted;
+                }
+                if lose_lo {
+                    let split = tp.swings[..limit].partition_point(|w| *w <= most.finite);
+                    least.finite = &least.finite + &range_sum(split, limit);
+                    limit = split;
+                } else {
+                    let neg_least = -&least.finite;
+                    let split = tp.swings[..limit].partition_point(|w| *w <= neg_least);
+                    most.finite = &most.finite - &range_sum(split, limit);
+                    limit = split;
+                }
+            }
+        }
+
+        SlackStatus::Unknown
+    }
+}
+
+fn parse_two_point_disj(
+    ds: &[std::rc::Rc<Parts>],
+    dw: &DisjointWide,
+    implied: &Near,
+) -> Option<(Atom, Int, Int)> {
+    if ds.len() != 2 {
+        return None;
+    }
+    let mut atom_out: Option<Atom> = None;
+    let mut vals: [Option<Int>; 2] = [None, None];
+    for (at, d) in ds.iter().enumerate() {
+        if !d.ors.is_empty() || implied.refutes(&d.cons) {
+            return None;
+        }
+        let mut arm_a: Option<Atom> = None;
+        let mut e: Ends = (None, None);
+        for c in &d.cons {
+            let (a_opt, b, bad) = unary_bound(c)?;
+            if bad {
+                return None;
+            }
+            let a = a_opt?;
+            match &arm_a {
+                None => {
+                    e = dw.ends.get(&a).cloned().unwrap_or((None, None));
+                    arm_a = Some(a);
+                }
+                Some(prev) if *prev == a => {}
+                Some(_) => return None,
+            }
+            if meet_ends(&mut e, b) {
+                return None;
+            }
+        }
+        let a = arm_a?;
+        if let Some((il, ih)) = implied.one.get(&a)
+            && meet_ends(&mut e, (il.clone(), ih.clone()))
+        {
+            return None;
+        }
+        let (Some(l), Some(h)) = e else {
+            return None;
+        };
+        if l != h {
+            return None;
+        }
+        match &atom_out {
+            None => atom_out = Some(a),
+            Some(prev) if *prev == a => {}
+            Some(_) => return None,
+        }
+        vals[at] = Some(l);
+    }
+    let a = atom_out?;
+    let [Some(v0), Some(v1)] = vals else {
+        return None;
+    };
+    if v0 == v1 {
+        return None;
+    }
+    Some((a, v0, v1))
+}
+
+/// Batched `O(k log k log W)` witness search across all `2k` unary two-point probes in
+/// [`probe_kept`]. Returns `(stopped_early, all_probes_checked)`.
+// Complexity tradeoff: naive `probe_kept` searches each unheld disjunct independently (`O(k^2)`).
+// `find_probe_points` sweeps each disjoint unit-coefficient row once (`sweep_row` or
+// `sweep_row_unbounded`) and combines row witnesses in `O(k log k log W)` total; formulas with
+// non-unit equations, overlapping rows, or non-two-point disjunctions return `(false, false)` and
+// run `probe_kept`'s per-disjunct loop unchanged. Test:
+// `l01_38_presburger::slack_scale::two_rows_scales`.
+fn find_probe_points(
+    si: &SlackIndex,
+    p: &Parts,
+    order: &[usize],
+    held: &mut [Vec<bool>],
+    implied: &Near,
+    stop: bool,
+    points: &mut Vec<Model>,
+) -> (bool, bool) {
+    if no_slack() {
+        return (false, false);
+    }
+    let k = p.ors.len();
+    let num_rows = si.dw.rows.len();
+    if k < 2 || num_rows == 0 {
+        return (false, false);
+    }
+    for wr in &si.dw.rows {
+        let Some(first_c) = wr.con.lin.terms.values().next() else {
+            return (false, false);
+        };
+        if wr.con.rel != Rel::Eq
+            || !first_c.is_unit()
+            || !wr.con.lin.terms.values().all(|c| c == first_c)
+        {
+            return (false, false);
+        }
+    }
+
+    let mut row_disjs: Vec<Vec<DisjInfo>> = (0..num_rows).map(|_| Vec::new()).collect();
+    let mut disj_loc: Vec<(usize, usize)> = Vec::with_capacity(k);
+    let mut seen_disj_atom: HashSet<Atom> = HashSet::with_capacity(k);
+
+    for (j, ds) in p.ors.iter().enumerate() {
+        let Some((a, v0, v1)) = parse_two_point_disj(ds, &si.dw, implied) else {
+            return (false, false);
+        };
+        let Some(&r_idx) = si.dw.atom_row.get(&a) else {
+            return (false, false);
+        };
+        if !seen_disj_atom.insert(a.clone()) {
+            return (false, false);
+        }
+        let (low_arm, high_arm, low_val, high_val) = if v0 <= v1 {
+            (0, 1, v0, v1)
+        } else {
+            (1, 0, v1, v0)
+        };
+        let Some((Some(bl), Some(bh))) = si.dw.ends.get(&a) else {
+            return (false, false);
+        };
+        if !low_val.is_zero() || !high_val.is_positive() || !bl.is_zero() || *bh != high_val {
+            return (false, false);
+        }
+        let weight = high_val.clone();
+        let loc = row_disjs[r_idx].len();
+        row_disjs[r_idx].push(DisjInfo {
+            disj_idx: j,
+            atom: a,
+            low_arm,
+            high_arm,
+            low_val,
+            high_val,
+            weight,
+        });
+        disj_loc.push((r_idx, loc));
+    }
+
+    let mut fixed_atoms: Vec<(Atom, Int)> = Vec::new();
+    let mut row_targets: Vec<Int> = Vec::with_capacity(num_rows);
+
+    for (r_idx, wr) in si.dw.rows.iter().enumerate() {
+        if row_disjs[r_idx].len() < 2 {
+            return (false, false);
+        }
+        let first_c = wr.con.lin.terms.values().next().expect("non-empty");
+        let disj_set: HashMap<&Atom, usize> = row_disjs[r_idx]
+            .iter()
+            .enumerate()
+            .map(|(loc, d)| (&d.atom, loc))
+            .collect();
+        let mut base_sum = wr.con.lin.constant.clone();
+        for (a, coef) in &wr.con.lin.terms {
+            if disj_set.contains_key(a) {
+                continue;
+            }
+            let Some((Some(l), Some(h))) = si.dw.ends.get(a) else {
+                return (false, false);
+            };
+            if l != h {
+                return (false, false);
+            };
+            base_sum = &base_sum + &(coef * l);
+            fixed_atoms.push((a.clone(), l.clone()));
+        }
+        let target = if first_c.is_positive() {
+            -&base_sum
+        } else {
+            base_sum
+        };
+        row_targets.push(target);
+    }
+
+    for (a, (lo, hi)) in &si.dw.ends {
+        if !si.dw.atom_row.contains_key(a) {
+            let v = match (lo, hi) {
+                (Some(l), Some(h)) => l.max(&Int::ZERO).min(h).clone(),
+                (Some(l), None) => l.max(&Int::ZERO).clone(),
+                (None, Some(h)) => h.min(&Int::ZERO).clone(),
+                (None, None) => Int::ZERO,
+            };
+            fixed_atoms.push((a.clone(), v));
+        }
+    }
+
+    let mut solve_cons = p.cons.clone();
+    for a in implied.one.keys() {
+        implied.bounds(a, &mut solve_cons);
+    }
+    let solve_cons = reduce_subset_wide_eqs(&solve_cons);
+    let mut explicit_unary: HashSet<Atom> = HashSet::new();
+    for c in &solve_cons {
+        if c.lin.terms.len() == 1
+            && let Some(a) = c.lin.terms.keys().next()
+        {
+            explicit_unary.insert(a.clone());
+        }
+    }
+    let (ord_atoms, col_map) = colors(&solve_cons);
+    let ranks: HashMap<&Atom, usize> = ord_atoms.iter().enumerate().map(|(i, a)| (a, i)).collect();
+
+    let mut plans: Vec<RowPlan> = Vec::with_capacity(num_rows);
+    for (r_idx, disjs) in row_disjs.into_iter().enumerate() {
+        let mut seen_cols: HashSet<u64> = HashSet::with_capacity(disjs.len());
+        let mut missing_col = false;
+        for d in &disjs {
+            let Some(&col) = col_map.get(&d.atom) else {
+                missing_col = true;
+                break;
+            };
+            seen_cols.insert(col);
+        }
+        if missing_col {
+            return (false, false);
+        }
+        if seen_cols.len() == disjs.len() {
+            let solve_ord = row_order(&disjs, &ord_atoms, &ranks);
+            let Some(plan) = sweep_row(disjs, solve_ord, row_targets[r_idx].clone()) else {
+                return (false, false);
+            };
+            plans.push(plan);
+        } else if seen_cols.len() == 1 && disjs.iter().all(|d| !explicit_unary.contains(&d.atom)) {
+            plans.push(sweep_row_unbounded(
+                disjs,
+                row_targets[r_idx].clone(),
+                !old_path(),
+            ));
+        } else {
+            return (false, false);
+        }
+    }
+
+    if plans.iter().any(|pl| pl.any_hit.is_none()) {
+        return (false, true);
+    }
+
+    for &i in order {
+        let (r_idx, loc) = disj_loc[i];
+        for at in 0..2 {
+            if held[i][at] || matches!(plans[r_idx].hit_table[loc][at], HitKind::None) {
+                continue;
+            }
+            if points.is_empty() {
+                let mut m = Model::new();
+                for (a, v) in &fixed_atoms {
+                    m.insert(a.clone(), v.clone());
+                }
+                let mut ok = true;
+                for (other_r, pl) in plans.iter().enumerate() {
+                    let (use_loc, use_at) = if other_r == r_idx {
+                        (loc, at)
+                    } else {
+                        pl.any_hit.expect("every row has a hit")
+                    };
+                    if !fill_row_model(pl, use_loc, use_at, &mut m) {
+                        ok = false;
+                        break;
+                    }
+                }
+                if !ok || !p.holds(&m) {
+                    continue;
+                }
+                if stop {
+                    points.push(m);
+                    return (true, true);
+                }
+                for (pl_r, pl) in plans.iter().enumerate() {
+                    let _ = pl_r;
+                    for d in &pl.disjs {
+                        let v = &m[&d.atom];
+                        if *v == d.low_val {
+                            held[d.disj_idx][d.low_arm] = true;
+                        }
+                        if *v == d.high_val {
+                            held[d.disj_idx][d.high_arm] = true;
+                        }
+                    }
+                }
+                points.push(m);
+            } else {
+                held[i][at] = true;
+            }
+        }
+    }
+
+    (false, true)
+}
+
+/// Renaming-invariant canonical-color witness search for [`settle_tied`].
+///
+/// Orders and groups two-point disjunctions strictly by `(color[a], lo, hi, coef_sign)` so every
+/// permutation of variable names builds the identical weight sequence and makes the identical
+/// `decide` decision; when `want` is set, maps the canonical choice back to a concrete `Model`.
+// Complexity tradeoff: on `Naming::Tied` (`sat_half` and `two_rows` at `k = 512`), `by_color`
+// tests only a single all-low / all-high tuple per color and refuses with `Refusal::Unordered`.
+// `find_tied_point` sorts two-point disjunctions purely by `(color, weight, low_val, high_val)` —
+// never reading `Atom` names — and runs `sweep_row` in `O(k log k log W)`. What is given up:
+// satisfiable tied instances whose witness requires breaking ties in an exponential subset-sum
+// search rather than a canonical-order greedy walk still return `Refusal::Unordered` (telling
+// arbitrary tied subset-sum instances apart is NP-complete). Test:
+// `l01_38_presburger::slack_scale::sat_half_tied_512_is_deterministic_and_scales`.
+fn find_tied_point(p: &Parts, color: &HashMap<Atom, usize>, want: bool) -> Option<Model> {
+    if no_slack() || p.ors.len() < 2 {
+        return None;
+    }
+    let implied = disjunction_hulls(&p.ors, &mut DeepHulls::default());
+    let mut all_cons = p.cons.clone();
+    all_cons.extend(implied);
+    let dw = DisjointWide::of_cons(&all_cons)?;
+    if dw.empty() || dw.rows.is_empty() {
+        return None;
+    }
+    for wr in &dw.rows {
+        if wr.con.rel != Rel::Eq || !wr.con.lin.terms.values().all(Int::is_unit) {
+            return None;
+        }
+    }
+
+    let empty_near = Near::default();
+    let num_rows = dw.rows.len();
+    let mut row_disjs: Vec<Vec<(usize, DisjInfo)>> = (0..num_rows).map(|_| Vec::new()).collect();
+    let mut seen_disj_atom: HashSet<Atom> = HashSet::with_capacity(p.ors.len());
+
+    for (j, ds) in p.ors.iter().enumerate() {
+        let (a, v0, v1) = parse_two_point_disj(ds, &dw, &empty_near)?;
+        let r_idx = *dw.atom_row.get(&a)?;
+        if !seen_disj_atom.insert(a.clone()) {
+            return None;
+        }
+        let coef = &dw.rows[r_idx].con.lin.terms[&a];
+        let (c0, c1) = (coef * &v0, coef * &v1);
+        let (low_arm, high_arm, low_val, high_val, weight) = if c0 <= c1 {
+            (0, 1, v0, v1, &c1 - &c0)
+        } else {
+            (1, 0, v1, v0, &c0 - &c1)
+        };
+        let col = color.get(&a).copied().unwrap_or(usize::MAX);
+        row_disjs[r_idx].push((
+            col,
+            DisjInfo {
+                disj_idx: j,
+                atom: a,
+                low_arm,
+                high_arm,
+                low_val,
+                high_val,
+                weight,
+            },
+        ));
+    }
+
+    let mut fixed_atoms: Vec<(Atom, Int)> = Vec::new();
+    let mut row_targets: Vec<Int> = Vec::with_capacity(num_rows);
+    for (r_idx, wr) in dw.rows.iter().enumerate() {
+        if row_disjs[r_idx].len() < 2 {
+            return None;
+        }
+        let disj_set: HashMap<&Atom, usize> = row_disjs[r_idx]
+            .iter()
+            .enumerate()
+            .map(|(loc, (_, d))| (&d.atom, loc))
+            .collect();
+        let mut base_sum = wr.con.lin.constant.clone();
+        for (a, coef) in &wr.con.lin.terms {
+            if let Some(&loc) = disj_set.get(a) {
+                let d = &row_disjs[r_idx][loc].1;
+                base_sum = &base_sum + &(coef * &d.low_val);
+            } else {
+                let (Some(l), Some(h)) = dw.ends.get(a)? else {
+                    return None;
+                };
+                if l != h {
+                    return None;
+                }
+                base_sum = &base_sum + &(coef * l);
+                fixed_atoms.push((a.clone(), l.clone()));
+            }
+        }
+        row_targets.push(-&base_sum);
+    }
+
+    for (a, (lo, hi)) in &dw.ends {
+        if !dw.atom_row.contains_key(a) {
+            let v = match (lo, hi) {
+                (Some(l), Some(h)) => l.max(&Int::ZERO).min(h).clone(),
+                (Some(l), None) => l.max(&Int::ZERO).clone(),
+                (None, Some(h)) => h.min(&Int::ZERO).clone(),
+                (None, None) => Int::ZERO,
+            };
+            fixed_atoms.push((a.clone(), v));
+        }
+    }
+
+    let mut plans: Vec<RowPlan> = Vec::with_capacity(num_rows);
+    for (r_idx, mut items) in row_disjs.into_iter().enumerate() {
+        // Canonical order: depends ONLY on `(color, weight, low_val, high_val)` — never on `Atom`!
+        // Items with identical `(color, weight, low_val, high_val)` are symmetric and produce the
+        // exact same scalar sequence `w_of` in any atom permutation.
+        items.sort_by(|(ca, da), (cb, db)| {
+            ca.cmp(cb)
+                .then_with(|| da.weight.cmp(&db.weight))
+                .then_with(|| da.low_val.cmp(&db.low_val))
+                .then_with(|| da.high_val.cmp(&db.high_val))
+        });
+        let disjs: Vec<DisjInfo> = items.into_iter().map(|(_, d)| d).collect();
+        let solve_ord: Vec<usize> = (0..disjs.len()).collect();
+        let plan = sweep_row(disjs, solve_ord, row_targets[r_idx].clone())?;
+        plan.any_hit?;
+        plans.push(plan);
+    }
+
+    let mut m = Model::new();
+    for (a, v) in fixed_atoms {
+        m.insert(a, v);
+    }
+    for pl in &plans {
+        let (loc, at) = pl.any_hit?;
+        if !fill_row_model(pl, loc, at, &mut m) {
+            return None;
+        }
+    }
+    if !p.holds(&m) {
+        return None;
+    }
+    Some(if want { m } else { Model::new() })
+}
+
+struct BoundedPickRow {
+    disjs: Vec<DisjInfo>,
+    solve_ord: Vec<usize>,
+    solve_pos: Vec<usize>,
+    w_of: Vec<Int>,
+    bit: Vec<Int>,
+    active_pos: BTreeSet<usize>,
+    active_sum: Int,
+    rem: Int,
+    split_pos: usize,
+    special: HashMap<usize, Int>,
+}
+
+impl BoundedPickRow {
+    fn bit_add(&mut self, mut idx: usize, delta: &Int) {
+        let n = self.solve_ord.len();
+        idx += 1;
+        while idx <= n {
+            self.bit[idx] = &self.bit[idx] + delta;
+            idx += idx.isolate_lowest_one();
+        }
+    }
+
+    fn fenwick_split(&self, target: &Int) -> (usize, Int) {
+        let n = self.solve_ord.len();
+        if n == 0 || target.is_zero() {
+            return (0, Int::ZERO);
+        }
+        let mut idx = 0usize;
+        let mut acc = Int::ZERO;
+        let mut step = 1usize << (usize::BITS - 1 - n.leading_zeros());
+        while step > 0 {
+            let next = idx + step;
+            if next <= n && &acc + &self.bit[next] < *target {
+                idx = next;
+                acc = &acc + &self.bit[next];
+            }
+            step >>= 1;
+        }
+        (idx, target - &acc)
+    }
+
+    fn recompute(&mut self) -> Result<(), Refusal> {
+        self.special.clear();
+        let u = self.active_pos.len();
+        if u == 0 {
+            self.split_pos = 0;
+            return Ok(());
+        }
+        if self.rem.is_zero() {
+            self.split_pos = 0;
+            return Ok(());
+        }
+        if self.rem == self.active_sum {
+            self.split_pos = self.solve_ord.len();
+            return Ok(());
+        }
+        if u == 1 {
+            let p0 = *self.active_pos.first().expect("one active");
+            self.split_pos = 0;
+            self.special.insert(self.solve_ord[p0], self.rem.clone());
+            return Ok(());
+        }
+
+        let p_last1 = *self.active_pos.iter().next_back().expect("u >= 2");
+        let p_last2 = *self.active_pos.iter().nth_back(1).expect("u >= 2");
+        let loc1 = self.solve_ord[p_last1];
+        let loc2 = self.solve_ord[p_last2];
+        let w_last2 = &self.w_of[loc1] + &self.w_of[loc2];
+        let sum_before_last2 = &self.active_sum - &w_last2;
+        if self.rem <= sum_before_last2 {
+            let (pos, val_star) = self.fenwick_split(&self.rem);
+            let loc_star = self.solve_ord[pos];
+            if val_star == self.w_of[loc_star] {
+                self.split_pos = pos + 1;
+            } else {
+                self.split_pos = pos;
+                self.special.insert(loc_star, val_star);
+            }
+            return Ok(());
+        }
+
+        // `rem > sum_before_last2`: `Omega::run` eliminates `0 .. u - 2` onto `(loc2, loc1)`:
+        // `0 <= a2 <= w2, 0 <= a1 <= w1`, with `a2 + a1 == rem` when `sum_before_last2 == 0`
+        // (`u == 2`) and `rem - sum_before_last2 <= a2 + a1 <= rem` otherwise.
+        let a2 = &self.disjs[loc2].atom;
+        let a1 = &self.disjs[loc1].atom;
+        let x2 = Lin::atom(a2.clone());
+        let x1 = Lin::atom(a1.clone());
+        let pair_sum = x2.plus(&x1);
+        let lo_pair = &self.rem - &sum_before_last2;
+        let mut cons = vec![
+            Con::ge(&x2, &Lin::constant(0)),
+            Con::ge(&Lin::constant(self.w_of[loc2].clone()), &x2),
+            Con::ge(&x1, &Lin::constant(0)),
+            Con::ge(&Lin::constant(self.w_of[loc1].clone()), &x1),
+        ];
+        if sum_before_last2.is_zero() {
+            cons.push(Con::eq(&pair_sum, &Lin::constant(self.rem.clone())));
+        } else {
+            cons.push(Con::ge(&pair_sum, &Lin::constant(lo_pair)));
+            cons.push(Con::ge(&Lin::constant(self.rem.clone()), &pair_sum));
+        }
+        let m = solve(&cons, true)?.ok_or(Refusal::Disjuncts)?;
+        let v2 = m.get(a2).cloned().unwrap_or(Int::ZERO);
+        let v1 = m.get(a1).cloned().unwrap_or(Int::ZERO);
+        let rem_prefix = &(&self.rem - &v2) - &v1;
+        if rem_prefix == sum_before_last2 {
+            self.split_pos = p_last2;
+        } else {
+            let (pos, val_star) = self.fenwick_split(&rem_prefix);
+            let loc_star = self.solve_ord[pos];
+            if val_star == self.w_of[loc_star] {
+                self.split_pos = pos + 1;
+            } else {
+                self.split_pos = pos;
+                self.special.insert(loc_star, val_star);
+            }
+        }
+        self.special.insert(loc2, v2);
+        self.special.insert(loc1, v1);
+        Ok(())
+    }
+
+    fn cur_val(&self, loc: usize) -> Int {
+        if let Some(v) = self.special.get(&loc) {
+            return v.clone();
+        }
+        if self.solve_pos[loc] < self.split_pos {
+            self.w_of[loc].clone()
+        } else {
+            Int::ZERO
+        }
+    }
+
+    fn deactivate(&mut self, loc: usize) {
+        let pos = self.solve_pos[loc];
+        if self.active_pos.remove(&pos) {
+            let neg_w = -&self.w_of[loc];
+            self.bit_add(pos, &neg_w);
+            self.active_sum = &self.active_sum - &self.w_of[loc];
+            self.special.remove(&loc);
+        }
+    }
+}
+
+enum PickRowState {
+    FixedEmpty,
+    Bounded(BoundedPickRow),
+    Unbounded {
+        disjs: Vec<DisjInfo>,
+        active_atoms: BTreeSet<(Atom, usize)>,
+        rem: Int,
+    },
+}
+
+enum PickEntry {
+    Row {
+        r_idx: usize,
+        loc: usize,
+        only_val: Option<Int>,
+    },
+    Fixed {
+        atom: Atom,
+        val: Int,
+        ok: bool,
+    },
+}
+
+fn parse_one_point_disj(ds: &[std::rc::Rc<Parts>]) -> Option<(Atom, Int)> {
+    if ds.len() != 1 || !ds[0].ors.is_empty() {
+        return None;
+    }
+    let mut target: Option<Atom> = None;
+    let mut ends: Ends = (None, None);
+    for c in &ds[0].cons {
+        let (atom, b, bad) = unary_bound(c)?;
+        if bad {
+            return None;
+        }
+        if let Some(a) = atom {
+            match &target {
+                None => target = Some(a),
+                Some(prev) if *prev == a => {}
+                Some(_) => return None,
+            }
+            if meet_ends(&mut ends, b) {
+                return None;
+            }
+        }
+    }
+    let a = target?;
+    match ends {
+        (Some(l), Some(h)) if l == h => Some((a, l)),
+        _ => None,
+    }
+}
+
+/// Exact `O(k log k)` execution of [`pick_by`]`(p, deep, false)` on two-point disjunctions
+/// coupled by pairwise atom-disjoint unit-coefficient equations (bounded or unbounded).
+///
+/// Complexity tradeoff: naive `pick_by(..., false)` calls `solve(&cs, true)` on the full `k`-atom
+/// component whenever the current model misses both arms of a disjunction, costing `Theta(k^2)`
+/// across `k` disjunctions. Here each disjoint unit row tracks either the `quotient` suffix-maximum
+/// atom in a `BTreeSet` (unbounded) or the exact `Omega` prefix split in a Fenwick tree over
+/// `solve_ord` (bounded), updating in `O(log k)` per step (`O(k log k)` total). Formulas outside
+/// this fragment return `None` and run `pick_by` unchanged. Test:
+/// `l01_38_presburger::slack_scale::sat_half_decide_scales`.
+fn try_pick_disjoint_wide<'a>(
+    p: &'a Parts,
+    deep: bool,
+) -> Option<Result<(Model, Vec<&'a Parts>), Refusal>> {
+    if no_slack() || no_batch() || p.ors.is_empty() {
+        return None;
+    }
+    let red_cons = reduce_subset_wide_eqs(&p.cons);
+    let base_dw = DisjointWide::of_reduced(&red_cons)?;
+    if base_dw.empty() || base_dw.rows.is_empty() {
+        return None;
+    }
+    let num_rows = base_dw.rows.len();
+    for wr in &base_dw.rows {
+        let first_c = wr.con.lin.terms.values().next()?;
+        if wr.con.rel != Rel::Eq
+            || !first_c.is_unit()
+            || !wr.con.lin.terms.values().all(|c| c == first_c)
+        {
+            return None;
+        }
+    }
+
+    let empty_near = Near::default();
+    let k = p.ors.len();
+    let mut row_disjs: Vec<Vec<DisjInfo>> = (0..num_rows).map(|_| Vec::new()).collect();
+    let mut disj_entries: Vec<PickEntry> = Vec::with_capacity(k);
+    let mut seen_disj_atom: HashSet<Atom> = HashSet::with_capacity(k);
+
+    for (j, ds) in p.ors.iter().enumerate() {
+        if ds.len() == 1 {
+            let (a, req_v) = parse_one_point_disj(ds)?;
+            if !seen_disj_atom.insert(a.clone()) {
+                return None;
+            }
+            match base_dw.ends.get(&a) {
+                Some((Some(bl), Some(bh))) if bl == bh => {
+                    disj_entries.push(PickEntry::Fixed {
+                        atom: a,
+                        val: req_v.clone(),
+                        ok: *bl == req_v,
+                    });
+                }
+                Some((Some(bl), Some(bh)))
+                    if bl.is_zero() && bh.is_positive() && (req_v.is_zero() || req_v == *bh) =>
+                {
+                    let &r_idx = base_dw.atom_row.get(&a)?;
+                    let loc = row_disjs[r_idx].len();
+                    let w = bh.clone();
+                    row_disjs[r_idx].push(DisjInfo {
+                        disj_idx: j,
+                        atom: a,
+                        low_arm: 0,
+                        high_arm: 0,
+                        low_val: Int::ZERO,
+                        high_val: w.clone(),
+                        weight: w,
+                    });
+                    disj_entries.push(PickEntry::Row {
+                        r_idx,
+                        loc,
+                        only_val: Some(req_v),
+                    });
+                }
+                None | Some((None, None)) => {
+                    let &r_idx = base_dw.atom_row.get(&a)?;
+                    let loc = row_disjs[r_idx].len();
+                    row_disjs[r_idx].push(DisjInfo {
+                        disj_idx: j,
+                        atom: a,
+                        low_arm: 0,
+                        high_arm: 0,
+                        low_val: Int::ZERO,
+                        high_val: req_v.clone(),
+                        weight: req_v.clone(),
+                    });
+                    disj_entries.push(PickEntry::Row {
+                        r_idx,
+                        loc,
+                        only_val: Some(req_v),
+                    });
+                }
+                _ => return None,
+            }
+            continue;
+        }
+        let (a, v0, v1) = parse_two_point_disj(ds, &base_dw, &empty_near)?;
+        let &r_idx = base_dw.atom_row.get(&a)?;
+        if !seen_disj_atom.insert(a.clone()) {
+            return None;
+        }
+        let (low_arm, high_arm, low_val, high_val) = if v0 <= v1 {
+            (0, 1, v0, v1)
+        } else {
+            (1, 0, v1, v0)
+        };
+        if !low_val.is_zero() || !high_val.is_positive() {
+            return None;
+        }
+        let weight = high_val.clone();
+        let loc = row_disjs[r_idx].len();
+        row_disjs[r_idx].push(DisjInfo {
+            disj_idx: j,
+            atom: a,
+            low_arm,
+            high_arm,
+            low_val,
+            high_val,
+            weight,
+        });
+        disj_entries.push(PickEntry::Row {
+            r_idx,
+            loc,
+            only_val: None,
+        });
+    }
+
+    let mut final_vals = Model::new();
+    let mut row_targets: Vec<Int> = Vec::with_capacity(num_rows);
+    for (r_idx, wr) in base_dw.rows.iter().enumerate() {
+        let first_c = wr.con.lin.terms.values().next().expect("non-empty");
+        let disj_set: HashSet<&Atom> = row_disjs[r_idx].iter().map(|d| &d.atom).collect();
+        let mut base_sum = wr.con.lin.constant.clone();
+        for (a, coef) in &wr.con.lin.terms {
+            if disj_set.contains(a) {
+                continue;
+            }
+            let (Some(l), Some(h)) = base_dw.ends.get(a)? else {
+                return None;
+            };
+            if l != h {
+                return None;
+            }
+            base_sum = &base_sum + &(coef * l);
+            final_vals.insert(a.clone(), l.clone());
+        }
+        let target = if first_c.is_positive() {
+            -&base_sum
+        } else {
+            base_sum
+        };
+        row_targets.push(target);
+    }
+
+    for (a, (lo, hi)) in &base_dw.ends {
+        if !base_dw.atom_row.contains_key(a) {
+            let v = match (lo, hi) {
+                (Some(l), Some(h)) => l.max(&Int::ZERO).min(h).clone(),
+                (Some(l), None) => l.max(&Int::ZERO).clone(),
+                (None, Some(h)) => h.min(&Int::ZERO).clone(),
+                (None, None) => Int::ZERO,
+            };
+            final_vals.insert(a.clone(), v);
+        }
+    }
+
+    let mut explicit_unary: HashSet<Atom> = HashSet::new();
+    for c in &red_cons {
+        if c.lin.terms.len() == 1
+            && let Some(a) = c.lin.terms.keys().next()
+        {
+            explicit_unary.insert(a.clone());
+        }
+    }
+    let (ord_atoms, col_map) = colors(&red_cons);
+    let ranks: HashMap<&Atom, usize> = ord_atoms.iter().enumerate().map(|(i, a)| (a, i)).collect();
+
+    let mut states: Vec<PickRowState> = Vec::with_capacity(num_rows);
+    let mut infeasible_base = false;
+    for (r_idx, disjs) in row_disjs.into_iter().enumerate() {
+        let k_r = disjs.len();
+        if k_r == 0 {
+            if !row_targets[r_idx].is_zero() {
+                infeasible_base = true;
+            }
+            states.push(PickRowState::FixedEmpty);
+            continue;
+        }
+        let mut seen_cols: HashSet<u64> = HashSet::with_capacity(k_r);
+        for d in &disjs {
+            let &col = col_map.get(&d.atom)?;
+            seen_cols.insert(col);
+        }
+        let all_bounded = disjs.iter().all(|d| {
+            matches!(
+                base_dw.ends.get(&d.atom),
+                Some((Some(bl), Some(bh))) if bl.is_zero() && *bh == d.weight
+            )
+        });
+        let all_unbounded = disjs.iter().all(|d| {
+            !explicit_unary.contains(&d.atom)
+                && matches!(base_dw.ends.get(&d.atom), Some((None, None)))
+        });
+
+        if all_bounded && seen_cols.len() == k_r {
+            let solve_ord = row_order(&disjs, &ord_atoms, &ranks);
+            if solve_ord.len() != k_r {
+                return None;
+            }
+            let mut solve_pos = vec![0usize; k_r];
+            for (pos, &loc) in solve_ord.iter().enumerate() {
+                solve_pos[loc] = pos;
+            }
+            let w_of: Vec<Int> = disjs.iter().map(|d| d.weight.clone()).collect();
+            let mut active_sum = Int::ZERO;
+            for w in &w_of {
+                active_sum = &active_sum + w;
+            }
+            let target = row_targets[r_idx].clone();
+            if target.is_negative() || target > active_sum {
+                infeasible_base = true;
+            }
+            let mut bpr = BoundedPickRow {
+                disjs,
+                solve_ord,
+                solve_pos,
+                w_of,
+                bit: vec![Int::ZERO; k_r + 1],
+                active_pos: (0..k_r).collect(),
+                active_sum,
+                rem: target,
+                split_pos: 0,
+                special: HashMap::new(),
+            };
+            if !infeasible_base {
+                for pos in 0..k_r {
+                    let loc = bpr.solve_ord[pos];
+                    let w = bpr.w_of[loc].clone();
+                    bpr.bit_add(pos, &w);
+                }
+            }
+            states.push(PickRowState::Bounded(bpr));
+        } else if all_unbounded && seen_cols.len() == 1 {
+            let mut active_atoms = BTreeSet::new();
+            for (loc, d) in disjs.iter().enumerate() {
+                active_atoms.insert((d.atom.clone(), loc));
+            }
+            states.push(PickRowState::Unbounded {
+                disjs,
+                active_atoms,
+                rem: row_targets[r_idx].clone(),
+            });
+        } else {
+            return None;
+        }
+    }
+
+    if infeasible_base {
+        return Some(Err(Refusal::Disjuncts));
+    }
+    for st in &mut states {
+        if let PickRowState::Bounded(bpr) = st
+            && let Err(e) = bpr.recompute()
+        {
+            return Some(Err(e));
+        }
+    }
+
+    let mut took: Vec<&'a Parts> = Vec::with_capacity(k);
+    let mut held_buf: Vec<&'a Parts> = Vec::new();
+    let mut atom_model = Model::new();
+    let mut stamp = fresh_stamp();
+
+    for j in (0..k).rev() {
+        let ds = &p.ors[j];
+        let (r_idx, loc, only_val) = match &disj_entries[j] {
+            PickEntry::Fixed { atom, val, ok } => {
+                if !*ok {
+                    return Some(Err(Refusal::Disjuncts));
+                }
+                atom_model.clear();
+                atom_model.insert(atom.clone(), val.clone());
+                held_buf.clear();
+                let holds = if deep {
+                    ds[0].witness(&atom_model, stamp, &mut held_buf)
+                } else {
+                    ds[0].cons.iter().all(|c| c.holds_linear(&atom_model))
+                };
+                if !holds {
+                    return Some(Err(Refusal::Disjuncts));
+                }
+                final_vals.insert(atom.clone(), val.clone());
+                took.push(&*ds[0]);
+                continue;
+            }
+            PickEntry::Row {
+                r_idx,
+                loc,
+                only_val,
+            } => (*r_idx, *loc, only_val.clone()),
+        };
+        let (atom, high_arm, weight, cur_v) = match &states[r_idx] {
+            PickRowState::FixedEmpty => unreachable!("active entry on FixedEmpty row"),
+            PickRowState::Bounded(bpr) => {
+                let d = &bpr.disjs[loc];
+                (
+                    d.atom.clone(),
+                    d.high_arm,
+                    d.weight.clone(),
+                    bpr.cur_val(loc),
+                )
+            }
+            PickRowState::Unbounded {
+                disjs,
+                active_atoms,
+                rem,
+            } => {
+                let d = &disjs[loc];
+                let max_loc = active_atoms.last().map(|&(_, l)| l).unwrap_or(usize::MAX);
+                let cv = if loc == max_loc {
+                    rem.clone()
+                } else {
+                    Int::ZERO
+                };
+                (d.atom.clone(), d.high_arm, d.weight.clone(), cv)
+            }
+        };
+
+        atom_model.clear();
+        atom_model.insert(atom.clone(), cur_v.clone());
+        let mut matched_at: Option<usize> = None;
+        for (at_idx, d) in ds.iter().enumerate() {
+            held_buf.clear();
+            let holds = if deep {
+                d.witness(&atom_model, stamp, &mut held_buf)
+            } else {
+                d.cons.iter().all(|c| c.holds_linear(&atom_model))
+            };
+            if holds {
+                matched_at = Some(at_idx);
+                break;
+            }
+        }
+
+        if let Some(at_idx) = matched_at {
+            match &mut states[r_idx] {
+                PickRowState::FixedEmpty => unreachable!(),
+                PickRowState::Bounded(bpr) => {
+                    bpr.deactivate(loc);
+                    bpr.rem = &bpr.rem - &cur_v;
+                }
+                PickRowState::Unbounded {
+                    active_atoms, rem, ..
+                } => {
+                    active_atoms.remove(&(atom.clone(), loc));
+                    *rem = &*rem - &cur_v;
+                }
+            }
+            final_vals.insert(atom, cur_v);
+            took.push(&*ds[at_idx]);
+            continue;
+        }
+
+        match &mut states[r_idx] {
+            PickRowState::FixedEmpty => unreachable!(),
+            PickRowState::Bounded(bpr) => {
+                bpr.deactivate(loc);
+                let mut chosen: Option<(usize, Int)> = None;
+                if let Some(req_v) = only_val {
+                    let new_rem = &bpr.rem - &req_v;
+                    let ok = if bpr.active_pos.is_empty() {
+                        new_rem.is_zero()
+                    } else {
+                        !new_rem.is_negative() && new_rem <= bpr.active_sum
+                    };
+                    if ok {
+                        bpr.rem = new_rem;
+                        if let Err(e) = bpr.recompute() {
+                            return Some(Err(e));
+                        }
+                        chosen = Some((0, req_v));
+                    }
+                } else {
+                    for at_idx in 0..2 {
+                        let v = if at_idx == high_arm {
+                            weight.clone()
+                        } else {
+                            Int::ZERO
+                        };
+                        let new_rem = &bpr.rem - &v;
+                        let ok = if bpr.active_pos.is_empty() {
+                            new_rem.is_zero()
+                        } else {
+                            !new_rem.is_negative() && new_rem <= bpr.active_sum
+                        };
+                        if ok {
+                            bpr.rem = new_rem;
+                            if let Err(e) = bpr.recompute() {
+                                return Some(Err(e));
+                            }
+                            chosen = Some((at_idx, v));
+                            break;
+                        }
+                    }
+                }
+                let Some((at_idx, v)) = chosen else {
+                    return Some(Err(Refusal::Disjuncts));
+                };
+                stamp = fresh_stamp();
+                final_vals.insert(atom, v);
+                took.push(&*ds[at_idx]);
+            }
+            PickRowState::Unbounded {
+                active_atoms, rem, ..
+            } => {
+                active_atoms.remove(&(atom.clone(), loc));
+                let v0 = if let Some(req_v) = only_val {
+                    req_v
+                } else if high_arm == 0 {
+                    weight
+                } else {
+                    Int::ZERO
+                };
+                if active_atoms.is_empty() && *rem != v0 {
+                    return Some(Err(Refusal::Disjuncts));
+                }
+                *rem = &*rem - &v0;
+                stamp = fresh_stamp();
+                final_vals.insert(atom, v0);
+                took.push(&*ds[0]);
+            }
+        }
+    }
+
+    if !p.holds(&final_vals) {
+        return None;
+    }
+    Some(Ok((final_vals, took)))
 }
 
 #[cfg(feature = "two-at-a-time")]

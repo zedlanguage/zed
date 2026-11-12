@@ -269,6 +269,73 @@ impl Formula {
     pub(super) fn flattens_into(&self, kind: u8) -> bool {
         matches!(self, Formula::And(_) | Formula::Or(_)) && self.rank() == kind
     }
+
+    /// The top-level conjuncts, with a conjunction kept among them ([`Formula::and_keeping`])
+    /// read as flattened into it; a conjunction kept at more than one place is read at its first.
+    pub(super) fn conjuncts(&self) -> Vec<&Formula> {
+        match self.conjunct_list() {
+            Conjuncts::Read(out) => out,
+            flat => flat.iter().collect(),
+        }
+    }
+
+    /// [`Formula::conjuncts`], borrowed from the formula where no list need be made.
+    // A conjunction that holds no conjunction, or a formula that is none, is read as it stands,
+    // with no set of the conjunctions seen and no list made: O(1), where a list costs an
+    // allocation on each call. Only a conjunction that holds one is read into a list, O(c).
+    pub(super) fn conjunct_list(&self) -> Conjuncts<'_> {
+        match self {
+            Formula::And(gs) if !gs.iter().any(|g| matches!(g, Formula::And(_))) => {
+                return Conjuncts::Flat(gs);
+            }
+            Formula::And(_) => {}
+            g => return Conjuncts::Flat(std::slice::from_ref(g)),
+        }
+        let mut out = Vec::new();
+        // An id is one number, so the seen set is hashed by `FxHasher`, not by the default
+        // hasher, which reads a per-thread seed on each call and costs more per id.
+        let mut seen: HashSet<Id, std::hash::BuildHasherDefault<rustc_hash::FxHasher>> =
+            HashSet::default();
+        let mut stack = vec![self];
+        while let Some(g) = stack.pop() {
+            match g {
+                Formula::And(gs) => {
+                    if seen.insert(Id::any(g)) {
+                        stack.extend(gs.iter().rev());
+                    }
+                }
+                g => out.push(g),
+            }
+        }
+        Conjuncts::Read(out)
+    }
+}
+
+/// The top-level conjuncts of a formula ([`Formula::conjunct_list`]): the operands of a
+/// conjunction that holds none, or the formula alone, as written; or a list read from nested
+/// conjunctions.
+pub(super) enum Conjuncts<'f> {
+    Flat(&'f [Formula]),
+    Read(Vec<&'f Formula>),
+}
+
+impl<'f> Conjuncts<'f> {
+    /// Each conjunct, in order.
+    pub(super) fn iter(&self) -> impl Iterator<Item = &'f Formula> + '_ {
+        let (flat, read): (&'f [Formula], &[&'f Formula]) = match self {
+            Conjuncts::Flat(gs) => (gs, &[]),
+            Conjuncts::Read(gs) => (&[], gs),
+        };
+        flat.iter().chain(read.iter().copied())
+    }
+
+    /// The number of conjuncts.
+    pub(super) fn len(&self) -> usize {
+        match self {
+            Conjuncts::Flat(gs) => gs.len(),
+            Conjuncts::Read(gs) => gs.len(),
+        }
+    }
 }
 
 impl Factor {
@@ -633,3 +700,32 @@ impl Con {
         right.show(f, name)
     }
 }
+
+/// The atom of a constraint of one atom, with the least and the greatest value it allows that
+/// atom; a least above the greatest allows none.
+pub(super) fn one_bound(c: &Con) -> Option<(&Atom, Option<Int>, Option<Int>)> {
+    let mut terms = c.lin.terms.iter();
+    let (Some((a, coef)), None) = (terms.next(), terms.next()) else {
+        return None;
+    };
+    // `coef·a + k` compared with zero.
+    let k = &c.lin.constant;
+    let m = coef.abs();
+    let (lo, hi) = match c.rel {
+        // `a >= -k / coef`, rounded up.
+        Rel::Ge if coef.is_positive() => (Some(-&k.div_floor(&m)), None),
+        // `a <= k / |coef|`, rounded down.
+        Rel::Ge => (None, Some(k.div_floor(&m))),
+        Rel::Eq if k.mod_floor(&m).is_zero() => {
+            let v = -&k.div_floor(&m);
+            let v = if coef.is_positive() { v } else { -&v };
+            (Some(v.clone()), Some(v))
+        }
+        // No integer `a` has `coef·a == -k`.
+        Rel::Eq => (Some(Int::ONE), Some(Int::ZERO)),
+    };
+    Some((a, lo, hi))
+}
+
+/// The least and greatest value of each atom, `None` where there is none.
+pub(super) type Ends = (Option<Int>, Option<Int>);

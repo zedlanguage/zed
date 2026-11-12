@@ -519,6 +519,23 @@ no re-export and no copy, and no change in behavior:
 The tests of `types.rs` and `empty.rs` moved to `types/tests.rs` and `types/empty/tests.rs`,
 and those of `rec.rs` to `rec/group.rs` (`types::rec::group::tests`).
 
+**The `zedc-presburger` cycle the PRES-* merges of 2026-11-12 brought is broken
+(IMPORT-cycle-presburger).** The tool reported one component of four files: `presburger`,
+`presburger/one_row`, `presburger/row_domains` and `presburger/slack`. `one_row.rs` called
+`Formula::conjuncts` and `row_domains.rs` called `one_bound`, both in `presburger.rs`; `slack.rs`
+used `Near`, `Parts`, `colors`, `solve`, `disjunction_hulls` and `DeepHulls` from it, and `solve`
+calls `slack.rs` while `BoundedPickRow::recompute` there calls `solve`, a true group of mutual
+recursion. The moves, with no copy and no change in behavior:
+
+| Edge | Move |
+|---|---|
+| `one_row`, `row_domains`, `forced` to `presburger` | `Formula::conjuncts`, `Formula::conjunct_list`, the type `Conjuncts` they return (PRES-disj-regressions) and `one_bound` moved to `presburger/formula.rs`, which all three already import |
+| `slack` to `presburger` | The searches that read a search's parts or call the solver (`SlackStatus`, `RowSwing`, `TwoPointRowProp`, `SlackIndex`, `parse_two_point_disj`, `find_probe_points`, `find_tied_point`, `BoundedPickRow`, `PickRowState`, `PickEntry`, `parse_one_point_disj`, `try_pick_disjoint_wide`) moved from `slack.rs` to `presburger.rs`, as the recursive group must be one unit. `slack.rs` keeps the row algebra (`DisjointWide`, `WideRow`, `Sum`, the sweeps, `FastGreedy`) and imports only `formula.rs`. The switches only it reads, `ROW_ORDER_SCAN`, `SLACKLESS` and `UNBATCHED`, moved there; `presburger.rs` re-exports them (an edge from parent to child), so the paths `zedc_presburger::presburger::{ROW_ORDER_SCAN, SLACKLESS, UNBATCHED}` are unchanged. `sweep_row_unbounded` takes `!old_path()` as a parameter from its caller instead of reading it |
+| `local` to `presburger` | `local.rs` (C2-local-tier, merged after the cycle was first reported) used `Ends`, `hull_side`, `Formula::atoms` and `Formula::and` from `presburger.rs`, which uses `local::Clusters` and `local::cluster_sides`. The alias `Ends` moved to `formula.rs`, and `Formula::cons` and `Formula::atoms` to `presburger/deep.rs` beside `Formula::walk`, which they call. `hull_side` calls the solver and `Formula::and` calls the joins of `presburger.rs` (`Joining` and the `two-at-a-time` switch), so `cluster_sides` takes both as parameters, `and` and `side`, from its one caller |
+
+`imports crates/zedc-presburger/src` now reports no cycle (25 files, 58 imports), and
+`s_01f_import_graph` checks that.
+
 `zed-kernel` and `zedc` read the shared scaling test through `#[path]` (`zed-kernel` `lib.rs:28`, `zedc` `lib.rs:45`); the tool reports such
 a module and does not read it, since its file is outside the crate.
 

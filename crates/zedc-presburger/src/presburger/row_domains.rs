@@ -27,8 +27,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use zedc_int::int::Int;
 
-use super::formula::{Atom, Con, Formula, Id, Model, Rel};
-use super::{Conjuncts, one_bound};
+use super::formula::{Atom, Con, Conjuncts, Formula, Id, Model, Rel, one_bound};
 
 /// What the residue or the ends of the row settle.
 pub(super) enum Settled {
