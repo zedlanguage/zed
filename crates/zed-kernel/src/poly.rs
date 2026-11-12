@@ -10,7 +10,7 @@
 //!
 //! [`decide`] first compares the two sides at two points derived from the identity's content,
 //! the same on every run and in batch and single-file checking (sec:optimizer,
-//! [SchwartzZippel]). The sides are evaluated modulo the prime `2^61 - 1`; a difference there is
+//! \[SchwartzZippel\]). The sides are evaluated modulo the prime `2^61 - 1`; a difference there is
 //! a difference over the integers, so at `int` and `rat` with no atom it refutes the identity,
 //! and a witness of small integers is then found one binder at a time among `deg + 1` values
 //! (sec:verification, rung 2). Agreement is no grade: it only lets the expansion run. Then
