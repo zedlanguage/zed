@@ -401,7 +401,7 @@ impl<'a, 's> Builder<'a, 's> {
                     .map(|&l| self.word(self.tree.nodes[l].start).into());
                 let body = self.body(body)?;
                 let span = self.span(n);
-                self.loop_initials(label.as_deref(), span, &body)?;
+                self.loop_initials(label.as_deref(), span, &body, n)?;
                 Ok(Expr {
                     kind: ExprKind::Loop {
                         label,

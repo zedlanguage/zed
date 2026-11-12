@@ -10,7 +10,7 @@
 use super::initial::{accepted, notes, refusal, refused};
 use super::{check, fmt};
 use zed_tests::scaling;
-use zedc::ast::unit;
+use zedc::ast::{Error, unit, unit_all_errors};
 use zedc::lex::lex;
 use zedc::parse::{TOP, parse};
 use zedc::rejection::Row;
@@ -174,7 +174,9 @@ fn every_construct_with_paths_is_checked() {
         ("x' = f(t) else c*.a();", "the default of the `else`"),
         ("x' = t > 1 && c*.a();", "the right side of the `&&`"),
         ("x' = t > 1 || c*.a();", "the right side of the `||`"),
-        ("x' = for i in 0..<t { c*.a() };", "the body of the `for`"),
+        // A `for` over one key: over several, each pass writes `c'`, row "Collision"
+        // (`several_writers_in_a_for_body`).
+        ("x' = for i in 0..<1 { c*.a() };", "the body of the `for`"),
         ("x' = (i -> c*.a());", "the body of the lambda"),
         // A nested block in a branch is still in the branch.
         (
@@ -311,7 +313,7 @@ fn an_update_in_a_nested_block_counts() {
         "x' = if t > 1 { c' <- 1; 0 } else { 1 };",
         "x' = if t > 1 { c'[v in 0..<2] = v; 0 } else { 1 };",
         "x' = t > 1 && { c' = 1; true };",
-        "x' = for i in 0..<t { c' = i; i };",
+        "x' = for i in 0..<1 { c' = i; i };",
     ] {
         let src = t_loop(&[update]);
         let e = refusal(&src);
@@ -562,13 +564,13 @@ const ONE_WRITER: &str = "a step writes `c'` at most once, even where the values
 /// the definition, the second gives each key its own entry.
 #[test]
 fn several_writers_of_one_fact() {
-    let message = "Several writers of `c'` in one step: `d[i in 0..<2] = c*.a()`. Try `r = \
-                   c*.a(); d[i in 0..<2] = r;` instead.";
+    let message = "Several writers of `c'` in one step: `d[i in 0..<2] = c*.a()`. Try `r1 = \
+                   c*.a(); d[i in 0..<2] = r1;` instead.";
     let notes = [
         "`c*.a()` writes `c'`, and `d[i in 0..<2] = …` computes its value once for each key of \
          `i` in `0..<2`, so `c'` is written twice in one step [c*.a()]",
         &format!("{ONE_WRITER} [d[i in 0..<2] = c*.a();]"),
-        "repair: `r = c*.a();` before the definition writes `c'` once on a step, and each key \
+        "repair: `r1 = c*.a();` before the definition writes `c'` once on a step, and each key \
          reads the result [d[i in 0..<2] = c*.a();]",
         "repair: `c[i]*.a()` writes one entry of `c` for each key of `i`, when `c` has an entry \
          for each [c*.a()]",
@@ -581,7 +583,7 @@ fn several_writers_of_one_fact() {
             Some(message),
             &notes,
             &[
-                t_loop(&[initial, "r = c*.a(); d[i in 0..<2] = r;"]).as_str(),
+                t_loop(&[initial, "r1 = c*.a(); d[i in 0..<2] = r1;"]).as_str(),
                 t_loop(&[initial, "d[i in 0..<2] = c[i]*.a();"]).as_str(),
             ],
         );
@@ -623,19 +625,19 @@ fn several_writers_of_one_fact() {
         (
             "old[i in 0..<4] = grid[0]*.relax();",
             "grid[0]*.relax()",
-            "r = grid[0]*.relax(); old[i in 0..<4] = r;",
+            "r1 = grid[0]*.relax(); old[i in 0..<4] = r1;",
         ),
         // A chain is one write, made once for each key.
         (
             "old[i in 0..<4] = grid*.a().b();",
             "grid*.a().b()",
-            "r = grid*.a().b(); old[i in 0..<4] = r;",
+            "r1 = grid*.a().b(); old[i in 0..<4] = r1;",
         ),
         // The call is moved out of the rest of the value.
         (
             "old[i in 0..<4] = grid*.a() + i;",
             "grid*.a()",
-            "r = grid*.a(); old[i in 0..<4] = r + i;",
+            "r1 = grid*.a(); old[i in 0..<4] = r1 + i;",
         ),
         // A call that reads the key cannot be moved out: each key gets its own entry.
         (
@@ -654,17 +656,18 @@ fn several_writers_of_one_fact() {
             "grid'[v in 0..<3] = v;",
             "old[i in 0..<4] = { grid'[i][v in 0..<3] = v; 0 };",
         ),
-        // In the body of a `for`, in a nested definition's domain, and in a nested definition's
-        // value whose key is not the outer one.
+        // In the body of a `for` over several keys, whose key the entry takes too, in a nested
+        // definition's domain, and in a nested definition's value whose key is not the outer
+        // one.
         (
             "old[i in 0..<4] = for x in 0..<2 { grid*.a() };",
             "grid*.a()",
-            "old[i in 0..<4] = for x in 0..<2 { grid[i]*.a() };",
+            "old[i in 0..<4] = for x in 0..<2 { grid[i][x]*.a() };",
         ),
         (
             "old[i in 0..<4] = { e[j in 0..<grid*.a()] = j; 0 };",
             "grid*.a()",
-            "old[i in 0..<4] = { e[j in 0..<grid[i]*.a()] = j; 0 };",
+            "r1 = grid*.a(); old[i in 0..<4] = { e[j in 0..<r1] = j; 0 };",
         ),
         (
             "old[i in 0..<4] = { e[j in 0..<2] = grid[j]*.a(); 0 };",
@@ -675,7 +678,7 @@ fn several_writers_of_one_fact() {
         (
             "old[i in 0..<4] = grid.pos*.relax();",
             "grid.pos*.relax()",
-            "r = grid.pos*.relax(); old[i in 0..<4] = r;",
+            "r1 = grid.pos*.relax(); old[i in 0..<4] = r1;",
         ),
         (
             "old[i in 0..<4] = grid.pos*.relax(i);",
@@ -716,15 +719,16 @@ fn several_writers_of_one_fact() {
         );
         accepted(&t_loop(&["initial grid = 0 with carryForward;", repair]));
     }
-    // The new name avoids the names of the loop.
+    // The new name avoids the names of the item around the loop, `r` of `r = loop t`, and of
+    // its body.
     let e = refusal(&t_loop(&[
         "initial c = 0;",
-        "r = 1;",
-        "d[i in 0..<2] = c*.a() + r;",
+        "r1 = 1;",
+        "d[i in 0..<2] = c*.a() + r1;",
     ]));
     assert!(
         e.message
-            .ends_with("Try `r1 = c*.a(); d[i in 0..<2] = r1 + r;` instead."),
+            .ends_with("Try `r2 = c*.a(); d[i in 0..<2] = r2 + r1;` instead."),
         "{}",
         e.message
     );
@@ -1620,4 +1624,338 @@ fn the_dot_call_notes_scale() {
         // The loop, the `initial` statement, one note per call and the one repair.
         assert_eq!(e.notes.len(), n + 3, "{e:?}");
     });
+}
+
+/// Row "Collision" in the body of a `for` over several keys: the body runs once for each key of
+/// its binder, so a write there whose target does not name that key writes one fact once for
+/// each, as in the value of an indexed definition (`several_writers_of_one_fact`). The repairs
+/// are the same two. A `for` over one key or none runs its body once at most, and keeps row "A
+/// loop variable not updated on every path of a step".
+#[test]
+fn several_writers_in_a_for_body() {
+    refused(
+        &t_loop(&["initial c = 0;", "x' = for i in 0..<t { c*.a() };"]),
+        Row::Collision,
+        "c*.a()",
+        Some(
+            "Several writers of `c'` in one step: `for i in 0..<t { c*.a() }`. Try `r1 = c*.a(); \
+             x' = for i in 0..<t { r1 };` instead.",
+        ),
+        &[
+            "`c*.a()` writes `c'`, and `for i in 0..<t …` runs its body once for each key of `i` \
+             in `0..<t`, so `c'` is written once for each key in one step [c*.a()]",
+            &format!("{ONE_WRITER} [for i in 0..<t {{ c*.a() }}]"),
+            "repair: `r1 = c*.a();` before the statement writes `c'` once on a step, and each \
+             key reads the result [x' = for i in 0..<t { c*.a() };]",
+            "repair: `c[i]*.a()` writes one entry of `c` for each key of `i`, when `c` has an \
+             entry for each [c*.a()]",
+        ],
+        &[
+            &t_loop(&["initial c = 0;", "r1 = c*.a(); x' = for i in 0..<t { r1 };"]),
+            &t_loop(&[
+                "initial c = 0 with carryForward;",
+                "x' = for i in 0..<t { c[i]*.a() };",
+            ]),
+        ],
+    );
+    // A primed definition, and a count of the passes.
+    let src = t_loop(&[
+        "initial c = 0 with carryForward;",
+        "x' = for i in 0..<3 { c' = i; i };",
+    ]);
+    let e = refusal(&src);
+    assert_eq!(e.row, Some(Row::Collision), "{e:?}");
+    assert_eq!(&src[e.span.start..e.span.end], "c' = i;");
+    assert_eq!(
+        e.message,
+        "Several writers of `c'` in one step: `for i in 0..<3 { c' = i; i }`. Try `x' = for i \
+         in 0..<3 { c'[i] = i; i };` instead."
+    );
+    assert!(
+        e.notes
+            .iter()
+            .any(|n| n.text.ends_with("so `c'` is written 3 times in one step")),
+        "{e:?}"
+    );
+    accepted(&t_loop(&[
+        "initial c = 0 with carryForward;",
+        "x' = for i in 0..<3 { c'[i] = i; i };",
+    ]));
+    // One key or none: one writer at most.
+    for update in [
+        "x' = for i in 0..<1 { c*.a() };",
+        "x' = for i in 2..<2 { c*.a() };",
+    ] {
+        let src = t_loop(&["initial c = 0;", update]);
+        assert_eq!(refusal(&src).row, Some(Row::NotEveryPath), "{src}");
+        accepted(&t_loop(&["initial c = 0 with carryForward;", update]));
+    }
+    // A target that names the key writes one entry on each pass.
+    accepted(&t_loop(&[
+        "initial c = 0 with carryForward;",
+        "x' = for i in 0..<t { c[i]*.a() };",
+    ]));
+    // A `for` in the value of an indexed definition: the entry takes both keys.
+    let src = t_loop(&[
+        "initial c = 0 with carryForward;",
+        "d[i in 0..<2] = for x in 0..<2 { c[x]*.a() };",
+    ]);
+    let e = refusal(&src);
+    assert_eq!(e.row, Some(Row::Collision), "{e:?}");
+    assert!(
+        e.message
+            .ends_with("Try `d[i in 0..<2] = for x in 0..<2 { c[x][i]*.a() };` instead."),
+        "{}",
+        e.message
+    );
+    accepted(&t_loop(&[
+        "initial c = 0 with carryForward;",
+        "d[i in 0..<2] = for x in 0..<2 { c[x][i]*.a() };",
+    ]));
+}
+
+/// A binder between a write and the key it would name, of a lambda, a `for`, a match arm or a
+/// block, hides that key when it has its name: the write's `[i]` names the nearer binder, so the
+/// write is made once for each key of the outer one, row "Collision". The repair gives the
+/// nearer binder a new name, which a note states, so the entry can name both.
+#[test]
+fn a_binder_that_hides_a_key_is_renamed() {
+    for (update, shown, repair, hide) in [
+        (
+            "e[i in 0..<2] = (i -> c[i]*.a())(0);",
+            "e[i in 0..<2] = (i -> c[i]*.a())(0)",
+            "e[i in 0..<2] = (i1 -> c[i1][i]*.a())(0);",
+            "the `i` of `(i -> …` hides the `i` of `e[i in 0..<2] = …`, so the write names only \
+             the nearer one; the repair names it `i1` [(i -> c[i]*.a())]",
+        ),
+        (
+            "e[i in 0..<2] = for i in 0..<1 { c[i]*.a() };",
+            "e[i in 0..<2] = for i in 0..<1 { c[i]*.a() }",
+            "e[i in 0..<2] = for i1 in 0..<1 { c[i1][i]*.a() };",
+            "the `i` of `for i in 0..<1 …` hides the `i` of `e[i in 0..<2] = …`, so the write \
+             names only the nearer one; the repair names it `i1` [for i in 0..<1 { c[i]*.a() }]",
+        ),
+        (
+            "e[i in 0..<2] = match 0 { i -> c[i]*.a() };",
+            "e[i in 0..<2] = match 0 { i -> c[i]*.a() }",
+            "e[i in 0..<2] = match 0 { i1 -> c[i1][i]*.a() };",
+            "the `i` of `i -> …` hides the `i` of `e[i in 0..<2] = …`, so the write names only \
+             the nearer one; the repair names it `i1` [i -> c[i]*.a()]",
+        ),
+        (
+            "e[i in 0..<2] = { i = 0; c[i]*.a() };",
+            "e[i in 0..<2] = { i = 0; c[i]*.a() }",
+            "e[i in 0..<2] = { i1 = 0; c[i1][i]*.a() };",
+            "the `i` of `i = …` hides the `i` of `e[i in 0..<2] = …`, so the write names only \
+             the nearer one; the repair names it `i1` [i = 0;]",
+        ),
+    ] {
+        let src = t_loop(&["initial c = 0 with carryForward;", update]);
+        let e = refusal(&src);
+        assert_eq!(e.row, Some(Row::Collision), "{src}: {e:?}");
+        assert_eq!(&src[e.span.start..e.span.end], "c[i]*.a()", "{src}");
+        assert_eq!(
+            e.message,
+            format!("Several writers of `c'[i]` in one step: `{shown}`. Try `{repair}` instead."),
+            "{src}"
+        );
+        assert!(
+            notes(&src, &e).iter().any(|n| n == hide),
+            "{src}: {:#?}",
+            notes(&src, &e)
+        );
+        accepted(&t_loop(&["initial c = 0 with carryForward;", repair]));
+    }
+    // A binder of another name hides nothing, and neither does a `for` over one key that binds
+    // a name of its own.
+    accepted(&t_loop(&[
+        "initial c = 0 with carryForward;",
+        "e[i in 0..<2] = match 0 { j -> c[i]*.a() };",
+        "f[i in 0..<2] = for j in 0..<1 { c[i]*.a() };",
+    ]));
+}
+
+/// [`COUNTER`] with `next`, a method that writes its receiver and has a declared result.
+const NEXT: &str = "struct Counter { n: int }\nCounter.tick() { n' = n + 1; }\nCounter.next() -> \
+                    int { n' = n + 1; return n; }\n";
+
+/// The error of the loop in the unit `text`: methods with a declared result are not compiled by
+/// this zedc yet, which is refused first, so the loop's own error is the last of the unit's.
+fn loop_error(text: &str) -> Error {
+    let tokens = lex(text).unwrap();
+    let tree = parse(text, &tokens, "Unit", TOP).unwrap();
+    match unit_all_errors(text, &tokens, &tree) {
+        Ok(_) => panic!("accepted: {text}"),
+        Err(es) => es.into_iter().last().unwrap(),
+    }
+}
+
+/// A `.` call in code run once for each of several keys: written with `*.`, as the repair of a
+/// `.` call is, it would write the variable once for each key, row "Collision". The repair
+/// makes the call once before the statement, or gives each key its own entry when the call
+/// cannot be moved, as row "Collision" repairs a write.
+#[test]
+fn a_dot_call_run_for_each_key_is_made_once() {
+    // A call with a result: the result is read in its place.
+    let src = format!(
+        "{NEXT}{}",
+        t_loop(&["initial c = Counter(n: 0);", "d[i in 0..<2] = c.next();"])
+    );
+    let e = loop_error(&src);
+    assert_eq!(e.row, Some(Row::InitialNotUpdated), "{e:?}");
+    assert_eq!(&src[e.span.start..e.span.end], "c.next()");
+    assert_eq!(
+        e.message,
+        "No statement of this loop updates `c`: `c.next()` does not update `c`. Try `r1 = \
+         c*.next(); d[i in 0..<2] = r1;` instead."
+    );
+    assert_eq!(
+        notes(&src, &e)[3..],
+        [
+            "`c*.next()` would write `c'`, and `d[i in 0..<2] = …` computes its value once for \
+             each key of `i` in `0..<2`, so `c'` would be written twice in one step [c.next()]",
+            "repair: `r1 = c*.next(); d[i in 0..<2] = r1;` in place of `d[i in 0..<2] = \
+             c.next();` [c.next()]",
+        ]
+    );
+    accepted(&format!(
+        "{NEXT}{}",
+        t_loop(&[
+            "initial c = Counter(n: 0);",
+            "r1 = c*.next(); d[i in 0..<2] = r1;"
+        ])
+    ));
+    // A call that is a whole statement moves before the statement around it.
+    for (update, repair) in [
+        (
+            "d[i in 0..<2] = { c.tick(); 0 };",
+            "c*.tick(); d[i in 0..<2] = { 0 };",
+        ),
+        (
+            "z = for x in 0..<2 { c.tick(); 0 };",
+            "c*.tick(); z = for x in 0..<2 { 0 };",
+        ),
+    ] {
+        let src = c_loop(&[update]);
+        let e = refusal(&src);
+        assert_eq!(e.row, Some(Row::InitialNotUpdated), "{e:?}");
+        assert_eq!(
+            e.message,
+            format!(
+                "No statement of this loop updates `c`: `c.tick()` does not update `c`. Try \
+                 `{repair}` instead."
+            )
+        );
+        builds(&c_loop(&[repair]));
+    }
+    // A call on some passes only: each key gets its own entry, and the variable carries.
+    let src = format!(
+        "{NEXT}{}",
+        t_loop(&[
+            "initial c = Counter(n: 0);",
+            "d[i in 0..<2] = { if i > 0 { c.next() } else { 0 } };",
+        ])
+    );
+    let e = loop_error(&src);
+    assert_eq!(e.row, Some(Row::InitialNotUpdated), "{e:?}");
+    assert_eq!(
+        e.message,
+        "No statement of this loop updates `c`: `c.next()` does not update `c`. Try `d[i in \
+         0..<2] = { if i > 0 { c[i]*.next() } else { 0 } };` and `initial c = Counter(n: 0) \
+         with carryForward;` instead."
+    );
+    accepted(&format!(
+        "{NEXT}{}",
+        t_loop(&[
+            "initial c = Counter(n: 0) with carryForward;",
+            "d[i in 0..<2] = { if i > 0 { c[i]*.next() } else { 0 } };",
+        ])
+    ));
+}
+
+/// `n` statements, each a `for` over `0..<t` whose body updates the entry `ck[j]` of its own
+/// carried variable, then `tail`.
+fn for_bodies(n: usize, tail: &str) -> String {
+    let initials: String = (0..n)
+        .map(|k| format!("initial c{k} = 0 with carryForward; "))
+        .collect();
+    let fors: String = (0..n)
+        .map(|k| format!("x{k}' = for j in 0..<t {{ c{k}[j]*.a() }}; "))
+        .collect();
+    format!("r = loop t {{ while t < 9; {initials}{fors}{tail} }};\n")
+}
+
+/// A write of `c[i]` inside `n` nested blocks in the value of `d[i in 0..<2]`, each block
+/// binding `i` anew, so that each hides the key.
+fn hiding_blocks(n: usize) -> String {
+    let open = "{ i = 0; ".repeat(n);
+    let close = " }".repeat(n);
+    format!(
+        "r = loop t {{ while t < 9; initial c = 0 with carryForward; d[i in 0..<2] = \
+         {open}c[i]*.a(){close}; }};\n"
+    )
+}
+
+/// `n` indexed definitions, each with a `.` call with a result as its value.
+fn dot_calls_for_each_key(n: usize) -> String {
+    let defs: String = (0..n)
+        .map(|k| format!("d{k}[i in 0..<2] = c.next(); "))
+        .collect();
+    format!("{NEXT}r = loop t {{ while t < 9; initial c = Counter(n: 0); {defs}}};\n")
+}
+
+/// The checks of writes in code run for each key cost one walk of the step: `n` `for` bodies
+/// with keyed writes, accepted or refused at the end; a write under `n` binders that hide its
+/// key, whose repair renames each; and `n` `.` calls each made once before its definition, each
+/// with a new name, are each checked in time of order `n log n`.
+#[test]
+fn writes_run_for_each_key_scale() {
+    type Make = fn(usize) -> String;
+    let cases: [(&str, Make, Option<Row>, usize); 4] = [
+        ("for bodies, accepted", |n| for_bodies(n, ""), None, 0),
+        (
+            "for bodies, refused at the end",
+            |n| for_bodies(n, "y' = for j in 0..<t { b*.a() };"),
+            Some(Row::Collision),
+            4,
+        ),
+        (
+            "binders that hide a key",
+            hiding_blocks,
+            Some(Row::Collision),
+            3,
+        ),
+        (
+            "dot calls for each key",
+            dot_calls_for_each_key,
+            Some(Row::InitialNotUpdated),
+            3,
+        ),
+    ];
+    for (what, make, row, fixed) in cases {
+        let units = scaling::inputs(500, |n| {
+            let text = make(n);
+            let tokens = lex(&text).unwrap();
+            let tree = parse(&text, &tokens, "Unit", TOP).unwrap();
+            (text, tokens, tree)
+        });
+        scaling::check(what, 500, |n| {
+            let (text, tokens, tree) = &units[&n];
+            match (unit_all_errors(text, tokens, tree), row) {
+                (Ok(_), None) => {}
+                (Err(es), Some(r)) => {
+                    let e = es.last().unwrap();
+                    assert_eq!(e.row, Some(r), "{what}: {e:?}");
+                    // A note for each binder renamed, and two for each call made once.
+                    let per = match r {
+                        Row::InitialNotUpdated => 2 * n,
+                        _ if what.starts_with("binders") => n,
+                        _ => 0,
+                    };
+                    assert_eq!(e.notes.len(), fixed + per, "{what}: {e:?}");
+                }
+                (got, _) => panic!("{what}: {:?}", got.err()),
+            }
+        });
+    }
 }

@@ -62,27 +62,31 @@ pub(super) fn keys_of(k: &IndexKey) -> Option<Keys> {
             Some(v) => Some(Keys::Ints(v.clone(), End::At(v))),
             None => written(e, ""),
         },
-        IndexKey::In { set, .. } => {
-            let ExprKind::Range(lo, end) = &set.kind else {
-                return written(set, "in ");
-            };
-            let Some(lo) = int_literal(lo) else {
-                return written(set, "in ");
-            };
-            let end = match end {
-                RangeEnd::Below(b) => match int_literal(b) {
-                    Some(b) => End::At(b - 1),
-                    None => return written(set, "in "),
-                },
-                RangeEnd::Through(b) => match int_literal(b) {
-                    Some(b) => End::At(b),
-                    None => return written(set, "in "),
-                },
-                RangeEnd::Open => End::Above,
-            };
-            end.reaches(&lo).then_some(Keys::Ints(lo, end))
-        }
+        IndexKey::In { set, .. } => keys_in(set),
     }
+}
+
+/// The keys of the domain `set`, as [`keys_of`] gives them for the bracket `i in set`.
+pub(super) fn keys_in(set: &Expr) -> Option<Keys> {
+    let written = || Some(Keys::Written(format!("in {set}")));
+    let ExprKind::Range(lo, end) = &set.kind else {
+        return written();
+    };
+    let Some(lo) = int_literal(lo) else {
+        return written();
+    };
+    let end = match end {
+        RangeEnd::Below(b) => match int_literal(b) {
+            Some(b) => End::At(b - 1),
+            None => return written(),
+        },
+        RangeEnd::Through(b) => match int_literal(b) {
+            Some(b) => End::At(b),
+            None => return written(),
+        },
+        RangeEnd::Open => End::Above,
+    };
+    end.reaches(&lo).then_some(Keys::Ints(lo, end))
 }
 
 /// The entries one site gives one variable: the variable; the generation keys, `lo` to `end`,
