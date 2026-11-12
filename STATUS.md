@@ -1977,7 +1977,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | BUILD-const | impl attempt 1 | 2026-11-05 04:07 | build all-targets 0, fmt check 0, grammar check OK, sync --check OK; running the affected groups with --doc (220 pieces) / load 64.24 62.38 55.55 |
 | GSX-unsolved | hybrid-xr attempt  | 2026-11-11 16:53 | round 2 recorded (Opus pf1 moved it: sweep 3, lost 3, prints 3; CD best still 29); round 3 launched |
-| LOAD-max-div-unsolved | hybrid-xr attempt 1 | 2026-11-11 17:11 | round 1: difference rule meets A + scored C at R 8.1-8.2; aperiodic open; merging part |
+| LOAD-max-div-unsolved | hybrid-xr attempt 1 | 2026-11-11 17:11 | merged part A + scored C (difference rule) as ece80a15c; 4 groups 0 failed; round 2: lazy-offset treap for aperiodic chains |
 | MSG-derive-print-per-message | running | 2026-11-12 04:27 |  |
 | MSG-split-imports | impl attempt 1 | 2026-11-11 01:43 | started; worktree /home/luke/Work/wt/msg-split-imports on origin/main d41b005c1 |
 | NAME-ascii-library | running | 2026-11-12 13:53 |  |
