@@ -799,3 +799,227 @@ fn long_failing_max_all() {
         one,
     );
 }
+
+/// `f(a)`, a call of the term `f`.
+fn call(f: Term, args: Vec<Term>) -> Term {
+    Term::App(Shared::new(f), args)
+}
+
+/// `(ps) -> body`.
+fn lambda(ps: &[&str], body: Term) -> Term {
+    Term::Lam(ps.iter().map(|&p| p.into()).collect(), Shared::new(body))
+}
+
+/// `let x = e in body`.
+fn let_in(x: &str, e: Term, body: Term) -> Term {
+    Term::Let(x.into(), Shared::new(e), Shared::new(body))
+}
+
+/// `e0 = v; ej = if (v >= j) { e(j-1) } else { other(e(j-1)) }`, the arms one shared term
+/// when `other` is `None`.
+fn arms_over_v(d: usize, other: Option<fn(Term) -> Term>) -> Term {
+    (1..=d as i64).fold(var("v"), |e, j| {
+        let e = Shared::new(e);
+        let b = match other {
+            None => e.clone(),
+            Some(f) => Shared::new(f((*e).clone())),
+        };
+        Term::If(Shared::new(prim(Prim::Ge, var("v"), int(j))), e, b)
+    })
+}
+
+/// `i >= ((v) -> e)(3)` for `e` of [`arms_over_v`] with one shared arm: a call that reads no
+/// input, whose value is found by closing it and running the closed term.
+fn shared_arms_in_a_called_lambda(d: usize) -> Term {
+    let f = lambda(&["v"], arms_over_v(d, None));
+    prim(Prim::Ge, var("i"), call(f, vec![int(3)]))
+}
+
+/// `let f = (a, b) -> max(a, b); let x0 = 1; x1 = f(x0, x0); …; i >= xk`: each name read
+/// twice in the call that the next is bound to.
+fn chain_of_doubled_calls(k: usize) -> Term {
+    let mut body = prim(Prim::Ge, var("i"), var(&format!("x{k}")));
+    for j in (1..=k).rev() {
+        let prev = var(&format!("x{}", j - 1));
+        body = let_in(
+            &format!("x{j}"),
+            call(var("f"), vec![prev.clone(), prev]),
+            body,
+        );
+    }
+    let max = lambda(&["a", "b"], prim(Prim::Max, var("a"), var("b")));
+    let_in("f", max, let_in("x0", int(1), body))
+}
+
+/// Closing a call that reads no input visits each shared part once for each scope and set of
+/// names bound within it, so `d` nested `if`s over one shared arm close in time of `d`; the
+/// tree walk took `2^d`.
+#[test]
+fn long_closing_shared_arms_in_a_called_lambda() {
+    long(
+        "a call of a lambda of nested `if`s over one shared arm",
+        shared_arms_in_a_called_lambda,
+        one,
+    );
+}
+
+/// A name bound to a value is closed as that value, found once, so the chain closes and runs
+/// in time of `k`; copying each name's closed term at each read made a term of `2^k` parts,
+/// which the evaluator then ran.
+#[test]
+fn long_closing_a_chain_of_doubled_calls() {
+    long(
+        "a chain of calls, each reading the name before twice",
+        chain_of_doubled_calls,
+        one,
+    );
+}
+
+#[test]
+fn closed_terms_have_the_values_of_the_tree_walk() {
+    let ds = doms(&[("i", Some(-50), Some(50))]);
+    let pre = |t: &Term| shown(&preimage(t, &ds, &Demand::Bool(true)));
+    let at = |v: i64| format!("i [{v}..=50]; exact");
+    // The arms apart, so that the value tells which arm each level took: `v = 3` takes the
+    // first arm at levels 1 to 3 and the second above, adding 1 at each.
+    let plus_one: fn(Term) -> Term = |e| prim(Prim::Add, e, int(1));
+    for d in 0..=6 {
+        let f = lambda(&["v"], arms_over_v(d, Some(plus_one)));
+        let value = zed_kernel::eval(&call(f.clone(), vec![int(3)])).unwrap();
+        let Value::Int(value) = value else {
+            panic!("{value}")
+        };
+        assert_eq!(value, 3 + d.saturating_sub(3) as i64);
+        let t = prim(Prim::Ge, var("i"), call(f, vec![int(3)]));
+        assert_eq!(pre(&t), at(value), "depth {d}");
+    }
+    // The chain's value is 1 at every length; with `a + b - 1` it is `2^k + 1`.
+    for k in 0..=6 {
+        assert_eq!(pre(&chain_of_doubled_calls(k)), at(1), "length {k}");
+    }
+    let sum = lambda(
+        &["a", "b"],
+        prim(Prim::Sub, prim(Prim::Add, var("a"), var("b")), int(1)),
+    );
+    for k in 0..=5 {
+        let mut body = prim(Prim::Ge, var("i"), var(&format!("x{k}")));
+        for j in (1..=k).rev() {
+            let prev = var(&format!("x{}", j - 1));
+            body = let_in(
+                &format!("x{j}"),
+                call(var("f"), vec![prev.clone(), prev]),
+                body,
+            );
+        }
+        let t = let_in("f", sum.clone(), let_in("x0", int(2), body));
+        assert_eq!(pre(&t), at((1 << k) + 1), "length {k}");
+    }
+    // A `let` within the call is run once and read as its value.
+    let square = lambda(
+        &["v"],
+        let_in("w", prim(Prim::Add, var("v"), int(1)), {
+            prim(Prim::Mul, var("w"), var("w"))
+        }),
+    );
+    assert_eq!(
+        pre(&prim(Prim::Ge, var("i"), call(square, vec![int(3)]))),
+        at(16)
+    );
+}
+
+#[test]
+fn one_term_under_two_scopes_of_bound_names_closes_twice() {
+    // With `s` the shared term `y + 1`, which is 2 under a lambda that binds `y` to 1 and 6
+    // outside it: `let y = 5; i >= ((u) -> u)(((y) -> s)(1) + (if true { s } else { s }))`,
+    // and `let y = 5; i >= ((u) -> s)(0) + ((y) -> s)(1)`, where `s` is closed first under the
+    // lambda binding `u`, as 6, and then under the one binding `y`, where it is not 6.
+    let s = Shared::new(prim(Prim::Add, var("y"), int(1)));
+    let under = |p: &str, a: i64| {
+        Term::App(
+            Shared::new(Term::Lam(vec![p.into()], s.clone())),
+            vec![int(a)],
+        )
+    };
+    let outer = Term::If(
+        Shared::new(Term::Lit(Value::Bool(true))),
+        s.clone(),
+        s.clone(),
+    );
+    let sums = [
+        call(
+            lambda(&["u"], var("u")),
+            vec![prim(Prim::Add, under("y", 1), outer)],
+        ),
+        prim(Prim::Add, under("u", 0), under("y", 1)),
+    ];
+    let ds = doms(&[("i", Some(-50), Some(50))]);
+    for sum in sums {
+        let t = let_in("y", int(5), prim(Prim::Ge, var("i"), sum));
+        assert_eq!(
+            shown(&preimage(&t, &ds, &Demand::Bool(true))),
+            "i [8..=50]; exact",
+            "{t}"
+        );
+    }
+}
+
+#[test]
+fn a_name_closed_into_a_call_is_not_taken_by_its_parameters() {
+    // `let g = (v) -> v + w; i >= ((w) -> g(1))(5)` and `let g = w + 1; i >= ((w) -> g)(5)`,
+    // `w` a name the term does not bind: closed into the call, `g`'s `w` is not the parameter
+    // `w`, so the value is not 6 and the call has none.
+    let read_w = |g: Term, read_g: Term| {
+        let_in(
+            "g",
+            g,
+            prim(
+                Prim::Ge,
+                var("i"),
+                call(lambda(&["w"], read_g), vec![int(5)]),
+            ),
+        )
+    };
+    let terms = [
+        read_w(
+            lambda(&["v"], prim(Prim::Add, var("v"), var("w"))),
+            call(var("g"), vec![int(1)]),
+        ),
+        read_w(prim(Prim::Add, var("w"), int(1)), var("g")),
+    ];
+    let ds = doms(&[("i", Some(-50), Some(50))]);
+    for t in &terms {
+        let p = preimage(t, &ds, &Demand::Bool(true));
+        assert!(!p.exact, "{t}: {}", shown(&p));
+        assert!(p.domains["i"].contains(-50), "{t}: {}", shown(&p));
+    }
+}
+
+/// `x0 * x0 mod 10 == 9` with `x0` in `0..=n`, and `n` inputs more that the term does not read,
+/// each in `0..=1`, or one value when `points`.
+fn unread_inputs(n: usize, points: bool) -> (Term, Domains) {
+    let sq = prim(Prim::Mul, var("x0"), var("x0"));
+    let t = prim(Prim::Eq, prim(Prim::Mod, sq, int(10)), int(9));
+    let hi = if points { 0 } else { 1 };
+    let mut ds = doms(&[("x0", Some(0), Some(n as i64))]);
+    ds.extend((1..=n).map(|j| {
+        let set = IntervalSet::range(End::of(0), End::of(hi));
+        (Arc::from(format!("y{j}").as_str()), set)
+    }));
+    (t, ds)
+}
+
+/// Under `@exact` a box holds only the inputs the term reads, so the search over `x0` in
+/// `0..=n` with `n` unread inputs takes time of order `n`. Each box holding every input took
+/// `n^2` where the unread inputs are points, and halving the widest input split unread inputs
+/// too.
+#[test]
+fn an_exact_search_reads_only_the_inputs_it_touches() {
+    for points in [true, false] {
+        let made = scaling::inputs(64, |n| unread_inputs(n, points));
+        scaling::check("an `@exact` search beside n unread inputs", 64, |n| {
+            let (t, ds) = &made[&n];
+            let p = exact_preimage(t, ds, &Classes::new(), &Demand::Bool(true));
+            assert!(p.exact && p.domains.len() == n + 1);
+        });
+    }
+}

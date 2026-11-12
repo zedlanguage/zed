@@ -123,7 +123,7 @@ impl Demand {
 }
 
 /// Why the transfer stopped.
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum StopKind {
     /// A string operation other than `len`.
     String(Prim),
@@ -153,13 +153,27 @@ pub enum StopKind {
     Recursion,
 }
 
-/// A reported stop: its kind and the term it stopped at.
+/// A reported stop: its kind and the term it stopped at. The term is held, not printed: its
+/// text is made only when the stop is shown.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Stop {
     /// Why.
     pub kind: StopKind,
-    /// The term, as the kernel prints it.
-    pub term: String,
+    /// The term, as the transfer was given it.
+    pub term: Shared,
+}
+
+/// By the kind and the primitive or name it holds, as [`PartialEq`] compares them: [`Prim`]
+/// has no hash of its own, and no primitive carries data, so its discriminant is all of it.
+impl std::hash::Hash for StopKind {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        std::mem::discriminant(self).hash(h);
+        match self {
+            StopKind::String(p) => std::mem::discriminant(p).hash(h),
+            StopKind::Foreign(n) => n.hash(h),
+            StopKind::Outside | StopKind::Recursion => {}
+        }
+    }
 }
 
 impl fmt::Display for Stop {
@@ -267,7 +281,7 @@ fn preimage_in(
         exact: back.exact,
     };
     let doubt = back.doubt;
-    let mut stops = std::mem::take(&mut tx.run.stops);
+    let stops = std::mem::take(&mut tx.run.stops);
     let mut enumerated = false;
     if !r.exact && !is_empty(&r.dom) {
         tx.start(&r.dom, marks);
@@ -299,7 +313,6 @@ fn preimage_in(
             refusal = None;
         }
     }
-    stops.dedup();
     Preimage {
         domains: r.dom,
         exact: r.exact,
@@ -652,6 +665,8 @@ struct Terms<'t> {
     made: HashMap<Made, Tid>,
     /// The integer literals of the given terms, each term counted once.
     ints: Vec<Num>,
+    /// The given [`Shared`] each number held in one stands for.
+    held: HashMap<Tid, &'t Shared>,
 }
 
 impl<'t> Terms<'t> {
@@ -727,7 +742,11 @@ impl<'t> Terms<'t> {
         seen: &mut HashMap<u64, Tid>,
         todo: &mut Vec<(&'t Term, Tid)>,
     ) -> Tid {
-        *seen.entry(s.id()).or_insert_with(|| self.number(s, todo))
+        *seen.entry(s.id()).or_insert_with(|| {
+            let t = self.number(s, todo);
+            self.held.insert(t, s);
+            t
+        })
     }
 
     /// A new number for `t`, its parts left to `todo`.
@@ -809,7 +828,8 @@ struct Call {
 #[derive(Default)]
 struct Run {
     stops: Vec<Stop>,
-    seen: HashSet<String>,
+    /// The stops reported, by kind and term number.
+    seen: HashSet<(StopKind, Tid)>,
     /// The bodies of the lambdas whose calls are being read, each with its place on the stack.
     active: HashMap<Tid, usize>,
     marks: Landmarks,
@@ -1144,11 +1164,12 @@ impl<'t> Tx<'t> {
         }
     }
 
-    /// `t` as the kernel prints it.
-    fn print(&self, t: Tid) -> String {
-        match self.terms.src[t as usize] {
-            Some(s) => s.to_string(),
-            None => self.term(t).to_string(),
+    /// The term `t` stands for, held in a [`Shared`]: the given one where `t` is a part held in
+    /// one, otherwise a new one around [`Tx::term`].
+    fn shared(&self, t: Tid) -> Shared {
+        match self.terms.held.get(&t) {
+            Some(&s) => s.clone(),
+            None => Shared::new(self.term(t)),
         }
     }
 
@@ -1527,13 +1548,11 @@ impl<'t> Tx<'t> {
         self.cx.inputs.iter().map(|(k, z)| of(k, z)).collect()
     }
 
+    /// Reports a stop at `t`, once for each kind, holding the term unprinted.
     fn stop(&mut self, kind: StopKind, t: Tid) -> Res {
-        let s = Stop {
-            kind,
-            term: self.print(t),
-        };
-        if self.run.seen.insert(s.to_string()) {
-            self.run.stops.push(s);
+        if self.run.seen.insert((kind.clone(), t)) {
+            let term = self.shared(t);
+            self.run.stops.push(Stop { kind, term });
         }
         Res::unknown()
     }

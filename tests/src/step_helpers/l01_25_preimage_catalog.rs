@@ -107,7 +107,7 @@ pub fn shown(p: &Preimage) -> String {
     if p.enumerated {
         out.push("enumerated".into());
     }
-    for s in &p.stops {
+    for s in p.stop_texts() {
         out.push(format!("stop: {s}"));
     }
     out.join("; ")

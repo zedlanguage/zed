@@ -125,7 +125,7 @@ impl Demand {
 }
 
 /// Why the transfer stopped.
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum StopKind {
     /// A string operation other than `len`.
     String(Prim),
@@ -155,13 +155,27 @@ pub enum StopKind {
     Recursion,
 }
 
-/// A reported stop: its kind and the term it stopped at.
+/// A reported stop: its kind and the term it stopped at. The term is held, not printed: its
+/// text is made only when the stop is shown.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Stop {
     /// Why.
     pub kind: StopKind,
-    /// The term, as the kernel prints it.
-    pub term: String,
+    /// The term, as the transfer was given it.
+    pub term: Shared,
+}
+
+/// By the kind and the primitive or name it holds, as [`PartialEq`] compares them: [`Prim`]
+/// has no hash of its own, and no primitive carries data, so its discriminant is all of it.
+impl std::hash::Hash for StopKind {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        std::mem::discriminant(self).hash(h);
+        match self {
+            StopKind::String(p) => std::mem::discriminant(p).hash(h),
+            StopKind::Foreign(n) => n.hash(h),
+            StopKind::Outside | StopKind::Recursion => {}
+        }
+    }
 }
 
 impl fmt::Display for Stop {
@@ -198,6 +212,19 @@ pub struct Preimage {
     /// Why the linear-relation domain left the demand undecided, when it did and the box is
     /// not exact.
     pub refusal: Option<Refusal>,
+}
+
+impl Preimage {
+    /// The stops as printed, each text once, in the order they were reported. A stop is kept
+    /// for each kind and term the transfer stopped at, so two copies of one term (cloned, not
+    /// shared) are two stops; their texts are made here, where copies that print alike merge.
+    pub fn stop_texts(&self) -> Vec<String> {
+        let mut seen = HashSet::new();
+        (self.stops.iter())
+            .map(Stop::to_string)
+            .filter(|s| seen.insert(s.clone()))
+            .collect()
+    }
 }
 
 /// The value of the closed term `t`, if its form shows that it ends ([`stage::ends`]) and it
@@ -533,7 +560,7 @@ fn preimage_in(
         dom: tx.whole(&r),
         exact: r.exact,
     };
-    let mut stops = std::mem::take(&mut tx.run.stops);
+    let stops = std::mem::take(&mut tx.run.stops);
     let mut enumerated = false;
     if !r.exact && !is_empty(&r.dom) {
         // Complexity tradeoff: naive version, the forward run over a box the backward run
@@ -604,7 +631,6 @@ fn preimage_in(
             refusal = None;
         }
     }
-    stops.dedup();
     Preimage {
         domains: r.dom,
         exact: r.exact,
@@ -625,7 +651,7 @@ fn wide(
     (rel, why): ClassRelation,
     listed: &Listed,
     demand: &Demand,
-    mut stops: Vec<Stop>,
+    stops: Vec<Stop>,
 ) -> Preimage {
     let mut r = Whole { dom, exact: false };
     let mut enumerated = false;
@@ -633,7 +659,6 @@ fn wide(
         r = e;
         enumerated = true;
     }
-    stops.dedup();
     Preimage {
         domains: r.dom,
         exact: r.exact,
@@ -2958,6 +2983,9 @@ struct Terms<'t> {
     /// two places), so that [`Walk::chain`] reads each through once.
     shared: HashSet<Tid>,
     by_form: HashMap<Form, Tid>,
+    /// The given [`Shared`] each number held in one stands for, so that a result made of it
+    /// ([`Tx::shared`]) holds it, not a copy.
+    held: HashMap<Tid, &'t Shared>,
 }
 
 impl<'t> Terms<'t> {
@@ -3050,7 +3078,11 @@ impl<'t> Terms<'t> {
                 self.shared.insert(*e.get());
                 *e.get()
             }
-            Seen::Vacant(e) => *e.insert(self.number(s, todo)),
+            Seen::Vacant(e) => {
+                let t = self.number(s, todo);
+                self.held.insert(t, s);
+                *e.insert(t)
+            }
         }
     }
 
@@ -3199,7 +3231,8 @@ fn finite_ends<'a>(
 #[derive(Default)]
 struct Run {
     stops: Vec<Stop>,
-    seen: HashSet<String>,
+    /// The stops reported, by kind and term number: a term stopped at twice is reported once.
+    seen: HashSet<(StopKind, Tid)>,
     /// The bodies of the lambdas whose calls are being read, each with its place on the stack.
     active: HashMap<Tid, usize>,
     marks: Marks,
@@ -3476,6 +3509,8 @@ impl Fwd {
 struct Memo {
     mentions: HashMap<At, Entry<Option<bool>>>,
     constant: HashMap<At, Entry<Option<Value>>>,
+    /// The closed parts held in a [`Shared`], by the set of names bound within ([`Walk::close`]).
+    close: HashMap<(At, Lid), Entry<Option<Shared>>>,
     fwd: HashMap<At, Entry<Fwd>>,
     back: HashMap<(At, Demand), Entry<Res>>,
     /// The piecewise-affine summary of an integer term of one input ([`Walk::pa`]).
@@ -4280,6 +4315,9 @@ struct Tx<'t> {
     /// How each product, by the term and scope its names lead to, reads as a power ([`Tx::power`]).
     /// It depends on the terms and scopes alone, so it outlives one box.
     powers: HashMap<At, Power>,
+    /// The sets of names bound within the terms being closed. They depend on the terms alone,
+    /// so they outlive one box.
+    locals: Locals,
     run: Run,
     cx: Cx,
     /// The names bound by `let`s around the term, read through their summaries
@@ -4379,6 +4417,7 @@ impl<'t> Tx<'t> {
             scopes: vec![Scope::new()],
             scope_ids: HashMap::new(),
             powers: HashMap::new(),
+            locals: Locals::new(),
             run: Run::default(),
             cx: Cx {
                 inputs: Sets::new(),
@@ -4605,6 +4644,21 @@ impl<'t> Tx<'t> {
         e
     }
 
+    /// The set `local` with `x` bound by the binder `binder`, made once for each set and
+    /// binding, and the name `x` is closed to.
+    fn bind_local(&mut self, local: Lid, x: Name, binder: Tid) -> (Lid, Arc<str>) {
+        let k = (local, x, binder);
+        if let Some(made) = self.locals.ids.get(&k) {
+            return made.clone();
+        }
+        let to: Arc<str> = format!("{}\u{0}{binder}", self.name(x)).into();
+        let set = self.locals.sets[local as usize].update(x, to.clone());
+        let l = self.locals.sets.len() as Lid;
+        self.locals.sets.push(set);
+        self.locals.ids.insert(k, (l, to.clone()));
+        (l, to)
+    }
+
     /// Records `at` as read as a power: `p`.
     fn power_made(&mut self, at: At, p: Power) {
         self.powers.insert(at, p);
@@ -4657,11 +4711,12 @@ impl<'t> Tx<'t> {
         }
     }
 
-    /// `t` as the kernel prints it.
-    fn print(&self, t: Tid) -> String {
-        match self.terms.src[t as usize] {
-            Some(s) => s.to_string(),
-            None => self.term(t).to_string(),
+    /// The term `t` stands for, held in a [`Shared`]: the given one where `t` is a part held in
+    /// one, otherwise a new one around [`Tx::term`].
+    fn shared(&self, t: Tid) -> Shared {
+        match self.terms.held.get(&t) {
+            Some(&s) => s.clone(),
+            None => Shared::new(self.term(t)),
         }
     }
 
@@ -4888,13 +4943,21 @@ impl<'t> Tx<'t> {
         Some(narrowed.map(|(k, n)| (k.clone(), (**n).clone())).collect())
     }
 
+    /// Reports a stop at `t`, once for each kind. The term is held, not printed
+    /// ([`Stop`]).
+    // Complexity tradeoff: the naive stop printed its term when reported and kept the text
+    // in a set of texts, `O(s)` for a term of printed size `s` (exponential in depth where
+    // parts are shared), at each of `k` places that stop over one term: `O(k s)`. Used: the
+    // stop holds the term ([`Tx::shared`], `O(1)` for a part held in a [`Shared`], a copy of
+    // the parts held inline otherwise) and is kept by kind and term number, `O(1)`; the text
+    // is made only when read ([`Preimage::stop_texts`]). Cost: copies of one term that print
+    // alike are separate stops until read. Test:
+    // `l01_25_preimage_catalog::stops::many_stops_over_one_shared_term_make_no_text`;
+    // COMPLEXITY.md row S21.
     fn stop(&mut self, kind: StopKind, t: Tid) -> Res {
-        let s = Stop {
-            kind,
-            term: self.print(t),
-        };
-        if self.run.seen.insert(s.to_string()) {
-            self.run.stops.push(s);
+        if self.run.seen.insert((kind.clone(), t)) {
+            let term = self.shared(t);
+            self.run.stops.push(Stop { kind, term });
         }
         Res::unknown()
     }
@@ -5868,66 +5931,94 @@ impl<'m, 't> Walk<'m, 't> {
         }
     }
 
-    /// The term with every bound name replaced by the closed term it is bound to, for a term
-    /// that reads no input. `local` holds the names bound within the term being closed: to
-    /// the closed term a `let` binds, or to `None` for a lambda's parameter, which stays.
-    fn close(&'m self, t: Tid, env: Eid, local: Rc<Local>) -> Deep<'m, Option<Term>> {
+    /// The term `t` read in `env`, for a term that reads no input, with each name bound in
+    /// `env` replaced by the value of the term it is bound to, or by that term closed where it
+    /// has none; `None` where it reads a term the catalog does not follow. The names bound
+    /// within the term stay, each renamed by its binder ([`Locals`]): a `let` stays a `let`, so
+    /// its bound term is run once however often it is read, and no name of a closed term put
+    /// under a binder is taken by it.
+    // Complexity tradeoff: the naive closing walked the term as a tree and copied the closed
+    // term a name is bound to at each read, exponential in depth where parts are shared: `d`
+    // nested `if`s over one shared arm, or the chain `x_k = f(x_{k-1}, x_{k-1})`, whose closed
+    // term the evaluator then also ran `2^k` times. Used: a part held in a [`Shared`] is closed
+    // once for each scope and set of names bound within ([`Memo::close`]) into a shared
+    // result, and a name bound in the scope is replaced by its value ([`Walk::constant`],
+    // remembered), so the work and the closed term are linear in the distinct triples of
+    // part, scope and set. A part held inline has one place, in its parent, and is closed
+    // with it, unremembered. Cost: a memo entry for each triple. Tests:
+    // `l01_25_preimage_catalog::scaling::long_closing_shared_arms_in_a_called_lambda`,
+    // `long_closing_a_chain_of_doubled_calls`; COMPLEXITY.md row S21.
+    fn close(&'m self, t: Tid, env: Eid, local: Lid) -> Deep<'m, Option<Term>> {
         self.stack.call(move || self.close_at(t, env, local))
     }
 
-    async fn close_all(&'m self, args: Span, env: Eid, local: &Rc<Local>) -> Option<Vec<Term>> {
+    /// [`Walk::close`] held in a [`Shared`], remembered for a part held in one.
+    fn close_shared(&'m self, t: Tid, env: Eid, local: Lid) -> Deep<'m, Option<Shared>> {
+        let shut = move || async move { Some(Shared::new(self.close_at(t, env, local).await?)) };
+        if self.held(t) {
+            self.cached(|m| &mut m.close, ((t, env), local), shut)
+        } else {
+            self.stack.call(shut)
+        }
+    }
+
+    /// Whether `t` is a part held in a [`Shared`] of a given term.
+    fn held(&self, t: Tid) -> bool {
+        self.with(|tx| tx.terms.held.contains_key(&t))
+    }
+
+    async fn close_all(&'m self, args: Span, env: Eid, local: Lid) -> Option<Vec<Term>> {
         let mut out = Vec::with_capacity(args.len());
         for i in 0..args.len() {
-            out.push(self.close(self.arg(args, i), env, local.clone()).await?);
+            out.push(self.close(self.arg(args, i), env, local).await?);
         }
         Some(out)
     }
 
-    async fn close_at(&'m self, t: Tid, env: Eid, local: Rc<Local>) -> Option<Term> {
+    async fn close_at(&'m self, t: Tid, env: Eid, local: Lid) -> Option<Term> {
         Some(match self.node(t) {
-            Node::Var(x) => match (local.get(&x), self.lookup(env, x)) {
-                (Some(Some(bound)), _) => (**bound).clone(),
-                (Some(None), _) | (None, None) => Term::Var(self.name(x)),
-                (None, Some((bt, be))) => self.close(bt, be, Rc::new(Local::new())).await?,
+            Node::Var(x) => match (self.with(|tx| tx.locals.get(local, x)), self.lookup(env, x)) {
+                (Some(to), _) => Term::Var(to),
+                (None, None) => Term::Var(self.name(x)),
+                (None, Some((bt, be))) => match self.constant(bt, be).await {
+                    Some(v) => Term::Lit(v),
+                    None if self.held(bt) => (*self.close_shared(bt, be, NO_LOCAL).await?).clone(),
+                    None => self.close(bt, be, NO_LOCAL).await?,
+                },
             },
             Node::Int(n) => Term::Lit(Value::Int(n)),
             Node::Bool(b) => Term::Lit(Value::Bool(b)),
             Node::Lit(v) => Term::Lit(v.clone()),
             Node::PrimFn(p) => Term::PrimFn(p),
             Node::Let(n, e, b) => {
-                // The body reads `n` as the closed bound term.
-                let e = self.close(e, env, local.clone()).await?;
-                let inner = Rc::new(local.update(n, Some(Rc::new(e))));
-                self.close(b, env, inner).await?
+                let e = self.close_shared(e, env, local).await?;
+                let (inner, to) = self.with(|tx| tx.bind_local(local, n, t));
+                Term::Let(to, e, self.close_shared(b, env, inner).await?)
             }
             Node::Lam(ps, b) => {
-                let mut inner = (*local).clone();
-                let mut names = Vec::with_capacity(ps.len());
+                let (mut inner, mut names) = (local, Vec::with_capacity(ps.len()));
                 for i in 0..ps.len() {
                     let p = self.param(ps, i);
-                    inner.insert(p, None);
-                    names.push(self.name(p));
+                    let (l, to) = self.with(|tx| tx.bind_local(inner, p, t));
+                    inner = l;
+                    names.push(to);
                 }
-                Term::Lam(
-                    names,
-                    Shared::new(self.close(b, env, Rc::new(inner)).await?),
-                )
+                Term::Lam(names, self.close_shared(b, env, inner).await?)
             }
-            Node::App(f, args) => {
-                let f = self.close(f, env, local.clone()).await?;
-                Term::App(Shared::new(f), self.close_all(args, env, &local).await?)
-            }
-            Node::Prim(p, args) => Term::Prim(p, self.close_all(args, env, &local).await?),
-            Node::If(g, a, b) => {
-                let g = self.close(g, env, local.clone()).await?;
-                let a = self.close(a, env, local.clone()).await?;
-                let b = self.close(b, env, local).await?;
-                Term::If(Shared::new(g), Shared::new(a), Shared::new(b))
-            }
+            Node::App(f, args) => Term::App(
+                self.close_shared(f, env, local).await?,
+                self.close_all(args, env, local).await?,
+            ),
+            Node::Prim(p, args) => Term::Prim(p, self.close_all(args, env, local).await?),
+            Node::If(g, a, b) => Term::If(
+                self.close_shared(g, env, local).await?,
+                self.close_shared(a, env, local).await?,
+                self.close_shared(b, env, local).await?,
+            ),
             Node::Follow(v, own, arms) => {
                 let mut arms = arms.to_vec();
-                arms.push((Pattern::Wild, self.close(own, env, local.clone()).await?));
-                Term::Match(Shared::new(self.close(v, env, local).await?), arms)
+                arms.push((Pattern::Wild, self.close(own, env, local).await?));
+                Term::Match(self.close_shared(v, env, local).await?, arms)
             }
             Node::Other => return None,
         })
@@ -6084,15 +6175,15 @@ impl<'m, 't> Walk<'m, 't> {
             Node::If(g, a, b) => match self.constant(g, env).await? {
                 Value::Bool(true) => self.constant(a, env).await,
                 Value::Bool(false) => self.constant(b, env).await,
-                _ => run_closed(&self.close_all_bound(t, env).await?),
+                _ => run_closed(&*self.close_all_bound(t, env).await?),
             },
-            _ => run_closed(&self.close_all_bound(t, env).await?),
+            _ => run_closed(&*self.close_all_bound(t, env).await?),
         }
     }
 
     /// [`Walk::close`] with no name bound within the term.
-    fn close_all_bound(&'m self, t: Tid, env: Eid) -> Deep<'m, Option<Term>> {
-        self.close(t, env, Rc::new(Local::new()))
+    fn close_all_bound(&'m self, t: Tid, env: Eid) -> Deep<'m, Option<Shared>> {
+        self.close_shared(t, env, NO_LOCAL)
     }
 
     async fn constant_int(&'m self, t: Tid, env: Eid) -> Option<i64> {
@@ -11544,8 +11635,35 @@ fn ceil_div(n: &Int, d: &Int) -> Int {
     -&(-n).div_floor(d)
 }
 
-/// The names bound within a term being closed ([`Walk::close`]).
-type Local = imbl::HashMap<Name, Option<Rc<Term>>>;
+/// The number of a set of names bound within a term being closed ([`Locals`]).
+type Lid = u32;
+
+/// The set that binds no name.
+const NO_LOCAL: Lid = 0;
+
+/// The sets of names bound within the terms being closed ([`Walk::close`]), each name with the
+/// name it is closed to, numbered so that a closed part is remembered by its set: a set and a
+/// binding give one set, as a scope and a binding give one scope ([`Tx::bind`]). Each name is
+/// renamed by its binder's number past any name a program writes, so that a closed term put
+/// under the binder (the term a name of the scope is bound to) keeps its own names.
+struct Locals {
+    sets: Vec<imbl::HashMap<Name, Arc<str>>>,
+    ids: HashMap<(Lid, Name, Tid), (Lid, Arc<str>)>,
+}
+
+impl Locals {
+    fn new() -> Self {
+        Locals {
+            sets: vec![imbl::HashMap::new()],
+            ids: HashMap::new(),
+        }
+    }
+
+    /// The name `x` is closed to in `local`, if bound within.
+    fn get(&self, local: Lid, x: Name) -> Option<Arc<str>> {
+        self.sets[local as usize].get(&x).cloned()
+    }
+}
 
 /// Whether the scalar catalog has an entry for the primitive, or reads through it (`len`).
 fn scalar(p: Prim) -> bool {
@@ -11994,8 +12112,28 @@ pub fn witness(
         }
     }
     let mut first = First(None, lowest);
-    branch(term, dom, classes, demand, &mut first)?;
-    Some(first.0)
+    let (read, unread) = split_read(term, dom);
+    branch(term, read, classes, demand, &mut first)?;
+    Some(first.0.map(|mut p| {
+        p.extend(lowest(&unread));
+        p
+    }))
+}
+
+/// `dom` split in two: the inputs `term` reads, which a search narrows and halves, and the
+/// others, whose values change no point's value.
+// Complexity tradeoff: the naive search kept every input in each box, so each box copied,
+// narrowed and compared all `m` inputs, `O(m)` per box for a term that reads a few, and
+// halved the widest input even when the term does not read it, which multiplies the boxes by
+// the points of the unread inputs. Used: the search holds only the inputs the term reads
+// ([`stage::free`], `O(s log s)` for `s` distinct parts, once per search), so a box costs the
+// inputs it touches and is halved on one of them, and the others keep their whole sets.
+// Tests: `l01_25_preimage_catalog::scaling::an_exact_search_reads_only_the_inputs_it_touches`,
+// `l01_25_preimage_catalog::exact::inputs_the_term_does_not_read_keep_their_sets`;
+// COMPLEXITY.md row S21.
+fn split_read(term: &Term, dom: Domains) -> (Domains, Domains) {
+    let read = stage::free(term);
+    dom.into_iter().partition(|(k, _)| read.contains(k))
 }
 
 /// The projection of the points of `dom` in `classes` meeting `demand`, and whether their box
@@ -12006,12 +12144,13 @@ fn exact_search(
     classes: &Classes,
     demand: &Demand,
 ) -> Option<(Domains, bool)> {
-    let Some(dom) = within_classes(dom, classes) else {
-        let empty = dom
-            .keys()
+    let empty = || {
+        dom.keys()
             .map(|k| (k.clone(), IntervalSet::empty()))
-            .collect();
-        return Some((empty, true));
+            .collect()
+    };
+    let Some(dom) = within_classes(dom, classes) else {
+        return Some((empty(), true));
     };
     if dom
         .values()
@@ -12019,36 +12158,46 @@ fn exact_search(
     {
         return None;
     }
-    /// The search for every point: the projections of the boxes met so far, each input's
-    /// the join of its parts; a box within them adds nothing.
-    struct Met(Domains);
+    /// The search for every point: whether a box met the demand, and the projections of the
+    /// boxes met so far, each input's the join of its parts; a box within them adds nothing.
+    struct Met(bool, Domains);
     impl Search for Met {
         fn skip(&self, b: &Domains) -> bool {
-            b.iter().all(|(k, s)| s.is_subset(&self.0[k]))
+            self.0 && b.iter().all(|(k, s)| s.is_subset(&self.1[k]))
         }
         fn all(&mut self, b: &Domains) -> bool {
+            self.0 = true;
             for (k, s) in b {
-                let joined = self.0[k].join(s);
-                self.0.insert(k.clone(), joined);
+                let joined = self.1[k].join(s);
+                self.1.insert(k.clone(), joined);
             }
             false
         }
     }
-    let mut met = Met(dom
-        .keys()
-        .map(|k| (k.clone(), IntervalSet::empty()))
-        .collect());
-    branch(term, dom, classes, demand, &mut met)?;
-    let met = met.0;
-    let several = met.values().filter(|s| !is_point(s)).count();
-    if met.values().any(IntervalSet::is_empty) || several <= 1 {
-        return Some((met, true));
+    let (read, unread) = split_read(term, dom);
+    let mut met = Met(
+        false,
+        read.keys()
+            .map(|k| (k.clone(), IntervalSet::empty()))
+            .collect(),
+    );
+    branch(term, read, classes, demand, &mut met)?;
+    let Met(found, mut met) = met;
+    if !found {
+        return Some((empty(), true));
     }
-    // The second search looks for a point of `met` that fails the demand: one whose value is
-    // outside it, or whose run fails (DESIGN.md sec:failure). A search for the complement
-    // demand misses the second kind, as the diagonal of `1 div (y - x)` (SOUND-exact-oracle).
-    let found = fails_in(term, met.clone(), classes, demand)?;
-    Some((met, !found))
+    // The projections' product is exact when at most one read input has several values; the
+    // unread inputs keep their sets, which change no point's value.
+    let several = met.values().filter(|s| !is_point(s)).count();
+    let exact = several <= 1 || {
+        // The second search looks for a point of `met` that fails the demand: one whose value
+        // is outside it, or whose run fails (DESIGN.md sec:failure). A search for the
+        // complement demand misses the second kind, as the diagonal of `1 div (y - x)`
+        // (SOUND-exact-oracle).
+        !fails_in(term, met.clone(), classes, demand)?
+    };
+    met.extend(unread);
+    Some((met, exact))
 }
 
 /// Whether some point of `root` with each input in its class fails `demand`: its value is
@@ -12563,6 +12712,10 @@ mod tests {
         } else if let (Some(a), Some(b)) =
             (a.downcast_ref::<Option<IntervalSet>>(), b.downcast_ref())
         {
+            Some(a == b)
+        } else if let (Some(a), Some(b)) = (a.downcast_ref::<Option<Shared>>(), b.downcast_ref()) {
+            // A closed term ([`Walk::close`]): its names bound within are renamed by their
+            // binders' numbers, which a term read again keeps.
             Some(a == b)
         } else if a.is::<Option<Lin>>() || a.is::<Option<Formula>>() {
             // A translation read again defines its own auxiliary atoms anew.

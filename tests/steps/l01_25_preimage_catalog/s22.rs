@@ -31,6 +31,7 @@ use zedc::store::preimage::{
 };
 use zedc::store::preimage_ref as before;
 use zedc::store::presburger::{Atom, Formula, Model, Refusal, Relation, member, satisfiable};
+use zedc::store::revision::reduce_congruence;
 
 use super::check;
 use super::random::{bool_term, domains, int_demand, int_term, with_functions};
@@ -601,6 +602,34 @@ impl Diffs {
         {
             self.cases += 1;
             self.unlisted += 1;
+            return;
+        }
+        // Item T11-preimage-rest: the search holds only the inputs the term reads, so an
+        // input it does not read keeps its set, its ends in its class, where the transfer
+        // before halved it to its points. The two sets hold the same members of the class,
+        // and every input is in its class, so the preimages are the same.
+        let same_members = |k: &str, a: &IntervalSet, b: &IntervalSet| {
+            let none = |s: IntervalSet| match cs.get(k) {
+                Some(c) => reduce_congruence(&s, c).0.is_empty(),
+                None => s.is_empty(),
+            };
+            none(a.complement_in(b)) && none(b.complement_in(a))
+        };
+        if now.domains != then.domains
+            && now.domains.keys().eq(then.domains.keys())
+            && now
+                .domains
+                .iter()
+                .all(|(k, s)| same_members(k, s, &then.domains[k]))
+            && (
+                now.enumerated,
+                &rest(now.exact, &now.stops, &now.relation, &now.refusal),
+            ) == (
+                then.enumerated,
+                &rest(then.exact, &then.stops, &then.relation, &then.refusal),
+            )
+        {
+            self.cases += 1;
             return;
         }
         let (new, old) = (format!("{now:?}"), format!("{then:?}"));

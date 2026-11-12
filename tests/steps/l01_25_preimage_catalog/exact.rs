@@ -114,3 +114,45 @@ fn the_classes_alone_decide_a_box_of_any_size() {
     let took = zed_tests::scaling::cpu_time() - t0;
     assert!(took.as_secs() < 1, "took {took:?}");
 }
+
+#[test]
+fn inputs_the_term_does_not_read_keep_their_sets() {
+    // `y` and `z` are not read: the search holds `x` alone, and `y` keeps its set with its
+    // ends in its class, as a box on which the preimage is exact keeps it (the odd `y` from 1
+    // to 3, not split into its points), `z` its one value.
+    let classes: Classes = [(Arc::from("y"), Congruence::new(2, 1))].into();
+    let ds = &[
+        ("x", Some(0), Some(30)),
+        ("y", Some(0), Some(3)),
+        ("z", Some(5), Some(5)),
+    ];
+    let (_, exact) = both("ok(x, y, z) = x * x mod 10 == 9;\n", ds, &classes);
+    assert_eq!(
+        exact,
+        "x [3..=3, 7..=7, 13..=13, 17..=17, 23..=23, 27..=27]; y [1..=3]; z [5..=5]; \
+         exact; enumerated"
+    );
+    // No point meets the term: every input's set is empty, the unread ones too.
+    let (_, exact) = both("ok(x, y, z) = x * x mod 10 == 2;\n", ds, &classes);
+    assert_eq!(exact, "x []; y []; z []; exact; enumerated");
+    // Two read inputs and an unread one: the second search reads `x` and `y` alone.
+    let (_, exact) = both(
+        "ok(x, y, z) = x * y mod 7 == 3;\n",
+        &[
+            ("x", Some(1), Some(6)),
+            ("y", Some(1), Some(6)),
+            ("z", Some(0), Some(9)),
+        ],
+        &Classes::new(),
+    );
+    assert_eq!(
+        exact,
+        "x [1..=6]; y [1..=6]; z [0..=9]; necessary; enumerated"
+    );
+    // A witness gives each unread input its lowest value in its class.
+    let (_, body) = function("ok(x, y, z) = x * x mod 10 == 9;\n");
+    let w = witness(&body, &doms(ds), &classes, &Demand::Bool(true));
+    let w = w.unwrap().unwrap();
+    let w: Vec<String> = w.iter().map(|(k, v)| format!("{k} = {v}")).collect();
+    assert_eq!(w, ["x = 3", "y = 1", "z = 5"]);
+}

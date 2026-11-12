@@ -225,3 +225,80 @@ fn a_fix_between_the_demand_and_an_input_stops_the_transfer() {
          n -> min((n + 1), 10), join: max, ev: {})"
     );
 }
+
+/// `hash(a)`, a call of the foreign name `hash`.
+fn hash(a: Term) -> Term {
+    Term::App(Shared::new(var("hash")), vec![a])
+}
+
+#[test]
+fn copies_of_a_stop_are_two_stops_shown_once() {
+    // `hash(x) < 10 && hash(x) > 0`, each `hash(x)` its own copy: two stops, which print alike
+    // and are shown once.
+    let call = || hash(var("x"));
+    let t = prim(
+        Prim::And,
+        vec![lt(call(), lit(10)), prim(Prim::Gt, vec![call(), lit(0)])],
+    );
+    let ds = doms(&[("x", None, None)]);
+    let p = preimage(&t, &ds, &Demand::Bool(true));
+    assert_eq!(p.stops.len(), 2);
+    assert_eq!(p.stop_texts().len(), 1);
+    assert_eq!(
+        shown(&p),
+        "x [..]; necessary; stop: foreign name `hash` stops the transfer at hash(x)"
+    );
+    // One call held in a `let` and read twice is one term, so one stop.
+    let t = Term::Let(
+        "h".into(),
+        Shared::new(call()),
+        Shared::new(prim(
+            Prim::And,
+            vec![
+                lt(var("h"), lit(10)),
+                prim(Prim::Gt, vec![var("h"), lit(0)]),
+            ],
+        )),
+    );
+    let p = preimage(&t, &ds, &Demand::Bool(true));
+    assert_eq!(p.stops.len(), 1);
+    assert_eq!(p.stops[0].kind, StopKind::Foreign("hash".into()));
+    // Two calls that print apart are two stops, each shown.
+    let t = prim(
+        Prim::And,
+        vec![lt(call(), lit(10)), lt(hash(var("y")), lit(10))],
+    );
+    let ds = doms(&[("x", None, None), ("y", None, None)]);
+    let p = preimage(&t, &ds, &Demand::Bool(true));
+    assert_eq!(
+        shown(&p),
+        "x [..]; y [..]; necessary; stop: foreign name `hash` stops the transfer at hash(x); \
+         stop: foreign name `hash` stops the transfer at hash(y)"
+    );
+}
+
+/// `s = x + 1 + … + 1` with `n` ones, one shared term, and `hash(let u = s in u) < 0 && … &&
+/// hash(let u = s in u) < n - 1`: `n` stops, each at a term that prints at the size of `s`.
+fn stops_over_one_term(n: usize) -> Term {
+    let s = Shared::new((0..n).fold(var("x"), |a, _| add(a, lit(1))));
+    let call = || hash(Term::Let("u".into(), s.clone(), Shared::new(var("u"))));
+    (1..n as i64).fold(lt(call(), lit(0)), |a, j| {
+        prim(Prim::And, vec![a, lt(call(), lit(j))])
+    })
+}
+
+/// A stop holds its term and makes its text only when read, so `n` stops over one shared term
+/// of size `n` take time of order `n`; printing each stop's term during the transfer took
+/// `n^2`.
+#[test]
+fn many_stops_over_one_shared_term_make_no_text() {
+    let ds = doms(&[("x", None, None)]);
+    let ds = &ds;
+    let terms = zed_tests::scaling::inputs(64, stops_over_one_term);
+    zed_tests::scaling::on_a_thread(2 << 20, || {
+        zed_tests::scaling::check("stops over one shared term", 64, |n| {
+            let p = preimage(&terms[&n], ds, &Demand::Bool(true));
+            assert_eq!(p.stops.len(), n);
+        })
+    });
+}
