@@ -617,9 +617,23 @@ fn rewrite_lin_full(
 pub fn solve_modular(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     // A remainder row whose two unit terms tie (`solve_modular_whole`, step 3) is read one way
     // first and, if that gives no answer, the other way: at most two runs, each exact.
+    // If neither gives an answer and some row had both unit terms bounded to less than a period,
+    // a last run takes the previous choice by `Atom` order (as Codex did in round 7, R7-CODEX-2):
+    // without it the 5,000-formula enumeration test refused 70 formulas instead of 11. Each of
+    // the at most three runs is exact; only the last reads names, and only when the others refuse.
     let mut tied = false;
-    match solve_modular_whole(f, want_model, false, &mut tied) {
-        None if tied => solve_modular_whole(f, want_model, true, &mut tied),
+    let mut both_bounded = false;
+    let found = match solve_modular_whole(f, want_model, false, false, &mut tied, &mut both_bounded)
+    {
+        None if tied => {
+            solve_modular_whole(f, want_model, true, false, &mut tied, &mut both_bounded)
+        }
+        found => found,
+    };
+    match found {
+        None if both_bounded => {
+            solve_modular_whole(f, want_model, false, true, &mut tied, &mut both_bounded)
+        }
         found => found,
     }
 }
@@ -628,7 +642,9 @@ fn solve_modular_whole(
     f: &Formula,
     want_model: bool,
     flip_ties: bool,
+    by_atom_order: bool,
     tied: &mut bool,
+    both_bounded: &mut bool,
 ) -> Option<Option<Model>> {
     // Collect top-level conjunction and verify no Product atoms exist anywhere in `f`.
     let mut top_cons: Vec<&Con> = Vec::new();
@@ -899,19 +915,28 @@ fn solve_modular_whole(
             // has the sign of `c_q` is taken first, the other in the second run of
             // `solve_modular`; a renaming can change these signs (the root of a class whose
             // aliases have sign -1), so a tie is name-independent only through the second run.
-            (Some(k0), Some(k1)) => match k0.cmp(&k1) {
-                std::cmp::Ordering::Greater => (units[0], units[1]),
-                std::cmp::Ordering::Less => (units[1], units[0]),
-                std::cmp::Ordering::Equal => {
-                    *tied = true;
-                    let first = (units[0].1.is_positive() == c_q.is_positive()) != flip_ties;
-                    if first {
-                        (units[0], units[1])
-                    } else {
-                        (units[1], units[0])
+            // The last run of `solve_modular` (`by_atom_order`) takes the larger `Atom` as `r`.
+            (Some(k0), Some(k1)) => {
+                *both_bounded = true;
+                let k = if by_atom_order {
+                    units[0].0.cmp(units[1].0)
+                } else {
+                    k0.cmp(&k1)
+                };
+                match k {
+                    std::cmp::Ordering::Greater => (units[0], units[1]),
+                    std::cmp::Ordering::Less => (units[1], units[0]),
+                    std::cmp::Ordering::Equal => {
+                        *tied = true;
+                        let first = (units[0].1.is_positive() == c_q.is_positive()) != flip_ties;
+                        if first {
+                            (units[0], units[1])
+                        } else {
+                            (units[1], units[0])
+                        }
                     }
                 }
-            },
+            }
             (None, None) => continue,
         };
         if rem_defs.contains_key(r_root) || rem_defs.contains_key(x_root) {
