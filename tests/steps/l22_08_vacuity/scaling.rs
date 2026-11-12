@@ -298,3 +298,49 @@ fn a_shared_field_atom_scales() {
         run(&inputs[&n], Mode::Default)
     });
 }
+
+/// An atom whose left side fixes a field that cuts off the right side's subtrees:
+/// `f(x, .., x) == g1(..gk(g0(f(y, .., y, x), f(y, .., y, x)))..)` with `f` of k arguments. The
+/// left side has k leaves at `x`, one for each projection of `f`, and only the last projection
+/// reaches an `x` on the right, below k fields the left side does not name. Every path to an
+/// `x` on the right needs `f` at its last projection, so the walk refuses the right side at its
+/// root for each of the other k - 1 leaves instead of walking the k fields down to each `f`:
+/// 2 k + 8 pairs, and work linear in k, not k^2.
+#[test]
+fn a_shared_field_atom_with_cut_subtrees_scales() {
+    let cut = |k: usize| {
+        let mut t = Theory::new("Cut");
+        t.field("f", k).field("g0", 2);
+        for i in 1..=k {
+            t.field(&format!("g{i}"), 1);
+        }
+        let xs = vec!["x"; k].join(", ");
+        let last = format!("f({}x)", "y, ".repeat(k - 1));
+        let names: Vec<String> = (1..=k).map(|i| format!("g{i}")).collect();
+        let body = format!(
+            "f({xs}) == {}(g0({last}, {last}){}",
+            names.join("("),
+            ")".repeat(k)
+        );
+        t.law("cut", "x y", &body);
+        t
+    };
+    let k = 200;
+    let inputs = scaling::inputs(k, cut);
+    for (&k, t) in &inputs {
+        let atom = t.laws[0].clauses()[0][0];
+        let (pairs, runs, steps) = t.shared_atom_size(&atom).expect("the sides share `f`");
+        eprintln!("a cut shared-field atom at k = {k}: {pairs} pairs, {runs} runs, {steps} steps");
+        assert_eq!(pairs, 2 * k + 8);
+        assert_eq!(
+            steps,
+            6 * k as u64 + 20,
+            "the walk takes only steps that reach a pair"
+        );
+    }
+    scaling::check(
+        "a shared-field atom with cut subtrees, Default, by fields",
+        k,
+        |n| run(&inputs[&n], Mode::Default),
+    );
+}

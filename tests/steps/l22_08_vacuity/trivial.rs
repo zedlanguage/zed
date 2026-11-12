@@ -770,21 +770,37 @@ impl Theory {
     /// in the atom (`f1(..fd(x)..) == fd(..f1(x)..)` has d^2 + d + 1 pairs and about 2 d^3 / 3
     /// choices; d = 50 and 400: 42 and 18,711 million instructions for the default report, 442
     /// times). Here the left side's tree is walked and, at each of its leaves, the right side's
-    /// tree, following the fields the leaf chose and skipping the subtrees with no leaf of the
-    /// leaf's key; a pair is a number, and each node of the walk writes one run, the pairs below
-    /// it. The runs of one field's nodes do not nest, so a pair's cube holds a choice exactly
-    /// when the pair lies in a run of that choice, and names a field exactly when it lies in a
-    /// run of a node of that field. The engine keeps the runs, not the cubes (`Engine`). Cost:
-    /// O(S log S) for the trees, S the paths' choices, plus the steps of the walk, each of which
-    /// writes a run or ends at a pair except where a field the left leaf chose leads the right
-    /// tree to a subtree with no leaf of the key; then O(R log R) for the engine's lists of the
-    /// R runs. On the family: 2 d^2 + 6 d + 2 steps and 3 d^2 + d runs, and 7.6 and 539 million
-    /// instructions at d = 50 and 400, 71 times for a limit of 108 (d^2 log d). What is given
-    /// up: the walk's steps that end at no pair, on an atom whose right side tests many fields
-    /// the left leaf chose otherwise, at most the left leaves times the right tree. Structural
-    /// trigger: an atom whose sides share a field. Test: `scaling::a_shared_field_atom_scales`,
-    /// with `brute` and the corpus for the verdicts; COMPLEXITY.md C32; plan row
-    /// TRIVIAL-shared-atom.
+    /// tree, following the fields the leaf chose; a pair is a number, and each node of the walk
+    /// writes one run, the pairs below it. The runs of one field's nodes do not nest, so a pair's
+    /// cube holds a choice exactly when the pair lies in a run of that choice, and names a field
+    /// exactly when it lies in a run of a node of that field. The engine keeps the runs, not the
+    /// cubes (`Engine`).
+    ///
+    /// The right walk. Naive (plan row TRIVIAL-shared-atom): enter each child with a leaf of the
+    /// leaf's key below; a step whose fields the left leaf chose otherwise ends at no pair, up to
+    /// the left leaves times the right tree
+    /// (`scaling::a_shared_field_atom_with_cut_subtrees_scales`: k = 200 and 1600, 41,617 and
+    /// 2,572,817 steps, 24 and 1,285 million instructions, 53.6 times for a limit of 12.3).
+    /// Here the right tree is indexed by key (`KeyIndex`, O(E log^2 E)
+    /// for its E entries, built once per atom): a child is entered only when the left leaf agrees
+    /// with every choice that each path from it to a leaf of the key makes, checked at the root
+    /// and at the children of the entries with two or more such children, O(min(chosen, needed)
+    /// log) a check; the one child of any other entry needs nothing new. So each step writes a
+    /// run or ends at a pair, except one case kept: when the left leaf cuts off each child of a
+    /// right branch point by a different field, the children need no choice in common, so the
+    /// chain above the branch point is walked down to it and every child refused there; at most
+    /// the left leaves times the right entries (plan row TRIVIAL-walk-branches:
+    /// `f1(f2(w(x, .., x), x), x) == c1(..cn(g(f1(y, x), f2(y, x)))..)`, n = 256: 1,551 pairs,
+    /// 69,675 steps). The index also replaces the walk over all children of an unfixed field
+    /// (its arity plus 2, for each left leaf) with the children of the key. Cost: O(S log S) for
+    /// the trees, S the paths' choices, O(E log^2 E) for the index, the steps, then O(R log R)
+    /// for the engine's lists of the R runs. On the d-family: 2 d^2 + 6 d + 2 steps (unchanged)
+    /// and 3 d^2 + d runs, 6.9 and 510 million instructions at d = 50 and 400 (main: 7.2 and
+    /// 535), 73 times for a limit of 108 (d^2 log d); on the cut family: 6 k + 20 steps, 5.0 and
+    /// 41 million instructions at k = 200 and 1600, 8.2 times for a limit of 12.3. Structural
+    /// trigger: an atom whose sides share a field. Tests: `scaling::a_shared_field_atom_scales`,
+    /// `scaling::a_shared_field_atom_with_cut_subtrees_scales`, with `brute` and the corpus for
+    /// the verdicts; COMPLEXITY.md C32; plan rows TRIVIAL-shared-atom, TRIVIAL-walk-index.
     fn pair_form(&self, a: &Atom, lf: &[usize], rf: &[usize]) -> PairForm {
         let mut scope = Vec::with_capacity(lf.len() + rf.len());
         scope.extend_from_slice(lf);
@@ -800,11 +816,11 @@ impl Theory {
         };
         let left = self.tree(a.lhs, &scope, key(false));
         let right = self.tree(a.rhs, &scope, key(true));
-        let (below, keys) = right.keys_below();
-        let has = |n: usize, k: Sym| keys[below[n].clone()].binary_search(&k).is_ok();
+        let index = right.index();
         enum Step {
             Left(usize),
-            Right(usize),
+            /// A node of the right tree and its entry for the left leaf's key.
+            Right(usize, usize),
             Fix(usize, Choice),
             Unfix(usize),
             /// The start of a run: the pairs numbered so far.
@@ -813,16 +829,25 @@ impl Theory {
             /// choice `.1`.
             Close(usize, Choice),
         }
-        // The choices of the left leaf being walked, by place in `scope`.
+        // The choices of the left leaf being walked, by place in `scope`, and the places chosen.
         let mut fixed = vec![MENTION; scope.len()];
+        let mut chosen: Vec<usize> = Vec::new();
         let (mut pairs, mut runs, mut steps) = (0, Vec::new(), 0);
         let mut starts: Vec<usize> = Vec::new();
-        let mut leaf_key = Sym::Const(0);
         let mut stack = vec![Step::Left(0)];
         while let Some(step) = stack.pop() {
             match step {
-                Step::Fix(s, c) => fixed[s] = c,
-                Step::Unfix(s) => fixed[s] = MENTION,
+                Step::Fix(s, c) => {
+                    if fixed[s] == MENTION {
+                        chosen.push(s);
+                    }
+                    fixed[s] = c;
+                }
+                Step::Unfix(s) => {
+                    fixed[s] = MENTION;
+                    let last = chosen.pop();
+                    debug_assert_eq!(last, Some(s), "the left walk unfixes in reverse order");
+                }
                 Step::Open => starts.push(pairs),
                 Step::Close(s, c) => {
                     let start = starts.pop().expect("a run is opened before it is closed");
@@ -834,9 +859,10 @@ impl Theory {
                     steps += 1;
                     match left.test[n] {
                         NONE => {
-                            if let Some(k) = left.key[n].filter(|&k| has(0, k)) {
-                                leaf_key = k;
-                                stack.push(Step::Right(0));
+                            if let Some(e) = left.key[n].and_then(|k| index.entry(0, k))
+                                && index.agrees(e, &fixed, &chosen)
+                            {
+                                stack.push(Step::Right(0, e));
                             }
                         }
                         s => {
@@ -854,30 +880,36 @@ impl Theory {
                         }
                     }
                 }
-                Step::Right(n) => {
+                Step::Right(n, e) => {
                     steps += 1;
                     match right.test[n] {
                         NONE => pairs += 1,
                         s => {
-                            let first = right.kid_at[n].start;
+                            // Only the children with a leaf of the key below. Inside a chain
+                            // the chain start's needs already agreed; at a branch point each
+                            // child starts a chain and is checked.
+                            let kids = &index.kids[index.kids_at[e].clone()];
+                            let branch = kids.len() > 1;
+                            let enter = |kid_entry: usize| {
+                                !branch || index.agrees(kid_entry, &fixed, &chosen)
+                            };
                             match fixed[s] {
                                 MENTION => {
-                                    let dom = choices(self.fields[scope[s]].arity);
                                     stack.push(Step::Close(s, MENTION));
-                                    for c in (0..dom).rev() {
-                                        let kid = right.kid[first + c as usize];
-                                        if has(kid, leaf_key) {
+                                    for &(c, kid, kid_entry) in kids.iter().rev() {
+                                        if enter(kid_entry) {
                                             stack.push(Step::Close(s, c));
-                                            stack.push(Step::Right(kid));
+                                            stack.push(Step::Right(kid, kid_entry));
                                             stack.push(Step::Open);
                                         }
                                     }
                                     stack.push(Step::Open);
                                 }
                                 c => {
-                                    let kid = right.kid[first + c as usize];
-                                    if has(kid, leaf_key) {
-                                        stack.push(Step::Right(kid));
+                                    if let Ok(i) = kids.binary_search_by_key(&c, |&(c, _, _)| c)
+                                        && enter(kids[i].2)
+                                    {
+                                        stack.push(Step::Right(kids[i].1, kids[i].2));
                                     }
                                 }
                             }
@@ -926,28 +958,181 @@ struct Tree {
 }
 
 impl Tree {
-    /// For each node, the range in the returned list of the keys of the leaves below it, sorted.
-    /// The children of a node come after it, so one pass from the last node merges each node's
-    /// children: O(S log S) for S the leaves' depths, which bound the keys listed.
-    fn keys_below(&self) -> (Vec<std::ops::Range<usize>>, Vec<Sym>) {
-        let mut below = vec![0..0; self.test.len()];
-        let (mut keys, mut merged) = (Vec::new(), Vec::new());
+    /// The tree indexed by the keys of its leaves (`KeyIndex`). The children of a node come
+    /// after it, so one pass from the last node builds each node's entries from its children's:
+    /// O(E log E) for the E entries, which the leaves' depths bound. The lists of choices each
+    /// chain start needs hold O(E log E) choices in all: a branch point copies at most its
+    /// smallest child's list, and a leaf's entry lies below O(log E) smallest children. Writing
+    /// what a branch point's children have in common looks up at most twice the choices of all
+    /// children but the largest, so O(E log^2 E) for the lists (`KeyIndex::needs`).
+    fn index(&self) -> KeyIndex {
+        let mut index = KeyIndex {
+            below: vec![0..0; self.test.len()],
+            key: Vec::new(),
+            node: Vec::new(),
+            kids_at: Vec::new(),
+            kids: Vec::new(),
+            needs_at: Vec::new(),
+            needs: Vec::new(),
+            common_at: Vec::new(),
+        };
+        // (key, choice, child, child's entry) for each key below each child of one node.
+        let mut merged: Vec<(Sym, Choice, usize, usize)> = Vec::new();
         for n in (0..self.test.len()).rev() {
-            merged.clear();
+            let start = index.key.len();
             if self.test[n] == NONE {
-                merged.extend(self.key[n]);
-            } else {
-                for &kid in &self.kid[self.kid_at[n].clone()] {
-                    merged.extend_from_slice(&keys[below[kid].clone()]);
+                if let Some(k) = self.key[n] {
+                    index.push_entry(k, n);
                 }
-                merged.sort_unstable();
-                merged.dedup();
+            } else {
+                merged.clear();
+                for (c, &kid) in self.kid[self.kid_at[n].clone()].iter().enumerate() {
+                    for e in index.below[kid].clone() {
+                        merged.push((index.key[e], c as Choice, kid, e));
+                    }
+                }
+                merged.sort_unstable_by_key(|&(k, c, _, _)| (k, c));
+                for (i, &(k, c, kid, e)) in merged.iter().enumerate() {
+                    if i == 0 || merged[i - 1].0 != k {
+                        index.push_entry(k, n);
+                    }
+                    let last = index.kids_at.len() - 1;
+                    index.kids.push((c, kid, e));
+                    index.kids_at[last].end = index.kids.len();
+                }
             }
-            let start = keys.len();
-            keys.extend_from_slice(&merged);
-            below[n] = start..keys.len();
+            index.below[n] = start..index.key.len();
+            // A node's entries with two or more children start their children's chains: write
+            // what each chain start needs, then what all of them need.
+            for e in start..index.key.len() {
+                if index.kids_at[e].len() > 1 {
+                    for i in index.kids_at[e].clone() {
+                        index.write_needs(self, index.kids[i].2);
+                    }
+                    index.write_common(e);
+                }
+            }
         }
-        (below, keys)
+        // The root's entries start chains too.
+        for e in index.below[0].clone() {
+            index.write_needs(self, e);
+        }
+        index
+    }
+}
+
+/// One side's tree indexed by the keys of its leaves, for the walk of `pair_form`. An entry is a
+/// node and one key of a leaf below it. The entries of a node with two or more children of its
+/// key below are branch points; a chain is a node whose parent entry is a branch point (or the
+/// root), then each next node while the entry has one child of its key, down to a branch point
+/// or a leaf. Each entry starting a chain holds the choices that every path from it to a leaf of
+/// its key makes: the choices along its chain, then those every child of the branch point at
+/// its end needs.
+struct KeyIndex {
+    /// For each node, its entries, by key.
+    below: Vec<std::ops::Range<usize>>,
+    /// For each entry, its key and its node.
+    key: Vec<Sym>,
+    node: Vec<usize>,
+    /// For each entry, its children with a leaf of the key below, as `(choice, child, child's
+    /// entry)` in `kids[kids_at[e]]`, by choice.
+    kids_at: Vec<std::ops::Range<usize>>,
+    kids: Vec<(Choice, usize, usize)>,
+    /// For each entry that starts a chain, the choices every path from it to a leaf of its key
+    /// makes, as `(place in scope, choice)` in `needs[needs_at[e]]`, by place; for each branch
+    /// point, those all its children need, in `needs[common_at[e]]`. Empty elsewhere.
+    needs_at: Vec<std::ops::Range<usize>>,
+    needs: Vec<(usize, Choice)>,
+    common_at: Vec<std::ops::Range<usize>>,
+}
+
+impl KeyIndex {
+    fn push_entry(&mut self, k: Sym, n: usize) {
+        self.key.push(k);
+        self.node.push(n);
+        self.kids_at.push(self.kids.len()..self.kids.len());
+        self.needs_at.push(0..0);
+        self.common_at.push(0..0);
+    }
+
+    /// The entry of node `n` for key `k`, if a leaf of that key is below `n`.
+    fn entry(&self, n: usize, k: Sym) -> Option<usize> {
+        let below = self.below[n].clone();
+        self.key[below.clone()]
+            .binary_search(&k)
+            .ok()
+            .map(|i| below.start + i)
+    }
+
+    /// Writes what chain start `e` needs: the choices down its chain, each node's one child of
+    /// the key, then what the branch point at its end has in common. O(L log L) for the L
+    /// choices written; each chain is written once.
+    fn write_needs(&mut self, tree: &Tree, mut e: usize) {
+        let start = self.needs.len();
+        let head = e;
+        while self.kids_at[e].len() == 1 {
+            let (c, _, kid_entry) = self.kids[self.kids_at[e].start];
+            self.needs.push((tree.test[self.node[e]], c));
+            e = kid_entry;
+        }
+        // A path tests each field at most once, so the chain's places and those below are
+        // distinct.
+        self.needs.extend_from_within(self.common_at[e].clone());
+        self.needs[start..].sort_unstable();
+        self.needs_at[head] = start..self.needs.len();
+    }
+
+    /// Writes what every child of branch point `e` needs: the choices in all of their lists.
+    /// The children's choices of `e`'s own field differ, so none of them is common. Each choice
+    /// of the shortest list is looked up in the others: O(m c log L), m the shortest list's
+    /// length, c the children and L the longest list's length.
+    fn write_common(&mut self, e: usize) {
+        let Self {
+            kids_at,
+            kids,
+            needs_at,
+            needs,
+            common_at,
+            ..
+        } = self;
+        let kids = &kids[kids_at[e].clone()];
+        let shortest = kids
+            .iter()
+            .map(|&(_, _, k)| needs_at[k].clone())
+            .min_by_key(|r| r.len())
+            .expect("a branch point has two or more children");
+        let start = needs.len();
+        for i in shortest {
+            let (s, c) = needs[i];
+            let in_all = kids.iter().all(|&(_, _, k)| {
+                let list = &needs[needs_at[k].clone()];
+                list.binary_search_by_key(&s, |&(p, _)| p)
+                    .is_ok_and(|j| list[j].1 == c)
+            });
+            if in_all {
+                needs.push((s, c));
+            }
+        }
+        common_at[e] = start..needs.len();
+    }
+
+    /// Whether the left leaf, whose choices are `fixed` by place with `chosen` the places it
+    /// chose, agrees with every choice chain start `e` needs. The shorter of the two lists is
+    /// read and each of its places looked up in the other: O(min(|chosen|, |needs|) log).
+    fn agrees(&self, e: usize, fixed: &[Choice], chosen: &[usize]) -> bool {
+        let needs = &self.needs[self.needs_at[e].clone()];
+        if chosen.len() < needs.len() {
+            chosen.iter().all(|&s| {
+                needs
+                    .binary_search_by_key(&s, |&(p, _)| p)
+                    .ok()
+                    .is_none_or(|i| needs[i].1 == fixed[s])
+            })
+        } else {
+            needs
+                .iter()
+                .all(|&(s, c)| fixed[s] == MENTION || fixed[s] == c)
+        }
     }
 }
 
