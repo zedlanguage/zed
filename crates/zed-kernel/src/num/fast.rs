@@ -1728,10 +1728,30 @@ fn matrix_product(l: [&BigInt; 4], r: &[&BigInt], shift: Option<u64>) -> Vec<Big
             [(l[2 * i], r[j]), (l[2 * i + 1], r[c + j])]
         })
     };
-    let (mut separate, mut widest, mut leaf) = (0.0, 0, false);
-    for (x, y) in terms().filter(|(x, y)| !x.is_zero() && !y.is_zero()) {
+    let one_by_one = || -> Vec<BigInt> {
+        (0..2 * c)
+            .map(|out| {
+                let (i, j) = (out / c, out % c);
+                let e = mul_int(l[2 * i], r[j]) + mul_int(l[2 * i + 1], r[c + j]);
+                // No shift by 0: num-bigint's shift, even by 0, shrinks the sum's digits to
+                // fit, a reallocation and copy when it has spare capacity (1-2 % of bezout's
+                // instructions at every width).
+                match shift {
+                    Some(s) => e >> s,
+                    None => e,
+                }
+            })
+            .collect()
+    };
+    let nonzero = || terms().filter(|(x, y)| !x.is_zero() && !y.is_zero());
+    // A product at or below `MUL_LEAF` decides for the products one by one before any cost is
+    // computed: the common case inside the half gcd's recursion.
+    if nonzero().any(|(x, y)| width(x).min(width(y)) <= MUL_LEAF) {
+        return one_by_one();
+    }
+    let (mut separate, mut widest) = (0.0, 0);
+    for (x, y) in nonzero() {
         let (wx, wy) = (width(x), width(y));
-        leaf |= wx.min(wy) <= MUL_LEAF;
         separate += dense_cost(wx, wy);
         widest = widest.max(wx + wy - 1);
     }
@@ -1753,13 +1773,8 @@ fn matrix_product(l: [&BigInt; 4], r: &[&BigInt], shift: Option<u64>) -> Vec<Big
         }
     };
     let shared = ((factors + 2 * c) as u128 * TRANSFORM_COST * points_cost(n)) as f64 / 3.0;
-    if leaf || widest == 0 || shared >= separate {
-        return (0..2 * c)
-            .map(|out| {
-                let (i, j) = (out / c, out % c);
-                (mul_int(l[2 * i], r[j]) + mul_int(l[2 * i + 1], r[c + j])) >> shift.unwrap_or(0)
-            })
-            .collect();
+    if widest == 0 || shared >= separate {
+        return one_by_one();
     }
     #[cfg(test)]
     SHARED_PRODUCTS.with(|v| {
@@ -1898,7 +1913,11 @@ fn nu(x: &BigInt) -> Option<u64> {
 }
 
 /// `x^-1 mod 2^w` for an odd `x`, by Newton's iteration `y (2 - x y)`, which doubles the
-/// correct bits.
+/// correct bits. With `y` right to `h` bits, `x y = 1 + 2^h e` modulo `2^bits`, `bits <= 2 h`,
+/// and `y (2 - x y) = y - 2^h y e`: only `e` and `y e` modulo `2^(bits - h)` are needed.
+/// Complexity tradeoff: the plain step takes two products of `bits x h` bits; this one takes
+/// one of `bits x h` and one of `h x (bits - h)`, about a quarter less, O(M(w)) either way.
+/// Test inverses_modulo_powers_of_two.
 fn inverse_mod_pow2(x: &BigUint, w: u64) -> BigUint {
     let low = x.iter_u64_digits().next().expect("x is odd");
     let mut inv = 1u64;
@@ -1906,14 +1925,15 @@ fn inverse_mod_pow2(x: &BigUint, w: u64) -> BigUint {
         inv = inv.wrapping_mul(2u64.wrapping_sub(low.wrapping_mul(inv)));
     }
     let mut y = BigUint::from(inv);
-    let mut bits = 64;
-    while bits < w {
-        bits = (2 * bits).min(w);
-        let mask = (BigUint::one() << bits) - 1u32;
-        let xy = mul(&(x & &mask), &y) & &mask;
-        // `2 - x y mod 2^bits`, as `2^bits + 2 - x y`, `x y` being below `2^bits`.
-        let e = ((&mask + 3u32) - xy) & &mask;
-        y = mul(&y, &e) & &mask;
+    let mut h = 64;
+    while h < w {
+        let bits = (2 * h).min(w);
+        let high = (BigUint::one() << (bits - h)) - 1u32;
+        let e = (mul(&(x & ((BigUint::one() << bits) - 1u32)), &y) >> h) & &high;
+        // `-y e` modulo `2^(bits - h)`, placed above the `h` bits of `y`.
+        let ye = mul(&y, &e) & &high;
+        y += (((&high + 1u32) - ye) & &high) << h;
+        h = bits;
     }
     let mask = (BigUint::one() << w) - 1u32;
     y & mask
@@ -1950,32 +1970,92 @@ fn step(a: &BigInt, b: &BigInt, j: u64) -> (BigInt, BigInt, BigInt) {
     (q, b1, r)
 }
 
+/// What a caller of [`half`] takes from it: the product `R` of the steps, the pair they reach,
+/// or both.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Want {
+    Matrix,
+    Pair,
+    Both,
+}
+
+/// [`half`]'s result: the number of halvings `j`, and `R` and the pair `R (a, b) / 2^2j` as
+/// asked for by its [`Want`].
+struct Half {
+    j: u64,
+    r: Option<Mat>,
+    pair: Option<(BigInt, BigInt)>,
+}
+
+impl Half {
+    /// `(j, R, x, y)` of a result asked for with [`Want::Both`].
+    fn both(self) -> (u64, Mat, BigInt, BigInt) {
+        let (x, y) = self.pair.expect("asked for the pair");
+        (self.j, self.r.expect("asked for the matrix"), x, y)
+    }
+}
+
 /// The steps of the binary gcd of `(a, b)`, `a` odd and `b` even or 0, whose valuations sum
-/// to at most `k`, as many as fit: their number of halvings `j` and their product `R`, with
-/// `R (a, b) / 2^2j` the pair they reach. The steps depend only on `a` and `b` modulo
-/// `2^(2k+1)`, so the first half is found from those residues of half the width, and the
-/// rest from the pair it reaches (Stehlé and Zimmermann, "A binary recursive gcd algorithm",
-/// ANTS 2004). O(M(k) log k).
-fn half(a: &BigInt, b: &BigInt, k: u64) -> (u64, Mat) {
-    match nu(b) {
+/// to at most `k`, as many as fit: their number of halvings `j`, their product `R`, and the
+/// pair they reach, `R (a, b) / 2^2j`. The steps depend only on `a` and `b` modulo
+/// `2^(2k+1)`, so the first half is found from those residues of half the width
+/// ([`half_low`]), and the rest from the pair it reaches (Stehlé and Zimmermann, "A binary
+/// recursive gcd algorithm", ANTS 2004). O(M(k) log k).
+///
+/// Complexity tradeoff: `R` is `r2 (q r1)`, a product of two matrices of about `k / 2` bits,
+/// and the pair is `r2 (a3, b3) / 2^2j2` from the pair `(a3, b3)` that `r2` was found from,
+/// a product of a matrix by a pair. A caller that needs one of them only ([`gcd_using`] the
+/// pair, the second half inside the recursion the matrix) is spared the other product. Before
+/// [`gcd_using`] asked for the pair only, it formed `R` and applied it to the whole numbers;
+/// without the product of the matrices a gcd of 4,153 words takes 7.1 % fewer instructions,
+/// one of 33,220 words 6.5 % fewer (2026-11-12). Test half_pairs_match_the_matrix.
+fn half(a: BigInt, b: BigInt, k: u64, want: Want) -> Half {
+    let (matrix, pair) = (want != Want::Pair, want != Want::Matrix);
+    let done = |j, r: Mat, x, y| Half {
+        j,
+        r: matrix.then_some(r),
+        pair: pair.then_some((x, y)),
+    };
+    match nu(&b) {
         Some(v) if v <= k => {}
-        _ => return (0, Mat::identity()),
+        _ => return done(0, Mat::identity(), a, b),
     }
     if k <= HALF_LEAF {
-        return half_leaf(a, b, k);
+        let (j, r) = half_leaf(&a, &b, k);
+        let (x, y) = match pair {
+            true => r.apply(&a, &b, j),
+            false => (a, b),
+        };
+        return done(j, r, x, y);
     }
     let k1 = k / 2;
-    let (j1, r1) = half(&cmod(a, 2 * k1 + 1), &cmod(b, 2 * k1 + 1), k1);
-    let (a2, b2) = r1.apply(a, b, j1);
+    let (j1, r1, a2, b2) = half_low(a, b, k1);
     let j0 = match nu(&b2) {
         Some(v) if j1 + v <= k => v,
-        _ => return (j1, r1),
+        _ => return done(j1, r1, a2, b2),
     };
     let (q, a3, b3) = step(&a2, &b2, j0);
     drop((a2, b2));
     let k2 = k - j1 - j0;
-    let (j2, r2) = half(&cmod(&a3, 2 * k2 + 1), &cmod(&b3, 2 * k2 + 1), k2);
-    drop((a3, b3));
+    let (j2, r2, last) = match pair {
+        true => {
+            let (j2, r2, a4, b4) = half_low(a3, b3, k2);
+            (j2, r2, Some((a4, b4)))
+        }
+        false => {
+            let w = 2 * k2 + 1;
+            let h = half(cmod(&a3, w), cmod(&b3, w), k2, Want::Matrix);
+            (h.j, h.r.expect("asked for the matrix"), None)
+        }
+    };
+    let j = j1 + j0 + j2;
+    if !matrix {
+        return Half {
+            j,
+            r: None,
+            pair: last,
+        };
+    }
     // The step's matrix [[0, 2^j0], [2^j0, q]] times r1.
     let [m00, m01, m10, m11] = &r1.0;
     let qr1 = Mat([
@@ -1985,7 +2065,59 @@ fn half(a: &BigInt, b: &BigInt, k: u64) -> (u64, Mat) {
         (m01 << j0) + mul_int(&q, m11),
     ]);
     drop(r1);
-    (j1 + j0 + j2, r2.times(&qr1))
+    Half {
+        j,
+        r: Some(r2.times(&qr1)),
+        pair: last,
+    }
+}
+
+/// [`half`] of `(a, b)` with budget `k`, found from their residues modulo `2^w`, `w = 2k + 1`,
+/// centered: its matrix `R` and the pair `R (a, b) / 2^2j`. With
+/// `(a, b) = (a_l, b_l) + 2^w (a_h, b_h)`, that pair is
+/// `R (a_l, b_l) / 2^2j + 2^(w - 2j) R (a_h, b_h)`, as `2j < w`.
+///
+/// Complexity tradeoff: applying `R` (entries of about `k` bits) to the whole numbers
+/// ([`Mat::apply`]) takes products by all `bits(a)` bits; lifting the residues' pair takes
+/// them by the high parts only, `bits(a) - w` bits, but needs that pair, one more product of
+/// a matrix by a pair inside the recursion. When the products are num-bigint's (entries of
+/// at most `MUL_LEAF` words, where [`matrix_product`] takes them one by one), whose cost grows
+/// with the product of the widths, the lift is cheaper (Möller's `hgcd-b`, "On Schönhage's
+/// algorithm and subquadratic integer gcd computation", Math. Comp. 2008): [`bezout`] of
+/// Fibonacci pairs takes 8 % fewer instructions at 356 words and 11 % fewer at 711. Above,
+/// the transforms of [`Mat::apply`] are planned for the quotient, about `bits(a) - k` bits,
+/// the same size as the lift's products, so the lift only adds the residues' pair: a gcd of
+/// 33,220 words took 7 % more when every level lifted. So the lift is taken for entries of
+/// at most `MUL_LEAF` words, `k <= 64 MUL_LEAF` bits. Measured on 2026-11-12, a gcd of two
+/// random odd numbers of 4,153 and of 33,220 words took 515.9 and 6,270.1 million
+/// instructions; with the limit at half, 537.0 and 6,443.6, and at double, 521.9 and 6,344.5.
+/// The same pair either way. Tests half_pairs_match_the_matrix,
+/// pncx_fast_bezout_matches_euclid, reading_a_rat_of_two_wide_parts_scales.
+fn half_low(a: BigInt, b: BigInt, k: u64) -> (u64, Mat, BigInt, BigInt) {
+    // At the leaf the matrix has at most two words, and applying it to the whole numbers is
+    // linear in their width, as a lift is.
+    if k <= HALF_LEAF {
+        return half(a, b, k, Want::Both).both();
+    }
+    let w = 2 * k + 1;
+    let (al, bl) = (cmod(&a, w), cmod(&b, w));
+    if k > 64 * MUL_LEAF as u64 {
+        let h = half(al, bl, k, Want::Matrix);
+        let r = h.r.expect("asked for the matrix");
+        let (x, y) = r.apply(&a, &b, h.j);
+        return (h.j, r, x, y);
+    }
+    // `x >> w` rounds down, to `(x - r) / 2^w` for the residue `r` in `[0, 2^w)`; a negative
+    // centered residue is `r - 2^w`, one more `2^w` in the high part.
+    let ah = (a >> w) + BigInt::from(al.is_negative());
+    let bh = (b >> w) + BigInt::from(bl.is_negative());
+    let (j, r, x, y) = half(al, bl, k, Want::Both).both();
+    let [m00, m01, m10, m11] = &r.0;
+    let [c, d] = matrix_product([m00, m01, m10, m11], &[&ah, &bh], None)
+        .try_into()
+        .expect("a 2x1 product");
+    let s = w - 2 * j;
+    (j, r, x + (c << s), y + (d << s))
 }
 
 /// [`half`] on 128-bit integers, for `k <= HALF_LEAF`: the residues modulo `2^(2k+1)` stay
@@ -2269,11 +2401,9 @@ fn gcd_using(a: &BigUint, b: &BigUint, handoff: bool) -> BigUint {
             let (zx, zy) = (xm.trailing_zeros().unwrap(), ym.trailing_zeros().unwrap());
             return (stein_odd(xm, zx, ym, zy) << zx.min(zy)) << z;
         }
-        let (j, r) = half(&x, &y, n / 2);
-        if j > 0 {
-            (x, y) = r.apply(&x, &y, j);
-        }
-        drop(r);
+        (x, y) = half(x, y, n / 2, Want::Pair)
+            .pair
+            .expect("asked for the pair");
         if let Some(v) = nu(&y) {
             let (_, a1, b1) = step(&x, &y, v);
             (x, y) = (a1, b1);
@@ -2324,9 +2454,9 @@ fn inverse_mod_odd(a: &BigUint, b: &BigUint) -> Option<BigUint> {
     let mut e = 0u64;
     while !y.is_zero() {
         let n = x.bits().max(y.bits());
-        let (j, r) = half(&x, &y, n / 2);
+        let (j, r, x1, y1) = half(x, y, n / 2, Want::Both).both();
+        (x, y) = (x1, y1);
         if j > 0 {
-            (x, y) = r.apply(&x, &y, j);
             let [m00, m01, m10, m11] = &r.0;
             (c0, c1) = (
                 mul_int(m00, &c0) + mul_int(m01, &c1),
@@ -2390,9 +2520,9 @@ pub(super) fn bezout(a: &BigUint, b: &BigUint) -> Option<(BigUint, BigInt, BigIn
     let mut halvings = 0u64;
     while !y.is_zero() {
         let n = x.bits().max(y.bits());
-        let (j, r) = half(&x, &y, (n / 2).max(1));
+        let (j, r, x1, y1) = half(x, y, (n / 2).max(1), Want::Both).both();
+        (x, y) = (x1, y1);
         if j > 0 {
-            (x, y) = r.apply(&x, &y, j);
             let [m00, m01, m10, m11] = &r.0;
             (bx, by) = (
                 mul_int(m00, &bx) + mul_int(m01, &by),
@@ -3694,7 +3824,8 @@ mod tests {
             let a = BigInt::from(random(seed, words) | BigUint::one());
             let b = BigInt::from(random(seed + 10, words) << 1u32);
             for k in [64 * words as u64 / 4, 64 * words as u64 / 2] {
-                let (j, m) = half(&a, &b, k);
+                let h = half(a.clone(), b.clone(), k, Want::Matrix);
+                let (j, m) = (h.j, h.r.expect("asked for the matrix"));
                 let [m00, m01, m10, m11] = &m.0;
                 let want = (
                     (m00 * &a + m01 * &b) >> (2 * j),
@@ -3705,6 +3836,68 @@ mod tests {
         }
         let (shared, folded) = SHARED_PRODUCTS.with(|v| v.get());
         assert!(shared > 0 && folded > 0, "{shared} shared, {folded} folded");
+    }
+
+    /// [`half`] for each [`Want`]: the same halvings, the same matrix, and the pair that matrix
+    /// gives, at widths on both sides of the lift's limit in [`half_low`] (`64 MUL_LEAF` bits,
+    /// 3,072 in the tests), with budgets from 1 to above the width, for both signs and second
+    /// numbers of every valuation class.
+    #[test]
+    fn half_pairs_match_the_matrix() {
+        for words in [1usize, 2, 3, 5, 8, 17, 40, 120, 300] {
+            let bits = 64 * words as u64;
+            for (i, x) in forms(words, 3 + words as u64).into_iter().enumerate() {
+                let a = x | BigUint::one();
+                let y = random(41 + i as u64, words);
+                for b in [
+                    BigUint::zero(),
+                    &y | BigUint::one(),
+                    &y << 1u32,
+                    (&y >> 1u32) << (bits / 3 + 1),
+                    forms(words, 7)[i].clone() << 2u32,
+                ] {
+                    for (sa, sb) in [(1i32, 1i32), (-1, 1), (1, -1), (-1, -1)] {
+                        let a = BigInt::from(a.clone()) * sa;
+                        let b = BigInt::from(b.clone()) * sb;
+                        for k in [1, HALF_LEAF, HALF_LEAF + 1, bits / 4, bits / 2, bits + 64] {
+                            let at = format!("{words} words, form {i}, signs {sa} {sb}, k = {k}");
+                            let (j, m, x, y) = half(a.clone(), b.clone(), k, Want::Both).both();
+                            assert!(j <= k, "{at}: {j} halvings");
+                            let [m00, m01, m10, m11] = &m.0;
+                            let (p, q) = (m00 * &a + m01 * &b, m10 * &a + m11 * &b);
+                            let low = (BigInt::one() << (2 * j)) - 1;
+                            assert!((&p & &low).is_zero() && (&q & &low).is_zero(), "{at}");
+                            let pair = (p >> (2 * j), q >> (2 * j));
+                            assert_eq!((&x, &y), (&pair.0, &pair.1), "{at}");
+                            let h = half(a.clone(), b.clone(), k, Want::Matrix);
+                            assert_eq!((h.j, h.r.map(|r| r.0), h.pair), (j, Some(m.0), None));
+                            let h = half(a.clone(), b.clone(), k, Want::Pair);
+                            assert_eq!((h.j, h.r.is_none(), h.pair), (j, true, Some(pair)));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// [`inverse_mod_pow2`] at widths around the Newton steps' doublings and their ends.
+    #[test]
+    fn inverses_modulo_powers_of_two() {
+        for w in [
+            1u64, 2, 63, 64, 65, 127, 128, 129, 200, 1000, 4096, 4097, 20_000,
+        ] {
+            let mask = (BigUint::one() << w) - 1u32;
+            for x in [
+                BigUint::one(),
+                mask.clone(),
+                random(w, 1 + w as usize / 64) | BigUint::one(),
+                (random(w + 1, 2 + w as usize / 32) << 3u32) | BigUint::one(),
+            ] {
+                let y = inverse_mod_pow2(&x, w);
+                assert!(y <= mask, "width {w}");
+                assert!(((&x * &y) & &mask).is_one(), "width {w}");
+            }
+        }
     }
 
     #[test]
