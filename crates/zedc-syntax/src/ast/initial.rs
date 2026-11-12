@@ -997,8 +997,12 @@ impl<'e> Renames<'e> {
 
     /// The source `text` from `from` to `to`, offsets of the source, with each word that could
     /// be a name written as [`Renames::word`] gives it; a word right after `.` or `#`, a member
-    /// or an atom, is no name of a binder and is kept.
-    fn apply(&self, text: &str, from: usize, to: usize, out: &mut String) {
+    /// or an atom, is no name of a binder and is kept. Inside the parentheses of a call, a
+    /// struct or an atom pattern, `f(i: 1)` or `#e(code: i)`, a word before `:` names a field
+    /// and is kept, except a field written alone, `#e(i:)`, which binds its name: it is written
+    /// `#e(i: i1)`. `open` holds, for each bracket open at `from`, whether it is such a
+    /// parenthesis, one right after a name, and is kept up to date for the text that follows.
+    fn apply(&self, text: &str, from: usize, to: usize, out: &mut String, open: &mut Vec<bool>) {
         let word = |c: char| c.is_alphanumeric() || c == '_';
         let mut at = from;
         while at < to {
@@ -1009,13 +1013,46 @@ impl<'e> Renames<'e> {
             let after_dot =
                 before.ends_with('#') || before.ends_with('.') && !before.ends_with("..");
             let named = !w.is_empty() && !w.starts_with(|c: char| c.is_ascii_digit());
-            out.push_str(if named && !after_dot {
-                self.word(w, at)
-            } else {
-                w
-            });
+            let colon = rest[len..]
+                .trim_start()
+                .strip_prefix(':')
+                .filter(|r| !r.starts_with([':', '=']));
+            // The new name of a field written alone, written after its `:`.
+            let mut alone = None;
+            match (named && !after_dot, colon) {
+                (true, Some(r)) if open.last() == Some(&true) => {
+                    out.push_str(w);
+                    let new = self.word(w, at);
+                    if new != w && r.trim_start().starts_with([')', ',']) {
+                        alone = Some(new);
+                    }
+                }
+                (true, _) => out.push_str(self.word(w, at)),
+                (false, _) => out.push_str(w),
+            }
             let gap = rest[len..].find(word).map_or(rest.len(), |g| len + g);
-            out.push_str(&rest[len..gap]);
+            for (k, c) in rest[len..gap].char_indices() {
+                match c {
+                    '(' => {
+                        open.push(text[..at + len + k].ends_with(|p: char| word(p) || p == '\''))
+                    }
+                    '[' | '{' => open.push(false),
+                    ')' | ']' | '}' => {
+                        open.pop();
+                    }
+                    _ => {}
+                }
+            }
+            let between = &rest[len..gap];
+            match (alone, between.find(':')) {
+                (Some(new), Some(c)) => {
+                    out.push_str(&between[..=c]);
+                    out.push(' ');
+                    out.push_str(new);
+                    out.push_str(&between[c + 1..]);
+                }
+                _ => out.push_str(between),
+            }
             at += gap;
         }
     }
@@ -2433,16 +2470,17 @@ impl Builder<'_, '_> {
     /// in order, that lie inside it, and each word between them written as `renames` gives it.
     fn rewrite(&self, span: Span, edits: &[(usize, usize, String)], renames: &Renames) -> String {
         let mut out = String::new();
+        let mut open = Vec::new();
         let mut at = span.start;
         for (a, b, t) in edits
             .iter()
             .filter(|e| span.start <= e.0 && e.1 <= span.end)
         {
-            renames.apply(self.text, at, *a, &mut out);
+            renames.apply(self.text, at, *a, &mut out, &mut open);
             out.push_str(t);
             at = *b;
         }
-        renames.apply(self.text, at, span.end, &mut out);
+        renames.apply(self.text, at, span.end, &mut out, &mut open);
         out
     }
 

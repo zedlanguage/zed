@@ -3721,3 +3721,14 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | `Vec::split_off` taking the literals refused in this application off the queue `lit_refused` | `Ck::apply_demanding` | Mutation (gap 11) | the queue as a value split at the mark and returned |
 | `partition_point` then `take_while` over a slice sorted by start, as a range lookup | `edits_in`, `lies_in` | None | a binary search on the sorted sequence and a slice of it |
 | A loop of `fmt::Write::write_char` in place of a format width, since a width is at most 2^16 − 1 | `repeat` in `front.rs`, the menu pad in `Msg::written` | Formatting (no width limit in Zed) | a string of `n` copies, or a width with no limit |
+
+## Entries from CHK-for-body-writers, MSG-dot-repair-in-indexed, MSG-hoist-name-outer (`crates/zedc-syntax/src/ast/initial.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `Taken` of a `HashSet<String>` and a `HashMap<String, usize>` of the next suffix for each base, changed in place by each new name | `Taken`, `fresh`, `Builder::keyed`, `Builder::several_writers`, `Builder::dot_fixes` | Mutation (gap 11) | a fold over the new names of a repair that returns the names taken and the next suffix of each base |
+| A `HashMap<&str, VecDeque<usize>>` of the keys still to come for each name, popped at the front while a `while let` climbs the scopes | `Builder::keyed` | Mutation (gap 11) | a recursion over the scopes out from the write that passes the queues as values |
+| A sort, then a sweep with a `Vec` stack of the texts open, that cuts the renaming texts of one name into runs | `Renames::new` | Mutation (gap 11) | a fold over the sorted texts with the stack as a list value |
+| A `Vec<bool>` of the brackets open, kept across the pieces of one rewrite, telling whether a `(` follows a name | `Renames::apply`, `Builder::rewrite` | Mutation (gap 11) | the stack threaded through the pieces as a value |
+| `Option::get_or_insert_with` to list the names around the loop on the first repair that needs them | `Builder::dot_fixes` | Lazy cells (gap 3) | a lazy value of the item's names |
+| `let … else { continue }` passing over a call with no repair | `Builder::dot_fixes`, `Builder::keyed` | Early exit (gap 12) | a filter over the calls before the map |

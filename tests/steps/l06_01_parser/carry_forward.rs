@@ -1749,6 +1749,29 @@ fn a_binder_that_hides_a_key_is_renamed() {
             "the `i` of `i = …` hides the `i` of `e[i in 0..<2] = …`, so the write names only \
              the nearer one; the repair names it `i1` [i = 0;]",
         ),
+        // A field written alone binds its name; the repair keeps the field and binds the new
+        // name to it. A field written with its pattern keeps its name.
+        (
+            "e[i in 0..<2] = match #p(i: 0) { #p(i:) -> c[i]*.a() };",
+            "e[i in 0..<2] = match #p(i: 0) { #p(i:) -> c[i]*.a() }",
+            "e[i in 0..<2] = match #p(i: 0) { #p(i: i1) -> c[i1][i]*.a() };",
+            "the `i` of `#p(i:) -> …` hides the `i` of `e[i in 0..<2] = …`, so the write names \
+             only the nearer one; the repair names it `i1` [#p(i:) -> c[i]*.a()]",
+        ),
+        (
+            "e[i in 0..<2] = match #p(code: 0) { #p(code: i) -> c[i]*.a() };",
+            "e[i in 0..<2] = match #p(code: 0) { #p(code: i) -> c[i]*.a() }",
+            "e[i in 0..<2] = match #p(code: 0) { #p(code: i1) -> c[i1][i]*.a() };",
+            "the `i` of `#p(code: i) -> …` hides the `i` of `e[i in 0..<2] = …`, so the write \
+             names only the nearer one; the repair names it `i1` [#p(code: i) -> c[i]*.a()]",
+        ),
+        (
+            "e[i in 0..<2] = match 0 { i -> { _ = #q(i: i); c[i]*.a() } };",
+            "e[i in 0..<2] = match 0 { i -> { _ = #q(i: i); c[i]*.a() } }",
+            "e[i in 0..<2] = match 0 { i1 -> { _ = #q(i: i1); c[i1][i]*.a() } };",
+            "the `i` of `i -> …` hides the `i` of `e[i in 0..<2] = …`, so the write names only \
+             the nearer one; the repair names it `i1` [i -> { _ = #q(i: i); c[i]*.a() }]",
+        ),
     ] {
         let src = t_loop(&["initial c = 0 with carryForward;", update]);
         let e = refusal(&src);
