@@ -183,12 +183,10 @@ fn a_call_of_an_integer_with_no_exact_f64_is_rejected() {
     assert_eq!(
         type_errors(&src),
         vec![
-            "`h` does not take (1 | 9007199254740993): `g(c)` may give the integer \
-             9007199254740993, which `f64` does not hold exactly, so it cannot be read as the \
-             `f64` that `h` takes here; an integer a call gives is read at `f64` only where \
-             `f64` holds it exactly, as an integer literal is. Make that value one `f64` holds \
-             exactly where it is written, or give this parameter of `h` a type that holds \
-             9007199254740993, such as `int`. [h(g(c))]"
+            "`h` does not take (1 | 9007199254740993): no `f64` equals 9007199254740993, which \
+             `g(c)` may give. Make `g(c)` give a number `f64` holds exactly in its place, or \
+             give this parameter of `h` a type that holds 9007199254740993, such as `int`. \
+             [h(g(c))]"
                 .to_string()
         ]
     );
@@ -208,11 +206,9 @@ fn a_call_of_a_decimal_is_not_read_at_rat() {
     assert_eq!(
         type_errors(src),
         vec![
-            "`h` does not take (1 | 2.5): `g(c)` may give the decimal 2.5, which nothing fixes \
-             where it is written, so it is an `f64` there; an `f64` is not read as the `rat` \
-             that `h` takes here, since a call gives that `f64`, not the decimal written. Write \
-             that decimal with the suffix `r` where it is written, as 2.5r, or give this \
-             parameter of `h` the type `f64`. [h(g(c))]"
+            "`h` does not take (1 | 2.5): `g(c)` may give the decimal 2.5, an `f64` where it is \
+             written, and no `f64` is read as a `rat`. Write 2.5r where it is written, or give \
+             this parameter of `h` the type `f64`. [h(g(c))]"
                 .to_string()
         ]
     );
@@ -350,13 +346,10 @@ fn a_call_of_a_value_the_other_operand_cannot_hold_is_rejected() {
         assert_eq!(
             type_errors(&src),
             vec![format!(
-                "`{other}` does not take (f64, 1 | 9007199254740993): `g(c)` may give the \
-                 integer 9007199254740993, which `f64` does not hold exactly, so it cannot be \
-                 read as the `f64` of the other arguments of `{other}` here; an integer a call \
-                 gives is read at `f64` only where `f64` holds it exactly, as an integer literal \
-                 is. Make that value one `f64` holds exactly where it is written, or give the \
-                 other arguments of `{other}` a type that holds 9007199254740993, such as `int`. \
-                 [x {op} g(c)]"
+                "`{other}` does not take (f64, 1 | 9007199254740993): no `f64` equals \
+                 9007199254740993, which `g(c)` may give. Make `g(c)` give a number `f64` holds \
+                 exactly in its place, or give the other arguments of `{other}` a type that \
+                 holds 9007199254740993, such as `int`. [x {op} g(c)]"
             )]
         );
     }
@@ -365,11 +358,9 @@ fn a_call_of_a_value_the_other_operand_cannot_hold_is_rejected() {
     assert_eq!(
         type_errors(decimal),
         vec![
-            "`*` does not take (rat, 1 | 2.5): `g(c)` may give the decimal 2.5, which nothing \
-             fixes where it is written, so it is an `f64` there; an `f64` is not read as the \
-             `rat` of the other arguments of `*` here, since a call gives that `f64`, not the \
-             decimal written. Write that decimal with the suffix `r` where it is written, as \
-             2.5r, or give the other arguments of `*` the type `f64`. [x * g(c)]"
+            "`*` does not take (rat, 1 | 2.5): `g(c)` may give the decimal 2.5, an `f64` where \
+             it is written, and no `f64` is read as a `rat`. Write 2.5r where it is written, or \
+             give the other arguments of `*` the type `f64`. [x * g(c)]"
                 .to_string()
         ]
     );
@@ -727,12 +718,10 @@ fn an_operation_on_literals_past_two_to_the_53_differs_by_where_it_is_fixed() {
     assert_eq!(
         type_errors(&call),
         vec![
-            "`h` does not take (1 | 9007199254740993): `g(c)` may give the integer \
-             9007199254740993, which `f64` does not hold exactly, so it cannot be read as the \
-             `f64` that `h` takes here; an integer a call gives is read at `f64` only where \
-             `f64` holds it exactly, as an integer literal is. Make that value one `f64` holds \
-             exactly where it is written, or give this parameter of `h` a type that holds \
-             9007199254740993, such as `int`. [h(g(c))]"
+            "`h` does not take (1 | 9007199254740993): no `f64` equals 9007199254740993, which \
+             `g(c)` may give. Make `g(c)` give a number `f64` holds exactly in its place, or \
+             give this parameter of `h` a type that holds 9007199254740993, such as `int`. \
+             [h(g(c))]"
                 .to_string()
         ]
     );

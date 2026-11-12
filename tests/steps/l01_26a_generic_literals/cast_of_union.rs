@@ -178,10 +178,15 @@ fn every_repair_offered_checks_as_written() {
     assert_eq!(repairs_check(&src), 0, "{src}");
     let src = format!("{FORCED}\nh(positional z: String) = z;\ny = h(g(true));\n");
     assert_eq!(repairs_check(&src), 1, "{src}");
-    // A call of type `1 | f64` beside an `f64`: whatever is offered checks (the count is not
-    // pinned, as above).
+    // A call of type `1 | f64` beside an `f64` is read there, each value as it would be
+    // alone (LIT-call-union-at-f64); with 2^53 + 1 in place of the `1` it is not, and
+    // whatever is offered checks (the count is not pinned, as above).
     let src = "g(positional c: bool, positional x: f64) = if c { x } else { 1 };\n\
                y = 1.0f64 + g(false, 2.5f64);\n";
+    assert_eq!(type_errors(src), Vec::<String>::new());
+    let src = "g(positional c: bool, positional x: f64) = if c { x } else { 9007199254740993 };\n\
+               y = 1.0f64 + g(false, 2.5f64);\n";
+    assert_eq!(type_errors(src).len(), 1, "{src}");
     repairs_check(src);
     // A wrap that always fails is not offered: `int(b)` with `b` the String "x".
     let src = "p = (1, \"x\");\na, b = p;\nc = a + b;\n";
