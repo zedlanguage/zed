@@ -299,8 +299,46 @@ fn a_fix_beside_another_rejected_argument_is_kept() {
     assert!(got.contains("Try `y = k(1.0, 0.5)` instead."), "{got}");
     assert!(got.contains("y = k(1.0r, 0.5);"), "{got}");
     let got = offered(&format!("{h}y = h(1.0f64, true);"));
-    assert!(got.contains("No fix is offered"), "{got}");
+    assert!(!got.contains("Try"), "{got}");
     assert!(!got.contains("h(1.0, true)"), "{got}");
+}
+
+/// A call that refuses a literal and another argument too is one error, whose headline
+/// names every argument and whose steps give the literal's own message
+/// (MSG-many-args-one-error): `h(1.0f64, true)` at two `rat` parameters, and
+/// `h(1.0f64, 2.5f64, true)` at three, the literals' steps in the order of the text. Before,
+/// the literals were a second error, which said again that `1.0f64` is never a `rat`. A
+/// literal after the argument refused, `2.5f64` in `h(1.0f64, true, 2.5f64)`, has no step:
+/// the check of the call stops at `true` (follow-up MSG-one-error-later-literals).
+#[test]
+fn a_call_that_refuses_a_literal_and_another_argument_is_one_error() {
+    let h2 = "h(positional a: rat, positional b: rat) = 1;\n";
+    let h3 = "h(positional a: rat, positional b: rat, positional c: rat) = 1;\n";
+    for (src, head, lits) in [
+        (
+            format!("{h2}y = h(1.0f64, true);"),
+            "`h` does not take (1.0f64, true): no arrow of `h` takes these types.",
+            &["1.0f64"][..],
+        ),
+        (
+            format!("{h3}y = h(1.0f64, 2.5f64, true);"),
+            "`h` does not take (1.0f64, 2.5f64, true): no arrow of `h` takes these types.",
+            &["1.0f64", "2.5f64"][..],
+        ),
+    ] {
+        let (i, _) = info(&src);
+        assert_eq!(i.errors.len(), 1, "{src}\n{:#?}", i.errors);
+        let e = &i.errors[0];
+        assert!(e.message.starts_with(head), "{src}\n{}", e.message);
+        let steps: Vec<&str> = (e.notes.iter())
+            .map(|n| n.text.as_str())
+            .filter(|t| t.starts_with("The suffix makes the literal"))
+            .collect();
+        let want: Vec<String> = (lits.iter())
+            .map(|l| format!("The suffix makes the literal `{l}` an `f64`, never `rat`"))
+            .collect();
+        assert_eq!(steps, want, "{src}");
+    }
 }
 
 /// A fix that leaves its own rejection fixes nothing: `int(n)` in `min(1.0f64, n)` and in

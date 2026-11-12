@@ -8900,15 +8900,25 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// the construct is not `t` are carried on to the construct `w` is an argument of.
     ///
     /// Complexity tradeoff: one pass over the construct's errors to index them by span, then
-    /// O(1) expected per span a fix needs, and one check of the construct per type carried
-    /// into an argument, the cost of checking it once; fixes that give an argument one type
-    /// are checked together, and the groups join smaller into larger, so a fix moves
-    /// O(log fixes) times in all. The naive ways: checking the whole statement again with the
+    /// O(1) expected per span a fix needs; the arguments' places sorted once, O(a log a), so
+    /// the argument an error lies in is a binary search. The types carried into the
+    /// arguments are checked in rounds, each giving an argument at most one type: at a call
+    /// whose parameters are checked apart ([`params_apart`]) a round is one check of a call
+    /// of one parameter per argument and one check of the whole call
+    /// ([`Self::carried_together`]), O(the call) for the round; elsewhere one check of the
+    /// construct per type carried ([`Self::carried_alone`]). Fixes that give an argument one
+    /// type are checked together, and the groups join smaller into larger, so a fix moves
+    /// O(log fixes) times in all. The naive ways: one check of the call per argument
+    /// carrying a fix, as before MSG-many-args-repair-loop, is quadratic in a call of n
+    /// arguments each with its own rejection, `f(k * 0.5, k * 0.5, …)` (31 times the
+    /// instructions at 8 times the arguments); checking the whole statement again with the
     /// fix written in costs the statement per fix, quadratic in a statement of many
     /// rejections; one check per carried fix is quadratic in a nest of n operations each
     /// with its own rejection, as `((1 + 1) / 1 + 1) / 1 …` before its literals meet a
     /// carrier, where each fix rides up every level; and scanning the construct's errors for
-    /// each span needed is O(errors × spans), quadratic in the arguments of one call.
+    /// each span needed is O(errors × spans), quadratic in the arguments of one call. Still
+    /// quadratic: a call whose parameters share a type variable, or has bounds or several
+    /// arrows, is checked once per argument carrying a fix (MSG-many-args-generic).
     fn pending_settled(
         &mut self,
         w: &Written<'a>,
@@ -8932,35 +8942,160 @@ impl<'t, 'a> Ck<'t, 'a> {
                 false => self.fix_dropped(&p),
             }
         }
-        let within = |at: Span, s: Span| at.start <= s.start && s.end <= at.end;
+        // The arguments' places in the order of the text, each with its index: the argument
+        // a span lies in is one binary search ([`arg_holding`]).
+        let mut ats: Vec<(Span, usize)> = (w.args.iter().enumerate())
+            .filter_map(|(j, a)| Some((a.as_ref()?.at?, j)))
+            .collect();
+        ats.sort_unstable_by_key(|&(s, _)| (s.start, s.end));
+        // The `r`th round holds the `r`th type carried into each argument, so that no round
+        // gives an argument two types.
+        let mut rounds: Vec<Vec<(usize, Carry)>> = Vec::new();
+        let mut taken = vec![0; w.args.len()];
         for (i, c) in carried {
-            let Some(at) = w.args[i].as_ref().and_then(|a| a.at) else {
+            if w.args[i].as_ref().and_then(|a| a.at).is_none() {
                 continue;
+            }
+            if rounds.len() == taken[i] {
+                rounds.push(Vec::new());
+            }
+            rounds[taken[i]].push((i, c));
+            taken[i] += 1;
+        }
+        // The construct's own check rejected nothing outside its arguments, as a call no arrow
+        // takes, so one argument's fix does not settle an error another argument gave.
+        let apart = matches!(&w.form, Construct::Call(_, sig) if params_apart(sig))
+            && found.iter().all(|&s| arg_holding(&ats, s).is_some());
+        for round in rounds {
+            let left = match apart {
+                true => self.carried_together(w, t, &found, &ats, round, &mut up),
+                false => round,
             };
-            let others: Vec<Span> = (w.args.iter().enumerate())
-                .filter(|&(j, _)| j != i)
-                .filter_map(|(_, a)| a.as_ref()?.at)
-                .collect();
-            let mut ty = Some(c.ty);
-            let args = (w.args.iter().enumerate())
-                .map(|(j, a)| match j == i {
-                    true => ty.take().map(|ty| Arg {
-                        at: Some(at),
-                        ..Arg::of(ty)
-                    }),
-                    false => a.clone(),
-                })
-                .collect();
-            let form = w.form.clone();
-            let (ty, needs) = self.trial(|ck| ck.construct(form, args, w.span));
-            let apart = |s: &Span| found.contains(s) && others.iter().any(|&a| within(a, *s));
-            match needs.is_some_and(|needs| needs.iter().all(apart)) {
-                true if ty != *t => carry_joined(&mut up, ty, c.fixes),
-                true => {}
-                false => c.fixes.iter().for_each(|p| self.fix_dropped(p)),
+            for (i, c) in left {
+                match self.carried_alone(w, &found, &ats, i, &c) {
+                    Some(ty) if ty != *t => carry_joined(&mut up, ty, c.fixes),
+                    Some(_) => {}
+                    None => c.fixes.iter().for_each(|p| self.fix_dropped(p)),
+                }
             }
         }
         self.carried_up(w.span, up);
+    }
+
+    /// The construct `w` checked with each argument `i` of `round` given the type `ty` its
+    /// carried fixes give it ([`Carry`]): its type and the spans of the errors it adds, or `None`
+    /// for those as [`Self::trial`] gives them. One check of the construct.
+    fn carried_check(
+        &mut self,
+        w: &Written<'a>,
+        round: &[(usize, &Ty)],
+    ) -> (Ty, Option<Vec<Span>>) {
+        // The arguments not replaced copied, the replaced ones not.
+        let mut with: Vec<Option<&Ty>> = vec![None; w.args.len()];
+        for &(i, ty) in round {
+            with[i] = Some(ty);
+        }
+        let args = (w.args.iter().zip(with))
+            .map(|(a, ty)| match ty {
+                Some(ty) => Some(Arg {
+                    at: a.as_ref().and_then(|a| a.at),
+                    ..Arg::of(ty.clone())
+                }),
+                None => a.clone(),
+            })
+            .collect();
+        let form = w.form.clone();
+        self.trial(|ck| ck.construct(form, args, w.span))
+    }
+
+    /// The type the construct `w` has with the fixes `c` carried into its argument `i`, where
+    /// it then adds no error but those its own check `found`, each inside another argument
+    /// (`ats`, [`arg_holding`]); `None` where it adds another. One check of the construct and
+    /// a binary search per error it adds.
+    fn carried_alone(
+        &mut self,
+        w: &Written<'a>,
+        found: &HashSet<Span>,
+        ats: &[(Span, usize)],
+        i: usize,
+        c: &Carry,
+    ) -> Option<Ty> {
+        let (ty, needs) = self.carried_check(w, &[(i, &c.ty)]);
+        let apart = |s: &Span| found.contains(s) && arg_holding(ats, *s).is_some_and(|j| j != i);
+        needs
+            .is_some_and(|needs| needs.iter().all(apart))
+            .then_some(ty)
+    }
+
+    /// Settles the fixes of `round`, each carried into its own argument of the call `w`
+    /// whose parameters are checked apart ([`params_apart`]) and whose own check gave the
+    /// type `t` and rejected only `found`, all inside its arguments, as a check of the call
+    /// with each alone settles them ([`Self::carried_alone`]): the call is rejected with an
+    /// argument's fixes where its parameter does not take the type they give it, the rest of
+    /// the call as written, so a check of a call of that parameter alone rejects them; the
+    /// others are kept, with the type one check of the call with all of them in place gives,
+    /// which is the type a check with each alone gives, since none of their arguments has a
+    /// loose atom to pass on to it. Gives the fixes it leaves to [`Self::carried_alone`]: all
+    /// of them where an argument of the round has a loose atom or a type with a variable or
+    /// an unknown, or a check of a parameter alone is a trial with no verdict, and those kept
+    /// where the check with all of them adds an error the call's own check did not, or one
+    /// inside an argument of theirs. O(the call's check) for the round, besides one check of
+    /// a call of one parameter per fix.
+    fn carried_together(
+        &mut self,
+        w: &Written<'a>,
+        t: &Ty,
+        found: &HashSet<Span>,
+        ats: &[(Span, usize)],
+        round: Vec<(usize, Carry)>,
+        up: &mut HashMap<Ty, Vec<Pending>>,
+    ) -> Vec<(usize, Carry)> {
+        let Construct::Call(what, sig) = &w.form else {
+            return round;
+        };
+        let plain = |ty: &Ty| ty.closed() && ty.loose().is_empty();
+        let plain = (round.iter())
+            .all(|(i, c)| plain(&c.ty) && w.args[*i].as_ref().is_some_and(|a| plain(&a.ty)));
+        if round.len() < 2 || !plain {
+            return round;
+        }
+        let mut takes = Vec::with_capacity(round.len());
+        for (i, c) in &round {
+            let alone = param_alone(sig, *i);
+            let at = w.args[*i].as_ref().and_then(|a| a.at);
+            let arg = Some(Arg {
+                at,
+                ..Arg::of(c.ty.clone())
+            });
+            match self
+                .trial(|ck| ck.apply(what, &alone, vec![arg], false, w.span))
+                .1
+            {
+                Some(needs) => takes.push(needs.is_empty()),
+                None => return round,
+            }
+        }
+        let mut kept = Vec::with_capacity(round.len());
+        for ((i, c), takes) in round.into_iter().zip(takes) {
+            match takes {
+                true => kept.push((i, c)),
+                false => c.fixes.iter().for_each(|p| self.fix_dropped(p)),
+            }
+        }
+        let tys: Vec<(usize, &Ty)> = kept.iter().map(|(i, c)| (*i, &c.ty)).collect();
+        let (ty, needs) = self.carried_check(w, &tys);
+        let mut held = vec![false; w.args.len()];
+        kept.iter().for_each(|(i, _)| held[*i] = true);
+        let apart = |s: &Span| found.contains(s) && arg_holding(ats, *s).is_some_and(|j| !held[j]);
+        if !needs.is_some_and(|needs| needs.iter().all(apart)) {
+            return kept;
+        }
+        if ty != *t {
+            for (_, c) in kept {
+                carry_joined(up, ty.clone(), c.fixes);
+            }
+        }
+        Vec::new()
     }
 
     /// The fixes `up` by the type they give the construct at `span`, carried to the construct
@@ -9896,14 +10031,25 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         // What a check of a need left when the application failed before taking it.
         self.need_passed.truncate(passing);
-        // The literals refused are their own error, and the application's none.
-        let refused = self.lit_refused.split_off(refusals);
-        self.literals_refused(what, sig, &args, refused, pass, span);
+        // The literals refused are their own error where the application takes the other
+        // arguments; where it refuses another argument too, as `h(1.0f64, true)` at two
+        // `rat` parameters, they are steps of the application's one error, which lists every
+        // argument (MSG-many-args-one-error). A trial keeps them apart: its verdict is the
+        // spans rejected, the same either way.
+        let mut refused = self.lit_refused.split_off(refusals);
+        if r.is_ok() || self.trying {
+            self.literals_refused(what, sig, &args, std::mem::take(&mut refused), pass, span);
+        }
         match r {
             Ok((t, kept)) => (out.union(&t), kept),
             Err(message) => {
                 self.applied = None;
-                let mut notes = self.applied(what, sig, &args, span);
+                refused.sort_by_key(|(s, _)| (s.start, s.end));
+                let also: Vec<Span> = refused.iter().map(|(s, _)| *s).collect();
+                let mut notes: Vec<Note> = (refused.into_iter())
+                    .map(|(span, m)| Note { span, text: m.text })
+                    .collect();
+                notes.extend(self.applied(what, sig, &args, span));
                 let mut seen: HashSet<Note> = notes.iter().cloned().collect();
                 for a in args.iter().flatten() {
                     for n in self.reasons(&a.ty) {
@@ -9938,6 +10084,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                     self.rejects_with(Row::NoCommonCarrier, span, message, notes);
                 } else {
                     self.error_with(span, message, notes);
+                }
+                if let Some(e) = self.errors.last_mut().filter(|_| !also.is_empty()) {
+                    e.also = also;
                 }
                 (out, Vec::new())
             }
@@ -10854,7 +11003,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             found.push((l.site, unfixed(l, &cs, None)));
         }
         found.sort_by_key(|(s, _)| s.start);
-        self.reject_unfixed(&format_args!("the arguments of `{what}`"), found);
+        self.reject_unfixed(&format_args!("the arguments of {what}"), found);
     }
 
     /// [`Self::apply`] of a signature of several arrows, each over one carrier or a tuple:
@@ -12755,6 +12904,59 @@ fn edits_in<'s, 'e>(
 fn lies_in(sorted: &[Span], s: Span) -> bool {
     let k = sorted.partition_point(|a| a.start <= s.start);
     (k.checked_sub(1)).is_some_and(|k| s.end <= sorted[k].end)
+}
+
+/// The index of the argument whose place, in `sorted` as [`lies_in`] reads its spans, `s` lies
+/// in, if one holds it. O(log n).
+fn arg_holding(sorted: &[(Span, usize)], s: Span) -> Option<usize> {
+    let k = sorted
+        .partition_point(|(a, _)| a.start <= s.start)
+        .checked_sub(1)?;
+    let (a, j) = sorted[k];
+    (s.end <= a.end).then_some(j)
+}
+
+/// The signature of a call of `sig` with its parameter `j` alone, for a signature whose
+/// parameters are checked apart ([`params_apart`]): its parameter `j` and the result of its
+/// one arrow. O(the size of those).
+fn param_alone(sig: &Sig, j: usize) -> Sig {
+    let arrow = &sig.arrows[0];
+    Sig {
+        params: vec![sig.params[j].clone()],
+        arrows: vec![Arrow {
+            params: vec![arrow.params[j].clone()],
+            result: arrow.result.clone(),
+        }],
+        bounds: BTreeMap::new(),
+        data: sig.data,
+        dense: sig.dense,
+        word: None,
+        needs: Vec::new(),
+        own: BTreeSet::new(),
+        held: BTreeSet::new(),
+        named: sig.named,
+        facts: Default::default(),
+    }
+}
+
+/// Whether a call of `sig` checks each argument against its parameter apart from the others:
+/// one arrow, no type variable of its own or bounded, no need of the body, not a prelude word
+/// or a family, and parameters and result that hold no variable or unknown ([`Ty::closed`]),
+/// so an argument's type changes neither what another argument meets nor the result.
+/// O(the arrow's parameters).
+fn params_apart(sig: &Sig) -> bool {
+    match sig.arrows.as_slice() {
+        [arrow] => {
+            sig.own.is_empty()
+                && sig.bounds.is_empty()
+                && sig.needs.is_empty()
+                && sig.word.is_none()
+                && !sig.data
+                && arrow.result.closed()
+                && arrow.params.iter().all(Ty::closed)
+        }
+        _ => false,
+    }
 }
 
 #[cfg(test)]

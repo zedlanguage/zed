@@ -263,3 +263,74 @@ fn many_literal_arguments_refused_at_their_parameters_scale() {
 fn many_literal_arguments_refused_at_int_parameters_scale() {
     many_literal_arguments_scale("int", None);
 }
+
+/// A call of `n` arguments `k * 0.5` at `rat` parameters, one per line, `k` an `int`
+/// (MSG-many-args-repair-loop): each argument is its own error, whose fix `rat(k) * 0.5` gives
+/// its argument the type `rat` and is carried to the call, which checks them. One check of
+/// the call per carried fix, each copying the other arguments, cost O(n²) (31 times the
+/// instructions at 8 times the arguments); the fixes of one round are now checked by one
+/// check of a call of one parameter each and one check of the whole call. One argument per
+/// line, so that each message quotes a line of its own and the output is linear in `n`.
+fn carried_fixes(n: usize) -> String {
+    let ps: Vec<String> = (0..n).map(|i| format!("positional p{i}: rat")).collect();
+    let xs = vec!["  k * 0.5"; n];
+    format!(
+        "k = 1;\nf({}) = 1;\ny = f(\n{});\n",
+        ps.join(", "),
+        xs.join(",\n")
+    )
+}
+
+#[test]
+fn the_carried_fixes_of_many_arguments_scale() {
+    let srcs = scaling::inputs(100, carried_fixes);
+    scaling::check(
+        "checking the carried fixes of a call of n arguments",
+        100,
+        |n| {
+            let out = rejected(&srcs[&n]);
+            assert_eq!(
+                out.matches("A decimal literal is never an `int`: `k : int * 0.5`.")
+                    .count(),
+                n,
+                "{out}"
+            );
+            assert_eq!(out.matches("Try `rat(k) * 0.5").count(), n, "{out}");
+        },
+    );
+}
+
+/// A call of `n` decimal literals at parameters with no type, `f(1.5, …)`
+/// (MSG-many-args-decimal): nothing gives the literals a carrier, and they are one message
+/// that writes the call once per fix, `f(1.5f64, …)` and `f(1.5r, …)`, with a step for each.
+fn unfixed_decimal_arguments(n: usize) -> String {
+    let ps: Vec<String> = (0..n).map(|i| format!("positional p{i}")).collect();
+    format!(
+        "f({}) = 1;\ny = f({});\n",
+        ps.join(", "),
+        vec!["1.5"; n].join(", ")
+    )
+}
+
+#[test]
+fn many_unfixed_decimal_arguments_scale() {
+    let srcs = scaling::inputs(200, unfixed_decimal_arguments);
+    scaling::check(
+        "the message of a call of n decimal literals at n parameters with no type",
+        200,
+        |n| {
+            let out = rejected(&srcs[&n]);
+            let head = format!("{n} parts of the arguments of `f` are literals that nothing");
+            assert!(out.contains(&head), "{out}");
+            assert_eq!(
+                out.matches("Nothing gives the literal `1.5` a carrier")
+                    .count(),
+                n
+            );
+            let fixed = format!("y = f({});", vec!["1.5f64"; n].join(", "));
+            assert_eq!(out.matches(fixed.as_str()).count(), 1, "{out}");
+            let call = format!("y = f({});", vec!["1.5"; n].join(", "));
+            assert_eq!(out.matches(call.as_str()).count(), 1, "{out}");
+        },
+    );
+}
