@@ -6872,7 +6872,7 @@ fn positional(n: usize) -> Vec<SParam> {
         .collect()
 }
 
-/// An operator of an expression, binary or unary, as [`op_sig`] types it. It prints as the
+/// An operator of an expression, binary or unary, as `op_sig` types it. It prints as the
 /// operator is written.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Operator {
