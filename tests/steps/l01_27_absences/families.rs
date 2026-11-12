@@ -123,7 +123,7 @@ fn repair(error: &str, which: usize) -> String {
         .filter(|l| l.starts_with("repair: "))
         .nth(which)
         .expect("the repair");
-    let code = line.split_once(" as `").expect("the repair's code").1;
+    let code = line.split_once('`').expect("the repair's code").1;
     let code = code
         .split_once('`')
         .expect("the end of the repair's code")
@@ -150,17 +150,15 @@ fn a_family_of_one_atom_has_a_repair_for_that_atom() {
     assert_eq!(
         errors,
         [
-            "the condition of `if` does not take #off, which the value here may be: an atom of a \
-          named family is data like any other value, not a failure that passes through the \
-          condition of `if` untouched, and the condition of `if` has no case for it\n\
+            "No case for `#off` in the condition of `if`: `v : bool | #off`. Try \
+          `(v else #off -> d)` instead.\n\
           `v` is bool | #off here\n\
           `v` is bound here\n\
-          repair: replace `#off` by a value the condition of `if` takes before the value gets \
-          here, as `(v else #off -> d)`, where `v` is the value and `d` the value to use \
-          instead\n\
-          repair: test the value with `match`, with an arm for the atom and one for the rest, \
-          as `match v { #off -> d, rest -> rest }`, where `v` is the value and `d` the value to \
-          use in place of the atom"
+          an atom of a named family is data, not a failure, so it does not pass through the \
+          condition of `if`\n\
+          `d` is the value to use in place of the atom\n\
+          repair: `(v else #off -> d)`\n\
+          repair: `match v { #off -> d, rest -> rest }`"
         ]
     );
     let fixed = repaired(&errors[0], 0);
@@ -179,17 +177,15 @@ fn a_value_of_two_atoms_and_nothing_else_has_no_arm_for_the_rest() {
     assert_eq!(
         errors,
         [
-            "the condition of `if` does not take #off | #on, which the value here may be: an atom \
-          of a named family is data like any other value, not a failure that passes through the \
-          condition of `if` untouched, and the condition of `if` has no case for it\n\
+            "No case for `#off | #on` in the condition of `if`: `v : #off | #on`. Try \
+          `(v else #off -> d else #on -> d)` instead.\n\
           `v` is #off | #on here\n\
           `v` is bound here\n\
-          repair: replace each of `#off` and `#on` by a value the condition of `if` takes \
-          before the value gets here, as `(v else #off -> d else #on -> d)`, where `v` is the \
-          value and each `d` the value to use in place of the atom before it\n\
-          repair: test the value with `match`, with one arm for each atom, as \
-          `match v { #off -> d, #on -> d }`, where `v` is the value and each `d` the value to \
-          use in place of the atom of its arm"
+          an atom of a named family is data, not a failure, so it does not pass through the \
+          condition of `if`\n\
+          each `d` is the value to use in place of the atom before it\n\
+          repair: `(v else #off -> d else #on -> d)`\n\
+          repair: `match v { #off -> d, #on -> d }`"
         ]
     );
     let fixed = repaired(&errors[0], 0);
@@ -203,7 +199,7 @@ fn a_value_of_two_atoms_and_nothing_else_has_no_arm_for_the_rest() {
     let left = errors_given(&half, &v);
     assert_eq!(left.len(), 1, "{left:?}");
     assert!(
-        left[0].starts_with("the condition of `if` does not take #on, "),
+        left[0].starts_with("No case for `#on` in the condition of `if`: "),
         "{}",
         left[0]
     );
@@ -218,21 +214,19 @@ fn a_family_of_many_atoms_beside_a_loose_failure_has_a_pattern_for_each() {
     assert_eq!(
         errors,
         [
-            "the condition of `if` does not take #fri | #mon | #sat | #sun | #thu | #tue | #wed, \
-          which the value here may be: an atom of a named family is data like any other value, \
-          not a failure that passes through the condition of `if` untouched, and the condition \
-          of `if` has no case for it\n\
+            "No case for `#fri | #mon | #sat | #sun | #thu | #tue | #wed` in the condition of \
+          `if`: `v : bool | #fri | #ioError | #mon | #sat | #sun | #thu | #tue | #wed`. Try \
+          `(v else #fri -> d else #mon -> d else #sat -> d else #sun -> d else #thu -> d else \
+          #tue -> d else #wed -> d)` instead.\n\
           `v` is bool | #fri | #ioError | #mon | #sat | #sun | #thu | #tue | #wed here\n\
           `v` is bound here\n\
-          repair: replace each of `#fri`, `#mon`, `#sat`, `#sun`, `#thu`, `#tue` and `#wed` by \
-          a value the condition of `if` takes before the value gets here, as `(v else #fri -> d \
-          else #mon -> d else #sat -> d else #sun -> d else #thu -> d else #tue -> d else #wed \
-          -> d)`, where `v` is the value and each `d` the value to use in place of the atom \
-          before it\n\
-          repair: test the value with `match`, with one arm for each atom and one for the rest, \
-          as `match v { #fri -> d, #mon -> d, #sat -> d, #sun -> d, #thu -> d, #tue -> d, \
-          #wed -> d, rest -> rest }`, where `v` is the value and each `d` the value to use in \
-          place of the atom of its arm"
+          an atom of a named family is data, not a failure, so it does not pass through the \
+          condition of `if`\n\
+          each `d` is the value to use in place of the atom before it\n\
+          repair: `(v else #fri -> d else #mon -> d else #sat -> d else #sun -> d else #thu -> \
+          d else #tue -> d else #wed -> d)`\n\
+          repair: `match v { #fri -> d, #mon -> d, #sat -> d, #sun -> d, #thu -> d, #tue -> d, \
+          #wed -> d, rest -> rest }`"
         ]
     );
     // The loose `#ioError` passes through `if` as before; only the family needed handling.
@@ -262,7 +256,7 @@ fn the_repair_for_an_atom_with_a_payload_is_the_bare_pattern() {
     let left = errors_given(&with_payload, &v);
     assert_eq!(left.len(), 1, "{left:?}");
     assert!(
-        left[0].starts_with("the condition of `if` does not take #circle(..), "),
+        left[0].starts_with("No case for `#circle(..)` in the condition of `if`: "),
         "{}",
         left[0]
     );

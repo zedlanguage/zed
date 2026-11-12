@@ -833,7 +833,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 else {
                     unreachable!("an `if`")
                 };
-                let out = self.passing(&c, "the condition of `if`", cond.span);
+                let out = self.passing(&c, "the condition of `if`", cond.span, Some(cond.span));
                 let what = "the condition of `if`";
                 for p in c.pieces() {
                     let ok = match self.class_of(&p) {
@@ -3263,7 +3263,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         curry: bool,
         span: Span,
     ) {
-        let out = self.passing(f, "a call", span);
+        let out = self.passing(f, "a call", span, None);
         let mut pieces = f.pieces();
         // A class's calls are recorded with the arguments' types, found once.
         let class = pieces.iter().any(|p| self.class_of(p).is_some());
@@ -5006,7 +5006,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// atoms, which `TupleGet` passes. A value of a class needs a tuple of `n` of each type
     /// the class meets.
     fn component(&mut self, v: &Ty, i: usize, n: usize, span: Span) -> Ty {
-        let mut out = self.passing(v, "a tuple", span);
+        let mut out = self.passing(v, "a tuple", span, None);
         for p in v.pieces() {
             match p {
                 Piece::Tuple(cs) if cs.len() == n => out = out.union(&cs[i]),
@@ -6755,8 +6755,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 )
                 .0;
         }
-        let out = self.passing(&x.ty, &what, span);
-        let out = out.union(&self.passing(&y.ty, &what, span));
+        let out = self.passing(&x.ty, &what, span, x.at);
+        let out = out.union(&self.passing(&y.ty, &what, span, y.at));
         let (a, b) = (x.ty.without_loose(), y.ty.without_loose());
         // An operand with no value: nothing is compared, and the comparison gives no value, but
         // each value of the other operand is still checked as `<` takes it.
@@ -7808,7 +7808,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `#outOfBounds` ([`Self::dense_read`]). With `of`, the span of `v` as written, a key
     /// outside a function's keys is rejected ([`Self::key_outside`]).
     fn at_key(&mut self, v: &Ty, x: Arg<'a>, of: Option<Span>, span: Span, dense: bool) -> Ty {
-        let mut out = self.passing(v, "a call", span);
+        let mut out = self.passing(v, "a call", span, of);
         for p in v.pieces() {
             match p {
                 Piece::Tuple(cs) => {
@@ -7864,7 +7864,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         span: Span,
         dense: bool,
     ) -> Ty {
-        let mut out = self.passing(v, "an index", span);
+        let mut out = self.passing(v, "an index", span, of);
         let shown = x.ty.to_string();
         for p in v.pieces() {
             match p {
@@ -9356,7 +9356,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `sum` of a tuple: its components added in turn, `0` for the empty tuple; atoms pass.
     fn sum(&mut self, x: Arg<'a>, span: Span) -> Ty {
         let t = &x.ty;
-        let mut out = self.passing(t, "`sum`", span);
+        let mut out = self.passing(t, "`sum`", span, x.at);
         let add = op_sig(Operator::Binary(BinaryOp::Add));
         for p in t.pieces() {
             match p {

@@ -3014,68 +3014,67 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The loose atoms of `t`, which flow through `what` unchanged: an atom of a named family
-    /// is data, and data that selects no arrow is an error (sec:failure). The repairs handle
-    /// every atom of the family the value may be, one `else` pattern or one `match` arm each,
-    /// so their text is linear in the number of those atoms.
-    fn passing(&mut self, t: &Ty, what: &str, span: Span) -> Ty {
+    /// is data, and data that selects no arrow is an error (sec:failure). `of`, where known,
+    /// is the span of the value as written, which the headline shows with its type and the
+    /// repairs rewrite; elsewhere they write it `v`. The headline ends with the first repair
+    /// (sec:diagnostics). The repairs handle every atom of the family the value may be, one
+    /// `else` pattern or one `match` arm each, so their text is linear in the number of those
+    /// atoms.
+    fn passing(&mut self, t: &Ty, what: &str, span: Span, of: Option<Span>) -> Ty {
         if !t.family.is_empty() {
             let atoms = Ty::set(t.family.clone());
-            let message = format!(
-                "{what} does not take {atoms}, which the value here may be: an atom of a named \
-                 family is data like any other value, not a failure that passes through {what} \
-                 untouched, and {what} has no case for it"
-            );
-            let mut menu = Vec::new();
+            let code = (self.t.text.zip(of))
+                .map(|(s, at)| s[at.start..at.end].trim())
+                .filter(|c| !c.is_empty() && !c.contains('\n'));
+            let mut notes = Vec::new();
+            if code.is_none() {
+                notes.push(format!("`v` is the value {what} reads"));
+            }
+            let c = code.unwrap_or("v");
+            // The value in parentheses unless it is a name, a call or an access, so that
+            // `else` applies to all of it.
+            let v = match c
+                .chars()
+                .all(|ch| ch.is_alphanumeric() || "_.:[]()".contains(ch))
+            {
+                true => c.to_string(),
+                false => format!("({c})"),
+            };
+            notes.push(format!(
+                "an atom of a named family is data, not a failure, so it does not pass through \
+                 {what}"
+            ));
             // Each atom as a bare pattern, which handles the atom with any payload or none;
             // a pattern with a payload would leave the atom in the type (step L1.27).
+            let mut repairs = Vec::new();
             match t.family.atom_names() {
                 Some(names) => {
                     let names: Vec<String> = names.map(|(name, _)| format!("#{name}")).collect();
-                    let quoted: Vec<String> = names.iter().map(|a| format!("`{a}`")).collect();
                     let chain: String = names.iter().map(|a| format!(" else {a} -> d")).collect();
                     let mut arms: Vec<String> = names.iter().map(|a| format!("{a} -> d")).collect();
-                    let (each, before, arm_for, its_arm) = match names.len() {
-                        1 => (
-                            "",
-                            "`d` the value to use instead",
-                            "an arm for the atom",
-                            "`d` the value to use in place of the atom",
-                        ),
-                        _ => (
-                            "each of ",
-                            "each `d` the value to use in place of the atom before it",
-                            "one arm for each atom",
-                            "each `d` the value to use in place of the atom of its arm",
-                        ),
-                    };
-                    menu.push(format!(
-                        "repair: replace {each}{} by a value {what} takes before the value gets \
-                         here, as `(v{chain})`, where `v` is the value and {before}",
-                        and_list(&quoted)
-                    ));
                     // The value may hold more than the family's atoms: a last arm keeps the rest.
-                    let and_rest = match t.diff(&atoms).is_empty() {
-                        true => "",
-                        false => {
-                            arms.push("rest -> rest".to_string());
-                            " and one for the rest"
-                        }
-                    };
-                    menu.push(format!(
-                        "repair: test the value with `match`, with {arm_for}{and_rest}, as \
-                         `match v {{ {} }}`, where `v` is the value and {its_arm}",
-                        arms.join(", ")
-                    ));
+                    if !t.diff(&atoms).is_empty() {
+                        arms.push("rest -> rest".to_string());
+                    }
+                    notes.push(match names.len() {
+                        1 => "`d` is the value to use in place of the atom".to_string(),
+                        _ => "each `d` is the value to use in place of the atom before it"
+                            .to_string(),
+                    });
+                    repairs.push(format!("({v}{chain})"));
+                    repairs.push(format!("match {v} {{ {} }}", arms.join(", ")));
                 }
                 // A family of every atom but some cannot be listed.
-                None => menu.push(
-                    "repair: test the value with `match` and handle each atom in its own arm"
-                        .to_string(),
-                ),
+                None => notes.push(format!(
+                    "repair: a `match` on `{v}` with one arm for each atom of `{atoms}`"
+                )),
             }
+            let then = (repairs.first()).map_or(String::new(), |r| format!(" Try `{r}` instead."));
+            let message = format!("No case for `{atoms}` in {what}: `{c} : {t}`.{then}");
+            notes.extend(repairs.iter().map(|r| format!("repair: `{r}`")));
             // In the row "Atom of a named family reaching …" of the rejection table, named from
             // L2.5, when a source program can raise it and so have a near miss (step L1.29).
-            self.error_offering(span, message, menu);
+            self.error_offering(span, message, notes);
         }
         t.loose_ty()
     }
@@ -3959,7 +3958,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     .collect(),
             }
         };
-        let mut out = self.passing(&x.ty, "a tuple index", span);
+        let mut out = self.passing(&x.ty, "a tuple index", span, x.at);
         let key = x.ty.without_atoms();
         // A key that is only failures selects nothing and passes them.
         if key.is_empty() {
@@ -9012,7 +9011,7 @@ mod tests {
         };
         let color = atoms(&["red", "green", "blue"]).named();
         let read = color.union(&atoms(&["ioError"]));
-        let out = ck.passing(&read, "a call", span(0));
+        let out = ck.passing(&read, "a call", span(0), None);
         assert_eq!(out, atoms(&["ioError"]));
         let messages: Vec<(String, Vec<String>)> = (ck.errors.into_iter())
             .map(|f| {
@@ -9024,20 +9023,18 @@ mod tests {
         assert_eq!(
             messages,
             [(
-                "a call does not take #blue | #green | #red, which the value here may be: an \
-                 atom of a named family is data like any other value, not a failure that passes \
-                 through a call untouched, and a call has no case for it"
+                "No case for `#blue | #green | #red` in a call: \
+                 `v : #blue | #green | #ioError | #red`. Try \
+                 `(v else #blue -> d else #green -> d else #red -> d)` instead."
                     .to_string(),
                 vec![
-                    "repair: replace each of `#blue`, `#green` and `#red` by a value a call takes \
-                     before the value gets here, as `(v else #blue -> d else #green -> d else \
-                     #red -> d)`, where `v` is the value and each `d` the value to use in place \
-                     of the atom before it"
+                    "`v` is the value a call reads".to_string(),
+                    "an atom of a named family is data, not a failure, so it does not pass \
+                     through a call"
                         .to_string(),
-                    "repair: test the value with `match`, with one arm for each atom and one for \
-                     the rest, as `match v { #blue -> d, #green -> d, #red -> d, rest -> rest }`, \
-                     where `v` is the value and each `d` the value to use in place of the atom of \
-                     its arm"
+                    "each `d` is the value to use in place of the atom before it".to_string(),
+                    "repair: `(v else #blue -> d else #green -> d else #red -> d)`".to_string(),
+                    "repair: `match v { #blue -> d, #green -> d, #red -> d, rest -> rest }`"
                         .to_string(),
                 ]
             )]
@@ -9045,7 +9042,7 @@ mod tests {
         // The same atoms written inline are loose: they pass through with no error.
         let mut ck = Ck::new(&t);
         assert_eq!(
-            ck.passing(&read.written(), "a call", span(0)),
+            ck.passing(&read.written(), "a call", span(0), None),
             read.written()
         );
         assert!(ck.errors.is_empty());
