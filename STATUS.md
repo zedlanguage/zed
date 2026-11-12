@@ -1958,8 +1958,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | EXP-swar-digits | impl attempt 1 | 2026-11-12 11:14 | correctness tests pass (37 num tests incl. 3 new); benchmark battery of 126 configs started, load 52.69 50.35 46.16 |
 | GSX-unsolved | hybrid-xr attempt 1 | 2026-11-11 16:53 | round H1 seats launched: Opus 5.5 medium (h1/claude, tree gsxh-claude), gpt-6.1-sol medium (h1/codex, tree gsxh-codex), 5 h limit; load 25.46 30.53 39.26 |
-| LAZY-hub-cleanups | impl attempt 1 | 2026-11-12 07:57 | fmt and clippy -D warnings clean; running l01_38_presburger, l01_39_reduced_product, zedc_presburger, zedc_preimage with --doc (load5 ~48) |
-| LAZY-unary-arms-growth | impl attempt 1 | 2026-11-12 07:57 | cause found: presburger Hull::tighten asked two whole-formula questions per name for the open-end candidates (2k decides of size k); fix: one point per disjunct |
 | LIT-two-union-headline | running | 2026-11-12 11:17 |  |
 | LIT-two-union-unread-wording | running | 2026-11-12 11:17 |  |
 | LOAD-max-div-unsolved | impl attempt 1 | 2026-11-11 17:11 | worktree /home/luke/Work/wt/lmd-cd (wt/lmd-cd at 7d96d3826) made for the Rust port; CD round 1 best 58 = 28.71 |
