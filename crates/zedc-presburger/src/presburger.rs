@@ -4565,15 +4565,21 @@ fn probe_kept_status(
                             // of bounds, `O(n log n)`) and, when that does not refute, one `settle`. The
                             // search usually ends on a bound that has a point, and that test always costs
                             // a `settle`. So when no learned bound removes a later disjunct, `r` refuted
-                            // disjuncts cost up to `O(r log m)` settles, not `r` (verifier's counters:
-                            // `guards_beyond_the_inputs_scale` 5 calls of `learn` and 16 settles in them,
-                            // cross 2 and 2). Trigger: disjuncts without a point whose proofs
-                            // differ by more than a bound of one atom. Tests:
-                            // `l01_25_preimage_catalog::s22::chains_on_two_inputs_keep_their_boxes`
-                            // reaches it (cross at `k = 51`); `chain_cross_above_its_width_scales` (cross
-                            // at 12 and 96, COMPLEXITY.md S22: 40.0 times the bytes with one propagation
-                            // per disjunct, 10.1 times now) and `l01_38_presburger::probe::`
-                            // `projecting_guards_beyond_the_inputs_scales` measure it. A
+                            // disjuncts cost up to `O(r log m)` settles, not `r`. Counted on
+                            // 2026-11-12 (item TESTS-split-reversed-boxes): the projection onto `i`
+                            // of `l01_38_presburger::probe::projecting_guards_beyond_the_inputs_scales`
+                            // makes one propagation here at 16 and at 128 guards, and 4 and 2 calls
+                            // of [`learn`] in all, with 6 and 10 settles in them; `decide` on the
+                            // same formula (`guards_beyond_the_inputs_scale`) and the preimage of
+                            // the cross family of `l01_25_preimage_catalog::s22` at `k` = 12, 48,
+                            // 51, 52, 72 and 96 make none and call [`learn`] not at all, since the
+                            // bounds of the parts answer them first. Trigger: disjuncts without a
+                            // point whose proofs differ by more than a bound of one atom. Tests:
+                            // `projecting_guards_beyond_the_inputs_scales` reaches it and measures
+                            // it; `l01_25_preimage_catalog::s22::chain_cross_above_its_width_scales`
+                            // measured it when the cross family reached it (cross at 12 and 96,
+                            // COMPLEXITY.md S22: 40.0 times the bytes with one propagation per
+                            // disjunct, 10.1 times with [`learn`]). A
                             // complete solution is a `settle` that returns, with each refutation, the
                             // constraints its proof used (a conflict explanation), so that one propagation
                             // removes every disjunct those constraints exclude. The linked test is that

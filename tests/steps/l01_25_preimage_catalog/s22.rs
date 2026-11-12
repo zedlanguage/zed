@@ -3906,19 +3906,34 @@ fn a_power_zero_of_a_quotient_by_a_term_is_not_exact_where_the_divisor_is_zero()
     }
 }
 
-/// Cases `from..to` of [`random_guarded_chains`]' sequence, each run by the transfer and by
+/// The number of cases that [`reversed_parts_give_the_same_boxes`] compares, and the number of
+/// parts, one test each, they are split into. A part of 1000 cases took 18 to 22 s alone (83
+/// to 104 G instructions, load 42 to 48) and 40 to 59 s when four test binaries ran at once,
+/// near the 60 s limit on a piece; a part of 500 takes about half that (item
+/// TESTS-split-reversed-boxes).
+const REVERSED_CASES: usize = 4000;
+const REVERSED_PARTS: usize = 8;
+const _: () = assert!(REVERSED_CASES.is_multiple_of(REVERSED_PARTS));
+
+/// Part `part` of the [`REVERSED_CASES`] cases of [`random_guarded_chains`]' sequence, split
+/// into [`REVERSED_PARTS`] runs of consecutive cases. Each case is run by the transfer and by
 /// the transfer before it ([`before`]) as written and with the disjunctions of every
 /// projection, and the disjuncts of each, read in reverse
 /// ([`zedc::store::presburger::with_parts_reversed`]): the boxes and their exactness are the
 /// same both ways (item PROJECT-canon-precision). Before that item, the transfer before gave
 /// 17 of the 4000 cases different boxes in reverse: a disjunct with no point stayed when the
 /// greedy search found a point first, and a disjunction left with one disjunct did not start
-/// another round of the propagation.
-fn reversed_parts_give_the_same_boxes(from: usize, to: usize) {
+/// another round of the propagation. Each part checks that it compared exactly its share of
+/// the cases, so the parts together compare each case once.
+fn reversed_parts_give_the_same_boxes(part: usize) {
     use zedc::store::presburger::with_parts_reversed as reversed;
+    assert!(part < REVERSED_PARTS, "part {part} of {REVERSED_PARTS}");
+    let len = REVERSED_CASES / REVERSED_PARTS;
+    let (from, to) = (part * len, (part + 1) * len);
     on_big_stack(|| {
         let mut rng = Rng::new(22);
         let mut differ = Vec::new();
+        let mut compared = 0;
         for i in 0..to {
             let t = random_chain(&mut rng);
             let ds = over(&[("i", chain_domain(&mut rng))]);
@@ -3934,6 +3949,7 @@ fn reversed_parts_give_the_same_boxes(from: usize, to: usize) {
             if i < from {
                 continue;
             }
+            compared += 1;
             let (a, b) = (preimage(&t, &ds, &d), reversed(|| preimage(&t, &ds, &d)));
             if a.domains != b.domains || a.exact != b.exact {
                 differ.push(format!(
@@ -3953,6 +3969,7 @@ fn reversed_parts_give_the_same_boxes(from: usize, to: usize) {
                 ));
             }
         }
+        assert_eq!(compared, len, "cases compared by part {part}");
         assert!(
             differ.is_empty(),
             "boxes that depend on the order:\n{}",
@@ -3963,22 +3980,42 @@ fn reversed_parts_give_the_same_boxes(from: usize, to: usize) {
 
 #[test]
 fn reversed_parts_give_the_same_boxes_0() {
-    reversed_parts_give_the_same_boxes(0, 1000);
+    reversed_parts_give_the_same_boxes(0);
 }
 
 #[test]
 fn reversed_parts_give_the_same_boxes_1() {
-    reversed_parts_give_the_same_boxes(1000, 2000);
+    reversed_parts_give_the_same_boxes(1);
 }
 
 #[test]
 fn reversed_parts_give_the_same_boxes_2() {
-    reversed_parts_give_the_same_boxes(2000, 3000);
+    reversed_parts_give_the_same_boxes(2);
 }
 
 #[test]
 fn reversed_parts_give_the_same_boxes_3() {
-    reversed_parts_give_the_same_boxes(3000, 4000);
+    reversed_parts_give_the_same_boxes(3);
+}
+
+#[test]
+fn reversed_parts_give_the_same_boxes_4() {
+    reversed_parts_give_the_same_boxes(4);
+}
+
+#[test]
+fn reversed_parts_give_the_same_boxes_5() {
+    reversed_parts_give_the_same_boxes(5);
+}
+
+#[test]
+fn reversed_parts_give_the_same_boxes_6() {
+    reversed_parts_give_the_same_boxes(6);
+}
+
+#[test]
+fn reversed_parts_give_the_same_boxes_7() {
+    reversed_parts_give_the_same_boxes(7);
 }
 
 /// `c - i` with `c = 4n + 3` under a demand of `2n` pieces, `n` on each side of zero, by the
