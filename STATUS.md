@@ -1964,6 +1964,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PERF-negated-followups | impl attempt 1 | 2026-11-12 07:49 | main 64ef2bb4c: wide-rat test 684.4M/8139.3M instr = 11.89x (limit 12.34, not 12.26 as recorded), load 28; separate failure on main: tuple_min_max chain 44.1x b |
 | PRODUCT-lin-rows | hybrid-xr attempt 1 | 2026-11-11 01:43 | round 0 started: own attempt at a potential design before seats |
 | REFUSAL-front-unsolved | running | 2026-11-11 17:03 |  |
+| REFUSAL-tuple-split-main | running | 2026-11-12 11:07 |  |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
