@@ -17,6 +17,7 @@
 //! was before the powers.
 
 mod bound;
+mod digit_text;
 mod factor;
 mod fast;
 mod float_text;
@@ -1148,11 +1149,12 @@ pub fn bezout_int(a: &BigInt, b: &BigInt) -> Option<(BigInt, BigInt, BigInt)> {
     Some((BigInt::from(g), s, t))
 }
 
-/// The digits `read_decimal` hands to num-bigint whole. The value read does not depend on it.
+/// The digits `read_decimal` reads whole, with no split. The value read does not depend on it.
 //
 // Complexity tradeoff: a timed crossover of two algorithms with identical results, nothing
-// given up. A text of at most `LEAF_DIGITS` digits is read by num-bigint's `parse`, O(n^2), one
-// word of digits at a time; a longer one is split by halves (`read_parts`), O(n log^2 n). Both
+// given up. A text of at most `LEAF_DIGITS` digits is read whole (`digit_text::read_whole`),
+// O(n^2), one word of 19 digits at a time (num-bigint's `parse` until SWAR-read-literals); a
+// longer one is split by halves (`read_digits_by`), O(n log^2 n). Both
 // give the same number for every text (test `num::tests::the_leaf_does_not_change_the_value`,
 // leaf 1 against `LEAF_DIGITS` and against num-bigint; COMPLEXITY.md K41). Measured on
 // 2026-11-07 (item KERNEL-leaf-digits, not committed): `read_digits` with each leaf on random
@@ -1172,8 +1174,11 @@ pub fn bezout_int(a: &BigInt, b: &BigInt) -> Option<(BigInt, BigInt, BigInt)> {
 // whole) and 1,500 (2048, 10% fewer); from 3,000 digits 2048 costs 0.2% to 2.3% more, as the
 // O(n^2) leaves grow. Processor time agreed within its noise at this load (10^6: 153 to 157
 // ms for leaves 128 to 2048). The peak heap is the same at 512 and 1024, 23.6 bits per digit
-// on 2^16 to 2^22 nines, within the 48 that `read_decimal` asks for. To be measured again at
-// the Zed port, where both sides of the crossover change.
+// on 2^16 to 2^22 nines, within the 48 that `read_decimal` asks for. Measured again with the
+// leaf read eight digits a step (EXP-swar-digits, 2026-11-12, leaves 128 to 4096 at 3,000 to
+// 10^6 digits): 1024 and 2048 are again the fewest, within 1% of each other, so a cheaper leaf
+// does not move the crossover. To be measured again at the Zed port, where both sides of the
+// crossover change.
 const LEAF_DIGITS: usize = 1024;
 
 /// The sign of a text and the rest of it after an optional `-` or `+`.
@@ -1198,7 +1203,7 @@ fn decimal_syntax(text: &str) -> Option<DecimalParts<'_>> {
     };
     let (sign, mantissa) = sign_of(mantissa);
     let (whole, frac): (&str, &str) = mantissa.split_once('.').unwrap_or((mantissa, ""));
-    let digits = |t: &str| t.bytes().all(|b| b.is_ascii_digit());
+    let digits = |t: &str| digit_text::all_digits(t.as_bytes());
     let read = !(whole.is_empty() && frac.is_empty()) && digits(whole) && digits(frac);
     if !read || exp.is_some_and(|(_, e)| e.is_empty() || !digits(e)) {
         return None;
@@ -1210,7 +1215,7 @@ fn decimal_syntax(text: &str) -> Option<DecimalParts<'_>> {
 /// else, and [`TooLarge`] when the system refuses the memory for reading it, asked before
 /// anything is built.
 pub fn read_decimal(digits: &str) -> Result<Option<BigUint>, TooLarge> {
-    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+    if digits.is_empty() || !digit_text::all_digits(digits.as_bytes()) {
         return Ok(None);
     }
     // Complexity tradeoff: the memory asked for is 48 bits for each digit, a measured bound,
@@ -1264,12 +1269,21 @@ fn read_digits_by(digits: &str, leaf: usize) -> BigUint {
     // a recursion with `fast::mul` took 121.4 and 1,827.9 million instructions, and level by
     // level with `fast::Factor` 121.5 and 1,756.4 (the spectra are kept from 1701 words, only
     // at the larger size). The number is the same: every split of the text gives its value.
-    let mut parts: Vec<BigUint> = (0..digits.len().div_ceil(leaf))
+    assert!(
+        !digits.is_empty(),
+        "a nonempty text of ASCII decimal digits"
+    );
+    let text = digits.as_bytes();
+    // A text of one leaf, which is every literal of up to `leaf` digits, is read with no vector
+    // of parts and no power of ten: building `10^leaf` alone cost about 9,500 instructions
+    // (EXP-swar-digits, 2026-11-12), 70% to 84% of reading a literal of 1 to 25 digits.
+    if text.len() <= leaf {
+        return digit_text::read_whole(text);
+    }
+    let mut parts: Vec<BigUint> = (0..text.len().div_ceil(leaf))
         .map(|i| {
-            let end = digits.len() - i * leaf;
-            digits[end.saturating_sub(leaf)..end]
-                .parse()
-                .expect("ASCII decimal digits")
+            let end = text.len() - i * leaf;
+            digit_text::read_whole(&text[end.saturating_sub(leaf)..end])
         })
         .collect();
     // `parts[i]` is below `power`, `10^(leaf 2^j)` at level `j`, and is the `i`-th group of
@@ -1884,5 +1898,55 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// `read_decimal` gives num-bigint's value at every length from 1 to 2,100 digits, across
+    /// one leaf, two and three: random digits, the same after leading zeros, all nines, all
+    /// zeros and a power of ten; and leaves of 19 and 20 digits, one chunk and one more,
+    /// split the same texts.
+    #[test]
+    fn a_decimal_text_reads_as_num_bigint_reads_it() {
+        for len in 1..=2100 {
+            let random = digits(len as u64, len);
+            let padded = format!("{}{}", "0".repeat(len % 23), &random[len % 23..]);
+            let power = format!("1{}", "0".repeat(len - 1));
+            for text in [random, padded, "9".repeat(len), "0".repeat(len), power] {
+                let expected: BigUint = text.parse().expect("ASCII decimal digits");
+                let read = read_decimal(&text).expect("room for a short text");
+                assert_eq!(read.as_ref(), Some(&expected), "{len} digits");
+                for leaf in [19, 20] {
+                    assert_eq!(read_digits_by(&text, leaf), expected, "leaf {leaf}, {len}");
+                }
+            }
+        }
+    }
+
+    /// A text that is not ASCII decimal digits alone is no number for `read_decimal` and no
+    /// decimal for `Rat::decimal` (`Rat::is_decimal`), wherever the other character is: in the part checked eight
+    /// bytes at a time and in the rest, at every place of texts of 1 to 40 digits. The other
+    /// characters are `_` between digits, a sign, a space, the bytes either side of the digits
+    /// (`/` and `:`), a letter, and digits of other scripts (Arabic-Indic, full-width), which
+    /// are several bytes each.
+    #[test]
+    fn a_text_with_anything_but_ascii_digits_is_not_read() {
+        assert_eq!(read_decimal(""), Ok(None));
+        for len in 1..=40 {
+            let text = digits(len as u64 + 7, len);
+            for at in 0..=len {
+                for other in ["_", "+", "-", " ", "/", ":", "a", "\u{663}", "\u{FF13}"] {
+                    let bad = format!("{}{other}{}", &text[..at], &text[at..]);
+                    assert_eq!(read_decimal(&bad), Ok(None), "{bad:?}");
+                    assert!(!Rat::is_decimal(&format!("1.{bad}")), "{bad:?}");
+                }
+            }
+        }
+    }
+
+    /// `read_digits` is for texts already checked: a `_`, which num-bigint's `parse` skipped
+    /// inside a leaf, stops it.
+    #[test]
+    #[should_panic(expected = "ASCII decimal digits")]
+    fn read_digits_stops_at_a_mark() {
+        read_digits("1_000");
     }
 }
