@@ -153,6 +153,13 @@ fn the_runtime_keys_the_lines_as_the_interpreter_does() {
         b"a\r\n\nb",
         b"ok\n\xff\xfe\nfine\n",
         b"x\ny\nz\n",
+        // A lone `\r` stays in its line; a run of them before `\n` or the end is dropped.
+        b"a\rb\r\n\r\nc",
+        b"one\rtwo\rthree\r",
+        b"\r",
+        b"\r\r\n\r",
+        // A byte order mark is U+FEFF, kept in the line it starts.
+        b"\xef\xbb\xbfname\r\n",
     ] {
         assert_eq!(
             zed_rt::ports::lines("stdin", input),

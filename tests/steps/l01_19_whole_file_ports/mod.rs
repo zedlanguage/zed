@@ -3,6 +3,7 @@
 //! the wave without the world.
 
 mod files;
+mod line_ends;
 mod lines;
 mod main_args;
 mod replay;
