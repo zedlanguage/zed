@@ -1976,16 +1976,16 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| BUILD-const | impl attempt 1 | 2026-11-05 04:07 | build all-targets 0, fmt check 0, grammar check OK, sync --check OK; running the affected groups with --doc (220 pieces) / load 64.24 62.38 55.55 |
+| BUILD-const | impl attempt 1 | 2026-11-05 04:07 | affected groups + --doc: 215 pieces, 0 failed, 2039 tests passed (l02_08d 14/14, l02_03 95/95); merging / load 47.11 58.54 56.33 |
 | GSX-unsolved | hybrid-xr attempt  | 2026-11-11 16:53 | round 2 recorded (Opus pf1 moved it: sweep 3, lost 3, prints 3; CD best still 29); round 3 launched |
 | LOAD-max-div-unsolved | hybrid-xr attempt 1 | 2026-11-11 17:11 | merged part A + scored C (difference rule) as ece80a15c; 4 groups 0 failed; round 2: lazy-offset treap for aperiodic chains |
-| MSG-derive-print-per-message | running | 2026-11-12 04:27 |  |
-| MSG-split-imports | impl attempt 1 | 2026-11-11 01:43 | started; worktree /home/luke/Work/wt/msg-split-imports on origin/main d41b005c1 |
+| MSG-derive-print-per-message | impl attempt 1 | 2026-11-12 04:27 | negative control on main: work-scaling tests fail, bytes n=40->320: doubling 33.5MB->1596MB (47.7x), compared 52.6MB->2815MB (53.5x), name chain 28.2MB->1227MB  |
+| MSG-split-imports | impl attempt 1 | 2026-11-11 01:43 | test the_split_repair_in_an_imported_unit_ignores_the_names_its_importers_define passes (checker 19 passed, 1 ignored); negative control (ok1, ok2 counted as ta |
 | NAME-ascii-library | running | 2026-11-12 13:53 |  |
 | NAME-nonprinting | impl attempt 1 | 2026-11-12 13:28 | NAME-ascii-library: l01_02 with ascii tests (load 71.52 57.51 51.99) |
-| SOUND-random | impl attempt 1 | 2026-11-05 04:07 | rebased on e741c42ad (STATUS conflict: kept DIAG-control and SOUND-random rows); l01_26 + zedc_check 133 pieces, 0 failed; load 60.54 to 70.17 |
+| SOUND-random | impl attempt 1 | 2026-11-05 04:07 | rebased on 8d6ca2226 (plan_dag count conflict, recounted); l01_26 + zedc_check 133 pieces, 0 failed; load 45.01 to 48.34 |
 | TESTS-L1.40d-surface-kinds | impl attempt 1 | 2026-11-08 23:59 | green: kinds:: 6 pass; 165 pieces (l01_29, l01_16, l01_17, l01_22, l01_26, zedc_resolve) 0 failed; clippy clean; rebased on d6662b78f, plan --fix running |
-| TESTS-scaling-gaps | impl attempt 1 | 2026-11-08 23:59 | started; worktree /home/luke/Work/wt/tests-scaling-gaps at d41b005c1, load 39.71 46.43 48.91 |
+| TESTS-scaling-gaps | impl attempt 1 | 2026-11-08 23:59 | self-test now cubic at 50/400 (502x instr, 179-239x time; small run 2x slower 253x/138-154x, limits 13.5/27; old quadratic 2x slower 32x/26-31x vs 11.4/22.9); c |
 | TRIVIAL-walk-branches | orchestrator attempt  | 2026-11-12 11:58 | R2 own attempt: memoized shared-split picks; K3 3.43x->1.28x main, J3 1.14x->0.68x, hashes equal main |
 | WARN-refused | impl attempt 1 | 2026-11-05 04:07 | negative controls: dropping the elab merge of the checker's refusals fails 5 of 7 refused_warning tests; dropping the placement in no_state_reaches fails the re |
 
