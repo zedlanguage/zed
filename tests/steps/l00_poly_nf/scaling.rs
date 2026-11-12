@@ -155,3 +155,33 @@ fn a_power_of_a_sum_of_two_names() {
         proved(&ins[&n])
     });
 }
+
+/// `((x + y) ^ k + x) ^ 2 == (x + y) ^ (2k) + 2 * x * (x + y) ^ k + x ^ 2`: the left side's
+/// square multiplies a sum whose monomials are homogeneous of degree `k` apart from `x`, so its
+/// packed indices leave gaps that no common step removes, and its product is formed from its
+/// `3k + 3` output monomials, not from the `(k + 2)^2` pairs or the `(k + 1)^2` indices the
+/// pairs span (POLY-nf-sparse-product). The output has `3k + 3` monomials of up to `2k` bits:
+/// order 2 in `k`.
+fn gapped_square(k: usize) -> Id {
+    let xy = || sum(&[var("x"), var("y")]);
+    Id {
+        lhs: pow(sum(&[pow(xy(), k as i64), var("x")]), 2),
+        rhs: sum(&[
+            pow(xy(), 2 * k as i64),
+            mul(mul(lit(2), var("x")), pow(xy(), k as i64)),
+            pow(var("x"), 2),
+        ]),
+        names: vec!["x".into(), "y".into()],
+    }
+}
+
+#[test]
+fn the_square_of_a_power_of_a_sum_beside_one_name() {
+    let ins = scaling::inputs(256, gapped_square);
+    scaling::check_order(
+        "((x + y) ^ k + x) ^ 2, 3k + 3 monomials of 2k bits",
+        256,
+        2,
+        |n| proved(&ins[&n]),
+    );
+}

@@ -407,8 +407,9 @@ fn the_dense_and_sparse_products_agree() {
             let a = p(n, 3, base_a, step_a);
             let b = p(n + 5, 11, base_b, step_b);
             let sparse = a.sparse_mul(&b);
-            if let Some((slot, step)) = a.dense_cost(&b) {
-                assert_eq!(a.dense_mul(&b, slot, step), sparse, "n = {n}");
+            let plan = a.plan(&b).expect("packed keys");
+            if plan.dense <= plan.sparse {
+                assert_eq!(a.dense_mul(&b, plan.slot, plan.step), sparse, "n = {n}");
             }
             // Force the dense product at a slot wide enough, at the common step and at 1.
             let common = if n == 1 { step_b } else { step_a.gcd(&step_b) };
@@ -416,9 +417,10 @@ fn the_dense_and_sparse_products_agree() {
             assert_eq!(a.dense_mul(&b, 8, 1), sparse, "n = {n}");
         }
     }
-    assert!(p(300, 3, 0, 1).dense_cost(&p(300, 4, 0, 1)).is_some());
+    let plan = p(300, 3, 0, 1).plan(&p(300, 4, 0, 1)).expect("packed keys");
+    assert!(plan.dense <= plan.sparse);
     // The step is the greatest common divisor of the distances from each side's lowest index.
-    let step = |a: Poly<u128>, b: Poly<u128>| a.dense_cost(&b).map(|(_, s)| s);
+    let step = |a: Poly<u128>, b: Poly<u128>| a.plan(&b).map(|p| p.step);
     assert_eq!(step(p(300, 3, 3, 5), p(300, 4, 7, 5)), Some(5));
     assert_eq!(step(p(300, 3, 2, 6), p(300, 4, 1, 10)), Some(2));
     assert_eq!(step(p(300, 3, 2, 7), p(300, 4, 1, 1)), Some(1));
@@ -472,4 +474,127 @@ fn a_difference_zero_modulo_p_has_no_witness() {
         ),
         Verdict::Differs
     );
+}
+
+/// A sum of the `(index, coefficient)` pairs, like indices merged and zeros dropped.
+fn sum_at(pairs: impl IntoIterator<Item = (u128, i64)>) -> Poly<u128> {
+    let mut m = std::collections::BTreeMap::new();
+    for (k, c) in pairs {
+        *m.entry(k).or_insert_with(BigInt::zero) += c;
+    }
+    Poly {
+        den: BigInt::one(),
+        terms: m.into_iter().filter(|(_, c)| !c.is_zero()).collect(),
+    }
+}
+
+/// The support product with no budget, so it never gives way to another method.
+fn support(a: &Poly<u128>, b: &Poly<u128>) -> Vec<(u128, BigInt)> {
+    let mut plan = a.plan(b).expect("packed keys");
+    plan.dense = f64::INFINITY;
+    plan.sparse = f64::INFINITY;
+    a.support_mul(b, &plan).expect("no budget")
+}
+
+#[test]
+fn the_support_product_agrees_with_the_sparse_one() {
+    // `((x + y)^k + x)` at radix `2k + 1`, `x` the low digit: indices that no common step
+    // reduces, the family the support product is for.
+    for k in [1u128, 2, 5, 40] {
+        let r = 2 * k + 1;
+        let mut binomial = 1i64;
+        let a = sum_at(
+            (0..=k)
+                .map(|i| {
+                    let t = (i + (k - i) * r, binomial);
+                    binomial = binomial * (k - i) as i64 / (i + 1) as i64;
+                    t
+                })
+                .chain([(1, 1)]),
+        );
+        assert_eq!(support(&a, &a), a.sparse_mul(&a), "k = {k}");
+    }
+    // (x + y)(x - y) = x^2 - y^2: the middle index cancels, and must not be kept as a zero.
+    let (a, b) = (sum_at([(1, 1), (100, 1)]), sum_at([(1, 1), (100, -1)]));
+    assert_eq!(
+        support(&a, &b),
+        vec![(2, BigInt::from(1)), (200, BigInt::from(-1))]
+    );
+    // One term on a side, and indices past 2^64, whose squares fill all eight digits.
+    let wide = sum_at([(3, 2), (1 << 100, -3), ((1 << 120) + 7, 5)]);
+    for b in [sum_at([(9, 4)]), wide.clone()] {
+        assert_eq!(support(&wide, &b), wide.sparse_mul(&b));
+    }
+    // Pseudo-random sums: few distinct sums (on a few progressions) and all distinct ones (the
+    // primes must grow), with small coefficients that cancel. A slot test that took a slot of
+    // two sums for one, or a coefficient read from a shared slot, would differ here.
+    let mut x = 0x2545_f491_4f6c_dd1du64;
+    let mut next = |m: u64| {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        x % m
+    };
+    for round in 0..60 {
+        let gaps = [3, 1000, 1 << 40][round % 3];
+        let (n, m) = (1 + next(80), 1 + next(80));
+        let mut side = |n: u64| {
+            sum_at((0..n).map(|_| {
+                let lane = u128::from(next(4)) * gaps * 97;
+                (
+                    lane + u128::from(next(50)) * gaps + u128::from(next(2)),
+                    next(5) as i64 - 2,
+                )
+            }))
+        };
+        let (a, b) = (side(n), side(m));
+        if a.terms.is_empty() || b.terms.is_empty() {
+            continue;
+        }
+        assert_eq!(support(&a, &b), a.sparse_mul(&b), "round {round}");
+    }
+}
+
+#[test]
+fn the_square_of_a_wide_index_is_exact() {
+    for a in [
+        0u128,
+        1,
+        3,
+        u128::from(u64::MAX),
+        1 << 64,
+        (1 << 64) + 1,
+        u128::MAX - 5,
+        u128::MAX,
+    ] {
+        let want = BigUint::from(a) * BigUint::from(a);
+        let mut got = square(a).to_vec();
+        while got.last() == Some(&0) {
+            got.pop();
+        }
+        assert_eq!(got, want.to_u32_digits(), "a = {a}");
+    }
+}
+
+#[test]
+fn the_product_takes_the_support_product_where_it_is_cheaper() {
+    // The shape of `(x + y) ^ k + x` at k = 256 with coefficients of about 256 bits, like its
+    // binomial ones: the sparse product pays (k + 2)^2 pairs of 4-word coefficients, the dense
+    // one a span of about 2k^2 slots, and the support product about 3k sums.
+    let k = 256u128;
+    let r = 2 * k + 1;
+    let wide = |i: u128| (BigInt::one() << 250u32) + BigInt::from(i);
+    let mut terms: std::collections::BTreeMap<u128, BigInt> =
+        (0..=k).map(|i| (i + (k - i) * r, wide(i))).collect();
+    terms.insert(1, wide(k + 1));
+    let a = Poly {
+        den: BigInt::one(),
+        terms: terms.into_iter().collect(),
+    };
+    let plan = a.plan(&a).expect("packed keys");
+    assert_eq!(a.support_mul(&a, &plan), Some(a.sparse_mul(&a)));
+    // Sides whose pairs are all distinct go to the sparse product: the sampled estimate says so.
+    let b = sum_at((0..64u128).map(|i| (i * i * i * 1009 + i, 1)));
+    let plan = b.plan(&b).expect("packed keys");
+    assert_eq!(b.support_mul(&b, &plan), None);
 }

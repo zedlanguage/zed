@@ -37,7 +37,7 @@ use num_integer::Integer;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 
 use crate::digest::{Digest, step};
-use crate::num::{mul_int, pow_uint};
+use crate::num::{is_prime, mul_int, mul_uint, pow_uint};
 use crate::term::{Prim, Term};
 use crate::value::Value;
 
@@ -1351,9 +1351,9 @@ impl<K: Key> Poly<K> {
         Poly { den, terms: out }.reduced()
     }
 
-    /// `self * o`, by the cheaper of two methods with the same result.
+    /// `self * o`, by the cheapest of three methods with the same result.
     ///
-    /// Complexity tradeoff: nothing is given up; a crossing of two methods with identical
+    /// Complexity tradeoff: nothing is given up; a crossing of methods with identical
     /// results, chosen from their cost formulas, not from timings. The sparse product forms
     /// all `t1 * t2` products and sorts them, `O(t1 t2 log(t1 t2))` coefficient products of
     /// `w1 * w2` words. The dense product packs each side into one integer, a slot of `b` bits
@@ -1364,8 +1364,11 @@ impl<K: Key> Poly<K> {
     /// `t1 * t2 * w1 * w2`, both formulas with unit constants: so a product whose monomials
     /// merge densely, as of two univariate sums, costs `O(n log n)` in its output, and one of
     /// sums in different names, whose `t1 * t2` products are all distinct, costs
-    /// `O(t1 t2 log(t1 t2))`, near-linear in its output too. Tested by
-    /// `l00_poly_nf::scaling` (COMPLEXITY.md K107, Crossovers).
+    /// `O(t1 t2 log(t1 t2))`, near-linear in its output too. Between them, a product whose
+    /// pairs fall on few indices spread over a long span, as `((x + y)^k + x)^2`, pays neither
+    /// `t1 t2` nor its span with the support product ([`Poly::support_mul`]), `O(n log n)` in
+    /// its output; it is tried first when its estimated cost is below both. Tested by
+    /// `l00_poly_nf::scaling` (COMPLEXITY.md K107, Crossovers, POLY-nf-sparse-product).
     fn mul(&self, o: &Poly<K>) -> Poly<K> {
         let den = &self.den * &o.den;
         if self.terms.is_empty() || o.terms.is_empty() {
@@ -1374,16 +1377,21 @@ impl<K: Key> Poly<K> {
                 terms: Vec::new(),
             };
         }
-        let terms = match self.dense_cost(o) {
-            Some((slot, step)) => self.dense_mul(o, slot, step),
+        let terms = match self.plan(o) {
             None => self.sparse_mul(o),
+            Some(plan) => match self.support_mul(o, &plan) {
+                Some(terms) => terms,
+                None if plan.dense <= plan.sparse => self.dense_mul(o, plan.slot, plan.step),
+                None => self.sparse_mul(o),
+            },
         };
         Poly { den, terms }.reduced()
     }
 
-    /// The slot width in 32-bit words of the dense product with `o`, when it is cheaper than
-    /// the sparse one, and the step between the indices that may hold a term: the greatest
-    /// common divisor of every index's distance from its side's lowest.
+    /// The costs of the dense and the sparse product with `o`, the dense product's slot width in
+    /// 32-bit words, and the step between the indices that may hold a term: the greatest common
+    /// divisor of every index's distance from its side's lowest. `None` for keys that are not
+    /// packed, which only the sparse product takes.
     ///
     /// Complexity tradeoff: the naive dense product gives every index between the lowest and
     /// the highest a slot, but a homogeneous polynomial of degree `d` in `x` and `y` uses only
@@ -1394,8 +1402,9 @@ impl<K: Key> Poly<K> {
     /// removes those empty slots exactly, as the product's distances are sums of the sides'
     /// and so multiples of `g` too: one `O(t1 + t2)` pass of word-sized gcds per product, which
     /// the packing's own `O(t1 + t2)` pass already costs. Kept: a sum with empty indices that no
-    /// common step removes (`x^5 y^2 + x y + 1`) still pays its span.
-    fn dense_cost(&self, o: &Poly<K>) -> Option<(u64, u128)> {
+    /// common step removes (`x^5 y^2 + x y + 1`) still pays its span, unless the support product
+    /// is cheaper.
+    fn plan(&self, o: &Poly<K>) -> Option<Plan> {
         let (lo_a, hi_a) = (self.terms[0].0.index()?, self.terms.last()?.0.index()?);
         let (lo_b, hi_b) = (o.terms[0].0.index()?, o.terms.last()?.0.index()?);
         let mut step = 0u128;
@@ -1416,12 +1425,18 @@ impl<K: Key> Poly<K> {
         // |c| < 2^(ba + bb + bits(min(ta, tb))), and one bit more for the sign.
         let slot_bits = bits(self) + bits(o) + u64::from(64 - ta.min(tb).leading_zeros()) + 1;
         let slot_words = slot_bits.div_ceil(32);
-        let words = span.checked_mul(u128::from(slot_words))? as f64 / 2.0;
-        let dense = words * words.log2().max(1.0);
+        let dense = span
+            .checked_mul(u128::from(slot_words))
+            .map_or(f64::INFINITY, |w| ntt_cost(w as f64));
         let wa = bits(self).div_ceil(64).max(1) as f64;
         let wb = bits(o).div_ceil(64).max(1) as f64;
         let sparse = ta as f64 * tb as f64 * wa * wb;
-        (dense <= sparse).then_some((slot_words, step))
+        Some(Plan {
+            slot: slot_words,
+            step,
+            dense,
+            sparse,
+        })
     }
 
     /// The sparse product: every pair's product, sorted by monomial and merged.
@@ -1449,12 +1464,18 @@ impl<K: Key> Poly<K> {
         let slot = usize::try_from(slot).expect("a slot fits in memory");
         let base_a = self.terms[0].0.index().expect("a packed key");
         let base_b = o.terms[0].0.index().expect("a packed key");
-        let product = mul_int(
-            &pack(&self.terms, base_a, step, slot),
-            &pack(&o.terms, base_b, step, slot),
-        );
-        let negative = product.is_negative();
-        let words = product.magnitude().to_u32_digits();
+        let packed = |terms: &[(K, BigInt)], base: u128| {
+            let at = |k: &K| usize::try_from((k.index().expect("packed") - base) / step);
+            let len = at(&terms.last().expect("not empty").0).expect("fits in memory") + 1;
+            pack(
+                len,
+                slot,
+                terms
+                    .iter()
+                    .map(|(k, c)| (at(k).expect("fits in memory"), c)),
+            )
+        };
+        let product = mul_int(&packed(&self.terms, base_a), &packed(&o.terms, base_b));
         let hi_a = self
             .terms
             .last()
@@ -1471,34 +1492,118 @@ impl<K: Key> Poly<K> {
             .expect("packed");
         let span = usize::try_from((hi_a - base_a) / step + (hi_b - base_b) / step + 1)
             .expect("fits in memory");
-        let half = BigUint::one() << (slot * 32 - 1);
-        let full = BigUint::one() << (slot * 32);
         let mut out = Vec::new();
-        let mut carry = false;
-        for j in 0..span {
-            let from = (j * slot).min(words.len());
-            let to = ((j + 1) * slot).min(words.len());
-            let digits = &words[from..to];
-            if !carry && digits.iter().all(|w| *w == 0) {
-                continue;
-            }
-            let mut v = BigUint::from_slice(digits);
-            if carry {
-                v += 1u32;
-            }
-            let c = if v >= half {
-                carry = true;
-                BigInt::from_biguint(Sign::Minus, &full - v)
-            } else {
-                carry = false;
-                BigInt::from_biguint(Sign::Plus, v)
-            };
-            if !c.is_zero() {
-                let c = if negative { -c } else { c };
-                out.push((K::at(base_a + base_b + j as u128 * step), c));
-            }
-        }
+        unpack(&product, slot, span, |j, c| {
+            out.push((K::at(base_a + base_b + j as u128 * step), c));
+        });
         out
+    }
+
+    /// The product with `o` from its support: the indices that some pair of terms reaches
+    /// ([`sumset`]), then their coefficients ([`coefficients`]); `None` when its estimated cost
+    /// is not below the cheaper of the dense and the sparse product, or when the work runs past
+    /// that cost.
+    ///
+    /// Complexity tradeoff: the dense product pays the span between the lowest and the highest
+    /// index, `O(L log L)` in `L` words, and the sparse one all `t1 t2` pairs, so a product
+    /// whose pairs fall on `s` indices spread over a span much longer than `s`, far fewer than
+    /// `t1 t2`, pays more than its output by either: `((x + y)^k + x)^2` has `3k + 3` terms of
+    /// about `2k` bits, about `6 k^2` bits, against `k^3` words for the dense and `k^4 / 4096`
+    /// word products for the sparse product. The support product (after Arnold and Roche,
+    /// "Output-sensitive algorithms for sumset and sparse polynomial multiplication", ISSAC 2015)
+    /// folds both sides modulo `z^p - 1` for a prime `p` near `s`, which maps index `i` to
+    /// slot `i mod p`, and multiplies the folds densely: `O(s log s)` in `s` slots per round, with
+    /// rounds of falling size, so `O(n log n)` in the output when the coefficients are not much
+    /// wider than the output's. Its primes are drawn from the sides' content digest, so the work
+    /// is the same on every run, and each step checks its results exactly: an index or a
+    /// coefficient is taken only from a slot that provably holds that index alone, so a bad draw
+    /// costs time, never a wrong term, and the budget bounds the time (at most twice the cheaper
+    /// method's cost when the estimate is wrong).
+    fn support_mul(&self, o: &Poly<K>, plan: &Plan) -> Option<Vec<(K, BigInt)>> {
+        let budget = plan.dense.min(plan.sparse);
+        let (a, b) = (&self.terms, &o.terms);
+        let (ta, tb) = (a.len(), b.len());
+        let lo = |t: &[(K, BigInt)]| t[0].0.index().expect("a packed key");
+        let (lo_a, lo_b) = (lo(a), lo(b));
+        let reduce = |t: &[(K, BigInt)], lo: u128| -> Vec<u128> {
+            t.iter()
+                .map(|(k, _)| (k.index().expect("packed") - lo) / plan.step)
+                .collect()
+        };
+        let (ra, rb) = (reduce(a, lo_a), reduce(b, lo_b));
+        let bits = |x: u128| u64::from(128 - x.leading_zeros());
+        let pairs = ta as u128 * tb as u128;
+        // Each of the nine moments `sum a^i b^j` (i, j < 3) of a slot is at most
+        // `pairs * ha^2 * hb^2`.
+        let sub = usize::try_from(
+            (bits(pairs) + 2 * bits(*ra.last()?) + 2 * bits(*rb.last()?)).div_ceil(32),
+        )
+        .ok()?;
+        // A slot of the coefficients' product is at most `sum |a_i| * sum |b_j|`, and one bit
+        // more for the sign.
+        let sum_bits = |t: &[(K, BigInt)]| {
+            t.iter()
+                .fold(BigUint::zero(), |s, (_, c)| s + c.magnitude())
+                .bits()
+        };
+        let slot = usize::try_from((sum_bits(a) + sum_bits(b) + 1).div_ceil(32)).ok()?;
+        let words = |t: &[(K, BigInt)]| -> f64 {
+            t.iter()
+                .map(|(_, c)| c.bits().div_ceil(64).max(1) as f64)
+                .sum()
+        };
+        let folds = words(a) + words(b);
+        let cost = |s: f64| {
+            let p = 1.5 * s;
+            2.0 * (sumset_round(p, sub, ta + tb) + coefficient_round(p, slot, folds))
+        };
+        let sampling = SAMPLES as f64 * (ta + tb) as f64;
+        if sampling + cost((ta + tb - 1) as f64) >= budget {
+            return None;
+        }
+        let mut rng = {
+            let mut h = Digest::default();
+            ra.hash(&mut h);
+            rb.hash(&mut h);
+            h.finish()
+        };
+        // Complexity tradeoff: the support's size `s` is not known before the sumset is found, and
+        // the sumset of sides whose pairs are all distinct costs more than the sparse product of
+        // the same sides. A mean of `1 / count` over `SAMPLES` pairs drawn at random, `count` the
+        // number of pairs on the drawn pair's index, estimates `s / (t1 t2)` in
+        // `O(SAMPLES (t1 + t2))`, so such a product goes to the sparse one at once.
+        let mut inverse = 0.0;
+        for _ in 0..SAMPLES {
+            rng = step(rng, 1);
+            let i = (rng % ta as u64) as usize;
+            rng = step(rng, 2);
+            let j = (rng % tb as u64) as usize;
+            inverse += 1.0 / pairs_at(&ra, &rb, ra[i] + rb[j]) as f64;
+        }
+        let estimate = (pairs as f64 * inverse / SAMPLES as f64).max((ta + tb - 1) as f64);
+        let mut spent = sampling;
+        if spent + cost(estimate) >= budget {
+            return None;
+        }
+        let support = sumset(&ra, &rb, sub, estimate as u64, &mut rng, &mut spent, budget)?;
+        let coefficients = coefficients(
+            [(&a[..], &ra[..]), (&b[..], &rb[..])],
+            &support,
+            slot,
+            folds,
+            &mut rng,
+            &mut spent,
+            budget,
+        )?;
+        let base = lo_a + lo_b;
+        Some(
+            support
+                .iter()
+                .zip(coefficients)
+                .filter(|(_, c)| !c.is_zero())
+                .map(|(s, c)| (K::at(base + s * plan.step), c))
+                .collect(),
+        )
     }
 
     /// `self ^ e`: a monomial's power directly, otherwise by squaring with [`Poly::mul`].
@@ -1580,16 +1685,272 @@ impl<K: Key> Poly<K> {
     }
 }
 
-/// The terms as one integer, `sum c * 2^(32 slot (index - base) / step)`, `step` dividing every
-/// `index - base`: the positive and the negative coefficients written into two digit vectors
-/// and subtracted, linear in the words.
-fn pack<K: Key>(terms: &[(K, BigInt)], base: u128, step: u128, slot: usize) -> BigInt {
-    let hi = terms.last().expect("not empty").0.index().expect("packed");
-    let len = usize::try_from((hi - base) / step + 1).expect("fits in memory") * slot;
+/// The costs of the dense and the sparse product of two sums of packed keys ([`Poly::plan`]).
+struct Plan {
+    /// The dense product's slot, in 32-bit words.
+    slot: u64,
+    /// The step between the indices that may hold a term.
+    step: u128,
+    /// The dense product's cost, infinite when its integer's length does not fit in a `u128`.
+    dense: f64,
+    /// The sparse product's cost.
+    sparse: f64,
+}
+
+/// The pairs drawn to estimate the size of a product's support ([`Poly::support_mul`]): the
+/// estimate only chooses a method, so its error costs time, never a wrong term.
+const SAMPLES: u32 = 32;
+
+/// The primes tried for each round of [`coefficients`], the one that leaves the most indices alone
+/// for its size taken.
+const CANDIDATES: u32 = 4;
+
+/// The cost of a product of `words` 32-bit words by the number-theoretic transform, in the
+/// sparse product's unit of one word product: `w log2 w` in its `w` 64-bit words.
+fn ntt_cost(words: f64) -> f64 {
+    let w = words / 2.0;
+    w * w.log2().max(1.0)
+}
+
+/// The cost of a round of [`sumset`] at a prime `p`, with `sub` words a moment and `terms`
+/// terms in both sides.
+fn sumset_round(p: f64, sub: usize, terms: usize) -> f64 {
+    ntt_cost(2.0 * p * (9 * sub) as f64) + terms as f64
+}
+
+/// The cost of a round of [`coefficients`] at a prime `p`, with `slot` words a slot and `folds`
+/// words in both sides' coefficients.
+fn coefficient_round(p: f64, slot: usize, folds: f64) -> f64 {
+    ntt_cost(2.0 * p * slot as f64) + folds
+}
+
+/// The number of pairs of `a` in `ra` and `b` in `rb`, both increasing, with `a + b == s`: one
+/// merge of the two lists, `O(t1 + t2)`.
+fn pairs_at(ra: &[u128], rb: &[u128], s: u128) -> u64 {
+    let (mut i, mut j, mut n) = (0, rb.len(), 0);
+    while i < ra.len() && j > 0 {
+        match (ra[i] + rb[j - 1]).cmp(&s) {
+            std::cmp::Ordering::Less => i += 1,
+            std::cmp::Ordering::Greater => j -= 1,
+            std::cmp::Ordering::Equal => {
+                n += 1;
+                i += 1;
+                j -= 1;
+            }
+        }
+    }
+    n
+}
+
+/// The first prime at or past a point of `[lambda, 2 lambda)` drawn from `rng`, which advances.
+fn draw_prime(lambda: u64, rng: &mut u64) -> u64 {
+    let lo = lambda.max(2);
+    *rng = step(*rng, 3);
+    let mut p = lo + *rng % lo;
+    while !is_prime(p) {
+        p += 1;
+    }
+    p
+}
+
+/// Every `a + b`, `a` in `ra` and `b` in `rb`, in increasing order, each once, by rounds at a
+/// prime `p` drawn from `lambda` on: each side folded modulo `z^p - 1` (index `i` to slot
+/// `i mod p`) and the folds multiplied densely, `sub` words a moment; `None` once `spent` passes
+/// `budget`.
+///
+/// One side is packed with sub-digits `1`, `a` and `a^2` at 0, 1 and 2 of its slot, the other
+/// with `1`, `b` and `b^2` at 0, 3 and 6, so one product gives each slot's nine moments
+/// `sum a^i b^j` over its pairs, at sub-digit `i + 3 j`, and from them its pairs' count `C`,
+/// `W = sum (a + b)` and `Q = sum (a + b)^2`. Over the slot's distinct sums `s`, of `c_s` pairs
+/// each, `C Q - W^2 = sum_(s < s') c_s c_s' (s - s')^2` (Lagrange's identity), zero exactly when
+/// the slot holds one sum, `W / C`: so a sum is taken only when it is certain. A later round
+/// subtracts the sums found from its slots, so it sees only the rest. The first prime is drawn
+/// near `lambda`, the caller's estimate of the sums; the next near twice the slots left open,
+/// at least twice the sums left, or near twice the last when a round found none, so the rounds
+/// end however the primes fall.
+fn sumset(
+    ra: &[u128],
+    rb: &[u128],
+    sub: usize,
+    mut lambda: u64,
+    rng: &mut u64,
+    spent: &mut f64,
+    budget: f64,
+) -> Option<Vec<u128>> {
+    let mut found: Vec<(u128, u64)> = Vec::new();
+    loop {
+        let p = draw_prime(lambda, rng);
+        *spent += sumset_round(p as f64, sub, ra.len() + rb.len());
+        if *spent > budget {
+            return None;
+        }
+        let n = usize::try_from(p).ok()?;
+        let at = |i: u128| (i % u128::from(p)) as usize;
+        let fold = |r: &[u128], sub_at: [usize; 3]| {
+            let mut w = vec![0u32; n * 9 * sub];
+            for &a in r {
+                let slot = at(a) * 9 * sub;
+                add_into(&mut w[slot + sub_at[0] * sub..], &[1]);
+                add_into(&mut w[slot + sub_at[1] * sub..], &words(a));
+                add_into(&mut w[slot + sub_at[2] * sub..], &square(a));
+            }
+            BigUint::new(w)
+        };
+        let product = mul_uint(&fold(ra, [0, 1, 2]), &fold(rb, [0, 3, 6])).to_u32_digits();
+        let digit = |j: usize, k: usize| {
+            let from = ((j * 9 + k) * sub).min(product.len());
+            nat(&product[from..(from + sub).min(product.len())])
+        };
+        // Modulo `z^p - 1`, the product's slots `r` and `r + p` are one.
+        let moment = |r: usize, k: usize| digit(r, k) + digit(r + n, k);
+        let mut moments = vec![[BigUint::zero(), BigUint::zero(), BigUint::zero()]; n];
+        for (r, m) in moments.iter_mut().enumerate() {
+            let c = moment(r, 0);
+            if !c.is_zero() {
+                let w = moment(r, 1) + moment(r, 3);
+                let q = moment(r, 2) + (moment(r, 4) << 1u32) + moment(r, 6);
+                *m = [c, w, q];
+            }
+        }
+        for &(s, c) in &found {
+            let [mc, mw, mq] = &mut moments[at(s)];
+            let (c, s) = (BigUint::from(c), BigUint::from(s));
+            let cs = &c * &s;
+            *mq -= &cs * &s;
+            *mw -= cs;
+            *mc -= c;
+        }
+        let (mut open, mut new) = (0u64, 0usize);
+        for [c, w, q] in &moments {
+            if c.is_zero() {
+                continue;
+            }
+            if c * q == w * w {
+                found.push(((w / c).to_u128()?, c.to_u64()?));
+                new += 1;
+            } else {
+                open += 1;
+            }
+        }
+        if open == 0 {
+            break;
+        }
+        lambda = if new == 0 { 2 * lambda } else { 2 * open };
+    }
+    found.sort_unstable();
+    Some(found.into_iter().map(|(s, _)| s).collect())
+}
+
+/// A side of a product: its terms and their indices, reduced.
+type Side<'a, K> = (&'a [(K, BigInt)], &'a [u128]);
+
+/// The coefficient of each index of `support` in the product of the two sides, each its terms
+/// and their indices reduced as `support`'s, by rounds at a prime `p` near the number `u` of
+/// indices left, the best of `CANDIDATES` drawn from `2u / 3` on: both sides'
+/// coefficients folded modulo `z^p - 1`, `slot` words a slot, and the folds multiplied densely;
+/// `folds` is the sides' coefficients' words, and `None` comes once `spent` passes `budget`.
+///
+/// A slot is the sum of the coefficients of the indices of `support` on it, as the product has no
+/// other index. The coefficients found are subtracted from it, and a slot with one index left
+/// gives that index's coefficient exactly. When no candidate leaves an index alone, the next
+/// candidates are drawn from twice as far on, so the rounds end however the primes fall.
+fn coefficients<K>(
+    sides: [Side<K>; 2],
+    support: &[u128],
+    slot: usize,
+    folds: f64,
+    rng: &mut u64,
+    spent: &mut f64,
+    budget: f64,
+) -> Option<Vec<BigInt>> {
+    let mut found = vec![BigInt::zero(); support.len()];
+    let mut open: Vec<usize> = (0..support.len()).collect();
+    let mut done: Vec<usize> = Vec::with_capacity(support.len());
+    let mut lambda = (2 * open.len() as u64).div_ceil(3);
+    let mut count = Vec::new();
+    while !open.is_empty() {
+        // Complexity tradeoff: a prime drawn at random leaves about `e^(-u/p)` of the `u`
+        // indices left alone in their slots, so a prime near `u` is cheapest over all rounds
+        // (`p e^(u/p)`, least at `p = u`), but a support of a few arithmetic progressions with one
+        // difference, as `((x + y)^k + x)^2`'s, either misses itself modulo `p` or overlaps
+        // nearly whole, and a round that overlaps leaves half. The support is known here, so each
+        // of `CANDIDATES` primes is tried by counting its lone indices, `O(u + p)`, far below the
+        // `O(p slot log(p slot))` product, and the one with the most for its size is taken.
+        let mut best = (0.0, 0);
+        for _ in 0..CANDIDATES {
+            let p = draw_prime(lambda, rng);
+            let score = lone(&open, support, p, &mut count) as f64 / p as f64;
+            if score > best.0 {
+                best = (score, p);
+            }
+        }
+        *spent += (CANDIDATES as usize * open.len()) as f64;
+        let p = best.1;
+        if p == 0 {
+            lambda *= 2;
+            continue;
+        }
+        *spent += coefficient_round(p as f64, slot, folds);
+        if *spent > budget {
+            return None;
+        }
+        lone(&open, support, p, &mut count);
+        let n = usize::try_from(p).ok()?;
+        let at = |i: u128| (i % u128::from(p)) as usize;
+        let [fa, fb] = sides.map(|(terms, r)| {
+            let mut fold = vec![BigInt::zero(); n];
+            for ((_, c), &i) in terms.iter().zip(r) {
+                fold[at(i)] += c;
+            }
+            pack(n, slot, fold.iter().enumerate())
+        });
+        let mut slots = vec![BigInt::zero(); n];
+        unpack(&mul_int(&fa, &fb), slot, 2 * n - 1, |j, c| {
+            slots[j % n] += c
+        });
+        for &u in &done {
+            let r = at(support[u]);
+            if count[r] == 1 {
+                slots[r] -= &found[u];
+            }
+        }
+        open.retain(|&u| {
+            let r = at(support[u]);
+            if count[r] != 1 {
+                return true;
+            }
+            found[u] = std::mem::take(&mut slots[r]);
+            done.push(u);
+            false
+        });
+        lambda = (2 * open.len() as u64).div_ceil(3);
+    }
+    Some(found)
+}
+
+/// The number of indices of `open`, positions in `support`, alone in their slot modulo `p`, with
+/// `count` left holding each slot's number of them.
+fn lone(open: &[usize], support: &[u128], p: u64, count: &mut Vec<u32>) -> usize {
+    let at = |u: usize| (support[u] % u128::from(p)) as usize;
+    count.clear();
+    count.resize(usize::try_from(p).expect("a prime that fits in memory"), 0);
+    for &u in open {
+        count[at(u)] += 1;
+    }
+    open.iter().filter(|&&u| count[at(u)] == 1).count()
+}
+
+/// The values as one integer, `sum c * 2^(32 slot i)` over the pairs `(i, c)`, `i < len` and
+/// `|c| < 2^(32 slot)`: the positive and the negative values written into two digit vectors and
+/// subtracted, linear in the words.
+fn pack<'a>(
+    len: usize,
+    slot: usize,
+    values: impl IntoIterator<Item = (usize, &'a BigInt)>,
+) -> BigInt {
+    let len = len * slot;
     let (mut pos, mut neg) = (vec![0u32; len], Vec::new());
-    for (k, c) in terms {
-        let at = usize::try_from((k.index().expect("packed") - base) / step).expect("fits") * slot;
-        let digits = c.magnitude().to_u32_digits();
+    for (i, c) in values {
         let into = if c.is_negative() {
             if neg.is_empty() {
                 neg = vec![0u32; len];
@@ -1598,7 +1959,12 @@ fn pack<K: Key>(terms: &[(K, BigInt)], base: u128, step: u128, slot: usize) -> B
         } else {
             &mut pos
         };
-        into[at..at + digits.len()].copy_from_slice(&digits);
+        for (w, d) in into[i * slot..]
+            .iter_mut()
+            .zip(c.magnitude().iter_u32_digits())
+        {
+            *w = d;
+        }
     }
     let p = BigInt::from_biguint(Sign::Plus, BigUint::new(pos));
     if neg.is_empty() {
@@ -1606,6 +1972,84 @@ fn pack<K: Key>(terms: &[(K, BigInt)], base: u128, step: u128, slot: usize) -> B
     } else {
         p - BigInt::from_biguint(Sign::Plus, BigUint::new(neg))
     }
+}
+
+/// `f(j, c)` for each slot `j < len` of `product`, `slot` 32-bit words each, whose value `c` is
+/// not zero, every value below `2^(32 slot - 1)` in magnitude: a negative value is its two's
+/// complement in its slot, with a borrow from the next.
+fn unpack(product: &BigInt, slot: usize, len: usize, mut f: impl FnMut(usize, BigInt)) {
+    let negative = product.is_negative();
+    let words = product.magnitude().to_u32_digits();
+    let half = BigUint::one() << (slot * 32 - 1);
+    let full = BigUint::one() << (slot * 32);
+    let mut carry = false;
+    for j in 0..len {
+        let from = (j * slot).min(words.len());
+        let to = ((j + 1) * slot).min(words.len());
+        let digits = &words[from..to];
+        if !carry && digits.iter().all(|w| *w == 0) {
+            continue;
+        }
+        let mut v = BigUint::from_slice(digits);
+        if carry {
+            v += 1u32;
+        }
+        let c = if v >= half {
+            carry = true;
+            BigInt::from_biguint(Sign::Minus, &full - v)
+        } else {
+            carry = false;
+            BigInt::from_biguint(Sign::Plus, v)
+        };
+        if !c.is_zero() {
+            f(j, if negative { -c } else { c });
+        }
+    }
+}
+
+/// The natural number of the 32-bit `digits`, least first, with no allocation when it is zero.
+fn nat(digits: &[u32]) -> BigUint {
+    if digits.iter().all(|d| *d == 0) {
+        BigUint::zero()
+    } else {
+        BigUint::from_slice(digits)
+    }
+}
+
+/// `w += v`, both 32-bit digits, least first; the caller leaves room for the carry.
+fn add_into(w: &mut [u32], v: &[u32]) {
+    let len = v.iter().rposition(|d| *d != 0).map_or(0, |i| i + 1);
+    let mut carry = 0u64;
+    for (x, d) in w.iter_mut().zip(&v[..len]) {
+        let s = u64::from(*x) + u64::from(*d) + carry;
+        *x = s as u32;
+        carry = s >> 32;
+    }
+    let mut i = len;
+    while carry != 0 {
+        let s = u64::from(w[i]) + carry;
+        w[i] = s as u32;
+        carry = s >> 32;
+        i += 1;
+    }
+}
+
+/// The 32-bit digits of `a`, least first.
+fn words(a: u128) -> [u32; 4] {
+    std::array::from_fn(|i| (a >> (32 * i)) as u32)
+}
+
+/// The 32-bit digits of `a^2`, least first: `a = h 2^64 + l` gives
+/// `a^2 = h^2 2^128 + 2 h l 2^64 + l^2`, with no allocation.
+fn square(a: u128) -> [u32; 8] {
+    let m = u128::from(u64::MAX);
+    let (h, l) = (a >> 64, a & m);
+    let (ll, hl, hh) = (l * l, h * l, h * h);
+    let t1 = (ll >> 64) + 2 * (hl & m);
+    let t2 = (t1 >> 64) + 2 * (hl >> 64) + (hh & m);
+    let t3 = (t2 >> 64) + (hh >> 64);
+    let limbs = [ll & m, t1 & m, t2 & m, t3];
+    std::array::from_fn(|i| (limbs[i / 2] >> (32 * (i % 2))) as u32)
 }
 
 #[cfg(test)]
