@@ -275,12 +275,12 @@ impl Builder<'_, '_> {
                     }
                     _ => names.extend(kids.iter().map(|&k| self.name_of(k))),
                 }
-                StmtKind::Initial(Initial {
+                StmtKind::Initial(Box::new(Initial {
                     names,
                     ty,
                     keys,
                     value: self.node(value)?,
-                })
+                }))
             }
             "Mutable" => StmtKind::Mutable(Box::new(Stmt {
                 kind: self.decl(kids[0])?,

@@ -211,6 +211,7 @@ const PROGRAM_FACETS: &[(&str, &str)] = &[("L12", "parity"), ("L12", "latency"),
 const PENDING: &[(&str, &str)] = &[
     ("failure", "PORT-ack-name"),
     ("keeps", "L7.4"),
+    ("names", "L38.2"),
     ("bitorder", "TERM-1"),
     ("fpwarn", "FPWARN"),
     ("fpsafe", "FPWARN"),

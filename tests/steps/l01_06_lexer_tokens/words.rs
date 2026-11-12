@@ -18,7 +18,7 @@ fn every_keyword_is_a_keyword_and_a_longer_word_is_a_name() {
             );
         }
     }
-    assert_eq!(KEYWORDS.len(), 36);
+    assert_eq!(KEYWORDS.len(), 37);
     assert_eq!(
         render(&lex("format iffy in_stock types notable asc ascending").unwrap()),
         "format iffy in_stock types notable «asc» ascending"

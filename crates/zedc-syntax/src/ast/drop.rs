@@ -118,7 +118,8 @@ fn expr_kids(kind: &mut ExprKind, out: &mut Vec<Expr>) {
 /// Moves the expressions directly in the statement `kind` to `out`.
 fn stmt_kids(kind: StmtKind, out: &mut Vec<Expr>) {
     match kind {
-        StmtKind::Initial(Initial { keys, value, .. }) => {
+        StmtKind::Initial(i) => {
+            let Initial { keys, value, .. } = *i;
             key_kids(keys, out);
             out.push(value);
         }

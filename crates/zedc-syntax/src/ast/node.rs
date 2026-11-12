@@ -322,8 +322,9 @@ pub enum StmtKind {
         value: Expr,
     },
     /// `initial x = e;`, the start value of a variable its loop updates, or a boundary entry
-    /// `initial p[-2] = e;` (DESIGN.md sec:generations).
-    Initial(Initial),
+    /// `initial p[-2] = e;` (DESIGN.md sec:generations). Boxed: inline it is the largest kind
+    /// and would make every statement 8 bytes larger.
+    Initial(Box<Initial>),
     /// `mutable x = e;`: the binding, whose variable carries forward when a step leaves it
     /// unassigned.
     Mutable(Box<Stmt>),
