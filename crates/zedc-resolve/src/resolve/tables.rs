@@ -358,7 +358,7 @@ impl<'a> Tables<'a> {
     /// binder of the scope is placed in its statement by a binary search, so the order
     /// reads the uses of the scope's own binders only, not those of the scopes inside it.
     /// A call of an overload set waits on the one overload its arguments select, or on none
-    /// when type checking must choose ([`super::pick`]); any other use of a set waits on one
+    /// when type checking must choose (`super::pick`); any other use of a set waits on one
     /// join node, which waits on the set's statements, so `U` uses of `K` overloads make
     /// `U + K` dependencies, not `U·K`.
     // Complexity tradeoff (COMPLEXITY.md F7, F49): the naive order collects each scope's
