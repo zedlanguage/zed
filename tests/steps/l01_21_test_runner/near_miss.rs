@@ -243,7 +243,7 @@ const NEAR_MISSES: &[NearMiss] = &[
         "rest = 3;\n",
         "without = 3;\n",
         "1:1",
-        Some("`rest = 3;`, `rest` in place of `without`"),
+        Some("`rest = 3;`"),
     ),
     (
         Row::InitialNotUpdated,

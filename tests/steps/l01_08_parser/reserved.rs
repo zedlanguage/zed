@@ -1,7 +1,7 @@
 //! A reserved word written where a name stands (DESIGN.md sec:lexical; row "Reserved word
 //! written where a name stands" of sec:diagnostics): the parse error is reported at the word,
-//! says that the word is reserved and what it begins, and offers another name, written into
-//! the word's line when the line then parses. A name that only begins with a reserved word is
+//! shows the word's line, says what the word begins, and offers the line with another name in
+//! the word's place when that line then parses. A name that only begins with a reserved word is
 //! an ordinary name.
 
 use zed_tests::scaling;
@@ -10,12 +10,9 @@ use zedc::lex::{KEYWORDS, Tok, lex};
 use zedc::parse::{RESERVED, TOP, parse};
 use zedc::rejection::Row;
 
-const TAIL: &str =
-    "Write another name in its place, here and wherever the program uses it as a name.";
-
-/// The whole message for `word`, written out for the words the position tests use.
-fn message(word: &str) -> String {
-    let what = match word {
+/// What `word` begins, written out for the words the position tests use.
+fn what(word: &str) -> &'static str {
+    match word {
         "without" => "it removes a facet from a value, as `n without units(\"km\")`",
         "law" => {
             "it begins a law, as in `struct Span { lo: int, hi: int, law ordered() = lo <= hi }`"
@@ -27,8 +24,16 @@ fn message(word: &str) -> String {
         "if" => "it begins a conditional, as `if x < 0 { -x } else { x }`",
         "for" => "it begins a comprehension, as `for x in xs { x * 2 }`",
         _ => panic!("no message written for {word}"),
-    };
-    format!("`{word}` is a reserved word, so it cannot be a name: {what}. {TAIL}")
+    }
+}
+
+/// The notes of the message for `word` with the note `repair` last.
+fn notes_of(word: &str, what: &str, repair: &str) -> [String; 3] {
+    [
+        format!("`{word}` is reserved: {what}"),
+        format!("rename the other uses of `{word}` as a name too"),
+        repair.to_string(),
+    ]
 }
 
 /// The error the unit `src` is refused with by the parser.
@@ -37,16 +42,31 @@ fn refusal(src: &str) -> Error {
     Error::from(parse(src, &tokens, "Unit", TOP).expect_err(src))
 }
 
-/// Checks that `src` is refused at `word`, at byte `at`, with the whole message and the one
-/// note `repair`.
-fn reserved(src: &str, word: &str, at: usize, repair: &str) {
+/// Checks that `src` is refused at `word`, at byte `at`, with the whole message and notes:
+/// the word's line is shown, and `repaired` is offered in its place.
+fn reserved(src: &str, word: &str, at: usize, repaired: &str) {
+    let start = src[..at].rfind('\n').map_or(0, |i| i + 1);
+    let end = src[at..].find('\n').map_or(src.len(), |i| at + i);
+    let line = src[start..end].trim();
+    refused(
+        src,
+        word,
+        at,
+        &format!("Reserved word used as a name: `{line}`. Try `{repaired}` instead."),
+        &format!("repair: `{repaired}`"),
+    );
+}
+
+/// Checks that `src` is refused at `word`, at byte `at`, with `message` and the notes that end
+/// in `repair`.
+fn refused(src: &str, word: &str, at: usize, message: &str, repair: &str) {
     let e = refusal(src);
     assert_eq!(e.row, Some(Row::ReservedWordAsName), "{src}");
-    assert_eq!(e.message, message(word), "{src}");
+    assert_eq!(e.message, message, "{src}");
     assert_eq!(&src[e.span.start..e.span.end], word, "{src}");
     assert_eq!(e.span.start, at, "{src}");
     let notes: Vec<&str> = e.notes.iter().map(|n| n.text.as_str()).collect();
-    assert_eq!(notes, [repair], "{src}");
+    assert_eq!(notes, notes_of(word, what(word), repair), "{src}");
     for n in &e.notes {
         assert_eq!(n.span, e.span, "{src}");
     }
@@ -62,168 +82,73 @@ fn accepted(src: &str) {
 
 #[test]
 fn a_binding() {
-    reserved(
-        "without = 3;",
-        "without",
-        0,
-        "repair: `rest = 3;`, `rest` in place of `without`",
-    );
-    reserved(
-        "law = 3;",
-        "law",
-        0,
-        "repair: `rule = 3;`, `rule` in place of `law`",
-    );
-    reserved(
-        "initial = 0;",
-        "initial",
-        0,
-        "repair: `start = 0;`, `start` in place of `initial`",
-    );
-    reserved(
-        "mutable for = 0;",
-        "for",
-        8,
-        "repair: `mutable each = 0;`, `each` in place of `for`",
-    );
+    reserved("without = 3;", "without", 0, "rest = 3;");
+    reserved("law = 3;", "law", 0, "rule = 3;");
+    reserved("initial = 0;", "initial", 0, "start = 0;");
+    reserved("mutable for = 0;", "for", 8, "mutable each = 0;");
 }
 
 #[test]
 fn a_parameter() {
-    reserved(
-        "f(law) = law + 1;",
-        "law",
-        2,
-        "repair: `f(rule) = rule + 1;`, `rule` in place of `law`",
-    );
+    reserved("f(law) = law + 1;", "law", 2, "f(rule) = rule + 1;");
     reserved(
         "f(initial) = initial + 1;",
         "initial",
         2,
-        "repair: `f(start) = start + 1;`, `start` in place of `initial`",
+        "f(start) = start + 1;",
     );
     reserved(
         "f(positional without: int) = without;",
         "without",
         13,
-        "repair: `f(positional rest: int) = rest;`, `rest` in place of `without`",
+        "f(positional rest: int) = rest;",
     );
-    reserved(
-        "g = for -> for + 1;",
-        "for",
-        4,
-        "repair: `g = each -> each + 1;`, `each` in place of `for`",
-    );
+    reserved("g = for -> for + 1;", "for", 4, "g = each -> each + 1;");
 }
 
 #[test]
 fn a_function_or_method_name() {
-    reserved(
-        "if(x) = x;",
-        "if",
-        0,
-        "repair: `cond(x) = x;`, `cond` in place of `if`",
-    );
-    reserved(
-        "without(x) = x;",
-        "without",
-        0,
-        "repair: `rest(x) = x;`, `rest` in place of `without`",
-    );
-    reserved(
-        "Point.law = 1;",
-        "law",
-        6,
-        "repair: `Point.rule = 1;`, `rule` in place of `law`",
-    );
+    reserved("if(x) = x;", "if", 0, "cond(x) = x;");
+    reserved("without(x) = x;", "without", 0, "rest(x) = x;");
+    reserved("Point.law = 1;", "law", 6, "Point.rule = 1;");
 }
 
 #[test]
 fn a_field_after_a_dot() {
-    reserved(
-        "f(x) = x.if;",
-        "if",
-        9,
-        "repair: `f(x) = x.cond;`, `cond` in place of `if`",
-    );
-    reserved(
-        "y = s.without;",
-        "without",
-        6,
-        "repair: `y = s.rest;`, `rest` in place of `without`",
-    );
-    reserved(
-        "y = for.x;",
-        "for",
-        4,
-        "repair: `y = each.x;`, `each` in place of `for`",
-    );
+    reserved("f(x) = x.if;", "if", 9, "f(x) = x.cond;");
+    reserved("y = s.without;", "without", 6, "y = s.rest;");
+    reserved("y = for.x;", "for", 4, "y = each.x;");
 }
 
 #[test]
 fn a_field_of_a_struct_or_interface() {
-    reserved(
-        "struct S { law: int }",
-        "law",
-        11,
-        "repair: `struct S { rule: int }`, `rule` in place of `law`",
-    );
+    reserved("struct S { law: int }", "law", 11, "struct S { rule: int }");
     reserved(
         "struct S { x: int, initial: int }",
         "initial",
         19,
-        "repair: `struct S { x: int, start: int }`, `start` in place of `initial`",
+        "struct S { x: int, start: int }",
     );
     reserved(
         "interface I { if: int }",
         "if",
         14,
-        "repair: `interface I { cond: int }`, `cond` in place of `if`",
+        "interface I { cond: int }",
     );
 }
 
 #[test]
 fn a_field_of_a_record_display_or_a_named_argument() {
-    reserved(
-        "s = { law: 1 };",
-        "law",
-        6,
-        "repair: `s = { rule: 1 };`, `rule` in place of `law`",
-    );
-    reserved(
-        "y = f(without: 1);",
-        "without",
-        6,
-        "repair: `y = f(rest: 1);`, `rest` in place of `without`",
-    );
+    reserved("s = { law: 1 };", "law", 6, "s = { rule: 1 };");
+    reserved("y = f(without: 1);", "without", 6, "y = f(rest: 1);");
 }
 
 #[test]
 fn a_type_struct_or_import_name() {
-    reserved(
-        "type law = int;",
-        "law",
-        5,
-        "repair: `type rule = int;`, `rule` in place of `law`",
-    );
-    reserved(
-        "struct for { x: int }",
-        "for",
-        7,
-        "repair: `struct each { x: int }`, `each` in place of `for`",
-    );
-    reserved(
-        "f(x: if) = x;",
-        "if",
-        5,
-        "repair: `f(x: cond) = x;`, `cond` in place of `if`",
-    );
-    reserved(
-        "import without;",
-        "without",
-        7,
-        "repair: `import rest;`, `rest` in place of `without`",
-    );
+    reserved("type law = int;", "law", 5, "type rule = int;");
+    reserved("struct for { x: int }", "for", 7, "struct each { x: int }");
+    reserved("f(x: if) = x;", "if", 5, "f(x: cond) = x;");
+    reserved("import without;", "without", 7, "import rest;");
 }
 
 #[test]
@@ -232,13 +157,13 @@ fn a_loop_variable_or_a_statement_of_a_loop() {
         "r = loop for { while for < 3; };",
         "for",
         9,
-        "repair: `r = loop each { while each < 3; };`, `each` in place of `for`",
+        "r = loop each { while each < 3; };",
     );
     reserved(
         "r = loop t { while t < 3; initial initial = 0; };",
         "initial",
         34,
-        "repair: `r = loop t { while t < 3; initial start = 0; };`, `start` in place of `initial`",
+        "r = loop t { while t < 3; initial start = 0; };",
     );
 }
 
@@ -246,38 +171,35 @@ fn a_loop_variable_or_a_statement_of_a_loop() {
 /// not then parse; a name the program already uses is not offered.
 #[test]
 fn the_repair() {
-    reserved(
-        "x = 1;\ny = x +\n  for * 2;\n",
-        "for",
-        17,
-        "repair: `each * 2;`, `each` in place of `for`",
-    );
+    reserved("x = 1;\ny = x +\n  for * 2;\n", "for", 17, "each * 2;");
     reserved(
         "rule = 1;\nlaw = rule + 1;\n",
         "law",
         10,
-        "repair: `rule2 = rule + 1;`, `rule2` in place of `law`",
+        "rule2 = rule + 1;",
     );
     reserved(
         "rule = rule2;\nlaw = rule + 1;\n",
         "law",
         14,
-        "repair: `rule3 = rule + 1;`, `rule3` in place of `law`",
+        "rule3 = rule + 1;",
     );
     // `if` both as a name and as a keyword on one line: neither the name everywhere nor at the
     // one site parses, since the second `if` is a name too.
-    reserved(
+    refused(
         "f(if) = if if > 0 { 1 } else { 0 };",
         "if",
         2,
-        "repair: another name in place of `if`, as `cond`",
+        "Reserved word used as a name: `f(if) = if if > 0 { 1 } else { 0 };`. Try another \
+         name, such as `cond`.",
+        "repair: another name, such as `cond`",
     );
     // At the one site only, where the word also stands as a keyword on the line.
     reserved(
         "f(if) = if x > 0 { 1 } else { 0 };",
         "if",
         2,
-        "repair: `f(cond) = if x > 0 { 1 } else { 0 };`, `cond` in place of `if`",
+        "f(cond) = if x > 0 { 1 } else { 0 };",
     );
 }
 
@@ -339,16 +261,14 @@ fn every_keyword_has_its_message() {
         assert_eq!(e.row, Some(Row::ReservedWordAsName), "{src}");
         assert_eq!(
             e.message,
-            format!("`{word}` is a reserved word, so it cannot be a name: {what}. {TAIL}"),
+            format!("Reserved word used as a name: `{word} = 1;`. Try `{like} = 1;` instead."),
             "{src}"
         );
         assert_eq!(e.span.start, 0, "{src}");
         let notes: Vec<&str> = e.notes.iter().map(|n| n.text.as_str()).collect();
         assert_eq!(
             notes,
-            [format!(
-                "repair: `{like} = 1;`, `{like}` in place of `{word}`"
-            )],
+            notes_of(word, what, &format!("repair: `{like} = 1;`")),
             "{src}"
         );
     }

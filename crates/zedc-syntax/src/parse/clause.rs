@@ -548,8 +548,8 @@ fn with_item(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
 }
 
 /// Each reserved word, in the order of [`crate::lex::KEYWORDS`], with what it begins (the
-/// clause of its message after "so it cannot be a name: ") and a name of like meaning that the
-/// repair offers in its place.
+/// note "`word` is reserved: ...") and a name of like meaning that the repair offers in its
+/// place.
 pub const RESERVED: [(&str, &str, &str); 38] = [
     (
         "struct",
@@ -767,29 +767,40 @@ fn reserved(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
     // the word stands, or else only here; offered when the parse then gets past the line.
     let (a, b) = t.line(at);
     let everywhere: Vec<usize> = (a..=b).filter(|&i| keyword(i) && t.t(i) == word).collect();
-    let repair = [everywhere, vec![at]]
+    let line = &t.text[t.span(a).start..t.span(b).end];
+    let repaired = [everywhere, vec![at]]
         .into_iter()
         .find(|s| t.renamed(s, &name, b))
         .map(|s| {
-            let mut line = String::new();
+            let mut out = String::new();
             let mut from = t.span(a).start;
             for i in s {
-                line.push_str(&t.text[from..t.span(i).start]);
-                line.push_str(&name);
+                out.push_str(&t.text[from..t.span(i).start]);
+                out.push_str(&name);
                 from = t.span(i).end;
             }
-            line.push_str(&t.text[from..t.span(b).end]);
-            format!("repair: `{line}`, `{name}` in place of `{word}`")
-        })
-        .unwrap_or_else(|| format!("repair: another name in place of `{word}`, as `{name}`"));
+            out.push_str(&t.text[from..t.span(b).end]);
+            out
+        });
+    let (try_, repair) = match &repaired {
+        Some(r) => (format!("Try `{r}` instead."), format!("repair: `{r}`")),
+        None => (
+            format!("Try another name, such as `{name}`."),
+            format!("repair: another name, such as `{name}`"),
+        ),
+    };
     Some(Clause {
         row: Some(Row::ReservedWordAsName),
-        message: format!(
-            "`{word}` is a reserved word, so it cannot be a name: {what}. Write another name in \
-             its place, here and wherever the program uses it as a name."
-        ),
+        message: format!("Reserved word used as a name: `{line}`. {try_}"),
         span,
-        notes: vec![(span, repair)],
+        notes: vec![
+            (span, format!("`{word}` is reserved: {what}")),
+            (
+                span,
+                format!("rename the other uses of `{word}` as a name too"),
+            ),
+            (span, repair),
+        ],
     })
 }
 

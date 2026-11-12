@@ -203,10 +203,8 @@ fn initial_may_stand_anywhere_in_the_body() {
 /// statement as it should, and gets the parse's own message at `_`, which is no name.
 #[test]
 fn initial_is_a_reserved_word() {
-    const MESSAGE: &str = "`initial` is a reserved word, so it cannot be a name: it begins the \
-                           statement `initial x = e;`, which gives `x` its value before step 0 \
-                           of a loop that updates `x`. Write another name in its place, here \
-                           and wherever the program uses it as a name.";
+    const WHAT: &str = "`initial` is reserved: it begins the statement `initial x = e;`, which \
+                        gives `x` its value before step 0 of a loop that updates `x` [initial]";
     for (src, at, repair) in [
         ("initial = 0;", 0, "start = 0;"),
         ("initial[0] = 1;", 0, "start[0] = 1;"),
@@ -216,13 +214,19 @@ fn initial_is_a_reserved_word() {
         let e = parse(src, &tokens, "Unit", TOP).expect_err(src);
         let e = Error::from(e);
         assert_eq!(e.row, Some(Row::ReservedWordAsName), "{src}");
-        assert_eq!(e.message, MESSAGE, "{src}");
+        assert_eq!(
+            e.message,
+            format!("Reserved word used as a name: `{src}`. Try `{repair}` instead."),
+            "{src}"
+        );
         assert_eq!(e.span.start, at, "{src}");
         assert_eq!(
             notes(src, &e),
-            [format!(
-                "repair: `{repair}`, `start` in place of `initial` [initial]"
-            )],
+            [
+                WHAT.to_string(),
+                "rename the other uses of `initial` as a name too [initial]".to_string(),
+                format!("repair: `{repair}` [initial]"),
+            ],
             "{src}"
         );
     }
