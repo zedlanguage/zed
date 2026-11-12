@@ -18,6 +18,7 @@ mod lit_branches;
 mod parts_type;
 mod scaling;
 mod spelling;
+mod top_literals;
 mod tuple_rest;
 mod tuples;
 mod two_union_operands;

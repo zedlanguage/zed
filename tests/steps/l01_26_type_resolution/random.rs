@@ -2,8 +2,9 @@
 //! kernel type error at run time). For each arrow the checker gives a random function of
 //! scalars, each value the evaluator computes at arguments of the arrow's parameter types lies
 //! in its result; and no random program the checker accepts, of functions of no declared
-//! parameter types that destructure tuples, call their parameters, take lambdas and use `^`
-//! and the bit words, raises a kernel type error when it runs. The seeds are fixed, so each
+//! parameter types that destructure tuples, compute on the components of a pair, call their
+//! parameters, take lambdas and use `^` and the bit words, raises a kernel type error when it
+//! runs or gives a value outside the static type of its result. The seeds are fixed, so each
 //! run makes the same programs.
 
 use std::collections::HashMap;
@@ -136,11 +137,23 @@ fn a_wrong_claim_is_caught() {
 /// literal or a name, so no run builds a number of more than a few thousand bits.
 struct Gen {
     rng: Rng,
-    /// For each function so far, `h0` first, its number of parameters and whether it calls
+    /// For each function so far, `h0` first, its number of parameters and what it does with
     /// its first.
-    arity: Vec<(usize, bool)>,
+    arity: Vec<(usize, First)>,
     /// The number of lambdas so far, which names the next one's parameter.
     lambdas: usize,
+}
+
+/// What a function does with its first parameter, which the arguments of its calls follow.
+#[derive(Clone, Copy)]
+enum First {
+    /// Anything else.
+    Value,
+    /// It calls it: a call passes a lambda most often.
+    Called,
+    /// It computes on two components of it, as `p[0] + p[1]`: a call passes a pair most
+    /// often, whose literals the body computes on (item SOUND-top-literals).
+    Pair,
 }
 
 /// The bit words of two int operands, the shifts, the words of one operand and a width, and
@@ -220,14 +233,21 @@ impl Gen {
         format!("({v} -> {body})")
     }
 
-    /// The arguments of a call of `n` parameters, the first most often a lambda when `applies`,
-    /// as the function called calls its first parameter.
-    fn args(&mut self, scope: &[&str], n: usize, applies: bool) -> String {
+    /// The arguments of a call of `n` parameters, the first most often a lambda or a pair as
+    /// `first` says the function called uses it.
+    fn args(&mut self, scope: &[&str], n: usize, first: First) -> String {
         let a: Vec<String> = (0..n)
-            .map(|k| match k == 0 && applies && self.rng.below(4) > 0 {
-                true => self.lambda(scope, 2),
-                false => self.arg(scope, 2, true),
-            })
+            .map(
+                |k| match (k == 0 && self.rng.below(4) > 0).then_some(first) {
+                    Some(First::Called) => self.lambda(scope, 2),
+                    Some(First::Pair) => format!(
+                        "({}, {})",
+                        self.arg(scope, 1, false),
+                        self.arg(scope, 1, false)
+                    ),
+                    Some(First::Value) | None => self.arg(scope, 2, true),
+                },
+            )
             .collect();
         a.join(", ")
     }
@@ -271,14 +291,18 @@ impl Gen {
             13 => format!("({})[{}]", e(self), self.rng.below(3)),
             14..=16 if !self.arity.is_empty() => {
                 let h = self.rng.below(self.arity.len());
-                let (n, applies) = self.arity[h];
-                format!("h{h}({})", self.args(scope, n, applies))
+                let (n, first) = self.arity[h];
+                format!("h{h}({})", self.args(scope, n, first))
             }
             17 if calls && !scope.is_empty() => {
                 let f = self.rng.pick(scope);
-                format!("{f}({})", self.args(scope, 1, false))
+                format!("{f}({})", self.args(scope, 1, First::Value))
             }
-            18 => format!("{}({})", self.lambda(scope, d), self.args(scope, 1, false)),
+            18 => format!(
+                "{}({})",
+                self.lambda(scope, d),
+                self.args(scope, 1, First::Value)
+            ),
             19 => {
                 let w = self.rng.pick(&WORDS2);
                 format!("{w}({}, {})", e(self), e(self))
@@ -302,16 +326,33 @@ impl Gen {
 
     /// The next function `h{i}`: a body that destructures its first parameter, a call of a
     /// function before it that passes its parameters on, a body that calls its first parameter,
-    /// a body that gives its first parameter to `^`, a shift or a bit word, or a body of one
-    /// expression.
+    /// a body that gives its first parameter to `^`, a shift or a bit word, a body that
+    /// computes on two components of its first parameter, or a body of one expression.
     fn helper(&mut self) -> String {
         let i = self.arity.len();
         let n = 1 + self.rng.below(2);
         let mut scope: Vec<&str> = ["p", "q"][..n].to_vec();
         let head: Vec<String> = scope.iter().map(|p| format!("positional {p}")).collect();
         let head = head.join(", ");
-        let mut applies = false;
-        let text = match self.rng.below(5) {
+        let mut first = First::Value;
+        let text = match self.rng.below(6) {
+            4 => {
+                // Each operand a component of `p`, or a literal or `q`.
+                first = First::Pair;
+                let operand = |g: &mut Self| match g.rng.below(3) {
+                    0 => "p[0]".to_string(),
+                    1 => "p[1]".to_string(),
+                    _ => g.leaf(&scope[1..]),
+                };
+                let (a, b) = (operand(self), operand(self));
+                let body = match self.rng.below(4) {
+                    0 => format!("({a} + {b})"),
+                    1 => format!("({a} - {b})"),
+                    2 => format!("({a} * {b})"),
+                    _ => format!("(-{a})"),
+                };
+                format!("h{i}({head}) = {body};\n")
+            }
             0 => {
                 let k = 2 + self.rng.below(2);
                 let names = &["a", "b", "c"][..k];
@@ -324,14 +365,14 @@ impl Gen {
             }
             1 if i > 0 => {
                 let h = self.rng.below(i);
-                applies = self.arity[h].1;
+                first = self.arity[h].1;
                 let a: Vec<&str> = (0..self.arity[h].0)
                     .map(|_| self.rng.pick(&scope))
                     .collect();
                 format!("h{i}({head}) = h{h}({});\n", a.join(", "))
             }
             2 => {
-                applies = true;
+                first = First::Called;
                 let a = self.expr(&scope[1..], 2, false);
                 let body = match self.rng.below(2) {
                     0 => format!("p({a})"),
@@ -354,13 +395,13 @@ impl Gen {
             }
             _ => format!("h{i}({head}) = {};\n", self.expr(&scope, 3, true)),
         };
-        self.arity.push((n, applies));
+        self.arity.push((n, first));
         text
     }
 }
 
 /// The forms counted among the programs run, each with what shows it in a program's text.
-const FORMS: [(&str, &[&str]); 7] = [
+const FORMS: [(&str, &[&str]); 8] = [
     ("destructuring", &[" = p;"]),
     ("lambda", &[" -> "]),
     ("power", &[")^"]),
@@ -379,6 +420,7 @@ const FORMS: [(&str, &[&str]); 7] = [
     ("tuple", &["(("]),
     ("call of a parameter", &[" p(", " q(", "(p(", "(q("]),
     ("call passed on", &[") = h"]),
+    ("components of a pair", &["p[0]", "p[1]"]),
 ];
 
 /// What the random programs of some seeds gave.
@@ -397,6 +439,11 @@ struct Runs {
     forms: [usize; FORMS.len()],
     /// Each accepted program whose run raised a kernel type error, with the error.
     type_errors: Vec<String>,
+    /// Each accepted program whose run gave a value that its static type does not hold
+    /// (item SOUND-top-literals), with the value and the type.
+    outside: Vec<String>,
+    /// Programs run whose type of `r` has no kernel type to test the value against.
+    untyped: usize,
 }
 
 /// The runs of the programs of the seeds `seeds`: for each seed, `n` sets of functions and
@@ -430,8 +477,17 @@ fn run_programs(seeds: std::ops::Range<u64>, n: usize) -> Runs {
                 // checker fault let apply itself.
                 let mut ev = Evaluator::new(World::new()).with_fuel(1_000_000);
                 match ev.run(&with_prelude(t)) {
-                    Ok(_) => {
+                    Ok(v) => {
                         runs.ran += 1;
+                        // The value lies in the static type of `r` (DESIGN.md rule 4).
+                        let ty = &i.tops["r"];
+                        match ty.kernel() {
+                            Some(k) if !k.contains(&v) => runs
+                                .outside
+                                .push(format!("{p}value {v} is not in its type {ty}")),
+                            Some(_) => {}
+                            None => runs.untyped += 1,
+                        }
                         for (k, (_, marks)) in FORMS.iter().enumerate() {
                             runs.forms[k] += usize::from(marks.iter().any(|m| p.contains(m)));
                         }
@@ -448,9 +504,10 @@ fn run_programs(seeds: std::ops::Range<u64>, n: usize) -> Runs {
 }
 
 /// Runs the programs of the seeds `seeds`, a hundred sets of functions each, and fails on any
-/// accepted program whose run raises a kernel type error. Each form of [`FORMS`] must occur
-/// among the programs run, so a change that stopped the generator making one, or the checker
-/// accepting it, fails here rather than testing less without notice.
+/// accepted program whose run raises a kernel type error or gives a value its static type does
+/// not hold. Each form of [`FORMS`] must occur among the programs run, so a change that stopped
+/// the generator making one, or the checker accepting it, fails here rather than testing less
+/// without notice.
 fn no_type_error(seeds: std::ops::Range<u64>) {
     let r = run_programs(seeds.clone(), 100);
     assert!(
@@ -458,6 +515,19 @@ fn no_type_error(seeds: std::ops::Range<u64>) {
         "seeds {seeds:?}: {} accepted programs raised a kernel type error:\n{}",
         r.type_errors.len(),
         r.type_errors.join("----\n")
+    );
+    assert!(
+        r.outside.is_empty(),
+        "seeds {seeds:?}: {} accepted programs gave a value outside the type of `r`:\n{}",
+        r.outside.len(),
+        r.outside.join("----\n")
+    );
+    // Nearly every type of `r` has a kernel type, so the test above sees nearly every value.
+    assert!(
+        r.untyped * 10 < r.ran,
+        "seeds {seeds:?}: {} of {} values run have no kernel type to test",
+        r.untyped,
+        r.ran
     );
     assert!(
         r.ran >= 200,

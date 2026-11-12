@@ -5659,12 +5659,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         let level = self.classes[child].level;
         let binder = self.classes[child].binder;
         let generic = self.classes[child].generic;
+        let asked = self.classes[child].asked;
         let given = self.classes[child].given;
         let narrowed_to = std::mem::take(&mut self.classes[child].narrowed_to);
         let narrows = self.classes[child].narrows;
         self.classes[child].parent = root;
         let c = &mut self.classes[root];
         c.generic &= generic;
+        c.asked |= asked;
         // Its values are no longer those of one `min` or `max` use only.
         c.order_of = None;
         c.given &= given;

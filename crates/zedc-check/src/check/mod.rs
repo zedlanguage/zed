@@ -929,6 +929,11 @@ struct Class {
     /// Whether its values are those of generic literals only, as of `1 + 1` inside a function: of a merged
     /// class, whether both were. An `if` merges it with the class of its other branch.
     generic: bool,
+    /// Whether a use asked it for a carrier, as the bounded variable of an operator or of a
+    /// function does: its values are then any of the carrier it takes, which the use may
+    /// compute, not only the literals that joined it ([`Ck::resolve_top_parts`]). A literal's
+    /// own join does not ask. Of a merged class, whether either was.
+    asked: bool,
     /// Whether it is what a use of another class's values gives, as `args[k]` is in the body
     /// of `r(fs, args, k)`: at a call it may hold any atom, and a test narrows it by a need
     /// ([`Ck::narrowed`]). Of a merged class, whether both were. A parameter's class is not:
@@ -2620,6 +2625,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             flowed: Vec::new(),
             binder: None,
             generic: false,
+            asked: false,
             given: false,
             narrowed_to: Vec::new(),
             narrows: false,
@@ -2645,11 +2651,21 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Removes from class `k` the carriers `mask` lacks, as `what` at `span` requires;
-    /// false, changing nothing, if none would be left.
+    /// false, changing nothing, if none would be left. A mask of carriers alone asks the
+    /// class for a carrier ([`Class::asked`]), even where it removes none.
     fn restrict(&mut self, k: usize, mask: u8, what: &str, span: Span) -> bool {
+        self.restrict_asking(k, mask, what, span, mask & OTHER == 0)
+    }
+
+    /// [`Self::restrict`], which asks the class for a carrier if `asks`.
+    fn restrict_asking(&mut self, k: usize, mask: u8, what: &str, span: Span, asks: bool) -> bool {
         let r = self.find(k);
         let m = self.classes[r].mask & mask;
         if m == self.classes[r].mask {
+            if asks && !self.classes[r].asked {
+                self.touch(r);
+                self.classes[r].asked = true;
+            }
             return true;
         }
         if m == 0 {
@@ -2658,6 +2674,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.touch(r);
         let c = &mut self.classes[r];
         c.mask = m;
+        c.asked |= asks;
         c.reasons.push(Reason {
             span,
             what: what.into(),
@@ -2754,13 +2771,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .into_iter()
                 .filter(|&c| adoptable(l, c) && (!l.generic || fits(l, c)))
                 .fold(0, |m, c| m | c.bit());
-            if !self.restrict(
+            // The literal's own carriers do not ask the class for one.
+            if !self.restrict_asking(
                 k,
                 m,
                 &quoting(&format_args!("the literal {}", l.written()), || {
                     "this literal".into()
                 }),
                 l.site,
+                false,
             ) {
                 return false;
             }
@@ -4263,13 +4282,19 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Gives each class [`Self::generic_parts`] made outside every function since `from`, of
-    /// the literals of a tuple argument, its type, now that the application has met it: a
-    /// class the application left one numeric carrier takes it, and its literals adopt it,
-    /// as `2` takes `rat` in `y = f(x: 1r, p: (2, 1))` with `f(x, p) = x + p[0]`; any other
-    /// keeps its literals' own types, `int` for `1` there, since nothing outside a function
-    /// chooses among carriers (DESIGN.md L1.26a), and a decimal literal so left is rejected
-    /// where the arguments are read ([`Self::unfixed_args`]). Each class is read once: the
-    /// cost is the number of its literals.
+    /// the literals of a tuple argument, its type, now that the application has met it. A
+    /// class a use asked for a carrier ([`Class::asked`]), as a bounded variable does,
+    /// stands for one carrier of the bound, as the variable does at a call (DESIGN.md
+    /// L1.26a), and the body's operators make new values of that carrier from the literals,
+    /// so the class is the whole carrier: `int` in `r = h((1, 2))` with `h(positional p) =
+    /// p[0] + p[1]`, whose value is `3`, and `rat` for `2` in `y = f(x: 1r, p: (2, 1))` with
+    /// `f(x, p) = x + p[0]`. The carrier is chosen as for literals alone at a bounded
+    /// variable: `int` for integer literals where the class holds it, the one carrier left,
+    /// and with two or more the first literal is rejected, unless a decimal literal is in
+    /// the class, which is rejected where the arguments are read ([`Self::unfixed_args`]).
+    /// The literals adopt the carrier. A class no use asked, as `p` in `h(p) = p[0]`,
+    /// keeps its literals' own types, `1` for `h((1, 2))`, since only a copy of a literal
+    /// can come out of it. Each class is read once: the cost is the number of its literals.
     fn resolve_top_parts(&mut self, from: usize) {
         for k in self.top_parts.split_off(from) {
             let r = self.find(k);
@@ -4280,20 +4305,40 @@ impl<'t, 'a> Ck<'t, 'a> {
             let lits: Vec<Lit> = (self.classes[r].lits.iter())
                 .map(|(l, _)| l.clone())
                 .collect();
-            let mut numeric = Carrier::of_mask(mask).filter(|c| c.numeric());
-            let one = match (numeric.next(), numeric.next()) {
-                (Some(c), None) if mask & OTHER == 0 => Some(c),
-                _ => None,
+            let takes: Vec<Carrier> = Carrier::of_mask(mask)
+                .filter(|&c| c.numeric() && lits.iter().all(|l| fits(l, c)))
+                .collect();
+            let ints = lits.iter().all(|l| lit_carrier(&l.value) == Carrier::Int);
+            let c = match takes[..] {
+                _ if !self.classes[r].asked => None,
+                [] => None,
+                _ if ints && takes.contains(&Carrier::Int) => Some(Carrier::Int),
+                [c] => Some(c),
+                [c, ..] => {
+                    let decimal = lits.iter().any(|l| lit_carrier(&l.value) == Carrier::F64);
+                    if !decimal && let Some(l) = lits.first() {
+                        let notes = self.derive(&[l.site]);
+                        let m = unfixed(l, &takes, None);
+                        self.reject(Some(Row::UnfixedDecimal), l.site, m, notes);
+                    }
+                    Some(c)
+                }
             };
-            let mut ts = Vec::with_capacity(lits.len());
-            for l in &lits {
-                ts.push(match one {
-                    Some(c) => self.adopt_to(l, c),
-                    None => lit_ty(&l.value, l.neg()),
-                });
-            }
+            let ty = match c {
+                Some(c) => {
+                    for l in &lits {
+                        self.adopt_to(l, c);
+                    }
+                    Ty::carrier(c)
+                }
+                None => Ty::union_all(
+                    &(lits.iter())
+                        .map(|l| lit_ty(&l.value, l.neg()))
+                        .collect::<Vec<_>>(),
+                ),
+            };
             self.touch(r);
-            self.classes[r].resolved = Some(Ty::union_all(&ts));
+            self.classes[r].resolved = Some(ty);
         }
     }
 }
