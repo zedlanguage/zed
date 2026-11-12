@@ -1957,17 +1957,19 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| EXP-swar-digits | impl attempt 1 | 2026-11-12 11:14 | correctness tests pass (37 num tests incl. 3 new); benchmark battery of 126 configs started, load 52.69 50.35 46.16 |
 | GSX-unsolved | hybrid-xr attempt 1 | 2026-11-11 16:53 | round H1 seats launched: Opus 5.5 medium (h1/claude, tree gsxh-claude), gpt-6.1-sol medium (h1/codex, tree gsxh-codex), 5 h limit; load 25.46 30.53 39.26 |
+| L17-forced-rat-headline | impl attempt 1 | 2026-11-12 11:26 | start: worktree on origin/main f80ceabf4, load 44.24 |
 | LIT-two-union-headline | running | 2026-11-12 11:17 |  |
 | LIT-two-union-unread-wording | running | 2026-11-12 11:17 |  |
 | LOAD-max-div-unsolved | impl attempt 1 | 2026-11-11 17:11 | worktree /home/luke/Work/wt/lmd-cd (wt/lmd-cd at 7d96d3826) made for the Rust port; CD round 1 best 58 = 28.71 |
 | MSG-many-args-decimal | running | 2026-11-12 07:32 |  |
 | MSG-many-args-one-error | running | 2026-11-12 07:32 |  |
 | MSG-many-args-repair-loop | impl attempt 1 | 2026-11-12 07:32 | started with MSG-many-args-decimal and MSG-many-args-one-error; worktree /home/luke/Work/wt/msg-many-args2, spec /home/luke/Work/wt/msg-many-args2-spec; load 36 |
-| PERF-negated-followups | impl attempt 1 | 2026-11-12 07:49 | main 64ef2bb4c: wide-rat test 684.4M/8139.3M instr = 11.89x (limit 12.34, not 12.26 as recorded), load 28; separate failure on main: tuple_min_max chain 44.1x b |
+| POLY-nf | impl attempt 1 | 2026-11-11 01:43 | started; worktree /home/luke/Work/wt/poly-nf from origin/main |
 | PRODUCT-lin-rows | hybrid-xr attempt 1 | 2026-11-11 01:43 | round 0 started: own attempt at a potential design before seats |
 | REFUSAL-front-unsolved | running | 2026-11-11 17:03 |  |
+| SWAR-read-literals | impl attempt 1 | 2026-11-12 11:34 | negative control (every text read whole, O(n^2), not committed): l01_18 4 reading scaling tests fail, int(s) 352.2M to 22,399.4M instr 63.6x (limit 12.1), rat(s |
+| TRIVIAL-walk-index | impl attempt 1 | 2026-11-12 11:01 | negative control: main's walk on the cut family f(x,..,x) == g1(..gk(g0(f(y,..,x), f(y,..,x)))) fails, k 200->1600: 23,988,879 -> 1,285,478,711 instr (53.6x, li |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
