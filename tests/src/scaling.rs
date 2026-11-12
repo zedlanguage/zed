@@ -865,27 +865,29 @@ mod tests {
         assert!(fails(|| by((1, 2), &quarter)));
     }
 
+    /// Linear work passes and cubic work fails by processor time, at 100 and 800, where the
+    /// limit is 12.8 (25.5 by time): 8 and 512 times the work. Measured at load about 25
+    /// (2026-11-12, three runs): linear 6.6 to 7.4 times, 3.4 times under the allowance; cubic
+    /// 217 to 501 times, 8.5 times over it. The linear runs are 1 and 8 million passes, as
+    /// before. This test ran quadratic work at 1000 and 8000 before, 64 times the work against
+    /// 22.9 by time: measured 42.4 to 58.8 times, only 1.85 times over the allowance, and linear
+    /// work at 100,000 and 800,000, 5.7 to 6.9 times against 20.8 (load about 31).
     // Only Linux has a meter of processor time.
     #[cfg(target_os = "linux")]
     #[test]
     fn processor_time_tells_the_orders_apart_too() {
         let mut meter = Meter::of_cpu_time();
         let cpu = &mut meter;
-        check_by(
-            cpu,
-            Measures::WorkOnly,
-            "linear work",
-            100_000,
-            (1, 1),
-            |n| work(n, 1, 10),
-        );
+        check_by(cpu, Measures::WorkOnly, "linear work", 100, (1, 1), |n| {
+            work(n, 1, 10_000)
+        });
         assert!(fails(|| check_by(
             cpu,
             Measures::WorkOnly,
-            "quadratic work",
-            1000,
+            "cubic work",
+            100,
             (1, 1),
-            |n| { work(n, 2, 2) }
+            |n| { work(n, 3, 2) }
         )));
     }
 

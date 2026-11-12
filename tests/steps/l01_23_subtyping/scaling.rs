@@ -1242,35 +1242,82 @@ fn pinwheels_whose_ends_share_a_first_component_scale() {
         .unwrap();
 }
 
+/// The integer ends of `k` pinwheels, `10 i + 1` to `10 i + 3`, with the third end of the last
+/// one cofinite when `cofinite`: its own integer and every integer no pinwheel uses.
+fn plain_ends(k: usize, cofinite: bool) -> Vec<[Type; 3]> {
+    let mut ends: Vec<[Type; 3]> = (0..k as i64).map(|i| End::Plain.ends(10 * i)).collect();
+    if cofinite && let Some(last) = ends.last_mut() {
+        let used =
+            Type::union_all((0..k as i64).flat_map(|i| (1..=3).map(move |j| lit_i(10 * i + j))));
+        last[2] = &(&Type::int() - &used) | &last[2];
+    }
+    ends
+}
+
+/// The pinwheels on `ends` written as one difference: the union of their squares less the
+/// union of all their boxes. Each box lies in the square of its own pinwheel and the squares
+/// share no value, so this is the union of the pinwheels. But its part is a meet, not a union
+/// of parts that share no tuple type, so the rule that decides such a union one part at a
+/// time (COMPLEXITY.md K80) does not apply, and only the split into classes on a component
+/// (K36) decides it one pinwheel at a time.
+fn squares_less_boxes(full: bool, ends: &[[Type; 3]]) -> Type {
+    let boxes: &[[u8; 2]] = match full {
+        false => &[[3, 1], [4, 3], [6, 4], [1, 6]],
+        true => &[[3, 1], [4, 3], [6, 4], [1, 6], [2, 2]],
+    };
+    let set = |e: &[Type; 3], m: u8| {
+        Type::union_all((0..3).filter(|i| m >> i & 1 == 1).map(|i| e[i].clone()))
+    };
+    let squares = Type::union_all(ends.iter().map(|e| Type::tuple(vec![set(e, 7); 2])));
+    let all = Type::union_all(ends.iter().flat_map(|e| {
+        boxes
+            .iter()
+            .map(|b| Type::tuple(b.iter().map(|&m| set(e, m)).collect()))
+    }));
+    &squares - &all
+}
+
 #[test]
 fn a_union_of_disjoint_pinwheels_is_decided_piece_by_piece() {
-    // No component splits the pinwheels' boxes into disjoint pieces, so each was decided, and
-    // its value sought, against the whole union: 27.7 times the work from k = 16 to 128. Their
-    // cells on the first component fall into one class per pinwheel, sharing no integer, and
-    // the halves of the classes are decided and searched apart.
+    // The pinwheels are written as their squares less all their boxes (`squares_less_boxes`).
+    // No component splits the boxes into disjoint pieces, so without the split into classes
+    // each open tuple type is a piece decided against the whole part: from k = 64 to 512, 58.6
+    // times the instructions empty, 57.9 times with the cofinite end, and 26.6 times the bytes
+    // with a middle (negative control, run once, not committed: `classes` answering `None`).
+    // Their cells on the first component fall into one class per pinwheel, sharing no integer,
+    // and the halves of the classes are decided and searched apart: 8.8, 8.9 and 8.2 times
+    // (limit 13.20, load about 35, 2026-11-12). The union of the pinwheels (`pinwheels`) is
+    // decided one pinwheel at a time by the rule for unions of parts that share no tuple type
+    // (K80) too: without the split it took 8.0 times empty and 7.1 times with a middle, from
+    // k = 16 to 128, so it does not test the split.
     std::thread::Builder::new()
         .spawn(|| {
+            let built = |cofinite: bool, full: bool| -> std::collections::HashMap<usize, Type> {
+                scaling::inputs(64, |k| squares_less_boxes(full, &plain_ends(k, cofinite)))
+            };
+            let empty = built(false, true);
             scaling::check("k disjoint pinwheels, empty, by k", 64, |k| {
                 Type::forget_emptiness();
-                assert!(pinwheels(k, true, End::Plain).is_empty());
+                assert!(empty[&k].is_empty());
             });
             // A cofinite type lists the integers it leaves out. When any cofinite cell joined
             // its whole universe, all k pinwheels fell in one class: 62.6 times the work from
             // k = 64 to 512. A finite cell now joins it only when it holds an integer the
             // cofinite one does not leave out.
+            let cofinite = built(true, true);
             scaling::check(
                 "k disjoint pinwheels, one end cofinite, empty, by k",
                 64,
                 |k| {
                     Type::forget_emptiness();
-                    assert!(cofinite_pinwheels(k, true, End::Plain).is_empty());
+                    assert!(cofinite[&k].is_empty());
                 },
             );
+            let open = built(false, false);
             scaling::check("k disjoint pinwheels with a middle, by k", 64, |k| {
                 Type::forget_emptiness();
-                let t = pinwheels(k, false, End::Plain);
-                assert!(!t.is_empty());
-                assert_eq!(t.verdict(), zed_kernel::types::Verdict::Inhabited);
+                assert!(!open[&k].is_empty());
+                assert_eq!(open[&k].verdict(), Verdict::Inhabited);
             });
         })
         .unwrap()
@@ -1300,6 +1347,26 @@ fn a_union_of_disjoint_pinwheels_is_decided() {
             "k = {k}"
         );
         assert!(full.subtype(&open) && !open.subtype(&full), "k = {k}");
+        // The squares less all the boxes are the same pinwheels, with or without a cofinite
+        // end, and are decided the same way.
+        for cofinite in [false, true] {
+            let ends = plain_ends(k, cofinite);
+            let (full_d, open_d) = (
+                squares_less_boxes(true, &ends),
+                squares_less_boxes(false, &ends),
+            );
+            assert_eq!(full_d.verdict(), Verdict::Empty, "k = {k}, {cofinite}");
+            assert_eq!(open_d.verdict(), Verdict::Inhabited, "k = {k}, {cofinite}");
+            assert!((&open_d - &full_d).equiv(&middles), "k = {k}, {cofinite}");
+            let unions = (
+                Type::union_all(ends.iter().map(|e| pinwheel(true, e.clone()))),
+                Type::union_all(ends.iter().map(|e| pinwheel(false, e.clone()))),
+            );
+            assert!(
+                full_d.equiv(&unions.0) && open_d.equiv(&unions.1),
+                "k = {k}, {cofinite}"
+            );
+        }
     }
 }
 
