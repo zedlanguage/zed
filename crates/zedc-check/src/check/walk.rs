@@ -9946,7 +9946,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     branched.push(a);
                     continue;
                 }
-                if values_alone(&a.ty) && lists_a_number(&a.ty) && self.readable(a) {
+                // [`Self::readable`] before [`lists_a_number`], as in [`Self::read_arg`].
+                if values_alone(&a.ty) && self.readable(a) && lists_a_number(&a.ty) {
                     valued = true;
                     called.push(a);
                     continue;
@@ -11717,8 +11718,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         p: &Ty,
     ) -> Option<Result<(Ty, Carrier), (Value, Carrier)>> {
         // The cheap tests first: every operator application with an argument of no literal
-        // asks, and few such arguments list a number.
-        if p.dynamic || !p.vars.is_empty() || !lists_a_number(&a.ty) || !self.readable(a) {
+        // asks, and few such arguments list a number. Complexity tradeoff (COMPLEXITY.md
+        // F181): whether the argument is a call or an `if` ([`Self::readable`]) is O(1) for
+        // any other argument, and is asked before [`lists_a_number`], which lists the values
+        // of the type, O(v) for `v` values. Asked the other way round, each `min` of a chain
+        // `a{i} = min(a{i - 1}, (i, 0.5f64, i))` listed the `i` values of its first
+        // component, a name and no call, O(n²) bytes in all (44 times the bytes at 8 times
+        // the length, MINMAX-chain-bytes-main).
+        if p.dynamic || !p.vars.is_empty() || !self.readable(a) || !lists_a_number(&a.ty) {
             return None;
         }
         read_ty(&a.ty, p)
@@ -11763,11 +11770,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             a.lit.as_ref().is_some_and(|l| l.bare) || a.parts.is_some() || a.branches.is_some()
         };
         // The arguments whose listed values are read at a carrier where they are used
-        // ([`Self::readable`]), found once for every arrow.
+        // ([`Self::readable`]), found once for every arrow. [`Self::readable`] is asked before
+        // [`lists_a_number`], as in [`Self::read_arg`].
         let read: Vec<bool> = (args.iter())
             .map(|a| {
                 a.as_ref().is_some_and(|a| {
-                    values_alone(&a.ty) && lists_a_number(&a.ty) && self.readable(a)
+                    values_alone(&a.ty) && self.readable(a) && lists_a_number(&a.ty)
                 })
             })
             .collect();
