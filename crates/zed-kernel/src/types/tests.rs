@@ -315,10 +315,63 @@ fn a_function_part_is_found_at_any_depth() {
     ] {
         assert_eq!(t.function_part(), Some(part), "{}", t.surface());
     }
-    // The tradeoff of `Type::function_part`: a tuple type subtracted is walked as one kept
-    // is, so this pair of `int`s is read as holding a function.
-    let less = &pair(&int, &int) - &pair(&tuples, &int);
-    assert_eq!(less.function_part(), Some(tuples));
+}
+
+#[test]
+fn a_function_part_follows_only_the_tuple_types_a_path_to_true_takes() {
+    let (int, a) = (Type::int(), Type::atom("a"));
+    let tuples = Type::universe(Universe::Tuple);
+    let fns = Type::universe(Universe::Morphism);
+    let pair = |x: &Type, y: &Type| Type::tuple(vec![x.clone(), y.clone()]);
+    let wide_int = pair(&(&int | &tuples), &int);
+    let shape = pair(&int, &(&int | &a));
+    // A tuple type only subtracted is not walked: each of these holds pairs of data alone.
+    let met = &(&tuples - &wide_int) & &shape;
+    for t in [
+        // Subtracted from a written pair.
+        &pair(&int, &int) - &pair(&tuples, &int),
+        // Subtracted from every tuple, then met with a pair of data: `(int, #a)` alone.
+        met.clone(),
+        // The same in a union with a pair of data, and met once more.
+        &met | &pair(&a, &a),
+        &met & &(&tuples - &pair(&int, &tuples)),
+        // Two differences met, each subtracting a pair with a kind-wide component.
+        &(&(&tuples - &pair(&tuples, &int)) & &(&tuples - &pair(&int, &tuples))) & &shape,
+        // Under three complements, by `!`.
+        &shape & &!&!&!&wide_int,
+        // A subtracted function type.
+        &pair(&int, &int) - &pair(&int, &fns),
+    ] {
+        assert_eq!(t.function_part(), None, "{}", t.surface());
+    }
+    // A tuple type with a kind-wide component under an even number of complements is kept,
+    // and a function part that a difference leaves in place is found.
+    for (t, part) in [
+        // Twice subtracted: `(..) \ ((..) \ ((..), int))` is `((..), int)`.
+        (&tuples - &(&tuples - &wide_int), tuples.clone()),
+        (&shape | &!&!&wide_int, tuples.clone()),
+        // A union in a difference: the subtracted pair takes away part of the kind-wide one.
+        (
+            &pair(&tuples, &tuples) - &pair(&tuples, &int),
+            tuples.clone(),
+        ),
+        (&met | &pair(&a, &tuples), tuples.clone()),
+        // The function part survives a difference that takes a function type away.
+        (&pair(&int, &fns) - &pair(&int, &int), fns.clone()),
+    ] {
+        assert_eq!(t.function_part(), Some(part), "{}", t.surface());
+    }
+    // The tradeoff of `Type::function_part` (COMPLEXITY.md K103): a path to `true` that takes
+    // two tuple types walks both, though their meet may leave no function. So the meet of
+    // `(int, int)` with `(int | (..), int)`, which holds only pairs of `int`s, is read as
+    // holding a function; and so is `s \ (r \ q)`, which is `s & (!r | q)`, whose path
+    // `s & r & q` takes `r`, though its values are in `q = (int, int)`.
+    for t in [
+        &pair(&int, &int) & &wide_int,
+        &shape - &(&wide_int - &pair(&int, &int)),
+    ] {
+        assert_eq!(t.function_part(), Some(tuples.clone()), "{}", t.surface());
+    }
 }
 
 #[test]

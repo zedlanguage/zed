@@ -553,15 +553,53 @@ fn a_kind_wide_part_met_with_a_shape_that_holds_one_may_hold_a_function() {
         );
         assert_eq!(errors(text), [want], "{text}");
     }
-    // The tradeoff of `Type::function_part` (COMPLEXITY.md K103): a subtracted tuple type is
-    // walked as a kept one is, so this type, which holds only `(int, #a)`, is refused for the
-    // `(..)` of the pair it subtracts. Open: a walk of the tuple types each path keeps.
-    let text = "f(p: ((..) \\ (int | (..), int)) & (int, int | #a)) = String(p);\n";
-    let value = "(int, int | #a) \\ (int | (..), int)";
-    let want = format!(
-        "`String` takes data, and this value, of `{value}`, may hold a function: data is a value that holds no function at any depth, and `{value}` holds `(..)`, which holds every value of its shape, functions too [String(p)]"
-    );
-    assert_eq!(errors(text), [want], "{text}");
+}
+
+#[test]
+fn a_tuple_type_that_is_only_subtracted_holds_no_function() {
+    // A tuple type taken away holds none of the values left, so its `(..)` is not read as a
+    // function the value may hold (COMPLEXITY.md K103): each parameter below holds pairs of
+    // `int`s and `#a` alone, data, which `String` and `==` take.
+    let errors = zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    for text in [
+        // The pair with `(..)` is taken from every tuple, and the rest met with a pair of
+        // data: what is left is `(int, #a)`.
+        "f(p: ((..) \\ (int | (..), int)) & (int, int | #a)) = String(p);\n",
+        // The same in a union with another pair of data.
+        "f(p: (((..) \\ (int | (..), int)) & (int, int | #a)) | (#a, #a)) = String(p);\n",
+        // Two differences met, each taking away a pair with `(..)` on one side.
+        "f(p: ((..) \\ ((..), int)) & ((..) \\ (int, (..))) & (int, int | #a)) = p == p;\n",
+        // Taken away three times over, which is taken away once.
+        "f(p: ((..) \\ ((..) \\ ((..) \\ ((..), int)))) & (int, int | #a)) = String(p);\n",
+    ] {
+        assert_eq!(errors(text), Vec::<String>::new(), "{text}");
+    }
+}
+
+#[test]
+fn a_tuple_type_subtracted_twice_or_left_beside_a_difference_may_hold_a_function() {
+    // A tuple type taken away twice is kept, and a kind-wide part that a difference does not
+    // take away stays in the value.
+    let errors = zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    for (text, value) in [
+        (
+            "f(p: (..) \\ ((..) \\ ((..), int))) = String(p);\n",
+            "((..), int)",
+        ),
+        (
+            "f(p: (int, (..)) \\ (int, (int, int))) = String(p);\n",
+            "(int, (..))",
+        ),
+        (
+            "f(p: (((..) \\ (int | (..), int)) & (int, int | #a)) | (#a, (..))) = String(p);\n",
+            "((int, int | #a) \\ (int | (..), int)) | (#a, (..))",
+        ),
+    ] {
+        let want = format!(
+            "`String` takes data, and this value, of `{value}`, may hold a function: data is a value that holds no function at any depth, and `{value}` holds `(..)`, which holds every value of its shape, functions too [String(p)]"
+        );
+        assert_eq!(errors(text), [want], "{text}");
+    }
 }
 
 #[test]
@@ -599,6 +637,38 @@ fn the_function_part_of_a_kind_wide_part_is_found_in_linear_time() {
             Some(tuples.clone())
         );
     });
+    // `((..), int)` taken away from `(..)` n times, met with `(int, int | #a)`, which holds no
+    // function, and with `(int | (..), int)`, which holds one when n is even and the tuple type
+    // is kept.
+    let wide_int = Type::tuple(vec![tuples.clone(), int()]);
+    let nested = |n: usize| (0..n).fold(wide_int.clone(), |t, _| &tuples - &t);
+    let shape = Type::tuple(vec![int(), &int() | &Type::atom("a")]);
+    let kept = Type::tuple(vec![&int() | &tuples, int()]);
+    scaling::check(
+        "the function part of a tuple type taken away n times",
+        256,
+        |n| {
+            assert_eq!(Ty::set(&shape & &nested(n)).held_wide(), None);
+            let want = (n % 2 == 0).then(|| tuples.clone());
+            assert_eq!(Ty::set(&kept & &nested(n)).held_wide(), want);
+        },
+    );
+    // The exclusive or of n tuple types `(i, int)`, which hold data, and of the same with a
+    // last `(n, (..))`, which holds a function: an expression each of whose nodes a path to
+    // `true` reaches both kept and taken away, so 2^n paths and n nodes.
+    let parity = |n: usize, last: Type| {
+        let rows = (0..n).map(|i| Type::tuple(vec![lit(i), int()]));
+        let rows = rows.chain([Type::tuple(vec![lit(n), last])]);
+        Ty::set(rows.fold(Type::empty(), |p, r| &(&p - &r) | &(&r - &p)))
+    };
+    scaling::check(
+        "the function part of the exclusive or of n tuple types",
+        256,
+        |n| {
+            assert_eq!(parity(n, int()).held_wide(), None);
+            assert_eq!(parity(n, tuples.clone()).held_wide(), Some(tuples.clone()));
+        },
+    );
 }
 
 /// The atom `#name` with the payloads `shapes`, each of components only.

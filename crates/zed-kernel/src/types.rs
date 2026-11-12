@@ -1499,27 +1499,33 @@ impl Type {
     /// The first part, at any depth, that holds values a function may be in: every tuple or
     /// struct, every tuple of a length outside the tuple types listed for it, or a morphism.
     /// The part found is given as its tuples, structs and morphisms, as [`Type::split`] gives
-    /// them; `None` when every value is data. The components of each tuple type listed are
-    /// walked, and the payloads of each atom name listed; the atoms of the names not listed
-    /// are not read as holding a function, since a payload not listed is not known
+    /// them; `None` when every value is data. The components of the tuple types a tuple of the
+    /// part may be in are walked: those some path of the part to `true` takes, so a tuple type
+    /// the part only subtracts is not, as `((..), int)` in `(int, int) \ ((..), int)`. A tuple
+    /// of the part with a function in a component is in some tuple type of the part, since it
+    /// is outside every one only when the part holds a tuple outside them all, which is found
+    /// first; and a tuple type it is in that a path to `true` takes holds the function in that
+    /// component. The payloads of each atom name listed are walked; the atoms of the names not
+    /// listed are not read as holding a function, since a payload not listed is not known
     /// (`zedc_types::Ty::payloads`), as a set's own atoms are not.
     // Complexity tradeoff (COMPLEXITY.md K103): naive version, a walk of the paths from the
     // root, 2^n for a pair nested n deep whose components are one node, and endless on a
-    // recursive type. Used: each node walked once, by a set of node numbers, O(n) for a type
-    // of n nodes. Given up: a part is read as holding a function from its tuple types alone,
-    // not by search, so the tuple types a part subtracts are walked as those it keeps are,
-    // and `(int, int) \ ((..), int)` is read as holding a function though it holds none.
-    // Why: which tuple types a value may be in is a search over the part, and the written
-    // differences seen so far subtract tuples of data, as `(..) \ (#a, #a)`. Trigger: a
-    // subtracted tuple type whose components hold a kind-wide part, as in `((..) \ (int |
-    // (..), int)) & (int, int | #a)`, whose values `(int, #a)` are refused as data.
-    // Tests: `types::tests::a_function_part_is_found_at_any_depth`,
+    // recursive type. Used: each type walked once, by a set of node numbers, and each node of
+    // a tuple part once for each value it is walked toward, by a set of node ids, O(n) for a
+    // type of n nodes. Given up: a tuple type taken on a path to `true` is walked whether or
+    // not the other tuple types that path takes leave a value with a function in it, so
+    // `(int, int) & ((..), int)` is read as holding a function though it holds only pairs of
+    // `int`s. Why: which tuple types a value with a function may be in together is a search
+    // over the meets of the tuple types (coNP-hard, as emptiness is, `types/empty.rs`).
+    // Trigger: a meet of tuple types, one with a component that holds a kind-wide part and
+    // another that cuts it away. Tests: `types::tests::a_function_part_is_found_at_any_depth`,
+    // `a_function_part_follows_only_the_tuple_types_a_path_to_true_takes`,
     // `a_function_part_is_found_in_a_recursive_type_once_per_node`, and
     // `l01_22_type_representation::kinds::the_function_part_of_a_kind_wide_part_is_found_in_linear_time`.
-    // The complete solution walks only the tuple types held on a path of the part that
-    // reaches `true`.
+    // The complete solution meets the component types each path takes before walking them.
     pub fn function_part(&self) -> Option<Type> {
         let mut seen = HashSet::new();
+        let mut paths = HashSet::new();
         let mut stack = vec![self.clone()];
         while let Some(t) = stack.pop() {
             if !seen.insert(t.node_id()) {
@@ -1535,10 +1541,9 @@ impl Type {
                 }
             }
             stack.extend(p.atoms.names.values().map(|a| a.payload.clone()));
-            p.tuples.atoms(&mut |r| {
-                stack.extend(r.iter().cloned());
-                true
-            });
+            for part in p.tuples.lens.values() {
+                part.taken_toward(true, &mut paths, &mut |r| stack.extend(r.iter().cloned()));
+            }
         }
         None
     }

@@ -1739,6 +1739,41 @@ impl<A: Literal> Part<A> {
         true
     }
 
+    /// Calls `f` on atoms such that every setting of the atoms that makes the part `to` either
+    /// holds one of them or makes the part `to` with no atom holding. A diagram gives the atoms
+    /// its paths to `to` take (`Bdd::taken_toward`); `!x` gives those of `x` to `!to`, and
+    /// `x | y` and `x & y` those of both operands to `to`. By induction: a setting that makes
+    /// `x | y` or `x & y` `to` makes one or both operands `to` with the same atoms, and when it
+    /// holds no atom given for them, the setting that holds no atom makes those operands `to`
+    /// as well, so the whole too. An atom refused on every path to `to`, as `r` in `!r & s`
+    /// to `true`, is not given. Each expression and diagram node is walked once for each value,
+    /// by `seen` (shared across calls, so a node met again is passed over), from a stack, so the
+    /// time is linear in the nodes.
+    pub(super) fn taken_toward<'a>(
+        &'a self,
+        to: bool,
+        seen: &mut HashSet<(u64, bool)>,
+        f: &mut impl FnMut(&'a A),
+    ) {
+        let mut stack = vec![(self, to)];
+        while let Some((p, to)) = stack.pop() {
+            match p {
+                Part::Bdd(b) => b.taken_toward(to, seen, f),
+                Part::Expr(e) => {
+                    if seen.insert((e.id, to)) {
+                        match e.form() {
+                            Form::Not(a) => stack.push((a, !to)),
+                            Form::Or(a, b) | Form::And(a, b) => {
+                                stack.push((b, to));
+                                stack.push((a, to));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Each distinct atom once, in the order first met. One atom can stand on several nodes,
     /// and a caller that tests or splits on each atom must meet it once.
     pub(super) fn distinct_atoms(&self) -> Vec<A> {
@@ -3048,6 +3083,57 @@ mod list {
                     }
                 }
                 at = c.right.as_deref().filter(|r| seen.insert(r.id));
+            }
+        }
+
+        /// Calls `f` on each atom that some path of the list to the value `to` takes, the atom
+        /// holding there; at least those, and exactly those for a list in its one form. A path
+        /// ends at the first block with a literal that holds, or at the default, and passes the
+        /// blocks before it with none of their literals holding. So a literal `a` of a block of
+        /// value `to` is taken by the path that block ends; a literal `!a` is taken by every path
+        /// that passes its block, which, for a block before the last, reaches both values later.
+        /// The last block's `!a` is taken too unless the block is that one literal and its value
+        /// is `to`; in the one form ([`finish`]) a last block of one literal is the whole list, a
+        /// literal, which is answered alone. Each cell and each set node is walked once for each
+        /// value of `to` relative to its own first block, by `seen` (ids of cells, sets and
+        /// expressions come from one counter), from a stack.
+        pub(super) fn taken_toward<'a>(
+            &'a self,
+            to: bool,
+            seen: &mut std::collections::HashSet<(u64, bool)>,
+            f: &mut impl FnMut(&'a A),
+        ) {
+            let Bdd::List(root, first) = self else { return };
+            if let Some((a, taken)) = self.as_literal() {
+                if taken == to {
+                    f(a);
+                }
+                return;
+            }
+            // Each cell with whether its first block has the value `to`; the blocks of a
+            // sequence alternate in value, first to last.
+            let mut cells: Vec<(&'a Cell<A>, bool)> = vec![(&**root, *first == to)];
+            let mut sets: Vec<&'a Set<A>> = Vec::new();
+            while let Some((c, first)) = cells.pop() {
+                if !seen.insert((c.id, first)) {
+                    continue;
+                }
+                let left = c.left.as_deref();
+                let own = first != left.is_some_and(|l| l.len % 2 == 1);
+                cells.extend(left.map(|l| (l, first)));
+                cells.extend(c.right.as_deref().map(|r| (r, !own)));
+                sets.push(&c.block);
+                while let Some(s) = sets.pop() {
+                    if !seen.insert((s.id, own)) {
+                        continue;
+                    }
+                    let (a, taken) = &s.key;
+                    if own || !*taken {
+                        f(a);
+                    }
+                    sets.extend(s.left.as_deref());
+                    sets.extend(s.right.as_deref());
+                }
             }
         }
 
