@@ -1428,3 +1428,57 @@ fn products_whose_factors_keep_open_sides_scale() {
         false,
     );
 }
+
+/// The premise and the goal of [`open_side_chain`] with the links `x{i} - b{i} - c{i} >= 4`,
+/// `c{i} >= 0` and `b{i} * c{i} >= -1000000`, all joined into one cluster by the row
+/// `w0 + ... + w{k-1} >= -1000000 * k` on atoms `w{i} == b{i}`. The bound `x{i} >= 7` needs
+/// `x{i} + b{i} >= 10` and `x{i} - b{i} - c{i} >= 4` at once with `c{i} >= 0`, and `b{i}` and
+/// `c{i}` are factors, so it is not among the cheap bounds and is found by the solver over the
+/// cluster (`Tier::Local`).
+fn one_sum_joins(k: usize) -> (Relation, Relation) {
+    let link =
+        |i: usize| format!("x{i} - b{i} - c{i} >= 4 && c{i} >= 0 && b{i} * c{i} >= -1000000");
+    let (premise, goal) = open_side_chain_source(k, link);
+    let ws: Vec<String> = (0..k).map(|i| format!("w{i}")).collect();
+    let ties: Vec<String> = (0..k).map(|i| format!("w{i} == b{i}")).collect();
+    let head = |s: &str| s.replacen(") =", &format!(", {}) =", ws.join(", ")), 1);
+    let premise = format!(
+        "{} && {} && {} >= -{};",
+        head(&premise).trim_end_matches(';'),
+        ties.join(" && "),
+        ws.join(" + "),
+        1000000 * k
+    );
+    let (ps, p) = function(&premise);
+    let (_, g) = function(&head(&goal));
+    let mut rs = relations(&[&p, &g], &ps, true).expect("in the domain");
+    let g = rs.pop().expect("two relations");
+    (rs.pop().expect("two relations"), g)
+}
+
+#[test]
+fn products_whose_factors_one_sum_joins_scale() {
+    // One cluster holds all k links, so a solver search over the cluster for each open side
+    // cost O(sides × cluster): 41 times the instructions at 8n with the sum on `b{i}` itself
+    // (C2-local-tier). Through the cluster's block-cut tree each link is its own block, and the
+    // sides are found in one pass over the blocks. The sum is on atoms tied to `b{i}`, not on
+    // `b{i}`: a sum on a factor is one of the factor's linear premises, and its product with
+    // each premise on `c{i}` has k terms, so the products alone hold O(k²) terms (row
+    // C2-pairs-long-row).
+    let n = 8;
+    let built = scaling::inputs(n, one_sum_joins);
+    let measure = move || {
+        scaling::check("a sum of products whose factors one sum joins", n, |k| {
+            let (p, g) = &built[&k];
+            presburger::hull_sides_asked();
+            let e = entails(p, g);
+            let asked = presburger::hull_sides_asked();
+            assert!(matches!(e, Entailment::Proved(_)), "{k}: {e}");
+            assert!(
+                asked > 0,
+                "{k}: no side asked, so the cluster was not searched"
+            );
+        });
+    };
+    scaling::on_a_thread(8 << 20, measure);
+}

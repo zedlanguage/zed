@@ -3612,3 +3612,11 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | A stack of open modules as a `Vec` popped by `while let` in a sweep over the modules sorted by number | `Opens::new` | Mutation (gap 11) | a fold over the sorted modules with the stack and the cuts as its accumulator |
 | `Option::get_or_insert_with` to build the range-minimum table on the first module written inline in the calling file | `untyped_imports` | Lazy cells (gap 3) | build the table before the loop when the pair's file has such modules (`inside` holds the pair's key), or fold with it as an optional accumulator |
 | `let … else { continue; }` | `untyped_imports` | Early exit (gap 12) | a `match` with the empty case as one arm |
+
+## Entries from C2-local-tier (`crates/zedc-presburger/src/presburger/local.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| Tarjan's biconnected components on an explicit `Vec` stack of frames changed through `last_mut`, with an edge stack popped by `while let` and `index`/`low` tables filled in place | `biconnected` | Mutation (gap 11) | the recursive Tarjan with the tables and the edge stack threaded through as a state value |
+| `HashMap` tables filled in place over the passes up and down the block-cut tree (`part`, `child_blocks`, `want_side`, `child_info`, `down`, `out`), and a closure writing into a `&mut Vec<Formula>` out-parameter | `cluster_sides`, its `add` and `constrain` closures | Mutation (gap 11) | folds over the blocks in tree order that return the maps; `constrain` returns its rows |
+| `let … else { continue }` | `cluster_sides` | Early exit (gap 12) | a `match` with the skip as one arm |

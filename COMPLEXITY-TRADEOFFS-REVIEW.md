@@ -250,8 +250,9 @@ Line numbers are those before this review's edits.
 | `presburger.rs:8430` (hull bisection) | 01d71b2e | before: 41.6 s at 128 stages | O(n log n) on chains; O(n²) solves by cases | DISJ-incremental | complete | none |
 | `presburger.rs` `summarize` | 873f1a86 | level's own formula, O(d²) measured 51.1× | this formula | wider hull (S31) | complete | none |
 | `presburger.rs` `part_bounds` | 355e67f4 | integer program per hull, NP-hard | O(m log n) bounds | wider bounds (C2) | complete | none |
-| `presburger.rs:9892` (tiers) | 355e67f4 | see `Tier` | O(sides × cluster), O(sides × part) | C2 | complete | none |
-| `presburger.rs` `Tier` | 355e67f4 | integer program per side | Local O(sides × cluster), Whole O(sides × part) | measured 52 ms to 3.86 s (C2-local-tier) | complete | none |
+| `presburger.rs:9892` (tiers) | 355e67f4 | see `Tier` | O(Σ_B (cuts(B) + sides(B)) × size(B)), O(sides × part) | C2 | complete | none |
+| `presburger.rs` `Tier` | 355e67f4 | integer program per side | Local O(Σ_B (cuts(B) + sides(B)) × size(B)) over the block-cut tree, Whole O(sides × part) | quadratic in one large block; 9.7× at 8 → 64 links (C2-local-tier) | complete | none |
+| `presburger/local.rs` `cluster_sides` | C2-local-tier | integer program per side over the cluster, O(sides × cluster) | one pass over the block-cut tree, each side asked over its block | quadratic in one large block; wider than the hull where a projection has gaps (C2) | complete | none |
 | `presburger.rs` `products` | 44d370e7 | CAD, doubly exponential; integers undecidable | products of premise pairs | `NotProved` (C2) | complete | none |
 | `deep.rs` `Flat` | eca1d8dc | (no shorter printed form) | written out, exponential in a chain | compare and hash linear | complete | none |
 | `deep.rs` `Formula::cmp` | 9e80c1c5 | read through, N | visited set, linear; O(e log N) with `Canon` | S31b | complete | none |

@@ -102,6 +102,7 @@ mod deep;
 pub mod extend;
 mod forced;
 mod formula;
+mod local;
 mod modular;
 mod one_row;
 mod row_domains;
@@ -14885,21 +14886,18 @@ fn propagate(other: &[&Con], b: &HashMap<Atom, Ends>, out: &mut Vec<Con>) {
     }
 }
 
-/// For each atom of a row of `cons` that is not a difference constraint or a bound, or of a
-/// disjunction of `ors`, the formula of its cluster: the atoms that such rows and disjunctions
-/// join, by union-find over the atoms of each, with those rows and disjunctions, the
-/// difference constraints of `cons` on atoms of the cluster alone, and the bounds `ends` of
-/// each atom of the cluster. Each holds wherever `cons`, `ors` and `ends` do, so the hull of
-/// an atom over its cluster contains its hull over them, and it is wider where a path of
-/// difference constraints through other atoms ties two atoms of the cluster more closely than
-/// their bounds do. Each row and disjunction is read once, so the cost is linear in their size,
-/// with a factor log n for the ordered map of the n atoms, which keeps the order of each
-/// cluster's rows independent of the hash seed.
-fn clusters(
-    cons: &[Con],
-    ors: &[&Formula],
-    ends: &HashMap<Atom, Ends>,
-) -> HashMap<Atom, Rc<Formula>> {
+/// The clusters of the atoms of the rows of `cons` that are not difference constraints or
+/// bounds, and of the disjunctions of `ors`, and the cluster of each such atom: the atoms that
+/// such rows and disjunctions join, by union-find over the atoms of each, with those rows and
+/// disjunctions, the difference constraints of `cons` on atoms of the cluster alone, and the
+/// bounds `ends` of each atom of the cluster ([`local::Cluster`]). Each holds wherever `cons`,
+/// `ors` and `ends` do, so the hull of an atom over its cluster contains its hull over them,
+/// and it is wider where a path of difference constraints through other atoms ties two atoms
+/// of the cluster more closely than their bounds do. Each row and disjunction is read once, so
+/// the cost is linear in their size, with a factor log n for the ordered map of the n atoms,
+/// which keeps the numbering of the clusters and the order of each one's rows and atoms
+/// independent of the hash seed.
+fn clusters(cons: &[Con], ors: &[&Formula], ends: &HashMap<Atom, Ends>) -> local::Clusters {
     fn find(parent: &mut [usize], mut i: usize) -> usize {
         while parent[i] != i {
             parent[i] = parent[parent[i]];
@@ -14950,27 +14948,24 @@ fn clusters(
             parts.entry(root).or_default().push(Formula::Con(c.clone()));
         }
     }
+    // The clusters numbered in the order of their first atoms, so that the numbering does not
+    // depend on the hash seed.
+    let mut out = local::Clusters::default();
+    let mut number: HashMap<usize, usize> = HashMap::new();
     for (a, &i) in &ids {
         let root = find(&mut parent, i);
-        let (lo, hi) = ends.get(a).cloned().unwrap_or_default();
-        let x = Lin::atom(a.clone());
-        let part = parts.entry(root).or_default();
-        if let Some(lo) = lo {
-            part.push(Formula::Con(Con::ge(&x, &Lin::constant(lo))));
-        }
-        if let Some(hi) = hi {
-            part.push(Formula::Con(Con::ge(&Lin::constant(hi), &x)));
-        }
+        let k = *number.entry(root).or_insert_with(|| {
+            out.all.push(local::Cluster {
+                items: parts.remove(&root).unwrap_or_default(),
+                ends: Vec::new(),
+            });
+            out.all.len() - 1
+        });
+        let end = ends.get(a).cloned().unwrap_or_default();
+        out.all[k].ends.push((a.clone(), end));
+        out.of.insert(a.clone(), k);
     }
-    let formulas: HashMap<usize, Rc<Formula>> = (parts.into_iter())
-        .map(|(root, fs)| (root, Rc::new(Formula::and(fs))))
-        .collect();
-    (ids.into_iter())
-        .map(|(a, i)| {
-            let root = find(&mut parent, i);
-            (a, Rc::clone(&formulas[&root]))
-        })
-        .collect()
+    out
 }
 
 /// What [`part_bounds`] finds of a part: bounds of its atoms, whether they are its hulls
@@ -14979,7 +14974,7 @@ fn clusters(
 struct PartBounds {
     ends: HashMap<Atom, Ends>,
     hulls: bool,
-    local: HashMap<Atom, Rc<Formula>>,
+    local: local::Clusters,
 }
 
 /// Bounds of the atoms of `part`, a part of the premises with the point `m`, whose atoms
@@ -15040,7 +15035,7 @@ fn part_bounds(part: &Formula, m: &Model, factors: &[&Atom]) -> PartBounds {
         return PartBounds {
             ends: HashMap::new(),
             hulls: false,
-            local: HashMap::new(),
+            local: local::Clusters::default(),
         };
     };
     let (mut rows, other): (Vec<&Con>, Vec<&Con>) = cons.iter().partition(|c| is_difference(c));
@@ -15049,7 +15044,7 @@ fn part_bounds(part: &Formula, m: &Model, factors: &[&Atom]) -> PartBounds {
         return PartBounds {
             ends: HashMap::new(),
             hulls: false,
-            local: HashMap::new(),
+            local: local::Clusters::default(),
         };
     };
     let first = g.ends();
@@ -15072,7 +15067,7 @@ fn part_bounds(part: &Formula, m: &Model, factors: &[&Atom]) -> PartBounds {
     }
     if added.is_empty() {
         let local = if hulls {
-            HashMap::new()
+            local::Clusters::default()
         } else {
             clusters(&cons, &joined, &first)
         };
@@ -15093,7 +15088,7 @@ fn part_bounds(part: &Formula, m: &Model, factors: &[&Atom]) -> PartBounds {
         meet_bound(&mut ends, r, &HashMap::new());
     }
     let local = if hulls {
-        HashMap::new()
+        local::Clusters::default()
     } else {
         clusters(&cons, &joined, &ends)
     };
@@ -15262,9 +15257,9 @@ fn entails_inner(premises: &Relation, goal: &Relation) -> Result<Entailment, Ref
     // the one from the wider bound with the linear premises, whatever one try proves the next
     // proves too, and the last verdict is the one the hulls give. Where the solver refuses,
     // the verdict before stands.
-    // Complexity tradeoff: each try costs one solver question for each open side, over the
-    // cluster O(sides × cluster) and over the part O(sides × part); see [`Tier`] for why and
-    // when. COMPLEXITY.md row C2.
+    // Complexity tradeoff: each try costs solver questions for the open sides, over the
+    // blocks of each cluster O(Σ_B (cuts(B) + sides(B)) × |B|) and over the part
+    // O(sides × part); see [`Tier`] for why and when. COMPLEXITY.md row C2.
     let (ps, loose) = match products(premises, goal, Tier::Local) {
         Ok(found) => found,
         Err(_) => return Ok(first),
@@ -15321,26 +15316,31 @@ fn linear_reading(
 }
 
 /// Which bounds [`products`] takes of a factor: those [`part_bounds`] finds (`Cheap`), or
-/// those with each side not known to be the hull's replaced by the hull the solver finds
-/// ([`hull_side`]) over the factor's cluster ([`clusters`], `Local`) or over its whole part
-/// (`Whole`). A side found over the cluster lies between the hull over the part and the
-/// bound of `Cheap`, since the cluster holds wherever the part does and holds that bound.
+/// those with each side not known to be the hull's replaced by a side the solver finds
+/// ([`hull_side`]) over the factor's cluster ([`clusters`]), through the cluster's block-cut
+/// tree ([`local::cluster_sides`], `Local`), or over its whole part (`Whole`). A side found
+/// over the cluster lies between the hull over the part and the bound of `Cheap`, since every
+/// constraint it is found from holds wherever the part does, and it is met with that bound.
 ///
-/// Complexity tradeoff: `Local` costs one solver question of the cluster for each open side
-/// and O(log d) more for a bound at distance d, so O(sides × cluster), linear over a chain
-/// of links that each hold their own general rows, and O(n²) at worst when one cluster holds
-/// n open factors; `Whole` costs O(sides × part), O(n²) on a part with n open factors. Why:
-/// the hull of one atom of a general integer system is an integer program, NP-hard, and the
-/// bounds [`part_bounds`] finds in O(m log n) are not always the hulls; no way is known to
-/// share the work of one side's question with another's. Trigger: [`entails_inner`] takes
-/// `Local` only when the goal is not proved from the `Cheap` bounds and one of them is not
-/// known to be the hull's, and `Whole` only when the goal is still not proved, which needs a
-/// path of difference constraints through atoms outside a cluster that ties two of its atoms
-/// more closely than their bounds do. Test:
-/// `l01_38_presburger::ladder::products_whose_factors_keep_open_sides_scale` (`Local`, linear
-/// in the links). Measured quadratic case: one cluster of k links joined by a sum of their
-/// atoms, 32 sides in 52 ms at k = 8 and 234 sides in 3.86 s at k = 64; plan row
-/// C2-local-tier. COMPLEXITY.md row C2.
+/// Complexity tradeoff: `Local` searches each block of the cluster's block-cut tree once for
+/// each cut node it holds and each open side inside it, each search over the block and O(log d)
+/// questions for a bound at distance d, so O(Σ_B (cuts(B) + sides(B)) × |B|): linear when the
+/// blocks are small, as in links joined by rows or by atoms, and O(s × b) for one biconnected
+/// block of size b with s open sides or cut nodes, O(n²) at worst; `Whole` costs
+/// O(sides × part), O(n²) on a part with n open factors. One search of the whole cluster for
+/// each open side cost O(sides × cluster), 41 times the instructions at 8n on one cluster of k
+/// links joined by a sum of their atoms (C2-local-tier). Why: the hull of one atom of a general
+/// integer system is an integer program, NP-hard, and the bounds [`part_bounds`] finds in
+/// O(m log n) are not always the hulls; the block-cut tree shares the work of one side's
+/// question with another's only across blocks, and no way is known to share it within one
+/// block. Trigger: [`entails_inner`] takes `Local` only when the goal is not proved from the
+/// `Cheap` bounds and one of them is not known to be the hull's, and `Whole` only when the
+/// goal is still not proved, which needs a path of difference constraints through atoms
+/// outside a cluster that ties two of its atoms more closely than their bounds do, or a cut
+/// atom of the cluster whose values on one side of it have a gap (see [`local`]). Tests:
+/// `l01_38_presburger::ladder::products_whose_factors_keep_open_sides_scale` (`Local`, links
+/// in clusters of their own) and `products_whose_factors_one_sum_joins_scale` (`Local`, one
+/// cluster of k links). COMPLEXITY.md row C2.
 #[derive(Clone, Copy)]
 enum Tier {
     Cheap,
@@ -15508,55 +15508,108 @@ fn products(
         });
         given.insert(*root, found);
     }
-    let mut loose = false;
-    let mut on: BTreeMap<Factor, Vec<Lin>> = BTreeMap::new();
+    // The bounds of each factor with a part, and whether each side is known to be the hull's:
+    // see the doc comment above.
+    type Sides<'a> = (Factor, usize, &'a Model, Ends, [bool; 2]);
+    let mut bounded: Vec<Sides> = Vec::new();
+    let mut alone: Vec<Factor> = Vec::new();
     for s in factors {
         let atom = s.atom();
-        let mut set: Vec<Lin> = on_atom.get(&atom).map_or_else(Vec::new, |is| {
-            is.iter().map(|&i| linear[i].clone()).collect()
-        });
-        let x = Lin::atom(atom.clone());
         let root = match ids.get(&atom) {
             Some(&id) if consistent => Some(find(&mut parent, id)),
             _ => None,
         };
-        if let Some(root) = root
-            && let Some((m, b, signs)) = &given[&root]
-        {
-            let (lo, hi) = b.ends.get(&atom).cloned().unwrap_or_default();
-            // Whether the side going `dir` is the hull's: see the doc comment above.
-            let known = |end: &Option<Int>, dir: i64| {
-                b.hulls
-                    || match end {
-                        Some(v) => m.get(&atom) == Some(v),
-                        None => signs
-                            .as_ref()
-                            .and_then(|s| s.get(&atom))
-                            .is_some_and(|&(pos, neg)| if dir > 0 { !neg } else { !pos }),
-                    }
-            };
-            let mut side = |end: Option<Int>, dir: i64| -> Result<Option<Int>, Refusal> {
-                if known(&end, dir) {
-                    return Ok(end);
+        let Some((root, Some((m, b, signs)))) = root.map(|r| (r, &given[&r])) else {
+            alone.push(s);
+            continue;
+        };
+        let (lo, hi) = b.ends.get(&atom).cloned().unwrap_or_default();
+        let known = |end: &Option<Int>, dir: i64| {
+            b.hulls
+                || match end {
+                    Some(v) => m.get(&atom) == Some(v),
+                    None => signs
+                        .as_ref()
+                        .and_then(|s| s.get(&atom))
+                        .is_some_and(|&(pos, neg)| if dir > 0 { !neg } else { !pos }),
                 }
-                match (tier, b.local.get(&atom)) {
-                    (Tier::Whole, _) => hull_side(&parts[&root], &atom, m, dir),
-                    (Tier::Local, Some(c)) => {
-                        loose = true;
-                        Ok(hull_side(c, &atom, m, dir).unwrap_or(end))
-                    }
-                    _ => {
-                        loose = true;
-                        Ok(end)
+        };
+        let open = [!known(&lo, -1), !known(&hi, 1)];
+        bounded.push((s, root, m, (lo, hi), open));
+    }
+    // With `Local`, the open sides of the factors of each cluster, all found in one pass over
+    // the cluster ([`local::cluster_sides`]).
+    let mut found: HashMap<(Atom, i64), Option<Int>> = HashMap::new();
+    if matches!(tier, Tier::Local) {
+        let mut asked: BTreeMap<(usize, usize), Vec<(Atom, i64)>> = BTreeMap::new();
+        for (s, root, _, _, open) in &bounded {
+            let atom = s.atom();
+            let Some((_, b, _)) = &given[root] else {
+                continue;
+            };
+            if let Some(&k) = b.local.of.get(&atom) {
+                for (dir, o) in [(-1, open[0]), (1, open[1])] {
+                    if o {
+                        asked
+                            .entry((*root, k))
+                            .or_default()
+                            .push((atom.clone(), dir));
                     }
                 }
-            };
-            if let Some(l) = side(lo, -1)? {
-                set.push(x.minus(&Lin::constant(l)));
             }
-            if let Some(h) = side(hi, 1)? {
-                set.push(Lin::constant(h).minus(&x));
+        }
+        for ((root, k), sides) in &asked {
+            if let Some((m, b, _)) = &given[root] {
+                found.extend(local::cluster_sides(&b.local.all[*k], m, sides));
             }
+        }
+    }
+    let mut loose = false;
+    let mut on: BTreeMap<Factor, Vec<Lin>> = BTreeMap::new();
+    // The linear rows on each factor, and for one with a part, the bounds of its sides.
+    let on_linear = |atom: &Atom| -> Vec<Lin> {
+        on_atom.get(atom).map_or_else(Vec::new, |is| {
+            is.iter().map(|&i| linear[i].clone()).collect()
+        })
+    };
+    for s in alone {
+        let mut set = on_linear(&s.atom());
+        set.sort();
+        set.dedup();
+        on.insert(s, set);
+    }
+    for (s, root, m, (lo, hi), open) in bounded {
+        let atom = s.atom();
+        let mut set = on_linear(&atom);
+        let x = Lin::atom(atom.clone());
+        let mut side = |end: Option<Int>, dir: i64, open: bool| -> Result<Option<Int>, Refusal> {
+            if !open {
+                return Ok(end);
+            }
+            match tier {
+                Tier::Whole => hull_side(&parts[&root], &atom, m, dir),
+                Tier::Local => {
+                    loose = true;
+                    // The side found lies within the bound the cluster's rows give the factor
+                    // alone, and so within `end`; the meet keeps `end` where none is found.
+                    Ok(
+                        match (found.get(&(atom.clone(), dir)).cloned().flatten(), end) {
+                            (Some(v), Some(e)) => Some(if dir < 0 { v.max(e) } else { v.min(e) }),
+                            (v, e) => v.or(e),
+                        },
+                    )
+                }
+                Tier::Cheap => {
+                    loose = true;
+                    Ok(end)
+                }
+            }
+        };
+        if let Some(l) = side(lo, -1, open[0])? {
+            set.push(x.minus(&Lin::constant(l)));
+        }
+        if let Some(h) = side(hi, 1, open[1])? {
+            set.push(Lin::constant(h).minus(&x));
         }
         set.sort();
         set.dedup();
