@@ -2011,7 +2011,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | MSG-domain-repairs-v | impl attempt 1 | 2026-11-12 00:53 | running affected groups; load 44.01 39.14 34.67 |
 | NAME-ascii-only | impl attempt 1 | 2026-11-12 16:11 | start: worktrees name-ascii-only (zed-impl) and name-ascii-only-spec (zed) |
 | NARROW-or-order | impl attempt 1 | 2026-11-12 15:40 | started; worktree /home/luke/Work/wt/narrow-or-order on cdd557f13 |
-| POLY-nf-sparse-product | impl attempt 1 | 2026-11-12 14:17 | negative controls run once: main dispatch 140.6x bytes (limit 96.8), sparse only >60 s, dense only >60 s killed; restored |
+| POW-rat-literal-ops | running | 2026-11-12 16:20 |  |
 | T11-preimage-rest | impl attempt 1 | 2026-11-05 04:07 | run2 236 pieces 0 failed; unit recheck now compares closed terms (Option<Shared>), zedc-preimage --lib 127 passed |
 | T6-refusal-cost | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/t6-refusal-cost from origin/main 8d0bfe954 |
 | TRIVIAL-walk-picks | impl attempt 1 | 2026-11-12 14:54 | code commit 0613b6f9c rebased; docs edited; building tests for m0_03 before docs commit and merge / load 78.93 64.48 50.98 |
