@@ -1518,6 +1518,7 @@ impl Conjuncts {
                 for g in &gs {
                     for h in names(g).into_iter().filter(|h| h != x) {
                         self.index.hangs.remove(&h, g);
+                        self.blocks.hang(&h, g, false);
                         if self.users.has(&h, g) {
                             self.index.moving.add(&h, g);
                         }
@@ -1541,6 +1542,7 @@ impl Conjuncts {
             for g in &s.gs {
                 for h in names(g).into_iter().filter(|h| *h != x) {
                     self.index.hangs.add(&h, g);
+                    self.blocks.hang(&h, g, true);
                     self.index.moving.remove(&h, g);
                 }
             }
@@ -1979,6 +1981,18 @@ pub struct Blocks {
     gapped: OrdSet<Arc<str>>,
     /// The number of such names of each tree, at its representative; none when zero.
     gaps: OrdMap<BlockId, usize>,
+    /// The pairs of a name and a conjunct of a star whose hub is the name: `hangs` of
+    /// [`Conjuncts`], kept here by [`Blocks::hang`].
+    hung: OrdSet<(Arc<str>, Arc<Formula>)>,
+    /// For each name, the number of its moving conjuncts in each block: those that mention
+    /// it and do not hang at it ([`Conjuncts::moving`]); none zero.
+    // Complexity tradeoff: the blocks a move of a name makes due could be read by walking
+    // the name's moving conjuncts and looking up each one's block, O(d log n) per move for a
+    // name of d moving conjuncts, so a name that moves once per test, over k tests with d
+    // near k, costs O(k² log n). This index gives each block once, in O(log n) per block,
+    // at O(log n) per name of a conjunct each time the conjunct changes block or hangs,
+    // the order `at` already costs.
+    moving_at: OrdMap<Arc<str>, OrdMap<BlockId, usize>>,
 }
 
 /// Adds `by` to the count of `r` in `counts`, which holds no zero.
@@ -2121,6 +2135,17 @@ impl Blocks {
         if was == to {
             return was;
         }
+        for n in names(g) {
+            if self.hung.contains(&(n.clone(), g.clone())) {
+                continue;
+            }
+            if let Some(w) = was {
+                self.count_moving(&n, w, -1);
+            }
+            if let Some(t) = to {
+                self.count_moving(&n, t, 1);
+            }
+        }
         let in_forest = |b: Option<BlockId>| b.is_some_and(|b| !self.apart.contains(&b));
         let (was_in, to_in) = (in_forest(was), in_forest(to));
         for a in atoms {
@@ -2146,6 +2171,36 @@ impl Blocks {
             }
         }
         was
+    }
+
+    fn count_moving(&mut self, n: &Arc<str>, b: BlockId, by: isize) {
+        let mut counts = self.moving_at.remove(n).unwrap_or_default();
+        tally(&mut counts, b, by);
+        if !counts.is_empty() {
+            self.moving_at.insert(n.clone(), counts);
+        }
+    }
+
+    /// Records that `g`, which mentions `n`, hangs at `n` as the hub of a star (`on`), or no
+    /// longer does.
+    pub fn hang(&mut self, n: &Arc<str>, g: &Arc<Formula>, on: bool) {
+        let key = (n.clone(), g.clone());
+        let changed = if on {
+            self.hung.insert(key).is_none()
+        } else {
+            self.hung.remove(&key).is_some()
+        };
+        if changed && let Some(b) = self.of(g) {
+            self.count_moving(n, b, if on { -1 } else { 1 });
+        }
+    }
+
+    /// The blocks that hold a moving conjunct of `n` ([`Conjuncts::moving`]), each once.
+    pub fn moving_blocks(&self, n: &str) -> impl Iterator<Item = BlockId> + '_ {
+        self.moving_at
+            .get(n)
+            .into_iter()
+            .flat_map(|m| m.keys().copied())
     }
 
     fn fresh(&mut self) -> BlockId {

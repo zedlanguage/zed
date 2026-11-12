@@ -42,7 +42,7 @@ use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap};
 use std::fmt;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 
 use zed_kernel::frames::{Deep, Stack};
 use zed_kernel::print;
@@ -569,6 +569,9 @@ pub struct Scope {
     /// joined with the other cases and never shown: a constraint of the case that joins a
     /// group of linked constraints makes no part due ([`Block::outer`]).
     in_case: bool,
+    /// The ends the two-name rule of [`Block::reframe`] has projected for on this path of
+    /// tests, each a name and whether its lower end: each is projected for once.
+    spent: imbl::OrdSet<(Arc<str>, bool)>,
 }
 
 /// A name's `let` binding in a [`Scope`]; the order of its binding is in [`Scope::orders`].
@@ -2070,6 +2073,10 @@ struct Part {
     with: PartWith,
     of: Option<Arc<Formula>>,
     names: Vec<Arc<str>>,
+    /// Whether the conjunct is a two-name threshold row.
+    stair: bool,
+    /// One arm has an integer support of the form x = d + j*y, j >= 0.
+    ray: bool,
 }
 
 /// Where a part stands among its block's parts, in the order [`split`] gives them: the part of
@@ -2090,6 +2097,32 @@ struct Block {
     parts: imbl::OrdMap<PartAt, Arc<Part>>,
     /// The parts that mention each name, the leaf among them.
     users: imbl::OrdMap<Arc<str>, imbl::OrdSet<PartAt>>,
+    /// Users other than threshold rows, used when the rows are solved together.
+    ordinary_users: imbl::OrdMap<Arc<str>, imbl::OrdSet<PartAt>>,
+    /// Users left when the shared integer-support certificate holds, with and without
+    /// threshold rows. Each map is updated only as a part enters or leaves.
+    ray_other_users: imbl::OrdMap<Arc<str>, imbl::OrdSet<PartAt>>,
+    active_users: imbl::OrdMap<Arc<str>, imbl::OrdSet<PartAt>>,
+    rays: imbl::OrdMap<(Arc<str>, Arc<str>), RayGroup>,
+    ray_parts: imbl::OrdSet<PartAt>,
+    ray_managed: bool,
+    ray_due: Option<PartAt>,
+    /// A component with other ordinary operators keeps the original queue order.
+    aggregate_unsupported: imbl::OrdSet<PartAt>,
+    aggregate_uppers: imbl::OrdSet<PartAt>,
+    /// What the upper disjunctions give in [`Scope::cover_staircase`] at the staircase and
+    /// lower ends of its last call, taking in each upper disjunction as it enters.
+    upper_bounds: Option<UpperBounds>,
+    /// The least bound the constraints give over the rays of the one ray group
+    /// ([`Block::ray_high`]), found at the first call after a ray or constraint leaves and
+    /// taking in each ray or constraint as it enters.
+    ray_least: OnceLock<RayLeast>,
+
+    /// The threshold rows were solved together at the last keep. Their snapshot is
+    /// `names_at`; no individual `Scope::projected` records are needed while this holds.
+    stair_managed: bool,
+    /// One part carrying the demand to solve the threshold rows again.
+    stair_due: Option<PartAt>,
     /// The leaf, when the block is a star ([`Conjuncts::star`]).
     leaf: Option<Arc<str>>,
     /// Each of its conjuncts ([`Conjuncts::core`]), with the number of ways it is one: as a
@@ -2126,6 +2159,20 @@ struct Block {
     // at every level (36.4 times the bytes at 8 times the depth). Used: each part under each
     // of its variables, O(s log k). COMPLEXITY.md C52.
     vars: imbl::OrdMap<Factor, imbl::OrdSet<PartAt>>,
+    /// The disjunctions in which a constraint on two names bounds an end of one of them in
+    /// every arm ([`bounds_at`]), by the two names, the end and the side of it the constraint
+    /// turns from that end, and by how far it may turn ([`Turn`]), so that a case's constraint
+    /// finds them by a range of the map ([`Block::reframe`]).
+    bounds: imbl::OrdMap<BoundsKey, imbl::OrdMap<Turn, imbl::OrdSet<PartAt>>>,
+    /// Threshold parts, grouped by their lower and upper names.
+    stairs: imbl::OrdMap<(Arc<str>, Arc<str>), Staircase>,
+    stair_parts: imbl::OrdSet<PartAt>,
+    /// The parts the two-name rule of [`Block::reframe`] made due at the last update, projected
+    /// whatever their records say.
+    fired: BTreeSet<PartAt>,
+    /// The ends the two-name rule of [`Block::reframe`] projected for at the last update, each
+    /// a name and whether its lower end, spent once the block is kept ([`Scope::spent`]).
+    spends: Vec<(Arc<str>, bool)>,
     /// The parts whose records were taken away or changed since the block was kept
     /// ([`Seen::drop_part`]), due at its next projection.
     forgot: imbl::OrdSet<PartAt>,
@@ -2184,6 +2231,20 @@ impl Block {
             id: b,
             parts: imbl::OrdMap::new(),
             users: imbl::OrdMap::new(),
+            ordinary_users: imbl::OrdMap::new(),
+            ray_other_users: imbl::OrdMap::new(),
+            active_users: imbl::OrdMap::new(),
+            rays: imbl::OrdMap::new(),
+            ray_parts: imbl::OrdSet::new(),
+            ray_managed: false,
+            ray_due: None,
+            aggregate_unsupported: imbl::OrdSet::new(),
+            aggregate_uppers: imbl::OrdSet::new(),
+            upper_bounds: None,
+            ray_least: OnceLock::new(),
+
+            stair_managed: false,
+            stair_due: None,
             leaf,
             core: imbl::OrdMap::new(),
             unshaped: imbl::OrdSet::new(),
@@ -2194,6 +2255,11 @@ impl Block {
             terms: imbl::OrdMap::new(),
             mentions: imbl::OrdMap::new(),
             vars: imbl::OrdMap::new(),
+            bounds: imbl::OrdMap::new(),
+            stairs: imbl::OrdMap::new(),
+            stair_parts: imbl::OrdSet::new(),
+            fired: BTreeSet::new(),
+            spends: Vec::new(),
             forgot: imbl::OrdSet::new(),
             members,
             member_names,
@@ -2250,6 +2316,11 @@ impl Block {
         }
         if matches!(&**g, Formula::Con(_)) {
             self.cons.insert(g.clone());
+            if let Some(least) = self.ray_least.get_mut()
+                && let Some(((x, y), group)) = self.rays.iter().next()
+            {
+                least.take_con(g, x, y, group);
+            }
             return None;
         }
         let (key, with, formula) = self.split.part(g, &self.outer);
@@ -2269,7 +2340,9 @@ impl Block {
         }
         self.core.remove(g);
         self.unshaped.remove(g);
-        self.cons.remove(g);
+        if self.cons.remove(g).is_some() {
+            self.ray_least.take();
+        }
         self.remove_part(&(false, g.clone()));
     }
 
@@ -2283,8 +2356,58 @@ impl Block {
         formula: &Formula,
     ) {
         let names = syms(formula);
+        let stair = of.as_ref().and_then(|g| stair_row(g)).is_some();
+        let ray = of.as_ref().and_then(|g| ray_row(g));
+        // An upper disjunction is read by the threshold aggregate (`cover_staircase`) like a
+        // threshold row, so it joins neither the active nor the ordinary users.
+        let is_upper = of.as_ref().is_some_and(|g| upper_disjunction(g));
+        let is_stair_or_upper = stair || is_upper;
+        if is_upper {
+            self.aggregate_uppers.insert(at.clone());
+            if let (Some(u), Some(g)) = (&mut self.upper_bounds, &of) {
+                u.take(g);
+            }
+        }
+        if of.is_some() && !stair && ray.is_none() && !is_upper {
+            self.aggregate_unsupported.insert(at.clone());
+        }
+
+        if let Some((x, y, j, d)) = &ray {
+            self.ray_parts.insert(at.clone());
+            let pair = (x.clone(), y.clone());
+            if !self.rays.contains_key(&pair) {
+                self.ray_least.take();
+            }
+            self.rays.entry(pair).or_default().add(j, d);
+            if let Some(least) = self.ray_least.get_mut() {
+                least.take_ray(&self.cons, x, y, j, d);
+            }
+        }
+
+        if stair {
+            self.stair_parts.insert(at.clone());
+        }
         for n in &names {
             self.users.entry(n.clone()).or_default().insert(at.clone());
+            if ray.is_none() {
+                self.ray_other_users
+                    .entry(n.clone())
+                    .or_default()
+                    .insert(at.clone());
+                if !is_stair_or_upper {
+                    self.active_users
+                        .entry(n.clone())
+                        .or_default()
+                        .insert(at.clone());
+                }
+            }
+
+            if !is_stair_or_upper {
+                self.ordinary_users
+                    .entry(n.clone())
+                    .or_default()
+                    .insert(at.clone());
+            }
         }
         if let Some(g) = &of {
             for t in terms(g) {
@@ -2306,6 +2429,14 @@ impl Block {
             for x in factors(g) {
                 self.vars.entry(x).or_default().insert(at.clone());
             }
+            if let Some((x, y, a, b)) = stair_row(g) {
+                let tree = self.stairs.entry((x, y)).or_default();
+                *tree = tree.insert((b, a));
+            }
+            for (key, turn) in bounds_at(g) {
+                let by = self.bounds.entry(key).or_default();
+                by.entry(turn).or_default().insert(at.clone());
+            }
         }
         self.added.push(key.clone());
         let part = Part {
@@ -2313,6 +2444,8 @@ impl Block {
             with,
             of,
             names,
+            stair,
+            ray: ray.is_some(),
         };
         self.parts.insert(at, Arc::new(part));
     }
@@ -2322,11 +2455,46 @@ impl Block {
         let Some(part) = self.parts.remove(at) else {
             return;
         };
+        self.stair_parts.remove(at);
+        self.ray_parts.remove(at);
+        self.aggregate_unsupported.remove(at);
+        self.aggregate_uppers.remove(at);
+        let is_upper = part.of.as_ref().is_some_and(|g| upper_disjunction(g));
+        let is_stair_or_upper = part.stair || is_upper;
+        if is_upper {
+            self.upper_bounds = None;
+        }
+        if let Some((x, y, j, d)) = part.of.as_ref().and_then(|g| ray_row(g)) {
+            self.ray_least.take();
+            let pair = (x, y);
+            if let Some(group) = self.rays.get_mut(&pair) {
+                group.remove(&j, &d);
+                if group.rays.is_empty() {
+                    self.rays.remove(&pair);
+                }
+            }
+        }
+
         for n in &part.names {
+            for users in [&mut self.ray_other_users, &mut self.active_users] {
+                if let Some(us) = users.get_mut(n) {
+                    us.remove(at);
+                    if us.is_empty() {
+                        users.remove(n);
+                    }
+                }
+            }
+
             if let Some(us) = self.users.get_mut(n) {
                 us.remove(at);
                 if us.is_empty() {
                     self.users.remove(n);
+                }
+            }
+            if !is_stair_or_upper && let Some(us) = self.ordinary_users.get_mut(n) {
+                us.remove(at);
+                if us.is_empty() {
+                    self.ordinary_users.remove(n);
                 }
             }
         }
@@ -2357,6 +2525,29 @@ impl Block {
                 }
             }
         }
+        if let Some((x, y, a, b)) = stair_row(g) {
+            let key = (x, y);
+            if let Some(tree) = self.stairs.get_mut(&key) {
+                *tree = tree.remove(&(b, a), false);
+                if tree.size() == 0 {
+                    self.stairs.remove(&key);
+                }
+            }
+        }
+        for (key, turn) in bounds_at(g) {
+            let Some(by) = self.bounds.get_mut(&key) else {
+                continue;
+            };
+            if let Some(ps) = by.get_mut(&turn) {
+                ps.remove(at);
+                if ps.is_empty() {
+                    by.remove(&turn);
+                }
+            }
+            if by.is_empty() {
+                self.bounds.remove(&key);
+            }
+        }
     }
 
     /// Brings the constraints' context up to date after the constraints on the terms `changed`
@@ -2372,6 +2563,8 @@ impl Block {
         changed: &BTreeSet<BTreeMap<Atom, Int>>,
         due: &mut BTreeSet<PartAt>,
         groups: bool,
+        names: &imbl::OrdMap<Arc<str>, Product>,
+        spent: &imbl::OrdSet<(Arc<str>, bool)>,
     ) -> bool {
         let cons: Vec<&Arc<Formula>> = self.cons.iter().collect();
         let split = Split::new(&cons, self.leaf.as_ref());
@@ -2471,6 +2664,79 @@ impl Block {
         // Waking such parts in a case by a test on their names was measured and is quadratic
         // where main is linear (by shared factor: on `x + j * a >= 1` arms; by pair of names:
         // on staircase parts). COMPLEXITY.md C52.
+        // Inside the cases, a case's constraint on two names `u` and `v` reaches the
+        // disjunctions on them whose arms it all makes bound an end of `u` or `v` that some arm
+        // does not bound alone and the names' products leave open, found in [`Block::bounds`]
+        // ([`bounds_at`]). Projected with the case's constraints, such a part bounds that end in
+        // every arm. Such a part is projected (`fired`), keyed as outside the cases so that the
+        // join keeps its record, and the end is spent on this path of tests ([`Scope::spent`]).
+        // Complexity tradeoff: naive version, the parts found projected in each case, O(k) per
+        // case when k parts are found and the end stays open, O(k^2) over k tests on the parts
+        // `x >= i || y <= -1000 + i` and the tests `x + y <= -j || z >= j`, whose second case
+        // never bounds `y`. Used: each end projected for once on a path of tests, O(log k) per
+        // end and direction of a case's constraint, and O(log k + f) for the f parts found the
+        // one time, so O(n log n) in all for n parts and constraints; lost against the naive
+        // version: a part that would bound the end again in a later test, after a join that
+        // dropped the first bound. COMPLEXITY.md C52.
+        if !groups {
+            for t in changed {
+                for c in self.split.on.get(t).into_iter().flatten() {
+                    let Some((u, v, q)) = two_names(c) else {
+                        continue;
+                    };
+                    let (Factor::Sym(un), Factor::Sym(vn)) = (&u, &v) else {
+                        continue;
+                    };
+                    // Each end, [lower u, upper u, lower v, upper v], when it is open.
+                    let ends = [(un, true), (un, false), (vn, true), (vn, false)];
+                    let open = ends.map(|(n, low)| {
+                        names
+                            .get(n)
+                            .and_then(|p| p.ints().bounds())
+                            .is_none_or(|(lo, hi)| {
+                                if low {
+                                    *lo == End::NegInf
+                                } else {
+                                    *hi == End::PosInf
+                                }
+                            })
+                    });
+                    let mut qs = vec![q.clone()];
+                    if c.rel == Rel::Eq {
+                        qs.push([-&q[0], -&q[1]]);
+                    }
+                    for end in (0..4u8).filter(|&e| open[usize::from(e)]) {
+                        let (n, low) = ends[usize::from(end)];
+                        if spent.contains(&(n.clone(), low)) {
+                            continue;
+                        }
+                        for q in &qs {
+                            let q = turned(end, q);
+                            // Both coefficients of a constraint on two names are nonzero.
+                            if q[1].is_zero() {
+                                continue;
+                            }
+                            let left = q[1].is_positive();
+                            let key = (un.clone(), vn.clone(), end, left);
+                            let Some(by) = self.bounds.get(&key) else {
+                                continue;
+                            };
+                            let q = Turn(q);
+                            let range = if left {
+                                (std::ops::Bound::Excluded(q), std::ops::Bound::Unbounded)
+                            } else {
+                                (std::ops::Bound::Unbounded, std::ops::Bound::Excluded(q))
+                            };
+                            for (_, ps) in by.range(range) {
+                                self.spends.push((n.clone(), low));
+                                self.fired.extend(ps.iter().cloned());
+                                due.extend(ps.iter().cloned());
+                            }
+                        }
+                    }
+                }
+            }
+        }
         for at in on {
             let Some(part) = self.parts.get_mut(&at) else {
                 continue;
@@ -2517,6 +2783,7 @@ impl Block {
         relation: &Conjuncts,
         names: &imbl::OrdMap<Arc<str>, Product>,
         groups: bool,
+        spent: &imbl::OrdSet<(Arc<str>, bool)>,
     ) -> Option<(Block, BTreeSet<PartAt>)> {
         let blocks = relation.blocks();
         if blocks.is_apart(self.id) != self.apart {
@@ -2529,6 +2796,9 @@ impl Block {
         }
         let mut next = self.clone();
         next.added = Vec::new();
+        next.fired = BTreeSet::new();
+        next.spends = Vec::new();
+        next.stair_due = None;
         let empty = imbl::OrdSet::new();
         let members = blocks.member_set(self.id).unwrap_or(&empty);
         // Each conjunct's change in count, applied once the block is known to be kept.
@@ -2607,7 +2877,8 @@ impl Block {
         // Outside the cases of a test, the groups are read again when they were last read within
         // them ([`Block::outer`]), though no constraint changed since.
         let stale = groups && next.outer_cons.diff(&next.cons).next().is_some();
-        if (!changed.is_empty() || stale) && !next.reframe(&changed, &mut due, groups) {
+        if (!changed.is_empty() || stale) && !next.reframe(&changed, &mut due, groups, names, spent)
+        {
             return None;
         }
         let others = delta
@@ -2621,6 +2892,46 @@ impl Block {
                 due.extend(next.enter(&g, added));
             }
         }
+        let manages = next.manages_stairs(names);
+        // Complexity tradeoff: a name change used to enqueue all k threshold rows and write
+        // k snapshots per case. The exact aggregate has one snapshot (`names_at`) and one
+        // demand. Only ordinary users are walked, O(u log k) for u such users, plus the
+        // O((r+1) log k) aggregate query for r base rows. Leaving the handled shape restores
+        // every individual row to the ordinary due rule, O(k) on that transition.
+        if manages {
+            let names_changed = next
+                .users
+                .keys()
+                .any(|n| self.names_at.get(n) != names.get(n));
+            if !self.stair_managed || names_changed || !changed.is_empty() || !next.added.is_empty()
+            {
+                next.stair_due = next.stair_parts.iter().next().cloned();
+                due.extend(next.stair_due.iter().cloned());
+            }
+        } else if self.stair_managed {
+            due.extend(next.stair_parts.iter().cloned());
+        }
+        next.stair_managed = manages;
+        next.ray_due = None;
+        next.ray_managed = next.ray_high(names).is_some();
+        if next.ray_managed
+            && (!self.ray_managed
+                || !changed.is_empty()
+                || !next.added.is_empty()
+                || next
+                    .users
+                    .keys()
+                    .any(|n| self.names_at.get(n) != names.get(n)))
+        {
+            next.ray_due = next.ray_parts.iter().next().cloned();
+            due.extend(next.ray_due.iter().cloned());
+        }
+
+        if self.ray_managed && !next.ray_managed {
+            due.extend(next.ray_parts.iter().cloned());
+        }
+
+        let users = next.due_users();
         // The names whose products changed: the changes since the block was kept while they
         // are no more than its names, else each of its names compared.
         let mut walked = 0;
@@ -2632,12 +2943,12 @@ impl Block {
             let (DiffItem::Add(n, _)
             | DiffItem::Remove(n, _)
             | DiffItem::Update { new: (n, _), .. }) = d;
-            if let Some(us) = next.users.get(n) {
+            if let Some(us) = users.get(n) {
                 due.extend(us.iter().cloned());
             }
         }
         if walked > next.users.len() {
-            for (n, us) in &next.users {
+            for (n, us) in users {
                 if self.names_at.get(n) != names.get(n) {
                     due.extend(us.iter().cloned());
                 }
@@ -2646,7 +2957,13 @@ impl Block {
         let forgot = std::mem::take(&mut next.forgot);
         due.extend(forgot);
         // A part made due above may be gone since, with its conjunct.
-        due.retain(|at| next.parts.contains_key(at));
+        due.retain(|at| {
+            next.parts.get(at).is_some_and(|p| {
+                let is_stair_or_upper =
+                    p.stair || p.of.as_ref().is_some_and(|g| upper_disjunction(g));
+                !manages || !is_stair_or_upper || next.stair_due.as_ref() == Some(at)
+            })
+        });
         Some((next, due))
     }
 
@@ -3014,6 +3331,7 @@ impl Scope {
             potential: Potential::default(),
             lazy: false,
             in_case: false,
+            spent: imbl::OrdSet::new(),
         };
         s.reduce();
         s
@@ -3072,20 +3390,28 @@ impl Scope {
     /// new or not projected with their names' intervals and classes as they are now.
     fn block(&self, relation: &Conjuncts, b: BlockId) -> (Block, Vec<PartAt>) {
         let kept = self.seen.blocks.get(&b).filter(|k| k.id == b);
-        let (block, maybe) = match kept.and_then(|k| k.update(relation, &self.names, !self.in_case))
-        {
-            Some(found) => found,
-            None => {
-                let block = Block::of(relation, b, &self.names);
-                let all = block.parts.keys().cloned().collect();
-                (block, all)
-            }
-        };
+        let (mut block, maybe) =
+            match kept.and_then(|k| k.update(relation, &self.names, !self.in_case, &self.spent)) {
+                Some(found) => found,
+                None => {
+                    let block = Block::of(relation, b, &self.names);
+                    let all = block.parts.keys().cloned().collect();
+                    (block, all)
+                }
+            };
+        block.ray_managed = block.ray_high(&self.names).is_some();
         let due: Vec<PartAt> = maybe
             .into_iter()
             .filter(|at| {
                 let p = &block.parts[at];
-                !self.is_projected(&p.key, &p.with, &p.names)
+                if block.ray_managed && p.ray && block.ray_due.as_ref() != Some(at) {
+                    return false;
+                }
+
+                block.stair_due.as_ref() == Some(at)
+                    || block.ray_due.as_ref() == Some(at)
+                    || block.fired.contains(at)
+                    || !self.is_projected(&p.key, &p.with, &p.names)
             })
             .collect();
         (block, due)
@@ -3094,6 +3420,9 @@ impl Scope {
     /// Keeps `block` as its projection left it, with the names' products as they are now.
     fn keep(&mut self, mut block: Block) {
         block.names_at = self.names.clone();
+        for w in std::mem::take(&mut block.spends) {
+            self.spent.insert(w);
+        }
         for key in std::mem::take(&mut block.added) {
             self.seen.owners.entry(key).or_default().insert(block.id);
         }
@@ -3801,6 +4130,7 @@ impl Scope {
         // The names held differently or mentioned by a written constraint one side holds
         // alone, at which the core of every star ([`Conjuncts::core`]) may differ.
         let mut moved: BTreeSet<Arc<str>> = BTreeSet::new();
+
         for d in self.names.diff(&other.names) {
             let (DiffItem::Add(n, _)
             | DiffItem::Remove(n, _)
@@ -4120,6 +4450,22 @@ impl Scope {
             potential: self.potential.clone(),
             lazy: self.lazy || other.lazy,
             in_case: self.in_case && other.in_case,
+            spent: {
+                // An end either side spent is spent on the join, so that no later test
+                // projects for it again on this path: a bound on the work, not a fact of the
+                // products.
+                // Complexity tradeoff: O(d log s) for the d ends spent on one side only, of s
+                // spent, at most two per name, as the diff of `names` above; the naive
+                // version, the intersection, would let each side of every later test spend
+                // the end again.
+                let mut spent = self.spent.clone();
+                for d in self.spent.diff(&other.spent) {
+                    if let imbl::ordset::DiffItem::Add(e) = d {
+                        spent.insert(e.clone());
+                    }
+                }
+                spent
+            },
         }
     }
 
@@ -6467,7 +6813,43 @@ impl Scope {
     /// one value; the block's conjuncts are then projected together once, which gives the
     /// fixed point the steps tend to, and the worklist stops. That is an event of the
     /// projection, not a count of steps or a size.
-    fn project_block(&mut self, b: Block, due: Vec<PartAt>) {
+    fn project_block(&mut self, mut b: Block, due: Vec<PartAt>) {
+        let start = self.names.clone();
+        let (was_stair, was_ray) = (b.stair_managed, b.ray_managed);
+        let mut covered = self.cover_staircase(&mut b);
+        b.stair_managed = covered.is_some();
+        b.ray_managed = self.cover_rays(&b);
+        let mut due = due;
+        if was_stair && !b.stair_managed {
+            due.extend(b.stair_parts.iter().cloned());
+        }
+        if was_ray && !b.ray_managed {
+            due.extend(b.ray_parts.iter().cloned());
+        }
+        let mut moved: BTreeSet<Arc<str>> = BTreeSet::new();
+
+        let due = if covered.is_some() || b.ray_managed {
+            let mut due: BTreeSet<PartAt> = due.into_iter().collect();
+            for d in start.diff(&self.names) {
+                let (DiffItem::Add(n, _)
+                | DiffItem::Remove(n, _)
+                | DiffItem::Update { new: (n, _), .. }) = d;
+                moved.insert(n.clone());
+                if let Some(us) = (match (b.stair_managed, b.ray_managed) {
+                    (true, true) => &b.active_users,
+                    (true, false) => &b.ordinary_users,
+                    (false, true) => &b.ray_other_users,
+                    (false, false) => &b.users,
+                })
+                .get(n)
+                {
+                    due.extend(us.iter().cloned());
+                }
+            }
+            due.into_iter().collect()
+        } else {
+            due
+        };
         // Each part is compared with the snapshot of its own names, not the block's: a part
         // new to the block, or a name of another part, leaves it as it was, so a new conjunct
         // costs its own part and not the block's (the walk through a shared name). The parts
@@ -6476,7 +6858,6 @@ impl Scope {
             self.keep(b);
             return;
         }
-        let start = self.names.clone();
         // A threshold-implication component is solved as a whole, exactly ([`threshold::solve`]).
         // Complexity tradeoff: the component is solved again from the start each time one of
         // its parts is due, so a block of N parts narrowed by N tests, one at a time, costs
@@ -6494,11 +6875,24 @@ impl Scope {
         // conjunct showing it is no component ([`Block::unshaped`]) skips the read, in O(1).
         // Tradeoffs: the block keeps the set of such conjuncts, updated as conjuncts come and
         // go; a block without one is read whole, as before. COMPLEXITY.md row C26.
-        if b.unshaped.is_empty() {
+        // The aggregate is the exact solution of the entire component when every part
+        // other than the constraints is a threshold row. Reading and solving that same
+        // component again would rebuild a k-row system in each of k cases, O(k^2 log k).
+        // The stored row count and the constraints' last key establish coverage in O(log k).
+        // Complexity tradeoff: keep the general solver for components with other parts;
+        // the wholly covered shape uses the persistent O(log k) threshold queries above.
+        let all_stairs = covered.is_some()
+            && b.stair_parts.len()
+                == b.parts.len() - usize::from(b.parts.keys().next_back().is_some_and(|at| at.0));
+        if b.unshaped.is_empty() && !all_stairs {
             let core: Vec<Arc<Formula>> = b.core.keys().cloned().collect();
             if let Some(shape) = &threshold::shape(&core)
                 && self.project_threshold(shape)
             {
+                if covered.is_some() {
+                    b.stair_managed = self.cover_staircase(&mut b).is_some();
+                }
+                b.ray_managed = self.cover_rays(&b);
                 self.record(b, &start, &due);
                 return;
             }
@@ -6509,30 +6903,71 @@ impl Scope {
         // no move back and forth. Every part of a star mentions the leaf, through the star's
         // own conjunct, so otherwise each move of it projected all of them (item
         // NARROW-lazy-settle).
-        let leaf = b.leaf.as_ref();
-        let mut work: std::collections::VecDeque<&PartAt> = due.iter().collect();
-        let mut queued: BTreeSet<&PartAt> = due.iter().collect();
-        let mut moved: BTreeSet<&Arc<str>> = BTreeSet::new();
+        let leaf = b.leaf.clone();
+        let mut work: std::collections::VecDeque<PartAt> = due.iter().cloned().collect();
+        let mut queued: BTreeSet<PartAt> = due.iter().cloned().collect();
         while let Some(i) = work.pop_front() {
-            queued.remove(i);
-            let part = &b.parts[i];
-            let before = self.snapshot(&part.names);
+            queued.remove(&i);
+            let part = &b.parts[&i].clone();
+            if b.ray_managed && part.ray {
+                continue;
+            }
+            if let Some((x, y)) = &covered
+                && (part
+                    .of
+                    .as_ref()
+                    .and_then(|g| stair_row(g))
+                    .is_some_and(|(u, v, _, _)| &u == x && &v == y)
+                    || part.of.as_ref().is_some_and(|g| upper_disjunction(g)))
+            {
+                continue;
+            }
+            let check_names = if covered.is_some() {
+                b.names()
+            } else {
+                part.names.clone()
+            };
+            let before = self.snapshot(&check_names);
             self.project_part(&b.formula(part));
+            let after_part = self.names.clone();
+            if covered.is_some() {
+                covered = self.cover_staircase(&mut b);
+                b.stair_managed = covered.is_some();
+            }
+            b.ray_managed = self.cover_rays(&b);
+            // An aggregate move is a projection of other parts. It must wake this part
+            // again too, just as projecting a threshold row separately would. The diff
+            // touches at most the two aggregate names and skips shared map structure.
+            let aggregated: BTreeSet<Arc<str>> = after_part
+                .diff(&self.names)
+                .map(|d| {
+                    let (DiffItem::Add(n, _)
+                    | DiffItem::Remove(n, _)
+                    | DiffItem::Update { new: (n, _), .. }) = d;
+                    n.clone()
+                })
+                .collect();
             let mut again = false;
             let mut empty = false;
-            for (n, old) in part.names.iter().zip(before.iter()) {
+            for (n, old) in check_names.iter().zip(before.iter()) {
                 let p = self.get(n);
                 if (p.ints(), &p.cell.congruence.element) == (&old.1, &old.2) {
                     continue;
                 }
                 empty |= p.ints().is_empty();
-                if leaf == Some(n) {
+                if leaf.as_ref() == Some(n) {
                     continue;
                 }
-                again |= !moved.insert(n);
-                for j in b.users.get(n).into_iter().flatten() {
-                    if j != i && queued.insert(j) {
-                        work.push_back(j);
+                again |= !moved.insert(n.clone());
+                let users = match (b.stair_managed, b.ray_managed) {
+                    (true, true) => &b.active_users,
+                    (true, false) => &b.ordinary_users,
+                    (false, true) => &b.ray_other_users,
+                    (false, false) => &b.users,
+                };
+                for j in users.get(n).into_iter().flatten() {
+                    if (j != &i || aggregated.contains(n)) && queued.insert(j.clone()) {
+                        work.push_back(j.clone());
                     }
                 }
             }
@@ -6542,6 +6977,10 @@ impl Scope {
             if again {
                 let all = Formula::and(b.parts.values().map(|p| b.formula(p)).collect());
                 self.project_part(&all);
+                if covered.is_some() {
+                    b.stair_managed = self.cover_staircase(&mut b).is_some();
+                }
+                b.ray_managed = self.cover_rays(&b);
                 break;
             }
         }
@@ -6559,12 +6998,26 @@ impl Scope {
     /// O((d + c) log k) for `d` parts due and `c` changed names' parts. Tradeoffs: the
     /// clone of the names' map at the start, O(1) by sharing. COMPLEXITY.md row C26.
     fn record(&mut self, b: Block, start: &imbl::OrdMap<Arc<str>, Product>, due: &[PartAt]) {
-        let mut writes: BTreeSet<&PartAt> = due.iter().collect();
+        let mut writes: BTreeSet<&PartAt> = due
+            .iter()
+            .filter(|at| {
+                let p = &b.parts[*at];
+                let is_stair_or_upper =
+                    p.stair || p.of.as_ref().is_some_and(|g| upper_disjunction(g));
+                (!b.stair_managed || !is_stair_or_upper) && (!b.ray_managed || !p.ray)
+            })
+            .collect();
         for d in start.diff(&self.names) {
             let (DiffItem::Add(n, _)
             | DiffItem::Remove(n, _)
             | DiffItem::Update { new: (n, _), .. }) = d;
-            writes.extend(b.users.get(n).into_iter().flatten());
+            let users = match (b.stair_managed, b.ray_managed) {
+                (true, true) => &b.active_users,
+                (true, false) => &b.ordinary_users,
+                (false, true) => &b.ray_other_users,
+                (false, false) => &b.users,
+            };
+            writes.extend(users.get(n).into_iter().flatten());
         }
         for at in writes {
             let p = &b.parts[at];
@@ -6731,7 +7184,7 @@ impl Scope {
     /// COMPLEXITY.md row C49.
     fn moved_blocks(&self, relation: &Conjuncts, n: &str) -> Vec<BlockId> {
         let blocks = relation.blocks();
-        let mut out: Vec<BlockId> = (relation.moving(n)).filter_map(|g| blocks.of(g)).collect();
+        let mut out: Vec<BlockId> = blocks.moving_blocks(n).collect();
         if self.lazy {
             return out;
         }
@@ -8837,4 +9290,1083 @@ fn sides(names: &imbl::OrdMap<Arc<str>, Product>, n: &str) -> (bool, bool) {
         Some(None) => (true, true),
         None => (false, false),
     }
+}
+
+/// The two names of `c` and its normal over them, when it has exactly two atoms, both names.
+fn two_names(c: &Con) -> Option<(Factor, Factor, [Int; 2])> {
+    let mut it = c.lin.terms.iter();
+    let (Some((Atom::Sym(u), a)), Some((Atom::Sym(v), b)), None) =
+        (it.next(), it.next(), it.next())
+    else {
+        return None;
+    };
+    Some((
+        Factor::Sym(u.clone()),
+        Factor::Sym(v.clone()),
+        [a.clone(), b.clone()],
+    ))
+}
+
+/// `a × b`, the cross product of two vectors of the plane.
+fn cross(a: &[Int; 2], b: &[Int; 2]) -> Int {
+    &(&a[0] * &b[1]) - &(&a[1] * &b[0])
+}
+
+/// Whether `t` is a nonnegative combination of `gens`, vectors of the plane. By Carathéodory's
+/// theorem for cones it is one of at most two of them, and the two that bound it most closely
+/// on each side span it if any pair does: O(m) for m vectors.
+fn in_cone(t: &[Int; 2], gens: &[[Int; 2]]) -> bool {
+    let mut left: Option<&[Int; 2]> = None;
+    let mut right: Option<&[Int; 2]> = None;
+    for g in gens {
+        let s = cross(t, g);
+        if s.is_zero() {
+            let dot = &(&t[0] * &g[0]) + &(&t[1] * &g[1]);
+            if dot.is_positive() {
+                return true;
+            }
+        } else if s.is_positive() {
+            if left.is_none_or(|l| cross(g, l).is_positive()) {
+                left = Some(g);
+            }
+        } else if right.is_none_or(|r| cross(r, g).is_positive()) {
+            right = Some(g);
+        }
+    }
+    matches!((right, left), (Some(r), Some(l)) if cross(r, l).is_positive())
+}
+
+/// Where a disjunction stands in [`Block::bounds`]: two names in order, an end of one of them
+/// (0 and 1 the lower and upper end of the first, 2 and 3 of the second), and whether a
+/// constraint that bounds it turns from that end to the left (`true`) or to the right.
+type BoundsKey = (Arc<str>, Arc<str>, u8, bool);
+type NamePair = (Arc<str>, Arc<str>);
+type Normals = Vec<[Int; 2]>;
+
+/// A direction of the plane, ordered by its angle in (-π, π] from the positive first axis;
+/// two directions are equal when they are the same however long. Directions are in the frame
+/// of an end ([`turned`]), where that end is the positive first axis.
+#[derive(Clone, Debug)]
+struct Turn([Int; 2]);
+
+impl Turn {
+    /// The half of the circle `self` is in, in the order of the angles: below the first axis,
+    /// on its positive half, above it, on its negative half.
+    fn half(&self) -> u8 {
+        let [x, y] = &self.0;
+        if y.is_negative() {
+            0
+        } else if y.is_zero() && x.is_positive() {
+            1
+        } else if y.is_positive() {
+            2
+        } else {
+            3
+        }
+    }
+}
+
+impl Ord for Turn {
+    fn cmp(&self, other: &Turn) -> std::cmp::Ordering {
+        // Within a half, the angle from a to b is less than π, so the sign of a × b orders them.
+        self.half()
+            .cmp(&other.half())
+            .then_with(|| Int::from(0).cmp(&cross(&self.0, &other.0)))
+    }
+}
+
+impl PartialOrd for Turn {
+    fn partial_cmp(&self, other: &Turn) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for Turn {
+    fn eq(&self, other: &Turn) -> bool {
+        self.cmp(other) == std::cmp::Ordering::Equal
+    }
+}
+
+impl Eq for Turn {}
+
+/// The normal `n` over two names in the frame of end `end` ([`BoundsKey`]), turned so that the
+/// direction in which a constraint bounds that end is the positive first axis: a constraint
+/// `n · (u, v) + k >= 0` bounds the lower end of `u` when `(1, 0)` is a nonnegative
+/// combination of its normal and others, and the upper end when `(-1, 0)` is.
+fn turned(end: u8, n: &[Int; 2]) -> [Int; 2] {
+    let [a, b] = n;
+    match end {
+        0 => [a.clone(), b.clone()],
+        1 => [-a, -b],
+        2 => [b.clone(), -a],
+        _ => [-b, a.clone()],
+    }
+}
+
+/// One arm's rows grouped in one pass. Unary directions are reduced to their signs;
+/// positive scaling preserves the cone, so many rows on one name occupy at most two slots.
+#[derive(Default)]
+struct ArmNormals {
+    pairs: BTreeMap<NamePair, Normals>,
+    unary: BTreeMap<Arc<str>, (bool, bool)>,
+}
+
+impl ArmNormals {
+    fn of(arm: &Formula) -> Self {
+        let mut out = Self::default();
+        let mut add = |c: &Con| {
+            let mut it = c.lin.terms.iter();
+            match (it.next(), it.next(), it.next()) {
+                (Some((Atom::Sym(u), a)), Some((Atom::Sym(v), b)), None) => {
+                    let ns = out.pairs.entry((u.clone(), v.clone())).or_default();
+                    ns.push([a.clone(), b.clone()]);
+                    if c.rel == Rel::Eq {
+                        ns.push([-a, -b]);
+                    }
+                }
+                (Some((Atom::Sym(u), a)), None, None) => {
+                    if a.is_zero() {
+                        return;
+                    }
+                    let signs = out.unary.entry(u.clone()).or_default();
+                    signs.0 |= a.is_positive() || c.rel == Rel::Eq;
+                    signs.1 |= a.is_negative() || c.rel == Rel::Eq;
+                }
+                _ => {}
+            }
+        };
+        match arm {
+            Formula::Con(c) => add(c),
+            Formula::And(gs) => {
+                for g in gs.iter() {
+                    if let Formula::Con(c) = g {
+                        add(c);
+                    }
+                }
+            }
+            _ => {}
+        }
+        out
+    }
+    fn on(&self, u: &Arc<str>, v: &Arc<str>) -> Vec<[Int; 2]> {
+        let mut out = self
+            .pairs
+            .get(&(u.clone(), v.clone()))
+            .cloned()
+            .unwrap_or_default();
+        for (n, axis) in [(u, 0), (v, 1)] {
+            if let Some(&(positive, negative)) = self.unary.get(n) {
+                for sign in [positive.then_some(1), negative.then_some(-1)]
+                    .into_iter()
+                    .flatten()
+                {
+                    let mut p = [Int::ZERO, Int::ZERO];
+                    p[axis] = Int::from(sign);
+                    out.push(p);
+                }
+            }
+        }
+        out
+    }
+}
+
+/// The entries of the disjunction `g` in [`Block::bounds`]: for two names of a constraint of
+/// `g` on two names (or the two names of `g`'s constraints on one name, when there are two),
+/// and each end of each, when some arm does not bound that end by its constraints on the two
+/// names alone, the directions of a constraint on them that makes every arm bound it.
+///
+/// In the frame of the end ([`turned`]), an arm whose normals `N` do not hold `(1, 0)` in their
+/// cone holds it in the cone of `N` and `q` exactly when `(1, 0)` lies in the cone of `q` and
+/// one normal `n` of `N` (Carathéodory's theorem for cones of the plane), that is when `q`
+/// lies strictly within π of `n` on the other side of the axis. The directions so allowed are
+/// an open arc about the axis, from `-l` to `-r` for `l` the normal above the axis nearest it
+/// and `r` the one below, closed at the axis on a side with no normal. Every arm's arc holds
+/// the axis, so the arcs of the arms meet in one arc, from the greatest `-l` to the least `-r`.
+/// The entry of a side is that end of the arc, none when the arc stops at the axis there.
+// Complexity tradeoff: rescanning m rows for p pairs costs O(p*m); even grouping rows and
+// then reading a slots per pair costs O(p*a). Grouping each arm once and accumulating only
+// present pair/arm entries costs O(m log m). Without unary rows, a missing arm contributes
+// no entry: a non-axis query alone cannot bound an axis. With unary rows the index handles
+// disjunctions wholly on the same two names (p=1), again O(m log m). Mixed unary supports
+// on three or more names keep M1's scheduling; their additional pair firings are omitted.
+fn bounds_at(g: &Formula) -> Vec<(BoundsKey, Turn)> {
+    let Formula::Or(arms) = g else {
+        return Vec::new();
+    };
+    let mut pairs: BTreeSet<(Arc<str>, Arc<str>)> = BTreeSet::new();
+    let mut ones: BTreeSet<Arc<str>> = BTreeSet::new();
+    for c in g.cons() {
+        let mut syms = c.lin.terms.keys().map(|a| match a {
+            Atom::Sym(n) => Some(n.clone()),
+            _ => None,
+        });
+        match (syms.next(), syms.next(), syms.next()) {
+            (Some(Some(u)), Some(Some(v)), None) => {
+                // Both orders: a lookup by either order of the two names finds the entry.
+                pairs.insert((u.clone(), v.clone()));
+                pairs.insert((v, u));
+            }
+            (Some(Some(u)), None, None) => {
+                ones.insert(u);
+            }
+            _ => {}
+        }
+    }
+    if let [u, v] = &ones.into_iter().collect::<Vec<_>>()[..] {
+        pairs.insert((u.clone(), v.clone()));
+    }
+    let grouped: Vec<ArmNormals> = arms.iter().map(ArmNormals::of).collect();
+    let unary = grouped.iter().any(|a| !a.unary.is_empty());
+    if unary && syms(g).len() != 2 {
+        return Vec::new();
+    }
+    let mut sparse: BTreeMap<NamePair, Vec<Normals>> = BTreeMap::new();
+    if !unary {
+        for arm in &grouped {
+            for (pair, ns) in &arm.pairs {
+                sparse.entry(pair.clone()).or_default().push(ns.clone());
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for (u, v) in pairs {
+        let normals: Vec<Vec<[Int; 2]>> = if unary {
+            grouped.iter().map(|a| a.on(&u, &v)).collect()
+        } else {
+            let Some(ns) = sparse.remove(&(u.clone(), v.clone())) else {
+                continue;
+            };
+            if ns.len() != arms.len() {
+                continue;
+            }
+            ns
+        };
+        for end in 0..4u8 {
+            let axis = [Int::from(1), Int::from(0)];
+            let (mut lo, mut hi) = (Some(None::<Turn>), Some(None::<Turn>));
+            let mut gained = false;
+            for ns in &normals {
+                let ns: Vec<[Int; 2]> = ns.iter().map(|n| turned(end, n)).collect();
+                if in_cone(&axis, &ns) {
+                    continue;
+                }
+                gained = true;
+                let above = ns.iter().filter(|n| n[1].is_positive());
+                let below = ns.iter().filter(|n| n[1].is_negative());
+                // The nearest normal above the axis is the one no other is clockwise of.
+                let l = above.min_by(|a, b| Turn((*a).clone()).cmp(&Turn((*b).clone())));
+                let r = below.max_by(|a, b| Turn((*a).clone()).cmp(&Turn((*b).clone())));
+                let lo_arm = l.map(|n| Turn([-&n[0], -&n[1]]));
+                let hi_arm = r.map(|n| Turn([-&n[0], -&n[1]]));
+                lo = match (lo, lo_arm) {
+                    (Some(was), Some(now)) => Some(Some(match was {
+                        Some(was) if was > now => was,
+                        _ => now,
+                    })),
+                    _ => None,
+                };
+                hi = match (hi, hi_arm) {
+                    (Some(was), Some(now)) => Some(Some(match was {
+                        Some(was) if was < now => was,
+                        _ => now,
+                    })),
+                    _ => None,
+                };
+            }
+            if !gained {
+                continue;
+            }
+            if let Some(Some(t)) = lo {
+                out.push(((u.clone(), v.clone(), end, false), t));
+            }
+            if let Some(Some(t)) = hi {
+                out.push(((u.clone(), v.clone(), end, true), t));
+            }
+        }
+    }
+    out
+}
+
+/// A persistent AVL tree of `x >= a || y <= b`, keyed by `(b, a)`. Each subtree
+/// keeps its greatest `a`, so a prefix bound and a minimax bound take one search path.
+/// Every tree walk follows children of strictly decreasing height, a topological order.
+#[derive(Clone, Default)]
+struct Staircase(Option<Arc<StairNode>>);
+
+#[derive(Clone)]
+struct StairNode {
+    key: (Int, Int),
+    count: usize,
+    height: usize,
+    size: usize,
+    max_a: Int,
+    left: Staircase,
+    right: Staircase,
+}
+
+impl Staircase {
+    /// Whether `self` and `other` are one tree in memory, so hold the same rows. A tree is
+    /// never changed in place, and each holder keeps its root alive, so the address names
+    /// the tree for as long as either is held. Used for identity only, never for order.
+    fn same(&self, other: &Staircase) -> bool {
+        match (&self.0, &other.0) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+
+    fn height(&self) -> usize {
+        self.0.as_ref().map_or(0, |n| n.height)
+    }
+    fn size(&self) -> usize {
+        self.0.as_ref().map_or(0, |n| n.size)
+    }
+    fn max_a(&self) -> Option<&Int> {
+        self.0.as_ref().map(|n| &n.max_a)
+    }
+    fn node(key: (Int, Int), count: usize, left: Self, right: Self) -> Self {
+        let mut max_a = key.1.clone();
+        for v in [left.max_a(), right.max_a()].into_iter().flatten() {
+            if *v > max_a {
+                max_a = v.clone();
+            }
+        }
+        Self(Some(Arc::new(StairNode {
+            max_a,
+            height: 1 + left.height().max(right.height()),
+            size: count + left.size() + right.size(),
+            key,
+            count,
+            left,
+            right,
+        })))
+    }
+    fn balanced(key: (Int, Int), count: usize, mut left: Self, mut right: Self) -> Self {
+        if left.height() > right.height() + 1 {
+            let l = left.0.as_ref().expect("a taller left child exists");
+            if l.right.height() > l.left.height() {
+                let r = l.right.0.as_ref().expect("the taller inner child exists");
+                left = Self::node(
+                    r.key.clone(),
+                    r.count,
+                    Self::node(l.key.clone(), l.count, l.left.clone(), r.left.clone()),
+                    r.right.clone(),
+                );
+            }
+            let l = left.0.as_ref().expect("rotation preserves the left child");
+            return Self::node(
+                l.key.clone(),
+                l.count,
+                l.left.clone(),
+                Self::node(key, count, l.right.clone(), right),
+            );
+        }
+        if right.height() > left.height() + 1 {
+            let r = right.0.as_ref().expect("a taller right child exists");
+            if r.left.height() > r.right.height() {
+                let l = r.left.0.as_ref().expect("the taller inner child exists");
+                right = Self::node(
+                    l.key.clone(),
+                    l.count,
+                    l.left.clone(),
+                    Self::node(r.key.clone(), r.count, l.right.clone(), r.right.clone()),
+                );
+            }
+            let r = right
+                .0
+                .as_ref()
+                .expect("rotation preserves the right child");
+            return Self::node(
+                r.key.clone(),
+                r.count,
+                Self::node(key, count, left, r.left.clone()),
+                r.right.clone(),
+            );
+        }
+        Self::node(key, count, left, right)
+    }
+    // Complexity tradeoff: a sorted vector copied at every insertion costs O(k^2) over k
+    // parts. Path-copying an AVL tree with subtree maxima costs O(log k) per update and
+    // O(log k) per query, including deletion and persistent versions used by case splits.
+    fn insert(&self, key: (Int, Int)) -> Self {
+        let Some(n) = &self.0 else {
+            return Self::node(key, 1, Self::default(), Self::default());
+        };
+        match key.cmp(&n.key) {
+            std::cmp::Ordering::Less => {
+                Self::balanced(n.key.clone(), n.count, n.left.insert(key), n.right.clone())
+            }
+            std::cmp::Ordering::Greater => {
+                Self::balanced(n.key.clone(), n.count, n.left.clone(), n.right.insert(key))
+            }
+            std::cmp::Ordering::Equal => {
+                Self::node(n.key.clone(), n.count + 1, n.left.clone(), n.right.clone())
+            }
+        }
+    }
+    fn remove(&self, key: &(Int, Int), all: bool) -> Self {
+        let Some(n) = &self.0 else {
+            return self.clone();
+        };
+        match key.cmp(&n.key) {
+            std::cmp::Ordering::Less => Self::balanced(
+                n.key.clone(),
+                n.count,
+                n.left.remove(key, all),
+                n.right.clone(),
+            ),
+            std::cmp::Ordering::Greater => Self::balanced(
+                n.key.clone(),
+                n.count,
+                n.left.clone(),
+                n.right.remove(key, all),
+            ),
+            std::cmp::Ordering::Equal if n.count > 1 && !all => {
+                Self::node(n.key.clone(), n.count - 1, n.left.clone(), n.right.clone())
+            }
+            std::cmp::Ordering::Equal => {
+                if n.left.0.is_none() {
+                    return n.right.clone();
+                }
+                let Some(mut first) = n.right.0.as_ref() else {
+                    return n.left.clone();
+                };
+                while let Some(l) = first.left.0.as_ref() {
+                    first = l;
+                }
+                Self::balanced(
+                    first.key.clone(),
+                    first.count,
+                    n.left.clone(),
+                    n.right.remove(&first.key, true),
+                )
+            }
+        }
+    }
+    /// `max { a : b < y }`.
+    fn lower_x(&self, y: &Int) -> Option<Int> {
+        let (mut at, mut best) = (&self.0, None::<Int>);
+        while let Some(n) = at {
+            if n.key.0 < *y {
+                for a in [Some(&n.key.1), n.left.max_a()].into_iter().flatten() {
+                    best = Some(best.map_or_else(|| a.clone(), |b| b.max(a.clone())));
+                }
+                at = &n.right.0;
+            } else {
+                at = &n.left.0;
+            }
+        }
+        best
+    }
+    /// `min { b : a > x }`.
+    fn upper_y(&self, x: &Int) -> Option<Int> {
+        let mut at = &self.0;
+        while let Some(n) = at {
+            if n.left.max_a().is_some_and(|a| a > x) {
+                at = &n.left.0;
+            } else if n.key.1 > *x {
+                return Some(n.key.0.clone());
+            } else {
+                at = &n.right.0;
+            }
+        }
+        None
+    }
+    /// `min_i max(b_i, floor((c - p*a_i)/q))`, for positive `p,q`.
+    fn upper_case(&self, p: &Int, q: &Int, c: &Int) -> Option<Int> {
+        debug_assert!(p.is_positive() && q.is_positive());
+        self.upper_dec(|a: &Int| Some((c - &(p * a)).div_floor(q)))
+    }
+    /// `min_i max(b_i, f(max_{j <= i} a_j))` over the rows in order of `b`, for `f` that does
+    /// not increase, `None` standing for no bound: the least upper bound on y that the rows
+    /// `x >= a_i || y <= b_i` and `y <= f(x)` allow.
+    // Complexity tradeoff: evaluating the bound at every row costs O(k) per call for k rows;
+    // the descent keeps the prefix maximum of `a` and calls `f` once per level, O(log k)
+    // calls of `f`.
+    fn upper_dec(&self, f: impl Fn(&Int) -> Option<Int>) -> Option<Int> {
+        let le = |v: Option<Int>, b: &Int| v.is_some_and(|v| v <= *b);
+        let (mut at, mut prefix, mut best) = (&self.0, None::<Int>, None::<Int>);
+        while let Some(n) = at {
+            let mut a = prefix
+                .clone()
+                .map_or_else(|| n.key.1.clone(), |a| a.max(n.key.1.clone()));
+            if let Some(l) = n.left.max_a() {
+                a = a.max(l.clone());
+            }
+            if le(f(&a), &n.key.0) {
+                best = Some(n.key.0.clone());
+                at = &n.left.0;
+            } else {
+                prefix = Some(a);
+                at = &n.right.0;
+            }
+        }
+        if let Some(v) = prefix.and_then(|a| f(&a)) {
+            best = Some(best.map_or(v.clone(), |b| b.min(v)));
+        }
+        best
+    }
+}
+
+/// A threshold part's lower name, upper name, lower threshold, and upper threshold.
+fn stair_row(g: &Formula) -> Option<(Arc<str>, Arc<str>, Int, Int)> {
+    let Formula::Or(gs) = g else {
+        return None;
+    };
+    if gs.len() != 2 {
+        return None;
+    }
+    let mut lo = None;
+    let mut hi = None;
+    for g in gs.iter() {
+        let Formula::Con(c) = g else {
+            return None;
+        };
+        if c.rel != Rel::Ge {
+            return None;
+        }
+        let mut terms = c.lin.terms.iter();
+        let (Some((Atom::Sym(n), k)), None) = (terms.next(), terms.next()) else {
+            return None;
+        };
+        if k.is_positive() {
+            lo = Some((n.clone(), -&c.lin.constant.div_floor(k)));
+        } else if k.is_negative() {
+            hi = Some((n.clone(), c.lin.constant.div_floor(&-k)));
+        }
+    }
+    let ((x, a), (y, b)) = (lo?, hi?);
+    (x != y).then_some((x, y, a, b))
+}
+
+impl Scope {
+    /// Exact box marginals for threshold rows and positive upper half-planes on their two
+    /// names. Other disjunctions are still projected normally. Refuses classes, holes,
+    /// equalities, a third name, and other half-plane directions; the ordinary rule then runs.
+    // Complexity tradeoff: projecting k threshold rows separately costs O(k) per case.
+    // The aggregate query costs O((r + 1) log k) for r base rows. The caller shares the
+    // threshold rows' snapshot and walks only ordinary users after a name change. Ordinary
+    // users, leaving the handled shape, and the existing raw projection still cost their
+    // entries; this is not a global bound on the reduced product (R1-CODEX-01).
+    fn cover_staircase(&mut self, b: &mut Block) -> Option<(Arc<str>, Arc<str>)> {
+        if !b.aggregate_unsupported.is_empty() {
+            return None;
+        }
+        if b.stairs.len() != 1 || b.users.len() != 2 {
+            return None;
+        }
+        let ((x, y), tree) = b.stairs.iter().next()?;
+        let (x, y, tree) = (&x.clone(), &y.clone(), &tree.clone());
+        let px = self.get(x);
+        let py = self.get(y);
+        if classed(&px) || classed(&py) || px.ints().len() > 1 || py.ints().len() > 1 {
+            return None;
+        }
+        let (mut xl, mut xh) = px.ints().bounds().map(|(l, h)| (l.clone(), h.clone()))?;
+        let (mut yl, mut yh) = py.ints().bounds().map(|(l, h)| (l.clone(), h.clone()))?;
+        let mut planes = Vec::new();
+        for g in &b.cons {
+            let Formula::Con(c) = &**g else {
+                return None;
+            };
+            if c.rel != Rel::Ge {
+                return None;
+            }
+            let mut p = Int::ZERO;
+            let mut q = Int::ZERO;
+            for (a, k) in &c.lin.terms {
+                match a {
+                    Atom::Sym(n) if n == x => p = -k,
+                    Atom::Sym(n) if n == y => q = -k,
+                    _ => return None,
+                }
+            }
+            let v = &c.lin.constant;
+            match (p.is_zero(), q.is_zero()) {
+                (true, true) => {
+                    if v.is_negative() {
+                        self.empty_at(x);
+                        return Some((x.clone(), y.clone()));
+                    }
+                }
+                (false, true) => {
+                    if p.is_positive() {
+                        xh = xh.min(End::Fin(Num::from(&v.div_floor(&p))));
+                    } else {
+                        xl = xl.max(End::Fin(Num::from(&-&v.div_floor(&-&p))));
+                    }
+                }
+                (true, false) => {
+                    if q.is_positive() {
+                        yh = yh.min(End::Fin(Num::from(&v.div_floor(&q))));
+                    } else {
+                        yl = yl.max(End::Fin(Num::from(&-&v.div_floor(&-&q))));
+                    }
+                }
+                (false, false) if p.is_positive() && q.is_positive() => {
+                    planes.push((p, q, v.clone()))
+                }
+                _ => return None,
+            }
+        }
+        if let End::Fin(l) = &yl {
+            let l = Int::from(l);
+            if let Some(a) = tree.lower_x(&l) {
+                xl = xl.max(End::Fin(Num::from(&a)));
+            }
+            for (p, q, c) in &planes {
+                let h = (c - &(q * &l)).div_floor(p);
+                xh = xh.min(End::Fin(Num::from(&h)));
+            }
+        }
+        if let End::Fin(h) = &xh
+            && let Some(v) = tree.upper_y(&Int::from(h))
+        {
+            yh = yh.min(End::Fin(Num::from(&v)));
+        }
+        for (p, q, c) in &planes {
+            if let Some(v) = tree.upper_case(p, q, c) {
+                yh = yh.min(End::Fin(Num::from(&v)));
+            }
+            if let End::Fin(l) = &xl {
+                let h = (c - &(p * &Int::from(l))).div_floor(q);
+                yh = yh.min(End::Fin(Num::from(&h)));
+            }
+        }
+        // The upper disjunctions bound y and x through `UpperBounds`, which depends only on
+        // the staircase, the lower ends of x and y, and the disjunctions.
+        // Complexity tradeoff: reading each of the u upper disjunctions at each call costs
+        // O(u (a log k)) per call for disjunctions of a arms, O(k u) over k tests that each
+        // move only an upper end; the block keeps the bounds and takes in each disjunction
+        // as it enters, O(a log k), and reads them all again, O(u (a log k)), only when the
+        // staircase or a lower end changes or a disjunction leaves.
+        let fresh = b.upper_bounds.as_ref().is_some_and(|u| {
+            &u.pair.0 == x && &u.pair.1 == y && u.tree.same(tree) && u.xl == xl && u.yl == yl
+        });
+        if !fresh {
+            let mut u = UpperBounds {
+                pair: (x.clone(), y.clone()),
+                tree: tree.clone(),
+                xl: xl.clone(),
+                yl: yl.clone(),
+                y: None,
+                x: None,
+            };
+            for at in &b.aggregate_uppers {
+                u.take(&at.1);
+            }
+            b.upper_bounds = Some(u);
+        }
+        if let Some(u) = &b.upper_bounds {
+            if let Some(v) = &u.y {
+                yh = yh.min(End::Fin(Num::from(v)));
+            }
+            if let Some(v) = &u.x {
+                xh = xh.min(End::Fin(Num::from(v)));
+            }
+        }
+        let changes = px.ints() != &IntervalSet::range(xl.clone(), xh.clone())
+            || py.ints() != &IntervalSet::range(yl.clone(), yh.clone());
+        // A changing threshold aggregate must also solve the other lower cohort
+        // in this prospective box. Otherwise preserve all individual movements.
+        if changes && !b.rays.is_empty() {
+            let mut probe = self.names.clone();
+            for (n, l, h) in [(x, &xl, &xh), (y, &yl, &yh)] {
+                if let Some(p) = probe.get_mut(n) {
+                    let prem = p.premises();
+                    p.meet_ints(IntervalSet::range(l.clone(), h.clone()), &prem);
+                }
+            }
+            b.ray_high(&probe)?;
+        }
+        for (n, l, h) in [(x, xl, xh), (y, yl, yh)] {
+            if l > h {
+                self.empty_at(n);
+            } else if let Some(p) = self.names.get_mut(n) {
+                let prem = p.premises();
+                p.meet_ints(IntervalSet::range(l, h), &prem);
+            }
+        }
+        Some((x.clone(), y.clone()))
+    }
+}
+
+impl Block {
+    /// Whether the exact threshold calculation handles every base row and both name domains.
+    fn manages_stairs(&self, names: &imbl::OrdMap<Arc<str>, Product>) -> bool {
+        if !self.aggregate_unsupported.is_empty() {
+            return false;
+        }
+        if self.stairs.len() != 1 || self.users.len() != 2 {
+            return false;
+        }
+        let Some(((x, y), _)) = self.stairs.iter().next() else {
+            return false;
+        };
+        for n in [x, y] {
+            let Some(p) = names.get(n) else {
+                return false;
+            };
+            if classed(p) || p.ints().len() != 1 {
+                return false;
+            }
+        }
+        for g in &self.cons {
+            let Formula::Con(c) = &**g else {
+                return false;
+            };
+            if c.rel != Rel::Ge {
+                return false;
+            }
+            if c.lin.terms.len() > 1 && c.lin.terms.values().any(|k| k.is_positive()) {
+                return false;
+            }
+            if c.lin
+                .terms
+                .keys()
+                .any(|a| !matches!(a,Atom::Sym(n) if n == x || n == y))
+            {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+/// An integer support shared by ordinary parts on one ordered pair. An arm
+/// `x - j*y >= d`, j >= 0, supports every y <= H at x = d + j*y.
+/// The multiset holds each distinct `(j, d)` with its count.
+/// Complexity tradeoff: projecting k parts per case costs O(k) projections; this
+/// persistent multiset costs O(log k) per insertion or deletion, and a case reads
+/// its R distinct `(j, d)` pairs, O(R) arithmetic with no projection
+/// ([`Block::ray_high`]). No witness coordinates or copies of the block's rows are stored.
+#[derive(Clone, Default)]
+struct RayGroup {
+    rays: imbl::OrdMap<(Int, Int), usize>,
+}
+
+impl RayGroup {
+    fn add(&mut self, j: &Int, d: &Int) {
+        *self.rays.entry((j.clone(), d.clone())).or_insert(0) += 1;
+    }
+
+    fn remove(&mut self, j: &Int, d: &Int) {
+        let key = (j.clone(), d.clone());
+        if let Some(count) = self.rays.get_mut(&key) {
+            *count -= 1;
+            if *count == 0 {
+                self.rays.remove(&key);
+            }
+        }
+    }
+}
+
+/// Half-plane arms on two names, all with unit positive x coefficient and
+/// the same constant. At y <= 0 the least y coefficient dominates all others.
+fn ray_row(g: &Formula) -> Option<(Arc<str>, Arc<str>, Int, Int)> {
+    let Formula::Or(arms) = g else {
+        return None;
+    };
+    let ns = syms(g);
+    let [x, y] = &ns[..] else {
+        return None;
+    };
+    let mut slope: Option<Int> = None;
+    let mut limit: Option<Int> = None;
+    for arm in arms.iter() {
+        let Formula::Con(c) = arm else {
+            return None;
+        };
+        if c.rel != Rel::Ge {
+            return None;
+        }
+        let (mut a, mut b) = (Int::ZERO, Int::ZERO);
+        for (atom, k) in &c.lin.terms {
+            match atom {
+                Atom::Sym(n) if n == x => a = k.clone(),
+                Atom::Sym(n) if n == y => b = k.clone(),
+                _ => return None,
+            }
+        }
+        if a != Int::ONE || limit.as_ref().is_some_and(|d| d != &-&c.lin.constant) {
+            return None;
+        }
+        limit = Some(-&c.lin.constant);
+        slope = Some(match slope {
+            Some(old) => old.min(b),
+            None => b,
+        });
+    }
+    let slope = slope?;
+    if !slope.is_negative() {
+        return None;
+    }
+    Some((x.clone(), y.clone(), -&slope, limit?))
+}
+
+impl Block {
+    fn due_users(&self) -> &imbl::OrdMap<Arc<str>, imbl::OrdSet<PartAt>> {
+        match (self.stair_managed, self.ray_managed) {
+            (true, true) => &self.active_users,
+            (true, false) => &self.ordinary_users,
+            (false, true) => &self.ray_other_users,
+            (false, false) => &self.users,
+        }
+    }
+
+    /// Common-ray bound while y <= 0: each member is equivalent to x >= d+j*y,
+    /// and a row p*x+q*y <= c with p >= 0 then gives y <= (c-p*d)/(p*j+q)
+    /// at integer floors; the least such bound over the distinct (j, d) holds.
+    /// Complexity tradeoff: reading the r rows against the R distinct (j, d) at each run
+    /// costs O(r R) per run, O(k^2) over k tests that each add a ray; the block keeps the
+    /// least bound ([`RayLeast`]) and takes in each ray as it enters, O(r), and each row,
+    /// O(R), so a run costs O(r) for the rows and the lower end of x. A ray or row that
+    /// leaves makes the next run read them all again, O(r R). Construction and removals
+    /// cost O(log k) per member.
+    fn ray_high(&self, names: &imbl::OrdMap<Arc<str>, Product>) -> Option<(Arc<str>, Int)> {
+        if !self.aggregate_unsupported.is_empty() || self.rays.len() != 1 || self.users.len() != 2 {
+            return None;
+        }
+        let ((x, y), group) = self.rays.iter().next()?;
+        if self
+            .stairs
+            .keys()
+            .any(|pair| pair != &(x.clone(), y.clone()))
+        {
+            return None;
+        }
+        if group.rays.is_empty() {
+            return None;
+        }
+        let (px, py) = (names.get(x)?, names.get(y)?);
+        if classed(px) || classed(py) || px.ints().len() != 1 || py.ints().len() != 1 {
+            return None;
+        }
+        let (xl, End::PosInf) = px.ints().bounds()? else {
+            return None;
+        };
+        let (End::NegInf, End::Fin(h)) = py.ints().bounds()? else {
+            return None;
+        };
+        let mut h = Int::from(h);
+        if h.is_positive() {
+            return None;
+        }
+        let least = self
+            .ray_least
+            .get_or_init(|| RayLeast::of(&self.cons, x, y, group));
+        let RayLeast::Least(least) = least else {
+            return None;
+        };
+        if let Some(v) = least {
+            h = h.min(v.clone());
+        }
+        if let End::Fin(l) = xl {
+            let l = Int::from(l);
+            for g in &self.cons {
+                let (p, q, c) = ray_con(g, x, y)?;
+                h = h.min((&c - &(&p * &l)).div_floor(&q));
+            }
+        }
+        Some((y.clone(), h))
+    }
+}
+
+/// A row `p*x + q*y <= c` of [`Block::ray_high`] as `(p, q, c)`, when `g` is one with `p >= 0`
+/// and `q > 0` on the names `x` and `y` alone.
+fn ray_con(g: &Formula, x: &Arc<str>, y: &Arc<str>) -> Option<(Int, Int, Int)> {
+    let Formula::Con(c) = g else {
+        return None;
+    };
+    if c.rel != Rel::Ge {
+        return None;
+    }
+    let (mut p, mut q) = (Int::ZERO, Int::ZERO);
+    for (a, k) in &c.lin.terms {
+        match a {
+            Atom::Sym(n) if n == x => p = -k,
+            Atom::Sym(n) if n == y => q = -k,
+            _ => return None,
+        }
+    }
+    (!p.is_negative() && q.is_positive()).then(|| (p, q, c.lin.constant.clone()))
+}
+
+/// The bound a row `p*x + q*y <= c` gives over a ray `(j, d)` in [`Block::ray_high`].
+fn ray_bound((p, q, c): &(Int, Int, Int), j: &Int, d: &Int) -> Int {
+    (c - &(p * d)).div_floor(&(&(p * j) + q))
+}
+
+/// The least of `x` and `y`, either of which may be missing.
+fn least_of(x: Option<Int>, y: Option<Int>) -> Option<Int> {
+    match (x, y) {
+        (Some(x), Some(y)) => Some(x.min(y)),
+        (x, None) => x,
+        (None, y) => y,
+    }
+}
+
+/// The least bound the rows of a block give over the rays of its one ray group
+/// ([`Block::ray_high`]).
+#[derive(Clone)]
+enum RayLeast {
+    /// A row is not `p*x + q*y <= c` with `p >= 0` and `q > 0` on the group's two names.
+    Unsupported,
+    /// The least [`ray_bound`] over the rows and rays, none when there is no row.
+    Least(Option<Int>),
+}
+
+impl RayLeast {
+    /// Reads the rows `cons` against every ray of `group` on `x` and `y`, O(r R).
+    fn of(cons: &imbl::OrdSet<Arc<Formula>>, x: &Arc<str>, y: &Arc<str>, group: &RayGroup) -> Self {
+        let mut least = None;
+        for g in cons {
+            let Some(row) = ray_con(g, x, y) else {
+                return RayLeast::Unsupported;
+            };
+            for (j, d) in group.rays.keys() {
+                least = least_of(least, Some(ray_bound(&row, j, d)));
+            }
+        }
+        RayLeast::Least(least)
+    }
+
+    /// Takes in the row `g` against every ray of `group` on `x` and `y`, O(R).
+    fn take_con(&mut self, g: &Formula, x: &Arc<str>, y: &Arc<str>, group: &RayGroup) {
+        let RayLeast::Least(least) = self else {
+            return;
+        };
+        let Some(row) = ray_con(g, x, y) else {
+            *self = RayLeast::Unsupported;
+            return;
+        };
+        for (j, d) in group.rays.keys() {
+            *least = least_of(least.take(), Some(ray_bound(&row, j, d)));
+        }
+    }
+
+    /// Takes in the ray `(j, d)` on `x` and `y` against every row of `cons`, O(r).
+    fn take_ray(
+        &mut self,
+        cons: &imbl::OrdSet<Arc<Formula>>,
+        x: &Arc<str>,
+        y: &Arc<str>,
+        j: &Int,
+        d: &Int,
+    ) {
+        let RayLeast::Least(least) = self else {
+            return;
+        };
+        for g in cons {
+            // Every row was read when the bound was first found; a row of another form
+            // made it `Unsupported` then.
+            if let Some(row) = ray_con(g, x, y) {
+                *least = least_of(least.take(), Some(ray_bound(&row, j, d)));
+            }
+        }
+    }
+}
+
+/// What the upper disjunctions of a block give in [`Scope::cover_staircase`] for the
+/// staircase `tree` of the names `pair` and the lower ends `xl` of x and `yl` of y: the least
+/// upper end of y and of x over the disjunctions, none where no disjunction bounds it.
+#[derive(Clone)]
+struct UpperBounds {
+    pair: NamePair,
+    tree: Staircase,
+    xl: End,
+    yl: End,
+    y: Option<Int>,
+    x: Option<Int>,
+}
+
+impl UpperBounds {
+    /// Takes in the upper disjunction `g`, O(a log k) for a arms and k threshold rows.
+    ///
+    /// An upper disjunction `p1*x + q1*y <= c1 || p2*x + q2*y <= c2 || ...` on x and y, every
+    /// p and q positive ([`upper_disjunction`]), bounds y at each x by the largest of its
+    /// arms' lines, a function of x that does not increase. The staircase descent gives the
+    /// least y the threshold rows and that function allow; the lower ends of x and y bound the
+    /// other name through the same lines. A disjunction on other names gives nothing.
+    fn take(&mut self, g: &Formula) {
+        let Some(arms) = upper_arms(g, &self.pair.0, &self.pair.1) else {
+            return;
+        };
+        let y_at = |a: &Int| {
+            arms.iter()
+                .map(|(p, q, c)| (c - &(p * a)).div_floor(q))
+                .max()
+        };
+        let mut y = self.tree.upper_dec(y_at);
+        if let End::Fin(l) = &self.xl {
+            y = least_of(y, y_at(&Int::from(l)));
+        }
+        self.y = least_of(self.y.take(), y);
+        if let End::Fin(l) = &self.yl {
+            let l = Int::from(l);
+            let x = arms
+                .iter()
+                .map(|(p, q, c)| (c - &(q * &l)).div_floor(p))
+                .max();
+            self.x = least_of(self.x.take(), x);
+        }
+    }
+}
+
+impl Scope {
+    fn cover_rays(&mut self, b: &Block) -> bool {
+        let Some((y, h)) = b.ray_high(&self.names) else {
+            return false;
+        };
+        if let Some(p) = self.names.get_mut(&y) {
+            let prem = p.premises();
+            p.meet_ints(
+                IntervalSet::range(End::NegInf, End::Fin(Num::from(&h))),
+                &prem,
+            );
+        }
+        true
+    }
+}
+
+/// Closed upper half-plane disjunctions stay within the monotone two-name
+/// fragment. Other ordinary operators retain the original queue: collapsing
+/// threshold movements beside arbitrary operators can suppress its whole-block
+/// exit.
+/// Complexity tradeoff: classify each new description once, O(description size),
+/// rather than scan k descriptions in each of k cases, O(k^2). The persistent
+/// set records unsupported parts and answers the guard in O(1).
+fn upper_disjunction(g: &Formula) -> bool {
+    let Formula::Or(arms) = g else {
+        return false;
+    };
+    arms.iter().all(|a| {
+        matches!(a, Formula::Con(c) if c.rel==Rel::Ge && c.lin.terms.len()==2
+            && c.lin.terms.iter().all(|(a,k)| matches!(a,Atom::Sym(_)) && k.is_negative()))
+    })
+}
+
+/// The arms of the upper disjunction `g` as `(p, q, c)` for `p*x + q*y <= c`, when every arm
+/// is on the names `x` and `y` alone. [`upper_disjunction`] makes `p` and `q` positive.
+fn upper_arms(g: &Formula, x: &Arc<str>, y: &Arc<str>) -> Option<Vec<(Int, Int, Int)>> {
+    let Formula::Or(arms) = g else {
+        return None;
+    };
+    arms.iter()
+        .map(|arm| {
+            let Formula::Con(c) = arm else {
+                return None;
+            };
+            let (mut p, mut q) = (Int::ZERO, Int::ZERO);
+            for (a, k) in &c.lin.terms {
+                match a {
+                    Atom::Sym(n) if n == x => p = -k,
+                    Atom::Sym(n) if n == y => q = -k,
+                    _ => return None,
+                }
+            }
+            (p.is_positive() && q.is_positive()).then(|| (p, q, c.lin.constant.clone()))
+        })
+        .collect()
 }

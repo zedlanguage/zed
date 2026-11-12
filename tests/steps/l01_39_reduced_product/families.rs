@@ -1216,58 +1216,39 @@ fn chain_against_the_oracle() {
 
 #[test]
 fn coord3_against_the_oracle() {
-    // Missed: `y <= 4`. For `y >= 5` the step gives `x >= 10`, so `x + y >= 15` and
-    // `x + 2 * y >= 20`, and neither arm of the last test holds; (10, 4) meets every test.
-    check(
-        "coord3",
-        1,
-        "a=[..] x=[..] y=[..]",
-        "a=[..] x=[..] y=[..=4]",
-    );
+    // `y <= 4`: for `y >= 5` the step gives `x >= 10`, so `x + y >= 15` and `x + 2 * y >= 20`,
+    // and neither arm of the last test holds; (10, 4) meets every test. The threshold
+    // aggregate finds it from the last test's arms (LAZY-hub-unsolved).
+    exact("coord3", 1, "a=[..] x=[..] y=[..=4]");
 }
 
 #[test]
 fn coordkk_against_the_oracle() {
-    // Missed: `y <= -2k`. For `y > -1000 + k` the steps give `x >= k`, and the last test
+    // `y <= -2k`: for `y > -1000 + k` the steps give `x >= k`, and the last test
     // then gives `y <= -k - x <= -2k` or `y <= -2500 - k / 2`; for `y <= -1000 + k` the bound
     // holds already. (k, -2k) meets every test.
     for k in 1..=3 {
         let y = -2 * k as i64;
-        check(
-            "coordkk",
-            k,
-            "a=[..] x=[..] y=[..]",
-            &format!("a=[..] x=[..] y=[..={y}]"),
-        );
+        exact("coordkk", k, &format!("a=[..] x=[..] y=[..={y}]"));
     }
 }
 
 #[test]
 fn coordkk_y_against_the_oracle() {
-    // Missed: `y <= -2k`, as on coordkk; the scope keeps only the first test's `y <= 0`.
+    // `y <= -2k`, as on coordkk.
     for k in 1..=3 {
         let y = -2 * k as i64;
-        check(
-            "coordkk_y",
-            k,
-            "a=[..] x=[..] y=[..=0]",
-            &format!("a=[..] x=[..] y=[..={y}]"),
-        );
+        exact("coordkk_y", k, &format!("a=[..] x=[..] y=[..={y}]"));
     }
 }
 
 #[test]
 fn coordmix_against_the_oracle() {
-    // Missed: `y <= -k`. For `y > -10k` the step gives `x >= 0`, and the last test then gives
+    // `y <= -k`: for `y > -10k` the step gives `x >= 0`, and the last test then gives
     // `y <= -k - x` or `y <= (-51k - x) / 2`; for `y <= -10k` the bound holds already.
     // (0, -k) meets every test.
     for k in 1..=3 {
-        check(
-            "coordmix",
-            k,
-            "a=[..] x=[..] y=[..]",
-            &format!("a=[..] x=[..] y=[..=-{k}]"),
-        );
+        exact("coordmix", k, &format!("a=[..] x=[..] y=[..=-{k}]"));
     }
 }
 
@@ -1280,43 +1261,32 @@ fn coordmix_floor_against_the_oracle() {
 
 #[test]
 fn coordmix_shift_against_the_oracle() {
-    // Missed: `y <= floor(-11k / 4)`. For `y > -10k` the step gives `x >= 0` and the last
+    // `y <= floor(-11k / 4)`: for `y > -10k` the step gives `x >= 0` and the last
     // test `x <= -k - y` (its other arm needs `y <= -25k`). The first split then needs
     // `x - 3y >= 10k`, so `-k - 4y >= 10k`; its other arm `x + 3y >= 10k` needs `y >= 5.5k`
     // and so `x < 0`.
     for (k, y) in [(1, -3), (2, -6), (3, -9)] {
-        check(
-            "coordmix_shift",
-            k,
-            "a=[..] x=[..] y=[..]",
-            &format!("a=[..] x=[..] y=[..={y}]"),
-        );
+        exact("coordmix_shift", k, &format!("a=[..] x=[..] y=[..={y}]"));
     }
 }
 
 #[test]
 fn coordmix_slopes_against_the_oracle() {
-    // Missed: `y <= -k`. For `y > -10k` the step gives `x >= 0`, and the last test then gives
+    // `y <= -k`: for `y > -10k` the step gives `x >= 0`, and the last test then gives
     // `y <= -k - x / k` or `y <= -25k - k / 2 - x / (2k)`.
     for k in 1..=3 {
-        check(
-            "coordmix_slopes",
-            k,
-            "a=[..] x=[..] y=[..]",
-            &format!("a=[..] x=[..] y=[..=-{k}]"),
-        );
+        exact("coordmix_slopes", k, &format!("a=[..] x=[..] y=[..=-{k}]"));
     }
 }
 
 #[test]
 fn coordmix_unmatched_against_the_oracle() {
-    // Missed: `y <= -k`. For `y > -10k` the step gives `x >= 0`, and the last test, of slope
+    // `y <= -k`: for `y > -10k` the step gives `x >= 0`, and the last test, of slope
     // `q = 2k + 3`, then gives `y <= -k - x / q` or `y <= -(51k + x / q) / 2`.
     for k in 1..=2 {
-        check(
+        exact(
             "coordmix_unmatched",
             k,
-            "a=[..] x=[..] y=[..]",
             &format!("a=[..] x=[..] y=[..=-{k}]"),
         );
     }
@@ -1395,14 +1365,9 @@ fn hubs_against_the_oracle() {
 
 #[test]
 fn m1_trans_ce_against_the_oracle() {
-    // Missed: `a <= 0`. With `a > 0` the second test gives `y >= 5`, the step `x >= 10`, so
+    // `a <= 0`: with `a > 0` the second test gives `y >= 5`, the step `x >= 10`, so
     // `x + y >= 15`, and the last test's other arm needs `a <= 0`.
-    check(
-        "m1_trans_ce",
-        1,
-        "a=[..] x=[..] y=[..]",
-        "a=[..=0] x=[..] y=[..]",
-    );
+    exact("m1_trans_ce", 1, "a=[..=0] x=[..] y=[..]");
 }
 
 #[test]
@@ -1424,13 +1389,8 @@ fn side_families_against_the_oracle() {
         exact(name, 1, "a=[..=-9] x=[..=5] y=[..=-9]");
     }
     exact("side5", 1, "a=[..] x=[..=-6] y=[..=-9]");
-    // Missed: `y <= 4`, as on coord3, and from it `a <= 4` by the part `a <= y || a <= -50`.
-    check(
-        "side4",
-        1,
-        "a=[..] x=[..] y=[..]",
-        "a=[..=4] x=[..] y=[..=4]",
-    );
+    // `y <= 4`, as on coord3, and from it `a <= 4` by the part `a <= y || a <= -50`.
+    exact("side4", 1, "a=[..=4] x=[..] y=[..=4]");
 }
 
 #[test]
@@ -1650,29 +1610,31 @@ fn coordmix_floor_scales() {
     scales("coordmix_floor", 4, 1);
 }
 
-// The families below grow faster than linearly on main (TESTS-lhx-families, 2026-11-11, the
-// power per doubling of `k` as measured): each is held to order `k` and ignored with the item
-// that would fix it.
-
-/// About `k^1.2` to `k^1.8` from `k = 8` to 128.
+/// About `k^1.6` to `k^2` on main; about `k^1.1` to `k^1.25` since the threshold aggregate
+/// reads the upper disjunctions (LAZY-hub-unsolved).
 #[test]
-#[ignore = "PERF-coordkk: above linear on main, see ledger"]
-fn coordkk_scales() {
-    scales("coordkk", 16, 1);
-}
-
-/// About `k^1.6` to `k^2`.
-#[test]
-#[ignore = "PERF-coordkk: above linear on main, see ledger"]
 fn coordkk_y_scales() {
     scales("coordkk_y", 8, 1);
 }
 
-/// About `k^1.8` to `k^2.1`.
+/// About `k^1.8` to `k^2.1` on main; about `k^1.05` to `k^1.1` since the threshold aggregate
+/// reads the upper disjunctions and every ray of a group (LAZY-hub-unsolved).
 #[test]
-#[ignore = "PERF-coordmix-slopes: quadratic on main, see ledger"]
 fn coordmix_slopes_scales() {
     scales("coordmix_slopes", 4, 1);
+}
+
+// The families below grow faster than linearly on main (TESTS-lhx-families, 2026-11-11, the
+// power per doubling of `k` as measured): each is held to order `k` and ignored with the item
+// that would fix it.
+
+/// About `k^1.2` to `k^1.8` from `k = 8` to 128 on main; with the threshold aggregate's
+/// upper disjunctions (LAZY-hub-unsolved), about `k^1.2` to `k^1.4`, 15.6 times the work from
+/// `k = 16` to 128 against the limit 15.4.
+#[test]
+#[ignore = "PERF-coordkk: above linear on main, see ledger"]
+fn coordkk_scales() {
+    scales("coordkk", 16, 1);
 }
 
 /// About `k^1.75` to `k^1.96`.
