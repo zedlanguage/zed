@@ -912,7 +912,7 @@ thread_local! {
 
 /// A new id. Block 0 is never drawn, so nothing built non-empty has id 0.
 pub fn fresh_id() -> Id {
-    NEXT.with(|next| {
+    crate::local::with(&NEXT, |next| {
         let (mut id, mut end) = next.get();
         if id == end {
             id = BLOCKS.fetch_add(1, AtomicOrdering::Relaxed) * BLOCK;

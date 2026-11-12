@@ -40,7 +40,7 @@ impl<T> Queue<T> {
 /// Drops `part` with the thread's `queue`, as `value::free` does.
 pub(crate) fn free_in<T: 'static>(queue: &'static LocalKey<Queue<T>>, part: T) {
     let mut held = Some(part);
-    let first = queue.with(|q| {
+    let first = crate::local::with(queue, |q| {
         if q.busy.replace(true) {
             q.parts.borrow_mut().extend(held.take());
             false
@@ -53,10 +53,10 @@ pub(crate) fn free_in<T: 'static>(queue: &'static LocalKey<Queue<T>>, part: T) {
     }
     drop(held);
     // The borrow ends with the pop: dropping a part can reach `free_in` again.
-    while let Some(next) = queue.with(|q| q.parts.borrow_mut().pop()) {
+    while let Some(next) = crate::local::with(queue, |q| q.parts.borrow_mut().pop()) {
         drop(next);
     }
-    queue.with(|q| {
+    crate::local::with(queue, |q| {
         // Complexity tradeoff: the buffer is freed here, O(1), and made again by the next
         // outermost drop that queues a part, amortized O(1) per part; kept, it would be lost
         // when the thread ends, as the queue is never dropped.

@@ -538,7 +538,7 @@ impl<K: Tabled> Shared<K> {
     /// The live node of the thread whose key equals `key`, or a new one put in the table.
     fn new(digest: u64, key: K) -> Arc<Shared<K>> {
         let bucket = |f: &mut dyn FnMut(&mut Bucket<Shared<K>>)| {
-            K::live().with(|t| f(t.borrow_mut().entry(digest).or_default()));
+            crate::local::with(K::live(), |t| f(t.borrow_mut().entry(digest).or_default()));
         };
         match bucket::find(bucket, |r| K::order(&r.key, &key)) {
             Ok(r) => r,
@@ -623,7 +623,7 @@ thread_local! {
 
 impl Literal for Row {
     fn table<R>(f: impl FnOnce(&mut Tables<Self>) -> R) -> R {
-        TUPLES.with(|t| f(&mut t.borrow_mut()))
+        crate::local::with(&TUPLES, |t| f(&mut t.borrow_mut()))
     }
     fn untable(f: impl FnOnce(&mut Tables<Self>)) {
         let _ = TUPLES.try_with(|t| t.try_borrow_mut().map(|mut t| f(&mut t)));
@@ -641,7 +641,7 @@ impl Literal for Row {
 
 impl Literal for Morphism {
     fn table<R>(f: impl FnOnce(&mut Tables<Self>) -> R) -> R {
-        MORPHISMS.with(|t| f(&mut t.borrow_mut()))
+        crate::local::with(&MORPHISMS, |t| f(&mut t.borrow_mut()))
     }
     fn untable(f: impl FnOnce(&mut Tables<Self>)) {
         let _ = MORPHISMS.try_with(|t| t.try_borrow_mut().map(|mut t| f(&mut t)));
@@ -1341,7 +1341,7 @@ impl Type {
 
     /// No value.
     pub fn empty() -> Type {
-        EMPTY.with(Type::clone)
+        crate::local::with(&EMPTY, Type::clone)
     }
 
     fn build_empty() -> Type {
@@ -1361,7 +1361,7 @@ impl Type {
 
     /// Every value, `_`.
     pub fn top() -> Type {
-        TOP.with(Type::clone)
+        crate::local::with(&TOP, Type::clone)
     }
 
     /// The union of `ts`, joined in pairs: `k` tuple or morphism types, each ordered after the
@@ -1401,27 +1401,27 @@ impl Type {
 
     /// `bool`.
     pub fn bool() -> Type {
-        SCALARS.with(|s| s[0].clone())
+        crate::local::with(&SCALARS, |s| s[0].clone())
     }
 
     /// `int`.
     pub fn int() -> Type {
-        SCALARS.with(|s| s[1].clone())
+        crate::local::with(&SCALARS, |s| s[1].clone())
     }
 
     /// `rat`.
     pub fn rat() -> Type {
-        SCALARS.with(|s| s[2].clone())
+        crate::local::with(&SCALARS, |s| s[2].clone())
     }
 
     /// `f64`.
     pub fn f64() -> Type {
-        SCALARS.with(|s| s[3].clone())
+        crate::local::with(&SCALARS, |s| s[3].clone())
     }
 
     /// `String`.
     pub fn string() -> Type {
-        SCALARS.with(|s| s[4].clone())
+        crate::local::with(&SCALARS, |s| s[4].clone())
     }
 
     /// The type of one scalar literal or bare atom; `None` for any other value.
@@ -1550,7 +1550,7 @@ impl Type {
 
     /// Every value of `u`.
     pub fn universe(u: Universe) -> Type {
-        UNIVERSES.with(|us| us[u as usize].clone())
+        crate::local::with(&UNIVERSES, |us| us[u as usize].clone())
     }
 
     fn build_universe(u: Universe) -> Type {
@@ -1959,8 +1959,9 @@ impl Type {
             Op::Or => (&TOP, &EMPTY),
             Op::And => (&EMPTY, &TOP),
         };
-        let is =
-            |t: &Type, k: &'static std::thread::LocalKey<Type>| k.with(|k| Arc::ptr_eq(&t.0, &k.0));
+        let is = |t: &Type, k: &'static std::thread::LocalKey<Type>| {
+            crate::local::with(k, |k| Arc::ptr_eq(&t.0, &k.0))
+        };
         if is(self, absorbs) || is(other, unit) {
             Some(self.clone())
         } else if is(other, absorbs) || is(self, unit) {
