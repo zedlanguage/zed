@@ -13,13 +13,13 @@ use std::collections::HashSet;
 
 use num_bigint::BigInt;
 
-use super::builder::Builder;
+use super::builder::{Builder, Level};
 use super::sentinel::{End, Entry, Keys, Sentinels, keys_of};
 use super::{
     BinaryOp, CARRY_FORWARD, Error, Expr, ExprKind, Field, IndexKey, Initial, Note, Pattern,
     RangeEnd, Stmt, StmtKind, StrPart, Target, UnaryOp,
 };
-use crate::lex::Span;
+use crate::lex::{Span, Tok, Token};
 use zedc_base::rejection::Row;
 
 /// The `initial` statement `s` is, through the annotations written before it.
@@ -474,18 +474,105 @@ impl<'e> Must<'e> {
     }
 }
 
-/// The variable a `*.` call on `of` updates: the name of the receiver, `c` in `c*.m`, or of the
-/// variable whose entry it is, `grid` in `grid[i]*.m` and `grid[i][j]*.m`. Each step moves
-/// down one index of the receiver, a node no other call's receiver holds, so the calls of a
-/// step cost O(n) together.
-fn receiver(mut of: &Expr) -> Option<&str> {
+/// The variable a `*.` call on `of` updates, and whether an index lies on the path to it: the
+/// name the path starts at, `c` in `c*.m`, `grid` in `grid[i]*.m` and `grid[i][j]*.m`, `p` in
+/// `p.pos*.m`, and the root variable of a path of both, `p` in `p.items[i]*.m` and `grid` in
+/// `grid[i].pos*.m`. A name written right before a `.` that the text only uses as the
+/// qualifier of an imported unit, `shapes` in `shapes.origin*.reset()` after `import
+/// geometry.shapes;`, is no variable and is not a receiver ([`qualifiers`]). Each step moves
+/// down one index or field of the receiver, a node no other call's receiver holds, so the
+/// calls of a step cost O(n) together.
+fn receiver<'e>(mut of: &'e Expr, qualifiers: &HashSet<&str>) -> Option<(&'e str, bool)> {
+    let mut indexed = false;
+    let mut field = false;
     loop {
         match &of.kind {
-            ExprKind::Name(n) => return Some(unprimed(n)),
-            ExprKind::Index(a, _) => of = a,
+            ExprKind::Name(n) if field && qualifiers.contains(n.as_str()) => return None,
+            ExprKind::Name(n) => return Some((unprimed(n), indexed)),
+            ExprKind::Index(a, _) => {
+                (of, indexed, field) = (a, true, false);
+            }
+            ExprKind::Member { of: a, .. } => {
+                (of, field) = (a, true);
+            }
             _ => return None,
         }
     }
+}
+
+/// The names an `import` of `levels`, the token lists of a text and its string holes, binds to
+/// a unit, `shapes` in `import geometry.shapes;` and `g` in `import geometry.shapes as g;`, that
+/// the text writes nowhere else but right before a `.` or right after a `.`, `?.`, `*.` or
+/// `::`. Such a name can only be a qualifier: a variable is written at its binder, which is
+/// never right before or after a `.`, and an `import a.{x}` that binds `x` writes it between
+/// braces. A word in a comment is not a token and does not count; a name of a string hole
+/// does.
+// Complexity tradeoff: the receiver of a `*.` call on a field path is its leftmost name when
+// name resolution makes that name a variable, and the builder, which runs before resolution,
+// has no scopes. Finding the binder of each such receiver by walking up its enclosing scopes
+// costs O(depth) per call and needs the binders of every scope, a second resolver. Here one
+// pass over the tokens lists the imports, O(n) with no allocation when there is none, and a
+// second pass, run only when an import binds a unit, removes the names written in any other
+// place: each receiver is then one hash lookup. What is given up: a spelling that a text both
+// imports as a unit and binds as a variable, by a binder written right before a `.`, which no
+// form of the grammar has, would be taken for the qualifier. A name that is never bound and is
+// taken for a variable is a program the resolver refuses anyway (COMPLEXITY.md row
+// CHK-update-field-receiver; test `the_must_assign_check_scales`).
+pub(super) fn qualifiers<'s>(text: &'s str, levels: &[Level]) -> HashSet<&'s str> {
+    let word = |t: &Token| &text[t.span.start..t.span.end];
+    fn tok(ts: &[Token], i: usize) -> Option<&Tok> {
+        ts.get(i).map(|t| &t.tok)
+    }
+    let mut out = HashSet::new();
+    for l in levels {
+        let ts = l.tokens;
+        for i in 0..ts.len() {
+            if !matches!(ts[i].tok, Tok::Keyword("import")) {
+                continue;
+            }
+            let mut k = i + 1;
+            while let Some(Tok::Name(_) | Tok::Op(".")) = tok(ts, k) {
+                k += 1;
+            }
+            match tok(ts, k) {
+                Some(Tok::Keyword("as")) => {
+                    if let Some(Tok::Name(_)) = tok(ts, k + 1) {
+                        out.insert(word(&ts[k + 1]));
+                    }
+                }
+                Some(Tok::Op("{")) => {}
+                _ => {
+                    if k > i + 1
+                        && let Tok::Name(_) = ts[k - 1].tok
+                    {
+                        out.insert(word(&ts[k - 1]));
+                    }
+                }
+            }
+        }
+    }
+    if out.is_empty() {
+        return out;
+    }
+    for l in levels {
+        let ts = l.tokens;
+        let mut import = false;
+        for (i, t) in ts.iter().enumerate() {
+            match &t.tok {
+                Tok::Keyword("import") => import = true,
+                Tok::Op(";" | "{") => import = false,
+                Tok::Name(_) if !import => {
+                    let before = i.checked_sub(1).and_then(|j| tok(ts, j));
+                    let after = matches!(tok(ts, i + 1), Some(Tok::Op(".")));
+                    if !after && !matches!(before, Some(Tok::Op("." | "?." | "*." | "::"))) {
+                        out.remove(unprimed(word(t)));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    out
 }
 
 /// How a part of a node combines into the node's [`Must`]: run on every path through the node,
@@ -513,16 +600,18 @@ enum Task<'e> {
 /// The variables that every path of a step through `stmts`, the statements of a loop's body,
 /// updates, and each update of a variable with the branch it stands in (DESIGN.md
 /// sec:generations, *must-assign*). An update is `x' = …`, `x' <- e`, `x'[k] = …` or a `*.`
-/// call on `x` or an entry of it ([`receiver`]), wherever it is written in the step, a nested
-/// block included: one in a nested block counts on the paths through that block. Top-level
+/// call on `x`, an entry of it or a field of either, `x[i]*.m(…)`, `x.pos*.m(…)` or
+/// `x[i].pos*.m(…)` ([`receiver`]), wherever it is written in the step, a nested block
+/// included: one in a nested block counts on the paths through that block. Top-level
 /// statements run on every path; a branch of an `if`, an arm of a `match`, the default of an
 /// `else`, the right side of `&&` and `||`, the body of a `for`, the body of a lambda and the
 /// value of an indexed definition (computed once for each key) run on some paths only, except
-/// that a value that is a `*.` call on an entry, `old[i in cells] = grid[i]*.relax()`, updates
-/// `grid` key by key, as `grid'[i in cells] = …` does, on every path through it; a path that ends in `break` needs no
-/// update, and `return`, a block's export, ends no path. Nested loops, whose names are their
-/// own, are not entered, nor are the values of `initial` statements, computed once before the
-/// first step, or the bodies of functions and methods, which are not part of a step.
+/// that a value that is a `*.` call on a path through an entry, `old[i in cells] =
+/// grid[i]*.relax()` or `grid[i].pos*.relax()`, updates `grid` key by key, as `grid'[i in
+/// cells] = …` does, on every path through it; a path that ends in `break` needs no update,
+/// and `return`, a block's export, ends no path. Nested loops, whose names are their own, are
+/// not entered, nor are the values of `initial` statements, computed once before the first
+/// step, or the bodies of functions and methods, which are not part of a step.
 ///
 /// One visit of each node, by a work list with a stack of results, so the depth of the code
 /// costs no stack. A node's result is the union of its parts that always run with the meet of
@@ -536,7 +625,7 @@ enum Task<'e> {
 // strictly linear method, a check per variable over the tree of its updates' common ancestors
 // with constant-time ancestor queries, was weighed and not used: it needs an ancestor index of
 // the step and a second pass, for at most a log factor (CHK-update-every-path-cases).
-fn every_path<'e>(stmts: &'e [Stmt]) -> (Must<'e>, Vec<Update<'e>>) {
+fn every_path<'e>(stmts: &'e [Stmt], qualifiers: &HashSet<&str>) -> (Must<'e>, Vec<Update<'e>>) {
     let mut updates = Vec::new();
     let mut results: Vec<(Role, Must<'e>)> = Vec::new();
     let mut tasks: Vec<Task<'e>> = vec![Task::Join {
@@ -597,9 +686,9 @@ fn every_path<'e>(stmts: &'e [Stmt]) -> (Must<'e>, Vec<Update<'e>>) {
                     }
                     StmtKind::Return(es) => es.iter().for_each(&mut always),
                     // `d'[v in nodes] = …` updates `d` key by key, and so does `old[i in cells] =
-                    // grid[i]*.relax()`, which writes `grid'[i]` for each key. The domains and
-                    // the boundary entries are computed once on a step; the value once for each
-                    // key.
+                    // grid[i]*.relax()`, which writes `grid'[i]` for each key, and so does a call on
+                    // any path with an index on it, `grid[i].pos*.relax()`. The domains and the
+                    // boundary entries are computed once on a step; the value once for each key.
                     StmtKind::IndexedDef(d) => {
                         if d.name.ends_with('\'') {
                             own.insert(unprimed(&d.name));
@@ -609,8 +698,7 @@ fn every_path<'e>(stmts: &'e [Stmt]) -> (Must<'e>, Vec<Update<'e>>) {
                             _ => &d.value,
                         };
                         if let ExprKind::Spread { of, .. } = &call.kind
-                            && matches!(of.kind, ExprKind::Index(..))
-                            && let Some(n) = receiver(of)
+                            && let Some((n, true)) = receiver(of, qualifiers)
                         {
                             own.insert(n);
                         }
@@ -679,7 +767,7 @@ fn every_path<'e>(stmts: &'e [Stmt]) -> (Must<'e>, Vec<Update<'e>>) {
                         }
                     }
                     ExprKind::Spread { of, .. } => {
-                        if let Some(n) = receiver(of) {
+                        if let Some((n, _)) = receiver(of, qualifiers) {
                             own = Must::Names(HashSet::from([n]));
                             updates.push(Update {
                                 name: n,
@@ -1051,7 +1139,7 @@ impl Builder<'_, '_> {
         }
         // What the step updates, on any path; a variable not carried must be updated on every
         // path.
-        let (must, mut updates) = every_path(stmts);
+        let (must, mut updates) = every_path(stmts, self.qualifiers);
         let updated: HashSet<&str> = updates.iter().map(|u| u.name).collect();
         if sites {
             self.initial_sites(label, at, stmts, &updated, &locals)?;

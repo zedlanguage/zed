@@ -179,6 +179,9 @@ pub(super) struct Builder<'a, 's: 'a> {
     pub(super) bare: &'a Bare<'s>,
     /// The `main` functions of the text this tree is in.
     pub(super) mains: &'a Mains,
+    /// The names written in the text only as the qualifier of an imported unit
+    /// ([`super::initial::qualifiers`]).
+    pub(super) qualifiers: &'a std::collections::HashSet<&'s str>,
     /// The parent of each node of the tree, listed on the first rejection that names one.
     pub(super) parents: std::cell::OnceCell<Vec<usize>>,
 }
@@ -306,6 +309,7 @@ impl<'a, 's> Builder<'a, 's> {
         done: &'a mut [Option<Result<Expr, Error>>],
         bare: &'a Bare<'s>,
         mains: &'a Mains,
+        qualifiers: &'a std::collections::HashSet<&'s str>,
     ) -> Builder<'a, 's> {
         let mut holes = Vec::with_capacity(level.tokens.len());
         let mut count = 0;
@@ -330,6 +334,7 @@ impl<'a, 's> Builder<'a, 's> {
             front: 0,
             bare,
             mains,
+            qualifiers,
             parents: std::cell::OnceCell::new(),
         }
     }

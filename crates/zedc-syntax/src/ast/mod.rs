@@ -155,15 +155,23 @@ fn with_holes<'t, R>(
     }
     let bare = Bare::new();
     let mains = Mains::new(text, tokens, tree);
+    let qualifiers = initial::qualifiers(text, &list);
     let mut done: Vec<Option<Result<Expr, Error>>> = Vec::new();
     done.resize_with(list.len(), || None);
     for (i, l) in list.iter().enumerate().skip(1).rev() {
-        let mut b = Builder::new(text, l, &mut done, &bare, &mains);
+        let mut b = Builder::new(text, l, &mut done, &bare, &mains, &qualifiers);
         b.fill(l.tree.root);
         let e = b.node(l.tree.root);
         done[i] = Some(e);
     }
-    top(&mut Builder::new(text, &list[0], &mut done, &bare, &mains))
+    top(&mut Builder::new(
+        text,
+        &list[0],
+        &mut done,
+        &bare,
+        &mains,
+        &qualifiers,
+    ))
 }
 
 /// What the nodes of a rule build to.

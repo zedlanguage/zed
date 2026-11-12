@@ -449,6 +449,112 @@ fn an_update_of_an_entry_counts() {
     }
 }
 
+/// A `*.` call on a field path, `p.pos*.m()`, or on a path of fields and entries,
+/// `p.items[i]*.m()` or `grid[i].pos*.m()`, updates the variable the path starts at
+/// (sec:generations). As the whole value of an indexed definition, a path with an entry on it
+/// updates its variable key by key, on every path through the statement; a path of fields only
+/// writes the same place once for each key, and counts on some paths only.
+#[test]
+fn an_update_of_a_field_counts() {
+    for body in [
+        &["initial p = 0;", "p.pos*.m();"][..],
+        &["initial p = 0;", "x' = p?.pos*.m();"],
+        &["initial p = 0;", "x' = p.items[0]*.m();"],
+        &["initial p = 0;", "x' = p.a.b[0].c[1]*.m();"],
+        &["initial grid = 0;", "grid[0].pos*.m();"],
+        &[
+            "initial grid = 0;",
+            "old[i in 0..<4] = grid[i].pos*.relax();",
+        ],
+        &["initial p = 0;", "old[i in 0..<4] = p.items[i]*.relax();"],
+        &[
+            "initial p = 0;",
+            "x' = if t > 1 { p.pos*.m() } else { p.items[1]*.m() };",
+        ],
+    ] {
+        accepted(&t_loop(body));
+    }
+    for (update, at, part) in [
+        (
+            "x' = if t > 1 { p.pos*.m() } else { 0 };",
+            "p.pos*.m",
+            "a branch of the `if`",
+        ),
+        (
+            "x' = if t > 1 { p.items[0]*.m() } else { 0 };",
+            "p.items[0]*.m",
+            "a branch of the `if`",
+        ),
+        (
+            "x' = if t > 1 { p[0].pos*.m() } else { 0 };",
+            "p[0].pos*.m",
+            "a branch of the `if`",
+        ),
+        (
+            "old[i in 0..<4] = p.pos*.relax();",
+            "p.pos*.relax",
+            "the value of the indexed definition",
+        ),
+    ] {
+        let src = t_loop(&["initial p = 0;", update]);
+        let e = refusal(&src);
+        assert_eq!(e.row, Some(Row::NotEveryPath), "{src}: {e:?}");
+        assert_eq!(&src[e.span.start..e.span.end], at, "{src}");
+        assert!(
+            e.notes
+                .iter()
+                .any(|n| n.text == format!("`{at}` updates `p` only on the paths through {part}")),
+            "{src}: {e:?}"
+        );
+        accepted(&t_loop(&["initial p = 0 with carryForward;", update]));
+    }
+}
+
+/// The name of an imported unit, `shapes` after `import geometry.shapes;` or `g` after `import
+/// geometry.shapes as g;`, is no variable: a `*.` call on a path it starts, `shapes.origin*.m()`,
+/// updates no variable of the loop. A name the text binds otherwise is a variable, even when an
+/// import also spells it, and so is a name an `import a.{x}` binds.
+#[test]
+fn a_qualified_name_is_no_receiver() {
+    let branch = "x' = if t > 1 { shapes.origin*.m() } else { 0 };";
+    for src in [
+        format!("import geometry.shapes;\n{}", t_loop(&[branch])),
+        format!(
+            "import geometry.shapes as g;\n{}",
+            t_loop(&["x' = if t > 1 { g.origin*.m() } else { 0 };"])
+        ),
+        format!(
+            "import geometry.shapes;\n{}",
+            t_loop(&["x' = if t > 1 { shapes.origin.corner*.m() } else { 0 };"])
+        ),
+    ] {
+        // The unit is built and checked; `accepted` would also load the imported unit, which
+        // these tests do not have.
+        let tokens = lex(&src).unwrap();
+        let tree = parse(&src, &tokens, "Unit", TOP).unwrap();
+        if let Err(e) = unit(&src, &tokens, &tree) {
+            panic!("refused: {src}\n{e:?}");
+        }
+    }
+    for src in [
+        format!(
+            "import geometry.shapes;\n{}",
+            t_loop(&["initial shapes = 0;", branch])
+        ),
+        format!("import geometry.{{shapes}};\n{}", t_loop(&[branch])),
+        format!(
+            "import geometry.shapes;\nf(shapes) = 0;\n{}",
+            t_loop(&[branch])
+        ),
+        format!("import geometry.shapes as g;\n{}", t_loop(&[branch])),
+        t_loop(&[branch]),
+    ] {
+        let e = refusal(&src);
+        assert_eq!(e.row, Some(Row::NotEveryPath), "{src}: {e:?}");
+        assert_eq!(&src[e.span.start..e.span.end], "shapes.origin*.m", "{src}");
+    }
+}
+
 /// The rule notes of row "A `mutable` declaration", in a loop and outside one.
 const IN_LOOP: &str = "the loop whose body holds the declaration: a variable a loop updates is a \
                        recurrence, defined on every frame, so each step updates it on every \
@@ -855,6 +961,24 @@ fn wide(n: usize, tail: &str) -> String {
     format!("r = loop t {{ while t < 9; {stmts}{tail} }};\n")
 }
 
+/// [`wide`] with each call on a path of a field and an entry, `c{i}.pos[{i}]*.a()`.
+fn fields(n: usize, tail: &str) -> String {
+    let stmts: String = (0..n)
+        .map(|i| format!("x{i}' = if t > {i} {{ c{i}.pos[{i}]*.a() }} else {{ break 0 }}; "))
+        .collect();
+    format!("r = loop t {{ while t < 9; {stmts}{tail} }};\n")
+}
+
+/// `n` imported units `u{i}` and `n` calls `u{i}.x*.a()`, each in one branch of its own `if`:
+/// no call updates a variable of the loop, so the loop is accepted.
+fn qualified(n: usize) -> String {
+    let imports: String = (0..n).map(|i| format!("import m.u{i};\n")).collect();
+    let stmts: String = (0..n)
+        .map(|i| format!("x{i}' = if t > {i} {{ u{i}.x*.a() }} else {{ 0 }}; "))
+        .collect();
+    format!("{imports}r = loop t {{ while t < 9; {stmts} }};\n")
+}
+
 /// One `if` whose two branches each update the same `n` variables, then `tail`.
 fn branches(n: usize, tail: &str) -> String {
     let calls: String = (0..n).map(|i| format!("c{i}*.a(); ")).collect();
@@ -901,11 +1025,19 @@ fn nested_blocks(n: usize, branch: bool) -> String {
 /// The must-assign check is one walk of the body with sets merged smaller into larger, so `n`
 /// variables updated each on its own paths, `n` variables updated on both branches of one `if`,
 /// directly or in nested blocks, and an update `n` constructs or blocks deep are each checked in
-/// time of order `n log n`, accepted or refused.
+/// time of order `n log n`, accepted or refused. `n` calls on paths of fields and entries, and
+/// `n` calls on the names of `n` imported units, which one pass over the tokens lists, are too.
 #[test]
 fn the_must_assign_check_scales() {
     type Make = fn(usize) -> String;
-    let cases: [(&str, Make, Option<Row>); 9] = [
+    let cases: [(&str, Make, Option<Row>); 12] = [
+        ("fields, accepted", |n| fields(n, ""), None),
+        (
+            "fields, refused at the end",
+            |n| fields(n, "y' = t > 1 && d.e[0]*.a();"),
+            Some(Row::NotEveryPath),
+        ),
+        ("qualified names, accepted", qualified, None),
         ("wide, accepted", |n| wide(n, ""), None),
         (
             "wide, refused at the end",
