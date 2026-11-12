@@ -339,6 +339,7 @@ pub fn relations(terms: &[&Term], inputs: &[Arc<str>], products: bool) -> Option
         out.push(Relation {
             body,
             defs: tr.defs[first..].to_vec(),
+            bit_ands: Vec::new(),
         });
     }
     Some(out)
@@ -375,6 +376,7 @@ fn linear(
     let rel = Relation {
         body,
         defs: tr.defs,
+        bit_ands: Vec::new(),
     };
     let go = || -> Result<(Domains, bool, Option<Refusal>), Refusal> {
         let within = |d: &Domains| -> Formula {

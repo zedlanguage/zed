@@ -6,7 +6,7 @@ use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::ops::{Add, Mul, Neg, Sub};
+use std::ops::{Add, BitAnd, Mul, Neg, Sub};
 use std::sync::{Arc, Mutex};
 
 use num_bigint::{BigInt, BigUint, Sign};
@@ -372,6 +372,19 @@ impl Mul for &Int {
             }
         }
         mul_int(&self.big(), &other.big()).into()
+    }
+}
+
+/// The bitwise and of two integers, each read as an infinite two's-complement word: a
+/// negative integer has every bit set above its width (`-1 & 5 == 5`, `-4 & -3 == -4`).
+impl BitAnd for &Int {
+    type Output = Int;
+
+    fn bitand(self, other: &Int) -> Int {
+        if let (Repr::Small(a), Repr::Small(b)) = (&self.0, &other.0) {
+            return (a & b).into();
+        }
+        (&*self.big() & &*other.big()).into()
     }
 }
 
@@ -3078,6 +3091,36 @@ fn write_decimal(f: &mut fmt::Formatter<'_>, v: &BigInt) -> fmt::Result {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bit_and_reads_each_sign_as_twos_complement_at_every_size() {
+        // Small values agree with `i128`'s `&`, every sign.
+        for a in -40i128..=40 {
+            for b in -40i128..=40 {
+                assert_eq!(&Int::from(a) & &Int::from(b), Int::from(a & b), "{a} & {b}");
+            }
+        }
+        // Shifted past 128 bits, the and is the shifted and: `(a·2^k) & (b·2^k) = (a & b)·2^k`
+        // for every sign, so a big value on either side, or both, keeps its sign's bits.
+        let k = Int::from(BigInt::from(1) << 200u32);
+        for (a, b) in [
+            (-1i128, 5i128),
+            (5, -1),
+            (-4, -3),
+            (12, 10),
+            (-12, 10),
+            (i128::MIN, -1),
+        ] {
+            let (x, y) = (&Int::from(a) * &k, &Int::from(b) * &k);
+            assert_eq!(&x & &y, &Int::from(a & b) * &k, "({a}·2^200) & ({b}·2^200)");
+        }
+        // One big and one small: `-1` keeps the other whole, a nonnegative small one masks.
+        let big = &k + &Int::from(13);
+        assert_eq!(&Int::from(-1) & &big, big);
+        assert_eq!(&big & &Int::from(-1), big);
+        assert_eq!(&big & &Int::from(7), Int::from(5));
+        assert_eq!(&(-&big) & &Int::from(7), Int::from(3));
+    }
 
     /// The least root by trying every index from the largest down, written out.
     fn least_root_by_trial(b: u64) -> (u64, u64) {

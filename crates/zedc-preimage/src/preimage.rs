@@ -1321,6 +1321,7 @@ fn residue_relation(
             (0, format!("{name} div {c}"), def),
             (1, format!("{name} mod {c}"), Formula::top()),
         ],
+        bit_ands: Vec::new(),
     }
 }
 
@@ -1770,6 +1771,7 @@ pub fn relations(terms: &[&Term], inputs: &[Arc<str>], products: bool) -> Option
         out.push(Relation {
             body,
             defs: tr.written(first),
+            bit_ands: tr.bit_ands(first),
         });
     }
     Some(out)
@@ -2208,9 +2210,16 @@ impl<'t> Scoped<'t> {
                 (i as u32, what.written(Some(&lin)), renumber(def))
             })
             .collect();
+        let bit_ands = (reached.iter().enumerate())
+            .filter_map(|(i, &n)| match &self.tr.defs[n as usize].1 {
+                What::BitAnd(a, b) => Some((i as u32, lin(a), lin(b))),
+                _ => None,
+            })
+            .collect();
         Relation {
             body: renumber(body),
             defs,
+            bit_ands,
         }
     }
 
@@ -2270,6 +2279,7 @@ fn linear(
     let rel = Relation {
         body,
         defs: tr.written(0),
+        bit_ands: tr.bit_ands(0),
     };
     let go = || -> Result<(Domains, bool, Option<Refusal>), (Domains, Refusal)> {
         let within = |d: &Domains| -> Formula {
@@ -2389,6 +2399,16 @@ impl Tr {
     fn written(&self, first: usize) -> Vec<(u32, String, Formula)> {
         (self.defs[first..].iter())
             .map(|(n, w, f)| (*n, w.to_string(), f.clone()))
+            .collect()
+    }
+
+    /// The `bitAnd` variables from `first` on, as [`Relation::bit_ands`] lists them.
+    fn bit_ands(&self, first: usize) -> Vec<(u32, Lin, Lin)> {
+        (self.defs[first..].iter())
+            .filter_map(|(n, w, _)| match w {
+                What::BitAnd(a, b) => Some((*n, a.clone(), b.clone())),
+                _ => None,
+            })
             .collect()
     }
 
@@ -2619,6 +2639,8 @@ enum What {
     Min(Lin, Lin),
     /// `max(a, b)`.
     Max(Lin, Lin),
+    /// `bitAnd(a, b)`, which its definition bounds and does not fix ([`bit_and_bounds`]).
+    BitAnd(Lin, Lin),
     /// `a1 if g1, a2 if g2, …`: the value `ai` where `gi` holds, the `gi` disjoint.
     Cases(Vec<(Formula, Lin)>),
     /// The binding of a claimed call of a test ([`Tr::claims`]): each canonical atom of its
@@ -2665,11 +2687,42 @@ impl What {
             What::Abs(a) => format!("abs({})", l(a)),
             What::Min(a, b) => format!("min({}, {})", l(a), l(b)),
             What::Max(a, b) => format!("max({}, {})", l(a), l(b)),
+            What::BitAnd(a, b) => format!("bitAnd({}, {})", l(a), l(b)),
             What::Bind(pairs) => bindings(pairs, &l),
             What::Value(v, pairs) if pairs.is_empty() => format!("{}", l(v)),
             What::Value(v, pairs) => format!("{} where {}", l(v), bindings(pairs, &l)),
         }
     }
+}
+
+/// The bounds of `x = bitAnd(a, b)`, one disjunct for each pair of signs of `a` and `b`, each
+/// integer read as an infinite two's-complement word (L1.39d), so that the bounds hold for
+/// every sign, not only the `int[0..]` operands L1.39a admits:
+///
+/// | `a`  | `b`  | rows                     |
+/// |------|------|--------------------------|
+/// | ≥ 0  | ≥ 0  | `0 <= x`, `x <= a`, `x <= b` |
+/// | ≥ 0  | < 0  | `0 <= x`, `x <= a`       |
+/// | < 0  | ≥ 0  | `0 <= x`, `x <= b`       |
+/// | < 0  | < 0  | `x <= a`, `x <= b`       |
+///
+/// Each row holds since a bit of `x` is set only where it is set in both operands: `x` is
+/// nonnegative where one operand is (its high bits are clear), and `x <= a` where `a` is
+/// nonnegative (`x` is `a` with some bits cleared) or both are negative (`a - x` is the
+/// nonnegative `a & !b`). `x <= a` fails where only `a` is negative: `bitAnd(-1, 5)` is 5. The
+/// rows bound `x` and do not fix it, so the variable is listed in [`Relation::bit_ands`].
+/// Plan row RUNG2-bit; test `l01_39a_bit_words::rung2`.
+fn bit_and_bounds(x: &Lin, a: &Lin, b: &Lin) -> Formula {
+    let zero = Lin::constant(0);
+    let nonneg = |l: &Lin| Formula::Con(Con::ge(l, &zero));
+    let neg = |l: &Lin| Formula::Con(Con::ge(&Lin::constant(-1), l));
+    let below = |l: &Lin| Formula::Con(Con::ge(l, x));
+    Formula::or(vec![
+        Formula::and(vec![nonneg(a), nonneg(b), nonneg(x), below(a), below(b)]),
+        Formula::and(vec![nonneg(a), neg(b), nonneg(x), below(a)]),
+        Formula::and(vec![neg(a), nonneg(b), nonneg(x), below(b)]),
+        Formula::and(vec![neg(a), neg(b), below(a), below(b)]),
+    ])
 }
 
 /// The bindings `pairs`, as a message writes them: `c = a`, each argument written `l(a)`.
@@ -7988,6 +8041,17 @@ impl<'m, 't> Walk<'m, 't> {
                                 _ => What::Max(a.clone(), b.clone()),
                             };
                             tr.aux(what, def);
+                            Some(x)
+                        })
+                    }
+                    // Rung 2 only, as a quotient by a term is: the linear stage reads every
+                    // definition as fixing its variable (`projected`), and this one does not.
+                    BitAnd if products => {
+                        let (a, b) = (arg(0).await?, arg(1).await?);
+                        self.tr(|tr| {
+                            let x = Lin::atom(presburger::Atom::Aux(tr.defs.len() as u32));
+                            let def = bit_and_bounds(&x, &a, &b);
+                            tr.aux(What::BitAnd(a, b), def);
                             Some(x)
                         })
                     }

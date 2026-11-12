@@ -3764,7 +3764,8 @@ fn touched_cases() -> Vec<(String, Term, Domains, Demand)> {
 /// COMPLEXITY.md S22-split-holes: the split of programs over domains whose pieces wrap past
 /// the modulus, span a whole period or have an infinite end, for `m = 10`, `m = -5` and `m = 7`
 /// ([`touched_cases`]), gives byte for byte the preimage that main gave at 01eb1be0, before the
-/// classes shared the domain (`touched_cases.txt`, one line per case, written by main then).
+/// classes shared the domain (`touched_cases.txt`, one line per case, written by main then; each
+/// relation since prints the empty `bit_ands` list RUNG2-bit added, and nothing else changed).
 /// For `m = 10` and for `m = -5`, each kind of answer of `touched` occurs at least once.
 #[test]
 fn split_pieces_reach_each_kind_of_touched() {

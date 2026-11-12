@@ -854,13 +854,20 @@ impl Joining {
 }
 
 /// A relation: a body, and the definitions of its auxiliary variables, each of which fixes
-/// one auxiliary variable for every value of the others.
+/// one auxiliary variable for every value of the others, but for those of `bit_ands`, which
+/// it only bounds.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Relation {
     /// The body.
     pub body: Formula,
     /// The definitions, each an auxiliary variable and the formula that fixes it.
     pub defs: Vec<(u32, String, Formula)>,
+    /// The auxiliary variables that stand for `bitAnd(a, b)`, each with `a` and `b`, in
+    /// increasing order of the variables. Their definitions bound them by the signs of `a`
+    /// and `b` and do not fix them, so a point of the definitions is a point of the program
+    /// only where each such variable is `a & b` there ([`entails`] refutes only at such a
+    /// point).
+    pub bit_ands: Vec<(u32, Lin, Lin)>,
 }
 
 impl Relation {
@@ -869,6 +876,7 @@ impl Relation {
         Relation {
             body,
             defs: Vec::new(),
+            bit_ands: Vec::new(),
         }
     }
 
@@ -15270,11 +15278,24 @@ fn linear_reading(
         premises.body.clone(),
         Formula::negate(goal.body.clone()),
     ]);
-    let syms: Model = m
+    let mut syms: Model = m
         .iter()
         .filter(|(a, _)| !matches!(a, Atom::Product(..)))
         .map(|(a, v)| (a.clone(), v.clone()))
         .collect();
+    // A `bitAnd` variable is only bounded by its definition, so the solver may give it any
+    // value within the bounds: each is set to the and of its operands at the point, operands
+    // before the variables made from them (increasing numbers), and the point is a
+    // countermodel only if the premises still hold and the goal still fails there. Where the
+    // new value breaks the definition of a variable made from it (`min(bitAnd(a, b), 3)`), the
+    // point is no countermodel and the verdict is `NotProved`.
+    let mut bit_ands: Vec<&(u32, Lin, Lin)> =
+        premises.bit_ands.iter().chain(&goal.bit_ands).collect();
+    bit_ands.sort_unstable_by_key(|(n, ..)| *n);
+    for (n, a, b) in bit_ands {
+        let v = &a.eval(&syms) & &b.eval(&syms);
+        syms.insert(Atom::Aux(*n), v);
+    }
     if real.holds(&syms) {
         let shown = syms
             .into_iter()

@@ -13,6 +13,7 @@ mod kept_ends;
 mod nan;
 mod narrowing;
 mod reference;
+mod rung2;
 mod scaling;
 mod transfer;
 mod values;
