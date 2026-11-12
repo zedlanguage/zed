@@ -2000,15 +2000,16 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| ATOM-empty-payload | impl attempt 1 | 2026-11-12 14:11 | tests added (kinds, native atoms, zir address, kernel types, laws samples); check+clippy |
+| ATOM-empty-payload | impl attempt 1 | 2026-11-12 14:11 | affected step groups pass; native red check (hooks fix reverted) fails both new native tests, restored |
 | GSX-unsolved | hybrid-xr attempt  | 2026-11-11 16:53 | round 2 recorded (Opus pf1 moved it: sweep 3, lost 3, prints 3; CD best still 29); round 3 launched |
 | MSG-derive-print-per-message | impl attempt 1 | 2026-11-12 04:27 | l01_29 354 pass; kernel 268, zedc-types 16, zedc-check 11 unit pass; rustdoc -D warnings clean after one fix; COMPLEXITY row + K108 MAKER-file-chain, plan_dag D |
 | MSG-domain-repairs-v | impl attempt 1 | 2026-11-12 00:53 | running affected groups; load 44.01 39.14 34.67 |
+| NAME-ascii-only | running | 2026-11-12 16:11 |  |
 | NARROW-or-order | impl attempt 1 | 2026-11-12 15:40 | started; worktree /home/luke/Work/wt/narrow-or-order on cdd557f13 |
-| POLY-nf-sparse-product | impl attempt 1 | 2026-11-12 14:17 | started; worktree wt/poly-nf-sparse-product on cdd557f13 |
+| POLY-nf-sparse-product | impl attempt 1 | 2026-11-12 14:17 | red test confirmed (bytes 140.4x vs 96.8x); writing the support product in poly.rs |
 | POW-rat | impl attempt 1 | 2026-11-12 00:53 | started; worktree /home/luke/Work/wt/pow-rat on origin/main |
-| T11-preimage-rest | impl attempt 1 | 2026-11-05 04:07 | started; worktree at cdd557f13, design read |
-| T6-pinwheel-split-guard | running | 2026-11-12 15:53 |  |
+| T11-preimage-rest | impl attempt 1 | 2026-11-05 04:07 | new tests pass (closing 7.7x/7.8x, stops 7.9x, exact 8.0x); negative controls: memo off and old closing time out at 60 s, eager print 53.4x bytes, per-box copy  |
+| T6-pinwheel-split-guard | impl attempt 1 | 2026-11-12 15:53 | finding confirmed: union-of-pinwheels input is decided by K80 disjoint disjuncts, 8.0x/7.1x with classes() off; new input squares less all boxes (one meet): wit |
 | TRIVIAL-walk-picks | impl attempt 1 | 2026-11-12 14:54 | started; making worktree |
 | UNITS-info | spec attempt 1 | 2026-11-12 15:31 | DESIGN and DOCS-TODO 136 committed on wt/units-info-spec; impl worktree created |
 
