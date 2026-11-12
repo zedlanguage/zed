@@ -15318,28 +15318,26 @@ enum Tier {
 ///
 /// A premise `a` on the factor `x` of a product `x * y` is left out of the products with the
 /// premises on `y` when it mentions a factor `u` foreign to `y`: `u` is not `y`, no premise on
-/// `y` mentions it, the formulas multiply `u` by something but by nothing that is `y` or that a
-/// premise on `y` mentions, and no other premise that mentions a partner of `y` holds `u` with the other
-/// sign. Each product of `a` with a premise on `y` then holds `u * v` for some `v` (the
-/// coefficient of `u * v` is `a_u × b_v`, since `b` has no `u`), an atom the formulas do not
-/// mention, which the linear reading leaves free, and which no product of a premise on a
-/// partner of `y` with a premise on `y` can cancel. Leaving a product out only weakens the
-/// premises, so it is sound. The sign test keeps the
-/// proofs that cancel such atoms between the products of two premises, as
-/// `(x - z) * y + (x + z - w) * y` gives `2 * x * y - w * y` from `x - z >= 0`,
-/// `x + z - w >= 0` and `y >= 0` with `z` mentioned in no product, and as the products with
-/// `y` of `x - z >= 0` and of `w + z >= 0` for the products `x * y` and `w * y`. A proof through
+/// `y` mentions it, no product of the formulas multiplies `u` by `y` or by something a premise
+/// on `y` mentions, and no other premise that mentions a partner of `y` can cancel `u`. Each
+/// product of `a` with a premise `b` on `y` holds `u * v` for each `v` of `b` (the coefficient
+/// is `a_u × b_v`, since `b` has no `u`), an atom the formulas do not mention, which the
+/// linear reading leaves free unless another product cancels it. Leaving a product out only
+/// weakens the premises, so it is sound. A product `r * b'` of another premise `r` on a
+/// partner of `y` cancels `u * y` only when `r_u × b'_y` and `a_u × b_y` have opposite signs:
+/// when `r` holds `u` with the other sign, or when the premises on `y` hold `y` with both
+/// signs. That test keeps the proofs that cancel such atoms between the products of two
+/// premises, as `(x - z) * y + (x + z - w) * y` gives `2 * x * y - w * y` from `x - z >= 0`,
+/// `x + z - w >= 0` and `y >= 0`, as the products with `y` of `x - z >= 0` and of
+/// `w + z >= 0` for the products `x * y` and `w * y`, and as `d` cancels between
+/// `(b + d + 2 * a) * c` and `(e + d - b) * c` with `1 - c >= 0` and `2 * c - 1 >= 0`
+/// (`ladder::a_factor_cancels_through_rows_on_the_other_side_of_both_signs`). A proof through
 /// a factor with a partner on the other side is kept too: from `x + z >= 0`, `x - z >= 0`,
 /// `y + w >= 0` and `y - w >= 0`, the goal `x * y - z * w >= 0` is proved. What the rule can
 /// still lose is a proof that cancels `u * v` through the product of two premises on another
 /// pair of factors, one on `u`'s side holding `u` and one holding `v`; a model of this step
-/// lost none of 230 random entailments that need products and that the products of every
-/// pair prove (C2-pairs-long-row). A factor that the formulas multiply by nothing is never
-/// foreign: it can cancel through the products of any pair whatever its sign, as `d` does
-/// between `(b + d + 2 * a) * c` and `(e + d - b) * c` with `1 - c >= 0` and `2 * c - 1 >= 0`
-/// (`ladder::a_factor_in_no_product_never_leaves_a_premise_out_of_the_products`). With that
-/// condition and the sign test, the model lost none of 6,556 further random entailments, where
-/// the sign test alone lost 2 and the partner condition alone 14.
+/// lost none of 230 entailments that need products and that the products of every pair prove
+/// (C2-pairs-long-row), and none of 12,000 random ones (CD-audit).
 ///
 /// Complexity tradeoff: the products of every pair cost Θ(k²) terms for one premise of k
 /// factors that lies on each of their k products, such as one sum `b0 + ... + b{k-1}` beside
@@ -15352,8 +15350,11 @@ enum Tier {
 /// of the sum costs O(log) for each of its k factors. In general the test of `a` costs
 /// O(|a| × Σ over its factors of the rows on them × log) at worst, which is not bounded by
 /// the size of the input when many long rows share factors that are not foreign. The
-/// products kept cost O(|a| × |b| × log) each. Test:
-/// `l01_38_presburger::ladder::products_whose_factors_one_sum_on_the_factors_joins_scale`.
+/// products kept cost O(|a| × |b| × log) each. Which factors the premises on them hold with
+/// both signs is found once, in one pass over those premises. Tests:
+/// `l01_38_presburger::ladder::products_whose_factors_one_sum_on_the_factors_joins_scale` and,
+/// for a premise whose other atoms are in no product,
+/// `ladder::products_whose_premise_holds_k_atoms_in_no_product_scale`.
 ///
 /// Complexity tradeoff: a product of two variables is an opaque atom, bounded only by these
 /// products of pairs of linear premises; a goal that needs any other nonlinear reasoning is
@@ -15657,19 +15658,37 @@ fn products(
         };
         rows.iter().any(|&i| linear[i].terms.contains_key(other))
     };
-    // Whether a linear row other than the one that holds `u` with the sign of `c` holds it with
-    // the other sign and lies on a partner of `y`: its products with the rows on `y` can then
-    // cancel the atoms `u * v` of a product of the first row. Each row on `u` costs a look at
-    // the shorter of the row and the partners of `y`.
-    let cancels = |u: &Factor, c: &Int, y: &Factor| -> bool {
+    // The factors that the rows on them hold with both signs: a product with one row on such a
+    // factor `y` can cancel the atoms `u * y` of a product with another row on `y`.
+    let both: BTreeSet<&Factor> = on
+        .iter()
+        .filter(|(y, rows)| {
+            let ya = y.atom();
+            let mut signs = rows
+                .iter()
+                .filter_map(|r| r.terms.get(&ya))
+                .map(|c| c.is_negative());
+            signs.next().is_some_and(|s| signs.any(|t| t != s))
+        })
+        .map(|(y, _)| y)
+        .collect();
+    // Whether a linear row other than `a`, which holds `u` with the coefficient `c`, holds `u`
+    // and lies on a partner of `y`, with the other sign of `u` or with `y` in `both`. The atom
+    // `u * y` of a product `a * b` has the coefficient `c × b_y`, and that of a product `r * b'`
+    // the coefficient `r_u × b'_y`; they can cancel only when the two coefficients have opposite
+    // signs, and `r * b'` is formed only when `r` lies on a partner of `y`. Each row on `u`
+    // costs a look at the shorter of the row and the partners of `y`.
+    let cancels = |a: &Lin, u: &Factor, c: &Int, y: &Factor| -> bool {
         let Some(ps) = partners.get(y) else {
             return false;
         };
         let ua = u.atom();
+        let either = both.contains(y);
         on_atom.get(&ua).is_some_and(|is| {
             is.iter().any(|&i| {
                 let r = &linear[i];
-                r.terms[&ua].is_negative() != c.is_negative()
+                (either || r.terms[&ua].is_negative() != c.is_negative())
+                    && !std::ptr::eq(r, a)
                     && if r.terms.len() <= ps.len() {
                         r.terms
                             .keys()
@@ -15682,19 +15701,17 @@ fn products(
         })
     };
     // Whether `a` mentions a factor foreign to `y`: one that is not `y`, that no row on `y`
-    // mentions, that has a partner and none of whose partners is `y` or mentioned by a row on
-    // `y`, and that no other row on a partner of `y` can cancel ([`cancels`]). Each product of
-    // `a` with a row on `y` then holds a product of that factor that the formulas do not
-    // mention; see the doc comment above. A factor with no partner is never foreign: it can
-    // cancel through the products of any pair whatever its sign.
+    // mentions, none of whose partners is `y` or mentioned by a row on `y`, and that no other
+    // row can cancel ([`cancels`]). Each product of `a` with a row on `y` then holds a product
+    // of that factor that the formulas do not mention; see the doc comment above.
     let foreign = |a: &Lin, y: &Factor| -> bool {
         a.terms.iter().any(|(t, c)| {
             Factor::of(t).is_some_and(|u| {
                 !meets(&u, y)
                     && partners
                         .get(&u)
-                        .is_some_and(|ps| ps.iter().all(|p| !meets(p, y)))
-                    && !cancels(&u, c, y)
+                        .is_none_or(|ps| ps.iter().all(|p| !meets(p, y)))
+                    && !cancels(a, &u, c, y)
             })
         })
     };

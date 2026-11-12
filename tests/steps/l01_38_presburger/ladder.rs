@@ -1523,11 +1523,13 @@ fn a_premise_with_a_factor_foreign_to_the_other_side_is_left_out_of_the_products
 }
 
 #[test]
-fn a_factor_in_no_product_never_leaves_a_premise_out_of_the_products() {
-    // A factor that no product of the formulas holds can cancel through the products of
-    // another pair, whatever its sign: here `d` cancels between `(b + d + 2 * a) * c` and
-    // `(e + d - b) * c`, which share its sign, and the rows on `c` give the opposite signs.
-    // Such a factor is never foreign, so no premise is left out for it (C2-pairs-long-row).
+fn a_factor_cancels_through_rows_on_the_other_side_of_both_signs() {
+    // A factor can cancel between the products of two premises that hold it with the same
+    // sign when the rows on the other factor hold that factor with both signs: here `d`
+    // cancels between `(b + d + 2 * a) * c` and `(e + d - b) * c`, which share its sign, and
+    // `1 - c` and `2 * c - 1` give `c` the opposite signs. So `d` is not foreign to `c`, and
+    // no premise is left out for it, whether or not a product holds `d` (C2-pairs-long-row,
+    // CD-audit: the third case, with the product `d * q`, was not proved by e8fea7860).
     assert_proved(
         "ok(a: int, b: int, c: int, d: int, e: int) = 1 - c >= 0 && 2 * c - 1 >= 0 && b + d + 2 * a >= 0 && 2 * e + 2 * d - 2 * b >= 0 && 2 * d >= 0;",
         "ok(a: int, b: int, c: int, d: int, e: int) = 4 * b * c - 3 * b + 3 * d + 4 * a * c - 2 * a - 2 * c * e + 2 * e >= 0;",
@@ -1536,6 +1538,47 @@ fn a_factor_in_no_product_never_leaves_a_premise_out_of_the_products() {
         "ok(a: int, b: int, c: int, d: int, e: int, f: int) = 2 * b - 2 * d - 2 * c >= 0 && -2 * f - c >= 0 && a + 2 * e >= 0 && -a - 2 * e >= 0 && -b >= 0;",
         "ok(a: int, b: int, c: int, d: int, e: int, f: int) = -4 * a * b - 8 * b * e - 6 * a - 12 * e + 2 * a * d + 4 * d * e - 4 * a * f - 8 * e * f >= 0;",
     );
+    assert_proved(
+        "ok(a: int, b: int, c: int, d: int, e: int, q: int) = 1 - c >= 0 && 2 * c - 1 >= 0 && b + d + 2 * a >= 0 && 2 * e + 2 * d - 2 * b >= 0 && 2 * d >= 0 && d * q >= -5;",
+        "ok(a: int, b: int, c: int, d: int, e: int, q: int) = 4 * b * c - 3 * b + 3 * d + 4 * a * c - 2 * a - 2 * c * e + 2 * e >= 0;",
+    );
+}
+
+/// `x + z0 + ... + z{k-1} >= 0` beside `x >= 1` and the rows `y >= w{j}`, `w{j} >= 0`, with
+/// the goal `x * y >= 0`: no product holds a `z{j}`.
+fn one_sum_of_atoms_in_no_product(k: usize) -> (Relation, Relation) {
+    let names: Vec<String> = (0..k).map(|j| format!("z{j}: int, w{j}: int")).collect();
+    let head = format!("ok(x: int, y: int, {})", names.join(", "));
+    let zs: Vec<String> = (0..k).map(|j| format!("z{j}")).collect();
+    let mut premise = vec![format!("x + {} >= 0", zs.join(" + ")), "x >= 1".to_string()];
+    premise.extend((0..k).map(|j| format!("y >= w{j} && w{j} >= 0")));
+    let (ps, p) = function(&format!("{head} = {};", premise.join(" && ")));
+    let (_, g) = function(&format!("{head} = x * y >= 0;"));
+    let mut rs = relations(&[&p, &g], &ps, true).expect("in the domain");
+    let g = rs.pop().expect("two relations");
+    (rs.pop().expect("two relations"), g)
+}
+
+#[test]
+fn products_whose_premise_holds_k_atoms_in_no_product_scale() {
+    // The sum on `x` holds k atoms that no product holds and that no other row holds, so
+    // each is foreign to `y` and the sum is left out of the products with the k rows on `y`;
+    // before CD-audit a factor in no product was never foreign, and the k products of the
+    // sum cost Θ(k²) terms (C2-pairs-long-row).
+    let n = 8;
+    let built = scaling::inputs(n, one_sum_of_atoms_in_no_product);
+    let measure = move || {
+        scaling::check(
+            "a premise of atoms in no product beside many rows on the other factor",
+            n,
+            |k| {
+                let (p, g) = &built[&k];
+                let e = entails(p, g);
+                assert!(matches!(e, Entailment::Proved(_)), "{k}: {e}");
+            },
+        );
+    };
+    scaling::on_a_thread(8 << 20, measure);
 }
 
 #[test]
