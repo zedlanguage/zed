@@ -1995,17 +1995,17 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| ATOM-empty-payload | impl attempt 1 | 2026-11-12 14:11 | reproduced with resolver refusal lifted: f(1) prints bare, #e() is #e and #e() == #e both true (want not bare, false, false) |
+| ATOM-empty-payload | impl attempt 1 | 2026-11-12 14:11 | tests added (kinds, native atoms, zir address, kernel types, laws samples); check+clippy |
 | GSX-unsolved | hybrid-xr attempt  | 2026-11-11 16:53 | round 2 recorded (Opus pf1 moved it: sweep 3, lost 3, prints 3; CD best still 29); round 3 launched |
-| MSG-derive-print-per-message | impl attempt 1 | 2026-11-12 04:27 | tests: comparison work tests at n=40/320 (7.8x after, 52-55x cache off), 4 wrong-fix catchers (spelling x2, group order, union in tuple); + repair path O(n^2) i |
-| MSG-domain-repairs-v | impl attempt 1 | 2026-11-12 00:53 | started; worktree /home/luke/Work/wt/msg-domain-repairs-v on origin/main 8ddd28861, seeded |
-| NARROW-or-order | running | 2026-11-12 15:40 |  |
-| POLY-nf-sparse-product | running | 2026-11-12 14:17 |  |
+| MSG-derive-print-per-message | impl attempt 1 | 2026-11-12 04:27 | l01_29 354 pass; kernel 268, zedc-types 16, zedc-check 11 unit pass; rustdoc -D warnings clean after one fix; COMPLEXITY row + K108 MAKER-file-chain, plan_dag D |
+| MSG-domain-repairs-v | impl attempt 1 | 2026-11-12 00:53 | running affected groups; load 44.01 39.14 34.67 |
+| NARROW-or-order | impl attempt 1 | 2026-11-12 15:40 | started; worktree /home/luke/Work/wt/narrow-or-order on cdd557f13 |
+| POLY-nf-sparse-product | impl attempt 1 | 2026-11-12 14:17 | started; worktree wt/poly-nf-sparse-product on cdd557f13 |
 | POW-rat | impl attempt 1 | 2026-11-12 00:53 | started; worktree /home/luke/Work/wt/pow-rat on origin/main |
-| STAGE-commands | running | 2026-11-12 15:39 |  |
-| T11-preimage-rest | running | 2026-11-05 04:07 |  |
-| TRIVIAL-walk-picks | running | 2026-11-12 14:54 |  |
-| UNITS-info | impl attempt 1 | 2026-11-12 15:31 | started; spec worktree wt/units-info-spec at d32b595 / load 36.70 26.03 29.96 |
+| STAGE-commands | impl attempt 1 | 2026-11-12 15:39 | started; worktree /home/luke/Work/wt/stage-commands at cdd557f13, load 16.72 |
+| T11-preimage-rest | impl attempt 1 | 2026-11-05 04:07 | started; worktree at cdd557f13, design read |
+| TRIVIAL-walk-picks | impl attempt 1 | 2026-11-12 14:54 | started; making worktree |
+| UNITS-info | spec attempt 1 | 2026-11-12 15:31 | DESIGN and DOCS-TODO 136 committed on wt/units-info-spec; impl worktree created |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
