@@ -181,9 +181,10 @@ fn every_construct_with_paths_is_checked() {
             "x' = if t > 1 { y = c*.a(); y } else { 0 };",
             "a branch of the `if`",
         ),
-        // The value of an indexed definition is computed once for each key.
+        // The value of an indexed definition is computed once for each key: here one, so
+        // `c'` has one writer (over two keys it has two, `several_writers_of_one_fact`).
         (
-            "d[i in 0..<2] = c*.a();",
+            "d[i in 0..<1] = c*.a();",
             "the value of the indexed definition",
         ),
     ] {
@@ -453,7 +454,7 @@ fn an_update_of_an_entry_counts() {
 /// `p.items[i]*.m()` or `grid[i].pos*.m()`, updates the variable the path starts at
 /// (sec:generations). As the whole value of an indexed definition, a path with an entry on it
 /// updates its variable key by key, on every path through the statement; a path of fields only
-/// writes the same place once for each key, and counts on some paths only.
+/// writes the same place once for each key, two writers in one step (`several_writers_of_one_fact`).
 #[test]
 fn an_update_of_a_field_counts() {
     for body in [
@@ -489,11 +490,6 @@ fn an_update_of_a_field_counts() {
             "x' = if t > 1 { p[0].pos*.m() } else { 0 };",
             "p[0].pos*.m",
             "a branch of the `if`",
-        ),
-        (
-            "old[i in 0..<4] = p.pos*.relax();",
-            "p.pos*.relax",
-            "the value of the indexed definition",
         ),
     ] {
         let src = t_loop(&["initial p = 0;", update]);
@@ -553,6 +549,195 @@ fn a_qualified_name_is_no_receiver() {
         assert_eq!(e.row, Some(Row::NotEveryPath), "{src}: {e:?}");
         assert_eq!(&src[e.span.start..e.span.end], "shapes.origin*.m", "{src}");
     }
+}
+
+/// The note of row "Collision" on the one-writer rule, for `c'`.
+const ONE_WRITER: &str = "a step writes `c'` at most once, even where the values agree, with or \
+                          without `with carryForward`";
+
+/// Row "Collision" for a write the value of an indexed definition makes once for each key
+/// (sec:tour_methods, "Two `*.` chains on one receiver in one step are two writers of `c'`"):
+/// `d[i in 0..<2] = c*.a()` writes `c'` twice in a step, with or without `with carryForward`,
+/// where `d[i in 0..<1] = c*.a()` writes it once. The first repair makes the call once before
+/// the definition, the second gives each key its own entry.
+#[test]
+fn several_writers_of_one_fact() {
+    let message = "Several writers of `c'` in one step: `d[i in 0..<2] = c*.a()`. Try `r = \
+                   c*.a(); d[i in 0..<2] = r;` instead.";
+    let notes = [
+        "`c*.a()` writes `c'`, and `d[i in 0..<2] = …` computes its value once for each key of \
+         `i` in `0..<2`, so `c'` is written twice in one step [c*.a()]",
+        &format!("{ONE_WRITER} [d[i in 0..<2] = c*.a();]"),
+        "repair: `r = c*.a();` before the definition writes `c'` once on a step, and each key \
+         reads the result [d[i in 0..<2] = c*.a();]",
+        "repair: `c[i]*.a()` writes one entry of `c` for each key of `i`, when `c` has an entry \
+         for each [c*.a()]",
+    ];
+    for initial in ["initial c = 0;", "initial c = 0 with carryForward;"] {
+        refused(
+            &t_loop(&[initial, "d[i in 0..<2] = c*.a();"]),
+            Row::Collision,
+            "c*.a()",
+            Some(message),
+            &notes,
+            &[
+                t_loop(&[initial, "r = c*.a(); d[i in 0..<2] = r;"]).as_str(),
+                t_loop(&[initial, "d[i in 0..<2] = c[i]*.a();"]).as_str(),
+            ],
+        );
+    }
+    // One key, or none: one writer at most, so a carried variable is accepted; a recurrence is
+    // still refused, since the value runs on some paths only.
+    for update in [
+        "d[i in 0..<1] = c*.a();",
+        "d[i in 3..=3] = c*.a();",
+        "d[i in 2..<2] = c*.a();",
+        "d[i in 0..<1][j in 5..<6] = c*.a();",
+    ] {
+        let src = t_loop(&["initial c = 0;", update]);
+        assert_eq!(refusal(&src).row, Some(Row::NotEveryPath), "{src}");
+        accepted(&t_loop(&["initial c = 0 with carryForward;", update]));
+    }
+    // A `*.` call on an entry whose keys name the key writes one entry for each: accepted, and
+    // an update on every path. Keys that read the key in other ways, and keys that hold a `*.`
+    // call, are left to the disjointness check of the one-writer rule (step L6.3).
+    for update in [
+        "old[i in 0..<4] = grid[i]*.relax();",
+        "old[i in cells] = grid[i]*.relax();",
+        "old[i in 0..<4] = grid[i][0]*.relax();",
+        "old[i in 0..<4] = grid[i + 1]*.relax();",
+        "old[i in 0..<4][j in 0..<4] = grid[j][i]*.relax();",
+        "old[i in 0..<4] = { x = grid[i]*.relax(); x };",
+        "old[i in 0..<4] = { grid'[i][v in 0..<3] = v; 0 };",
+        "old[i in 0..<4] = { e[j in 0..<3] = grid[i][j]*.relax(); 0 };",
+    ] {
+        accepted(&t_loop(&["initial grid = 0 with carryForward;", update]));
+    }
+    accepted(&t_loop(&[
+        "initial grid = 0;",
+        "old[i in 0..<4] = grid[i]*.relax();",
+    ]));
+    // Each form of write, at its text, and the repair it gets.
+    for (update, at, repair) in [
+        // An entry with a fixed key: written once for each key of `i`.
+        (
+            "old[i in 0..<4] = grid[0]*.relax();",
+            "grid[0]*.relax()",
+            "r = grid[0]*.relax(); old[i in 0..<4] = r;",
+        ),
+        // A chain is one write, made once for each key.
+        (
+            "old[i in 0..<4] = grid*.a().b();",
+            "grid*.a().b()",
+            "r = grid*.a().b(); old[i in 0..<4] = r;",
+        ),
+        // The call is moved out of the rest of the value.
+        (
+            "old[i in 0..<4] = grid*.a() + i;",
+            "grid*.a()",
+            "r = grid*.a(); old[i in 0..<4] = r + i;",
+        ),
+        // A call that reads the key cannot be moved out: each key gets its own entry.
+        (
+            "old[i in 0..<4] = grid*.a(i);",
+            "grid*.a(i)",
+            "old[i in 0..<4] = grid[i]*.a(i);",
+        ),
+        // A primed definition in a block of the value.
+        (
+            "old[i in cells] = { grid' = i; 0 };",
+            "grid' = i;",
+            "old[i in cells] = { grid'[i] = i; 0 };",
+        ),
+        (
+            "old[i in 0..<4] = { grid'[v in 0..<3] = v; 0 };",
+            "grid'[v in 0..<3] = v;",
+            "old[i in 0..<4] = { grid'[i][v in 0..<3] = v; 0 };",
+        ),
+        // In the body of a `for`, in a nested definition's domain, and in a nested definition's
+        // value whose key is not the outer one.
+        (
+            "old[i in 0..<4] = for x in 0..<2 { grid*.a() };",
+            "grid*.a()",
+            "old[i in 0..<4] = for x in 0..<2 { grid[i]*.a() };",
+        ),
+        (
+            "old[i in 0..<4] = { e[j in 0..<grid*.a()] = j; 0 };",
+            "grid*.a()",
+            "old[i in 0..<4] = { e[j in 0..<grid[i]*.a()] = j; 0 };",
+        ),
+        (
+            "old[i in 0..<4] = { e[j in 0..<2] = grid[j]*.a(); 0 };",
+            "grid[j]*.a()",
+            "old[i in 0..<4] = { e[j in 0..<2] = grid[j][i]*.a(); 0 };",
+        ),
+        // A path of fields writes its variable, and the key goes after the path's last index.
+        (
+            "old[i in 0..<4] = grid.pos*.relax();",
+            "grid.pos*.relax()",
+            "r = grid.pos*.relax(); old[i in 0..<4] = r;",
+        ),
+        (
+            "old[i in 0..<4] = grid.pos*.relax(i);",
+            "grid.pos*.relax(i)",
+            "old[i in 0..<4] = grid[i].pos*.relax(i);",
+        ),
+        (
+            "old[i in 0..<4] = grid[0].pos*.relax(i);",
+            "grid[0].pos*.relax(i)",
+            "old[i in 0..<4] = grid[0][i].pos*.relax(i);",
+        ),
+        // A second domain the entry does not name.
+        (
+            "old[i in 0..<4][j in 0..<2] = grid[i]*.a();",
+            "grid[i]*.a()",
+            "old[i in 0..<4][j in 0..<2] = grid[i][j]*.a();",
+        ),
+        // A nearer key of the same name hides the outer one; the repair renames it.
+        (
+            "old[i in 0..<4] = { e[i in 0..<2] = grid[i]*.a(); 0 };",
+            "grid[i]*.a()",
+            "old[i in 0..<4] = { e[i1 in 0..<2] = grid[i1][i]*.a(); 0 };",
+        ),
+        (
+            "old[i in 0..<4] = { grid'[i in 0..<3] = i; 0 };",
+            "grid'[i in 0..<3] = i;",
+            "old[i in 0..<4] = { grid'[i][i1 in 0..<3] = i1; 0 };",
+        ),
+    ] {
+        let src = t_loop(&["initial grid = 0 with carryForward;", update]);
+        let e = refusal(&src);
+        assert_eq!(e.row, Some(Row::Collision), "{src}: {e:?}");
+        assert_eq!(&src[e.span.start..e.span.end], at, "{src}");
+        assert!(
+            e.message.ends_with(&format!("Try `{repair}` instead.")),
+            "{src}: {}",
+            e.message
+        );
+        accepted(&t_loop(&["initial grid = 0 with carryForward;", repair]));
+    }
+    // The new name avoids the names of the loop.
+    let e = refusal(&t_loop(&[
+        "initial c = 0;",
+        "r = 1;",
+        "d[i in 0..<2] = c*.a() + r;",
+    ]));
+    assert!(
+        e.message
+            .ends_with("Try `r1 = c*.a(); d[i in 0..<2] = r1 + r;` instead."),
+        "{}",
+        e.message
+    );
+    // The first in written order is reported, before a path without an update.
+    let src = t_loop(&[
+        "initial c = 0;",
+        "x' = if t > 1 { b*.a() } else { 0 };",
+        "d[i in 0..<2] = c*.a();",
+        "e[i in 0..<2] = b*.a();",
+    ]);
+    let e = refusal(&src);
+    assert_eq!(e.row, Some(Row::Collision), "{e:?}");
+    assert_eq!(&src[e.span.start..e.span.end], "c*.a()");
 }
 
 /// The rule notes of row "A `mutable` declaration", in a loop and outside one.
@@ -1022,15 +1207,65 @@ fn nested_blocks(n: usize, branch: bool) -> String {
     format!("r = loop t {{ while t < 9; initial c = 0; x' = {open}{inner}{close}; }};\n")
 }
 
+/// `n` carried variables `ck`, each updated by a keyed `*.` call `ck[i]*.a()` in the value of
+/// one indexed definition, then `tail`.
+fn keyed(n: usize, tail: &str) -> String {
+    let initials: String = (0..n)
+        .map(|k| format!("initial c{k} = 0 with carryForward; "))
+        .collect();
+    let calls: String = (0..n).map(|k| format!("c{k}[i]*.a(); ")).collect();
+    format!("r = loop t {{ while t < 9; {initials}d[i in 0..<2] = {{ {calls}0 }}; {tail} }};\n")
+}
+
+/// `n` carried variables `ck`, each updated by a keyed `*.` call `ck[i]*.a()` in the value of one
+/// indexed definition with `n` domains of one key before its domain of `i`.
+fn keyed_after_single_keys(n: usize) -> String {
+    let initials: String = (0..n)
+        .map(|k| format!("initial c{k} = 0 with carryForward; "))
+        .collect();
+    let domains: String = (0..n).map(|k| format!("[a{k} in 0..<1]")).collect();
+    let calls: String = (0..n).map(|k| format!("c{k}[i]*.a(); ")).collect();
+    format!("r = loop t {{ while t < 9; {initials}d{domains}[i in 0..<2] = {{ {calls}0 }}; }};\n")
+}
+
+/// `n` indexed definitions, each in the value of the one before, each value a block that first
+/// makes a `*.` call on an entry of `g` whose key holds a `*.` call on `h`.
+fn nested_call_keys(n: usize) -> String {
+    let mut value = "0".to_string();
+    for k in (1..n).rev() {
+        value = format!("{{ x = g[h*.a()]*.b(); e{k}[i{k} in 0..<2] = {value}; 0 }}");
+    }
+    format!("r = loop t {{ while t < 9; e0[i0 in 0..<2] = {value}; }};\n")
+}
+
+/// `n` indexed definitions, each in the value of the one before, the innermost value a `*.` call
+/// on the entry of `c` at the keys of all of them; with `missing`, the outermost key is left out
+/// of the entry. `c` carries, since a block of a value runs on some paths only.
+fn nested_keys(n: usize, missing: bool) -> String {
+    let keys: String = (usize::from(missing)..n)
+        .map(|k| format!("[i{k}]"))
+        .collect();
+    let mut value = format!("c{keys}*.a()");
+    for k in (1..n).rev() {
+        value = format!("{{ e{k}[i{k} in 0..<2] = {value}; 0 }}");
+    }
+    format!(
+        "r = loop t {{ while t < 9; initial c = 0 with carryForward; e0[i0 in 0..<2] = {value}; }};\n"
+    )
+}
+
 /// The must-assign check is one walk of the body with sets merged smaller into larger, so `n`
 /// variables updated each on its own paths, `n` variables updated on both branches of one `if`,
-/// directly or in nested blocks, and an update `n` constructs or blocks deep are each checked in
-/// time of order `n log n`, accepted or refused. `n` calls on paths of fields and entries, and
-/// `n` calls on the names of `n` imported units, which one pass over the tokens lists, are too.
+/// directly or in nested blocks, an update `n` constructs or blocks deep, `n` keyed writes in the
+/// value of one indexed definition, with or without `n` domains of one key, a write `n` indexed
+/// definitions deep, and a write whose key holds a `*.` call at each of `n` levels are each
+/// checked in time of order `n log n`, accepted or refused. `n` calls on paths of fields and
+/// entries, and `n` calls on the names of `n` imported units, which one pass over the tokens
+/// lists, are too.
 #[test]
 fn the_must_assign_check_scales() {
     type Make = fn(usize) -> String;
-    let cases: [(&str, Make, Option<Row>); 12] = [
+    let cases: [(&str, Make, Option<Row>); 18] = [
         ("fields, accepted", |n| fields(n, ""), None),
         (
             "fields, refused at the end",
@@ -1062,6 +1297,28 @@ fn the_must_assign_check_scales() {
             "nested blocks, refused",
             |n| nested_blocks(n, true),
             Some(Row::NotEveryPath),
+        ),
+        ("keyed writes, accepted", |n| keyed(n, ""), None),
+        (
+            "keyed writes, refused at the end",
+            |n| keyed(n, "e[j in 0..<2] = b*.a();"),
+            Some(Row::Collision),
+        ),
+        ("nested keys, accepted", |n| nested_keys(n, false), None),
+        (
+            "nested keys, refused",
+            |n| nested_keys(n, true),
+            Some(Row::Collision),
+        ),
+        (
+            "keyed writes after one-key domains, accepted",
+            keyed_after_single_keys,
+            None,
+        ),
+        (
+            "calls in keys at each level, refused",
+            nested_call_keys,
+            Some(Row::Collision),
         ),
     ];
     for (what, make, row) in cases {

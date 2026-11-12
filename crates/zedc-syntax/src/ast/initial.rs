@@ -4,7 +4,8 @@
 //! a loop, or under `local`", "An `initial` statement for a name the loop does not update",
 //! "An `initial` value that reads a name of its own loop", "Two sentinel values for one
 //! variable", "`with carryForward` on a keyed boundary entry", "A loop variable not updated on
-//! every path of a step", and, for an entry written as a bare statement, "A boundary entry of a
+//! every path of a step", "Collision" for a write the value of an indexed definition makes once
+//! for each of several keys, and, for an entry written as a bare statement, "A boundary entry of a
 //! loop written without `initial`". The forms the parser stops at, `with x = e`, `with initial x
 //! = e` and `with x[-2] = e` on a statement of a loop, and the removed form `mutable x = e;`,
 //! are found by the parser (`crate::parse`).
@@ -16,8 +17,8 @@ use num_bigint::BigInt;
 use super::builder::{Builder, Level};
 use super::sentinel::{End, Entry, Keys, Sentinels, keys_of};
 use super::{
-    BinaryOp, CARRY_FORWARD, Error, Expr, ExprKind, Field, IndexKey, Initial, Note, Pattern,
-    RangeEnd, Stmt, StmtKind, StrPart, Target, TypeKind, UnaryOp,
+    BinaryOp, CARRY_FORWARD, Error, Expr, ExprKind, Field, IndexKey, IndexedDef, Initial, Note,
+    Pattern, RangeEnd, Stmt, StmtKind, StrPart, Target, TypeKind, UnaryOp,
 };
 use crate::lex::{Span, Tok, Token};
 use zedc_base::rejection::Row;
@@ -498,11 +499,13 @@ fn dot_repair(fixes: &[Fix], carry: Option<(&str, &str)>) -> Note {
     }
 }
 
-/// What [`every_path`] finds in a step.
+/// What [`every_path`] finds in a step: the variables every path updates, each update, each `.`
+/// call on a variable, and each write made several times by the value of an indexed definition.
 struct Walk<'e> {
     must: Must<'e>,
     updates: Vec<Update<'e>>,
     dots: Vec<DotCall<'e>>,
+    several: Vec<Several<'e>>,
 }
 
 /// The variables every path through a node updates: all of them when every path ends in
@@ -645,6 +648,29 @@ pub(super) fn qualifiers<'s>(text: &'s str, levels: &[Level]) -> HashSet<&'s str
     out
 }
 
+/// The words of the source text `t` that could be names: runs of letters, digits and `_` that
+/// do not start with a digit.
+fn identifiers(t: &str) -> impl Iterator<Item = &str> {
+    t.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|w| w.chars().next().is_some_and(|c| !c.is_ascii_digit()))
+}
+
+/// The source text `t` with each word `from` in it, a run of letters, digits and `_`, written
+/// `to`.
+fn rename(t: &str, from: &str, to: &str) -> String {
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    let mut out = String::with_capacity(t.len());
+    let mut rest = t;
+    while !rest.is_empty() {
+        let (w, after) = rest.split_at(rest.find(|c| !word(c)).unwrap_or(rest.len()));
+        out.push_str(if w == from { to } else { w });
+        let (gap, next) = after.split_at(after.find(word).unwrap_or(after.len()));
+        out.push_str(gap);
+        rest = next;
+    }
+    out
+}
+
 /// How a part of a node combines into the node's [`Must`]: run on every path through the node,
 /// one of several alternatives of which a path runs exactly one, or run on some paths only.
 #[derive(Clone, Copy)]
@@ -654,12 +680,146 @@ enum Role {
     Some,
 }
 
-/// A step of the walk of [`every_path`]: an expression or statement to visit, with the branch
-/// it stands in and its role in its parent; or the combination of the last `kids` results into
-/// one, with what the node itself updates.
+/// Where a node of the walk of [`every_path`] stands: the innermost construct whose part holds
+/// it; the innermost indexed definition whose value holds it and whose domain may hold more
+/// than one key, an index into the walk's [`Per`] list; the write whose target's keys hold it,
+/// an index into its [`Write`] list; and, for the callee of a call or the value before a `.`,
+/// the outermost call or member of the chain it heads (`c*.a().b()` for `c*.a`).
+#[derive(Clone, Copy)]
+struct Ctx {
+    branch: Option<Branch>,
+    per: Option<usize>,
+    key_of: Option<usize>,
+    top: Option<Span>,
+}
+
+/// An indexed definition whose value holds the node being walked, with a domain that may hold
+/// more than one key: the statement, the definition, its domains that may hold more than one key,
+/// and the next such definition out.
+struct Per<'e> {
+    stmt: &'e Stmt,
+    def: &'e IndexedDef,
+    many: Vec<&'e IndexKey>,
+    up: Option<usize>,
+}
+
+/// Whether the domain `k` of an indexed definition may hold more than one key: any domain but
+/// one written with integer literals that holds one key or none, `i in 0..<1`.
+fn many_keys(k: &IndexKey) -> bool {
+    match k {
+        IndexKey::At(_) => false,
+        IndexKey::In { .. } => match keys_of(k) {
+            None => false,
+            Some(Keys::Ints(lo, End::At(hi))) => hi != lo,
+            Some(_) => true,
+        },
+    }
+}
+
+/// How a write in the value of an indexed definition is written.
+#[derive(Clone, Copy)]
+enum WriteForm<'e> {
+    /// A `*.` call on `of`, `c` in `c*.a()`, whose chain is the span.
+    Call(&'e Expr),
+    /// `c' = …`.
+    Bind,
+    /// `c'[v in …] = …`.
+    Def,
+}
+
+/// A write of a variable inside the value of an indexed definition whose domain may hold more
+/// than one key: the variable; the write as shown, the chain of a `*.` call or the statement;
+/// its form; where a key `[i]` would go after the variable's name in it; the innermost such
+/// definition; the names its target's keys read, the first `bound` of them the names its
+/// own domains bind, for `c'[v in …] = …`; and whether a key holds a `*.` call, which
+/// the disjointness check of step L6.3 judges, so this check passes the write over.
+struct Write<'e> {
+    name: &'e str,
+    span: Span,
+    form: WriteForm<'e>,
+    insert: Option<usize>,
+    per: usize,
+    names: Vec<&'e str>,
+    bound: usize,
+    all: bool,
+}
+
+/// A write that the value of the indexed definition `stmt` makes once for each key of its
+/// domain `key`, since no key of the write's target reads that key's name: several writers of
+/// one fact in one step (DESIGN.md sec:tour_methods, "Two `*.` chains on one receiver in one
+/// step are two writers"). `only` tells whether `stmt` is the only enclosing definition with
+/// more than one key; `hidden_by` is the nearer definition whose key of the same name hides
+/// `key` from the write, if one does.
+struct Several<'e> {
+    write: Write<'e>,
+    stmt: &'e Stmt,
+    def: &'e IndexedDef,
+    key: &'e IndexKey,
+    only: bool,
+    hidden_by: Option<Span>,
+}
+
+/// The writes of `writes` that write one fact once for each key of an enclosing indexed
+/// definition, given the definitions `pers`. A write is checked against each definition out
+/// from its own, until a key of that definition with more than one key is missing from the
+/// names its target reads, or hidden by a nearer definition's key of the same name.
+// Complexity tradeoff: walking every write out through every enclosing definition and all its
+// domains is O(w (d + k)) for w writes under d definitions with k domains in all, O(n^2) for a
+// step of n nodes with a write at each level of a deep nesting. Here each definition keeps its
+// domains that may hold more than one key, filtered once; each write's names go into a set
+// once; a write whose key holds a `*.` call is passed over (step L6.3 judges it); and the walk
+// stops at the first domain whose key the write misses or that a nearer key hides. A domain the
+// walk passes puts its key in `hidden`, so a second domain of that name stops it: the walk
+// passes at most as many domains as the write's target reads names, and a step of n nodes costs
+// O(n) expected.
+fn several<'e>(writes: Vec<Write<'e>>, pers: &[Per<'e>]) -> Vec<Several<'e>> {
+    let mut out = Vec::new();
+    for w in writes {
+        if w.all {
+            continue;
+        }
+        let names: HashSet<&str> = w.names.iter().copied().collect();
+        // The keys a nearer definition names, with that definition: the definition the write
+        // itself is, for `c'[i in …] = …`, and the definitions out from it.
+        let mut hidden: HashMap<&str, Span> = HashMap::new();
+        if let WriteForm::Def = w.form {
+            hidden.extend(w.names[..w.bound].iter().map(|&n| (n, w.span)));
+        }
+        let mut at = Some(w.per);
+        let mut miss = None;
+        'out: while let Some(p) = at {
+            for &k in &pers[p].many {
+                if let IndexKey::In { name, .. } = k {
+                    let near = hidden.get(name.as_str()).copied();
+                    if near.is_some() || !names.contains(name.as_str()) {
+                        miss = Some((p, k, near));
+                        break 'out;
+                    }
+                    hidden.insert(name, pers[p].stmt.span);
+                }
+            }
+            at = pers[p].up;
+        }
+        if let Some((p, key, hidden_by)) = miss {
+            out.push(Several {
+                only: p == w.per && pers[p].up.is_none(),
+                stmt: pers[p].stmt,
+                def: pers[p].def,
+                key,
+                hidden_by,
+                write: w,
+            });
+        }
+    }
+    out
+}
+
+/// A step of the walk of [`every_path`]: an expression or statement to visit, with where it
+/// stands and its role in its parent; or the combination of the last `kids` results into one,
+/// with what the node itself updates.
 enum Task<'e> {
-    Expr(&'e Expr, Option<Branch>, Role),
-    Stmt(&'e Stmt, Option<Branch>, Role),
+    Expr(&'e Expr, Ctx, Role),
+    Stmt(&'e Stmt, Ctx, Role),
     Join {
         kids: usize,
         own: Must<'e>,
@@ -699,6 +859,9 @@ enum Task<'e> {
 // strictly linear method, a check per variable over the tree of its updates' common ancestors
 // with constant-time ancestor queries, was weighed and not used: it needs an ancestor index of
 // the step and a second pass, for at most a log factor (CHK-update-every-path-cases).
+//
+// The same walk lists the writes made inside the value of an indexed definition whose domain may
+// hold more than one key, with the names their targets' keys read, for [`several`].
 fn every_path<'e>(
     stmts: &'e [Stmt],
     qualifiers: &HashSet<&str>,
@@ -711,13 +874,21 @@ fn every_path<'e>(
     // The expressions whose value is dropped: the value of an expression statement, and each
     // branch, arm and export of one whose value is dropped.
     let mut dropped: HashSet<Span> = HashSet::new();
+    let mut pers: Vec<Per<'e>> = Vec::new();
+    let mut writes: Vec<Write<'e>> = Vec::new();
     let mut results: Vec<(Role, Must<'e>)> = Vec::new();
+    let start = Ctx {
+        branch: None,
+        per: None,
+        key_of: None,
+        top: None,
+    };
     let mut tasks: Vec<Task<'e>> = vec![Task::Join {
         kids: stmts.len(),
         own: Must::none(),
         role: Role::Always,
     }];
-    tasks.extend(stmts.iter().map(|s| Task::Stmt(s, None, Role::Always)));
+    tasks.extend(stmts.iter().map(|s| Task::Stmt(s, start, Role::Always)));
     while let Some(task) = tasks.pop() {
         match task {
             Task::Join { kids, own, role } => {
@@ -743,7 +914,7 @@ fn every_path<'e>(
                 }
                 results.push((role, acc));
             }
-            Task::Stmt(s, branch, role) => {
+            Task::Stmt(s, ctx, role) => {
                 // The variables the statement itself updates, and its parts.
                 let mut own: HashSet<&'e str> = HashSet::new();
                 let mut kids: Vec<Task<'e>> = Vec::new();
@@ -755,14 +926,27 @@ fn every_path<'e>(
                 if let StmtKind::Expr(v) = &s.kind {
                     dropped.insert(v.span);
                 }
-                let mut always = |x: &'e Expr| kids.push(Task::Expr(x, branch, Role::Always));
+                let plain = Ctx { top: None, ..ctx };
+                let mut always = |x: &'e Expr| kids.push(Task::Expr(x, plain, Role::Always));
                 match &s.kind {
                     StmtKind::Bind { targets, value } => {
                         for t in targets {
-                            if let Target::Name(n, _) = t
+                            if let Target::Name(n, at) = t
                                 && n.ends_with('\'')
                             {
                                 own.insert(unprimed(n));
+                                if let Some(per) = ctx.per {
+                                    writes.push(Write {
+                                        name: unprimed(n),
+                                        span: s.span,
+                                        form: WriteForm::Bind,
+                                        insert: Some(at.end),
+                                        per,
+                                        names: Vec::new(),
+                                        bound: 0,
+                                        all: false,
+                                    });
+                                }
                             }
                         }
                         always(value);
@@ -782,9 +966,6 @@ fn every_path<'e>(
                     // any path with an index on it, `grid[i].pos*.relax()`. The domains and the
                     // boundary entries are computed once on a step; the value once for each key.
                     StmtKind::IndexedDef(d) => {
-                        if d.name.ends_with('\'') {
-                            own.insert(unprimed(&d.name));
-                        }
                         let call = match &d.value.kind {
                             ExprKind::Call { callee, .. } => callee,
                             _ => &d.value,
@@ -794,21 +975,73 @@ fn every_path<'e>(
                         {
                             own.insert(n);
                         }
-                        for k in d.keys.iter().chain(d.boundary.iter().flat_map(|b| &b.keys)) {
+                        for k in &d.keys {
+                            if let IndexKey::In { set, .. } = k {
+                                always(set);
+                            }
+                        }
+                        for k in d.boundary.iter().flat_map(|b| &b.keys) {
                             match k {
                                 IndexKey::In { set, .. } => always(set),
                                 IndexKey::At(e) => always(e),
                             }
                         }
                         d.boundary.iter().for_each(|b| always(&b.value));
-                        let b = Some(Branch {
-                            span: s.span,
-                            what: Construct::Indexed,
-                        });
-                        kids.push(Task::Expr(&d.value, b, Role::Some));
+                        // A definition of a primed name inside the value of another writes one
+                        // entry for each of its keys, which its target names: the names of its
+                        // domains and those its written keys read.
+                        let mut keys = plain;
+                        if d.name.ends_with('\'') {
+                            own.insert(unprimed(&d.name));
+                            if let Some(per) = ctx.per {
+                                keys.key_of = Some(writes.len());
+                                let names: Vec<&str> = (d.keys.iter())
+                                    .filter_map(|k| match k {
+                                        IndexKey::In { name, .. } => Some(name.as_str()),
+                                        IndexKey::At(_) => None,
+                                    })
+                                    .collect();
+                                writes.push(Write {
+                                    name: unprimed(&d.name),
+                                    span: s.span,
+                                    form: WriteForm::Def,
+                                    insert: None,
+                                    per,
+                                    bound: names.len(),
+                                    names,
+                                    all: false,
+                                });
+                            }
+                        }
+                        for k in &d.keys {
+                            if let IndexKey::At(e) = k {
+                                kids.push(Task::Expr(e, keys, Role::Always));
+                            }
+                        }
+                        let many: Vec<_> = d.keys.iter().filter(|k| many_keys(k)).collect();
+                        let per = if !many.is_empty() {
+                            pers.push(Per {
+                                stmt: s,
+                                def: d,
+                                many,
+                                up: ctx.per,
+                            });
+                            Some(pers.len() - 1)
+                        } else {
+                            ctx.per
+                        };
+                        let value = Ctx {
+                            branch: Some(Branch {
+                                span: s.span,
+                                what: Construct::Indexed,
+                            }),
+                            per,
+                            ..plain
+                        };
+                        kids.push(Task::Expr(&d.value, value, Role::Some));
                     }
                     StmtKind::Local(d) | StmtKind::Annotated { decl: d, .. } => {
-                        tasks.push(Task::Stmt(d, branch, role));
+                        tasks.push(Task::Stmt(d, ctx, role));
                         continue;
                     }
                     StmtKind::Initial(_)
@@ -822,7 +1055,7 @@ fn every_path<'e>(
                 updates.extend(own.iter().map(|&name| Update {
                     name,
                     span: s.span,
-                    branch,
+                    branch: ctx.branch,
                 }));
                 let own = Must::Names(own);
                 if kids.is_empty() {
@@ -836,12 +1069,22 @@ fn every_path<'e>(
                     tasks.append(&mut kids);
                 }
             }
-            Task::Expr(e, branch, role) => {
+            Task::Expr(e, ctx, role) => {
                 let gone = dropped.contains(&e.span);
-                let inside = |what| Some(Branch { span: e.span, what });
+                let plain = Ctx { top: None, ..ctx };
+                let inside = |what| Ctx {
+                    branch: Some(Branch { span: e.span, what }),
+                    ..plain
+                };
+                // The callee of a call and the value before a `.` stand in the chain of the
+                // outermost call or member around them.
+                let chain = Ctx {
+                    top: ctx.top.or(Some(e.span)),
+                    ..ctx
+                };
                 let mut own = Must::none();
                 let mut kids: Vec<Task<'e>> = Vec::new();
-                let mut always = |x: &'e Expr| kids.push(Task::Expr(x, branch, Role::Always));
+                let mut always = |x: &'e Expr| kids.push(Task::Expr(x, plain, Role::Always));
                 match &e.kind {
                     ExprKind::Int { .. }
                     | ExprKind::Float { .. }
@@ -850,8 +1093,12 @@ fn every_path<'e>(
                     | ExprKind::Atom(_)
                     | ExprKind::This
                     | ExprKind::Section(_)
-                    | ExprKind::Name(_)
                     | ExprKind::Loop { .. } => {}
+                    ExprKind::Name(n) => {
+                        if let Some(w) = ctx.key_of {
+                            writes[w].names.push(n);
+                        }
+                    }
                     ExprKind::Str(parts) => {
                         for p in parts {
                             if let StrPart::Hole(x) = p {
@@ -860,15 +1107,60 @@ fn every_path<'e>(
                         }
                     }
                     ExprKind::Spread { of, .. } => {
-                        if let Some((n, _)) = receiver(of, qualifiers) {
-                            own = Must::Names(HashSet::from([n]));
-                            updates.push(Update {
-                                name: n,
-                                span: e.span,
-                                branch,
-                            });
+                        if let Some(w) = ctx.key_of {
+                            writes[w].all = true;
                         }
-                        always(of);
+                        match (receiver(of, qualifiers), ctx.per) {
+                            (Some((n, _)), per) => {
+                                own = Must::Names(HashSet::from([n]));
+                                updates.push(Update {
+                                    name: n,
+                                    span: e.span,
+                                    branch: ctx.branch,
+                                });
+                                match per {
+                                    // The keys on the path of the receiver are the keys of the
+                                    // entry it writes; the variable is read as any value is. A
+                                    // key for each key of the definition goes after the path's
+                                    // last index, or after its variable: `c[i]`, `grid[0][i]`,
+                                    // `p[i].pos`, `grid[j][i].pos`.
+                                    Some(per) => {
+                                        let mut end: &'e Expr = of;
+                                        while let ExprKind::Member { of: a, .. } = &end.kind {
+                                            end = a;
+                                        }
+                                        let keys = Ctx {
+                                            key_of: Some(writes.len()),
+                                            ..plain
+                                        };
+                                        writes.push(Write {
+                                            name: n,
+                                            span: ctx.top.unwrap_or(e.span),
+                                            form: WriteForm::Call(of),
+                                            insert: Some(end.span.end),
+                                            per,
+                                            names: Vec::new(),
+                                            bound: 0,
+                                            all: false,
+                                        });
+                                        let mut base: &'e Expr = of;
+                                        loop {
+                                            match &base.kind {
+                                                ExprKind::Index(a, k) => {
+                                                    kids.push(Task::Expr(k, keys, Role::Always));
+                                                    base = a;
+                                                }
+                                                ExprKind::Member { of: a, .. } => base = a,
+                                                _ => break,
+                                            }
+                                        }
+                                        kids.push(Task::Expr(base, plain, Role::Always));
+                                    }
+                                    None => always(of),
+                                }
+                            }
+                            (None, _) => always(of),
+                        }
                     }
                     ExprKind::Break(a) => {
                         own = Must::All;
@@ -889,15 +1181,17 @@ fn every_path<'e>(
                             span: e.span,
                             of_end: of.span.end,
                             bare: matches!(of.kind, ExprKind::Name(_)),
-                            branch,
+                            branch: ctx.branch,
                             stmt: whole.get(&e.span).copied(),
                             dropped: gone,
                         });
                         always(of);
                     }
+                    ExprKind::Member { of: a, .. } => {
+                        kids.push(Task::Expr(a, chain, Role::Always));
+                    }
                     ExprKind::Unary(_, a)
                     | ExprKind::Is { of: a, .. }
-                    | ExprKind::Member { of: a, .. }
                     | ExprKind::Read { of: a, .. } => always(a),
                     ExprKind::SortKey { key, .. } => {
                         if let Some(k) = key {
@@ -931,8 +1225,9 @@ fn every_path<'e>(
                         ..
                     } => {
                         // A `.` call is recorded with the span of the whole call, its arguments
-                        // included; its member read, the callee, is not recorded again.
-                        match &callee.kind {
+                        // included; its member read, the callee, is not recorded again, and its
+                        // receiver is walked in its place.
+                        let head = match &callee.kind {
                             ExprKind::Member {
                                 of,
                                 name: method,
@@ -949,16 +1244,17 @@ fn every_path<'e>(
                                     span: e.span,
                                     of_end: of.span.end,
                                     bare: matches!(of.kind, ExprKind::Name(_)),
-                                    branch,
+                                    branch: ctx.branch,
                                     stmt: whole.get(&e.span).copied(),
                                     dropped: gone,
                                 });
-                                always(of);
+                                Task::Expr(of, plain, Role::Always)
                             }
-                            _ => always(callee),
-                        }
+                            _ => Task::Expr(callee, chain, Role::Always),
+                        };
                         positional.iter().for_each(&mut always);
                         named.iter().for_each(|(_, x)| always(x));
+                        kids.push(head);
                     }
                     ExprKind::Tuple(es) | ExprKind::Array(es) | ExprKind::Set(es) => {
                         es.iter().for_each(&mut always);
@@ -1007,7 +1303,7 @@ fn every_path<'e>(
                         {
                             dropped.insert(x.span);
                         }
-                        kids.extend(stmts.iter().map(|s| Task::Stmt(s, branch, Role::Always)));
+                        kids.extend(stmts.iter().map(|s| Task::Stmt(s, plain, Role::Always)));
                     }
                     ExprKind::Match { of, arms } => {
                         always(of);
@@ -1059,6 +1355,7 @@ fn every_path<'e>(
         must,
         updates,
         dots,
+        several: several(writes, &pers),
     }
 }
 
@@ -1302,10 +1599,16 @@ impl Builder<'_, '_> {
             must,
             mut updates,
             dots,
+            several,
         } = every_path(stmts, self.qualifiers, &HashSet::new());
         let updated: HashSet<&str> = updates.iter().map(|u| u.name).collect();
         if sites {
             self.initial_sites(label, at, stmts, &updated, &locals, &dots)?;
+        }
+        // A write made once for each key of an indexed definition is several writers, whether
+        // or not the variable is carried; it is reported before a path without an update.
+        if let Some(first) = several.iter().min_by_key(|w| w.write.span.start) {
+            return Err(self.several_writers(first, body));
         }
         let Must::Names(must) = must else {
             return Ok(());
@@ -1446,6 +1749,165 @@ impl Builder<'_, '_> {
                     text: format!("repair: `{code}`, {why}"),
                 },
             ],
+        }
+    }
+
+    /// Row "Collision", for a write that the value of an indexed definition makes once for each
+    /// key of a domain the write's target does not name (DESIGN.md sec:tour_methods, "Two `*.`
+    /// chains on one receiver in one step are two writers of `c'`"). `body` is the loop's body,
+    /// whose names a new name in the repair avoids. The repair computes the write once before
+    /// the definition when it reads no key and its definition binds no name around it;
+    /// otherwise it gives each key its own entry.
+    fn several_writers(&self, s: &Several, body: &Expr) -> Error {
+        let w = &s.write;
+        let name = w.name;
+        let IndexKey::In { name: key, set } = s.key else {
+            unreachable!("a domain that may hold several keys is written with `in`")
+        };
+        let write = self.text_of(w.span);
+        // The target as written, `c'`, or `grid'[0]` for an entry.
+        let target = match w.form {
+            WriteForm::Call(of) => {
+                let t = self.text_of(of.span);
+                match t.strip_prefix(name) {
+                    Some(rest) if !rest.starts_with('\'') => format!("{name}'{rest}"),
+                    _ => t.to_string(),
+                }
+            }
+            WriteForm::Bind | WriteForm::Def => format!("{name}'"),
+        };
+        let stmt = self.text_of(s.stmt.span);
+        let head = stmt.strip_suffix(';').unwrap_or(stmt).trim_end();
+        let lhs = self.text[s.stmt.span.start..s.def.value.span.start].trim_end();
+        let times = match keys_of(s.key) {
+            Some(Keys::Ints(lo, End::At(hi))) if hi.clone() - lo.clone() == BigInt::from(1) => {
+                "twice".to_string()
+            }
+            Some(Keys::Ints(lo, End::At(hi))) => format!("{} times", hi - lo + 1),
+            _ => "once for each key".to_string(),
+        };
+        let mut notes = vec![
+            Note {
+                span: w.span,
+                text: format!(
+                    "`{write}` writes `{target}`, and `{lhs} …` computes its value once for each \
+                     key of `{key}` in `{}`, so `{target}` is written {times} in one step",
+                    self.text_of(set.span)
+                ),
+            },
+            Note {
+                span: s.stmt.span,
+                text: format!(
+                    "a step writes `{target}` at most once, even where the values agree, with or \
+                     without `with {CARRY_FORWARD}`"
+                ),
+            },
+        ];
+        // Give each key its own entry: `c[i]*.a()`, `c'[i] = …`, `c'[i][v in …] = …`.
+        let insert = match w.form {
+            WriteForm::Def => {
+                let primed = format!("{name}'");
+                write
+                    .starts_with(&primed)
+                    .then(|| w.span.start + primed.len())
+            }
+            _ => w.insert,
+        };
+        // When a nearer definition's key of the same name hides the key, that definition's key
+        // takes a new name in the repair, `e[i1 in …] = c[i1][i]*.a()`.
+        let used: HashSet<&str> = identifiers(self.text_of(body.span)).collect();
+        let fresh = |base: &str| {
+            (1..)
+                .map(|i| format!("{base}{i}"))
+                .find(|r| !used.contains(r.as_str()))
+                .unwrap_or_default()
+        };
+        let (hide, renamed) = match s.hidden_by {
+            Some(h) => (h, fresh(key)),
+            None => (w.span, key.clone()),
+        };
+        let part = |from: usize, to: usize| rename(&self.text[from..to], key, &renamed);
+        let keyed = insert.map(|at| {
+            let entry = format!("{}[{key}]{}", part(w.span.start, at), part(at, w.span.end));
+            let whole = format!(
+                "{}{}[{key}]{}{}",
+                &self.text[s.stmt.span.start..hide.start],
+                part(hide.start, at),
+                part(at, hide.end),
+                &self.text[hide.end..s.stmt.span.end],
+            );
+            (entry, whole)
+        });
+        if let Some(h) = s.hidden_by {
+            let text = self.text_of(h);
+            let near = &text[..text.find('=').unwrap_or(text.len())];
+            notes.push(Note {
+                span: h,
+                text: format!(
+                    "the `{key}` of `{}= …` hides the `{key}` of `{lhs} …`, so the write names \
+                     only the nearer one",
+                    near
+                ),
+            });
+        }
+        // Or make the call once, before the definition, when it reads no key of the definition
+        // and no name bound inside the value.
+        let binders: HashSet<&str> = (s.def.keys.iter())
+            .filter_map(|k| match k {
+                IndexKey::In { name, .. } => Some(name.as_str()),
+                IndexKey::At(_) => None,
+            })
+            .collect();
+        let value = self.text_of(s.def.value.span);
+        let hoist = (s.only
+            && matches!(w.form, WriteForm::Call(_))
+            && !value.contains('{')
+            && !value.contains("=>")
+            && !identifiers(write).any(|n| binders.contains(n)))
+        .then(|| {
+            let r = if used.contains("r") {
+                fresh("r")
+            } else {
+                "r".to_string()
+            };
+            let rewritten = format!(
+                "{}{r}{}",
+                &self.text[s.stmt.span.start..w.span.start],
+                &self.text[w.span.end..s.stmt.span.end]
+            );
+            (format!("{r} = {write};"), rewritten)
+        });
+        let code = match (&hoist, &keyed) {
+            (Some((first, then)), _) => format!("{first} {then}"),
+            (None, Some((_, whole))) => whole.clone(),
+            (None, None) => unreachable!("a write in a value has a name to key"),
+        };
+        if let Some((first, _)) = &hoist {
+            notes.push(Note {
+                span: s.stmt.span,
+                text: format!(
+                    "repair: `{first}` before the definition writes `{target}` once on a step, \
+                     and each key reads the result"
+                ),
+            });
+        }
+        if let Some((entry, _)) = &keyed {
+            notes.push(Note {
+                span: w.span,
+                text: format!(
+                    "repair: `{entry}` writes one entry of `{name}` for each key of `{key}`, \
+                     when `{name}` has an entry for each"
+                ),
+            });
+        }
+        Error {
+            row: Some(Row::Collision),
+            menu: String::new(),
+            span: w.span,
+            message: format!(
+                "Several writers of `{target}` in one step: `{head}`. Try `{code}` instead."
+            ),
+            notes,
         }
     }
 
