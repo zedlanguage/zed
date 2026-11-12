@@ -1065,6 +1065,19 @@ fn ors(base: u64, m: usize, leaf: impl Fn(Row) -> Part<Row>) -> Part<Row> {
     })
 }
 
+/// The expressions `e_k = e_{k-1} | e_{k-2}` for `k` from 2 to `m - 1`, the last returned, on
+/// `e_0` the atom `base` and `e_1` the atom `base + 1`: each expression is the second operand
+/// of the one two above it, so an evaluation that reaches it first through the first operand
+/// finds it in its memo the second time. In [`ors`] every lookup comes before the first entry.
+fn ladder(base: u64, m: usize) -> Part<Row> {
+    let (mut below, mut top) = (Part::literal(atom(base)), Part::literal(atom(base + 1)));
+    for _ in 2..m {
+        let next = Part::expr(Form::Or(top.clone(), below));
+        (below, top) = (top, next);
+    }
+    top
+}
+
 /// `t | y_1 | … | y_{m-1}` as expressions nested `m - 1` deep, and `!t`: `t` is the
 /// complement of the atom `base` kept as an expression, and `y_k` the list of the
 /// atoms `base + 2k - 1` and `base + 2k`, which is no chain under `|`, so that no union
@@ -1125,6 +1138,18 @@ fn the_walks_over_parts_nested_deep_run_on_a_small_stack() {
 }
 
 #[test]
+fn an_expression_read_twice_has_one_value() {
+    // The ladder's top is the union of its two atoms, and each expression below it is read
+    // once through each of two expressions above it.
+    let p = ladder(0, 12);
+    assert!(!p.eval(&|_| false));
+    assert!(p.eval(&|_| true));
+    assert!(p.eval(&|a| *a == atom(0)));
+    assert!(p.eval(&|a| *a == atom(1)));
+    assert!(!p.eval(&|a| *a == atom(2)));
+}
+
+#[test]
 fn the_walks_over_parts_scale() {
     let n = 1 << 12;
     let sizes = [n, scaling::FACTOR * n];
@@ -1136,9 +1161,18 @@ fn the_walks_over_parts_scale() {
         .into();
     let meets: BTreeMap<usize, Part<Row>> =
         sizes.map(|m| (m, Part::Bdd(meet(30 * m as u64, m)))).into();
+    let ladders: BTreeMap<usize, Part<Row>> = sizes.map(|m| (m, ladder(40 * m as u64, m))).into();
     scaling::check("eval of an expression, by depth", n, |m| {
         assert!(!ors[&m].eval(&|_| false));
     });
+    // Every expression but the top one is read twice, the second time from the memo.
+    scaling::check(
+        "eval of an expression whose operands are shared, by depth",
+        n,
+        |m| {
+            assert!(!ladders[&m].eval(&|_| false));
+        },
+    );
     scaling::check("eval3 of an expression and a diagram, by depth", n, |m| {
         assert_eq!(ors[&m].eval3(&|_| None), None);
         assert_eq!(meets[&m].eval3(&|_| None), None);

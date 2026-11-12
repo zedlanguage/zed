@@ -1171,7 +1171,12 @@ impl<A: Literal> Part<A> {
             First(&'a Expr<A>),
             Last(&'a Expr<A>),
         }
-        let mut memo: HashMap<u64, bool> = HashMap::new();
+        // Keyed by `Digest`, one finalizer step per id: with the standard map's SipHash, hashing
+        // was about 47% of a run that evaluates 4000 parts on 64 assignments each, and `Digest`
+        // halves that run's instructions (COMPLEXITY.md K104). The ids come from one counter
+        // shared by every part, so a vector indexed by id would first need a numbering walk
+        // with a map of its own.
+        let mut memo: HashMap<u64, bool, BuildHasherDefault<Digest>> = HashMap::default();
         let mut values: Vec<bool> = Vec::new();
         let mut jobs = vec![Job::Part(self)];
         while let Some(job) = jobs.pop() {
