@@ -49,6 +49,7 @@ pub(crate) fn link(src: &Path, out: &Path, tools: &Toolchain) -> Link {
         build(
             src.to_str().unwrap(),
             out,
+            &[],
             &mut Default::default(),
             tools,
             &mut Vec::new(),

@@ -18,13 +18,15 @@ use zed_alloc_count as _;
 const USAGE: &str = "The commands of zedc are:
   zedc fmt <file>
       print the file in the standard layout
-  zedc run <file> [--record <out>] [--suppress <address> …] [--addresses] [-- arg …]
+  zedc run <file> [--record <out>] [--suppress <address> …] [--addresses]
+          [--option <name> …] [-- arg …]
       run the program in the file
-  zedc replay <file> <record> [--suppress <address> …] [--addresses] [-- arg …]
+  zedc replay <file> <record> [--suppress <address> …] [--addresses]
+          [--option <name> …] [-- arg …]
       run the program again on the inputs a record of an earlier run holds
-  zedc build <file> -o <out> [--suppress <address> …] [--addresses]
+  zedc build <file> -o <out> [--suppress <address> …] [--addresses] [--option <name> …]
       compile the program to an executable
-  zedc test [--mutate] [--suppress <address> …] [--addresses] <file> …
+  zedc test [--mutate] [--suppress <address> …] [--addresses] [--option <name> …] <file> …
       run the tests of each file
   zedc --report <command> …
       run the command, then print the work it did by stage

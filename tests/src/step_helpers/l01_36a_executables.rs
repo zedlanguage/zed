@@ -36,6 +36,7 @@ pub fn built(src: &Path, out: &Path) {
     if let Err((status, why)) = build(
         src.to_str().unwrap(),
         out,
+        &[],
         &mut Default::default(),
         &toolchain(),
         &mut warnings,

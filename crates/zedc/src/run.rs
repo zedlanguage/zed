@@ -22,6 +22,7 @@ use zed_kernel::{Evaluator, Family, Lookup, Provenance, Shared, Term, Value, Wor
 
 use crate::address::ContentAddress;
 use crate::ast::{self, Function, Stmt, StmtKind, TypeKind};
+use crate::build::Build;
 use crate::elab::Unit;
 use crate::front::{Diagnostic, Quoted, Unloaded, compile};
 use crate::lex::Span;
@@ -286,17 +287,22 @@ pub struct Record {
     pub args: Vec<String>,
 }
 
-/// The program in `bytes`, or its errors, each as `line:col: why` with its derivation and its
-/// menu of fixes ([`Unloaded::report`]).
+/// The program in `bytes`, built for the machine zedc runs on with no option on, or its errors,
+/// each as `line:col: why` with its derivation and its menu of fixes ([`Unloaded::report`]).
 pub fn load(bytes: &[u8]) -> Result<Program, String> {
-    loaded(bytes).map_err(|why| why.report(None, |_| String::new()))
+    load_for(bytes, &Build::default())
 }
 
-/// The program in `bytes`, or why it was not loaded.
-fn loaded(bytes: &[u8]) -> Result<Program, Unloaded> {
+/// The program in `bytes` built for `build` (step L2.8d), or its errors, as [`load`] gives them.
+pub fn load_for(bytes: &[u8], build: &Build) -> Result<Program, String> {
+    loaded(bytes, build).map_err(|why| why.report(None, |_| String::new()))
+}
+
+/// The program in `bytes` built for `build`, or why it was not loaded.
+fn loaded(bytes: &[u8], build: &Build) -> Result<Program, Unloaded> {
     let text = work::stage(Stage::Load, None, || source::load(bytes))
         .map_err(|e| Unloaded::Refused(e.render(bytes)))?;
-    let (stmts, unit, warnings) = compile(&text).map_err(Unloaded::Rejected)?;
+    let (stmts, unit, warnings) = compile(&text, build).map_err(Unloaded::Rejected)?;
     let mut program = work::stage(Stage::Program, None, || program(&stmts, unit))
         .map_err(|e| Unloaded::Rejected(refusal(&text, &stmts, e)))?;
     program.warnings = warnings.into();
@@ -962,8 +968,8 @@ impl Record {
     }
 }
 
-/// `zedc run <file> [--record <out>] [-- arg …]` and
-/// `zedc replay <file> <record> [-- arg …]`, with `args` the words after
+/// `zedc run <file> [--record <out>] [--option <name> …] [-- arg …]` and
+/// `zedc replay <file> <record> [--option <name> …] [-- arg …]`, with `args` the words after
 /// `zedc`. `m.stdin` reads standard input, `m.args` holds the words after `--`, which a
 /// replay ignores for the recorded ones, `m.env` holds this process's variables, and
 /// `m.stdout` and `m.stderr` write standard output and standard error. Returns the exit
@@ -1065,9 +1071,9 @@ fn command_inner(
             format!(
                 "{why}\n\nThe forms are:\n  \
                  zedc run <file> [--record <out>] [--suppress <address> …] \
-                 [--addresses] [-- arg …]\n  \
+                 [--addresses] [--option <name> …] [-- arg …]\n  \
                  zedc replay <file> <record> [--suppress <address> …] \
-                 [--addresses] [-- arg …]"
+                 [--addresses] [--option <name> …] [-- arg …]"
             ),
         )
     };
@@ -1088,8 +1094,9 @@ fn command_inner(
         }
     };
     let (mut suppress, rest) = Suppress::take(rest).map_err(|why| (2, why))?;
+    let (on, rest) = crate::build::take(&rest).map_err(|why| (2, why))?;
     let options = Options::parse(&rest, replay.is_none()).map_err(usage)?;
-    let program = load_file(file, &mut suppress, stderr)?;
+    let program = load_file(file, &on, &mut suppress, stderr)?;
     let wave = match replay {
         Some(path) => {
             let bytes = std::fs::read(path).map_err(|e| (2, unreadable(path, &e)))?;
@@ -1112,15 +1119,17 @@ fn command_inner(
     options.finish(&wave, stdout, stderr)
 }
 
-/// The program in `file`, its warnings that `suppress` does not name written to `stderr` as
-/// `zedc run` writes them, then a line for each address `suppress` names that no warning has;
-/// or the exit status and message: 2 when the file cannot be read or resolved to the place its
-/// addresses name ([`crate::place::Place`]), 1 when the program is rejected (by its package, by
-/// the front end or by `program`), each rejection as `file:line:col: why` and its derivation,
-/// followed, under `--addresses`, by its address, and then a line for each rejection
-/// `suppress` names, since a rejection cannot be suppressed.
+/// The program in `file`, built for the machine zedc runs on with the options `on` turned on
+/// ([`Build::at`]), its warnings that `suppress` does not name written to `stderr` as `zedc run`
+/// writes them, then a line for each address `suppress` names that no warning has; or the exit
+/// status and message: 2 when the file cannot be read or resolved to the place its addresses
+/// name ([`crate::place::Place`]) or an option of `on` is not one its manifest declares, 1 when
+/// the program is rejected (by its package, by the front end or by `program`), each rejection
+/// as `file:line:col: why` and its derivation, followed, under `--addresses`, by its address,
+/// and then a line for each rejection `suppress` names, since a rejection cannot be suppressed.
 pub fn load_file(
     file: &str,
+    on: &[&str],
     suppress: &mut Suppress,
     stderr: &mut dyn Write,
 ) -> Result<Program, (u8, String)> {
@@ -1129,16 +1138,31 @@ pub fn load_file(
     let path = std::path::Path::new(file);
     let place = crate::place::Place::of(path).map_err(|e| (2, e))?;
     let at = InFile::at(&place);
+    // An option the manifest does not list, or a manifest that cannot be read, is a usage
+    // error, reported before the package is read; a manifest that does not parse is reported
+    // with the package, before the build it declares is needed.
+    let build = match Build::at(&place, on) {
+        Err((2, why)) => return Err((2, why)),
+        build => build,
+    };
+    let host = Build::default();
     // A unit under a manifest that imports a unit, or sees a prelude unit, is read with its
     // package (step L2.3); linking it to the units it imports is step L2.4.
     if let Ok(text) = std::str::from_utf8(&bytes)
-        && let Some(report) =
-            crate::unit::package_report(path, place, text, suppress).map_err(|e| (1, e))?
+        && let Some(report) = crate::unit::package_report(
+            path,
+            place,
+            text,
+            build.as_ref().unwrap_or(&host),
+            suppress,
+        )
+        .map_err(|e| (1, e))?
         && !report.is_empty()
     {
         return Err((1, report.join("\n")));
     }
-    let program = match loaded(&bytes) {
+    let build = build?;
+    let program = match loaded(&bytes, &build) {
         Ok(program) => program,
         Err(why) => {
             let mut text = why.report(Some(file), |d| suppress.address_line(at.address(d)));

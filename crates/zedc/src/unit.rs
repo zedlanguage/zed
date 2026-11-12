@@ -23,11 +23,12 @@
 //! but unchecked; a manifest that cannot be read or parsed stops the package before any unit is
 //! read.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::ast::{self, Error, ExprKind, Note, StmtKind, StrPart, Target};
+use crate::build::Build;
 use crate::front::{self, Diagnostic, Parsed, error};
 use crate::lex::{self, Span, Tok};
 use crate::parse::{TOP, parse};
@@ -113,13 +114,17 @@ impl Files for Memory {
 pub struct Manifest {
     /// The path of the prelude unit and the text of its string, if the manifest names one.
     pub prelude: Option<(String, Span)>,
+    /// The options a build of the package may turn on (step L2.8d), in the order the entry
+    /// `options` writes them; none when it has no such entry.
+    pub options: Vec<String>,
 }
 
 /// The start of a file, where an error about the whole file is placed.
 const NOWHERE: Span = Span { start: 0, end: 0 };
 
 /// The manifest `text`, or every error in it: it is written in unit syntax and binds only
-/// names to string literals, each name once, and `prelude` is the one name it may bind.
+/// names to string literals, each name once, and `prelude` and `options` are the names it may
+/// bind.
 pub fn manifest(text: &str) -> Result<Manifest, Vec<Error>> {
     let tokens = lex::lex(text).map_err(|e| vec![e.into()])?;
     let tree =
@@ -184,12 +189,20 @@ pub fn manifest(text: &str) -> Result<Manifest, Vec<Error>> {
             continue;
         }
         seen.insert(name, *at);
+        if name == "options" {
+            match options(&string) {
+                Ok(names) => out.options = names,
+                Err(why) => errors.push(error(value.span, why)),
+            }
+            continue;
+        }
         if name != "prelude" {
             errors.push(error(
                 *at,
                 format!(
-                    "the manifest has no entry `{name}`: its one entry is `prelude`, the path \
-                     of the package's prelude unit"
+                    "the manifest has no entry `{name}`: its entries are `prelude`, the path \
+                     of the package's prelude unit, and `options`, the options a build may \
+                     turn on"
                 ),
             ));
             continue;
@@ -207,6 +220,41 @@ pub fn manifest(text: &str) -> Result<Manifest, Vec<Error>> {
     } else {
         Err(errors)
     }
+}
+
+/// The options the manifest entry `options = "list";` declares: names separated by commas,
+/// with spaces around them, each written once; or why `list` is not such a list. O(n log n)
+/// in its length, the repeats found through a sorted set.
+fn options(list: &str) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    let mut seen = BTreeSet::new();
+    if list.trim().is_empty() {
+        return Ok(out);
+    }
+    for part in list.split(',') {
+        let name = part.trim();
+        if name.is_empty() {
+            return Err(
+                "the entry `options` holds an empty name between two commas or at an end: it \
+                 lists names separated by commas, as `options = \"shortAddresses, counting\";`"
+                    .to_string(),
+            );
+        }
+        if name.contains('.') || bad_segment(name).is_some() {
+            return Err(format!(
+                "the option `{name}` is not a name: the entry `options` lists names separated \
+                 by commas, as `options = \"shortAddresses, counting\";`"
+            ));
+        }
+        if !seen.insert(name) {
+            return Err(format!(
+                "the entry `options` lists `{name}` twice, and lists each option once. Remove \
+                 one of the two."
+            ));
+        }
+        out.push(name.to_string());
+    }
+    Ok(out)
 }
 
 /// The first part of the dotted path `path` that is not a `Name`, if any.
@@ -1136,21 +1184,23 @@ impl Units for Linked {
 /// package its unit reaches, the files written under the root as `file`'s directory names it,
 /// with its address, and a line for each problem whose address `suppress` names
 /// ([`Package::report_on_disk`]), after the pins the build writes are written into the files
-/// ([`Package::write_pins`]), followed by each file they could not be written into.
+/// ([`Package::write_pins`]), followed by each file they could not be written into. Each unit
+/// is compiled for `build`.
 pub fn package_report(
     file: &Path,
     place: Place,
     text: &str,
+    build: &Build,
     suppress: &mut Suppress,
 ) -> Result<Option<Vec<String>>, String> {
     let Place::Unit { root, name } = place else {
         return Ok(None);
     };
-    let mut db = Db::new();
+    let mut db = Db::for_build(build.clone());
     let imports = matches!(&*db.parse(text), Ok((_, i)) if !i.is_empty());
     let dir = Dir(root);
     let prelude = match dir.read(MANIFEST) {
-        Some(Ok(m)) => !matches!(manifest(&m), Ok(Manifest { prelude: None })),
+        Some(Ok(m)) => !matches!(manifest(&m), Ok(Manifest { prelude: None, .. })),
         _ => true,
     };
     if !imports && !prelude {

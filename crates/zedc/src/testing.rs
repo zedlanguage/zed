@@ -19,6 +19,7 @@ use zed_kernel::Term;
 
 use crate::address::ContentAddress;
 use crate::ast::{self, Stmt, StmtKind};
+use crate::build::Build;
 use crate::elab::{Cones, Unit};
 use crate::mutate::{self, Verdict};
 use crate::query::{self, Db, Query};
@@ -315,7 +316,9 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
         _ => (false, args),
     };
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
-    let (mut suppress, args) = match Suppress::take(&words) {
+    let taken = Suppress::take(&words)
+        .and_then(|(suppress, rest)| Ok((suppress, crate::build::take(&rest)?)));
+    let (mut suppress, (on, args)) = match taken {
         Ok(taken) => taken,
         Err(why) => {
             let _ = writeln!(stderr, "{why}");
@@ -325,7 +328,8 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
     if args.is_empty() {
         let _ = writeln!(
             stderr,
-            "usage: zedc test [--mutate] [--suppress <address> …] [--addresses] <file> …"
+            "usage: zedc test [--mutate] [--suppress <address> …] [--addresses] [--option <name> …] \
+             <file> …"
         );
         return 2;
     }
@@ -342,11 +346,14 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
                 return 2;
             }
         };
-        let at = match InFile::of(std::path::Path::new(file)) {
-            Ok(at) => at,
-            Err(why) => {
+        let place = crate::place::Place::of(std::path::Path::new(file))
+            .map_err(|why| (2, why))
+            .and_then(|place| Ok((InFile::at(&place), Build::at(&place, &on)?)));
+        let (at, build) = match place {
+            Ok(taken) => taken,
+            Err((status, why)) => {
                 let _ = writeln!(stderr, "{why}");
-                return 2;
+                return status;
             }
         };
         let text = match text {
@@ -360,6 +367,7 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
         if !fence::marks(&text).lines.is_empty() {
             rejection += 1;
         }
+        db.set_build(&build);
         let (outcomes, accepted) = checks(&mut db, &text, &run::direct);
         // A unit with a rejection reports no warning (DESIGN.md L1.29): the warnings are
         // printed only when the front end and `run::program` accept it.
@@ -377,7 +385,7 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
             let _ = writeln!(stdout, "{line}");
             failed += 1;
         }
-        texts.push((file, text));
+        texts.push((file, text, build));
         if outcomes.is_empty() {
             let _ = writeln!(
                 stdout,
@@ -418,10 +426,11 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
 }
 
 /// Runs the mutants of each unit of `texts` that compiles, and writes the report.
-fn mutants(db: &mut Db, texts: &[(&str, String)], stdout: &mut dyn Write) -> u8 {
+fn mutants(db: &mut Db, texts: &[(&str, String, Build)], stdout: &mut dyn Write) -> u8 {
     let (mut detected, mut undetected, mut skipped, mut not_run) = (0, 0, 0, 0);
     let mut status = 0;
-    for (file, text) in texts {
+    for (file, text, build) in texts {
+        db.set_build(build);
         let front = db.front(text);
         let Ok((stmts, unit, _)) = &*front else {
             continue;

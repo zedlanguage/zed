@@ -122,21 +122,24 @@ impl Toolchain {
 
 /// The message of a `zedc build` command line that is not one.
 pub const USAGE: &str = "zedc build takes the program's file and, after `-o`, the executable to \
-                         write: `zedc build <file> -o <out> [--suppress <address> …] [--addresses]`, as in \
+                         write: `zedc build <file> -o <out> [--suppress <address> …] [--addresses] \
+                         [--option <name> …]`, as in \
                          `zedc build hello.zed -o hello`";
 
-/// `zedc build <file> -o <out> [--suppress <address> …] [--addresses]`, with `args` the words after
-/// `build`; a warning whose address is named is not printed (DESIGN.md sec:diagnostics).
+/// `zedc build <file> -o <out> [--suppress <address> …] [--addresses] [--option <name> …]`,
+/// with `args` the words after `build`; a warning whose address is named is not printed
+/// (DESIGN.md sec:diagnostics), and each option named is turned on (step L2.8d).
 /// Returns the exit status: 0; 1 when the program is rejected, does not compile or does not
 /// link; 2 for a usage error, among them a missing linker or runtime library.
 pub fn command(args: &[String], tools: &Toolchain, stderr: &mut dyn Write) -> u8 {
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
-    let outcome = Suppress::take(&words).map_err(|why| (2, why)).and_then(
-        |(mut suppress, rest)| match rest[..] {
-            [file, "-o", out] => build(file, Path::new(out), &mut suppress, tools, stderr),
+    let outcome = Suppress::take(&words)
+        .and_then(|(suppress, rest)| Ok((suppress, zedc::build::take(&rest)?)))
+        .map_err(|why| (2, why))
+        .and_then(|(mut suppress, (on, rest))| match rest[..] {
+            [file, "-o", out] => build(file, Path::new(out), &on, &mut suppress, tools, stderr),
             _ => Err((2, USAGE.to_string())),
-        },
-    );
+        });
     match outcome {
         Ok(()) => 0,
         Err((status, why)) => {
@@ -146,12 +149,13 @@ pub fn command(args: &[String], tools: &Toolchain, stderr: &mut dyn Write) -> u8
     }
 }
 
-/// Builds the program in `file` into the executable `out` with `tools`, the program's
-/// warnings that `suppress` does not name written to `stderr`; on failure, the exit status
-/// and the message.
+/// Builds the program in `file`, with the options `on` turned on, into the executable `out`
+/// with `tools`, the program's warnings that `suppress` does not name written to `stderr`; on
+/// failure, the exit status and the message.
 pub fn build(
     file: &str,
     out: &Path,
+    on: &[&str],
     suppress: &mut Suppress,
     tools: &Toolchain,
     stderr: &mut dyn Write,
@@ -209,7 +213,7 @@ pub fn build(
             ),
         ));
     }
-    let program = zedc::run::load_file(file, suppress, stderr)?;
+    let program = zedc::run::load_file(file, on, suppress, stderr)?;
     let g = work::stage(Stage::Lower, None, || lower(&program.term()))
         .map_err(|e| (1, format!("{file}: {e}")))?;
     let address = program.address().map_err(|e| (1, format!("{file}: {e}")))?;

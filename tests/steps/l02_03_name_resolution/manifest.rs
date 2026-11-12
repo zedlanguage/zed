@@ -1,5 +1,5 @@
-//! The manifest: its one entry `prelude`, the prelude unit every other unit sees, and what the
-//! manifest may not hold.
+//! The manifest: its entries `prelude`, the prelude unit every other unit sees, and `options`,
+//! the options a build may turn on (step L2.8d), and what the manifest may not hold.
 
 use super::{mistakes, package, use_of};
 use zedc::unit::{Manifest, manifest};
@@ -37,8 +37,8 @@ fn a_manifest_holds_only_its_entries_each_once_bound_to_a_plain_string() {
     assert_eq!(
         refused("version = \"1.0\";\n"),
         [
-            "the manifest has no entry `version`: its one entry is `prelude`, the path of the \
-          package's prelude unit [version]"
+            "the manifest has no entry `version`: its entries are `prelude`, the path of the \
+          package's prelude unit, and `options`, the options a build may turn on [version]"
         ]
     );
     assert_eq!(
@@ -51,8 +51,8 @@ fn a_manifest_holds_only_its_entries_each_once_bound_to_a_plain_string() {
     assert_eq!(
         refused("base = \"std\";\nprelude = \"${base}.prelude\";\n"),
         [
-            "the manifest has no entry `base`: its one entry is `prelude`, the path of the \
-             package's prelude unit [base]",
+            "the manifest has no entry `base`: its entries are `prelude`, the path of the \
+             package's prelude unit, and `options`, the options a build may turn on [base]",
             "the manifest entry `prelude` is bound to a string literal with no hole, as \
              `prelude = \"std.prelude\";` [\"${base}.prelude\"]",
         ]

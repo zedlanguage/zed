@@ -1636,7 +1636,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| `cfg!(target_arch = "x86_64")` choosing a code generator flag | `zed_native::run_in` | Missing (compile-time target query) | A constant of the build's target, read from the build description |
+| `cfg!(target_arch = "x86_64")` choosing a code generator flag | `zed_native::run_in` | Zed form exists since BUILD-const (step L2.8d), so `cfg!` stays until the port | `build.target == "x86_64-linux"`, a literal of the build after resolution, so staging keeps the branch of the target built for and cuts the other |
 | `libc::mmap` of a `PROT_NONE` reservation, `mprotect` of pieces of it, `munmap` in `Drop` | test `placement::FarApart` | System calls, no destructors | Test harness only: a foreign call to map memory and a scope that unmaps it |
 | `unsafe impl Send` for a struct holding a raw pointer to memory it alone owns | test `placement::FarApart` | Foreign library | Inside the `@ffi` binding, which owns the mapping as a handle |
 | `Box<dyn JITMemoryProvider + Send>` passed in to choose where the JIT puts code | `zed_native::run_in` | Foreign library | A parameter of the `@ffi` binding to the code generator |
@@ -1865,7 +1865,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| A cargo feature, `short-addresses`, read as `cfg!(feature = …)` in a `const` that masks every digest and address | `zed_kernel::address::SHORT`, `short64`, `short256`, `ContentAddress::hashed` | Missing (compile-time build option) | A unit parameter of the kernel, a `Bool` given at the import, read by the two masking functions |
+| A cargo feature, `short-addresses`, read as `cfg!(feature = …)` in a `const` that masks every digest and address | `zed_kernel::address::SHORT`, `short64`, `short256`, `ContentAddress::hashed` | Zed form exists since BUILD-const (step L2.8d), so the feature stays until the port | The build option `build.options.shortAddresses`, declared in the kernel package's manifest as `options = "shortAddresses";` and turned on by `--option shortAddresses`, read by the two masking functions |
 | A `HashMap<ContentAddress, BTreeMap<Shape, usize>>` from key to the nodes of that key ordered by shape, entered with `entry` so one search finds or inserts | `Lower::add`, `Frame::seen` | Mutation (gap 11) | A map from key to an ordered map from shape to node, updated with `patch` in a state receiver |
 | A hand-written `impl Ord for Shape` comparing the shells' bytes and then the regions from an explicit `Vec` stack of region pairs, stopping at the first difference, with `Arc::ptr_eq` to skip a region the two share | `canon::Shape` | Mutation (gap 11), Early exit (gap 12), Identity (gap 1) | An order given as a fold over a work list; without identity each shared region is compared, which costs its size again |
 | A `HashMap<u64, bool>` filled in postorder for whether each node's chain of `lo` edges reaches `true`, read by a closure that borrows it | `Bdd::reaching` | Mutation (gap 11), Identity (gap 1: node ids) | A fold over the postorder into a persistent map keyed by node digest, confirmed by contents |

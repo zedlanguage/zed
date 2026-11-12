@@ -70,7 +70,7 @@ fn zir(file: &str, words: &[&str]) -> (String, String) {
     let (mut suppress, rest) = Suppress::take(&words).unwrap();
     assert!(rest.is_empty());
     let mut err = Vec::new();
-    let program = load_file(file, &mut suppress, &mut err).unwrap();
+    let program = load_file(file, &[], &mut suppress, &mut err).unwrap();
     let g = zedc::zir::lower::lower(&program.term()).unwrap();
     (zedc::zir::text::print(&g), String::from_utf8(err).unwrap())
 }

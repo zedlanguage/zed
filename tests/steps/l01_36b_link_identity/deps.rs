@@ -292,6 +292,7 @@ fn refused(src: &Path, out: &Path, driver: &Path) -> (u8, String) {
     zed_native::link::build(
         src.to_str().unwrap(),
         out,
+        &[],
         &mut Default::default(),
         &tools,
         &mut Vec::new(),

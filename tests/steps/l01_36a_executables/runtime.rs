@@ -155,6 +155,7 @@ fn a_build_refuses_a_library_of_another_build() {
             build(
                 src.to_str().unwrap(),
                 &out,
+                &[],
                 &mut Default::default(),
                 &tools,
                 &mut Vec::new()

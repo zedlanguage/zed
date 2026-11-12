@@ -132,7 +132,8 @@ pub enum Ref {
     // use, at a larger constant per element read and an inline copy for lists of three or
     // fewer, which costs O(1).
     Bound(Vector<usize>),
-    /// A prelude word of layer L1.
+    /// A prelude word of layer L1, or `build` of L2, which `zedc::build` replaces before
+    /// elaboration (step L2.8d).
     Prelude(String),
     /// The definition `name` of the unit `unit`: a member `shapes.area` of a qualifier, a type
     /// `shapes.Point`, or a name of the prelude unit. It is named, not numbered, so a unit's
@@ -327,7 +328,8 @@ pub struct Resolved {
 /// The value words of the prelude, each with the layer it belongs to (DESIGN.md, "Defined
 /// words by layer"): at L1 the numeric casts, the `String` cast that interpolation calls, the
 /// `String` functions the documentation uses, and `min` and `max`, which the table does not list
-/// and so enter with the scalars they take. The table's other names that are no word are left
+/// and so enter with the scalars they take; at L2 `build`, the build constant (step L2.8d).
+/// The table's other names that are no word are left
 /// out: `main` and the ports `clock` and `log`, which a program names, and `abs` of L14, the L1
 /// word on more types. The prelude's facet words, the table's third column, are words too: a
 /// facet is a value of the prelude struct `Facet` bound to a name, with no facet keyword
@@ -370,6 +372,7 @@ pub const WORDS: &[(&str, u32)] = &[
     ("pext", 1),
     ("funnelShl", 1),
     ("funnelShr", 1),
+    ("build", 2),
     ("count", 3),
     ("map", 3),
     ("where", 3),
@@ -1289,7 +1292,8 @@ impl Resolver<'_> {
                 }
                 Some(Found::Ambiguous(a, b)) => return self.ambiguous(name, span, a, b),
                 Some(Found::Unit(unit)) => return self.prelude_unit(name, span, unit),
-                Some(Found::Word(1)) => {
+                // `build`, the one value word of L2, is read by `zedc::build` before elaboration.
+                Some(Found::Word(layer)) if layer == 1 || name == "build" => {
                     self.out.uses.insert(span, Ref::Prelude(name.into()));
                     return;
                 }

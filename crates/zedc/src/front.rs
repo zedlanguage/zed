@@ -604,16 +604,25 @@ impl Unloaded {
     }
 }
 
-/// The statements, elaboration and warnings of the unit `text`, the warnings moved out of the
-/// elaboration and placed in the source, or the diagnostics of the first phase that rejects it.
-pub(crate) fn compile(text: &str) -> Front {
+/// The statements, elaboration and warnings of the unit `text` built for `build`, the warnings
+/// moved out of the elaboration and placed in the source, or the diagnostics of the first phase
+/// that rejects it. The statements are those of `text` with each read of the build replaced by
+/// the literal it reads ([`crate::build::read`]).
+pub(crate) fn compile(text: &str, build: &crate::build::Build) -> Front {
     let lines = source::Lines::new(text.as_bytes());
-    let (tokens, docs, stmts) = syntax(text, &lines)?;
-    let all = |errors: Vec<ast::Error>| placed(text, &lines, &stmts, Severity::Rejection, errors);
-    let res = work::stage(Stage::Resolve, None, || {
+    let (tokens, docs, mut stmts) = syntax(text, &lines)?;
+    let resolved = work::stage(Stage::Resolve, None, || {
         resolve::resolve_text(&stmts, Some(text))
-    })
-    .map_err(all)?;
+    });
+    let mut res = match resolved {
+        Ok(res) => res,
+        Err(errors) => return Err(placed(text, &lines, &stmts, Severity::Rejection, errors)),
+    };
+    let misread = crate::build::read(&mut stmts, &mut res, build);
+    let all = |errors: Vec<ast::Error>| placed(text, &lines, &stmts, Severity::Rejection, errors);
+    if !misread.is_empty() {
+        return Err(all(misread));
+    }
     // Doc comments are checked after parsing; their errors join elaboration's.
     let mut errors = work::stage(Stage::Docs, None, || {
         docs::check(text, &tokens, &docs, &res)
