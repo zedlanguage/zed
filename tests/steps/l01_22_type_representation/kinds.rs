@@ -1333,6 +1333,178 @@ fn a_program_is_offered_a_one_component_shape_as_a_type_it_can_write() {
     assert_eq!(type_errors(repaired), Vec::<String>::new());
 }
 
+#[test]
+fn a_bounded_type_variable_in_a_refused_bucket_prints_by_name_with_where_it_is_bound() {
+    use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    // `U` is bounded by `int` in `g`'s type: the bucket prints it by name, once or twice
+    // (DESIGN.md sec:diagnostics, "Types in a message"), and the message says which `for`
+    // binds it, since the bucket is printed apart from `g`'s type.
+    let p = "p(f: (x: ((int, int),) | ((int, int, int),)) -> int) = 0;\n";
+    for (bucket, said) in [
+        (
+            "((int, bool) | (int, bool, bool),) | ((int, U) | (int, U, U),)",
+            "((x: ((int, bool) | (int, bool, bool),) | ((int, U) | (int, U, U),)) -> int for \
+             U in int)",
+        ),
+        (
+            "((int, bool) | (int, bool, bool),) | ((int, U) | (int, bool, bool),)",
+            "((x: ((int, bool) | (int, bool, bool),) | ((int, U) | (int, bool, bool),)) -> int \
+             for U in int)",
+        ),
+    ] {
+        let src = format!("{p}q(g: (x: {bucket}) -> int for U in int) = p(f: g);\n");
+        assert_eq!(
+            type_errors(&src),
+            vec![format!(
+                "`p` does not take {said}; this is not proved wrong: the checker could not \
+                 decide whether it fits, because the tuples ((int, int),) and ((int, int, int),) \
+                 may each be held by one of the shapes {bucket}, which have no component that \
+                 is one value, of one carrier, of one atom name or of one tuple length, and \
+                 neither is held by the first of those shapes; which shape holds each decides \
+                 what the type variables are bound to, and the checker looks through those \
+                 shapes for one of the two only; here `U` is the type variable of `for U in \
+                 int`; to repair it, give ((int, int),) a shape of its own, written just before \
+                 the shape that should hold it: `((int, int),)`; or test the value with `is` \
+                 first, so that each test meets one of the two [p(f: g)]"
+            )],
+            "{src}"
+        );
+    }
+}
+
+#[test]
+fn a_rigid_type_variable_in_a_refused_bucket_prints_by_name_in_the_shape_offered() {
+    use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    // `V` is bounded in `f`'s type, which the heading does not print: the tuples `g` gives,
+    // `W` bound to `V`, the bucket and the repair all name it, and the message says which
+    // `for` binds it. The repair is written in `f`'s result, where `V` is bound.
+    let src = "p(f: (x: V) -> ((int, bool) | (int, bool, bool),) | ((V, V) | (V, V, V),) \
+               for V in int) = 0;\n\
+               q(g: (x: W) -> ((W, W),) | ((W, W, W),) for W in int) = p(f: g);\n";
+    assert_eq!(
+        type_errors(src),
+        vec![
+            "`p` does not take ((x: W) -> ((W, W),) | ((W, W, W),) for W in int); this is not \
+             proved wrong: the checker could not decide whether it fits, because the tuples \
+             ((V, V),) and ((V, V, V),) may each be held by one of the shapes ((int, bool) | \
+             (int, bool, bool),) | ((V, V) | (V, V, V),), which have no component that is one \
+             value, of one carrier, of one atom name or of one tuple length, and neither is held \
+             by the first of those shapes; which shape holds each decides what the type \
+             variables are bound to, and the checker looks through those shapes for one of the \
+             two only; here `V` is the type variable of `for V in int`; to repair it, give \
+             ((V, V),) a shape of its own, written just before the shape that should hold it: \
+             `((V, V),)`; or test the value with `is` first, so that each test meets one of the \
+             two [p(f: g)]"
+                .to_string()
+        ]
+    );
+    let repaired = "p(f: (x: V) -> ((int, bool) | (int, bool, bool),) | ((V, V),) \
+                    | ((V, V) | (V, V, V),) for V in int) = 0;\n\
+                    q(g: (x: W) -> ((W, W),) | ((W, W, W),) for W in int) = p(f: g);\n";
+    assert_eq!(type_errors(repaired), Vec::<String>::new());
+}
+
+/// The clause [`Ty::refused`] gives for tuples `(3, 5) | (4, 6)` in the shapes `bucket`, two
+/// pairs told apart only at component 1.
+fn pairs_refused_in(bucket: &str) -> String {
+    format!(
+        "; this is not proved wrong: the checker could not decide whether it fits, because the \
+         tuples (3, 5) and (4, 6) may each be held by one of the shapes {bucket}, which are told \
+         apart only at component 1, where they agree with both, and neither is held by the \
+         first of those shapes; which shape holds each decides what the type variables are \
+         bound to, and the checker looks through those shapes for one of the two only; to \
+         repair it, give (3, 5) a shape of its own, written just before the shape that should \
+         hold it and the same as that shape except at component 1, where it is 3: `(3, …)`, \
+         with that shape's other components in place of each `…`; or test the value with `is` \
+         first, so that each test meets one of the two"
+    )
+}
+
+#[test]
+fn an_unbounded_type_variable_in_a_refused_bucket_prints_by_name_where_it_stands_twice() {
+    // In two shapes of the bucket, `T` is one type in both, so it prints by name; `T` and
+    // `U` each in one place print `_` (DESIGN.md sec:diagnostics, "Types in a message").
+    let pair = |a: Ty, b: Ty| Ty::tuple(vec![a, b]);
+    let l = Ty::union_all(&[pair(int(3), int(5)), pair(int(4), int(6))]);
+    let twice = Ty::union_all(&[pair(ty("1 | 2"), var("T")), pair(ty("int"), var("T"))]);
+    assert_eq!(l.refused(&twice), pairs_refused_in("(1 | 2, T) | (int, T)"));
+    let once = Ty::union_all(&[pair(ty("1 | 2"), var("T")), pair(ty("int"), var("U"))]);
+    assert_eq!(l.refused(&once), pairs_refused_in("(1 | 2, _) | (int, _)"));
+    // The own variable of a function type, in one shape twice and in two shapes.
+    let p = ty("(x: ((int, int),) | ((int, int, int),)) -> int");
+    for bucket in [
+        "((int, bool) | (int, bool, bool),) | ((int, T) | (int, T, T),)",
+        "((int, bool) | (int, bool, bool),) | ((int, T) | (int, bool, T),)",
+    ] {
+        let g = ty(&format!("(x: {bucket}) -> int"));
+        assert_eq!(
+            g.refused(&p),
+            format!(
+                "; this is not proved wrong: the checker could not decide whether it fits, \
+                 because the tuples ((int, int),) and ((int, int, int),) may each be held by \
+                 one of the shapes {bucket}, which have no component that is one value, of one \
+                 carrier, of one atom name or of one tuple length, and neither is held by the \
+                 first of those shapes; which shape holds each decides what the type variables \
+                 are bound to, and the checker looks through those shapes for one of the two \
+                 only; to repair it, give ((int, int),) a shape of its own, written just before \
+                 the shape that should hold it: `((int, int),)`; or test the value with `is` \
+                 first, so that each test meets one of the two"
+            )
+        );
+    }
+}
+
+#[test]
+fn a_refused_bucket_of_long_shapes_that_repeat_a_variable_prints_in_linear_time() {
+    // Pairs grown to `n` components, `T` at each place after the first: each text of the
+    // message is printed once, in one walk of its type, so the refusal grows with `n`.
+    let row = |head: Ty, rest: &dyn Fn() -> Ty, n: usize| {
+        Ty::tuple(
+            std::iter::once(head)
+                .chain((1..n).map(|_| rest()))
+                .collect(),
+        )
+    };
+    let inputs = scaling::inputs(256, |n| {
+        let l = Ty::union_all(&[row(int(3), &|| int(5), n), row(int(4), &|| int(6), n)]);
+        let r = Ty::union_all(&[
+            row(ty("1 | 2"), &|| var("T"), n),
+            row(ty("int"), &|| var("T"), n),
+        ]);
+        let bucket = format!("(1 | 2{ts}) | (int{ts})", ts = ", T".repeat(n - 1));
+        (l, r, bucket)
+    });
+    scaling::check("a refused bucket of two shapes of n components", 256, |n| {
+        let (l, r, bucket) = &inputs[&n];
+        let why = l.refused(r);
+        assert!(
+            why.contains(&format!("one of the shapes {bucket}, which")),
+            "{why}"
+        );
+    });
+}
+
+#[test]
+fn an_unbounded_type_variable_in_two_payload_shapes_of_a_refused_bucket_prints_by_name() {
+    let r = with_payloads(
+        "a",
+        vec![vec![ty("1 | 2"), var("T")], vec![ty("int"), var("T")]],
+    );
+    let l = with_payloads("a", vec![vec![int(3), int(5)], vec![int(4), int(6)]]);
+    assert_eq!(
+        l.refused(&r),
+        "; this is not proved wrong: the checker could not decide whether it fits, because the \
+         payloads #a(3, 5) and #a(4, 6) may each be held by one of the shapes \
+         #a(1 | 2, T) | #a(int, T), which are told apart only at component 1, where they agree \
+         with both, and neither is held by the first of those shapes; which shape holds each \
+         decides what the type variables are bound to, and the checker looks through those \
+         shapes for one of the two only; to repair it, give #a(3, 5) a shape of its own, \
+         written just before the shape that should hold it and the same as that shape except \
+         at component 1, where it is 3: `#a(3, …)`, with that shape's other components in place \
+         of each `…`; or test the value with `is` first, so that each test meets one of the two"
+    );
+}
+
 /// `n` tuples on each side, in pairs `(t, u)` with what is left of `t` without `u` and what
 /// of `t` is in `u`, as tuple counts: each tuple of `t` may share a value with at most one of
 /// `u`, found by key lookup, which meeting or subtracting every pair of tuples compared in
