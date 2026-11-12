@@ -689,6 +689,71 @@ fn a_type_of_one_value_is_written_with_no_article() {
 }
 
 #[test]
+fn a_type_of_one_value_that_holds_atoms_is_written_with_no_article() {
+    // A bare atom, and an atom whose payload is one value, are each one value, and so is a
+    // tuple of them: the message names the type as that value (MSG-article-atom-value).
+    let fixes = [("less = t[1] == 1;", "compares component 1")];
+    assert_eq!(
+        type_errors("t = (#a, 2);\nless = t == 1;\n"),
+        [format!(
+            "No number equals `(#a, 2)`: `t : (#a, 2) == 1` always gives the same answer{}{} [1]",
+            tried(&fixes),
+            menu(&fixes)
+        )]
+    );
+    // A payload with fields, and a tuple nested in the tuple.
+    assert_eq!(
+        type_errors("t = (#a(x: 1, y: \"km\"), (#b, 2));\nless = t == 1;\n"),
+        [format!(
+            "No number equals `(#a(x: 1, y: \"km\"), (#b, 2))`: `t : (#a(x: 1, y: \"km\"), (#b, \
+             2)) == 1` is always `false`. Try `less = false` instead.{} [1]",
+            menu(&[("less = false;", "the answer the comparison always gives")])
+        )]
+    );
+    // A component of one value, met by the literal inside a tuple.
+    assert_eq!(
+        type_errors("t = ((#a(1), true), 2);\nless = t == (1, 2);\n"),
+        [
+            "No number equals `(#a(1), true)`: `1` compared by `==` with a component of `t` \
+             always gives the same answer. Write a value of `(#a(1), true)` in place of `1`. [1]"
+        ]
+    );
+    // Two branches that give the same atom give one value.
+    let fixes = [(
+        "f(positional c: bool) = (if c { #a(1) } else { #a(1) }, 2)[1] == 1;",
+        "compares component 1",
+    )];
+    assert_eq!(
+        type_errors("f(positional c: bool) = (if c { #a(1) } else { #a(1) }, 2) == 1;\n"),
+        [format!(
+            "No number equals `(#a(1), 2)`: `1` compared by `==` with `(#a(1), 2)` always gives \
+             the same answer{}{} [1]",
+            tried(&fixes),
+            menu(&fixes)
+        )]
+    );
+    // An atom whose payload holds many values, or one of two payloads, keeps the article.
+    for (atom, branches) in [
+        ("#a(int)", "#a(n)"),
+        ("#a(1) | #a(2)", "if n > 0 { #a(1) } else { #a(2) }"),
+        ("#a | #a(1)", "if n > 0 { #a(1) } else { #a }"),
+    ] {
+        let line = format!("f(positional n: int) = ({branches}, 2)");
+        let fixes = [(format!("{line}[1] == 1;"), "compares component 1")];
+        assert_eq!(
+            type_errors(&format!("{line} == 1;\n")),
+            [format!(
+                "No number equals a `({atom}, 2)`: `1` compared by `==` with a `({atom}, 2)` \
+                 always gives the same answer{}{} [1]",
+                tried(&refs(&fixes)),
+                menu(&refs(&fixes))
+            )],
+            "{atom}"
+        );
+    }
+}
+
+#[test]
 fn a_number_literal_in_a_tuple_compared_with_a_component_that_holds_no_number_is_rejected() {
     // Component by component, as a literal in a tuple reads a declared tuple type.
     assert_eq!(

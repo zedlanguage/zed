@@ -101,6 +101,10 @@ struct RowData {
     exact: Option<KType>,
     /// The one value of the tuple shape, when each component is one value ([`Ty::point`]).
     point: Option<Value>,
+    /// Whether each component is one value that its text writes as that value
+    /// ([`Ty::is_one_value`]): a scalar literal, a bare atom, an atom whose payload is one
+    /// value, or a tuple of such values. The tuple shape is then one value too.
+    one: bool,
     /// The first kind-wide part, `(..)` or `{..}`, a component holds at any depth outside
     /// functions, in payloads too: a part that may hold a function ([`Ty::held_wide`]).
     wide: Option<KType>,
@@ -181,6 +185,9 @@ impl Row {
         let point = (cs.iter().map(Ty::point))
             .collect::<Option<Vec<_>>>()
             .map(Value::tuple);
+        // A point is one value; each component's rows and shapes keep their own, so this
+        // reads the components' outer levels.
+        let one = point.is_some() || cs.iter().all(Ty::is_one_value);
         let wide = cs.iter().find_map(Ty::held_wide);
         let open_atoms = cs.iter().any(Ty::open_atoms);
         // Complexity tradeoff: as in `KType::tuple`, only a component that lists no value
@@ -205,6 +212,7 @@ impl Row {
             kernel,
             exact,
             point,
+            one,
             wide,
             void,
             listed,
@@ -1134,6 +1142,9 @@ pub struct ShapeData {
     /// Whether a component or field lists no value ([`Ty::lists_nothing`]): no atom has this
     /// payload, and [`Ty::atom_of`] and the rebuilding walk leave it out.
     void: bool,
+    /// Whether each component and field is one value that its text writes as that value
+    /// ([`Ty::is_one_value`]): an atom with this payload is one value too, `#a(1)`.
+    one: bool,
     /// The class of each component and field and its value where it is one value ([`class`]),
     /// found the first time the shape is filed ([`near_pairs`]) and kept, as a row keeps its own.
     keys: std::sync::OnceLock<Keys>,
@@ -1315,6 +1326,7 @@ impl Shape {
         let wide = cs().find_map(Ty::held_wide);
         let open_atoms = cs().any(Ty::open_atoms);
         let void = cs().any(Ty::lists_nothing);
+        let one = cs().all(Ty::is_one_value);
         Shape(Arc::new(ShapeData {
             items,
             fields,
@@ -1330,6 +1342,7 @@ impl Shape {
             wide,
             open_atoms,
             void,
+            one,
             keys: std::sync::OnceLock::new(),
         }))
     }
@@ -5940,18 +5953,37 @@ impl Ty {
     }
 
     /// Whether it holds exactly one value that its text writes as that value: one scalar
-    /// literal, one tuple of such values (`Ty::point`), or one bare atom, `#a`. A message
-    /// writes such a type with no article: `x` is `true`, not `x` is a `true`. It reads the
-    /// outer level only: each row keeps its own one value, and at most two atom names are read.
+    /// literal, one bare atom, `#a`, one atom whose payload is one value, `#a(1)`, or one
+    /// tuple of such values, `(#a(1), 2)`. A message writes such a type with no article: `x`
+    /// is `true`, not `x` is a `true`. It reads the outer level only: each row and payload
+    /// shape keeps whether its components are such values, and at most two atom names are read.
     pub fn is_one_value(&self) -> bool {
-        if self.point().is_some() {
-            return true;
+        if self.dynamic || !self.vars.is_empty() || !self.fns.is_empty() {
+            return false;
         }
-        let lone =
-            !self.dynamic && self.vars.is_empty() && self.fns.is_empty() && self.tuples.is_empty();
-        lone && self.set.atom_names().is_some_and(|mut names| {
-            matches!((names.next(), names.next()), (Some((n, true)), None) if self.set == KType::atom(n))
-        })
+        match &self.tuples[..] {
+            [r] => {
+                self.set.is_empty() && self.payloads.is_empty() && self.family.is_empty() && r.0.one
+            }
+            [] => self.point().is_some() || self.is_one_atom(),
+            _ => false,
+        }
+    }
+
+    /// Whether its set is one atom and nothing else: the bare atom `#a`, or the atom of one
+    /// name whose one listed payload shape is one value, `#a(1)` ([`Ty::is_one_value`]).
+    fn is_one_atom(&self) -> bool {
+        let Some(mut names) = self.set.atom_names() else {
+            return false;
+        };
+        match (names.next(), names.next()) {
+            (Some((n, true)), None) => self.set == KType::atom(n),
+            (Some((n, false)), None) => {
+                let one = matches!(self.payloads.get(n), Some(Some(ss)) if matches!(&ss[..], [s] if s.one));
+                one && self.payloads.len() == 1 && self.set == KType::atom_with(n, &KType::top())
+            }
+            _ => false,
+        }
     }
 
     /// Its one value, when it is one scalar literal, or one tuple shape each of whose

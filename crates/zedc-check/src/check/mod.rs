@@ -5363,7 +5363,8 @@ impl fmt::Display for Place<'_> {
 }
 
 /// The article, with the space after it, that a message writes before the text `text` of the
-/// type `t`: none for a type of one value, as `true`, `3`, `"km"` or `#a`, which the text names
+/// type `t`: none for a type of one value, as `true`, `3`, `"km"`, `#a`, `#a(1)` or
+/// `(#a(1), 2)`, which the text names
 /// as that value (`x` is `true`); `an ` before a type written with a vowel sound first,
 /// `int`, `f64`, `(..)` not; `a ` else.
 fn article_of(t: &Ty, text: &impl fmt::Display) -> &'static str {

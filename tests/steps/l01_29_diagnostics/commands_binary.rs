@@ -174,8 +174,8 @@ fn every_command_prints_a_syntax_error_as_zedc_run_does() {
             run.starts_with(&format!("{}:", f.display())),
             "{name}: {run}"
         );
-        // Each has its steps but the lexical and the plain parse error, and the last unit has
-        // two errors, each after the file's name.
+        // Each has its steps but the lexical error (the plain parse error has one, what was
+        // expected at its place), and the last unit has two errors, each after the file's name.
         if name == "two_initials" {
             assert!(
                 run.contains(
@@ -186,11 +186,7 @@ fn every_command_prints_a_syntax_error_as_zedc_run_does() {
             );
         }
         let steps = run.contains("\n  [1] ");
-        assert_eq!(
-            steps,
-            !matches!(name, "character" | "parse"),
-            "{name}: {run}"
-        );
+        assert_eq!(steps, name != "character", "{name}: {run}");
         let errors = run.matches(&format!("{}:", f.display())).count();
         assert_eq!(
             errors,
@@ -222,7 +218,7 @@ fn a_rejection_by_the_checker_prints_alike_and_zedc_fmt_lays_the_unit_out() {
         run,
         format!(
             "{}:3:20: this argument is passed by position, and the parameter it reaches, `a` of \
-             `g`, is a named parameter, which a call passes only by name, as `a: …`\n  \
+             `g`, is a named parameter, which a call passes only by name, as `a: …`.\n  \
              [1] 1:1: `g` is declared here with no type written for its result; the type the \
              checker found for `g` is `(a: int, b: int) -> int`\n      \
              1 | g(a: int, b: int) = a + b;\n        \
@@ -269,6 +265,75 @@ fn a_parse_error_in_a_manifest_prints_its_steps_and_repairs() {
              |                              ^^^^^ [2]\n  \
              [2] 1:30: repair: `prelude = \"std.prelude\";`, the `with` clause deleted\n",
             manifest.display()
+        )
+    );
+}
+
+/// A tuple of one value that holds an atom with a payload of one value, `(#ok(1), 2)`: the
+/// message names the type as that value, with no article, as it names `true` or `"km"`
+/// (MSG-article-atom-value).
+const ONE_ATOM: &str = "main(m: MainArgs) {\n  t = (#ok(1), 2);\n  m.stdout <- \"${t == 1}\";\n}\n";
+
+#[test]
+fn a_type_of_one_value_that_holds_an_atom_is_written_with_no_article() {
+    let f = file("one_atom.zed", ONE_ATOM);
+    let run = rejection("run", &f);
+    assert_eq!(
+        run,
+        format!(
+            "{}:3:23: No number equals `(#ok(1), 2)`: `t : (#ok(1), 2) == 1` always gives the \
+             same answer. Try `m.stdout <- \"${{t[1] == 1}}\"` instead.\n  \
+             [1] 3:18: `t` is (#ok(1), 2) here\n      \
+             3 |   m.stdout <- \"${{t == 1}}\";\n        \
+             |                  ^\n  \
+             [2] 2:7: `t` is defined as this expression, (#ok(1), 2)\n      \
+             2 |   t = (#ok(1), 2);\n        \
+             |       ^^^^^^^^^^^ [2, 3]\n        \
+             |        ^^^^^^ [4]\n        \
+             |            ^ [5]\n        \
+             |                ^ [6]\n  \
+             [3] 2:7: this expression gives (#ok(1), 2)\n  \
+             [4] 2:8: this atom `#ok` with its payload gives #ok(1)\n  \
+             [5] 2:12: this literal, 1, is 1\n  \
+             [6] 2:16: this literal, 2, is 2\n  \
+             fixes, each checked here:\n    \
+             m.stdout <- \"${{t[1] == 1}}\";    compares component 1\n",
+            f.display()
+        )
+    );
+    assert_eq!(
+        rejection("test", &f),
+        format!("{run}0 passed, 1 failed, 0 rejection units\n")
+    );
+}
+
+/// The contrast: the payload holds every `int`, so `(#ok(int), 2)` has many values and keeps
+/// its article.
+const MANY_ATOMS: &str = "same(positional n: int) = (#ok(n), 2) == 1;\n\nmain(m: MainArgs) {\n  \
+                          m.stdout <- \"${same(3)}\";\n}\n";
+
+#[test]
+fn a_type_that_holds_an_atom_of_many_payloads_keeps_its_article() {
+    let f = file("many_atoms.zed", MANY_ATOMS);
+    assert_eq!(
+        rejection("run", &f),
+        format!(
+            "{}:1:42: No number equals a `(#ok(int), 2)`: `1` compared by `==` with a \
+             `(#ok(int), 2)` always gives the same answer. Try `same(positional n: int) = \
+             (#ok(n), 2)[1] == 1` instead.\n  \
+             [1] 1:27: this expression gives (#ok(int), 2)\n      \
+             1 | same(positional n: int) = (#ok(n), 2) == 1;\n        \
+             |      ^^^^^^^^^^^^^^^^^ [4] ^^^^^^ [2]\n        \
+             |                           ^^^^^^^^^^^ [1]\n        \
+             |                                ^ [3]\n        \
+             |                                    ^ [5]\n  \
+             [2] 1:28: this atom `#ok` with its payload gives #ok(int)\n  \
+             [3] 1:32: `n` is int here\n  \
+             [4] 1:6: `n` is declared `int`\n  \
+             [5] 1:36: this literal, 2, is 2\n  \
+             fixes, each checked here:\n    \
+             same(positional n: int) = (#ok(n), 2)[1] == 1;    compares component 1\n",
+            f.display()
         )
     );
 }
