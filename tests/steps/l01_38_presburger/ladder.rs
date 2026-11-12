@@ -1499,19 +1499,19 @@ fn products_whose_factors_one_sum_on_the_factors_joins_scale() {
 }
 
 #[test]
-fn a_premise_with_a_factor_foreign_to_the_other_side_is_left_out_of_the_products() {
-    // A premise on `x` that mentions a factor foreign to `y` (no premise on `y` mentions it,
-    // and the formulas multiply it by nothing on `y`'s side) is left out of the products for
-    // `x * y` (C2-pairs-long-row). A factor with a partner on the other side is not foreign:
-    // `(x + z) * (y - w) + (x - z) * (y + w)` is `2 * x * y - 2 * z * w`.
+fn a_product_whose_free_atoms_cancel_is_kept() {
+    // A product that alone holds an atom no formula mentions is left out of the products
+    // (C2-pairs-long-row, C2-pairs-exact); one whose atoms are mentioned or cancel against
+    // another product's is kept: `(x + z) * (y - w) + (x - z) * (y + w)` is
+    // `2 * x * y - 2 * z * w`.
     assert_proved(
         "ok(x: int, y: int, z: int, w: int) = x + z >= 0 && x - z >= 0 && y + w >= 0 && y - w >= 0;",
         "ok(x: int, y: int, z: int, w: int) = x * y - z * w >= 0;",
     );
-    // A factor in no product is not foreign when another premise on a partner of `y` holds it
-    // with the other sign: `(x - z) * y + (x + z - w) * y` is `2 * x * y - w * y`, with both
-    // premises on `x`, and `(x - z) * y + (w + z) * y` is `x * y + w * y`, with the second
-    // premise on `w`, the other factor multiplied by `y`.
+    // `z * y` is in no formula and cancels between two products with `y`:
+    // `(x - z) * y + (x + z - w) * y` is `2 * x * y - w * y`, with both premises on `x`, and
+    // `(x - z) * y + (w + z) * y` is `x * y + w * y`, with the second premise on `w`, the other
+    // factor multiplied by `y`.
     assert_proved(
         "ok(x: int, y: int, z: int, w: int) = x - z >= 0 && x + z - w >= 0 && y >= 0;",
         "ok(x: int, y: int, z: int, w: int) = 2 * x * y >= w * y;",
@@ -1527,9 +1527,10 @@ fn a_factor_cancels_through_rows_on_the_other_side_of_both_signs() {
     // A factor can cancel between the products of two premises that hold it with the same
     // sign when the rows on the other factor hold that factor with both signs: here `d`
     // cancels between `(b + d + 2 * a) * c` and `(e + d - b) * c`, which share its sign, and
-    // `1 - c` and `2 * c - 1` give `c` the opposite signs. So `d` is not foreign to `c`, and
-    // no premise is left out for it, whether or not a product holds `d` (C2-pairs-long-row,
-    // CD-audit: the third case, with the product `d * q`, was not proved by e8fea7860).
+    // `1 - c` and `2 * c - 1` give `c` the opposite signs, so `c * d` is held by four
+    // products and none is left out for it, whether or not a product holds `d`
+    // (C2-pairs-long-row, CD-audit: the third case, with the product `d * q`, was not proved
+    // by e8fea7860).
     assert_proved(
         "ok(a: int, b: int, c: int, d: int, e: int) = 1 - c >= 0 && 2 * c - 1 >= 0 && b + d + 2 * a >= 0 && 2 * e + 2 * d - 2 * b >= 0 && 2 * d >= 0;",
         "ok(a: int, b: int, c: int, d: int, e: int) = 4 * b * c - 3 * b + 3 * d + 4 * a * c - 2 * a - 2 * c * e + 2 * e >= 0;",
@@ -1541,6 +1542,27 @@ fn a_factor_cancels_through_rows_on_the_other_side_of_both_signs() {
     assert_proved(
         "ok(a: int, b: int, c: int, d: int, e: int, q: int) = 1 - c >= 0 && 2 * c - 1 >= 0 && b + d + 2 * a >= 0 && 2 * e + 2 * d - 2 * b >= 0 && 2 * d >= 0 && d * q >= -5;",
         "ok(a: int, b: int, c: int, d: int, e: int, q: int) = 4 * b * c - 3 * b + 3 * d + 4 * a * c - 2 * a - 2 * c * e + 2 * e >= 0;",
+    );
+}
+
+#[test]
+fn a_product_atom_cancels_through_the_products_of_another_pair() {
+    // The proof is `(1 - a - d) * (1 + a - b + c) + (b - a) * (-a - b - d) +
+    // (-a - b - d) * (-c) + (-c) * (-c)` plus premises. `c * d` is in no formula: it cancels
+    // between the first product, for `a * b`, and the third, for `b * c`, another pair of
+    // factors. The rule of C2-pairs-long-row and CD-audit left `-a - b - d` out of the
+    // products for `b * c`, since `d` is foreign to `c`, and did not prove it; the rule of
+    // C2-pairs-exact drops a product only when it alone holds an atom the formulas do not
+    // mention, and `c * d` is held by two.
+    assert_proved(
+        "ok(a: int, b: int, c: int, d: int) = -c >= 0 && 1 - a - d >= 0 && 1 + a - b + c >= 0 && -a - c >= 0 && b - a >= 0 && -a - b - d >= 0;",
+        "ok(a: int, b: int, c: int, d: int) = 1 + a * b - b - b * b + b * c + c + c * c - d >= 0;",
+    );
+    // A proof that cancels `b * c` through `(b + c) * (-b - e - 1)`, a product for `b * e`:
+    // here the bounds `b >= 3` and `e <= -4` give it other products too.
+    assert_proved(
+        "ok(a: int, b: int, c: int, e: int) = b + c >= 0 && a - 1 >= 0 && -b - e - 1 >= 0 && -a + b - 2 >= 0 && -e >= 0;",
+        "ok(a: int, b: int, c: int, e: int) = -2 * b - 4 * c - b * e - c * e - 2 * a * b - 2 * a * e + 2 * e - 2 * a + 2 >= 0;",
     );
 }
 
@@ -1561,10 +1583,9 @@ fn one_sum_of_atoms_in_no_product(k: usize) -> (Relation, Relation) {
 
 #[test]
 fn products_whose_premise_holds_k_atoms_in_no_product_scale() {
-    // The sum on `x` holds k atoms that no product holds and that no other row holds, so
-    // each is foreign to `y` and the sum is left out of the products with the k rows on `y`;
-    // before CD-audit a factor in no product was never foreign, and the k products of the
-    // sum cost Θ(k²) terms (C2-pairs-long-row).
+    // The sum on `x` holds k atoms that no product holds and that no other row holds, so its
+    // product with each row `y - w{j}` alone holds `z{i} * w{j}` and is left out; the k
+    // products of the sum cost Θ(k²) terms (C2-pairs-long-row, C2-pairs-exact).
     let n = 8;
     let built = scaling::inputs(n, one_sum_of_atoms_in_no_product);
     let measure = move || {

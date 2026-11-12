@@ -106,6 +106,7 @@ mod formula;
 mod local;
 mod modular;
 mod one_row;
+mod pairs;
 mod row_domains;
 mod slack;
 mod values;
@@ -15316,45 +15317,19 @@ enum Tier {
 /// meets the bound, or, with no bound, when the factor has no coefficient of the sign that
 /// could stop it going that way ([`signs`]).
 ///
-/// A premise `a` on the factor `x` of a product `x * y` is left out of the products with the
-/// premises on `y` when it mentions a factor `u` foreign to `y`: `u` is not `y`, no premise on
-/// `y` mentions it, no product of the formulas multiplies `u` by `y` or by something a premise
-/// on `y` mentions, and no other premise that mentions a partner of `y` can cancel `u`. Each
-/// product of `a` with a premise `b` on `y` holds `u * v` for each `v` of `b` (the coefficient
-/// is `a_u × b_v`, since `b` has no `u`), an atom the formulas do not mention, which the
-/// linear reading leaves free unless another product cancels it. Leaving a product out only
-/// weakens the premises, so it is sound. A product `r * b'` of another premise `r` on a
-/// partner of `y` cancels `u * y` only when `r_u × b'_y` and `a_u × b_y` have opposite signs:
-/// when `r` holds `u` with the other sign, or when the premises on `y` hold `y` with both
-/// signs. That test keeps the proofs that cancel such atoms between the products of two
-/// premises, as `(x - z) * y + (x + z - w) * y` gives `2 * x * y - w * y` from `x - z >= 0`,
-/// `x + z - w >= 0` and `y >= 0`, as the products with `y` of `x - z >= 0` and of
-/// `w + z >= 0` for the products `x * y` and `w * y`, and as `d` cancels between
-/// `(b + d + 2 * a) * c` and `(e + d - b) * c` with `1 - c >= 0` and `2 * c - 1 >= 0`
-/// (`ladder::a_factor_cancels_through_rows_on_the_other_side_of_both_signs`). A proof through
-/// a factor with a partner on the other side is kept too: from `x + z >= 0`, `x - z >= 0`,
-/// `y + w >= 0` and `y - w >= 0`, the goal `x * y - z * w >= 0` is proved. What the rule can
-/// still lose is a proof that cancels `u * v` through the product of two premises on another
-/// pair of factors, one on `u`'s side holding `u` and one holding `v`; a model of this step
-/// lost none of 230 entailments that need products and that the products of every pair prove
-/// (C2-pairs-long-row), and none of 12,000 random ones (CD-audit).
-///
-/// Complexity tradeoff: the products of every pair cost Θ(k²) terms for one premise of k
-/// factors that lies on each of their k products, such as one sum `b0 + ... + b{k-1}` beside
-/// products `b{i} * c{i}`: 33.5 times the instructions at 8 times the links (C2-pairs-long-row).
-/// With the foreign factors left out, the test of a premise `a` against `y` stops at the
-/// first foreign factor, and each factor of `a` it passes costs a look at the shorter of the
-/// lists of rows on it and on `y` for it and each of its partners, and for each row on it the
-/// shorter of that row and the partners of `y`; the rows are borrowed, not copied for each
-/// factor. On the family the first factor of the sum other than `x` is foreign, so the test
-/// of the sum costs O(log) for each of its k factors. In general the test of `a` costs
-/// O(|a| × Σ over its factors of the rows on them × log) at worst, which is not bounded by
-/// the size of the input when many long rows share factors that are not foreign. The
-/// products kept cost O(|a| × |b| × log) each. Which factors the premises on them hold with
-/// both signs is found once, in one pass over those premises. Tests:
-/// `l01_38_presburger::ladder::products_whose_factors_one_sum_on_the_factors_joins_scale` and,
-/// for a premise whose other atoms are in no product,
-/// `ladder::products_whose_premise_holds_k_atoms_in_no_product_scale`.
+/// A product is left out when it alone holds, with a nonzero coefficient, a product atom that
+/// no premise, goal or definition mentions, among the products not yet left out, to a fixpoint
+/// ([`pairs::kept`]). Such an atom is free in the linear reading: whatever point satisfies the
+/// other rows, the atom can take a value of the sign of its coefficient large enough that the
+/// product holds too, so leaving it out changes no verdict, and the products left out are
+/// justified in the reverse of the order they go. An atom can cancel between products of
+/// different pairs of factors: `c * d` is in `(1 - a - d) * (1 + a - b + c)`, for `a * b`, and
+/// in `(-a - b - d) * (-c)`, for `b * c`, and both are kept
+/// (`l01_38_presburger::ladder::a_product_atom_cancels_through_the_products_of_another_pair`;
+/// the rule of C2-pairs-long-row left the second out, as `d` is foreign to `c`, and lost the
+/// proof). Which products to leave out is decided from the factor rows without expanding the
+/// products, at the cost [`pairs::kept`] states; each product kept then costs
+/// O(|a| × |b| × log) for its rows `a` and `b`.
 ///
 /// Complexity tradeoff: a product of two variables is an opaque atom, bounded only by these
 /// products of pairs of linear premises; a goal that needs any other nonlinear reasoning is
@@ -15571,19 +15546,30 @@ fn products(
         }
     }
     let mut loose = false;
-    // The linear rows on each factor, borrowed, and for one with a part, the bounds of its
-    // sides. A copy of each row for each factor it holds cost O(k²) for one row of k factors.
-    let mut on: BTreeMap<Factor, Vec<Cow<Lin>>> = BTreeMap::new();
-    let on_linear = |atom: &Atom| -> Vec<Cow<Lin>> {
-        on_atom.get(atom).map_or_else(Vec::new, |is| {
-            is.iter().map(|&i| Cow::Borrowed(&linear[i])).collect()
+    // The rows multiplied, each once: the linear rows, borrowed, the first of equal ones
+    // standing for all, and the bounds of the sides of the factors with a part. A copy of each
+    // row for each factor it holds cost O(k²) for one row of k factors.
+    let mut table: Vec<Cow<Lin>> = Vec::with_capacity(linear.len());
+    let mut first: HashMap<&Lin, usize> = HashMap::new();
+    let same: Vec<usize> = linear
+        .iter()
+        .map(|l| {
+            let i = *first.entry(l).or_insert(table.len());
+            if i == table.len() {
+                table.push(Cow::Borrowed(l));
+            }
+            i
         })
+        .collect();
+    // The rows on each factor, as places in `table`, each once.
+    let mut on: BTreeMap<Factor, Vec<usize>> = BTreeMap::new();
+    let on_linear = |atom: &Atom| -> Vec<usize> {
+        on_atom
+            .get(atom)
+            .map_or_else(Vec::new, |is| is.iter().map(|&i| same[i]).collect())
     };
     for s in alone {
-        let mut set = on_linear(&s.atom());
-        set.sort();
-        set.dedup();
-        on.insert(s, set);
+        on.insert(s.clone(), on_linear(&s.atom()));
     }
     for (s, root, m, (lo, hi), open) in bounded {
         let atom = s.atom();
@@ -15612,15 +15598,27 @@ fn products(
                 }
             }
         };
-        if let Some(l) = side(lo, -1, open[0])? {
-            set.push(Cow::Owned(x.minus(&Lin::constant(l))));
+        // A bound equal to a linear row on the factor is that row.
+        for bound in [
+            side(lo, -1, open[0])?.map(|l| x.minus(&Lin::constant(l))),
+            side(hi, 1, open[1])?.map(|h| Lin::constant(h).minus(&x)),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            match set.iter().find(|&&i| *table[i] == bound) {
+                Some(_) => {}
+                None => {
+                    set.push(table.len());
+                    table.push(Cow::Owned(bound));
+                }
+            }
         }
-        if let Some(h) = side(hi, 1, open[1])? {
-            set.push(Cow::Owned(Lin::constant(h).minus(&x)));
-        }
-        set.sort();
-        set.dedup();
         on.insert(s, set);
+    }
+    for set in on.values_mut() {
+        set.sort_unstable();
+        set.dedup();
     }
     // The factors each factor is multiplied by in a product the formulas mention.
     let mut partners: HashMap<Factor, Vec<Factor>> = HashMap::new();
@@ -15641,101 +15639,26 @@ fn products(
         ps.sort();
         ps.dedup();
     }
-    // Whether `u` is `y` or a linear row on `y` mentions it, through the shorter of the lists
-    // of rows on each.
-    let meets = |u: &Factor, y: &Factor| -> bool {
-        let (ua, ya) = (u.atom(), y.atom());
-        if ua == ya {
-            return true;
-        }
-        let (Some(us), Some(ys)) = (on_atom.get(&ua), on_atom.get(&ya)) else {
-            return false;
-        };
-        let (rows, other) = if us.len() <= ys.len() {
-            (us, &ya)
-        } else {
-            (ys, &ua)
-        };
-        rows.iter().any(|&i| linear[i].terms.contains_key(other))
-    };
-    // The factors that the rows on them hold with both signs: a product with one row on such a
-    // factor `y` can cancel the atoms `u * y` of a product with another row on `y`.
-    let both: BTreeSet<&Factor> = on
-        .iter()
-        .filter(|(y, rows)| {
-            let ya = y.atom();
-            let mut signs = rows
-                .iter()
-                .filter_map(|r| r.terms.get(&ya))
-                .map(|c| c.is_negative());
-            signs.next().is_some_and(|s| signs.any(|t| t != s))
-        })
-        .map(|(y, _)| y)
-        .collect();
-    // Whether a linear row other than `a`, which holds `u` with the coefficient `c`, holds `u`
-    // and lies on a partner of `y`, with the other sign of `u` or with `y` in `both`. The atom
-    // `u * y` of a product `a * b` has the coefficient `c × b_y`, and that of a product `r * b'`
-    // the coefficient `r_u × b'_y`; they can cancel only when the two coefficients have opposite
-    // signs, and `r * b'` is formed only when `r` lies on a partner of `y`. Each row on `u`
-    // costs a look at the shorter of the row and the partners of `y`.
-    let cancels = |a: &Lin, u: &Factor, c: &Int, y: &Factor| -> bool {
-        let Some(ps) = partners.get(y) else {
-            return false;
-        };
-        let ua = u.atom();
-        let either = both.contains(y);
-        on_atom.get(&ua).is_some_and(|is| {
-            is.iter().any(|&i| {
-                let r = &linear[i];
-                (either || r.terms[&ua].is_negative() != c.is_negative())
-                    && !std::ptr::eq(r, a)
-                    && if r.terms.len() <= ps.len() {
-                        r.terms
-                            .keys()
-                            .filter_map(Factor::of)
-                            .any(|p| ps.binary_search(&p).is_ok())
-                    } else {
-                        ps.iter().any(|p| r.terms.contains_key(&p.atom()))
-                    }
-            })
-        })
-    };
-    // Whether `a` mentions a factor foreign to `y`: one that is not `y`, that no row on `y`
-    // mentions, none of whose partners is `y` or mentioned by a row on `y`, and that no other
-    // row can cancel ([`cancels`]). Each product of `a` with a row on `y` then holds a product
-    // of that factor that the formulas do not mention; see the doc comment above.
-    let foreign = |a: &Lin, y: &Factor| -> bool {
-        a.terms.iter().any(|(t, c)| {
-            Factor::of(t).is_some_and(|u| {
-                !meets(&u, y)
-                    && partners
-                        .get(&u)
-                        .is_none_or(|ps| ps.iter().all(|p| !meets(p, y)))
-                    && !cancels(a, &u, c, y)
-            })
-        })
-    };
-    let mut out = BTreeSet::new();
+    // The pairs of rows on the two factors of each product, each once, and of them those the
+    // exact rule keeps ([`pairs::kept`]).
+    let mut pairs = BTreeSet::new();
     for (x, y) in &wanted {
-        let xs: Vec<&Lin> = on[x]
-            .iter()
-            .filter(|a| !foreign(a, y))
-            .map(|a| &**a)
-            .collect();
-        let ys: Vec<&Lin> = on[y]
-            .iter()
-            .filter(|b| !foreign(b, x))
-            .map(|b| &**b)
-            .collect();
-        for a in &xs {
-            for b in &ys {
-                if let Some(p) = a.product(b) {
-                    out.insert(Con {
-                        lin: p,
-                        rel: Rel::Ge,
-                    });
-                }
+        for &a in &on[x] {
+            for &b in &on[y] {
+                pairs.insert((a.min(b), a.max(b)));
             }
+        }
+    }
+    let pairs: Vec<(usize, usize)> = pairs.into_iter().collect();
+    let rows: Vec<&Lin> = table.iter().map(|r| &**r).collect();
+    let kept = pairs::kept(&rows, &pairs, &partners);
+    let mut out = BTreeSet::new();
+    for (&(a, b), keep) in pairs.iter().zip(kept) {
+        if keep && let Some(p) = rows[a].product(rows[b]) {
+            out.insert(Con {
+                lin: p,
+                rel: Rel::Ge,
+            });
         }
     }
     Ok((out.into_iter().map(Formula::Con).collect(), loose))
