@@ -66,7 +66,7 @@ fn a_cycle_through_an_overload_set() {
     assert_eq!(
         errors(src),
         [
-            "`f`, `g` are defined in terms of each other, which is recursion. Recursion is \
+            "`f(x: int)`, `g` are defined in terms of each other, which is recursion. Recursion is \
            part of the Zed language, and this version of zedc does not compile it yet. Write the \
            program without it, with the forms this zedc compiles. [f(x: int) = g;]"
         ]

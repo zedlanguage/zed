@@ -41,6 +41,7 @@ use zedc_syntax::ast::{
 use zedc_syntax::ast::{BinaryOp, Every, Note, Type, TypeBound, TypeKind};
 use zedc_syntax::lex::Span;
 
+mod pick;
 pub mod tables;
 pub mod topo;
 

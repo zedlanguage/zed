@@ -13,6 +13,7 @@ use zedc_syntax::ast::{
 };
 use zedc_syntax::lex::Span;
 
+use super::pick::{Call, Pick, picks};
 use super::topo::{topo_around_cycles, topo_joined};
 
 /// The binders of a unit, shared by the checker and elaboration.
@@ -38,6 +39,9 @@ pub struct Tables<'a> {
     pub text: Option<&'a str>,
     /// The binders of each name, in the order of the binders.
     by_name: HashMap<&'a str, Vec<usize>>,
+    /// What each call of an overload set waits on, by the use of the set ([`super::pick`]). A
+    /// use of a set that is not here, the set passed as a value, waits on every overload.
+    picks: HashMap<Span, Pick>,
 }
 
 /// The uses of one list of binders.
@@ -171,8 +175,10 @@ impl<'a> Tables<'a> {
             written: Vec::new(),
             text,
             by_name,
+            picks: HashMap::new(),
         };
-        t.collect_functions(unit);
+        let (calls, param_ty) = t.collect_functions(unit);
+        t.picks = picks(&calls, res, &t.funcs, &param_ty);
         t
     }
 
@@ -180,17 +186,74 @@ impl<'a> Tables<'a> {
     /// inside them. The walk keeps the parts still to visit on a heap stack, so a deeply nested
     /// expression does not grow the thread's stack. Each part's children go on the stack in
     /// reverse, so the parts are met in the order of the text, the order of `written`.
-    fn collect_functions(&mut self, stmts: &'a [Stmt]) {
+    /// Returns the calls of overload sets and the written type of each parameter, by the
+    /// parameter's text, which [`picks`] reads.
+    #[allow(clippy::type_complexity)]
+    fn collect_functions(&mut self, stmts: &'a [Stmt]) -> (Vec<Call<'a>>, HashMap<Span, &'a Type>) {
+        let mut calls: Vec<Call<'a>> = Vec::new();
+        let mut called: HashSet<Span> = HashSet::new();
+        let mut param_ty: HashMap<Span, &'a Type> = HashMap::new();
+        let mut params = |ps: &'a [Param]| {
+            for p in ps {
+                if let Some(t) = &p.ty {
+                    param_ty.insert(p.span, t);
+                }
+            }
+        };
+        let res = self.res;
+        let set = |at: Span| matches!(res.uses.get(&at), Some(Ref::Bound(ids)) if ids.len() > 1);
         let mut todo: Vec<Collect<'a>> = stmts.iter().rev().map(Collect::Stmt).collect();
         while let Some(c) = todo.pop() {
             let at = todo.len();
             match c {
                 Collect::Type(t) => self.written.push(t),
-                Collect::Stmt(s) => self.collect_stmt(s, &mut todo),
-                Collect::Expr(e) => collect_expr(e, &mut todo),
+                Collect::Stmt(s) => {
+                    if let StmtKind::Function(f) = &s.kind {
+                        params(&f.params);
+                    }
+                    self.collect_stmt(s, &mut todo)
+                }
+                Collect::Expr(e) => {
+                    match &e.kind {
+                        // `f(args)` and `x.f(args)`, the uniform call `f(x, args)`. A curried
+                        // call `f(a, ...)` is a function value, which waits on every overload.
+                        ExprKind::Call {
+                            callee,
+                            positional,
+                            named,
+                            curry: false,
+                        } if set(callee.span) => {
+                            let receiver = match &callee.kind {
+                                ExprKind::Member { of, .. } => Some(&**of),
+                                _ => None,
+                            };
+                            called.insert(callee.span);
+                            calls.push(Call {
+                                use_at: callee.span,
+                                receiver,
+                                positional,
+                                named,
+                            });
+                        }
+                        // `x.f` without parentheses, the call `f(x)`; the callee of a call is
+                        // met after the call.
+                        ExprKind::Member { of, .. } if set(e.span) && !called.contains(&e.span) => {
+                            calls.push(Call {
+                                use_at: e.span,
+                                receiver: Some(of),
+                                positional: &[],
+                                named: &[],
+                            })
+                        }
+                        ExprKind::Lambda { params: ps, .. } => params(ps),
+                        _ => {}
+                    }
+                    collect_expr(e, &mut todo)
+                }
             }
             todo[at..].reverse();
         }
+        (calls, param_ty)
     }
 
     /// Records the function declaration `s` if it is one and puts the parts it holds on
@@ -294,8 +357,10 @@ impl<'a> Tables<'a> {
     /// function's `test` tables aside; else the statements of each cycle. Each use of a
     /// binder of the scope is placed in its statement by a binary search, so the order
     /// reads the uses of the scope's own binders only, not those of the scopes inside it.
-    /// A use of an overload set waits on one join node, which waits on the set's statements,
-    /// so `U` uses of `K` overloads make `U + K` dependencies, not `U·K`.
+    /// A call of an overload set waits on the one overload its arguments select, or on none
+    /// when type checking must choose ([`super::pick`]); any other use of a set waits on one
+    /// join node, which waits on the set's statements, so `U` uses of `K` overloads make
+    /// `U + K` dependencies, not `U·K`.
     // Complexity tradeoff (COMPLEXITY.md F7, F49): the naive order collects each scope's
     // uses with `uses_in`, which reads the uses of every scope nested inside, O(uses · depth)
     // over a nest; here a scope reads only the groups of its own binders and places each use
@@ -328,18 +393,8 @@ impl<'a> Tables<'a> {
                     continue;
                 }
                 let group = &self.uses[g];
-                let mut named: Vec<usize> = (group.binders.iter())
-                    .filter_map(|b| item_of.get(b).copied())
-                    .collect();
-                named.sort_unstable();
-                named.dedup();
-                let on = match named[..] {
-                    [one] => one,
-                    _ => {
-                        deps.push(named);
-                        deps.len() - 1
-                    }
-                };
+                // The join of the set, made at its first use that waits on every overload.
+                let mut join: Option<usize> = None;
                 for u in &group.at {
                     let k = items.partition_point(|s| s.span.start <= u.start);
                     let Some(user) = k.checked_sub(1) else {
@@ -349,6 +404,27 @@ impl<'a> Tables<'a> {
                     if u.end > at.span.end || in_tests(at, *u) {
                         continue;
                     }
+                    let on = match self.picks.get(u) {
+                        Some(Pick::Arm(b)) => match item_of.get(b) {
+                            Some(&i) => i,
+                            None => continue,
+                        },
+                        Some(Pick::Undecided) => continue,
+                        None => *join.get_or_insert_with(|| {
+                            let mut named: Vec<usize> = (group.binders.iter())
+                                .filter_map(|b| item_of.get(b).copied())
+                                .collect();
+                            named.sort_unstable();
+                            named.dedup();
+                            match named[..] {
+                                [one] => one,
+                                _ => {
+                                    deps.push(named);
+                                    deps.len() - 1
+                                }
+                            }
+                        }),
+                    };
                     deps[user].push(on);
                 }
             }
@@ -467,6 +543,8 @@ impl<'a> Tables<'a> {
             })
             .collect();
         let mut lists: Vec<Vec<usize>> = Vec::new();
+        // The list of each statement that a call picks alone.
+        let mut single: HashMap<usize, usize> = HashMap::new();
         let mut edges: HashMap<usize, Vec<Edge>> = HashMap::new();
         let mut seen: HashSet<usize> = HashSet::new();
         for &b in &member_binders {
@@ -490,9 +568,8 @@ impl<'a> Tables<'a> {
                     lists[l].dedup();
                 }
                 let name = self.res.binders[group.binders[0]].name.as_str();
-                // The uses are in the order of the text and the statements do not overlap, so
-                // the uses of one statement stand together.
-                let mut last = None;
+                // Each statement's edge for each list, by statement and list.
+                let mut edge_at: HashMap<(usize, usize), usize> = HashMap::new();
                 for u in &group.at {
                     let k = items.partition_point(|s| s.span.start <= u.start);
                     let Some(user) = k.checked_sub(1) else {
@@ -502,20 +579,38 @@ impl<'a> Tables<'a> {
                     if u.end > at.span.end || in_tests(at, *u) {
                         continue;
                     }
-                    let Some(&list) = cycle_of.get(&user).and_then(|c| named.get(c)) else {
+                    let Some(&c) = cycle_of.get(&user) else {
                         continue;
                     };
+                    // The statements the use waits on, as `deps` gives them: the overload a
+                    // call picks, none, or every overload.
+                    let list = match self.picks.get(u) {
+                        Some(Pick::Arm(b)) => match item_of.get(b) {
+                            Some(&i) if cycle_of[&i] == c => {
+                                *single.entry(i).or_insert_with(|| {
+                                    lists.push(vec![i]);
+                                    lists.len() - 1
+                                })
+                            }
+                            _ => continue,
+                        },
+                        Some(Pick::Undecided) => continue,
+                        None => match named.get(&c) {
+                            Some(&l) => l,
+                            None => continue,
+                        },
+                    };
                     let es = edges.entry(user).or_default();
-                    if last != Some(user) {
-                        last = Some(user);
+                    let k = *edge_at.entry((user, list)).or_insert_with(|| {
                         es.push(Edge {
                             first: *u,
                             read: None,
                             list,
                             name,
                         });
-                    }
-                    let e = es.last_mut().expect("pushed above");
+                        es.len() - 1
+                    });
+                    let e = &mut es[k];
                     if e.read.is_none() && !deferred.get(&user).is_some_and(|d| inside(d, *u)) {
                         e.read = Some(*u);
                     }
@@ -585,7 +680,7 @@ impl<'a> Tables<'a> {
         let mut notes = Vec::new();
         let mut uses = 0;
         for &i in &order {
-            let who = what(items[i]);
+            let who = self.shown(items[i]);
             let several = names_bound(items[i]) > 1;
             let verb = match (value, several) {
                 (true, false) => "reads",
@@ -597,6 +692,10 @@ impl<'a> Tables<'a> {
                 uses += 1;
                 let whom = if lists[e.list] == [i] && !several {
                     "itself".to_string()
+                } else if let [j] = lists[e.list][..]
+                    && let Some(h) = self.header(items[j])
+                {
+                    h
                 } else {
                     format!("`{}`", e.name)
                 };
@@ -606,9 +705,9 @@ impl<'a> Tables<'a> {
                 });
             }
         }
-        let first = what(items[start]);
+        let first = self.shown(items[start]);
         let several = names_bound(items[start]) > 1;
-        let names: Vec<String> = order.iter().map(|&i| what(items[i])).collect();
+        let names: Vec<String> = order.iter().map(|&i| self.shown(items[i])).collect();
         let at = items[start].span;
         if value {
             let head = match (&names[..], several) {
@@ -691,6 +790,36 @@ impl<'a> Tables<'a> {
                 notes,
             }
         }
+    }
+
+    /// How a message names the statement `s` of a cycle: [`Tables::header`] for an overload,
+    /// else [`what`].
+    fn shown(&self, s: &Stmt) -> String {
+        self.header(s).unwrap_or_else(|| what(s))
+    }
+
+    /// The written head of the function `s` declares, with its parameters and their types, as
+    /// `` `f(positional n: int)` ``, when another binder shares its name and the text is known:
+    /// the name alone does not tell the overloads of a set apart.
+    fn header(&self, s: &Stmt) -> Option<String> {
+        let StmtKind::Function(f) = &s.kind else {
+            return None;
+        };
+        let text = self.text?;
+        if self
+            .by_name
+            .get(f.name.as_str())
+            .is_none_or(|b| b.len() < 2)
+        {
+            return None;
+        }
+        let head = text.get(s.span.start..f.body.span.start)?;
+        let head: Vec<&str> = head
+            .trim_end()
+            .trim_end_matches('=')
+            .split_whitespace()
+            .collect();
+        Some(format!("`{}`", head.join(" ")))
     }
 
     /// The repair of a value that reads its own value: step it from its earlier value, in a
