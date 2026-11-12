@@ -1988,16 +1988,15 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | ATOM-empty-payload | impl attempt 1 | 2026-11-12 14:11 | started; worktree /home/luke/Work/wt/atom-empty-payload on origin/main |
 | BUILD-const | impl attempt 1 | 2026-11-05 04:07 | affected groups + --doc: 215 pieces, 0 failed, 2039 tests passed (l02_08d 14/14, l02_03 95/95); merging / load 47.11 58.54 56.33 |
-| FENCE-sync-stack | impl attempt 1 | 2026-11-12 14:53 | reproduced both failures (l01_07 copies out of date; after sync l01_21 rows lacks 2 rows); synced, 2 Row variants added; 36 pieces 0 failed (l01_06/07/08-14/21/ |
 | GSX-unsolved | hybrid-xr attempt  | 2026-11-11 16:53 | round 2 recorded (Opus pf1 moved it: sweep 3, lost 3, prints 3; CD best still 29); round 3 launched |
-| LOAD-max-div-unsolved | hybrid-xr attempt 1 | 2026-11-11 17:11 | round 2 merged: lazy-offset treap with a run-adaptive union replaces the difference rule; every interval chain R 8.1 to 8.6 at n and 8n, periodic or not; 4 groups 0 failed; open: a bound free of log M |
-| MSG-derive-print-per-message | impl attempt 1 | 2026-11-12 04:27 | negative control on main: work-scaling tests fail, bytes n=40->320: doubling 33.5MB->1596MB (47.7x), compared 52.6MB->2815MB (53.5x), name chain 28.2MB->1227MB  |
+| MSG-derive-print-per-message | impl attempt 1 | 2026-11-12 04:27 | tests: comparison work tests at n=40/320 (7.8x after, 52-55x cache off), 4 wrong-fix catchers (spelling x2, group order, union in tuple); + repair path O(n^2) i |
 | MSG-domain-repairs-v | impl attempt 1 | 2026-11-12 00:53 | started; worktree /home/luke/Work/wt/msg-domain-repairs-v on origin/main 8ddd28861, seeded |
-| POW-rat | running | 2026-11-12 00:53 |  |
+| POW-rat | impl attempt 1 | 2026-11-12 00:53 | started; worktree /home/luke/Work/wt/pow-rat on origin/main |
 | SOUND-top-literals | impl attempt 1 | 2026-11-12 13:51 | random.rs: pair-component helper form + value-in-type check; red in 4/4 seed pieces without the fix, green with it |
 | TESTS-scaling-gaps | impl attempt 1 | 2026-11-08 23:59 | added l01_23 payload_scaling (cofinite #e((i,)) / (i,) pinwheels 32->256: 7.9-8.2x instr empty, 5.3-5.9x middle; control naive pairwise cell test 46.2x bytes fa |
 | TESTS-split-reversed-boxes | impl attempt 1 | 2026-11-12 02:58 | old parts of 1000 cases alone 18.5-22.1 s, 83-104 G instr (load 42-48); split to 8 parts of 500 with a compared-count assert: 10.2-13.6 s alone, 38-53 G each, s |
-| WARN-refused-placements | impl attempt 1 | 2026-11-12 14:51 | tests written; red-before shown for both arms; negative control run (detected, 18.6x bytes vs limit 13.76) |
+| UNITS-info | running | 2026-11-12 15:31 |  |
+| WARN-refused-placements | impl attempt 1 | 2026-11-12 14:51 | negative controls (once, not committed) on many_placed_refusals_scale, n=40/320: clean 532.8M->4012.1M instr (7.5x), 93.7MB->698.2MB (7.4x), limit 13.76; render |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
