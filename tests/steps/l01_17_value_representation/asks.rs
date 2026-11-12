@@ -530,10 +530,7 @@ fn the_message_for_a_long_literal_is_written_in_memory_asked_first() {
             .collect();
         assert_eq!(
             messages,
-            [
-                "this literal is a decimal, and `+` expects `int`, the carrier of `n`; a decimal \
-              literal is never an `int`"
-            ],
+            ["A decimal literal is never an `int`, and `+` expects `int`."],
             "n = {n}"
         );
     }
@@ -600,9 +597,8 @@ fn the_rest_of_k30_is_exact_when_its_ask_is_given() {
     assert_eq!(
         messages,
         [format!(
-            "the literal `0.{nines}` is a decimal, and `+` expects `int`, the carrier of `n`; a \
-             decimal literal is never an `int`; write `f64(n) + 0.{nines}` or \
-             `rat(n) + 0.{nines}`"
+            "A decimal literal is never an `int`: `n : int + 0.{nines}`. Try `rat(n) + 0.{nines}` \
+             instead."
         )]
     );
 }

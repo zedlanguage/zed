@@ -72,9 +72,8 @@ fn a_generic_function_runs_at_each_carrier() {
     assert_eq!(
         type_errors(&format!("{INC}y = inc(x: 2.5);\n")),
         [
-            "the literal `2.5` is a decimal, and nothing here gives it a carrier; a decimal \
-             literal takes the carrier of its use, never `int`, and Zed does not choose one for \
-             it\n  fixes, each checked here:\n    y = inc(x: 2.5f64);    the literal is then the f64 \
+            "Nothing gives the literal `2.5` a carrier. Try `y = inc(x: 2.5f64)` instead.\n  \
+             fixes, each checked here:\n    y = inc(x: 2.5f64);    the literal is then the f64 \
              2.5\n    y = inc(x: 2.5r);      the literal is then exactly 2.5, a rat [2.5]"
         ]
     );
@@ -199,28 +198,25 @@ fn literals_that_nothing_fixes_and_that_no_int_holds_are_rejected_with_a_menu() 
     assert_eq!(
         type_errors("half = 1 / 2;\n"),
         [
-            "`half = 1 / 2` divides two integer literals, and nothing here gives them a \
-             carrier; `/` has no arrow at `int`, and Zed does not choose `f64` or `rat` for \
-             it\n  fixes, each checked here:\n    half = 1.0f64 / 2;    half is 0.5\n    \
-             half = 1r / 2;        half is 1r/2r\n    half = f64(1) / 2;    half is 0.5 [1 / 2]"
+            "Nothing gives the integer literals a carrier, and `/` has none at `int`: `half = 1 / \
+             2`. Try `half = 1.0f64 / 2` instead.\n  fixes, each checked here:\n    half = 1.0f64 / 2;    half is \
+             0.5\n    half = 1r / 2;        half is 1r/2r\n    half = f64(1) / 2;    half is 0.5 \
+             [1 / 2]"
         ]
     );
     assert_eq!(
         type_errors("y = 0.1;\n"),
         [
-            "the literal `0.1` is a decimal, and nothing here gives it a carrier; a decimal \
-             literal takes the carrier of its use, never `int`, and Zed does not choose one for \
-             it\n  fixes, each checked here:\n    y = 0.1f64;    y is 0.1\n    y = 0.1r;      y is \
-             1r/10r [0.1]"
+            "Nothing gives the literal `0.1` a carrier. Try `y = 0.1f64` instead.\n  fixes, each \
+             checked here:\n    y = 0.1f64;    y is 0.1\n    y = 0.1r;      y is 1r/10r [0.1]"
         ]
     );
     assert_eq!(
         type_errors("y = 1 == 1.0;\n"),
         [
-            "the literal `1.0` is a decimal, and nothing here gives it a carrier; a decimal \
-             literal takes the carrier of its use, never `int`, and Zed does not choose one for \
-             it\n  fixes, each checked here:\n    y = 1 == 1.0f64;    y is true\n    y = 1 == 1.0r;      \
-             y is true [1.0]"
+            "Nothing gives the literal `1.0` a carrier. Try `y = 1 == 1.0f64` instead.\n  fixes, \
+             each checked here:\n    y = 1 == 1.0f64;    y is true\n    y = 1 == 1.0r;      y is \
+             true [1.0]"
         ]
     );
     // The fixes the menus name each check.
@@ -242,18 +238,19 @@ fn a_literal_at_one_declared_carrier_takes_it_exactly_or_not_at_all() {
         type_errors(&id("f64", "9007199254740993")),
         [
             "the literal `9007199254740993` has no exact `f64`, and `f64` is expected here; an \
-             integer literal takes a carrier only where it is exact\n  fixes, each checked here:\n    \
-             x = id(9007199254740992);    the literal is then 9007199254740992.0, the nearer \
-             f64 by ties to even [9007199254740993]"
+             integer literal takes a carrier only where it is exact. Try `x = \
+             id(9007199254740992)` instead.\n  fixes, each checked here:\n    x = \
+             id(9007199254740992);    the literal is then 9007199254740992.0, the nearer f64 by \
+             ties to even [9007199254740993]"
         ]
     );
     assert_eq!(
         type_errors("f(positional x: f64 | rat) = x;\ny = f(1);\n"),
         [
-            "the literal `1` can be a `rat` or an `f64` at `rat | f64`, and nothing here \
-             chooses one\n  T1 stands for a part written more than once:\n    type T1 = rat | \
-             f64;\n  fixes, each checked here:\n    y = f(1r);        the literal is then \
-             exactly 1, a rat\n    y = f(1.0f64);    the literal is then the f64 1.0 [1]"
+            "the literal `1` can be a `rat` or an `f64` at `rat | f64`, and nothing here chooses \
+             one. Try `y = f(1r)` instead.\n  T1 stands for a part written more than once:\n    \
+             type T1 = rat | f64;\n  fixes, each checked here:\n    y = f(1r);        the literal \
+             is then exactly 1, a rat\n    y = f(1.0f64);    the literal is then the f64 1.0 [1]"
         ]
     );
 }
@@ -364,11 +361,10 @@ fn a_decimal_literal_takes_a_float_format_or_rat_and_never_int() {
     assert_eq!(
         type_errors("twice(x: int) = x * 2.0;\n"),
         [
-            "the literal `2.0` is a decimal, and `*` expects `int`, the carrier of `x`; a \
-             decimal literal is never an `int`\n  fixes, each checked here:\n    \
-             twice(x: int) = x * 2;           2 takes the int of x\n    \
-             twice(x: int) = f64(x) * 2.0;    x is cast to f64, and `*` takes two f64\n    \
-             twice(x: int) = rat(x) * 2.0;    x is cast to rat, and `*` takes two rat [2.0]"
+            "A decimal literal is never an `int`: `x : int * 2.0`. Try `twice(x: int) = x * 2` \
+             instead.\n  fixes, each checked here:\n    twice(x: int) = x * 2;           2 takes \
+             the int of x\n    twice(x: int) = rat(x) * 2.0;    x is cast to rat, and `*` takes two rat \
+             [2.0]"
         ]
     );
     assert_eq!(
@@ -452,13 +448,13 @@ fn batch_and_single_file_checking_agree() {
         first(1),
         Some(
             "2:42: the literal `1` can be a `rat` or an `f64` at `rat | f64`, and nothing here \
-             chooses one"
+             chooses one. Try `main(m: MainArgs) { m.stdout <- String(f(1r)); }` instead."
         )
     );
     assert_eq!(alone[2], None);
     assert_eq!(alone[3], None);
     assert!(
-        first(4).is_some_and(|l| l.starts_with("1:8: the literal `0.1` is a decimal")),
+        first(4).is_some_and(|l| l.starts_with("1:8: Nothing gives the literal `0.1` a carrier")),
         "{:?}",
         alone[4]
     );

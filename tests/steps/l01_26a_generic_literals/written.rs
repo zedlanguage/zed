@@ -14,10 +14,7 @@ fn rejected(src: &str) -> String {
     }
 }
 
-const UNFIXED: &str = "nothing here gives it a carrier; a decimal literal takes the carrier \
-                       of its use, never `int`, and Zed does not choose one for it";
-const DIVIDES: &str = "divides two integer literals, and nothing here gives them a carrier; \
-                       `/` has no arrow at `int`, and Zed does not choose `f64` or `rat` for it";
+const DIVIDES: &str = "Nothing gives the integer literals a carrier, and `/` has none at `int`";
 const STRING: &str = "is a `String` here, which no number equals, so the comparison always \
                       gives the same answer";
 
@@ -25,9 +22,10 @@ const STRING: &str = "is a `String` here, which no number equals, so the compari
 fn a_decimal_with_underscores_is_quoted_with_them() {
     assert_eq!(
         type_errors("y = 1_000.5;\n"),
-        [format!(
-            "the literal `1_000.5` is a decimal, and {UNFIXED}\n  fixes, each checked here:\n    \
-             y = 1_000.5f64;    y is 1000.5\n    y = 1_000.5r;      y is 2001r/2r [1_000.5]"
+        [String::from(
+            "Nothing gives the literal `1_000.5` a carrier. Try `y = 1_000.5f64` instead.\n  \
+             fixes, each checked here:\n    y = 1_000.5f64;    y is 1000.5\n    y = 1_000.5r;      \
+             y is 2001r/2r [1_000.5]"
         )]
     );
 }
@@ -36,9 +34,10 @@ fn a_decimal_with_underscores_is_quoted_with_them() {
 fn a_negative_literal_is_quoted_with_its_sign_and_underscores() {
     assert_eq!(
         type_errors("y = -1_000.5;\n"),
-        [format!(
-            "the literal `-1_000.5` is a decimal, and {UNFIXED}\n  fixes, each checked here:\n    \
-             y = -1_000.5f64;    y is -1000.5\n    y = -1_000.5r;      y is -2001r/2r [-1_000.5]"
+        [String::from(
+            "Nothing gives the literal `-1_000.5` a carrier. Try `y = -1_000.5f64` instead.\n  \
+             fixes, each checked here:\n    y = -1_000.5f64;    y is -1000.5\n    y = \
+             -1_000.5r;      y is -2001r/2r [-1_000.5]"
         )]
     );
 }
@@ -47,26 +46,26 @@ fn a_negative_literal_is_quoted_with_its_sign_and_underscores() {
 fn an_exponent_is_quoted_as_written() {
     assert_eq!(
         type_errors("y = 2.5e-3;\n"),
-        [format!(
-            "the literal `2.5e-3` is a decimal, and {UNFIXED}\n  fixes, each checked here:\n    \
-             y = 2.5e-3f64;    y is 0.0025\n    y = 2.5e-3r;      y is 1r/400r [2.5e-3]"
+        [String::from(
+            "Nothing gives the literal `2.5e-3` a carrier. Try `y = 2.5e-3f64` instead.\n  \
+             fixes, each checked here:\n    y = 2.5e-3f64;    y is 0.0025\n    y = 2.5e-3r;      y \
+             is 1r/400r [2.5e-3]"
         )]
     );
     assert_eq!(
         type_errors("y = 1_0e1_0;\n"),
-        [format!(
-            "the literal `1_0e1_0` is a decimal, and {UNFIXED}\n  fixes, each checked here:\n    \
-             y = 1_0e1_0f64;    y is 100000000000.0\n    y = 1_0e1_0r;      y is 100000000000r \
-             [1_0e1_0]"
+        [String::from(
+            "Nothing gives the literal `1_0e1_0` a carrier. Try `y = 1_0e1_0f64` instead.\n  \
+             fixes, each checked here:\n    y = 1_0e1_0f64;    y is 100000000000.0\n    y = \
+             1_0e1_0r;      y is 100000000000r [1_0e1_0]"
         )]
     );
     assert_eq!(
         type_errors("f(x: int) = x + 1e3;\n"),
         [
-            "the literal `1e3` is a decimal, and `+` expects `int`, the carrier of `x`; a decimal \
-          literal is never an `int`\n  fixes, each checked here:\n    f(x: int) = f64(x) + 1e3;    \
-          x is cast to f64, and `+` takes two f64\n    f(x: int) = rat(x) + 1e3;    x is cast to \
-          rat, and `+` takes two rat [1e3]"
+            "A decimal literal is never an `int`: `x : int + 1e3`. Try `f(x: int) = rat(x) + 1e3` \
+             instead.\n  fixes, each checked here:\n    f(x: int) = rat(x) + 1e3;    x is cast to \
+             rat, and `+` takes two rat [1e3]"
         ]
     );
 }
@@ -85,8 +84,9 @@ fn a_suffixed_literal_is_quoted_with_its_suffix() {
         type_errors("f(x: rat) = x + 1_000.5f64;\n"),
         [
             "the literal `1_000.5f64` is an `f64` by its suffix, and `rat` is expected here; a \
-          suffix fixes a literal's carrier\n  fixes, each checked here:\n    f(x: rat) = x + \
-          1_000.5r;    the literal is then exactly 1_000.5, a rat [1_000.5f64]"
+             suffix fixes a literal's carrier. Try `f(x: rat) = x + 1_000.5r` instead.\n  fixes, \
+             each checked here:\n    f(x: rat) = x + 1_000.5r;    the literal is then exactly \
+             1_000.5, a rat [1_000.5f64]"
         ]
     );
 }
@@ -96,11 +96,10 @@ fn the_integer_fix_of_a_decimal_keeps_its_underscores() {
     assert_eq!(
         type_errors("f(x: int) = x * -1_000.0;\n"),
         [
-            "the literal `-1_000.0` is a decimal, and `*` expects `int`, the carrier of `x`; a \
-          decimal literal is never an `int`\n  fixes, each checked here:\n    f(x: int) = x * \
-          -1_000;           -1_000 takes the int of x\n    f(x: int) = f64(x) * -1_000.0;    x \
-          is cast to f64, and `*` takes two f64\n    f(x: int) = rat(x) * -1_000.0;    x is cast \
-          to rat, and `*` takes two rat [-1_000.0]"
+            "A decimal literal is never an `int`: `x : int * -1_000.0`. Try `f(x: int) = x * \
+             -1_000` instead.\n  fixes, each checked here:\n    f(x: int) = x * -1_000;           \
+             -1_000 takes the int of x\n    f(x: int) = rat(x) * -1_000.0;    x is cast to rat, \
+             and `*` takes two rat [-1_000.0]"
         ]
     );
 }
@@ -110,9 +109,9 @@ fn a_division_of_integer_literals_quotes_them_as_written() {
     assert_eq!(
         type_errors("half = 1_000 / 2_0;\n"),
         [format!(
-            "`half = 1_000 / 2_0` {DIVIDES}\n  fixes, each checked here:\n    half = 1_000.0f64 / \
-             2_0;    half is 50.0\n    half = 1_000r / 2_0;        half is 50r\n    half = \
-             f64(1_000) / 2_0;    half is 50.0 [1_000 / 2_0]"
+            "{DIVIDES}: `half = 1_000 / 2_0`. Try `half = 1_000.0f64 / 2_0` instead.\n  fixes, each \
+             checked here:\n    half = 1_000.0f64 / 2_0;    half is 50.0\n    half = 1_000r / \
+             2_0;        half is 50r\n    half = f64(1_000) / 2_0;    half is 50.0 [1_000 / 2_0]"
         )]
     );
 }
@@ -123,23 +122,26 @@ fn a_literal_in_another_base_is_quoted_with_its_prefix_and_underscores() {
     assert_eq!(
         type_errors("half = -0xF_F / 2;\n"),
         [format!(
-            "`half = -0xF_F / 2` {DIVIDES}\n  fixes, each checked here:\n    half = -f64(0xF_F) / \
-             2;    half is -127.5\n    half = -rat(0xF_F) / 2;    half is -255r/2r [-0xF_F / 2]"
+            "{DIVIDES}: `half = -0xF_F / 2`. Try `half = -f64(0xF_F) / 2` instead.\n  fixes, each \
+             checked here:\n    half = -f64(0xF_F) / 2;    half is -127.5\n    half = -rat(0xF_F) \
+             / 2;    half is -255r/2r [-0xF_F / 2]"
         )]
     );
     assert_eq!(
         type_errors("y = 0b1_0 / 2;\n"),
         [format!(
-            "`y = 0b1_0 / 2` {DIVIDES}\n  fixes, each checked here:\n    y = f64(0b1_0) / 2;    \
-             y is 1.0\n    y = rat(0b1_0) / 2;    y is 1r [0b1_0 / 2]"
+            "{DIVIDES}: `y = 0b1_0 / 2`. Try `y = f64(0b1_0) / 2` instead.\n  fixes, each checked \
+             here:\n    y = f64(0b1_0) / 2;    y is 1.0\n    y = rat(0b1_0) / 2;    y is 1r [0b1_0 \
+             / 2]"
         )]
     );
     assert_eq!(
         type_errors("f(x: String) = x == 0xF_F;\n"),
         [format!(
-            "the literal `0xF_F` is a number, and `x` {STRING}\n  fixes, each checked here:\n    \
-             f(x: String) = x == \"0xF_F\";       compares the text\n    f(x: String) = int(x) \
-             == 0xF_F;    compares the number the text holds [0xF_F]"
+            "the literal `0xF_F` is a number, and `x` {STRING}. Try `f(x: String) = x == \
+             \"0xF_F\"` instead.\n  fixes, each checked here:\n    f(x: String) = x == \
+             \"0xF_F\";       compares the text\n    f(x: String) = int(x) == 0xF_F;    compares \
+             the number the text holds [0xF_F]"
         )]
     );
 }
@@ -149,18 +151,19 @@ fn the_text_fix_of_a_number_compared_with_a_string_is_the_literal_as_written() {
     assert_eq!(
         type_errors("f(x: String) = x == 1_000;\n"),
         [format!(
-            "the literal `1_000` is a number, and `x` {STRING}\n  fixes, each checked here:\n    \
-             f(x: String) = x == \"1_000\";       compares the text\n    f(x: String) = int(x) \
-             == 1_000;    compares the number the text holds [1_000]"
+            "the literal `1_000` is a number, and `x` {STRING}. Try `f(x: String) = x == \
+             \"1_000\"` instead.\n  fixes, each checked here:\n    f(x: String) = x == \
+             \"1_000\";       compares the text\n    f(x: String) = int(x) == 1_000;    compares \
+             the number the text holds [1_000]"
         )]
     );
     assert_eq!(
         type_errors("f(x: (int, String)) = x == (1, 2_0);\n"),
         [
             "the literal `2_0` is a number, and the component of `x` it is compared with by `==` \
-          is a `String` here, which no number equals, so the comparison always gives the same \
-          answer\n  fixes, each checked here:\n    f(x: (int, String)) = x == (1, \"2_0\");    \
-          compares the text [2_0]"
+             is a `String` here, which no number equals, so the comparison always gives the same \
+             answer. Try `f(x: (int, String)) = x == (1, \"2_0\")` instead.\n  fixes, each checked \
+             here:\n    f(x: (int, String)) = x == (1, \"2_0\");    compares the text [2_0]"
         ]
     );
 }
@@ -169,10 +172,10 @@ fn the_text_fix_of_a_number_compared_with_a_string_is_the_literal_as_written() {
 fn a_literal_in_parentheses_is_quoted_without_them() {
     assert_eq!(
         type_errors("y = -(1_000.5);\n"),
-        [format!(
-            "the literal `-1_000.5` is a decimal, and {UNFIXED}\n  fixes, each checked here:\n    \
-             y = -1_000.5f64;    y is -1000.5\n    y = -1_000.5r;      y is -2001r/2r \
-             [-(1_000.5)]"
+        [String::from(
+            "Nothing gives the literal `-1_000.5` a carrier. Try `y = -1_000.5f64` instead.\n  \
+             fixes, each checked here:\n    y = -1_000.5f64;    y is -1000.5\n    y = \
+             -1_000.5r;      y is -2001r/2r [-(1_000.5)]"
         )]
     );
     assert_eq!(

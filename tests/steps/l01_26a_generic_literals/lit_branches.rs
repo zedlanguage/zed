@@ -132,7 +132,11 @@ fn an_operation_on_literals_in_an_if_has_its_value_at_run_time() {
     assert_eq!(
         type_errors("g(positional c: bool) = if c { 1 + 1 } else { 1.5 };\nb = g(false);\n"),
         [
-            "the literal `1.5` is a decimal, and nothing here gives it a carrier; a decimal literal takes the carrier of its use, never `int`, and Zed does not choose one for it; the value holds it through a call of `g`\n  fixes, each checked here:\n    g(positional c: bool) = if c { 1 + 1 } else { 1.5f64 };    the literal is then the f64 1.5\n    g(positional c: bool) = if c { 1 + 1 } else { 1.5r };      the literal is then exactly 1.5, a rat [1.5]"
+            "Nothing gives the literal `1.5` a carrier; the value holds it through a call of `g`. \
+             Try `g(positional c: bool) = if c { 1 + 1 } else { 1.5f64 }` instead.\n  fixes, each \
+             checked here:\n    g(positional c: bool) = if c { 1 + 1 } else { 1.5f64 };    the \
+             literal is then the f64 1.5\n    g(positional c: bool) = if c { 1 + 1 } else { 1.5r \
+             };      the literal is then exactly 1.5, a rat [1.5]"
         ]
     );
 }
@@ -146,8 +150,7 @@ fn a_division_of_literals_in_an_if_is_not_kept_as_its_value() {
     let errors = type_errors(src);
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(
-        errors[0]
-            .starts_with("the literal `1.5` is a decimal, and nothing here gives it a carrier"),
+        errors[0].starts_with("Nothing gives the literal `1.5` a carrier"),
         "{errors:?}"
     );
 }

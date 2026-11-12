@@ -95,7 +95,8 @@ fn an_inexact_literal_in_an_operation_branch_is_its_own_error() {
         type_errors(&src),
         vec![
             "the literal `9007199254740993` has no exact `f64`, and `f64` is expected here; an \
-             integer literal takes a carrier only where it is exact\n  \
+             integer literal takes a carrier only where it is exact. Try `f(positional c: bool) = \
+             h(if c { 9007199254740992 + 0 } else { 1 })` instead.\n  \
              fixes, each checked here:\n    \
              f(positional c: bool) = h(if c { 9007199254740992 + 0 } else { 1 });    the \
              literal is then 9007199254740992.0, the nearer f64 by ties to even \
@@ -114,7 +115,8 @@ fn a_division_in_an_if_is_still_not_kept() {
         type_errors(src),
         vec![
             "the literal `1` takes the carrier of its use, and nothing here chooses one of `f64 \
-             | rat`, the carriers what it meets takes\n  \
+             | rat`, the carriers what it meets takes. Try `g(positional c: bool) = if c { 1.0f64 \
+             / 2 } else { 1 }` instead.\n  \
              fixes, each checked here:\n    \
              g(positional c: bool) = if c { 1.0f64 / 2 } else { 1 };    the literal is then the \
              f64 1.0\n    \
@@ -652,9 +654,10 @@ fn an_inexact_literal_of_an_if_in_a_tuple_is_its_own_error() {
     let inexact = |src: &str, fixed: &str| {
         vec![format!(
             "the literal `9007199254740993` has no exact `f64`, and `f64` is expected here; an \
-             integer literal takes a carrier only where it is exact\n  fixes, each checked \
-             here:\n    {fixed}    the literal is then 9007199254740992.0, the nearer f64 by \
-             ties to even [9007199254740993]"
+             integer literal takes a carrier only where it is exact. Try `{}` instead.\n  fixes, \
+             each checked here:\n    {fixed}    the literal is then 9007199254740992.0, the nearer f64 by \
+             ties to even [9007199254740993]",
+            fixed.trim_end_matches(';')
         )]
         .into_iter()
         .map(|m| (src.to_string(), m))

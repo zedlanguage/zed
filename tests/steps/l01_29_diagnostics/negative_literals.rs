@@ -58,23 +58,35 @@ fn each_menu_names_the_signed_forms_the_type_holds() {
              literal takes a carrier only where it is exact"
         )
     };
+    // A headline with a menu ends with its first fix (DESIGN.md sec:diagnostics).
+    let tried = |head: String, fix: &str| format!("{head}. Try `y = f({fix})` instead.");
     let cases = [
         ("int", "-2.5", decimal_at_int("-2.5", "")),
         (
             "int",
             "-3.0",
-            decimal_at_int("-3.0", ", even when its value is an integer"),
+            tried(
+                decimal_at_int("-3.0", ", even when its value is an integer"),
+                "-3",
+            ),
         ),
         (
             "rat",
             "-2.5f64",
-            "2:7: the literal `-2.5f64` is an `f64` by its suffix, and `rat` is expected here; a \
-             suffix fixes a literal's carrier"
-                .to_string(),
+            tried(
+                "2:7: the literal `-2.5f64` is an `f64` by its suffix, and `rat` is expected \
+                 here; a suffix fixes a literal's carrier"
+                    .to_string(),
+                "-2.5r",
+            ),
         ),
-        ("f64 | rat", "-3", two_carriers("-3")),
-        ("f64 | rat", "-2.5", two_carriers("-2.5")),
-        ("f64", "-9007199254740993", no_exact("-9007199254740993")),
+        ("f64 | rat", "-3", tried(two_carriers("-3"), "-3r")),
+        ("f64 | rat", "-2.5", tried(two_carriers("-2.5"), "-2.5r")),
+        (
+            "f64",
+            "-9007199254740993",
+            tried(no_exact("-9007199254740993"), "-9007199254740992"),
+        ),
         ("f64", "-0x20000000000001", no_exact("-0x20000000000001")),
     ];
     let wrong: Vec<String> = cases
@@ -96,8 +108,8 @@ fn an_operand_and_an_argument_at_a_fixed_class_point_at_the_minus() {
     // at `int`.
     assert_eq!(
         head("offset(positional x: int) = x + -2.5;\n"),
-        "1:33: the literal `-2.5` is a decimal, and `+` expects `int`, the carrier of `x`; a \
-         decimal literal is never an `int`"
+        "1:33: A decimal literal is never an `int`: `x : int + -2.5`. Try \
+         `offset(positional x: int) = rat(x) + -2.5` instead."
     );
     assert_eq!(
         head("isTwo(positional x) = x div 2 == 1;\ny = isTwo(-2.5);\n"),

@@ -94,3 +94,10 @@ pub fn menu(fixes: &[(&str, &str)]) -> String {
     }
     s
 }
+
+/// What a headline with the menu `fixes` ends with (DESIGN.md sec:diagnostics, "A short
+/// headline, the detail in the notes"): the first fix, its corrected line without its `;`.
+pub fn tried(fixes: &[(&str, &str)]) -> String {
+    let first = fixes[0].0.trim_end_matches([';', ',']);
+    format!(". Try `{first}` instead.")
+}

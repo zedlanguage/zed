@@ -5622,10 +5622,10 @@ impl Msg {
     ///     half = 1r / 2;        half is 1r/2r
     /// ```
     ///
-    /// Without the text, or where a fix's span does not lie in it, the short forms follow
-    /// the message, as `; write `0.5f64` or `0.5r``, and the menu is empty. Written in memory
-    /// the system gives first; where it refuses, the message alone and no menu. It costs the
-    /// length of the message and of the lines the fixes touch.
+    /// Without the text, or where a fix's span does not lie in it, the short forms end the
+    /// headline, as `. Try `0.5f64` or `0.5r` instead.`, and the menu is empty. Written in
+    /// memory the system gives first; where it refuses, the message alone and no menu. It costs
+    /// the length of the message and of the lines the fixes touch.
     fn written(self, source: Option<&str>) -> (String, String) {
         if self.fixes.is_empty() {
             return (self.text, String::new());
@@ -5650,10 +5650,18 @@ impl Msg {
                     }
                     Ok(())
                 }));
-                menu.map(|menu| (None, menu))
+                // The headline ends with the first fix, the corrected source line in full,
+                // where it is one line (DESIGN.md sec:diagnostics, "A short headline").
+                let first = lines[0].trim().trim_end_matches([';', ',']);
+                let text = (!first.contains('\n')).then(|| {
+                    let head = self.text.strip_suffix('.').unwrap_or(&self.text);
+                    format!("{head}. Try `{first}` instead.")
+                });
+                menu.map(|menu| (text, menu))
             }
             None => shown(&fmt::from_fn(|f| {
-                write!(f, "{}; write ", self.text)?;
+                let head = self.text.strip_suffix('.').unwrap_or(&self.text);
+                write!(f, "{head}. Try ")?;
                 let n = self.fixes.len();
                 for (i, x) in self.fixes.iter().enumerate() {
                     let sep = match i {
@@ -5663,7 +5671,7 @@ impl Msg {
                     };
                     write!(f, "{sep}`{}`", x.alone)?;
                 }
-                Ok(())
+                f.write_str(" instead.")
             }))
             .map(|text| (Some(text), String::new())),
         };
@@ -5954,8 +5962,8 @@ fn menu(l: &Lit, held: &[Carrier]) -> Msg {
 /// operator). `name` is the operand's name and span where it is a name, and `op` the
 /// operator's symbol and whether the literal is its left operand. Where both are known, the
 /// fixes rewrite the operation: `x * 2` where the literal's value is an integer and the
-/// operator has an arrow at `int`, then `f64(x) * 2.0` and `rat(x) * 2.0`; otherwise the fix is
-/// the integer literal alone, `2`.
+/// operator has an arrow at `int`, then `rat(x) * 2.0`; otherwise the fix is the integer literal
+/// alone, `2`. The headline shows the operation as code with the operand's type.
 fn decimal_at_int(
     l: &Lit,
     what: &str,
@@ -5980,20 +5988,19 @@ fn decimal_at_int(
                     &alone,
                 ));
             }
-            // Each cast of the operand that checks: a decimal literal takes `f64` and `rat`
-            // (DESIGN.md L1.26b), and each takes `+`, `-`, `*` and `/` at two of it.
-            for c in ["f64", "rat"] {
-                let alone = fmt::from_fn(|f| match left {
-                    true => write!(f, "{lit} {op} {c}({n})"),
-                    false => write!(f, "{c}({n}) {op} {lit}"),
-                });
-                let open = format!("{c}(");
-                fixes.push(Rewrite::new(
-                    &[(point(at.start), &open), (point(at.end), &")")],
-                    &format_args!("{n} is cast to {c}, and {what} takes two {c}"),
-                    &alone,
-                ));
-            }
+            // The cast of the operand to `rat`, which a decimal literal takes (DESIGN.md L1.26b)
+            // and which takes `+`, `-`, `*` and `/` at two of it. Not `f64(x)`, which is inexact
+            // above 2^53 in magnitude: a repair never narrows a type (DESIGN.md
+            // sec:diagnostics).
+            let alone = fmt::from_fn(|f| match left {
+                true => write!(f, "{lit} {op} rat({n})"),
+                false => write!(f, "rat({n}) {op} {lit}"),
+            });
+            fixes.push(Rewrite::new(
+                &[(point(at.start), &"rat("), (point(at.end), &")")],
+                &format_args!("{n} is cast to rat, and {what} takes two rat"),
+                &alone,
+            ));
         }
         _ => fixes.extend(whole_part(l).map(|w| {
             Rewrite::lit(
@@ -6003,16 +6010,24 @@ fn decimal_at_int(
             )
         })),
     }
-    let m = literal_message(
-        l,
-        |f, w| match name {
-            Some((n, _)) => write!(
+    // The operation as code with the type of the operand, `x : int * 2.0`.
+    let m = quoting(
+        &fmt::from_fn(|f| match (name, op) {
+            (Some((n, _)), Some((op, true))) => write!(
                 f,
-                "{w} is a decimal, and {what} expects `int`, the carrier of `{n}`"
+                "A decimal literal is never an `int`: `{lit} {op} {n} : int`."
             ),
-            None => write!(f, "{w} is a decimal, and {what} expects `int`"),
-        },
-        "; a decimal literal is never an `int`",
+            (Some((n, _)), Some((op, false))) => write!(
+                f,
+                "A decimal literal is never an `int`: `{n} : int {op} {lit}`."
+            ),
+            _ => write!(
+                f,
+                "A decimal literal is never an `int`: `{lit}` meets {what}, which expects \
+                 `int`."
+            ),
+        }),
+        || format!("A decimal literal is never an `int`, and {what} expects `int`."),
     );
     Msg::new(m, fixes)
 }
@@ -6045,12 +6060,7 @@ fn unfixed(l: &Lit, cs: &[Carrier], bound: Option<(&str, &Expr)>) -> Msg {
     }
     let names = carrier_names(cs);
     let m = match decimal {
-        true => literal_message(
-            l,
-            |f, w| write!(f, "{w} is a decimal, and nothing here gives it a carrier"),
-            "; a decimal literal takes the carrier of its use, never `int`, and Zed does not \
-             choose one for it",
-        ),
+        true => literal_message(l, |f, w| write!(f, "Nothing gives {w} a carrier"), ""),
         false => literal_message(
             l,
             |f, w| {
@@ -6376,35 +6386,22 @@ fn unfixed_binding(
     };
     let two = lits.len() == 2 && literal(a, None).is_some() && literal(b, None).is_some();
     let why = match pow {
-        false => {
-            "nothing here gives them a carrier; `/` has no arrow at `int`, and Zed does not \
-             choose `f64` or `rat` for it"
-        }
+        false => "Nothing gives the integer literals a carrier, and `/` has none at `int`",
         true => {
-            "nothing here gives them a carrier; `/` has no arrow at `int`, `^` has none at \
-             `rat`, and Zed does not choose `f64` for it"
+            "Nothing gives the integer literals a carrier, `/` has none at `int`, and `^` none \
+             at `rat`"
         }
     };
+    // The value as code: the binding, `q = (1 + 2) / (3 + 4)`, where the value is the whole
+    // of it, else the `/` in it.
+    let text = |at: Span| src.and_then(|s| s.get(at.start..at.end));
     let m = quoting(
-        &fmt::from_fn(|f| match (two, literal(a, src), literal(b, src)) {
-            (true, Some(x), Some(y)) if whole => write!(
-                f,
-                "`{n} = {x} / {y}` divides two integer literals, and {why}",
-                x = x.written(),
-                y = y.written(),
-            ),
-            (true, Some(x), Some(y)) => write!(
-                f,
-                "`{x} / {y}` in the value of `{n}` divides two integer literals, and {why}",
-                x = x.written(),
-                y = y.written(),
-            ),
-            _ => write!(
-                f,
-                "the `/` in the value of `{n}` divides integer literals, and {why}"
-            ),
+        &fmt::from_fn(|f| match (whole, text(e.span), text(d.span)) {
+            (true, Some(v), _) => write!(f, "{why}: `{n} = {v}`."),
+            (_, _, Some(v)) => write!(f, "{why}: `{v}` in the value of `{n}`."),
+            _ => write!(f, "{why}, in the value of `{n}`."),
         }),
-        || format!("the `/` in the value of `{n}` divides integer literals, and {why}"),
+        || format!("{why}, in the value of `{n}`."),
     );
     // The first literal of the value, whose carrier reaches the rest ([`unreached`]), in a
     // cast, `f64(1)`; with the suffix, `1.0f64`, where each is written in decimal digits,

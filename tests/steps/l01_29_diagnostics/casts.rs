@@ -289,16 +289,17 @@ fn a_plain_literal_beside_a_value_of_another_carrier_is_a_case_of_the_row() {
         .unwrap_or_else(|| panic!("no menu: {out}"));
     assert!(
         head.starts_with(
-            "1:20: the literal `1.5` is a decimal, and `+` expects `int`, the carrier of `q`; a \
-             decimal literal is never an `int`\n  [1] "
+            "1:20: A decimal literal is never an `int`: `q : int + 1.5`. Try \
+             `half(q: int) = rat(q) + 1.5` instead.\n  [1] "
         ),
         "{out}"
     );
-    assert!(
-        fixes.starts_with(
-            "    half(q: int) = f64(q) + 1.5;    q is cast to f64, and `+` takes two f64\n"
-        ),
-        "{out}"
+    // `f64(q)` is not offered: `q: int` is unbounded, and `f64` is exact only up to 2^53, so
+    // that cast can lose information (DESIGN.md sec:diagnostics, "A repair never narrows a
+    // type").
+    assert_eq!(
+        fixes,
+        "    half(q: int) = rat(q) + 1.5;    q is cast to rat, and `+` takes two rat"
     );
     assert!(!fixes.contains("\n  ["), "a step after the menu: {out}");
     assert!(steps(&out).contains(&"`q` is declared `int`"), "{out}");

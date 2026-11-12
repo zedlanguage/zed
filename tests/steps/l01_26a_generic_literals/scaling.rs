@@ -162,7 +162,7 @@ fn a_menu_of_a_long_line_scales() {
             let [e] = &u.type_errors()[..] else {
                 panic!("one rejection")
             };
-            assert_eq!(e.matches("(1 + 0)").count(), 2 * m, "{e}");
+            assert_eq!(e.matches("(1 + 0)").count(), 3 * m, "{e}");
             assert!(e.contains("* 0.5f64;    y is 0.5\n"), "{e}");
         }
         scaling::check("rejecting a value of n sums with a menu", n, |m| {
@@ -212,8 +212,12 @@ fn a_menu_that_writes_a_literal_in_each_of_many_divisions_scales() {
             let [e] = &u.type_errors()[..] else {
                 panic!("one rejection")
             };
-            for fix in ["y = (1.0f64 / 1) * (1 / 1)", "y = (1r / 1) * (1 / 1)"] {
-                assert_eq!(e.matches(fix).count(), 1, "{e}");
+            // The first fix is also the headline's repair.
+            for (fix, k) in [
+                ("y = (1.0f64 / 1) * (1 / 1)", 2),
+                ("y = (1r / 1) * (1 / 1)", 1),
+            ] {
+                assert_eq!(e.matches(fix).count(), k, "{e}");
             }
             assert!(e.contains(" * (1 / 1);") && e.contains(" y is 1r\n"), "{e}");
         }
@@ -239,7 +243,7 @@ fn a_menu_of_divisions_nested_deep_scales() {
             };
             let fix = format!("    y = 1r{};", " / 1".repeat(*m));
             assert!(e.contains(&fix), "{e}");
-            assert_eq!(e.matches("1.0f64").count(), 1, "{e}");
+            assert_eq!(e.matches("1.0f64").count(), 2, "{e}");
         }
         scaling::check("rejecting n nested divisions with a menu", n, |m| {
             std::hint::black_box(units[&m].type_errors());

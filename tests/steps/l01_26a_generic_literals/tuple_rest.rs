@@ -23,10 +23,10 @@ fn unfixed(lit: &str, f64: &str, rat: &str, call: Option<&str>) -> String {
     });
     let w = f64.len().max(rat.len()) + 4;
     format!(
-        "the literal `{lit}` is a decimal, and nothing here gives it a carrier; a decimal \
-         literal takes the carrier of its use, never `int`, and Zed does not choose one for \
-         it{through}\n  fixes, each checked here:\n    {f64:w$}the literal is then the f64 \
-         {lit}\n    {rat:w$}the literal is then exactly {lit}, a rat [{lit}]"
+        "Nothing gives the literal `{lit}` a carrier{through}. Try `{}` instead.\n  fixes, each checked here:\n    \
+         {f64:w$}the literal is then the f64 {lit}\n    {rat:w$}the literal is then exactly {lit}, \
+         a rat [{lit}]",
+        f64.trim_end_matches(';')
     )
 }
 
@@ -349,7 +349,13 @@ fn the_decimals_a_value_ends_in_are_rejected_in_one_message() {
     assert_eq!(
         type_errors(src),
         [
-            "2 parts of the value of `y` are literals that nothing here gives a carrier, and Zed does not choose one for them; the steps below give each one\n  fixes, each checked here:\n    y = (if c { 0.5f64 } else { 1 }, if c { 0.25f64 } else { 2 });    the literal is then the f64 0.5; the literal is then the f64 0.25\n    y = (if c { 0.5r } else { 1 }, if c { 0.25r } else { 2 });        the literal is then exactly 0.5, a rat; the literal is then exactly 0.25, a rat [0.5]"
+            "2 parts of the value of `y` are literals that nothing here gives a carrier, and Zed \
+             does not choose one for them; the steps below give each one. Try `y = (if c { 0.5f64 \
+             } else { 1 }, if c { 0.25f64 } else { 2 })` instead.\n  fixes, each checked \
+             here:\n    y = (if c { 0.5f64 } else { 1 }, if c { 0.25f64 } else { 2 });    the \
+             literal is then the f64 0.5; the literal is then the f64 0.25\n    y = (if c { 0.5r } \
+             else { 1 }, if c { 0.25r } else { 2 });        the literal is then exactly 0.5, a \
+             rat; the literal is then exactly 0.25, a rat [0.5]"
         ]
     );
     let old = "y = (if c { 0.5 } else { 1 }, if c { 0.25 } else { 2 });";

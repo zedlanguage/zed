@@ -69,8 +69,8 @@ fn where_nothing_gives_a_carrier_the_menu_writes_the_first_literal() {
     let src = "y = 1 + 7 / 2;\n";
     assert_eq!(
         first(src),
-        "the `/` in the value of `y` divides integer literals, and nothing here gives them a \
-         carrier; `/` has no arrow at `int`, and Zed does not choose `f64` or `rat` for it"
+        "Nothing gives the integer literals a carrier, and `/` has none at `int`: `y = 1 + 7 / 2`. \
+         Try `y = 1.0f64 + 7 / 2` instead."
     );
     assert_eq!(
         checked(src),

@@ -26,8 +26,8 @@ fn a_division_of_divisions_of_literals_names_no_type_for_them() {
     let out = rejected("y = (1 / 2) / (3 / 4);\n");
     let d = open_div();
     let want = format!(
-        "1:5: the `/` in the value of `y` divides integer literals, and nothing here gives them \
-         a carrier; `/` has no arrow at `int`, and Zed does not choose `f64` or `rat` for it
+        "1:5: Nothing gives the integer literals a carrier, and `/` has none at `int`: \
+         `y = (1 / 2) / (3 / 4)`. Try `y = (1.0f64 / 2) / (3 / 4)` instead.
   [1] 1:5: {d}
       1 | y = (1 / 2) / (3 / 4);
         |     ^^^^^^^ [2]    ^ [7]

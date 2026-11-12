@@ -154,15 +154,13 @@ fn a_power_lists_no_rat() {
 }
 
 #[test]
-fn a_decimal_at_an_int_lists_both_casts() {
+fn a_decimal_at_an_int_lists_the_cast_to_rat_only() {
+    // The cast `f64(x)` of an unbounded `int` can lose information, so it is never a fix
+    // (DESIGN.md sec:diagnostics).
     assert_eq!(
         checked("twice(x: int) = x * 2.0;\n"),
         pairs(&[
             ("twice(x: int) = x * 2;", "2 takes the int of x"),
-            (
-                "twice(x: int) = f64(x) * 2.0;",
-                "x is cast to f64, and `*` takes two f64"
-            ),
             (
                 "twice(x: int) = rat(x) * 2.0;",
                 "x is cast to rat, and `*` takes two rat"
@@ -265,16 +263,10 @@ fn a_negative_literal_keeps_its_minus_in_each_fix() {
     );
     assert_eq!(
         checked("offset(positional x: int) = x + -2.5;\n"),
-        pairs(&[
-            (
-                "offset(positional x: int) = f64(x) + -2.5;",
-                "x is cast to f64, and `+` takes two f64"
-            ),
-            (
-                "offset(positional x: int) = rat(x) + -2.5;",
-                "x is cast to rat, and `+` takes two rat"
-            ),
-        ])
+        pairs(&[(
+            "offset(positional x: int) = rat(x) + -2.5;",
+            "x is cast to rat, and `+` takes two rat"
+        ),])
     );
 }
 

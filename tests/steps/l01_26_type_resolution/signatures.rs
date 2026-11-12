@@ -132,9 +132,8 @@ fn a_default_is_checked_at_its_parameters_type() {
     assert_eq!(
         type_errors("tax(price, rate = 0.2) = price * rate;\n"),
         [format!(
-            "the literal `0.2` is a decimal, and nothing here gives it a carrier; a decimal \
-             literal takes the carrier of its use, never `int`, and Zed does not choose one for \
-             it{} [0.2]",
+            "Nothing gives the literal `0.2` a carrier. Try `tax(price, rate = 0.2f64) = price * \
+             rate` instead.{} [0.2]",
             menu(&[
                 ("tax(price, rate = 0.2f64) = price * rate;", "rate is 0.2"),
                 ("tax(price, rate = 0.2r) = price * rate;", "rate is 1r/5r"),

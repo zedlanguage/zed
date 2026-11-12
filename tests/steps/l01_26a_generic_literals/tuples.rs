@@ -103,7 +103,11 @@ fn the_decimals_of_a_tuple_are_rejected_in_one_message() {
     assert_eq!(
         type_errors(src),
         [
-            "3 parts of the value of `y` are literals that nothing here gives a carrier, and Zed does not choose one for them; the steps below give each one\n  fixes, each checked here:\n    y = (0.5f64, 0.25f64, 0.75f64);    y[0] is 0.5; y[1] is 0.25; y[2] is 0.75\n    y = (0.5r, 0.25r, 0.75r);          y[0] is 1r/2r; y[1] is 1r/4r; y[2] is 3r/4r [0.5]"
+            "3 parts of the value of `y` are literals that nothing here gives a carrier, and Zed \
+             does not choose one for them; the steps below give each one. Try `y = (0.5f64, \
+             0.25f64, 0.75f64)` instead.\n  fixes, each checked here:\n    y = (0.5f64, 0.25f64, \
+             0.75f64);    y[0] is 0.5; y[1] is 0.25; y[2] is 0.75\n    y = (0.5r, 0.25r, \
+             0.75r);          y[0] is 1r/2r; y[1] is 1r/4r; y[2] is 3r/4r [0.5]"
         ]
     );
     for fixed in [

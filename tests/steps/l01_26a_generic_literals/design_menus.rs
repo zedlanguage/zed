@@ -73,8 +73,8 @@ fn a_division_of_operations_on_integer_literals_writes_one_carrier() {
     // the first literal of the value", and the message, whose first line and fixes that write a
     // literal are:
     //
-    //   error: the `/` in the value of `q` divides integer literals, and nothing here gives
-    //   them a carrier; `/` has no arrow at `int`, and Zed does not choose `f64` or `rat` for it
+    //   error: Nothing gives the integer literals a carrier, and `/` has none at `int`: `q =
+    //   (1 + 2) / (3 + 4)`. Try `q = (1.0f64 + 2) / (3 + 4)` instead.
     //   [...]
     //     q = (1.0f64 + 2) / (3 + 4);    q is 0.42857142857142855
     //     q = (1r + 2) / (3 + 4);        q is 3r/7r
@@ -85,8 +85,8 @@ fn a_division_of_operations_on_integer_literals_writes_one_carrier() {
     let src = "q = (1 + 2) / (3 + 4);\n";
     assert_eq!(
         first(src),
-        "the `/` in the value of `q` divides integer literals, and nothing here gives them a \
-         carrier; `/` has no arrow at `int`, and Zed does not choose `f64` or `rat` for it"
+        "Nothing gives the integer literals a carrier, and `/` has none at `int`: `q = (1 + 2) / \
+         (3 + 4)`. Try `q = (1.0f64 + 2) / (3 + 4)` instead."
     );
     assert_eq!(
         checked(src),

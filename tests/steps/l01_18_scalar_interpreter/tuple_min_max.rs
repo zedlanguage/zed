@@ -82,7 +82,10 @@ fn tuples_min_and_max_cannot_order_are_refused() {
         errors("x = min((1, 2.0), (1, 3));\n"),
         // As `min(2.0, 3)` is: nothing gives the decimal a carrier (DESIGN.md L1.26a).
         [
-            "the literal `2.0` is a decimal, and nothing here gives it a carrier; a decimal literal takes the carrier of its use, never `int`, and Zed does not choose one for it\n  fixes, each checked here:\n    x = min((1, 2.0f64), (1, 3));    the literal is then the f64 2.0\n    x = min((1, 2.0r), (1, 3));      the literal is then exactly 2.0, a rat [2.0]"
+            "Nothing gives the literal `2.0` a carrier. Try `x = min((1, 2.0f64), (1, 3))` \
+             instead.\n  fixes, each checked here:\n    x = min((1, 2.0f64), (1, 3));    the \
+             literal is then the f64 2.0\n    x = min((1, 2.0r), (1, 3));      the literal is then \
+             exactly 2.0, a rat [2.0]"
         ]
     );
     assert_eq!(

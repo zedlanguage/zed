@@ -10,7 +10,7 @@ use zed_kernel::{F64, Value};
 use zed_tests::scaling;
 use zedc::testing::test;
 
-use super::{info, menu, type_errors};
+use super::{info, menu, tried, type_errors};
 use zed_tests::step_helpers::l01_16_elaboration::value;
 
 /// The values the literals of `text` adopt, sorted by position.
@@ -32,19 +32,17 @@ fn two_carriers(lit: &str, line: impl Fn(&str) -> String) -> String {
         true => lit.to_string(),
         false => format!("{lit}.0"),
     };
+    let (r, f) = (line(&format!("{lit}r")), line(&format!("{float}f64")));
+    let (rh, fh) = (
+        format!("the literal is then exactly {lit}, a rat"),
+        format!("the literal is then the f64 {float}"),
+    );
+    let fixes = [(r.as_str(), rh.as_str()), (f.as_str(), fh.as_str())];
     format!(
         "the literal `{lit}` can be a `rat` or an `f64` at `rat | f64`, and nothing here chooses \
-         one{} [{lit}]",
-        menu(&[
-            (
-                &line(&format!("{lit}r")),
-                &format!("the literal is then exactly {lit}, a rat")
-            ),
-            (
-                &line(&format!("{float}f64")),
-                &format!("the literal is then the f64 {float}")
-            ),
-        ])
+         one{}{} [{lit}]",
+        tried(&fixes),
+        menu(&fixes)
     )
 }
 
@@ -168,7 +166,8 @@ fn literals_in_a_tuple_take_its_components_carriers() {
         type_errors("f(positional p: (f64, f64)) = p;\ny = f((9007199254740993, 1));\n"),
         [format!(
             "the literal `9007199254740993` has no exact `f64`, and `f64` is expected here; an \
-             integer literal takes a carrier only where it is exact{} [9007199254740993]",
+             integer literal takes a carrier only where it is exact. Try `y = f((9007199254740992, \
+             1))` instead.{} [9007199254740993]",
             menu(&[(
                 "y = f((9007199254740992, 1));",
                 "the literal is then 9007199254740992.0, the nearer f64 by ties to even"
@@ -253,9 +252,8 @@ fn literals_in_a_tuple_compared_with_a_tuple() {
     assert_eq!(
         type_errors("y = (1, (2, 3)) == (1.0, (2r, 3));\n"),
         [format!(
-            "the literal `1.0` is a decimal, and nothing here gives it a carrier; a decimal \
-             literal takes the carrier of its use, never `int`, and Zed does not choose one for \
-             it{} [1.0]",
+            "Nothing gives the literal `1.0` a carrier. Try `y = (1, (2, 3)) == (1.0f64, (2r, 3))` \
+             instead.{} [1.0]",
             menu(&[
                 // The binder's value: DESIGN.md sec:diagnostics, "The value a fix names":
                 // "`y is true` for `y = 1 == 1.0f64`".
@@ -465,8 +463,9 @@ fn a_number_literal_compared_with_a_string_is_rejected() {
     assert_eq!(
         type_errors("f(positional x: String) = 1.5 != x;\n"),
         [format!(
-            "the literal `1.5` is a number, and `x` is a `String` here, which no number equals, \
-             so the comparison always gives the same answer{} [1.5]",
+            "the literal `1.5` is a number, and `x` is a `String` here, which no number equals, so \
+             the comparison always gives the same answer. Try `f(positional x: String) = \"1.5\" \
+             != x` instead.{} [1.5]",
             menu(&[
                 (
                     "f(positional x: String) = \"1.5\" != x;",
@@ -510,7 +509,8 @@ fn a_number_literal_compared_with_a_string_is_rejected() {
 fn never_equal(ty: &str, fixes: &[(&str, &str)]) -> String {
     format!(
         "the literal `1` is a number, and `x` is a `{ty}` here, which no number equals, so the \
-         comparison always gives the same answer{} [1]",
+         comparison always gives the same answer{}{} [1]",
+        tried(fixes),
         menu(fixes)
     )
 }
@@ -633,7 +633,7 @@ fn a_number_literal_compared_with_a_bool_or_a_tuple_is_rejected() {
         type_errors("f(positional x: bool) = (x && x) == 1;\n"),
         [format!(
             "the literal `1` is a number, compared by `==` with a `bool`, which no number \
-             equals, so the comparison always gives the same answer{} [1]",
+             equals, so the comparison always gives the same answer. Try `f(positional x: bool) = (x && x) == true` instead.{} [1]",
             menu(&refs(&truth(|b| format!(
                 "f(positional x: bool) = (x && x) == {b};"
             ))))
@@ -644,7 +644,8 @@ fn a_number_literal_compared_with_a_bool_or_a_tuple_is_rejected() {
         type_errors("f(positional x: (String, bool)) = x != 1;\n"),
         [format!(
             "the literal `1` is a number, and `x` is a `(String, bool)` here, which no number \
-             equals, so the comparison always gives `true`{} [1]",
+             equals, so the comparison always gives `true`. Try `f(positional x: (String, bool)) = \
+             true` instead.{} [1]",
             menu(&[(
                 "f(positional x: (String, bool)) = true;",
                 "the answer the comparison always gives"
@@ -655,7 +656,8 @@ fn a_number_literal_compared_with_a_bool_or_a_tuple_is_rejected() {
         type_errors("f(positional x: (int, int)) = 1.5 == x;\n"),
         [format!(
             "the literal `1.5` is a number, and `x` is a `(int, int)` here, which no number \
-             equals, so the comparison always gives `false`{} [1.5]",
+             equals, so the comparison always gives `false`. Try `f(positional x: (int, int)) = \
+             false` instead.{} [1.5]",
             menu(&[(
                 "f(positional x: (int, int)) = false;",
                 "the answer the comparison always gives"
@@ -670,9 +672,9 @@ fn a_number_literal_in_a_tuple_compared_with_a_component_that_holds_no_number_is
     assert_eq!(
         type_errors("f(positional p: (String, int)) = p == (1, 2);\n"),
         [format!(
-            "the literal `1` is a number, and the component of `p` it is compared with by `==` \
-             is a `String` here, which no number equals, so the comparison always gives the \
-             same answer{} [1]",
+            "the literal `1` is a number, and the component of `p` it is compared with by `==` is \
+             a `String` here, which no number equals, so the comparison always gives the same \
+             answer. Try `f(positional p: (String, int)) = p == (\"1\", 2)` instead.{} [1]",
             menu(&[(
                 "f(positional p: (String, int)) = p == (\"1\", 2);",
                 "compares the text"
@@ -684,7 +686,7 @@ fn a_number_literal_in_a_tuple_compared_with_a_component_that_holds_no_number_is
         [format!(
             "the literal `1` is a number, and the component of `p` it is compared with by `!=` \
              is a `bool` here, which no number equals, so the comparison always gives the same \
-             answer{} [1]",
+             answer. Try `f(positional p: (bool, int)) = (true, 2) != p` instead.{} [1]",
             menu(&refs(&truth(|b| format!(
                 "f(positional p: (bool, int)) = ({b}, 2) != p;"
             ))))

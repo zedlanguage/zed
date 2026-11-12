@@ -4,7 +4,7 @@
 //! menu of the suffixed forms, as is a `/` of integer literals. A literal with a suffix, such
 //! as `1r` or `0.5f64`, keeps its own carrier, and a bare one beside it takes that carrier.
 
-use super::{info, menu, type_errors};
+use super::{info, menu, tried, type_errors};
 use zed_kernel::{F64, Value};
 use zed_tests::step_helpers::l01_16_elaboration::value;
 
@@ -20,8 +20,8 @@ fn adopted(text: &str) -> Vec<Value> {
 /// `fixes`, each a corrected line and what the program then holds.
 fn unfixed(d: &str, fixes: &[(&str, &str)]) -> String {
     format!(
-        "the literal `{d}` is a decimal, and nothing here gives it a carrier; a decimal literal \
-         takes the carrier of its use, never `int`, and Zed does not choose one for it{} [{d}]",
+        "Nothing gives the literal `{d}` a carrier{}{} [{d}]",
+        tried(fixes),
         menu(fixes)
     )
 }
@@ -29,10 +29,12 @@ fn unfixed(d: &str, fixes: &[(&str, &str)]) -> String {
 /// The rejection of the decimal literal `d` where `int` is expected, with the one fix `line`,
 /// which writes the integer literal `int`.
 fn decimal_at_int(d: &str, line: &str, int: &str) -> String {
+    let fixes = [(line, &*format!("the literal is then the int {int}"))];
     format!(
         "the literal `{d}` is a decimal, and `int` is expected here; a decimal literal is never \
-         an `int`, even when its value is an integer{} [{d}]",
-        menu(&[(line, &format!("the literal is then the int {int}"))])
+         an `int`, even when its value is an integer{}{} [{d}]",
+        tried(&fixes),
+        menu(&fixes)
     )
 }
 
@@ -68,15 +70,18 @@ fn a_power_with_a_decimal_that_nothing_fixes_is_rejected_with_f64_alone() {
     );
     assert_eq!(
         type_errors("q = (3/2)^2;\n"),
-        [format!(
-            "the `/` in the value of `q` divides integer literals, and nothing here gives them a \
-             carrier; `/` has no arrow at `int`, `^` has none at `rat`, and Zed does not choose \
-             `f64` for it{} [(3/2)]",
-            menu(&[
+        [{
+            let fixes = [
                 ("q = (3.0f64/2)^2;", "q is 2.25"),
                 ("q = (f64(3)/2)^2;", "q is 2.25"),
-            ])
-        )]
+            ];
+            format!(
+                "Nothing gives the integer literals a carrier, `/` has none at `int`, and `^` none \
+                 at `rat`: `q = (3/2)^2`{}{} [(3/2)]",
+                tried(&fixes),
+                menu(&fixes)
+            )
+        }]
     );
     // Each repair checks: the bare `2` takes `f64` from the suffixed decimal.
     assert_eq!(value("root2 = 2^0.5f64;\n", "root2"), "1.4142135623730951");
@@ -99,12 +104,11 @@ fn a_slash_among_operations_on_literals_is_rejected_once_at_the_literal_that_fix
     //   q = (1.0f64 + 2) / (3 + 4);    q is 0.42857142857142855
     //   q = (1r + 2) / (3 + 4);        q is 3r/7r
     //   q = (f64(1) + 2) / (3 + 4);    q is 0.42857142857142855
-    let why = "nothing here gives them a carrier; `/` has no arrow at `int`, and Zed does not \
-               choose `f64` or `rat` for it";
-    let pow = "nothing here gives them a carrier; `/` has no arrow at `int`, `^` has none at \
-               `rat`, and Zed does not choose `f64` for it";
-    let slash =
-        |why: &str| format!("the `/` in the value of `y` divides integer literals, and {why}");
+    // Each headline quotes the binding, the value being the whole of it.
+    let why = "Nothing gives the integer literals a carrier, and `/` has none at `int`";
+    let pow = "Nothing gives the integer literals a carrier, `/` has none at `int`, and `^` none \
+               at `rat`";
+    let slash = |why: &str| why.to_string();
     let cases = [
         (
             "y = (1 + 2) / 3;\n",
@@ -150,7 +154,7 @@ fn a_slash_among_operations_on_literals_is_rejected_once_at_the_literal_that_fix
         // A literal in another base is offered in a cast alone, at `f64` and then `rat`.
         (
             "y = 0xFF / 2;\n",
-            format!("`y = 0xFF / 2` divides two integer literals, and {why}"),
+            slash(why),
             vec![
                 ("y = f64(0xFF) / 2;", "y is 127.5"),
                 ("y = rat(0xFF) / 2;", "y is 255r/2r"),
@@ -216,7 +220,12 @@ fn a_slash_among_operations_on_literals_is_rejected_once_at_the_literal_that_fix
     for (src, text, fixes, at) in &cases {
         assert_eq!(
             type_errors(src),
-            [format!("{text}{} [{at}]", menu(fixes))],
+            [format!(
+                "{text}: `{}`{}{} [{at}]",
+                src.trim_end().trim_end_matches(';'),
+                tried(fixes),
+                menu(fixes)
+            )],
             "{src}"
         );
         // Each fix checks, and the binder holds the value it names.
@@ -293,7 +302,8 @@ fn an_integer_literal_that_cannot_take_a_carrier_exactly_is_an_error() {
         type_errors(&format!("{f}y = f(9007199254740993);\n")),
         [format!(
             "the literal `9007199254740993` has no exact `f64`, and `f64` is expected here; an \
-             integer literal takes a carrier only where it is exact{} [9007199254740993]",
+             integer literal takes a carrier only where it is exact. Try `y = f(9007199254740992)` \
+             instead.{} [9007199254740993]",
             menu(&[(
                 "y = f(9007199254740992);",
                 "the literal is then 9007199254740992.0, the nearer f64 by ties to even"
