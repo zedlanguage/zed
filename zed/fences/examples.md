@@ -829,7 +829,7 @@ hit = cache[key] else fetch(key);                                               
 main(m: MainArgs) -> int {
   ticks = clock(period: 0.01r);                 // Stream(Instant), one instant per period
   m.stdout <- ticks.take(3).map(t -> "tick");
-  if m.args::len > 0 { 0 } else { 2 }           // m.args : the arguments keyed from 1, each a Utf8String
+  if m.args::len > 0 { 0 } else { 2 }           // m.args : the arguments keyed from 0, each a Utf8String
 }
 ```
 

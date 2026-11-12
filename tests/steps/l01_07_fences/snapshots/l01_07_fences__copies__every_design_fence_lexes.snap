@@ -53,7 +53,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   4 | }
   7 | main ( m : MainArgs ) -> int {
   8 | m . stdout <- str["checked"] ;
-  9 | «if» ( m . args [ 1₍10₎ ] «else» str[] ) == str["fail"] { 1₍10₎ } «else» { 0₍10₎ }
+  9 | «if» ( m . args [ 0₍10₎ ] «else» str[] ) == str["fail"] { 1₍10₎ } «else» { 0₍10₎ }
  10 | }
 == DESIGN.md [sec:ports] 2 L7
   2 | main ( m : MainArgs ) -> int {
