@@ -32,6 +32,11 @@ probe families are built by `rfx_case(name, n, tag)` in the same file. A probe i
 
 ## U1. X38: the escape's cell discovery reads super-linearly many empty cells
 
+**Solved (2026-11-12, hybrid cross-review round 3):** `cells_windows` reads each window of
+place offsets by method A or by the residue-filtered pair listing, whichever computed cost is
+lower; within n log n on every bench family, at most 0.962 of the sweep's instructions, answers
+equal on the 91 dumps (COMPLEXITY K106).
+
 **Program.** Lists `P \ (R_1 | ... | R_k)` where P is a positive list type with finite or
 cofinite heads and every R_i is a list chain that enters a shared tail at a different height.
 The escape solve (crates/zed-kernel/src/types/empty/escape.rs, module comment and lines about
