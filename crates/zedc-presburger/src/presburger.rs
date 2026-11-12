@@ -4757,18 +4757,13 @@ fn learn(p: &Parts, rest: Vec<Rc<Parts>>, d: &Parts, implied: &mut Near) {
     // and `x <= v`), `learn`'s one-sided binary search skips `x`, so cloning `p.ors` (`O(k)` per
     // refuted arm, `O(k^2)` across `O(k)` refuted arms on `ss_untied` cascade) did zero work.
     // Detecting equalities upfront skips `p.ors` cloning when no non-equality one-sided bound
-    // exists, and records `[only]`'s unary bounds after the search loop so `implied.refutes`
-    // never prematurely aborts `LIN-probe-refute` on `cross`. Test:
-    // `l01_38_presburger::slack_scale::ss_decide_scales`.
-    let only_bounds: Vec<(Atom, Option<Int>, Option<Int>)> = match rest.as_slice() {
-        [only] if !slack::no_slack() && only.ors.is_empty() => only
-            .cons
-            .iter()
-            .filter_map(one_bound)
-            .map(|(a, lo, hi)| (a.clone(), lo, hi))
-            .collect(),
-        _ => Vec::new(),
-    };
+    // exists. Test: `l01_38_presburger::slack_scale::ss_decide_scales`.
+    // The unary bounds of a lone remaining disjunct (`rest == [only]`) are implied, but they
+    // are not recorded in `implied`: they changed the later point searches of [`probe`], which
+    // then missed the point the search without them finds first, 2.08 times the instructions
+    // of `decide` on two overlapping sums of 8 two-way disjunctions (PRES-disj-cost-xr), and
+    // they answered no case that is not answered without them (the seed-777 shared-sum
+    // formulas, 3,000 cases, and the `cross` family of `l01_25_preimage_catalog::s22`).
     let mut eq_atoms: BTreeMap<&Atom, (Option<Int>, Option<Int>)> = BTreeMap::new();
     for (x, lo, hi) in d.cons.iter().filter_map(one_bound) {
         let e = eq_atoms.entry(x).or_insert((None, None));
@@ -4885,9 +4880,6 @@ fn learn(p: &Parts, rest: Vec<Rc<Parts>>, d: &Parts, implied: &mut Near) {
                 implied.tighten(x, None, Some(w - &Int::ONE));
             }
         }
-    }
-    for (a, lo, hi) in only_bounds {
-        implied.tighten(&a, lo, hi);
     }
 }
 
