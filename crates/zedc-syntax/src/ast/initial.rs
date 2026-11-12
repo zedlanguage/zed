@@ -9,7 +9,7 @@
 //! = e` and `with x[-2] = e` on a statement of a loop, and the removed form `mutable x = e;`,
 //! are found by the parser (`crate::parse`).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use num_bigint::BigInt;
 
@@ -17,7 +17,7 @@ use super::builder::{Builder, Level};
 use super::sentinel::{End, Entry, Keys, Sentinels, keys_of};
 use super::{
     BinaryOp, CARRY_FORWARD, Error, Expr, ExprKind, Field, IndexKey, Initial, Note, Pattern,
-    RangeEnd, Stmt, StmtKind, StrPart, Target, UnaryOp,
+    RangeEnd, Stmt, StmtKind, StrPart, Target, TypeKind, UnaryOp,
 };
 use crate::lex::{Span, Tok, Token};
 use zedc_base::rejection::Row;
@@ -435,6 +435,76 @@ struct Update<'e> {
     branch: Option<Branch>,
 }
 
+/// A `.` call on a variable or a path into it, `c.bump(3)`, `grid[i].relax()` or `p.pos.m()`, or a `.` read
+/// of a member, `c.tick` (a method declared without parentheses is called so): an update when
+/// written with `*.`, when its method writes the next receiver. The variable; the span of the
+/// call; where the receiver ends, before the `.`; whether the receiver is the variable itself; the
+/// innermost construct whose part holds it;
+/// the statement whose whole value it is, if any; and whether its value is dropped, as the value
+/// of an expression statement or a branch, arm or export of one is.
+struct DotCall<'e> {
+    name: &'e str,
+    method: &'e str,
+    span: Span,
+    of_end: usize,
+    bare: bool,
+    branch: Option<Branch>,
+    stmt: Option<&'e Stmt>,
+    dropped: bool,
+}
+
+/// The repair of a [`DotCall`] whose method writes the next receiver: the call as written,
+/// `c.bump(3)`; the call written with `*.`, `c*.bump(3)`; and the text the repair replaces, the
+/// whole statement when the call is one's whole value, with what replaces it (`_ = c*.bump(3);`
+/// in place of `c.bump(3);`, since a statement drops no declared result).
+struct Fix {
+    span: Span,
+    branch: Option<Branch>,
+    call: String,
+    star: String,
+    replaced: String,
+    code: String,
+}
+
+/// `items` joined as a sentence lists them: `a`, `a and b`, `a, b and c`.
+fn and_list(items: impl IntoIterator<Item = String>) -> String {
+    let mut items: Vec<String> = items.into_iter().collect();
+    match items.pop() {
+        None => String::new(),
+        Some(last) if items.is_empty() => last,
+        Some(last) => format!("{} and {last}", items.join(", ")),
+    }
+}
+
+/// That the `.` calls of `fixes` do not update `name`: "`c.bump(3)` does not update `c`".
+fn not_updating(name: &str, fixes: &[Fix]) -> String {
+    let verb = if fixes.len() == 1 { "does" } else { "do" };
+    let calls = and_list(fixes.iter().map(|f| format!("`{}`", f.call)));
+    format!("{calls} {verb} not update `{name}`")
+}
+
+/// The repair note of the `.` calls of `fixes`, at the first: each call written with `*.` in
+/// place of what it replaces, and `carry`, the `initial` statement with `with carryForward` in
+/// place of the statement as written, when the calls run on some paths only.
+fn dot_repair(fixes: &[Fix], carry: Option<(&str, &str)>) -> Note {
+    let mut parts: Vec<String> = fixes
+        .iter()
+        .map(|f| format!("`{}` in place of `{}`", f.code, f.replaced))
+        .collect();
+    parts.extend(carry.map(|(code, written)| format!("`{code}` in place of `{written}`")));
+    Note {
+        span: fixes[0].span,
+        text: format!("repair: {}", and_list(parts)),
+    }
+}
+
+/// What [`every_path`] finds in a step.
+struct Walk<'e> {
+    must: Must<'e>,
+    updates: Vec<Update<'e>>,
+    dots: Vec<DotCall<'e>>,
+}
+
 /// The variables every path through a node updates: all of them when every path ends in
 /// `break`, and otherwise a set.
 enum Must<'e> {
@@ -613,6 +683,10 @@ enum Task<'e> {
 /// not entered, nor are the values of `initial` statements, computed once before the first
 /// step, or the bodies of functions and methods, which are not part of a step.
 ///
+/// The walk also lists each `.` call on a variable ([`DotCall`]), which updates nothing; one
+/// whose span is in `counted` is taken as an update, as it would be written with `*.`, to ask
+/// whether rewriting those calls would complete every path (empty but on a rejection).
+///
 /// One visit of each node, by a work list with a stack of results, so the depth of the code
 /// costs no stack. A node's result is the union of its parts that always run with the meet of
 /// its alternatives.
@@ -625,8 +699,18 @@ enum Task<'e> {
 // strictly linear method, a check per variable over the tree of its updates' common ancestors
 // with constant-time ancestor queries, was weighed and not used: it needs an ancestor index of
 // the step and a second pass, for at most a log factor (CHK-update-every-path-cases).
-fn every_path<'e>(stmts: &'e [Stmt], qualifiers: &HashSet<&str>) -> (Must<'e>, Vec<Update<'e>>) {
+fn every_path<'e>(
+    stmts: &'e [Stmt],
+    qualifiers: &HashSet<&str>,
+    counted: &HashSet<Span>,
+) -> Walk<'e> {
     let mut updates = Vec::new();
+    let mut dots: Vec<DotCall<'e>> = Vec::new();
+    // The statements whose whole value is a call or a member read, by the span of the value.
+    let mut whole: HashMap<Span, &'e Stmt> = HashMap::new();
+    // The expressions whose value is dropped: the value of an expression statement, and each
+    // branch, arm and export of one whose value is dropped.
+    let mut dropped: HashSet<Span> = HashSet::new();
     let mut results: Vec<(Role, Must<'e>)> = Vec::new();
     let mut tasks: Vec<Task<'e>> = vec![Task::Join {
         kids: stmts.len(),
@@ -663,6 +747,14 @@ fn every_path<'e>(stmts: &'e [Stmt], qualifiers: &HashSet<&str>) -> (Must<'e>, V
                 // The variables the statement itself updates, and its parts.
                 let mut own: HashSet<&'e str> = HashSet::new();
                 let mut kids: Vec<Task<'e>> = Vec::new();
+                if let StmtKind::Bind { value: v, .. } | StmtKind::Expr(v) = &s.kind
+                    && matches!(v.kind, ExprKind::Call { .. } | ExprKind::Member { .. })
+                {
+                    whole.insert(v.span, s);
+                }
+                if let StmtKind::Expr(v) = &s.kind {
+                    dropped.insert(v.span);
+                }
                 let mut always = |x: &'e Expr| kids.push(Task::Expr(x, branch, Role::Always));
                 match &s.kind {
                     StmtKind::Bind { targets, value } => {
@@ -745,6 +837,7 @@ fn every_path<'e>(stmts: &'e [Stmt], qualifiers: &HashSet<&str>) -> (Must<'e>, V
                 }
             }
             Task::Expr(e, branch, role) => {
+                let gone = dropped.contains(&e.span);
                 let inside = |what| Some(Branch { span: e.span, what });
                 let mut own = Must::none();
                 let mut kids: Vec<Task<'e>> = Vec::new();
@@ -781,6 +874,27 @@ fn every_path<'e>(stmts: &'e [Stmt], qualifiers: &HashSet<&str>) -> (Must<'e>, V
                         own = Must::All;
                         always(a);
                     }
+                    ExprKind::Member {
+                        of,
+                        name: method,
+                        safe: false,
+                    } if receiver(of, qualifiers).is_some() => {
+                        let (name, _) = receiver(of, qualifiers).expect("matched by the guard");
+                        if counted.contains(&e.span) {
+                            own = Must::Names(HashSet::from([name]));
+                        }
+                        dots.push(DotCall {
+                            name,
+                            method,
+                            span: e.span,
+                            of_end: of.span.end,
+                            bare: matches!(of.kind, ExprKind::Name(_)),
+                            branch,
+                            stmt: whole.get(&e.span).copied(),
+                            dropped: gone,
+                        });
+                        always(of);
+                    }
                     ExprKind::Unary(_, a)
                     | ExprKind::Is { of: a, .. }
                     | ExprKind::Member { of: a, .. }
@@ -816,7 +930,33 @@ fn every_path<'e>(stmts: &'e [Stmt], qualifiers: &HashSet<&str>) -> (Must<'e>, V
                         named,
                         ..
                     } => {
-                        always(callee);
+                        // A `.` call is recorded with the span of the whole call, its arguments
+                        // included; its member read, the callee, is not recorded again.
+                        match &callee.kind {
+                            ExprKind::Member {
+                                of,
+                                name: method,
+                                safe: false,
+                            } if receiver(of, qualifiers).is_some() => {
+                                let (name, _) =
+                                    receiver(of, qualifiers).expect("matched by the guard");
+                                if counted.contains(&e.span) {
+                                    own = Must::Names(HashSet::from([name]));
+                                }
+                                dots.push(DotCall {
+                                    name,
+                                    method,
+                                    span: e.span,
+                                    of_end: of.span.end,
+                                    bare: matches!(of.kind, ExprKind::Name(_)),
+                                    branch,
+                                    stmt: whole.get(&e.span).copied(),
+                                    dropped: gone,
+                                });
+                                always(of);
+                            }
+                            _ => always(callee),
+                        }
                         positional.iter().for_each(&mut always);
                         named.iter().for_each(|(_, x)| always(x));
                     }
@@ -858,12 +998,24 @@ fn every_path<'e>(stmts: &'e [Stmt], qualifiers: &HashSet<&str>) -> (Must<'e>, V
                         kids.push(Task::Expr(body, b, Role::Some));
                     }
                     ExprKind::Block(stmts) => {
+                        if gone
+                            && let Some(Stmt {
+                                kind: StmtKind::Return(es),
+                                ..
+                            }) = stmts.last()
+                            && let [x] = &es[..]
+                        {
+                            dropped.insert(x.span);
+                        }
                         kids.extend(stmts.iter().map(|s| Task::Stmt(s, branch, Role::Always)));
                     }
                     ExprKind::Match { of, arms } => {
                         always(of);
                         let b = inside(Construct::Match);
                         for a in arms {
+                            if gone {
+                                dropped.insert(a.body.span);
+                            }
                             kids.extend(a.guard.iter().map(|g| Task::Expr(g, b, Role::Some)));
                             kids.push(Task::Expr(&a.body, b, Role::Alt));
                         }
@@ -879,6 +1031,9 @@ fn every_path<'e>(stmts: &'e [Stmt], qualifiers: &HashSet<&str>) -> (Must<'e>, V
                         otherwise,
                     } => {
                         always(cond);
+                        if gone {
+                            dropped.extend([then.span, otherwise.span]);
+                        }
                         let b = inside(Construct::If);
                         kids.push(Task::Expr(then, b, Role::Alt));
                         kids.push(Task::Expr(otherwise, b, Role::Alt));
@@ -900,7 +1055,11 @@ fn every_path<'e>(stmts: &'e [Stmt], qualifiers: &HashSet<&str>) -> (Must<'e>, V
     let Some((_, must)) = results.pop() else {
         unreachable!("the walk of a body leaves one result");
     };
-    (must, updates)
+    Walk {
+        must,
+        updates,
+        dots,
+    }
 }
 
 /// What a name of a loop is, for the message of an `initial` value that reads it.
@@ -1139,10 +1298,14 @@ impl Builder<'_, '_> {
         }
         // What the step updates, on any path; a variable not carried must be updated on every
         // path.
-        let (must, mut updates) = every_path(stmts, self.qualifiers);
+        let Walk {
+            must,
+            mut updates,
+            dots,
+        } = every_path(stmts, self.qualifiers, &HashSet::new());
         let updated: HashSet<&str> = updates.iter().map(|u| u.name).collect();
         if sites {
-            self.initial_sites(label, at, stmts, &updated, &locals)?;
+            self.initial_sites(label, at, stmts, &updated, &locals, &dots)?;
         }
         let Must::Names(must) = must else {
             return Ok(());
@@ -1152,14 +1315,15 @@ impl Builder<'_, '_> {
             Some(first) => {
                 let name = first.name;
                 let of_name: Vec<&Update> = updates.iter().filter(|u| u.name == name).collect();
-                Err(self.not_every_path(name, &of_name, stmts, at))
+                Err(self.not_every_path(name, &of_name, stmts, at, &dots))
             }
             None => Ok(()),
         }
     }
 
     /// The checks of [`Self::loop_initials`] on the `initial` statements and indexed definitions
-    /// among `stmts`, given what the body updates and defines on each step.
+    /// among `stmts`, given what the body updates and defines on each step, and its `.` calls on
+    /// variables.
     fn initial_sites(
         &self,
         label: Option<&str>,
@@ -1167,6 +1331,7 @@ impl Builder<'_, '_> {
         stmts: &[Stmt],
         updated: &HashSet<&str>,
         locals: &HashSet<&str>,
+        dots: &[DotCall],
     ) -> Result<(), Error> {
         // The entries each site gives, compared by the values of their keys.
         let mut sentinels = Sentinels::new(entries_of(stmts));
@@ -1185,7 +1350,7 @@ impl Builder<'_, '_> {
                 }
                 for (n, _) in &i.names {
                     if !updated.contains(n.as_str()) {
-                        return Err(self.not_updated(s, n, at));
+                        return Err(self.not_updated(s, n, at, stmts, dots));
                     }
                 }
                 let found = walk(&[&i.value], &[]);
@@ -1284,9 +1449,16 @@ impl Builder<'_, '_> {
         }
     }
 
-    /// Row "A loop variable not updated on every path of a step", for `name`, whose updates,
-    /// each a `*.` call, are `updates`, in written order.
-    fn not_every_path(&self, name: &str, updates: &[&Update], stmts: &[Stmt], at: Span) -> Error {
+    /// Row "A loop variable not updated on every path of a step", for `name`, whose updates are
+    /// `updates`, in written order, among the `.` calls `dots` of the step.
+    fn not_every_path(
+        &self,
+        name: &str,
+        updates: &[&Update],
+        stmts: &[Stmt],
+        at: Span,
+        dots: &[DotCall],
+    ) -> Error {
         let branch = |u: &Update| {
             let Some(b) = u.branch else {
                 unreachable!("an update on every path leaves no path without one")
@@ -1312,6 +1484,14 @@ impl Builder<'_, '_> {
             }
             [] => unreachable!("a variable updated on no path is not a candidate"),
         };
+        // The `.` calls that, written with `*.`, would update `name`: when they complete every
+        // path, they are the repair.
+        let fixes = self.dot_fixes(name, dots, stmts);
+        let covers = !fixes.is_empty() && self.covers(name, &fixes, stmts);
+        let where_ = match covers {
+            true => format!("{where_}, and {}", not_updating(name, &fixes)),
+            false => where_,
+        };
         let mut notes = vec![Note {
             span: at,
             text: format!(
@@ -1335,6 +1515,10 @@ impl Builder<'_, '_> {
                 span: b.span,
                 text: format!("the {} that `{call}` stands in", b.what.name()),
             });
+        }
+        notes.extend(self.dot_notes(name, &fixes));
+        if covers {
+            notes.push(dot_repair(&fixes, None));
         }
         let keyless = stmts.iter().find(|t| {
             initial_of(unwrapped(t).0)
@@ -1370,13 +1554,15 @@ impl Builder<'_, '_> {
                  … {{ … }} else {{ {name} }};`"
             ),
         });
+        let try_ = match covers {
+            true => and_list(fixes.iter().map(|f| format!("`{}`", f.code))),
+            false => format!("`{code}`"),
+        };
         Error {
             row: Some(Row::NotEveryPath),
             menu: String::new(),
             span: updates[0].span,
-            message: format!(
-                "Not updated on every path of a step: {where_}. Try `{code}` instead."
-            ),
+            message: format!("Not updated on every path of a step: {where_}. Try {try_} instead."),
             notes,
         }
     }
@@ -1411,55 +1597,218 @@ impl Builder<'_, '_> {
         }
     }
 
-    /// Row "An `initial` statement for a name the loop does not update".
-    fn not_updated(&self, s: &Stmt, name: &str, at: Span) -> Error {
+    /// Row "An `initial` statement for a name the loop does not update", among the statements
+    /// `stmts` of the loop's body, whose `.` calls on variables are `dots`. When `.` calls whose
+    /// methods write the next receiver are all that leave `name` without an update, the message
+    /// names them and offers them written with `*.`, and `with carryForward` beside them when
+    /// they run on some paths only.
+    fn not_updated(
+        &self,
+        s: &Stmt,
+        name: &str,
+        at: Span,
+        stmts: &[Stmt],
+        dots: &[DotCall],
+    ) -> Error {
         let written = self.text_of(s.span);
         let i = initial_of(unwrapped(s).0);
         let value = i.map_or("…", |i| self.text_of(i.value.span));
-        // A carried variable is still one the loop updates: `with carryForward` keeps its value
-        // on a step that does not update it, and makes no name a loop variable by itself.
-        let why = if i.is_some_and(|i| i.carry) {
-            format!(
-                "`with {CARRY_FORWARD}` keeps the value of a variable the loop updates on a step \
-                 that does not update it, and does not make `{name}` a variable of the loop: a \
-                 value no step changes is a constant, written as a binding before the loop."
-            )
-        } else {
-            format!(
-                "An `initial` statement gives a value before the first step only, so `{name}` \
-                 would have no value at any later step."
-            )
+        let carried = i.is_some_and(|i| i.carry);
+        let fixes = self.dot_fixes(name, dots, stmts);
+        let mut notes = vec![Note {
+            span: at,
+            text: format!("the loop, none of whose statements updates `{name}`"),
+        }];
+        notes.extend(self.dot_notes(name, &fixes));
+        // The repair by the `.` calls: the calls written with `*.`, and when they leave some path
+        // without an update, `with carryForward` on the statement, which needs it without keys.
+        let carry = match fixes.is_empty() || carried || self.covers(name, &fixes, stmts) {
+            true => Some(None),
+            false => i.filter(|i| i.keys.is_empty()).map(|_| {
+                let head = written.strip_suffix(';').unwrap_or(written).trim_end();
+                Some((format!("{head} with {CARRY_FORWARD};"), written))
+            }),
         };
+        let message = match carry {
+            Some(carry) if !fixes.is_empty() => {
+                notes.push(dot_repair(
+                    &fixes,
+                    carry.as_ref().map(|(c, w)| (c.as_str(), *w)),
+                ));
+                let mut codes: Vec<String> =
+                    fixes.iter().map(|f| format!("`{}`", f.code)).collect();
+                codes.extend(carry.map(|(c, _)| format!("`{c}`")));
+                format!(
+                    "No statement of this loop updates `{name}`: {}. Try {} instead.",
+                    not_updating(name, &fixes),
+                    and_list(codes)
+                )
+            }
+            _ => {
+                // A carried variable is still one the loop updates: `with carryForward` keeps
+                // its value on a step that does not update it, and makes no name a loop
+                // variable by itself.
+                let why = if carried {
+                    format!(
+                        "`with {CARRY_FORWARD}` keeps the value of a variable the loop updates on \
+                         a step that does not update it, and does not make `{name}` a variable of \
+                         the loop: a value no step changes is a constant, written as a binding \
+                         before the loop."
+                    )
+                } else {
+                    format!(
+                        "An `initial` statement gives a value before the first step only, so \
+                         `{name}` would have no value at any later step."
+                    )
+                };
+                format!(
+                    "`{written}` gives `{name}` a value before step 0, and no statement of this \
+                     loop updates `{name}`: none writes `{name}' = …`, `{name}' <- e` or \
+                     `{name}*.m(…)`. {why}"
+                )
+            }
+        };
+        notes.push(Note {
+            span: s.span,
+            text: format!(
+                "repair: add the update the loop is meant to make, `{name}' = …;`, to its body"
+            ),
+        });
+        notes.push(Note {
+            span: at,
+            text: format!(
+                "repair: `{name} = {value};` written before the loop, and `{written}` deleted, for \
+                 a value that does not change"
+            ),
+        });
         Error {
             row: Some(Row::InitialNotUpdated),
             menu: String::new(),
             span: s.span,
-            message: format!(
-                "`{written}` gives `{name}` a value before step 0, and no statement of this loop \
-                 updates `{name}`: none writes `{name}' = …`, `{name}' <- e` or \
-                 `{name}*.m(…)`. {why}"
-            ),
-            notes: vec![
-                Note {
-                    span: at,
-                    text: format!("the loop, none of whose statements updates `{name}`"),
-                },
-                Note {
-                    span: s.span,
-                    text: format!(
-                        "repair: add the update the loop is meant to make, `{name}' = …;`, to \
-                         its body"
-                    ),
-                },
-                Note {
-                    span: at,
-                    text: format!(
-                        "repair: `{name} = {value};` written before the loop, and `{written}` \
-                         deleted, for a value that does not change"
-                    ),
-                },
-            ],
+            message,
+            notes,
         }
+    }
+
+    /// The `.` calls among `dots` on `name` whose method writes the next receiver, so that the
+    /// call written with `*.` updates `name`, each with its repair ([`Fix`]). The method is the
+    /// one declared on the type of `name` when its `initial` statement shows the type, as
+    /// `initial c: Counter = …` or `initial c = Counter(…)`, and the call's receiver is `name`
+    /// itself, not a path into it such as `c.pos`; otherwise every method of that name
+    /// the source declares must agree on what it writes and on its declared result. A call on
+    /// `name'`, a call whose method the source does not declare, and a call of a method with no
+    /// declared result whose value is used, not dropped (`d = c.tick();` or `x' = if t > 1 {
+    /// c.tick() } else { c };`, a new receiver the program reads, which with `*.` would be
+    /// nothing), are left out.
+    fn dot_fixes(&self, name: &str, dots: &[DotCall], stmts: &[Stmt]) -> Vec<Fix> {
+        let ty = stmts
+            .iter()
+            .filter_map(|t| initial_of(unwrapped(t).0))
+            .find(|i| i.keys.is_empty() && i.names.iter().any(|(n, _)| n == name))
+            .and_then(|i| match (&i.ty, &i.value.kind) {
+                (Some(t), _) => match &t.kind {
+                    TypeKind::Name(t) => Some(t.as_str()),
+                    _ => None,
+                },
+                (None, ExprKind::Call { callee, .. }) => match &callee.kind {
+                    ExprKind::Name(t) => Some(t.as_str()),
+                    _ => None,
+                },
+                _ => None,
+            });
+        let mut out = Vec::new();
+        for d in dots.iter().filter(|d| d.name == name) {
+            let infos = self.methods.named(d.method);
+            // The type of `name` is the receiver's type only when the receiver is `name` itself.
+            let of_type = ty
+                .filter(|_| d.bare)
+                .and_then(|t| infos.iter().find(|m| m.receiver == t));
+            let info = of_type.or_else(|| match infos {
+                [first, rest @ ..] => rest
+                    .iter()
+                    .all(|m| m.mutates == first.mutates && m.result == first.result)
+                    .then_some(first),
+                [] => None,
+            });
+            let Some(info) = info.filter(|m| m.mutates && (m.result || d.dropped)) else {
+                continue;
+            };
+            let receiver = &self.text[d.span.start..d.of_end];
+            if receiver
+                .split(['[', '.'])
+                .next()
+                .unwrap_or("")
+                .trim_end()
+                .ends_with('\'')
+            {
+                continue;
+            }
+            let Some(rest) = self.text[d.of_end..d.span.end]
+                .trim_start()
+                .strip_prefix('.')
+            else {
+                continue;
+            };
+            let call = self.text_of(d.span).to_string();
+            let star = format!("{receiver}*.{}", rest.trim_start());
+            let (replaced, code) = match d.stmt.map(|s| (s, &s.kind)) {
+                Some((s, StmtKind::Expr(_) | StmtKind::Bind { .. })) => {
+                    let bind = matches!(s.kind, StmtKind::Bind { .. });
+                    let before = &self.text[s.span.start..d.span.start];
+                    let after = &self.text[d.span.end..s.span.end];
+                    let discard = if info.result && !bind { "_ = " } else { "" };
+                    (
+                        self.text_of(s.span).to_string(),
+                        format!("{discard}{before}{star}{after}"),
+                    )
+                }
+                _ => (call.clone(), star.clone()),
+            };
+            out.push(Fix {
+                span: d.span,
+                branch: d.branch,
+                call,
+                star,
+                replaced,
+                code,
+            });
+        }
+        // The walk visits calls in no fixed order; notes and repairs follow the source.
+        out.sort_by_key(|f| f.span.start);
+        out
+    }
+
+    /// Whether every path of a step through `stmts` updates `name` once the `.` calls of `fixes`
+    /// are written with `*.`: one more walk of the step, O(n log n) as [`every_path`] is, made
+    /// once, for the rejection.
+    fn covers(&self, name: &str, fixes: &[Fix], stmts: &[Stmt]) -> bool {
+        let counted: HashSet<Span> = fixes.iter().map(|f| f.span).collect();
+        match every_path(stmts, self.qualifiers, &counted).must {
+            Must::All => true,
+            Must::Names(m) => m.contains(name),
+        }
+    }
+
+    /// A note at each `.` call of `fixes`: that it does not update `name`, and the paths it runs
+    /// on when they are not all of them.
+    fn dot_notes(&self, name: &str, fixes: &[Fix]) -> Vec<Note> {
+        fixes
+            .iter()
+            .map(|f| {
+                let paths = match f.branch {
+                    Some(b) => format!("; it runs only on the paths through {}", b.what.part()),
+                    None => String::new(),
+                };
+                Note {
+                    span: f.span,
+                    text: format!(
+                        "`{}` does not update `{name}`: a `.` call never updates its receiver, \
+                         and `{}` does{paths}",
+                        f.call, f.star
+                    ),
+                }
+            })
+            .collect()
     }
 
     /// Row "An `initial` value that reads a name of its own loop", for the read of `n` at

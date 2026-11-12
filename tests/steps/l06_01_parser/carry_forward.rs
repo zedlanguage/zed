@@ -1081,3 +1081,227 @@ fn the_must_assign_check_scales() {
         });
     }
 }
+
+/// A struct with methods that update their receiver (`tick`, `add`) and one that reads it
+/// (`peek`), for the loops below.
+const COUNTER: &str = "struct Counter { n: int }\nCounter.tick() { n' = n + 1; }\nCounter.add(positional by) { n' = n + by; }\nCounter.peek() = n;\n";
+
+/// A unit with [`COUNTER`] and a loop with `initial c = Counter(n: 0);` and the statements
+/// `body`.
+fn c_loop(body: &[&str]) -> String {
+    let mut stmts = vec!["initial c = Counter(n: 0);"];
+    stmts.extend(body);
+    format!("{COUNTER}{}", t_loop(&stmts))
+}
+
+/// Checks that the statements of the unit `text` build. Methods are not compiled by this zedc
+/// yet, so a unit with them is checked by building its statements, which is where these rows
+/// are produced.
+#[track_caller]
+fn builds(text: &str) {
+    let tokens = lex(text).unwrap();
+    let tree = parse(text, &tokens, "Unit", TOP).unwrap();
+    if let Err(e) = unit(text, &tokens, &tree) {
+        panic!("refused: {text}\n{e:?}");
+    }
+}
+
+/// The note at the loop of row "An `initial` statement in a loop that never updates its
+/// variable", for `c`.
+const NONE_NOTE: &str = "the loop, none of whose statements updates `c` [loop t { …]";
+/// The two repairs that row offers for `c`, after any repair with `*.`.
+const NONE_REPAIRS: [&str; 2] = [
+    "repair: add the update the loop is meant to make, `c' = …;`, to its body [initial c = \
+     Counter(n: 0);]",
+    "repair: `c = Counter(n: 0);` written before the loop, and `initial c = Counter(n: 0);` \
+     deleted, for a value that does not change [loop t { …]",
+];
+
+/// A `.` call never updates its receiver (DESIGN.md sec:generations, "`.` never mutates"): a
+/// loop variable whose only calls are `.` calls of methods that write primes is not updated,
+/// and the message names each call and writes the repair with `*.`, the update call.
+#[test]
+fn a_dot_call_does_not_update_its_receiver() {
+    let mut notes = vec![
+        NONE_NOTE,
+        "`c.add(3)` does not update `c`: a `.` call never updates its receiver, and `c*.add(3)` \
+         does [c.add(3)]",
+        "repair: `c*.add(3);` in place of `c.add(3);` [c.add(3)]",
+    ];
+    notes.extend(NONE_REPAIRS);
+    let src = c_loop(&["c.add(3);"]);
+    let e = refusal(&src);
+    assert_eq!(e.row, Some(Row::InitialNotUpdated), "{e:?}");
+    assert_eq!(&src[e.span.start..e.span.end], "initial c = Counter(n: 0);");
+    assert_eq!(
+        e.message,
+        "No statement of this loop updates `c`: `c.add(3)` does not update `c`. Try \
+         `c*.add(3);` instead."
+    );
+    assert_eq!(super::initial::notes(&src, &e), notes);
+    builds(&c_loop(&["c*.add(3);"]));
+    builds(&c_loop(&["c' = c;", "c.add(3);"]));
+    builds(&format!(
+        "{COUNTER}c = Counter(n: 0);\n{}",
+        t_loop(&["c.add(3);"])
+    ));
+
+    // Two calls: both are named, in the order they are written, and one repair rewrites both.
+    let src = c_loop(&["c.tick();", "c.add(2);"]);
+    let e = refusal(&src);
+    assert_eq!(e.row, Some(Row::InitialNotUpdated), "{e:?}");
+    assert_eq!(
+        e.message,
+        "No statement of this loop updates `c`: `c.tick()` and `c.add(2)` do not update `c`. \
+         Try `c*.tick();` and `c*.add(2);` instead."
+    );
+    let mut want = vec![
+        NONE_NOTE,
+        "`c.tick()` does not update `c`: a `.` call never updates its receiver, and \
+         `c*.tick()` does [c.tick()]",
+        "`c.add(2)` does not update `c`: a `.` call never updates its receiver, and \
+         `c*.add(2)` does [c.add(2)]",
+        "repair: `c*.tick();` in place of `c.tick();` and `c*.add(2);` in place of `c.add(2);` \
+         [c.tick()]",
+    ];
+    want.extend(NONE_REPAIRS);
+    assert_eq!(super::initial::notes(&src, &e), want);
+    builds(&c_loop(&["c*.tick();", "c*.add(2);"]));
+
+    // A `.` call on a field of the variable: `*.` on the path updates the variable the path
+    // starts at, and the method is the one of the field's type, not of the variable's.
+    let pos = "struct Pos { x: int }\nPos.shift() { x' = x + 1; }\nstruct P { pos: Pos }\n";
+    let src = format!(
+        "{pos}{}",
+        t_loop(&["initial p = P(pos: Pos(x: 0));", "p.pos.shift();"])
+    );
+    let e = refusal(&src);
+    assert_eq!(e.row, Some(Row::InitialNotUpdated), "{e:?}");
+    assert_eq!(
+        e.message,
+        "No statement of this loop updates `p`: `p.pos.shift()` does not update `p`. Try \
+         `p.pos*.shift();` instead."
+    );
+    builds(&format!(
+        "{pos}{}",
+        t_loop(&["initial p = P(pos: Pos(x: 0));", "p.pos*.shift();"])
+    ));
+}
+
+/// A `.` call on some paths only: its note names the part of the step it runs in. When the
+/// other paths update the variable, the row is "not updated on every path" and the `*.` repair
+/// completes it; when no other path does, `*.` alone leaves the other paths, so the repair also
+/// carries the variable forward.
+#[test]
+fn a_dot_call_on_some_paths_is_named_with_its_part() {
+    let src = c_loop(&["if t > 1 { c*.tick() } else { c.add(2) };"]);
+    let e = refusal(&src);
+    assert_eq!(e.row, Some(Row::NotEveryPath), "{e:?}");
+    assert_eq!(&src[e.span.start..e.span.end], "c*.tick");
+    assert_eq!(
+        e.message,
+        "Not updated on every path of a step: `c*.tick` updates `c` only in a branch of the \
+         `if`, and `c.add(2)` does not update `c`. Try `c*.add(2)` instead."
+    );
+    assert_eq!(
+        super::initial::notes(&src, &e),
+        [
+            LOOP_NOTE,
+            "`c*.tick` updates `c` only on the paths through a branch of the `if` [c*.tick]",
+            "the `if` that `c*.tick` stands in [if t > 1 { c*.tick() } else { c.add(2) }]",
+            "`c.add(2)` does not update `c`: a `.` call never updates its receiver, and \
+             `c*.add(2)` does; it runs only on the paths through a branch of the `if` \
+             [c.add(2)]",
+            "repair: `c*.add(2)` in place of `c.add(2)` [c.add(2)]",
+            "repair: `initial c = Counter(n: 0) with carryForward;` in place of `initial c = \
+             Counter(n: 0);`, so a step that does not update `c` keeps its value [initial c = \
+             Counter(n: 0);]",
+            "repair: update `c` on every path, with the update written where the branch is \
+             chosen and `c` itself on the paths that leave it as it is: `c' = if … { … } else { \
+             c };` [c*.tick]",
+        ]
+    );
+    builds(&c_loop(&["if t > 1 { c*.tick() } else { c*.add(2) };"]));
+
+    let src = c_loop(&["if t > 1 { c.tick() } else { 0 };"]);
+    let e = refusal(&src);
+    assert_eq!(e.row, Some(Row::InitialNotUpdated), "{e:?}");
+    assert_eq!(
+        e.message,
+        "No statement of this loop updates `c`: `c.tick()` does not update `c`. Try \
+         `c*.tick()` and `initial c = Counter(n: 0) with carryForward;` instead."
+    );
+    let mut want = vec![
+        NONE_NOTE,
+        "`c.tick()` does not update `c`: a `.` call never updates its receiver, and \
+         `c*.tick()` does; it runs only on the paths through a branch of the `if` [c.tick()]",
+        "repair: `c*.tick()` in place of `c.tick()` and `initial c = Counter(n: 0) with \
+         carryForward;` in place of `initial c = Counter(n: 0);` [c.tick()]",
+    ];
+    want.extend(NONE_REPAIRS);
+    assert_eq!(super::initial::notes(&src, &e), want);
+    let mut carried = c_loop(&["if t > 1 { c*.tick() } else { 0 };"]);
+    carried = carried.replace(
+        "Counter(n: 0);\n  if",
+        "Counter(n: 0) with carryForward;\n  if",
+    );
+    builds(&carried);
+}
+
+/// No `*.` repair where `*.` is not the fix: a `*.` call already written, a method that writes
+/// no primes and so has no `*.` form, a method the unit does not declare, and a call whose
+/// value is used, where `*.` would change the value.
+#[test]
+fn a_dot_call_gets_the_update_repair_only_where_it_applies() {
+    builds(&c_loop(&["c*.add(3);"]));
+    builds(&c_loop(&["c*.tick();", "x' = c.peek();"]));
+    let old = "`initial c = Counter(n: 0);` gives `c` a value before step 0, and no statement \
+               of this loop updates `c`: none writes `c' = …`, `c' <- e` or `c*.m(…)`. An \
+               `initial` statement gives a value before the first step only, so `c` would have \
+               no value at any later step.";
+    for body in [
+        "c.peek();",
+        "c.zap();",
+        "x' = if t > 1 { c.tick() } else { c };",
+        "x' = c.add(1).n;",
+    ] {
+        let src = c_loop(&[body]);
+        let e = refusal(&src);
+        assert_eq!(e.row, Some(Row::InitialNotUpdated), "{body}: {e:?}");
+        assert_eq!(e.message, old, "{body}");
+        let mut want = vec![NONE_NOTE];
+        want.extend(NONE_REPAIRS);
+        assert_eq!(super::initial::notes(&src, &e), want, "{body}");
+    }
+}
+
+/// `n` methods that each write a prime and `n` statements, each a `.` call of one of them.
+fn dot_calls(n: usize) -> String {
+    let methods: String = (0..n)
+        .map(|i| format!("Counter.m{i}() {{ n' = n + {i}; }}\n"))
+        .collect();
+    let calls: String = (0..n).map(|i| format!("c.m{i}(); ")).collect();
+    format!(
+        "struct Counter {{ n: int }}\n{methods}r = loop t {{ while t < 9; initial c = Counter(n: \
+         0); {calls}}};\n"
+    )
+}
+
+/// The `.` call notes cost one walk of the method declarations, one lookup per call and one
+/// more walk of the step for the repair: `n` methods and `n` calls of them are refused in time
+/// of order `n log n`.
+#[test]
+fn the_dot_call_notes_scale() {
+    let units = scaling::inputs(500, |n| {
+        let text = dot_calls(n);
+        let tokens = lex(&text).unwrap();
+        let tree = parse(&text, &tokens, "Unit", TOP).unwrap();
+        (text, tokens, tree)
+    });
+    scaling::check("dot calls, refused", 500, |n| {
+        let (text, tokens, tree) = &units[&n];
+        let e = unit(text, tokens, tree).unwrap_err();
+        assert_eq!(e.row, Some(Row::InitialNotUpdated), "{e:?}");
+        assert_eq!(e.notes.len(), n + 4, "{e:?}");
+    });
+}

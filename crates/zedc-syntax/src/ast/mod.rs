@@ -48,7 +48,7 @@ pub use node::{
 
 use crate::lex::{Part, Span, Tok, Token};
 use crate::parse::{Tree, grammar};
-use builder::{Bare, Builder, Built, Level, Mains};
+use builder::{Bare, Builder, Built, Level, Mains, Methods};
 
 /// The expression of `tree`, parsed as `Expr` from `tokens` of `text`.
 pub fn build(text: &str, tokens: &[Token], tree: &Tree) -> Result<Expr, Error> {
@@ -156,10 +156,11 @@ fn with_holes<'t, R>(
     let bare = Bare::new();
     let mains = Mains::new(text, tokens, tree);
     let qualifiers = initial::qualifiers(text, &list);
+    let methods = Methods::new(text, tokens, tree);
     let mut done: Vec<Option<Result<Expr, Error>>> = Vec::new();
     done.resize_with(list.len(), || None);
     for (i, l) in list.iter().enumerate().skip(1).rev() {
-        let mut b = Builder::new(text, l, &mut done, &bare, &mains, &qualifiers);
+        let mut b = Builder::new(text, l, &mut done, &bare, &mains, &qualifiers, &methods);
         b.fill(l.tree.root);
         let e = b.node(l.tree.root);
         done[i] = Some(e);
@@ -171,6 +172,7 @@ fn with_holes<'t, R>(
         &bare,
         &mains,
         &qualifiers,
+        &methods,
     ))
 }
 

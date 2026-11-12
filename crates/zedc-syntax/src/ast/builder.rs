@@ -155,6 +155,102 @@ impl Mains {
     }
 }
 
+/// What [`Methods`] records of one method `T.m` of a source.
+pub(super) struct MethodInfo {
+    /// `T`, the type it is declared on.
+    pub(super) receiver: String,
+    /// Whether its body writes the next receiver, so that `x*.m(…)` is a call of it (DESIGN.md
+    /// sec:tour_methods): a primed target, `n' = …`, `n'[k] = …` or `n' <- e`, or a `*.` call,
+    /// outside the loops, functions and methods its body declares.
+    pub(super) mutates: bool,
+    /// Whether it declares a result type, `-> int`.
+    pub(super) result: bool,
+}
+
+/// The methods declared in a source, by name, listed on first use: a rejection of a loop
+/// variable that a `.` call leaves without an update asks whether the call's method has a `*.`
+/// form (`initial`).
+// Complexity tradeoff: one walk of the tree from its root lists every method and what its body
+// writes, O(n) for a tree of n nodes, made once per source on the first rejection that asks; a
+// walk of the source for each `.` call asked about would be O(n) per call.
+pub(super) struct Methods<'t> {
+    text: &'t str,
+    tokens: &'t [Token],
+    tree: &'t Tree,
+    table: std::cell::OnceCell<HashMap<String, Vec<MethodInfo>>>,
+}
+
+impl<'t> Methods<'t> {
+    pub(super) fn new(text: &'t str, tokens: &'t [Token], tree: &'t Tree) -> Methods<'t> {
+        Methods {
+            text,
+            tokens,
+            tree,
+            table: std::cell::OnceCell::new(),
+        }
+    }
+
+    /// The methods named `name` declared in the source, in no set order.
+    pub(super) fn named(&self, name: &str) -> &[MethodInfo] {
+        let table = self.table.get_or_init(|| self.list());
+        table.get(name).map_or(&[], |v| &v[..])
+    }
+
+    fn list(&self) -> HashMap<String, Vec<MethodInfo>> {
+        let (text, tokens, tree) = (self.text, self.tokens, self.tree);
+        let word = |i: usize| {
+            let s = tokens[i].span;
+            &text[s.start..s.end]
+        };
+        let first = |n: usize| word(tree.nodes[n].start);
+        let mut table: HashMap<String, Vec<MethodInfo>> = HashMap::new();
+        // Each method's entry, by name and place, for the nodes of its body.
+        let mut found: Vec<(String, MethodInfo)> = Vec::new();
+        // Each node reached from the root once, with the method whose body holds it, if any;
+        // the parser's abandoned nodes are not reached.
+        let mut stack: Vec<(usize, Option<usize>)> = vec![(tree.root, None)];
+        while let Some((n, owner)) = stack.pop() {
+            let kids = &tree.nodes[n].kids;
+            match tree.name(n) {
+                "Method" if kids.len() >= 3 => {
+                    let (&body, head) = kids.split_last().expect("a method ends in its body");
+                    let result = head.iter().any(|&k| tree.name(k) == "Result");
+                    found.push((
+                        first(head[1]).to_string(),
+                        MethodInfo {
+                            receiver: first(head[0]).to_string(),
+                            mutates: false,
+                            result,
+                        },
+                    ));
+                    stack.push((body, Some(found.len() - 1)));
+                    continue;
+                }
+                "Loop" | "Function" | "Method" => {
+                    stack.extend(kids.iter().map(|&k| (k, None)));
+                    continue;
+                }
+                "Target" | "IndexedDef" | "WholePush" if first(n).ends_with('\'') => {
+                    if let Some(m) = owner {
+                        found[m].1.mutates = true;
+                    }
+                }
+                "SpreadSuffix" => {
+                    if let Some(m) = owner {
+                        found[m].1.mutates = true;
+                    }
+                }
+                _ => {}
+            }
+            stack.extend(kids.iter().map(|&k| (k, owner)));
+        }
+        for (name, info) in found {
+            table.entry(name).or_default().push(info);
+        }
+        table
+    }
+}
+
 /// The builder of one tree, a text's or a string hole's: what each node built to, until its
 /// parent takes it.
 pub(super) struct Builder<'a, 's: 'a> {
@@ -182,6 +278,8 @@ pub(super) struct Builder<'a, 's: 'a> {
     /// The names written in the text only as the qualifier of an imported unit
     /// ([`super::initial::qualifiers`]).
     pub(super) qualifiers: &'a std::collections::HashSet<&'s str>,
+    /// The methods declared in the text this tree is in.
+    pub(super) methods: &'a Methods<'a>,
     /// The parent of each node of the tree, listed on the first rejection that names one.
     pub(super) parents: std::cell::OnceCell<Vec<usize>>,
 }
@@ -310,6 +408,7 @@ impl<'a, 's> Builder<'a, 's> {
         bare: &'a Bare<'s>,
         mains: &'a Mains,
         qualifiers: &'a std::collections::HashSet<&'s str>,
+        methods: &'a Methods<'a>,
     ) -> Builder<'a, 's> {
         let mut holes = Vec::with_capacity(level.tokens.len());
         let mut count = 0;
@@ -335,6 +434,7 @@ impl<'a, 's> Builder<'a, 's> {
             bare,
             mains,
             qualifiers,
+            methods,
             parents: std::cell::OnceCell::new(),
         }
     }
