@@ -254,6 +254,52 @@ fn a_decimal_a_called_function_returns_is_rejected() {
 }
 
 #[test]
+fn a_binding_of_a_call_with_a_literal_argument_keeps_no_unfixed_decimal() {
+    // Item LIT-unfixed-decimal-binding, the program of its note: `y = g(true)` with `g` of type
+    // `(bool) -> 1 | 2.5` was accepted as `1`. DESIGN.md L1.26a: "`y = g(c)` is rejected at the
+    // `2.5`, which nothing fixes". The argument's value does not matter: the type of `g(true)`
+    // is the type of `g`'s result, which keeps the `2.5`.
+    let g = "g(positional c: bool) = if c { 1 } else { 2.5 };";
+    let (f64, rat) = (
+        "g(positional c: bool) = if c { 1 } else { 2.5f64 };",
+        "g(positional c: bool) = if c { 1 } else { 2.5r };",
+    );
+    for (defs, call, name) in [
+        ("", "y = g(true);", "g"),
+        ("", "y = g(false);", "g"),
+        // Through a nested call: the message names the call the value is bound to, and the
+        // fixes still rewrite the line that writes the decimal.
+        ("k(positional c: bool) = g(c);\n", "y = k(true);", "k"),
+        (
+            "k(positional c: bool) = g(c);\nm(positional c: bool) = k(c);\n",
+            "y = m(false);",
+            "m",
+        ),
+    ] {
+        let src = format!("{g}\n{defs}{call}\n");
+        assert_eq!(
+            type_errors(&src),
+            [unfixed("2.5", f64, rat, Some(name))],
+            "{src}"
+        );
+        fixes_check(&src, g, [f64, rat]);
+    }
+    // The fixes give these values: the `1` meets no carrier and is the `int` 1, and the
+    // decimal is the carrier its suffix names.
+    let at = |line: &str, call: &str| format!("{line}\n{call}\n");
+    assert_eq!(value(&at(f64, "y = g(true);"), "y"), "1");
+    assert_eq!(value(&at(f64, "y = g(false);"), "y"), "2.5");
+    assert_eq!(value(&at(rat, "y = g(false);"), "y"), "5r/2r");
+    // A carrier at the use fixes both values, so nothing is rejected: an `f64` parameter
+    // reads the `1` as 1.0. (A declared binding, `y: f64 = g(true);`, is the other fix DESIGN
+    // names; this zedc does not compile a declared binding yet.)
+    let fixed = format!("{g}\nh(positional z: f64) = z;\na = h(g(true));\nb = h(g(false));\n");
+    assert_eq!(type_errors(&fixed), Vec::<String>::new());
+    assert_eq!(value(&fixed, "a"), "1.0");
+    assert_eq!(value(&fixed, "b"), "2.5");
+}
+
+#[test]
 fn a_decimal_a_call_gives_a_carrier_stays_accepted() {
     // The literal has a suffix; it joins the class of the parameter, which the argument
     // fixes; and it joins the class beside an atom the other branch may give.
