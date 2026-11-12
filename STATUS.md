@@ -2014,6 +2014,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | POW-rat-literal-ops | impl attempt 1 | 2026-11-12 16:20 | start; worktree wt/pow-rat-literal-ops on origin/main b43c23228, seeded |
 | T11-preimage-rest | impl attempt 1 | 2026-11-05 04:07 | run2 236 pieces 0 failed; unit recheck now compares closed terms (Option<Shared>), zedc-preimage --lib 127 passed |
 | T6-refusal-cost | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/t6-refusal-cost from origin/main 8d0bfe954 |
+| TESTS-split-s22-random | running | 2026-11-12 16:54 |  |
 | TRIVIAL-walk-picks | impl attempt 1 | 2026-11-12 14:54 | code commit 0613b6f9c rebased; docs edited; building tests for m0_03 before docs commit and merge / load 78.93 64.48 50.98 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
