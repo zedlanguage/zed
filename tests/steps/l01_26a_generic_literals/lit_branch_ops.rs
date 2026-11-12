@@ -182,13 +182,7 @@ fn a_call_of_an_integer_with_no_exact_f64_is_rejected() {
     );
     assert_eq!(
         type_errors(&src),
-        vec![
-            "`h` does not take (1 | 9007199254740993): no `f64` equals 9007199254740993, which \
-             `g(c)` may give. Make `g(c)` give a number `f64` holds exactly in its place, or \
-             give this parameter of `h` a type that holds 9007199254740993, such as `int`. \
-             [h(g(c))]"
-                .to_string()
-        ]
+        vec!["No `f64` equals 9007199254740993, which `g(c)` may give. [h(g(c))]".to_string()]
     );
     // At `rat` the same value is exact.
     let rat = "k() = 9007199254740993;\nh(positional z: rat) = z;\na = h(k());\n";
@@ -341,15 +335,12 @@ fn a_call_of_a_value_the_other_operand_cannot_hold_is_rejected() {
     // Negative controls: an integer `f64` does not hold exactly, and a decimal at `rat`, as at
     // a parameter, each with the message's menu.
     let big = "g(positional c: bool) = if c { 9007199254740993 } else { 1 };\n";
-    for (op, other) in [("*", "*"), ("==", "==")] {
+    for op in ["*", "=="] {
         let src = format!("{big}f(positional c: bool, x: f64) = x {op} g(c);\n");
         assert_eq!(
             type_errors(&src),
             vec![format!(
-                "`{other}` does not take (f64, 1 | 9007199254740993): no `f64` equals \
-                 9007199254740993, which `g(c)` may give. Make `g(c)` give a number `f64` holds \
-                 exactly in its place, or give the other arguments of `{other}` a type that \
-                 holds 9007199254740993, such as `int`. [x {op} g(c)]"
+                "No `f64` equals 9007199254740993, which `g(c)` may give. [x {op} g(c)]"
             )]
         );
     }
@@ -717,13 +708,7 @@ fn an_operation_on_literals_past_two_to_the_53_differs_by_where_it_is_fixed() {
     assert_eq!(sig(&call, "g"), "(bool) -> 1 | 9007199254740993");
     assert_eq!(
         type_errors(&call),
-        vec![
-            "`h` does not take (1 | 9007199254740993): no `f64` equals 9007199254740993, which \
-             `g(c)` may give. Make `g(c)` give a number `f64` holds exactly in its place, or \
-             give this parameter of `h` a type that holds 9007199254740993, such as `int`. \
-             [h(g(c))]"
-                .to_string()
-        ]
+        vec!["No `f64` equals 9007199254740993, which `g(c)` may give. [h(g(c))]".to_string()]
     );
 }
 

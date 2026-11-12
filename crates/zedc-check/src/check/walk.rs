@@ -7111,10 +7111,20 @@ impl<'t, 'a> Ck<'t, 'a> {
         // the code of each operand stands for its name. A literal gets its own forms, which
         // the application offers, and an operand of a class or a type variable is checked
         // there too (MSG-concise-no-common-carrier).
-        let codes = [&x, &y].map(|a| scalars.then(|| self.unordered_operand(a)).flatten());
-        let both = (codes.iter().all(Option::is_some))
-            .then(|| (x.ty.without_loose(), y.ty.without_loose()));
-        if let (Some((a, b)), [Some(cx), Some(cy)]) = (both, codes)
+        // An operand read at a carrier ([`Self::read_whole`]), as `g(b, x)` of type `1 | f64`,
+        // stands for the carrier it holds whole, at which its listed values are read: `g(b, x)
+        // < gr(b, r)` with `gr(b, r)` of type `1 | rat` compares an `f64` with a `rat` (DESIGN.md
+        // step L1.26a, rule 3).
+        let sided = |a: &Arg<'a>| match self.unordered_operand(a) {
+            Some(code) => Some((code, a.ty.without_loose())),
+            None => {
+                let c = self.read_whole(a)?;
+                let code = self.code(a.at).filter(|c| !c.contains('\n'))?;
+                Some((code, Ty::carrier(c)))
+            }
+        };
+        let sides = [&x, &y].map(|a| scalars.then(|| sided(a)).flatten());
+        if let [Some((cx, a)), Some((cy, b))] = sides
             && no_common_carrier(&a, &b)
         {
             let out = self.passing(&x.ty, &what, span, x.at);
@@ -10120,8 +10130,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// that is not read at the carrier `c` ([`read_at`]): an integer no value of `c` equals,
     /// or a decimal at `rat`. The carrier is that of `a`'s parameter, or, where `shared`
     /// holds, that of the other arguments at the same type variable, as the other operand of
-    /// `x * g(c)`. Short, as sec:diagnostics asks: the value, the expression that gives it,
-    /// and the two repairs; neither is a cast, since no cast of `v` to `c` is exact.
+    /// `x * g(c)`. Short, as sec:diagnostics asks. An integer gets the headline of an integer
+    /// literal no value of `c` equals, "No `f64` equals 9007199254740993, which `gb(b, x)`
+    /// may give.", as `g(b, x) + 9007199254740993` does, with no repair: none rewrites the
+    /// call, and no cast of `v` to `c` is exact. A decimal gets two repairs, neither a cast.
     pub(super) fn unread_call(
         &self,
         what: &str,
@@ -10151,11 +10163,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                  `f64` is read as a `rat`. Write {v}r where it is written, or {change} the \
                  type `f64`"
             ),
-            _ => format!(
-                ": no `{c}` equals {v}, which {call} may give. Make {call} give a number \
-                 `{c}` holds exactly in its place, or {change} a type that holds {v}, such as \
-                 `int`"
-            ),
+            _ => return format!("No `{c}` equals {v}, which {call} may give"),
         };
         self.rejected_because(what, args, &why)
     }
@@ -10294,7 +10302,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             }
             let bound = match (carriers.count_ones(), classes.first()) {
-                (n, _) if n > 1 => return fail(self),
+                (n, _) if n > 1 => {
+                    return match self.shown_whole(sig, args) {
+                        Some(whole) => Err(self.rejected(what, &whole)),
+                        None => fail(self),
+                    };
+                }
                 (1, _) => {
                     let c = Carrier::of_mask(carriers).next().expect("one carrier");
                     if m & carriers == 0 {
@@ -10982,6 +10995,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut out = Ty::empty();
         for (alive, dyn_, at, path) in &states {
             let shown = |ck: &Self| {
+                // Two carriers held whole beside a read argument: the message shows the
+                // carriers ([`Self::shown_whole`]).
+                if let Some(whole) = ck.shown_whole(sig, args) {
+                    return ck.rejected(what, &whole);
+                }
                 // The call's literals are printed as written there.
                 let shown: Vec<String> = ck.near(Some(span), |ck| {
                     (path.iter().zip(&no_value))
@@ -12032,6 +12050,81 @@ impl<'t, 'a> Ck<'t, 'a> {
         true
     }
 
+    /// The one carrier, `f64` or `rat`, of the part that the argument `a`, read at a carrier
+    /// ([`Self::readable`]), holds whole beside the values it lists: `f64` for `g(b, x)` of type
+    /// `1 | f64`. `None` for any other argument.
+    fn read_whole(&self, a: &Arg) -> Option<Carrier> {
+        if !values_alone(&a.ty) || !self.readable(a) || !lists_a_number(&a.ty) {
+            return None;
+        }
+        match whole_carriers(&a.ty).collect::<Vec<_>>()[..] {
+            [c @ (Carrier::F64 | Carrier::Rat)] => Some(c),
+            _ => None,
+        }
+    }
+
+    /// The arguments of a refused application of `sig` as its message shows them, where the
+    /// parts its arguments hold whole are of two or more carriers and some argument read at a
+    /// carrier holds one of them, as `g(b, x) + gr(b, r)` with `g(b, x)` of type `1 | f64`
+    /// and `gr(b, r)` of `1 | rat` (DESIGN.md step L1.26a, rule 3: the application is
+    /// refused): each such argument is shown as the carrier it holds whole ([`Self::read_whole`]),
+    /// `(f64, rat)`, since its listed values are read at that carrier and the two carriers are
+    /// what no arrow takes, not the `1` a check of each value apart meets first. `None` where
+    /// this does not hold, or where some arrow takes the parts shown.
+    // Complexity tradeoff: asked only once an application is refused, O(n) for the n
+    // arguments' types and O(A n) subtype tests for the A arrows; the naive message, the
+    // first pair of values that no arrow takes, needs nothing more and names the listed `1`.
+    fn shown_whole(&self, sig: &Sig, args: &[Option<Arg<'a>>]) -> Option<Vec<Option<Arg<'a>>>> {
+        let generic = |a: &Arg| {
+            a.lit.as_ref().is_some_and(|l| l.bare) || a.parts.is_some() || a.branches.is_some()
+        };
+        if args.iter().flatten().count() < 2 || args.iter().flatten().any(generic) {
+            return None;
+        }
+        let whole: BTreeSet<Carrier> = (args.iter().flatten())
+            .flat_map(|a| whole_carriers(&a.ty))
+            .collect();
+        if whole.len() < 2 {
+            return None;
+        }
+        let mut read = false;
+        let shown: Vec<Option<Arg<'a>>> = (args.iter())
+            .map(|a| {
+                let a = a.as_ref()?;
+                Some(match self.read_whole(a) {
+                    Some(c) => {
+                        read = true;
+                        Arg {
+                            ty: Ty::carrier(c),
+                            ..a.clone()
+                        }
+                    }
+                    None => a.clone(),
+                })
+            })
+            .collect();
+        // A parameter that is a bounded variable takes the arguments at it only where they are
+        // one type of numbers of its bound, as `add(a, b)` of type `(T, T) -> T`.
+        let taken = sig.arrows.iter().any(|arrow| {
+            let mut at_var: HashMap<&str, &Ty> = HashMap::new();
+            (shown.iter().zip(&arrow.params)).all(|(a, p)| {
+                let Some(a) = a else {
+                    return true;
+                };
+                match p.as_var().and_then(|v| Some((v, sig.bounds.get(v)?))) {
+                    Some((v, &m)) => {
+                        let bits = (a.ty.pieces().iter())
+                            .try_fold(0u8, |b, q| Some(b | q.carrier()?.bit()));
+                        let t = *at_var.entry(&**v).or_insert(&a.ty);
+                        bits.is_some_and(|b| b & !m == 0) && t.subtype(&a.ty) && a.ty.subtype(t)
+                    }
+                    None => p.dynamic || self.sub(&a.ty, p, &mut Binds::new()),
+                }
+            })
+        });
+        (read && !taken).then_some(shown)
+    }
+
     /// The argument `a` read at the parameter `p` where [`Self::readable`] finds it is read
     /// at a carrier: [`read_ty`] of its type, with the adoptions of [`Self::read_adopting`].
     pub(super) fn read_arg(&self, a: &Arg, p: &Ty) -> Option<ReadArg> {
@@ -12401,6 +12494,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .collect();
             let all: Vec<usize> = (0..sig.arrows.len()).collect();
             let why = refused_among(sig, &all, &tys);
+            if why.is_empty()
+                && let Some(whole) = self.shown_whole(sig, args)
+            {
+                return Err(self.rejected(what, &whole));
+            }
             return Err(self.rejected_because(what, args, &why));
         };
         // A literal that two or more of the word's numeric carriers take, and that nothing

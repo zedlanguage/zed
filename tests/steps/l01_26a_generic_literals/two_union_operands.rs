@@ -109,6 +109,86 @@ fn whole_parts_of_two_carriers_are_still_refused() {
     assert!(errors[0].starts_with("`+` does not take ("), "{errors:?}");
 }
 
+/// The one error of `k` with the body `body`, with its menu and the text it stands at.
+fn refused(body: &str) -> String {
+    let errors = type_errors(&with(body));
+    assert_eq!(errors.len(), 1, "{body}: {errors:?}");
+    errors[0].clone()
+}
+
+#[test]
+fn whole_parts_of_two_carriers_are_named_in_the_headline() {
+    // The headline names the carriers each operand holds whole, `f64` and `rat`, at which
+    // their listed `1`s are read, not the `1` a check of each value apart meets first; no
+    // cast is offered, since neither `f64(r)` nor `rat(x)` is exact (item
+    // LIT-two-union-headline).
+    let no_arrow = |op: &str, shown: &str, at: &str| {
+        format!("{op} does not take ({shown}): no arrow of {op} takes these types. [{at}]")
+    };
+    for (body, op, shown) in [
+        ("g(b, x) + gr(b, r)", "`+`", "f64, rat"),
+        ("gr(b, r) + g(b, x)", "`+`", "rat, f64"),
+        ("g(b, x) - gr(b, r)", "`-`", "f64, rat"),
+        ("g(b, x) + r", "`+`", "f64, rat"),
+        ("x + gr(b, r)", "`+`", "f64, rat"),
+        ("max(g(b, x), gr(b, r))", "`max`", "f64, rat"),
+        ("add(g(b, x), gr(b, r))", "`add`", "f64, rat"),
+    ] {
+        assert_eq!(refused(body), no_arrow(op, shown, body), "{body}");
+    }
+    // An ordering gets the message of two numbers that do not compare, as `x < r` does.
+    for (body, pair) in [
+        ("g(b, x) < gr(b, r)", "g(b, x) : f64 < gr(b, r) : rat"),
+        ("g(b, x) < r", "g(b, x) : f64 < r : rat"),
+        ("x < gr(b, r)", "x : f64 < gr(b, r) : rat"),
+    ] {
+        assert_eq!(
+            refused(body),
+            format!("Cannot compare unequal types: `{pair}`. [{body}]"),
+            "{body}"
+        );
+    }
+    // Where a widening cast exists, it is still offered: `rat(n)` beside a `rat`.
+    let r = Resolved::new(&with("gr(b, r) + n"));
+    let errors = r.check().errors;
+    assert_eq!(errors.len(), 1);
+    assert_eq!(
+        errors[0].message,
+        "`+` does not take (rat, int): no arrow of `+` takes these types."
+    );
+    assert!(
+        (errors[0].notes.iter())
+            .any(|n| n.text == "repair: write `rat(n)`; the checker accepts that"),
+        "{:?}",
+        errors[0].notes
+    );
+}
+
+const GB: &str = "gb(positional c: bool, positional x: f64) = if c { x } else { 9007199254740993 };\n\
+                  gq(positional c: bool) = if c { 1 } else { 9007199254740993 };\n";
+
+#[test]
+fn an_integer_a_call_gives_with_no_exact_f64_is_named_in_the_headline() {
+    // As the literal `9007199254740993` beside `g(b, x)` is: no `f64` equals it, whichever
+    // operand gives the `f64` (item LIT-two-union-unread-wording).
+    for (body, call) in [
+        ("gb(b, x) + gb(b, x)", "gb(b, x)"),
+        ("gq(b) + x", "gq(b)"),
+        ("x * gq(b)", "gq(b)"),
+        ("add(gb(b, x), gb(b, x))", "gb(b, x)"),
+        ("h(gq(b))", "gq(b)"),
+    ] {
+        let errors = type_errors(&format!("{GB}{}", with(body)));
+        assert_eq!(
+            errors,
+            [format!(
+                "No `f64` equals 9007199254740993, which `{call}` may give. [{body}]"
+            )],
+            "{body}"
+        );
+    }
+}
+
 #[test]
 fn an_integer_with_no_exact_f64_is_still_refused() {
     let errors = type_errors(&with("g(b, x) + 9007199254740993"));

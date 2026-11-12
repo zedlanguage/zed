@@ -100,10 +100,8 @@ fn an_integer_with_no_exact_f64_is_still_refused() {
     assert_eq!(
         type_errors(&with("h(if b { x } else { 9007199254740993 })")),
         [
-            "`h` does not take (9007199254740993 | f64): no `f64` equals 9007199254740993, \
-             which the `if` may give. Make the `if` give a number `f64` holds exactly in its \
-             place, or give this parameter of `h` a type that holds 9007199254740993, such as \
-             `int`. [h(if b { x } else { 9007199254740993 })]"
+            "No `f64` equals 9007199254740993, which the `if` may give. \
+             [h(if b { x } else { 9007199254740993 })]"
         ]
     );
 }
