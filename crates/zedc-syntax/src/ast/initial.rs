@@ -1517,8 +1517,20 @@ impl Builder<'_, '_> {
             });
         }
         notes.extend(self.dot_notes(name, &fixes));
+        // With the `*.` calls completing every path, they are the one repair: `with
+        // carryForward` or an `if … else` update would leave the calls writing nothing.
         if covers {
             notes.push(dot_repair(&fixes, None));
+            return Error {
+                row: Some(Row::NotEveryPath),
+                menu: String::new(),
+                span: updates[0].span,
+                message: format!(
+                    "Not updated on every path of a step: {where_}. Try {} instead.",
+                    and_list(fixes.iter().map(|f| format!("`{}`", f.code)))
+                ),
+                notes,
+            };
         }
         let keyless = stmts.iter().find(|t| {
             initial_of(unwrapped(t).0)
@@ -1554,15 +1566,13 @@ impl Builder<'_, '_> {
                  … {{ … }} else {{ {name} }};`"
             ),
         });
-        let try_ = match covers {
-            true => and_list(fixes.iter().map(|f| format!("`{}`", f.code))),
-            false => format!("`{code}`"),
-        };
         Error {
             row: Some(Row::NotEveryPath),
             menu: String::new(),
             span: updates[0].span,
-            message: format!("Not updated on every path of a step: {where_}. Try {try_} instead."),
+            message: format!(
+                "Not updated on every path of a step: {where_}. Try `{code}` instead."
+            ),
             notes,
         }
     }
@@ -1601,7 +1611,9 @@ impl Builder<'_, '_> {
     /// `stmts` of the loop's body, whose `.` calls on variables are `dots`. When `.` calls whose
     /// methods write the next receiver are all that leave `name` without an update, the message
     /// names them and offers them written with `*.`, and `with carryForward` beside them when
-    /// they run on some paths only.
+    /// they run on some paths only; the error then stands at the first of those calls, and the
+    /// repairs that would discard them (an update added to the body, a binding before the loop)
+    /// are not offered. Otherwise the error stands at the `initial` statement with those repairs.
     fn not_updated(
         &self,
         s: &Stmt,
@@ -1629,45 +1641,58 @@ impl Builder<'_, '_> {
                 Some((format!("{head} with {CARRY_FORWARD};"), written))
             }),
         };
-        let message = match carry {
-            Some(carry) if !fixes.is_empty() => {
-                notes.push(dot_repair(
-                    &fixes,
-                    carry.as_ref().map(|(c, w)| (c.as_str(), *w)),
-                ));
-                let mut codes: Vec<String> =
-                    fixes.iter().map(|f| format!("`{}`", f.code)).collect();
-                codes.extend(carry.map(|(c, _)| format!("`{c}`")));
-                format!(
+        // With the `*.` repair the error stands at the first `.` call, the statement the program
+        // meant to update `name`, and the older repairs (an update added to the body, a binding
+        // before the loop) are left out: they would discard the calls the program wrote.
+        // When some path is left without an update and the statement has keys, no `*.` repair
+        // applies (`carry` is `None`) and the older message and repairs stand.
+        if let Some(carry) = carry.filter(|_| !fixes.is_empty()) {
+            notes.insert(
+                1,
+                Note {
+                    span: s.span,
+                    text: format!(
+                        "the `initial` statement of `{name}`, which gives it a value before step \
+                         0 only"
+                    ),
+                },
+            );
+            notes.push(dot_repair(
+                &fixes,
+                carry.as_ref().map(|(c, w)| (c.as_str(), *w)),
+            ));
+            let mut codes: Vec<String> = fixes.iter().map(|f| format!("`{}`", f.code)).collect();
+            codes.extend(carry.map(|(c, _)| format!("`{c}`")));
+            return Error {
+                row: Some(Row::InitialNotUpdated),
+                menu: String::new(),
+                span: fixes[0].span,
+                message: format!(
                     "No statement of this loop updates `{name}`: {}. Try {} instead.",
                     not_updating(name, &fixes),
                     and_list(codes)
-                )
-            }
-            _ => {
-                // A carried variable is still one the loop updates: `with carryForward` keeps
-                // its value on a step that does not update it, and makes no name a loop
-                // variable by itself.
-                let why = if carried {
-                    format!(
-                        "`with {CARRY_FORWARD}` keeps the value of a variable the loop updates on \
-                         a step that does not update it, and does not make `{name}` a variable of \
-                         the loop: a value no step changes is a constant, written as a binding \
-                         before the loop."
-                    )
-                } else {
-                    format!(
-                        "An `initial` statement gives a value before the first step only, so \
-                         `{name}` would have no value at any later step."
-                    )
-                };
-                format!(
-                    "`{written}` gives `{name}` a value before step 0, and no statement of this \
-                     loop updates `{name}`: none writes `{name}' = …`, `{name}' <- e` or \
-                     `{name}*.m(…)`. {why}"
-                )
-            }
+                ),
+                notes,
+            };
+        }
+        // A carried variable is still one the loop updates: `with carryForward` keeps its value
+        // on a step that does not update it, and makes no name a loop variable by itself.
+        let why = if carried {
+            format!(
+                "`with {CARRY_FORWARD}` keeps the value of a variable the loop updates on a step \
+                 that does not update it, and does not make `{name}` a variable of the loop: a \
+                 value no step changes is a constant, written as a binding before the loop."
+            )
+        } else {
+            format!(
+                "An `initial` statement gives a value before the first step only, so `{name}` \
+                 would have no value at any later step."
+            )
         };
+        let message = format!(
+            "`{written}` gives `{name}` a value before step 0, and no statement of this loop \
+             updates `{name}`: none writes `{name}' = …`, `{name}' <- e` or `{name}*.m(…)`. {why}"
+        );
         notes.push(Note {
             span: s.span,
             text: format!(
@@ -1718,8 +1743,7 @@ impl Builder<'_, '_> {
             });
         let mut out = Vec::new();
         for d in dots.iter().filter(|d| d.name == name) {
-            let infos = self.methods.named(d.method);
-            // The type of `name` is the receiver's type only when the receiver is `name` itself.
+            let infos = self.methods.named(d.method); // The type of `name` is the receiver's type only when the receiver is `name` itself.
             let of_type = ty
                 .filter(|_| d.bare)
                 .and_then(|t| infos.iter().find(|m| m.receiver == t));

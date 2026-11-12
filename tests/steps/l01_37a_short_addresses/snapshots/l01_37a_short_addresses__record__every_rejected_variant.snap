@@ -118,7 +118,7 @@ dot-never-mutates
         row: None,
     },
     Diagnostic {
-        line: 22,
+        line: 30,
         col: 3,
         message: "No statement of this loop updates `c`: `c.bump(3)` does not update `c`. Try `_ = c*.bump(3);` instead.",
         steps: [
@@ -130,32 +130,25 @@ dot-never-mutates
                 width: 6,
             },
             Step {
+                line: 22,
+                col: 3,
+                text: "the `initial` statement of `c`, which gives it a value before step 0 only",
+                source: "  initial c = Counter(n: 0, hi: 9); // state receiver: updated every step, boundary at t = -1",
+                width: 33,
+            },
+            Step {
                 line: 30,
                 col: 3,
                 text: "`c.bump(3)` does not update `c`: a `.` call never updates its receiver, and `c*.bump(3)` does",
-                source: "  c.bump(3);                     // ✗ Statement that writes nothing, or drops a declared result: `.` never mutates, so this writes nothing",
+                source: "  c.bump(3);                     // ✗ An `initial` statement for a name the loop does not update: `.` never mutates, so no statement updates c",
                 width: 9,
             },
             Step {
                 line: 30,
                 col: 3,
                 text: "repair: `_ = c*.bump(3);` in place of `c.bump(3);`",
-                source: "  c.bump(3);                     // ✗ Statement that writes nothing, or drops a declared result: `.` never mutates, so this writes nothing",
+                source: "  c.bump(3);                     // ✗ An `initial` statement for a name the loop does not update: `.` never mutates, so no statement updates c",
                 width: 9,
-            },
-            Step {
-                line: 22,
-                col: 3,
-                text: "repair: add the update the loop is meant to make, `c' = …;`, to its body",
-                source: "  initial c = Counter(n: 0, hi: 9); // state receiver: updated every step, boundary at t = -1",
-                width: 33,
-            },
-            Step {
-                line: 21,
-                col: 7,
-                text: "repair: `c = Counter(n: 0, hi: 9);` written before the loop, and `initial c = Counter(n: 0, hi: 9);` deleted, for a value that does not change",
-                source: "run = loop {",
-                width: 6,
             },
         ],
         menu: "",
@@ -164,7 +157,7 @@ dot-never-mutates
         ),
     },
 ]
-  checks: [Outcome { line: 8, col: 29, failure: Some("the declared result type `-> int` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 22, col: 3, failure: Some("No statement of this loop updates `c`: `c.bump(3)` does not update `c`. Try `_ = c*.bump(3);` instead.\n  [1] 21:7: the loop, none of whose statements updates `c`\n      21 | run = loop {\n         |       ^^^^^^\n  [2] 30:3: `c.bump(3)` does not update `c`: a `.` call never updates its receiver, and `c*.bump(3)` does\n      30 |   c.bump(3);                     // ✗ Statement that writes nothing, or drops a declared result: `.` never mutates, so this writes nothing\n         |   ^^^^^^^^^\n  [3] 30:3: repair: `_ = c*.bump(3);` in place of `c.bump(3);`\n  [4] 22:3: repair: add the update the loop is meant to make, `c' = …;`, to its body\n      22 |   initial c = Counter(n: 0, hi: 9); // state receiver: updated every step, boundary at t = -1\n         |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  [5] 21:7: repair: `c = Counter(n: 0, hi: 9);` written before the loop, and `initial c = Counter(n: 0, hi: 9);` deleted, for a value that does not change") }, Outcome { line: 30, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }]
+  checks: [Outcome { line: 8, col: 29, failure: Some("the declared result type `-> int` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 30, col: 3, failure: None }]
 
 exponential-base-differs
   rejected: [

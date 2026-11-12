@@ -27,6 +27,6 @@ run = loop {
                                     //   end, its value the links' returns, in order
   // c*.tick().tick();              // no returns ⇒ a statement, still exactly one write
   _ = c*.bump(1); _ = c*.bump(2);   // ✗ Collision: two chains, two writers of c'
-  // c.bump(3);                     // ✗ Statement that writes nothing, or drops a declared result: `.` never mutates, so this writes nothing
+  // c.bump(3);                     // ✗ An `initial` statement for a name the loop does not update: `.` never mutates, so no statement updates c
   // c', prev = c.bump(3);          // the explicit spelling; `*.` abbreviates it, both legal
 };

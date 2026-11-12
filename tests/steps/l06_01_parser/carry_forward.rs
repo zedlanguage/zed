@@ -1109,7 +1109,10 @@ fn builds(text: &str) {
 /// The note at the loop of row "An `initial` statement in a loop that never updates its
 /// variable", for `c`.
 const NONE_NOTE: &str = "the loop, none of whose statements updates `c` [loop t { …]";
-/// The two repairs that row offers for `c`, after any repair with `*.`.
+/// The note at the `initial` statement of `c` when that row stands at a `.` call.
+const INITIAL_NOTE: &str = "the `initial` statement of `c`, which gives it a value before step 0 \
+                            only [initial c = Counter(n: 0);]";
+/// The two repairs that row offers for `c` when no repair with `*.` applies.
 const NONE_REPAIRS: [&str; 2] = [
     "repair: add the update the loop is meant to make, `c' = …;`, to its body [initial c = \
      Counter(n: 0);]",
@@ -1119,20 +1122,21 @@ const NONE_REPAIRS: [&str; 2] = [
 
 /// A `.` call never updates its receiver (DESIGN.md sec:generations, "`.` never mutates"): a
 /// loop variable whose only calls are `.` calls of methods that write primes is not updated,
-/// and the message names each call and writes the repair with `*.`, the update call.
+/// and the message, at the first call, names each call and writes the repair with `*.`, the
+/// update call, with no repair that would drop the calls.
 #[test]
 fn a_dot_call_does_not_update_its_receiver() {
-    let mut notes = vec![
+    let notes = vec![
         NONE_NOTE,
+        INITIAL_NOTE,
         "`c.add(3)` does not update `c`: a `.` call never updates its receiver, and `c*.add(3)` \
          does [c.add(3)]",
         "repair: `c*.add(3);` in place of `c.add(3);` [c.add(3)]",
     ];
-    notes.extend(NONE_REPAIRS);
     let src = c_loop(&["c.add(3);"]);
     let e = refusal(&src);
     assert_eq!(e.row, Some(Row::InitialNotUpdated), "{e:?}");
-    assert_eq!(&src[e.span.start..e.span.end], "initial c = Counter(n: 0);");
+    assert_eq!(&src[e.span.start..e.span.end], "c.add(3)");
     assert_eq!(
         e.message,
         "No statement of this loop updates `c`: `c.add(3)` does not update `c`. Try \
@@ -1155,8 +1159,10 @@ fn a_dot_call_does_not_update_its_receiver() {
         "No statement of this loop updates `c`: `c.tick()` and `c.add(2)` do not update `c`. \
          Try `c*.tick();` and `c*.add(2);` instead."
     );
-    let mut want = vec![
+    assert_eq!(&src[e.span.start..e.span.end], "c.tick()");
+    let want = vec![
         NONE_NOTE,
+        INITIAL_NOTE,
         "`c.tick()` does not update `c`: a `.` call never updates its receiver, and \
          `c*.tick()` does [c.tick()]",
         "`c.add(2)` does not update `c`: a `.` call never updates its receiver, and \
@@ -1164,7 +1170,6 @@ fn a_dot_call_does_not_update_its_receiver() {
         "repair: `c*.tick();` in place of `c.tick();` and `c*.add(2);` in place of `c.add(2);` \
          [c.tick()]",
     ];
-    want.extend(NONE_REPAIRS);
     assert_eq!(super::initial::notes(&src, &e), want);
     builds(&c_loop(&["c*.tick();", "c*.add(2);"]));
 
@@ -1190,8 +1195,8 @@ fn a_dot_call_does_not_update_its_receiver() {
 
 /// A `.` call on some paths only: its note names the part of the step it runs in. When the
 /// other paths update the variable, the row is "not updated on every path" and the `*.` repair
-/// completes it; when no other path does, `*.` alone leaves the other paths, so the repair also
-/// carries the variable forward.
+/// completes it, the only repair offered; when no other path does, `*.` alone leaves the other
+/// paths, so the repair also carries the variable forward.
 #[test]
 fn a_dot_call_on_some_paths_is_named_with_its_part() {
     let src = c_loop(&["if t > 1 { c*.tick() } else { c.add(2) };"]);
@@ -1213,12 +1218,6 @@ fn a_dot_call_on_some_paths_is_named_with_its_part() {
              `c*.add(2)` does; it runs only on the paths through a branch of the `if` \
              [c.add(2)]",
             "repair: `c*.add(2)` in place of `c.add(2)` [c.add(2)]",
-            "repair: `initial c = Counter(n: 0) with carryForward;` in place of `initial c = \
-             Counter(n: 0);`, so a step that does not update `c` keeps its value [initial c = \
-             Counter(n: 0);]",
-            "repair: update `c` on every path, with the update written where the branch is \
-             chosen and `c` itself on the paths that leave it as it is: `c' = if … { … } else { \
-             c };` [c*.tick]",
         ]
     );
     builds(&c_loop(&["if t > 1 { c*.tick() } else { c*.add(2) };"]));
@@ -1231,14 +1230,15 @@ fn a_dot_call_on_some_paths_is_named_with_its_part() {
         "No statement of this loop updates `c`: `c.tick()` does not update `c`. Try \
          `c*.tick()` and `initial c = Counter(n: 0) with carryForward;` instead."
     );
-    let mut want = vec![
+    assert_eq!(&src[e.span.start..e.span.end], "c.tick()");
+    let want = vec![
         NONE_NOTE,
+        INITIAL_NOTE,
         "`c.tick()` does not update `c`: a `.` call never updates its receiver, and \
          `c*.tick()` does; it runs only on the paths through a branch of the `if` [c.tick()]",
         "repair: `c*.tick()` in place of `c.tick()` and `initial c = Counter(n: 0) with \
          carryForward;` in place of `initial c = Counter(n: 0);` [c.tick()]",
     ];
-    want.extend(NONE_REPAIRS);
     assert_eq!(super::initial::notes(&src, &e), want);
     let mut carried = c_loop(&["if t > 1 { c*.tick() } else { 0 };"]);
     carried = carried.replace(
@@ -1275,6 +1275,64 @@ fn a_dot_call_gets_the_update_repair_only_where_it_applies() {
     }
 }
 
+/// The method a `.` call names is looked up among the methods the unit declares. Of two
+/// methods of one name on different types, the one of the variable's type is taken when its
+/// `initial` statement shows the type; otherwise they must agree. A method the unit does not
+/// declare, as one of an imported unit or the prelude, gives no `*.` repair: the rows are
+/// produced when the unit is built, before its imports are read; a method the unit declares is
+/// taken even when the unit imports another.
+#[test]
+fn a_dot_call_finds_its_method_in_the_unit() {
+    let other = "struct Other { n: int }\nOther.tick() = n;\n";
+    // `Counter.tick` writes a prime and `Other.tick` does not: the variable's type decides.
+    let src = format!(
+        "{COUNTER}{other}{}",
+        t_loop(&["initial c = Counter(n: 0);", "c.tick();"])
+    );
+    let e = refusal(&src);
+    assert_eq!(e.row, Some(Row::InitialNotUpdated), "{e:?}");
+    assert_eq!(
+        e.message,
+        "No statement of this loop updates `c`: `c.tick()` does not update `c`. Try \
+         `c*.tick();` instead."
+    );
+    let old = "`initial c = make();` gives `c` a value before step 0, and no statement of this \
+               loop updates `c`: none writes `c' = …`, `c' <- e` or `c*.m(…)`. An `initial` \
+               statement gives a value before the first step only, so `c` would have no value \
+               at any later step.";
+    // The type is not shown, and the two methods disagree: no `*.` repair, and the older two.
+    let src = format!(
+        "{COUNTER}{other}make() = Counter(n: 0);\n{}",
+        t_loop(&["initial c = make();", "c.tick();"])
+    );
+    let e = refusal(&src);
+    assert_eq!(e.row, Some(Row::InitialNotUpdated), "{e:?}");
+    assert_eq!(e.message, old);
+    assert_eq!(&src[e.span.start..e.span.end], "initial c = make();");
+    assert_eq!(e.notes.len(), 3, "{e:?}");
+
+    // A method of an imported unit is not known when the unit is built.
+    let src = format!(
+        "import geometry.counters;\n{}",
+        t_loop(&["initial c = make();", "c.bump(1);"])
+    );
+    let e = refusal(&src);
+    assert_eq!(e.row, Some(Row::InitialNotUpdated), "{e:?}");
+    assert_eq!(e.message, old);
+    // The unit's own `Counter.tick` is taken beside an import.
+    let src = format!(
+        "import geometry.counters;\n{COUNTER}{}",
+        t_loop(&["initial c = Counter(n: 0);", "c.tick();"])
+    );
+    let e = refusal(&src);
+    assert_eq!(&src[e.span.start..e.span.end], "c.tick()");
+    assert_eq!(
+        e.message,
+        "No statement of this loop updates `c`: `c.tick()` does not update `c`. Try \
+         `c*.tick();` instead."
+    );
+}
+
 /// `n` methods that each write a prime and `n` statements, each a `.` call of one of them.
 fn dot_calls(n: usize) -> String {
     let methods: String = (0..n)
@@ -1302,6 +1360,7 @@ fn the_dot_call_notes_scale() {
         let (text, tokens, tree) = &units[&n];
         let e = unit(text, tokens, tree).unwrap_err();
         assert_eq!(e.row, Some(Row::InitialNotUpdated), "{e:?}");
-        assert_eq!(e.notes.len(), n + 4, "{e:?}");
+        // The loop, the `initial` statement, one note per call and the one repair.
+        assert_eq!(e.notes.len(), n + 3, "{e:?}");
     });
 }
