@@ -383,6 +383,30 @@ fn a_forced_contradiction_has_the_same_empty_projection_after_renaming() {
     }
 }
 
+/// The paired chain with its two ends tied by `y0 - y[k] == -1` in place of their values:
+/// no top-level constraint has one atom, so the forced propagation has no first step and is
+/// not built (`forced::may_start`). The chain makes every `y` equal, so there is no point, and
+/// the projection itself shows it, as on main before I17. (`decide` is not asked: from k = 8
+/// it refuses the formula with an `Unordered` tie among the chain's atoms, as main 4a8336416
+/// does.)
+#[test]
+fn a_formula_with_no_first_step_is_projected_without_the_propagation() {
+    for k in [2, 8, 32] {
+        let ys: Vec<_> = (0..=k).map(|i| sym(&format!("y{i}"))).collect();
+        let mut fs = vec![eq(&[(ys[0].clone(), 1), (ys[k].clone(), -1)], 1)];
+        for pair in ys.windows(2) {
+            fs.push(Formula::or(vec![
+                Formula::and(pair.iter().map(|y| eq(&[(y.clone(), 1)], 0)).collect()),
+                Formula::and(pair.iter().map(|y| eq(&[(y.clone(), 1)], -1)).collect()),
+            ]));
+        }
+        let f = Formula::and(fs);
+        let (each, skipped) = project_each(&f, &[ys[0].clone(), ys[k].clone()]).unwrap();
+        assert_eq!(each, vec![Ok(IntervalSet::empty()); 2], "k = {k}");
+        assert!(skipped.is_empty(), "k = {k}");
+    }
+}
+
 /// `satisfiable` on a box and one row, and on subset sums with target 0, at `n = 64` and
 /// `8n = 512`; the point each gives is checked by `holds` outside the measured runs.
 #[test]

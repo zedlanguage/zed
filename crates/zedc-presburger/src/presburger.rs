@@ -691,8 +691,29 @@ impl Formula {
     /// The top-level conjuncts, with a conjunction kept among them ([`Formula::and_keeping`])
     /// read as flattened into it; a conjunction kept at more than one place is read at its first.
     fn conjuncts(&self) -> Vec<&Formula> {
+        match self.conjunct_list() {
+            Conjuncts::Read(out) => out,
+            flat => flat.iter().collect(),
+        }
+    }
+
+    /// [`Formula::conjuncts`], borrowed from the formula where no list need be made.
+    // A conjunction that holds no conjunction, or a formula that is none, is read as it stands,
+    // with no set of the conjunctions seen and no list made: O(1), where a list costs an
+    // allocation on each call. Only a conjunction that holds one is read into a list, O(c).
+    fn conjunct_list(&self) -> Conjuncts<'_> {
+        match self {
+            Formula::And(gs) if !gs.iter().any(|g| matches!(g, Formula::And(_))) => {
+                return Conjuncts::Flat(gs);
+            }
+            Formula::And(_) => {}
+            g => return Conjuncts::Flat(std::slice::from_ref(g)),
+        }
         let mut out = Vec::new();
-        let mut seen = std::collections::HashSet::new();
+        // An id is one number, so the seen set is hashed by `FxHasher`, not by the default
+        // hasher, which reads a per-thread seed on each call and costs more per id.
+        let mut seen: HashSet<Id, std::hash::BuildHasherDefault<rustc_hash::FxHasher>> =
+            HashSet::default();
         let mut stack = vec![self];
         while let Some(g) = stack.pop() {
             match g {
@@ -704,7 +725,34 @@ impl Formula {
                 g => out.push(g),
             }
         }
-        out
+        Conjuncts::Read(out)
+    }
+}
+
+/// The top-level conjuncts of a formula ([`Formula::conjunct_list`]): the operands of a
+/// conjunction that holds none, or the formula alone, as written; or a list read from nested
+/// conjunctions.
+enum Conjuncts<'f> {
+    Flat(&'f [Formula]),
+    Read(Vec<&'f Formula>),
+}
+
+impl<'f> Conjuncts<'f> {
+    /// Each conjunct, in order.
+    fn iter(&self) -> impl Iterator<Item = &'f Formula> + '_ {
+        let (flat, read): (&'f [Formula], &[&'f Formula]) = match self {
+            Conjuncts::Flat(gs) => (gs, &[]),
+            Conjuncts::Read(gs) => (&[], gs),
+        };
+        flat.iter().chain(read.iter().copied())
+    }
+
+    /// The number of conjuncts.
+    fn len(&self) -> usize {
+        match self {
+            Conjuncts::Flat(gs) => gs.len(),
+            Conjuncts::Read(gs) => gs.len(),
+        }
     }
 }
 
@@ -1034,7 +1082,8 @@ fn satisfiable_written(f: &Formula) -> Result<Option<Model>, Refusal> {
             // different point from the old public entry. Arbitrary-precision arithmetic
             // retains its bit cost. Test: one_row::a_box_and_an_extreme_row_build_their_models_in_near_linear_work.
             // The thread-local switch is used only as a negative control.
-            if let Some(b) = one_row::OneRow::of(f) {
+            let conjuncts = f.conjunct_list();
+            if let Some(b) = one_row::OneRow::of(&conjuncts) {
                 if !b.exists() {
                     return Ok(None);
                 }
@@ -1044,7 +1093,7 @@ fn satisfiable_written(f: &Formula) -> Result<Option<Model>, Refusal> {
                     Ok(b.point())
                 };
             }
-            match row_domains::settle(f) {
+            match row_domains::settle(&conjuncts) {
                 Some(row_domains::Settled::Empty) => Ok(None),
                 Some(row_domains::Settled::Point(m)) => {
                     if SOLVER_MODEL_FIRST.with(Cell::get) {
@@ -1141,10 +1190,11 @@ fn decide_written(f: &Formula) -> Result<bool, Refusal> {
         Forced::Empty => Ok(false),
         Forced::Point(_) | Forced::Holds => Ok(true),
         Forced::Undecided(facts) => {
-            if let Some(b) = one_row::OneRow::of(f) {
+            let conjuncts = f.conjunct_list();
+            if let Some(b) = one_row::OneRow::of(&conjuncts) {
                 return Ok(b.exists());
             }
-            if let Some(s) = row_domains::settle(f) {
+            if let Some(s) = row_domains::settle(&conjuncts) {
                 return Ok(matches!(s, row_domains::Settled::Point(_)));
             }
             match reduced(&facts) {
@@ -1762,9 +1812,6 @@ fn old_path() -> bool {
 
 thread_local! {
     static OLD_PATH: Cell<bool> = const { Cell::new(false) };
-    /// Set while a question of [`tighten_each`] that the solver refused is asked again with
-    /// no removal by bounds ([`drop_by_bounds`], [`without_bounds`]).
-    static BOUNDLESS: Cell<bool> = const { Cell::new(false) };
     static REVERSED: Cell<bool> = const { Cell::new(false) };
 }
 
@@ -1998,26 +2045,6 @@ fn equation(c: &Con, negated: bool, both: bool) -> Option<Formula> {
 // projections change, so no check before the question tells which path it answers. Trigger:
 // rows of three atoms or more whose projection the solver refuses. Test:
 // `store::presburger::by_halves_against_old::answers_are_those_of_the_old_path`.
-/// `run`, and where it is refused and no removal by bounds was left out, `run` again with none
-/// ([`drop_by_bounds`]), as the solver ran before C47; the first refusal where both are refused.
-/// The removals take out only disjuncts with no point, so either answer is exact, but the
-/// searches that follow take other paths, and on `random2` cases 98 and 1063 only the path
-/// without them answers the questions a hull needs (I21).
-fn without_bounds<T>(
-    run: impl FnOnce() -> Result<T, Refusal>,
-    again: impl FnOnce() -> Result<T, Refusal>,
-) -> Result<T, Refusal> {
-    match run() {
-        Err(e) if !BOUNDLESS.with(Cell::get) => {
-            BOUNDLESS.with(|b| b.set(true));
-            let r = again();
-            BOUNDLESS.with(|b| b.set(false));
-            r.map_err(|_| e)
-        }
-        r => r,
-    }
-}
-
 fn or_old<T>(run: impl Fn() -> Result<T, Refusal>) -> Result<T, Refusal> {
     match run() {
         Err(_) if !old_path() => {
@@ -2054,12 +2081,13 @@ fn decide_inner(f: &Formula) -> Result<bool, Refusal> {
 /// projected away given values ([`repair`]); a point of the parts at which `f` does not hold
 /// so still answers `true` (S22-shapes-linear and PREIMAGE-slow-rounds, one first-point path).
 fn decide_kept(f: &Formula, kept: Option<&mut Vec<Model>>) -> Result<bool, Refusal> {
-    decide_kept_status(f, kept).0
+    decide_kept_status(f, kept, false).0
 }
 
 fn decide_kept_status(
     f: &Formula,
     mut kept: Option<&mut Vec<Model>>,
+    status: bool,
 ) -> (Result<bool, Refusal>, bool) {
     let mut immune = false;
     let answer = (|| {
@@ -2106,7 +2134,7 @@ fn decide_kept_status(
             }
             let mut first = Vec::new();
             let (probed, status) =
-                probe_kept_status(p, &mut first, true, false, true, &HashSet::new(), true);
+                probe_kept_status(p, &mut first, true, false, true, &HashSet::new(), status);
             immune = status;
             let q = match probed {
                 Ok(None) => return Ok(false),
@@ -2616,13 +2644,10 @@ fn settle_tied(f: &Formula, color: &HashMap<Atom, usize>, want: bool) -> Result<
         let implied = disjunction_hulls(&p.ors, &mut DeepHulls::default());
         if !implied.is_empty() {
             let rows: Vec<&Con> = p.cons.iter().chain(implied.iter()).collect();
-            if rows.iter().any(|c| c.lin.terms.len() > 2)
-                && let Some(dw) = slack::DisjointWide::of_refs(&rows)
-            {
-                if dw.empty() {
-                    return Ok(Settled::Empty);
-                }
-            } else if let Ok(None) = solve(&rows, false) {
+            // `solve` without a point reads disjoint wide rows by their sums itself
+            // (`slack::DisjointWide`), so they are not read here first: a system they do not
+            // fit was read twice before the solver ran.
+            if let Ok(None) = solve(&rows, false) {
                 return Ok(Settled::Empty);
             }
         }
@@ -4561,8 +4586,26 @@ fn probe_kept_status(
                 }
                 (order, links)
             } else {
-                let sbh_failed =
-                    search_by_halves(&p, &mut held, points, &implied, stop, !all_probes_checked);
+                // Complexity tradeoff (PRES-disj-regressions): in [`batched_prefix`] (no `tests`)
+                // the halves go two levels deep, as when the slack probes checked every disjunct,
+                // since the probe that stopped before it ([`has_point`]) already searched each
+                // disjunct alone ([`point_with`]), the search a leaf of one disjunct repeats.
+                // Naive version (I18 of PRES-stop-prefix): halving down to one disjunct, 1.37
+                // times main's instructions on `overlap_rows` decided at k = 16 (9.02 G against
+                // 6.57 G) and 1.41 times at k = 32 (57.85 G against 40.97 G). Used: two levels,
+                // 6.32 G and 37.65 G; the 12 `random2` answers of I18 stay, and the 3,000 cost
+                // 416.84 G against 420.73 G halving to one disjunct. Not used: no halves (413.73
+                // G, but 9 fewer hulls finer than main's), or every level but the leaves (7.19 G
+                // and 46.31 G, above main). Test:
+                // `l01_38_presburger::decide_sat::decide_answers_where_satisfiable_answers`.
+                let sbh_failed = search_by_halves(
+                    &p,
+                    &mut held,
+                    points,
+                    &implied,
+                    stop,
+                    !all_probes_checked && tests,
+                );
                 if (stop && points.len() > before) || !tests {
                     return Ok(Some(p));
                 }
@@ -5117,7 +5160,7 @@ fn drop_by_bounds(p: &mut Parts, spared: &dyn Fn(&Parts) -> bool) -> Option<bool
     // of the readings would follow the names, and four readings, which stop short of the
     // bounds' fixed point, would show some systems empty under one naming and not another
     // (`l01_38_presburger::oracle::answers_do_not_depend_on_names_or_order`).
-    if p.ors.is_empty() || BOUNDLESS.with(Cell::get) {
+    if p.ors.is_empty() {
         return Some(false);
     }
     let n_cons = p.cons.len();
@@ -6533,6 +6576,15 @@ fn drain_unary(ors: &mut Vec<Vec<Rc<Parts>>>, base: &mut Linked, near: &mut Near
         ds: Option<Vec<Rc<Parts>>>,
         children: std::ops::Range<usize>,
     }
+    // A disjunction that drains is empty, or one disjunct of unary constraints. Where none is,
+    // the walk below would give back `ors` unchanged, so it is kept as it is, with no arena
+    // built: O(R) reads of the R disjunctions' tops, where the walk allocates two lists.
+    let drains = |ds: &Vec<Rc<Parts>>| {
+        ds.is_empty() || (ds.len() == 1 && ds[0].cons.iter().all(|c| c.lin.terms.len() <= 1))
+    };
+    if !ors.iter().any(drains) {
+        return true;
+    }
     let roots = ors.len();
     let mut arena: Vec<Node> = mem::take(ors)
         .into_iter()
@@ -6856,8 +6908,10 @@ fn solve<C: std::borrow::Borrow<Con>>(cons: &[C], want: bool) -> Result<Option<M
         if let Some(b) = one_row::OneRow::of_cons(&cons) {
             return Ok(b.exists().then(Model::new));
         }
+        // `cons` is reduced above wherever a reduction applies (one needs an equation of three
+        // terms or more), so it is read as it stands, not reduced again.
         if cons.iter().any(|c| c.lin.terms.len() > 2)
-            && let Some(dw) = slack::DisjointWide::of_refs(&cons)
+            && let Some(dw) = slack::DisjointWide::of_reduced_refs(&cons)
         {
             return Ok((!dw.empty()).then(Model::new));
         }
@@ -7203,13 +7257,8 @@ fn quotient(
 /// A part of a system: its variables, and its rows.
 type Part = (Vec<usize>, Vec<(Row, Rel)>);
 
-/// [`search`] on each part of `base` that shares no variable with the others: the rows hold
-/// at a point exactly when each part's rows do at its own variables. So the answer is empty
-/// when one part is empty, whatever the others give; otherwise the least of the parts'
-/// refusals; otherwise the parts' points together, a variable in no row taking 0. A part of
-/// two variables is decided exactly, however many such parts there are. Each part's
-/// variables keep their colors, `keys`.
-/// Naming-invariant laminar subset reduction on `Row` unit-coefficient equations (`parts`).
+/// Naming-invariant laminar subset reduction on `Row` unit-coefficient equations (`parts`),
+/// over variables numbered below `vars`.
 ///
 /// Complexity tradeoff: without laminar subtraction, nested prefix equations (`two_rows`:
 /// `E_1` on `0..k/2` and `E_2` on `0..k`) keep all `k` variables in one connected component and
@@ -7219,20 +7268,50 @@ type Part = (Vec<usize>, Vec<(Row, Rel)>);
 /// and `E_2 - E_1` on `k/2..k`), preserving the exact integer solution set and variable colors.
 /// Non-laminar overlapping equations stay unreduced. Test:
 /// `l01_38_presburger::slack_scale::two_rows_scales`.
-fn reduce_subset_row_eqs(mut base: Vec<(Row, Rel)>) -> Vec<(Row, Rel)> {
+fn reduce_subset_row_eqs(mut base: Vec<(Row, Rel)>, vars: usize) -> Vec<(Row, Rel)> {
     if slack::no_batch() {
         return base;
     }
-    let mut buckets: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-    let mut total_wide = 0usize;
-    for (i, (r, rel)) in base.iter().enumerate() {
-        if *rel == Rel::Eq && r.a.len() >= 2 && r.a.iter().all(|(_, c)| c.is_unit()) {
-            buckets.entry(r.a.len()).or_default().push(i);
-            total_wide += 1;
+    let candidate = |(r, rel): &(Row, Rel)| {
+        *rel == Rel::Eq && r.a.len() >= 2 && r.a.iter().all(|(_, c)| c.is_unit())
+    };
+    // A first subtraction needs an equation shorter than another one, every variable of which
+    // is in another equation, and every later one needs a first, so where no equation has
+    // both, nothing is reduced. That is found by counting the equations of each variable in a
+    // vector indexed by it, O(vars + T) for T terms, with no map built; most systems `parts`
+    // is given have no such equation, and the maps below cost them about a sixth of the call
+    // to reduce nothing. Before that vector, the equations of two or more terms are counted by
+    // their lengths alone, O(c) for c rows with no term read: fewer than two, or all of one
+    // length, leave no equation shorter than another.
+    let (mut eqs, mut shortest, mut widest) = (0usize, usize::MAX, 0usize);
+    for (r, rel) in &base {
+        if *rel == Rel::Eq && r.a.len() >= 2 {
+            eqs += 1;
+            shortest = shortest.min(r.a.len());
+            widest = widest.max(r.a.len());
         }
     }
-    if total_wide < 2 {
+    if eqs < 2 || shortest == widest {
         return base;
+    }
+    let mut uses = vec![0u32; vars];
+    let mut longest = 0;
+    for (r, _) in base.iter().filter(|e| candidate(e)) {
+        longest = longest.max(r.a.len());
+        for (v, _) in r.a.iter() {
+            uses[*v] += 1;
+        }
+    }
+    if !(base.iter().filter(|e| candidate(e)))
+        .any(|(r, _)| r.a.len() < longest && r.a.iter().all(|(v, _)| uses[*v] > 1))
+    {
+        return base;
+    }
+    let mut buckets: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for (i, e) in base.iter().enumerate() {
+        if candidate(e) {
+            buckets.entry(e.0.a.len()).or_default().push(i);
+        }
     }
     let mut owner: HashMap<usize, usize> = HashMap::new();
     while let Some((len, idxs)) = buckets.pop_first() {
@@ -7324,6 +7403,12 @@ fn reduce_subset_row_eqs(mut base: Vec<(Row, Rel)>) -> Vec<(Row, Rel)> {
     base
 }
 
+/// [`search`] on each part of `base` that shares no variable with the others: the rows hold
+/// at a point exactly when each part's rows do at its own variables. So the answer is empty
+/// when one part is empty, whatever the others give; otherwise the least of the parts'
+/// refusals; otherwise the parts' points together, a variable in no row taking 0. A part of
+/// two variables is decided exactly, however many such parts there are. Each part's
+/// variables keep their colors, `keys`.
 fn parts(
     vars: usize,
     base: Vec<(Row, Rel)>,
@@ -7331,7 +7416,7 @@ fn parts(
     want: bool,
     name: &dyn Fn(usize) -> String,
 ) -> Result<Option<Vec<Int>>, Refusal> {
-    let base = reduce_subset_row_eqs(base);
+    let base = reduce_subset_row_eqs(base, vars);
     // The parts, by union-find over the variables each row mentions.
     let mut parent: Vec<usize> = (0..vars).collect();
     fn find(parent: &mut [usize], mut i: usize) -> usize {
@@ -9105,6 +9190,14 @@ fn pivots(e: &Row, sys: &System, others: impl Fn(usize) -> usize) -> Vec<usize> 
 
 /// The row or its negation, whichever is less, as its coefficients and its constant: two
 /// equalities with the same one are the same equality.
+/// Whether `a` and `b` are one row up to sign, `unsigned(a) == unsigned(b)`, read in place.
+fn same_up_to_sign(a: &Row, b: &Row) -> bool {
+    a.a.len() == b.a.len()
+        && ((a.k == b.k && a.a == b.a)
+            || (a.k == -&b.k
+                && (a.a.iter().zip(b.a.iter())).all(|((i, c), (j, d))| i == j && *c == -d)))
+}
+
 fn unsigned(r: &Row) -> (Vec<Term>, Int) {
     let neg = opposite(&r.a);
     if *r.a <= *neg {
@@ -9428,29 +9521,16 @@ impl Omega {
         let mut sys = System::new(keys.iter().copied());
         let mut es = Equalities::new(keys.len());
         let mut steps = Vec::new();
+        // The wide equations are compared only when a unary one is there to substitute, and
+        // in place, with no row copied: a system with none, or with two wide equations that
+        // differ, takes the general queue without a copy of each wide equation made first.
         if !slack::no_batch() {
-            let mut has_unary_eq = false;
-            let mut wide_unsigned: Option<(Vec<Term>, Int)> = None;
-            let mut multi_ok = true;
-            for (r, rel) in base {
-                if *rel == Rel::Eq {
-                    match r.a.len() {
-                        1 => has_unary_eq = true,
-                        n if n >= 2 => {
-                            let u = unsigned(r);
-                            if let Some(prev) = &wide_unsigned {
-                                if *prev != u {
-                                    multi_ok = false;
-                                    break;
-                                }
-                            } else {
-                                wide_unsigned = Some(u);
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
+            let has_unary_eq = (base.iter()).any(|(r, rel)| *rel == Rel::Eq && r.a.len() == 1);
+            let mut wide_eqs = (base.iter()).filter(|(r, rel)| *rel == Rel::Eq && r.a.len() >= 2);
+            let multi_ok = has_unary_eq
+                && wide_eqs
+                    .next()
+                    .is_none_or(|(first, _)| wide_eqs.all(|(r, _)| same_up_to_sign(first, r)));
             if has_unary_eq && multi_ok {
                 let mut fixed: Vec<Option<Int>> = vec![None; keys.len()];
                 let mut fixed_vars: Vec<usize> = Vec::new();
@@ -10512,11 +10592,12 @@ pub type Each = (Vec<Result<IntervalSet, Refusal>>, Vec<Refusal>);
 pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
     // A box and one row, or one equation that its residue or its ends settle, is projected
     // exactly without the solver (modules `one_row` and `row_domains`).
+    let conjuncts = f.conjunct_list();
     if !syms.iter().any(|a| matches!(a, Atom::Product(..))) {
-        if let Some(b) = one_row::OneRow::of(f) {
+        if let Some(b) = one_row::OneRow::of(&conjuncts) {
             return Ok((syms.iter().map(|a| Ok(b.project(a))).collect(), Vec::new()));
         }
-        if let Some(s) = row_domains::settle(f) {
+        if let Some(s) = row_domains::settle(&conjuncts) {
             let at = |a: &Atom| match &s {
                 row_domains::Settled::Empty => IntervalSet::empty(),
                 row_domains::Settled::Point(m) => match m.get(a) {
@@ -10532,9 +10613,10 @@ pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
     // already used by decide visits each part/term through its incidence queues, O(n)
     // work and storage; use only its proof of emptiness, then return exact empty sets in
     // O(syms.len()). Other results leave the existing projection untouched, at the price
-    // of this extra O(n) pass. In particular a trial point is not a unique projection.
-    // I17; one_row::a_forced_contradiction_projects_to_empty_in_linear_work.
-    if matches!(forced::forced(f, false), Forced::Empty) {
+    // of this extra O(n) pass, which is not built where the top-level conjuncts give the
+    // propagation no first step (`forced::empty`). In particular a trial point is not a
+    // unique projection. I17; one_row::a_forced_contradiction_projects_to_empty_in_linear_work.
+    if forced::empty(f, &conjuncts) {
         return Ok(no_points(syms));
     }
     // The formula with each shared part taken out of the disjunctions that hold it in every
@@ -12097,42 +12179,30 @@ fn project_parts(
                 &summary
             }
         };
-        // Complexity tradeoff: a question the solver refuses is asked again without the removals
-        // by bounds ([`without_bounds`]), so it costs up to that second ask more, on the path
-        // whose cost C47 made linear; a question answered costs what it did. Naive version:
-        // one ask, which leaves three hulls of `random2` coarser than before C47 (cases 98,
-        // 1063, 2992; I21). Test:
-        // `l01_38_presburger::disj_groups::a_hull_question_refused_with_the_removals_by_bounds_is_asked_without_them`.
+        // Complexity tradeoff (PRES-disj-regressions): a question the solver refuses is not asked
+        // again. Naive version (I21 of PRES-disj-cost-xr): asked again without the removals by
+        // bounds ([`drop_by_bounds`]), which made the hulls of `random2` cases 98, 1063 and 2992
+        // exact at up to a second ask per refused question: 1.77 times main's instructions on
+        // `overlap_rows` projected at k = 16, and 2.78 G more over the 3,000 `random2` formulas.
+        // Without it, 98 and 2992 are exact now (other changes of PRES-disj-cost-xr answer them),
+        // and the hull of `y4` in 1063 holds 16 and 17 where its one point has 17, as on main.
+        // No test made before the second ask was found to tell when it answers: asking again only
+        // where a removal fixed an atom that another row names, with its value put in, cost 1.96
+        // times the instructions on that `overlap_rows` projection, and putting the values in on
+        // every ask left two other `random2` hulls coarser than main (cases 1018 and 2306). Test:
+        // `l01_38_presburger::disj_groups::a_hull_question_refused_after_the_removals_by_bounds_keeps_its_point`.
         let ask: Ask = if sets {
-            |f, _| {
-                let answer = without_bounds(|| decide(f), || decide(f));
-                let immune = answer.is_err()
+            |f, _, status| {
+                let answer = decide(f);
+                let immune = status
+                    && answer.is_err()
                     && !HULL_BISECT.with(Cell::get)
                     && !HULL_NO_IMMUNITY.with(Cell::get)
                     && hull_immunity(f);
                 (answer, immune)
             }
         } else {
-            |f, kept| {
-                let first = decide_kept_status(f, Some(kept));
-                if first.0.is_err() && !BOUNDLESS.with(Cell::get) {
-                    let mut more = Vec::new();
-                    let second = BOUNDLESS.with(|mode| {
-                        let was = mode.replace(true);
-                        let r = decide_kept_status(f, Some(&mut more));
-                        mode.set(was);
-                        r
-                    });
-                    kept.append(&mut more);
-                    if second.0.is_ok() {
-                        second
-                    } else {
-                        (first.0, first.1 && second.1)
-                    }
-                } else {
-                    first
-                }
-            }
+            |f, kept, status| decide_kept_status(f, Some(kept), status)
         };
         tighten_each(f, syms, &ks, &open, &mut out, &implied, ask);
     }
@@ -12284,7 +12354,7 @@ fn summarize(cons: &[Con], seen: &[Option<Vec<Projected>>], syms: &[Atom]) -> Fo
 
 /// A question of [`tighten_each`]: whether a formula has a point, [`decide_kept`] adding to
 /// the list a point of the formula it finds, or [`decide`], which adds none.
-type Ask = fn(&Formula, &mut Vec<Model>) -> (Result<bool, Refusal>, bool);
+type Ask = fn(&Formula, &mut Vec<Model>, bool) -> (Result<bool, Refusal>, bool);
 
 /// The tied residual's immunity certificate, returned to the hull caller.
 // Complexity tradeoff: naive bisection asks O(log W) whole decision questions after an
@@ -12658,7 +12728,7 @@ impl Hull {
         if self.seed() {
             return Ok(true);
         }
-        let r = (self.ask)(&self.f, &mut self.found).0;
+        let r = (self.ask)(&self.f, &mut self.found, false).0;
         self.read_found();
         self.has = matches!(r, Ok(true));
         r
@@ -12692,14 +12762,25 @@ impl Hull {
     /// point of that formula is one of `f`, so `true` shows that `f` has a point (`has`), even
     /// where `ask` gives none ([`decide`] with `sets`) and where `ask` refuses `f` itself.
     fn asked(&mut self, i: usize, below: bool, v: &Int) -> Result<bool, Refusal> {
-        self.asked_status(i, below, v).0
+        self.asked_with(i, below, v, false).0
     }
 
     fn asked_status(&mut self, i: usize, below: bool, v: &Int) -> (Result<bool, Refusal>, bool) {
+        self.asked_with(i, below, v, true)
+    }
+
+    fn asked_with(
+        &mut self,
+        i: usize,
+        below: bool,
+        v: &Int,
+        status: bool,
+    ) -> (Result<bool, Refusal>, bool) {
         let con = self.side(i, below, v);
         let (r, immune) = (self.ask)(
             &Formula::and(vec![self.f.clone(), Formula::Con(con)]),
             &mut self.found,
+            status,
         );
         match r {
             Ok(true) => self.has = true,
@@ -12818,7 +12899,7 @@ impl Hull {
         // a point, so the steps end, after about `log2 w` questions with `w` the distance from
         // the end to the nearest value of the symbol at a point.
         if (lo.is_none() || hi.is_none()) && self.seen[i].is_none() && !self.has {
-            match (self.ask)(&self.f, &mut self.found).0 {
+            match (self.ask)(&self.f, &mut self.found, false).0 {
                 Ok(true) => self.has = true,
                 Ok(false) => return IntervalSet::empty(),
                 Err(_) => return set,

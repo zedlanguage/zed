@@ -28,7 +28,7 @@ use std::collections::{BTreeMap, HashMap};
 use zedc_int::int::Int;
 
 use super::formula::{Atom, Con, Formula, Id, Model, Rel};
-use super::one_bound;
+use super::{Conjuncts, one_bound};
 
 /// What the residue or the ends of the row settle.
 pub(super) enum Settled {
@@ -39,8 +39,9 @@ pub(super) enum Settled {
 /// The ends of a range of one atom.
 type Range = (Int, Int);
 
-/// The answer of `f` when it is one equation over atoms confined to finite ranges and its
-/// residue or its ends settle it; `None` otherwise.
+/// The answer of a formula, given as its top-level conjuncts (`Formula::conjunct_list`), when it is
+/// one equation over atoms confined to finite ranges and its residue or its ends settle it;
+/// `None` otherwise.
 // Complexity tradeoff: the solver's search over the k disjunctions of such a formula asks O(k)
 // questions of the whole row and more when no point is found, O(k²) or worse (subset sum with
 // odd target and even weights: k^2.7 in instructions). Here each conjunct is read once into an
@@ -49,11 +50,27 @@ type Range = (Int, Int);
 // O(n²) in the size of its shared form. Test:
 // `l01_38_presburger::one_row::residue_and_ends_of_a_row_scale`. COMPLEXITY.md row
 // PRES-disj-cost.
-pub(super) fn settle(f: &Formula) -> Option<Settled> {
+pub(super) fn settle(conjuncts: &Conjuncts) -> Option<Settled> {
+    // The shape is first checked by counting, with no conjunct read past its top: one
+    // equation of two or more atoms, and one other conjunct for each of its atoms. Most
+    // formulas the callers ask (two equations, a bound beside a disjunction) fail here, in
+    // O(c) for c conjuncts, before any arm is read into a map. The read below also answers
+    // `Settled::Empty` early for a conjunct that is `false` or that confines its atom to no
+    // value; where the counts do not match, such a formula is now left to the callers' other
+    // methods (the forced propagator where it has a first step, else the solver), which give
+    // the same answer at their own cost.
+    let mut rows = conjuncts.iter().filter_map(|g| match g {
+        Formula::Con(c) if c.rel == Rel::Eq && c.lin.terms.len() > 1 => Some(c),
+        _ => None,
+    });
+    match (rows.next(), rows.next()) {
+        (Some(c), None) if c.lin.terms.len() + 1 == conjuncts.len() => {}
+        _ => return None,
+    }
     let mut domains: BTreeMap<Atom, Vec<Range>> = BTreeMap::new();
     let mut row: Option<&Con> = None;
     let mut arms_read: HashMap<Id, (Atom, Int, Int)> = HashMap::new();
-    for g in f.conjuncts() {
+    for g in conjuncts.iter() {
         if let Formula::Con(c) = g
             && c.rel == Rel::Eq
             && c.lin.terms.len() > 1

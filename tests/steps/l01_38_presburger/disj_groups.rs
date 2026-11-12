@@ -697,10 +697,13 @@ fn projected_two_values(
 }
 
 /// Random case 1063 of the harness: the one point is `(3, 0, 0, 29, 17, 16)`. The question
-/// `y4 <= 16` is refused after the removals by bounds, and answered without them (item I21;
-/// `y4` was `16..=17` before).
+/// `y4 <= 16` is refused after the removals by bounds, so the hull of `y4` is `16..=17`,
+/// which holds the point's 17, as on main before PRES-disj-cost-xr. Item I21 asked the
+/// refused question again without the removals, which made the hull exact, at 1.77 times
+/// main's instructions on `overlap_rows` projected at k = 16; it was removed
+/// (PRES-disj-regressions, comment at `ask` in `project_parts`). The other hulls are exact.
 #[test]
-fn a_hull_question_refused_with_the_removals_by_bounds_is_asked_without_them() {
+fn a_hull_question_refused_after_the_removals_by_bounds_keeps_its_point() {
     let doms = [
         (3, 12, None),
         (0, 17, None),
@@ -710,7 +713,8 @@ fn a_hull_question_refused_with_the_removals_by_bounds_is_asked_without_them() {
         (0, 16, None),
     ];
     let got = projected_two_values(&doms, &[-1, -1, 1, 2, 1, 1], 88);
-    let want = [3, 0, 0, 29, 17, 16].map(|v| Some((v, v)));
+    let mut want = [3, 0, 0, 29, 17, 16].map(|v| Some((v, v)));
+    want[4] = Some((16, 17));
     assert_eq!(got, want);
 }
 

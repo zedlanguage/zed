@@ -36,6 +36,7 @@ use std::collections::BTreeMap;
 use zedc_int::int::Int;
 use zedc_lattice::interval::{End, IntervalSet, Num};
 
+use super::Conjuncts;
 use super::formula::{Atom, Con, Formula, Model, Rel};
 
 /// The least or the greatest value of a sum over a box: its finite part, and how many of its
@@ -78,18 +79,22 @@ pub(super) struct OneRow {
 }
 
 impl OneRow {
-    /// `f` read as a box and one row, when it is a conjunction of constraints with no product
-    /// atom, and such a box and row; `None` for any other formula.
+    /// A formula, given as its top-level conjuncts (`Formula::conjunct_list`), read as a box and one
+    /// row, when it is a conjunction of constraints with no product atom, and such a box and row;
+    /// `None` for any other formula. A conjunct other than a constraint fails it before any list
+    /// is made.
     // Complexity tradeoff: the solver's elimination of the row's n atoms copies the shrinking
     // row at each step, O(n²) term work, and a projection repeats that for each end it bisects.
     // Here the ends are kept in an ordered map and the row's two sums are made once, O(n log n);
     // each projected atom takes its own term out of the sums, O(log n), not a new sum of the
     // other n - 1 terms, which would cost O(n²) over all atoms. Test:
     // `l01_38_presburger::one_row::a_box_and_one_row_scale`. COMPLEXITY.md row PRES-disj-cost.
-    pub(super) fn of(f: &Formula) -> Option<OneRow> {
-        let cons: Vec<&Con> = f
-            .conjuncts()
-            .into_iter()
+    pub(super) fn of(conjuncts: &Conjuncts) -> Option<OneRow> {
+        if !conjuncts.iter().all(|g| matches!(g, Formula::Con(_))) {
+            return None;
+        }
+        let cons: Vec<&Con> = conjuncts
+            .iter()
             .map(|g| match g {
                 Formula::Con(c) if !c.lin.terms.keys().any(|a| matches!(a, Atom::Product(..))) => {
                     Some(c)

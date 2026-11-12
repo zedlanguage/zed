@@ -25,6 +25,9 @@
 
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::hash::BuildHasherDefault;
+
+use rustc_hash::FxHasher;
 
 use zedc_int::int::Int;
 use zedc_lattice::interval::{End, IntervalSet, Num};
@@ -62,6 +65,22 @@ fn has_product_con(c: &Con) -> bool {
 /// `l01_38_presburger::slack_scale::two_rows_scales`.
 pub(super) fn try_reduce_subset_wide_eqs_refs(cons: &[&Con]) -> Option<Vec<Con>> {
     if no_slack() {
+        return None;
+    }
+    // The equations of two or more terms, by their lengths alone, with no term read: the
+    // equations of unit coefficients and no product are among them, so fewer than two, or all
+    // of one length, leave nothing to reduce. O(c) for c constraints, where the test below
+    // walks every term of each such equation twice.
+    let (mut eqs, mut shortest, mut longest) = (0usize, usize::MAX, 0usize);
+    for c in cons {
+        let len = c.lin.terms.len();
+        if c.rel == Rel::Eq && len >= 2 {
+            eqs += 1;
+            shortest = shortest.min(len);
+            longest = longest.max(len);
+        }
+    }
+    if eqs < 2 || shortest == longest {
         return None;
     }
     let mut total_wide = 0usize;
@@ -348,7 +367,7 @@ impl DisjointWide {
     }
 
     pub(super) fn of_refs(cons: &[&Con]) -> Option<DisjointWide> {
-        if no_slack() || cons.iter().any(|c| has_product_con(c)) {
+        if no_slack() {
             return None;
         }
         if let Some(reduced) = try_reduce_subset_wide_eqs_refs(cons) {
@@ -358,7 +377,43 @@ impl DisjointWide {
         }
     }
 
+    /// [`DisjointWide::of_refs`] of rows that [`try_reduce_subset_wide_eqs_refs`] already
+    /// reduced, or that hold no equation of three terms or more, which it leaves as they are.
+    pub(super) fn of_reduced_refs(cons: &[&Con]) -> Option<DisjointWide> {
+        if no_slack() {
+            return None;
+        }
+        Self::of_reduced(cons)
+    }
+
     fn of_reduced<C: std::borrow::Borrow<Con>>(cons: &[C]) -> Option<DisjointWide> {
+        // Complexity tradeoff: the rows that make this `None` (a product, a wide equation with
+        // a coefficient other than ±1, two wide rows sharing an atom) were found while the
+        // bounds and the row of each atom were built, so a system refused here paid for maps
+        // it then dropped. They are now found first, in one pass over the T terms that borrows
+        // each atom into a set hashed by `FxHasher`, sized once (keys are atoms of one system,
+        // which no one chooses to collide; nothing iterates the set): O(T), with no clone and
+        // no ordered map. The build below runs only for a system it accepts.
+        let wide_terms = (cons.iter().map(|c| c.borrow().lin.terms.len()))
+            .filter(|n| *n > 1)
+            .sum();
+        let mut wide_atoms: HashSet<&Atom, BuildHasherDefault<FxHasher>> =
+            HashSet::with_capacity_and_hasher(wide_terms, BuildHasherDefault::default());
+        for c in cons {
+            let c = c.borrow();
+            if has_product_con(c) {
+                return None;
+            }
+            if c.lin.terms.len() < 2 {
+                continue;
+            }
+            if c.rel == Rel::Eq && !c.lin.terms.values().all(Int::is_unit) {
+                return None;
+            }
+            if !c.lin.terms.keys().all(|a| wide_atoms.insert(a)) {
+                return None;
+            }
+        }
         let mut ends: BTreeMap<Atom, Ends> = BTreeMap::new();
         let mut atom_row: HashMap<Atom, usize> = HashMap::new();
         let mut wide_cons: Vec<Con> = Vec::new();
@@ -366,9 +421,6 @@ impl DisjointWide {
 
         for c in cons {
             let c = c.borrow();
-            if has_product_con(c) {
-                return None;
-            }
             if let Some((atom, b, bad)) = unary_bound(c) {
                 empty |= bad;
                 if let Some(a) = atom {
@@ -376,14 +428,9 @@ impl DisjointWide {
                 }
                 continue;
             }
-            if c.rel == Rel::Eq && !c.lin.terms.values().all(Int::is_unit) {
-                return None;
-            }
             let r_idx = wide_cons.len();
             for a in c.lin.terms.keys() {
-                if atom_row.insert(a.clone(), r_idx).is_some() {
-                    return None;
-                }
+                atom_row.insert(a.clone(), r_idx);
             }
             wide_cons.push(c.clone());
         }

@@ -52,6 +52,7 @@ use std::hash::BuildHasherDefault;
 use rustc_hash::FxHasher;
 use zedc_int::int::Int;
 
+use super::Conjuncts;
 use super::formula::{Atom, Con, Formula, Id, Model, Rel};
 use state::{Countdown, Interval, Latch, Meet, Once};
 use trial::Trial;
@@ -159,6 +160,73 @@ pub(super) fn forced(f: &Formula, point: bool) -> Forced<'_> {
             }
         }
     }
+}
+
+/// Whether [`forced`] answers `f`, of top-level conjuncts `conjuncts` (`Formula::conjunct_list`),
+/// [`Forced::Empty`]: the propagation alone, with no facts read out and no trial point, which
+/// only answer a formula it does not show empty, and with no graph built for a formula whose
+/// top-level conjuncts give it no first step ([`may_start`]). O(n) as [`forced`].
+pub(super) fn empty(f: &Formula, conjuncts: &Conjuncts) -> bool {
+    if !may_start(conjuncts) {
+        return false;
+    }
+    let mut g = Graph::of(f);
+    g.events.push(Event::Force(0));
+    !g.run()
+}
+
+/// Whether the propagation can take a first step on `f` from its top-level conjuncts, the parts
+/// forced from the start. With no atom known, a forced constraint gives a step only with one
+/// atom ([`Graph::solve`]): an equation fixes it, or shows it has no integer value; rows `t >= 0`
+/// of one atom bound it, and fix it or cross only where its least value is at or above its
+/// greatest. A constraint of no atom, or a disjunction of one operand or none, gives a step
+/// too. Where none of these is among the conjuncts, no atom is ever known and no part ever has
+/// its value, so the propagation ends with nothing shown.
+// Complexity tradeoff: the answer reads the top-level conjuncts alone, O(c) for c conjuncts and
+// O(b) expected for the b rows of one atom, so a constraint of no atom below a top-level
+// disjunction or negation, which the propagation would value at once and which could decide that
+// disjunction, is not seen: such a formula is projected without the proof of emptiness, at the
+// cost of the projection itself. Why: seeing it walks the whole formula, the O(n) pass this
+// test saves (about 15K instructions on a formula of a dozen parts, where the projection costs
+// about 500K). The constructors (`Formula::and`, `Formula::or`) absorb `true` and `false` but
+// keep a constraint of no atom. Trigger: a projected formula whose only seed is such a part.
+// Tests: `l01_38_presburger::one_row::a_forced_contradiction_projects_to_empty_in_linear_work`
+// and `l01_38_presburger::one_row::a_formula_with_no_first_step_is_projected_without_the_propagation`.
+fn may_start(conjuncts: &Conjuncts) -> bool {
+    let mut ends: Vec<(&Atom, Option<Int>, Option<Int>)> = Vec::new();
+    for g in conjuncts.iter() {
+        match g {
+            Formula::Con(c) if c.lin.terms.is_empty() => return true,
+            Formula::Con(c) if c.rel == Rel::Eq && c.lin.terms.len() == 1 => return true,
+            Formula::Con(c) => ends.extend(super::one_bound(c)),
+            Formula::Or(ds) if ds.len() <= 1 => return true,
+            Formula::Or(_) | Formula::And(_) | Formula::Not(_) => {}
+        }
+    }
+    if ends.len() < 2 {
+        return false;
+    }
+    let mut at: FxMap<&Atom, (Option<Int>, Option<Int>)> =
+        FxMap::with_capacity_and_hasher(ends.len(), Default::default());
+    for (a, lo, hi) in ends {
+        let (l, h) = at.entry(a).or_default();
+        if let Some(lo) = lo
+            && l.as_ref().is_none_or(|v| lo > *v)
+        {
+            *l = Some(lo);
+        }
+        if let Some(hi) = hi
+            && h.as_ref().is_none_or(|v| hi < *v)
+        {
+            *h = Some(hi);
+        }
+        if let (Some(l), Some(h)) = (&*l, &*h)
+            && l >= h
+        {
+            return true;
+        }
+    }
+    false
 }
 
 impl<'f> Graph<'f> {
