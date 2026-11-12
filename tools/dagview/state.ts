@@ -424,7 +424,10 @@ export function buildGraph(inp: Inputs): BoardState {
     else if (ls === "fixing" || ls === "drafting" || ls === "merging") s = "active";
     else if (ls === "abandoned") s = "unstarted";
     // An item the ledger lists as open is not active, whatever the log says about it.
-    else if (ls === "open" || ls === "queued") s = "unstarted";
+    // "unsolved" (an agent gave up after its rounds) and "todo" (a follow-up an agent filed) wait for a
+    // new attempt; "ready" (a branch handed to the orchestrator to merge) waits on the merge.
+    else if (ls === "open" || ls === "queued" || ls === "unsolved" || ls === "todo") s = "unstarted";
+    else if (ls === "ready") s = "waiting";
     else if (ls === "running" || ls === "started" || ls === "active") s = "active";
     else if (lines.some((l) => l.entry.role === "merge" && /\bon main\b|merged/.test(l.entry.text))) s = "done";
     else if (lines.length > 0) s = "active";

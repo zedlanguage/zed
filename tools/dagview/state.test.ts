@@ -553,3 +553,12 @@ test("the commit list agrees with a scan on random hashes", () => {
   assert.equal(l.size, 1500);
   for (const h of all) for (const k of [7, 12, 40]) assert.equal(l.has(h.slice(0, k)), [...on].some((o) => o.startsWith(h.slice(0, k))), h.slice(0, k));
 });
+
+test("an agent's unsolved or todo line leaves the node unstarted; ready leaves it waiting", () => {
+  const log = "2026-11-12 10:00:00 | A:impl#1 | round 1 started\n";
+  const st = (state: string) => by(buildNodes(inputs(log, `{"id":"A","state":"${state}","by":"CD-xr:A"}\n`))).get("A")!.state;
+  assert.equal(st("unsolved"), "unstarted");
+  assert.equal(st("todo"), "unstarted");
+  assert.equal(st("ready"), "waiting");
+  assert.equal(st("running"), "active");
+});
