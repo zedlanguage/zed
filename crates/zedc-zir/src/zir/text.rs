@@ -637,9 +637,9 @@ fn word_len(s: &str) -> usize {
 
 /// Why `w` is not a name by the lexer's rule ([`lex::name_end`]: a character that starts a
 /// name, or `_` before one that continues a name, then characters that continue a name and one
-/// prime at most), or `None` when it is one. The rule is the lexer's own function; the first character
-/// is looked at again here only to say which part of the rule `w` breaks. The binary form
-/// ([`super::binary`]) checks its names with this function too.
+/// prime at most), or `None` when it is one. The rule is the lexer's own function; the first
+/// character is looked at again here only to say which part of the rule `w` breaks. The binary
+/// form ([`super::binary`]) checks its names with this function too.
 pub(super) fn not_a_name(w: &str) -> Option<String> {
     if lex::name_end(w, 0) == Some(w.len()) {
         return None;

@@ -59,9 +59,13 @@ fn a_name_or_an_atom_cannot_hold_the_marks() {
             passing(&format!("#a{c}")),
             passing("1").replace("h()", &format!("h{c}()")),
         ] {
+            // A noncharacter (general category Cn) may not show on screen, so the message names
+            // it by its code point alone (NAME-nonprinting).
             let out = rejected(&src);
             assert!(
-                out.contains(&format!("(U+{code:X}) starts no name, number, operator")),
+                out.contains(&format!(
+                    "U+{code:X}, which may not show on screen, starts no name, number, operator"
+                )),
                 "{out}"
             );
         }

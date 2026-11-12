@@ -207,6 +207,7 @@ const PENDING: &[(&str, &str)] = &[
     ("keeps", "L7.4"),
     ("names", "L38.2"),
     ("bitorder", "TERM-1"),
+    ("stack", "L18.2c"),
     ("fpwarn", "FPWARN"),
     ("fpsafe", "FPWARN"),
     ("approx", "L10.3d"),

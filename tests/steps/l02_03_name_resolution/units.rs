@@ -92,7 +92,10 @@ fn a_unit_that_does_not_parse_reports_its_own_error_and_its_importer_one() {
     ]);
     let m = mistakes(&p);
     assert_eq!(m.len(), 2, "{m:?}");
-    assert!(m[0].starts_with("broken.zed:1:5: expected"), "{m:?}");
+    assert!(
+        m[0].starts_with("broken.zed:1:5: Syntax error at `;`."),
+        "{m:?}"
+    );
     assert_eq!(
         m[1],
         "main.zed:1:1: the unit `broken` cannot be imported: the file `broken.zed` does not \
