@@ -122,7 +122,8 @@ const NOWHERE: Span = Span { start: 0, end: 0 };
 /// names to string literals, each name once, and `prelude` is the one name it may bind.
 pub fn manifest(text: &str) -> Result<Manifest, Vec<Error>> {
     let tokens = lex::lex(text).map_err(|e| vec![e.into()])?;
-    let tree = parse(text, &tokens, "Unit", TOP).map_err(|e| vec![e.into()])?;
+    let tree =
+        parse(text, &tokens, "Unit", TOP).map_err(|e| vec![ast::Error::of_parse(text, e)])?;
     let stmts = ast::unit_all_errors(text, &tokens, &tree)?;
     let mut out = Manifest::default();
     let mut errors = Vec::new();

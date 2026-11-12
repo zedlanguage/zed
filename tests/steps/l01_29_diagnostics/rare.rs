@@ -53,25 +53,27 @@ fn a_default_the_checker_cannot_place_in_a_range_is_rejected_at_the_call() {
 
 #[test]
 fn an_argument_forwarded_to_a_function_parameter_is_checked_against_its_range() {
-    // MSG-forwarded-repair: repair [4] names `a`, which belongs to `h`, not to the call at
-    // 3:8, which passes -1 as `v` of `ap`; the derivation [1] to [3] is right.
+    // The repair names the argument `-1` of the call at 3:8, not `a`, which belongs to `h`
+    // (MSG-forwarded-repair); step [1] shows where `-1` is passed.
     assert_eq!(
         shown(
             "ap(positional g, positional v) = g(v);\nh(positional a) = bitAnd(a, 1);\n\
              main = ap(h, -1);\n"
         ),
-        r#"3:8: `g` takes `a` in int[0..], and this `a` is -1: a value outside int[0..] would reach a use that does not take it.
-  [1] 2:19: `bitAnd` takes `a` in int[0..] here
+        r#"3:8: `g` takes `a` in int[0..], and this call passes `-1` on to it as `a`: a value outside int[0..] would reach a use that does not take it.
+  [1] 3:14: `-1` reaches `g` as `a`
+      3 | main = ap(h, -1);
+        |        ^^^^^^^^^ [5]
+        |              ^^ [1]
+  [2] 2:19: `bitAnd` takes `a` in int[0..] here
       2 | h(positional a) = bitAnd(a, 1);
         |                   ^^^^^^^^^^^^
-  [2] 1:34: `ap` needs this of its argument here
+  [3] 1:34: `ap` needs this of its argument here
       1 | ap(positional g, positional v) = g(v);
-        | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [3]
-        |                                  ^^^^ [2]
-  [3] 1:1: `ap` is declared here with no type written for `g`, `v` or its result; the type the checker found for `ap` is `(_, _) -> _`
-  [4] 3:8: repair: pass as `a` a value in int[0..]
-      3 | main = ap(h, -1);
-        |        ^^^^^^^^^"#
+        | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [4]
+        |                                  ^^^^ [3]
+  [4] 1:1: `ap` is declared here with no type written for `g`, `v` or its result; the type the checker found for `ap` is `(_, _) -> _`
+  [5] 3:8: repair: pass a value in int[0..] where this call passes `-1`"#
     );
 }
 

@@ -15,7 +15,7 @@ use zedc::rejection::Row;
 fn refusal(text: &str) -> Error {
     let tokens = lex(text).unwrap();
     match parse(text, &tokens, "Unit", TOP) {
-        Err(e) => Error::from(e),
+        Err(e) => Error::of_parse(text, e),
         Ok(tree) => match unit(text, &tokens, &tree) {
             Err(e) => e,
             Ok(_) => panic!("accepted: {text}"),

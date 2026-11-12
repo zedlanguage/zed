@@ -110,7 +110,8 @@ fn parentheses_keep_a_block_from_opening_a_branch() {
 #[test]
 fn a_source_that_does_not_parse_is_reported_at_its_line_and_column() {
     let e = zedc::format::format_source(b"f(x) = 1;\ng(x) = ;\n").unwrap_err();
-    assert!(e.starts_with("2:8: expected "), "{e}");
+    assert!(e.starts_with("2:8: Syntax error at `;`.\n"), "{e}");
+    assert!(e.contains("[1] 2:8: expected "), "{e}");
 }
 
 #[test]

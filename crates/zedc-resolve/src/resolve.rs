@@ -1295,13 +1295,13 @@ impl Resolver<'_> {
                 }
                 Some(Found::Word(_)) => not_yet(&format!("the prelude word `{name}`")),
                 // A prelude struct of a later layer is named as a value to build one.
-                None if name == MAIN_ARGS => main_args_elsewhere(),
+                None if name == MAIN_ARGS => return self.errors.push(main_args_elsewhere(span)),
                 None => match later_type_layer(name) {
                     Some(_) => not_yet(&format!("the prelude type `{name}`")),
                     None => match self.main_params.iter().find(|(body, m)| {
                         m == name && body.start <= span.start && span.end <= body.end
                     }) {
-                        Some(_) => main_param_alone(name),
+                        Some(_) => return self.errors.push(main_param_alone(name, span)),
                         None => undefined(name),
                     },
                 },
@@ -2589,7 +2589,7 @@ impl Resolver<'_> {
                     kind.binder()
                 )
             }
-            None if n == MAIN_ARGS => main_args_elsewhere(),
+            None if n == MAIN_ARGS => return self.errors.push(main_args_elsewhere(span)),
             Some(Found::Word(_)) | None => match later_type_layer(n) {
                 Some(_) => not_yet(&format!("the prelude type `{n}`")),
                 None => undefined_type(n),
@@ -2849,24 +2849,52 @@ fn undefined(name: &str) -> String {
     format!("`{name}` is not defined.")
 }
 
-/// The message for a use of `m`, the parameter of `main(m: MainArgs)`, other than a read of one
-/// of its fields: `m` holds ports, and a port is read or pushed to through its field.
-fn main_param_alone(m: &str) -> String {
-    format!(
-        "`{m}` is used here by itself, and `{m}` is the argument of `main`, of type `MainArgs`, \
-         which holds the program's inputs and outputs as its fields; this zedc reads and pushes \
-         to each field, not to `{m}` as a whole. Read `{m}.args`, `{m}.stdin` or `{m}.env`, or \
-         push to `{m}.stdout` or `{m}.stderr`, as `{m}.stdout <- lines;`."
-    )
+/// The error for a use at `span` of `m`, the parameter of `main(m: MainArgs)`, other than a
+/// read of one of its fields: `m` holds ports, and a port is read or pushed to through its
+/// field. A short headline, the rule in the notes (DESIGN.md sec:diagnostics).
+fn main_param_alone(m: &str, span: Span) -> Error {
+    let note = |text: String| Note { span, text };
+    Error {
+        row: None,
+        menu: String::new(),
+        span,
+        message: format!("`{m}`, the argument of `main`, is used whole."),
+        notes: vec![
+            note(format!(
+                "`{m}` is of type `MainArgs`, which holds the program's inputs and outputs as \
+                 its fields; this zedc reads and pushes to each field, not to `{m}` as a whole"
+            )),
+            note(format!(
+                "read `{m}.args`, `{m}.stdin` or `{m}.env`, or push to `{m}.stdout` or \
+                 `{m}.stderr`, as `{m}.stdout <- lines;`"
+            )),
+        ],
+    }
 }
 
-/// The message for `MainArgs` written anywhere but as the type of `main`'s parameter.
-fn main_args_elsewhere() -> String {
-    "`MainArgs` is the type of `main`'s argument, written `main(m: MainArgs)`, and this zedc \
-     takes it there only: no other function takes it, and no value of it is built. Read the \
-     fields of `m` in `main`, and pass a function the values it needs, such as `m.args` or a \
-     line of `m.stdin`."
-        .into()
+/// The error for `MainArgs` written at `span`, anywhere but as the type of `main`'s parameter.
+/// A short headline, the rule in the notes (DESIGN.md sec:diagnostics).
+fn main_args_elsewhere(span: Span) -> Error {
+    let note = |text: &str| Note {
+        span,
+        text: text.into(),
+    };
+    Error {
+        row: None,
+        menu: String::new(),
+        span,
+        message: "`MainArgs` is the type of the argument of `main` only.".into(),
+        notes: vec![
+            note(
+                "`main`'s argument is written `main(m: MainArgs)`; no other function takes a \
+                 `MainArgs`, and no value of it is built",
+            ),
+            note(
+                "the fields of `m` are read in `main`, and a function is passed the values it \
+                 needs, such as `m.args` or a line of `m.stdin`",
+            ),
+        ],
+    }
 }
 
 /// The message for the type `name`, which no type in scope and no prelude type has as its name.

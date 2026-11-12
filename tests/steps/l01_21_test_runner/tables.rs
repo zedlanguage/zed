@@ -115,12 +115,12 @@ fn a_wave_that_aborts_fails_its_row() {
 fn a_main_with_a_wrong_header_reports_once_and_runs_no_row() {
     let src = "main(n: int) {\n  m.stdout <- \"x\";\n}\n\
                test { 1 -> \"x\\n\" }\n";
+    // One error: its headline, then the notes of what `main` takes.
+    let got = checks(src);
+    assert_eq!(got.len(), 1, "{got:?}");
     assert_eq!(
-        checks(src),
-        [format!(
-            "1:6: {}",
-            zed_tests::main_param_message("n", "int")
-        )]
+        got[0].lines().next(),
+        Some(format!("1:6: {}", zed_tests::main_param_message("n", "int")).as_str())
     );
 }
 

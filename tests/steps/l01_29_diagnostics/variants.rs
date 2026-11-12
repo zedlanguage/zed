@@ -55,9 +55,7 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
         (
             "taint-reaches-clean-sink",
             "50: the mark names the row \"Taint at a sink whose parameter does not take it\", \
-             and the diagnostic is in no row of the rejection table: expected '&' or '(' or '->' \
-             or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or \
-             'with' or '|'."
+             and the diagnostic is in no row of the rejection table: Syntax error at `exec`."
                 .into(),
         ),
         (
@@ -164,5 +162,6 @@ fn two_variants_are_rejected_for_a_reason_other_than_their_documented_error() {
         "6:5: `Point` is not defined."
     );
     let e = rejected("taint-reaches-clean-sink");
-    assert!(e.starts_with("50:1: expected "), "{e}");
+    assert!(e.starts_with("50:1: Syntax error at `exec`.\n"), "{e}");
+    assert!(e.contains("expected '&' or '('"), "{e}");
 }

@@ -5750,7 +5750,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn check_on(&mut self, n: &Need, t: &Ty, span: Span) {
         let from = self.errors.len();
         let start = self.need_passed.len();
+        self.call_frames.push(CallFrame::default());
         let got = self.meet(n, t, &mut Binds::new(), span);
+        self.call_frames.pop();
         // A use checked on a value that flowed in has no call whose argument gave the atoms.
         let passed: Vec<NeedPass> = self.need_passed.drain(start..).collect();
         for (inner, _, k) in passed {
@@ -5799,6 +5801,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Some(positional.iter().map(Ty::holds_vars).collect())
             }
             NeedKind::Index(t) => Some(vec![t.holds_vars()]),
+            _ => None,
+        };
+        // Each positional argument of the use that is a parameter of the call whose need it
+        // is comes from that call's argument, where one parameter alone holds its variables.
+        self.need_from = match (&n.kind, self.call_frames.last()) {
+            (NeedKind::Call { positional, .. }, Some(frame)) if !frame.args.is_empty() => {
+                Some(positional.iter().map(|t| frame.from(t)).collect())
+            }
             _ => None,
         };
         let start = self.refused.len();
@@ -5867,6 +5877,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         self.replaying -= 1;
         self.need_args = None;
+        self.need_from = None;
         // Each argument the use's applications passed atoms of by is named by the variables
         // of its type in the need: an argument of no variable gives them to no call.
         for (what, i, k) in self.refused.drain(start..).collect::<Vec<_>>() {
@@ -6756,6 +6767,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         sig: &Sig,
         args: &[Option<Arg<'a>>],
         leaving: &[usize],
+        from: Option<&[Option<Forwarded<'a>>]>,
         span: Span,
     ) {
         let int = KType::int();
@@ -6822,10 +6834,48 @@ impl<'t, 'a> Ck<'t, 'a> {
                     self.no_int_vars(&a.ty, &passed, span);
                 }
                 if !ns.is_empty() && !listed_in(domain, &ns) {
-                    let shown = self.show(&Ty::set(ns));
-                    let message = format!("{takes}, and this `{p}` is {shown}{}", outside(domain));
-                    let mut notes = chain();
-                    notes.extend(passed_repairs(&p, domain, None, None, false, span));
+                    let shown = self.show(&Ty::set(ns.clone()));
+                    // The argument of the call around that gave the value, as `-1` in
+                    // `ap(h, -1)` (MSG-forwarded-repair): the message and the repairs name it,
+                    // not `p`, which belongs to the function passed, nor the parameter of the
+                    // function called that passed it on.
+                    let given = (from.and_then(|f| f.get(*param).copied().flatten()))
+                        .and_then(|f| Some((f, self.code(Some(f.at))?)));
+                    let Some((f, code)) = given else {
+                        let message =
+                            format!("{takes}, and this `{p}` is {shown}{}", outside(domain));
+                        let mut notes = chain();
+                        notes.extend(passed_repairs(&p, domain, None, None, false, None, span));
+                        self.error_with(span, message, notes);
+                        continue;
+                    };
+                    let is = match code == shown.as_str() {
+                        true => String::new(),
+                        false => format!(", which is {shown},"),
+                    };
+                    let message = format!(
+                        "{takes}, and this call passes `{code}`{is} on to it as `{p}`{}",
+                        outside(domain)
+                    );
+                    let mut notes = vec![Note {
+                        span: f.at,
+                        text: format!("`{code}` reaches {what} as `{p}`"),
+                    }];
+                    notes.extend(chain());
+                    let outside_all = (ns.ints_listed())
+                        .is_some_and(|vs| vs.iter().all(|v| !value_in(domain, v)));
+                    let arg =
+                        Some(code).map(|c| (c, f.expr.is_some_and(|e| self.tested(e).is_some())));
+                    let call = self.call_with(f.call, f.at, &p);
+                    notes.extend(passed_repairs(
+                        &p,
+                        domain,
+                        arg,
+                        call,
+                        outside_all,
+                        Some(code),
+                        f.call,
+                    ));
                     self.error_with(span, message, notes);
                 }
                 continue;
@@ -6879,20 +6929,30 @@ impl<'t, 'a> Ck<'t, 'a> {
                 None => r.ints.meet(&at_least_zero()).is_empty(),
             };
             let arg = self.code(Some(at)).map(|c| (c, self.tested(e).is_some()));
-            // The call as written, and with the argument replaced by `p`.
-            let call = (span.start <= at.start && at.end <= span.end)
-                .then(|| {
-                    let src = self.t.text?;
-                    let (before, after) =
-                        (src.get(span.start..at.start)?, src.get(at.end..span.end)?);
-                    Some((self.code(Some(span))?, format!("{before}{p}{after}")))
-                })
-                .flatten();
+            let call = self.call_with(span, at, &p);
             notes.extend(chain());
-            notes.extend(passed_repairs(&p, domain, arg, call, outside_all, span));
+            notes.extend(passed_repairs(
+                &p,
+                domain,
+                arg,
+                call,
+                outside_all,
+                None,
+                span,
+            ));
             let message = format!("{takes}, and this `{p}` is {shown}{}", outside(domain));
             self.error_with(span, message, notes);
         }
+    }
+
+    /// The call at `span` as written, and with its argument at `at` replaced by `p`.
+    fn call_with(&self, span: Span, at: Span, p: &str) -> Option<(&'a str, String)> {
+        if at.start < span.start || span.end < at.end {
+            return None;
+        }
+        let src = self.t.text?;
+        let (before, after) = (src.get(span.start..at.start)?, src.get(at.end..span.end)?);
+        Some((self.code(Some(span))?, format!("{before}{p}{after}")))
     }
 
     /// Checks that a value of `t` is data, as `what` at `span` needs (L1.17): it holds no
@@ -6998,7 +7058,32 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// An ordering: two values of one carrier, or two tuples of one length; atoms pass.
     fn compare(&mut self, op: BinaryOp, x: Arg<'a>, y: Arg<'a>, span: Span) -> Ty {
         let what = format!("`{op}`");
-        if x.ty.tuples.is_empty() && y.ty.tuples.is_empty() {
+        let scalars = x.ty.tuples.is_empty() && y.ty.tuples.is_empty();
+        // Two numbers of no common carrier, each written in the program and neither a literal,
+        // as `x[1] < y[1]` of an `int` and a `rat`, get the message of two tuples' components
+        // that do not compare, the pair as code with its types and the repair the comparison
+        // rewritten (DESIGN.md sec:diagnostics, "A short headline, the detail in the notes"):
+        // the code of each operand stands for its name. A literal gets its own forms, which
+        // the application offers, and an operand of a class or a type variable is checked
+        // there too (MSG-concise-no-common-carrier).
+        let codes = [&x, &y].map(|a| scalars.then(|| self.unordered_operand(a)).flatten());
+        let both = (codes.iter().all(Option::is_some))
+            .then(|| (x.ty.without_loose(), y.ty.without_loose()));
+        if let (Some((a, b)), [Some(cx), Some(cy)]) = (both, codes)
+            && no_common_carrier(&a, &b)
+        {
+            let out = self.passing(&x.ty, &what, span, x.at);
+            let out = out.union(&self.passing(&y.ty, &what, span, y.at));
+            let sides = OrderSides {
+                names: [Some(cx), Some(cy)],
+                ats: [x.at, y.at],
+                plain: [a.atoms().is_empty(), b.atoms().is_empty()],
+                exact: [self.exact_in_f64(&x), self.exact_in_f64(&y)],
+            };
+            self.components(&what, &sides, &a, &b, span);
+            return out.union(&Ty::carrier(Carrier::Bool));
+        }
+        if scalars {
             return self
                 .apply(
                     &what,
@@ -7027,12 +7112,39 @@ impl<'t, 'a> Ck<'t, 'a> {
                     names: [name(x.at), name(y.at)],
                     ats: [x.at, y.at],
                     plain: [a.atoms().is_empty(), b.atoms().is_empty()],
+                    exact: [false; 2],
                 };
                 self.components(&what, &sides, &a, &b, span);
                 return out.union(&Ty::carrier(Carrier::Bool));
             }
         }
         out
+    }
+
+    /// The code of `a`, an operand of an ordering, where the message of two numbers that do not
+    /// compare names it as code ([`Ck::compare`]): an operand written on one line, of numbers of
+    /// known carriers alone apart from atoms, no class, type variable or unknown, and not a
+    /// literal, whose own forms the application offers instead. Nor an operand that holds
+    /// literals, or that the application may read at the other operand's carrier
+    /// ([`Self::readable`], asked before [`lists_a_number`] as in [`Self::read_arg`]), as `g(c)`
+    /// of type `1 | 2` or `1 | f64`.
+    fn unordered_operand(&self, a: &Arg<'a>) -> Option<&'a str> {
+        let t = &a.ty;
+        let read =
+            a.branches.is_some() || a.parts.is_some() || (self.readable(a) && lists_a_number(t));
+        if a.lit.is_some() || read || t.dynamic || !t.vars.is_empty() || !only_numbers(t) {
+            return None;
+        }
+        if self.class_of_ty(&t.without_loose()).is_some() {
+            return None;
+        }
+        let at = a.at?;
+        if let Some((_, Src::Other(e))) = self.seen.get(&at)
+            && rat_forms(e, self.t.text).is_some()
+        {
+            return None;
+        }
+        self.code(Some(at)).filter(|c| !c.contains('\n'))
     }
 
     /// Checks each value of `t`, an operand of the ordering `what` whose other operand has no
@@ -7202,6 +7314,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             names: [None; 2],
             ats: [None; 2],
             plain: [false; 2],
+            exact: [false; 2],
         };
         self.components(what, &sides, a, b, span);
         let ok = self.errors.len() == mark.errors;
@@ -7331,7 +7444,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             let rests = [x, y];
             for (s, rest) in rests.into_iter().enumerate() {
                 for w in ["int", "rat", "f64"] {
-                    let Some(r) = cast_widening(w, rest).filter(|r| r != rest) else {
+                    let exact = path.is_empty() && sides.exact[s];
+                    let Some(r) = widening(w, rest, exact).filter(|r| r != rest) else {
                         continue;
                     };
                     let Some(at) = code(s, path) else {
@@ -8379,6 +8493,74 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
+    /// The message of the operator `what`, of signature `sig`, applied to `args`, where one of
+    /// its two operands is a `rat` literal and the other a number of no carrier in common with
+    /// it, as `n * -3r` of an `int` (DESIGN.md sec:diagnostics, row "Two numeric values with no
+    /// common carrier"): "The suffix makes the literal `-3r` a `rat`, never `int`", as the
+    /// message of an `f64` literal beside a `rat` says, with the literal's place. `None`
+    /// otherwise, and in a trial ([`Self::trying`]), where the rejection stands at the
+    /// operator: at the literal it would lie inside an argument a repair leaves as it was, which
+    /// [`Self::written_with`] reads as an error of that argument, so a cast of the other operand
+    /// that leaves the literal refused would pass as a repair, as `f64(y)` for `y * 0.1r`.
+    /// Cost: the two operands' carriers and the literal's text.
+    fn forced_rat(
+        &self,
+        what: &str,
+        sig: &Sig,
+        args: &[Option<Arg<'a>>],
+    ) -> Option<(Span, String)> {
+        if self.trying {
+            return None;
+        }
+        let binary = matches!(
+            Operator::of_label(what),
+            Some(Operator::Binary(
+                BinaryOp::Add
+                    | BinaryOp::Sub
+                    | BinaryOp::Mul
+                    | BinaryOp::Div
+                    | BinaryOp::Lt
+                    | BinaryOp::Le
+                    | BinaryOp::Gt
+                    | BinaryOp::Ge
+            ))
+        );
+        if !binary || args.len() != 2 || !self.no_common_carrier(sig, args) {
+            return None;
+        }
+        let rat_lit = |a: &Arg<'a>| {
+            let at = a.at?;
+            match self.seen.get(&at) {
+                Some((_, Src::Other(e))) if rat_forms(e, None).is_some() => Some(at),
+                _ => None,
+            }
+        };
+        let [Some(x), Some(y)] = args else {
+            return None;
+        };
+        let (at, other) = match (rat_lit(x), rat_lit(y)) {
+            (Some(at), None) => (at, y),
+            (None, Some(at)) => (at, x),
+            _ => return None,
+        };
+        let mask = self.numbers_of(other)?;
+        let cs: Vec<Carrier> = (Carrier::ALL.into_iter())
+            .filter(|c| mask & c.bit() != 0)
+            .collect();
+        if cs.is_empty() || cs.contains(&Carrier::Rat) {
+            return None;
+        }
+        let names = carrier_names(&cs);
+        let text = quoting(
+            &format_args!(
+                "The suffix makes the literal `{}` a `rat`, never `{names}`",
+                self.code(Some(at))?
+            ),
+            || format!("The suffix makes this literal a `rat`, never `{names}`"),
+        );
+        Some((at, text))
+    }
+
     /// The repairs of a rejected application the checker discharges: each argument wrapped
     /// in a prelude word, when the application then checks, tried with the checker's state
     /// restored after. At an operator or a call of a prelude word the wrapped argument keeps
@@ -8391,7 +8573,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// else as the word around the place shown: the menu of the row for two numeric values
     /// with no common carrier (DESIGN.md sec:diagnostics). A `rat` literal is offered the
     /// literals of the other carriers that are the same number exactly, `1.0` for `1r`, in
-    /// place of the words ([`rat_forms`]).
+    /// place of the words ([`rat_forms`]). Each comes with what its trial gave, which
+    /// [`Self::note_offered`] records where the note is offered, and with the fix that writes
+    /// it in the program's text, which a message offers in its place.
     fn repairs(
         &mut self,
         what: &str,
@@ -8399,7 +8583,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         args: &[Option<Arg<'a>>],
         pass: bool,
         span: Span,
-    ) -> Vec<Note> {
+    ) -> Vec<Repaired> {
         let mut out = Vec::new();
         if self.trying {
             return out;
@@ -8463,11 +8647,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                             );
                             (Some(s), text)
                         });
+                    let carrier = ty.numeric_carrier();
                     for (lit, text) in std::iter::once((lit, text)).chain(suffixed) {
                         // The literal as the repair writes it, where the checker reads it alone.
                         let was = self.t.text.and_then(|s| s.get(at.start..at.end));
-                        let with = match (lit, was) {
-                            (Some(lit), Some(was)) => match self.written_arg(&lit, was, a, *at) {
+                        let with = match (&lit, was) {
+                            (Some(lit), Some(was)) => match self.written_arg(lit, was, a, *at) {
                                 Mapped::Args(mut one) => one.pop().flatten(),
                                 _ => None,
                             },
@@ -8478,9 +8663,17 @@ impl<'t, 'a> Ck<'t, 'a> {
                             ..Arg::of(ty.clone())
                         });
                         if let Some(got) = self.repaired(what, sig, args, (i, with), pass, span) {
-                            let note = Note { span: *at, text };
-                            self.note_offered(&note, got);
-                            out.push(note);
+                            // The fix writes the literal of the form, `-3` for `-3r`.
+                            let fix = (lit.as_deref().zip(carrier)).and_then(|(l, c)| {
+                                let holds =
+                                    format_args!("the literal is then the {} {l}", c.name());
+                                Rewrite::new(&[(*at, &l)], &holds, &l)
+                            });
+                            out.push(Repaired {
+                                note: Note { span: *at, text },
+                                got,
+                                fix,
+                            });
                             break;
                         }
                     }
@@ -8503,9 +8696,20 @@ impl<'t, 'a> Ck<'t, 'a> {
                         Some(n) => format!("repair: write `{w}({n})`; the checker accepts that"),
                         None => format!("repair: wrap this in `{w}(…)`; the checker accepts that"),
                     };
-                    let note = Note { span: *at, text };
-                    self.note_offered(&note, got);
-                    out.push(note);
+                    // The fix casts the argument where it stands, `rat(n)`.
+                    let fix = self.code(Some(*at)).and_then(|c| {
+                        let open = format!("{w}(");
+                        let holds = format_args!("{c} is cast to {w}");
+                        let alone = format_args!("{w}({c})");
+                        let edits: [(Span, &dyn fmt::Display); 2] =
+                            [(point(at.start), &open), (point(at.end), &")")];
+                        Rewrite::new(&edits, &holds, &alone)
+                    });
+                    out.push(Repaired {
+                        note: Note { span: *at, text },
+                        got,
+                        fix,
+                    });
                 }
             }
         }
@@ -9248,6 +9452,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             .map(|_| None)
     }
 
+    /// The notes of the repairs `repairs`, each recorded as offered ([`Self::note_offered`]).
+    fn offered(&mut self, repairs: Vec<Repaired>) -> Vec<Note> {
+        (repairs.into_iter())
+            .map(|r| {
+                self.note_offered(&r.note, r.got);
+                r.note
+            })
+            .collect()
+    }
+
     /// The note `note`, a repair [`Self::repaired`] checked as written, which gave the
     /// construct being checked the type and left the errors of `got`, pending for the
     /// rejection about to be found ([`Pending`]); nothing where it was not checked as written
@@ -9541,9 +9755,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             .collect();
         let mut out = Ty::empty();
         let need_args = self.need_args.take();
+        let need_from = self.need_from.take();
         let leaving = std::mem::take(&mut self.leaving);
         if (sig.needs.iter()).any(|n| matches!(n.kind, NeedKind::InDomain { .. })) {
-            self.floors_at(what, sig, &args, &leaving, span);
+            self.floors_at(what, sig, &args, &leaving, need_from.as_deref(), span);
         }
         if pass {
             let atoms: Vec<Ty> = args
@@ -9642,7 +9857,26 @@ impl<'t, 'a> Ck<'t, 'a> {
                         }
                     }
                 }
-                notes.extend(self.repairs(what, sig, &args, pass, span));
+                let repairs = self.repairs(what, sig, &args, pass, span);
+                // A `rat` literal beside a number of another carrier, as `-3r` in `n * -3r`, gets
+                // the message of a literal whose suffix forces its carrier, with the repairs as
+                // fixes written in the program's text (MSG-concise-no-common-carrier). The
+                // message names the literal, so the literal's own forms come first, `n * -3`
+                // before `rat(n) * -3r`; each cast is a step as well, as in the row of a literal
+                // at a carrier it cannot take ([`Self::literals_refused`]).
+                if let Some((at, text)) = self.forced_rat(what, sig, &args) {
+                    let (own, casts): (Vec<_>, Vec<_>) =
+                        repairs.into_iter().partition(|r| r.note.span == at);
+                    let mut fixes: Vec<_> = own.into_iter().map(|r| r.fix).collect();
+                    for r in casts {
+                        self.note_offered(&r.note, r.got);
+                        notes.push(r.note);
+                        fixes.push(r.fix);
+                    }
+                    self.reject(Some(Row::NoCommonCarrier), at, Msg::new(text, fixes), notes);
+                    return (out, Vec::new());
+                }
+                notes.extend(self.offered(repairs));
                 if self.no_arrow_at_carrier(what, sig, &args) {
                     self.rejects_with(Row::NoArrowAtCarrier, span, message, notes);
                 } else if self.no_common_carrier(sig, &args) {
@@ -9794,7 +10028,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     }
                 }
             }
-            notes.extend(self.repairs(what, sig, args, pass, span));
+            let repairs = self.repairs(what, sig, args, pass, span);
+            notes.extend(self.offered(repairs));
         }
         if refused.len() == 1 {
             let (s, m) = refused.pop().expect("one literal");
@@ -10232,7 +10467,25 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         defer.extend(inner.order.into_iter().filter(|v| !taken.contains(v)));
         let passing = self.need_passed.len();
+        // The arguments of this call, for a repair of a need of a function it passes to name
+        // the argument it passes on, as `-1` of `ap(h, -1)` (MSG-forwarded-repair). A call of
+        // no needs has none to name.
+        let forwarded = (arrow.params.iter().zip(args))
+            .take(if sig.needs.is_empty() { 0 } else { args.len() })
+            .map(|(_, a)| {
+                a.as_ref().and_then(|a| {
+                    Some(Forwarded {
+                        call: span,
+                        at: a.at?,
+                        expr: a.expr,
+                    })
+                })
+            })
+            .collect();
+        self.call_frames
+            .push(CallFrame::new(&arrow.params, forwarded));
         let mut left = self.replay(what, &sig.needs, &mut binds, defer, span);
+        let frame = self.call_frames.pop();
         // Each bounded variable's binding is within its bound, and of one carrier, or of
         // other values only: the arrows of an operator each take one. So the classes in it
         // merge, and what else it holds flows into them.
@@ -10321,7 +10574,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 false => {
                     let needs = left.iter().map(|n| n.replace(&binds)).collect();
                     let (held, now) = hold(&result, needs, |v| self.is_class(v));
+                    self.call_frames.extend(frame);
                     self.replay(what, &now, &mut binds, BTreeSet::new(), span);
+                    self.call_frames.pop();
                     left.clear();
                     held
                 }
@@ -10980,13 +11235,15 @@ fn outside(d: &IntDomain) -> String {
 /// ([`Ck::tested`]), and `outside_all` says that no value of it lies in `d`, so that a test of
 /// it leaves nothing to pass. A name a test does not narrow, or an expression, is first bound
 /// to a new name, `p`'s own. `call` is the call's code as written and with the argument
-/// replaced by `p`, which the test then holds in full.
+/// replaced by `p`, which the test then holds in full. `given` is the argument of the call that a function's parameter `p`
+/// takes the value from, where the call passes it on (MSG-forwarded-repair).
 fn passed_repairs(
     p: &str,
     d: &IntDomain,
     arg: Option<(&str, bool)>,
     call: Option<(&str, String)>,
     outside_all: bool,
+    given: Option<&str>,
     span: Span,
 ) -> Vec<Note> {
     let dom = domain_text(d);
@@ -11016,7 +11273,10 @@ fn passed_repairs(
         )),
         _ => {}
     }
-    out.push(format!("repair: pass as `{p}` a value in {dom}"));
+    out.push(match given {
+        Some(code) => format!("repair: pass a value in {dom} where this call passes `{code}`"),
+        None => format!("repair: pass as `{p}` a value in {dom}"),
+    });
     out.into_iter().map(|text| Note { span, text }).collect()
 }
 
@@ -12145,6 +12405,9 @@ struct OrderSides<'n> {
     ats: [Option<Span>; 2],
     /// Whether each operand holds no atom, so that a tuple written out can stand for it.
     plain: [bool; 2],
+    /// Whether each operand is an int the checker shows lies within ±2^53, so that `f64` of it
+    /// is exact ([`Ck::exact_in_f64`]): a repair may cast it, where it is not a tuple.
+    exact: [bool; 2],
 }
 
 /// A pair of component types an ordering compares ([`Ck::components`]): the types, and the
@@ -12153,6 +12416,14 @@ struct Met {
     up: usize,
     at: usize,
     ty: [Ty; 2],
+}
+
+/// A repair of a rejected application ([`Ck::repairs`]): its note, what its trial gave, and
+/// the fix that writes it in the program's text, where the text shows it.
+struct Repaired {
+    note: Note,
+    got: Option<(Ty, Vec<Span>)>,
+    fix: Option<Rewrite>,
 }
 
 /// Why a pair of values does not compare under an ordering.

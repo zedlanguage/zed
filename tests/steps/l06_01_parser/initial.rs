@@ -19,7 +19,7 @@ use zedc::rejection::Row;
 pub(super) fn refusal(text: &str) -> Error {
     let tokens = lex(text).unwrap();
     match parse(text, &tokens, "Unit", TOP) {
-        Err(e) => Error::from(e),
+        Err(e) => Error::of_parse(text, e),
         Ok(tree) => match unit(text, &tokens, &tree) {
             Err(e) => e,
             Ok(_) => panic!("accepted: {text}"),
@@ -212,7 +212,7 @@ fn initial_is_a_reserved_word() {
     ] {
         let tokens = lex(src).unwrap();
         let e = parse(src, &tokens, "Unit", TOP).expect_err(src);
-        let e = Error::from(e);
+        let e = Error::of_parse(src, e);
         assert_eq!(e.row, Some(Row::ReservedWordAsName), "{src}");
         assert_eq!(
             e.message,
@@ -232,11 +232,12 @@ fn initial_is_a_reserved_word() {
     }
     let src = "initial _ = 0;";
     let tokens = lex(src).unwrap();
-    let e = Error::from(parse(src, &tokens, "Unit", TOP).expect_err(src));
+    let e = Error::of_parse(src, parse(src, &tokens, "Unit", TOP).expect_err(src));
     assert_eq!(
         (e.row, e.message.as_str(), e.span.start),
-        (None, "expected a name", 8)
+        (None, "Syntax error at `_`.", 8)
     );
+    assert_eq!(e.notes[0].text, "expected a name");
 }
 
 /// The forms `with initial` and a `with` clause on a statement of a loop are gone.
@@ -968,7 +969,7 @@ fn finding_a_bare_item_scales() {
     });
     scaling::check("a bare item after n statements", 500, |n| {
         let (text, tokens) = &units[&n];
-        let e = Error::from(parse(text, tokens, "Unit", TOP).unwrap_err());
+        let e = Error::of_parse(text, parse(text, tokens, "Unit", TOP).unwrap_err());
         assert_eq!(e.row, Some(Row::BareBoundary));
     });
 }

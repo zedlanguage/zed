@@ -96,21 +96,28 @@ fn each_path_is_read_once_so_the_wave_sees_one_value() {
 
 #[test]
 fn main_takes_one_main_args() {
-    let e = load(b"main(n: int) {\n  m.stdout <- \"x\";\n}\n").err();
+    // The headline, then the notes: what `main` takes and where the input is read now.
+    let e = load(b"main(n: int) {\n  m.stdout <- \"x\";\n}\n")
+        .err()
+        .unwrap_or_default();
     assert_eq!(
-        e.as_deref(),
+        e.lines().next(),
         Some(format!("1:6: {}", main_param_message("n", "int")).as_str())
+    );
+    assert!(
+        e.contains("`main` takes one argument, of type `MainArgs`"),
+        "{e}"
     );
     // The old header's output ports are a result type, and `main` gives an `int`.
     let e = load(b"main(m: MainArgs) -> (out: Files) {\n  out <- \"x\";\n}\n").err();
+    let e = e.unwrap_or_default();
     assert_eq!(
-        e.as_deref(),
-        Some(
-            "1:22: `main` is declared to give `(out: Files)`, and `main` gives an `int`, the \
-             program's exit status, 0 for success; a body that exports nothing gives 0. Declare \
-             `-> int` and export the status, or leave the result out. To write lines, push them \
-             to `m.stdout`, as `m.stdout <- lines;`, with `main(m: MainArgs)`."
-        )
+        e.lines().next(),
+        Some("1:22: Result of `main` that is not an `int`: `(out: Files)`. Try `int` instead.")
+    );
+    assert!(
+        e.contains("`main` gives an `int`, the program's exit status"),
+        "{e}"
     );
     // `main()` and `main(m)` need no type: only `MainArgs` fits.
     assert!(load(b"main() {\n}\n").is_ok());
@@ -155,14 +162,14 @@ fn a_helper_output_port_is_a_later_form_at_l1() {
           main(m: MainArgs) {\n  m.stdout <- \"x\";\n}\n",
     )
     .err();
+    let e = e.unwrap_or_default();
     assert_eq!(
-        e.as_deref(),
-        Some(
-            "2:13: `main` is declared to give `(out: Files)`, and `main` gives an `int`, the \
-             program's exit status, 0 for success; a body that exports nothing gives 0. Declare \
-             `-> int` and export the status, or leave the result out. To write lines, push them \
-             to `m.stdout`, as `m.stdout <- lines;`, with `main(m: MainArgs)`."
-        )
+        e.lines().next(),
+        Some("2:13: Result of `main` that is not an `int`: `(out: Files)`. Try `int` instead.")
+    );
+    assert!(
+        e.contains("`main` gives an `int`, the program's exit status"),
+        "{e}"
     );
 }
 

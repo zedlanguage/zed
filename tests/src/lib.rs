@@ -89,15 +89,12 @@ pub fn is_not_yet(message: &str) -> bool {
         || message.contains("this version of zedc does not yet tie")
 }
 
-/// The message for the parameter `name` of `main`, declared as `name: written`, a type that is
-/// not `MainArgs` and that no field of `MainArgs` replaces.
+/// The headline for the parameter `name` of `main`, declared as `name: written`, a type that is
+/// not `MainArgs`.
 pub fn main_param_message(name: &str, written: &str) -> String {
     format!(
-        "the parameter `{name}` of `main` is declared as `{name}: {written}`, and `main` takes \
-         one argument, of type `MainArgs`, which holds every input and output of the program. \
-         Declare `main(m: MainArgs)` and compute the `{written}` that `{name}` held in the body, \
-         from `m.args` (the words after `--`), `m.stdin` (standard input) or `m.env` (the \
-         environment); the program's output is pushed to `m.stdout`."
+        "Parameter of `main` that is not a `MainArgs`: `{name}: {written}`. Try \
+         `main(m: MainArgs)` instead."
     )
 }
 

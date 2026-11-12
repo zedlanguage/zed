@@ -184,7 +184,7 @@ fn a_push_target_has_at_most_one_view_and_it_comes_last() {
         let src = format!("main(m: MainArgs) {{\n  {target} <- \"a\";\n}}\n");
         let err = zedc::run::load(src.as_bytes()).err().unwrap_or_default();
         assert!(
-            err.starts_with(&format!("{at}: expected ")),
+            err.starts_with(&format!("{at}: Syntax error at `<-`.\n")),
             "{target}: {err}"
         );
     }

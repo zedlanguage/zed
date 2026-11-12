@@ -11,9 +11,9 @@ use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
 fn a_message_prints_a_literal_as_it_is_written() {
     let cases = [
         // A `rat` literal: once printed `5e-1r`, a form the program never held.
-        ("f(x: int) = x * 0.5r;\n", "(int, 0.5r)"),
-        ("f(x: int) = x * 0.50r;\n", "(int, 0.50r)"),
-        ("f(x: int) = x * 2.5e-3r;\n", "(int, 2.5e-3r)"),
+        ("f(x: int) = x * 0.5r;\n", "literal `0.5r`"),
+        ("f(x: int) = x * 0.50r;\n", "literal `0.50r`"),
+        ("f(x: int) = x * 2.5e-3r;\n", "literal `2.5e-3r`"),
         ("k(x: int) = x;\ny = k(x: 0.5r);\n", "(0.5r)"),
         // A value read through a name prints as the literal that wrote it.
         ("h = 0.5r;\ny = h + \"a\";\n", "0.5r"),
@@ -48,8 +48,8 @@ fn a_message_prints_a_literal_as_it_is_written() {
 fn each_message_prints_its_own_spelling_of_a_value() {
     let errors = type_errors("f(x: int) = x * 2.5e-3r;\ng(x: int) = x * 0.0025r;\n");
     assert_eq!(errors.len(), 2, "{errors:?}");
-    assert!(errors[0].contains("(int, 2.5e-3r)"), "{errors:?}");
-    assert!(errors[1].contains("(int, 0.0025r)"), "{errors:?}");
+    assert!(errors[0].contains("literal `2.5e-3r`"), "{errors:?}");
+    assert!(errors[1].contains("literal `0.0025r`"), "{errors:?}");
 }
 
 /// A computed value the program writes no literal for prints as its type, which the program

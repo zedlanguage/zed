@@ -792,18 +792,30 @@ impl From<crate::lex::Error> for Error {
     }
 }
 
-/// A parse error as an error of the source: at a `with` clause that gives a sentinel value, or
-/// at the reserved word `initial` written as a name, its row, message and repairs (DESIGN.md
-/// sec:diagnostics).
-impl From<crate::parse::Error> for Error {
-    fn from(e: crate::parse::Error) -> Error {
+impl Error {
+    /// The parse error `e` of the source `text` as an error of the source: at a `with` clause
+    /// that gives a sentinel value, or at a reserved word written as a name, its row, message
+    /// and repairs; elsewhere the headline "Syntax error at `area`.", with the token where
+    /// the parse stopped as written, and a note there with the tokens the grammar takes there
+    /// (DESIGN.md sec:diagnostics, "A short headline" and the row "Syntax error"). A token
+    /// that spans lines or holds a backtick is not quoted: the excerpt under the headline
+    /// shows it. O(t) for a token of t bytes.
+    pub fn of_parse(text: &str, e: crate::parse::Error) -> Error {
         let message = e.to_string();
         let Some(c) = e.clause else {
+            let headline = match text.get(e.span.start..e.span.end).unwrap_or("") {
+                "" if e.span.start >= text.len() => "Syntax error at the end of the text.".into(),
+                t if t.is_empty() || t.contains(['\n', '`']) => "Syntax error here.".into(),
+                t => format!("Syntax error at `{t}`."),
+            };
             return Error {
                 menu: String::new(),
                 span: e.span,
-                message,
-                notes: Vec::new(),
+                message: headline,
+                notes: vec![Note {
+                    span: e.span,
+                    text: message,
+                }],
                 row: None,
             };
         };

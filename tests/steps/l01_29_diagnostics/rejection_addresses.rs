@@ -128,20 +128,24 @@ fn a_main_that_zedc_run_refuses_prints_its_place_and_address() {
     let file = unit("addresses", "port.zed", PORT);
     let (status, _, err) = zedc(&["run", &file]);
     assert_eq!(status, 1);
-    let a = address_after(&err, &format!("{file}:2:6: the parameter `n` of `main`"));
-    assert_eq!(
-        err,
-        format!(
-            "{file}:2:6: {}\n  address: {a}\n",
-            zed_tests::main_param_message("n", "int")
-        )
+    let head = format!(
+        "{file}:2:6: {}\n",
+        zed_tests::main_param_message("n", "int")
     );
+    let a = address_after(&err, head.trim_end());
+    // The headline, its notes, then the address.
+    assert!(err.starts_with(&head), "{err}");
+    assert!(
+        err.contains("`main` takes one argument, of type `MainArgs`"),
+        "{err}"
+    );
+    assert!(err.ends_with(&format!("\n  address: {a}\n")), "{err}");
     // `zedc test` prints it the same way, address and all.
     let tested = PORT.replace("helper(x) = x;", "helper(x) = x test { 1 -> 1 }");
     let tested = unit("addresses", "port_test.zed", &tested);
     let (status, out, _) = zedc_test(&[&tested]);
     assert_eq!(status, 1, "{out}");
-    let b = address_after(&out, &format!("{tested}:2:6: the parameter `n` of `main`"));
+    let b = address_after(&out, &format!("{tested}:2:6: Parameter of `main`"));
     let (_, _, run) = zedc(&["run", &tested]);
     assert_eq!(address_after(&run, &format!("{tested}:2:6: ")), b);
     // Naming it is an error, under both commands.

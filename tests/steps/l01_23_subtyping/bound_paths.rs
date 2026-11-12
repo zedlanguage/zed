@@ -140,10 +140,14 @@ fn an_old_output_port_is_refused_before_its_bound_is_read() {
     assert_eq!(
         through_load("main() -> (out: #a .. #b -> int) {\n  out <- \"x\";\n}\n"),
         [
-            "1:11: `main` is declared to give `(out: #a .. #b -> int)`, and `main` gives an \
-             `int`, the program's exit status, 0 for success; a body that exports nothing gives \
-             0. Declare `-> int` and export the status, or leave the result out. To write lines, \
-             push them to `m.stdout`, as `m.stdout <- lines;`, with `main(m: MainArgs)`."
+            "1:11: Result of `main` that is not an `int`: `(out: #a .. #b -> int)`. Try `int` \
+             instead.",
+            "  [1] 1:11: `main` gives an `int`, the program's exit status, 0 for success; a body \
+             that exports nothing gives 0, so the result may be left out",
+            "      1 | main() -> (out: #a .. #b -> int) {",
+            "        |           ^^^^^^^^^^^^^^^^^^^^^^",
+            "  [2] 1:11: the program writes lines with a push to `m.stdout`, as \
+             `m.stdout <- lines;`, with `main(m: MainArgs)`"
         ]
     );
     assert_eq!(

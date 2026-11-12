@@ -539,29 +539,46 @@ impl Builder<'_, '_> {
         result: Option<Result<Type, Span>>,
         body: Span,
     ) -> Result<(Vec<Param>, MainHeader), Error> {
-        let error = |span: Span, message: String| Error {
+        // A short headline that shows the piece written and the header `main` takes, the rule
+        // in the notes, each at `span` (DESIGN.md sec:diagnostics, "A short headline").
+        let error = |span: Span, message: String, notes: &[String]| Error {
             row: None,
             menu: String::new(),
             span,
             message,
-            notes: Vec::new(),
+            notes: (notes.iter())
+                .map(|text| Note {
+                    span,
+                    text: text.clone(),
+                })
+                .collect(),
         };
+        let written = |s: Span| &self.text[s.start..s.end];
         let mut params = params.into_iter();
         let param = params.next();
         if let Some(second) = params.next() {
             let first = param.as_ref().expect("a first parameter");
+            let m = &first.name;
             return Err(error(
                 second.span,
                 format!(
-                    "`main` is declared with a second parameter `{}`, and `main` takes one \
-                     argument, of type `MainArgs`, which holds every input and output of the \
-                     program: `m.args` (the words after `--`), `m.stdin` (standard input), \
-                     `m.env` (the environment), `m.stdout` and `m.stderr`. Declare \
-                     `main(m: MainArgs)` and read what `{}` and `{}` read through it: \
-                     `m.args`, `m.stdin` or `m.env`; files are read with `files()`, and \
-                     the clock with `clock(period: …)`.",
-                    second.name, first.name, second.name
+                    "Second parameter of `main`: `{}`. Try `main({m}: MainArgs)` instead.",
+                    written(second.span)
                 ),
+                &[
+                    format!(
+                        "`main` takes one argument, of type `MainArgs`, which holds every input \
+                         and output of the program: `{m}.args` (the words after `--`), \
+                         `{m}.stdin` (standard input), `{m}.env` (the environment), \
+                         `{m}.stdout` and `{m}.stderr`"
+                    ),
+                    format!(
+                        "what `{}` read is read through `{m}`: `{m}.args`, `{m}.stdin` or \
+                         `{m}.env`; files are read with `files()`, and the clock with \
+                         `clock(period: …)`",
+                        second.name
+                    ),
+                ],
             ));
         }
         if let Some(p) = &param {
@@ -570,18 +587,33 @@ impl Builder<'_, '_> {
                 Some(t) => matches!(&t.kind, TypeKind::Name(n) if n == "MainArgs"),
             };
             if !main_args {
-                return Err(error(p.span, main_param_message(self.text, p)));
-            }
-            if let Some(d) = &p.default {
                 return Err(error(
-                    d.span,
+                    p.span,
                     format!(
-                        "the parameter `{}` of `main` is given a default value, and `main` is \
-                         called once, when the program starts, with the program's inputs and \
-                         outputs: its argument is never left out. Remove `= {}`.",
-                        p.name,
-                        &self.text[d.span.start..d.span.end]
+                        "Parameter of `main` that is not a `MainArgs`: `{}`. Try \
+                         `main(m: MainArgs)` instead.",
+                        written(p.span)
                     ),
+                    &main_param_notes(self.text, p),
+                ));
+            }
+            if p.default.is_some() {
+                let kept = match &p.ty {
+                    Some(t) => format!("{}: {}", p.name, written(t.span)),
+                    None => p.name.clone(),
+                };
+                return Err(error(
+                    p.span,
+                    format!(
+                        "Default value on the parameter of `main`: `{}`. Try `main({kept})` \
+                         instead.",
+                        written(p.span)
+                    ),
+                    &[
+                        "`main` is called once, when the program starts, with the program's \
+                       inputs and outputs: its argument is never left out"
+                            .to_string(),
+                    ],
                 ));
             }
         }
@@ -655,31 +687,43 @@ impl Builder<'_, '_> {
     }
 }
 
-/// The error for a result type other than `int` declared on `main`, written at `span`.
+/// The error for a result type other than `int` declared on `main`, written at `span`: a
+/// short headline with the type written and `int`, the rule in the notes.
 fn main_result_error(text: &str, span: Span) -> Error {
     let written = &text[span.start..span.end];
+    let note = |text: &str| Note {
+        span,
+        text: text.into(),
+    };
     Error {
         row: None,
         menu: String::new(),
         span,
-        notes: Vec::new(),
-        message: format!(
-            "`main` is declared to give `{written}`, and `main` gives an `int`, the program's \
-             exit status, 0 for success; a body that exports nothing gives 0. Declare `-> int` \
-             and export the status, or leave the result out. To write lines, push them to \
-             `m.stdout`, as `m.stdout <- lines;`, with `main(m: MainArgs)`."
-        ),
+        notes: vec![
+            note(
+                "`main` gives an `int`, the program's exit status, 0 for success; a body that \
+                 exports nothing gives 0, so the result may be left out",
+            ),
+            note(
+                "the program writes lines with a push to `m.stdout`, as `m.stdout <- lines;`, \
+                 with `main(m: MainArgs)`",
+            ),
+        ],
+        message: format!("Result of `main` that is not an `int`: `{written}`. Try `int` instead."),
     }
 }
 
-/// The message for the parameter `p` of `main` in `text`, whose type is not `MainArgs`: what
+/// The notes for the parameter `p` of `main` in `text`, whose type is not `MainArgs`: what
 /// `main` takes, and where each input an old header named a parameter for is read now.
-fn main_param_message(text: &str, p: &Param) -> String {
+fn main_param_notes(text: &str, p: &Param) -> Vec<String> {
     let name = &p.name;
     let ty =
         p.ty.as_ref()
             .expect("a parameter with a type other than MainArgs");
     let written = &text[ty.span.start..ty.span.end];
+    let takes = "`main` takes one argument, of type `MainArgs`, which holds every input and \
+                 output of the program; the program's output is pushed to `m.stdout`"
+        .to_string();
     let read = match &ty.kind {
         TypeKind::Name(n) if n == "Lines" => "`m.stdin`, the lines of standard input",
         TypeKind::Name(n) if n == "CommandLine" => {
@@ -688,21 +732,18 @@ fn main_param_message(text: &str, p: &Param) -> String {
         TypeKind::Name(n) if n == "Files" => "`files()`, which reads files by path",
         TypeKind::Arrow { partial: true, .. } => "`m.env`, the environment variables by name",
         _ => {
-            return format!(
-                "the parameter `{name}` of `main` is declared as `{name}: {written}`, and `main` \
-                 takes one argument, of type `MainArgs`, which holds every input and output of \
-                 the program. Declare `main(m: MainArgs)` and compute the `{written}` that \
-                 `{name}` held in the body, from `m.args` (the words after `--`), `m.stdin` \
-                 (standard input) or `m.env` (the environment); the program's output is pushed \
-                 to `m.stdout`."
-            );
+            return vec![
+                takes,
+                format!(
+                    "the `{written}` that `{name}` held is computed in the body, from `m.args` \
+                     (the words after `--`), `m.stdin` (standard input) or `m.env` (the \
+                     environment)"
+                ),
+            ];
         }
     };
-    format!(
-        "the parameter `{name}` of `main` is declared as `{name}: {written}`, and `main` takes \
-         one argument, of type `MainArgs`, which holds every input and output of the program. \
-         Declare `main(m: MainArgs)` and read what `{name}` read from {read}, writing it in \
-         the body where `{name}` is written now; the program's output is pushed to \
-         `m.stdout`."
-    )
+    vec![
+        takes,
+        format!("what `{name}` read is read from {read}, where `{name}` is written now"),
+    ]
 }

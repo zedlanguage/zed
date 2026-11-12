@@ -39,7 +39,7 @@ fn notes_of(word: &str, what: &str, repair: &str) -> [String; 3] {
 /// The error the unit `src` is refused with by the parser.
 fn refusal(src: &str) -> Error {
     let tokens = lex(src).unwrap();
-    Error::from(parse(src, &tokens, "Unit", TOP).expect_err(src))
+    Error::of_parse(src, parse(src, &tokens, "Unit", TOP).expect_err(src))
 }
 
 /// Checks that `src` is refused at `word`, at byte `at`, with the whole message and notes:
@@ -224,8 +224,14 @@ fn other_errors_keep_the_parse_message() {
     ] {
         let e = refusal(src);
         assert_eq!(e.row, None, "{src}");
-        assert!(e.message.starts_with("expected "), "{src}: {}", e.message);
-        assert!(e.notes.is_empty(), "{src}");
+        // The parse's own message: its headline, and what the grammar takes there in a note.
+        assert!(
+            e.message.starts_with("Syntax error "),
+            "{src}: {}",
+            e.message
+        );
+        assert_eq!(e.notes.len(), 1, "{src}");
+        assert!(e.notes[0].text.starts_with("expected "), "{src}");
     }
 }
 

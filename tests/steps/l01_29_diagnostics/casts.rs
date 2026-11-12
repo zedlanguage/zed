@@ -80,13 +80,29 @@ fn an_unbounded_int_and_an_f64_offer_no_cast() {
 
 #[test]
 fn a_comparison_offers_the_same_casts() {
+    // The comparison is rewritten whole, in the headline and as the repair.
     let src = program("late(n: int, r: rat) = n < r;");
     let out = rejected(&src);
-    assert!(out.contains(&offered("rat(n)")), "{out}");
-    assert!(!out.contains(&offered("int(r)")), "{out}");
+    assert!(
+        out.starts_with(
+            "1:24: Cannot compare unequal types: `n : int < r : rat`. Try `rat(n) < r` instead.\n"
+        ),
+        "{out}"
+    );
+    assert!(steps(&out).contains(&"repair: `rat(n) < r`"), "{out}");
+    assert!(!out.contains("int(r)"), "{out}");
     checks(&edited(&src, "n < r", "rat(n) < r"));
+    // Each cast narrows, so the headline offers none, and the one repair says a type has to
+    // change, as for two components of tuples.
     let out = rejected(&program("late(r: rat, x: f64) = r < x;"));
-    assert!(!out.contains("repair:"), "{out}");
+    assert!(
+        out.starts_with("1:24: Cannot compare unequal types: `r : rat < x : f64`.\n"),
+        "{out}"
+    );
+    assert_eq!(
+        menu(&program("late(r: rat, x: f64) = r < x;")),
+        ["change the type of `r` or `x` so that the two compare"]
+    );
 }
 
 #[test]
@@ -268,6 +284,23 @@ fn menu(src: &str) -> Vec<String> {
         .collect()
 }
 
+/// The lines of the fixes of the one rejection of `src`, each without what it then holds.
+fn fixed(src: &str) -> Vec<String> {
+    let out = rejected(src);
+    let Some((_, rest)) = out.split_once("\n  fixes, each checked here:\n") else {
+        return Vec::new();
+    };
+    (rest.lines())
+        .take_while(|l| l.starts_with("    "))
+        .map(|l| {
+            l.trim_start()
+                .split_once("  ")
+                .map_or(l.trim(), |(line, _)| line)
+                .to_string()
+        })
+        .collect()
+}
+
 /// The menu entry offering the cast or literal `cast`, after `repair: `.
 fn entry(cast: &str) -> String {
     format!("write `{cast}`; the checker accepts that")
@@ -340,15 +373,30 @@ fn a_call_of_max_offers_the_widening_casts_of_its_arguments() {
 fn a_rat_literal_is_offered_its_literal_forms_not_a_cast() {
     let src = program("scaled(b: f64) = b * 1r;");
     assert_eq!(rows(&src), [Some(Row::NoCommonCarrier)]);
+    let out = rejected(&src);
+    assert!(
+        out.starts_with(
+            "1:22: The suffix makes the literal `1r` a `rat`, never `f64`. Try \
+             `scaled(b: f64) = b * 1.0` instead.\n"
+        ),
+        "{out}"
+    );
     // `rat(b)` is `#invalid` at NaN and the infinities, so it is not offered.
-    assert_eq!(menu(&src), [entry("1.0")]);
+    assert_eq!(fixed(&src), ["scaled(b: f64) = b * 1.0;"]);
+    assert!(menu(&src).is_empty());
     checks(&edited(&src, "b * 1r", "b * 1.0"));
     // A negative literal keeps its sign, and an integral one beside an `int` drops the point.
+    // The literal's own form comes first, as the headline names the literal; the cast is a
+    // step as well.
     let src = program("scaled(n: int) = n * -3r;");
-    assert_eq!(menu(&src), [entry("rat(n)"), entry("-3")]);
+    assert_eq!(
+        fixed(&src),
+        ["scaled(n: int) = n * -3;", "scaled(n: int) = rat(n) * -3r;"]
+    );
+    assert_eq!(menu(&src), [entry("rat(n)")]);
     checks(&edited(&src, "n * -3r", "n * -3"));
     let src = program("scaled(b: f64) = b * 0.5r;");
-    assert_eq!(menu(&src), [entry("0.5")]);
+    assert_eq!(fixed(&src), ["scaled(b: f64) = b * 0.5;"]);
     checks(&edited(&src, "b * 0.5r", "b * 0.5"));
 }
 
@@ -358,6 +406,7 @@ fn a_rat_literal_that_no_f64_holds_exactly_is_offered_no_literal() {
     // nothing is offered.
     let src = program("scaled(b: f64) = b * 0.1r;");
     assert!(menu(&src).is_empty());
+    assert!(fixed(&src).is_empty());
 }
 
 #[test]
@@ -400,7 +449,7 @@ fn the_menus_of_calls_literals_and_comparisons_scale() {
         |n| {
             let out = rejected(&called(n));
             assert_eq!(out.matches(&offered("rat(n)")).count(), 2 * n);
-            assert_eq!(out.matches(&offered("1.0")).count(), n);
+            assert_eq!(out.matches("the literal is then the f64 1.0").count(), n);
         },
     );
 }

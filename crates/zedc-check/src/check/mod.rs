@@ -1079,6 +1079,15 @@ struct Ck<'t, 'a> {
     /// variable of the need: only their atoms may pass by to the call around, the first
     /// application taking it.
     need_args: Option<Vec<bool>>,
+    /// The calls whose needs are being checked, innermost last, each with, for each
+    /// positional argument, the variables of its parameter and the argument
+    /// (MSG-forwarded-repair). A check of a value that flowed into a class has a frame of no
+    /// arguments, so that it names none of a call around it.
+    call_frames: Vec<CallFrame<'a>>,
+    /// For the application a check of a need is about to make, the argument of the call whose
+    /// need it is that each of its positional arguments came from, as `-1` in `ap(h, -1)` is
+    /// `v` of `g(v)` in `ap(g, v) = g(v)`: a repair at that call names it, not `v`.
+    need_from: Option<Vec<Option<Forwarded<'a>>>>,
     /// The parameters of no declared type of the functions being checked, by binder: a value
     /// of one whose ints a use takes at least 0 is passed on to the calls (CHK-need-bound).
     open_params: HashSet<usize>,
@@ -1158,6 +1167,63 @@ struct Ck<'t, 'a> {
 /// sec:type_resolution): the value's name, the variables of the need's argument, the atoms.
 type NeedPass = (Arc<str>, Vec<Arc<str>>, KType);
 
+/// A call whose needs are being checked ([`Ck::call_frames`]): its positional arguments, where
+/// the call shows them, and the parameter that holds each variable.
+#[derive(Default)]
+struct CallFrame<'a> {
+    args: Vec<Option<Forwarded<'a>>>,
+    /// For each variable of a parameter, the parameter's position, or `None` where two or
+    /// more parameters hold it.
+    by_var: HashMap<Arc<str>, Option<usize>>,
+}
+
+impl<'a> CallFrame<'a> {
+    /// The frame of the arguments `args` at the parameters `params`.
+    fn new(params: &[Ty], args: Vec<Option<Forwarded<'a>>>) -> Self {
+        let mut by_var = HashMap::new();
+        for (i, p) in params.iter().enumerate().take(args.len()) {
+            for v in &p.vars {
+                by_var
+                    .entry(v.clone())
+                    .and_modify(|at| {
+                        if *at != Some(i) {
+                            *at = None;
+                        }
+                    })
+                    .or_insert(Some(i));
+            }
+        }
+        Self { args, by_var }
+    }
+
+    /// The argument that a value of type `t` came from: that of the one parameter that holds
+    /// its variables, where one alone does. Complexity tradeoff: naive, a test of `t`'s
+    /// variables against every parameter's, O(p) set tests for p parameters, so O(p^2) for a
+    /// need of every parameter (l01_26 scaling); used, a lookup of each variable of `t` in
+    /// [`Self::by_var`], built once for the call in O(v) for v variables of its parameters.
+    fn from(&self, t: &Ty) -> Option<Forwarded<'a>> {
+        let mut one = None;
+        for v in &t.vars {
+            match self.by_var.get(v) {
+                None => {}
+                Some(None) => return None,
+                Some(&Some(i)) if one.is_none_or(|j| j == i) => one = Some(i),
+                Some(Some(_)) => return None,
+            }
+        }
+        self.args[one?]
+    }
+}
+
+/// An argument of a call written in the program ([`Ck::need_from`]): the call's span, the
+/// argument's span, and its expression.
+#[derive(Clone, Copy)]
+struct Forwarded<'a> {
+    call: Span,
+    at: Span,
+    expr: Option<&'a Expr>,
+}
+
 /// A need being checked at a call.
 struct Open {
     /// The need's use in the body.
@@ -1221,6 +1287,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             refused: Vec::new(),
             need_passed: Vec::new(),
             need_args: None,
+            call_frames: Vec::new(),
+            need_from: None,
             open_params: HashSet::new(),
             floors: HashMap::new(),
             leaving: Vec::new(),

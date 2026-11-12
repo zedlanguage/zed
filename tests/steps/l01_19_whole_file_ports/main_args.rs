@@ -117,28 +117,28 @@ fn a_header_main_may_not_have_is_rejected() {
         (
             "second",
             "main(m: MainArgs, n: int) {\n}\n",
-            "`main` is declared with a second parameter `n`",
+            "1:19: Second parameter of `main`: `n: int`. Try `main(m: MainArgs)` instead.\n",
         ),
         (
             "string",
             "main(m: MainArgs) -> String {\n  \"x\"\n}\n",
-            "`main` is declared to give `String`",
+            "1:22: Result of `main` that is not an `int`: `String`. Try `int` instead.\n",
         ),
         (
             "lines",
             "main(m: MainArgs) -> Lines {\n  m.stdin\n}\n",
-            "`main` is declared to give `Lines`",
+            "1:22: Result of `main` that is not an `int`: `Lines`. Try `int` instead.\n",
         ),
         (
             "default",
             "main(m: MainArgs = 1) {\n}\n",
-            "the parameter `m` of `main` is given a default value",
+            "1:6: Default value on the parameter of `main`: `m: MainArgs = 1`. Try \
+             `main(m: MainArgs)` instead.\n",
         ),
         (
             "elsewhere",
             "f(a: MainArgs) = 1;\nmain(m: MainArgs) {\n}\n",
-            "1:6: `MainArgs` is the type of `main`'s argument, written `main(m: MainArgs)`, \
-             and this zedc takes it there only",
+            "1:6: `MainArgs` is the type of the argument of `main` only.\n",
         ),
     ] {
         let out = run(name, src, "", &[]);

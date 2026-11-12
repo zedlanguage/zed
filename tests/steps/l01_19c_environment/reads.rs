@@ -104,8 +104,8 @@ fn the_environment_is_a_field_of_main_args() {
         assert_eq!(out.status, 1, "{ty}");
         assert!(
             out.stderr.contains(&format!(
-                "1:6: the parameter `env` of `main` is declared as `env: {ty}`, and `main` takes \
-                 one argument, of type `MainArgs`"
+                "1:6: {}\n",
+                zed_tests::main_param_message("env", ty)
             )),
             "{ty}: {}",
             out.stderr

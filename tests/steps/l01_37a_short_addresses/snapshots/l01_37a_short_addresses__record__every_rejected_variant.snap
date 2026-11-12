@@ -275,26 +275,42 @@ nullable-column-missing-none
     Diagnostic {
         line: 51,
         col: 1,
-        message: "expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'.",
-        steps: [],
+        message: "Syntax error at `rows`.",
+        steps: [
+            Step {
+                line: 51,
+                col: 1,
+                text: "expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'",
+                source: "rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers",
+                width: 4,
+            },
+        ],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 36, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 51, col: 1, failure: Some("expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'.") }]
+  checks: [Outcome { line: 36, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 51, col: 1, failure: Some("Syntax error at `rows`.\n  [1] 51:1: expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'\n      51 | rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers\n         | ^^^^") }]
 
 numeric-is-not-binary-float
   rejected: [
     Diagnostic {
         line: 51,
         col: 1,
-        message: "expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'.",
-        steps: [],
+        message: "Syntax error at `rows`.",
+        steps: [
+            Step {
+                line: 51,
+                col: 1,
+                text: "expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'",
+                source: "rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers",
+                width: 4,
+            },
+        ],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 36, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 51, col: 1, failure: Some("expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'.") }]
+  checks: [Outcome { line: 36, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 51, col: 1, failure: Some("Syntax error at `rows`.\n  [1] 51:1: expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'\n      51 | rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers\n         | ^^^^") }]
 
 payload-built-by-position
   rejected: [
@@ -457,13 +473,21 @@ taint-reaches-clean-sink
     Diagnostic {
         line: 50,
         col: 1,
-        message: "expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'.",
-        steps: [],
+        message: "Syntax error at `exec`.",
+        steps: [
+            Step {
+                line: 50,
+                col: 1,
+                text: "expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'",
+                source: "exec(db, userInput);            // ✗ Taint at a sink whose parameter does not take it: #userInput taint reaches a #clean sink",
+                width: 4,
+            },
+        ],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 50, col: 1, failure: Some("the mark names the row \"Taint at a sink whose parameter does not take it\", and the diagnostic is in no row of the rejection table: expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'.") }]
+  checks: [Outcome { line: 50, col: 1, failure: Some("the mark names the row \"Taint at a sink whose parameter does not take it\", and the diagnostic is in no row of the rejection table: Syntax error at `exec`.") }]
 
 taint-through-concatenation
   rejected: [
@@ -546,13 +570,21 @@ unit-mismatch-in-sum
     Diagnostic {
         line: 51,
         col: 1,
-        message: "expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'.",
-        steps: [],
+        message: "Syntax error at `rows`.",
+        steps: [
+            Step {
+                line: 51,
+                col: 1,
+                text: "expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'",
+                source: "rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers",
+                width: 4,
+            },
+        ],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 47, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 51, col: 1, failure: Some("expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'.") }]
+  checks: [Outcome { line: 47, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 51, col: 1, failure: Some("Syntax error at `rows`.\n  [1] 51:1: expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'\n      51 | rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers\n         | ^^^^") }]
 
 units-differ-by-kind
   rejected: [
