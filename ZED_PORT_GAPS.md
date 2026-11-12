@@ -3544,3 +3544,11 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 |---|---|---|---|
 | A `BinaryHeap` of (binding order, name) and a `BTreeSet` of names seen, both mutated in a loop that pops the latest binding and pushes the names its term narrowed, with an early `return` when a name has no value | `Scope::through_terms` | Mutation, early exit | A fold over a persistent priority queue (or a set ordered by binding order, taking its greatest) whose state is the queue, the set seen and the scope, ending when the queue is empty or a name is empty |
 | A counter in a `thread_local!` `Cell<u64>` behind `#[cfg(feature = "counts")]`, as the other counts | `counts::TERM_READS`, `counts::term_reads` | Global state, conditional compilation | As the other counts: a count returned beside the scope, read by the test |
+
+## Entries from INITIAL-two-sentinels-overlap (`crates/zedc-syntax/src/ast/sentinel.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A Fenwick tree per class in a `Vec<Option<usize>>` changed in place, stepped with `isolate_lowest_one` and `r &= r - 1`, its nodes indices into the list of sites | `Class::insert`, `Class::meets` | Mutation | A Zed value threaded through the fold over the sites in written order, or a persistent tree over the sorted first keys, `O(log k)` per step either way; the steps are `bitAnd(r, 0 - r)` and `bitAnd(r, r - 1)` on bit words (L1.39a) |
+| A `HashMap` keyed by `(&str, Option<&str>)` and by `(usize, &[Keys])`, a borrowed slice of the site's later brackets, numbering the classes as they are first met | `Sentinels::new` | Borrowed keys | A map keyed by the values themselves: `(name, line)` and `(line, keys)` as Zed values |
+| `BigInt` from `num-bigint` for the keys | `End`, `Keys`, `int_literal` | External crate | Vanishes: a key is an `int` |

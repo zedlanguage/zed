@@ -162,7 +162,7 @@ impl Class {
 // built the same way meets. Both are caught by the boundary analysis of step L6.8a (range
 // analysis of the keys); the tests are `two_sentinel_values_for_one_variable_are_refused`
 // and `overlapping_entries_scale` in tests/steps/l06_01_parser/initial.rs, COMPLEXITY.md row
-// "Two sentinel values: entries by value".
+// INITIAL-two-sentinels-overlap.
 pub(super) struct Sentinels<'s> {
     entries: Vec<Entry<'s>>,
     classes: Vec<Class>,
