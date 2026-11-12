@@ -1945,10 +1945,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | MSG-concise-style | impl attempt 1 | 2026-11-11 23:43 | Part 3: affected battery 532 pieces 0 failed (logs9); clippy clean; scaling: never_equal component repairs 256/2048 17.1M/133.9M instr 7.8x (limit 12.10), wide- |
 | MSG-converted-claims-checked | impl attempt 1 | 2026-11-12 03:11 | started with MSG-suffix-menu-unchecked in /home/luke/Work/wt/msg-repairs-checked; load 55.07 |
 | MSG-derive-type-size | impl attempt 1 | 2026-11-11 23:35 | started; worktree /home/luke/Work/wt/msg-derive-type-size on origin/main 6874a6ea0 |
+| MSG-dot-call-not-updated | impl attempt 1 | 2026-11-12 02:08 | started; reading DESIGN fence and checker |
 | MSG-indexed-spread-one-writer | impl attempt 1 | 2026-11-12 02:53 | started; worktree /home/luke/Work/wt/msg-indexed-spread |
 | MSG-suffix-menu-unchecked | running | 2026-11-12 03:11 |  |
 | MSG-union-order-consistent | impl attempt 1 | 2026-11-11 13:26 | scaling zed-kernel types::print::tests::a_union_of_many_numeric_literals_prints_ascending_in_m_log_m: n=1024/8192, 7.8x instructions, 8.0x bytes, limit 11.44; n |
 | PERF-negated-chain-unsolved | impl attempt 1 | 2026-11-11 17:41 | worktree wt/pncx-cd made to port CD candidate 45 (7-8% fewer instructions on 23..711 words, same growth) for the instruction-count comparison |
+| PRES-disj-regressions | impl attempt 1 | 2026-11-11 23:37 | pushed 6d5a815dd + 6391887d9 to main after rebase on d0ddd9956; build, fmt, clippy -D warnings clean; run_tests.sh --doc --only l01_38/l01_25/zedc_presburger: 5 |
 | PRINT-own-shape-1tuple | impl attempt 1 | 2026-11-09 10:56 | done; worktree and branch removed / load 33.55 27.72 27.93 |
 | PRODUCT-superlinear-main | impl attempt 1 | 2026-11-12 00:05 | blocked, no commit (load1 56.17): shared cause = case split re-projects every earlier part on a moved hub, Theta(k) projections per test, 90-98% no-ops; persist |
 | RADIX-depth | xr attempt 1 | 2026-11-11 01:43 | seats in progress: Opus read 12.11, gcd 12.35, wide 14.04 (own numbers, unverified); codex valuation 11.72-12.32 / load 53.88 56.03 58.57 |
