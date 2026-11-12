@@ -6845,9 +6845,7 @@ impl Scope {
     fn project_block(&mut self, mut b: Block, due: Vec<PartAt>) {
         let start = self.names.clone();
         let (was_stair, was_ray) = (b.stair_managed, b.ray_managed);
-        let mut covered = self.cover_staircase(&mut b);
-        b.stair_managed = covered.is_some();
-        b.ray_managed = self.cover_rays(&b);
+        let mut covered = self.cover(&mut b, true);
         let mut due = due;
         due.extend(b.released(was_stair, was_ray).cloned());
         let mut moved: BTreeSet<Arc<str>> = BTreeSet::new();
@@ -6902,10 +6900,7 @@ impl Scope {
             if let Some(shape) = &threshold::shape(&core)
                 && self.project_threshold(shape)
             {
-                if covered.is_some() {
-                    b.stair_managed = self.cover_staircase(&mut b).is_some();
-                }
-                b.ray_managed = self.cover_rays(&b);
+                self.cover(&mut b, covered.is_some());
                 self.record(b, &start, &due);
                 return;
             }
@@ -6925,20 +6920,18 @@ impl Scope {
             if b.managed(part) {
                 continue;
             }
-            let check_names = if covered.is_some() {
-                b.names()
-            } else {
-                part.names.clone()
-            };
-            let before = self.snapshot(&check_names);
+            // Complexity tradeoff: naive version, a covered block's names copied and their
+            // intervals and classes read before each part, O(N) per part for a block of N
+            // names, O(N k) over k parts. Used: the names' map kept by sharing, O(1), and the
+            // names of the block it differs at read after, O(c log N) for c changed names
+            // ([`Scope::block_before`]). Tradeoffs: none; a part's own names, when the block
+            // is not covered, are read as before, O(|part|).
+            let start_part = (self.names.clone(), self.bottom);
+            let part_before = (covered.is_none()).then(|| self.snapshot(&part.names));
             self.project_part(&b.formula(part));
             let after_part = self.names.clone();
             let was = (b.stair_managed, b.ray_managed);
-            if covered.is_some() {
-                covered = self.cover_staircase(&mut b);
-                b.stair_managed = covered.is_some();
-            }
-            b.ray_managed = self.cover_rays(&b);
+            covered = self.cover(&mut b, covered.is_some());
             for j in b.released(was.0, was.1) {
                 if queued.insert(j.clone()) {
                     work.push_back(j.clone());
@@ -6958,7 +6951,9 @@ impl Scope {
                 .collect();
             let mut again = false;
             let mut empty = false;
-            for (n, old) in check_names.iter().zip(before.iter()) {
+            let before = part_before.unwrap_or_else(|| self.block_before(&b, &start_part));
+            for old in before.iter() {
+                let n = &old.0;
                 let p = self.get(n);
                 if (p.ints(), &p.cell.congruence.element) == (&old.1, &old.2) {
                     continue;
@@ -6980,10 +6975,7 @@ impl Scope {
             if again {
                 let all = Formula::and(b.parts.values().map(|p| b.formula(p)).collect());
                 self.project_part(&all);
-                if covered.is_some() {
-                    b.stair_managed = self.cover_staircase(&mut b).is_some();
-                }
-                b.ray_managed = self.cover_rays(&b);
+                self.cover(&mut b, covered.is_some());
                 break;
             }
         }
@@ -7096,6 +7088,39 @@ impl Scope {
                     p.ints().clone(),
                     p.cell.congruence.element.clone(),
                 )
+            })
+            .collect()
+    }
+
+    /// The interval and class each name of `b` had at `then`, an earlier state of the names'
+    /// products and of `bottom`, for the names whose product may differ now, in name order:
+    /// those the names' map differs at, or every name of `b` when `bottom` has changed. The
+    /// rest are as they were, so [`Scope::snapshot`] of all of `b`'s names gives no more.
+    fn block_before(&self, b: &Block, then: &(imbl::OrdMap<Arc<str>, Product>, bool)) -> Projected {
+        let (names, bottom) = then;
+        let changed: Vec<Arc<str>> = if self.bottom != *bottom {
+            b.names()
+        } else {
+            (names.diff(&self.names))
+                .map(|d| {
+                    let (DiffItem::Add(n, _)
+                    | DiffItem::Remove(n, _)
+                    | DiffItem::Update { new: (n, _), .. }) = d;
+                    n.clone()
+                })
+                .filter(|n| b.users.contains_key(n))
+                .collect()
+        };
+        let read = |n: Arc<str>, p: &Product| {
+            let element = p.cell.congruence.element.clone();
+            (n, p.ints().clone(), element)
+        };
+        changed
+            .into_iter()
+            .map(|n| match names.get(&n) {
+                Some(p) if !*bottom => read(n, p),
+                _ if *bottom => read(n, &Product::bottom()),
+                _ => read(n, &Product::top()),
             })
             .collect()
     }
@@ -9611,7 +9636,11 @@ impl ArmNormals {
 // then one equality each, O(m * w' * e'), then each of those with one name left out,
 // O(m * w' * e' * t). Lost: a bound that needs two inequalities of `with` chained, or a row
 // of `with` with a name outside `g` other than an equality of two names (`b - zi` from
-// `a + b - zi == i` and the arm `a <= 2`), or another such equality of the same name.
+// `a + b - zi == i` and the arm `a <= 2`), or another such equality of the same name. No input
+// is known that loses a bound to the last rule: LAZY-hub-cleanups compared 15 rows of a case
+// on the name of a second equality with the oracle; the answers differed only at the oracle's
+// window, in congruences, or in one bound that adding every such equality does not give
+// either (`families::two_eq_case_against_the_oracle`, PRODUCT-two-eq-round).
 // Pairs of names that only rows on one name reach: naive version, every pair
 // of such names, O(s^2) for s names, quadratic on two arms of s bounds each. Used: the pair
 // when there are just two, and the pairs a row of `with` is on, O(w log s); lost: a pair no
@@ -10462,6 +10491,23 @@ impl UpperBounds {
 }
 
 impl Scope {
+    /// Applies the aggregates of `b` to the names as they are, the staircase
+    /// ([`Scope::cover_staircase`]) when `stair` and then the common ray ([`Scope::cover_rays`]),
+    /// and records in `b` which of them hold; the staircase's names when it holds.
+    // Complexity tradeoff: `Scope::project_block` calls this after each projection, so up to
+    // four times per block and once per part due. Calling it only when the names changed
+    // since the last call that changed nothing gives the same answers (each call reads only
+    // the names and the block), but the two aggregates are each O(r) for the block's r rows,
+    // and a profile (perf, k = 64 of stair_cover, coordmix and hub_eqs) puts them together
+    // under 0.3% of the run, all that skipping calls could save; so every call is made.
+    // COMPLEXITY.md row LAZY-hub-cleanups.
+    fn cover(&mut self, b: &mut Block, stair: bool) -> Option<(Arc<str>, Arc<str>)> {
+        let covered = if stair { self.cover_staircase(b) } else { None };
+        b.stair_managed = covered.is_some();
+        b.ray_managed = self.cover_rays(b);
+        covered
+    }
+
     fn cover_rays(&mut self, b: &Block) -> bool {
         let Some((y, h)) = b.ray_high(&self.names) else {
             return false;

@@ -620,6 +620,58 @@ fn family(name: &str, k: usize) -> Family {
             }
             around(&xy, 40)
         }
+        // `a`, `b` in 0..=100000, `a + b <= 150000`, `a <= 2 || b >= 8`, then `k` equalities
+        // `a + b - zi == i` (hub_eqs) or `a - zi == i` (hub_alias), each with a name of its own.
+        "hub_eqs" | "hub_alias" => {
+            names = vec!["a".into(), "b".into()];
+            names.extend((0..k).map(|i| format!("z{i}")));
+            tests.extend(boxed_from(&["a", "b"], 0, 100_000));
+            tests.push(le(add(var("a"), var("b")), int(150_000)));
+            tests.push(or(le(var("a"), int(2)), ge(var("b"), int(8))));
+            for i in 0..ki {
+                let l = if name == "hub_eqs" {
+                    add(var("a"), var("b"))
+                } else {
+                    var("a")
+                };
+                tests.push(eq(sub(l, var(&format!("z{i}"))), int(i)));
+            }
+            around(&["a", "b"], 3)
+        }
+        // `k` names `zi`, all at least 1 or all at most -1 (one disjunction of two arms of `k`
+        // constraints each), then `z0 + z(k-1) >= 5 || x <= 0`.
+        "unary_arms" => {
+            let z = |i: i64| var(&format!("z{i}"));
+            let all = |f: &dyn Fn(i64) -> Term| (1..ki).fold(f(0), |s, i| and(s, f(i)));
+            names.extend((0..k).map(|i| format!("z{i}")));
+            tests.push(or(all(&|i| ge(z(i), int(1))), all(&|i| le(z(i), int(-1)))));
+            tests.push(or(ge(add(z(0), z(ki - 1)), int(5)), le(var("x"), int(0))));
+            let mut window: Vec<(String, i64, i64)> =
+                (0..k).map(|i| (format!("z{i}"), -6, 6)).collect();
+            window.push(("x".into(), -6, 6));
+            window
+        }
+        // `a <= 2 || b >= 8`, `a == 3 * z0`, `a == 2 * z1 + 1`, then `b - z1 <= 4 || z1 >= 20`
+        // (k = 0) or `b - z1 <= 4` (k = 1). In the arm `a <= 2`, `a` is odd and a multiple of
+        // 3, so `a <= -3` and `z1 <= -2`, and the last test gives `b <= 2`.
+        "two_eq_case" => {
+            names = vec!["a".into(), "b".into(), "z0".into(), "z1".into()];
+            tests.push(or(le(var("a"), int(2)), ge(var("b"), int(8))));
+            tests.push(eq(sub(var("a"), times(3, "z0")), int(0)));
+            tests.push(eq(sub(var("a"), times(2, "z1")), int(1)));
+            let last = le(sub(var("b"), var("z1")), int(4));
+            tests.push(if k == 0 {
+                or(last, ge(var("z1"), int(20)))
+            } else {
+                last
+            });
+            vec![
+                ("a".into(), -6, 12),
+                ("b".into(), -3, 10),
+                ("z0".into(), -3, 6),
+                ("z1".into(), -4, 8),
+            ]
+        }
         _ => panic!("no family {name}"),
     };
     Family {
@@ -1287,6 +1339,16 @@ fn drop_end_against_the_oracle() {
 }
 
 #[test]
+fn unary_arms_against_the_oracle() {
+    // Each `zi` is at least 1 or at most -1; `x` is free, since `z0 + z(k-1) >= 5` holds
+    // when every `zi` is 5.
+    for k in 2..=3 {
+        let zs: String = (0..k).map(|i| format!(" z{i}=[..=-1, 1..]")).collect();
+        exact("unary_arms", k, &format!("a=[..] x=[..] y=[..]{zs}"));
+    }
+}
+
+#[test]
 fn coord3_against_the_oracle() {
     // `y <= 4`: for `y >= 5` the step gives `x >= 10`, so `x + y >= 15` and `x + 2 * y >= 20`,
     // and neither arm of the last test holds; (10, 4) meets every test. The threshold
@@ -1681,6 +1743,11 @@ fn drop_ends_scale() {
 }
 
 #[test]
+fn unary_arms_scale() {
+    scales("unary_arms", 8, 1);
+}
+
+#[test]
 fn cuts_scale() {
     scales("cuts", 4, 1);
 }
@@ -1811,4 +1878,25 @@ fn hopb_scales() {
 #[ignore = "PERF-hop: quadratic on main, see ledger"]
 fn hoponb_scales() {
     scales("hoponb", 2, 1);
+}
+
+#[test]
+fn two_eq_case_against_the_oracle() {
+    // A lost bound, kept as it is: in the part `a <= 2`, `a == 2 * z1 + 1` alone gives
+    // `z1 <= 0` and `b <= 4`; `b <= 2` needs `a <= -3`, which takes both equalities with
+    // rounding between them, and the part's `z1 <= -2` does not reach `b` (PRODUCT-two-eq-round).
+    // The rule that one equality of two names per name is added to the part's rows is not
+    // the cause: with every such equality added, `b <= 4` still.
+    let k0 =
+        "a=[..=-3, 9..=39, 45..] b=[..=4, 8..] z0=[..=-1, 3..=13, 15..] z1=[..=-2, 4..=19, 22..]";
+    let k1 = "a=[..=-3, 9..] b=[..=4, 8..] z0=[..=-1, 3..] z1=[..=-2, 4..]";
+    for (k, want) in [(0, k0), (1, k1)] {
+        check(
+            "two_eq_case",
+            k,
+            want,
+            "a=[-3..=-3, 9..=9] 9 mod 12 b=[..=2, 8..=8] z0=[-1..=-1, 3..=3] 3 mod 4 \
+             z1=[-2..=-2, 4..=4] 4 mod 6",
+        );
+    }
 }

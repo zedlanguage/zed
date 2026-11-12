@@ -12499,6 +12499,9 @@ struct Hull {
     /// For each of `ks`, the greatest `v` with `f` and the symbol at most `v` shown to have no
     /// point, and the least `v` with `f` and the symbol at least `v` shown so ([`Hull::asked`]).
     cuts: Vec<(Option<Int>, Option<Int>)>,
+    /// The disjuncts of the disjunction of `f` with the most rows, each tried once for a point
+    /// before the first question is asked ([`Hull::seed_arms`]); empty once tried.
+    arms: Vec<Rc<Parts>>,
     ask: Ask,
 }
 
@@ -12514,6 +12517,12 @@ impl Hull {
         let mut rows = mem::take(&mut parts.cons);
         rows.extend(disjunction_hulls(&parts.ors, &mut DeepHulls::default()));
         rows.extend(hint);
+        // The first of the disjunctions with the most rows.
+        let rows_of = |ds: &&Vec<Rc<Parts>>| ds.iter().map(|d| d.cons.len()).sum::<usize>();
+        let arms = (parts.ors.iter().rev())
+            .max_by_key(rows_of)
+            .cloned()
+            .unwrap_or_default();
         let ks: Vec<(usize, Lin)> = (ks.into_iter())
             .map(|k| (k, Lin::atom(syms[k].clone())))
             .collect();
@@ -12525,6 +12534,7 @@ impl Hull {
             ks,
             found: Vec::new(),
             has: false,
+            arms,
             ask,
         }
     }
@@ -12561,6 +12571,48 @@ impl Hull {
             }
         }
         held
+    }
+
+    /// Reads, for each disjunct of the disjunction kept in `arms`, a point of the rows and that
+    /// disjunct's own rows with every atom at its least value, and one with every atom at its
+    /// greatest, where `f` holds at them; then forgets the disjuncts, so that it runs once.
+    // Complexity tradeoff: naive version, each end of each symbol's hull asked of the solver
+    // where no point found shows it: a question of all of `f` for each of `s` symbols, O(s * F)
+    // for `f` of size F. Two disjuncts of `k` rows on one name each (`z0 >= 1 && ...` or
+    // `z0 <= -1 && ...`, the family `unary_arms` of `l01_39_reduced_product::families`) asked
+    // two questions for each of the `k` names, O(k^2) in all, each answered by a point of one
+    // disjunct. Used: before the first question, a point of the rows with each disjunct of the
+    // disjunction with the most rows added, O(a * (R + F)) for `a` disjuncts and R rows, about
+    // the cost of one question, which reads each disjunct too; each point read answers the
+    // question of every symbol it shows past the end asked. Tradeoffs: a point only answers a
+    // question whose answer is that the formula has a point, which leaves the hull as it was,
+    // so no hull changes; a disjunct whose point the rows' least or greatest values miss, or a
+    // point that needs disjuncts of other disjunctions, still leaves its questions asked. Test
+    // `l01_39_reduced_product::families::unary_arms_scale` (`n` and `8n`); COMPLEXITY.md row
+    // LAZY-unary-arms-growth.
+    fn seed_arms(&mut self) {
+        for d in mem::take(&mut self.arms) {
+            let n = self.rows.len();
+            self.rows.extend(d.cons.iter().cloned());
+            for greatest in [false, true] {
+                if let Some(m) = point_of(&self.rows, greatest)
+                    && self.f.holds(&m)
+                {
+                    self.read(&m);
+                }
+            }
+            self.rows.truncate(n);
+        }
+    }
+
+    /// Whether a point found has symbol `i` at most `v` (`below`) or at least `v`, once the
+    /// points of the disjuncts are read ([`Hull::seed_arms`]) where none found before has.
+    fn found_past(&mut self, i: usize, below: bool, v: &Int) -> bool {
+        if self.known(i, below, v) {
+            return true;
+        }
+        self.seed_arms();
+        self.known(i, below, v)
     }
 
     /// Whether `f` has a point: shown by [`Hull::seed`], or else asked.
@@ -12653,7 +12705,7 @@ impl Hull {
     /// Whether `f` with symbol `i` at most `v` (`below`) or at least `v` is shown to have no
     /// point.
     fn none(&mut self, i: usize, below: bool, v: &Int) -> bool {
-        !self.known(i, below, v) && matches!(self.asked(i, below, v), Ok(false))
+        !self.found_past(i, below, v) && matches!(self.asked(i, below, v), Ok(false))
     }
 
     /// Whether a point of `f` with symbol `i` at `v` is found: among those found, or as a point
@@ -12672,7 +12724,7 @@ impl Hull {
                 self.read(&m);
                 true
             }
-            _ => false,
+            _ => self.found_past(i, below, v),
         }
     }
 

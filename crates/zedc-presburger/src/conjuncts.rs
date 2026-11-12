@@ -282,8 +282,6 @@ struct StarIndex {
     families: OrdMap<Class, OrdSet<Class>>,
     /// The families of `families` at each of their hubs.
     family_at: Uses<Class>,
-    /// The conjuncts of the stars at each hub.
-    hangs: Uses<Arc<Formula>>,
     /// The conjuncts that mention each name, but those of the stars at it as a hub: those a
     /// move of the name makes due in a lazy scope ([`Conjuncts::moving`]).
     moving: Uses<Arc<Formula>>,
@@ -824,7 +822,7 @@ impl Conjuncts {
 
     /// The conjuncts of the stars whose hub is `y`.
     pub fn hanging(&self, y: &str) -> impl Iterator<Item = &Arc<Formula>> {
-        self.index.hangs.of(y)
+        self.blocks.hung.of(y)
     }
 
     /// The leaves of the stars of two hubs or more whose projection reads a conjunct at `y`
@@ -1517,7 +1515,6 @@ impl Conjuncts {
                 self.blocks.undetach(b);
                 for g in &gs {
                     for h in names(g).into_iter().filter(|h| h != x) {
-                        self.index.hangs.remove(&h, g);
                         self.blocks.hang(&h, g, false);
                         if self.users.has(&h, g) {
                             self.index.moving.add(&h, g);
@@ -1541,7 +1538,6 @@ impl Conjuncts {
             self.enclass(&x, &s.gs, &s.hubs);
             for g in &s.gs {
                 for h in names(g).into_iter().filter(|h| *h != x) {
-                    self.index.hangs.add(&h, g);
                     self.blocks.hang(&h, g, true);
                     self.index.moving.remove(&h, g);
                 }
@@ -1981,9 +1977,9 @@ pub struct Blocks {
     gapped: OrdSet<Arc<str>>,
     /// The number of such names of each tree, at its representative; none when zero.
     gaps: OrdMap<BlockId, usize>,
-    /// The pairs of a name and a conjunct of a star whose hub is the name: `hangs` of
-    /// [`Conjuncts`], kept here by [`Blocks::hang`].
-    hung: OrdSet<(Arc<str>, Arc<Formula>)>,
+    /// The conjuncts of the stars at each hub ([`Conjuncts::hanging`]), kept by
+    /// [`Blocks::hang`].
+    hung: Uses<Arc<Formula>>,
     /// For each name, the number of its moving conjuncts in each block: those that mention
     /// it and do not hang at it ([`Conjuncts::moving`]); none zero.
     // Complexity tradeoff: the blocks a move of a name makes due could be read by walking
@@ -2136,7 +2132,7 @@ impl Blocks {
             return was;
         }
         for n in names(g) {
-            if self.hung.contains(&(n.clone(), g.clone())) {
+            if self.hung.has(&n, g) {
                 continue;
             }
             if let Some(w) = was {
@@ -2184,12 +2180,12 @@ impl Blocks {
     /// Records that `g`, which mentions `n`, hangs at `n` as the hub of a star (`on`), or no
     /// longer does.
     pub fn hang(&mut self, n: &Arc<str>, g: &Arc<Formula>, on: bool) {
-        let key = (n.clone(), g.clone());
-        let changed = if on {
-            self.hung.insert(key).is_none()
+        let changed = self.hung.has(n, g) != on;
+        if on {
+            self.hung.add(n, g);
         } else {
-            self.hung.remove(&key).is_some()
-        };
+            self.hung.remove(n, g);
+        }
         if changed && let Some(b) = self.of(g) {
             self.count_moving(n, b, if on { -1 } else { 1 });
         }
