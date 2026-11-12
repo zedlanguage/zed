@@ -72,7 +72,10 @@ fn an_exponent_is_quoted_as_written() {
 fn a_suffixed_literal_is_quoted_with_its_suffix() {
     assert_eq!(
         type_errors("f(x: int) = x + 0.5f64;\n"),
-        ["The suffix makes the literal `0.5f64` an `f64`, never `int` [0.5f64]"]
+        [
+            "The suffix makes the literal `0.5f64` an `f64`, never `int`. No fix is offered: each one the \
+          checker tried is rejected too. [0.5f64]"
+        ]
     );
     // The fix writes the digits as the program does, and names the number by them.
     assert_eq!(

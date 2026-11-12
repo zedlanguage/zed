@@ -529,6 +529,94 @@ impl<'a> Arg<'a> {
     }
 }
 
+/// A construct being checked ([`Ck::written`]): what it applies, its arguments as the program
+/// writes them, before the check reads them at a carrier, and its span.
+struct Written<'a> {
+    form: Construct<'a>,
+    args: Vec<Option<Arg<'a>>>,
+    span: Span,
+}
+
+/// A fix, by what it writes, of the rejection [`Found::id`] in the construct being checked
+/// ([`Ck::fixes_checked`], [`Ck::repairs`]), whose check as written gave the construct the
+/// type `ty` and added errors only at `needs`, each inside an argument the fix does not edit,
+/// as `f(1, 1.0f64)` for `f(1.0f64, 1.0f64)` with `int` parameters: the fix is kept where the
+/// construct's own check rejects each of `needs` too, apart from the rejection the fix is
+/// for, and dropped where it does not. A fix kept whose `ty` is not the type the construct's
+/// own check gives is checked again in the construct the first one is an argument of
+/// ([`Ck::carried`]), as `1.0r` in `min(1.0r, 0.5r) + 2.5f64`, which is then dropped.
+struct Pending {
+    id: usize,
+    offer: Offer,
+    needs: Vec<Span>,
+    ty: Ty,
+}
+
+/// The fixes kept in a construct that give it the type `ty` in place of the type its own check
+/// gives ([`Ck::carried`]), checked together in the construct around it: they give it the
+/// same argument, so one check settles them all.
+struct Carry {
+    ty: Ty,
+    fixes: Vec<Pending>,
+}
+
+/// What a [`Pending`] fix writes: the edits of a fix of a menu ([`Ck::fixes_checked`]), or a
+/// note that writes a repair ([`Ck::repairs`]), by its span and text, as the note that writes
+/// `0.5` for `0.5r`.
+#[derive(PartialEq)]
+enum Offer {
+    Edits(Vec<(Span, String)>),
+    Note(Span, String),
+}
+
+/// What a construct of [`Written`] applies: a binary operator other than `&&` and `||`, with
+/// its second operand as written, a prelude word applied to one argument, or a function,
+/// named as a message names it, called with its arguments in the order of its parameters.
+#[derive(Clone)]
+enum Construct<'a> {
+    Binary(BinaryOp, &'a Expr),
+    Word(&'a str),
+    Call(Rc<str>, Arc<Sig>),
+}
+
+impl Construct<'_> {
+    /// The name of what it applies as an application names it: `` `+` `` or `` `int` ``.
+    fn what(&self) -> String {
+        match self {
+            Construct::Binary(op, _) => format!("`{op}`"),
+            Construct::Word(w) => format!("`{w}`"),
+            Construct::Call(what, _) => what.to_string(),
+        }
+    }
+}
+
+/// What a fix writes in a construct's arguments ([`Ck::fix_args`]): the arguments it gives,
+/// one whose application fails where the fix writes it, as `int(0.5)`, or text the checker
+/// does not read alone, so the fix is not checked here.
+enum Mapped<'a> {
+    Args(Vec<Option<Arg<'a>>>),
+    Fails,
+    Unread,
+}
+
+/// The text of `src` in `at` with each edit of `edits`, which lie in `at` apart and in the
+/// order of the text, written in place of its span; `None` where a span is not in `src` or
+/// the system refuses the memory. It costs the length of `at` and of the edits.
+fn edited(src: &str, at: Span, edits: &[&(Span, String)]) -> Option<String> {
+    let mut parts = Vec::with_capacity(2 * edits.len() + 1);
+    let mut i = at.start;
+    for (s, with) in edits {
+        parts.push(src.get(i..s.start)?);
+        parts.push(with.as_str());
+        i = s.end;
+    }
+    parts.push(src.get(i..at.end)?);
+    shown(&fmt::from_fn(|f| {
+        parts.iter().try_for_each(|p| f.write_str(p))
+    }))
+    .ok()
+}
+
 /// A component of a tuple argument as written: a numeric literal, an `if` of literals, a
 /// tuple holding one of them at some depth, or anything else. A literal in a tuple adopts the
 /// carrier the type its tuple meets gives its component, as a literal argument adopts its
@@ -922,6 +1010,24 @@ struct Ck<'t, 'a> {
     pub(super) narrowed_at: HashMap<(usize, usize), Ty>,
     /// The type each narrowed binder had before its first narrowing in place.
     pub(super) unnarrowed: HashMap<usize, Ty>,
+    /// The construct being checked, with its arguments as written, whose rejections' fixes
+    /// are checked by checking it again with each fix in place ([`Ck::fixes_checked`]);
+    /// `None` outside one and while a repair is tried.
+    written: Option<Rc<Written<'a>>>,
+    /// The fixes kept for rejections in the constructs being checked whose checks as written
+    /// added errors only inside other arguments ([`Pending`]), settled when the construct's
+    /// check ends ([`Ck::pending_settled`]).
+    pending_fixes: Vec<Pending>,
+    /// The fixes kept in a construct whose type they change ([`Pending`]), by the construct's
+    /// span, one [`Carry`] per type they give it, for the construct it is an argument of to
+    /// check with that type in its place.
+    carried: HashMap<Span, Vec<Carry>>,
+    /// The [`Found::id`] the next error gets.
+    next_found: usize,
+    /// Whether the repair being tried ([`Ck::tried`]) makes an operation on literals alone
+    /// whose value has no type until it meets a carrier, as `1 ^ 2.5`: the trial does not see
+    /// where the value goes, so it fails.
+    opened: bool,
     /// Whether a repair is being tried, so its errors offer none.
     trying: bool,
     /// Whether a repair's rewritten call is being tried ([`Ck::repaired`]), so a decimal
@@ -987,6 +1093,10 @@ struct Ck<'t, 'a> {
     /// The literals the applications under way refused, each with its message, for
     /// [`Self::apply`] to report with the application's derivation and repairs.
     lit_refused: Vec<(Span, Msg)>,
+    /// What each operation on literals alone that a repair's trial gave a carrier is at that
+    /// carrier ([`Ck::lit_fit`]), by its span and the carrier: read off the text alone, as
+    /// [`Ck::lit_ops`] is, so it is kept after the trial.
+    lit_fits: HashMap<(Span, Carrier), LitFit>,
     /// The classes [`Self::generic_parts`] made outside every function, for [`Self::apply`] to
     /// give their types once the application has met them ([`Self::resolve_top_parts`]).
     top_parts: Vec<usize>,
@@ -1082,6 +1192,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             narrowings: 0,
             narrowed_at: HashMap::new(),
             unnarrowed: HashMap::new(),
+            written: None,
+            pending_fixes: Vec::new(),
+            carried: HashMap::new(),
+            next_found: 0,
+            opened: false,
             trying: false,
             rough: false,
             lines_out: HashSet::new(),
@@ -1104,6 +1219,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             defer: BTreeSet::new(),
             applied: None,
             lit_refused: Vec::new(),
+            lit_fits: HashMap::new(),
             top_parts: Vec::new(),
             tail_reach: None,
             tail_calls: HashMap::new(),
@@ -1539,13 +1655,25 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// until the end in place of its written menu. Test:
     /// `l01_26a_generic_literals::scaling::a_menu_that_writes_a_literal_in_each_of_many_divisions_scales`;
     /// COMPLEXITY.md F150.
-    fn reject(&mut self, row: Option<Row>, span: Span, m: Msg, notes: Vec<Note>) {
+    ///
+    /// The fixes of a rejection inside the construct being checked are each checked as
+    /// written first, and those that do not check are dropped ([`Self::fixes_checked`]).
+    fn reject(&mut self, row: Option<Row>, span: Span, mut m: Msg, notes: Vec<Note>) {
+        if !self.trying && !m.fixes.is_empty() {
+            self.fixes_checked(span, &mut m);
+        }
         self.errors.push(Found {
+            id: self.next_found,
             row,
             span,
             m,
             notes,
         });
+        // A trial's errors are undone after it, so they take no number of their own: the
+        // number of the error a repair checked before it is found stays the one it gets.
+        if !self.trying {
+            self.next_found += 1;
+        }
     }
 
     /// The derivation of the expressions at `spans`: for each, its type, and for a name or a
@@ -3308,16 +3436,20 @@ impl<'t, 'a> Ck<'t, 'a> {
             let Some(r) = cast_widening(w, &held) else {
                 continue;
             };
-            let cast = Arg {
-                at: Some(at),
-                ..Arg::of(r)
+            // As written where the comparison is the construct being checked: the cast
+            // applied to the operand, then the comparison with it in place
+            // ([`Ck::operand_replaced`]); else the comparison with a value of the cast's type.
+            let written = match self.comparing {
+                Some(c) => self.operand_replaced(c.span, at, |ck, a| ck.wrapped(w, a, &held, at)),
+                None => None,
             };
-            let saved = self.mark();
-            self.trying = true;
-            self.equal(l, &cast);
-            let ok = self.errors.len() == saved.errors;
-            self.trying = false;
-            self.undo(&saved);
+            let ok = written.unwrap_or_else(|| {
+                let cast = Arg {
+                    at: Some(at),
+                    ..Arg::of(r)
+                };
+                self.tried(|ck| ck.equal(l, &cast)).is_some()
+            });
             if ok {
                 let text = match name {
                     Some(n) => format!("repair: write `{w}({n})`; the checker accepts that"),
@@ -3480,6 +3612,33 @@ impl<'t, 'a> Ck<'t, 'a> {
                         fixes[1].push(Fix::Component(s, i));
                     }
                 }
+            }
+        }
+        // Each fix checked as written: the comparison checked again with the cast operand, or
+        // its component, in place of the operand ([`Ck::operand_replaced`]); a fix with which
+        // it is rejected is dropped, and with none left the answer is offered.
+        // Complexity tradeoff: at most six casts and one component per index of the narrower
+        // tuple, each one trial of the comparison with one operand replaced, which costs the
+        // size of the other operand and of the replacement, never the replaced tuple again
+        // (test `l01_29_diagnostics::scaling::checking_the_components_offered_for_a_wide_tuple_scales`).
+        // The naive way, checking the program again with each fix written in, costs the
+        // size of the program per fix.
+        if !self.trying {
+            for group in &mut fixes {
+                let mut kept = Vec::new();
+                for fix in std::mem::take(group) {
+                    let (Fix::Cast(s, _) | Fix::Component(s, _)) = fix;
+                    let checks = ats[s].and_then(|at| {
+                        self.operand_replaced(span, at, |ck, a| match fix {
+                            Fix::Cast(_, w) => ck.wrapped(w, a, &a.ty, at),
+                            Fix::Component(_, i) => ck.component_read(a, i, at),
+                        })
+                    });
+                    if checks != Some(false) {
+                        kept.push(fix);
+                    }
+                }
+                *group = kept;
             }
         }
         let [fixes, components] = fixes;
@@ -5568,8 +5727,10 @@ impl Rewrite {
 }
 
 /// An error as the checker finds it: its row of the rejection table if any, its span, its
-/// message and fixes not yet written ([`Ck::reject`]), and its notes.
+/// message and fixes not yet written ([`Ck::reject`]), and its notes; and its number in the
+/// order the checker found the errors in, which [`Ck::errors`] keeps.
 struct Found {
+    id: usize,
     row: Option<Row>,
     span: Span,
     m: Msg,
@@ -5578,8 +5739,12 @@ struct Found {
 
 impl Found {
     /// The error with its message and menu written against `source`, the unit's text
-    /// ([`Msg::written`]).
-    fn written(self, source: Option<&str>) -> Error {
+    /// ([`Msg::written`]). A note that writes a repair, one that starts `repair:`, offers a
+    /// fix too, so the message does not say that none is offered.
+    fn written(mut self, source: Option<&str>) -> Error {
+        if self.notes.iter().any(|n| n.text.starts_with("repair:")) {
+            self.m.dropped = false;
+        }
         let (message, menu) = self.m.written(source);
         Error {
             row: self.row,
@@ -5595,6 +5760,10 @@ impl Found {
 pub(crate) struct Msg {
     text: String,
     fixes: Vec<Rewrite>,
+    /// Whether fixes or repair notes were made and each was dropped as it does not check where
+    /// it is written ([`Ck::fixes_checked`], [`Ck::pending_settled`]), so the message says that
+    /// none is offered.
+    dropped: bool,
 }
 
 impl From<String> for Msg {
@@ -5602,6 +5771,7 @@ impl From<String> for Msg {
         Msg {
             text,
             fixes: Vec::new(),
+            dropped: false,
         }
     }
 }
@@ -5612,6 +5782,7 @@ impl Msg {
         Msg {
             text,
             fixes: fixes.into_iter().flatten().collect(),
+            dropped: false,
         }
     }
 
@@ -5630,10 +5801,22 @@ impl Msg {
     /// Without the text, or where a fix's span does not lie in it, the short forms end the
     /// headline, as `. Try `0.5f64` or `0.5r` instead.`, and the menu is empty. Written in
     /// memory the system gives first; where it refuses, the message alone and no menu. It costs
-    /// the length of the message and of the lines the fixes touch.
+    /// the length of the message and of the lines the fixes touch. Where every fix the
+    /// checker made was dropped, since none checks where it is written
+    /// ([`Ck::fixes_checked`]), the message says that it offers none.
     fn written(self, source: Option<&str>) -> (String, String) {
         if self.fixes.is_empty() {
-            return (self.text, String::new());
+            let text = match self.dropped {
+                true => {
+                    let head = self.text.strip_suffix('.').unwrap_or(&self.text);
+                    let text = shown(&format_args!(
+                        "{head}. No fix is offered: each one the checker tried is rejected too."
+                    ));
+                    text.unwrap_or_else(|_| self.text.clone())
+                }
+                false => self.text,
+            };
+            return (text, String::new());
         }
         let lines = source.and_then(|s| {
             (self.fixes.iter())
@@ -5730,7 +5913,14 @@ fn grouped(what: &dyn fmt::Display, parts: Vec<(Span, Msg)>) -> (Msg, Vec<Note>)
         "{n} parts of {what} are literals that nothing here gives a carrier, and Zed does not \
          choose one for them; the steps below give each one"
     );
-    (Msg { text, fixes }, notes)
+    (
+        Msg {
+            text,
+            fixes,
+            dropped: false,
+        },
+        notes,
+    )
 }
 
 /// The message `head` about the literal `l`, then `why`. `head` is given the words "the
@@ -5824,24 +6014,7 @@ fn folded(e: &Expr, c: Carrier) -> Option<Value> {
                 }
                 match &x.kind {
                     ExprKind::Binary(op, a, b) => {
-                        let p = match *op {
-                            BinaryOp::Add => Prim::Add,
-                            BinaryOp::Sub => Prim::Sub,
-                            BinaryOp::Mul => Prim::Mul,
-                            BinaryOp::Div => Prim::Div,
-                            BinaryOp::Pow => Prim::Pow,
-                            BinaryOp::Eq => Prim::Eq,
-                            BinaryOp::Ne => Prim::Ne,
-                            BinaryOp::Lt => Prim::Lt,
-                            BinaryOp::Le => Prim::Le,
-                            BinaryOp::Gt => Prim::Gt,
-                            BinaryOp::Ge => Prim::Ge,
-                            BinaryOp::Or
-                            | BinaryOp::And
-                            | BinaryOp::Concat
-                            | BinaryOp::IntDiv
-                            | BinaryOp::Mod => return None,
-                        };
+                        let p = binary_prim(*op)?;
                         todo.extend([Step::Apply(p, 2), Step::Visit(b), Step::Visit(a)]);
                     }
                     ExprKind::Unary(UnaryOp::Neg, a) => {
@@ -5856,15 +6029,50 @@ fn folded(e: &Expr, c: Carrier) -> Option<Value> {
             }
             Step::Apply(p, n) => {
                 let args = values.split_off(values.len().checked_sub(n)?);
-                let v = eval(&Term::Prim(p, args.into_iter().map(Term::Lit).collect())).ok()?;
-                if matches!(v, Value::Atom(_)) {
-                    return None;
-                }
-                values.push(v);
+                values.push(prim_folded(p, args)?);
             }
         }
     }
     values.pop()
+}
+
+/// The kernel's operation for the operator `op` where [`folded`] folds it: the arithmetic
+/// operators and the comparisons.
+fn binary_prim(op: BinaryOp) -> Option<Prim> {
+    Some(match op {
+        BinaryOp::Add => Prim::Add,
+        BinaryOp::Sub => Prim::Sub,
+        BinaryOp::Mul => Prim::Mul,
+        BinaryOp::Div => Prim::Div,
+        BinaryOp::Pow => Prim::Pow,
+        BinaryOp::Eq => Prim::Eq,
+        BinaryOp::Ne => Prim::Ne,
+        BinaryOp::Lt => Prim::Lt,
+        BinaryOp::Le => Prim::Le,
+        BinaryOp::Gt => Prim::Gt,
+        BinaryOp::Ge => Prim::Ge,
+        BinaryOp::Or | BinaryOp::And | BinaryOp::Concat | BinaryOp::IntDiv | BinaryOp::Mod => {
+            return None;
+        }
+    })
+}
+
+/// The operation `p` on the values `args` by the kernel's one evaluator ([`eval()`]), as
+/// [`folded`] folds it: `None` where it gives an atom, as `1 / 0` does.
+fn prim_folded(p: Prim, args: Vec<Value>) -> Option<Value> {
+    let v = eval(&Term::Prim(p, args.into_iter().map(Term::Lit).collect())).ok()?;
+    (!matches!(v, Value::Atom(_))).then_some(v)
+}
+
+/// What an operation on literals alone is at one carrier ([`Ck::lit_fit`]): its value there,
+/// as [`folded`] gives it; whether it holds a `/`; whether it holds a `^`; and
+/// the first of its literals that is not exactly a value of the carrier.
+#[derive(Clone)]
+struct LitFit {
+    value: Option<Value>,
+    div: bool,
+    pow: bool,
+    refused: Option<Lit>,
 }
 
 /// The literal `l` written with the carrier `c`: with its suffix, `0.5f64`, `1.0f64` or
@@ -6770,13 +6978,13 @@ fn leaves_with(
 
 /// The literals of the other carriers that are exactly the number of `e` when `e` is a `rat`
 /// literal, `k` or `-k` with `k` written `1r` or `0.5r`, each with its type and the repair
-/// that writes it, in the order of [`menu`]: the `f64` literal, `1.0` or `0.5`, where the
-/// number is an `f64` exactly, then the `int` literal, `1`, where it is written without a
-/// point; `None` when `e` is no `rat` literal. A repair writes the literal's digits as `src`,
-/// the program's text, writes them, `1_000.0` for `1_000r`, where it is known. A literal has
+/// that writes it and the literal it writes, in the order of [`menu`]: the `f64` literal,
+/// `1.0` or `0.5`, where the number is an `f64` exactly, then the `int` literal, `1`, where it
+/// is written without a point; `None` when `e` is no `rat` literal. A repair writes the
+/// literal's digits as `src`, the program's text, writes them, `1_000.0` for `1_000r`, where it is known. A literal has
 /// no length limit, so a repair that quotes it is written in memory asked for first
 /// ([`quoting`]).
-fn rat_forms(e: &Expr, src: Option<&str>) -> Option<Vec<(Ty, String)>> {
+fn rat_forms(e: &Expr, src: Option<&str>) -> Option<Vec<(Ty, Option<String>, String)>> {
     let (neg, inner) = match &e.kind {
         ExprKind::Unary(UnaryOp::Neg, a) => (true, &**a),
         _ => (false, e),
@@ -6810,7 +7018,8 @@ fn rat_forms(e: &Expr, src: Option<&str>) -> Option<Vec<(Ty, String)>> {
                 )
             },
         );
-        out.push((Ty::lit(&x), text));
+        let lit = shown(&format_args!("{sign}{digits}{suffix}")).ok();
+        out.push((Ty::lit(&x), lit, text));
     }
     Some(out)
 }

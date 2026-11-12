@@ -23,6 +23,7 @@ mod markers;
 mod menu_order;
 mod negative_literals;
 mod neglit;
+mod offered_repairs;
 mod order;
 mod overload_cycles;
 mod printed;

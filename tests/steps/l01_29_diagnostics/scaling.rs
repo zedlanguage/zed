@@ -164,3 +164,49 @@ fn a_chain_of_names_to_a_negated_zero_prints_in_linear_time() {
         },
     );
 }
+
+/// `n` rejections whose fixes are each checked as written (MSG-converted-claims-checked): a
+/// menu fix, `y = 1 + gi(true)`, dropped; a comparison cast, `int(r)`, dropped; a cast beside
+/// a decimal literal, `f64(k)`, dropped. Each costs a few checks of its own construct, so the
+/// whole is linear in `n`.
+fn checked_fixes(n: usize) -> String {
+    let mut src = String::from(
+        "gi(positional c: bool) = if c { 1 } else { true };\nn = 1;\nr = 2.5r;\n\
+         k = 1152921504606846977;\n",
+    );
+    for i in 0..n {
+        src += &format!("a{i} = 1.0f64 + gi(true);\nb{i} = n == r;\nc{i} = k == 0.5;\n");
+    }
+    src
+}
+
+#[test]
+fn checking_each_offered_fix_as_written_scales() {
+    scaling::check("checking the fixes of 3n rejections as written", 200, |n| {
+        let out = rejected(&checked_fixes(n));
+        assert_eq!(out.matches("No fix is offered").count(), n, "{out}");
+        assert!(!out.contains("int(r)"), "{out}");
+        assert!(!out.contains("f64(k)"), "{out}");
+    });
+}
+
+/// A tuple of `n` `rat` components compared with a `rat`: each component is offered,
+/// `t[i] == 1r`, and each is checked as written, the comparison checked again with the
+/// component in place of the tuple, which is not copied for it.
+fn tuple_compared(n: usize) -> String {
+    let xs = vec!["1r"; n];
+    format!("t = ({});\ny = t == 1r;\n", xs.join(", "))
+}
+
+#[test]
+fn checking_the_components_offered_for_a_wide_tuple_scales() {
+    scaling::check(
+        "checking the n components offered for an n-tuple",
+        200,
+        |n| {
+            let out = rejected(&tuple_compared(n));
+            let last = format!("t[{}] == 1r", n - 1);
+            assert!(out.contains(&last), "{out}");
+        },
+    );
+}

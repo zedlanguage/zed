@@ -772,10 +772,34 @@ impl<'t, 'a> Ck<'t, 'a> {
                     }
                 }
                 let sig = op_sig(Operator::Unary(op));
+                let at = x.expr.map(|e| e.span);
                 let t = self
                     .apply(&format!("`{op}`"), &sig, vec![Some(x)], true, span)
                     .0;
                 self.lit_wrote(span, from);
+                // The fixes carried up from the operand, as `(-0.5 ^ 1.0r) + 2.5f64` carries the
+                // fix of `^` past the `-`, are checked under the `-` with the type they give the
+                // operand ([`Self::pending_settled`]); one trial per type carried.
+                let carried = at.and_then(|at| Some((at, self.carried.remove(&at)?)));
+                self.carried.remove(&span);
+                if let Some((at, carried)) = carried {
+                    let mut up = HashMap::new();
+                    for c in carried {
+                        let arg = Arg {
+                            at: Some(at),
+                            ..Arg::of(c.ty)
+                        };
+                        let name = format!("`{op}`");
+                        let (ty, needs) =
+                            self.trial(|ck| ck.apply(&name, &sig, vec![Some(arg)], true, span).0);
+                        match needs.is_some_and(|n| n.is_empty()) {
+                            true if ty != t => carry_joined(&mut up, ty, c.fixes),
+                            true => {}
+                            false => c.fixes.iter().for_each(|p| self.fix_dropped(p)),
+                        }
+                    }
+                    self.carried_up(span, up);
+                }
                 m.ty(t);
             }
             Frame::Tuple(s) => self.tuple_step(m, s),
@@ -2556,7 +2580,6 @@ impl<'t, 'a> Ck<'t, 'a> {
                 op,
                 BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Pow
             ) {
-                self.lit_ops.insert(span);
                 // Its value has no type until it meets a carrier where it holds a `/` or a
                 // decimal ([`Ck::lit_open`]): one lookup per operand.
                 let open = |a: &Arg| {
@@ -2564,7 +2587,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                         || (a.lit.as_ref())
                             .is_some_and(|l| l.bare && lit_carrier(&l.value) == Carrier::F64)
                 };
-                if op == BinaryOp::Div || open(x) || open(y) {
+                let opened = op == BinaryOp::Div || open(x) || open(y);
+                // A trial records nothing here, as nothing undoes it, and one whose operation
+                // has no type until its value meets a carrier fails, since it does not see
+                // where the value goes ([`Self::tried`]).
+                if self.trying {
+                    self.opened |= opened;
+                    return;
+                }
+                self.lit_ops.insert(span);
+                if opened {
                     self.lit_open.insert(span);
                     for e in [x.expr, y.expr].into_iter().flatten() {
                         self.lit_open_within(e);
@@ -2622,8 +2654,18 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// ([`Ck::lit_wrote`]); `false`, with nothing changed, where `e` holds a `^` and `c` is
     /// `rat`, which no arrow of `^` takes, or where `e` holds a `/` or a `^` and its value at
     /// `c` is no value of `c` ([`folded`]), as `1 / 0` at `rat`: the rejection of the
-    /// operation stands. It costs the size of `e`, twice where it holds a `/` or a `^`.
+    /// operation stands. It costs the size of `e`, twice where it holds a `/` or a `^`; in a
+    /// repair's trial ([`Self::tried`]), which changes nothing that lasts, what it finds is
+    /// read from [`Self::lit_fit`] instead.
     fn lit_takes(&mut self, e: &Expr, c: Carrier) -> bool {
+        if self.trying {
+            let (takes, refused) = self.lit_fit(e, c);
+            // A literal that is not exactly a `c` is rejected as below, which fails the trial.
+            if takes && let Some(l) = refused {
+                self.adopt_to(&l, c);
+            }
+            return takes;
+        }
         let mut nodes = Vec::new();
         let (mut div, mut pow) = (false, false);
         let mut todo = vec![e];
@@ -2653,6 +2695,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             // Each operation in it is of the carrier now, which a derivation names, and not
             // the type the walk found before it met one.
+            // A trial ([`Self::tried`]) changes neither, as nothing undoes it.
+            if self.trying {
+                continue;
+            }
             self.lit_open.remove(&e.span);
             if let Some((kept @ Some(_), _)) = self.seen.get_mut(&e.span) {
                 *kept = Some(Ty::carrier(c));
@@ -2662,6 +2708,93 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         true
+    }
+
+    /// What [`Self::lit_takes`] finds of `e`, an operation on bare literals alone, taking `c`:
+    /// whether it takes it, and the first of its literals that is not exactly a `c`, which
+    /// [`Self::adopt_to`] rejects. Both are read off `e` and `c` alone, so what each operation
+    /// in `e` is at `c` is kept ([`Ck::lit_fits`]), and the walk stops at an operation kept
+    /// already.
+    ///
+    /// Complexity tradeoff: the naive way, the walk and the fold of all of `e` in each trial,
+    /// costs the size of `e` per trial. Over a nest of `n` operations, each rejected as it is
+    /// walked with a fix whose trial gives the operation below it a carrier, as in
+    /// `((1 + 1) / 1 + 1) / 1`, that is O(n²) (test
+    /// `l01_26a_generic_literals::scaling::an_argument_of_divisions_of_literals_nested_deep_takes_its_carrier_in_linear_time`).
+    /// Kept by operation and carrier, each operation is read once per carrier, at three
+    /// carriers at most: one kernel operation on its operands' values, besides copying them.
+    fn lit_fit(&mut self, e: &Expr, c: Carrier) -> (bool, Option<Lit>) {
+        enum Step<'e> {
+            Visit(&'e Expr),
+            Done(&'e Expr, Option<Prim>, usize, bool, bool),
+        }
+        let mut todo = vec![Step::Visit(e)];
+        let mut fits: Vec<LitFit> = Vec::new();
+        while let Some(step) = todo.pop() {
+            match step {
+                Step::Visit(x) => {
+                    if let Some(f) = self.lit_fits.get(&(x.span, c)) {
+                        fits.push(f.clone());
+                        continue;
+                    }
+                    if let Some(l) = literal(x, None) {
+                        let refused = literal(x, self.t.text).filter(|l| adopt(l, c).is_err());
+                        fits.push(LitFit {
+                            value: lit_value(&l, c),
+                            div: false,
+                            pow: false,
+                            refused,
+                        });
+                        continue;
+                    }
+                    match &x.kind {
+                        ExprKind::Binary(op, a, b) => todo.extend([
+                            Step::Done(
+                                x,
+                                binary_prim(*op),
+                                2,
+                                *op == BinaryOp::Div,
+                                *op == BinaryOp::Pow,
+                            ),
+                            Step::Visit(b),
+                            Step::Visit(a),
+                        ]),
+                        ExprKind::Unary(UnaryOp::Neg, a) => todo.extend([
+                            Step::Done(x, Some(Prim::Neg), 1, false, false),
+                            Step::Visit(a),
+                        ]),
+                        // A `rat` literal, `2r`, is a value of `rat` alone ([`folded`]).
+                        kind => fits.push(LitFit {
+                            value: match kind {
+                                ExprKind::Rat(d) if c == Carrier::Rat => {
+                                    Rat::decimal(d).ok().flatten().map(Value::rat)
+                                }
+                                _ => None,
+                            },
+                            div: false,
+                            pow: false,
+                            refused: None,
+                        }),
+                    }
+                }
+                Step::Done(x, p, n, div, pow) => {
+                    let parts = fits.split_off(fits.len() - n);
+                    let values: Option<Vec<Value>> =
+                        parts.iter().map(|f| f.value.clone()).collect();
+                    let fit = LitFit {
+                        value: p.zip(values).and_then(|(p, vs)| prim_folded(p, vs)),
+                        div: div || parts.iter().any(|f| f.div),
+                        pow: pow || parts.iter().any(|f| f.pow),
+                        refused: parts.into_iter().find_map(|f| f.refused),
+                    };
+                    self.lit_fits.insert((x.span, c), fit.clone());
+                    fits.push(fit);
+                }
+            }
+        }
+        let f = fits.pop().expect("one fit for `e`");
+        let takes = !(f.pow && c == Carrier::Rat) && !((f.div || f.pow) && f.value.is_none());
+        (takes, f.refused)
     }
 
     /// At the top level, each argument of `args` that is an operation on bare literals alone
@@ -2801,8 +2934,13 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// A binary operator other than `&&` and `||` applied to its arguments `x` and `y`, the
-    /// second written `b`.
-    fn binary_end(
+    /// second written `b`, recorded as the construct being checked ([`Self::as_written`]).
+    fn binary_end(&mut self, op: BinaryOp, x: Arg<'a>, y: Arg<'a>, b: &'a Expr, span: Span) -> Ty {
+        self.as_written(Construct::Binary(op, b), vec![Some(x), Some(y)], span)
+    }
+
+    /// [`Self::binary_end`] checked.
+    fn binary_op(
         &mut self,
         op: BinaryOp,
         mut x: Arg<'a>,
@@ -2900,7 +3038,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                     if let (Some(lit), None) = (&l.lit, &v.lit)
                         && lit.bare
                     {
-                        self.eq_sides.insert(lit.site, (op, v.at, left));
+                        if !self.trying {
+                            self.eq_sides.insert(lit.site, (op, v.at, left));
+                        }
                         if self.class_of_ty(&v.ty).is_none() && holds_no_number(&[&v.ty]) {
                             self.never_equal(lit, &v.ty);
                         }
@@ -2957,7 +3097,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                     // `*` and `/` take the same (f64, f64) and (rat, rat), and only `*` takes
                     // (int, int): `/` is defined where the product holds no `int`.
                     let quotient = !r.0.set.is_empty() && (&r.0.set & &KType::int()).is_empty();
-                    *self.info.quotients.entry(span).or_insert(quotient) &= quotient;
+                    if !self.trying {
+                        *self.info.quotients.entry(span).or_insert(quotient) &= quotient;
+                    }
                 }
                 match nonzero && !carried {
                     true => r.0.diff(&Ty::set(KType::atom("divByZero"))),
@@ -3078,7 +3220,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
-    fn word_end(&mut self, w: &str, mut x: Arg<'a>, span: Span) -> Ty {
+    /// The prelude word `w` applied to one argument `x`, recorded as the construct being
+    /// checked ([`Self::as_written`]).
+    fn word_end(&mut self, w: &'a str, x: Arg<'a>, span: Span) -> Ty {
+        self.as_written(Construct::Word(w), vec![Some(x)], span)
+    }
+
+    /// [`Self::word_end`] checked.
+    fn word_applied(&mut self, w: &'a str, mut x: Arg<'a>, span: Span) -> Ty {
         if w == "sum" {
             return self.sum(x, span);
         }
@@ -3591,7 +3740,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // of a trial.
                 let from_outside = !self.trying && self.replaying == 0 && !self.widened.is_empty();
                 let with = from_outside.then(|| self.outside_args(&args)).flatten();
-                let t = self.apply(&what, &s.sig, args, false, s.span).0;
+                let form = Construct::Call(what.as_str().into(), s.sig.clone());
+                let t = self.as_written(form, args, s.span);
                 match with {
                     Some(with) => self.try_outside(&what, &s.sig, with, s.span),
                     None if from_outside => self.tried_at(s.span, Some(t.loose())),
@@ -8211,15 +8361,62 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Some((_, Src::Other(e))) => (None, rat_forms(e, self.t.text)),
                 _ => (None, None),
             };
+            let a = a.as_ref().expect("an argument");
             if let Some(forms) = written {
-                for (ty, text) in forms {
-                    if self.repaired(what, sig, args, (i, ty, kept.then_some(*at)), pass, span) {
-                        out.push(Note { span: *at, text });
+                for (ty, lit, text) in forms {
+                    // The form is offered for its own carrier: `1` for `1r` where an `int` is
+                    // taken, not where an `f64` is, which `1.0` is offered for, though `1`
+                    // checks there too.
+                    let at_carrier = Arg {
+                        at: kept.then_some(*at),
+                        ..Arg::of(ty.clone())
+                    };
+                    if self
+                        .repaired(what, sig, args, (i, at_carrier), pass, span)
+                        .is_none()
+                    {
+                        continue;
+                    }
+                    // An `f64` literal whose operation then has no type until its value meets
+                    // a carrier, as `2.5` in `1 ^ 2.5`, is written with its suffix, `2.5f64`.
+                    let f64 = ty.numeric_carrier() == Some(Carrier::F64);
+                    let suffixed = (lit.as_ref().filter(|_| f64))
+                        .and_then(|l| shown(&format_args!("{l}f64")).ok())
+                        .map(|s| {
+                            let text = quoting(
+                                &format_args!("repair: write `{s}`; the checker accepts that"),
+                                || {
+                                    "repair: write this literal as an `f64` literal with its \
+                                     suffix; the checker accepts that"
+                                        .to_string()
+                                },
+                            );
+                            (Some(s), text)
+                        });
+                    for (lit, text) in std::iter::once((lit, text)).chain(suffixed) {
+                        // The literal as the repair writes it, where the checker reads it alone.
+                        let was = self.t.text.and_then(|s| s.get(at.start..at.end));
+                        let with = match (lit, was) {
+                            (Some(lit), Some(was)) => match self.written_arg(&lit, was, a, *at) {
+                                Mapped::Args(mut one) => one.pop().flatten(),
+                                _ => None,
+                            },
+                            _ => None,
+                        };
+                        let with = with.unwrap_or(Arg {
+                            at: kept.then_some(*at),
+                            ..Arg::of(ty.clone())
+                        });
+                        if let Some(got) = self.repaired(what, sig, args, (i, with), pass, span) {
+                            let note = Note { span: *at, text };
+                            self.note_offered(&note, got);
+                            out.push(note);
+                            break;
+                        }
                     }
                 }
                 continue;
             }
-            let a = a.as_ref().expect("an argument");
             for w in ["String", "int", "rat", "f64"] {
                 let Some(r) = self
                     .wrapped(w, a, &held, *at)
@@ -8227,12 +8424,18 @@ impl<'t, 'a> Ck<'t, 'a> {
                 else {
                     continue;
                 };
-                if self.repaired(what, sig, args, (i, r, kept.then_some(*at)), pass, span) {
+                let with = Arg {
+                    at: kept.then_some(*at),
+                    ..Arg::of(r)
+                };
+                if let Some(got) = self.repaired(what, sig, args, (i, with), pass, span) {
                     let text = match name {
                         Some(n) => format!("repair: write `{w}({n})`; the checker accepts that"),
                         None => format!("repair: wrap this in `{w}(…)`; the checker accepts that"),
                     };
-                    out.push(Note { span: *at, text });
+                    let note = Note { span: *at, text };
+                    self.note_offered(&note, got);
+                    out.push(note);
                 }
             }
         }
@@ -8250,46 +8453,550 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `String(g(c))` is rejected there too, as `String(0.5)` is. Complexity tradeoff: one
     /// application of a word of at most five arrows to one argument, the cost of checking the
     /// call as written, for each of the four words at each rejected application.
-    fn wrapped(&mut self, w: &str, a: &Arg<'a>, held: &Ty, at: Span) -> Option<Ty> {
+    pub(super) fn wrapped(
+        &mut self,
+        w: &'static str,
+        a: &Arg<'a>,
+        held: &Ty,
+        at: Span,
+    ) -> Option<Ty> {
         let arg = Arg {
             ty: held.clone(),
             ..a.clone()
         };
+        self.tried(|ck| ck.word_end(w, arg, at))
+    }
+
+    /// `f` run as a trial: its result where it adds no error, refuses no literal and makes no
+    /// operation on literals alone whose value has no type until it meets a carrier
+    /// ([`Self::opened`]), `None` where it does, with the checker's state restored after
+    /// either way, as a repair is tried ([`Self::trying`], [`Self::rough`]). What it reads of
+    /// the comparison being checked ([`Self::comparing`]) is kept for after it.
+    pub(super) fn tried<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> Option<T> {
+        match self.trial(f) {
+            (t, Some(found)) if found.is_empty() => Some(t),
+            _ => None,
+        }
+    }
+
+    /// `f` run as a trial, as [`Self::tried`] runs it: its result, with the spans of the
+    /// errors it adds and the literals it refuses, or `None` for those where it makes an
+    /// operation on literals alone whose value has no type until it meets a carrier
+    /// ([`Self::opened`]) or drops an error found before it. O(what `f` costs).
+    fn trial<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> (T, Option<Vec<Span>>) {
         let saved = self.mark();
         let refused = self.lit_refused.len();
         let trying = std::mem::replace(&mut self.trying, true);
         let rough = std::mem::replace(&mut self.rough, true);
-        let t = self.word_end(w, arg, at);
-        let ok = self.errors.len() == saved.errors && self.lit_refused.len() == refused;
+        let comparing = self.comparing;
+        let opened = std::mem::replace(&mut self.opened, false);
+        let t = f(self);
+        let found = match (self.opened, self.errors.get(saved.errors..)) {
+            (false, Some(errors)) => Some(
+                (errors.iter().map(|e| e.span))
+                    .chain(
+                        self.lit_refused
+                            .get(refused..)
+                            .unwrap_or(&[])
+                            .iter()
+                            .map(|r| r.0),
+                    )
+                    .collect(),
+            ),
+            _ => None,
+        };
+        self.opened = opened;
+        self.comparing = comparing;
         self.rough = rough;
         self.trying = trying;
         self.lit_refused.truncate(refused);
         self.undo(&saved);
-        ok.then_some(t)
+        (t, found)
     }
 
-    /// Whether the application of `sig` to `args` checks with argument `i` replaced by a
-    /// value of type `ty` at the place `at`, if any, tried with the checker's state restored after.
+    /// The construct `form` applied to `args`, as the program writes them, at `span`,
+    /// recorded while it is checked, so that each fix offered for a rejection in it is
+    /// checked by checking it again with the fix in place ([`Self::fixes_checked`]). A trial
+    /// records nothing: its rejections offer no fix.
+    ///
+    /// Complexity tradeoff: the record copies the arguments' types, O(their size), at each
+    /// operator and prelude word, which the check of the construct reads in full anyway.
+    /// Keeping them only where a rejection comes would need them before the check changes
+    /// them (a literal adopts a carrier, a call is read at one), which is when they are
+    /// copied here.
+    fn as_written(&mut self, form: Construct<'a>, args: Vec<Option<Arg<'a>>>, span: Span) -> Ty {
+        if self.trying {
+            return self.construct(form, args, span);
+        }
+        let w = Rc::new(Written {
+            form: form.clone(),
+            args: args.clone(),
+            span,
+        });
+        let outer = self.written.replace(w.clone());
+        let (errors, pending) = (self.errors.len(), self.pending_fixes.len());
+        let t = self.construct(form, args, span);
+        self.written = outer;
+        // The fixes kept in the arguments that change their types, from the arguments' own
+        // checks just before this one.
+        let mut carried = Vec::new();
+        for (i, a) in w.args.iter().enumerate() {
+            if let Some(at) = a.as_ref().and_then(|a| a.at) {
+                carried.extend(
+                    self.carried
+                        .remove(&at)
+                        .into_iter()
+                        .flatten()
+                        .map(|c| (i, c)),
+                );
+            }
+        }
+        // A check of this span before, as a function's body is checked at each call, carries
+        // nothing to this one.
+        self.carried.remove(&span);
+        if self.pending_fixes.len() > pending || !carried.is_empty() {
+            self.pending_settled(&w, &t, errors, pending, carried);
+        }
+        t
+    }
+
+    /// Settles the fixes [`Self::fixes_checked`] kept pending in the construct `w`, whose own
+    /// check gave the type `t` and added the errors from `errors` on and the pending fixes
+    /// from `pending` on, and the fixes `carried` of its arguments, each by the index of the
+    /// argument whose type they change ([`Carry`]): a pending fix whose check as written
+    /// rejected a span the construct's own check does not reject is dropped from its
+    /// rejection's menu, as are carried ones where the construct, checked with the type they
+    /// give its argument, adds an error other than those; and where that leaves none the
+    /// message says that none is offered ([`Msg::dropped`]). The fixes kept whose type for
+    /// the construct is not `t` are carried on to the construct `w` is an argument of.
+    ///
+    /// Complexity tradeoff: one pass over the construct's errors to index them by span, then
+    /// O(1) expected per span a fix needs, and one check of the construct per type carried
+    /// into an argument, the cost of checking it once; fixes that give an argument one type
+    /// are checked together, and the groups join smaller into larger, so a fix moves
+    /// O(log fixes) times in all. The naive ways: checking the whole statement again with the
+    /// fix written in costs the statement per fix, quadratic in a statement of many
+    /// rejections; one check per carried fix is quadratic in a nest of n operations each
+    /// with its own rejection, as `((1 + 1) / 1 + 1) / 1 …` before its literals meet a
+    /// carrier, where each fix rides up every level; and scanning the construct's errors for
+    /// each span needed is O(errors × spans), quadratic in the arguments of one call.
+    fn pending_settled(
+        &mut self,
+        w: &Written<'a>,
+        t: &Ty,
+        errors: usize,
+        pending: usize,
+        carried: Vec<(usize, Carry)>,
+    ) {
+        let settled = self.pending_fixes.split_off(pending);
+        let from = errors.min(self.errors.len());
+        let found: HashSet<Span> = self.errors[from..].iter().map(|e| e.span).collect();
+        let mut up = HashMap::new();
+        for p in settled {
+            // A fix that leaves its own rejection, as `int(n) * 0.5` for `n * 0.5`, fixes nothing.
+            let own = self.found(p.id).map(|e| e.span);
+            match p.needs.iter().all(|s| found.contains(s) && Some(*s) != own) {
+                true if p.ty != *t => carry_joined(&mut up, p.ty.clone(), vec![p]),
+                true => {}
+                false => self.fix_dropped(&p),
+            }
+        }
+        let within = |at: Span, s: Span| at.start <= s.start && s.end <= at.end;
+        for (i, c) in carried {
+            let Some(at) = w.args[i].as_ref().and_then(|a| a.at) else {
+                continue;
+            };
+            let others: Vec<Span> = (w.args.iter().enumerate())
+                .filter(|&(j, _)| j != i)
+                .filter_map(|(_, a)| a.as_ref()?.at)
+                .collect();
+            let mut ty = Some(c.ty);
+            let args = (w.args.iter().enumerate())
+                .map(|(j, a)| match j == i {
+                    true => ty.take().map(|ty| Arg {
+                        at: Some(at),
+                        ..Arg::of(ty)
+                    }),
+                    false => a.clone(),
+                })
+                .collect();
+            let form = w.form.clone();
+            let (ty, needs) = self.trial(|ck| ck.construct(form, args, w.span));
+            let apart = |s: &Span| found.contains(s) && others.iter().any(|&a| within(a, *s));
+            match needs.is_some_and(|needs| needs.iter().all(apart)) {
+                true if ty != *t => carry_joined(&mut up, ty, c.fixes),
+                true => {}
+                false => c.fixes.iter().for_each(|p| self.fix_dropped(p)),
+            }
+        }
+        self.carried_up(w.span, up);
+    }
+
+    /// The fixes `up` by the type they give the construct at `span`, carried to the construct
+    /// it is an argument of ([`Self::carried`]).
+    fn carried_up(&mut self, span: Span, up: HashMap<Ty, Vec<Pending>>) {
+        if !up.is_empty() {
+            let up = up.into_iter().map(|(ty, fixes)| Carry { ty, fixes });
+            self.carried.insert(span, up.collect());
+        }
+    }
+
+    /// The error [`Found::id`] `id`, where it is still found: the errors keep the order they
+    /// were found in, so a binary search, O(log errors).
+    fn found(&self, id: usize) -> Option<&Found> {
+        let i = self.errors.binary_search_by_key(&id, |e| e.id).ok()?;
+        Some(&self.errors[i])
+    }
+
+    /// Drops the fix `p` from the menu of its rejection, which the errors hold in the order
+    /// they were found in ([`Found::id`]), found by binary search, O(log errors); where that
+    /// leaves none the message says that none is offered ([`Msg::dropped`]).
+    fn fix_dropped(&mut self, p: &Pending) {
+        let Ok(i) = self.errors.binary_search_by_key(&p.id, |e| e.id) else {
+            return;
+        };
+        let e = &mut self.errors[i];
+        match &p.offer {
+            Offer::Edits(edits) => {
+                if let Some(k) = e.m.fixes.iter().position(|f| f.edits == *edits) {
+                    e.m.fixes.remove(k);
+                    e.m.dropped |= e.m.fixes.is_empty();
+                }
+            }
+            Offer::Note(at, text) => {
+                e.notes.retain(|n| n.span != *at || n.text != *text);
+                e.m.dropped |=
+                    e.m.fixes.is_empty() && !e.notes.iter().any(|n| n.text.starts_with("repair:"));
+            }
+        }
+    }
+
+    /// The construct `form` applied to `args` at `span`, checked.
+    fn construct(&mut self, form: Construct<'a>, mut args: Vec<Option<Arg<'a>>>, span: Span) -> Ty {
+        match form {
+            Construct::Binary(op, b) => {
+                let y = args.pop().flatten().expect("two operands");
+                let x = args.pop().flatten().expect("two operands");
+                self.binary_op(op, x, y, b, span)
+            }
+            Construct::Word(w) => {
+                let x = args.pop().flatten().expect("an argument");
+                self.word_applied(w, x, span)
+            }
+            Construct::Call(what, sig) => self.apply(&what, &sig, args, false, span).0,
+        }
+    }
+
+    /// The construct being checked ([`Self::written`]), when it is the application at `span`
+    /// named `what`, checked with its argument `i` replaced by `with`: its type and the
+    /// errors it then has, each inside another argument ([`Pending::needs`]), or `None` where
+    /// it has another; `None` where it is not that application.
+    fn written_with(
+        &mut self,
+        what: &str,
+        span: Span,
+        i: usize,
+        with: Arg<'a>,
+    ) -> Option<Option<(Ty, Vec<Span>)>> {
+        let w = self.written.clone()?;
+        if w.span != span || w.form.what() != what || i >= w.args.len() {
+            return None;
+        }
+        let mut args = w.args.clone();
+        args[i] = Some(with);
+        let form = w.form.clone();
+        let (ty, needs) = self.trial(|ck| ck.construct(form, args, span));
+        let within = |at: Span, s: Span| at.start <= s.start && s.end <= at.end;
+        let others: Vec<Span> = (w.args.iter().enumerate())
+            .filter(|&(j, _)| j != i)
+            .filter_map(|(_, a)| a.as_ref()?.at)
+            .collect();
+        let apart = |s: &Span| others.iter().any(|&a| within(a, *s));
+        Some(needs.filter(|n| n.iter().all(apart)).map(|n| (ty, n)))
+    }
+
+    /// The type of `x[i]` for the argument `x` written at `at`, as a repair writes it, read
+    /// as the program's own `x[i]` is ([`Self::at_index`]); `None` where that read is
+    /// rejected. One read of `x`'s pieces.
+    pub(super) fn component_read(&mut self, x: &Arg<'a>, i: usize, at: Span) -> Option<Ty> {
+        let k = Arg::of(Ty::lit(&Value::int(i.into())));
+        self.tried(|ck| ck.at_index(&x.ty, Some(i), k, None, at, false))
+    }
+
+    /// Whether the construct being checked ([`Self::written`]), when it is the one at `span`,
+    /// checks with its argument written at `at` replaced by a value of the type `with` gives
+    /// for it, as a repair writes a cast or a component in its place: `Some(false)` where
+    /// `with` gives none (the cast always fails) or the construct is rejected with it, `None`
+    /// where the construct is not the one at `span` or has no argument at `at`. One check
+    /// of the construct, besides what `with` costs.
+    pub(super) fn operand_replaced(
+        &mut self,
+        span: Span,
+        at: Span,
+        with: impl FnOnce(&mut Self, &Arg<'a>) -> Option<Ty>,
+    ) -> Option<bool> {
+        let w = self.written.clone()?;
+        if w.span != span {
+            return None;
+        }
+        let i = (w.args.iter()).position(|a| a.as_ref().and_then(|a| a.at) == Some(at))?;
+        let Some(ty) = with(self, w.args[i].as_ref()?) else {
+            return Some(false);
+        };
+        // The other arguments copied, the replaced one not: a tuple operand replaced by one
+        // of its components is not copied once per component.
+        let mut ty = Some(ty);
+        let args = (w.args.iter().enumerate())
+            .map(|(j, a)| match j == i {
+                true => ty.take().map(|ty| Arg {
+                    at: Some(at),
+                    ..Arg::of(ty)
+                }),
+                false => a.clone(),
+            })
+            .collect();
+        let form = w.form.clone();
+        Some(self.tried(|ck| ck.construct(form, args, span)).is_some())
+    }
+
+    /// Whether the application of `sig` to `args`, named `what`, checks with argument `i`
+    /// replaced by `with`, tried with the checker's state restored after: as written, where
+    /// it is the construct being checked ([`Self::written_with`]), with the type it then has
+    /// and the errors left in its other arguments, else as an application, with neither.
     fn repaired(
         &mut self,
         what: &str,
         sig: &Sig,
         args: &[Option<Arg<'a>>],
-        (i, ty, at): (usize, Ty, Option<Span>),
+        (i, with): (usize, Arg<'a>),
         pass: bool,
         span: Span,
-    ) -> bool {
-        let mut with = args.to_vec();
-        with[i] = Some(Arg { at, ..Arg::of(ty) });
-        let saved = self.mark();
-        self.trying = true;
-        self.rough = true;
-        self.apply(what, sig, with, pass, span);
-        let ok = self.errors.len() == saved.errors;
-        self.rough = false;
-        self.trying = false;
-        self.undo(&saved);
-        ok
+    ) -> Option<Option<(Ty, Vec<Span>)>> {
+        if let Some(got) = self.written_with(what, span, i, with.clone()) {
+            return got.map(Some);
+        }
+        let mut args = args.to_vec();
+        args[i] = Some(with);
+        self.tried(|ck| ck.apply(what, sig, args, pass, span))
+            .map(|_| None)
+    }
+
+    /// The note `note`, a repair [`Self::repaired`] checked as written, which gave the
+    /// construct being checked the type and left the errors of `got`, pending for the
+    /// rejection about to be found ([`Pending`]); nothing where it was not checked as written
+    /// or a repair is being tried.
+    fn note_offered(&mut self, note: &Note, got: Option<(Ty, Vec<Span>)>) {
+        if let (false, Some((ty, needs))) = (self.trying, got) {
+            self.pending_fixes.push(Pending {
+                id: self.next_found,
+                offer: Offer::Note(note.span, note.text.clone()),
+                needs,
+                ty,
+            });
+        }
+    }
+
+    /// `m`'s fixes, for a rejection at `span`, each checked as written: where the rejection
+    /// lies in the construct being checked ([`Self::written`]) and a fix rewrites its
+    /// arguments alone, the construct is checked again with the arguments the fix writes, and
+    /// a fix where that adds an error is dropped, except one where it adds errors only inside
+    /// arguments the fix does not edit: that one is kept where the construct's own check
+    /// rejects those too ([`Pending`], [`Self::pending_settled`]), so each rejected argument
+    /// of `f(1.0f64, 1.0f64)` offers its own fix. A fix that writes anything else is kept as
+    /// it is: one in a part of an argument, `(1 + 0.5r)` for `(1 + 0.5)`, or one that
+    /// rewrites the whole comparison. Where every fix is dropped the message says that none is
+    /// offered ([`Msg::dropped`]).
+    ///
+    /// Complexity tradeoff: one check of the construct per fix, each the cost of checking it
+    /// once, so a rejection with k fixes costs k + 1 checks of its construct, k at most the
+    /// carriers a literal can take (DESIGN.md sec:diagnostics), at most 3 per argument. The
+    /// naive way, checking the whole program again with each fix in place, costs the size of
+    /// the program per fix; a fix rewrites one construct's arguments, and the rest of the
+    /// program reads only that construct's type, which the trial gives. A rejection outside
+    /// a recorded construct keeps its fixes unchecked.
+    pub(super) fn fixes_checked(&mut self, span: Span, m: &mut Msg) {
+        let Some(w) = self.written.clone() else {
+            return;
+        };
+        let Some(src) = self.t.text else {
+            return;
+        };
+        if span.start < w.span.start || w.span.end < span.end {
+            return;
+        }
+        let within = |at: Span, s: Span| at.start <= s.start && s.end <= at.end;
+        let fixes = std::mem::take(&mut m.fixes);
+        let made = fixes.len();
+        for fix in fixes {
+            let keep = match self.fix_args(&w, &fix, src) {
+                Mapped::Args(args) => {
+                    let (form, at) = (w.form.clone(), w.span);
+                    // Errors only inside arguments the fix leaves as they are, as the other
+                    // rejected arguments of `f(1.0f64, 1.0f64)`, are the construct's own where
+                    // its check rejects them too, which is known when it ends; and the type
+                    // the fix gives the construct is checked where the construct is used then.
+                    let (ty, needs) = self.trial(|ck| ck.construct(form, args, at));
+                    let others: Vec<Span> = (w.args.iter().flatten())
+                        .filter_map(|a| a.at)
+                        .filter(|&a| !fix.edits.iter().any(|(s, _)| within(a, *s)))
+                        .collect();
+                    let apart = |s: &Span| others.iter().any(|&a| within(a, *s));
+                    let keep = needs.as_ref().is_some_and(|n| n.iter().all(apart));
+                    if keep {
+                        self.pending_fixes.push(Pending {
+                            id: self.next_found,
+                            offer: Offer::Edits(fix.edits.clone()),
+                            needs: needs.unwrap_or_default(),
+                            ty,
+                        });
+                    }
+                    keep
+                }
+                Mapped::Fails => false,
+                Mapped::Unread => true,
+            };
+            if keep {
+                m.fixes.push(fix);
+            }
+        }
+        m.dropped |= made > 0 && m.fixes.is_empty();
+    }
+
+    /// The arguments of the construct `w` with the fix `fix` written in the program's text
+    /// `src`, where each of its edits lies in an argument and rewrites it to one the checker
+    /// reads alone ([`Self::written_arg`]).
+    fn fix_args(&mut self, w: &Written<'a>, fix: &Rewrite, src: &str) -> Mapped<'a> {
+        let within = |at: Span, s: Span| at.start <= s.start && s.end <= at.end;
+        let ats: Vec<Span> = w.args.iter().flatten().filter_map(|a| a.at).collect();
+        let in_arg = |s: Span| ats.iter().any(|&at| within(at, s));
+        if !fix.edits.iter().all(|(s, _)| in_arg(*s)) {
+            return Mapped::Unread;
+        }
+        let mut args = w.args.clone();
+        for (i, a) in w.args.iter().enumerate() {
+            let Some((a, at)) = a.as_ref().and_then(|a| Some((a, a.at?))) else {
+                continue;
+            };
+            let edits: Vec<&(Span, String)> =
+                fix.edits.iter().filter(|(s, _)| within(at, *s)).collect();
+            if edits.is_empty() {
+                continue;
+            }
+            let Some(text) = edited(src, at, &edits) else {
+                return Mapped::Unread;
+            };
+            let Some(was) = src.get(at.start..at.end) else {
+                return Mapped::Unread;
+            };
+            match self.written_arg(&text, was, a, at) {
+                Mapped::Args(mut one) => args[i] = one.pop().flatten(),
+                other => return other,
+            }
+        }
+        Mapped::Args(args)
+    }
+
+    /// The argument `a`, written `was` at `at`, as the program writes it in place of `was`
+    /// the text `text`, where the checker reads that alone: `a` in a cast or conversion
+    /// word, as `f64(0xFF)` or `rat(n)`, which fails where the word's application does
+    /// ([`Self::wrapped`]); a component of `a`, as `x[1]` ([`Self::component`]); a numeric
+    /// literal, perhaps under one `-`; a `rat` literal; a string literal without holes;
+    /// `true` or `false`.
+    fn written_arg(&mut self, text: &str, was: &str, a: &Arg<'a>, at: Span) -> Mapped<'a> {
+        if let Some(i) = (text.strip_prefix(was))
+            .and_then(|r| r.strip_prefix('['))
+            .and_then(|r| r.strip_suffix(']'))
+            .and_then(|r| r.parse::<usize>().ok())
+        {
+            return match self.component_read(a, i, at) {
+                Some(ty) => Mapped::Args(vec![Some(Arg {
+                    at: Some(at),
+                    ..Arg::of(ty)
+                })]),
+                None => Mapped::Fails,
+            };
+        }
+        if let Some(inner) = text.strip_suffix(')')
+            && let Some((w, rest)) = inner.split_once('(')
+            && rest == was
+        {
+            let Some(w) = ["String", "int", "rat", "f64"]
+                .into_iter()
+                .find(|&x| x == w)
+            else {
+                return Mapped::Unread;
+            };
+            return match self.wrapped(w, a, &a.ty, at) {
+                Some(ty) => Mapped::Args(vec![Some(Arg {
+                    at: Some(at),
+                    ..Arg::of(ty)
+                })]),
+                None => Mapped::Fails,
+            };
+        }
+        let Ok(tokens) = lex(text) else {
+            return Mapped::Unread;
+        };
+        let (neg, rest) = match tokens.as_slice() {
+            [t, rest @ ..] if matches!(t.tok, Tok::Op("-")) => (true, rest),
+            all => (false, all),
+        };
+        let [t] = rest else {
+            return Mapped::Unread;
+        };
+        // The literal's span, without its `-`, which is one char long at its start.
+        if neg && at.end - at.start < 2 {
+            return Mapped::Unread;
+        }
+        let span = Span {
+            start: at.start + usize::from(neg),
+            end: at.end,
+        };
+        let number = |kind| {
+            let mut l = read_literal(&Expr { kind, span }, None).ok()??;
+            l.site = at;
+            Some(Arg {
+                ty: lit_ty(&l.value, l.neg()),
+                lit: Some(l),
+                at: Some(at),
+                ..Arg::of(Ty::empty())
+            })
+        };
+        let arg = match &t.tok {
+            Tok::Int { radix, digits } => number(ExprKind::Int {
+                radix: *radix,
+                digits: Arc::clone(digits),
+            }),
+            Tok::Float { digits, forced } => number(ExprKind::Float {
+                digits: Arc::clone(digits),
+                forced: *forced,
+            }),
+            Tok::Rat(d) => match Rat::decimal(d) {
+                Ok(Some(r)) => Some(Arg {
+                    at: Some(at),
+                    ..Arg::of(lit_ty(&Value::rat(r), neg))
+                }),
+                _ => None,
+            },
+            Tok::Str(parts) if !neg => match parts.as_slice() {
+                [] => Some(Value::str("")),
+                [zedc_syntax::lex::Part::Text(s)] => Some(Value::str(s)),
+                _ => None,
+            }
+            .map(|v| Arg {
+                at: Some(at),
+                ..Arg::of(Ty::lit(&v))
+            }),
+            Tok::Keyword(k @ ("true" | "false")) if !neg => Some(Arg {
+                at: Some(at),
+                ..Arg::of(Ty::lit(&Value::Bool(*k == "true")))
+            }),
+            _ => None,
+        };
+        match arg {
+            Some(a) => Mapped::Args(vec![Some(a)]),
+            None => Mapped::Unread,
+        }
     }
 
     /// Applies `sig` to `args`, a missing one filled by its default. When `pass` holds, as
@@ -10766,6 +11473,17 @@ enum Unordered {
     Kinds(Ty, Ty),
     /// The pieces of either side met by a tuple, then those met by an atom.
     Refused([Vec<String>; 2]),
+}
+
+/// Joins the fixes `fixes` to those of `up` that give a construct the type `ty` ([`Carry`]),
+/// the smaller group appended to the larger, so a fix moves O(log fixes) times however many
+/// joins it goes through.
+fn carry_joined(up: &mut HashMap<Ty, Vec<Pending>>, ty: Ty, mut fixes: Vec<Pending>) {
+    let group = up.entry(ty).or_default();
+    if group.len() < fixes.len() {
+        std::mem::swap(group, &mut fixes);
+    }
+    group.append(&mut fixes);
 }
 
 #[cfg(test)]
