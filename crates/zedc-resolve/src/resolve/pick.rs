@@ -19,7 +19,7 @@
 
 use std::collections::HashMap;
 
-use zedc_syntax::ast::{Every, Expr, ExprKind, Function, Param, Type, TypeKind};
+use zedc_syntax::ast::{BinaryOp, Every, Expr, ExprKind, Function, Param, Type, TypeKind, UnaryOp};
 use zedc_syntax::lex::Span;
 
 use crate::resolve::{Kind, Ref, Resolution};
@@ -105,9 +105,19 @@ fn of_arg(e: &Expr, res: &Resolution, param_ty: &HashMap<Span, &Type>) -> Mask {
         ExprKind::Str(_) => TEXT,
         ExprKind::Atom(_) => ATOM,
         ExprKind::Tuple(_) | ExprKind::Lambda { .. } => OTHER,
-        ExprKind::Unary("!", _) => BOOL,
-        ExprKind::Binary("<" | "<=" | ">" | ">=" | "==" | "!=" | "&&" | "||", ..) => BOOL,
-        ExprKind::Unary("-", a)
+        ExprKind::Unary(UnaryOp::Not, _) => BOOL,
+        ExprKind::Binary(
+            BinaryOp::Lt
+            | BinaryOp::Le
+            | BinaryOp::Gt
+            | BinaryOp::Ge
+            | BinaryOp::Eq
+            | BinaryOp::Ne
+            | BinaryOp::And
+            | BinaryOp::Or,
+            ..,
+        ) => BOOL,
+        ExprKind::Unary(UnaryOp::Neg, a)
             if matches!(
                 a.kind,
                 ExprKind::Int { .. } | ExprKind::Float { .. } | ExprKind::Rat(_)
