@@ -1232,6 +1232,7 @@ dependencies = [
  "num-bigint",
  "unicode-ident",
  "unicode-script",
+ "unicode-width",
  "zed-kernel",
  "zedc-base",
 ]

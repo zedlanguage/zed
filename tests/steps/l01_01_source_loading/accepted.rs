@@ -35,3 +35,18 @@ fn nfc_text_in_many_scripts_loads_unchanged() {
 fn a_byte_order_mark_after_the_start_is_left_to_the_lexer() {
     assert!(load("a = 1;\u{feff}".as_bytes()).is_ok());
 }
+
+#[test]
+fn nul_and_bidi_controls_are_left_to_the_lexer() {
+    // The loader rejects only text that is not NFC and a leading byte order mark (DESIGN.md
+    // sec:lexical); where these characters may stand is the lexer's rule, which accepts them in
+    // comments and strings and rejects them elsewhere (l01_02_lexer_names, `invisible`).
+    for text in [
+        "a = 1;\u{0}",
+        "a = \"\u{202e}x\";",
+        "a = 1; // \u{2066}\n",
+        "\u{200f}a = 1;",
+    ] {
+        assert_eq!(load(text.as_bytes()).unwrap(), text);
+    }
+}

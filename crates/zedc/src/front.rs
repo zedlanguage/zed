@@ -250,7 +250,7 @@ struct Stretch {
 fn layout(source: &str, steps: &[Step], numbers: &[usize]) -> Layout {
     let (text, at) = shown(source);
     let end = at.len() - 1;
-    let column = |i: usize| at.get(i).copied().unwrap_or(at[end] + i - end);
+    let column = |i: usize| at.get(i).copied().unwrap_or_else(|| at[end] + i - end);
     // A stretch's first column and the column after it. A stretch past the end of the line gets
     // a column for each character it lacks; one on combining marks alone is marked under the
     // character they combine with.
