@@ -6,5 +6,7 @@ mod branches;
 mod command;
 mod reads;
 mod scaling;
+#[cfg(target_os = "linux")]
+mod staged;
 
 pub(crate) use branches::lowered;

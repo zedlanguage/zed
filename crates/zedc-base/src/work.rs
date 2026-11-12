@@ -92,6 +92,9 @@ pub enum Stage {
     Linear,
     /// `main`'s ports, read from its header.
     Program,
+    /// Staging (step L1.28): the build-stage terms `main` demands evaluated, so a run and a
+    /// build start from the program as the build leaves it (`zedc run`, `replay`, `build`).
+    Staging,
     /// The rows of a definition's test table, and the waves of `main`'s.
     Test,
     /// A wave of `main`.
@@ -121,6 +124,7 @@ impl Stage {
             Stage::Elaborate => "elaborate",
             Stage::Linear => "linear",
             Stage::Program => "program",
+            Stage::Staging => "staging",
             Stage::Test => "test",
             Stage::Run => "run",
             Stage::Lower => "lower",

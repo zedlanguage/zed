@@ -63,6 +63,10 @@ pub struct Program {
     /// The program's content address, or why it could not be taken, at the first wave or
     /// replay.
     address: std::sync::OnceLock<Result<ContentAddress, String>>,
+    /// For a staged program, the elaboration before staging, whose `main` the content address
+    /// is taken of: staging never changes meaning (DESIGN.md G7), so a record names the
+    /// program as checked, whether the staged program or the other wrote it.
+    unstaged: Option<Arc<Unit>>,
     ports: Ports,
     /// The name of `main`'s parameter, `m` in `main(m: MainArgs)`, if written.
     param: Option<String>,
@@ -411,6 +415,7 @@ pub(crate) fn program(stmts: &[Stmt], unit: Arc<Unit>) -> Result<Program, ast::E
         unit,
         main: std::sync::OnceLock::new(),
         address: std::sync::OnceLock::new(),
+        unstaged: None,
         ports: Ports { inputs, outputs },
         param: main
             .main
@@ -441,11 +446,18 @@ impl Program {
         self.term_of(main.clone())
     }
 
-    /// The program's content address (step L1.19b), [`Ports::address`] of [`Program::term`].
-    /// Taken once, at the first wave or replay.
+    /// The program's content address (step L1.19b), [`Ports::address`] of [`Program::term`],
+    /// or of the term before staging when this program is staged ([`Program::stage`]). Taken
+    /// once, at the first wave or replay.
     pub fn address(&self) -> Result<ContentAddress, String> {
         self.address
-            .get_or_init(|| self.ports.address(self.term()))
+            .get_or_init(|| {
+                let term = match &self.unstaged {
+                    None => self.term(),
+                    Some(unit) => self.term_of(unit.get("main").expect("`main` was elaborated")),
+                };
+                self.ports.address(term)
+            })
             .clone()
     }
 
@@ -471,13 +483,16 @@ impl Program {
     }
 
     /// This program with its demanded build-stage terms evaluated where their form shows they
-    /// end (step L1.28), and what the build did.
+    /// end (step L1.28), and what the build did. The staged program keeps this one's content
+    /// address.
     pub fn stage(&self) -> (Program, stage::Report) {
-        let (unit, report) = stage::mix(&self.unit, &["main"]);
+        let (unit, report) =
+            work::stage(Stage::Staging, None, || stage::mix(&self.unit, &["main"]));
         let program = Program {
             unit: Arc::new(unit),
             main: std::sync::OnceLock::new(),
-            address: std::sync::OnceLock::new(),
+            address: self.address.clone(),
+            unstaged: Some(Arc::clone(self.unstaged.as_ref().unwrap_or(&self.unit))),
             ports: self.ports.clone(),
             param: self.param.clone(),
             warnings: Arc::clone(&self.warnings),
@@ -1120,13 +1135,14 @@ fn command_inner(
 }
 
 /// The program in `file`, built for the machine zedc runs on with the options `on` turned on
-/// ([`Build::at`]), its warnings that `suppress` does not name written to `stderr` as `zedc run`
-/// writes them, then a line for each address `suppress` names that no warning has; or the exit
-/// status and message: 2 when the file cannot be read or resolved to the place its addresses
-/// name ([`crate::place::Place`]) or an option of `on` is not one its manifest declares, 1 when
-/// the program is rejected (by its package, by the front end or by `program`), each rejection
-/// as `file:line:col: why` and its derivation, followed, under `--addresses`, by its address,
-/// and then a line for each rejection `suppress` names, since a rejection cannot be suppressed.
+/// ([`Build::at`]) and staged ([`Program::stage`]), its warnings that `suppress` does not name
+/// written to `stderr` as `zedc run` writes them, then a line for each address `suppress` names
+/// that no warning has; or the exit status and message: 2 when the file cannot be read or
+/// resolved to the place its addresses name ([`crate::place::Place`]) or an option of `on` is
+/// not one its manifest declares, 1 when the program is rejected (by its package, by the front
+/// end or by `program`), each rejection as `file:line:col: why` and its derivation, followed,
+/// under `--addresses`, by its address, and then a line for each rejection `suppress` names,
+/// since a rejection cannot be suppressed.
 pub fn load_file(
     file: &str,
     on: &[&str],
@@ -1190,7 +1206,9 @@ pub fn load_file(
             ),
         )
     })?;
-    Ok(program)
+    // Run, replay and build all take the staged program, so an executable holds only the
+    // branch of `if build.target == …` its build takes (step L2.8d).
+    Ok(program.stage().0)
 }
 
 /// The words of a command line after the program: the file `--record` names.
