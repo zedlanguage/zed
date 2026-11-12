@@ -334,6 +334,25 @@ impl<'a, 's> Builder<'a, 's> {
         }
     }
 
+    /// The parent of node `n`, `None` for the root. The parents are listed on the first call.
+    pub(super) fn parent(&self, n: usize) -> Option<usize> {
+        let tree = self.tree;
+        let parents = self.parents.get_or_init(|| {
+            // One walk from the root lists each node's parent; the parser's abandoned nodes are
+            // not reached, so none of them is taken for a parent.
+            let mut parents = vec![usize::MAX; tree.nodes.len()];
+            let mut stack = vec![tree.root];
+            while let Some(k) = stack.pop() {
+                for &c in &tree.nodes[k].kids {
+                    parents[c] = k;
+                    stack.push(c);
+                }
+            }
+            parents
+        });
+        parents.get(n).copied().filter(|&p| p != usize::MAX)
+    }
+
     pub(super) fn span(&self, n: usize) -> Span {
         let node = &self.tree.nodes[n];
         Span {

@@ -45,10 +45,10 @@ fn middle(before: &str, head: &str, name: &str, value: &str) -> String {
         "Each side of a test case is an expression, and in an expression `with` is followed only \
          by a facet, as `{before} with f(…)`, or by an update of fields, as `{before} with {{ \
          {name} = … }}`; here `with` is followed by `{head}`, which begins a boundary item. A \
-         boundary clause gives a variable its value below its first step or index, and it \
-         follows only the value of a binding, as `{name}' = … with initial {name} = {value};`, \
-         or of an indexed definition, as `{name}[i in 0..<n] = … with initial {name} = \
-         {value};`."
+         boundary clause follows only the value of an indexed definition, each item with its \
+         key, as `{name}[i in 0..<n] = … with {name}[-1] = {value};`, and a variable a loop \
+         updates takes its sentinel value, its value before step 0, from a statement of the \
+         loop's body, `initial {name} = {value};`."
     )
 }
 
@@ -64,9 +64,9 @@ fn a_bare_item_on_the_left_side_is_refused_at_the_with() {
             "The test case `1 with x = 0 -> 1` of `double` holds the boundary clause `with x = \
              0`, and a test case takes no boundary clause. It states that `double` applied to \
              `1` gives `1`. {} The item is read as `x = 0`: its value ends before `->`, the \
-             arrow of the test case. Written with neither `initial` nor an index, `with x = 0` \
-             would be refused after a binding too: it reads as though `x` took the value `0` \
-             anew on every step, and the sentinel value is written `with initial x = 0`.",
+             arrow of the test case. Written with neither `initial` nor a key, `with x = 0` \
+             would be refused on a statement of a loop too: it reads as though `x` took the \
+             value `0` anew on every step.",
             middle("1", "x =", "x", "0")
         )
     );
@@ -125,7 +125,8 @@ fn a_value_that_could_begin_a_lambda_ends_before_the_arrow() {
     }
 }
 
-/// `with initial` in a test case: the same refusal, with no row, since the item has `initial`.
+/// `with initial` in a test case: the same refusal, with row WithInitialItem, and a sentence
+/// that the statement `initial x = 0;` gives the sentinel value.
 #[test]
 fn an_initial_item_in_a_test_case_is_refused() {
     let src = "double(positional x) = x * 2 test { 1 with initial x = 0 -> 1 }";
@@ -136,12 +137,14 @@ fn an_initial_item_in_a_test_case_is_refused() {
             "The test case `1 with initial x = 0 -> 1` of `double` holds the boundary clause \
              `with initial x = 0`, and a test case takes no boundary clause. It states that \
              `double` applied to `1` gives `1`. {} The item is read as `initial x = 0`: its \
-             value ends before `->`, the arrow of the test case.",
+             value ends before `->`, the arrow of the test case. `with initial x = 0` would be \
+             refused on a statement of a loop too: `with initial` is no longer how a sentinel \
+             value is given, and the statement `initial x = 0;` gives it.",
             middle("1", "initial x =", "x", "0")
         )
     );
     assert_eq!(&src[e.span.start..e.span.end], "with initial x = 0");
-    assert_eq!(e.row, None);
+    assert_eq!(e.row, Some(Row::WithInitialItem));
     assert_eq!(
         notes(src, &e)[2],
         "repair: `1 -> 1`, the case with the `with` clause deleted [1 with initial x = 0 -> 1]"
@@ -174,9 +177,9 @@ fn a_clause_on_the_right_side_is_refused() {
         format!(
             "The test case `1 -> 2 with x = 0` of `double` holds the boundary clause `with x = \
              0`, and a test case takes no boundary clause. It states that `double` applied to \
-             `1` gives `2`. {} Written with neither `initial` nor an index, `with x = 0` would \
-             be refused after a binding too: it reads as though `x` took the value `0` anew on \
-             every step, and the sentinel value is written `with initial x = 0`.",
+             `1` gives `2`. {} Written with neither `initial` nor a key, `with x = 0` would be \
+             refused on a statement of a loop too: it reads as though `x` took the value `0` \
+             anew on every step.",
             middle("2", "x =", "x", "0")
         )
     );
@@ -306,20 +309,22 @@ fn a_later_error_leaves_the_function_unnamed() {
     );
 }
 
-/// A `with` item outside a test table keeps the messages it had: a parenthesized case side is
-/// code that takes no boundary clause, and a binding gets the bare-item repair.
+/// A `with` item outside a test table keeps the messages of its place: a parenthesized case side
+/// is code that is neither an indexed definition nor a statement of a loop, and a statement of
+/// a loop gets the bare-item message and repair.
 #[test]
 fn other_places_keep_their_messages() {
     let e = refusal("double(positional x) = x * 2 test { (1 with x = 0) -> 1 }");
-    assert!(
-        e.message
-            .starts_with("`with x = 0` gives `x` no sentinel value")
-    );
+    assert!(e.message.starts_with(
+        "`with x = 0` stands on `1 with x = 0`, which is neither an indexed definition"
+    ));
+    assert_eq!(e.row, Some(Row::BareBoundary));
     let e = refusal("f(n) = loop t { while t < n; y' = y with y = 1; };");
     assert!(
         e.message
-            .starts_with("`with y = 1` gives `y` no sentinel value")
+            .starts_with("`with y = 1` stands on `y' = y with y = 1;` in the body of a `loop`")
     );
+    assert_eq!(e.row, Some(Row::BareBoundary));
 }
 
 /// The case is found by a scan back to the table's `{` and forward to the case's end, one parse
@@ -336,7 +341,13 @@ fn finding_a_clause_in_a_test_case_scales() {
     scaling::check("a clause in a test case after n cases", 500, |n| {
         let (text, tokens) = &units[&n];
         let e = parse(text, tokens, "Unit", TOP).unwrap_err();
-        let case = e.case.as_ref().unwrap();
-        assert_eq!(case.function.as_deref(), Some("double"));
+        let clause = e.clause.as_ref().unwrap();
+        assert!(
+            clause
+                .message
+                .starts_with("The test case `1 with x = 0 -> 1` of `double` holds"),
+            "{}",
+            clause.message
+        );
     });
 }

@@ -260,6 +260,7 @@ fn is_binder(rule: &str) -> bool {
             | "Display"
             | "FieldPat"
             | "BoundaryItem"
+            | "InitTarget"
             | "IndexKey"
             | "TypedBinding"
             | "Lambda"

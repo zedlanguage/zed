@@ -1541,6 +1541,7 @@ impl Resolver<'_> {
                     | StmtKind::While(_)
                     | StmtKind::Until(_)
                     | StmtKind::Expr(_)
+                    | StmtKind::Initial(_)
                     | StmtKind::UnitAnnot(_)
             ) {
                 self.out.decls.insert(s.span.start);
@@ -1567,12 +1568,7 @@ impl Resolver<'_> {
     /// indexed family bind its name once: `families` holds the families bound in this scope.
     fn declare<'s>(&mut self, s: &'s Stmt, whole: bool, families: &mut HashSet<&'s str>) {
         match &s.kind {
-            StmtKind::Bind {
-                targets,
-                value,
-                boundary,
-            } => {
-                let whole = whole || !boundary.is_empty();
+            StmtKind::Bind { targets, value } => {
                 let id = self.out.binders.len();
                 for t in targets {
                     match t {
@@ -1663,6 +1659,7 @@ impl Resolver<'_> {
             | StmtKind::While(_)
             | StmtKind::Until(_)
             | StmtKind::Expr(_)
+            | StmtKind::Initial(_)
             | StmtKind::UnitAnnot(_) => {}
         }
     }
@@ -1700,6 +1697,7 @@ impl Resolver<'_> {
             }
             StmtKind::Return(_) => "a `return`",
             StmtKind::Push { .. } => "a push",
+            StmtKind::Initial(_) => "an `initial` statement, which belongs to a loop body",
             StmtKind::Import(_) => "an import, whose names are not definitions of the unit",
             StmtKind::Local(_) => "a `local` declaration again",
             StmtKind::Mutable(_) => "a `mutable` binding, which belongs to a loop body",
@@ -1727,9 +1725,7 @@ impl Resolver<'_> {
     /// own statements.
     fn stmt<'a>(&mut self, s: &'a Stmt, top: bool, todo: &mut Vec<Task<'a>>) {
         match &s.kind {
-            StmtKind::Bind { boundary, .. } if !boundary.is_empty() => {
-                self.later(s.span, "a boundary `with`")
-            }
+            StmtKind::Initial(_) => self.later(s.span, "an `initial` statement"),
             StmtKind::Bind { value, .. } => todo.push(Task::Expr(value)),
             StmtKind::Return(es) => todo.extend(es.iter().rev().map(Task::Expr)),
             StmtKind::Push { port, .. } if port.ends_with('\'') => {
@@ -2362,7 +2358,7 @@ impl Resolver<'_> {
                 todo.push(Task::Expr(source));
             }
             // A loop body's bare and primed names are the frames of step L6.3, which a
-            // `mutable` or a `with` boundary declares and resolution does not bind yet, so the
+            // `mutable` or an `initial` statement declares and resolution does not bind yet, so the
             // body is not walked: its names would be reported as not defined.
             ExprKind::Loop { .. } => self.later(e.span, "a `loop`"),
             ExprKind::Break(value) => {

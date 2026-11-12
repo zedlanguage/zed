@@ -15,7 +15,7 @@ main(m: MainArgs) {
   rootRec(positional v) = if up(v) == v { v } else { rootRec(up(v)) };
   depthRec(positional v) = if up(v) == v { 0 } else { 1 + depthRec(up(v)) };
 
-  rootLoop(positional v0) = loop { v' = up(v) with initial v = v0; until v' == v; }.v;
+  rootLoop(positional v0) = loop { initial v = v0; v' = up(v); until v' == v; }.v;
 
   anc[k in 0..=n][v in par::domain] = if k == 0 { v } else { up(anc[k - 1][v]) };
   rootIdx(positional v) = anc[n][v];

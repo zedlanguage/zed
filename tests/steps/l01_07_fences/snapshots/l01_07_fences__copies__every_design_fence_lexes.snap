@@ -36,10 +36,12 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   7 | r6 = ( ab , c ) «into» ( ab || c -> v ) ;
 == DESIGN.md [sec:generations] 1 L6
   1 | sim = «loop» {
-  2 | pos' = pos + vel * dt «with» initial pos = p0 ;
-  3 | vel' = vel + a ( pos ) * dt «with» initial vel = v0 ;
-  4 | «until» pos' . x > bound ;
-  5 | } ;
+  2 | «initial» pos = p0 ;
+  3 | «initial» vel = v0 ;
+  4 | pos' = pos + vel * dt ;
+  5 | vel' = vel + a ( pos ) * dt ;
+  6 | «until» pos' . x > bound ;
+  7 | } ;
 == DESIGN.md [sec:generations] 2 L6
   1 | x [ i «in» 0₍10₎ ..< warm ] = coldStart ( i ) ;
   2 | x [ i «in» warm ..< n ] = anneal ( x [ i - 1₍10₎ ] ) ;
@@ -614,19 +616,22 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   6 | total = cdf . last «else» 0₍10₎ ;
   9 | sim = «loop» t {
  10 | «while» t < maxSteps ;
- 11 | pos' = pos + vel * dt «with» initial pos = p0 ;
- 12 | vel' = vel + a ( pos ) * dt «with» initial vel = v0 ;
- 13 | «until» pos' . x > bound ;
- 14 | } ;
- 15 | final = sim . pos ;
- 16 | history = sim :: frames ;
- 17 | steps = sim :: len ;
- 20 | simplified = «loop» {
- 21 | terms' = simplifyOnce ( terms ) «with» initial terms = input ;
- 22 | «until» terms' == terms ;
- 23 | } ;
- 26 | sessions = events . chunkBy ( e -> e . userId ) ;
- 27 | report = sessions . map ( s -> summarize ( s ) ) ;
+ 11 | «initial» pos = p0 ;
+ 12 | «initial» vel = v0 ;
+ 13 | pos' = pos + vel * dt ;
+ 14 | vel' = vel + a ( pos ) * dt ;
+ 15 | «until» pos' . x > bound ;
+ 16 | } ;
+ 17 | final = sim . pos ;
+ 18 | history = sim :: frames ;
+ 19 | steps = sim :: len ;
+ 22 | simplified = «loop» {
+ 23 | «initial» terms = input ;
+ 24 | terms' = simplifyOnce ( terms ) ;
+ 25 | «until» terms' == terms ;
+ 26 | } ;
+ 29 | sessions = events . chunkBy ( e -> e . userId ) ;
+ 30 | report = sessions . map ( s -> summarize ( s ) ) ;
 == DESIGN.md [sec:tour_failure] 1 L3
   1 | parse : ( Utf8String ) -> Config | #syntaxError ( .. )
   3 | conf = parse ( text ) «else» defaultConfig ;
@@ -680,7 +685,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  19 | state [ i ] = csvStep ( state [ i - 1₍10₎ ] , text :: codepoints [ i ] ) «with» state [ - 1₍10₎ ] = #outsideQuotes ;
  24 | firstPrime = ( «for» i «in» n .. { i } ) . where ( isPrime ) . first ;
  30 | sessions = clicks . chunkBy ( c -> c . userId ) . map ( s -> Session ( start : s . first . time , count : s . count ) ) ;
- 34 | run = «loop» t { «while» t < edits :: len && ! closed ; doc' = doc . patch ( edits [ t ] ) «with» initial doc = empty ; } ;
+ 34 | run = «loop» t { «while» t < edits :: len && ! closed ; «initial» doc = empty ; doc' = doc . patch ( edits [ t ] ) ; } ;
  36 | past = run :: frames [ run :: len - 2₍10₎ ] . doc «else» empty ;
  39 | @memoized report = sales . join ( costs , on : #sku ) . group ( ( ( s , c ) ) -> s . region ) . map ( rows -> rows . map ( ( ( s , c ) ) -> margin ( s , c ) ) . sum ) ;
  44 | rows = exec ( db , str["SELECT * WHERE name = "] ++ sanitize ( userName ) ) ;

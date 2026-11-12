@@ -1456,6 +1456,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             StmtKind::Mutable(_)
             | StmtKind::IndexedDef(_)
+            | StmtKind::Initial(_)
             | StmtKind::While(_)
             | StmtKind::Until(_)
             | StmtKind::Expr(_) => unreachable!(

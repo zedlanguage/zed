@@ -97,9 +97,10 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   3 | allowed = age >= 18₍10₎ && member || override ;
 == EXAMPLES.md [5. Conditionals] 3 L6
   2 | collatz = «loop» {
-  3 | n' = «if» ( n «mod» 2₍10₎ ) == 0₍10₎ { n «div» 2₍10₎ } «else» { 3₍10₎ * n + 1₍10₎ } «with» initial n = 27₍10₎ ;
-  4 | «until» n' == 1₍10₎ ;
-  5 | } ;
+  3 | «initial» n = 27₍10₎ ;
+  4 | n' = «if» ( n «mod» 2₍10₎ ) == 0₍10₎ { n «div» 2₍10₎ } «else» { 3₍10₎ * n + 1₍10₎ } ;
+  5 | «until» n' == 1₍10₎ ;
+  6 | } ;
 == EXAMPLES.md [6. Functions] 1 L7
   2 | double ( «positional» x ) = x * 2₍10₎ ;
   3 | double : ( int ) -> int ;
@@ -344,12 +345,14 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
 == EXAMPLES.md [13. Loops and state] 1 L6
   2 | sim = «loop» t {
   3 | «while» t < maxSteps ;
-  4 | pos' = pos + vel * dt «with» initial pos = p0 ;
-  5 | vel' = vel + acc * dt «with» initial vel = v0 ;
-  6 | «until» pos . y < 0₍10₎ ;
-  7 | } ;
-  8 | final = sim . pos ;
-  9 | history = sim :: frames ;
+  4 | «initial» pos = p0 ;
+  5 | «initial» vel = v0 ;
+  6 | pos' = pos + vel * dt ;
+  7 | vel' = vel + acc * dt ;
+  8 | «until» pos . y < 0₍10₎ ;
+  9 | } ;
+ 10 | final = sim . pos ;
+ 11 | history = sim :: frames ;
 == EXAMPLES.md [13. Loops and state] 2 L6
   2 | run = «loop» {
   3 | «mutable» c = Counter ( n : 0₍10₎ , hi : 9₍10₎ ) ;
@@ -357,31 +360,35 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   5 | «until» prev > 20₍10₎ ;
   6 | } ;
 == EXAMPLES.md [13. Loops and state] 3 L6
-  2 | once = «loop» { i' = i + 1₍10₎ «with» initial i = 0₍10₎ ; «until» i' == 10₍10₎ ; } ;
-  3 | maybe = «loop» { i' = i + 1₍10₎ «with» initial i = 0₍10₎ ; «while» i < 10₍10₎ ; } ;
-  4 | counted = «loop» t { x' = step ( x ) «with» initial x = seed ; «until» t == 99₍10₎ ; } ;
+  2 | once = «loop» { «initial» i = 0₍10₎ ; i' = i + 1₍10₎ ; «until» i' == 10₍10₎ ; } ;
+  3 | maybe = «loop» { «initial» i = 0₍10₎ ; i' = i + 1₍10₎ ; «while» i < 10₍10₎ ; } ;
+  4 | counted = «loop» t { «initial» x = seed ; x' = step ( x ) ; «until» t == 99₍10₎ ; } ;
 == EXAMPLES.md [13. Loops and state] 4 L6
   2 | found = «loop» {
-  3 | i' = i + 1₍10₎ «with» initial i = 0₍10₎ ;
-  4 | _ = «if» xs [ i ] == target { «break» i } «else» { i } ;
-  5 | «while» i < xs :: len ;
-  6 | } ;
+  3 | «initial» i = 0₍10₎ ;
+  4 | i' = i + 1₍10₎ ;
+  5 | _ = «if» xs [ i ] == target { «break» i } «else» { i } ;
+  6 | «while» i < xs :: len ;
+  7 | } ;
 == EXAMPLES.md [13. Loops and state] 5 L6
   2 | simplified = «loop» {
-  3 | terms' = simplifyOnce ( terms ) «with» initial terms = input ;
-  4 | «until» terms' == terms ;
-  5 | } ;
+  3 | «initial» terms = input ;
+  4 | terms' = simplifyOnce ( terms ) ;
+  5 | «until» terms' == terms ;
+  6 | } ;
 == EXAMPLES.md [13. Loops and state] 6 L6
-  2 | run = «loop» t { «while» t < edits :: len && ! closed ; doc' = doc . patch ( edits [ t ] ) «with» initial doc = empty ; } ;
+  2 | run = «loop» t { «while» t < edits :: len && ! closed ; «initial» doc = empty ; doc' = doc . patch ( edits [ t ] ) ; } ;
   3 | past = run :: frames [ run :: len - 2₍10₎ ] . doc «else» empty ;
   5 | x [ i «in» 0₍10₎ ..< warm ] = warmup ( i ) ;
   6 | x [ i «in» warm ..< n ] = x [ i - 1₍10₎ ] + delta ( i ) ;
 == EXAMPLES.md [13. Loops and state] 7 L6
   2 | s = «loop» {
-  3 | «local» tally' = tally + step ( a ) «with» initial tally = 0₍10₎ ;
-  4 | a' = a + 1₍10₎ «with» initial a = 0₍10₎ ;
-  5 | «until» a' > 100₍10₎ ;
-  6 | } ;
+  3 | «initial» tally = 0₍10₎ ;
+  4 | «initial» a = 0₍10₎ ;
+  5 | «local» tally' = tally + step ( a ) ;
+  6 | a' = a + 1₍10₎ ;
+  7 | «until» a' > 100₍10₎ ;
+  8 | } ;
 == EXAMPLES.md [14. Recursion] 1 L6
   2 | fact ( «positional» n ) = «if» n == 0₍10₎ { 1₍10₎ } «else» { n * fact ( n - 1₍10₎ ) } ;
   3 | fib ( «positional» n ) = «if» n < 2₍10₎ { n } «else» { fib ( n - 1₍10₎ ) + fib ( n - 2₍10₎ ) } ;
@@ -424,17 +431,18 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   2 | edges : Id ->? [ Id ] = { 1₍10₎ -> [ 2₍10₎ , 3₍10₎ ] , 2₍10₎ -> [ 4₍10₎ ] , 3₍10₎ -> [ 4₍10₎ ] , 4₍10₎ -> [ ] } ;
   3 | succ ( «positional» s ) = s . flatMap ( n -> edges [ n ] «else» [ ] ) . image ;
   4 | reach = «loop» {
-  5 | r' = r . union ( succ ( r ) ) «with» initial r = { start } ;
-  6 | «until» r' == r ;
-  7 | } ;
+  5 | «initial» r = { start } ;
+  6 | r' = r . union ( succ ( r ) ) ;
+  7 | «until» r' == r ;
+  8 | } ;
 == EXAMPLES.md [15. Trees and graphs] 4 L16
   6 | «type» Dist = int [ 0₍10₎ .. ] | #inf ;
   7 | addD ( «positional» d : Dist , «positional» w : int [ 0₍10₎ .. ] ) -> Dist { «if» d «is» #inf { #inf } «else» { d + w } }
   8 | @associative @commutative @idempotent
   9 | minD ( «positional» a : Dist , «positional» b : Dist ) -> Dist { «if» a «is» #inf { b } «else» «if» b «is» #inf { a } «else» { min ( a , b ) } }
  10 | dist = «loop» {
- 11 | d' [ v «in» nodes ] = minD ( d [ v ] , ( «for» u «in» preds [ v ] { addD ( d [ u ] , w [ u ] [ v ] ) } ) >< minD «else» #inf )
- 12 | «with» initial d = «for» v «in» nodes { «if» v == start { 0₍10₎ } «else» { #inf } } ;
+ 11 | «initial» d = «for» v «in» nodes { «if» v == start { 0₍10₎ } «else» { #inf } } ;
+ 12 | d' [ v «in» nodes ] = minD ( d [ v ] , ( «for» u «in» preds [ v ] { addD ( d [ u ] , w [ u ] [ v ] ) } ) >< minD «else» #inf ) ;
  13 | «until» d' == d ;
  14 | } ;
 == EXAMPLES.md [16. Generics and interfaces] 1 L5
@@ -567,15 +575,16 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
 == EXAMPLES.md [20. Testing, properties, and proofs] 5 L15
   2 | amt ( «positional» t : int ) = withdrawals [ t ] «else» 0₍10₎ ;
   3 | account = «loop» t {
-  4 | @invariant ( balance >= 0₍10₎ ) balance' = «if» amt ( t ) <= balance { balance - amt ( t ) } «else» { balance } «with» initial balance = 0₍10₎ ;
-  5 | «until» t + 1₍10₎ >= withdrawals :: len ;
-  6 | } ;
-  7 | «law» neverNegative ( t : int [ 0₍10₎ ..< account :: len ] ) = account :: frames [ t ] . balance >= 0₍10₎ ;
-  9 | «type» Lamp = #green | #yellow | #red ;
- 10 | «type» Cmd = #tick | #fault ;
- 11 | advance ( «positional» l : Lamp , «positional» c : Cmd ) = «if» c == #fault { #red } «else» { «match» l { #green -> #yellow , #yellow -> #red , #red -> #green } } ;
- 12 | reachable = «loop» { R' = R . union ( R . flatMap ( l -> [ advance ( l , #tick ) , advance ( l , #fault ) ] ) . image ) «with» initial R = { #red } ; } ;
- 13 | «law» faultStops ( l : Lamp ) = ( l «in» reachable . R ) . implies ( advance ( l , #fault ) == #red ) ;
+  4 | «initial» balance = 0₍10₎ ;
+  5 | @invariant ( balance >= 0₍10₎ ) balance' = «if» amt ( t ) <= balance { balance - amt ( t ) } «else» { balance } ;
+  6 | «until» t + 1₍10₎ >= withdrawals :: len ;
+  7 | } ;
+  8 | «law» neverNegative ( t : int [ 0₍10₎ ..< account :: len ] ) = account :: frames [ t ] . balance >= 0₍10₎ ;
+ 10 | «type» Lamp = #green | #yellow | #red ;
+ 11 | «type» Cmd = #tick | #fault ;
+ 12 | advance ( «positional» l : Lamp , «positional» c : Cmd ) = «if» c == #fault { #red } «else» { «match» l { #green -> #yellow , #yellow -> #red , #red -> #green } } ;
+ 13 | reachable = «loop» { «initial» R = { #red } ; R' = R . union ( R . flatMap ( l -> [ advance ( l , #tick ) , advance ( l , #fault ) ] ) . image ) ; } ;
+ 14 | «law» faultStops ( l : Lamp ) = ( l «in» reachable . R ) . implies ( advance ( l , #fault ) == #red ) ;
 == EXAMPLES.md [21. Domains] 1 L20
   2 | «type» Port = int [ 1₍10₎ ..= 65535₍10₎ ] ;
   3 | «type» Name = Utf8String [ len 1₍10₎ ..= 80₍10₎ ] ;
@@ -632,14 +641,15 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   7 | #withdraw ( id : , amt : ) -> ( { id -> #update ( a -> a «with» { bal = a . bal - amt } ) } ) ,
   8 | } ;
   9 | book = «loop» t {
- 10 | accts' = accts . patch ( edits ( txs [ t ] ) ) «with» initial accts = opening ;
- 11 | «while» t «in» txs :: domain ;
- 12 | } ;
- 13 | closing = book . accts ;
+ 10 | «initial» accts = opening ;
+ 11 | accts' = accts . patch ( edits ( txs [ t ] ) ) ;
+ 12 | «while» t «in» txs :: domain ;
+ 13 | } ;
+ 14 | closing = book . accts ;
 == EXAMPLES.md [24. Small programs] 2 L6
   2 | «type» Light = #green | #yellow | #red ;
   3 | next ( «positional» l : Light ) = «match» l { #green -> #yellow , #yellow -> #red , #red -> #green } ;
-  4 | lights = «loop» t { l' = next ( l ) «with» initial l = #red ; «until» t == 10₍10₎ ; } ;
+  4 | lights = «loop» t { «initial» l = #red ; l' = next ( l ) ; «until» t == 10₍10₎ ; } ;
   5 | trace = lights :: frames . map ( f -> f . l ) ;
 == EXAMPLES.md [24. Small programs] 3 L6
   2 | alive ( «positional» cells , «positional» p ) -> bool {
@@ -652,9 +662,10 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   9 | «if» ( cells [ p ] «else» «false» ) { ( n == 2₍10₎ ) || ( n == 3₍10₎ ) } «else» { n == 3₍10₎ }
  10 | }
  11 | life = «loop» t {
- 12 | cells' = «for» p -> _ «in» cells { alive ( cells , p ) } «with» initial cells = seed ;
- 13 | «until» t == 100₍10₎ ;
- 14 | } ;
+ 12 | «initial» cells = seed ;
+ 13 | cells' = «for» p -> _ «in» cells { alive ( cells , p ) } ;
+ 14 | «until» t == 100₍10₎ ;
+ 15 | } ;
 == EXAMPLES.md [24. Small programs] 4 L5
   2 | «struct» Req { path : Utf8String , status : int , ms : int }
   3 | byPath = reqs . group ( r -> r . path ) ;

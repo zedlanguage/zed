@@ -25,7 +25,8 @@ main(m: MainArgs) {
   k   = int(m.stdin[0] else "") else 1;
   pts = m.stdin.drop(1).map(l -> { w = l.split(" "); Pt(x: int(w[0] else "") else 0, y: int(w[1] else "") else 0) });
   run = loop t {
-    label' = merge(label, closest(pts, label)) with initial label = for i -> _ in pts { i };
+    initial label = for i -> _ in pts { i };
+    label' = merge(label, closest(pts, label));
     while t < pts::len - k;
   };
   clusters = run.label.group(l -> l);

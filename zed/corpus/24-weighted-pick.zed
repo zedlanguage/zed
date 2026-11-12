@@ -20,7 +20,8 @@ main(m: MainArgs) {
     if below(q, m) { Range(lo: m, hi: r.hi) } else { Range(lo: r.lo, hi: m) }
   };
   search(positional q) = loop {
-    r' = half(q, r) with initial r = Range(lo: -1, hi: n);
+    initial r = Range(lo: -1, hi: n);
+    r' = half(q, r);
     while r.hi - r.lo > 1;
   }.r.hi;
   m.stdout <- m.stdin.drop(1).map(l -> {

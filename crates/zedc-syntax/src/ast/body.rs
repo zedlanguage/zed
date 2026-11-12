@@ -206,20 +206,7 @@ impl Builder<'_, '_> {
     /// The form whose body the brace `n` is, as a message names it.
     fn body_of(&self, n: usize) -> &'static str {
         let tree = self.tree;
-        let parents = self.parents.get_or_init(|| {
-            // One walk from the root lists each node's parent; the parser's abandoned nodes are
-            // not reached, so none of them is taken for a parent.
-            let mut parents = vec![usize::MAX; tree.nodes.len()];
-            let mut stack = vec![tree.root];
-            while let Some(k) = stack.pop() {
-                for &c in &tree.nodes[k].kids {
-                    parents[c] = k;
-                    stack.push(c);
-                }
-            }
-            parents
-        });
-        let Some(&p) = parents.get(n).filter(|&&p| p != usize::MAX) else {
+        let Some(p) = self.parent(n) else {
             return "a body position";
         };
         match tree.name(p) {

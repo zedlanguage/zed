@@ -12,22 +12,27 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-/// A loop whose boundary item has neither `initial` nor an index: a parse error with two
-/// steps, its statement and its repair.
+/// A loop whose boundary item has neither `initial` nor an index: a parse error with three
+/// steps, its statement, its loop and its repair.
 const BARE: &str = "f(n) = loop t {\n  while t < n;\n  x' = x + 1 with x = 0;\n};\n";
 
 /// What every command prints for [`BARE`] in the file `file`, without the final line break.
 fn bare_rejection(file: &Path) -> String {
     format!(
-        "{}:3:19: `with x = 0` gives `x` no sentinel value: a boundary item is written \
-         `initial x = 0`, which gives the sentinel value, or with an index, as `x[k] = 0`. \
-         Without `initial`, `with x = 0` reads as though `x` took the value `0` anew on every \
-         step, while a boundary item gives `x` one value, below its first step or index, once.\n  \
-         [1] 3:3: the statement whose boundary clause holds the item\n      \
+        "{}:3:19: `with x = 0` stands on `x' = x + 1 with x = 0;` in the body of a `loop`, \
+         and it gives `x` no sentinel value: without `initial` or a key, it reads as though `x` \
+         took the value `0` anew on every step. The sentinel value of `x`, its value before \
+         step 0, is given once, by a statement of its own, `initial x = 0;`, which may stand \
+         anywhere among the statements of the loop's body.\n  \
+         [1] 3:3: the statement the `with` clause stands on\n      \
          3 |   x' = x + 1 with x = 0;\n        \
          |   ^^^^^^^^^^^^^^^^^^^^^^ [1]\n        \
-         |                   ^^^^^ [2]\n  \
-         [2] 3:19: repair: `with initial x = 0`, the sentinel value",
+         |                   ^^^^^ [3]\n  \
+         [2] 1:8: the loop whose body holds the statement\n      \
+         1 | f(n) = loop t {{\n        \
+         |        ^^^^\n  \
+         [3] 3:19: repair: `initial x = 0; x' = x + 1;`, `initial x = 0;` written beside the \
+         statement, the sentinel value given once, before step 0, and the `with` clause deleted",
         file.display()
     )
 }
@@ -153,8 +158,8 @@ const SYNTAX: [(&str, &str); 12] = [
     ("two_exports", "f(x) = {\n  return x;\n  return 1;\n};\n"),
     (
         "two_initials",
-        "f(n) = loop t {\n  while t < n;\n  x' = x + 1 with initial x = 0;\n  \
-         y' = x with initial x = 1;\n};\n",
+        "f(n) = loop t {\n  while t < n;\n  initial x = 0;\n  x' = x + 1;\n  \
+         initial x = 1;\n};\n",
     ),
     ("field_twice", "s = {a: 1};\nt = s with { a = 2, a = 3 };\n"),
     ("two_errors", "y = {1, 2 -> 3};\nz = {1 -> 2, 3};\n"),
@@ -171,6 +176,15 @@ fn every_command_prints_a_syntax_error_as_zedc_run_does() {
         );
         // Each has its steps but the lexical and the plain parse error, and the last unit has
         // two errors, each after the file's name.
+        if name == "two_initials" {
+            assert!(
+                run.contains(
+                    ":5:3: `x` is given its sentinel value, its value before step 0, twice in \
+                     this loop: first by `initial x = 0;`, then by `initial x = 1;`."
+                ),
+                "{name}: {run}"
+            );
+        }
         let steps = run.contains("\n  [1] ");
         assert_eq!(
             steps,
@@ -243,16 +257,17 @@ fn a_parse_error_in_a_manifest_prints_its_steps_and_repairs() {
     assert_eq!(
         rejection("run", &f),
         format!(
-            "{}:1:30: `with y = 0` gives `y` no sentinel value: a boundary item is written \
-             `initial y = 0`, which gives the sentinel value, or with an index, as `y[k] = 0`. \
-             Without `initial`, `with y = 0` reads as though `y` took the value `0` anew on \
-             every step, while a boundary item gives `y` one value, below its first step or \
-             index, once.\n  \
-             [1] 1:1: the statement whose boundary clause holds the item\n      \
+            "{}:1:30: `with y = 0` stands on `prelude = \"std.prelude\" with y = 0;`, which is \
+             neither an indexed definition nor a statement of the body of a `loop`, and it gives \
+             `y` no sentinel value: without `initial` or a key, it reads as though `y` took the \
+             value `0` anew on every step. A `with` clause stands only on an indexed definition, \
+             as `y[i in 0..<n] = … with y[-1] = 0;`, and a variable a loop updates takes its \
+             sentinel value from a statement of the loop's body, `initial y = 0;`.\n  \
+             [1] 1:1: the statement the `with` clause stands on\n      \
              1 | prelude = \"std.prelude\" with y = 0;\n        \
              | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [1]\n        \
              |                              ^^^^^ [2]\n  \
-             [2] 1:30: repair: `with initial y = 0`, the sentinel value\n",
+             [2] 1:30: repair: `prelude = \"std.prelude\";`, the `with` clause deleted\n",
             manifest.display()
         )
     );

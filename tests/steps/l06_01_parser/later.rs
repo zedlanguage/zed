@@ -79,10 +79,10 @@ fn each_form_names_the_step_that_compiles_it() {
             )],
         ),
         (
-            "x = 1 with initial x = 0;",
+            "cdf[i in 0..<4] = cdf[i - 1] + 1 with cdf[-1] = 0;",
             &[concat!(
-                zed_tests::not_yet!("a boundary `with`"),
-                " [x = 1 with initial x = 0;]"
+                zed_tests::not_yet!("an indexed definition"),
+                " [cdf[i in 0..<4] = cdf[i - 1] + 1 with cdf[-1] = 0;]"
             )],
         ),
         (
@@ -128,10 +128,10 @@ fn declared_names_are_bound_and_refused_once() {
             ],
         ),
         (
-            "a', b = (1, 2) with initial a = 0;\nc = b;",
+            "x[i in 0..<4] = x[i - 1] + 1 with x[-1] = 0;\ny = x;",
             &[concat!(
-                zed_tests::not_yet!("a boundary `with`"),
-                " [a', b = (1, 2) with initial a = 0;]"
+                zed_tests::not_yet!("an indexed definition"),
+                " [x[i in 0..<4] = x[i - 1] + 1 with x[-1] = 0;]"
             )],
         ),
         (

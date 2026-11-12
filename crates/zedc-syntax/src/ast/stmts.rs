@@ -3,8 +3,8 @@
 //! from step L2.1, the declarations of structs, of types, and of methods `T.m`; and from step
 //! L2.2, imports with their `@hash` pins, and the annotations `@name` written before a
 //! declaration; and from step L6.1, the guards `while c;` and `until c;`, `mutable x = e;`,
-//! indexed definitions `x[i in s] = e;`, boundary values `with initial x = e0` and
-//! `with x[k] = e0` after a binding or an indexed definition, and expression statements `e;`; and from step L7.3, the unit items
+//! indexed definitions `x[i in s] = e;` with their boundary entries
+//! `with x[k] = e0`, the start values `initial x = e;`, and expression statements `e;`; and from step L7.3, the unit items
 //! `@name;` and `@name(args);`, as `@log(#off);`.
 
 use std::collections::{HashMap, HashSet};
@@ -12,12 +12,11 @@ use std::collections::{HashMap, HashSet};
 use super::builder::{Builder, Built, MAIN_INPUTS, MAIN_OUTPUTS};
 use super::{
     Annot, BoundaryItem, Error, Expr, ExprKind, Field, Function, Import, ImportKind, IndexKey,
-    IndexedDef, MainHeader, Method, Note, Param, Port, Stmt, StmtKind, Struct, Type, TypeDecl,
-    TypeKind, TypeParam,
+    IndexedDef, Initial, MainHeader, Method, Note, Param, Port, Stmt, StmtKind, Struct, Type,
+    TypeDecl, TypeKind, TypeParam,
 };
 use crate::lex::{Part, Span, Tok};
 use zedc_base::address::ContentAddress;
-use zedc_base::rejection::Row;
 
 impl Builder<'_, '_> {
     /// The block of node `n`, a `Block`: its statements, of which at most one is a `return`.
@@ -56,7 +55,7 @@ impl Builder<'_, '_> {
             }
             stmts.push(s);
         }
-        self.initial_once(&stmts)?;
+        self.initials_placed(Some(n), &stmts)?;
         stmts.sort_by_key(|s| s.kind.place());
         Ok(Expr {
             kind: ExprKind::Block(stmts),
@@ -253,13 +252,35 @@ impl Builder<'_, '_> {
                     .collect::<Result<_, _>>()?,
             ),
             "PlainBinding" => {
-                let (kids, boundary) = self.boundary(kids)?;
                 let (&value, targets) = kids.split_last().expect("PlainBinding ends in a value");
                 StmtKind::Bind {
                     targets: targets.iter().map(|&t| self.target(t)).collect(),
                     value: self.node(value)?,
-                    boundary,
                 }
+            }
+            "Initial" => {
+                let [target, value] = *kids else {
+                    unreachable!("Initial = 'initial' InitTarget '=' Expr ';'")
+                };
+                let kids = self.kids(target);
+                let (mut names, mut ty, mut keys) = (Vec::new(), None, Vec::new());
+                match self.tree.name(kids[kids.len() - 1]) {
+                    "Type" => {
+                        names.push(self.name_of(kids[0]));
+                        ty = Some(self.ty(kids[1])?);
+                    }
+                    "IndexKey" => {
+                        names.push(self.name_of(kids[0]));
+                        keys = self.keys(&kids[1..])?;
+                    }
+                    _ => names.extend(kids.iter().map(|&k| self.name_of(k))),
+                }
+                StmtKind::Initial(Initial {
+                    names,
+                    ty,
+                    keys,
+                    value: self.node(value)?,
+                })
             }
             "Mutable" => StmtKind::Mutable(Box::new(Stmt {
                 kind: self.decl(kids[0])?,
@@ -330,8 +351,13 @@ impl Builder<'_, '_> {
         })
     }
 
-    /// The kids of a declaration that may end in a `Boundary`, without it, and the boundary
-    /// values it holds.
+    /// The name of node `n`, a `Name`, and its text.
+    fn name_of(&self, n: usize) -> (String, Span) {
+        (self.word(self.tree.nodes[n].start).into(), self.span(n))
+    }
+
+    /// The kids of an indexed definition, which may end in a `Boundary`, without it, and the
+    /// boundary entries it holds.
     fn boundary<'k>(
         &mut self,
         kids: &'k [usize],
@@ -344,12 +370,8 @@ impl Builder<'_, '_> {
         };
         let mut items = Vec::new();
         for &item in self.kids(b) {
-            // `initial x = e` has the kids `[x, e]`, the literal `initial` leaving no node, and
-            // an indexed entry `x[k] = e` has at least one key, so no keys means `initial`.
             let [name, keys @ .., value] = self.kids(item) else {
-                unreachable!(
-                    "BoundaryItem = 'initial' Name '=' Expr | Name ('[' IndexKey ']')+ '=' Expr"
-                )
+                unreachable!("BoundaryItem = Name ('[' IndexKey ']')+ '=' Expr")
             };
             items.push(BoundaryItem {
                 name: self.word(self.tree.nodes[*name].start).into(),
@@ -622,95 +644,6 @@ impl Builder<'_, '_> {
             ports,
         };
         Ok((synth, header))
-    }
-}
-
-/// The boundary items of statement `s`, through the `mutable`, `local` and annotation that may
-/// wrap its binding or indexed definition.
-fn boundary_of(mut s: &Stmt) -> &[BoundaryItem] {
-    loop {
-        match &s.kind {
-            StmtKind::Mutable(d) | StmtKind::Local(d) | StmtKind::Annotated { decl: d, .. } => {
-                s = d
-            }
-            StmtKind::Bind { boundary, .. } => return boundary,
-            StmtKind::IndexedDef(d) => return &d.boundary,
-            _ => return &[],
-        }
-    }
-}
-
-impl Builder<'_, '_> {
-    /// The error for a second `with initial` item for one variable among `stmts`, the
-    /// statements of one block or unit in written order: a variable's sentinel value is given
-    /// once, on any one statement, since the statements run in the order their data
-    /// dependencies fix (DESIGN.md sec:generations, "One site for each start value"; row "Two
-    /// `with initial` items for one variable"). One pass over the items with a map from each
-    /// name to its first item: O(k) for k items.
-    pub(super) fn initial_once(&self, stmts: &[Stmt]) -> Result<(), Error> {
-        let mut first: HashMap<&str, (&BoundaryItem, Span)> = HashMap::new();
-        for s in stmts {
-            for b in boundary_of(s).iter().filter(|b| b.keys.is_empty()) {
-                let Some(&(a, at)) = first.get(b.name.as_str()) else {
-                    first.insert(&b.name, (b, s.span));
-                    continue;
-                };
-                let text = |span: Span| &self.text[span.start..span.end];
-                let name = &b.name;
-                return Err(Error {
-                    row: Some(Row::TwoInitials),
-                    menu: String::new(),
-                    span: b.span,
-                    message: format!(
-                        "the sentinel value of `{name}`, its value below its first step or \
-                         index, is given twice in this body: by `with {}` here and by `with {}` \
-                         earlier. The statements of a body run in the order their data \
-                         dependencies fix, not the order they are written, so one `with initial \
-                         {name}` gives the start value whichever statement carries it, and a \
-                         second one is a second writer of the same entry, even where the two \
-                         values agree. Keep one of the two.",
-                        text(b.span),
-                        text(a.span),
-                    ),
-                    notes: vec![
-                        Note {
-                            span: a.span,
-                            text: format!("the first `with {}`", text(a.span)),
-                        },
-                        Note {
-                            span: b.span,
-                            text: format!(
-                                "repair: keep the first and delete this one: `{}`",
-                                self.without(s.span, b.span)
-                            ),
-                        },
-                        Note {
-                            span: a.span,
-                            text: format!(
-                                "repair: keep this one and delete the first: `{}`",
-                                self.without(at, a.span)
-                            ),
-                        },
-                    ],
-                });
-            }
-        }
-        Ok(())
-    }
-
-    /// The text of the statement at `stmt` with its boundary item at `item` deleted, with the
-    /// comma that joined it to another item, or with its `with` when it was the only one.
-    fn without(&self, stmt: Span, item: Span) -> String {
-        let before = self.text[stmt.start..item.start].trim_end();
-        let after = &self.text[item.end..stmt.end];
-        if let Some(b) = before.strip_suffix(',') {
-            return format!("{b}{after}");
-        }
-        if let Some(a) = after.trim_start().strip_prefix(',') {
-            return format!("{before} {}", a.trim_start());
-        }
-        let b = before.strip_suffix("with").unwrap_or(before).trim_end();
-        format!("{b}{after}")
     }
 }
 

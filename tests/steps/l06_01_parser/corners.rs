@@ -33,9 +33,9 @@ fn nested_loops_whose_break_reads_the_outer_step() {
              j n))))))))",
         ),
         (
-            "f(n) = loop i { r' = loop j { break i + j; } with initial r = 0; };",
-            "(def f (n) = (loop i (block (= (r') (loop j (block (do (break (+ i j))))) (with (initial \
-             r 0))))))",
+            "f(n) = loop i { initial r = 0; r' = loop j { break i + j; }; };",
+            "(def f (n) = (loop i (block (initial (r) 0) (= (r') (loop j (block (do (break (+ i \
+             j)))))))))",
         ),
     ]);
 }
@@ -49,13 +49,14 @@ fn with_sentinels() {
              1)) (in j (..< 0 n))) (+ j 1)) (= d ((in i (..< 0 m)) (at (- 1))) (+ i 1))))",
         ),
         (
-            "a', b' = (b, a + b) with initial a = 0, initial b = 1;",
-            "(= (a' b') (tuple b (+ a b)) (with (initial a 0) (initial b 1)))",
+            "f(n) = loop { initial a, b = (0, 1); a', b' = (b, a + b); until a > n; };",
+            "(def f (n) = (loop (block (initial (a b) (tuple 0 1)) (= (a' b') (tuple b (+ a b))) \
+             (until (> a n)))))",
         ),
         // A sentinel's value is a whole expression, a lambda included.
         (
-            "g' = g with initial g = x -> x;",
-            "(= (g') g (with (initial g (fn (x) x))))",
+            "f(n) = loop { initial g = x -> x; g' = g; until n > 0; };",
+            "(def f (n) = (loop (block (initial (g) (fn (x) x)) (= (g') g) (until (> n 0)))))",
         ),
         ("x = 1 with;", "syntax"),
         ("x = 1 with y;", "syntax"),
@@ -67,8 +68,8 @@ fn with_sentinels() {
 fn primes_on_a_receiver_and_on_a_field() {
     check(&[
         (
-            "f(b) = loop { pos' = pos.step() with initial pos = start; until pos'.x > b; };",
-            "(def f (b) = (loop (block (= (pos') (call (. pos step)) (with (initial pos start))) \
+            "f(b) = loop { initial pos = start; pos' = pos.step(); until pos'.x > b; };",
+            "(def f (b) = (loop (block (initial (pos) start) (= (pos') (call (. pos step))) \
              (until (> (. pos' x) b)))))",
         ),
         ("f(c) = c.x' + c.x;", "(def f (c) = (+ (. c x') (. c x)))"),
@@ -96,8 +97,8 @@ fn primes_on_a_receiver_and_on_a_field() {
 #[test]
 fn while_and_until_in_one_loop() {
     check(&[(
-        "f(n) = loop t { x' = x + t with initial x = 0; until x' > n; while t < 10; };",
-        "(def f (n) = (loop t (block (while (< t 10)) (= (x') (+ x t) (with (initial x 0))) \
+        "f(n) = loop t { initial x = 0; x' = x + t; until x' > n; while t < 10; };",
+        "(def f (n) = (loop t (block (while (< t 10)) (initial (x) 0) (= (x') (+ x t)) \
          (until (> x' n)))))",
     )]);
 }

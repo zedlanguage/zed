@@ -201,21 +201,67 @@ const NEAR_MISSES: &[NearMiss] = &[
         "1:19",
         Some("read the map with a key in `#a`"),
     ),
+    // A key-less item on an indexed definition reads as a value at every key.
     (
         Row::BareBoundary,
         "",
-        "x = 1 with initial x = 0;\n",
-        "x = 1 with x = 0;\n",
-        "1:12",
-        Some("`with initial x = 0`, the sentinel value"),
+        "d[i in 0..<5] = d[i - 1] + 1 with d[-1] = 0;\n",
+        "d[i in 0..<5] = d[i - 1] + 1 with d = 0;\n",
+        "1:35",
+        Some("`d[i in 0..<5] = d[i - 1] + 1 with d[-1] = 0;`, the entry of `d` given with its key"),
     ),
     (
-        Row::TwoInitials,
-        "x = 1 with initial x = 0;\n",
-        "y = x;\n",
-        "y = x with initial x = 0;\n",
-        "2:12",
-        Some("keep the first and delete this one: `y = x;`"),
+        Row::WithInitialItem,
+        "r = loop t {\n  while t < 3;\n",
+        "  initial x = 0;\n  x' = x + 1;\n};\n",
+        "  x' = x + 1 with initial x = 0;\n};\n",
+        "3:19",
+        Some(
+            "`initial x = 0; x' = x + 1;`, `initial x = 0;` written beside the statement, the \
+             sentinel value given once, before step 0, and the `with` clause deleted",
+        ),
+    ),
+    (
+        Row::BareLoopEntry,
+        "r = loop t {\n  while t < 3;\n  p' = p + 1;\n",
+        "  initial p[-2] = -1;\n};\n",
+        "  p[-2] = -1;\n};\n",
+        "4:3",
+        Some("`initial p[-2] = -1;`, the entry given once, before the first step"),
+    ),
+    (
+        Row::InitialOutsideLoop,
+        "",
+        "x = 0;\n",
+        "initial x = 0;\n",
+        "1:1",
+        Some("`x = 0;`, a plain binding"),
+    ),
+    (
+        Row::InitialNotUpdated,
+        "r = loop t {\n  while t < 3;\n  initial y = 0;\n",
+        "  y' = y + t;\n};\n",
+        "  x' = t;\n};\n",
+        "3:3",
+        Some("add the update the loop is meant to make, `y' = …;`, to its body"),
+    ),
+    (
+        Row::InitialReadsLoop,
+        "r = loop t {\n  while t < 3;\n  initial x = 0;\n",
+        "  initial y = 0;\n  x' = x + 1;\n  y' = y + x;\n};\n",
+        "  initial y = x;\n  x' = x + 1;\n  y' = y + x;\n};\n",
+        "4:15",
+        Some(
+            "compute the start value before the loop, `y0 = …;` above it, and write `initial y = y0;`",
+        ),
+    ),
+    (
+        Row::TwoSentinels,
+        "r = loop t {\n  while t < 3;\n  initial x = 0;\n  x' = x + 1;\n",
+        "};\n",
+        "  initial x = 0;\n};\n",
+        "5:3",
+        Some("keep the first, `initial x = 0;`, and delete this one, `initial x = 0;`"),
     ),
     (
         Row::NameAboveDefinition,
@@ -227,10 +273,18 @@ const NEAR_MISSES: &[NearMiss] = &[
     ),
 ];
 
-/// Rows the parser raises for a form that name resolution does not compile yet (a boundary
-/// `with`, step L6.2): their accepted program is refused only with the message that names the
-/// form as not compiled yet. Once it is accepted, the row leaves this list.
-const LATER: &[Row] = &[Row::BareBoundary, Row::TwoInitials];
+/// Rows whose accepted program holds a form name resolution does not compile yet (a boundary
+/// `with`, step L6.2, or a `loop`, step L6.1): their accepted program is refused only with the
+/// message that names the form as not compiled yet. Once it is accepted, the row leaves this
+/// list.
+const LATER: &[Row] = &[
+    Row::BareBoundary,
+    Row::WithInitialItem,
+    Row::BareLoopEntry,
+    Row::InitialNotUpdated,
+    Row::InitialReadsLoop,
+    Row::TwoSentinels,
+];
 
 /// The `.rs` files under `dir`, in no order.
 fn sources(dir: &Path, out: &mut Vec<PathBuf>) {

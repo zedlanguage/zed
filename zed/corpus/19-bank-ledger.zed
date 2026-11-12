@@ -38,7 +38,8 @@ show(positional id, positional v) = match v {
 main(m: MainArgs) {
   txs  = m.stdin.map(l -> parse(l));
   book = loop t {
-    accts' = accts.patch(edits(txs[t], t)) with initial accts = {};
+    initial accts = {};
+    accts' = accts.patch(edits(txs[t], t));
     while t in txs::domain;
   };
   closing = book.accts;

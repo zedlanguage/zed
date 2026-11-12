@@ -245,6 +245,9 @@ impl<'t, 'a> Walk<'t, 'a> {
             StmtKind::IndexedDef(d) => {
                 self.root(&d.value, Label::Other);
             }
+            StmtKind::Initial(i) => {
+                self.root(&i.value, Label::Other);
+            }
             StmtKind::Struct(_)
             | StmtKind::Type(_)
             | StmtKind::Method(_)

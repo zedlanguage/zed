@@ -31,9 +31,10 @@ main(m: MainArgs) {
   syms  = decls.group(d -> d.name).map(g -> symbol(g));
 
   ty = loop {
+    initial ty = for n -> _ in syms { #unknown };
     ty' = for n -> s in syms {
       match s { #one(decl:) -> infer(decl.expr, ty), _ -> #error }
-    } with initial ty = for n -> _ in syms { #unknown };
+    };
     until ty' == ty;
   }.ty;
 

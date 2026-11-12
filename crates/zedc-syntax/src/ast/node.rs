@@ -314,16 +314,16 @@ pub struct Stmt {
 /// The kinds of statement.
 #[derive(Debug)]
 pub enum StmtKind {
-    /// `a = e;`, or `a, b = e;` destructuring a tuple, each followed by its boundary values
-    /// `with initial x = e0` if written.
+    /// `a = e;`, or `a, b = e;` destructuring a tuple.
     Bind {
         /// The targets, in order.
         targets: Vec<Target>,
         /// The value.
         value: Expr,
-        /// The boundary values, in written order; empty when there is no `with`.
-        boundary: Vec<BoundaryItem>,
     },
+    /// `initial x = e;`, the start value of a variable its loop updates, or a boundary entry
+    /// `initial p[-2] = e;` (DESIGN.md sec:generations).
+    Initial(Initial),
     /// `mutable x = e;`: the binding, whose variable carries forward when a step leaves it
     /// unassigned.
     Mutable(Box<Stmt>),
@@ -539,13 +539,26 @@ pub enum IndexKey {
     At(Expr),
 }
 
-/// A boundary value of a `with` clause: `initial x = e`, the sentinel value of `x`, or the
-/// indexed entry `x[-2] = e`.
+/// `initial x = e;`, `initial x: T = e;`, `initial a, b = e;`, `initial x[k] = e;` or
+/// `initial x[i in r] = e;`.
+#[derive(Debug)]
+pub struct Initial {
+    /// The names, in order, each with its text: one but for `initial a, b = e;`.
+    pub names: Vec<(String, Span)>,
+    /// The declared type of `initial x: T = e;`.
+    pub ty: Option<Type>,
+    /// The keys of a boundary entry, outermost first; none for a start value.
+    pub keys: Vec<IndexKey>,
+    /// The value.
+    pub value: Expr,
+}
+
+/// A boundary entry of an indexed definition's `with` clause, `with d[-1] = e`.
 #[derive(Debug)]
 pub struct BoundaryItem {
-    /// The variable.
+    /// The family.
     pub name: String,
-    /// Its keys, outermost first; none for `initial x = e`, which the grammar gives no keys.
+    /// Its keys, outermost first; never none, which the grammar requires.
     pub keys: Vec<IndexKey>,
     /// The value.
     pub value: Expr,
@@ -572,6 +585,7 @@ impl StmtKind {
         match self {
             StmtKind::While(_) => 0,
             StmtKind::Bind { .. }
+            | StmtKind::Initial(_)
             | StmtKind::Mutable(_)
             | StmtKind::Local(_)
             | StmtKind::IndexedDef(_)

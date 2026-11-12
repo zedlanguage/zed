@@ -483,7 +483,7 @@ pub(crate) type Syntax = (Vec<lex::Token>, Vec<lex::Doc>, Vec<Stmt>);
 
 /// The tokens of the unit `text`, whose lines are `lines`, its doc comments and its statements;
 /// or the diagnostics of the first of the phases of its syntax that rejects it: lexing, parsing
-/// (a boundary item with neither `initial` nor an index is placed with its statement and its
+/// (a `with` clause that gives a sentinel value is placed with its statement and its
 /// repairs) or building the statements (every item's error). `compile` starts with it and
 /// `zedc fmt` reads only it, so `zedc run`, `zedc build`, `zedc test` and `zedc fmt` print a
 /// file's syntax error alike.

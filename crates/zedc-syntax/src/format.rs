@@ -628,8 +628,7 @@ impl<'a> Formatter<'a> {
                         sep: ", ",
                         ind,
                     });
-                    let initial = if b.keys.is_empty() { "initial " } else { "" };
-                    self.put(format!("{sep}{initial}{}", b.name));
+                    self.put(format!("{sep}{}", b.name));
                     then![stack;
                         Job::Keys { keys: &b.keys, ind },
                         put(" = "),
@@ -948,11 +947,7 @@ impl<'a> Formatter<'a> {
             ind,
         };
         match &s.kind {
-            StmtKind::Bind {
-                targets,
-                value: v,
-                boundary,
-            } => {
+            StmtKind::Bind { targets, value: v } => {
                 let ts: Vec<&str> = targets
                     .iter()
                     .map(|t| match t {
@@ -962,7 +957,16 @@ impl<'a> Formatter<'a> {
                     .collect();
                 self.put(ts.join(", "));
                 self.put(" = ");
-                then![stack; value(v), with(boundary), put(";")];
+                then![stack; value(v), put(";")];
+            }
+            StmtKind::Initial(i) => {
+                let names: Vec<&str> = i.names.iter().map(|(n, _)| n.as_str()).collect();
+                self.put(format!("initial {}", names.join(", ")));
+                then![stack; put(" = "), value(&i.value), put(";")];
+                match &i.ty {
+                    Some(t) => then![stack; put(": "), Job::Ty { t, min: 0 }],
+                    None => stack.push(Job::Keys { keys: &i.keys, ind }),
+                }
             }
             StmtKind::Mutable(decl) => {
                 self.put("mutable ");

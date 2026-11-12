@@ -6,19 +6,19 @@ use super::check;
 fn loops_build_with_and_without_a_step_name() {
     check(&[
         (
-            "f(n) = loop t { while t < n; x' = x + 1 with initial x = 0; };",
-            "(def f (n) = (loop t (block (while (< t n)) (= (x') (+ x 1) (with (initial x 0))))))",
+            "f(n) = loop t { while t < n; initial x = 0; x' = x + 1; };",
+            "(def f (n) = (loop t (block (while (< t n)) (initial (x) 0) (= (x') (+ x 1)))))",
         ),
         (
-            "f(n) = loop { x' = x * 2 with initial x = 1; until x' > n; };",
-            "(def f (n) = (loop (block (= (x') (* x 2) (with (initial x 1))) (until (> x' n)))))",
+            "f(n) = loop { initial x = 1; x' = x * 2; until x' > n; };",
+            "(def f (n) = (loop (block (initial (x) 1) (= (x') (* x 2)) (until (> x' n)))))",
         ),
         ("f(x) = loop { };", "(def f (x) = (loop (block)))"),
         (
             "p = loop t { while t < edits::len && !closed; \
-             doc' = doc.patch(edits[t]) with initial doc = empty; };",
+             initial doc = empty; doc' = doc.patch(edits[t]); };",
             "(= (p) (loop t (block (while (&& (< t (:: edits len)) (! closed))) \
-             (= (doc') (call (. doc patch) (index edits t)) (with (initial doc empty))))))",
+             (initial (doc) empty) (= (doc') (call (. doc patch) (index edits t))))))",
         ),
     ]);
 }
@@ -54,8 +54,8 @@ fn mutable_bindings_and_spread_calls_build() {
              prev)))",
         ),
         (
-            "f(n) = loop { mutable c = Counter(n: 0) with initial c = z; until c > n; };",
-            "(def f (n) = (loop (block (mutable (= (c) (call Counter (n: 0)) (with (initial c z)))) \
+            "f(n) = loop { mutable c = z; c' = Counter(n: 0); until c > n; };",
+            "(def f (n) = (loop (block (mutable (= (c) z)) (= (c') (call Counter (n: 0))) \
              (until (> c n)))))",
         ),
         ("f(x) = g(x)*.h;", "(def f (x) = (*. (call g x) h))"),
@@ -73,9 +73,9 @@ fn indexed_definitions_build_with_their_keys_and_boundary() {
              1))) 0)))",
         ),
         (
-            "g[i in 0..<n][j] = i + j with g[0][k in s] = 1, initial h = 2;",
-            "(indexed g ((in i (..< 0 n)) (at j)) (+ i j) (with (= g ((at 0) (in k s)) 1) (initial h \
-             2)))",
+            "g[i in 0..<n][j] = i + j with g[0][k in s] = 1, g[-1][k in s] = 2;",
+            "(indexed g ((in i (..< 0 n)) (at j)) (+ i j) (with (= g ((at 0) (in k s)) 1) (= g ((at \
+             (- 1)) (in k s)) 2)))",
         ),
         (
             "x[i in 0..<warm] = cold(i);\nx[i in warm..] = hot(x[i - 1]);",
@@ -94,6 +94,12 @@ fn pushes_and_expression_statements_build() {
         (
             "f(x) = { out' <- x; g(x); 0 };",
             "(def f (x) = (block (<- out' x) (do (call g x)) (return 0)))",
+        ),
+        // A push reads the sentinel value an `initial` statement gives; a `with initial` item
+        // is removed.
+        (
+            "f(x) = loop { initial acc = 0; acc' <- acc + x; };",
+            "(def f (x) = (loop (block (initial (acc) 0) (<- acc' (+ acc x)))))",
         ),
         (
             "f(x) = loop { acc' <- acc + x with initial acc = 0; };",

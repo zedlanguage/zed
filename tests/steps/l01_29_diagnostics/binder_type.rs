@@ -239,6 +239,10 @@ const SITES: &[(&str, Site)] = &[
         "BoundaryItem",
         Site::NotBinder("the family a boundary value is given to, a use"),
     ),
+    (
+        "InitTarget",
+        Site::NotBinder("the variable an `initial` statement gives a value to, a use"),
+    ),
     ("Signature", Site::Later("int: int;\n")),
     ("Lambda", Site::L1("succ = int -> int + 1;\n", "int")),
     (

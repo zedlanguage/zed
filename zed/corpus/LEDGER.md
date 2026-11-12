@@ -188,7 +188,7 @@ so a different decision changes the named `.out` files.
     at step L13.2.
 15. **`return { mean: mx, sd:, cov: }`** in a block-bodied function (21),
     following EXAMPLES lines 233 to 241.
-16. **Loop results.** `loop t { x' = f(x) with initial x = x0; while c; }` runs the step
+16. **Loop results.** `loop t { initial x = x0; x' = f(x); while c; }` runs the step
     at t when c holds at t; `run.x` is the final state and `run::frames` the
     per-step states (14, 15, 16, 19, 24, 28). 28's inclusive test
     `while t <= toks::len` relies on this reading.

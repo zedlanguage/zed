@@ -4,8 +4,8 @@
 use std::mem;
 
 use super::{
-    Annot, BoundaryItem, Expr, ExprKind, Field, Function, IndexKey, IndexedDef, Method, Param,
-    Pattern, RangeEnd, Stmt, StmtKind, StrPart, Struct, Type, TypeKind,
+    Annot, BoundaryItem, Expr, ExprKind, Field, Function, IndexKey, IndexedDef, Initial, Method,
+    Param, Pattern, RangeEnd, Stmt, StmtKind, StrPart, Struct, Type, TypeKind,
 };
 
 impl Drop for Expr {
@@ -118,13 +118,12 @@ fn expr_kids(kind: &mut ExprKind, out: &mut Vec<Expr>) {
 /// Moves the expressions directly in the statement `kind` to `out`.
 fn stmt_kids(kind: StmtKind, out: &mut Vec<Expr>) {
     match kind {
-        StmtKind::Bind {
-            value, boundary, ..
-        } => {
+        StmtKind::Initial(Initial { keys, value, .. }) => {
+            key_kids(keys, out);
             out.push(value);
-            boundary_kids(boundary, out);
         }
-        StmtKind::Push { value, .. }
+        StmtKind::Bind { value, .. }
+        | StmtKind::Push { value, .. }
         | StmtKind::While(value)
         | StmtKind::Until(value)
         | StmtKind::Expr(value) => out.push(value),

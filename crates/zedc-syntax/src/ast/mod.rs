@@ -24,6 +24,7 @@
 mod body;
 mod builder;
 mod drop;
+mod initial;
 mod neglit;
 mod node;
 mod show;
@@ -39,8 +40,8 @@ use zed_kernel::num::TooLarge;
 
 pub use node::{
     Annot, Arm, BoundaryItem, Error, Every, Expr, ExprKind, Field, Function, Import, ImportKind,
-    IndexKey, IndexedDef, MainHeader, Method, Note, Param, Pattern, Port, RangeEnd, Stmt, StmtKind,
-    StrPart, Struct, Target, Type, TypeBound, TypeDecl, TypeKind, TypeParam, Update,
+    IndexKey, IndexedDef, Initial, MainHeader, Method, Note, Param, Pattern, Port, RangeEnd, Stmt,
+    StmtKind, StrPart, Struct, Target, Type, TypeBound, TypeDecl, TypeKind, TypeParam, Update,
 };
 
 use crate::lex::{Part, Span, Tok, Token};
@@ -103,7 +104,7 @@ pub fn unit_all_errors(text: &str, tokens: &[Token], tree: &Tree) -> Result<Vec<
                 Err(e) => errors.push(e),
             }
         }
-        if let Err(e) = b.initial_once(&out) {
+        if let Err(e) = b.initials_placed(None, &out) {
             errors.push(e);
             errors.sort_by_key(|e| e.span);
         }
@@ -375,14 +376,18 @@ impl<'a, 's> Builder<'a, 's> {
             // The body is a block that may export nothing: a loop's value is its last frame.
             "Loop" => {
                 let (&body, label) = kids.split_last().expect("Loop ends in its block");
+                let label: Option<String> = label
+                    .first()
+                    .map(|&l| self.word(self.tree.nodes[l].start).into());
+                let body = self.body(body)?;
+                let span = self.span(n);
+                self.loop_initials(label.as_deref(), span, &body)?;
                 Ok(Expr {
                     kind: ExprKind::Loop {
-                        label: label
-                            .first()
-                            .map(|&l| self.word(self.tree.nodes[l].start).into()),
-                        body: Box::new(self.body(body)?),
+                        label,
+                        body: Box::new(body),
                     },
-                    span: self.span(n),
+                    span,
                 })
             }
             "Break" => Ok(Expr {
@@ -767,50 +772,13 @@ impl From<crate::lex::Error> for Error {
     }
 }
 
-/// A parse error as an error of the source: at a boundary item written with neither `initial`
-/// nor an index, the row "Boundary item with neither `initial` nor an index" with its
-/// statement and its repairs (DESIGN.md sec:diagnostics).
+/// A parse error as an error of the source: at a `with` clause that gives a sentinel value, or
+/// at the reserved word `initial` written as a name, its row, message and repairs (DESIGN.md
+/// sec:diagnostics).
 impl From<crate::parse::Error> for Error {
     fn from(e: crate::parse::Error) -> Error {
         let message = e.to_string();
-        if let Some(c) = e.case {
-            let mut notes = vec![
-                Note {
-                    span: c.table,
-                    text: "the test table that holds the case".into(),
-                },
-                Note {
-                    span: c.case_span,
-                    text: "the test case, which takes no boundary clause".into(),
-                },
-            ];
-            if let Some(d) = &c.deleted {
-                notes.push(Note {
-                    span: c.case_span,
-                    text: format!("repair: `{d}`, the case with the `with` clause deleted"),
-                });
-            }
-            if let Some(u) = &c.update {
-                notes.push(Note {
-                    span: c.case_span,
-                    text: format!(
-                        "repair: `{u}`, the case with `{}` updated in its fields",
-                        c.before
-                    ),
-                });
-            }
-            return Error {
-                menu: String::new(),
-                span: c.clause_span,
-                message,
-                notes,
-                row: c
-                    .bare
-                    .is_some()
-                    .then_some(zedc_base::rejection::Row::BareBoundary),
-            };
-        }
-        let Some(b) = e.bare else {
+        let Some(c) = e.clause else {
             return Error {
                 menu: String::new(),
                 span: e.span,
@@ -819,66 +787,16 @@ impl From<crate::parse::Error> for Error {
                 row: None,
             };
         };
-        let (name, value) = (&b.name, &b.value);
-        if let Some(m) = &b.misplaced {
-            use crate::parse::Fix;
-            let mut notes = vec![Note {
-                span: b.stmt,
-                text: "the code the item follows, which takes no boundary clause".into(),
-            }];
-            notes.extend(m.repairs.iter().map(|r| Note {
-                span: r.span,
-                text: match &r.fix {
-                    Fix::Binding => format!(
-                        "repair: `{}`, the same next value written as a binding, which takes \
-                         a boundary clause",
-                        r.text
-                    ),
-                    Fix::Moved { here } => format!(
-                        "repair: `{}`, the sentinel value given on the binding that defines \
-                         `{name}`, and the item deleted where it stood: `{here}`",
-                        r.text
-                    ),
-                    Fix::Deleted => format!(
-                        "repair: `{}`, the `with` clause deleted, where `{name}` takes its \
-                         sentinel value from another statement",
-                        r.text
-                    ),
-                },
-            }));
-            return Error {
-                menu: String::new(),
-                span: b.item,
-                message,
-                notes,
-                row: Some(zedc_base::rejection::Row::BareBoundary),
-            };
-        }
-        let mut notes = vec![
-            Note {
-                span: b.stmt,
-                text: "the statement whose boundary clause holds the item".into(),
-            },
-            Note {
-                span: b.item,
-                text: format!("repair: `with initial {name} = {value}`, the sentinel value"),
-            },
-        ];
-        if let Some(k) = &b.below {
-            notes.push(Note {
-                span: b.item,
-                text: format!(
-                    "repair: `with {name}[{k}] = {value}`, the entry one below the low edge of \
-                     the domain of `{name}`"
-                ),
-            });
-        }
         Error {
             menu: String::new(),
-            span: b.item,
+            span: c.span,
             message,
-            notes,
-            row: Some(zedc_base::rejection::Row::BareBoundary),
+            notes: c
+                .notes
+                .into_iter()
+                .map(|(span, text)| Note { span, text })
+                .collect(),
+            row: c.row,
         }
     }
 }

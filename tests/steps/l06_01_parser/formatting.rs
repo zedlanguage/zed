@@ -19,8 +19,8 @@ fn check(cases: &[(&str, &str)]) {
 fn each_form_round_trips() {
     check(&[
         (
-            "f(n)=loop t{while t<n;x'=x+1 with initial x=0;};",
-            "f(n) = loop t {\n  while t < n;\n  x' = x + 1 with initial x = 0;\n};\n",
+            "f(n)=loop t{while t<n;initial x=0;x'=x+1;};",
+            "f(n) = loop t {\n  while t < n;\n  initial x = 0;\n  x' = x + 1;\n};\n",
         ),
         ("f(x) = loop {   };", "f(x) = loop { };\n"),
         (
@@ -37,8 +37,8 @@ fn each_form_round_trips() {
             "cdf[i] = cdf[i - 1] + hist[i] with cdf[-1] = 0;\n",
         ),
         (
-            "g[i in 0..<n][j]=i+j with g[0][k in s]=1,initial h=2;",
-            "g[i in 0..<n][j] = i + j with g[0][k in s] = 1, initial h = 2;\n",
+            "g[i in 0..<n][j]=i+j with g[0][k in s]=1,g[-1][k in s]=2;",
+            "g[i in 0..<n][j] = i + j with g[0][k in s] = 1, g[-1][k in s] = 2;\n",
         ),
         (
             "f(x) = { out' <-x; g( x ); 0 };",
@@ -47,8 +47,8 @@ fn each_form_round_trips() {
         ("f(x) = g(x) *. h;", "f(x) = g(x)*.h;\n"),
         ("f(x) = pos'.x+c.y';", "f(x) = pos'.x + c.y';\n"),
         (
-            "a',b'=(b,a+b)with initial a=0,initial b=1;",
-            "a', b' = (b, a + b) with initial a = 0, initial b = 1;\n",
+            "f(n)=loop{initial a,b=(0,1);a',b'=(b,a+b);until a>n;};",
+            "f(n) = loop {\n  initial a, b = (0, 1);\n  a', b' = (b, a + b);\n  until a > n;\n};\n",
         ),
     ]);
 }
@@ -60,9 +60,9 @@ fn each_form_round_trips() {
 fn guards_are_written_where_their_timing_is() {
     check(&[
         (
-            "f(n) = loop t { x' = x + 1 with initial x = 0; until x' > n; y' = x; while t < 9; };",
-            "f(n) = loop t {\n  while t < 9;\n  x' = x + 1 with initial x = 0;\n  y' = x;\n  until x' > \
-             n;\n};\n",
+            "f(n) = loop t { x' = x + 1; until x' > n; initial x = 0; y' = x; while t < 9; };",
+            "f(n) = loop t {\n  while t < 9;\n  x' = x + 1;\n  initial x = 0;\n  y' = x;\n  until \
+             x' > n;\n};\n",
         ),
         (
             "f(n) = loop {\n  until a; // last\n  // first\n  while b;\n  until c;\n  while d;\n};",
@@ -125,7 +125,7 @@ fn parentheses_where_the_grammar_needs_them() {
 #[test]
 fn comments_are_kept() {
     check(&[(
-        "f(n) = loop t {\n  // the step\n  x' = x + 1 with initial x = 0; // from zero\n};",
-        "f(n) = loop t {\n  // the step\n  x' = x + 1 with initial x = 0; // from zero\n};\n",
+        "f(n) = loop t {\n  // the step\n  x' = x + 1;\n  initial x = 0; // from zero\n};",
+        "f(n) = loop t {\n  // the step\n  x' = x + 1;\n  initial x = 0; // from zero\n};\n",
     )]);
 }

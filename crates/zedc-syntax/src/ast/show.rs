@@ -302,21 +302,17 @@ fn keys<'a>(keys: &'a [IndexKey], out: &mut Vec<Show<'a>>) {
     out.push(Text(")"));
 }
 
-/// ` (with (initial x e) (= x ((at k)) e))` for boundary values, nothing for none.
+/// ` (with (= x ((at k)) e))` for the boundary entries of an indexed definition, nothing for
+/// none.
 fn boundary_items<'a>(items: &'a [BoundaryItem], out: &mut Vec<Show<'a>>) {
     if items.is_empty() {
         return;
     }
     out.push(Text(" (with"));
     for b in items {
-        if b.keys.is_empty() {
-            out.extend([Text(" (initial "), Text(&b.name), Text(" ")]);
-        } else {
-            out.extend([Text(" (= "), Text(&b.name), Text(" ")]);
-            keys(&b.keys, out);
-            out.push(Text(" "));
-        }
-        out.extend([Show::Expr(&b.value), Text(")")]);
+        out.extend([Text(" (= "), Text(&b.name), Text(" ")]);
+        keys(&b.keys, out);
+        out.extend([Text(" "), Show::Expr(&b.value), Text(")")]);
     }
     out.push(Text(")"));
 }
@@ -335,26 +331,40 @@ fn params_spaced<'a>(params: &'a [Param], out: &mut Vec<Show<'a>>) {
 /// `(struct P (x: f64) (y: f64 = 0.0) (import a.B))`, a type `(type T (A) (| A #b))`, an import
 /// `(import a.b)`, `(import a.b as c)` or `(import a.b (x y) @hash(…))`, and an annotated
 /// declaration `(annotated @log (@cost n (k: 1)) (def …))`, a bare annotation without
-/// parentheses; from layer L6, a binding with boundary values
-/// `(= (x') e (with (= x 0)))`, `(mutable (= (c) e))`, an indexed definition
+/// parentheses; from layer L6, `(mutable (= (c) e))`, the start values `(initial (x) 0)`,
+/// `(initial (a b) e)` and `(initial (x: f64) 0.0)` and the boundary entry
+/// `(initial p ((at -2)) -1)`, an indexed definition
 /// `(indexed x ((in i s) (at k)) e (with (= x ((at -1)) 0)))`, `(while c)`, `(until c)`, and an
 /// expression statement `(do e)`.
 fn stmt<'a>(s: &'a Stmt, out: &mut Vec<Show<'a>>) {
     match &s.kind {
-        StmtKind::Bind {
-            targets,
-            value,
-            boundary,
-        } => {
+        StmtKind::Bind { targets, value } => {
             out.push(Text("(= ("));
             let mut sep = "";
             for t in targets {
                 out.extend([Text(sep), Text(target(t))]);
                 sep = " ";
             }
-            out.extend([Text(") "), Show::Expr(value)]);
-            boundary_items(boundary, out);
-            out.push(Text(")"));
+            out.extend([Text(") "), Show::Expr(value), Text(")")]);
+        }
+        StmtKind::Initial(i) => {
+            out.push(Text("(initial "));
+            if i.keys.is_empty() {
+                out.push(Text("("));
+                let mut sep = "";
+                for (n, _) in &i.names {
+                    out.extend([Text(sep), Text(n)]);
+                    sep = " ";
+                }
+                if let Some(t) = &i.ty {
+                    out.extend([Text(": "), Show::Type(t)]);
+                }
+                out.push(Text(")"));
+            } else {
+                out.extend([Text(&i.names[0].0), Text(" ")]);
+                keys(&i.keys, out);
+            }
+            out.extend([Text(" "), Show::Expr(&i.value), Text(")")]);
         }
         StmtKind::Mutable(decl) => out.extend([Text("(mutable "), Show::Stmt(decl), Text(")")]),
         StmtKind::Local(decl) => out.extend([Text("(local "), Show::Stmt(decl), Text(")")]),

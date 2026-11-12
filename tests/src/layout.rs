@@ -250,16 +250,12 @@ fn expr_kids<'a>(
 /// to `work`; a wrapped statement is part of its wrapper and not counted again.
 fn stmt_kids<'a>(kind: &'a StmtKind, out: &mut Vec<&'a Expr>, work: &mut Vec<&'a StmtKind>) {
     match kind {
-        StmtKind::Bind {
-            value, boundary, ..
-        } => {
-            out.push(value);
-            for b in boundary {
-                keys(&b.keys, out);
-                out.push(&b.value);
-            }
+        StmtKind::Initial(i) => {
+            keys(&i.keys, out);
+            out.push(&i.value);
         }
-        StmtKind::Push { value, .. }
+        StmtKind::Bind { value, .. }
+        | StmtKind::Push { value, .. }
         | StmtKind::While(value)
         | StmtKind::Until(value)
         | StmtKind::Expr(value) => out.push(value),

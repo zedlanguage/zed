@@ -215,6 +215,7 @@ impl<'a> Tables<'a> {
             | StmtKind::Annotated { .. }
             | StmtKind::Mutable(_)
             | StmtKind::IndexedDef(_)
+            | StmtKind::Initial(_)
             | StmtKind::While(_)
             | StmtKind::Until(_)
             | StmtKind::Expr(_)
@@ -272,6 +273,7 @@ impl<'a> Tables<'a> {
             }
             StmtKind::Mutable(_)
             | StmtKind::IndexedDef(_)
+            | StmtKind::Initial(_)
             | StmtKind::While(_)
             | StmtKind::Until(_)
             | StmtKind::Expr(_) => unreachable!("resolve rejects the forms of layer L6"),
@@ -410,6 +412,7 @@ fn what(s: &Stmt) -> String {
         }
         StmtKind::Mutable(_)
         | StmtKind::IndexedDef(_)
+        | StmtKind::Initial(_)
         | StmtKind::While(_)
         | StmtKind::Until(_)
         | StmtKind::Expr(_) => unreachable!("resolve rejects the forms of layer L6"),

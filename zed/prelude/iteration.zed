@@ -44,8 +44,8 @@ dfnLe(positional a, positional b) = b == #done || (a != #done && a <= b);
 
 wto(positional succ, positional by) = {
   run = loop v {
-    st' = if st.w.dfn[by[v]] == 0 { visit(succ, by[v], st.w, st.out) } else { st }
-      with initial st = V(w: W(dfn: succ.map(x -> 0), num: 0, stack: []), head: 0, isLoop: false, out: []);
+    initial st = V(w: W(dfn: succ.map(x -> 0), num: 0, stack: []), head: 0, isLoop: false, out: []);
+    st' = if st.w.dfn[by[v]] == 0 { visit(succ, by[v], st.w, st.out) } else { st };
     while v < succ::len;
   };
   run.st.out.reverse

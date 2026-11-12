@@ -6,10 +6,11 @@
 struct Edge { a: int, b: int }
 
 components(positional n, positional edges) = loop {
+  initial label = for v in 0..<n { v };
   label' = for v in 0..<n {
     min(label[v], (for e in edges where e.a == v || e.b == v {
       label[if e.a == v { e.b } else { e.a }]
     }) >< min else label[v])
-  } with initial label = for v in 0..<n { v };
+  };
   until label' == label;
 }.label;

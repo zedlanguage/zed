@@ -128,12 +128,7 @@ pub fn manifest(text: &str) -> Result<Manifest, Vec<Error>> {
     let mut errors = Vec::new();
     let mut seen: HashMap<&str, Span> = HashMap::new();
     for s in &stmts {
-        let StmtKind::Bind {
-            targets,
-            value,
-            boundary,
-        } = &s.kind
-        else {
+        let StmtKind::Bind { targets, value } = &s.kind else {
             errors.push(error(
                 s.span,
                 "a manifest holds only bindings of string literals, as \
@@ -142,7 +137,7 @@ pub fn manifest(text: &str) -> Result<Manifest, Vec<Error>> {
             ));
             continue;
         };
-        let ([Target::Name(name, at)], true) = (&targets[..], boundary.is_empty()) else {
+        let [Target::Name(name, at)] = &targets[..] else {
             errors.push(error(
                 s.span,
                 "a manifest entry binds one name to a string literal, as \
