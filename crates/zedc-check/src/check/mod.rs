@@ -596,9 +596,14 @@ struct Written<'a> {
 /// construct's own check rejects each of `needs` too, apart from the rejection the fix is
 /// for, and dropped where it does not. A fix kept whose `ty` is not the type the construct's
 /// own check gives is checked again in the construct the first one is an argument of
-/// ([`Ck::carried`]), as `1.0r` in `min(1.0r, 0.5r) + 2.5f64`, which is then dropped.
+/// ([`Ck::carried`]), as `1.0r` in `min(1.0r, 0.5r) + 2.5f64`, which is then dropped, and,
+/// where that construct is the value bound to a name, at each use of the name
+/// ([`Ck::bound_carried`]). `serial` tells the fix apart from every other, and its copies at
+/// the uses of a name from nothing: they are one fix.
+#[derive(Clone)]
 struct Pending {
     id: usize,
+    serial: usize,
     offer: Offer,
     needs: Vec<Span>,
     ty: Ty,
@@ -607,15 +612,78 @@ struct Pending {
 /// The fixes kept in a construct that give it the type `ty` in place of the type its own check
 /// gives ([`Ck::carried`]), checked together in the construct around it: they give it the
 /// same argument, so one check settles them all.
+#[derive(Clone)]
 struct Carry {
     ty: Ty,
-    fixes: Vec<Pending>,
+    fixes: Fixes,
+}
+
+/// The fixes of a [`Carry`], with the place in `list` of each one a name carried to its uses
+/// ([`Ck::bound_carried`]), by its [`Pending::serial`]: a copy of such a fix may reach a
+/// construct through another argument too, as `2r^k` bound to `y` reaches `y * y` through
+/// both, and is then taken out of each ([`Fixes::take`]) to be checked with both arguments
+/// given their types at once ([`Ck::pending_settled`]).
+#[derive(Clone, Default)]
+struct Fixes {
+    list: Vec<Pending>,
+    named: HashMap<usize, usize>,
+}
+
+impl Fixes {
+    /// The one fix `p`, which no name carried.
+    fn one(p: Pending) -> Fixes {
+        Fixes {
+            list: vec![p],
+            named: HashMap::new(),
+        }
+    }
+
+    /// These fixes as a name carries them to one of its uses: each of them marked as one a
+    /// name carried. O(the fixes).
+    fn at_use(&self) -> Fixes {
+        let list = self.list.clone();
+        let named = (list.iter().enumerate())
+            .map(|(i, p)| (p.serial, i))
+            .collect();
+        Fixes { list, named }
+    }
+
+    /// `other` added to these. The fixes of the smaller one move, and only their marks, so
+    /// that a fix moves O(log fixes) times however the groups join (union by size; Hopcroft
+    /// and Ullman, "Set merging algorithms", SIAM J. Comput. 2(4), 1973).
+    fn join(&mut self, mut other: Fixes) {
+        if self.list.len() < other.list.len() {
+            std::mem::swap(self, &mut other);
+        }
+        let at = self.list.len();
+        (self.named).extend(other.named.into_iter().map(|(s, i)| (s, at + i)));
+        self.list.append(&mut other.list);
+    }
+
+    /// Adds the fix `p`, which a name carried.
+    fn push_named(&mut self, p: Pending) {
+        self.named.insert(p.serial, self.list.len());
+        self.list.push(p);
+    }
+
+    /// The fix of the serial `serial` a name carried, taken out, O(1): the last fix takes its
+    /// place, and its mark moves with it.
+    fn take(&mut self, serial: usize) -> Option<Pending> {
+        let i = self.named.remove(&serial)?;
+        let p = self.list.swap_remove(i);
+        if let Some(moved) = self.list.get(i)
+            && let Some(at) = self.named.get_mut(&moved.serial)
+        {
+            *at = i;
+        }
+        Some(p)
+    }
 }
 
 /// What a [`Pending`] fix writes: the edits of a fix of a menu ([`Ck::fixes_checked`]), or a
 /// note that writes a repair ([`Ck::repairs`]), by its span and text, as the note that writes
 /// `0.5` for `0.5r`.
-#[derive(PartialEq)]
+#[derive(Clone, PartialEq)]
 enum Offer {
     Edits(Vec<(Span, String)>),
     Note(Span, String),
@@ -1116,6 +1184,12 @@ struct Ck<'t, 'a> {
     /// span, one [`Carry`] per type they give it, for the construct it is an argument of to
     /// check with that type in its place.
     carried: HashMap<Span, Vec<Carry>>,
+    /// The fixes carried into the value bound to a name ([`Self::carried`]), by the name's
+    /// binder, which each use of the name carries on to the construct it is an argument of,
+    /// as `y + n` drops `2r^k` from `y = 2^k` for an int `n`.
+    bound_carried: HashMap<usize, Vec<Carry>>,
+    /// The [`Pending::serial`] the next fix gets.
+    next_fix: usize,
     /// The parameter whose default is the expression at each span, for each default checked
     /// at its parameter's type: a rejection whose value reached its use through the default
     /// names it and offers the declaration without it.
@@ -1410,6 +1484,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             check_fixes,
             pending_fixes: Vec::new(),
             carried: HashMap::new(),
+            bound_carried: HashMap::new(),
+            next_fix: 0,
             defaults: HashMap::new(),
             next_found: 0,
             opened: false,

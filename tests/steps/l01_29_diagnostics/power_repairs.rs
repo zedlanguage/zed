@@ -192,14 +192,97 @@ fn each_offered_power_repair_checks_where_it_is_written() {
 }
 
 #[test]
-#[ignore = "REPAIR-past-binding: a repair that changes the type of a value bound to a name is \
-            checked at the binding, not at the name's uses"]
 fn a_repair_is_checked_at_the_uses_of_the_name_it_binds() {
     let src = "q(n: int, k: int) {\n  y = 2^k;\n  return y + n;\n}\n";
     let out = rejected(src);
+    // `2r^k` makes `y + n` add a rat to an int: not offered.
+    assert_eq!(repairs(&out), ["if k >= 0 { 2^k } else { … }"], "{out}");
     for r in repairs(&out) {
         checks(&repaired(src, "2^k", r));
     }
+}
+
+/// Programs of one rejected power bound to a name, each with the repairs it offers, checked at
+/// each use of the name.
+const BOUND: [(&str, &[&str]); 9] = [
+    // A use outside any construct takes every type.
+    (
+        "q(k: int) {\n  y = 2^k;\n  return y;\n}\n",
+        &["if k >= 0 { 2^k } else { … }", "2r^k"],
+    ),
+    // Both arguments are uses of `y`: `2r^k` makes both rat at once.
+    (
+        "q(k: int) {\n  y = 2^k;\n  return y * y;\n}\n",
+        &["if k >= 0 { 2^k } else { … }", "2r^k"],
+    ),
+    (
+        "q(k: int) {\n  y = 2^k;\n  return (y + 1) * y;\n}\n",
+        &["if k >= 0 { 2^k } else { … }", "2r^k"],
+    ),
+    // Through a second name, and through a construct bound to a name.
+    (
+        "q(n: int, k: int) {\n  y = 2^k;\n  z = y;\n  return z + n;\n}\n",
+        &["if k >= 0 { 2^k } else { … }"],
+    ),
+    (
+        "q(n: int, k: int) {\n  y = 2^k;\n  a = y * 2;\n  return a + n;\n}\n",
+        &["if k >= 0 { 2^k } else { … }"],
+    ),
+    // One use takes a rat and the other does not.
+    (
+        "q(n: int, k: int) {\n  y = 2^k;\n  a = y + 1;\n  return y + n;\n}\n",
+        &["if k >= 0 { 2^k } else { … }"],
+    ),
+    // A component of a tuple display bound to a name.
+    (
+        "q(n: int, k: int) {\n  y, w = (2^k, 1);\n  return y + n;\n}\n",
+        &["if k >= 0 { 2^k } else { … }"],
+    ),
+    (
+        "q(k: int) {\n  y, w = (2^k, 1);\n  return y + 1;\n}\n",
+        &["if k >= 0 { 2^k } else { … }", "2r^k"],
+    ),
+    // An argument of a call whose parameter is an int.
+    (
+        "f(a: int) = a + 1;\nq(k: int) {\n  y = 2^k;\n  return f(a: y);\n}\n",
+        &["if k >= 0 { 2^k } else { … }"],
+    ),
+];
+
+#[test]
+fn a_repair_of_a_bound_value_is_checked_at_every_use() {
+    for (src, want) in BOUND {
+        let out = rejected(src);
+        assert_eq!(repairs(&out), want, "{src}\n{out}");
+        for r in want {
+            checks(&repaired(src, "2^k", r));
+        }
+    }
+}
+
+/// A function of `n` rejected powers each bound to a name used twice, as one argument of an
+/// int sum and as both arguments of a product, and one rejected power bound to a name used `n`
+/// times: each repair is checked at every use.
+fn bound_uses(n: usize) -> String {
+    let mut src = String::from("q(n: int, k: int) {\n  y = 2^k;\n");
+    for i in 0..n {
+        src += &format!("  b{i} = 2^k;\n  c{i} = b{i} + n;\n  d{i} = b{i} * b{i};\n");
+        src += &format!("  a{i} = y + {i};\n");
+    }
+    src + "  return y;\n}\n"
+}
+
+#[test]
+fn checking_repairs_at_uses_scales() {
+    let made = scaling::inputs(64, |n| program(&bound_uses(n)));
+    scaling::check(
+        "checking repairs at the uses of n names and n uses of a name",
+        64,
+        |n| {
+            let src = &made[&n];
+            assert!(load(src.as_bytes()).is_err(), "{src}");
+        },
+    );
 }
 
 /// A chain of `n` bindings under `k >= 0`, each a power of 2 to the one before, and each

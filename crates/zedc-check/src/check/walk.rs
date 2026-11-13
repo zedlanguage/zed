@@ -844,7 +844,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         match needs.is_some_and(|n| n.is_empty()) {
                             true if ty != t => carry_joined(&mut up, ty, c.fixes),
                             true => {}
-                            false => c.fixes.iter().for_each(|p| self.fix_dropped(p)),
+                            false => c.fixes.list.iter().for_each(|p| self.fix_dropped(p)),
                         }
                     }
                     self.carried_up(span, up);
@@ -1677,6 +1677,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         match &targets[..] {
             [Target::Name(n, _)] => {
                 let id = self.id(s.span, n);
+                self.carried_bound(id, value.span);
                 self.origin(id, value.span, Why::Defined(v.clone()), Some(value.span));
                 self.alias.insert(id, value.span);
                 self.facts.insert(id, value);
@@ -1705,6 +1706,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                     match target {
                         Target::Name(name, _) => {
                             let id = self.id(s.span, name);
+                            // The fixes of a component of a tuple display go to the name it
+                            // binds, as those of a whole value ([`Self::carried_bound`]); a
+                            // component of any other value carries none.
+                            match items {
+                                Some(items) => self.carried_bound(id, items[i].span),
+                                None if !self.trying => _ = self.bound_carried.remove(&id),
+                                None => {}
+                            }
                             let why = Why::Component(i, c.clone());
                             self.origin(id, value.span, why, Some(value.span));
                             self.env.insert(id, c);
@@ -2501,6 +2510,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             ExprKind::Name(_) => {
                 let t = self.name(e.span);
+                self.carried_use(e.span);
                 m.ty(t);
             }
             ExprKind::Unary(op, a) => {
@@ -7963,9 +7973,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// most three, and only for a power that is rejected. The naive way, checking the whole
     /// statement again with each repair written in, costs the statement per repair, and a
     /// statement of n rejected powers O(n²); the construct's check costs its own operands'
-    /// types alone, which are already known. Not seen: a use of the power after the
-    /// construct that holds it, as a binding of it used as an int later, which the pending
-    /// fixes of every construct do not see either ([`Pending`]).
+    /// types alone, which are already known. A repair of a value bound to a name is checked
+    /// at each use of the name too ([`Self::carried_bound`], [`Self::carried_use`]), O(fixes)
+    /// per use. Not seen: a use through the value of an `if` or a block, as
+    /// `(if n > 0 { 2^k } else { n }) + n`, which carries no fix up (REPAIR-through-branch).
     fn power_rejects(
         &mut self,
         p: &PowerUse,
@@ -10870,7 +10881,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             // A fix that leaves its own rejection, as `int(n) * 0.5` for `n * 0.5`, fixes nothing.
             let own = self.found(p.id).map(|e| e.span);
             match p.needs.iter().all(|s| found.contains(s) && Some(*s) != own) {
-                true if p.ty != *t => carry_joined(&mut up, p.ty.clone(), vec![p]),
+                true if p.ty != *t => carry_joined(&mut up, p.ty.clone(), Fixes::one(p)),
                 true => {}
                 false => self.fix_dropped(&p),
             }
@@ -10881,6 +10892,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             .filter_map(|(j, a)| Some((a.as_ref()?.at?, j)))
             .collect();
         ats.sort_unstable_by_key(|&(s, _)| (s.start, s.end));
+        let carried = self.shared_settled(w, t, (&found, &ats), carried, &mut up);
         // The `r`th round holds the `r`th type carried into each argument, so that no round
         // gives an argument two types.
         let mut rounds: Vec<Vec<(usize, Carry)>> = Vec::new();
@@ -10908,11 +10920,139 @@ impl<'t, 'a> Ck<'t, 'a> {
                 match self.carried_alone(w, &found, &ats, i, &c) {
                     Some(ty) if ty != *t => carry_joined(&mut up, ty, c.fixes),
                     Some(_) => {}
-                    None => c.fixes.iter().for_each(|p| self.fix_dropped(p)),
+                    None => c.fixes.list.iter().for_each(|p| self.fix_dropped(p)),
                 }
             }
         }
         self.carried_up(w.span, up);
+    }
+
+    /// Keeps the fixes carried into the value at `value` ([`Self::carried`]), which a binding
+    /// binds to the name of the binder `id`, for the uses of the name ([`Self::carried_use`]):
+    /// `2r^k` in `y = 2^k` gives `y` the type rat, which `y + n` must take too. A binding of a
+    /// value no fix changes leaves the name none, also where an earlier check of the same
+    /// binding did. Nothing while a fix is tried, which carries nothing.
+    ///
+    /// Complexity tradeoff: the naive way checks the definition again with each fix written
+    /// in, O(program) per fix. Used: an index from the binder to the fixes, which each use
+    /// reads ([`Self::carried_use`]), O(fixes) per use, so O(uses * fixes) in all.
+    fn carried_bound(&mut self, id: usize, value: Span) {
+        if self.trying {
+            return;
+        }
+        match self.carried.remove(&value) {
+            Some(cs) => self.bound_carried.insert(id, cs),
+            None => self.bound_carried.remove(&id),
+        };
+    }
+
+    /// Carries the fixes bound to the name used at `span` ([`Self::carried_bound`]) into the
+    /// construct the use is an argument of, as the fixes of the argument, each marked as a
+    /// name's ([`Fixes::at_use`]) so that a construct reached through two uses checks it once
+    /// with both ([`Self::shared_settled`]). O(fixes). A use outside every construct, as
+    /// `return y`, takes them nowhere: the fix is not checked there.
+    fn carried_use(&mut self, span: Span) {
+        if self.trying {
+            return;
+        }
+        let bound = match self.t.res.uses.get(&span) {
+            Some(Ref::Bound(ids)) if ids.len() == 1 => self.bound_carried.get(&ids[0]),
+            _ => None,
+        };
+        match bound {
+            Some(cs) => {
+                let cs = (cs.iter()).map(|c| Carry {
+                    ty: c.ty.clone(),
+                    fixes: c.fixes.at_use(),
+                });
+                self.carried.insert(span, cs.collect());
+            }
+            None => {
+                self.carried.remove(&span);
+            }
+        }
+    }
+
+    /// Settles the fixes a name carried to its uses ([`Self::bound_carried`]) that reach the
+    /// construct `w` through more than one argument, among the fixes `carried` into its
+    /// arguments, each by the index of the argument whose type they change, as `2r^k` bound
+    /// to `y` reaches `y * y` through both. Such a fix is one fix, which gives each of those
+    /// arguments its type at once: the construct is checked once with all of them given
+    /// their types, never with one alone, which would drop `2r^k` from `y * y` as `rat * int`.
+    /// It is kept, and carried on where it changes the construct's type `t`, where that check
+    /// adds no error but those the construct's own check `found`, each inside an argument it
+    /// does not give a type (`ats`, [`arg_holding`]); else dropped. The fixes that give the
+    /// same arguments their types are checked together. Gives back the other fixes.
+    ///
+    /// Complexity tradeoff: the naive way, testing each fix of each argument against the
+    /// fixes of every other argument, costs their product, quadratic in a call of many
+    /// arguments each a use of its own name. Used: the fixes a name carried in every carry
+    /// but the one with the most, each looked up in that one and indexed by its serial, O(1)
+    /// expected per fix ([`Fixes::named`]), and each shared one taken out of its carries in
+    /// O(1) ([`Fixes::take`]): O(those fixes) per construct, besides one check of the
+    /// construct per set of arguments shared. A construct where no argument holds such a fix,
+    /// which is every construct of a program with no name bound to a rejected value, walks
+    /// none. Carries of one type join smaller into larger ([`Fixes::join`]); carries of
+    /// different types are walked once at each construct they reach, which already checks the
+    /// construct once per carry ([`Self::carried_alone`]).
+    fn shared_settled(
+        &mut self,
+        w: &Written<'a>,
+        t: &Ty,
+        (found, ats): (&HashSet<Span>, &[(Span, usize)]),
+        mut carried: Vec<(usize, Carry)>,
+        up: &mut HashMap<Ty, Fixes>,
+    ) -> Vec<(usize, Carry)> {
+        let Some(most) = (0..carried.len()).max_by_key(|&k| carried[k].1.fixes.named.len()) else {
+            return carried;
+        };
+        // The carries holding each fix a name carried, from every carry but the one with the
+        // most, which is looked up.
+        let mut held: HashMap<usize, Vec<usize>> = HashMap::new();
+        for (k, (_, c)) in carried.iter().enumerate() {
+            if k != most {
+                for &s in c.fixes.named.keys() {
+                    held.entry(s).or_default().push(k);
+                }
+            }
+        }
+        // The fixes shared, by the carries holding them, in the order of the carries.
+        let mut shared: HashMap<Vec<usize>, Vec<usize>> = HashMap::new();
+        for (s, mut ks) in held {
+            if carried[most].1.fixes.named.contains_key(&s) {
+                ks.push(most);
+            }
+            if ks.len() > 1 {
+                ks.sort_unstable();
+                shared.entry(ks).or_default().push(s);
+            }
+        }
+        for (ks, serials) in shared {
+            // The copies of a fix are one fix: the first is kept.
+            let mut fixes = Fixes::default();
+            for s in serials {
+                let mut first = None;
+                for &k in &ks {
+                    let p = carried[k].1.fixes.take(s);
+                    first = first.or(p);
+                }
+                fixes.push_named(first.expect("a fix shared is held"));
+            }
+            let round: Vec<(usize, &Ty)> = (ks.iter())
+                .map(|&k| (carried[k].0, &carried[k].1.ty))
+                .collect();
+            let (ty, needs) = self.carried_check(w, &round);
+            let given = |j: usize| round.iter().any(|&(i, _)| i == j);
+            let apart =
+                |s: &Span| found.contains(s) && arg_holding(ats, *s).is_some_and(|j| !given(j));
+            match needs.is_some_and(|needs| needs.iter().all(apart)) {
+                true if ty != *t => carry_joined(up, ty, fixes),
+                true => {}
+                false => fixes.list.iter().for_each(|p| self.fix_dropped(p)),
+            }
+        }
+        carried.retain(|(_, c)| !c.fixes.list.is_empty());
+        carried
     }
 
     /// The construct `w` checked with each argument `i` of `round` given the type `ty` its
@@ -10981,7 +11121,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         found: &HashSet<Span>,
         ats: &[(Span, usize)],
         round: Vec<(usize, Carry)>,
-        up: &mut HashMap<Ty, Vec<Pending>>,
+        up: &mut HashMap<Ty, Fixes>,
     ) -> Vec<(usize, Carry)> {
         let Construct::Call(what, sig) = &w.form else {
             return round;
@@ -11012,7 +11152,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         for ((i, c), takes) in round.into_iter().zip(takes) {
             match takes {
                 true => kept.push((i, c)),
-                false => c.fixes.iter().for_each(|p| self.fix_dropped(p)),
+                false => c.fixes.list.iter().for_each(|p| self.fix_dropped(p)),
             }
         }
         let tys: Vec<(usize, &Ty)> = kept.iter().map(|(i, c)| (*i, &c.ty)).collect();
@@ -11033,7 +11173,7 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// The fixes `up` by the type they give the construct at `span`, carried to the construct
     /// it is an argument of ([`Self::carried`]).
-    fn carried_up(&mut self, span: Span, up: HashMap<Ty, Vec<Pending>>) {
+    fn carried_up(&mut self, span: Span, up: HashMap<Ty, Fixes>) {
         if !up.is_empty() {
             let up = up.into_iter().map(|(ty, fixes)| Carry { ty, fixes });
             self.carried.insert(span, up.collect());
@@ -11752,13 +11892,22 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// or a repair is being tried.
     fn note_offered(&mut self, note: &Note, got: Option<(Ty, Vec<Span>)>) {
         if let (false, Some((ty, needs))) = (self.trying, got) {
-            self.pending_fixes.push(Pending {
-                id: self.next_found,
-                offer: Offer::Note(note.span, note.text.clone()),
-                needs,
-                ty,
-            });
+            self.pend(Offer::Note(note.span, note.text.clone()), needs, ty);
         }
+    }
+
+    /// Keeps the fix `offer` pending for the rejection about to be found ([`Pending`]), with
+    /// the type `ty` it gives the construct being checked and the errors `needs` it leaves
+    /// there, under a serial of its own.
+    fn pend(&mut self, offer: Offer, needs: Vec<Span>, ty: Ty) {
+        self.pending_fixes.push(Pending {
+            id: self.next_found,
+            serial: self.next_fix,
+            offer,
+            needs,
+            ty,
+        });
+        self.next_fix += 1;
     }
 
     /// `m`'s fixes, for a rejection at `span`, each checked as written: where the rejection
@@ -11816,12 +11965,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let apart = |s: &Span| lies_in(&others, *s);
                     let keep = needs.as_ref().is_some_and(|n| n.iter().all(apart));
                     if keep {
-                        self.pending_fixes.push(Pending {
-                            id: self.next_found,
-                            offer: Offer::Edits(fix.edits.clone()),
-                            needs: needs.unwrap_or_default(),
-                            ty,
-                        });
+                        let needs = needs.unwrap_or_default();
+                        self.pend(Offer::Edits(fix.edits.clone()), needs, ty);
                     }
                     keep
                 }
@@ -15532,14 +15677,10 @@ enum Unordered {
 }
 
 /// Joins the fixes `fixes` to those of `up` that give a construct the type `ty` ([`Carry`]),
-/// the smaller group appended to the larger, so a fix moves O(log fixes) times however many
-/// joins it goes through.
-fn carry_joined(up: &mut HashMap<Ty, Vec<Pending>>, ty: Ty, mut fixes: Vec<Pending>) {
-    let group = up.entry(ty).or_default();
-    if group.len() < fixes.len() {
-        std::mem::swap(group, &mut fixes);
-    }
-    group.append(&mut fixes);
+/// the smaller group appended to the larger ([`Fixes::join`]), so a fix moves O(log fixes)
+/// times however many joins it goes through.
+fn carry_joined(up: &mut HashMap<Ty, Fixes>, ty: Ty, fixes: Fixes) {
+    up.entry(ty).or_default().join(fixes);
 }
 
 /// The edits `edits` sorted by where they start, and then by where they end, as a corrected
