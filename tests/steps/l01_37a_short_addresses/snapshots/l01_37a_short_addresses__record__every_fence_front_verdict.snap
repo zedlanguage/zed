@@ -19,7 +19,7 @@ DESIGN.md [sec:codecs] 4: rejected, 5 diagnostics, 961fc5579eca016f
 DESIGN.md [sec:codecs] 5: rejected, 2 diagnostics, b1bdddee9c62d13b
 DESIGN.md [sec:codecs] 6: rejected, 2 diagnostics, 048542048cffd770
 DESIGN.md [sec:codecs] 7: rejected, 3 diagnostics, d81c785a8fe8cc2d
-DESIGN.md [sec:codecs] 8: rejected, 6 diagnostics, 8cdb1027b1f2e267
+DESIGN.md [sec:codecs] 8: rejected, 5 diagnostics, 870792c076f2277d
 DESIGN.md [sec:level_names] 1: rejected, 3 diagnostics, 37c7baea14bb452e
 DESIGN.md [sec:level_names] 2: rejected, 2 diagnostics, d27a5da859b74f8d
 DESIGN.md [sec:level_names] 3: rejected, 3 diagnostics, 5c7d75e013217dc8
@@ -140,7 +140,7 @@ EXAMPLES.md [16. Generics and interfaces] 4: rejected, 2 diagnostics, 6f1d79c7a9
 EXAMPLES.md [16. Generics and interfaces] 5: rejected, 4 diagnostics, 6ea88d1df0326f01
 EXAMPLES.md [17. Modules] 1: rejected, 2 diagnostics, dd1dffa437d7fdee
 EXAMPLES.md [17. Modules] 2: rejected, 2 diagnostics, 743051ae770129c8
-EXAMPLES.md [18. Files, stores, and the world] 1: rejected, 2 diagnostics, 60d4a96ac2a83307
+EXAMPLES.md [18. Files, stores, and the world] 1: rejected, 1 diagnostics, 3a952f397beaa091
 EXAMPLES.md [18. Files, stores, and the world] 2: rejected, 1 diagnostics, ef8d4e6654a0d5e4
 EXAMPLES.md [18. Files, stores, and the world] 3: rejected, 1 diagnostics, bed017f1d0c4c32e
 EXAMPLES.md [18. Files, stores, and the world] 4: rejected, 1 diagnostics, e408090f2510ac84
