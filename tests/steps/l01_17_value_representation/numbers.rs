@@ -1,6 +1,6 @@
 //! Unbounded integers and exact rationals, from literals through arithmetic.
 
-use zed_tests::step_helpers::l01_16_elaboration::{errors, term, value};
+use zed_tests::step_helpers::l01_16_elaboration::{elab, errors, term, value};
 
 #[test]
 fn integers_widen_past_64_bits_and_narrow_back() {
@@ -84,11 +84,17 @@ fn rational_division_by_zero_is_an_atom() {
 
 #[test]
 fn numbers_of_different_kinds_do_not_mix() {
-    // Values of two kinds do not mix; the checker finds it before anything runs.
+    // Values of two kinds do not mix; the checker finds it before anything runs. `x` holds
+    // only `1r`, which `f64` converts exactly, so `f64(x)` narrows nothing and is offered
+    // (DESIGN sec:diagnostics, "A repair never narrows a type"; item CAST-literal-exact).
     assert_eq!(
         errors("x = 1r;\na = x + f64(1);\n"),
-        ["`+` does not take (1r, f64): no arrow of `+` takes these types. [x + f64(1)]"]
+        [
+            "`+` does not take (1r, f64): no arrow of `+` takes these types. Try `f64(x) + \
+             f64(1)` instead. [x + f64(1)]"
+        ]
     );
+    assert!(elab("x = 1r;\na = f64(x) + f64(1);\n").is_ok());
     // A name bound to an integer literal is an `int`, and does not mix with a `rat`; the
     // literal whose suffix forces the `rat` is named, with the line rewritten without it
     // (DESIGN sec:diagnostics, "A short headline").
