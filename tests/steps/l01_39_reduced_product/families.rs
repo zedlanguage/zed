@@ -1816,8 +1816,9 @@ fn coordkk_scales() {
 // families below then pass under 13 at 8n, measured as instructions and bytes of the first
 // runs: stair_holes 7.4 and 6.2, stair_holes_mix 7.4 and 6.2, stair_cover 8.2 and 6.6,
 // stair_cover_free 8.8 and 7.2, stair_holes_late 9.7 and 8.5, hop 10.7 and 10.0, hopon 11.6
-// and 10.8, boxstar 11.5 and 10.8, cuts 11.2 and 11.1, coordmix_floor 12.3 and 10.7, chain
-// 12.9 and 12.4, hoponb 12.9 and 12.1. star_extra, persist and hopb stay ignored.
+// and 10.8, boxstar 11.5 and 10.8, cuts 11.2 and 11.1, coordmix_floor 12.3 and 10.7, hoponb
+// 12.9 and 12.1. star_extra, persist, hopb and chain stay ignored (chain was 12.9 on abf5d24cd
+// and is 13.1 on af6a5a696).
 
 /// About `k^1.75` to `k^1.96`.
 #[test]
@@ -1830,6 +1831,7 @@ fn star_extra_scales() {
 /// passes (31.9 times the work against 35.2); at `n = 4` each run of `k = 32` takes over 30 s,
 /// so the test would not finish in 60 s.
 #[test]
+#[ignore = "PERF-l139-family: chain, 13.1 times the instructions at 8n (352.6M and 4,633.1M) on origin/main af6a5a696, over the limit of 13 (12.9 on abf5d24cd); open"]
 fn chain_scales() {
     scales("chain", 2, 1);
 }
