@@ -221,7 +221,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   3 | «import» geometry . shapes . { area , Rect } ;
 == DESIGN.md [sec:facets] 1 L20
   1 | «type» Nonzero = Utf8String «matching» «grammar» { str["0"] * ( str["1"] | str["2"] | str["3"] | str["4"] | str["5"] | str["6"] | str["7"] | str["8"] | str["9"] ) digit * } ;
-  2 | «type» UnitName = Utf8String «matching» «grammar» { alpha ( alpha | str["_"] ) * | str["°"] alpha * | str["%"] | str["′"] | str["″"] | str["'"] | str["\""] } ;
+  2 | «type» UnitName = Utf8String «matching» «grammar» { alpha ( alpha | digit | str["_"] ) * | str["°"] alpha * | str["%"] | str["′"] | str["″"] | str["'"] | str["\""] } ;
   3 | «type» UnitKind = Utf8String «matching» «grammar» { str["#"] alpha ( alpha | digit | str["_"] ) * } ;
   4 | «type» UnitPower = Utf8String «matching» «grammar» { str["-"] ? digit + | str["("] str["-"] ? digit + str["/"] Nonzero str[")"] } ;
   5 | «type» UnitFactor = Utf8String «matching» «grammar» { UnitName ( str["^"] UnitPower ) ? } ;
@@ -274,6 +274,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  13 | nfdLong = s :: nfd :: len ;
  14 | first = s :: u8 [ 0₍10₎ ] ;
  15 | small = s :: u8 :: len < ( 1₍10₎ «with» units ( str["kB"] ) ) ;
+ 16 | utf16Len = s :: chars :: len ;
 == DESIGN.md [sec:facets] 4 L12
   1 | force = 3.0f64 «with» units ( str["N"] ) ;
   2 | arm = 2.0f64 «with» units ( str["m"] ) ;

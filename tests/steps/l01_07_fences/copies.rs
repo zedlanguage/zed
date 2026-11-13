@@ -78,6 +78,35 @@ fn expected_marks() {
     insta::assert_snapshot!(marks_by_key(&fences::all()));
 }
 
+/// `char` is not a unit name (UNITS-char16): a fence writes `units("char")` or `units("chars")`
+/// only on a commented ✗ line, and some such line offers both units a reader may mean,
+/// `units("char16")` and `units("codepoint")`.
+#[test]
+fn char_is_a_unit_only_on_a_rejected_line() {
+    let mut offered = 0;
+    for f in fences::all() {
+        let variants = marks(&f.text).variants;
+        for (k, line) in f.text.split('\n').enumerate() {
+            if !(line.contains(r#"units("char")"#) || line.contains(r#"units("chars")"#)) {
+                continue;
+            }
+            assert!(
+                variants.contains(&(k + 1)),
+                "{} line {}: {line}",
+                f.at,
+                k + 1
+            );
+            if line.contains(r#"units("char16")"#) && line.contains(r#"units("codepoint")"#) {
+                offered += 1;
+            }
+        }
+    }
+    assert!(
+        offered >= 1,
+        "no ✗ line offers char16 and codepoint for char"
+    );
+}
+
 #[test]
 fn every_commented_variant_has_exactly_one_fixture() {
     let wanted: Vec<String> = fences::all()

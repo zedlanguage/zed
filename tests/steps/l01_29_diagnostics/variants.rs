@@ -166,6 +166,15 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
                 zed_tests::not_yet!("the reduction `with units(\"GiB\")`")
             ),
         ),
+        // `char` is not a unit; `char16` and `codepoint` are offered (UNITS-char16).
+        // Plan row UNITS-info-prelude moves this pin to the full rejection text.
+        (
+            "char-is-not-a-unit",
+            format!(
+                "2: {}",
+                zed_tests::not_yet!("the reduction `with units(\"GiB\")`")
+            ),
+        ),
         // The comparisons across units of sec:facets (plan row UNITS-compare).
         (
             "unit-comparison-sum-still-strict",
