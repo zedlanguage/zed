@@ -1527,8 +1527,41 @@ impl Type {
 
     /// The union of `ts`, joined in pairs: `k` tuple or morphism types, each ordered after the
     /// last in the diagrams, cost `O(k log k)` nodes joined this way and `O(k²)` one at a time.
+    /// The types of atoms alone (no name holding every payload) are first joined into one map
+    /// of names: the largest one's, shared as [`Atoms::zip`] shares it, with the others' names
+    /// added in turn, so that a node is copied once and then changed in place.
+    // Complexity tradeoff: in pairs, the atoms of `k` such types are added to a map shared
+    // with an operand, copying a path each time, about `log k` times each, so `O(k log² k)`
+    // steps, each copying a node; into one map, each once, `O(k log k)`. The union of a
+    // finite set's `k` atom literals (`Product::reduce_domains`) took the larger. A fresh map
+    // in place of the largest operand's would copy every name of a union of a large type with
+    // a small one, quadratic in space over a chain of such unions
+    // (`l01_23_subtyping::rec::recursive_definitions_scale`: 32.2 times the bytes from 100 to
+    // 800 definitions). The maps are imbl B-trees, persistent by path copying (Driscoll,
+    // Sarnak, Sleator and Tarjan, "Making data structures persistent", JCSS 38(1), 1989): an
+    // insert copies the nodes on its path only while another map shares them. Measured by
+    // `l01_27_absences::scaling::the_repairs_for_a_family_of_many_atoms_scale`: 9.06 times the
+    // instructions from 1000 to 8000 atoms joined in pairs, 8.67 now, with 17% and 20% fewer
+    // instructions at the two sizes.
     pub fn union_all(ts: impl IntoIterator<Item = Type>) -> Type {
-        Type::pairwise(ts, Type::empty(), |a, b| a | b)
+        let (atoms, mut rest): (Vec<Type>, Vec<Type>) = ts
+            .into_iter()
+            .partition(|t| t.atoms_only() && !t.p().atoms.cofinite);
+        if atoms.len() < 2 {
+            rest.extend(atoms);
+        } else {
+            let largest = (0..atoms.len())
+                .max_by_key(|&i| atoms[i].p().atoms.names.len())
+                .expect("two at least");
+            let mut joined = atoms[largest].p().atoms.clone();
+            for (i, t) in atoms.iter().enumerate() {
+                if i != largest {
+                    joined.join(&t.p().atoms);
+                }
+            }
+            rest.push(Type::with(|p| p.atoms = joined));
+        }
+        Type::pairwise(rest, Type::empty(), |a, b| a | b)
     }
 
     /// The intersection of `ts`, joined in pairs as in [`Type::union_all`].
@@ -2734,6 +2767,17 @@ impl Atoms {
             out.set(n, large.get(n).zip(p, op));
         }
         out
+    }
+
+    /// Joins `other` into `self` in place, both listing every name they hold (neither
+    /// cofinite): `O(s log l)` for `other`'s `s` names and the result's `l`. A node `self`
+    /// shares with another map is copied the first time it changes, and then changed in place.
+    fn join(&mut self, other: &Atoms) {
+        debug_assert!(!self.cofinite && !other.cofinite);
+        for (n, p) in &other.names {
+            let joined = self.get(n).zip(p, Op::Or);
+            self.set(n, joined);
+        }
     }
 
     fn not(&self) -> Atoms {

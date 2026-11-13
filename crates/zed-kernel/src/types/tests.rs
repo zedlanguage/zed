@@ -462,3 +462,36 @@ fn colliding_presentation_hashes_keep_named_graphs_apart() {
     }
     assert!(collisions > 0, "257 graphs must collide in eight bits");
 }
+
+/// `union_all` joins the types of atoms alone into one map before the pairs; the union must be
+/// the one a fold of `|` gives, for every subset, in both orders, of bare atoms, payloads of one
+/// name joined, a name repeated, a complement (cofinite, so joined in pairs), a type of atoms
+/// and a tuple, and other kinds beside them.
+#[test]
+fn union_all_of_atom_types_is_the_union_joined_one_at_a_time() {
+    let payload = |t: Type| Type::tuple(vec![t]);
+    let ts = [
+        Type::atom("a"),
+        Type::atom_with("a", &payload(Type::int())),
+        Type::atom_with("a", &payload(Type::bool())),
+        Type::atom("b"),
+        Type::atom("b"),
+        !&Type::atom("c"),
+        &Type::atom("d") | &payload(Type::int()),
+        Type::bool(),
+        Type::atom_with("e", &Type::top()),
+    ];
+    for mask in 0..1u32 << ts.len() {
+        let chosen: Vec<Type> = (0..ts.len())
+            .filter(|i| mask & (1 << i) != 0)
+            .map(|i| ts[i].clone())
+            .collect();
+        let fold = chosen.iter().fold(Type::empty(), |u, t| &u | t);
+        assert_eq!(Type::union_all(chosen.clone()), fold, "mask {mask:#b}");
+        assert_eq!(
+            Type::union_all(chosen.into_iter().rev()),
+            fold,
+            "mask {mask:#b}"
+        );
+    }
+}

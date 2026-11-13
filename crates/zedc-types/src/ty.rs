@@ -3269,6 +3269,8 @@ impl Piece {
         // operator of a chain `#e0 + #e1 + …`, whose loose atoms grow by one at each, O(n²) in
         // all (2.9·10^9 instructions at 8000 atoms). The parts answer in O(1) when they list
         // atoms alone; the check runs only for a recursive type or parts listing another kind.
+        // Measured by `l01_27_absences::scaling::a_chain_of_many_failure_atoms_scales`: 11.5
+        // times the instructions from 1000 to 8000 atoms before, 8.4 times now.
         matches!(self, Piece::Set(s) if s.atoms_only() || s.subtype(&atoms()))
     }
 
@@ -8113,7 +8115,9 @@ impl<'t> ArrowIndex<'t> {
         // arrow (3200 arrows `(x: #ai | #a(i+1)) -> …` covering `(x: #a0 | … | #a3200)`:
         // 2.5·10^9 instructions). Here each key's list is walked against the arrows from the
         // shorter side, counting the keys each arrow offers at each parameter: O(Σ min(l·log c,
-        // c·log l) + c·p) for p parameters with a key, at most the naive cost.
+        // c·log l) + c·p) for p parameters with a key, at most the naive cost. Measured by
+        // `l01_26_type_resolution::scaling::many_arrows_whose_results_meet_only_on_different_sets_are_refused_in_linear_time`:
+        // 12.3 times the instructions from 400 to 3200 arrows before, 8.3 times now.
         let mut params: Vec<usize> = need.iter().map(|e| e.0).collect();
         params.sort_unstable();
         params.dedup();
