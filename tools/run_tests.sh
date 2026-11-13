@@ -528,12 +528,20 @@ fi
 # (59 to 61 s each beside the other pieces at load 52) are each four parts, each a piece, and
 # the two tests of a menu's cost in a larger program (36 s each alone at load 46) check programs
 # half as large (2026-11-12, TESTS-l01_29-split).
+# l01_26a_generic_literals took 42 s whole at load 50; each module (one per test file, so a new
+# file is a piece of its own) and each test of mod.rs is a piece. The slowest pieces are scaling
+# and lit_branch_ops, 24 to 50 s and 26 to 45 s at load 35 to 51. libtest runs a module's tests on
+# parallel threads, so each takes about as long as its slowest test: scaling's test of many calls
+# given divisions took 29 to 39 s alone at load 40 to 48. A piece per test of the two modules
+# was no faster: in alternate runs at load 39 to 49 the module pieces took 24 and 28 s, the
+# piece per test 34 and 32 s at most (2026-11-13, TESTS-l01_26a-split).
 split="
   l01_08_parser l01_16_elaboration l01_16_elaboration::scaling
   l01_23_subtyping l01_23_subtyping::scaling l01_23_subtyping::r6_reduction
   l01_25_preimage_catalog l01_25_preimage_catalog::s22
   l01_25_preimage_catalog::exact_oracle
   l01_26_type_resolution l01_26_type_resolution::deep_ops l01_26_type_resolution::op_table
+  l01_26a_generic_literals
   l01_28_staging l01_28_staging::scaling l01_28_staging::dag
   l01_29_diagnostics l01_29_diagnostics::casts l01_29_diagnostics::offered_repairs
   l01_29_diagnostics::offered_repairs::every_offered_repair_inside_a_sum_checks_as_written
