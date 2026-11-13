@@ -273,7 +273,23 @@ fn a_relation_between_two_operands_of_type_variables_is_rejected_at_the_use() {
     ] {
         let out = rejected(&format!("{body}\n"));
         assert!(out.contains(msg), "{body}: {out}");
-        assert!(out.contains("declare the type of"), "{body}: {out}");
+        // A test of a width or of `k` against a known width is offered with the parameter
+        // declared `int`; no test holds `x` below `2 ^ w` for a `w` of no one value.
+        let headline = out.lines().next().unwrap_or("");
+        match body.contains("rotl") {
+            true => {
+                assert!(!headline.contains("Try"), "{body}: {out}");
+                assert!(
+                    out.contains("repair: pass as `x` a value in int[0..<2^width]"),
+                    "{body}: {out}"
+                );
+            }
+            false => assert!(
+                headline.ends_with("instead, with each parameter in `w` declared `int`.")
+                    || headline.ends_with("instead, with each parameter in `k` declared `int`."),
+                "{body}: {out}"
+            ),
+        }
     }
 }
 

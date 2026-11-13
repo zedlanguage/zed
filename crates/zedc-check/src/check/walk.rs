@@ -6215,7 +6215,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             NeedKind::InDomain { .. } => Ty::empty(),
             NeedKind::Into { what, ty } => {
-                self.into(&on, ty, what, span);
+                let from = self.call_frames.last().and_then(|f| f.named(&n.on));
+                self.into(&on, ty, what, from, span);
                 Ty::empty()
             }
             NeedKind::Payload { atom, slot } => self.payload(&on, atom, slot, span),
@@ -6419,23 +6420,50 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Checks that a value of `on` may be passed, by `what` at `span`, at a parameter of the
-    /// closed type `ty`.
-    fn into(&mut self, on: &Ty, ty: &Ty, what: &str, span: Span) {
+    /// closed type `ty`. `from` is the argument of the call being checked that the value came
+    /// from, with the name of the parameter that takes it: the `is` repair tests it, in the
+    /// program's code, bound first to that name where it is not a name a test narrows
+    /// ([`test_repair`], MSG-is-repair-v).
+    fn into(
+        &mut self,
+        on: &Ty,
+        ty: &Ty,
+        what: &str,
+        from: Option<(Forwarded<'a>, Arc<str>)>,
+        span: Span,
+    ) {
         for piece in on.pieces() {
             let ok = self.piece_into(&piece, ty, what, span);
             if !ok {
                 let p = self.show(&piece.ty());
                 let why = on.of_piece(&piece).refused(ty);
+                let held_fn = ty.held_function().is_some();
+                let keeps = on.meets(ty);
                 // After `is` a type stands as a union operand: a function type is parenthesized.
                 let is_ty = self.text_in_union(ty);
                 let ty = self.text(ty);
-                let menu = [
-                    format!("repair: pass {what} a value of {ty}"),
-                    format!(
-                        "repair: test the value with `is` first, as `if v is {is_ty} {{ … }}`{DECLARE}, \
-                         or handle the values that are not {ty} with `else` or `match`"
-                    ),
-                ];
+                let test = (from.as_ref()).and_then(|(f, p)| {
+                    let code = self.code(Some(f.at))?;
+                    let narrows = f.expr.is_some_and(|e| self.tested(e).is_some());
+                    let call = self.call_parts(f.call, f.at);
+                    let is = |a: &str| format!("{a} is {is_ty}");
+                    Some(test_repair(p, &is, (code, narrows), call))
+                });
+                // `is` cannot test a type that holds a function, which shows no type at run
+                // time (the elaborator refuses it), and a test that no value of `on` passes
+                // leaves a branch that never runs: no test is offered for either.
+                let test = match test {
+                    _ if held_fn || !keeps => None,
+                    Some(r) => Some(format!("{}{DECLARE}", repair_note(&r))),
+                    None => Some(format!(
+                        "repair: test the value with `is {is_ty}` first{DECLARE}"
+                    )),
+                };
+                let mut menu = vec![format!("repair: pass {what} a value of {ty}")];
+                menu.extend(test);
+                menu.push(format!(
+                    "repair: handle the values that are not {ty} with `else` or `match`"
+                ));
                 self.error_offering(
                     span,
                     format!("{what} does not take {p}, only {ty}{why}"),
@@ -7138,8 +7166,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut notes = self.derive(&[span]);
         notes.push(Note { span, text: why });
         let code = self.code(Some(span));
+        let within = Within::of(d);
         let first = code.map(|c| {
-            let (test, _) = test_repair(&d.name, d, (c, false), None);
+            let (test, _) = test_repair(&d.name, &|a| within.test(a), (c, false), None);
             let tail = format!(
                 ", with each parameter in `{}` declared `int` and `{}` passed inside the branch",
                 unparen(c),
@@ -7292,7 +7321,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         let mut notes = chain();
                         notes.push(outside(domain, span));
                         let (first, repairs) =
-                            passed_repairs(&p, domain, None, None, false, None, span);
+                            passed_repairs(&p, &Within::of(domain), None, None, false, None, span);
                         notes.extend(repairs);
                         let piece = format!("{p} : {shown}");
                         let message = domain_message(&takes, &piece, first.as_ref());
@@ -7310,8 +7339,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let arg =
                         Some(code).map(|c| (c, f.expr.is_some_and(|e| self.tested(e).is_some())));
                     let call = self.call_parts(f.call, f.at);
-                    let (first, repairs) =
-                        passed_repairs(&p, domain, arg, call, outside_all, Some(code), f.call);
+                    let (first, repairs) = passed_repairs(
+                        &p,
+                        &Within::of(domain),
+                        arg,
+                        call,
+                        outside_all,
+                        Some(code),
+                        f.call,
+                    );
                     notes.extend(repairs);
                     let piece = self.annotated(f.call, f.at, &shown);
                     self.error_with(span, domain_message(&takes, &piece, first.as_ref()), notes);
@@ -7371,7 +7407,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             let call = self.call_parts(span, at);
             notes.extend(chain());
             notes.push(outside(domain, span));
-            let (first, repairs) = passed_repairs(&p, domain, arg, call, outside_all, None, span);
+            let (first, repairs) =
+                passed_repairs(&p, &Within::of(domain), arg, call, outside_all, None, span);
             notes.extend(repairs);
             let piece = self.annotated(span, at, shown);
             self.error_with(span, domain_message(&takes, &piece, first.as_ref()), notes);
@@ -7392,6 +7429,33 @@ impl<'t, 'a> Ck<'t, 'a> {
             Some((_, before, after)) => format!("{before}{part}{after}"),
             None => part,
         }
+    }
+
+    /// The code at `span` with each of its parts `parts`, in order and apart, annotated with
+    /// its type, as `funnelShl(3, 5, n : int[0..9], width: w : int[0..8])`; the first part
+    /// alone annotated ([`Ck::annotated`]) where the checker lacks the code of one of them.
+    fn annotated_parts(&self, span: Span, parts: &[(Span, &str)]) -> String {
+        let whole = (self.t.text)
+            .zip(self.code(Some(span)))
+            .and_then(|(src, _)| {
+                let mut out = String::new();
+                let mut from = span.start;
+                for &(at, shown) in parts {
+                    if at.start < from || span.end < at.end {
+                        return None;
+                    }
+                    let c = self.code(Some(at))?;
+                    out.push_str(src.get(from..at.start)?);
+                    match c == shown {
+                        true => out.push_str(&format!("{c} : int")),
+                        false => out.push_str(&format!("{c} : {shown}")),
+                    }
+                    from = at.end;
+                }
+                out.push_str(src.get(from..span.end)?);
+                Some(out)
+            });
+        whole.unwrap_or_else(|| self.annotated(span, parts[0].0, parts[0].1))
     }
 
     /// The call at `span` as written, and its code before and after its argument at `at`.
@@ -8369,7 +8433,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `shr`, `int[0..<2^width]` for the operands read as `width` digits, `int[0..<width]`
     /// for the `k` of a funnel shift, and a multiple of 8 for the width of `byteSwap`. An operand
     /// is rejected when its int part is not shown to lie in the domain, from its listed values or
-    /// the interval of its expression, as `^`'s exponent is.
+    /// the interval of its expression, as `^`'s exponent is. Each rejection names the domain at
+    /// the smallest width, and repairs the operand with a test that keeps it there, or the width
+    /// with a test, or a literal width rewritten, that holds the other operands
+    /// (MSG-width-headline).
     fn bit_domains(&mut self, w: &str, p: Prim, slots: &[(Arg<'a>, &'a Expr)], span: Span) {
         let names = zed_kernel::bits::params(p);
         let shift = matches!(p, Prim::Shl | Prim::Shr);
@@ -8377,13 +8444,47 @@ impl<'t, 'a> Ck<'t, 'a> {
         let ranges: Vec<Option<IntRange>> =
             slots.iter().map(|(a, e)| self.int_range(a, e)).collect();
         let last = slots.len() - 1;
-        // The operands read as `width` digits, and the smallest width, if the width is of an
-        // int type and at least 0: a test that keeps such an operand at least 0 keeps it below
-        // `2 ^ w` too, so that the width check that follows takes it.
+        let has_width = zed_kernel::bits::has_width(p);
         let two_pow = zed_kernel::bits::below_two_pow_width(p);
+        let below_width = zed_kernel::bits::below_width(p);
+        // The smallest width, if the width is of an int type and at least 0: a test that keeps
+        // an operand below `2 ^ w`, or a `k` below `w`, keeps it there at every width.
         let smallest = match slots[last].0.ty.vars.is_empty() {
-            true => (ranges[last].as_ref()).and_then(|r| r.extreme(std::cmp::Ordering::Less)),
+            true => (ranges[last].as_ref())
+                .and_then(|r| r.extreme(std::cmp::Ordering::Less))
+                .filter(|s| s.surface_cmp(&Value::Int(0)).is_some_and(|o| o.is_ge())),
             false => None,
+        };
+        // The width, where it is one value: an operand's domain is then written and tested at
+        // it; else the domain is written at `width`, and only the width is tested.
+        let exact = (smallest.clone()).filter(|s| {
+            (ranges[last].as_ref())
+                .and_then(|r| r.extreme(std::cmp::Ordering::Greater))
+                .is_some_and(|h| h.surface_cmp(s).is_some_and(|o| o.is_eq()))
+        });
+        // The ints a test of the width keeps it in, so that it holds the other operands.
+        let width_within = (has_width.then(|| least_width(p, slots, &ranges)))
+            .flatten()
+            .map(|l| Within::width(p, l));
+        // The domain of operand `i` as a message writes it, and whether a test keeps the
+        // operand in it: one at an exact width, or the width's own, or `int[0..]`.
+        let within_of = |i: usize| -> (Within, bool) {
+            let range = |below| Within::Range { low: 0, below };
+            let nonempty = |s: &Value| s.surface_cmp(&Value::Int(1)).is_some_and(|o| o.is_ge());
+            if two_pow.contains(&i) {
+                let s = exact.clone();
+                (range(Some(Bound::TwoPow(s.clone()))), s.is_some())
+            } else if below_width == Some(i) {
+                let s = exact.clone().filter(nonempty);
+                (range(Some(Bound::Width(s.clone()))), s.is_some())
+            } else if has_width && i == last {
+                match &width_within {
+                    Some(wi) => (wi.clone(), true),
+                    None => (range(None), false),
+                }
+            } else {
+                (range(None), true)
+            }
         };
         let mut fine = true;
         for (i, (((a, e), r), name)) in slots.iter().zip(&ranges).zip(names).enumerate() {
@@ -8421,44 +8522,39 @@ impl<'t, 'a> Ck<'t, 'a> {
                      row of them"
                 ),
             });
-            // The test keeps an operand read as `width` digits below `2 ^ w` as well; none is
-            // offered where the width check would still refuse what it keeps: for such an
-            // operand under a width not shown to be at least 0, the `k` of a funnel shift, which
-            // lies below the width, and the width itself, which bounds the operands read as
-            // `width` digits and, for `byteSwap`, is a multiple of 8.
-            let below_two_pow = (smallest.as_ref())
-                .filter(|s| {
-                    two_pow.contains(&i) && s.surface_cmp(&Value::Int(0)).is_some_and(|o| o.is_ge())
-                })
-                .map(|s| Width(s.clone()));
-            let testable = (below_two_pow.is_some() || !two_pow.contains(&i))
-                && zed_kernel::bits::below_width(p) != Some(i)
-                && !(zed_kernel::bits::has_width(p) && i == last);
-            let d = IntDomain {
-                what: format!("`{w}` takes `{name}` in int[0..]").into(),
-                below_two_pow,
-                name: (*name).into(),
-            };
+            // No test is offered where the checks that follow would still refuse what it
+            // keeps: an operand bounded by a width not shown to be at least 0, and a width
+            // whose other operands have no largest value.
+            let (shown_within, testable) = within_of(i);
             let arg =
                 (self.code(Some(at)).filter(|_| testable)).map(|c| (c, self.tested(e).is_some()));
             let call = self.call_parts(span, at);
-            let outside_all = r.ints.meet(&at_least_zero()).is_empty();
-            let (first, repairs) = passed_repairs(name, &d, arg, call, outside_all, None, span);
+            let outside_all = shown_within.holds_none_of(r);
+            let (mut first, mut repairs) =
+                passed_repairs(name, &shown_within, arg, call, outside_all, None, span);
+            if has_width && i == last {
+                let rewrite =
+                    (width_within.as_ref()).and_then(|wi| self.width_rewrite(span, at, wi));
+                repairs.splice(first.is_some() as usize..first.is_some() as usize, {
+                    (rewrite.iter().map(repair_note)).map(|text| Note { span, text })
+                });
+                first = first.or(rewrite);
+            }
             notes.extend(repairs);
+            let takes = format!("`{w}` takes `{name}` {}", shown_within.takes());
             let piece = self.annotated(span, at, shown);
-            self.error_with(span, domain_message(&d.what, &piece, first.as_ref()), notes);
+            self.error_with(span, domain_message(&takes, &piece, first.as_ref()), notes);
         }
-        if !fine || !zed_kernel::bits::has_width(p) {
+        if !fine || !has_width {
             return;
         }
         // An operand of a type variable read as `width` digits, under a width of an int type,
         // takes the ints below `2 ^ w`, `w` the smallest width, as a need on its parameter.
         // The other relations to `width` are between two operands, which a need on one
         // parameter does not carry: an operand of a type variable in one is rejected here
-        // (CHK-need-bound).
-        let related = (two_pow.iter().copied())
-            .chain(zed_kernel::bits::below_width(p))
-            .chain([last]);
+        // (CHK-need-bound), with the test that holds the relation and each parameter it reads
+        // declared `int`.
+        let related = (two_pow.iter().copied()).chain(below_width).chain([last]);
         for i in related {
             let (a, e) = &slots[i];
             if a.ty.vars.is_empty() {
@@ -8479,36 +8575,42 @@ impl<'t, 'a> Ck<'t, 'a> {
                 text: format!("`{name}` is this operand, of no declared type"),
             }];
             self.derive_into(&[at], &mut notes);
-            notes.push(Note {
-                span: at,
-                text: format!(
-                    "repair: declare the type of `{name}` where it is bound, as \
-                     `{name}: int[0..<2^32]`"
-                ),
-            });
             let checks = match i == last {
                 true => "its operands".to_string(),
                 false => format!("`{name}`"),
             };
-            self.error_with(
+            notes.push(Note {
                 span,
-                format!(
-                    "`{w}` checks {checks} against `width`, and `{name}` has no declared type \
-                     here, so its values are whatever the caller passes; the checker does not \
-                     follow this check back to each caller, so it needs the type of `{name}` \
-                     declared"
+                text: format!(
+                    "`{w}` checks {checks} against `width`, and the checker does not follow a \
+                     check between two operands back to each caller, so the type of `{name}` \
+                     is needed here"
                 ),
-                notes,
-            );
+            });
+            let (shown_within, testable) = within_of(i);
+            let code = self.code(Some(at)).filter(|_| testable);
+            let arg = code.map(|c| (c, self.tested(e).is_some()));
+            let call = self.call_parts(span, at);
+            let (mut first, mut repairs) =
+                passed_repairs(name, &shown_within, arg, call, false, None, span);
+            // A test narrows only a name whose values are all ints.
+            if let (Some((test, tail)), Some(c)) = (&mut first, code) {
+                *tail = format!(", with each parameter in `{}` declared `int`", unparen(c));
+                repairs[0].text = repair_note(&(test.clone(), tail.clone()));
+            }
+            notes.extend(repairs);
+            let takes = format!("`{w}` takes `{name}` {}", shown_within.takes());
+            let piece = self.annotated(span, at, &self.show(&a.ty));
+            self.error_with(span, domain_message(&takes, &piece, first.as_ref()), notes);
             return;
         }
         let (wa, we) = &slots[last];
         let Some(rw) = &ranges[last] else {
             return;
         };
-        let width = (wa.at.unwrap_or(we.span), rw.shown.as_str());
+        let aw = wa.at.unwrap_or(we.span);
         if zed_kernel::bits::whole_bytes(p) && !whole_bytes(rw) {
-            let (aw, sw) = width;
+            let sw = rw.shown.as_str();
             let mut notes = vec![Note {
                 span: aw,
                 text: format!("`width` is this operand, {sw}"),
@@ -8516,51 +8618,137 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.derive_into(&[aw], &mut notes);
             notes.push(Note {
                 span,
-                text: "repair: pass a `width` that is a multiple of 8, such as 8, 16, 32 or 64"
-                    .to_string(),
+                text: format!("`{w}` works on whole bytes"),
             });
-            self.error_with(
-                span,
-                format!(
-                    "`{w}` takes `width` a multiple of 8, and this `width` is {sw}: `{w}` works on \
-                     whole bytes, and the checker found that this `width` may not be a whole \
-                     number of bytes"
-                ),
-                notes,
-            );
+            let within = width_within.unwrap_or(Within::Bytes(vec![8, 16, 32, 64]));
+            let arg = self.code(Some(aw)).map(|c| (c, self.tested(we).is_some()));
+            let call = self.call_parts(span, aw);
+            let outside_all = within.holds_none_of(rw);
+            let (first, mut repairs) =
+                passed_repairs("width", &within, arg, call, outside_all, None, span);
+            let rewrite = self.width_rewrite(span, aw, &within);
+            let at = first.is_some() as usize;
+            repairs.splice(at..at, {
+                (rewrite.iter().map(repair_note)).map(|text| Note { span, text })
+            });
+            notes.extend(repairs);
+            let takes = format!("`{w}` takes `width` {}", within.takes());
+            let piece = self.annotated(span, aw, sw);
+            let first = first.or(rewrite);
+            self.error_with(span, domain_message(&takes, &piece, first.as_ref()), notes);
             return;
         }
-        let smallest = rw.extreme(std::cmp::Ordering::Less);
+        let Some(s) = smallest else {
+            return;
+        };
         // An operand lies below `2 ^ width` when its largest value does below the smallest
         // width, and below `width` when its largest value is less than the smallest width.
-        for (i, two_pow) in zed_kernel::bits::below_two_pow_width(p)
-            .iter()
-            .map(|&i| (i, true))
-            .chain(zed_kernel::bits::below_width(p).map(|i| (i, false)))
-        {
+        let bounded = (two_pow.iter().map(|&i| (i, Bound::TwoPow(Some(s.clone())))))
+            .chain(below_width.map(|i| (i, Bound::Width(Some(s.clone())))));
+        for (i, bound) in bounded {
             let ((a, e), Some(r)) = (&slots[i], &ranges[i]) else {
                 continue;
             };
-            let below = r
-                .extreme(std::cmp::Ordering::Greater)
-                .zip(smallest.as_ref())
-                .is_some_and(|(h, l)| match two_pow {
-                    true => zed_kernel::bits::below_two_pow(&h, l),
-                    false => h
-                        .as_integer()
-                        .zip(l.as_integer())
-                        .is_some_and(|(h, l)| h < l),
-                });
+            let at_smallest = Within::Range {
+                low: 0,
+                below: Some(bound),
+            };
+            let below =
+                (r.extreme(std::cmp::Ordering::Greater)).is_some_and(|h| at_smallest.holds(&h));
             if !below {
-                let needs = if two_pow {
-                    "int[0..<2^width]"
-                } else {
-                    "int[0..<width]"
-                };
-                let operand = (a.at.unwrap_or(e.span), r.shown.as_str());
-                self.width_error(w, names[i], needs, operand, width, span);
+                let operand = (a.at.unwrap_or(e.span), *e, r);
+                let within = within_of(i);
+                self.width_error(
+                    w,
+                    names[i],
+                    within,
+                    operand,
+                    (aw, *we, rw),
+                    &width_within,
+                    span,
+                );
             }
         }
+    }
+
+    /// The error for the operand `name` of `w`, at `ax`, not shown to lie below the bound the
+    /// smallest width, at `aw`, sets it: each place with its expression and its ints. `within`
+    /// is its domain, at the width where the width is one value, else at `width`, and the flag
+    /// says that a test of the operand keeps it there. The repairs test the operand, test the
+    /// width or rewrite a literal width so that it holds the other operands, `width_within`,
+    /// and pass a value in `within`.
+    #[allow(clippy::too_many_arguments)]
+    fn width_error(
+        &mut self,
+        w: &str,
+        name: &str,
+        (within, testable): (Within, bool),
+        (ax, ex, rx): (Span, &'a Expr, &IntRange),
+        (aw, ew, rw): (Span, &'a Expr, &IntRange),
+        width_within: &Option<Within>,
+        span: Span,
+    ) {
+        let (sx, sw) = (rx.shown.as_str(), rw.shown.as_str());
+        let mut notes = vec![
+            Note {
+                span: ax,
+                text: format!("`{name}` is this operand, {sx}"),
+            },
+            Note {
+                span: aw,
+                text: format!("`width` is this operand, {sw}"),
+            },
+        ];
+        self.derive_into(&[ax, aw], &mut notes);
+        let arg =
+            (self.code(Some(ax)).filter(|_| testable)).map(|c| (c, self.tested(ex).is_some()));
+        let call = self.call_parts(span, ax);
+        let outside_all = within.holds_none_of(rx);
+        let (test, mut repairs) = passed_repairs(name, &within, arg, call, outside_all, None, span);
+        // The width that holds every other operand: a literal rewritten, else a test of it.
+        let widened = width_within.as_ref().and_then(|wi| {
+            self.width_rewrite(span, aw, wi).or_else(|| {
+                let arg = self.code(Some(aw)).map(|c| (c, self.tested(ew).is_some()));
+                let call = self.call_parts(span, aw);
+                let (t, _) =
+                    passed_repairs("width", wi, arg, call, wi.holds_none_of(rw), None, span);
+                t
+            })
+        });
+        let width_note = match &widened {
+            Some(r) => repair_note(r),
+            None => {
+                "repair: pass a larger `width`, if the operation is meant on a wider word".into()
+            }
+        };
+        let at = test.is_some() as usize;
+        repairs.insert(
+            at,
+            Note {
+                span,
+                text: width_note,
+            },
+        );
+        notes.extend(repairs);
+        let takes = format!("`{w}` takes `{name}` {}", within.takes());
+        let piece = match self.code(Some(aw)).is_some_and(int_literal) {
+            true => self.annotated(span, ax, sx),
+            false => self.annotated_parts(span, &[(ax, sx), (aw, sw)]),
+        };
+        let first = test.or(widened);
+        self.error_with(span, domain_message(&takes, &piece, first.as_ref()), notes);
+    }
+
+    /// The call at `span` with its width at `at`, an int literal, rewritten as the least width
+    /// `within` holds, as `byteSwap(x, width: 16)` for `width: 12`; none where the width is not
+    /// a literal.
+    fn width_rewrite(&self, span: Span, at: Span, within: &Within) -> Option<Repair> {
+        let code = self.code(Some(at))?;
+        if !int_literal(code.strip_prefix('-').unwrap_or(code)) {
+            return None;
+        }
+        let (_, before, after) = self.call_parts(span, at)?;
+        Some((format!("{before}{}{after}", within.least()), String::new()))
     }
 
     /// The integers an argument may be, when its type has an int part: an interval holding them,
@@ -11131,8 +11319,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 })
             })
             .collect();
+        let names = sig.params.iter().map(|p| p.name.clone()).collect();
         self.call_frames
-            .push(CallFrame::new(&arrow.params, forwarded));
+            .push(CallFrame::new(&arrow.params, forwarded, names));
         let mut left = self.replay(what, &sig.needs, &mut binds, defer, span);
         let frame = self.call_frames.pop();
         // Each bounded variable's binding is within its bound, and of one carrier, or of
@@ -11914,30 +12103,225 @@ fn outside(d: &IntDomain, span: Span) -> Note {
 /// A call's code as written, and its code before and after one argument.
 type Call<'s> = (&'s str, &'s str, &'s str);
 
-/// The repairs of an argument `p` that may lie outside the ints `d` its use needs, each in the
-/// program's code: `arg` is the argument's code, with whether it is a name a test narrows
-/// ([`Ck::tested`]), and `outside_all` says that no value of it lies in `d`, so that a test of
-/// it leaves nothing to pass. A name a test does not narrow, or an expression, is first bound
+/// The ints a test keeps an argument within, as a message writes them and as the program's code
+/// tests them: a comparison, never a refinement such as `is int[0..<2^8]`, which this zedc does
+/// not compile.
+#[derive(Clone)]
+enum Within {
+    /// The ints from `low`, and below `below` where it is given: `int[0..<2^8]`, tested as
+    /// `n >= 0 && n < 2^8`, or `int[3..]`, tested as `n >= 3`.
+    Range { low: i64, below: Option<Bound> },
+    /// The multiples of 8 a width of `byteSwap` takes, tested one by one, as
+    /// `w == 16 || w == 32 || w == 64`: the checker reads a multiple of 8 from listed values
+    /// only, and Zed has no remainder operator to test it with. In increasing order, never
+    /// empty.
+    Bytes(Vec<i64>),
+}
+
+/// The end of a [`Within::Range`] that no int it holds reaches, at the width `w`, or at the
+/// width written `width` where the call's width is not one known value: such a range is
+/// written, never tested, and holds no value the checker could show to lie in it.
+#[derive(Clone)]
+enum Bound {
+    /// `2 ^ w`, for an operand read as `w` binary digits.
+    TwoPow(Option<Value>),
+    /// `w` itself, for the `k` of a funnel shift of width `w`.
+    Width(Option<Value>),
+}
+
+impl std::fmt::Display for Bound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Bound::TwoPow(Some(w)) => write!(f, "2^{w}"),
+            Bound::TwoPow(None) => write!(f, "2^width"),
+            Bound::Width(Some(w)) => write!(f, "{w}"),
+            Bound::Width(None) => write!(f, "width"),
+        }
+    }
+}
+
+impl Within {
+    /// The ints of the domain `d`, as its test keeps them.
+    fn of(d: &IntDomain) -> Within {
+        Within::Range {
+            low: 0,
+            below: (d.below_two_pow.as_ref()).map(|w| Bound::TwoPow(Some(w.0.clone()))),
+        }
+    }
+
+    /// The widths of the operation `p` from `least`, the least width that holds its other
+    /// operands ([`least_width`]): for `byteSwap`, each of 8, 16, 32 and 64 from `least`, or
+    /// else the multiple of 8 next from it.
+    fn width(p: Prim, least: i64) -> Within {
+        if !zed_kernel::bits::whole_bytes(p) {
+            return Within::Range {
+                low: least,
+                below: None,
+            };
+        }
+        let listed: Vec<i64> = [8, 16, 32, 64]
+            .into_iter()
+            .filter(|&b| b >= least)
+            .collect();
+        match listed.is_empty() {
+            true => Within::Bytes(vec![(least + 7) / 8 * 8]),
+            false => Within::Bytes(listed),
+        }
+    }
+
+    /// The least int it holds: the width a literal width is rewritten as.
+    fn least(&self) -> i64 {
+        match self {
+            Within::Range { low, .. } => *low,
+            Within::Bytes(vs) => vs[0],
+        }
+    }
+
+    /// Whether it holds the int `v`.
+    fn holds(&self, v: &Value) -> bool {
+        let ge = |b: i64| (v.surface_cmp(&Value::Int(b))).is_some_and(|o| o.is_ge());
+        match self {
+            Within::Range { low, below } => {
+                ge(*low)
+                    && match below {
+                        None => true,
+                        Some(Bound::TwoPow(Some(w))) => zed_kernel::bits::below_two_pow(v, w),
+                        Some(Bound::Width(Some(w))) => v.surface_cmp(w).is_some_and(|o| o.is_lt()),
+                        Some(Bound::TwoPow(None) | Bound::Width(None)) => false,
+                    }
+            }
+            Within::Bytes(vs) => vs
+                .iter()
+                .any(|&b| v.surface_cmp(&Value::Int(b)).is_some_and(|o| o.is_eq())),
+        }
+    }
+
+    /// Whether it holds none of the ints of `r`, so that a test of the operand leaves nothing
+    /// to pass. A range holds none of an interval when the least int of the interval from its
+    /// `low` is not below its bound: one search of the pieces, O(log p) for p pieces, against
+    /// O(p) for testing each piece; listed values are each tested once, O(v), and the 4 widths
+    /// of `byteSwap` each searched for, O(log p).
+    fn holds_none_of(&self, r: &IntRange) -> bool {
+        if let Some(vs) = &r.values {
+            return !vs.iter().any(|v| self.holds(v));
+        }
+        match self {
+            Within::Range { low, .. } => {
+                let from = End::of(*low);
+                match r.ints.piece_at_or_above(&from) {
+                    None => true,
+                    Some((Fin(a), _)) if *a > Num::from(*low) => !self.holds(&Value::from(a)),
+                    Some(_) => !self.holds(&Value::Int(*low)),
+                }
+            }
+            Within::Bytes(vs) => !vs.iter().any(|&b| r.ints.contains(b)),
+        }
+    }
+
+    /// The ints as a message writes them after "takes `x`", as "in int[0..<2^8]" or "a
+    /// multiple of 8 in int[0..]": the bound 0 written, so that a negative multiple of 8 does not
+    /// seem to be in it.
+    fn takes(&self) -> String {
+        match self {
+            Within::Range { low, below: None } => format!("in int[{low}..]"),
+            Within::Range {
+                low,
+                below: Some(b),
+            } => format!("in int[{low}..<{b}]"),
+            Within::Bytes(_) => "a multiple of 8 in int[0..]".into(),
+        }
+    }
+
+    /// A value in the ints, as a repair writes it after "pass": "a value in int[0..]", or "a
+    /// multiple of 8 in int[0..], as 8, 16, 32 or 64".
+    fn value(&self) -> String {
+        match self {
+            Within::Range { .. } => format!("a value {}", self.takes()),
+            Within::Bytes(vs) => {
+                let vs: Vec<String> = vs.iter().map(i64::to_string).collect();
+                format!("{}, as {}", self.takes(), or_list(&vs))
+            }
+        }
+    }
+
+    /// The test of the name `a` that holds it within the ints inside its branch.
+    fn test(&self, a: &str) -> String {
+        match self {
+            Within::Range { low, below: None } => format!("{a} >= {low}"),
+            Within::Range {
+                low,
+                below: Some(b),
+            } => format!("{a} >= {low} && {a} < {b}"),
+            Within::Bytes(vs) => (vs.iter().map(|v| format!("{a} == {v}")))
+                .collect::<Vec<_>>()
+                .join(" || "),
+        }
+    }
+}
+
+/// The least width of the operation `p` that holds its operands other than the width: the
+/// most binary digits of an operand read as `width` digits, and one more than the largest `k`
+/// of a funnel shift; none where one of them is of a type variable or has no largest value.
+/// One pass over the operands.
+fn least_width(p: Prim, slots: &[(Arg<'_>, &Expr)], ranges: &[Option<IntRange>]) -> Option<i64> {
+    let largest = |i: usize| -> Option<Value> {
+        match slots[i].0.ty.vars.is_empty() {
+            true => ranges[i].as_ref()?.extreme(std::cmp::Ordering::Greater),
+            false => None,
+        }
+    };
+    let positive = |v: &Value| v.surface_cmp(&Value::Int(0)).is_some_and(|o| o.is_gt());
+    let mut least = 0i64;
+    for &i in zed_kernel::bits::below_two_pow_width(p) {
+        let h = largest(i)?;
+        if positive(&h) {
+            let bits = h.as_integer()?.to_integer().ok()?.bits();
+            least = least.max(i64::try_from(bits).ok()?);
+        }
+    }
+    if let Some(i) = zed_kernel::bits::below_width(p) {
+        let h = largest(i)?;
+        if h.surface_cmp(&Value::Int(0)).is_some_and(|o| o.is_ge()) {
+            let Value::Int(k) = h else { return None };
+            least = least.max(k.checked_add(1)?);
+        }
+    }
+    Some(least)
+}
+
+/// The texts `vs` joined as "8, 16, 32 or 64".
+fn or_list(vs: &[String]) -> String {
+    match vs {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} or {last}", rest.join(", ")),
+    }
+}
+
+/// The repairs of an argument `p` that may lie outside the ints `within` its use needs, each in
+/// the program's code: `arg` is the argument's code, with whether it is a name a test narrows
+/// ([`Ck::tested`]), and `outside_all` says that no value of it lies in `within`, so that a test
+/// of it leaves nothing to pass. A name a test does not narrow, or an expression, is first bound
 /// to a new name ([`test_repair`]). `call` is the call's code, which the test then holds in
 /// full. `given` is the argument of the call that a function's parameter `p` takes the value
 /// from, where the call passes it on (MSG-forwarded-repair). Gives the test, the repair a
 /// headline shows, if there is one, and the notes of every repair.
 fn passed_repairs(
     p: &str,
-    d: &IntDomain,
+    within: &Within,
     arg: Option<(&str, bool)>,
     call: Option<Call<'_>>,
     outside_all: bool,
     given: Option<&str>,
     span: Span,
 ) -> (Option<Repair>, Vec<Note>) {
-    let dom = domain_text(d);
+    let value = within.value();
     let test = (!outside_all)
-        .then(|| arg.map(|a| test_repair(p, d, a, call)))
+        .then(|| arg.map(|a| test_repair(p, &|a| within.test(a), a, call)))
         .flatten();
     let pass = match given {
-        Some(code) => format!("repair: pass a value in {dom} where this call passes `{code}`"),
-        None => format!("repair: pass as `{p}` a value in {dom}"),
+        Some(code) => format!("repair: pass {value} where this call passes `{code}`"),
+        None => format!("repair: pass as `{p}` {value}"),
     };
     let notes = (test.iter().map(repair_note))
         .chain([pass])
@@ -11946,22 +12330,16 @@ fn passed_repairs(
     (test, notes)
 }
 
-/// The test of the argument `a` of `p` that keeps it in the ints `d` inside its branch, in the
-/// program's code: of `a` itself where it is a name a test narrows (the flag), else of a new
-/// name bound to it, `p` or `p` with a number ([`fresh`]); holding `call` with `a`, or the new
-/// name, in place, where the call is known.
+/// The test of the argument `a` of `p` that keeps it in what `test` tests of a name inside its
+/// branch, in the program's code: of `a` itself where it is a name a test narrows (the flag),
+/// else of a new name bound to it, `p` or `p` with a number ([`fresh`]); holding `call` with
+/// `a`, or the new name, in place, where the call is known.
 fn test_repair(
     p: &str,
-    d: &IntDomain,
+    test: &dyn Fn(&str) -> String,
     (a, narrows): (&str, bool),
     call: Option<Call<'_>>,
 ) -> Repair {
-    // A width domain is tested by its two bounds: this zedc does not compile a refinement
-    // such as `is int[0..<2^8]`.
-    let test = |a: &str| match &d.below_two_pow {
-        None => format!("{a} >= 0"),
-        Some(w) => format!("{a} >= 0 && {a} < 2^{}", w.0),
-    };
     if narrows {
         return match call {
             Some((call, ..)) => (

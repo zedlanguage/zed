@@ -1214,18 +1214,20 @@ struct Ck<'t, 'a> {
 type NeedPass = (Arc<str>, Vec<Arc<str>>, KType);
 
 /// A call whose needs are being checked ([`Ck::call_frames`]): its positional arguments, where
-/// the call shows them, and the parameter that holds each variable.
+/// the call shows them, the names of its parameters, and the parameter that holds each
+/// variable.
 #[derive(Default)]
 struct CallFrame<'a> {
     args: Vec<Option<Forwarded<'a>>>,
+    names: Vec<Arc<str>>,
     /// For each variable of a parameter, the parameter's position, or `None` where two or
     /// more parameters hold it.
     by_var: HashMap<Arc<str>, Option<usize>>,
 }
 
 impl<'a> CallFrame<'a> {
-    /// The frame of the arguments `args` at the parameters `params`.
-    fn new(params: &[Ty], args: Vec<Option<Forwarded<'a>>>) -> Self {
+    /// The frame of the arguments `args` at the parameters `params`, named `names`.
+    fn new(params: &[Ty], args: Vec<Option<Forwarded<'a>>>, names: Vec<Arc<str>>) -> Self {
         let mut by_var = HashMap::new();
         for (i, p) in params.iter().enumerate().take(args.len()) {
             for v in &p.vars {
@@ -1239,7 +1241,11 @@ impl<'a> CallFrame<'a> {
                     .or_insert(Some(i));
             }
         }
-        Self { args, by_var }
+        Self {
+            args,
+            names,
+            by_var,
+        }
     }
 
     /// The argument that a value of type `t` came from: that of the one parameter that holds
@@ -1248,6 +1254,19 @@ impl<'a> CallFrame<'a> {
     /// need of every parameter (l01_26 scaling); used, a lookup of each variable of `t` in
     /// [`Self::by_var`], built once for the call in O(v) for v variables of its parameters.
     fn from(&self, t: &Ty) -> Option<Forwarded<'a>> {
+        self.args[self.slot(t)?]
+    }
+
+    /// The argument that a value of type `t` came from, as [`Self::from`] finds it, with the
+    /// name of the parameter that takes it.
+    fn named(&self, t: &Ty) -> Option<(Forwarded<'a>, Arc<str>)> {
+        let i = self.slot(t)?;
+        Some((self.args[i]?, self.names.get(i)?.clone()))
+    }
+
+    /// The position of the one parameter that holds the variables of `t`, where one alone
+    /// does.
+    fn slot(&self, t: &Ty) -> Option<usize> {
         let mut one = None;
         for v in &t.vars {
             match self.by_var.get(v) {
@@ -1257,7 +1276,7 @@ impl<'a> CallFrame<'a> {
                 Some(Some(_)) => return None,
             }
         }
-        self.args[one?]
+        one
     }
 }
 
@@ -3329,7 +3348,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The loose atoms of `t`, which flow through `what` unchanged: an atom of a named family
     /// is data, and data that selects no arrow is an error (sec:failure). `of`, where known,
     /// is the span of the value as written, which the headline shows with its type and the
-    /// repairs rewrite; elsewhere they write it `v`. The headline ends with the first repair
+    /// repairs rewrite; elsewhere the one repair is said in words, with no name invented for the
+    /// value. The headline ends with the first repair
     /// (sec:diagnostics). The repairs handle every atom of the family the value may be, one
     /// `else` pattern or one `match` arm each, so their text is linear in the number of those
     /// atoms.
@@ -3339,16 +3359,22 @@ impl<'t, 'a> Ck<'t, 'a> {
             let code = (self.t.text.zip(of))
                 .map(|(s, at)| s[at.start..at.end].trim())
                 .filter(|c| !c.is_empty() && !c.contains('\n'));
-            let mut notes = Vec::new();
-            if code.is_none() {
-                notes.push(format!("`v` is the value {what} reads"));
-            }
-            let c = code.unwrap_or("v");
-            let v = else_operand(c);
-            notes.push(format!(
+            let data = format!(
                 "an atom of a named family is data, not a failure, so it does not pass through \
                  {what}"
-            ));
+            );
+            // With no code to rewrite, no name is invented for the value: the repair is prose.
+            let Some(c) = code else {
+                let message = format!("No case for `{atoms}` in {what}: a value of `{t}`.");
+                let repair = format!(
+                    "repair: handle each atom of `{atoms}` with `else` or `match` before the \
+                     value reaches {what}"
+                );
+                self.error_offering(span, message, [data, repair]);
+                return t.loose_ty();
+            };
+            let v = else_operand(c);
+            let mut notes = vec![data];
             // Each atom as a bare pattern, which handles the atom with any payload or none;
             // a pattern with a payload would leave the atom in the type (step L1.27).
             let mut repairs = Vec::new();
@@ -3452,8 +3478,8 @@ impl<'t, 'a> Ck<'t, 'a> {
              checker cannot show that it is one {what} takes"
         );
         let menu = [
-            "repair: test the value with `is` first, as `if v is int { … } else { … }`, so that \
-             inside the branch it has the type tested"
+            "repair: test the value with `is` first, so that inside the branch it has the type \
+             tested"
                 .to_string(),
             "repair: write the type of the value where it is bound, as `x: int = …`, so that it \
              is no longer `_`"
@@ -3542,12 +3568,6 @@ impl<'t, 'a> Ck<'t, 'a> {
                         .all(|a| plain(&a.result) && strings(&(&a.result.set - &not_found)))
             });
         if !ok && !t.dynamic && t.vars.is_empty() {
-            let message = format!(
-                "a `Lines` port takes a `String` or a family of strings, not {}: the port \
-                 `{port}` writes each value pushed to it as one line of text, and the value \
-                 pushed here may be something other than text",
-                self.show(t)
-            );
             // Each repair is written with the value's code, where the checker has it on one line:
             // an `else` with no pattern writes an empty line for every atom, whichever atoms
             // the value holds, and a string interpolation writes any data as text.
@@ -3558,22 +3578,49 @@ impl<'t, 'a> Ck<'t, 'a> {
             let atoms = !t.atoms().is_empty();
             let rest = t.without_atoms();
             let text = strings(&rest.set) && plain(&rest) && rest.fns.is_empty();
-            let mut menu = Vec::new();
-            match code {
-                Some(c) if atoms && text => menu.push(format!(
-                    "repair: write an empty line in place of each atom, as `{port} <- {} else \
-                     \"\";`",
-                    else_operand(c)
+            // The first repair as code, which the headline ends with, and its note.
+            let first = match code {
+                Some(c) if atoms && text => Some((
+                    "write an empty line in place of each atom",
+                    format!("{port} <- {} else \"\";", else_operand(c)),
                 )),
-                Some(c) if atoms && t.fns.is_empty() => menu.push(format!(
-                    "repair: write the value into a string, and an empty line in place of each \
-                     atom, as `{port} <- \"${{{c}}}\" else \"\";`"
+                Some(c) if atoms && t.fns.is_empty() => Some((
+                    "write the value into a string, and an empty line in place of each atom",
+                    format!("{port} <- \"${{{c}}}\" else \"\";"),
                 )),
-                Some(c) if t.fns.is_empty() => menu.push(format!(
-                    "repair: write the value into a string, as `{port} <- \"${{{c}}}\";`"
+                Some(c) if t.fns.is_empty() => Some((
+                    "write the value into a string",
+                    format!("{port} <- \"${{{c}}}\";"),
                 )),
-                _ => menu.push("repair: write the value into a string with `\"${…}\"`".into()),
-            }
+                _ => None,
+            };
+            // A literal whose type shows as the literal itself is annotated with its carrier,
+            // as `m.stdout <- 42 : int`.
+            let shown = match self.show(t) {
+                s if code == Some(s.as_str()) => self.show(&t.carriers()),
+                s => s,
+            };
+            let message = match (code, &first) {
+                (Some(c), Some((_, r))) => format!(
+                    "A `Lines` port takes a `String` or a family of strings: `{port} <- {c} : \
+                     {shown}`. Try `{r}` instead."
+                ),
+                (Some(c), None) => format!(
+                    "A `Lines` port takes a `String` or a family of strings: `{port} <- {c} : \
+                     {shown}`."
+                ),
+                (None, _) => format!(
+                    "A `Lines` port takes a `String` or a family of strings: the value pushed to \
+                     `{port}` is {shown}."
+                ),
+            };
+            let mut menu = vec![format!(
+                "the port `{port}` writes each value pushed to it as one line of text"
+            )];
+            menu.push(match first {
+                Some((what, r)) => format!("repair: {what}, as `{r}`"),
+                None => "repair: write the value into a string with `\"${…}\"`".into(),
+            });
             if atoms {
                 menu.push(
                     "repair: handle each atom of the value with `match`, giving the line to \
@@ -3882,47 +3929,6 @@ impl<'t, 'a> Ck<'t, 'a> {
             return None;
         }
         Some((self.env.get(&ids[0]).and_then(only_fn)?, receiver))
-    }
-
-    /// The error for operand `name` of `w`, at `operand`, outside `needs` for the width at
-    /// `width`; each is the operand's place and how it is shown.
-    fn width_error(
-        &mut self,
-        w: &str,
-        name: &str,
-        needs: &str,
-        (ax, sx): (Span, &str),
-        (aw, sw): (Span, &str),
-        span: Span,
-    ) {
-        let mut notes = vec![
-            Note {
-                span: ax,
-                text: format!("`{name}` is this operand, {sx}"),
-            },
-            Note {
-                span: aw,
-                text: format!("`width` is this operand, {sw}"),
-            },
-        ];
-        self.derive_into(&[ax, aw], &mut notes);
-        let menu = [
-            format!(
-                "repair: pass a `{name}` in {needs}, or test it with `is` first, so that inside \
-                 the branch it lies there"
-            ),
-            "repair: pass a larger `width`, if the operation is meant on a wider word".to_string(),
-        ];
-        notes.extend(menu.into_iter().map(|text| Note { span, text }));
-        self.error_with(
-            span,
-            format!(
-                "`{w}` takes `{name}` in {needs}, and this `{name}` is {sx} with `width` {sw}: \
-                 `{w}` is defined only for such a `{name}`, and the checker found that this one \
-                 may lie outside it"
-            ),
-            notes,
-        );
     }
 
     /// The tuple `cs` at the computed key `x`, by the `m[k]` row of DESIGN.md sec:types: a
@@ -7699,16 +7705,18 @@ fn listed_at_least_zero(ints: &KType) -> bool {
 }
 
 /// Whether every value `r` holds is shown to be a multiple of 8: its listed values each are, or
-/// its interval is one such value.
+/// each piece of its interval is one such value.
 fn whole_bytes(r: &IntRange) -> bool {
     let eight = |v: &Value| {
         v.as_integer()
             .is_some_and(|n| Num::from(&*n).mod_floor(&Num::from(8)).is_zero())
     };
-    match (&r.values, r.ints.bounds()) {
-        (Some(vs), _) => vs.iter().all(eight),
-        (None, Some((Fin(a), Fin(b)))) if a == b => eight(&Value::from(a)),
-        _ => false,
+    // Each piece of the interval one multiple of 8, as a test `w == 8 || w == 16` leaves it:
+    // one pass over the pieces.
+    let point = |(a, b): &(End, End)| matches!((a, b), (Fin(a), Fin(b)) if a == b && eight(&Value::from(a)));
+    match &r.values {
+        Some(vs) => vs.iter().all(eight),
+        None => !r.ints.is_empty() && r.ints.pieces().all(point),
     }
 }
 
@@ -9518,37 +9526,57 @@ mod tests {
     #[test]
     fn a_family_atom_reaching_a_call_is_rejected_with_its_repairs() {
         let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
-        let t = Tables::new(&[], &res);
-        let mut ck = checker(&t);
+        let mut t = Tables::new(&[], &res);
+        // The value's code, which the headline shows and the repairs rewrite.
+        t.text = Some("paint(c)");
         let atoms = |names: &[&str]| {
             (names.iter()).fold(Ty::empty(), |t, n| t.union(&Ty::set(KType::atom(n))))
         };
         let color = atoms(&["red", "green", "blue"]).named();
         let read = color.union(&atoms(&["ioError"]));
-        let out = ck.passing(&read, "a call", span(0), None);
-        assert_eq!(out, atoms(&["ioError"]));
-        let messages: Vec<(String, Vec<String>)> = (ck.errors.into_iter())
-            .map(|f| {
-                let mut e = f.written(t.text);
-                lay_out(&mut e.message, &mut e.notes, &mut e.menu);
-                (e.message, e.notes.into_iter().map(|n| n.text).collect())
-            })
-            .collect();
+        let messages = |of: Option<Span>| {
+            let mut ck = checker(&t);
+            assert_eq!(
+                ck.passing(&read, "a call", span(0), of),
+                atoms(&["ioError"])
+            );
+            (ck.errors.into_iter())
+                .map(|f| {
+                    let mut e = f.written(t.text);
+                    lay_out(&mut e.message, &mut e.notes, &mut e.menu);
+                    (e.message, e.notes.into_iter().map(|n| n.text).collect())
+                })
+                .collect::<Vec<(String, Vec<String>)>>()
+        };
+        let data = "an atom of a named family is data, not a failure, so it does not pass through \
+                    a call";
         assert_eq!(
-            messages,
+            messages(Some(span(6))),
             [(
                 "No case for `#blue | #green | #red` in a call: \
-                 `v : #blue | #green | #ioError | #red`. Try \
-                 `(v else #blue -> d else #green -> d else #red -> d)` instead."
+                 `c : #blue | #green | #ioError | #red`. Try \
+                 `(c else #blue -> d else #green -> d else #red -> d)` instead."
                     .to_string(),
                 vec![
-                    "`v` is the value a call reads".to_string(),
-                    "an atom of a named family is data, not a failure, so it does not pass \
-                     through a call"
-                        .to_string(),
+                    data.to_string(),
                     "each `d` is the value to use in place of the atom before it".to_string(),
-                    "repair: `(v else #blue -> d else #green -> d else #red -> d)`".to_string(),
-                    "repair: `match v { #blue -> d, #green -> d, #red -> d, rest -> rest }`"
+                    "repair: `(c else #blue -> d else #green -> d else #red -> d)`".to_string(),
+                    "repair: `match c { #blue -> d, #green -> d, #red -> d, rest -> rest }`"
+                        .to_string(),
+                ]
+            )]
+        );
+        // With no code for the value, no name is invented for it: the repair is said in words.
+        assert_eq!(
+            messages(None),
+            [(
+                "No case for `#blue | #green | #red` in a call: a value of \
+                 `#blue | #green | #ioError | #red`."
+                    .to_string(),
+                vec![
+                    data.to_string(),
+                    "repair: handle each atom of `#blue | #green | #red` with `else` or `match` \
+                     before the value reaches a call"
                         .to_string(),
                 ]
             )]

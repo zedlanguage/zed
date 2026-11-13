@@ -72,9 +72,8 @@ fn a_handler_for_not_found_leaves_out_of_bounds_in_the_type() {
     let out = run("oob_old_handler", src, "", &["--", "a"]);
     assert_eq!(out.status, 1);
     assert!(
-        out.stderr.contains(
-            "a `Lines` port takes a `String` or a family of strings, not String | #outOfBounds"
-        ),
+        out.stderr
+            .contains("`m.stdout <- m.args[0] else #notFound -> \"none\" : String | #outOfBounds`"),
         "{}",
         out.stderr
     );

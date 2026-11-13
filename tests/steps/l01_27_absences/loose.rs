@@ -222,36 +222,44 @@ fn a_loose_atom_enters_the_first_arrow_at_a_parameter_that_may_take_other_values
     assert_eq!(value(&ok, "b"), "3");
 }
 
-/// Item PRINT-fmt-audit: the repair that tests the value with `is` writes the parameter's type
-/// as `is` reads it, a function type in parentheses. Before, it was
-/// `if v is (int) -> int { … }`, which reads as `(v is (int)) -> int`.
+/// Item PRINT-fmt-audit, then MSG-is-repair-v: a value passed where a function is taken gets
+/// no `is` repair. `is` cannot test a function type, since a function value shows no type when
+/// the program runs, and the elaborator refuses the test; the repair once offered,
+/// `if v is ((int) -> int) { … }`, named a value `v` the program does not have and was refused
+/// where it was written.
 #[test]
-fn the_is_repair_writes_a_function_type_in_parentheses() {
+fn no_is_repair_is_offered_for_a_function_type() {
     let t = "ap(positional g: (int) -> int) = g(1);\n";
-    let bad = format!("{t}k(positional a) = (ap(a), a);\nh(positional y: int | #nf) = k(y);\n");
+    let bad = format!(
+        "{t}k(positional a) = (ap(a), a);\nh(positional y: ((int) -> int) | #nf) = k(y);\n"
+    );
     let out = match zedc::run::load(bad.as_bytes()) {
         Ok(_) => panic!("accepted:\n{bad}"),
         Err(e) => e,
     };
-    assert!(
-        out.contains(
-            "repair: test the value with `is` first, as `if v is ((int) -> int) { … }`, or \
-             handle the values that are not (int) -> int with `else` or `match`"
-        ),
-        "{out}"
-    );
+    assert!(!out.contains(" is ("), "{out}");
+    assert!(!out.contains("`v`"), "{out}");
     assert!(
         out.contains("repair: pass `ap` a value of (int) -> int"),
         "{out}"
     );
-    // The repair, applied, is accepted, and the type it names reads back as written.
-    let ok = format!(
-        "{t}k(positional a) = if a is ((int) -> int) {{ ap(a) }} else {{ 0 }};\n\
-         h(positional y: int | #nf) = k(y);\n"
+    assert!(
+        out.contains("repair: handle the values that are not (int) -> int with `else` or `match`"),
+        "{out}"
     );
-    assert!(type_errors(&ok).is_empty(), "{:?}", type_errors(&ok));
-    let back = zedc::check::read::parse_type("(int) -> int").unwrap();
-    assert_eq!(back.to_string(), "(int) -> int");
+    // The control: the test such a repair would write is refused.
+    let tested = format!(
+        "{t}k(positional a) = (ap(a), a);\n\
+         h(positional y: ((int) -> int) | #nf) = if y is ((int) -> int) {{ k(y) }} else {{ 0 }};\n"
+    );
+    let refused = match zedc::run::load(tested.as_bytes()) {
+        Ok(_) => panic!("accepted:\n{tested}"),
+        Err(e) => e,
+    };
+    assert!(
+        refused.contains("a function value does not show its type then"),
+        "{refused}"
+    );
 }
 
 /// Item REPAIR-is-shared-type: the `is` repair on a type with a part written twice. Before, the
@@ -264,7 +272,7 @@ fn the_is_repair_writes_a_function_type_in_parentheses() {
 #[test]
 fn the_is_repair_on_a_shared_part_declares_it_at_the_top_level() {
     let t = "ap(positional g: (int | #x, int | #x)) = 0;\n";
-    let call = "h(positional y: int | #nf) = k(y);\n";
+    let call = "h(positional y: (int | #x, int | #x) | #nf) = k(y);\n";
     let bad = format!("{t}k(positional a) = (ap(a), a);\n{call}");
     let out = match zedc::run::load(bad.as_bytes()) {
         Ok(_) => panic!("accepted:\n{bad}"),
@@ -277,14 +285,20 @@ fn the_is_repair_on_a_shared_part_declares_it_at_the_top_level() {
         ),
         "{out}"
     );
+    // The test is written with the program's own argument, `y`, never a value `v`
+    // (MSG-is-repair-v).
     assert!(
         out.contains(
-            "repair: test the value with `is` first, as `if v is (T1, T1) { … }`, with the \
-             declaration above written first at the top level of the file, before the function, \
-             or handle the values that are not (T1, T1) with `else` or `match`"
+            "repair: `if y is (T1, T1) { k(y) } else { … }`, with the declaration above written \
+             first at the top level of the file, before the function\n"
         ),
         "{out}"
     );
+    assert!(
+        out.contains("repair: handle the values that are not (T1, T1) with `else` or `match`"),
+        "{out}"
+    );
+    assert!(!out.contains("`v`"), "{out}");
     assert!(
         out.contains("repair: pass `ap` a value of (T1, T1)\n"),
         "{out}"
@@ -292,8 +306,8 @@ fn the_is_repair_on_a_shared_part_declares_it_at_the_top_level() {
     assert!(!out.contains("type T1 = int | #x; "), "{out}");
     // The repair applied: it parses and resolves, and only the declaration is refused.
     let fixed = format!(
-        "type T1 = int | #x;\n{t}k(positional a) = if a is (T1, T1) {{ ap(a) }} else {{ 0 }};\n\
-         {call}"
+        "type T1 = int | #x;\n{t}k(positional a) = (ap(a), a);\n\
+         h(positional y: (int | #x, int | #x) | #nf) = if y is (T1, T1) {{ k(y) }} else {{ 0 }};\n"
     );
     let refused = match zedc::run::load(fixed.as_bytes()) {
         Ok(_) => panic!("type declarations compile now: check the repair in full:\n{fixed}"),
@@ -305,7 +319,8 @@ fn the_is_repair_on_a_shared_part_declares_it_at_the_top_level() {
         "{refused}"
     );
     let inline = format!(
-        "{t}k(positional a) = if a is (int | #x, int | #x) {{ ap(a) }} else {{ 0 }};\n{call}"
+        "{t}k(positional a) = (ap(a), a);\n\
+         h(positional y: (int | #x, int | #x) | #nf) = if y is (int | #x, int | #x) {{ k(y) }} else {{ 0 }};\n"
     );
     assert!(
         type_errors(&inline).is_empty(),
@@ -318,6 +333,81 @@ fn the_is_repair_on_a_shared_part_declares_it_at_the_top_level() {
         Ok(_) => panic!("accepted:\n{taken}"),
         Err(e) => e,
     };
-    assert!(out.contains("as `if v is (T2, T2) { … }`"), "{out}");
+    assert!(
+        out.contains("repair: `if y is (T2, T2) { k(y) } else { … }`"),
+        "{out}"
+    );
     assert!(out.contains("\n    type T2 = int | #x;\n"), "{out}");
+}
+
+/// A `main` that loads checks the functions beside it.
+const MAIN: &str = "main(m: MainArgs) {\n  m.stdout <- \"a\";\n}\n";
+
+/// MSG-is-repair-v: an argument that is no name a test narrows is bound first to the name of
+/// the parameter it reaches, or that name with the least number from 2 the call does not
+/// write, and the test reads that name. The repair, its shared part written out, is accepted;
+/// a test of a type wider than the parameter's is not.
+#[test]
+fn the_is_repair_binds_an_argument_expression_to_the_parameters_name() {
+    let t = "ap(positional g: (int | #x, int | #x)) = 0;\nk(positional a) = (ap(a), a);\n";
+    for (h, want, fixed) in [
+        (
+            "h(positional y: (int | #x, int | #x) | #nf) = k(y else 1);\n",
+            "repair: `a = y else 1; if a is (T1, T1) { k(a) } else { … }`",
+            "h(positional y: (int | #x, int | #x) | #nf) = \
+             { a = y else 1; if a is (int | #x, int | #x) { k(a) } else { 0 } };\n",
+        ),
+        // The parameter's name is a name the call writes: the next one is taken.
+        (
+            "h(positional a: (int | #x, int | #x) | #nf) = k(a else 1);\n",
+            "repair: `a2 = a else 1; if a2 is (T1, T1) { k(a2) } else { … }`",
+            "h(positional a: (int | #x, int | #x) | #nf) = \
+             { a2 = a else 1; if a2 is (int | #x, int | #x) { k(a2) } else { 0 } };\n",
+        ),
+    ] {
+        let bad = format!("{t}{h}");
+        let out = match zedc::run::load(bad.as_bytes()) {
+            Ok(_) => panic!("accepted:\n{bad}"),
+            Err(e) => e,
+        };
+        assert!(out.contains(want), "{bad}\n{out}");
+        assert!(!out.contains("`v`"), "{out}");
+        let ok = format!("{t}{fixed}{MAIN}");
+        assert!(type_errors(&ok).is_empty(), "{ok}\n{:?}", type_errors(&ok));
+        zedc::run::load(ok.as_bytes()).unwrap_or_else(|e| panic!("{ok}\n{e}"));
+    }
+    // The control: a test that keeps the `1` of `y else 1` leaves a value `ap` does not take.
+    let wide = format!(
+        "{t}h(positional y: (int | #x, int | #x) | #nf) = \
+         {{ a = y else 1; if a is (int | #x, int | #x) | int {{ k(a) }} else {{ 0 }} }};\n{MAIN}"
+    );
+    match zedc::run::load(wide.as_bytes()) {
+        Ok(_) => panic!("accepted:\n{wide}"),
+        Err(e) => assert!(e.contains("`ap` does not take 1"), "{e}"),
+    }
+}
+
+/// MSG-is-repair-v: no `is` repair is offered where no value of the argument passes the test,
+/// as no test of an int is offered where no value of it lies in the ints (DESIGN.md
+/// sec:diagnostics). Such a test is accepted, and the call in its branch never runs: with `y`
+/// of `int | #nf`, `if y is (T1, T1) { k(y) } else { 0 }` is always 0.
+#[test]
+fn no_is_repair_is_offered_where_no_value_passes_the_test() {
+    let t = "ap(positional g: (int | #x, int | #x)) = 0;\nk(positional a) = (ap(a), a);\n";
+    let bad = format!("{t}h(positional y: int | #nf) = k(y);\n");
+    let out = match zedc::run::load(bad.as_bytes()) {
+        Ok(_) => panic!("accepted:\n{bad}"),
+        Err(e) => e,
+    };
+    assert!(!out.contains(" is ("), "{out}");
+    assert!(
+        out.contains("repair: handle the values that are not (T1, T1) with `else` or `match`"),
+        "{out}"
+    );
+    // The control: the test such a repair would write is accepted, with a branch that never
+    // runs.
+    let dead = format!(
+        "{t}h(positional y: int | #nf) = if y is (int | #x, int | #x) {{ k(y) }} else {{ 0 }};\n{MAIN}"
+    );
+    zedc::run::load(dead.as_bytes()).unwrap_or_else(|e| panic!("{dead}\n{e}"));
 }

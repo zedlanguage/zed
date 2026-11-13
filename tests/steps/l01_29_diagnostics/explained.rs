@@ -28,10 +28,12 @@ fn each_rejection_explains_itself_and_offers_its_repairs() {
         ),
         (
             reading("  m.stdout <- n;"),
-            "3:15: a `Lines` port takes a `String` or a family of strings, not int: the port \
-             `m.stdout` writes each value pushed to it as one line of text, and the value pushed \
-             here may be something other than text.",
-            vec!["repair: write the value into a string, as `m.stdout <- \"${n}\";`"],
+            "3:15: A `Lines` port takes a `String` or a family of strings: \
+             `m.stdout <- n : int`. Try `m.stdout <- \"${n}\";` instead.",
+            vec![
+                "the port `m.stdout` writes each value pushed to it as one line of text",
+                "repair: write the value into a string, as `m.stdout <- \"${n}\";`",
+            ],
         ),
         (
             reading("  m.stdout <- String(popCount(n));"),

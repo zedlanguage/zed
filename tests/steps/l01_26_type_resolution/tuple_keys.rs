@@ -132,7 +132,8 @@ fn a_possibly_missing_component_is_disposed_of_before_a_port() {
     assert_eq!(out.status, 1);
     assert!(
         out.stderr.contains(
-            "a `Lines` port takes a `String` or a family of strings, not String | #outOfBounds"
+            "`m.stdout <- \"${t[i]}\" : String | #outOfBounds`. Try \
+             `m.stdout <- (\"${t[i]}\") else \"\";` instead."
         ),
         "{}",
         out.stderr

@@ -39,36 +39,46 @@ fn each_operand_is_checked() {
         ("x = shl(1, -1);\n", "`shl` takes `k` in int[0..]"),
         (
             "x = bitNot(1, width: -1);\n",
-            "`bitNot` takes `width` in int[0..]",
+            "`bitNot` takes `width` in int[1..]: `bitNot(1, width: -1 : int)`. \
+             Try `bitNot(1, width: 1)` instead.",
         ),
         (
             "x = rotl(1, -1, width: 4);\n",
-            "`rotl` takes `k` in int[0..]",
+            "`rotl` takes `k` in int[0..]: `rotl(1, -1 : int, width: 4)`.\n",
         ),
         (
             "x = leadingZeros(-1, width: 4);\n",
-            "`leadingZeros` takes `x` in int[0..]",
+            "`leadingZeros` takes `x` in int[0..<2^4]: `leadingZeros(-1 : int, width: 4)`.\n",
         ),
     ] {
         let out = rejected(src);
         assert!(out.contains(msg), "{src}: {out}");
     }
+    assert!(accepted("x = bitNot(1, width: 1);\n"));
 }
 
 #[test]
 fn an_x_wider_than_its_width_is_rejected() {
     let out = rejected("x = bitNot(8, width: 3);\n");
     assert!(
-        out.contains("`bitNot` takes `x` in int[0..<2^width], and this `x` is 8 with `width` 3"),
+        out.contains(
+            "`bitNot` takes `x` in int[0..<2^3]: `bitNot(8 : int, width: 3)`. \
+             Try `bitNot(8, width: 4)` instead."
+        ),
         "{out}"
     );
     assert!(out.contains("`width` is this operand, 3"), "{out}");
     let out = rejected("x = rotr(2^64, 1, width: 64);\n");
     assert!(
-        out.contains("`rotr` takes `x` in int[0..<2^width]"),
+        out.contains(
+            "`rotr` takes `x` in int[0..<2^64]: `rotr(2^64 : 18446744073709551616, 1, width: 64)`. \
+             Try `rotr(2^64, 1, width: 65)` instead."
+        ),
         "{out}"
     );
     assert!(accepted("x = rotr(2^64 - 1, 1, width: 64);\n"));
+    assert!(accepted("x = bitNot(8, width: 4);\n"));
+    assert!(accepted("x = rotr(2^64, 1, width: 65);\n"));
     assert!(accepted("x = trailingZeros(255, width: 8);\n"));
     assert!(!accepted("x = trailingZeros(256, width: 8);\n"));
 }
@@ -179,7 +189,10 @@ fn a_name_carries_what_its_text_shows() {
         "{out}"
     );
     let out = rejected("w = 4 + 0;\ny = bitNot(16, width: w);\n");
-    assert!(out.contains("and this `x` is 16 with `width` 4"), "{out}");
+    assert!(
+        out.contains("`bitNot` takes `x` in int[0..<2^4]: `bitNot(16 : int, width: w : 4)`.\n"),
+        "{out}"
+    );
 }
 
 #[test]
@@ -198,7 +211,14 @@ fn bit_words_nested_in_each_other_are_each_checked_with_the_inner_values() {
         ),
         "{out}"
     );
-    // The width is 2, and 15 does not lie below `2 ^ 2`.
+    // The width is 2, and 15 does not lie below `2 ^ 2`; neither width is a literal, so no
+    // rewritten width is offered.
     let out = rejected("x = leadingZeros(bitAnd(255, 15), width: bitAnd(6, 3));\n");
-    assert!(out.contains("takes `x` in int[0..<2^width]"), "{out}");
+    assert!(
+        out.contains(
+            "`leadingZeros` takes `x` in int[0..<2^2]: \
+             `leadingZeros(bitAnd(255, 15) : 15, width: bitAnd(6, 3) : 2)`.\n"
+        ),
+        "{out}"
+    );
 }

@@ -78,8 +78,8 @@ fn a_miss_left_undisposed_is_rejected_before_the_run() {
         assert_eq!((out.status, out.stdout.as_str()), (1, ""), "{}", out.stderr);
         assert!(
             out.stderr.contains(
-                "2:15: a `Lines` port takes a `String` or a family of strings, not \
-                 String | #notFound"
+                "2:15: A `Lines` port takes a `String` or a family of strings: `m.stdout <- m.env[\"ZED_A\"] : \
+                 String | #notFound`. Try `m.stdout <- (m.env[\"ZED_A\"]) else \"\";` instead."
             ) && out
                 .stderr
                 .contains("this expression gives String | #notFound"),

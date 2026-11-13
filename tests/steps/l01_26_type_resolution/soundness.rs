@@ -770,7 +770,7 @@ fn zedc_run_offers_and_runs_the_exact_rat_power() {
     );
     assert_eq!(out.status, 1, "{}", out.stderr);
     assert!(
-        out.stderr.contains("not String | #divByZero"),
+        out.stderr.contains(": String | #divByZero`"),
         "{}",
         out.stderr
     );
@@ -818,8 +818,6 @@ fn a_port_takes_an_operation_on_literals_whose_divisor_is_no_zero() {
             "{e}"
         );
     }
-    let refused = "a `Lines` port takes a `String` or a family of strings, not String | \
-                   #divByZero";
     for e in [
         "(0r)^-1",
         "1r / (1r - 1r)",
@@ -827,7 +825,11 @@ fn a_port_takes_an_operation_on_literals_whose_divisor_is_no_zero() {
         "1r / (1 - 1)",
     ] {
         let out = rejected("", &format!("\"${{{e}}}\""));
-        assert!(out.contains(refused), "{e}: {out}");
+        let refused = format!(
+            "A `Lines` port takes a `String` or a family of strings: \
+             `m.stdout <- \"${{{e}}}\" : String | #divByZero`."
+        );
+        assert!(out.contains(&refused), "{e}: {out}");
         let handled = format!("\"${{{e} else #divByZero -> 0r}}\"");
         assert_eq!(runs("", &handled, ""), "0r\n", "{e}");
     }

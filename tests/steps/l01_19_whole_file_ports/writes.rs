@@ -116,8 +116,10 @@ fn only_strings_are_written_as_lines() {
     let out = run("number", src, "", &[]);
     assert_eq!(out.status, 1);
     assert!(
-        out.stderr
-            .contains("2:15: a `Lines` port takes a `String` or a family of strings, not 42"),
+        out.stderr.contains(
+            "2:15: A `Lines` port takes a `String` or a family of strings: `m.stdout <- 42 : int`. Try \
+             `m.stdout <- \"${42}\";` instead."
+        ),
         "{}",
         out.stderr
     );

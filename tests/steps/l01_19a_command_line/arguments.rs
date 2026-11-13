@@ -131,7 +131,8 @@ fn a_read_may_be_out_of_bounds_so_the_checker_asks_for_its_disposal() {
     assert_eq!(out.status, 1);
     assert!(
         out.stderr.contains(
-            "a `Lines` port takes a `String` or a family of strings, not String | #outOfBounds"
+            "A `Lines` port takes a `String` or a family of strings: `m.stdout <- m.args[0] : String | #outOfBounds`. \
+             Try `m.stdout <- m.args[0] else \"\";` instead."
         ),
         "{}",
         out.stderr
