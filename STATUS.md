@@ -2030,7 +2030,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FENCE-copies-resync | impl attempt 1 | 2026-11-12 19:34 | started; creating worktree |
 | FLOAT-f32 | impl attempt 1 | 2026-11-05 04:07 | scaling: a chain of n f32 bindings (check+elab+run) 100->800: 8.1x instr, 8.1x bytes, limit 12.77; negative control (n/100 repeats, quadratic) 64.7x bytes, fail |
 | L1.29d | impl attempt 1 | 2026-11-11 01:43 | started; worktree /home/luke/Work/wt/l129d from e52caa1bf |
-| LIT-tuple-decimal-body | impl attempt 1 | 2026-11-12 18:30 | started; worktree wt/lit-tuple-dec on origin/main 151b26576 (also MSG-callee-code) |
+| LIT-tuple-decimal-body | impl attempt 1 | 2026-11-12 18:30 | red on old code: 3 of 9 tuple_arg_pair tests fail on the rejection; green with the fix; affected groups 137 pieces 0 failed (load 61-95); scaling n=100->800 dec |
 | MSG-callee-code | running | 2026-11-12 18:30 |  |
 | MSG-is-repair-v | running | 2026-11-12 17:32 |  |
 | MSG-lines-headline | running | 2026-11-12 17:32 |  |
@@ -2038,6 +2038,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PERF-l139-family | impl attempt 1 | 2026-11-12 18:45 | started; worktree /home/luke/Work/wt/perf-l139-family on 163c04744 |
 | POLY-nf-power-value | impl attempt 1 | 2026-11-12 14:17 | started; worktree wt/poly-nf-power-value from origin/main f2d8e0094 |
 | POW-rat-literal-ops | impl attempt 1 | 2026-11-12 16:20 | tests pass (l01_26 all pieces, l01_26a 182, l01_29 366, l01_17 133, l01_39a 50 pieces, zedc-check 11); range facts with squares of text values; spec e9ef76d on  |
+| PRINT-below-whole | impl attempt 1 | 2026-11-11 01:43 | started: rebase wt/print-below-whole (251 behind), benchmark for PRINT_WHOLE/PRINT_HANDOFF per A96 |
 | REFUSAL-census-now | impl attempt 1 | 2026-11-12 19:34 | built step binaries with a temporary capture hook in front::compile; running step groups to capture every unit text (load 55.09 66.05 59.44) |
 | STAGE-print | impl attempt 1 | 2026-11-04 03:10 | started; worktree wt/stage-print seeded |
 
