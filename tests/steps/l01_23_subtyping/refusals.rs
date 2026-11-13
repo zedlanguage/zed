@@ -8808,10 +8808,21 @@ fn r11_payload_name_prefixes_must_scale() {
 /// A ternary-density alignment family: one row class has only the final two
 /// coordinates, two classes have every coordinate. Every product entry is 1.
 #[test]
-#[ignore = "probe for REFUSAL-front-rest (docs/handoff/REFUSAL-front-unsolved.md): its sizes up to 4096 take past 60 s"]
+fn r11_ternary_alignment_is_inhabited() {
+    r11_ternary_alignment(&[16, 64, 256, 1024]);
+}
+
+/// [`r11_ternary_alignment_is_inhabited`] at 4096, with the work printed.
+#[test]
+#[ignore = "probe for REFUSAL-front-rest (docs/handoff/REFUSAL-front-unsolved.md): size 4096 \
+            alone, too slow for a 60 s piece; the sizes up to 1024 run unignored"]
 fn r11_ternary_alignment_probe() {
+    r11_ternary_alignment(&[4096]);
+}
+
+fn r11_ternary_alignment(sizes: &[usize]) {
     big(|| {
-        for n in [16usize, 64, 256, 1024, 4096] {
+        for &n in sizes {
             let m = n.isqrt().max(4);
             let a: Vec<Vec<bool>> = (0..m)
                 .map(|i| (0..m).map(|q| i % 3 != 0 || q >= m - 2).collect())

@@ -114,7 +114,8 @@ impl Drop for Elsewhere {
 /// directory with the call a build locks its working directory with, says `held`, and keeps
 /// the lock until its standard input ends. Run any other way, it does nothing.
 #[test]
-#[ignore = "TEST-l01_36b-leftover: a helper, not a test; run only by Elsewhere::new, in a process of its own"]
+#[ignore = "TEST-l01_36b-leftover: a helper, not a test; run only by Elsewhere::new, in a \
+            process of its own"]
 fn a_process_that_locks_a_directory_for_another_test() {
     use std::io::{Read as _, Write as _};
     let Some(at) = std::env::var_os(LOCK_DIR) else {

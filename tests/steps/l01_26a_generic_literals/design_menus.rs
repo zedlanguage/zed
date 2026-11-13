@@ -218,8 +218,9 @@ fn a_cast_of_a_decimal_names_the_literal() {
 }
 
 #[test]
-#[ignore = "open: a top-level binding with a declared type (TypedBinding) is layer L10, and zedc \
-            refuses it at L1, so a fix that declares a type cannot be checked; QUESTIONS.md"]
+#[ignore = "LIT-menu-design-gaps (a), step L10.1: a top-level binding with a declared type \
+            (TypedBinding) is layer L10, and zedc refuses it at L1, so a fix that declares a \
+            type cannot be checked; QUESTIONS.md"]
 fn fixes_declare_a_type() {
     // DESIGN.md sec:diagnostics, "A `/` of integer literals", the fixes:
     //

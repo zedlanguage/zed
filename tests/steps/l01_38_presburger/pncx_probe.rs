@@ -1238,8 +1238,43 @@ fn pncx_pairs_scale() {
     pncx_front_scale("pairs");
 }
 #[test]
-#[ignore = "probe for PERF-negated-chain-unsolved (docs/handoff/PERF-negated-chain-unsolved.md): takes past 60 s"]
-fn pncx_t8_enum_suite() {
+fn pncx_t8_enum_suite_sign12() {
+    t8_enum_suite(1, 0..1200, 33);
+}
+
+#[test]
+fn pncx_t8_enum_suite_padic() {
+    t8_enum_suite(2, 0..1200, 33);
+}
+
+#[test]
+fn pncx_t8_enum_suite_pairs_0() {
+    t8_enum_suite(3, 0..300, 7);
+}
+
+#[test]
+fn pncx_t8_enum_suite_pairs_1() {
+    t8_enum_suite(3, 300..600, 5);
+}
+
+#[test]
+fn pncx_t8_enum_suite_pairs_2() {
+    t8_enum_suite(3, 600..900, 16);
+}
+
+#[test]
+fn pncx_t8_enum_suite_pairs_3() {
+    t8_enum_suite(3, 900..1200, 6);
+}
+
+/// The 3,600 formulas of the T8 suite against enumeration, three families of 1,200 drawn from
+/// one generator: of family `only`, the formulas numbered in `part` are decided and checked,
+/// and the rest are only drawn, so each piece has the formulas it had when the three families
+/// ran as one test (47 s alone at load 32) and stays well under 60 s. At most `most_refused`
+/// are refused: 33 in families 1 and 2 and 34 in family 3, 100 in all, as the one test
+/// allowed, with family 3's 34 shared among its four parts by their refusals on
+/// 2026-11-12 (5, 3, 12 and 4).
+fn t8_enum_suite(only: usize, part: std::ops::Range<usize>, most_refused: usize) {
     use std::sync::Arc;
     use zedc::store::int::Int;
     use zedc::store::presburger::{Atom, Con, Formula, Lin, Model, decide, satisfiable};
@@ -1302,6 +1337,9 @@ fn pncx_t8_enum_suite() {
             ]),
         ];
         let f = Formula::and(fs);
+        if only != 1 || !part.contains(&idx) {
+            continue;
+        }
         let brute = (base_lo..=hi).any(|xv| {
             (xv + s1).rem_euclid(m1) <= w1
                 && ((xv - c2).rem_euclid(m2) == r2a || (xv - c2).rem_euclid(m2) == r2b)
@@ -1392,6 +1430,9 @@ fn pncx_t8_enum_suite() {
             fs.push(Formula::or(vec![l1, l2, l3]));
         }
         let f = Formula::and(fs);
+        if only != 2 || !part.contains(&idx) {
+            continue;
+        }
         let brute = (lo..=hi).any(|xv| {
             let mut m = Model::from([(x0.clone(), Int::from(xv))]);
             for (qa, ra, mod_m, sh) in &divs {
@@ -1481,6 +1522,9 @@ fn pncx_t8_enum_suite() {
             }
         }
         let f = Formula::and(fs);
+        if only != 3 || !part.contains(&idx) {
+            continue;
+        }
         let brute = (lo..=hi).any(|xv| {
             let mut m = Model::from([(x0.clone(), Int::from(xv))]);
             for (qa, ra, mod_m) in &divs {
@@ -1508,9 +1552,10 @@ fn pncx_t8_enum_suite() {
     }
 
     println!(
-        "T8_ENUM_SUITE total=3600 checked={total_checked} sat={total_sat} unsat={total_unsat} refused={total_refused}"
+        "T8_ENUM_SUITE family {only} formulas {part:?}: checked={total_checked} sat={total_sat} unsat={total_unsat} refused={total_refused}"
     );
-    assert!(total_checked >= 3500);
+    assert_eq!(total_checked + total_refused, part.len());
+    assert!(total_refused <= most_refused, "{total_refused} refused");
 }
 
 #[test]
