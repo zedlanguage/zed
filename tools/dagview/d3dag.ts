@@ -1619,9 +1619,21 @@ export function seedPlaces(prevX: Float64Array, parents: number[][], children: n
 // Complexity tradeoff: the sort is O(N log w) for N pieces; the median order
 // (twolayerAgg) as a base would place each layer from the layer above, which
 // discards the earlier order and moves most nodes (it is what decrossSweeps
-// does from scratch); a pass costs what sweeper's steps cost, and the count
-// O(E log w). work, if given, counts the steps (see Work) of the sorts, the
-// sweeps and the counts, each call of along as one.
+// does from scratch). The first pass costs O(N + E log d) (sweeper's trees
+// and sorted neighbor lists); each later step costs what its swaps and the
+// swaps since its last run changed (sweeper), and a pass is judged by the
+// crossings its swaps removed (sweeper's removed), not by a count.
+// Complexity tradeoff (DAGVIEW-seeded-scale): the earlier form ran every pass
+// in full, O(N log w): it rebuilt each step's gains, counted all crossings
+// with a Fenwick tree, O(E log w), and copied the order, O(N), at the end of
+// each pass. The passes until no gain grow slowly with the width (4 at 12
+// layers of 150 nodes, 5 at 12 of 1200, decross.test.ts), while the swaps fall
+// about tenfold from each pass to the next (10,638, 1,514, 63, 2 and 0 at
+// 1200), so the steps grew 10.7 times at 8 times the nodes. Now the passes
+// after the first cost about their swaps, and a pass with no gain is undone
+// swap by swap (sweeper's undo) instead of restored from a copy; the orders
+// are the same. work, if given, counts the steps (see Work) of the sorts and
+// the sweeps, each call of along as one.
 export function decrossSeeded(index: Map<any, number>, x: Float64Array, y: Int32Array, along?: (s: number, t: number, l: number) => number, work?: Work): any {
   const at = (s: any): number => {
     if (s.data.role === "node") return x[index.get(s.data.node)!];
@@ -1630,26 +1642,24 @@ export function decrossSeeded(index: Map<any, number>, x: Float64Array, y: Int32
     return Number.isNaN(e) ? x[a] + ((s.data.layer - y[a]) / (y[b] - y[a])) * (x[b] - x[a]) : e;
   };
   return (layers: any[][]) => {
-    let steps = 0, N = 0;
+    let N = 0;
     for (const row of layers) {
       const k = new Map(row.map((s) => [s, at(s)]));
       row.sort(work ? (p, q) => (work.steps++, k.get(p)! - k.get(q)!) : (p, q) => k.get(p)! - k.get(q)!);
       N += row.length;
     }
-    const { step, count } = sweeper(layers, undefined, work);
-    let best = count(work), kept = layers.map((l) => l.slice());
-    steps += 3 * N;
+    if (work) work.steps += 3 * N;
+    const { step, removed, keep, undo } = sweeper(layers, undefined, work);
+    // The crossings removed at the best order seen; the seeded order is 0.
+    let most = 0;
     for (;;) {
       for (let k = 0; k + 1 < layers.length; k++) step(k + 1, true);
       for (let k = layers.length - 1; k > 0; k--) step(k - 1, false);
-      const now = count(work);
-      if (now >= best) break;
-      best = now;
-      kept = layers.map((l) => l.slice());
-      steps += N;
+      const now = removed();
+      if (now <= most) { undo(); break; }
+      most = now;
+      keep();
     }
-    layers.splice(0, layers.length, ...kept);
-    if (work) work.steps += steps;
   };
 }
 
@@ -1699,18 +1709,20 @@ export function decrossSweeps(inits: ((layers: any[][]) => void)[], passes: numb
 // same in the two parts left and right of the swap. The gain of swapping u, v
 // is the sum over their neighbors a of u, b of v of sign(pos a - pos b) times
 // the two edge counts. The layers' pieces and edges do not change while the
-// steps run, only their order. count(work) is crossings(layers, work) for the
-// current order.
+// steps run, only their order, and layers is kept in that order at each swap.
+// count(work) is crossings(layers, work) for the current order. Without a
+// base, removed() is the number of crossings the swaps have removed so far,
+// keep() marks the current order, and undo() returns to the order last marked
+// (or the first).
 // Complexity tradeoff: d3-dag forms each pair's gain with a nested loop over
 // the two neighbor lists, O(du dv), rebuilding the lists and a map of the
 // fixed layer's positions on each call; on the plan of 2026-11-11 that was
 // 60 % of a relayout. Here each piece gets an integer id and its neighbors'
-// ids once, O(N + E) for N pieces; a step reads the neighbors' positions from
-// an array and sorts each list, O(E_k log d) for the E_k edges at layer k,
-// and a gain is a merge of the two sorted lists, O(du + dv), computed once per
-// pair, as d3-dag's cache of gains computes it; the best pair of a range is
-// found in O(log w) (see the segment tree below). The orders are the same.
-// work, if given, counts the steps (see Work), the base step's not.
+// ids once, O(N + E) for N pieces, each list is sorted by its neighbors'
+// positions once, O(E log d), and a gain is a merge of the two sorted lists,
+// O(du + dv); the best pair of a range is found in O(log w) (see the segment
+// tree below). The orders are the same. work, if given, counts the steps (see
+// Work), the base step's not.
 // Complexity tradeoff (DAGVIEW-aspect-plan-time): the steps and the counts
 // read integer arrays only: each layer's order as ids and the neighbor lists
 // as flat arrays. The earlier form looked up each piece's id in a Map at
@@ -1721,7 +1733,38 @@ export function decrossSweeps(inits: ((layers: any[][]) => void)[], passes: numb
 // took 28 of the 47 s of aspect-plan.test.ts. With these arrays and the
 // segment tree below, aspect-plan.test.ts took 23 to 27 s against 36 to 53 s
 // before, run back to back at load 29 to 37, and the layouts are the same.
-function sweeper(layers: any[][], base?: (top: any[], bottom: any[], down: boolean) => void, work?: Work): { step: (k: number, down: boolean) => boolean; count: (work?: Work) => number } {
+// Complexity tradeoff (DAGVIEW-seeded-scale): a step's gains are kept from
+// one step to the next, not rebuilt. The naive form, which DAGVIEW-aspect-
+// plan-time had, sorted every list and built every tree at each step, O(w +
+// E_k log d), so each pass cost O(N + E log d) however few pairs it swapped.
+// Here the trees of all layers live as long as the sweeper, and a swap of u, v
+// in layer k marks the leaves whose gain it can change: the pairs next to it
+// in layer k's two trees, and in the trees of layers k - 1 and k + 1 the
+// pairs next to each neighbor of u or v, whose order against u and v is the
+// only thing that changed: swapping two adjacent nodes changes only the
+// crossings between their own edges, which is what makes the adjacent swaps
+// of Eades and Kelly's greedy switch cheap to judge (P. Eades and D. Kelly,
+// "Heuristics for reducing crossings in 2-layered networks", Ars
+// Combinatoria 21-A (1986) 89-98). For the same reason removed() is the sum
+// of the gains of the swaps against both neighbor layers.
+// A step first recomputes its tree's marked leaves and then the largest gains
+// above them, level by level, each node once: O(m (d + log(w / m)) + m) for
+// m marks. The sorted lists into layer k are kept sorted at each swap: u and
+// v are next to each other in every list that holds both, found by binary
+// search, O(d log d) per swap. So a step costs O(log w) plus O(d log d +
+// log w) per swap, its own and those since it last ran. Within a step a swap
+// writes the two new pairs' gains into their leaves but not into the nodes
+// above (as DAGVIEW-aspect-plan-time did, O(log w) each): a range's first and
+// last pairs are the only ones a swap in it can change, so a range's largest
+// gain is the larger of those two leaves and of the nodes over its other
+// pairs, which still hold the gains of the step's start. Tested as
+// decross.test.ts's seeded scaling test (the steps grew 10.73 times at 8 times
+// the nodes before, see decrossSeeded); the orders are those of the earlier
+// form on the layouts of layout.test.ts and on 4,000 random graphs, both with
+// and without a base.
+type Lists = { at: Int32Array; id: Int32Array; count: Float64Array };
+type Gains = { most: Float64Array; size: number; stale: Int32Array; n: number; marked: Uint8Array; seen: Int32Array; epoch: number };
+function sweeper(layers: any[][], base?: (top: any[], bottom: any[], down: boolean) => void, work?: Work): { step: (k: number, down: boolean) => boolean; count: (work?: Work) => number; removed: () => number; keep: () => void; undo: () => void } {
   const id = new Map<any, number>(), piece: any[] = [], order: Int32Array[] = [];
   let widest = 0;
   for (const l of layers) {
@@ -1730,10 +1773,11 @@ function sweeper(layers: any[][], base?: (top: any[], bottom: any[], down: boole
     order.push(o);
     widest = Math.max(widest, l.length);
   }
-  const n = piece.length;
+  const n = piece.length, L = order.length;
   // Each piece's neighbors in the layer above (ups) and below (downs), as ids
-  // with edge counts: piece v's are at at[v] ..< at[v + 1].
-  const lists = (read: (s: any) => Iterable<[any, number]>) => {
+  // with edge counts: piece v's are at at[v] ..< at[v + 1], in order of their
+  // positions (sortList).
+  const lists = (read: (s: any) => Iterable<[any, number]>): Lists => {
     const at = new Int32Array(n + 1), ids: number[] = [], counts: number[] = [];
     for (let v = 0; v < n; v++) {
       for (const [e, c] of read(piece[v])) { ids.push(id.get(e)!); counts.push(c); }
@@ -1745,146 +1789,238 @@ function sweeper(layers: any[][], base?: (top: any[], bottom: any[], down: boole
   if (work) work.steps += 2 * n + ups.id.length + downs.id.length;
   const pos = new Int32Array(n);
   for (const o of order) o.forEach((v, i) => { pos[v] = i; });
-  const tree = new Float64Array(widest + 1), lefts = new Int32Array(32), rights = new Int32Array(32);
+  // Most pieces are pieces of long edges, with one neighbor and nothing to sort.
+  const sortList = (nb: Lists, v: number) => {
+    const a = nb.at[v], d = nb.at[v + 1] - a;
+    if (d < 2) return;
+    const by = Array.from({ length: d }, (_, q) => a + q).sort(work ? (p, q) => (work.steps++, pos[nb.id[p]] - pos[nb.id[q]]) : (p, q) => pos[nb.id[p]] - pos[nb.id[q]]);
+    const ids = by.map((e) => nb.id[e]), counts = by.map((e) => nb.count[e]);
+    for (let q = 0; q < d; q++) { nb.id[a + q] = ids[q]; nb.count[a + q] = counts[q]; }
+    if (work) work.steps += 2 * d;
+  };
+  for (let v = 0; v < n; v++) { sortList(ups, v); sortList(downs, v); }
+  // The gain of swapping u, v (u left of v) against the layer of their
+  // neighbors in nb.
+  const gain = (nb: Lists, u: number, v: number): number => {
+    const a0 = nb.at[u], a1 = nb.at[u + 1], b0 = nb.at[v], b1 = nb.at[v + 1];
+    let total = 0, below = 0, j = b0, all = 0, read = 0;
+    for (let q = b0; q < b1; q++) all += nb.count[q];
+    for (let p = a0; p < a1; p++) {
+      const at = pos[nb.id[p]];
+      while (j < b1 && pos[nb.id[j]] < at) below += nb.count[j++];
+      let same = 0, q = j;
+      for (; q < b1 && pos[nb.id[q]] === at; q++) same += nb.count[q];
+      read += q - j;
+      total += nb.count[p] * (below - (all - below - same));
+    }
+    if (work) work.steps += 1 + a1 - a0 + 2 * (b1 - b0) + read;
+    return total;
+  };
+  // The gains of the pairs at positions 0 ..< w - 1 of a layer against the
+  // layer above (tree 2k) and below (tree 2k + 1), as the leaves of a max
+  // segment tree: node v (from 1) holds the largest gain below it, leaf i is
+  // node size + i, and leaves past w - 2 hold -Infinity. stale[0 ..< n] are
+  // the leaves marked since the tree was last brought up to date (marked[i]
+  // is 1 for each), seen and epoch mark the nodes lift has visited. A tree is
+  // built when its first step runs, and dropped when a base step reorders a
+  // layer it reads.
+  // Complexity tradeoff (DAGVIEW-aspect-plan-time): d3-dag scans the whole
+  // range for its best pair after each swap, O(range) per swap and O(w^2) per
+  // step when each swap splits off a short part; a range here is the
+  // O(log w) nodes that cover it, and the first of them holding the largest
+  // gain is followed down to its leftmost leaf of that gain, so the first
+  // pair of the largest gain, as d3-dag picks it. A swap at i makes new pairs
+  // only at i - 1 and i + 1, and splits the range at i, so the pair at i is
+  // never read again in the step.
+  const trees: (Gains | null)[] = new Array(2 * L).fill(null);
+  const lefts = new Int32Array(32), rights = new Int32Array(32);
+  const lower = new Int32Array(Math.max(1, widest)), upper = new Int32Array(Math.max(1, widest));
+  // The nodes above leaves stale[0 ..< m] get the larger gain of their two
+  // children, level by level from the leaves, each node once.
+  const lift = (t: Gains) => {
+    const { most, seen } = t, e = ++t.epoch;
+    let from = lower, to = upper, len = t.n, steps = 0;
+    for (let q = 0; q < len; q++) from[q] = t.size + t.stale[q];
+    while (len) {
+      let m = 0;
+      for (let q = 0; q < len; q++) {
+        const p = from[q] >> 1;
+        if (p && seen[p] !== e) { seen[p] = e; most[p] = Math.max(most[2 * p], most[2 * p + 1]); to[m++] = p; }
+      }
+      steps += len;
+      [from, to] = [to, from];
+      len = m;
+    }
+    if (work) work.steps += steps;
+  };
+  // Layer k's tree against the layer above (down) or below, built or brought
+  // up to date.
+  const gainsOf = (k: number, down: boolean): Gains => {
+    const j = 2 * k + (down ? 0 : 1), nb = down ? ups : downs, o = order[k], w = o.length;
+    const t = trees[j];
+    if (t) {
+      for (let q = 0; q < t.n; q++) {
+        const i = t.stale[q];
+        t.marked[i] = 0;
+        t.most[t.size + i] = gain(nb, o[i], o[i + 1]);
+      }
+      lift(t);
+      t.n = 0;
+      return t;
+    }
+    let size = 1;
+    while (size < w - 1) size <<= 1;
+    const most = new Float64Array(2 * size).fill(-Infinity);
+    for (let i = 0; i + 1 < w; i++) most[size + i] = gain(nb, o[i], o[i + 1]);
+    for (let v = size - 1; v > 0; v--) most[v] = Math.max(most[2 * v], most[2 * v + 1]);
+    if (work) work.steps += 2 * size;
+    const pairs = Math.max(0, w - 1);
+    return (trees[j] = { most, size, stale: new Int32Array(pairs), n: 0, marked: new Uint8Array(pairs), seen: new Int32Array(size), epoch: 0 });
+  };
+  const mark = (t: Gains | null, i: number) => {
+    if (t && i >= 0 && i < t.marked.length && !t.marked[i]) { t.marked[i] = 1; t.stale[t.n++] = i; }
+  };
+  // Marks in t the pairs on both sides of each of u's neighbors in nb.
+  const near = (t: Gains | null, nb: Lists, u: number): number => {
+    if (!t) return 0;
+    for (let e = nb.at[u]; e < nb.at[u + 1]; e++) { const i = pos[nb.id[e]]; mark(t, i - 1); mark(t, i); }
+    return nb.at[u + 1] - nb.at[u];
+  };
+  // u at b and v at b + 1 are next to each other in the list (back) of each
+  // neighbor p of u (from) whose list also holds v: they change places there.
+  const relink = (from: Lists, back: Lists, u: number, v: number, b: number): number => {
+    let steps = 0;
+    for (let e = from.at[u]; e < from.at[u + 1]; e++) {
+      const p = from.id[e], end = back.at[p + 1];
+      let lo = back.at[p], hi = end - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (pos[back.id[mid]] < b) lo = mid + 1;
+        else hi = mid;
+        steps++;
+      }
+      steps++;
+      if (lo + 1 < end && back.id[lo + 1] === v) {
+        back.id[lo] = v; back.id[lo + 1] = u;
+        const c = back.count[lo]; back.count[lo] = back.count[lo + 1]; back.count[lo + 1] = c;
+      }
+    }
+    return steps;
+  };
+  // The swaps since keep(), as layer and position, and the crossings removed.
+  const log: number[] = [];
+  let gone = 0, kept = 0, logging = !base;
+  // Swaps the pieces at b and b + 1 of layer k, in the layer, the order and
+  // the sorted lists, and marks the leaves the swap can change.
+  const swap = (k: number, b: number) => {
+    const o = order[k], u = o[b], v = o[b + 1], row = layers[k];
+    if (logging) { gone += gain(ups, u, v) + gain(downs, u, v); log.push(k, b); }
+    let steps = 8 + relink(ups, downs, u, v, b) + relink(downs, ups, u, v, b);
+    o[b] = v; o[b + 1] = u; pos[v] = b; pos[u] = b + 1;
+    const s = row[b]; row[b] = row[b + 1]; row[b + 1] = s;
+    for (let i = b - 1; i <= b + 1; i++) { mark(trees[2 * k], i); mark(trees[2 * k + 1], i); }
+    if (k > 0) steps += near(trees[2 * k - 1], ups, u) + near(trees[2 * k - 1], ups, v);
+    if (k + 1 < L) steps += near(trees[2 * k + 2], downs, u) + near(trees[2 * k + 2], downs, v);
+    if (work) work.steps += steps;
+  };
   const step = (k: number, down: boolean): boolean => {
-    const layer = layers[k], old = order[k];
-    let ids = old;
+    const layer = layers[k], o = order[k], w = o.length;
+    let changed = false, steps = 0;
+    // A base step and the swaps after it could, in principle, give back the
+    // order before the step; changed compares with it, as d3-dag does.
+    const before = base ? o.slice() : null;
     if (base) {
       if (down) base(layers[k - 1], layer, true);
       else base(layer, layers[k + 1], false);
-      ids = Int32Array.from(layer, (s) => id.get(s)!);
-    }
-    const w = ids.length;
-    // Each piece's neighbors in the fixed layer, as positions sorted, with
-    // counts, in two flat arrays: piece i's are at off[i] ..< off[i + 1]. Most
-    // pieces are pieces of long edges, with one neighbor and nothing to sort.
-    const nb = down ? ups : downs;
-    const off = new Int32Array(w + 1);
-    for (let i = 0; i < w; i++) off[i + 1] = off[i] + nb.at[ids[i] + 1] - nb.at[ids[i]];
-    // The slices, ids, offsets, the reorder, place and the comparison with
-    // the old order, each a sweep of the layer, and each neighbor read once.
-    let steps = 7 * w + off[w];
-    const P = new Float64Array(off[w]), C = new Float64Array(off[w]);
-    for (let i = 0; i < w; i++) {
-      const a = nb.at[ids[i]], d = nb.at[ids[i] + 1] - a, o = off[i];
-      if (d === 1) { P[o] = pos[nb.id[a]]; C[o] = nb.count[a]; continue; }
-      const by = Array.from({ length: d }, (_, q) => a + q).sort(work ? (p, q) => (work.steps++, pos[nb.id[p]] - pos[nb.id[q]]) : (p, q) => pos[nb.id[p]] - pos[nb.id[q]]);
-      by.forEach((e, r) => { P[o + r] = pos[nb.id[e]]; C[o + r] = nb.count[e]; });
-    }
-    // The layer as indices into ids, so that the scans read no map.
-    const ord = new Int32Array(w);
-    for (let i = 0; i < w; i++) ord[i] = i;
-    // The gain of swapping the pieces at positions i and i + 1.
-    const gain = (i: number) => {
-      const iu = ord[i], iv = ord[i + 1];
-      const a0 = off[iu], a1 = off[iu + 1], b0 = off[iv], b1 = off[iv + 1];
-      let total = 0, below = 0, j = b0, all = 0, read = 0;
-      for (let q = b0; q < b1; q++) all += C[q];
-      for (let p = a0; p < a1; p++) {
-        while (j < b1 && P[j] < P[p]) below += C[j++];
-        let same = 0, q = j;
-        for (; q < b1 && P[q] === P[p]; q++) same += C[q];
-        read += q - j;
-        total += C[p] * (below - (all - below - same));
+      for (let i = 0; i < w; i++) {
+        const v = id.get(layer[i])!;
+        if (v !== o[i]) { changed = true; o[i] = v; }
+        pos[v] = i;
       }
-      // Counted into work, not steps: a closure that writes steps keeps it out
-      // of a register for the whole step.
-      if (work) work.steps += a1 - a0 + 2 * (b1 - b0) + read;
-      return total;
-    };
-    // The gains of the pairs at positions 0 ..< w - 1 as the leaves of a max
-    // segment tree: node v (from 1) holds the largest gain below it, leaf i is
-    // node size + i, and leaves past w - 2 hold -Infinity.
-    // Complexity tradeoff (DAGVIEW-aspect-plan-time): d3-dag scans the whole
-    // range for its best pair after each swap, O(range) per swap and O(w^2) per
-    // step when each swap splits off a short part; a range here is the
-    // O(log w) nodes that cover it, and the first of them holding the largest
-    // gain is followed down to its leftmost leaf of that gain, so the first
-    // pair of the largest gain, as d3-dag picks it; the tree costs O(w) to
-    // build and O(log w) per changed pair. A swap at i makes new pairs only at
-    // i - 1 and i + 1, and splits the range at i, so the pair at i is never
-    // read again and no other pair changes. Each pair's gain is computed once,
-    // when the pair forms inside a range, as the scan with d3-dag's cache of
-    // gains computes it.
-    let size = 1, depth = 0;
-    while (size < w - 1) { size <<= 1; depth++; }
-    const most = new Float64Array(2 * size).fill(-Infinity);
-    for (let i = 0; i + 1 < w; i++) most[size + i] = gain(i);
-    for (let v = size - 1; v > 0; v--) most[v] = Math.max(most[2 * v], most[2 * v + 1]);
-    steps += 2 * size;
+      steps += 2 * w;
+      if (changed) {
+        // Every position in layer k may have changed: the lists into it are
+        // sorted again and the trees that read it built again.
+        if (k > 0) { for (const p of order[k - 1]) sortList(downs, p); steps += order[k - 1].length; trees[2 * k - 1] = null; }
+        if (k + 1 < L) { for (const p of order[k + 1]) sortList(ups, p); steps += order[k + 1].length; trees[2 * k + 2] = null; }
+        trees[2 * k] = trees[2 * k + 1] = null;
+      }
+    }
+    const { most, size } = gainsOf(k, down), nb = down ? ups : downs;
     // The ranges still to scan, each of two or more pieces, disjoint, so at
     // most w / 2 at once: range q is los[q] ..< his[q].
     const los = new Int32Array(w >> 1), his = new Int32Array(w >> 1);
     let ranges = 0;
     if (w >= 2) { los[0] = 0; his[0] = w; ranges = 1; }
     while (ranges) {
-      // Pairs lo ..< hi - 1 of the range lo ..< hi; the nodes that cover them,
-      // left to right: lefts[0 ..< nl] then rights[nr - 1 ... 0].
+      // The pairs lo ..< hi - 1 of the range lo ..< hi, left to right: the
+      // leaf of the first, the nodes over the pairs between (lefts[0 ..< nl]
+      // then rights[nr - 1 ... 0]), the leaf of the last.
       const lo = los[--ranges], hi = his[ranges];
-      let nl = 0, nr = 0;
-      for (let a = size + lo, b = size + hi - 1; a < b; a >>= 1, b >>= 1) {
+      let top = 0, at = 0, nl = 0, nr = 0;
+      if (most[size + lo] > top) { top = most[size + lo]; at = size + lo; }
+      for (let a = size + lo + 1, b = size + hi - 2; a < b; a >>= 1, b >>= 1) {
         if (a & 1) lefts[nl++] = a++;
         if (b & 1) rights[nr++] = --b;
+        steps++;
       }
-      let top = 0, at = 0;
       for (let q = 0; q < nl; q++) if (most[lefts[q]] > top) { top = most[lefts[q]]; at = lefts[q]; }
       for (let q = nr - 1; q >= 0; q--) if (most[rights[q]] > top) { top = most[rights[q]]; at = rights[q]; }
-      steps += nl + nr + depth;
+      if (hi - 2 > lo && most[size + hi - 2] > top) { top = most[size + hi - 2]; at = size + hi - 2; }
+      steps += 3 + nl + nr;
       if (!at) continue;
-      while (at < size) at = most[2 * at] === top ? 2 * at : 2 * at + 1;
+      for (; at < size; steps++) at = most[2 * at] === top ? 2 * at : 2 * at + 1;
       const best = at - size;
-      const s = ord[best + 1];
-      ord[best + 1] = ord[best];
-      ord[best] = s;
+      swap(k, best);
+      changed = true;
       // The new pairs at best - 1 and best + 1, where they lie in the range.
-      for (let i = best - 1; i <= best + 1; i += 2) {
-        if (i < lo || i > hi - 2) continue;
-        let v = size + i;
-        most[v] = gain(i);
-        for (v >>= 1; v; v >>= 1) most[v] = Math.max(most[2 * v], most[2 * v + 1]);
-        steps += depth + 1;
-      }
+      if (best - 1 >= lo) most[size + best - 1] = gain(nb, o[best - 1], o[best]);
+      if (best + 1 <= hi - 2) most[size + best + 1] = gain(nb, o[best + 1], o[best + 2]);
       if (best + 1 - lo >= 2) { los[ranges] = lo; his[ranges++] = best + 1; }
       if (hi - best - 1 >= 2) { los[ranges] = best + 1; his[ranges++] = hi; }
     }
-    const now = new Int32Array(w);
-    let changed = false;
-    for (let i = 0; i < w; i++) {
-      const v = ids[ord[i]];
-      now[i] = v;
-      layer[i] = piece[v];
-      pos[v] = i;
-      if (v !== old[i]) changed = true;
+    if (before) {
+      changed = false;
+      for (let i = 0; i < w; i++) if (o[i] !== before[i]) changed = true;
+      steps += 2 * w;
     }
-    order[k] = now;
     if (work) work.steps += steps;
     return changed;
+  };
+  const removed = () => gone;
+  const keep = () => { log.length = 0; kept = gone; };
+  const undo = () => {
+    logging = false;
+    for (let q = log.length - 2; q >= 0; q -= 2) swap(log[q], log[q + 1]);
+    logging = !base;
+    log.length = 0;
+    gone = kept;
   };
   // The crossings between each two adjacent layers: the edges from the upper
   // layer in order of their upper end, each list of one piece in order of the
   // lower end, and the crossings the inversions of the lower ends, counted
   // with a Fenwick tree (Barth, Juenger and Mutzel 2004). Steps as crossings
   // counts them.
+  const tree = new Float64Array(widest + 1);
   const count = (work?: Work): number => {
     let total = 0, steps = 0;
-    for (let k = 0; k + 1 < order.length; k++) {
+    for (let k = 0; k + 1 < L; k++) {
       const top = order[k], w = order[k + 1].length;
       tree.fill(0, 0, w + 1);
       let seen = 0;
       steps += 2 * w;
       for (let t = 0; t < top.length; t++) {
-        const a = downs.at[top[t]], d = downs.at[top[t] + 1] - a;
-        const out = d === 1 ? [a] : Array.from({ length: d }, (_, q) => a + q).sort(work ? (p, q) => (work.steps++, pos[downs.id[p]] - pos[downs.id[q]]) : (p, q) => pos[downs.id[p]] - pos[downs.id[q]]);
+        const a = downs.at[top[t]], b = downs.at[top[t] + 1];
         // Edges of earlier upper pieces ending right of c cross this one;
         // edges of the same piece do not, so they are added after all are
         // counted.
-        for (const e of out) {
+        for (let e = a; e < b; e++) {
           const c = pos[downs.id[e]];
           let atMost = 0;
           for (let i = c + 1; i > 0; i -= i & -i) atMost += tree[i];
           total += downs.count[e] * (seen - atMost);
         }
-        for (const e of out) {
+        for (let e = a; e < b; e++) {
           const c = pos[downs.id[e]], m = downs.count[e];
           for (let i = c + 1; i <= w; i += i & -i) tree[i] += m;
           seen += m;
@@ -1894,8 +2030,8 @@ function sweeper(layers: any[][], base?: (top: any[], bottom: any[], down: boole
         // instructions in decrossSeeded (DAGVIEW-counter-cost, 2026-11-11). A
         // change to either loop must change its walk here too.
         if (work) {
-          steps += 1 + d;
-          for (const e of out) {
+          steps += 1 + b - a;
+          for (let e = a; e < b; e++) {
             const c = pos[downs.id[e]];
             for (let i = c + 1; i > 0; i -= i & -i) steps++;
             for (let i = c + 1; i <= w; i += i & -i) steps++;
@@ -1906,7 +2042,7 @@ function sweeper(layers: any[][], base?: (top: any[], bottom: any[], down: boole
     if (work) work.steps += steps;
     return total;
   };
-  return { step, count };
+  return { step, count, removed, keep, undo };
 }
 
 // Crossings between each two adjacent layers, each edge counted with its
