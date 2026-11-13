@@ -211,6 +211,95 @@ fn each_rejection_of_a_value_names_the_refused_question_behind_it() {
     }
 }
 
+#[test]
+fn an_inner_name_that_shadows_one_under_a_refused_question_does_not_take_its_question() {
+    // The refused question is on the parameter `x`. The block's own `x`, from `v` alone, shadows
+    // it: its rejection has no question behind it, though the question's text names an `x`. The
+    // parameter `x`, rejected after the block, still has the question behind it (WARN-refused-
+    // shadowed: the questions were once matched to a value by the name as written).
+    let line = format!(
+        "f(x: int, y: int, z: int, w: int, v: int) = if {GROWTH} \
+         {{ {{ a = {{ x = v - 1; 2 ^ x }}; a + 2 ^ x }} }} else {{ 0 }};"
+    );
+    let src = format!("{line}\nmain() {{\n}}\n");
+    let file = unit("rejection", "shadowed.zed", &src);
+    let (asked, declared) = (col(&line, LAST), col(&line, "v: int"));
+    let defined = col(&line, "v - 1");
+    let one = defined + 4;
+    let inner = col(&line, "2 ^ x }");
+    let outer = col(&line, "2 ^ x } }");
+    let (inner_x, outer_x) = (inner + 4, outer + 4);
+    let rows: String = [
+        marks(&[
+            (declared, 6, "[5]"),
+            (defined, 1, "[4]"),
+            (inner, 5, "[7, 8]"),
+        ]),
+        marks(&[(defined, 5, "[2, 3]")]),
+        marks(&[(one, 1, "[6]"), (inner_x, 1, "[1]")]),
+    ]
+    .iter()
+    .map(|m| format!("        | {m}\n"))
+    .collect();
+    let end = asked + LAST.len() - 1;
+    let at = format!("1:{asked} to 1:{end}");
+    let expected = format!(
+        "\
+{file}:1:{inner}: Int power with an exponent that may be negative: `2 : int ^ x : int`. Try \
+`if x >= 0 {{ 2 ^ x }} else {{ … }}` instead.
+  [1] 1:{inner_x}: `x` is int here
+      1 | {line}
+{rows}  [2] 1:{defined}: `x` is defined as this expression, int
+  [3] 1:{defined}: this `-` gives int
+  [4] 1:{defined}: `v` is int here
+  [5] 1:{declared}: `v` is declared `int`
+  [6] 1:{one}: this literal, 1, is 1
+  [7] 1:{inner}: repair: `if x >= 0 {{ 2 ^ x }} else {{ … }}`
+  [8] 1:{inner}: repair: `2r ^ x`
+{file}:1:{outer}: Int power with an exponent that may be negative: `2 : int ^ x : int`. Try \
+`if x >= 0 {{ 2 ^ x }} else {{ … }}` instead.
+  [1] {at}: here the conditions `{CONDITIONS}` hold
+      line 1 is shown above
+  [2] {at}: the checker could not work out which values each of their variables can take: to \
+find whole numbers that meet these conditions, the checker removes one variable at a time, \
+putting in place of the conditions on it conditions on the variables left. Here four variables \
+or more are left, and removing any one of them would leave more conditions than there are now, \
+so the work could grow without end. The checker stopped there, and the bounds that each \
+condition gives each variable from the bounds of the others rule out no value: `w`, `x`, `y` \
+and `z` may still be any whole number
+  [3] {at}: so here each of their variables keeps only those bounds, which may be wider than \
+the conditions allow; so the checker may reject or warn about code here that is correct, and it \
+does not accept code that is wrong
+  [4] 1:{outer_x} to 1:{outer_x}: `x` is int here
+  [5] 1:3 to 1:8: `x` is declared `int`
+  [6] 1:{outer} to 1:{outer_end}: repair: `if x >= 0 {{ 2 ^ x }} else {{ … }}`
+  [7] 1:{outer} to 1:{outer_end}: repair: `2r ^ x`
+",
+        outer_end = outer + 4,
+    );
+    assert_eq!(run(&file, &[]), (1, expected));
+}
+
+#[test]
+fn an_inner_name_read_from_a_name_under_a_refused_question_takes_the_question() {
+    // The block's own `x` is computed from `y`, on which the question is asked: the question is
+    // behind the inner rejection through `y`, as for any value read from it, and behind the
+    // parameter's rejection through the parameter `x`; each names it once.
+    let src = format!(
+        "f(x: int, y: int, z: int, w: int) = if {GROWTH} \
+         {{ {{ a = {{ x = y - 1; 2 ^ x }}; a + 2 ^ x }} }} else {{ 0 }};\nmain() {{\n}}\n"
+    );
+    let file = unit("rejection", "shadowed_through.zed", &src);
+    let (status, err) = run(&file, &[]);
+    assert_eq!(status, 1, "{err}");
+    assert_eq!(
+        err.matches("Int power with an exponent").count(),
+        2,
+        "{err}"
+    );
+    assert_eq!(err.matches("here the conditions").count(), 2, "{err}");
+}
+
 /// A function of `n` groups of four parameters, each group `xi`, `yi`, `zi`, `wi` under its own
 /// copy of [`GROWTH`], all in one test, whose arm adds `2 ^ xi` for each group: `n` refused
 /// questions in one scope and `n` rejections, each with one question behind it.

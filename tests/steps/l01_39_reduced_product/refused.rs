@@ -343,7 +343,7 @@ fn keeping_many_refusals_scales() {
     use zed_tests::scaling::{self, FACTOR};
     let names = refused_names;
     let n = 4096;
-    let refused = [n, FACTOR * n].map(|k| -> Vec<(Refused, Kept)> {
+    let refused = [n, FACTOR * n].map(|k| -> Vec<(Refused, Kept, Vec<Arc<str>>)> {
         names(k)
             .chunks(4)
             .map(|c| {
@@ -353,7 +353,7 @@ fn keeping_many_refusals_scales() {
                     cause: Refusal::Growth.into(),
                 };
                 let sets = c.iter().map(|n| (n.clone(), IntervalSet::top()));
-                (r, Arc::new(sets.collect()))
+                (r, Arc::new(sets.collect()), c.to_vec())
             })
             .collect()
     });
@@ -361,8 +361,8 @@ fn keeping_many_refusals_scales() {
     scaling::check("keeping refusals", n, |k| {
         let s = refused[usize::from(k != n)]
             .iter()
-            .fold(empty.clone(), |mut s, (r, kept)| {
-                s.refuse(r.clone(), kept.clone());
+            .fold(empty.clone(), |mut s, (r, kept, on)| {
+                s.refuse(r.clone(), kept.clone(), on);
                 s
             });
         assert_eq!(s.refusals.len(), k);
@@ -381,7 +381,7 @@ fn the_refusals_on_a_name_are_found_by_that_name() {
             asked: Asked::Test { outcome: true },
             cause: Refusal::Growth.into(),
         };
-        s.refuse(r, Arc::new(Default::default()));
+        s.refuse(r, Arc::new(Default::default()), c);
         s
     });
     let found = |ns: &[&str]| -> Vec<String> {
@@ -391,8 +391,9 @@ fn the_refusals_on_a_name_are_found_by_that_name() {
     };
     let test = |i: usize| growth_test([0, 1, 2, 3].map(|j| &*names[4 * i + j]));
     assert_eq!(found(&["v5"]), [test(1)]);
-    // A name of the scope is matched by the name the program wrote, before its `@`.
-    assert_eq!(found(&["v5@7"]), [test(1)]);
+    // A name of the scope is matched by its binding: `v5@7`, a binder written `v5` that
+    // shadows the `v5` of the question, is another name, and finds no question.
+    assert!(found(&["v5@7"]).is_empty());
     assert_eq!(found(&["v0", "v3", "v9"]), [test(0), test(2)]);
     assert_eq!(found(&["v1", "v2"]), [test(0)], "one question once");
     assert!(found(&["v12", "v"]).is_empty());
@@ -403,12 +404,45 @@ fn the_refusals_on_a_name_are_found_by_that_name() {
             asked: Asked::Test { outcome: false },
             cause: Refusal::Growth.into(),
         };
-        o.refuse(r, Arc::new(Default::default()));
+        o.refuse(r, Arc::new(Default::default()), c);
         o
     });
     let joined = other.join(&s);
     assert_eq!(joined.refused_on(["v9"]).len(), 1);
     assert_eq!(joined.refused_on(["v0"]).len(), 2);
+}
+
+/// A question whose text reads alike may be asked of an outer name and again of an inner name
+/// that shadows it, `v0` and `v0@3`: it is kept once and found by both bindings, and not by a
+/// third, `v0@4`. A join keeps each binding a side found it under, whichever side.
+#[test]
+fn a_question_asked_of_two_bindings_of_one_name_is_found_by_each() {
+    let outer: Vec<Arc<str>> = ["v0", "v1", "v2", "v3"].map(Arc::from).into();
+    let inner: Vec<Arc<str>> = ["v0@3", "v1", "v2", "v3"].map(Arc::from).into();
+    let r = Refused {
+        constraint: growth_test(["v0", "v1", "v2", "v3"]).into(),
+        asked: Asked::Test { outcome: true },
+        cause: Refusal::Growth.into(),
+    };
+    let asked = |on: &[&[Arc<str>]]| {
+        on.iter().fold(super::ints(&[]), |mut s, names| {
+            s.refuse(r.clone(), Arc::new(Default::default()), names);
+            s
+        })
+    };
+    let found = |s: &Scope, n: &str| s.refused_on([n]).len();
+    let both = asked(&[&outer, &inner]);
+    assert_eq!(both.refusals.len(), 1);
+    assert_eq!(
+        ["v0", "v0@3", "v0@4", "v1"].map(|n| found(&both, n)),
+        [1, 1, 0, 1]
+    );
+    let (o, i) = (asked(&[&outer]), asked(&[&inner]));
+    assert_eq!(["v0", "v0@3"].map(|n| found(&o, n)), [1, 0]);
+    for joined in [o.join(&i), i.join(&o)] {
+        assert_eq!(joined.refusals.len(), 1);
+        assert_eq!(["v0", "v0@3", "v0@4"].map(|n| found(&joined, n)), [1, 1, 0]);
+    }
 }
 
 /// Finding the refusals on each of `k` names among `k` refusals in one scope costs near linear
@@ -425,7 +459,7 @@ fn finding_the_refusals_on_many_names_scales() {
                 asked: Asked::Test { outcome: true },
                 cause: Refusal::Growth.into(),
             };
-            s.refuse(r, Arc::new(Default::default()));
+            s.refuse(r, Arc::new(Default::default()), c);
             s
         });
         let firsts: Vec<Arc<str>> = names.chunks(4).map(|c| c[0].clone()).collect();
@@ -640,7 +674,7 @@ fn the_bounds_of_a_refusal_do_not_depend_on_the_order_it_was_met_in() {
     let names: Vec<Arc<str>> = ["u", "v"].map(Arc::from).into();
     let refused = |sets: &[&Kept]| {
         sets.iter().fold(super::ints(&names), |mut s, k| {
-            s.refuse(r.clone(), (*k).clone());
+            s.refuse(r.clone(), (*k).clone(), &names);
             s
         })
     };

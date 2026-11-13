@@ -4963,15 +4963,15 @@ impl<'a> Ck<'_, 'a> {
     }
 
     /// A note for each step of the derivation of each question the integer solver refused in
-    /// the scope `e` is read in ([`Ck::ints_here`]) whose constraint mentions a name `e` reads
-    /// ([`Ck::read_names`]), for a rejection of the value of `e`: such a question leaves the
+    /// the scope `e` is read in ([`Ck::ints_here`]) whose constraint mentions a binding `e` reads
+    /// ([`Ck::read_names`]; an inner name that shadows an outer one is another binding), for a rejection of the value of `e`: such a question leaves the
     /// value wider than the tests may make it, so it may be behind the rejection, which names
     /// it as its warning would in a unit the checker accepts (DESIGN.md L1.39). Each note is
     /// at the place the program asks the question ([`Ck::asked_at`]). None where the read
     /// does not take the scope, a value the text shows or a read outside every test, and none
     /// while a repair is tried, whose derivations are not written ([`Ck::derive_into`]).
     ///
-    /// Complexity tradeoff: the questions are found through the scope's index of them by name
+    /// Complexity tradeoff: the questions are found through the scope's index of them by binding
     /// ([`Scope::refused_on`]), O(m log k) for the m names `e` reads among k questions, and
     /// not by reading each question of the scope, O(k) for each rejection, which `r`
     /// rejections under `k` refused tests would make O(r k). The read is taken again, at the

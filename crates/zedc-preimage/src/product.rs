@@ -546,10 +546,12 @@ pub struct Scope {
     /// S18 (the solver) and S28 (this report). A complete solution would decide every question
     /// (see `presburger`).
     pub refusals: imbl::OrdMap<Refused, Kept>,
-    /// Each question of [`Scope::refusals`] under each name its constraint mentions, as the
-    /// program wrote it ([`presburger::names_in`]), kept with it by [`Scope::refuse`] and the
-    /// join: so the questions behind a read of m names are found in O(m log k) among k
-    /// questions, and not by reading each question ([`Scope::refused_on`]).
+    /// Each question of [`Scope::refusals`] under each name of the scope its constraint
+    /// mentions, by the name's binding: its name in the scope, which is `x@k` for a binder
+    /// elaboration renamed, so an inner `x` that shadows an outer `x` has its own entry. Kept
+    /// with it by [`Scope::refuse`] and the join: so the questions behind a read of m names are
+    /// found in O(m log k) among k questions, and not by reading each question
+    /// ([`Scope::refused_on`]).
     refused_by: imbl::OrdMap<Arc<str>, imbl::OrdSet<Refused>>,
     /// Each name a `let` of the walk bound, with the order of its binding and, for a function,
     /// its lambda: a test that calls a function is closed over it before its preimage is taken
@@ -3532,12 +3534,44 @@ pub struct Refused {
 /// alternative set aside, or the ends of names with holes.
 pub type Kept = Arc<BTreeMap<Arc<str>, IntervalSet>>;
 
-/// `by` with the question `r` under each name its constraint mentions ([`Scope::refused_by`]),
-/// O(n log k) for the n names among k questions.
-fn index_refused(by: &mut imbl::OrdMap<Arc<str>, imbl::OrdSet<Refused>>, r: &Refused) {
-    for n in presburger::names_in(&r.constraint) {
-        by.entry(n.into()).or_default().insert(r.clone());
+/// `by` with the question `r` under each of `names`, the names of the scope its constraint
+/// mentions ([`Scope::refused_by`]), O(n log k) for the n names among k questions.
+fn index_refused(
+    by: &mut imbl::OrdMap<Arc<str>, imbl::OrdSet<Refused>>,
+    r: &Refused,
+    names: &[Arc<str>],
+) {
+    for n in names {
+        by.entry(n.clone()).or_default().insert(r.clone());
     }
+}
+
+/// Those of `names`, names of a scope, that a constraint printed as `text` mentions: each one
+/// whose written name ([`written_name`]) the text holds outside a call
+/// ([`presburger::names_in`]). The scope's names keep their bindings apart, as `x` and the
+/// `x@k` that shadows it, which the text does not. O(t + n) for a text of length t and n
+/// names.
+fn mentioned(text: &str, names: impl IntoIterator<Item = Arc<str>>) -> Vec<Arc<str>> {
+    let written: std::collections::HashSet<&str> = presburger::names_in(text).into_iter().collect();
+    (names.into_iter())
+        .filter(|n| written.contains(written_name(n)))
+        .collect()
+}
+
+/// The names `f` mentions, as the scope holds them, the factors of a product included. O(c log
+/// a) for c constraints and a atoms.
+fn syms_of(f: &Formula) -> impl Iterator<Item = Arc<str>> {
+    let factor = |x: Factor| match x {
+        Factor::Sym(n) => Some(n),
+        Factor::Aux(_) => None,
+    };
+    (f.atoms().into_iter())
+        .flat_map(move |a| match a {
+            Atom::Sym(n) => [Some(n), None],
+            Atom::Product(x, y) => [factor(x), factor(y)],
+            Atom::Aux(_) => [None, None],
+        })
+        .flatten()
 }
 
 /// The sets of one refused question met twice, each of whose sets holds every value the
@@ -4594,32 +4628,31 @@ impl Scope {
     /// projected, once, with `kept`, the sets it left its variables. The same question asked
     /// again in this scope keeps the meet of the sets of each time, each of which holds every
     /// value the question allows here, so the sets do not depend on the order the questions
-    /// were met in. O(log k) in the k refusals kept, O(m log m) in the m variables of `kept`,
-    /// and, for a new question, O(n log k) for the n names its constraint mentions
-    /// (`Scope::refused_by`). Every refused test and part of the relation is kept through
-    /// here.
-    pub fn refuse(&mut self, r: Refused, kept: Kept) {
+    /// were met in. `names` are the names of the scope its constraint mentions, under each of
+    /// which it is found (`Scope::refused_by`): a question its text shows alike may be asked of
+    /// an outer `x` and again of an inner `x` that shadows it, and is then found under both.
+    /// O(log k) in the k refusals kept, O(m log m) in the m variables of `kept`, and O(n log k)
+    /// for the n names. Every refused test and part of the relation is kept through here.
+    pub fn refuse(&mut self, r: Refused, kept: Kept, names: &[Arc<str>]) {
+        index_refused(&mut self.refused_by, &r, names);
         let kept = match self.refusals.get(&r) {
             Some(old) => kept_meet(old, &kept),
-            None => {
-                index_refused(&mut self.refused_by, &r);
-                kept
-            }
+            None => kept,
         };
         self.refusals.insert(r, kept);
     }
 
     /// Each question the integer solver left undecided in this scope whose constraint mentions
-    /// one of `names`, names of the scope, by the name the program wrote ([`written_name`]),
-    /// once each, in the order of [`Refused`], with the sets it left its variables. O(m log k +
-    /// q log q) for m names among k questions and the q questions found
-    /// (`Scope::refused_by`).
+    /// one of `names`, names of the scope (`x@k` for a binder elaboration renamed), by the
+    /// binding: a question on an outer `x` is not found by an inner `x` that shadows it. Once
+    /// each, in the order of [`Refused`], with the sets it left its variables. O(m log k + q
+    /// log q) for m names among k questions and the q questions found (`Scope::refused_by`).
     pub fn refused_on<'n>(
         &self,
         names: impl IntoIterator<Item = &'n str>,
     ) -> Vec<(&Refused, &Kept)> {
         let mut found: Vec<&Refused> = (names.into_iter())
-            .filter_map(|n| self.refused_by.get(written_name(n)))
+            .filter_map(|n| self.refused_by.get(n))
             .flatten()
             .collect();
         found.sort_unstable();
@@ -5069,7 +5102,6 @@ impl Scope {
             match d {
                 DiffItem::Add(r, kept) => {
                     refusals.insert(r.clone(), kept.clone());
-                    index_refused(&mut refused_by, r);
                 }
                 DiffItem::Update {
                     old: (r, mine),
@@ -5077,6 +5109,29 @@ impl Scope {
                 } => {
                     let both = merged(mine, theirs, IntervalSet::join, false);
                     refusals.insert(r.clone(), Arc::new(both));
+                }
+                DiffItem::Remove(..) => {}
+            }
+        }
+        // Each name keeps the questions found under it on either side. The other side's index
+        // is read where it differs from this side's, and a name's questions where they differ,
+        // so a join costs O(d log k) for the d entries that differ, not the whole index.
+        for d in self.refused_by.diff(&other.refused_by) {
+            match d {
+                DiffItem::Add(n, theirs) => {
+                    refused_by.insert(n.clone(), theirs.clone());
+                }
+                DiffItem::Update {
+                    old: (n, mine),
+                    new: (_, theirs),
+                } => {
+                    let mut both = mine.clone();
+                    for e in mine.diff(theirs) {
+                        if let imbl::ordset::DiffItem::Add(r) = e {
+                            both.insert(r.clone());
+                        }
+                    }
+                    refused_by.insert(n.clone(), both);
                 }
                 DiffItem::Remove(..) => {}
             }
@@ -5776,15 +5831,15 @@ impl Scope {
                 // The names read free in the test are in scope where it is written; a name it
                 // binds in two places is read in a part through one value (`print::pretty_in`).
                 let free = stage::free(written);
-                let constraint = print::written(written, written_name, &|x| free.contains(x));
-                self.refuse(
-                    Refused {
-                        constraint: constraint.into(),
-                        asked: Asked::Test { outcome },
-                        cause: cause.into(),
-                    },
-                    kept,
-                );
+                let constraint: Arc<str> =
+                    print::written(written, written_name, &|x| free.contains(x)).into();
+                let names = mentioned(&constraint, free.iter().cloned());
+                let r = Refused {
+                    constraint,
+                    asked: Asked::Test { outcome },
+                    cause: cause.into(),
+                };
+                self.refuse(r, kept, &names);
             }
             // The names bound by `let`s read through their summaries: the test narrows the
             // inputs they are computed from as well as the names. Only the inputs it narrows
@@ -6936,9 +6991,9 @@ impl Scope {
                     .filter(|((u, v, _), _)| inside.contains(u) && inside.contains(v))
                     .map(|(_, g)| *g)
                     .collect();
-                let constraint = Formula::and(gs.into_iter().map(|g| (**g).clone()).collect())
-                    .written(written_name)
-                    .into();
+                let between = Formula::and(gs.into_iter().map(|g| (**g).clone()).collect());
+                let constraint: Arc<str> = between.written(written_name).into();
+                let on = mentioned(&constraint, syms_of(&between));
                 let mut holed: Vec<Arc<str>> = holed
                     .iter()
                     .map(|&i| written_name(&names[i]).into())
@@ -6954,6 +7009,7 @@ impl Scope {
                         },
                     },
                     Kept::default(),
+                    &on,
                 );
                 Ends::Blockwise
             }
@@ -8406,19 +8462,21 @@ impl Scope {
             return;
         }
         let (whole, syms) = self.framed(part);
-        // The text of `part`, each name as written, printed once, and only when a question
-        // about it is refused.
-        let mut text: Option<Arc<str>> = None;
+        // The text of `part`, each name as written, with the names of the scope it mentions,
+        // made once, and only when a question about it is refused.
+        let mut text: Option<(Arc<str>, Vec<Arc<str>>)> = None;
         let mut refuse = |s: &mut Scope, asked: Asked, cause: presburger::Refusal, kept: Kept| {
-            let constraint = text
-                .get_or_insert_with(|| part.written(written_name).into())
-                .clone();
+            let (constraint, on) = text.get_or_insert_with(|| {
+                let written: Arc<str> = part.written(written_name).into();
+                let on = mentioned(&written, syms_of(part));
+                (written, on)
+            });
             let r = Refused {
-                constraint,
+                constraint: constraint.clone(),
                 asked,
                 cause: cause.into(),
             };
-            s.refuse(r, kept);
+            s.refuse(r, kept, on);
         };
         // A refused projection keeps the bounds the box stage gives the rows (DESIGN step
         // L1.38), and is reported with them: each name of the scope that `part` mentions, or
