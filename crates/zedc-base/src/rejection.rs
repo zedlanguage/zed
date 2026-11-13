@@ -101,12 +101,13 @@ rows! {
         "Order read on a level with no natural order — origin keys outside their `Seq`",
     TwoOrders => "Two declared orders meet in one key type",
     EmissionDisjointness => "Emission-disjointness",
-    // No diagnostic uses these four rows yet: plan rows L7.4 (the first and third), TERM-1 and
-    // EXPORT-unique emit them.
+    // No diagnostic uses these five rows yet: plan rows L7.4 (the first, third and fifth), TERM-1
+    // and EXPORT-unique emit them.
     BitFieldWithNoUnit => "Bit-field of a foreign struct with no C unit",
     ItemWithNoBitOrder => "Grammar item narrower than a byte with no bit order",
     ReleaseWhileKept => "Release of a foreign value while a result that keeps it is still read",
     SymbolExportedTwice => "One C symbol exported twice",
+    MisalignedForeignPointer => "Misaligned foreign pointer in a run",
     Rebinding => "Rebinding in the same scope",
     BinderNamingType => "Binder naming a type",
     // A numeric literal at a carrier it cannot take (as `x * 2.0` with `x: int`), and a decimal

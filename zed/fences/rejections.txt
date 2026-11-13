@@ -57,6 +57,7 @@ Bit-field of a foreign struct with no C unit
 Grammar item narrower than a byte with no bit order
 Release of a foreign value while a result that keeps it is still read
 One C symbol exported twice
+Misaligned foreign pointer in a run
 Rebinding in the same scope
 Binder naming a type
 Numeric literal at a carrier that cannot take it
