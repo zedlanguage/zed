@@ -345,6 +345,15 @@ const NEAR_MISSES: &[NearMiss] = &[
              language, and this version of zedc does not compile them yet.",
         ),
     ),
+    // Step L1.29d: the repair deletes the token the parse stopped at.
+    (
+        Row::SyntaxError,
+        "",
+        FEE,
+        "fee(positional base: int, rate: int) = base * * rate;\n",
+        "1:47",
+        Some("`fee(positional base: int, rate: int) = base * rate;`"),
+    ),
 ];
 
 /// Rows whose accepted program holds a form name resolution does not compile yet (a boundary
