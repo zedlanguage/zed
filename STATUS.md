@@ -2079,8 +2079,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FLOAT-f32 | impl attempt 1 | 2026-11-05 04:07 | tuple decimal component at f32 fixed (red then green); rebased on 8679b15a8; clippy + full --doc suite running |
 | L1.29d-package | impl attempt 1 | 2026-11-12 20:48 | started; worktree /home/luke/Work/wt/l129d-package on origin/main ba655bbca |
 | LIT-tuple-branch-carrier | impl attempt 1 | 2026-11-12 20:34 | started; worktree /home/luke/Work/wt/lit-tuple-branch on origin/main 0c230df62 |
-| MAIN-red-m0_01-s_01f | running | 2026-11-12 21:37 |  |
+| MAIN-red-m0_01-s_01f | impl attempt 1 | 2026-11-12 21:37 | started; worktree /home/luke/Work/wt/main-red |
 | MSG-fixnote-huge-value | impl attempt 1 | 2026-11-12 20:52 | started; worktree wt/msg-fixnote-huge |
+| PERF-deep-ops-slow | running | 2026-11-12 21:38 |  |
 | PERF-l139-family | running | 2026-11-12 18:45 | coordkk fixed d016b9cc3 90a844aa8; 14 tests in 8 families still ignored, cross-review next / 45.57 |
 | POLY-nf-power-value | running | 2026-11-12 14:17 | impl merged fast path 8c2710fc5; W <= K(n) refusal not merged (W does not track cost); CD xr POLY-nf-W spawned / 45.76 |
 | REGRESS-l01_26-overload | impl attempt 1 | 2026-11-12 20:07 | l01_27 merging_the_failures_of_a_long_chain_scales (None kinds): main's empty.rs 16.0x FAILED, with fix 8.2x (Some(7), Some(1) 8.0x both); a_chain_of_many_failu |
