@@ -2153,9 +2153,11 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | CAST-overflow-atom | impl attempt 1 | 2026-11-13 06:23 | started; worktree /home/luke/Work/wt/cast-overflow-atom from origin/main 3201dab08 |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | CD 1409134102157721601 launched RUN_TYPE_SHORT after test run 15,583.6 (sandbox ns); load 94.95 77.65 61.21 |
 | MAIN-files | impl attempt 1 | 2026-11-13 06:50 | reproduced on 77af58128: main::files is refused as 'a metadata read :: ... not yet' in main and in a helper; files() still accepted; main(1) gets the arity mess |
+| MSG-apply-try-headline | running |  |  |
 | NARROW-ne-rat-divisor | impl attempt 1 | 2026-11-13 01:12 | started in /home/luke/Work/wt/narrow-ne-rat-divisor from c75a68775 |
 | NUM-huge-div | impl attempt 1 | 2026-11-13 06:35 | started; worktree /home/luke/Work/wt/num-huge-div from bb7379f01 |
 | PERF-l139-family | running | 2026-11-12 18:45 | coordkk fixed d016b9cc3 90a844aa8; 14 tests in 8 families still ignored, cross-review next / 45.57 |
+| POLY-sum-chain-fold | running | 2026-11-13 07:32 |  |
 | PRES-overlap-fast | xr attempt  | 2026-11-13 01:10 | round 1 launched: Sol and Opus seats (medium); Gemini 429 (resets in 32h55m); CD next |
 | ROOTS-listed | impl attempt 1 | 2026-11-13 05:56 | started; load 24.38 28.00 29.26 |
 
