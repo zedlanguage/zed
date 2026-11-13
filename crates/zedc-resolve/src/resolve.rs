@@ -1337,6 +1337,17 @@ impl Resolver<'_> {
         })
     }
 
+    /// Whether the name `n`, used here, names a `main` function: every function named `main`
+    /// is a `main`, as the builder gives it `main`'s header; a binding or parameter `main` is
+    /// another name.
+    // Cost: a string compare at each use, and only at a use of the word `main` a hash lookup of
+    // the scope and a pass over the binders it finds, O(1) for the one `main` a scope has.
+    fn names_main(&self, n: &str) -> bool {
+        n == "main"
+            && matches!(self.find(n), Some(Found::Bound(ids))
+                if ids.iter().any(|&i| self.out.binders[i].kind == Kind::Function))
+    }
+
     /// Whether the binder `id` is a function: declared as one, or bound to a lambda.
     fn function_like(&self, id: usize) -> bool {
         self.out.binders[id].kind == Kind::Function || self.lambdas.contains(&id)
@@ -2369,7 +2380,12 @@ impl Resolver<'_> {
                 StrPart::Hole(h) => Some(Task::Expr(h)),
                 StrPart::Text(_) => None,
             })),
-            ExprKind::Name(n) => self.name(n, e.span),
+            ExprKind::Name(n) => {
+                if self.names_main(n) {
+                    self.errors.push(main_value(e.span));
+                }
+                self.name(n, e.span)
+            }
             ExprKind::Unary(_, a) => todo.push(Task::Expr(a)),
             ExprKind::Binary(_, a, b) | ExprKind::Index(a, b) => {
                 // `e == #a` and `e != #a`, either way round, handle `#a` for `e`.
@@ -2395,16 +2411,8 @@ impl Resolver<'_> {
             } => {
                 // Every function named `main` is a `main` (the builder gives it `main`'s
                 // header), so a call of a function the name `main` binds calls `main`.
-                // Cost: one hash lookup of the scope and a pass over the binders of `main`, only
-                // at a call whose callee is the word `main`; the name is resolved again below,
-                // as every callee is, rather than threading this lookup into it.
-                if let ExprKind::Name(n) = &callee.kind
-                    && n == "main"
-                    && let Some(Found::Bound(ids)) = self.find(n)
-                    && ids
-                        .iter()
-                        .any(|&i| self.out.binders[i].kind == Kind::Function)
-                {
+                let calls_main = matches!(&callee.kind, ExprKind::Name(n) if self.names_main(n));
+                if calls_main {
                     self.errors.push(main_called(e.span));
                 }
                 // The old call `files()`, when the program binds no `files` of its own: the file
@@ -2429,7 +2437,12 @@ impl Resolver<'_> {
                 }
                 todo.extend(named.iter().rev().map(|(_, a)| Task::Expr(a)));
                 todo.extend(positional.iter().rev().map(Task::Expr));
-                todo.push(Task::Expr(callee));
+                // The callee `main` is resolved here, before the arguments as every callee is,
+                // and not as a value, which [`Resolver::main_value`] would reject again.
+                match &callee.kind {
+                    ExprKind::Name(n) if calls_main => self.name(n, callee.span),
+                    _ => todo.push(Task::Expr(callee)),
+                }
             }
             ExprKind::Tuple(items) => todo.extend(items.iter().rev().map(Task::Expr)),
             ExprKind::Lambda { params, body } => todo.push(Task::Function {
@@ -2554,7 +2567,11 @@ impl Resolver<'_> {
             }
             ExprKind::Read { of, .. } => {
                 self.later(e.span, "a metadata read `::`");
-                todo.push(Task::Expr(of));
+                // `main::args` reads the entry point, which is no use of `main` as a value.
+                match &of.kind {
+                    ExprKind::Name(n) => self.name(n, of.span),
+                    _ => todo.push(Task::Expr(of)),
+                }
             }
             ExprKind::Section(_) => self.later(e.span, "an operator section"),
             ExprKind::Array(items) => {
@@ -3178,6 +3195,32 @@ fn main_called(span: Span) -> Error {
                 "repair: move the code the call wants into a function that `main` and the caller \
                  both call",
             ),
+        ],
+    }
+}
+
+/// The error for the name `main` at `span` used as a value: passed, bound, returned or put in
+/// a tuple, anywhere but as a call's callee, which [`main_called`] rejects, or before `::`.
+/// Whether such a value is called later is a question of the program's data flow, which no
+/// check decides in general; every value of a function is for calling, so the use itself is
+/// rejected, in constant time, and no call through it can follow. The alternative, rejecting
+/// only the calls through such a value, needs a flow analysis of every function value, for a
+/// use that has no other purpose.
+fn main_value(span: Span) -> Error {
+    let note = |text: &str| Note {
+        span,
+        text: text.into(),
+    };
+    Error {
+        row: None,
+        menu: String::new(),
+        span,
+        message: "`main` used as a value: no function calls `main`, which runs once, when the \
+                  program starts."
+            .into(),
+        notes: vec![
+            note("repair: read `main::args` or `main::files` for what `main` reads"),
+            note("repair: in place of `main`, use a function that `main` and this code both call"),
         ],
     }
 }

@@ -1,7 +1,9 @@
-//! `main` in every scope (QUESTIONS A68, DESIGN.md sec:ports): every function reads the file
-//! port as `main::files`, no function calls `main`, and the old call `files()` is gone.
+//! `main` in every scope (QUESTIONS A68, Q54, DESIGN.md sec:ports): every function reads the
+//! file port as `main::files`, in a unit with no `main` too and with `main` in parentheses; no
+//! function calls `main` or uses it as a value; and the old call `files()` is gone.
 
 use zed_tests::scaling::{check, inputs};
+use zed_tests::step_helpers::l01_21_test_runner::checks;
 use zedc::run::load;
 
 use super::{dir, run};
@@ -122,22 +124,148 @@ fn the_old_call_files_is_rejected_with_main_files() {
 }
 
 #[test]
-fn main_files_in_a_unit_without_main_is_not_yet_compiled() {
+fn main_files_in_a_unit_without_main_names_the_programs_port() {
+    // A library reads the program's file port as every function does (QUESTIONS Q54); its
+    // test table's clause gives the port to its rows, and a row of a table without the clause
+    // fails at the read, naming the repair.
+    let src = "size(positional p) = main::files[p] else \"none\"\n  \
+               test with main::files = q -> if q == \"a\" { \"x\" } else { #notFound } \
+               { \"a\" -> \"x\", \"b\" -> \"none\", \"a\" -> \"y\" }\n  \
+               test { \"a\" -> \"x\" }\n\
+               show(positional p) = \"[${(main)::files[p] else \"-\"}]\"\n  \
+               test with main::files = (q -> \"1\") { \"a\" -> \"[1]\" }\n";
+    assert_eq!(
+        checks(src),
+        [
+            "2:73: ok",
+            "2:85: ok",
+            "2:100: `\"a\" -> \"y\"` of `size`: the result is \"x\"",
+            "3:10: `\"a\" -> \"x\"` of `size`: the port `main::files` could not answer a read: \
+             the table gives the row no files; repair: `test with main::files = p -> …` on the \
+             table, a function from a path to its text",
+            "5:40: ok",
+        ]
+    );
+}
+
+#[test]
+fn main_files_in_parentheses_is_main_files() {
+    // Parentheses around `main` change nothing, in `main`'s body, before it and after it, and
+    // `main` opens the port once.
+    let d = dir("outside_parens");
+    let a = d.join("a.txt");
+    std::fs::write(&a, "hi").unwrap();
+    let src = format!(
+        "size(positional p) = (main)::files[p] else \"none\";\n\
+         main(m: MainArgs) {{\n  fs = ((main))::files;\n  \
+         m.stdout <- size(\"{a}\") ++ (fs[\"{a}\"] else \"-\") ++ show(\"{a}\");\n}}\n\
+         show(positional p) = \"[${{(main)::files[p] else \"-\"}}]\";\n",
+        a = a.display(),
+    );
+    let out = run("outside_parens", &src, "", &[]);
+    assert_eq!(
+        (out.status, out.stdout.as_str(), out.stderr.as_str()),
+        (0, "hihi[hi]\n", "")
+    );
+    let program = load(src.as_bytes()).unwrap();
+    let files: Vec<_> = (program.inputs().iter())
+        .filter(|(p, _)| p == "main::files")
+        .collect();
+    assert_eq!(files.len(), 1, "{:?}", program.inputs());
+}
+
+#[test]
+fn main_used_as_a_value_is_rejected_anywhere() {
+    // A value of `main` could be called later, so every use of `main` but a call and a read
+    // `main::…` is rejected, whether a call through it follows or not.
+    for (name, src, at) in [
+        (
+            "value_bound",
+            "f = main;\ng() = f(1);\nmain(m: MainArgs) {\n  m.stdout <- \"x\";\n}\n",
+            "1:5",
+        ),
+        (
+            "value_passed",
+            "h(positional k) = k(1);\ng() = h(main);\nmain() {\n}\n",
+            "2:9",
+        ),
+        (
+            "value_passed_in_main",
+            "h(positional k) = k(1);\nmain(m: MainArgs) {\n  m.stdout <- \"x\";\n  \
+             n = h(main);\n}\n",
+            "4:9",
+        ),
+        ("value_returned", "g() = main;\nmain() {\n}\n", "1:7"),
+        (
+            "value_in_parentheses_in_a_tuple",
+            "g() = (1, (main));\nmain() {\n}\n",
+            "1:11",
+        ),
+    ] {
+        let out = run(name, src, "", &[]);
+        assert_eq!((out.status, out.stdout.as_str()), (1, ""), "{name}");
+        for part in [
+            format!(
+                "{at}: `main` used as a value: no function calls `main`, which runs once, when \
+                 the program starts.\n"
+            ),
+            format!("{at}: repair: read `main::args` or `main::files` for what `main` reads\n"),
+            format!(
+                "{at}: repair: in place of `main`, use a function that `main` and this code \
+                 both call\n"
+            ),
+        ] {
+            assert!(out.stderr.contains(&part), "{name}: {}", out.stderr);
+        }
+        assert!(
+            !out.stderr.contains("Call of `main`"),
+            "{name}: {}",
+            out.stderr
+        );
+    }
+    // A call of `main`, in parentheses or not, is rejected once, as a call.
     let out = run(
-        "no_main",
-        "size(positional p) = main::files[p] else \"none\";\n",
+        "call_in_parentheses",
+        "g() = (main)(1);\nmain() {\n}\n",
         "",
         &[],
     );
     assert_eq!(out.status, 1);
     assert!(
-        out.stderr.contains(
-            "1:22: a read of `main::files` in a unit that declares no `main` is part of the Zed \
-             language, and this version of zedc does not compile it yet."
-        ),
+        out.stderr.contains("1:7: Call of `main`") && !out.stderr.contains("used as a value"),
         "{}",
         out.stderr
     );
+}
+
+#[test]
+fn a_keyed_write_to_main_files_is_a_later_step_in_main_and_outside_it() {
+    // A write `fs[path] <- v` to the file port is step L7.2's keyed push, the same in `main`
+    // and in another function.
+    for (name, src, at) in [
+        (
+            "keyed_write_outside",
+            "w() {\n  main::files[\"x\"] <- \"v\";\n}\nmain(m: MainArgs) {\n  \
+             m.stdout <- \"x\";\n}\n",
+            "2:3",
+        ),
+        (
+            "keyed_write_in_main",
+            "main(m: MainArgs) {\n  main::files[\"x\"] <- \"v\";\n  m.stdout <- \"x\";\n}\n",
+            "2:3",
+        ),
+    ] {
+        let out = run(name, src, "", &[]);
+        assert_eq!((out.status, out.stdout.as_str()), (1, ""), "{name}");
+        assert!(
+            out.stderr.contains(&format!(
+                "{at}: the push at a key `main::files[\"x\"] <- \"v\";` is part of the Zed \
+                 language, and this version of zedc does not compile it yet."
+            )),
+            "{name}: {}",
+            out.stderr
+        );
+    }
 }
 
 #[test]

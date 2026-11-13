@@ -575,3 +575,38 @@ fn a_complete_component_is_searched_once_in_time_linear_in_its_imports() {
         || run(113),
     );
 }
+
+/// An imported unit `tool` with its own `main` and `k` helpers, each reading `main::files`,
+/// half in parentheses, and `main` reading it too; `main` imports one helper.
+fn own_main(k: usize) -> Vec<(String, String)> {
+    let mut text = String::new();
+    for i in 0..k {
+        let of = if i % 2 == 0 { "main" } else { "(main)" };
+        text.push_str(&format!("h{i}(positional p) = {of}::files[p] else \"\";\n"));
+    }
+    text.push_str(
+        "main(m: MainArgs) {\n  fs = main::files;\n  m.stdout <- fs[\"a\"] else \"\";\n}\n",
+    );
+    vec![
+        ("tool.zed".into(), text),
+        ("main.zed".into(), "import tool.{h0};\nmain() {\n}\n".into()),
+    ]
+}
+
+#[test]
+fn reads_of_main_files_in_a_unit_with_its_own_main_are_rejected_in_linear_time() {
+    // Each read is found among the unit's uses in one pass (QUESTIONS Q54); the reads in
+    // parentheses are found by the builder's walk before the build.
+    let pkgs: HashMap<usize, Memory> = scaling::inputs(200, |k| memory(own_main(k)));
+    for (&k, fs) in &pkgs {
+        let p = load(&mut Db::new(), fs, &["main"]);
+        assert_eq!(mistakes(&p).len(), k + 1, "{k}");
+    }
+    scaling::check(
+        "an imported unit with its own main and many reads of main::files",
+        200,
+        |k| {
+            std::hint::black_box(load(&mut Db::new(), &pkgs[&k], &["main"]));
+        },
+    );
+}

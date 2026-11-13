@@ -137,8 +137,18 @@ impl Mains {
             outer,
             outside: std::cell::Cell::new(None),
         };
-        // The reads `main::files` outside every body: a `Postfix` whose operand is the one
-        // word `main` and whose suffix is `::files`. `fill` builds deeper nodes first, so a
+        // The tokens of `n` are the one word `main`, in any number of parentheses, `((main))`:
+        // a sequence of tokens `(`ᵏ `main` `)`ᵏ parses only as `k` nested `Group`s of the name,
+        // which the builder builds to the name. O(k) for `k` parentheses.
+        let main_word = |n: usize| {
+            let (mut from, mut to) = (tree.nodes[n].start, tree.nodes[n].end);
+            while to - from >= 3 && word(from) == "(" && word(to - 1) == ")" {
+                (from, to) = (from + 1, to - 1);
+            }
+            to - from == 1 && word(from) == "main"
+        };
+        // The reads `main::files` outside every body: a `Postfix` whose operand is the word
+        // `main`, in parentheses or not, and whose suffix is `::files`. `fill` builds deeper nodes first, so a
         // function written after `main` can be built after `main`'s header, which must already
         // know of the read. A string hole is a tree of its own, built before the text's, and
         // [`Builder::main_files`] records the reads in it as it builds them.
@@ -153,8 +163,7 @@ impl Mains {
                 && tree.name(n) == "Postfix"
                 && tree.name(s) == "ReadSuffix"
                 && word(tree.nodes[s].end - 1) == "files"
-                && tree.nodes[of].end - tree.nodes[of].start == 1
-                && word(tree.nodes[of].start) == "main"
+                && main_word(of)
                 && mains.at(span(n).start).is_none()
             {
                 mains.read_outside(span(n));
@@ -176,11 +185,6 @@ impl Mains {
     pub(super) fn outside(&self, body: Span) -> Option<Span> {
         let i = self.list.partition_point(|b| b.body.start < body.start);
         (self.outer.get(i) == Some(&None)).then(|| self.outside.get())?
-    }
-
-    /// Whether the text declares a `main` outside every other `main`'s body.
-    pub(super) fn has_entry(&self) -> bool {
-        self.outer.contains(&None)
     }
 
     /// The innermost `main` whose body holds the text at `at`, if any.
@@ -404,26 +408,18 @@ impl<'a, 's> Builder<'a, 's> {
     /// the use of its file port ([`Builder::main_use`]); in any other function, the name
     /// `main::files`, which names the program's file port there, recorded as read outside
     /// `main` so that `main` opens the port. In a text that declares no `main`, a library, the
-    /// read is not compiled yet: the program that imports it gives the port under the grant
-    /// `port(Files)`, which this zedc does not check.
-    pub(super) fn main_files(&self, span: Span) -> Result<Expr, Error> {
+    /// name is the same and names the program's entry point (QUESTIONS Q54): a test table's
+    /// clause `test with main::files = e` gives it to a row, and the program that imports the
+    /// library gives it under the grant `port(Files)`, which this zedc does not check yet.
+    pub(super) fn main_files(&self, span: Span) -> Expr {
         if self.mains.at(span.start).is_some() {
-            return Ok(self.main_use("main::files", span));
-        }
-        if !self.mains.has_entry() {
-            return Err(Error {
-                row: None,
-                menu: String::new(),
-                span,
-                message: not_yet("a read of `main::files` in a unit that declares no `main`"),
-                notes: Vec::new(),
-            });
+            return self.main_use("main::files", span);
         }
         self.mains.read_outside(span);
-        Ok(Expr {
+        Expr {
             kind: ExprKind::Name("main::files".into()),
             span,
-        })
+        }
     }
 
     /// The name of the input `use_` of the `main` whose body holds `span` (one of

@@ -493,13 +493,14 @@ impl<'a, 's> Builder<'a, 's> {
         let of = Box::new(of);
         let name = self.tree.name(s);
         let kind = match name {
-            // `main` written as the one word, as [`Mains::new`] finds the read before the build.
+            // `main` as the one word in any number of parentheses, which a `Group` builds to
+            // the name with the parentheses' span: the reads [`Mains::new`] finds before the
+            // build.
             "ReadSuffix"
                 if matches!(&of.kind, ExprKind::Name(n) if n == "main")
-                    && of.span.end - of.span.start == "main".len()
                     && self.word(node.end - 1) == "files" =>
             {
-                return self.main_files(span);
+                return Ok(self.main_files(span));
             }
             "CallSuffix" => {
                 let (positional, named, curry) = match node.kids[..] {

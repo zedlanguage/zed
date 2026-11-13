@@ -35,7 +35,7 @@ use crate::parse::{TOP, parse_unit};
 use crate::pin::{self, Check, Edit, PIN_FILE, PRELUDE, Pins};
 use crate::place::{MANIFEST, Place};
 use crate::query::{self, Db};
-use crate::resolve::{Exports, Refused, Resolved, Units};
+use crate::resolve::{Exports, Ref, Refused, Resolved, Units};
 use crate::source;
 use crate::suppress::{InFile, Severity, Suppress, addresses};
 
@@ -710,6 +710,7 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
         });
     }
     let comp = order(&mut pkg, &edges, prelude.map(|(p, _)| p));
+    let root: HashSet<usize> = roots.iter().map(|r| pkg.index[*r]).collect();
     // The prelude unit and every unit it reaches see no prelude unit.
     let mut bare = vec![false; pkg.units.len()];
     if let Some((p, _)) = prelude {
@@ -809,6 +810,10 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
                 pkg.problems[at..].sort_by_key(|p| p.error.span.start);
             }
         }
+        if !root.contains(&u) {
+            pkg.problems
+                .extend(own_main_reads(text, stmts, &r).iter().map(problem));
+        }
         numbers[u] = db.exports_number(&r.res.exports).to_le_bytes();
         pkg.units[u].resolved = Some(r);
     }
@@ -818,6 +823,62 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
     // they are the same for every order of the roots. A stable sort, O(P log P).
     pkg.problems.sort_by(|a, b| a.file.cmp(&b.file));
     pkg
+}
+
+/// The errors for the reads of `main::files` in the unit `text`, whose statements are `stmts`
+/// and resolution `r`, when the unit is not the program's root and declares its own `main` at
+/// its top level (QUESTIONS Q54): the name resolves where it is written, to the unit's `main`,
+/// which never runs, so each read is rejected, naming that `main`, with the repair of renaming
+/// it, after which the name is the program's entry point's. A unit with no `main` of its own,
+/// a library, reads the program's port. `main::args` is a metadata read, not compiled yet in any
+/// unit.
+// Complexity: the unit's top-level statements, then its uses in one pass, O(s + u); the reads
+// are the uses that name the port, `Ref::Main` outside `main`'s body and the parameter
+// `main::files` in it, so no second walk of the syntax tree is needed.
+fn own_main_reads(text: &str, stmts: &[ast::Stmt], r: &Resolved) -> Vec<Error> {
+    let Some(header) = stmts.iter().find_map(|s| match &s.kind {
+        StmtKind::Function(f) if f.main.is_some() => {
+            let head = text[s.span.start..f.body.span.start].trim_end();
+            let head = head.strip_suffix('=').unwrap_or(head).trim_end();
+            Some(Span {
+                start: s.span.start,
+                end: s.span.start + head.len(),
+            })
+        }
+        _ => None,
+    }) else {
+        return Vec::new();
+    };
+    let port = |id: usize| r.res.binders[id].name == "main::files";
+    (r.res.uses.iter())
+        .filter(|(_, to)| match to {
+            Ref::Main(_) => true,
+            Ref::Bound(ids) => port(ids[0]),
+            _ => false,
+        })
+        .map(|(&span, _)| Error {
+            row: None,
+            menu: String::new(),
+            span,
+            message: "`main::files` names this unit's own `main`, and this unit is not the \
+                      program's root."
+                .into(),
+            notes: vec![
+                Note {
+                    span: header,
+                    text: "the unit's `main`, which never runs: only the root unit's `main` \
+                           runs, and every other unit reads its files"
+                        .into(),
+                },
+                Note {
+                    span: header,
+                    text: "repair: rename this `main`; `main::files` then names the program's \
+                           entry point"
+                        .into(),
+                },
+            ],
+        })
+        .collect()
 }
 
 /// Checks and writes the pins of `pkg` (step L2.8): each import is checked against, or pinned

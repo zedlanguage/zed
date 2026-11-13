@@ -177,3 +177,49 @@ fn a_unit_path_names_a_file_under_the_root_and_back() {
         "the file `notes.txt` is not a unit: its name does not end in `.zed`"
     );
 }
+
+/// A unit with its own `main` and a helper that read `main::files` (QUESTIONS Q54).
+const OWN_MAIN: &str = "size(positional p) = main::files[p] else \"none\";\n\
+                        main(m: MainArgs) {\n  fs = main::files;\n  \
+                        m.stdout <- size(\"a\") ++ (fs[\"b\"] else \"\");\n}\n";
+
+#[test]
+fn main_files_in_a_unit_with_its_own_main_is_rejected_unless_the_unit_is_the_root() {
+    // Imported, the unit's `main` never runs, so each read, in its `main` and outside it,
+    // names that `main`; at the root it is the program's own.
+    let p = package(&[
+        ("tool.zed", OWN_MAIN),
+        ("main.zed", "import tool.{size};\nmain() {\n}\n"),
+    ]);
+    // The second read's listing gives the lines the first one showed by their ranges.
+    let shown = "      2 | main(m: MainArgs) {\n        | ^^^^^^^^^^^^^^^^^";
+    let got = mistakes(&p);
+    assert_eq!(got.len(), 2, "{got:#?}");
+    for (g, (at, step, line)) in got.iter().zip([
+        ("1:22", "2:1", shown),
+        ("3:8", "2:1 to 2:17", "      line 2 is shown above"),
+    ]) {
+        let want = format!(
+            "tool.zed:{at}: `main::files` names this unit's own `main`, and this unit is not the \
+             program's root.\n  [1] {step}: the unit's `main`, which never runs: only the root \
+             unit's `main` runs, and every other unit reads its files\n{line}\n  [2] {step}: \
+             repair: rename this `main`; `main::files` then names the program's entry point"
+        );
+        assert_eq!(g, &want);
+    }
+    let root = zedc::unit::load(
+        &mut zedc::query::Db::new(),
+        &super::files(&[("tool.zed", OWN_MAIN)]),
+        &["tool"],
+    );
+    assert_eq!(mistakes(&root), Vec::<String>::new());
+    // A unit with no `main` of its own reads the program's port, imported or not.
+    let p = package(&[
+        (
+            "lib.zed",
+            "size(positional p) = main::files[p] else \"none\";\n",
+        ),
+        ("main.zed", "import lib.{size};\nmain() {\n}\n"),
+    ]);
+    assert_eq!(mistakes(&p), Vec::<String>::new());
+}
