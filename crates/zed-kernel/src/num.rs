@@ -843,6 +843,10 @@ impl Rat {
                 // A complete solution would keep an opaque base `b^e` beside the primes, with
                 // the bases made pairwise coprime by Bernstein's coprime-base algorithm.
                 None => {
+                    // `e` fits in 64 bits here: this part is wider than 64 bits, so for
+                    // `e >= 2^64` the ask above is at least `65 * 2^67` bits, `65 * 2^61`
+                    // words, more than a `usize` counts, and `room` refused it. Tested by
+                    // `a_power_of_a_wide_base_to_an_exponent_beyond_64_bits_is_refused`.
                     let e = e.to_u64().expect("an exponent whose power fits in memory");
                     raised[i] = BigInt::from(fast::pow(part, e));
                 }

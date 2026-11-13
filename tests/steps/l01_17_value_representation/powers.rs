@@ -2,9 +2,9 @@
 //! and not built. Each test compares the kept form with the value built out in full, or with
 //! the standard library's correctly rounded reading of the same decimal text.
 
-use num_bigint::BigInt;
+use num_bigint::{BigInt, BigUint};
 use zed_kernel::Rat;
-use zed_kernel::num::{LiteralRounding, literal_f32, literal_f64};
+use zed_kernel::num::{LiteralRounding, TooLarge, literal_f32, literal_f64};
 use zed_tests::instances::Rng;
 use zed_tests::scaling::check_order;
 
@@ -362,6 +362,37 @@ fn a_power_of_a_wide_base_is_built() {
         .pow(&3u32.into())
         .unwrap();
     assert_eq!(built(&mixed), Rat::int(wide.pow(3u32) << 300));
+}
+
+/// A base wider than 64 bits raised to an exponent of `2^64` or more is refused for the memory
+/// its power asks, a byte for each bit of the wide parts times the exponent, and is never built:
+/// a numerator, a denominator or both wide, of either sign, with or without kept powers.
+#[test]
+fn a_power_of_a_wide_base_to_an_exponent_beyond_64_bits_is_refused() {
+    let wide: BigInt = (BigInt::from(1) << 64) + 13;
+    let narrow = BigInt::from(3);
+    let bases = [
+        (Rat::int(wide.clone()), 65u32),
+        (Rat::int(-wide.clone()), 65),
+        (Rat::new(narrow.clone(), wide.clone()).unwrap(), 65),
+        (
+            Rat::new(-wide.clone(), (BigInt::from(1) << 70) + 1).unwrap(),
+            136,
+        ),
+        (Rat::int(wide).mul(&two_to(-100)).unwrap(), 65),
+    ];
+    let one = BigUint::from(1u32);
+    for e in [&one << 64u32, (&one << 64u32) + 1u32, &one << 200u32] {
+        for (base, bits) in &bases {
+            assert_eq!(
+                base.pow(&e),
+                Err(TooLarge {
+                    bits: (BigUint::from(*bits) * &e) << 3u32
+                }),
+                "{base:?} ^ {e}"
+            );
+        }
+    }
 }
 
 /// Building, ordering, multiplying, dividing and projecting `10^n` costs a few products of

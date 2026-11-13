@@ -2169,7 +2169,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | MAIN-files-rest | impl attempt 1 | 2026-11-13 10:39 | started; worktree from origin/main 10c508cf5 |
 | PERF-l139-under9 | impl attempt 1 | 2026-11-13 09:15 | baseline on 9fbcc48eb (load 48-58), instr/bytes at 8n: star_extra 15.6 (fails), chain 13.0 (fails), persist bytes 13.2 (fails), hopb 12.9/12.1, hoponb 12.8/12.0 |
 | PRES-overlap-fast | xr attempt  | 2026-11-13 01:10 | round 1 launched: Sol and Opus seats (medium); Gemini 429 (resets in 32h55m); CD next |
-| RAT-pow-expect | impl attempt 1 | 2026-11-13 10:35 | started; worktree from origin/main 2c906b966 |
 | RED-main-2026-11-13 | impl attempt 1 | 2026-11-13 10:33 | started: l01_35 layout (ast::Stmt 280 bytes vs record 256); other parts owned by MAIN-call-l01_16, MSG-headline-l01_26, SPEC-standalone |
 | SPEC-ffi-align | impl attempt 1 | 2026-11-13 10:53 | started: spec row from A85 B2 (alignment stop counted with Assumed) |
 | SPEC-standalone | impl attempt 1 | 2026-11-13 08:55 | started; worktree /home/luke/Work/wt/spec-standalone from origin/main c12614e6c |
