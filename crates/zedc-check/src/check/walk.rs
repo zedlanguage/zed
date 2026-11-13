@@ -556,6 +556,17 @@ pub(super) struct MemberF<'a> {
     span: Span,
 }
 
+/// A call of a prelude word that is not a bit word: `w(positional, named)`, or
+/// `x.w(positional, named)` with `receiver` the value of `x` and its expression.
+struct PreludeCall<'a> {
+    w: &'a str,
+    receiver: Option<(Arg<'a>, &'a Expr)>,
+    positional: &'a [Expr],
+    named: &'a [(String, Expr)],
+    curry: bool,
+    span: Span,
+}
+
 pub(super) struct FitF<'a> {
     params: &'a [Param],
     body: &'a Expr,
@@ -1244,23 +1255,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                     if let Some(p) = bit_prim(w) {
                         return self.bits(m, w, p, None, positional, named, curry, span);
                     }
-                    if word_arity(w) != 1 {
-                        let args = Args::of(positional, named);
-                        return self.call_value(m, &f, what.into(), None, args, curry, span);
-                    }
-                    if named.is_empty() && !curry && positional.len() == 1 {
-                        return self.word(m, w, positional, None, span);
-                    }
-                    // Elaboration reports named arguments and `...`.
-                    let err = (named.is_empty() && !curry).then(|| {
-                        let n = positional.len();
-                        let message = format!("`{w}` takes one argument, and this call passes {n}");
-                        let menu = vec![format!("repair: pass one argument, as `{w}(x)`")];
-                        (span, message, menu)
-                    });
-                    m.k(Frame::Fail(err));
-                    m.each(Args::of(positional, named).exprs());
-                    return;
+                    let call = PreludeCall {
+                        w,
+                        receiver: None,
+                        positional,
+                        named,
+                        curry,
+                        span,
+                    };
+                    return self.prelude_call(m, &f, call);
                 }
                 let args = Args::of(positional, named);
                 self.call_value(m, &f, what.into(), None, args, curry, span);
@@ -3461,6 +3464,103 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
+    /// The call `c` of a prelude word, `f` its type. A call with as many arguments as the word
+    /// has parameters, the value before the dot counted, is the word applied to them: one by
+    /// [`Self::word`], two or three by [`Self::call_value`]. Named arguments and `...` are
+    /// reported by elaboration, which says that a word's parameters have no names. Any other
+    /// count is an error that names the word and its parameters as DESIGN.md writes them
+    /// ([`Self::word_count`]), where [`Self::call_value`] would name the parameters `x0`, `x1`
+    /// of the word's signature and print the word as its type, and where `y.sqrt(2.0)` was
+    /// given no type and no error at all.
+    fn prelude_call(&mut self, m: &mut M<'a>, f: &Ty, c: PreludeCall<'a>) {
+        let k = word_arity(c.w);
+        let n = c.positional.len() + usize::from(c.receiver.is_some());
+        let (receiver, of) = c.receiver.unzip();
+        if c.named.is_empty() && !c.curry && n == k {
+            return match k {
+                1 => self.word(m, c.w, c.positional, receiver, c.span),
+                _ => {
+                    let args = Args::of(c.positional, c.named);
+                    self.call_value(m, f, c.w.into(), receiver, args, false, c.span)
+                }
+            };
+        }
+        let err = (c.named.is_empty() && !c.curry)
+            .then(|| self.word_count(c.w, of, c.positional, c.span));
+        m.k(Frame::Fail(err));
+        m.each(Args::of(c.positional, c.named).exprs());
+    }
+
+    /// The error of the call at `span` of the prelude word `w` with the arguments `of`, the
+    /// expression before the dot, and `positional`, whose number is not the word's: its place,
+    /// its message and its repairs. The message names the word and its parameters and shows the
+    /// call as written, "`fma` takes 3 arguments, `fma(a, b, c)`, and `fma(x, x)` passes 2.";
+    /// a call with too many arguments is rewritten with the first ones alone, as `sqrt(1.0)`
+    /// for `sqrt(1.0, 2.0)`, and a call with too few names the missing parameters, as
+    /// `fma(x, x, c)`. Complexity tradeoff: the naive way, the call checked against the word's
+    /// signature as a call of a function value, finds the same count in O(n) for `n`
+    /// arguments but reports it as a parameter given no value or an argument too many, in the
+    /// words of the signature. Used: the count compared once, O(1), and the message written
+    /// from at most the word's three arguments and the call's text, O(length of the call).
+    fn word_count(
+        &self,
+        w: &str,
+        of: Option<&Expr>,
+        positional: &[Expr],
+        span: Span,
+    ) -> (Span, String, Vec<String>) {
+        let params = word_params(w);
+        let k = params.len();
+        let n = positional.len() + usize::from(of.is_some());
+        let takes = match k {
+            1 => "one argument".to_string(),
+            _ => format!("{k} arguments"),
+        };
+        let one_line = |c: &'a str| (!c.contains('\n')).then_some(c);
+        let whole = params.join(", ");
+        let passes = match self.code(Some(span)).and_then(one_line) {
+            Some(c) => format!("`{c}` passes {n}"),
+            None => format!("this call passes {n}"),
+        };
+        let mut message = format!("`{w}` takes {takes}, `{w}({whole})`, and {passes}.");
+        let mut menu = Vec::new();
+        // The value before the dot is the first argument, which the count includes.
+        if let Some(x) = of.and_then(|e| self.code(Some(e.span))).and_then(one_line) {
+            menu.push(format!(
+                "`{x}` before `.{w}` is the first argument of `{w}`"
+            ));
+        }
+        // The arguments as written, the value before the dot first; none where one is not on
+        // one line or the checker has no text.
+        let written: Option<Vec<&str>> = (of.into_iter().chain(positional))
+            .take(k)
+            .map(|e| self.code(Some(e.span)).and_then(one_line))
+            .collect();
+        match written {
+            Some(written) if n > k => {
+                let call = format!("{w}({})", written.join(", "));
+                message.push_str(&format!(" Try `{call}` instead."));
+                menu.push(format!("repair: `{call}`"));
+            }
+            Some(written) => {
+                let missing = &params[n..];
+                let all: Vec<&str> = written.into_iter().chain(missing.iter().copied()).collect();
+                let call = format!("{w}({})", all.join(", "));
+                let named = match missing {
+                    [p] => format!("`{p}`"),
+                    [rest @ .., last] => {
+                        let rest: Vec<String> = rest.iter().map(|p| format!("`{p}`")).collect();
+                        format!("{} and `{last}`", rest.join(", "))
+                    }
+                    [] => unreachable!("a call with fewer arguments than parameters"),
+                };
+                menu.push(format!("repair: give {named} a value, as `{call}`"));
+            }
+            None => menu.push(format!("repair: pass {takes}, as `{w}({whole})`")),
+        }
+        (span, message, menu)
+    }
+
     /// The prelude word `w` applied to one argument `x`, recorded as the construct being
     /// checked ([`Self::as_written`]).
     fn word_end(&mut self, w: &'a str, x: Arg<'a>, span: Span) -> Ty {
@@ -4149,18 +4249,17 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Some(1) if let Some(p) = bit_prim(name) => {
                     self.bits(m, name, p, Some((x, of)), positional, named, curry, span)
                 }
-                Some(1)
-                    if positional.is_empty()
-                        && named.is_empty()
-                        && !curry
-                        && word_arity(name) == 1 =>
-                {
-                    self.word(m, name, &[], Some(x), span)
-                }
-                Some(1) if word_arity(name) != 1 => {
+                Some(1) => {
                     let f = Ty::func(word_sig(name));
-                    let args = Args::of(positional, named);
-                    self.call_value(m, &f, name.into(), Some(x), args, curry, span);
+                    let call = PreludeCall {
+                        w: name,
+                        receiver: Some((x, of)),
+                        positional,
+                        named,
+                        curry,
+                        span,
+                    };
+                    self.prelude_call(m, &f, call);
                 }
                 _ => m.ty(Ty::dynamic()),
             },
@@ -7286,6 +7385,32 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.t.text?.get(at.start..at.end)
     }
 
+    /// The program's code at `span` with the edits of `fix` made, as `sqrt(f64(n))` for
+    /// `sqrt(n)` and the cast of `n`; none where an edit lies outside `span`, the checker has
+    /// no text, or the code runs over more than one line, which a headline cannot show.
+    /// Unlike [`Rewrite::line`], which writes the whole source line, it writes the construct
+    /// alone. It costs the length of `span`.
+    fn rewritten(&self, span: Span, fix: &Rewrite) -> Option<String> {
+        let mut out = String::new();
+        let mut at = span.start;
+        for (s, with) in &fix.edits {
+            if s.start < at || s.end > span.end {
+                return None;
+            }
+            out.push_str(self.code(Some(Span {
+                start: at,
+                end: s.start,
+            }))?);
+            out.push_str(with);
+            at = s.end;
+        }
+        out.push_str(self.code(Some(Span {
+            start: at,
+            end: span.end,
+        }))?);
+        (!out.contains('\n')).then_some(out)
+    }
+
     /// The code of `callee`, the callee of the call at `span`, as the program writes it: with
     /// the parentheses around it, which the tree does not keep, as `(if c { f } else { g })`;
     /// none when the checker has no text or the code runs over more than one line, which a
@@ -9612,6 +9737,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                                 note: Note { span: *at, text },
                                 got,
                                 fix,
+                                cast: None,
                             });
                             break;
                         }
@@ -9648,6 +9774,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         note: Note { span: *at, text },
                         got,
                         fix,
+                        cast: Some(w),
                     });
                 }
             }
@@ -10967,6 +11094,41 @@ impl<'t, 'a> Ck<'t, 'a> {
                     }
                     self.reject(Some(Row::NoCommonCarrier), at, Msg::new(text, fixes), notes);
                     return (out, Vec::new());
+                }
+                // A call of a prelude word, `sqrt(n)`, ends its headline with the first repair
+                // that casts an argument to a number, as the whole call rewritten,
+                // `sqrt(f64(n))` (DESIGN.md sec:diagnostics, "A short headline"), as a
+                // comparison ends with `f64(n) < x`. A word applied to one name that no repair
+                // fits, as `sqrt(n)` with `n` an `int` that may lie above 2^53, where `f64(n)`
+                // is inexact and no repair narrows, gets the repair of a comparison with no
+                // cast: a change of the type. Other applications keep their repairs in the notes
+                // alone (row MSG-apply-try-headline): there the first repair is often a cast to
+                // `String`, as `int(String(true))`, which no headline should offer. Cost: the
+                // naive way writes every repair's call, the length of the call for each of r
+                // repairs; used: the repairs already built are scanned once, O(r), and only the
+                // first numeric cast is written, once the length of the call.
+                let word = (what.text().strip_prefix('`'))
+                    .and_then(|w| w.strip_suffix('`'))
+                    .filter(|w| sig.word.as_deref() == Some(*w))
+                    .is_some_and(|w| zedc_resolve::resolve::prelude_layer(w).is_some());
+                let first = (repairs.iter())
+                    .filter(|r| word && matches!(r.cast, Some("int" | "rat" | "f64")))
+                    .find_map(|r| r.fix.as_ref());
+                let message = match first.and_then(|fix| self.rewritten(span, fix)) {
+                    Some(call) => {
+                        let head = message.strip_suffix('.').unwrap_or(&message);
+                        format!("{head}. Try `{call}` instead.")
+                    }
+                    None => message,
+                };
+                if repairs.is_empty()
+                    && word
+                    && let [Some(Arg { at: Some(at), .. })] = &args[..]
+                    && let Some((_, Src::Name(id))) = self.seen.get(at)
+                {
+                    let n = &self.t.res.binders[*id].name;
+                    let text = format!("repair: change the type of `{n}` so that {what} takes it");
+                    notes.push(Note { span: *at, text });
                 }
                 notes.extend(self.offered(repairs));
                 if self.no_arrow_at_carrier(what, sig, &args) {
@@ -14033,12 +14195,15 @@ struct Met {
     ty: [Ty; 2],
 }
 
-/// A repair of a rejected application ([`Ck::repairs`]): its note, what its trial gave, and
-/// the fix that writes it in the program's text, where the text shows it.
+/// A repair of a rejected application ([`Ck::repairs`]): its note, what its trial gave, the
+/// fix that writes it in the program's text, where the text shows it, and its cast.
 struct Repaired {
     note: Note,
     got: Option<(Ty, Vec<Span>)>,
     fix: Option<Rewrite>,
+    /// The word the repair casts the argument with, `f64` in `f64(n)`; none for a literal
+    /// written in another form.
+    cast: Option<&'static str>,
 }
 
 /// Why a pair of values does not compare under an ordering.

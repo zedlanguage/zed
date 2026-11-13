@@ -127,24 +127,20 @@ fn min_and_max_take_two_numbers_of_one_kind() {
         errors("x = min(1, true);\n"),
         ["`min` does not take (1, true): no arrow of `min` takes these types. [min(1, true)]"]
     );
-    let both =
-        "((int, int) -> int) & ((f64, f64) -> f64) & ((rat, rat) -> rat) & ((f32, f32) -> f32)";
+    // A wrong number of arguments names the word and its parameters (MSG-prelude-word-args),
+    // not the parameters `x0` and `x1` of its signature, printed as a type.
     assert_eq!(
         errors("x = min(1);\n"),
-        [format!(
-            "this call of `{both}` gives no value to its parameter `x1`, and `x1` has no default, so the call cannot be made. [min(1)]"
-        )]
+        ["`min` takes 2 arguments, `min(a, b)`, and `min(1)` passes 1. [min(1)]"]
     );
     assert_eq!(
         errors("x = 3.max;\n"),
-        [format!(
-            "this call of `{both}` gives no value to its parameter `x1`, and `x1` has no default, so the call cannot be made. [3.max]"
-        )]
+        ["`max` takes 2 arguments, `max(a, b)`, and `3.max` passes 1. [3.max]"]
     );
     assert_eq!(
         errors("x = max(1, 2, 3);\n"),
-        [format!(
-            "this argument is one more than `{both}` takes: `{both}` takes 2 arguments by position, and the arguments before this one already fill them all. [3]"
-        )]
+        [
+            "`max` takes 2 arguments, `max(a, b)`, and `max(1, 2, 3)` passes 3. Try `max(1, 2)` instead. [max(1, 2, 3)]"
+        ]
     );
 }

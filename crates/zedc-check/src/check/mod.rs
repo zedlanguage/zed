@@ -7848,6 +7848,17 @@ fn word_arity(w: &str) -> usize {
     }
 }
 
+/// The names of the parameters of the prelude word `w`, one for each of its [`word_arity`]
+/// operands, as DESIGN.md writes the word: `sqrt(x)`, `fma(a, b, c)`. A message about the
+/// number of arguments of a call of `w` names them.
+fn word_params(w: &str) -> &'static [&'static str] {
+    match word_arity(w) {
+        1 => &["x"],
+        2 => &["a", "b"],
+        _ => &["a", "b", "c"],
+    }
+}
+
 /// A prelude word's arrows.
 fn word_sig(w: &str) -> Arc<Sig> {
     use Carrier::*;

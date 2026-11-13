@@ -593,12 +593,16 @@ fn an_int_or_rat_operand_or_two_formats_are_rejected() {
     let rat = rejected("f(positional x: rat) = sqrt(x);\n");
     assert!(rat.ends_with("`sqrt` does not take (rat): no arrow of `sqrt` takes these types."));
     let mixed = rejected("f(positional x: f64, positional y: f32) = fma(x, y, x);\n");
-    assert!(
-        mixed
-            .ends_with("`fma` does not take (f64, f32, f64): no arrow of `fma` takes these types.")
-    );
+    // Every `f32` is an `f64`, so the cast of `y` is exact and is offered as the call rewritten.
+    assert!(mixed.ends_with(
+        "`fma` does not take (f64, f32, f64): no arrow of `fma` takes these types. \
+         Try `fma(x, f64(y), x)` instead."
+    ));
     let two = rejected("f(positional x: f64) = fma(x, x);\n");
-    assert!(two.contains("gives no value to its parameter"), "{two}");
+    assert!(
+        two.ends_with("`fma` takes 3 arguments, `fma(a, b, c)`, and `fma(x, x)` passes 2."),
+        "{two}"
+    );
 }
 
 /// The gap FLOAT-f32 left: a call that lists integer values, beside an `f32`, is read at

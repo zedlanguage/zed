@@ -12,6 +12,7 @@ mod rat_text;
 mod scaling;
 mod sqrt_fma;
 mod tuple_min_max;
+mod word_args;
 mod words;
 
 use zed_tests::step_helpers::l01_16_elaboration::value;
