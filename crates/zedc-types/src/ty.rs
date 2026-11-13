@@ -2657,23 +2657,41 @@ pub enum NeedKind {
     },
 }
 
-/// The words of the error of a [`NeedKind::Power`] need.
+/// What the error of a [`NeedKind::Power`] need is made from: the code it quotes is kept as
+/// spans of the program's text and written only when the error is.
+// Complexity tradeoff (COMPLEXITY.md row POW-rat-literal-ops): naive version, the base's code
+// and each repair written out where the `^` is, O(k) for a power of size k and O(n^2) for n
+// nested powers, as `((2)^-1)^-1`, though most needs never fail. Used: spans and the few facts
+// the repairs depend on, O(1) a need besides the exponent's steps; the words cost O(k) only
+// for an error.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct PowerUse {
     /// The exponent as the error shows it, for a need on the base; `None` on the exponent,
     /// whose ints are shown when they flow in.
     pub exponent: Option<Arc<str>>,
-    /// The base's code.
-    pub base: Option<Arc<str>>,
-    /// The exponent's code.
-    pub exponent_code: Option<Arc<str>>,
+    /// The base's span.
+    pub base: Option<Span>,
+    /// The exponent's span.
+    pub exponent_at: Option<Span>,
+    /// The power's span.
+    pub at: Span,
     /// Whether every value of the exponent is below 0, for a need on the base.
     pub negative: bool,
     /// The steps of the derivation of the exponent, for a need on the base.
     pub steps: Arc<[zedc_syntax::ast::Note]>,
-    /// The repairs, each the rewritten code and the words that follow it, as `, and pass a
-    /// float as `b` at each call`, or none.
-    pub repairs: Arc<[(String, String)]>,
+    /// The base, if it is a parameter of the function the `^` is in, which a repair declares a
+    /// float.
+    pub param: Option<Arc<str>>,
+    /// The exponent, if it is a name bound once, which a test narrows.
+    pub tested: Option<Arc<str>>,
+    /// Whether a repair tests the exponent: it may be at least 0 and holds no type variable.
+    pub test: bool,
+    /// Whether the exponent takes a float as it is: a literal, or of a type variable.
+    pub exponent_takes_float: bool,
+    /// Whether the base takes a float as it is: a literal, or of a type variable.
+    pub base_takes_float: bool,
+    /// Whether the base is an `int`, which widens to a `rat` with no failure.
+    pub base_int: bool,
 }
 
 /// The ints a use takes, as `^`'s exponent and a bit word's operand do: those at least 0, and

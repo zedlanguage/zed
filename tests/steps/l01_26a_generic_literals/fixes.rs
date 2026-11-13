@@ -146,9 +146,19 @@ fn an_unfixed_decimal_lists_a_line_for_each_carrier() {
     );
 }
 
+/// A power whose exponent is an integer literal lists `rat` as well, by the arrow (rat, int)
+/// of `^`; one whose exponent is an operation does not, as `^` has no arrow (rat, rat).
 #[test]
-fn a_power_lists_no_rat() {
-    let fixes = checked("y = (2 ^ 3) / 4;\n");
+fn a_power_lists_rat_only_with_an_integer_literal_exponent() {
+    assert_eq!(
+        checked("y = (2 ^ 3) / 4;\n"),
+        pairs(&[
+            ("y = (2.0f64 ^ 3) / 4;", "y is 2.0"),
+            ("y = (2r ^ 3) / 4;", "y is 2r"),
+            ("y = (f64(2) ^ 3) / 4;", "y is 2.0"),
+        ])
+    );
+    let fixes = checked("y = (2 ^ (1 + 2)) / 4;\n");
     assert!(fixes.iter().all(|(l, _)| !l.contains('r')), "{fixes:?}");
     assert!(fixes.iter().all(|(_, h)| h == "y is 2.0"), "{fixes:?}");
 }

@@ -55,7 +55,8 @@ fn an_integer_literal_beside_a_float_takes_its_carrier() {
 
 #[test]
 fn a_power_with_a_decimal_that_nothing_fixes_is_rejected_with_f64_alone() {
-    // `^` has no arrow at `rat`, so the menu offers `f64` alone.
+    // A decimal that nothing fixes is offered at `f64` alone under `^`; whether it should be
+    // offered at `rat` too is left to the plan row POW-domains.
     assert_eq!(
         type_errors("root2 = 2^0.5;\n"),
         [unfixed(
@@ -67,28 +68,70 @@ fn a_power_with_a_decimal_that_nothing_fixes_is_rejected_with_f64_alone() {
         type_errors("x = 0.5^2;\n"),
         [unfixed("0.5", &[("x = 0.5f64^2;", "x is 0.25")])]
     );
+    // Each repair checks: the bare `2` takes `f64` from the suffixed decimal.
+    assert_eq!(value("root2 = 2^0.5f64;\n", "root2"), "1.4142135623730951");
+    assert_eq!(value("x = 0.5f64^2;\n", "x"), "0.25");
+    // An integer power of integer literals is an `int`.
+    assert_eq!(value("p = 2^3;\n", "p"), "8");
+}
+
+/// A `/` of integer literals under a `^` whose exponent is an integer literal: the value is
+/// refused at `/`, which has no arrow at `int`, and the menu offers the exact `rat` power
+/// beside `f64`, since `^` takes (rat, int) and the exponent keeps `int` (POW-rat-literal-ops).
+/// Before, `^` was taken to have no arrow at `rat` here, and the menu offered `f64` alone.
+#[test]
+fn a_power_of_a_division_of_integer_literals_is_offered_the_exact_rat_power() {
+    let why = "Nothing gives the integer literals a carrier, and `/` has none at `int`";
+    for (src, fixes) in [
+        (
+            "q = (3/2)^2;",
+            [
+                ("q = (3.0f64/2)^2;", "q is 2.25"),
+                ("q = (3r/2)^2;", "q is 9r/4r"),
+                ("q = (f64(3)/2)^2;", "q is 2.25"),
+            ],
+        ),
+        (
+            "q = (3/2)^-2;",
+            [
+                ("q = (3.0f64/2)^-2;", "q is 0.4444444444444444"),
+                ("q = (3r/2)^-2;", "q is 4r/9r"),
+                ("q = (f64(3)/2)^-2;", "q is 0.4444444444444444"),
+            ],
+        ),
+    ] {
+        let value_text = src.trim_end_matches(';');
+        assert_eq!(
+            type_errors(&format!("{src}\n")),
+            [format!(
+                "{why}: `{value_text}`{}{} [(3/2)]",
+                tried(&fixes),
+                menu(&fixes)
+            )],
+            "{src}"
+        );
+        for (line, holds) in fixes {
+            let q = holds.strip_prefix("q is ").unwrap();
+            assert_eq!(value(&format!("{line}\n"), "q"), q, "{line}");
+        }
+    }
+    // An exponent that is not a literal takes the base's carrier, and `^` has no arrow
+    // (rat, rat), so there the menu offers `f64` alone.
     assert_eq!(
-        type_errors("q = (3/2)^2;\n"),
+        type_errors("q = (3/2)^(1+1);\n"),
         [{
             let fixes = [
-                ("q = (3.0f64/2)^2;", "q is 2.25"),
-                ("q = (f64(3)/2)^2;", "q is 2.25"),
+                ("q = (3.0f64/2)^(1.0f64+1);", "q is 2.25"),
+                ("q = (f64(3)/2)^(f64(1)+1);", "q is 2.25"),
             ];
             format!(
                 "Nothing gives the integer literals a carrier, `/` has none at `int`, and `^` none \
-                 at `rat`: `q = (3/2)^2`{}{} [(3/2)]",
+                 at `rat` with this exponent: `q = (3/2)^(1+1)`{}{} [(3/2)]",
                 tried(&fixes),
                 menu(&fixes)
             )
         }]
     );
-    // Each repair checks: the bare `2` takes `f64` from the suffixed decimal.
-    assert_eq!(value("root2 = 2^0.5f64;\n", "root2"), "1.4142135623730951");
-    assert_eq!(value("x = 0.5f64^2;\n", "x"), "0.25");
-    assert_eq!(value("q = (f64(3)/2)^2;\n", "q"), "2.25");
-    assert_eq!(value("q = (3.0f64/2)^2;\n", "q"), "2.25");
-    // An integer power of integer literals is an `int`.
-    assert_eq!(value("p = 2^3;\n", "p"), "8");
 }
 
 #[test]
@@ -97,8 +140,8 @@ fn a_slash_among_operations_on_literals_is_rejected_once_at_the_literal_that_fix
     // `1 + 2` is in `(1 + 2) / 3`. The value is rejected once, at its `/`, and each fix
     // writes the first literal of the value with a carrier, the suffixed forms before the
     // cast; an operation on literals alone takes the carrier of what it meets, so it reaches
-    // the rest, a `/` of two literals and the base and literal exponent of a `^` among them,
-    // and every fix checks. DESIGN.md sec:diagnostics, "A `/` of integer literals": "the menu
+    // the rest, a `/` of two literals and the base and literal exponent of a `^` among them
+    // (an integer exponent keeps `int` under a base at `rat`), and every fix checks. DESIGN.md sec:diagnostics, "A `/` of integer literals": "the menu
     // writes the carrier at the first literal of the value":
     //   q = (1.0f64 + 2) / (3 + 4);    q is 0.42857142857142855
     //   q = (1r + 2) / (3 + 4);        q is 3r/7r
@@ -106,7 +149,7 @@ fn a_slash_among_operations_on_literals_is_rejected_once_at_the_literal_that_fix
     // Each headline quotes the binding, the value being the whole of it.
     let why = "Nothing gives the integer literals a carrier, and `/` has none at `int`";
     let pow = "Nothing gives the integer literals a carrier, `/` has none at `int`, and `^` none \
-               at `rat`";
+               at `rat` with this exponent";
     let slash = |why: &str| why.to_string();
     let cases = [
         (
@@ -162,20 +205,35 @@ fn a_slash_among_operations_on_literals_is_rejected_once_at_the_literal_that_fix
         ),
         (
             "y = 0xFF / 2 ^ 2;\n",
-            slash(pow),
-            // `2 ^ 2` meets `f64(0xFF)` at the `/` and takes its carrier, so only `0xFF` is
-            // written, and in a cast alone.
-            vec![("y = f64(0xFF) / 2 ^ 2;", "y is 63.75")],
+            slash(why),
+            // `2 ^ 2` meets `f64(0xFF)` or `rat(0xFF)` at the `/` and takes its carrier, its
+            // exponent `int` under `rat`, so only `0xFF` is written, and in a cast alone.
+            vec![
+                ("y = f64(0xFF) / 2 ^ 2;", "y is 63.75"),
+                ("y = rat(0xFF) / 2 ^ 2;", "y is 255r/4r"),
+            ],
             "0xFF / 2 ^ 2",
         ),
         (
             "y = 1 + 2 ^ 2 / 3;\n",
-            slash(pow),
+            slash(why),
             vec![
                 ("y = 1.0f64 + 2 ^ 2 / 3;", "y is 2.333333333333333"),
+                ("y = 1r + 2 ^ 2 / 3;", "y is 7r/3r"),
                 ("y = f64(1) + 2 ^ 2 / 3;", "y is 2.333333333333333"),
             ],
             "2 ^ 2 / 3",
+        ),
+        // An exponent that is an operation takes the base's carrier, and `^` has no arrow
+        // (rat, rat), so the menu offers `f64` alone.
+        (
+            "y = 2 ^ (1 + 1) / 3;\n",
+            slash(pow),
+            vec![
+                ("y = 2.0f64 ^ (1.0f64 + 1) / 3;", "y is 1.3333333333333333"),
+                ("y = f64(2) ^ (f64(1) + 1) / 3;", "y is 1.3333333333333333"),
+            ],
+            "2 ^ (1 + 1) / 3",
         ),
         // One carrier reaches both `/` of two literals: they meet at the outer `/`.
         (

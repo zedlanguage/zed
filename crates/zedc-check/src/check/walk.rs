@@ -780,6 +780,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                     .apply(&format!("`{op}`"), &sig, vec![Some(x)], true, span)
                     .0;
                 self.lit_wrote(span, from);
+                // A `-` of an operation of which the text gives something at `rat` gives as much
+                // ([`Self::rat_folded`]).
+                if op == UnaryOp::Neg
+                    && (t.numeric_carrier() == Some(Carrier::Rat)
+                        || self.class_beside_atoms(&t).is_some())
+                    && let Some(fact) = at.and_then(|at| self.rat_folds.get(&at)).cloned()
+                    && let Some(fact) = rat_step(Prim::Neg, Some(fact), None)
+                {
+                    self.rat_folds.insert(span, fact);
+                }
                 // The fixes carried up from the operand, as `(-0.5 ^ 1.0r) + 2.5f64` carries the
                 // fix of `^` past the `-`, are checked under the `-` with the type they give the
                 // operand ([`Self::pending_settled`]); one trial per type carried.
@@ -2532,7 +2542,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             return None;
         }
         let e = exported(e);
-        let (ls, rat, _) = literals_alone(e, None)?;
+        let (ls, rat) = literals_alone(e, None)?;
         let ints = ls
             .iter()
             .all(|l| l.bare && lit_carrier(&l.value) == Carrier::Int);
@@ -2569,9 +2579,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// ([`Ck::lit_wrote`], [`Ck::drop_met`]).
     ///
     /// An operation is left as it was where its value at the carrier is no value of it
-    /// ([`folded`]), as `1r + 1 / 0`, whose `/` always fails: its rejection stands. An
-    /// operation holding a `^` does not take `rat`: `^` takes `rat` only with an `int` exponent,
-    /// and all the literals of an operation take one carrier.
+    /// ([`folded`]), as `1r + 1 / 0`, whose `/` always fails: its rejection stands. At `rat`
+    /// each `^` in it takes an `int` exponent, so it takes `rat` only where each exponent is an
+    /// integer literal, which keeps the carrier `int`: `(3/2)^-2 * 1r` is `4/9`.
     ///
     /// Complexity tradeoff: the naive test walks each operand to see whether it holds literals
     /// alone, which costs the depth of the operation at each operator, the square of the
@@ -2660,12 +2670,13 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Each literal of `e`, an operation on bare literals alone ([`Ck::lit_ops`]), adopting
     /// `c`, each of its operations of type `c` where a derivation names it ([`Ck::seen`],
     /// [`Ck::lit_open`]), and the errors its operations wrote as they were walked dropped
-    /// ([`Ck::lit_wrote`]); `false`, with nothing changed, where `e` holds a `^` and `c` is
-    /// `rat`, whose `^` takes an `int` exponent and not a `rat` one, or where `e` holds a `/` or a `^` and its value at
-    /// `c` is no value of `c` ([`folded`]), as `1 / 0` at `rat`: the rejection of the
-    /// operation stands. It costs the size of `e`, twice where it holds a `/` or a `^`; in a
-    /// repair's trial ([`Self::tried`]), which changes nothing that lasts, what it finds is
-    /// read from [`Self::lit_fit`] instead.
+    /// ([`Ck::lit_wrote`]); at `rat` the exponent of each `^`, an integer literal, adopts `int`,
+    /// which `^` takes there. `false`, with nothing changed, where `e` holds a `/` or a `^` and
+    /// its value at `c` is no value of `c` ([`folded`]), as `1 / 0` at `rat`, or `(3/2)^(1 + 1)`
+    /// at `rat`, whose exponent would be a `rat`: the rejection of the operation stands. It
+    /// costs the size of `e`, twice where it holds a `/` or a `^`; in a repair's trial
+    /// ([`Self::tried`]), which changes nothing that lasts, what it finds is read from
+    /// [`Self::lit_fit`] instead.
     fn lit_takes(&mut self, e: &Expr, c: Carrier) -> bool {
         if self.trying {
             let (takes, refused) = self.lit_fit(e, c);
@@ -2677,9 +2688,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let mut nodes = Vec::new();
         let (mut div, mut pow) = (false, false);
-        let mut todo = vec![e];
-        while let Some(e) = todo.pop() {
-            nodes.push(e);
+        let mut todo = vec![(e, c)];
+        while let Some((e, at)) = todo.pop() {
+            nodes.push((e, at));
             if literal(e, None).is_some() {
                 continue;
             }
@@ -2687,19 +2698,29 @@ impl<'t, 'a> Ck<'t, 'a> {
                 ExprKind::Binary(op, a, b) => {
                     div |= *op == BinaryOp::Div;
                     pow |= *op == BinaryOp::Pow;
-                    todo.extend([&**b, &**a]);
+                    // At `rat` a `^` takes an `int` exponent, which keeps its carrier ([`folded`]).
+                    let k = if *op == BinaryOp::Pow && c == Carrier::Rat {
+                        Carrier::Int
+                    } else {
+                        at
+                    };
+                    todo.extend([(&**b, k), (&**a, at)]);
                 }
-                ExprKind::Unary(UnaryOp::Neg, a) => todo.push(a),
+                ExprKind::Unary(UnaryOp::Neg, a) => todo.push((a, at)),
                 _ => {}
             }
         }
-        if (pow && c == Carrier::Rat) || ((div || pow) && folded(e, c).is_none()) {
+        if (div || pow) && !self.lit_fit(e, c).0 {
             return false;
         }
         let live = !self.trying && self.replaying == 0;
-        for e in nodes {
+        for (e, at) in nodes {
             if let Some(l) = literal(e, self.t.text) {
-                self.adopt_to(&l, c);
+                match at == c {
+                    true => _ = self.adopt_to(&l, c),
+                    // An exponent keeps its own carrier, whatever the walk gave it before.
+                    false => self.put(Undo::Adopt(l.span, None)),
+                }
                 continue;
             }
             // Each operation in it is of the carrier now, which a derivation names, and not
@@ -2735,6 +2756,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn lit_fit(&mut self, e: &Expr, c: Carrier) -> (bool, Option<Lit>) {
         enum Step<'e> {
             Visit(&'e Expr),
+            // The exponent of a `^` at `rat`, read at `int` ([`folded`]).
+            Exponent(&'e Expr),
             Done(&'e Expr, Option<Prim>, usize, bool, bool),
         }
         let mut todo = vec![Step::Visit(e)];
@@ -2749,7 +2772,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     if let Some(l) = literal(x, None) {
                         let refused = literal(x, self.t.text).filter(|l| adopt(l, c).is_err());
                         fits.push(LitFit {
-                            value: lit_value(&l, c),
+                            value: lit_value(&l, c).map(RatFact::Value),
                             div: false,
                             pow: false,
                             refused,
@@ -2757,6 +2780,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                         continue;
                     }
                     match &x.kind {
+                        ExprKind::Binary(BinaryOp::Pow, a, b) if c == Carrier::Rat => {
+                            todo.extend([
+                                Step::Done(x, Some(Prim::Pow), 2, false, true),
+                                Step::Exponent(b),
+                                Step::Visit(a),
+                            ])
+                        }
                         ExprKind::Binary(op, a, b) => todo.extend([
                             Step::Done(
                                 x,
@@ -2775,9 +2805,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                         // A `rat` literal, `2r`, is a value of `rat` alone ([`folded`]).
                         kind => fits.push(LitFit {
                             value: match kind {
-                                ExprKind::Rat(d) if c == Carrier::Rat => {
-                                    Rat::decimal(d).ok().flatten().map(Value::rat)
-                                }
+                                ExprKind::Rat(d) if c == Carrier::Rat => Rat::decimal(d)
+                                    .ok()
+                                    .flatten()
+                                    .map(Value::rat)
+                                    .map(RatFact::Value),
                                 _ => None,
                             },
                             div: false,
@@ -2786,12 +2818,33 @@ impl<'t, 'a> Ck<'t, 'a> {
                         }),
                     }
                 }
+                Step::Exponent(b) => fits.push(LitFit {
+                    value: rat_exponent(b).map(RatFact::Value),
+                    div: false,
+                    pow: false,
+                    refused: None,
+                }),
                 Step::Done(x, p, n, div, pow) => {
                     let parts = fits.split_off(fits.len() - n);
-                    let values: Option<Vec<Value>> =
-                        parts.iter().map(|f| f.value.clone()).collect();
+                    // At `rat` a power is not computed ([`rat_step`]); at `int` and `f64` the
+                    // operands' values give the kernel's.
+                    let value = match (p, c) {
+                        (Some(p), Carrier::Rat) => {
+                            let y = parts.get(1).and_then(|f| f.value.clone());
+                            rat_step(p, parts[0].value.clone(), y)
+                        }
+                        (Some(p), _) => (parts.iter())
+                            .map(|f| match &f.value {
+                                Some(RatFact::Value(v)) => Some(v.clone()),
+                                _ => None,
+                            })
+                            .collect::<Option<Vec<Value>>>()
+                            .and_then(|vs| prim_folded(p, vs))
+                            .map(RatFact::Value),
+                        (None, _) => None,
+                    };
                     let fit = LitFit {
-                        value: p.zip(values).and_then(|(p, vs)| prim_folded(p, vs)),
+                        value,
                         div: div || parts.iter().any(|f| f.div),
                         pow: pow || parts.iter().any(|f| f.pow),
                         refused: parts.into_iter().find_map(|f| f.refused),
@@ -2802,7 +2855,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         let f = fits.pop().expect("one fit for `e`");
-        let takes = !(f.pow && c == Carrier::Rat) && !((f.div || f.pow) && f.value.is_none());
+        let takes = !((f.div || f.pow) && f.value.is_none());
         (takes, f.refused)
     }
 
@@ -2963,6 +3016,24 @@ impl<'t, 'a> Ck<'t, 'a> {
         if !matches!(op, BinaryOp::Eq | BinaryOp::Ne) {
             for l in [&mut x.lit, &mut y.lit].into_iter().flatten() {
                 l.generic = l.bare;
+            }
+            // An integer exponent of `^` on a base whose value the text gives, or gives as no
+            // zero, does not restrict the base's carrier: `^` takes (rat, int), so in
+            // `(3/2)^-2` the `-2` leaves the base free to be a `rat` ([`Lit::exponent`]). A base
+            // of unknown value, as a parameter in `p(positional b) = b ^ -1`, keeps the exponent
+            // in its class: at `rat` it could be `0r` and give `#divByZero`, which the class's
+            // result would then carry at every carrier. O(1): what the text gives of the base
+            // is a lookup ([`Self::rat_fact`]).
+            if op == BinaryOp::Pow
+                && x.expr.is_some_and(|a| {
+                    self.rat_fact(a)
+                        .is_some_and(|f| matches!(f, RatFact::Value(_)) || f.nonzero())
+                })
+                && let Some(l) = &mut y.lit
+                && l.bare
+                && lit_carrier(&l.value) == Carrier::Int
+            {
+                l.exponent = true;
             }
             // Two generic operands, as in `1 + 2`, make a class of their own inside a
             // function: generic, it takes the carrier of what it meets, the first operand
@@ -3136,7 +3207,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                     _ => "…".to_string(),
                 };
                 let sig = op_sig(Operator::Binary(op));
+                let a = x.expr;
                 let r = self.apply(&format!("`{op}`"), &sig, vec![Some(x), Some(y)], true, span);
+                // An operation at `rat` on `rat` literals and such operations has the value
+                // the kernel gives it: where that is a number, it fails with no
+                // `#divByZero`, as `1r / (2r/3r)` and `(2r/3r)^-2` do not.
+                let folds = a.is_some_and(|a| self.rat_folded(op, a, b, span, &r.0));
                 if let Some(why) = zero
                     && r.0.atoms().contains(&Value::atom("divByZero"))
                 {
@@ -3151,12 +3227,79 @@ impl<'t, 'a> Ck<'t, 'a> {
                         *self.info.quotients.entry(span).or_insert(quotient) &= quotient;
                     }
                 }
-                match (nonzero || total_power) && !carried {
+                match (nonzero || total_power || folds) && !carried {
                     true => r.0.diff(&Ty::set(KType::atom("divByZero"))),
                     false => r.0,
                 }
             }
         }
+    }
+
+    /// Whether the operation `op` at `span` on `a` and `b`, of type `t`, is at `rat`, or in a
+    /// class of literals that may resolve to `rat`, and the text shows it gives no `#divByZero`
+    /// there. What the text gives of an operand ([`Self::rat_fact`]) is its value where it is a
+    /// `rat` literal, a bare literal at `rat` or a sum, difference, product or quotient of such
+    /// values, and that it is no zero where it is a power of a base that is no zero; a `^`'s
+    /// exponent is known where it is an `int` literal. The operation's own fact is kept
+    /// ([`Ck::rat_folds`]): a value by the kernel's one evaluator as A54 permits
+    /// ([`prim_folded`]), unless the operation gives an atom, as `1r / (1r - 1r)` does.
+    ///
+    /// A power's value is not computed, except at a base of `0`, `1` or `-1`, which the kernel
+    /// reads from the exponent's sign alone: `3^e` with `e` defined as `200000` would build a
+    /// value the size of `e`, which the text does not show (`a_constant_no_bit_word_reads_is_
+    /// not_folded`). A power of a base that is no zero is no zero, which is all a later `/` or
+    /// `^` needs to rule `#divByZero` out.
+    ///
+    /// Complexity tradeoff (COMPLEXITY.md POW-rat-literal-ops): each operand's fact is a lookup
+    /// of the one kept for it, or one literal's reading, so an operation costs at most one
+    /// kernel operation that is not a power, and a chain of n operations O(n) of them; the
+    /// naive [`folded`] of each operation's whole text would cost O(n^2) over a chain, and
+    /// folding each power O(value of its exponent).
+    fn rat_folded(&mut self, op: BinaryOp, a: &Expr, b: &Expr, span: Span, t: &Ty) -> bool {
+        // A class of literals may resolve to `rat`: the operands' values are the same at each
+        // carrier, so a base or divisor known to be no zero rules `#divByZero` out there too.
+        if t.numeric_carrier() != Some(Carrier::Rat) && self.class_beside_atoms(t).is_none() {
+            return false;
+        }
+        let Some(p) = binary_prim(op).filter(|_| {
+            matches!(
+                op,
+                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Pow
+            )
+        }) else {
+            return false;
+        };
+        let x = self.rat_fact(a);
+        let y = match op {
+            BinaryOp::Pow => rat_exponent(b).map(RatFact::Value),
+            _ => self.rat_fact(b),
+        };
+        // Only the divisor of a `/` can give `#divByZero`: one known to be no zero rules it out
+        // whatever the dividend is, as in `n / (2r/3r)`. A dividend the text does not give may
+        // carry atoms of its own, so the quotient is kept as no fact.
+        if op == BinaryOp::Div && x.is_none() {
+            return y.is_some_and(|y| y.nonzero());
+        }
+        let Some(fact) = rat_step(p, x, y) else {
+            return false;
+        };
+        self.rat_folds.insert(span, fact);
+        true
+    }
+
+    /// What the text gives of `e` at `rat`: the value of a literal, perhaps under `-`, read at
+    /// `rat`, or what [`Self::rat_folded`] kept for an operation. O(1).
+    fn rat_fact(&self, e: &Expr) -> Option<RatFact> {
+        if let Some(f) = self.rat_folds.get(&e.span) {
+            return Some(f.clone());
+        }
+        let rat = |x: &Expr| matches!(x.kind, ExprKind::Rat(_));
+        match &e.kind {
+            ExprKind::Unary(UnaryOp::Neg, x) if rat(x) => folded(e, Carrier::Rat),
+            _ if rat(e) => folded(e, Carrier::Rat),
+            _ => literal(e, None).and_then(|l| lit_value(&l, Carrier::Rat)),
+        }
+        .map(RatFact::Value)
     }
 
     fn call(
@@ -6588,14 +6731,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     self.floor_on(id, need);
                 }
                 None => {
-                    let p = PowerUse {
-                        exponent: None,
-                        base: self.code(x.at).map(Into::into),
-                        exponent_code: self.code(n.at).map(Into::into),
-                        negative: false,
-                        steps: Arc::new([]),
-                        repairs: self.power_repairs(x, n, e, span, false).into(),
-                    };
+                    let p = self.power_use(x, n, e, span, None, false, Vec::new());
                     self.power_vars(&n.ty, &Arc::new(p), e.span);
                 }
             }
@@ -6613,25 +6749,20 @@ impl<'t, 'a> Ck<'t, 'a> {
                 vs.iter()
                     .all(|v| v.surface_cmp(&Value::Int(0)) == Some(std::cmp::Ordering::Less))
             });
-        let repairs = self.power_repairs(x, n, e, span, negative);
         let mut steps = Vec::new();
         if narrowed {
             steps.extend(self.deciding_notes(e));
         }
         steps.extend(self.refused_notes(e));
         steps.extend(self.derive(&[n.at.unwrap_or(span)]));
+        let p =
+            Arc::new(self.power_use(x, n, e, span, Some(shown.as_str().into()), negative, steps));
         if x_generic {
-            let p = PowerUse {
-                exponent: Some(shown.as_str().into()),
-                base: self.code(x.at).map(Into::into),
-                exponent_code: self.code(n.at).map(Into::into),
-                negative,
-                steps: steps.clone().into(),
-                repairs: repairs.clone().into(),
-            };
-            self.power_vars(&x.ty, &Arc::new(p), x.at.unwrap_or(span));
+            self.power_vars(&x.ty, &p, x.at.unwrap_or(span));
         }
         if x_int {
+            let repairs = self.power_repairs(&p);
+            let mut steps = p.steps.to_vec();
             let base = self.show(&Ty::set(&x.ty.set & &int));
             // A base that is no literal has its own derivation, as `x` defined as `2`.
             if x.lit.is_none()
@@ -6653,6 +6784,43 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
+    /// The need of the int `x ^ n` at `span`, whose exponent `n`, the expression `e`, is not
+    /// shown to be at least 0: on the base, with the exponent as shown, whether every value
+    /// of it is below 0 and the steps of its derivation; on the exponent, with `exponent`
+    /// `None`. Its repairs are written from it when it fails ([`Self::power_repairs`]).
+    #[allow(clippy::too_many_arguments)]
+    fn power_use(
+        &self,
+        x: &Arg<'a>,
+        n: &Arg<'a>,
+        e: &'a Expr,
+        span: Span,
+        exponent: Option<Arc<str>>,
+        negative: bool,
+        steps: Vec<Note>,
+    ) -> PowerUse {
+        let param = (x.expr)
+            .filter(|b| self.open_param(b).is_some())
+            .and_then(|b| match &b.kind {
+                ExprKind::Name(name) => Some(name.to_string().into()),
+                _ => None,
+            });
+        PowerUse {
+            exponent,
+            base: x.at,
+            exponent_at: n.at,
+            at: span,
+            negative,
+            steps: steps.into(),
+            param,
+            tested: self.tested(e).map(Into::into),
+            test: !negative && n.ty.vars.is_empty(),
+            exponent_takes_float: n.lit.is_some() || !n.ty.vars.is_empty(),
+            base_takes_float: !x.ty.vars.is_empty() || x.lit.is_some(),
+            base_int: x.ty.numeric_carrier() == Some(Carrier::Int),
+        }
+    }
+
     /// The need `p` of an int `^` on each type variable of `t`, its base or its exponent
     /// (CHK-need-bound): on a class, recorded and checked on what flows into it
     /// ([`Self::power_on`]); on its type, if it has one by now. A variable of a signature
@@ -6660,7 +6828,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn power_vars(&mut self, t: &Ty, p: &Arc<PowerUse>, span: Span) {
         for v in &t.vars {
             let Some(r) = self.class_root(v) else {
-                let what = match (&p.exponent, &p.base) {
+                let what = match (&p.exponent, self.code(p.base)) {
                     (Some(_), Some(b)) => format!("the base `{b}`"),
                     (Some(_), None) => "the base".into(),
                     (None, _) => "the exponent".into(),
@@ -6692,7 +6860,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         if refused {
             let shown = self.show(&Ty::set(ints));
-            let note = match (&p.exponent, &p.base) {
+            let note = match (&p.exponent, self.code(p.base)) {
                 (Some(_), Some(b)) => format!("the base `{b}` is {shown} here"),
                 (Some(_), None) => format!("the base is {shown} here"),
                 (None, _) => format!("the exponent is {shown} here"),
@@ -6709,12 +6877,13 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `note` says, may be `shown`: the exponent the `^` shows, or else `shown`, then the
     /// steps of the exponent's derivation, or else of the value at `span`, and the repairs.
     fn power_error(&mut self, p: &PowerUse, shown: &str, note: String, span: Span) {
+        let repairs = self.power_repairs(p);
         let mut notes = vec![Note { span, text: note }];
         match p.exponent {
             Some(_) => notes.extend(p.steps.iter().cloned()),
             None => self.derive_into(&[span], &mut notes),
         }
-        notes.extend(p.repairs.iter().map(|r| Note {
+        notes.extend(repairs.iter().map(|r| Note {
             span,
             text: repair_note(r),
         }));
@@ -6724,33 +6893,25 @@ impl<'t, 'a> Ck<'t, 'a> {
             None => ("int", shown),
         };
         let message = power_message(
-            (p.base.as_deref(), base),
-            (p.exponent_code.as_deref(), exponent),
+            (self.code(p.base), base),
+            (self.code(p.exponent_at), exponent),
             p.negative,
-            p.repairs.first(),
+            repairs.first(),
         );
         self.error_with(span, message, notes);
     }
 
-    /// The repairs of the int `x ^ n` at `span` whose exponent `n`, the expression `e`, is not
-    /// shown to be at least 0, each the power rewritten in full in the program's code: on
-    /// floats, which take a negative exponent, with an int literal base or exponent written as
-    /// a float literal, or with a base parameter declared a float; where the exponent may be
-    /// at least 0 (`negative` false) and is no class of literals, which a test does not narrow,
-    /// a test of it, of a name bound in the body or of a new name that holds it ([`fresh`]);
-    /// and, last, on a `rat`, exact for an exponent of either sign, with an int base written
-    /// `2r` for the literal `2` and `rat(x)` for anything else, a cast that cannot fail. No
-    /// repair casts an int to a float: `f64(k)` may fail, with `#inexact`. Without the
-    /// program's text, the test in words.
-    fn power_repairs(
-        &self,
-        x: &Arg<'a>,
-        n: &Arg<'a>,
-        e: &'a Expr,
-        span: Span,
-        negative: bool,
-    ) -> Vec<Repair> {
-        let test = !negative && n.ty.vars.is_empty();
+    /// The repairs of the int power `p`, whose exponent is not shown to be at least 0, each
+    /// the power rewritten in full in the program's code: on floats, which take a negative
+    /// exponent, with an int literal base or exponent written as a float literal, or with a
+    /// base parameter declared a float; where the exponent may be at least 0 and is no class
+    /// of literals, which a test does not narrow, a test of it, of a name bound in the body or
+    /// of a new name that holds it ([`fresh`]); and, last, on a `rat`, exact for an exponent
+    /// of either sign, with an int base written `2r` for the literal `2` and `rat(x)` for
+    /// anything else, a cast that cannot fail. No repair casts an int to a float: `f64(k)` may
+    /// fail, with `#inexact`. Without the program's text, the test in words.
+    fn power_repairs(&self, p: &PowerUse) -> Vec<Repair> {
+        let (test, span) = (p.test, p.at);
         let words = || match test {
             true => vec![(
                 "if … >= 0 { … } else { … }".to_string(),
@@ -6758,7 +6919,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             )],
             false => Vec::new(),
         };
-        let (Some(xs), Some(ns)) = (x.at, n.at) else {
+        let (Some(xs), Some(ns)) = (p.base, p.exponent_at) else {
             return words();
         };
         let (Some(bt), Some(et), Some(power)) = (
@@ -6786,14 +6947,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             Some(out)
         };
         // An exponent that is a literal or holds a type variable takes a float as it is.
-        let takes_float = n.lit.is_some() || !n.ty.vars.is_empty();
+        let takes_float = p.exponent_takes_float;
         let mut out = Vec::new();
-        let param = (x.expr)
-            .filter(|b| self.open_param(b).is_some())
-            .and_then(|b| match &b.kind {
-                ExprKind::Name(name) => Some(name.to_string()),
-                _ => None,
-            });
+        let param = p.param.as_deref();
         let pass = match &param {
             Some(b) => format!(", and pass a float as `{b}` at each call"),
             None => String::new(),
@@ -6807,15 +6963,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             _ => {}
         }
-        let base_takes_float = !x.ty.vars.is_empty() || x.lit.is_some();
-        if base_takes_float
+        if p.base_takes_float
             && int_literal(et.strip_prefix('-').unwrap_or(et))
             && let Some(p) = rewrite(&[(ns, &format!("{et}.0"))])
         {
             out.push((p, pass));
         }
         if test {
-            match self.tested(e) {
+            match &p.tested {
                 Some(k) => out.push((
                     format!("if {k} >= 0 {{ {power} }} else {{ … }}"),
                     String::new(),
@@ -6837,7 +6992,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         // a `rat` with no failure, an int literal by its `r` suffix and anything else by `rat`.
         // A base whose type holds a variable and that is no int literal is left: `rat` of it
         // may be a float, which `rat` may refuse with `#invalid`.
-        if int_literal(bt) || x.ty.numeric_carrier() == Some(Carrier::Int) {
+        if int_literal(bt) || p.base_int {
             let base = match int_literal(bt) {
                 true => format!("{bt}r"),
                 false => format!("rat({})", unparen(bt)),
@@ -11302,7 +11457,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // of it, as a lone literal argument does ([`Lit::joining`]).
                 for a in args.iter().flatten() {
                     if let Some(l) = &a.lit
-                        && !self.join(k, l, false)
+                        && !self.join(k, l, l.exponent)
                     {
                         return Err(self.rejected(what, args));
                     }
@@ -11337,12 +11492,20 @@ impl<'t, 'a> Ck<'t, 'a> {
         type State = (Vec<usize>, bool, ClassAt, Vec<Option<Piece>>);
         let mut states: Vec<State> = vec![(kept.clone(), false, None, Vec::new())];
         for (i, a) in args.iter().enumerate() {
+            // An integer exponent of `^` keeps the arrows whose exponent it fits exactly
+            // ([`Lit::exponent`]), and stands for itself, not for the class.
+            let exponent =
+                (a.as_ref().and_then(|a| a.lit.as_ref())).filter(|l| l.exponent && class.is_some());
             let pieces: Vec<Option<Piece>> = match a {
                 None => vec![None],
                 // An argument of no value keeps every arrow; an argument of type `Never` the
                 // call does not need is one of them.
                 Some(_) if no_value[i] => vec![None],
-                Some(a) if (a.lit.is_some() || a.branches.is_some()) && class.is_some() => {
+                Some(a)
+                    if (a.lit.is_some() || a.branches.is_some())
+                        && class.is_some()
+                        && exponent.is_none() =>
+                {
                     vec![Some(Piece::Var(format!("${}", class.unwrap()).into()))]
                 }
                 Some(a) => a.ty.pieces().into_iter().map(Some).collect(),
@@ -11352,6 +11515,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                 for p in &pieces {
                     let mut at = at.clone();
                     let (alive, dyn_) = match p {
+                        _ if let Some(l) = exponent => {
+                            let alive = (alive.iter().copied())
+                                .filter(|&j| {
+                                    (sig.arrows[j].params[i].numeric_carrier())
+                                        .is_some_and(|c| fits(l, c))
+                                })
+                                .collect();
+                            (alive, *dyn_)
+                        }
                         None => (alive.clone(), *dyn_),
                         // A class may still take any value its mask allows, so it keeps
                         // every arrow; the restriction after the arguments narrows it.

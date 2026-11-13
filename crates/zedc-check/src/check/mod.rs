@@ -435,6 +435,10 @@ struct Lit {
     bare: bool,
     generic: bool,
     witness: bool,
+    /// Whether it is an integer exponent of `^` in a class of the base: `^` takes an `int`
+    /// exponent at `int` and `rat`, and an `f64` one at `f64` alone, so it follows the class
+    /// only where it is an `f64` and does not restrict it ([`Ck::lit_follows`]).
+    exponent: bool,
 }
 
 impl Lit {
@@ -1139,6 +1143,10 @@ struct Ck<'t, 'a> {
     /// carrier ([`Ck::lit_fit`]), by its span and the carrier: read off the text alone, as
     /// [`Ck::lit_ops`] is, so it is kept after the trial.
     lit_fits: HashMap<(Span, Carrier), LitFit>,
+    /// What the text gives at `rat` of each operation at `rat`, or in a class of literals, whose
+    /// operands are literals and such operations, by its span ([`Ck::rat_folded`]): its value,
+    /// or for a power only that it is no zero; read off the text alone, so kept after a trial.
+    rat_folds: HashMap<Span, RatFact>,
     /// The classes [`Self::generic_parts`] made outside every function, for [`Self::apply`] to
     /// give their types once the application has met them ([`Self::resolve_top_parts`]).
     top_parts: Vec<usize>,
@@ -1335,6 +1343,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             applied: None,
             lit_refused: Vec::new(),
             lit_fits: HashMap::new(),
+            rat_folds: HashMap::new(),
             top_parts: Vec::new(),
             tail_reach: None,
             tail_calls: HashMap::new(),
@@ -2892,7 +2901,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         match ty.numeric_carrier() {
             Some(c) => {
                 for (l, _) in &lits {
-                    self.adopt_to(l, c);
+                    self.lit_follows(l, c);
                 }
             }
             // A type variable: each literal compared with the class, and each generic one,
@@ -2903,6 +2912,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let values: Vec<(Carrier, Value)> = [Carrier::Int, Carrier::F64, Carrier::Rat]
                         .into_iter()
                         .filter(|&c| mask & c.bit() != 0 && c != lit_carrier(&l.value))
+                        .filter(|&c| !(l.exponent && c == Carrier::Rat))
                         .filter_map(|c| match adopt(l, c) {
                             Ok(Some(v)) => Some((c, neg_value(&v, l.neg()))),
                             // A literal that is not exactly a value of `c`, as `9007199254740993`
@@ -2984,6 +2994,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let c = &self.classes[r];
                 (c.generic && c.resolved.is_none() && !c.lits.is_empty()).then(|| {
                     let ty = (c.lits.iter())
+                        .filter(|(l, _)| !l.exponent)
                         .fold(Ty::empty(), |t, (l, _)| t.union(&lit_ty(&l.value, l.neg())));
                     (v, ty)
                 })
@@ -3291,6 +3302,15 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The literal `l` adopting `c`, recorded; an error when it is not exactly a `c`.
+    /// The literal `l` of a class whose carrier is `c`: an exponent of `^` ([`Lit::exponent`])
+    /// takes `c` only where it is `f64`, and keeps its `int` where `^` takes an `int`
+    /// exponent, at `int` and `rat`; any other literal adopts `c` ([`Self::adopt_to`]).
+    fn lit_follows(&mut self, l: &Lit, c: Carrier) {
+        if !l.exponent || c == Carrier::F64 {
+            self.adopt_to(l, c);
+        }
+    }
+
     fn adopt_to(&mut self, l: &Lit, c: Carrier) -> Ty {
         match adopt(l, c) {
             Ok(None) => lit_ty(&l.value, l.neg()),
@@ -4351,7 +4371,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .map(|(l, _)| l.clone())
                 .collect();
             let takes: Vec<Carrier> = Carrier::of_mask(mask)
-                .filter(|&c| c.numeric() && lits.iter().all(|l| fits(l, c)))
+                .filter(|&c| c.numeric() && lits.iter().all(|l| l.exponent || fits(l, c)))
                 .collect();
             let ints = lits.iter().all(|l| lit_carrier(&l.value) == Carrier::Int);
             let c = match takes[..] {
@@ -4372,7 +4392,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let ty = match c {
                 Some(c) => {
                     for l in &lits {
-                        self.adopt_to(l, c);
+                        self.lit_follows(l, c);
                     }
                     Ty::carrier(c)
                 }
@@ -4856,6 +4876,7 @@ fn read_literal(e: &Expr, src: Option<&str>) -> Result<Option<Lit>, TooLarge> {
         bare,
         generic: false,
         witness: false,
+        exponent: false,
     }))
 }
 
@@ -5906,11 +5927,21 @@ fn binder_holds<'a>(n: impl fmt::Display + 'a, e: &Expr, c: Carrier) -> impl fmt
 /// fix that gives one of them that carrier gives it to all. The literals are folded as A54
 /// permits, each operation by the kernel's one evaluator ([`eval()`]); the checker runs no code
 /// of the program. `None` where a literal is not exactly a `c` or an operation gives an atom,
-/// as `1 / 0`. The walk keeps its own stack, since the operations nest as deep as the text;
-/// it costs one operation per node of `e`, and the reading of its literals ([`lit_value`]).
+/// as `1 / 0`. At `rat` a `^` takes an `int` exponent, so there its exponent is an `int`
+/// literal, read at `int` ([`rat_exponent`]), and `None` otherwise: `(3/2)^-2` is `4/9` at
+/// `rat`. The walk keeps its own stack, since the operations nest as deep as the text; it
+/// costs one operation per node of `e`, and the reading of its literals ([`lit_value`]).
+///
+/// Complexity tradeoff: a power's value has a size that grows with its exponent's value, not
+/// with the text, as `3^200000` does. The value a fix names is that value (DESIGN.md
+/// sec:diagnostics, "The value a fix names"), so a fix's note costs it; the checks
+/// themselves read only what the text gives of a power ([`rat_step`], [`Ck::lit_fit`],
+/// [`unfixed_binding`]), so an accepted program, and a rejected one up to its notes, cost
+/// O(the text) (COMPLEXITY.md POW-rat-literal-ops).
 fn folded(e: &Expr, c: Carrier) -> Option<Value> {
     enum Step<'e> {
         Visit(&'e Expr),
+        Push(Value),
         Apply(Prim, usize),
     }
     let mut todo = vec![Step::Visit(e)];
@@ -5923,6 +5954,10 @@ fn folded(e: &Expr, c: Carrier) -> Option<Value> {
                     continue;
                 }
                 match &x.kind {
+                    ExprKind::Binary(BinaryOp::Pow, a, b) if c == Carrier::Rat => {
+                        let k = rat_exponent(b)?;
+                        todo.extend([Step::Apply(Prim::Pow, 2), Step::Push(k), Step::Visit(a)]);
+                    }
                     ExprKind::Binary(op, a, b) => {
                         let p = binary_prim(*op)?;
                         todo.extend([Step::Apply(p, 2), Step::Visit(b), Step::Visit(a)]);
@@ -5937,6 +5972,7 @@ fn folded(e: &Expr, c: Carrier) -> Option<Value> {
                     _ => return None,
                 }
             }
+            Step::Push(v) => values.push(v),
             Step::Apply(p, n) => {
                 let args = values.split_off(values.len().checked_sub(n)?);
                 values.push(prim_folded(p, args)?);
@@ -5944,6 +5980,308 @@ fn folded(e: &Expr, c: Carrier) -> Option<Value> {
         }
     }
     values.pop()
+}
+
+/// What the text gives of an operand at `rat` ([`Ck::rat_folded`]). A power's value is not
+/// computed: its size grows with the exponent's value, as `3^200000` does, not with the text.
+#[derive(Clone, Debug, PartialEq)]
+enum RatFact {
+    /// Its value.
+    Value(Value),
+    /// A range that holds it, as `1r..` for `3r^2 + 1r`.
+    Range(RatRange),
+}
+
+/// The values `lo..=hi`, an end that is `None` having no bound, and whether the value is no
+/// zero beside what the ends say, as for a power of a base that is no zero: `(1r/2r)^5` is in
+/// `0r..=1r/4r` and is no zero. Each end is a value of the text, its square, or one reached from
+/// such values by `+`, `-`, `*` and `/`, never a higher power of one ([`rat_step`]).
+#[derive(Clone, Debug, PartialEq)]
+struct RatRange {
+    lo: Option<Rat>,
+    hi: Option<Rat>,
+    nonzero: bool,
+}
+
+/// An end of a range in a product: below every value, a value, or above every value.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum RatEnd {
+    Below,
+    At(Rat),
+    Above,
+}
+
+impl RatEnd {
+    /// The sign of the end, `-1`, `0` or `1`.
+    fn sign(&self) -> i8 {
+        match self {
+            RatEnd::Below => -1,
+            RatEnd::At(r) if r.is_zero() => 0,
+            RatEnd::At(r) if r.is_negative() => -1,
+            _ => 1,
+        }
+    }
+
+    /// The product of two ends: an end with no bound times a nonzero end has no bound, and
+    /// times `0r` is `0r`, the end of a range a product of ranges reaches at that corner.
+    fn mul(&self, other: &RatEnd) -> Option<RatEnd> {
+        Some(match (self, other) {
+            (RatEnd::At(x), RatEnd::At(y)) => RatEnd::At(x.mul(y).ok()?),
+            (x, y) => match x.sign() * y.sign() {
+                0 => RatEnd::At(Rat::int(0.into())),
+                s if s < 0 => RatEnd::Below,
+                _ => RatEnd::Above,
+            },
+        })
+    }
+}
+
+impl RatRange {
+    /// The range of the one value `v`, a `rat` or an exponent's `int`.
+    fn of(v: &Value) -> Option<RatRange> {
+        let r = match v {
+            Value::Rat(r) => Rat::clone(r),
+            v => v.as_integer()?.into_owned(),
+        };
+        Some(RatRange {
+            lo: Some(r.clone()),
+            hi: Some(r),
+            nonzero: false,
+        })
+    }
+
+    /// Whether it holds no zero.
+    fn nonzero(&self) -> bool {
+        self.nonzero
+            || self
+                .lo
+                .as_ref()
+                .is_some_and(|lo| !lo.is_negative() && !lo.is_zero())
+            || self.hi.as_ref().is_some_and(Rat::is_negative)
+    }
+
+    /// Whether every value in it is at least `0r`.
+    fn at_least_zero(&self) -> bool {
+        self.lo.as_ref().is_some_and(|lo| !lo.is_negative())
+    }
+
+    /// Whether every value in it is at most `0r`.
+    fn at_most_zero(&self) -> bool {
+        self.hi
+            .as_ref()
+            .is_some_and(|hi| hi.is_negative() || hi.is_zero())
+    }
+
+    fn neg(&self) -> RatRange {
+        RatRange {
+            lo: self.hi.as_ref().map(Rat::neg),
+            hi: self.lo.as_ref().map(Rat::neg),
+            nonzero: self.nonzero,
+        }
+    }
+
+    fn add(&self, other: &RatRange) -> Option<RatRange> {
+        let end = |x: &Option<Rat>, y: &Option<Rat>| match (x, y) {
+            (Some(x), Some(y)) => x.add(y).ok().map(Some),
+            _ => Some(None),
+        };
+        Some(RatRange {
+            lo: end(&self.lo, &other.lo)?,
+            hi: end(&self.hi, &other.hi)?,
+            nonzero: false,
+        })
+    }
+
+    /// The product: the least and the greatest of the products of the ends.
+    fn mul(&self, other: &RatRange) -> Option<RatRange> {
+        let lo = |r: &RatRange| r.lo.clone().map_or(RatEnd::Below, RatEnd::At);
+        let hi = |r: &RatRange| r.hi.clone().map_or(RatEnd::Above, RatEnd::At);
+        let corners = [
+            lo(self).mul(&lo(other))?,
+            lo(self).mul(&hi(other))?,
+            hi(self).mul(&lo(other))?,
+            hi(self).mul(&hi(other))?,
+        ];
+        let at = |e: &RatEnd| match e {
+            RatEnd::At(r) => Some(r.clone()),
+            _ => None,
+        };
+        Some(RatRange {
+            lo: corners.iter().min().and_then(at),
+            hi: corners.iter().max().and_then(at),
+            nonzero: self.nonzero() && other.nonzero(),
+        })
+    }
+
+    /// The range of `1r / x` for `x` in a range that holds no zero.
+    fn inverse(&self) -> Option<RatRange> {
+        let inv = |r: &Rat| Rat::int(1.into()).div(r).ok().flatten();
+        let (lo, hi) = if self.at_least_zero() || self.at_most_zero() {
+            // One sign: `1r / x` falls as `x` rises; an end at `0r` has no bound past it, an
+            // end with no bound gives `0r`.
+            let past = |e: &Option<Rat>| match e {
+                Some(r) if r.is_zero() => Some(None),
+                Some(r) => inv(r).map(Some),
+                None => Some(Some(Rat::int(0.into()))),
+            };
+            (past(&self.hi)?, past(&self.lo)?)
+        } else {
+            (None, None)
+        };
+        Some(RatRange {
+            lo,
+            hi,
+            nonzero: true,
+        })
+    }
+
+    /// The range of `x^k` for `x` in the range, at an `int` exponent `k`, read without
+    /// computing a power: at `|k| >= 2` a magnitude of at least `1r` stays at least itself and
+    /// one of at most `1r` stays at most itself, and a negative `k` inverts the range of
+    /// `x^-k`. So `(2r/3r)^-2` is in `3r/2r..` and `2r^10` in `2r..`. With `square`, for a
+    /// range of one value of the text, the ends are the squares of the magnitudes, since
+    /// `m^k >= m^2` at `m >= 1r` and `m^k <= m^2` at `0r <= m <= 1r`: `2r^10` is in `4r..`, so
+    /// `2r^2 - 3r` is in `1r..` and holds no zero. `None` where `x` may be `0r` and `k` is below
+    /// 0.
+    // Complexity tradeoff: squaring each power's ends would double their size at each power
+    // nested in another, `((2r^2)^2)^2`, so that their size grows exponentially in the text. A
+    // square is taken only of a value of the text, which is no power's range, so each end is at
+    // most twice the size of a value of the text.
+    fn pow(&self, k: &Rat, square: bool) -> Option<RatRange> {
+        let one = Rat::int(1.into());
+        if k.is_zero() {
+            return RatRange::of(&Value::rat(one));
+        }
+        if k.is_negative() && !self.nonzero() {
+            return None;
+        }
+        let odd = !k.rem_euclid(&Rat::int(2.into())).ok()?.is_zero();
+        // The magnitudes of the values in the range.
+        let (m1, m2) = if self.at_least_zero() {
+            (self.lo.clone()?, self.hi.clone())
+        } else if self.at_most_zero() {
+            (self.hi.as_ref()?.neg(), self.lo.as_ref().map(Rat::neg))
+        } else {
+            let m2 = match (&self.lo, &self.hi) {
+                (Some(lo), Some(hi)) => Some(std::cmp::max(lo.neg(), hi.clone())),
+                _ => None,
+            };
+            (Rat::int(0.into()), m2)
+        };
+        let magnitude = RatRange {
+            lo: Some(m1),
+            hi: m2,
+            nonzero: self.nonzero(),
+        };
+        let end = |m: Rat| if square { m.mul(&m).ok() } else { Some(m) };
+        let raised = if k.abs() == one {
+            magnitude
+        } else {
+            RatRange {
+                lo: match magnitude.lo.filter(|m1| *m1 >= one) {
+                    Some(m1) => Some(end(m1)?),
+                    None => Some(Rat::int(0.into())),
+                },
+                hi: match magnitude.hi.filter(|m2| *m2 <= one) {
+                    Some(m2) => Some(end(m2)?),
+                    None => None,
+                },
+                nonzero: magnitude.nonzero,
+            }
+        };
+        let raised = if k.is_negative() {
+            raised.inverse()?
+        } else {
+            raised
+        };
+        Some(if !odd || self.at_least_zero() {
+            raised
+        } else if self.at_most_zero() {
+            raised.neg()
+        } else {
+            RatRange {
+                lo: raised.hi.as_ref().map(Rat::neg),
+                hi: raised.hi,
+                nonzero: raised.nonzero,
+            }
+        })
+    }
+}
+
+impl RatFact {
+    /// Whether the value is known to be no zero.
+    fn nonzero(&self) -> bool {
+        match self {
+            RatFact::Value(v) => *v != Value::rat(Rat::int(0.into())),
+            RatFact::Range(r) => r.nonzero(),
+        }
+    }
+
+    /// The range of the value.
+    fn range(&self) -> Option<RatRange> {
+        match self {
+            RatFact::Value(v) => RatRange::of(v),
+            RatFact::Range(r) => Some(r.clone()),
+        }
+    }
+}
+
+/// What the operation `p` at `rat` gives where the text gives `x` and `y` of its operands
+/// ([`RatFact`]): `p` is `Neg`, with `y` `None`, or an arithmetic operation of [`binary_prim`],
+/// with `y` for `Pow` the exponent's `int` value. Two values give the kernel's value
+/// ([`prim_folded`]), but for a power, which is computed only at a base of `0`, `1` or `-1`,
+/// raised in O(1) by the exponent's sign and parity; otherwise a range that holds the value
+/// ([`RatRange`]), so `1r / (3r^2 + 1r)` divides by a value in `1r..`. `None` where the text
+/// does not rule out an atom, as `1r / (1r - 1r)`, `(2r - 2r)^-1` or `1r / (2r^2 - 4r)`, whose
+/// divisor's range, `0r..`, holds `0r`, as do those of `1r / ((2r^2)^2 - 5r)`, in `-1r..`, and
+/// `1r / (2r^3 - 5r)`, though their divisors are not `0r`.
+// Complexity tradeoff: the naive version computes each power, at a cost that grows with the
+// exponent's value, as `3r^200000` does, and not with the text. Used: a power's range, whose
+// ends are those of its base or their inverses, O(1) operations on values of the text; a sum
+// or a product of ranges is O(1) operations on their ends, whose sizes grow as the values of
+// the text that they combine, as the values folded beside them do (COMPLEXITY.md
+// POW-rat-literal-ops).
+fn rat_step(p: Prim, x: Option<RatFact>, y: Option<RatFact>) -> Option<RatFact> {
+    let small = |v: &Value| {
+        [0, 1, -1]
+            .into_iter()
+            .any(|k| *v == Value::rat(Rat::int(k.into())))
+    };
+    match (p, x, y) {
+        (Prim::Neg, Some(RatFact::Value(x)), None) => {
+            prim_folded(Prim::Neg, vec![x]).map(RatFact::Value)
+        }
+        (Prim::Neg, Some(RatFact::Range(x)), None) => Some(RatFact::Range(x.neg())),
+        (p, Some(RatFact::Value(x)), Some(RatFact::Value(y))) if p != Prim::Pow || small(&x) => {
+            prim_folded(p, vec![x, y]).map(RatFact::Value)
+        }
+        (Prim::Pow, Some(x), Some(RatFact::Value(k))) => {
+            let k = k.as_integer()?;
+            if k.as_ref() == &Rat::int(1.into()) {
+                return Some(x);
+            }
+            let square = matches!(x, RatFact::Value(_));
+            x.range()?.pow(&k, square).map(RatFact::Range)
+        }
+        (Prim::Div, Some(x), Some(y)) if y.nonzero() => {
+            let x = x.range()?;
+            let q = x.mul(&y.range()?.inverse()?)?;
+            Some(RatFact::Range(RatRange {
+                nonzero: x.nonzero(),
+                ..q
+            }))
+        }
+        (Prim::Mul, Some(x), Some(y)) => x.range()?.mul(&y.range()?).map(RatFact::Range),
+        (Prim::Add, Some(x), Some(y)) => x.range()?.add(&y.range()?).map(RatFact::Range),
+        (Prim::Sub, Some(x), Some(y)) => x.range()?.add(&y.range()?.neg()).map(RatFact::Range),
+        _ => None,
+    }
+}
+
+/// The value of `b`, the exponent of a `^` at `rat`, where it is an `int` literal, perhaps
+/// under `-`: `^` takes (rat, int), so at `rat` the exponent keeps its own carrier, `int`.
+fn rat_exponent(b: &Expr) -> Option<Value> {
+    literal(b, None).and_then(|l| lit_value(&l, Carrier::Int))
 }
 
 /// The kernel's operation for the operator `op` where [`folded`] folds it: the arithmetic
@@ -5974,12 +6312,12 @@ fn prim_folded(p: Prim, args: Vec<Value>) -> Option<Value> {
     (!matches!(v, Value::Atom(_))).then_some(v)
 }
 
-/// What an operation on literals alone is at one carrier ([`Ck::lit_fit`]): its value there,
-/// as [`folded`] gives it; whether it holds a `/`; whether it holds a `^`; and
+/// What an operation on literals alone is at one carrier ([`Ck::lit_fit`]): what the text gives
+/// of it there ([`rat_step`] at `rat`); whether it holds a `/`; whether it holds a `^`; and
 /// the first of its literals that is not exactly a value of the carrier.
 #[derive(Clone)]
 struct LitFit {
-    value: Option<Value>,
+    value: Option<RatFact>,
     div: bool,
     pow: bool,
     refused: Option<Lit>,
@@ -6229,13 +6567,13 @@ fn paired<'e>(a: &'e Expr, b: &'e Expr) -> Option<Vec<(&'e Expr, &'e Expr)>> {
 }
 
 /// The `int` and `f64` literals of `e`, with or without a suffix, in the order of the text,
-/// whether it holds a `rat` literal, `2r`, and whether it holds a `^`, where `e` is an
+/// and whether it holds a `rat` literal, `2r`, where `e` is an
 /// operation on literals alone under `+`, `-`, `*`, `^` and a `-`; `None` otherwise, and for
 /// a `/`, whose rejection where nothing gives it a carrier is the `/`'s own, as it is walked
 /// ([`Ck::apply`]). It costs the size of `e`.
-fn literals_alone(e: &Expr, src: Option<&str>) -> Option<(Vec<Lit>, bool, bool)> {
+fn literals_alone(e: &Expr, src: Option<&str>) -> Option<(Vec<Lit>, bool)> {
     let mut out = Vec::new();
-    let (mut rat, mut pow) = (false, false);
+    let mut rat = false;
     let mut todo = vec![e];
     while let Some(x) = todo.pop() {
         if let Some(l) = literal(x, src) {
@@ -6245,18 +6583,17 @@ fn literals_alone(e: &Expr, src: Option<&str>) -> Option<(Vec<Lit>, bool, bool)>
         match &x.kind {
             ExprKind::Rat(_) => rat = true,
             ExprKind::Binary(
-                op @ (BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Pow),
+                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Pow,
                 a,
                 b,
             ) => {
-                pow |= *op == BinaryOp::Pow;
                 todo.extend([&**b, &**a]);
             }
             ExprKind::Unary(UnaryOp::Neg, a) => todo.push(a),
             _ => return None,
         }
     }
-    Some((out, rat, pow))
+    Some((out, rat))
 }
 
 /// The rejection of a comparison `a == b` or `a != b` of two tuple displays of one shape whose
@@ -6284,24 +6621,17 @@ fn unfixed_comparison(
     if pairs.len() == 1 && std::ptr::eq(pairs[0].0, &**a) {
         return None;
     }
-    // The literals of each pair, and whether it holds a `rat` literal; and whether a pair
-    // with a `rat` literal holds a `^`.
-    let mut rat_pow = false;
+    // The literals of each pair, and whether it holds a `rat` literal.
     let lits: Vec<(Vec<Lit>, Vec<Lit>, bool)> = (pairs.iter())
         .map(|(x, y)| {
-            let ((xs, r, p), (ys, s, q)) = (literals_alone(x, src)?, literals_alone(y, src)?);
-            rat_pow |= (r || s) && (p || q);
+            let ((xs, r), (ys, s)) = (literals_alone(x, src)?, literals_alone(y, src)?);
             Some((xs, ys, r || s))
         })
         .collect::<Option<_>>()?;
     // A comparison of tuples carries the carrier of a component into the operation on
     // literals alone it is compared with ([`Ck::lit_pairs`]): in
     // `y = (1 + 2, 0) == (3.0f64, 0)`, `1 + 2` is an `f64`, so each pair is folded at its
-    // carrier below. But a `rat` reaches no `^`, which has no arrow at `rat`, so a value with
-    // such a pair is left to [`unfixed_binding`].
-    if rat_pow {
-        return None;
-    }
+    // carrier below, a `^` at `rat` with its integer exponent ([`folded`]).
     let decimal = |l: &&Lit| l.bare && lit_carrier(&l.value) == Carrier::F64;
     let open = |(xs, ys, rat): &&(Vec<Lit>, Vec<Lit>, bool)| {
         !rat && xs.iter().chain(ys).all(|l| l.bare) && xs.iter().chain(ys).any(|l| decimal(&l))
@@ -6426,7 +6756,8 @@ fn first_literal(mut e: &Expr, src: Option<&str>) -> Option<Lit> {
 /// The rejection of the value `e` bound to the name `n` outside a function when nothing gives
 /// its literals a carrier (DESIGN.md step L1.26b): `e` is literals with no suffix alone, under
 /// `+`, `-`, `*`, `/`, `^` and a `-`, with a decimal among them or a `/`; with a `^` among them
-/// the fixes give `f64` alone, since `^` has no arrow at `rat`. Each fix writes one literal
+/// a fix gives `rat` only where each `^` has an `int` literal for its exponent, which `^` takes
+/// at `rat` ([`rat_exponent`]), and never to a decimal (POW-domains). Each fix writes one literal
 /// with a carrier ([`leaves_with`]), and the operators carry it to the rest, since an
 /// operation on literals alone takes the carrier of what it meets ([`Ck::lit_op_meets`]): the
 /// first decimal, which the message names ([`unfixed`]), `y = 0.5f64` and `y = 0.5r`, and
@@ -6470,6 +6801,11 @@ fn unfixed_binding(
     let mut lits = Vec::new();
     let mut div = None;
     let mut pow = false;
+    // At `rat`, `^` takes an `int` exponent alone, so `rat` checks only where each `^` has an
+    // `int` literal for its exponent ([`rat_exponent`]): `q = (3/2)^-2` holds `4/9`, but in
+    // `q = (3/2)^(1 + 1)` the exponent would be a `rat`. The text decides it, and no power is
+    // computed, whose size grows with its exponent's value, as `3^200000` does.
+    let mut at_rat = true;
     while let Some(x) = stack.pop() {
         match &x.kind {
             ExprKind::Binary(
@@ -6482,6 +6818,7 @@ fn unfixed_binding(
                     div = Some(x);
                 }
                 pow |= *op == BinaryOp::Pow;
+                at_rat &= *op != BinaryOp::Pow || rat_exponent(b).is_some();
                 stack.extend([&**b, &**a]);
             }
             ExprKind::Unary(UnaryOp::Neg, a) if literal(x, None).is_none() => stack.push(a),
@@ -6491,20 +6828,19 @@ fn unfixed_binding(
             }
         }
     }
-    // `^` has no arrow at `rat`, so with a `^` in the value only `f64` checks.
     let forms = [
         Form::Suffix(Carrier::F64),
         Form::Suffix(Carrier::Rat),
         Form::Cast,
-    ];
-    let forms = forms
-        .into_iter()
-        .filter(|f| !pow || f.carrier() != Carrier::Rat);
+    ]
+    .into_iter();
     // The literals come in the order of the text: the stack takes the left operand first.
     let is_decimal = |l: &&Lit| lit_carrier(&l.value) == Carrier::F64;
     if let Some(l) = lits.iter().find(is_decimal) {
         let mut m = unfixed(l, &[], Some((n, e)));
-        let forms = forms.filter(|f| *f != Form::Cast);
+        // A decimal under a `^` with nothing to fix it is left to the fixes at `f64`, the
+        // default POW-domains settles.
+        let forms = forms.filter(|f| *f != Form::Cast && (!pow || f.carrier() != Carrier::Rat));
         let mut leaves = unreached(&roots, l.span, src);
         leaves.push(l.clone());
         leaves.sort_by_key(|l| l.span.start);
@@ -6518,11 +6854,12 @@ fn unfixed_binding(
         unreachable!("a `/`")
     };
     let two = lits.len() == 2 && literal(a, None).is_some() && literal(b, None).is_some();
-    let why = match pow {
-        false => "Nothing gives the integer literals a carrier, and `/` has none at `int`",
-        true => {
+    let forms = forms.filter(|f| at_rat || f.carrier() != Carrier::Rat);
+    let why = match at_rat {
+        true => "Nothing gives the integer literals a carrier, and `/` has none at `int`",
+        false => {
             "Nothing gives the integer literals a carrier, `/` has none at `int`, and `^` none \
-             at `rat`"
+             at `rat` with this exponent"
         }
     };
     // The value as code: the binding, `q = (1 + 2) / (3 + 4)`, where the value is the whole

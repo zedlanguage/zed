@@ -88,11 +88,13 @@ fn where_nothing_gives_a_carrier_the_menu_writes_the_first_literal() {
             ("y = 0.5r * (7 / 2);", "y is 7r/4r"),
         ])
     );
-    // A `^` takes `f64` alone, since it has no arrow at `rat`.
+    // A `^` whose exponent is an integer literal takes `rat` too, by its arrow (rat, int): the
+    // exponent keeps `int` while the base takes `rat` (POW-rat-literal-ops).
     assert_eq!(
         checked("y = 2 ^ 3 / 2;\n"),
         pairs(&[
             ("y = 2.0f64 ^ 3 / 2;", "y is 4.0"),
+            ("y = 2r ^ 3 / 2;", "y is 4r"),
             ("y = f64(2) ^ 3 / 2;", "y is 4.0"),
         ])
     );
@@ -100,6 +102,7 @@ fn where_nothing_gives_a_carrier_the_menu_writes_the_first_literal() {
         checked("y = 1 + 2 ^ 3 / 2;\n"),
         pairs(&[
             ("y = 1.0f64 + 2 ^ 3 / 2;", "y is 5.0"),
+            ("y = 1r + 2 ^ 3 / 2;", "y is 5r"),
             ("y = f64(1) + 2 ^ 3 / 2;", "y is 5.0"),
         ])
     );
@@ -170,11 +173,16 @@ fn a_menu_writes_the_exponent_of_a_power_that_its_carrier_does_not_reach() {
     );
     assert_eq!(y("y = 2.0f64 ^ (1.0f64 + 1) / 2;\n"), "2.0");
     assert_eq!(y("y = f64(2) ^ (f64(1) + 1) / 2;\n"), "2.0");
-    // A literal exponent takes the carrier of the base it meets, so only the first literal
-    // of the value is written: `2 ^ 2` meets `f64(0xFF)` under `/`.
+    // A literal exponent takes the carrier `f64` of the base it meets, and keeps `int` under a
+    // base at `rat`, so only the first literal of the value is written: `2 ^ 2` meets
+    // `f64(0xFF)` or `rat(0xFF)` under `/`.
     assert_eq!(
         checked("y = 0xFF / 2 ^ 2;\n"),
-        pairs(&[("y = f64(0xFF) / 2 ^ 2;", "y is 63.75")])
+        pairs(&[
+            ("y = f64(0xFF) / 2 ^ 2;", "y is 63.75"),
+            ("y = rat(0xFF) / 2 ^ 2;", "y is 255r/4r"),
+        ])
     );
     assert_eq!(y("y = f64(0xFF) / 2 ^ 2;\n"), "63.75");
+    assert_eq!(y("y = rat(0xFF) / 2 ^ 2;\n"), "255r/4r");
 }

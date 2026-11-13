@@ -797,3 +797,92 @@ fn zedc_run_offers_and_runs_the_exact_rat_power() {
         );
     }
 }
+
+/// An operation on literals alone whose divisor or base is no zero is pushed to a port with
+/// no `else`: `(2r/3r)^-2` and `1r / (2r/3r)` carry no `#divByZero`, though `rat` holds `0r`
+/// (POW-rat-literal-ops). Before, the port refused each as `String | #divByZero`. A divisor or
+/// base that is zero keeps the atom, and the port refuses it.
+#[test]
+fn a_port_takes_an_operation_on_literals_whose_divisor_is_no_zero() {
+    for (e, want) in [
+        ("(2r/3r)^-2", "9r/4r"),
+        ("1r / (2r/3r)", "3r/2r"),
+        ("(3/2)^-2 * 1r", "4r/9r"),
+        ("-(3/2)^-3 * 1r", "-8r/27r"),
+        ("(1/2)^-1 * 2r", "4r"),
+        ("(3/2)^-2 * 2.0f64", "0.8888888888888888"),
+    ] {
+        assert_eq!(
+            runs("", &format!("\"${{{e}}}\""), ""),
+            format!("{want}\n"),
+            "{e}"
+        );
+    }
+    let refused = "a `Lines` port takes a `String` or a family of strings, not String | \
+                   #divByZero";
+    for e in [
+        "(0r)^-1",
+        "1r / (1r - 1r)",
+        "(1 - 1)^-1 * 1r",
+        "1r / (1 - 1)",
+    ] {
+        let out = rejected("", &format!("\"${{{e}}}\""));
+        assert!(out.contains(refused), "{e}: {out}");
+        let handled = format!("\"${{{e} else #divByZero -> 0r}}\"");
+        assert_eq!(runs("", &handled, ""), "0r\n", "{e}");
+    }
+    // An integer exponent keeps `int`, so `2 ^ -1` is an `int` power with a negative exponent,
+    // and the menu offers the exact `rat` power beside the float ones; each repair runs.
+    let out = rejected("", "\"${2 ^ -1}\"");
+    assert!(
+        out.contains("Int power with a negative exponent: `2 : int ^ -1 : int`."),
+        "{out}"
+    );
+    for (repair, want) in [
+        ("2.0f64 ^ -1", "0.5"),
+        ("2 ^ -1.0", "0.5"),
+        ("2r ^ -1", "1r/2r"),
+    ] {
+        assert!(
+            out.contains(&format!("repair: `{repair}`")),
+            "{repair}: {out}"
+        );
+        assert_eq!(
+            runs("", &format!("\"${{{repair}}}\""), ""),
+            format!("{want}\n"),
+            "{repair}"
+        );
+    }
+    // A parameter is no operation on literals: its value is not in the text, so the literal
+    // exponent stays in the parameter's class, and `p` takes no `rat`, whose `^` would need
+    // the exponent at `int` and could give `#divByZero` at `0r`.
+    let out = rejected("p(positional b) = b ^ -1;", "\"${p(2r)}\"");
+    assert!(
+        out.contains("`p` takes (T) -> T for T in int | f64"),
+        "{out}"
+    );
+}
+
+/// A `/` of integer literals under a `^` is refused at `/`, which has no arrow at `int`, and
+/// not taken as `f64`: the menu offers the exact `rat` power, which runs as printed
+/// (POW-rat-literal-ops).
+#[test]
+fn a_power_of_a_division_of_integer_literals_is_refused_with_the_exact_fix() {
+    let out = power_case(
+        "",
+        "  m.stdout <- \"${(3/2)^-2}\";",
+        &[("  m.stdout <- \"${(3r/2)^-2}\";", "", "4r/9r\n")],
+    );
+    assert_eq!(
+        out.trim_end(),
+        "3:19: Nothing gives the literal `3` a carrier of `f64 | rat`. Try \
+         `m.stdout <- \"${(3.0f64/2)^-2}\"` instead.\n  \
+         fixes, each checked here:\n    \
+         m.stdout <- \"${(3.0f64/2)^-2}\";    the literal is then the f64 3.0\n    \
+         m.stdout <- \"${(3r/2)^-2}\";        the literal is then exactly 3, a rat"
+    );
+    assert_eq!(
+        runs("", r#""${(3.0f64/2)^-2}""#, ""),
+        "0.4444444444444444\n"
+    );
+}

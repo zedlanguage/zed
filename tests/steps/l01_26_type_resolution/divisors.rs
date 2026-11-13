@@ -136,3 +136,66 @@ fn a_divisor_narrowed_by_a_test_adds_no_div_by_zero() {
         "(x: int, d: int) -> int"
     );
 }
+
+/// A divisor, or the base of a `^` under a negative exponent, that is an operation on
+/// literals alone has the value its text gives, and one that is no zero adds no
+/// `#divByZero`: `(2r/3r)^-2` is `9r/4r` and `1r / (2r/3r)` is `3r/2r`, though `rat` holds
+/// `0r` (POW-rat-literal-ops). An integer literal as the exponent keeps `int`, so
+/// `(3/2)^-2` in a sum with a `rat` is the exact `4r/9r`.
+#[test]
+fn a_divisor_or_base_that_is_an_operation_on_literals_adds_div_by_zero_only_at_zero() {
+    for (body, at_one) in [
+        ("x + (2r/3r)^-2", "13r/4r"),
+        ("x + 1r / (2r/3r)", "5r/2r"),
+        ("x / (2r/3r)", "3r/2r"),
+        ("x + (3/2)^-2", "13r/9r"),
+        ("x + (3/2)^-2 * 1r", "13r/9r"),
+        ("x - (3/2)^-3", "19r/27r"),
+        ("x + 1 / (2/3)", "5r/2r"),
+        // A power's value is not computed; the range the text gives of it is enough here:
+        // `3r^2 + 1r` is at least `1r`, `2r^10 - 1r` at least `3r`, `2r^2 - 3r` at least `1r`,
+        // since a power of a value of the text is read as at least its square, `(1r/2r)^3 - 1r`
+        // at most `-3r/4r`, and `(-2r)^3 + 1r` at most `-3r`.
+        ("x + 1r / (3r^2 + 1r)", "11r/10r"),
+        ("x + 1r / (2r^10 - 1r)", "1024r/1023r"),
+        ("x + 1r / (2r^2 - 3r)", "2r"),
+        ("x + 1r / ((1r/2r)^3 - 1r)", "-1r/7r"),
+        ("x + 1r / ((-2r)^3 + 1r)", "6r/7r"),
+        ("x + (1r/2r - 1r/3r)^-3", "217r"),
+    ] {
+        let text = format!("f(x: rat) = {body};\n");
+        assert_eq!(sig(&text, "f"), "(x: rat) -> rat", "{body}");
+        assert_eq!(
+            value(&format!("{text}y = f(x: 1r);\n"), "y"),
+            at_one,
+            "{body}"
+        );
+    }
+    // A divisor or base whose value is zero, or not known from the text, keeps `#divByZero`.
+    for body in [
+        "x + (0r)^-1",
+        "x + 1r / (1r - 1r)",
+        "x + (1 - 1)^-1 * 1r",
+        "x / (1 - 1)",
+        "x ^ -2",
+        "1r / x",
+        // Zero, and a range that holds `0r`: `(-2r)^2 - 4r` is `0r`; `2r^3 - 5r`, which is `3r`,
+        // is read as at least `-1r`, since `2r^3` is read as at least `2r^2`, and
+        // `(2r^2)^2 - 5r`, which is `11r`, too, since the square is taken only of a value of the
+        // text, not of the range of `2r^2`.
+        "x + 1r / ((-2r)^2 - 4r)",
+        "x + (3r^2 - 9r)^-1",
+        "x + 1r / (2r^3 - 5r)",
+        "x + 1r / ((2r^2)^2 - 5r)",
+    ] {
+        let text = format!("f(x: rat) = {body};\n");
+        assert_eq!(sig(&text, "f"), "(x: rat) -> rat | #divByZero", "{body}");
+    }
+    assert_eq!(
+        value("f(x: rat) = x + (0r)^-1;\ny = f(x: 1r);\n", "y"),
+        "#divByZero"
+    );
+    // Value typing narrows a result inside an arrow `^` has and makes none: `^` has no arrow
+    // (rat, rat), so `4r ^ 0.5r` is refused though its value would be `2r`.
+    assert_eq!(type_errors("f(x: rat) = x + 4r ^ 0.5r;\n").len(), 1);
+}

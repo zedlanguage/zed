@@ -419,3 +419,98 @@ fn an_argument_of_divisions_of_literals_nested_deep_takes_its_carrier_in_linear_
         );
     });
 }
+
+/// `(…((3/2)^-1)^-1 …)^-1`, `n` powers of an operation on literals nested `n` deep, each
+/// level on a line of its own: in a body beside `x: rat`, the same on the base `2`, at the top
+/// level times `1r`, and `x / (2r/3r) * (2r/3r) …`, `n` divisors that are operations on
+/// literals; one divisor `3r^(200 n) + 1r`, whose range is read without the power; and one
+/// divisor of `n` nested squares of `3r`. Each base or divisor's value or range is a lookup of
+/// the one kept for the operation inside it (`Ck::rat_folded`), so no `#divByZero` is added in
+/// one step per operation, and the
+/// integer exponents keep `int` (POW-rat-literal-ops). In a body each base is a class that may
+/// still be an `int`, so each `^` records that its base takes no int, a need whose words are
+/// made only if it fails.
+///
+/// Negative control (run once, not committed): the need's words made at each `^` allocated
+/// 13.1 times the bytes at 8n on the body and 12.7 times on the base `2`, against the limit of
+/// 11.7; COMPLEXITY.md row POW-rat-literal-ops.
+#[test]
+fn operations_on_literals_typed_by_their_value_check_in_linear_time() {
+    let nest = |base: &str, n: usize| format!("{}({base}){}", "(".repeat(n), ")\n^-1".repeat(n));
+    let body = |n: usize| format!("f(x: rat) = x + {};\ny = f(x: 0r);\n", nest("3/2", n));
+    let two = |n: usize| format!("f(x: rat) = x + {};\ny = f(x: 0r);\n", nest("2", n));
+    let top = |n: usize| format!("y = {} * 1r;\n", nest("3/2", n));
+    let chain = |n: usize| {
+        let ops: String = (0..n)
+            .map(|i| match i % 2 {
+                0 => "\n  / (2r/3r)",
+                _ => "\n  * (2r/3r)",
+            })
+            .collect();
+        format!("f(x: rat) = x{ops};\ny = f(x: 1r);\n")
+    };
+    // One divisor whose power has an exponent of 200 n: its range, at least `1r`, is read
+    // from the base and the exponent, and the power, of about 95 n digits, is not computed, so
+    // the check does not grow with n (order 0).
+    let power = |n: usize| format!("f(x: rat) = x / (3r^{} + 1r);\n", 200 * n);
+    // A divisor of n nested squares `((3r^2)^2 …)^2 + 1r`: the square is taken of the base
+    // `3r`, a value of the text, and not of the range of a power, so the ends stay `9r` and
+    // do not double in size at each level.
+    let squares = |n: usize| {
+        format!(
+            "f(x: rat) = x / ({}3r{} + 1r);\n",
+            "(".repeat(n),
+            ")^2".repeat(n)
+        )
+    };
+    let value = zed_tests::step_helpers::l01_16_elaboration::value;
+    scaling::on_a_thread(1 << 29, || {
+        assert_eq!(sig(&body(3), "f"), "(x: rat) -> rat");
+        assert_eq!(value(&body(3), "y"), "2r/3r");
+        assert_eq!(value(&body(4), "y"), "3r/2r");
+        assert_eq!(sig(&two(3), "f"), "(x: rat) -> rat");
+        assert_eq!(value(&two(3), "y"), "1r/2r");
+        assert_eq!(value(&top(3), "y"), "2r/3r");
+        assert_eq!(sig(&chain(3), "f"), "(x: rat) -> rat");
+        assert_eq!(value(&chain(3), "y"), "3r/2r");
+        assert_eq!(sig(&power(3), "f"), "(x: rat) -> rat");
+        assert_eq!(sig(&squares(3), "f"), "(x: rat) -> rat");
+        let n = 500;
+        for (what, make, order) in [
+            (
+                "checking n nested powers of literals in a body at rat",
+                &body as &dyn Fn(usize) -> String,
+                1,
+            ),
+            (
+                "checking n nested powers of the literal 2 in a body at rat",
+                &two,
+                1,
+            ),
+            (
+                "checking n nested powers of literals at the top level",
+                &top,
+                1,
+            ),
+            (
+                "checking n divisors that are operations on literals",
+                &chain,
+                1,
+            ),
+            (
+                "checking a divisor that holds a power of 3 at 200 n",
+                &power,
+                0,
+            ),
+            ("checking a divisor of n nested squares of 3", &squares, 1),
+        ] {
+            let units = scaling::inputs(n, |m| Resolved::new(&make(m)));
+            for u in units.values() {
+                assert_eq!(u.type_errors(), Vec::<String>::new(), "{what}");
+            }
+            scaling::check_order(what, n, order, |m| {
+                std::hint::black_box(units[&m].type_errors());
+            });
+        }
+    });
+}
