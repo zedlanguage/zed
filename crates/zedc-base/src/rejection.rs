@@ -203,6 +203,11 @@ rows! {
     LevelNameClash => "Two levels of one map with one name at the instantiation of a generic type",
     UnknownSliceName => "Named slice of a name the value's type does not have, or of one level twice",
     UnnamedCodecLevel => "Codec of a map type with an unnamed level",
+    // No diagnostic uses the next three rows yet: plan rows STR-layer-views and UNITS-text-lengths
+    // emit them.
+    StringWithNoView => "String read with no view",
+    ViewNotOfType => "View a string's type does not have",
+    CountedInMisplaced => "`countedIn` written where it does not attach, or twice",
 }
 
 impl Row {

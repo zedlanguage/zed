@@ -270,8 +270,10 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   9 | s = str["naïve"] ;
  10 | long = s :: len > 3₍10₎ ;
  11 | bytesLong = s :: u8 :: len > 5₍10₎ ;
- 12 | first = s :: u8 [ 0₍10₎ ] ;
- 13 | small = s :: u8 :: len < ( 1₍10₎ «with» units ( str["kB"] ) ) ;
+ 12 | nfdBytes = s :: nfd :: u8 :: len ;
+ 13 | nfdLong = s :: nfd :: len ;
+ 14 | first = s :: u8 [ 0₍10₎ ] ;
+ 15 | small = s :: u8 :: len < ( 1₍10₎ «with» units ( str["kB"] ) ) ;
 == DESIGN.md [sec:facets] 4 L12
   1 | force = 3.0f64 «with» units ( str["N"] ) ;
   2 | arm = 2.0f64 «with» units ( str["m"] ) ;

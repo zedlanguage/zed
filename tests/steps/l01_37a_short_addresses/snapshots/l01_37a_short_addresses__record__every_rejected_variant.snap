@@ -53,7 +53,7 @@ argument-unit-not-convertible
         row: None,
     },
     Diagnostic {
-        line: 14,
+        line: 16,
         col: 25,
         message: "the reduction `with units(\"kB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
@@ -61,7 +61,7 @@ argument-unit-not-convertible
         row: None,
     },
     Diagnostic {
-        line: 15,
+        line: 17,
         col: 15,
         message: "the reduction `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
@@ -69,7 +69,7 @@ argument-unit-not-convertible
         row: None,
     },
 ]
-  checks: [Outcome { line: 2, col: 17, failure: Some("the reduction `with units(\"GiB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 3, col: 10, failure: Some("the reduction `with units(\"Gbit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 5, col: 13, failure: Some("the facet `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 6, col: 21, failure: Some("the reduction `with units(\"degC\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 7, col: 13, failure: Some("the facet `with assumedUnits(\"B\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 9, col: 15, failure: Some("the reduction `with units(\"bit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 14, col: 25, failure: Some("the reduction `with units(\"kB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 15, col: 15, failure: Some("the mark names the row \"Argument whose unit does not convert to its parameter's\", and the diagnostic is in no row of the rejection table: the reduction `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }]
+  checks: [Outcome { line: 2, col: 17, failure: Some("the reduction `with units(\"GiB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 3, col: 10, failure: Some("the reduction `with units(\"Gbit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 5, col: 13, failure: Some("the facet `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 6, col: 21, failure: Some("the reduction `with units(\"degC\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 7, col: 13, failure: Some("the facet `with assumedUnits(\"B\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 9, col: 15, failure: Some("the reduction `with units(\"bit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 16, col: 25, failure: Some("the reduction `with units(\"kB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 17, col: 15, failure: Some("the mark names the row \"Argument whose unit does not convert to its parameter's\", and the diagnostic is in no row of the rejection table: the reduction `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }]
 
 block-binding-never-read
   rejected: [
@@ -135,7 +135,7 @@ byte-length-against-kilobytes
         row: None,
     },
     Diagnostic {
-        line: 14,
+        line: 16,
         col: 25,
         message: "the reduction `with units(\"kB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
@@ -143,7 +143,7 @@ byte-length-against-kilobytes
         row: None,
     },
     Diagnostic {
-        line: 17,
+        line: 19,
         col: 21,
         message: "the reduction `with units(\"kB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
@@ -151,7 +151,7 @@ byte-length-against-kilobytes
         row: None,
     },
 ]
-  checks: [Outcome { line: 2, col: 17, failure: Some("the reduction `with units(\"GiB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 3, col: 10, failure: Some("the reduction `with units(\"Gbit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 5, col: 13, failure: Some("the facet `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 6, col: 21, failure: Some("the reduction `with units(\"degC\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 7, col: 13, failure: Some("the facet `with assumedUnits(\"B\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 9, col: 15, failure: Some("the reduction `with units(\"bit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 14, col: 25, failure: Some("the reduction `with units(\"kB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 17, col: 21, failure: Some("the mark names the row \"Units that differ where an operation requires equal ones\", and the diagnostic is in no row of the rejection table: the reduction `with units(\"kB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }]
+  checks: [Outcome { line: 2, col: 17, failure: Some("the reduction `with units(\"GiB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 3, col: 10, failure: Some("the reduction `with units(\"Gbit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 5, col: 13, failure: Some("the facet `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 6, col: 21, failure: Some("the reduction `with units(\"degC\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 7, col: 13, failure: Some("the facet `with assumedUnits(\"B\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 9, col: 15, failure: Some("the reduction `with units(\"bit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 16, col: 25, failure: Some("the reduction `with units(\"kB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 19, col: 21, failure: Some("the mark names the row \"Units that differ where an operation requires equal ones\", and the diagnostic is in no row of the rejection table: the reduction `with units(\"kB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }]
 
 constructor-called-by-position
   rejected: [
@@ -385,7 +385,7 @@ key-in-bytes-for-codepoints
         row: None,
     },
     Diagnostic {
-        line: 14,
+        line: 16,
         col: 25,
         message: "the reduction `with units(\"kB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
@@ -393,7 +393,7 @@ key-in-bytes-for-codepoints
         row: None,
     },
 ]
-  checks: [Outcome { line: 2, col: 17, failure: Some("the reduction `with units(\"GiB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 3, col: 10, failure: Some("the reduction `with units(\"Gbit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 5, col: 13, failure: Some("the facet `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 6, col: 21, failure: Some("the reduction `with units(\"degC\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 7, col: 13, failure: Some("the facet `with assumedUnits(\"B\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 9, col: 15, failure: Some("the reduction `with units(\"bit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 14, col: 25, failure: Some("the reduction `with units(\"kB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 18, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }]
+  checks: [Outcome { line: 2, col: 17, failure: Some("the reduction `with units(\"GiB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 3, col: 10, failure: Some("the reduction `with units(\"Gbit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 5, col: 13, failure: Some("the facet `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 6, col: 21, failure: Some("the reduction `with units(\"degC\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 7, col: 13, failure: Some("the facet `with assumedUnits(\"B\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 9, col: 15, failure: Some("the reduction `with units(\"bit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 16, col: 25, failure: Some("the reduction `with units(\"kB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 20, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }]
 
 log-unit-compared-with-number
   rejected: [
@@ -821,7 +821,7 @@ text-length-in-bytes
         row: None,
     },
     Diagnostic {
-        line: 14,
+        line: 16,
         col: 25,
         message: "the reduction `with units(\"kB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
@@ -829,7 +829,7 @@ text-length-in-bytes
         row: None,
     },
     Diagnostic {
-        line: 16,
+        line: 18,
         col: 17,
         message: "the reduction `with units(\"B\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
         steps: [],
@@ -837,7 +837,7 @@ text-length-in-bytes
         row: None,
     },
 ]
-  checks: [Outcome { line: 2, col: 17, failure: Some("the reduction `with units(\"GiB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 3, col: 10, failure: Some("the reduction `with units(\"Gbit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 5, col: 13, failure: Some("the facet `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 6, col: 21, failure: Some("the reduction `with units(\"degC\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 7, col: 13, failure: Some("the facet `with assumedUnits(\"B\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 9, col: 15, failure: Some("the reduction `with units(\"bit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 14, col: 25, failure: Some("the reduction `with units(\"kB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 16, col: 17, failure: Some("the mark names the row \"Units that differ where an operation requires equal ones\", and the diagnostic is in no row of the rejection table: the reduction `with units(\"B\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }]
+  checks: [Outcome { line: 2, col: 17, failure: Some("the reduction `with units(\"GiB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 3, col: 10, failure: Some("the reduction `with units(\"Gbit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 5, col: 13, failure: Some("the facet `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 6, col: 21, failure: Some("the reduction `with units(\"degC\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 7, col: 13, failure: Some("the facet `with assumedUnits(\"B\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 9, col: 15, failure: Some("the reduction `with units(\"bit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 16, col: 25, failure: Some("the reduction `with units(\"kB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }, Outcome { line: 18, col: 17, failure: Some("the mark names the row \"Units that differ where an operation requires equal ones\", and the diagnostic is in no row of the rejection table: the reduction `with units(\"B\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }]
 
 two-point-readings-added
   rejected: [

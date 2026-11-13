@@ -133,3 +133,6 @@ Level names that do not fit the type
 Two levels of one map with one name at the instantiation of a generic type
 Named slice of a name the value's type does not have, or of one level twice
 Codec of a map type with an unnamed level
+String read with no view
+View a string's type does not have
+`countedIn` written where it does not attach, or twice
