@@ -3,7 +3,7 @@
 # tests build each variant from the spec at test time (tests/src/fences.rs, `build`), so this
 # repository keeps no copy of a fence. The words:
 #   variant: NAME      starts an entry
-#   fence: KEY         the fence, as `DESIGN.md [sec:name] N`
+#   fence: KEY         the fence, as `DESIGN.md [sec:facets] 3`
 #   live: TEXT         the commented ✗ line made live
 #   omit: TEXT         a line left out
 #   keep: TEXT         a line kept; an entry that keeps any line leaves out the rest
