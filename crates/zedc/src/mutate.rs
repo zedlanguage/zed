@@ -22,7 +22,7 @@
 
 use std::sync::Arc;
 
-use zed_kernel::num::{TooLarge, bytes_of};
+use zed_kernel::num::TooLarge;
 use zed_kernel::provenance::{Position, child, child_mut};
 use zed_kernel::{Prim, Rat, Shared, Term, Value};
 
@@ -107,9 +107,8 @@ fn beside(n: &Value) -> Result<[Value; 2], String> {
         let one = Rat::int(1.into());
         let refused = |e: TooLarge| {
             format!(
-                "the system refused the {} bytes of memory asked to build a neighbor of an \
-                 integer literal",
-                bytes_of(&e.bits)
+                "Number too large for memory: a neighbor of an integer literal needs {}",
+                e.number()
             )
         };
         Ok([r.sub(&one).map_err(refused)?, r.add(&one).map_err(refused)?])
@@ -399,10 +398,7 @@ fn reported(c: &Change) -> String {
     match c {
         Change::Int(Value::Big(r) | Value::Rat(r)) => match r.text_room() {
             Ok(()) => c.to_string(),
-            Err(e) => format!(
-                "an integer whose digits the system refused the {} bytes of memory asked to write",
-                bytes_of(&e.bits)
-            ),
+            Err(e) => format!("an integer of {}", e.amount("")),
         },
         _ => c.to_string(),
     }

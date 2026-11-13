@@ -98,9 +98,7 @@ impl W {
         if cap - len < bytes.len() && self.0.try_reserve(bytes.len()).is_err() {
             // What `Vec` asks to grow: twice its capacity, or what the bytes need if more.
             let ask = (2 * cap).max(len + bytes.len());
-            self.1 = Some(TooLarge {
-                bits: BigUint::from(ask) << 3u32,
-            });
+            self.1 = Some(TooLarge::of_bytes(ask));
             return;
         }
         self.0.extend_from_slice(bytes);
@@ -146,9 +144,9 @@ impl W {
         let parts = r.built_parts().and_then(|(num, den)| {
             let limbs = num.iter_u64_digits().len() + den.iter_u64_digits().len();
             let bytes = 8 * (limbs + 2);
-            self.0.try_reserve(bytes).map_err(|_| TooLarge {
-                bits: BigUint::from(bytes) << 3u32,
-            })?;
+            self.0
+                .try_reserve(bytes)
+                .map_err(|_| TooLarge::of_bytes(bytes))?;
             Ok((num, den))
         });
         match parts {

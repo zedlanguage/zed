@@ -40,12 +40,12 @@ fn two_to(s: u32) -> Rat {
         .expect("a power of 2 is kept")
 }
 
-/// The operator and size of the error `eval(t)` gives, which must be
+/// The operator and the memory asked of the error `eval(t)` gives, which must be
 /// [`KernelError::NumberTooLarge`]; anything else is told without printing a number's digits,
 /// whose text would itself abort the child.
 fn refused(t: &Term) -> (&'static str, BigUint) {
     match eval(t) {
-        Err(KernelError::NumberTooLarge { op, bits }) => (op, bits),
+        Err(KernelError::NumberTooLarge { op, need }) => (op, need.ask),
         Ok(v) => panic!("answered a value of type {}", v.kind_type()),
         Err(e) => panic!("another error: {e:?}"),
     }

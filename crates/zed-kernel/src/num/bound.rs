@@ -332,10 +332,10 @@ pub(super) fn cmp(n: &Product<'_>, d: &Product<'_>) -> Result<Ordering, TooLarge
         // at least its size; the alternative of asking only under a `Watch` left an unwatched
         // comparison to abort the process on a precision or a build the system cannot give.
         if BigUint::from(k) >= cost {
-            room(cost)?;
+            room(cost.clone(), cost)?;
             return Ok(n.materialize()?.cmp(&d.materialize()?));
         }
-        room(BigUint::from(k) << 3u32)?;
+        room(BigUint::from(k) << 1u32, BigUint::from(k) << 3u32)?;
         let (nl, nu) = (n.bound(k, false), n.bound(k, true));
         let (dl, du) = (d.bound(k, false), d.bound(k, true));
         if nl.cmp(&du) == Ordering::Greater {
@@ -437,7 +437,7 @@ pub(super) fn round(
         // by `projection_matches_the_standard_reading` (COMPLEXITY.md K30). A complete solution
         // would stop at a precision from a lower bound on the distance to the boundary.
         let q = if BigUint::from(k) >= cost {
-            room(cost.clone()).map_err(LiteralRounding::TooLarge)?;
+            room(cost.clone(), cost.clone()).map_err(LiteralRounding::TooLarge)?;
             Quotient::Exact {
                 n: n.materialize().map_err(LiteralRounding::TooLarge)?,
                 d: d.materialize().map_err(LiteralRounding::TooLarge)?,
@@ -453,7 +453,8 @@ pub(super) fn round(
             // `a_literal_near_a_rounding_boundary_is_a_compile_error_when_memory_is_short`
             // (COMPLEXITY.md K30). A complete solution would be a division whose scratch is
             // allocated once, its size known by construction.
-            room(BigUint::from(k) << 5u32).map_err(LiteralRounding::TooLarge)?;
+            room(BigUint::from(k) << 1u32, BigUint::from(k) << 5u32)
+                .map_err(LiteralRounding::TooLarge)?;
             let (nl, nu) = (n.bound(k, false), n.bound(k, true));
             let (dl, du) = (d.bound(k, false), d.bound(k, true));
             Quotient::Bounds {

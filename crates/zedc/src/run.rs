@@ -166,11 +166,10 @@ impl Ports {
         };
         let term = canon::address(&main, &|_| None).map_err(|e| {
             format!(
-                "zedc could not compile the program: one of its constants takes {} bytes, and the \
-                 system refused zedc that much memory to write the constant out and compute \
-                 the program's content address. The program is not wrong. Repair: free memory \
-                 and run again.",
-                e.bytes()
+                "Constant too large for memory: zedc writes out each constant of the program once \
+                 to tell programs apart, and one of them takes {}. The program is not wrong. \
+                 Repair: free memory and run again.",
+                e.memory()
             )
         })?;
         let ports = self.to_text();
@@ -1391,6 +1390,11 @@ pub fn placed(
 ) -> String {
     let Some(at) = at else {
         return why;
+    };
+    // The headline names the expression as written at the site, not the operator alone.
+    let why = match text.get(at.start..at.end) {
+        Some(written) => zed_kernel::value::name_expression(why, written),
+        None => why,
     };
     let span = Span {
         start: at.start,

@@ -16,8 +16,8 @@ use num_traits::{ToPrimitive, Zero};
 
 use crate::KernelError;
 use crate::num::{
-    Exact, FloatFormat, Rat, TooLarge, beyond_float, exact_f32, exact_f64, read_decimal,
-    read_f32_ieee, read_f64_ieee, room, show_f32, show_f64,
+    Exact, FloatFormat, Rat, TooLarge, beyond_float, bits_of_digits, exact_f32, exact_f64,
+    read_decimal, read_f32_ieee, read_f64_ieee, room, show_f32, show_f64,
 };
 use crate::term::Prim;
 use crate::text::Text;
@@ -47,7 +47,7 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
             Err(e) => {
                 return Err(KernelError::NumberTooLarge {
                     op: "String",
-                    bits: e.bits,
+                    need: e,
                 });
             }
         },
@@ -56,21 +56,21 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
         // Reading a number's digits asks the system for the memory first, and so does the copy
         // of a string made by joins into one block to read.
         (Prim::CastInt, Value::Str(s)) => {
-            let s = s.try_flat().map_err(|e| refused("int", e))?;
+            let s = s.try_flat().map_err(|e| unread("int", s.len(), e))?;
             match read_int(&s).map_err(|e| refused("int", e))? {
                 Some(n) => Value::int(n),
                 None => invalid(),
             }
         }
         (Prim::CastRat, Value::Str(s)) => {
-            let s = s.try_flat().map_err(|e| refused("rat", e))?;
+            let s = s.try_flat().map_err(|e| unread("rat", s.len(), e))?;
             match read_rat(&s).map_err(|e| refused("rat", e))? {
                 Some(r) => Value::rat(r),
                 None => invalid(),
             }
         }
         (Prim::CastF64, Value::Str(s)) => {
-            let s = s.try_flat().map_err(|e| refused("f64", e))?;
+            let s = s.try_flat().map_err(|e| unread("f64", s.len(), e))?;
             match read_f64(&s) {
                 Some(f) if f.is_infinite() && !s.ends_with("inf") => overflow(),
                 Some(f) => Value::float(f),
@@ -78,7 +78,7 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
             }
         }
         (Prim::CastF32, Value::Str(s)) => {
-            let s = s.try_flat().map_err(|e| refused("f32", e))?;
+            let s = s.try_flat().map_err(|e| unread("f32", s.len(), e))?;
             match read_f32(&s) {
                 Some(f) if f.is_infinite() && !s.ends_with("inf") => overflow(),
                 Some(f) => Value::float32(f),
@@ -117,7 +117,7 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
                 _ if beyond_float(&r, float_format(p)).map_err(|e| {
                     KernelError::RoundTooLarge {
                         to: float_format(p).name(),
-                        bits: e.bits,
+                        need: e,
                     }
                 })? =>
                 {
@@ -127,20 +127,14 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
                     Ok(Some(f)) => Value::float32(f),
                     Ok(None) => inexact(),
                     Err(e) => {
-                        return Err(KernelError::RoundTooLarge {
-                            to: "f32",
-                            bits: e.bits,
-                        });
+                        return Err(KernelError::RoundTooLarge { to: "f32", need: e });
                     }
                 },
                 _ => match exact_f64(&r) {
                     Ok(Some(f)) => Value::float(f),
                     Ok(None) => inexact(),
                     Err(e) => {
-                        return Err(KernelError::RoundTooLarge {
-                            to: "f64",
-                            bits: e.bits,
-                        });
+                        return Err(KernelError::RoundTooLarge { to: "f64", need: e });
                     }
                 },
             }
@@ -152,10 +146,9 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
         // A wide number not negative is its own `abs`, shared; a negative one is copied, which
         // asks the system for the memory first.
         (Prim::Abs, Value::Big(n) | Value::Rat(n)) if n.is_negative() => {
-            let r = n.try_neg().map_err(|e| KernelError::NumberTooLarge {
-                op: "abs",
-                bits: e.bits,
-            })?;
+            let r = n
+                .try_neg()
+                .map_err(|e| KernelError::NumberTooLarge { op: "abs", need: e })?;
             match x {
                 Value::Big(_) => Value::integer(r),
                 _ => Value::rat(r),
@@ -199,7 +192,7 @@ fn reserved(op: &'static str, bytes: usize) -> Result<String, KernelError> {
     let refused = || KernelError::StringCopyTooLarge { op, bytes };
     let mut out = String::new();
     out.try_reserve_exact(bytes).map_err(|_| refused())?;
-    room(BigUint::from(bytes) << 3u32).map_err(|_| refused())?;
+    room(BigUint::from(bytes) << 3u32, BigUint::from(bytes) << 3u32).map_err(|_| refused())?;
     Ok(out)
 }
 
@@ -237,7 +230,7 @@ fn lower(s: &Text) -> Result<Value, KernelError> {
     // `to_lowercase` starts at the length of its input and doubles, so it holds at most twice
     // the larger of the two; the value copies the result.
     let held = 2 * bytes.max(s.len()) + bytes;
-    room(BigUint::from(held) << 3u32)
+    room(BigUint::from(bytes) << 3u32, BigUint::from(held) << 3u32)
         .map_err(|_| KernelError::StringCopyTooLarge { op: "lower", bytes })?;
     Ok(Value::str(&flat.to_lowercase()))
 }
@@ -372,7 +365,7 @@ fn written(x: fmt::Arguments<'_>) -> u128 {
 fn print(x: &Value) -> Result<Value, KernelError> {
     let need = room_to_print(x).map_err(|e| KernelError::NumberTooLarge {
         op: "String",
-        bits: e.bits,
+        need: e,
     })?;
     let text = need.bytes;
     let refused = || KernelError::TextTooLarge { bytes: text };
@@ -381,7 +374,11 @@ fn print(x: &Value) -> Result<Value, KernelError> {
         .ok_or_else(refused)?;
     let mut out = String::new();
     out.try_reserve_exact(bytes).map_err(|_| refused())?;
-    room(need.widest.max(BigUint::from(bytes) << 3u32)).map_err(|_| refused())?;
+    {
+        let ask = need.widest.max(BigUint::from(bytes) << 3u32);
+        room(ask.clone(), ask)
+    }
+    .map_err(|_| refused())?;
     fmt::write(&mut out, format_args!("{x}")).expect("writing to a String");
     Ok(Value::str(&out))
 }
@@ -478,9 +475,16 @@ fn room_to_print(v: &Value) -> Result<Room, TooLarge> {
     Ok(Room { bytes, widest })
 }
 
+/// The error for a text of `len` bytes that `op` reads a number from, refused the memory to
+/// write it in one piece (`e`): the number read has about `len` digits.
+fn unread(op: &'static str, len: usize, e: TooLarge) -> KernelError {
+    let size = bits_of_digits(&BigUint::from(len));
+    refused(op, TooLarge { size, ask: e.ask })
+}
+
 /// The error for a number the system refused the memory to build or read for `op`.
 fn refused(op: &'static str, e: TooLarge) -> KernelError {
-    KernelError::NumberTooLarge { op, bits: e.bits }
+    KernelError::NumberTooLarge { op, need: e }
 }
 
 /// An optional `-` and decimal digits.
@@ -536,7 +540,8 @@ fn read_rat(s: &str) -> Result<Option<Rat>, TooLarge> {
     // less is refused when the free memory lies between the two, and none aborts. Tested by
     // `reading_a_long_number_from_a_string_is_refused_when_memory_is_short` (COMPLEXITY.md
     // K30). A complete solution would ask each allocation of the reading for its own memory.
-    room(BigUint::from(num.len() + den.map_or(0, str::len)) * 48u32)?;
+    let len = BigUint::from(num.len() + den.map_or(0, str::len));
+    room(bits_of_digits(&len), len * 48u32)?;
     let read = |t: &str| read_decimal(t).map(|n| n.expect("checked digits"));
     let num = BigInt::from_biguint(sign, read(num)?);
     Ok(match den {

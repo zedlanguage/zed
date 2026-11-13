@@ -123,11 +123,10 @@ pub(crate) fn data(
     let source = source.as_str();
     let zir = zedc::zir::binary::encode(graph).map_err(|e| {
         format!(
-            "zedc could not build the executable: a constant of the program is so large that \
-             the system refused the {} bytes of memory needed to write it into the executable. \
-             Repairs: free memory and build again, or run the program with `zedc run`, which \
-             writes no executable",
-            zed_kernel::num::bytes_of(&e.bits)
+            "Executable too large for memory: writing a constant of the program into the \
+             executable takes {}. Repairs: free memory and build again, or run the program with \
+             `zedc run`, which writes no executable",
+            e.memory()
         )
     })?;
     let len =
@@ -135,9 +134,10 @@ pub(crate) fn data(
     let mut out = Vec::new();
     out.try_reserve_exact(len).map_err(|_| {
         format!(
-            "zedc could not build the executable: the program's data in it is {len} bytes, and \
-             the system refused that much memory. Repairs: free memory and build again, or run \
-             the program with `zedc run`, which writes no executable"
+            "Executable too large for memory: the program's data in it takes {}. Repairs: free \
+             memory and build again, or run the program with `zedc run`, which writes no \
+             executable",
+            zed_kernel::num::TooLarge::of_bytes(len).memory()
         )
     })?;
     out.push(u8::from(fuse));

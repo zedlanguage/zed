@@ -109,11 +109,7 @@ fn refused_with(k: u32) {
     let d = at(two(k));
     lower_limit_by(4 * u64::from(k / 8));
     let e = address(&d, &|_| None).expect_err("refused under the limit");
-    assert!(
-        bytes_of(&e.bits) >= k.into(),
-        "2^{k}: {} bits named",
-        e.bits
-    );
+    assert!(bytes_of(&e.ask) >= k.into(), "2^{k}: {} bits named", e.ask);
 }
 
 #[test]

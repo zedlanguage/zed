@@ -339,3 +339,17 @@ pub fn unless_atom(v: Term, then: Term) -> Term {
         vec![(Pattern::AnyAtom, v), (Pattern::Wild, then)],
     )
 }
+
+/// The end of a refusal's message for a value larger than this machine's memory:
+/// `; this machine has 126 GiB of memory`, or nothing where the machine's memory is unknown
+/// (`zed_kernel::num::machine_memory`).
+pub fn beyond_machine() -> String {
+    zed_kernel::num::machine_memory()
+        .map(|m| {
+            format!(
+                "; this machine has {} of memory",
+                zed_kernel::num::bytes_text(&m.into())
+            )
+        })
+        .unwrap_or_default()
+}

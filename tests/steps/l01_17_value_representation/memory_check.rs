@@ -10,7 +10,7 @@
 //! the parent reports as a failure.
 
 use num_bigint::{BigInt, BigUint};
-use zed_kernel::num::bytes_of;
+use zed_kernel::num::{TooLarge, bits_of_digits, bytes_of, bytes_text, memory_clause};
 use zed_kernel::term::build::{lit, prim};
 use zed_kernel::{Evidence, Family, FixKind, KernelError, Pattern, Prim, Rat, Term, Value, eval};
 use zed_tests::kernel::{bin, get, path};
@@ -86,18 +86,16 @@ fn ordering_numbers_that_agree_in_many_bits_is_refused_when_memory_is_short() {
         (Prim::Max, "max"),
     ] {
         let err = eval(&bin(p, a.clone(), b.clone())).unwrap_err();
-        let KernelError::OrderTooLarge { op: o, bits } = &err else {
+        let KernelError::OrderTooLarge { op: o, need } = &err else {
             panic!("{op}: {err:?}")
         };
         assert_eq!(*o, op);
         assert_eq!(
             err.to_string(),
             format!(
-                "`{op}` must compare two numbers that agree in their leading digits, and the \
-                 system refused the {} bytes of memory asked to read enough of their digits; \
-                 the numbers are exact and have no size limit, but this machine cannot hold \
-                 enough of their digits to order them",
-                bytes_of(bits)
+                "Numbers too close to order in memory: `{op}` compares two numbers so close \
+                 that ordering them needs {}",
+                need.amount(" of them")
             )
         );
     }
@@ -149,10 +147,10 @@ fn ordering_wide_rationals_is_refused_when_memory_is_short() {
     let (a, b) = (thirds(1), thirds(4));
     lower_limit();
     let err = eval(&bin(Prim::Lt, a, b)).unwrap_err();
-    let KernelError::OrderTooLarge { op: "<", bits } = &err else {
+    let KernelError::OrderTooLarge { op: "<", need } = &err else {
         panic!("{err:?}")
     };
-    assert_eq!(*bits, BigUint::from(WIDE + 3));
+    assert_eq!(need.ask, BigUint::from(WIDE + 3));
 }
 
 /// `==` of a built multiple of 3 and a kept power of 3 moves the 3 out of the built one, which
@@ -169,18 +167,16 @@ fn equality_that_must_copy_a_wide_number_is_refused_when_memory_is_short() {
     lower_limit();
     for (p, op) in [(Prim::Eq, "=="), (Prim::Ne, "!=")] {
         let err = eval(&bin(p, built.clone(), kept.clone())).unwrap_err();
-        let KernelError::EqualityTooLarge { op: o, bits } = &err else {
+        let KernelError::EqualityTooLarge { op: o, need } = &err else {
             panic!("{op}: {err:?}")
         };
         assert_eq!(*o, op);
         assert_eq!(
             err.to_string(),
             format!(
-                "`{op}` must compare two numbers in the same normal form, which moves a prime \
-                 one keeps as a power out of the other's digits, and the system refused the {} \
-                 bytes of memory asked for it; the numbers are exact and have no size limit, \
-                 but this machine cannot hold enough of their digits to compare them",
-                bytes_of(bits)
+                "Numbers too large to compare in memory: `{op}` must write two numbers in one \
+                 form to compare them, which needs {}",
+                need.amount(" of them")
             )
         );
     }
@@ -229,17 +225,15 @@ fn a_family_key_order_refused_is_an_error() {
     let family = lit(Value::Family(Family::of([(a, 1)])));
     lower_limit();
     let err = eval(&get(family, b)).unwrap_err();
-    let KernelError::KeyOrderTooLarge { bits } = &err else {
+    let KernelError::KeyOrderTooLarge { need } = &err else {
         panic!("{err:?}")
     };
     assert_eq!(
         err.to_string(),
         format!(
-            "two numbers placed in a family's key order agree in their leading digits, and \
-             the system refused the {} bytes of memory asked to read enough of their \
-             digits; the numbers are exact and have no size limit, but this machine cannot \
-             hold enough of their digits to order them",
-            bytes_of(bits)
+            "Keys too close to order in memory: two numbers placed in a family's key order \
+             are so close that ordering them needs {}",
+            need.amount(" of them")
         )
     );
 }
@@ -254,18 +248,16 @@ fn rounding_near_a_boundary_is_refused_when_memory_is_short() {
     let q = lit(Value::rat(below_half_ulp(WIDE)));
     lower_limit();
     let err = eval(&prim(Prim::CastF64, vec![q])).unwrap_err();
-    let KernelError::RoundTooLarge { to, bits } = &err else {
+    let KernelError::RoundTooLarge { to, need } = &err else {
         panic!("{err:?}")
     };
     assert_eq!(*to, "f64");
     assert_eq!(
         err.to_string(),
         format!(
-            "`f64` must round a number that lies near a rounding boundary, and the system \
-             refused the {} bytes of memory asked to read enough of its digits; the number \
-             is exact and has no size limit, but this machine cannot hold enough of its \
-             digits to round it",
-            bytes_of(bits)
+            "Number too close to a rounding boundary for memory: `f64` must round a number \
+             so close to a rounding boundary that it needs {}",
+            need.amount(" of it")
         )
     );
     // `1.5` is a float exactly, and reads no more than its own bits.
@@ -300,8 +292,27 @@ fn a_literal_near_a_boundary_under(suffix: &str, margin: u64) -> Option<String> 
 }
 
 /// The memory asked to read the literal's 54 digits and `2^22` nines, 64 bits a digit, in bytes.
-fn literal_read_bytes() -> u64 {
+fn literal_read_bytes() -> usize {
     8 * (54 + (1 << 22))
+}
+
+/// The message for a literal of `digits` digits whose reading asked `bytes` bytes and was refused:
+/// the size named is that of the literal's number, from its digits, and the memory asked is
+/// named only where the number itself would fit.
+pub(crate) fn unread(digits: usize, bytes: usize) -> String {
+    unread_bits(bits_of_digits(&BigUint::from(digits)), bytes)
+}
+
+/// [`unread`] of a literal whose number is `bits` bits wide.
+pub(crate) fn unread_bits(bits: BigUint, bytes: usize) -> String {
+    let need = TooLarge {
+        size: bits,
+        ask: BigUint::from(bytes) << 3u32,
+    };
+    format!(
+        "Number too large for memory: this literal needs {}. Write it with fewer digits.",
+        need.number()
+    )
 }
 
 /// The exact rational of [`a_literal_near_a_boundary_under`] 16 MiB, where reading the digits
@@ -313,12 +324,7 @@ fn a_long_decimal_literal_is_refused_when_memory_is_short() {
     }
     assert_eq!(
         a_literal_near_a_boundary_under("r", 16 << 20),
-        Some(format!(
-            "this literal has so many digits that the system refused the {} bytes of memory \
-             zedc asked for to read it. A literal has no size limit, but this machine cannot \
-             hold this one's value. Write it with fewer digits.",
-            literal_read_bytes()
-        ))
+        Some(unread(54 + (1 << 22), literal_read_bytes()))
     );
 }
 
@@ -393,14 +399,14 @@ fn printing_a_composite_holding_a_number_too_large_to_build_is_an_error() {
         ("family", lit(in_family)),
     ] {
         let err = eval(&show(t)).unwrap_err();
-        let KernelError::NumberTooLarge { op, bits } = &err else {
+        let KernelError::NumberTooLarge { op, need } = &err else {
             panic!("{what}: {err:?}")
         };
         assert_eq!((what, *op), (what, "String"));
         // The memory asked: a byte for each of its `2^100 + 2` bits and eight for each byte of
         // its text, at most `0.301 (2^100 + 2) + 2` (`Rat::text_ask`).
         assert_eq!(
-            bytes_of(bits).to_string(),
+            bytes_of(&need.ask).to_string(),
             "4322886617184547919947741790226",
             "{what}"
         );
@@ -445,9 +451,9 @@ fn printing_many_copies_of_a_number_asks_for_the_whole_text() {
     assert_eq!(
         err.to_string(),
         format!(
-            "`String` must write a text of up to {n} bytes, counting each number inside it at \
-             its widest, and the system refused the memory for it; the value has no size \
-             limit, but this machine cannot hold its text"
+            "Text too large for memory: `String` would write up to {} of text{}",
+            bytes_text(&BigUint::from(*n)),
+            memory_clause(&BigUint::from(*n), &BigUint::from(*n))
         )
     );
 }
@@ -545,10 +551,10 @@ fn ordering_a_wide_integer_against_a_rational_is_refused_when_memory_is_short() 
     let family = lit(Value::Family(Family::of([(wide_int(), 1)])));
     lower_limit();
     let err = eval(&bin(Prim::Lt, a.clone(), b)).unwrap_err();
-    let KernelError::OrderTooLarge { op: "<", bits } = &err else {
+    let KernelError::OrderTooLarge { op: "<", need } = &err else {
         panic!("{err:?}")
     };
-    assert_eq!(*bits, BigUint::from(WIDE + 3));
+    assert_eq!(need.ask, BigUint::from(WIDE + 3));
     let err = eval(&get(family, lit(third()))).unwrap_err();
     assert!(
         matches!(&err, KernelError::KeyOrderTooLarge { .. }),
@@ -616,17 +622,15 @@ fn a_literal_pattern_refused_its_equality_test_is_an_error_of_match() {
     );
     lower_limit();
     let err = eval(&t).unwrap_err();
-    let KernelError::EqualityTooLarge { op: "match", bits } = &err else {
+    let KernelError::EqualityTooLarge { op: "match", need } = &err else {
         panic!("{err:?}")
     };
     assert_eq!(
         err.to_string(),
         format!(
-            "`match` must compare two numbers in the same normal form, which moves a prime \
-             one keeps as a power out of the other's digits, and the system refused the {} \
-             bytes of memory asked for it; the numbers are exact and have no size limit, \
-             but this machine cannot hold enough of their digits to compare them",
-            bytes_of(bits)
+            "Numbers too large to compare in memory: `match` must write two numbers in one \
+             form to compare them, which needs {}",
+            need.amount(" of them")
         )
     );
 }
@@ -701,18 +705,15 @@ fn a_family_merge_refused_its_equality_test_is_an_error() {
     let b = lit(Value::Family(Family::of([(1, kept)])));
     lower_limit();
     let err = eval(&bin(Prim::Union, a, b)).unwrap_err();
-    let KernelError::FamilyEqualityTooLarge { bits } = &err else {
+    let KernelError::FamilyEqualityTooLarge { need } = &err else {
         panic!("{err:?}")
     };
     assert_eq!(
         err.to_string(),
         format!(
-            "two numbers in families, compared to tell whether they are equal, must be put \
-             in the same normal form, which moves a prime one keeps as a power out of the \
-             other's digits, and the system refused the {} bytes of memory asked for it; \
-             the numbers are exact and have no size limit, but this machine cannot hold \
-             enough of their digits to compare them",
-            bytes_of(bits)
+            "Numbers too large to compare in memory: two numbers in families must be written \
+             in one form to tell whether they are equal, which needs {}",
+            need.amount(" of them")
         )
     );
 }
@@ -729,10 +730,10 @@ fn negating_a_wide_number_is_refused_when_memory_is_short() {
     lower_limit();
     for (p, op, v) in [(Prim::Neg, "-", x.clone()), (Prim::Abs, "abs", minus_x)] {
         let err = eval(&prim(p, vec![lit(v)])).unwrap_err();
-        let KernelError::NumberTooLarge { op: o, bits } = &err else {
+        let KernelError::NumberTooLarge { op: o, need } = &err else {
             panic!("{op}: {err:?}")
         };
-        assert_eq!((*o, bits), (op, &BigUint::from(WIDE + 2)));
+        assert_eq!((*o, &need.ask), (op, &BigUint::from(WIDE + 2)));
     }
     assert_eq!(eval(&prim(Prim::Abs, vec![lit(x.clone())])).unwrap(), x);
 }

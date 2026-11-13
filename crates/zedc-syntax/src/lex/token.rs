@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use unicode_script::{Script, UnicodeScript};
 use unicode_width::UnicodeWidthChar;
-use zed_kernel::num::{FloatFormat, TooLarge, bytes_of};
+use zed_kernel::num::{FloatFormat, TooLarge};
 use zedc_base::terminal;
 
 /// A number literal's digits, without `_`: one copy of the source text, made in memory asked
@@ -348,14 +348,12 @@ pub fn may_not_show(c: char) -> bool {
         || is_blank(c)
 }
 
-/// The message for a numeric literal whose digits the system refused the memory to read. It
+/// The message for a numeric literal whose value does not fit in the memory the system gives. It
 /// does not quote the literal, which may be millions of digits long.
 pub fn unread_literal(r: &TooLarge) -> String {
     format!(
-        "this literal has so many digits that the system refused the {} bytes of memory zedc \
-         asked for to read it. A literal has no size limit, but this machine cannot hold this \
-         one's value. Write it with fewer digits.",
-        bytes_of(&r.bits)
+        "Number too large for memory: this literal needs {}. Write it with fewer digits.",
+        r.number()
     )
 }
 

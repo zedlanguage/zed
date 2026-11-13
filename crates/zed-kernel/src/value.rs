@@ -47,8 +47,8 @@ use num_traits::{One, ToPrimitive};
 use crate::deep::{self, Queue};
 use crate::digest::Digest;
 use crate::num::{
-    Exact, FloatFormat, LiteralRounding, Rat, TooLarge, bytes_of, literal_f32, literal_f64,
-    read_decimal, room, sign_of,
+    Exact, FloatFormat, LiteralRounding, Rat, TooLarge, bytes_text, literal_f32, literal_f64,
+    memory_clause, read_decimal, room, sign_of,
 };
 use crate::text::{Text, TooLong};
 
@@ -598,7 +598,8 @@ impl Value {
         // Tested by `a_long_integer_literal_is_refused_when_memory_is_short` (COMPLEXITY.md
         // K30). A complete solution would pack the digits into words with memory reserved once.
         let per_digit = radix.ilog2() + u32::from(!radix.is_power_of_two());
-        room((BigUint::from(digits.len()) * (8 + per_digit)) << 1u32)?;
+        let len = BigUint::from(digits.len());
+        room(&len * per_digit, (len * (8 + per_digit)) << 1u32)?;
         Ok(BigUint::parse_bytes(digits.as_bytes(), radix).map(int))
     }
 
@@ -2576,69 +2577,63 @@ pub enum KernelError {
         /// The undefined keys, in order.
         keys: Vec<Value>,
     },
-    /// An arithmetic operation had to build or read a number in full, and the system refused the
-    /// `bits` bits of memory asked for it (sec:domains says when a number is built). The number
-    /// is a value of the language; this evaluator cannot run the program on this machine.
+    /// An arithmetic operation had to build or read a number in full, and the system did not
+    /// give the memory for it (sec:domains says when a number is built). The number is a value
+    /// of the language; this evaluator cannot run the program on this machine.
     NumberTooLarge {
         /// The operator: `+`, `-`, `div`, `mod`, `^`, `String` printing a number, or `int` or
         /// `rat` reading one from a string.
         op: &'static str,
-        /// The memory asked for, in bits: a measured multiple of the number's size, not the size
-        /// itself. The message gives it in bytes.
-        bits: num_bigint::BigUint,
+        /// The size of the number and the memory asked for it.
+        need: TooLarge,
     },
     /// `String` of a tuple, keypath, atom or family must write a text of up to `bytes` bytes,
-    /// the digits of the numbers inside it counted at their widest, and the system refused the
-    /// memory for it, with the widest number's build; `None` for more than `u128::MAX` bytes.
+    /// the digits of the numbers inside it counted at their widest, and the system did not give
+    /// the memory for it, with the widest number's build; `None` for more than `u128::MAX` bytes.
     TextTooLarge {
         /// At most this many bytes: the length of the text.
         bytes: Option<u128>,
     },
     /// Two numbers agree in so many leading bits that ordering them, for `<`, `<=`, `>`,
-    /// `>=`, `min` or `max`, needs bounds of them, or the two in full, and the system refused
-    /// the `bits` bits of memory asked for them.
+    /// `>=`, `min` or `max`, needs bounds of them, or the two in full, and the system did not
+    /// give the memory for them.
     OrderTooLarge {
         /// The operator.
         op: &'static str,
-        /// The memory asked for, in bits: a measured multiple of the widest bound's or number's
-        /// size, not the size itself. The message gives it in bytes.
-        bits: num_bigint::BigUint,
+        /// The bits read of the two and the memory asked for them.
+        need: TooLarge,
     },
     /// `==` or `!=` of two numbers, one of whose coefficients is divisible by a prime the other
     /// keeps as a power, must copy and divide the coefficients to compare their normal forms,
-    /// and the system refused the `bits` bits of memory asked for it.
+    /// and the system did not give the memory for it.
     EqualityTooLarge {
         /// The operator.
         op: &'static str,
-        /// The memory asked for, in bits: a measured multiple of the size of the copy and the
-        /// division, not the size itself. The message gives it in bytes.
-        bits: num_bigint::BigUint,
+        /// The size of the numbers built and the memory asked for them.
+        need: TooLarge,
     },
     /// Two numbers among a family's keys, or a key looked up and one in the family, agree in
     /// so many leading bits that placing them in key order needs bounds of them, or the two in
-    /// full, and the system refused the `bits` bits of memory asked for them.
+    /// full, and the system did not give the memory for them.
     KeyOrderTooLarge {
-        /// The memory asked for, in bits: a measured multiple of the widest bound's or number's
-        /// size, not the size itself. The message gives it in bytes.
-        bits: num_bigint::BigUint,
+        /// The bits read of the two and the memory asked for them.
+        need: TooLarge,
     },
     /// Two numbers in families, compared for equality (two leaves written at one keypath, or a
     /// key and its member when a set is printed), must be put in the same normal form, and the
-    /// system refused the `bits` bits of memory asked for it.
+    /// system did not give the memory for it.
     FamilyEqualityTooLarge {
-        /// The memory asked for, in bits: a measured multiple of the size of the copy and the
-        /// division, not the size itself. The message gives it in bytes.
-        bits: num_bigint::BigUint,
+        /// The size of the numbers built and the memory asked for them.
+        need: TooLarge,
     },
     /// A number lies so near a rounding boundary of a float that telling which side it is on
-    /// needs bounds of it, or the number in full, and the system refused the `bits` bits of
-    /// memory asked for them.
+    /// needs bounds of it, or the number in full, and the system did not give the memory for
+    /// them.
     RoundTooLarge {
         /// The float it is rounded to, as the cast is written: `f64`.
         to: &'static str,
-        /// The memory asked for, in bits: a measured multiple of the widest bound's or number's
-        /// size, not the size itself. The message gives it in bytes.
-        bits: num_bigint::BigUint,
+        /// The bits read of the number and the memory asked for them.
+        need: TooLarge,
     },
     /// `++` of two strings whose lengths in bytes add up past `usize::MAX`, the most a length
     /// holds: the joined string's length is not representable, whatever memory there is.
@@ -2667,6 +2662,69 @@ pub enum KernelError {
 /// Where a bug in zedc is reported: a message for a broken invariant names it
 /// (DESIGN.md sec:diagnostics).
 pub const REPORT_TO: &str = "https://github.com/zedlanguage/zed/issues";
+
+/// The first words of a message for a number too large for this machine's memory.
+const NUMBER_TOO_LARGE: &str = "Number too large for memory";
+/// The first words of a message for a text too large for this machine's memory.
+const TEXT_TOO_LARGE: &str = "Text too large for memory";
+/// The first words of a message for two numbers too close to order in memory.
+const ORDER_TOO_LARGE: &str = "Numbers too close to order in memory";
+/// The first words of a message for two numbers too large to compare in memory.
+const EQUALITY_TOO_LARGE: &str = "Numbers too large to compare in memory";
+/// The first words of a message for a number too close to a float's rounding boundary.
+const ROUND_TOO_LARGE: &str = "Number too close to a rounding boundary for memory";
+/// The first words of a message for a string too large for this machine's memory.
+const STRING_TOO_LARGE: &str = "String too large for memory";
+/// The first words of a message for a join longer than a string can be.
+const STRING_TOO_LONG: &str = "String too long";
+
+/// `why`, a [`KernelError`]'s text, with the operator it names replaced by the expression as
+/// the program writes it, `written`, the source of the site the run stopped at: "`^` needs a
+/// number of …" becomes "`b ^ (2^64)` needs a number of …". The text is left as it is when it
+/// is not one of the errors that name an operator, or when `written` does not contain the
+/// operator (the site is another expression). A line break in `written`, with the spaces
+/// around it, is written as one space, so the headline stays on one line.
+///
+/// Tradeoff: an error reaches the place where its site is known as text (both engines carry
+/// it as a `String`), so the expression is put in by recognizing the headline's first words
+/// here, next to the [`fmt::Display`] that writes them, rather than by carrying the error
+/// value to that place, which would change the error type of both engines' runs. Cost: one
+/// pass over `why` and `written`, O(their length).
+pub fn name_expression(why: String, written: &str) -> String {
+    let titles = [
+        NUMBER_TOO_LARGE,
+        TEXT_TOO_LARGE,
+        ORDER_TOO_LARGE,
+        EQUALITY_TOO_LARGE,
+        ROUND_TOO_LARGE,
+        STRING_TOO_LARGE,
+        STRING_TOO_LONG,
+    ];
+    let Some(rest) = titles.iter().find_map(|t| why.strip_prefix(t)) else {
+        return why;
+    };
+    let Some(op) = rest
+        .strip_prefix(": `")
+        .and_then(|r| r.split_once('`'))
+        .map(|(op, _)| op)
+    else {
+        return why;
+    };
+    if !written.contains(op) || written.trim() == op {
+        return why;
+    }
+    let at = why.len() - rest.len() + 3;
+    let mut out = String::with_capacity(why.len() + written.len());
+    out.push_str(&why[..at]);
+    let mut parts = written.trim().split('\n');
+    out.push_str(parts.next().unwrap_or_default().trim_end());
+    for line in parts {
+        out.push(' ');
+        out.push_str(line.trim());
+    }
+    out.push_str(&why[at + op.len()..]);
+    out
+}
 
 impl fmt::Display for KernelError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -2737,89 +2795,90 @@ impl fmt::Display for KernelError {
                      repair it, give at least one of them a value that does not read the others"
                 )
             }
-            KernelError::NumberTooLarge { op, bits } => write!(
-                f,
-                "`{op}` must build a number in full, and the system refused the {} bytes of \
-                 memory asked for it; the number is exact and has no size limit, but this \
-                 machine cannot hold its digits",
-                bytes_of(bits)
-            ),
-            KernelError::TextTooLarge { bytes } => {
-                match bytes {
-                    Some(n) => write!(f, "`String` must write a text of up to {n} bytes")?,
-                    None => write!(
-                        f,
-                        "`String` must write a text of more than {} bytes",
-                        u128::MAX
-                    )?,
-                }
+            KernelError::NumberTooLarge { op: "String", need } => {
                 write!(
                     f,
-                    ", counting each number inside it at its widest, and the system refused the \
-                     memory for it; the value has no size limit, but this machine cannot hold \
-                     its text"
+                    "{}: `String` would write {}",
+                    TEXT_TOO_LARGE,
+                    need.text()
                 )
             }
-            KernelError::OrderTooLarge { op, bits } => write!(
+            KernelError::NumberTooLarge { op, need } => {
+                write!(f, "{}: `{op}` needs {}", NUMBER_TOO_LARGE, need.number())
+            }
+            KernelError::TextTooLarge { bytes } => match bytes {
+                Some(n) => write!(
+                    f,
+                    "{}: `String` would write up to {} of text{}",
+                    TEXT_TOO_LARGE,
+                    bytes_text(&BigUint::from(*n)),
+                    memory_clause(&BigUint::from(*n), &BigUint::from(*n))
+                ),
+                None => write!(
+                    f,
+                    "{}: `String` would write more than {} of text{}",
+                    TEXT_TOO_LARGE,
+                    bytes_text(&BigUint::from(u128::MAX)),
+                    memory_clause(&BigUint::from(u128::MAX), &BigUint::from(u128::MAX))
+                ),
+            },
+            KernelError::OrderTooLarge { op, need } => write!(
                 f,
-                "`{op}` must compare two numbers that agree in their leading digits, and the \
-                 system refused the {} bytes of memory asked to read enough of their digits; \
-                 the numbers are exact and have no size limit, but this machine cannot hold \
-                 enough of their digits to order them",
-                bytes_of(bits)
+                "{}: `{op}` compares two numbers so close that ordering them needs {}",
+                ORDER_TOO_LARGE,
+                need.amount(" of them")
             ),
-            KernelError::EqualityTooLarge { op, bits } => write!(
+            KernelError::EqualityTooLarge { op, need } => write!(
                 f,
-                "`{op}` must compare two numbers in the same normal form, which moves a prime \
-                 one keeps as a power out of the other's digits, and the system refused the {} \
-                 bytes of memory asked for it; the numbers are exact and have no size limit, \
-                 but this machine cannot hold enough of their digits to compare them",
-                bytes_of(bits)
+                "{}: `{op}` must write two numbers in one form to compare them, which needs {}",
+                EQUALITY_TOO_LARGE,
+                need.amount(" of them")
             ),
-            KernelError::KeyOrderTooLarge { bits } => write!(
+            KernelError::KeyOrderTooLarge { need } => write!(
                 f,
-                "two numbers placed in a family's key order agree in their leading digits, and \
-                 the system refused the {} bytes of memory asked to read enough of their \
-                 digits; the numbers are exact and have no size limit, but this machine cannot \
-                 hold enough of their digits to order them",
-                bytes_of(bits)
+                "Keys too close to order in memory: two numbers placed in a family's key order \
+                 are so close that ordering them needs {}",
+                need.amount(" of them")
             ),
-            KernelError::FamilyEqualityTooLarge { bits } => write!(
+            KernelError::FamilyEqualityTooLarge { need } => write!(
                 f,
-                "two numbers in families, compared to tell whether they are equal, must be put \
-                 in the same normal form, which moves a prime one keeps as a power out of the \
-                 other's digits, and the system refused the {} bytes of memory asked for it; \
-                 the numbers are exact and have no size limit, but this machine cannot hold \
-                 enough of their digits to compare them",
-                bytes_of(bits)
+                "{}: two numbers in families must be written in one form to tell whether they \
+                 are equal, which needs {}",
+                EQUALITY_TOO_LARGE,
+                need.amount(" of them")
             ),
-            KernelError::RoundTooLarge { to, bits } => write!(
+            KernelError::RoundTooLarge { to, need } => write!(
                 f,
-                "`{to}` must round a number that lies near a rounding boundary, and the system \
-                 refused the {} bytes of memory asked to read enough of its digits; the number \
-                 is exact and has no size limit, but this machine cannot hold enough of its \
-                 digits to round it",
-                bytes_of(bits)
+                "{}: `{to}` must round a number so close to a rounding boundary that it needs {}",
+                ROUND_TOO_LARGE,
+                need.amount(" of it")
             ),
+            // The largest length is written as a power of 2, not in binary units, where it and
+            // one byte more both read `16 EiB`.
             KernelError::StringTooLong { left, right } => write!(
                 f,
-                "`++` cannot join a string of {left} bytes to one of {right} bytes: the result \
-                 would be {} bytes, more than the {} bytes a string's length can hold; keep \
-                 the parts apart, as a list of strings written out one at a time, or join \
-                 fewer of them",
-                *left as u128 + *right as u128,
-                usize::MAX
+                "{}: `++` would join strings of {} and {}, {} in all; a string holds at most \
+                 2^{} - 1 bytes. Keep the parts apart, as a list of strings written out one at a \
+                 time, or join fewer of them",
+                STRING_TOO_LONG,
+                bytes_text(&BigUint::from(*left)),
+                bytes_text(&BigUint::from(*right)),
+                bytes_text(&(BigUint::from(*left) + *right)),
+                usize::BITS
             ),
             KernelError::StringCopyTooLarge { op, bytes } => write!(
                 f,
-                "`{op}` must write a string of {bytes} bytes, and the system refused the memory \
-                 for it; the string has no size limit, but this machine cannot hold the result"
+                "{}: `{op}` would write a string of {}{}",
+                STRING_TOO_LARGE,
+                bytes_text(&BigUint::from(*bytes)),
+                memory_clause(&BigUint::from(*bytes), &BigUint::from(*bytes))
             ),
             KernelError::AtomNameTooLarge { bytes } => write!(
                 f,
-                "an atom's name or field name is a joined string of {bytes} bytes, which an \
-                 atom holds in one piece, and the system refused the memory to write it so; \
-                 the string has no size limit, but this machine cannot hold it as a name"
+                "Atom name too large for memory: an atom's name or field name is a joined \
+                 string of {}, which an atom holds in one piece{}",
+                bytes_text(&BigUint::from(*bytes)),
+                memory_clause(&BigUint::from(*bytes), &BigUint::from(*bytes))
             ),
         }
     }
@@ -3116,10 +3175,47 @@ mod tests {
         });
         assert_eq!(
             e.to_string(),
-            "`++` cannot join a string of 9223372036854775808 bytes to one of \
-             9223372036854775808 bytes: the result would be 18446744073709551616 bytes, more \
-             than the 18446744073709551615 bytes a string's length can hold; keep the parts \
-             apart, as a list of strings written out one at a time, or join fewer of them"
+            "String too long: `++` would join strings of 8.0 EiB and 8.0 EiB, 16 EiB in all; a \
+             string holds at most 2^64 - 1 bytes. Keep the parts apart, as a list of strings \
+             written out one at a time, or join fewer of them"
+        );
+    }
+
+    /// The operator a refusal names is replaced by the expression the program writes, its
+    /// lines joined by one space; any other message, or a site that does not contain the
+    /// operator or is only the operator, leaves the text as it is.
+    #[test]
+    fn a_refusal_names_the_expression_as_written() {
+        let why = |op: &'static str| {
+            KernelError::NumberTooLarge {
+                op,
+                need: TooLarge {
+                    size: BigUint::from(8u32),
+                    ask: BigUint::from(8u32),
+                },
+            }
+            .to_string()
+        };
+        let caret = why("^");
+        let named = name_expression(caret.clone(), "b ^ (2^64)");
+        assert_eq!(named, caret.replacen("`^`", "`b ^ (2^64)`", 1));
+        assert!(named.starts_with("Number too large for memory: `b ^ (2^64)` needs a number of"));
+        // A site written over three lines is shown on one.
+        assert_eq!(
+            name_expression(caret.clone(), "  b\n      ^\n  (2^64)  "),
+            caret.replacen("`^`", "`b ^ (2^64)`", 1)
+        );
+        // The site is another expression, or the operator alone: nothing is put in.
+        assert_eq!(name_expression(caret.clone(), "f(x)"), caret);
+        assert_eq!(name_expression(caret.clone(), " ^ "), caret);
+        assert_eq!(name_expression(caret.clone(), ""), caret);
+        // A message that names no operator is left as it is.
+        let other = KernelError::EmptyKeypath.to_string();
+        assert_eq!(name_expression(other.clone(), "a ^ b"), other);
+        // `String` of a value is named as the call is written.
+        assert!(
+            name_expression(why("String"), "String(2^2^100)")
+                .starts_with("Text too large for memory: `String(2^2^100)` would write about ")
         );
     }
 

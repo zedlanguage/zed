@@ -88,9 +88,11 @@ fn a_folded_constant_too_large_to_write_out_stops_alike() {
     assert_eq!(ran.status, 1);
     assert_eq!(
         stop_line(&ran, "folded"),
-        "FILE:4:17: `String` must build a number in full, and the system refused the \
-         4322886617184547919947741790226 bytes of memory asked for it; the number is exact and \
-         has no size limit, but this machine cannot hold its digits."
+        format!(
+            "FILE:4:17: Text too large for memory: `String(g() * n)` would write about \
+             3.8 × 10^29 digits{}.",
+            zed_tests::kernel::beyond_machine()
+        )
     );
 }
 
@@ -99,7 +101,10 @@ fn the_row_s_program_stops_alike() {
     let src = "main(m: MainArgs) {\n    n = 1;\n    m.stdout <- String(2^2^100 * n);\n}\n";
     let ran = agree("row", src);
     assert_eq!(ran.status, 1);
-    assert!(stop_line(&ran, "row").starts_with("FILE:3:17: `String` must build a number"));
+    assert!(
+        stop_line(&ran, "row")
+            .starts_with("FILE:3:17: Text too large for memory: `String(2^2^100 * n)` would write")
+    );
 }
 
 #[test]

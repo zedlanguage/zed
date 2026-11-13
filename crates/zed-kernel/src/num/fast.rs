@@ -3679,10 +3679,13 @@ pub(super) fn built(pows: &[(u64, BigUint)]) -> Result<BigInt, TooLarge> {
         .map(|(p, e)| e.to_u64().map(|e| (*p, e)))
         .collect();
     let Some(small) = small else {
-        let bits = (pows.iter())
+        let bits: BigUint = (pows.iter())
             .map(|(p, e)| e * (p.ilog2() + u32::from(!p.is_power_of_two())))
             .sum();
-        return Err(TooLarge { bits });
+        return Err(TooLarge {
+            size: bits.clone(),
+            ask: bits,
+        });
     };
     let mut out = BigUint::one();
     let mut twos = 0;

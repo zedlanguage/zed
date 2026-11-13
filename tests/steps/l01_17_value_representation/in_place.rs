@@ -54,18 +54,18 @@ fn outcome(r: &Result<Value, KernelError>) -> String {
             )
         }
         Ok(v) => format!("Ok(a value of type {})", v.kind_type()),
-        Err(KernelError::NumberTooLarge { op, bits }) => {
-            format!("Err(NumberTooLarge {{ op: {op}, bits: {bits} }})")
+        Err(KernelError::NumberTooLarge { op, need }) => {
+            format!("Err(NumberTooLarge {{ op: {op}, ask: {} }})", need.ask)
         }
         Err(KernelError::Type(m)) => format!("Err(Type({m}))"),
         Err(_) => "Err(another error)".into(),
     }
 }
 
-/// The error of `t`, which must be [`KernelError::NumberTooLarge`] of `op`, and its size.
+/// The error of `t`, which must be [`KernelError::NumberTooLarge`] of `op`, and the memory it asked.
 fn too_large(t: &Term, op: &str) -> BigUint {
     match eval(t) {
-        Err(KernelError::NumberTooLarge { op: o, bits }) if o == op => bits,
+        Err(KernelError::NumberTooLarge { op: o, need }) if o == op => need.ask,
         other => panic!("{op}: {}", outcome(&other)),
     }
 }

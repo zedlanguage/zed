@@ -1045,11 +1045,10 @@ fn too_large(span: Span, path: &str, too: &zed_kernel::num::TooLarge) -> Error {
     error(
         span,
         format!(
-            "zedc could not compute the content address of the unit `{path}`, which the build \
-             pins here: one of its constants takes {} bytes, and the system refused zedc that \
-             much memory to write the constant out. The program is not wrong. Repair: free \
-             memory and build again.",
-            too.bytes()
+            "Constant too large for memory: zedc writes out each constant of the unit `{path}`, \
+             which the build pins here, once to tell units apart, and one of them takes {}. \
+             The program is not wrong. Repair: free memory and build again.",
+            too.memory()
         ),
     )
 }

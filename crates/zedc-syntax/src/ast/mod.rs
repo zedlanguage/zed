@@ -37,8 +37,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::OnceLock;
 
-use num_bigint::BigUint;
-use zed_kernel::num::TooLarge;
+use zed_kernel::num::{TooLarge, bits_of_digits};
 use zedc_base::rejection::Row;
 
 pub use node::{
@@ -769,8 +768,11 @@ pub fn shown(x: &impl fmt::Display) -> Result<String, TooLarge> {
     let mut len = Count(0);
     fmt::write(&mut len, format_args!("{x}")).expect("counting cannot fail");
     let mut out = String::new();
+    // The literal's characters are counted as its digits: the size named is a number of that
+    // many digits, and the memory asked a byte for each.
     out.try_reserve_exact(len.0).map_err(|_| TooLarge {
-        bits: BigUint::from(len.0) << 3u32,
+        size: bits_of_digits(&len.0.into()),
+        ask: num_bigint::BigUint::from(len.0) << 3u32,
     })?;
     fmt::write(&mut out, format_args!("{x}")).expect("writing to a String");
     Ok(out)

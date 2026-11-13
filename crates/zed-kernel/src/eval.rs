@@ -2639,7 +2639,7 @@ fn atom_name(name: &crate::text::Text) -> Result<Arc<str>, KernelError> {
 fn too_large(p: Prim, e: crate::num::TooLarge) -> KernelError {
     KernelError::NumberTooLarge {
         op: p.written(),
-        bits: e.bits,
+        need: e,
     }
 }
 
@@ -2657,12 +2657,12 @@ fn order_too_large(p: Prim, t: Test, e: TooLarge) -> KernelError {
 /// The error for a test `t` of two numbers refused its memory, made by `op` (an operator or
 /// `match` or `fix`), or with no `op` while building or reading families.
 fn test_too_large(op: Option<&'static str>, t: Test, e: TooLarge) -> KernelError {
-    let bits = e.bits;
+    let need = e;
     match (op, t) {
-        (Some(op), Test::Order) => KernelError::OrderTooLarge { op, bits },
-        (Some(op), Test::Equality) => KernelError::EqualityTooLarge { op, bits },
-        (None, Test::Order) => KernelError::KeyOrderTooLarge { bits },
-        (None, Test::Equality) => KernelError::FamilyEqualityTooLarge { bits },
+        (Some(op), Test::Order) => KernelError::OrderTooLarge { op, need },
+        (Some(op), Test::Equality) => KernelError::EqualityTooLarge { op, need },
+        (None, Test::Order) => KernelError::KeyOrderTooLarge { need },
+        (None, Test::Equality) => KernelError::FamilyEqualityTooLarge { need },
     }
 }
 

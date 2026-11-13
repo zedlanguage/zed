@@ -47,7 +47,11 @@ fn an_error_stops_the_wave_before_anything_is_written() {
     );
     let out = run("abort", &src, "", &[]);
     assert_eq!(out.status, 1, "{}", out.stderr);
-    assert!(out.stderr.contains("cannot join"), "{}", out.stderr);
+    assert!(
+        out.stderr.contains("String too long: `s ++ s` would join"),
+        "{}",
+        out.stderr
+    );
     assert!(!out.stderr.contains("half done"), "{}", out.stderr);
     assert_eq!(out.stdout, "");
 }
@@ -83,8 +87,8 @@ fn a_number_too_large_to_build_stops_the_run() {
     assert_eq!(out.status, 1, "{}", out.stderr);
     assert!(
         out.stderr.contains(
-            "`+` must build a number in full, and the system refused the \
-             1267650600228229401496703205379 bytes of memory asked for it"
+            "3:22: Number too large for memory: `2^2^100 + 1` needs a number of about \
+             3.8 × 10^29 digits (1.6 × 10^29 bytes)"
         ),
         "{}",
         out.stderr
@@ -101,8 +105,8 @@ fn printing_a_number_too_large_to_build_stops_the_run() {
     assert_eq!(out.status, 1, "{}", out.stderr);
     assert!(
         out.stderr.contains(
-            "`String` must build a number in full, and the system refused the \
-             4322886617184547919947741790226 bytes of memory asked for it"
+            "2:15: Text too large for memory: `String(2^2^100)` would write about 3.8 × 10^29 \
+             digits"
         ),
         "{}",
         out.stderr

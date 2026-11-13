@@ -25,8 +25,7 @@
 
 use std::sync::Arc;
 
-use num_bigint::BigUint;
-use zed_kernel::num::{FloatFormat, TooLarge};
+use zed_kernel::num::{FloatFormat, TooLarge, bits_of_digits};
 
 use super::name::is_name_continue;
 use super::token::{Error, ErrorKind, Span, Tok};
@@ -94,8 +93,11 @@ pub(super) fn number(text: &str, pos: usize) -> Option<Result<(usize, Tok), Erro
 /// refuses, naming that memory, so a literal too long to copy is an error and not an abort.
 fn without_separators(s: &str) -> Result<String, TooLarge> {
     let mut out = String::new();
+    // The size named is a number of the literal's digits, counted in one more pass, O(len) as
+    // the copy is; the memory asked is a byte for each byte of `s`.
     out.try_reserve_exact(s.len()).map_err(|_| TooLarge {
-        bits: BigUint::from(s.len()) << 3u32,
+        size: bits_of_digits(&s.bytes().filter(|&b| b != b'_').count().into()),
+        ask: num_bigint::BigUint::from(s.len()) << 3u32,
     })?;
     s.split('_').for_each(|part| out.push_str(part));
     Ok(out)

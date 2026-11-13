@@ -89,7 +89,7 @@ pub fn word(p: Prim, args: &[Value]) -> Result<Value, KernelError> {
 fn too_large(p: Prim, e: TooLarge) -> KernelError {
     KernelError::NumberTooLarge {
         op: p.written(),
-        bits: e.bits,
+        need: e,
     }
 }
 

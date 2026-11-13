@@ -46,7 +46,7 @@ use std::fmt::Write;
 use std::mem;
 use std::sync::Arc;
 
-use zed_kernel::num::{TooLarge, bytes_of};
+use zed_kernel::num::TooLarge;
 use zed_kernel::sites::{Sites, Span};
 use zed_kernel::term::{FixKind, Pattern, Prim, Shared, Term};
 use zed_kernel::types::Type;
@@ -285,10 +285,10 @@ pub fn lower_sited(t: &Term, sites: Option<&Sites>) -> Result<(Region, Vec<Optio
     // A refused constant is the error, whatever lowering found after it.
     if let Some(e) = l.refused {
         return Err(format!(
-            "zedc could not compile the program: one of its constants takes {} bytes, and the \
-             system refused zedc that much memory to write the constant out and compute its \
-             content address. The program is not wrong. Repair: free memory and build again",
-            bytes_of(&e.bits)
+            "Constant too large for memory: zedc writes out each constant of the program once to \
+             tell programs apart, and one of them takes {}. The program is not wrong. Repair: \
+             free memory and build again",
+            e.memory()
         ));
     }
     let out = out?;

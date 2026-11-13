@@ -201,8 +201,12 @@ impl Text {
             Tree::Block { block, .. } => Ok(Cow::Borrowed(block)),
             Tree::Node { .. } | Tree::Deep { .. } => {
                 let mut out = String::new();
-                out.try_reserve_exact(self.len()).map_err(|_| TooLarge {
-                    bits: BigUint::from(self.len()) << 3u32,
+                out.try_reserve_exact(self.len()).map_err(|_| {
+                    let bits = BigUint::from(self.len()) << 3u32;
+                    TooLarge {
+                        size: bits.clone(),
+                        ask: bits,
+                    }
                 })?;
                 self.chunks().for_each(|c| out.push_str(c));
                 Ok(Cow::Owned(out))
@@ -219,7 +223,10 @@ impl Text {
             return Ok(Arc::clone(block));
         }
         let flat = self.try_flat()?;
-        room(BigUint::from(self.len()) << 3u32)?;
+        room(
+            BigUint::from(self.len()) << 3u32,
+            BigUint::from(self.len()) << 3u32,
+        )?;
         Ok(Arc::from(&*flat))
     }
 
@@ -1288,7 +1295,8 @@ mod tests {
             assert_eq!(
                 s.try_flat().unwrap_err(),
                 TooLarge {
-                    bits: BigUint::from(1usize << k) << 3u32
+                    size: BigUint::from(1usize << k) << 3u32,
+                    ask: BigUint::from(1usize << k) << 3u32,
                 }
             );
         }

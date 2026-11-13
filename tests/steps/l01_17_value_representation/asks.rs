@@ -13,7 +13,7 @@ use zed_kernel::term::build::{lit, prim};
 use zed_kernel::{KernelError, Prim, Rat, Value, eval};
 use zed_tests::scaling::check_order;
 
-use super::memory_check::{in_child_at, lower_limit_by};
+use super::memory_check::{in_child_at, lower_limit_by, unread, unread_bits};
 
 fn in_child(name: &str) -> bool {
     in_child_at(module_path!(), name)
@@ -54,7 +54,7 @@ fn above(s: u64) -> Rat {
 /// The memory a refusal asked, in bytes.
 fn asked(r: Result<impl Sized, TooLarge>) -> BigUint {
     match r {
-        Err(TooLarge { bits }) => bytes_of(&bits),
+        Err(TooLarge { ask, .. }) => bytes_of(&ask),
         Ok(_) => panic!("answered"),
     }
 }
@@ -63,7 +63,7 @@ fn asked(r: Result<impl Sized, TooLarge>) -> BigUint {
 /// error names; anything else is told without printing a number's digits.
 fn refused(p: Prim, x: Value, op: &str) -> BigUint {
     match eval(&prim(p, vec![lit(x)])) {
-        Err(KernelError::NumberTooLarge { op: o, bits }) if o == op => bytes_of(&bits),
+        Err(KernelError::NumberTooLarge { op: o, need }) if o == op => bytes_of(&need.ask),
         Ok(v) => panic!("answered a value of type {}", v.kind_type()),
         Err(e) => panic!("another error: {e:?}"),
     }
@@ -265,15 +265,6 @@ fn literal_errors(texts: &[String], margin: u64, check_short: bool) -> Vec<Strin
     out
 }
 
-/// The message for a literal whose digits the system refused `bytes` bytes to read.
-fn unread(bytes: usize) -> String {
-    format!(
-        "this literal has so many digits that the system refused the {bytes} bytes of memory \
-         zedc asked for to read it. A literal has no size limit, but this machine cannot hold \
-         this one's value. Write it with fewer digits."
-    )
-}
-
 /// A decimal literal of `2^22` nines asks six bytes a digit, 24 MiB, and a hexadecimal one
 /// of `2^22` `f`s three, 12 MiB: under a limit 2 MiB above what the child holds, the
 /// elaborator reports each, where it copied the digits and read them with no ask and aborted.
@@ -289,7 +280,7 @@ fn a_long_integer_literal_is_refused_when_memory_is_short() {
     ];
     assert_eq!(
         literal_errors(&texts, 2 << 20, false),
-        [unread(6 * n), unread(3 * n)]
+        [unread(n, 6 * n), unread_bits(BigUint::from(4 * n), 3 * n)]
     );
 }
 
@@ -305,7 +296,7 @@ fn checking_a_long_literal_is_refused_when_memory_is_short() {
     let text = format!("x = {};\ny = 0.{};\n", "9".repeat(n), "9".repeat(n));
     assert_eq!(
         literal_errors(&[text], 2 << 20, true),
-        [unread(6 * n), unread(n + 2)]
+        [unread(n, 6 * n), unread(n + 2, n + 2)]
     );
 }
 
@@ -345,7 +336,7 @@ fn a_long_literal_with_separators_is_refused_by_the_lexer_when_memory_is_short()
     lower_limit_by(SHORT);
     for (n, text) in &all {
         match zedc::lex::lex_fence(text) {
-            Err(e) => assert_eq!(e.to_string(), unread(2 * n - 1), "n = {n}"),
+            Err(e) => assert_eq!(e.to_string(), unread(*n, 2 * n - 1), "n = {n}"),
             Ok(_) => panic!("lexed {n} digits"),
         }
     }
@@ -422,10 +413,13 @@ fn reporting_a_mutant_of_a_wide_constant_is_refused_when_memory_is_short() {
     let all = [1u64 << 23, 1 << 26].map(|s| (s, Value::integer(above(s))));
     lower_limit_by(SHORT);
     for (s, x) in all {
+        let need = TooLarge {
+            size: BigUint::from(s + 2),
+            ask: BigUint::from(print_ask(s)) << 3u32,
+        };
         let want = format!(
-            "1:1: undetected: `an integer whose digits the system refused the {} bytes of memory \
-             asked to write` replaced by `0` in `f` at",
-            print_ask(s)
+            "1:1: undetected: `an integer of {}` replaced by `0` in `f` at",
+            need.amount("")
         );
         let got = report(x);
         assert!(got.starts_with(&want), "s = {s}: {got}");
@@ -494,10 +488,10 @@ fn addressing_a_wide_constant_is_refused_when_memory_is_short() {
         assert_eq!(
             zedc::zir::lower::lower(built_t).err(),
             Some(format!(
-                "zedc could not compile the program: one of its constants takes {bytes} bytes, \
-                 and the system refused zedc that much memory to write the constant out and \
-                 compute its content address. The program is not wrong. Repair: free memory \
-                 and build again"
+                "Constant too large for memory: zedc writes out each constant of the program \
+                 once to tell programs apart, and one of them takes {}. The program is not \
+                 wrong. Repair: free memory and build again",
+                TooLarge::of_bytes(bytes).memory()
             )),
             "k = {k}"
         );
@@ -511,10 +505,10 @@ fn addressing_a_wide_constant_is_refused_when_memory_is_short() {
         assert_eq!(
             ports.address(built_t.clone()).err(),
             Some(format!(
-                "zedc could not compile the program: one of its constants takes {bytes} bytes, \
-                 and the system refused zedc that much memory to write the constant out and \
-                 compute the program's content address. The program is not wrong. Repair: \
-                 free memory and run again."
+                "Constant too large for memory: zedc writes out each constant of the program \
+                 once to tell programs apart, and one of them takes {}. The program is not \
+                 wrong. Repair: free memory and run again.",
+                TooLarge::of_bytes(bytes).memory()
             )),
             "k = {k}"
         );

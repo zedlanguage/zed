@@ -11,7 +11,7 @@ use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use zed_kernel::num::{TooLarge, bytes_of, literal_f64};
+use zed_kernel::num::{TooLarge, literal_f64};
 use zed_kernel::{Rat, Value};
 
 use super::ty::{Binds, NodeId, Row, Shape, Sig, Ty};
@@ -451,11 +451,8 @@ fn int(radix: u32, digits: &str, negative: bool, text: &str) -> Result<Value, St
     })
 }
 
-/// The message for a number in the type text `text` whose digits the system refused the memory
-/// to read.
+/// The message for a number in the type text `text` whose value does not fit in the memory the
+/// system gives.
 fn refused(text: &str, e: &TooLarge) -> String {
-    format!(
-        "`{text}`: the system refused the {} bytes of memory asked to read a number in it",
-        bytes_of(&e.bits)
-    )
+    format!("Number too large for memory: `{text}` needs {}", e.number())
 }

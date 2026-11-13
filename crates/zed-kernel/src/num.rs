@@ -43,7 +43,10 @@ pub use fast::{
     to_decimal_split, to_decimal_split_at,
 };
 pub use float_text::{FloatFormat, read_f32_ieee, read_f64_ieee, read_float, show_f32, show_f64};
-pub use room::{LiteralRounding, TooLarge, bytes_of, room};
+pub use room::{
+    LiteralRounding, TooLarge, about, bits_of_digits, bytes_of, bytes_text, digits_of_bits,
+    machine_memory, memory_clause, room,
+};
 
 /// An exact number `num/den * prod p^e`: `num/den` reduced with `den` positive, the primes
 /// `p` distinct and in increasing order, each `e` nonzero, and `num` and `den` divisible by
@@ -162,7 +165,8 @@ impl Rat {
         // `a_long_decimal_literal_is_refused_when_memory_is_short` (COMPLEXITY.md K30). A
         // complete solution would ask each allocation of the reading for its own memory.
         let len = whole.len() + frac.len() + exp.map_or(0, |(_, e)| e.len());
-        room(BigUint::from(len) << 6u32)?;
+        let len = BigUint::from(len);
+        room(bits_of_digits(&len), len << 6u32)?;
         let mantissa = match frac.is_empty() {
             true => BigInt::from_biguint(sign, read_digits(whole)),
             false => BigInt::from_biguint(sign, read_digits(&[whole, frac].concat())),
@@ -277,12 +281,11 @@ impl Rat {
         // when the free memory lies between the two, and none aborts. Tested by
         // `building_a_kept_power_is_refused_when_memory_is_short` (COMPLEXITY.md K30). A
         // complete solution would ask each allocation of the build for its own memory.
-        room(
-            width(
-                &self.num,
-                self.pows.iter().map(|(p, e)| (*p, e.magnitude())),
-            ) << 3u32,
-        )?;
+        let size = width(
+            &self.num,
+            self.pows.iter().map(|(p, e)| (*p, e.magnitude())),
+        );
+        room(size.clone(), size << 3u32)?;
         self.integer_built()
     }
 
@@ -359,7 +362,8 @@ impl Rat {
     /// `Ok` when the system gives the memory to write its digits (`Rat::text_ask`); else
     /// [`TooLarge`] naming that memory, before anything is built.
     pub fn text_room(&self) -> Result<(), TooLarge> {
-        room(self.text_ask())
+        let (bits, _) = self.text_size();
+        room(bits, self.text_ask())
     }
 
     /// The memory writing its digits asks for, in bits.
@@ -422,7 +426,7 @@ impl Rat {
             // (COMPLEXITY.md K30). A complete solution would ask each allocation of the build
             // for its own memory.
             let (bits, _) = self.text_size();
-            room(bits << 3u32)?;
+            room(bits.clone(), bits << 3u32)?;
         }
         fn side<'s>(
             coef: &'s BigInt,
@@ -652,7 +656,8 @@ impl Rat {
             if self.den.is_one() && b.den.is_one() {
                 // num-bigint builds the result once, at most one bit wider than the wider
                 // operand.
-                room(BigUint::from(self.num.bits().max(b.num.bits()) + 1))?;
+                let size = BigUint::from(self.num.bits().max(b.num.bits()) + 1);
+                room(size.clone(), size)?;
                 return Ok(Rat::int(match minus {
                     true => &self.num - &b.num,
                     false => &self.num + &b.num,
@@ -674,7 +679,7 @@ impl Rat {
             // which needs a reduction written here rather than num-bigint's.
             let n = (self.num.bits() + b.den.bits()).max(b.num.bits() + self.den.bits()) + 1;
             let d = self.den.bits() + b.den.bits();
-            room(BigUint::from(n + d) << 4u32)?;
+            room(BigUint::from(n + d), BigUint::from(n + d) << 4u32)?;
             // Unreachable: both denominators are positive, so their product is not zero and
             // `Rat::new` returns `Some`.
             return Ok(Rat::new(
@@ -732,7 +737,8 @@ impl Rat {
         let sizes = [(&a.num, &rest_a, &b.den), (&b.num, &rest_b, &a.den)]
             .map(|(n, rest, d)| width(n, rest.iter().map(|(p, e)| (*p, e))) + d.bits());
         let [x, y] = sizes;
-        room((x.max(y) + 1u32) << 3u32)?;
+        let size = x.max(y) + 1u32;
+        room(size.clone(), size << 3u32)?;
         let ra = fast::mul_int(&a.num, &built(&rest_a)?);
         let rb = fast::mul_int(&b.num, &built(&rest_b)?);
         Ok(Rat::build(
@@ -758,7 +764,8 @@ impl Rat {
             // (COMPLEXITY.md K30).
             // A complete solution would be a multiplication whose scratch is allocated once,
             // its size known by construction.
-            room(BigUint::from(self.num.bits() + b.num.bits()) << 3u32)?;
+            let size = BigUint::from(self.num.bits() + b.num.bits());
+            room(size.clone(), size << 3u32)?;
             return Ok(Rat::int(fast::mul_int(&self.num, &b.num)));
         }
         self.scaled(&b.num, &b.den, &b.pows, |x, y| x + y)
@@ -798,7 +805,7 @@ impl Rat {
         // (COMPLEXITY.md K30). A complete solution would ask each allocation of the reduction
         // for its own memory, which needs a reduction written here rather than num-bigint's.
         let bits = self.num.bits() + self.den.bits() + up.bits() + down.bits();
-        room(BigUint::from(bits) << 4u32)?;
+        room(BigUint::from(bits), BigUint::from(bits) << 4u32)?;
         Ok(Rat::build(
             fast::mul_int(&self.num, up),
             fast::mul_int(&self.den, down),
@@ -818,13 +825,15 @@ impl Rat {
     /// `-a`, or [`TooLarge`] when the system refuses the memory for its coefficients: negating
     /// copies them.
     pub fn try_neg(&self) -> Result<Rat, TooLarge> {
-        room(BigUint::from(self.num.bits() + self.den.bits()))?;
+        let size = BigUint::from(self.num.bits() + self.den.bits());
+        room(size.clone(), size)?;
         Ok(self.neg())
     }
 
     /// A copy, or [`TooLarge`] when the system refuses the memory for its coefficients.
     fn try_copy(&self) -> Result<Rat, TooLarge> {
-        room(BigUint::from(self.num.bits() + self.den.bits()))?;
+        let size = BigUint::from(self.num.bits() + self.den.bits());
+        room(size.clone(), size)?;
         Ok(self.clone())
     }
 
@@ -863,11 +872,19 @@ impl Rat {
             .filter(|part| part.to_u64().is_none())
             .map(|part| part.bits())
             .sum();
-        // The memory asked for the wide parts' powers, in bits, eight times their width: asked of
-        // `room` here, and returned as the refusal below when `e` is too wide to raise a part to.
-        let ask = || (BigUint::from(wide) * e) << 3u32;
+        // The refusal of the wide parts' powers: their size in bits, the width times `e`, and the
+        // memory asked, eight times it; asked of `room` here, and returned below when `e` is too
+        // wide to raise a part to.
+        let refusal = || {
+            let size = BigUint::from(wide) * e;
+            TooLarge {
+                ask: &size << 3u32,
+                size,
+            }
+        };
         if wide > 0 {
-            room(ask())?;
+            let TooLarge { size, ask } = refusal();
+            room(size, ask)?;
         }
         let times = BigInt::from(e.clone());
         let mut pows: Vec<(u64, BigInt)> = self
@@ -903,7 +920,7 @@ impl Rat {
                     // refusal, so the step holds by the code, not by that argument. Tested by
                     // `a_power_of_a_wide_base_to_an_exponent_beyond_64_bits_is_refused`.
                     let Some(e) = e.to_u64() else {
-                        return Err(TooLarge { bits: ask() });
+                        return Err(refusal());
                     };
                     raised[i] = BigInt::from(fast::pow(part, e));
                 }
@@ -1017,7 +1034,7 @@ impl Rat {
             // A complete solution would ask each allocation of the power and the division for
             // its own memory, which needs a modular power written here rather than
             // num-bigint's.
-            room(BigUint::from(m.bits()) << 5u32)?;
+            room(BigUint::from(m.bits()), BigUint::from(m.bits()) << 5u32)?;
         }
         for (p, e) in self.pows.iter() {
             r = r * BigUint::from(*p).modpow(e.magnitude(), &m) % &m;
@@ -1053,6 +1070,7 @@ impl Rat {
             let a = BigUint::from(self.num.bits());
             let b = m.num.magnitude();
             room(
+                a.clone(),
                 match (b.to_u64(), fast::reciprocal_points(b, self.num.bits())) {
                     (Some(_), _) => a,
                     // `k > n`: the quotient has more bits than the divisor (`fast::div_rem`).
@@ -1145,7 +1163,8 @@ impl Rat {
             // `equality_that_must_copy_a_wide_number_is_refused_when_memory_is_short`
             // (COMPLEXITY.md K30). A complete solution would ask each allocation of
             // `valuation` for its own memory, or divide the powers of `p` out in place.
-            room(BigUint::from(self.num.bits() + self.den.bits()) << 4u32)?;
+            let size = BigUint::from(self.num.bits() + self.den.bits());
+            room(size.clone(), size << 4u32)?;
         }
         let mut pows = self.pows.to_vec();
         pows.extend(new.into_iter().map(|p| (p, BigInt::zero())));
@@ -1464,7 +1483,8 @@ pub fn read_decimal(digits: &str) -> Result<Option<BigUint>, TooLarge> {
     // refused when the free memory lies between the two, and none aborts. Tested by
     // `a_long_decimal_literal_is_refused_when_memory_is_short` (COMPLEXITY.md K30). A complete
     // solution would ask each allocation of the reading for its own memory.
-    room(BigUint::from(digits.len()) * 48u32)?;
+    let len = BigUint::from(digits.len());
+    room(bits_of_digits(&len), len * 48u32)?;
     Ok(Some(read_digits(digits)))
 }
 
@@ -1689,10 +1709,13 @@ fn rem(a: &BigUint, m: &BigUint) -> Result<BigUint, TooLarge> {
     // the two. Tested by `a_wide_number_modulo_a_wide_one_answers_when_its_peak_is_given` and
     // `a_dense_divisor_asks_for_its_transforms` (COMPLEXITY.md K30). A complete solution would
     // ask each allocation of the division for its own memory.
-    room(match fast::reciprocal_points(m, a.bits()) {
-        Some(points) => BigUint::from(points) * (64 * POINT_WORDS),
-        None => BigUint::from(m.bits()) * REM_STEP,
-    })?;
+    room(
+        BigUint::from(m.bits()),
+        match fast::reciprocal_points(m, a.bits()) {
+            Some(points) => BigUint::from(points) * (64 * POINT_WORDS),
+            None => BigUint::from(m.bits()) * REM_STEP,
+        },
+    )?;
     Ok(fast::Divisor::new(Cow::Borrowed(m), a.bits()).rem(a))
 }
 
@@ -1702,7 +1725,7 @@ fn euclid(r: BigUint, negative: bool, m: &BigUint) -> Result<Rat, TooLarge> {
     if !negative || r.is_zero() {
         return Ok(Rat::int(BigInt::from(r)));
     }
-    room(BigUint::from(m.bits()))?;
+    room(BigUint::from(m.bits()), BigUint::from(m.bits()))?;
     Ok(Rat::int(BigInt::from(m - r)))
 }
 
@@ -1716,7 +1739,8 @@ fn times<'a>(x: &'a BigUint, y: &'a BigUint, check: bool) -> Result<Cow<'a, BigU
         return Ok(Cow::Borrowed(y));
     }
     if check {
-        room(BigUint::from(x.bits() + y.bits()))?;
+        let size = BigUint::from(x.bits() + y.bits());
+        room(size.clone(), size)?;
     }
     Ok(Cow::Owned(fast::mul(x, y)))
 }
@@ -1735,7 +1759,8 @@ fn digits(coef: &BigUint, pows: Vec<(u64, BigUint)>) -> Result<String, TooLarge>
     let zeros = match coef.is_zero() {
         true => 0,
         false => (tens.to_usize()).ok_or_else(|| TooLarge {
-            bits: &tens << 3u32,
+            size: bits_of_digits(&tens),
+            ask: &tens << 3u32,
         })?,
     };
     let rest: Vec<(u64, BigUint)> = pows
@@ -2138,9 +2163,27 @@ mod tests {
         let (two, three, ten) = (big(2), big(3), big(10));
         let k_text = "1267650600228229401496703205376";
         // `2^K` has `K` bits, `3^K` fewer than `2K`; `10^K` is its `K` zeros, a byte each.
-        assert_eq!(two.numer_text(), Err(TooLarge { bits: k.clone() }));
-        assert_eq!(three.numer_text(), Err(TooLarge { bits: &k << 1u32 }));
-        assert_eq!(ten.numer_text(), Err(TooLarge { bits: &k << 3u32 }));
+        assert_eq!(
+            two.numer_text(),
+            Err(TooLarge {
+                size: k.clone(),
+                ask: k.clone()
+            })
+        );
+        assert_eq!(
+            three.numer_text(),
+            Err(TooLarge {
+                size: &k << 1u32,
+                ask: &k << 1u32
+            })
+        );
+        assert_eq!(
+            ten.numer_text(),
+            Err(TooLarge {
+                size: bits_of_digits(&k),
+                ask: &k << 3u32
+            })
+        );
         assert!(two.to_integer().is_err() && three.built_parts().is_err());
         assert_eq!(two.integer_digits(), format!("2^{k_text}"));
         assert_eq!(ten.integer_digits(), format!("10^{k_text}"));
@@ -2148,7 +2191,13 @@ mod tests {
         assert_eq!(three.neg().integer_text(), format!("-3^{k_text}"));
         let third = Rat::int(BigInt::from(5)).div(&three).unwrap().unwrap();
         assert_eq!(third.to_string(), format!("rat(5)/rat(3^{k_text})"));
-        assert_eq!(third.denom_text(), Err(TooLarge { bits: &k << 1u32 }));
+        assert_eq!(
+            third.denom_text(),
+            Err(TooLarge {
+                size: &k << 1u32,
+                ask: &k << 1u32
+            })
+        );
         assert!(third.literal_text().starts_with("rat(5)/"));
         // The order is told by the bit lengths, and nothing is built.
         assert_eq!(two.try_cmp(&three), Ok(Ordering::Less));

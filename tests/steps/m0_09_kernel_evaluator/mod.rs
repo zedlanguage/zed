@@ -1094,8 +1094,8 @@ fn a_unit_to_a_kept_power_builds_no_exponent() {
 #[test]
 fn a_sum_too_large_to_build_is_an_error_naming_its_size() {
     for (k, bytes) in [
-        (100u32, "1267650600228229401496703205379"),
-        (60, "1152921504606846979"),
+        (100u32, "3.8 × 10^29 digits (1.6 × 10^29 bytes)"),
+        (60, "3.5 × 10^17 digits (128 PiB)"),
     ] {
         let huge = bin(Prim::Pow, lit(2), bin(Prim::Pow, lit(2), lit(k as i64)));
         let err = eval(&add(huge.clone(), lit(1))).unwrap_err();
@@ -1106,9 +1106,8 @@ fn a_sum_too_large_to_build_is_an_error_naming_its_size() {
         assert_eq!(
             err.to_string(),
             format!(
-                "`+` must build a number in full, and the system refused the {bytes} bytes of \
-                 memory asked for it; the number is exact and has no size limit, but this \
-                 machine cannot hold its digits"
+                "Number too large for memory: `+` needs a number of about {bytes}{}",
+                beyond_machine()
             )
         );
         // The same number is a value while it is kept: compared, multiplied, divided exactly.
@@ -1154,9 +1153,10 @@ fn printing_a_number_too_large_to_build_is_an_error_naming_its_size() {
     );
     assert_eq!(
         err.to_string(),
-        "`String` must build a number in full, and the system refused the \
-         4322886617184547919947741790226 bytes of memory asked for it; the number is exact and \
-         has no size limit, but this machine cannot hold its digits"
+        format!(
+            "Text too large for memory: `String` would write about 3.8 × 10^29 digits{}",
+            beyond_machine()
+        )
     );
     // A rational with a huge denominator is refused the same way.
     let rat = |t: Term| prim(Prim::CastRat, vec![t]);

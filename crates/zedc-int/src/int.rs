@@ -2175,7 +2175,8 @@ impl Num {
     // own memory.
     pub fn built(&self) -> Result<Cow<'_, BigInt>, TooLarge> {
         if let Word::Kept(k) = &self.0 {
-            room(k.widths().1 << 3u32)?;
+            let (value, widest) = k.widths();
+            room(value, widest << 3u32)?;
         }
         Ok(self.big())
     }

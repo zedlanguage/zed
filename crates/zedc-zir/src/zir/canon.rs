@@ -27,7 +27,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use num_bigint::BigUint;
 use zed_kernel::num::TooLarge;
 use zed_kernel::term::{Pattern, Term};
 use zed_kernel::value::Value;
@@ -262,9 +261,7 @@ impl Regions {
         let mut nodes = Vec::new();
         nodes
             .try_reserve_exact(r.nodes.len())
-            .map_err(|_| TooLarge {
-                bits: BigUint::from(r.nodes.len() * size_of::<(Vec<u8>, Vec<usize>)>()) << 3u32,
-            })?;
+            .map_err(|_| TooLarge::of_bytes(r.nodes.len() * size_of::<(Vec<u8>, Vec<usize>)>()))?;
         for ((n, keys), numbers) in r.nodes.iter().zip(keys).zip(numbers) {
             let shell = shell_bytes(n)?;
             h.update(&key_of(&shell, keys).0);

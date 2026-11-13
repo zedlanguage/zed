@@ -387,7 +387,8 @@ fn a_power_of_a_wide_base_to_an_exponent_beyond_64_bits_is_refused() {
             assert_eq!(
                 base.pow(&e),
                 Err(TooLarge {
-                    bits: (BigUint::from(*bits) * &e) << 3u32
+                    size: BigUint::from(*bits) * &e,
+                    ask: (BigUint::from(*bits) * &e) << 3u32
                 }),
                 "{base:?} ^ {e}"
             );

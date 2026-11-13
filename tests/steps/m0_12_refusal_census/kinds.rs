@@ -44,7 +44,7 @@ pub const KINDS: &[Kind] = &[
     },
     Kind {
         name: "PowerMemory",
-        phrase: "the system refused the memory",
+        phrase: "whose digits are too many to hold in memory",
     },
     Kind {
         name: "Fork",

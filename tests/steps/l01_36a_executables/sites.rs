@@ -6,6 +6,7 @@
 
 use std::path::PathBuf;
 
+use zed_tests::kernel::beyond_machine;
 use zed_tests::scaling;
 use zedc::zir::lower::{lower, lower_sited};
 use zedc::zir::text::print;
@@ -70,12 +71,74 @@ fn a_number_too_large_is_placed_at_its_operation() {
         "plus",
         "main(m: MainArgs) {\n    n = 1;\n    m.stdout <- String(2^2^100 + n);\n}\n",
         "",
-        "FILE:3:24: `+` must build a number in full, and the system refused the \
-         1267650600228229401496703205379 bytes of memory asked for it; the number is exact and \
-         has no size limit, but this machine cannot hold its digits.\n  \
-         [1] 3:24: the run stopped here\n      \
-         3 |     m.stdout <- String(2^2^100 + n);\n        \
-           |                        ^^^^^^^^^^^\n",
+        &format!(
+            "FILE:3:24: Number too large for memory: `2^2^100 + n` needs a number of about \
+             3.8 × 10^29 digits (1.6 × 10^29 bytes){}.\n  \
+             [1] 3:24: the run stopped here\n      \
+             3 |     m.stdout <- String(2^2^100 + n);\n        \
+               |                        ^^^^^^^^^^^\n",
+            beyond_machine()
+        ),
+    );
+}
+
+/// Item MSG-too-large-plain: `b ^ (2^64)` with `b = 2^64 + 13`, a number of `65 · 2^64` bits, is
+/// named as the program writes it, with its size in digits and bytes and the machine's
+/// memory. Before, the message named only `^` and a raw count of 22 digits of the memory the
+/// evaluator asked for, eight times the number's size.
+#[test]
+fn a_power_too_large_is_named_as_written_with_its_size() {
+    let src = "main(m: MainArgs) {\n    b = 2^64 + 13;\n    m.stdout <- String(b ^ (2^64));\n}\n";
+    stops(
+        "power",
+        src,
+        "",
+        &format!(
+            "FILE:3:24: Number too large for memory: `b ^ (2^64)` needs a number of about \
+             3.6 × 10^20 digits (130 EiB){}.\n  [1] 3:24: the run stopped here\n      \
+             3 |     m.stdout <- String(b ^ (2^64));\n        \
+               |                        ^^^^^^^^^^\n",
+            beyond_machine()
+        ),
+    );
+}
+
+/// The same power of the rational `rat(b)`: the same size, named as written.
+#[test]
+fn a_rational_power_too_large_is_named_as_written_with_its_size() {
+    let src = "main(m: MainArgs) {\n    b = 2^64 + 13;\n    \
+               m.stdout <- String(rat(b) ^ (2^64)) else \"\";\n}\n";
+    stops(
+        "rat_power",
+        src,
+        "",
+        &format!(
+            "FILE:3:24: Number too large for memory: `rat(b) ^ (2^64)` needs a number of about \
+             3.6 × 10^20 digits (130 EiB){}.\n  [1] 3:24: the run stopped here\n      \
+             3 |     m.stdout <- String(rat(b) ^ (2^64)) else \"\";\n        \
+               |                        ^^^^^^^^^^^^^^^\n",
+            beyond_machine()
+        ),
+    );
+}
+
+/// `2^(2^64) * b` is a value, `b` times a kept power of 2, but its decimal text, about
+/// `0.30 · 2^64` digits, is larger than any memory: `String` of it is named as written, with
+/// the size of the text.
+#[test]
+fn a_string_too_large_is_named_as_written_with_its_size() {
+    let src = "main(m: MainArgs) {\n    b = 2^64 + 13;\n    m.stdout <- String(2^(2^64) * b);\n}\n";
+    stops(
+        "huge_string",
+        src,
+        "",
+        &format!(
+            "FILE:3:17: Text too large for memory: `String(2^(2^64) * b)` would write about \
+             5.6 × 10^18 digits (4.8 EiB){}.\n  [1] 3:17: the run stopped here\n      \
+             3 |     m.stdout <- String(2^(2^64) * b);\n        \
+               |                 ^^^^^^^^^^^^^^^^^^^^\n",
+            beyond_machine()
+        ),
     );
 }
 
@@ -88,10 +151,9 @@ fn a_string_too_long_is_placed_at_its_join() {
         "join",
         &src,
         "",
-        "FILE:65:11: `++` cannot join a string of 9223372036854775808 bytes to one of \
-         9223372036854775808 bytes: the result would be 18446744073709551616 bytes, more than \
-         the 18446744073709551615 bytes a string's length can hold; keep the parts apart, as a \
-         list of strings written out one at a time, or join fewer of them.\n  \
+        "FILE:65:11: String too long: `d62 ++ d62` would join strings of 8.0 EiB and 8.0 EiB, \
+         16 EiB in all; a string holds at most 2^64 - 1 bytes. Keep the parts apart, as a list \
+         of strings written out one at a time, or join fewer of them.\n  \
          [1] 65:11: the run stopped here\n      \
          65 |     d63 = d62 ++ d62;\n         \
             |           ^^^^^^^^^^\n",
@@ -99,14 +161,14 @@ fn a_string_too_long_is_placed_at_its_join() {
 }
 
 /// The message of `lower` refused a string of 2^63 bytes, placed at `line`:`col`, `under`
-/// marked under the line `code`.
-fn lower_refused(line: usize, col: usize, code: &str, under: &str) -> String {
+/// marked under the line `code`, which writes the call as `call`.
+fn lower_refused(line: usize, col: usize, call: &str, code: &str, under: &str) -> String {
     let pad = " ".repeat(line.to_string().len());
     format!(
-        "FILE:{line}:{col}: `lower` must write a string of 9223372036854775808 bytes, and the \
-         system refused the memory for it; the string has no size limit, but this machine \
-         cannot hold the result.\n  [1] {line}:{col}: the run stopped here\n      \
-         {line} | {code}\n      {pad} | {under}\n"
+        "FILE:{line}:{col}: String too large for memory: `{call}` would write a string of \
+         8.0 EiB{}.\n  [1] {line}:{col}: the run stopped here\n      \
+         {line} | {code}\n      {pad} | {under}\n",
+        beyond_machine()
     )
 }
 
@@ -122,6 +184,7 @@ fn a_prelude_word_is_placed_at_the_call_in_the_program() {
         &lower_refused(
             65,
             17,
+            "lower(d62)",
             "    m.stdout <- lower(d62);",
             "                ^^^^^^^^^^",
         ),
@@ -142,6 +205,7 @@ fn a_function_of_the_program_is_placed_in_its_body() {
         &lower_refused(
             1,
             18,
+            "lower(s)",
             "low(s: String) = lower(s);",
             "                 ^^^^^^^^",
         ),
@@ -158,10 +222,9 @@ fn a_node_two_expressions_share_takes_the_first_site() {
         "shared",
         &src,
         "",
-        "FILE:65:9: `++` cannot join a string of 9223372036854775808 bytes to one of \
-         9223372036854775808 bytes: the result would be 18446744073709551616 bytes, more than \
-         the 18446744073709551615 bytes a string's length can hold; keep the parts apart, as a \
-         list of strings written out one at a time, or join fewer of them.\n  \
+        "FILE:65:9: String too long: `d62 ++ d62` would join strings of 8.0 EiB and 8.0 EiB, \
+         16 EiB in all; a string holds at most 2^64 - 1 bytes. Keep the parts apart, as a list \
+         of strings written out one at a time, or join fewer of them.\n  \
          [1] 65:9: the run stopped here\n      \
          65 |     a = d62 ++ d62;\n         \
             |         ^^^^^^^^^^\n",

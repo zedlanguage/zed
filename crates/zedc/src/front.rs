@@ -1245,8 +1245,8 @@ pub fn linear_questions(
                         "zedc could not decide whether the condition of `{}`, written \
                          `{condition}`, can be true or false for whole-number values of \
                          {params}, which it works out for every test function: the condition \
-                         holds a number written as a power, and the system refused the memory \
-                         to write it out in digits.",
+                         holds a number written as a power whose digits are too many to hold \
+                         in memory.",
                         f.name
                     ),
                     notes: Vec::new(),

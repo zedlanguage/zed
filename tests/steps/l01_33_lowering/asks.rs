@@ -45,15 +45,25 @@ fn two_lambdas(c: &Value) -> Term {
     Term::Prim(Prim::Tuple, vec![one(), one()])
 }
 
-/// The bytes a refusal of the lowering names.
+/// The bytes a refusal of the lowering names, as a count and a binary unit (`8.0 MiB`), so
+/// within a twentieth of the unit.
 fn refused_bytes(e: &str) -> u64 {
-    let Some((_, rest)) = e.split_once("one of its constants takes ") else {
+    let Some((_, rest)) = e.split_once("and one of them takes ") else {
         panic!("another error: {e}");
     };
-    rest.split(' ')
-        .next()
-        .and_then(|b| b.parse().ok())
-        .unwrap_or_else(|| panic!("no byte count in: {e}"))
+    let mut words = rest.split([' ', ';']);
+    let (Some(count), Some(unit)) = (words.next(), words.next()) else {
+        panic!("no size in: {e}");
+    };
+    let count: f64 = count.parse().unwrap_or_else(|_| panic!("no count in: {e}"));
+    let shift = match unit {
+        "bytes" | "byte" => 0,
+        "KiB" => 10,
+        "MiB" => 20,
+        "GiB" => 30,
+        _ => panic!("no unit in: {e}"),
+    };
+    (count * (1u64 << shift) as f64) as u64
 }
 
 /// Lowers two equal lambdas of a constant of `bytes` bytes with four times the constant's bytes

@@ -31,7 +31,7 @@ use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use zed_kernel::num::{Rat, TooLarge, bytes_of, read_f32_ieee, read_f64_ieee};
+use zed_kernel::num::{Rat, TooLarge, read_f32_ieee, read_f64_ieee};
 use zed_kernel::term::{Evidence, Grade, GuardPos, Pattern, Prim, Witness};
 use zed_kernel::types::{Type, Universe};
 use zed_kernel::value::Family;
@@ -1119,9 +1119,8 @@ impl<'a> P<'a> {
                         Ok(Some(v)) => lit(v),
                         Ok(None) => Err(format!("expected a value, found `{t}`")),
                         Err(e) => Err(format!(
-                            "the system refused the {} bytes of memory asked to read the number \
-                             `{t}`",
-                            bytes_of(&e.bits)
+                            "Number too large for memory: `{t}` needs {}",
+                            e.number()
                         )),
                     };
                 }
@@ -1664,12 +1663,7 @@ fn number(t: &str) -> Result<Value, String> {
             _ => Err(not()),
         };
     }
-    let refused = |e: TooLarge| {
-        format!(
-            "the system refused the {} bytes of memory asked to read the number `{t}`",
-            bytes_of(&e.bits)
-        )
-    };
+    let refused = |e: TooLarge| format!("Number too large for memory: `{t}` needs {}", e.number());
     if t.contains('r') {
         // A side is digits, or digits and an exponent as a type prints them (`1e400000r`),
         // read as a decimal literal so the power is kept and not built.
