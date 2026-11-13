@@ -2016,6 +2016,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| CHK-replay-pair | running | 2026-11-12 15:51 |  |
 | COST-required-spec | impl attempt 1 | 2026-11-12 17:24 | started; worktrees cost-required-spec (impl) and cost-required-spec-spec (zed) |
 | GSX-unsolved | merge attempt 1 | 2026-11-11 16:53 | started: rebase combo (gsxh-claude) onto origin/main and apply decisions (a)-(d) of cd-xr/GSX-merge.md / load 43.50 38.06 40.03 |
 | MSG-is-repair-v | running | 2026-11-12 17:32 |  |
@@ -2023,6 +2024,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | MSG-width-headline | running | 2026-11-12 17:32 |  |
 | NARROW-or-order | impl attempt 1 | 2026-11-12 15:40 | started; worktree /home/luke/Work/wt/narrow-or-order on cdd557f13 |
 | POW-rat-literal-ops | impl attempt 1 | 2026-11-12 16:20 | reproduced: (2r/3r)^-2, 1r/(2r/3r), (3r/2r)^-2 refused at a port for #divByZero; (3/2)^-2 in main settles at f64; top-level offers no rat fix |
+| SOUND-call-pair | running | 2026-11-12 15:51 |  |
 | STAGE-print | impl attempt 1 | 2026-11-04 03:10 | started; worktree wt/stage-print seeded |
 | STR-norm-layer | impl attempt 1 | 2026-11-12 16:19 | spec committed 1348df4 in wt/str-norm-layer-spec; impl worktree made |
 | T6-refusal-cost | impl attempt 1 | 2026-11-05 04:07 | negative controls: fix reverted -> x_tail fails (143x bytes, limit 123); cubic loop at SharedCells -> r3 fails (195x, limit 141); both restored |
