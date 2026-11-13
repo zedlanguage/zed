@@ -1094,6 +1094,17 @@ impl DeepHulls {
             .map(|d| d.hull.get().expect("a part read"))
             .filter(|r| r.live())
             .collect();
+        // One live disjunct with no rows of its own has its base for its hull, kept with its
+        // id, so that hulls made from it still share their origin ([`one_origin`]): a shared
+        // disjunction held as one disjunct holding it ([`Parts::of`]) has the hull of the
+        // disjunction it holds.
+        if let [r] = live[..]
+            && r.own.is_empty()
+        {
+            let out = r.base.clone();
+            self.ors.insert(key, out.clone());
+            return out;
+        }
         let out = (!live.is_empty()).then(|| {
             let bases: Vec<&Rooted> = live
                 .iter()
@@ -2540,12 +2551,14 @@ fn found(p: Parts) -> Result<Option<Model>, Refusal> {
 // round 3's second brief (hpx-xr-records/archive/r3/R3_CLAUDE.md). Given up: nothing on the
 // dump of the five test groups (hpx-cmp-hash.sh, 34,692 formulas): no answer changed but one
 // main refused, now true, with a point; none moved to the probe. Still superlinear or slower
-// than main, with the numbers in COMPLEXITY.md row C55: `holders_chain` (25.0 G instructions at
-// n = 1,000 against main's 5.21 G, both near n²; 19.7 G against 29.3 M with a point, since
-// [`pick`] comes after the sweep), `split_windows` (1.88 per doubling, faster than main),
-// `kss`, `sh_choice`, `wideik`, `sh_windows2`, `sh_winsame2`, and `overlap2c` (refused, as on
-// main): the sweep updates each disjunction at every end of its cells, n² updates for n
-// disjunctions over one shared set of n cells.
+// than main, with the numbers in COMPLEXITY.md row C55: `split_windows` (1.88 per doubling,
+// faster than main), `kss`, `sh_choice`, `wideik`, and `overlap2c` (refused, as on main): the
+// sweep updates each disjunction at every end of its cells, n² updates for n disjunctions over
+// one shared set of n cells. Round 4 (Claude seat, R4-C): `holders_chain`, a chain whose steps
+// each choose between one shared set and its complement, is decided before the sweep by
+// [`cells_by_sets`] (R = 8.12 at 8n, 0.018 of main's instructions at n = 480), and a shared
+// disjunction is held as one disjunct holding it ([`Parts::of`]), which makes `sh_windows2`
+// and `sh_winsame2` linear (R = 7.91 and 6.95, 0.13 of main).
 fn has_point(p: Parts) -> Result<bool, Refusal> {
     if let Some(answer) = by_cells(&p, false) {
         return answer;
@@ -6351,7 +6364,7 @@ fn cells_of<'p>(p: &'p Parts, x: &Atom, solving: bool) -> Option<Result<bool, Re
         return Some(Ok(cells_point(0, k - 1, items, &live_cells)));
     }
     if !solving {
-        return None;
+        return cells_by_sets(&placed, x, &walk.cells).map(Ok);
     }
     if let Some(answer) = cells_by_classes(&placed, x, &live_cells) {
         return Some(Ok(answer));
@@ -6379,6 +6392,105 @@ fn cells_of<'p>(p: &'p Parts, x: &Atom, solving: bool) -> Option<Result<bool, Re
         }
     }
     (!refused).then_some(Ok(false))
+}
+
+/// Whether a live cell has a point, when the cells where each group of `placed` is held are
+/// all the cells or one of a family of pairwise disjoint sets of cells: `None` when two of
+/// these sets overlap, or when no cell has a point and [`solve`] refused one. A cell's
+/// conjunction is then the rows held everywhere, the rows of the one set that holds the cell,
+/// if any, and the bounds of `x` to the cell. So the rows held everywhere are reduced once by
+/// [`shadow`] to a core over `x` and the atoms of the other rows, each set's rows with that
+/// core are reduced to rows over `x` alone, and each cell is solved with the rows of its set.
+/// This is the shape of a chain whose steps each choose between one shared set of cells and
+/// its complement (`holders_chain`).
+// Complexity tradeoff: naive version, this shape left to the sweep after it
+// ([`cell_sweep::decide_by_cells`]), which reads the shared set once per step: n² updates on
+// `holders_chain`, 25.0 G instructions at n = 1,000. Used: O(k + T) to mark the set of each
+// cell for k cells and T runs, one [`shadow`] of the rows held everywhere and one of each
+// set's rows with its result (each O(m log m) for m terms; Pugh, "The Omega test", 1992, the
+// exact shadow), then one solve per cell of rows over `x` alone: O(k + T + M log M + s·c +
+// k·d) for M terms, s sets, a core of c rows and set results of d rows, linear where the core
+// shrinks to `x` (0.23 G instructions at n = 1,000 on `holders_chain`). Given up: where the
+// core of the rows held everywhere cannot shrink, each set reads it whole, O(s·c), as main's
+// solve of each cell after the sweep does (`point_rows`, equal to main within 0.2%). Sets
+// that overlap (the guards of `andg`, the prefixes of `stretch_chain`) are refused at the
+// first marked cell they meet, in O(k + T), and left to the sweep.
+fn cells_by_sets(placed: &[(Rc<Vec<Con>>, CellSet)], x: &Atom, cells: &[Span]) -> Option<bool> {
+    let k = cells.len();
+    let everywhere: CellSet = vec![(0, k - 1)];
+    // The set holding each cell. A set equal to the one marked at its first cell is that set,
+    // already marked; any other set meeting a marked cell overlaps it.
+    let mut owner: Vec<Option<&CellSet>> = vec![None; k];
+    for (_, at) in placed.iter().filter(|(_, at)| *at != everywhere) {
+        let Some(&(first, _)) = at.first() else {
+            continue;
+        };
+        match owner[first] {
+            Some(set) if set == at => continue,
+            Some(_) => return None,
+            None => {}
+        }
+        for &(a, b) in at {
+            for cell in &mut owner[a..=b] {
+                if cell.replace(at).is_some() {
+                    return None;
+                }
+            }
+        }
+    }
+    let mut sets: BTreeMap<&CellSet, Vec<&Con>> = BTreeMap::new();
+    let mut all: Vec<Con> = Vec::new();
+    for (cs, at) in placed {
+        if *at == everywhere {
+            all.extend(cs.iter().cloned());
+        } else {
+            sets.entry(at).or_default().extend(cs.iter());
+        }
+    }
+    let read: HashSet<&Atom> = (sets.values().flatten())
+        .flat_map(|c| c.lin.terms.keys())
+        .collect();
+    let Some(core) = shadow(&all, &|a| a == x || read.contains(a), true) else {
+        return Some(false);
+    };
+    let bound = |k: Int, c: Int| Con {
+        lin: Lin {
+            terms: BTreeMap::from([(x.clone(), k)]),
+            constant: c,
+        },
+        rel: Rel::Ge,
+    };
+    let mut refused = false;
+    // Whether one of the cells `at` has a point of `rows` (none when `rows` has none).
+    let mut any_cell = |rows: Option<Vec<Con>>, at: &mut dyn Iterator<Item = usize>| {
+        let Some(rows) = rows else {
+            return false;
+        };
+        for (lo, hi) in at.map(|c| &cells[c]) {
+            let ends: Vec<Con> = (lo.clone().map(|l| bound(Int::ONE, -&l)).into_iter())
+                .chain(hi.clone().map(|h| bound(-&Int::ONE, h)))
+                .collect();
+            match solve(&rows.iter().chain(&ends).collect::<Vec<_>>(), false) {
+                Ok(Some(_)) => return true,
+                Ok(None) => {}
+                Err(_) => refused = true,
+            }
+        }
+        false
+    };
+    let only_x = |a: &Atom| a == x;
+    let mut rest = (0..k).filter(|&c| owner[c].is_none());
+    if any_cell(shadow(&core, &only_x, true), &mut rest) {
+        return Some(true);
+    }
+    for (set, own) in sets {
+        let rows: Vec<Con> = core.iter().chain(own).cloned().collect();
+        let mut at = set.iter().flat_map(|&(a, b)| a..=b);
+        if any_cell(shadow(&rows, &only_x, true), &mut at) {
+            return Some(true);
+        }
+    }
+    (!refused).then_some(false)
 }
 
 /// Whether a live cell's conjunction has a point, when no constraint of `placed` reads `x`:
@@ -9619,7 +9731,32 @@ impl Parts {
         // The parts that the formula reaches through more than one parent: only these are made
         // once and assumed by key, so the parts made follow the formula's own sharing, never the
         // handles that hold its parts outside it.
-        let twice = Id::reached_twice(&f);
+        let mut twice = Id::reached_twice(&f);
+        // A part that a conjunction of `twice` holds is made at each place of that conjunction,
+        // since the conjunction is spread into the part that holds it; so it is one of `twice`
+        // too, and a disjunction a shared conjunction holds is made once (HAS-point-probe: a
+        // shared `0 <= i && (i == 0 || i == 2 || ..)` at each of n disjuncts was n copies of
+        // its n disjuncts). One walk, each part entered once, and none when no part is shared:
+        // a part not of `twice` has one parent, so its mark is final when its parent is entered.
+        if !twice.is_empty() {
+            let mut entered: HashSet<Id> = HashSet::new();
+            let mut walk = vec![&f];
+            while let Some(g) = walk.pop() {
+                let spread = matches!(g, Formula::And(_)) && twice.contains(&Id::any(g));
+                for h in g.kids() {
+                    if matches!(h, Formula::Con(_)) {
+                        continue;
+                    }
+                    let id = Id::any(h);
+                    if spread {
+                        twice.insert(id);
+                    }
+                    if entered.insert(id) {
+                        walk.push(h);
+                    }
+                }
+            }
+        }
         // The disjunctions and the disjuncts already made that are held in more than one place,
         // each made with nothing assumed, so that it serves at every place.
         let mut ors: HashMap<Id, Vec<Rc<Parts>>> = HashMap::new();
@@ -9652,9 +9789,28 @@ impl Parts {
                     continue;
                 }
                 let (id, _, done, _) = top.arms.take().expect("the disjunction entered");
-                if let Some(id) = id {
-                    ors.insert(id, done.clone());
-                }
+                // A shared disjunction of two or more disjuncts is held at each place as one
+                // disjunct holding it, so each place costs O(1) and a pass keyed by part reads
+                // it once; its hull is that of the disjunction it holds ([`DeepHulls`]).
+                // Complexity tradeoff (HAS-point-probe): naive version, the list of k disjuncts
+                // copied to each of d places, O(d·k): `cells_scaling::a_chain_over_one_shared_
+                // set_is_decided_in_linear_work` allocated 60.0 times the bytes at 8n so. Used:
+                // the one disjunct, O(d + k). Given up: a pass that reads disjuncts one level
+                // down reads one more level here.
+                let done = match id {
+                    Some(id) => {
+                        let held = if done.len() > 1 {
+                            let mut w = Parts::default();
+                            w.ors.push(done);
+                            vec![Rc::new(w)]
+                        } else {
+                            done
+                        };
+                        ors.insert(id, held.clone());
+                        held
+                    }
+                    None => done,
+                };
                 top.p.ors.push(done);
             }
             if let Some(g) = top.todo.pop() {
@@ -23950,5 +24106,182 @@ mod cells_scaling {
         );
         assert_eq!(met_atoms(&[two, other, bare]), set(&["y"]));
         assert!(met_atoms(&[]).is_empty());
+    }
+
+    /// `0 <= i <= 2n`, `q_0 = 2i`, `q_n = end`, and for each `j` from 1 to `n` either
+    /// `q_j = q_{j-1}` with `i` in one shared set of the `n` even points below `2n`, or
+    /// `i >= 2n` and `q_j + q_{j-1} = 2`. The chain holds `q_n = 2i` on the set, which `end`
+    /// 0 meets at `i = 0` and `end` 1 never; at `i = 2n` it holds `q_n = 4n` or `2 - 4n`.
+    fn holders_chain(n: usize, end: usize) -> Formula {
+        let i = var("i");
+        let q = |j: usize| var(&format!("q{j}"));
+        let h = points(&i, n, 2, 0);
+        let mut fs = vec![le(&num(0), &i), le(&i, &num(2 * n))];
+        fs.push(eq(&q(0), &i.times(2)));
+        fs.push(eq(&q(n), &num(end)));
+        for j in 1..=n {
+            fs.push(or(vec![
+                and(vec![eq(&q(j), &q(j - 1)), h.clone()]),
+                and(vec![
+                    le(&num(2 * n), &i),
+                    eq(&q(j).plus(&q(j - 1)), &num(2)),
+                ]),
+            ]));
+        }
+        and(fs)
+    }
+
+    /// Control (main f0abc6b6e, not kept): killed at the 60 s limit.
+    #[test]
+    fn a_chain_over_one_shared_set_is_decided_in_linear_work() {
+        no_point_scales("a chain over one shared set", 125, |n| holders_chain(n, 1));
+    }
+
+    /// The parts of [`holders_chain`] built directly, as [`has_point`] reads them: `q_n` is
+    /// `end` when given, and `i` is odd (`i == 2t + 1`) when `odd`.
+    fn holders_parts(n: usize, end: Option<i128>, odd: bool) -> Parts {
+        let (i, k) = (var("i"), |v: i128| Lin::constant(v));
+        let q = |j: usize| var(&format!("q{j}"));
+        let part = |cons: Vec<Con>, ors: Vec<Vec<Rc<Parts>>>| {
+            let mut p = Parts::default();
+            p.cons.extend(cons);
+            p.ors.extend(ors);
+            Rc::new(p)
+        };
+        let set = (0..n).map(|j| part(vec![Con::eq(&i, &k(2 * j as i128))], Vec::new()));
+        let h = part(Vec::new(), vec![set.collect()]);
+        let mut p = Parts::default();
+        p.cons
+            .extend([Con::ge(&i, &k(0)), Con::ge(&k(2 * n as i128), &i)]);
+        p.cons.push(Con::eq(&q(0), &i.times(2)));
+        p.cons.extend(end.map(|e| Con::eq(&q(n), &k(e))));
+        if odd {
+            p.cons.push(Con::eq(&i, &var("t").times(2).plus(&k(1))));
+        }
+        p.ors.extend((1..=n).map(|j| {
+            let to = Con::eq(&q(j).plus(&q(j - 1)), &k(2));
+            vec![
+                part(vec![Con::eq(&q(j), &q(j - 1))], vec![vec![h.clone()]]),
+                part(vec![Con::ge(&i, &k(2 * n as i128)), to], Vec::new()),
+            ]
+        }));
+        p
+    }
+
+    /// [`has_point`] on the parts `make` gives, at n and 8n, with the answer `answer`.
+    fn has_point_scales(what: &str, n: usize, answer: bool, make: impl Fn(usize) -> Parts + Sync) {
+        scaling::check_order(what, n, 1, |m| {
+            assert_eq!(has_point(make(m)), Ok(answer), "{m}")
+        });
+    }
+
+    /// The chain with a point at `i = 0`. Control (main f0abc6b6e, not kept): 58.3 times the
+    /// bytes at 8n.
+    #[test]
+    fn a_chain_over_one_shared_set_with_a_point_is_decided_in_linear_work() {
+        has_point_scales(
+            "parts of a chain over one shared set, with a point",
+            125,
+            true,
+            |n| holders_parts(n, Some(0), false),
+        );
+    }
+
+    /// The chain with `i` odd and `q_n` free, so no cell of the shared set has a point.
+    /// Control (main f0abc6b6e, not kept): 58.3 times the bytes at 8n.
+    #[test]
+    fn a_chain_over_one_shared_set_with_no_point_on_it_is_decided_in_linear_work() {
+        has_point_scales(
+            "parts of a chain over one shared set, odd",
+            125,
+            false,
+            |n| holders_parts(n, None, true),
+        );
+    }
+
+    /// A part of `cons` and `ors`.
+    fn part(cons: Vec<Con>, ors: Vec<Vec<Rc<Parts>>>) -> Rc<Parts> {
+        let mut p = Parts::default();
+        p.cons.extend(cons);
+        p.ors.extend(ors);
+        Rc::new(p)
+    }
+
+    /// `i == 2t + off` for `t` from 0 to `n - 1`, one part of `n` disjuncts.
+    fn point_set(n: usize, step: i128, off: i128) -> Rc<Parts> {
+        let i = var("i");
+        let at = |t: usize| {
+            part(
+                vec![Con::eq(&i, &Lin::constant(step * t as i128 + off))],
+                vec![],
+            )
+        };
+        part(vec![], vec![(0..n).map(at).collect()])
+    }
+
+    /// `0 <= i <= 2n`, `q_0 = 2i`, `cons`, and for each `j` from 1 to `n` the disjunction
+    /// `arms(j)`.
+    fn chain_parts(n: usize, cons: Vec<Con>, arms: impl Fn(usize) -> Vec<Rc<Parts>>) -> Parts {
+        let (i, k) = (var("i"), |v: i128| Lin::constant(v));
+        let mut p = Parts::default();
+        p.cons
+            .extend([Con::ge(&i, &k(0)), Con::ge(&k(2 * n as i128), &i)]);
+        p.cons.push(Con::eq(&var("q0"), &i.times(2)));
+        p.cons.extend(cons);
+        p.ors.extend((1..=n).map(arms));
+        p
+    }
+
+    /// `q_j == q_{j-1}` and `held`.
+    fn step_in(j: usize, held: &Rc<Parts>) -> Rc<Parts> {
+        let q = |j: usize| var(&format!("q{j}"));
+        part(vec![Con::eq(&q(j), &q(j - 1))], vec![vec![held.clone()]])
+    }
+
+    /// Odd steps in the even points from 0 to `2n - 4` or at `i == 2n - 2`, even steps in the
+    /// even points from 2 to `2n - 2` or at `i == 0`, each disjunct with `q_j == q_{j-1}`: two
+    /// shared sets of different disjunctions that overlap, so [`cells_by_sets`] leaves the
+    /// parts to the sweep. `q_n = 2i` on the even points to `2n - 2`, which `q_n = 0` and
+    /// `q_n = 4n - 4` meet and `q_n = 1` does not.
+    #[test]
+    fn steps_over_two_shared_sets_that_overlap_are_left_to_the_sweep() {
+        let n = 6;
+        let (low, high) = (point_set(n - 1, 2, 0), point_set(n - 1, 2, 2));
+        let at = |v: usize| point_set(1, 0, v as i128);
+        let (top, bottom) = (at(2 * n - 2), at(0));
+        for (end, answer) in [(0, true), (4 * n as i128 - 4, true), (1, false)] {
+            let last = Con::eq(&var(&format!("q{n}")), &Lin::constant(end));
+            let p = chain_parts(n, vec![last], |j| match j % 2 {
+                1 => vec![step_in(j, &low), step_in(j, &top)],
+                _ => vec![step_in(j, &high), step_in(j, &bottom)],
+            });
+            assert_eq!(has_point(p), Ok(answer), "q_n = {end}");
+        }
+    }
+
+    /// The chain over one shared set with a row held everywhere that has no integer point
+    /// (`1 <= y <= 0`): no cell has a point, found before any cell is solved.
+    #[test]
+    fn steps_over_one_shared_set_under_rows_with_no_point_have_none() {
+        let mut p = holders_parts(6, Some(0), false);
+        let y = var("y");
+        p.cons.push(Con::ge(&y, &Lin::constant(1)));
+        p.cons.push(Con::ge(&Lin::constant(0), &y));
+        assert_eq!(has_point(p), Ok(false));
+    }
+
+    /// Each step in one shared set (the even points below `2n`) or at `i >= 2n`, a disjunct of
+    /// bounds of `i` alone, so the cell at `2n` is held by no set. `q_0 >= 4n` holds only
+    /// there, and `q_0 >= 4n + 1` nowhere.
+    #[test]
+    fn a_point_in_a_cell_no_shared_set_holds_is_found() {
+        let n = 6;
+        let (i, evens) = (var("i"), point_set(n, 2, 0));
+        let above = part(vec![Con::ge(&i, &Lin::constant(2 * n as i128))], vec![]);
+        for (low, answer) in [(4 * n as i128, true), (4 * n as i128 + 1, false)] {
+            let from = Con::ge(&var("q0"), &Lin::constant(low));
+            let p = chain_parts(n, vec![from], |j| vec![step_in(j, &evens), above.clone()]);
+            assert_eq!(has_point(p), Ok(answer), "q_0 >= {low}");
+        }
     }
 }
