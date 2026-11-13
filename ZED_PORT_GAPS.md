@@ -422,7 +422,7 @@ compiler recognizes it, which no step states.
 
 Fix: L5 words `m.upTo(k)` and `m.from(k)`, each an ordered restriction in O(log n), so that
 `.first` and `.last` give neighbors. `BinaryHeap` (`topo`, `elab.rs:1533`; `IntervalSet::cap`,
-`interval.rs:266`; Dijkstra's search in `difference_hulls`, `presburger.rs`, and in `Scope::repair` and `Scope::bound_pass`, `product.rs`; reference 14's `Level::merge`, `zed/corpus/ref/src/p14.rs`) is then an ordered set
+`interval.rs:266`; Dijkstra's search in `difference_hulls`, `presburger.rs`, and in `Scope::repair` and `Scope::bound_pass`, `product.rs`; the optimal merge order of `Poly::sum`, `zed-kernel/src/poly.rs`; reference 14's `Level::merge`, `zed/corpus/ref/src/p14.rs`) is then an ordered set
 `.first` and `.last` give neighbors. `BinaryHeap` (`topo`, `elab/topo.rs:10`; `IntervalSet::cap`,
 `interval.rs:266`; reference 14's `Level::merge`, `zed/corpus/ref/src/p14.rs`) is then an ordered set
 with `.first` and a `patch`.
@@ -882,6 +882,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `VecDeque` with `push_front`, `pop_back` and `get_mut`, slots taken in place by `Option::take` | `Builder::fill`, `Builder::take` | Mutation | A map keyed by position, or a state receiver over a list |
 | `Cow<str>` for pieces of output, some borrowed from the source | `Formatter::pieces` | None | Zed shares strings, so a piece is a plain `String` |
 | `Cow<'static, str>` for a primitive's name in a message, borrowed from a table of words or formatted (A9-path-words) | `Prim::named` in `zed-kernel/src/print.rs` | None | Zed shares strings, so the name is a plain `String` |
+| `Cow<'_, Poly<K>>` for a summand, borrowed from a node's form until merged into a new sum (POLY-sum-chain-fold) | `Poly::sum` in `zed-kernel/src/poly.rs` | None | Zed shares values, so each slot holds the polynomial itself |
 | `macro_rules!` for repeated statements in a `match` | `then!`, `shown!`, `debug_as_shown!` | Macros | A function |
 | `OnceLock` for a table computed once | `ast::forms` | Global state | A constant, or a value passed in |
 | A generic struct over a trait with an unsized `Self` (`Parser<I: Input + ?Sized>` on `[char]` and on `Tokens`) | `zedc::parse::engine` | Unsized types | An interface over a value, passed as a parameter |

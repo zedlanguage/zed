@@ -22,7 +22,8 @@
 //! work that took 250 ms on the machine and at the load it was measured at (QUESTIONS A99).
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -1129,30 +1130,77 @@ impl<'t> Identity<'t> {
         for &s in roots {
             uses[s] += 1;
         }
-        let mut forms: Vec<Option<Poly<K>>> = (0..self.nodes.len()).map(|_| None).collect();
+        // A sum or difference read only by one other sum or difference is inside a chain: it
+        // is not formed, and the chain's top node adds up the chain's summands at once
+        // ([`Poly::sum`]). A root is read by the caller too, so it is never inside a chain.
+        //
+        // Complexity tradeoff: the naive expansion forms every node, so a sum written
+        // `x0 + x1 + … + xn`, a left-deep chain, forms the partial sums of 2, 3, …, n terms,
+        // O(n^2) term copies: `(x0 + … + x4095) * (y + z)` took 3.6 s and was refused by
+        // [`LIMIT`]. Read as one sum of its k summands of T terms in all, the chain costs
+        // O(T log k) term reads (O(T + k log k) when one summand dominates), whatever the
+        // shape it was written in. Nothing is given up: the sum is the same polynomial, and a
+        // partial sum that is also read elsewhere (a `let`) is formed as before. Tested by
+        // `l03_09_egraph::scaling::a_written_chain_of_n_names_times_a_sum` (COMPLEXITY.md
+        // POLY-sum-chain-fold).
+        let mut inner = vec![false; self.nodes.len()];
         for (i, n) in self.nodes.iter().enumerate() {
-            if !reach[i] {
+            if let (true, Node::Add(a, b) | Node::Sub(a, b)) = (reach[i], n) {
+                for c in [*a, *b] {
+                    if uses[c] == 1 && matches!(self.nodes[c], Node::Add(..) | Node::Sub(..)) {
+                        inner[c] = true;
+                    }
+                }
+            }
+        }
+        let mut forms: Vec<Option<Poly<K>>> = (0..self.nodes.len()).map(|_| None).collect();
+        // The forms each node reads, with whether each is subtracted: a chain's summands, or
+        // an operation's operands.
+        let mut read: Vec<(usize, bool)> = Vec::new();
+        let mut stack: Vec<(usize, bool)> = Vec::new();
+        for (i, n) in self.nodes.iter().enumerate() {
+            if !reach[i] || inner[i] {
                 continue;
+            }
+            read.clear();
+            match n {
+                Node::Const(..) | Node::Leaf(_) => {}
+                Node::Neg(a) | Node::Pow(a, _) => read.push((*a, false)),
+                Node::Mul(a, b) => read.extend([(*a, false), (*b, false)]),
+                Node::Add(..) | Node::Sub(..) => {
+                    // The summands left to right, by an explicit stack: a chain is as deep as
+                    // it is long.
+                    stack.push((i, false));
+                    while let Some((j, minus)) = stack.pop() {
+                        match &self.nodes[j] {
+                            Node::Add(a, b) if j == i || inner[j] => {
+                                stack.extend([(*b, minus), (*a, minus)]);
+                            }
+                            Node::Sub(a, b) if j == i || inner[j] => {
+                                stack.extend([(*b, !minus), (*a, minus)]);
+                            }
+                            _ => read.push((j, minus)),
+                        }
+                    }
+                }
             }
             let f = {
                 let form = |j: usize| forms[j].as_ref().expect("a child expanded first");
                 match n {
                     Node::Const(a, b) => Some(Poly::constant(a.clone(), b.clone())),
                     Node::Leaf(l) => Some(Poly::monomial(K::leaf(ctx, *l))),
-                    Node::Add(a, b) => form(*a).add(form(*b), false, budget),
-                    Node::Sub(a, b) => form(*a).add(form(*b), true, budget),
+                    Node::Add(..) | Node::Sub(..) => {
+                        let parts: Vec<(&Poly<K>, bool)> =
+                            read.iter().map(|&(j, minus)| (form(j), minus)).collect();
+                        Poly::sum(&parts, budget)
+                    }
                     Node::Neg(a) => form(*a).neg(budget),
                     Node::Mul(a, b) => form(*a).mul(form(*b), budget),
                     Node::Pow(a, e) => form(*a).pow(e, budget),
                 }
                 .ok_or(i)?
             };
-            let children: [Option<usize>; 2] = match n {
-                Node::Const(..) | Node::Leaf(_) => [None, None],
-                Node::Neg(a) | Node::Pow(a, _) => [Some(*a), None],
-                Node::Add(a, b) | Node::Sub(a, b) | Node::Mul(a, b) => [Some(*a), Some(*b)],
-            };
-            for c in children.into_iter().flatten() {
+            for &(c, _) in &read {
                 uses[c] -= 1;
                 if uses[c] == 0 {
                     forms[c] = None;
@@ -1668,6 +1716,55 @@ impl<K: Key> Poly<K> {
             }
         }
         Some(Poly { den, terms: out }.reduced())
+    }
+
+    /// The sum of `parts`, each subtracted when its flag is set, by merging the two with the
+    /// fewest terms until one is left ([`Poly::add`], which charges `budget`); `None` when a
+    /// charge would pass it. `parts` is not empty.
+    ///
+    /// Complexity tradeoff: the naive sum adds the parts one after another, O(T k) term reads
+    /// for k parts of T terms in all, O(k^2) for a chain of k names. Merging balanced halves
+    /// (the plan row's other option) reads O(T log k) terms, but reads a part of most of the
+    /// terms at each of the log k levels. Merging the two smallest first is the optimal merge
+    /// pattern of sorted lists (D. A. Huffman, "A method for the construction of
+    /// minimum-redundancy codes", Proc. IRE 40(9), 1952; D. E. Knuth, The Art of Computer
+    /// Programming vol. 3, section 5.4.9): it reads each term once per level of the merge tree
+    /// it sits at, O(T log k) at most and O(T + k log k) for one large part and k small ones,
+    /// plus O(k log k) for the heap. Sizes are counted in terms, not words, so a part of few
+    /// wide coefficients may be merged later than its words would place it. The plan row's
+    /// first option, one map of all the terms, would still sort its T terms at the end,
+    /// O(T log T), and would need its own handling of the parts' denominators, which
+    /// [`Poly::add`] already brings to their lcm. Measured on a chain of n names times
+    /// `(y + z)`: 9.1 times the instructions and 8.6 times the bytes from n = 500 to 4000
+    /// (n log n predicts 10.7), the same as a balanced sum of the same names.
+    fn sum(parts: &[(&Poly<K>, bool)], budget: &mut Budget) -> Option<Poly<K>> {
+        let mut slots: Vec<Option<(Cow<'_, Poly<K>>, bool)>> = parts
+            .iter()
+            .map(|&(p, minus)| Some((Cow::Borrowed(p), minus)))
+            .collect();
+        // Ties go to the earlier part, so the merge order, and so the charges, depend only on
+        // the parts.
+        let mut heap: BinaryHeap<Reverse<(usize, usize)>> = parts
+            .iter()
+            .enumerate()
+            .map(|(i, (p, _))| Reverse((p.terms.len(), i)))
+            .collect();
+        loop {
+            let Reverse((_, a)) = heap.pop().expect("a part to sum");
+            let (pa, ma) = slots[a].take().expect("each slot is popped once");
+            let Some(Reverse((_, b))) = heap.pop() else {
+                return if ma {
+                    pa.neg(budget)
+                } else {
+                    Some(pa.into_owned())
+                };
+            };
+            let (pb, mb) = slots[b].take().expect("each slot is popped once");
+            // `pa + pb` is `pa - pb` when their signs differ, and keeps `pa`'s sign.
+            let s = pa.add(&pb, ma != mb, budget)?;
+            heap.push(Reverse((s.terms.len(), a)));
+            slots[a] = Some((Cow::Owned(s), ma));
+        }
     }
 
     /// `self * o`, by the cheapest of three methods with the same result.

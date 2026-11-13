@@ -801,9 +801,18 @@ fn work_of(term: &Term, binders: &[&str]) -> (f64, u64) {
     (budget.spent, id.size)
 }
 
-/// The charges of [`LIMIT`]'s units: a sum of `s` names written `x1 + … + xs` reads the sums of
-/// 2 to `s` one-word terms, each term [`SUM_TERM`] and its word [`SUM_WORD`]; a product of two
-/// sums in different names, sparse below the dense cost, [`PAIR`] plus one word for each pair.
+/// The terms read by merging `s` sums of one term each, smallest first ([`Poly::sum`]):
+/// `s q + 2 (s - 2^q)` for `q = floor(log2 s)`, each term read once per level of a merge tree
+/// whose leaves sit at depths `q` and `q + 1`.
+fn merged_terms(s: usize) -> f64 {
+    let q = s.ilog2();
+    (s * q as usize + 2 * (s - (1 << q))) as f64
+}
+
+/// The charges of [`LIMIT`]'s units: a sum of `s` names written `x1 + … + xs` merges its `s`
+/// one-word summands two at a time, smallest first, each term read [`SUM_TERM`] and its word
+/// [`SUM_WORD`]; a product of two sums in different names, sparse below the dense cost,
+/// [`PAIR`] plus one word for each pair.
 #[test]
 fn the_charges_are_the_measured_ones() {
     let names: Vec<String> = (0..40).map(|i| format!("x{i}")).collect();
@@ -811,13 +820,45 @@ fn the_charges_are_the_measured_ones() {
     let sum = |from: usize, n: usize| format!("({})", names[from..from + n].join(" + "));
     for s in 1..=40 {
         let (work, _) = work_of(&t(&sum(0, s)), &binders);
-        let terms = (s * (s + 1) / 2 - 1) as f64;
         assert!(
-            (work - terms * (SUM_TERM + SUM_WORD)).abs() < 1e-9,
+            (work - merged_terms(s) * (SUM_TERM + SUM_WORD)).abs() < 1e-9,
             "{s}: {work}"
         );
     }
     let (work, _) = work_of(&t(&format!("{} * {}", sum(0, 20), sum(20, 20))), &binders);
-    let sums = 2.0 * (20.0 * 21.0 / 2.0 - 1.0) * (SUM_TERM + SUM_WORD);
+    let sums = 2.0 * merged_terms(20) * (SUM_TERM + SUM_WORD);
     assert!((work - sums - 400.0 * (PAIR + 1.0)).abs() < 1e-9, "{work}");
+}
+
+/// A chain of sums and differences is read as one sum of its summands with their signs, in
+/// every shape it is written in, and a partial sum that is read elsewhere is formed once.
+#[test]
+fn a_chain_of_sums_is_one_sum() {
+    let b = ["x", "y", "z", "w"];
+    assert_eq!(nf("x - y - z - w", &b), "x - y - z - w");
+    assert_eq!(nf("0 - x - y + 2", &b), "-x - y + 2");
+    // Left-deep, right-deep and mixed, with subtractions that flip a whole chain.
+    assert_eq!(nf("x + y - z + w", &b), nf("w + (x + (y - z))", &b));
+    assert_eq!(nf("x - (y - (z - w))", &b), nf("x - y + z - w", &b));
+    assert_eq!(nf("x - (y + z + w)", &b), nf("x - y - z - w", &b));
+    // Every summand subtracted: the sum is negated once at the end.
+    assert_eq!(nf("0 - x - y - z", &b), nf("-(x + y + z)", &b));
+    // Summands that cancel, and repeated ones.
+    assert_eq!(nf("x + y - x - y + z", &b), nf("z", &b));
+    assert_eq!(nf("x + x + x - y", &b), nf("3 * x - y", &b));
+    assert_eq!(nf("x - x", &b), nf("0", &b));
+    // A summand that is a product or a power is formed first and merged whole.
+    assert_eq!(nf("(x + y) * (x - y) + y * y - x * x + z", &b), nf("z", &b));
+    // A partial sum shared through a `let` is formed once and read by both chains.
+    let shared = let_("s", t("x + y + z"), t("s + w - s + s * s"));
+    assert_eq!(
+        normal_form(&shared, &b, Carrier::Int).expect("not refused"),
+        nf(
+            "w + x * x + y * y + z * z + 2 * x * y + 2 * x * z + 2 * y * z",
+            &b
+        )
+    );
+    // Rational coefficients with different denominators merge over their common one.
+    let r = |s: &str| normal_form(&t(s), &b, Carrier::Rat).expect("expanded");
+    assert_eq!(r("x / 2 + x / 3 + y / 6 - x"), r("y / 6 - x / 6"));
 }

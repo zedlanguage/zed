@@ -2160,7 +2160,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | CD 1409134102157721601 launched RUN_TYPE_SHORT after test run 15,583.6 (sandbox ns); load 94.95 77.65 61.21 |
 | NARROW-ne-rat-divisor | impl attempt 1 | 2026-11-13 01:12 | started in /home/luke/Work/wt/narrow-ne-rat-divisor from c75a68775 |
 | NUM-huge-div | impl attempt 1 | 2026-11-13 06:35 | started; worktree /home/luke/Work/wt/num-huge-div from bb7379f01 |
-| POLY-sum-chain-fold | impl attempt 1 | 2026-11-13 07:32 | started; worktree from origin/main 2bd599913 |
 | PORT-out-param | impl attempt 1 | 2026-11-13 07:46 | reproduced on ffc8b6170: say("hi", out: m.stdout) refused by the builder (zedc-syntax main_field) as a read of m.stdout; DESIGN's own say(out: Lines, positional |
 | PRES-overlap-fast | xr attempt  | 2026-11-13 01:10 | round 1 launched: Sol and Opus seats (medium); Gemini 429 (resets in 32h55m); CD next |
 | ROOTS-terms-cubic | impl attempt 1 | 2026-11-13 08:29 | start; worktree from origin/main 9171c9beb |

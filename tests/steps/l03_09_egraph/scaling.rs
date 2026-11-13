@@ -161,6 +161,72 @@ fn a_sum_of_n_names_times_a_sum() {
     scaling::check("(x0 + ... + xn) * (y + z)", 500, |n| proved(&ins[&n]));
 }
 
+/// The sum of `terms` as written, `((t0 + t1) + t2) + …`: a left-deep chain of depth `n`.
+fn chain(terms: impl IntoIterator<Item = Term>) -> Term {
+    terms
+        .into_iter()
+        .reduce(|a, b| prim(Prim::Add, vec![a, b]))
+        .unwrap_or_else(|| lit(0))
+}
+
+/// [`linear`] with both sums written as chains, as a law's source gives them: the chain is
+/// read as one sum of its summands, not as `n` sums of growing partial sums
+/// (POLY-sum-chain-fold).
+fn linear_chain(n: usize) -> Id {
+    let mut names: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
+    names.push("y".into());
+    names.push("z".into());
+    let written = (0..n).flat_map(|i| ["y", "z"].map(|w| mul(var(&format!("x{i}")), var(w))));
+    Id {
+        lhs: mul(
+            chain((0..n).map(|i| var(&format!("x{i}")))),
+            chain([var("y"), var("z")]),
+        ),
+        rhs: chain(written),
+        names,
+    }
+}
+
+#[test]
+fn a_written_chain_of_n_names_times_a_sum() {
+    let ins = scaling::inputs(500, linear_chain);
+    scaling::check(
+        "x0 + ... + xn written as a chain, times (y + z)",
+        500,
+        |n| proved(&ins[&n]),
+    );
+}
+
+/// The plan row's law, from Zed source: before the chain was read as one sum, its written side
+/// of 8192 monomials cost about 3.6 s and was refused by the limit.
+#[test]
+fn the_law_of_4096_names_times_a_sum_is_proved_from_source() {
+    let n = 4096;
+    let xs: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
+    let params: Vec<String> = xs
+        .iter()
+        .chain(["y".to_string(), "z".to_string()].iter())
+        .map(|x| format!("{x}: int"))
+        .collect();
+    let lhs = format!("({}) * (y + z)", xs.join(" + "));
+    let rhs: Vec<String> = xs
+        .iter()
+        .flat_map(|x| [format!("{x} * y"), format!("{x} * z")])
+        .collect();
+    let src = format!(
+        "sides({}) = ({lhs}, {});\n",
+        params.join(", "),
+        rhs.join(" + ")
+    );
+    let sides = &super::sides_of(&src, &["sides"])[0];
+    // The elaboration of the source is not timed: only the decision is the row's.
+    let start = std::time::Instant::now();
+    let d = super::decide_sides(sides, Carrier::Int);
+    eprintln!("work {} limit {LIMIT}, {:?}", d.work, start.elapsed());
+    assert_eq!(d.verdict, Verdict::Proved);
+    assert!(d.work <= LIMIT / 10.0, "{} of {LIMIT}", d.work);
+}
+
 /// `x0 * x1 * c0 + ... + x(n-1) * x0 * c(n-1) - x0` against the same monomials in reverse,
 /// `c` of two words each: `n` names, so the monomials are lists past `u128`'s Kronecker keys,
 /// and only sums are formed, each charged by its terms and words (`poly::LIMIT`, QUESTIONS
