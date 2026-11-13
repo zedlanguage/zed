@@ -34,9 +34,9 @@ use num_traits::{One, Pow, Signed, ToPrimitive, Zero};
 
 use bound::{Format, Product};
 pub use factor::is_prime;
-use fast::{LEAF_DIGITS, built, read_digits_by};
 #[doc(hidden)]
 pub use fast::crossover;
+use fast::{LEAF_DIGITS, built, read_digits_by};
 pub use fast::{
     PRINT_HANDOFF, PRINT_WHOLE, mul as mul_uint, mul_int, pow as pow_uint, to_decimal,
     to_decimal_split, to_decimal_split_at,

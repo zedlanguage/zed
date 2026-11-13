@@ -106,8 +106,8 @@ use std::rc::Rc;
 use zedc_int::int::Int;
 use zedc_lattice::interval::{End, IntervalSet, Num};
 
-use super::refusal::{Each, Refusal};
 use super::formula::{Atom, Conjuncts, Formula, Id, Model, Rel, one_bound};
+use super::refusal::{Each, Refusal};
 use super::row_domains::{self, Settled, range};
 
 /// A row `Σ c·y + k`, `== 0` or `>= 0`, over the atoms' indices.
