@@ -2894,7 +2894,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .or(first)
             {
                 let notes = self.derive(&[l.site]);
-                let m = unfixed(l, &left, None);
+                let m = unfixed(l, &left);
                 self.reject(Some(Row::UnfixedDecimal), l.site, m, notes);
             }
         }
@@ -4390,7 +4390,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let decimal = lits.iter().any(|l| lit_carrier(&l.value) == Carrier::F64);
                     if !decimal && let Some(l) = lits.first() {
                         let notes = self.derive(&[l.site]);
-                        let m = unfixed(l, &takes, None);
+                        let m = unfixed(l, &takes);
                         self.reject(Some(Row::UnfixedDecimal), l.site, m, notes);
                     }
                     Some(c)
@@ -5919,14 +5919,81 @@ fn lit_holds(l: &Lit, c: Carrier) -> impl fmt::Display + '_ {
 }
 
 /// What the name `n`, bound to the operation on literals `e`, holds once a fix gives its
-/// literals the carrier `c`: `half is 0.5` ([`folded`]), or `half is an f64` where the
-/// operation gives no value of `c`.
-fn binder_holds<'a>(n: impl fmt::Display + 'a, e: &Expr, c: Carrier) -> impl fmt::Display + 'a {
-    let v = folded(e, c);
-    fmt::from_fn(move |f| match &v {
-        Some(v) => write!(f, "{n} is {v}"),
+/// literals the carrier `c` with the edits `edits` of `src`: `half is 0.5` ([`folded`]), or
+/// `half is an f64` where the operation gives no value of `c`. At `int` and `rat`, whose values
+/// have no fixed size, a value reached through a `^` is named by the operation as the fix writes it
+/// ([`written_alone`]), `x is 3r^200000 / 2`, and is not computed (DESIGN.md
+/// sec:diagnostics, "The value a fix names"); `x is a rat` where there is no text to write.
+fn binder_holds<'a>(
+    n: impl fmt::Display + 'a,
+    e: &Expr,
+    c: Carrier,
+    src: Option<&str>,
+    edits: &[(Span, &dyn fmt::Display)],
+) -> impl fmt::Display + 'a {
+    let named = match matches!(c, Carrier::Int | Carrier::Rat) && holds_power(e) {
+        true => src
+            .and_then(|s| written_alone(s, e.span, edits))
+            .map(Holds::Written),
+        false => folded(e, c).map(Holds::Value),
+    };
+    fmt::from_fn(move |f| match &named {
+        Some(Holds::Value(v)) => write!(f, "{n} is {v}"),
+        Some(Holds::Written(w)) => write!(f, "{n} is {w}"),
         None => write!(f, "{n} is {} {}", article(c), c.name()),
     })
+}
+
+/// How a fix names a value: by the value, or by the operation as the fix writes it.
+enum Holds {
+    Value(Value),
+    Written(String),
+}
+
+/// Whether the operation `e` holds a `^`. The walk keeps its own stack, since the operations
+/// nest as deep as the text; it costs the size of `e`.
+fn holds_power(e: &Expr) -> bool {
+    let mut todo = vec![e];
+    while let Some(x) = todo.pop() {
+        match &x.kind {
+            ExprKind::Binary(BinaryOp::Pow, _, _) => return true,
+            ExprKind::Binary(_, a, b) => todo.extend([&**a, &**b]),
+            ExprKind::Unary(_, a) => todo.push(a),
+            ExprKind::Tuple(xs) => todo.extend(xs),
+            _ => {}
+        }
+    }
+    false
+}
+
+/// The text of `src` in `at` with the edits `edits`, which lie in `at` apart and in the order
+/// of the text, on one line: the tokens as written, and between two of them the space written
+/// there where it holds no line break and no comment, else one space, so a note that names
+/// `(1 + // one\n 3r^2)` reads `(1 + 3r^2)`. `None` where a span is not in `src`, where the
+/// text does not lex alone, or where the system refuses the memory. It costs the length of
+/// `at` and of the edits.
+fn written_alone(src: &str, at: Span, edits: &[(Span, &dyn fmt::Display)]) -> Option<String> {
+    let mut i = at.start;
+    let mut text = String::new();
+    for (s, with) in edits {
+        text.push_str(src.get(i..s.start)?);
+        text.push_str(&shown(with).ok()?);
+        i = s.end;
+    }
+    text.push_str(src.get(i..at.end)?);
+    let tokens = lex(&text).ok()?;
+    let mut out = String::new();
+    let mut end = tokens.first()?.span.start;
+    for t in &tokens {
+        let gap = &text[end..t.span.start];
+        out.push_str(match gap.bytes().all(|b| b == b' ' || b == b'\t') {
+            true => gap,
+            false => " ",
+        });
+        out.push_str(&text[t.span.start..t.span.end]);
+        end = t.span.end;
+    }
+    Some(out)
 }
 
 /// The value of `e`, an operation on literals alone under `+`, `-`, `*`, `/`, `^` and a `-`, or
@@ -5939,12 +6006,15 @@ fn binder_holds<'a>(n: impl fmt::Display + 'a, e: &Expr, c: Carrier) -> impl fmt
 /// `rat`. The walk keeps its own stack, since the operations nest as deep as the text; it
 /// costs one operation per node of `e`, and the reading of its literals ([`lit_value`]).
 ///
-/// Complexity tradeoff: a power's value has a size that grows with its exponent's value, not
-/// with the text, as `3^200000` does. The value a fix names is that value (DESIGN.md
-/// sec:diagnostics, "The value a fix names"), so a fix's note costs it; the checks
-/// themselves read only what the text gives of a power ([`rat_step`], [`Ck::lit_fit`],
-/// [`unfixed_binding`]), so an accepted program, and a rejected one up to its notes, cost
-/// O(the text) (COMPLEXITY.md POW-rat-literal-ops).
+/// Complexity tradeoff: a power at `int` or `rat` has a value whose size grows with its exponent's
+/// value, not with the text, as `3^200000` does, so folding one costs that size. A fix does
+/// not fold one: it names such a value by the operation as written ([`binder_holds`], DESIGN.md
+/// sec:diagnostics, "The value a fix names"), and the checks of a binding read only what the
+/// text gives of a power ([`rat_step`], [`Ck::lit_fit`], [`unfixed_binding`]), so such a
+/// binding, accepted or rejected with its fixes, costs O(the text) (COMPLEXITY.md
+/// POW-rat-literal-ops, MSG-fixnote-huge-value). Naming the value instead would print about
+/// 0.48 e digits for `3^e`, which the text writes in O(log e) characters, and multiply numbers
+/// of that size.
 fn folded(e: &Expr, c: Carrier) -> Option<Value> {
     enum Step<'e> {
         Visit(&'e Expr),
@@ -6522,25 +6592,16 @@ fn f64_cast_fix(l: &Lit, n: &str, at: Span, op: BinaryOp, left: bool) -> Option<
 /// `half() = 1 / 2`), or a call of a generic function with literal arguments only
 /// (`y = inc(x: 2.5)`). The fixes write the literal with each carrier, `0.1f64` or `0.1r`,
 /// and for an integer `1.0f64` or `1r`; an integer literal in another base takes no suffix,
-/// so it is written in a cast, `f64(0xFF)` or `rat(0xFF)`. With `bound`, the name the value
-/// `e` is bound to, each fix names the value that name then holds, `y is 0.1`; otherwise the
-/// literal's.
-fn unfixed(l: &Lit, cs: &[Carrier], bound: Option<(&str, &Expr)>) -> Msg {
+/// so it is written in a cast, `f64(0xFF)` or `rat(0xFF)`. Each fix names the value the
+/// literal then is ([`lit_holds`]); a binding's fixes, which name the value its binder holds,
+/// are [`unfixed_binding`]'s.
+fn unfixed(l: &Lit, cs: &[Carrier]) -> Msg {
     let decimal = lit_carrier(&l.value) == Carrier::F64;
-    let sign = if l.neg() { "-" } else { "" };
     let mut fixes = Vec::new();
     let carriers = [Carrier::F64, Carrier::Rat].into_iter();
     for c in carriers.filter(|&c| cs.contains(&c) && (c != Carrier::Rat || !decimal || l.bare)) {
         let with = with_carrier(l, c);
-        // The binding rewritten, `y = 0.1f64`, where the literal is the whole value.
-        let alone = fmt::from_fn(|f| match bound {
-            Some((n, e)) if literal(e, None).is_some() => write!(f, "{n} = {sign}{with}"),
-            _ => write!(f, "{sign}{with}"),
-        });
-        fixes.push(match bound {
-            Some((n, e)) => Rewrite::new(&[(l.span, &with)], &binder_holds(n, e, c), &alone),
-            None => Rewrite::new(&[(l.span, &with)], &lit_holds(l, c), &alone),
-        });
+        fixes.push(Rewrite::lit(l, &with, &lit_holds(l, c)));
     }
     let names = carrier_names(cs);
     let m = match decimal {
@@ -6614,8 +6675,9 @@ fn literals_alone(e: &Expr, src: Option<&str>) -> Option<(Vec<Lit>, bool)> {
 /// (1.0f64, (2r, 3)); y is true`. Each pair takes the carrier of its literals with a suffix,
 /// the fixed decimal's among them, or `int` where it has none, and `==` is true where every
 /// pair is equal; where the pairs' literals take no one carrier, the fix names the literal
-/// instead ([`lit_holds`]). `None` for any other value, which [`unfixed_binding`] then reads.
-/// It costs the size of `e` ([`folded`]).
+/// instead ([`lit_holds`]). A pair at `int` or `rat` that holds a `^` is not folded, and the fix names
+/// the comparison as it writes it, as [`binder_holds`] does. `None` for any other value, which
+/// [`unfixed_binding`] then reads. It costs the size of `e` ([`folded`]).
 fn unfixed_comparison(
     e: &Expr,
     place: &dyn fmt::Display,
@@ -6655,10 +6717,11 @@ fn unfixed_comparison(
             .flat_map(|(_, ys, _)| ys)
             .find(decimal)
     })?;
-    // Whether the two sides are equal once `l` is written with `c`.
-    let equal = |c: Carrier| -> Option<bool> {
-        let mut all = true;
-        for ((x, y), (xs, ys, rat)) in pairs.iter().zip(&lits) {
+    // The carrier of each pair once `l` is written with `c`; `None` where a pair's literals
+    // take no one carrier.
+    let carriers = |c: Carrier| -> Option<Vec<Carrier>> {
+        let mut out = Vec::with_capacity(lits.len());
+        for (xs, ys, rat) in &lits {
             let mut at = rat.then_some(Carrier::Rat);
             for m in xs.iter().chain(ys) {
                 let own = match m.site == l.site {
@@ -6671,25 +6734,44 @@ fn unfixed_comparison(
                 }
                 at = Some(own);
             }
-            let at = at.unwrap_or(Carrier::Int);
+            out.push(at.unwrap_or(Carrier::Int));
+        }
+        Some(out)
+    };
+    // Whether the two sides are equal at the carriers `ats`.
+    let equal = |ats: &[Carrier]| -> Option<bool> {
+        let mut all = true;
+        for ((x, y), &at) in pairs.iter().zip(ats) {
             let (u, v) = (folded(x, at)?, folded(y, at)?);
             all &= eval(&Term::Prim(Prim::Eq, vec![Term::Lit(u), Term::Lit(v)])).ok()?
                 == Value::Bool(true);
         }
         Some(if *op == BinaryOp::Eq { all } else { !all })
     };
-    let mut m = unfixed(l, &[], None);
+    let mut m = unfixed(l, &[]);
     let sign = if l.neg() { "-" } else { "" };
     m.fixes = [Carrier::F64, Carrier::Rat]
         .into_iter()
         .filter_map(|c| {
             let with = with_carrier(l, c);
             let alone = format_args!("{sign}{with}");
-            match equal(c) {
-                Some(v) => {
-                    Rewrite::new(&[(l.span, &with)], &format_args!("{place} is {v}"), &alone)
-                }
-                None => Rewrite::new(&[(l.span, &with)], &lit_holds(l, c), &alone),
+            let edits = [(l.span, &with as &dyn fmt::Display)];
+            let lit = || Rewrite::new(&edits, &lit_holds(l, c), &alone);
+            let Some(ats) = carriers(c) else {
+                return lit();
+            };
+            // A pair at `int` or `rat` that holds a `^` is not folded, as for a binding
+            // ([`binder_holds`]): the comparison is named as the fix writes it.
+            let powered = (pairs.iter().zip(&ats)).any(|((x, y), &at)| {
+                matches!(at, Carrier::Int | Carrier::Rat) && (holds_power(x) || holds_power(y))
+            });
+            let named = match powered {
+                true => src.and_then(|s| written_alone(s, e.span, &edits)),
+                false => equal(&ats).and_then(|v| shown(&v).ok()),
+            };
+            match named {
+                Some(w) => Rewrite::new(&edits, &format_args!("{place} is {w}"), &alone),
+                None => lit(),
             }
         })
         .collect();
@@ -6844,7 +6926,7 @@ fn unfixed_binding(
     // The literals come in the order of the text: the stack takes the left operand first.
     let is_decimal = |l: &&Lit| lit_carrier(&l.value) == Carrier::F64;
     if let Some(l) = lits.iter().find(is_decimal) {
-        let mut m = unfixed(l, &[], Some((n, e)));
+        let mut m = unfixed(l, &[]);
         // A decimal under a `^` with nothing to fix it is left to the fixes at `f64`, the
         // default POW-domains settles.
         let forms = forms.filter(|f| *f != Form::Cast && (!pow || f.carrier() != Carrier::Rat));
@@ -6852,7 +6934,7 @@ fn unfixed_binding(
         leaves.push(l.clone());
         leaves.sort_by_key(|l| l.span.start);
         m.fixes = forms
-            .filter_map(|f| leaves_with(&leaves, f, place, whole.then_some(n), e, None))
+            .filter_map(|f| leaves_with(&leaves, f, place, whole.then_some(n), e, None, src))
             .collect();
         return Some((l.site, m));
     }
@@ -6896,7 +6978,7 @@ fn unfixed_binding(
     let divisor = literal(b, src).filter(|_| two);
     let bound = whole.then_some(n);
     let fixes =
-        (forms.into_iter()).map(|f| leaves_with(leaves, f, place, bound, e, divisor.as_ref()));
+        (forms.into_iter()).map(|f| leaves_with(leaves, f, place, bound, e, divisor.as_ref(), src));
     Some((d.span, Msg::new(m, fixes.collect())))
 }
 
@@ -7213,7 +7295,8 @@ impl Form {
 /// message written without the program's text, is the binding rewritten where `e` is the
 /// whole value of `bound` and one literal, `y = 0.5f64`, or the division of two literals by
 /// `divisor`, `half = f64(1) / 2`; otherwise each literal's new text and the literal it
-/// replaces. It costs the length of those texts.
+/// replaces. `src` is the unit's text, which names a value at `rat` reached through a `^`.
+/// It costs the length of those texts and of `e`.
 fn leaves_with(
     leaves: &[Lit],
     form: Form,
@@ -7221,6 +7304,7 @@ fn leaves_with(
     bound: Option<&str>,
     e: &Expr,
     divisor: Option<&Lit>,
+    src: Option<&str>,
 ) -> Option<Rewrite> {
     let c = form.carrier();
     let texts: Vec<_> = (leaves.iter())
@@ -7256,7 +7340,7 @@ fn leaves_with(
             Ok(())
         }
     });
-    Rewrite::new(&edits, &binder_holds(place, e, c), &alone)
+    Rewrite::new(&edits, &binder_holds(place, e, c, src, &edits), &alone)
 }
 
 /// The literals of the other carriers that are exactly the number of `e` when `e` is a `rat`

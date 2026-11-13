@@ -94,7 +94,7 @@ fn where_nothing_gives_a_carrier_the_menu_writes_the_first_literal() {
         checked("y = 2 ^ 3 / 2;\n"),
         pairs(&[
             ("y = 2.0f64 ^ 3 / 2;", "y is 4.0"),
-            ("y = 2r ^ 3 / 2;", "y is 4r"),
+            ("y = 2r ^ 3 / 2;", "y is 2r ^ 3 / 2"),
             ("y = f64(2) ^ 3 / 2;", "y is 4.0"),
         ])
     );
@@ -102,7 +102,7 @@ fn where_nothing_gives_a_carrier_the_menu_writes_the_first_literal() {
         checked("y = 1 + 2 ^ 3 / 2;\n"),
         pairs(&[
             ("y = 1.0f64 + 2 ^ 3 / 2;", "y is 5.0"),
-            ("y = 1r + 2 ^ 3 / 2;", "y is 5r"),
+            ("y = 1r + 2 ^ 3 / 2;", "y is 1r + 2 ^ 3 / 2"),
             ("y = f64(1) + 2 ^ 3 / 2;", "y is 5.0"),
         ])
     );
@@ -180,7 +180,7 @@ fn a_menu_writes_the_exponent_of_a_power_that_its_carrier_does_not_reach() {
         checked("y = 0xFF / 2 ^ 2;\n"),
         pairs(&[
             ("y = f64(0xFF) / 2 ^ 2;", "y is 63.75"),
-            ("y = rat(0xFF) / 2 ^ 2;", "y is 255r/4r"),
+            ("y = rat(0xFF) / 2 ^ 2;", "y is rat(0xFF) / 2 ^ 2"),
         ])
     );
     assert_eq!(y("y = f64(0xFF) / 2 ^ 2;\n"), "63.75");

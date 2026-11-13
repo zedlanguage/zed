@@ -1814,7 +1814,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .into_iter()
                 .filter(|&c| fits(&l, c))
                 .collect();
-            let mut m = unfixed(&l, &cs, None);
+            let mut m = unfixed(&l, &cs);
             if let Some(c) = call {
                 let callee = match &c.kind {
                     ExprKind::Call { callee, .. } => callee.span,
@@ -2405,7 +2405,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                             && lit_carrier(&l.value) != Carrier::Int
                         {
                             let notes = self.derive(&[l.site]);
-                            let m = unfixed(&l, &[Carrier::F64, Carrier::Rat], None);
+                            let m = unfixed(&l, &[Carrier::F64, Carrier::Rat]);
                             self.reject(Some(Row::UnfixedDecimal), l.site, m, notes);
                         }
                     }
@@ -3450,7 +3450,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .collect();
             if let [c, ..] = cs[..] {
                 let notes = self.derive(&[l.site]);
-                let m = unfixed(&l, &cs, None);
+                let m = unfixed(&l, &cs);
                 self.reject(Some(Row::UnfixedDecimal), l.site, m, notes);
                 self.adopt_to(&l, c);
                 x.lit = None;
@@ -3465,7 +3465,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 && lit_carrier(&l.value) != Carrier::Int
             {
                 let notes = self.derive(&[l.site]);
-                let m = unfixed(l, &[Carrier::F64, Carrier::Rat], None);
+                let m = unfixed(l, &[Carrier::F64, Carrier::Rat]);
                 self.reject(Some(Row::UnfixedDecimal), l.site, m, notes);
             }
             // So is one a branch of an `if` of literals gives, `String(if c { 1 } else
@@ -3476,7 +3476,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Branch::Lit(l) if l.bare && lit_carrier(&l.value) != Carrier::Int => Some(l),
                 _ => None,
             }))
-            .map(|l| (l.site, unfixed(l, &[Carrier::F64, Carrier::Rat], None)))
+            .map(|l| (l.site, unfixed(l, &[Carrier::F64, Carrier::Rat])))
             .collect();
             self.reject_unfixed(&"the argument of `String`", found);
             if x.lit.is_none() {
@@ -8245,7 +8245,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                                 .into_iter()
                                 .filter(|&c| fits(l, c))
                                 .collect();
-                            unfixed_found.push((l.site, unfixed(l, &cs, None)));
+                            unfixed_found.push((l.site, unfixed(l, &cs)));
                             fixed[side] = Some(Lit {
                                 bare: false,
                                 ..l.clone()
@@ -10007,7 +10007,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                                     text: literal_note(l.written(), lit_ty(&l.value, l.neg())),
                                 })
                                 .to_vec();
-                            let m = unfixed(d, &[Carrier::F64, Carrier::Rat], None);
+                            let m = unfixed(d, &[Carrier::F64, Carrier::Rat]);
                             self.reject(Some(Row::UnfixedDecimal), d.site, m, notes);
                         }
                         (true, false) => {
@@ -11145,7 +11145,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                                         .find(|l| lit_carrier(&l.value) == Carrier::F64)
                                         .unwrap_or(&lits[0]);
                                     let notes = self.derive(&[l.site]);
-                                    let m = unfixed(l, &takes, None);
+                                    let m = unfixed(l, &takes);
                                     self.reject(Some(Row::UnfixedDecimal), l.site, m, notes);
                                     c
                                 }
@@ -11629,14 +11629,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             if cs.is_empty() {
                 continue;
             }
-            found.push((l.site, unfixed(l, &cs, None)));
+            found.push((l.site, unfixed(l, &cs)));
         }
         for l in &payloads {
             let cs: Vec<Carrier> = [Carrier::F64, Carrier::Rat]
                 .into_iter()
                 .filter(|&c| fits(l, c))
                 .collect();
-            found.push((l.site, unfixed(l, &cs, None)));
+            found.push((l.site, unfixed(l, &cs)));
         }
         found.sort_by_key(|(s, _)| s.start);
         self.reject_unfixed(&format_args!("the arguments of {what}"), found);
@@ -13578,12 +13578,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let rejected = first.is_some();
         if let Some((l, left)) = first {
             let notes = self.derive(&[l.site]);
-            self.reject(
-                Some(Row::UnfixedDecimal),
-                l.site,
-                unfixed(&l, &left, None),
-                notes,
-            );
+            self.reject(Some(Row::UnfixedDecimal), l.site, unfixed(&l, &left), notes);
         }
         // A call rejected so gives no value, as a rejected application gives, so that the
         // arrows it then meets do not report it again: `1 + g(c)`.

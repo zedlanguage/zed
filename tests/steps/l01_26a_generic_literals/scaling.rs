@@ -514,3 +514,45 @@ fn operations_on_literals_typed_by_their_value_check_in_linear_time() {
         }
     });
 }
+
+/// The fixes of a rejected binding name the value a power of literals gives at `rat` by the
+/// operation as the fix writes it, `x is 3r^200000 / 2`, and do not compute it: the power has
+/// about 95 n digits at an exponent of 200 n, and the message, its fixes and the check cost the
+/// text, which does not grow with n (order 0; DESIGN.md sec:diagnostics, "The value a fix
+/// names"). The same holds where the binding compares tuples, whose fix names the comparison
+/// where a pair at `int` or `rat` holds a `^`.
+/// Before MSG-fixnote-huge-value each fix computed the power: at n = 500 the division took 19.7
+/// times the bytes at 8n, and through `zedc run` at the exponents 200,000 and 1,600,000 the
+/// comparisons took 4.9 times (`rat`) and 6.7 times (`int`) the instructions (COMPLEXITY.md row
+/// MSG-fixnote-huge-value).
+#[test]
+fn a_fix_names_a_power_of_literals_without_computing_it() {
+    let half = |n: usize| format!("x = 3^{} / 2;\n", 200 * n);
+    let pair = |n: usize| format!("y = (3^{} + 0.5, 1) == (1, 2);\n", 200 * n);
+    let int_pair = |n: usize| format!("y = (3^{} + 1, 0.5) == (2, 2);\n", 200 * n);
+    scaling::on_a_thread(1 << 29, || {
+        let n = 500;
+        for (what, make) in [
+            (
+                "the fixes of a division of a power of 3 at 200 n",
+                &half as &dyn Fn(usize) -> String,
+            ),
+            (
+                "the fixes of a comparison holding a power of 3 at 200 n",
+                &pair,
+            ),
+            (
+                "the fixes of a comparison holding a power of 3 at 200 n at int",
+                &int_pair,
+            ),
+        ] {
+            let units = scaling::inputs(n, |m| Resolved::new(&make(m)));
+            for u in units.values() {
+                assert_eq!(u.type_errors().len(), 1, "{what}");
+            }
+            scaling::check_order(what, n, 0, |m| {
+                std::hint::black_box(units[&m].type_errors());
+            });
+        }
+    });
+}

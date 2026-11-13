@@ -37,6 +37,16 @@ fn decimal_at_int(d: &str, line: &str, int: &str) -> String {
     )
 }
 
+/// The value of `name` that a fix's note names: the value written, or, where the note names a
+/// `rat` value reached through a `^` by the operation as the fix writes it (DESIGN.md
+/// sec:diagnostics, "The value a fix names"), the value of that operation.
+fn named(name: &str, holds: &str) -> String {
+    match holds.contains('^') {
+        true => value(&format!("{name} = {holds};\n"), name),
+        false => holds.to_string(),
+    }
+}
+
 #[test]
 fn an_integer_literal_beside_a_float_takes_its_carrier() {
     // `1 + taxRate` with `taxRate: f64` is the case generic literals are for.
@@ -87,7 +97,7 @@ fn a_power_of_a_division_of_integer_literals_is_offered_the_exact_rat_power() {
             "q = (3/2)^2;",
             [
                 ("q = (3.0f64/2)^2;", "q is 2.25"),
-                ("q = (3r/2)^2;", "q is 9r/4r"),
+                ("q = (3r/2)^2;", "q is (3r/2)^2"),
                 ("q = (f64(3)/2)^2;", "q is 2.25"),
             ],
         ),
@@ -95,7 +105,7 @@ fn a_power_of_a_division_of_integer_literals_is_offered_the_exact_rat_power() {
             "q = (3/2)^-2;",
             [
                 ("q = (3.0f64/2)^-2;", "q is 0.4444444444444444"),
-                ("q = (3r/2)^-2;", "q is 4r/9r"),
+                ("q = (3r/2)^-2;", "q is (3r/2)^-2"),
                 ("q = (f64(3)/2)^-2;", "q is 0.4444444444444444"),
             ],
         ),
@@ -112,7 +122,7 @@ fn a_power_of_a_division_of_integer_literals_is_offered_the_exact_rat_power() {
         );
         for (line, holds) in fixes {
             let q = holds.strip_prefix("q is ").unwrap();
-            assert_eq!(value(&format!("{line}\n"), "q"), q, "{line}");
+            assert_eq!(value(&format!("{line}\n"), "q"), named("q", q), "{line}");
         }
     }
     // An exponent that is not a literal takes the base's carrier, and `^` has no arrow
@@ -210,7 +220,7 @@ fn a_slash_among_operations_on_literals_is_rejected_once_at_the_literal_that_fix
             // exponent `int` under `rat`, so only `0xFF` is written, and in a cast alone.
             vec![
                 ("y = f64(0xFF) / 2 ^ 2;", "y is 63.75"),
-                ("y = rat(0xFF) / 2 ^ 2;", "y is 255r/4r"),
+                ("y = rat(0xFF) / 2 ^ 2;", "y is rat(0xFF) / 2 ^ 2"),
             ],
             "0xFF / 2 ^ 2",
         ),
@@ -219,7 +229,7 @@ fn a_slash_among_operations_on_literals_is_rejected_once_at_the_literal_that_fix
             slash(why),
             vec![
                 ("y = 1.0f64 + 2 ^ 2 / 3;", "y is 2.333333333333333"),
-                ("y = 1r + 2 ^ 2 / 3;", "y is 7r/3r"),
+                ("y = 1r + 2 ^ 2 / 3;", "y is 1r + 2 ^ 2 / 3"),
                 ("y = f64(1) + 2 ^ 2 / 3;", "y is 2.333333333333333"),
             ],
             "2 ^ 2 / 3",
@@ -288,7 +298,7 @@ fn a_slash_among_operations_on_literals_is_rejected_once_at_the_literal_that_fix
         // Each fix checks, and the binder holds the value it names.
         for (line, holds) in fixes {
             let y = holds.strip_prefix("y is ").unwrap();
-            assert_eq!(value(&format!("{line}\n"), "y"), y, "{line}");
+            assert_eq!(value(&format!("{line}\n"), "y"), named("y", y), "{line}");
         }
     }
     // The suffix on the decimal reaches the operation on literals beside it, which takes the

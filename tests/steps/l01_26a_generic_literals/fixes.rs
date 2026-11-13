@@ -54,6 +54,12 @@ pub(super) fn checked(src: &str) -> Vec<(String, String)> {
         if let Some((name, v)) = holds.split_once(" is ")
             && line.starts_with(&format!("{name} = "))
         {
+            // A `rat` value reached through a `^` is named by the operation as the fix writes
+            // it (DESIGN.md sec:diagnostics, "The value a fix names"), which holds that value.
+            let v = match v.contains('^') {
+                true => value(&format!("{name} = {v};\n"), name),
+                false => v.to_string(),
+            };
             assert_eq!(value(&fixed, name), v, "the fix {line:?} of {last:?}");
         }
     }
@@ -154,7 +160,7 @@ fn a_power_lists_rat_only_with_an_integer_literal_exponent() {
         checked("y = (2 ^ 3) / 4;\n"),
         pairs(&[
             ("y = (2.0f64 ^ 3) / 4;", "y is 2.0"),
-            ("y = (2r ^ 3) / 4;", "y is 2r"),
+            ("y = (2r ^ 3) / 4;", "y is (2r ^ 3) / 4"),
             ("y = (f64(2) ^ 3) / 4;", "y is 2.0"),
         ])
     );
@@ -314,6 +320,78 @@ fn a_fix_leaves_out_a_comment_after_the_line() {
         pairs(&[
             ("y = 0.5f64; /* a note", "y is 0.5"),
             ("y = 0.5r; /* a note", "y is 1r/2r")
+        ])
+    );
+}
+
+/// A fix that gives a power of literals the carrier `rat` names the value the binder then
+/// holds by the operation as the fix writes it, and does not compute it: `3r^200000` has
+/// 95,425 digits, and the note is as long as the text (DESIGN.md sec:diagnostics, "The value a
+/// fix names"; MSG-fixnote-huge-value). At `f64` the value, of fixed size, is named, and so is
+/// a value at `rat` with no `^`. The same holds at `int`, as in a pair of a comparison of tuples.
+#[test]
+fn a_value_at_rat_reached_through_a_power_is_named_by_the_operation() {
+    assert_eq!(
+        type_errors("x = 3^200000 / 2;\n"),
+        [concat!(
+            "Nothing gives the integer literals a carrier, and `/` has none at `int`: ",
+            "`x = 3^200000 / 2`. Try `x = 3.0f64^200000 / 2` instead.\n",
+            "  fixes, each checked here:\n",
+            "    x = 3.0f64^200000 / 2;    x is inf\n",
+            "    x = 3r^200000 / 2;        x is 3r^200000 / 2\n",
+            "    x = f64(3)^200000 / 2;    x is inf [3^200000 / 2]",
+        )]
+    );
+    // The contrast: with no `^` the value is named at `rat` too.
+    assert_eq!(
+        checked("x = (3 + 1) / 2;\n"),
+        pairs(&[
+            ("x = (3.0f64 + 1) / 2;", "x is 2.0"),
+            ("x = (3r + 1) / 2;", "x is 2r"),
+            ("x = (f64(3) + 1) / 2;", "x is 2.0"),
+        ])
+    );
+    assert_eq!(
+        checked("x = (3^2 + 1) / 2;\n"),
+        pairs(&[
+            ("x = (3.0f64^2 + 1) / 2;", "x is 5.0"),
+            ("x = (3r^2 + 1) / 2;", "x is (3r^2 + 1) / 2"),
+            ("x = (f64(3)^2 + 1) / 2;", "x is 5.0"),
+        ])
+    );
+    // A comparison of tuples is named as the fix writes it where a pair at `rat` holds a `^`.
+    assert_eq!(
+        checked("y = (3^20 + 0.5, 1) == (1, 2);\n"),
+        pairs(&[
+            ("y = (3^20 + 0.5f64, 1) == (1, 2);", "y is false"),
+            (
+                "y = (3^20 + 0.5r, 1) == (1, 2);",
+                "y is (3^20 + 0.5r, 1) == (1, 2)"
+            ),
+        ])
+    );
+    // So it is where the pair is at `int`, whose values have no fixed size either; the pair at
+    // `f64` is named by its value.
+    assert_eq!(
+        checked("y = (3^2 + 1, 0.5) == (10, 0.5);\n"),
+        pairs(&[
+            (
+                "y = (3^2 + 1, 0.5f64) == (10, 0.5);",
+                "y is (3^2 + 1, 0.5f64) == (10, 0.5)"
+            ),
+            (
+                "y = (3^2 + 1, 0.5r) == (10, 0.5);",
+                "y is (3^2 + 1, 0.5r) == (10, 0.5)"
+            ),
+        ])
+    );
+    // The note is on one line: a line break or a comment between two tokens is one space.
+    assert_eq!(
+        fixes("x = (3^20 // three\n    + 1) / 2;\n"),
+        pairs(&[
+            ("x = (3.0f64^20", "x is 1743392201.0"),
+            ("x = (3r^20", "x is (3r^20 + 1) / 2"),
+            ("x = (f64(3)^20", "x is 1743392201.0"),
         ])
     );
 }
