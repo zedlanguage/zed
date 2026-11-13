@@ -269,10 +269,8 @@ fn parity_variant(k: usize, form: usize, prefix: Option<&str>, reverse_unions: b
     let types = Group::new(
         defs.into_iter()
             .map(|(_, mut d)| {
-                if reverse_unions {
-                    if let Expr::Union(kids) = &mut d.body {
-                        kids.reverse();
-                    }
+                if reverse_unions && let Expr::Union(kids) = &mut d.body {
+                    kids.reverse();
                 }
                 d
             })
