@@ -7,7 +7,7 @@ use super::{mistakes, package, use_of};
 const SHAPES: &str = "\
 area(r: f64) = 3.14159 * r * r;
 perimeter(r: f64) = 2.0 * 3.14159 * r;
-unitRadius = 1.0;
+unitRadius = 1.0f64;
 ";
 
 #[test]
@@ -124,8 +124,8 @@ fn a_qualifier_is_no_value() {
 #[test]
 fn a_name_two_units_bring_in_is_ambiguous_where_it_is_used() {
     let p = package(&[
-        ("metric.zed", "scale = 1000.0;\n"),
-        ("imperial.zed", "scale = 1760.0;\n"),
+        ("metric.zed", "scale = 1000.0f64;\n"),
+        ("imperial.zed", "scale = 1760.0f64;\n"),
         (
             "main.zed",
             "import metric.{scale};\nimport imperial.{scale};\nfar = 3.0 * scale;\n",
@@ -149,8 +149,8 @@ fn a_name_two_units_bring_in_is_ambiguous_where_it_is_used() {
 #[test]
 fn an_unused_ambiguous_name_is_no_error_and_a_top_level_definition_shadows_it() {
     let p = package(&[
-        ("metric.zed", "scale = 1000.0;\n"),
-        ("imperial.zed", "scale = 1760.0;\n"),
+        ("metric.zed", "scale = 1000.0f64;\n"),
+        ("imperial.zed", "scale = 1760.0f64;\n"),
         (
             "main.zed",
             "import metric.{scale};\nimport imperial.{scale};\nscale = 1.0;\nnear = scale;\n",

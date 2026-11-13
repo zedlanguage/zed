@@ -41,6 +41,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use zed_kernel::Term;
 
+use crate::ast::Error;
 use crate::build::Build;
 use crate::elab::Cones;
 use crate::front::{self, Front, Parsed};
@@ -101,6 +102,9 @@ pub enum Query {
     /// A unit's content address (step L2.8), keyed by its text, of which its exports and their
     /// values are functions, and the build it is compiled for.
     Address,
+    /// The errors of a unit that compiles alone, checked in a package build (step L1.29d),
+    /// keyed by its text and the build.
+    Check,
 }
 
 /// The memoized results, and how many times each query was computed rather than reused.
@@ -111,6 +115,7 @@ pub struct Db {
     parsed: HashMap<Key, Arc<Parsed>>,
     resolved: HashMap<Key, Arc<Resolved>>,
     addresses: HashMap<Key, Arc<Address>>,
+    checks: HashMap<Key, Arc<Vec<Error>>>,
     computed: HashMap<Query, usize>,
     /// The number given to each definition's text, for a row's key.
     texts: HashMap<Box<str>, u64>,
@@ -134,6 +139,7 @@ impl Default for Db {
             parsed: HashMap::new(),
             resolved: HashMap::new(),
             addresses: HashMap::new(),
+            checks: HashMap::new(),
             computed: HashMap::new(),
             texts: HashMap::new(),
             exports: HashMap::new(),
@@ -152,6 +158,7 @@ impl Clone for Db {
             parsed: self.parsed.clone(),
             resolved: self.resolved.clone(),
             addresses: self.addresses.clone(),
+            checks: self.checks.clone(),
             computed: self.computed.clone(),
             texts: self.texts.clone(),
             exports: self.exports.clone(),
@@ -186,6 +193,19 @@ impl Db {
     /// The front end's result for the unit `text`, built for this database's build.
     pub fn front(&mut self, text: &str) -> Arc<Front> {
         front_at(&mut self.front, &mut self.computed, text, &self.build)
+    }
+
+    /// The errors the unit `text`, which compiles alone, is rejected with, built for this
+    /// database's build, before they are placed ([`front::rejection`]): empty when it compiles.
+    pub fn check(&mut self, text: &str) -> Arc<Vec<Error>> {
+        let k = key("check", &[text.as_bytes(), &self.build.bytes()]);
+        if let Some(c) = self.checks.get(&k) {
+            return c.clone();
+        }
+        *self.computed.entry(Query::Check).or_default() += 1;
+        let c = Arc::new(front::rejection(text, &self.build));
+        self.checks.insert(k, c.clone());
+        c
     }
 
     /// The statements and imports of the unit `text`.

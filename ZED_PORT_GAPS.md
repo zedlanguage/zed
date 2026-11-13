@@ -3758,7 +3758,17 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | `(floor..=s).rev().find(..)` scanning a range backward for the first column token | `begins_at` | None | a search from the end of a slice |
 | The one `Parser` table shared by every attempt, written by `rule_node` through `&mut self` | `recovering` | Shared tables across pure calls (gap 2) | the table threaded through the fold as a value, as the parser memo of Gap 2 |
 | A `BTreeSet` of tried edits filled from a closure that captures it mutably | `repairs` | Mutation (gap 11) | a fold that keeps a sorted set and the edits offered |
-| A `Vec<bool>` of dropped statements, a `Vec` work list, and a `HashMap` from each name to its users from which `remove` takes each name once, for the search from the statements that use a broken name | `without_broken` | Mutation (gap 11) | a depth-first search over the uses as a fold carrying the visited set and the names read as persistent sets |
+| A `Vec<bool>` of dropped statements, a `Vec` work list, and a `HashMap` from each name to its users from which `remove` takes each name once, for the search from the statements that use a broken name | `dropped`, called by `without_broken` and `resolve_recovered` (L1.29d-package) | Mutation (gap 11) | a depth-first search over the uses as a fold carrying the visited set and the names read as persistent sets |
+
+## Entries from L1.29d-package (`crates/zedc-resolve/src/resolve.rs`; `crates/zedc/src/front.rs`, `unit.rs`, `query.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `BTreeSet<String>` of broken names written into finished exports through `&mut self` | `Exports::set_broken`, called by `resolve_recovered` | Mutation (gap 11) | the exports built once with the broken names as a field value |
+| A `HashSet<usize>` of the binder ids of broken imports and a `Vec<Span>` of broken uses, each filled in place as the walk reaches them | `Resolver::broken`, `Resolver::dead_use`, `broken_member`, `prelude_broken` | Mutation (gap 11) | sets threaded through the walk with the `dead` set they refine |
+| A sorted `Vec` of statement starts read by `partition_point` to find the statement that holds a position | `dropped` | None | a binary search over a sorted list |
+| A memo `HashMap` of a unit's errors by the key of its text and build (`Query::Check`) | `Db::check` | Shared tables across pure calls (gap 2) | the memo of Gap 2, keyed by the text's digest |
+| `sort_by_key` on the tail `problems[at..]` of the package's problems, in place | `load` | Mutation (gap 11) | the unit's errors sorted as a list, then appended |
 
 ## Entries from POLY-nf-power-value (`crates/zed-kernel/src/poly.rs`)
 

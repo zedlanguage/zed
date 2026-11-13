@@ -26,10 +26,11 @@ use crate::{docs, interp, source, terminal};
 /// (`run::program`) holds the same unit.
 pub type Front = Result<(Vec<Stmt>, Arc<Unit>, Vec<Diagnostic>), Vec<Diagnostic>>;
 
-/// A unit's statements and its imports, each with the unit it names, the statement's text and
-/// the content address it is pinned to, if written (step L2.8), in text order; or the errors of
-/// the first phase that rejects it.
-pub type Parsed = Result<(Vec<Stmt>, Vec<Imported>), Vec<ast::Error>>;
+/// A unit's statements that parse and its imports, each with the unit it names, the statement's
+/// text and the content address it is pinned to, if written (step L2.8), in text order, and its
+/// declarations that do not parse (step L1.29d); or the errors of lexing, or of building the
+/// statements, with the syntax errors.
+pub type Parsed = Result<(Vec<Stmt>, Vec<Imported>, Broken), Vec<ast::Error>>;
 
 /// An import statement of a unit: the unit it names, the statement's text, its `;` included,
 /// and the content address it is pinned to, if written.
@@ -552,8 +553,8 @@ pub(crate) type Syntax = (Vec<lex::Token>, Vec<lex::Doc>, Vec<Stmt>);
 
 /// The declarations of a unit that did not parse (step L1.29d): the syntax error of each, and
 /// the names they would define, had they parsed.
-#[derive(Default)]
-pub(crate) struct Broken {
+#[derive(Default, Debug)]
+pub struct Broken {
     /// The syntax errors, in the order of the text.
     pub errors: Vec<ast::Error>,
     /// The names.
@@ -567,7 +568,8 @@ pub(crate) struct Broken {
 /// error). `zedc fmt` reads only it, and `compile` starts as it does, so `zedc run`, `zedc
 /// build`, `zedc test` and `zedc fmt` print a file's syntax errors alike.
 pub(crate) fn syntax(text: &str, lines: &source::Lines) -> Result<Syntax, Vec<Diagnostic>> {
-    let (syntax, broken) = recovered(text, lines)?;
+    let (syntax, broken) =
+        recovered(text).map_err(|e| placed(text, lines, &[], Severity::Rejection, e))?;
     if broken.errors.is_empty() {
         return Ok(syntax);
     }
@@ -575,15 +577,28 @@ pub(crate) fn syntax(text: &str, lines: &source::Lines) -> Result<Syntax, Vec<Di
 }
 
 /// The syntax of the unit `text` as [`syntax`] reads it, and the declarations that did not
-/// parse, which the statements leave out; or the diagnostics of lexing, or of building the
+/// parse, which the statements leave out; or the errors of lexing, or of building the
 /// statements that parse, with the syntax errors.
-fn recovered(text: &str, lines: &source::Lines) -> Result<(Syntax, Broken), Vec<Diagnostic>> {
-    let rejected = |errors| placed(text, lines, &[], Severity::Rejection, errors);
+fn recovered(text: &str) -> Result<(Syntax, Broken), Vec<ast::Error>> {
     let (tokens, docs) = work::stage(Stage::Lex, None, || lex::lex_with_docs(text))
-        .map_err(|e| rejected(vec![lex_error(text, e)]))?;
+        .map_err(|e| vec![lex_error(text, e)])?;
     let (tree, failed) = work::stage(Stage::Parse, None, || {
         crate::parse::parse_unit(text, &tokens, TOP)
     });
+    let built = work::stage(Stage::Syntax, None, || built(text, &tokens, &tree, failed));
+    let (stmts, broken) = built?;
+    Ok(((tokens, docs, stmts), broken))
+}
+
+/// The statements of the unit `text` built from its tokens `tokens` and its tree `tree`, and
+/// its declarations that `failed` holds, which do not parse ([`Broken`]); or the errors of
+/// building the statements, with the syntax errors, in text order.
+fn built(
+    text: &str,
+    tokens: &[lex::Token],
+    tree: &crate::parse::Tree,
+    failed: Vec<crate::parse::Error>,
+) -> Result<(Vec<Stmt>, Broken), Vec<ast::Error>> {
     let defines = failed
         .iter()
         .flat_map(|e| e.recovery.defines.iter().cloned())
@@ -592,18 +607,14 @@ fn recovered(text: &str, lines: &source::Lines) -> Result<(Syntax, Broken), Vec<
         .into_iter()
         .map(|e| ast::Error::of_parse(text, e))
         .collect();
-    let built = work::stage(Stage::Syntax, None, || {
-        ast::unit_all_errors(text, &tokens, &tree)
-    });
-    let stmts = match built {
-        Ok(stmts) => stmts,
+    match ast::unit_all_errors(text, tokens, tree) {
+        Ok(stmts) => Ok((stmts, Broken { errors, defines })),
         Err(mut built) => {
             built.extend(errors);
             built.sort_by_key(|e| e.span);
-            return Err(rejected(built));
+            Err(built)
         }
-    };
-    Ok(((tokens, docs, stmts), Broken { errors, defines }))
+    }
 }
 
 /// The lexical error `e` of `text` as an error of the source. The ASCII name it may offer for a
@@ -660,34 +671,118 @@ impl Unloaded {
 /// text (step L1.29d).
 pub(crate) fn compile(text: &str, build: &crate::build::Build) -> Front {
     let lines = source::Lines::new(text.as_bytes());
-    let ((tokens, docs, stmts), broken) = recovered(text, &lines)?;
-    if broken.errors.is_empty() {
-        return checked(text, &lines, &tokens, &docs, stmts, build);
+    match unplaced(text, build) {
+        Ok((stmts, mut unit)) => {
+            let warnings = std::mem::take(&mut unit.warnings);
+            let warnings = placed(text, &lines, &stmts, Severity::Warning, warnings);
+            Ok((stmts, Arc::new(unit), warnings))
+        }
+        Err((stmts, errors)) => Err(placed(text, &lines, &stmts, Severity::Rejection, errors)),
     }
-    let stmts = without_broken(text, stmts, &broken.defines);
-    let mut out = placed(text, &lines, &[], Severity::Rejection, broken.errors);
-    if let Err(rest) = checked(text, &lines, &tokens, &docs, stmts, build) {
-        out.extend(rest);
-    }
-    out.sort_by_key(|d| (d.line, d.col));
-    Err(out)
 }
 
+/// The errors [`compile`] rejects the unit `text` with, built for `build`, before they are
+/// placed: what a package build reports of a unit that compiles alone (step L1.29d), placed
+/// there with the unit's other problems. Empty when the unit compiles.
+pub(crate) fn rejection(text: &str, build: &crate::build::Build) -> Vec<ast::Error> {
+    unplaced(text, build)
+        .err()
+        .map_or_else(Vec::new, |(_, e)| e)
+}
+
+/// [`compile`] before its diagnostics are placed: the statements checked and the elaboration,
+/// or the statements the errors are placed among and the errors.
+fn unplaced(text: &str, build: &crate::build::Build) -> Checked {
+    let ((tokens, docs, stmts), broken) = recovered(text).map_err(|e| (Vec::new(), e))?;
+    if broken.errors.is_empty() {
+        return checked(text, &tokens, &docs, stmts, build);
+    }
+    let stmts = without_broken(text, stmts, &broken.defines);
+    let mut errors = broken.errors;
+    // A syntax error lies in no statement that parses, so the statements checked place
+    // every error as they place the rest. A stable sort, in the order of the text.
+    let stmts = match checked(text, &tokens, &docs, stmts, build) {
+        Ok((stmts, _)) => stmts,
+        Err((stmts, rest)) => {
+            errors.extend(rest);
+            stmts
+        }
+    };
+    errors.sort_by_key(|e| e.span.start);
+    Err((stmts, errors))
+}
+
+/// The statements of a unit checked and its elaboration, or the statements its errors are
+/// placed among and the errors, in the order they are reported.
+type Checked = Result<(Vec<Stmt>, Unit), (Vec<Stmt>, Vec<ast::Error>)>;
+
 /// The statements of a unit `text` with syntax errors that its checking reads: `stmts`, those
-/// that parse, but for each top-level statement that uses a name in `broken`, which a
-/// declaration that did not parse would define, and each that uses a name one of those
-/// defines, at any distance. A use of a name in `broken` that nothing defines so gets no
-/// error: its declaration has one (step L1.29d).
+/// that parse, but for those [`dropped`] leaves out. A use of a name in `broken` that nothing
+/// defines so gets no error: its declaration has one (step L1.29d).
+fn without_broken(text: &str, stmts: Vec<Stmt>, broken: &HashSet<String>) -> Vec<Stmt> {
+    let resolved = work::stage(Stage::Resolve, None, || {
+        resolve::resolve_in_text(&stmts, &Alone, Some(text))
+    });
+    let dropped = dropped(text, &stmts, &resolved, broken);
+    stmts
+        .into_iter()
+        .zip(dropped)
+        .filter_map(|(s, d)| (!d).then_some(s))
+        .collect()
+}
+
+/// The resolution of the unit `text` in its package, whose statements that parse are `stmts`,
+/// whose declarations that do not parse would define the names `broken`, and which reads the
+/// other units through `units`: of the statements [`dropped`] keeps, its exports holding as
+/// broken the names `broken` and those the statements left out define, which the unit then does
+/// not define, so its importers leave out the statements that use them (step L1.29d). A unit
+/// with no such name, and none from the units it reads, is resolved once, as before.
+// Complexity tradeoff: dropping a statement and resolving again until no further name is lost
+// costs O(r·d) for a resolution of cost r and a chain of d statements. Here a unit with a
+// broken name is resolved twice, once to find every statement to leave out ([`dropped`]) and
+// once over the rest, O(r), and the names its exports lose are found by one lookup each,
+// O(x log x) for x exports. A unit with none is resolved once.
+pub(crate) fn resolve_recovered(
+    text: &str,
+    stmts: &[Stmt],
+    broken: &HashSet<String>,
+    units: &dyn resolve::Units,
+) -> resolve::Resolved {
+    let all = resolve::resolve_in_text(stmts, units, Some(text));
+    if broken.is_empty() && all.res.broken.is_empty() {
+        return all;
+    }
+    let keep: Vec<bool> = dropped(text, stmts, &all, broken)
+        .into_iter()
+        .map(|d| !d)
+        .collect();
+    let mut r = resolve::resolve_kept(stmts, Some(&keep), units, Some(text));
+    let lost: Vec<String> = (all.res.exports.names())
+        .filter(|n| r.res.exports.get(n).is_none())
+        .map(String::from)
+        .collect();
+    r.res.exports.set_broken(broken.iter().cloned().chain(lost));
+    r
+}
+
+/// Which of `stmts`, the statements that parse of a unit `text` whose resolution is `resolved`,
+/// are left out of its checking: each top-level statement that uses a name in `broken`, which
+/// a declaration that did not parse would define, or a name an imported unit would define but
+/// for its syntax errors ([`resolve::Resolution::broken`]), and each that uses a name one of
+/// those defines, at any distance (step L1.29d).
 // Complexity tradeoff: dropping the statements with an unresolved use and resolving the rest
 // again until no new name goes unresolved is O(n·d) for n statements and a chain of d
 // statements each using the one before, O(n²) for a chain through the unit. Here one
 // resolution finds every use; each use across statements is listed under its name, and a
 // search from the statements with a broken use drops each statement once and reads each
 // listed use once, O((n + b + u) log n) for b binders and u uses, then one more resolution.
-fn without_broken(text: &str, stmts: Vec<Stmt>, broken: &HashSet<String>) -> Vec<Stmt> {
-    let resolve::Resolved { res, errors, .. } = work::stage(Stage::Resolve, None, || {
-        resolve::resolve_in_text(&stmts, &Alone, Some(text))
-    });
+fn dropped(
+    text: &str,
+    stmts: &[Stmt],
+    resolved: &resolve::Resolved,
+    broken: &HashSet<String>,
+) -> Vec<bool> {
+    let resolve::Resolved { res, errors, .. } = resolved;
     // The statement whose text holds position `at`, by the statements' starts in text order.
     let mut by_start: Vec<(usize, usize, usize)> = stmts
         .iter()
@@ -702,13 +797,15 @@ fn without_broken(text: &str, stmts: Vec<Stmt>, broken: &HashSet<String>) -> Vec
     };
     let mut dropped = vec![false; stmts.len()];
     let mut work = Vec::new();
-    for e in &errors {
+    let unresolved = errors.iter().filter_map(|e| {
         let name = &text[e.span.start..e.span.end];
-        let unresolved =
+        let undefined =
             e.message == resolve::undefined(name) || e.message == resolve::undefined_type(name);
-        if unresolved
-            && broken.contains(name)
-            && let Some(i) = owner(e.span.start)
+        (undefined && broken.contains(name)).then_some(e.span.start)
+    });
+    let imported = res.broken.iter().map(|span| span.start);
+    for at in unresolved.chain(imported) {
+        if let Some(i) = owner(at)
             && !std::mem::replace(&mut dropped[i], true)
         {
             work.push(i);
@@ -744,63 +841,50 @@ fn without_broken(text: &str, stmts: Vec<Stmt>, broken: &HashSet<String>) -> Vec
             }
         }
     }
-    stmts
-        .into_iter()
-        .zip(dropped)
-        .filter_map(|(s, d)| (!d).then_some(s))
-        .collect()
+    dropped
 }
 
-/// [`compile`] for the statements `stmts` of the unit `text`, its tokens `tokens` and its doc
+/// [`unplaced`] for the statements `stmts` of the unit `text`, its tokens `tokens` and its doc
 /// comments `docs`, which parse.
 fn checked(
     text: &str,
-    lines: &source::Lines,
     tokens: &[lex::Token],
     docs: &[lex::Doc],
     mut stmts: Vec<Stmt>,
     build: &crate::build::Build,
-) -> Front {
+) -> Checked {
     let resolved = work::stage(Stage::Resolve, None, || {
         resolve::resolve_text(&stmts, Some(text))
     });
     let mut res = match resolved {
         Ok(res) => res,
-        Err(errors) => return Err(placed(text, lines, &stmts, Severity::Rejection, errors)),
+        Err(errors) => return Err((stmts, errors)),
     };
     let misread = crate::build::read(&mut stmts, &mut res, build);
-    let all = |errors: Vec<ast::Error>| placed(text, lines, &stmts, Severity::Rejection, errors);
     if !misread.is_empty() {
-        return Err(all(misread));
+        return Err((stmts, misread));
     }
     // Doc comments are checked after parsing; their errors join elaboration's.
     let mut errors = work::stage(Stage::Docs, None, || docs::check(text, tokens, docs, &res));
     let elaborated = work::stage(Stage::Elaborate, None, || {
         elaborate_text(&stmts, &res, Some(text))
     });
-    let mut unit = match elaborated {
+    let unit = match elaborated {
         Ok(unit) if errors.is_empty() => unit,
-        Ok(_) => return Err(all(errors)),
+        Ok(_) => return Err((stmts, errors)),
         Err(es) => {
             errors.extend(es);
             errors.sort_by_key(|e| e.span);
-            return Err(all(errors));
+            return Err((stmts, errors));
         }
     };
     let refused = work::stage(Stage::Linear, None, || {
         linear_questions(text, tokens, &stmts, &unit)
     });
     if !refused.is_empty() {
-        return Err(all(refused));
+        return Err((stmts, refused));
     }
-    let warnings = placed(
-        text,
-        lines,
-        &stmts,
-        Severity::Warning,
-        std::mem::take(&mut unit.warnings),
-    );
-    Ok((stmts, Arc::new(unit), warnings))
+    Ok((stmts, unit))
 }
 
 /// The operands of the outermost `&&` of `e`, in written order, each as `text` writes it, a
@@ -1299,20 +1383,15 @@ pub(crate) fn error(span: Span, message: String) -> Error {
 /// [`Query::Parse`]: crate::query::Query::Parse
 pub(crate) fn parse_unit(text: &str) -> Parsed {
     let tokens = lex::lex(text).map_err(|e| vec![lex_error(text, e)])?;
-    // Every declaration that does not parse has its error (step L1.29d).
+    // Every declaration that does not parse has its error, and the others are read
+    // (step L1.29d).
     let (tree, failed) = crate::parse::parse_unit(text, &tokens, TOP);
-    if !failed.is_empty() {
-        return Err(failed
-            .into_iter()
-            .map(|e| ast::Error::of_parse(text, e))
-            .collect());
-    }
-    let stmts = ast::unit_all_errors(text, &tokens, &tree)?;
+    let (stmts, broken) = built(text, &tokens, &tree, failed)?;
     // The imports are found by the resolver's own walk, which meets every import in every
     // scope; read alone, the unit resolves with no other unit, and only the imports are kept.
     let mut imports = resolve::resolve_in(&stmts, &Alone).res.units;
     imports.sort_by_key(|i| i.1);
-    Ok((stmts, imports))
+    Ok((stmts, imports, broken))
 }
 
 /// Writes `n` copies of `c`. A width in a format string takes at most 2^16 - 1, so a mark at a

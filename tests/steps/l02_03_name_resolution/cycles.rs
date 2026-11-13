@@ -210,7 +210,8 @@ fn a_unit_that_imports_itself_on_a_cycle_is_reported_for_both() {
 #[test]
 fn units_outside_cycles_are_ordered_and_reported_the_same_for_every_order_of_the_roots() {
     // Two units that do not parse, a cycle, and units that import them: the problems come in
-    // order of their files, and the units in one order, whatever the roots' order.
+    // order of their files, and the units in one order, whatever the roots' order. `sales`
+    // imports a name of `tax`, which does not parse, and is given no error for it (L1.29d).
     let fs = [
         ("report.zed", "import sales.{total};\nshown = total;\n"),
         ("sales.zed", "import tax.{rate};\ntotal = rate;\n"),
@@ -222,11 +223,7 @@ fn units_outside_cycles_are_ordered_and_reported_the_same_for_every_order_of_the
     let roots = ["report", "draft", "left", "tax"];
     let m = every_order(&fs, &roots);
     let files_of: Vec<&str> = m.iter().map(|l| l.split(':').next().unwrap()).collect();
-    assert_eq!(
-        files_of,
-        ["draft.zed", "left.zed", "sales.zed", "tax.zed"],
-        "{m:?}"
-    );
+    assert_eq!(files_of, ["draft.zed", "left.zed", "tax.zed"], "{m:?}");
     let files = files(&fs);
     let unit_order = |roots: &[&str]| -> Vec<String> {
         let p = load(&mut Db::new(), &files, roots);
@@ -507,7 +504,7 @@ fn a_cycle_beside_a_unit_that_does_not_parse_and_a_root_with_no_file_is_reported
     let files_of: Vec<&str> = m.iter().map(|l| l.split(':').next().unwrap()).collect();
     assert_eq!(
         files_of,
-        ["draft.zed", "missing.zed", "orders.zed", "stock.zed"],
+        ["draft.zed", "missing.zed", "orders.zed"],
         "{m:?}"
     );
     assert_eq!(
@@ -515,18 +512,12 @@ fn a_cycle_beside_a_unit_that_does_not_parse_and_a_root_with_no_file_is_reported
         "missing.zed: there is no unit `missing`: no file `missing.zed` under the root"
     );
     assert_eq!(m[2], cycle);
-    assert!(
-        m[3].starts_with(
-            "stock.zed:2:1: the unit `draft` cannot be imported: the file `draft.zed` does not \
-             parse"
-        ),
-        "{m:?}"
-    );
-    // Either unit of the cycle alone: the cycle, the import of `draft` and `draft`'s own error.
+    // Either unit of the cycle alone: the cycle and `draft`'s own error; the import of `draft`,
+    // which does not parse, is given no error (L1.29d).
     let files = files(&fs);
     for r in ["orders", "stock"] {
         let alone = mistakes(&load(&mut Db::new(), &files, &[r]));
-        assert_eq!(alone, [&*m[0], &m[2], &m[3]], "the unit `{r}` alone");
+        assert_eq!(alone, [&*m[0], &m[2]], "the unit `{r}` alone");
     }
 }
 

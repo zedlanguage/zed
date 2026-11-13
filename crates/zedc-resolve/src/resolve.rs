@@ -26,7 +26,7 @@
 //! (`crate::unit`) gives each unit the exports of the units it imports, in an order where those
 //! are resolved first; a unit read alone imports nothing.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -194,6 +194,10 @@ pub struct Resolution {
     /// call or an operator in it, a branch of an `if`, a block's result or a hole of a string,
     /// at any depth. In written order.
     pub flows: Vec<(Span, usize)>,
+    /// Each use of a name that an imported unit would define but for its syntax errors
+    /// ([`Exports`], [`Refused::Unknown`]), by its text: it has no error, and the statement
+    /// that holds it is not checked (step L1.29d).
+    pub broken: Vec<Span>,
 }
 
 /// A region of value flow whose loose atoms reach a handler (DESIGN.md sec:type_resolution).
@@ -229,18 +233,28 @@ pub struct Export {
     pub local: bool,
 }
 
-/// What a unit's top level defines: each name, by name. It holds no text position, so an edit
-/// that moves or rewrites a definition but keeps its name, its kind and its `local` leaves the
-/// exports, and so every importer's resolution, as they were.
+/// What a unit's top level defines: each name, by name, and the names it would define but for
+/// its syntax errors (step L1.29d). It holds no text position, so an edit that moves or
+/// rewrites a definition but keeps its name, its kind and its `local` leaves the exports, and
+/// so every importer's resolution, as they were.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Exports {
     names: BTreeMap<String, Export>,
+    /// The names a declaration of the unit that does not parse would define, or a declaration
+    /// left unchecked since it uses one, and that nothing of the unit defines: an importer's
+    /// use of one gets no error, and its statement is not checked ([`Resolution::broken`]).
+    broken: BTreeSet<String>,
 }
 
 impl Exports {
     /// What the unit defines as `name`, if anything.
     pub fn get(&self, name: &str) -> Option<Export> {
         self.names.get(name).copied()
+    }
+
+    /// The names the unit defines, in order.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.names.keys().map(String::as_str)
     }
 
     /// How many names the unit defines.
@@ -262,15 +276,36 @@ impl Exports {
             .or_insert(Export { kind, local });
     }
 
-    /// The names in order, each as its length, its bytes, its kind and `local`: what an
-    /// importer's resolution reads of the unit, encoded so that two exports have equal bytes
-    /// only when they are equal.
+    /// Records the names `broken` that declarations of the unit that do not parse would
+    /// define, but for those the unit defines.
+    pub fn set_broken(&mut self, broken: impl IntoIterator<Item = String>) {
+        self.broken = broken
+            .into_iter()
+            .filter(|n| !self.names.contains_key(n))
+            .collect();
+    }
+
+    /// Whether `name` is a name a declaration of the unit that does not parse would define,
+    /// which the unit does not define.
+    pub fn is_broken(&self, name: &str) -> bool {
+        self.broken.contains(name)
+    }
+
+    /// The names in order, each as its length, its bytes, its kind and `local`, then the
+    /// broken names in order, each after the byte 255, which no kind is: what an importer's
+    /// resolution reads of the unit, encoded so that two exports have equal bytes only when
+    /// they are equal.
     pub fn bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
         for (name, e) in &self.names {
             out.extend_from_slice(&(name.len() as u64).to_le_bytes());
             out.extend_from_slice(name.as_bytes());
             out.extend_from_slice(&[e.kind as u8, u8::from(e.local)]);
+        }
+        for name in &self.broken {
+            out.extend_from_slice(&(name.len() as u64).to_le_bytes());
+            out.extend_from_slice(name.as_bytes());
+            out.push(u8::MAX);
         }
         out
     }
@@ -285,6 +320,10 @@ pub enum Refused {
     /// strongly connected component (`unit::order`): the import is rejected with no error of
     /// its own.
     OnCycle,
+    /// The unit's text does not lex, or its statements cannot be built, which is reported in
+    /// it: every name it might define is unknown, so the import gets no error, and each use
+    /// of a name it brings in is a broken use ([`Resolution::broken`]).
+    Unknown,
 }
 
 /// The other units a unit's resolution reads.
@@ -665,6 +704,19 @@ pub fn resolve_in(unit: &[Stmt], units: &dyn Units) -> Resolved {
 
 /// [`resolve_in`], with the unit's text when it is known, as [`resolve_text`].
 pub fn resolve_in_text(unit: &[Stmt], units: &dyn Units, text: Option<&str>) -> Resolved {
+    resolve_kept(unit, None, units, text)
+}
+
+/// [`resolve_in_text`] for the statements of `unit` that `keep` marks, one flag per statement,
+/// or for all when `keep` is `None`: the unit as if the others were not written, read with no
+/// copy of the statements kept (step L1.29d leaves out those that use a name a declaration that
+/// does not parse would define).
+pub fn resolve_kept(
+    unit: &[Stmt],
+    keep: Option<&[bool]>,
+    units: &dyn Units,
+    text: Option<&str>,
+) -> Resolved {
     let mut r = Resolver {
         units: Some(units),
         text,
@@ -674,7 +726,7 @@ pub fn resolve_in_text(unit: &[Stmt], units: &dyn Units, text: Option<&str>) -> 
     // inner what it declares (tier 2), which shadows it.
     r.scopes.push(Vec::new());
     r.scopes.push(Vec::new());
-    r.walk(Task::Unit(unit));
+    r.walk(Task::Unit(unit, keep));
     r.above_errors();
     r.errors.sort_by_key(|e| e.span);
     r.later.sort_by_key(|e| e.span);
@@ -742,6 +794,9 @@ struct Resolver<'u> {
     local: bool,
     /// The binders of imports that failed: their uses are not reported again.
     dead: HashSet<usize>,
+    /// Those of `dead` that a unit would define but for its syntax errors: each use of one is
+    /// recorded in [`Resolution::broken`].
+    broken: HashSet<usize>,
     /// The type variables a bounds clause around the type being walked binds, by name.
     tvars: HashMap<String, TypeVar>,
     /// The function types around the type being walked, outermost first, by their text.
@@ -1279,7 +1334,9 @@ impl Resolver<'_> {
         }
         let message =
             match self.find(name) {
-                Some(Found::Bound(ids)) if self.dead.contains(&ids[0]) => return,
+                Some(Found::Bound(ids)) if self.dead.contains(&ids[0]) => {
+                    return self.dead_use(ids[0], span);
+                }
                 Some(Found::Bound(ids)) if self.out.binders[ids[0]].kind == Kind::Unit => {
                     let unit = &self.out.imports[&ids[0]];
                     format!(
@@ -1304,11 +1361,12 @@ impl Resolver<'_> {
                 None if name == MAIN_ARGS => return self.errors.push(main_args_elsewhere(span)),
                 None => match later_type_layer(name) {
                     Some(_) => not_yet(&format!("the prelude type `{name}`")),
-                    None => match self.main_params.iter().find(|(body, m)| {
+                    None => match self.main_params.iter().any(|(body, m)| {
                         m == name && body.start <= span.start && span.end <= body.end
                     }) {
-                        Some(_) => return self.errors.push(main_param_alone(name, span)),
-                        None => undefined(name),
+                        true => return self.errors.push(main_param_alone(name, span)),
+                        false if self.prelude_broken(name, span) => return,
+                        false => undefined(name),
                     },
                 },
             };
@@ -1347,11 +1405,14 @@ impl Resolver<'_> {
         }
         self.out.uses.insert(q_span, Ref::Bound(ids));
         if self.dead.contains(&id) {
+            self.dead_use(id, span);
             return true;
         }
         let unit = self.out.imports[&id].clone();
         let import = self.out.binders[id].span;
-        if self.export(&unit, name, span, import).is_some() {
+        if self.export(&unit, name, span, import).is_none() {
+            self.broken_member(&unit, name, span);
+        } else {
             self.out.uses.insert(
                 span,
                 Ref::Unit {
@@ -1371,6 +1432,8 @@ impl Resolver<'_> {
         let exports = self.units.and_then(|u| u.exports(unit).ok())?;
         let message = match exports.get(name) {
             Some(e) if !e.local => return Some(e),
+            // The unit's declaration of `name` does not parse, which is reported there.
+            None if exports.is_broken(name) => return None,
             Some(_) => format!(
                 "`{name}` is declared `local` in the unit `{unit}`, so no other unit sees it"
             ),
@@ -1396,6 +1459,7 @@ impl Resolver<'_> {
     fn import(&mut self, i: &Import, span: Span) {
         let unit: Arc<str> = i.path.as_str().into();
         self.out.units.push((unit.clone(), span, i.pin));
+        let mut unknown = false;
         let exports = match self.units.map(|u| u.exports(&i.path)) {
             Some(Ok(e)) => Some(e),
             Some(Err(Refused::Because(why))) => {
@@ -1409,6 +1473,10 @@ impl Resolver<'_> {
                 None
             }
             Some(Err(Refused::OnCycle)) => None,
+            Some(Err(Refused::Unknown)) => {
+                unknown = true;
+                None
+            }
             None => None,
         };
         let qualifier = match &i.kind {
@@ -1422,6 +1490,9 @@ impl Resolver<'_> {
                     if !matches!(found, Some(Some(_))) {
                         self.dead.insert(id);
                     }
+                    if unknown || exports.is_some_and(|e| e.is_broken(n)) {
+                        self.broken.insert(id);
+                    }
                 }
                 return;
             }
@@ -1429,6 +1500,38 @@ impl Resolver<'_> {
         let id = self.bind_import(qualifier, span, Kind::Unit, &unit);
         if exports.is_none() {
             self.dead.insert(id);
+        }
+        if unknown {
+            self.broken.insert(id);
+        }
+    }
+
+    /// Whether `name`, used at `span` and found nowhere, is a name the prelude unit would
+    /// define but for its syntax errors: then the use is recorded as a broken use.
+    fn prelude_broken(&mut self, name: &str, span: Span) -> bool {
+        let prelude = self.units.and_then(|u| u.prelude());
+        let broken = prelude.is_some_and(|(_, e)| e.is_broken(name));
+        if broken {
+            self.out.broken.push(span);
+        }
+        broken
+    }
+
+    /// The use at `span` of `name` through a qualifier of `unit`, which does not define it:
+    /// recorded as a broken use when `unit` would define it but for its syntax errors.
+    fn broken_member(&mut self, unit: &str, name: &str, span: Span) {
+        let units = self.units.and_then(|u| u.exports(unit).ok());
+        if units.is_some_and(|e| e.is_broken(name)) {
+            self.out.broken.push(span);
+        }
+    }
+
+    /// The use at `span` of the binder `id` of an import that failed: recorded as a broken use
+    /// when the binder is one a unit would define but for its syntax errors, else nothing,
+    /// since the import has its error.
+    fn dead_use(&mut self, id: usize, span: Span) {
+        if self.broken.contains(&id) {
+            self.out.broken.push(span);
         }
     }
 
@@ -1440,8 +1543,12 @@ impl Resolver<'_> {
         let mut todo = vec![root];
         while let Some(task) = todo.pop() {
             match task {
-                Task::Unit(stmts) => self.stmts(stmts, true, &mut todo),
-                Task::Stmts(stmts) => self.stmts(stmts, false, &mut todo),
+                Task::Unit(stmts, None) => self.stmts(stmts.iter(), true, &mut todo),
+                Task::Unit(stmts, Some(keep)) => {
+                    let kept = stmts.iter().zip(keep).filter(|(_, k)| **k);
+                    self.stmts(kept.map(|(s, _)| s), true, &mut todo);
+                }
+                Task::Stmts(stmts) => self.stmts(stmts.iter(), false, &mut todo),
                 Task::Stmt(s, top) => self.stmt(s, top, &mut todo),
                 Task::Function {
                     params,
@@ -1501,11 +1608,13 @@ impl Resolver<'_> {
                 Task::Member(span, name) => {
                     if name.ends_with('\'') {
                         self.later(span, &format!("the primed field `{name}`"));
-                    } else if let Some(Found::Bound(ids)) = self.find(name)
-                        && !self.dead.contains(&ids[0])
-                    {
-                        self.order(name, span, &ids);
-                        self.out.uses.insert(span, Ref::Bound(ids));
+                    } else if let Some(Found::Bound(ids)) = self.find(name) {
+                        if self.dead.contains(&ids[0]) {
+                            self.dead_use(ids[0], span);
+                        } else {
+                            self.order(name, span, &ids);
+                            self.out.uses.insert(span, Ref::Bound(ids));
+                        }
                     }
                 }
                 Task::Close => self.close(),
@@ -1532,11 +1641,16 @@ impl Resolver<'_> {
     /// The statements of the innermost scope: their binders first, so that a use finds its
     /// binder wherever it stands, and a use above its definition is reported as one.
     /// They are the unit's own statements when `top` holds.
-    fn stmts<'a>(&mut self, stmts: &'a [Stmt], top: bool, todo: &mut Vec<Task<'a>>) {
+    fn stmts<'a>(
+        &mut self,
+        stmts: impl DoubleEndedIterator<Item = &'a Stmt> + Clone,
+        top: bool,
+        todo: &mut Vec<Task<'a>>,
+    ) {
         let mut families = HashSet::new();
         let first = self.out.binders.len();
         let mut items = Vec::new();
-        for s in stmts {
+        for s in stmts.clone() {
             if !matches!(
                 s.kind,
                 StmtKind::Return(_)
@@ -1562,7 +1676,7 @@ impl Resolver<'_> {
         if !top {
             self.list(first, items);
         }
-        todo.extend(stmts.iter().rev().map(|s| Task::Stmt(s, top)));
+        todo.extend(stmts.rev().map(|s| Task::Stmt(s, top)));
     }
 
     /// Binds the names the statement `s` declares. Resolution refuses the forms of layer L6
@@ -2555,7 +2669,9 @@ impl Resolver<'_> {
             return self.qualified_type(q, name, span);
         }
         let message = match self.find(n) {
-            Some(Found::Bound(ids)) if self.dead.contains(&ids[0]) => return,
+            Some(Found::Bound(ids)) if self.dead.contains(&ids[0]) => {
+                return self.dead_use(ids[0], span);
+            }
             Some(Found::Bound(ids)) if self.out.binders[ids[0]].kind.is_type() => {
                 self.order(n, span, &ids);
                 self.out.uses.insert(span, Ref::Bound(ids));
@@ -2598,6 +2714,7 @@ impl Resolver<'_> {
             None if n == MAIN_ARGS => return self.errors.push(main_args_elsewhere(span)),
             Some(Found::Word(_)) | None => match later_type_layer(n) {
                 Some(_) => not_yet(&format!("the prelude type `{n}`")),
+                None if self.prelude_broken(n, span) => return,
                 None => undefined_type(n),
             },
         };
@@ -2638,13 +2755,15 @@ impl Resolver<'_> {
             });
         }
         let message = match self.find(q) {
-            Some(Found::Bound(ids)) if self.dead.contains(&ids[0]) => return,
+            Some(Found::Bound(ids)) if self.dead.contains(&ids[0]) => {
+                return self.dead_use(ids[0], span);
+            }
             Some(Found::Bound(ids)) if self.out.binders[ids[0]].kind == Kind::Unit => {
                 let id = ids[0];
                 let unit = self.out.imports[&id].clone();
                 let import = self.out.binders[id].span;
                 match self.export(&unit, name, span, import) {
-                    None => return,
+                    None => return self.broken_member(&unit, name, span),
                     Some(e) if e.kind.is_type() => {
                         self.out.uses.insert(
                             span,
@@ -2800,8 +2919,8 @@ impl Resolver<'_> {
 /// A piece of the walk still to do, kept on the walk's stack.
 #[derive(Clone, Copy)]
 enum Task<'a> {
-    /// The unit's own statements.
-    Unit(&'a [Stmt]),
+    /// The unit's own statements, and which of them are kept, if not all.
+    Unit(&'a [Stmt], Option<&'a [bool]>),
     Stmts(&'a [Stmt]),
     /// A statement, and whether it is one of the unit's own.
     Stmt(&'a Stmt, bool),

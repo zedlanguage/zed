@@ -178,9 +178,14 @@ fences changed, so test `l01_07` needs its expected output accepted at the next 
   failing declaration once with the type errors of the declarations that parse, and a use of a
   name a failing declaration would define is not reported (`parse::recover`, `front::recovered`,
   `front::without_broken`); each repair re-parses only the failing declaration (COMPLEXITY.md
-  F190). `zedc fmt` and the manifest list every syntax error. Open: a unit of a package build
-  with syntax errors reports them alone and checks none of its declarations (ledger
-  L1.29d-package).
+  F190). `zedc fmt` and the manifest list every syntax error.
+- Done: **L1.29d-package**, syntax errors across a package: one build reports every unit's
+  syntax errors, each once in its own file, and the type errors of each unit that imports
+  nothing and sees no prelude unit; an importer gets no error for a unit with syntax errors,
+  and its statements that use a name that unit would define but for them, or a name it leaves
+  unchecked, are not checked, through any number of units (`front::resolve_recovered`,
+  `front::dropped`, `Exports::set_broken`, `Refused::Unknown`, `Db::check`); the "does not
+  parse" importer error is gone; batch and single-file checking agree (COMPLEXITY.md F192).
 - Done: **L1.30**, the compiler as queries (`zedc::query`): the front end keyed by the text,
   each table row keyed by the definitions its check reaches, so an edit reruns only the rows
   whose definitions changed; `zedc test` shares one database across its files.
@@ -2096,7 +2101,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| L1.29d-package | impl attempt 1 | 2026-11-12 20:48 | tests pass: 113 targeted pieces 0 failed (l01_29, l02_03, l02_08, l01_30, l01_07, zedc libs) load 35-42; red on old code: 10/10 package_recovery + 3 l02_03; con |
 | LIT-tuple-branch-carrier | impl attempt 1 | 2026-11-12 20:34 | started; worktree /home/luke/Work/wt/lit-tuple-branch on origin/main 0c230df62 |
 | MAIN-red-m0_01-s_01f | impl attempt 1 | 2026-11-12 21:37 | folders renamed: tests/steps/l00_poly_nf is now tests/steps/l03_09_egraph (POLY-nf-W: rebase onto the new folder name), diag_control is now l02_12_diagnostics;  |
 | MSG-literal-type-huge-power | impl attempt 1 | 2026-11-12 22:00 | negative control (run once, not committed): without the walk.rs change the 3 new tests fail; scaling of the checking of if 3^(200n)+1 took 6.1 times the bytes a |

@@ -85,21 +85,18 @@ fn an_import_of_a_unit_with_no_file_names_the_file_looked_for() {
 }
 
 #[test]
-fn a_unit_that_does_not_parse_reports_its_own_error_and_its_importer_one() {
+fn a_unit_that_does_not_parse_reports_its_own_error_and_its_importer_none() {
+    // The syntax error is reported once, in its own file; the importer's use of `x`, which
+    // the broken declaration would define, is not checked (step L1.29d).
     let p = package(&[
         ("broken.zed", "x = ;\n"),
         ("main.zed", "import broken.{x};\ny = x;\n"),
     ]);
     let m = mistakes(&p);
-    assert_eq!(m.len(), 2, "{m:?}");
+    assert_eq!(m.len(), 1, "{m:?}");
     assert!(
         m[0].starts_with("broken.zed:1:5: Syntax error at `;`."),
         "{m:?}"
-    );
-    assert_eq!(
-        m[1],
-        "main.zed:1:1: the unit `broken` cannot be imported: the file `broken.zed` does not \
-         parse, so the names it defines are not known."
     );
 }
 

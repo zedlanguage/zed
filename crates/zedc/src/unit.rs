@@ -35,7 +35,7 @@ use crate::parse::{TOP, parse_unit};
 use crate::pin::{self, Check, Edit, PIN_FILE, PRELUDE, Pins};
 use crate::place::{MANIFEST, Place};
 use crate::query::{self, Db};
-use crate::resolve::{self, Exports, Refused, Resolved, Units};
+use crate::resolve::{Exports, Refused, Resolved, Units};
 use crate::source;
 use crate::suppress::{InFile, Severity, Suppress, addresses};
 
@@ -452,7 +452,7 @@ impl Package {
                 }
             };
             let stmts = match self.unit_of_file(name).and_then(|u| u.parsed.as_deref()) {
-                Some(Ok((stmts, _))) if name != MANIFEST => &stmts[..],
+                Some(Ok((stmts, _, _))) if name != MANIFEST => &stmts[..],
                 _ => &[],
             };
             let lines = source::Lines::new(text.as_bytes());
@@ -615,7 +615,9 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
         if let Some(Ok(t)) = &text {
             let parsed = db.parse(t);
             match &*parsed {
-                Ok((_, imports)) => {
+                // A unit with syntax errors has its other statements read: their imports are
+                // followed, and the errors reported with the unit's others (step L1.29d).
+                Ok((_, imports, _)) => {
                     for (unit, span, _) in imports {
                         let j = add(&mut pkg, &mut todo, unit);
                         edges[i].push((j, *span));
@@ -692,9 +694,15 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
         let Some(parsed) = pkg.units[u].parsed.clone() else {
             continue;
         };
-        let Ok((stmts, _)) = &*parsed else {
+        let Ok((stmts, _, broken)) = &*parsed else {
             continue;
         };
+        // A unit that imports nothing and sees no prelude unit compiles alone, and is checked
+        // as it is alone, so its type errors are reported too (step L1.29d); the others' wait
+        // for their imports to be linked (step L2.4). Complexity tradeoff: such a unit is
+        // compiled once for its errors, memoized by its text (`Db::check`), O(c) for a compile of
+        // cost c, which an address of a rejection of the unit costs as well.
+        let alone = edges[u].is_empty() && (prelude.is_none() || bare[u]);
         let mut deps: Vec<Dep> = Vec::new();
         let mut named = HashSet::new();
         for &(v, _) in &edges[u] {
@@ -711,10 +719,9 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
                     because(format!("there is no file `{}` under the root", dep.file))
                 }
                 (None, Some(Err(why)), _) => because(unreadable(&dep.file, why)),
-                (None, Some(Ok(_)), Some(p)) if p.is_err() => because(format!(
-                    "the file `{}` does not parse, so the names it defines are not known",
-                    dep.file
-                )),
+                // A unit whose statements cannot be read has its own errors; the uses of the
+                // names it would define are not checked (step L1.29d).
+                (None, Some(Ok(_)), Some(p)) if p.is_err() => Err(Refused::Unknown),
                 (None, _, _) => {
                     unreachable!("a unit's imports outside its component are put before it")
                 }
@@ -734,6 +741,7 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
                 Ok(_) => Read::Unit(&numbers[pkg.index[path]]),
                 Err(Refused::Because(why)) => Read::Failed(why),
                 Err(Refused::OnCycle) => Read::OnCycle,
+                Err(Refused::Unknown) => Read::Unknown,
             };
             push_read(&mut parts, path, read);
         }
@@ -742,13 +750,25 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
         }
         let k = query::key("resolve", &parts);
         let linked = Linked { deps, prelude };
-        let r = db.resolve(k, || resolve::resolve_in_text(stmts, &linked, Some(text)));
+        let r = db.resolve(k, || {
+            front::resolve_recovered(text, stmts, &broken.defines, &linked)
+        });
         let file = &pkg.units[u].file;
-        for e in r.errors.iter().chain(&r.later) {
-            pkg.problems.push(Problem {
-                file: file.clone(),
-                error: e.clone(),
-            });
+        let problem = |e: &Error| Problem {
+            file: file.clone(),
+            error: e.clone(),
+        };
+        if alone {
+            pkg.problems.extend(db.check(text).iter().map(problem));
+        } else {
+            // A unit with syntax errors has them and its others in the order of the text, as
+            // `front::compile` gives them. A stable sort, O(e log e) for its e errors.
+            let at = pkg.problems.len();
+            let errors = broken.errors.iter().chain(&r.errors).chain(&r.later);
+            pkg.problems.extend(errors.map(problem));
+            if !broken.errors.is_empty() {
+                pkg.problems[at..].sort_by_key(|p| p.error.span.start);
+            }
         }
         numbers[u] = db.exports_number(&r.res.exports).to_le_bytes();
         pkg.units[u].resolved = Some(r);
@@ -775,7 +795,7 @@ fn pin_units(db: &mut Db, pkg: &mut Package, prelude: Option<(usize, Span)>) {
         let Some(parsed) = pkg.units[u].parsed.clone() else {
             continue;
         };
-        let Ok((_, imports)) = &*parsed else {
+        let Ok((_, imports, _)) = &*parsed else {
             continue;
         };
         let Some(Ok(text)) = pkg.units[u].text.clone() else {
@@ -1134,13 +1154,15 @@ fn cycle_error(
 }
 
 /// What a unit's resolution reads of another unit: an import resolved to the number of its
-/// exports, an import that failed and why, the prelude unit with the number of its exports, or
-/// an import on a cycle, which fails with no error of its own.
+/// exports, an import that failed and why, the prelude unit with the number of its exports, an
+/// import on a cycle, which fails with no error of its own, or an import of a unit whose
+/// statements cannot be read, which has none either.
 enum Read<'a> {
     Unit(&'a [u8; 8]),
     Failed(&'a str),
     Prelude(&'a [u8; 8]),
     OnCycle,
+    Unknown,
 }
 
 /// Appends to the parts of a resolve key what the resolution reads of the unit `path`: its
@@ -1154,6 +1176,7 @@ fn push_read<'a>(parts: &mut Vec<&'a [u8]>, path: &'a str, read: Read<'a>) {
         Read::Failed(why) => parts.extend([&[1][..], why.as_bytes()]),
         Read::Prelude(n) => parts.extend([&[2][..], n]),
         Read::OnCycle => parts.push(&[3]),
+        Read::Unknown => parts.push(&[4]),
     }
 }
 
@@ -1203,7 +1226,7 @@ pub fn package_report(
         return Ok(None);
     };
     let mut db = Db::for_build(build.clone());
-    let imports = matches!(&*db.parse(text), Ok((_, i)) if !i.is_empty());
+    let imports = matches!(&*db.parse(text), Ok((_, i, _)) if !i.is_empty());
     let dir = Dir(root);
     let prelude = match dir.read(MANIFEST) {
         Some(Ok(m)) => !matches!(manifest(&m), Ok(Manifest { prelude: None, .. })),
@@ -1255,33 +1278,36 @@ mod tests {
     /// Eight bytes, each the tag of an import on a cycle.
     const THREES: [u8; 8] = [3; 8];
 
-    /// The `i`-th of 18 reads: of the unit `a`, or of one whose path is the tag byte 1 or 3, each
-    /// a resolved unit, a failure whose text is empty or one of those tag bytes, the prelude, or
-    /// an import on a cycle.
+    /// The `i`-th of 32 reads: of the unit `a`, or of one whose path is the tag byte 1, 3 or 4,
+    /// each a resolved unit, a failure whose text is empty or one of the tag bytes 1, 3 and 4,
+    /// the prelude, an import on a cycle, or an import of a unit whose statements cannot be read.
     fn nth_read(i: usize) -> (&'static str, Read<'static>) {
-        let path = ["a", "\u{1}", "\u{3}"][i / 6];
-        let read = match i % 6 {
+        let path = ["a", "\u{1}", "\u{3}", "\u{4}"][i / 8];
+        let read = match i % 8 {
             0 => Read::Unit(&THREES),
             1 => Read::Failed(""),
             2 => Read::Failed("\u{1}"),
             3 => Read::Failed("\u{3}"),
-            4 => Read::Prelude(&THREES),
-            _ => Read::OnCycle,
+            4 => Read::Failed("\u{4}"),
+            5 => Read::Prelude(&THREES),
+            6 => Read::OnCycle,
+            _ => Read::Unknown,
         };
         (path, read)
     }
 
     #[test]
     fn no_two_lists_of_reads_share_a_resolve_key() {
-        // Every list of up to three of the reads: an import on a cycle, the tag 3 with nothing
-        // after it, never shares a key with a failure whose text is empty or tag bytes, nor
-        // with a read of a unit whose path is a tag after it.
+        // Every list of up to three of the reads: an import on a cycle or of a unit whose
+        // statements cannot be read, the tag 3 or 4 with nothing after it, never shares a key
+        // with a failure whose text is empty or tag bytes, nor with a read of a unit whose path
+        // is a tag after it.
         let mut lists: Vec<Vec<usize>> = vec![Vec::new()];
         let mut from = 0;
         for _ in 0..3 {
             let to = lists.len();
             for l in from..to {
-                for i in 0..18 {
+                for i in 0..32 {
                     let mut next = lists[l].clone();
                     next.push(i);
                     lists.push(next);
@@ -1300,6 +1326,6 @@ mod tests {
                 panic!("the reads {:?} and {l:?} share a key", lists[m]);
             }
         }
-        assert_eq!(seen.len(), 1 + 18 + 18 * 18 + 18 * 18 * 18);
+        assert_eq!(seen.len(), 1 + 32 + 32 * 32 + 32 * 32 * 32);
     }
 }

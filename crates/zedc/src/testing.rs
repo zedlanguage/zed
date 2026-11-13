@@ -133,7 +133,9 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, Accepted
             // A rejected unit runs no table, and a row that does not run does not pass (DESIGN.md
             // L1.21: no check passes on a fraction of its cases), so each row fails. A unit the
             // parser rejects has no rows to show.
-            if let Ok((stmts, _)) = &*db.parse(text) {
+            if let Ok((stmts, _, broken)) = &*db.parse(text)
+                && broken.errors.is_empty()
+            {
                 let lines = source::Lines::new(text.as_bytes());
                 for s in stmts {
                     let StmtKind::Function(f) = &s.kind else {

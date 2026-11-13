@@ -127,7 +127,7 @@ fn a_manifest_that_is_refused_stops_the_package() {
 fn a_prelude_unit_name_that_is_no_type_stands_where_a_type_is_written() {
     let p = package(&[
         ("zed.manifest", "prelude = \"std.prelude\";\n"),
-        ("std/prelude.zed", "scale = 1.0;\n"),
+        ("std/prelude.zed", "scale = 1.0f64;\n"),
         ("main.zed", "f(positional a: scale) = a;\n"),
     ]);
     // Before: "the type `scale` is not defined: no type in scope has this name, and the

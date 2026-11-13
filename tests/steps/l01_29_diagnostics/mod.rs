@@ -28,6 +28,7 @@ mod neglit;
 mod offered_repairs;
 mod order;
 mod overload_cycles;
+mod package_recovery;
 mod printed;
 mod quoted;
 mod rare;
