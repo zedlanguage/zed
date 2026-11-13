@@ -2042,12 +2042,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | FLOAT-f32 | impl attempt 1 | 2026-11-05 04:07 | negative control: O(n^2) in Value::float32 makes the f32 chain scaling test fail at 24.7x (limit 12.8x); reverted, not committed |
-| MSG-fixnote-huge-value | running | 2026-11-12 20:52 | spawned / 55.25 |
+| MSG-fixnote-huge-value | impl attempt 1 | 2026-11-12 20:52 | started; worktree wt/msg-fixnote-huge |
 | MSG-is-repair-v | running | 2026-11-12 17:32 |  |
 | MSG-lines-headline | running | 2026-11-12 17:32 |  |
 | MSG-width-headline | running | 2026-11-12 17:32 |  |
-| PERF-l139-family | impl attempt 1 | 2026-11-12 18:45 | started; worktree /home/luke/Work/wt/perf-l139-family on 163c04744 |
-| POLY-nf-power-value | impl attempt 1 | 2026-11-12 14:17 | started; worktree wt/poly-nf-power-value from origin/main f2d8e0094 |
 | PRINT-below-whole | impl attempt 1 | 2026-11-11 01:43 | started: rebase wt/print-below-whole (251 behind), benchmark for PRINT_WHOLE/PRINT_HANDOFF per A96 |
 | REFUSAL-census-now | impl attempt 1 | 2026-11-12 19:34 | captured 59,664 distinct units (454 MB, most from scaling families); censusing them in 239 pieces of 250 units, 12 at a time, each run under 60 s (load 40.26 43 |
 | REGRESS-l01_26-overload | impl attempt 1 | 2026-11-12 20:07 | reproduced 4 failures on 969576f90 (16.5, 16.3, 15.0, 23.8x, load 46); bisect: first bad commit 502dc1de5 (GSX-unsolved merge), 151b26576 passes |
