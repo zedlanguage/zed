@@ -3195,11 +3195,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             | BinaryOp::Mod
             | BinaryOp::Pow => {
                 let from = self.errors.len();
-                // A divisor whose type holds no zero cannot fail with `#divByZero`.
+                // A divisor whose type holds no zero cannot fail with `#divByZero`, nor can an
+                // int divisor the tests it is under keep from zero, as `d` in the arm of
+                // `if d != 0` (DESIGN.md L1.26, the interval of a name in an arm, L1.24). The
+                // tests are read only where the type holds a zero.
                 let divides = matches!(op, BinaryOp::Div | BinaryOp::IntDiv | BinaryOp::Mod);
                 let nonzero = divides
-                    && !y.ty.contains(&Value::Int(0))
-                    && !y.ty.contains(&Value::rat(Rat::int(0.into())));
+                    && ((!y.ty.contains(&Value::Int(0))
+                        && !y.ty.contains(&Value::rat(Rat::int(0.into()))))
+                        || (y.ty.without_atoms().subtype(&Ty::carrier(Carrier::Int))
+                            && !self.ints_here(b).0.contains(0)));
                 // A `rat` power fails only for `0r` to a negative power.
                 let total_power = op == BinaryOp::Pow
                     && (!x.ty.contains(&Value::rat(Rat::int(0.into())))

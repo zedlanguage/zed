@@ -1,11 +1,13 @@
 //! A division, `div` or `mod` whose divisor's type holds no zero adds no `#divByZero`
 //! (DESIGN.md step L1.26). At layer L1 a divisor gets such a type from literals that survive
-//! an `if` (step L1.26a), as `1 | 9` or `-3 | -1`, directly or through a call; a divisor
-//! whose type holds `0` keeps `#divByZero`, and so does an `int`. The types written in a
-//! declaration, `d: int[1..=9]`, and a test that narrows, `if d != 0`, are layer L10's, and
+//! an `if` (step L1.26a), as `1 | 9` or `-3 | -1`, directly or through a call, and an `int`
+//! divisor holds no zero in the arm of a test that rules zero out, as `if d != 0` (step
+//! L1.24); a divisor whose type holds `0` keeps `#divByZero`, and so does an `int` no test
+//! keeps from zero. The types written in a declaration, `d: int[1..=9]`, are layer L10's, and
 //! their cases are kept below, ignored until zedc compiles them.
 
 use super::{sig, type_errors};
+use zed_tests::scaling;
 use zed_tests::step_helpers::l01_16_elaboration::value;
 
 /// A divisor of one of two literals, neither zero.
@@ -122,17 +124,156 @@ fn a_divisor_declared_without_zero_adds_no_div_by_zero() {
 }
 
 #[test]
-#[ignore = "NARROW-ne-divisor: under the test `d != 0` the read `d` stays an `int`, so the \
-            quotient keeps `#divByZero`"]
 fn a_divisor_narrowed_by_a_test_adds_no_div_by_zero() {
     // DESIGN.md sec:type_resolution rule 3: "The checker maintains per-node proposition sets
-    // (facts learned by tests)", and step L1.26 on a divisor whose type holds no zero.
+    // (facts learned by tests)"; in the arm of a test a name has the interval the test leaves
+    // it (step L1.24), and step L1.26 adds no `#divByZero` for a divisor that holds no zero.
     assert_eq!(
         sig(
             "f(x: int, d: int) = if d != 0 { x div d } else { 0 };\n",
             "f"
         ),
         "(x: int, d: int) -> int"
+    );
+}
+
+/// Each test that keeps `d` from zero in the arm the division is in: `!=` in either order,
+/// the `else` of `==`, a disjunction of two sides that each exclude zero, and a test further
+/// out than the arm the division is in; at `div` and `mod`.
+#[test]
+fn every_test_that_rules_zero_out_narrows_the_divisor() {
+    for body in [
+        "if d != 0 { x div d } else { 0 }",
+        "if 0 != d { x div d } else { 0 }",
+        "if d == 0 { 0 } else { x div d }",
+        "if 0 == d { 0 } else { x mod d }",
+        "if d > 0 || d < 0 { x div d } else { 0 }",
+        "if d >= 1 { x mod d } else { 0 }",
+        "if d != 0 { if x > 0 { x div d } else { x mod d } } else { 0 }",
+        "if d != 0 && x != 0 { x div d } else { 0 }",
+    ] {
+        let text = format!("f(x: int, d: int) = {body};\n");
+        assert_eq!(sig(&text, "f"), "(x: int, d: int) -> int", "{body}");
+    }
+    let run = "f(x: int, d: int) = if d != 0 { x div d } else { 0 };\n\
+               a = f(x: 7, d: 2);\nb = f(x: 7, d: 0);\nc = f(x: -7, d: 2);\n";
+    assert_eq!(value(run, "a"), "3");
+    assert_eq!(value(run, "b"), "0");
+    // `div` is Euclidean (sec:domains): -7 = -4 * 2 + 1.
+    assert_eq!(value(run, "c"), "-4");
+}
+
+/// Where the test leaves zero to the divisor, `#divByZero` stays: a test against another
+/// value, a test of another name, a disjunction one side of which holds zero, and a division
+/// outside the arm. The test changes no type outside its arm: `d` stays an `int` in the
+/// signature.
+#[test]
+fn a_test_that_leaves_zero_keeps_div_by_zero() {
+    for body in [
+        "if d != 1 { x div d } else { 0 }",
+        "if x != 0 { x div d } else { 0 }",
+        "if d >= 0 || d < -1 { x div d } else { 0 }",
+        "if d != 0 && x != 0 { 0 } else { x div d }",
+        "(if d != 0 { 1 } else { 2 }) + x div d",
+        "{ y = if d != 0 { 1 } else { 0 }; y + x mod d }",
+    ] {
+        let text = format!("f(x: int, d: int) = {body};\n");
+        assert_eq!(
+            sig(&text, "f"),
+            "(x: int, d: int) -> int | #divByZero",
+            "{body}"
+        );
+    }
+}
+
+/// Through `zedc run`: the quotient under `d != 0` has no loose failure for `_` to drop, and
+/// under `d != 1` the rejection names the failure and where it enters.
+#[test]
+fn zedc_run_drops_the_quotient_only_under_a_test_that_rules_zero_out() {
+    use zed_tests::step_helpers::l01_19_whole_file_ports::run as zedc_run;
+    let program = |test: &str| {
+        format!(
+            "f(x: int, d: int) = {{ _ = if {test} {{ x div d }} else {{ 0 }}; x }};\n\
+             main(m: MainArgs) {{\n  m.stdout <- \"${{f(x: 7, d: 0)}}\";\n}}\n"
+        )
+    };
+    let out = zedc_run("ne_divisor_zero", &program("d != 0"), "", &[]);
+    assert_eq!(
+        (out.status, out.stdout.as_str()),
+        (0, "7\n"),
+        "{}",
+        out.stderr
+    );
+    let out = zedc_run("ne_divisor_one", &program("d != 1"), "", &[]);
+    assert_eq!((out.status, out.stdout.as_str()), (1, ""), "{}", out.stderr);
+    let (_, message) = out
+        .stderr
+        .split_once("prog.zed:")
+        .expect("a located message");
+    assert_eq!(
+        message,
+        "1:23: `_` drops a loose failure this value may be, #divByZero: `_` drops only a \
+         failure the program names, as the default of an `else` names it, and this one would \
+         be dropped with nothing in the text saying so.
+  [1]  1:39: the loose failure #divByZero enters here
+       1 | f(x: int, d: int) = { _ = if d != 1 { x div d } else { 0 }; x };
+         |   ^^^^^^ [10]         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [14, 15, 16]
+         |           ^^^^^^ [5]      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [2]
+         |                              ^ [4]  ^^^^^^^^^^^ [7]
+         |                              ^^^^^^ [3]     ^ [11]
+         |                                   ^ [6]              ^^^^^ [12]
+         |                                       ^ [9]            ^ [13]
+         |                                       ^^^^^^^ [1, 8]
+  [2]  1:27: this `if` gives int | #divByZero
+  [3]  1:30: this `!=` gives bool
+  [4]  1:30: `d` is int here
+  [5]  1:11: `d` is declared `int`
+  [6]  1:35: this literal, 1, is 1
+  [7]  1:37: this block gives int | #divByZero
+  [8]  1:39: this `div` gives int | #divByZero
+  [9]  1:39: `x` is int here
+  [10] 1:3: `x` is declared `int`
+  [11] 1:45: `d` is int here
+  [12] 1:54: this block gives 0
+  [13] 1:56: this literal, 0, is 0
+  [14] 1:23: repair: write a default for the value, as `_ = … else #ok;`, so the text names what it drops
+  [15] 1:23: repair: handle each failure with a `match` on the value
+  [16] 1:23: repair: bind the value to a name, and use the name
+"
+    );
+}
+
+/// `f(x: int, d: int) = { a1 = if d != 0 { x div d } else { 0 }; a2 = if d != 0 { a1 div d }
+/// else { a1 }; …; an }`: `n` tests, each with a division in its arm.
+fn chained_tests(n: usize) -> String {
+    let mut s = String::from("f(x: int, d: int) = { a0 = x; ");
+    for i in 1..=n {
+        let p = i - 1;
+        s += &format!("a{i} = if d != 0 {{ a{p} div d }} else {{ a{p} }}; ");
+    }
+    s += &format!("a{n} }};\n");
+    s
+}
+
+#[test]
+fn chained_tests_and_divisions_check_in_linear_time() {
+    // Each division reads the integers of its divisor in the scope of its arm once
+    // (`Ck::ints_here`), only where the divisor's type holds a zero (COMPLEXITY.md row
+    // NARROW-ne-divisor).
+    assert_eq!(sig(&chained_tests(3), "f"), "(x: int, d: int) -> int");
+    let built = scaling::inputs(100, |m| {
+        let stmts = zed_tests::deep::statements(&chained_tests(m));
+        let res = zedc::resolve::resolve(&stmts).unwrap();
+        (stmts, res)
+    });
+    scaling::check(
+        "n chained tests each with a division in its arm",
+        100,
+        |m| {
+            let (stmts, res) = &built[&m];
+            let info = zedc::check::walk::check(stmts, res);
+            assert!(info.errors.is_empty(), "{:?}", info.errors);
+        },
     );
 }
 
