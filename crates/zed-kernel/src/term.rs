@@ -164,6 +164,13 @@ pub enum Prim {
     /// every key present: the entry at `k`, or `#outOfBounds` (DESIGN.md sec:type_language, the
     /// `m[k]` row); on a tuple, `TupleGet`.
     At,
+    /// `sqrt(x)` of an `f64` or an `f32`: the square root correctly rounded to the operand's
+    /// format, as IEEE 754 `squareRoot` gives it: `sqrt(-0.0)` is `-0.0`, and a negative or NaN
+    /// operand gives NaN (DESIGN.md sec:linalg, machine operations).
+    Sqrt,
+    /// `fma(a, b, c)` of three `f64` or three `f32`: the exact `a * b + c` rounded once to the
+    /// operands' format, IEEE 754 `fusedMultiplyAdd` (DESIGN.md step L1.18a).
+    Fma,
 }
 
 impl Prim {
@@ -173,8 +180,8 @@ impl Prim {
         match self {
             Neg | Not | Count | PathLen | Show | CastInt | CastRat | CastF64 | CastF32 | Abs
             | Len | Lower | Upper | Trim | Sum | PopCount | F64Bits | CodePoint | Scalar | Utf8
-            | FromUtf8 => Some(1),
-            Rotl | Rotr | MulHi => Some(3),
+            | FromUtf8 | Sqrt => Some(1),
+            Rotl | Rotr | MulHi | Fma => Some(3),
             FunnelShl | FunnelShr => Some(4),
             Path | Tuple | Atom => None,
             _ => Some(2),
@@ -253,6 +260,8 @@ impl Prim {
             FunnelShr => 61,
             At => 62,
             CastF32 => 63,
+            Sqrt => 64,
+            Fma => 65,
         }
     }
 }

@@ -2656,6 +2656,18 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
         (Prim::Mul, [Float32(a), Float32(b)]) => Value::float32(a.get() * b.get()),
         (Prim::Div, [Float32(a), Float32(b)]) => Value::float32(a.get() / b.get()),
         (Prim::Neg, [Float32(a)]) => Value::float32(-a.get()),
+        // IEEE 754 `squareRoot` and `fusedMultiplyAdd`, each rounded once to the operands'
+        // format: Rust's `sqrt` and `mul_add` are both correctly rounded, `sqrt(-0.0)` is
+        // `-0.0`, and a negative or NaN operand of `sqrt`, a NaN operand of `fma`, or
+        // `fma(inf, 0, c)` gives NaN (DESIGN.md sec:linalg, machine operations).
+        (Prim::Sqrt, [Float(a)]) => Value::float(a.get().sqrt()),
+        (Prim::Sqrt, [Float32(a)]) => Value::float32(a.get().sqrt()),
+        (Prim::Fma, [Float(a), Float(b), Float(c)]) => {
+            Value::float(a.get().mul_add(b.get(), c.get()))
+        }
+        (Prim::Fma, [Float32(a), Float32(b), Float32(c)]) => {
+            Value::float32(a.get().mul_add(b.get(), c.get()))
+        }
         (Prim::Concat, [Str(a), Str(b)]) => Str(crate::text::Text::join(a, b)?),
         // NaN in, NaN out, as for every float operation (DESIGN.md sec:domains, NaN rule 5):
         // IEEE 754 `pow` gives `pow(NaN, 0) = 1` and `pow(1, NaN) = 1`, so a NaN operand is

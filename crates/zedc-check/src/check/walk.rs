@@ -2875,9 +2875,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// (DESIGN.md sec:domains: a use fixes a literal's carrier "at a declared type, that
     /// type's", and "an operation on literals alone ... is a literal too, and takes the
     /// carrier of what it meets"): with `f(x: f64)`, in `f(x: 1 / 2)` the `/` is an `f64`
-    /// and `x` is `0.5`, and the rejection the `/` wrote as it was walked is dropped. An
-    /// operator's arrows differ in their carriers, so this leaves its operands to
-    /// [`Ck::lit_op_meets`]; a generic parameter gives no carrier, so `inc(x: 1 / 2)` is
+    /// and `x` is `0.5`, and the rejection the `/` wrote as it was walked is dropped. At a
+    /// parameter the arrows declare of float formats alone, `f64` among them, it takes `f64`,
+    /// as a bare literal does there ([`floats_take_f64`]): `sqrt(-0.0 - 1e-300)` is the `sqrt`
+    /// of an `f64`. An operator's arrows differ in their carriers, so this leaves its operands
+    /// to [`Ck::lit_op_meets`]; a generic parameter gives no carrier, so `inc(x: 1 / 2)` is
     /// rejected still. Where the operation's value at the carrier is no value of it
     /// ([`Ck::lit_takes`]), its rejection stands.
     ///
@@ -2891,14 +2893,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             let Some(e) = a.expr.filter(|e| self.lit_ops.contains(&e.span)) else {
                 continue;
             };
-            let mut at = (sig.arrows.iter())
-                .map(|arrow| arrow.params.get(i).and_then(|p| p.numeric_carrier()));
-            let Some(Some(c)) = at.next() else {
+            let at: Option<Vec<Carrier>> = (sig.arrows.iter())
+                .map(|arrow| arrow.params.get(i).and_then(|p| p.numeric_carrier()))
+                .collect();
+            let Some(at) = at else {
                 continue;
             };
-            if c == Carrier::Int || !at.all(|d| d == Some(c)) {
-                continue;
-            }
+            let c = match at[..] {
+                [c, ..] if c != Carrier::Int && at.iter().all(|&d| d == c) => c,
+                _ if floats_take_f64(&at) => Carrier::F64,
+                _ => continue,
+            };
             if self.lit_takes(e, c) {
                 a.ty = Ty::carrier(c);
             }
@@ -3085,8 +3090,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 if self.level == 0 {
                     self.lit_pairs(&mut x, &mut y);
                 }
-                // A call or an `if` that lists values compared with a value of one carrier, `f64`
-                // or `rat`, is read at that carrier, as at an arithmetic operator: `x == g(c)`
+                // A call or an `if` that lists values compared with a value of one carrier, `f64`,
+                // `f32` or `rat`, is read at that carrier, as at an arithmetic operator: `x == g(c)`
                 // with `x: f64` and `g` of type `(bool) -> 1 | 2` compares two `f64`s
                 // ([`read_ty`]; L1.26a). One read of the listed values. Where the parts the
                 // two operands hold whole are of one such carrier, both are read at it, as at
@@ -3106,7 +3111,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     BTreeSet::new()
                 };
                 let one = match whole.iter().collect::<Vec<_>>()[..] {
-                    [&c @ (Carrier::F64 | Carrier::Rat)] => Some(Ty::carrier(c)),
+                    [&c @ (Carrier::F64 | Carrier::F32 | Carrier::Rat)] => Some(Ty::carrier(c)),
                     _ => None,
                 };
                 for flip in [false, true] {
@@ -3459,6 +3464,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             && let Some(p) = zedc_base::interp::prim(w)
         {
             let sig = word_sig(w);
+            // A word that takes float formats alone, `f64` among them, as `sqrt` does, gives
+            // the literal `f64` (author decision, 2026-11-12, [`floats_take_f64`]):
+            // `sqrt(2.0)` is `sqrt(2.0f64)`.
+            let takes: Vec<Carrier> = [Carrier::F64, Carrier::Rat, Carrier::F32]
+                .into_iter()
+                .filter(|&c| (sig.arrows.iter()).any(|a| a.params[0] == Ty::carrier(c)))
+                .collect();
+            let floats = floats_take_f64(&takes);
             let cs: Vec<Carrier> = [Carrier::F64, Carrier::Rat]
                 .into_iter()
                 .filter(|&c| {
@@ -3469,9 +3482,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 })
                 .collect();
             if let [c, ..] = cs[..] {
-                let notes = self.derive(&[l.site]);
-                let m = unfixed(&l, &cs);
-                self.reject(Some(Row::UnfixedDecimal), l.site, m, notes);
+                if !floats {
+                    let notes = self.derive(&[l.site]);
+                    let m = unfixed(&l, &cs);
+                    self.reject(Some(Row::UnfixedDecimal), l.site, m, notes);
+                }
                 self.adopt_to(&l, c);
                 x.lit = None;
                 x.ty = Ty::carrier(c);
@@ -4529,7 +4544,7 @@ pub(super) fn branch_lits<'e>(
 /// `g(positional c: bool, positional x: f64) = if c { x } else { 1 }`, of type `(bool, f64)
 /// -> 1 | f64`, `g(c, x)` there is `f64` (sec:type_resolution, rule 3: "each value keeps its
 /// own carrier, the literal `1` taking its carrier where the result is used"). An integer
-/// value is read at `f64` or `rat` where it is exactly one, and a decimal one only at `f64`,
+/// value is read at `f64`, `f32` or `rat` where it is exactly one, and a decimal one only at `f64`,
 /// which its value at run time already is: read at `rat` it would be the `f64`'s value, not
 /// the decimal's. `None` where `t` is not read so, which leaves it to the check every
 /// argument has: a part outside the carrier that is not a list of values, as the `int` of
@@ -4556,7 +4571,7 @@ pub(super) fn read_ty(t: &Ty, p: &Ty) -> Option<Result<(Ty, Carrier), (Value, Ca
 /// literals adopted at it, or the value no value of the carrier equals and the carrier.
 type ReadArg = Result<(Ty, Carrier, Adoptions), (Value, Carrier)>;
 
-/// The carrier [`read_ty`] reads at, where `p` holds numbers of one carrier, `f64` or `rat`,
+/// The carrier [`read_ty`] reads at, where `p` holds numbers of one carrier, `f64`, `f32` or `rat`,
 /// and no type variable or `_`.
 fn read_carrier(p: &Ty) -> Option<Carrier> {
     if p.dynamic || !p.vars.is_empty() {
@@ -4566,7 +4581,7 @@ fn read_carrier(p: &Ty) -> Option<Carrier> {
         .into_iter()
         .filter(|c| !(&p.set & &c.ty()).is_empty());
     match held.collect::<Vec<_>>()[..] {
-        [c @ (Carrier::F64 | Carrier::Rat)] => Some(c),
+        [c @ (Carrier::F64 | Carrier::F32 | Carrier::Rat)] => Some(c),
         _ => None,
     }
 }
@@ -4652,7 +4667,7 @@ fn call_values(a: &Arg) -> Option<Vec<Value>> {
     t.set.values_listed().filter(|vs| !vs.is_empty())
 }
 
-/// The type `t` read at the carrier `c`, `f64` or `rat`, as [`read_ty`] says: `t` with each
+/// The type `t` read at the carrier `c`, `f64`, `f32` or `rat`, as [`read_ty`] says: `t` with each
 /// value it lists outside `c` read at `c`, `Err(v)` with the first value `v` not read at `c`,
 /// or `None` where `t` lists no value outside `c` ([`listed_outside`]) or one of them is no
 /// number.
@@ -11169,13 +11184,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             }
             // A call or an `if` that lists values, `x * g(c)` with `x: f64` and `g` of type `(bool)
-            // -> 1 | 2`, is read at the one carrier, `f64` or `rat`, of the other arguments and
+            // -> 1 | 2`, is read at the one carrier, `f64`, `f32` or `rat`, of the other arguments and
             // of the parts the calls hold whole, as at a parameter of that carrier ([`read_ty`]; L1.26a: "each keeps its own value
             // and is fixed where the result is used"). Elsewhere its values are their own
             // carriers, as before: `g(c) * g(c)` is an `int`. Each call is read once, O(v log v)
             // in the values its type lists ([`read_at`]).
             let one = match Carrier::of_mask(carriers).collect::<Vec<_>>()[..] {
-                [c @ (Carrier::F64 | Carrier::Rat)] if classes.is_empty() => Some(c),
+                [c @ (Carrier::F64 | Carrier::F32 | Carrier::Rat)] if classes.is_empty() => Some(c),
                 _ => None,
             };
             for a in called {
@@ -13253,7 +13268,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         true
     }
 
-    /// The one carrier, `f64` or `rat`, of the part that the argument `a`, read at a carrier
+    /// The one carrier, `f64`, `f32` or `rat`, of the part that the argument `a`, read at a carrier
     /// ([`Self::readable`]), holds whole beside the values it lists: `f64` for `g(b, x)` of type
     /// `1 | f64`. `None` for any other argument.
     fn read_whole(&self, a: &Arg) -> Option<Carrier> {
@@ -13261,7 +13276,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             return None;
         }
         match whole_carriers(&a.ty).collect::<Vec<_>>()[..] {
-            [c @ (Carrier::F64 | Carrier::Rat)] => Some(c),
+            [c @ (Carrier::F64 | Carrier::F32 | Carrier::Rat)] => Some(c),
             _ => None,
         }
     }
@@ -13497,7 +13512,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .flat_map(|a| whole_carriers(&a.ty))
                 .collect();
             match whole.iter().collect::<Vec<_>>()[..] {
-                [&c @ (Carrier::F64 | Carrier::Rat)] => Some(c),
+                [&c @ (Carrier::F64 | Carrier::F32 | Carrier::Rat)] => Some(c),
                 _ => None,
             }
         } else {
@@ -13541,7 +13556,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             // adopted: a decimal literal's adoption at `rat` reads its digits (COMPLEXITY.md
             // K41), as at the `rat` arrow of `n + 0.5` with `n` an int.
             // A call or an `if` that lists values, `g(c)` of type `1 | 2` or `1 | f64`, is read at the
-            // parameter's carrier, `f64` or `rat`, as at a declared parameter ([`read_ty`];
+            // parameter's carrier, `f64`, `f32` or `rat`, as at a declared parameter ([`read_ty`];
             // L1.26a: "each keeps its own value and is fixed where the result is used"): in
             // `x * g(c)` with `x: f64` it is an `f64` at the `f64` arrow. Complexity
             // tradeoff: each such argument is read once per arrow, O(A v log v) for A arrows
@@ -13706,8 +13721,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         // A literal that two or more of the word's numeric carriers take, and that nothing
         // else here gives one, as `abs(0.5)` or `String(0.5)`: an integer literal is `int`
-        // where `int` is among them, and otherwise it is rejected (steps L1.26a and L1.26b).
-        // One value gives one error: of two such operands, as in `0.5 * 2.0`, the first
+        // where `int` is among them, float formats alone, `f64` among them, take `f64`, as
+        // `sqrt(2.0)` does ([`floats_take_f64`]), and otherwise it is rejected (steps L1.26a and
+        // L1.26b). One value gives one error: of two such operands, as in `0.5 * 2.0`, the first
         // decimal literal, or else the first literal, is rejected. A branch of an `if` of
         // literals is a literal there as it is alone: `f64(if c { 1 } else { 2.5 })` is
         // rejected at the `2.5`, as `f64(0.5)` is, and `f64(if c { 1 } else { 2 })` is an
@@ -13722,7 +13738,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let left: Vec<Carrier> = Carrier::of_mask(m).filter(|c| c.numeric()).collect();
                 ls.filter_map(move |l| {
                     let int = lit_carrier(&l.value) == Carrier::Int && left.contains(&Carrier::Int);
-                    (!int && left.len() > 1).then(|| (l, left.clone()))
+                    (!int && left.len() > 1 && !floats_take_f64(&left)).then(|| (l, left.clone()))
                 })
             });
             found.into_iter().flatten()

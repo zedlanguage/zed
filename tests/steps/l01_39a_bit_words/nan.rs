@@ -81,8 +81,8 @@ fn both_print(src: &Path, exe: &Path, words: &[OsString], want: &str) {
     );
 }
 
-/// The NaN routes the language has now (`sqrt` and `f64(#NaN)` come later; see the ignored tests
-/// at the end), each made at run time from the operands
+/// The NaN routes the language has now (`f64(#NaN)` comes later; see the ignored tests at the
+/// end), each made at run time from the operands
 /// `z = 0.0`, `one = 1.0`, `m = -1.0` and `r`, a NaN read from the command line. Each fallback
 /// after `else` is a value that makes no NaN, so a word the program fails to read shows as a
 /// wrong line.
@@ -118,12 +118,17 @@ main(m: MainArgs) {
     read ${f64Bits(r)}
     read negated ${f64Bits(-r)}
     read plus one ${f64Bits(r + one)}
+    square root of minus one ${f64Bits(sqrt(m))}
+    square root of nan ${f64Bits(sqrt(r))}
+    square root of minus nan ${f64Bits(sqrt(-r))}
+    fma of inf times zero ${f64Bits(fma(inf, z, one))}
+    fma of nan ${f64Bits(fma(one, one, -nan))}
     """;
 }
 "#;
 
 /// The labels of [`ROUTES`]' lines, in order.
-const LABELS: [&str; 23] = [
+const LABELS: [&str; 28] = [
     "zero over zero",
     "inf minus inf",
     "zero times inf",
@@ -147,6 +152,11 @@ const LABELS: [&str; 23] = [
     "read",
     "read negated",
     "read plus one",
+    "square root of minus one",
+    "square root of nan",
+    "square root of minus nan",
+    "fma of inf times zero",
+    "fma of nan",
 ];
 
 /// What [`ROUTES`] must print: every line the canonical NaN.
@@ -186,6 +196,8 @@ main(m: MainArgs) {
     negative to the half ${f64Bits((-1.0)^0.5)}
     nan to the zero ${f64Bits((0.0 / 0.0)^0.0)}
     one to the nan ${f64Bits(1.0^(0.0 / 0.0))}
+    square root of minus one ${f64Bits(sqrt(-1.0))}
+    fma of inf times zero ${f64Bits(fma(1.0 / 0.0, 0.0, 1.0))}
     """;
 }
 "#;
@@ -205,6 +217,8 @@ fn nans_of_literal_operands_give_the_canonical_nan_in_the_interpreter_and_the_ex
         "negative to the half",
         "nan to the zero",
         "one to the nan",
+        "square root of minus one",
+        "fma of inf times zero",
     ]
     .iter()
     .map(|l| format!("{l} {CANONICAL}\n"))
@@ -241,7 +255,6 @@ main(m: MainArgs) {
 }
 
 #[test]
-#[ignore = "FLOAT-sqrt: `sqrt` is not yet defined"]
 fn the_square_root_of_a_negative_is_the_canonical_nan() {
     assert_eq!(x("f64Bits(sqrt(-1.0))"), CANONICAL.to_string());
     assert_eq!(x("f64Bits(sqrt(-0.0 - 1e-300))"), CANONICAL.to_string());

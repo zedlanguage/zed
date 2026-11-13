@@ -634,7 +634,8 @@ const fn sig(word: &'static str, positional: Count) -> Sig {
 /// its arguments: the casts and the L1 string and number words take one (L1.14); `min` and
 /// `max` two or more (`min(d[i-1][j] + 1, …)`, sec:power); the bit words as step L1.39a
 /// gives them and the integer machine operations as step L1.39f does, with `width:` on the
-/// words whose result depends on a width; the views of a string one (L1.39c); the family
+/// words whose result depends on a width; the views of a string one (L1.39c); `sqrt` one and
+/// `fma` three (row FLOAT-sqrt); the family
 /// operations their receiver and the operands of the kernel table (sec:kernel): `foldl(init,
 /// op)`, `foldr(op, init)`, `.sort(asc f, …)`, `.sort()` (the key `x -> x`, sec:order) or `.sort(by: le)`, and one operand for the
 /// others.
@@ -705,6 +706,8 @@ const SIGS: &[Sig] = &[
     sig("scalar", Count::Exactly(1)),
     sig("utf8", Count::Exactly(1)),
     sig("fromUtf8", Count::Exactly(1)),
+    sig("sqrt", Count::Exactly(1)),
+    sig("fma", Count::Exactly(3)),
     sig("count", Count::Exactly(1)),
     sig("map", Count::Exactly(2)),
     sig("where", Count::Exactly(2)),

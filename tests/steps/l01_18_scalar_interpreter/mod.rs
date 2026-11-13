@@ -10,6 +10,7 @@ mod literals;
 mod prim_names;
 mod rat_text;
 mod scaling;
+mod sqrt_fma;
 mod tuple_min_max;
 mod words;
 

@@ -7761,10 +7761,11 @@ fn op_sig(op: Operator) -> Sig {
 }
 
 /// The number of operands of the prelude word `w` that [`word_sig`] types: two for `min` and
-/// `max`, one for every other.
+/// `max`, three for `fma`, one for every other.
 fn word_arity(w: &str) -> usize {
     match w {
         "min" | "max" => 2,
+        "fma" => 3,
         _ => 1,
     }
 }
@@ -7817,6 +7818,10 @@ fn word_sig(w: &str) -> Arc<Sig> {
         ],
         "abs" => arrows(&[Int, F64, Rat, F32], 1, Ty::carrier),
         "min" | "max" => arrows(&[Int, F64, Rat, F32], 2, Ty::carrier),
+        // The float formats alone: an `int` or `rat` operand is cast first, `sqrt(f64(n))`,
+        // so no call rounds where the text does not say so (row FLOAT-sqrt).
+        "sqrt" => arrows(&[F64, F32], 1, Ty::carrier),
+        "fma" => arrows(&[F64, F32], 3, Ty::carrier),
         "len" => vec![arrow(Str, Int, &[])],
         "codePoint" => vec![arrow(Str, Int, &["notScalar"])],
         "scalar" => vec![arrow(Int, Str, &["notScalar"])],

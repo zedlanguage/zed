@@ -9,7 +9,9 @@
 //! `if` and `match` are emitted inline. Each node's dups and drops are calls of `rt_inc` and
 //! `rt_dec`. Integer, float and boolean arithmetic and comparisons run inline when the tags
 //! say the operands are scalars; overflow and every other case call the runtime, which runs
-//! the node as the counting machine does. Float `^` calls `rt_pow`, after a NaN test of each
+//! the node as the counting machine does. `sqrt` and `fma` on `f64` are Cranelift's `sqrt`
+//! and `fma`, each rounded once as the kernel's are; no multiply and add is ever fused into an
+//! `fma` the program did not write. Float `^` calls `rt_pow`, after a NaN test of each
 //! operand the graph does not prove NaN-free. After each call that returns a word, an error
 //! word leaves the function, returning the error word.
 
@@ -637,8 +639,34 @@ impl<M: Module> Gen<'_, M> {
                     fx.b.switch_to_block(next);
                     fx.b.ins().jump(slow, &[]);
                 }
+                Prim::Sqrt => {
+                    let c = fx.b.ins().icmp_imm_s(IntCC::Equal, a.0, Word::FLOAT);
+                    self.when(fx, c, slow);
+                    let x = self.float(fx, a.1);
+                    let r = fx.b.ins().sqrt(x);
+                    let w = self.float_word(fx, r);
+                    self.jump(fx, merge, &[w]);
+                    fx.b.switch_to_block(next);
+                    fx.b.ins().jump(slow, &[]);
+                }
                 _ => unreachable!("checked by `inline`"),
             }
+        } else if p == Prim::Fma {
+            // One `fma` instruction, rounded once: `vfmadd` where the host has FMA, else the
+            // C library's `fma`, which Cranelift calls in its place.
+            let (b, c) = (self.get(fx, ins[1]), self.get(fx, ins[2]));
+            let ab = self.both(fx, a, b, Word::FLOAT);
+            let cf = fx.b.ins().icmp_imm_s(IntCC::Equal, c.0, Word::FLOAT);
+            let all = fx.b.ins().band(ab, cf);
+            self.when(fx, all, slow);
+            let (x, y, z) = (
+                self.float(fx, a.1),
+                self.float(fx, b.1),
+                self.float(fx, c.1),
+            );
+            let r = fx.b.ins().fma(x, y, z);
+            let w = self.float_word(fx, r);
+            self.jump(fx, merge, &[w]);
         } else {
             let b = self.get(fx, ins[1]);
             let int = int_op(p) || int_cmp(p).is_some();
@@ -877,7 +905,7 @@ impl<M: Module> Gen<'_, M> {
 /// Whether primitive `p` on `n` inputs has an inline path.
 fn inline(p: Prim, n: usize) -> bool {
     match n {
-        1 => matches!(p, Prim::Neg | Prim::Not),
+        1 => matches!(p, Prim::Neg | Prim::Not | Prim::Sqrt),
         2 => {
             int_op(p)
                 || int_cmp(p).is_some()
@@ -885,6 +913,7 @@ fn inline(p: Prim, n: usize) -> bool {
                 || float_cmp(p).is_some()
                 || matches!(p, Prim::And | Prim::Or | Prim::Pow)
         }
+        3 => p == Prim::Fma,
         _ => false,
     }
 }

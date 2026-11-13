@@ -44,6 +44,8 @@ const WORDS: &[(&str, Prim)] = &[
     ("pext", Prim::Pext),
     ("funnelShl", Prim::FunnelShl),
     ("funnelShr", Prim::FunnelShr),
+    ("sqrt", Prim::Sqrt),
+    ("fma", Prim::Fma),
 ];
 
 /// Whether `name` is a prelude word.

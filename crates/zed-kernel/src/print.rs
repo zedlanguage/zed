@@ -171,6 +171,8 @@ fn name(p: Prim) -> &'static str {
         CastRat => "rat",
         CastF64 => "f64",
         CastF32 => "f32",
+        Sqrt => "sqrt",
+        Fma => "fma",
         Abs => "abs",
         Len => "len",
         Lower => "lower",

@@ -412,6 +412,8 @@ pub const WORDS: &[(&str, u32)] = &[
     ("pext", 1),
     ("funnelShl", 1),
     ("funnelShr", 1),
+    ("sqrt", 1),
+    ("fma", 1),
     ("build", 2),
     ("count", 3),
     ("map", 3),

@@ -137,8 +137,8 @@ const CASES: &[(&str, &str, &str)] = &[
     ),
     (
         "parse: bad prim",
-        "zir 1\nr region function ()\nr.0 prim ^ (2, 3) -> (int)\nr.1 prim sqrt (2) -> (f64)\nr results (r.0^0)\n",
-        "line 4: column 14: `sqrt` is not a primitive",
+        "zir 1\nr region function ()\nr.0 prim ^ (2, 3) -> (int)\nr.1 prim cbrt (2) -> (f64)\nr results (r.0^0)\n",
+        "line 4: column 14: `cbrt` is not a primitive",
     ),
     (
         "parse: bad grade",
