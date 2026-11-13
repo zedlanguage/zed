@@ -2040,6 +2040,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | POW-rat-literal-ops | impl attempt 1 | 2026-11-12 16:20 | tests pass (l01_26 all pieces, l01_26a 182, l01_29 366, l01_17 133, l01_39a 50 pieces, zedc-check 11); range facts with squares of text values; spec e9ef76d on  |
 | PRINT-below-whole | impl attempt 1 | 2026-11-11 01:43 | started: rebase wt/print-below-whole (251 behind), benchmark for PRINT_WHOLE/PRINT_HANDOFF per A96 |
 | REFUSAL-census-now | impl attempt 1 | 2026-11-12 19:34 | built step binaries with a temporary capture hook in front::compile; running step groups to capture every unit text (load 55.09 66.05 59.44) |
+| REGRESS-l01_26-overload | running | 2026-11-12 20:07 | spawned (from NARROW-or-order's report) / 47.86 |
 | STAGE-print | impl attempt 1 | 2026-11-04 03:10 | started; worktree wt/stage-print seeded |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
