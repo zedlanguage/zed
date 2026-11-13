@@ -90,3 +90,76 @@ test("crossing reduction from a seeded order scales as n log n in the layer widt
   assert.ok(ratio < limit, `seeded: ${show(ours)}`);
   assert.ok(controlRatio > limit, `control: ${show(control)}: the test would not tell n log n from w^2`);
 });
+
+// Two layers of w nodes; node p of the top layer has the one child p of the
+// bottom layer, and the seed puts the bottom layer in the order 1 0 3 2 5 4
+// ..., each pair crossed. One greedy step uncrosses every pair, and each swap
+// splits off the two pieces before it, so a sweep that rescans the rest of
+// the range after each swap reads w^2 / 4 pairs (DAGVIEW-aspect-plan-time).
+function pairs(w: number) {
+  const n = 2 * w;
+  const y = Int32Array.from({ length: n }, (_, i) => (i < w ? 0 : 1));
+  const x = Float64Array.from({ length: n }, (_, i) => (i < w ? i : (i - w) ^ 1));
+  const s: any[] = Array.from({ length: n }, (_, i) => ({ data: { role: "node", node: i } }));
+  s.forEach((v, i) => {
+    v.childCounts = () => (i < w ? [[s[w + i], 1]] : []);
+    v.parentCounts = () => (i < w ? [] : [[s[i - w], 1]]);
+  });
+  const layers = [s.slice(0, w), s.slice(w)];
+  for (const row of layers) row.sort((p: any, q: any) => x[p.data.node] - x[q.data.node]);
+  return { layers, x, y, index: new Map(s.map((_, i) => [i, i])) };
+}
+
+test("a greedy step that swaps many pairs scales as n log n in the layer width: two layers of 2048 and of 16384 nodes, every pair of the seed crossed", () => {
+  const w = 2048;
+  const run = (k: number) => (work: Work) => { const g = pairs(k); return () => decrossSeeded(g.index, g.x, g.y, undefined, work)(g.layers); };
+  const ours = [w, 8 * w].map((k) => measured(run(k)));
+  const g = pairs(8 * w);
+  const before = crossings(g.layers);
+  decrossSeeded(g.index, g.x, g.y)(g.layers);
+  assert.equal(before, 4 * w);
+  assert.equal(crossings(g.layers), 0);
+  // 8 times the nodes at n log n is 8 log(8n) / log n times the steps, 10
+  // here; the scan of the rest of the range after each swap grows 64 times.
+  const ratio = ours[1].steps / ours[0].steps;
+  const load = readFileSync("/proc/loadavg", "utf8").split(" ")[0];
+  console.log(`pairs: ${ours[0].steps} and ${ours[1].steps} steps (ratio ${ratio.toFixed(2)}), ${ours[0].ms.toFixed(1)} and ${ours[1].ms.toFixed(1)} ms; load ${load}`);
+  assert.ok(ratio < 10.5, `pairs: step ratio ${ratio.toFixed(2)}`);
+});
+
+// Small layers: none, one and two nodes, odd widths and ties. Each case is a
+// top layer in order and a bottom layer whose seed order is given; the
+// greedy step swaps the leftmost pair of the largest gain first, as d3-dag's
+// twolayerGreedy does, so a tie keeps the left pair.
+test("the greedy step on small layers: empty, one node, two nodes, odd widths, ties", () => {
+  const cases: [number[], number[][], number[], number][] = [
+    // bottom seed order, each bottom node's parents, the order after, crossings after
+    [[], [], [], 0],
+    [[0], [[0]], [0], 0],
+    [[0, 1], [[0], [1]], [0, 1], 0],
+    [[1, 0], [[0], [1]], [0, 1], 0],
+    [[1, 0, 2], [[0], [1], [2]], [0, 1, 2], 0],
+    // The step swaps 2 1, then 2 0, and splits the range there, so 1 0 stays,
+    // as in d3-dag; the sweep up then puts the top layer in the order 1 0 2.
+    [[2, 1, 0], [[0], [1], [2]], [1, 0, 2], 0],
+    // 0 and 1 share both parents: no order is better, the seed stays.
+    [[1, 0], [[0, 1], [0, 1]], [1, 0], 1],
+  ];
+  for (const [seed, parentsOf, after, left] of cases) {
+    const w = seed.length, top = Math.max(1, ...parentsOf.flat().map((p) => p + 1));
+    const n = top + w;
+    const y = Int32Array.from({ length: n }, (_, i) => (i < top ? 0 : 1));
+    const x = Float64Array.from({ length: n }, (_, i) => (i < top ? i : seed.indexOf(i - top)));
+    const s: any[] = Array.from({ length: n }, (_, i) => ({ data: { role: "node", node: i } }));
+    s.forEach((v, i) => {
+      v.childCounts = () => (i < top ? parentsOf.flatMap((ps, b) => (ps.includes(i) ? [[s[top + b], 1]] : [])) : []);
+      v.parentCounts = () => (i < top ? [] : parentsOf[i - top].map((p) => [s[p], 1]));
+    });
+    const layers = [s.slice(0, top), s.slice(top)];
+    for (const row of layers) row.sort((p: any, q: any) => x[p.data.node] - x[q.data.node]);
+    decrossSeeded(new Map(s.map((_, i) => [i, i])), x, y)(layers);
+    const got = layers[1].map((v: any) => v.data.node - top);
+    assert.deepEqual(got, after, `seed ${seed}`);
+    assert.equal(crossings(layers), left, `seed ${seed}`);
+  }
+});

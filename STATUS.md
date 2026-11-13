@@ -2171,7 +2171,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| DAGVIEW-aspect-plan-time | impl attempt 1 | 2026-11-13 14:01 | started; load 37.71 41.62 39.04 |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | cross-review round 5 launched on zed-impl 77a026349: Claude, Codex; Gemini 429 (gap recorded); main dump in progress; load 25.99 19.01 20.42 |
 | LIT-name-int-fixed | impl attempt 1 | 2026-11-13 14:29 | started; worktree from origin/main df105e781 |
 | PORT-lines-int-name | impl attempt 1 | 2026-11-13 14:29 | started; worktree from df105e781 |
