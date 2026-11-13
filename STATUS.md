@@ -2178,14 +2178,13 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | cross-review round 5 launched on zed-impl 77a026349: Claude, Codex; Gemini 429 (gap recorded); main dump in progress; load 25.99 19.01 20.42 |
 | LIT-name-int-fixed | impl attempt 1 | 2026-11-13 14:29 | started; worktree from origin/main df105e781 |
 | PERF-tuple-print | impl attempt 1 | 2026-11-13 14:51 | started; worktree /home/luke/Work/wt/perf-tuple-print from 4a1a69d22 |
-| PORT-lines-int-name | impl attempt 1 | 2026-11-13 14:29 | fix in Ck::pushed; scaling 8.0 instr/8.0 bytes at 1000/8000, control (copy of class literals per literal) 34.3x bytes failed; load ~36 |
 | POW-scope-exponent | impl attempt 1 | 2026-11-13 14:51 | reproduced on 4a1a69d22 with zedc run: 2^(2^k - 2) under k > 0, 2^(3^k - 3) under k >= 1, 2^(5^(2^k + 1) - 10) under k >= 0 all rejected 'exponent that may be n |
 | PRES-overlap-coeffs | impl attempt 1 | 2026-11-13 14:10 | started; worktree from origin/main 64dfe1c61 |
 | RED-written-compare | running | 2026-11-13 14:51 |  |
 | REPAIR-eq-kept-cast | impl attempt 1 | 2026-11-13 14:45 | started; worktree from origin/main 50eadf267 |
 | SPEC-main-limits | impl attempt 1 | 2026-11-13 15:14 | start: spec edits for A100 (address-space rejection, limits/@timeout on main) |
 | ST-walk-orders-left | impl attempt 1 | 2026-11-13 13:56 | started |
-| TYPE-op-table | running | 2026-11-13 15:30 |  |
+| TYPE-op-table | impl attempt 1 | 2026-11-13 15:22 | started; load 35.92 39.67 40.25 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
