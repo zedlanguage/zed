@@ -1,15 +1,17 @@
 //! The scaling test of the rule of low complexity (DESIGN.md Part G, "Six standing rules"): a
-//! pass runs at sizes n and 8n, and the larger run must do less than 13 times the work of the
+//! pass runs at sizes n and 8n, and the larger run must do less than 10.5 times the work of the
 //! smaller, times `8^(k−1)` where `n^k` is the order the measured work is defined to have
-//! ([`LIMIT`], [`limit`]; author, 2026-11-13: "keep the 8x scaling under 13, but strongly prefer
-//! under 9 if such an algorithm can be found"). A check that passes with a ratio from 9 to 13
-//! times `8^(k−1)` ([`PREFERRED`]) prints a note naming the test ([`hold`]). Work of order n log n
-//! is `8 ln(8n) / ln(n)` times: 10.4 at n = 1000, 12.2 at n = 52, under 13 from n = 28 on. Work
-//! of order `n^1.25` is 13.45 times at every n, over the limit; `n^1.2` is 12.1 times. Work of
-//! order `n log^2 n`, the best known cost of radix conversion and of the gcd of numbers of n bits
-//! (author decision A47, 2026-11-09), is under 13 from n = 1936 on. Until 2026-11-13 the limit
-//! was `8^k × ln(8n) / ln(n) × 1.1` (SCALE-ratio, 15.4 at n = 16), with `8 × (ln(8n) / ln(n))^2
-//! × 1.1` for radix conversion and the gcd, and until 2026-11-07 a fixed `24 × 8^(k−1)`. Setting
+//! ([`LIMIT`], [`limit`]; author, 2026-11-13: "Let's keep things under 10.5 for 8x scaling" and
+//! "Under 10.5, but ideally under 9"). A check that passes with a ratio from 9 to 10.5 times
+//! `8^(k−1)` ([`PREFERRED`]) prints a note naming the test ([`hold`]). Work of order n log n is
+//! `8 ln(8n) / ln(n)` times: 10.4 at n = 1000, 10.4995 at n = 777, under 10.5 from n = 777 on and
+//! 12.2 at n = 52. Work of order `n^1.13` is 10.48 times at every n, under the limit, and
+//! `n^1.14` is 10.70 times, over it. Work of order `n log^2 n`, the best known cost of radix
+//! conversion and of the gcd of numbers of n bits (author decision A47, 2026-11-09), is under
+//! 10.5 only from n = 1,587,343 on. For a few hours of 2026-11-13 the limit was 13
+//! (TESTS-scaling-limit-13), and until then `8^k × ln(8n) / ln(n) × 1.1` (SCALE-ratio, 15.4 at
+//! n = 16), with `8 × (ln(8n) / ln(n))^2 × 1.1` for radix conversion and the gcd, and until
+//! 2026-11-07 a fixed `24 × 8^(k−1)`. Setting
 //! the variable `ZED_SCALING_RATIOS` ([`RATIOS_FILE`]) to a file name makes every check append
 //! its measurements to that file.
 //!
@@ -97,8 +99,8 @@ pub const FACTOR: usize = 8;
 /// The ratio of the work at 8n to the work at n that a pass of order n must stay under (author,
 /// 2026-11-13). The instructions of one test differ from run to run by up to 6.5% in this ratio
 /// (387 tests run three times, 2026-11-07: median 0.03%, 99th percentile 3%), from the order a
-/// hash map's seed puts keys in, so a pass of order n log n measured at 12.2 may pass or fail.
-pub const LIMIT: f64 = 13.0;
+/// hash map's seed puts keys in, so a pass of order n log n measured at 10.4 may pass or fail.
+pub const LIMIT: f64 = 10.5;
 
 /// The ratio under which a pass of order n is strongly preferred (author, 2026-11-13): a check
 /// that passes from it up to [`LIMIT`] prints a note naming the test.
@@ -116,11 +118,12 @@ fn scale(power: u32) -> f64 {
 }
 
 /// The ratio of the work at 8n to the work at n that work of order `n^power` must stay under:
-/// [`LIMIT`] times `8^(power − 1)`. Power 1 is a pass of the compiler or the runtime, 13; power
+/// [`LIMIT`] times `8^(power − 1)`. Power 1 is a pass of the compiler or the runtime, 10.5; power
 /// 2 a Zed program whose own algorithm is quadratic, such as an O(n) operation in an O(n) loop,
-/// 104; power 0 work of order 1 or `log n`, 1.625. One rule for every power keeps a single
-/// constant, at the cost of power 0 allowing more than before: the limit until 2026-11-13,
-/// `ln(8n) / ln(n) × 1.1`, was 1.32 at n = 30,000, while work of order `log n` is 1.20 times there.
+/// 84; power 0 work of order 1 or `log n`, 1.3125. One rule for every power keeps a single
+/// constant, at the cost of power 0 allowing more than before at large n: the limit until
+/// 2026-11-13, `ln(8n) / ln(n) × 1.1`, was 1.32 at n = 30,000 and falls toward 1.1 as n grows,
+/// while work of order `log n` is 1.20 times at n = 30,000.
 pub fn limit(power: u32) -> f64 {
     LIMIT * scale(power)
 }
@@ -155,7 +158,7 @@ pub fn hold(what: &str, measure: &str, small: u64, large: u64, power: u32) -> f6
 /// [`hold`] for a count that is linear in n by its construction and does not change with the
 /// load (calls of a function, nodes made or entered, bytes of a text), held also to
 /// [`PREFERRED`]: such a count measures near 8 times on every run, so a bound of 9 still finds an
-/// extra factor of `log n` (`8 ln(8n) / ln(n)`, 11.2 at n = 192) that [`LIMIT`] lets through.
+/// extra factor of `log n` (`8 ln(8n) / ln(n)`, 10.4 at n = 1000) that [`LIMIT`] lets through.
 /// The tests that use it held their count under 9, or under 5 at 4n, before the limit was 13.
 pub fn hold_linear(what: &str, measure: &str, small: u64, large: u64) -> f64 {
     let ratio = hold(what, measure, small, large, 1);
@@ -175,7 +178,7 @@ fn why(power: u32) -> String {
             "the rule of low complexity allows less than {limit:.2} times at 8n (DESIGN.md Part G)"
         ),
         _ => format!(
-            "for work of order n^{power} the rule of low complexity allows less than 13 × \
+            "for work of order n^{power} the rule of low complexity allows less than {LIMIT} × \
              8^({power} − 1) = {limit:.2} times at 8n (DESIGN.md Part G)"
         ),
     }
@@ -813,7 +816,7 @@ fn compare_by_dyn(
 /// line to for each measurement, when it is set: the test, `what`, n (`-` for [`compare`] and
 /// [`hold`]), the power (`-` for [`compare_costs`]), the limit, the work of the two sizes and its ratio, the unit, and the
 /// bytes of the two sizes and their ratio (`-` for [`hold`]), separated by tabs. It lists the
-/// ratios the tests measure (SCALE-ratio, TESTS-scaling-limit-13).
+/// ratios the tests measure (SCALE-ratio, TESTS-scaling-limit-13, TESTS-scaling-limit-10_5).
 pub const RATIOS_FILE: &str = "ZED_SCALING_RATIOS";
 
 /// Appends one measurement to the file [`RATIOS_FILE`] names, if it is set. One `write` call per
@@ -900,12 +903,12 @@ mod tests {
     }
 
     /// Work of order `n^1.25`, which the limit of 24 for k = 1 let pass (13.5 times at 8n), fails
-    /// at n = 1000, and work of order `n log n` passes there and at n = 52.
+    /// at n = 1000, and work of order `n log n` passes there and at n = 2000 (10.2 times).
     #[test]
     fn work_a_quarter_power_above_n_log_n_fails() {
         let n_log_n = |n: usize| spin((n as f64 * (n as f64).log2() * 50.0) as u64);
         check_instructions_only("n log n work", 1000, 1, n_log_n);
-        check_instructions_only("n log n work", 52, 1, n_log_n);
+        check_instructions_only("n log n work", 2000, 1, n_log_n);
         let quarter = |n: usize| spin(((n as f64).powf(1.25) * 500.0) as u64);
         assert!(fails(|| check_instructions_only(
             "work of order n^1.25",
@@ -915,28 +918,31 @@ mod tests {
         )));
     }
 
-    /// The limit is 13 at 8n for work of order n, times `8^(k − 1)` for order `n^k`. Work of
-    /// order n log n is under it from n = 28 on (12.99 times at 28, 13.04 at 27), and work of
-    /// order `n^1.25` (13.45 times) is over it at every n.
+    /// The limit is 10.5 at 8n for work of order n, times `8^(k − 1)` for order `n^k`. Work of
+    /// order n log n is under it from n = 777 on (10.4995 times at 777, 10.5000 at 776), work of
+    /// order `n^1.13` (10.48 times) is under it at every n and work of order `n^1.14` (10.70
+    /// times) over it, and work of order `n log^2 n` is under it from n = 1,587,343 on.
     #[test]
-    fn the_limit_is_13_times_8_to_the_power_less_one() {
+    fn the_limit_is_10_5_times_8_to_the_power_less_one() {
         assert_eq!(
             (limit(0), limit(1), limit(2), limit(3)),
-            (1.625, 13.0, 104.0, 832.0)
+            (1.3125, 10.5, 84.0, 672.0)
         );
         let n_log_n = |n: f64| 8.0 * (8.0 * n).ln() / n.ln();
-        assert!(n_log_n(28.0) < limit(1) && n_log_n(27.0) > limit(1));
-        assert!(8f64.powf(1.25) > limit(1) && 8f64.powf(1.2) < limit(1));
+        assert!(n_log_n(777.0) < limit(1) && n_log_n(776.0) > limit(1));
+        assert!(8f64.powf(1.14) > limit(1) && 8f64.powf(1.13) < limit(1));
+        let n_log2_n = |n: f64| n_log_n(n).powi(2) / 8.0;
+        assert!(n_log2_n(1_587_343.0) < limit(1) && n_log2_n(1_587_342.0) > limit(1));
     }
 
     /// [`hold`] passes a ratio under the limit, fails one at it or over it, and reads a count of
     /// 0 as 1.
     #[test]
     fn a_held_ratio_must_be_under_the_limit() {
-        assert_eq!(hold("nodes, n and 8n", "nodes", 100, 1299, 1), 12.99);
-        assert!(fails(|| _ = hold("nodes, n and 8n", "nodes", 100, 1300, 1)));
+        assert_eq!(hold("nodes, n and 8n", "nodes", 100, 1049, 1), 10.49);
+        assert!(fails(|| _ = hold("nodes, n and 8n", "nodes", 100, 1050, 1)));
         assert!(fails(
-            || _ = hold("nodes, n and 8n", "nodes", 100, 10_400, 2)
+            || _ = hold("nodes, n and 8n", "nodes", 100, 8_400, 2)
         ));
         assert_eq!(hold("nodes, n and 8n", "nodes", 0, 8, 1), 8.0);
         let message = message_of(|| _ = hold("steps at 10 and 80", "steps", 10, 200, 1));
@@ -946,7 +952,7 @@ mod tests {
         );
     }
 
-    /// Run by [`a_ratio_from_9_to_13_prints_a_note_naming_the_test`]: a ratio of 10 by [`hold`]
+    /// Run by [`a_ratio_from_9_to_10_5_prints_a_note_naming_the_test`]: a ratio of 10 by [`hold`]
     /// and work of order n log n at 1000 (10.4 times) print a note, a ratio of 8 none.
     #[test]
     fn ratios_near_the_limit_pass() {
@@ -957,7 +963,7 @@ mod tests {
     }
 
     #[test]
-    fn a_ratio_from_9_to_13_prints_a_note_naming_the_test() {
+    fn a_ratio_from_9_to_10_5_prints_a_note_naming_the_test() {
         let run = std::process::Command::new(std::env::current_exe().expect("this test binary"))
             .args([
                 "--exact",
@@ -986,9 +992,9 @@ mod tests {
     }
 
     /// Linear work passes and cubic work fails by processor time, at 100 and 800, where the
-    /// limit is 13 (26 by time): 8 and 512 times the work. Measured at load about 25
-    /// (2026-11-12, three runs): linear 6.6 to 7.4 times, 3.4 times under the allowance; cubic
-    /// 217 to 501 times, 8.5 times over it. The linear runs are 1 and 8 million passes, as
+    /// limit is 10.5 (21 by time): 8 and 512 times the work. Measured at load about 25
+    /// (2026-11-12, three runs): linear 6.6 to 7.4 times, 2.8 times under the allowance of 21; cubic
+    /// 217 to 501 times, 10.3 times over it. The linear runs are 1 and 8 million passes, as
     /// before. This test ran quadratic work at 1000 and 8000 before, 64 times the work against
     /// 22.9 by time: measured 42.4 to 58.8 times, only 1.85 times over the allowance, and linear
     /// work at 100,000 and 800,000, 5.7 to 6.9 times against 20.8 (load about 31).
@@ -1017,7 +1023,7 @@ mod tests {
     }
 
     /// Cubic work on a thread a run starts, at 50 and 400: 512 times the work, against the limit
-    /// of 13 (26 by time). A meter that missed the thread's work would find only the cost of
+    /// of 10.5 (21 by time). A meter that missed the thread's work would find only the cost of
     /// starting it, the same at both sizes. The quadratic work this test ran before, at 1000 and
     /// 8000 (64 times, limit 11.4, 22.9 by time), took as long and measured 49 to 61 times by
     /// time, but only 26 to 31 times with the small run made twice as slow, near the limit. The
