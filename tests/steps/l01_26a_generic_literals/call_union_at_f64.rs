@@ -107,6 +107,38 @@ fn an_integer_with_no_exact_f64_is_still_refused() {
 }
 
 #[test]
+fn a_power_with_no_exact_f64_is_named_as_a_power() {
+    // NUM-no-panic-built: the message names the value as its type does, `2^K`, and builds no
+    // digits. Before, it built them, and `2^2^100`, whose digits no memory holds, stopped
+    // zedc with an internal error, `3^2^100` at another site of the same build than `2^2^100`.
+    for (power, written) in [
+        ("2^2^100", "2^1267650600228229401496703205376"),
+        ("3^2^100", "3^1267650600228229401496703205376"),
+        ("3^200000", "3^200000"),
+        ("5 * 3^2^64", "5*3^18446744073709551616"),
+    ] {
+        let src = format!(
+            "f(positional c: bool) = if c {{ {power} }} else {{ 1 }};\n\
+             h(positional x: f64) = x;\nk(positional b: bool) = h(f(b));\n"
+        );
+        assert_eq!(
+            type_errors(&src),
+            [format!(
+                "No `f64` equals {written}, which `f(b)` may give. [h(f(b))]"
+            )],
+            "{power}"
+        );
+    }
+    // A value held as digits is named by them, as its type is: the sum is built.
+    let src = "f(positional c: bool) = if c { 3^40 + 2 } else { 1 };\n\
+               h(positional x: f64) = x;\nk(positional b: bool) = h(f(b));\n";
+    assert_eq!(
+        type_errors(src),
+        ["No `f64` equals 12157665459056928803, which `f(b)` may give. [h(f(b))]"]
+    );
+}
+
+#[test]
 fn a_member_that_is_no_number_is_still_refused() {
     // The value no arrow takes is named in place of the type (MSG-call-union-headline).
     assert_eq!(

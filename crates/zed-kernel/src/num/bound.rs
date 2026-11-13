@@ -142,10 +142,11 @@ impl Product<'_> {
         b
     }
 
-    /// The product itself, built by [`built`] and [`fast::mul`], O(n log n) in its width.
-    fn materialize(&self) -> BigUint {
-        let pows = built(&self.pows).into_parts().1;
-        fast::mul(&self.coef, &pows)
+    /// The product itself, built by [`built`] and [`fast::mul`], O(n log n) in its width;
+    /// [`TooLarge`] as for [`built`].
+    fn materialize(&self) -> Result<BigUint, TooLarge> {
+        let pows = built(&self.pows)?.into_parts().1;
+        Ok(fast::mul(&self.coef, &pows))
     }
 
     /// The widest exponent, in bits.
@@ -317,7 +318,7 @@ pub(super) fn cmp(n: &Product<'_>, d: &Product<'_>, check: bool) -> Result<Order
             if check {
                 room(cost)?;
             }
-            return Ok(n.materialize().cmp(&d.materialize()));
+            return Ok(n.materialize()?.cmp(&d.materialize()?));
         }
         if check {
             room(BigUint::from(k) << 3u32)?;
@@ -423,8 +424,8 @@ pub(super) fn round(
         let q = if BigUint::from(k) >= cost {
             room(cost.clone()).map_err(LiteralRounding::TooLarge)?;
             Quotient::Exact {
-                n: n.materialize(),
-                d: d.materialize(),
+                n: n.materialize().map_err(LiteralRounding::TooLarge)?,
+                d: d.materialize().map_err(LiteralRounding::TooLarge)?,
             }
         } else {
             // Complexity tradeoff: a round asks for `32k` bits, a measured bound, not a proved

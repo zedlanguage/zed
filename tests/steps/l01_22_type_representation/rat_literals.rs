@@ -170,8 +170,8 @@ fn kept_and_built_forms_of_random_numbers_print_alike() {
         let kept = Rat::decimal(&format!("{sign}{text}e{exp}"))
             .unwrap()
             .unwrap();
-        let n: BigInt = kept.numer_text().parse().unwrap();
-        let d: BigInt = kept.denom_text().parse().unwrap();
+        let n: BigInt = kept.numer_text().unwrap().parse().unwrap();
+        let d: BigInt = kept.denom_text().unwrap().parse().unwrap();
         let built = Rat::new(n, d).unwrap();
         assert_eq!(kept, built);
         let (a, b) = (lit(&Value::rat(kept)), lit(&Value::rat(built)));

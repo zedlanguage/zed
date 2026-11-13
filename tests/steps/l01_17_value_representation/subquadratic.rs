@@ -171,15 +171,18 @@ fn a_gcd_of_wide_numbers_scales() {
 fn printing_a_wide_number_scales() {
     let n = 1 << 16;
     let inputs = built(n, |m| int(random(m, 8)));
-    assert_eq!(at(&inputs, n, n).numer_text(), random(n, 8).to_string());
-    assert_eq!(int(sparse(n)).numer_text(), sparse(n).to_string());
     assert_eq!(
-        int(sparse(n) - 1u32).numer_text(),
+        at(&inputs, n, n).numer_text().unwrap(),
+        random(n, 8).to_string()
+    );
+    assert_eq!(int(sparse(n)).numer_text().unwrap(), sparse(n).to_string());
+    assert_eq!(
+        int(sparse(n) - 1u32).numer_text().unwrap(),
         (sparse(n) - 1u32).to_string()
     );
-    assert_eq!(int(BigInt::zero()).numer_text(), "0");
+    assert_eq!(int(BigInt::zero()).numer_text().unwrap(), "0");
     check("the decimal text of a number of n words", n, |m| {
-        assert!(!at(&inputs, n, m).numer_text().is_empty());
+        assert!(!at(&inputs, n, m).numer_text().unwrap().is_empty());
     });
 }
 

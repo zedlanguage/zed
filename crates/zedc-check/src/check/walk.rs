@@ -11185,6 +11185,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                  `f64` is read as a `rat`. Write {v}r where it is written, or {change} the \
                  type `f64`"
             ),
+            // Complexity tradeoff (NUM-no-panic-built): an integer beyond 64 bits is named as
+            // its type names it ([`Rat::integer_text`]), its digits or, where shorter, its
+            // powers, decided from the exponents in O(the text). Naively writing its digits
+            // cost O(n log^2 n) in the value's bits n, 95,425 digits for `3^200000`, and
+            // stopped zedc on `2^2^100`, whose digits no memory holds.
+            Value::Big(n) => {
+                let n = n.integer_text();
+                return format!("No `{c}` equals {n}, which {call} may give");
+            }
             _ => return format!("No `{c}` equals {v}, which {call} may give"),
         };
         self.rejected_because(what, args, &why)

@@ -236,17 +236,18 @@ impl Rat {
                 self.pows.iter().map(|(p, e)| (*p, e.magnitude())),
             ) << 3u32,
         )?;
-        Ok(self.integer_built())
+        self.integer_built()
     }
 
-    /// The integer it is, built, with no check of its size. It must be an integer.
-    fn integer_built(&self) -> BigInt {
+    /// The integer it is, built, with no check of its size but the exponents' ([`built`]). It
+    /// must be an integer.
+    fn integer_built(&self) -> Result<BigInt, TooLarge> {
         let pows: Vec<(u64, BigUint)> = self
             .pows
             .iter()
             .map(|(p, e)| (*p, e.magnitude().clone()))
             .collect();
-        fast::mul_int(&self.num, &built(&pows))
+        Ok(fast::mul_int(&self.num, &built(&pows)?))
     }
 
     /// Whether the integer it is is even: a positive power of 2, or an even coefficient. It
@@ -285,18 +286,27 @@ impl Rat {
         for (p, e) in self.pows.iter() {
             low += e * (63 - p.leading_zeros());
         }
-        (low <= BigInt::from(63)).then(|| self.integer_built())
+        // Within the bound every exponent is below 64, so the build is never refused.
+        match low <= BigInt::from(63) {
+            true => self.integer_built().ok(),
+            false => None,
+        }
     }
 
-    /// The numerator's digits, with its sign.
-    pub fn numer_text(&self) -> String {
+    /// The numerator's digits, with its sign, or [`TooLarge`] when a kept exponent is too large
+    /// for any memory to hold the digits ([`built`]). The memory is not asked for here; a
+    /// caller that writes a wide number asks first with [`Rat::text_room`].
+    pub fn numer_text(&self) -> Result<String, TooLarge> {
         let sign = if self.is_negative() { "-" } else { "" };
         let pows = self
             .pows
             .iter()
             .filter(|(_, e)| e.is_positive())
             .map(|(p, e)| (*p, e.magnitude().clone()));
-        format!("{sign}{}", digits(self.num.magnitude(), pows.collect()))
+        Ok(format!(
+            "{sign}{}",
+            digits(self.num.magnitude(), pows.collect())?
+        ))
     }
 
     /// `Ok` when the system gives the memory to write its digits (`Rat::text_ask`); else
@@ -336,8 +346,8 @@ impl Rat {
         (bits, text)
     }
 
-    /// The denominator's digits.
-    pub fn denom_text(&self) -> String {
+    /// The denominator's digits, or [`TooLarge`] as for [`Rat::numer_text`].
+    pub fn denom_text(&self) -> Result<String, TooLarge> {
         let pows = self
             .pows
             .iter()
@@ -367,20 +377,24 @@ impl Rat {
             let (bits, _) = self.text_size();
             room(bits << 3u32)?;
         }
-        fn side<'s>(coef: &'s BigInt, pows: &[(u64, BigInt)], sign: Sign) -> Cow<'s, BigUint> {
+        fn side<'s>(
+            coef: &'s BigInt,
+            pows: &[(u64, BigInt)],
+            sign: Sign,
+        ) -> Result<Cow<'s, BigUint>, TooLarge> {
             let pows: Vec<(u64, BigUint)> = pows
                 .iter()
                 .filter(|(_, e)| e.sign() == sign)
                 .map(|(p, e)| (*p, e.magnitude().clone()))
                 .collect();
-            match pows.is_empty() {
+            Ok(match pows.is_empty() {
                 true => Cow::Borrowed(coef.magnitude()),
-                false => Cow::Owned(fast::mul(coef.magnitude(), built(&pows).magnitude())),
-            }
+                false => Cow::Owned(fast::mul(coef.magnitude(), built(&pows)?.magnitude())),
+            })
         }
         Ok((
-            side(&self.num, &self.pows, Sign::Plus),
-            side(&self.den, &self.pows, Sign::Minus),
+            side(&self.num, &self.pows, Sign::Plus)?,
+            side(&self.den, &self.pows, Sign::Minus)?,
         ))
     }
 
@@ -459,7 +473,12 @@ impl Rat {
                     .expect("an exponent less its least is not negative"),
             )
         }));
-        let m = fast::to_decimal(&fast::mul(num.magnitude(), built(&pows).magnitude()));
+        // An exponent of 2^64 or more has digits no memory holds; the value is written as
+        // `Display` writes it then, by its powers.
+        let Ok(m) = built(&pows) else {
+            return self.to_string();
+        };
+        let m = fast::to_decimal(&fast::mul(num.magnitude(), m.magnitude()));
         match tens.is_zero() {
             true => format!("{sign}{m}r"),
             false => format!("{sign}{m}e{tens}r"),
@@ -485,17 +504,21 @@ impl Rat {
     /// (DESIGN.md L1.26a).
     pub fn integer_text(&self) -> String {
         debug_assert!(self.is_integer());
+        let sign = if self.is_negative() { "-" } else { "" };
         if self.is_plain() {
-            return self.numer_text();
+            return format!("{sign}{}", fast::to_decimal(self.num.magnitude()));
         }
         let power = self.power_text();
         let ten = Rat::int(BigInt::from(10))
             .pow(&BigUint::from(power.len()))
             .expect("10 is factored and nothing is built");
-        match self.magnitude_order(&ten, false) {
-            Ok(Ordering::Less) => self.numer_text(),
-            _ => format!("{}{power}", if self.is_negative() { "-" } else { "" }),
-        }
+        // Below `10^L` every exponent is small, so the digits are never refused; a refusal
+        // would leave the powers, which are the value too.
+        let digits = match self.magnitude_order(&ten, false) {
+            Ok(Ordering::Less) => self.numer_text().ok(),
+            _ => None,
+        };
+        digits.unwrap_or_else(|| format!("{sign}{power}"))
     }
 
     /// The integer's coefficient and powers as `c*b^e*…`, without the sign: the primes that
@@ -546,10 +569,12 @@ impl Rat {
         if least >= BigUint::from(grouped.len()) {
             return grouped;
         }
-        let gcd_form = format!(
-            "{head}{}^{g_text}",
-            fast::to_decimal(built(&reduced).magnitude())
-        );
+        // The base's digits are fewer than the grouped text's, so its exponents are small and
+        // it is never refused.
+        let Ok(base) = built(&reduced) else {
+            return grouped;
+        };
+        let gcd_form = format!("{head}{}^{g_text}", fast::to_decimal(base.magnitude()));
         match gcd_form.len() < grouped.len() {
             true => gcd_form,
             false => grouped,
@@ -657,8 +682,8 @@ impl Rat {
             .map(|(n, rest, d)| width(n, rest.iter().map(|(p, e)| (*p, e))) + d.bits());
         let [x, y] = sizes;
         room((x.max(y) + 1u32) << 3u32)?;
-        let ra = fast::mul_int(&a.num, &built(&rest_a));
-        let rb = fast::mul_int(&b.num, &built(&rest_b));
+        let ra = fast::mul_int(&a.num, &built(&rest_a)?);
+        let rb = fast::mul_int(&b.num, &built(&rest_b)?);
         Ok(Rat::build(
             signed(fast::mul_int(&ra, &b.den), fast::mul_int(&rb, &a.den)),
             fast::mul_int(&a.den, &b.den),
@@ -1712,14 +1737,22 @@ fn times<'a>(x: &'a BigUint, y: &'a BigUint, check: bool) -> Result<Cow<'a, BigU
 }
 
 /// The digits of `coef * prod pows`. The power of 10 they share is written as zeros, so a
-/// decimal literal's digits cost their number.
-fn digits(coef: &BigUint, pows: Vec<(u64, BigUint)>) -> String {
+/// decimal literal's digits cost their number. [`TooLarge`] when an exponent is 2^64 or
+/// more ([`built`]), or the zeros are more than an address reaches, naming their bytes; the
+/// memory is not asked for here.
+fn digits(coef: &BigUint, pows: Vec<(u64, BigUint)>) -> Result<String, TooLarge> {
     let exp = |q: u64| {
         pows.iter()
             .find(|(p, _)| *p == q)
             .map_or(BigUint::zero(), |(_, e)| e.clone())
     };
     let tens = exp(2).min(exp(5));
+    let zeros = match coef.is_zero() {
+        true => 0,
+        false => (tens.to_usize()).ok_or_else(|| TooLarge {
+            bits: &tens << 3u32,
+        })?,
+    };
     let rest: Vec<(u64, BigUint)> = pows
         .iter()
         .map(|(p, e)| match p {
@@ -1727,14 +1760,9 @@ fn digits(coef: &BigUint, pows: Vec<(u64, BigUint)>) -> String {
             _ => (*p, e.clone()),
         })
         .collect();
-    let mut out = fast::to_decimal(&fast::mul(coef, built(&rest).magnitude()));
-    if !coef.is_zero() {
-        let zeros = tens
-            .to_usize()
-            .expect("a number whose digits fit in memory");
-        out.push_str(&"0".repeat(zeros));
-    }
-    out
+    let mut out = fast::to_decimal(&fast::mul(coef, built(&rest)?.magnitude()));
+    out.push_str(&"0".repeat(zeros));
+    Ok(out)
 }
 
 thread_local! {
@@ -1912,15 +1940,62 @@ impl PartialOrd for Rat {
     }
 }
 
-/// Written as its literal: `3r`, `-1r/3r`.
+/// Written as its literal: `3r`, `-1r/3r`; or, when the system refuses the memory for the
+/// digits ([`Rat::digits_or_powers`]), as each side's powers cast, `rat(2^K)` or
+/// `rat(1)/rat(3^K)`.
 impl fmt::Display for Rat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let den = self.denom_text();
-        if den == "1" {
-            write!(f, "{}r", self.numer_text())
-        } else {
-            write!(f, "{}r/{den}r", self.numer_text())
+        match self.digits_or_powers() {
+            Ok((num, den)) if den == "1" => write!(f, "{num}r"),
+            Ok((num, den)) => write!(f, "{num}r/{den}r"),
+            Err((num, den)) if den == "1" => write!(f, "rat({num})"),
+            Err((num, den)) => write!(f, "rat({num})/rat({den})"),
         }
+    }
+}
+
+impl Rat {
+    /// The digits of the integer it is, with its sign, as `String` writes them; or, when the
+    /// system refuses the memory for them, its powers as [`Rat::integer_text`] writes them,
+    /// `2^1267650600228229401496703205376`. It must be an integer.
+    pub fn integer_digits(&self) -> String {
+        match self.digits_or_powers() {
+            Ok((num, _)) | Err((num, _)) => num,
+        }
+    }
+
+    /// `Ok` with the digits of the numerator, with its sign, and of the denominator; or, when
+    /// the system refuses the memory for them ([`Rat::text_room`]), `Err` with each side's
+    /// text by [`Rat::integer_text`], its powers where they are shorter.
+    ///
+    /// Complexity tradeoff (NUM-no-panic-built): a number with kept powers asks the system
+    /// for the memory of its digits before they are built, one allocation asked and freed,
+    /// beside the digits' O(n log^2 n) in their bits n; a plain number is written as it is,
+    /// its digits about its own size. The naive method, building the digits always, aborted
+    /// the process on a refusal and stopped zedc at an `expect` on an exponent of 2^64 or more,
+    /// as `2^2^100` in a message. Which text a value near the memory limit gets depends on the
+    /// machine's free memory; the messages that name a number print its type's text
+    /// ([`Rat::integer_text`]) and not this, so they do not.
+    fn digits_or_powers(&self) -> Result<(String, String), (String, String)> {
+        let room = match self.is_plain() {
+            true => Ok(()),
+            false => self.text_room(),
+        };
+        let digits = room.and_then(|()| Ok((self.numer_text()?, self.denom_text()?)));
+        digits.map_err(|_| {
+            let side = |num: &BigInt, sign: Sign| {
+                let pows = (self.pows.iter())
+                    .filter(|(_, e)| e.sign() == sign)
+                    .map(|(p, e)| (*p, BigInt::from(e.magnitude().clone())));
+                Rat {
+                    num: num.clone(),
+                    den: BigInt::one(),
+                    pows: pows.collect(),
+                }
+                .integer_text()
+            };
+            (side(&self.num, Sign::Plus), side(&self.den, Sign::Minus))
+        })
     }
 }
 
@@ -2078,6 +2153,35 @@ mod tests {
             power(3, 200000),
             power(3, 200000).add(&Rat::int(BigInt::one())).unwrap()
         );
+    }
+
+    #[test]
+    fn a_power_whose_digits_no_memory_holds_is_refused_and_written_by_its_powers() {
+        // NUM-no-panic-built: an exponent of 2^64 or more has more bits than any memory holds.
+        // Building the number is `TooLarge`, naming its bits, where `expect` stopped before,
+        // and writing it gives its powers.
+        let k = BigUint::one() << 100u32;
+        let big = |b: u64| Rat::int(BigInt::from(b)).pow(&k).unwrap();
+        let (two, three, ten) = (big(2), big(3), big(10));
+        let k_text = "1267650600228229401496703205376";
+        // `2^K` has `K` bits, `3^K` fewer than `2K`; `10^K` is its `K` zeros, a byte each.
+        assert_eq!(two.numer_text(), Err(TooLarge { bits: k.clone() }));
+        assert_eq!(three.numer_text(), Err(TooLarge { bits: &k << 1u32 }));
+        assert_eq!(ten.numer_text(), Err(TooLarge { bits: &k << 3u32 }));
+        assert!(two.to_integer().is_err() && three.built_parts().is_err());
+        assert_eq!(two.integer_digits(), format!("2^{k_text}"));
+        assert_eq!(ten.integer_digits(), format!("10^{k_text}"));
+        assert_eq!(three.to_string(), format!("rat(3^{k_text})"));
+        assert_eq!(three.neg().integer_text(), format!("-3^{k_text}"));
+        let third = Rat::int(BigInt::from(5)).div(&three).unwrap().unwrap();
+        assert_eq!(third.to_string(), format!("rat(5)/rat(3^{k_text})"));
+        assert_eq!(third.denom_text(), Err(TooLarge { bits: &k << 1u32 }));
+        assert!(third.literal_text().starts_with("rat(5)/"));
+        // The order is told by the bit lengths, and nothing is built.
+        assert_eq!(two.try_cmp(&three), Ok(Ordering::Less));
+        // A power with an exponent below 2^64 still prints its digits.
+        assert_eq!(power(2, 64).integer_digits(), "18446744073709551616");
+        assert_eq!(power(10, 3).to_string(), "1000r");
     }
 
     #[test]

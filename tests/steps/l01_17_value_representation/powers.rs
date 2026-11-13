@@ -10,8 +10,16 @@ use zed_tests::scaling::check_order;
 
 /// The value built out: the plain rational of its digits.
 fn built(r: &Rat) -> Rat {
-    let n: BigInt = r.numer_text().parse().expect("a numerator is digits");
-    let d: BigInt = r.denom_text().parse().expect("a denominator is digits");
+    let n: BigInt = r
+        .numer_text()
+        .unwrap()
+        .parse()
+        .expect("a numerator is digits");
+    let d: BigInt = r
+        .denom_text()
+        .unwrap()
+        .parse()
+        .expect("a denominator is digits");
     Rat::new(n, d).expect("a denominator is not zero")
 }
 
@@ -180,7 +188,7 @@ fn corner_cases_of_kept_powers() {
     // Zero has no powers, whatever its exponent.
     assert!(dec("0e999").is_zero());
     assert_eq!(dec("0e999"), int(0));
-    assert_eq!(dec("-0.0e-999999999999").numer_text(), "0");
+    assert_eq!(dec("-0.0e-999999999999").numer_text().unwrap(), "0");
     assert_eq!(literal_f64("0e99999999999"), Ok(0.0));
     // Negatives.
     assert_eq!(dec("-1.5e3"), int(-1500));
@@ -221,7 +229,7 @@ fn corner_cases_of_kept_powers() {
     assert_eq!(one, int(1));
     assert!(one.is_integer());
     assert_eq!(
-        (one.numer_text(), one.denom_text()),
+        (one.numer_text().unwrap(), one.denom_text().unwrap()),
         ("1".into(), "1".into())
     );
     let q = int(6)
@@ -237,7 +245,7 @@ fn corner_cases_of_kept_powers() {
     assert_eq!(int(1000), dec("1e3"));
     assert_eq!(int(8), int(2).pow(&3u32.into()).unwrap());
     assert_eq!(
-        dec("1.345e932").numer_text(),
+        dec("1.345e932").numer_text().unwrap(),
         format!("1345{}", "0".repeat(929))
     );
 }
@@ -282,7 +290,7 @@ fn plain_fast_paths_agree_with_the_general_path() {
     }
     let two = int(2).pow(&1u32.into()).unwrap();
     let four = two.mul(&two).unwrap();
-    let text = |r: &Rat| (r.numer_text(), r.denom_text());
+    let text = |r: &Rat| (r.numer_text().unwrap(), r.denom_text().unwrap());
     for a in &values {
         for b in &values {
             let (a2, b2) = (a.mul(&two).unwrap(), b.mul(&two).unwrap());

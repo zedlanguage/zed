@@ -126,6 +126,8 @@ use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 
+use super::TooLarge;
+
 /// The 64-bit words at or below which the narrower factor goes to num-bigint's
 /// multiplication, the other methods' costs not computed. Measured on 2026-11-07 at load 34
 /// to 41 (BIGINT-fast-mul), the transform took 1.74 times num-bigint's time at 256 by 256
@@ -3615,24 +3617,35 @@ fn add_around(x: &mut [u64], mut c: u128) {
 }
 
 /// `prod p^e`, built. A power of 2 is a shift, done last, so `2^e` costs its `e` bits and
-/// not the squarings of a multiplication.
-pub(super) fn built(pows: &[(u64, BigUint)]) -> BigInt {
+/// not the squarings of a multiplication. [`TooLarge`] when an exponent is 2^64 or more: the
+/// power has at least that many bits, more than any memory holds, and it names the bits of
+/// the whole product, `sum e * ceil(log2 p)`, as the memory asked for. Every other build asks
+/// the system for its memory before calling this.
+///
+/// Complexity tradeoff (NUM-no-panic-built): the exponents are read once before the build,
+/// O(terms) word operations, to refuse an exponent of 2^64 or more as an error; before, such
+/// an exponent stopped zedc at an `expect`, when a message printed the digits of `2^2^100`.
+pub(super) fn built(pows: &[(u64, BigUint)]) -> Result<BigInt, TooLarge> {
+    let small: Option<Vec<(u64, u64)>> = (pows.iter())
+        .map(|(p, e)| e.to_u64().map(|e| (*p, e)))
+        .collect();
+    let Some(small) = small else {
+        let bits = (pows.iter())
+            .map(|(p, e)| e * (p.ilog2() + u32::from(!p.is_power_of_two())))
+            .sum();
+        return Err(TooLarge { bits });
+    };
     let mut out = BigUint::one();
-    let mut twos = None;
-    for (p, e) in pows {
-        match (p, e.is_zero()) {
-            (_, true) => {}
-            (2, false) => twos = Some(e),
-            _ => {
-                let e = e.to_u64().expect("a power whose bits fit in memory");
-                out = mul(&out, &pow(&BigUint::from(*p), e));
-            }
+    let mut twos = 0;
+    for (p, e) in small {
+        match (p, e) {
+            (_, 0) => {}
+            (2, _) => twos = e,
+            _ => out = mul(&out, &pow(&BigUint::from(p), e)),
         }
     }
-    if let Some(e) = twos {
-        out <<= e.to_u64().expect("a power of 2 whose bits fit in memory");
-    }
-    BigInt::from(out)
+    out <<= twos;
+    Ok(BigInt::from(out))
 }
 
 /// The methods on either side of each size threshold of `num`, one by one, for the
