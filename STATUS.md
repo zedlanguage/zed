@@ -2024,6 +2024,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | COST-old-form | impl attempt 1 | 2026-11-12 18:18 | tests: l02_02 23/23, zedc_syntax 0/0, doc check ok; l01_07 43/44 against spec main (copies test: design.md out of date from spec 43975e8/296b1ea, not this item) |
 | FLOAT-f32 | impl attempt 1 | 2026-11-05 04:07 | started; worktrees /home/luke/Work/wt/float-f32 and float-f32-spec; load 50.77 50.76 45.34 |
 | GSX-unsolved | merge attempt 1 | 2026-11-11 16:53 | started: rebase combo (gsxh-claude) onto origin/main and apply decisions (a)-(d) of cd-xr/GSX-merge.md / load 43.50 38.06 40.03 |
+| L1.29d | impl attempt 1 | 2026-11-11 01:43 | started; worktree /home/luke/Work/wt/l129d from e52caa1bf |
 | MAKER-file-chain | impl attempt 1 | 2026-11-12 17:24 | red on old code: new work tests t_n + 1 bytes 19.9x, a_n + 1 bytes 14.0x at n=40->320 (limit 13.8); load 76 |
 | MSG-is-repair-v | running | 2026-11-12 17:32 |  |
 | MSG-lines-headline | running | 2026-11-12 17:32 |  |
