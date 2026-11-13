@@ -2147,10 +2147,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | CAST-overflow-atom | impl attempt 1 | 2026-11-13 06:23 | started; worktree /home/luke/Work/wt/cast-overflow-atom from origin/main 3201dab08 |
-| HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | M5 merged 16429d383 (C55); 862 pieces pass; dump: 0 answers changed but one refusal now true; next old tree, holders_chain, rounds 4+ |
+| HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | own attempt not merged (andg 1.09-1.11x main); round 4 launched: Opus, Sol; Gemini 429 until ~2026-11-14 22:00Z; CD seat next |
 | MSG-prelude-word-args | impl attempt 1 | 2026-11-13 05:56 | started; worktree seeded |
 | NARROW-ne-rat-divisor | impl attempt 1 | 2026-11-13 01:12 | started in /home/luke/Work/wt/narrow-ne-rat-divisor from c75a68775 |
-| NUM-huge-div | running |  |  |
+| NUM-huge-div | impl attempt 1 | 2026-11-13 06:35 | started; worktree /home/luke/Work/wt/num-huge-div from bb7379f01 |
 | PERF-l139-family | running | 2026-11-12 18:45 | coordkk fixed d016b9cc3 90a844aa8; 14 tests in 8 families still ignored, cross-review next / 45.57 |
 | PERF-ref-memo-quadratic | impl attempt 4 | 2026-11-10 18:04 | round 3 scored: mix of Sol r3 + Opus r3 SCORE 446.707, 0 coarser; porting into wt/prm4 |
 | POLY-work-250ms | impl attempt 1 | 2026-11-13 06:24 | started: worktree wt/poly-work-250ms from origin/main 8049b9c66; base is POLY-nf-W 1aa4f967d (A98 rule) to be replaced by the A99 250 ms rule; load 36.91 32.45  |
