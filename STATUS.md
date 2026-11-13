@@ -2175,10 +2175,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | DAGVIEW-seeded-scale | impl attempt 1 | 2026-11-13 14:33 | started |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | cross-review round 5 launched on zed-impl 77a026349: Claude, Codex; Gemini 429 (gap recorded); main dump in progress; load 25.99 19.01 20.42 |
 | LIT-name-int-fixed | impl attempt 1 | 2026-11-13 14:29 | started; worktree from origin/main df105e781 |
-| PORT-lines-int-name | impl attempt 1 | 2026-11-13 14:29 | started; worktree from df105e781 |
-| POW-nonneg-power | impl attempt 1 | 2026-11-13 12:32 | started; worktree /home/luke/Work/wt/pow-nonneg-power at ca7c70736 |
+| PERF-tuple-print | running | 2026-11-13 14:51 |  |
+| PORT-lines-int-name | impl attempt 1 | 2026-11-13 14:29 | fix in Ck::pushed; scaling 8.0 instr/8.0 bytes at 1000/8000, control (copy of class literals per literal) 34.3x bytes failed; load ~36 |
+| POW-scope-exponent | running | 2026-11-13 14:51 |  |
 | PRES-overlap-coeffs | impl attempt 1 | 2026-11-13 14:10 | started; worktree from origin/main 64dfe1c61 |
-| REPAIR-eq-kept-cast | running |  |  |
+| RED-written-compare | running | 2026-11-13 14:51 |  |
+| REPAIR-eq-kept-cast | impl attempt 1 | 2026-11-13 14:45 | started; worktree from origin/main 50eadf267 |
 | SPEC-release-dag | impl attempt 1 | 2026-11-13 14:18 | started; load 32.34 33.77 36.42 |
 | ST-walk-orders-left | impl attempt 1 | 2026-11-13 13:56 | started |
 
