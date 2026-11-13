@@ -2104,8 +2104,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | CK-apply-operator | impl attempt 1 | 2026-11-12 00:38 | started; worktree /home/luke/Work/wt/ck-apply-operator on origin/main b9e56b559 |
-| LIT-tuple-branch-carrier | impl attempt 1 | 2026-11-12 20:34 | started; worktree /home/luke/Work/wt/lit-tuple-branch on origin/main 0c230df62 |
-| MSG-derive-print-unions | running | 2026-11-12 17:24 |  |
+| LIT-tuple-branch-carrier | impl attempt 1 | 2026-11-12 20:34 | tests green on rebased tree: affected battery 1429 pieces 0 failed (load 30-55), l01_26a 198 passed; spec zed b85e2da 5e97be4 7900b4f pushed; impl push pending  |
+| MSG-derive-print-unions | impl attempt 1 | 2026-11-12 17:24 | started; worktree /home/luke/Work/wt/derive-print-unions / load 37.56 39.12 37.75 |
 | MSG-flow-origin | impl attempt 1 | 2026-11-11 13:43 | started; worktree wt/msg-flow-origin / 28.82 31.73 34.72 |
 | MSG-literal-type-huge-power | impl attempt 1 | 2026-11-12 22:00 | negative control (run once, not committed): without the walk.rs change the 3 new tests fail; scaling of the checking of if 3^(200n)+1 took 6.1 times the bytes a |
 | PERF-deep-ops-slow | impl attempt 1 | 2026-11-12 21:38 | probe at 20,000 levels, instr/level 8a311f0e6 -> af3881a32: verdict 198k->251k, fits_sig 384k->527k, why_unfit 552k->819k, diff (z vs y tuples) 198k->462k, buil |
