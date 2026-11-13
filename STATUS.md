@@ -2025,7 +2025,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| FENCE-copies-resync | running | 2026-11-12 19:34 |  |
+| FENCE-copies-resync | impl attempt 1 | 2026-11-12 19:34 | started; creating worktree |
 | FLOAT-f32 | impl attempt 1 | 2026-11-05 04:07 | scaling: a chain of n f32 bindings (check+elab+run) 100->800: 8.1x instr, 8.1x bytes, limit 12.77; negative control (n/100 repeats, quadratic) 64.7x bytes, fail |
 | L1.29d | impl attempt 1 | 2026-11-11 01:43 | started; worktree /home/luke/Work/wt/l129d from e52caa1bf |
 | LIT-tuple-decimal-body | impl attempt 1 | 2026-11-12 18:30 | started; worktree wt/lit-tuple-dec on origin/main 151b26576 (also MSG-callee-code) |
@@ -2035,9 +2035,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | MSG-width-headline | running | 2026-11-12 17:32 |  |
 | NARROW-or-order | impl attempt 1 | 2026-11-12 15:40 | started; worktree /home/luke/Work/wt/narrow-or-order on cdd557f13 |
 | PERF-l139-family | impl attempt 1 | 2026-11-12 18:45 | started; worktree /home/luke/Work/wt/perf-l139-family on 163c04744 |
-| POW-rat-literal-ops | impl attempt 1 | 2026-11-12 16:20 | reproduced: (2r/3r)^-2, 1r/(2r/3r), (3r/2r)^-2 refused at a port for #divByZero; (3/2)^-2 in main settles at f64; top-level offers no rat fix |
-| REFUSAL-census-now | running | 2026-11-12 19:34 |  |
-| REFUSAL-periodic-split | impl attempt 1 | 2026-11-11 01:43 | tests pass: witnesses 11, refusals 132 (+17 ignored), all 28 l01_23 groups 0 failed, kernel unit 291 passed (17 ignored); red on old code (2 new tests Refused(F |
+| POW-rat-literal-ops | impl attempt 1 | 2026-11-12 16:20 | tests pass (l01_26 all pieces, l01_26a 182, l01_29 366, l01_17 133, l01_39a 50 pieces, zedc-check 11); range facts with squares of text values; spec e9ef76d on  |
+| REFUSAL-census-now | impl attempt 1 | 2026-11-12 19:34 | started; worktree /home/luke/Work/wt/census-now |
 | STAGE-print | impl attempt 1 | 2026-11-04 03:10 | started; worktree wt/stage-print seeded |
 | TESTS-l01_23-group-oracle-sweep | impl attempt 1 | 2026-11-08 23:59 | started; worktree /home/luke/Work/wt/group-oracle-sweep on origin/main |
 
