@@ -2182,9 +2182,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | CONST-too-large | impl attempt 1 | 2026-11-13 12:32 | reproduced on 19ade181c: A100 programs 1 and 3 compile, stop at run time 'Number too large for memory ... 130 EiB'; load 36.31 40.11 40.40 |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | cross-review round 5 launched on zed-impl 77a026349: Claude, Codex; Gemini 429 (gap recorded); main dump in progress; load 25.99 19.01 20.42 |
 | MSG-literal-class-headline | impl attempt 1 | 2026-11-13 15:45 | started; worktree made from origin/main |
-| PERF-l139-family | running | 2026-11-12 18:45 | coordkk fixed d016b9cc3 90a844aa8; 14 tests in 8 families still ignored, cross-review next / 45.57 |
+| PERF-l139-family | impl attempt 3 | 2026-11-12 18:45 | start: worktree from origin/main 25a9b75b4, re-measuring all l01_39 families |
 | POW-scope-exponent | impl attempt 1 | 2026-11-13 14:51 | reproduced on 4a1a69d22 with zedc run: 2^(2^k - 2) under k > 0, 2^(3^k - 3) under k >= 1, 2^(5^(2^k + 1) - 10) under k >= 0 all rejected 'exponent that may be n |
 | PRES-overlap-coeffs | impl attempt 1 | 2026-11-13 14:10 | started; worktree from origin/main 64dfe1c61 |
+| REPAIR-both-sides-cast | running | 2026-11-13 16:55 |  |
 | REPAIR-past-binding | impl attempt 1 | 2026-11-13 14:51 | started; worktree from origin/main 8776f59cf |
 | TESTS-l01_26a-split | impl attempt 1 | 2026-11-13 15:45 | start; load 32.35 44.38 45.74 |
 | TESTS-unignore-all | impl attempt 1 | 2026-11-13 15:27 | started; worktree from origin/main a9818cd33 |
