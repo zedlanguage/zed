@@ -2147,10 +2147,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| BLOCKING-fact | running |  |  |
+| BLOCKING-fact | impl attempt 1 | 2026-11-13 06:50 | started; worktree /home/luke/Work/wt/blocking-fact; load 38.07 40.87 40.05 |
 | CAST-overflow-atom | impl attempt 1 | 2026-11-13 06:23 | started; worktree /home/luke/Work/wt/cast-overflow-atom from origin/main 3201dab08 |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | own attempt not merged (andg 1.09-1.11x main); round 4 launched: Opus, Sol; Gemini 429 until ~2026-11-14 22:00Z; CD seat next |
-| MAIN-files | running |  |  |
+| MAIN-files | impl attempt 1 | 2026-11-13 06:50 | reproduced on 77af58128: main::files is refused as 'a metadata read :: ... not yet' in main and in a helper; files() still accepted; main(1) gets the arity mess |
 | MSG-prelude-word-args | impl attempt 1 | 2026-11-13 05:56 | started; worktree seeded |
 | NARROW-ne-rat-divisor | impl attempt 1 | 2026-11-13 01:12 | started in /home/luke/Work/wt/narrow-ne-rat-divisor from c75a68775 |
 | NUM-huge-div | impl attempt 1 | 2026-11-13 06:35 | started; worktree /home/luke/Work/wt/num-huge-div from bb7379f01 |
