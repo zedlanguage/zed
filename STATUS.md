@@ -2176,9 +2176,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | DAGVIEW-seeded-scale | impl attempt 1 | 2026-11-13 14:33 | started |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | cross-review round 5 launched on zed-impl 77a026349: Claude, Codex; Gemini 429 (gap recorded); main dump in progress; load 25.99 19.01 20.42 |
 | LIT-name-int-fixed | impl attempt 1 | 2026-11-13 14:29 | started; worktree from origin/main df105e781 |
-| PERF-tuple-print | running | 2026-11-13 14:51 |  |
+| PERF-tuple-print | impl attempt 1 | 2026-11-13 14:51 | started; worktree /home/luke/Work/wt/perf-tuple-print from 4a1a69d22 |
 | PORT-lines-int-name | impl attempt 1 | 2026-11-13 14:29 | fix in Ck::pushed; scaling 8.0 instr/8.0 bytes at 1000/8000, control (copy of class literals per literal) 34.3x bytes failed; load ~36 |
-| POW-scope-exponent | running | 2026-11-13 14:51 |  |
+| POW-scope-exponent | impl attempt 1 | 2026-11-13 14:51 | started; worktree /home/luke/Work/wt/pow-scope-exponent |
 | PRES-overlap-coeffs | impl attempt 1 | 2026-11-13 14:10 | started; worktree from origin/main 64dfe1c61 |
 | RED-written-compare | running | 2026-11-13 14:51 |  |
 | REPAIR-eq-kept-cast | impl attempt 1 | 2026-11-13 14:45 | started; worktree from origin/main 50eadf267 |
