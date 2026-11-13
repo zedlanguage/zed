@@ -58,7 +58,7 @@ pub struct Report {
     /// The definitions, by kernel name, that the roots reach as written only through an arm of
     /// an `if` the build does not take: one whose condition the build evaluated to the other
     /// arm's `bool`, or to an atom, which takes neither arm. A definition the build evaluates,
-    /// or one whose run a cut read keeps ([`keep_cut_reads`]), is reached.
+    /// or one whose run a cut read keeps (`keep_cut_reads`), is reached.
     pub untaken: BTreeSet<Arc<str>>,
 }
 

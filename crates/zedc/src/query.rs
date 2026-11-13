@@ -201,7 +201,7 @@ impl Db {
     }
 
     /// The errors the unit `text`, which compiles alone, is rejected with, built for this
-    /// database's build, before they are placed ([`front::rejection`]): empty when it compiles.
+    /// database's build, before they are placed (`front::rejection`): empty when it compiles.
     pub fn check(&mut self, text: &str) -> Arc<Vec<Error>> {
         let k = key("check", &[text.as_bytes(), &self.build.bytes()]);
         if let Some(c) = self.checks.get(&k) {

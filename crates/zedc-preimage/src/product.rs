@@ -2158,7 +2158,7 @@ struct Search<'a> {
     end: Option<(&'a Arc<str>, ForestAt<'a>, bool)>,
 }
 
-/// The conjuncts of the forest at a name ([`Conjuncts::in_forest`]).
+/// The conjuncts of the forest at a name (`Conjuncts::in_forest`).
 type ForestAt<'a> = Box<dyn Iterator<Item = &'a Arc<Formula>> + 'a>;
 
 impl<'a> Search<'a> {
