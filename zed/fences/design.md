@@ -101,7 +101,7 @@ x[i in warm..<n]  = anneal(x[i-1]);       // phase 2 — reads across the seam l
   }
 ```
 
-<!-- DESIGN.md:629 layer L7: ring L3, word L7 (spawn), label none; section [sec:ports] 2 -->
+<!-- DESIGN.md:628 layer L7: ring L3, word L7 (spawn), label none; section [sec:ports] 2 -->
 ```zed
   // runs git with two words and no shell; a failure to start, an exit code and a signal are each handled
   main(m: MainArgs) -> int {
@@ -125,7 +125,7 @@ x[i in warm..<n]  = anneal(x[i-1]);       // phase 2 — reads across the seam l
   }
 ```
 
-<!-- DESIGN.md:656 layer L7: ring L3, word L7 (run), label none; section [sec:ports] 3 -->
+<!-- DESIGN.md:655 layer L7: ring L3, word L7 (run), label none; section [sec:ports] 3 -->
 ```zed
   // compresses every file named on the command line; the runs are not ordered, so they may overlap
   main(m: MainArgs) {
@@ -239,7 +239,7 @@ main(m: MainArgs) {
 @foreign("sensor", "sensor_read") readSamples: (count: i32) -> Ptr([Sample] with length(1024)) with release(freeSamples);
 
 main(m: MainArgs) {
-  fs = files();
+  fs = main::files;
   samples = readSamples(count: 1024) else [];          // read in place, freed after its last use
   fs::bytes["samples.bin"] <- records(Sample).encode(samples);
   m.stdout <- "${samples::len} samples written";
@@ -250,7 +250,7 @@ main(m: MainArgs) {
 ```zed
 // a later run reads them back; each record is a view of the file's bytes
 main(m: MainArgs) {
-  back = (files()::bytes["samples.bin"] else []).via(records(Sample));   // Sample | DecodeFailure per record
+  back = (main::files::bytes["samples.bin"] else []).via(records(Sample));   // Sample | DecodeFailure per record
   m.stdout <- "${back::len} samples read";
 }
 ```

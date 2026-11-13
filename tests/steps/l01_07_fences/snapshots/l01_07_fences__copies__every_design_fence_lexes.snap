@@ -143,14 +143,14 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   3 | @foreign ( str["sensor"] , str["sensor_free"] ) freeSamples : ( p : Ptr ( [ Sample ] «with» length ( 1024₍10₎ ) ) ) -> #ok ;
   4 | @foreign ( str["sensor"] , str["sensor_read"] ) readSamples : ( count : i32 ) -> Ptr ( [ Sample ] «with» length ( 1024₍10₎ ) ) «with» release ( freeSamples ) ;
   6 | main ( m : MainArgs ) {
-  7 | fs = files ( ) ;
+  7 | fs = main :: files ;
   8 | samples = readSamples ( count : 1024₍10₎ ) «else» [ ] ;
   9 | fs :: bytes [ str["samples.bin"] ] <- records ( Sample ) . encode ( samples ) ;
  10 | m . stdout <- str[${samples :: len} " samples written"] ;
  11 | }
 == DESIGN.md [sec:codecs] 8 L20
   2 | main ( m : MainArgs ) {
-  3 | back = ( files ( ) :: bytes [ str["samples.bin"] ] «else» [ ] ) . via ( records ( Sample ) ) ;
+  3 | back = ( main :: files :: bytes [ str["samples.bin"] ] «else» [ ] ) . via ( records ( Sample ) ) ;
   4 | m . stdout <- str[${back :: len} " samples read"] ;
   5 | }
 == DESIGN.md [sec:level_names] 1 L3
