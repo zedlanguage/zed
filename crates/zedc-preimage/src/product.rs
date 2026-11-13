@@ -769,7 +769,7 @@ impl<'a> IntoIterator for &'a NameProducts {
 }
 
 /// The relation of a scope: a conjunction, and the conjuncts of tests that
-/// [`Scope::extend_path`] and [`Scope::extend_threshold`] admitted since, held apart until the
+/// `Scope::extend_path` and `Scope::extend_threshold` admitted since, held apart until the
 /// conjunction is read.
 // Complexity tradeoff: naive version, each admitted test is added to the conjunction at once,
 // which updates its persistent indexes (the set, the tightest constraint per term, the users of
@@ -6319,7 +6319,7 @@ impl Scope {
     /// reports it at each `if` whose condition joins tests by `&&`, `||` or `!` (DESIGN.md step
     /// L1.39: the class depends on the test as written, so a test outside it is rejected
     /// whether or not its arms are read); none when the test is in the class. The scope gives
-    /// the names' ranges. Costs what [`Scope::refuse_looped`] does.
+    /// the names' ranges. Costs what `Scope::refuse_looped` does.
     pub fn looped_test(&self, test: &Term, outcome: bool) -> Option<Refused> {
         if self.bottom {
             return None;
@@ -7027,7 +7027,7 @@ impl Scope {
                 // hold every value at which the test has this outcome.
                 let kept: Kept = Arc::new(
                     (pre.domains.iter())
-                        .filter(|(n, _)| self.names.contains_key(*n))
+                        .filter(|(n, _)| self.names.contains_key(n))
                         .map(|(n, d)| (n.clone(), d.clone()))
                         .collect(),
                 );

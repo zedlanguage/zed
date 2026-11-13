@@ -13,7 +13,7 @@
 //! parts and (iii) no bound written by two cases of one part in a cyclic strongly connected
 //! component whose edges come from the base and a part or from two parts; or when it is a
 //! threshold-implication component ([`threshold::shape`]); or when it
-//! is a two-hub octagonal component with a dominating disjunction ([`octagonal`]).
+//! is a two-hub octagonal component with a dominating disjunction (`octagonal`).
 //!
 //! Complexity tradeoff: naive, an edge from each bound an atom of k names reads to each of the
 //! k bounds it writes, O(k²) per atom, and from each case's reads to each other case's writes,
@@ -1125,7 +1125,7 @@ impl Say<'_> {
         }
     }
 
-    /// "the least x limits the least y, which limits the least x: <links>".
+    /// "the least x limits the least y, which limits the least x: `<links>`".
     fn loop_text(&self, links: &[Link]) -> String {
         let mut s = format!(
             "{} limits {}",

@@ -22,7 +22,8 @@
 //! output. Both judge the threshold as built by a [`Verdict`]: at every size measured, the
 //! method the code takes must do at most the work of the method the measured crossover takes
 //! there times the spread of repeated runs. Where a constant of a cost model decides and not a
-//! size, [`Constant::fit`] finds the values of the constant that best match the measurements.
+//! size, [`Constant::steps`] and [`Steps::fit`] find the values of the constant that best match
+//! the measurements.
 //! The binary `crossover` runs the benchmarks one by one, or all of them (`crossover all`);
 //! COMPLEXITY.md section "Crossovers" records what they measured.
 
@@ -230,7 +231,8 @@ pub struct Crossover<'a, I, O> {
     /// Whether the code as built takes the second method for an input, the first at a size.
     pub takes_above: &'a dyn Fn(&I) -> bool,
     /// The cost constant that decides between the methods, where a cost model and not a size
-    /// threshold decides: its value is then fitted to the measurements ([`Constant::fit`]).
+    /// threshold decides: its value is then fitted to the measurements
+    /// ([`Constant::steps`], [`Steps::fit`]).
     pub constant: Option<Constant<'a, I>>,
 }
 

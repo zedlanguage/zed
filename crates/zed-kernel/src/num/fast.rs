@@ -3645,29 +3645,29 @@ pub mod crossover {
 
     use super::MulBy;
 
-    /// [`super::MUL_LEAF`] as built, in words.
+    /// `super::MUL_LEAF` as built, in words.
     pub const MUL_LEAF: usize = super::MUL_LEAF;
-    /// [`super::DIV_LEAF`] as built, in bits.
+    /// `super::DIV_LEAF` as built, in bits.
     pub const DIV_LEAF: u64 = super::DIV_LEAF;
-    /// [`super::RECIP_LEAF`] as built, in bits.
+    /// `super::RECIP_LEAF` as built, in bits.
     pub const RECIP_LEAF: u64 = super::RECIP_LEAF;
-    /// [`super::GCD_LEAF`] as built, in bits.
+    /// `super::GCD_LEAF` as built, in bits.
     pub const GCD_LEAF: u64 = super::GCD_LEAF;
-    /// [`super::LIFT_BITS`] as built, in bits.
+    /// `super::LIFT_BITS` as built, in bits.
     pub const LIFT_BITS: u64 = super::LIFT_BITS;
     /// The digits [`crate::num::read_digits`] reads whole, as built.
     pub const LEAF_DIGITS: usize = crate::num::LEAF_DIGITS;
-    /// [`super::DIV_COST`] as built.
+    /// `super::DIV_COST` as built.
     pub const DIV_COST: f64 = super::DIV_COST;
-    /// [`super::TOOM_COST`] as built.
+    /// `super::TOOM_COST` as built.
     pub const TOOM_COST: f64 = super::TOOM_COST;
-    /// [`super::TRANSFORM_COST`] as built.
+    /// `super::TRANSFORM_COST` as built.
     pub const TRANSFORM_COST: f64 = super::TRANSFORM_COST;
-    /// [`super::SPARSE_WORD`] as built.
+    /// `super::SPARSE_WORD` as built.
     pub const SPARSE_WORD: f64 = super::SPARSE_WORD;
-    /// [`super::SPARSE_STEP`] as built.
+    /// `super::SPARSE_STEP` as built.
     pub const SPARSE_STEP: f64 = super::SPARSE_STEP;
-    /// [`super::CACHED_COST`] as built.
+    /// `super::CACHED_COST` as built.
     pub const CACHED_COST: f64 = super::CACHED_COST;
 
     /// The method [`super::mul`] takes for `a * b`: "num-bigint", "rows" or "transforms".
@@ -3679,7 +3679,7 @@ pub mod crossover {
         }
     }
 
-    /// `a * b` by transforms, in the pieces [`super::transform_plan`] chooses, whatever the
+    /// `a * b` by transforms, in the pieces `super::transform_plan` chooses, whatever the
     /// sizes; both factors nonzero.
     pub fn mul_by_transforms(a: &BigUint, b: &BigUint) -> BigUint {
         let (la, lb) = (super::words(a), super::words(b));
@@ -3687,12 +3687,12 @@ pub mod crossover {
         super::pieces_mul(a, b, piece)
     }
 
-    /// `a * b` by rows over the nonzero words of one factor ([`super::sparse_mul`]).
+    /// `a * b` by rows over the nonzero words of one factor (`super::sparse_mul`).
     pub fn mul_by_rows(a: &BigUint, b: &BigUint) -> BigUint {
         super::sparse_mul(a, b)
     }
 
-    /// `(a / b, a mod b)` past [`super::DIV_LEAF`], whatever the sizes: the cheaper of long
+    /// `(a / b, a mod b)` past `super::DIV_LEAF`, whatever the sizes: the cheaper of long
     /// division over the nonzero words of `b` and the division by a reciprocal; `a >= b > 0`.
     pub fn div_rem_past_leaf(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
         super::div_rem_past_leaf(a, b)
@@ -3717,13 +3717,13 @@ pub mod crossover {
             <= super::newton_cost(aw - bw + 1, bw)
     }
 
-    /// Whether [`super::div_rem`] takes num-bigint's division for `a / b`; `a >= b > 0`.
+    /// Whether `super::div_rem` takes num-bigint's division for `a / b`; `a >= b > 0`.
     pub fn div_by_num_bigint(a: &BigUint, b: &BigUint) -> bool {
         div_flip(a, b).is_none_or(|flip| super::DIV_COST <= flip)
     }
 
-    /// The value of [`super::DIV_COST`] at which [`super::div_rem`] changes method for `a / b`:
-    /// num-bigint's division at or below it. `None` at or below [`super::DIV_LEAF`], where it
+    /// The value of `super::DIV_COST` at which `super::div_rem` changes method for `a / b`:
+    /// num-bigint's division at or below it. `None` at or below `super::DIV_LEAF`, where it
     /// does not decide; `a >= b > 0`.
     pub fn div_flip(a: &BigUint, b: &BigUint) -> Option<f64> {
         let (m, n) = (a.bits(), b.bits());
@@ -3736,9 +3736,9 @@ pub mod crossover {
         Some(past / super::num_bigint_div_units(qw, bw))
     }
 
-    /// The value of [`super::TOOM_COST`] at which [`super::mul`] changes method for `a * b`:
+    /// The value of `super::TOOM_COST` at which [`super::mul`] changes method for `a * b`:
     /// num-bigint's product at or below it, else the cheaper of rows and transforms. `None` at
-    /// or below [`super::MUL_LEAF`], where it does not decide.
+    /// or below `super::MUL_LEAF`, where it does not decide.
     pub fn toom_flip(a: &BigUint, b: &BigUint) -> Option<f64> {
         let (la, lb) = (super::words(a), super::words(b));
         let (short, long) = (la.min(lb), la.max(lb));
@@ -3752,8 +3752,8 @@ pub mod crossover {
         Some((rows as f64).min(cost) / per)
     }
 
-    /// The value of [`super::TRANSFORM_COST`] at which [`super::mul`] changes from transforms
-    /// to rows for `a * b`: rows at or above it. `None` at or below [`super::MUL_LEAF`].
+    /// The value of `super::TRANSFORM_COST` at which [`super::mul`] changes from transforms
+    /// to rows for `a * b`: rows at or above it. `None` at or below `super::MUL_LEAF`.
     pub fn transform_flip(a: &BigUint, b: &BigUint) -> Option<f64> {
         let (la, lb) = (super::words(a), super::words(b));
         let (short, long) = (la.min(lb), la.max(lb));
@@ -3766,7 +3766,7 @@ pub mod crossover {
         Some(rows as f64 * super::TRANSFORM_COST / cost)
     }
 
-    /// The value of [`super::SPARSE_WORD`] at which [`div_rem_past_leaf`] changes method for
+    /// The value of `super::SPARSE_WORD` at which [`div_rem_past_leaf`] changes method for
     /// `a / b`: long division at or below it, the reciprocal above; `a >= b > 0`.
     pub fn sparse_flip(a: &BigUint, b: &BigUint) -> Option<f64> {
         let (aw, bw) = (super::words(a), super::words(b));
@@ -3776,7 +3776,7 @@ pub mod crossover {
     }
 
     /// A factor whose spectra are kept for products with numbers of at most `other` words
-    /// whatever the costs, where [`super::Factor`] keeps them only when they cost less.
+    /// whatever the costs, where `super::Factor` keeps them only when they cost less.
     pub struct Kept(super::Factor);
 
     impl Kept {
@@ -3838,7 +3838,7 @@ pub mod crossover {
         super::reciprocal_from(x, x.bits(), leaf.max(4))
     }
 
-    /// The gcd of `a` and `b` by [`super::gcd`] with the leaf of `leaf` bits and the lift of
+    /// The gcd of `a` and `b` by `super::gcd` with the leaf of `leaf` bits and the lift of
     /// `lift` bits.
     pub fn gcd(a: &BigUint, b: &BigUint, leaf: u64, lift: u64) -> BigUint {
         super::gcd_using(a, b, true, leaf, lift)
@@ -3850,7 +3850,7 @@ pub mod crossover {
         crate::num::read_digits_by(digits, leaf)
     }
 
-    /// [`super::bezout`] with the lift of `lift` bits.
+    /// `super::bezout` with the lift of `lift` bits.
     pub fn bezout(a: &BigUint, b: &BigUint, lift: u64) -> Option<(BigUint, BigInt, BigInt)> {
         super::bezout_with(a, b, lift)
     }

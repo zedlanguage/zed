@@ -564,9 +564,9 @@ fn first_named(t: &Table, texts: &[&mut String]) -> HashMap<usize, usize> {
 /// variables the texts mark are named, skipping every word of the texts ([`name_vars`]). `texts`
 /// with no mark or reference are left as they are, and give no definition.
 ///
-/// The texts are the steps of a message in reading order. A part placed by [`add_counted`], a
+/// The texts are the steps of a message in reading order. A part placed by `add_counted`, a
 /// union or an intersection, is named in each text from the first that writes a printed type
-/// which, with the bodies it reaches, uses it twice or more ([`first_named`]), and in the
+/// which, with the bodies it reaches, uses it twice or more (`first_named`), and in the
 /// definitions; before that text, and in a message where no printed type uses it twice, it is
 /// written in full. So a step that uses a union once spells it, and once a step names it,
 /// that step and every later one write it by name.
@@ -583,7 +583,7 @@ fn first_named(t: &Table, texts: &[&mut String]) -> HashMap<usize, usize> {
 /// ends.
 ///
 /// Time linear in the texts and the bodies reached, and in the parts written in full, with a
-/// hash lookup per reference, and the merges of [`first_named`].
+/// hash lookup per reference, and the merges of `first_named`.
 pub fn lift(texts: &mut [&mut String], taken: &dyn Fn(&str) -> bool) -> Vec<(String, String)> {
     lift_holding(texts, false, taken).0
 }

@@ -473,7 +473,7 @@ impl Rat {
     ///
     /// Complexity tradeoff (LIT-power-values): the text is chosen without the digits. They are
     /// no longer than the power's text, of `L` characters, exactly when `|self| < 10^L`, which
-    /// the bounds of [`Rat::magnitude_order`] decide in O(L) word operations; only then are
+    /// the bounds of `Rat::magnitude_order` decide in O(L) word operations; only then are
     /// they built, at the cost of a text of at most `L` characters. So the cost is that of the
     /// shorter text, never of a power's digits: `3^200000` costs its 8 characters where its
     /// 95,425 digits cost about 105 million instructions (two decimal conversions of about 95

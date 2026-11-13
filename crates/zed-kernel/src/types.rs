@@ -1531,7 +1531,7 @@ impl Type {
     /// The union of `ts`, joined in pairs: `k` tuple or morphism types, each ordered after the
     /// last in the diagrams, cost `O(k log k)` nodes joined this way and `O(k²)` one at a time.
     /// The types of atoms alone (no name holding every payload) are first joined into one map
-    /// of names: the largest one's, shared as [`Atoms::zip`] shares it, with the others' names
+    /// of names: the largest one's, shared as `Atoms::zip` shares it, with the others' names
     /// added in turn, so that a node is copied once and then changed in place.
     // Complexity tradeoff: in pairs, the atoms of `k` such types are added to a map shared
     // with an operand, copying a path each time, about `log k` times each, so `O(k log² k)`
