@@ -144,7 +144,7 @@ enum Frame<'a> {
     Read(Span, Prim),
     /// A generic literal of [`check::Info::witness`], by its span, once elaborated: it takes
     /// the carrier of the value of the parameter of that binder.
-    Witness(Span, usize),
+    Witness(Span, &'a check::Witness),
     Binary(&'a Expr),
     Tuple,
     Is(&'a Expr),
@@ -625,10 +625,10 @@ impl<'a> Elab<'a> {
             None => {}
         }
         if let Some(s) = lit_span(e)
-            && let Some(&id) = info.witness.get(&s)
+            && let Some(w) = info.witness.get(&s)
             && self.guarding.insert(s)
         {
-            m.k(Frame::Witness(s, id));
+            m.k(Frame::Witness(s, w));
             m.stack.push(Job::Expr(e));
             return;
         }
@@ -1460,9 +1460,9 @@ impl<'a> Elab<'a> {
                 let t = m.t().map(|a| Term::Prim(p, vec![a]));
                 m.give(t);
             }
-            Frame::Witness(s, id) => {
+            Frame::Witness(s, w) => {
                 self.guarding.remove(&s);
-                let t = m.t().map(|own| self.witnessed(s, id, own));
+                let t = m.t().map(|own| self.witnessed(s, w, own));
                 m.give(t);
             }
             Frame::Binary(e) => {
@@ -1876,16 +1876,55 @@ impl<'a> Elab<'a> {
         Term::Let(other, Shared::new(x), Shared::new(Term::Prim(p, args)))
     }
 
-    /// The generic literal at `s`, of term `own`, taking the carrier of the value of the
-    /// parameter `id` (L1.26a): its value at each carrier of [`check::Info::follows`] that
-    /// the parameter's value has, else its own.
-    fn witnessed(&self, s: Span, id: usize, own: Term) -> Term {
+    /// The generic literal at `s`, of term `own`, taking the carrier of the value of `w`, a
+    /// parameter or a component of one (L1.26a): its value at each carrier of
+    /// [`check::Info::follows`] that the value of `w` has, else its own.
+    fn witnessed(&mut self, s: Span, w: &check::Witness, own: Term) -> Term {
         let mut arms: Vec<(KPattern, Term)> = self.info.follows[&s]
             .iter()
             .map(|(c, v)| (KPattern::Is(c.ty()), Term::Lit(v.clone())))
             .collect();
         arms.push((KPattern::Wild, own));
-        Term::Match(Shared::new(Term::Var(self.names[id].clone())), arms)
+        Term::Match(self.witness_term(w), arms)
+    }
+
+    /// The value of `w` as a term, shared: a parameter's name, or the component read from the
+    /// value of the witness it is read from, as the read `v[i]` in the body is
+    /// (`Frame::Index`).
+    // Complexity tradeoff: a term built for each literal copies the d reads of a component
+    // nested d deep, O(d) per literal, linear in the text too, since each literal stands beside
+    // a read of d steps written in the body, but the elaborated unit then holds L copies for L
+    // literals; used: each read's term built once, one step on the shared term of the value it
+    // is read from, O(1) per literal and per read, and the unit holds each read once.
+    fn witness_term(&mut self, w: &check::Witness) -> Shared {
+        let mut steps = Vec::new();
+        let mut at = w;
+        let mut term = loop {
+            match at {
+                check::Witness::Param(id) => {
+                    break Shared::new(Term::Var(self.names[*id].clone()));
+                }
+                check::Witness::Component { of, i, read } => match self.reads.get(read) {
+                    Some(t) => break t.clone(),
+                    None => {
+                        steps.push((*i, *read));
+                        at = of;
+                    }
+                },
+            }
+        };
+        for (i, read) in steps.into_iter().rev() {
+            let v = self.temp();
+            let get = match self.info.dense.get(&read) == Some(&true) {
+                true => Prim::At,
+                false => Prim::TupleGet,
+            };
+            let k = Term::Lit(Value::Int(i as i64));
+            let body = Term::Prim(get, vec![Term::Var(v.clone()), k]);
+            term = Shared::new(Term::Let(v, term, Shared::new(body)));
+            self.reads.insert(read, term.clone());
+        }
+        term
     }
 
     /// `v is t`, its operand and type elaborated.

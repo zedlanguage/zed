@@ -342,6 +342,26 @@ fn refused_warning(span: Span, r: &Refused, kept: &Kept) -> Error {
     }
 }
 
+/// What gives a generic literal with no other operand its carrier at run time (L1.26a): a
+/// parameter, by its binder, or a component of a value that gives one, read by its component
+/// number, as `p[0]` or `p[0][1]`, with the span of the read in the body (the span by which
+/// [`Info::dense`] says how it is read). Each component holds the value it is read from by
+/// reference, so a read nested d deep is one step on the one it is read from, not d steps.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Witness {
+    /// A parameter, by its binder.
+    Param(usize),
+    /// Component `i` of the value of `of`, read at `read`.
+    Component {
+        /// The value it is read from.
+        of: Arc<Witness>,
+        /// The component number.
+        i: usize,
+        /// The span of the read `v[i]` in the body.
+        read: Span,
+    },
+}
+
 /// What the checker finds.
 #[derive(Clone, Debug, Default)]
 pub struct Info {
@@ -373,9 +393,9 @@ pub struct Info {
     pub follows: HashMap<Span, Vec<(Carrier, Value)>>,
     /// Each generic literal of [`Self::follows`] that has no other operand to take its carrier
     /// from, by its span: a call's argument, an `if` branch, an operand of an operator whose
-    /// other operand is generic too (L1.26a). Its value is the binder of a parameter of the
-    /// literal's class in scope at it, whose value has the class's carrier at run time.
-    pub witness: HashMap<Span, usize>,
+    /// other operand is generic too (L1.26a). Its value is a parameter of the literal's class
+    /// in scope at it, or a component of one, whose value has the class's carrier at run time.
+    pub witness: HashMap<Span, Witness>,
     /// Each read `v[k]` whose receiver is a family, by the read's span: whether every
     /// function the receiver may be is a family whose keys are one integer interval, every key
     /// present ([`Sig::dense`]), so that a miss there is `#outOfBounds` (DESIGN.md
@@ -926,10 +946,10 @@ struct Class {
     /// The tuples and functions that flowed into it, each with where: every use is checked
     /// on each.
     flowed: Vec<(Ty, Span)>,
-    /// A parameter of the class whose value has the class's carrier at run time, if any:
-    /// its binder and the body it is in scope in; of a merged class, the outer one where one
-    /// body holds the other.
-    binder: Option<(usize, Span)>,
+    /// A parameter of the class, or a component of one, whose value has the class's carrier at
+    /// run time, if any, and the body the parameter is in scope in; of a merged class, the
+    /// outer one where one body holds the other.
+    binder: Option<(Witness, Span)>,
     /// Whether its values are those of generic literals only, as of `1 + 1` inside a function: of a merged
     /// class, whether both were. An `if` merges it with the class of its other branch.
     generic: bool,
@@ -1626,7 +1646,34 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         if let Some(k) = self.class_of_ty(t) {
             self.touch(k);
-            self.classes[k].binder.get_or_insert((id, body));
+            self.classes[k]
+                .binder
+                .get_or_insert((Witness::Param(id), body));
+        }
+    }
+
+    /// Records the read `v[i]` at `read`, which gave `r`, as the binder of the class of `r`
+    /// where `v` is the class `k` alone and that class has a binder: the component's value at
+    /// run time has its class's carrier, so a generic literal beside it, as the `0` of
+    /// `if p[0] < 5 { p[0] } else { 0 }`, takes the carrier from it as it would from a
+    /// parameter (L1.26a, "checked as the same body is at the literal alone").
+    // Complexity tradeoff: a binder that copied the reads from the parameter would cost d
+    // steps at a read nested d deep, O(d²) for one read `p[0][0]...[0]`; used: one step on
+    // the binder of the value read, held by reference, O(1) per read.
+    fn bind_component(&mut self, v: &Ty, k: usize, i: Option<usize>, r: &Ty, read: Span) {
+        let (Some(i), Some(j)) = (i, self.class_of_ty(r)) else {
+            return;
+        };
+        if self.class_of_ty(v) != Some(k) {
+            return;
+        }
+        let Some((of, body)) = self.classes[k].binder.clone() else {
+            return;
+        };
+        if self.classes[j].binder.is_none() {
+            self.touch(j);
+            let of = Arc::new(of);
+            self.classes[j].binder = Some((Witness::Component { of, i, read }, body));
         }
     }
 
@@ -2866,12 +2913,17 @@ impl<'t, 'a> Ck<'t, 'a> {
         let (mask, lits) = (self.classes[r].mask, self.classes[r].lits.clone());
         // A generic literal with no other operand takes the carrier from a parameter of the
         // class in scope at it; with none, it is read as a plain literal, which fixes the
-        // class's carrier.
-        let binder = self.classes[r].binder;
+        // class's carrier. A component of a parameter is a class a use gives, which may hold
+        // any atom at a call; one a test narrows holds there the atoms the test removes, which
+        // have no carrier, and gives no carrier.
+        let c = &self.classes[r];
+        let tested = || (c.uses.iter()).any(|(_, n)| matches!(n.kind, NeedKind::Narrow(_)));
+        let binder =
+            (c.binder.clone()).filter(|(w, _)| matches!(w, Witness::Param(_)) || !tested());
         let witness = |l: &Lit| {
-            binder
+            (binder.as_ref())
                 .filter(|(_, s)| s.start <= l.span.start && l.span.end <= s.end)
-                .map(|(id, _)| id)
+                .map(|(w, _)| w.clone())
         };
         let numeric = [Carrier::Int, Carrier::F64, Carrier::Rat, Carrier::F32]
             .into_iter()
@@ -2946,8 +2998,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     if !values.is_empty() {
                         self.put(Undo::Follows(l.span, Some(values)));
                         if l.witness {
-                            let id = witness(l).expect("a witnessed literal's binder");
-                            self.put(Undo::Witness(l.span, Some(id)));
+                            let w = witness(l).expect("a witnessed literal's binder");
+                            self.put(Undo::Witness(l.span, Some(w)));
                         }
                     }
                 }
@@ -4647,7 +4699,7 @@ enum Undo {
     /// The atoms the call at the first span passes by at its argument at the second.
     Passes(Span, Span, Option<KType>),
     Follows(Span, Option<Vec<(Carrier, Value)>>),
-    Witness(Span, Option<usize>),
+    Witness(Span, Option<Witness>),
     /// A class, while a repair is tried.
     Class(usize, Box<Class>),
     /// Whether a row or payload shape is among [`Ck::data_checked`], while a repair is tried.

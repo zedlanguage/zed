@@ -252,10 +252,13 @@ fn a_first_component_of_another_type_is_rejected() {
          \x20       |     ^^^^^^^^^^^^^^\n"
     );
     for (def, call, head) in [
+        // `h` takes a component of any number carrier, as it takes `p` in `h("a")` of the
+        // same body (item LIT-tuple-branch-carrier); it was "`h` gives \"a\" here, which is
+        // not int".
         (
             PICK,
             "h((\"a\", 2))",
-            "2:5: `h` gives \"a\" here, which is not int",
+            "2:5: `h` does not take ((\"a\", 2)): no arrow of `h` takes these types.",
         ),
         (
             ADD_R,
@@ -342,7 +345,9 @@ fn a_decimal_component_takes_f32_or_the_float_formats_f64() {
 
 /// A decimal component that no use gives one carrier is rejected as before: one the body does
 /// not read, one beside a component a use does fix, which alone is rejected, and one that `*`
-/// with a literal leaves `f64` or `rat`. One at an `int` use is rejected for that use.
+/// with a literal leaves `f64` or `rat`. One returned beside a literal is rejected with the
+/// menu, as `h(1.5)` of the same body is (item LIT-tuple-branch-carrier); it was rejected for
+/// an `int` use, with a second message whose fixes were rejected too.
 #[test]
 fn a_decimal_component_no_use_fixes_is_rejected() {
     let name = "l01_26a_tuple_arg_pair_decimal_rejected";
@@ -388,11 +393,136 @@ fn a_decimal_component_no_use_fixes_is_rejected() {
         (
             PICK,
             "h((1.5, 2))",
-            "2:5: `h` gives 1.5 here, which is not int: the use requires a value of int.",
+            "2:8: Nothing gives the literal `1.5` a carrier. Try `r = h((1.5f64, 2))` instead.",
         ),
     ] {
         let got = outcome(name, def, call);
         assert!(got.starts_with(head), "{def} {call}\n{got}");
+        assert_eq!(got.matches("prog.zed:").count(), 0, "one message: {got}");
+    }
+}
+
+/// The literal branch beside a component takes the component's carrier, so the call has the
+/// type and value of the same body at the literal alone, `h(1.5f64)` (DESIGN.md L1.26a, item
+/// LIT-tuple-branch-carrier); `h((1.5f64, 2))` was rejected with "`h` gives 1.5f64 here, which
+/// is not int", since the branch `0` was fixed to `int`. Integer components stay `int`. A
+/// component of a nested tuple, a named parameter and two such branches summed alike.
+#[test]
+fn a_branch_beside_a_component_takes_its_carrier() {
+    let name = "l01_26a_tuple_arg_pair_branch";
+    for (pair, alone, ty, out) in [
+        ("h((1.5f64, 2))", "h(1.5f64)", "f64", "1.5\n"),
+        ("h((7.5f64, 2))", "h(7.5f64)", "f64", "0.0\n"),
+        ("h((1.5r, 2))", "h(1.5r)", "rat", "3r/2r\n"),
+        ("h((7.5r, 2))", "h(7.5r)", "rat", "0r\n"),
+        ("h((1.5f32, 2))", "h(1.5f32)", "f32", "1.5\n"),
+        ("h((7.5f32, 2))", "h(7.5f32)", "f32", "0.0\n"),
+        ("h((1, 2))", "h(1)", "int", "1\n"),
+        ("h((7, 2))", "h(7)", "int", "0\n"),
+    ] {
+        let one = PICK.replace("p[0]", "p");
+        assert_eq!(outcome(name, PICK, pair), out, "{PICK} {pair}");
+        assert_eq!(outcome(name, &one, alone), out, "{one} {alone}");
+        assert_eq!(type_of_r(PICK, pair), ty, "{PICK} {pair}");
+        assert_eq!(type_of_r(&one, alone), ty, "{one} {alone}");
+    }
+    for (def, call, ty, out) in [
+        (
+            "h(positional p) = if p[0][1] < 5 { p[0][1] } else { 0 };",
+            "h(((1, 1.5f64), 2))",
+            "f64",
+            "1.5\n",
+        ),
+        (
+            "h(positional p) = if p[0][1] < 5 { p[0][1] } else { 0 };",
+            "h(((1, 7.5r), 2))",
+            "rat",
+            "0r\n",
+        ),
+        (
+            "h(p) = if p[1] < 5 { p[1] } else { 0 };",
+            "h(p: (true, 7.5f64))",
+            "f64",
+            "0.0\n",
+        ),
+        (
+            "h(positional p) = (if p[0] < 5 { p[0] } else { 0 }) + (if p[1] < 5 { p[1] } else { 1 });",
+            "h((0.5f64, 7.5f64))",
+            "f64",
+            "1.5\n",
+        ),
+    ] {
+        assert_eq!(outcome(name, def, call), out, "{def} {call}");
+        assert_eq!(type_of_r(def, call), ty, "{def} {call}");
+    }
+}
+
+/// A component an `else` reads is no carrier for the branch beside it, as a parameter
+/// read by `else` is none: the branch stays `int`, and a decimal component is rejected for
+/// the `int` use with one message and no fix, as at the parameter alone.
+#[test]
+fn a_branch_beside_a_component_read_by_else_stays_int() {
+    let name = "l01_26a_tuple_arg_pair_branch_else";
+    let def = "h(positional p) = if (p[0] else 0) < 5 { p[0] } else { 0 };";
+    assert_eq!(outcome(name, def, "h((1, 2)) else 9"), "1\n");
+    for (call, lit) in [
+        ("h((1.5, 2)) else 9", "1.5"),
+        ("h((1.5f64, 2)) else 9", "1.5f64"),
+    ] {
+        let got = outcome(name, def, call);
+        let head = format!("2:5: `h` gives {lit} here, which is not int");
+        assert!(got.starts_with(&head), "{call}\n{got}");
+        assert_eq!(got.matches("prog.zed:").count(), 0, "one message: {got}");
+        assert!(!got.contains("fixes"), "{call}\n{got}");
+    }
+}
+
+/// The fixes printed under "fixes, each checked here" in the messages of `got`, as written:
+/// `r = h((1.5f64, 2));`.
+fn printed_fixes(got: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for part in got.split("fixes, each checked here:\n").skip(1) {
+        for line in part.lines().take_while(|l| l.starts_with("    ")) {
+            let fix = line.trim_start().split("    ").next().unwrap_or("");
+            out.push(fix.to_string());
+        }
+    }
+    out
+}
+
+/// Each fix printed under "fixes, each checked here" for a decimal component, put in place
+/// of the call, runs (item LIT-tuple-branch-carrier): `r = h((1.5f64, 2))` was printed for
+/// `if (p[0] else 0) < 5 { p[0] } else { 0 }` and rejected.
+#[test]
+fn every_printed_fix_of_a_decimal_component_runs() {
+    let name = "l01_26a_tuple_arg_pair_fixes_run";
+    let one = PICK.replace("p[0]", "p");
+    for (def, call, fixes) in [
+        (PICK, "h((1.5, 2))", 2),
+        (one.as_str(), "h(1.5)", 2),
+        ("h(positional p) = p[0];", "h((1.5, 2))", 2),
+        (ADD_R, "h((1.5, 2.5))", 2),
+        ("h(positional p) = p[1] + 1r;", "h((1.5, 2))", 2),
+        ("h(positional p) = p[0] * 2;", "h((1.5, 2))", 2),
+        (
+            "h(positional p) = if (p[0] else 0) < 5 { p[0] } else { 0 };",
+            "h((1.5, 2)) else 9",
+            0,
+        ),
+    ] {
+        let got = outcome(name, def, call);
+        let printed = printed_fixes(&got);
+        assert_eq!(printed.len(), fixes, "{def} {call}\n{got}");
+        for fix in printed {
+            let fixed = (fix.strip_prefix("r = ").and_then(|f| f.strip_suffix(';')))
+                .unwrap_or_else(|| panic!("{def} {call}: fix {fix}"));
+            let o = run(name, &program(def, fixed), "", &[]);
+            assert_eq!(
+                o.status, 0,
+                "{def} {call}: the fix {fix} is rejected:\n{}",
+                o.stderr
+            );
+        }
     }
 }
 
@@ -496,6 +626,78 @@ fn many_components_and_nested_calls_check_in_linear_time() {
                     Vec::<String>::new()
                 );
             });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+/// `n` components, each returned beside a literal, and a call with `n` `f64` literals: each
+/// literal branch takes its carrier from its own component (item LIT-tuple-branch-carrier).
+fn branches(n: usize) -> String {
+    let body: Vec<String> = (0..n)
+        .map(|i| format!("if p[{i}] < 5 {{ p[{i}] }} else {{ 0 }}"))
+        .collect();
+    let args: Vec<String> = (0..n).map(|i| format!("{}.5f64", i % 9)).collect();
+    format!(
+        "h(positional p) = ({});\nr = h(({}));\n",
+        body.join(", "),
+        args.join(", ")
+    )
+}
+
+/// A component read `n` levels deep, `p[0][0]…[0]`, returned beside a literal: the literal takes
+/// its carrier from the read, whose term is built once, in steps of one level each.
+fn deep(n: usize) -> String {
+    let read = format!("p{}", "[0]".repeat(n));
+    let nest = (1..n).fold(String::from("1.5f64"), |a, _| format!("({a}, 1)"));
+    format!("h(positional p) = if p[1] {{ {read} }} else {{ 0 }};\nr = h(({nest}, false));\n")
+}
+
+/// `n` branches, each returning `p[0][0]` beside a literal of its own: the reads share one
+/// class, so every literal takes its carrier from the first read, whose term is built once.
+fn shared(n: usize) -> String {
+    let body: Vec<String> = (0..n)
+        .map(|i| format!("if p[1] {{ p[0][0] }} else {{ {i} }}"))
+        .collect();
+    format!(
+        "h(positional p) = ({});\nr = h(((1.5f64, 1), false));\n",
+        body.join(", ")
+    )
+}
+
+#[test]
+fn many_branches_beside_components_check_and_elaborate_in_linear_time() {
+    use zed_tests::step_helpers::l01_16_elaboration::{checked, value};
+    std::thread::Builder::new()
+        .stack_size(1 << 29)
+        .spawn(|| {
+            assert_eq!(value(&branches(3), "r"), "(0.5, 1.5, 2.5)");
+            assert_eq!(value(&deep(3), "r"), "0.0");
+            assert_eq!(value(&shared(3), "r"), "(0.0, 1.0, 2.0)");
+            for (what, make, n) in [
+                (
+                    "checking and elaborating n literal branches beside n components",
+                    branches as fn(usize) -> String,
+                    100,
+                ),
+                (
+                    "checking and elaborating a literal branch beside a read n deep",
+                    deep,
+                    60,
+                ),
+                (
+                    "checking and elaborating n literal branches beside reads of one component",
+                    shared,
+                    100,
+                ),
+            ] {
+                let srcs = [make(n), make(scaling::FACTOR * n)];
+                scaling::check(what, n, |m| {
+                    let c = checked(&srcs[usize::from(m != n)]);
+                    c.elab();
+                });
+            }
         })
         .unwrap()
         .join()

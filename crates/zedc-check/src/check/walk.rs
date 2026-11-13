@@ -5929,7 +5929,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let data = self.classes[child].data;
         let mut flowed = std::mem::take(&mut self.classes[child].flowed);
         let level = self.classes[child].level;
-        let binder = self.classes[child].binder;
+        let binder = self.classes[child].binder.clone();
         let generic = self.classes[child].generic;
         let asked = self.classes[child].asked;
         let given = self.classes[child].given;
@@ -5944,7 +5944,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         c.given &= given;
         c.narrowed_to.extend(narrowed_to);
         c.narrows |= narrows;
-        c.binder = match (c.binder, binder) {
+        c.binder = match (c.binder.take(), binder) {
             (Some(a), Some(b)) if b.1.start <= a.1.start && a.1.end <= b.1.end => Some(b),
             (a, b) => a.or(b),
         };
@@ -9010,7 +9010,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                         i,
                         key: x.ty.clone(),
                     };
-                    out = out.union(&self.need(k, kind, true, span));
+                    let r = self.need(k, kind, true, span);
+                    self.bind_component(v, k, i, &r, span);
+                    out = out.union(&r);
                 }
                 Piece::Dyn => self.any(&format!("`[{shown}]`"), span),
                 Piece::Var(_) => out = out.union(&Ty::dynamic()),
@@ -10969,6 +10971,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     ) -> Result<(Ty, Vec<usize>), String> {
         let arrow = &sig.arrows[k];
         let fail = |ck: &Self| Err(ck.rejected(what, args));
+        let errors = self.errors.len();
         let mut binds = Binds::new();
         let mut grouped = vec![false; args.len()];
         // The arguments each bounded variable stands at, in one pass over the arguments: one
@@ -11435,7 +11438,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             });
         }
         out = out.union(&self.pass_needs(what, &arrow.params, args, passing, span)?);
-        if self.level == 0 && self.replaying == 0 && !self.trying {
+        // A call this application already rejected, as `g((1.5, 2))` where the body needs an
+        // `int` of `p[0]`, gets no rejection of its unfixed literals: the error stands with
+        // every carrier of the literal, so each fix would be rejected, and the call has one
+        // error, as `g(1.5)` has.
+        if self.level == 0 && self.replaying == 0 && !self.trying && self.errors.len() == errors {
             self.unfixed_args(what, sig, k, args, &grouped);
         }
         self.applied = Some((binds, left));

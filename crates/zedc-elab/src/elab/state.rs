@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use zed_kernel::types::Type as KType;
-use zed_kernel::{Pattern as KPattern, Prim, Term, Value};
+use zed_kernel::{Pattern as KPattern, Prim, Shared, Term, Value};
 
 use zedc_base::rejection::Row;
 use zedc_check::check::{Info, Misfit};
@@ -36,6 +36,9 @@ pub(super) struct Elab<'a> {
     /// The calls being read at a carrier ([`zedc_check::check::Fit::Read`]), each while it is
     /// elaborated.
     pub(super) reading: HashSet<Span>,
+    /// The term of each component read a generic literal takes its carrier from
+    /// ([`zedc_check::check::Witness`]), by the read's span: built once and shared.
+    pub(super) reads: HashMap<Span, Shared>,
     fresh: usize,
     pub(super) tests: Vec<Test>,
     pub(super) errors: Vec<Error>,
@@ -77,6 +80,7 @@ impl<'a> Elab<'a> {
             passing: HashMap::new(),
             guarding: HashSet::new(),
             reading: HashSet::new(),
+            reads: HashMap::new(),
             fresh: 0,
             tests: Vec::new(),
             errors: Vec::new(),
