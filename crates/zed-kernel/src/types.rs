@@ -41,6 +41,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, Bound, HashMap, HashSet};
 use std::fmt;
 use std::ops::{BitAnd, BitOr, Not, Sub};
+use std::rc::Rc;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 
 use crate::deep;
@@ -1897,10 +1898,13 @@ impl Type {
             .collect();
         drop(index);
         let mut numbers = Numbers::default();
+        // Each type is filed once for all makers: a chain of types each holding the one before
+        // in its first component is walked once, not once per maker (COMPLEXITY.md K109).
+        let mut filer = Filer::default();
         let makers = types
             .into_iter()
             .zip(boxes.into_iter().zip(rows))
-            .map(|(t, (boxes, rows))| Maker::new(t, boxes, rows, &mut numbers))
+            .map(|(t, (boxes, rows))| Maker::new(t, boxes, rows, &mut numbers, &mut filer))
             .collect();
         Some(Values {
             makers,
@@ -3759,11 +3763,13 @@ fn scalars(p: &Parts) -> Vec<Value> {
 /// What a column's type names of the values it may hold, at any depth of first components: a
 /// value's component at depth 0 is the value, and at depth `d + 1` the first component of its
 /// component at depth `d`.
+#[derive(Clone)]
 struct Filed {
     /// The scalars and bare atoms the types at some depth list, and the empty tuple where they
     /// hold it, sorted and distinct: a value none of whose components is a key is in the type
-    /// only as its kinds decide ([`kind_status`]).
-    keys: Vec<Value>,
+    /// only as its kinds decide ([`kind_status`]). A type whose keys are all those of one type
+    /// below it shares that type's set ([`Filer`]).
+    keys: Rc<Vec<Value>>,
     /// Whether every value of the type has a component that is a key.
     listed: bool,
 }
@@ -3801,16 +3807,36 @@ fn firsts(t: &Type, by_boxes: bool, keys: &mut Vec<Value>, mut push: impl FnMut(
     listed
 }
 
-/// The keys of the column type `t` ([`Filed`]): each type it reaches through first columns
-/// ([`firsts`]) is visited once, kept in a visited set, so a type recursive in its first
-/// component ends too. A key is not tied to its depth: a component equal to a key at another
-/// depth only makes its tuple type read.
-fn file(t: &Type, by_boxes: bool) -> Filed {
-    let (mut keys, mut listed) = (Vec::new(), true);
-    let mut seen: HashSet<Type> = HashSet::from([t.clone()]);
-    let mut todo = vec![t.clone()];
-    while let Some(t) = todo.pop() {
-        let p = t.p();
+/// The keys of column types ([`Filed`]) for one [`Type::each_value`] call, each type filed
+/// once for the whole call, by each way of reading its first components (`by_boxes`,
+/// [`firsts`]). A key is not tied to its depth: a component equal to a key at another depth
+/// only makes its tuple type read.
+#[derive(Default)]
+struct Filer {
+    /// Per way of reading first components, without and with boxes, the types filed.
+    filed: [HashMap<Type, Filed>; 2],
+}
+
+/// A type that [`Filer::file`] is filing.
+struct Visit {
+    ty: Type,
+    /// Its own keys: its scalars, bare atoms and empty tuple, unsorted.
+    keys: Vec<Value>,
+    /// Whether every value of the type has its own key or a first component in a first column.
+    listed: bool,
+    /// Its first columns not yet read.
+    firsts: Vec<Type>,
+    /// The least number of a type being filed that it reaches (Tarjan's low link).
+    low: usize,
+    /// The keys of the first columns filed before it was done, each read once.
+    below: Vec<Filed>,
+}
+
+impl Visit {
+    /// The type `ty`, numbered `number` in its walk, with its own keys and first columns.
+    fn new(ty: Type, by_boxes: bool, number: usize) -> Visit {
+        let (mut keys, mut listed, mut next) = (Vec::new(), true, Vec::new());
+        let p = ty.p();
         for b in [false, true] {
             if p.bools & (1 << u8::from(b)) != 0 {
                 keys.push(Value::Bool(b));
@@ -3830,14 +3856,114 @@ fn file(t: &Type, by_boxes: bool) -> Filed {
                 .map(|(name, _)| Value::atom(name)),
         );
         listed &= !atoms.cofinite;
-        listed &= firsts(&t, by_boxes, &mut keys, |c| {
-            if seen.insert(c.clone()) {
-                todo.push(c.clone());
-            }
-        });
+        listed &= firsts(&ty, by_boxes, &mut keys, |c| next.push(c.clone()));
+        Visit {
+            ty,
+            keys,
+            listed,
+            firsts: next,
+            low: number,
+            below: Vec::new(),
+        }
     }
-    keys.sort();
-    keys.dedup();
+}
+
+impl Filer {
+    /// The keys of the column type `t`: those of every type it reaches through first columns
+    /// ([`firsts`]). The types are walked depth first, and the types that reach each other, as
+    /// a type recursive in its first component does itself, are filed together when the walk
+    /// leaves the first of them (Tarjan's strongly connected components), each with the keys of
+    /// all of them and of the types below them, which were filed before.
+    // Complexity tradeoff: the naive form, one walk per column with a visited set that lives
+    // for the walk, read every type the column reaches again for each column, O(n²) for a
+    // chain of n types each holding the one before in its first component, as the makers of
+    // `t_i = (t_{i-1}, t_{i-1})` file `t_{i-1}`, …, `t_0` for each i (COMPLEXITY.md K109). Here
+    // each type is walked and filed once per `each_value` call and way of reading, O(T + E)
+    // for the T types and E first columns reached, plus the keys copied: a type whose keys are
+    // those of one set below it, as each type of such a chain, shares that set, and only a
+    // type with keys of its own beside a set below, or two distinct sets below, merges them,
+    // in O(k log k) for the k keys it reads; a row reading the type copies those k keys into
+    // its index anyway ([`Keyed::add`]). The cost is a map of every type filed, each with a
+    // shared set, held until the makers are built.
+    fn file(&mut self, t: &Type, by_boxes: bool) -> Filed {
+        let filed = &mut self.filed[usize::from(by_boxes)];
+        if let Some(f) = filed.get(t) {
+            return f.clone();
+        }
+        // Each type of this walk by its number, the position of its visit.
+        let mut numbers: HashMap<Type, usize> = HashMap::from([(t.clone(), 0)]);
+        let mut visits = vec![Visit::new(t.clone(), by_boxes, 0)];
+        // The types walked and not yet filed, in the order of their numbers, and the types
+        // from `t` to the one being read.
+        let (mut open, mut path) = (vec![0], vec![0]);
+        while let Some(&v) = path.last() {
+            if let Some(c) = visits[v].firsts.pop() {
+                if let Some(f) = filed.get(&c) {
+                    visits[v].below.push(f.clone());
+                } else if let Some(&w) = numbers.get(&c) {
+                    // Walked and not yet filed: `c` reaches `v`, and is filed with it.
+                    visits[v].low = visits[v].low.min(w);
+                } else {
+                    let w = visits.len();
+                    numbers.insert(c.clone(), w);
+                    visits.push(Visit::new(c, by_boxes, w));
+                    open.push(w);
+                    path.push(w);
+                }
+                continue;
+            }
+            path.pop();
+            let low = visits[v].low;
+            if low < v {
+                let u = *path
+                    .last()
+                    .expect("a type reaching an earlier one is not the first");
+                visits[u].low = visits[u].low.min(low);
+                continue;
+            }
+            // `v` and the types walked after it and not yet filed reach each other.
+            let at = open.partition_point(|&w| w < v);
+            let (mut keys, mut listed, mut below) = (Vec::new(), true, Vec::new());
+            for &w in &open[at..] {
+                let visit = &mut visits[w];
+                keys.append(&mut visit.keys);
+                listed &= visit.listed;
+                below.append(&mut visit.below);
+            }
+            let f = merged(keys, listed, below);
+            for w in open.drain(at..) {
+                filed.insert(visits[w].ty.clone(), f.clone());
+            }
+            if let Some(&u) = path.last() {
+                visits[u].below.push(f);
+            }
+        }
+        filed[t].clone()
+    }
+}
+
+/// The keys of types that reach each other, from their own `keys`, unsorted, and the keys of
+/// the types `below` them. A set below is read once however many of them hold it, and is
+/// shared where it is the only one and the types have no keys of their own.
+fn merged(mut keys: Vec<Value>, listed: bool, below: Vec<Filed>) -> Filed {
+    let listed = listed && below.iter().all(|f| f.listed);
+    // The distinct sets below, by identity: a set shared by two types is one allocation.
+    let mut seen: HashSet<*const Vec<Value>> = HashSet::new();
+    let sets: Vec<&Rc<Vec<Value>>> = below
+        .iter()
+        .map(|f| &f.keys)
+        .filter(|s| !s.is_empty() && seen.insert(Rc::as_ptr(s)))
+        .collect();
+    let keys = match sets[..] {
+        [] if keys.is_empty() => Rc::new(Vec::new()),
+        [set] if keys.is_empty() => Rc::clone(set),
+        _ => {
+            keys.extend(sets.iter().flat_map(|s| s.iter().cloned()));
+            keys.sort();
+            keys.dedup();
+            Rc::new(keys)
+        }
+    };
     Filed { keys, listed }
 }
 
@@ -3985,19 +4111,19 @@ fn whole(x: &Value) -> bool {
     }
 }
 
-/// The keys of each column of `row` ([`file()`]), and the column with fewest keys among those
+/// The keys of each column of `row` ([`Filer::file`]), and the column with fewest keys among those
 /// that list every value they hold: a tuple none of whose components there is a key is not in
 /// the row. A column is first filed by its tuple types, and by its boxes only when that does
 /// not list its values, since a box is made by walking the type's diagram.
-fn file_row(row: &Row) -> (Vec<Filed>, Option<usize>) {
+fn file_row(row: &Row, filer: &mut Filer) -> (Vec<Filed>, Option<usize>) {
     let filed: Vec<Filed> = row
         .iter()
         .map(|t| {
-            let f = file(t, false);
+            let f = filer.file(t, false);
             if f.listed {
                 return f;
             }
-            let g = file(t, true);
+            let g = filer.file(t, true);
             if g.listed { g } else { f }
         })
         .collect();
@@ -4829,15 +4955,16 @@ fn whole_kinds(chain: &[Kind]) -> bool {
 }
 
 impl RowIndex {
-    fn new(len: usize, part: &Part<Row>) -> RowIndex {
+    fn new(len: usize, part: &Part<Row>, filer: &mut Filer) -> RowIndex {
         let mut rows = part.distinct_atoms();
         rows.sort();
-        let filed: Vec<(Vec<Filed>, Option<usize>)> = rows.iter().map(file_row).collect();
+        let filed: Vec<(Vec<Filed>, Option<usize>)> =
+            rows.iter().map(|r| file_row(r, filer)).collect();
         // How many rows each key of each column files.
         let mut count: Vec<BTreeMap<&Value, usize>> = vec![BTreeMap::new(); len];
         for (columns, _) in &filed {
             for (j, f) in columns.iter().enumerate() {
-                for k in &f.keys {
+                for k in f.keys.iter() {
                     *count[j].entry(k).or_default() += 1;
                 }
             }
@@ -4863,7 +4990,7 @@ impl RowIndex {
             let mut by_key: BTreeMap<&Value, Vec<usize>> = BTreeMap::new();
             for (i, a) in absorbs.iter().enumerate() {
                 if a.as_ref().is_some_and(|a| a[j]) {
-                    for k in &filed[i].0[j].keys {
+                    for k in filed[i].0[j].keys.iter() {
                         let rs = by_key.entry(k).or_default();
                         if rows[i][j].contains(k) {
                             rs.push(i);
@@ -5173,6 +5300,7 @@ impl Maker {
         boxes: Vec<(Vec<usize>, Row)>,
         rows: BTreeMap<Row, Vec<Option<usize>>>,
         numbers: &mut Numbers,
+        filer: &mut Filer,
     ) -> Maker {
         let p = ty.p();
         let made = scalars(&p);
@@ -5181,7 +5309,7 @@ impl Maker {
             .tuples
             .lens
             .iter()
-            .map(|(&len, part)| (len, RowIndex::new(len, part)))
+            .map(|(&len, part)| (len, RowIndex::new(len, part, filer)))
             .collect();
         Maker {
             boxes,

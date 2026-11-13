@@ -446,9 +446,8 @@ fn works(what: &str, n: usize, make: fn(usize) -> String) {
 }
 
 /// `src` with its last line's `+ 1` made `< 1`. The derivation is the one `+` gives, but `<`
-/// tries no repair: the repair of `t_n + 1` lists the values of `t_n` (`Type::values_listed`),
-/// whose maker files the first components of each level again, O(n²) in a chain of n levels,
-/// a cost of the type's values and not of printing (COMPLEXITY.md row MAKER-file-chain).
+/// tries no repair, so these tests measure the derivation alone; the repair of `t_n + 1`, which
+/// lists the values of `t_n` (`Type::values_listed`), is measured by the tests that add 1.
 fn compared_with_1(src: String) -> String {
     let at = src.rfind(" + 1;").expect("the last line adds 1");
     src[..at].to_string() + " < 1;\n"
@@ -479,6 +478,28 @@ fn rejecting_a_comparison_of_a_chain_of_n_names_each_holding_the_one_before_with
         "rejecting a comparison of a chain of n names each holding the one before with 1",
         40,
         |n| compared_with_1(growing(n)),
+    );
+}
+
+// The repair of `t_n + 1` lists the one value of `t_n`. Its maker files the first components
+// of each type once for the whole listing; before, each level's maker walked every level below
+// it again, O(n²) in a chain of n levels (COMPLEXITY.md row K109, MAKER-file-chain).
+
+#[test]
+fn rejecting_a_tuple_doubled_n_times_with_1_added_does_work_linear_in_n() {
+    works(
+        "rejecting a tuple doubled n times with 1 added",
+        40,
+        doubling,
+    );
+}
+
+#[test]
+fn rejecting_a_chain_of_n_names_each_holding_the_one_before_with_1_added_does_work_linear_in_n() {
+    works(
+        "rejecting a chain of n names each holding the one before with 1 added",
+        40,
+        growing,
     );
 }
 

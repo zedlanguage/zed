@@ -337,3 +337,108 @@ fn a_type_that_holds_an_atom_of_many_payloads_keeps_its_article() {
         )
     );
 }
+
+/// MAKER-file-chain (COMPLEXITY.md K109): `u = a2 + 1;` after a chain of names each holding the
+/// one before, and `u = t2 + 1;` after a tuple doubled twice. Looking for a repair lists the
+/// values of the left side (`Type::each_value`), which files each type of the chain once; the
+/// message, which offers no repair, is the one `zedc run` printed before that change.
+const CHAIN: &str = "a0 = (0, 0);\na1 = (a0, 1);\na2 = (a1, 2);\nu = a2 + 1;\n";
+const DOUBLED: &str = "t0 = (1, 1);\nt1 = (t0, t0);\nt2 = (t1, t1);\nu = t2 + 1;\n";
+
+#[test]
+fn zedc_run_prints_the_rejection_of_1_added_to_a_chain_of_names() {
+    let f = file("chain.zed", CHAIN);
+    assert_eq!(
+        rejection("run", &f),
+        format!(
+            "{}:{}",
+            f.display(),
+            r#"4:5: `+` does not take ((T1, 2), 1): no arrow of `+` takes these types.
+  T1 stands for a part written more than once:
+    type T1 = ((0, 0), 1);
+  [1]  4:5: `a2` is (T1, 2) here
+       4 | u = a2 + 1;
+         |     ^^ [1]
+         |     ^^^^^^ [15, 16, 17]
+         |          ^ [14]
+  [2]  3:6: `a2` is defined as this expression, (T1, 2)
+       3 | a2 = (a1, 2);
+         |      ^^^^^^^ [2, 3]
+         |       ^^ [4]
+         |           ^ [13]
+  [3]  3:6: this expression gives (T1, 2)
+  [4]  3:7: `a1` is T1 here
+  [5]  2:6: `a1` is defined as this expression, T1
+       2 | a1 = (a0, 1);
+         |      ^^^^^^^ [5, 6]
+         |       ^^ [7]
+         |           ^ [12]
+  [6]  2:6: this expression gives T1
+  [7]  2:7: `a0` is (0, 0) here
+  [8]  1:6: `a0` is defined as this expression, (0, 0)
+       1 | a0 = (0, 0);
+         |      ^^^^^^ [8, 9]
+         |       ^ [10]
+         |          ^ [11]
+  [9]  1:6: this expression gives (0, 0)
+  [10] 1:7: this literal, 0, is 0
+  [11] 1:10: this literal, 0, is 0
+  [12] 2:11: this literal, 1, is 1
+  [13] 3:11: this literal, 2, is 2
+  [14] 4:10: this literal, 1, is 1
+  [15] 4:5: `+` takes (int, int) -> int
+  [16] 4:5: `+` takes (f64, f64) -> f64
+  [17] 4:5: `+` takes (rat, rat) -> rat
+"#
+        )
+    );
+}
+
+#[test]
+fn zedc_run_prints_the_rejection_of_1_added_to_a_doubled_tuple() {
+    let f = file("doubled.zed", DOUBLED);
+    assert_eq!(
+        rejection("run", &f),
+        format!(
+            "{}:{}",
+            f.display(),
+            r#"4:5: `+` does not take ((T1, T1), 1): no arrow of `+` takes these types.
+  T1 stands for a part written more than once:
+    type T1 = ((1, 1), (1, 1));
+  [1]  4:5: `t2` is (T1, T1) here
+       4 | u = t2 + 1;
+         |     ^^ [1]
+         |     ^^^^^^ [15, 16, 17]
+         |          ^ [14]
+  [2]  3:6: `t2` is defined as this expression, (T1, T1)
+       3 | t2 = (t1, t1);
+         |      ^^^^^^^^ [2, 3]
+         |       ^^ [4]
+         |           ^^ [13]
+  [3]  3:6: this expression gives (T1, T1)
+  [4]  3:7: `t1` is T1 here
+  [5]  2:6: `t1` is defined as this expression, T1
+       2 | t1 = (t0, t0);
+         |      ^^^^^^^^ [5, 6]
+         |       ^^ [7]
+         |           ^^ [12]
+  [6]  2:6: this expression gives T1
+  [7]  2:7: `t0` is (1, 1) here
+  [8]  1:6: `t0` is defined as this expression, (1, 1)
+       1 | t0 = (1, 1);
+         |      ^^^^^^ [8, 9]
+         |       ^ [10]
+         |          ^ [11]
+  [9]  1:6: this expression gives (1, 1)
+  [10] 1:7: this literal, 1, is 1
+  [11] 1:10: this literal, 1, is 1
+  [12] 2:11: `t0` is (1, 1) here
+  [13] 3:11: `t1` is T1 here
+  [14] 4:10: this literal, 1, is 1
+  [15] 4:5: `+` takes (int, int) -> int
+  [16] 4:5: `+` takes (f64, f64) -> f64
+  [17] 4:5: `+` takes (rat, rat) -> rat
+"#
+        )
+    );
+}
