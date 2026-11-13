@@ -572,6 +572,8 @@ fn show_decimal(sign: &str, f: u64, e: i32) -> String {
             power /= 10;
         }
     }
+    // Unreachable: every byte put is ASCII (the sign `-` or none, digits, `.`, `e`, `-`), and
+    // ASCII is UTF-8.
     String::from(std::str::from_utf8(&text[..at]).expect("ASCII text"))
 }
 

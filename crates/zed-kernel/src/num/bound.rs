@@ -45,6 +45,7 @@ impl Bound {
             return Bound::exact(m.clone());
         }
         let drop = bits - k;
+        // Unreachable: `bits > k >= 0` here, so `m` is not zero and has a lowest set bit.
         let inexact = m.trailing_zeros().expect("a bound is positive") < drop;
         let mut kept = m >> drop;
         if up && inexact {
@@ -63,6 +64,7 @@ impl Bound {
             return self;
         }
         let drop = bits - k;
+        // Unreachable: `bits > k >= 0` here, so `self.m` is not zero.
         let inexact = self.m.trailing_zeros().expect("a bound is positive") < drop;
         self.m >>= drop;
         if up && inexact {
@@ -100,7 +102,8 @@ impl Bound {
     fn cmp(&self, other: &Bound) -> Ordering {
         self.log2().cmp(&other.log2()).then_with(|| {
             // With the leading bit in one place, the exponents differ by the difference of the
-            // mantissas' widths.
+            // mantissas' widths. Unreachable: equal `log2` gives `e1 + bits1 = e2 + bits2`, so
+            // `d = bits2 - bits1`, and no mantissa in memory has `2^63` bits.
             let d = (&self.e - &other.e)
                 .to_i64()
                 .expect("bounds with one leading place have exponents a mantissa apart");
@@ -116,6 +119,10 @@ impl Bound {
     fn floor_scaled(&self, s: &BigInt) -> (BigUint, bool) {
         let x = &self.e + s;
         match x.to_u64() {
+            // Unreachable: the one caller, `round_with`, takes `s = prec - t` with `t` the top of
+            // `log2 q` clamped to the format and lowered only while the scaled value keeps at most
+            // `prec` bits, so the scaled bound has at most a few bits more than `prec` and `up`,
+            // below it, fits in a `usize`.
             Some(up) => (
                 &self.m << usize::try_from(up).expect("a scaled bound near a float's mantissa"),
                 true,
@@ -125,6 +132,7 @@ impl Bound {
                 if down >= self.m.bits() {
                     return (BigUint::zero(), false);
                 }
+                // Unreachable: `down < self.m.bits()`, so `self.m` is not zero.
                 let exact = self.m.trailing_zeros().expect("a bound is positive") >= down;
                 (&self.m >> down, exact)
             }
@@ -215,6 +223,7 @@ const LOG2_ULPS: f64 = 16.0;
 /// `m * 2^s` is within a relative `2^-63 + 2^-53 <= 2^-52` of `x` (truncation, then rounding).
 fn leading(x: &BigUint) -> (f64, u64) {
     let s = x.bits().saturating_sub(64);
+    // Unreachable: `x >> s` has at most 64 bits.
     let m = (x >> s).to_u64().expect("the leading 64 bits");
     (m as f64, s)
 }
@@ -391,6 +400,8 @@ impl Quotient {
                 }
             }
             Quotient::Exact { n, d } => {
+                // Unreachable: `|s| = |prec - t|` with `t` clamped to the format's exponents, at
+                // most `prec - emin`, 1,075 for `f64`.
                 let shift = |x: &BigUint, by: &BigInt| {
                     x << by.to_usize().expect("a float's scale fits in memory")
                 };
@@ -467,6 +478,7 @@ fn round_with(
     if low > BigInt::from(f.emax) {
         return Some(Err(LiteralRounding::Infinite));
     }
+    // Unreachable: a value clamped to `[emin, emax]` fits in an `i64`.
     let mut t = high
         .clamp(BigInt::from(f.emin), BigInt::from(f.emax))
         .to_i64()
@@ -487,6 +499,8 @@ fn round_with(
         } else {
             half + 1u32
         };
+        // Unreachable: `w` has at most `prec + 1` bits here, so `half + 1 <= 2^prec`, at most
+        // `2^53`.
         let mut m = m.to_u64().expect("a significand fits in 64 bits");
         if m == 1 << f.prec {
             m >>= 1;

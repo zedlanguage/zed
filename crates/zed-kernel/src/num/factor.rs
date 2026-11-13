@@ -116,6 +116,15 @@ fn split(n: u64) -> u64 {
             return g;
         }
     }
+    // Unreachable: each `c` ends (once `y` is in the cycle and `r` past its length, a
+    // difference is 0, so `g = n`; the search back from `ys` then meets the difference of that
+    // batch that shares a factor with `n`), and some `c` returns. The first comparison is of
+    // `x = 2` with `f(f(2)) = 2 + (c + 2)(c + 7) mod n`, so it gives `g = gcd((c + 2)(c + 7), n)`.
+    // For `p` the least prime factor of `n` (odd, so `p >= 3`) and `c = p - 2 >= 1`, that is
+    // `gcd(p (p + 5), n)`: a multiple of `p`, and `n` only if the odd `n / p >= p` divides the
+    // even `p + 5`, so `n / p <= (p + 5) / 2` and `p <= 5`, which leaves `n = 25` alone. So
+    // every odd composite but 25 is split by `c = p - 2` at the latest, and 25 is split by a
+    // smaller `c` (`factors_agree_with_trial_division`).
     unreachable!("some c splits a composite")
 }
 
@@ -124,4 +133,80 @@ fn gcd(mut a: u64, mut b: u64) -> u64 {
         (a, b) = (b, a % b);
     }
     a
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The factors of `n` by trial division.
+    fn by_trial(mut n: u64) -> Vec<(u64, u64)> {
+        let mut out = Vec::new();
+        let mut p = 2;
+        while p * p <= n {
+            let mut k = 0;
+            while n.is_multiple_of(p) {
+                n /= p;
+                k += 1;
+            }
+            if k > 0 {
+                out.push((p, k));
+            }
+            p += 1;
+        }
+        if n > 1 {
+            out.push((n, 1));
+        }
+        out
+    }
+
+    /// NUM-expect-audit: `split` returns for every composite below `2^16`, 25 among them (the
+    /// one odd composite its proof leaves to this test), and the factors are the primes trial
+    /// division finds.
+    #[test]
+    fn factors_agree_with_trial_division() {
+        for n in 2..1u64 << 16 {
+            assert_eq!(factor(n), by_trial(n), "{n}");
+            assert_eq!(is_prime(n), by_trial(n) == [(n, 1)], "{n}");
+        }
+    }
+
+    /// NUM-expect-audit: the 64-bit corner cases: squares and products of the largest primes
+    /// below `2^32`, Carmichael numbers and strong pseudoprimes to small bases, prime powers,
+    /// `2^64 - 1` and the largest 64-bit prime.
+    #[test]
+    fn factors_of_wide_numbers_are_their_primes() {
+        let (p, q) = (4_294_967_291u64, 4_294_967_279u64);
+        let cases: [(u64, &[(u64, u64)]); 9] = [
+            (p * p, &[(p, 2)]),
+            (p * q, &[(q, 1), (p, 1)]),
+            (561, &[(3, 1), (11, 1), (17, 1)]),
+            (3_215_031_751, &[(151, 1), (751, 1), (28_351, 1)]),
+            (
+                3_825_123_056_546_413_051,
+                &[(149_491, 1), (747_451, 1), (34_233_211, 1)],
+            ),
+            (3u64.pow(40), &[(3, 40)]),
+            (1_000_003u64.pow(3), &[(1_000_003, 3)]),
+            (
+                u64::MAX,
+                &[
+                    (3, 1),
+                    (5, 1),
+                    (17, 1),
+                    (257, 1),
+                    (641, 1),
+                    (65_537, 1),
+                    (6_700_417, 1),
+                ],
+            ),
+            (
+                18_446_744_073_709_551_557,
+                &[(18_446_744_073_709_551_557, 1)],
+            ),
+        ];
+        for (n, want) in cases {
+            assert_eq!(factor(n), want, "{n}");
+        }
+    }
 }

@@ -1222,6 +1222,8 @@ fn pieces_mul(a: &BigUint, b: &BigUint, piece: usize) -> BigUint {
         let mut slots = out[at..].iter_mut();
         let mut carry = false;
         for d in p.iter_u64_digits() {
+            // Unreachable: `p = short * part` has at most `words(short) + words(part)` words,
+            // and `out[at..]` has `la + lb - at` of them, with `words(part) <= la - at`.
             let slot = slots.next().expect("the product fits in its words");
             let (v, c1) = slot.overflowing_add(d);
             let (v, c2) = v.overflowing_add(u64::from(carry));
@@ -1599,6 +1601,8 @@ fn sparse_div_rem_words(
     let la = a.len();
     // Normalized: the top word of `b 2^sh` has its top bit set, so a quotient word estimated
     // from the window's top two words and the divisor's top word is at most two above.
+    // Unreachable: both callers pass a nonzero `b`: `sparse_div_rem` one of at least two
+    // words, and `Divisor::step` the divisor `Divisor::new` asserts is not zero.
     let sh = b
         .iter_u64_digits()
         .next_back()
@@ -1781,6 +1785,7 @@ fn approx_reciprocal(a: &BigUint, p: u64, tw: &Roots, leaf: u64) -> BigUint {
     while let Some(&s) = sizes.last().filter(|&&s| s > leaf) {
         sizes.push((s + 3).div_ceil(2));
     }
+    // Unreachable: `sizes` starts as `[p]` and only grows.
     let mut h = sizes.pop().expect("p is listed");
     // `a_h X < 2^2h <= a_h (X + 1)` for `a_h` the top `h` bits.
     let mut x = ((BigUint::one() << (2 * h)) - 1u32) / (a >> (p - h));
@@ -1889,6 +1894,7 @@ impl Mat {
     fn times(&self, other: &Mat) -> Mat {
         let [a, b, c, d] = &self.0;
         let [e, f, g, h] = &other.0;
+        // Unreachable: `matrix_product` returns `2 c` entries for `c = r.len() / 2`, four here.
         let [w, x, y, z] = matrix_product([a, b, c, d], &[e, f, g, h], None)
             .try_into()
             .expect("a 2x2 product");
@@ -1898,6 +1904,7 @@ impl Mat {
     /// `self * (a, b) / 2^2j`, exact.
     fn apply(&self, a: &BigInt, b: &BigInt, j: u64) -> (BigInt, BigInt) {
         let [m00, m01, m10, m11] = &self.0;
+        // Unreachable: `matrix_product` returns `2 c` entries for `c = r.len() / 2`, two here.
         let [c, d] = matrix_product([m00, m01, m10, m11], &[a, b], Some(2 * j))
             .try_into()
             .expect("a 2x1 product");
@@ -2125,6 +2132,8 @@ fn nu(x: &BigInt) -> Option<u64> {
 /// one of `bits x h` and one of `h x (bits - h)`, about a quarter less, O(M(w)) either way.
 /// Test inverses_modulo_powers_of_two.
 fn inverse_mod_pow2(x: &BigUint, w: u64) -> BigUint {
+    // Unreachable: every caller passes an odd `x` (`step`'s `b1`, `a` after its `bit(0)`
+    // test, the odd part `o`, an odd modulus), and an odd number has a low word.
     let low = x.iter_u64_digits().next().expect("x is odd");
     let mut inv = 1u64;
     for _ in 0..6 {
@@ -2196,6 +2205,8 @@ struct Half {
 impl Half {
     /// `(j, R, x, y)` of a result asked for with [`Want::Both`].
     fn both(self) -> (u64, Mat, BigInt, BigInt) {
+        // Unreachable: `half` sets `pair` when asked for it (`want != Matrix`) and `r` when
+        // asked for the matrix (`want != Pair`), and `both` is called only after `Want::Both`.
         let (x, y) = self.pair.expect("asked for the pair");
         (self.j, self.r.expect("asked for the matrix"), x, y)
     }
@@ -2251,6 +2262,7 @@ fn half(a: BigInt, b: BigInt, k: u64, want: Want, lift: u64) -> Half {
         false => {
             let w = 2 * k2 + 1;
             let h = half(cmod(&a3, w), cmod(&b3, w), k2, Want::Matrix, lift);
+            // Unreachable: `half` sets `r` when asked for `Want::Matrix`.
             (h.j, h.r.expect("asked for the matrix"), None)
         }
     };
@@ -2309,6 +2321,7 @@ fn half_low(a: BigInt, b: BigInt, k: u64, lift: u64) -> (u64, Mat, BigInt, BigIn
     let (al, bl) = (cmod(&a, w), cmod(&b, w));
     if k > lift {
         let h = half(al, bl, k, Want::Matrix, lift);
+        // Unreachable: `half` sets `r` when asked for `Want::Matrix`.
         let r = h.r.expect("asked for the matrix");
         let (x, y) = r.apply(&a, &b, h.j);
         return (h.j, r, x, y);
@@ -2319,6 +2332,7 @@ fn half_low(a: BigInt, b: BigInt, k: u64, lift: u64) -> (u64, Mat, BigInt, BigIn
     let bh = (b >> w) + BigInt::from(bl.is_negative());
     let (j, r, x, y) = half(al, bl, k, Want::Both, lift).both();
     let [m00, m01, m10, m11] = &r.0;
+    // Unreachable: `matrix_product` returns `2 c` entries for `c = r.len() / 2`, two here.
     let [c, d] = matrix_product([m00, m01, m10, m11], &[&ah, &bh], None)
         .try_into()
         .expect("a 2x1 product");
@@ -2604,9 +2618,14 @@ fn gcd_using(a: &BigUint, b: &BigUint, handoff: bool, leaf: u64, lift: u64) -> B
         let n = x.bits().max(y.bits());
         if handoff && n <= leaf {
             let (xm, ym) = (x.magnitude(), y.magnitude());
-            let (zx, zy) = (xm.trailing_zeros().unwrap(), ym.trailing_zeros().unwrap());
+            // Unreachable: `y` is not zero by the loop's test, and `x` stays odd (the binary
+            // gcd's invariant: it starts as `a >> za` and each step makes it `b / 2^j`), so
+            // each has a lowest set bit.
+            let zx = xm.trailing_zeros().expect("x is odd");
+            let zy = ym.trailing_zeros().expect("y is not zero");
             return (stein_odd(xm, zx, ym, zy) << zx.min(zy)) << z;
         }
+        // Unreachable: `half` sets `pair` when asked for `Want::Pair`.
         (x, y) = half(x, y, n / 2, Want::Pair, lift)
             .pair
             .expect("asked for the pair");
@@ -3078,6 +3097,7 @@ fn folded(x: &[u64], m: usize) -> Cow<'_, [u64]> {
 /// widest use is [`newton`]'s `xh tm < 2^(2h + 2) <= 2^(p + 6)`.
 fn cyclic_points(bits: u64) -> usize {
     let words = bits.saturating_sub(55).div_ceil(64).max(1);
+    // Unreachable: a number of `bits` bits in memory has fewer words than a `usize` counts.
     usize::try_from(words)
         .expect("a number whose words fit in memory")
         .next_power_of_two()
@@ -3088,6 +3108,7 @@ fn cyclic_points(bits: u64) -> usize {
 /// `yw` words, `k` bits' words, and the remainder's ([`cyclic_points`]); the reciprocal's own
 /// need no more than the first.
 fn level_points(bits: u64, k: u64) -> (usize, usize) {
+    // Unreachable: a reciprocal of `k` bits in memory has fewer words than a `usize` counts.
     let yw = usize::try_from(k.div_ceil(64)).expect("a number whose words fit in memory");
     ((2 * yw).next_power_of_two(), cyclic_points(bits))
 }
@@ -3192,6 +3213,7 @@ pub fn to_decimal_split_at(x: &BigUint, handoff: usize) -> String {
     }
     let mut powers = vec![BigUint::from(10u32).pow(PRINT_LEAF as u32)];
     loop {
+        // Unreachable: `powers` starts with one power and the loop only pushes.
         let last = powers.last().expect("the first power is built");
         // `last^2 > x` once its bits exceed `x`'s.
         if 2 * last.bits() - 1 > x.bits() {
@@ -3205,6 +3227,7 @@ pub fn to_decimal_split_at(x: &BigUint, handoff: usize) -> String {
     }
     // Each power listed is at most `x`, except perhaps the first, and the last squared is
     // above it, so `high` and `low` below are each under the next power down squared.
+    // Unreachable: the loop above only pushes onto the one power `powers` starts with.
     let top = powers.pop().expect("the first power is listed");
     // Complexity tradeoff: a number whose split would divide by a power of ten of at most
     // `handoff` words is printed by num-bigint, whose printing is faster there; the two
@@ -3245,6 +3268,8 @@ pub fn to_decimal_split_at(x: &BigUint, handoff: usize) -> String {
     drop(top);
     let printer = Printer::new(powers, handoff);
     // `log10(2) < 1234 / 4096`.
+    // Unreachable: `x` is in memory, below `2^51` bits with 48-bit addresses, so its digit
+    // count is far below what a `usize` counts.
     let digits = usize::try_from(x.bits() * 1234 / 4096 + 2).expect("a text that fits in memory");
     let mut out = String::with_capacity(digits);
     let level = printer.levels.len() + printer.first;
@@ -3297,6 +3322,7 @@ impl Level {
         Level {
             y: spectra(&low, linear, tw),
             dc: spectra(&d, cyclic, tw),
+            // Unreachable: `w / 64` is the word count of a reciprocal held in memory.
             yw: usize::try_from(w / 64).expect("a number whose words fit in memory"),
             d,
             bits,
@@ -3409,6 +3435,8 @@ fn derive(
 ) -> BigUint {
     let n = d.bits();
     let w = n.next_multiple_of(64);
+    // Unreachable: the one caller, `Printer::new`, passes the `e` of the level above, at
+    // least `w + 2n + 3` there (each `d` is at least the first power, of 31 words).
     let shift = ea
         .checked_sub(w + 2 * n)
         .expect("the reciprocal above is at least as precise");
@@ -3763,6 +3791,8 @@ pub(super) fn read_digits_by(digits: &str, leaf: usize) -> BigUint {
             false => BigUint::zero(),
         };
     }
+    // Unreachable: `read_digits_by` asserts a nonempty text, so `parts` starts nonempty and
+    // each round leaves `ceil(len / 2) >= 1` parts.
     parts.pop().expect("a nonempty text has a part")
 }
 
@@ -3930,6 +3960,7 @@ pub mod crossover {
 
         /// `y * x` by the spectra, `y` of at most `other` words.
         pub fn mul(&self, y: &BigUint) -> BigUint {
+            // Unreachable: `Kept::new`, the only constructor, sets the spectra.
             let (s, tw) = self.0.spectra.as_ref().expect("kept spectra");
             self.0.spectra_mul(y, s, tw)
         }
@@ -3942,6 +3973,7 @@ pub mod crossover {
 
         /// Whether [`super::Factor::mul`] takes the spectra for `y`.
         pub fn by_spectra(&self, y: &BigUint) -> bool {
+            // Unreachable: `Kept::new`, the only constructor, sets the spectra.
             let (s, _) = self.0.spectra.as_ref().expect("kept spectra");
             self.0.takes_spectra(s[0].len(), super::words(y))
         }
@@ -3951,6 +3983,7 @@ pub mod crossover {
         /// decide: `y` wider than the spectra allow, or [`super::mul`] taking num-bigint's
         /// product at or below [`super::MUL_LEAF`].
         pub fn cached_flip(&self, y: &BigUint) -> Option<f64> {
+            // Unreachable: `Kept::new`, the only constructor, sets the spectra.
             let (s, _) = self.0.spectra.as_ref().expect("kept spectra");
             let (points, wx, wy) = (s[0].len(), super::words(&self.0.x), super::words(y));
             let dense = super::dense_cost(wy, wx);

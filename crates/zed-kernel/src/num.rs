@@ -167,6 +167,8 @@ impl Rat {
             true => BigInt::from_biguint(sign, read_digits(whole)),
             false => BigInt::from_biguint(sign, read_digits(&[whole, frac].concat())),
         };
+        // Unreachable: a `usize` is at most 64 bits on every target Rust supports, so a length
+        // always fits in a `u64`.
         let shift = u64::try_from(frac.len()).expect("a text's length fits in 64 bits");
         Ok(match exp {
             None => Rat::over_ten_to(mantissa, shift),
@@ -509,6 +511,8 @@ impl Rat {
         }
         let tens = (&two).min(&five).clone();
         let mut pows = others(Sign::Plus);
+        // Unreachable: `tens` is the smaller of `two` and `five`, so neither difference is
+        // negative and each converts to a `BigUint`.
         pows.extend([(2, &two - &tens), (5, &five - &tens)].map(|(p, e)| {
             (
                 p,
@@ -552,6 +556,8 @@ impl Rat {
             return format!("{sign}{}", fast::to_decimal(self.num.magnitude()));
         }
         let power = self.power_text();
+        // Unreachable: `Rat::pow` returns `TooLarge` only for a numerator or denominator wider
+        // than 64 bits, and 10 is factored into `2^L * 5^L`, so nothing is asked or built.
         let ten = Rat::int(BigInt::from(10))
             .pow(&BigUint::from(power.len()))
             .expect("10 is factored and nothing is built");
@@ -669,6 +675,8 @@ impl Rat {
             let n = (self.num.bits() + b.den.bits()).max(b.num.bits() + self.den.bits()) + 1;
             let d = self.den.bits() + b.den.bits();
             room(BigUint::from(n + d) << 4u32)?;
+            // Unreachable: both denominators are positive, so their product is not zero and
+            // `Rat::new` returns `Some`.
             return Ok(Rat::new(
                 signed(
                     fast::mul_int(&self.num, &b.den),
@@ -855,8 +863,11 @@ impl Rat {
             .filter(|part| part.to_u64().is_none())
             .map(|part| part.bits())
             .sum();
+        // The memory asked for the wide parts' powers, in bits, eight times their width: asked of
+        // `room` here, and returned as the refusal below when `e` is too wide to raise a part to.
+        let ask = || (BigUint::from(wide) * e) << 3u32;
         if wide > 0 {
-            room((BigUint::from(wide) * e) << 3u32)?;
+            room(ask())?;
         }
         let times = BigInt::from(e.clone());
         let mut pows: Vec<(u64, BigInt)> = self
@@ -885,11 +896,15 @@ impl Rat {
                 // A complete solution would keep an opaque base `b^e` beside the primes, with
                 // the bases made pairwise coprime by Bernstein's coprime-base algorithm.
                 None => {
-                    // `e` fits in 64 bits here: this part is wider than 64 bits, so for
-                    // `e >= 2^64` the ask above is at least `65 * 2^67` bits, `65 * 2^61`
-                    // words, more than a `usize` counts, and `room` refused it. Tested by
+                    // An exponent of `2^64` or more is refused with the ask above. With a
+                    // 64-bit `usize`, `room` has already refused it (this part is wider than
+                    // 64 bits, so the ask is at least `65 * 2^67` bits, `65 * 2^61` words,
+                    // more than a `usize` counts); on any other target this returns the same
+                    // refusal, so the step holds by the code, not by that argument. Tested by
                     // `a_power_of_a_wide_base_to_an_exponent_beyond_64_bits_is_refused`.
-                    let e = e.to_u64().expect("an exponent whose power fits in memory");
+                    let Some(e) = e.to_u64() else {
+                        return Err(TooLarge { bits: ask() });
+                    };
                     raised[i] = BigInt::from(fast::pow(part, e));
                 }
             }
@@ -1099,6 +1114,8 @@ impl Rat {
     /// 10.9 times the coefficients' width, for products of 512 to 2^14 words reduced by
     /// factors of 66 words to their own length.
     fn exact_div(&self, m: &Rat) -> Result<Rat, TooLarge> {
+        // Unreachable: `Rat::div` returns `None` only for a zero divisor, and an `m` that
+        // divides is not zero; every caller passes a nonzero `m` (`div_euclid` requires it).
         Ok(self.div(m)?.expect("the divisor is not zero"))
     }
 
@@ -1228,6 +1245,8 @@ fn mul_mod(a: u64, b: u64) -> u64 {
     // `2^61 = 1 (mod M)`, so the high part adds to the low part; one subtraction ends it.
     let r = (x & m) + (x >> 61);
     let r = if r >= m { r - m } else { r };
+    // Unreachable: `a, b < M` give `x < M^2 < 2^122`, so `r <= M + 2^61 - 1 < 2M` before the
+    // subtraction and `r < M < 2^61` after it.
     u64::try_from(r).expect("a residue below 2^61")
 }
 
@@ -1245,6 +1264,7 @@ fn rem_u64(x: &BigUint, m: u64) -> u64 {
         .iter_u64_digits()
         .rev()
         .fold(0u128, |r, d| ((r << 64) | u128::from(d)) % m);
+    // Unreachable: each fold step ends with `% m`, so `r < m <= u64::MAX`.
     u64::try_from(r).expect("a remainder below a u64 modulus")
 }
 
@@ -1493,6 +1513,7 @@ fn valuation_upto(n: BigInt, p: u64, cap: u64) -> (u64, BigInt) {
         return (0, n);
     }
     if p == 2 {
+        // Unreachable: a zero `n` returned above, and a nonzero one has a lowest set bit.
         let z = n.trailing_zeros().expect("n is not zero").min(cap);
         return (z, n >> z);
     }
@@ -2009,6 +2030,7 @@ impl Exact<'_> {
         let r = if exp >= 0 {
             Rat::int(m * two.pow(exp as u32))
         } else {
+            // Unreachable: the denominator `2^-exp` is positive.
             Rat::new(m, two.pow((-exp) as u32)).expect("den > 0")
         };
         Exact::Finite(Cow::Owned(r))
@@ -2021,6 +2043,11 @@ impl Exact<'_> {
 /// [`LiteralRounding::Infinite`] when that rounds to infinity and [`LiteralRounding::Zero`] when
 /// it rounds to zero while the literal is not zero, so `0e999` is zero and `1e-400` is an error.
 pub fn literal_f64(text: &str) -> Result<f64, LiteralRounding> {
+    // Unreachable for every caller: each passes the digits the lexer keeps of a `Float`
+    // (`Decimal '.' Decimal Exponent? | Decimal Exponent`, zedc-syntax lex/number.rs) or of a
+    // decimal `Integer`, with the `_` removed, and `read_float` reads every such text: digits,
+    // an optional `.` and digits, an optional `e`/`E`, sign and digits. Tested by
+    // `the_lexer_s_float_and_decimal_forms_are_read`.
     read_float(text, FloatFormat::F64)
         .expect("the lexer's float text is a decimal")
         .map(f64::from_bits)
@@ -2029,6 +2056,7 @@ pub fn literal_f64(text: &str) -> Result<f64, LiteralRounding> {
 /// The float literal `text` at `f32`, by the rule of [`literal_f64`]: `1e39` rounds to
 /// infinity and `1e-46` to zero.
 pub fn literal_f32(text: &str) -> Result<f32, LiteralRounding> {
+    // Unreachable for every caller, by the argument at `literal_f64`.
     read_float(text, FloatFormat::F32)
         .expect("the lexer's float text is a decimal")
         .map(|bits| f32::from_bits(bits as u32))
@@ -2298,5 +2326,62 @@ mod tests {
         }
         assert!(Rat::from_kept(i(1), i(-1), vec![]).is_none());
         assert!(Rat::from_kept(i(1), i(0), vec![]).is_none());
+    }
+
+    /// NUM-expect-audit: every form the lexer keeps of a `Float` (`Decimal '.' Decimal
+    /// Exponent? | Decimal Exponent`, `_` removed) and of a decimal `Integer` is read, so the
+    /// `expect` in `literal_f64` and `literal_f32` is never reached; each value is the one std
+    /// reads.
+    #[test]
+    fn the_lexer_s_float_and_decimal_forms_are_read() {
+        let forms = [
+            "0.5",
+            "1.0",
+            "0.0",
+            "12.5e3",
+            "1e9",
+            "1E-9",
+            "1e+9",
+            "0e0",
+            "007.250E+0010",
+            "1e999",
+            "1e-999",
+            "123",
+            "0",
+            "000",
+            "18446744073709551616",
+        ];
+        for text in forms {
+            let want: f64 = text.parse().unwrap();
+            match literal_f64(text) {
+                Ok(x) => assert_eq!(x, want, "{text}"),
+                Err(LiteralRounding::Infinite) => assert!(want.is_infinite(), "{text}"),
+                Err(LiteralRounding::TooLarge(e)) => panic!("{text}: {e:?}"),
+                Err(LiteralRounding::Zero) => assert_eq!(want, 0.0, "{text}"),
+            }
+            let want: f32 = text.parse().unwrap();
+            match literal_f32(text) {
+                Ok(x) => assert_eq!(x, want, "{text}"),
+                Err(LiteralRounding::Infinite) => assert!(want.is_infinite(), "{text}"),
+                Err(LiteralRounding::Zero) => assert_eq!(want, 0.0, "{text}"),
+                Err(LiteralRounding::TooLarge(e)) => panic!("{text}: {e:?}"),
+            }
+        }
+    }
+
+    /// NUM-expect-audit: `mul_mod` and `pow_mod` stay below `2^61 - 1` at the largest inputs,
+    /// where the conversions they `expect` are tightest.
+    #[test]
+    fn the_residues_stay_below_the_modulus_at_their_largest_inputs() {
+        let m = MERSENNE_61;
+        for (a, b) in [(m - 1, m - 1), (m - 1, 1), (m - 2, m - 3), (0, m - 1)] {
+            let want = u128::from(a) * u128::from(b) % u128::from(m);
+            assert_eq!(u128::from(mul_mod(a, b)), want, "{a} * {b}");
+        }
+        // `(M - 1)^2 = 1`, and an exponent of `M - 1` or a multiple of it reduces to 0.
+        assert_eq!(pow_mod(m - 1, &BigUint::from(2u8)), 1);
+        assert_eq!(pow_mod(3, &BigUint::from(m - 1)), 1);
+        assert_eq!(pow_mod(3, &(BigUint::from(m - 1) << 70u32)), 1);
+        assert_eq!(pow_mod(m, &BigUint::from(5u8)), 0);
     }
 }
