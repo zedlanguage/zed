@@ -2012,13 +2012,14 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| COST-required-spec | impl attempt 1 | 2026-11-12 17:24 | started; worktrees cost-required-spec (impl) and cost-required-spec-spec (zed) |
 | GSX-unsolved | merge attempt 1 | 2026-11-11 16:53 | started: rebase combo (gsxh-claude) onto origin/main and apply decisions (a)-(d) of cd-xr/GSX-merge.md / load 43.50 38.06 40.03 |
 | NAME-ascii-only | impl attempt 1 | 2026-11-12 16:11 | spec committed (541c9d7-amended) and rebased on f0d6c20; impl rebased on a596e044b, fences resynced; l01_02 45/45 pass; rebuilding for the other groups |
 | NARROW-or-order | impl attempt 1 | 2026-11-12 15:40 | started; worktree /home/luke/Work/wt/narrow-or-order on cdd557f13 |
 | POW-rat-literal-ops | impl attempt 1 | 2026-11-12 16:20 | reproduced: (2r/3r)^-2, 1r/(2r/3r), (3r/2r)^-2 refused at a port for #divByZero; (3/2)^-2 in main settles at f64; top-level offers no rat fix |
 | STAGE-print | impl attempt 1 | 2026-11-04 03:10 | started; worktree wt/stage-print seeded |
-| STR-norm-layer | impl attempt 1 | 2026-11-12 16:19 | started; spec worktree made on zed f0d6c20 |
-| T6-refusal-cost | impl attempt 1 | 2026-11-05 04:07 | probe on 8d0bfe954 (load 36-45): x_tail nfa Refused(Fork) 26.7M/55.0M/145M/535M/2.92G/20.3G instr at n 4..128 (x6.97 per doubling at 64->128, N^1.40 with N ~ n^ |
+| STR-norm-layer | impl attempt 1 | 2026-11-12 16:19 | spec committed 1348df4 in wt/str-norm-layer-spec; impl worktree made |
+| T6-refusal-cost | impl attempt 1 | 2026-11-05 04:07 | value classes in member_known: x_tail n16->128 32x (was 140x), r3 seed 2 n8->64 60x; tests pass; running negative controls |
 | TESTS-L1.23-refusal-text | impl attempt 1 | 2026-11-08 23:59 | started; worktree tests-l1.23-refusal-text on origin/main a596e044b |
 | TESTS-P14-MST-lattice-circles | impl attempt 1 | 2026-11-08 23:59 | started in /home/luke/Work/wt/tests-p14-lattice |
 | WARN-refused-in-rejection | impl attempt 1 | 2026-11-12 14:51 | started; worktree /home/luke/Work/wt/warn-refused-in-rejection on origin/main a596e044b |
