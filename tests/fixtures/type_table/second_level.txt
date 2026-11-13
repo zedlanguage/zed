@@ -1,0 +1,30 @@
+# Two operators where rules interact: an atom bubbling through two operators, a literal fixed by a
+# later use, and reads of a tuple.
+
+template: ($0 + $1) * $2
+int | #a, int | #b, int => type T1 = #a | #b; int | #a | #b | #errs(T1 ->? T1) -- sec:failure "they merge into #errs carrying the set of distinct failures (of type #errs(E ->? E))"
+int | #a, int | #a, int => int | #a -- sec:failure "a singleton unwraps"
+int | #a, int, int | #b => type T1 = #a | #b; int | #a | #b | #errs(T1 ->? T1) -- sec:failure "they merge into #errs"
+int | #none, =1, =2 => int | #none -- sec:failure "an atom an operand carries in passes through"
+f64 | #none, =1.5, f64 => f64 | #none -- sec:failure "passes through"; L1.26b "a literal takes that carrier"
+=2, =3, rat => rat -- L1.26b "a literal takes that carrier, exactly or not at all"
+=2.5, =2, f64 => f64 -- L1.26b "a literal takes that carrier"
+=1, =2, f32 => f32 -- L1.26b "a literal takes that carrier"
+=2, =2.5, int => error Numeric literal at a carrier that cannot take it !! LIT-op-carrier-headline: error Two numeric values with no common carrier -- L1.26b "a literal takes that carrier, exactly or not at all"
+=2, =3, =4 => int -- sec:domains "three() = 1 + 2 is () -> int"
+=2.5, =2, =3 => error Decimal literal, or `/` of integer literals, that nothing gives a carrier -- sec:domains "A decimal literal that nothing fixes is rejected"
+
+template: (if c { 1 } else { 2.5 }) + $0
+f64 => f64 -- sec:type_resolution "each listed value of each operand, and a literal beside them, as it would be alone there"
+rat => rat -- sec:type_resolution "each listed value ... as it would be alone there"
+int => error Numeric literal at a carrier that cannot take it -- L1.26b "a literal takes that carrier, exactly or not at all"
+
+template: (if c { 1 } else { $0 }) + $1
+f64, int => error Two numeric values with no common carrier !! DIAG-union-carrier-row: error - -- sec:type_resolution "no carrier holds both and the operation is refused"
+f64, f64 => f64 -- sec:type_resolution "read at that carrier ... so the sum is an f64"
+
+template: $0[0]
+(int, f64) => int -- sec:lexical "a literal index selects that component's type (pair[0] : int)"
+
+template: $0[1]
+(int, f64) => f64 -- sec:lexical "a literal index selects that component's type"

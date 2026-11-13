@@ -1,0 +1,43 @@
+# Interval boundary cases: a single point, empty-adjacent, negative, crossing 0, unbounded on each
+# side. A literal set (an if of literals) or a written interval gives the operand's domain.
+
+template: $0 div $1
+int, =0 => error Operation that always fails -- sec:failure "An operation that always fails is rejected" (single point 0)
+int, =(if c { -3 } else { -1 }) => int -- sec:failure "Where no reaching input gives the atom" (negative)
+int, =(if c { -1 } else { 1 }) => int -- sec:failure "Where no reaching input gives the atom" (both signs, no 0)
+int, =(if c { -1 } else { 0 }) => int | #divByZero -- sec:failure "Where some reaching inputs give it" (ends at 0)
+int, =(if c { 0 } else { 1 }) => int | #divByZero -- sec:failure "Where some reaching inputs give it" (starts at 0)
+=(if c { 1 } else { 2 }), =(if c { 1 } else { 3 }) => int -- sec:failure "Where no reaching input gives the atom"
+int, int[-1..=1] => int | #divByZero !! L10.1: notyet -- sec:failure "a div b has the type int | #divByZero when b : int[-1..=1]" (crossing 0)
+int, int[0..=0] => error Operation that always fails !! L10.1: notyet -- sec:failure "An operation that always fails is rejected" (single point)
+int, int[1..=1] => int !! L10.1: notyet -- sec:failure "Where no reaching input gives the atom" (single point, empty-adjacent to 0)
+int, int[_..=-1] => int !! L10.1: notyet -- sec:failure "Where no reaching input gives the atom" (unbounded below)
+int, int[1..] => int !! L10.1: notyet -- sec:failure "Where no reaching input gives the atom" (unbounded above)
+int, int[0..] => int | #divByZero !! L10.1: notyet -- sec:failure "Where some reaching inputs give it" (unbounded above from 0)
+int, int[_..=0] => int | #divByZero !! L10.1: notyet -- sec:failure "Where some reaching inputs give it" (unbounded below to 0)
+
+template: $0 mod $1
+int, =(if c { -3 } else { -1 }) => int -- sec:failure "Where no reaching input gives the atom"
+int, =(if c { -1 } else { 0 }) => int | #divByZero -- sec:failure "Where some reaching inputs give it"
+int, int[1..] => int !! L10.1: notyet -- sec:failure "Where no reaching input gives the atom"
+
+template: $0 ^ $1
+int, =0 => int -- L1.17 "x^n on an integer x requires n : int[0..]"
+int, =(if c { 0 } else { 3 }) => int -- L1.17 "x^n on an integer x requires n : int[0..]"
+int, =(if c { -1 } else { 3 }) => error * -- L1.17 "x^n on an integer x requires n : int[0..], which the checker decides from the interval of n"
+int, int[0..] => int !! L10.1: notyet -- L1.17 "x^n on an integer x requires n : int[0..]"
+int, int[_..=-1] => error * !! L10.1: notyet -- L1.17 "x^n on an integer x requires n : int[0..]"
+=(if c { -1 } else { 1 }), int => error * -- L1.17 "x^n on an integer x requires n : int[0..]"; POW-domains "(int, int) -> int (exponent proved non-negative)"
+rat, =(if c { -1 } else { 3 }) => rat | #divByZero -- L1.17 "is #divByZero only for x == 0r and n < 0"
+=(if c { 2r } else { 3r }), int => rat -- L1.17 "drops #divByZero where the type of x holds no 0r"
+rat, int[0..] => rat !! L10.1: notyet -- L1.17 "drops #divByZero where ... n : int[0..]"
+
+template: 1r / rat($0)
+int[1..] => rat !! L10.1: notyet -- L1.17 "rat(n) of an int n whose interval holds no 0 has a type without 0r, so 1r / rat(n) ... total"
+=(if c { 1 } else { 2 }) => rat -- L1.17 "rat(n) of an int n whose interval holds no 0"
+int => rat | #divByZero -- sec:failure "Where some reaching inputs give it"
+
+template: $0 / $1
+rat, =(if c { 1r } else { 2r }) => rat -- sec:failure "Where no reaching input gives the atom"
+rat, =(if c { 0r } else { 2r }) => rat | #divByZero -- sec:failure "Where some reaching inputs give it"
+rat, =0r => error Operation that always fails -- sec:failure "An operation that always fails is rejected"

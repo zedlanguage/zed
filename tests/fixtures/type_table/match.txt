@@ -1,0 +1,16 @@
+# match over each atom-bearing union.
+
+template: match $0 { is int -> 1, #none -> 0 }
+int | #none => 0 | 1 !! L2.4: notyet -- sec:lexical "match value-pattern dispatch"; sec:type_resolution "Unions split, joins merge"
+
+template: match $0 { n is int -> n, #a -> 0, #b -> 1 }
+int | #a | #b => int !! L2.4: notyet -- sec:lexical "match ... n is T also binds it to n at the narrowed type"
+
+template: match $0 { x is f64 -> x, #none -> 0.0f64 }
+f64 | #none => f64 !! L2.4: notyet -- sec:lexical "match value-pattern dispatch"
+
+template: match $0 { is int -> 1 }
+int | #none => error * !! L2.4: notyet -- sec:lexical "match ... must be exhaustive (sec:failure)"
+
+template: match $0 { is int -> 1, #none -> 0, #none -> 2 }
+int | #none => error Unreachable `match` arm !! L2.4: notyet -- sec:diagnostics "Unreachable match arm"

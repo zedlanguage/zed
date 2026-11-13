@@ -1,0 +1,56 @@
+# Each type alone as a function's result, and the unary operators over every type.
+top: k = 2;
+
+template: $0
+int => int -- sec:type_resolution "each value keeps its own carrier"
+rat => rat -- sec:type_resolution "each value keeps its own carrier"
+f32 => f32 -- sec:type_resolution "each value keeps its own carrier"
+f64 => f64 -- sec:type_resolution "each value keeps its own carrier"
+f16 => f16 !! L1.18a: notyet -- sec:type_resolution "each value keeps its own carrier"
+bool => bool -- sec:type_resolution "each value keeps its own carrier"
+Utf8String => Utf8String !! STR-types: notyet -- sec:type_resolution "each value keeps its own carrier"
+(int, f64) => (int, f64) -- sec:type_resolution "each value keeps its own carrier"
+int | #none => int | #none -- sec:type_resolution "each value keeps its own carrier"
+f64 | #none => f64 | #none -- sec:type_resolution "each value keeps its own carrier"
+=#none => #none -- L1.26b "f(x) = (x, 1) is (x: T) -> (T, 1)" (a literal returned keeps its value); sec:diagnostics "-3 for -3r" (a signed literal is a literal)
+=2 => 2 -- L1.26b "f(x) = (x, 1) is (x: T) -> (T, 1)" (a literal returned keeps its value); sec:diagnostics "-3 for -3r" (a signed literal is a literal)
+=2.5 => 2.5 -- L1.26b "f(x) = (x, 1) is (x: T) -> (T, 1)" (a literal returned keeps its value); sec:diagnostics "-3 for -3r" (a signed literal is a literal)
+=2.5f64 => f64 !! LIT-forced-carrier: 2.5 -- sec:type_resolution "each value keeps its own carrier"
+=2r => rat !! LIT-forced-carrier: 2r -- sec:type_resolution "each value keeps its own carrier"
+=k => 2 -- L1.26b "f(x) = (x, 1) is (x: T) -> (T, 1)" (a literal returned keeps its value); sec:diagnostics "-3 for -3r" (a signed literal is a literal)
+
+template: -$0
+int => int -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "three() = 1 + 2 is () -> int"
+rat => rat -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "three() = 1 + 2 is () -> int"
+f32 => f32 -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "three() = 1 + 2 is () -> int"
+f64 => f64 -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "three() = 1 + 2 is () -> int"
+f16 => f16 !! L1.18a: notyet -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "three() = 1 + 2 is () -> int"
+bool => error * -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "three() = 1 + 2 is () -> int"
+Utf8String => error * !! STR-types: notyet -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "three() = 1 + 2 is () -> int"
+(int, f64) => error * -- sec:lexical "+ - * arithmetic on numbers"; sec:linalg "Arithmetic on morphisms" (of one exact domain)
+int | #none => int | #none -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "three() = 1 + 2 is () -> int"; sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
+f64 | #none => f64 | #none -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "three() = 1 + 2 is () -> int"; sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
+=#none => #none -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
+=2 => -2 -- L1.26b "f(x) = (x, 1) is (x: T) -> (T, 1)" (a literal returned keeps its value); sec:diagnostics "-3 for -3r" (a signed literal is a literal)
+=2.5 => -2.5 -- L1.26b "f(x) = (x, 1) is (x: T) -> (T, 1)" (a literal returned keeps its value); sec:diagnostics "-3 for -3r" (a signed literal is a literal)
+=2.5f64 => f64 !! LIT-forced-carrier: -2.5 -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "three() = 1 + 2 is () -> int"
+=2r => rat !! LIT-forced-carrier: -2r -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "three() = 1 + 2 is () -> int"
+=k => int -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "three() = 1 + 2 is () -> int"
+
+template: !$0
+int => error * -- sec:lexical "! logical not"
+rat => error * -- sec:lexical "! logical not"
+f32 => error * -- sec:lexical "! logical not"
+f64 => error * -- sec:lexical "! logical not"
+f16 => error * !! L1.18a: notyet -- sec:lexical "! logical not"
+bool => bool -- sec:lexical "! logical not"
+Utf8String => error * !! STR-types: notyet -- sec:lexical "! logical not"
+(int, f64) => error * -- sec:lexical "! logical not"
+int | #none => error * -- sec:lexical "! logical not"
+f64 | #none => error * -- sec:lexical "! logical not"
+=#none => #none -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
+=2 => error * -- sec:lexical "! logical not"
+=2.5 => error * -- sec:lexical "! logical not"
+=2.5f64 => error * -- sec:lexical "! logical not"
+=2r => error * -- sec:lexical "! logical not"
+=k => error * -- sec:lexical "! logical not"

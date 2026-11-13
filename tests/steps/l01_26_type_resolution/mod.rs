@@ -27,6 +27,7 @@ mod narrowing;
 mod never;
 mod never_operands;
 mod no_common_value;
+mod op_table;
 mod ordered_tuples;
 mod out_of_bounds;
 mod partial_maps;

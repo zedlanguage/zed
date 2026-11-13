@@ -1,0 +1,14 @@
+# Values with units, and a unit through two operations.
+
+template: $0 + $1
+f64 with units("m"), f64 with units("m") => f64 with units("m") !! L12.2: notyet -- sec:facets "units"; sec:lexical "with facet attach v with units"
+f64 with units("m"), f64 with units("s") => error * !! L12.2: notyet -- sec:facets "units": no common unit
+
+template: $0 / $1
+f64 with units("m"), f64 with units("s") => f64 with units("m/s") !! L12.2: notyet -- sec:facets "km/s is km¹·s⁻¹"
+
+template: ($0 + $1) / $2
+f64 with units("m"), f64 with units("m"), f64 with units("s") => f64 with units("m/s") !! L12.2: notyet -- sec:facets "km/s is km¹·s⁻¹"
+
+template: f32($0)
+f64 with units("m") => f32 with units("m") | #inexact | #overflow !! L12.2: notyet -- sec:corner_cases "Casts are domain proofs"; author decision on facets "casts keep units"

@@ -533,7 +533,7 @@ split="
   l01_23_subtyping l01_23_subtyping::scaling l01_23_subtyping::r6_reduction
   l01_25_preimage_catalog l01_25_preimage_catalog::s22
   l01_25_preimage_catalog::exact_oracle
-  l01_26_type_resolution l01_26_type_resolution::deep_ops
+  l01_26_type_resolution l01_26_type_resolution::deep_ops l01_26_type_resolution::op_table
   l01_28_staging l01_28_staging::scaling l01_28_staging::dag
   l01_29_diagnostics l01_29_diagnostics::casts l01_29_diagnostics::offered_repairs
   l01_29_diagnostics::offered_repairs::every_offered_repair_inside_a_sum_checks_as_written

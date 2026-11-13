@@ -1,0 +1,14 @@
+# Folds (><) and joins.
+
+template: $0 >< (+)
+int -> int => int !! L3.2: notyet -- sec:lexical "><  reduce"; sec:corner_cases "a reduction of nothing is #empty (or the operator's identity)"
+int -> f64 => f64 !! L3.2: notyet -- sec:lexical "><  reduce"; sec:corner_cases "or the operator's identity"
+
+template: $0 >< max
+int -> int => int | #empty !! L3.2: notyet -- sec:corner_cases "a reduction of nothing is #empty"
+
+template: ($0, $1) into ($0 && $1 -> v)
+int -> f64, int -> bool => int -> (f64, bool) !! L5.4a: notyet -- sec:joins "One flat value per chain": "V for the first operand and each && operand"
+
+template: ($0, $1) into ($0 || $1 -> v)
+int -> f64, int -> bool => int -> (f64 | #none, bool | #none) !! L5.4a: notyet -- sec:joins "V | #none for ... every operand of an || chain"

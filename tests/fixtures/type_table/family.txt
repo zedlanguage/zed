@@ -1,0 +1,11 @@
+# A named family of atoms (type Opt = int | #none) under else, is and match.
+top: type Opt = int | #none;
+
+template: $0 else 0
+Opt => int | #none warn !! L2.5: notyet -- sec:lexical "else default-narrowing: named-family atoms are data and survive"
+
+template: $0 is int
+Opt => bool !! L2.5: notyet -- sec:lexical "is type test"
+
+template: match $0 { is int -> 1, #none -> 0 }
+Opt => 0 | 1 !! L2.5: notyet -- sec:lexical "match value-pattern dispatch"

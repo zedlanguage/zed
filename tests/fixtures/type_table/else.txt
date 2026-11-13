@@ -1,0 +1,29 @@
+# else over each atom-bearing union, a named family, the bare atom and a type with no atom.
+
+template: $0 else 0
+int | #none => int -- sec:lexical "else default-narrowing: e else d strips the loose atom members"; sec:type_resolution "Unions split, joins merge"
+int | #a | #b => int -- sec:lexical "else default-narrowing: e else d strips the loose atom members"
+f64 | #none => 0 | f64 -- sec:type_resolution "Unions split, joins merge" ("if c { 1 } else { 2.5f64 } is 1 | f64")
+rat | #none => 0 | rat -- sec:type_resolution "Unions split, joins merge"
+=#none => 0 -- sec:lexical "else default-narrowing"; L1.26a "an integer literal is read as an int ... as the default after else" (a literal prints as it was written)
+int => int warn !! L2.12e: int -- sec:failure "else with nothing to strip" (QUESTIONS A67)
+
+template: $0 else 2.5f64
+int | #none => int | f64 !! LIT-forced-carrier: 2.5 | int -- sec:type_resolution "Unions split, joins merge", no conversion
+f64 | #none => f64 -- sec:lexical "else default-narrowing"
+
+template: $0 else false
+bool | #none => bool -- sec:lexical "else default-narrowing"
+
+template: $0 else ""
+Utf8String | #none => Utf8String !! STR-types: notyet -- sec:lexical "else default-narrowing"
+
+template: $0 else #a -> 0
+int | #a | #b => int | #b -- sec:lexical "else pattern form e else #x(_) -> d for selected members"
+f64 | #a => 0 | f64 -- sec:lexical "else pattern form"
+
+template: $0 else #a -> 0 else #b -> 1
+int | #a | #b => int -- sec:lexical "several pattern forms chain left to right"
+
+template: ($0 + 1) else 0
+int | #none => int -- sec:failure "an atom an operand carries in passes through"; sec:lexical "else default-narrowing"

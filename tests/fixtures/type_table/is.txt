@@ -1,0 +1,24 @@
+# is and is not over each atom-bearing union and the narrowing they give.
+
+template: $0 is int
+int | #none => bool -- sec:lexical "is type test (narrows both branches)"
+f64 | #none => bool -- sec:lexical "is type test"
+int => bool -- sec:lexical "is type test"
+
+template: $0 is #none
+int | #none => bool -- sec:lexical "is type test"
+=#none => bool -- sec:lexical "is type test"
+
+template: $0 is not #none
+int | #none => bool -- sec:lexical "is / is not type test and its negation"
+
+template: if $0 is int { $0 } else { 0 }
+int | #none => int -- sec:type_resolution "Unions split, joins merge"; sec:lexical "is narrows both branches"
+f64 | #none => 0 -- sec:lexical "is narrows both branches" (no member of f64 | #none is an int, so the first branch is never taken); L1.26a "a literal prints as it was written"
+
+template: if $0 is #none { 0 } else { $0 }
+int | #none => int -- sec:lexical "is narrows both branches"
+int | #a | #none => int | #a -- sec:lexical "is narrows both branches"
+
+template: if $0 is not #a { $0 } else { 0 }
+int | #a | #b => int | #b -- sec:lexical "is not ... its negation"; "narrows both branches"
