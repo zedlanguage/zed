@@ -2010,12 +2010,16 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | MSG-derive-print-per-message | impl attempt 1 | 2026-11-12 04:27 | l01_29 354 pass; kernel 268, zedc-types 16, zedc-check 11 unit pass; rustdoc -D warnings clean after one fix; COMPLEXITY row + K108 MAKER-file-chain, plan_dag D |
 | MSG-domain-repairs-v | impl attempt 1 | 2026-11-12 00:53 | running affected groups; load 44.01 39.14 34.67 |
-| NAME-ascii-only | impl attempt 1 | 2026-11-12 16:11 | start: worktrees name-ascii-only (zed-impl) and name-ascii-only-spec (zed) |
+| NAME-ascii-only | impl attempt 1 | 2026-11-12 16:11 | spec committed (541c9d7-amended) and rebased on f0d6c20; impl rebased on a596e044b, fences resynced; l01_02 45/45 pass; rebuilding for the other groups |
 | NARROW-or-order | impl attempt 1 | 2026-11-12 15:40 | started; worktree /home/luke/Work/wt/narrow-or-order on cdd557f13 |
-| POW-rat-literal-ops | impl attempt 1 | 2026-11-12 16:20 | start; worktree wt/pow-rat-literal-ops on origin/main b43c23228, seeded |
+| POW-rat-literal-ops | impl attempt 1 | 2026-11-12 16:20 | reproduced: (2r/3r)^-2, 1r/(2r/3r), (3r/2r)^-2 refused at a port for #divByZero; (3/2)^-2 in main settles at f64; top-level offers no rat fix |
+| STAGE-print | impl attempt 1 | 2026-11-04 03:10 | started; worktree wt/stage-print seeded |
+| STR-norm-layer | impl attempt 1 | 2026-11-12 16:19 | started; spec worktree made on zed f0d6c20 |
 | T6-refusal-cost | impl attempt 1 | 2026-11-05 04:07 | probe on 8d0bfe954 (load 36-45): x_tail nfa Refused(Fork) 26.7M/55.0M/145M/535M/2.92G/20.3G instr at n 4..128 (x6.97 per doubling at 64->128, N^1.40 with N ~ n^ |
-| TESTS-split-s22-random | impl attempt 1 | 2026-11-12 16:54 | started; worktree tests-split-s22-random |
+| TESTS-L1.23-refusal-text | impl attempt 1 | 2026-11-08 23:59 | started; worktree tests-l1.23-refusal-text on origin/main a596e044b |
+| TESTS-split-s22-random | impl attempt 1 | 2026-11-12 16:54 | split chains (3 parts) and random terms (7 parts); negative control part 6 skipping its last case fails 1049 vs 1050 (load 37.6), reverted |
 | TRIVIAL-walk-picks | impl attempt 1 | 2026-11-12 14:54 | code commit 0613b6f9c rebased; docs edited; building tests for m0_03 before docs commit and merge / load 78.93 64.48 50.98 |
+| WARN-refused-in-rejection | impl attempt 1 | 2026-11-12 14:51 | started; worktree /home/luke/Work/wt/warn-refused-in-rejection on origin/main a596e044b |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
