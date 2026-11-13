@@ -1223,7 +1223,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let f = m.take_ty();
                 let what = match &callee.kind {
                     ExprKind::Name(n) => n.clone(),
-                    _ => "the function called here".into(),
+                    _ => self.callee_code(callee, span).unwrap_or(CALLED_HERE).into(),
                 };
                 if let (ExprKind::Name(w), Some(Ref::Prelude(_))) =
                     (&callee.kind, self.t.res.uses.get(&callee.span))
@@ -3806,14 +3806,15 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The error of a call at `span` of `w`, a value of the type shown as `shown` that is not
     /// a function.
     fn not_a_function(&mut self, w: &str, shown: &str, span: Span) {
+        let w = callee(w);
         let menu = [format!(
-            "repair: call a function here, or write `{w}` without the parentheses if its value \
-             is meant"
+            "repair: call a function here, or write {w} without the parentheses of the call if \
+             its value is meant"
         )];
         self.error_offering(
             span,
             format!(
-                "`{w}` is {shown}, not a function: this call applies `{w}` to arguments, and a \
+                "{w} is {shown}, not a function: this call applies {w} to arguments, and a \
                  value of type {shown} cannot be applied"
             ),
             menu,
@@ -4021,8 +4022,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         // The first misfit, the one elaboration would report first, explains the refusal.
         let (at, misfit) = misfits[0];
         let message = format!(
-            "`{what}` here is a function of type `{}`, and the arguments of this call do not \
-             fit its parameters: {}",
+            "{} here is a function of type `{}`, and the arguments of this call do not fit its \
+             parameters: {}",
+            callee(what),
             self.sig_text(sig),
             misfit.message(what)
         );
@@ -7008,6 +7010,26 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn code(&self, at: Option<Span>) -> Option<&'a str> {
         let at = at?;
         self.t.text?.get(at.start..at.end)
+    }
+
+    /// The code of `callee`, the callee of the call at `span`, as the program writes it: with
+    /// the parentheses around it, which the tree does not keep, as `(if c { f } else { g })`;
+    /// none when the checker has no text or the code runs over more than one line, which a
+    /// headline cannot show.
+    fn callee_code(&self, callee: &Expr, span: Span) -> Option<&'a str> {
+        let text = self.t.text?;
+        // Each `(` between the call's start and the callee's opens one pair around it.
+        let opened = text
+            .get(span.start..callee.span.start)?
+            .matches('(')
+            .count();
+        let mut end = callee.span.end;
+        for _ in 0..opened {
+            let rest = text.get(end..)?;
+            let blank = rest.len() - rest.trim_start().len();
+            end += blank + rest[blank..].strip_prefix(')').map(|_| 1)?;
+        }
+        text.get(span.start..end).filter(|c| !c.contains('\n'))
     }
 
     /// The name `e` is, where it is bound once, so that a test of it narrows it.
@@ -11835,10 +11857,14 @@ fn unparen(s: &str) -> &str {
     inner
 }
 
-/// The callee of a call as a message names it: a name in code quotes, and the words that
-/// stand for a callee written as an expression as they are.
+/// The words that name a callee written as an expression when its code cannot be shown: the
+/// checker has no text, or the code runs over more than one line.
+const CALLED_HERE: &str = "the function called here";
+
+/// The callee of a call as a message names it: its name or code in code quotes, and the
+/// words [`CALLED_HERE`] as they are.
 fn callee(what: &str) -> String {
-    match what.contains(' ') {
+    match what == CALLED_HERE {
         true => what.to_string(),
         false => format!("`{what}`"),
     }

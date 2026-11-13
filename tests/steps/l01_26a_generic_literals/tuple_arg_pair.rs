@@ -40,16 +40,16 @@ fn outcome(name: &str, def: &str, call: &str) -> String {
 fn not_a_function(shown: &str, arg: &str) -> String {
     let marks = "^".repeat(arg.len() + 3);
     format!(
-        "2:5: `the function called here` is {shown}, not a function: this call applies `the \
-         function called here` to arguments, and a value of type {shown} cannot be applied.\n\
+        "2:5: `p[1]` is {shown}, not a function: this call applies `p[1]` to arguments, and a value \
+         of type {shown} cannot be applied.\n\
          \x20 [1] 1:19: `h` needs this of its argument here\n\
          \x20     1 | h(positional p) = p[1](p[0]);\n\
          \x20       | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [2]\n\
          \x20       |                   ^^^^^^^^^^ [1]\n\
          \x20 [2] 1:1: `h` is declared here with no type written for `p` or its result; the \
          type the checker found for `h` is `(_) -> _`\n\
-         \x20 [3] 2:5: repair: call a function here, or write `the function called here` \
-         without the parentheses if its value is meant\n\
+         \x20 [3] 2:5: repair: call a function here, or write `p[1]` without the parentheses of the call \
+         if its value is meant\n\
          \x20     2 | r = h({arg});\n\
          \x20       |     {marks}\n"
     )
@@ -77,15 +77,87 @@ fn a_call_of_a_literal_component_is_rejected_as_one_of_a_string() {
     let errors = type_errors("h(positional p) = p[0](1);\nr = h((2.5f64, 1));\n");
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(
-        errors[0].starts_with("`the function called here` is 2.5f64, not a function"),
+        errors[0].starts_with("`p[0]` is 2.5f64, not a function"),
         "{errors:?}"
     );
     // A literal component that `+` asks for a carrier is not called either.
     let errors = type_errors("g(positional x) = (x + 1)(2);\nr = g(1);\n");
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(
-        errors[0].starts_with("`the function called here` is int | f64 | rat, not a function"),
+        errors[0].starts_with("`(x + 1)` is int | f64 | rat, not a function"),
         "{errors:?}"
+    );
+}
+
+/// A callee that is not a name is named in a call's messages by its own code, as written,
+/// with the parentheses around it and the spaces inside it (item MSG-callee-code); it was
+/// named "`the function called here`", in code quotes as if it were code. A callee written
+/// over two lines cannot stand in a headline and is named by those words, not in quotes.
+#[test]
+fn a_callee_that_is_not_a_name_is_named_by_its_code() {
+    let name = "l01_26a_tuple_arg_pair_callee";
+    for (def, call, code) in [
+        (
+            "h(positional fs, positional i) = fs[i + 1](2);",
+            "h((1, \"s\"), 0)",
+            "`fs[i + 1]`",
+        ),
+        (
+            "h(positional c, positional p) = (if c { p[0] } else { p[1] })(2);",
+            "h(false, (1, \"s\"))",
+            "`(if c { p[0] } else { p[1] })`",
+        ),
+        (
+            "h(positional p) = ( p[1] )(p[0]);",
+            "h((1, \"s\"))",
+            "`( p[1] )`",
+        ),
+        (
+            "h(positional p) = (\n  p[1])(p[0]);",
+            "h((1, \"s\"))",
+            "the function called here",
+        ),
+    ] {
+        let got = outcome(name, def, call);
+        let at = 2 + def.matches('\n').count();
+        let head = format!(
+            "{at}:5: {code} is \"s\", not a function: this call applies {code} to arguments, and \
+             a value of type \"s\" cannot be applied.\n"
+        );
+        assert!(got.starts_with(&head), "{def} {call}\n{got}");
+        let repair = format!(
+            "repair: call a function here, or write {code} without the parentheses of the call \
+             if its value is meant\n"
+        );
+        assert!(got.contains(&repair), "{def} {call}\n{got}");
+    }
+    // A call of a call: the callee is `scale(2)`.
+    assert_eq!(
+        outcome(
+            name,
+            "scale(positional k: int) = (x: int) -> k * x;",
+            "scale(2)(\"a\")"
+        ),
+        "2:5: `scale(2)` does not take (\"a\"): no arrow of `scale(2)` takes these types.\n\
+         \x20 [1] 2:14: this expression is \"a\"\n\
+         \x20     2 | r = scale(2)(\"a\");\n\
+         \x20       |     ^^^^^^^^^^^^^ [2]\n\
+         \x20       |              ^^^ [1]\n\
+         \x20 [2] 2:5: `scale(2)` takes (int) -> int\n"
+    );
+    // Arguments that do not fit the parameters of a function a component holds.
+    let got = outcome(
+        name,
+        "h(positional p) = p[1](p[0], q: 3);",
+        "h((1, (x) -> x))",
+    );
+    assert!(
+        got.contains(
+            "`p[1]` here is a function of type `(T) -> T`, and the arguments of this call do \
+             not fit its parameters: this argument is passed by the name `q`, and `p[1]` has no \
+             parameter of that name"
+        ),
+        "{got}"
     );
 }
 

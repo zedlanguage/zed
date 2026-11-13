@@ -91,9 +91,8 @@ fn each_rejection_explains_itself_and_offers_its_repairs() {
                 "scale(positional k: int) = (x: int) -> k * x;\n{}",
                 reading("  m.stdout <- String(scale(n)(\"a\"));")
             ),
-            "4:22: the function called here does not take (\"a\"): no arrow of the function \
-             called here takes these types.",
-            vec!["the function called here takes"],
+            "4:22: `scale(n)` does not take (\"a\"): no arrow of `scale(n)` takes these types.",
+            vec!["`scale(n)` takes"],
         ),
     ];
     for (src, message, repairs) in cases {
