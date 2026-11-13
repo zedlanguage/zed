@@ -2178,7 +2178,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CAST-int-f64-lit-class | impl attempt 1 | 2026-11-13 15:45 | started; worktree from 640d14847 |
+| CAST-int-f64-lit-class | impl attempt 1 | 2026-11-13 15:45 | name forms fixed by dba724818; in-place int(2^64 + 13), f64(2^3 + 1) still atoms on 640d14847 (3 of 6 new tests red); fix Ck::cast_takes_int for int/rat/f64/f32 |
 | CONST-too-large | impl attempt 1 | 2026-11-13 12:32 | reproduced on 19ade181c: A100 programs 1 and 3 compile, stop at run time 'Number too large for memory ... 130 EiB'; load 36.31 40.11 40.40 |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | cross-review round 5 launched on zed-impl 77a026349: Claude, Codex; Gemini 429 (gap recorded); main dump in progress; load 25.99 19.01 20.42 |
 | MSG-literal-class-headline | impl attempt 1 | 2026-11-13 15:45 | started; worktree made from origin/main |
@@ -2189,6 +2189,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | REPAIR-past-binding | impl attempt 1 | 2026-11-13 14:51 | started; worktree from origin/main 8776f59cf |
 | TESTS-l01_26a-split | impl attempt 1 | 2026-11-13 15:45 | start; load 32.35 44.38 45.74 |
 | TESTS-unignore-all | impl attempt 1 | 2026-11-13 15:27 | started; worktree from origin/main a9818cd33 |
+| TYPE-op-table | impl attempt 1 | 2026-11-13 15:22 | merged 039365b0d, 005e29ba7; op_table 4652 cases in tests/fixtures/type_table: 3078 agree, 1574 marked (1147 later steps, 77 POW-domains, 1 L2.12e, 349 under 7  |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
