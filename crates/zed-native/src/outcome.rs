@@ -26,16 +26,17 @@ pub struct Outcome {
 }
 
 /// Runs the generated code entered at `root`, made from the tables `t`, the kernel in `ev`
-/// running the nodes the runtime does not: the JIT's way and a linked executable's.
+/// running the nodes the runtime does not: the JIT's way and a linked executable's. An error
+/// comes with the number of the node that raised it, when a node did (plan row RT-sites).
 pub(crate) fn call(
     t: Arc<Tables>,
     root: extern "C" fn() -> Word,
     ev: &mut Evaluator,
-) -> Result<Outcome, String> {
+) -> Result<Outcome, (String, Option<usize>)> {
     // Generated code recurses on the machine stack once per Zed call and keeps a function's
     // words in its frame, so it runs on a stack as large as memory (COMPLEXITY.md R10), mapped
     // before the run's state is installed so that a failure leaves nothing to undo.
-    let stack = Stack::new()?;
+    let stack = Stack::new().map_err(|e| (e, None))?;
     let taken = std::mem::replace(ev, Evaluator::new(World::new()));
     hooks::install(hooks::State::new(t, taken));
     let w = stack.run(|| root());
@@ -44,7 +45,7 @@ pub(crate) fn call(
     let r = hooks::finish(&s.t, &mut s.run, w);
     *ev = s.run.ev;
     Ok(Outcome {
-        value: r?,
+        value: r.map_err(|e| (e, s.run.err_at))?,
         stats: s.run.heap.stats,
         kernel_calls: s.run.kernel_calls,
         table: s.run.heap.table_len(),

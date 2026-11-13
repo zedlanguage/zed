@@ -134,8 +134,8 @@ fn copy(first: Part<'_>) -> Copied {
                 }
                 _ => done.terms.push(shallow(t)),
             },
-            Part::Rebuild(t) => {
-                let t = match t {
+            Part::Rebuild(t0) => {
+                let t = match t0 {
                     Term::App(f, args) => Term::App(f.clone(), done.last_terms(args.len())),
                     Term::Prim(p, args) => Term::Prim(*p, done.last_terms(args.len())),
                     Term::Match(e, arms) => {
@@ -145,6 +145,11 @@ fn copy(first: Part<'_>) -> Copied {
                     }
                     _ => unreachable!("only a term with parts of its own is rebuilt"),
                 };
+                if crate::site_table::recording()
+                    && let (Some(f), Some(k)) = (t0.site_key(), t.site_key())
+                {
+                    crate::site_table::copy(f, k);
+                }
                 done.terms.push(t);
             }
             Part::Pattern(p) => match p {

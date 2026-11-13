@@ -184,6 +184,17 @@ fn out_with(p: &Program, u: &Unit, stdin: &str) -> String {
     }
 }
 
+/// Checks that `out` is the error of a `++` that could not join its strings, placed at its
+/// line and column in the program (plan row RT-sites).
+fn stopped_at_join(out: &str) {
+    let placed = out
+        .strip_prefix("error: ")
+        .and_then(|e| e.split_once(": `++` cannot join"))
+        .and_then(|(at, _)| at.split_once(':'))
+        .is_some_and(|(line, col)| line.parse::<usize>().is_ok() && col.parse::<usize>().is_ok());
+    assert!(placed, "{out}");
+}
+
 #[test]
 fn a_split_function_called_with_a_value_read_at_run_time_gives_what_the_function_gives() {
     let p = load(PORT.as_bytes()).unwrap();
@@ -274,7 +285,7 @@ fn a_stopped_binding_read_twice_is_evaluated_once() {
     for x in ["huge", "r0", "r1"] {
         assert_eq!(term(&s, x), term(&p, x), "{x}");
     }
-    assert!(out(&s, "x\n").starts_with("error: `++` cannot join"));
+    stopped_at_join(&out(&s, "x\n"));
     assert_eq!(out(&s, "x\n"), out(&p, "x\n"));
     let mut meter = Meter::new();
     let [one, eight] = [1, 8].map(|k| load(stopped_read_by(k).as_bytes()).unwrap());
@@ -314,7 +325,7 @@ fn a_binding_named_only_in_a_cut_branch_is_still_evaluated() {
         main.contains("huge = twice(") && !main.contains("if"),
         "{main}"
     );
-    assert!(out(&s, "x\n").starts_with("error: `++` cannot join"));
+    stopped_at_join(&out(&s, "x\n"));
     assert_eq!(out(&s, "x\n"), out(&p, "x\n"));
 }
 
@@ -340,7 +351,7 @@ fn a_definition_named_only_in_a_cut_branch_is_still_evaluated() {
     assert_eq!(report.left.len(), 1, "{:?}", report.left);
     let main = term(&s, "main");
     assert!(main.contains("huge") && !main.contains("if"), "{main}");
-    assert!(out(&p, "x\n").starts_with("error: `++` cannot join"));
+    stopped_at_join(&out(&p, "x\n"));
     assert_eq!(out(&s, "x\n"), out(&p, "x\n"));
     // A remix (step L25.8) mixes `main`'s term as `mix` mixes the definition, read kept.
     let written = p.unit().defs.iter().find(|d| d.name == "main").unwrap();
@@ -359,7 +370,7 @@ fn a_cut_read_is_kept_through_a_definition_built_to_a_literal() {
     ));
     assert_eq!(report.left.len(), 1, "{:?}", report.left);
     assert!(term(&s, "label").contains("huge"), "{}", term(&s, "label"));
-    assert!(out(&p, "x\n").starts_with("error: `++` cannot join"));
+    stopped_at_join(&out(&p, "x\n"));
     assert_eq!(out(&s, "x\n"), out(&p, "x\n"));
 }
 
@@ -375,7 +386,7 @@ fn a_cut_read_is_kept_in_a_function() {
     assert_eq!(report.left.len(), 1, "{:?}", report.left);
     let shout = term(&s, "shout");
     assert!(shout.contains("huge") && !shout.contains("if"), "{shout}");
-    assert!(out(&p, "x\n").starts_with("error: `++` cannot join"));
+    stopped_at_join(&out(&p, "x\n"));
     assert_eq!(out(&s, "x\n"), out(&p, "x\n"));
 }
 

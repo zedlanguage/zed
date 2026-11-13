@@ -47,6 +47,8 @@ pub(super) struct Elab<'a> {
     pub(super) defaults: HashMap<(usize, usize), Term>,
     /// The marks of a marked elaboration ([`elaborate_marked`](super::elaborate_marked)), `None` for an ordinary one.
     pub(super) marks: Option<Vec<Mark>>,
+    /// The shared parts given their source sites so far ([`zed_kernel::sites::mark`]).
+    pub(super) sited: HashSet<u64>,
 }
 
 impl<'a> Elab<'a> {
@@ -86,6 +88,7 @@ impl<'a> Elab<'a> {
             errors: Vec::new(),
             defaults: HashMap::new(),
             marks: None,
+            sited: HashSet::new(),
         }
     }
 

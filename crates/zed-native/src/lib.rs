@@ -163,7 +163,7 @@ fn run_in(
         reason = "calling generated code needs a function pointer from it"
     )]
     let root: extern "C" fn() -> Word = unsafe { std::mem::transmute(code) };
-    let o = call(t, root, ev);
+    let o = call(t, root, ev).map_err(|(e, _)| e);
     drop(m);
     o
 }
@@ -192,15 +192,19 @@ pub fn ir(g: &Legalized, plan: &Plan) -> Result<String, String> {
 /// L1.19b): [`object()`]'s code for `g` legalized, the program as data, and a C `main` that
 /// passes both, with the command line, to the runtime library's start. The data holds `g` as
 /// lowered, since ZIR's binary form does not record which nodes legalization swapped; the
-/// start legalizes and plans it again, as this does.
+/// start legalizes and plans it again, as this does. The data holds too `source`, the name of the program's
+/// file and its text, and `sites`, the site of each node of `g` (plan row RT-sites), so that a
+/// run-time error prints its site as `zedc run` prints it.
 #[cfg(unix)]
 pub fn executable_object(
     g: Region,
     fuse: bool,
     ports: &zedc::run::Ports,
     address: zedc::address::ContentAddress,
+    source: (Option<&str>, &str),
+    sites: &[Option<zed_kernel::sites::Span>],
 ) -> Result<Vec<u8>, String> {
-    let data = exe::data(fuse, address, ports, &g)?;
+    let data = exe::data(fuse, address, ports, source, sites, &g)?;
     let g = legalize(g);
     let plan = plan(g.graph(), fuse);
     let (t, plans) = Tables::new(&g, &plan)?;

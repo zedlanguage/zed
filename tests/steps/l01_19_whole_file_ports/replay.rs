@@ -45,12 +45,14 @@ fn a_read_the_record_lacks_stops_the_replay() {
     assert_eq!(
         e.as_deref(),
         Some(
-            "the port `files()` could not answer a read: the program reads \"a.txt\" here, and \
+            "3:15: the port `files()` could not answer a read: the program reads \"a.txt\" here, and \
              the record holds no read of it, so the replay cannot go on: a replay reads nothing \
              from outside, only what the record holds. The run that wrote the record did not \
              read \"a.txt\", so its inputs differed from these, or the record has been changed. \
              Replay with the inputs of the recorded run, or make a new record with `zedc run \
-             <file> --record <out>`."
+             <file> --record <out>`.\n  [1] 3:15: the run stopped here\n      \
+             3 |   m.stdout <- fs[\"a.txt\"] else \"-\";\n        \
+               |               ^^^^^^^^^^^"
         )
     );
 }

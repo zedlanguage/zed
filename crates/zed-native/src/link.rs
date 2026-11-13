@@ -23,7 +23,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use zedc::suppress::Suppress;
 use zedc::work::{self, Stage};
-use zedc::zir::lower::lower;
+use zedc::zir::lower::lower_sited;
 
 /// The system libraries the runtime library needs, as `rustc --print native-static-libs`
 /// lists them for this crate on x86-64 Linux with glibc.
@@ -214,11 +214,20 @@ pub fn build(
         ));
     }
     let program = zedc::run::load_file(file, on, suppress, stderr)?;
-    let g = work::stage(Stage::Lower, None, || lower(&program.term()))
-        .map_err(|e| (1, format!("{file}: {e}")))?;
+    let (g, sites) = work::stage(Stage::Lower, None, || {
+        lower_sited(&program.term(), Some(program.sites()))
+    })
+    .map_err(|e| (1, format!("{file}: {e}")))?;
     let address = program.address().map_err(|e| (1, format!("{file}: {e}")))?;
     let object = work::stage(Stage::Codegen, None, || {
-        crate::executable_object(g, true, program.ports(), address)
+        crate::executable_object(
+            g,
+            true,
+            program.ports(),
+            address,
+            (program.file(), program.text()),
+            &sites,
+        )
     })
     .map_err(|e| (1, format!("{file}: {e}")))?;
     let identity = Identity::of(tools)?;

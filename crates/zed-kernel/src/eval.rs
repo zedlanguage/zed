@@ -27,6 +27,7 @@ use std::rc::Rc;
 
 use crate::exact::{CanonicalTree, TreeStep, exact_sum};
 use crate::num::{Test, TooLarge, refused};
+use crate::sites::{Sites, Span};
 use crate::value::KernelError;
 use crate::value::{Family, Keypath, all_leaves, ieee_min_max};
 use std::sync::Arc;
@@ -427,6 +428,10 @@ pub struct Evaluator {
     /// The number of definedness `fix` evaluations begun, which names each one's family.
     fixes: u64,
     trace: Option<Trace>,
+    /// The source sites of the program's nodes (plan row RT-sites), when it has them.
+    sites: Option<Arc<Sites>>,
+    /// The site of the node the last run stopped at with an error, if it has one.
+    failed: Option<Span>,
 }
 
 /// Evaluates a closed term with no ports and no fuel limit, expecting data.
@@ -445,7 +450,22 @@ impl Evaluator {
             schedule: Schedule::default(),
             fixes: 0,
             trace: None,
+            sites: None,
+            failed: None,
         }
+    }
+
+    /// Places each error of a run at the site `sites` gives its node ([`Evaluator::failed_at`]).
+    pub fn set_sites(&mut self, sites: Option<Arc<Sites>>) {
+        self.sites = sites;
+    }
+
+    /// The source site of the node the last run stopped at with an error: the node's own, or
+    /// when it has none, that of the innermost call or primitive around it that has one; `None`
+    /// when the run gave a value, the evaluator has no sites, or no node around the error has a
+    /// site.
+    pub fn failed_at(&self) -> Option<Span> {
+        self.failed
     }
 
     /// Records the provenance of the next run (step L1.20), which
@@ -523,16 +543,20 @@ impl Evaluator {
         // The order of numbers inside family keys and comparisons asks the system for the
         // memory of its bounds while the run lives.
         let watch = crate::num::Watch::start();
-        let out = Machine {
+        let mut machine = Machine {
             ev: self,
             frames: Vec::new(),
             drops: Rc::default(),
             globals,
             made: HashMap::new(),
             short_paths: Vec::new(),
-        }
-        .run(term, env);
+            failed: None,
+        };
+        let out = machine.run(term, env);
+        let failed = machine.failed;
+        drop(machine);
         drop(watch);
+        self.failed = failed.and_then(|k| self.sites.as_ref()?.at(k));
         if let Some(t) = &mut self.trace {
             // A run that stopped with an error left the regions it was inside.
             t.calls.truncate(marks.0);
@@ -878,6 +902,10 @@ struct Machine<'e, 't> {
     /// running, innermost last: `pathKey` past the end of one of them reads [`unbound`]. One
     /// entry per `reindex` nested inside a key map, so a few.
     short_paths: Vec<crate::value::Id>,
+    /// The name ([`crate::sites::key`]) of the node the run stopped at with an error, once it
+    /// has: the node whose own work failed, or the innermost call or primitive around the
+    /// error that has a site. Set at the first error, which ends the run.
+    failed: Option<usize>,
 }
 
 impl<'t> Machine<'_, 't> {
@@ -916,10 +944,56 @@ impl<'t> Machine<'_, 't> {
                     Some((t, e)) => Err(test_too_large(None, t, e).into()),
                 },
             };
+            if let Err(Stop::Error(_)) = out {
+                self.fail(None);
+            }
             step = match self.frames.pop() {
                 Some(frame) => self.resume(frame, out),
                 None => return out,
             };
+        }
+    }
+
+    /// Records the node the run stopped at, once, when the evaluator has sites: `node` when
+    /// it has a site, else the innermost call, primitive or `match` waiting on the frames that
+    /// has one. O(1) for a node with a site, and at most one walk of the frames per run, since
+    /// an error ends the run.
+    // Complexity tradeoff: a node with no parts of its own (a variable, a literal) has no key
+    // and so no site, and an error there is placed by the frames around it, O(d) once for d
+    // frames, where giving every node a key would cost a word in each `Term` and change its
+    // identity, which the sites must leave as it was (plan row RT-sites). Trigger: an error
+    // raised by a node with no site; one walk per run, since the error ends the run. Test:
+    // `l01_36a_executables::sites` (each error kind placed, the same as natively).
+    fn fail(&mut self, node: Option<usize>) {
+        let Some(sites) = &self.ev.sites else {
+            return;
+        };
+        if self.failed.is_some() {
+            return;
+        }
+        if let Some(k) = node
+            && sites.at(k).is_some()
+        {
+            self.failed = Some(k);
+            return;
+        }
+        if node.is_some() {
+            // The node has no site: the frames around it are scanned when the error reaches
+            // the run loop.
+            return;
+        }
+        self.failed = self.frames.iter().rev().find_map(|f| {
+            let k = match f {
+                Frame::Wait(Wait::Args { rest, .. }) => crate::sites::end(rest),
+                Frame::Wait(Wait::Fun { args, .. }) => crate::sites::end(args),
+                Frame::Wait(Wait::Match { arms, .. }) => crate::sites::end(arms),
+                _ => return None,
+            };
+            sites.at(k).map(|_| k)
+        });
+        // No site anywhere: the frame walk is not repeated as the error passes each frame.
+        if self.failed.is_none() {
+            self.failed = Some(0);
         }
     }
 
@@ -1156,7 +1230,12 @@ impl<'t> Machine<'_, 't> {
         env: Env<'t>,
     ) -> R<Step<'t>> {
         let Some((first, rest)) = rest.split_first() else {
-            return self.finish(head, at, done);
+            let out = self.finish(head, at, done);
+            if let Err(Stop::Error(_)) = out {
+                // `rest` is empty and ends where the node's arguments end, so it names the node.
+                self.fail(Some(crate::sites::end(rest)));
+            }
+            return out;
         };
         let kept = if rest.is_empty() { None } else { env.clone() };
         let first_at = self.ev.child(at, done.len());

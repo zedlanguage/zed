@@ -638,9 +638,31 @@ fn free_terms(ts: &mut Vec<Term>) {
     }
 }
 
+impl Term {
+    /// The name of this node while it is alive, for its source site ([`crate::sites::key`]):
+    /// the address one past the end of its own parts, or `None` when it has none. O(1).
+    pub(crate) fn site_key(&self) -> Option<usize> {
+        match self {
+            Term::App(_, args) | Term::Prim(_, args) if !args.is_empty() => Some(parts_end(args)),
+            Term::Match(_, arms) if !arms.is_empty() => Some(parts_end(arms)),
+            _ => None,
+        }
+    }
+}
+
+/// The address one past the last element of `xs`.
+pub(crate) fn parts_end<T>(xs: &[T]) -> usize {
+    xs.as_ptr_range().end as usize
+}
+
 /// A term's parts are freed in a loop, not by recursion.
 impl Drop for Term {
     fn drop(&mut self) {
+        if crate::site_table::recording()
+            && let Some(k) = self.site_key()
+        {
+            crate::site_table::forget(k);
+        }
         match self {
             Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => {}
             Term::Lam(_, b) | Term::Push(_, b) => free_shared(b),

@@ -13,6 +13,7 @@ mod minmax;
 mod mul_edges;
 mod runtime;
 mod scaling;
+mod sites;
 
 pub(crate) use zed_tests::step_helpers::l01_36a_executables::{
     Ran, built, dir, executable, interpreter,

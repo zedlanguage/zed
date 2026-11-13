@@ -103,6 +103,29 @@ pub fn nodes_in(regions: &[Arc<Region>]) -> usize {
     n
 }
 
+/// The site of each node of `legalize(g, want)`, by its number, from `sites`, the site of each
+/// node of `g` by its number in preorder ([`crate::zir::lower::lower_sited`]): a node keeps
+/// its site, and a derived node that expands drops its number, its certificate's nodes, which
+/// follow it in preorder, taking its place, as [`legalize`] numbers them. One walk of `g`,
+/// O(n) for n nodes, with the regions still to read on a heap stack.
+pub fn legalized_sites<T: Copy>(g: &Region, want: Expansions, sites: &[T]) -> Vec<T> {
+    let mut out = Vec::with_capacity(sites.len());
+    let mut number = 0;
+    let mut todo: Vec<std::slice::Iter<'_, Node>> = vec![g.nodes.iter()];
+    while let Some(top) = todo.last_mut() {
+        let Some(node) = top.next() else {
+            todo.pop();
+            continue;
+        };
+        if !expands(node, want) {
+            out.push(sites[number]);
+        }
+        number += 1;
+        todo.extend(node.regions.iter().rev().map(|r| r.nodes.iter()));
+    }
+    out
+}
+
 /// An operation a back end may ask to have expanded.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Expansion {

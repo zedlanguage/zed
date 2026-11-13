@@ -47,6 +47,7 @@ use std::mem;
 use std::sync::Arc;
 
 use zed_kernel::num::{TooLarge, bytes_of};
+use zed_kernel::sites::{Sites, Span};
 use zed_kernel::term::{FixKind, Pattern, Prim, Shared, Term};
 use zed_kernel::types::Type;
 
@@ -115,6 +116,8 @@ struct Frame {
     keys: Vec<Vec<ContentAddress>>,
     /// The numbers of each node's regions in [`canon::Regions`], in node order.
     numbers: Vec<Vec<usize>>,
+    /// The site of each node, in node order, when lowering with sites; else empty.
+    sites: Vec<NodeSite>,
 }
 
 impl Frame {
@@ -133,6 +136,7 @@ impl Frame {
             seen: HashMap::new(),
             keys: Vec::new(),
             numbers: Vec::new(),
+            sites: Vec::new(),
         }
     }
 }
@@ -146,6 +150,7 @@ struct Built {
     values: usize,
     keys: Vec<Vec<ContentAddress>>,
     numbers: Vec<Vec<usize>>,
+    sites: Vec<NodeSite>,
 }
 
 struct Lower<'t> {
@@ -162,6 +167,10 @@ struct Lower<'t> {
     refused: Option<TooLarge>,
     /// The regions finished so far, each distinct one numbered once.
     regions: canon::Regions,
+    /// The source sites of the term's nodes, when lowering with them ([`lower_sited`]).
+    sites: Option<&'t Sites>,
+    /// The site of the innermost term with a site being lowered: each node built takes it.
+    site: Option<Span>,
 }
 
 /// What a lambda body uses from outside it: a port it reads or pushes, or a name free in it.
@@ -236,6 +245,24 @@ impl Places {
 /// The graph of the closed term `t`, validated. A prelude word is read only where the term
 /// binds it, as [`zedc_base::interp::prelude`] does.
 pub fn lower(t: &Term) -> Result<Region, String> {
+    lower_sited(t, None).map(|(g, _)| g)
+}
+
+/// The graph of `t`, as [`lower`] gives it, and with `sites`, the source site of each of its
+/// nodes, by number in preorder (as [`super::legalize::Legalized`] numbers them): the site of
+/// the innermost term with a site that the node was lowered for, or `None` when no term around
+/// it has one (plan row RT-sites). The graph is the same with sites and without them, so the
+/// ZIR text and the content addresses are too. A node merged with an equal one met before
+/// keeps the first one's site. O(n) more for the n nodes, one walk of the finished tree of
+/// sites; with no sites, nothing is kept.
+// Complexity tradeoff: the sites are kept as a tree beside the regions being built and
+// numbered in one walk at the end, O(n) time and memory for n nodes, since a node's preorder
+// number is known only once every region before it is finished, and lowering finishes inner
+// regions first. Numbering as nodes are added would need the region sizes in advance, a
+// second pass over the term. Measured: lowering n joins with sites, n = 200 and 1600, takes
+// 8.3 times the instructions and 8.9 times the bytes
+// (`l01_36a_executables::sites::lowering_with_sites_scales`, 2026-11-13).
+pub fn lower_sited(t: &Term, sites: Option<&Sites>) -> Result<(Region, Vec<Option<Span>>), String> {
     let mut uses: HashMap<Arc<str>, usize> = HashMap::new();
     let places = Places::new(t, &mut |s| {
         if let Term::Var(x) = s {
@@ -251,6 +278,8 @@ pub fn lower(t: &Term) -> Result<Region, String> {
         places,
         refused: None,
         regions: canon::Regions::default(),
+        sites,
+        site: None,
     };
     let out = l.term(At { t, id: 0 }).and_then(|v| l.src(v));
     // A refused constant is the error, whatever lowering found after it.
@@ -276,7 +305,33 @@ pub fn lower(t: &Term) -> Result<Region, String> {
         root.kind = RegionKind::Port;
     }
     validate(&root).map_err(|e| bug(format_args!("the lowered graph is invalid: {e}")))?;
-    Ok(root)
+    let numbered = preorder(f.sites);
+    Ok((root, numbered))
+}
+
+/// The site of a node lowered with sites ([`lower_sited`]), and the sites of the nodes of each
+/// of its regions, each in node order.
+struct NodeSite {
+    at: Option<Span>,
+    regions: Vec<Vec<NodeSite>>,
+}
+
+/// The sites of `nodes`, a region's, and of the nodes of their regions, by node number in
+/// preorder: a region's nodes in order, each followed at once by the nodes of its regions.
+/// O(n) for n nodes, with the nodes still to number on a heap stack, since regions nest as
+/// deep as the program.
+fn preorder(nodes: Vec<NodeSite>) -> Vec<Option<Span>> {
+    let mut out = Vec::new();
+    let mut todo: Vec<std::vec::IntoIter<NodeSite>> = vec![nodes.into_iter()];
+    while let Some(top) = todo.last_mut() {
+        let Some(n) = top.next() else {
+            todo.pop();
+            continue;
+        };
+        out.push(n.at);
+        todo.extend(n.regions.into_iter().rev().map(Vec::into_iter));
+    }
+    out
 }
 
 impl<'t> Lower<'t> {
@@ -463,7 +518,17 @@ impl<'t> Lower<'t> {
     // `l01_33_lowering::scaling::lowering_a_deep_nest_scales`, `l01_37a_short_addresses::collide`,
     // `l01_32_canonical_zir::fuzz::the_key_agrees_with_the_address` and
     // `l01_37a_short_addresses::scaling::many_equal_nodes_are_found_by_their_keys`.
-    fn add(&mut self, node: Node, keys: Vec<ContentAddress>, numbers: Vec<usize>) -> usize {
+    fn add(
+        &mut self,
+        node: Node,
+        keys: Vec<ContentAddress>,
+        numbers: Vec<usize>,
+        regions: Vec<Vec<NodeSite>>,
+    ) -> usize {
+        let site = self.sites.map(|_| NodeSite {
+            at: self.site,
+            regions,
+        });
         let shape = match (&self.refused, canon::Shape::of(&node, numbers.clone())) {
             (None, Ok(shape)) => shape,
             (refused, shape) => {
@@ -476,6 +541,7 @@ impl<'t> Lower<'t> {
                 f.region.nodes.push(node);
                 f.keys.push(keys);
                 f.numbers.push(numbers);
+                f.sites.extend(site);
                 return f.region.nodes.len() - 1;
             }
         };
@@ -487,6 +553,7 @@ impl<'t> Lower<'t> {
                 f.region.nodes.push(node);
                 f.keys.push(keys);
                 f.numbers.push(numbers);
+                f.sites.extend(site);
                 *e.insert(f.region.nodes.len() - 1)
             }
         }
@@ -501,6 +568,7 @@ impl<'t> Lower<'t> {
                 outputs: vec![top()],
                 regions: Vec::new(),
             },
+            Vec::new(),
             Vec::new(),
             Vec::new(),
         );
@@ -536,7 +604,9 @@ impl<'t> Lower<'t> {
         let mut regions = Vec::new();
         let mut keys = Vec::new();
         let mut numbers = Vec::new();
+        let mut sites = Vec::new();
         for b in built {
+            sites.push(b.sites);
             let map: Vec<usize> = (0..b.fixed)
                 .chain(b.captures.iter().map(|c| b.fixed + at[&captured(c)]))
                 .collect();
@@ -579,6 +649,7 @@ impl<'t> Lower<'t> {
             },
             keys,
             numbers,
+            sites,
         );
         for (j, (_, p)) in ports.iter().enumerate() {
             self.set_state(p, Src::Out(n, values + j));
@@ -909,6 +980,7 @@ impl<'t> Lower<'t> {
                     },
                     Vec::new(),
                     Vec::new(),
+                    Vec::new(),
                 );
                 self.set_state(p, Src::Out(n, 1));
                 s.vals.push(Val::Src(Src::Out(n, 0), at));
@@ -1018,7 +1090,16 @@ impl<'t> Lower<'t> {
 
     fn step(&mut self, job: Job<'t>, s: &mut Stacks<'t>) -> Result<(), String> {
         match job {
-            Job::Term(t) => return self.enter(t, s),
+            Job::Term(t) => {
+                // The nodes built for `t`, after its parts, take its site until the job below
+                // puts the one around it back; the parts' own jobs, above, take theirs.
+                if let Some(site) = self.sites.and_then(|x| x.of(t.t)) {
+                    let around = self.site.replace(site);
+                    s.jobs.push(Job::Site(around));
+                }
+                return self.enter(t, s);
+            }
+            Job::Site(around) => self.site = around,
             Job::Var(x) => {
                 let v = self.lookup(&x)?;
                 s.vals.push(v);
@@ -1105,6 +1186,7 @@ impl<'t> Lower<'t> {
                     },
                     Vec::new(),
                     Vec::new(),
+                    Vec::new(),
                 );
                 for (j, p) in c.ports.iter().enumerate() {
                     self.set_state(p, Src::Out(k, 1 + j));
@@ -1139,6 +1221,7 @@ impl<'t> Lower<'t> {
                     values: 1,
                     keys: f.keys,
                     numbers: f.numbers,
+                    sites: f.sites,
                 });
             }
             Job::Node { op, fixed, regions } => {
@@ -1158,6 +1241,7 @@ impl<'t> Lower<'t> {
                         outputs: vec![top(), Edge::State(p.clone())],
                         regions: Vec::new(),
                     },
+                    Vec::new(),
                     Vec::new(),
                     Vec::new(),
                 );
@@ -1207,6 +1291,8 @@ impl Args<'_> {
 /// region, once built, waits on [`Stacks::built`] for its node.
 enum Job<'t> {
     Term(At<'t>),
+    /// Puts back the site of the term around the one whose lowering ends here.
+    Site(Option<Span>),
     /// The value bound to the name.
     Var(Arc<str>),
     Src,

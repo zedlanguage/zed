@@ -18,6 +18,7 @@ use std::ffi::{OsStr, OsString};
 use std::io::{Read, Write};
 use std::sync::{Arc, OnceLock};
 
+use zed_kernel::sites::{Recorder, Sites};
 use zed_kernel::{Evaluator, Family, Lookup, Provenance, Shared, Term, Value, World};
 
 use crate::address::ContentAddress;
@@ -72,6 +73,13 @@ pub struct Program {
     param: Option<String>,
     /// The warnings, placed in the source: they do not stop the build.
     warnings: Arc<[Diagnostic]>,
+    /// The source text the program was read from, empty when it was not read from one.
+    text: Arc<str>,
+    /// The file the text was read from, if named.
+    file: Option<Arc<str>>,
+    /// The site in `text` of each node of `unit` that has one (plan row RT-sites), by which a
+    /// run-time error is placed.
+    sites: Arc<Sites>,
 }
 
 /// `main`'s ports: what a wave reads and writes, and all an executable built by `zedc build`
@@ -306,10 +314,16 @@ pub fn load_for(bytes: &[u8], build: &Build) -> Result<Program, String> {
 fn loaded(bytes: &[u8], build: &Build) -> Result<Program, Unloaded> {
     let text = work::stage(Stage::Load, None, || source::load(bytes))
         .map_err(|e| Unloaded::Refused(e.render(bytes)))?;
+    // The front end records the site of each node it builds, kept for the nodes the unit holds
+    // (plan row RT-sites).
+    let recorder = Recorder::start(&Sites::default());
     let (stmts, unit, warnings) = compile(&text, build).map_err(Unloaded::Rejected)?;
+    let sites = recorder.freeze(unit.defs.iter().map(|d| &*d.term));
     let mut program = work::stage(Stage::Program, None, || program(&stmts, unit))
         .map_err(|e| Unloaded::Rejected(refusal(&text, &stmts, e)))?;
     program.warnings = warnings.into();
+    program.text = text.into();
+    program.sites = Arc::new(sites);
     Ok(program)
 }
 
@@ -423,6 +437,9 @@ pub(crate) fn program(stmts: &[Stmt], unit: Arc<Unit>) -> Result<Program, ast::E
             .and_then(|h| h.param.as_ref())
             .map(|(name, ..)| name.clone()),
         warnings: Arc::from([]),
+        text: Arc::from(""),
+        file: None,
+        sites: Arc::default(),
     })
 }
 
@@ -486,8 +503,11 @@ impl Program {
     /// end (step L1.28), and what the build did. The staged program keeps this one's content
     /// address.
     pub fn stage(&self) -> (Program, stage::Report) {
+        // Staging records the site of each node it builds in place of a node, and of each copy.
+        let recorder = Recorder::start(&self.sites);
         let (unit, report) =
             work::stage(Stage::Staging, None, || stage::mix(&self.unit, &["main"]));
+        let sites = recorder.freeze(unit.defs.iter().map(|d| &*d.term));
         let program = Program {
             unit: Arc::new(unit),
             main: std::sync::OnceLock::new(),
@@ -496,6 +516,9 @@ impl Program {
             ports: self.ports.clone(),
             param: self.param.clone(),
             warnings: Arc::clone(&self.warnings),
+            text: Arc::clone(&self.text),
+            file: self.file.clone(),
+            sites: Arc::new(sites),
         };
         (program, report)
     }
@@ -581,11 +604,33 @@ impl Program {
             Some(main) => (self.term_of(main.clone()), None),
             None => (self.term(), Some(self.address()?)),
         };
-        let mut out = self
-            .ports
-            .wave(lines, args, files, trace, |ev| map(&term, ev))?;
+        let mut out = self.ports.wave(lines, args, files, trace, |ev| {
+            ev.set_sites(Some(Arc::clone(&self.sites)));
+            map(&term, ev).map_err(|why| self.placed(why, ev.failed_at()))
+        })?;
         out.0.record.program = program;
         Ok(out)
+    }
+
+    /// The run-time error `why` placed at `at`, a site in the program's text: [`placed`].
+    pub fn placed(&self, why: String, at: Option<zed_kernel::sites::Span>) -> String {
+        placed(&self.text, self.file.as_deref(), why, at)
+    }
+
+    /// The program's source text, which its sites ([`Program::sites`]) are spans of.
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// The name of the file the program was read from, when it was read from one.
+    pub fn file(&self) -> Option<&str> {
+        self.file.as_deref()
+    }
+
+    /// The source site of each node of [`Program::term`]'s terms that has one, kept while the
+    /// program is alive (plan row RT-sites).
+    pub fn sites(&self) -> &Sites {
+        &self.sites
     }
 
     /// Checks that `record` is a record of this program: it names a content address, and the
@@ -1179,7 +1224,10 @@ pub fn load_file(
     }
     let build = build?;
     let program = match loaded(&bytes, &build) {
-        Ok(program) => program,
+        Ok(mut program) => {
+            program.file = Some(file.into());
+            program
+        }
         Err(why) => {
             let mut text = why.report(Some(file), |d| suppress.address_line(at.address(d)));
             if let Unloaded::Rejected(ds) = &why {
@@ -1334,6 +1382,43 @@ impl<'a> Options<'a> {
         });
         failed.map_or(Ok(wave.status), |why| Err((1, why)))
     }
+}
+
+/// The run-time error `why` placed at `at`, a site in `text`, the program's source, read from
+/// `file` when it has a name, in the layout of a diagnostic (DESIGN.md sec:diagnostics):
+/// `file:line:col: why`, then the source line with the expression the run stopped at marked
+/// under it. `why` alone when it has no site. `zedc run` and an executable `zedc build` makes
+/// both print an error with it, so the two print the same text (plan row RT-sites).
+pub fn placed(
+    text: &str,
+    file: Option<&str>,
+    why: String,
+    at: Option<zed_kernel::sites::Span>,
+) -> String {
+    let Some(at) = at else {
+        return why;
+    };
+    let span = Span {
+        start: at.start,
+        end: at.end,
+    };
+    let error = ast::Error {
+        span,
+        message: why,
+        notes: vec![ast::Note {
+            span,
+            text: "the run stopped here".into(),
+        }],
+        menu: String::new(),
+        row: None,
+    };
+    let lines = source::Lines::new(text.as_bytes());
+    let place = file.map_or_else(String::new, |f| format!("{f}:"));
+    crate::front::placed(text, &lines, &[], Severity::Rejection, vec![error])
+        .iter()
+        .map(|d| format!("{place}{d}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The command line of an executable `zedc build` makes (step L1.36a), `name

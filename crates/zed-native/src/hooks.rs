@@ -40,6 +40,9 @@ pub(crate) struct Run {
     outs: Vec<Word>,
     pending: Word,
     pub err: Option<String>,
+    /// The number of the node whose hook recorded [`Run::err`], when a hook with a node
+    /// recorded it: the executable prints the site of that node (plan row RT-sites).
+    pub err_at: Option<usize>,
     entries: Vec<i64>,
     pub kernel_calls: u64,
     /// For each atom node, the shape last made from constant name and field words.
@@ -68,6 +71,7 @@ impl State {
             outs: Vec::new(),
             pending: Word::err(),
             err: None,
+            err_at: None,
             entries: vec![0; t.lambdas.len()],
             kernel_calls: 0,
             shapes: vec![None; t.nodes.len()],
@@ -109,17 +113,26 @@ fn with_args<R>(f: impl FnOnce(&Tables, &mut Run, &[Word]) -> R) -> R {
     })
 }
 
-/// `r`'s word, or the error word with the message recorded.
-fn word(s: &mut Run, r: Result<Word, String>) -> Word {
+/// Records `e` as the run's error, raised at node `at` when a node's hook raised it, unless an
+/// error is recorded already: the first one stops the run.
+fn fail(s: &mut Run, e: String, at: Option<usize>) {
+    if s.err.is_none() {
+        s.err = Some(e);
+        s.err_at = at;
+    }
+}
+
+/// `r`'s word, or the error word with the message recorded, raised at node `at`.
+fn word(s: &mut Run, r: Result<Word, String>, at: Option<usize>) -> Word {
     r.unwrap_or_else(|e| {
-        s.err.get_or_insert(e);
+        fail(s, e, at);
         Word::err()
     })
 }
 
-fn code(s: &mut Run, r: Result<i64, String>) -> i64 {
+fn code(s: &mut Run, r: Result<i64, String>, at: Option<usize>) -> i64 {
     r.unwrap_or_else(|e| {
-        s.err.get_or_insert(e);
+        fail(s, e, at);
         -1
     })
 }
@@ -195,7 +208,7 @@ extern "C" fn rt_node(id: i64) -> Word {
     with_args(|t, s, ins| {
         s.heap.allocating(Some(id as usize));
         let r = node(t, s, id as usize, ins);
-        word(s, r)
+        word(s, r, Some(id as usize))
     })
 }
 
@@ -209,7 +222,7 @@ extern "C" fn rt_node(id: i64) -> Word {
 extern "C" fn rt_inc(tag: i64, bits: i64) {
     with(|_, s| {
         if let Err(e) = s.heap.inc(Word { tag, bits }) {
-            s.err.get_or_insert(e);
+            fail(s, e, None);
         }
     });
 }
@@ -222,7 +235,7 @@ extern "C" fn rt_inc(tag: i64, bits: i64) {
 extern "C" fn rt_dec(tag: i64, bits: i64) {
     with(|_, s| {
         if let Err(e) = s.heap.dec(Word { tag, bits }) {
-            s.err.get_or_insert(e);
+            fail(s, e, None);
         }
     });
 }
@@ -235,7 +248,7 @@ extern "C" fn rt_dec(tag: i64, bits: i64) {
 extern "C" fn rt_cap(tag: i64, bits: i64, i: i64) -> Word {
     with(|_, s| {
         let r = s.heap.capture(Word { tag, bits }, i as usize);
-        word(s, r)
+        word(s, r, None)
     })
 }
 
@@ -280,7 +293,7 @@ extern "C" fn rt_branch(id: i64) -> i64 {
     with_args(|t, s, ins| {
         s.heap.allocating(Some(id as usize));
         let r = branch(t, s, id as usize, ins);
-        code(s, r)
+        code(s, r, Some(id as usize))
     })
 }
 
@@ -293,7 +306,7 @@ extern "C" fn rt_match(id: i64) -> i64 {
     with_args(|t, s, ins| {
         s.heap.allocating(Some(id as usize));
         let r = matched(t, s, id as usize, ins);
-        code(s, r)
+        code(s, r, Some(id as usize))
     })
 }
 
@@ -332,6 +345,7 @@ extern "C" fn rt_error(id: i64) -> Word {
                 "passed a value to a function that releases it, without a reference of its own",
                 e,
             )),
+            Some(id as usize),
         )
     })
 }

@@ -180,6 +180,9 @@ enum Frame<'a> {
     FitBody(Box<FitF<'a>>),
     FitExtras(Box<FitF<'a>>, Term),
     Lambda(Vec<Arc<str>>),
+    /// An expression done, by its span: its term's nodes that have no site take this one
+    /// (plan row RT-sites).
+    Site(Span),
 }
 
 /// A call that passes atoms ([`Elab::passes`]): its arguments that do, each bound to a
@@ -326,7 +329,12 @@ impl<'a> Elab<'a> {
         };
         while let Some(job) = m.stack.pop() {
             match job {
-                Job::Expr(e) => self.expr(&mut m, e),
+                Job::Expr(e) => {
+                    if zed_kernel::sites::recording() {
+                        m.k(Frame::Site(e.span));
+                    }
+                    self.expr(&mut m, e)
+                }
                 Job::Block(stmts) => {
                     m.k(Frame::Block);
                     self.start_scope(&mut m, stmts, false);
@@ -1439,6 +1447,15 @@ impl<'a> Elab<'a> {
     /// Takes up a caller where its job left off.
     fn resume(&mut self, m: &mut M<'a>, f: Frame<'a>) {
         match f {
+            Frame::Site(span) => {
+                if let Ret::T(Some(t)) = &m.ret {
+                    let span = zed_kernel::sites::Span {
+                        start: span.start,
+                        end: span.end,
+                    };
+                    zed_kernel::sites::mark(t, span, &mut self.sited);
+                }
+            }
             Frame::Seq(mut sf) => {
                 let t = m.t();
                 let failed = t.is_none();

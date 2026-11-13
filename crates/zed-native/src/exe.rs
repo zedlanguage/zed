@@ -4,7 +4,8 @@
 //!
 //! The data is the plan's `fuse` flag, the program's content address, which a record names
 //! (step L1.19b), `main`'s ports as [`Ports::to_text`] writes them, and the graph as lowered in
-//! ZIR's binary form. The runtime decodes the graph, legalizes it and plans it again, which
+//! ZIR's binary form; and for the run-time errors' sites (plan row RT-sites), the name of the
+//! source file, its text and the site of each node of the graph. The runtime decodes the graph, legalizes it and plans it again, which
 //! gives the tables the code was generated from, node for node, and the nodes legalization
 //! swapped: the code passes node numbers, and the hooks read the tables by them.
 
@@ -21,9 +22,10 @@ use cranelift_module::{DataDescription, FuncId, Linkage, Module};
 use zedc::address::ContentAddress;
 use zedc::run::Ports;
 use zedc::zir::Region;
-use zedc::zir::legalize::Legalized;
+use zedc::zir::legalize::{Legalized, legalized_sites};
 use zedc::zir::memory::{Plan, plan};
 
+use zed_kernel::sites::Span;
 use zed_rt::Word;
 
 use crate::tables::Tables;
@@ -35,19 +37,90 @@ struct Program {
     address: ContentAddress,
     graph: Legalized,
     plan: Plan,
+    /// The program's source text and the name of its file, which an error's site is placed in.
+    text: String,
+    file: Option<String>,
+    /// The site of each node of `graph`, by its number, when it has one.
+    sites: Vec<Option<Span>>,
+}
+
+/// `text` with every line that no site in `sites` touches emptied, its line break kept, and
+/// each site moved by the bytes removed before it: the lines an error can be printed on, at
+/// the same line numbers and columns. An executable holds only the branch its build takes
+/// (DESIGN.md step L2.8d), so it holds the lines of the operations staging kept and not the
+/// rest of the source, where a dropped branch's text would be; text of a dropped branch
+/// written on a line with a kept operation is held, as part of that line.
+// Complexity tradeoff: O(s + n log l) for s bytes of source, n sites and l lines: the line
+// starts in one pass, each site's first and last line by binary search, the touched lines
+// marked by a difference array (a site that spans many lines costs two entries, not one per
+// line), and the bytes removed before each line summed in one pass. Keeping whole lines
+// rather than only the sites' own bytes is what lets the line be printed as `zedc run`
+// prints it. Test: `exe::tests::an_executable_keeps_the_lines_of_its_sites_only`,
+// `l02_08d_build_constant::staged`.
+fn kept_lines(text: &str, sites: &[Option<Span>]) -> (String, Vec<Option<Span>>) {
+    let starts: Vec<usize> = std::iter::once(0)
+        .chain(text.match_indices('\n').map(|(i, _)| i + 1))
+        .collect();
+    let line = |at: usize| starts.partition_point(|&s| s <= at) - 1;
+    let mut touched = vec![0i64; starts.len() + 1];
+    for s in sites.iter().flatten() {
+        let last = if s.end > s.start { s.end - 1 } else { s.start };
+        touched[line(s.start.min(text.len()))] += 1;
+        touched[line(last.min(text.len())) + 1] -= 1;
+    }
+    let (mut out, mut removed, mut depth) = (String::new(), Vec::with_capacity(starts.len()), 0);
+    for (k, &start) in starts.iter().enumerate() {
+        depth += touched[k];
+        removed.push(start - out.len());
+        let end = starts.get(k + 1).copied().unwrap_or(text.len());
+        if depth > 0 {
+            out.push_str(&text[start..end]);
+        } else if k + 1 < starts.len() {
+            out.push('\n');
+        }
+    }
+    let moved = sites
+        .iter()
+        .map(|s| {
+            s.map(|s| {
+                let by = removed[line(s.start.min(text.len()))];
+                Span {
+                    start: s.start - by,
+                    end: s.end - by,
+                }
+            })
+        })
+        .collect();
+    (out, moved)
 }
 
 /// The bytes of the data: `fuse` as one byte, the program's content address as its 32 bytes,
-/// the length of the ports' text as 8 bytes, little end first, the text, then the graph. An
-/// error when the system refuses the memory to write one of the graph's exact numbers, or the
-/// memory of the data, which is asked before it is written.
+/// the length of the ports' text as 8 bytes, little end first, the text; the source file's name
+/// (empty for none) and the lines of the source text the sites touch ([`kept_lines`]), each the
+/// same way; the number of sites in 8 bytes and each site as its start and end in 8 bytes each,
+/// both [`u64::MAX`] for a node with none, by node number in `graph`, as
+/// [`lower_sited`](zedc::zir::lower::lower_sited) numbers them;
+/// then the graph. An error when the system refuses the memory to write one of the graph's
+/// exact numbers, or the memory of the data, which is asked before it is written.
+// Complexity tradeoff: the executable holds the source lines the sites touch, one byte for each
+// other line, and 16 bytes a node, O(s + n) bytes at most for s bytes of source and n nodes,
+// written and read once, so that a run-time error prints the source line as `zedc run` does
+// with no file beside the executable. The line and column alone would cost less and could not
+// print the line; the sites are stored in full, not delta coded as DWARF's line table is
+// (DWARF 5, section 6.2), since the graph beside them takes O(n) bytes already. Test:
+// `exe::tests::the_data_reads_back`, `l01_36a_executables::sites`.
 pub(crate) fn data(
     fuse: bool,
     address: ContentAddress,
     ports: &Ports,
+    source: (Option<&str>, &str),
+    sites: &[Option<Span>],
     graph: &Region,
 ) -> Result<Vec<u8>, String> {
     let text = ports.to_text();
+    let file = source.0.unwrap_or_default();
+    let (source, sites) = kept_lines(source.1, sites);
+    let source = source.as_str();
     let zir = zedc::zir::binary::encode(graph).map_err(|e| {
         format!(
             "zedc could not build the executable: a constant of the program is so large that \
@@ -57,7 +130,8 @@ pub(crate) fn data(
             zed_kernel::num::bytes_of(&e.bits)
         )
     })?;
-    let len = 1 + 32 + 8 + text.len() + zir.len();
+    let len =
+        1 + 32 + 8 * 4 + text.len() + file.len() + source.len() + 16 * sites.len() + zir.len();
     let mut out = Vec::new();
     out.try_reserve_exact(len).map_err(|_| {
         format!(
@@ -70,6 +144,16 @@ pub(crate) fn data(
     out.extend_from_slice(&address.0);
     out.extend_from_slice(&(text.len() as u64).to_le_bytes());
     out.extend_from_slice(text.as_bytes());
+    for s in [file, source] {
+        out.extend_from_slice(&(s.len() as u64).to_le_bytes());
+        out.extend_from_slice(s.as_bytes());
+    }
+    out.extend_from_slice(&(sites.len() as u64).to_le_bytes());
+    for s in &sites {
+        let (start, end) = s.map_or((u64::MAX, u64::MAX), |s| (s.start as u64, s.end as u64));
+        out.extend_from_slice(&start.to_le_bytes());
+        out.extend_from_slice(&end.to_le_bytes());
+    }
     out.extend_from_slice(&zir);
     Ok(out)
 }
@@ -86,12 +170,25 @@ impl Program {
         let (&fuse, rest) = data.split_first().ok_or_else(bad)?;
         let (address, rest) = rest.split_first_chunk::<32>().ok_or_else(bad)?;
         let address = ContentAddress(*address);
-        let (len, rest) = rest.split_first_chunk::<8>().ok_or_else(bad)?;
-        let len = usize::try_from(u64::from_le_bytes(*len)).map_err(|_| bad())?;
-        let (text, zir) = rest.split_at_checked(len).ok_or_else(bad)?;
-        let text = std::str::from_utf8(text).map_err(|_| bad())?;
+        let (text, rest) = string(rest).ok_or_else(bad)?;
         let ports = Ports::from_text(text)?;
+        let (file, rest) = string(rest).ok_or_else(bad)?;
+        let (source, rest) = string(rest).ok_or_else(bad)?;
+        let (n, mut zir) = number(rest).ok_or_else(bad)?;
+        // Each site is 16 bytes, so a count the data cannot hold is refused before any memory
+        // is asked for it.
+        if n > zir.len() / 16 {
+            return Err(bad());
+        }
+        let mut sites = Vec::with_capacity(n);
+        for _ in 0..n {
+            let (start, rest) = number(zir).ok_or_else(bad)?;
+            let (end, rest) = number(rest).ok_or_else(bad)?;
+            zir = rest;
+            sites.push((start != usize::MAX).then_some(Span { start, end }));
+        }
         let graph = zedc::zir::binary::decode(zir).map_err(|e| format!("{DAMAGED} ({e})"))?;
+        let sites = legalized_sites(&graph, crate::legal::EXPANSIONS, &sites);
         let graph = crate::legal::legalize(graph);
         let plan = plan(graph.graph(), fuse != 0);
         Ok(Program {
@@ -99,8 +196,24 @@ impl Program {
             address,
             graph,
             plan,
+            text: source.to_owned(),
+            file: (!file.is_empty()).then(|| file.to_owned()),
+            sites,
         })
     }
+}
+
+/// The number in the first 8 bytes of `data`, little end first, and the bytes after them.
+fn number(data: &[u8]) -> Option<(usize, &[u8])> {
+    let (n, rest) = data.split_first_chunk::<8>()?;
+    Some((usize::try_from(u64::from_le_bytes(*n)).ok()?, rest))
+}
+
+/// The text whose length in bytes the first 8 bytes of `data` give, and the bytes after it.
+fn string(data: &[u8]) -> Option<(&str, &[u8])> {
+    let (n, rest) = number(data)?;
+    let (text, rest) = rest.split_at_checked(n)?;
+    Some((std::str::from_utf8(text).ok()?, rest))
 }
 
 /// Defines, in `m`, the data `data` and a C `main(argc, argv)` that returns
@@ -217,7 +330,14 @@ fn start(words: &[OsString], data: &[u8], root: extern "C" fn() -> Word) -> u8 {
         &mut stderr,
         |ev| {
             let (t, _) = Tables::new(&program.graph, &program.plan)?;
-            crate::outcome::call(Arc::new(t), root, ev).map(|o| o.value)
+            crate::outcome::call(Arc::new(t), root, ev)
+                .map(|o| o.value)
+                // The error printed as `zedc run` prints it, at the site of the node that
+                // raised it (plan row RT-sites).
+                .map_err(|(why, at)| {
+                    let at = at.and_then(|i| program.sites.get(i).copied().flatten());
+                    zedc::run::placed(&program.text, program.file.as_deref(), why, at)
+                })
         },
     )
 }
@@ -226,6 +346,51 @@ fn start(words: &[OsString], data: &[u8], root: extern "C" fn() -> Word) -> u8 {
 mod tests {
     use super::*;
     use zedc::run::PortKind;
+
+    #[test]
+    fn an_executable_keeps_the_lines_of_its_sites_only() {
+        // Lines 2 and 4 to 5 hold sites; lines 1, 3 and 6 are emptied, their line breaks kept,
+        // so each site keeps its line and column.
+        let text = "dropped one\nkept a + b\ndropped two\nkept (c\n  + d)\ndropped three";
+        let at = |s: &str| text.find(s).unwrap();
+        let sites = [
+            Some(Span {
+                start: at("a + b"),
+                end: at("a + b") + 5,
+            }),
+            None,
+            Some(Span {
+                start: at("(c"),
+                end: at("d)") + 2,
+            }),
+        ];
+        let (kept, moved) = kept_lines(text, &sites);
+        assert_eq!(kept, "\nkept a + b\n\nkept (c\n  + d)\n");
+        assert!(!kept.contains("dropped"));
+        let site = |k: usize| moved[k].map(|s| &kept[s.start..s.end]);
+        assert_eq!(
+            (site(0), site(1), site(2)),
+            (Some("a + b"), None, Some("(c\n  + d)"))
+        );
+        // The same lines and columns in both texts.
+        let place = |t: &str, s: usize| {
+            let before = &t[..s];
+            (
+                before.matches('\n').count(),
+                s - before.rfind('\n').map_or(0, |i| i + 1),
+            )
+        };
+        for (k, s) in sites.iter().enumerate() {
+            if let (Some(s), Some(m)) = (s, moved[k]) {
+                assert_eq!(place(text, s.start), place(&kept, m.start));
+            }
+        }
+        // No sites: every line emptied.
+        assert_eq!(
+            kept_lines(text, &[None]),
+            ("\n\n\n\n\n".to_string(), vec![None])
+        );
+    }
 
     #[test]
     fn the_data_reads_back() {
@@ -247,7 +412,12 @@ mod tests {
         ))
         .unwrap();
         let address = ContentAddress([7; 32]);
-        let p = Program::decode(&data(true, address, &ports, &graph).unwrap()).unwrap();
+        let site = Some(Span { start: 1, end: 4 });
+        let source = (Some("a.zed"), "x = \"a\" > \"b\";");
+        let p = Program::decode(&data(true, address, &ports, source, &[site], &graph).unwrap())
+            .unwrap();
+        assert_eq!((p.file.as_deref(), p.text.as_str()), source);
+        assert_eq!(p.sites, [site]);
         assert_eq!(p.ports, ports);
         assert_eq!(p.address, address);
         let built = crate::legal::legalize(graph.clone());
@@ -255,8 +425,10 @@ mod tests {
         assert_eq!(p.graph.swapped(), built.swapped());
         assert!(p.graph.swapped().contains(0));
         assert!(p.plan.fuse);
-        let bytes = data(false, address, &ports, &graph).unwrap();
-        assert!(!Program::decode(&bytes).unwrap().plan.fuse);
+        let bytes = data(false, address, &ports, (None, ""), &[None], &graph).unwrap();
+        let p = Program::decode(&bytes).unwrap();
+        assert!(!p.plan.fuse);
+        assert_eq!((p.file, p.text.as_str(), p.sites), (None, "", vec![None]));
         // Cut in the flag, the address, the length, at the text and in it.
         for cut in [0, 1, 5, 37, 41, 44] {
             assert_eq!(

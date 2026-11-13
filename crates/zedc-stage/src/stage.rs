@@ -3674,6 +3674,7 @@ impl Mixer {
                 unreachable!("leaves and recursions are kept as written")
             }
         };
+        zed_kernel::sites::inherit(t, &built);
         let sum = self.frees.combine(&built, &sums);
         Out {
             term: Mixed::Inline(built),
