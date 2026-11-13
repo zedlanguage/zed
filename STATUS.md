@@ -2079,13 +2079,14 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FLOAT-f32 | impl attempt 1 | 2026-11-05 04:07 | tuple decimal component at f32 fixed (red then green); rebased on 8679b15a8; clippy + full --doc suite running |
 | L1.29d-package | impl attempt 1 | 2026-11-12 20:48 | started; worktree /home/luke/Work/wt/l129d-package on origin/main ba655bbca |
 | LIT-tuple-branch-carrier | impl attempt 1 | 2026-11-12 20:34 | started; worktree /home/luke/Work/wt/lit-tuple-branch on origin/main 0c230df62 |
+| MAIN-red-m0_01-s_01f | running | 2026-11-12 21:37 |  |
 | MSG-fixnote-huge-value | impl attempt 1 | 2026-11-12 20:52 | started; worktree wt/msg-fixnote-huge |
 | PERF-l139-family | running | 2026-11-12 18:45 | coordkk fixed d016b9cc3 90a844aa8; 14 tests in 8 families still ignored, cross-review next / 45.57 |
 | POLY-nf-power-value | running | 2026-11-12 14:17 | impl merged fast path 8c2710fc5; W <= K(n) refusal not merged (W does not track cost); CD xr POLY-nf-W spawned / 45.76 |
-| REGRESS-l01_26-overload | impl attempt 1 | 2026-11-12 20:07 | negative control (old list_rows restored, not committed): l01_26 cover 16.5x, fn-arrow 16.3x, intersect 15.0x, different-sets 23.8x, l01_27 chain 22.0x, all FAI |
+| REGRESS-l01_26-overload | impl attempt 1 | 2026-11-12 20:07 | l01_27 merging_the_failures_of_a_long_chain_scales (None kinds): main's empty.rs 16.0x FAILED, with fix 8.2x (Some(7), Some(1) 8.0x both); a_chain_of_many_failu |
 | STAGE-print | impl attempt 1 | 2026-11-04 03:10 | started; worktree wt/stage-print seeded |
-| ST-walk-implicit | running | 2026-11-11 01:43 |  |
-| WARN-refused-shadowed | impl attempt 1 | 2026-11-12 20:35 | tests zedc_preimage, zedc_check, l01_39a_bit_words, l01_19_whole_file_ports: 109 pieces, 0 failed; load 39.5 to 49.19 |
+| ST-walk-implicit | impl attempt 1 | 2026-11-11 01:43 | started: worktree /home/luke/Work/wt/st-walk-implicit on origin/main 89d83b4a3 / load 36.87 40.84 46.29 |
+| WARN-refused-shadowed | impl attempt 1 | 2026-11-12 20:35 | after rebase on 0c230df62 with spec 481161f: spec groups + l01_39_reduced_product 300 pieces, 0 failed; load 32.22 to 49.84; build all targets + fmt check pass |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
