@@ -2096,16 +2096,16 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| L1.29d-package | impl attempt 1 | 2026-11-12 20:48 | started; worktree /home/luke/Work/wt/l129d-package on origin/main ba655bbca |
+| L1.29d-package | impl attempt 1 | 2026-11-12 20:48 | tests pass: 113 targeted pieces 0 failed (l01_29, l02_03, l02_08, l01_30, l01_07, zedc libs) load 35-42; red on old code: 10/10 package_recovery + 3 l02_03; con |
 | LIT-tuple-branch-carrier | impl attempt 1 | 2026-11-12 20:34 | started; worktree /home/luke/Work/wt/lit-tuple-branch on origin/main 0c230df62 |
 | MAIN-red-m0_01-s_01f | impl attempt 1 | 2026-11-12 21:37 | folders renamed: tests/steps/l00_poly_nf is now tests/steps/l03_09_egraph (POLY-nf-W: rebase onto the new folder name), diag_control is now l02_12_diagnostics;  |
-| MSG-literal-type-huge-power | impl attempt 1 | 2026-11-12 22:00 | started; worktree wt/literal-type-power / 46.59 45.65 42.60 |
+| MSG-literal-type-huge-power | impl attempt 1 | 2026-11-12 22:00 | negative control (run once, not committed): without the walk.rs change the 3 new tests fail; scaling of the checking of if 3^(200n)+1 took 6.1 times the bytes a |
 | PERF-deep-ops-slow | impl attempt 1 | 2026-11-12 21:38 | probe at 20,000 levels, instr/level 8a311f0e6 -> af3881a32: verdict 198k->251k, fits_sig 384k->527k, why_unfit 552k->819k, diff (z vs y tuples) 198k->462k, buil |
 | PERF-l139-family | running | 2026-11-12 18:45 | coordkk fixed d016b9cc3 90a844aa8; 14 tests in 8 families still ignored, cross-review next / 45.57 |
-| PERF-pk-one-sided | running | 2026-11-12 22:06 |  |
+| PERF-pk-one-sided | impl attempt 1 | 2026-11-12 22:06 | started; worktree /home/luke/Work/wt/pk-one-sided on 97a7d13b8 / 28.69 31.99 36.31 |
 | POLY-nf-power-value | running | 2026-11-12 14:17 | impl merged fast path 8c2710fc5; W <= K(n) refusal not merged (W does not track cost); CD xr POLY-nf-W spawned / 45.76 |
 | ST-walk-implicit | impl attempt 1 | 2026-11-11 01:43 | started: worktree /home/luke/Work/wt/st-walk-implicit on origin/main 89d83b4a3 / load 36.87 40.84 46.29 |
-| TEST-staged | impl attempt 1 | 2026-11-12 21:50 | started; worktrees /home/luke/Work/wt/test-staged (impl, 4056f4e26) and test-staged-spec / load 27.11 34.54 39.51 |
+| TEST-staged | impl attempt 1 | 2026-11-12 21:50 | not-run rows via Mixer::taken + taken_reads (if evaluated whole at build: only the arm the build takes); l02_08d 26/26 pass; negative control (extra run per 25  |
 | WARN-refused-shadowed | impl attempt 1 | 2026-11-12 20:35 | after rebase on 335b4c2a2 (product.rs conflict with STAGE-print resolved): build, fmt check, clippy pass; l01_29_diagnostics, l01_39_reduced_product, zedc_check |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
