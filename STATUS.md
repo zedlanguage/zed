@@ -2140,6 +2140,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| DOC-private-links-2 | impl attempt 1 | 2026-11-13 05:56 | started; worktree from origin/main c75a68775, load 24.38 28.00 29.26 |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | M5 merged 16429d383 (C55); 862 pieces pass; dump: 0 answers changed but one refusal now true; next old tree, holders_chain, rounds 4+ |
 | MSG-prelude-word-args | impl attempt 1 | 2026-11-13 05:56 | started; worktree seeded |
 | NARROW-ne-rat-divisor | impl attempt 1 | 2026-11-13 01:12 | started in /home/luke/Work/wt/narrow-ne-rat-divisor from c75a68775 |
@@ -2147,7 +2148,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PERF-l139-family | running | 2026-11-12 18:45 | coordkk fixed d016b9cc3 90a844aa8; 14 tests in 8 families still ignored, cross-review next / 45.57 |
 | PERF-ref-memo-quadratic | impl attempt 4 | 2026-11-10 18:04 | round 3 scored: mix of Sol r3 + Opus r3 SCORE 446.707, 0 coarser; porting into wt/prm4 |
 | PRES-overlap-fast | impl attempt 1 | 2026-11-13 01:10 | own attempt merged zed-impl 24981fcda 21f10e120 0418e6e46 (row_sums join of row-sum tables; overlap_rows 0.45M at 16 vs main 5,443M+refusal; random2 0 coarser 2 |
+| ROOTS-listed | impl attempt 1 | 2026-11-13 05:56 | started; load 24.38 28.00 29.26 |
 | SPEC-no-verbatim | impl attempt 1 | 2026-11-13 05:23 | started; worktree from origin/main 812acc32e |
+| WALK-read-image-n2 | impl attempt 1 | 2026-11-13 05:56 | started; worktree from origin/main 365c3b110 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
