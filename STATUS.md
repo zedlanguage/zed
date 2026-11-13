@@ -2045,6 +2045,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | FLOAT-f32 | impl attempt 1 | 2026-11-05 04:07 | tuple decimal component at f32 fixed (red then green); rebased on 8679b15a8; clippy + full --doc suite running |
+| L1.29d-package | running | 2026-11-12 20:48 |  |
 | LIT-tuple-branch-carrier | impl attempt 1 | 2026-11-12 20:34 | started; worktree /home/luke/Work/wt/lit-tuple-branch on origin/main 0c230df62 |
 | MSG-fixnote-huge-value | impl attempt 1 | 2026-11-12 20:52 | started; worktree wt/msg-fixnote-huge |
 | PERF-l139-family | running | 2026-11-12 18:45 | coordkk fixed d016b9cc3 90a844aa8; 14 tests in 8 families still ignored, cross-review next / 45.57 |
