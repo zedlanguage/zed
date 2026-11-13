@@ -8,9 +8,13 @@
 //!   the points near every end of the input, of main's box and of the new one, and in
 //!   [-60, 60]. The other 182,327 calls give main's answer unchanged; the dump is 126 MB, so
 //!   that replay was run once, outside the tests (COMPLEXITY.md C56);
-//! - the scaling: each of the 48 families of the item's benchmark at n and 8n, held to 13
-//!   times the instructions and the bytes (the plan's limit; the families' work is of order
-//!   `n log n` or the size of their answer), times Q/8 where the answer grows Q > 8 times.
+//! - the scaling: each of the 48 families of the item's benchmark at n and 8n, held to the
+//!   plan's limit (`scaling::LIMIT`) in instructions and bytes, with no wider limit for any
+//!   family; each answer grows at most 8 times (`output_grid` demands four values, 4n pieces).
+//!   The work of writing out a larger answer is held at one n by
+//!   `output_grid_work_grows_with_its_answer`, and `nested_moduli_eq_4096` with its costly
+//!   constants next to the root at every n is ignored with its plan row,
+//!   REF-nested-moduli-state.
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
@@ -431,8 +435,14 @@ fn named(n: usize, a: impl Fn(i64) -> i64) -> Term {
 
 /// Remainders by `moduli[j mod len]` under the guards `guard`.
 fn moduli(n: usize, guard: fn(i64) -> Term, ms: &'static [i64]) -> Term {
+    moduli_from(n, guard, ms, 0)
+}
+
+/// [`moduli`] with link `j` taking the constants `(j + d) mod 5` and `ms[(j + d) mod len]`.
+fn moduli_from(n: usize, guard: fn(i64) -> Term, ms: &'static [i64], d: i64) -> Term {
     chain(n, var("i"), guard, move |j, t| {
-        sub_c(j % 5, prim(Prim::Mod, t, int(ms[j as usize % ms.len()])))
+        let k = j + d;
+        sub_c(k % 5, prim(Prim::Mod, t, int(ms[k as usize % ms.len()])))
     })
 }
 
@@ -634,23 +644,19 @@ fn family(name: &str, n: usize) -> Vec<(Term, Domains, Demand)> {
         "nested_moduli_mod7" => one(moduli(n, g_mod7, &[7, 64]), mega()),
         "nested_moduli_946_eq" => one(moduli(n, g_eqj, &[9, 4, 6]), mega()),
         "nested_moduli_eq_4096" => one(moduli(n, g_eqj, &[7, 4096]), mega()),
+        "nested_moduli_eq_4096_at_6" => {
+            // The links next to the root take the constants they take at n = 6 mod 10, the
+            // class whose answer has about 760 pieces, at every n.
+            let d = (6 - n as i64).rem_euclid(10);
+            one(moduli_from(n, g_eqj, &[7, 4096], d), mega())
+        }
         "normal_holey_guards" => {
             let g = |j| prim(Prim::Le, var("i"), int(4 * j));
             let t = chain(n, var("i"), g, |j, t| sub_c(j % 5, t));
             let ps = (0..ni).map(|j| (End::of(4 * j), End::of(4 * j))).collect();
             one(t, over(&[("i", IntervalSet::from_pieces(ps))]))
         }
-        "output_grid" => {
-            let g = |j| prim(Prim::Le, var("i"), int(j * ni));
-            let t = chain(n, var("i"), g, |_, t| prim(Prim::Sub, t, int(ni)));
-            let odd = (1..=ni).filter(|i| i % 2 == 1);
-            let wanted = odd.map(|i| (End::of(i), End::of(i))).collect();
-            vec![(
-                t,
-                i_in(1, ni * ni),
-                Demand::Ints(IntervalSet::from_pieces(wanted)),
-            )]
-        }
+        "output_grid" => vec![output_grid(n, 4)],
         "pathological_2var" => {
             let g = |j: i64| {
                 let (v, at) = if j % 2 == 0 {
@@ -670,55 +676,58 @@ fn family(name: &str, n: usize) -> Vec<(Term, Domains, Demand)> {
     }
 }
 
-/// The pieces of every domain of the answers, at least 1 an answer: the size of the output.
-fn answer_size(cases: &[(Term, Domains, Demand)]) -> usize {
-    let size = |(t, ds, d): &(Term, Domains, Demand)| {
-        let p = preimage(t, ds, d);
-        p.domains
-            .values()
-            .map(IntervalSet::len)
-            .sum::<usize>()
-            .max(1)
-    };
-    cases.iter().map(size).sum()
+/// `t0 = i; tj = if i <= j n { t(j-1) } else { t(j-1) - n }` over `i` in `[1, n^2]`, the demand
+/// the first `k` odd values of `[1, n]` (`k <= n / 2`). An `i` in the block `(b-1) n < i <= b n`
+/// meets the `b - 1` guards `j < b` false, so the chain gives `i - (b-1) n`, its place in the
+/// block, and each demanded value `v` gives the one point `v + (b-1) n` in each of the `n`
+/// blocks. The points are odd places, so no two are adjacent, within a block or across one: the
+/// answer is exactly `k n` pieces.
+fn output_grid(n: usize, k: usize) -> (Term, Domains, Demand) {
+    assert!(
+        2 * k <= n,
+        "output_grid: {k} odd values do not fit in [1, {n}]"
+    );
+    let ni = n as i64;
+    let g = |j| prim(Prim::Le, var("i"), int(j * ni));
+    let t = chain(n, var("i"), g, |_, t| prim(Prim::Sub, t, int(ni)));
+    let odd = (1..=ni).filter(|i| i % 2 == 1).take(k);
+    let wanted = odd.map(|i| (End::of(i), End::of(i))).collect();
+    (
+        t,
+        i_in(1, ni * ni),
+        Demand::Ints(IntervalSet::from_pieces(wanted)),
+    )
+}
+
+/// The pieces of every domain of the answer to `case`.
+fn answer_pieces(case: &(Term, Domains, Demand)) -> usize {
+    let (t, ds, d) = case;
+    preimage(t, ds, d)
+        .domains
+        .values()
+        .map(IntervalSet::len)
+        .sum()
 }
 
 /// [`scaling::compare`] on the reference preimage of the family `name` at `n` and `8n` links: a
-/// pass of order n, held to [`scaling::LIMIT`] with the note from [`scaling::PREFERRED`]. When
-/// the answer grows `Q` > 8 times, work that grows with the output is not charged: the two runs
-/// are held by [`scaling::compare_costs`] to [`scaling::LIMIT`] times `Q / 8` (`output_grid`
-/// and `nested_moduli_eq_4096`, whose answers grow about 64 and 154 times).
+/// pass of order n, held to [`scaling::LIMIT`] with the note from [`scaling::PREFERRED`]. Every
+/// family's answer grows at most 8 times from `n` to `8n`; the work of writing out a larger
+/// answer is held by [`output_grid_work_grows_with_its_answer`], at one `n`.
 fn scales(name: &str, n: usize) {
     on_big_stack(|| {
         let large_n = n * scaling::FACTOR;
         let (small, large) = (family(name, n), family(name, large_n));
-        let growth = answer_size(&large) as f64 / answer_size(&small) as f64;
         let run = |cases: &[(Term, Domains, Demand)]| {
             for (t, ds, d) in cases {
                 std::hint::black_box(preimage(t, ds, d));
             }
         };
         let what = format!("the reference preimage of the family {name}, sizes {n} and {large_n}");
-        let factor = scaling::FACTOR as f64;
-        if growth <= factor {
-            scaling::compare(&what, 1, || run(&small), || run(&large));
-        } else {
-            scaling::compare_costs(
-                &what,
-                &format!(
-                    "the limit {} of a pass of order n, times {growth:.1} / 8 for an answer that \
-                     grows {growth:.1} times",
-                    scaling::LIMIT
-                ),
-                scaling::LIMIT * growth / factor,
-                || run(&small),
-                || run(&large),
-            );
-        }
+        scaling::compare(&what, 1, || run(&small), || run(&large));
     });
 }
 
-/// One test a family, each at the first size the item's scorer used.
+/// One test a family, each at the first size the item's scorer used, except where a note says.
 macro_rules! scaling_tests {
     ($($test:ident: $name:literal at $n:literal;)*) => {
         $(
@@ -753,7 +762,9 @@ scaling_tests! {
     ne_guard_wide_scales: "ne_guard_wide" at 64;
     nested_moduli_946_eq_scales: "nested_moduli_946_eq" at 2;
     nested_moduli_eq_scales: "nested_moduli_eq" at 2;
-    nested_moduli_eq_4096_scales: "nested_moduli_eq_4096" at 32;
+    // At n = 0 mod 10, so both sizes put the same constants next to the root (they repeat every
+    // 10 links); at 32 and 256 the answer went from 5 pieces to 772, a different question.
+    nested_moduli_eq_4096_scales: "nested_moduli_eq_4096" at 160;
     nested_moduli_eq_long_scales: "nested_moduli_eq" at 128;
     nested_moduli_mod7_scales: "nested_moduli_mod7" at 2;
     normal_abs_gap_scales: "normal_abs_gap" at 16;
@@ -773,10 +784,53 @@ scaling_tests! {
     normal_rel_guard_scales: "normal_rel_guard" at 16;
     normal_round_down_scales: "normal_round_down" at 16;
     normal_round_trip_scales: "normal_round_trip" at 16;
-    output_grid_scales: "output_grid" at 8;
+    // Four values demanded: 4n pieces. At 8 the answer-free work was 84% of the run.
+    output_grid_scales: "output_grid" at 64;
     pathological_2var_scales: "pathological_2var" at 16;
     pathological_abs_scales: "pathological_abs" at 16;
     pow2_small_scales: "pow2_small" at 8;
     pow2_wide_scales: "pow2_wide" at 64;
     random_chains_scales: "random_chains" at 64;
+}
+
+/// The answer of [`output_grid`] has exactly `k n` pieces, as its comment derives.
+#[test]
+fn output_grid_answers_have_k_n_pieces() {
+    for (n, k) in [(8, 1), (8, 4), (16, 8), (64, 4), (64, 32), (512, 4)] {
+        let pieces = on_big_stack(|| answer_pieces(&output_grid(n, k)));
+        assert_eq!(pieces, k * n, "output_grid at n = {n}, k = {k}");
+    }
+}
+
+/// The work of writing out an answer 8 times larger, the term unchanged: [`output_grid`] at 1024
+/// links with 64 and 512 values demanded, `64 n` and `512 n` pieces by the hand count, held to
+/// [`scaling::LIMIT`] as a pass of order n in the pieces. An earlier test held `output_grid`'s
+/// work at `n` and `8n` with all `n / 2` odd values demanded to the limit times the growth of
+/// the answer counted from the code under test (64 times): work quadratic in `n` passed it, and
+/// an answer split into more pieces raised its own limit.
+#[test]
+fn output_grid_work_grows_with_its_answer() {
+    on_big_stack(|| {
+        let n = 1024;
+        let (small, large) = (output_grid(n, 64), output_grid(n, 512));
+        let run = |(t, ds, d): &(Term, Domains, Demand)| {
+            std::hint::black_box(preimage(t, ds, d));
+        };
+        scaling::compare(
+            "the reference preimage of output_grid at 1024 links, 64 and 512 values demanded",
+            1,
+            || run(&small),
+            || run(&large),
+        );
+        assert_eq!(answer_pieces(&small), 64 * n);
+        assert_eq!(answer_pieces(&large), 512 * n);
+    });
+}
+
+/// [`scales`] on `nested_moduli_eq_4096` with the constants of n = 6 mod 10 next to the root at
+/// every n, an answer of about 760 pieces at both sizes.
+#[test]
+#[ignore = "REF-nested-moduli-state: the reference preimage's remainder chain costs about 150M instructions a link, 21.4 times the instructions and 20.5 times the bytes at 16 and 128 links, 11.5 and 12.1 at 64 and 512, over the limit; open"]
+fn nested_moduli_eq_4096_at_6_scales() {
+    scales("nested_moduli_eq_4096_at_6", 16);
 }

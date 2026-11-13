@@ -113,13 +113,21 @@
 //!
 //! Cost in theory: O(n log n + output) time and O(n + output) space over a chain of n links,
 //! with output the pieces of the answer; a nested remainder adds a factor `m/old` per excluded
-//! piece, linear in a modulus literal (so exponential in its bits). Measured T(8n)/T(n), the
+//! piece, linear in a modulus literal (so exponential in its bits). Nested remainders do not
+//! meet that bound: each link costs the pieces of its state, which the listing keeps large
+//! whatever the answer, so the chain costs O(n s) for s state pieces. Measured on
+//! `nested_moduli_eq_4096` with the constants of n = 6 mod 10 next to the root (an answer of
+//! about 760 pieces at every n): about 150M instructions a link, 21.4 times the instructions
+//! from 16 to 128 links and 11.5 times from 64 to 512, the per-link cost still rising
+//! (REF-nested-moduli-state). Measured T(8n)/T(n), the
 //! larger of the instruction and byte ratios, over the 48 families of the scaling tests
 //! (`l01_25_preimage_catalog::ref_memo`, load about 37 on 32 cores): at most 10.6
 //! (`normal_abs_gap`), 9.0 to 10.4 on six more (`normal_min_gap`, `normal_round_down`,
 //! `pathological_abs`, `normal_holey_guards`, `normal_mod_chain`, `normal_div_chain`), under 9 on
-//! the rest. Two families grow with their answers: `output_grid` 15.0 for 64 times the pieces,
-//! `nested_moduli_eq_4096` 25.3 for 154 times. Main exceeds 13 on 24 of the 38 families it
+//! the rest; `output_grid` (four values demanded, 4n pieces) 8.0 from 64 to 512 links, and with
+//! 64 and 512 values demanded at 1024 links (8 times the pieces) 5.0 times the instructions and
+//! 5.7 times the bytes; `nested_moduli_eq_4096` 4.7 from 160 to 1280 links, multiples of 10 so
+//! that both put the same constants next to the root. Main exceeds 13 on 24 of the 38 families it
 //! finishes within 60 s (17.8 to 2,965), and 10 do not finish within 60 s. Main's answer dump
 //! (182,747 calls): 182,327 the same, 420 finer, none coarser or unsound. Size against main:
 //! 2,547 lines added and 117 removed, this section included.
