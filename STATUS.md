@@ -2176,13 +2176,16 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| CAST-int-f64-lit-class | running | 2026-11-13 17:25 |  |
 | CONST-too-large | impl attempt 1 | 2026-11-13 12:32 | reproduced on 19ade181c: A100 programs 1 and 3 compile, stop at run time 'Number too large for memory ... 130 EiB'; load 36.31 40.11 40.40 |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | cross-review round 5 launched on zed-impl 77a026349: Claude, Codex; Gemini 429 (gap recorded); main dump in progress; load 25.99 19.01 20.42 |
+| MSG-literal-class-headline | running | 2026-11-13 17:25 |  |
 | PERF-tuple-print | impl attempt 1 | 2026-11-13 14:51 | started; worktree /home/luke/Work/wt/perf-tuple-print from 4a1a69d22 |
 | POW-scope-exponent | impl attempt 1 | 2026-11-13 14:51 | reproduced on 4a1a69d22 with zedc run: 2^(2^k - 2) under k > 0, 2^(3^k - 3) under k >= 1, 2^(5^(2^k + 1) - 10) under k >= 0 all rejected 'exponent that may be n |
 | PRES-overlap-coeffs | impl attempt 1 | 2026-11-13 14:10 | started; worktree from origin/main 64dfe1c61 |
 | REPAIR-past-binding | impl attempt 1 | 2026-11-13 14:51 | started; worktree from origin/main 8776f59cf |
 | ST-walk-orders-left | impl attempt 1 | 2026-11-13 13:56 | started |
+| TESTS-l01_26a-split | running | 2026-11-13 17:20 |  |
 | TESTS-unignore-all | impl attempt 1 | 2026-11-13 15:27 | started; worktree from origin/main a9818cd33 |
 | TYPE-op-table | impl attempt 1 | 2026-11-13 15:22 | started; load 35.92 39.67 40.25 |
 
