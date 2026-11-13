@@ -189,7 +189,7 @@ fn out_with(p: &Program, u: &Unit, stdin: &str) -> String {
 fn stopped_at_join(out: &str) {
     let placed = out
         .strip_prefix("error: ")
-        .and_then(|e| e.split_once(": `++` cannot join"))
+        .and_then(|e| e.split_once(": String too long: `"))
         .and_then(|(at, _)| at.split_once(':'))
         .is_some_and(|(line, col)| line.parse::<usize>().is_ok() && col.parse::<usize>().is_ok());
     assert!(placed, "{out}");
@@ -281,7 +281,11 @@ fn a_stopped_binding_read_twice_is_evaluated_once() {
     assert!(report.built.is_empty(), "{:?}", report.built);
     assert_eq!(report.left.len(), 1, "{:?}", report.left);
     assert_eq!(report.left[0].0.to_string(), term(&p, "huge"));
-    assert!(report.left[0].1.contains("a string's length can hold"));
+    assert!(
+        report.left[0]
+            .1
+            .contains("a string holds at most 2^64 - 1 bytes")
+    );
     for x in ["huge", "r0", "r1"] {
         assert_eq!(term(&s, x), term(&p, x), "{x}");
     }
@@ -319,7 +323,11 @@ fn a_binding_named_only_in_a_cut_branch_is_still_evaluated() {
     let (p, s, report) = staged(&src);
     assert!(report.unread.is_empty(), "{:?}", report.unread);
     assert_eq!(report.left.len(), 1, "{:?}", report.left);
-    assert!(report.left[0].1.contains("a string's length can hold"));
+    assert!(
+        report.left[0]
+            .1
+            .contains("a string holds at most 2^64 - 1 bytes")
+    );
     let main = term(&s, "main");
     assert!(
         main.contains("huge = twice(") && !main.contains("if"),

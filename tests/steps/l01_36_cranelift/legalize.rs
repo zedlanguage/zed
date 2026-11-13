@@ -222,7 +222,9 @@ fn an_order_refused_its_memory_names_the_operator_as_written() {
         let kernel = raise(m).and_then(|t| super::kernel(&t));
         let want = kernel.unwrap_err();
         assert!(
-            want.starts_with(&format!("`{op}` must compare two numbers")),
+            want.starts_with(&format!(
+                "Numbers too close to order in memory: `{op}` compares two numbers"
+            )),
             "{want}"
         );
         assert_eq!(machine.map(|(v, _)| v), Err(want.clone()), "{op}: machine");

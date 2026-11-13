@@ -33,11 +33,9 @@ fn len_both(block: &str, k: u32) -> (Value, Value, u64) {
 }
 
 /// The refusal of `++` when the two halves are `2^63` bytes each.
-const TOO_LONG: &str = "`++` cannot join a string of 9223372036854775808 bytes to one of \
-                        9223372036854775808 bytes: the result would be 18446744073709551616 \
-                        bytes, more than the 18446744073709551615 bytes a string's length can \
-                        hold; keep the parts apart, as a list of strings written out one at a \
-                        time, or join fewer of them";
+const TOO_LONG: &str = "String too long: `++` would join strings of 8.0 EiB and 8.0 EiB, 16 EiB in \
+                        all; a string holds at most 2^64 - 1 bytes. Keep the parts apart, as a \
+                        list of strings written out one at a time, or join fewer of them";
 
 #[test]
 fn a_string_doubled_to_2_62_bytes_has_its_length_natively() {

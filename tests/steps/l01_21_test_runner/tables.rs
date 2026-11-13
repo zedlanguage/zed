@@ -108,7 +108,10 @@ fn a_wave_that_aborts_fails_its_row() {
         got[0].starts_with("5:8: `\"7\" -> \"7\\n\"` of `main`: "),
         "{got:?}"
     );
-    assert!(got[0].contains("cannot join"), "{got:?}");
+    assert!(
+        got[0].contains("String too long: `++` would join"),
+        "{got:?}"
+    );
 }
 
 #[test]
