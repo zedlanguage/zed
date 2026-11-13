@@ -567,6 +567,9 @@ fn chain(n: usize, close: Option<i64>) -> Sys {
     Sys::new(&xs, 0, 4 * n as i64, vec![], rel)
 }
 
+/// Asserts the answers of [`chain`] closed by `close` in each of [`HOWS`] at 8 and 64 names,
+/// then near linear time in each: in the reverse order the closing test comes first and each
+/// link then moves the ends of a closed path (ST-walk-orders: on main 36 to 61 at 8n).
 fn chain_answers(what: &str, close: impl Fn(usize) -> Option<i64> + Sync, empty: bool) {
     for n in [8, 64] {
         let sys = chain(n, close(n));
@@ -586,7 +589,7 @@ fn chain_answers(what: &str, close: impl Fn(usize) -> Option<i64> + Sync, empty:
             }
         }
     }
-    for how in [How::AtOnce, How::Forward] {
+    for how in HOWS {
         let inputs = scaling::inputs(8, |n| chain(n, close(n)));
         scaling::check_order(&format!("{what}, {how:?}, n names"), 8, 1, |m| {
             drop(inputs[&m].narrowed(how));
@@ -715,6 +718,24 @@ fn control_a_walk_without_its_start_narrows_nothing_in_near_linear_time() {
             w
         },
     );
+}
+
+/// The walk, and the walk without its start, given as one conjunction and in the reverse
+/// order: near linear time in both, as [`family`] checks in the forward order, where it also
+/// checks the answers in each order (ST-walk-orders: on main 44 to 85 at 8n at once, each row
+/// joined against all the rows before it, and 43 to 81 in reverse). The walk is measured from
+/// 40 rows, where a meet of a threshold row that changed nothing but copied its product made a
+/// kept block compare every product so copied since (`Scope::meet_own`): 11.0 in reverse.
+#[test]
+fn a_walk_narrows_in_near_linear_time_at_once_and_in_reverse() {
+    for (what, n, start) in [("walk", 40, true), ("walk without its start", 10, false)] {
+        let inputs = scaling::inputs(n, |m| walk(m, start));
+        for how in [How::AtOnce, How::Backward] {
+            scaling::check_order(&format!("{what}, {how:?}, n rows"), n, 1, |m| {
+                drop(inputs[&m].narrowed(how));
+            });
+        }
+    }
 }
 
 /// Claude round 3 (`probe_r3.rs`, C26 and base churn): unbounded `a`, `x`, `y`,
@@ -855,6 +876,16 @@ fn a_chain_raise_narrows_in_near_linear_time() {
     });
 }
 
+/// The chain raise given as one conjunction: near linear time, as in the forward order
+/// (ST-walk-orders: on main 16 to 37 at 8n, each `x0 >= j + 1` raising every `x_i` in turn).
+#[test]
+fn a_chain_raise_given_at_once_narrows_in_near_linear_time() {
+    let inputs = scaling::inputs(16, chain_raise);
+    scaling::check_order("chain raise, AtOnce, k tests", 16, 1, |m| {
+        drop(inputs[&m].narrowed(How::AtOnce));
+    });
+}
+
 /// The B4 test of `nests.rs`, flipped to its exact answer (Gemini rounds 3 and 4, META3 and
 /// META4): `x - y >= 5 || y - x >= 5`, then `-2 <= x - y <= 2`, `x`, `y` in `-20..=20`, leave no
 /// value, in either order.
@@ -934,6 +965,39 @@ fn a_bound_on_an_end_of_a_closed_cycle_reaches_every_name() {
             assert_eq!(kept(&head, &x, 0, 32), want, "{how:?}, x0 <= 5: {x}");
             let want: Vec<i64> = (30 - (n - 1 - i) as i64..=3 * n as i64 + 1 + i as i64).collect();
             assert_eq!(kept(&tail, &x, 0, 32), want, "{how:?}, {last} >= 30: {x}");
+        }
+    }
+}
+
+/// Every family above in every order with `path_check` on: each test the paths take, a side of
+/// one conjunction among them (`Scope::narrow_linear`), and each row `extend_threshold`
+/// certifies is run again by the solver, and the scopes agree (ST-walk-orders). Given as one
+/// conjunction, a family whose sides the paths take is compared at least once.
+#[test]
+fn every_order_of_the_families_on_paths_matches_the_solver() {
+    use zedc::store::product::path_check;
+    let fams: Vec<(&str, Sys, bool)> = vec![
+        ("cycle of weight 0", chain(8, Some(-7)), true),
+        ("cycle of weight 1", chain(8, Some(-6)), false),
+        ("open chain", chain(8, None), true),
+        ("walk", walk(6, true), true),
+        ("walk without its start", walk(6, false), true),
+        ("chain raise", chain_raise(6), true),
+        ("churn", c26(3, true), false),
+    ];
+    for (what, sys, on_paths) in &fams {
+        for how in HOWS {
+            path_check::start();
+            drop(sys.narrowed(how));
+            let (compared, differences) = path_check::stop();
+            assert!(
+                differences.is_empty(),
+                "{what}, {how:?}: the scopes on paths differ from the solver's:\n{}",
+                differences.join("\n")
+            );
+            if matches!(how, How::AtOnce) && *on_paths {
+                assert!(compared > 0, "{what}, {how:?}: nothing compared");
+            }
         }
     }
 }

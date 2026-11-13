@@ -6367,7 +6367,15 @@ impl Scope {
             s.settle_test(test);
             let plain = plain_test(test, &s);
             s.narrow(plain.as_ref().unwrap_or(test), outcome, premises);
-            if s.bottom || !(s.seen.extension.as_deref()).is_some_and(Extension::certified) {
+            // A scope left with paths ends with sides of a conjunction the paths took, after a
+            // reduction (`Scope::narrow_linear`), as a forward order of admitted tests does.
+            // Complexity tradeoff: naive, reduce again, which materializes the paths and
+            // solves every row, Θ(n) a test and Θ(n²) for a cycle given at once (s4 `cycle0`,
+            // `cycle1`); used, no second reduction, O(1); the paths' products are exact by
+            // the shortest-path argument of `NameProducts::hold` (Bellman 1958, Shostak
+            // 1981). Measured 8.1 to 8.7 at 8n in every order (ST-walk-orders).
+            let certified = (s.seen.extension.as_deref()).is_some_and(Extension::certified);
+            if s.bottom || s.names.paths.is_empty() && !certified {
                 reduce(&mut s);
             }
         }
@@ -6379,7 +6387,7 @@ impl Scope {
                 (Some(a), Some(b)) => !Arc::ptr_eq(&a, &b),
                 _ => false,
             };
-            if admitted || newly {
+            if admitted || newly || !s.names.paths.is_empty() {
                 path_check::compare(&s, || {
                     path_check::as_reference(|| self.assume_with(test, outcome, premises, reduce))
                 });
@@ -6602,11 +6610,17 @@ impl Scope {
     // general incremental solver for such rows; any other row clears it and reduces as
     // before. Products and affine hulls are unchanged; keeping each whole row (deferred, see
     // [`Relation`]) and the set of used endpoints costs O(log n) a row, O(n log n) over the
-    // walk. Measured, instructions at 8n over n: s4 walk 10.4, walk without its start 9.5
-    // (its test count alone grows 39/4 = 9.75 times); main allocates 24.8 and 26.8 times
-    // the bytes. The walk's last test, which no certificate covers, runs the solver once over
-    // every row; the cross-review of ST-walk-implicit measured it at 79% of the walk's work at
-    // 8n (allocator calls), which keeps the walk above 9.
+    // walk. The argument is Freuder's ("A sufficient condition for backtrack-free search",
+    // JACM 29(1), 1982): rows that join a tree of names, each arc consistent with the box,
+    // leave every value of the box reachable without search. ST-walk-orders extends it to a
+    // walk's start `v0 - w >= 1` (conjuncts of the hub and one name that hold at both
+    // witnesses, kept as used) and to a forced row whose first case no point of the box
+    // meets, which is `y - w >= b` and raises `y` alone; before, each ran the solver over
+    // every row, Θ(n²) (14.4 at 8n in reverse). Measured, instructions at 8n over n: s4 walk
+    // 8.1 to 9.97 in reverse, 6.5 to 8.1 at once, 10.2 to 10.4 forward, walk without its
+    // start 8.3 to 9.75. The walk's last test, which no certificate covers, runs the solver
+    // once over every row; the cross-review of ST-walk-implicit measured it at 79% of the
+    // walk's work at 8n (allocator calls), which keeps the forward walk above 9.
     //
     // The checker's scopes (item ST-walk-checker-admit) are admitted as in
     // `Scope::extend_path`: lazy, names bound to themselves (`Scope::self_bound`), and
@@ -6646,7 +6660,9 @@ impl Scope {
             upper,
             lower,
         } = row;
-        if previous.as_ref().is_some_and(|(hub, used)| *hub != w || (used.contains(&x) && used.contains(&y)))
+        if previous
+            .as_ref()
+            .is_some_and(|(hub, used)| *hub != w || (used.contains(&x) && used.contains(&y)))
             || ![&x, &y, &w].into_iter().all(|n| self.self_bound(n))
         {
             return false;
@@ -7214,6 +7230,61 @@ impl Scope {
         })
     }
 
+    /// Narrows by the sides of a root conjunction giving `value`, in the order given, when
+    /// each is narrowed exactly: by the paths ([`Scope::extend_path`]), as a row
+    /// [`Scope::extend_threshold`] certifies, or, when some side is a nest or an `if`, as an
+    /// atom the solver takes (`Scope::atom`), the scope being reduced after the atoms before
+    /// the next row and at the end. `false` when a side is none of these, with the scope
+    /// possibly changed; the caller then goes back to the scope it had before the conjunction
+    /// ([`Scope::narrow_linear`]).
+    fn sides_exactly(
+        &mut self,
+        tree: &Tree,
+        sides: &[(usize, bool)],
+        value: bool,
+        prem: &Premises,
+    ) -> bool {
+        let nests = |k: usize| matches!(tree.nodes[k].kind, Kind::Nest(..) | Kind::If(_));
+        let atoms_solved = sides.iter().any(|&(k, _)| nests(k));
+        let mut unreduced = false;
+        for &(k, p) in sides {
+            let v = value == p;
+            if self.bottom {
+                return true;
+            }
+            if self.extend_path(&tree.term_at(k), v, prem) {
+                continue;
+            }
+            if !nests(k) {
+                if !atoms_solved {
+                    return false;
+                }
+                self.names.materialize();
+                self.narrow_node(tree, k, v, prem);
+                unreduced = true;
+                continue;
+            }
+            if unreduced {
+                self.reduce_case();
+                unreduced = false;
+                if self.bottom {
+                    return true;
+                }
+            }
+            self.names.materialize();
+            let Some(body) = self.relation_of(&tree.term_at(k), v) else {
+                return false;
+            };
+            if !self.extend_threshold(&body, prem) {
+                return false;
+            }
+        }
+        if unreduced {
+            self.reduce_case();
+        }
+        true
+    }
+
     /// Narrows by node `n` of `tree` giving `value`, keeping the linear relation of the node's
     /// test when it has cases ([`Scope::narrow`]). A nest the value forces whose test has no
     /// such relation, as when one side holds a `mod`, is narrowed side by side, each side
@@ -7223,6 +7294,37 @@ impl Scope {
     fn narrow_linear(&mut self, tree: &Tree, n: usize, value: bool, prem: &Premises) {
         if self.bottom {
             return;
+        }
+        // Complexity tradeoff: naive, a root nest the value forces whose test has a relation is
+        // narrowed as one node (`narrow_node`), which splits each `or` side into cases and
+        // joins them against the whole relation: a walk of n rows `v_i + w <= 0 || v_{i+1} - w
+        // >= 1` given as one conjunction takes Θ(n) per row and Θ(n²) in all (measured 44 to
+        // 85 at 8n on main, ST-walk-orders). Used: first the sides one by one, each narrowed
+        // exactly ([`Scope::sides_exactly`]): by the paths, or as a row `extend_threshold`
+        // certifies (Freuder, "A sufficient condition for backtrack-free search", JACM 29(1),
+        // 1982: a tree of constraints that are arc consistent is solved without search), or
+        // as an atom the solver takes; O(s log s) for a test of `s` nodes, plus the
+        // certification of each row, as in the forward order. A conjunction with a side none
+        // of these takes goes back to the scope before it (one clone of persistent maps, O(1))
+        // and is narrowed as before, so it costs at most its narrowing twice. Measured at 8n,
+        // instructions: the walk 6.5 to 8.1 at n = 5 to 40, without its start 8.6 to 9.6,
+        // the chains with a cycle (s4 `cycle0`, `cycle1`) 8.1 to 8.5.
+        if let Kind::Nest(and, sides) = &tree.nodes[n].kind
+            && *and == value
+            && n == 0
+        {
+            // The sides in the tree's order of rank, and among one rank in the order the test
+            // gives them: the tree numbers a root's sides from its last to its first
+            // ([`Tree::of`]), where its own order sorts them by form, so that a walk's rows
+            // would come in the order of their names' texts (`v1`, `v10`, `v11`, ..., `v2`),
+            // each joining two names that rows before it hold and no row certified.
+            let mut ordered = sides.clone();
+            ordered.sort_by_key(|&(k, _)| (tree.nodes[k].rank, std::cmp::Reverse(k)));
+            let saved = self.clone();
+            if self.sides_exactly(tree, &ordered, value, prem) {
+                return;
+            }
+            *self = saved;
         }
         let body = match &tree.nodes[n].kind {
             Kind::Nest(..) | Kind::If(_) => self.relation_of(&tree.term_at(n), value),
@@ -7243,41 +7345,15 @@ impl Scope {
             self.seen.extension = None;
             self.reduce();
         }
-        // Complexity tradeoff: naive, a root nest the value forces whose test has a relation is
-        // narrowed as one node (`narrow_node`), which splits each `or` side into cases and
-        // joins them against the whole relation: a walk of n rows `v_i + w <= 0 || v_{i+1} - w
-        // >= 1` given as one conjunction takes Θ(n) per row and Θ(n²) in all (measured 44 to
-        // 57 at 8n, ST-walk-orders). Used: the sides are narrowed one by one, as when the test
-        // has no relation, so `a && b` narrows as `a` then `b` do and each row may be certified
-        // by `extend_threshold` (Freuder, "A sufficient condition for backtrack-free search",
-        // JACM 1982: a tree of constraints that are arc consistent is solved without search);
-        // the conjunction then adds the whole relation, whose conjuncts the sides gave
-        // already, but for those of sides of one name, which the products hold. O(s log s) more
-        // for a test of `s` nodes; measured as the forward order, 10.5 to 11 at 8n.
-        if let Kind::Nest(and, sides) = &tree.nodes[n].kind
-            && *and == value
-            && n == 0
-        {
-            // The sides in the tree's order of rank, and among one rank in the order the test
-            // gives them: the tree numbers a root's sides from its last to its first
-            // ([`Tree::of`]), where its own order sorts them by form, so that a walk's rows
-            // would come in the order of their names' texts (`v1`, `v10`, `v11`, ..., `v2`),
-            // each joining two names that rows before it hold and no row certified.
-            let mut sides = sides.clone();
-            sides.sort_by_key(|&(k, _)| (tree.nodes[k].rank, std::cmp::Reverse(k)));
-            for (k, p) in sides {
-                self.narrow_linear(tree, k, value == p, prem);
-            }
-            if let Some(body) = body
-                && !self.bottom
-                && !self.seen.extension.as_deref().is_some_and(Extension::certified)
-            {
-                self.relation.and(body);
-            }
-            return;
-        }
         let Some(body) = body else {
-            self.narrow_node(tree, n, value, prem);
+            match &tree.nodes[n].kind {
+                Kind::Nest(and, sides) if *and == value && n == 0 => {
+                    for &(k, p) in sides {
+                        self.narrow_linear(tree, k, value == p, prem);
+                    }
+                }
+                _ => self.narrow_node(tree, n, value, prem),
+            }
             return;
         };
         let before = self.relation.clone();
@@ -7839,6 +7915,33 @@ impl Scope {
             self.names.insert(n.clone(), p);
         }
         met
+    }
+
+    /// Meets the integers of `n`, when in scope, with `x` on the premises its product rests
+    /// on; the product is put back only when the meet changed it, as [`Scope::meet_name`] does.
+    // Complexity tradeoff: naive version, the meet made in place (`get_mut`), which copies the
+    // path to `n` and the product even when the meet changes nothing; a block kept many tests
+    // ago ([`Block::update`]) then finds its names by a difference of the maps that skips only
+    // what they share, and compares each copied product with the one it kept: Theta(t) per
+    // update, Theta(n²) over the n tests of a family whose threshold rows are met each test
+    // (s4 `walk`, 19.9 million product comparisons at n = 2560 against 0.34 million at 320).
+    // Used: a copy of the product (one `Arc`), put back only when changed, as the reduction
+    // does (COMPLEXITY.md row PA-bind-cost): O(log n) per meet, nothing copied when nothing
+    // changes, and the difference walks the changes alone (ST-walk-orders; 0.14 million
+    // comparisons at 2560, 17 thousand at 320; the s4 walk in reverse went from 14.4 to 9.6
+    // times the instructions at 8n). The maps copy the path to a changed node and share the
+    // rest (Driscoll, Sarnak, Sleator and Tarjan, "Making data structures persistent", JCSS
+    // 38(1), 1989), so a difference is cheap only while unchanged nodes stay shared. Test:
+    // `xst::s4::a_walk_narrows_in_near_linear_time_at_once_and_in_reverse`.
+    fn meet_own(&mut self, n: &Arc<str>, x: IntervalSet) {
+        let Some(p) = self.names.get(n) else {
+            return;
+        };
+        let mut p = p.clone();
+        let prem = p.premises();
+        if p.meet_ints(x, &prem) {
+            self.names.insert(n.clone(), p);
+        }
     }
 
     /// Whether `n`, in scope, has no value: its type has none, or it is read through its term
@@ -9822,17 +9925,11 @@ impl Scope {
                 true
             }
             threshold::Answer::Bounds { names, hub } => {
-                let mut meet = |n: &Arc<str>, x: IntervalSet| {
-                    if let Some(p) = self.names.get_mut(n) {
-                        let prem = p.premises();
-                        p.meet_ints(x, &prem);
-                    }
-                };
                 for (n, (lo, hi)) in shape.names.iter().zip(names) {
-                    meet(n, IntervalSet::range(lo, hi));
+                    self.meet_own(n, IntervalSet::range(lo, hi));
                 }
                 if let Some(w) = &shape.hub {
-                    meet(w, hub);
+                    self.meet_own(w, hub);
                 }
                 true
             }
@@ -13551,9 +13648,8 @@ impl Scope {
         for (n, l, h) in [(x, xl, xh), (y, yl, yh)] {
             if l > h {
                 self.empty_at(n);
-            } else if let Some(p) = self.names.get_mut(n) {
-                let prem = p.premises();
-                p.meet_ints(IntervalSet::range(l, h), &prem);
+            } else {
+                self.meet_own(n, IntervalSet::range(l, h));
             }
         }
         Some((x.clone(), y.clone()))
@@ -14888,7 +14984,22 @@ pub mod path_check {
                 record(format!("{n}: {a:?} where the solver gives {b:?}"));
             }
         }
-        if *new.relation != *old.relation {
+        // A relation may differ in form alone: a certified row whose first case no point of
+        // the box meets keeps its live case (`Scope::extend_threshold`), as a forward order
+        // does, where the solver given the conjunction at once keeps both. Two relations of
+        // different forms are compared by their points, each with the other's negation.
+        let whole =
+            |s: &Scope| Formula::and(s.relation.set().iter().map(|f| (**f).clone()).collect());
+        let within = |a: &Formula, b: &Formula| {
+            let f = Formula::and(vec![a.clone(), Formula::negate(b.clone())]);
+            matches!(presburger::satisfiable(&f), Ok(None))
+        };
+        if *new.relation != *old.relation
+            && !{
+                let (a, b) = (whole(new), whole(&old));
+                within(&a, &b) && within(&b, &a)
+            }
+        {
             record(format!(
                 "relation {} where the solver has {}",
                 new.relation, old.relation
