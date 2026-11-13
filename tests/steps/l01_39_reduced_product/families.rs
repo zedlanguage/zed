@@ -2249,7 +2249,8 @@ fn projection_shortcut_cases() {
     assert_eq!(out.join("\n"), want);
 }
 
-/// The facts of [`projection_shortcut_cases`] on origin/main abf5d24cd.
+/// The facts of [`projection_shortcut_cases`] on origin/main 9568d1a8d, the same as on abf5d24cd
+/// except C2, where main now gives x = 2 or 4 (x = 2w, w in 1..=2) for the interval 2..=4.
 const WANT_SHORTCUT_CASES: &str = "
 P1 eq-then-ne: x=[0..=1, 3..=4] y=[0..=1, 3..=4]
 P2 ne-then-eq: x=[0..=1, 3..=4] y=[0..=1, 3..=4]
@@ -2403,7 +2404,7 @@ G5 x <= 2y <= x + 1: x=[0..=4] y=[0..=2]
 E1 G5 then y >= 1: x=[1..=5] y=[1..=3]
 A26 audit seed 26 steps 0-4: a=[-8..=5] x=[-8..=3] y=[-8..=5] z=[-4..=8]
 C1 x = 2w, x = 2y + 1: bottom
-C2 x = 2w, x = y + 1: x=[2..=4] y=[1..=3] w=[1..=2]
+C2 x = 2w, x = y + 1: x=[2..=2, 4..=4] y=[1..=3] w=[1..=2]
 C3 x = 2w + 1, x = 2y: bottom
 C4 x = 3w + 1, x >= y: x=[1..=7] y=[0..=3] w=[0..=2]
 ";
