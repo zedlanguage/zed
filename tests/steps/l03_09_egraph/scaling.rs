@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use num_bigint::BigInt;
-use zed_kernel::poly::{Carrier, Verdict, decide, limit};
+use zed_kernel::poly::{Carrier, LIMIT, Verdict, decide};
 use zed_kernel::term::build::{lit, prim, var};
 use zed_kernel::term::{Prim, Term};
 use zed_kernel::{Rat, Value};
@@ -73,7 +73,7 @@ fn proved(id: &Id) {
     assert_eq!(d.verdict, Verdict::Proved);
     // The counted work beside the meter's instructions: their ratio is the spread of the
     // counter (COMPLEXITY.md POLY-nf-work).
-    eprintln!("size {} work {} limit {}", d.size, d.work, limit(d.size));
+    eprintln!("size {} work {} limit {LIMIT}", d.size, d.work);
 }
 
 /// `(1 + x + ... + x ^ k) ^ 2` against its `2k + 1` written monomials: one dense product.
@@ -161,6 +161,31 @@ fn a_sum_of_n_names_times_a_sum() {
     scaling::check("(x0 + ... + xn) * (y + z)", 500, |n| proved(&ins[&n]));
 }
 
+/// `x0 * x1 * c0 + ... + x(n-1) * x0 * c(n-1) - x0` against the same monomials in reverse,
+/// `c` of two words each: `n` names, so the monomials are lists past `u128`'s Kronecker keys,
+/// and only sums are formed, each charged by its terms and words (`poly::LIMIT`, QUESTIONS
+/// A99), so order `n log n` with the balanced tree.
+fn ring_of_names(n: usize) -> Id {
+    let names: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
+    let c = |i: usize| Term::Lit(Value::Big(Arc::new(Rat::int(BigInt::from(i + 1) << 100))));
+    let monomial = |i: usize| mul(c(i), mul(var(&names[i]), var(&names[(i + 1) % n])));
+    let forward: Vec<Term> = (0..n).map(monomial).collect();
+    let backward: Vec<Term> = (0..n).rev().map(monomial).collect();
+    Id {
+        lhs: less_x(sum(&forward)),
+        rhs: less_x(sum(&backward)),
+        names,
+    }
+}
+
+#[test]
+fn a_sum_of_n_monomials_in_n_names() {
+    let ins = scaling::inputs(1000, ring_of_names);
+    scaling::check("x0 * x1 * c0 + ... + x(n-1) * x0 * c(n-1)", 1000, |n| {
+        proved(&ins[&n])
+    });
+}
+
 #[test]
 fn a_grid_of_n_squared_monomials() {
     let ins = scaling::inputs(30, grid);
@@ -173,8 +198,9 @@ fn a_grid_of_n_squared_monomials() {
 /// `k + 1` monomials of up to `k` bits, so order 2 in `k`, linear in the output's bits. The
 /// squarings multiply homogeneous sums, whose packed indices are a common step apart
 /// (`Poly::plan`). The written side makes the law long enough to be expanded: written as two
-/// powers, `(x + y) ^ k` costs about `k^2 / 64` words for `log k` bits of text, refused from
-/// k = 72 on (`poly::limit`, QUESTIONS A98; `l03_09_egraph::refusal`).
+/// powers, `(x + y) ^ k` costs about `k^2 / 64` words, which the size rule of QUESTIONS A98
+/// refused from k = 72 on; the limit of 250 ms (`poly::LIMIT`, QUESTIONS A99) is passed
+/// between k = 4096 and 8192 (`l03_09_egraph::calibration`).
 fn binomial(k: usize) -> Id {
     let s = |a: &str, b: &str| sum(&[var(a), var(b)]);
     let c = binomials(k);
@@ -268,10 +294,12 @@ fn gapped_square(k: usize) -> Id {
 
 #[test]
 fn the_square_of_a_power_of_a_sum_beside_one_name() {
-    let ins = scaling::inputs(256, gapped_square);
+    // At k = 2048 the square is about 2 s of work, refused (QUESTIONS A99); 8 * 32 = 256 is
+    // about 50 ms.
+    let ins = scaling::inputs(32, gapped_square);
     scaling::check_order(
         "((x + y) ^ k + x) ^ 2, 3k + 3 monomials of 2k bits",
-        256,
+        32,
         2,
         |n| proved(&ins[&n]),
     );

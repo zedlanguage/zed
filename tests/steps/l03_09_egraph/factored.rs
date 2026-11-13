@@ -1,9 +1,9 @@
-//! Products of powers of the same factors (POLY-nf-power-value, QUESTIONS A98): each side read
+//! Products of powers of the same factors (POLY-nf-power-value): each side read
 //! as a constant times powers of sums and names, each sum expanded once, the sides not at all.
 
 use std::sync::Arc;
 
-use zed_kernel::poly::{Carrier, Refused, Verdict, limit};
+use zed_kernel::poly::{Carrier, LIMIT, Refused, Verdict};
 use zed_kernel::term::Term;
 use zed_tests::scaling;
 
@@ -40,35 +40,35 @@ fn the_a98_laws_at_exponent_1000() {
         Carrier::Int,
     );
     assert_eq!((d.verdict, d.factored), (Verdict::Proved, true));
-    // Different factors on the two sides: the expansion would form 1001 monomials of up to
-    // 1000 bits, more work than the limit of this size, so the law is refused (QUESTIONS A98),
-    // at most the limit spent.
+    // Different factors on the two sides: the expansion forms 1001 monomials of up to 1000
+    // bits, refused by the size rule of QUESTIONS A98 and about 30 ms of work, so proved under
+    // the limit of 250 ms (QUESTIONS A99).
     let d = law(
         "x: int",
         "(1 + x) ^ 1000 * (1 - x) ^ 1000",
         "(1 - x ^ 2) ^ 1000",
         Carrier::Int,
     );
-    let Verdict::Refused(r) = d.verdict else {
-        panic!("{:?}", d.verdict)
-    };
-    assert_eq!((r.why, d.factored), (Refused::Work(d.size), false));
-    assert!(d.work <= limit(d.size));
-    eprintln!(
-        "exponent 1000: size {} work {} limit {}",
-        d.size,
-        d.work,
-        limit(d.size)
-    );
-    // At 2^32, which never finished before the work was counted, it is refused as soon.
+    assert_eq!((d.verdict, d.factored), (Verdict::Proved, false));
+    assert_eq!(d.terms, Some([1001, 1001]));
+    assert!(d.work <= LIMIT / 5.0, "{}", d.work);
+    // At 2^32, which never finished before the work was counted, it is refused at once: the
+    // first power past the limit is charged before it runs.
     let d = law(
         "x: int",
         "(1 + x) ^ 4294967296 * (1 - x) ^ 4294967296",
         "(1 - x ^ 2) ^ 4294967296",
         Carrier::Int,
     );
-    assert!(matches!(d.verdict, Verdict::Refused(_)), "{:?}", d.verdict);
-    assert!(d.work <= limit(d.size));
+    let Verdict::Refused(r) = d.verdict else {
+        panic!("{:?}", d.verdict)
+    };
+    assert!(
+        matches!(r.why, Refused::Work(w) if w > LIMIT),
+        "{:?}",
+        r.why
+    );
+    assert!(d.work <= LIMIT);
     // At 10 it is expanded.
     let d = law(
         "x: int",

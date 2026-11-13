@@ -17,9 +17,9 @@
 //! products of sums are expanded and like monomials merged; equal normal forms prove the
 //! identity in every commutative ring, since the expansion uses only the ring laws.
 //!
-//! The expansion counts its work as it goes, each operation charged before it runs, and stops
-//! with a [`Refusal`] once the work would pass [`limit`] of the identity's size: the work of the
-//! costliest product of three sums written at the same size (QUESTIONS A98).
+//! The expansion counts its work as it goes, each operation charged before it runs by the
+//! sizes of its operands, and stops with a [`Refusal`] once the work would pass [`LIMIT`]: the
+//! work that took 250 ms on the machine and at the load it was measured at (QUESTIONS A99).
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -50,74 +50,76 @@ pub enum Carrier {
     Ring,
 }
 
-/// The most work the expansion of an identity of `size` may spend: the work of the costliest
-/// product of at most three sums written at that size (QUESTIONS A98), which is the larger of
-/// the work counted for `(x1 + … + xs) ^ 3`, `s = max(1, (size - 2) / 2)` rounded down, and for
-/// the one sum `x1 + … + xm`, `m = (size + 1) / 2`. The sum is the larger only up to size 5,
-/// where the power reads one name (`x ^ 3`, work 2) and `a + b + c` costs 5.
+/// The most work the expansion of an identity may spend: 250 ms of the expansion on the
+/// machine and at the load it was measured at (QUESTIONS A99), in work units, so that every
+/// machine refuses the same identities. Measured on 2026-11-13 on an AMD Ryzen 9 5950X (16
+/// cores, 32 threads, up to 5.1 GHz) at a load average of 36 to 41 from other builds and tests,
+/// with the test profile (`opt-level = 2`): the largest identity of each of nine families of
+/// products, powers and sums (a probe of plan row POLY-work-250ms, not kept; `l03_09_egraph::calibration` times three laws again) took 10 to 22 ns a unit, 14.3 ns as
+/// the geometric mean, 70 000 units a millisecond.
 ///
-/// The size is the identity's size as a term: one for each operation, name, atom, `let` and
-/// read of a `let`'s name, and one for each number plus the bits of its numerator, of its
-/// denominator when that is not 1, and of an exponent. The work is counted by [`Budget`] in
-/// word operations: a sum or a negation the words of its operands' coefficients, a product
-/// what its support product spent, plus the cheaper of its dense and sparse costs
-/// ([`Poly::plan`]) when that product gives up, a power of one term the words
-/// of its result; a power of more terms is its squarings' products. Written as `(x1 + … + xs)
-/// ^ 3`, the three sums cost `2 s + 2`: `s` names, `s - 1` sums, a power and the two bits of
-/// 3. Their work is `(s - 1)(s + 2) / 2` for the sums that read the base, `s^2` for its square
-/// (`s` terms by `s`, one word each), and `s^2 (s + 1) / 2` for the base times the square's
-/// `s (s + 1) / 2` terms; the cheaper dense cost only lowers it, so the formula is at least the
-/// counted work. Any other product of three sums of that size costs no more: three distinct
-/// sums of `a`, `b` and `c` names cost `ab + abc` at size `2 (a + b + c) - 1`, and a shared
-/// one read by `let` costs the same as the power at a larger size (tested by brute force over
-/// the shapes and name overlaps, `poly::tests::no_product_of_three_sums_is_refused`). The
-/// limit includes the reading of the term, the sums that build the base, so that a term with
-/// no product (`a + c == c + a`, work 4 against 12) is never refused; leaves and constants
-/// cost nothing in either. `s` is at least 1, and the sum counts, so that no
-/// small identity is refused: `x == x` has a limit of 2 and `abs(a) + -abs(a) == 0`, of work 3,
-/// a limit of 5.
+/// The work is counted by `Budget`, each operation charged before it runs, by the operands'
+/// sizes: its number of terms `t`, and the words `w` of its widest coefficient, 64 bits each.
+/// A unit is one of the dense product's `L log2 L`, about 14 ns, in the `L` 32-bit words of the
+/// packed integers (`Poly::plan`), so the dense product's charge grows with the exponents'
+/// span times the coefficients' bits. The other charges are that unit times their measured
+/// times: a sum or a negation `SUM_TERM` or `SPARSE_TERM` a term and `SUM_WORD` a word of
+/// its operands, the sparse product `PAIR` plus `w1 w2` for each of its `t1 t2` pairs, the
+/// support product `SUPPORT` for each unit it counts, and a power of one term the words of
+/// its result.
 ///
-/// Complexity tradeoff: what is given up is every identity whose expansion costs more than
-/// the limit, refused with [`Refusal`]: an error naming the operation at which the work passed
-/// it, with a written proof (rung 8) in its menu and the note that every point agreed; a
-/// false one is still refuted at a point first, and a product of powers of the same factors
-/// is still proved without expanding the sides ([`Identity::factored`]). Why: the expansion
-/// of a product of `s` sums of `t` terms has up to `t^s` monomials, exponential in the written
-/// `s`, and deciding polynomial identities of formulas in deterministic polynomial time is an
-/// open problem (polynomial identity testing), so some identities must be refused. The limit
-/// is cubic in the size, so a power whose cost grows with its exponent's value, not its
-/// digits, is refused once that value passes about the cube of the written size:
-/// `(x + y) ^ k - x == (x + y) ^ (k / 2) * (y + x) ^ (k / 2) - x` is proved at k = 70 and
-/// refused from 72 on, and `(1 + x) ^ 1000 * (1 - x) ^ 1000 == (1 - x ^ 2) ^ 1000` is refused
-/// when 5381 of its 7152 units are spent and the next operation would pass the rest
-/// (measured, COMPLEXITY.md POLY-nf-work). The counted work tracks the instructions spent
-/// within a factor of 10.6 over the expanding scaling families (94 to 1000 instructions a
-/// unit); the factored path spends about 6150 a unit, since its pass over the nodes and its
-/// hashing are linear and not counted. A refusal costs at most the limit, since each
-/// operation is charged before it runs; deciding the limit costs one pass over the nodes. A complete solution would decide identity of arithmetic formulas deterministically
-/// in polynomial time, which no known algorithm does.
-pub fn limit(size: u64) -> f64 {
-    let s = names_at(size) as f64;
-    let m = size.div_ceil(2).max(1) as f64;
-    let cube = (s - 1.0) * (s + 2.0) / 2.0 + s * s + s * s * (s + 1.0) / 2.0;
-    cube.max((m - 1.0) * (m + 2.0) / 2.0)
-}
+/// Complexity tradeoff: the naive limit, a bound on the written size of the identity
+/// (QUESTIONS A98: the work of the costliest product of three sums written at that size),
+/// refused a power by the value of its exponent, `(x + y) ^ 72 - x == (x + y) ^ 36 * (y + x) ^
+/// 36 - x` at 0.3 ms, while it allowed a sum of 4096 names that takes 4 s; its units tracked
+/// the time within a factor of 40. This limit refuses by the predicted time itself, at the cost
+/// of one constant measured on one machine, which a faster or idle machine spends in less than
+/// 250 ms; the counted work predicts the time within a factor of 2 on every family but one,
+/// a sparse product whose pairs merge into few terms (`((x + y) ^ 64 + x) ^ 2`, 52 ns a unit).
+/// Not counted: the reading of the identity, its points and its factors, linear in its size
+/// (about 0.2 ms for a size of 6000), so no identity is refused for its length alone. A refusal
+/// costs at most the limit, since each operation is charged before it runs. A complete
+/// solution would decide identity of arithmetic formulas deterministically in polynomial time,
+/// which no known algorithm does (polynomial identity testing), so some identities must be
+/// refused.
+pub const LIMIT: f64 = 17_500_000.0;
 
-/// The names `s` of the base of `(x1 + … + xs) ^ 3`, the costliest product of three sums of
-/// `size` ([`limit`]).
-fn names_at(size: u64) -> u64 {
-    (size.saturating_sub(2) / 2).max(1)
-}
+/// The time [`LIMIT`] stands for, in milliseconds.
+pub const LIMIT_MS: f64 = 250.0;
 
-/// The work an expansion has spent, and the most it may spend, in the units of [`limit`].
+/// The charge for each term a sum or a negation reads, with packed keys: about 30 ns, its
+/// coefficient's copy and later free.
+const SUM_TERM: f64 = 2.0;
+
+/// The charge for each term a sum or a negation reads, with keys that are not packed: about 90
+/// ns, its key's copy too.
+const SPARSE_TERM: f64 = 6.0;
+
+/// The charge for each 64-bit word of a coefficient a sum or a negation reads: about 3 ns.
+const SUM_WORD: f64 = 0.2;
+
+/// The charge for each pair of the sparse product besides its `w1 w2` words: about 130 ns, the
+/// product's allocation, its sorting and its merge.
+const PAIR: f64 = 8.0;
+
+/// The charge for each unit the support product counts: about 30 ns.
+const SUPPORT: f64 = 2.0;
+
+/// The work an expansion has spent, the most it may spend, and the work it would have reached
+/// at the charge it refused, in the units of [`LIMIT`].
 struct Budget {
     spent: f64,
     most: f64,
+    wanted: f64,
 }
 
 impl Budget {
     fn new(most: f64) -> Budget {
-        Budget { spent: 0.0, most }
+        Budget {
+            spent: 0.0,
+            most,
+            wanted: 0.0,
+        }
     }
 
     /// What is left to spend.
@@ -125,9 +127,11 @@ impl Budget {
         self.most - self.spent
     }
 
-    /// Spends `w`; `None`, and nothing spent, when that would pass the most.
+    /// Spends `w`; `None`, and nothing spent, when that would pass the most, the work it would
+    /// have reached kept as the prediction.
     fn spend(&mut self, w: f64) -> Option<()> {
         if self.spent + w > self.most {
+            self.wanted = self.spent + w;
             return None;
         }
         self.spent += w;
@@ -135,12 +139,11 @@ impl Budget {
     }
 }
 
-/// The words of `p`'s coefficients, at least one each: what a sum or a negation reads.
-fn coefficient_words<K>(p: &Poly<K>) -> f64 {
-    p.terms
-        .iter()
-        .map(|(_, c)| c.bits().div_ceil(64).max(1) as f64)
-        .sum()
+/// The charge for a sum or a negation reading `p`: [`SUM_TERM`], or [`SPARSE_TERM`] with keys
+/// that are not packed, for each term, and [`SUM_WORD`] for each word of its coefficients.
+fn sum_charge<K: Key>(p: &Poly<K>) -> f64 {
+    let words: u64 = p.terms.iter().map(|(_, c)| c.bits().div_ceil(64)).sum();
+    p.terms.len() as f64 * K::TERM + words as f64 * SUM_WORD
 }
 
 /// The prime the points are taken modulo, `2^61 - 1`.
@@ -156,7 +159,7 @@ pub enum Verdict {
     /// The normal forms differ, but no point refutes: a side holds an atom, which may depend on
     /// the binders, or the carrier is a ring that may have finite characteristic.
     Differs,
-    /// The expansion would cost more than [`limit`] allows, or an exponent is too wide.
+    /// The expansion would cost more than [`LIMIT`] allows, or an exponent is too wide.
     Refused(Refusal),
 }
 
@@ -167,7 +170,7 @@ pub struct Decision {
     pub verdict: Verdict,
     /// The most sums any product multiplies, a power `a ^ n` counting the fewer of `n` times the
     /// sums of `a` and the bound on its monomials less one: a measure of the written shape, which
-    /// no longer refuses anything (see [`limit`]).
+    /// no longer refuses anything (see [`LIMIT`]).
     pub sums: u64,
     /// The total degree of the two sides, at most; `None` past `u64::MAX`.
     pub degree: Option<u64>,
@@ -177,9 +180,11 @@ pub struct Decision {
     /// factor expanded once and the sides not at all: `(1 + x) ^ 1000 == (1 + x) ^ 500 * (x +
     /// 1) ^ 500`.
     pub factored: bool,
-    /// The identity's size as a term, as [`limit`] counts it.
+    /// The identity's size as a term: one for each operation, name, atom, `let` and read of a
+    /// `let`'s name, and one for each number plus the bits of its numerator, of its denominator
+    /// when that is not 1, and of an exponent.
     pub size: u64,
-    /// The work the expansion counted, in the units of [`limit`]: of the reading of the factors
+    /// The work the expansion counted, in the units of [`LIMIT`]: of the reading of the factors
     /// when [`Decision::factored`], of the sides' expansion when they were expanded, up to the
     /// refused operation when refused, and 0 when a point decided.
     pub work: f64,
@@ -204,8 +209,9 @@ impl fmt::Display for Point {
 /// Why a product is not expanded.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Refused {
-    /// The expansion's work would pass [`limit`] of the identity's size, this one.
-    Work(u64),
+    /// The expansion's work would pass [`LIMIT`]: the work it would have reached at the refused
+    /// operation, a lower bound on the whole expansion's.
+    Work(f64),
     /// A power's exponent, or a monomial's degree, is past `u64::MAX`, the widest exponent a
     /// monomial holds.
     Exponent,
@@ -229,10 +235,10 @@ impl Refusal {
     /// notes, and the repair, a written proof of `law`, the law's text without its `;`.
     pub fn message(&self, law: &str) -> String {
         let mut out = match &self.why {
-            Refused::Work(size) => format!(
-                "Cannot expand `{}`: the law costs more to expand than `(x1 + … + x{}) ^ 3`.",
+            Refused::Work(work) => format!(
+                "Cannot expand `{}`: expanding the law takes at least {:.0} ms, more than {LIMIT_MS} ms.",
                 self.product,
-                names_at(*size)
+                (work / LIMIT * LIMIT_MS).ceil()
             ),
             Refused::Exponent => format!(
                 "Cannot expand `{}`: an exponent is above {}.",
@@ -241,9 +247,9 @@ impl Refusal {
             ),
         };
         match &self.why {
-            Refused::Work(_) => out.push_str(
-                "\n  note: a law is expanded only when that costs at most as much as the costliest product of three sums written as long as the law, a number counting one more for each of its bits.",
-            ),
+            Refused::Work(work) => out.push_str(&format!(
+                "\n  note: the time is predicted from the sizes of the sums and products: at least {work:.0} units of work, against a limit of {LIMIT:.0} units measured as {LIMIT_MS} ms on one machine, so that every machine refuses the same laws.",
+            )),
             Refused::Exponent => {}
         }
         if !self.agreed.is_empty() {
@@ -276,17 +282,22 @@ pub fn normal_form(t: &Term, binders: &[&str], carrier: Carrier) -> Result<Strin
     if let Some(i) = id.too_wide(&shapes, &reach) {
         return Err(id.refused(i, Refused::Exponent, Vec::new()));
     }
-    let mut budget = Budget::new(limit(id.size));
-    let refused = |i| id.refused(i, Refused::Work(id.size), Vec::new());
+    let mut budget = Budget::new(LIMIT);
     Ok(match id.keys(&shapes, &reach) {
         Keys::Packed(ctx) => {
             let forms = id.expand::<u128>(&ctx, &reach, &id.sides[..1], &mut budget);
-            id.show(&forms.map_err(refused)?[0], &ctx)
+            id.show(
+                &forms.map_err(|i| id.refused(i, Refused::Work(budget.wanted), Vec::new()))?[0],
+                &ctx,
+            )
         }
         Keys::Sparse => {
             let ctx = Packing::none();
             let forms = id.expand::<Sparse>(&ctx, &reach, &id.sides[..1], &mut budget);
-            id.show(&forms.map_err(refused)?[0], &ctx)
+            id.show(
+                &forms.map_err(|i| id.refused(i, Refused::Work(budget.wanted), Vec::new()))?[0],
+                &ctx,
+            )
         }
     })
 }
@@ -325,7 +336,7 @@ struct Identity<'t> {
     binders: usize,
     sides: [usize; 2],
     carrier: Carrier,
-    /// The size as a term ([`limit`]).
+    /// The size as a term ([`Decision::size`]).
     size: u64,
 }
 
@@ -764,7 +775,7 @@ impl<'t> Identity<'t> {
             let r = self.refused(i, Refused::Exponent, agreed);
             return decision(Verdict::Refused(r), None, 0.0);
         }
-        let mut budget = Budget::new(limit(self.size));
+        let mut budget = Budget::new(LIMIT);
         let forms = match self.keys(&shapes, &reach) {
             Keys::Packed(ctx) => self
                 .expand::<u128>(&ctx, &reach, &self.sides, &mut budget)
@@ -778,7 +789,7 @@ impl<'t> Identity<'t> {
         match forms {
             Ok((verdict, terms)) => decision(verdict, Some(terms), budget.spent),
             Err(i) => {
-                let r = self.refused(i, Refused::Work(self.size), agreed);
+                let r = self.refused(i, Refused::Work(budget.wanted), agreed);
                 decision(Verdict::Refused(r), None, budget.spent)
             }
         }
@@ -815,7 +826,7 @@ impl<'t> Identity<'t> {
     /// Tested by `poly::tests::products_of_powers` and `l03_09_egraph::factored` (COMPLEXITY.md
     /// POLY-nf-power-value).
     ///
-    /// The work is counted against [`limit`] as the expansion's is, the constants' powers
+    /// The work is counted against [`LIMIT`] as the expansion's is, the constants' powers
     /// charged the words of their results, and past it the identity is left to the expansion,
     /// which counts afresh: the factors' keys may differ from the sides', so their forms are not
     /// reused, and a refused identity costs at most twice the limit. `Some` of the work when the
@@ -843,7 +854,7 @@ impl<'t> Identity<'t> {
         if self.too_wide(shapes, &reach).is_some() {
             return None;
         }
-        let mut budget = Budget::new(limit(self.size));
+        let mut budget = Budget::new(LIMIT);
         let b = &mut budget;
         let same = match self.keys(shapes, &reach) {
             Keys::Packed(ctx) => self.same_factors::<u128>(&ctx, &reach, &factors, &exp, minus, b),
@@ -1443,6 +1454,9 @@ impl Packing {
 
 /// A monomial: a product of names with their exponents.
 trait Key: Clone + Ord + Hash + Eq {
+    /// The charge for each term a sum or a negation reads: [`SUM_TERM`] for packed keys,
+    /// [`SPARSE_TERM`] for keys that must be copied.
+    const TERM: f64;
     /// The monomial 1.
     fn unit() -> Self;
     /// The name `v`.
@@ -1462,6 +1476,8 @@ trait Key: Clone + Ord + Hash + Eq {
 }
 
 impl Key for u128 {
+    const TERM: f64 = SUM_TERM;
+
     fn unit() -> Self {
         0
     }
@@ -1510,6 +1526,8 @@ impl Key for u128 {
 struct Sparse(Box<[(u32, u64)]>);
 
 impl Key for Sparse {
+    const TERM: f64 = SPARSE_TERM;
+
     fn unit() -> Self {
         Sparse(Box::default())
     }
@@ -1591,9 +1609,9 @@ impl<K: Key> Poly<K> {
         }
     }
 
-    /// `-self`, charged its words to `budget`; `None` when that would pass it.
+    /// `-self`, charged [`sum_charge`] to `budget`; `None` when that would pass it.
     fn neg(&self, budget: &mut Budget) -> Option<Poly<K>> {
-        budget.spend(coefficient_words(self))?;
+        budget.spend(sum_charge(self))?;
         Some(Poly {
             den: self.den.clone(),
             terms: self.terms.iter().map(|(k, c)| (k.clone(), -c)).collect(),
@@ -1601,10 +1619,10 @@ impl<K: Key> Poly<K> {
     }
 
     /// `self + o`, or `self - o` when `sub`: one merge of the two sorted lists, `O(t1 + t2)`
-    /// coefficient operations, over a common denominator. Charged the operands' words to
+    /// coefficient operations, over a common denominator. Charged the operands' [`sum_charge`] to
     /// `budget`; `None` when that would pass it.
     fn add(&self, o: &Poly<K>, sub: bool, budget: &mut Budget) -> Option<Poly<K>> {
-        budget.spend(coefficient_words(self) + coefficient_words(o))?;
+        budget.spend(sum_charge(self) + sum_charge(o))?;
         let same = self.den == o.den;
         let (den, fa, fb) = if same {
             (self.den.clone(), None, None)
@@ -1671,9 +1689,13 @@ impl<K: Key> Poly<K> {
     /// its output; it is tried first when its estimated cost is below both. Tested by
     /// `l03_09_egraph::scaling` (COMPLEXITY.md K107, Crossovers, POLY-nf-sparse-product).
     ///
-    /// Charged to `budget`: what the support product spent, which it bounds by the cheaper of
-    /// the dense and the sparse cost and by what is left; and when it gives up, that cheaper
-    /// cost, before the method runs. `None` when a charge would pass the budget.
+    /// Charged to `budget`, in the units of [`LIMIT`]: [`SUPPORT`] times what the support
+    /// product counted, which it bounds by the cheaper of the dense and the sparse cost and by
+    /// what is left; and when it gives up, the cheaper method's charge, before it runs: the dense
+    /// cost, or [`Poly::sparse_charge`]. The method is chosen by the costs with unit constants,
+    /// as the crossover was benchmarked, though the sparse product's pair takes about 8 of the
+    /// dense product's units (COMPLEXITY.md POLY-nf-work). `None` when a charge would pass the
+    /// budget.
     fn mul(&self, o: &Poly<K>, budget: &mut Budget) -> Option<Poly<K>> {
         let den = &self.den * &o.den;
         if self.terms.is_empty() || o.terms.is_empty() {
@@ -1684,18 +1706,23 @@ impl<K: Key> Poly<K> {
         }
         let terms = match self.plan(o) {
             None => {
-                budget.spend(self.sparse_cost(o))?;
+                budget.spend(self.sparse_charge(o))?;
                 self.sparse_mul(o)
             }
             Some(plan) => {
                 let cheaper = plan.dense.min(plan.sparse);
                 let mut tried = 0.0;
-                let support = self.support_mul(o, &plan, cheaper.min(budget.left()), &mut tried);
-                budget.spend(tried)?;
+                let bound = cheaper.min(budget.left() / SUPPORT);
+                let support = self.support_mul(o, &plan, bound, &mut tried);
+                budget.spend(tried * SUPPORT)?;
                 match support {
                     Some(terms) => terms,
                     None => {
-                        budget.spend(cheaper)?;
+                        budget.spend(if plan.dense <= plan.sparse {
+                            plan.dense
+                        } else {
+                            self.sparse_charge(o)
+                        })?;
                         if plan.dense <= plan.sparse {
                             self.dense_mul(o, plan.slot, plan.step)
                         } else {
@@ -1716,6 +1743,15 @@ impl<K: Key> Poly<K> {
             bits.div_ceil(64).max(1) as f64
         };
         self.terms.len() as f64 * o.terms.len() as f64 * w(self) * w(o)
+    }
+
+    /// The charge for the sparse product with `o`: [`PAIR`] plus `w1 * w2` for each of the
+    /// `t1 * t2` pairs, in units of the dense product's ([`LIMIT`]). Not [`Poly::sparse_cost`],
+    /// which chooses the method and so stays as the crossover was benchmarked: a pair's
+    /// allocation, sorting and merge take about 8 of the dense product's units.
+    fn sparse_charge(&self, o: &Poly<K>) -> f64 {
+        let pairs = self.terms.len() as f64 * o.terms.len() as f64;
+        pairs * PAIR + self.sparse_cost(o)
     }
 
     /// The costs of the dense and the sparse product with `o`, the dense product's slot width in

@@ -5,7 +5,7 @@
 //! checks' `types::Refusal` (Fork, Residues, TupleSplit, SharedCells, MorphismSplit, NoWitness,
 //! Group); the two refused arrow combinations of `ty.rs`, its functions at one place left
 //! unpaired (`Forms::tie`, FunctionPairs) and its unions whose shape is not chosen
-//! (`unchosen_text`, Unchosen); and the normal form's `poly::Refused` (PolySums,
+//! (`unchosen_text`, Unchosen); and the normal form's `poly::Refused` (PolyWork,
 //! PolyExponent). A diagnostic that says it could not decide, or that the
 //! checker does not try, and holds none of these phrases is of kind `Other`, so a new kind
 //! fails the census until it is named here.
@@ -91,8 +91,8 @@ pub const KINDS: &[Kind] = &[
         phrase: "through those shapes for one of the two only",
     },
     Kind {
-        name: "PolySums",
-        phrase: "sums of more than one name.",
+        name: "PolyWork",
+        phrase: " ms, more than 250 ms.",
     },
     Kind {
         name: "PolyExponent",

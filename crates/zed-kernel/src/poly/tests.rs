@@ -315,57 +315,69 @@ fn refused_shapes() {
     ] {
         let d = decide(&t(l), &t(r), n, Carrier::Int);
         assert_eq!(d.verdict, Verdict::Proved, "{l}");
-        assert!(d.work <= limit(d.size), "{l}");
+        assert!(d.work <= LIMIT, "{l}");
     }
-    // A power whose cost grows with its exponent's value, past the work of three sums written
-    // at the same size.
-    let xy = &["x", "y"];
+    // A product past the limit, refused before it runs: `(1 + x) ^ 256 * (1 + y) ^ 256` is
+    // 65536 terms of up to 512 bits, each of which the third power's 257 terms multiply.
+    let xyz = &["x", "y", "z"];
+    let past = "(1 + x) ^ 256 * (1 + y) ^ 256 * (1 + z) ^ 256 - x";
     let d = decide(
-        &t("(x + y) ^ 200 - x"),
-        &t("(y + x) ^ 200 - x"),
-        xy,
+        &t(past),
+        &t("(1 + z) ^ 256 * (1 + y) ^ 256 * (1 + x) ^ 256 - x"),
+        xyz,
         Carrier::Int,
     );
     let Verdict::Refused(r) = d.verdict else {
         panic!("not refused")
     };
-    assert_eq!(r.why, Refused::Work(d.size));
-    assert_eq!(r.product, "((x + y)^200)");
+    let Refused::Work(work) = r.why else {
+        panic!("{:?}", r.why)
+    };
+    assert_eq!(
+        r.product,
+        "((((1 + x)^256) * ((1 + y)^256)) * ((1 + z)^256))"
+    );
     assert_eq!(r.agreed.len(), 2);
-    assert!(d.work <= limit(d.size));
-    let m = r.message("law two(x: int, y: int) = …");
+    // The prediction is the work spent and the refused product's charge, which alone passes
+    // the limit; the work spent stays below it.
+    assert!(d.work <= LIMIT && work - d.work > LIMIT);
+    let m = r.message("law three(x: int, y: int, z: int) = …");
+    let ms = (work / LIMIT * LIMIT_MS).ceil();
     assert!(
         m.starts_with(&format!(
-            "Cannot expand `((x + y)^200)`: the law costs more to expand than `(x1 + … + x{}) ^ 3`.",
-            names_at(d.size)
+            "Cannot expand `{}`: expanding the law takes at least {ms:.0} ms, more than 250 ms.\n  note: the time is predicted from the sizes of the sums and products: at least {work:.0} units of work, against a limit of 17500000 units measured as 250 ms on one machine, so that every machine refuses the same laws.",
+            r.product
         )),
         "{m}"
     );
     assert!(m.contains("note: the two sides agree at every point tried"));
-    assert!(m.ends_with("Try `law two(x: int, y: int) = … proof { … }` instead."));
+    assert!(m.ends_with("Try `law three(x: int, y: int, z: int) = … proof { … }` instead."));
     // A false identity of that shape is refuted at a point.
     assert!(matches!(
-        verdict("(x + y) ^ 200 - x", "(y + x) ^ 200 - y", xy, Carrier::Int),
+        verdict(
+            past,
+            "(1 + z) ^ 256 * (1 + y) ^ 256 * (1 + x) ^ 256 - y",
+            xyz,
+            Carrier::Int
+        ),
         Verdict::Refuted(_)
     ));
-    // The smallest laws are never refused.
+    // A power whose cost grows with its exponent's value is proved while its predicted time is
+    // below the limit: past the A98 rule's limit of exponent 70 on two names.
+    let xy = &["x", "y"];
+    let d = decide(
+        &t("(x + y) ^ 1000 - x"),
+        &t("(y + x) ^ 500 * (x + y) ^ 500 - x"),
+        xy,
+        Carrier::Int,
+    );
+    assert_eq!(d.verdict, Verdict::Proved);
+    assert!(!d.factored);
+    // The smallest laws cost little: two sums of two one-word terms on each side.
     let d = decide(&t("a + c"), &t("c + a"), &["a", "c"], Carrier::Int);
-    assert_eq!(
-        (d.verdict, d.size, d.work, limit(d.size)),
-        (Verdict::Proved, 6, 4.0, 12.0)
-    );
+    assert_eq!((d.verdict, d.size, d.work), (Verdict::Proved, 6, 8.8));
     let d = decide(&t("x"), &t("x"), &["x"], Carrier::Int);
-    assert_eq!(
-        (d.verdict, d.size, limit(d.size)),
-        (Verdict::Proved, 2, 2.0)
-    );
-    // At size 5 the cube reads one name (`x ^ 3`, work 2) and the sum `x1 + x2 + x3` bounds
-    // the limit: a negation and a sum cost 3.
-    let d = decide(&t("a + -a"), &t("0"), &["a"], Carrier::Int);
-    assert_eq!(
-        (d.verdict, d.size, d.work, limit(d.size)),
-        (Verdict::Proved, 5, 3.0, 5.0)
-    );
+    assert_eq!((d.verdict, d.size, d.work), (Verdict::Proved, 2, 0.0));
     // An exponent past u64::MAX on a name, in a sum (alone it is a factor: `products_of_powers`).
     let Verdict::Refused(r) = verdict(
         "x ^ 18446744073709551616 - x",
@@ -481,16 +493,25 @@ fn products_of_powers() {
     // A factor whose expansion passes the limit leaves the identity to the expansion, which
     // refuses it at the same limit.
     let d = decide(
-        &t("(1 + x) ^ 200 * (1 - x) ^ 200"),
-        &t("(1 - x ^ 2) ^ 200"),
-        xy,
+        &t("((1 + x) ^ 256 * (1 + y) ^ 256 * (1 + z) ^ 256 + 1) ^ 2"),
+        &t("((1 + z) ^ 256 * (1 + y) ^ 256 * (1 + x) ^ 256 + 1) ^ 2"),
+        &["x", "y", "z"],
         Carrier::Int,
     );
     assert!(!d.factored);
     let Verdict::Refused(r) = d.verdict else {
         panic!("not refused")
     };
-    assert_eq!(r.why, Refused::Work(d.size));
+    assert!(matches!(r.why, Refused::Work(w) if w > LIMIT));
+    // A product of powers of different factors is left to the expansion, which proves it while
+    // its predicted time is below the limit.
+    let d = decide(
+        &t("(1 + x) ^ 200 * (1 - x) ^ 200"),
+        &t("(1 - x ^ 2) ^ 200"),
+        xy,
+        Carrier::Int,
+    );
+    assert_eq!((d.verdict, d.factored), (Verdict::Proved, false));
     // Exponents that multiply past `2^128` are left to the expansion, which refuses them.
     let Verdict::Refused(r) = verdict(
         "((x + y) ^ 18446744073709551616) ^ 18446744073709551616",
@@ -522,9 +543,9 @@ fn products_of_powers() {
 fn the_points_are_deterministic() {
     let a = || {
         decide(
-            &t("(x + y) ^ 200 - x"),
-            &t("(y + x) ^ 200 - x"),
-            &["x", "y"],
+            &t("(1 + x) ^ 256 * (1 + y) ^ 256 * (1 + z) ^ 256 - x"),
+            &t("(1 + z) ^ 256 * (1 + y) ^ 256 * (1 + x) ^ 256 - x"),
+            &["x", "y", "z"],
             Carrier::Int,
         )
     };
@@ -780,52 +801,23 @@ fn work_of(term: &Term, binders: &[&str]) -> (f64, u64) {
     (budget.spent, id.size)
 }
 
-/// `limit` is at least the work of every product of three sums at the same size: sums of 1 to
-/// 6 names, overlapping by every offset, multiplied either way round, as powers, and shared by
-/// `let`. The identity `p == 0` is the smallest that writes `p`, so the one with the least
-/// limit.
+/// The charges of [`LIMIT`]'s units: a sum of `s` names written `x1 + … + xs` reads the sums of
+/// 2 to `s` one-word terms, each term [`SUM_TERM`] and its word [`SUM_WORD`]; a product of two
+/// sums in different names, sparse below the dense cost, [`PAIR`] plus one word for each pair.
 #[test]
-fn no_product_of_three_sums_is_refused() {
+fn the_charges_are_the_measured_ones() {
     let names: Vec<String> = (0..40).map(|i| format!("x{i}")).collect();
     let binders: Vec<&str> = names.iter().map(String::as_str).collect();
     let sum = |from: usize, n: usize| format!("({})", names[from..from + n].join(" + "));
-    let check = |term: Term, what: &str| {
-        let (work, size) = work_of(&term, &binders);
-        assert!(
-            work <= limit(size),
-            "{what}: work {work} > limit({size}) = {}",
-            limit(size)
-        );
-    };
-    for a in 1..=6 {
-        let pa = sum(0, a);
-        check(t(&format!("{pa} ^ 3")), &format!("{pa} ^ 3"));
-        check(
-            let_("p", t(&pa), t("p * p * p")),
-            &format!("p * p * p, p = {pa}"),
-        );
-        for b in 1..=6 {
-            for ob in 0..=6 {
-                let pb = sum(ob, b);
-                check(t(&format!("{pa} ^ 2 * {pb}")), &format!("{pa} ^ 2 * {pb}"));
-                for c in 1..=6 {
-                    for oc in 0..=6 {
-                        let pc = sum(oc, c);
-                        let l = format!("{pa} * {pb} * {pc}");
-                        check(t(&l), &l);
-                        let r = format!("{pa} * ({pb} * {pc})");
-                        check(t(&r), &r);
-                    }
-                }
-            }
-        }
-    }
-    // The power of `s` names is written in `2 s + 2`, `+ 1` for the `0`: `limit` names `s`.
     for s in 1..=40 {
-        let p = format!("{} ^ 3", sum(0, s));
-        let (work, size) = work_of(&t(&p), &binders);
-        assert_eq!(size, 2 * s as u64 + 3, "{p}");
-        assert_eq!(names_at(size), s as u64);
-        assert!(work <= limit(size), "{p}");
+        let (work, _) = work_of(&t(&sum(0, s)), &binders);
+        let terms = (s * (s + 1) / 2 - 1) as f64;
+        assert!(
+            (work - terms * (SUM_TERM + SUM_WORD)).abs() < 1e-9,
+            "{s}: {work}"
+        );
     }
+    let (work, _) = work_of(&t(&format!("{} * {}", sum(0, 20), sum(20, 20))), &binders);
+    let sums = 2.0 * (20.0 * 21.0 / 2.0 - 1.0) * (SUM_TERM + SUM_WORD);
+    assert!((work - sums - 400.0 * (PAIR + 1.0)).abs() < 1e-9, "{work}");
 }
