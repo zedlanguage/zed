@@ -202,8 +202,17 @@ fn an_operand_of_a_comparison_is_quoted_as_written() {
     assert_eq!(
         type_errors("f(x: f64) = x == 0.5_0r;\n"),
         [
-            "No value is both `f64` and `rat`: `x : f64 == 0.5_0r : rat` is always `false`. Try \
-             `false` instead. [x == 0.5_0r]"
+            "No value is both `f64` and `rat`: `x : f64 == 0.5_0r : rat` always gives the same \
+             answer. Try `x == 0.5_0` to compare the numbers instead. [x == 0.5_0r]"
+        ]
+    );
+    // The literal repair writes the digits as the program does, on either side (row
+    // RED-written-compare).
+    assert_eq!(
+        type_errors("f(x: f64) = 1_000.5r != x;\n"),
+        [
+            "No value is both `rat` and `f64`: `1_000.5r : rat != x : f64` always gives the same \
+             answer. Try `1_000.5 != x` to compare the numbers instead. [1_000.5r != x]"
         ]
     );
 }

@@ -525,3 +525,62 @@ fn offering_the_literal_of_a_long_text_in_a_comparison_scales() {
         },
     );
 }
+
+/// `n` functions, each comparing a `rat` by `==` or `!=` with a fraction text no literal
+/// writes, `1/(3i + 3)`, whose denominator has the factor 3, the text on either side, so each rejection offers the cast kept around the
+/// literal (row REPAIR-eq-kept-cast): besides the trials of the literals, one application
+/// of the cast to the literal.
+fn fractions_compared(n: usize) -> String {
+    (0..n)
+        .map(|i| match i % 4 {
+            0 => format!("h{i}(positional r: rat) = r == \"1/{}\";\n", 3 * i + 3),
+            1 => format!("h{i}(positional r: rat) = \"1/{}\" != r;\n", 3 * i + 3),
+            2 => format!("h{i}(positional r: rat) = r != \"1/{}\";\n", 3 * i + 3),
+            _ => format!("h{i}(positional r: rat) = \"1/{}\" == r;\n", 3 * i + 3),
+        })
+        .collect()
+}
+
+#[test]
+fn offering_the_cast_of_a_literal_in_comparisons_scales() {
+    let srcs = scaling::inputs(200, fractions_compared);
+    scaling::check(
+        "n comparisons with fraction texts, each repaired by the cast kept around the text",
+        200,
+        |n| {
+            let out = rejected(&srcs[&n]);
+            assert_eq!(
+                out.matches("Try `r == rat(\"").count(),
+                n.div_ceil(4),
+                "{out}"
+            );
+            assert_eq!(out.matches("Try `rat(\"").count(), n / 2, "{out}");
+            let last = n - 1;
+            assert!(
+                out.contains(&format!("Try `rat(\"1/{}\") == r`", 3 * last + 3)),
+                "{out}"
+            );
+        },
+    );
+}
+
+#[test]
+fn offering_the_cast_of_a_long_fraction_text_in_a_comparison_scales() {
+    // One text of d digits over 9 compared by `==`: its cast, its printing, the failed
+    // reading back as a literal, the cast checked as written, and the text in the headline.
+    let srcs = scaling::inputs(4000, |d| {
+        format!("f(positional r: rat) = r == \"{}/9\";\n", "7".repeat(d))
+    });
+    scaling::check(
+        "the cast kept around a compared fraction text of d digits",
+        4000,
+        |d| {
+            let out = rejected(&srcs[&d]);
+            let want = format!(
+                "Try `r == rat(\"{}/9\")` to compare the numbers instead.",
+                "7".repeat(d)
+            );
+            assert!(out.contains(&want), "{out}");
+        },
+    );
+}

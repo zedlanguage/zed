@@ -230,6 +230,47 @@ fn a_comparison_with_a_literal_is_repaired_by_the_literal_before_a_cast_of_the_o
             Some("r == 0.5r"),
             true,
         ),
+        // `1/3` has no literal of its own: the cast kept around the literal, as for `<`, in
+        // both orders of the operands, for `==` and `!=` (row REPAIR-eq-kept-cast).
+        (
+            "f(positional r: rat) = ",
+            "r == \"1/3\"",
+            Some("r == rat(\"1/3\")"),
+            true,
+        ),
+        (
+            "f(positional r: rat) = ",
+            "\"1/3\" == r",
+            Some("rat(\"1/3\") == r"),
+            true,
+        ),
+        (
+            "f(positional r: rat) = ",
+            "r != \"1/3\"",
+            Some("r != rat(\"1/3\")"),
+            true,
+        ),
+        (
+            "f(positional r: rat) = ",
+            "\"1/3\" != r",
+            Some("rat(\"1/3\") != r"),
+            true,
+        ),
+        // An operand with no name: the cast in place of the literal operand.
+        (
+            "f(positional r: rat) = ",
+            "r + 1r == \"1/3\"",
+            Some("rat(\"1/3\")"),
+            false,
+        ),
+        // `1/3` is no `int`, so `int("1/3")` can fail, and no repair writes it: only the
+        // comparison's one answer is left.
+        (
+            "f(positional n: int) = ",
+            "n == \"1/3\"",
+            Some("false"),
+            false,
+        ),
         // A literal of another number type: its literal before the cast of the name.
         ("f(positional n: int) = ", "n == 1r", Some("n == 1"), true),
         // An operand with no name: the literal in place of the literal operand.

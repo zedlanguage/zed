@@ -11022,7 +11022,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// answer. At the operands themselves the repairs are, first, the literal a cast that
     /// cannot fail gives on a literal operand, written in its place ([`Ck::literal_repair`]),
     /// `n == 8` for `n == "8"`, which keeps the other operand's type, as [`Ck::repairs`]
-    /// puts such a repair first for `<` (row REPAIR-compare-order); then each cast of one
+    /// puts such a repair first for `<` (row REPAIR-compare-order), or, where no literal
+    /// writes that value, the cast kept around the literal, `r == rat("1/3")` (row
+    /// REPAIR-eq-kept-cast); then each cast of one
     /// operand that makes the two meet, except the cast whose literal is offered; then each
     /// component of a tuple operand that may equal the other operand; with none, or inside
     /// the operands, the answer it always gives.
@@ -11119,7 +11121,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         // The naive way, checking the program again with each fix written in, costs the
         // size of the program per fix. A literal fix adds at most three more trials, each
         // after one run of its cast on the literal's one value ([`Ck::literal_repair`]) (test
-        // `l01_29_diagnostics::scaling::offering_the_literal_first_in_comparisons_scales`).
+        // `l01_29_diagnostics::scaling::offering_the_literal_first_in_comparisons_scales`);
+        // where no literal writes the value, one application of the cast to the literal
+        // ([`Ck::wrapped`]) besides, the cost of checking `rat("1/3")` as written (test
+        // `l01_29_diagnostics::scaling::offering_the_cast_of_a_literal_in_comparisons_scales`).
         // The text of each literal kept, by side and word.
         let mut literals: Vec<(usize, &str, String)> = Vec::new();
         if !self.trying {
@@ -11137,11 +11142,36 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let checks = ats[s].and_then(|at| {
                         self.operand_replaced(span, at, |ck, a| match fix {
                             Fix::Cast(_, w) => ck.wrapped(w, a, &a.ty, at),
-                            Fix::Literal(_, w) => {
-                                let l = ck.literal_repair(w, a, &a.ty, at)?;
-                                text = Some(l.text);
-                                Some(l.arg.ty)
-                            }
+                            Fix::Literal(s, w) => match ck.literal_repair(w, a, &a.ty, at) {
+                                Some(l) => {
+                                    // A `rat` literal's digits as the program writes them,
+                                    // `0.5_0` for `0.5_0r`, as [`Ck::repairs`] writes them
+                                    // ([`rat_forms`]); the value is the one checked, as both
+                                    // run the cast `w` on the one number (row
+                                    // RED-written-compare). O(d) for d digits.
+                                    let written = (exprs[s].and_then(|e| rat_forms(e, ck.t.text)))
+                                        .and_then(|forms| {
+                                            forms.into_iter().find_map(|(ty, lit, _)| {
+                                                lit.filter(|_| {
+                                                    ty.numeric_carrier().map(Carrier::name)
+                                                        == Some(w)
+                                                })
+                                            })
+                                        });
+                                    text = Some(written.unwrap_or(l.text));
+                                    Some(l.arg.ty)
+                                }
+                                // No literal writes the value, as for `rat("1/3")`: the cast
+                                // kept around the literal, where it gives no atom the literal
+                                // lacks, so it cannot fail on it, as [`Ck::repairs`] offers
+                                // `r < rat("1/3")` (row REPAIR-eq-kept-cast).
+                                None => {
+                                    let r = (ck.wrapped(w, a, &a.ty, at))
+                                        .filter(|r| r.atoms() == a.ty.atoms())?;
+                                    text = Some(format!("{w}({})", ck.code(Some(at))?));
+                                    Some(r)
+                                }
+                            },
                             Fix::Component(_, i) => ck.component_read(a, i, at),
                         })
                     });

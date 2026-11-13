@@ -5795,7 +5795,8 @@ fn article_of(t: &Ty, text: &impl fmt::Display) -> &'static str {
 
 /// A repair of an `==` whose operands share no value ([`Ck::apart`]): a cast by the word of
 /// the operand at a side, 0 left and 1 right; the literal that cast gives on the literal
-/// operand at a side, written in its place (`8` for `"8"`); or that operand's component at
+/// operand at a side, written in its place (`8` for `"8"`), or the cast kept around that
+/// literal where no literal writes the value (`rat("1/3")`); or that operand's component at
 /// an index compared in its place.
 #[derive(Clone, Copy)]
 enum Fix {
