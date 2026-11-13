@@ -2022,9 +2022,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CHK-replay-pair | running | 2026-11-12 15:51 |  |
-| COST-old-form | impl attempt 1 | 2026-11-12 18:18 | tests: l02_02 23/23, zedc_syntax 0/0, doc check ok; l01_07 43/44 against spec main (copies test: design.md out of date from spec 43975e8/296b1ea, not this item) |
-| FLOAT-f32 | impl attempt 1 | 2026-11-05 04:07 | started; worktrees /home/luke/Work/wt/float-f32 and float-f32-spec; load 50.77 50.76 45.34 |
+| FLOAT-f32 | impl attempt 1 | 2026-11-05 04:07 | scaling: a chain of n f32 bindings (check+elab+run) 100->800: 8.1x instr, 8.1x bytes, limit 12.77; negative control (n/100 repeats, quadratic) 64.7x bytes, fail |
 | GSX-unsolved | merge attempt 1 | 2026-11-11 16:53 | started: rebase combo (gsxh-claude) onto origin/main and apply decisions (a)-(d) of cd-xr/GSX-merge.md / load 43.50 38.06 40.03 |
 | L1.29d | impl attempt 1 | 2026-11-11 01:43 | started; worktree /home/luke/Work/wt/l129d from e52caa1bf |
 | MAKER-file-chain | impl attempt 1 | 2026-11-12 17:24 | red on old code: new work tests t_n + 1 bytes 19.9x, a_n + 1 bytes 14.0x at n=40->320 (limit 13.8); load 76 |
@@ -2032,9 +2030,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | MSG-lines-headline | running | 2026-11-12 17:32 |  |
 | MSG-width-headline | running | 2026-11-12 17:32 |  |
 | NARROW-or-order | impl attempt 1 | 2026-11-12 15:40 | started; worktree /home/luke/Work/wt/narrow-or-order on cdd557f13 |
+| PERF-l139-family | running | 2026-11-12 18:45 |  |
 | POW-rat-literal-ops | impl attempt 1 | 2026-11-12 16:20 | reproduced: (2r/3r)^-2, 1r/(2r/3r), (3r/2r)^-2 refused at a port for #divByZero; (3/2)^-2 in main settles at f64; top-level offers no rat fix |
-| REFUSAL-periodic-split | impl attempt 1 | 2026-11-11 01:43 | started; worktree /home/luke/Work/wt/refusal-periodic-split on origin/main 773887f85 |
-| SOUND-call-pair | running | 2026-11-12 15:51 |  |
+| REFUSAL-periodic-split | impl attempt 1 | 2026-11-11 01:43 | both cases confirmed Refused(Fork) on main; rule written: a union of pure cycles less some is empty when each class lies inside one class taken out, tested by r |
 | STAGE-print | impl attempt 1 | 2026-11-04 03:10 | started; worktree wt/stage-print seeded |
 | WARN-refused-in-rejection | impl attempt 1 | 2026-11-12 14:51 | started; worktree /home/luke/Work/wt/warn-refused-in-rejection on origin/main a596e044b |
 
