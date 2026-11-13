@@ -14,8 +14,10 @@
 # matches no piece stops the run with an error. The short-addresses build is made only when a
 # short- piece is selected, in a clone of build/cargo kept in build/short-clone from run to run;
 # such a run must go through /home/luke/Work/wt/zrun, and --short-clone-remove deletes the clone
-# (through zrun too) and runs nothing. --doc adds the check that the documentation builds, which
-# is off by default; --no-doc is accepted and changes nothing. --list builds what the selection
+# (through zrun too) and runs nothing. --doc adds the check that the documentation of the whole
+# workspace builds, which is off by default; --no-doc is accepted and changes nothing. Every run
+# but --list checks the documentation of each package whose `///` or `//!` lines the checkout
+# changes since origin/main (tools/check_changed_docs.sh). --list builds what the selection
 # needs, prints the names of the selected pieces and runs nothing.
 # A run without --only saves the table of all pieces in its log directory; --list --reuse-table
 # selects from that table without building or listing the binaries, for tests of the selection.
@@ -684,6 +686,11 @@ if [ -n "$doc" ] &&
   echo "DOC FAILED"
   exit 1
 fi
+# On every run, with --doc or not: the documentation of each package whose doc comments this
+# checkout changes since origin/main, alone and with the workspace's features. Agents run this
+# script before they merge, and seldom passed --doc, so links that broke the doc build reached main
+# three times (DOC-private-links, -2, -3); with no doc comment changed it builds nothing.
+tools/check_changed_docs.sh "$out/doc-changed.log" || exit 1
 # At most `slots` pieces run at once on this machine, whichever checkout started them. A piece holds
 # a lock on one file of $slot_dir until it ends, so a killed run frees its slots, and its 60 s start
 # when it has one. Four suites at once took 2:13 with 8 slots and 2:05 without, and the longest
