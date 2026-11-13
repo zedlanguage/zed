@@ -69,6 +69,26 @@ fn types_not_known_finite() {
     }
 }
 
+/// `(int, 0) - (int - 0, 0)` in full (COMPLEXITY.md C22): its one value is `(0, 0)`, it is
+/// equal to `(0, 0)` both ways, and it is still answered not known finite, since the box
+/// `(int, 0)` is read as written. A change to any of these answers is seen here.
+#[test]
+fn the_difference_of_int_0_and_int_minus_0_0_is_one_value_not_known_finite() {
+    let t = &Type::tuple(vec![Type::int(), lit(0)])
+        - &Type::tuple(vec![&Type::int() - &lit(0), lit(0)]);
+    assert_eq!(t.to_string(), r"(& (tuple int 0) (! (tuple (\ int 0) 0)))");
+    assert!(!t.finite(), "{t}");
+    assert!(t.each_value().is_none(), "{t}");
+    assert!(!t.is_empty(), "{t}");
+    let one = Type::tuple(vec![lit(0), lit(0)]);
+    assert!(t.subtype(&one) && one.subtype(&t), "{t}");
+    let pair = |a: i64, b: i64| Value::tuple(vec![Value::Int(a), Value::Int(b)]);
+    assert!(t.contains(&pair(0, 0)), "{t}");
+    for (a, b) in [(1, 0), (-1, 0), (0, 1), (i64::MAX, 0), (i64::MIN, 0)] {
+        assert!(!t.contains(&pair(a, b)), "{t} holds ({a}, {b})");
+    }
+}
+
 /// A small random type over the literals 0..3 and pairs of them, from `seed`.
 fn random(seed: &mut u64, depth: u32) -> Type {
     *seed = seed

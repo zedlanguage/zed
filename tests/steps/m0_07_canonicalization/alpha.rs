@@ -188,6 +188,63 @@ fn literals_are_hashed_by_their_exact_value() {
     assert_ne!(l(Value::tuple(vec![])), l(Value::path(vec![])));
 }
 
+/// `1`, `1r` and `1.0` are three values of three kinds and get three addresses. An integer has
+/// one address however it is built: `Big` holds only integers outside the 64-bit range, so a
+/// small integer built from a `BigInt`, an integer `Rat`, its digits or a sum of two `Big`s is
+/// the `Int`, and `2^63` built each of those ways is one `Big`, apart from the `Int` below it
+/// and from the rational `2^63r`.
+#[test]
+fn one_one_r_and_a_big_get_the_addresses_of_their_values() {
+    use num_bigint::BigInt;
+    use zed_kernel::num::Rat;
+    use zed_kernel::{Evaluator, World};
+    let l = |v: Value| addr(&def("k", Term::Lit(v)));
+    let one = l(Value::Int(1));
+    let one_r = l(Value::rat(Rat::int(BigInt::from(1))));
+    let one_f = l(Value::float(1.0));
+    assert!(one != one_r && one != one_f && one_r != one_f);
+    let sum = |a: Value, b: Value| {
+        Evaluator::new(World::new())
+            .run(&prim(Prim::Add, vec![Term::Lit(a), Term::Lit(b)]))
+            .expect("a sum of two integers")
+    };
+    let p63 = BigInt::from(1u64 << 63);
+    let big = |n: &BigInt| Value::Big(Arc::new(Rat::int(n.clone())));
+    for (v, n) in [
+        (Value::Int(1), 1),
+        (Value::Int(i64::MAX), i64::MAX),
+        (Value::Int(i64::MIN), i64::MIN),
+    ] {
+        let n = BigInt::from(n);
+        let built = [
+            Value::int(n.clone()),
+            Value::integer(Rat::int(n.clone())),
+            Value::int_text(&n.to_string(), 10).unwrap().unwrap(),
+            Value::int_text(&n.to_str_radix(16), 16).unwrap().unwrap(),
+            sum(big(&(&n + &p63)), big(&-&p63)),
+        ];
+        for w in built {
+            assert_eq!(w, v);
+            assert!(matches!(w, Value::Int(_)), "{w:?}");
+            assert_eq!(l(w), l(v.clone()));
+        }
+    }
+    let built = [
+        Value::int(p63.clone()),
+        Value::integer(Rat::int(p63.clone())),
+        Value::int_text("9223372036854775808", 10).unwrap().unwrap(),
+        Value::int_text("8000000000000000", 16).unwrap().unwrap(),
+        sum(Value::Int(i64::MAX), Value::Int(1)),
+    ];
+    let a = l(built[0].clone());
+    for w in built {
+        assert!(matches!(w, Value::Big(_)), "{w:?}");
+        assert_eq!(l(w), a);
+    }
+    assert_ne!(a, l(Value::Int(i64::MAX)));
+    assert_ne!(a, l(Value::rat(Rat::int(p63))));
+}
+
 #[test]
 fn the_rename_step_records_the_written_name_and_its_place() {
     let t = lam(&["acc"], let_("x", var("acc"), var("x")));

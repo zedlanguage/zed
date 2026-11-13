@@ -923,15 +923,18 @@ impl<'a> Doc<'a> {
         r
     }
 
-    /// Whether the one-line text of the token or group at `i` fits in `room` columns. It stops
-    /// once the room runs out, so it reads at most `room` columns of text.
+    /// Whether the one-line text of the token or group at `i` fits in `room` columns, one column
+    /// a character, not a byte: the literal `"é"`, quotes included, takes three columns, as `"e"`
+    /// does. It stops once the room runs out, so it reads at most `room + 1` characters of text.
     fn fits(&self, i: usize, mut room: usize) -> bool {
-        self.flat(i, |s| match room.checked_sub(s.len()) {
-            Some(r) => {
-                room = r;
-                true
+        self.flat(i, |s| {
+            match room.checked_sub(s.chars().take(room.saturating_add(1)).count()) {
+                Some(r) => {
+                    room = r;
+                    true
+                }
+                None => false,
             }
-            None => false,
         })
     }
 
@@ -1006,7 +1009,7 @@ impl<'a> Doc<'a> {
         if flat {
             self.flat(i, |s| {
                 *out += s;
-                *col += s.len();
+                *col += s.chars().count();
                 true
             });
             return;

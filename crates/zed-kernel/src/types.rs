@@ -1817,8 +1817,10 @@ impl Type {
         // `X` is empty, and emptiness of Boolean combinations of tuple types is coNP-hard
         // (`types/empty.rs`); this test reads the type's own parts and boxes once and compares
         // no size. Trigger: any of those forms in the type. Tests:
-        // `l01_23_subtyping::scaling::listing_a_diagram_with_exponentially_many_paths_scales`
-        // and `l01_28_staging::trick::a_finite_domain_is_split_on_the_values_passed_and_an_infinite_one_is_kept`.
+        // `l01_23_subtyping::scaling::listing_a_diagram_with_exponentially_many_paths_scales`,
+        // `l01_28_staging::trick::a_finite_domain_is_split_on_the_values_passed_and_an_infinite_one_is_kept`
+        // and, for `(int, 0) - (int - 0, 0)`,
+        // `l01_23_subtyping::listing::the_difference_of_int_0_and_int_minus_0_0_is_one_value_not_known_finite`.
         // A complete solution would decide, for each box with an infinite component, whether
         // the type holds finitely many of its tuples, by the emptiness search with a full case
         // split over the tuple types (exponential in them, or a SAT solver), and would follow

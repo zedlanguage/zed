@@ -826,15 +826,29 @@ fn a_unit_and_a_copy_with_a_local_binding_renamed_get_the_same_heads_cells_and_v
     assert_eq!(written.cells, ["[-2..=104]", "[0..=101]", "[2..=103]"]);
     assert!(!written.proved.contains(&(0, 1)));
 
-    // The search over the a/b/c family and random local names.
+    // The search over the a/b/c family: 20,000 members, the size of the probe that found the
+    // witness, each under six namings, the six orders of three random local names, so that
+    // every relative order of the written names is met.
+    const MEMBERS: usize = 20_000;
     let mut rng = Rng::new(0x0e4c);
-    for _ in 0..RANDOM_INSTANCES {
+    for _ in 0..MEMBERS {
         let eq = abc_member(&mut rng);
+        let want = outcome(&keyed_by_level(&eq, ["a", "b", "c"]));
         let n = local_names(&mut rng, 3);
-        assert_eq!(
-            outcome(&keyed_by_level(&eq, [&n[0], &n[1], &n[2]])),
-            outcome(&keyed_by_level(&eq, ["a", "b", "c"])),
-            "{n:?}: {eq:?}"
-        );
+        for [i, j, k] in [
+            [0, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ] {
+            let names = [n[i].as_str(), &n[j], &n[k]];
+            assert_eq!(
+                outcome(&keyed_by_level(&eq, names)),
+                want,
+                "{names:?}: {eq:?}"
+            );
+        }
     }
 }

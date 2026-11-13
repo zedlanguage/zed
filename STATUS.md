@@ -2124,10 +2124,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | ST-K3-narrow | impl attempt 1 | 2026-11-11 01:43 | reproduced: no refusal of this kind on main; ping-pong and shifted ping-pong exact; random 6000 runs 5942 exact, 0 refused, 58 wider sound supersets; design in  |
 | ST-walk-implicit | impl attempt 1 | 2026-11-11 01:43 | started: worktree /home/luke/Work/wt/st-walk-implicit on origin/main 89d83b4a3 / load 36.87 40.84 46.29 |
 | TESTS-scaling-limit-13 | impl attempt 1 | 2026-11-12 23:54 | started; worktree /home/luke/Work/wt/tests-scaling-13 |
-| TESTS-small-sizes | impl attempt 1 | 2026-11-08 23:59 | new sizes pass: rename 20,000x6 3.9 s, printer 20,000x8 4.6 s, tie order 810,000 pairs 0.05 s full build, group short-l01_37a 8.2 s; 134 pieces pass at load 33- |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
+- TESTS-small-sizes (audit row 20): ORDER-rename at 20,000 members x 6 namings, tie order on 810,000 pairs of 900 random types (both builds), the printer on 20,000 random terms x 8 widths, C22 `(int, 0) - (int - 0, 0)` pinned, m0_05 landmarks at i64::MAX and MIN, M0.7 addresses of `1`, `1r` and `Big` 2^63. Fixed: the printer measured a line in bytes, not characters (`print.rs` `fits`, `enter`); printer scaling 7.2 to 8.2 times at 8n. Also fixed three doc links that broke the --doc check (query.rs, product.rs, stage.rs).
 
 ## Open points
 

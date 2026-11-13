@@ -1,9 +1,11 @@
 //! The two-phase iteration against a flattened stack machine, against the concrete least
 //! fixpoint, and on the loops whose values the landmarks decide.
 
+use num_bigint::BigInt;
+use zed_kernel::Value;
 use zed_tests::instances::{RANDOM_INSTANCES, Rng};
 use zedc::lex::Span;
-use zedc::store::interval::IntervalSet;
+use zedc::store::interval::{IntervalSet, Num};
 use zedc::store::iterate::{Equations, Scopes, narrow, order, phase1, solve};
 use zedc::store::landmarks::Landmarks;
 use zedc::store::lattice::Lattice;
@@ -158,6 +160,76 @@ fn a_counter_stops_at_its_landmarks_in_phase_one() {
         solve(&counter(99).bare()).unwrap(),
         vec![iv(Some(0), Some(99))]
     );
+}
+
+/// The counter `i = start ⊔ ((i ⊓ guard) + step)`.
+fn walker(start: i64, guard: IntervalSet, step: i64) -> System {
+    System::new(
+        vec![IntervalSet::single(start)],
+        vec![vec![Term {
+            from: 0,
+            filter: guard,
+            offset: step,
+        }]],
+    )
+}
+
+#[test]
+fn a_literal_at_the_end_of_the_machine_word_gives_landmarks_past_it() {
+    // A literal `k` gives the landmarks `k - 1`, `k` and `k + 1` (DESIGN.md step M0.5), so
+    // `i64::MAX` gives 2^63 and `i64::MIN` gives -2^63 - 1, outside the 64-bit range.
+    let wide = |n: i128| Num::from(n);
+    let max = i128::from(i64::MAX);
+    let min = i128::from(i64::MIN);
+    let marks = Landmarks::of([i64::MAX, i64::MIN], []);
+    let want: Vec<Num> = [min - 1, min, min + 1, max - 1, max, max + 1]
+        .map(wide)
+        .into();
+    assert_eq!(marks.ints().iter().cloned().collect::<Vec<_>>(), want);
+    let past = Value::int(BigInt::from(max + 1));
+    assert!(matches!(past, Value::Big(_)), "{past:?}");
+    assert!(marks.has(&past));
+    assert!(marks.has(&Value::int(BigInt::from(min - 1))));
+    assert!(!marks.has(&Value::int(BigInt::from(max + 2))));
+
+    // `i = (i64::MAX - 10) ⊔ (i ⊓ [..=i64::MAX]) + 1`, the loop of
+    // `initial i = 9223372036854775797; i' = i + 1; while i <= 9223372036854775807;`: the
+    // counter stops at 2^63, the landmark past the word, as `i = -10 ⊔ (i ⊓ [..=0]) + 1` stops
+    // at 1, shifted by i64::MAX. Counting down from i64::MIN + 10 under `i >= i64::MIN` stops
+    // at -2^63 - 1 as counting down from 10 under `i >= 0` stops at -1, shifted by i64::MIN.
+    let order = [Element::Component {
+        head: 0,
+        body: vec![],
+    }];
+    let up = walker(i64::MAX - 10, iv(None, Some(i64::MAX)), 1);
+    let small_up = walker(-10, iv(None, Some(0)), 1);
+    let down = walker(i64::MIN + 10, iv(Some(i64::MIN), None), -1);
+    let small_down = walker(10, iv(Some(0), None), -1);
+    let moved = |s: &IntervalSet, by: i64| {
+        s.lift1(|(lo, hi)| vec![(super::shift(lo, by), super::shift(hi, by))])
+    };
+    for (wide_loop, small_loop, by, text) in [
+        (
+            &up,
+            &small_up,
+            i64::MAX,
+            "[9223372036854775797..=9223372036854775808]",
+        ),
+        (
+            &down,
+            &small_down,
+            i64::MIN,
+            "[-9223372036854775809..=-9223372036854775798]",
+        ),
+    ] {
+        let small = phase1(small_loop, &order);
+        let wide = phase1(wide_loop, &order);
+        assert_eq!(wide, vec![moved(&small[0], by)]);
+        assert_eq!(wide[0].to_string(), text);
+        let solved = solve(wide_loop).unwrap();
+        assert_eq!(solved, vec![moved(&solve(small_loop).unwrap()[0], by)]);
+        assert_eq!(solved[0].to_string(), text);
+    }
 }
 
 /// `a = 0 ⊔ c; b = a + 1; c = b ⊓ (-inf, 4]` of DESIGN.md sec:domains, with `a`, `b` and `c`

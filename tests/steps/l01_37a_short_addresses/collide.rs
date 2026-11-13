@@ -3,6 +3,7 @@
 //! A map that trusts the address alone, planted here, merges them, so it differs between the
 //! two builds where the compiler does not.
 
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
@@ -12,6 +13,7 @@ use zed_kernel::{Prim, Term, Value};
 use zedc::zir::canon;
 use zedc::zir::lower::lower;
 
+use zed_tests::instances::Rng;
 use zed_tests::step_helpers::l01_33_lowering::{count, eval, round_trip};
 
 /// `x + 1` for each `x` in `0..n`: `n` distinct prim nodes.
@@ -165,6 +167,67 @@ fn types_that_tie_in_digest_level_after_level_are_ordered_on_a_small_stack() {
         });
         run.unwrap().join().unwrap();
     });
+}
+
+/// A random type over a few atoms, integers and tuple, union, meet, difference and morphism
+/// types, `depth` levels deep: in the short build most digests of such types tie.
+fn random_type(rng: &mut Rng, depth: usize) -> Type {
+    if depth == 0 {
+        return match rng.below(4) {
+            0 => Type::atom(&format!("a{}", rng.below(6))),
+            1 => Type::lit(&Value::Int(rng.int(0, 3))).expect("an integer is a literal type"),
+            2 => Type::int(),
+            _ => Type::top(),
+        };
+    }
+    let kind = rng.below(7);
+    let mut part = || {
+        let d = rng.below(depth);
+        random_type(rng, d)
+    };
+    match kind {
+        0 => Type::tuple(vec![part()]),
+        1 => Type::tuple(vec![part(), part()]),
+        2 => &part() | &part(),
+        3 => &part() & &part(),
+        4 => &part() - &part(),
+        5 => Type::morphism(part(), part(), part()),
+        _ => !&part(),
+    }
+}
+
+#[test]
+fn the_order_of_types_is_total_on_every_pair_of_900() {
+    // 900 random types, 810,000 ordered pairs, the size of the probe of SHORT-stack-l01_22. The
+    // order is antisymmetric on every pair; two types are equal in it exactly when their texts
+    // are; and the types sorted are in order on every pair, so the order is transitive. Sorting
+    // the types given in reverse gives the same sequence.
+    const TYPES: usize = 900;
+    let mut rng = Rng::new(0x37a);
+    let types: Vec<Type> = (0..TYPES).map(|_| random_type(&mut rng, 4)).collect();
+    let texts: Vec<String> = types.iter().map(|t| t.to_string()).collect();
+    let mut tied = 0;
+    for (a, ta) in types.iter().zip(&texts) {
+        for (b, tb) in types.iter().zip(&texts) {
+            let ab = a.cmp(b);
+            assert_eq!(ab, b.cmp(a).reverse(), "{ta} against {tb}");
+            assert_eq!(ab == Ordering::Equal, ta == tb, "{ta} against {tb}");
+            tied += usize::from(ab != Ordering::Equal && digest(a) == digest(b));
+        }
+    }
+    // The short build orders many pairs by contents, as the full build almost never does.
+    assert_eq!(tied > TYPES, SHORT, "{tied} distinct pairs tie in digest");
+    let mut sorted = types.clone();
+    sorted.sort();
+    for (i, a) in sorted.iter().enumerate() {
+        for b in &sorted[i + 1..] {
+            assert_ne!(a.cmp(b), Ordering::Greater, "{a} after {b}");
+        }
+    }
+    let mut back: Vec<Type> = types.iter().rev().cloned().collect();
+    back.sort();
+    let text = |ts: &[Type]| ts.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+    assert_eq!(text(&sorted), text(&back));
 }
 
 #[test]

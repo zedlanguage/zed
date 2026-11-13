@@ -4,7 +4,7 @@
 use zed_kernel::print::pretty;
 use zed_kernel::term::build::{app, if_, lam, let_, lit, var};
 use zed_kernel::{Prim, Term};
-use zed_tests::instances::{RANDOM_INSTANCES, Rng};
+use zed_tests::instances::Rng;
 use zed_tests::kernel::*;
 
 /// The weekly revenue per region: a fold over a reindex over a filter.
@@ -130,20 +130,42 @@ fn no_space(s: &str) -> String {
 
 #[test]
 fn the_broken_text_is_the_flat_text_up_to_whitespace() {
+    // 20,000 random terms, each printed at eight widths from narrower than any name to wider
+    // than most terms, and at the width of its own flat text, where nothing is broken.
+    const TERMS: usize = 20_000;
+    const WIDTHS: [usize; 8] = [8, 16, 24, 32, 48, 64, 80, 120];
     let mut rng = Rng::new(15);
-    for _ in 0..RANDOM_INSTANCES {
+    for _ in 0..TERMS {
         let depth = 1 + rng.below(4);
         let t = random(&mut rng, depth);
         let flat = t.to_string();
         assert!(!flat.contains('\n'), "{flat}");
-        let width = 10 + rng.below(80);
-        let text = pretty(&t, width);
-        assert_eq!(no_space(&text), no_space(&flat), "width {width}:\n{text}");
-        // Breaking only adds lines: a line break replaces a space or follows an opener, and
-        // each broken line is indented by an even number of spaces.
-        for line in text.lines() {
-            let indent = line.len() - line.trim_start().len();
-            assert_eq!(indent % 2, 0, "{text}");
+        assert_eq!(pretty(&t, flat.chars().count()), flat);
+        for width in WIDTHS {
+            let text = pretty(&t, width);
+            assert_eq!(no_space(&text), no_space(&flat), "width {width}:\n{text}");
+            // Breaking only adds lines: a line break replaces a space or follows an opener, and
+            // each broken line is indented by an even number of spaces.
+            for line in text.lines() {
+                let indent = line.len() - line.trim_start().len();
+                assert_eq!(indent % 2, 0, "{text}");
+            }
         }
+    }
+}
+
+#[test]
+fn a_line_is_measured_in_characters_not_bytes() {
+    // `discard("ééééé", "ééééé")` is 25 characters and 35 bytes: at width 25 it stays on one
+    // line, as `discard("eeeee", "eeeee")` does, and at 24 both break.
+    for s in ["ééééé", "eeeee"] {
+        let t = discard(lit(s), lit(s));
+        let flat = t.to_string();
+        assert_eq!(flat, format!("discard(\"{s}\", \"{s}\")"));
+        assert_eq!(pretty(&t, 25), flat);
+        assert_eq!(
+            pretty(&t, 24),
+            format!("discard(\n  \"{s}\",\n  \"{s}\"\n)")
+        );
     }
 }
