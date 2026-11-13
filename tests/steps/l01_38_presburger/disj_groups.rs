@@ -901,9 +901,14 @@ mod row_sums {
     /// `overlap_rows` with the second sum's coefficients 1 and 2 in turn: the shared atoms'
     /// two coefficients are not proportional, so the sums over them take two numbers each.
     fn coefficients_one_and_two(k: usize) -> Case {
+        coefficients(k, |i| 1 + (i % 2) as i64)
+    }
+
+    /// `overlap_rows` with the second sum's coefficient of `y_i` `c(i)`, its constant the sum
+    /// at the point where the even-numbered atoms take their weights.
+    fn coefficients(k: usize, c: impl Fn(usize) -> i64) -> Case {
         let mut case = overlap_rows(k);
         let w = weights(k);
-        let c = |i: usize| 1 + (i % 2) as i64;
         let row = &mut case.rows[1];
         row.0 = (0..k).map(|i| if i >= k / 3 { c(i) } else { 0 }).collect();
         row.1 = (k / 3..k).filter(|i| i % 2 == 0).map(|i| c(i) * w[i]).sum();
@@ -957,14 +962,20 @@ mod row_sums {
 
     /// Two overlapping sums whose shared atoms have coefficients 1 and 2 in turn in one and 1 in
     /// the other: exact at k = 12 and 16 (the solver alone gives `y0` both 0 and 1000 at k = 16,
-    /// where only 1000 is in a point). The work is not of order k here: decided at k = 16, 32
-    /// and 64 in 0.38M, 3.8M and 3,873M instructions, projected in 0.28M, 5.7M and 7,386M,
-    /// against 0.45M, 29.5M and 25,199M, and 0.46M, 51.9M and 58,170M before PRES-overlap-fast
-    /// (2026-11-13); the solver alone runs past 60 s at k = 64. Plan row PRES-overlap-coeffs.
+    /// where only 1000 is in a point); also with the ratios the other way round, a ratio of -1,
+    /// three ratios, and no point. The work at k = 64 and 512 is checked in
+    /// `two_overlapping_sums_with_coefficients_one_and_two_of_64_and_512_atoms_scale`.
     #[test]
     fn two_overlapping_sums_with_coefficients_one_and_two_are_answered_exactly() {
         coefficients_one_and_two(12).is_answered_exactly();
         coefficients_one_and_two(16).is_answered_exactly();
+        // The two ratios the other way round, a ratio of -1, three ratios, and no point.
+        coefficients(12, |i| 2 - (i % 2) as i64).is_answered_exactly();
+        coefficients(12, |i| if i % 2 == 0 { 1 } else { -1 }).is_answered_exactly();
+        coefficients(12, |i| 1 + (i % 3) as i64).is_answered_exactly();
+        let mut none = coefficients_one_and_two(12);
+        none.rows[1].1 += 1;
+        none.is_answered_exactly();
     }
 
     /// An inequality that closes beside an equation, checked on each pair of a key's bucket;
@@ -1179,6 +1190,36 @@ mod row_sums {
                 "{p:?}"
             );
         });
+    }
+
+    /// `coefficients_one_and_two` at k = 64 and 512, decided and projected onto its first,
+    /// middle and last atoms: the two groups the sums share are joined at once (PRES-overlap-
+    /// coeffs). 2026-11-13: decided 167.7M and 76.7M, projected 413.1M and 136.1M; before,
+    /// decided 3,873M and projected 7,386M at k = 64, the pairs of the two groups' tables.
+    #[test]
+    fn two_overlapping_sums_with_coefficients_one_and_two_of_64_and_512_atoms_scale() {
+        let inputs = scaling::inputs(64, |k| coefficients_one_and_two(k).formula());
+        scaling::check_order(
+            "two sums with coefficients one and two decided",
+            64,
+            1,
+            |k| {
+                assert_eq!(decide(&inputs[&k]), Ok(true));
+            },
+        );
+        scaling::check_order(
+            "two sums with coefficients one and two projected",
+            64,
+            1,
+            |k| {
+                let p =
+                    project_each(&inputs[&k], &[v(0), v(k / 2), v(k - 1)]).expect("a projection");
+                assert!(
+                    p.0.iter().all(|s| s.as_ref().is_ok_and(|s| !s.is_empty())),
+                    "{p:?}"
+                );
+            },
+        );
     }
 
     /// A chain of m sums, each sharing three atoms with the next: the groups are joined one

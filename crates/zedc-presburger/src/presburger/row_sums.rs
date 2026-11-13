@@ -77,7 +77,9 @@
 //! (`overlap_rows` at k = 1,024, whose bound is past [`FIRST`] per unit of size, answers in
 //! this first run). Otherwise, or where that run stops, the solver runs, each system it is
 //! asked charging its number of terms, and when the charge reaches the bound over [`RATE`] the
-//! method runs once more, with the whole bound as its allowance. When it answers, the solver is
+//! method runs once more, with the whole bound as its allowance. A plan with a [`Fused`] join,
+//! whose bound is the loose product of its pairs, runs first whatever its bound and, where a
+//! run stops, runs again with twice the allowance, up to the bound ([`race`]). When it answers, the solver is
 //! left at once and its answer dropped; a bound past `u64` never runs. The work units of both
 //! sides are counts, so the answer and its cost are the same at every run. [`RATE`] is set
 //! where the method's whole run costs about what the solver spent before it, so a question
@@ -115,9 +117,16 @@
 //! more than 10.5 times from k = 64 to 512. After round 2 the floor of the bound above kept the
 //! plan from costing more than main on `wide`. Two sums whose shared atoms have different
 //! coefficients in each (1 and 2 in one, 1 in the other) split the shared atoms into classes
-//! whose box is the product of their ranges, so the bound passes [`FIRST`] · [`RATE`] and the
-//! method waits for the solver: faster than main, but not of order k (plan row
-//! PRES-overlap-coeffs). Sumsets by FFT (K. Koiliaris
+//! whose box is the product of their ranges, so the bound passed [`FIRST`] · [`RATE`] and the
+//! method waited for the solver: 3,873M instructions decided at k = 64. PRES-overlap-coeffs
+//! (2026-11-13) splits the shared atoms by their ratio into two groups and joins the two at
+//! once ([`Fused`], [`lattice`]); the bound of that join stays far past its runs, since the
+//! sets it meets are sparse only near the ends of their range, so a plan with such a join runs
+//! first whatever its bound and doubles its allowance after each run that stops ([`race`]):
+//! 167.7M decided at k = 64 and 76.7M at k = 512. The doubling schedules above reran the
+//! method from an allowance of the size and cost `overlap_rows` and subset sum more; this one
+//! starts at [`FIRST`] times the size, waits [`RATE`] for each doubling, and runs only for
+//! plans with such a join. Sumsets by FFT (K. Koiliaris
 //! and C. Xu, "A faster pseudopolynomial time algorithm for subset sum", SODA 2017; K.
 //! Bringmann, "A near-linear pseudopolynomial time algorithm for subset sum", SODA 2017) cost
 //! O(W log W log n) for the sumset of n atoms whose sums span W, against O(n · log m · W/64)
@@ -572,9 +581,11 @@ fn planned<T: 'static>(
         };
         let bound = plan.bound(&rows, pass(&want));
         debug_assert!(floor <= bound, "floor {floor} past the bound {bound}");
+        let grow = (0..plan.len()).any(|i| plan.join(i).fuse.is_some());
         return race(
             size,
             bound,
+            grow,
             move |allowance| Ok(run(&plan, &rows, &want, allowance)),
             old,
         );
@@ -600,7 +611,7 @@ fn planned<T: 'static>(
         built = Some(plan);
         next
     };
-    race(size, floor, new, old)
+    race(size, floor, false, new, old)
 }
 
 /// The number of bits of `n`: 1 + the floor of its base-2 logarithm, 0 for 0.
@@ -964,6 +975,11 @@ impl Lits {
                 }
             }
         }
+    }
+
+    /// The units of a lookup: `1 + bits(runs)`.
+    fn lookup(&self) -> u64 {
+        1 + bits(self.runs.len() as u64)
     }
 
     fn contains(&self, key: i64) -> bool {
@@ -1569,6 +1585,611 @@ impl Work {
     }
 }
 
+/// A map of keys: `x + c` (`Shift`) or `c - x` (`Reflect`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Map {
+    Shift(i64),
+    Reflect(i64),
+}
+
+impl Map {
+    fn key(self, x: i64) -> i64 {
+        match self {
+            Map::Shift(c) => x + c,
+            Map::Reflect(c) => c - x,
+        }
+    }
+
+    fn inverse(self) -> Map {
+        match self {
+            Map::Shift(c) => Map::Shift(-c),
+            r => r,
+        }
+    }
+
+    /// The set mapped, the keys below 0 dropped, charged as a shift or a reflection.
+    fn set(self, s: &Set, work: &mut Work) -> Option<Set> {
+        match self {
+            Map::Shift(c) => work.shift(s, c),
+            Map::Reflect(c) => work.reflect(s, c),
+        }
+    }
+}
+
+/// The words of the even keys and of the odd keys.
+const PARITY: [u64; 2] = [0x5555_5555_5555_5555, 0xAAAA_AAAA_AAAA_AAAA];
+
+/// The bits of `x` at even positions, packed into the low 32 bits.
+fn even_bits(x: u64) -> u64 {
+    let mut x = x & PARITY[0];
+    x = (x | (x >> 1)) & 0x3333_3333_3333_3333;
+    x = (x | (x >> 2)) & 0x0F0F_0F0F_0F0F_0F0F;
+    x = (x | (x >> 4)) & 0x00FF_00FF_00FF_00FF;
+    x = (x | (x >> 8)) & 0x0000_FFFF_0000_FFFF;
+    (x | (x >> 16)) & 0x0000_0000_FFFF_FFFF
+}
+
+/// `{t : 2t + π in l}` for π = 0 and 1: each word's bits of one parity packed in half a word.
+fn halves(l: &Lits) -> [Lits; 2] {
+    let mut out = [Lits::default(), Lits::default()];
+    for i in 0..l.runs.len() {
+        let (b, w) = l.run(i);
+        for (k, &x) in w.iter().enumerate() {
+            let blk = b + k as i64;
+            for (pi, o) in out.iter_mut().enumerate() {
+                o.put(blk >> 1, even_bits(x >> pi) << (32 * (blk & 1)));
+            }
+        }
+    }
+    out
+}
+
+/// The keys of `l` from `lo` to `hi` (both at least 0) of parity `pi`.
+fn parity_clip(l: &Lits, lo: i64, hi: i64, pi: usize) -> Lits {
+    let mut out = Lits::default();
+    if lo > hi {
+        return out;
+    }
+    let c = l.clipped(lo, hi);
+    for i in 0..c.runs.len() {
+        let (b, w) = c.run(i);
+        for (k, &x) in w.iter().enumerate() {
+            out.put(b + k as i64, x & PARITY[pi]);
+        }
+    }
+    out
+}
+
+/// `s` from `lo` to `hi`, charged a lookup and the words kept; empty where `lo > hi`.
+fn window(s: &Set, lo: i64, hi: i64, work: &mut Work) -> Option<Set> {
+    work.spend(s.lookup())?;
+    let lo = lo.max(0);
+    if lo > hi {
+        return Some(Set::default());
+    }
+    let w = s.clipped(lo, hi);
+    work.spend(w.words())?;
+    Some(w)
+}
+
+/// The overlaps of two lists of intervals, each sorted and not overlapping, appended to `out`:
+/// one merge, O(|a| + |b|).
+fn meet_into(
+    a: impl Iterator<Item = (i128, i128)>,
+    b: impl Iterator<Item = (i128, i128)>,
+    out: &mut Vec<(i128, i128)>,
+) {
+    let (mut a, mut b) = (a.peekable(), b.peekable());
+    while let (Some(&(a1, a2)), Some(&(b1, b2))) = (a.peek(), b.peek()) {
+        if a1.max(b1) <= a2.min(b2) {
+            out.push((a1.max(b1), a2.min(b2)));
+        }
+        if a2 <= b2 {
+            a.next();
+        } else {
+            b.next();
+        }
+    }
+}
+
+/// The keys of one coordinate of the points of [`lattice`], gathered as the parts of the
+/// points are read: words over the coordinate's range, intervals, and keys of one parity from
+/// one key to another, as intervals of `t` for the keys `2t + π` (`half[π]`).
+struct Acc {
+    lo: i64,
+    hi: i64,
+    dense: Vec<u64>,
+    fill: Vec<(i64, i64)>,
+    half: [Vec<(i64, i64)>; 2],
+}
+
+impl Acc {
+    /// Gathers keys from `lo` to `hi`, charged one unit per word of that range.
+    fn new(lo: i64, hi: i64, work: &mut Work) -> Option<Acc> {
+        let (lo, hi) = (lo.max(0), hi.min(LIMIT as i64));
+        let n = if lo > hi {
+            0
+        } else {
+            (hi >> 6) - (lo >> 6) + 1
+        };
+        work.spend(n as u64 + 1)?;
+        Some(Acc {
+            lo,
+            hi,
+            dense: vec![0; n as usize],
+            fill: Vec::new(),
+            half: [Vec::new(), Vec::new()],
+        })
+    }
+
+    fn lits(&mut self, l: &Lits) {
+        let b0 = self.lo >> 6;
+        for i in 0..l.runs.len() {
+            let (b, w) = l.run(i);
+            for (k, &x) in w.iter().enumerate() {
+                if let Some(d) = usize::try_from(b + k as i64 - b0)
+                    .ok()
+                    .and_then(|j| self.dense.get_mut(j))
+                {
+                    *d |= x;
+                }
+            }
+        }
+    }
+
+    fn set(&mut self, s: &Set) {
+        self.lits(&s.lit);
+        self.fill.extend_from_slice(&s.fill);
+    }
+
+    fn key(&mut self, k: i64) {
+        if (self.lo..=self.hi).contains(&k) {
+            self.dense[((k >> 6) - (self.lo >> 6)) as usize] |= 1 << (k & 63);
+        }
+    }
+
+    /// The keys from `a` to `b`, cut to the range.
+    fn interval(&mut self, a: i128, b: i128) {
+        let (a, b) = (a.max(i128::from(self.lo)), b.min(i128::from(self.hi)));
+        if a <= b {
+            self.fill.push((a as i64, b as i64));
+        }
+    }
+
+    /// The keys from `a` to `b` of parity `pi`, cut to the range.
+    fn ap(&mut self, a: i128, b: i128, pi: i128) {
+        let (a, b) = (a.max(i128::from(self.lo)), b.min(i128::from(self.hi)));
+        let (ta, tb) = ((a - pi + 1).div_euclid(2), (b - pi).div_euclid(2));
+        if ta <= tb {
+            self.half[pi as usize].push((ta as i64, tb as i64));
+        }
+    }
+
+    /// The keys gathered. A stretch where both parities are gathered is an interval; a stretch
+    /// of one parity is set word by word.
+    fn finish(mut self, work: &mut Work) -> Option<Set> {
+        let mut keyed: [Vec<(i64, i64)>; 2] = [Vec::new(), Vec::new()];
+        for (pi, h) in self.half.iter_mut().enumerate() {
+            work.spend(sorted(h.len() as u64))?;
+            let p = pi as i64;
+            keyed[pi] = (joined(std::mem::take(h)).into_iter())
+                .map(|(a, b)| (2 * a + p, 2 * b + p))
+                .collect();
+        }
+        // Both parities: the overlaps of the two lists, each sorted, by one merge.
+        let (mut both, mut i, mut j) = (Vec::new(), 0, 0);
+        while i < keyed[0].len() && j < keyed[1].len() {
+            let ((a, x), (b, y)) = (keyed[0][i], keyed[1][j]);
+            if a.max(b) <= x.min(y) {
+                both.push((a.max(b), x.min(y)));
+            }
+            if x <= y {
+                i += 1;
+            } else {
+                j += 1;
+            }
+        }
+        // One parity: each list less the overlaps, set word by word.
+        for (pi, list) in keyed.iter().enumerate() {
+            let mut f = 0;
+            for &(a, b) in list {
+                let mut at = a;
+                while f < both.len() && both[f].1 < at {
+                    f += 1;
+                }
+                let mut g = f;
+                while at <= b {
+                    let stop = match both.get(g) {
+                        Some(&(c, d)) if c <= b => {
+                            g += 1;
+                            (c - 1, d + 1)
+                        }
+                        _ => (b, b + 1),
+                    };
+                    if at <= stop.0 {
+                        work.spend(((stop.0 >> 6) - (at >> 6) + 1) as u64)?;
+                        for blk in (at >> 6)..=(stop.0 >> 6) {
+                            let j = (blk - (self.lo >> 6)) as usize;
+                            self.dense[j] |= span_mask((at, stop.0), blk) & PARITY[pi];
+                        }
+                    }
+                    at = stop.1;
+                }
+            }
+        }
+        work.spend(self.dense.len() as u64 + sorted((self.fill.len() + both.len()) as u64))?;
+        let mut lit = Lits::default();
+        let b0 = self.lo >> 6;
+        for (k, &x) in self.dense.iter().enumerate() {
+            lit.put(b0 + k as i64, x);
+        }
+        self.fill.extend(both);
+        Some(Set::settled(lit, joined(self.fill)))
+    }
+}
+
+/// The coordinates of a point `(x, y)` of [`lattice`], as indices of its answer.
+const X: usize = 0;
+const Y: usize = 1;
+const SUM: usize = 2;
+const DIFF: usize = 3;
+
+/// The points `(x, y)` with x in `p`, y in `q`, `x + y` in `s` and `x - y + h` in `d` (any where
+/// `d` is `None`), read as the sets of their x, y, `x + y` and `x - y + h`, each where `want`
+/// asks for it (else empty). `h` is at least the greatest key of `q`, so `x - y + h` is at least
+/// 0 (PRES-overlap-coeffs: the join of two groups that share two rows, [`Fused`]).
+// Complexity tradeoff: the points are pairs, and taken pair by pair (the sums of the two groups
+// as one table of two digits, as before) they cost the product of the two tables: 1.29M keys
+// at k = 64 for `coefficients_one_and_two`, about 1.6·10^10 at k = 512. Here the sets are
+// split into their words (`lit`) and their intervals (`fill`), and the points into five parts
+// by which of the four sets they meet in words: y in the words of q, one shift and
+// intersection per y; else x in the words of p, one per x; else `x + y` in the words of s,
+// the intervals of y by one merge of the intervals of q and p per key; else `x - y + h` in the
+// words of d, by two merges per key; else all four in intervals, one interval or two runs of
+// one parity per four intervals. A part may meet a point again (a word may lie inside an
+// interval), which changes no answer. With w the words of a set, n its keys in words and r its
+// intervals, the cost is O(n_q·(w_p + w_s + w_d) + n_p·(r_q + w_s + w_d) +
+// n_s·(r_q + r_p)·(log + r_d + w_d) + n_d·(r_q + r_p + r_s) + r_q·r_p·(log + r_s·r_d)) plus the
+// words of each answer's range. The words of a group's table lie
+// near the ends of its range, where its sums are sparse; in the middle every sum is reached
+// (Z. Galil and O. Margalit, "An almost linear-time algorithm for the dense subset-sum
+// problem", SIAM J. Comput. 20(6), 1991), so n and w stay about the same as k grows, r is 1
+// or 2, and the cost is about the same at every k but for the words of the answer's range,
+// O(k·W/64) for weights of W. This is the meet in the middle of Horowitz and Sahni
+// ("Computing partitions with applications to the knapsack problem", J. ACM 21(2), 1974) on
+// the words, and interval arithmetic on the dense middle. The plan row named sumsets by FFT
+// (K. Bringmann, "A near-linear pseudopolynomial time algorithm for subset sum", SODA 2017):
+// the points of two groups are a sumset in two dimensions, O(R² log R) for sums of range R by
+// a transform, past the product above at these sizes, so it is not used.
+fn lattice(
+    p: &Set,
+    q: &Set,
+    s: &Set,
+    d: Option<&Set>,
+    h: i64,
+    want: [bool; 4],
+    work: &mut Work,
+) -> Option<[Set; 4]> {
+    let none = || {
+        [
+            Set::default(),
+            Set::default(),
+            Set::default(),
+            Set::default(),
+        ]
+    };
+    let (Some((pmin, pmax)), Some((qmin, qmax)), Some((smin, smax))) = (
+        p.min().zip(p.max()),
+        q.min().zip(q.max()),
+        s.min().zip(s.max()),
+    ) else {
+        return Some(none());
+    };
+    let (dmin, dmax) = match d {
+        None => (pmin - qmax + h, pmax - qmin + h),
+        Some(d) => match d.min().zip(d.max()) {
+            None => return Some(none()),
+            Some((a, b)) => (a.max(pmin - qmax + h), b.min(pmax - qmin + h)),
+        },
+    };
+    work.spend(4)?;
+    let ranges = [(pmin, pmax), (qmin, qmax), (smin, smax), (dmin, dmax)];
+    let mut acc = Vec::with_capacity(4);
+    for (a, &(lo, hi)) in ranges.iter().enumerate() {
+        acc.push(if want[a] {
+            Some(Acc::new(lo, hi, work)?)
+        } else {
+            None
+        });
+    }
+    // 1: y in the words of q.
+    work.spend(q.lit.words())?;
+    for y in q.lit.keys_in(0, i64::MAX) {
+        work.spend(1)?;
+        let xa = pmin.max(smin - y).max(dmin + y - h);
+        let xb = pmax.min(smax - y).min(dmax + y - h);
+        if xa > xb {
+            continue;
+        }
+        let px = window(p, xa, xb, work)?;
+        let sx = window(s, xa + y, xb + y, work)?;
+        let mut x = work.and_shifted(&px, &sx, -y)?;
+        if let Some(d) = d {
+            let dx = window(d, xa - y + h, xb - y + h, work)?;
+            x = work.and_shifted(&x, &dx, y - h)?;
+        }
+        if x.is_empty() {
+            continue;
+        }
+        if let Some(a) = &mut acc[X] {
+            work.spend(x.words())?;
+            a.set(&x);
+        }
+        if let Some(a) = &mut acc[Y] {
+            a.key(y);
+        }
+        for (k, c) in [(SUM, y), (DIFF, h - y)] {
+            if let Some(a) = &mut acc[k] {
+                let t = work.shift(&x, c)?;
+                a.set(&t);
+            }
+        }
+    }
+    // 2: y in an interval of q, x in the words of p: per x, the y of the intervals of q that
+    // meet `s - x` and `x + h - d`.
+    let (h1, pfill, qfill) = (i128::from(h), &p.fill, &q.fill);
+    let wide = |f: &(i64, i64)| (i128::from(f.0), i128::from(f.1));
+    if let (Some(&(f1, _)), Some(&(_, f2))) = (qfill.first(), qfill.last()) {
+        let qf = Set {
+            lit: Lits::default(),
+            fill: qfill.clone(),
+        };
+        work.spend(qf.words() + 1 + p.lit.lookup())?;
+        let lo = pmin.max(smin - f2).max(dmin + f1 - h);
+        let hi = pmax.min(smax - f1).min(dmax + f2 - h);
+        for x in p.lit.keys_in(lo, hi.max(lo - 1) + 1) {
+            work.spend(1)?;
+            let ya = f1.max(smin - x).max(x + h - dmax);
+            let yb = f2.min(smax - x).min(x + h - dmin);
+            if ya > yb {
+                continue;
+            }
+            let sy = window(s, x + ya, x + yb, work)?;
+            let sy = work.shift(&sy, -x)?;
+            let qy = window(&qf, ya, yb, work)?;
+            let mut ys = work.and(&sy, &qy)?;
+            if let Some(d) = d {
+                let dy = window(d, x + h - yb, x + h - ya, work)?;
+                ys = work.and_reflected(&ys, &dy, x + h)?;
+            }
+            if ys.is_empty() {
+                continue;
+            }
+            if let Some(a) = &mut acc[X] {
+                a.key(x);
+            }
+            if let Some(a) = &mut acc[Y] {
+                work.spend(ys.words())?;
+                a.set(&ys);
+            }
+            if let Some(a) = &mut acc[SUM] {
+                let t = work.shift(&ys, x)?;
+                a.set(&t);
+            }
+            if let Some(a) = &mut acc[DIFF] {
+                let t = work.reflect(&ys, x + h)?;
+                a.set(&t);
+            }
+        }
+    }
+    // The points of y in `[ya, yb]` with `x + y = σ`, in i128: x from `σ - yb`, and
+    // `x - y + h` from `σ + h - 2·yb` by 2.
+    let along = |acc: &mut Vec<Option<Acc>>, ya: i128, yb: i128, sg: i128| {
+        if let Some(a) = &mut acc[X] {
+            a.interval(sg - yb, sg - ya);
+        }
+        if let Some(a) = &mut acc[Y] {
+            a.interval(ya, yb);
+        }
+        if let Some(a) = &mut acc[SUM] {
+            a.interval(sg, sg);
+        }
+        if let Some(a) = &mut acc[DIFF] {
+            a.ap(sg + h1 - 2 * yb, sg + h1 - 2 * ya, (sg + h1).rem_euclid(2));
+        }
+    };
+    let (mut ys, mut two) = (Vec::new(), Vec::new());
+    let both = !pfill.is_empty() && !qfill.is_empty();
+    // 3: x and y in intervals, `x + y` in the words of s: per σ, the y of the intervals of q
+    // that meet `σ - p`, by one merge.
+    let half = match d {
+        Some(d) if !d.lit.is_empty() && both => {
+            work.spend(2 * d.lit.words())?;
+            Some(halves(&d.lit))
+        }
+        _ => None,
+    };
+    if both {
+        let (lo, hi) = (
+            pfill[0].0 + qfill[0].0,
+            pfill[pfill.len() - 1].1 + qfill[qfill.len() - 1].1,
+        );
+        work.spend(s.lit.lookup())?;
+        for sg in s.lit.keys_in(lo, hi + 1) {
+            work.spend(1 + (pfill.len() + qfill.len()) as u64)?;
+            let sg = i128::from(sg);
+            ys.clear();
+            let back = pfill
+                .iter()
+                .rev()
+                .map(|f| (sg - i128::from(f.1), sg - i128::from(f.0)));
+            meet_into(qfill.iter().map(wide), back, &mut ys);
+            for &(ya, yb) in &ys {
+                let Some(d) = d else {
+                    along(&mut acc, ya, yb, sg);
+                    continue;
+                };
+                // `x - y + h = δ` for y = (σ + h - δ) / 2: the intervals of d, then its words.
+                let (da, db) = (sg + h1 - 2 * yb, sg + h1 - 2 * ya);
+                work.spend(d.lookup())?;
+                let from = d.fill.partition_point(|f| i128::from(f.1) < da);
+                for &(d1, d2) in d.fill[from..].iter().take_while(|f| i128::from(f.0) <= db) {
+                    work.spend(1)?;
+                    let a = ya.max((sg + h1 - i128::from(d2) + 1).div_euclid(2));
+                    let b = yb.min((sg + h1 - i128::from(d1)).div_euclid(2));
+                    if a <= b {
+                        along(&mut acc, a, b, sg);
+                    }
+                }
+                let Some(half) = &half else { continue };
+                let pi = (sg + h1).rem_euclid(2);
+                let c = (sg + h1 - pi) / 2;
+                let (ta, tb) = ((c - yb).max(0), c - ya);
+                if ta > tb {
+                    continue;
+                }
+                let t = Set {
+                    lit: half[pi as usize].clipped(ta as i64, tb as i64),
+                    fill: Vec::new(),
+                };
+                work.spend(half[pi as usize].lookup() + t.words())?;
+                if t.is_empty() {
+                    continue;
+                }
+                // y = c - t, x = σ - c + t.
+                if let Some(a) = &mut acc[X] {
+                    let u = work.shift(&t, (sg - c) as i64)?;
+                    a.set(&u);
+                }
+                if let Some(a) = &mut acc[Y] {
+                    let u = work.reflect(&t, c as i64)?;
+                    a.set(&u);
+                }
+                if let Some(a) = &mut acc[SUM] {
+                    a.key(sg as i64);
+                }
+                if let Some(a) = &mut acc[DIFF] {
+                    let u = parity_clip(&d.lit, da.max(0) as i64, db as i64, pi as usize);
+                    work.spend(u.words() + 1)?;
+                    a.lits(&u);
+                }
+            }
+        }
+    }
+    // 4: x, y and `x + y` in intervals, `x - y + h` in the words of d: per δ, with e = δ - h,
+    // the y of the intervals of q, `p - e` and `(s - e) / 2`, by two merges.
+    if let Some(d) = d
+        && both
+        && !s.fill.is_empty()
+    {
+        let lo = (pfill[0].0 - qfill[qfill.len() - 1].1 + h).max(0);
+        let hi = pfill[pfill.len() - 1].1 - qfill[0].0 + h;
+        work.spend(d.lit.lookup())?;
+        for dl in d.lit.keys_in(lo, hi.max(lo - 1) + 1) {
+            work.spend(1 + (pfill.len() + qfill.len() + s.fill.len()) as u64)?;
+            let e = i128::from(dl) - h1;
+            two.clear();
+            ys.clear();
+            let xs = pfill
+                .iter()
+                .map(|f| (i128::from(f.0) - e, i128::from(f.1) - e));
+            meet_into(qfill.iter().map(wide), xs, &mut two);
+            let halved = (s.fill.iter())
+                .map(|f| {
+                    let (s1, s2) = wide(f);
+                    ((s1 - e + 1).div_euclid(2), (s2 - e).div_euclid(2))
+                })
+                .filter(|f| f.0 <= f.1);
+            meet_into(two.iter().copied(), halved, &mut ys);
+            for &(ya, yb) in &ys {
+                if let Some(a) = &mut acc[X] {
+                    a.interval(ya + e, yb + e);
+                }
+                if let Some(a) = &mut acc[Y] {
+                    a.interval(ya, yb);
+                }
+                if let Some(a) = &mut acc[SUM] {
+                    a.ap(2 * ya + e, 2 * yb + e, e.rem_euclid(2));
+                }
+                if let Some(a) = &mut acc[DIFF] {
+                    a.key(dl);
+                }
+            }
+        }
+    }
+    // 5: all four in intervals (`x - y + h` any, where d is `None`): per interval of q and of p,
+    // the intervals of s and d over their sums and differences.
+    let universe = [(dmin, dmax)];
+    let dfill = d.map_or(&universe[..], |d| &d.fill[..]);
+    for &(q1, q2) in qfill {
+        for &(p1, p2) in pfill {
+            let (lo, hi) = (p1 + q1, p2 + q2);
+            work.spend(s.lookup())?;
+            let from = s.fill.partition_point(|f| f.1 < lo);
+            for &(s1, s2) in s.fill[from..].iter().take_while(|f| f.0 <= hi) {
+                let [q1, q2, p1, p2, s1, s2] = [q1, q2, p1, p2, s1, s2].map(i128::from);
+                work.spend(1 + bits(dfill.len() as u64))?;
+                let from = dfill.partition_point(|f| i128::from(f.1) < p1 - q2 + h1);
+                for &(d1, d2) in dfill[from..]
+                    .iter()
+                    .take_while(|f| i128::from(f.0) <= p2 - q1 + h1)
+                {
+                    work.spend(1)?;
+                    let (e1, e2) = (i128::from(d1) - h1, i128::from(d2) - h1);
+                    if let Some(a) = &mut acc[Y] {
+                        a.interval(
+                            q1.max(s1 - p2)
+                                .max(p1 - e2)
+                                .max((s1 - e2 + 1).div_euclid(2)),
+                            q2.min(s2 - p1).min(p2 - e1).min((s2 - e1).div_euclid(2)),
+                        );
+                    }
+                    if let Some(a) = &mut acc[X] {
+                        a.interval(
+                            p1.max(s1 - q2)
+                                .max(q1 + e1)
+                                .max((s1 + e1 + 1).div_euclid(2)),
+                            p2.min(s2 - q1).min(q2 + e2).min((s2 + e2).div_euclid(2)),
+                        );
+                    }
+                    // `x + y` and `x - y` have one parity: each parity on its own.
+                    for pi in 0..2 {
+                        let up = |v: i128| v + (pi - v).rem_euclid(2);
+                        let down = |v: i128| v - (v - pi).rem_euclid(2);
+                        if let Some(a) = &mut acc[SUM] {
+                            let (e1, e2) = (up(e1), down(e2));
+                            if e1 <= e2 {
+                                a.ap(
+                                    s1.max(e1 + 2 * q1).max(2 * p1 - e2).max(p1 + q1),
+                                    s2.min(2 * p2 - e1).min(e2 + 2 * q2).min(p2 + q2),
+                                    pi,
+                                );
+                            }
+                        }
+                        if let Some(a) = &mut acc[DIFF] {
+                            let (s1, s2) = (up(s1), down(s2));
+                            if s1 <= s2 {
+                                a.ap(
+                                    e1.max(s1 - 2 * q2).max(2 * p1 - s2).max(p1 - q2) + h1,
+                                    e2.min(2 * p2 - s1).min(s2 - 2 * q1).min(p2 - q1) + h1,
+                                    (pi + h1).rem_euclid(2),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut out = none();
+    for (a, o) in acc.into_iter().zip(out.iter_mut()) {
+        if let Some(a) = a {
+            *o = a.finish(work)?;
+        }
+    }
+    Some(out)
+}
+
 /// The values `s` of `l·s + c` that meet `== 0` (`eq`) or `>= 0`: from the first to the second
 /// number, none where the first is greater.
 fn meets(l: i128, c: i128, eq: bool) -> (i128, i128) {
@@ -1958,6 +2579,27 @@ type Keyed = (i64, i64, i128, usize, i128, i128);
 /// Closed intervals of values, `(least, greatest)`, in increasing order.
 type Pieces = Vec<(i128, i128)>;
 
+/// Two groups i and i + 1 joined as one ([`lattice`]): the atoms of one signature of two rows,
+/// r open before them and closing at i + 1 as an equation, s opening at i and open after
+/// i + 1, split by the ratio of their coefficients on s and r, the ratio at i + 1 twice that at
+/// i, λ = ±1 on both rows at i and on r at i + 1. With u the key of layer i (r alone), e and o
+/// the keys of the two groups' sums and v the key of layer i + 2 (s alone), r closes as
+/// `u + q = s(e)` for `q = q(o)` in `[0, h]`, and `v = out(u - q + h)`.
+#[derive(Clone, Copy, Debug)]
+struct Fused {
+    q: Map,
+    s: Map,
+    h: i64,
+    out: Map,
+}
+
+/// A join's part in a pair of [`Fused`] groups: the first, with the pair's maps, or the second.
+#[derive(Clone, Copy, Debug)]
+enum Fuse {
+    First(Fused),
+    Second,
+}
+
 #[derive(Clone, Copy)]
 struct Join<'a> {
     entries: &'a [Entry],
@@ -1965,6 +2607,7 @@ struct Join<'a> {
     /// The number of keys of the layer with the keyed digits fixed.
     span: i64,
     word: Option<Word>,
+    fuse: Option<Fuse>,
 }
 
 /// Where a join's items lie in [`Joins`]: its entries and its keyed equations, each a start
@@ -1975,6 +2618,7 @@ struct JoinAt {
     keyed: (usize, usize),
     span: i64,
     word: Option<Word>,
+    fuse: Option<Fuse>,
 }
 
 /// The joins of a plan, as [`Groups`].
@@ -1993,12 +2637,14 @@ impl Joins {
             keyed: (k, nk),
             span,
             word,
+            fuse,
         } = self.at[i];
         Join {
             entries: &self.entries[e..e + ne],
             keyed: &self.keyed[k..k + nk],
             span,
             word,
+            fuse,
         }
     }
 }
@@ -2076,7 +2722,19 @@ impl Sigs {
 
 impl Plan {
     /// The plan, or `None` where a key passes [`LIMIT`] or a sum `i128`: the solver answers.
+    /// Groups are split into [`Fused`] pairs where they meet its conditions; where a split pair
+    /// does not, or the plan with the splits passes a limit, the plan is made again without.
     fn of(rows: &Rows, want: &[bool]) -> Option<Plan> {
+        let mut split = false;
+        match Plan::build(rows, want, true, &mut split) {
+            None if split => Plan::build(rows, want, false, &mut split),
+            plan => plan,
+        }
+    }
+
+    /// The plan, its groups split into [`Fused`] pairs where `fuse` asks; `split` is set where a
+    /// group was split.
+    fn build(rows: &Rows, want: &[bool], fuse: bool, split: &mut bool) -> Option<Plan> {
         let sigs = Sigs::of(rows);
         // The groups: the atoms of each signature, in order of signature, the atoms projected
         // onto last (so the pass back over a group's atoms, [`Plan::project`], stops at the
@@ -2101,12 +2759,29 @@ impl Plan {
         let mut groups = Groups::with_capacity(order.len(), sigs.rows.len());
         let mut last = vec![0; rows.rows.len()];
         let mut sc = Scratch::default();
+        // Each row's first group, and the first group of each pair split for [`Fused`].
+        let (mut first, mut pairs) = (vec![usize::MAX; rows.rows.len()], Vec::new());
         for atoms in order.chunk_by(|&a, &b| sigs.sig(a) == sigs.sig(b)) {
-            let (i, sig) = (groups.at.len(), sigs.sig(atoms[0]));
-            for &r in sig {
-                last[r] = i;
+            let sig = sigs.sig(atoms[0]);
+            let halves = fuse
+                .then(|| Plan::halves(&sigs, &first, sig, atoms))
+                .flatten();
+            let parts = match &halves {
+                Some((e, o)) => {
+                    *split = true;
+                    pairs.push(groups.at.len());
+                    [&e[..], &o[..]]
+                }
+                None => [atoms, &[][..]],
+            };
+            for atoms in parts.into_iter().filter(|a| !a.is_empty()) {
+                let i = groups.at.len();
+                for &r in sig {
+                    last[r] = i;
+                    first[r] = first[r].min(i);
+                }
+                groups.push(rows, &sigs, sig, atoms, &mut sc)?;
             }
-            groups.push(rows, &sigs, sig, atoms, &mut sc)?;
         }
         // Each row's least and greatest partial sum, after each group in turn.
         let n = rows.rows.len();
@@ -2180,11 +2855,125 @@ impl Plan {
                 layouts.get(i + 1),
             )?;
         }
+        for &i in &pairs {
+            let f = Plan::fused(rows, &last, i, &groups, &layouts)?;
+            joins.at[i].fuse = Some(Fuse::First(f));
+            joins.at[i + 1].fuse = Some(Fuse::Second);
+        }
         Some(Plan {
             groups,
             layouts,
             joins,
             free,
+        })
+    }
+}
+
+impl Plan {
+    /// The atoms of a group of two rows, r open before it (`first`) and s opening here, in two
+    /// parts by the ratio of their coefficients on s and r, the ratio of the second part twice
+    /// that of the first; `None` where they are not so.
+    fn halves(
+        sigs: &Sigs,
+        first: &[usize],
+        sig: &[usize],
+        atoms: &[usize],
+    ) -> Option<(Vec<usize>, Vec<usize>)> {
+        let &[a, b] = sig else { return None };
+        let (r, s) = match (first[a] != usize::MAX, first[b] != usize::MAX) {
+            (true, false) => (0, 1),
+            (false, true) => (1, 0),
+            _ => return None,
+        };
+        // The ratio s/r as a pair, and whether two are equal or the second twice the first.
+        let ratio = |j: usize| (sigs.coefs[sigs.at[j] + s], sigs.coefs[sigs.at[j] + r]);
+        let same =
+            |p: (i128, i128), q: (i128, i128)| Some(p.0.checked_mul(q.1)? == q.0.checked_mul(p.1)?);
+        let twice = |p: (i128, i128), q: (i128, i128)| {
+            Some(q.0.checked_mul(p.1)? == p.0.checked_mul(q.1)?.checked_mul(2)?)
+        };
+        if atoms.iter().any(|&j| ratio(j).1 == 0) {
+            return None;
+        }
+        let x = ratio(atoms[0]);
+        let y = atoms
+            .iter()
+            .map(|&j| ratio(j))
+            .find(|&p| same(p, x) != Some(true))?;
+        let lo = if twice(x, y)? {
+            x
+        } else if twice(y, x)? {
+            y
+        } else {
+            return None;
+        };
+        let (mut e, mut o) = (Vec::new(), Vec::new());
+        for &j in atoms {
+            if same(ratio(j), lo)? {
+                e.push(j);
+            } else if twice(lo, ratio(j))? {
+                o.push(j);
+            } else {
+                return None;
+            }
+        }
+        Some((e, o))
+    }
+
+    /// The maps of the pair of groups i and i + 1, `None` where they do not meet the conditions
+    /// of [`Fused`].
+    fn fused(
+        rows: &Rows,
+        last: &[usize],
+        i: usize,
+        groups: &Groups,
+        layouts: &Layouts,
+    ) -> Option<Fused> {
+        let (x, y) = (layouts.get(i), layouts.get(i + 2));
+        let (&[(r, _)], &[(s, _)]) = (x.by_row, y.by_row) else {
+            return None;
+        };
+        let (ge, go) = (groups.get(i), groups.get(i + 1));
+        let lambda = |g: Group, row: usize| Some(g.of_row[g.sig.binary_search(&row).ok()?].1);
+        let (lre, lse) = (lambda(ge, r)?, lambda(ge, s)?);
+        let (lro, lso) = (lambda(go, r)?, lambda(go, s)?);
+        if last[r] != i + 1
+            || !rows.rows[r].eq
+            || ge.digits.len() != 1
+            || go.digits.len() != 1
+            || [lre, lse, lro].iter().any(|l| l.abs() != 1)
+            || lso != 2 * lse * lre * lro
+        {
+            return None;
+        }
+        // With the class sums E and O, r's sum A = λ_rE·E at i, B = λ_rO·O = q + cb at i + 1;
+        // r closes as U + A + B + k = 0 for U = u + lo_i, and s = ε·(B − U − k), ε = λ_sE·λ_rE.
+        let (lce, lco, h) = (
+            ge.digits[0].lo,
+            go.digits[0].lo,
+            i128::from(go.digits[0].radix) - 1,
+        );
+        let (lo_i, lo_s, k) = (x.digits[0].lo, y.digits[0].lo, rows.rows[r].k);
+        let wide = |v: i128| i64::try_from(v).ok();
+        let (q, cb) = match lro {
+            1 => (Map::Shift(0), lco),
+            _ => (Map::Reflect(wide(h)?), -h - lco),
+        };
+        let kk = k + lo_i + cb;
+        let s_map = match lre {
+            1 => Map::Reflect(wide(-lce - kk)?),
+            _ => Map::Shift(wide(lce - kk)?),
+        };
+        let c = h + cb - lo_i - k;
+        let out = match lse * lre {
+            1 => Map::Reflect(wide(c - lo_s)?),
+            _ => Map::Shift(wide(-c - lo_s)?),
+        };
+        Some(Fused {
+            q,
+            s: s_map,
+            h: wide(h)?,
+            out,
         })
     }
 }
@@ -2282,6 +3071,7 @@ impl Joins {
             keyed: (k0, keyed.len()),
             span,
             word,
+            fuse: None,
         });
         Some(())
     }
@@ -2452,6 +3242,25 @@ impl Plan {
         let mut met = Vec::with_capacity(self.len());
         for i in 0..self.len() {
             let (layer, table) = (&layers[i], self.sum(&prefix, i));
+            match self.join(i).fuse {
+                Some(Fuse::First(f)) => {
+                    // The pair at once: its two sums as `s` and `q`, kept for the pass back in
+                    // `met`, layer i + 1 left empty.
+                    let s = f.s.set(table, work)?;
+                    let q = f.q.set(self.sum(&prefix, i + 1), work)?;
+                    let want = [false, false, false, true];
+                    let [_, _, _, d] = lattice(layer, &q, &s, None, f.h, want, work)?;
+                    let next = f.out.set(&d, work)?;
+                    if next.is_empty() {
+                        return Some(None);
+                    }
+                    met.extend([s, q]);
+                    layers.extend([Set::default(), next]);
+                    continue;
+                }
+                Some(Fuse::Second) => continue,
+                None => {}
+            }
             let (m, next) = match self.join(i).word {
                 Some(w) => self.word_join(i, w, layer, table, work)?,
                 None => {
@@ -2526,6 +3335,20 @@ impl Plan {
         good[p] = work.copy(&t.layers[p])?;
         for i in (0..p).rev() {
             let (layer, gy) = (&t.layers[i], &good[i + 1]);
+            match self.join(i).fuse {
+                Some(Fuse::First(f)) => {
+                    let d = f.out.inverse().set(&good[i + 2], work)?;
+                    let want = [true, true, true, false];
+                    let (s, q) = (&t.met[i], &t.met[i + 1]);
+                    let [gx, gq, gs, _] = lattice(layer, q, s, Some(&d), f.h, want, work)?;
+                    good[i] = gx;
+                    sums[i] = f.s.inverse().set(&gs, work)?;
+                    sums[i + 1] = f.q.inverse().set(&gq, work)?;
+                    continue;
+                }
+                Some(Fuse::Second) => continue,
+                None => {}
+            }
             let (gx, gg) = match self.join(i).word {
                 Some(w) => {
                     let gr = self.group(i);
@@ -2582,8 +3405,27 @@ impl Plan {
         let mut m = Model::new();
         let mut x = 0;
         for (i, gr) in (0..self.len()).map(|i| self.group(i)).enumerate() {
-            work.spend(sums[i].words())?;
             let j = self.join(i);
+            match j.fuse {
+                Some(Fuse::First(f)) => {
+                    // q in the pair's q sums with x + q in its s sums and x - q + h in the next
+                    // layer's good keys; the least such q.
+                    let q = f.q.set(&sums[i + 1], work)?;
+                    let s = f.s.set(&sums[i], work)?;
+                    let d = f.out.inverse().set(&good[i + 2], work)?;
+                    let c = work.and_shifted(&q, &s, -x)?;
+                    let c = work.and_reflected(&c, &d, x + f.h)?;
+                    let q = c.min()?;
+                    let (e, o) = (f.s.inverse().key(x + q), f.q.inverse().key(q));
+                    self.take_apart(rows, &t, i, e, &mut m, work)?;
+                    self.take_apart(rows, &t, i + 1, o, &mut m, work)?;
+                    x = f.out.key(x - q + f.h);
+                    continue;
+                }
+                Some(Fuse::Second) => continue,
+                None => {}
+            }
+            work.spend(sums[i].words())?;
             let each = 2 + good[i + 1].lookup();
             let mut pick = None;
             for g in sums[i].keys() {
@@ -2595,34 +3437,47 @@ impl Plan {
                     break;
                 }
             }
-            let (mut key, y) = pick?;
-            // The group's sum is taken apart from its last atom back: some value of the atom
-            // leaves a sum of the table before it.
-            for tt in (0..gr.atoms.len()).rev() {
-                let (a, before, delta) =
-                    (gr.atoms[tt], &t.prefix[self.table(i) + tt], gr.delta(tt));
-                let each = before.lookup();
-                let mut found = None;
-                'v: for (v0, off, n) in gr.ranges(rows, tt) {
-                    for e in 0..n {
-                        work.spend(each)?;
-                        let rest = key - off - if e == 0 { 0 } else { e * delta };
-                        if before.contains(rest) {
-                            found = Some((v0 + i128::from(e), rest));
-                            break 'v;
-                        }
-                    }
-                }
-                let (v, rest) = found?;
-                m.insert(rows.atoms[a].clone(), Int::from(v));
-                key = rest;
-            }
+            let (key, y) = pick?;
+            self.take_apart(rows, &t, i, key, &mut m, work)?;
             x = y;
         }
         for &a in &self.free {
             m.insert(rows.atoms[a].clone(), Int::from(rows.domains[a][0].0));
         }
         Some(Some(m))
+    }
+
+    /// Group i's sum `key` taken apart into values of its atoms, written to `m`, from its last
+    /// atom back: some value of the atom leaves a sum of the table before it.
+    fn take_apart(
+        &self,
+        rows: &Rows,
+        t: &Tables,
+        i: usize,
+        mut key: i64,
+        m: &mut Model,
+        work: &mut Work,
+    ) -> Option<()> {
+        let gr = self.group(i);
+        for tt in (0..gr.atoms.len()).rev() {
+            let (a, before, delta) = (gr.atoms[tt], &t.prefix[self.table(i) + tt], gr.delta(tt));
+            let each = before.lookup();
+            let mut found = None;
+            'v: for (v0, off, n) in gr.ranges(rows, tt) {
+                for e in 0..n {
+                    work.spend(each)?;
+                    let rest = key - off - if e == 0 { 0 } else { e * delta };
+                    if before.contains(rest) {
+                        found = Some((v0 + i128::from(e), rest));
+                        break 'v;
+                    }
+                }
+            }
+            let (v, rest) = found?;
+            m.insert(rows.atoms[a].clone(), Int::from(v));
+            key = rest;
+        }
+        Some(())
     }
 
     /// Each wanted atom's set of values over the points of the rows.
@@ -3040,11 +3895,14 @@ const FIRST: u64 = 4096;
 const RATE: u64 = 2048;
 
 /// A method run beside the solver: what the solver has been charged, the charge at which the
-/// method next runs, the method, and whether it has answered. The method answers whether it
-/// has answered, or the charge at which it runs again.
+/// method next runs, the allowance it then runs with, whether that allowance doubles after a
+/// run that does not answer (up to the bound), the method, and whether it has answered. The
+/// method answers whether it has answered, or the charge at which it runs again.
 struct Race {
     charged: u64,
     next: u64,
+    allow: u64,
+    grow: bool,
     bound: u64,
     run: Box<dyn FnMut(u64) -> Result<bool, u64>>,
     done: bool,
@@ -3104,8 +3962,13 @@ pub(super) fn charge(units: u64) {
         r.charged = r.charged.saturating_add(units);
         while !r.done && r.charged >= r.next {
             r.next = u64::MAX;
-            match (r.run)(r.bound) {
-                Ok(done) => r.done = done,
+            match (r.run)(r.allow) {
+                Ok(true) => r.done = true,
+                Ok(false) if r.grow && r.allow < r.bound => {
+                    r.allow = r.allow.saturating_mul(2).min(r.bound);
+                    r.next = r.allow.div_ceil(RATE);
+                }
+                Ok(false) => {}
                 Err(at) => r.next = at,
             }
         }
@@ -3146,15 +4009,28 @@ impl Drop for Off {
 /// The answer of `new` (the method, given an allowance) or of `old` (the solver), whichever
 /// finishes first, as the module note describes; `bound` is the most `new` spends, `u64::MAX`
 /// where it cannot be told, or at most that where `new` answers `Err(at)`: it runs again once
-/// the solver has been charged `at` ([`planned`]).
+/// the solver has been charged `at` ([`planned`]). Where `grow` is set, the method runs first
+/// whatever its bound, and each run that does not answer doubles the allowance of the next,
+/// up to the bound, which runs once the solver has been charged that allowance over [`RATE`].
+// Complexity tradeoff: the bound adds up each operation's charge with each set at its most;
+// where a plan joins two groups that share their rows ([`Fused`]) the sets the join meets are
+// sparse only in the middle of their range, which the bound cannot see, and the bound is far
+// past the run: 1.66·10^9 units at k = 64 for `coefficients_one_and_two` decided, against
+// 1.24M spent, so the method waited for the solver to be charged 810K units (27,900M
+// instructions), and from k = 128 never ran first. Doubling the allowance from the run first
+// (the doubling of Levin's search, Problems of Information Transmission 9(3), 1973) spends at
+// most four times what the run needs (each allowance below twice the need, the runs before it
+// at most as much again), and the solver at most twice the need over the rate; the plans
+// without such a join keep the race as before, whose bound is near their runs.
 fn race<T: 'static>(
     size: u64,
     bound: u64,
+    grow: bool,
     mut new: impl FnMut(u64) -> Result<Option<T>, u64> + 'static,
     old: impl FnOnce() -> Result<T, Refusal>,
 ) -> Result<T, Refusal> {
     let first = size.saturating_mul(FIRST);
-    if bound <= first.saturating_mul(RATE)
+    if (grow || bound <= first.saturating_mul(RATE))
         && let Ok(Some(t)) = new(bound.min(first))
     {
         return Ok(t);
@@ -3174,11 +4050,17 @@ fn race<T: 'static>(
     RACES.with(|races| {
         races.borrow_mut().push(Race {
             charged: 0,
-            next: if bound <= first || bound == u64::MAX {
-                u64::MAX
-            } else {
-                bound.div_ceil(RATE)
+            next: match bound {
+                b if b <= first || b == u64::MAX => u64::MAX,
+                _ if grow => first.saturating_mul(2).min(bound).div_ceil(RATE),
+                _ => bound.div_ceil(RATE),
             },
+            allow: if grow {
+                first.saturating_mul(2).min(bound)
+            } else {
+                bound
+            },
+            grow,
             bound,
             run,
             done: false,
@@ -3236,7 +4118,7 @@ mod tests {
         let runs = Rc::new(Cell::new(0));
         let ask = |bound, cost, units| {
             runs.set(0);
-            let answer = race(1, bound, method(cost, &runs), solver(units));
+            let answer = race(1, bound, false, method(cost, &runs), solver(units));
             (answer, runs.get())
         };
         // The run first answers; the solver never starts.
@@ -3269,7 +4151,10 @@ mod tests {
                     true => Ok(Some(1)),
                 }
             };
-            (race(1, 4 * FIRST * RATE, new, solver(units)), runs.get())
+            (
+                race(1, 4 * FIRST * RATE, false, new, solver(units)),
+                runs.get(),
+            )
         };
         let at = 8 * FIRST;
         assert_eq!(lazy(at, at + 5), (Ok(1), 2));
@@ -3277,6 +4162,40 @@ mod tests {
         // A charge already past the one named: the method runs at once.
         assert_eq!(lazy(1, 4 * FIRST + 5), (Ok(1), 2));
         // No race is left on the thread.
+        assert!(RACES.with(|r| r.borrow().is_empty()));
+    }
+
+    /// A race whose allowance doubles ([`Fused`] plans): the method runs first whatever its
+    /// bound, then with twice the allowance once the solver has been charged that allowance
+    /// over the rate, and so on up to the bound, which it never passes.
+    #[test]
+    fn a_race_that_doubles_its_allowance() {
+        let (runs, given) = (Rc::new(Cell::new(0)), Rc::new(RefCell::new(Vec::new())));
+        let ask = |bound: u64, cost: u64, units: u64| {
+            runs.set(0);
+            given.borrow_mut().clear();
+            let (r, g) = (Rc::clone(&runs), Rc::clone(&given));
+            let new = move |allowance: u64| {
+                r.set(r.get() + 1);
+                g.borrow_mut().push(allowance);
+                Ok((allowance >= cost).then_some(1))
+            };
+            (race(1, bound, true, new, solver(units)), runs.get())
+        };
+        // Past the run first's limit, the run first still answers.
+        let far = 4 * FIRST * RATE;
+        assert_eq!(ask(far, FIRST, 0), (Ok(1), 1));
+        // A run of 5·FIRST: allowances FIRST, 2·FIRST, 4·FIRST, 8·FIRST, the last at a charge
+        // of 8·FIRST / RATE.
+        assert_eq!(ask(far, 5 * FIRST, u64::MAX), (Ok(1), 4));
+        assert_eq!(*given.borrow(), [1, 2, 4, 8].map(|m| m * FIRST));
+        // The solver answers before the charge of the last run.
+        assert_eq!(ask(far, 5 * FIRST, 8 * FIRST / RATE - 1), (Ok(2), 3));
+        // The allowance stops at the bound, and a method that needs more never answers.
+        assert_eq!(ask(3 * FIRST, u64::MAX, 1000), (Ok(2), 3));
+        assert_eq!(*given.borrow(), [FIRST, 2 * FIRST, 3 * FIRST]);
+        // A bound within the run first: one run.
+        assert_eq!(ask(FIRST, u64::MAX, 1000), (Ok(2), 1));
         assert!(RACES.with(|r| r.borrow().is_empty()));
     }
 
@@ -3349,6 +4268,70 @@ mod tests {
         );
         assert_eq!(huge.floor(), u64::MAX);
         assert!(Plan::of(&huge, &[]).is_none());
+    }
+
+    /// [`lattice`] on random sets of words and intervals, with `d` given and not, against the
+    /// points taken pair by pair: each part of the points (y in words; x in words; `x + y` in
+    /// words; `x - y + h` in words; all in intervals) and each parity is met.
+    #[test]
+    fn lattice_by_pairs() {
+        let mut seed = 0x9E37_79B9_7F4A_7C15_u64;
+        let mut next = move |n: u64| {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (seed >> 33) % n
+        };
+        let set = |top: i64, next: &mut dyn FnMut(u64) -> u64| {
+            let mut keys: Vec<i64> = (0..next(12)).map(|_| next(top as u64) as i64).collect();
+            let mut fill: Vec<(i64, i64)> = (0..next(3))
+                .map(|_| {
+                    let a = next(top as u64) as i64;
+                    (a, (a + next(150) as i64).min(top))
+                })
+                .collect();
+            fill.sort_unstable();
+            Set::settled(Lits::of(&mut keys), fill)
+        };
+        let mut met = [0usize; 4];
+        for case in 0..400 {
+            let top = [40, 200, 700][case % 3];
+            let (p, q, s) = (
+                set(top, &mut next),
+                set(top, &mut next),
+                set(2 * top, &mut next),
+            );
+            let d = set(2 * top, &mut next);
+            let d = (case % 4 != 0).then_some(&d);
+            let h = q.max().unwrap_or(0) + next(3) as i64;
+            let mut want = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+            for x in p.keys() {
+                for y in q.keys() {
+                    if s.contains(x + y) && d.is_none_or(|d| d.contains(x - y + h)) {
+                        for (w, k) in want.iter_mut().zip([x, y, x + y, x - y + h]) {
+                            w.push(k);
+                        }
+                    }
+                }
+            }
+            for w in &mut want {
+                w.sort_unstable();
+                w.dedup();
+            }
+            for one in 0..4 {
+                let mut ask = [false; 4];
+                ask[one] = true;
+                let got = lattice(&p, &q, &s, d, h, ask, &mut Work::new(u64::MAX))
+                    .expect("within the allowance");
+                for (a, (g, w)) in got.iter().zip(&want).enumerate() {
+                    let g: Vec<i64> = g.keys().collect();
+                    let w = if a == one { &w[..] } else { &[][..] };
+                    assert_eq!(g, w, "case {case}, coordinate {a}");
+                }
+                met[one] += usize::from(!want[one].is_empty());
+            }
+        }
+        assert!(met.iter().all(|&m| m > 100), "{met:?}");
     }
 
     /// One step of [`Plan::project`] value by value, as its walk does it: the sums of `before`
