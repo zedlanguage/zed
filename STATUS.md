@@ -2106,7 +2106,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | CK-apply-operator | impl attempt 1 | 2026-11-12 00:38 | started; worktree /home/luke/Work/wt/ck-apply-operator on origin/main b9e56b559 |
 | CROSSOVER-bench | running | 2026-11-12 22:47 |  |
-| LIT-tuple-branch-carrier | impl attempt 1 | 2026-11-12 20:34 | tests green on rebased tree: affected battery 1429 pieces 0 failed (load 30-55), l01_26a 198 passed; spec zed b85e2da 5e97be4 7900b4f pushed; impl push pending  |
 | MSG-derive-print-unions | impl attempt 1 | 2026-11-12 17:24 | started; worktree /home/luke/Work/wt/derive-print-unions / load 37.56 39.12 37.75 |
 | MSG-flow-origin | impl attempt 1 | 2026-11-11 13:43 | started; worktree wt/msg-flow-origin / 28.82 31.73 34.72 |
 | MSG-literal-type-huge-power | impl attempt 1 | 2026-11-12 22:00 | negative control (run once, not committed): without the walk.rs change the 3 new tests fail; scaling of the checking of if 3^(200n)+1 took 6.1 times the bytes a |
