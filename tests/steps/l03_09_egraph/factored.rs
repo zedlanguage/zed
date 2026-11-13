@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use zed_kernel::poly::{Carrier, Verdict};
+use zed_kernel::poly::{Carrier, Refused, Verdict, limit};
 use zed_kernel::term::Term;
 use zed_tests::scaling;
 
@@ -32,7 +32,7 @@ fn split_is_proved_without_expanding_a_side() {
 }
 
 #[test]
-fn the_a98_laws_at_exponent_1000_are_proved() {
+fn the_a98_laws_at_exponent_1000() {
     let d = law(
         "x: int",
         "(1 + x) ^ 1000",
@@ -40,15 +40,44 @@ fn the_a98_laws_at_exponent_1000_are_proved() {
         Carrier::Int,
     );
     assert_eq!((d.verdict, d.factored), (Verdict::Proved, true));
-    // Different factors on the two sides: the expansion decides, 1001 monomials each.
+    // Different factors on the two sides: the expansion would form 1001 monomials of up to
+    // 1000 bits, more work than the limit of this size, so the law is refused (QUESTIONS A98),
+    // at most the limit spent.
     let d = law(
         "x: int",
         "(1 + x) ^ 1000 * (1 - x) ^ 1000",
         "(1 - x ^ 2) ^ 1000",
         Carrier::Int,
     );
+    let Verdict::Refused(r) = d.verdict else {
+        panic!("{:?}", d.verdict)
+    };
+    assert_eq!((r.why, d.factored), (Refused::Work(d.size), false));
+    assert!(d.work <= limit(d.size));
+    eprintln!(
+        "exponent 1000: size {} work {} limit {}",
+        d.size,
+        d.work,
+        limit(d.size)
+    );
+    // At 2^32, which never finished before the work was counted, it is refused as soon.
+    let d = law(
+        "x: int",
+        "(1 + x) ^ 4294967296 * (1 - x) ^ 4294967296",
+        "(1 - x ^ 2) ^ 4294967296",
+        Carrier::Int,
+    );
+    assert!(matches!(d.verdict, Verdict::Refused(_)), "{:?}", d.verdict);
+    assert!(d.work <= limit(d.size));
+    // At 10 it is expanded.
+    let d = law(
+        "x: int",
+        "(1 + x) ^ 10 * (1 - x) ^ 10",
+        "(1 - x ^ 2) ^ 10",
+        Carrier::Int,
+    );
     assert_eq!((d.verdict, d.factored), (Verdict::Proved, false));
-    assert_eq!(d.terms, Some([1001, 1001]));
+    assert_eq!(d.terms, Some([11, 11]));
 }
 
 #[test]

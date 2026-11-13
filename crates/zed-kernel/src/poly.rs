@@ -17,14 +17,9 @@
 //! products of sums are expanded and like monomials merged; equal normal forms prove the
 //! identity in every commutative ring, since the expansion uses only the ring laws.
 //!
-//! A product of four or more sums over two or more names is refused ([`Refusal`]), a sum inside
-//! a factor counting as one more sum of the product: the expansion of `s` sums of `t` terms has
-//! up to `t^s` monomials. A power `a ^ n` whose base, as written, has at most `T` monomials
-//! counts as the fewer of `n` times the sums of `a` and `T - 1`: its expansion has at most
-//! `C(T + n - 1, T - 1) <= (n + 1) ^ (T - 1)` monomials, as many as a product of `T - 1` sums of
-//! `n + 1` terms, so `(x + y) ^ n` counts one sum and `(a + b + c + d + f) ^ 4` four. The
-//! refusal is the written shape of the product, never the number of terms it expands to (see
-//! `REFUSED_SUMS`).
+//! The expansion counts its work as it goes, each operation charged before it runs, and stops
+//! with a [`Refusal`] once the work would pass [`limit`] of the identity's size: the work of the
+//! costliest product of three sums written at the same size (QUESTIONS A98).
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -55,42 +50,98 @@ pub enum Carrier {
     Ring,
 }
 
-/// The fewest sums of a product over two or more names that is refused, a power counted as
-/// below.
+/// The most work the expansion of an identity of `size` may spend: the work of the costliest
+/// product of at most three sums written at that size (QUESTIONS A98), which is the larger of
+/// the work counted for `(x1 + … + xs) ^ 3`, `s = max(1, (size - 2) / 2)` rounded down, and for
+/// the one sum `x1 + … + xm`, `m = (size + 1) / 2`. The sum is the larger only up to size 5,
+/// where the power reads one name (`x ^ 3`, work 2) and `a + b + c` costs 5.
 ///
-/// Complexity tradeoff: what is given up is every identity with a product of four or more sums
-/// over two or more names (`(a + b) * (c + d) * (e + f) * (g + h)`, `(a + b + c + d + f) ^ 4`),
-/// refused with [`Refusal`]: an error naming the product, with a written proof (rung 8) in its
-/// menu and the note that every point agreed; a false one is still refuted at a point first.
-/// Why: the expansion of a product of `s` sums of `t` terms has up to `t^s` monomials,
-/// exponential in the written `s`, and deciding polynomial identities of formulas in
-/// deterministic polynomial time is an open problem (polynomial identity testing), so some
-/// written shape must be refused. The count is a property of the written product, never of the
-/// number of terms; a product whose sums are all in one name is never refused, since its
-/// expansion has at most its degree plus one terms.
+/// The size is the identity's size as a term: one for each operation, name, atom, `let` and
+/// read of a `let`'s name, and one for each number plus the bits of its numerator, of its
+/// denominator when that is not 1, and of an exponent. The work is counted by [`Budget`] in
+/// word operations: a sum or a negation the words of its operands' coefficients, a product
+/// what its support product spent, plus the cheaper of its dense and sparse costs
+/// ([`Poly::plan`]) when that product gives up, a power of one term the words
+/// of its result; a power of more terms is its squarings' products. Written as `(x1 + … + xs)
+/// ^ 3`, the three sums cost `2 s + 2`: `s` names, `s - 1` sums, a power and the two bits of
+/// 3. Their work is `(s - 1)(s + 2) / 2` for the sums that read the base, `s^2` for its square
+/// (`s` terms by `s`, one word each), and `s^2 (s + 1) / 2` for the base times the square's
+/// `s (s + 1) / 2` terms; the cheaper dense cost only lowers it, so the formula is at least the
+/// counted work. Any other product of three sums of that size costs no more: three distinct
+/// sums of `a`, `b` and `c` names cost `ab + abc` at size `2 (a + b + c) - 1`, and a shared
+/// one read by `let` costs the same as the power at a larger size (tested by brute force over
+/// the shapes and name overlaps, `poly::tests::no_product_of_three_sums_is_refused`). The
+/// limit includes the reading of the term, the sums that build the base, so that a term with
+/// no product (`a + c == c + a`, work 4 against 12) is never refused; leaves and constants
+/// cost nothing in either. `s` is at least 1, and the sum counts, so that no
+/// small identity is refused: `x == x` has a limit of 2 and `abs(a) + -abs(a) == 0`, of work 3,
+/// a limit of 5.
 ///
-/// A power `a ^ n` counts `min(n * sums(a), T - 1)` sums, where `T` bounds the monomials of
-/// `a` from its written shape (a name or a number 1; a sum the sum of its parts' bounds; a
-/// product their product; a power the bound below). Both counts bound the expansion by the same
-/// rule as a product of sums. The first: `a ^ n` is a product of `n` copies of `a`. The second:
-/// the monomials of `a ^ n` are the products of `n` of the `T` monomials of `a` with repetition,
-/// at most `C(T + n - 1, T - 1) <= (n + 1) ^ (T - 1)` (each of the first `T - 1` monomials
-/// taken 0 to `n` times, the last making up the rest), the count of a product of `T - 1` sums
-/// of `n + 1` terms. So `(x + y) ^ n` counts one sum and expands to `n + 1` monomials, and
-/// `(a + b + c + d + f) ^ 4` counts four (`C(8, 4)` = 70 monomials). The former count, `n *
-/// sums(a)` alone, refused `(x + y) ^ 4`, which has five monomials. The bound is polynomial in
-/// the exponent's value, not in its written digits: an exponent of `2^20` on a sum of two terms
-/// expands to `2^20 + 1` monomials of up to `2^20` bits, which no count of sums refuses, in one
-/// name as in two (measured: `(1 + x) ^ 32768` 1.16 GB and 13.8 s, `2^16` past 60 s;
-/// COMPLEXITY.md POLY-nf-power-value, open as QUESTIONS A98).
-///
-/// Four is one above the most the corpus's obligations need: the measurement
-/// (`l03_09_egraph::measure`, COMPLEXITY.md POLY-nf-sums) found at most two, in `(a + b) * (a +
-/// b)`, over the spec's laws and the associativity and commutativity obligations of the
-/// studies' reducers, and the plan's row needs `(a + b) * (c + d) * (e + f)`, three. Tested by
-/// `l03_09_egraph::refusal`. A complete solution would decide identity of arithmetic formulas
-/// deterministically in polynomial time, which no known algorithm does.
-pub const REFUSED_SUMS: u64 = 4;
+/// Complexity tradeoff: what is given up is every identity whose expansion costs more than
+/// the limit, refused with [`Refusal`]: an error naming the operation at which the work passed
+/// it, with a written proof (rung 8) in its menu and the note that every point agreed; a
+/// false one is still refuted at a point first, and a product of powers of the same factors
+/// is still proved without expanding the sides ([`Identity::factored`]). Why: the expansion
+/// of a product of `s` sums of `t` terms has up to `t^s` monomials, exponential in the written
+/// `s`, and deciding polynomial identities of formulas in deterministic polynomial time is an
+/// open problem (polynomial identity testing), so some identities must be refused. The limit
+/// is cubic in the size, so a power whose cost grows with its exponent's value, not its
+/// digits, is refused once that value passes about the cube of the written size:
+/// `(x + y) ^ k - x == (x + y) ^ (k / 2) * (y + x) ^ (k / 2) - x` is proved at k = 70 and
+/// refused from 72 on, and `(1 + x) ^ 1000 * (1 - x) ^ 1000 == (1 - x ^ 2) ^ 1000` is refused
+/// when 5381 of its 7152 units are spent and the next operation would pass the rest
+/// (measured, COMPLEXITY.md POLY-nf-work). The counted work tracks the instructions spent
+/// within a factor of 10.6 over the expanding scaling families (94 to 1000 instructions a
+/// unit); the factored path spends about 6150 a unit, since its pass over the nodes and its
+/// hashing are linear and not counted. A refusal costs at most the limit, since each
+/// operation is charged before it runs; deciding the limit costs one pass over the nodes. A complete solution would decide identity of arithmetic formulas deterministically
+/// in polynomial time, which no known algorithm does.
+pub fn limit(size: u64) -> f64 {
+    let s = names_at(size) as f64;
+    let m = size.div_ceil(2).max(1) as f64;
+    let cube = (s - 1.0) * (s + 2.0) / 2.0 + s * s + s * s * (s + 1.0) / 2.0;
+    cube.max((m - 1.0) * (m + 2.0) / 2.0)
+}
+
+/// The names `s` of the base of `(x1 + … + xs) ^ 3`, the costliest product of three sums of
+/// `size` ([`limit`]).
+fn names_at(size: u64) -> u64 {
+    (size.saturating_sub(2) / 2).max(1)
+}
+
+/// The work an expansion has spent, and the most it may spend, in the units of [`limit`].
+struct Budget {
+    spent: f64,
+    most: f64,
+}
+
+impl Budget {
+    fn new(most: f64) -> Budget {
+        Budget { spent: 0.0, most }
+    }
+
+    /// What is left to spend.
+    fn left(&self) -> f64 {
+        self.most - self.spent
+    }
+
+    /// Spends `w`; `None`, and nothing spent, when that would pass the most.
+    fn spend(&mut self, w: f64) -> Option<()> {
+        if self.spent + w > self.most {
+            return None;
+        }
+        self.spent += w;
+        Some(())
+    }
+}
+
+/// The words of `p`'s coefficients, at least one each: what a sum or a negation reads.
+fn coefficient_words<K>(p: &Poly<K>) -> f64 {
+    p.terms
+        .iter()
+        .map(|(_, c)| c.bits().div_ceil(64).max(1) as f64)
+        .sum()
+}
 
 /// The prime the points are taken modulo, `2^61 - 1`.
 const P: u64 = (1 << 61) - 1;
@@ -105,7 +156,7 @@ pub enum Verdict {
     /// The normal forms differ, but no point refutes: a side holds an atom, which may depend on
     /// the binders, or the carrier is a ring that may have finite characteristic.
     Differs,
-    /// A product of a refused written shape.
+    /// The expansion would cost more than [`limit`] allows, or an exponent is too wide.
     Refused(Refusal),
 }
 
@@ -114,7 +165,9 @@ pub enum Verdict {
 pub struct Decision {
     /// The verdict.
     pub verdict: Verdict,
-    /// The most sums any product multiplies, counted as [`REFUSED_SUMS`] counts them.
+    /// The most sums any product multiplies, a power `a ^ n` counting the fewer of `n` times the
+    /// sums of `a` and the bound on its monomials less one: a measure of the written shape, which
+    /// no longer refuses anything (see [`limit`]).
     pub sums: u64,
     /// The total degree of the two sides, at most; `None` past `u64::MAX`.
     pub degree: Option<u64>,
@@ -124,6 +177,12 @@ pub struct Decision {
     /// factor expanded once and the sides not at all: `(1 + x) ^ 1000 == (1 + x) ^ 500 * (x +
     /// 1) ^ 500`.
     pub factored: bool,
+    /// The identity's size as a term, as [`limit`] counts it.
+    pub size: u64,
+    /// The work the expansion counted, in the units of [`limit`]: of the reading of the factors
+    /// when [`Decision::factored`], of the sides' expansion when they were expanded, up to the
+    /// refused operation when refused, and 0 when a point decided.
+    pub work: f64,
 }
 
 /// Values for the binders, in the order given, at which the two sides differ.
@@ -145,8 +204,8 @@ impl fmt::Display for Point {
 /// Why a product is not expanded.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Refused {
-    /// It multiplies this many sums over two or more names, at least [`REFUSED_SUMS`].
-    Sums(u64),
+    /// The expansion's work would pass [`limit`] of the identity's size, this one.
+    Work(u64),
     /// A power's exponent, or a monomial's degree, is past `u64::MAX`, the widest exponent a
     /// monomial holds.
     Exponent,
@@ -170,9 +229,10 @@ impl Refusal {
     /// notes, and the repair, a written proof of `law`, the law's text without its `;`.
     pub fn message(&self, law: &str) -> String {
         let mut out = match &self.why {
-            Refused::Sums(n) => format!(
-                "Cannot expand `{}`: it multiplies {n} sums of more than one name.",
-                self.product
+            Refused::Work(size) => format!(
+                "Cannot expand `{}`: the law costs more to expand than `(x1 + … + x{}) ^ 3`.",
+                self.product,
+                names_at(*size)
             ),
             Refused::Exponent => format!(
                 "Cannot expand `{}`: an exponent is above {}.",
@@ -181,9 +241,9 @@ impl Refusal {
             ),
         };
         match &self.why {
-            Refused::Sums(_) => out.push_str(&format!(
-                "\n  note: a product of {REFUSED_SUMS} or more sums is expanded only when its sums are all in one name, as `(1 + x) ^ 2 * (1 + x ^ 2) ^ 2`, and a power of a sum of `t` terms counts as at most `t - 1` sums, as `(x + y) ^ 9` counts 1."
-            )),
+            Refused::Work(_) => out.push_str(
+                "\n  note: a law is expanded only when that costs at most as much as the costliest product of three sums written as long as the law, a number counting one more for each of its bits.",
+            ),
             Refused::Exponent => {}
         }
         if !self.agreed.is_empty() {
@@ -213,15 +273,21 @@ pub fn normal_form(t: &Term, binders: &[&str], carrier: Carrier) -> Result<Strin
     let id = Identity::new(t, &zero, binders, carrier);
     let shapes = id.shapes();
     let reach = id.reachable(&id.sides);
-    if let Some(r) = id.refusal(&shapes, &reach, Vec::new()) {
-        return Err(r);
+    if let Some(i) = id.too_wide(&shapes, &reach) {
+        return Err(id.refused(i, Refused::Exponent, Vec::new()));
     }
+    let mut budget = Budget::new(limit(id.size));
+    let refused = |i| id.refused(i, Refused::Work(id.size), Vec::new());
     Ok(match id.keys(&shapes, &reach) {
-        Keys::Packed(ctx) => id.show(&id.expand::<u128>(&ctx, &reach, &id.sides[..1])[0], &ctx),
-        Keys::Sparse => id.show(
-            &id.expand::<Sparse>(&Packing::none(), &reach, &id.sides[..1])[0],
-            &Packing::none(),
-        ),
+        Keys::Packed(ctx) => {
+            let forms = id.expand::<u128>(&ctx, &reach, &id.sides[..1], &mut budget);
+            id.show(&forms.map_err(refused)?[0], &ctx)
+        }
+        Keys::Sparse => {
+            let ctx = Packing::none();
+            let forms = id.expand::<Sparse>(&ctx, &reach, &id.sides[..1], &mut budget);
+            id.show(&forms.map_err(refused)?[0], &ctx)
+        }
     })
 }
 
@@ -239,46 +305,28 @@ enum Node {
     Pow(usize, BigUint),
 }
 
-/// Which names a subterm holds: none, one, or more than one.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Names {
-    None,
-    One(u32),
-    Many,
-}
-
-impl Names {
-    fn join(self, o: Names) -> Names {
-        match (self, o) {
-            (Names::None, x) | (x, Names::None) => x,
-            (Names::One(a), Names::One(b)) if a == b => Names::One(a),
-            _ => Names::Many,
-        }
-    }
-}
-
 /// The written shape of a node: its total degree at most (`None` past `u64::MAX`), the sums
-/// it multiplies, its number of monomials at most (`u64::MAX` past it), and the names of the
-/// whole node and of the sums it multiplies.
+/// it multiplies ([`Decision::sums`]), and its number of monomials at most (`u64::MAX` past
+/// it).
 #[derive(Clone, Copy, Debug)]
 struct Shape {
     degree: Option<u64>,
     sums: u64,
     terms: u64,
-    names: Names,
-    sum_names: Names,
 }
 
 /// The two sides of an identity, lowered.
 struct Identity<'t> {
     nodes: Vec<Node>,
-    /// The term each `Mul` and `Pow` node was lowered from, to name a refused product.
+    /// The term each operation's node was lowered from, to name a refused one.
     origin: Vec<Option<&'t Term>>,
     /// The names of the leaves: the binders first, then the atoms' texts.
     names: Vec<Arc<str>>,
     binders: usize,
     sides: [usize; 2],
     carrier: Carrier,
+    /// The size as a term ([`limit`]).
+    size: u64,
 }
 
 /// The work of the lowering's loop, which keeps its own stack so that a term of any depth is
@@ -311,6 +359,7 @@ impl<'t> Identity<'t> {
             binders: binders.len(),
             sides: [0, 0],
             carrier,
+            size: 0,
         };
         let binder: HashMap<&str, u32> = binders
             .iter()
@@ -328,7 +377,10 @@ impl<'t> Identity<'t> {
                         Visit::Leaf(l) => done.push(l),
                         Visit::Name(n) => {
                             let at = match lets.get(n).and_then(|s| s.last()) {
-                                Some(&i) => i,
+                                Some(&i) => {
+                                    id.size += 1;
+                                    i
+                                }
                                 None => match binder.get(n) {
                                     Some(&b) => id.push(Node::Leaf(b), None),
                                     None => id.atom(&mut atoms, n.to_string()),
@@ -345,6 +397,7 @@ impl<'t> Identity<'t> {
                             work.extend(args.iter().rev().map(Work::Visit));
                         }
                         Visit::Let(name, e, body) => {
+                            id.size += 1;
                             work.push(Work::Unbind(name));
                             work.push(Work::Visit(body));
                             work.push(Work::Bind(name));
@@ -354,7 +407,7 @@ impl<'t> Identity<'t> {
                     Work::Build(op, t) => {
                         let b = done.pop().expect("an operand lowered");
                         let at = match op {
-                            Op::Neg => id.push(Node::Neg(b), None),
+                            Op::Neg => id.push(Node::Neg(b), Some(t)),
                             Op::Pow(n) => id.push(Node::Pow(b, n), Some(t)),
                             Op::Scale(n, d) => {
                                 let c = id.push(Node::Const(n, d), None);
@@ -363,8 +416,8 @@ impl<'t> Identity<'t> {
                             Op::Add | Op::Sub | Op::Mul => {
                                 let a = done.pop().expect("two operands lowered");
                                 match op {
-                                    Op::Add => id.push(Node::Add(a, b), None),
-                                    Op::Sub => id.push(Node::Sub(a, b), None),
+                                    Op::Add => id.push(Node::Add(a, b), Some(t)),
+                                    Op::Sub => id.push(Node::Sub(a, b), Some(t)),
                                     _ => id.push(Node::Mul(a, b), Some(t)),
                                 }
                             }
@@ -385,7 +438,14 @@ impl<'t> Identity<'t> {
         id
     }
 
+    /// Adds node `n`, lowered from `origin`, and its size: one, and the bits of a number or an
+    /// exponent.
     fn push(&mut self, n: Node, origin: Option<&'t Term>) -> usize {
+        self.size += 1 + match &n {
+            Node::Const(a, b) => a.bits() + if b.is_one() { 0 } else { b.bits() },
+            Node::Pow(_, e) => e.bits(),
+            _ => 0,
+        };
         self.nodes.push(n);
         self.origin.push(origin);
         self.nodes.len() - 1
@@ -470,26 +530,19 @@ impl<'t> Identity<'t> {
                     degree: Some(0),
                     sums: 0,
                     terms: 1,
-                    names: Names::None,
-                    sum_names: Names::None,
                 },
-                Node::Leaf(l) => Shape {
+                Node::Leaf(_) => Shape {
                     degree: Some(1),
                     sums: 0,
                     terms: 1,
-                    names: Names::One(*l),
-                    sum_names: Names::None,
                 },
                 Node::Neg(a) => s[*a],
                 Node::Add(a, b) | Node::Sub(a, b) => {
                     let (a, b) = (s[*a], s[*b]);
-                    let names = a.names.join(b.names);
                     Shape {
                         degree: a.degree.zip(b.degree).map(|(x, y)| x.max(y)),
                         sums: a.sums.max(b.sums).max(1),
                         terms: a.terms.saturating_add(b.terms),
-                        names,
-                        sum_names: names,
                     }
                 }
                 Node::Mul(a, b) => {
@@ -498,8 +551,6 @@ impl<'t> Identity<'t> {
                         degree: a.degree.zip(b.degree).and_then(|(x, y)| x.checked_add(y)),
                         sums: a.sums.saturating_add(b.sums),
                         terms: a.terms.saturating_mul(b.terms),
-                        names: a.names.join(b.names),
-                        sum_names: a.sum_names.join(b.sum_names),
                     }
                 }
                 Node::Pow(a, e) => {
@@ -517,11 +568,9 @@ impl<'t> Identity<'t> {
                         // `a ^ n` is a product of `a.sums * n` sums, and also, expanded, a
                         // sum of at most C(T + n - 1, T - 1) <= (n + 1) ^ (T - 1) monomials
                         // for `T = a.terms`: as many as a product of `T - 1` sums of `n + 1`
-                        // terms. The smaller count bounds it; see `REFUSED_SUMS`.
+                        // terms. The smaller count bounds it.
                         sums: a.sums.saturating_mul(n).min(a.terms - 1),
                         terms: power_terms(a.terms, n),
-                        names: a.names,
-                        sum_names: a.sum_names,
                     }
                 }
             };
@@ -530,9 +579,9 @@ impl<'t> Identity<'t> {
         s
     }
 
-    /// The first refused product among the nodes `reach` marks, in the order the nodes were
-    /// built, so the smallest: with `agreed` the points that agreed.
-    fn refusal(&self, shapes: &[Shape], reach: &[bool], agreed: Vec<Point>) -> Option<Refusal> {
+    /// The first product or power among the nodes `reach` marks whose exponent or degree is past
+    /// `u64::MAX`, in the order the nodes were built, so the smallest.
+    fn too_wide(&self, shapes: &[Shape], reach: &[bool]) -> Option<usize> {
         for (i, n) in self.nodes.iter().enumerate() {
             if !reach[i] {
                 continue;
@@ -544,30 +593,24 @@ impl<'t> Identity<'t> {
             // monomial for a shape no obligation of the corpus writes (COMPLEXITY.md
             // POLY-nf-exponent). A base of 0, 1 or -1 is not refused: its power is a constant.
             // Tested by `poly::tests::refused_shapes`.
-            let why = match n {
-                Node::Pow(a, e) if e.to_u64().is_none() && !self.trivial_base(*a) => {
-                    Some(Refused::Exponent)
-                }
-                Node::Mul(..) | Node::Pow(..) if shapes[i].degree.is_none() => {
-                    Some(Refused::Exponent)
-                }
-                Node::Mul(..) | Node::Pow(..)
-                    if shapes[i].sums >= REFUSED_SUMS && shapes[i].sum_names == Names::Many =>
-                {
-                    Some(Refused::Sums(shapes[i].sums))
-                }
-                _ => None,
+            let wide = match n {
+                Node::Pow(a, e) => e.to_u64().is_none() && !self.trivial_base(*a),
+                _ => false,
             };
-            if let Some(why) = why {
-                let product = self.origin[i].map_or_else(String::new, |t| t.to_string());
-                return Some(Refusal {
-                    product,
-                    why,
-                    agreed,
-                });
+            if wide || matches!(n, Node::Mul(..) | Node::Pow(..)) && shapes[i].degree.is_none() {
+                return Some(i);
             }
         }
         None
+    }
+
+    /// The refusal of node `i`'s operation, with `agreed` the points that agreed.
+    fn refused(&self, i: usize, why: Refused, agreed: Vec<Point>) -> Refusal {
+        Refusal {
+            product: self.origin[i].map_or_else(String::new, |t| t.to_string()),
+            why,
+            agreed,
+        }
     }
 
     /// Whether node `a` is the constant 0, 1 or -1, whose powers need no exponent's width.
@@ -686,12 +729,14 @@ impl<'t> Identity<'t> {
             .degree
             .zip(shapes[self.sides[1]].degree)
             .map(|(a, b)| a.max(b));
-        let decision = |verdict, terms| Decision {
+        let decision = |verdict, terms, work| Decision {
             verdict,
             sums,
             degree,
             terms,
             factored: false,
+            size: self.size,
+            work,
         };
         let refutable = self.refutable(&reach);
         let seed = self.seed();
@@ -704,23 +749,38 @@ impl<'t> Identity<'t> {
                 Some([a, b]) if a == b => agreed.push(self.binder_point(&at)),
                 Some(_) if refutable => {
                     let w = self.witness(at, degree, &mut vals);
-                    return decision(Verdict::Refuted(w), None);
+                    return decision(Verdict::Refuted(w), None, 0.0);
                 }
-                Some(_) => return decision(Verdict::Differs, None),
+                Some(_) => return decision(Verdict::Differs, None, 0.0),
             }
         }
-        if self.factored(&shapes) {
+        if let Some(work) = self.factored(&shapes) {
             return Decision {
                 factored: true,
-                ..decision(Verdict::Proved, None)
+                ..decision(Verdict::Proved, None, work)
             };
         }
-        if let Some(r) = self.refusal(&shapes, &reach, agreed) {
-            return decision(Verdict::Refused(r), None);
+        if let Some(i) = self.too_wide(&shapes, &reach) {
+            let r = self.refused(i, Refused::Exponent, agreed);
+            return decision(Verdict::Refused(r), None, 0.0);
         }
-        match self.keys(&shapes, &reach) {
-            Keys::Packed(ctx) => self.compare::<u128>(&ctx, &reach, refutable, decision),
-            Keys::Sparse => self.compare::<Sparse>(&Packing::none(), &reach, refutable, decision),
+        let mut budget = Budget::new(limit(self.size));
+        let forms = match self.keys(&shapes, &reach) {
+            Keys::Packed(ctx) => self
+                .expand::<u128>(&ctx, &reach, &self.sides, &mut budget)
+                .map(|f| self.compare(f, &ctx, refutable)),
+            Keys::Sparse => {
+                let ctx = Packing::none();
+                self.expand::<Sparse>(&ctx, &reach, &self.sides, &mut budget)
+                    .map(|f| self.compare(f, &ctx, refutable))
+            }
+        };
+        match forms {
+            Ok((verdict, terms)) => decision(verdict, Some(terms), budget.spent),
+            Err(i) => {
+                let r = self.refused(i, Refused::Work(self.size), agreed);
+                decision(Verdict::Refused(r), None, budget.spent)
+            }
         }
     }
 
@@ -746,12 +806,21 @@ impl<'t> Identity<'t> {
     /// factors again, so such an identity costs up to twice the expansion; and so is one
     /// whose exponents multiply past `2^128`: as big integers, the exponents down a chain of `m`
     /// powers of 64 bits would cost `O(m^2)` words, and the expansion refuses an exponent past
-    /// `u64::MAX` anyway. A factor that holds a refused product leaves the identity to the
-    /// refusal, as the factor's expansion would cost what the refusal guards against. The
-    /// constants that do not cancel are multiplied out by a product tree, no larger than the
-    /// coefficients the expansion would form. Tested by `poly::tests::products_of_powers` and
-    /// `l03_09_egraph::factored` (COMPLEXITY.md POLY-nf-power-value).
-    fn factored(&self, shapes: &[Shape]) -> bool {
+    /// `u64::MAX` anyway. A factor whose expansion passes the limit leaves the identity to the
+    /// expansion, which refuses it. A constant below 1 is kept as its reciprocal on the other
+    /// side, so `2` and `1 / 2` cancel; the constants that still do not cancel are multiplied out
+    /// by a product tree, no larger than the coefficients the expansion would form, and charged.
+    /// Constants with a common factor that is not the whole of either (`4 ^ k` against `2 ^ (2 *
+    /// k)`) are raised, not cancelled: a coprime base of the constants would cancel them.
+    /// Tested by `poly::tests::products_of_powers` and `l03_09_egraph::factored` (COMPLEXITY.md
+    /// POLY-nf-power-value).
+    ///
+    /// The work is counted against [`limit`] as the expansion's is, the constants' powers
+    /// charged the words of their results, and past it the identity is left to the expansion,
+    /// which counts afresh: the factors' keys may differ from the sides', so their forms are not
+    /// reused, and a refused identity costs at most twice the limit. `Some` of the work when the
+    /// sides are found equal.
+    fn factored(&self, shapes: &[Shape]) -> Option<f64> {
         let is_factor = |i: usize| {
             matches!(
                 self.nodes[i],
@@ -764,24 +833,25 @@ impl<'t> Identity<'t> {
                 Node::Add(..) | Node::Sub(..) | Node::Leaf(_)
             )
         }) {
-            return false;
+            return None;
         }
-        let Some((exp, minus)) = self.exponents() else {
-            return false;
-        };
+        let (exp, minus) = self.exponents()?;
         let factors: Vec<usize> = (0..self.nodes.len())
             .filter(|&i| exp[i] != [0, 0] && is_factor(i))
             .collect();
         let reach = self.reachable(&factors);
-        if self.refusal(shapes, &reach, Vec::new()).is_some() {
-            return false;
+        if self.too_wide(shapes, &reach).is_some() {
+            return None;
         }
-        match self.keys(shapes, &reach) {
-            Keys::Packed(ctx) => self.same_factors::<u128>(&ctx, &reach, &factors, &exp, minus),
+        let mut budget = Budget::new(limit(self.size));
+        let b = &mut budget;
+        let same = match self.keys(shapes, &reach) {
+            Keys::Packed(ctx) => self.same_factors::<u128>(&ctx, &reach, &factors, &exp, minus, b),
             Keys::Sparse => {
-                self.same_factors::<Sparse>(&Packing::none(), &reach, &factors, &exp, minus)
+                self.same_factors::<Sparse>(&Packing::none(), &reach, &factors, &exp, minus, b)
             }
-        }
+        };
+        same.then_some(budget.spent)
     }
 
     /// The exponent of every node in each side's product of powers, and whether each side's
@@ -823,7 +893,8 @@ impl<'t> Identity<'t> {
     }
 
     /// Whether the sides' products of `factors`, at the exponents `exp` and with the signs
-    /// `minus`, are equal, each factor expanded once with keys `K` ([`Identity::factored`]).
+    /// `minus`, are equal, each factor expanded once with keys `K` ([`Identity::factored`]),
+    /// the work charged to `budget`: `false` past it.
     fn same_factors<K: Key>(
         &self,
         ctx: &Packing,
@@ -831,8 +902,11 @@ impl<'t> Identity<'t> {
         factors: &[usize],
         exp: &[[u128; 2]],
         mut minus: [bool; 2],
+        budget: &mut Budget,
     ) -> bool {
-        let forms = self.expand::<K>(ctx, reach, factors);
+        let Ok(forms) = self.expand::<K>(ctx, reach, factors, budget) else {
+            return false;
+        };
         let mut zero = [false; 2];
         // Each factor's form without its content and sign, and the content `num / den`, each
         // with its exponents on the two sides.
@@ -863,8 +937,16 @@ impl<'t> Identity<'t> {
                 (&content / &g).into_parts().1,
                 (&form.den / &g).into_parts().1,
             );
+            // A constant below 1 is kept as its reciprocal on the other side (`c ^ l * A == c ^ r
+            // * B` is `A * (1 / c) ^ r == B * (1 / c) ^ l`), so the 2 of `2 * x + 2` cancels the
+            // 1/2 of `/ 2` instead of both being raised to their exponents.
+            let (num, den, at) = if num < den {
+                (den, num, [e[1], e[0]])
+            } else {
+                (num, den, e)
+            };
             if !(num.is_one() && den.is_one())
-                && add(constants.entry((num, den)).or_default(), e).is_none()
+                && add(constants.entry((num, den)).or_default(), at).is_none()
             {
                 return false;
             }
@@ -896,6 +978,11 @@ impl<'t> Identity<'t> {
             let Ok(d) = u64::try_from(d) else {
                 return false;
             };
+            // The words of the two powers, as `Poly::pow` charges a monomial's.
+            let gain = |x: &BigUint| ((x.bits() - 1) as f64 * d as f64 / 64.0).ceil().max(1.0);
+            if budget.spend(gain(&num) + gain(&den)).is_none() {
+                return false;
+            }
             parts[s][0].push(pow_uint(&num, d));
             parts[s][1].push(pow_uint(&den, d));
         }
@@ -903,31 +990,32 @@ impl<'t> Identity<'t> {
         mul_uint(&ln, &rd) == mul_uint(&rn, &ld)
     }
 
-    /// The decision from the two normal forms with keys `K`.
+    /// The verdict from the two sides' normal forms with keys `K`, and their numbers of terms.
+    /// Their difference is not charged: one merge of two lists the expansion paid to form.
     fn compare<K: Key>(
         &self,
+        forms: Vec<Poly<K>>,
         ctx: &Packing,
-        reach: &[bool],
         refutable: bool,
-        decision: impl Fn(Verdict, Option<[usize; 2]>) -> Decision,
-    ) -> Decision {
-        let mut forms = self.expand::<K>(ctx, reach, &self.sides).into_iter();
+    ) -> (Verdict, [usize; 2]) {
+        let mut forms = forms.into_iter();
         let (l, r) = (
             forms.next().expect("the left side expanded"),
             forms.next().expect("the right side expanded"),
         );
-        let terms = Some([l.terms.len(), r.terms.len()]);
-        let diff = l.add(&r, true);
-        if diff.terms.is_empty() {
-            return decision(Verdict::Proved, terms);
-        }
-        if !refutable {
-            return decision(Verdict::Differs, terms);
-        }
-        match self.expanded_witness(&diff, ctx) {
-            Some(w) => decision(Verdict::Refuted(w), terms),
-            None => decision(Verdict::Differs, terms),
-        }
+        let terms = [l.terms.len(), r.terms.len()];
+        let diff = l
+            .add(&r, true, &mut Budget::new(f64::INFINITY))
+            .expect("an unbounded budget");
+        let verdict = if diff.terms.is_empty() {
+            Verdict::Proved
+        } else if !refutable {
+            Verdict::Differs
+        } else {
+            self.expanded_witness(&diff, ctx)
+                .map_or(Verdict::Differs, Verdict::Refuted)
+        };
+        (verdict, terms)
     }
 
     /// The binders' coordinates of `at`.
@@ -1003,8 +1091,16 @@ impl<'t> Identity<'t> {
     }
 
     /// The normal forms of `roots`, with `reach` the nodes they reach. Each node is expanded
-    /// once, from its children's forms, and a form is dropped after its last use.
-    fn expand<K: Key>(&self, ctx: &Packing, reach: &[bool], roots: &[usize]) -> Vec<Poly<K>> {
+    /// once, from its children's forms, and a form is dropped after its last use. Each
+    /// operation is charged to `budget` before it runs; `Err` of the node whose operation would
+    /// pass it.
+    fn expand<K: Key>(
+        &self,
+        ctx: &Packing,
+        reach: &[bool],
+        roots: &[usize],
+        budget: &mut Budget,
+    ) -> Result<Vec<Poly<K>>, usize> {
         let mut uses = vec![0usize; self.nodes.len()];
         for (i, n) in self.nodes.iter().enumerate() {
             if !reach[i] {
@@ -1030,14 +1126,15 @@ impl<'t> Identity<'t> {
             let f = {
                 let form = |j: usize| forms[j].as_ref().expect("a child expanded first");
                 match n {
-                    Node::Const(a, b) => Poly::constant(a.clone(), b.clone()),
-                    Node::Leaf(l) => Poly::monomial(K::leaf(ctx, *l)),
-                    Node::Add(a, b) => form(*a).add(form(*b), false),
-                    Node::Sub(a, b) => form(*a).add(form(*b), true),
-                    Node::Neg(a) => form(*a).neg(),
-                    Node::Mul(a, b) => form(*a).mul(form(*b)),
-                    Node::Pow(a, e) => form(*a).pow(e),
+                    Node::Const(a, b) => Some(Poly::constant(a.clone(), b.clone())),
+                    Node::Leaf(l) => Some(Poly::monomial(K::leaf(ctx, *l))),
+                    Node::Add(a, b) => form(*a).add(form(*b), false, budget),
+                    Node::Sub(a, b) => form(*a).add(form(*b), true, budget),
+                    Node::Neg(a) => form(*a).neg(budget),
+                    Node::Mul(a, b) => form(*a).mul(form(*b), budget),
+                    Node::Pow(a, e) => form(*a).pow(e, budget),
                 }
+                .ok_or(i)?
             };
             let children: [Option<usize>; 2] = match n {
                 Node::Const(..) | Node::Leaf(_) => [None, None],
@@ -1053,7 +1150,7 @@ impl<'t> Identity<'t> {
             forms[i] = Some(f);
         }
         // A root named twice (both sides one node) is copied for all but its last naming.
-        roots
+        Ok(roots
             .iter()
             .map(|&s| {
                 uses[s] -= 1;
@@ -1064,7 +1161,7 @@ impl<'t> Identity<'t> {
                     f.clone().expect("a root expanded")
                 }
             })
-            .collect()
+            .collect())
     }
 
     /// A witness of small integers from `diff`, the difference of the normal forms, not zero:
@@ -1494,16 +1591,20 @@ impl<K: Key> Poly<K> {
         }
     }
 
-    fn neg(&self) -> Poly<K> {
-        Poly {
+    /// `-self`, charged its words to `budget`; `None` when that would pass it.
+    fn neg(&self, budget: &mut Budget) -> Option<Poly<K>> {
+        budget.spend(coefficient_words(self))?;
+        Some(Poly {
             den: self.den.clone(),
             terms: self.terms.iter().map(|(k, c)| (k.clone(), -c)).collect(),
-        }
+        })
     }
 
     /// `self + o`, or `self - o` when `sub`: one merge of the two sorted lists, `O(t1 + t2)`
-    /// coefficient operations, over a common denominator.
-    fn add(&self, o: &Poly<K>, sub: bool) -> Poly<K> {
+    /// coefficient operations, over a common denominator. Charged the operands' words to
+    /// `budget`; `None` when that would pass it.
+    fn add(&self, o: &Poly<K>, sub: bool, budget: &mut Budget) -> Option<Poly<K>> {
+        budget.spend(coefficient_words(self) + coefficient_words(o))?;
         let same = self.den == o.den;
         let (den, fa, fb) = if same {
             (self.den.clone(), None, None)
@@ -1548,7 +1649,7 @@ impl<K: Key> Poly<K> {
                 }
             }
         }
-        Poly { den, terms: out }.reduced()
+        Some(Poly { den, terms: out }.reduced())
     }
 
     /// `self * o`, by the cheapest of three methods with the same result.
@@ -1569,23 +1670,52 @@ impl<K: Key> Poly<K> {
     /// `t1 t2` nor its span with the support product ([`Poly::support_mul`]), `O(n log n)` in
     /// its output; it is tried first when its estimated cost is below both. Tested by
     /// `l03_09_egraph::scaling` (COMPLEXITY.md K107, Crossovers, POLY-nf-sparse-product).
-    fn mul(&self, o: &Poly<K>) -> Poly<K> {
+    ///
+    /// Charged to `budget`: what the support product spent, which it bounds by the cheaper of
+    /// the dense and the sparse cost and by what is left; and when it gives up, that cheaper
+    /// cost, before the method runs. `None` when a charge would pass the budget.
+    fn mul(&self, o: &Poly<K>, budget: &mut Budget) -> Option<Poly<K>> {
         let den = &self.den * &o.den;
         if self.terms.is_empty() || o.terms.is_empty() {
-            return Poly {
+            return Some(Poly {
                 den: BigInt::one(),
                 terms: Vec::new(),
-            };
+            });
         }
         let terms = match self.plan(o) {
-            None => self.sparse_mul(o),
-            Some(plan) => match self.support_mul(o, &plan) {
-                Some(terms) => terms,
-                None if plan.dense <= plan.sparse => self.dense_mul(o, plan.slot, plan.step),
-                None => self.sparse_mul(o),
-            },
+            None => {
+                budget.spend(self.sparse_cost(o))?;
+                self.sparse_mul(o)
+            }
+            Some(plan) => {
+                let cheaper = plan.dense.min(plan.sparse);
+                let mut tried = 0.0;
+                let support = self.support_mul(o, &plan, cheaper.min(budget.left()), &mut tried);
+                budget.spend(tried)?;
+                match support {
+                    Some(terms) => terms,
+                    None => {
+                        budget.spend(cheaper)?;
+                        if plan.dense <= plan.sparse {
+                            self.dense_mul(o, plan.slot, plan.step)
+                        } else {
+                            self.sparse_mul(o)
+                        }
+                    }
+                }
+            }
         };
-        Poly { den, terms }.reduced()
+        Some(Poly { den, terms }.reduced())
+    }
+
+    /// The cost of the sparse product with `o`: `t1 * t2` products of `w1 * w2` words, `w` the
+    /// widest coefficient's words.
+    fn sparse_cost(&self, o: &Poly<K>) -> f64 {
+        let w = |p: &Poly<K>| {
+            let bits = p.terms.iter().map(|(_, c)| c.bits()).max().unwrap_or(0);
+            bits.div_ceil(64).max(1) as f64
+        };
+        self.terms.len() as f64 * o.terms.len() as f64 * w(self) * w(o)
     }
 
     /// The costs of the dense and the sparse product with `o`, the dense product's slot width in
@@ -1628,9 +1758,7 @@ impl<K: Key> Poly<K> {
         let dense = span
             .checked_mul(u128::from(slot_words))
             .map_or(f64::INFINITY, |w| ntt_cost(w as f64));
-        let wa = bits(self).div_ceil(64).max(1) as f64;
-        let wb = bits(o).div_ceil(64).max(1) as f64;
-        let sparse = ta as f64 * tb as f64 * wa * wb;
+        let sparse = self.sparse_cost(o);
         Some(Plan {
             slot: slot_words,
             step,
@@ -1701,8 +1829,8 @@ impl<K: Key> Poly<K> {
 
     /// The product with `o` from its support: the indices that some pair of terms reaches
     /// ([`sumset`]), then their coefficients ([`coefficients`]); `None` when its estimated cost
-    /// is not below the cheaper of the dense and the sparse product, or when the work runs past
-    /// that cost.
+    /// is not below `budget`, the cheaper of the dense and the sparse product or less, or when
+    /// the work runs past it. `spent` is its work, in the units of the other two's costs.
     ///
     /// Complexity tradeoff: the dense product pays the span between the lowest and the highest
     /// index, `O(L log L)` in `L` words, and the sparse one all `t1 t2` pairs, so a product
@@ -1719,8 +1847,13 @@ impl<K: Key> Poly<K> {
     /// coefficient is taken only from a slot that provably holds that index alone, so a bad draw
     /// costs time, never a wrong term, and the budget bounds the time (at most twice the cheaper
     /// method's cost when the estimate is wrong).
-    fn support_mul(&self, o: &Poly<K>, plan: &Plan) -> Option<Vec<(K, BigInt)>> {
-        let budget = plan.dense.min(plan.sparse);
+    fn support_mul(
+        &self,
+        o: &Poly<K>,
+        plan: &Plan,
+        budget: f64,
+        spent: &mut f64,
+    ) -> Option<Vec<(K, BigInt)>> {
         let (a, b) = (&self.terms, &o.terms);
         let (ta, tb) = (a.len(), b.len());
         let lo = |t: &[(K, BigInt)]| t[0].0.index().expect("a packed key");
@@ -1781,18 +1914,18 @@ impl<K: Key> Poly<K> {
             inverse += 1.0 / pairs_at(&ra, &rb, ra[i] + rb[j]) as f64;
         }
         let estimate = (pairs as f64 * inverse / SAMPLES as f64).max((ta + tb - 1) as f64);
-        let mut spent = sampling;
-        if spent + cost(estimate) >= budget {
+        *spent = sampling;
+        if *spent + cost(estimate) >= budget {
             return None;
         }
-        let support = sumset(&ra, &rb, sub, estimate as u64, &mut rng, &mut spent, budget)?;
+        let support = sumset(&ra, &rb, sub, estimate as u64, &mut rng, spent, budget)?;
         let coefficients = coefficients(
             [(&a[..], &ra[..]), (&b[..], &rb[..])],
             &support,
             slot,
             folds,
             &mut rng,
-            &mut spent,
+            spent,
             budget,
         )?;
         let base = lo_a + lo_b;
@@ -1806,13 +1939,16 @@ impl<K: Key> Poly<K> {
         )
     }
 
-    /// `self ^ e`: a monomial's power directly, otherwise by squaring with [`Poly::mul`].
-    fn pow(&self, e: &BigUint) -> Poly<K> {
+    /// `self ^ e`: a monomial's power directly, otherwise by squaring with [`Poly::mul`], each
+    /// product charged to `budget`; `None` when that would pass it. A monomial's power is
+    /// charged the words its coefficient and denominator gain, `(bits - 1) n / 64` each and at
+    /// least one: no more than the result's words, so a power of 1 costs 2 at any exponent.
+    fn pow(&self, e: &BigUint, budget: &mut Budget) -> Option<Poly<K>> {
         if e.is_zero() {
-            return Poly::constant(BigInt::one(), BigInt::one());
+            return Some(Poly::constant(BigInt::one(), BigInt::one()));
         }
         if self.terms.is_empty() {
-            return self.clone();
+            return Some(self.clone());
         }
         let Some(n) = e.to_u64() else {
             // The shape check refuses a wide exponent of anything but 0, 1 and -1.
@@ -1823,22 +1959,25 @@ impl<K: Key> Poly<K> {
             } else {
                 BigInt::one()
             };
-            return Poly {
+            budget.spend(2.0)?;
+            return Some(Poly {
                 den: BigInt::one(),
                 terms: vec![(k.clone(), c)],
-            };
+            });
         };
         if let [(k, c)] = &self.terms[..] {
+            let gain = |x: &BigInt| ((x.bits() - 1) as f64 * n as f64 / 64.0).ceil().max(1.0);
+            budget.spend(gain(c) + gain(&self.den))?;
             let mag = pow_uint(c.magnitude(), n);
             let sign = if c.is_negative() && n % 2 == 1 {
                 Sign::Minus
             } else {
                 Sign::Plus
             };
-            return Poly {
+            return Some(Poly {
                 den: BigInt::from_biguint(Sign::Plus, pow_uint(self.den.magnitude(), n)),
                 terms: vec![(k.power(n), BigInt::from_biguint(sign, mag))],
-            };
+            });
         }
         let mut base = Cow::Borrowed(self);
         let mut acc: Option<Poly<K>> = None;
@@ -1847,15 +1986,15 @@ impl<K: Key> Poly<K> {
             if n & 1 == 1 {
                 acc = Some(match acc {
                     None => base.as_ref().clone(),
-                    Some(a) => a.mul(&base),
+                    Some(a) => a.mul(&base, budget)?,
                 });
             }
             n >>= 1;
             if n > 0 {
-                base = Cow::Owned(base.mul(&base));
+                base = Cow::Owned(base.mul(&base, budget)?);
             }
         }
-        acc.expect("the exponent is not zero")
+        Some(acc.expect("the exponent is not zero"))
     }
 
     /// The polynomial with `den` and the coefficients divided by their common factor.

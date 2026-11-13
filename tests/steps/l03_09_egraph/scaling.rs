@@ -2,9 +2,13 @@
 //! the order of its output. The terms are built as balanced trees of kernel terms, so their
 //! depth is `log n`, and before any run is timed.
 
-use zed_kernel::poly::{Carrier, Verdict, decide};
+use std::sync::Arc;
+
+use num_bigint::BigInt;
+use zed_kernel::poly::{Carrier, Verdict, decide, limit};
 use zed_kernel::term::build::{lit, prim, var};
 use zed_kernel::term::{Prim, Term};
+use zed_kernel::{Rat, Value};
 use zed_tests::instances::Rng;
 use zed_tests::scaling;
 
@@ -28,6 +32,28 @@ fn pow(a: Term, n: i64) -> Term {
     prim(Prim::Pow, vec![a, lit(n)])
 }
 
+/// The written monomials `c * x ^ i * y ^ j`, as a balanced sum.
+fn written(monomials: impl IntoIterator<Item = (BigInt, usize, usize)>) -> Term {
+    let terms: Vec<Term> = monomials
+        .into_iter()
+        .map(|(c, i, j)| {
+            let c = Term::Lit(Value::Big(Arc::new(Rat::int(c))));
+            mul(c, mul(pow(var("x"), i as i64), pow(var("y"), j as i64)))
+        })
+        .collect();
+    sum(&terms)
+}
+
+/// The binomial coefficients `C(k, 0) … C(k, k)`.
+fn binomials(k: usize) -> Vec<BigInt> {
+    let mut row = vec![BigInt::from(1)];
+    for i in 0..k {
+        let next = &row[i] * BigInt::from(k - i) / BigInt::from(i + 1);
+        row.push(next);
+    }
+    row
+}
+
 /// `a - x`: a sum, so that the expansion decides it, not the reading of a product of powers of
 /// the same factors (`Decision::factored`).
 fn less_x(a: Term) -> Term {
@@ -45,6 +71,9 @@ fn proved(id: &Id) {
     let names: Vec<&str> = id.names.iter().map(String::as_str).collect();
     let d = decide(&id.lhs, &id.rhs, &names, Carrier::Int);
     assert_eq!(d.verdict, Verdict::Proved);
+    // The counted work beside the meter's instructions: their ratio is the spread of the
+    // counter (COMPLEXITY.md POLY-nf-work).
+    eprintln!("size {} work {} limit {}", d.size, d.work, limit(d.size));
 }
 
 /// `(1 + x + ... + x ^ k) ^ 2` against its `2k + 1` written monomials: one dense product.
@@ -140,18 +169,19 @@ fn a_grid_of_n_squared_monomials() {
     });
 }
 
-/// `(x + y) ^ k - x == (x + y) ^ (k / 2) * (y + x) ^ (k - k / 2) - x`: a power of a sum of two
-/// names counts one sum (POLY-nf-power), and expands to `k + 1` monomials of up to `k` bits, so
-/// order 2 in `k`, linear in the output's bits. Each side's squarings multiply homogeneous sums,
-/// whose packed indices are a common step apart (`Poly::dense_cost`).
+/// `(x + y) ^ k - x` against its `k + 1` monomials written out, less `x`: the power expands to
+/// `k + 1` monomials of up to `k` bits, so order 2 in `k`, linear in the output's bits. The
+/// squarings multiply homogeneous sums, whose packed indices are a common step apart
+/// (`Poly::plan`). The written side makes the law long enough to be expanded: written as two
+/// powers, `(x + y) ^ k` costs about `k^2 / 64` words for `log k` bits of text, refused from
+/// k = 72 on (`poly::limit`, QUESTIONS A98; `l03_09_egraph::refusal`).
 fn binomial(k: usize) -> Id {
     let s = |a: &str, b: &str| sum(&[var(a), var(b)]);
-    let h = k / 2;
+    let c = binomials(k);
     Id {
         lhs: less_x(pow(s("x", "y"), k as i64)),
-        rhs: less_x(mul(
-            pow(s("x", "y"), h as i64),
-            pow(s("y", "x"), (k - h) as i64),
+        rhs: less_x(written(
+            c.into_iter().enumerate().map(|(i, c)| (c, i, k - i)),
         )),
         names: vec!["x".into(), "y".into()],
     }
@@ -212,21 +242,26 @@ fn a_power_of_a_sum_of_two_names() {
     });
 }
 
-/// `((x + y) ^ k + x) ^ 2 == (x + y) ^ (2k) + 2 * x * (x + y) ^ k + x ^ 2`: the left side's
-/// square multiplies a sum whose monomials are homogeneous of degree `k` apart from `x`, so its
-/// packed indices leave gaps that no common step removes, and its product is formed from its
-/// `3k + 3` output monomials, not from the `(k + 2)^2` pairs or the `(k + 1)^2` indices the
-/// pairs span (POLY-nf-sparse-product). The output has `3k + 3` monomials of up to `2k` bits:
-/// order 2 in `k`.
+/// `((x + y) ^ k + x) ^ 2` against its `3k + 3` monomials written out, `k >= 2`: the square
+/// multiplies a sum whose monomials are homogeneous of degree `k` apart from `x`, so its packed
+/// indices leave gaps that no common step removes, and its product is formed from its `3k + 3`
+/// output monomials, not from the `(k + 2)^2` pairs or the `(k + 1)^2` indices the pairs span
+/// (POLY-nf-sparse-product). The output has `3k + 3` monomials of up to `2k` bits: order 2 in
+/// `k`. Written out, the law is long enough to be expanded (`binomial`).
 fn gapped_square(k: usize) -> Id {
     let xy = || sum(&[var("x"), var("y")]);
+    let twice = binomials(2 * k)
+        .into_iter()
+        .enumerate()
+        .map(|(i, c)| (c, i, 2 * k - i));
+    let middle = binomials(k)
+        .into_iter()
+        .enumerate()
+        .map(|(i, c)| (2 * c, i + 1, k - i));
+    let square = std::iter::once((BigInt::from(1), 2, 0));
     Id {
         lhs: pow(sum(&[pow(xy(), k as i64), var("x")]), 2),
-        rhs: sum(&[
-            pow(xy(), 2 * k as i64),
-            mul(mul(lit(2), var("x")), pow(xy(), k as i64)),
-            pow(var("x"), 2),
-        ]),
+        rhs: written(twice.chain(middle).chain(square)),
         names: vec!["x".into(), "y".into()],
     }
 }

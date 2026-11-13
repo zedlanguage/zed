@@ -258,7 +258,7 @@ fn a_ring_or_an_atom_is_never_refuted() {
 
 #[test]
 fn refused_shapes() {
-    // Four sums over more than one name: a true identity is refused, a false one refuted.
+    // Four sums over more than one name: cheap to expand, so proved, and a false one refuted.
     let lhs = "(a + b) * (c + d) * (e + f) * (g + h)";
     let names = &["a", "b", "c", "d", "e", "f", "g", "h"];
     let mut rhs = Vec::new();
@@ -272,87 +272,99 @@ fn refused_shapes() {
         }
     }
     let rhs = rhs.join(" + ");
-    let Verdict::Refused(r) = verdict(lhs, &rhs, names, Carrier::Int) else {
-        panic!("not refused")
-    };
-    assert_eq!(r.why, Refused::Sums(4));
-    assert_eq!(r.product, "((((a + b) * (c + d)) * (e + f)) * (g + h))");
-    assert_eq!(r.agreed.len(), 2);
-    let m = r.message("law four(a: int, …) = …");
-    assert!(m.starts_with(
-        "Cannot expand `((((a + b) * (c + d)) * (e + f)) * (g + h))`: it multiplies 4 sums of more than one name."
-    ));
-    assert!(m.contains("note: the two sides agree at every point tried"));
-    assert!(m.ends_with("Try `law four(a: int, …) = … proof { … }` instead."));
-    // A false identity of that shape is refuted at a point.
+    assert_eq!(verdict(lhs, &rhs, names, Carrier::Int), Verdict::Proved);
     let wrong = format!("{rhs} + 1");
     assert!(matches!(
         verdict(lhs, &wrong, names, Carrier::Int),
         Verdict::Refuted(_)
     ));
-    // `(x + y) ^ 4` counts one sum: its base has two monomials, so it expands to five.
-    assert_eq!(
-        verdict(
+    // Each side here and below is a sum, not a product of powers, so the expansion decides,
+    // not `Identity::factored`. Powers of sums of many names, and of a product of three sums.
+    let names5 = &["a", "b", "c", "d", "f"];
+    for (l, r, n) in [
+        (
             "(x + y) ^ 4",
             "x^4 + 4*x^3*y + 6*x^2*y^2 + 4*x*y^3 + y^4",
-            &["x", "y"],
-            Carrier::Int,
+            &["x", "y"][..],
         ),
-        Verdict::Proved
-    );
-    // A base of five monomials to the 4th counts the fewer of 4 and 5 - 1: four sums. Each side
-    // here and below is a sum, not a product of powers, so the expansion decides, not
-    // `Identity::factored`.
-    let names5 = &["a", "b", "c", "d", "f"];
-    let Verdict::Refused(r) = verdict(
-        "(a + b + c + d + f) ^ 4 - f ^ 4",
-        "(f + d + c + b + a) ^ 4 - f ^ 4",
-        names5,
-        Carrier::Int,
-    ) else {
-        panic!()
-    };
-    assert_eq!(r.why, Refused::Sums(4));
-    assert_eq!(r.product, "(((((a + b) + c) + d) + f)^4)");
-    // To the 3rd it counts three, and to the 4th a base of four monomials counts three too.
-    for (l, r, n) in [
+        (
+            "(a + b + c + d + f) ^ 4 - f ^ 4",
+            "(f + d + c + b + a) ^ 4 - f ^ 4",
+            &names5[..],
+        ),
         (
             "(a + b + c + d + f) ^ 3 - a",
             "(f + d + c + b + a) ^ 3 - a",
             &names5[..],
         ),
         (
-            "(a + b + c + d) ^ 4 - a",
-            "(d + c + b + a) ^ 4 - a",
-            &names5[..4],
-        ),
-        (
             "((a + b) * (c + d)) ^ 9 - a",
             "(a * c + a * d + b * c + b * d) ^ 9 - a",
             &names5[..4],
         ),
-    ] {
-        assert_eq!(verdict(l, r, n, Carrier::Int), Verdict::Proved, "{l}");
-    }
-    // A product of a base of three sums squared: the fewer of 6 and 8 - 1, refused.
-    let Verdict::Refused(r) = verdict(
-        "((a + b) * (c + d) * (f + a)) ^ 2 - a",
-        "((a + b) * (c + d) * (a + f)) ^ 2 - a",
-        names5,
-        Carrier::Int,
-    ) else {
-        panic!()
-    };
-    assert_eq!(r.why, Refused::Sums(6));
-    // Sums all in one name are never refused, at any count.
-    assert_eq!(
-        verdict(
+        (
+            "((a + b) * (c + d) * (f + a)) ^ 2 - a",
+            "((a + b) * (c + d) * (a + f)) ^ 2 - a",
+            &names5[..],
+        ),
+        (
             "(1 + x) ^ 40 - x",
             "(1 + x) ^ 20 * (1 + x) ^ 20 - x",
-            &["x"],
-            Carrier::Int
+            &["x"][..],
         ),
-        Verdict::Proved
+    ] {
+        let d = decide(&t(l), &t(r), n, Carrier::Int);
+        assert_eq!(d.verdict, Verdict::Proved, "{l}");
+        assert!(d.work <= limit(d.size), "{l}");
+    }
+    // A power whose cost grows with its exponent's value, past the work of three sums written
+    // at the same size.
+    let xy = &["x", "y"];
+    let d = decide(
+        &t("(x + y) ^ 200 - x"),
+        &t("(y + x) ^ 200 - x"),
+        xy,
+        Carrier::Int,
+    );
+    let Verdict::Refused(r) = d.verdict else {
+        panic!("not refused")
+    };
+    assert_eq!(r.why, Refused::Work(d.size));
+    assert_eq!(r.product, "((x + y)^200)");
+    assert_eq!(r.agreed.len(), 2);
+    assert!(d.work <= limit(d.size));
+    let m = r.message("law two(x: int, y: int) = …");
+    assert!(
+        m.starts_with(&format!(
+            "Cannot expand `((x + y)^200)`: the law costs more to expand than `(x1 + … + x{}) ^ 3`.",
+            names_at(d.size)
+        )),
+        "{m}"
+    );
+    assert!(m.contains("note: the two sides agree at every point tried"));
+    assert!(m.ends_with("Try `law two(x: int, y: int) = … proof { … }` instead."));
+    // A false identity of that shape is refuted at a point.
+    assert!(matches!(
+        verdict("(x + y) ^ 200 - x", "(y + x) ^ 200 - y", xy, Carrier::Int),
+        Verdict::Refuted(_)
+    ));
+    // The smallest laws are never refused.
+    let d = decide(&t("a + c"), &t("c + a"), &["a", "c"], Carrier::Int);
+    assert_eq!(
+        (d.verdict, d.size, d.work, limit(d.size)),
+        (Verdict::Proved, 6, 4.0, 12.0)
+    );
+    let d = decide(&t("x"), &t("x"), &["x"], Carrier::Int);
+    assert_eq!(
+        (d.verdict, d.size, limit(d.size)),
+        (Verdict::Proved, 2, 2.0)
+    );
+    // At size 5 the cube reads one name (`x ^ 3`, work 2) and the sum `x1 + x2 + x3` bounds
+    // the limit: a negation and a sum cost 3.
+    let d = decide(&t("a + -a"), &t("0"), &["a"], Carrier::Int);
+    assert_eq!(
+        (d.verdict, d.size, d.work, limit(d.size)),
+        (Verdict::Proved, 5, 3.0, 5.0)
     );
     // An exponent past u64::MAX on a name, in a sum (alone it is a factor: `products_of_powers`).
     let Verdict::Refused(r) = verdict(
@@ -457,17 +469,28 @@ fn products_of_powers() {
         (d.verdict, d.factored, d.terms),
         (Verdict::Proved, false, Some([2, 2]))
     );
-    // A factor that holds a refused product is refused, not expanded.
+    // A factor that holds a product of four sums is expanded once.
     let eight = &["a", "b", "c", "d", "e", "f", "g", "h"];
-    let Verdict::Refused(r) = verdict(
-        "((a + b) * (c + d) * (e + f) * (g + h) + 1) ^ 2",
-        "((h + g) * (f + e) * (d + c) * (b + a) + 1) ^ 2",
+    let d = decide(
+        &t("((a + b) * (c + d) * (e + f) * (g + h) + 1) ^ 2"),
+        &t("((h + g) * (f + e) * (d + c) * (b + a) + 1) ^ 2"),
         eight,
         Carrier::Int,
-    ) else {
-        panic!()
+    );
+    assert_eq!((d.verdict, d.factored), (Verdict::Proved, true));
+    // A factor whose expansion passes the limit leaves the identity to the expansion, which
+    // refuses it at the same limit.
+    let d = decide(
+        &t("(1 + x) ^ 200 * (1 - x) ^ 200"),
+        &t("(1 - x ^ 2) ^ 200"),
+        xy,
+        Carrier::Int,
+    );
+    assert!(!d.factored);
+    let Verdict::Refused(r) = d.verdict else {
+        panic!("not refused")
     };
-    assert_eq!(r.why, Refused::Sums(4));
+    assert_eq!(r.why, Refused::Work(d.size));
     // Exponents that multiply past `2^128` are left to the expansion, which refuses them.
     let Verdict::Refused(r) = verdict(
         "((x + y) ^ 18446744073709551616) ^ 18446744073709551616",
@@ -499,9 +522,9 @@ fn products_of_powers() {
 fn the_points_are_deterministic() {
     let a = || {
         decide(
-            &t("(a + b) * (c + d) * (e + f) * (g + h) - a"),
-            &t("(a + b) * (c + d) * (e + f) * (h + g) - a"),
-            &["a", "b", "c", "d", "e", "f", "g", "h"],
+            &t("(x + y) ^ 200 - x"),
+            &t("(y + x) ^ 200 - x"),
+            &["x", "y"],
             Carrier::Int,
         )
     };
@@ -623,10 +646,9 @@ fn sum_at(pairs: impl IntoIterator<Item = (u128, i64)>) -> Poly<u128> {
 
 /// The support product with no budget, so it never gives way to another method.
 fn support(a: &Poly<u128>, b: &Poly<u128>) -> Vec<(u128, BigInt)> {
-    let mut plan = a.plan(b).expect("packed keys");
-    plan.dense = f64::INFINITY;
-    plan.sparse = f64::INFINITY;
-    a.support_mul(b, &plan).expect("no budget")
+    let plan = a.plan(b).expect("packed keys");
+    a.support_mul(b, &plan, f64::INFINITY, &mut 0.0)
+        .expect("no budget")
 }
 
 #[test]
@@ -725,9 +747,85 @@ fn the_product_takes_the_support_product_where_it_is_cheaper() {
         terms: terms.into_iter().collect(),
     };
     let plan = a.plan(&a).expect("packed keys");
-    assert_eq!(a.support_mul(&a, &plan), Some(a.sparse_mul(&a)));
+    let budget = plan.dense.min(plan.sparse);
+    let mut spent = 0.0;
+    assert_eq!(
+        a.support_mul(&a, &plan, budget, &mut spent),
+        Some(a.sparse_mul(&a))
+    );
+    assert!(spent < budget, "{spent} of {budget}");
     // Sides whose pairs are all distinct go to the sparse product: the sampled estimate says so.
     let b = sum_at((0..64u128).map(|i| (i * i * i * 1009 + i, 1)));
     let plan = b.plan(&b).expect("packed keys");
-    assert_eq!(b.support_mul(&b, &plan), None);
+    let budget = plan.dense.min(plan.sparse);
+    assert_eq!(b.support_mul(&b, &plan, budget, &mut 0.0), None);
+}
+
+/// The work the expansion of `term == 0` counts with no limit, and that identity's size.
+fn work_of(term: &Term, binders: &[&str]) -> (f64, u64) {
+    let zero = lit(0);
+    let id = Identity::new(term, &zero, binders, Carrier::Int);
+    let shapes = id.shapes();
+    let reach = id.reachable(&id.sides);
+    let mut budget = Budget::new(f64::INFINITY);
+    let done = match id.keys(&shapes, &reach) {
+        Keys::Packed(ctx) => id
+            .expand::<u128>(&ctx, &reach, &id.sides, &mut budget)
+            .is_ok(),
+        Keys::Sparse => id
+            .expand::<Sparse>(&Packing::none(), &reach, &id.sides, &mut budget)
+            .is_ok(),
+    };
+    assert!(done, "an unbounded budget");
+    (budget.spent, id.size)
+}
+
+/// `limit` is at least the work of every product of three sums at the same size: sums of 1 to
+/// 6 names, overlapping by every offset, multiplied either way round, as powers, and shared by
+/// `let`. The identity `p == 0` is the smallest that writes `p`, so the one with the least
+/// limit.
+#[test]
+fn no_product_of_three_sums_is_refused() {
+    let names: Vec<String> = (0..40).map(|i| format!("x{i}")).collect();
+    let binders: Vec<&str> = names.iter().map(String::as_str).collect();
+    let sum = |from: usize, n: usize| format!("({})", names[from..from + n].join(" + "));
+    let check = |term: Term, what: &str| {
+        let (work, size) = work_of(&term, &binders);
+        assert!(
+            work <= limit(size),
+            "{what}: work {work} > limit({size}) = {}",
+            limit(size)
+        );
+    };
+    for a in 1..=6 {
+        let pa = sum(0, a);
+        check(t(&format!("{pa} ^ 3")), &format!("{pa} ^ 3"));
+        check(
+            let_("p", t(&pa), t("p * p * p")),
+            &format!("p * p * p, p = {pa}"),
+        );
+        for b in 1..=6 {
+            for ob in 0..=6 {
+                let pb = sum(ob, b);
+                check(t(&format!("{pa} ^ 2 * {pb}")), &format!("{pa} ^ 2 * {pb}"));
+                for c in 1..=6 {
+                    for oc in 0..=6 {
+                        let pc = sum(oc, c);
+                        let l = format!("{pa} * {pb} * {pc}");
+                        check(t(&l), &l);
+                        let r = format!("{pa} * ({pb} * {pc})");
+                        check(t(&r), &r);
+                    }
+                }
+            }
+        }
+    }
+    // The power of `s` names is written in `2 s + 2`, `+ 1` for the `0`: `limit` names `s`.
+    for s in 1..=40 {
+        let p = format!("{} ^ 3", sum(0, s));
+        let (work, size) = work_of(&t(&p), &binders);
+        assert_eq!(size, 2 * s as u64 + 3, "{p}");
+        assert_eq!(names_at(size), s as u64);
+        assert!(work <= limit(size), "{p}");
+    }
 }

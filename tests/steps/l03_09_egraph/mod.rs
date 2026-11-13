@@ -5,10 +5,10 @@
 //! elaborate each identity's two sides from Zed source, as the tuple of a function over the
 //! law's binders, and decide them with the kernel library.
 //!
-//! `rows` holds the plan row's tests, `refusal` the refused shapes, `witness` the points and
-//! witnesses, `measure` the measurement of the corpus's obligations that fixed the refused
-//! shapes, `factored` the products of powers of the same factors, and `scaling` the rule of low
-//! complexity.
+//! `rows` holds the plan row's tests, `refusal` the refusal of a law that costs more to expand
+//! than its size allows, `witness` the points and witnesses, `measure` the corpus's
+//! obligations, each within its limit, `factored` the products of powers of the same factors,
+//! and `scaling` the rule of low complexity.
 //!
 //! The tests sit in the folder of step L3.9, whose group and ring normal forms this library
 //! gives; the row exists so that L3.9 does not wait.

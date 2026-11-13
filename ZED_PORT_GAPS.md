@@ -3841,3 +3841,10 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 |---|---|---|---|
 | A persistent AVL tree of `Arc` nodes whose node is changed in place by `Arc::make_mut` when it has one owner and copied otherwise (path copying with reuse) | `tree_apply`, `tree_round`, `tree_division` (the partition of `State1d`) | Mutation, identity (gap 1) | the tree as a value; the runtime reuses a node it holds once, or each relabeling copies its path, O(log n) per step either way |
 | `Arc::ptr_eq` to return a union of a tree with itself without walking it | `tree_union` | Equality shortcut (gap 1) | the content digest of gap 1, or the walk, which costs the tree's size only when both sides are the same tree |
+
+## Entries from POLY-nf-W (`crates/zed-kernel/src/poly.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `Budget { spent, most }` passed as `&mut Budget` through every operation, `spend` returning `Option<()>` so that `?` stops the expansion at the first charge past the limit | `Poly::neg`, `add`, `mul`, `pow`, `Identity::expand`, `Identity::decide`, `Identity::factored`, `normal_form` | Mutation (gap 11); early return by `?` | the budget threaded as a value through the fold over the nodes, each operation returning the new budget and its result, a charge past the limit giving a failure atom that the fold passes up |
+| `support_mul` writing the work it counted into a `&mut f64` out-parameter, so that the caller charges it whether or not the product finished | `Poly::support_mul`, `sumset`, `coefficients` | Mutation (gap 11); out-parameter | a result tuple of the product (or the failure) and the work spent |

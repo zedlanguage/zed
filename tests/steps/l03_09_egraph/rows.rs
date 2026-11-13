@@ -62,8 +62,9 @@ fn wrong_is_refuted_at_one_one() {
 fn the_points_are_the_same_alone_and_in_a_batch() {
     // A refused true identity reports its points; they depend on the identity alone, not on
     // the unit around it or on the run. Each side is a sum, so it is expanded, not read as a
-    // product of the same four factors.
-    const FOUR: &str = "four(a: int, b: int, c: int, d: int, e: int, f: int, g: int, h: int) = ((a + b) * (c + d) * (e + f) * (g + h) - a, (g + h) * (e + f) * (c + d) * (a + b) - a);\n";
+    // product of powers of the same factor.
+    const FOUR: &str =
+        "four(p: int, q: int) = ((p + q) ^ 128 - p, (q + p) ^ 64 * (p + q) ^ 64 - p);\n";
     const OTHER: &str = "other(x: int, y: int) = ((x + y) * (x - y), x * x - y * y);\n";
     let alone = decide_sides(&sides_of(FOUR, &["four"])[0], Carrier::Int);
     let batch = sides_of(&format!("{OTHER}{FOUR}"), &["other", "four"]);

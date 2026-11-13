@@ -4,10 +4,11 @@
 //! commutativity obligations of the reducers of the studies' corpora (ASSOC-infer, H10-hull),
 //! each written out with its operands substituted, a tuple's components as separate
 //! obligations. The 31 programs of `corpus/` state no law. None of the obligations multiplies
-//! more than two sums (a power of a sum of two terms counting one), so `poly::REFUSED_SUMS`
-//! refuses none (COMPLEXITY.md POLY-nf-sums).
+//! more than two sums (a power of a sum of two terms counting one), and none costs more to
+//! expand than `poly::limit` of its size allows: the work of each is printed against its limit
+//! (COMPLEXITY.md POLY-nf-work).
 
-use zed_kernel::poly::{Carrier, REFUSED_SUMS, Verdict};
+use zed_kernel::poly::{Carrier, Verdict, limit};
 
 use super::law;
 
@@ -243,11 +244,16 @@ fn no_obligation_is_refused() {
         };
         assert_eq!(got, *expect, "{name}: {:?}", d.verdict);
         eprintln!(
-            "{name:16} sums {} degree {:?} terms {:?} {:?}",
-            d.sums, d.degree, d.terms, d.verdict
+            "{name:16} sums {} degree {:?} terms {:?} work {} of {} {:?}",
+            d.sums,
+            d.degree,
+            d.terms,
+            d.work,
+            limit(d.size),
+            d.verdict
         );
+        assert!(d.work <= limit(d.size), "{name}");
         most = most.max(d.sums);
     }
     assert_eq!(most, 2, "the most sums an obligation multiplies");
-    assert!(most < REFUSED_SUMS);
 }
