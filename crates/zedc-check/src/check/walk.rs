@@ -3590,6 +3590,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                     s.checked = true;
                     // No application, so no trial: the atoms from outside are unknown.
                     self.tried_at(span, None);
+                    // A call takes a function, which no carrier holds: a class of carriers
+                    // alone, as the literal `2` of `(1, 2)` read by `p[1](p[0])`, cannot
+                    // be called. A class that may still hold a function is left as it is,
+                    // as a variable of the body is, and its call is checked where the
+                    // function is known.
+                    if self.classes[self.find(k)].mask & OTHER == 0 {
+                        let shown = self.show(&p.ty());
+                        self.not_a_function(&s.what, &shown, span);
+                        continue;
+                    }
                     let ty_of = |a: &ArgSrc| match a {
                         ArgSrc::Got(x) => x.ty.clone(),
                         ArgSrc::Expr(_) => unreachable!("found above"),
@@ -3638,19 +3648,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 p if p.is_atoms() => {}
                 p => {
                     let shown = self.text(&p.ty());
-                    let w = &s.what;
-                    let menu = [format!(
-                        "repair: call a function here, or write `{w}` without the parentheses \
-                         if its value is meant"
-                    )];
-                    self.error_offering(
-                        span,
-                        format!(
-                            "`{w}` is {shown}, not a function: this call applies `{w}` to \
-                             arguments, and a value of type {shown} cannot be applied"
-                        ),
-                        menu,
-                    );
+                    self.not_a_function(&s.what, &shown, span);
                 }
             }
         }
@@ -3660,6 +3658,23 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         m.k(Frame::Const(out));
         m.each(s.args.exprs());
+    }
+
+    /// The error of a call at `span` of `w`, a value of the type shown as `shown` that is not
+    /// a function.
+    fn not_a_function(&mut self, w: &str, shown: &str, span: Span) {
+        let menu = [format!(
+            "repair: call a function here, or write `{w}` without the parentheses if its value \
+             is meant"
+        )];
+        self.error_offering(
+            span,
+            format!(
+                "`{w}` is {shown}, not a function: this call applies `{w}` to arguments, and a \
+                 value of type {shown} cannot be applied"
+            ),
+            menu,
+        );
     }
 
     /// A call of a function of signature `sig`; `declared` when it is the declared function
@@ -6136,7 +6151,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             // What the use gives is within its result: a variable there joins it, as for an
             // argument, and one it leaves unbound gives nothing.
             if let Some(r) = &n.result {
-                if !self.sub(&got, r, binds) {
+                if !self.gives_within(&got, r, binds, what, span) {
                     let why = got.refused(r);
                     let (got, r) = (self.text(&got), self.text(r));
                     let menu = [format!(
@@ -6160,6 +6175,32 @@ impl<'t, 'a> Ck<'t, 'a> {
             });
         }
         left
+    }
+
+    /// Whether what a use gave in a replay, `got`, lies within the use's result `r`, binding
+    /// the variables of `r` as `binds`. A class of `got`, as of the literal `1` of `(1, 2)`
+    /// read by `p[0]`, stands for a value its carriers hold, so at a closed `r` it is passed
+    /// as at a parameter of that type ([`Self::piece_into`]): `r` restricts its carriers,
+    /// `int` in `if p[0] < 5 { p[0] } else { 0 }`, as the literal is restricted at `h(1)` of
+    /// the same body. The cost is that of the pieces of `got`.
+    fn gives_within(
+        &mut self,
+        got: &Ty,
+        r: &Ty,
+        binds: &mut Binds,
+        what: &str,
+        span: Span,
+    ) -> bool {
+        if self.sub(got, r, binds) {
+            return true;
+        }
+        if r.dynamic || !r.vars.is_empty() {
+            return false;
+        }
+        got.pieces().iter().all(|p| match self.class_of(p) {
+            Some(_) => self.piece_into(p, r, what, span),
+            None => self.sub(&p.ty(), r, binds),
+        })
     }
 
     /// Checks that a value of `on` may be passed, by `what` at `span`, at a parameter of the
