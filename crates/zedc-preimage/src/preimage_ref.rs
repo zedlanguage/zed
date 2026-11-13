@@ -1,6 +1,5 @@
 //! The backward transfer as it was before the piecewise-affine summary and the demand clip of
-//! S22a (main at fdf7918, which holds the 397f1c9 transfer and later changes), kept unchanged
-//! but for the exact interval ends of TD-ends, the failure of a base raised to 0
+//! S22a (main at fdf7918, which holds the 397f1c9 transfer and later changes), retained as an independent catalog, with the exact interval ends of TD-ends, the failure of a base raised to 0
 //! (SOUND-div-exact), and a box of `c - x` no longer marked exact when the forward image of
 //! `{c} - z` merged pieces (S22-exact-mislabel) unless an enclosing guard removes every input
 //! that takes a value in the merged pieces (S22-guard-exact), so that tests can compare the
@@ -70,6 +69,61 @@
 //! which can have as many pieces as the box has points; it asks [`witness`] for one point
 //! that meets the demand, and the same search stops at the first.
 //!
+//! ## Cost of the transfer (PERF-ref-memo-quadratic, `COMPLEXITY.md` row C56)
+//!
+//! Naive method, main before this item: `Tx::back_doubt` memoizes each (term, demand,
+//! doubted values) triple. On a guarded chain `t_j = if (i <= j mod 7 - 3) { t } else { c - t }`
+//! each level reflects the demand by a different `c`, so the demands that reach a shared node
+//! differ at every level: the memo holds 8,852 keys at 64 links and 350,726 at 512, O(n^2) time
+//! and space (148 ms against 13,275 ms on `jmod5_wide`).
+//!
+//! Used: a term that reads one input is solved once over its reachable DAG (visited set, one
+//! pass in topological order), in a 1D state (`State1d`): the input's values partitioned into
+//! intervals by the value each takes at the current node, kept in a persistent value-ordered AVL
+//! tree with path copying (Adelson-Velsky and Landis 1962; persistence by path copying as in
+//! Driscoll, Sarnak, Sleator and Tarjan, "Making data structures persistent", JCSS 38, 1989), so
+//! that a branch shares the unchanged subtrees of both arms. A shift or a negation relabels the
+//! tree through a lazy tag on its nodes, and a positive quotient (`a = q*c + r`,
+//! `tree_division`) maps it in one O(p) pass over its p pieces; a remainder met while the state
+//! is already periodic in an incompatible modulus lists the excluded residues in each period that
+//! meets the remainder's image (`State1d::modulo_bounded`), at most `m/old + 1` pieces per
+//! excluded piece, bounded by moduli written in the program and not by the input range or the
+//! chain length. A chain of guards over affine links is solved by an endpoint sweep that keeps
+//! the composed affine map in a segment tree of affine maps (the composition of affine maps is
+//! associative; J. L. Bentley, "Solutions to Klee's rectangle problems", 1977), one O(log n)
+//! update per guard endpoint (`Tx::affine_guards`). Terms that read two or more inputs, and step
+//! shapes the 1D state does not cover, keep main's memo. The transfer itself follows no paper;
+//! the papers are those of the data structures.
+//!
+//! Earlier methods and why this one. Run 1 (gemini-4-carbon-high): a memo keyed by an input box,
+//! with chains of unit steps skipped by composed maps; one chain written with applied lambdas
+//! took 231G instructions at 256 links, and `pathological_abs` grew as n^1.66. Run 2
+//! (gemini-4-carbon-medium, branch head 8667f519): one-input state trees with exact one-input
+//! doubt; near linear on the item's 25 families, but n^3.28 on an `abs` chain with wide gaps,
+//! n^2.13 on a `min` chain, and a fallback to main's memo on nested remainders. Run 3
+//! (gpt-6.1-sol, 5b0f1eeb): one balanced tree with two orderings and exact inverse intervals;
+//! near linear on 40 families, but three answers coarser than main's (calls 22, 45 and 86 of
+//! main's answer dump: a product with no exact inverse passed every value but the excluded ones,
+//! not the values the product can take), and 114,800M instructions at 128 links of
+//! `normal_incompatible_moduli`. This method (cross-review rounds 1 to 3, Sol's round 3 with
+//! Opus's sorted listing for remainders) keeps run 3's tree with one ordering only, bounds the
+//! product and quotient demands by their forward image (calls 22, 45 and 86 now give main's
+//! answer), settles nested remainders at the input by the bounded listing, and replaces the
+//! input-ordered tree by the affine sweep.
+//!
+//! Cost in theory: O(n log n + output) time and O(n + output) space over a chain of n links,
+//! with output the pieces of the answer; a nested remainder adds a factor `m/old` per excluded
+//! piece, linear in a modulus literal (so exponential in its bits). Measured T(8n)/T(n), the
+//! larger of the instruction and byte ratios, over the 48 families of the scaling tests
+//! (`l01_25_preimage_catalog::ref_memo`, load about 37 on 32 cores): at most 10.6
+//! (`normal_abs_gap`), 9.0 to 10.4 on six more (`normal_min_gap`, `normal_round_down`,
+//! `pathological_abs`, `normal_holey_guards`, `normal_mod_chain`, `normal_div_chain`), under 9 on
+//! the rest. Two families grow with their answers: `output_grid` 15.0 for 64 times the pieces,
+//! `nested_moduli_eq_4096` 25.3 for 154 times. Main exceeds 13 on 24 of the 38 families it
+//! finishes within 60 s (17.8 to 2,965), and 10 do not finish within 60 s. Main's answer dump
+//! (182,747 calls): 182,327 the same, 420 finer, none coarser or unsound. Size against main:
+//! 2,547 lines added and 117 removed, this section included.
+//!
 //! [`super::preimage`]: crate::preimage
 //! [`exact_preimage`]: crate::preimage_ref::exact_preimage
 //! [`witness`]: crate::preimage_ref::witness
@@ -123,7 +177,7 @@ impl Demand {
 }
 
 /// Why the transfer stopped.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum StopKind {
     /// A string operation other than `len`.
     String(Prim),
@@ -153,27 +207,13 @@ pub enum StopKind {
     Recursion,
 }
 
-/// A reported stop: its kind and the term it stopped at. The term is held, not printed: its
-/// text is made only when the stop is shown.
+/// A reported stop: its kind and the term it stopped at.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Stop {
     /// Why.
     pub kind: StopKind,
-    /// The term, as the transfer was given it.
-    pub term: Shared,
-}
-
-/// By the kind and the primitive or name it holds, as [`PartialEq`] compares them: [`Prim`]
-/// has no hash of its own, and no primitive carries data, so its discriminant is all of it.
-impl std::hash::Hash for StopKind {
-    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
-        std::mem::discriminant(self).hash(h);
-        match self {
-            StopKind::String(p) => std::mem::discriminant(p).hash(h),
-            StopKind::Foreign(n) => n.hash(h),
-            StopKind::Outside | StopKind::Recursion => {}
-        }
-    }
+    /// The term, as the kernel prints it.
+    pub term: String,
 }
 
 impl fmt::Display for Stop {
@@ -221,24 +261,6 @@ fn run_closed(t: &Term) -> Option<Value> {
     eval(t).ok()
 }
 
-/// The most factors read as one power: an integer power past 64 of anything but -1, 0 and 1
-/// leaves `i64`.
-///
-/// Complexity tradeoff: a product of more than 64 equal factors is not read as a power, so it
-/// is read as nested products (the HC4 entry for `*`), wider than the power's exact inverse. Why
-/// given: the power would leave `i64`; that reason does not hold, since `Int` is unbounded
-/// and `x ^ k` inverts by a k-th root at a cost in the bits of its bounds. Trigger: more than
-/// 64 equal factors. Test:
-/// `l01_25_preimage_catalog::scopes::equal_factors_written_twice_are_read_as_a_square`
-/// (below the constant only). COMPLEXITY.md row C19. This switches behavior at a constant
-/// size, so it violates the no-thresholds rule; to be replaced (ledger item CAP-power). A
-/// complete solution would read any count of equal factors as a power, with ends held as
-/// unbounded integers.
-/// Naive version: k equal factors read as k nested products, O(k) HC4 steps, wider than the
-/// power's inverse; used: up to 64 factors, one power and its exact inverse; past 64, the
-/// nested products.
-const POWER_FACTORS: usize = 64;
-
 /// The preimage of `demand` under `term`, whose free names in `inputs` range over their
 /// domains, no domain one whose members the source lists ([`preimage_listed`]).
 pub fn preimage(term: &Term, inputs: &Domains, demand: &Demand) -> Preimage {
@@ -275,22 +297,39 @@ fn preimage_in(
 ) -> Preimage {
     let marks = tx.landmarks(inputs, demand);
     tx.start(inputs, marks.clone());
-    let back = tx.back(root, ROOT, demand);
+    // Total forward containment already proves the whole box. This avoids building
+    // inverse constraints for an answer known before any backward traversal.
+    let periodic = if tx.fwd(root, ROOT).meets(demand) {
+        Some((Res::all(), None))
+    } else {
+        tx.affine_guards(root, demand)
+            .or_else(|| tx.periodic(root, demand))
+            .or_else(|| tx.independent_reflections(root, demand))
+            .or_else(|| tx.correlated(root, demand))
+    };
+    let back = match &periodic {
+        Some((back, _)) => back.clone(),
+        None => tx.back(root, ROOT, demand),
+    };
     let mut r = Whole {
         dom: tx.whole(&back),
         exact: back.exact,
     };
     let doubt = back.doubt;
-    let stops = std::mem::take(&mut tx.run.stops);
+    let mut stops = std::mem::take(&mut tx.run.stops);
     let mut enumerated = false;
-    if !r.exact && !is_empty(&r.dom) {
+    if !r.exact && !is_empty(&r.dom) && periodic.is_none() {
         tx.start(&r.dom, marks);
         if tx.fwd(root, ROOT).meets(demand) {
             r.exact = true;
         }
     }
-    let (mut relation, mut refusal) = (None, None);
+    let (mut relation, mut refusal) = (periodic.and_then(|(_, rel)| rel), None);
+    if r.exact {
+        relation = None;
+    }
     if !r.exact
+        && relation.is_none()
         && !is_empty(&r.dom)
         && let Some((rel, found)) = linear(tx, root, &r.dom, demand, doubt.as_ref())
     {
@@ -313,6 +352,7 @@ fn preimage_in(
             refusal = None;
         }
     }
+    stops.dedup();
     Preimage {
         domains: r.dom,
         exact: r.exact,
@@ -392,6 +432,10 @@ fn linear(
         bit_ands: Vec::new(),
     };
     let go = || -> Result<(Domains, bool, Option<Refusal>), Refusal> {
+        let mut mentioned = rel.body.atoms();
+        for (_, _, f) in &rel.defs {
+            mentioned.extend(f.atoms());
+        }
         let within = |d: &Domains| -> Formula {
             let parts = d
                 .iter()
@@ -400,10 +444,6 @@ fn linear(
             Formula::and(parts)
         };
         let whole = Formula::and(vec![rel.defined(), within(dom), rel.body.clone()]);
-        let mut mentioned = rel.body.atoms();
-        for (_, _, f) in &rel.defs {
-            mentioned.extend(f.atoms());
-        }
         let syms: Vec<presburger::Atom> = dom
             .keys()
             .map(|k| presburger::Atom::Sym(k.clone()))
@@ -665,8 +705,6 @@ struct Terms<'t> {
     made: HashMap<Made, Tid>,
     /// The integer literals of the given terms, each term counted once.
     ints: Vec<Num>,
-    /// The given [`Shared`] each number held in one stands for.
-    held: HashMap<Tid, &'t Shared>,
 }
 
 impl<'t> Terms<'t> {
@@ -742,11 +780,7 @@ impl<'t> Terms<'t> {
         seen: &mut HashMap<u64, Tid>,
         todo: &mut Vec<(&'t Term, Tid)>,
     ) -> Tid {
-        *seen.entry(s.id()).or_insert_with(|| {
-            let t = self.number(s, todo);
-            self.held.insert(t, s);
-            t
-        })
+        *seen.entry(s.id()).or_insert_with(|| self.number(s, todo))
     }
 
     /// A new number for `t`, its parts left to `todo`.
@@ -828,8 +862,7 @@ struct Call {
 #[derive(Default)]
 struct Run {
     stops: Vec<Stop>,
-    /// The stops reported, by kind and term number.
-    seen: HashSet<(StopKind, Tid)>,
+    seen: HashSet<String>,
     /// The bodies of the lambdas whose calls are being read, each with its place on the stack.
     active: HashMap<Tid, usize>,
     marks: Landmarks,
@@ -863,6 +896,25 @@ enum Callee {
 /// An interval per name, persistent: a copy takes `O(1)` and a change `O(log n)`.
 type Sets = imbl::OrdMap<Arc<str>, Rc<IntervalSet>>;
 
+/// How many distinct inputs a subterm narrows or reads along live paths.
+#[derive(Clone, Default, PartialEq, Eq)]
+enum VarSet<K = Arc<str>> {
+    #[default]
+    Zero,
+    One(K),
+    Many,
+}
+
+impl<K: Clone + PartialEq> VarSet<K> {
+    fn join(&self, other: &Self) -> Self {
+        match (self, other) {
+            (VarSet::Zero, x) | (x, VarSet::Zero) => x.clone(),
+            (VarSet::One(a), VarSet::One(b)) if a == b => VarSet::One(a.clone()),
+            _ => VarSet::Many,
+        }
+    }
+}
+
 /// A result of the transfer: the box, by the inputs it narrows, so that a result takes the
 /// space of what the term reads and not of every enclosing parameter. A name not in `dom` has
 /// the whole of its domain.
@@ -877,6 +929,8 @@ struct Res {
     /// such box is known. Only the reflection of `c - x` leaves such points, which an
     /// enclosing guard may remove ([`Tx::meet`]).
     doubt: Option<Sets>,
+    /// The inputs narrowed or read along live paths.
+    vars: VarSet,
 }
 
 impl Res {
@@ -886,6 +940,7 @@ impl Res {
             none: false,
             exact: true,
             doubt: None,
+            vars: VarSet::Zero,
         }
     }
 
@@ -916,9 +971,102 @@ impl Res {
     fn unknown() -> Res {
         Res {
             exact: false,
+            vars: VarSet::Many,
             ..Res::all()
         }
     }
+}
+
+/// A unit-slope bijection `v -> (if self.0 { -v } else { v }) + self.1` on integer values.
+#[derive(Clone)]
+struct ValTag(bool, Num);
+
+impl ValTag {
+    fn id() -> Self {
+        Self(false, Num::ZERO)
+    }
+    fn is_id(&self) -> bool {
+        !self.0 && self.1.is_zero()
+    }
+    fn shift(delta: i128) -> Self {
+        Self(false, Num::from(delta))
+    }
+    fn neg() -> Self {
+        Self(true, Num::ZERO)
+    }
+    fn reflect(c: i128) -> Self {
+        Self(true, Num::from(c))
+    }
+    fn compose(&self, inner: &Self) -> Self {
+        let add = if self.0 {
+            &self.1 - &inner.1
+        } else {
+            &self.1 + &inner.1
+        };
+        Self(self.0 ^ inner.0, add)
+    }
+    fn map_end(&self, e: &End) -> End {
+        match (self.0, e) {
+            (false, Fin(v)) => Fin(v + &self.1),
+            (true, Fin(v)) => Fin(&self.1 - v),
+            (false, e) => e.clone(),
+            (true, NegInf) => PosInf,
+            (true, PosInf) => NegInf,
+        }
+    }
+    fn map_range(&self, lo: &End, hi: &End) -> (End, End) {
+        if self.0 {
+            (self.map_end(hi), self.map_end(lo))
+        } else {
+            (self.map_end(lo), self.map_end(hi))
+        }
+    }
+    fn map_set(&self, z: &IntervalSet) -> IntervalSet {
+        if self.is_id() {
+            return z.clone();
+        }
+        let pieces: Vec<_> = if self.0 {
+            z.pieces()
+                .rev()
+                .map(|(l, h)| self.map_range(l, h))
+                .collect()
+        } else {
+            z.pieces().map(|(l, h)| self.map_range(l, h)).collect()
+        };
+        IntervalSet::from_pieces(pieces)
+    }
+}
+
+/// Demand-independent structure of a single-input integer subterm ([`Tx::step_1d`]).
+#[derive(Clone)]
+struct Step1d {
+    var: VarSet,
+    guard: VarSet<Coordinate>,
+    fwd: IntervalSet,
+    kind: StepKind,
+}
+
+type HighImage = Option<(End, IntervalSet)>;
+type ArmMask = Option<(Rc<IntervalSet>, Rc<IntervalSet>)>;
+type BranchArm = Option<(At, ArmMask)>;
+
+#[derive(Clone)]
+enum StepKind {
+    Round(i64, At),
+    Leaf,
+    Const(Value),
+    Input,
+    Forward(At),
+    If(BranchArm, BranchArm),
+    Shift(i128, At),
+    Reflect(i64, At),
+    Neg(At),
+    Abs(At),
+    MinMax(Prim, i64, At),
+    Mul(i64, At),
+    Div(i64, At),
+    Mod(i64, IntervalSet, At),
+    Pow(Num, IntervalSet, At),
 }
 
 /// A box over every input, after the transfer.
@@ -1004,9 +1152,15 @@ impl Fwd {
 /// differs for each summary, since the parameter's name holds the summary's number.
 #[derive(Default)]
 struct Memo {
+    factors: HashMap<At, (Tid, Eid, Num)>,
     mentions: HashMap<At, Option<bool>>,
     constant: HashMap<At, Option<Value>>,
     fwd: HashMap<At, Fwd>,
+    /// By term, scope and demand ([`Tx::back_at`]).
+    back_at: HashMap<(At, Demand), Res>,
+    /// Single-input integer subterm structure ([`Tx::step_1d`]).
+    step_1d: HashMap<At, Option<Step1d>>,
+    high_image: HashMap<(At, Arc<str>), HighImage>,
     /// By term, scope, demand and doubted values ([`Tx::back_doubt`]).
     back: HashMap<(At, Demand, IntervalSet), Res>,
     scan: HashSet<At>,
@@ -1164,12 +1318,11 @@ impl<'t> Tx<'t> {
         }
     }
 
-    /// The term `t` stands for, held in a [`Shared`]: the given one where `t` is a part held in
-    /// one, otherwise a new one around [`Tx::term`].
-    fn shared(&self, t: Tid) -> Shared {
-        match self.terms.held.get(&t) {
-            Some(&s) => s.clone(),
-            None => Shared::new(self.term(t)),
+    /// `t` as the kernel prints it.
+    fn print(&self, t: Tid) -> String {
+        match self.terms.src[t as usize] {
+            Some(s) => s.to_string(),
+            None => self.term(t).to_string(),
         }
     }
 
@@ -1422,7 +1575,11 @@ impl<'t> Tx<'t> {
         for (k, z) in &r.dom {
             if self.cx.inputs.get(k).is_some_and(|w| w != z) {
                 out.dom.insert(k.clone(), z.clone());
+                out.vars = out.vars.join(&VarSet::One(k.clone()));
             }
+        }
+        if !out.exact {
+            out.vars = VarSet::Many;
         }
         for (i, n, dom) in &call.params {
             if let Some(z) = r.dom.get(n)
@@ -1548,11 +1705,13 @@ impl<'t> Tx<'t> {
         self.cx.inputs.iter().map(|(k, z)| of(k, z)).collect()
     }
 
-    /// Reports a stop at `t`, once for each kind, holding the term unprinted.
     fn stop(&mut self, kind: StopKind, t: Tid) -> Res {
-        if self.run.seen.insert((kind.clone(), t)) {
-            let term = self.shared(t);
-            self.run.stops.push(Stop { kind, term });
+        let s = Stop {
+            kind,
+            term: self.print(t),
+        };
+        if self.run.seen.insert(s.to_string()) {
+            self.run.stops.push(s);
         }
         Res::unknown()
     }
@@ -1599,11 +1758,13 @@ impl<'t> Tx<'t> {
                 }
             }
         };
+        let vars = a.vars.join(&b.vars);
         Res {
             dom,
             none: false,
             exact,
             doubt,
+            vars,
         }
     }
 
@@ -1646,6 +1807,7 @@ impl<'t> Tx<'t> {
         if self.empty(&b) {
             return a;
         }
+        let vars = a.vars.join(&b.vars);
         let (small, large) = if a.dom.len() < b.dom.len() {
             (&a.dom, &b.dom)
         } else {
@@ -1677,11 +1839,13 @@ impl<'t> Tx<'t> {
             (Some(Some(x)), Some(None)) | (Some(None), Some(Some(x))) if boxed => Some(x.clone()),
             _ => None,
         };
+        let exact = a.exact && b.exact && boxed;
         Res {
             dom,
             none: false,
-            exact: a.exact && b.exact && boxed,
+            exact,
             doubt,
+            vars,
         }
     }
 
@@ -1796,6 +1960,16 @@ impl<'t> Tx<'t> {
                         let inner = s.let_env(n, e, env);
                         s.constant(b, inner)
                     }
+                    Node::App(f, args)
+                        if let Node::Lam(ps, body) = s.node(f)
+                            && ps.len() == args.len() =>
+                    {
+                        for i in 0..args.len() {
+                            s.constant(s.arg(args, i), env)?;
+                        }
+                        let inner = s.call_env(ps, args, env, env);
+                        s.constant(body, inner)
+                    }
                     Node::Prim(p, args) => {
                         let mut vs = Vec::with_capacity(args.len());
                         for i in 0..args.len() {
@@ -1840,36 +2014,42 @@ impl<'t> Tx<'t> {
     }
 
     /// The factors of a product of one value read `k` times, as that value and `k`.
-    fn power(&self, t: Tid, env: Eid) -> Option<(Tid, Eid, u32)> {
-        let mut fs = Vec::new();
-        self.factors(t, env, &mut fs);
-        let (first, fenv) = fs[0];
-        let one = |&(t, e): &At| match (self.node(t), self.node(first)) {
-            (Node::Var(x), Node::Var(y)) if x == y => true,
-            _ => e == fenv && self.same(t, first),
-        };
-        (fs.len() >= 2 && fs.len() <= POWER_FACTORS && fs.iter().all(one)).then_some((
-            first,
-            fenv,
-            fs.len() as u32,
-        ))
+    fn power(&mut self, t: Tid, env: Eid) -> Option<(Tid, Eid, Num)> {
+        let (base, be, k) = self.factors(t, env);
+        (k > Num::ONE).then_some((base, be, k))
     }
 
-    fn factors(&self, t: Tid, env: Eid, out: &mut Vec<At>) {
-        let (mut t, mut env) = (t, env);
-        while let Node::Var(x) = self.node(t)
-            && let Some(to) = self.lookup(env, x)
-        {
-            (t, env) = to;
-        }
-        match self.node(t) {
-            _ if out.len() > POWER_FACTORS => {}
-            Node::Prim(Prim::Mul, args) if args.len() == 2 => {
-                self.factors(self.arg(args, 0), env, out);
-                self.factors(self.arg(args, 1), env, out);
-            }
-            _ => out.push((t, env)),
-        }
+    // Count equal factors on the DAG instead of flattening them into a capped list.
+    // Memoization shares repeated squarings and nested products; the count has O(depth)
+    // bits even when the expanded product has exponentially many factors. The revision
+    // table already accepts an arbitrary Num exponent. This removes the inherited 64
+    // factor size switch without turning a multiplication chain into repeated scans.
+    fn factors(&mut self, t: Tid, env: Eid) -> (Tid, Eid, Num) {
+        self.cached(
+            |m| &mut m.factors,
+            (t, env),
+            |s| {
+                match s.node(t) {
+                    Node::Var(x) if s.lookup(env, x).is_some() => {
+                        let (bt, be) = s.lookup(env, x).unwrap();
+                        return s.factors(bt, be);
+                    }
+                    Node::Prim(Prim::Mul, args) if args.len() == 2 => {
+                        let (a, ae, ak) = s.factors(s.arg(args, 0), env);
+                        let (b, be, bk) = s.factors(s.arg(args, 1), env);
+                        let same = match (s.node(a), s.node(b)) {
+                            (Node::Var(x), Node::Var(y)) => x == y,
+                            _ => ae == be && s.same(a, b),
+                        };
+                        if same {
+                            return (a, ae, &ak + &bk);
+                        }
+                    }
+                    _ => {}
+                }
+                (t, env, Num::ONE)
+            },
+        )
     }
 
     // ---- Into the linear-relation domain ------------------------------------------------
@@ -2190,7 +2370,10 @@ impl<'t> Tx<'t> {
             Node::App(f, args) => match self.callee(f, env) {
                 Ok(Callee::Lam(ps, body, lam)) if ps.len() == args.len() => {
                     self.through(t, body, Fwd::top(), |s, place| {
-                        match s.summon(ps, body, lam, args, env) {
+                        match (!matches!(s.node(f), Node::Lam(..)))
+                            .then(|| s.summon(ps, body, lam, args, env))
+                            .flatten()
+                        {
                             Some(call) => s.call_fwd(call, body, lam, place),
                             None => {
                                 let inner = s.call_env(ps, args, lam, env);
@@ -2296,7 +2479,11 @@ impl<'t> Tx<'t> {
     }
 
     fn back_at(&mut self, t: Tid, env: Eid, d: &Demand) -> Res {
-        self.back_doubt(t, env, d, &IntervalSet::empty())
+        self.cached(
+            |m| &mut m.back_at,
+            ((t, env), d.clone()),
+            |s| s.back_doubt(t, env, d, &IntervalSet::empty()),
+        )
     }
 
     /// The box of the inputs where `t` meets the demand `d`, as [`Tx::back_at`] gives it,
@@ -2306,16 +2493,46 @@ impl<'t> Tx<'t> {
     /// carries `D` ([`Res::doubt`]), which an enclosing guard may leave empty ([`Tx::meet`]).
     /// The doubted values are kept to those in `d` that `t` may take, so that the memo key
     /// does not hold values that cannot matter.
+    ///
+    // Complexity tradeoff: the old memo has O(n^2) demands on shared guarded
+    // reflection chains. The independent inverse walk visits each reachable node once,
+    // merging exact excluded-value constraints in a persistent value-ordered AVL
+    // partition. An endpoint sweep handles affine guarded folds, including translation
+    // staircases, so the former second input ordering and its conversions are removed.
+    // The measured scalar, named-call, multi-input-frontier and common-difference
+    // families cost about O(n log n). This is output-sensitive: an explicit staircase
+    // selecting n isolated values can require n^2 output pieces. Unsupported step shapes,
+    // independent guard coordinates and unresolved nested periodic constraints retain
+    // the old memo, which can still be quadratic. General unaligned scalar inverses can
+    // also visit every current partition. These remaining cases are not measured by
+    // the 48 families. Tests: `l01_25_preimage_catalog::ref_memo` (the scaling of each
+    // family, main's changed answers, calls 22, 45 and 86). COMPLEXITY.md C56.
     fn back_doubt(&mut self, t: Tid, env: Eid, d: &Demand, dd: &IntervalSet) -> Res {
         let dd = match d {
             Demand::Ints(z) if !dd.is_empty() => dd.meet(z).meet(&self.fwd(t, env).ints),
             _ => IntervalSet::empty(),
         };
-        self.cached(
-            |m| &mut m.back,
-            ((t, env), d.clone(), dd.clone()),
-            |s| s.back_in(t, env, d, &dd),
-        )
+        let key = ((t, env), d.clone(), dd.clone());
+        if let Some(r) = self.run.memo.back.get(&key) {
+            return r.clone();
+        }
+        if let Demand::Ints(z) = d {
+            if z.is_empty() {
+                return Res::none();
+            }
+            if dd.is_empty()
+                && let Some(s1d) = self.step_1d(t, env)
+                && !matches!(s1d.kind, StepKind::Leaf)
+                && let VarSet::One(Coordinate::Input(x)) = if s1d.guard == VarSet::Zero {
+                    s1d.var.coordinates()
+                } else {
+                    s1d.guard
+                }
+            {
+                return self.cached(|m| &mut m.back, key, |s| s.solve_1d((t, env), &x, z));
+            }
+        }
+        self.cached(|m| &mut m.back, key, |s| s.back_in(t, env, d, &dd))
     }
 
     fn back_in(&mut self, t: Tid, env: Eid, d: &Demand, dd: &IntervalSet) -> Res {
@@ -2349,6 +2566,7 @@ impl<'t> Tx<'t> {
                             }
                             let bad = met.meet(dd);
                             let mut r = Res::all();
+                            r.vars = VarSet::One(x.clone());
                             if met != **dom {
                                 r.dom.insert(x.clone(), Rc::new(met));
                             }
@@ -2385,7 +2603,10 @@ impl<'t> Tx<'t> {
             Node::App(f, args) => match self.callee(f, env) {
                 Ok(Callee::Lam(ps, body, lam)) if ps.len() == args.len() => {
                     self.through(t, body, Res::unknown(), |s, place| {
-                        match s.summon(ps, body, lam, args, env) {
+                        match (!matches!(s.node(f), Node::Lam(..)))
+                            .then(|| s.summon(ps, body, lam, args, env))
+                            .flatten()
+                        {
                             // A summary is kept by demand alone; the doubted values are not
                             // followed into it.
                             Some(call) => {
@@ -2553,7 +2774,10 @@ impl<'t> Tx<'t> {
             Node::App(f, args) => match self.callee(f, env) {
                 Ok(Callee::Lam(ps, body, lam)) if ps.len() == args.len() => {
                     self.through(t, body, (), |s, place| {
-                        match s.summon(ps, body, lam, args, env) {
+                        match (!matches!(s.node(f), Node::Lam(..)))
+                            .then(|| s.summon(ps, body, lam, args, env))
+                            .flatten()
+                        {
                             Some(call) => {
                                 if s.run.scanned.insert(call.sid) {
                                     let (sub, e) = s.open(&call, lam);
@@ -2656,20 +2880,20 @@ impl<'t> Tx<'t> {
                 // enclosing guard; in a chain of n nested `c - x` each level repeats that
                 // transfer over everything below it with holes that differ from level to level,
                 // O(n^2) terms followed with the memo (negative control, item S22-guard-exact:
-                // 9.4 and 511 ms at 32 and 256 levels, 55 times). Used: the holes are carried
-                // down as one set of doubted values with the demand ([`Tx::back_doubt`]), joined
-                // with the reflection of those doubted above, and are met with the guards' boxes
-                // once, where an input is reached, as a doubted box ([`Tx::meet`]); the
-                // reflection costs O(k) for the k pieces of `z`, the holes O(m log(n/m + 1)) for
-                // sets of m <= n pieces. The memo is keyed by the doubted set too; on the chains
-                // measured, with a constant that differs at each level, that did not raise the
-                // order: 63 and 594 ms at 256 and 2,048 levels, 9.4 times (test
-                // `l01_25_preimage_catalog::s22::guarded_holes_scale`). Given up: the doubted
-                // values are not followed into a summarized call, a projection of two operands
-                // that read inputs, `min` or `max` of two such operands, or a `mod` whose inverse
-                // merges periods; there the box is reported not exact. A doubted box is the box
-                // hull of the doubted points, so a guard that removes those points but not their
-                // hull leaves the box not exact.
+                // 9.4 and 511 ms at 32 and 256 levels, 55 times). Used: on subterms reading two
+                // or more inputs ([`Tx::back_in`]), the holes are carried down as one set of
+                // doubted values with the demand ([`Tx::back_doubt`]), joined with the reflection
+                // of those doubted above, and met with the guards' boxes once at the inputs
+                // (`COMPLEXITY.md` row C43); on single-input subterms ([`Tx::solve_1d`]), the
+                // reachable DAG is solved in one pass in a 1D partition state so cycling
+                // reflections (`c = j mod 5`) do not multiply memo keys (`COMPLEXITY.md` row
+                // C56, tests `l01_25_preimage_catalog::s22::guarded_holes_scale` and
+                // `l01_25_preimage_catalog::ref_memo`). Given up:
+                // the doubted values are not followed into a summarized call, a projection of two
+                // operands that read inputs, `min` or `max` of two such operands, or a `mod`
+                // whose inverse merges periods; there the box is reported not exact. On
+                // multi-input chains a doubted box is the box hull of the doubted points, and
+                // cycling reflections across shared multi-input branches remain O(n^2).
                 let r = revision::forward(&Op::Sub, &IntervalSet::single(c), z);
                 let holes = r.minus(&reflect(z, c as i128));
                 let doubted = holes.join(&reflect(dd, c as i128));
@@ -2812,6 +3036,2212 @@ impl<'t> Tx<'t> {
             r.inexact();
         }
         r
+    }
+
+    fn step_1d(&mut self, t: Tid, env: Eid) -> Option<Step1d> {
+        (!self.run.void).then(|| {
+            self.cached(
+                |m| &mut m.step_1d,
+                (t, env),
+                |s| {
+                    s.step_1d_at(t, env).or_else(|| {
+                        let fwd = s.fwd(t, env).ints;
+                        (!fwd.is_empty()).then(|| {
+                            let guard = match s.node(t) {
+                                Node::Prim(Prim::Add | Prim::Sub | Prim::Mul, args) => {
+                                    let mut guard = VarSet::Zero;
+                                    for i in 0..args.len() {
+                                        let a = s.arg(args, i);
+                                        guard = guard.join(
+                                            &s.step_1d(a, env)
+                                                .map_or(VarSet::Many, |sub| sub.guard),
+                                        );
+                                    }
+                                    if guard == VarSet::Zero {
+                                        guard
+                                    } else {
+                                        VarSet::Many
+                                    }
+                                }
+                                _ => VarSet::Many,
+                            };
+                            Step1d {
+                                var: VarSet::Many,
+                                guard,
+                                fwd,
+                                kind: StepKind::Leaf,
+                            }
+                        })
+                    })
+                },
+            )
+        })?
+    }
+
+    fn step_1d_at(&mut self, t: Tid, env: Eid) -> Option<Step1d> {
+        use Prim::*;
+        let fwd = self.fwd(t, env).ints;
+        let ok = |var, guard, kind| {
+            Some(Step1d {
+                var,
+                guard,
+                fwd: fwd.clone(),
+                kind,
+            })
+        };
+        if !matches!(self.node(t), Node::Var(_))
+            && let Some(v) = self.constant(t, env)
+        {
+            return ok(VarSet::Zero, VarSet::Zero, StepKind::Const(v));
+        }
+        match self.node(t) {
+            Node::Int(n) => ok(VarSet::Zero, VarSet::Zero, StepKind::Const(Value::Int(n))),
+            Node::Bool(b) => ok(VarSet::Zero, VarSet::Zero, StepKind::Const(Value::Bool(b))),
+            Node::Lit(v) => ok(VarSet::Zero, VarSet::Zero, StepKind::Const(v.clone())),
+            Node::Var(x) => match self.lookup(env, x) {
+                Some((bt, be)) => ok(
+                    self.step_1d(bt, be)?.var,
+                    self.step_1d(bt, be)?.guard,
+                    StepKind::Forward((bt, be)),
+                ),
+                None => {
+                    let name = self.name(x).clone();
+                    self.cx.inputs.contains_key(&name).then(|| Step1d {
+                        var: VarSet::One(name),
+                        guard: VarSet::Zero,
+                        fwd,
+                        kind: StepKind::Input,
+                    })
+                }
+            },
+            Node::Let(n, e, b) => {
+                let inner = self.let_env(n, e, env);
+                ok(
+                    self.step_1d(b, inner)?.var,
+                    self.step_1d(b, inner)?.guard,
+                    StepKind::Forward((b, inner)),
+                )
+            }
+            Node::If(g, a, b) => {
+                let (mut guard, yes, no, mut var) =
+                    if let Some((coord, yes, no)) = self.difference_guard(g, env) {
+                        let vars = match &coord {
+                            Coordinate::Input(x) => VarSet::One(x.clone()),
+                            Coordinate::Difference(..) => VarSet::Many,
+                        };
+                        let live = |m: &ArmMask| m.as_ref().is_none_or(|(s, _)| !s.is_empty());
+                        (
+                            VarSet::One(coord),
+                            live(&yes).then_some(((a, env), yes)),
+                            live(&no).then_some(((b, env), no)),
+                            vars,
+                        )
+                    } else {
+                        let gt = self.back_at(g, env, &Demand::Bool(true));
+                        let gf = self.back_at(g, env, &Demand::Bool(false));
+                        if !(self.empty(&gt) || gt.exact) || !(self.empty(&gf) || gf.exact) {
+                            return None;
+                        }
+                        let mask = |r: &Res| -> ArmMask {
+                            let (k, m) = r.dom.iter().next()?;
+                            let dom = &self.cx.inputs[k];
+                            let live = m.meet(dom);
+                            let cover = bridge_outside(&live, dom);
+                            Some((Rc::new(live), Rc::new(cover)))
+                        };
+                        let vars = gt.vars.join(&gf.vars);
+                        (
+                            vars.coordinates(),
+                            (!self.empty(&gt)).then(|| ((a, env), mask(&gt))),
+                            (!self.empty(&gf)).then(|| ((b, env), mask(&gf))),
+                            vars,
+                        )
+                    };
+                let (sa, sb) = (self.step_1d(a, env)?, self.step_1d(b, env)?);
+                if yes.is_some() {
+                    var = var.join(&sa.var);
+                    guard = guard.join(&sa.guard)
+                }
+                if no.is_some() {
+                    var = var.join(&sb.var);
+                    guard = guard.join(&sb.guard)
+                }
+                if guard == VarSet::Many {
+                    return None;
+                }
+                ok(var, guard, StepKind::If(yes, no))
+            }
+            Node::App(f, args) => match self.callee(f, env).ok()? {
+                Callee::Lam(ps, body, lam)
+                    if ps.len() == args.len()
+                        && (matches!(self.node(f), Node::Lam(..))
+                            || matches!(self.node(body), Node::Prim(..) | Node::Var(_))) =>
+                {
+                    if self.run.active.contains_key(&body)
+                        || !(0..args.len()).all(|i| self.mentions(self.arg(args, i), env).is_some())
+                    {
+                        return None;
+                    }
+                    let inner = self.call_env(ps, args, lam, env);
+                    self.run.active.insert(body, self.run.active.len());
+                    let sub = self.step_1d(body, inner);
+                    self.run.active.remove(&body);
+                    let sub = sub?;
+                    ok(sub.var, sub.guard, StepKind::Forward((body, inner)))
+                }
+                Callee::Prim(p) => {
+                    let c = self.terms.call(t, p, args);
+                    ok(
+                        self.step_1d(c, env)?.var,
+                        self.step_1d(c, env)?.guard,
+                        StepKind::Forward((c, env)),
+                    )
+                }
+                Callee::Lam(..) => None,
+            },
+            Node::Prim(p, args) if p.arity().is_none_or(|n| n == args.len()) => {
+                if p == IntDiv
+                    && let Some(c) = self.constant_int(self.arg(args, 1), env)
+                    && c != 0
+                    && let Node::Prim(Mul, inner) = self.node(self.arg(args, 0))
+                    && inner.len() == 2
+                {
+                    let (a, b) = (self.arg(inner, 0), self.arg(inner, 1));
+                    let base = if self.constant_int(a, env) == Some(c) {
+                        Some(b)
+                    } else if self.constant_int(b, env) == Some(c) {
+                        Some(a)
+                    } else {
+                        None
+                    };
+                    if let Some(base) = base {
+                        let sub = self.step_1d(base, env)?;
+                        return ok(sub.var, sub.guard, StepKind::Forward((base, env)));
+                    }
+                }
+                if p == Mul {
+                    let (a, b) = (self.arg(args, 0), self.arg(args, 1));
+                    let pair = if let Some(c) = self.constant_int(a, env) {
+                        Some((c, b))
+                    } else {
+                        self.constant_int(b, env).map(|c| (c, a))
+                    };
+                    if let Some((c, q)) = pair
+                        && c != 0
+                        && let Node::Prim(IntDiv, inner) = self.node(q)
+                        && inner.len() == 2
+                        && self.constant_int(self.arg(inner, 1), env) == Some(c)
+                    {
+                        let base = self.arg(inner, 0);
+                        let sub = self.step_1d(base, env)?;
+                        return ok(sub.var, sub.guard, StepKind::Round(c, (base, env)));
+                    }
+                }
+                if p == Mul
+                    && let Some((base, be, k)) = self.power(t, env)
+                {
+                    let sub = self.step_1d(base, be)?;
+                    return ok(sub.var, sub.guard, StepKind::Pow(k, sub.fwd, (base, be)));
+                }
+                let a = self.arg(args, 0);
+                match p {
+                    Neg | Abs => {
+                        let sub = self.step_1d(a, env)?;
+                        let kind = if p == Neg {
+                            StepKind::Neg((a, env))
+                        } else {
+                            StepKind::Abs((a, env))
+                        };
+                        ok(sub.var, sub.guard, kind)
+                    }
+                    Pow => {
+                        let k = u32::try_from(self.constant_int(self.arg(args, 1), env)?).ok()?;
+                        let sub = self.step_1d(a, env)?;
+                        ok(
+                            sub.var,
+                            sub.guard,
+                            StepKind::Pow(Num::from(i64::from(k)), sub.fwd, (a, env)),
+                        )
+                    }
+                    Add | Sub | Mul | IntDiv | Mod | Min | Max => {
+                        let b = self.arg(args, 1);
+                        let (ca, cb) = (self.constant_int(a, env), self.constant_int(b, env));
+                        let (child, kind) = match (p, ca, cb) {
+                            (Add, Some(c), _) => {
+                                ((b, env), StepKind::Shift(-(c as i128), (b, env)))
+                            }
+                            (Add, _, Some(c)) => {
+                                ((a, env), StepKind::Shift(-(c as i128), (a, env)))
+                            }
+                            (Sub, _, Some(c)) => ((a, env), StepKind::Shift(c as i128, (a, env))),
+                            (Sub, Some(c), _) => ((b, env), StepKind::Reflect(c, (b, env))),
+                            (Mul, Some(c), _) => ((b, env), StepKind::Mul(c, (b, env))),
+                            (Mul, _, Some(c)) => ((a, env), StepKind::Mul(c, (a, env))),
+                            (IntDiv, _, Some(c)) => ((a, env), StepKind::Div(c, (a, env))),
+                            (Mod, _, Some(c)) => {
+                                ((a, env), StepKind::Mod(c, self.fwd(a, env).ints, (a, env)))
+                            }
+                            (Min | Max, Some(c), _) => ((b, env), StepKind::MinMax(p, c, (b, env))),
+                            (Min | Max, _, Some(c)) => ((a, env), StepKind::MinMax(p, c, (a, env))),
+                            _ => return None,
+                        };
+                        ok(
+                            self.step_1d(child.0, child.1)?.var,
+                            self.step_1d(child.0, child.1)?.guard,
+                            kind,
+                        )
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn inverse_states(
+        &mut self,
+        root: At,
+        dom: &IntervalSet,
+        z: &IntervalSet,
+    ) -> (Vec<(At, Step1d, State1d)>, bool) {
+        let mut order = Vec::new();
+        let mut seen = HashSet::new();
+        let mut stack = vec![(root, false)];
+        while let Some((u, done)) = stack.pop() {
+            if done {
+                order.push(u);
+                continue;
+            }
+            if !seen.insert(u) {
+                continue;
+            }
+            stack.push((u, true));
+            match self.step_1d(u.0, u.1).expect("inverse step").kind {
+                StepKind::Const(_) | StepKind::Input | StepKind::Leaf => {}
+                StepKind::If(a, b) => {
+                    for (c, _) in [a, b].into_iter().flatten() {
+                        stack.push((c, false));
+                    }
+                }
+                StepKind::Forward(c)
+                | StepKind::Shift(_, c)
+                | StepKind::Reflect(_, c)
+                | StepKind::Neg(c)
+                | StepKind::Abs(c)
+                | StepKind::MinMax(_, _, c)
+                | StepKind::Mul(_, c)
+                | StepKind::Div(_, c)
+                | StepKind::Mod(_, _, c)
+                | StepKind::Pow(_, _, c)
+                | StepKind::Round(_, c) => stack.push((c, false)),
+            }
+        }
+        order.reverse();
+        // Physical domain holes are intersected once at the leaves. Covers are exact
+        // on that domain, so carrying their hull through exact scalar steps is harmless.
+        // Approximate remainder inverses retain the physical live set for their doubt.
+        let has_mod = order.iter().any(|u| {
+            matches!(
+                self.step_1d(u.0, u.1).expect("inverse step").kind,
+                StepKind::Mod(..)
+            )
+        });
+        let propagation_dom = if has_mod {
+            dom.clone()
+        } else {
+            dom.bounds().map_or_else(IntervalSet::empty, |(lo, hi)| {
+                IntervalSet::range(lo.clone(), hi.clone())
+            })
+        };
+        let mut states = HashMap::from([(
+            root,
+            State1d::init(&propagation_dom, &IntervalSet::top().minus(z)),
+        )]);
+        let push = |states: &mut HashMap<At, State1d>, c, next: State1d| {
+            if !next.live.is_empty() {
+                let next = match states.remove(&c) {
+                    Some(old) => old.union(next),
+                    None => next,
+                };
+                states.insert(c, next);
+            }
+        };
+        let mut unbranched = HashSet::from([root]);
+        let mut empty_inexact = false;
+        let mut leaves = Vec::new();
+        for u in order {
+            let Some(st) = states.remove(&u).filter(|s| !s.live.is_empty()) else {
+                continue;
+            };
+            let step = self.step_1d(u.0, u.1).expect("inverse step");
+            let st = st.clip_values(&step.fwd);
+            let top = unbranched.contains(&u);
+            let mut child = |c, next| {
+                if top {
+                    unbranched.insert(c);
+                }
+                push(&mut states, c, next)
+            };
+            match step.kind.clone() {
+                StepKind::Const(_) | StepKind::Input | StepKind::Leaf => leaves.push((u, step, st)),
+                StepKind::If(a, b) => {
+                    for (c, mask) in [a, b].into_iter().flatten() {
+                        push(&mut states, c, st.restrict_x(&mask));
+                    }
+                }
+                StepKind::Forward(c) => child(c, st),
+                StepKind::Shift(k, c) => child(c, st.apply_tag(&ValTag::shift(k))),
+                StepKind::Reflect(k, c) => child(c, st.reflect(k)),
+                StepKind::Neg(c) => child(c, st.apply_tag(&ValTag::neg())),
+                StepKind::Abs(c) => child(c, st.abs()),
+                StepKind::MinMax(p, k, c) => child(c, st.minmax(p, k)),
+                StepKind::Mul(k, c) => child(c, st.mul(k)),
+                StepKind::Div(k, c) => child(c, st.div(k)),
+                StepKind::Mod(k, fc, c) => {
+                    let (next, inexact) = st.modulo(k, &step.fwd, &fc);
+                    empty_inexact |= top && inexact;
+                    child(c, next);
+                }
+                StepKind::Pow(k, fc, c) => child(c, st.pow(k, &step.fwd, &fc)),
+                StepKind::Round(k, c) => child(c, st.round(k)),
+            }
+        }
+        (leaves, empty_inexact)
+    }
+    fn solve_1d(&mut self, root: At, x: &Arc<str>, z: &IntervalSet) -> Res {
+        let dom = self.cx.inputs[x].clone();
+        if dom.is_empty() || z.is_empty() {
+            return Res::none();
+        }
+        let (leaves, empty_inexact) = self.inverse_states(root, &dom, z);
+        let mut out = Res::none();
+        for (u, step, st) in leaves {
+            let met = match step.kind {
+                StepKind::Const(Value::Int(n)) => {
+                    Some(st.live.minus(&st.xs_at_value(&Num::from(n))))
+                }
+                StepKind::Const(Value::Big(b)) => {
+                    Some(st.live.minus(&st.xs_at_value(&Num::from(&*b))))
+                }
+                StepKind::Const(_) => continue,
+                StepKind::Input if step.var == VarSet::One(x.clone()) => Some(st.eval_diagonal()),
+                _ => None,
+            };
+            if let Some(met) = met {
+                let met = met.meet(&dom);
+                if met.is_empty() {
+                    continue;
+                }
+                let mut r = Res::all();
+                r.vars = VarSet::One(x.clone());
+                if met != *dom {
+                    r.dom.insert(x.clone(), Rc::new(met.clone()));
+                }
+                if !st.inexact.meet(&met).is_empty() {
+                    r.inexact();
+                }
+                out = self.union(out, r);
+            } else {
+                for (lo, hi, ex) in st.to_slices() {
+                    let live = st.live.meet(&IntervalSet::range(lo, hi)).meet(&dom);
+                    if live.is_empty() {
+                        continue;
+                    }
+                    let mut mask = Res::all();
+                    mask.vars = VarSet::One(x.clone());
+                    mask.dom.insert(x.clone(), Rc::new(live.clone()));
+                    // A frontier accepts only its attainable forward values minus exclusions.
+                    // Complementing in top reintroduces unreachable values, weakening HC4.
+                    // One interval-set difference per frontier slice; no extra DAG walk.
+                    let b = self.back_at(u.0, u.1, &Demand::Ints(step.fwd.minus(&ex)));
+                    let mut r = self.meet(mask, b);
+                    if !st.inexact.meet(&live).is_empty() {
+                        r.inexact();
+                    }
+                    out = self.union(out, r);
+                }
+            }
+        }
+        if out.none && empty_inexact {
+            out.inexact();
+        }
+        out
+    }
+}
+
+// ---- Input-labelled inverse intervals -----------------------------------------
+type Tree = Option<Arc<PartitionNode>>;
+type Slice1d = (End, End, IntervalSet);
+
+type Contents = IntervalSet;
+
+#[derive(Clone)]
+struct PartitionNode {
+    lo: End,
+    hi: End,
+    min_lo: End,
+    max_hi: End,
+    span: (End, End),
+    boundaries: Boundaries,
+    height: usize,
+    data: Contents,
+    lazy: ValTag,
+    left: Tree,
+    right: Tree,
+}
+impl PartitionNode {
+    fn key(&self) -> (End, End) {
+        (self.lo.clone(), self.hi.clone())
+    }
+}
+#[derive(Clone)]
+struct Boundaries {
+    anchor: Option<Num>,
+    step: Num,
+}
+impl Default for Boundaries {
+    fn default() -> Self {
+        Self {
+            anchor: None,
+            step: Num::ZERO,
+        }
+    }
+}
+impl Boundaries {
+    fn key(lo: &End, hi: &End) -> Self {
+        let mut out = Self::default();
+        for e in [lo.clone(), hi.succ()] {
+            if let Fin(n) = e {
+                out = out.join(&Self {
+                    anchor: Some(n),
+                    step: Num::ZERO,
+                });
+            }
+        }
+        out
+    }
+    fn join(&self, other: &Self) -> Self {
+        match (&self.anchor, &other.anchor) {
+            (None, _) => other.clone(),
+            (_, None) => self.clone(),
+            (Some(a), Some(b)) => Self {
+                anchor: Some(a.clone()),
+                step: self.step.gcd(&other.step).gcd(&(a - b)),
+            },
+        }
+    }
+    fn apply(&mut self, tag: &ValTag) {
+        if let Some(a) = &self.anchor {
+            self.anchor = Some(if tag.0 {
+                &(&tag.1 + &Num::ONE) - a
+            } else {
+                a + &tag.1
+            });
+        }
+    }
+}
+fn ceil_grid(e: &End, m: &Num) -> End {
+    match e {
+        Fin(n) => {
+            let negative = -n;
+            let q = -&negative.div_floor(m);
+            Fin(&q * m)
+        }
+        other => other.clone(),
+    }
+}
+fn tree_round(tree: Tree, m: &Num) -> Tree {
+    // Reuse uniquely owned nodes; shared branches still copy on write. This
+    // preserves the same grid inverse and reduces measured round-down byte R
+    // from 9.70 to 9.50 (16..128), without changing the asymptotic traversal.
+    let n = tree.as_ref()?;
+    if n.boundaries.step.rem_euclid(m).is_zero() {
+        let residue = n
+            .boundaries
+            .anchor
+            .as_ref()
+            .map_or(Num::ZERO, |a| a.rem_euclid(m));
+        let shift = (-&residue).rem_euclid(m);
+        return tree_apply(tree, &ValTag(false, shift));
+    }
+    let mut arc = tree?;
+    let n = Arc::make_mut(&mut arc);
+    let data = n.data.clone();
+    let left = tree_round(tree_apply(n.left.take(), &n.lazy), m);
+    let right = tree_round(tree_apply(n.right.take(), &n.lazy), m);
+    let (lo, hi) = (ceil_grid(&n.lo, m), ceil_grid(&n.hi.succ(), m).pred());
+    if lo > hi {
+        tree_join(left, right)
+    } else if tree_height(&left).abs_diff(tree_height(&right)) <= 1 {
+        *n = tree_parts((lo, hi), data, left, right);
+        Some(arc)
+    } else {
+        tree_node((lo, hi), data, left, right)
+    }
+}
+impl State1d {
+    fn round(self, c: i64) -> Self {
+        let mut st = self;
+        st.excl = tree_round(st.excl, &Num::from(c.unsigned_abs() as i128));
+        st
+    }
+}
+
+fn tree_height(t: &Tree) -> usize {
+    t.as_ref().map_or(0, |n| n.height)
+}
+// A positive Euclidean quotient has ordered, disjoint inverse intervals. Map the
+// existing balanced tree in place structurally instead of collecting it and
+// reinserting every interval (linear visits instead of p log p reinsertion work).
+// The endpoints follow a=q*c+r, 0<=r<c; no paper or production method is used.
+// With ownership reuse, measured normal_div_chain byte R is 8.22 (was 12.03)
+// and allocation R 7.79 (was 12.07), at 16..128 links.
+fn tree_division(t: Tree, c: &Num) -> Tree {
+    let mut arc = t?;
+    let n = Arc::make_mut(&mut arc);
+    let lower = |e: &End| match e {
+        Fin(v) => Fin(v * c),
+        e => e.clone(),
+    };
+    let upper = |e: &End| match e {
+        Fin(v) => Fin(&(&(v + &Num::ONE) * c) - &Num::ONE),
+        e => e.clone(),
+    };
+    n.left = tree_division(tree_apply(n.left.take(), &n.lazy), c);
+    n.right = tree_division(tree_apply(n.right.take(), &n.lazy), c);
+    n.lazy = ValTag::id();
+    n.lo = lower(&n.lo);
+    n.hi = upper(&n.hi);
+    n.min_lo = lower(&n.min_lo);
+    n.max_hi = upper(&n.max_hi);
+    n.boundaries.anchor = n.boundaries.anchor.as_ref().map(|a| a * c);
+    n.boundaries.step = &n.boundaries.step * c;
+    Some(arc)
+}
+fn tree_parts((lo, hi): (End, End), data: Contents, left: Tree, right: Tree) -> PartitionNode {
+    let (xlo, xhi) = data.bounds().expect("nonempty input labels");
+    let (mut xlo, mut xhi) = (xlo.clone(), xhi.clone());
+    for n in [&left, &right].into_iter().flatten() {
+        xlo = xlo.min(n.span.0.clone());
+        xhi = xhi.max(n.span.1.clone());
+    }
+    let mut boundaries = Boundaries::key(&lo, &hi);
+    for n in [&left, &right].into_iter().flatten() {
+        boundaries = boundaries.join(&n.boundaries);
+    }
+    PartitionNode {
+        boundaries,
+        min_lo: left
+            .as_ref()
+            .map_or_else(|| lo.clone(), |n| n.min_lo.clone()),
+        max_hi: right
+            .as_ref()
+            .map_or_else(|| hi.clone(), |n| n.max_hi.clone()),
+        lo,
+        hi,
+        span: (xlo, xhi),
+        height: 1 + tree_height(&left).max(tree_height(&right)),
+        data,
+        lazy: ValTag::id(),
+        left,
+        right,
+    }
+}
+fn tree_raw(key: (End, End), data: Contents, left: Tree, right: Tree) -> Tree {
+    Some(Arc::new(tree_parts(key, data, left, right)))
+}
+fn tree_apply(tree: Tree, tag: &ValTag) -> Tree {
+    if tag.is_id() {
+        return tree;
+    }
+    let mut arc = tree?;
+    let n = Arc::make_mut(&mut arc);
+    n.boundaries.apply(tag);
+    (n.lo, n.hi) = tag.map_range(&n.lo, &n.hi);
+    (n.min_lo, n.max_hi) = tag.map_range(&n.min_lo, &n.max_hi);
+    if tag.0 {
+        std::mem::swap(&mut n.left, &mut n.right);
+    }
+    n.lazy = tag.compose(&n.lazy);
+    Some(arc)
+}
+fn tree_push(n: &PartitionNode) -> (Contents, Tree, Tree) {
+    let data = n.data.clone();
+    (
+        data,
+        tree_apply(n.left.clone(), &n.lazy),
+        tree_apply(n.right.clone(), &n.lazy),
+    )
+}
+fn tree_balance(key: (End, End), data: Contents, left: Tree, right: Tree) -> Tree {
+    if tree_height(&left) > tree_height(&right) + 1 {
+        let l = left.as_ref().unwrap();
+        let (ld, ll, lr) = tree_push(l);
+        if tree_height(&ll) >= tree_height(&lr) {
+            return tree_raw(l.key(), ld, ll, tree_raw(key, data, lr, right));
+        }
+        let m = lr.as_ref().unwrap();
+        let (md, ml, mr) = tree_push(m);
+        return tree_raw(
+            m.key(),
+            md,
+            tree_raw(l.key(), ld, ll, ml),
+            tree_raw(key, data, mr, right),
+        );
+    }
+    if tree_height(&right) > tree_height(&left) + 1 {
+        let r = right.as_ref().unwrap();
+        let (rd, rl, rr) = tree_push(r);
+        if tree_height(&rr) >= tree_height(&rl) {
+            return tree_raw(r.key(), rd, tree_raw(key, data, left, rl), rr);
+        }
+        let m = rl.as_ref().unwrap();
+        let (md, ml, mr) = tree_push(m);
+        return tree_raw(
+            m.key(),
+            md,
+            tree_raw(key, data, left, ml),
+            tree_raw(r.key(), rd, mr, rr),
+        );
+    }
+    tree_raw(key, data, left, right)
+}
+fn tree_node(key: (End, End), data: Contents, left: Tree, right: Tree) -> Tree {
+    if data.is_empty() {
+        return tree_join(left, right);
+    }
+    if tree_height(&left) > tree_height(&right) + 1 {
+        let l = left.as_ref().unwrap();
+        let (ld, ll, lr) = tree_push(l);
+        return tree_balance(l.key(), ld, ll, tree_node(key, data, lr, right));
+    }
+    if tree_height(&right) > tree_height(&left) + 1 {
+        let r = right.as_ref().unwrap();
+        let (rd, rl, rr) = tree_push(r);
+        return tree_balance(r.key(), rd, tree_node(key, data, left, rl), rr);
+    }
+    tree_raw(key, data, left, right)
+}
+fn tree_single(lo: End, hi: End, data: Contents) -> Tree {
+    if lo > hi {
+        None
+    } else {
+        tree_node((lo, hi), data, None, None)
+    }
+}
+fn tree_join(a: Tree, b: Tree) -> Tree {
+    match (a, b) {
+        (None, t) | (t, None) => t,
+        (Some(a), Some(b)) if a.height >= b.height => {
+            let (ad, al, ar) = tree_push(&a);
+            tree_node(a.key(), ad, al, tree_join(ar, Some(b)))
+        }
+        (Some(a), Some(b)) => {
+            let (bd, bl, br) = tree_push(&b);
+            tree_node(b.key(), bd, tree_join(Some(a), bl), br)
+        }
+    }
+}
+fn strictly_below(lo: &End) -> Option<(End, End)> {
+    (*lo != NegInf).then(|| (NegInf, lo.pred()))
+}
+fn strictly_above(hi: &End) -> Option<(End, End)> {
+    (*hi != PosInf).then(|| (hi.succ(), PosInf))
+}
+fn tree_restrict(tree: &Tree, lo: &End, hi: &End) -> Tree {
+    let n = tree.as_ref()?;
+    if lo > hi || hi < &n.min_lo || lo > &n.max_hi {
+        return None;
+    }
+    if lo <= &n.min_lo && &n.max_hi <= hi {
+        return tree.clone();
+    }
+    let (data, left, right) = tree_push(n);
+    let l = (lo < &n.lo).then(|| tree_restrict(&left, lo, hi)).flatten();
+    let r = (hi > &n.hi)
+        .then(|| tree_restrict(&right, lo, hi))
+        .flatten();
+    if hi < &n.lo || lo > &n.hi {
+        return tree_join(l, r);
+    }
+    tree_node(
+        (lo.clone().max(n.lo.clone()), hi.clone().min(n.hi.clone())),
+        data,
+        l,
+        r,
+    )
+}
+fn tree_restrict_set(t: &Tree, s: &IntervalSet) -> Tree {
+    s.pieces()
+        .fold(None, |out, (l, h)| tree_join(out, tree_restrict(t, l, h)))
+}
+fn tree_collect(t: &Tree, out: &mut Vec<(End, End, Contents)>) {
+    tree_collect_at(t, &ValTag::id(), out)
+}
+// Read-only in-order walk under a pending tag. Composing the tag on the way down,
+// instead of pushing it into copies of shared children (`tree_push`), allocates
+// only the output: O(p) time, no node copies. Measured in R3_SEAT.md Q2.
+fn tree_collect_at(t: &Tree, tag: &ValTag, out: &mut Vec<(End, End, Contents)>) {
+    let Some(n) = t else { return };
+    let inner = tag.compose(&n.lazy);
+    let (l, r) = if tag.0 {
+        (&n.right, &n.left)
+    } else {
+        (&n.left, &n.right)
+    };
+    tree_collect_at(l, &inner, out);
+    let (lo, hi) = tag.map_range(&n.lo, &n.hi);
+    out.push((lo, hi, n.data.clone()));
+    tree_collect_at(r, &inner, out);
+}
+fn tree_union(a: Tree, b: Tree) -> Tree {
+    let (a, b) = match (a, b) {
+        (None, t) | (t, None) => return t,
+        (Some(a), Some(b)) => (a, b),
+    };
+    if Arc::ptr_eq(&a, &b) {
+        return Some(a);
+    }
+    // Equal cuts need no splitting, temporary interval tree or collection pass.
+    // Merge corresponding subtrees directly; this preserves the AVL ordering.
+    if a.lo == b.lo && a.hi == b.hi {
+        let (ad, al, ar) = tree_push(&a);
+        let (bd, bl, br) = tree_push(&b);
+        return tree_node(
+            a.key(),
+            ad.join(&bd),
+            tree_union(al, bl),
+            tree_union(ar, br),
+        );
+    }
+    if a.max_hi < b.min_lo {
+        return tree_join(Some(a), Some(b));
+    }
+    if b.max_hi < a.min_lo {
+        return tree_join(Some(b), Some(a));
+    }
+    let (a, b) = if a.height >= b.height { (a, b) } else { (b, a) };
+    let (ad, al, ar) = tree_push(&a);
+    let b = Some(b);
+    let bl = strictly_below(&a.lo).and_then(|(l, h)| tree_restrict(&b, &l, &h));
+    let br = strictly_above(&a.hi).and_then(|(l, h)| tree_restrict(&b, &l, &h));
+    let (nl, nr) = (tree_union(al, bl), tree_union(ar, br));
+    let Some(mid) = tree_restrict(&b, &a.lo, &a.hi) else {
+        return tree_node(a.key(), ad, nl, nr);
+    };
+    let mut parts = Vec::new();
+    tree_collect(&Some(mid), &mut parts);
+    let (mut out, mut cur) = (None, a.lo.clone());
+    for (lo, hi, data) in parts {
+        if cur < lo {
+            out = tree_join(out, tree_single(cur, lo.pred(), ad.clone()));
+        }
+        out = tree_join(out, tree_single(lo, hi.clone(), ad.join(&data)));
+        if hi == PosInf {
+            return tree_join(tree_join(nl, out), nr);
+        }
+        cur = hi.succ();
+    }
+    if cur <= a.hi {
+        out = tree_join(out, tree_single(cur, a.hi.clone(), ad));
+    }
+    tree_join(tree_join(nl, out), nr)
+}
+fn tree_restrict_input(t: &Tree, mask: &IntervalSet) -> Tree {
+    let n = t.as_ref()?;
+    let (lo, hi) = mask.bounds()?;
+    if hi < &n.span.0 || lo > &n.span.1 {
+        return None;
+    }
+    // One logarithmic interval lookup replaces two temporary sets at each tree
+    // node. A connected span is covered iff its first intersecting piece covers
+    // both ends; it is disjoint iff that piece starts after the span.
+    let (ml, mh) = mask.piece_at_or_above(&n.span.0)?;
+    if ml <= &n.span.0 && &n.span.1 <= mh {
+        return t.clone();
+    }
+    if ml > &n.span.1 {
+        return None;
+    }
+    let (data, l, r) = tree_push(n);
+    tree_node(
+        n.key(),
+        data.meet(mask),
+        tree_restrict_input(&l, mask),
+        tree_restrict_input(&r, mask),
+    )
+}
+fn coalesce_slice(out: &mut Vec<Slice1d>, lo: End, hi: End, ex: IntervalSet) {
+    if let Some((_, h, e)) = out.last_mut()
+        && h.succ() == lo
+        && *e == ex
+    {
+        *h = hi
+    } else {
+        out.push((lo, hi, ex))
+    }
+}
+fn val_from_set(s: &IntervalSet, xs: &IntervalSet) -> Tree {
+    val_from_iter(
+        &mut s.pieces().map(|(l, h)| (l.clone(), h.clone(), xs.clone())),
+        s.len(),
+    )
+}
+// Disjoint ordered intervals need only one balanced construction, not repeated
+// AVL unions. Elementary sorted-tree construction; O(p) nodes, no paper used.
+fn val_from_sorted(p: &[(End, End, IntervalSet)]) -> Tree {
+    val_from_iter(&mut p.iter().cloned(), p.len())
+}
+fn val_from_iter(it: &mut impl Iterator<Item = (End, End, IntervalSet)>, len: usize) -> Tree {
+    if len == 0 {
+        return None;
+    }
+    let mid = len / 2;
+    let left = val_from_iter(it, mid);
+    let (lo, hi, xs) = it.next().expect("ordered value interval");
+    tree_raw((lo, hi), xs, left, val_from_iter(it, len - mid - 1))
+}
+fn val_at(t: &Tree, v: &End) -> IntervalSet {
+    let mut t = t.clone();
+    while let Some(n) = t {
+        if v >= &n.lo && v <= &n.hi {
+            return n.data.clone();
+        }
+        let (_, l, r) = tree_push(&n);
+        t = if v < &n.lo { l } else { r };
+    }
+    IntervalSet::empty()
+}
+// The inputs x whose own value x is excluded: x in label(v) with v = x. A subtree
+// whose value range misses the hull of its input labels (`span`) holds no such x
+// and is skipped; a visited node lists only its label pieces inside its value
+// interval (one O(log p) seek), so no temporary sets or node copies are built.
+fn val_diagonal(t: &Tree, tag: &ValTag, out: &mut Vec<(End, End)>) {
+    let Some(n) = t else { return };
+    let (min, max) = tag.map_range(&n.min_lo, &n.max_hi);
+    if max < n.span.0 || min > n.span.1 {
+        return;
+    }
+    let inner = tag.compose(&n.lazy);
+    val_diagonal(&n.left, &inner, out);
+    val_diagonal(&n.right, &inner, out);
+    let (lo, hi) = tag.map_range(&n.lo, &n.hi);
+    for (a, b) in n.data.pieces_from(&lo).take_while(|(a, _)| *a <= hi) {
+        out.push((a.clone().max(lo.clone()), b.clone().min(hi.clone())));
+    }
+}
+#[derive(Clone, Default)]
+struct State1d {
+    live: IntervalSet,
+    cover: IntervalSet,
+    inexact: IntervalSet,
+    excl: Tree,
+}
+fn bridge_outside(a: &IntervalSet, dom: &IntervalSet) -> IntervalSet {
+    let mut dp = dom.pieces().peekable();
+    let mut out: Vec<(End, End)> = Vec::new();
+    let mut prev_dom: Option<(usize, End)> = None;
+    let mut dom_idx = 0usize;
+    for (alo, ahi) in a.pieces() {
+        while dp.peek().is_some_and(|(_, dhi)| *dhi < *alo) {
+            dp.next();
+            dom_idx += 1;
+        }
+        let Some(&(dlo, _)) = dp.peek() else { break };
+        let can_bridge = prev_dom.as_ref().is_some_and(|(p_idx, p_dhi)| {
+            *p_idx + 1 == dom_idx && out.last().is_some_and(|(_, ohi)| p_dhi == ohi) && dlo == alo
+        });
+        if can_bridge {
+            out.last_mut().expect("non-empty").1 = ahi.clone();
+        } else {
+            out.push((alo.clone(), ahi.clone()));
+        }
+        while dp.peek().is_some_and(|(_, dhi)| *dhi < *ahi) {
+            dp.next();
+            dom_idx += 1;
+        }
+        prev_dom = dp.peek().map(|&(_, dhi)| (dom_idx, dhi.clone()));
+    }
+    IntervalSet::from_pieces(out)
+}
+
+fn live_at_slices(slices: &[Slice1d], live: &IntervalSet) -> Vec<IntervalSet> {
+    let lp: Vec<&(End, End)> = live.pieces().collect();
+    let mut idx = 0usize;
+    let mut out = Vec::with_capacity(slices.len());
+    for (slo, shi, _) in slices {
+        while idx < lp.len() && &lp[idx].1 < slo {
+            idx += 1;
+        }
+        let (mut ps, mut j) = (Vec::new(), idx);
+        while j < lp.len() && &lp[j].0 <= shi {
+            let (lo, hi) = (slo.max(&lp[j].0).clone(), shi.min(&lp[j].1).clone());
+            if lo <= hi {
+                ps.push((lo, hi));
+            }
+            if &lp[j].1 <= shi {
+                idx = j + 1;
+            }
+            j += 1;
+        }
+        out.push(IntervalSet::from_pieces(ps));
+    }
+    out
+}
+
+impl State1d {
+    fn init(dom: &IntervalSet, excl: &IntervalSet) -> Self {
+        let Some((lo, hi)) = dom.bounds() else {
+            return Self::default();
+        };
+        Self {
+            live: dom.clone(),
+            cover: IntervalSet::range(lo.clone(), hi.clone()),
+            excl: val_from_set(excl, &IntervalSet::range(lo.clone(), hi.clone())),
+            ..Self::default()
+        }
+    }
+    fn restrict_x(&self, mask: &ArmMask) -> Self {
+        let Some((live, cover)) = mask else {
+            return self.clone();
+        };
+        Self {
+            live: self.live.meet(cover),
+            cover: self.cover.meet(cover),
+            inexact: self.inexact.meet(live),
+            excl: tree_restrict_input(&self.excl, cover),
+        }
+    }
+    fn union(self, other: Self) -> Self {
+        if self.live.is_empty() {
+            return other;
+        }
+        if other.live.is_empty() {
+            return self;
+        }
+        Self {
+            live: self.live.join(&other.live),
+            cover: self.cover.join(&other.cover),
+            inexact: self.inexact.join(&other.inexact),
+            excl: tree_union(self.excl, other.excl),
+        }
+    }
+    fn apply_tag(mut self, tag: &ValTag) -> Self {
+        self.excl = tree_apply(self.excl, tag);
+        self
+    }
+    fn clip_values(mut self, range: &IntervalSet) -> Self {
+        self.excl = tree_restrict_set(&self.excl, range);
+        self
+    }
+    fn reflect(self, c: i64) -> Self {
+        // The affine endpoint sweep covers translation staircases (output_grid),
+        // so the remaining inverse tree can use value order throughout.
+        self.apply_tag(&ValTag::reflect(c as i128))
+    }
+    fn abs(self) -> Self {
+        let mut st = self;
+        let pos = tree_restrict(&st.excl, &End::of(0), &PosInf);
+        st.excl = tree_union(pos.clone(), tree_apply(pos, &ValTag::neg()));
+        st
+    }
+    fn minmax(self, p: Prim, c: i64) -> Self {
+        let mut st = self;
+        let e = End::of(c);
+        let (lo, hi, rl, rh) = if p == Prim::Min {
+            (NegInf, e.pred(), e.clone(), PosInf)
+        } else {
+            (e.succ(), PosInf, NegInf, e.clone())
+        };
+        st.excl = tree_union(
+            tree_restrict(&st.excl, &lo, &hi),
+            tree_single(rl, rh, val_at(&st.excl, &e)),
+        );
+        st
+    }
+    fn inverse(self, f: impl Fn(&IntervalSet) -> IntervalSet) -> Self {
+        let mut st = self;
+        let mut raw = Vec::new();
+        tree_collect(&st.excl, &mut raw);
+        st.excl = raw.into_iter().fold(None, |out, (l, h, xs)| {
+            tree_union(out, val_from_set(&f(&IntervalSet::range(l, h)), &xs))
+        });
+        st
+    }
+    fn mul(self, c: i64) -> Self {
+        match c {
+            1 => self,
+            -1 => self.apply_tag(&ValTag::neg()),
+            _ => self.inverse(|s| times_pre(s, c)),
+        }
+    }
+    fn div(self, c: i64) -> Self {
+        match c {
+            0 => Self::default(),
+            1 => self,
+            -1 => self.apply_tag(&ValTag::neg()),
+            c if c > 0 => {
+                let mut st = self;
+                st.excl = tree_division(st.excl, &Num::from(c));
+                st
+            }
+            _ => self.inverse(|s| div_pre(s, c)),
+        }
+    }
+    fn pow(self, k: Num, _fwd: &IntervalSet, fc: &IntervalSet) -> Self {
+        if k.is_zero() {
+            let cover = self.cover.minus(&self.xs_at_value(&Num::ONE));
+            let live = self.live.meet(&cover);
+            let raw = cover
+                .pieces()
+                .map(|(l, h)| (l.clone(), h.clone(), IntervalSet::empty()))
+                .collect();
+            let mut st = self;
+            st.live = live;
+            st.cover = cover;
+            return st.replace_slices(raw);
+        }
+        self.inverse(|z| revision::backward(&Op::Pow(k.clone().into()), 0, fc, fc, z))
+    }
+    fn to_slices(&self) -> Vec<Slice1d> {
+        let mut events: BTreeMap<End, Vec<(bool, IntervalSet)>> = BTreeMap::new();
+        let mut raw = Vec::new();
+        tree_collect(&self.excl, &mut raw);
+        for (lo, hi, xs) in raw {
+            let set = IntervalSet::range(lo, hi);
+            for (xlo, xhi) in xs.pieces() {
+                events
+                    .entry(xlo.clone())
+                    .or_default()
+                    .push((true, set.clone()));
+                if *xhi != PosInf {
+                    events
+                        .entry(xhi.succ())
+                        .or_default()
+                        .push((false, set.clone()));
+                }
+            }
+        }
+        for (lo, hi) in self.cover.pieces() {
+            events.entry(lo.clone()).or_default();
+            if *hi != PosInf {
+                events.entry(hi.succ()).or_default();
+            }
+        }
+        let mut events = events.into_iter().peekable();
+        let mut ex = IntervalSet::empty();
+        let mut out = Vec::new();
+        while let Some((lo, at)) = events.next() {
+            for add in [false, true] {
+                for (_, s) in at.iter().filter(|(a, _)| *a == add) {
+                    ex = if add { ex.join(s) } else { ex.minus(s) };
+                }
+            }
+            let hi = events.peek().map_or(PosInf, |(next, _)| next.pred());
+            let cell = self.cover.meet(&IntervalSet::range(lo, hi));
+            for (lo, hi) in cell.pieces() {
+                coalesce_slice(&mut out, lo.clone(), hi.clone(), ex.clone());
+            }
+        }
+        out
+    }
+    fn replace_slices(mut self, raw: Vec<Slice1d>) -> Self {
+        let mut cover = Vec::new();
+        let mut kept = Vec::new();
+        self.excl = None;
+        for (lo, hi, ex) in raw {
+            if ex == IntervalSet::top() {
+                continue;
+            }
+            cover.push((lo.clone(), hi.clone()));
+            coalesce_slice(&mut kept, lo, hi, ex);
+        }
+        self.cover = IntervalSet::from_pieces(cover);
+        self.live = self.live.meet(&self.cover);
+        for (lo, hi, ex) in kept {
+            self.excl = tree_union(self.excl, val_from_set(&ex, &IntervalSet::range(lo, hi)));
+        }
+        self
+    }
+    fn modulo(mut self, c: i64, _fwd: &IntervalSet, fa: &IntervalSet) -> (Self, bool) {
+        if c == 0 {
+            return (Self::default(), false);
+        }
+        let slices = self.to_slices();
+        let xs = live_at_slices(&slices, &self.live);
+        let top = IntervalSet::top();
+        let mut any = false;
+        let raw = slices
+            .into_iter()
+            .zip(xs)
+            .map(|((lo, hi, ex), xs)| {
+                let (mut nz, mut exact) = (IntervalSet::empty(), true);
+                for (lo, hi) in fa.pieces() {
+                    let (s, ok) = mod_pre(
+                        &top.minus(&ex),
+                        c,
+                        &IntervalSet::range(lo.clone(), hi.clone()),
+                    );
+                    nz = nz.join(&s);
+                    exact &= ok;
+                }
+                if !exact && !xs.is_empty() {
+                    any = true;
+                    self.inexact = self.inexact.join(&xs);
+                }
+                (lo, hi, top.minus(&nz))
+            })
+            .collect();
+        (self.replace_slices(raw), any)
+    }
+    fn xs_at_value(&self, n: &Num) -> IntervalSet {
+        val_at(&self.excl, &Fin(n.clone()))
+    }
+    fn eval_diagonal(&self) -> IntervalSet {
+        let mut bad = Vec::new();
+        val_diagonal(&self.excl, &ValTag::id(), &mut bad);
+        self.live.minus(&IntervalSet::from_pieces(bad))
+    }
+}
+
+impl Tx<'_> {
+    // Elementary composition of affine bijections, independent of production's
+    // summaries. Compress only unary affine/forward edges, once per DAG node.
+    fn affine_end(&mut self, u: At, memo: &mut HashMap<At, (At, ValTag)>) -> (At, ValTag) {
+        if let Some(v) = memo.get(&u) {
+            return v.clone();
+        }
+        let edge = match self.step_1d(u.0, u.1).map(|s| s.kind) {
+            Some(StepKind::Forward(c)) => Some((c, ValTag::id())),
+            Some(StepKind::Shift(k, c)) => Some((c, ValTag::shift(-k))),
+            Some(StepKind::Reflect(k, c)) => Some((c, ValTag::reflect(k as i128))),
+            Some(StepKind::Neg(c)) => Some((c, ValTag::neg())),
+            _ => None,
+        };
+        let out = match edge {
+            None => (u, ValTag::id()),
+            Some((c, tag)) => {
+                let (base, inner) = self.affine_end(c, memo);
+                (base, tag.compose(&inner))
+            }
+        };
+        memo.insert(u, out.clone());
+        out
+    }
+
+    // Sweep guard endpoints and maintain the composition of the selected affine
+    // links in an array segment tree. Each endpoint changes one link in O(log n);
+    // inversion on each disjoint input cell writes only its answer pieces. Thus
+    // O(n log n + output) scalar work and O(n + output) allocated storage, without
+    // persistent AVL path copies. No input points or Boolean choices are run.
+    // No paper is used: this is substitution of interval masks and bijections.
+    // Measured scored R at 64..512: interleaved 8.01, let 7.99; the input-order
+    // tree is no longer needed for the translation-only output_grid staircase.
+    fn affine_guards(&mut self, root: Tid, demand: &Demand) -> Option<(Res, Option<Relation>)> {
+        let (root, z) = self.integer_request(root, demand)?;
+        let VarSet::One(x) = self.step_1d(root, ROOT)?.var else {
+            return None;
+        };
+        let dom = self.cx.inputs[&x].clone();
+        let mut memo = HashMap::new();
+        let (mut u, mut prefix) = self.affine_end((root, ROOT), &mut memo);
+        let mut events = Vec::new();
+        let mut count: usize = 0;
+        let mut seen = HashSet::new();
+        loop {
+            if !seen.insert(u) {
+                return None;
+            }
+            match self.step_1d(u.0, u.1)?.kind {
+                StepKind::Input => break,
+                StepKind::If(Some((c, _)), None) | StepKind::If(None, Some((c, _))) => {
+                    let (base, tag) = self.affine_end(c, &mut memo);
+                    u = base;
+                    prefix = prefix.compose(&tag);
+                }
+                StepKind::If(Some((a, am)), Some((b, bm))) => {
+                    let (at, av) = self.affine_end(a, &mut memo);
+                    let (bt, bv) = self.affine_end(b, &mut memo);
+                    // A shallow kernel clone has another root id but shared
+                    // child ids. Recognize that equality in O(1), without a
+                    // repeated structural comparison of the remaining chain.
+                    if at != bt
+                        && !(at.1 == bt.1
+                            && match (self.node(at.0), self.node(bt.0)) {
+                                (Node::If(g, a, b), Node::If(h, c, d)) => (g, a, b) == (h, c, d),
+                                (Node::Var(a), Node::Var(b)) => a == b,
+                                _ => false,
+                            })
+                    {
+                        return None;
+                    }
+                    for (mask, tag) in [(am, av), (bm, bv)] {
+                        let cover = mask.as_ref().map_or(&*dom, |(_, c)| &**c);
+                        for (lo, _) in cover.pieces() {
+                            events.push((lo.clone(), count, prefix.compose(&tag)));
+                        }
+                    }
+                    count += 1;
+                    u = at;
+                    prefix = ValTag::id();
+                }
+                _ => return None,
+            }
+        }
+        if count == 0 {
+            return None;
+        }
+        events.sort_by(|a, b| a.0.cmp(&b.0));
+        let size = count.next_power_of_two();
+        let mut tree = vec![ValTag::id(); size * 2];
+        let mut pieces = Vec::new();
+        let mut events = events.into_iter().peekable();
+        while let Some((lo, index, tag)) = events.next() {
+            let mut updates = vec![(index, tag)];
+            while events.peek().is_some_and(|e| e.0 == lo) {
+                let (_, i, t) = events.next().unwrap();
+                updates.push((i, t));
+            }
+            for (index, tag) in updates {
+                let mut at = size + index;
+                tree[at] = tag;
+                while at > 1 {
+                    at /= 2;
+                    tree[at] = tree[at * 2].compose(&tree[at * 2 + 1]);
+                }
+            }
+            let hi = events.peek().map_or(PosInf, |e| e.0.pred());
+            let tag = tree[1].compose(&prefix);
+            let inv = if tag.0 {
+                tag.clone()
+            } else {
+                ValTag(false, -&tag.1)
+            };
+            // Physical holes are clipped once after the sweep. Guard covers are
+            // exact on that domain; work inside a hole cannot affect its answer.
+            let cell = IntervalSet::range(lo, hi);
+            pieces.extend(inv.map_set(&z).meet(&cell).pieces().cloned());
+        }
+        let met = IntervalSet::from_pieces(pieces).meet(&dom);
+        if met.is_empty() {
+            return Some((Res::none(), None));
+        }
+        let mut r = Res::all();
+        r.vars = VarSet::One(x.clone());
+        if met != *dom {
+            r.dom.insert(x, Rc::new(met));
+        }
+        Some((r, None))
+    }
+
+    /// Independent choices of the same involution have only two effects: identity
+    /// and reflection. Project these effects directly rather than eliminating n
+    /// auxiliary variables. No paper or production summary is used: this is the
+    /// elementary identity R(R(v)) = v. Distinct guard inputs are essential.
+    /// Cost O(n log n + n*d), d the demand's interval count; no points are run.
+    fn independent_reflections(
+        &mut self,
+        root: Tid,
+        d: &Demand,
+    ) -> Option<(Res, Option<Relation>)> {
+        let (mut t, wanted) = self.integer_request(root, d)?;
+        let original = t;
+        let mut seen = HashSet::new();
+        let mut names = HashSet::new();
+        let mut guards = Vec::new();
+        let mut center = None;
+        while let Node::If(g, a, b) = self.node(t) {
+            if !seen.insert(t) {
+                return None;
+            }
+            let mut reflected = None;
+            for (plain, other, flip) in [(a, b, false), (b, a, true)] {
+                if let Node::Prim(Prim::Sub, args) = self.node(other)
+                    && args.len() == 2
+                    && self.same(self.arg(args, 1), plain)
+                    && let Some(c) = self.constant_int(self.arg(args, 0), ROOT)
+                {
+                    reflected = Some((plain, c, flip));
+                    break;
+                }
+            }
+            let (plain, c, flip) = reflected?;
+            if center.is_some_and(|old| old != c) {
+                return None;
+            }
+            center = Some(c);
+            let yes = self.back_at(g, ROOT, &Demand::Bool(!flip));
+            let no = self.back_at(g, ROOT, &Demand::Bool(flip));
+            if !yes.exact || !no.exact {
+                return None;
+            }
+            let VarSet::One(x) = yes.vars.join(&no.vars) else {
+                return None;
+            };
+            if !names.insert(x.clone()) {
+                return None;
+            }
+            let domain = self.cx.inputs.get(&x)?;
+            let mask = |r: &Res| {
+                if r.none {
+                    IntervalSet::empty()
+                } else {
+                    r.dom
+                        .get(&x)
+                        .map_or_else(|| (**domain).clone(), |s| (**s).clone())
+                }
+            };
+            let (a, b) = (mask(&yes), mask(&no));
+            guards.push((x, a, b));
+            t = plain;
+        }
+        let c = center?;
+        let Node::Var(name) = self.node(t) else {
+            return None;
+        };
+        if self.lookup(ROOT, name).is_some() {
+            return None;
+        }
+        let x = self.name(name).clone();
+        if names.contains(&x) {
+            return None;
+        }
+        let dom = self.cx.inputs.get(&x)?.clone();
+        let allowed = [wanted.clone(), reflect(&wanted, c as i128)];
+        let feasible = [
+            !dom.meet(&allowed[0]).is_empty(),
+            !dom.meet(&allowed[1]).is_empty(),
+        ];
+        let mut forced = 0usize;
+        let mut free = 0usize;
+        for (_, a, b) in &guards {
+            match (a.is_empty(), b.is_empty()) {
+                (true, true) => return Some((Res::none(), None)),
+                (true, false) => forced ^= 1,
+                (false, false) => free += 1,
+                _ => {}
+            }
+        }
+        let mut out = Res::all();
+        let mut projected = IntervalSet::empty();
+        for (parity, set) in allowed.iter().enumerate() {
+            if free != 0 || parity == forced {
+                projected = projected.join(&dom.meet(set));
+            }
+        }
+        if projected.is_empty() {
+            return Some((Res::none(), None));
+        }
+        out.dom.insert(x, Rc::new(projected.clone()));
+        let (mut remaining, mut parity) = (0usize, 0usize);
+        for (x, a, b) in guards {
+            let both = !a.is_empty() && !b.is_empty();
+            let others_free = free - usize::from(both);
+            let others_forced = forced ^ usize::from(a.is_empty());
+            let accepts = |p: usize| {
+                others_free != 0 && (feasible[0] || feasible[1]) || feasible[others_forced ^ p]
+            };
+            let a = if accepts(0) { a } else { IntervalSet::empty() };
+            let b = if accepts(1) { b } else { IntervalSet::empty() };
+            remaining += usize::from(!a.is_empty() && !b.is_empty());
+            parity ^= usize::from(a.is_empty());
+            out.dom.insert(x, Rc::new(a.join(&b)));
+        }
+        out.exact =
+            (0..=1).all(|p| remaining == 0 && p != parity || projected.is_subset(&allowed[p]));
+        out.vars = VarSet::Many;
+        let rel = if out.exact {
+            None
+        } else {
+            let mut tr = Tr {
+                defs: Vec::new(),
+                products: false,
+            };
+            let value = self.lin(&mut tr, original, ROOT)?;
+            Some(Relation {
+                body: presburger::within(&value, &wanted),
+                defs: tr.defs,
+                bit_ands: Vec::new(),
+            })
+        };
+        Some((out, rel))
+    }
+
+    fn integer_request(&mut self, root: Tid, d: &Demand) -> Option<(Tid, IntervalSet)> {
+        Some(match d {
+            Demand::Ints(z) => (root, z.clone()),
+            Demand::Bool(w) => {
+                let Node::Prim(mut p, args) = self.node(root) else {
+                    return None;
+                };
+                if !matches!(
+                    p,
+                    Prim::Eq | Prim::Ne | Prim::Le | Prim::Lt | Prim::Ge | Prim::Gt
+                ) || args.len() != 2
+                {
+                    return None;
+                }
+                if !w {
+                    p = negate(p)
+                }
+                let (a, b) = (self.arg(args, 0), self.arg(args, 1));
+                if let Some(c) = self.constant_int(b, ROOT) {
+                    if !self.fwd(a, ROOT).is_int() {
+                        return None;
+                    }
+                    (a, ray(p, c))
+                } else {
+                    let c = self.constant_int(a, ROOT)?;
+                    if !self.fwd(b, ROOT).is_int() {
+                        return None;
+                    }
+                    (b, ray(mirror(p), c))
+                }
+            }
+        })
+    }
+    fn periodic(&mut self, root: Tid, d: &Demand) -> Option<(Res, Option<Relation>)> {
+        let (root, z) = self.integer_request(root, d)?;
+        let shape = self.step_1d(root, ROOT)?;
+        let VarSet::One(x) = shape.var else {
+            return None;
+        };
+        let mut order = Vec::new();
+        let mut seen = HashSet::new();
+        let mut stack = vec![((root, ROOT), false)];
+        let (mut modular, mut guarded) = (false, false);
+        while let Some((u, done)) = stack.pop() {
+            if done {
+                order.push(u);
+                continue;
+            }
+            if !seen.insert(u) {
+                continue;
+            }
+            stack.push((u, true));
+            match self.step_1d(u.0, u.1)?.kind {
+                StepKind::Input | StepKind::Const(Value::Int(_) | Value::Big(_)) => {}
+                StepKind::Forward(c)
+                | StepKind::Shift(_, c)
+                | StepKind::Reflect(_, c)
+                | StepKind::Neg(c) => stack.push((c, false)),
+                StepKind::If(a, b) => {
+                    guarded = true;
+                    for (c, _) in [a, b].into_iter().flatten() {
+                        stack.push((c, false));
+                    }
+                }
+                StepKind::Mod(k, _, c) if k != 0 => {
+                    modular = true;
+                    stack.push((c, false));
+                }
+                _ => return None,
+            }
+        }
+        if !modular || !guarded {
+            return None;
+        }
+        order.reverse();
+        let dom = self.cx.inputs[&x].clone();
+        let mut states = HashMap::from([(
+            (root, ROOT),
+            HashMap::from([(None, State1d::init(&dom, &IntervalSet::top().minus(&z)))]),
+        )]);
+        let push =
+            |states: &mut HashMap<At, HashMap<Option<u64>, State1d>>, (at, mode), next: State1d| {
+                if !next.live.is_empty() {
+                    let modes = states.entry(at).or_default();
+                    let next = match modes.remove(&mode) {
+                        Some(old) => old.union(next),
+                        None => next,
+                    };
+                    modes.insert(mode, next);
+                }
+            };
+        let (mut met, mut regular) = (IntervalSet::empty(), IntervalSet::empty());
+        // IntervalSet caches do not change equality or hashing.
+        #[allow(clippy::mutable_key_type)]
+        let mut clauses: HashMap<(u64, IntervalSet), IntervalSet> = HashMap::new();
+        let mut exact = true;
+        for u in order {
+            let modes = states.remove(&u).unwrap_or_default();
+            for (mode, st) in modes {
+                if st.live.is_empty() {
+                    continue;
+                }
+                // This checked periodic language is total (nonzero moduli).
+                // With no excluded values every input label already succeeds;
+                // do not redistribute it through the remaining guard DAG.
+                if st.excl.is_none() {
+                    regular = regular.join(&st.live);
+                    continue;
+                }
+                let step = self.step_1d(u.0, u.1)?;
+                let tagged = |st: State1d, tag: &ValTag| match mode {
+                    None => st.apply_tag(tag),
+                    Some(m) => st.residue_tag(tag, &Num::from(m as i128)),
+                };
+                match step.kind {
+                    StepKind::Forward(c) => push(&mut states, (c, mode), st),
+                    StepKind::Shift(k, c) => {
+                        push(&mut states, (c, mode), tagged(st, &ValTag::shift(k)))
+                    }
+                    StepKind::Reflect(k, c) => push(
+                        &mut states,
+                        (c, mode),
+                        tagged(st, &ValTag::reflect(k as i128)),
+                    ),
+                    StepKind::Neg(c) => push(&mut states, (c, mode), tagged(st, &ValTag::neg())),
+                    StepKind::If(a, b) => {
+                        for (c, mask) in [a, b].into_iter().flatten() {
+                            push(&mut states, (c, mode), st.restrict_x(&mask));
+                        }
+                    }
+                    StepKind::Mod(k, fc, c) => {
+                        let m = k.unsigned_abs();
+                        let all =
+                            IntervalSet::range(End::of(0), Fin(&Num::from(m as i128) - &Num::ONE));
+                        match mode {
+                            Some(old) if old == m || m % old == 0 => {
+                                push(&mut states, (c, mode), st)
+                            }
+                            Some(old) if m < old => {
+                                push(&mut states, (c, Some(m)), st.clip_values(&all))
+                            }
+                            Some(old) => {
+                                // Restrict an incompatible residual period to the proved
+                                // high-branch image before attempting its interval inverse.
+                                // This settles local small ranges instead of projecting
+                                // the complete guarded chain through Presburger.
+                                let all = self
+                                    .high_image(u, &x)
+                                    .filter(|(lower, _)| {
+                                        st.live.bounds().is_some_and(|(lo, _)| lo >= lower)
+                                    })
+                                    .map_or(all.clone(), |(_, r)| all.meet(&r));
+                                let next = st.clone().modulo_bounded(modulus_i64(old), &all)?;
+                                push(&mut states, (c, Some(m)), next);
+                            }
+                            None => {
+                                let fc = self
+                                    .high_image(c, &x)
+                                    .filter(|(lower, _)| {
+                                        st.live.bounds().is_some_and(|(lo, _)| lo >= lower)
+                                    })
+                                    .map_or(fc, |(_, r)| r);
+                                if let Some(next) = st.clone().modulo_exact(k, &fc) {
+                                    push(&mut states, (c, None), next);
+                                } else {
+                                    push(&mut states, (c, Some(m)), st.clip_values(&all));
+                                }
+                            }
+                        }
+                    }
+                    StepKind::Const(v) => {
+                        let n = match v {
+                            Value::Int(i) => Num::from(i),
+                            Value::Big(b) => Num::from(&*b),
+                            _ => unreachable!(),
+                        };
+                        let n =
+                            mode.map_or_else(|| n.clone(), |m| n.rem_euclid(&Num::from(m as i128)));
+                        regular = regular.join(&st.live.minus(&st.xs_at_value(&n)));
+                    }
+                    StepKind::Input => match mode {
+                        None => regular = regular.join(&st.eval_diagonal()),
+                        Some(m) => {
+                            let modulus = Num::from(m as i128);
+                            let all = IntervalSet::range(End::of(0), Fin(&modulus - &Num::ONE));
+                            for (lo, hi, ex) in st.to_slices() {
+                                let cell = st.live.meet(&IntervalSet::range(lo, hi));
+                                if cell.is_empty() {
+                                    continue;
+                                }
+                                let allowed = all.minus(&ex);
+                                if allowed.is_empty() {
+                                    continue;
+                                }
+                                let out = period_pre(&allowed, modulus_i64(m), &cell);
+                                if out.is_empty() {
+                                    continue;
+                                }
+                                if residue_image(&out, &modulus).is_subset(&allowed) {
+                                    regular = regular.join(&out);
+                                } else {
+                                    exact = false;
+                                    met = met.join(&out);
+                                    let old = clauses.entry((m, allowed)).or_default();
+                                    *old = old.join(&cell);
+                                }
+                            }
+                        }
+                    },
+                    _ => unreachable!("the periodic structure was checked"),
+                }
+            }
+        }
+        met = met.join(&regular);
+        if met.is_empty() {
+            return Some((Res::none(), None));
+        }
+        let mut r = Res::all();
+        r.vars = VarSet::One(x.clone());
+        r.exact = exact;
+        if met != *dom {
+            r.dom.insert(x.clone(), Rc::new(met));
+        }
+        let relation = if exact {
+            None
+        } else {
+            let moduli: BTreeSet<_> = clauses.keys().map(|(m, _)| *m).collect();
+            let mut defs = Vec::new();
+            let mut ids = HashMap::new();
+            for m in moduli {
+                let n = defs.len() as u32;
+                let q = Lin::atom(presburger::Atom::Aux(n));
+                let rem = Lin::atom(presburger::Atom::Aux(n + 1));
+                let a = Lin::atom(presburger::Atom::Sym(x.clone()));
+                let mi = m as i128;
+                let def = Formula::and(vec![
+                    Formula::Con(Con::eq(&a, &q.times(mi).plus(&rem))),
+                    Formula::Con(Con::ge(&rem, &Lin::constant(0))),
+                    Formula::Con(Con::ge(&Lin::constant(mi - 1), &rem)),
+                ]);
+                defs.push((n, format!("{x} div {mi}"), def));
+                defs.push((n + 1, format!("{x} mod {mi}"), Formula::top()));
+                ids.insert(m, n + 1);
+            }
+            let mut parts: Vec<_> = clauses
+                .into_iter()
+                .map(|((m, allowed), cell)| {
+                    Formula::and(vec![
+                        presburger::member(&presburger::Atom::Sym(x.clone()), &cell),
+                        presburger::member(&presburger::Atom::Aux(ids[&m]), &allowed),
+                    ])
+                })
+                .collect();
+            parts.push(presburger::member(
+                &presburger::Atom::Sym(x.clone()),
+                &regular,
+            ));
+            Some(Relation {
+                body: Formula::or(parts),
+                defs,
+                bit_ands: Vec::new(),
+            })
+        };
+        Some((r, relation))
+    }
+}
+
+impl Tx<'_> {
+    fn high_image(&mut self, u: At, x: &Arc<str>) -> Option<(End, IntervalSet)> {
+        self.cached(
+            |m| &mut m.high_image,
+            (u, x.clone()),
+            |s| {
+                let domain = s.cx.inputs.get(x)?.clone();
+                let (dlo, dhi) = domain.bounds()?;
+                let step = s.step_1d(u.0, u.1)?;
+                match step.kind {
+                    StepKind::Input if step.var == VarSet::One(x.clone()) => {
+                        Some((dlo.clone(), (*domain).clone()))
+                    }
+                    StepKind::Const(Value::Int(n)) => Some((dlo.clone(), IntervalSet::single(n))),
+                    StepKind::Const(Value::Big(b)) => Some((
+                        dlo.clone(),
+                        IntervalSet::range(Fin(Num::from(&*b)), Fin(Num::from(&*b))),
+                    )),
+                    StepKind::Forward(c) => s.high_image(c, x),
+                    StepKind::Shift(k, c) => {
+                        let (lo, r) = s.high_image(c, x)?;
+                        Some((lo, ValTag::shift(-k).map_set(&r)))
+                    }
+                    StepKind::Reflect(k, c) => {
+                        let (lo, r) = s.high_image(c, x)?;
+                        Some((lo, ValTag::reflect(k as i128).map_set(&r)))
+                    }
+                    StepKind::Neg(c) => {
+                        let (lo, r) = s.high_image(c, x)?;
+                        Some((lo, ValTag::neg().map_set(&r)))
+                    }
+                    StepKind::Mod(k, _, c) if k != 0 => {
+                        let (lo, r) = s.high_image(c, x)?;
+                        Some((lo, residue_image(&r, &Num::from(k.unsigned_abs() as i128))))
+                    }
+                    StepKind::If(a, b) => {
+                        let (c, mask) = [a, b].into_iter().flatten().find(|(_, m)| {
+                            m.as_ref().is_none_or(|(_, cover)| cover.contains_end(dhi))
+                        })?;
+                        let lower = match mask {
+                            None => dlo.clone(),
+                            Some((_, cover)) => cover.pieces().next_back()?.0.clone(),
+                        };
+                        let (lo, r) = s.high_image(c, x)?;
+                        Some((lo.max(lower), r))
+                    }
+                    _ => None,
+                }
+            },
+        )
+    }
+}
+impl State1d {
+    // Exact inversion on a syntactic remainder range, never an input domain.
+    // The quotient bands, rather than input points or individual residues, are
+    // intersected with the excluded intervals. Cost is proportional to the
+    // resulting bands (at most ceil(m/old) per excluded interval for literals
+    // m and old), independent of the width of the physical input domain.
+    // This is elementary interval substitution, not Presburger elimination.
+    // C17's physical-domain approximation in mod_pre is unchanged. This new
+    // expansion is bounded by a syntactic remainder range, not the input width;
+    // its numeric cost can still be exponential in the bits of a modulus literal.
+    // Adopts Opus R2's sorted listing, then merges adjacent equal-labelled
+    // intervals. No paper or production summary is used for this construction.
+    // For p listed pieces this costs O(p log p) sorting, O(p) comparisons and
+    // O(p) tree nodes, plus label-equality cost; no per-piece tree unions.
+    // Measured long [7,64] allocation/byte R: 8.30/8.61 (128..1024),
+    // 7.86/7.91 (1024..8192). This is not a bound for arbitrary modulus literals.
+    fn modulo_bounded(self, c: i64, within: &IntervalSet) -> Option<Self> {
+        if within.is_empty() {
+            return Some(Self::default());
+        }
+        let m = Num::from(c.unsigned_abs() as i128);
+        let range = residue_image(within, &m);
+        let mut st = self.clip_values(&range);
+        let mut raw = Vec::new();
+        tree_collect(&st.excl, &mut raw);
+        let mut listed = Vec::new();
+        for (lo, hi, xs) in raw {
+            if range.bounds().is_some_and(|(a, b)| &lo <= a && b <= &hi) {
+                listed.extend(
+                    within
+                        .pieces()
+                        .map(|(l, h)| (l.clone(), h.clone(), xs.clone())),
+                );
+                continue;
+            }
+            for (a, b) in within.pieces() {
+                let (Fin(a), Fin(b)) = (a, b) else {
+                    return None;
+                };
+                let mut q = a.div_floor(&m);
+                let last = b.div_floor(&m);
+                while q <= last {
+                    let base = &q * &m;
+                    let (Fin(lo), Fin(hi)) = (&lo, &hi) else {
+                        return None;
+                    };
+                    let l = (a.clone()).max(&base + lo);
+                    let h = (b.clone()).min(&base + hi);
+                    if l <= h {
+                        listed.push((Fin(l), Fin(h), xs.clone()));
+                    }
+                    q = &q + &Num::ONE;
+                }
+            }
+        }
+        listed.sort_by(|a, b| a.0.cmp(&b.0));
+        // Adjacent exclusions with equal input labels are one interval. In
+        // particular, full residue coverage must not retain one tree node per
+        // historical cut. Linear coalescing after sorting preserves the set.
+        listed.dedup_by(|a, b| {
+            if b.1.succ() == a.0 && b.2 == a.2 {
+                b.1 = a.1.clone();
+                true
+            } else {
+                false
+            }
+        });
+        st.excl = val_from_sorted(&listed);
+        Some(st)
+    }
+
+    fn modulo_exact(self, c: i64, within: &IntervalSet) -> Option<Self> {
+        if within.is_empty() {
+            return Some(Self::default());
+        }
+        let range = residue_image(within, &Num::from(c.unsigned_abs() as i128));
+        let mut st = self.clip_values(&range);
+        let mut raw = Vec::new();
+        tree_collect(&st.excl, &mut raw);
+        let mut tree = None;
+        for (lo, hi, xs) in raw {
+            let wanted = IntervalSet::range(lo, hi);
+            let mut inv = IntervalSet::empty();
+            for (lo, hi) in within.pieces() {
+                let (s, exact) = mod_pre(&wanted, c, &IntervalSet::range(lo.clone(), hi.clone()));
+                if !exact {
+                    return None;
+                }
+                inv = inv.join(&s);
+            }
+            tree = tree_union(tree, val_from_set(&inv, &xs));
+        }
+        st.excl = tree;
+        Some(st)
+    }
+}
+
+fn modulus_i64(m: u64) -> i64 {
+    i64::try_from(m).unwrap_or(i64::MIN)
+}
+
+fn period_pre(rem: &IntervalSet, c: i64, within: &IntervalSet) -> IntervalSet {
+    if rem.is_empty() {
+        return IntervalSet::empty();
+    }
+    let m = Num::from(c.unsigned_abs() as i128);
+    let (a, b) = rem.bounds().expect("nonempty residues");
+    let (Fin(a), Fin(b)) = (a, b) else {
+        unreachable!("residues are finite")
+    };
+    let period = |k: &Num| ValTag(false, k * &m).map_set(rem);
+    let mut out = IntervalSet::empty();
+    for (lo, hi) in within.pieces() {
+        let (k0, k1) = (
+            match lo {
+                Fin(n) => Some(n.div_floor(&m)),
+                _ => None,
+            },
+            match hi {
+                Fin(n) => Some(n.div_floor(&m)),
+                _ => None,
+            },
+        );
+        let cell = IntervalSet::range(lo.clone(), hi.clone());
+        let mut part = IntervalSet::empty();
+        if let Some(k) = &k0 {
+            part = part.join(&period(k));
+        }
+        if let Some(k) = &k1 {
+            part = part.join(&period(k));
+        }
+        if k0
+            .as_ref()
+            .zip(k1.as_ref())
+            .is_none_or(|(l, h)| h > &(l + &Num::ONE))
+        {
+            let ml = k0
+                .as_ref()
+                .map_or(NegInf, |k| Fin(&(&(k + &Num::ONE) * &m) + a));
+            let mh = k1
+                .as_ref()
+                .map_or(PosInf, |k| Fin(&(&(k - &Num::ONE) * &m) + b));
+            part = part.join(&IntervalSet::range(ml, mh));
+        }
+        out = out.join(&part.meet(&cell));
+    }
+    out
+}
+
+fn residue_image(s: &IntervalSet, m: &Num) -> IntervalSet {
+    let all = IntervalSet::range(End::of(0), Fin(m - &Num::ONE));
+    let mut out = IntervalSet::empty();
+    for (lo, hi) in s.pieces() {
+        let (Fin(lo), Fin(hi)) = (lo, hi) else {
+            return all;
+        };
+        if hi - lo >= m - &Num::ONE {
+            return all;
+        }
+        let (a, b) = (lo.rem_euclid(m), hi.rem_euclid(m));
+        let part = if lo.div_floor(m) == hi.div_floor(m) {
+            IntervalSet::range(Fin(a), Fin(b))
+        } else {
+            IntervalSet::range(End::of(0), Fin(b))
+                .join(&IntervalSet::range(Fin(a), Fin(m - &Num::ONE)))
+        };
+        out = out.join(&part);
+        if out == all {
+            return out;
+        }
+    }
+    out
+}
+
+impl State1d {
+    fn residue_tag(self, tag: &ValTag, m: &Num) -> Self {
+        let tag = ValTag(tag.0, tag.1.rem_euclid(m));
+        let mut st = self.apply_tag(&tag);
+        st.excl = {
+            let t = &st.excl;
+            let lo = tree_apply(
+                tree_restrict(t, &NegInf, &End::of(-1)),
+                &ValTag(false, m.clone()),
+            );
+            let mid = tree_restrict(t, &End::of(0), &Fin(m - &Num::ONE));
+            let hi = tree_apply(
+                tree_restrict(t, &Fin(m.clone()), &PosInf),
+                &ValTag(false, -m),
+            );
+            tree_union(tree_union(lo, mid), hi)
+        };
+        st
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+enum Coordinate {
+    Input(Arc<str>),
+    Difference(Arc<str>, Arc<str>),
+}
+impl VarSet {
+    fn coordinates(&self) -> VarSet<Coordinate> {
+        match self {
+            Self::Zero => VarSet::Zero,
+            Self::Many => VarSet::Many,
+            Self::One(x) => VarSet::One(Coordinate::Input(x.clone())),
+        }
+    }
+}
+fn sum_sets(a: &IntervalSet, b: &IntervalSet) -> IntervalSet {
+    let mut out = Vec::new();
+    for (al, ah) in a.pieces() {
+        for (bl, bh) in b.pieces() {
+            let lo = match (al, bl) {
+                (Fin(a), Fin(b)) => Fin(a + b),
+                _ => NegInf,
+            };
+            let hi = match (ah, bh) {
+                (Fin(a), Fin(b)) => Fin(a + b),
+                _ => PosInf,
+            };
+            out.push((lo, hi));
+        }
+    }
+    IntervalSet::from_pieces(out)
+}
+impl Tx<'_> {
+    fn coordinate_domain(&self, c: &Coordinate) -> IntervalSet {
+        match c {
+            Coordinate::Input(x) => (*self.cx.inputs[x]).clone(),
+            Coordinate::Difference(a, b) => sum_sets(
+                &self.cx.inputs[a],
+                &ValTag::neg().map_set(&self.cx.inputs[b]),
+            ),
+        }
+    }
+    fn difference_guard(&mut self, g: Tid, env: Eid) -> Option<(Coordinate, ArmMask, ArmMask)> {
+        let Node::Prim(p, args) = self.node(g) else {
+            return None;
+        };
+        if !matches!(
+            p,
+            Prim::Eq | Prim::Ne | Prim::Le | Prim::Lt | Prim::Ge | Prim::Gt
+        ) || args.len() != 2
+        {
+            return None;
+        }
+        let (a, b) = (self.arg(args, 0), self.arg(args, 1));
+        if !self.fwd(a, env).is_int() || !self.fwd(b, env).is_int() {
+            return None;
+        }
+        let diff = self.terms.diff(g, args);
+        let mut tr = Tr {
+            defs: Vec::new(),
+            products: false,
+        };
+        let lin = self.lin(&mut tr, diff, env)?;
+        if !tr.defs.is_empty() || !matches!(lin.terms.len(), 1 | 2) {
+            return None;
+        }
+        let mut plus = None;
+        let mut minus = None;
+        for (atom, k) in &lin.terms {
+            let presburger::Atom::Sym(x) = atom else {
+                return None;
+            };
+            if *k == Int::from(1) {
+                plus = Some(x.clone());
+            } else if *k == Int::from(-1) {
+                minus = Some(x.clone());
+            } else {
+                return None;
+            }
+        }
+        let (coord, reverse) = if lin.terms.len() == 1 {
+            match (plus, minus) {
+                (Some(x), None) => (Coordinate::Input(x), false),
+                (None, Some(x)) => (Coordinate::Input(x), true),
+                _ => return None,
+            }
+        } else {
+            let (plus, minus) = (plus?, minus?);
+            let reverse = plus > minus;
+            (
+                if reverse {
+                    Coordinate::Difference(minus, plus)
+                } else {
+                    Coordinate::Difference(plus, minus)
+                },
+                reverse,
+            )
+        };
+        let dom = self.coordinate_domain(&coord);
+        let offset = Num::from(&lin.constant);
+        let yes = ValTag(false, -&offset).map_set(&ray(p, 0));
+        let yes = if reverse {
+            ValTag::neg().map_set(&yes)
+        } else {
+            yes
+        };
+        let mask = |s: IntervalSet| {
+            let live = s.meet(&dom);
+            Some((Rc::new(live), Rc::new(s)))
+        };
+        Some((
+            coord,
+            mask(yes.clone()),
+            mask(IntervalSet::top().minus(&yes)),
+        ))
+    }
+    fn correlated(&mut self, root: Tid, demand: &Demand) -> Option<(Res, Option<Relation>)> {
+        let (root, z) = self.integer_request(root, demand)?;
+        let shape = self.step_1d(root, ROOT)?;
+        let VarSet::One(coord @ Coordinate::Difference(..)) = shape.guard else {
+            return None;
+        };
+        let Coordinate::Difference(a, b) = &coord else {
+            unreachable!()
+        };
+        let mut seen = HashSet::new();
+        let mut todo = vec![(root, ROOT)];
+        while let Some(u) = todo.pop() {
+            if !seen.insert(u) {
+                continue;
+            }
+            match self.step_1d(u.0, u.1)?.kind {
+                StepKind::Leaf | StepKind::Mod(..) => return None,
+                StepKind::Pow(ref k, ..) if k.is_zero() => return None,
+                StepKind::Input | StepKind::Const(_) => {}
+                StepKind::If(y, n) => {
+                    for (c, _) in [y, n].into_iter().flatten() {
+                        todo.push(c)
+                    }
+                }
+                StepKind::Forward(c)
+                | StepKind::Shift(_, c)
+                | StepKind::Reflect(_, c)
+                | StepKind::Neg(c)
+                | StepKind::Abs(c)
+                | StepKind::MinMax(_, _, c)
+                | StepKind::Mul(_, c)
+                | StepKind::Div(_, c)
+                | StepKind::Pow(_, _, c)
+                | StepKind::Round(_, c) => todo.push(c),
+            }
+        }
+        let domain = self.coordinate_domain(&coord);
+        let (leaves, inexact) = self.inverse_states((root, ROOT), &domain, &z);
+        if inexact {
+            return None;
+        }
+        let (da, db) = (&*self.cx.inputs[a], &*self.cx.inputs[b]);
+        let (mut pa, mut pb, mut covered) = (
+            IntervalSet::empty(),
+            IntervalSet::empty(),
+            IntervalSet::empty(),
+        );
+        let mut rules = Vec::new();
+        for (_, step, st) in leaves {
+            if !st.inexact.is_empty() {
+                return None;
+            }
+            let constant = match &step.kind {
+                StepKind::Const(Value::Int(i)) => Some(Num::from(*i)),
+                StepKind::Const(Value::Big(v)) => Some(Num::from(&**v)),
+                StepKind::Const(_) => continue,
+                _ => None,
+            };
+            let name = if constant.is_some() {
+                a.clone()
+            } else {
+                let VarSet::One(x) = step.var else {
+                    return None;
+                };
+                if x != *a && x != *b {
+                    return None;
+                }
+                x
+            };
+            for (lo, hi, ex) in st.to_slices() {
+                let cell = st.live.meet(&IntervalSet::range(lo, hi));
+                if cell.is_empty() {
+                    continue;
+                }
+                let want = if let Some(n) = &constant {
+                    if ex.contains_end(&Fin(n.clone())) {
+                        continue;
+                    }
+                    self.cx.inputs[&name].as_ref().clone()
+                } else {
+                    self.cx.inputs[&name].minus(&ex)
+                };
+                if want.is_empty() {
+                    continue;
+                }
+                let neg = ValTag::neg().map_set(&cell);
+                let (ia, ib) = if name == *a {
+                    (
+                        want.meet(&sum_sets(db, &cell)),
+                        db.meet(&sum_sets(&want, &neg)),
+                    )
+                } else {
+                    (
+                        da.meet(&sum_sets(&want, &cell)),
+                        want.meet(&sum_sets(da, &neg)),
+                    )
+                };
+                if ia.is_empty() || ib.is_empty() {
+                    continue;
+                }
+                pa = pa.join(&ia);
+                pb = pb.join(&ib);
+                covered = covered.join(&cell);
+                rules.push((cell, name.clone(), want));
+            }
+        }
+        if pa.is_empty() || pb.is_empty() {
+            return Some((Res::none(), None));
+        }
+        let out_coordinate = sum_sets(&pa, &ValTag::neg().map_set(&pb));
+        let mut exact = out_coordinate.minus(&covered).is_empty();
+        for (cell, name, want) in &rules {
+            let bad = if name == a {
+                pa.minus(want).meet(&sum_sets(&pb, cell))
+            } else {
+                pb.minus(want)
+                    .meet(&sum_sets(&pa, &ValTag::neg().map_set(cell)))
+            };
+            exact &= bad.is_empty();
+        }
+        let mut r = Res::all();
+        r.vars = VarSet::Many;
+        r.exact = exact;
+        if pa != *da {
+            r.dom.insert(a.clone(), Rc::new(pa));
+        }
+        if pb != *db {
+            r.dom.insert(b.clone(), Rc::new(pb));
+        }
+        let relation = if exact {
+            None
+        } else {
+            let q = Lin::atom(presburger::Atom::Sym(a.clone()))
+                .minus(&Lin::atom(presburger::Atom::Sym(b.clone())));
+            let clauses = rules
+                .into_iter()
+                .map(|(cell, name, want)| {
+                    Formula::and(vec![
+                        presburger::within(&q, &cell),
+                        presburger::member(&presburger::Atom::Sym(name), &want),
+                    ])
+                })
+                .collect();
+            Some(Relation::of(Formula::or(clauses)))
+        };
+        Some((r, relation))
     }
 }
 

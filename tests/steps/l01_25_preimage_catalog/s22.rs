@@ -36,15 +36,15 @@ use zedc::store::revision::reduce_congruence;
 use super::check;
 use super::random::{bool_term, domains, int_demand, int_term, with_functions};
 
-fn var(x: &str) -> Term {
+pub(super) fn var(x: &str) -> Term {
     Term::Var(x.into())
 }
 
-fn int(n: i64) -> Term {
+pub(super) fn int(n: i64) -> Term {
     Term::Lit(Value::Int(n))
 }
 
-fn prim(p: Prim, a: Term, b: Term) -> Term {
+pub(super) fn prim(p: Prim, a: Term, b: Term) -> Term {
     Term::Prim(p, vec![a, b])
 }
 
@@ -57,18 +57,18 @@ fn pieces(ps: &[(i64, i64)]) -> IntervalSet {
 }
 
 /// The domains `name: set`.
-fn over(ds: &[(&str, IntervalSet)]) -> Domains {
+pub(super) fn over(ds: &[(&str, IntervalSet)]) -> Domains {
     ds.iter().map(|(n, s)| (Arc::from(*n), s.clone())).collect()
 }
 
 /// `i` in `[lo, hi]`.
-fn i_in(lo: i64, hi: i64) -> Domains {
+pub(super) fn i_in(lo: i64, hi: i64) -> Domains {
     over(&[("i", IntervalSet::of(lo, hi))])
 }
 
 /// `t0 = base; tj = if guard(j) { t(j-1) } else { arm(j, t(j-1)) }`, both arms reading the one
 /// term `t(j-1)`.
-fn chain(
+pub(super) fn chain(
     k: usize,
     base: Term,
     guard: impl Fn(i64) -> Term,
@@ -105,7 +105,7 @@ fn independent(k: usize, c: impl Fn(i64) -> i64) -> Term {
     )
 }
 
-fn bits(k: usize, lo: i64, hi: i64) -> Domains {
+pub(super) fn bits(k: usize, lo: i64, hi: i64) -> Domains {
     let mut d = over(&[("z", IntervalSet::of(lo, hi))]);
     for j in 1..=k {
         d.insert(format!("b{j}").into(), IntervalSet::of(0, 1));
@@ -343,7 +343,7 @@ fn old(d: &Demand) -> before::Demand {
 }
 
 /// Runs `f` on a thread with a stack deep enough for chains of thousands of terms.
-fn on_big_stack<R: Send>(f: impl FnOnce() -> R + Send) -> R {
+pub(super) fn on_big_stack<R: Send>(f: impl FnOnce() -> R + Send) -> R {
     std::thread::scope(|s| {
         let thread = std::thread::Builder::new().stack_size(1 << 28);
         thread.spawn_scoped(s, f).unwrap().join().unwrap()
@@ -371,6 +371,7 @@ struct Diffs {
     wider: Vec<String>,
     renamed: usize,
     unlisted: usize,
+    reference_finer: usize,
 }
 
 /// Whether `p`, not exact, holds the relation of a split by remainders over many periods
@@ -464,6 +465,28 @@ impl Diffs {
                 "{what}: {t} over {ds:?}, demand {d:?}\n  the interpreter refutes the box \
                  {which}: {shown}"
             ));
+            return;
+        }
+        // Item PERF-ref-memo-quadratic: the transfer before reads guarded chains of remainders,
+        // reflections, `abs` and `min` by intervals of the one input they read (the module
+        // comment of `preimage_ref`), and its box can then be narrower than the transfer's, or
+        // exact where the transfer's is not, or exact without the listing the transfer needs.
+        // Both boxes were checked against the interpreter above; the box before lies inside the
+        // box now, with the same stops.
+        let unlisted_before = now.enumerated && !then.enumerated && then.exact;
+        if new != old
+            && (then.domains != now.domains || then.exact && !now.exact || unlisted_before)
+            && then.domains.keys().eq(now.domains.keys())
+            && then
+                .domains
+                .iter()
+                .all(|(n, s)| s.is_subset(&now.domains[n]))
+            && (then.exact || !now.exact)
+            && (now.enumerated == then.enumerated || unlisted_before)
+            && format!("{:?}", now.stops) == format!("{:?}", then.stops)
+        {
+            self.cases += 1;
+            self.reference_finer += 1;
             return;
         }
         // Plan item S22e-wide: a split by remainders over many periods answers with its box and
@@ -687,6 +710,21 @@ impl Diffs {
             self.unlisted, 0,
             "an exact preimage listed before is read without a listing"
         );
+        assert_eq!(
+            self.reference_finer, 0,
+            "a box before is narrower than the box now"
+        );
+    }
+
+    /// Checks that `finer` boxes before are narrower than the boxes now, or exact where they
+    /// are not, or exact without their listing (item PERF-ref-memo-quadratic).
+    fn reference_finer(mut self, finer: usize) -> Diffs {
+        assert_eq!(
+            self.reference_finer, finer,
+            "the number of boxes before narrower than the boxes now changed"
+        );
+        self.reference_finer = 0;
+        self
     }
 
     /// Checks that a split over many periods answered `wide` cases with the classes'
@@ -1023,8 +1061,9 @@ fn random_chains_of_shared_terms_keep_their_preimages() {
 ///
 /// Since PA-plus-if, `x + x` has a summary (the sum of two summaries of one input), which is
 /// inverted in place of the map2 cap, so the preimage is now that true set, exact; the box
-/// before is as it was. The narrower kind of difference is still met in
-/// [`random_terms`] (6 cases).
+/// before was as it was until PERF-ref-memo-quadratic, whose transfer before reads the two
+/// arms of the inner `if` by intervals of `i` and gives `[-10] | [-2, 3] | [10]`, still
+/// inexact and sound. The narrower kind of difference is still met in [`random_terms`].
 #[test]
 fn meeting_a_demand_with_the_hull_may_narrow_a_box_the_map2_cap_widened() {
     let i = || var("i");
@@ -1044,7 +1083,8 @@ fn meeting_a_demand_with_the_hull_may_narrow_a_box_the_map2_cap_widened() {
     let (now, then) = (preimage(&t, &ds, &d), before::preimage(&t, &ds, &old(&d)));
     assert!(now.exact && !then.exact);
     assert_eq!(now.domains["i"], pieces(&[(-10, -10), (1, 3), (10, 10)]));
-    assert_eq!(then.domains["i"], pieces(&[(-10, -10), (-2, 10)]));
+    assert_eq!(then.domains["i"], pieces(&[(-10, -10), (-2, 3), (10, 10)]));
+    assert!(!refuted(&t, &ds, &d, &then.domains, false));
     assert!(!refuted(&t, &ds, &d, &now.domains, true));
     let mut diffs = Diffs::default();
     diffs.preimage("the narrowed case", &t, &ds, &d);
@@ -1059,6 +1099,7 @@ fn random_guarded_chains(
     (narrower, reflected, exact): (usize, usize, usize),
     (wide, wider): (usize, &[&str]),
     renamed: usize,
+    finer: usize,
 ) {
     on_big_stack(|| {
         let mut diffs = Diffs::default();
@@ -1079,107 +1120,84 @@ fn random_guarded_chains(
                 diffs.preimage("random chain", &t, &ds, &d);
             }
         }
-        diffs.split_wide(wide, wider).renamed(renamed).none_but(
-            to - from,
-            narrower,
-            reflected,
-            exact,
-        );
+        diffs
+            .split_wide(wide, wider)
+            .renamed(renamed)
+            .reference_finer(finer)
+            .none_but(to - from, narrower, reflected, exact);
     });
 }
 
 /// The counts of each test of [`random_guarded_chains`]: the first case of its 250, the
 /// narrower, reflected and exact boxes, and the splits over many periods with the wider of
-/// them, and the results that differ only in the names of their variables. The rows of each
-/// half sum to that half's counts as one test
-/// (`random_guarded_chains_sum_to_the_counts_of_each_half`).
+/// them, the results that differ only in the names of their variables, and the boxes before
+/// narrower than the boxes now (PERF-ref-memo-quadratic). The rows of each half sum to that
+/// half's counts as one test (`random_guarded_chains_sum_to_the_counts_of_each_half`).
 type Counts = (
     usize,
     (usize, usize, usize),
     (usize, &'static [&'static str]),
     usize,
+    usize,
 );
 
 const GUARDED: [Counts; 16] = [
-    (0, (0, 0, 44), (10, &[]), 0),
+    (0, (0, 0, 43), (10, &[]), 0, 0),
     (
         250,
-        (0, 0, 32),
+        (0, 0, 28),
         (
             9,
             &["i [..=-12, -9..=-9, -5..] before i [..=-11, -9..=1, 3..]"],
         ),
         0,
-    ),
-    (
-        500,
-        (0, 0, 39),
-        (8, &["i [..=0] before i [..=-5, -3..=0]"]),
         0,
     ),
-    (750, (0, 0, 32), (11, &[]), 0),
+    (500, (0, 0, 35), (7, &[]), 0, 1),
+    (750, (0, 0, 30), (11, &[]), 0, 0),
     (
         1000,
-        (0, 0, 48),
+        (0, 0, 45),
         (
             14,
             &["i [-10..=-10, -7..=-6, -4..=-4, -2..] before i [-10..=7, 9..]"],
         ),
         0,
+        0,
     ),
     (
         1250,
-        (0, 0, 45),
+        (0, 0, 41),
         (4, &["i [-7..] before i [..=-6, -4..]"]),
+        0,
         0,
     ),
     (
         1500,
-        (0, 0, 36),
-        (
-            12,
-            &[
-                "i [..=0, 6..=7, 9..=10, 12..=13, 15..=16, 18..=18] before i [..=-11, -9..=0, 3..=4, 6..=18]",
-                "i [-10..] before i [-10..=9, 11..]",
-            ],
-        ),
-        0,
-    ),
-    (1750, (0, 0, 40), (13, &[]), 0),
-    (
-        2000,
-        (0, 0, 40),
-        (17, &["i [1..] before i [1..=4, 7..]"]),
-        0,
-    ),
-    (
-        2250,
-        (0, 0, 39),
-        (15, &["i [3..] before i [3..=6, 9..]"]),
-        0,
-    ),
-    (2500, (0, 0, 39), (10, &[]), 0),
-    (2750, (0, 0, 42), (5, &[]), 0),
-    (
-        3000,
-        (0, 0, 43),
-        (10, &["i [-19..] before i [-19..=2, 5..=5, 8..=8, 11..]"]),
-        0,
-    ),
-    (3250, (0, 0, 38), (7, &[]), 0),
-    (3500, (0, 0, 38), (5, &[]), 0),
-    (
-        3750,
-        (0, 0, 45),
+        (0, 0, 35),
         (
             11,
             &[
-                "i [2..] before i [2..=2, 5..]",
-                "i [4..] before i [4..=5, 7..]",
-                "i [..=-2, 0..=0, 2..] before i [..=0, 2..=8, 10..]",
+                "i [..=0, 6..=7, 9..=10, 12..=13, 15..=16, 18..=18] before i [..=-11, -9..=0, 3..=4, 6..=18]",
             ],
         ),
         0,
+        1,
+    ),
+    (1750, (0, 0, 39), (13, &[]), 0, 0),
+    (2000, (0, 0, 37), (16, &[]), 0, 1),
+    (2250, (0, 0, 36), (14, &[]), 0, 1),
+    (2500, (0, 0, 38), (10, &[]), 0, 0),
+    (2750, (0, 0, 41), (5, &[]), 0, 0),
+    (3000, (0, 0, 40), (9, &[]), 0, 1),
+    (3250, (0, 0, 38), (7, &[]), 0, 0),
+    (3500, (0, 0, 38), (5, &[]), 0, 0),
+    (
+        3750,
+        (0, 0, 43),
+        (9, &["i [..=-2, 0..=0, 2..] before i [..=0, 2..=8, 10..]"]),
+        0,
+        2,
     ),
 ];
 
@@ -1189,8 +1207,8 @@ macro_rules! guarded_ranges {
         $(
             #[test]
             fn $name() {
-                let (from, counts, wide, renamed) = GUARDED[$row];
-                random_guarded_chains(from, from + 250, counts, wide, renamed);
+                let (from, counts, wide, renamed, finer) = GUARDED[$row];
+                random_guarded_chains(from, from + 250, counts, wide, renamed, finer);
             }
         )*
     };
@@ -1446,11 +1464,19 @@ guarded_ranges!(
 /// box before narrows and stays inexact, `i <= -20 || i >= 3` to `i <= -21 || i >= 3`
 /// (`i = -20` has no point), so no count moves for it. No other count changes and no box of
 /// the transfer here changes.
+///
+/// Since PERF-ref-memo-quadratic, whose transfer before reads guarded chains by intervals of
+/// their one input (the module comment of `preimage_ref`), the counts are 296 and 311 made
+/// exact (316 and 324 before) and 79 and 75 splits over many periods (81 and 80), and 2 and 5
+/// boxes before are narrower than the boxes now. In the 33 cases no longer made exact, the box
+/// before is now the same exact box. The 7 narrower boxes before are the 7 splits whose box was
+/// wider than the one before, listed above until then. No box of the transfer changes, and the
+/// interpreter refutes no box of either.
 #[test]
 fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     let sum = |rows: &[Counts]| {
-        let mut s = (0, 0, 0, 0, Vec::new(), 0);
-        for &(_, (narrower, reflected, exact), (wide, wider), renamed) in rows {
+        let mut s = (0, 0, 0, 0, Vec::new(), 0, 0);
+        for &(_, (narrower, reflected, exact), (wide, wider), renamed, finer) in rows {
             s = (
                 s.0 + narrower,
                 s.1 + reflected,
@@ -1458,6 +1484,7 @@ fn random_guarded_chains_sum_to_the_counts_of_each_half() {
                 s.3 + wide,
                 s.4,
                 s.5 + renamed,
+                s.6 + finer,
             );
             s.4.extend_from_slice(wider);
         }
@@ -1471,17 +1498,16 @@ fn random_guarded_chains_sum_to_the_counts_of_each_half() {
         (
             0,
             0,
-            316,
-            81,
+            296,
+            79,
             vec![
                 "i [..=-12, -9..=-9, -5..] before i [..=-11, -9..=1, 3..]",
-                "i [..=0] before i [..=-5, -3..=0]",
                 "i [-10..=-10, -7..=-6, -4..=-4, -2..] before i [-10..=7, 9..]",
                 "i [-7..] before i [..=-6, -4..]",
                 "i [..=0, 6..=7, 9..=10, 12..=13, 15..=16, 18..=18] before i [..=-11, -9..=0, 3..=4, 6..=18]",
-                "i [-10..] before i [-10..=9, 11..]",
             ],
-            0
+            0,
+            2
         )
     );
     assert_eq!(
@@ -1489,17 +1515,11 @@ fn random_guarded_chains_sum_to_the_counts_of_each_half() {
         (
             0,
             0,
-            324,
-            80,
-            vec![
-                "i [1..] before i [1..=4, 7..]",
-                "i [3..] before i [3..=6, 9..]",
-                "i [-19..] before i [-19..=2, 5..=5, 8..=8, 11..]",
-                "i [2..] before i [2..=2, 5..]",
-                "i [4..] before i [4..=5, 7..]",
-                "i [..=-2, 0..=0, 2..] before i [..=0, 2..=8, 10..]",
-            ],
-            0
+            311,
+            75,
+            vec!["i [..=-2, 0..=0, 2..] before i [..=0, 2..=8, 10..]"],
+            0,
+            5
         )
     );
 }
@@ -1667,14 +1687,16 @@ pub(super) fn cases(run: Run, mut each: impl FnMut(Case)) {
 /// to 2799, 2800 to 4699 and 4700 to 6799), the first two took 39.7 and 29.1 s at load about
 /// 40, and the three 25.7, 18.3 and 14.6 s at load 48; the parts take 5.3 to 9.9 s each in a run
 /// of the whole step at load 41 to 42 (item TESTS-split-s22-random).
-const RANDOM_TERM_PARTS: [(std::ops::Range<usize>, (usize, usize, usize)); 7] = [
-    (0..1100, (0, 2, 0)),
-    (1100..1950, (1, 2, 0)),
-    (1950..2800, (1, 4, 0)),
-    (2800..3750, (0, 3, 0)),
-    (3750..4700, (0, 8, 0)),
-    (4700..5750, (2, 8, 0)),
-    (5750..6800, (1, 1, 1)),
+type PartCounts = (usize, usize, usize, usize, usize);
+
+const RANDOM_TERM_PARTS: [(std::ops::Range<usize>, PartCounts); 7] = [
+    (0..1100, (0, 2, 0, 0, 0)),
+    (1100..1950, (1, 2, 0, 0, 1)),
+    (1950..2800, (0, 3, 0, 0, 0)),
+    (2800..3750, (0, 3, 0, 0, 2)),
+    (3750..4700, (0, 8, 0, 0, 0)),
+    (4700..5750, (2, 8, 0, 0, 1)),
+    (5750..6800, (1, 1, 1, 1, 0)),
 ];
 
 /// The random terms of `random.rs`, with its seeds and others, and its exact preimages: the
@@ -1683,7 +1705,7 @@ const RANDOM_TERM_PARTS: [(std::ops::Range<usize>, (usize, usize, usize)); 7] = 
 /// in its first run are made and passed over, so that each case is the one the whole sequence
 /// gives at its number.
 fn random_terms(part: usize) {
-    let (numbers, (narrower, exact, unlisted)) = RANDOM_TERM_PARTS[part].clone();
+    let (numbers, (narrower, exact, unlisted, renamed, finer)) = RANDOM_TERM_PARTS[part].clone();
     on_big_stack(|| {
         let mut diffs = Diffs::default();
         let mut at = 0;
@@ -1747,7 +1769,21 @@ fn random_terms(part: usize) {
         // Since TESTS-split-s22-random the three tests are the seven parts of
         // [`RANDOM_TERM_PARTS`]; the counts of the three, (2, 8, 0), (0, 11, 0) and (3, 9, 1),
         // are the sums of the parts' counts within each.
+        //
+        // Since PERF-ref-memo-quadratic, whose transfer before reads guarded chains by intervals
+        // of their one input (the module comment of `preimage_ref`), 4 boxes before are narrower
+        // than the boxes now or exact without their listing, and the transfer's boxes are as
+        // they were: `y` in `[1, 14]` for `[0, 14]` in `(x mod y) * y` (part 3; `y = 0` fails),
+        // the empty box of `((1 + (x mod -6)) + 0^3) < 2` and a box of `g0((x + 2)) <= 10` read
+        // exact without the listing the transfer makes (parts 3 and 5), and one in part 1. One
+        // box before narrowed (part 2) and one became exact (part 2) as the transfer's, so they
+        // no longer count. In part 6 the relation before of `5 + abs(if (y <= x) { 0 } else { y }
+        // + 2)` is stated on `x` and `y` (`x >= y`, or `y > x` and `y` in `[-9, 5]`, the exact
+        // solution set) where the transfer's names the `if` by an auxiliary variable; the box
+        // and its exactness are the same, so it counts as renamed.
         diffs
+            .renamed(renamed)
+            .reference_finer(finer)
             .unlisted(unlisted)
             .none_but(numbers.len(), narrower, 0, exact);
     });
@@ -1790,7 +1826,8 @@ fn random_terms_keep_their_preimages_6() {
 
 /// The parts of [`RANDOM_TERM_PARTS`] take each of the 6800 cases of [`RUNS`] once, in order,
 /// and their counts add up to those of the three tests they were: 5 narrower, 28 made exact
-/// and 1 unlisted.
+/// and 1 unlisted; since PERF-ref-memo-quadratic 4 narrower, 27 made exact, 1 unlisted, 1
+/// renamed and 4 boxes before narrower than the boxes now.
 #[test]
 fn the_parts_of_the_random_terms_take_each_case_once() {
     let mut all = 0;
@@ -1799,14 +1836,20 @@ fn the_parts_of_the_random_terms_take_each_case_once() {
     }
     assert_eq!(all, 6800, "the cases of the runs");
     let mut next = 0;
-    let mut sums = (0, 0, 0);
-    for (numbers, (narrower, exact, unlisted)) in RANDOM_TERM_PARTS {
+    let mut sums = (0, 0, 0, 0, 0);
+    for (numbers, (narrower, exact, unlisted, renamed, finer)) in RANDOM_TERM_PARTS {
         assert_eq!(numbers.start, next, "the parts leave out or repeat a case");
         next = numbers.end;
-        sums = (sums.0 + narrower, sums.1 + exact, sums.2 + unlisted);
+        sums = (
+            sums.0 + narrower,
+            sums.1 + exact,
+            sums.2 + unlisted,
+            sums.3 + renamed,
+            sums.4 + finer,
+        );
     }
     assert_eq!(next, all, "the parts leave out a case");
-    assert_eq!(sums, (5, 28, 1), "the counts of the parts");
+    assert_eq!(sums, (4, 27, 1, 1, 4), "the counts of the parts");
 }
 
 /// Guards, domains, offsets and demands at the two ends of `i64`, values that leave `i64`
@@ -1939,8 +1982,10 @@ fn ends_of_i64_and_other_corners_keep_their_preimages() {
         // other box before, `i` in `[-25, -20] ∪ {-5} ∪ [3, 5] ∪ [12, 17] ∪ [27, 32]` over
         // `[-30, -20] ∪ [-5, 5] ∪ [12, 40]` with demand `[-25, -20] ∪ [-10, -5] ∪ [3, 4] ∪
         // [10, 12]`, doubted only `i = 5`, which the linear stage decides alone; the box
-        // before is now the exact box of the transfer, without 5.
-        diffs.none_but(4000, 0, 0, 1);
+        // before is now the exact box of the transfer, without 5. None since
+        // PERF-ref-memo-quadratic: the transfer before reads the other one's guarded chain by
+        // intervals of `i` and finds the transfer's exact box.
+        diffs.none_but(4000, 0, 0, 0);
     });
 }
 

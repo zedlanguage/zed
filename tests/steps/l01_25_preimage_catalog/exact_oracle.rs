@@ -319,6 +319,13 @@ fn exact(seeds: std::ops::Range<u64>) -> Vec<Run> {
 // 36046 -> 36052, more_deep_1 35186 -> 35195 and more_deep_2 35170 -> 35178, 25 exact
 // marks in all, with no disagreement with the interpreter. With those two summaries turned
 // off and the rest of the change kept, the four old counts return.
+//
+// Since PERF-ref-memo-quadratic, whose transfer before reads guarded chains of remainders,
+// reflections, `abs` and `min` by intervals of their one input, five counts rose and no other:
+// s22_random_terms_2 5479 -> 5481, more_mixed_1 36160 -> 36167, more_mixed_2 36052 -> 36064,
+// more_deep_1 35195 -> 35196 and more_deep_2 35178 -> 35182, 26 more exact marks of the
+// transfer before in all, with no disagreement with the interpreter in either transfer. The
+// transfer itself is unchanged.
 
 #[test]
 fn s22_random_terms_match_the_interpreter_1() {
@@ -327,7 +334,7 @@ fn s22_random_terms_match_the_interpreter_1() {
 
 #[test]
 fn s22_random_terms_match_the_interpreter_2() {
-    check_runs(&RUNS[4..6], 5479);
+    check_runs(&RUNS[4..6], 5481);
 }
 
 #[test]
@@ -337,22 +344,22 @@ fn s22_random_terms_match_the_interpreter_3() {
 
 #[test]
 fn more_mixed_terms_match_the_interpreter_1() {
-    check_runs(&mixed(10_000..10_010), 36160);
+    check_runs(&mixed(10_000..10_010), 36167);
 }
 
 #[test]
 fn more_mixed_terms_match_the_interpreter_2() {
-    check_runs(&mixed(10_010..10_020), 36052);
+    check_runs(&mixed(10_010..10_020), 36064);
 }
 
 #[test]
 fn more_deep_terms_match_the_interpreter_1() {
-    check_runs(&deep(2_000..2_100), 35195);
+    check_runs(&deep(2_000..2_100), 35196);
 }
 
 #[test]
 fn more_deep_terms_match_the_interpreter_2() {
-    check_runs(&deep(2_100..2_200), 35178);
+    check_runs(&deep(2_100..2_200), 35182);
 }
 
 // The seeds 3000 to 3039 of `@exact` terms ran as one test of 56.5 s at load 41 (68.8 s at

@@ -294,7 +294,10 @@ fn chains_over_wide_domains_keep_their_preimages() {
     // box exact only when `i` takes no value of the image outside the reflection of the
     // demand. The linear stage then reads the 25 inexact boxes: in 18 it finds the exact box
     // the new transfer finds, and the two are equal; in 7 its box is still wider than the new
-    // one, and they count as narrower (20 before the item, now 27).
+    // one, and they count as narrower (20 before the item, then 27). Since
+    // PERF-ref-memo-quadratic, whose transfer before reads guarded chains by intervals of `i`,
+    // more boxes before equal the new ones: 16 count as narrower (27 before it) and 247 as now
+    // exact (246 before it), and the interpreter refutes no box before.
     assert!(
         refuted_before.is_empty(),
         "the boxes before that the interpreter refutes:\n{}",
@@ -307,7 +310,7 @@ fn chains_over_wide_domains_keep_their_preimages() {
     // Each is sound by the interpreter, inside the box before and exact wherever it was.
     assert_eq!(
         (narrower.len(), now_exact.len(), not_enumerated.len()),
-        (27, 246, 0),
+        (16, 247, 0),
         "narrower:\n{}\nnow exact:\n{}",
         narrower[..narrower.len().min(3)].join("\n"),
         now_exact[..now_exact.len().min(3)].join("\n")
@@ -437,7 +440,9 @@ fn values_past_i128_are_summarized_exactly() {
     // Of the 18, the transfer before gave the same preimage in 14; in 1 the same box inexact and in
     // 3 a wider box. None differs otherwise. The third wider box is `[-50..=-10, 0..=0]` under the
     // demand `(..=-10) | (2^63-2..=2^63)`: before LIST-size the transfer before ran the input `0`
-    // and dropped it, and a range is no longer run input by input (LIST-size).
+    // and dropped it, and a range is no longer run input by input (LIST-size). Since
+    // PERF-ref-memo-quadratic the transfer before reads the `if` by intervals of `i` and gives
+    // the same preimage in those 3 as well (17).
     assert_eq!(
         (
             count(Same::Equal),
@@ -446,7 +451,7 @@ fn values_past_i128_are_summarized_exactly() {
             count(Same::NotEnumerated),
             count(Same::Differ),
         ),
-        (14, 1, 3, 0, 0)
+        (17, 1, 0, 0, 0)
     );
 }
 

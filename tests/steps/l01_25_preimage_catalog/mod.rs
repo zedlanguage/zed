@@ -18,6 +18,7 @@ mod kept_ends;
 mod overflow;
 mod powers;
 mod random;
+mod ref_memo;
 mod s22;
 mod scaling;
 mod scopes;
