@@ -2116,9 +2116,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | CK-apply-operator | impl attempt 1 | 2026-11-12 00:38 | baseline: 875 pieces of l01_17-29, l01_39*, diag_control, zedc_check, zedc pass with a message dump (load 25-54); Label enum written, compiling |
 | CROSSOVER-bench | impl attempt 1 | 2026-11-12 22:47 | started; worktree /home/luke/Work/wt/crossover-bench on origin/main |
 | FLOAT-sqrt | impl attempt 1 | 2026-11-05 04:07 | started; worktrees float-sqrt and float-sqrt-spec made and seeded |
+| LIT-power-values | running | 2026-11-13 00:20 |  |
 | MSG-derive-print-unions | impl attempt 1 | 2026-11-12 17:24 | baseline on main, family B (a union of its own at each link): bytes 35286086 at n=40, 1265721515 at n=320 (35.9x, limit 13.8x) / load 34.01 32.66 33.90 |
 | NARROW-ne-divisor | impl attempt 1 | 2026-11-12 23:26 | cause: walk.rs nonzero read only the divisor's type, never the arm's interval (Scope narrowing of d != 0 already non-convex); fix reads ints_here for an int div |
-| PERF-deep-ops-slow | impl attempt 1 | 2026-11-12 21:38 | fix measured: verdict 207k fits 357k why 639k diff 189k a level (old 198/384/552/198, main 251/527/819/462); per-level test added, negative control fails on mai |
+| PERF-deep-ops-slow | impl attempt 1 | 2026-11-12 21:38 | union_all atoms fast path: family ratio 9.06 -> 8.82 by callgrind; running battery / load 52.89 46.05 42.49 |
 | PERF-l139-family | running | 2026-11-12 18:45 | coordkk fixed d016b9cc3 90a844aa8; 14 tests in 8 families still ignored, cross-review next / 45.57 |
 | RT-sites | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/rt-sites on origin/main 13bb12924 |
 | ST-K3-narrow | impl attempt 1 | 2026-11-11 01:43 | reproduced: no refusal of this kind on main; ping-pong and shifted ping-pong exact; random 6000 runs 5942 exact, 0 refused, 58 wider sound supersets; design in  |
@@ -2127,7 +2128,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
-- TESTS-small-sizes (audit row 20): ORDER-rename at 20,000 members x 6 namings, tie order on 810,000 pairs of 900 random types (both builds), the printer on 20,000 random terms x 8 widths, C22 `(int, 0) - (int - 0, 0)` pinned, m0_05 landmarks at i64::MAX and MIN, M0.7 addresses of `1`, `1r` and `Big` 2^63. Fixed: the printer measured a line in bytes, not characters (`print.rs` `fits`, `enter`); printer scaling 7.2 to 8.2 times at 8n. Also fixed three doc links that broke the --doc check (query.rs, product.rs, stage.rs).
 
 ## Open points
 
