@@ -227,6 +227,10 @@ const SITES: &[(&str, Site)] = &[
         "PushTarget",
         Site::NotBinder("a port's name, a use, as `m.stdout`"),
     ),
+    (
+        "PortName",
+        Site::NotBinder("the port a table's `test with` clause gives a value, a use"),
+    ),
     ("TypedBinding", Site::Later("int: int = 1;\n")),
     (
         "Target",

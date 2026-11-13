@@ -11,6 +11,7 @@ DESIGN.md [sec:generations] 2: rejected, 2 diagnostics, cafecd41ae4849e2
 DESIGN.md [sec:ports] 1: accepted, 0 diagnostics, 9eb18dc28febc257
 DESIGN.md [sec:ports] 2: rejected, 1 diagnostics, 533d5c3cd091b8c8
 DESIGN.md [sec:ports] 3: rejected, 3 diagnostics, a30a000678391e0f
+DESIGN.md [sec:ports] 4: rejected, 3 diagnostics, 3e4fe689b17c7e61
 DESIGN.md [sec:codecs] 1: rejected, 2 diagnostics, 63a8f32c1d096c90
 DESIGN.md [sec:codecs] 2: rejected, 2 diagnostics, 7979e9286f553da3
 DESIGN.md [sec:codecs] 3: rejected, 2 diagnostics, a8b3dfeb2f0175c1
