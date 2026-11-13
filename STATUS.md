@@ -2145,17 +2145,17 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CAST-overflow-atom | running |  |  |
+| CAST-overflow-atom | impl attempt 1 | 2026-11-13 06:23 | started; worktree /home/luke/Work/wt/cast-overflow-atom from origin/main 3201dab08 |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | M5 merged 16429d383 (C55); 862 pieces pass; dump: 0 answers changed but one refusal now true; next old tree, holders_chain, rounds 4+ |
 | MSG-prelude-word-args | impl attempt 1 | 2026-11-13 05:56 | started; worktree seeded |
 | NARROW-ne-rat-divisor | impl attempt 1 | 2026-11-13 01:12 | started in /home/luke/Work/wt/narrow-ne-rat-divisor from c75a68775 |
+| NUM-huge-div | running |  |  |
 | PERF-l139-family | running | 2026-11-12 18:45 | coordkk fixed d016b9cc3 90a844aa8; 14 tests in 8 families still ignored, cross-review next / 45.57 |
 | PERF-ref-memo-quadratic | impl attempt 4 | 2026-11-10 18:04 | round 3 scored: mix of Sol r3 + Opus r3 SCORE 446.707, 0 coarser; porting into wt/prm4 |
-| POLY-work-250ms | running |  |  |
+| POLY-work-250ms | impl attempt 1 | 2026-11-13 06:24 | started: worktree wt/poly-work-250ms from origin/main 8049b9c66; base is POLY-nf-W 1aa4f967d (A98 rule) to be replaced by the A99 250 ms rule; load 36.91 32.45  |
 | PRES-overlap-fast | xr attempt  | 2026-11-13 01:10 | round 1 launched: Sol and Opus seats (medium); Gemini 429 (resets in 32h55m); CD next |
 | ROOTS-listed | impl attempt 1 | 2026-11-13 05:56 | started; load 24.38 28.00 29.26 |
 | TEST-ports | impl attempt 1 | 2026-11-13 05:59 | started; worktree from origin/main 9549553be, load 45.74 35.29 31.76 |
-| WALK-read-image-n2 | impl attempt 1 | 2026-11-13 05:56 | started; worktree from origin/main 365c3b110 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
