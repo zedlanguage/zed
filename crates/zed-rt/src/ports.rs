@@ -4,21 +4,25 @@
 
 use zed_kernel::{Family, Value};
 
-/// The lines of `bytes`, the input of port `port`, keyed from 0: a line ends at `\n`, which a
-/// last line may lack; every `\r` right before a line's end is not part of the line; a line
-/// that is not UTF-8 is `#ioError(op: "read", path: port, why: "the line at key K is not UTF-8")`.
+/// The lines of `bytes`, the input of port `port`, keyed from 0: a line ends at `\n`, at `\r\n`
+/// or at a lone `\r`, which a last line may lack; a line that is not UTF-8 is
+/// `#ioError(op: "read", path: port, why: "the line at key K is not UTF-8")`. One pass over the
+/// whole input, apart from the interpreter's incremental reader.
 pub fn lines(port: &str, bytes: &[u8]) -> Value {
     let mut out = Vec::new();
     let mut start = 0;
     while start < bytes.len() {
         let end = bytes[start..]
             .iter()
-            .position(|b| *b == b'\n')
+            .position(|b| matches!(b, b'\n' | b'\r'))
             .map_or(bytes.len(), |i| start + i);
-        let mut line = &bytes[start..end];
-        while let [rest @ .., b'\r'] = line {
-            line = rest;
-        }
+        let line = &bytes[start..end];
+        // The line end's length: two for `\r\n`, one for `\n` or a lone `\r`, none at the end.
+        let ends = match &bytes[end..] {
+            [b'\r', b'\n', ..] => 2,
+            [] => 0,
+            _ => 1,
+        };
         let v = match std::str::from_utf8(line) {
             Ok(s) => Value::str(s),
             Err(_) => Value::io_error(
@@ -28,7 +32,7 @@ pub fn lines(port: &str, bytes: &[u8]) -> Value {
             ),
         };
         out.push((Value::Int(out.len() as i64), v));
-        start = end + 1;
+        start = end + ends;
     }
     Value::Family(Family::of(out))
 }
@@ -80,6 +84,13 @@ mod tests {
         assert_eq!(f(b""), Vec::<Value>::new());
         assert_eq!(f(b"\n"), vec![Value::str("")]);
         assert_eq!(f(b"a\r\nb"), vec![Value::str("a"), Value::str("b")]);
+        assert_eq!(f(b"a\rb"), vec![Value::str("a"), Value::str("b")]);
+        assert_eq!(f(b"\r"), vec![Value::str("")]);
+        assert_eq!(f(b"a\r\r\n"), vec![Value::str("a"), Value::str("")]);
+        assert_eq!(
+            f(b"a\n\rb"),
+            vec![Value::str("a"), Value::str(""), Value::str("b")]
+        );
         assert_eq!(
             f(b"a\n\nb\n"),
             vec![Value::str("a"), Value::str(""), Value::str("b")]

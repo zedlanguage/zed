@@ -120,7 +120,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   7 | m . stdout <- events . map ( e -> e . name «else» str["(a value that did not parse)"] ) ;
   8 | }
 == DESIGN.md [sec:codecs] 5 L10
-  2 | «type» Line = ( s : Utf8String where ! s . contains ( str["\n"] ) && ! s . endsWith ( str["\r"] ) ) ;
+  2 | «type» Line = ( s : Utf8String where ! s . contains ( str["\n"] ) && ! s . contains ( str["\r"] ) ) ;
   3 | «type» RawLine = ( s : Utf8String where ! s . contains ( str["\n"] ) ) ;
   4 | «type» Lines = Stream ( Utf8String ) ;
   6 | textLines = utf8Text ( ) . then ( lines ( ) ) ;

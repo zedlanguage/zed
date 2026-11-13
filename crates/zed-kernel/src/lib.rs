@@ -15,6 +15,7 @@ pub mod digest;
 pub mod eval;
 pub mod exact;
 pub mod frames;
+pub mod lines;
 mod local;
 pub mod num;
 pub mod paths;

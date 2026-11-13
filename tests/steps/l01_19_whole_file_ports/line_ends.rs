@@ -1,8 +1,9 @@
 //! Line ends and bytes in port input (DESIGN step L1.19 and sec:codecs): a `Lines` input
-//! ends a line only at `\n`, so a lone `\r` stays in its line's text, unlike source text; a
-//! `Files` read is `utf8Text()` over the file's bytes, so a byte order mark is the character
-//! U+FEFF and each `\r\n` stays; and a record holds the bytes of each `Lines` input, so a
-//! replay gives a line that is not UTF-8 the same `#ioError` the recorded run gave it.
+//! ends a line at `\n`, at `\r\n` and at a lone `\r`, the line breaks of source text (author,
+//! 2026-11-13, QUESTIONS A90); a `Files` read is `utf8Text()` over the file's bytes, so a byte
+//! order mark is the character U+FEFF and each `\r\n` stays; and a record holds the bytes of
+//! each `Lines` input, so a replay gives a line that is not UTF-8 the same `#ioError` the
+//! recorded run gave it.
 
 use zed_kernel::{Lookup, Value};
 use zedc::run::{Record, split_lines};
@@ -16,25 +17,30 @@ const THREE_LINES: &str = "main(m: MainArgs) {\n  \
      m.stdout <- \"${m.stdin[0] else \"none\"}|${m.stdin[1] else \"none\"}|${m.stdin[2] else \"none\"}\";\n}\n";
 
 #[test]
-fn a_lone_cr_stays_in_the_text_of_its_line() {
-    // A meter that writes `\r` between readings on one line: one line with two `\r` in it.
+fn a_lone_cr_ends_a_line() {
+    // A meter that writes `\r` between readings: each reading is a line.
     let out = run("lone-cr", THREE_LINES, "12\r13\r14\nend\n", &[]);
+    assert_eq!((out.status, out.stdout.as_str()), (0, "12|13|14\n"));
+    // `\r\n` is one line end, and a `\r` before another line end ends a line of its own.
+    let out = run("lone-cr", THREE_LINES, "a\rb\r\nc\r\r\n", &[]);
+    assert_eq!(out.stdout, "a|b|c\n");
     assert_eq!(
-        (out.status, out.stdout.as_str()),
-        (0, "12\r13\r14|end|none\n")
+        split_lines("stdin", b"c\r\r\n").to_string(),
+        "{0 -> \"c\", 1 -> \"\"}"
     );
-    // A `\r` right before a `\n` is dropped, and one inside the same line is kept.
-    let out = run("lone-cr", THREE_LINES, "a\rb\r\nc\rd", &[]);
-    assert_eq!(out.stdout, "a\rb|c\rd|none\n");
-    // Old Mac text, which ends its lines with `\r` alone, is one line, not three.
+    // Old Mac text, which ends its lines with `\r` alone, is three lines.
     let out = run("lone-cr", THREE_LINES, "one\rtwo\rthree\r", &[]);
-    assert_eq!(out.stdout, "one\rtwo\rthree|none|none\n");
-    // Each `\r` at the end of the input is dropped, as before a `\n`, so `\r` alone is one
-    // empty line and `\r\r\n\r` is two.
+    assert_eq!(out.stdout, "one|two|three\n");
+    // `\r` alone and `\r\n` alone are each one empty line; `\n\r` is two.
     assert_eq!(split_lines("stdin", b"\r").to_string(), "{0 -> \"\"}");
+    assert_eq!(split_lines("stdin", b"\r\n").to_string(), "{0 -> \"\"}");
     assert_eq!(
-        split_lines("stdin", b"\r\r\n\r").to_string(),
+        split_lines("stdin", b"\n\r").to_string(),
         "{0 -> \"\", 1 -> \"\"}"
+    );
+    assert_eq!(
+        split_lines("stdin", b"a\n\rb").to_string(),
+        "{0 -> \"a\", 1 -> \"\", 2 -> \"b\"}"
     );
 }
 
@@ -106,18 +112,20 @@ fn a_replay_gives_the_recorded_bytes_their_recorded_lines() {
     let src = format!(
         "main(m: MainArgs) {{\n  fs = files();\n  \
          a = m.stdin[0] else \"none\";\n  \
-         b = m.stdin[1] else #ioError(op:, path:, why:) -> \"${{op}} ${{path}}: ${{why}}\" else \"none\";\n  \
-         c = m.stdin[2] else \"none\";\n  \
+         b = m.stdin[1] else \"none\";\n  \
+         c = m.stdin[2] else #ioError(op:, path:, why:) -> \"${{op}} ${{path}}: ${{why}}\" else \"none\";\n  \
+         d = m.stdin[3] else \"none\";\n  \
          text = fs[\"{}\"] else \"(no text)\";\n  \
-         m.stdout <- \"${{a}}|${{b}}|${{c}}|${{text}}\";\n}}\n",
+         m.stdout <- \"${{a}}|${{b}}|${{c}}|${{d}}|${{text}}\";\n}}\n",
         path.display()
     );
-    // Line 0 holds a lone `\r`, line 1 is not UTF-8, and line 2 ends with `\r\n`.
+    // Lines 0 and 1 end with a lone `\r` and a `\n`, line 2 is not UTF-8, and line 3 ends with
+    // `\r\n`.
     let input = b"12\r13\n\xff\xfe\r\nfine\r\n";
     let rec_s = rec.to_str().unwrap();
     let out = run_bytes("replay-bytes", &src, input, &["--record", rec_s]);
     let expected =
-        format!("12\r13|read m.stdin: the line at key 1 is not UTF-8|fine|{WINDOWS_TEXT}\n");
+        format!("12|13|read m.stdin: the line at key 2 is not UTF-8|fine|{WINDOWS_TEXT}\n");
     assert_eq!(
         (out.status, out.stdout.as_str(), out.stderr.as_str()),
         (0, expected.as_str(), "")

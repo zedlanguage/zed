@@ -103,6 +103,69 @@ fn a_file_with_crlf_lines_keeps_them_around_its_pins() {
 }
 
 #[test]
+fn a_file_with_lone_cr_or_mixed_line_ends_keeps_them_around_its_pins() {
+    // The pin writer changes no line end (author, 2026-11-13, QUESTIONS A90): a pin goes inside
+    // its import line, and every other byte of the file stays.
+    for (name, text, want) in [
+        (
+            "lone-cr",
+            "// till\rimport pricing;\rmain(m: MainArgs) {}\r",
+            "// till\rimport pricing @hash(\"H\");\rmain(m: MainArgs) {}\r",
+        ),
+        (
+            "mixed",
+            "// till\r\nimport pricing;\rimport pricing as p;\nmain(m: MainArgs) {}\r\n",
+            "// till\r\nimport pricing @hash(\"H\");\rimport pricing as p @hash(\"H\");\n\
+             main(m: MainArgs) {}\r\n",
+        ),
+    ] {
+        let d = package_dir(
+            name,
+            &[
+                ("zed.manifest", "// the shop\n"),
+                ("main.zed", text),
+                ("pricing.zed", "net(g: f64) = g / 1.2;\n"),
+            ],
+        );
+        let main = d.join("main.zed");
+        let (_, err) = run(&main);
+        assert_eq!(mistakes(&err), Vec::<&str>::new(), "{name}: {err}");
+        let pinned = read(&main);
+        let h = super::pin_in(&pinned, 0);
+        assert_eq!(pinned, want.replace('H', &h), "{name}");
+    }
+}
+
+#[test]
+fn the_pin_file_ends_its_lines_with_lf_beside_a_crlf_manifest() {
+    // `zed.pins` is written whole by the toolchain, with `\n` (author, 2026-11-13, QUESTIONS
+    // A90), whatever the line ends of the package's other files.
+    let d = package_dir(
+        "prelude-crlf",
+        &[
+            ("zed.manifest", "// the shop\r\nprelude = \"std\";\r\n"),
+            ("std.zed", "double(x: f64) = x * 2.0;\r\n"),
+            ("app/main.zed", "main(m: MainArgs) {}\r\n"),
+        ],
+    );
+    let pins = d.join("zed.pins");
+    if pins.exists() {
+        std::fs::write(&pins, "").unwrap();
+    }
+    let (_, err) = run(&d.join("app/main.zed"));
+    assert_eq!(mistakes(&err), Vec::<&str>::new(), "{err}");
+    let text = read(&pins);
+    assert!(text.starts_with("// Pins written by zedc"), "{text}");
+    assert!(!text.contains('\r'), "{text:?}");
+    assert_eq!(text.matches('\n').count(), 2, "{text:?}");
+    // The manifest keeps its own line ends.
+    assert_eq!(
+        read(&d.join("zed.manifest")),
+        "// the shop\r\nprelude = \"std\";\r\n"
+    );
+}
+
+#[test]
 fn a_stale_pin_stops_the_run_at_the_import_in_its_file() {
     let d = package_dir(
         "stale",

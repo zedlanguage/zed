@@ -1265,7 +1265,12 @@ pub fn package_report(
         return Ok(None);
     };
     let mut db = Db::for_build(build.clone());
-    let imports = matches!(&*db.parse(text), Ok((_, i, _)) if !i.is_empty());
+    // The text as source loading gives it ([`Dir`] reads every unit so), each `\r\n` and lone
+    // `\r` a `\n`: read raw, a `//` comment ended by a lone `\r` would run on over the next
+    // line and hide an import there. A text that does not load is read as it is; the package
+    // reports why at its unit.
+    let text = source::load(text.as_bytes()).unwrap_or_else(|_| text.to_string());
+    let imports = matches!(&*db.parse(&text), Ok((_, i, _)) if !i.is_empty());
     let dir = Dir(root);
     let prelude = match dir.read(MANIFEST) {
         Some(Ok(m)) => !matches!(manifest(&m), Ok(Manifest { prelude: None, .. })),

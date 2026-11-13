@@ -201,8 +201,8 @@ main(m: MainArgs) {
 
 <!-- DESIGN.md:776 layer L10: ring L10, word L7 (utf8Text), label none; section [sec:codecs] 5 -->
 ```zed
-// what a line read through lines() can be: no line feed, and no carriage return at its end
-type Line = (s: Utf8String where !s.contains("\n") && !s.endsWith("\r"));
+// what a line read through lines() can be: no line feed and no carriage return
+type Line = (s: Utf8String where !s.contains("\n") && !s.contains("\r"));
 type RawLine = (s: Utf8String where !s.contains("\n"));
 type Lines = Stream(Utf8String);
 

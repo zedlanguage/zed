@@ -703,25 +703,19 @@ pub fn commit(
 }
 
 /// The lines of `bytes`, the input of `Lines` port `port`, keyed from 0. A line ends at `\n`,
-/// every `\r` right before its end is dropped, and a last line needs no `\n`; a `\r` inside a
-/// line is kept. Each line costs O(its length). A line that is not UTF-8 is
-/// `#ioError(op: "read", path: port, why:)`, its path the port's name, since standard input
+/// at `\r\n` or at a lone `\r`, and a last line needs no line end
+/// ([`zed_kernel::lines::LineReader`]). Each line costs O(its length). A line that is not UTF-8
+/// is `#ioError(op: "read", path: port, why:)`, its path the port's name, since standard input
 /// has no path.
 pub fn split_lines(port: &str, bytes: &[u8]) -> Value {
-    let mut parts: Vec<&[u8]> = bytes.split(|b| *b == b'\n').collect();
-    if parts.last().is_some_and(|l| l.is_empty()) {
-        parts.pop();
-    }
-    let lines = parts.into_iter().enumerate().map(|(i, line)| {
-        let mut line = line;
-        while let [rest @ .., b'\r'] = line {
-            line = rest;
-        }
+    let mut lines = Vec::new();
+    zed_kernel::lines::LineReader::whole(bytes, |line| {
+        let i = lines.len();
         let v = match std::str::from_utf8(line) {
             Ok(s) => Value::str(s),
             Err(_) => Value::io_error("read", port, &not_utf8(i)),
         };
-        (Value::Int(i as i64), v)
+        lines.push((Value::Int(i as i64), v));
     });
     Value::Family(Family::of(lines))
 }

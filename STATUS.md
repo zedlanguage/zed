@@ -109,7 +109,9 @@ fences changed, so test `l01_07` needs its expected output accepted at the next 
   (COMPLEXITY.md F196).
 - Done: **L1.19**, whole-file ports (`zedc::run`, `zedc run` and `zedc replay`): `Lines` and
   `Files` inputs read once, `Lines` outputs written once when the wave ends, acknowledgments,
-  and the replay record.
+  and the replay record. A `Lines` input ends a line at `\n`, at `\r\n` and at a lone `\r`
+  (LINE-ends-lf, QUESTIONS A90: `zed_kernel::lines::LineReader`, which gives a line as soon as
+  its `\r` is read and drops a `\n` that follows; `zed_rt::ports::lines` is written apart).
 - Done: **L1.19a**, the `CommandLine` input port (`run::words`, `run::arguments`, `check::port`):
   the words after the first `--` keyed from 0 (from 1 until KEYS-from-zero), a word that is
   not UTF-8 a usage error naming its key in `m.args`, the arguments recorded as `arg` entries and replayed, a `main` row
@@ -2136,7 +2138,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | CROSSOVER-bench | impl attempt 1 | 2026-11-12 22:47 | started; worktree /home/luke/Work/wt/crossover-bench on origin/main |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | started: M5 merge onto origin/main 3ae0befe8, worktree has-point-xr; load 35.33 59.73 61.58 |
-| LINE-ends-lf | impl attempt 1 | 2026-11-13 01:21 | started; worktrees wt/line-ends-lf and wt/line-ends-lf-spec; TESTS-L1.13-strings test already on main (batch 138) |
 | LIT-power-values | impl attempt 1 | 2026-11-13 00:20 | started: worktree, then perf of the 233M-instruction rejection |
 | MSG-derive-print-union-names | impl attempt 1 | 2026-11-13 00:05 | family test added; building baseline |
 | PERF-l139-family | running | 2026-11-12 18:45 | coordkk fixed d016b9cc3 90a844aa8; 14 tests in 8 families still ignored, cross-review next / 45.57 |

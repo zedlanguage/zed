@@ -101,9 +101,11 @@ fn a_main_row_gives_the_arguments_one_per_line() {
 }
 
 #[test]
-fn a_main_rows_arguments_drop_every_cr_before_a_line_end() {
+fn a_main_rows_arguments_end_at_each_line_end() {
+    // The String's lines are read as a `Lines` input's: `\n`, `\r\n` and a lone `\r` each end
+    // one (author, 2026-11-13, QUESTIONS A90).
     let src = "main(m: MainArgs) {\n  \
                m.stdout <- \"${m.args[0] else \"-\"}+${m.args[1] else \"-\"}\";\n}\n\
-               test { (\"\", \"a\\r\\r\\nb\\rc\\r\\n\") -> \"a+b\\rc\\n\", (\"\", \"a\\r\") -> \"a+-\\n\" }\n";
-    assert_eq!(checks(src), ["4:8: ok", "4:47: ok"]);
+               test { (\"\", \"a\\rb\\r\\nc\") -> \"a+b\\n\", (\"\", \"a\\r\\r\\n\") -> \"a+\\n\", (\"\", \"a\\r\") -> \"a+-\\n\" }\n";
+    assert_eq!(checks(src), ["4:8: ok", "4:38: ok", "4:65: ok"]);
 }

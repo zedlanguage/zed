@@ -186,17 +186,16 @@ impl Lookup for NotFound {
 }
 
 /// The arguments a test gives a `CommandLine` port as the `String` `s`, one per line, the
-/// lines read as a `Lines` input's are: a line ends at `\n`, every `\r` right before its end is
-/// dropped, and a last line needs no `\n`.
+/// lines read as a `Lines` input's are: a line ends at `\n`, at `\r\n` or at a lone `\r`, and a
+/// last line needs no line end.
 fn given_args(s: &str) -> Vec<String> {
-    let mut lines: Vec<&str> = s.split('\n').collect();
-    if lines.last().is_some_and(|l| l.is_empty()) {
-        lines.pop();
-    }
+    let mut lines = Vec::new();
+    zed_kernel::lines::LineReader::whole(s.as_bytes(), |l| {
+        // A cut of UTF-8 text at `\r` or `\n`, which are never part of another character's
+        // encoding, is UTF-8.
+        lines.push(String::from_utf8_lossy(l).into_owned());
+    });
     lines
-        .into_iter()
-        .map(|l| l.trim_end_matches('\r').to_string())
-        .collect()
 }
 
 /// A `Files` port a test gives as a function from path to contents.

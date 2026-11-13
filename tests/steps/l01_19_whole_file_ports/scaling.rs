@@ -98,3 +98,36 @@ fn a_wave_reading_many_distinct_paths_scales() {
         assert_eq!(wave.record.files["files()"].len(), n);
     });
 }
+
+/// `n` lines, `line 0` to `line n-1`, ended in turn by `\n`, `\r\n` and a lone `\r`, then one
+/// line of `n` bytes, so the reads below cut many line ends in two and join one long line
+/// across many reads.
+fn mixed_lines(n: usize) -> Vec<u8> {
+    let mut text: Vec<u8> = (0..n)
+        .flat_map(|i| {
+            let end: &[u8] = [&b"\n"[..], b"\r\n", b"\r"][i % 3];
+            [format!("line {i}").as_bytes(), end].concat()
+        })
+        .collect();
+    text.extend(std::iter::repeat_n(b'x', n));
+    text
+}
+
+#[test]
+fn reading_lines_in_small_reads_scales() {
+    // Reads of 7 bytes, a number prime to the line lengths, so `\r` falls at the end of a read
+    // and its `\n` at the start of the next all through the input.
+    let texts = inputs(20_000, mixed_lines);
+    check("reading n lines in reads of 7 bytes", 20_000, |n| {
+        let mut count = 0;
+        let mut reader = zed_kernel::lines::LineReader::new();
+        for read in texts[&n].chunks(7) {
+            reader.read(read, |_| count += 1);
+        }
+        reader.finish(|l| {
+            assert_eq!(l.len(), n);
+            count += 1;
+        });
+        assert_eq!(count, n + 1);
+    });
+}

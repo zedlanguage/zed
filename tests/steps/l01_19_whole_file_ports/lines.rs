@@ -45,24 +45,47 @@ fn lines_are_keyed_from_zero_and_crlf_is_one_line_end() {
 }
 
 #[test]
-fn every_cr_right_before_a_line_end_is_dropped() {
-    // DESIGN step L1.19: a line ends at `\n`, every `\r` right before its end is dropped, and
-    // a last line needs no `\n`; a `\r` inside a line is kept.
-    for input in [&b"a"[..], b"a\n", b"a\r\n", b"a\r\r\n", b"a\r", b"a\r\r"] {
+fn each_line_end_ends_one_line() {
+    // DESIGN step L1.19: a line ends at `\n`, at `\r\n` or at a lone `\r`, and a last line
+    // needs no line end (author, 2026-11-13, QUESTIONS A90).
+    for input in [&b"a"[..], b"a\n", b"a\r\n", b"a\r"] {
         assert_eq!(
             split_lines("stdin", input).to_string(),
             "{0 -> \"a\"}",
             "{input:?}"
         );
     }
+    for input in [&b"a\rb"[..], b"a\r\nb", b"a\rb\n"] {
+        assert_eq!(
+            split_lines("stdin", input).to_string(),
+            "{0 -> \"a\", 1 -> \"b\"}",
+            "{input:?}"
+        );
+    }
+    // `\n\r` is two line ends, and a `\r` before `\r\n` ends a line of its own.
+    assert_eq!(
+        split_lines("stdin", b"a\n\rb").to_string(),
+        "{0 -> \"a\", 1 -> \"\", 2 -> \"b\"}"
+    );
+    assert_eq!(
+        split_lines("stdin", b"a\r\r\n").to_string(),
+        "{0 -> \"a\", 1 -> \"\"}"
+    );
     assert_eq!(
         split_lines("stdin", b"a\rb\r\n\r\nc").to_string(),
-        "{0 -> \"a\\rb\", 1 -> \"\", 2 -> \"c\"}"
+        "{0 -> \"a\", 1 -> \"b\", 2 -> \"\", 3 -> \"c\"}"
     );
-    // A run of `\r` costs one step each: 100000 of them before one `\n` leave one empty line.
+    // The empty input has no line, `\n` is one empty line, and a final line end adds none.
+    assert_eq!(split_lines("stdin", b"").to_string(), "{}");
+    assert_eq!(split_lines("stdin", b"\n").to_string(), "{0 -> \"\"}");
+    // A run of `\r` costs one step each: 100000 of them before one `\n` are 100000 empty
+    // lines, the `\n` joined to the last `\r`.
     let mut many = vec![b'\r'; 100_000];
     many.push(b'\n');
-    assert_eq!(split_lines("stdin", &many).to_string(), "{0 -> \"\"}");
+    match split_lines("stdin", &many) {
+        Value::Family(f) => assert_eq!(f.leaves().len(), 100_000),
+        v => panic!("{v}"),
+    }
 }
 
 #[test]
@@ -156,11 +179,13 @@ fn the_runtime_keys_the_lines_as_the_interpreter_does() {
         b"a\r\n\nb",
         b"ok\n\xff\xfe\nfine\n",
         b"x\ny\nz\n",
-        // A lone `\r` stays in its line; a run of them before `\n` or the end is dropped.
+        // A lone `\r` ends a line, and `\r\n` is one line end.
         b"a\rb\r\n\r\nc",
         b"one\rtwo\rthree\r",
         b"\r",
         b"\r\r\n\r",
+        b"a\n\rb",
+        b"a\r\r\n",
         // A byte order mark is U+FEFF, kept in the line it starts.
         b"\xef\xbb\xbfname\r\n",
     ] {
