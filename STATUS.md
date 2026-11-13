@@ -2166,7 +2166,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| DAGVIEW-aspect | running |  |  |
+| DAGVIEW-aspect | impl attempt 1 | 2026-11-13 12:11 | started; worktree /home/luke/Work/wt/dagview-aspect |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | rule change noted: accept against R < 10.5 (CD run keeps 13 step; acceptance scorer score-accept.py); load 55.74 59.14 57.03 |
 | MSG-too-large-plain | impl attempt 1 | 2026-11-13 11:21 | started; worktree from origin/main 378a2cd0e |
 | PRES-overlap-fast | xr attempt  | 2026-11-13 01:10 | round 1 launched: Sol and Opus seats (medium); Gemini 429 (resets in 32h55m); CD next |
