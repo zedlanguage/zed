@@ -1,6 +1,6 @@
 //! Blocks, operators, strings, `if`, `else`, `?.`, lambdas, ports and `test` tables.
 
-use zed_kernel::{Evaluator, World};
+use zed_kernel::{Evaluator, Shared, Term, World};
 
 use super::{elab, term, value, with_prelude};
 
@@ -32,10 +32,17 @@ fn return_of_several_values_is_a_tuple_and_destructuring_reads_it() {
 
 #[test]
 fn a_block_without_an_export_is_the_empty_tuple() {
-    let src = "main(m: MainArgs) {\n  m.stdout <- \"ready\";\n}\nrun = main();\n";
+    // A function whose body ends without an export gives `()` when called.
+    let src = "settle(positional total) {\n  fee = total div 20;\n}\nrun = settle(1200);\n";
+    assert_eq!(value(src, "run"), "()");
+    assert_eq!(term(src, "settle"), "total -> { fee = (total div 20); () }");
+    // No function calls `main` (DESIGN.md sec:ports, QUESTIONS A68), so `main`'s body is run
+    // as the program starts it: applied to its inputs, here none.
+    let src = "main(m: MainArgs) {\n  m.stdout <- \"ready\";\n}\n";
     let u = elab(src).unwrap();
+    let start = Term::App(Shared::new(u.get("main").unwrap()), Vec::new());
     let mut ev = Evaluator::new(World::new().output("m.stdout"));
-    let out = ev.run(&with_prelude(u.get("run").unwrap())).unwrap();
+    let out = ev.run(&with_prelude(start)).unwrap();
     assert_eq!(out.to_string(), "()");
     assert_eq!(ev.world.log("m.stdout")[0].to_string(), "\"ready\"");
     assert_eq!(
