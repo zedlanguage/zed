@@ -16,6 +16,7 @@
 
 use zed_tests::scaling;
 use zed_tests::step_helpers::l01_16_elaboration::value;
+use zed_tests::step_helpers::l01_19_whole_file_ports::{dir, run};
 use zed_tests::step_helpers::l01_26_type_resolution::{Resolved, sig, type_errors};
 
 const H: &str = "h(positional z: f64) = z;\n";
@@ -126,6 +127,99 @@ fn a_division_in_an_if_is_still_not_kept() {
              exactly 1, a rat [1]"
                 .to_string()
         ]
+    );
+}
+
+#[test]
+fn an_operation_holding_a_power_keeps_no_value_in_an_if() {
+    // Item MSG-literal-type-huge-power, DESIGN.md step L1.26a: an operation on literals alone
+    // that holds a `^` keeps no value in an `if`, since its value at `int` grows with the
+    // exponent's value and not with the text; it is typed as the operation alone is, `int`
+    // where nothing fixes it. The rule looks for the `^`, never at the size of the value.
+    // Before the item `g` was `(bool) -> 1 | 8`.
+    let src = "g(positional c: bool) = if c { 2 ^ 3 } else { 1 };\na = g(true);\nb = g(false);\n";
+    assert_eq!(type_errors(src), Vec::<String>::new());
+    assert_eq!(sig(src, "g"), "(bool) -> int");
+    assert_eq!(value(src, "a"), "8");
+    assert_eq!(value(src, "b"), "1");
+    for branch in ["2 ^ 3 + 1", "-(2 ^ 3)", "(1 + 1) ^ 3"] {
+        let src = format!("g(positional c: bool) = if c {{ {branch} }} else {{ 1 }};\n");
+        assert_eq!(sig(&src, "g"), "(bool) -> int", "{src}");
+    }
+    // A decimal beside it is still read where the result is used.
+    let decimal = "g(positional c: bool) = if c { 2 ^ 3 } else { 1.5 };\n";
+    assert_eq!(sig(decimal, "g"), "(bool) -> 1.5 | int");
+    // The contrast: with no `^` the operation keeps its value, the small one and the large one.
+    let plain = "g(positional c: bool) = if c { 2 * 2 * 2 } else { 1 };\n";
+    assert_eq!(sig(plain, "g"), "(bool) -> 1 | 8");
+    let large = "g(positional c: bool) = if c { 4294967296 * 4294967296 } else { 1 };\n";
+    assert_eq!(sig(large, "g"), "(bool) -> 1 | 18446744073709551616");
+    // So the call of `g` is `int`, as a call of `g(positional c: bool) = 2 ^ 3;` is, and not
+    // read at the `f64` of `h`; written at the parameter, the `if` still takes its carrier.
+    let call = format!(
+        "{H}g(positional c: bool) = if c {{ 2 ^ 3 }} else {{ 1 }};\nf(positional c: bool) = h(g(c));\n"
+    );
+    assert_eq!(
+        type_errors(&call),
+        vec!["`h` does not take (int): no arrow of `h` takes these types. [h(g(c))]".to_string()]
+    );
+    let inline =
+        format!("{H}f(positional c: bool) = h(if c {{ 2 ^ 3 }} else {{ 1 }});\na = f(true);\n");
+    assert_eq!(type_errors(&inline), Vec::<String>::new());
+    assert_eq!(value(&inline, "a"), "8.0");
+    // Beside a generic operand it joins that operand's class, as an operation with no `^` does.
+    let generic = "f(positional c: bool, x) = x + (if c { 2 ^ 3 } else { 1 });\n\
+                   a = f(true, x: 0.5f64);\n";
+    assert_eq!(
+        sig(generic, "f"),
+        "(bool, x: T) -> T for T in int | f32 | f64 | rat"
+    );
+    assert_eq!(value(generic, "a"), "8.5");
+}
+
+/// The rejection of the item's program through `zedc run`: the type found for `f` is written
+/// `(b: bool) -> int`, and no digit of `3^200000` is printed or computed (MSG-literal-type-huge-
+/// power). Before the item the step read `(b: bool) -> 2 | ` and the 95,425 digits of the
+/// power, and the message was 191 KB.
+#[test]
+fn the_type_of_an_if_holding_a_power_names_no_digits_of_it() {
+    let src = "f(b: bool) = if b { 3^200000 } else { 2 };\nmain() = f(b: true) > 1;\n";
+    let out = run("l01_26a_power_branch", src, "", &[]);
+    let path = format!(
+        "{}:",
+        dir("l01_26a_power_branch").join("prog.zed").display()
+    );
+    assert_eq!(out.status, 1);
+    assert_eq!(out.stdout, "");
+    assert_eq!(
+        out.stderr.replace(&path, "prog.zed:"),
+        concat!(
+            "prog.zed:2:10: `main` gives `f(b: true) > 1`, which is bool, and the result of `main` ",
+            "is the program's exit status, an `int` from 0 to 255.\n",
+            "  [1] 2:10: this `>` gives bool\n",
+            "      2 | main() = f(b: true) > 1;\n",
+            "        |          ^^^^^^^^^^ [2]\n",
+            "        |          ^^^^^^^^^^^^^^ [1, 5, 6]\n",
+            "        |                       ^ [4]\n",
+            "  [2] 2:10: this call of `f` gives int\n",
+            "  [3] 1:1: `f` is declared here with no type written for its result; the type the ",
+            "checker found for `f` is `(b: bool) -> int`\n",
+            "      1 | f(b: bool) = if b { 3^200000 } else { 2 };\n",
+            "        | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n",
+            "  [4] 2:23: this literal, 1, is 1\n",
+            "  [5] 2:10: repair: give the status as an int, as `0` for success\n",
+            "  [6] 2:10: repair: write the text to the output, as `m.stdout <- text`, and give no ",
+            "result\n",
+        )
+    );
+    // The contrast: with no `^` the step names the values, as before the item.
+    let src = "f(b: bool) = if b { 3 * 3 } else { 2 };\nmain() = f(b: true) > 1;\n";
+    let out = run("l01_26a_power_branch", src, "", &[]);
+    assert!(
+        out.stderr.contains("this call of `f` gives 2 | 9\n")
+            && out.stderr.contains("is `(b: bool) -> 2 | 9`\n"),
+        "{}",
+        out.stderr
     );
 }
 
