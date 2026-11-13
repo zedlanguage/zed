@@ -2143,7 +2143,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PERF-ref-memo-quadratic | impl attempt 4 | 2026-11-10 18:04 | started: A88 answered, own attempt then cross-review (4 seats, 3 rounds) |
 | PRES-overlap-fast | impl attempt 1 | 2026-11-13 01:10 | started; worktree wt/pres-overlap-fast at 95b3d8a1f; load 37.88 41.70 48.12 |
 | ST-walk-implicit | impl attempt 1 | 2026-11-11 01:43 | started: worktree /home/luke/Work/wt/st-walk-implicit on origin/main 89d83b4a3 / load 36.87 40.84 46.29 |
-| TESTS-scaling-limit-13 | impl attempt 1 | 2026-11-12 23:54 | negative control: LIMIT = 8 once on l01_17, l01_18, l01_24, l01_38 omega: 13 of 40 pieces failed, 48 tests, every message at 8.0 times or more (e.g. int(s) 9.8x |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
