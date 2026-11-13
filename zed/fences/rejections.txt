@@ -99,6 +99,7 @@ Meaning function with a case `@decides` cannot reify
 Linear question outside the polynomial fragment of the linear-relation domain
 Statement that writes nothing, or drops a declared result
 One target for a call with several results
+A root of an obligation's equation at which a written constraint does not yield `true` or `false`
 Block binding that nothing reads
 Hole in the program
 Dependency reaching what its importer did not grant
