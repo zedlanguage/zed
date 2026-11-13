@@ -2173,8 +2173,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | DAGVIEW-aspect-plan-time | impl attempt 1 | 2026-11-13 14:01 | started; load 37.71 41.62 39.04 |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | cross-review round 5 launched on zed-impl 77a026349: Claude, Codex; Gemini 429 (gap recorded); main dump in progress; load 25.99 19.01 20.42 |
 | POW-nonneg-power | impl attempt 1 | 2026-11-13 12:32 | started; worktree /home/luke/Work/wt/pow-nonneg-power at ca7c70736 |
-| PRES-overlap-fast | xr done | 2026-11-13 13:45 | two rounds (CD, Codex gpt-6.1-sol and Claude opus-5-5 at medium; Gemini 429 at each launch): tables as words of 64 keys and intervals of full words, rate 2048, a floor of the bound; overlap_rows decided at 64, 512 and 1,024 in 1.83M, 13.0M and 25.3M (R 7.10 from 64 to 512; 10.70 from 8 to 64, reported); no family case past main by more than 0.3% (wide/4/decide 683.1K against 690.3K); random2 0 wrong or coarser, 451 finer; round 3 not run (target met at the test sizes, IMPL-common rule 6); coefficients 1 and 2 family to PRES-overlap-coeffs; CD round 2 read for ideas, none adopted |
-| REPAIR-compare-order | running |  |  |
+| PRES-overlap-coeffs | running | 2026-11-13 14:10 |  |
+| REPAIR-compare-order | impl attempt 1 | 2026-11-13 14:06 | started; worktree from origin/main 2bb162e92 |
 | ST-walk-orders-left | impl attempt 1 | 2026-11-13 13:56 | started |
 | TEST-step-one-piece | impl attempt 1 | 2026-11-13 13:52 | started |
 
