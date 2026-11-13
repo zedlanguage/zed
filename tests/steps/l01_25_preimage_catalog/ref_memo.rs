@@ -364,9 +364,6 @@ fn calls_22_45_and_86_keep_main_s_answer_or_a_finer_one() {
 
 // ---- Scaling ----
 
-/// The plan's limit on the work at 8n over the work at n (PERF-ref-memo-quadratic).
-const LIMIT: f64 = 13.0;
-
 fn ne0(t: Term) -> Term {
     prim(Prim::Ne, t, int(0))
 }
@@ -686,30 +683,38 @@ fn answer_size(cases: &[(Term, Domains, Demand)]) -> usize {
     cases.iter().map(size).sum()
 }
 
-/// [`scaling::compare`] on the reference preimage of the family `name` at `n` and `8n` links,
-/// held to [`LIMIT`] times `max(1, Q / 8)`, `Q` the growth of the answer: work that grows
-/// with the output is not charged.
+/// [`scaling::compare`] on the reference preimage of the family `name` at `n` and `8n` links: a
+/// pass of order n, held to [`scaling::LIMIT`] with the note from [`scaling::PREFERRED`]. When
+/// the answer grows `Q` > 8 times, work that grows with the output is not charged: the two runs
+/// are held by [`scaling::compare_costs`] to [`scaling::LIMIT`] times `Q / 8` (`output_grid`
+/// and `nested_moduli_eq_4096`, whose answers grow about 64 and 154 times).
 fn scales(name: &str, n: usize) {
     on_big_stack(|| {
         let large_n = n * scaling::FACTOR;
         let (small, large) = (family(name, n), family(name, large_n));
         let growth = answer_size(&large) as f64 / answer_size(&small) as f64;
-        let limit = LIMIT * (growth / scaling::FACTOR as f64).max(1.0);
         let run = |cases: &[(Term, Domains, Demand)]| {
             for (t, ds, d) in cases {
                 std::hint::black_box(preimage(t, ds, d));
             }
         };
-        scaling::compare(
-            &format!("the reference preimage of the family {name}, sizes {n} and {large_n}"),
-            &format!(
-                "the limit {LIMIT} of PERF-ref-memo-quadratic, times {growth:.1} / 8 when the \
-                 answer grows more than 8 times"
-            ),
-            limit,
-            || run(&small),
-            || run(&large),
-        );
+        let what = format!("the reference preimage of the family {name}, sizes {n} and {large_n}");
+        let factor = scaling::FACTOR as f64;
+        if growth <= factor {
+            scaling::compare(&what, 1, || run(&small), || run(&large));
+        } else {
+            scaling::compare_costs(
+                &what,
+                &format!(
+                    "the limit {} of a pass of order n, times {growth:.1} / 8 for an answer that \
+                     grows {growth:.1} times",
+                    scaling::LIMIT
+                ),
+                scaling::LIMIT * growth / factor,
+                || run(&small),
+                || run(&large),
+            );
+        }
     });
 }
 
