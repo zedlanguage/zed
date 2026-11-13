@@ -2156,11 +2156,11 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | MSG-apply-try-headline | impl attempt 1 | 2026-11-13 07:36 | started; worktree from origin/main 2bd599913 |
 | NARROW-ne-rat-divisor | impl attempt 1 | 2026-11-13 01:12 | started in /home/luke/Work/wt/narrow-ne-rat-divisor from c75a68775 |
 | NUM-huge-div | impl attempt 1 | 2026-11-13 06:35 | started; worktree /home/luke/Work/wt/num-huge-div from bb7379f01 |
-| PERF-l139-family | running | 2026-11-12 18:45 | coordkk fixed d016b9cc3 90a844aa8; 14 tests in 8 families still ignored, cross-review next / 45.57 |
 | POLY-sum-chain-fold | impl attempt 1 | 2026-11-13 07:32 | started; worktree from origin/main 2bd599913 |
-| PORT-out-param | running |  |  |
+| PORT-out-param | impl attempt 1 | 2026-11-13 07:46 | start; worktree /home/luke/Work/wt/port-out-param from ffc8b6170 |
 | PRES-overlap-fast | xr attempt  | 2026-11-13 01:10 | round 1 launched: Sol and Opus seats (medium); Gemini 429 (resets in 32h55m); CD next |
 | ROOTS-listed | impl attempt 1 | 2026-11-13 05:56 | started; load 24.38 28.00 29.26 |
+| S1F-num-cycle | running |  |  |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
