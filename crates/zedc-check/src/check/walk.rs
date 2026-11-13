@@ -3199,6 +3199,18 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // int divisor the tests it is under keep from zero, as `d` in the arm of
                 // `if d != 0` (DESIGN.md L1.26, the interval of a name in an arm, L1.24). The
                 // tests are read only where the type holds a zero.
+                //
+                // Cost (NARROW-ne-divisor). The arm's scope already holds `d` without 0
+                // (`Scope::assume` takes the complement of a literal for a direct test), so
+                // nothing in `zedc-preimage` changes, against the plan row's pointer there.
+                // Each division reads that scope once: one settle of the arm's scope and one
+                // forward evaluation of the divisor's term, as `total_power` below pays for
+                // an exponent; outside every arm `ints_here` returns at once. A read per arm
+                // opened above the division, the naive way to ask each test, costs O(n) a
+                // division and O(n^2) for n chained tests. Measured
+                // (`l01_26_type_resolution::divisors::chained_tests_and_divisions_check_in_linear_time`,
+                // n = 100 and 800 chained `if d != 0` arms each dividing by `d`): 8.0 times
+                // the work and 8.0 times the bytes; the per-arm read, 38.2 times the bytes.
                 let divides = matches!(op, BinaryOp::Div | BinaryOp::IntDiv | BinaryOp::Mod);
                 let nonzero = divides
                     && ((!y.ty.contains(&Value::Int(0))
