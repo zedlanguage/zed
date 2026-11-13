@@ -222,7 +222,6 @@ export function d3dagLayout(g: Graph, ops: Operators = operators, prev?: Record<
   const index = new Map(nodes.map((n, i) => [n, i]));
   const parents = nodes.map((n) => [...n.parents()].map((p) => index.get(p)!));
   const children = nodes.map((n) => [...n.children()].map((c) => index.get(c)!));
-  const { y: balanced, K: rowLimitUsed } = layers(dag, nodes, parents, children, prev, prevK);
   // sugiyama with the layers fixed: d3-dag 1.2.2 calls layering(graph,
   // layerSeparation) and takes the value returned as the last layer's index.
   const run = (y: Int32Array, decross: any) => sugiyama()
@@ -260,110 +259,242 @@ export function d3dagLayout(g: Graph, ops: Operators = operators, prev?: Record<
     };
   };
   const seedX = () => Float64Array.from(nodes, (n) => (had(n) ? prevAt![n.data.id].x : NaN));
-  // From an earlier layout the x that splitRows reads is the seeded one (see
-  // seedPlaces), and the layout runs once, after the split; from scratch it
-  // runs on the unsplit layers first to find x.
-  // Complexity tradeoff: a run is a crossing reduction and a placement, about
-  // 0.5 s on the plan of 2026-11-11 from a seed; the seeded x costs
-  // O(n + m log d).
-  let width = 0, height = 0;
-  let x: Float64Array;
-  if (prevAt) x = seedPlaces(seedX(), parents, children);
-  else {
-    ({ width, height } = run(balanced, ops.decross));
-    x = Float64Array.from(nodes, (n) => n.x);
-  }
-  // A node in the lower of the two rows its earlier layer was drawn in is 1,
-  // in the upper or a row not split 0, and a node with no earlier place -1.
-  let half: Int8Array | undefined;
-  if (prevAt && prev) {
-    const top = new Map<number, number>();
-    for (const n of nodes) if (had(n)) top.set(prev[n.data.id], Math.min(top.get(prev[n.data.id]) ?? Infinity, prevAt[n.data.id].y));
-    half = Int8Array.from(nodes, (n) => (had(n) ? (prevAt[n.data.id].y > top.get(prev[n.data.id])! ? 1 : 0) : -1));
-  }
-  const split = splitRows(balanced, x, half, parents, children);
-  // From an earlier layout, the rows after the split start from the earlier
-  // picture in the same way, so that a relayout moves few nodes.
-  if (prevAt) {
-    const rows = split ?? balanced;
-    ({ width, height } = run(rows, decrossSeeded(index, x, rows, alongIn(rows))));
-  } else if (split) ({ width, height } = run(split, decrossFrom(index, x, split)));
-
-  // Left sides and tops, and each link's route from the source's bottom to
-  // the target's top. d3-dag's points run from the source's center to the
-  // target's center through one point in each layer between.
-  let kids = nodes.map((n) => ({ id: n.data.id, x: n.x - n.data.w / 2, y: n.y - n.data.h / 2, width: n.data.w, height: n.data.h }));
-  const routes = new Map<string, Point[]>();
-  for (const [k, link] of links) {
-    const p: Point[] = link.points.map(([x, y]: [number, number]) => ({ x, y }));
-    const [s, t] = k.split(" ").map(Number);
-    p[0] = { x: p[0].x, y: kids[s].y + kids[s].height };
-    p[p.length - 1] = { x: p[p.length - 1].x, y: kids[t].y };
-    routes.set(k, p);
-  }
-  let w = width;
-  if (ops.narrow) {
-    // narrow reads an ELK layout: each point in a layer between is a short
-    // vertical run through the layer's middle, which it takes for an edge lane.
-    const ks = [...links.keys()];
-    const placed = narrow({
-      children: kids,
-      edges: ks.map((k, i) => {
-        const [s, t] = k.split(" ").map(Number);
-        const p = routes.get(k)!;
-        return {
-          id: `e${i}`, sources: [kids[s].id], targets: [kids[t].id],
-          sections: [{ startPoint: p[0], endPoint: p[p.length - 1], bendPoints: p.slice(1, -1).flatMap((q) => [{ x: q.x, y: q.y - 1 }, { x: q.x, y: q.y + 1 }]) }],
-        };
-      }),
-    });
-    kids = placed.children;
-    placed.edges.forEach((e, i) => {
-      const sec = e.sections![0];
-      routes.set(ks[i], [sec.startPoint, ...(sec.bendPoints ?? []), sec.endPoint]);
-    });
-    w = 0;
-    for (const c of kids) w = Math.max(w, c.x + c.width);
-    for (const p of routes.values()) for (const q of p) w = Math.max(w, q.x);
-  }
-
-  const boxes: Layout["boxes"] = {};
-  for (const c of kids) boxes[c.id] = { x: c.x + c.width / 2 + PAD, y: c.y + c.height / 2 + PAD, w: c.width, h: c.height };
-  const drawn: Layout["edges"] = [];
-  for (const [a, b] of edges) {
-    if (a === b) {
-      const A = boxes[a], x = A.x + A.w / 2, d = GAP[0] / 2;
-      drawn.push({ from: a, to: b, points: [{ x, y: A.y - 8 }, { x: x + d, y: A.y - 8 }, { x: x + d, y: A.y + 8 }, { x, y: A.y + 8 }] });
-      continue;
+  // Draws layers balanced at row limit rowLimitUsed, seeded from the earlier
+  // layout or from scratch.
+  const draw = (balanced: Int32Array, rowLimitUsed: number, seeded: boolean): Omit<Layout, "key"> => {
+    // From an earlier layout the x that splitRows reads is the seeded one (see
+    // seedPlaces), and the layout runs once, after the split; from scratch it
+    // runs on the unsplit layers first to find x.
+    // Complexity tradeoff: a run is a crossing reduction and a placement, about
+    // 0.5 s on the plan of 2026-11-11 from a seed; the seeded x costs
+    // O(n + m log d).
+    let width = 0, height = 0;
+    let x: Float64Array;
+    if (seeded) x = seedPlaces(seedX(), parents, children);
+    else {
+      ({ width, height } = run(balanced, ops.decross));
+      x = Float64Array.from(nodes, (n) => n.x);
     }
-    const [s, t, flip] = pair(a, b);
-    const p = routes.get(`${s} ${t}`)!.map((q) => ({ x: q.x + PAD, y: q.y + PAD }));
-    if (flip) p.reverse();
-    drawn.push({ from: a, to: b, points: p });
+    // A node in the lower of the two rows its earlier layer was drawn in is 1,
+    // in the upper or a row not split 0, and a node with no earlier place -1.
+    let half: Int8Array | undefined;
+    if (seeded) {
+      const top = new Map<number, number>();
+      for (const n of nodes) if (had(n)) top.set(prev![n.data.id], Math.min(top.get(prev![n.data.id]) ?? Infinity, prevAt![n.data.id].y));
+      half = Int8Array.from(nodes, (n) => (had(n) ? (prevAt![n.data.id].y > top.get(prev![n.data.id])! ? 1 : 0) : -1));
+    }
+    const split = splitRows(balanced, x, half, parents, children);
+    // From an earlier layout, the rows after the split start from the earlier
+    // picture in the same way, so that a relayout moves few nodes.
+    if (seeded) {
+      const rows = split ?? balanced;
+      ({ width, height } = run(rows, decrossSeeded(index, x, rows, alongIn(rows))));
+    } else if (split) ({ width, height } = run(split, decrossFrom(index, x, split)));
+
+    // Left sides and tops, and each link's route from the source's bottom to
+    // the target's top. d3-dag's points run from the source's center to the
+    // target's center through one point in each layer between.
+    let kids = nodes.map((n) => ({ id: n.data.id, x: n.x - n.data.w / 2, y: n.y - n.data.h / 2, width: n.data.w, height: n.data.h }));
+    const routes = new Map<string, Point[]>();
+    for (const [k, link] of links) {
+      const p: Point[] = link.points.map(([x, y]: [number, number]) => ({ x, y }));
+      const [s, t] = k.split(" ").map(Number);
+      p[0] = { x: p[0].x, y: kids[s].y + kids[s].height };
+      p[p.length - 1] = { x: p[p.length - 1].x, y: kids[t].y };
+      routes.set(k, p);
+    }
+    let w = width;
+    if (ops.narrow) {
+      // narrow reads an ELK layout: each point in a layer between is a short
+      // vertical run through the layer's middle, which it takes for an edge lane.
+      const ks = [...links.keys()];
+      const placed = narrow({
+        children: kids,
+        edges: ks.map((k, i) => {
+          const [s, t] = k.split(" ").map(Number);
+          const p = routes.get(k)!;
+          return {
+            id: `e${i}`, sources: [kids[s].id], targets: [kids[t].id],
+            sections: [{ startPoint: p[0], endPoint: p[p.length - 1], bendPoints: p.slice(1, -1).flatMap((q) => [{ x: q.x, y: q.y - 1 }, { x: q.x, y: q.y + 1 }]) }],
+          };
+        }),
+      });
+      kids = placed.children;
+      placed.edges.forEach((e, i) => {
+        const sec = e.sections![0];
+        routes.set(ks[i], [sec.startPoint, ...(sec.bendPoints ?? []), sec.endPoint]);
+      });
+      w = 0;
+      for (const c of kids) w = Math.max(w, c.x + c.width);
+      for (const p of routes.values()) for (const q of p) w = Math.max(w, q.x);
+    }
+
+    const boxes: Layout["boxes"] = {};
+    for (const c of kids) boxes[c.id] = { x: c.x + c.width / 2 + PAD, y: c.y + c.height / 2 + PAD, w: c.width, h: c.height };
+    const drawn: Layout["edges"] = [];
+    for (const [a, b] of edges) {
+      if (a === b) {
+        const A = boxes[a], x = A.x + A.w / 2, d = GAP[0] / 2;
+        drawn.push({ from: a, to: b, points: [{ x, y: A.y - 8 }, { x: x + d, y: A.y - 8 }, { x: x + d, y: A.y + 8 }, { x, y: A.y + 8 }] });
+        continue;
+      }
+      const [s, t, flip] = pair(a, b);
+      const p = routes.get(`${s} ${t}`)!.map((q) => ({ x: q.x + PAD, y: q.y + PAD }));
+      if (flip) p.reverse();
+      drawn.push({ from: a, to: b, points: p });
+    }
+    const kept: Record<string, number> = {};
+    nodes.forEach((n, i) => { kept[n.data.id] = balanced[i]; });
+    return { w: w + 2 * PAD, h: height + 2 * PAD, boxes, edges: drawn, layers: kept, rowLimit: rowLimitUsed };
+  };
+
+  // From an earlier layout with its K, the layers at that K (see layers) are
+  // drawn from the earlier picture and kept if the drawing is within BAND and
+  // the rows within ROOM of what the graph needs, so an unchanged graph keeps
+  // its layout and a small change moves few nodes. Otherwise, and with no earlier layout, the graph is laid out from
+  // scratch at the K fitLayers chooses, and drawn; while the drawing is
+  // outside BAND, e (the drawn w/h over the estimate, shapeOf) corrects the
+  // estimate and fitLayers chooses again. It stops at a K already drawn, or
+  // when the estimate says the new K would come no nearer the band than the
+  // best drawing so far (as for a graph whose longest path is too long for
+  // the band), and keeps the drawing nearest the band (distance from it,
+  // measured as a ratio; of equals the earlier). There are at most as many
+  // drawings as values of K; from scratch the plans of 2026-11-10, 11 and 13
+  // and the plan-shaped graphs of 500 and 4,000 nodes each took one.
+  // The earlier layers are never kept outside the band: before, the rows
+  // only grew (fromPrevious keeps at least the earlier number of layers) and K
+  // only fell (see layersAt), so the page's relayouts drew the live plan
+  // taller each time (1:21 on 2026-11-13). From scratch the rows can shrink
+  // back toward the longest path.
+  const size = sizesOf(nodes);
+  const ratio = (l: Omit<Layout, "key">) => l.w / l.h;
+  const old = prev ? fromPrevious(nodes.map((n) => (Object.hasOwn(prev, n.data.id) ? prev[n.data.id] : undefined)), parents, children) : null;
+  let best: Omit<Layout, "key"> | undefined, e = 1;
+  let base: Int32Array | undefined;
+  const scratch = () => (base ??= scratchLayers(dag, nodes, parents, children));
+  if (old) {
+    const { y, K } = prevK === undefined ? fitLayers(old, size, parents, children, 1) : { K: scaledK(prevK, nodes.length, prev!), y: layersAt(old, parents, children, scaledK(prevK, nodes.length, prev!)) };
+    const R = counts(y).length;
+    if (R <= ROOM * pathNodes(parents, children) || R <= ROOM * counts(fitLayers(scratch(), size, parents, children, 1).y).length) {
+      best = draw(y, K, !!prevAt);
+      if (!outside(ratio(best))) return best;
+    }
   }
-  const kept: Record<string, number> = {};
-  nodes.forEach((n, i) => { kept[n.data.id] = balanced[i]; });
-  return { w: w + 2 * PAD, h: height + 2 * PAD, boxes, edges: drawn, layers: kept, rowLimit: rowLimitUsed };
+  scratch();
+  const drawnAt = new Set<number>();
+  for (;;) {
+    const f = fitLayers(base!, size, parents, children, e);
+    if (drawnAt.has(f.K) || (best && outside(f.ratio) >= outside(ratio(best)))) break;
+    drawnAt.add(f.K);
+    const l = draw(f.y, f.K, false);
+    if (!best || outside(ratio(l)) < outside(ratio(best))) best = l;
+    if (!outside(ratio(l))) break;
+    e = ratio(l) / (f.ratio / e);
+  }
+  return best!;
 }
+
+// The most rows an earlier layering keeps, as a multiple of the rows the
+// graph needs: the larger of its longest path (in nodes) and the rows of a
+// layout from scratch at the K fitLayers chooses. fromPrevious never gives
+// rows back (it keeps at least the earlier number), so without this bound the
+// rows grow with each relayout while the drawing stays in BAND: on the
+// plan-shaped graph of 500 nodes 48 rows became 60 in 20 relayouts (longest
+// path 46), its edges longer by as much. 1.25 is the bound the task set
+// (row count at most 1.25 x the longest path, or the count the shape needs);
+// it leaves room for the earlier layers to hold while nodes come and go.
+const ROOM = 1.25;
+
+// The number of nodes on the longest path, by a topological order.
+// Complexity: O(n + m).
+function pathNodes(parents: number[][], children: number[][]): number {
+  const n = parents.length;
+  const waiting = Int32Array.from(parents, (p) => p.length), depth = new Int32Array(n).fill(1), order: number[] = [];
+  for (let i = 0; i < n; i++) if (!waiting[i]) order.push(i);
+  let most = 0;
+  for (let k = 0; k < order.length; k++) {
+    const v = order[k];
+    most = Math.max(most, depth[v]);
+    for (const c of children[v]) { depth[c] = Math.max(depth[c], depth[v] + 1); if (--waiting[c] === 0) order.push(c); }
+  }
+  return most;
+}
+
+// How far w/h r lies outside BAND, as a ratio: 0 inside, log(BAND[0] / r)
+// below and log(r / BAND[1]) above, so that 1:5 and 2:1 (a factor of two
+// from the band's ends) count alike.
+function outside(r: number): number {
+  return Math.max(0, Math.log(BAND[0] / r), Math.log(r / BAND[1]));
+}
+
+// The shape the author asked for (2026-11-13): "find some sort of constraint
+// that forces the DAG into an approximately 1:2 w:h ratio", and then "1:2.5 is
+// also acceptable". So the drawn width over height (Layout.w / Layout.h) is
+// held to [0.4, 0.6], and 0.4 counts as fully inside, not as its edge. A
+// layout outside the band is corrected toward 1:2 (TARGET); one inside it is
+// kept, and rows are never inserted only to move w/h from 0.4 toward 0.5.
+// Within the band fewer rows would be better still (shorter edges, fewer
+// crossings), but finding the largest K within it took probes growing with
+// log K (see fitLayers), so the first K found within it is kept. A graph
+// whose longest path alone makes it taller than 1:2.5 is drawn with the
+// fewest rows the layering gives (the nearest shape it can reach).
+export const BAND: [number, number] = [0.4, 0.6];
+const TARGET = 0.5;
 
 // The layers, top = 0, every edge going down at least one layer, every source
 // (no parents, some children) exactly one layer above its highest child unless
-// that layer holds K nodes, and K, the row limit they were balanced at. With
-// no earlier layering, or none of whose nodes is still in the graph, they come
-// from network simplex, nodes other than sources move to less crowded layers
-// until none can (balanceCounts), and every source is put directly above its
-// highest child (lowerSources). Otherwise they start from the earlier
-// layering (fromPrevious, which puts an added source directly above its
-// highest child). K is the split rule's row limit of those layers (rowLimit)
-// from scratch, or the earlier one, prevK, times the number of nodes over the
-// earlier number (prev's size), rounded to the nearest: for an unchanged graph
-// the same K. Then, in each round, makeRoom inserts empty layers above each
-// row over K, and until neither moves a node, nodes move to less full rows
-// and to shorten their edges into rows with room (balanceLayers) and sources
-// move with their only highest child out of rows over K (spreadSources). If
-// that leaves the rows' own limit below K, the round runs again at that
-// limit. Last, empty layers are dropped (compactLayers), which keeps the
-// order of the layers.
+// that layer holds K nodes, and K, the row limit they were balanced at.
+// From an earlier layering with its K (prev, prevK) they start from it
+// (fromPrevious, which puts an added source directly above its highest
+// child), at K = prevK times the number of nodes over the earlier number,
+// rounded to the nearest: for an unchanged graph the same layers and K.
+// Otherwise they start from base layers (scratchLayers, or fromPrevious when
+// prev comes without a K) and K is chosen for the shape (fitLayers).
+// d3dagLayout then draws them and, if the drawing is outside BAND, lays the
+// graph out from scratch with K corrected by the drawn shape.
+export function layers(dag: any, nodes: any[], parents: number[][], children: number[][], prev?: Record<string, number>, prevK?: number, work?: Work): { y: Int32Array; K: number } {
+  const old = prev ? fromPrevious(nodes.map((n) => (Object.hasOwn(prev, n.data.id) ? prev[n.data.id] : undefined)), parents, children, work) : null;
+  if (old && prevK !== undefined) {
+    const K = scaledK(prevK, nodes.length, prev!);
+    return { y: layersAt(old, parents, children, K, work), K };
+  }
+  const base = old ?? scratchLayers(dag, nodes, parents, children, work);
+  const { y, K } = fitLayers(base, sizesOf(nodes), parents, children, 1, work);
+  return { y, K };
+}
+
+// The earlier row limit for n nodes: prevK times n over the earlier number of
+// nodes, rounded to the nearest, so a one-node change keeps K both ways (it
+// was rounded down until 2026-11-13, and each removed and re-added node took
+// one off it).
+function scaledK(prevK: number, n: number, prev: Record<string, number>): number {
+  return Math.max(1, Math.round((prevK * n) / Object.keys(prev).length));
+}
+
+// Box widths and heights by node index.
+function sizesOf(nodes: any[]): { w: Float64Array; h: Float64Array } {
+  return { w: Float64Array.from(nodes, (n) => n.data.w), h: Float64Array.from(nodes, (n) => n.data.h) };
+}
+
+// Layers from scratch, before any row limit: network simplex, then nodes other
+// than sources moved to less crowded layers until none can (balanceCounts),
+// then every source put directly above its highest child (lowerSources).
+// None of it depends on K, so fitLayers tries every K from the same base.
+export function scratchLayers(dag: any, nodes: any[], parents: number[][], children: number[][], work?: Work): Int32Array {
+  // network simplex is d3-dag's and its steps are not counted.
+  layeringSimplex()(dag, layerSeparation);
+  const y = Int32Array.from(nodes, (n) => n.y);
+  balanceCounts(y, parents, children, undefined, work);
+  lowerSources(y, parents, children, work);
+  return y;
+}
+
+// The layers at row limit K from base (left as it is): makeRoom inserts empty
+// layers above each row over K, then, until neither moves a node, nodes move
+// to less full rows and to shorten their edges into rows with room
+// (balanceLayers) and sources move with their only highest child out of rows
+// over K (spreadSources); last, empty layers are dropped (compactLayers),
+// which keeps the order of the layers.
 // The two rules of the author's and how they meet (see balanceLayers): a
 // source sits directly above its highest child (2026-11-11), and a row over K
 // sheds nodes into less full rows before any edge is shortened (2026-11-13).
@@ -373,64 +504,156 @@ export function d3dagLayout(g: Graph, ops: Operators = operators, prev?: Record<
 // its child has room; spreadSources moves a source only with its only
 // highest child. balanceLayers never moves a source's only highest child
 // (another highest child may move, as one stays), and a child moving up to
-// the layer below a source becomes one of its highest children. Before
-// (2026-11-11) no step moved a source, and rows stayed over K where sources
-// share a child (27 over SCALE-cover on the live plan of 2026-11-11; on that
-// of 2026-11-13 the widest layer held 56 at K = 27, 52 boxes in the widest
-// drawn row).
+// the layer below a source becomes one of its highest children.
 // lowerSources runs only from scratch: on the earlier path it would put back
 // every source that left a row over K, refilling that row, and the passes
 // would then move different sources out of it, so an unchanged graph would
 // not keep its layers. A source whose child moved since is brought down by
 // balanceLayers instead, as far as rows with room allow.
-// An unchanged graph keeps its layers: the loop ended on them at K, with
-// balanceLayers and spreadSources each making no move, their limit at K or
-// more, and from them K is the same; makeRoom inserts nothing where no row is
-// over K. With balanceCounts on the earlier path
-// too, or K taken from the rows each time, it did not: on the plan of
-// 2026-11-10 K went 25, 27, 25, 27 ... (moves each round) when recomputed from
-// the result, and from an unchanged graph 14 nodes moved.
-// K from prevK was rounded down until 2026-11-13: each removed and re-added
-// node took one off it, Math.floor(prevK * (n - 1) / n) = prevK - 1 for
-// n > prevK, and as the loop only lowers K it never came back. The live
-// plan's saved layout had K = 11 where its rows' median was 19 (a limit of 27
-// from scratch), so balanceLayers packed rows to 11 and the rows it could not
-// relieve, with pinned sources, went to 95. Rounding to the nearest keeps K
-// for a one-node change both ways (27 over 12 removals and re-additions on the
-// live plan of 2026-11-13, against 27 down to 21 before).
-// The result is what Layout.layers keeps, and K Layout.rowLimit; splitRows
-// then splits the most crowded rows for the picture only.
+// An unchanged graph keeps its layers: they are a fixed point at their K,
+// balanceLayers and spreadSources each making no move, and makeRoom inserts
+// nothing where no row is over K. With balanceCounts on the earlier path too
+// it did not: from an unchanged graph 14 nodes moved.
+// Until 2026-11-13 a second, outer loop lowered K to the split rule's limit
+// of the result (1.5 x the median count, rowLimit) and ran again whenever
+// that was below K. The rows makeRoom inserts lower the median, so K only
+// fell, and the next layout started from that K: on the live plan K went
+// from 27 to 4 over the page's relayouts, 774 rows against a longest path of
+// 114, 3,868 x 82,548 px (w/h 0.047), edge spans median 8, 90th percentile
+// 181 and max 703 rows. Its only purpose was to keep rows under the split
+// limit; K now comes from the shape, so the loop is gone.
 // Complexity tradeoff: each round of the inner loop is one run of
 // balanceLayers and one of spreadSources, each O((n + m) log L) per pass (and
 // n K log L for balanceLayers' best layer), and it ends as both lower the same
-// (Q, F) (see spreadSources); K falls by at least one per outer round, so at
-// most K outer rounds, each with one makeRoom, O(n + L), inserting at most
-// n / K layers. On the plan and the live plan of 2026-11-11 the inner
-// loop ran 4 times in all, with 11 passes of balanceLayers (384 to 417 moves,
-// 56 to 69 ms) and 9 to 10 of spreadSources (28 to 36 moves, 45 ms); on the
-// plan-shaped graph of 4,000 nodes 2 times, 6 and 2 passes. Running
-// balanceLayers at one fixed K would leave rows over the split limit whenever
-// the result's median falls.
-export function layers(dag: any, nodes: any[], parents: number[][], children: number[][], prev?: Record<string, number>, prevK?: number, work?: Work): { y: Int32Array; K: number } {
-  let y = prev ? fromPrevious(nodes.map((n) => (Object.hasOwn(prev, n.data.id) ? prev[n.data.id] : undefined)), parents, children, work) : null;
-  const fresh = !y;
-  if (!y) {
-    // network simplex is d3-dag's and its steps are not counted.
-    layeringSimplex()(dag, layerSeparation);
-    y = Int32Array.from(nodes, (n) => n.y);
-    balanceCounts(y, parents, children, undefined, work);
-    lowerSources(y, parents, children, work);
-  }
-  let K = fresh || prevK === undefined ? rowLimit(y, work) : Math.max(1, Math.round((prevK * nodes.length) / Object.keys(prev!).length));
-  for (;;) {
-    makeRoom(y, K, work);
-    while (balanceLayers(y, parents, children, K, undefined, undefined, work) + spreadSources(y, parents, children, K, undefined, undefined, work) > 2);
-    const k = rowLimit(y, work);
-    if (k >= K) break;
-    K = k;
-  }
+// (Q, F) (see spreadSources); makeRoom is O(n + L) and inserts at most n / K
+// layers. On the plan and the live plan of 2026-11-11 the inner loop ran 4
+// times in all, with 11 passes of balanceLayers (384 to 417 moves, 56 to 69
+// ms) and 9 to 10 of spreadSources (28 to 36 moves, 45 ms); on the
+// plan-shaped graph of 4,000 nodes 2 times, 6 and 2 passes.
+export function layersAt(base: Int32Array, parents: number[][], children: number[][], K: number, work?: Work): Int32Array {
+  const y = Int32Array.from(base);
+  makeRoom(y, K, work);
+  while (balanceLayers(y, parents, children, K, undefined, undefined, work) + spreadSources(y, parents, children, K, undefined, undefined, work) > 2);
   compactLayers(y, work);
-  return { y, K };
+  return y;
+}
+
+// The width and height the page would draw layers y at, estimated without
+// drawing (a drawing costs a crossing reduction and a placement, 0.5 to 3 s
+// on the live plan): the rows splitRows draws (with the nodes in index order
+// for x), each row's height its tallest box with GAP[1] between rows, and the
+// width that of the widest row packed as narrow.ts packs it, the box widths
+// with GAP[0] between them and LANE for each edge passing through the row.
+// The estimate ignores the order of nodes and lanes in a row (a lane between
+// two boxes takes 16 px of the 26 between them in narrow.ts), so d3dagLayout
+// corrects it by the drawn shape (see fitLayers). Measured against the
+// drawing on the live plan of 2026-11-13, the plan of 2026-11-10 and the
+// plan-shaped graph of 500 nodes at K from 6 to 50: the height exact, the
+// width 1 to 5 percent over (drawn over estimated w/h 0.957 to 0.991), and 9
+// percent over on the 500-node graph at K = 6 (0.912).
+// Complexity tradeoff: O(n log n + m), the sorts of splitRows and one pass
+// over the edges with a difference array for the lanes; counting each edge's
+// lanes row by row would cost the total edge span, O(m L).
+const LANE = 8;
+export function shapeOf(y: Int32Array, size: { w: ArrayLike<number>; h: ArrayLike<number> }, parents: number[][], children: number[][], work?: Work): { w: number; h: number } {
+  const n = y.length;
+  if (!n) return { w: 2 * PAD, h: 2 * PAD };
+  const rows = splitRows(y, Int32Array.from({ length: n }, (_, i) => i), undefined, parents, children) ?? y;
+  let R = 0;
+  for (const v of rows) R = Math.max(R, v + 1);
+  const sum = new Float64Array(R), tall = new Float64Array(R), count = new Int32Array(R), lanes = new Int32Array(R + 1);
+  let m = 0;
+  for (let i = 0; i < n; i++) {
+    const r = rows[i];
+    sum[r] += size.w[i];
+    tall[r] = Math.max(tall[r], size.h[i]);
+    count[r]++;
+    for (const c of children[i]) { m++; if (rows[c] > r + 1) { lanes[r + 1]++; lanes[rows[c]]--; } }
+  }
+  let w = 0, h = GAP[1] * (R - 1), run = 0;
+  for (let r = 0; r < R; r++) {
+    run += lanes[r];
+    w = Math.max(w, sum[r] + GAP[0] * (count[r] - 1) + LANE * run);
+    h += tall[r];
+  }
+  // splitRows sorts the counts and each split row: about n log2 n comparisons.
+  if (work) work.steps += 3 * n + m + 2 * R + Math.ceil(n * Math.log2(n + 1));
+  return { w: w + 2 * PAD, h: h + 2 * PAD };
+}
+
+// The layers from base at a row limit K whose estimated w/h, times e (the
+// drawn w/h over the estimate, measured by d3dagLayout; 1 before any
+// drawing), lies within BAND, K at most the most nodes in a layer of base,
+// beyond which makeRoom inserts nothing. A larger K means fewer, fuller rows,
+// so w/h grows with K. If even the largest K is under BAND[0] (a longest path
+// too long for the band), that K is taken: the fewest rows, the nearest
+// shape; if no K lands within BAND (w/h jumps over it between two adjacent
+// K), the larger K under it.
+// The first probe is at the K where boxes of the mean size give w/h = TARGET,
+// in rows of K boxes and max(rows of base, n / K) rows, by bisection on that
+// formula. The estimate ignores the lanes of edges passing through a row, so
+// it guesses too large a K (32 for 25 and 92 for 68 on the graphs of the
+// scaling test in aspect.test.ts). Each probe outside BAND narrows the
+// interval (K_lo, known under BAND or 1; K_hi, known over it or past the
+// largest K), and the next probe is where w/h ~ K^2 from this probe puts
+// TARGET, K' = K sqrt(TARGET / (w/h)), within the interval; after two probes
+// in a row that did not halve it, its middle. w/h is not monotone in K in
+// theory (balanceLayers is a heuristic), so the result is not proven the
+// nearest; d3dagLayout checks the drawing.
+// Complexity tradeoff: each probe is a layersAt and a shapeOf, O((n + m) log
+// L) per balancing pass. Trying every K would be O(K_max) probes: 29.8 times
+// the steps at 8n in the scaling test (the negative control). Bisection for
+// the largest K within BAND, the first version of this, needs O(log K_max)
+// probes: 8 at 4,000 nodes and 10 at 32,000, 13.6 times the steps, over the
+// limit of 10.5. Stopping at the first probe within BAND took 3 probes at
+// 4,000, 8,000, 32,000 and 64,000 nodes, 9.16 times the steps at 8n, and
+// one drawing from scratch on the plans of 2026-11-10, 11 and 13. It gives
+// up some rows within the band: K 23 against 25 (w/h 0.487 against 0.595)
+// at 4,000 nodes, 64 against 68 at 32,000.
+export function fitLayers(base: Int32Array, size: { w: ArrayLike<number>; h: ArrayLike<number> }, parents: number[][], children: number[][], e: number, work?: Work): { y: Int32Array; K: number; ratio: number } {
+  const n = base.length;
+  const probed = new Map<number, { y: Int32Array; ratio: number }>();
+  const probe = (K: number) => {
+    let p = probed.get(K);
+    if (!p) {
+      const y = layersAt(base, parents, children, K, work);
+      const s = shapeOf(y, size, parents, children, work);
+      probed.set(K, (p = { y, ratio: (e * s.w) / s.h }));
+    }
+    return p;
+  };
+  const c = counts(base);
+  let most = 1, wide = 0, tall = 0;
+  for (const v of c) most = Math.max(most, v);
+  for (let i = 0; i < n; i++) { wide += size.w[i]; tall += size.h[i]; }
+  const pitchW = n ? wide / n + GAP[0] : 1, pitchH = n ? tall / n + GAP[1] : 1;
+  const guessed = (K: number) => (e * K * pitchW) / (Math.max(c.length, Math.ceil(n / K)) * pitchH);
+  // The guess grows with K: the largest K in [1, most] where it is at most
+  // TARGET, by bisection on the formula.
+  let a = 1, b = most;
+  while (a < b) { const k = (a + b + 1) >> 1; if (guessed(k) <= TARGET) a = k; else b = k - 1; }
+  if (work) work.steps += n + c.length + Math.ceil(Math.log2(most + 1));
+  let lo = 1, hi = most + 1, K = a, slow = 0;
+  for (;;) {
+    const width = hi - lo, r = probe(K).ratio;
+    if (r >= BAND[0] && r <= BAND[1]) return { K, ...probe(K) };
+    if (r < BAND[0]) lo = K; else hi = K;
+    if (hi - lo <= 1) break;
+    // w/h ~ K^2 put at TARGET from this probe, or, after two probes in a row
+    // that did not halve the interval, its middle.
+    slow = 2 * (hi - lo) > width ? slow + 1 : 0;
+    K = Math.min(hi - 1, Math.max(lo + 1, slow >= 2 ? (lo + hi) >> 1 : Math.round(K * Math.sqrt(TARGET / r))));
+  }
+  return { K: lo, ...probe(lo) };
+}
+
+// The node count of each layer of y (top at its least value).
+function counts(y: Int32Array): Int32Array {
+  let top = Infinity, bottom = -Infinity;
+  for (const v of y) { top = Math.min(top, v); bottom = Math.max(bottom, v); }
+  const c = new Int32Array(y.length ? bottom - top + 1 : 0);
+  for (const v of y) c[v - top]++;
+  return c;
 }
 
 // Layers for the graph from an earlier layering, old[i] being node i's
@@ -643,8 +866,9 @@ export function balanceCounts(y: Int32Array, parents: number[][], children: numb
 // up and one with more down than up is pulled down, by how much the moves
 // shorten its edges; a move to a less crowded row is better than one to a
 // more crowded row; and no node moves into a full row. With c[l] the number
-// of nodes in layer l, a row is full at K nodes (rowLimit below: the split
-// rule's 1.5 times the median count), and the moves lower
+// of nodes in layer l, a row is full at K nodes (K from the shape, see
+// fitLayers; until 2026-11-13 the split rule's 1.5 times the median count),
+// and the moves lower
 //   F = (2K + 1) * (sum of edge lengths in layers) + sum over l of c[l]^2.
 // Node i, with P parents and C children, from layer a to layer b changes the
 // first sum by s (b - a), s = P - C, and the second by 2 (c[b] - c[a] + 1).

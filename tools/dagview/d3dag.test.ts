@@ -610,8 +610,11 @@ test("a long row whose nodes all go to one half is not split, so no row is left 
 // A spine s_0 -> ... -> s_39, one node per layer; in each layer l from 1 to 38
 // ten fillers, each with parent s_(l-1) and child s_(l+1); a node T with
 // parent s_19 and child s_21, so it is fixed in layer 20; and `fan` sources,
-// each with T as its only child. The rows hold 11 nodes, so K = 16, and
-// lowerSources puts every source in layer 19, the row above T.
+// each with T as its only child; lowerSources puts every source in layer 19,
+// the row above T. K comes from the shape (fitLayers): rows of 11 boxes over
+// the spine's 40 layers are a little wider than 0.6 x the height, so K = 10,
+// under the 11 nodes a spine node and its fillers hold in one layer whatever
+// K is.
 function fanIn(fan: number): Graph {
   const ids: string[] = [], edges: [string, string][] = [];
   for (let l = 0; l < 40; l++) { ids.push(`s${l}`); if (l) edges.push([`s${l - 1}`, `s${l}`]); }
@@ -621,14 +624,13 @@ function fanIn(fan: number): Graph {
   return { nodes: ids.map((id) => ({ id, w: 210, h: 52 })), edges };
 }
 
-test("a node with 80 parents that are sources (DAGVIEW-wide-rows): the sources stagger into the rows above, so no layer holds more than K, and each source is directly above its child unless that row holds K", () => {
+test("a node with 80 parents that are sources (DAGVIEW-wide-rows): the sources stagger into the rows above, so no layer holding a source holds more than K, and each source is directly above its child unless that row holds K", () => {
   const g = fanIn(80);
   const { y, K } = layersOf(g);
   const { parents, children } = dagOf(g);
   const c = counts(y);
   console.log(`80 sources over one child: K = ${K}, ${c.length} layers, widest ${Math.max(...c)}, sources raised ${sourceGaps(y, parents, children).length}`);
-  assert.equal(K, 16);
-  assert.ok(Math.max(...c) <= K, `a layer of ${Math.max(...c)} nodes, over K = ${K}`);
+  for (const [i, n] of g.nodes.entries()) if (n.id.startsWith("q")) assert.ok(c[y[i]] <= K, `${n.id} in a layer of ${c[y[i]]} nodes, over K = ${K}`);
   assert.deepEqual(pinGaps(y, parents, children, K), []);
 });
 
