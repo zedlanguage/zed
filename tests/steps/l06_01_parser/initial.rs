@@ -235,7 +235,7 @@ fn initial_is_a_reserved_word() {
     let e = Error::of_parse(src, parse(src, &tokens, "Unit", TOP).expect_err(src));
     assert_eq!(
         (e.row, e.message.as_str(), e.span.start),
-        (None, "Syntax error at `_`.", 8)
+        (Some(Row::SyntaxError), "Syntax error at `_`.", 8)
     );
     assert_eq!(e.notes[0].text, "expected a name");
 }

@@ -2849,7 +2849,7 @@ enum Task<'a> {
 }
 
 /// The message for the use of `name`, which nothing in scope and nothing in the prelude defines.
-fn undefined(name: &str) -> String {
+pub fn undefined(name: &str) -> String {
     format!("`{name}` is not defined.")
 }
 
@@ -2902,6 +2902,6 @@ fn main_args_elsewhere(span: Span) -> Error {
 }
 
 /// The message for the type `name`, which no type in scope and no prelude type has as its name.
-fn undefined_type(name: &str) -> String {
+pub fn undefined_type(name: &str) -> String {
     format!("The type `{name}` is not defined.")
 }

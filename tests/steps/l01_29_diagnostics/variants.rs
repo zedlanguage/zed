@@ -21,6 +21,15 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
     // Each whole-line variant names its row; a marked line the checker does not reject yet
     // has no diagnostic, and one it rejects for another reason gives a diagnostic in no row.
     let none = |line: usize| format!("{line}: the line is marked ✗ and has no diagnostic");
+    // The four variants of the units-and-taint fence share its line 49, which has no `;`: the
+    // parse recovers at line 50 (step L1.29d), so the declarations around it are checked, and
+    // the first failure is the refusal of the grammar struct at line 3.
+    let key_val = format!(
+        "3: {}",
+        zed_tests::not_yet!(
+            "the struct declaration `struct KeyVal  grammar { key: Ident  \":\"  value: Json }`"
+        )
+    );
     let cases = [
         (
             "block-binding-never-read",
@@ -42,22 +51,17 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
                 zed_tests::not_yet!("the declared result type `-> int`")
             ),
         ),
-        ("nullable-column-missing-none", none(36)),
+        ("nullable-column-missing-none", key_val.clone()),
         // Rejected in the row its mark names (plan row LIT-bare).
         ("decimal-literal-at-int", "pass".into()),
-        ("numeric-is-not-binary-float", none(36)),
+        ("numeric-is-not-binary-float", key_val.clone()),
         (
             // The unit parses from step L2.2; resolution refuses its `type` declaration, which
             // comes before the marked line.
             "payload-built-by-position",
             format!("3: {}", zed_tests::not_yet!("a type declaration")),
         ),
-        (
-            "taint-reaches-clean-sink",
-            "50: the mark names the row \"Taint at a sink whose parameter does not take it\", \
-             and the diagnostic is in no row of the rejection table: Syntax error at `exec`."
-                .into(),
-        ),
+        ("taint-reaches-clean-sink", key_val.clone()),
         (
             "point-unit-in-quotient",
             format!(
@@ -81,7 +85,7 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
             ),
         ),
         ("unit-mismatch-force-energy", none(49)),
-        ("unit-mismatch-in-sum", none(47)),
+        ("unit-mismatch-in-sum", key_val.clone()),
         (
             "units-differ-by-kind",
             format!(
@@ -207,6 +211,13 @@ fn two_variants_are_rejected_for_a_reason_other_than_their_documented_error() {
         "6:5: `Point` is not defined."
     );
     let e = rejected("taint-reaches-clean-sink");
-    assert!(e.starts_with("50:1: Syntax error at `exec`.\n"), "{e}");
-    assert!(e.contains("expected '&' or '('"), "{e}");
+    // The syntax error at line 50 is reported with the refusals of the declarations around it.
+    assert!(
+        e.contains("\n50:1: Syntax error at `exec`. Try `exec : "),
+        "{e}"
+    );
+    assert!(
+        e.contains("expected '(' or '[' or 'matching' or '&'"),
+        "{e}"
+    );
 }

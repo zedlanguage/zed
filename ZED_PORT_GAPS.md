@@ -3749,3 +3749,13 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | Kahn's topological order with a `Vec` of rows ready, a `Vec<usize>` of needs still waiting and a `Vec` of levels, all changed in place in a `while let` loop | `fix_plan` | Mutation (gap 11) | a fold over the rows in topological order, carrying the levels and the waiting counts as map values |
 | `Peekable::next_if` taking the next row only when it is on the current line, while the text is rebuilt line by line into one `String` | `fix_plan` | Mutation, iterators | a fold over the lines that carries the rest of the row list and returns the joined text |
 | `HashMap::entry` keeping the first row of each id and reporting later ones | `index_rows` | Mutation (gap 11) | a fold into a map that keeps the existing value |
+
+## Entries from L1.29d (`crates/zedc-syntax/src/parse/recover.rs`, `parse/mod.rs`; `crates/zedc/src/front.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `while` loop over the token index `s` that pushes kept declarations, skipped ranges and errors into `Vec`s and pops kept declarations a failing one absorbs, truncating the holes kept with them | `recovering` | Mutation (gap 11) | a fold over the declarations carrying the kept list as a persistent stack, with the holes count stored beside each entry |
+| `(floor..=s).rev().find(..)` scanning a range backward for the first column token | `begins_at` | None | a search from the end of a slice |
+| The one `Parser` table shared by every attempt, written by `rule_node` through `&mut self` | `recovering` | Shared tables across pure calls (gap 2) | the table threaded through the fold as a value, as the parser memo of Gap 2 |
+| A `BTreeSet` of tried edits filled from a closure that captures it mutably | `repairs` | Mutation (gap 11) | a fold that keeps a sorted set and the edits offered |
+| A `Vec<bool>` of dropped statements, a `Vec` work list, and a `HashMap` from each name to its users from which `remove` takes each name once, for the search from the statements that use a broken name | `without_broken` | Mutation (gap 11) | a depth-first search over the uses as a fold carrying the visited set and the names read as persistent sets |

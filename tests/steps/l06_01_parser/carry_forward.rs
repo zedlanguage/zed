@@ -927,7 +927,7 @@ fn a_word_after_with_elsewhere_keeps_the_parser_message() {
         ]),
     ] {
         let e = refusal(text);
-        assert_eq!(e.row, None, "{text}: {e:?}");
+        assert_eq!(e.row, Some(Row::SyntaxError), "{text}: {e:?}");
         assert!(e.message.starts_with("Syntax error "), "{text}: {e:?}");
         assert!(e.notes[0].text.starts_with("expected "), "{text}: {e:?}");
     }

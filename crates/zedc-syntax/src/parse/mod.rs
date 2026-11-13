@@ -18,9 +18,12 @@ mod case;
 mod clause;
 pub mod engine;
 mod grammar;
+mod recover;
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::mem;
+use std::ops::Range;
 use std::sync::OnceLock;
 
 use clause::kind;
@@ -52,8 +55,12 @@ pub struct Tree {
     pub nodes: Vec<Node>,
     /// The root.
     pub root: usize,
-    /// The tree of each `${…}` hole, in the order of the tokens, each parsed as an `Expr`.
+    /// The tree of each `${…}` hole, in the order of the tokens, each parsed as an `Expr`; the
+    /// holes in a skipped declaration have none.
     pub holes: Vec<Tree>,
+    /// The token ranges of the declarations a unit parsed by [`parse_unit`] left out, each with
+    /// its syntax error, in the order of the text (step L1.29d).
+    pub skipped: Vec<Range<usize>>,
 }
 
 /// Holes nest as deep as the source does: each is moved to a work list before its parent goes.
@@ -77,6 +84,12 @@ impl Tree {
         let node = &self.nodes[n];
         grammar().rules[node.rule].alts[node.alt].layer
     }
+
+    /// Whether token `i` lies in a declaration the parse skipped. O(log s) for s skipped.
+    pub fn skips(&self, i: usize) -> bool {
+        let k = self.skipped.partition_point(|r| r.end <= i);
+        self.skipped.get(k).is_some_and(|r| r.start <= i)
+    }
 }
 
 /// Why a parse failed: the furthest token any alternative reached, and what it expected there.
@@ -85,8 +98,9 @@ pub struct Error {
     /// The span of that token (empty at the end of the text), or of the `..` that [`DOTS`]
     /// is about.
     pub span: Span,
-    /// The literals (quoted) and token kinds expected there, sorted, as the grammar writes
-    /// them (`'+'`, `IDENT`); the message names the kinds in the program's words instead.
+    /// The literals (quoted) and token kinds expected there, each once, in the order the
+    /// grammar tries the alternatives that expect them, as the grammar writes them (`'+'`,
+    /// `IDENT`); the message names the kinds in the program's words instead.
     pub expected: Vec<String>,
     /// A message that says more than the expected tokens: [`DOTS`] for a `..` in a list.
     pub message: Option<&'static str>,
@@ -94,6 +108,22 @@ pub struct Error {
     /// value, as `with initial x = 0` or `with x = 0`, or at a reserved word written where a
     /// name stands, as `without = 3;`; `span` is then the span of the item or the word.
     pub clause: Option<Box<Clause>>,
+    /// The notes, repairs and names of a failing declaration (step L1.29d), boxed as `clause`
+    /// is, so a `Result` that holds an `Error` stays small.
+    pub recovery: Box<Recovery>,
+}
+
+/// What recovery from a syntax error adds to the [`Error`] of a failing declaration.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Recovery {
+    /// Notes beside the message, each a span with its text, outermost first: where the failing
+    /// declaration begins and each bracket it leaves open.
+    pub notes: Vec<(Span, String)>,
+    /// The repairs: each the source line it rewrites, as it reads after the repair, at the
+    /// place of the edit; each parses.
+    pub repairs: Vec<(Span, String)>,
+    /// The names the failing declaration would define had it parsed.
+    pub defines: Vec<String>,
 }
 
 /// The message for a `..` written in a list with other items, as `(int, ..)`, `#a(int, ..)` or
@@ -110,20 +140,20 @@ impl fmt::Display for Error {
         match self.message {
             Some(m) => f.write_str(m),
             None => {
-                // The quoted literals in their sorted order, then the kinds of token in the
-                // order of `KINDS`, each once: `INT`, `FLOAT` and `RAT` are all "a number".
-                let mut shown: Vec<(usize, &str)> = self
+                // In the order of the grammar, each in the program's words, once: `INT`,
+                // `FLOAT` and `RAT` are all "a number". O(k log k) for k expected tokens.
+                let mut seen = BTreeSet::new();
+                let shown: Vec<&str> = self
                     .expected
                     .iter()
-                    .map(|e| match KINDS.iter().position(|(name, _)| name == e) {
-                        Some(i) => (i + 1, KINDS[i].1),
-                        None => (0, e.as_str()),
+                    .map(|e| match KINDS.iter().find(|(name, _)| name == e) {
+                        Some((_, words)) => *words,
+                        None => e.as_str(),
                     })
+                    .filter(|e| seen.insert(*e))
                     .collect();
-                shown.sort_by_key(|&(rank, _)| rank);
-                shown.dedup_by(|a, b| a.1 == b.1);
                 f.write_str("expected ")?;
-                for (i, (_, e)) in shown.iter().enumerate() {
+                for (i, e) in shown.iter().enumerate() {
                     if i > 0 {
                         f.write_str(" or ")?;
                     }
@@ -165,13 +195,28 @@ fn dots_in_list(toks: &[(Kind, &str)], far: usize) -> Option<usize> {
     (text(d) == Some("..") && opened).then_some(d)
 }
 
-/// Parses `tokens`, lexed from `text`, as the rule `start` at `ring`, to the end of the tokens.
-pub fn parse(text: &str, tokens: &[Token], start: &str, ring: u32) -> Result<Tree, Error> {
-    let end = Span {
+/// The span an error at the end of `text` is reported at.
+fn end_of(text: &str) -> Span {
+    Span {
         start: text.len(),
         end: text.len(),
-    };
-    parse_to(grammar(), text, tokens, start, ring, end)
+    }
+}
+
+/// Parses `tokens`, lexed from `text`, as the rule `start` at `ring`, to the end of the tokens.
+/// A unit is parsed as [`parse_unit`] does, and its error is the first in the order of the text.
+pub fn parse(text: &str, tokens: &[Token], start: &str, ring: u32) -> Result<Tree, Error> {
+    parse_to(grammar(), text, tokens, start, ring, end_of(text))
+}
+
+/// Parses `tokens`, lexed from `text`, as a unit at `ring`, declaration by declaration: the
+/// tree of the declarations that parse, its `skipped` the token ranges of those that do not,
+/// and the error of each of those, in the order of the text (step L1.29d). Linear in the unit.
+pub fn parse_unit(text: &str, tokens: &[Token], ring: u32) -> (Tree, Vec<Error>) {
+    let g = grammar();
+    let unit = g.rule("Unit").expect("the grammar has a rule `Unit`");
+    let item = g.rule("Item").expect("the grammar has a rule `Item`");
+    recover::recovering(g, text, tokens, unit, item, ring, end_of(text))
 }
 
 /// Parses as [`parse`] does, by the grammar `g`, which needs a rule `Expr` for a string's holes.
@@ -184,11 +229,7 @@ pub fn parse_with(
     start: &str,
     ring: u32,
 ) -> Result<Tree, Error> {
-    let end = Span {
-        start: text.len(),
-        end: text.len(),
-    };
-    parse_to(g, text, tokens, start, ring, end)
+    parse_to(g, text, tokens, start, ring, end_of(text))
 }
 
 /// A tree whose holes are being parsed: those left, each with the span of its `}`.
@@ -197,9 +238,9 @@ struct Open<'t> {
     holes: std::vec::IntoIter<(&'t [Token], Span)>,
 }
 
-/// Parses as `parse` does; `end` is the span reported for an error at the end of `tokens`.
-/// Holes nest, so the open trees are on a stack. An error stops the parse at the first failure
-/// in the order of the text, each tree before its holes.
+/// Parses as `parse` does; `end` is the span reported for an error at the end of `tokens`. A
+/// rule `Unit` of a grammar with a rule `Item` is parsed with recovery; any other rule stops at
+/// its first failure, in the order of the text, the tree before its holes.
 fn parse_to(
     g: &Grammar,
     text: &str,
@@ -208,13 +249,65 @@ fn parse_to(
     ring: u32,
     end: Span,
 ) -> Result<Tree, Error> {
-    let start = g.rule(start).unwrap_or_else(|| panic!("no rule {start}"));
-    let mut stack = vec![parse_one(g, text, tokens, start, ring, end)?];
-    let hole = g.rule("Expr");
+    let rule = g.rule(start).unwrap_or_else(|| panic!("no rule {start}"));
+    if start == "Unit"
+        && let Some(item) = g.rule("Item")
+    {
+        let (tree, errors) = recover::recovering(g, text, tokens, rule, item, ring, end);
+        return match errors.into_iter().next() {
+            Some(e) => Err(e),
+            None => Ok(tree),
+        };
+    }
+    let Open { mut tree, holes } = parse_one(g, text, tokens, rule, ring, end)?;
+    tree.holes = parse_holes(g, text, holes.collect(), ring)?;
+    Ok(tree)
+}
+
+/// The `${…}` holes in the strings of `tokens`, in the order of the text, each with the span of
+/// its `}`. O(the tokens and their string parts).
+fn holes_of(tokens: &[Token]) -> Vec<(&[Token], Span)> {
+    let mut holes = Vec::new();
+    for t in tokens {
+        if let Tok::Str(parts) = &t.tok {
+            for part in parts {
+                if let Part::Hole { tokens, span } = part {
+                    let close = Span {
+                        start: span.end - 1,
+                        end: span.end,
+                    };
+                    holes.push((tokens.as_slice(), close));
+                }
+            }
+        }
+    }
+    holes
+}
+
+/// The tree of each hole of `holes`, parsed as an `Expr` with its own holes. Holes nest as deep
+/// as the source does, so the open trees are on a stack; the first failure in the order of the
+/// text, each tree before its holes, stops the parse.
+fn parse_holes<'t>(
+    g: &Grammar,
+    text: &str,
+    holes: Vec<(&'t [Token], Span)>,
+    ring: u32,
+) -> Result<Vec<Tree>, Error> {
+    let mut done = Vec::new();
+    if holes.is_empty() {
+        return Ok(done);
+    }
+    let hole = g
+        .rule("Expr")
+        .expect("the grammar has a rule `Expr` for a string's holes");
+    let mut outer = holes.into_iter();
+    let mut stack: Vec<Open<'t>> = Vec::new();
     loop {
-        let top = stack.last_mut().expect("the outermost tree returns");
-        if let Some((tokens, close)) = top.holes.next() {
-            let hole = hole.expect("the grammar has a rule `Expr` for a string's holes");
+        let next = match stack.last_mut() {
+            Some(top) => top.holes.next(),
+            None => outer.next(),
+        };
+        if let Some((tokens, close)) = next {
             // A hole's tokens end at its `}`, so where the parse expected their end, the
             // program needs that `}`.
             let open = parse_one(g, text, tokens, hole, ring, close).map_err(|mut e| {
@@ -223,21 +316,22 @@ fn parse_to(
                         *x = "'}'".into();
                     }
                 }
-                e.expected.sort();
                 e
             })?;
             stack.push(open);
             continue;
         }
-        let done = stack.pop().expect("the top was read above").tree;
+        let Some(top) = stack.pop() else {
+            return Ok(done);
+        };
         match stack.last_mut() {
-            Some(parent) => parent.tree.holes.push(done),
-            None => return Ok(done),
+            Some(parent) => parent.tree.holes.push(top.tree),
+            None => done.push(top.tree),
         }
     }
 }
 
-/// Parses `tokens` as rule `start`, its holes left for `parse_to`.
+/// Parses `tokens` as rule `start`, its holes left for [`parse_holes`].
 fn parse_one<'t>(
     g: &Grammar,
     text: &str,
@@ -262,8 +356,7 @@ fn parse_one<'t>(
         None => None,
     };
     let Some(root) = matched else {
-        let mut expected: Vec<String> = p.expected().iter().map(shown).collect();
-        expected.sort();
+        let expected: Vec<String> = p.expected_in_order().iter().map(shown).collect();
         let dots = dots_in_list(&toks, p.far);
         let t = clause::Toks {
             g,
@@ -282,29 +375,17 @@ fn parse_one<'t>(
             expected,
             message: dots.map(|_| DOTS),
             clause: found.map(Box::new),
+            recovery: Box::default(),
         });
     };
-    let mut holes = Vec::new();
-    for t in tokens {
-        if let Tok::Str(parts) = &t.tok {
-            for part in parts {
-                if let Part::Hole { tokens, span } = part {
-                    let close = Span {
-                        start: span.end - 1,
-                        end: span.end,
-                    };
-                    holes.push((tokens.as_slice(), close));
-                }
-            }
-        }
-    }
     Ok(Open {
         tree: Tree {
             nodes: p.nodes,
             root,
             holes: Vec::new(),
+            skipped: Vec::new(),
         },
-        holes: holes.into_iter(),
+        holes: holes_of(tokens).into_iter(),
     })
 }
 

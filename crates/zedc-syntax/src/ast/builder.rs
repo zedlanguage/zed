@@ -412,9 +412,12 @@ impl<'a, 's> Builder<'a, 's> {
     ) -> Builder<'a, 's> {
         let mut holes = Vec::with_capacity(level.tokens.len());
         let mut count = 0;
-        for t in level.tokens {
+        for (j, t) in level.tokens.iter().enumerate() {
             holes.push(count);
-            if let Tok::Str(parts) = &t.tok {
+            // A skipped declaration's holes have no tree (`Tree::skipped`).
+            if let Tok::Str(parts) = &t.tok
+                && !level.tree.skips(j)
+            {
                 count += parts
                     .iter()
                     .filter(|p| matches!(p, Part::Hole { .. }))

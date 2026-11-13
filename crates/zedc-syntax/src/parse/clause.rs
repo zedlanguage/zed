@@ -295,7 +295,7 @@ impl Toks<'_, '_> {
     }
 
     /// The first and last tokens on the source line of token `i`.
-    fn line(&self, i: usize) -> (usize, usize) {
+    pub(super) fn line(&self, i: usize) -> (usize, usize) {
         let span = self.span(i);
         let lo = self.text[..span.start].rfind('\n').map_or(0, |k| k + 1);
         let hi = self.text[span.end..]

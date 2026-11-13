@@ -276,6 +276,17 @@ impl<'g, I: Input + ?Sized> Parser<'g, I> {
         self.expected.iter().copied().collect()
     }
 
+    /// What was expected at [`Parser::far`], each once, in the order the alternatives that
+    /// expected it were first tried: the order of the grammar. O(k log k) for k failures there.
+    pub fn expected_in_order(&self) -> Vec<Expected<'g>> {
+        let mut seen = BTreeSet::new();
+        self.expected
+            .iter()
+            .copied()
+            .filter(|e| seen.insert(*e))
+            .collect()
+    }
+
     /// Records that `what` was expected at `pos`.
     pub fn fail(&mut self, pos: usize, what: Expected<'g>) -> Option<usize> {
         if pos > self.far {

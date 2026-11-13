@@ -223,15 +223,24 @@ fn other_errors_keep_the_parse_message() {
         "y = (a is int) + if(x mod 2, z);",
     ] {
         let e = refusal(src);
-        assert_eq!(e.row, None, "{src}");
+        assert_eq!(e.row, Some(Row::SyntaxError), "{src}");
         // The parse's own message: its headline, and what the grammar takes there in a note.
         assert!(
             e.message.starts_with("Syntax error "),
             "{src}: {}",
             e.message
         );
-        assert_eq!(e.notes.len(), 1, "{src}");
         assert!(e.notes[0].text.starts_with("expected "), "{src}");
+        // Then the declaration and each bracket still open where the parse stops, and the
+        // repairs that parse (step L1.29d).
+        assert!(e.notes[1].text.ends_with(" begins here"), "{src}");
+        for n in &e.notes[2..] {
+            assert!(
+                n.text.contains(" opens here and is still open ") || n.text.starts_with("repair: "),
+                "{src}: {}",
+                n.text
+            );
+        }
     }
 }
 
@@ -341,6 +350,6 @@ fn many_reserved_words_in_one_statement_are_linear() {
     scaling::check("a statement of n words `true` ending in `is ;`", 500, |n| {
         let src = &long[&n];
         let e = refusal(src);
-        assert_eq!(e.row, None);
+        assert_eq!(e.row, Some(Row::SyntaxError));
     });
 }

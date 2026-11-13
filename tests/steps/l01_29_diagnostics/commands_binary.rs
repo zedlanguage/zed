@@ -442,3 +442,74 @@ fn zedc_run_prints_the_rejection_of_1_added_to_a_doubled_tuple() {
         )
     );
 }
+
+/// Two broken declarations and a sound one with a type error (step L1.29d): the first leaves a
+/// `(` open up to the next line that begins at the first column, the second has an operator
+/// with no operand, and the third is checked.
+const RECOVERED: &str = "perimeter(positional w, positional h) = 2 * (w + h\n\
+                         area(positional w, positional h) = w * * h;\n\
+                         show(positional x) = x ++ 1;\n";
+
+/// The two syntax errors of [`RECOVERED`] in `file`, as every command prints them.
+fn recovered_syntax(file: &Path) -> String {
+    let at = file.display();
+    format!(
+        "{at}:2:1: Syntax error at `area`. Try \
+         `perimeter(positional w, positional h) = 2 * (w + h);` instead.\n  \
+         [1] 2:1: expected '(' or '[' or '.' or '?.' or '*.' or '::' or '^' or '*' or '/' or \
+         'div' or 'mod' or '+' or '-' or '++' or '..<' or '..=' or '..' or '><' or 'as' or \
+         'into' or 'with' or 'without' or '<=' or '<' or '>=' or '>' or 'is' or 'not' or 'in' \
+         or '==' or '!=' or '&&' or '||' or 'else' or ')' or ','\n      \
+         2 | area(positional w, positional h) = w * * h;\n        \
+         | ^^^^\n  \
+         [2] 1:1: the declaration of `perimeter` begins here\n      \
+         1 | perimeter(positional w, positional h) = 2 * (w + h\n        \
+         | ^^^^^^^^^ [2]                               ^ [3] ^ [5]\n  \
+         [3] 1:45: `(` opens here and is still open at `area`\n  \
+         [4] 2:1: this line begins at the first column, so it begins the next declaration\n  \
+         [5] 1:51: repair: `perimeter(positional w, positional h) = 2 * (w + h);`\n\
+         {at}:2:40: Syntax error at `*`. Try `area(positional w, positional h) = w * h;` \
+         instead.\n  \
+         [1] 2:40 to 2:40: expected '-' or '!' or an annotation such as `@name` or a number or \
+         a string or 'true' or 'false' or an atom such as `#name` or a name or 'this' or '(' or \
+         'if' or 'match' or 'for' or 'loop' or '[' or '{{' or '?'\n      \
+         line 2 is shown above\n  \
+         [2] 2:1 to 2:4: the declaration of `area` begins here\n  \
+         [3] 2:40 to 2:41: repair: `area(positional w, positional h) = w * h;`\n"
+    )
+}
+
+#[test]
+fn zedc_run_prints_each_syntax_error_and_the_type_errors_of_the_declarations_that_parse() {
+    let f = file("recovered.zed", RECOVERED);
+    let run = rejection("run", &f);
+    assert_eq!(
+        run,
+        format!(
+            "{}{}:3:22: `++` does not take (String, 1): no arrow of `++` takes these types.\n  \
+             [1] 3:22: `x` is String here\n      \
+             3 | show(positional x) = x ++ 1;\n        \
+             |      ^^^^^^^^^^^^ [2]     ^ [3]\n        \
+             |                      ^ [1]\n        \
+             |                      ^^^^^^ [4, 5]\n  \
+             [2] 3:6: `x` has no declared type; its uses give it String\n  \
+             [3] 3:27: this literal, 1, is 1\n  \
+             [4] 3:22: `++` takes (String, String) -> String\n  \
+             [5] 3:22: `++` takes String\n",
+            recovered_syntax(&f),
+            f.display()
+        )
+    );
+    for command in ["replay", "build"] {
+        assert_eq!(rejection(command, &f), run, "zedc {command}");
+    }
+    // `zedc fmt` reads the syntax only: it prints the syntax errors and no type error.
+    assert_eq!(rejection("fmt", &f), recovered_syntax(&f));
+    // Each repair offered, written in place of its line, parses.
+    let fixed = RECOVERED
+        .replace("2 * (w + h\n", "2 * (w + h);\n")
+        .replace("w * * h", "w * h");
+    let f = file("recovered_fixed.zed", &fixed);
+    let run = rejection("run", &f);
+    assert!(!run.contains("Syntax error"), "{run}");
+}

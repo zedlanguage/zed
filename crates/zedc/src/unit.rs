@@ -31,7 +31,7 @@ use crate::ast::{self, Error, ExprKind, Note, StmtKind, StrPart, Target};
 use crate::build::Build;
 use crate::front::{self, Diagnostic, Parsed, error};
 use crate::lex::{self, Span, Tok};
-use crate::parse::{TOP, parse};
+use crate::parse::{TOP, parse_unit};
 use crate::pin::{self, Check, Edit, PIN_FILE, PRELUDE, Pins};
 use crate::place::{MANIFEST, Place};
 use crate::query::{self, Db};
@@ -127,8 +127,14 @@ const NOWHERE: Span = Span { start: 0, end: 0 };
 /// bind.
 pub fn manifest(text: &str) -> Result<Manifest, Vec<Error>> {
     let tokens = lex::lex(text).map_err(|e| vec![e.into()])?;
-    let tree =
-        parse(text, &tokens, "Unit", TOP).map_err(|e| vec![ast::Error::of_parse(text, e)])?;
+    // Every declaration that does not parse has its error (step L1.29d).
+    let (tree, failed) = parse_unit(text, &tokens, TOP);
+    if !failed.is_empty() {
+        return Err(failed
+            .into_iter()
+            .map(|e| ast::Error::of_parse(text, e))
+            .collect());
+    }
     let stmts = ast::unit_all_errors(text, &tokens, &tree)?;
     let mut out = Manifest::default();
     let mut errors = Vec::new();

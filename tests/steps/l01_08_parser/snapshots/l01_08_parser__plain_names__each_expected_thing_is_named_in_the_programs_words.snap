@@ -3,22 +3,22 @@ source: tests/steps/l01_08_parser/plain_names.rs
 expression: out
 ---
 "total = price * ;"
-  line 1, at ";": expected '!' or '(' or '-' or '?' or '[' or 'false' or 'for' or 'if' or 'loop' or 'match' or 'this' or 'true' or '{' or a name or a number or a string or an atom such as `#name` or an annotation such as `@name`
+  line 1, at ";": expected '-' or '!' or an annotation such as `@name` or a number or a string or 'true' or 'false' or an atom such as `#name` or a name or 'this' or '(' or 'if' or 'match' or 'for' or 'loop' or '[' or '{' or '?'
 "f(x) = x +\n"
-  line 2, at "": expected '!' or '(' or '-' or '?' or '[' or 'false' or 'for' or 'if' or 'loop' or 'match' or 'this' or 'true' or '{' or a name or a number or a string or an atom such as `#name` or an annotation such as `@name`
+  line 2, at "": expected '-' or '!' or an annotation such as `@name` or a number or a string or 'true' or 'false' or an atom such as `#name` or a name or 'this' or '(' or 'if' or 'match' or 'for' or 'loop' or '[' or '{' or '?'
 "x = 1;\ny = 2 3;"
-  line 2, at "3": expected '!=' or '&&' or '(' or '*' or '*.' or '+' or '++' or '-' or '.' or '..' or '..<' or '..=' or '/' or '::' or ';' or '<' or '<=' or '==' or '>' or '><' or '>=' or '?.' or '[' or '^' or 'as' or 'div' or 'else' or 'in' or 'into' or 'is' or 'mod' or 'not' or 'with' or 'without' or '||'
+  line 2, at "3": expected '(' or '[' or '.' or '?.' or '*.' or '::' or '^' or '*' or '/' or 'div' or 'mod' or '+' or '-' or '++' or '..<' or '..=' or '..' or '><' or 'as' or 'into' or 'with' or 'without' or '<=' or '<' or '>=' or '>' or 'is' or 'not' or 'in' or '==' or '!=' or '&&' or '||' or 'else' or ';'
 "x = 1;\n}\n"
-  line 2, at "}": expected '!' or '(' or '-' or '?' or '[' or 'break' or 'emit' or 'false' or 'for' or 'if' or 'import' or 'initial' or 'interface' or 'law' or 'local' or 'loop' or 'match' or 'return' or 'struct' or 'this' or 'true' or 'type' or 'until' or 'while' or '{' or '_' or a name or a number or a string or an atom such as `#name` or an annotation such as `@name` or the end of the text
+  line 2, at "}": expected an annotation such as `@name` or 'local' or 'initial' or 'import' or 'struct' or 'type' or 'interface' or 'law' or 'return' or 'emit' or 'while' or 'until' or a name or '_' or '(' or 'break' or '-' or '!' or a number or a string or 'true' or 'false' or an atom such as `#name` or 'this' or 'if' or 'match' or 'for' or 'loop' or '[' or '{' or '?' or the end of the text
 "@test(1 x = 1;"
   line 1, at "x": expected ')' or ','
 "xs = [1, 2, 3;"
-  line 1, at ";": expected '!=' or '&&' or '(' or '*' or '*.' or '+' or '++' or ',' or '-' or '.' or '..' or '..<' or '..=' or '/' or '::' or '<' or '<=' or '==' or '>' or '><' or '>=' or '?.' or '[' or ']' or '^' or 'as' or 'div' or 'else' or 'in' or 'into' or 'is' or 'mod' or 'not' or 'with' or 'without' or '||'
+  line 1, at ";": expected '(' or '[' or '.' or '?.' or '*.' or '::' or '^' or '*' or '/' or 'div' or 'mod' or '+' or '-' or '++' or '..<' or '..=' or '..' or '><' or 'as' or 'into' or 'with' or 'without' or '<=' or '<' or '>=' or '>' or 'is' or 'not' or 'in' or '==' or '!=' or '&&' or '||' or 'else' or ',' or ']'
 "type T = ;"
-  line 1, at ";": expected '!' or '#_' or '(' or '-' or '?' or '[' or 'false' or 'true' or '{' or '_' or a name or a number or a string or an atom such as `#name`
+  line 1, at ";": expected '(' or '!' or a name or an atom such as `#name` or '#_' or '[' or '{' or '-' or a number or a string or 'true' or 'false' or '_' or '?'
 "g = (a, b) -> ;"
-  line 1, at ";": expected '!' or '(' or '-' or '?' or '[' or 'break' or 'false' or 'for' or 'if' or 'loop' or 'match' or 'this' or 'true' or '{' or a name or a number or a string or an atom such as `#name` or an annotation such as `@name`
+  line 1, at ";": expected '{' or a name or '(' or 'break' or '-' or '!' or an annotation such as `@name` or a number or a string or 'true' or 'false' or an atom such as `#name` or 'this' or 'if' or 'match' or 'for' or 'loop' or '[' or '?'
 "match = 3;"
   line 1, at "=": Reserved word used as a name: `match = 3;`. Try `found = 3;` instead.
 "x = 1;\ns = \"v ${x x}\";"
-  line 2, at "x": expected '!=' or '&&' or '(' or '*' or '*.' or '+' or '++' or '-' or '->' or '.' or '..' or '..<' or '..=' or '/' or '::' or '<' or '<=' or '==' or '>' or '><' or '>=' or '?.' or '[' or '^' or 'as' or 'div' or 'else' or 'in' or 'into' or 'is' or 'mod' or 'not' or 'with' or 'without' or '||' or '}'
+  line 2, at "x": expected '->' or '(' or '[' or '.' or '?.' or '*.' or '::' or '^' or '*' or '/' or 'div' or 'mod' or '+' or '-' or '++' or '..<' or '..=' or '..' or '><' or 'as' or 'into' or 'with' or 'without' or '<=' or '<' or '>=' or '>' or 'is' or 'not' or 'in' or '==' or '!=' or '&&' or '||' or 'else' or '}'

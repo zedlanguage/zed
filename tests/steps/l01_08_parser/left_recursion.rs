@@ -18,7 +18,11 @@ fn show(g: &Grammar, text: &str, start: &str, ring: u32) -> String {
                 .iter()
                 .position(|t| t.span.start >= e.span.start)
                 .unwrap_or(tokens.len());
-            format!("ERROR@{at} {}", e.expected.join(" "))
+            // The case file lists what was expected sorted, so that it does not depend on the
+            // order in which the parse tries the alternatives; a message lists it in that order.
+            let mut expected = e.expected;
+            expected.sort();
+            format!("ERROR@{at} {}", expected.join(" "))
         }
     }
 }
@@ -162,7 +166,8 @@ fn a_mistake_after_a_chain_is_reported_where_it_is() {
     let tokens = lex(text).unwrap();
     let err = parse_with(&g, text, &tokens, "Sum", TOP).unwrap_err();
     assert_eq!(&text[err.span.start..err.span.end], "fee");
-    assert_eq!(err.expected, ["'*'", "'+'", "'-'", "'/'", "END"]);
+    // In the order of the grammar: a product continues before a sum does.
+    assert_eq!(err.expected, ["'*'", "'/'", "'+'", "'-'", "END"]);
 }
 
 #[test]

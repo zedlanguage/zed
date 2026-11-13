@@ -39,6 +39,7 @@ use std::sync::OnceLock;
 
 use num_bigint::BigUint;
 use zed_kernel::num::TooLarge;
+use zedc_base::rejection::Row;
 
 pub use node::{
     Annot, Arm, BinaryOp, BoundaryItem, CARRY_FORWARD, Error, Every, Expr, ExprKind, Field,
@@ -138,7 +139,9 @@ fn with_holes<'t, R>(
     while let Some(&Level { tokens, tree, .. }) = list.get(i) {
         let first = list.len();
         list[i].first = first;
-        let holes = tokens.iter().flat_map(|t| match &t.tok {
+        // A skipped declaration's holes have no tree (`Tree::skipped`).
+        let kept = tokens.iter().enumerate().filter(|&(j, _)| !tree.skips(j));
+        let holes = kept.flat_map(|(_, t)| match &t.tok {
             Tok::Str(parts) => &parts[..],
             _ => &[],
         });
@@ -805,20 +808,43 @@ impl Error {
     pub fn of_parse(text: &str, e: crate::parse::Error) -> Error {
         let message = e.to_string();
         let Some(c) = e.clause else {
-            let headline = match text.get(e.span.start..e.span.end).unwrap_or("") {
+            let quotable = |t: &str| !t.is_empty() && !t.contains(['\n', '`']);
+            let mut headline = match text.get(e.span.start..e.span.end).unwrap_or("") {
                 "" if e.span.start >= text.len() => "Syntax error at the end of the text.".into(),
-                t if t.is_empty() || t.contains(['\n', '`']) => "Syntax error here.".into(),
+                t if !quotable(t) => "Syntax error here.".into(),
                 t => format!("Syntax error at `{t}`."),
             };
+            // A repair is a source line as it reads repaired; one that cannot be quoted is
+            // left out, as the token in the headline is.
+            let repairs: Vec<(Span, String)> = e
+                .recovery
+                .repairs
+                .into_iter()
+                .filter(|(_, r)| quotable(r))
+                .collect();
+            if let Some((_, r)) = repairs.first() {
+                headline.push_str(&format!(" Try `{r}` instead."));
+            }
+            let mut notes = vec![Note {
+                span: e.span,
+                text: message,
+            }];
+            notes.extend(
+                e.recovery
+                    .notes
+                    .into_iter()
+                    .map(|(span, text)| Note { span, text }),
+            );
+            notes.extend(repairs.into_iter().map(|(span, r)| Note {
+                span,
+                text: format!("repair: `{r}`"),
+            }));
             return Error {
                 menu: String::new(),
                 span: e.span,
                 message: headline,
-                notes: vec![Note {
-                    span: e.span,
-                    text: message,
-                }],
-                row: None,
+                notes,
+                row: Some(Row::SyntaxError),
             };
         };
         Error {
