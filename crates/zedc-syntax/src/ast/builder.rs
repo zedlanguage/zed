@@ -335,6 +335,9 @@ pub(super) struct Builder<'a, 's: 'a> {
     pub(super) methods: &'a Methods<'a>,
     /// The parent of each node of the tree, listed on the first rejection that names one.
     pub(super) parents: std::cell::OnceCell<Vec<usize>>,
+    /// The text of each expression that is a whole argument of a call, listed on the first
+    /// use of an output of `main` ([`Builder::passed`]).
+    pub(super) args: std::cell::OnceCell<HashMap<Span, Span>>,
 }
 
 impl<'a, 's> Builder<'a, 's> {
@@ -349,8 +352,9 @@ impl<'a, 's> Builder<'a, 's> {
     }
 
     /// The read `of.field`, at `span`, of the parameter `of` of the `main` whose body holds it:
-    /// the name of the field's input, recorded as read ([`Mains`]); or why it cannot be read,
-    /// when the field is an output or `MainArgs` has no such field.
+    /// the name of the field's input, recorded as read ([`Mains`]); the name of an output passed
+    /// whole as an argument of a call, recorded as pushed to; or why it cannot be read, when the
+    /// field is an output read otherwise or `MainArgs` has no such field.
     pub(super) fn main_field(&self, of: Expr, field: &str, span: Span) -> Result<Expr, Error> {
         let m = self.main_param(&of).expect("a read of main's parameter");
         let error = |message: String| Error {
@@ -362,6 +366,21 @@ impl<'a, 's> Builder<'a, 's> {
         };
         match field {
             "args" | "stdin" | "env" => Ok(self.main_use(field, span)),
+            // Passed whole to a parameter, the output is given to the function called, which
+            // pushes to it, and `main` declares it as it declares an output it pushes to. The
+            // port is declared at its first use, the whole argument, which is also the text a
+            // group around the name gives it.
+            "stdout" | "stderr" if let Some(whole) = self.passed(span) => {
+                let main = self.mains.at(span.start).expect("a use inside main's body");
+                first_use(
+                    &mut main.uses.borrow_mut().1[(field == "stderr") as usize],
+                    whole,
+                );
+                Ok(Expr {
+                    kind: ExprKind::Name(format!("{m}.{field}")),
+                    span: whole,
+                })
+            }
             "stdout" | "stderr" => Err(error(format!(
                 "`{m}.{field}` is read here, and `{m}.{field}` is an output of the program: \
                  `main` writes lines to it with a push, as `{m}.{field} <- lines;`, and never \
@@ -518,6 +537,7 @@ impl<'a, 's> Builder<'a, 's> {
             qualifiers,
             methods,
             parents: std::cell::OnceCell::new(),
+            args: std::cell::OnceCell::new(),
         }
     }
 
@@ -538,6 +558,42 @@ impl<'a, 's> Builder<'a, 's> {
             parents
         });
         parents.get(n).copied().filter(|&p| p != usize::MAX)
+    }
+
+    /// The text of the whole argument of a call that the expression written at `span` is, as
+    /// `m.stdout` in `f(m.stdout)`, `f(out: m.stdout)` or `f(out: (m.stdout))`: where an output
+    /// of `main` is passed to a parameter, which the checker decides is an output port
+    /// (DESIGN.md L1.19), and not read. `None` when it is no whole argument.
+    // Complexity tradeoff: the naive test walks up from the expression's node to its
+    // parent, but the builder knows the expression by its text only; listing the arguments
+    // once, on the first use of an output, costs one walk of the tree, O(nodes), and O(1) per
+    // test after, where a search for the node by its text would cost O(nodes) per use.
+    pub(super) fn passed(&self, span: Span) -> Option<Span> {
+        let tree = self.tree;
+        let args = self.args.get_or_init(|| {
+            // A walk from the root, as in [`Builder::parent`], reaches no abandoned node.
+            let mut args = HashMap::new();
+            let mut stack = vec![tree.root];
+            while let Some(k) = stack.pop() {
+                let kids = &tree.nodes[k].kids;
+                if let ("PlainArg", [v]) | ("NamedArg", [_, v]) = (tree.name(k), &kids[..]) {
+                    // Grouping parentheses only shape parsing, so `f((m.stdout))` passes
+                    // `m.stdout` whole; a node with one child of its own text is a step of
+                    // the grammar's chain of precedence levels, which the walk passes through.
+                    let mut inner = *v;
+                    while let [c] = tree.nodes[inner].kids[..] {
+                        if tree.name(inner) != "Group" && self.span(c) != self.span(inner) {
+                            break;
+                        }
+                        inner = c;
+                    }
+                    args.insert(self.span(inner), self.span(*v));
+                }
+                stack.extend(kids);
+            }
+            args
+        });
+        args.get(&span).copied()
     }
 
     pub(super) fn span(&self, n: usize) -> Span {

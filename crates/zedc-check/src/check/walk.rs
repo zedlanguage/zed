@@ -49,8 +49,19 @@ pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
             .map(|b| b.name.as_str()),
     );
     let mut ck = Ck::new(t, Ck::fixes_checked);
-    ck.bounds();
-    ck.walk(unit);
+    // A misused output port stops the check, as the builder's rejection of a read of `m.stdout`
+    // stops the build: the walk would read the port as the value of its type, and its errors,
+    // a port given to `len` among them, would offer repairs that read the port.
+    let ports = super::ports::ports(t);
+    let stop = !ports.errors.is_empty();
+    for (span, message, notes) in ports.errors {
+        ck.error_with(span, message, notes);
+    }
+    ck.port_params = ports.params;
+    if !stop {
+        ck.bounds();
+        ck.walk(unit);
+    }
     ck.finish();
     #[cfg(debug_assertions)]
     clean_check::flush();
@@ -1184,7 +1195,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let StmtKind::Push { port, value } = &s.kind else {
                     unreachable!("a push")
                 };
-                if self.lines_out.contains(port) {
+                let param = match self.t.res.uses.get(&s.span) {
+                    Some(Ref::Bound(ids)) => self.port_params.contains(&ids[0]),
+                    _ => false,
+                };
+                if param || self.lines_out.contains(port) {
                     self.pushed(&t, port, value.span);
                 }
             }
@@ -2060,14 +2075,16 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let f = s.f;
         // A port has no origin for a derivation to show: the builder rejects every read of an
-        // output port, as `m.stdout` written as a value, so no expression names one.
+        // output port, as `m.stdout` written as a value, and the one use it lets through, a port
+        // passed whole to a parameter that is an output port ([`super::ports`]), is no read.
         if let Some(ports) = f.ports() {
             for p in ports {
                 let id = self.id(p.span, &p.name);
                 if matches!(&p.ty.kind, TypeKind::Name(n) if n == "Lines") {
                     self.lines_out.insert(p.name.clone());
                 }
-                self.env.insert(id, Ty::dynamic());
+                // Its declared type, `Lines`, which a parameter it is passed to declares.
+                self.env.insert(id, denoted(&p.ty));
             }
         }
         self.level += 1;

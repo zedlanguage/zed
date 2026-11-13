@@ -202,6 +202,26 @@ pub struct Resolution {
     /// ([`Exports`], [`Refused::Unknown`]), by its text: it has no error, and the statement
     /// that holds it is not checked (step L1.29d).
     pub broken: Vec<Span>,
+    /// The text of each push statement, in every scope: `uses` holds the port it pushes to at
+    /// that text.
+    pub pushes: Vec<Span>,
+    /// Each call whose callee is a name, with the text of its arguments. With
+    /// [`Resolution::pushes`], what the checker reads to tell a port passed whole to a
+    /// parameter that is pushed to from a read of the port (DESIGN.md L1.19).
+    pub calls: Vec<NamedCall>,
+}
+
+/// A call `f(a, x: b)` whose callee is a name, by the text of its parts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NamedCall {
+    /// The text of the whole call.
+    pub span: Span,
+    /// The text of the callee's name, where `uses` holds what it names.
+    pub callee: Span,
+    /// The text of each positional argument, in order.
+    pub positional: Vec<Span>,
+    /// Each named argument's name and text, in written order.
+    pub named: Vec<(String, Span)>,
 }
 
 /// A region of value flow whose loose atoms reach a handler (DESIGN.md sec:type_resolution).
@@ -1859,6 +1879,7 @@ impl Resolver<'_> {
             }
             StmtKind::Push { port, value } => {
                 self.name(port, s.span);
+                self.out.pushes.push(s.span);
                 todo.push(Task::Expr(value));
             }
             StmtKind::Function(f) => {
@@ -2397,6 +2418,14 @@ impl Resolver<'_> {
                 {
                     self.errors.push(files_moved(callee.span));
                     return;
+                }
+                if let ExprKind::Name(_) = callee.kind {
+                    self.out.calls.push(NamedCall {
+                        span: e.span,
+                        callee: callee.span,
+                        positional: positional.iter().map(|a| a.span).collect(),
+                        named: named.iter().map(|(n, a)| (n.clone(), a.span)).collect(),
+                    });
                 }
                 todo.extend(named.iter().rev().map(|(_, a)| Task::Expr(a)));
                 todo.extend(positional.iter().rev().map(Task::Expr));

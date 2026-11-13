@@ -226,3 +226,21 @@ fn a_long_chain_of_calls_is_decided_in_linear_time() {
         assert_eq!(facts(&t, stmts).len(), n);
     });
 }
+
+/// The helper of the L1.19 example blocks, since a push can wait while its reader does not
+/// read, and so does `main`, which calls it.
+#[test]
+fn a_helper_that_pushes_to_its_port_blocks() {
+    let text = "say(positional s, out: Lines) { out <- s; }\n\
+                main(m: MainArgs) {\n  _ = say(\"hi\", out: m.stdout);\n}\n";
+    let got = blocking(text);
+    assert_eq!(
+        got["say"],
+        "`say` can block: it pushes to `out`, which can wait while its reader does not read."
+    );
+    assert_eq!(
+        got["main"],
+        "`main` can block: it calls `say`, which pushes to `out`, which can wait while its reader \
+         does not read."
+    );
+}

@@ -1636,11 +1636,7 @@ impl<'a> Elab<'a> {
                 };
                 let out = m.t().map(|v| {
                     let t = self.temp();
-                    vec![(
-                        t.to_string(),
-                        t,
-                        Term::Push(port.as_str().into(), Shared::new(v)),
-                    )]
+                    vec![(t.to_string(), t, self.push(s.span, port, v))]
                 });
                 m.ret = Ret::Stmt(out);
             }

@@ -49,6 +49,9 @@ pub(super) struct Elab<'a> {
     pub(super) marks: Option<Vec<Mark>>,
     /// The shared parts given their source sites so far ([`zed_kernel::sites::mark`]).
     pub(super) sited: HashSet<u64>,
+    /// The output ports of the unit's `main`, `m.stdout` and `m.stderr` where it pushes to
+    /// them, in the order of its header; empty when the unit has no `main`.
+    pub(super) outputs: Vec<Arc<str>>,
 }
 
 impl<'a> Elab<'a> {
@@ -59,6 +62,12 @@ impl<'a> Elab<'a> {
             *count.entry(&b.name).or_default() += 1;
         }
         let mut seen: HashMap<&str, usize> = HashMap::new();
+        let outputs = t
+            .funcs
+            .values()
+            .find_map(|f| f.ports())
+            .map(|ports| ports.iter().map(|p| p.name.as_str().into()).collect())
+            .unwrap_or_default();
         let names = res
             .binders
             .iter()
@@ -89,6 +98,7 @@ impl<'a> Elab<'a> {
             defaults: HashMap::new(),
             marks: None,
             sited: HashSet::new(),
+            outputs,
         }
     }
 
@@ -155,14 +165,12 @@ impl<'a> Elab<'a> {
                     ids.len()
                 ),
             ),
-            Some(Ref::Bound(ids)) if self.t.res.binders[ids[0]].kind == Kind::Port => self.error(
-                span,
-                format!(
-                    "`{n}` is an output port, and a port is written to, not read, so it is no \
-                     value here. Push to it with `{n} <- e;`, and use the value `e` itself where \
-                     it is needed."
-                ),
-            ),
+            // The checker lets a port be named only where it is passed whole to a parameter
+            // that is an output port ([`zedc_check::check`]); the parameter holds its name, and a
+            // push to the parameter goes to the port of that name ([`Elab::push`]).
+            Some(Ref::Bound(ids)) if self.t.res.binders[ids[0]].kind == Kind::Port => {
+                Some(Term::Lit(Value::str(&self.t.res.binders[ids[0]].name)))
+            }
             Some(Ref::Bound(ids)) => Some(Term::Var(self.names[ids[0]].clone())),
             Some(Ref::Prelude(w)) => Some(Term::Var(w.as_str().into())),
             // `main::files` outside `main`: a read of the port `main` opens under that name.
@@ -172,6 +180,43 @@ impl<'a> Elab<'a> {
             }
             None => unreachable!("a resolved unit records every name"),
         }
+    }
+
+    /// The push of the value `v` to the target `port` of the push statement at `span`. A target
+    /// that is a parameter, an output port passed to the function (DESIGN.md L1.19), holds the
+    /// name of a port of `main` ([`Elab::name`]), and the push goes to the port of that name:
+    /// `if out == "m.stdout" { m.stdout <- v } else { m.stderr <- v }`.
+    // Complexity tradeoff: a push names its port statically in every later pass (the kernel's
+    // world, ZIR, staging, preimages), so the port a parameter holds is chosen here among the
+    // P ports `main` declares, P <= 2, by a chain of P - 1 tests: O(P) per push. Specializing
+    // each function per port it is given would leave every later pass as it is too, but copies
+    // a function once per tuple of ports, P^k copies for k output-port parameters, and gives each
+    // copy's binders a second kernel name; making a port a value of the kernel would change every
+    // later pass. Neither pays for itself while P <= 2.
+    pub(super) fn push(&self, span: Span, port: &str, v: Term) -> Term {
+        let v = Shared::new(v);
+        let held = match self.t.res.uses.get(&span) {
+            Some(Ref::Bound(ids)) if self.t.res.binders[ids[0]].kind == Kind::Param => ids[0],
+            _ => return Term::Push(port.into(), v),
+        };
+        let Some((last, rest)) = self.outputs.split_last() else {
+            // No `main` pushes to a port, so no call gives this parameter one: the checker
+            // rejects any other argument, and the push is never reached.
+            return Term::Push(port.into(), v);
+        };
+        let held = Term::Var(self.names[held].clone());
+        rest.iter()
+            .rev()
+            .fold(Term::Push(last.clone(), v.clone()), |other, p| {
+                Term::If(
+                    Shared::new(Term::Prim(
+                        Prim::Eq,
+                        vec![held.clone(), Term::Lit(Value::str(p))],
+                    )),
+                    Shared::new(Term::Push(p.clone(), v.clone())),
+                    Shared::new(other),
+                )
+            })
     }
 
     /// The declared function that `e` names, if it names exactly one.

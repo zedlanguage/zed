@@ -38,6 +38,7 @@
 
 pub(crate) use zedc_types::kernel_type;
 pub mod blocking;
+pub mod ports;
 pub mod read;
 pub use zedc_types::ty;
 pub mod widen;
@@ -1136,6 +1137,9 @@ struct Ck<'t, 'a> {
     rough: bool,
     /// The output ports declared `Lines`.
     lines_out: HashSet<String>,
+    /// The parameters that are output ports ([`ports`]): a push to one is checked as a push
+    /// to a `Lines` port of `main` is.
+    port_params: HashSet<usize>,
     /// The classes; class `k` is the type variable `$k`.
     classes: Vec<Class>,
     /// The rows and payload shapes [`Self::data`] entered, each holding no unknown: every class
@@ -1406,6 +1410,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             trying: false,
             rough: false,
             lines_out: HashSet::new(),
+            port_params: HashSet::new(),
             classes: Vec::new(),
             data_checked: HashSet::new(),
             clean: HashMap::new(),
