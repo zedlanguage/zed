@@ -39,17 +39,19 @@ pub use zedc_stage::stage::Cones;
 
 /// The elaboration of `unit` under its resolution, or every error in it, in text order.
 pub fn elaborate(unit: &[Stmt], res: &Resolution) -> Result<Unit, Vec<Error>> {
-    elaborate_text(unit, res, None)
+    elaborate_text(unit, res, None, None)
 }
 
 /// [`elaborate`], with the unit's text when it is known, which a message quotes: the line each
-/// fix of a rejected literal rewrites.
+/// fix of a rejected literal rewrites; and with the target it is built for, as `build.target`
+/// names it, which a message that depends on the target names.
 pub fn elaborate_text(
     unit: &[Stmt],
     res: &Resolution,
     text: Option<&str>,
+    target: Option<&str>,
 ) -> Result<Unit, Vec<Error>> {
-    elaborate_in(unit, res, text, None).map(|(unit, _)| unit)
+    elaborate_in(unit, res, text, target, None).map(|(unit, _)| unit)
 }
 
 /// The elaboration of `unit` as [`elaborate`] gives it, with each written operator and integer
@@ -60,7 +62,7 @@ pub fn elaborate_text(
 /// node of the unmarked elaboration has the same position in the marked one. The marked unit
 /// is for finding positions only; it is never run.
 pub fn elaborate_marked(unit: &[Stmt], res: &Resolution) -> Result<(Unit, Vec<Mark>), Vec<Error>> {
-    elaborate_in(unit, res, None, Some(Vec::new()))
+    elaborate_in(unit, res, None, None, Some(Vec::new()))
         .map(|(unit, marks)| (unit, marks.expect("marks were asked for")))
 }
 
@@ -68,9 +70,11 @@ fn elaborate_in<'a>(
     unit: &'a [Stmt],
     res: &'a Resolution,
     text: Option<&'a str>,
+    target: Option<&'a str>,
     marks: Option<Vec<Mark>>,
 ) -> Result<(Unit, Option<Vec<Mark>>), Vec<Error>> {
-    let t = Tables::with_text(unit, res, text);
+    let mut t = Tables::with_text(unit, res, text);
+    t.target = target;
     let (mut info, warnings) = work::stage(Stage::Check, None, || {
         let info = check::walk::check_with(&t, unit);
         let warnings = check::widen::warnings(&t, unit, &info);

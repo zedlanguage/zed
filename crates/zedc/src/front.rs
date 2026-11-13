@@ -867,7 +867,7 @@ fn checked(
     // Doc comments are checked after parsing; their errors join elaboration's.
     let mut errors = work::stage(Stage::Docs, None, || docs::check(text, tokens, docs, &res));
     let elaborated = work::stage(Stage::Elaborate, None, || {
-        elaborate_text(&stmts, &res, Some(text))
+        elaborate_text(&stmts, &res, Some(text), Some(build.target()))
     });
     let unit = match elaborated {
         Ok(unit) if errors.is_empty() => unit,

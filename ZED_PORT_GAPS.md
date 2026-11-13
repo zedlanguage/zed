@@ -3846,3 +3846,10 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 |---|---|---|---|
 | A `Budget { spent, most, wanted }` passed as `&mut Budget` through every operation, `spend` returning `Option<()>` so that `?` stops the expansion at the first charge past the limit | `Poly::neg`, `add`, `mul`, `pow`, `Identity::expand`, `Identity::decide`, `Identity::factored`, `normal_form` | Mutation (gap 11); early return by `?` | the budget threaded as a value through the fold over the nodes, each operation returning the new budget and its result, a charge past the limit giving a failure atom that the fold passes up |
 | `support_mul` writing the work it counted into a `&mut f64` out-parameter, so that the caller charges it whether or not the product finished | `Poly::support_mul`, `sumset`, `coefficients` | Mutation (gap 11); out-parameter | a result tuple of the product (or the failure) and the work spent |
+
+## Entries from CONST-too-large (`crates/zedc-check/src/check/walk.rs`; `crates/zedc-resolve/src/resolve/tables.rs`; `crates/zedc-elab/src/elab.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `Tables::target` set by assignment after `Tables::with_text` builds the tables | `elaborate_in` | Mutation (gap 11) | the target passed to the constructor, or a record update `t with target: ...` |
+| `u128::leading_zeros` and `div_ceil` on the bound of the exponent | `Ck::too_large_power` | Bit operations (gap 4, built) | `int` arithmetic: the floor of log₂ by the bit length, the division rounded up written out |

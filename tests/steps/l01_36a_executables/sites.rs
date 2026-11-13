@@ -82,42 +82,52 @@ fn a_number_too_large_is_placed_at_its_operation() {
     );
 }
 
-/// Item MSG-too-large-plain: `b ^ (2^64)` with `b = 2^64 + 13`, a number of `65 · 2^64` bits, is
-/// named as the program writes it, with its size in digits and bytes and the machine's
-/// memory. Before, the message named only `^` and a raw count of 22 digits of the memory the
-/// evaluator asked for, eight times the number's size.
+/// The program raising `base` to `k`, `b = 2^64 + 13` or its rational, `k` 2^64 plus the
+/// program's first word read as an integer, so 2^64 when there are none. With `k` read from
+/// the input the types do not fix the size, so the checker leaves the power to the run; with
+/// `k` written as `2^64`, the power is rejected at compile time (CONST-too-large,
+/// l01_29_diagnostics::too_large).
+fn input_power(base: &str) -> String {
+    format!(
+        "main(m: MainArgs) {{\n    b = 2^64 + 13;\n    \
+         k = 2^64 + (int(m.args[0] else \"\") else 0);\n    \
+         m.stdout <- if k >= 0 {{ String({base} ^ k) }} else {{ \"\" }};\n}}\n"
+    )
+}
+
+/// Item MSG-too-large-plain: `b ^ k` with `b = 2^64 + 13` and `k = 2^64`, a number of
+/// `64 · 2^64 + 1` bits or more, is named as the program writes it, with its size in digits
+/// and bytes and the machine's memory. Before, the message named only `^` and a raw count of
+/// 22 digits of the memory the evaluator asked for, eight times the number's size. The size
+/// in bytes is from 65 bits per factor (plan row MSG-too-large-figure).
 #[test]
 fn a_power_too_large_is_named_as_written_with_its_size() {
-    let src = "main(m: MainArgs) {\n    b = 2^64 + 13;\n    m.stdout <- String(b ^ (2^64));\n}\n";
     stops(
         "power",
-        src,
+        &input_power("b"),
         "",
         &format!(
-            "FILE:3:24: Number too large for memory: `b ^ (2^64)` needs a number of about \
-             3.6 × 10^20 digits (130 EiB){}.\n  [1] 3:24: the run stopped here\n      \
-             3 |     m.stdout <- String(b ^ (2^64));\n        \
-               |                        ^^^^^^^^^^\n",
+            "FILE:4:36: Number too large for memory: `b ^ k` needs a number of about \
+             3.6 × 10^20 digits (130 EiB){}.\n  [1] 4:36: the run stopped here\n      \
+             4 |     m.stdout <- if k >= 0 {{ String(b ^ k) }} else {{ \"\" }};\n        \
+               |                                    ^^^^^\n",
             beyond_machine()
         ),
     );
 }
 
-/// The same power of the rational `rat(b)`: the same size, named as written. `rat(b)` of an
-/// operation on integer literals gives no atom, so the push needs no `else` (CAST-rat-int).
+/// The same power of the rational `rat(b)`: the same size, named as written.
 #[test]
 fn a_rational_power_too_large_is_named_as_written_with_its_size() {
-    let src = "main(m: MainArgs) {\n    b = 2^64 + 13;\n    \
-               m.stdout <- String(rat(b) ^ (2^64));\n}\n";
     stops(
         "rat_power",
-        src,
+        &input_power("rat(b)"),
         "",
         &format!(
-            "FILE:3:24: Number too large for memory: `rat(b) ^ (2^64)` needs a number of about \
-             3.6 × 10^20 digits (130 EiB){}.\n  [1] 3:24: the run stopped here\n      \
-             3 |     m.stdout <- String(rat(b) ^ (2^64));\n        \
-               |                        ^^^^^^^^^^^^^^^\n",
+            "FILE:4:36: Number too large for memory: `rat(b) ^ k` needs a number of about \
+             3.6 × 10^20 digits (130 EiB){}.\n  [1] 4:36: the run stopped here\n      \
+             4 |     m.stdout <- if k >= 0 {{ String(rat(b) ^ k) }} else {{ \"\" }};\n        \
+               |                                    ^^^^^^^^^^\n",
             beyond_machine()
         ),
     );

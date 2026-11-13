@@ -43,6 +43,7 @@ mod stable;
 mod sum_plus;
 mod suppress;
 mod syntax_recovery;
+mod too_large;
 mod type_size;
 mod tyvars;
 mod untracked;

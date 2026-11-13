@@ -3444,6 +3444,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                     .any(|t| t.atoms().contains(&Value::atom("divByZero")));
                 if op == BinaryOp::Pow {
                     self.exponent(&x, &y, b, span);
+                    if let Some(a) = x.expr {
+                        self.too_large_power(a, b, span);
+                    }
                 }
                 let zero = if divides {
                     self.zero_divisor(op, &x, &y, b)
@@ -7531,6 +7534,214 @@ impl<'t, 'a> Ck<'t, 'a> {
             out = out.union(&left);
         }
         out
+    }
+
+    /// The power `a ^ e` at `span`, rejected when its result is proved larger than the
+    /// target's address space, whether or not its branch is taken (DESIGN.md
+    /// sec:checking_in_zed, sec:diagnostics "Number too large for any memory of the target";
+    /// QUESTIONS A100; plan row CONST-too-large). The text fixes the base `a`, and every
+    /// exponent `e` may take is at least `k` in magnitude. Each part of `a` that `^` builds,
+    /// its numerator or denominator where wider than 64 bits ([`Rat::built_widths`]), of `L`
+    /// bits, is at least `2^(L - 1)` in magnitude, so its power has at least
+    /// `k * (L - 1) + 1` bits: `k * ⌊log₂ |x|⌋ + 1`. A base within 64 bits, or one kept as
+    /// prime powers, as in `2^(2^70)`, builds nothing, and an exponent that may be 0, or one
+    /// the text does not bound, as in `2r^(2^k)`, proves nothing: both are left to the run.
+    /// Only exact `int` and `rat` values are covered, not texts or collections.
+    ///
+    /// The bound is the target's ([`ADDRESS_BYTES_LOG2`], the same for every target zedc
+    /// builds for), named as `build.target` names it where the build gives it
+    /// ([`Tables::target`]). The check reads nothing of the machine that builds, so a program
+    /// is accepted or refused alike on every machine.
+    ///
+    /// Complexity tradeoff: the naive method builds the power, as the run would, which costs
+    /// the size of the result (128 EiB for `(2^64 + 13) ^ (2^64)`) and depends on the memory
+    /// of the machine that builds. Used: what the text gives of the base and of the exponent's
+    /// interval ([`Self::fixed_value`], [`Self::ints_here`]), the bit lengths of the base's
+    /// two parts, and one comparison of the least exponent with a word: O(1) per power, plus
+    /// the size of the numbers a rejection's message writes. The bound is DESIGN's, not the
+    /// tightest: `k * log₂ |x|` would be larger by up to `k` bits per part, and a power
+    /// between the two is left to the run.
+    fn too_large_power(&mut self, a: &'a Expr, e: &'a Expr, span: Span) {
+        let Some(base) = self.fixed_value(a) else {
+            return;
+        };
+        let (Value::Big(r) | Value::Rat(r)) = &base else {
+            return;
+        };
+        let widths = r.built_widths();
+        // `F`, the sum of `L - 1` over the built parts, at least 64 for each, and their count.
+        let floor_log: u64 = widths.iter().flatten().map(|l| l - 1).sum();
+        let built = widths.iter().flatten().count() as u64;
+        if built == 0 {
+            return;
+        }
+        let (ints, _) = self.ints_here(e);
+        let Some(k) = least_magnitude(&ints) else {
+            return;
+        };
+        // The result has more than 2^67 bits, 2^64 bytes, exactly when `k * F + built` does,
+        // that is when `k` reaches `(2^67 + 1 - built) / F` rounded up: below 2^61, as
+        // `F >= 64`, so the comparison is of words.
+        let room_bits = 1u128 << (ADDRESS_BYTES_LOG2 + 3);
+        let limit = (room_bits + 1 - u128::from(built)).div_ceil(u128::from(floor_log));
+        if k < Num::from(u64::try_from(limit).expect("a quotient below 2^61")) {
+            return;
+        }
+        let bits = &(&k * &Num::from(floor_log)) + &Num::from(built);
+        let bytes = bits.div_floor(&Num::from(8i64));
+        let space = bytes_text_of(&Num::pow2(&Num::from(i64::from(ADDRESS_BYTES_LOG2))));
+        // A size that writes as the address space, as 2^64 bytes and a few bits, is more than
+        // it.
+        let need = match bytes_text_of(&bytes) {
+            need if need == space => format!("more than {need}"),
+            need => format!("at least {need}"),
+        };
+        let target = self
+            .t
+            .target
+            .map_or("a 64-bit target".to_string(), target_text);
+        let power = self.code(Some(span)).unwrap_or("this power");
+        let base_code = self.code(Some(a.span)).unwrap_or("the base");
+        let exponent_code = self.code(Some(e.span)).unwrap_or("the exponent");
+        let message = format!(
+            "Number too large for any memory of the target: `{power}` needs {need}; {target} \
+             addresses {space}"
+        );
+        // Where each operand comes from, the literal or the declaration, and its least size.
+        let mut notes = self.derive(&[span]);
+        let part_names = match &base {
+            Value::Rat(_) => [Some("numerator"), Some("denominator")],
+            _ => [None, None],
+        };
+        // `x` names the base, or `p` each part of a `rat` base, as the formula does.
+        let var = if part_names[0].is_some() { "p" } else { "x" };
+        let base_is = (widths.iter().zip(part_names))
+            .filter_map(|(l, name)| {
+                let low = (*l)? - 1;
+                Some(match name {
+                    Some(name) => format!(
+                        "the {name} p of the base `{base_code}` is at least 2^{low} in \
+                         magnitude, so ⌊log₂ |p|⌋ is {low}"
+                    ),
+                    None => format!(
+                        "the base x, `{base_code}`, is at least 2^{low} in magnitude, so \
+                         ⌊log₂ |x|⌋ is {low}"
+                    ),
+                })
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        notes.push(Note {
+            span: self.fixed_at(a),
+            text: base_is,
+        });
+        // Every exponent below 0, as `x ^ -(2^64)` on a `rat`: the repair keeps the sign.
+        let negative = matches!(ints.bounds(), Some((_, Fin(hi))) if hi.signum() < 0);
+        let k_text = number_text(&k);
+        let exponent_is = match negative {
+            true => format!("the exponent k, `{exponent_code}`, is at most -{k_text}"),
+            false => format!("the exponent k, `{exponent_code}`, is at least {k_text}"),
+        };
+        notes.push(Note {
+            span: self.fixed_at(e),
+            text: exponent_is,
+        });
+        let each = (widths.iter().zip(part_names))
+            .filter_map(|(l, name)| {
+                let bits = format!("{k_text} * {} + 1 bits", (*l)? - 1);
+                Some(match name {
+                    Some(name) => format!("{bits} from the base's {name}"),
+                    None => bits,
+                })
+            })
+            .collect::<Vec<_>>()
+            .join(" and ");
+        notes.push(Note {
+            span,
+            text: format!(
+                "so `{power}` has at least {each}: |k| * ⌊log₂ |{var}|⌋ + 1 at the least \
+                 |{var}| and |k|"
+            ),
+        });
+        notes.push(Note {
+            span,
+            text: "or read the exponent from the input: the run then stops if no memory holds \
+                   the result"
+                .to_string(),
+        });
+        // The repair: the largest exponent `2^j` whose power fits, `2^j * F + built` bits at
+        // most 2^67, as `b ^ (2^60)` for a base of 65 bits; none where even the base does not.
+        let mut fixes = Vec::new();
+        let most = (room_bits - u128::from(built)) / u128::from(floor_log);
+        if most > 0 {
+            let j = 127 - most.leading_zeros();
+            let with = match negative {
+                true => format!("-(2^{j})"),
+                false => format!("(2^{j})"),
+            };
+            let fits_bits = (1u128 << j) * u128::from(floor_log) + u128::from(built);
+            let fits = bytes_text_of(&Num::from(
+                i128::try_from(fits_bits / 8).expect("below 2^65"),
+            ));
+            // The power with the exponent rewritten; the exponent lies in the power's text.
+            let alone = match self.code(Some(span)) {
+                Some(code) => format!(
+                    "{}{with}{}",
+                    &code[..e.span.start - span.start],
+                    &code[e.span.end - span.start..],
+                ),
+                None => format!("{base_code} ^ {with}"),
+            };
+            fixes.push(Rewrite::new(
+                &[(e.span, &with)],
+                &format_args!("needs at least {fits}"),
+                &alone,
+            ));
+        }
+        self.reject(None, span, Msg::new(message, fixes), notes);
+    }
+
+    /// Where the text fixes `x`: the declaration of the one binder a name names, else `x`
+    /// itself, a literal or an operation.
+    fn fixed_at(&self, x: &Expr) -> Span {
+        match (&x.kind, self.t.res.uses.get(&x.span)) {
+            (ExprKind::Name(_), Some(Ref::Bound(b))) if b.len() == 1 => {
+                self.t.res.binders[b[0]].span
+            }
+            _ => x.span,
+        }
+    }
+
+    /// The value the text fixes for `a`: what [`Self::known`] gives of an int, what
+    /// [`Self::rat_fact`] gives of a `rat` literal or an operation on them, and the int a
+    /// `rat(x)` cast of a fixed `x` widens, as in `rat(b) ^ (2^64)`.
+    fn fixed_value(&mut self, a: &'a Expr) -> Option<Value> {
+        if let Some(v) = self.known(a).value {
+            return Some(v);
+        }
+        if let Some(RatFact::Value(v)) = self.rat_fact(a) {
+            return Some(v);
+        }
+        match &a.kind {
+            ExprKind::Call {
+                callee,
+                positional,
+                named,
+                curry: false,
+            } if named.is_empty()
+                && matches!(&callee.kind, ExprKind::Name(w) if w == "rat")
+                && matches!(self.t.res.uses.get(&callee.span), Some(Ref::Prelude(_))) =>
+            {
+                match &positional[..] {
+                    [x] => match self.known(x).value? {
+                        Value::Big(r) => Some(Value::Rat(r)),
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
     }
 
     /// `x ^ n` on an `int` `x` needs `n : int[0..]`, decided from the interval of `n`'s
@@ -13309,6 +13520,89 @@ fn default_repairs(name: &str, got: &str, want: &str, both: &str, span: Span) ->
 
 /// A repair of an int `^`: the rewritten code, and the words that follow it, or none.
 type Repair = (String, String);
+
+/// The base-2 logarithm of the bytes every target zedc builds for addresses: each is a 64-bit
+/// architecture (`zedc::build::TARGETS`: x86_64, aarch64 and riscv64), whose pointers count
+/// 2^64 bytes, 16 EiB. A result larger than this is held by no memory of the target, whatever
+/// the machine that builds it ([`Ck::too_large_power`]).
+const ADDRESS_BYTES_LOG2: u32 = 64;
+
+/// The target `target`, as `build.target` names it (`x86_64-linux`), as a message names it:
+/// the system, then the architecture, `Linux x86_64`. A name of another form is kept as it is.
+fn target_text(target: &str) -> String {
+    let Some((arch, os)) = target.split_once('-') else {
+        return target.to_string();
+    };
+    let os = match os {
+        "linux" => "Linux",
+        "macos" => "macOS",
+        "windows" => "Windows",
+        other => other,
+    };
+    format!("{os} {arch}")
+}
+
+/// The least magnitude of the integers in `ints`; `None` when they hold 0 or none, where a
+/// power may be 1 or is not reached. `O(log p)` for `p` pieces: the piece holding or above 1,
+/// and the piece holding or below -1.
+fn least_magnitude(ints: &IntervalSet) -> Option<Num> {
+    if ints.is_empty() || ints.contains(0) {
+        return None;
+    }
+    // Without 0, the piece reaching 1 starts at 1 or above, and the one reaching -1 ends at
+    // -1 or below.
+    let above = match ints.piece_at_or_above(&End::of(1)) {
+        Some((Fin(lo), _)) => Some(lo.clone()),
+        _ => None,
+    };
+    let below = match ints.piece_at_or_below(&End::of(-1)) {
+        Some((_, Fin(hi))) => Some(hi.abs()),
+        _ => None,
+    };
+    match (above, below) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    }
+}
+
+/// `n`, at least 1, as a message writes a lower bound: a power of 2 of at least 2^10 as it,
+/// `2^61`; else its digits within 64 bits; else the power of 2 below it, as `2^70`.
+fn number_text(n: &Num) -> String {
+    let low = &n.bits() - &Num::ONE;
+    match n.bits().to_i64() {
+        Some(b) if b > 10 && *n == Num::pow2(&low) => format!("2^{low}"),
+        Some(b) if b <= 64 => n.to_string(),
+        _ => format!("2^{low}"),
+    }
+}
+
+/// The bytes `n` as a message writes a lower bound, rounded down: in binary units, as
+/// `128 EiB` or `1.5 KiB`, one decimal below ten where it is not 0, up to 1023 YiB; beyond,
+/// the power of 2 at or below them, as `2^100 bytes`. Unlike `zed_kernel::num::bytes_text`,
+/// which rounds to the nearest, it never writes more than `n`.
+fn bytes_text_of(n: &Num) -> String {
+    const UNITS: [&str; 8] = ["KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB"];
+    let Some(unit) = (1..=UNITS.len())
+        .rev()
+        .find(|&i| *n >= Num::pow2(&Num::from(10 * i as i64)))
+    else {
+        return match n.to_i64() {
+            Some(1) => "1 byte".to_string(),
+            _ => format!("{n} bytes"),
+        };
+    };
+    let scale = |shift: i64| Num::pow2(&Num::from(shift));
+    let whole = n.div_floor(&scale(10 * unit as i64));
+    if whole.bits() > Num::from(10i64) {
+        return format!("{} bytes", number_text(n));
+    }
+    let tenths = (n * &Num::from(10i64)).div_floor(&scale(10 * unit as i64));
+    let name = UNITS[unit - 1];
+    match (whole < Num::from(10i64), tenths.to_i64().map(|t| t % 10)) {
+        (true, Some(t)) if t != 0 => format!("{whole}.{t} {name}"),
+        _ => format!("{whole} {name}"),
+    }
+}
 
 /// The note of the repair `r`, as "repair: `b: f64`, and pass a float as `b` at each call".
 fn repair_note((code, tail): &Repair) -> String {

@@ -15,7 +15,7 @@ pub fn elab(text: &str) -> Result<Unit, Vec<String>> {
     let tree = parse(text, &tokens, "Unit", TOP).unwrap();
     let stmts = unit(text, &tokens, &tree).unwrap();
     let res = resolve(&stmts).unwrap_or_else(|e| panic!("{text}: {e:?}"));
-    elaborate_text(&stmts, &res, Some(text)).map_err(|es| {
+    elaborate_text(&stmts, &res, Some(text), None).map_err(|es| {
         es.iter()
             .map(|e| {
                 format!(

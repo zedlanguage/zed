@@ -845,6 +845,18 @@ impl Rat {
         }
     }
 
+    /// The bit lengths of the numerator and the denominator, each where [`Rat::pow`] builds
+    /// its power: where it is wider than 64 bits. A narrower one is factored and kept as prime
+    /// exponents, so its power builds nothing and it has `None`. `self ^ k` has at least
+    /// `k * (L - 1) + 1` bits for each part of `L` bits, since the part is at least
+    /// `2^(L - 1)` in magnitude (DESIGN.md sec:checking_in_zed).
+    pub fn built_widths(&self) -> [Option<u64>; 2] {
+        [&self.num, &self.den].map(|part| {
+            let part = part.magnitude();
+            part.to_u64().is_none().then(|| part.bits())
+        })
+    }
+
     /// `a^e`. Powers of primes multiply their exponents, and a numerator or denominator that
     /// fits in 64 bits is factored into primes, so `10 ^ 10 ^ 9` is `2^(10^9) * 5^(10^9)`.
     /// [`TooLarge`] when a wider part's power is built and the system refuses the memory.
@@ -867,11 +879,7 @@ impl Rat {
         // aborts. Tested by
         // `a_power_of_a_wide_base_is_refused_when_memory_is_short` (COMPLEXITY.md K30). A
         // complete solution would ask each allocation of the power for its own memory.
-        let wide: u64 = parts
-            .iter()
-            .filter(|part| part.to_u64().is_none())
-            .map(|part| part.bits())
-            .sum();
+        let wide: u64 = self.built_widths().into_iter().flatten().sum();
         // The refusal of the wide parts' powers: their size in bits, the width times `e`, and the
         // memory asked, eight times it; asked of `room` here, and returned below when `e` is too
         // wide to raise a part to.
@@ -2151,6 +2159,30 @@ mod tests {
     /// `b^k` for a small base, kept as exponents.
     fn power(b: u64, k: u64) -> Rat {
         Rat::int(BigInt::from(b)).pow(&BigUint::from(k)).unwrap()
+    }
+
+    #[test]
+    fn the_built_widths_are_the_parts_wider_than_64_bits() {
+        // CONST-too-large: the checker's bound on `x ^ k` reads the bit lengths of the parts
+        // `pow` builds; a part within 64 bits is kept as exponents and has none.
+        let widths = |r: &Rat| r.built_widths();
+        let b: BigInt = (BigInt::one() << 64u32) + 13;
+        assert_eq!(widths(&Rat::int(b.clone())), [Some(65), None]);
+        assert_eq!(widths(&Rat::int(-b)), [Some(65), None]);
+        assert_eq!(widths(&Rat::int(BigInt::from(u64::MAX))), [None, None]);
+        assert_eq!(widths(&power(3, 40)), [None, None]);
+        assert_eq!(widths(&power(2, 100)), [None, None]);
+        // `n / (n + 1)` for `n = 5 * 2^100 + 1`: both parts wide and coprime.
+        let n: BigInt = (BigInt::from(5) << 100u32) + 1;
+        assert_eq!(
+            widths(&Rat::new(n.clone(), n + 1).unwrap()),
+            [Some(103), Some(103)]
+        );
+        // A wide numerator over a narrow denominator, and the reverse.
+        let r = Rat::new((BigInt::one() << 70u32) + 1, BigInt::from(3)).unwrap();
+        assert_eq!(widths(&r), [Some(71), None]);
+        let r = Rat::new(BigInt::from(3), (BigInt::one() << 70u32) + 1).unwrap();
+        assert_eq!(widths(&r), [None, Some(71)]);
     }
 
     #[test]

@@ -37,6 +37,9 @@ pub struct Tables<'a> {
     /// The unit's text, when it is known, which a message quotes: the line a fix rewrites
     /// (DESIGN.md sec:diagnostics).
     pub text: Option<&'a str>,
+    /// The target the unit is built for, as `build.target` names it (`x86_64-linux`), when the
+    /// build is known: a message that depends on the target names it.
+    pub target: Option<&'a str>,
     /// The binders of each name, in the order of the binders.
     by_name: HashMap<&'a str, Vec<usize>>,
     /// What each call of an overload set waits on, by the use of the set ([`super::pick`]). A
@@ -174,6 +177,7 @@ impl<'a> Tables<'a> {
             groups_of,
             written: Vec::new(),
             text,
+            target: None,
             by_name,
             picks: HashMap::new(),
         };
