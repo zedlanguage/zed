@@ -2173,7 +2173,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| DAGVIEW-seeded-scale | impl attempt 1 | 2026-11-13 14:33 | started |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | cross-review round 5 launched on zed-impl 77a026349: Claude, Codex; Gemini 429 (gap recorded); main dump in progress; load 25.99 19.01 20.42 |
 | LIT-name-int-fixed | impl attempt 1 | 2026-11-13 14:29 | started; worktree from origin/main df105e781 |
 | PERF-tuple-print | impl attempt 1 | 2026-11-13 14:51 | started; worktree /home/luke/Work/wt/perf-tuple-print from 4a1a69d22 |
