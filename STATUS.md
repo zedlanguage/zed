@@ -2159,9 +2159,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | CAST-literal-exact | impl attempt 1 | 2026-11-13 08:01 | baseline on bce53b287: l01_26, l01_26a, l01_29, l01_18, zedc_check unit: 239 pieces, 0 failed (load 38-70). Defect reproduced only through tests: zedc has no CL |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | rule change noted: accept against R < 10.5 (CD run keeps 13 step; acceptance scorer score-accept.py); load 55.74 59.14 57.03 |
-| NARROW-ne-rat-divisor | impl attempt 1 | 2026-11-13 01:12 | started in /home/luke/Work/wt/narrow-ne-rat-divisor from c75a68775 |
 | NUM-huge-div | impl attempt 1 | 2026-11-13 06:35 | started; worktree /home/luke/Work/wt/num-huge-div from bb7379f01 |
-| PERF-l139-under9 | running |  |  |
+| PERF-l139-under9 | impl attempt 1 | 2026-11-13 09:15 | baseline on 9fbcc48eb (load 48-58), instr/bytes at 8n: star_extra 15.6 (fails), chain 13.0 (fails), persist bytes 13.2 (fails), hopb 12.9/12.1, hoponb 12.8/12.0 |
 | POLY-crossover-bench | impl attempt 1 | 2026-11-13 07:32 | started; worktree from origin/main cf4ac0e72 |
 | PORT-out-param | impl attempt 1 | 2026-11-13 07:46 | reproduced on ffc8b6170: say("hi", out: m.stdout) refused by the builder (zedc-syntax main_field) as a read of m.stdout; DESIGN's own say(out: Lines, positional |
 | PRES-overlap-fast | xr attempt  | 2026-11-13 01:10 | round 1 launched: Sol and Opus seats (medium); Gemini 429 (resets in 32h55m); CD next |
@@ -2169,6 +2168,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | SCALE-answer-growth | impl attempt 1 | 2026-11-13 09:01 | started; worktree seeded at origin/main 416b2c414 |
 | SPEC-standalone | impl attempt 1 | 2026-11-13 08:55 | started; worktree /home/luke/Work/wt/spec-standalone from origin/main c12614e6c |
 | ST-walk-checker-admit | impl attempt 1 | 2026-11-13 08:01 | started; worktree from origin/main bce53b287 |
+| TESTS-scaling-limit-10_5 | impl attempt 1 | 2026-11-13 09:29 | started; worktree wt/tests-scaling-limit-10_5 from origin/main 0a1ab1ee1 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
