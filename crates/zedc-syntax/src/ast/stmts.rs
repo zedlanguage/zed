@@ -320,11 +320,11 @@ impl Builder<'_, '_> {
             "Until" => StmtKind::Until(self.node(kids[0])?),
             "ExprStmt" => StmtKind::Expr(self.node(kids[0])?),
             "Function" => StmtKind::Function(self.function(d, 0)?),
-            "Method" => StmtKind::Method(Method {
+            "Method" => StmtKind::Method(Box::new(Method {
                 receiver: self.word(self.tree.nodes[kids[0]].start).into(),
                 called: self.word(self.tree.nodes[kids[1]].end) == "(",
                 function: self.function(d, 1)?,
-            }),
+            })),
             "Struct" if self.tree.layer(d) == 2 => StmtKind::Struct(self.structure(d)?),
             "TypeDecl" => {
                 let (&ty, head) = kids.split_last().expect("TypeDecl ends in its type");

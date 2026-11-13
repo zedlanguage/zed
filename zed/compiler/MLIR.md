@@ -138,7 +138,7 @@ Inline sizes, `size_of` on x86-64 (the heap cell as the tests build it, with fea
 |---|---|
 | `ast::Expr` | 120 |
 | `ast::ExprKind` | 104 |
-| `ast::Stmt` | 256 |
+| `ast::Stmt` | 248 |
 | `ast::Type` | 72 |
 | `ast::Pattern` | 88 |
 | `kernel Term` | 88 |
@@ -150,6 +150,12 @@ Inline sizes, `size_of` on x86-64 (the heap cell as the tests build it, with fea
 | `zir::Region` | 80 |
 | `native Word` | 16 |
 | `native heap cell` | 96 |
+
+A statement took 256 bytes until item TEST-ports (2026-11-13) gave a function the clauses of its
+tables, a 24-byte vector, which made a method declaration, its function and its receiver's
+name, 264 bytes and every statement 280. Since item RED-main-2026-11-13 a method declaration
+is boxed, so the largest kind is a function declaration and a statement takes 248 bytes; a
+method declaration takes one allocation more.
 
 Measured on the 10 step units the front end accepts (4 more are refused by design and give no
 record):

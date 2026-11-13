@@ -3,8 +3,8 @@
 //! thread stack. The children listed are those [`super::drop`] moves out, so the two agree.
 
 use super::{
-    Annot, BoundaryItem, Expr, ExprKind, Field, Function, IndexKey, IndexedDef, Initial, Method,
-    Param, RangeEnd, Stmt, StmtKind, StrPart, Struct,
+    Annot, BoundaryItem, Expr, ExprKind, Field, Function, IndexKey, IndexedDef, Initial, Param,
+    RangeEnd, Stmt, StmtKind, StrPart, Struct,
 };
 
 /// Pushes the expressions directly in `kind` to `out`.
@@ -148,26 +148,8 @@ fn leaf_kids<'a>(kind: &'a mut StmtKind, out: &mut Vec<&'a mut Expr>) {
             }
         }
         StmtKind::Return(es) => out.extend(es.iter_mut()),
-        StmtKind::Function(f) | StmtKind::Method(Method { function: f, .. }) => {
-            let Function {
-                params,
-                body,
-                tests,
-                given,
-                ..
-            } = f;
-            param_kids(params, out);
-            out.push(body);
-            for (a, b) in tests {
-                out.extend([a, b]);
-            }
-            out.extend(
-                given
-                    .iter_mut()
-                    .flat_map(|t| &mut t.ports)
-                    .map(|p| &mut p.value),
-            );
-        }
+        StmtKind::Function(f) => function_kids(f, out),
+        StmtKind::Method(m) => function_kids(&mut m.function, out),
         StmtKind::Struct(Struct { fields, .. }) => {
             out.extend(fields.iter_mut().filter_map(|f| match f {
                 Field::Typed { default, .. } => default.as_mut(),
@@ -177,6 +159,27 @@ fn leaf_kids<'a>(kind: &'a mut StmtKind, out: &mut Vec<&'a mut Expr>) {
         StmtKind::Type(_) | StmtKind::Import(_) => {}
         StmtKind::UnitAnnot(a) => annot_kids(a, out),
     }
+}
+
+fn function_kids<'a>(f: &'a mut Function, out: &mut Vec<&'a mut Expr>) {
+    let Function {
+        params,
+        body,
+        tests,
+        given,
+        ..
+    } = f;
+    param_kids(params, out);
+    out.push(body);
+    for (a, b) in tests {
+        out.extend([a, b]);
+    }
+    out.extend(
+        given
+            .iter_mut()
+            .flat_map(|t| &mut t.ports)
+            .map(|p| &mut p.value),
+    );
 }
 
 fn annot_kids<'a>(a: &'a mut Annot, out: &mut Vec<&'a mut Expr>) {

@@ -4,8 +4,8 @@
 use std::mem;
 
 use super::{
-    Annot, BoundaryItem, Expr, ExprKind, Field, Function, IndexKey, IndexedDef, Initial, Method,
-    Param, Pattern, RangeEnd, Stmt, StmtKind, StrPart, Struct, Type, TypeKind,
+    Annot, BoundaryItem, Expr, ExprKind, Field, Function, IndexKey, IndexedDef, Initial, Param,
+    Pattern, RangeEnd, Stmt, StmtKind, StrPart, Struct, Type, TypeKind,
 };
 
 impl Drop for Expr {
@@ -147,9 +147,8 @@ fn stmt_kids(kind: StmtKind, out: &mut Vec<Expr>) {
             stmt_kids(decl.kind, out)
         }
         StmtKind::Return(mut es) => out.append(&mut es),
-        StmtKind::Function(f) | StmtKind::Method(Method { function: f, .. }) => {
-            function_kids(f, out)
-        }
+        StmtKind::Function(f) => function_kids(f, out),
+        StmtKind::Method(m) => function_kids(m.function, out),
         StmtKind::Struct(Struct { fields, .. }) => {
             out.extend(fields.into_iter().filter_map(|f| match f {
                 Field::Typed { default, .. } => default,

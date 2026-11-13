@@ -488,8 +488,9 @@ pub enum StmtKind {
     Struct(Struct),
     /// A type declaration.
     Type(TypeDecl),
-    /// A method declaration.
-    Method(Method),
+    /// A method declaration. Boxed: inline it is the largest kind, its function and its
+    /// receiver's name together, and would make every statement 32 bytes larger.
+    Method(Box<Method>),
     /// An import of a unit.
     Import(Import),
     /// A declaration and the annotations written before it, in written order.

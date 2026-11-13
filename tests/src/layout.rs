@@ -269,11 +269,8 @@ fn stmt_kids<'a>(kind: &'a StmtKind, out: &mut Vec<&'a Expr>, work: &mut Vec<&'a
         }
         StmtKind::Local(decl) => work.push(&decl.kind),
         StmtKind::Return(es) => out.extend(es),
-        StmtKind::Function(f) | StmtKind::Method(zedc::ast::Method { function: f, .. }) => {
-            out.extend(f.params.iter().filter_map(|p| p.default.as_ref()));
-            out.push(&f.body);
-            out.extend(f.tests.iter().flat_map(|(a, b)| [a, b]));
-        }
+        StmtKind::Function(f) => function_kids(f, out),
+        StmtKind::Method(m) => function_kids(&m.function, out),
         StmtKind::Struct(s) => out.extend(s.fields.iter().filter_map(|f| match f {
             zedc::ast::Field::Typed { default, .. } => default.as_ref(),
             zedc::ast::Field::Import { .. } => None,
@@ -291,6 +288,15 @@ fn stmt_kids<'a>(kind: &'a StmtKind, out: &mut Vec<&'a Expr>, work: &mut Vec<&'a
             out.extend(a.named.iter().map(|(_, e)| e));
         }
     }
+}
+
+/// Pushes the expressions directly in the function `f` to `out`: its defaults, its body, the
+/// rows of its tables and the values its tables' clauses give their ports.
+fn function_kids<'a>(f: &'a zedc::ast::Function, out: &mut Vec<&'a Expr>) {
+    out.extend(f.params.iter().filter_map(|p| p.default.as_ref()));
+    out.push(&f.body);
+    out.extend(f.tests.iter().flat_map(|(a, b)| [a, b]));
+    out.extend(f.given.iter().flat_map(|t| &t.ports).map(|p| &p.value));
 }
 
 fn keys<'a>(keys: &'a [IndexKey], out: &mut Vec<&'a Expr>) {
