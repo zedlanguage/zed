@@ -476,6 +476,30 @@ impl Ord for Formula {
         if self.same(other) {
             return Ordering::Equal;
         }
+        // Complexity tradeoff: naive version, every pair of compound nodes read by the walk
+        // below, which sets up its sets and stacks first: about 1,600 instructions for two
+        // disjunctions of two constraints, so that the ordered sets keyed by such formulas in a
+        // block (`zedc_preimage` `Block::enter`), O(log n) comparisons per insert, took 27% of
+        // a walk of 80 rows given one by one, and its ratio at 8n was 10.2 to 10.4
+        // (ST-walk-orders). Used: two nodes whose parts are all constraints, which none of
+        // their parts flattens into, compared as the two lists of constraints, the order the
+        // walk gives them; O(k) for k parts and no allocation. Other pairs are read as before.
+        // Tests `l01_38_presburger::shared::nodes_of_constraints_alone_compare_as_written_out`,
+        // `l01_39_reduced_product::xst::s4::a_walk_of_disjunctions_narrows_in_near_linear_time`.
+        let flat = |g: &Formula| g.kids().iter().all(|k| matches!(k, Formula::Con(_)));
+        if flat(self) && flat(other) {
+            fn con(g: &Formula) -> &Con {
+                match g {
+                    Formula::Con(c) => c,
+                    _ => unreachable!("only constraints"),
+                }
+            }
+            return self
+                .kids()
+                .iter()
+                .map(con)
+                .cmp(other.kids().iter().map(con));
+        }
         let mut equal: HashSet<(Id, Id)> = HashSet::new();
         // The key of each pair entered together, until it is kept as equal.
         let mut entries: Vec<Option<(Id, Id)>> = Vec::new();

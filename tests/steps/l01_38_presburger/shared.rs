@@ -1115,3 +1115,41 @@ fn taking_a_shared_part_out_of_a_disjunction_loses_no_precision() {
         "{same} the same, {narrower} narrower, {answered} answered"
     );
 }
+
+/// Two nodes whose parts are all constraints are compared as their two lists of constraints
+/// (ST-walk-orders-left), with no walk: the order must still be that of the formulas written
+/// out, for each variant, lists of other lengths, one list a prefix of the other, empty
+/// lists, and a node holding a compound part against one that holds none.
+#[test]
+fn nodes_of_constraints_alone_compare_as_written_out() {
+    let cs = [
+        con(1, 0, 0, false),
+        con(1, 0, 1, false),
+        con(0, 1, 0, false),
+        con(1, -1, 0, true),
+    ];
+    let lists: Vec<Vec<Formula>> = vec![
+        vec![],
+        vec![cs[0].clone()],
+        vec![cs[1].clone()],
+        vec![cs[0].clone(), cs[1].clone()],
+        vec![cs[1].clone(), cs[0].clone()],
+        vec![cs[0].clone(), cs[1].clone(), cs[2].clone()],
+        vec![cs[3].clone(), cs[2].clone()],
+    ];
+    let mut fs: Vec<Formula> = Vec::new();
+    for l in &lists {
+        fs.push(and(l.clone()));
+        fs.push(or(l.clone()));
+    }
+    fs.extend(cs.iter().map(|c| not(c.clone())));
+    fs.extend(cs.iter().cloned());
+    fs.push(and(vec![cs[0].clone(), or(vec![cs[1].clone()])]));
+    fs.push(or(vec![cs[0].clone(), and(vec![])]));
+    fs.push(not(and(vec![cs[0].clone(), cs[1].clone()])));
+    for p in &fs {
+        for q in &fs {
+            assert_eq!(p.cmp(q), written(p).cmp(&written(q)), "{p} against {q}");
+        }
+    }
+}

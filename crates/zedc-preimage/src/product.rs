@@ -231,6 +231,15 @@ impl Product {
         self.ty.element.is_empty()
     }
 
+    /// Whether no value has this element once its domains are reduced
+    /// ([`Product::reduce_domains`]): its type is empty, or holds integers alone while its
+    /// interval or its class holds none, which the reduction carries into the type.
+    fn empties(&self) -> bool {
+        self.is_empty()
+            || ((self.ints().is_empty() || self.cell.congruence.element == Congruence::Bottom)
+                && self.ty.element.subtype(&Type::int()))
+    }
+
     /// The integers of the interval domain.
     pub fn ints(&self) -> &IntervalSet {
         self.cell.ints.element.concrete()
@@ -8184,7 +8193,18 @@ impl Scope {
                 for d in last.diff(&self.names) {
                     let n = match d {
                         DiffItem::Add(n, p) | DiffItem::Update { new: (n, p), .. } => {
-                            if p.is_empty() {
+                            // Complexity tradeoff: naive version, a name is found empty by its
+                            // type alone, which the reduction of its domains below empties
+                            // only after the projection: an integer name a case empties by its
+                            // interval, as `x0 < j + 1` where `x0 >= k` in the case of `y_j <=
+                            // -1` of a chain raise in reverse, made every block that mentions
+                            // the name due, O(k) blocks at each of `k` tests, Θ(k² log k).
+                            // Used: the interval and the class read as the reduction would,
+                            // O(1) more a name changed, and the case stops before its
+                            // projection. Test:
+                            // `l01_39_reduced_product::xst::s4::a_chain_raise_in_reverse_narrows_in_near_linear_time`,
+                            // COMPLEXITY.md row ST-walk-orders.
+                            if p.empties() {
                                 self.bottom = true;
                                 break;
                             }

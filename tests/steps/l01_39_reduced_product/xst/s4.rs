@@ -1001,3 +1001,123 @@ fn every_order_of_the_families_on_paths_matches_the_solver() {
         }
     }
 }
+
+/// The chain raise in the reverse order: near linear time, as in the other two orders
+/// (ST-walk-orders-left: on main 10.4 to 11.0 at 8n, since a case `y_j <= -1` emptied `x0`
+/// by its interval alone, `x0 < j + 1` where `x0 >= k`, which was found only after every
+/// block naming `x0` was projected, O(k) blocks at each of k tests).
+#[test]
+fn a_chain_raise_in_reverse_narrows_in_near_linear_time() {
+    let inputs = scaling::inputs(32, chain_raise);
+    scaling::check_order("chain raise, Backward, k tests", 32, 1, |m| {
+        drop(inputs[&m].narrowed(How::Backward));
+    });
+}
+
+/// C26 given as one conjunction: near linear time, as one at a time (on main 10.0 at 8n at
+/// n = 32). The answers in this order are checked by [`unbounded_family`].
+#[test]
+fn c26_given_at_once_narrows_in_near_linear_time() {
+    let inputs = scaling::inputs(32, |k| c26(k, false));
+    scaling::check_order("C26, AtOnce, k tests", 32, 1, |m| {
+        drop(inputs[&m].narrowed(How::AtOnce));
+    });
+}
+
+/// Base churn given as one conjunction: near linear time, as one at a time (8.6 at 8n). Open:
+/// 11.1 at 8n by bytes at n = 16 and 10.7 at n = 32. The conjunction the paths do not take is
+/// narrowed as one node, whose cases each project the whole relation; the growth is in the
+/// hull of each projected block (`hull_side`, 14 times from n = 8 to 64,
+/// `decide_kept_status` 16 times). Narrowing the sides one by one in written order passed
+/// (9.7) but gave the less precise answers of the forward order, so it was not kept. The
+/// answers in this order are checked by [`unbounded_family`].
+#[test]
+#[ignore = "ST-churn-at-once: base churn given at once is 11.1 at 8n by bytes at n = 16; open"]
+fn churn_given_at_once_narrows_in_near_linear_time() {
+    let inputs = scaling::inputs(16, |k| c26(k, true));
+    scaling::check_order("base churn, AtOnce, k tests", 16, 1, |m| {
+        drop(inputs[&m].narrowed(How::AtOnce));
+    });
+}
+
+/// A case that empties a name by its interval alone, the type still `int`: the case is
+/// dropped, and with both cases empty the scope is empty, in each order.
+#[test]
+fn a_case_a_bound_empties_is_dropped_in_each_order() {
+    let x3 = prim(Prim::Ge, var("x"), int(3));
+    for (y, empty) in [(5, false), (30, true)] {
+        let d = or(
+            prim(Prim::Le, var("x"), int(1)),
+            prim(Prim::Ge, var("y"), int(y)),
+        );
+        let sys = Sys {
+            start: boxed(&["x", "y"], 20),
+            rel: vec![x3.clone(), d],
+        };
+        for how in HOWS {
+            let s = sys.narrowed(how);
+            assert_eq!(s.bottom, empty, "y >= {y}, {how:?}: {s}");
+            if !empty {
+                assert_eq!(
+                    kept(&s, "x", -21, 21),
+                    (3..=20).collect::<Vec<_>>(),
+                    "{how:?}"
+                );
+                assert_eq!(
+                    kept(&s, "y", -21, 21),
+                    (5..=20).collect::<Vec<_>>(),
+                    "{how:?}"
+                );
+            }
+        }
+    }
+}
+
+/// `x` even, then `(x % 2 == 1 && y >= 0) || y <= -5`, `x`, `y` in `-20..=20`: the first case
+/// empties `x` by its class alone.
+fn class_case() -> Sys {
+    let parity = |r| prim(Prim::Eq, prim(Prim::Mod, var("x"), int(2)), int(r));
+    Sys {
+        start: boxed(&["x", "y"], 20),
+        rel: vec![
+            parity(0),
+            or(
+                and(parity(1), prim(Prim::Ge, var("y"), int(0))),
+                prim(Prim::Le, var("y"), int(-5)),
+            ),
+        ],
+    }
+}
+
+/// Asserts that [`class_case`] narrowed in the order `how` keeps `y` in `-20..=-5` and the
+/// even `x`, with no warning.
+fn class_case_is_exact(how: How) {
+    let s = class_case().narrowed(how);
+    assert!(s.warnings().is_empty(), "{how:?}: {:?}", s.warnings());
+    assert_eq!(
+        kept(&s, "y", -21, 21),
+        (-20..=-5).collect::<Vec<_>>(),
+        "{how:?}: {s}"
+    );
+    assert_eq!(
+        kept(&s, "x", -21, 21),
+        (-20..=20).step_by(2).collect::<Vec<_>>(),
+        "{how:?}: {s}"
+    );
+}
+
+/// [`class_case`] with the class given first: the case the class empties is dropped.
+#[test]
+fn a_case_a_class_empties_is_dropped() {
+    class_case_is_exact(How::AtOnce);
+    class_case_is_exact(How::Forward);
+}
+
+/// [`class_case`] with the disjunction given first: the class that comes after it should drop
+/// the case it empties, as in the other orders. On main (cf505f0b6) it keeps `y` in `0..=20`
+/// too, with no warning: sound, but not the answer of the other orders.
+#[test]
+#[ignore = "ST-class-case-reverse: a class given after a disjunction does not drop the case it empties, y keeps 0..=20 with no warning; open"]
+fn a_case_a_class_empties_is_dropped_when_the_class_comes_last() {
+    class_case_is_exact(How::Backward);
+}
