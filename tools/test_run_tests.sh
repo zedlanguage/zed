@@ -37,8 +37,12 @@ selected() {
   run --list --reuse-table --only "$1" | sort
 }
 check "the full list is the names of the pieces file" "$(echo "$pieces" | cut -d ' ' -f 1)" "$all"
+# A step folder outside run_tests.sh's split list is one piece, named by the folder. The step
+# must stay off that list: l01_29 served here until TESTS-l01_29-split (69f447307) split it into
+# a piece per module and per slow test. l01_03 is 8 small lexer tests (TEST-step-one-piece).
+step03=$(ls tests/steps | grep '^l01_03_')
+check "a step folder is one piece" "$step03" "$(selected '^l01_03_')"
 step29=$(ls tests/steps | grep '^l01_29_')
-check "a step folder is one piece" "$step29" "$(selected '^l01_29_')"
 heap=$(by_binary deep_heap)
 check "deep_heap is one piece per test, more than one" "yes" "$([ "$(echo "$heap" | wc -l)" -gt 1 ] && echo yes)"
 check "deep_heap selects each of its tests" "$heap" "$(selected deep_heap)"
