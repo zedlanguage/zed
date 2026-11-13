@@ -52,6 +52,16 @@ rows! {
     QuantifierNotFinite => "Quantifier in a law over a domain that is not finite",
     BelowProofGrade =>
         "Obligation below proof grade",
+    // No diagnostic uses the next two rows yet: step L18.2a emits them.
+    CostAboveClaim => "Work above its cost claim",
+    CostUnbounded => "Unbounded work under a cost claim",
+    // No diagnostic uses the next six rows yet: plan row COST-required emits them.
+    CostClaimMissing => "Function without a cost claim in a unit under `@cost(#required);`",
+    CostReasonMissing => "Cost claim above `O(n log n)` without a reason",
+    CostClaimUnbounded => "Cost claim that bounds nothing",
+    CostKindMissing => "Cost claim with no kind of bound, or with a lower bound",
+    EquivalentShape => "Equivalent switch of another shape",
+    EquivalentNoInputs => "Equivalent switch below proof grade without inputs",
     NonExhaustiveMatch => "Non-exhaustive `match`",
     UnreachableArm => "Unreachable `match` arm",
     FoldWithNone => "`.fold` on a type that has none",
