@@ -662,11 +662,16 @@ pub(super) fn not_a_name(w: &str) -> Option<String> {
 }
 
 /// Why `w` is not a port's name, or `None` when it is one: names joined by `.`, the grammar's
-/// `PushTarget` (`m.stdout`, a field of `main`'s argument), or a name and `()`, the port a
-/// prelude constructor opens (`files()`). The binary form ([`super::binary`]) checks its port
+/// `PushTarget` (`m.stdout`, a field of `main`'s argument), or `main::` and a name, an input
+/// of `main` that every function reads (`main::files`). The binary form ([`super::binary`]) checks its port
 /// names with this function too.
 pub(super) fn not_a_port(w: &str) -> Option<String> {
-    let path = w.strip_suffix("()").unwrap_or(w);
+    let path = w.strip_prefix("main::").unwrap_or(w);
+    if path != w && path.contains('.') {
+        return Some(format!(
+            "`{w}` is not a port's name: `main::` takes one name"
+        ));
+    }
     let bad = path.split('.').find_map(not_a_name)?;
     // A plain name is refused as any name is.
     if path == w && !w.contains('.') {
@@ -774,11 +779,15 @@ impl<'a> P<'a> {
         }
     }
 
-    /// A port's name ([`not_a_port`]): names joined by `.`, as `m.stdout`, or a name and `()`,
-    /// as `files()`. An error points at the name it is about. The cost is linear in the name.
+    /// A port's name ([`not_a_port`]): names joined by `.`, as `m.stdout`, or `main::` and a
+    /// name, as `main::files`. An error points at the name it is about. The cost is linear in the name.
     fn port_name(&mut self) -> Result<&'a str, String> {
         self.ws();
         let start = self.i;
+        let main = self.rest().starts_with("main::");
+        if main {
+            self.i += "main::".len();
+        }
         loop {
             let n = word_len(self.rest());
             if n == 0 {
@@ -793,11 +802,7 @@ impl<'a> P<'a> {
                 return Err(e);
             }
             self.i += n;
-            if self.rest().starts_with("()") && !self.s[start..self.i].contains('.') {
-                self.i += 2;
-                break;
-            }
-            if !self.rest().starts_with('.') {
+            if main || !self.rest().starts_with('.') {
                 break;
             }
             self.i += 1;

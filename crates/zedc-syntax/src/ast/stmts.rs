@@ -541,10 +541,11 @@ impl Builder<'_, '_> {
     /// The ports of the `TestPorts` node `p`, `with p = e, …`, on a table of `main` when
     /// `is_main` (DESIGN.md sec:ports, "A test table gives a port its values"). A field of
     /// `main` is checked here: on `main`'s table, `main::stdin`, `main::args`, `main::env` and
-    /// `main::files` are the inputs a row's key gives, and any other field is rejected; the
-    /// outputs and a field given to another function's table are not compiled yet, since this
-    /// zedc compares the outputs by a row's value and lets no other function read `main`'s
-    /// ports (plan row MAIN-files). A name is left to the resolver, which knows what the unit
+    /// `main::files` are the inputs a row's key gives, and any other field is rejected. Every
+    /// function reads `main::files` (QUESTIONS A68), so any table may give it; the outputs, and
+    /// the other inputs on another function's table, are not compiled yet, since this zedc
+    /// compares the outputs by a row's value and a function other than `main` reads the other
+    /// inputs by `main::args`, of layer L3. A name is left to the resolver, which knows what the unit
     /// defines. A port given twice in one clause is rejected.
     fn test_ports(&mut self, p: usize, is_main: bool) -> Result<Vec<PortValue>, Error> {
         let mut out: Vec<PortValue> = Vec::new();
@@ -560,6 +561,8 @@ impl Builder<'_, '_> {
                 _ => {
                     let field = self.word(node.end - 1).to_string();
                     match field.as_str() {
+                        // Every function reads the file port as `main::files` (A68).
+                        "files" => PortName::Main(field, span),
                         _ if !is_main => {
                             return Err(self.later_as(
                                 name,
@@ -567,7 +570,7 @@ impl Builder<'_, '_> {
                                  giving",
                             ));
                         }
-                        "stdin" | "args" | "env" | "files" => PortName::Main(field, span),
+                        "stdin" | "args" | "env" => PortName::Main(field, span),
                         "stdout" | "stderr" => {
                             return Err(self.later_as(name, "a test clause giving"));
                         }
@@ -615,7 +618,7 @@ impl Builder<'_, '_> {
     /// The parameters and ports the rest of the compiler runs `main` with, from its written
     /// header `main(m: MainArgs) -> int` (DESIGN.md sec:ports, step L1.19), whose body is the
     /// text `body`: an input parameter for each field of `m` the body reads and for
-    /// `files()`, named as written (`m.stdin`), and an output port for each field it pushes
+    /// `main::files` when any function of the text reads it, named as written (`m.stdin`), and an output port for each field it pushes
     /// to (`m.stdout`), in the order of `MainArgs`; and the header as written. Or why the
     /// header is not one `main` may have: a second parameter, a parameter of another type,
     /// or a default value; then a result other than `int`, written at the span `result` holds
@@ -661,7 +664,7 @@ impl Builder<'_, '_> {
                     ),
                     format!(
                         "what `{}` read is read through `{m}`: `{m}.args`, `{m}.stdin` or \
-                         `{m}.env`; files are read with `files()`, and the clock with \
+                         `{m}.env`; files are read with `main::files`, and the clock with \
                          `clock(period: …)`",
                         second.name
                     ),
@@ -706,10 +709,14 @@ impl Builder<'_, '_> {
         }
         let result = (result.transpose()).map_err(|span| main_result_error(self.text, span))?;
         let main = self.mains.of(body).expect("a main's body is in the table");
-        let (inputs, outputs) = &*main.uses.borrow();
+        let (mut inputs, outputs) = *main.uses.borrow();
+        // A read of `main::files` in another function opens the port as a read in the body does;
+        // the parameter stands at the body's read when there is one.
+        let files = MAIN_INPUTS.len() - 1;
+        inputs[files] = inputs[files].or(self.mains.outside(body));
         let m = param.as_ref().map(|p| p.name.as_str());
         let named = |field: &str| match (field, m) {
-            ("files()", _) | (_, None) => field.to_string(),
+            ("main::files", _) | (_, None) => field.to_string(),
             (_, Some(m)) => format!("{m}.{field}"),
         };
         // `MainArgs` declares each field's type, so the type sits at the parameter's type as
@@ -727,12 +734,12 @@ impl Builder<'_, '_> {
             span,
         };
         let mut synth = Vec::new();
-        for (field, used) in MAIN_INPUTS.iter().zip(inputs) {
+        for (field, used) in MAIN_INPUTS.iter().zip(&inputs) {
             let Some(span) = *used else { continue };
             let ty = match *field {
                 "args" => name("CommandLine", at(span)),
                 "stdin" => name("Lines", at(span)),
-                "files()" => name("Files", at(span)),
+                "main::files" => name("Files", at(span)),
                 _ => Type {
                     kind: TypeKind::Arrow {
                         params: vec![TypeParam {
@@ -757,7 +764,7 @@ impl Builder<'_, '_> {
             });
         }
         let mut ports = Vec::new();
-        for (field, used) in MAIN_OUTPUTS.iter().zip(outputs) {
+        for (field, used) in MAIN_OUTPUTS.iter().zip(&outputs) {
             let Some(span) = *used else { continue };
             ports.push(Port {
                 name: named(field),
@@ -816,7 +823,7 @@ fn main_param_notes(text: &str, p: &Param) -> Vec<String> {
         TypeKind::Name(n) if n == "CommandLine" => {
             "`m.args`, the words after `--` on the command line"
         }
-        TypeKind::Name(n) if n == "Files" => "`files()`, which reads files by path",
+        TypeKind::Name(n) if n == "Files" => "`main::files`, which reads files by path",
         TypeKind::Arrow { partial: true, .. } => "`m.env`, the environment variables by name",
         _ => {
             return vec![

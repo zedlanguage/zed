@@ -322,7 +322,7 @@ impl<'a> Tables<'a> {
             .filter(|(u, _)| !skip.iter().any(|s| s.start <= u.start && u.end <= s.end))
             .filter_map(|(_, r)| match r {
                 Ref::Bound(ids) => Some(ids),
-                Ref::Prelude(_) | Ref::Unit { .. } => None,
+                Ref::Prelude(_) | Ref::Unit { .. } | Ref::Main(_) => None,
             })
             .flatten()
             .copied()

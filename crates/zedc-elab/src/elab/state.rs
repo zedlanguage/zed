@@ -165,6 +165,8 @@ impl<'a> Elab<'a> {
             ),
             Some(Ref::Bound(ids)) => Some(Term::Var(self.names[ids[0]].clone())),
             Some(Ref::Prelude(w)) => Some(Term::Var(w.as_str().into())),
+            // `main::files` outside `main`: a read of the port `main` opens under that name.
+            Some(Ref::Main(p)) => Some(Term::Read(p.as_str().into())),
             Some(Ref::Unit { .. }) => {
                 unreachable!("resolve sends a use of another unit's definition to step L2.4")
             }

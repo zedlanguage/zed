@@ -55,6 +55,7 @@ fn at(text: &str, name: &str, n: usize) -> Vec<String> {
     match used {
         Ref::Prelude(w) => vec![format!("prelude {w}")],
         Ref::Unit { unit, name } => vec![format!("unit {unit} {name}")],
+        Ref::Main(p) => vec![format!("input {p}")],
         Ref::Bound(ids) => ids
             .iter()
             .map(|&i| {

@@ -69,7 +69,7 @@ const WINDOWS_TEXT: &str = "\u{FEFF}name = Ada\r\nrole = admin\r\n";
 /// is `WINDOWS_TEXT` as written, then the text itself.
 fn echo_file(path: &std::path::Path) -> String {
     format!(
-        "main(m: MainArgs) {{\n  fs = files();\n  text = fs[\"{}\"] else \"(no text)\";\n  \
+        "main(m: MainArgs) {{\n  fs = main::files;\n  text = fs[\"{}\"] else \"(no text)\";\n  \
          m.stdout <- \"${{text == \"\\u{{FEFF}}name = Ada\\r\\nrole = admin\\r\\n\"}} [${{text}}]\";\n}}\n",
         path.display()
     )
@@ -110,7 +110,7 @@ fn a_replay_gives_the_recorded_bytes_their_recorded_lines() {
     let (path, rec) = (d.join("people.ini"), d.join("wave.rec"));
     std::fs::write(&path, WINDOWS_TEXT).unwrap();
     let src = format!(
-        "main(m: MainArgs) {{\n  fs = files();\n  \
+        "main(m: MainArgs) {{\n  fs = main::files;\n  \
          a = m.stdin[0] else \"none\";\n  \
          b = m.stdin[1] else \"none\";\n  \
          c = m.stdin[2] else #ioError(op:, path:, why:) -> \"${{op}} ${{path}}: ${{why}}\" else \"none\";\n  \

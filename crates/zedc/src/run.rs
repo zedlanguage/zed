@@ -1307,8 +1307,8 @@ impl<'a> Options<'a> {
                     "`{word}` names the file `{path}` for a port `{port}`, and a program's ports \
                      are not named on the command line: `main(m: MainArgs)` reads standard \
                      input from `m.stdin` and writes `m.stdout` and `m.stderr` to standard \
-                     output and standard error, and a program opens a file by its path with \
-                     `files()`. To read a file as standard input, write `< {path}`; to write \
+                     output and standard error, and a program reads a file by its path with \
+                     `main::files[path]`. To read a file as standard input, write `< {path}`; to write \
                      standard output to a file, write `> {path}`; to give the path to the \
                      program, put it after `--`, where `m.args` reads it."
                 ));

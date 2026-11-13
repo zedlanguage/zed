@@ -16,17 +16,46 @@ use crate::run::{PortKind, Program, Through};
 /// position in the unit and the term.
 pub(crate) type Swap<'a> = Option<(usize, &'a Shared)>;
 
-/// The value of `term` under the definitions it reaches, with `swap`, and the prelude.
+/// The value of `term` under the definitions it reaches, with `swap`, and the prelude, in a
+/// world with no port.
 fn value(
     cones: &Cones<'_>,
     swap: Swap<'_>,
     term: &Term,
     map: &Through<'_>,
 ) -> Result<Value, String> {
+    value_in(cones, swap, term, map, World::new())
+}
+
+/// The value of `term` as [`value`] gives it, in `world`.
+fn value_in(
+    cones: &Cones<'_>,
+    swap: Swap<'_>,
+    term: &Term,
+    map: &Through<'_>,
+    world: World,
+) -> Result<Value, String> {
     map(
         &interp::prelude(cones.close_with(term.clone(), swap)),
-        &mut Evaluator::new(World::new()),
+        &mut Evaluator::new(world),
     )
+}
+
+/// The world a row of a function's table runs in: the file port `main::files`, which any
+/// function reads (QUESTIONS A68), answers as the table's clause `test with main::files = e`
+/// gives it, and without the clause every read fails, naming the port and the repair.
+fn row_world(cones: &Cones<'_>, swap: Swap<'_>, t: &Test) -> World {
+    let given = t.args[t.args.len() - t.ports.len()..].iter();
+    let files: Arc<dyn Lookup> = match t
+        .ports
+        .iter()
+        .zip(given)
+        .find(|(p, _)| **p == "main::files")
+    {
+        Some((_, arg)) => Arc::new(Given(interp::prelude(cones.close_with(arg.clone(), swap)))),
+        None => Arc::new(Ungiven),
+    };
+    World::new().source("main::files", files)
 }
 
 /// Checks a row of a function's table, with `swap`.
@@ -36,7 +65,7 @@ pub(crate) fn row(
     t: &Test,
     map: &Through<'_>,
 ) -> Result<(), String> {
-    match value(cones, swap, &t.check, map)? {
+    match value_in(cones, swap, &t.check, map, row_world(cones, swap, t))? {
         Value::Bool(true) => Ok(()),
         _ => {
             let Term::Prim(_, sides) = &t.check else {
@@ -44,7 +73,7 @@ pub(crate) fn row(
             };
             Err(format!(
                 "the result is {}",
-                value(cones, swap, &sides[0], map)?
+                value_in(cones, swap, &sides[0], map, row_world(cones, swap, t))?
             ))
         }
     }
@@ -61,7 +90,7 @@ pub(crate) fn wave(
 ) -> Result<(), String> {
     // The name a field of `MainArgs` has in this program: `m.stdin`, or `stdin` in `main()`.
     let named = |f: &str| match program.param() {
-        Some(p) if f != "files()" => format!("{p}.{f}"),
+        Some(p) if f != "main::files" => format!("{p}.{f}"),
         _ => f.to_string(),
     };
     // The key gives the inputs by field (`MAIN_KEY`), so a row means the same whichever fields
@@ -173,7 +202,7 @@ pub(crate) fn wave(
 const MAIN_OUTPUTS: [&str; 2] = ["stdout", "stderr"];
 
 /// The field of `MainArgs` the port `name` of `main` is, as `stdin` for `m.stdin`, or
-/// `files()`.
+/// `main::files`.
 fn field(name: &str) -> &str {
     name.rsplit_once('.').map_or(name, |(_, f)| f)
 }
@@ -186,6 +215,20 @@ struct NotFound;
 impl Lookup for NotFound {
     fn get(&self, _: &Value) -> Result<Value, String> {
         Ok(Value::atom("notFound"))
+    }
+}
+
+/// The file port of a row whose table gives it none: every read fails, and the row with it.
+#[derive(Debug)]
+struct Ungiven;
+
+impl Lookup for Ungiven {
+    fn get(&self, _: &Value) -> Result<Value, String> {
+        Err(
+            "the table gives the row no files; repair: `test with main::files = p -> …` on the \
+             table, a function from a path to its text"
+                .into(),
+        )
     }
 }
 

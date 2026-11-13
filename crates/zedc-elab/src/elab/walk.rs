@@ -35,8 +35,8 @@ use zedc_syntax::ast::Param;
 /// The inputs a row of `main`'s table gives, by the position of each in a key that is a tuple:
 /// standard input, the arguments one per line, the environment as a function of the name, and
 /// the files as a function of the path (DESIGN.md sec:syntax_tour, `test`), each the field of
-/// `MainArgs` that gives it, or `files()`.
-pub const MAIN_KEY: [&str; 4] = ["stdin", "args", "env", "files()"];
+/// `MainArgs` that gives it, or `main::files`.
+pub const MAIN_KEY: [&str; 4] = ["stdin", "args", "env", "main::files"];
 
 /// What a job gives back.
 enum Ret {
@@ -249,15 +249,15 @@ impl<'a> TestsF<'a> {
     }
 }
 
-/// The field of [`MAIN_KEY`] a port of a clause on `main`'s table gives: `main::files` gives
-/// `files()`, and `main::stdin`, `main::args` and `main::env` their own names. The builder
-/// accepts no other port on `main`'s table, and the resolver no name.
+/// The input of [`MAIN_KEY`] a port of a clause gives: `main::files` gives `main::files`, and
+/// `main::stdin`, `main::args` and `main::env` their own names. The builder accepts no other
+/// field of `main` (on another function's table, only `main::files`), and the resolver no name.
 fn main_field(port: &PortName) -> Option<&'static str> {
     match port {
         PortName::Main(f, _) => MAIN_KEY
             .iter()
             .copied()
-            .find(|k| k.strip_suffix("()").unwrap_or(k) == f),
+            .find(|k| k.strip_prefix("main::").unwrap_or(k) == f),
         PortName::Name(..) => None,
     }
 }
@@ -592,14 +592,15 @@ impl<'a> Elab<'a> {
                     continue;
                 }
             };
-            // A row of `main` takes the inputs its table's clause gives after those of its key
+            // A row takes the inputs of `main` its table's clause gives after those of its key
             // (DESIGN.md sec:ports, "A test table gives a port its values"), and an input both
-            // give is given twice.
+            // give is given twice; the key of another function's row gives none of them.
             let mut args = args;
-            if f.main.is_some()
-                && let Some(clause) = tf.clause()
-            {
-                let keyed = &MAIN_KEY[..args.len()];
+            if let Some(clause) = tf.clause() {
+                let keyed = match f.main {
+                    Some(_) => &MAIN_KEY[..args.len()],
+                    None => &MAIN_KEY[..0],
+                };
                 let twice = (clause.ports.iter())
                     .find(|p| main_field(&p.port).is_some_and(|k| keyed.contains(&k)));
                 if let Some(p) = twice {
@@ -1718,15 +1719,12 @@ impl<'a> Elab<'a> {
                         };
                         let kernel = self.names[tf.id].clone();
                         let callee = Shared::new(Term::Var(kernel.clone()));
-                        // The ports a clause gives `main`'s row, by field; their values end
-                        // `args`, and the call takes the key's alone.
-                        let ports: Vec<&'static str> = match tf.f.main {
-                            Some(_) => (tf.clause().into_iter())
-                                .flat_map(|c| &c.ports)
-                                .filter_map(|p| main_field(&p.port))
-                                .collect(),
-                            None => Vec::new(),
-                        };
+                        // The inputs of `main` a clause gives the row, by field; their values
+                        // end `args`, and the call takes the key's alone.
+                        let ports: Vec<&'static str> = (tf.clause().into_iter())
+                            .flat_map(|c| &c.ports)
+                            .filter_map(|p| main_field(&p.port))
+                            .collect();
                         let keyed = args[..args.len() - ports.len()].to_vec();
                         let call = self.row_call(tf.f, input, callee, keyed);
                         self.tests.push(Test {

@@ -12,7 +12,7 @@ use zed_tests::step_helpers::l01_19a_command_line::{dir, run};
 
 /// `main` reading the files its first two arguments name through `r`, `missing` for a file
 /// that is not there.
-const MAIN: &str = "main(m: MainArgs) {\n  fs = files();\n  \
+const MAIN: &str = "main(m: MainArgs) {\n  fs = main::files;\n  \
     a = (r(fs: fs, args: m.args, k: 0) else #notFound -> \"missing\") else #ioError -> \"unreadable\";\n  \
     b = (r(fs: fs, args: m.args, k: 1) else #notFound -> \"missing\") else #ioError -> \"unreadable\";\n  \
     m.stdout <- \"${a}|${b}\";\n}\n";
@@ -91,7 +91,7 @@ fn helpers(n: usize) -> String {
     let mut src: String = (0..n)
         .map(|i| format!("r{i}(fs, args, k) = fs[args[k] else \"\"];\n"))
         .collect();
-    src.push_str("main(m: MainArgs) {\nfs = files();\n");
+    src.push_str("main(m: MainArgs) {\nfs = main::files;\n");
     for i in 0..n {
         src.push_str(&format!(
             "  a{i} = (r{i}(fs: fs, args: m.args, k: {}) else #notFound -> \"m\") \

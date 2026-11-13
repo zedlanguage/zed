@@ -145,6 +145,10 @@ pub enum Ref {
         /// The name it defines.
         name: String,
     },
+    /// The input `main::files` of the program's `main`, read in another function (DESIGN.md
+    /// sec:ports, QUESTIONS A68): the port itself, which `main` opens. In `main`'s body the read
+    /// is a use of `main`'s parameter of that name, [`Ref::Bound`].
+    Main(String),
 }
 
 /// The resolution of a unit.
@@ -1361,6 +1365,12 @@ impl Resolver<'_> {
                 Some(Found::Word(_)) => not_yet(&format!("the prelude word `{name}`")),
                 // A prelude struct of a later layer is named as a value to build one.
                 None if name == MAIN_ARGS => return self.errors.push(main_args_elsewhere(span)),
+                // Every function but `main` reads the file port by its name (`zedc_syntax`'s
+                // `Builder::main_files`); in `main`'s body the name is bound, to its parameter.
+                None if name == "main::files" => {
+                    self.out.uses.insert(span, Ref::Main(name.into()));
+                    return;
+                }
                 None => match later_type_layer(name) {
                     Some(_) => not_yet(&format!("the prelude type `{name}`")),
                     None => match self.main_params.iter().any(|(body, m)| {
@@ -2152,8 +2162,9 @@ impl Resolver<'_> {
     /// so a name the unit or the prelude binds is Zed code, which a test never replaces, and is
     /// rejected, as a name that names nothing is; a port constructor of the prelude that the
     /// unit does not bind is refused as not compiled yet, since this zedc has none of them.
-    /// The menu of a rejection is the ports `f` reaches: `main`'s inputs on `main`'s table,
-    /// and none on another function's, which no port reaches in this zedc.
+    /// The menu of a rejection is the ports `f` may reach: `main`'s inputs on `main`'s table,
+    /// and on another function's the file port `main::files`, the one port such a function
+    /// reads in this zedc (QUESTIONS A68), or the table without the clause.
     fn test_ports<'a>(&mut self, f: &'a Function, todo: &mut Vec<Task<'a>>) {
         const CONSTRUCTORS: [&str; 7] = [
             "now",
@@ -2192,13 +2203,14 @@ impl Resolver<'_> {
                     span: *span,
                     text: format!("repair: `main::{m} = …`"),
                 })),
-                None => notes.push(Note {
-                    span: *span,
-                    text: format!(
-                        "`{}` reaches no port; repair: `test {{ … }}`, the table without `{name} = …`",
-                        f.name
-                    ),
-                }),
+                None => notes.extend(
+                    [
+                        "repair: `main::files = …`, the file port, which every function reads"
+                            .to_string(),
+                        format!("repair: `test {{ … }}`, the table without `{name} = …`"),
+                    ]
+                    .map(|text| Note { span: *span, text }),
+                ),
             }
             self.errors.push(Error {
                 row: None,
@@ -2360,6 +2372,32 @@ impl Resolver<'_> {
                 named,
                 ..
             } => {
+                // Every function named `main` is a `main` (the builder gives it `main`'s
+                // header), so a call of a function the name `main` binds calls `main`.
+                // Cost: one hash lookup of the scope and a pass over the binders of `main`, only
+                // at a call whose callee is the word `main`; the name is resolved again below,
+                // as every callee is, rather than threading this lookup into it.
+                if let ExprKind::Name(n) = &callee.kind
+                    && n == "main"
+                    && let Some(Found::Bound(ids)) = self.find(n)
+                    && ids
+                        .iter()
+                        .any(|&i| self.out.binders[i].kind == Kind::Function)
+                {
+                    self.errors.push(main_called(e.span));
+                }
+                // The old call `files()`, when the program binds no `files` of its own: the file
+                // port is `main::files` now. A bare `files` that names nothing is an ordinary
+                // undefined name, as a fragment's list of paths is.
+                if let ExprKind::Name(n) = &callee.kind
+                    && n == "files"
+                    && positional.is_empty()
+                    && named.is_empty()
+                    && self.find(n).is_none()
+                {
+                    self.errors.push(files_moved(callee.span));
+                    return;
+                }
                 todo.extend(named.iter().rev().map(|(_, a)| Task::Expr(a)));
                 todo.extend(positional.iter().rev().map(Task::Expr));
                 todo.push(Task::Expr(callee));
@@ -3062,6 +3100,55 @@ fn main_param_alone(m: &str, span: Span) -> Error {
                 "read `{m}.args`, `{m}.stdin` or `{m}.env`, or push to `{m}.stdout` or \
                  `{m}.stderr`, as `{m}.stdout <- lines;`"
             )),
+        ],
+    }
+}
+
+/// The error for the call `files()` whose name is at `span`, when the unit binds no `files`: the
+/// file port was that call in `main`'s body, and is `main::files` in every function now (DESIGN.md
+/// sec:ports, QUESTIONS A68). A short headline, the repairs in the notes.
+fn files_moved(span: Span) -> Error {
+    let note = |text: &str| Note {
+        span,
+        text: text.into(),
+    };
+    Error {
+        row: None,
+        menu: String::new(),
+        span,
+        message: "`files` is not defined: the file port is `main::files`.".into(),
+        notes: vec![
+            note("repair: `main::files` for `files()`, as in `fs = main::files;`"),
+            note("repair: `main::files[path]` for `files()(path)`"),
+            note(
+                "every function of the program reads the file port as `main::files`, and no call \
+                 opens it",
+            ),
+        ],
+    }
+}
+
+/// The error for a call of `main` at `span`, anywhere in the program, `main`'s own body
+/// included (DESIGN.md sec:ports, QUESTIONS A68): `main` is in scope everywhere and runs once,
+/// when the program starts. A short headline, the menu in the notes.
+fn main_called(span: Span) -> Error {
+    let note = |text: &str| Note {
+        span,
+        text: text.into(),
+    };
+    Error {
+        row: None,
+        menu: String::new(),
+        span,
+        message: "Call of `main`: no function calls `main`, which runs once, when the program \
+                  starts."
+            .into(),
+        notes: vec![
+            note("repair: read `main::args` for the argument `main` takes"),
+            note(
+                "repair: move the code the call wants into a function that `main` and the caller \
+                 both call",
+            ),
         ],
     }
 }

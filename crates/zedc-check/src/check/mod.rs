@@ -4083,6 +4083,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.env.get(&ids[0]).cloned().unwrap_or_else(Ty::dynamic)
             }
             Some(Ref::Prelude(w)) if w != "sum" => Ty::func(word_sig(w)),
+            // `main::files` read outside `main`: the type of `main`'s parameter of that name, `Files`.
+            Some(Ref::Main(_)) => port(Carrier::Str, true),
             // Elaboration rejects a use of an overloaded name.
             Some(Ref::Bound(_)) => Ty::empty(),
             _ => Ty::dynamic(),

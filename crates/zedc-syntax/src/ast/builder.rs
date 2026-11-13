@@ -38,8 +38,9 @@ pub(super) enum Built {
 pub(super) type Bare<'a> = std::cell::OnceCell<std::collections::HashSet<&'a str>>;
 
 /// The fields of `MainArgs` that `main` reads (DESIGN.md sec:ports, step L1.19), in the
-/// struct's order, then the call `files()`: what a body built to [`Mains`] records it reads.
-pub const MAIN_INPUTS: [&str; 4] = ["args", "stdin", "env", "files()"];
+/// struct's order, then the file port `main::files`: what a body built to [`Mains`] records it
+/// reads. `main::files` is also the name every function reads the file port by.
+pub const MAIN_INPUTS: [&str; 4] = ["args", "stdin", "env", "main::files"];
 
 /// The fields of `MainArgs` that `main` pushes to, in the struct's order.
 pub const MAIN_OUTPUTS: [&str; 2] = ["stdout", "stderr"];
@@ -47,11 +48,13 @@ pub const MAIN_OUTPUTS: [&str; 2] = ["stdout", "stderr"];
 /// The `main` functions of a text, each with the text of its body, the name of its parameter
 /// when it has one written, and the fields of `MainArgs` its body reads and pushes to. The
 /// builder rewrites a read `m.stdin` in such a body to the name `m.stdin`, a push `m.stdout <-
-/// e` to a push to the port `m.stdout`, and the call `files()` to the name `files()`, each a
-/// name no source spells, and makes the parameters and ports of the old header from what was
-/// read and pushed: the rest of the compiler runs `main` with a parameter for each input it
+/// e` to a push to the port `m.stdout`, and the read `main::files` to the name `main::files`,
+/// each a name no source spells, and makes the parameters and ports of the old header from what
+/// was read and pushed: the rest of the compiler runs `main` with a parameter for each input it
 /// reads and a port for each output it pushes to, and a field that is never read is never
-/// opened.
+/// opened. A read of `main::files` in another function of the text (QUESTIONS A68) opens the
+/// file port too, so `main` of the text's top level takes it as a parameter, as if its body read
+/// it: the port is the program's whichever function reads it.
 /// A string hole is a tree of its own, built before the text around it, so the table is made
 /// from the text's tree before any builder runs, and found by the place a form starts.
 pub(super) struct Mains {
@@ -60,6 +63,8 @@ pub(super) struct Mains {
     list: Vec<MainBody>,
     /// For each body of `list`, the body that holds it, by its place in `list`.
     outer: Vec<Option<usize>>,
+    /// Where `main::files` is first read outside every body of `list`.
+    outside: std::cell::Cell<Option<Span>>,
 }
 
 /// A `main`'s body in [`Mains`].
@@ -127,7 +132,55 @@ impl Mains {
             outer.push(open.last().copied());
             open.push(i);
         }
-        Mains { list, outer }
+        let mains = Mains {
+            list,
+            outer,
+            outside: std::cell::Cell::new(None),
+        };
+        // The reads `main::files` outside every body: a `Postfix` whose operand is the one
+        // word `main` and whose suffix is `::files`. `fill` builds deeper nodes first, so a
+        // function written after `main` can be built after `main`'s header, which must already
+        // know of the read. A string hole is a tree of its own, built before the text's, and
+        // [`Builder::main_files`] records the reads in it as it builds them.
+        // Complexity: one walk of the nodes reached from the root, O(n) for n nodes, plus
+        // O(log k) to place each read among k bodies ([`Mains::at`]). The naive method, a
+        // walk of the whole text from `main`'s header when it is built, costs O(n) per `main`,
+        // O(n k) for k `main`s; this walk is done once, before any builder runs.
+        let mut stack = vec![tree.root];
+        while let Some(n) = stack.pop() {
+            let kids = &tree.nodes[n].kids;
+            if let [of, s] = kids[..]
+                && tree.name(n) == "Postfix"
+                && tree.name(s) == "ReadSuffix"
+                && word(tree.nodes[s].end - 1) == "files"
+                && tree.nodes[of].end - tree.nodes[of].start == 1
+                && word(tree.nodes[of].start) == "main"
+                && mains.at(span(n).start).is_none()
+            {
+                mains.read_outside(span(n));
+            }
+            stack.extend_from_slice(kids);
+        }
+        mains
+    }
+
+    /// Records a read of `main::files` at `span`, outside every body.
+    pub(super) fn read_outside(&self, span: Span) {
+        let mut first = self.outside.get();
+        first_use(&mut first, span);
+        self.outside.set(first);
+    }
+
+    /// Where `main::files` is first read outside every body, when `body` is the body of a
+    /// `main` of the text's top level, which runs the program: no other holds the port.
+    pub(super) fn outside(&self, body: Span) -> Option<Span> {
+        let i = self.list.partition_point(|b| b.body.start < body.start);
+        (self.outer.get(i) == Some(&None)).then(|| self.outside.get())?
+    }
+
+    /// Whether the text declares a `main` outside every other `main`'s body.
+    pub(super) fn has_entry(&self) -> bool {
+        self.outer.contains(&None)
     }
 
     /// The innermost `main` whose body holds the text at `at`, if any.
@@ -323,14 +376,40 @@ impl<'a, 's> Builder<'a, 's> {
                  after `--` on the command line), `stdin` (the lines of standard input), \
                  `stdout` and `stderr` (the lines the program writes) and `env` (the \
                  environment variables, by name). Read one of `{m}.args`, `{m}.stdin` or \
-                 `{m}.env`; files are read with `files()`."
+                 `{m}.env`; files are read with `main::files`."
             ))),
         }
     }
 
+    /// The read `main::files` at `span` (DESIGN.md sec:ports, QUESTIONS A68): in `main`'s body,
+    /// the use of its file port ([`Builder::main_use`]); in any other function, the name
+    /// `main::files`, which names the program's file port there, recorded as read outside
+    /// `main` so that `main` opens the port. In a text that declares no `main`, a library, the
+    /// read is not compiled yet: the program that imports it gives the port under the grant
+    /// `port(Files)`, which this zedc does not check.
+    pub(super) fn main_files(&self, span: Span) -> Result<Expr, Error> {
+        if self.mains.at(span.start).is_some() {
+            return Ok(self.main_use("main::files", span));
+        }
+        if !self.mains.has_entry() {
+            return Err(Error {
+                row: None,
+                menu: String::new(),
+                span,
+                message: not_yet("a read of `main::files` in a unit that declares no `main`"),
+                notes: Vec::new(),
+            });
+        }
+        self.mains.read_outside(span);
+        Ok(Expr {
+            kind: ExprKind::Name("main::files".into()),
+            span,
+        })
+    }
+
     /// The name of the input `use_` of the `main` whose body holds `span` (one of
-    /// [`MAIN_INPUTS`]), recorded as read there: `m.stdin` for `stdin`, and `files()` for
-    /// `files()`.
+    /// [`MAIN_INPUTS`]), recorded as read there: `m.stdin` for `stdin`, and `main::files` for
+    /// `main::files`.
     pub(super) fn main_use(&self, use_: &str, span: Span) -> Expr {
         let main = self.mains.at(span.start).expect("a use inside main's body");
         let i = MAIN_INPUTS
@@ -339,7 +418,7 @@ impl<'a, 's> Builder<'a, 's> {
             .expect("an input");
         first_use(&mut main.uses.borrow_mut().0[i], span);
         let name = match (use_, &main.param) {
-            ("files()", _) | (_, None) => use_.to_string(),
+            ("main::files", _) | (_, None) => use_.to_string(),
             (_, Some(m)) => format!("{m}.{use_}"),
         };
         Expr {

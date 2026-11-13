@@ -161,7 +161,8 @@ fn a_record_that_names_no_program_is_refused() {
 fn the_inputs_a_program_reads_are_part_of_the_address() {
     // The two terms give the same line; one reads standard input and the other a file.
     let lines = "main(m: MainArgs) {\n  m.stdout <- m.stdin[0] else \"a\";\n}\n";
-    let files = "main(m: MainArgs) {\n  fs = files();\n  m.stdout <- fs[\"1\"] else \"a\";\n}\n";
+    let files =
+        "main(m: MainArgs) {\n  fs = main::files;\n  m.stdout <- fs[\"1\"] else \"a\";\n}\n";
     let (a, b) = (
         load(lines.as_bytes()).unwrap(),
         load(files.as_bytes()).unwrap(),

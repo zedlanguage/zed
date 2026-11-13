@@ -159,7 +159,7 @@ fn the_rows_of_a_rejected_unit_fail_in_linear_time() {
 /// reading the file its clause gives.
 fn clause_tables(n: usize, rows: usize) -> String {
     let mut text =
-        String::from("main(m: MainArgs) {\n  m.stdout <- files()(\"a\") else \"\";\n}\n");
+        String::from("main(m: MainArgs) {\n  m.stdout <- main::files[\"a\"] else \"\";\n}\n");
     for i in 0..n {
         let row = format!("\"\" -> \"{i}\\n\"");
         let rows = vec![row; rows].join(", ");

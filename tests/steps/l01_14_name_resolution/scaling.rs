@@ -98,7 +98,7 @@ fn using_many_overloads_scales() {
         .values()
         .filter_map(|f| match f {
             Ref::Bound(ids) => Some(ids.iter().copied().collect()),
-            Ref::Prelude(_) | Ref::Unit { .. } => None,
+            Ref::Prelude(_) | Ref::Unit { .. } | Ref::Main(_) => None,
         })
         .collect();
     assert_eq!(sets.len(), 3);

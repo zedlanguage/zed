@@ -7,6 +7,7 @@ mod files;
 mod line_ends;
 mod lines;
 mod main_args;
+mod outside;
 mod replay;
 mod scaling;
 mod sharing;

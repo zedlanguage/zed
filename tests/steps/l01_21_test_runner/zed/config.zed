@@ -1,7 +1,7 @@
 // Reads the mode from a config file, trimmed, and falls back to quiet when the file is
 // missing; an unreadable file is reported rather than defaulted.
 main(m: MainArgs) {
-  fs = files();
+  fs = main::files;
   mode = trim(fs["app.conf"]) else #notFound -> "quiet";
   m.stdout <- "mode=${mode}" else #ioError -> "app.conf is unreadable";
 }

@@ -70,7 +70,7 @@ fn a_port_not_pushed_writes_nothing() {
 
 #[test]
 fn a_files_port_is_given_as_a_function_of_the_path() {
-    let src = "main(m: MainArgs) {\n  fs = files();\n  \
+    let src = "main(m: MainArgs) {\n  fs = main::files;\n  \
                m.stdout <- (fs[\"a.txt\"] else \"\") ++ (fs[\"b.txt\"] else \"\");\n}\n\
                test { (\"\", \"\", (n -> #notFound), (p -> if p == \"a.txt\" { \"1\" } else { \"2\" })) -> \"12\\n\" }\n";
     assert_eq!(checks(src), ["5:8: ok"]);

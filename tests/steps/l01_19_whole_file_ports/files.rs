@@ -19,7 +19,7 @@ fn a_config_file_is_read_and_a_missing_one_falls_back() {
     let cfg = d.join("app.conf");
     std::fs::write(&cfg, "  verbose  \n").unwrap();
     let src = format!(
-        "main(m: MainArgs) {{\n  fs = files();\n  \
+        "main(m: MainArgs) {{\n  fs = main::files;\n  \
          mode = trim(fs[\"{}\"]) else \"quiet\";\n  \
          extra = (fs[\"{}\"] else #notFound -> \"(no overrides)\") else \"(unreadable)\";\n  \
          m.stdout <- \"mode=${{mode}} ${{extra}}\";\n}}\n",
@@ -39,7 +39,7 @@ fn a_file_that_is_not_utf8_is_an_io_error() {
     let bin = d.join("blob.bin");
     std::fs::write(&bin, [0xffu8, 0x00, 0xfe]).unwrap();
     let src = format!(
-        "main(m: MainArgs) {{\n  fs = files();\n  \
+        "main(m: MainArgs) {{\n  fs = main::files;\n  \
          m.stdout <- (fs[\"{}\"] else #ioError -> \"unreadable\") else \"missing\";\n}}\n",
         bin.display()
     );
@@ -75,7 +75,7 @@ impl Lookup for Counting {
 
 #[test]
 fn each_path_is_read_once_so_the_wave_sees_one_value() {
-    let src = "main(m: MainArgs) {\n  fs = files();\n  \
+    let src = "main(m: MainArgs) {\n  fs = main::files;\n  \
                a = fs[\"notes.txt\"];\n  b = fs[\"notes.txt\"];\n  c = fs[\"todo.txt\"];\n  \
                m.stdout <- \"${a == b} ${c else \"none\"}\";\n}\n";
     let p = load(src.as_bytes()).unwrap();
@@ -87,7 +87,7 @@ fn each_path_is_read_once_so_the_wave_sees_one_value() {
         "notes.txt once, todo.txt once"
     );
     assert_eq!(wave.writes[0].1, b"true contents of \"todo.txt\"\n");
-    let paths: Vec<String> = wave.record.files["files()"]
+    let paths: Vec<String> = wave.record.files["main::files"]
         .keys()
         .map(|k| k.to_string())
         .collect();
@@ -178,7 +178,7 @@ fn a_failed_read_says_what_failed_where_and_why() {
     // A directory is no file: reading it fails with the operating system's reason.
     let d = dir("failed-read");
     let src = format!(
-        "main(m: MainArgs) {{\n  fs = files();\n  \
+        "main(m: MainArgs) {{\n  fs = main::files;\n  \
          m.stdout <- (fs[\"{}\"] else #ioError(op:, path:, why:) -> \"${{op}} ${{path}}: ${{why}}\") \
          else \"missing\";\n}}\n",
         d.display()
@@ -201,7 +201,7 @@ fn a_failed_read_says_what_failed_where_and_why() {
     );
     // A bare `#ioError` still matches it, by the atom alone.
     let src = format!(
-        "main(m: MainArgs) {{\n  fs = files();\n  \
+        "main(m: MainArgs) {{\n  fs = main::files;\n  \
          m.stdout <- (fs[\"{}\"] else #ioError -> \"unreadable\") else \"missing\";\n}}\n",
         d.display()
     );
@@ -212,11 +212,11 @@ fn a_failed_read_says_what_failed_where_and_why() {
 fn a_bare_io_error_pattern_narrows_the_payload_away() {
     // After `else #ioError -> …` and `else #notFound -> …` only a `String` is left, so the
     // push type-checks.
-    let src = "main(m: MainArgs) {\n  fs = files();\n  \
+    let src = "main(m: MainArgs) {\n  fs = main::files;\n  \
                m.stdout <- (fs[\"app.conf\"] else #ioError -> \"unreadable\") \
                else #notFound -> \"missing\";\n}\n";
     assert!(load(src.as_bytes()).is_ok());
-    let src = "main(m: MainArgs) {\n  fs = files();\n  \
+    let src = "main(m: MainArgs) {\n  fs = main::files;\n  \
                m.stdout <- fs[\"app.conf\"] else #notFound -> \"missing\";\n}\n";
     let e = load(src.as_bytes()).err().unwrap();
     assert!(

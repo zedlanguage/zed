@@ -118,7 +118,7 @@ fn every_enabled_fence_program_agrees() {
 }
 
 /// Reads the files its three arguments name, and says which are missing or unreadable.
-const READER: &str = "main(m: MainArgs) {\n  fs = files();\n  \
+const READER: &str = "main(m: MainArgs) {\n  fs = main::files;\n  \
     a = (fs[m.args[0] else \"\"] else #notFound -> \"missing\") else #ioError -> \"unreadable\";\n  \
     b = (fs[m.args[1] else \"\"] else #notFound -> \"missing\") else #ioError -> \"unreadable\";\n  \
     c = (fs[m.args[2] else \"\"] else #notFound -> \"missing\") else #ioError -> \"unreadable\";\n  \
@@ -190,7 +190,7 @@ fn files_named_by_arguments_agree() {
             "`nope=x` names the file `x` for a port `nope`, and a program's ports are not named \
              on the command line: `main(m: MainArgs)` reads standard input from `m.stdin` and \
              writes `m.stdout` and `m.stderr` to standard output and standard error, and a \
-             program opens a file by its path with `files()`. To read a file as standard input, \
+             program reads a file by its path with `main::files[path]`. To read a file as standard input, \
              write `< x`; to write standard output to a file, write `> x`; to give the path to \
              the program, put it after `--`, where `m.args` reads it.\n\nusage: {} \
              [--record <out>] [-- arg …]\n",

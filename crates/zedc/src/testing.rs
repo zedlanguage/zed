@@ -248,7 +248,10 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, Accepted
                     }
                     (None, "main") => continue,
                     _ => {
-                        let k = query::key("row", &[&db.cone(&cones, &[&t.check])]);
+                        // The values a clause gives the row's ports are part of what it computes.
+                        let mut roots = vec![&t.check];
+                        roots.extend(&t.args[t.args.len() - t.ports.len()..]);
+                        let k = query::key("row", &[&db.cone(&cones, &roots)]);
                         counted_row(db, Query::Row, k, &t.function, || row(&cones, None, t, map))
                             .err()
                     }

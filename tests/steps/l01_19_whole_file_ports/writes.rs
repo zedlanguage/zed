@@ -24,7 +24,7 @@ fn a_port_bound_on_the_command_line_is_a_usage_error() {
             "`report=out.txt` names the file `out.txt` for a port `report`, and a program's \
              ports are not named on the command line: `main(m: MainArgs)` reads standard input \
              from `m.stdin` and writes `m.stdout` and `m.stderr` to standard output and standard \
-             error, and a program opens a file by its path with `files()`. To read a file as \
+             error, and a program reads a file by its path with `main::files[path]`. To read a file as \
              standard input, write `< out.txt`; to write standard output to a file, write `> \
              out.txt`; to give the path to the program, put it after `--`, where `m.args` reads \
              it.\n\nThe forms are:\n  \
@@ -195,7 +195,7 @@ fn names_no_port(port: &str, path: &str) -> String {
         "`{port}={path}` names the file `{path}` for a port `{port}`, and a program's ports are \
          not named on the command line: `main(m: MainArgs)` reads standard input from `m.stdin` \
          and writes `m.stdout` and `m.stderr` to standard output and standard error, and a \
-         program opens a file by its path with `files()`. To read a file as standard input, \
+         program reads a file by its path with `main::files[path]`. To read a file as standard input, \
          write `< {path}`; to write standard output to a file, write `> {path}`; to give the \
          path to the program, put it after `--`, where `m.args` reads it.\n\n{USAGE}"
     )

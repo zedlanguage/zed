@@ -10,7 +10,7 @@ use super::{built, dir, executable};
 /// A program that reads the file each of its first `n` arguments names, and writes what each
 /// holds on one line, joined by `|`.
 fn reader(n: usize) -> String {
-    let mut src = "main(m: MainArgs) {\nfs = files();\n".to_string();
+    let mut src = "main(m: MainArgs) {\nfs = main::files;\n".to_string();
     for k in 1..=n {
         src += &format!(
             "  r{k} = (fs[m.args[{}] else \"\"] else #notFound -> \"missing\") \

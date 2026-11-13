@@ -36,7 +36,7 @@ fn trace(src: &str, stdin: &str, files: &[(&'static str, &'static str)]) -> zed_
 
 #[test]
 fn a_failed_total_names_the_bad_quantity_and_the_missing_price_file() {
-    let src = "main(m: MainArgs) {\n  fs = files();\n  \
+    let src = "main(m: MainArgs) {\n  fs = main::files;\n  \
                qty = int(m.stdin[0]);\n  unit = int(fs[\"price.txt\"]);\n  \
                total = qty * unit;\n  m.stdout <- String(total) else \"no total\";\n}\n";
     let p = trace(src, "three\n", &[]);

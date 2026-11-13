@@ -113,6 +113,7 @@ fn describe(text: &str, r: &Resolved, word: &str, n: usize) -> Vec<String> {
     match used {
         Ref::Prelude(w) => vec![format!("prelude {w}")],
         Ref::Unit { unit, name } => vec![format!("{unit}.{name}")],
+        Ref::Main(p) => vec![format!("input {p}")],
         Ref::Bound(ids) => ids
             .iter()
             .map(|&i| {

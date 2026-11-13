@@ -171,9 +171,9 @@ fn the_fixed_width_aliases_are_types_of_l7_and_byte_is_none() {
 
 /// The names of the table that the resolver does not hold, each with the reason: a name the
 /// program declares, a port a program names in `main`'s header, a compiler mode, which is no name
-/// in source, a word of L1 that a later layer extends to more types, and `files`, whose call
-/// `files()` in the body of `main` the parser reads as a use of `main`'s file port, as it reads
-/// `m.stdout`, so the resolver never sees the name.
+/// in source, a word of L1 that a later layer extends to more types, and `files`, which every
+/// function reads as `main::files`, a field of `main` (QUESTIONS A68), and which alone names
+/// nothing.
 const NOT_PRELUDE_NAMES: &[(&str, &str)] = &[
     ("L1", "main"),
     ("L1", "files"),
