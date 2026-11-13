@@ -344,7 +344,7 @@ fn a_bounded_variable_bound_to_two_carriers_fits_only_at_one_place() {
     assert_eq!(
         type_errors(text),
         [
-            "`add` is `(x: T, y: T) -> T for T in int | f32 | f64 | rat`, not `(x: T1, y: T1) -> T1`: at `(x: T1, y: T1) -> T1`, the arrow `(x: T, y: T) -> T for T in int | f32 | f64 | rat` takes it only with `T` bound to `int | f64`, values of more than one carrier, but a call fixes `T` to one carrier, and `T` stands at 2 places the arguments give, which could be given values of two carriers.\n  T1 stands for a part written more than once:\n    type T1 = int | f64; [add]"
+            "`add` is `(x: T, y: T) -> T for T in int | f32 | f64 | rat`, not `(x: T1, y: T1) -> T1`: at `(x: T1, y: T1) -> T1`, the arrow `(x: T, y: T) -> T for T in int | f32 | f64 | rat` takes it only with `T` bound to `T1`, values of more than one carrier, but a call fixes `T` to one carrier, and `T` stands at 2 places the arguments give, which could be given values of two carriers.\n  T1 stands for a part written more than once:\n    type T1 = int | f64; [add]"
         ]
     );
     let text = "p(f: (x: int | f64) -> ((y: int | f64) -> int)) = f(x: 1)(y: 1.5);\n\
@@ -352,7 +352,7 @@ fn a_bounded_variable_bound_to_two_carriers_fits_only_at_one_place() {
     assert_eq!(
         type_errors(text),
         [
-            "`p` does not take ((x: T) -> (y: T) -> int for T in int | f64): at `(x: T1) -> (y: T1) -> int`, the arrow `(x: T) -> (y: T) -> int for T in int | f64` takes it only with `T` bound to `int | f64`, values of more than one carrier, but a call fixes `T` to one carrier, and `T` stands where the arrow takes values of it inside a function type, which need not be of the carrier its argument fixes.\n  T1 stands for a part written more than once:\n    type T1 = int | f64; [p(f: g)]"
+            "`p` does not take ((x: T) -> (y: T) -> int for T in int | f64): at `(x: T1) -> (y: T1) -> int`, the arrow `(x: T) -> (y: T) -> int for T in int | f64` takes it only with `T` bound to `T1`, values of more than one carrier, but a call fixes `T` to one carrier, and `T` stands where the arrow takes values of it inside a function type, which need not be of the carrier its argument fixes.\n  T1 stands for a part written more than once:\n    type T1 = int | f64; [p(f: g)]"
         ]
     );
     // Near miss: one place, the result's alike, so each value takes the arrow at its carrier.
@@ -455,7 +455,7 @@ fn a_refused_cover_names_the_expected_types_variables() {
     assert_eq!(
         type_errors(text),
         [
-            "`p` does not take (((x: T1) -> int | f64 | #a) & ((x: T1) -> int | f64 | #b)): at `(x: U) -> U for U in int | f64`, the arrows `(x: int | f64) -> int | f64 | #a`, `(x: int | f64) -> int | f64 | #b` each take all of it, and the intersection of their results, `int | f64`, is not within `U`.\n  T1 stands for a part written more than once:\n    type T1 = int | f64; [p(f: g)]"
+            "`p` does not take (((x: T1) -> int | f64 | #a) & ((x: T1) -> int | f64 | #b)): at `(x: U) -> U for U in int | f64`, the arrows `(x: T1) -> int | f64 | #a`, `(x: T1) -> int | f64 | #b` each take all of it, and the intersection of their results, `T1`, is not within `U`.\n  T1 stands for a part written more than once:\n    type T1 = int | f64; [p(f: g)]"
         ]
     );
     let text = "p(f: (x: U, y: int | f64) -> U for U in int | f64) = 0;\n\

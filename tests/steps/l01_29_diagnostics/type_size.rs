@@ -11,7 +11,7 @@
 use super::rejected;
 
 /// `t0 = (1, 1);` and `t_i = (t_{i-1}, t_{i-1})` up to `t_n`, then `u = t_n + 1;`.
-fn doubling(n: usize) -> String {
+pub(super) fn doubling(n: usize) -> String {
     let mut src = "t0 = (1, 1);\n".to_string();
     for i in 1..=n {
         src += &format!("t{i} = (t{0}, t{0});\n", i - 1);
@@ -20,7 +20,7 @@ fn doubling(n: usize) -> String {
 }
 
 /// The chains of [`doubling`] from `(1, 1)` and from `(1, true)`, then `u = t_n < s_n;`.
-fn compared(n: usize) -> String {
+pub(super) fn compared(n: usize) -> String {
     let mut src = "t0 = (1, 1);\ns0 = (1, true);\n".to_string();
     for i in 1..=n {
         src += &format!("t{i} = (t{0}, t{0});\ns{i} = (s{0}, s{0});\n", i - 1);
@@ -30,7 +30,7 @@ fn compared(n: usize) -> String {
 
 /// `a0 = (0, 0);` and `a_i = (a_{i-1}, i)` up to `a_n`, then `u = a_n + 1;`: each name holds
 /// the one before.
-fn growing(n: usize) -> String {
+pub(super) fn growing(n: usize) -> String {
     let mut src = "a0 = (0, 0);\n".to_string();
     for i in 1..=n {
         src += &format!("a{i} = (a{}, {i});\n", i - 1);
@@ -669,50 +669,54 @@ fn a_union_of_tuples_printed_before_keeps_the_order_of_its_members() {
 }
 
 #[test]
-fn a_union_inside_a_tuple_printed_before_is_named_as_the_later_type_uses_it() {
-    // `1 | 2` is written once in `a0`'s type and twice in `a1`'s, so `a1`'s steps name it,
-    // and `a0`'s tuple inside `a1` is written with that name, not as `a0`'s steps wrote it.
+fn a_union_inside_a_tuple_printed_before_is_named_from_the_first_step_that_uses_it_twice() {
+    // `1 | 2` is written twice in the sentence's type, so it is `T1` from the sentence on,
+    // and `a0`'s steps, which use it once, write `T1` too (MSG-derive-print-union-names).
+    // Before, a union was named by how often each type used it, and `a0`'s steps wrote
+    // `(1 | 2, 3)`. With `T1` a part of it, `(T1, 3)`, written inside `T3` and in `a0`'s
+    // steps, is named as any tuple holding a named part is.
     assert_eq!(
         rejected(
             "g(positional c: bool) = if c { 1 } else { 2 };\na0 = (g(true), 3);\n\
              a1 = (a0, g(false));\na2 = (a1, a1);\nu = a2 + 1;\n"
         ),
-        r#"5:5: `+` does not take ((T2, T2), 1): no arrow of `+` takes these types.
-  T1 and T2 stand for parts written more than once:
+        r#"5:5: `+` does not take ((T3, T3), 1): no arrow of `+` takes these types.
+  T1, T2 and T3 stand for parts written more than once:
     type T1 = 1 | 2;
-    type T2 = ((T1, 3), T1);
-  [1]  5:5: `a2` is (T2, T2) here
+    type T2 = (T1, 3);
+    type T3 = (T2, T1);
+  [1]  5:5: `a2` is (T3, T3) here
        5 | u = a2 + 1;
          |     ^^ [1]
          |     ^^^^^^ [16, 17, 18, 19]
          |          ^ [15]
-  [2]  4:6: `a2` is defined as this expression, (T2, T2)
+  [2]  4:6: `a2` is defined as this expression, (T3, T3)
        4 | a2 = (a1, a1);
          |      ^^^^^^^^ [2, 3]
          |       ^^ [4]
          |           ^^ [14]
-  [3]  4:6: this expression gives (T2, T2)
-  [4]  4:7: `a1` is T2 here
-  [5]  3:6: `a1` is defined as this expression, T2
+  [3]  4:6: this expression gives (T3, T3)
+  [4]  4:7: `a1` is T3 here
+  [5]  3:6: `a1` is defined as this expression, T3
        3 | a1 = (a0, g(false));
          |      ^^^^^^^^^^^^^^ [5, 6]
          |       ^^ [7]
          |           ^^^^^^^^ [13]
-  [6]  3:6: this expression gives T2
-  [7]  3:7: `a0` is (1 | 2, 3) here
-  [8]  2:6: `a0` is defined as this expression, (1 | 2, 3)
+  [6]  3:6: this expression gives T3
+  [7]  3:7: `a0` is T2 here
+  [8]  2:6: `a0` is defined as this expression, T2
        2 | a0 = (g(true), 3);
          |      ^^^^^^^^^^^^ [8, 9]
          |       ^^^^^^^ [10]
          |                ^ [12]
-  [9]  2:6: this expression gives (1 | 2, 3)
-  [10] 2:7: this call of `g` gives 1 | 2
-  [11] 1:1: `g` is declared here with no type written for its result; the type the checker found for `g` is `(bool) -> 1 | 2`
+  [9]  2:6: this expression gives T2
+  [10] 2:7: this call of `g` gives T1
+  [11] 1:1: `g` is declared here with no type written for its result; the type the checker found for `g` is `(bool) -> T1`
        1 | g(positional c: bool) = if c { 1 } else { 2 };
          | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   [12] 2:16: this literal, 3, is 3
-  [13] 3:11: this call of `g` gives 1 | 2
-  [14] 4:11: `a1` is T2 here
+  [13] 3:11: this call of `g` gives T1
+  [14] 4:11: `a1` is T3 here
   [15] 5:10: this literal, 1, is 1
   [16] 5:5: `+` takes (int, int) -> int
   [17] 5:5: `+` takes (f64, f64) -> f64
@@ -721,17 +725,81 @@ fn a_union_inside_a_tuple_printed_before_is_named_as_the_later_type_uses_it() {
     );
 }
 
-// A part holding a union is taken again by later steps where it writes the union as the type
-// it stands in does (MSG-derive-print-unions). A union is named by how often the whole type
-// uses it, so a part printed before, where the union was used once and written out, is not the
-// text it has in a type that uses the union twice; each kept part carries how often it uses
-// each such inner part, and is taken again only where those uses agree with the type's.
+#[test]
+fn a_union_is_written_in_full_until_a_step_uses_it_twice_and_named_in_every_step_after() {
+    // The sentence and steps [1] to [3] use `#a | #b` once and write it; step [4] uses it
+    // twice and names it `T1`; step [6] uses it once and keeps the name.
+    assert_eq!(
+        rejected(
+            "k(positional p: #a | #b) = (p, 0);\nm(positional p: #a | #b) = 0;\n\
+             a0 = k(#a);\nu = a0 + m(#b);\n"
+        ),
+        r#"4:5: `+` does not take ((#a | #b, 0), 0): no arrow of `+` takes these types.
+  T1 stands for a part written more than once:
+    type T1 = #a | #b;
+  [1]  4:5: `a0` is (#a | #b, 0) here
+       4 | u = a0 + m(#b);
+         |     ^^ [1]
+         |     ^^^^^^^^^^ [7, 8, 9, 10]
+         |          ^^^^^ [5]
+  [2]  3:6: `a0` is defined as this expression, (#a | #b, 0)
+       3 | a0 = k(#a);
+         |      ^^^^^
+  [3]  3:6: this call of `k` gives (#a | #b, 0)
+  [4]  1:1: `k` is declared here with no type written for its result; the type the checker found for `k` is `(T1) -> (T1, 0)`
+       1 | k(positional p: #a | #b) = (p, 0);
+         | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  [5]  4:10: this call of `m` gives 0
+  [6]  2:1: `m` is declared here with no type written for its result; the type the checker found for `m` is `(T1) -> 0`
+       2 | m(positional p: #a | #b) = 0;
+         | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  [7]  4:5: `+` takes (int, int) -> int
+  [8]  4:5: `+` takes (f64, f64) -> f64
+  [9]  4:5: `+` takes (rat, rat) -> rat
+  [10] 4:5: `+` takes (f32, f32) -> f32"#
+    );
+}
+
+#[test]
+fn a_union_the_sentence_uses_twice_is_named_in_every_step() {
+    // The sentence writes `#a | #b` twice, so step [2], which uses it once, writes `T1`.
+    assert_eq!(
+        rejected(
+            "k(positional p: #a | #b) = (p, p);\nm(positional p: #a | #b) = 0;\n\
+             u = m(#b) + k(#a);\n"
+        ),
+        r#"3:5: `+` does not take (0, (T1, T1)): no arrow of `+` takes these types.
+  T1 stands for a part written more than once:
+    type T1 = #a | #b;
+  [1] 3:5: this call of `m` gives 0
+      3 | u = m(#b) + k(#a);
+        |     ^^^^^ [1]
+        |     ^^^^^^^^^^^^^ [5, 6, 7, 8]
+        |             ^^^^^ [3]
+  [2] 2:1: `m` is declared here with no type written for its result; the type the checker found for `m` is `(T1) -> 0`
+      2 | m(positional p: #a | #b) = 0;
+        | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  [3] 3:13: this call of `k` gives (T1, T1)
+  [4] 1:1: `k` is declared here with no type written for its result; the type the checker found for `k` is `(T1) -> (T1, T1)`
+      1 | k(positional p: #a | #b) = (p, p);
+        | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  [5] 3:5: `+` takes (int, int) -> int
+  [6] 3:5: `+` takes (f64, f64) -> f64
+  [7] 3:5: `+` takes (rat, rat) -> rat
+  [8] 3:5: `+` takes (f32, f32) -> f32"#
+    );
+}
+
+// A part holding a union is taken again by later steps (MSG-derive-print-unions). A union is
+// named from the first step of the message that uses it twice and in every step after, so a
+// part's text does not depend on the type it stands in, and each part is printed once for the
+// message (MSG-derive-print-union-names, option (1) of COMPLEXITY.md row K110).
 // Before, no part holding a union was kept, and a chain of n links each holding one printed
 // each link's whole type at each of its steps, O(n²) (COMPLEXITY.md row K110).
 
 /// `g` gives `1 | 2`, `a0 = (g(true), 0);` and `a_i = (a_{i-1}, g(false))` up to `a_n`, then
 /// `u = a_n < 1;`: each link holds the union, and from `a1` on uses it twice.
-fn unions(n: usize) -> String {
+pub(super) fn unions(n: usize) -> String {
     let mut src =
         "g(positional c: bool) = if c { 1 } else { 2 };\na0 = (g(true), 0);\n".to_string();
     for i in 1..=n {
@@ -741,7 +809,7 @@ fn unions(n: usize) -> String {
 }
 
 /// [`unions`] with a union of its own at each link: `g_i` gives `i | i + 1`.
-fn unions_each_its_own(n: usize) -> String {
+pub(super) fn unions_each_its_own(n: usize) -> String {
     let mut src =
         "g0(positional c: bool) = if c { 0 } else { 1 };\na0 = (g0(true), 0);\n".to_string();
     for i in 1..=n {
@@ -757,7 +825,7 @@ fn unions_each_its_own(n: usize) -> String {
 /// `a_i = (a_{i-1}, 0)` holds the union of `a0` once, deep inside, `d_i = (a_i, g(false))`
 /// uses it twice, and `e_i = (e_{i-1}, d_i)` holds every `d_i`, then `u = e_n < 1;`: each
 /// `a_i` is printed where the union is used once and inside a `d_i`, where it is used twice.
-fn unions_inside(n: usize) -> String {
+pub(super) fn unions_inside(n: usize) -> String {
     let mut src = "g(positional c: bool) = if c { 1 } else { 2 };\na0 = (g(true), 0);\n\
                    d0 = (a0, g(false));\ne0 = (d0, 0);\n"
         .to_string();
@@ -804,5 +872,46 @@ fn rejecting_a_chain_of_n_names_each_using_a_union_once_and_twice_does_work_line
         "rejecting a chain of n names each using a union once and twice",
         40,
         unions_inside,
+    );
+}
+
+/// `a_n` holds `n` unions once each, `g_i` giving `2i | 2i + 1` in `a_i = (a_{i-1}, g_i(true))`,
+/// and `e_0 = (a_n, 0); e_k = (e_{k-1}, g_k(false))` uses one more of them twice at each link,
+/// then `u = e_n < 1;` (MSG-derive-print-union-names).
+pub(super) fn unions_named_one_by_one(n: usize) -> String {
+    let mut src = String::new();
+    for i in 1..=n {
+        src += &format!(
+            "g{i}(positional c: bool) = if c {{ {} }} else {{ {} }};\n",
+            2 * i,
+            2 * i + 1
+        );
+    }
+    src += "a1 = (g1(true), 0);\n";
+    for i in 2..=n {
+        src += &format!("a{i} = (a{}, g{i}(true));\n", i - 1);
+    }
+    src += &format!("e0 = (a{n}, 0);\n");
+    for k in 1..=n {
+        src += &format!("e{k} = (e{}, g{k}(false));\n", k - 1);
+    }
+    src + &format!("u = e{n} < 1;\n")
+}
+
+#[test]
+fn rejecting_a_chain_naming_one_more_union_of_a_part_at_each_link_writes_a_text_linear_in_n() {
+    scales(
+        "rejecting a chain naming one more union of a part at each link",
+        40,
+        unions_named_one_by_one,
+    );
+}
+
+#[test]
+fn rejecting_a_chain_naming_one_more_union_of_a_part_at_each_link_does_work_linear_in_n() {
+    works(
+        "rejecting a chain naming one more union of a part at each link",
+        40,
+        unions_named_one_by_one,
     );
 }

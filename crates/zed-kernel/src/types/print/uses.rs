@@ -1,72 +1,34 @@
-//! How the parts of a printed type use the parts that are named by how often a type uses them
-//! (step MSG-derive-print-unions). A part such as a union `1 | 2` gets a definition when a type
-//! uses it twice or more and is written in full when it uses it once, so the text of a part
-//! that holds it depends on the rest of the type. For each such part `c` that a printed part
-//! holds, a [`Uses`] map records the one part that refers to it, or that two or more references
-//! to it were seen ([`Use::Many`]). The maps of two parts merge into the map of a part that
-//! holds both, and the printer keeps one with each part it keeps for later types of a message,
-//! so a later type that takes the part again knows its uses without printing it again.
+//! How the parts of a message's types use the parts that are named by how often they are used
+//! (steps MSG-derive-print-unions, MSG-derive-print-union-names). A part such as a union `1 | 2`
+//! gets a name from the first step of a message whose type uses it twice or more, and keeps it
+//! in every later step ([`super::defs::lift`]). For each such part `c` that a part of the
+//! message's table holds, a [`Uses`] map records the one part or text that refers to it, or
+//! that two or more references to it were seen ([`Use::Many`]). The maps of two parts merge
+//! into the map of a part that holds both, so the map of a part is built once and shared by
+//! every step that writes the part.
 //!
 //! A map is a persistent Patricia trie over the parts' numbers, big-endian, as in Okasaki and
 //! Gill, "Fast Mergeable Integer Maps", ACM SIGPLAN Workshop on ML, 1998. A map that a merge
 //! leaves unchanged is returned as it was, so maps built from one another share their subtrees,
-//! and [`conflicts`] skips a subtree the two maps share.
+//! and [`Uses::each_new_many`] skips a subtree it has already seen.
 
+use std::collections::HashSet;
 use std::rc::Rc;
 
 /// The uses of one part.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Use {
-    /// One reference, from the part numbered `from`; `named` when the print that made the map
-    /// named the part all the same, for its uses outside the part the map belongs to.
-    One { from: u32, named: bool },
-    /// Two or more references: the part is named in every type that holds them.
+    /// One reference, from the part or text numbered `from`.
+    One { from: u32 },
+    /// Two or more references: the part is named in every step from the first that holds them.
     Many,
 }
 
 impl Use {
     fn merge(self, other: Use) -> Use {
         match (self, other) {
-            (Use::One { from: a, named: x }, Use::One { from: b, named: y }) if a == b => {
-                Use::One {
-                    from: a,
-                    named: x || y,
-                }
-            }
+            (Use::One { from: a }, Use::One { from: b }) if a == b => self,
             _ => Use::Many,
-        }
-    }
-}
-
-/// What a subtree holds, so that a search skips one that holds nothing it looks for.
-#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
-struct Holds {
-    one: bool,
-    many: bool,
-    named_one: bool,
-}
-
-impl Holds {
-    fn of(u: Use) -> Holds {
-        match u {
-            Use::One { named, .. } => Holds {
-                one: true,
-                many: false,
-                named_one: named,
-            },
-            Use::Many => Holds {
-                one: false,
-                many: true,
-                named_one: false,
-            },
-        }
-    }
-
-    fn or(self, other: Holds) -> Holds {
-        Holds {
-            one: self.one || other.one,
-            many: self.many || other.many,
-            named_one: self.named_one || other.named_one,
         }
     }
 }
@@ -75,21 +37,22 @@ impl Holds {
 enum Trie {
     Leaf(u32, Use),
     /// The keys that agree with `prefix` above the bit `bit`, those with the bit clear on the
-    /// left.
+    /// left; `many` when some key below has [`Use::Many`].
     Branch {
         prefix: u32,
         bit: u32,
         left: Rc<Trie>,
         right: Rc<Trie>,
-        holds: Holds,
+        many: bool,
     },
 }
 
 impl Trie {
-    fn holds(&self) -> Holds {
+    /// Whether some key in the subtree has [`Use::Many`].
+    fn many(&self) -> bool {
         match self {
-            Trie::Leaf(_, u) => Holds::of(*u),
-            Trie::Branch { holds, .. } => *holds,
+            Trie::Leaf(_, u) => *u == Use::Many,
+            Trie::Branch { many, .. } => *many,
         }
     }
 
@@ -102,7 +65,7 @@ impl Trie {
     }
 }
 
-/// The uses of the named-by-count parts a printed part holds, by their numbers.
+/// The uses of the named-by-count parts a part holds, by their numbers.
 #[derive(Clone, Default, Debug)]
 pub(super) struct Uses(Option<Rc<Trie>>);
 
@@ -117,13 +80,13 @@ fn branching_bit(a: u32, b: u32) -> u32 {
 }
 
 fn branch(prefix: u32, bit: u32, left: Rc<Trie>, right: Rc<Trie>) -> Rc<Trie> {
-    let holds = left.holds().or(right.holds());
+    let many = left.many() || right.many();
     Rc::new(Trie::Branch {
         prefix,
         bit,
         left,
         right,
-        holds,
+        many,
     })
 }
 
@@ -226,6 +189,7 @@ fn union(a: &Rc<Trie>, b: &Rc<Trie>) -> Rc<Trie> {
     }
 }
 
+#[cfg(test)]
 fn get(t: &Trie, key: u32) -> Option<Use> {
     match t {
         Trie::Leaf(k, u) => (*k == key).then_some(*u),
@@ -243,64 +207,21 @@ fn get(t: &Trie, key: u32) -> Option<Use> {
     }
 }
 
-/// Whether some key has one use in `p` and many in `z`.
-fn conflicts(p: &Rc<Trie>, z: &Rc<Trie>) -> bool {
-    if Rc::ptr_eq(p, z) || !p.holds().one || !z.holds().many {
-        return false;
-    }
-    match (&**p, &**z) {
-        (Trie::Leaf(k, Use::One { .. }), _) => get(z, *k) == Some(Use::Many),
-        (Trie::Leaf(..), _) => false,
-        (_, Trie::Leaf(k, _)) => matches!(get(p, *k), Some(Use::One { .. })),
-        (
-            Trie::Branch {
-                prefix: pp,
-                bit: mp,
-                left: lp,
-                right: rp,
-                ..
-            },
-            Trie::Branch {
-                prefix: pz,
-                bit: mz,
-                left: lz,
-                right: rz,
-                ..
-            },
-        ) => {
-            if mp > mz {
-                match (mask(*pz, *mp) == *pp, pz & mp == 0) {
-                    (false, _) => false,
-                    (true, true) => conflicts(lp, z),
-                    (true, false) => conflicts(rp, z),
-                }
-            } else if mz > mp {
-                match (mask(*pp, *mz) == *pz, pp & mz == 0) {
-                    (false, _) => false,
-                    (true, true) => conflicts(p, lz),
-                    (true, false) => conflicts(p, rz),
-                }
-            } else {
-                pp == pz && (conflicts(lp, lz) || conflicts(rp, rz))
-            }
-        }
-    }
-}
+/// The trie nodes [`Uses::each_new_many`] has walked, each held so that its address is not
+/// given to another node while the set lives.
+#[derive(Default)]
+pub(super) struct Seen(HashSet<*const Trie>, Vec<Rc<Trie>>);
 
 // Complexity tradeoff: a map of the parts by their numbers in a hash table would take each
 // use in O(1), but merging the maps of the parts of a type copies them, O(n) per part and
 // O(n²) for a chain of n parts each holding the one before. The trie is persistent: inserting
-// a use builds the O(32) nodes on its key's path and shares the rest, a union of a map with
-// one of k keys costs O(32 k) and nothing for a subtree the two share, and so does a search
-// for a conflict ([`Uses::conflicts`]).
-// This is option (2) of COMPLEXITY.md row K110, chosen here without the cross-review the plan
-// row asked for (the brief left the method open): keep a part with the uses of each union
-// inside it in a shared or persistent map. Option (1), naming a union by its uses in the whole
-// message, would be cheaper (no map) but changes the DESIGN rule that a part used once is
-// written where it stands, so it needs the author. Measured, rejecting a chain of
-// n names each holding a union (`l01_29_diagnostics::type_size`), n = 40 to 320: 7.6 times the
-// work and 6.3 times the bytes, where the printer without these maps allocated 43.7 times the
-// bytes; with a union of its own at each link 7.8 and 7.9 times (35.5 without).
+// a use builds the O(32) nodes on its key's path and shares the rest, and a union of a map with
+// one of k keys costs O(32 k) and nothing for a subtree the two share. Finding the keys used
+// twice or more in the map of each step of a message walks each trie node once over all the
+// steps ([`Uses::each_new_many`]): a subtree a step shares with an earlier one was walked then.
+// This is option (1) of COMPLEXITY.md row K110, the one the author chose (2026-11-13): a part is
+// named by its uses from the first step that uses it twice, so a part's text no longer depends
+// on the type it stands in, and the printer keeps no map of its own (option (2) did).
 impl Uses {
     /// The map with `key`'s uses merged with `u`.
     pub(super) fn with(&self, key: u32, u: Use) -> Uses {
@@ -320,32 +241,44 @@ impl Uses {
     }
 
     /// The uses of `key`, if the map has it.
+    #[cfg(test)]
     pub(super) fn get(&self, key: u32) -> Option<Use> {
         get(self.0.as_deref()?, key)
     }
 
-    /// Whether some part used once here was named in the print that made the map: a part
-    /// that holds it is written so only where it stands in that type.
-    pub(super) fn named_once(&self) -> bool {
-        self.0.as_ref().is_some_and(|t| t.holds().named_one)
-    }
-
-    /// Whether some part used once here is used twice or more in `all`: a part that holds it
-    /// writes it in full, where a type with the uses of `all` names it.
-    pub(super) fn conflicts(&self, all: &Uses) -> bool {
-        match (&self.0, &all.0) {
-            (Some(p), Some(z)) => conflicts(p, z),
-            _ => false,
+    /// Calls `f` on each key with [`Use::Many`] in a subtree of the map that `seen` does not
+    /// hold, and adds the subtrees walked to `seen`. Over maps that share subtrees, each trie
+    /// node is walked once.
+    pub(super) fn each_new_many(&self, seen: &mut Seen, f: &mut impl FnMut(u32)) {
+        let mut stack: Vec<&Rc<Trie>> = self.0.iter().collect();
+        while let Some(t) = stack.pop() {
+            if !t.many() || !seen.0.insert(Rc::as_ptr(t)) {
+                continue;
+            }
+            seen.1.push(t.clone());
+            match &**t {
+                Trie::Leaf(k, _) => f(*k),
+                Trie::Branch { left, right, .. } => {
+                    stack.push(right);
+                    stack.push(left);
+                }
+            }
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Use, Uses};
+    use super::{Seen, Use, Uses};
 
     fn one(from: u32) -> Use {
-        Use::One { from, named: false }
+        Use::One { from }
+    }
+
+    fn new_many(u: &Uses, seen: &mut Seen) -> Vec<u32> {
+        let mut out = Vec::new();
+        u.each_new_many(seen, &mut |k| out.push(k));
+        out
     }
 
     #[test]
@@ -361,27 +294,20 @@ mod tests {
     }
 
     #[test]
-    fn a_conflict_is_a_key_used_once_in_one_map_and_many_times_in_the_other() {
-        let p = Uses::default().with(3, one(1)).with(u32::MAX, one(2));
-        let z = p.with(3, one(4));
-        assert!(p.conflicts(&z));
-        assert!(!z.conflicts(&p));
-        let q = Uses::default().with(u32::MAX, one(2)).with(8, Use::Many);
-        assert!(!q.conflicts(&q.with(8, one(1))));
-        assert!(!p.conflicts(&p));
-    }
-
-    #[test]
-    fn a_part_named_for_uses_outside_it_is_found() {
-        let p = Uses::default().with(
-            2,
-            Use::One {
-                from: 1,
-                named: true,
-            },
-        );
-        assert!(p.named_once());
-        assert!(!p.with(2, one(4)).named_once());
+    fn a_key_used_many_times_is_found_once_over_maps_that_share_it() {
+        let a = Uses::default()
+            .with(3, one(1))
+            .with(3, one(2))
+            .with(8, one(1));
+        let mut seen = Seen::default();
+        assert_eq!(new_many(&a, &mut seen), [3]);
+        // A map built on `a` shares the subtree of 3; only 8, now used twice, is new.
+        let b = a.with(8, one(4)).with(12, one(4));
+        assert_eq!(new_many(&b, &mut seen), [8]);
+        assert_eq!(new_many(&b, &mut seen), Vec::<u32>::new());
+        // A map built apart is walked whole.
+        let c = Uses::default().with(3, Use::Many);
+        assert_eq!(new_many(&c, &mut seen), [3]);
     }
 
     #[test]
@@ -404,6 +330,6 @@ mod tests {
         }
         let twice = u.union(&Uses::default().with(keys[7], one(99)));
         assert_eq!(twice.get(keys[7]), Some(Use::Many));
-        assert!(u.conflicts(&twice));
+        assert_eq!(new_many(&twice, &mut Seen::default()), [keys[7]]);
     }
 }

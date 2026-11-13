@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use zed_kernel::types::Type as KType;
+use zed_kernel::types::defs;
 use zed_kernel::{Rat, Value};
 use zed_tests::scaling;
 use zedc::check::read::parse_type;
@@ -161,6 +162,71 @@ fn every_printed_type_parses_back_to_itself() {
     failures.sort();
     failures.dedup();
     println!("{count} printed types");
+    assert!(
+        failures.is_empty(),
+        "{}\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+/// Each type a step of a message writes, as that step writes it, parses back to the type with
+/// the message's declarations in scope (step L1.29, MSG-derive-print-union-names): a union a
+/// step names is declared above every step, and a step after it writes the name even where it
+/// uses the union once. A type is found in the steps by its text before the message writes its
+/// references, so one whose variables the message renamed is not found, and is checked alone
+/// by [`every_printed_type_parses_back_to_itself`].
+#[test]
+fn every_type_a_step_writes_parses_back_with_the_message_declarations() {
+    use super::type_size as ts;
+    let mut failures = Vec::new();
+    let mut count = 0;
+    // The corpus prints few types with parts written apart, so the derivations of step
+    // MSG-derive-type-size, whose steps name tuples and unions, are read too.
+    type Make = fn(usize) -> String;
+    let makers: [(&str, Make); 7] = [
+        ("doubling", ts::doubling),
+        ("compared", ts::compared),
+        ("growing", ts::growing),
+        ("unions", ts::unions),
+        ("unions_each_its_own", ts::unions_each_its_own),
+        ("unions_inside", ts::unions_inside),
+        ("unions_named_one_by_one", ts::unions_named_one_by_one),
+    ];
+    let derivations = makers
+        .into_iter()
+        .flat_map(|(name, make)| (1..=3).map(move |n| (format!("{name}({n})"), make(n))));
+    for (at, text) in programs().into_iter().chain(derivations) {
+        printed::start();
+        defs::record_messages();
+        let _ = zedc::run::load(text.as_bytes());
+        let messages = defs::take_messages();
+        let seen = printed::take_raw();
+        let held = seen
+            .iter()
+            .filter(|(t, _, raw)| defs::holds_reference(raw) && !unsolved(t));
+        for (t, _, raw) in held {
+            for m in &messages {
+                let mut declared = String::new();
+                for (name, body) in &m.defs {
+                    defs::declare(&mut declared, name, body).expect("a String takes any text");
+                }
+                for shown in m.spelled(raw) {
+                    count += 1;
+                    if let Some(why) = mismatch(t, &format!("{declared}{shown}")) {
+                        failures.push(format!("{at}: {why}"));
+                    }
+                }
+            }
+        }
+    }
+    failures.sort();
+    failures.dedup();
+    println!("{count} types written in steps");
+    assert!(
+        count > 0,
+        "no step of a message writes a type with a reference"
+    );
     assert!(
         failures.is_empty(),
         "{}\n{}",

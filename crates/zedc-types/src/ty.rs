@@ -9808,7 +9808,7 @@ pub mod printed {
     use super::Ty;
 
     thread_local! {
-        static SEEN: RefCell<Option<Vec<(Ty, String)>>> = const { RefCell::new(None) };
+        static SEEN: RefCell<Option<Vec<(Ty, String, String)>>> = const { RefCell::new(None) };
     }
 
     /// Starts recording on this thread, dropping what was recorded.
@@ -9818,6 +9818,15 @@ pub mod printed {
 
     /// What was recorded since `start`, in printed order; recording stops.
     pub fn take() -> Vec<(Ty, String)> {
+        take_raw()
+            .into_iter()
+            .map(|(t, text, _)| (t, text))
+            .collect()
+    }
+
+    /// As [`take`], each also with its text as printed, which in a message holds references
+    /// to the definitions the message writes apart.
+    pub fn take_raw() -> Vec<(Ty, String, String)> {
         SEEN.take().unwrap_or_default()
     }
 
@@ -9826,7 +9835,8 @@ pub mod printed {
     pub fn record(t: &Ty, text: &str) {
         SEEN.with_borrow_mut(|seen| {
             if let Some(seen) = seen {
-                seen.push((t.clone(), zed_kernel::types::defs::plain(text)));
+                let alone = zed_kernel::types::defs::plain(text);
+                seen.push((t.clone(), alone, text.to_string()));
             }
         });
     }

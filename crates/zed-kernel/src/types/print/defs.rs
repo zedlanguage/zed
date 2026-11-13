@@ -42,14 +42,29 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::{self, Write as _};
 
 use super::names::{Names, fresh_name};
+use super::uses::{Seen, Use, Uses};
 
 /// Opens a reference.
 const REF: char = '\u{FDD5}';
 /// Opens a reference to a part that is named only if [`lift`] finds it inside another part
 /// ([`add_soft`]).
 const SOFT: char = '\u{FDD4}';
+/// Opens a reference to a part named from the first step of a message that uses it twice or
+/// more, and written in full before ([`add_counted`]).
+const COUNT: char = '\u{FDD3}';
+/// As [`COUNT`], where the part written in full is parenthesized, as `(1 | 2)[]`.
+const WRAP: char = '\u{FDD2}';
+/// Every mark that opens a reference.
+const MARKS: [char; 4] = [REF, SOFT, COUNT, WRAP];
 /// Closes a reference.
 const END: char = '\u{FDD6}';
+/// Opens the text of one print of types that holds a reference ([`enclose`]), the unit whose
+/// uses decide from which step a part is named ([`first_named`]).
+const TYPE: char = '\u{FDD0}';
+/// Closes what [`TYPE`] opens.
+const TYPE_END: char = '\u{FDD1}';
+/// Every mark [`spell`] reads.
+const SPELLED: [char; 6] = [REF, SOFT, COUNT, WRAP, TYPE, TYPE_END];
 /// A definition whose place is not known yet, written while the printer places the others.
 pub(super) const WAIT: &str = "\u{FDD7}";
 
@@ -150,6 +165,9 @@ struct Table {
     /// Whether each definition is named however often it is written: one a printed type
     /// names itself ([`add`], [`reserve`]), not only one [`add_soft`] placed.
     hard: Vec<bool>,
+    /// Whether each definition is named by how often the steps of a message use it
+    /// ([`add_counted`]), unless it is `hard` too.
+    counted: Vec<bool>,
     /// What the printer keeps of the parts it printed for this table ([`with_kept`]); this
     /// module never reads it.
     kept: Option<Box<dyn Any>>,
@@ -157,6 +175,8 @@ struct Table {
 
 thread_local! {
     static TABLE: RefCell<Option<Table>> = const { RefCell::new(None) };
+    /// The messages lifted since [`record_messages`], while it is on.
+    static LIFTED: RefCell<Option<Vec<Lifted>>> = const { RefCell::new(None) };
 }
 
 /// While it lives, printed types put their definitions in the thread's table ([`collect`]).
@@ -194,48 +214,95 @@ pub(super) fn soft_reference(k: usize) -> String {
     format!("{SOFT}{k}{END}")
 }
 
+/// The reference to definition `k` placed by [`add_counted`].
+pub(super) fn counted_reference(k: usize) -> String {
+    format!("{COUNT}{k}{END}")
+}
+
+/// `name`, a reference by [`counted_reference`], at a place where the part written in full is
+/// parenthesized, as `(1 | 2)[]`.
+pub(super) fn wrapped(name: &str) -> String {
+    name.replacen(COUNT, &WRAP.to_string(), 1)
+}
+
 /// Whether `name`, written for a node, is a reference by [`soft_reference`]: a text the
 /// message may write in full where it stands, so it binds as the text does.
 pub(super) fn is_soft(name: &str) -> bool {
     name.starts_with(SOFT)
 }
 
+/// Marks the texts of one print, `roots`, written in this order into one text of a message, as
+/// one type ([`TYPE`]) if one holds a reference: [`first_named`] counts the uses of a part in
+/// it, as a type printed alone does, and not those of the other types its step writes.
+pub(super) fn enclose(roots: &mut [String]) {
+    if !roots.iter().any(|r| r.contains(MARKS)) {
+        return;
+    }
+    roots[0].insert(0, TYPE);
+    roots[roots.len() - 1].push(TYPE_END);
+}
+
+/// Whether `name`, written for a node, is a reference by [`counted_reference`].
+pub(super) fn is_counted(name: &str) -> bool {
+    name.starts_with([COUNT, WRAP])
+}
+
+/// How [`lift`] decides whether a definition is named.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    /// Named however often it is written.
+    Hard,
+    /// A tuple, named by its uses inside other parts ([`add_soft`]).
+    Soft,
+    /// Named from the first step that uses it twice or more ([`add_counted`]).
+    Counted,
+}
+
 /// The place of a definition with `body`, which is known in full: that of an equal body if
 /// there is one. Equal texts mean the same, since each reference stands for one definition.
 pub(super) fn add(body: String) -> usize {
-    place(body, true)
+    place(body, Kind::Hard)
 }
 
 /// As [`add`], for a part that [`lift`] names only if one of its uses is inside another part,
 /// by the rule [`lift`] gives; it is written in full wherever else it stands.
 pub(super) fn add_soft(body: String) -> usize {
-    place(body, false)
+    place(body, Kind::Soft)
 }
 
-fn place(body: String, hard: bool) -> usize {
+/// As [`add`], for a part that [`lift`] names in each step of a message from the first that
+/// uses it twice or more, and writes in full before: a union or an intersection, and any other
+/// part but a tuple and a recursive type (MSG-derive-print-union-names).
+pub(super) fn add_counted(body: String) -> usize {
+    place(body, Kind::Counted)
+}
+
+fn place(body: String, kind: Kind) -> usize {
     TABLE.with_borrow_mut(|t| {
         let t = t.as_mut().expect("collecting");
         // A body that is one reference, as that of a union of one tuple, is the part it
         // refers to: defining it again would print `type T2 = T1;`.
-        if let Some(k) = only_reference(&body) {
-            t.hard[k] |= hard;
-            return k;
-        }
-        if let Some(&k) = t.index.get(&body) {
-            t.hard[k] |= hard;
-            return k;
-        }
-        let k = t.bodies.len();
-        t.index.insert(body.clone(), k);
-        t.bodies.push(body);
-        t.hard.push(hard);
+        let k = match only_reference(&body).or_else(|| t.index.get(&body).copied()) {
+            Some(k) => k,
+            None => {
+                let k = t.bodies.len();
+                t.index.insert(body.clone(), k);
+                t.bodies.push(body);
+                t.hard.push(false);
+                t.counted.push(false);
+                k
+            }
+        };
+        t.hard[k] |= kind == Kind::Hard;
+        t.counted[k] |= kind == Kind::Counted;
         k
     })
 }
 
-/// The definition `text` refers to, if it is one reference and nothing else.
+/// The definition `text` refers to, if it is one reference and nothing else. A reference
+/// that parenthesizes the part written in full is not that part's text alone.
 pub(super) fn only_reference(text: &str) -> Option<usize> {
-    let rest = text.strip_prefix([REF, SOFT])?.strip_suffix(END)?;
+    let rest = text.strip_prefix([REF, SOFT, COUNT])?.strip_suffix(END)?;
     rest.parse().ok()
 }
 
@@ -246,6 +313,7 @@ pub(super) fn reserve() -> usize {
         let t = t.as_mut().expect("collecting");
         t.bodies.push(String::new());
         t.hard.push(true);
+        t.counted.push(false);
         t.bodies.len() - 1
     })
 }
@@ -272,71 +340,250 @@ pub fn forget_printed() {
     });
 }
 
-/// The references in `text`, in order.
-fn refs(text: &str) -> impl Iterator<Item = usize> + '_ {
-    text.split([REF, SOFT]).skip(1).map(|s| {
-        let n = s.find(END).expect("a reference is closed");
-        s[..n].parse().expect("a reference is a number")
+/// The references in `text`, in order, each with the mark that opens it.
+fn marked_refs(text: &str) -> impl Iterator<Item = (char, usize)> + '_ {
+    text.match_indices(MARKS).map(|(i, m)| {
+        let rest = &text[i + m.len()..];
+        let n = rest.find(END).expect("a reference is closed");
+        let mark = m.chars().next().expect("a mark");
+        (mark, rest[..n].parse().expect("a reference is a number"))
     })
 }
 
-/// Writes `text` to `out`, each reference to a named definition by its name and each other by
-/// its body in `full`, written so in turn, with a stack of its own. Whether it wrote a name.
+/// The references in `text` by the print of types they stand in ([`enclose`]): those of each
+/// outermost [`TYPE`] in order, then, if any, those outside every one.
+fn refs_by_type(text: &str) -> Vec<Vec<usize>> {
+    let (mut types, mut open, mut outside) = (Vec::new(), Vec::new(), Vec::new());
+    let mut depth = 0usize;
+    for (i, m) in text.match_indices(SPELLED) {
+        match m.chars().next().expect("a mark") {
+            TYPE => depth += 1,
+            TYPE_END => {
+                depth = depth
+                    .checked_sub(1)
+                    .expect("a type is opened before it is closed");
+                if depth == 0 {
+                    types.push(std::mem::take(&mut open));
+                }
+            }
+            _ => {
+                let rest = &text[i + m.len()..];
+                let n = rest.find(END).expect("a reference is closed");
+                let k: usize = rest[..n].parse().expect("a reference is a number");
+                match depth {
+                    0 => outside.push(k),
+                    _ => open.push(k),
+                }
+            }
+        }
+    }
+    if !outside.is_empty() {
+        types.push(outside);
+    }
+    types
+}
+
+/// The references in `text`, in order.
+fn refs(text: &str) -> impl Iterator<Item = usize> + '_ {
+    marked_refs(text).map(|(_, k)| k)
+}
+
+/// The length of `text` in characters, its references left out.
+fn bare_len(text: &str) -> usize {
+    let marks: usize = marked_refs(text)
+        .map(|(_, k)| 2 + k.checked_ilog10().map_or(1, |d| d as usize + 1))
+        .sum();
+    text.chars().count() - marks
+}
+
+/// How [`spell`] writes each reference.
+struct Spelling<'a> {
+    /// The name of each definition named in some step.
+    names: HashMap<usize, String>,
+    /// The step from which each definition named by count is named ([`first_named`]).
+    from: HashMap<usize, usize>,
+    /// The body of each definition that some step writes in full.
+    full: HashMap<usize, &'a str>,
+}
+
+/// Writes `text`, held by step `step` of a message, to `out`: each reference to a definition
+/// named in that step by its name, and each other by its body, written so in turn, with a stack
+/// of its own; one by [`WRAP`] written in full is parenthesized. The definitions under a
+/// message are written as by a step after the last, `usize::MAX`. Whether it wrote a name.
 ///
 /// Complexity tradeoff: a part written in full is written straight into `out`, in time linear
 /// in what is written. Spelling each part to a string of its own first, and that string into
 /// the part around it, would copy a chain of n parts nested one in the next O(n²) times.
-fn spell(
-    text: &str,
-    names: &HashMap<usize, String>,
-    full: &HashMap<usize, &str>,
-    out: &mut String,
-) -> bool {
+fn spell(text: &str, s: &Spelling, step: usize, out: &mut String) -> bool {
     let mut holds = false;
-    let mut stack = vec![text];
-    while let Some(s) = stack.pop() {
-        let Some(i) = s.find([REF, SOFT]) else {
-            out.push_str(s);
+    let mut stack: Vec<&str> = vec![text];
+    while let Some(t) = stack.pop() {
+        let Some(i) = t.find(SPELLED) else {
+            out.push_str(t);
             continue;
         };
-        out.push_str(&s[..i]);
-        // REF and SOFT are each three bytes in UTF-8.
-        let rest = &s[i + REF.len_utf8()..];
+        out.push_str(&t[..i]);
+        let mark = t[i..].chars().next().expect("a mark was found");
+        let rest = &t[i + mark.len_utf8()..];
+        if mark == TYPE || mark == TYPE_END {
+            stack.push(rest);
+            continue;
+        }
         let n = rest.find(END).expect("a reference is closed");
         let k: usize = rest[..n].parse().expect("a reference is a number");
         stack.push(&rest[n + END.len_utf8()..]);
-        match names.get(&k) {
+        let named_here = s.from.get(&k).is_none_or(|&j| j <= step);
+        match s.names.get(&k).filter(|_| named_here) {
             Some(name) => {
                 out.push_str(name);
                 holds = true;
             }
-            None => stack.push(full[&k]),
+            None if mark == WRAP => {
+                out.push('(');
+                stack.push(")");
+                stack.push(s.full[&k]);
+            }
+            None => stack.push(s.full[&k]),
         }
     }
     holds
 }
 
+/// Whether definition `k` is named by count ([`add_counted`]).
+fn by_count(t: &Table, k: usize) -> bool {
+    t.counted[k] && !t.hard[k]
+}
+
+/// The number of definition `k` in a map of [`Uses`]; a text's number counts down from the
+/// top, past every definition's.
+fn key(k: usize) -> u32 {
+    u32::try_from(k)
+        .ok()
+        .filter(|&k| k < 1 << 31)
+        .expect("fewer definitions than 2^31")
+}
+
+/// `u` with the uses that the text or body numbered `id` makes by its references `at`, sorted:
+/// one of each definition named by count that it refers to once, and many of one it refers to
+/// twice or more.
+fn with_refs(t: &Table, mut u: Uses, at: &[usize], id: u32) -> Uses {
+    for run in at.chunk_by(|a, b| a == b) {
+        if by_count(t, run[0]) {
+            let used = match run.len() {
+                1 => Use::One { from: id },
+                _ => Use::Many,
+            };
+            u = u.with(key(run[0]), used);
+        }
+    }
+    u
+}
+
+/// The uses that the body of definition `root`, with the bodies it reaches, makes of the
+/// definitions named by count, kept in `memo` for each body met, which is entered once: a
+/// depth-first walk with a stack of its own, a body's map made when it is left. A reference
+/// back to a body on the walk's path, which a cycle makes, adds no uses: every cycle passes
+/// through a definition named however often it is written, and the body first entered on the
+/// cycle has every use the cycle makes.
+fn body_uses<'m>(t: &Table, root: usize, memo: &'m mut HashMap<usize, Uses>) -> &'m Uses {
+    if !memo.contains_key(&root) {
+        let enter = |k: usize| {
+            let mut at: Vec<usize> = refs(&t.bodies[k]).collect();
+            at.sort_unstable();
+            (k, at, 0)
+        };
+        let mut open: HashSet<usize> = HashSet::from([root]);
+        let mut stack: Vec<(usize, Vec<usize>, usize)> = vec![enter(root)];
+        while let Some(top) = stack.last_mut() {
+            if let Some(&c) = top.1.get(top.2) {
+                top.2 += 1;
+                if !memo.contains_key(&c) && open.insert(c) {
+                    stack.push(enter(c));
+                }
+                continue;
+            }
+            let (k, at, _) = stack.pop().expect("the top was found");
+            let mut u = Uses::default();
+            for c in at.chunk_by(|a, b| a == b) {
+                if let Some(m) = memo.get(&c[0]) {
+                    u = u.union(m);
+                }
+            }
+            memo.insert(k, with_refs(t, u, &at, key(k)));
+        }
+    }
+    &memo[&root]
+}
+
+/// The step from which each definition named by count that `texts` reach is named, by the
+/// order of `texts`: the first that writes a printed type ([`enclose`]) which, with the bodies
+/// it reaches, uses it twice or more. A use is a reference in the type or in one of those
+/// bodies, each body counted once, as a type printed alone counts the uses of its parts
+/// ([`super::Printer`]); two types of one step that each use a part once do not name it, so
+/// `` `v : #off | #on` `` beside `` `#off | #on` `` writes the union in full.
+///
+/// Complexity tradeoff (MSG-derive-print-union-names): naive, the bodies each text reaches
+/// walked anew for each text, O(n) per step and O(n²) for a derivation of n steps that each
+/// print the next of a chain. Used: one map of [`Uses`] per body, made once from those of the
+/// bodies it refers to, and one per text from those of its references; a persistent trie
+/// (Okasaki and Gill, 1998) shares the map of a part with every map made from it, so each map
+/// costs O(32) per reference made in its own body or text, plus a merge of O(32 k) for maps
+/// sharing no subtree and k keys, and the definitions used twice or more are found walking each
+/// trie node once over all the texts ([`Uses::each_new_many`]). This is option (1) of
+/// COMPLEXITY.md row K110, which the author chose (2026-11-13).
+fn first_named(t: &Table, texts: &[&mut String]) -> HashMap<usize, usize> {
+    let mut memo: HashMap<usize, Uses> = HashMap::new();
+    let mut seen = Seen::default();
+    let mut from: HashMap<usize, usize> = HashMap::new();
+    // Each printed type's number, counting down from the top past every definition's.
+    let mut id = u32::MAX;
+    for (j, text) in texts.iter().enumerate() {
+        for mut at in refs_by_type(text) {
+            at.sort_unstable();
+            let mut u = Uses::default();
+            for c in at.chunk_by(|a, b| a == b) {
+                u = u.union(body_uses(t, c[0], &mut memo));
+            }
+            assert!(id >= 1 << 31, "fewer printed types than 2^31");
+            let u = with_refs(t, u, &at, id);
+            id -= 1;
+            u.each_new_many(&mut seen, &mut |k| {
+                from.entry(k as usize).or_insert(j);
+            });
+        }
+    }
+    from
+}
+
 /// Names the definitions `texts` reach, directly or through other definitions, `T1`, `T2`, …
-/// and writes each reference by its name. Gives the definitions, name and body, each before
-/// its uses but where definitions refer to each other in a cycle. Numbers are given in that
-/// order, which is found from the texts alone, so equal texts get equal names. A name is
+/// and writes each reference to a named one by its name. Gives the definitions, name and body,
+/// each before its uses but where definitions refer to each other in a cycle. Numbers are given
+/// in that order, which is found from the texts alone, so equal texts get equal names. A name is
 /// skipped if the program binds it, `taken` says so or a text holds it as a word, so a
 /// variable `T5` the message writes leaves `T5` to it ([`fresh_name`]). First the unbounded
 /// variables the texts mark are named, skipping every word of the texts ([`name_vars`]). `texts`
 /// with no mark or reference are left as they are, and give no definition.
 ///
+/// The texts are the steps of a message in reading order. A part placed by [`add_counted`], a
+/// union or an intersection, is named in each text from the first that writes a printed type
+/// which, with the bodies it reaches, uses it twice or more ([`first_named`]), and in the
+/// definitions; before that text, and in a message where no printed type uses it twice, it is
+/// written in full. So a step that uses a union once spells it, and once a step names it,
+/// that step and every later one write it by name.
+///
 /// A part placed by `add_soft` is counted where it is written: n times in all, counting each
 /// reference in a text and each in a body reached, each body once, and n_b of them in bodies.
-/// One whose body holds a reference is named when n_b ≥ 1 and n ≥ 2: so a part held at each
-/// level of a nesting, or by each link of a chain whose steps print each link, is written once.
-/// One whose body holds none, of length L, is named when `n_b × L` is more than `type Tk = …;`
-/// and n_b + 1 names `Tk`; left in full at n_b ≥ 2 it is at most
-/// `((n_b + 1) × |Tk| + 9) / (n_b - 1)`, about three names, long. Otherwise each reference to a
-/// part is its body, written in full. A body placed so uses only definitions placed before it,
-/// or ones a printed type names itself, so writing one in full ends.
+/// One whose body holds a part named somewhere is named when n_b ≥ 1 and n ≥ 2: so a part held
+/// at each level of a nesting, or by each link of a chain whose steps print each link, is
+/// written once. One whose body holds none, of length L with the parts in it written in full,
+/// is named when `n_b × L` is more than `type Tk = …;` and n_b + 1 names `Tk`; left in full at
+/// n_b ≥ 2 it is at most `((n_b + 1) × |Tk| + 9) / (n_b - 1)`, about three names, long.
+/// Otherwise each reference to a part is its body, written in full. A body placed so uses only
+/// definitions placed before it, or ones a printed type names itself, so writing one in full
+/// ends.
 ///
 /// Time linear in the texts and the bodies reached, and in the parts written in full, with a
-/// hash lookup per reference.
+/// hash lookup per reference, and the merges of [`first_named`].
 pub fn lift(texts: &mut [&mut String], taken: &dyn Fn(&str) -> bool) -> Vec<(String, String)> {
     lift_holding(texts, false, taken).0
 }
@@ -353,6 +600,17 @@ pub fn lift_holding(
     headline: bool,
     taken: &dyn Fn(&str) -> bool,
 ) -> (Vec<(String, String)>, Vec<bool>) {
+    // The step from which each part named by count is named, found before the sentence's
+    // tuples are opened below, so that a tuple it writes twice counts its parts once.
+    let from = match texts.iter().any(|t| t.contains(MARKS)) {
+        true => TABLE.with_borrow(|t| {
+            first_named(
+                t.as_ref().expect("references are lifted while collecting"),
+                texts,
+            )
+        }),
+        false => HashMap::new(),
+    };
     // The tuples the sentence writes whole, once per place; each is counted below as a use
     // of itself, as if not opened.
     let mut opened: Vec<usize> = Vec::new();
@@ -375,7 +633,10 @@ pub fn lift_holding(
         });
     }
     name_all_vars(texts, taken);
-    if !texts.iter().any(|t| t.contains([REF, SOFT])) {
+    let raw: Option<Vec<String>> = LIFTED
+        .with_borrow(Option::is_some)
+        .then(|| texts.iter().map(|t| t.to_string()).collect());
+    if !texts.iter().any(|t| t.contains(SPELLED)) {
         return (Vec::new(), vec![false; texts.len()]);
     }
     // Each definition reached, in the order of the depth-first walk below, with its body and
@@ -386,8 +647,8 @@ pub fn lift_holding(
         // left, after the definitions its body uses, and each is entered once.
         let mut order = Vec::new();
         let mut seen: HashSet<usize> = HashSet::new();
-        // How often each definition is written, in the texts and in the bodies reached, and how
-        // often in those bodies.
+        // How often each definition is written, in the texts and in the bodies reached, and
+        // how often in those bodies.
         let mut uses: HashMap<usize, (usize, usize)> = HashMap::new();
         // The sentence's opened tuples, after its references, are walked as if written
         // there; the references their bodies put in the sentence were counted with those
@@ -432,22 +693,39 @@ pub fn lift_holding(
         // definitions reached; a name skipped for one the program binds is longer, which
         // makes naming no shorter than this counts it.
         let name = 1 + order.len().to_string().len();
+        // For each definition left, whether its body holds a part named somewhere, through
+        // the parts named by count it writes in full, and else its length with those
+        // written in full. A definition is left after those its body refers to, but on a
+        // cycle, whose parts are named.
+        let mut bare: HashMap<usize, (bool, usize)> = HashMap::with_capacity(order.len());
         order
             .into_iter()
             .map(|k| {
                 let body = &t.bodies[k];
+                let (mut part, mut len) = (false, bare_len(body));
+                for (mark, j) in marked_refs(body) {
+                    match bare.get(&j) {
+                        Some(&(p, l)) if by_count(t, j) && !from.contains_key(&j) => {
+                            part |= p;
+                            len += l + if mark == WRAP { 2 } else { 0 };
+                        }
+                        _ => part = true,
+                    }
+                }
+                bare.insert(k, (part, len));
                 let (n, inside) = uses[&k];
-                // A tuple with a part of its own is named when it is written twice, once inside
-                // another part, so that a part held at each level of a nesting is written once.
-                // A tuple with none is named when its declaration `type Tk = …;` and a name at
-                // each of its uses in bodies are shorter than a copy at each; with no part, its
-                // body is as long as written.
+                // A tuple with a part of its own is named when it is written twice, once
+                // inside another part, so that a part held at each level of a nesting is
+                // written once. A tuple with none is named when its declaration `type Tk =
+                // …;` and a name at each of its uses in bodies are shorter than a copy at
+                // each.
                 let named = t.hard[k]
-                    || match refs(body).next() {
-                        Some(_) => inside > 0 && n >= 2,
-                        None => {
-                            let l = body.chars().count();
-                            inside.saturating_mul(l) > l + "type  = ;".len() + (inside + 1) * name
+                    || match (by_count(t, k), part) {
+                        (true, _) => from.contains_key(&k),
+                        (false, true) => inside > 0 && n >= 2,
+                        (false, false) => {
+                            inside.saturating_mul(len)
+                                > len + "type  = ;".len() + (inside + 1) * name
                         }
                     };
                 (k, body.clone(), named)
@@ -471,19 +749,22 @@ pub fn lift_holding(
             names.insert(*k, name);
         }
     }
-    // The body of each part written in full where it stands.
+    // The body of each part some step writes in full where it stands: one not named, and one
+    // named by count, which the steps before it is named write in full.
     let full: HashMap<usize, &str> = (reached.iter())
-        .filter(|(_, _, named)| !named)
+        .filter(|(k, _, named)| !named || from.contains_key(k))
         .map(|(k, b, _)| (*k, b.as_str()))
         .collect();
+    let spelling = Spelling { names, from, full };
     let holding: Vec<bool> = texts
         .iter_mut()
-        .map(|text| {
-            if !text.contains([REF, SOFT]) {
+        .enumerate()
+        .map(|(step, text)| {
+            if !text.contains(SPELLED) {
                 return false;
             }
             let mut out = String::with_capacity(text.len());
-            let holds = spell(text, &names, &full, &mut out);
+            let holds = spell(text, &spelling, step, &mut out);
             **text = out;
             holds
         })
@@ -492,11 +773,72 @@ pub fn lift_holding(
         .filter(|(_, _, named)| *named)
         .map(|(k, body, _)| {
             let mut out = String::with_capacity(body.len());
-            spell(body, &names, &full, &mut out);
-            (names[k].clone(), out)
+            spell(body, &spelling, usize::MAX, &mut out);
+            (spelling.names[k].clone(), out)
         })
         .collect();
+    if let Some(raw) = raw {
+        let Spelling { names, from, full } = spelling;
+        let full = full.into_iter().map(|(k, b)| (k, b.to_string())).collect();
+        let lifted = Lifted {
+            raw,
+            defs: Vec::clone(&defs),
+            names,
+            from,
+            full,
+        };
+        LIFTED.with_borrow_mut(|l| l.as_mut().map(|l| l.push(lifted)));
+    }
     (defs, holding)
+}
+
+/// A message [`lift_holding`] wrote while [`record_messages`] was on, kept for the test that
+/// parses each type a step writes back with the message's declarations in scope (step L1.29,
+/// MSG-derive-print-union-names): its texts before the references were written, its
+/// definitions, and how each reference is written.
+pub struct Lifted {
+    raw: Vec<String>,
+    /// The definitions, each name with its body, as the message declares them.
+    pub defs: Vec<(String, String)>,
+    names: HashMap<usize, String>,
+    from: HashMap<usize, usize>,
+    full: HashMap<usize, String>,
+}
+
+impl Lifted {
+    /// `text`, a type's text printed while the message collected definitions, as each step
+    /// whose text holds it writes it: none if no step holds it, as a type with variables the
+    /// message renamed.
+    pub fn spelled(&self, text: &str) -> Vec<String> {
+        let spelling = Spelling {
+            names: self.names.clone(),
+            from: self.from.clone(),
+            full: (self.full.iter()).map(|(&k, b)| (k, b.as_str())).collect(),
+        };
+        (self.raw.iter().enumerate())
+            .filter(|(_, t)| t.contains(text))
+            .map(|(step, _)| {
+                let mut out = String::new();
+                spell(text, &spelling, step, &mut out);
+                out
+            })
+            .collect()
+    }
+}
+
+/// Starts keeping each message [`lift_holding`] writes on this thread, dropping those kept.
+pub fn record_messages() {
+    LIFTED.set(Some(Vec::new()));
+}
+
+/// The messages kept since [`record_messages`], in the order written; keeping stops.
+pub fn take_messages() -> Vec<Lifted> {
+    LIFTED.take().unwrap_or_default()
+}
+
+/// Whether `text`, printed while a message collects definitions, holds a reference to one.
+pub fn holds_reference(text: &str) -> bool {
+    text.contains(MARKS)
 }
 
 /// Writes the definition of `name` as a user declares it at the top level, `type T1 = …;`, and
@@ -519,7 +861,7 @@ impl fmt::Display for Declaration<'_> {
 /// `text` alone, finished: each of its definitions declared on a line of its own
 /// ([`declare`]), then the text, as a type printed outside a message is.
 pub fn plain(text: &str) -> String {
-    if !text.contains([REF, SOFT, VARS]) {
+    if !text.contains([REF, SOFT, COUNT, WRAP, TYPE, VARS]) {
         return text.into();
     }
     let mut root = text.to_string();
@@ -690,6 +1032,49 @@ mod tests {
         assert_eq!(s, "`g` does not take ((T1, T1), 0)");
         assert_eq!(n, "((T1, T1), 0)");
         assert_eq!(defs, [("T1".to_string(), "#a | #b".to_string())]);
+    }
+
+    #[test]
+    fn a_counted_part_is_written_until_a_step_uses_it_twice_and_named_in_every_step_after() {
+        let _on = collect();
+        let u = add_counted("#a | #b".into());
+        let r = counted_reference(u);
+        // A printed type, as a print writes it into a message.
+        let ty = |text: String| {
+            let mut roots = [text];
+            enclose(&mut roots);
+            let [text] = roots;
+            text
+        };
+        // Steps in reading order: once, once where it is parenthesized, twice, once, once
+        // parenthesized.
+        let mut t: Vec<String> = vec![
+            ty(r.clone()),
+            ty(format!("{}[]", wrapped(&r))),
+            format!("`f` is `{}`", ty(format!("({r}) -> ({r}, 0)"))),
+            ty(r.clone()),
+            ty(format!("{}[]", wrapped(&r))),
+        ];
+        let (defs, _) = lift_holding(&mut t.iter_mut().collect::<Vec<_>>(), false, &|_| false);
+        assert_eq!(
+            t,
+            [
+                "#a | #b",
+                "(#a | #b)[]",
+                "`f` is `(T1) -> (T1, 0)`",
+                "T1",
+                "T1[]"
+            ]
+        );
+        assert_eq!(defs, [("T1".to_string(), "#a | #b".to_string())]);
+        // Used once by each type, it is never named, though a step writes two such types.
+        let mut t: Vec<String> = vec![
+            format!("`v : {}` is not `{}`", ty(r.clone()), ty(r.clone())),
+            ty(format!("({r}, 0)")),
+        ];
+        let (defs, _) = lift_holding(&mut t.iter_mut().collect::<Vec<_>>(), false, &|_| false);
+        assert_eq!(t, ["`v : #a | #b` is not `#a | #b`", "(#a | #b, 0)"]);
+        assert!(defs.is_empty());
     }
 
     #[test]
