@@ -2150,6 +2150,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PRES-overlap-fast | impl attempt 1 | 2026-11-13 01:10 | own attempt merged zed-impl 24981fcda 21f10e120 0418e6e46 (row_sums join of row-sum tables; overlap_rows 0.45M at 16 vs main 5,443M+refusal; random2 0 coarser 2 |
 | ROOTS-listed | impl attempt 1 | 2026-11-13 05:56 | started; load 24.38 28.00 29.26 |
 | SPEC-no-verbatim | impl attempt 1 | 2026-11-13 05:23 | started; worktree from origin/main 812acc32e |
+| TEST-ports | running |  |  |
 | WALK-read-image-n2 | impl attempt 1 | 2026-11-13 05:56 | started; worktree from origin/main 365c3b110 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
