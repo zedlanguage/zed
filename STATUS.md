@@ -2132,7 +2132,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | CROSSOVER-bench | impl attempt 1 | 2026-11-12 22:47 | started; worktree /home/luke/Work/wt/crossover-bench on origin/main |
-| LINE-ends-lf | running | 2026-11-13 01:21 |  |
+| HAS-point-probe | running | 2026-11-10 22:35 | A89 answered D 2026-11-13: merge M5, then 3-6 rounds |
+| LINE-ends-lf | impl attempt 1 | 2026-11-13 01:21 | started; worktrees wt/line-ends-lf and wt/line-ends-lf-spec; TESTS-L1.13-strings test already on main (batch 138) |
 | LIT-power-values | impl attempt 1 | 2026-11-13 00:20 | started: worktree, then perf of the 233M-instruction rejection |
 | MSG-derive-print-union-names | impl attempt 1 | 2026-11-13 00:05 | started; worktrees msg-union-names and msg-union-names-spec; load 44.20 43.16 47.36 |
 | PERF-deep-ops-slow | impl attempt 1 | 2026-11-12 21:38 | union_all atoms fast path: family ratio 9.06 -> 8.82 by callgrind; running battery / load 52.89 46.05 42.49 |
@@ -2140,7 +2141,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PERF-ref-memo-quadratic | impl attempt 4 | 2026-11-10 18:04 | started: A88 answered, own attempt then cross-review (4 seats, 3 rounds) |
 | PRES-overlap-fast | impl attempt 1 | 2026-11-13 01:10 | started; worktree wt/pres-overlap-fast at 95b3d8a1f; load 37.88 41.70 48.12 |
 | RT-sites | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/rt-sites on origin/main 13bb12924 |
-| ST-K3-narrow | impl attempt 1 | 2026-11-11 01:43 | reproduced: no refusal of this kind on main; ping-pong and shifted ping-pong exact; random 6000 runs 5942 exact, 0 refused, 58 wider sound supersets; design in  |
 | ST-walk-implicit | impl attempt 1 | 2026-11-11 01:43 | started: worktree /home/luke/Work/wt/st-walk-implicit on origin/main 89d83b4a3 / load 36.87 40.84 46.29 |
 | TESTS-scaling-limit-13 | impl attempt 1 | 2026-11-12 23:54 | negative control: LIMIT = 8 once on l01_17, l01_18, l01_24, l01_38 omega: 13 of 40 pieces failed, 48 tests, every message at 8.0 times or more (e.g. int(s) 9.8x |
 
