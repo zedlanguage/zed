@@ -2015,14 +2015,16 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | COST-required-spec | impl attempt 1 | 2026-11-12 17:24 | started; worktrees cost-required-spec (impl) and cost-required-spec-spec (zed) |
 | GSX-unsolved | merge attempt 1 | 2026-11-11 16:53 | started: rebase combo (gsxh-claude) onto origin/main and apply decisions (a)-(d) of cd-xr/GSX-merge.md / load 43.50 38.06 40.03 |
+| MSG-is-repair-v | running | 2026-11-12 17:32 |  |
+| MSG-lines-headline | running | 2026-11-12 17:32 |  |
+| MSG-width-headline | running | 2026-11-12 17:32 |  |
 | NAME-ascii-only | impl attempt 1 | 2026-11-12 16:11 | spec committed (541c9d7-amended) and rebased on f0d6c20; impl rebased on a596e044b, fences resynced; l01_02 45/45 pass; rebuilding for the other groups |
 | NARROW-or-order | impl attempt 1 | 2026-11-12 15:40 | started; worktree /home/luke/Work/wt/narrow-or-order on cdd557f13 |
 | POW-rat-literal-ops | impl attempt 1 | 2026-11-12 16:20 | reproduced: (2r/3r)^-2, 1r/(2r/3r), (3r/2r)^-2 refused at a port for #divByZero; (3/2)^-2 in main settles at f64; top-level offers no rat fix |
 | STAGE-print | impl attempt 1 | 2026-11-04 03:10 | started; worktree wt/stage-print seeded |
 | STR-norm-layer | impl attempt 1 | 2026-11-12 16:19 | spec committed 1348df4 in wt/str-norm-layer-spec; impl worktree made |
-| T6-refusal-cost | impl attempt 1 | 2026-11-05 04:07 | value classes in member_known: x_tail n16->128 32x (was 140x), r3 seed 2 n8->64 60x; tests pass; running negative controls |
-| TESTS-L1.23-refusal-text | impl attempt 1 | 2026-11-08 23:59 | started; worktree tests-l1.23-refusal-text on origin/main a596e044b |
-| TESTS-P14-MST-lattice-circles | impl attempt 1 | 2026-11-08 23:59 | started in /home/luke/Work/wt/tests-p14-lattice |
+| T6-refusal-cost | impl attempt 1 | 2026-11-05 04:07 | negative controls: fix reverted -> x_tail fails (143x bytes, limit 123); cubic loop at SharedCells -> r3 fails (195x, limit 141); both restored |
+| TESTS-L1.23-refusal-text | impl attempt 1 | 2026-11-08 23:59 | committed 37ef098d3 a7900e3f4 (impl), 7a184b1 (spec); negative control (cubic loop in the ladder scaling test) 38579086 -> 10987276024 instructions at 32 -> 256 |
 | WARN-refused-in-rejection | impl attempt 1 | 2026-11-12 14:51 | started; worktree /home/luke/Work/wt/warn-refused-in-rejection on origin/main a596e044b |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
