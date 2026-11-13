@@ -2166,15 +2166,14 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| ENGINE-one | impl attempt 1 | 2026-11-13 09:45 | merged 8e20ea86c: constants kept as powers addressed by their powers; build and run end alike; follow-up ENGINE-kept-ends |
+| BLOCKING-gaps | running |  |  |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | rule change noted: accept against R < 10.5 (CD run keeps 13 step; acceptance scorer score-accept.py); load 55.74 59.14 57.03 |
 | MAIN-files-rest | impl attempt 1 | 2026-11-13 10:39 | started; worktree from origin/main 10c508cf5 |
-| MSG-too-large-plain | running |  |  |
+| MSG-too-large-plain | impl attempt 1 | 2026-11-13 11:21 | started; worktree from origin/main 378a2cd0e |
 | NUM-expect-audit | impl attempt 1 | 2026-11-13 11:14 | started; worktree from origin/main f70a4733b |
-| PERF-l139-under9 | impl attempt 3 | 2026-11-13 09:15 | not merged: eliminated_hulls (c9c2e5bf2, local branch wt/perf-l139-under9) gets chain 11.4 and hopb 12.0 running, but pendants leaves/equalities scale tests go  |
 | PRES-overlap-fast | xr attempt  | 2026-11-13 01:10 | round 1 launched: Sol and Opus seats (medium); Gemini 429 (resets in 32h55m); CD next |
 | RED-main-2026-11-13 | impl attempt 1 | 2026-11-13 10:33 | started: l01_35 layout (ast::Stmt 280 bytes vs record 256); other parts owned by MAIN-call-l01_16, MSG-headline-l01_26, SPEC-standalone |
-| SCHED-dep-dag | running |  |  |
+| SCHED-dep-dag | impl attempt 1 | 2026-11-13 11:21 | started: survey of zedc pipeline order, worktree from origin/main |
 | SPEC-ffi-align | impl attempt 1 | 2026-11-13 10:53 | started: spec row from A85 B2 (alignment stop counted with Assumed) |
 | SPEC-standalone | impl attempt 1 | 2026-11-13 08:55 | started; worktree /home/luke/Work/wt/spec-standalone from origin/main c12614e6c |
 | ST-walk-orders | impl attempt 1 | 2026-11-13 06:31 | reproduced on f1c80798d (instructions/bytes at 8n): cycle0@back 35.7/22.7 n=8, 61/40 n=32 (quadratic); cycle1@back 38/24..65/41; walk@back 43/31 n=5, 68/47 n=20 |
