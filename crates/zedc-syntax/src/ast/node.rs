@@ -490,6 +490,13 @@ pub enum StmtKind {
     Type(TypeDecl),
     /// A method declaration. Boxed: inline it is the largest kind, its function and its
     /// receiver's name together, and would make every statement 32 bytes larger.
+    // Tradeoff: inline, a statement takes 280 bytes; boxed, 248, and a method declaration
+    // takes one allocation of 264 bytes more, made and freed once each (O(1) per method). Live
+    // memory breaks even at about 7 other statements per method; the Zed sources of this
+    // repository have none, and the spec's examples about one per hundred statements. Measured
+    // by `zedc --report fmt` on 20,000 methods and 20,000 functions of three statements each
+    // (one method in five statements): building the tree 892.7M → 885.2M instructions and
+    // 274.7 MB → 272.9 MB allocated; the drop about 5M instructions more for the 20,000 boxes.
     Method(Box<Method>),
     /// An import of a unit.
     Import(Import),
