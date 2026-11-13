@@ -98,6 +98,7 @@ Cell read on a path back to its own cell
 Meaning function with a case `@decides` cannot reify
 Linear question outside the polynomial fragment of the linear-relation domain
 Statement that writes nothing, or drops a declared result
+One target for a call with several results
 Block binding that nothing reads
 Hole in the program
 Dependency reaching what its importer did not grant

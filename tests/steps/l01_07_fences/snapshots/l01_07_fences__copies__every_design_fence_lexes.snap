@@ -556,7 +556,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   7 | next : Ptr ( AddrInfo ) | #none ,
   8 | }
   9 | @foreign ( str["c"] , str["freeaddrinfo"] ) freeAddrInfo : ( res : Ptr ( AddrInfo ) ) -> #ok ;
- 10 | @foreign ( str["c"] , str["getaddrinfo"] ) getAddrInfo : ( node : [ u8 ] «with» terminated ( 0₍10₎ ) , service : [ u8 ] «with» terminated ( 0₍10₎ ) , hints : Ptr ( AddrInfo ) | #none ) -> { rc : i32 , res : Ptr ( AddrInfo ) | #none «with» release ( freeAddrInfo ) } ;
+ 10 | @foreign ( str["c"] , str["getaddrinfo"] ) getAddrInfo : ( node : [ u8 ] «with» terminated ( 0₍10₎ ) , service : [ u8 ] «with» terminated ( 0₍10₎ ) , hints : Ptr ( AddrInfo ) | #none ) -> ( i32 , Ptr ( AddrInfo ) | #none «with» release ( freeAddrInfo ) ) ;
 == DESIGN.md [sec:tour_basics] 1 L10
   2 | x = 42₍10₎ ;
   3 | port : int [ 1₍10₎ ..= 65535₍10₎ ] = 8080₍10₎ ;
