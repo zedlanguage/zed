@@ -22,10 +22,17 @@ name = "every_f32"
 path = "src/bin/every_f32.rs"
 test = false
 
+[[bin]]
+name = "pncx_probe"
+path = "src/bin/pncx_probe.rs"
+test = false
+
 [dependencies]
 # The meter of the scaling tests: instructions where the hardware counts them, and bytes.
 zed-tests = { path = "../tests" }
 zed-kernel.workspace = true
+# With the features the tests give it, as for the dylibs below.
+zedc = { workspace = true, features = ["printed-types", "counts", "preimage-ref"] }
 zed-corpus-ref.workspace = true
 num-integer = "0.1"
 num-bigint = "0.4.8"

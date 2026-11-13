@@ -130,8 +130,9 @@ reviewers' disagreements. "Limit" is the scaling test's bound for 8x input.
 ### U2. Fibonacci CRT bits: allocation and work above the limit
 
 - Input: test `presburger::modular::r6_tests::pncx_fibonacci_scale` (ignored, "open:
-  R7-CLAUDE-4"), and the axis `pncx_probe::pncx_crt_bit_axis` (moduli of 2,844 to 22,750
-  bits, 5,000 to 40,000 steps).
+  R7-CLAUDE-4"), and the axis `crt_bit_axis` of the hand-run binary `pncx_probe` (zed-benches,
+  `PNCX_SIZES=... pncx_probe crt_bit_axis`; moduli of 2,844 to 22,750 bits, 5,000 to 40,000
+  steps).
 - Measured: 18.5x instructions and 18.3x bytes for 8x steps (round 7, Claude and Codex, seat
   only, load 11.5 and 15); round 6 rerun by the coordinator: 22.3x (Claude's tree), 18.4x
   (Codex's), `library/r6-end/axes.txt`.

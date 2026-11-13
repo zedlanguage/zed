@@ -1,8 +1,11 @@
-//! Random-term helpers of step L1.38 (tests/steps/l01_38_presburger/random.rs).
+//! Random-term helpers of step L1.38 (tests/steps/l01_38_presburger/random.rs); in `pncx`, those
+//! of pncx_probe.rs.
 
 use zed_kernel::{Prim, Shared, Term, Value};
 
 use crate::instances::Rng;
+
+pub mod pncx;
 
 fn lit(n: i64) -> Term {
     Term::Lit(Value::Int(n))

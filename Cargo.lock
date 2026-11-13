@@ -1008,6 +1008,7 @@ dependencies = [
  "zed-corpus-ref",
  "zed-kernel",
  "zed-tests",
+ "zedc",
  "zedc-preimage",
  "zedc-presburger",
  "zedc-solvers",
