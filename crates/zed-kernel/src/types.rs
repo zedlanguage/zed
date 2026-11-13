@@ -157,10 +157,13 @@ pub struct Spelled<'a> {
 }
 
 /// A literal as a type prints it: a `rat` in canonical form ([`Rat::literal_text`]), so its
-/// text costs the literal's length; any other as the value prints.
+/// text costs the literal's length; an integer beyond 64 bits as its digits or, where shorter,
+/// its powers ([`Rat::integer_text`]), so `3^200000` costs its own text; any other as the
+/// value prints.
 pub(crate) fn lit_text(v: &Value) -> String {
     match v {
         Value::Rat(r) => r.literal_text(),
+        Value::Big(r) => r.integer_text(),
         other => other.to_string(),
     }
 }

@@ -54,11 +54,15 @@ fn equal_literals_written_differently_have_one_type() {
         tops("a = 1000r;\nb = 1e3r;\nc = 0.1e4r;\nd = 10000e-1r;\n"),
         ["a: 1e3r", "b: 1e3r", "c: 1e3r", "d: 1e3r"]
     );
-    // A big integer kept as a power of 2 and the same integer built have one type.
+    // A big integer kept as a power of 2 and the same integer built have one type. The kept
+    // one prints its power, which is shorter than its digits, and the built one its digits,
+    // since finding the powers of digits would factor them (LIT-power-values; the follow-up
+    // LIT-power-equal-print).
     let kept = Value::integer(Rat::int(BigInt::from(2)).pow(&100u32.into()).unwrap());
     let built = Value::int(BigInt::from(2).pow(100));
     assert_eq!(lit(&kept), lit(&built));
-    assert_eq!(lit(&kept).to_string(), "1267650600228229401496703205376");
+    assert_eq!(lit(&kept).to_string(), "2^100");
+    assert_eq!(lit(&built).to_string(), "1267650600228229401496703205376");
 }
 
 #[test]

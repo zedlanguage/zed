@@ -464,6 +464,96 @@ impl Rat {
         }
     }
 
+    /// Its text as a literal type writes an integer (DESIGN.md L1.26a, `LitType` in
+    /// sec:grammar): its digits, or the powers it holds where their text is shorter, so
+    /// `3^200000`, `-5*3^200000` and `12^100000` print so, and `2^10` prints `1024`. It must
+    /// be an integer.
+    ///
+    /// Complexity tradeoff (LIT-power-values): the text is chosen without the digits. They are
+    /// no longer than the power's text, of `L` characters, exactly when `|self| < 10^L`, which
+    /// the bounds of [`Rat::magnitude_order`] decide in O(L) word operations; only then are
+    /// they built, at the cost of a text of at most `L` characters. So the cost is that of the
+    /// shorter text, never of a power's digits: `3^200000` costs its 8 characters where its
+    /// 95,425 digits cost about 105 million instructions (two decimal conversions of about 95
+    /// million each and the power's 9 million, measured 2026-11-13 in the message of
+    /// MSG-literal-type-huge-power). This compares two lengths of one value and is no size
+    /// threshold. The alternative, a power always printed as a power, writes `2^3` for 8 and
+    /// gives `2^3` and `2 * 2 * 2` different texts; the one before, digits always, cost the
+    /// digits. A value held as plain digits, such as the sum `3^200000 + 1`, prints its digits
+    /// (DESIGN.md L1.26a).
+    pub fn integer_text(&self) -> String {
+        debug_assert!(self.is_integer());
+        if self.is_plain() {
+            return self.numer_text();
+        }
+        let power = self.power_text();
+        let ten = Rat::int(BigInt::from(10))
+            .pow(&BigUint::from(power.len()))
+            .expect("10 is factored and nothing is built");
+        match self.magnitude_order(&ten, false) {
+            Ok(Ordering::Less) => self.numer_text(),
+            _ => format!("{}{power}", if self.is_negative() { "-" } else { "" }),
+        }
+    }
+
+    /// The integer's coefficient and powers as `c*b^e*…`, without the sign: the primes that
+    /// share an exponent multiplied into one base, largest exponent first, or, where shorter,
+    /// every prime under the gcd `g` of the exponents, `(prod p^(e/g))^g`, which writes
+    /// `12^100000` and not `2^200000*3^100000`. That base is built only when a lower bound on
+    /// its digits leaves room for the form to be shorter, so it costs O(the text), as does
+    /// every other base here. It must be an integer with powers.
+    fn power_text(&self) -> String {
+        // A prime to the first power is written in the coefficient, so `5*3^200000` prints
+        // alike whether the 5 was kept as a prime or as digits.
+        let firsts = self.pows.iter().filter(|(_, e)| e.is_one());
+        let coef = firsts.fold(self.num.magnitude().clone(), |c, (p, _)| c * *p);
+        let mut by_exp: Vec<(&BigInt, u64)> = (self.pows.iter())
+            .filter(|(_, e)| !e.is_one())
+            .map(|(p, e)| (e, *p))
+            .collect();
+        by_exp.sort_unstable_by(|a, b| b.0.cmp(a.0).then(a.1.cmp(&b.1)));
+        let mut groups: Vec<String> = by_exp
+            .chunk_by(|a, b| a.0 == b.0)
+            .map(|run| {
+                let base = run.iter().fold(BigUint::one(), |b, (_, p)| b * *p);
+                format!("{}^{}", fast::to_decimal(&base), run[0].0)
+            })
+            .collect();
+        let powers = groups.len();
+        if !coef.is_one() || groups.is_empty() {
+            groups.insert(0, fast::to_decimal(&coef));
+        }
+        let head = match coef.is_one() {
+            true => String::new(),
+            false => format!("{}*", groups[0]),
+        };
+        let grouped = groups.join("*");
+        let g = self.pows.iter().fold(BigInt::zero(), |g, (_, e)| g.gcd(e));
+        if powers < 2 || g.is_one() {
+            return grouped;
+        }
+        let reduced: Vec<(u64, BigUint)> = (self.pows.iter())
+            .map(|(p, e)| (*p, (e / &g).magnitude().clone()))
+            .collect();
+        // `base >= 2^low`, so its digits are at least `low log10 2 > 0.30102 low`.
+        let low: BigUint = (reduced.iter())
+            .map(|(p, e)| e * u64::from(63 - p.leading_zeros()))
+            .sum();
+        let g_text = g.to_string();
+        let least = BigUint::from(head.len() + 1 + g_text.len()) + low * 30102u32 / 100_000u32;
+        if least >= BigUint::from(grouped.len()) {
+            return grouped;
+        }
+        let gcd_form = format!(
+            "{head}{}^{g_text}",
+            fast::to_decimal(built(&reduced).magnitude())
+        );
+        match gcd_form.len() < grouped.len() {
+            true => gcd_form,
+            false => grouped,
+        }
+    }
+
     /// `a + b`, or [`TooLarge`] when the system refuses the memory for the part of the
     /// operands it builds.
     pub fn add(&self, b: &Rat) -> Result<Rat, TooLarge> {
@@ -1928,6 +2018,63 @@ pub(crate) fn exact_f32(r: &Rat) -> Result<Option<f32>, TooLarge> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `b^k` for a small base, kept as exponents.
+    fn power(b: u64, k: u64) -> Rat {
+        Rat::int(BigInt::from(b)).pow(&BigUint::from(k)).unwrap()
+    }
+
+    #[test]
+    fn an_integer_prints_its_shorter_text_and_reads_back() {
+        let neg = |r: Rat| r.neg();
+        let times = |c: i64, r: Rat| Rat::int(BigInt::from(c)).mul(&r).unwrap();
+        for (value, text) in [
+            (power(2, 3), "8"),
+            (power(2, 10), "1024"),
+            (power(10, 5), "10^5"),
+            (power(10, 3), "1000"),
+            // 2^64 has 20 digits, its power 4 characters.
+            (power(2, 64), "2^64"),
+            (power(3, 200000), "3^200000"),
+            (power(9, 100000), "3^200000"),
+            (neg(power(3, 200000)), "-3^200000"),
+            (times(5, power(3, 200000)), "5*3^200000"),
+            (times(-5, power(3, 200000)), "-5*3^200000"),
+            (power(5, 1).mul(&power(3, 200000)).unwrap(), "5*3^200000"),
+            (
+                power(7, 1)
+                    .mul(&power(11, 1))
+                    .unwrap()
+                    .mul(&power(2, 64))
+                    .unwrap(),
+                "77*2^64",
+            ),
+            (power(12, 100000), "12^100000"),
+            (power(6, 100), "6^100"),
+            (power(2, 200).mul(&power(3, 100)).unwrap(), "12^100"),
+            (power(2, 300).mul(&power(3, 100)).unwrap(), "24^100"),
+            (power(2, 300).mul(&power(3, 7)).unwrap(), "2^300*3^7"),
+            (
+                power(2, 300)
+                    .mul(&power(5, 300))
+                    .unwrap()
+                    .mul(&power(3, 7))
+                    .unwrap(),
+                "10^300*3^7",
+            ),
+        ] {
+            assert_eq!(value.integer_text(), text, "{text}");
+            let back = crate::value::Value::power_text(text).unwrap();
+            let back = back.or_else(|| crate::value::Value::int_text(text, 10).unwrap());
+            assert_eq!(*back.unwrap().as_integer().unwrap(), value, "{text}");
+        }
+        // Equal values print alike, however they were made.
+        assert_eq!(power(9, 100000), power(3, 200000));
+        assert_ne!(
+            power(3, 200000),
+            power(3, 200000).add(&Rat::int(BigInt::one())).unwrap()
+        );
+    }
 
     #[test]
     fn doubling_an_integer_preserves_its_value_and_kept_powers() {

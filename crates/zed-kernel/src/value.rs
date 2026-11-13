@@ -42,7 +42,7 @@ use std::sync::{Arc, LazyLock};
 
 use crate::btree::{self, Hole};
 use num_bigint::{BigInt, BigUint};
-use num_traits::ToPrimitive;
+use num_traits::{One, ToPrimitive};
 
 use crate::deep::{self, Queue};
 use crate::digest::Digest;
@@ -600,6 +600,54 @@ impl Value {
         let per_digit = radix.ilog2() + u32::from(!radix.is_power_of_two());
         room((BigUint::from(digits.len()) * (8 + per_digit)) << 1u32)?;
         Ok(BigUint::parse_bytes(digits.as_bytes(), radix).map(int))
+    }
+
+    /// The integer of a literal type's product of powers (`LitType` in DESIGN.md sec:grammar):
+    /// `prod b^k` over `factors`, integers of no sign, negated when `negative`, so `3^200000` and
+    /// `5*3^200000`. A base within 64 bits is factored and its power kept as exponents
+    /// ([`Rat::pow`]), so the cost is the text's, never the digits'; [`TooLarge`] when a wider
+    /// base's power is built and the system refuses the memory.
+    pub fn power_product(negative: bool, factors: &[(Value, Value)]) -> Result<Self, TooLarge> {
+        let int = |v: &Value| {
+            (v.as_integer()
+                .expect("a factor of a power product is an integer"))
+            .into_owned()
+        };
+        let mut out = Rat::int(BigInt::one());
+        for (b, k) in factors {
+            let (b, k) = (int(b), int(k).to_integer()?);
+            let k = k.magnitude();
+            out = out.mul(&match k.is_one() {
+                true => b,
+                false => b.pow(k)?,
+            })?;
+        }
+        Ok(Value::integer(match negative {
+            true => out.neg(),
+            false => out,
+        }))
+    }
+
+    /// [`Value::power_product`] of the text of one, as the kernel prints it with no spaces,
+    /// `-5*3^200000`: decimal digits, each factor with an optional `^` and exponent. `Ok(None)`
+    /// when the text is not one.
+    pub fn power_text(text: &str) -> Result<Option<Self>, TooLarge> {
+        let (negative, body) = match text.strip_prefix('-') {
+            Some(b) => (true, b),
+            None => (false, text),
+        };
+        let mut factors = Vec::new();
+        for f in body.split('*') {
+            let (b, k) = f.split_once('^').unwrap_or((f, "1"));
+            match (read_decimal(b)?, read_decimal(k)?) {
+                (Some(b), Some(k)) => {
+                    let int = |n: BigUint| Value::integer(Rat::int(BigInt::from(n)));
+                    factors.push((int(b), int(k)))
+                }
+                _ => return Ok(None),
+            }
+        }
+        Value::power_product(negative, &factors).map(Some)
     }
 
     /// The rational `r`.

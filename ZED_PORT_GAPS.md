@@ -3824,3 +3824,10 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | A node named by the address one past the end of its parts buffer (`as_ptr_range().end as usize`), used only as a key while the node is alive | `sites::key`, `sites::end`, `Machine::fail`, `Machine::args` | Node identity by address (author decision node-ids) | a node id the term arena gives each node, kept beside the term as its key |
 | A thread-local flag and table (`thread_local!`, `Cell`, `RefCell`) that `Term::drop` and term copies read and change while a program is built | `sites::Recorder`, `sites::mark`, `sites::inherit`, `site_table::{copy, forget}` (called from `Drop for Term` and the rebuild in `term/walk.rs`, which name the node by `Term::site_key`) | Thread-local state, `Drop` hooks | the table a value threaded through elaboration and staging, each pass giving it back with the nodes it built |
 | A stack of `vec::IntoIter` part way through, for the preorder walk of the tree of sites | `lower::preorder`, `legalize::legalized_sites` | Iterators | a work list of (region, index) pairs |
+
+## Entries from LIT-power-values (`crates/zed-kernel/src/num.rs`, `num/bound.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `f64::log2` from the platform libm, trusted to within `LOG2_ULPS` = 16 ulps, a margin the proof of the comparison's error bound rests on | `log2_sum`, `by_logs` | Zed's `log2` states no accuracy in ulps | a `log2` whose error in ulps DESIGN states (correctly rounded, as CORE-MATH gives, or a stated bound), and `LOG2_ULPS` set from it |
+| The leading 64 bits of a `BigUint` and its bit length, read without the rest | `leading`, `by_bit_length` | Bit operations on `int` (gap 4) | `::bits` and a shift right on `int` |

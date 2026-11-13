@@ -2487,8 +2487,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// only, as `1 + 1` is inside a function, and the other's type is one class, beside atoms
     /// or alone ([`Ck::class_beside_atoms`]), the literal joins the class,
     /// generic, or the classes merge, and the `if` has the class's type (L1.26a). An operation
-    /// on integer literals alone whose other branch is of no class keeps its value instead,
-    /// unless it holds a `^` ([`Ck::kept`]).
+    /// on integer literals alone whose other branch is of no class keeps its value instead.
     fn branches(&mut self, then: &Expr, a: &Ty, otherwise: &Expr, b: &Ty) -> Ty {
         // An operation on integer literals alone keeps its value in an `if` (L1.26a: "an
         // operation on literals alone keeps its value in an `if`, so `if c { 1 + 1 } else {
@@ -2542,21 +2541,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// and where its value is no number, as `2 ^ -1`. A `/`, a decimal literal or a `rat` one makes
     /// no such value ([`literals_alone`]): a `/` of literals that meets no carrier is rejected, and
     /// a decimal has no value until its carrier is fixed (L1.26b).
-    ///
-    /// An operation that holds a `^`, as `3^200000` or `2^3 + 1`, keeps no value: it is its
-    /// class `t`, which takes `int` where nothing fixes it, as the operation alone does
-    /// (L1.26a; MSG-literal-type-huge-power). At `int` its value grows with the exponent's
-    /// value and not with the text, and no literal type writes it short, so its value would
-    /// cost the checker the power's digits and print them in each message that writes the
-    /// type. The rule looks for the `^` and never at the size of the value, as the value a fix
-    /// names does ([`binder_holds`]).
     // Complexity tradeoff: one walk of the operation to see that it holds integer literals
-    // alone, one to look for a `^` and, with none, one to fold it, O(its size), at the one
-    // `if` whose branch it is; an operation is the branch of at most one `if`, so a nest of
-    // them costs O(n) in all. Folding a `^` as well cost the digits of the power, which grow
-    // with the exponent's value, not with the text: 9 times the instructions of the check at 8
-    // times the exponent of `3^K + 1`. The naive form, typing every branch by its class, joins
-    // the other branch's literal to that class and gives `int`, or rejects a decimal there.
+    // alone and one to fold it, O(its size), at the one `if` whose branch it is; an operation
+    // is the branch of at most one `if`, so a nest of them costs O(n) in all. The naive
+    // form, typing the branch by its class, joins the other branch's literal to that class
+    // and gives `int`, or rejects a decimal there.
     fn kept(&self, e: &Expr, t: &Ty) -> Option<Ty> {
         let k = self.class_of_ty(t)?;
         if !self.classes[self.find(k)].generic {
@@ -2569,9 +2558,6 @@ impl<'t, 'a> Ck<'t, 'a> {
             .all(|l| l.bare && lit_carrier(&l.value) == Carrier::Int);
         if !ints || rat {
             return None;
-        }
-        if holds_power(e) {
-            return Some(t.clone());
         }
         folded(e, Carrier::Int).map(|v| Ty::lit(&v))
     }

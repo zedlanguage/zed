@@ -103,5 +103,24 @@ fn a_form_of_a_later_layer_is_refused_as_not_compiled_yet() {
             "p(x) = x is (\"h\");",
             concat!("error: ", zed_tests::not_yet!("the literal type `\"h\"`")),
         ),
+        // A literal type that writes an integer as its powers (LIT-power-values) parses whole.
+        (
+            "p(x) = x is 3^200000;",
+            concat!(
+                "error: ",
+                zed_tests::not_yet!("the literal type `3^200000`")
+            ),
+        ),
+        (
+            "p(x) = x is -5*3^200000;",
+            concat!(
+                "error: ",
+                zed_tests::not_yet!("the literal type `-5*3^200000`")
+            ),
+        ),
+        (
+            "p(x) = x is 2^3 | 12^100000*7;",
+            concat!("error: ", zed_tests::not_yet!("the literal type `2^3`")),
+        ),
     ]);
 }

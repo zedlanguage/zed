@@ -131,37 +131,61 @@ fn a_division_in_an_if_is_still_not_kept() {
 }
 
 #[test]
-fn an_operation_holding_a_power_keeps_no_value_in_an_if() {
-    // Item MSG-literal-type-huge-power, DESIGN.md step L1.26a: an operation on literals alone
-    // that holds a `^` keeps no value in an `if`, since its value at `int` grows with the
-    // exponent's value and not with the text; it is typed as the operation alone is, `int`
-    // where nothing fixes it. The rule looks for the `^`, never at the size of the value.
-    // Before the item `g` was `(bool) -> 1 | 8`.
+fn an_operation_holding_a_power_keeps_its_value_in_an_if() {
+    // Item LIT-power-values, DESIGN.md step L1.26a: an operation on literals alone keeps its
+    // value in an `if` whether or not it holds a `^`, so `2 ^ 3` and `2 * 2 * 2` give one type.
+    // MSG-literal-type-huge-power made `g` `(bool) -> int`; before it and now it is `1 | 8`.
     let src = "g(positional c: bool) = if c { 2 ^ 3 } else { 1 };\na = g(true);\nb = g(false);\n";
     assert_eq!(type_errors(src), Vec::<String>::new());
-    assert_eq!(sig(src, "g"), "(bool) -> int");
+    assert_eq!(sig(src, "g"), "(bool) -> 1 | 8");
     assert_eq!(value(src, "a"), "8");
     assert_eq!(value(src, "b"), "1");
-    for branch in ["2 ^ 3 + 1", "-(2 ^ 3)", "(1 + 1) ^ 3"] {
+    for (branch, ty) in [
+        ("2 * 2 * 2", "1 | 8"),
+        ("2 ^ 3 + 1", "1 | 9"),
+        ("-(2 ^ 3)", "-8 | 1"),
+        ("(1 + 1) ^ 3", "1 | 8"),
+        ("2 ^ 2 ^ 2", "1 | 16"),
+    ] {
         let src = format!("g(positional c: bool) = if c {{ {branch} }} else {{ 1 }};\n");
-        assert_eq!(sig(&src, "g"), "(bool) -> int", "{src}");
+        assert_eq!(sig(&src, "g"), format!("(bool) -> {ty}"), "{src}");
     }
     // A decimal beside it is still read where the result is used.
     let decimal = "g(positional c: bool) = if c { 2 ^ 3 } else { 1.5 };\n";
-    assert_eq!(sig(decimal, "g"), "(bool) -> 1.5 | int");
-    // The contrast: with no `^` the operation keeps its value, the small one and the large one.
-    let plain = "g(positional c: bool) = if c { 2 * 2 * 2 } else { 1 };\n";
-    assert_eq!(sig(plain, "g"), "(bool) -> 1 | 8");
+    assert_eq!(sig(decimal, "g"), "(bool) -> 1.5 | 8");
+    // A value beyond 64 bits prints its digits or, where shorter, the power that makes it; the
+    // product, built as digits, prints them, and the two are one value.
     let large = "g(positional c: bool) = if c { 4294967296 * 4294967296 } else { 1 };\n";
+    let power = "g(positional c: bool) = if c { 2 ^ 64 } else { 1 };\n";
+    assert_eq!(sig(power, "g"), "(bool) -> 1 | 2^64");
     assert_eq!(sig(large, "g"), "(bool) -> 1 | 18446744073709551616");
-    // So the call of `g` is `int`, as a call of `g(positional c: bool) = 2 ^ 3;` is, and not
-    // read at the `f64` of `h`; written at the parameter, the `if` still takes its carrier.
+    let same = format!("{power}a = g(true) == 4294967296 * 4294967296;\n");
+    assert_eq!(value(&same, "a"), "true");
+    // So the call of `g` is read at the `f64` of `h`, as the `if` written at the parameter is.
+    // The contrast: with an `int` parameter in the operation the branch is an `int`, and the
+    // call is rejected there.
     let call = format!(
-        "{H}g(positional c: bool) = if c {{ 2 ^ 3 }} else {{ 1 }};\nf(positional c: bool) = h(g(c));\n"
+        "{H}g(positional c: bool) = if c {{ 2 ^ 3 }} else {{ 1 }};\nf(positional c: bool) = \
+         h(g(c));\na = f(true);\nb = f(false);\n"
+    );
+    assert_eq!(type_errors(&call), Vec::<String>::new());
+    assert_eq!(value(&call, "a"), "8.0");
+    assert_eq!(value(&call, "b"), "1.0");
+    let plain = format!(
+        "{H}g(positional c: bool) = if c {{ 2 * 2 * 2 }} else {{ 1 }};\nf(positional c: bool) = \
+         h(g(c));\na = f(true);\n"
+    );
+    assert_eq!(type_errors(&plain), Vec::<String>::new());
+    assert_eq!(value(&plain, "a"), "8.0");
+    let int = format!(
+        "{H}g(positional c: bool, positional x: int) = if c {{ x * 2 }} else {{ 1 }};\n\
+         f(positional c: bool) = h(g(c, 3));\n"
     );
     assert_eq!(
-        type_errors(&call),
-        vec!["`h` does not take (int): no arrow of `h` takes these types. [h(g(c))]".to_string()]
+        type_errors(&int),
+        vec![
+            "`h` does not take (int): no arrow of `h` takes these types. [h(g(c, 3))]".to_string()
+        ]
     );
     let inline =
         format!("{H}f(positional c: bool) = h(if c {{ 2 ^ 3 }} else {{ 1 }});\na = f(true);\n");
@@ -178,11 +202,11 @@ fn an_operation_holding_a_power_keeps_no_value_in_an_if() {
 }
 
 /// The rejection of the item's program through `zedc run`: the type found for `f` is written
-/// `(b: bool) -> int`, and no digit of `3^200000` is printed or computed (MSG-literal-type-huge-
-/// power). Before the item the step read `(b: bool) -> 2 | ` and the 95,425 digits of the
-/// power, and the message was 191 KB.
+/// `(b: bool) -> 2 | 3^200000`, as the program writes the power, and no digit of it is printed
+/// (LIT-power-values). Before MSG-literal-type-huge-power the step read `(b: bool) -> 2 | ` and
+/// the 95,425 digits of the power, and the message was 191 KB; that item printed `int`.
 #[test]
-fn the_type_of_an_if_holding_a_power_names_no_digits_of_it() {
+fn the_type_of_an_if_holding_a_power_names_the_power() {
     let src = "f(b: bool) = if b { 3^200000 } else { 2 };\nmain() = f(b: true) > 1;\n";
     let out = run("l01_26a_power_branch", src, "", &[]);
     let path = format!(
@@ -191,8 +215,9 @@ fn the_type_of_an_if_holding_a_power_names_no_digits_of_it() {
     );
     assert_eq!(out.status, 1);
     assert_eq!(out.stdout, "");
+    let stderr = out.stderr.replace(&path, "prog.zed:");
     assert_eq!(
-        out.stderr.replace(&path, "prog.zed:"),
+        stderr,
         concat!(
             "prog.zed:2:10: `main` gives `f(b: true) > 1`, which is bool, and the result of `main` ",
             "is the program's exit status, an `int` from 0 to 255.\n",
@@ -201,9 +226,9 @@ fn the_type_of_an_if_holding_a_power_names_no_digits_of_it() {
             "        |          ^^^^^^^^^^ [2]\n",
             "        |          ^^^^^^^^^^^^^^ [1, 5, 6]\n",
             "        |                       ^ [4]\n",
-            "  [2] 2:10: this call of `f` gives int\n",
+            "  [2] 2:10: this call of `f` gives 2 | 3^200000\n",
             "  [3] 1:1: `f` is declared here with no type written for its result; the type the ",
-            "checker found for `f` is `(b: bool) -> int`\n",
+            "checker found for `f` is `(b: bool) -> 2 | 3^200000`\n",
             "      1 | f(b: bool) = if b { 3^200000 } else { 2 };\n",
             "        | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n",
             "  [4] 2:23: this literal, 1, is 1\n",
@@ -212,15 +237,51 @@ fn the_type_of_an_if_holding_a_power_names_no_digits_of_it() {
             "result\n",
         )
     );
-    // The contrast: with no `^` the step names the values, as before the item.
-    let src = "f(b: bool) = if b { 3 * 3 } else { 2 };\nmain() = f(b: true) > 1;\n";
-    let out = run("l01_26a_power_branch", src, "", &[]);
-    assert!(
-        out.stderr.contains("this call of `f` gives 2 | 9\n")
-            && out.stderr.contains("is `(b: bool) -> 2 | 9`\n"),
-        "{}",
-        out.stderr
-    );
+    // No run of digits is longer than the program's text.
+    let longest = (stderr.split(|c: char| !c.is_ascii_digit()))
+        .map(str::len)
+        .max()
+        .unwrap_or(0);
+    assert!(longest <= src.len(), "{longest} digits");
+    // The contrasts: a power whose digits are no longer than its text prints them, and so does
+    // a product with no `^`; `9^100000` is the same value and prints as the one power.
+    for (branch, shown) in [
+        ("3 * 3", "2 | 9"),
+        ("3^2", "2 | 9"),
+        ("9^100000", "2 | 3^200000"),
+        ("-(3^200000)", "-3^200000 | 2"),
+    ] {
+        let src =
+            format!("f(b: bool) = if b {{ {branch} }} else {{ 2 }};\nmain() = f(b: true) > 1;\n");
+        let out = run("l01_26a_power_branch", &src, "", &[]);
+        assert!(
+            out.stderr
+                .contains(&format!("this call of `f` gives {shown}\n"))
+                && out.stderr.contains(&format!("is `(b: bool) -> {shown}`\n")),
+            "{}",
+            out.stderr
+        );
+    }
+}
+
+/// Equal powers are one value whatever their bases, and a power and the integer one above it
+/// differ (LIT-power-values): `9^100000 == 3^200000` is true and `3^200000 == 3^200000 + 1`
+/// false, each decided by the checker without the digits of either side, as is `1 < 3^200000`.
+#[test]
+fn powers_compare_exactly_without_their_digits() {
+    for (expr, want) in [
+        ("9^100000 == 3^200000", "true"),
+        ("3^200000 == 3^200000 + 1", "false"),
+        ("3^200000 + 1 > 3^200000", "true"),
+        ("1 < 3^200000", "true"),
+        ("2^200000 < 3^126186", "true"),
+        ("2^200000 > 3^126185", "true"),
+        ("12^100000 == 2^200000 * 3^100000", "true"),
+    ] {
+        let src = format!("a = {expr};\n");
+        assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
+        assert_eq!(value(&src, "a"), want, "{src}");
+    }
 }
 
 #[test]

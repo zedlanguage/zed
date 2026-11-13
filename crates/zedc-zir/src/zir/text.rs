@@ -1104,7 +1104,25 @@ impl<'a> P<'a> {
     fn ty_leaf(&mut self) -> Result<Type, String> {
         match self.peek() {
             Some('"') => return lit(self.value()?),
-            Some(c) if c.is_ascii_digit() || c == '-' => return lit(self.value()?),
+            Some(c) if c.is_ascii_digit() || c == '-' => {
+                // An integer the kernel prints as its powers, `3^200000` or `-5*3^200000`
+                // (`Rat::integer_text`), is read as one; any other number by `value`.
+                let start = self.i;
+                let t = self.token("();,[]{}");
+                if t.contains(['^', '*']) {
+                    return match Value::power_text(t) {
+                        Ok(Some(v)) => lit(v),
+                        Ok(None) => Err(format!("expected a value, found `{t}`")),
+                        Err(e) => Err(format!(
+                            "the system refused the {} bytes of memory asked to read the number \
+                             `{t}`",
+                            bytes_of(&e.bits)
+                        )),
+                    };
+                }
+                self.i = start;
+                return lit(self.value()?);
+            }
             _ => {}
         }
         let start = self.i;

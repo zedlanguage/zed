@@ -176,6 +176,110 @@ impl Product<'_> {
     }
 }
 
+/// The order of two positive products read from their bit lengths alone, when those tell it:
+/// `2^(b - 1) <= c < 2^b` for a coefficient of `b` bits and `2^((b - 1) e) <= p^e < 2^(b e)` for
+/// a prime of `b` bits, so a product whose least bit length is at least the other's greatest is
+/// the larger. Exact integer arithmetic on the exponents, O(terms) word operations for exponents
+/// of a word: `1 < 3^200000` is `2^0 <= 1 < 2^1` against `3^200000 >= 2^200000`.
+fn by_bit_length(n: &Product<'_>, d: &Product<'_>) -> Option<Ordering> {
+    let range = |x: &Product<'_>| {
+        let b = x.coef.bits();
+        let (mut low, mut high) = (BigUint::from(b - 1), BigUint::from(b));
+        for (p, e) in &x.pows {
+            let bits = u64::from(64 - p.leading_zeros());
+            low += e * (bits - 1);
+            high += e * bits;
+        }
+        (low, high)
+    };
+    let ((nl, nh), (dl, dh)) = (range(n), range(d));
+    if nl >= dh {
+        return Some(Ordering::Greater);
+    }
+    if dl >= nh {
+        return Some(Ordering::Less);
+    }
+    None
+}
+
+/// The error of the system's `log2` on an `f64`, in units in the last place, that
+/// [`by_logs`] allows for. Rust documents the precision of `f64::log2` as unspecified ("non-
+/// deterministic": it calls the platform's libm), and no bound of glibc's was at hand (its
+/// manual's table of known errors could not be fetched, 2026-11-13), so this is the "few ulps"
+/// of the brief, taken large: correctly rounded and the usual libms are within 1 ulp, and a
+/// larger allowance only moves a few more pairs on to the exact bounds, at no measurable cost.
+const LOG2_ULPS: f64 = 16.0;
+
+/// `x` as `m * 2^s` with `m` its leading 64 bits, rounded to an `f64`, and `s` the bits dropped:
+/// `m * 2^s` is within a relative `2^-63 + 2^-53 <= 2^-52` of `x` (truncation, then rounding).
+fn leading(x: &BigUint) -> (f64, u64) {
+    let s = x.bits().saturating_sub(64);
+    let m = (x >> s).to_u64().expect("the leading 64 bits");
+    (m as f64, s)
+}
+
+/// An approximation `S'` of `log2 x` for a product `x`, and the number of its terms; `None`
+/// when an exponent is beyond what an `f64` holds with room for the product.
+fn log2_sum(x: &Product<'_>) -> Option<(f64, usize)> {
+    let mut sum = 0.0f64;
+    let mut terms = 0;
+    if !x.coef.is_one() {
+        let (m, s) = leading(&x.coef);
+        sum += s as f64 + m.log2();
+        terms += 1;
+    }
+    for (p, e) in &x.pows {
+        let (m, s) = leading(e);
+        if s > 900 {
+            return None;
+        }
+        let e = m * 2f64.powi(s as i32);
+        sum += e * (*p as f64).log2();
+        terms += 1;
+    }
+    Some((sum, terms))
+}
+
+/// The order of two positive products from `log2` of each in `f64`, when the two differ by
+/// more than a proved bound on the error; `None` when they do not, or an exponent is beyond an
+/// `f64`. `slack` scales the margin: 1 for the proved bound, which every caller passes; a test
+/// passes 0 to show that the bound is needed.
+///
+/// Error analysis, with `u = 2^-53` and `c` = [`LOG2_ULPS`]. Each side is `S = log2 coef +
+/// sum e log2 p`, every term at least 0 (`coef >= 1`, `p >= 2`), so relative errors of the
+/// terms add without cancellation. A prime's term `fl(fl(e) * L)`, with `L = log2(fl(p))` from
+/// the libm: `fl(p)` is within a relative `u` of `p`, which moves `log2 p` by at most
+/// `u / ln 2 < 1.45u`, relative `1.45u` since `log2 p >= 1`; the libm adds
+/// `c ulp(L) <= 2cu |L|`; `fl(e)` from the leading 64 bits is within `2u` ([`leading`]); the
+/// product rounds by `u`. So a term is within a relative `(2c + 5)u` of its value, to first
+/// order. The coefficient's term `s + log2(m)`: `m` within `2u`, so `log2 m` within `2.9u`
+/// absolute, plus the libm's `c ulp(log2 m) <= c 2^-46` for `m < 2^64`, and the sum rounds by
+/// `u`; with `log2 coef >= 63` once `s > 0`, that is within a relative `(2.04c + 5)u`
+/// (`c 2^-46 / 63 < 2.04cu`), and below 64 bits it is the prime's case. So every term is
+/// within a relative `r = (3c + 6)u`. Recursive summation of `N` terms at least 0 adds a
+/// relative `gamma(N - 1) = (N - 1)u / (1 - (N - 1)u)` (Higham, "Accuracy and Stability of
+/// Numerical Algorithms", SIAM, 2nd ed. 2002, sec. 4.2). So `|S' - S| <= B S` with
+/// `B = (3c + 6 + N)u (1 + 2^-20)` for `N` and `c` far below `2^30`, the second-order terms
+/// inside the factor. Then `Sn > Sd` holds when `Sn' (1 - B) > Sd' (1 + B)`, that is
+/// `Sn' - Sd' > B (Sn' + Sd')`; the test below computes both sides in `f64` and asks for twice
+/// that, which covers the rounding of the test itself (three roundings, `(1 - u)^3 / (1 + u) >
+/// 1/2`). Since `log2` is increasing, `Sn > Sd` is `n > d`.
+pub(super) fn by_logs(n: &Product<'_>, d: &Product<'_>, slack: f64) -> Option<Ordering> {
+    let (sn, tn) = log2_sum(n)?;
+    let (sd, td) = log2_sum(d)?;
+    let terms = tn.max(td) as f64;
+    let b = (3.0 * LOG2_ULPS + 6.0 + terms) * 2f64.powi(-53) * (1.0 + 2f64.powi(-20));
+    let margin = slack * 2.0 * b * (sn + sd);
+    let diff = sn - sd;
+    if diff > margin {
+        Some(Ordering::Greater)
+    } else if -diff > margin {
+        Some(Ordering::Less)
+    } else {
+        None
+    }
+}
+
 /// The first precision tried: a power `p^e` loses about `log2 e` bits to rounding, so this
 /// leaves 64 good bits.
 fn start(n: &Product<'_>, d: &Product<'_>) -> u64 {
@@ -186,6 +290,17 @@ fn start(n: &Product<'_>, d: &Product<'_>) -> u64 {
 /// each precision before it is tried, `8k` bits for what a round holds at once (four `k`-bit
 /// bounds and the `2k`-bit product of two, with room to spare), and for the two products in full before they are built; [`TooLarge`] when it refuses.
 pub(super) fn cmp(n: &Product<'_>, d: &Product<'_>, check: bool) -> Result<Ordering, TooLarge> {
+    // Complexity tradeoff (LIT-power-values): the order is tried first from the bit lengths in
+    // exact integer arithmetic ([`by_bit_length`]), then from `log2` of each side in `f64` with
+    // a proved error bound ([`by_logs`]), each O(terms) word operations for exponents of a
+    // word, and only then from the `k`-bit bounds below, whose first round costs `2 log e`
+    // products of about `64 + log2 e` bits. So `1 < 3^200000` and `2^200000 < 3^200000` cost a
+    // few word operations, and only two sides within a relative `2^-45` or so in `log2` reach
+    // the bounds. The f64 check was the author's addition (2026-11-13); the alternative of the
+    // bounds alone was already free of the digits, at O(log^2 e) word operations.
+    if let Some(o) = by_bit_length(n, d).or_else(|| by_logs(n, d, 1.0)) {
+        return Ok(o);
+    }
     let cost = n.bits() + d.bits();
     let mut k = start(n, d);
     loop {
@@ -379,5 +494,83 @@ fn round_with(
             return Some(Err(LiteralRounding::Zero));
         }
         return Some(Ok((m, t)));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use num_traits::Pow;
+
+    fn product(coef: BigUint, pows: &[(u64, u64)]) -> Product<'static> {
+        Product {
+            coef: Cow::Owned(coef),
+            pows: pows.iter().map(|&(p, e)| (p, BigUint::from(e))).collect(),
+        }
+    }
+
+    fn power(p: u64, e: u64) -> Product<'static> {
+        product(BigUint::one(), &[(p, e)])
+    }
+
+    /// `1 < 3^200000` by the bit lengths alone; `2^84 < 3^53`, whose bit lengths overlap (85
+    /// against 53 to 106) and whose `log2` differ by 0.0028, far past the bound of about
+    /// `10^-11`, by the f64 check.
+    #[test]
+    fn bit_lengths_and_the_f64_check_decide_products_far_apart() {
+        let one = product(BigUint::one(), &[]);
+        assert_eq!(
+            by_bit_length(&one, &power(3, 200_000)),
+            Some(Ordering::Less)
+        );
+        assert_eq!(
+            by_bit_length(&power(3, 200_000), &one),
+            Some(Ordering::Greater)
+        );
+        let (a, b) = (power(2, 84), power(3, 53));
+        assert_eq!(by_bit_length(&a, &b), None);
+        assert_eq!(by_logs(&a, &b, 1.0), Some(Ordering::Less));
+        assert_eq!(by_logs(&b, &a, 1.0), Some(Ordering::Greater));
+        assert_eq!(cmp(&a, &b, false), Ok(Ordering::Less));
+    }
+
+    /// `2^16785921` and `3^10590737`, from a convergent of `log2 3`: their `log2` differ by
+    /// about `5 * 10^-8`, inside the bound of about `4 * 10^-7`, so the f64 check leaves them to
+    /// the `k`-bit bounds. The order is checked against `log2 3` to 40 digits, in integers.
+    #[test]
+    fn products_close_in_log2_go_on_to_the_exact_bounds() {
+        let (p, q) = (16_785_921u64, 10_590_737u64);
+        let (a, b) = (power(2, p), power(3, q));
+        assert_eq!(by_bit_length(&a, &b), None);
+        assert_eq!(by_logs(&a, &b, 1.0), None);
+        let log2_3 =
+            BigUint::parse_bytes(b"15849625007211561814537389439478165087598", 10).expect("digits");
+        let expected =
+            (BigUint::from(p) * BigUint::from(10u32).pow(40u32)).cmp(&(BigUint::from(q) * log2_3));
+        assert_eq!(cmp(&a, &b, false), Ok(expected));
+        assert_eq!(cmp(&b, &a, false), Ok(expected.reverse()));
+    }
+
+    /// `3^1000 + 1` and `3^1000 - 1` against `3^1000`: the f64 check leaves both, which agree
+    /// with `3^1000` in about 1585 bits, and the bounds reach the products' size and build them.
+    /// The negative control: with no margin (`slack` 0) the f64 check gives one verdict for
+    /// both pairs, for some exponents, and so a wrong one; a margin too small is not sound.
+    #[test]
+    fn the_f64_check_needs_its_margin() {
+        let mut wrong = 0;
+        for k in 1000u32..1064 {
+            let x = BigUint::from(3u32).pow(k);
+            let pow = power(3, u64::from(k));
+            let above = product(&x + 1u32, &[]);
+            let below = product(&x - 1u32, &[]);
+            for (side, truth) in [(&above, Ordering::Greater), (&below, Ordering::Less)] {
+                assert_eq!(by_logs(side, &pow, 1.0), None);
+                assert_eq!(cmp(side, &pow, false), Ok(truth));
+                if by_logs(side, &pow, 0.0).is_some_and(|o| o != truth) {
+                    wrong += 1;
+                }
+            }
+        }
+        assert!(wrong > 0, "no exponent gave a wrong verdict with no margin");
     }
 }

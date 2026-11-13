@@ -304,7 +304,10 @@ TypePrimary   = ~TypeApply                                                      
               | ~LitType                                                           L10
               | ~InferType                                                         L10
               | ~HoleType                                                          L15
-LitType       = SignedLit                                                          L10
+LitType       = '-'? LitFactor ('*' LitFactor)+                                    L10
+              | '-'? INT '^' INT                                                   L10
+              | SignedLit                                                          L10
+LitFactor     = INT ('^' INT)?                                                     L10
 TypeApply     = Path '(' nest(TypeParam % ',' ','?) ')'                            L2
 TypeName      = Path                                                               L1
 AtomApply     = ATOM '(' nest(TypeParam % ',' ','?) ')'                            L2

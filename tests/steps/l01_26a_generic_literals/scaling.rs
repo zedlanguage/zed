@@ -563,47 +563,56 @@ fn a_fix_names_a_power_of_literals_without_computing_it() {
     });
 }
 
-/// The type of an `if` whose branch is a power of literals at `int` is `int`, and the checker
-/// does not compute the power for it: the checking of `f(b: bool) = if b { 3^K } else { 2 };`,
-/// and the rejection of `main() = f(b: true) > 1;` through `zedc run`, which writes the type
-/// found for `f`, cost the text, which does not grow with K = 200 n (order 0; DESIGN.md step
-/// L1.26a and sec:diagnostics, "Types in a message"; MSG-literal-type-huge-power). So does a
-/// branch that adds to the power, `3^K + 1`, whose value the kernel cannot keep as a power.
-/// Before the item the branch kept its value: through `zedc run` at K = 200,000 and 1,600,000
-/// the rejection took 233M and about 2,500M instructions and its message grew from 191 KB to
-/// 1.5 MB, and the checking of `3^K + 1` took 9 times the instructions and 5.8 times the bytes
-/// (COMPLEXITY.md row MSG-literal-type-huge-power).
+/// The type of an `if` whose branch is a power of literals keeps the power, held as its prime
+/// exponents, and prints it as the program wrote it (DESIGN.md step L1.26a and sec:diagnostics,
+/// "Types in a message"; LIT-power-values): the checking of `f(b: bool) = if b { 3^K } else
+/// { 2 };`, and the rejection of `main() = f(b: true) > 1;` through `zedc run`, which writes
+/// `(b: bool) -> 2 | 3^K`, cost the text, which does not grow with K = 200 n (order 0). A
+/// branch that adds to the power, `3^K + 1`, is built as binary digits, O(n log n) by the
+/// products of `num::fast`, and its type prints its decimal digits, O(n log^2 n) (radix
+/// conversion; COMPLEXITY.md C31). Before MSG-literal-type-huge-power the power's type printed
+/// its digits, 233M and about 2,500M instructions through `zedc run` at K = 200,000 and
+/// 1,600,000; that item made the type `int` (COMPLEXITY.md row MSG-literal-type-huge-power).
 #[test]
-fn the_type_of_an_if_holding_a_power_of_literals_does_not_compute_it() {
+fn the_type_of_an_if_holding_a_power_of_literals_prints_the_power() {
     use zed_tests::step_helpers::l01_19_whole_file_ports::run;
-    let main = |n: usize| {
-        format!(
-            "f(b: bool) = if b {{ 3^{} }} else {{ 2 }};\nmain() = f(b: true) > 1;\n",
-            200 * n
-        )
-    };
+    let def = |n: usize| format!("f(b: bool) = if b {{ 3^{} }} else {{ 2 }};\n", 200 * n);
+    let main = |n: usize| format!("{}main() = f(b: true) > 1;\n", def(n));
     let sum = |n: usize| {
         format!(
-            "f(b: bool) = if b {{ 3^{} + 1 }} else {{ 2 }};\ny = f(b: true) + 1;\n",
+            "f(b: bool) = if b {{ 3^{} + 1 }} else {{ 2 }};\nmain() = f(b: true) > 1;\n",
             200 * n
         )
     };
     scaling::on_a_thread(1 << 29, || {
         let n = 500;
-        let units = scaling::inputs(n, |m| Resolved::new(&sum(m)));
+        let units = scaling::inputs(n, |m| Resolved::new(&def(m)));
         for m in [n, scaling::FACTOR * n] {
-            assert_eq!(sig(&sum(m), "f"), "(b: bool) -> int");
+            assert_eq!(sig(&def(m), "f"), format!("(b: bool) -> 2 | 3^{}", 200 * m));
         }
-        scaling::check_order("the checking of an `if` of 3^(200 n) + 1", n, 0, |m| {
+        scaling::check_order("the checking of an `if` of 3^(200 n)", n, 0, |m| {
             std::hint::black_box(units[&m].type_errors());
         });
         let texts = scaling::inputs(n, main);
-        for t in texts.values() {
-            assert_eq!(run("l01_26a_power_scaling", t, "", &[]).status, 1);
-        }
         scaling::check_order("zedc run of an `if` of 3^(200 n), rejected", n, 0, |m| {
             let out = run("l01_26a_power_scaling", &texts[&m], "", &[]);
-            assert!(out.stderr.contains("`(b: bool) -> int`"), "{}", out.stderr);
+            assert_eq!(out.status, 1);
+            let ty = format!("`(b: bool) -> 2 | 3^{}`", 200 * m);
+            assert!(out.stderr.contains(&ty), "{}", out.stderr);
+        });
+        // At n = 1000 the decimal conversion runs on `num::fast` products at both sizes; at
+        // n = 500 the smaller runs on num-bigint's Toom-3, of a lower constant, and the ratio
+        // was 14.6 (2026-11-13).
+        let n = 1000;
+        let units = scaling::inputs(n, |m| Resolved::new(&sum(m)));
+        scaling::check("the checking of an `if` of 3^(200 n) + 1", n, |m| {
+            std::hint::black_box(units[&m].type_errors());
+        });
+        let texts = scaling::inputs(n, sum);
+        scaling::check("zedc run of an `if` of 3^(200 n) + 1, rejected", n, |m| {
+            let out = run("l01_26a_power_scaling", &texts[&m], "", &[]);
+            assert_eq!(out.status, 1);
+            assert!(out.stderr.contains("(b: bool) -> 2 | "), "{}", out.stderr);
         });
     });
 }

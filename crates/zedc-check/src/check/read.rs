@@ -343,6 +343,11 @@ fn leaves(
         let (start, tok) = (tokens[i].span.start, &tokens[i].tok);
         let next = tokens.get(i + 1).map(|t| &t.tok);
         let (ty, used) = match (tok, next) {
+            (Tok::Op("-") | Tok::Int { .. }, _)
+                if let Some((v, used)) = power_product(text, &tokens[i..])? =>
+            {
+                (Ty::lit(&v), used)
+            }
             (Tok::Wildcard, _) => (Ty::dynamic(), 1),
             (Tok::Op("!"), Some(Tok::Wildcard)) => (Ty::empty(), 2),
             (Tok::Op("!"), _) => return Err(format!("`{text}`: `!` stands before no `_`")),
@@ -390,6 +395,48 @@ fn leaves(
     }
     out.push_str(&head[from..]);
     Ok(out)
+}
+
+/// The integer of a literal type's product of powers at the start of `tokens`, `3^200000` or
+/// `-5*3^200000` (`LitType` in DESIGN.md sec:grammar), with the number of tokens it takes;
+/// `None` when they start no `^` or `*` between integers, which the other leaves read. The
+/// power is kept as exponents (`Value::power_product`), so reading costs the text.
+fn power_product(text: &str, tokens: &[lex::Token]) -> Result<Option<(Value, usize)>, String> {
+    let tok = |j: usize| tokens.get(j).map(|t| &t.tok);
+    let uint = |j: usize| match tok(j) {
+        Some(Tok::Int { radix, digits }) => int(*radix, digits, false, text).map(Some),
+        _ => Ok(None),
+    };
+    let negative = tok(0) == Some(&Tok::Op("-"));
+    let mut j = usize::from(negative);
+    let mut factors = Vec::new();
+    loop {
+        let Some(b) = uint(j)? else {
+            return Ok(None);
+        };
+        let k = match tok(j + 1) {
+            Some(Tok::Op("^")) => match uint(j + 2)? {
+                Some(k) => {
+                    j += 2;
+                    k
+                }
+                None => return Ok(None),
+            },
+            _ => Value::int(1.into()),
+        };
+        factors.push((b, k));
+        j += 1;
+        if tok(j) != Some(&Tok::Op("*")) {
+            break;
+        }
+        j += 1;
+    }
+    if j == usize::from(negative) + 1 {
+        return Ok(None);
+    }
+    Value::power_product(negative, &factors)
+        .map(|v| Some((v, j)))
+        .map_err(|e| refused(text, &e))
 }
 
 /// The integer of `digits` in `radix`, negated when `negative`, read in memory the system

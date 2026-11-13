@@ -153,7 +153,8 @@ TypeSuffix    : `[r]` a refinement, `[r1, r2]` the intersection of both; `matchi
 Refinement    : the subset of the type a comparison, range or named predicate selects
 RangeLit      : an interval of the type, `_` an open end
 TypePrimary   : the type of its alternative
-LitType       : the singleton type of the literal
+LitType       : the singleton type of the literal; with `^` or `*`, of the integer the product of powers gives, `-` negating it (sec:diagnostics, "Types in a message")
+LitFactor     : a factor of a literal type's product, `b^k` the power
 TypeApply     : a type application
 TypeName      : a named type
 AtomApply     : an atom type with its payload; `#a(..)` the atom with any payload, `#a()` the atom whose payload is the empty tuple
