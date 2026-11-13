@@ -2023,9 +2023,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | FLOAT-f32 | impl attempt 1 | 2026-11-05 04:07 | scaling: a chain of n f32 bindings (check+elab+run) 100->800: 8.1x instr, 8.1x bytes, limit 12.77; negative control (n/100 repeats, quadratic) 64.7x bytes, fail |
-| GSX-unsolved | merge attempt 1 | 2026-11-11 16:53 | started: rebase combo (gsxh-claude) onto origin/main and apply decisions (a)-(d) of cd-xr/GSX-merge.md / load 43.50 38.06 40.03 |
 | L1.29d | impl attempt 1 | 2026-11-11 01:43 | started; worktree /home/luke/Work/wt/l129d from e52caa1bf |
-| LIT-tuple-decimal-body | running | 2026-11-12 18:30 |  |
+| LIT-tuple-decimal-body | impl attempt 1 | 2026-11-12 18:30 | started; worktree wt/lit-tuple-dec on origin/main 151b26576 (also MSG-callee-code) |
 | MAKER-file-chain | impl attempt 1 | 2026-11-12 17:24 | red on old code: new work tests t_n + 1 bytes 19.9x, a_n + 1 bytes 14.0x at n=40->320 (limit 13.8); load 76 |
 | MSG-callee-code | running | 2026-11-12 18:30 |  |
 | MSG-is-repair-v | running | 2026-11-12 17:32 |  |
