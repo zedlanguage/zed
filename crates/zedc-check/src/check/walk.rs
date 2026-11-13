@@ -2103,7 +2103,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             let what = format!("the default of `{}`", p.name);
             match class {
                 Some(k) => {
-                    if !self.flow(k, &dt, &what, d.span) {
+                    self.defaults.insert(d.span, p.name.as_str().into());
+                    if !self.flow(k, &dt, &what, d.span, d.span) {
                         let shown = self.show(t);
                         let mut notes = self.derive(&[d.span]);
                         notes.extend(self.reasons(t));
@@ -5754,7 +5755,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         for (n, t) in &now {
-            self.check_on(n, t, n.span);
+            self.check_on(n, t, n.span, None);
         }
         needs.sort_by_key(|(n, _)| *n);
         sig.needs = needs.into_iter().map(|(_, n)| n).collect();
@@ -5907,8 +5908,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Merges classes `a` and `b`, as `what` at `span` requires; false, changing nothing, if
     /// they share no carrier. The shorter lists move into the longer, so that each item
     /// moves `O(log n)` times.
-    fn merge(&mut self, a: usize, b: usize, what: &str, span: Span) -> bool {
-        let (a, b) = (self.find(a), self.find(b));
+    fn merge(&mut self, named_a: usize, named_b: usize, what: &str, span: Span) -> bool {
+        let (a, b) = (self.find(named_a), self.find(named_b));
         if a == b {
             return true;
         }
@@ -5918,6 +5919,15 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         self.touch(a);
         self.touch(b);
+        let reason = Reason {
+            span,
+            what: what.into(),
+            takes: None,
+        };
+        match self.classes[a].size <= self.classes[b].size {
+            true => self.link_proof(named_a, named_b, reason.clone()),
+            false => self.link_proof(named_b, named_a, reason.clone()),
+        }
         let (root, child) = match self.classes[a].rank < self.classes[b].rank {
             true => (b, a),
             false => (a, b),
@@ -5926,11 +5936,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.classes[root].rank += 1;
         }
         // Each use of one class is checked on what flowed into the other.
-        let mut cross: Vec<(Need, Ty, Span)> = Vec::new();
+        let mut cross: Vec<(Need, Inflow)> = Vec::new();
         for (x, y) in [(a, b), (b, a)] {
             for (_, n) in &self.classes[x].uses {
-                for (t, at) in &self.classes[y].flowed {
-                    cross.push((n.clone(), t.clone(), *at));
+                for v in &self.classes[y].flowed {
+                    cross.push((n.clone(), v.clone()));
                 }
             }
         }
@@ -5949,8 +5959,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         let given = self.classes[child].given;
         let narrowed_to = std::mem::take(&mut self.classes[child].narrowed_to);
         let narrows = self.classes[child].narrows;
+        let size = self.classes[child].size;
         self.classes[child].parent = root;
         let c = &mut self.classes[root];
+        c.size += size;
         c.generic &= generic;
         c.asked |= asked;
         // Its values are no longer those of one `min` or `max` use only.
@@ -6005,11 +6017,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             std::mem::swap(&mut c.reasons, &mut reasons);
         }
         c.reasons.extend(reasons);
-        c.reasons.push(Reason {
-            span,
-            what: what.into(),
-            takes: None,
-        });
+        c.reasons.push(reason);
         c.mask = m;
         c.level = c.level.min(level);
         if lowered {
@@ -6020,8 +6028,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             let level = self.classes[root].level;
             self.lower(vars.order, level);
         }
-        for (n, t, at) in &cross {
-            self.check_on(n, t, *at);
+        for (n, v) in &cross {
+            self.check_on(n, &v.ty, v.at, Some(v));
         }
         true
     }
@@ -6080,8 +6088,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         let given = result.clone().unwrap_or_else(Ty::empty);
         class.known.insert((need.kind.clone(), gives), given);
         class.data |= data;
-        for (t, at) in &flowed {
-            self.check_on(&need, t, *at);
+        for v in &flowed {
+            self.check_on(&need, &v.ty, v.at, Some(v));
         }
         result.unwrap_or_else(Ty::empty)
     }
@@ -6123,15 +6131,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             *old = joined;
         }
         let flowed = class.flowed.clone();
-        for (t, at) in &flowed {
-            self.check_on(&need, t, *at);
+        for v in &flowed {
+            self.check_on(&need, &v.ty, v.at, Some(v));
         }
         result.unwrap_or_else(Ty::empty)
     }
 
-    /// Checks the use `n` of a class on `t`, which flowed into the class at `span` or which
-    /// the class takes: what the use gives flows into the class of its result.
-    fn check_on(&mut self, n: &Need, t: &Ty, span: Span) {
+    /// Checks the use `n` of a class on `t`, which flowed into the class at `span` as the
+    /// value `came` or which the class takes: what the use gives flows into the class of its
+    /// result. A rejection of a value that flowed in names where it comes from and each merge
+    /// that brought it to the use (MSG-flow-origin).
+    fn check_on(&mut self, n: &Need, t: &Ty, span: Span, came: Option<&Inflow>) {
         let from = self.errors.len();
         let start = self.need_passed.len();
         self.call_frames.push(CallFrame::default());
@@ -6153,25 +6163,118 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         if let Some(r) = &n.result
             && let Some(k) = self.class_of_ty(r)
-            && !self.flow(k, &got, "this use", n.span)
+            && !self.flow(k, &got, "this use", n.span, n.span)
         {
             let shown = self.show(r);
             let got = self.text(&got);
-            let menu = [
-                "repair: declare the types of the values this use reads, so that it is checked \
-                 where it is written"
-                    .to_string(),
-            ];
-            self.error_offering(
-                n.span,
-                format!(
+            let one_line = |s: Option<&'a str>| s.filter(|c| !c.contains('\n'));
+            let used = one_line(self.code(Some(n.span)));
+            let value = came
+                .filter(|v| v.from != n.span)
+                .and_then(|v| one_line(self.code(Some(v.from))));
+            let message = match (used, value) {
+                (Some(u), Some(v)) => {
+                    format!("`{u}` gives {got} on the value `{v}`, but other uses need {shown}")
+                }
+                (Some(u), None) => format!("`{u}` gives {got}, but other uses need {shown}"),
+                (None, _) => format!(
                     "this use gives {got}, not {shown}: its result flows into a value that \
                      other uses have already made {shown}"
                 ),
-                menu,
+            };
+            let mut menu = Vec::new();
+            if let Some(v) = came
+                && !self.trying
+            {
+                menu.extend(self.default_repair(n, v));
+            }
+            menu.push(
+                "repair: declare the types of the values this use reads, so that it is checked \
+                 where it is written"
+                    .to_string(),
             );
+            self.error_offering(n.span, message, menu);
         }
         self.also(from, n.span, |_| "this use needs it here".to_string());
+        if let Some(v) = came {
+            self.also_notes(from, |ck| ck.came_from(n, v));
+        }
+    }
+
+    /// The class of the use `n`'s value, as it was when the use was recorded: the class the
+    /// merges are followed to.
+    fn use_class(n: &Need) -> Option<usize> {
+        n.on.as_var().and_then(|v| class_id(v))
+    }
+
+    /// The notes that say where the value `v` comes from, when it is not the use `n` itself,
+    /// and each merge on the way from the class it entered to the class of `n`'s value, in
+    /// order.
+    fn came_from(&self, n: &Need, v: &Inflow) -> Vec<Note> {
+        let mut out = Vec::new();
+        if v.from != n.span {
+            let text = match (self.code(Some(v.from)), self.code(Some(n.span))) {
+                (Some(c), Some(u)) if !c.contains('\n') && !u.contains('\n') => {
+                    format!("`{c}` comes from here and reaches `{u}`")
+                }
+                _ => "the value comes from here".to_string(),
+            };
+            built(1);
+            out.push(Note { span: v.from, text });
+        }
+        if let Some(u) = Self::use_class(n) {
+            for r in self.merges_between(v.class, u) {
+                // A default is named with its parameter, in the program's words.
+                let default = self.defaults.get(&r.span).zip(self.code(Some(r.span)));
+                out.push(match default {
+                    Some((name, d)) if !d.contains('\n') => {
+                        built(1);
+                        Note {
+                            span: r.span,
+                            text: format!(
+                                "the default `{name} = {d}` gives `{name}` the type of `{d}`"
+                            ),
+                        }
+                    }
+                    _ => r.note(),
+                });
+            }
+        }
+        out
+    }
+
+    /// The repair of a rejection of the use `n` on the value `v` whose way to the use runs
+    /// through a default of a parameter, checked at the parameter's type: the parameter with
+    /// no default, which a call that leaves it out then passes, as the declaration rewritten.
+    /// The last such default on the way, nearest the use: the way runs from the parameter
+    /// the value was passed as to the class of the use, so the last default is the one that
+    /// reads a value the calls can name, while an earlier one reads another parameter, as
+    /// `h2 = h1` does; none if there is none.
+    fn default_repair(&self, n: &Need, v: &Inflow) -> Option<String> {
+        let u = Self::use_class(n)?;
+        let (span, name) = self
+            .merges_between(v.class, u)
+            .iter()
+            .rev()
+            .find_map(|r| Some((r.span, self.defaults.get(&r.span)?)))?;
+        let default = self.code(Some(span))?;
+        let rewritten = self.t.text.and_then(|text| {
+            let before = text.get(..span.start)?.trim_end().strip_suffix('=')?;
+            let cut = before.trim_end().len();
+            let line_start = text[..cut].rfind('\n').map_or(0, |i| i + 1);
+            let line_end = text[span.end..]
+                .find('\n')
+                .map_or(text.len(), |i| span.end + i);
+            let line = format!("{}{}", &text[line_start..cut], &text[span.end..line_end]);
+            Some(line.trim().to_string())
+        });
+        let pass = format!("pass `{default}` as `{name}` in each call that leaves `{name}` out");
+        Some(match rewritten {
+            Some(d) if !default.contains('\n') => {
+                format!("repair: write `{name}` with no default, as `{d}`, and {pass}")
+            }
+            _ => format!("repair: write `{name}` with no default, and {pass}"),
+        })
     }
 
     /// The use `n`, of a value of `on`, checked at `span` where the variables of the
@@ -6566,11 +6669,20 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// The values of `t` flow into class `k`: a class merges with it, a carrier restricts it
     /// to that carrier, and a tuple or a function to other values; atoms change nothing, and
-    /// a value of type `_`, which may be any, does not flow.
-    fn flow(&mut self, k: usize, t: &Ty, what: &str, span: Span) -> bool {
+    /// a value of type `_`, which may be any, does not flow. The value is the expression at
+    /// `from`, which a rejection names as where it comes from.
+    fn flow(&mut self, k: usize, t: &Ty, what: &str, span: Span, from: Span) -> bool {
         for p in t.pieces() {
             let ok = match (self.class_of(&p), p.carrier()) {
-                (Some(j), _) => self.merge(k, j, what, span),
+                (Some(j), _) => {
+                    // The class the type names, not its root, so that the proof forest
+                    // ([`Ck::link_proof`]) has the merge between the two the program joined.
+                    let named = match &p {
+                        Piece::Var(v) => class_id(v),
+                        _ => None,
+                    };
+                    self.merge(k, named.unwrap_or(j), what, span)
+                }
                 _ if p == Piece::Dyn => false,
                 _ if matches!(p, Piece::Var(_)) || p.is_atoms() => true,
                 (None, Some(c)) => self.restrict(k, c.bit(), what, span),
@@ -6581,16 +6693,21 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             if matches!(p, Piece::Tuple(_) | Piece::Fn(_)) {
                 let r = self.find(k);
-                let t = p.ty();
                 let uses: Vec<Need> = self.classes[r]
                     .uses
                     .iter()
                     .map(|(_, n)| n.clone())
                     .collect();
+                let v = Inflow {
+                    ty: p.ty(),
+                    at: span,
+                    from,
+                    class: k,
+                };
                 self.touch(r);
-                self.classes[r].flowed.push((t.clone(), span));
+                self.classes[r].flowed.push(v.clone());
                 for n in &uses {
-                    self.check_on(n, &t, span);
+                    self.check_on(n, &v.ty, span, Some(&v));
                 }
             }
         }
@@ -11226,7 +11343,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let ok = match (&a.lit, &a.branches) {
                     (Some(l), _) => self.join(k, &self.joining(l), false),
                     (None, Some(ls)) => ls.iter().all(|b| self.branch_joins(k, b, what, span)),
-                    (None, None) => self.flow(k, &a.ty, what, span),
+                    (None, None) => {
+                        // Into the parameter's own class, where a rejection starts the merges it
+                        // lists ([`Ck::came_from`]).
+                        let own = p.as_var().and_then(|v| class_id(v)).unwrap_or(k);
+                        self.flow(own, &a.ty, what, span, a.at.unwrap_or(span))
+                    }
                 };
                 if !ok {
                     return fail(self);
@@ -11414,7 +11536,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             if let Some(c) = class
                 && kinds != 0
-                && !self.flow(c, &rest, what, span)
+                && !self.flow(c, &rest, what, span, span)
             {
                 return fail(self);
             }

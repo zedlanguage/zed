@@ -840,7 +840,7 @@ fn lay_out(message: &mut String, notes: &mut [Note], menu: &mut String) {
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct Reason {
     span: Span,
-    what: Box<str>,
+    what: std::rc::Rc<str>,
     takes: Option<u8>,
 }
 
@@ -887,6 +887,17 @@ impl Drop for Origin<'_> {
             };
         }
     }
+}
+
+/// A tuple or function that flowed into a class: its type, where it flowed in (the call that
+/// passed it, the default, the use that gave it), the value's own expression there, and the
+/// class it entered, from which a rejection follows the merges to the use that fails on it.
+#[derive(Clone)]
+struct Inflow {
+    ty: Ty,
+    at: Span,
+    from: Span,
+    class: usize,
 }
 
 /// A `min` or `max` use's key in [`Class::orders`]: its word, whether the class's value is the
@@ -943,9 +954,16 @@ struct Class {
     order_of: Option<(usize, OrderKey)>,
     /// Whether `uses` holds a `NeedKind::Data` use.
     data: bool,
-    /// The tuples and functions that flowed into it, each with where: every use is checked
-    /// on each.
-    flowed: Vec<(Ty, Span)>,
+    /// The tuples and functions that flowed into it: every use is checked on each.
+    flowed: Vec<Inflow>,
+    /// The number of classes in its tree, of a root.
+    size: usize,
+    /// Its edge in the proof forest of the merges [Nieuwenhuis and Oliveras, "Fast
+    /// congruence closure and extensions", 2007]: the class it was merged with and the merge,
+    /// or none at the root of its proof tree. Each merge adds one edge between the two
+    /// classes it names, so the path between two classes of one tree lists the merges that
+    /// made them one ([`Ck::merges_between`]). Each class has one, not only a root.
+    proof: Option<(usize, Reason)>,
     /// A parameter of the class, or a component of one, whose value has the class's carrier at
     /// run time, if any, and the body the parameter is in scope in; of a merged class, the
     /// outer one where one body holds the other.
@@ -1079,6 +1097,10 @@ struct Ck<'t, 'a> {
     /// span, one [`Carry`] per type they give it, for the construct it is an argument of to
     /// check with that type in its place.
     carried: HashMap<Span, Vec<Carry>>,
+    /// The parameter whose default is the expression at each span, for each default checked
+    /// at its parameter's type: a rejection whose value reached its use through the default
+    /// names it and offers the declaration without it.
+    defaults: HashMap<Span, Box<str>>,
     /// The [`Found::id`] the next error gets.
     next_found: usize,
     /// Whether the repair being tried ([`Ck::tried`]) makes an operation on literals alone
@@ -1355,6 +1377,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             check_fixes,
             pending_fixes: Vec::new(),
             carried: HashMap::new(),
+            defaults: HashMap::new(),
             next_found: 0,
             opened: false,
             trying: false,
@@ -2734,6 +2757,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             order_of: None,
             data: false,
             flowed: Vec::new(),
+            size: 1,
+            proof: None,
             binder: None,
             generic: false,
             asked: false,
@@ -2759,6 +2784,85 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.log
                 .push(Undo::Class(r, Box::new(self.classes[r].clone())));
         }
+    }
+
+    /// Adds the edge of the merge `why` of classes `a` and `b`, the classes it names and not
+    /// their roots, to the proof forest ([`Class::proof`]): the proof tree of `a` is turned
+    /// to hang from `a`, by reversing the edges on its path to its root, and `a` then hangs
+    /// from `b`. The caller passes the smaller class as `a`.
+    ///
+    /// Complexity tradeoff: naive version, no forest, and a rejection that lists each merge
+    /// of the classes concerned ([`Ck::reasons`]), which names merges that do not join the
+    /// two values and leaves out none, O(R) for R merges of the class. Used: the forest,
+    /// whose turning costs at most the size of the smaller class, so each class is turned
+    /// O(log N) times and the merges of N classes O(N log N) in all; a path costs its
+    /// length ([`Ck::merges_between`]). Tradeoff: one edge per class, logged while a repair
+    /// is tried. COMPLEXITY.md row F195; test
+    /// `l01_29_diagnostics::scaling::the_merges_between_a_value_and_its_use_scale`.
+    fn link_proof(&mut self, a: usize, b: usize, why: Reason) {
+        let mut at = a;
+        let mut back = None;
+        while let Some((next, how)) = self.set_proof(at, back) {
+            back = Some((at, how));
+            at = next;
+        }
+        self.set_proof(a, Some((b, why)));
+    }
+
+    /// Sets class `k`'s edge in the proof forest, logging the one it replaces while a repair
+    /// is tried; gives that one.
+    fn set_proof(&mut self, k: usize, edge: Option<(usize, Reason)>) -> Option<(usize, Reason)> {
+        let old = std::mem::replace(&mut self.classes[k].proof, edge);
+        if self.trying {
+            self.log.push(Undo::Proof(k, old.clone()));
+        }
+        old
+    }
+
+    /// The merges on the path of the proof forest from class `x` to class `y`, which are of
+    /// one class, in order: those that made them one value. Two walks climb from `x` and
+    /// from `y` in turn, each marking what it passed, until one reaches a class the other
+    /// passed, which is their nearest common ancestor; so the cost is at most twice the
+    /// length of the path, however deep the tree, and nothing when they are one class.
+    fn merges_between(&self, x: usize, y: usize) -> Vec<Reason> {
+        if x == y {
+            return Vec::new();
+        }
+        let mut walks = [vec![x], vec![y]];
+        let mut passed = [HashMap::from([(x, 0)]), HashMap::from([(y, 0)])];
+        let mut climbing = [true, true];
+        let mut turn = 0;
+        let (meet_x, meet_y) = loop {
+            let last = *walks[turn].last().expect("a walk starts with its class");
+            match &self.classes[last].proof {
+                Some((next, _)) => {
+                    let next = *next;
+                    if let Some(&j) = passed[1 - turn].get(&next) {
+                        walks[turn].push(next);
+                        let i = walks[turn].len() - 1;
+                        break if turn == 0 { (i, j) } else { (j, i) };
+                    }
+                    passed[turn].insert(next, walks[turn].len());
+                    walks[turn].push(next);
+                }
+                None if !climbing[1 - turn] => return Vec::new(),
+                None => climbing[turn] = false,
+            }
+            if climbing[1 - turn] {
+                turn = 1 - turn;
+            }
+        };
+        let edge = |k: usize| {
+            self.classes[k]
+                .proof
+                .as_ref()
+                .expect("below the meeting")
+                .1
+                .clone()
+        };
+        let mut out: Vec<Reason> = walks[0][..meet_x].iter().map(|&k| edge(k)).collect();
+        out.extend(walks[1][..meet_y].iter().rev().map(|&k| edge(k)));
+        out
     }
 
     /// Removes from class `k` the carriers `mask` lacks, as `what` at `span` requires;
@@ -4702,6 +4806,8 @@ enum Undo {
     Witness(Span, Option<Witness>),
     /// A class, while a repair is tried.
     Class(usize, Box<Class>),
+    /// A class's edge in the proof forest ([`Class::proof`]), while a repair is tried.
+    Proof(usize, Option<(usize, Reason)>),
     /// Whether a row or payload shape is among [`Ck::data_checked`], while a repair is tried.
     DataChecked(NodeId, bool),
     /// The entry of a row or payload shape in [`Ck::clean`], while a repair is tried.
@@ -4740,6 +4846,9 @@ impl Ck<'_, '_> {
         if let Undo::Class(k, c) = w {
             return Undo::Class(k, Box::new(std::mem::replace(&mut self.classes[k], *c)));
         }
+        if let Undo::Proof(k, e) = w {
+            return Undo::Proof(k, std::mem::replace(&mut self.classes[k].proof, e));
+        }
         if let Undo::DataChecked(n, now) = w {
             let was = match now {
                 true => !self.data_checked.insert(n),
@@ -4772,7 +4881,9 @@ impl Ck<'_, '_> {
             }
             Undo::Follows(k, v) => Undo::Follows(k, set!(i.follows, k, v)),
             Undo::Witness(k, v) => Undo::Witness(k, set!(i.witness, k, v)),
-            Undo::Class(..) | Undo::DataChecked(..) | Undo::Clean(..) => unreachable!("set above"),
+            Undo::Class(..) | Undo::Proof(..) | Undo::DataChecked(..) | Undo::Clean(..) => {
+                unreachable!("set above")
+            }
         }
     }
 

@@ -334,3 +334,41 @@ fn many_unfixed_decimal_arguments_scale() {
         },
     );
 }
+
+/// [`super::rare`]'s value that flows into `g` through a chain of `n` defaults, `k(h0 = g,
+/// h1 = h0, ...)`, which passes `x -> "s"` as the last; then `n` more parameters whose
+/// defaults read the two ends of the chain in turn, `m0 = h0, m1 = h{n-1}, m2 = h0, ...`, so
+/// that each of their merges names a class at the far end of the chain from the last one.
+fn defaults_chain(n: usize) -> String {
+    let last = n - 1;
+    let params: Vec<String> = std::iter::once("h0 = g".to_string())
+        .chain((1..n).map(|i| format!("h{i} = h{}", i - 1)))
+        .chain((0..n).map(|j| format!("m{j} = h{}", if j % 2 == 0 { 0 } else { last })))
+        .collect();
+    format!(
+        "f(positional g) {{\n  a = g(1) + 1;\n  k({}) = h{last}(2);\n  b = k(h{last}: x -> \"s\");\n  \
+         return a;\n}}\n",
+        params.join(", ")
+    )
+}
+
+#[test]
+fn the_merges_between_a_value_and_its_use_scale() {
+    // Each default merges a parameter with the one it reads; the derivation walks the merges
+    // from the lambda's class to `g`'s, one note per default of the chain (MSG-flow-origin;
+    // COMPLEXITY.md F195). A merge reroots the smaller of the two trees of merges: rerooting
+    // the tree of the chain at `h0` and at `h{n-1}` in turn would cost n at each `m`.
+    let inputs = scaling::inputs(1000, defaults_chain);
+    scaling::check(
+        "the merges between a value and its use, 2n defaults",
+        1000,
+        |n| {
+            let out = rejected(&inputs[&n]);
+            let defaults = out
+                .lines()
+                .filter(|l| l.contains(": the default `h"))
+                .count();
+            assert_eq!(defaults, n, "{out}");
+        },
+    );
+}
