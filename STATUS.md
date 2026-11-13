@@ -2160,6 +2160,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | CAST-literal-exact | impl attempt 1 | 2026-11-13 08:01 | baseline on bce53b287: l01_26, l01_26a, l01_29, l01_18, zedc_check unit: 239 pieces, 0 failed (load 38-70). Defect reproduced only through tests: zedc has no CL |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | rule change noted: accept against R < 10.5 (CD run keeps 13 step; acceptance scorer score-accept.py); load 55.74 59.14 57.03 |
+| MSG-headline-l01_26 | running |  |  |
 | PERF-l139-under9 | impl attempt 1 | 2026-11-13 09:15 | baseline on 9fbcc48eb (load 48-58), instr/bytes at 8n: star_extra 15.6 (fails), chain 13.0 (fails), persist bytes 13.2 (fails), hopb 12.9/12.1, hoponb 12.8/12.0 |
 | POLY-crossover-bench | impl attempt 1 | 2026-11-13 07:32 | started; worktree from origin/main cf4ac0e72 |
 | PORT-out-param | impl attempt 1 | 2026-11-13 07:46 | reproduced on ffc8b6170: say("hi", out: m.stdout) refused by the builder (zedc-syntax main_field) as a read of m.stdout; DESIGN's own say(out: Lines, positional |
