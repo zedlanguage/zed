@@ -157,6 +157,9 @@ rows! {
     NonLinearQuestion =>
         "Linear question outside the polynomial fragment of the linear-relation domain",
     WritesNothing => "Statement that writes nothing, or drops a declared result",
+    // No diagnostic uses the next two rows yet: plan rows FFI-status and ROOTS-listed emit them.
+    OneTargetForResults => "One target for a call with several results",
+    RootConstraintFails => "A root of an obligation's equation at which a written constraint does not yield `true` or `false`",
     // No diagnostic uses the next three rows yet: plan rows L2.12d, L15.8b and L21.0b emit them.
     UnreadBinding => "Block binding that nothing reads",
     ProgramHole => "Hole in the program",
