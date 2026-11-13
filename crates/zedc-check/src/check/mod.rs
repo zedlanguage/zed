@@ -4222,9 +4222,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// with the parameter of any arrow at its place: `7 / 2`, whose `int` operands no arrow
     /// of `/` takes, and not `r + x` of a `rat` and an `f64`, each of which an arrow takes.
     /// One meet per operand and arrow.
-    fn no_arrow_at_carrier(&self, what: &str, sig: &Sig, args: &[Option<Arg>]) -> bool {
+    fn no_arrow_at_carrier(&self, what: Label<'_>, sig: &Sig, args: &[Option<Arg>]) -> bool {
         // `==` and `!=` are not in the row: [`Ck::equal`] checks them, not their arrows.
-        let operator = match Operator::of_label(what) {
+        let operator = match what.operator() {
             None | Some(Operator::Binary(BinaryOp::Eq | BinaryOp::Ne)) => false,
             Some(Operator::Unary(UnaryOp::Neg | UnaryOp::Not))
             | Some(Operator::Binary(
@@ -7683,18 +7683,73 @@ impl Operator {
         }
     }
 
-    /// The operator that `what`, the label [`Ck::apply`] is given, names as `` `op` ``: the
-    /// binary one where a symbol is both, `-`.
-    fn of_label(what: &str) -> Option<Self> {
-        let op = what.strip_prefix('`')?.strip_suffix('`')?;
-        (BinaryOp::of_token(op).map(Operator::Binary))
-            .or_else(|| UnaryOp::of_token(op).map(Operator::Unary))
+    /// The text of the operator in code quotes, `` `+` ``, as a message names it.
+    fn quoted(self) -> &'static str {
+        match self {
+            Operator::Binary(o) => match o {
+                BinaryOp::Or => "`||`",
+                BinaryOp::And => "`&&`",
+                BinaryOp::Eq => "`==`",
+                BinaryOp::Ne => "`!=`",
+                BinaryOp::Lt => "`<`",
+                BinaryOp::Le => "`<=`",
+                BinaryOp::Gt => "`>`",
+                BinaryOp::Ge => "`>=`",
+                BinaryOp::Add => "`+`",
+                BinaryOp::Sub => "`-`",
+                BinaryOp::Concat => "`++`",
+                BinaryOp::Mul => "`*`",
+                BinaryOp::Div => "`/`",
+                BinaryOp::IntDiv => "`div`",
+                BinaryOp::Mod => "`mod`",
+                BinaryOp::Pow => "`^`",
+            },
+            Operator::Unary(o) => match o {
+                UnaryOp::Neg => "`-`",
+                UnaryOp::Not => "`!`",
+            },
+        }
     }
 }
 
 impl fmt::Display for Operator {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+/// What an application applies, as [`Ck::apply`] and its messages name it: an operator, or
+/// anything else by the text that names it, `` `f` ``, `` `min` `` or "this family". It
+/// prints as that text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Label<'s> {
+    /// An operator, named in code quotes, `` `+` ``.
+    Operator(Operator),
+    /// A function, a prelude word or a family, named by this text.
+    Text(&'s str),
+}
+
+impl<'s> Label<'s> {
+    /// The text that names it.
+    fn text(self) -> &'s str {
+        match self {
+            Label::Operator(o) => o.quoted(),
+            Label::Text(t) => t,
+        }
+    }
+
+    /// The operator it is, if it is one.
+    fn operator(self) -> Option<Operator> {
+        match self {
+            Label::Operator(o) => Some(o),
+            Label::Text(_) => None,
+        }
+    }
+}
+
+impl fmt::Display for Label<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.text())
     }
 }
 
@@ -9590,6 +9645,22 @@ mod tests {
             start,
             end: start + 1,
         }
+    }
+
+    /// An operator's label prints as the operator in code quotes, as the messages named it when
+    /// the label was a string (CK-apply-operator).
+    #[test]
+    fn an_operator_label_prints_as_the_quoted_operator() {
+        use BinaryOp::*;
+        let binary = [
+            Or, And, Eq, Ne, Lt, Le, Gt, Ge, Add, Sub, Concat, Mul, Div, IntDiv, Mod, Pow,
+        ]
+        .map(Operator::Binary);
+        let unary = [UnaryOp::Neg, UnaryOp::Not].map(Operator::Unary);
+        for o in binary.into_iter().chain(unary) {
+            assert_eq!(Label::Operator(o).to_string(), format!("`{o}`"));
+        }
+        assert_eq!(Label::Text("this family").to_string(), "this family");
     }
 
     /// A branch the checker rolls back, as [`Ck::try_outside`] and [`Ck::repairs`] roll back a

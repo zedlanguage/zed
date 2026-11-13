@@ -119,7 +119,7 @@ pub fn operator(op: Operator, args: &[Ty]) -> (Ty, Vec<String>) {
         | Operator::Unary(UnaryOp::Neg | UnaryOp::Not) => Demand::All,
     };
     let (out, _) = ck.apply_demanding(
-        &format!("`{op}`"),
+        Label::Operator(op),
         &op_sig(op),
         args,
         true,
@@ -777,7 +777,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let sig = op_sig(Operator::Unary(op));
                 let at = x.expr.map(|e| e.span);
                 let t = self
-                    .apply(&format!("`{op}`"), &sig, vec![Some(x)], true, span)
+                    .apply(
+                        Label::Operator(Operator::Unary(op)),
+                        &sig,
+                        vec![Some(x)],
+                        true,
+                        span,
+                    )
                     .0;
                 self.lit_wrote(span, from);
                 // A `-` of an operation of which the text gives something at `rat` gives as much
@@ -802,9 +808,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                             at: Some(at),
                             ..Arg::of(c.ty)
                         };
-                        let name = format!("`{op}`");
+                        let name = Label::Operator(Operator::Unary(op));
                         let (ty, needs) =
-                            self.trial(|ck| ck.apply(&name, &sig, vec![Some(arg)], true, span).0);
+                            self.trial(|ck| ck.apply(name, &sig, vec![Some(arg)], true, span).0);
                         match needs.is_some_and(|n| n.is_empty()) {
                             true if ty != t => carry_joined(&mut up, ty, c.fixes),
                             true => {}
@@ -992,7 +998,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let c = m.take_cond();
                 let sig = op_sig(Operator::Unary(UnaryOp::Not));
                 let t = self
-                    .apply("`!`", &sig, vec![Some(Arg::of(c.t))], true, span)
+                    .apply(
+                        Label::Operator(Operator::Unary(UnaryOp::Not)),
+                        &sig,
+                        vec![Some(Arg::of(c.t))],
+                        true,
+                        span,
+                    )
                     .0;
                 m.ret = Ret::Cond(Cond {
                     t,
@@ -1045,7 +1057,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let sig = op_sig(Operator::Binary(BinaryOp::And));
                 let t = self
                     .apply_demanding(
-                        &format!("`{op}`"),
+                        Label::Operator(Operator::Binary(op)),
                         &sig,
                         vec![Some(Arg::of(ta)), Some(Arg::of(b.t))],
                         true,
@@ -1087,7 +1099,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let sig = op_sig(Operator::Binary(BinaryOp::And));
                 let t = self
                     .apply_demanding(
-                        &format!("`{op}`"),
+                        Label::Operator(Operator::Binary(op)),
                         &sig,
                         vec![Some(Arg::of(ta)), Some(Arg::of(tb))],
                         true,
@@ -1537,7 +1549,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let (input, expected) = &s.f.tests[s.case];
         let args = std::mem::take(&mut s.got);
         let what = format!("`{}`", s.f.name);
-        let (result, _) = self.apply(&what, &s.sig, args, false, input.span);
+        let (result, _) = self.apply(Label::Text(&what), &s.sig, args, false, input.span);
         m.k(Frame::TestWant(s, result));
         m.job(Job::Arg(expected, Want::default()));
     }
@@ -3251,7 +3263,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                     sig.arrows.retain(|a| a.params != mixed);
                 }
                 let a = x.expr;
-                let r = self.apply(&format!("`{op}`"), &sig, vec![Some(x), Some(y)], true, span);
+                let r = self.apply(
+                    Label::Operator(Operator::Binary(op)),
+                    &sig,
+                    vec![Some(x), Some(y)],
+                    true,
+                    span,
+                );
                 // An operation at `rat` on `rat` literals and such operations has the value
                 // the kernel gives it: where that is a number, it fails with no
                 // `#divByZero`, as `1r / (2r/3r)` and `(2r/3r)^-2` do not.
@@ -3545,7 +3563,13 @@ impl<'t, 'a> Ck<'t, 'a> {
         let at = x.at.unwrap_or(span);
         let no_zero = w == "rat" && self.ints_without_zero(&x);
         let mut r = self
-            .apply(&format!("`{w}`"), &sig, vec![Some(x)], true, span)
+            .apply(
+                Label::Text(&format!("`{w}`")),
+                &sig,
+                vec![Some(x)],
+                true,
+                span,
+            )
             .0;
         if no_zero && let Some(zero) = KType::lit(&Value::rat(Rat::int(0.into()))) {
             r.set = &r.set - &zero;
@@ -3705,7 +3729,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         self.bit_domains(w, p, &slots, span);
         let args = slots.into_iter().map(|(a, _)| Some(a)).collect();
-        let t = self.apply(&format!("`{w}`"), &sig, args, true, span).0;
+        let t = self
+            .apply(Label::Text(&format!("`{w}`")), &sig, args, true, span)
+            .0;
         m.ty(t);
     }
 
@@ -5731,7 +5757,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let applied = self.applied.take();
         let saved = self.mark();
         self.trying = true;
-        let (t, _) = self.apply(what, sig, with, false, span);
+        let (t, _) = self.apply(Label::Text(what), sig, with, false, span);
         let ok = self.errors.len() == saved.errors;
         self.trying = false;
         self.undo(&saved);
@@ -6693,7 +6719,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut ok = true;
         for a in &q.arrows {
             let args = a.params.iter().map(|t| Some(Arg::of(t.clone()))).collect();
-            let (r, _) = self.apply(what, s, args, false, span);
+            let (r, _) = self.apply(Label::Text(what), s, args, false, span);
             ok &= self.subtype(&r, &a.result);
         }
         ok || self.errors.len() > from
@@ -7747,7 +7773,7 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// An ordering: two values of one carrier, or two tuples of one length; atoms pass.
     fn compare(&mut self, op: BinaryOp, x: Arg<'a>, y: Arg<'a>, span: Span) -> Ty {
-        let what = format!("`{op}`");
+        let what = Label::Operator(Operator::Binary(op));
         let scalars = x.ty.tuples.is_empty() && y.ty.tuples.is_empty();
         // Two numbers of no common carrier, each written in the program and neither a literal,
         // as `x[1] < y[1]` of an `int` and a `rat`, get the message of two tuples' components
@@ -7772,21 +7798,21 @@ impl<'t, 'a> Ck<'t, 'a> {
         if let [Some((cx, a)), Some((cy, b))] = sides
             && no_common_carrier(&a, &b)
         {
-            let out = self.passing(&x.ty, &what, span, x.at);
-            let out = out.union(&self.passing(&y.ty, &what, span, y.at));
+            let out = self.passing(&x.ty, what.text(), span, x.at);
+            let out = out.union(&self.passing(&y.ty, what.text(), span, y.at));
             let sides = OrderSides {
                 names: [Some(cx), Some(cy)],
                 ats: [x.at, y.at],
                 plain: [a.atoms().is_empty(), b.atoms().is_empty()],
                 exact: [self.exact_in_f64(&x), self.exact_in_f64(&y)],
             };
-            self.components(&what, &sides, &a, &b, span);
+            self.components(what, &sides, &a, &b, span);
             return out.union(&Ty::carrier(Carrier::Bool));
         }
         if scalars {
             return self
                 .apply(
-                    &what,
+                    what,
                     &op_sig(Operator::Binary(BinaryOp::Lt)),
                     vec![Some(x), Some(y)],
                     true,
@@ -7794,14 +7820,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                 )
                 .0;
         }
-        let out = self.passing(&x.ty, &what, span, x.at);
-        let out = out.union(&self.passing(&y.ty, &what, span, y.at));
+        let out = self.passing(&x.ty, what.text(), span, x.at);
+        let out = out.union(&self.passing(&y.ty, what.text(), span, y.at));
         let (a, b) = (x.ty.without_loose(), y.ty.without_loose());
         // An operand with no value: nothing is compared, and the comparison gives no value, but
         // each value of the other operand is still checked as `<` takes it.
         match (a.is_empty(), b.is_empty()) {
-            (true, _) => self.compared_alone(&what, &b, true, span),
-            (_, true) => self.compared_alone(&what, &a, false, span),
+            (true, _) => self.compared_alone(what, &b, true, span),
+            (_, true) => self.compared_alone(what, &a, false, span),
             _ => {
                 let tables = self.t;
                 let name = |at: Option<Span>| match at.and_then(|at| self.seen.get(&at)) {
@@ -7814,7 +7840,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     plain: [a.atoms().is_empty(), b.atoms().is_empty()],
                     exact: [false; 2],
                 };
-                self.components(&what, &sides, &a, &b, span);
+                self.components(what, &sides, &a, &b, span);
                 return out.union(&Ty::carrier(Carrier::Bool));
             }
         }
@@ -7852,7 +7878,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// at the top or in a component of a tuple at any depth against the arrows of `<`, beside
     /// `Never`, so that a function among them is rejected. Atoms pass. A row shared by many
     /// paths is visited once, so the check is linear in the rows of `t`.
-    fn compared_alone(&mut self, what: &str, t: &Ty, none_first: bool, span: Span) {
+    fn compared_alone(&mut self, what: Label<'_>, t: &Ty, none_first: bool, span: Span) {
         let sig = op_sig(Operator::Binary(BinaryOp::Lt));
         // Keyed by the row's address (`Row::addr`): every row met is borrowed from `t`, which
         // stays borrowed for the whole walk, so no key names a freed row, and the set is only
@@ -7904,7 +7930,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// each, from which the place of a failure is read back only when one is found; a failure
     /// is reported once for the two unions met, as for `x < y` with `x: int | f64`, not once
     /// per pair of tuples. COMPLEXITY.md row F140.
-    fn components(&mut self, what: &str, sides: &OrderSides, a: &Ty, b: &Ty, span: Span) {
+    fn components(&mut self, what: Label<'_>, sides: &OrderSides, a: &Ty, b: &Ty, span: Span) {
         enum Step {
             Pair(usize),
             Rest(usize, Box<(Ty, Ty)>),
@@ -7950,7 +7976,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let atoms = !s.atoms().is_empty();
                 for p in t.pieces() {
                     let ok = match self.class_of(&p) {
-                        Some(k) if !s.tuples.is_empty() => self.restrict(k, OTHER, what, span),
+                        Some(k) if !s.tuples.is_empty() => {
+                            self.restrict(k, OTHER, what.text(), span)
+                        }
                         Some(_) => true,
                         None => match &p {
                             Piece::Dyn => false,
@@ -8007,7 +8035,7 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// Whether each value of `a` compares with each of `b` under the ordering `what`
     /// ([`Ck::components`]), tried and undone.
-    fn compares(&mut self, what: &str, a: &Ty, b: &Ty, span: Span) -> bool {
+    fn compares(&mut self, what: Label<'_>, a: &Ty, b: &Ty, span: Span) -> bool {
         let (mark, was) = (self.mark(), self.trying);
         self.trying = true;
         let sides = OrderSides {
@@ -8046,7 +8074,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// each trial reads only pieces that are not tuples. COMPLEXITY.md row F140.
     fn not_compared(
         &mut self,
-        what: &str,
+        what: Label<'_>,
         sides: &OrderSides,
         met: &[Met],
         k: usize,
@@ -8078,7 +8106,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         let path: Vec<usize> = below.map(|&i| met[i].at).collect();
         let path = &path[..];
         let ty = &met[k].ty;
-        let op = what.trim_matches('`');
+        let op = match what {
+            Label::Operator(o) => o.as_str(),
+            Label::Text(t) => t.trim_matches('`'),
+        };
         // The value at `p` on side `s`, as code where the operand's text is known.
         let code = |s: usize, p: &[usize]| sides.names[s].map(|c| format!("{c}{}", Place(p)));
         let label = |s: usize, p: &[usize]| match (code(s, p), p) {
@@ -8445,7 +8476,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 };
                 let [f0, f1] = fixed;
                 self.apply(
-                    what,
+                    Label::Text(what),
                     sig,
                     vec![Some(arg(a, &at[0], f0)), Some(arg(b, &at[1], f1))],
                     true,
@@ -8471,7 +8502,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 if !numbers.is_empty() {
                     let (x, y) = pair(numbers);
                     self.apply(
-                        what,
+                        Label::Text(what),
                         sig,
                         vec![Some(Arg::of(x)), Some(Arg::of(y))],
                         true,
@@ -8999,7 +9030,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             .filter(|v| !given.contains(v))
             .collect();
         self.leaving = missing.to_vec();
-        let (result, kept) = self.apply(&callee(what), sig, args, false, span);
+        let (result, kept) = self.apply(Label::Text(&callee(what)), sig, args, false, span);
         let Some((binds, needs)) = self.applied.take() else {
             return result;
         };
@@ -9103,7 +9134,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                         continue;
                     }
                     let r = self
-                        .apply("this function", &sig, vec![Some(x.clone())], false, span)
+                        .apply(
+                            Label::Text("this function"),
+                            &sig,
+                            vec![Some(x.clone())],
+                            false,
+                            span,
+                        )
                         .0;
                     let r = if dense { out_of_bounds(r, &x.ty) } else { r };
                     out = out.union(&r);
@@ -9156,7 +9193,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                         continue;
                     }
                     let r = self
-                        .apply("this family", &sig, vec![Some(x.clone())], true, span)
+                        .apply(
+                            Label::Text("this family"),
+                            &sig,
+                            vec![Some(x.clone())],
+                            true,
+                            span,
+                        )
                         .0;
                     let r = if dense { out_of_bounds(r, &x.ty) } else { r };
                     out = out.union(&r);
@@ -9357,7 +9400,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Cost: the two operands' carriers and the literal's text.
     fn forced_rat(
         &self,
-        what: &str,
+        what: Label<'_>,
         sig: &Sig,
         args: &[Option<Arg<'a>>],
     ) -> Option<(Span, String)> {
@@ -9365,7 +9408,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             return None;
         }
         let binary = matches!(
-            Operator::of_label(what),
+            what.operator(),
             Some(Operator::Binary(
                 BinaryOp::Add
                     | BinaryOp::Sub
@@ -9430,7 +9473,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// it in the program's text, which a message offers in its place.
     fn repairs(
         &mut self,
-        what: &str,
+        what: Label<'_>,
         sig: &Sig,
         args: &[Option<Arg<'a>>],
         pass: bool,
@@ -9443,6 +9486,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         // A word is called by its name and has its own signature; a declared function may
         // share the name only with a signature of its own.
         let word = what
+            .text()
             .strip_prefix('`')
             .and_then(|w| w.strip_suffix('`'))
             .is_some_and(|w| sig.word.as_deref() == Some(w));
@@ -9865,7 +9909,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 ..Arg::of(c.ty.clone())
             });
             match self
-                .trial(|ck| ck.apply(what, &alone, vec![arg], false, w.span))
+                .trial(|ck| ck.apply(Label::Text(what), &alone, vec![arg], false, w.span))
                 .1
             {
                 Some(needs) => takes.push(needs.is_empty()),
@@ -9946,7 +9990,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let x = args.pop().flatten().expect("an argument");
                 self.word_applied(w, x, span)
             }
-            Construct::Call(what, sig) => self.apply(&what, &sig, args, false, span).0,
+            Construct::Call(what, sig) => self.apply(Label::Text(&what), &sig, args, false, span).0,
         }
     }
 
@@ -10423,14 +10467,14 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// and the errors left in its other arguments, else as an application, with neither.
     fn repaired(
         &mut self,
-        what: &str,
+        what: Label<'_>,
         sig: &Sig,
         args: &[Option<Arg<'a>>],
         (i, with): (usize, Arg<'a>),
         pass: bool,
         span: Span,
     ) -> Option<Option<(Ty, Vec<Span>)>> {
-        if let Some(got) = self.written_with(what, span, i, with.clone()) {
+        if let Some(got) = self.written_with(what.text(), span, i, with.clone()) {
             return got.map(Some);
         }
         let mut args = args.to_vec();
@@ -10692,7 +10736,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// result says ([`Demand`]).
     fn apply(
         &mut self,
-        what: &str,
+        what: Label<'_>,
         sig: &Sig,
         args: Vec<Option<Arg<'a>>>,
         pass: bool,
@@ -10708,7 +10752,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// [`Self::apply`], the arguments the call needs the values of given by `demand`.
     fn apply_demanding(
         &mut self,
-        what: &str,
+        what: Label<'_>,
         sig: &Sig,
         mut args: Vec<Option<Arg<'a>>>,
         pass: bool,
@@ -10745,7 +10789,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         let need_from = self.need_from.take();
         let leaving = std::mem::take(&mut self.leaving);
         if (sig.needs.iter()).any(|n| matches!(n.kind, NeedKind::InDomain { .. })) {
-            self.floors_at(what, sig, &args, &leaving, need_from.as_deref(), span);
+            self.floors_at(
+                what.text(),
+                sig,
+                &args,
+                &leaving,
+                need_from.as_deref(),
+                span,
+            );
         }
         if pass {
             let atoms: Vec<Ty> = args
@@ -10780,7 +10831,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     // at the call whose argument gave them, which [`Self::apply_one`] finds.
                     atoms.push(a.ty.of_piece(&Piece::Set(refused.clone())));
                     a.ty = a.ty.without(&refused);
-                    self.refused.push((what.into(), i, refused));
+                    self.refused.push((what.text().into(), i, refused));
                     continue;
                 };
                 if refused == loose {
@@ -10801,7 +10852,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             && matches!(sig.word.as_deref(), Some("min" | "max"))
         {
             let written = [x.parts.clone(), y.parts.clone()];
-            let t = self.min_max_tuples(what, sig, &x.ty, &y.ty, written.clone(), span);
+            let t = self.min_max_tuples(what.text(), sig, &x.ty, &y.ty, written.clone(), span);
             return (out.union(&t), Vec::new());
         }
         let defer = std::mem::take(&mut self.defer);
@@ -10809,10 +10860,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         let refusals = self.lit_refused.len();
         let made = self.top_parts.len();
         let r = match (sig.arrows.len(), self.first_taking(sig, &args, pass)) {
-            (1, _) => self.apply_one(what, sig, 0, &args, &unneeded, defer, span),
-            (_, Some(k)) => self.apply_one(what, sig, k, &args, &unneeded, defer, span),
+            (1, _) => self.apply_one(what.text(), sig, 0, &args, &unneeded, defer, span),
+            (_, Some(k)) => self.apply_one(what.text(), sig, k, &args, &unneeded, defer, span),
             _ => {
-                let r = self.apply_many(what, sig, &mut args, &unneeded, span);
+                let r = self.apply_many(what.text(), sig, &mut args, &unneeded, span);
                 self.applied = None;
                 r
             }
@@ -10846,7 +10897,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let mut notes: Vec<Note> = (refused.into_iter())
                     .map(|(span, m)| Note { span, text: m.text })
                     .collect();
-                notes.extend(self.applied(what, sig, &args, span));
+                notes.extend(self.applied(what.text(), sig, &args, span));
                 let mut seen: HashSet<Note> = notes.iter().cloned().collect();
                 for a in args.iter().flatten() {
                     for n in self.reasons(&a.ty) {
@@ -10914,7 +10965,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `l01_29_diagnostics::scaling::many_literal_arguments_refused_at_their_parameters_scale`.
     fn literals_refused(
         &mut self,
-        what: &str,
+        what: Label<'_>,
         sig: &Sig,
         args: &[Option<Arg<'a>>],
         mut refused: Vec<(Span, Msg)>,
@@ -10947,7 +10998,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             });
         // The operator's symbol, where it is a binary arithmetic operator or an ordering, each
         // of which has arrows at `rat` and at `f64`.
-        let op = match Operator::of_label(what) {
+        let op = match what.operator() {
             Some(Operator::Binary(
                 o @ (BinaryOp::Add
                 | BinaryOp::Sub
@@ -10999,7 +11050,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     .get_or_insert_with(|| name.is_some() && op.is_some() && self.exact_in_f64(o));
                 let op = op.map(|o| (o, left == Some(*s)));
                 match l.bare {
-                    true => *m = decimal_at_int(l, what, name, op, exact),
+                    true => *m = decimal_at_int(l, what.text(), name, op, exact),
                     false => {
                         if let (true, Some((n, at)), Some((op, left))) = (exact, name, op) {
                             m.fixes.extend(f64_cast_fix(l, n, at, op, left));
@@ -11017,7 +11068,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let applied = row == Row::LiteralCarrier && self.no_common_carrier(sig, args);
         let mut notes = Vec::new();
         if applied && !self.trying {
-            notes = self.applied(what, sig, args, span);
+            notes = self.applied(what.text(), sig, args, span);
             let mut seen: HashSet<Note> = notes.iter().cloned().collect();
             for a in args.iter().flatten() {
                 for n in self.reasons(&a.ty) {
@@ -11041,7 +11092,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let sites: Vec<Span> = refused.iter().map(|(s, _)| *s).collect();
         let also = sites[1..].to_vec();
         let n = refused.len();
-        let whose = match Operator::of_label(what) {
+        let whose = match what.operator() {
             Some(_) => "operands",
             None => "arguments",
         };
@@ -12142,7 +12193,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         let pair = if i < at { [c, acc] } else { [acc, c] };
                         let ty = self
                             .apply(
-                                "`+` in `sum`",
+                                Label::Text("`+` in `sum`"),
                                 &add,
                                 pair.map(Some).to_vec(),
                                 true,
