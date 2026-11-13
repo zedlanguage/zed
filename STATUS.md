@@ -2133,10 +2133,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | CROSSOVER-bench | impl attempt 1 | 2026-11-12 22:47 | started; worktree /home/luke/Work/wt/crossover-bench on origin/main |
-| HAS-point-probe | running | 2026-11-10 22:35 | A89 answered D 2026-11-13: merge M5, then 3-6 rounds |
+| HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | started: M5 merge onto origin/main 3ae0befe8, worktree has-point-xr; load 35.33 59.73 61.58 |
 | LINE-ends-lf | impl attempt 1 | 2026-11-13 01:21 | started; worktrees wt/line-ends-lf and wt/line-ends-lf-spec; TESTS-L1.13-strings test already on main (batch 138) |
 | LIT-power-values | impl attempt 1 | 2026-11-13 00:20 | started: worktree, then perf of the 233M-instruction rejection |
-| MSG-derive-print-union-names | impl attempt 1 | 2026-11-13 00:05 | started; worktrees msg-union-names and msg-union-names-spec; load 44.20 43.16 47.36 |
+| MSG-derive-print-union-names | impl attempt 1 | 2026-11-13 00:05 | family test added; building baseline |
 | PERF-l139-family | running | 2026-11-12 18:45 | coordkk fixed d016b9cc3 90a844aa8; 14 tests in 8 families still ignored, cross-review next / 45.57 |
 | PERF-ref-memo-quadratic | impl attempt 4 | 2026-11-10 18:04 | started: A88 answered, own attempt then cross-review (4 seats, 3 rounds) |
 | PRES-overlap-fast | impl attempt 1 | 2026-11-13 01:10 | started; worktree wt/pres-overlap-fast at 95b3d8a1f; load 37.88 41.70 48.12 |
