@@ -2780,9 +2780,15 @@ fn found(p: Parts) -> Result<Option<Model>, Refusal> {
 /// [`found`] found a point (I18). Now a refusal here with no point is followed by the batched
 /// searches that [`found`]'s probe makes first ([`batched_prefix`]), on the parts this probe
 /// returned, which have the points of `p`; the tests one disjunct at a time that follow them
-/// in [`found`]'s probe were made here already, and are not made again. Before the probe,
-/// parts whose disjunctions are each split by the bounds of one atom are decided exactly by
-/// cells of that atom ([`by_cells`]).
+/// in [`found`]'s probe were made here already, and are not made again.
+///
+/// Before the probe, in this order (HAS-point-probe-xr, method M5 of round 3): parts whose
+/// disjunctions are each split by the bounds of one atom are decided exactly by cells of that
+/// atom ([`by_cells`] without solving); then by a sweep over the cells of the atoms the
+/// disjuncts bound ([`cell_sweep::decide_by_cells`]); then [`pick`]; then [`by_cells`]
+/// solving each class of cells once. Cells come before [`pick`] because on a membership in
+/// many shared sets [`pick`] reads every disjunct for each of them, where the cells read each
+/// shared set once (round 2, finding H2-4).
 // Complexity tradeoff: naive version, `found` probing every disjunct to the end, O(h²) here
 // (21.5 s at k = 32). Used: the probe stops at its first point, linear in the pieces (6.75
 // times the instructions in the scaling test below). Tradeoffs: a probe that finds no point
@@ -2807,6 +2813,15 @@ fn found(p: Parts) -> Result<Option<Model>, Refusal> {
 // searches cost 95.7 times the bytes at 8n on `s22::chain_cross_above_its_width_scales`
 // (limit 16.2) and 68.0 times on `chain_cross_dead_scales` (limit 17.6). Test:
 // `l01_38_presburger::decide_sat::decide_answers_where_satisfiable_answers`.
+//
+// Complexity tradeoff (HAS-point-probe, M5): naive version, main's order ([`by_cells`] after
+// a [`pick`] that fails, then the probe), O(n²) or worse on memberships in shared sets
+// (`shared_holders`, `sh_two`, `pub_interface`: over 60 s at n = 250 to 2,000). Used: the cells
+// first, with each shared set read once through windowed views of it ([`CellView`]) and joins
+// memoized per list of pieces; 1.01 to 1.06 per doubling on those families and on the 17 of
+// BRIEF2 (hpx-xr-records/archive/r3/R3_CLAUDE.md). Still superlinear or slower than main:
+// COMPLEXITY.md row C55. Given up: nothing on the dump of the five test groups, where no answer
+// changed (hpx-cmp-hash.sh).
 fn has_point(p: Parts) -> Result<bool, Refusal> {
     if let Some(answer) = by_cells(&p, false) {
         return answer;
@@ -5693,60 +5708,208 @@ fn by_cells(p: &Parts, solving: bool) -> Option<Result<bool, Refusal>> {
     if p.ors.is_empty() {
         return None;
     }
-    let mut seen: HashMap<*const Parts, OrdSet<Atom>> = HashMap::new();
-    let all: Vec<OrdSet<Atom>> = (p.ors.iter().flatten())
-        .map(|d| bounded_atoms(d, &mut seen))
-        .collect();
-    let atoms = met_atoms(all);
+    let mut walk = BoundedWalk::default();
+    let all: Vec<Bounded> = (p.ors.iter().flatten()).map(|d| walk.part(d)).collect();
+    let atoms = met_atoms(&all);
     if atoms.is_empty() {
         return None;
     }
+    let atoms = splitting(p, atoms);
     atoms.iter().find_map(|x| cells_of(p, x, solving))
 }
 
-/// The atoms in every set of `all`: the smallest set's atoms, each looked up in the others.
-fn met_atoms(mut all: Vec<OrdSet<Atom>>) -> OrdSet<Atom> {
-    let Some(i) = (0..all.len()).min_by_key(|&i| all[i].len()) else {
-        return OrdSet::new();
-    };
-    let small = all.swap_remove(i);
-    if all.is_empty() {
-        return small;
+/// The atoms of `atoms` that can split `p` into cells, as far as twin disjuncts tell: two
+/// disjuncts of one disjunction, each with constraints of its own, that have the same
+/// disjunctions (the same parts, in order). On an atom `x` that neither bounds by a constraint
+/// of its own, they may hold on the same cells and neither holds whatever the other atoms are,
+/// so [`CellWalk::spread`] finds a choice of the two wherever they may hold; `x` serves only
+/// when it is bounded so by all but at most one of each set of twins.
+// Complexity tradeoff: naive version, [`cells_of`] tried on each atom of `atoms` in turn, each
+// try a walk of the whole parts, O(A·N) for A atoms and N parts; on a nest of k levels whose
+// disjuncts share the level below (`f[i] = (x[i] >= i + 1 && f[i-1]) || (x[i] <= -2i - 3 &&
+// f[i-1])`) every level's atom is bounded in every disjunct, and every try ends in a choice
+// at the level of another atom: O(k²), 3.82 times the instructions from k = 16 to 32
+// (`l01_38_presburger::exp_families::nest_point_decide`). Used: one walk with a visited set
+// that groups each disjunction's disjuncts by their disjunctions, O(N log N), and keeps the
+// atoms that every set of twins allows. Given up: twins that may hold on no cell where their
+// disjunction is placed make no choice, so an atom they rule out could still have decided the
+// parts; such parts go on to the methods after [`by_cells`] in [`has_point`].
+fn splitting(p: &Parts, atoms: OrdSet<Atom>) -> Vec<Atom> {
+    let mut sets = 0usize;
+    let mut allowed: HashMap<&Atom, usize> = HashMap::new();
+    let mut seen: HashSet<*const Parts> = HashSet::new();
+    let mut stack: Vec<&Parts> = vec![p];
+    while let Some(u) = stack.pop() {
+        for o in &u.ors {
+            let mut twins: HashMap<Vec<*const Parts>, Vec<&Parts>> = HashMap::new();
+            for d in o {
+                if seen.insert(Rc::as_ptr(d)) {
+                    stack.push(d);
+                }
+                if d.cons.is_empty() {
+                    continue;
+                }
+                // The parts of each disjunction, each disjunction closed by a null.
+                let key = (d.ors.iter())
+                    .flat_map(|e| e.iter().map(Rc::as_ptr).chain([std::ptr::null()]))
+                    .collect();
+                twins.entry(key).or_default().push(d);
+            }
+            for set in twins.values().filter(|s| s.len() > 1) {
+                sets += 1;
+                let mut bounded: HashMap<&Atom, usize> = HashMap::new();
+                for d in set {
+                    let own: BTreeSet<&Atom> = (d.cons.iter())
+                        .filter(|c| c.lin.terms.len() == 1)
+                        .flat_map(|c| c.lin.terms.keys())
+                        .collect();
+                    for a in own {
+                        *bounded.entry(a).or_default() += 1;
+                    }
+                }
+                for (a, n) in bounded {
+                    if n + 1 >= set.len() {
+                        *allowed.entry(a).or_default() += 1;
+                    }
+                }
+            }
+        }
     }
-    (small.into_iter())
-        .filter(|a| all.iter().all(|s| s.contains(a)))
+    (atoms.into_iter())
+        .filter(|a| allowed.get(a).copied().unwrap_or(0) == sets)
         .collect()
 }
 
-/// The atoms that `d` bounds alone: by a constraint of its own on that atom alone, or in every
-/// disjunct of one of its disjunctions. Memoized by part in `seen`, so a part shared by many
-/// disjunctions is read once.
-// Complexity tradeoff: copying each part's set costs O(j) at depth j of a chain of parts each
-// bounding an atom of its own, O(n²) for a chain of n. The sets are persistent: a part's set
-// starts from its largest disjunction's set, uncopied, and adds the others' atoms and its own,
-// O(log n) each; a disjunction's set is its smallest disjunct's atoms looked up in the others.
-fn bounded_atoms(d: &Rc<Parts>, seen: &mut HashMap<*const Parts, OrdSet<Atom>>) -> OrdSet<Atom> {
-    if let Some(s) = seen.get(&Rc::as_ptr(d)) {
-        return s.clone();
+/// The atoms that a part bounds alone: by a constraint of its own on that atom alone, or in
+/// every disjunct of one of its disjunctions. They are those of `base`, the set of one of its
+/// disjunctions, shared with every part holding that disjunction and not copied, and those of
+/// `extra`, the atoms the part adds.
+#[derive(Clone)]
+struct Bounded {
+    base: OrdSet<Atom>,
+    extra: OrdSet<Atom>,
+}
+
+impl Bounded {
+    fn contains(&self, a: &Atom) -> bool {
+        self.base.contains(a) || self.extra.contains(a)
     }
-    let mut mets: Vec<OrdSet<Atom>> = (d.ors.iter())
-        .map(|o| {
-            let all = o.iter().map(|e| bounded_atoms(e, seen)).collect();
-            met_atoms(all)
-        })
-        .collect();
-    let mut out = match (0..mets.len()).max_by_key(|&i| mets[i].len()) {
-        Some(i) => mets.swap_remove(i),
-        None => OrdSet::new(),
+}
+
+/// The atoms in every set of `all`.
+// Complexity tradeoff: the meet of the sets by looking the smallest set's atoms up in the
+// others costs O(m log m) for sets of about m atoms, even when the sets differ in a few atoms
+// only, as a disjunction's disjuncts do when each adds a guard to the same disjunction below:
+// O(k² log k) for a nest of k levels (`l01_38_presburger::exp_families::nest_point_decide`,
+// 2.68 times from k = 64 to 128). Sets with the same `base` meet in `base` and the atoms of
+// the smallest `extra` found in every other, O(e log m) for the e atoms of the extras, and the
+// meet keeps `base` uncopied when they add none. Liljenzin, "Confluently persistent sets and
+// maps" (arXiv 1301.3388, 2013) gets the same from hash-consed treaps, whose equal sets are one
+// node, for any two sets; here the two pieces suffice because a set shared by many parts is
+// always shared as a `base`. Sets with different bases are met as before.
+fn met_atoms(all: &[Bounded]) -> OrdSet<Atom> {
+    let Some(first) = all.first() else {
+        return OrdSet::new();
     };
-    for a in mets.into_iter().flatten() {
-        out.insert(a);
+    if all.iter().all(|b| b.base.ptr_eq(&first.base)) {
+        let small = (all.iter().min_by_key(|b| b.extra.len())).expect("a set");
+        let mut out = first.base.clone();
+        for a in &small.extra {
+            if !out.contains(a) && all.iter().all(|b| b.extra.contains(a)) {
+                out.insert(a.clone());
+            }
+        }
+        return out;
     }
-    for c in d.cons.iter().filter(|c| c.lin.terms.len() == 1) {
-        out.extend(c.lin.terms.keys().cloned());
+    let small = (all.iter().min_by_key(|b| b.base.len() + b.extra.len())).expect("a set");
+    (small.base.iter().chain(&small.extra))
+        .filter(|a| all.iter().all(|b| b.contains(a)))
+        .cloned()
+        .collect()
+}
+
+/// The [`Bounded`] atoms of each part read, memoized by part, and the met set of each
+/// disjunction, memoized by its disjuncts, so that parts holding the same disjunction share its
+/// set as their `base`.
+#[derive(Default)]
+struct BoundedWalk {
+    parts: HashMap<*const Parts, Bounded>,
+    ors: HashMap<Vec<*const Parts>, OrdSet<Atom>>,
+}
+
+impl BoundedWalk {
+    /// The [`Bounded`] atoms of `d`. The parts under `d` not read yet are put in an order where
+    /// each comes after the parts it holds, by a depth-first walk with an explicit stack, and
+    /// read in that order.
+    // Complexity tradeoff: copying each part's set costs O(j) at depth j of a chain of parts
+    // each bounding an atom of its own, O(n²) for a chain of n. A part's set takes its largest
+    // disjunction's set as its `base`, uncopied, and puts the other disjunctions' atoms and its
+    // own in `extra`, O(log n) each.
+    fn part(&mut self, d: &Rc<Parts>) -> Bounded {
+        if let Some(b) = self.parts.get(&Rc::as_ptr(d)) {
+            return b.clone();
+        }
+        let mut order: Vec<&Rc<Parts>> = Vec::new();
+        let mut seen: HashSet<*const Parts> = HashSet::from([Rc::as_ptr(d)]);
+        type Kids<'a> = std::iter::Flatten<std::slice::Iter<'a, Vec<Rc<Parts>>>>;
+        let mut stack: Vec<(&Rc<Parts>, Kids)> = vec![(d, d.ors.iter().flatten())];
+        while let Some((u, kids)) = stack.last_mut() {
+            match kids.next() {
+                Some(e) => {
+                    if !self.parts.contains_key(&Rc::as_ptr(e)) && seen.insert(Rc::as_ptr(e)) {
+                        stack.push((e, e.ors.iter().flatten()));
+                    }
+                }
+                None => {
+                    order.push(*u);
+                    stack.pop();
+                }
+            }
+        }
+        for u in order {
+            let b = self.read(u);
+            self.parts.insert(Rc::as_ptr(u), b);
+        }
+        self.parts[&Rc::as_ptr(d)].clone()
     }
-    seen.insert(Rc::as_ptr(d), out.clone());
-    out
+
+    /// The [`Bounded`] atoms of `d`, whose disjuncts are read.
+    fn read(&mut self, d: &Parts) -> Bounded {
+        let mut mets: Vec<OrdSet<Atom>> = d.ors.iter().map(|o| self.met(o)).collect();
+        let base = match (0..mets.len()).max_by_key(|&i| mets[i].len()) {
+            Some(i) => mets.swap_remove(i),
+            None => OrdSet::new(),
+        };
+        let mut extra = OrdSet::new();
+        for a in mets.into_iter().flatten() {
+            if !base.contains(&a) {
+                extra.insert(a);
+            }
+        }
+        for c in d.cons.iter().filter(|c| c.lin.terms.len() == 1) {
+            for a in c.lin.terms.keys() {
+                if !base.contains(a) {
+                    extra.insert(a.clone());
+                }
+            }
+        }
+        Bounded { base, extra }
+    }
+
+    /// The atoms every disjunct of `o` bounds alone; its disjuncts are read.
+    fn met(&mut self, o: &[Rc<Parts>]) -> OrdSet<Atom> {
+        let key: Vec<*const Parts> = o.iter().map(Rc::as_ptr).collect();
+        if let Some(s) = self.ors.get(&key) {
+            return s.clone();
+        }
+        let all: Vec<Bounded> = o
+            .iter()
+            .map(|e| self.parts[&Rc::as_ptr(e)].clone())
+            .collect();
+        let out = met_atoms(&all);
+        self.ors.insert(key, out.clone());
+        out
+    }
 }
 
 /// The interval of `x` that the constraints of `x` alone among `cons` leave, `None` when empty;
@@ -24005,5 +24168,40 @@ mod cells_scaling {
     #[test]
     fn cells_in_few_classes_are_solved_once_per_class() {
         no_point_scales("cells in three classes", 62, interface);
+    }
+
+    /// The meet of sets of bounded atoms: with one base, the base uncopied and the atoms of
+    /// every extra; with different bases, the atoms in every set; with none, no atom.
+    #[test]
+    fn bounded_atoms_meet_by_their_shared_base() {
+        let set = |names: &[&str]| -> OrdSet<Atom> {
+            names.iter().map(|s| Atom::Sym((*s).into())).collect()
+        };
+        let base = set(&["x", "y"]);
+        let one = Bounded {
+            base: base.clone(),
+            extra: set(&["z", "u"]),
+        };
+        let two = Bounded {
+            base: base.clone(),
+            extra: set(&["z"]),
+        };
+        let bare = Bounded {
+            base: base.clone(),
+            extra: OrdSet::new(),
+        };
+        assert_eq!(
+            met_atoms(&[one.clone(), two.clone()]),
+            set(&["x", "y", "z"])
+        );
+        assert!(met_atoms(&[bare.clone(), one.clone()]).ptr_eq(&base));
+        let other = Bounded {
+            base: set(&["y", "z"]),
+            extra: set(&["w"]),
+        };
+        assert_eq!(met_atoms(&[one, other.clone()]), set(&["y", "z"]));
+        assert_eq!(met_atoms(&[other.clone()]), set(&["y", "z", "w"]));
+        assert_eq!(met_atoms(&[two, other, bare]), set(&["y"]));
+        assert!(met_atoms(&[]).is_empty());
     }
 }
