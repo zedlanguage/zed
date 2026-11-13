@@ -224,9 +224,13 @@ fn a_decimal_from_a_call_or_with_a_suffix_is_still_refused_at_rat() {
         [
             "`hr` does not take (1 | 2.5): the `if` may give the decimal 2.5, an `f64` where it \
              is written, and no `f64` is read as a `rat`. Write 2.5r where it is written, or \
-             give this parameter of `hr` the type `f64`. [hr(if b { gd(b) } else { 2.5 })]"
+             give this parameter of `hr` the type `f64`. Try \
+             `hr(rat(if b { gd(b) } else { 2.5 }))` instead. [hr(if b { gd(b) } else { 2.5 })]"
         ]
     );
+    // `1` and `2.5` each convert to a `rat` exactly, so that `rat(…)` gives no atom and `hr`
+    // takes it (item CAST-literal-exact).
+    assert!(type_errors(&with("hr(rat(if b { gd(b) } else { 2.5 }))")).is_empty());
     assert_eq!(
         type_errors(&with("hr(if b { r } else { 2.5f64 })")),
         [
