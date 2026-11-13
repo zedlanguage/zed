@@ -2126,8 +2126,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | CROSSOVER-bench | impl attempt 1 | 2026-11-12 22:47 | started; worktree /home/luke/Work/wt/crossover-bench on origin/main |
+| LINE-ends-lf | running | 2026-11-13 01:21 |  |
 | LIT-power-values | impl attempt 1 | 2026-11-13 00:20 | started: worktree, then perf of the 233M-instruction rejection |
-| MSG-derive-print-union-names | running | 2026-11-13 00:05 | 2026-11-13 author: fix the O(n^2) union names the most sensible way; K110 option 1 |
+| MSG-derive-print-union-names | impl attempt 1 | 2026-11-13 00:05 | started; worktrees msg-union-names and msg-union-names-spec; load 44.20 43.16 47.36 |
 | PERF-deep-ops-slow | impl attempt 1 | 2026-11-12 21:38 | union_all atoms fast path: family ratio 9.06 -> 8.82 by callgrind; running battery / load 52.89 46.05 42.49 |
 | PERF-l139-family | running | 2026-11-12 18:45 | coordkk fixed d016b9cc3 90a844aa8; 14 tests in 8 families still ignored, cross-review next / 45.57 |
 | PERF-ref-memo-quadratic | impl attempt 4 | 2026-11-10 18:04 | started: A88 answered, own attempt then cross-review (4 seats, 3 rounds) |
