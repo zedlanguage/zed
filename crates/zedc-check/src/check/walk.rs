@@ -5284,15 +5284,137 @@ impl<'a> Ck<'_, 'a> {
 
     /// The ints `e` may be here: what its text shows ([`Ck::known`]) met with what the tests
     /// the walk is in show of it; and whether a test narrowed it.
+    ///
+    /// What the tests show is the scope's reading of `e` ([`Ck::ints_in_scope`]) met with its
+    /// reading from its parts: an int power at the corners of its base and exponent read here
+    /// ([`revision::forward_pow`]), an integer operator or `-` by the revision table over its
+    /// operands read from their parts, a name as the scope reads it met with its value read
+    /// from its parts where one `name = value` binds it, anything else as its text shows. A
+    /// value read here is sound, since its names are the same binders and none is ever
+    /// assigned again. So a test's narrowing of an exponent reaches the power: under `k > 0`, `2^k - 2`
+    /// is at least 0 (POW-scope-exponent), where the scope reads `^` as opaque.
+    ///
+    /// Complexity tradeoff: each node is read once in the scope of each node it is read in,
+    /// O(1) table operations per node and one scope read per name and per power operand,
+    /// memoized by span and node; on an explicit stack, so a tower of powers costs no thread
+    /// stack. The plan row named the naive method, the scope reading `^` itself by a product
+    /// transfer at an interval exponent: the scope reads the whole term of an expression for
+    /// each check of it ([`Ck::read_in_scope`] builds and walks it, O(size)), so a tower of `d`
+    /// powers, each exponent checked, cost O(d^2) (48.1 times the bytes at 8n, measured on
+    /// `a_tower_of_powers_under_a_test_scales`). Given up against it: a relation between the
+    /// parts of an expression across a power, as in `2^n - 2^m` under `n >= m`, which reads
+    /// as any int; the relation below a power (`n - m` in `2^(n - m)`) is kept, since the
+    /// scope reads each power operand whole. Test: `l01_29_diagnostics::power_repairs`;
+    /// COMPLEXITY.md C60.
     pub(super) fn ints_here(&mut self, e: &'a Expr) -> (IntervalSet, bool) {
         let k = self.known(e);
-        if k.value.is_some() || self.arms.here() == 0 {
+        let here = self.arms.here();
+        if k.value.is_some() || here == 0 {
             return (k.ints, false);
         }
-        let narrowed = self.ints_in_scope(e);
-        let ints = k.ints.meet(&narrowed);
+        if !self.arms.here_ints.contains_key(&(e.span, here)) {
+            self.read_parts(e, here);
+        }
+        let ints = self.arms.here_ints[&(e.span, here)].clone();
         let changed = ints != k.ints;
         (ints, changed)
+    }
+
+    /// Fills [`Arms::here_ints`](super::arms::Arms::here_ints) for `e` at node `here`, and
+    /// [`Arms::part_ints`](super::arms::Arms::part_ints) for the parts it is read from, children
+    /// first on an explicit stack (see [`Ck::ints_here`]).
+    fn read_parts(&mut self, e: &'a Expr, here: usize) {
+        // `Whole(x)` is `x` read whole and from its parts; `Parts(x)` from its parts only.
+        #[derive(Clone, Copy)]
+        enum Read<'e> {
+            Whole(&'e Expr),
+            Parts(&'e Expr),
+        }
+        let done = |ck: &Self, r: Read<'_>| match r {
+            Read::Whole(x) => ck.arms.here_ints.contains_key(&(x.span, here)),
+            Read::Parts(x) => ck.arms.part_ints.contains_key(&(x.span, here)),
+        };
+        // The reads begun and not finished: a name whose value reads the name again, as a
+        // value in a loop of binders may, says nothing more there.
+        let mut open: HashSet<(bool, Span)> = HashSet::new();
+        let key = |r: Read<'_>| match r {
+            Read::Whole(x) => (true, x.span),
+            Read::Parts(x) => (false, x.span),
+        };
+        let mut stack = vec![(Read::Whole(e), false)];
+        while let Some((r, ready)) = stack.pop() {
+            if !ready {
+                if done(self, r) || !open.insert(key(r)) {
+                    continue;
+                }
+                stack.push((r, true));
+                let needs = match r {
+                    Read::Whole(x) => vec![Read::Parts(x)],
+                    Read::Parts(x) => match &x.kind {
+                        _ if self.known(x).value.is_some() => vec![],
+                        ExprKind::Binary(BinaryOp::Pow, a, b) => {
+                            vec![Read::Whole(a), Read::Whole(b)]
+                        }
+                        ExprKind::Binary(o, a, b) if int_op(*o).is_some() => {
+                            vec![Read::Parts(a), Read::Parts(b)]
+                        }
+                        ExprKind::Unary(UnaryOp::Neg, a) => vec![Read::Parts(a)],
+                        ExprKind::Name(_) => {
+                            self.bound_value(x).map(Read::Parts).into_iter().collect()
+                        }
+                        _ => vec![],
+                    },
+                };
+                let fresh = |n: &Read<'_>| !done(self, *n) && !open.contains(&key(*n));
+                stack.extend(needs.into_iter().filter(fresh).map(|n| (n, false)));
+                continue;
+            }
+            open.remove(&key(r));
+            // A read still open, from a loop of binders, says nothing.
+            let read = |m: &HashMap<(Span, usize), IntervalSet>, a: &Expr| {
+                m.get(&(a.span, here))
+                    .cloned()
+                    .unwrap_or_else(IntervalSet::top)
+            };
+            let whole = |ck: &Self, a: &Expr| read(&ck.arms.here_ints, a);
+            let part = |ck: &Self, a: &Expr| read(&ck.arms.part_ints, a);
+            match r {
+                Read::Whole(x) => {
+                    let k = self.known(x);
+                    let ints = match k.value {
+                        Some(_) => k.ints,
+                        None => k.ints.meet(&self.ints_in_scope(x)).meet(&part(self, x)),
+                    };
+                    self.arms.here_ints.insert((x.span, here), ints);
+                }
+                Read::Parts(x) => {
+                    let k = self.known(x);
+                    let ints = match &x.kind {
+                        _ if k.value.is_some() => k.ints.clone(),
+                        ExprKind::Binary(BinaryOp::Pow, a, b) => {
+                            revision::forward_pow(&whole(self, a), &whole(self, b))
+                        }
+                        ExprKind::Binary(o, a, b) if let Some((op, _)) = int_op(*o) => {
+                            forward(&op, &part(self, a), &part(self, b))
+                        }
+                        ExprKind::Unary(UnaryOp::Neg, a) => {
+                            forward(&Op::Neg, &part(self, a), &IntervalSet::top())
+                        }
+                        ExprKind::Name(_) => {
+                            let scope = self.ints_in_scope(x);
+                            match self.bound_value(x) {
+                                Some(v) => scope.meet(&part(self, v)),
+                                None => scope,
+                            }
+                        }
+                        _ => IntervalSet::top(),
+                    };
+                    self.arms
+                        .part_ints
+                        .insert((x.span, here), k.ints.meet(&ints));
+                }
+            }
+        }
     }
 
     /// The interval of each name written in `e` that a test the walk is in narrows, by the

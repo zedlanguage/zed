@@ -42,6 +42,7 @@ use zed_kernel::types::Type as KType;
 use zed_kernel::{Prim, Term};
 
 use zedc_lattice::cell::Premises;
+use zedc_lattice::interval::IntervalSet;
 use zedc_preimage::preimage::LetPa;
 use zedc_preimage::product::{Product, Scope};
 use zedc_syntax::ast::{BinaryOp, Expr};
@@ -154,6 +155,12 @@ pub(super) struct Arms<'a> {
     /// The summary of each binder's value, once a scope has been told of the binder
     /// ([`Summarized`]); none when its value has no summary over one input.
     pub(super) summaries: HashMap<usize, Option<Rc<Summarized>>>,
+    /// What [`Ck::ints_here`](super::Ck::ints_here) gave of each expression read in the scope
+    /// of each node, by the expression's span and the node.
+    pub(super) here_ints: HashMap<(Span, usize), IntervalSet>,
+    /// What [`Ck::ints_here`](super::Ck::ints_here) read of each expression from its parts, by
+    /// span and node.
+    pub(super) part_ints: HashMap<(Span, usize), IntervalSet>,
 }
 
 impl<'a> Arms<'a> {
@@ -174,6 +181,8 @@ impl<'a> Arms<'a> {
             terms: HashMap::new(),
             names: HashMap::new(),
             summaries: HashMap::new(),
+            here_ints: HashMap::new(),
+            part_ints: HashMap::new(),
         }
     }
 

@@ -262,6 +262,51 @@ pub fn forward(op: &Op, x: &IntervalSet, y: &IntervalSet) -> IntervalSet {
     }
 }
 
+/// Forward transfer of the int power `x ^ n` at an exponent `n` that is a set, not a constant:
+/// an interval containing `x ^ k` for every member `x` of `x` and every member `k >= 0` of `n`.
+/// The members of `n` below 0 give no int (a checked program raises an int to none, DESIGN.md
+/// L1.26), so an `n` with no member at least 0 gives the empty set. One exponent is the table's
+/// entry [`Op::Pow`], exact on every base. On a base of int[0..] the power is monotone in each
+/// argument where the base is at least 1, so the result lies between the corners
+/// `lo(x) ^ lo(n)` and `hi(x) ^ hi(n)`, each exact at any size through [`Num::pow_by`]; a base
+/// of 0 adds the value 0 (and 1 at the exponent 0) below them. A base that may be negative
+/// gives any int.
+// Complexity tradeoff: O(1) operations on the four ends, where reading the image of each
+// member pair is O(|x| |n|) or unbounded. The corners are exact: `Num::pow_by` keeps a power
+// of a value past `i128` as its base and exponent, never written out, so `2 ^ (2 ^ 40)` costs
+// the bits of 2 and of `2 ^ 40`; an exponent that is itself kept has no form there, and the
+// end is bounded outward by `pow_end`. Before POW-scope-exponent the checker read only the
+// lower bound, by Bernoulli's inequality `b ^ k >= 1 + k (b - 1)` (O(1) words, below `b ^ k`
+// from k = 2 on, so `2^(5^(2^k + 1) - 10)` was rejected); the exact corner costs the same
+// order. Given up: precision on a base that may be negative (`(-2)^(2*k)` is any int), which
+// needs the parity of each exponent. Test: `l01_29_diagnostics::power_repairs`; COMPLEXITY.md
+// C60.
+pub fn forward_pow(x: &IntervalSet, n: &IntervalSet) -> IntervalSet {
+    let n = n.meet(&IntervalSet::range(End::of(0), PosInf));
+    // The least member of a set of ints at least 0 is finite.
+    let (Some((blo, bhi)), Some((Fin(klo), khi))) = (x.bounds(), n.bounds()) else {
+        return IntervalSet::empty();
+    };
+    if matches!(khi, Fin(h) if h == klo) {
+        return forward(&Op::Pow(klo.clone().into()), x, x);
+    }
+    if blo.signum() < 0 {
+        return IntervalSet::top();
+    }
+    // `n` has two members at least, so its greatest is at least 1, and `0 ^ hi(n)` is 0.
+    let lo = match blo {
+        Fin(b) if !b.is_zero() => pow_end(b, &klo.clone().into(), Dir::Down),
+        _ => End::of(0),
+    };
+    let hi = match (bhi, khi) {
+        (Fin(b), _) if b.is_zero() => End::of(if klo.signum() == 0 { 1 } else { 0 }),
+        (Fin(b), _) if *b == Num::ONE => End::of(1),
+        (Fin(b), Fin(k)) => pow_end(b, &k.clone().into(), Dir::Up),
+        _ => PosInf,
+    };
+    IntervalSet::range(lo, hi)
+}
+
 /// `x mod y` for one piece of each: `0..abs(y)`, or the piece of `x` itself shifted when one
 /// constant divisor maps it without wrapping.
 fn forward_mod(a: &(End, End), b: &(End, End)) -> Vec<(End, End)> {
@@ -878,5 +923,56 @@ mod tests {
             &Congruence::new(3, 1),
         );
         assert_eq!(x, IntervalSet::range(NegInf, End::of(-5)));
+    }
+
+    /// The power at an exponent that is a set holds every power of its members, and on a base
+    /// of int[0..] whose members are all in the window it is their hull: its ends are the
+    /// least and greatest powers. An exponent with no member at least 0 gives nothing.
+    #[test]
+    fn a_power_at_a_set_of_exponents_holds_each_power_and_no_more() {
+        for x in operands() {
+            for n in operands() {
+                let f = forward_pow(&x, &n);
+                let ks: Vec<i64> = members(&n).into_iter().filter(|&k| k >= 0).collect();
+                let mut powers = Vec::new();
+                for b in members(&x) {
+                    for &k in &ks {
+                        let v = b.pow(u32::try_from(k).expect("k >= 0"));
+                        assert!(f.contains(v), "{x} ^ {n} = {f} lacks {b}^{k}");
+                        powers.push(v);
+                    }
+                }
+                if ks.is_empty() && n.meet(&IntervalSet::range(End::of(0), PosInf)).is_empty() {
+                    assert_eq!(f, IntervalSet::empty(), "{x} ^ {n}");
+                }
+                let finite = |s: &IntervalSet| matches!(s.bounds(), Some((Fin(_), Fin(_))));
+                let nonneg = x.bounds().is_some_and(|(lo, _)| lo.signum() >= 0);
+                if nonneg && finite(&x) && finite(&n) && !powers.is_empty() {
+                    let (lo, hi) = (powers.iter().min(), powers.iter().max());
+                    let want = IntervalSet::range(
+                        End::of(*lo.expect("a power")),
+                        End::of(*hi.expect("a power")),
+                    );
+                    assert_eq!(f, want, "{x} ^ {n}");
+                }
+            }
+        }
+        // The least power is exact, where Bernoulli's inequality gives 1 + 2 * 4 = 9.
+        let at_least = |v: i64| IntervalSet::range(End::of(v), PosInf);
+        assert_eq!(forward_pow(&at_least(5), &at_least(2)), at_least(25));
+        // An end of any size is held as a power, not written out.
+        let k = Num::from(2).pow(40);
+        let f = forward_pow(&at_least(2), &IntervalSet::range(Fin(k.clone()), PosInf));
+        let want = Num::from(2).pow_by(&k).expect("a power of an int");
+        assert_eq!(f, IntervalSet::range(Fin(want), PosInf));
+        // A base that may be negative gives any int; at one exponent, the table's entry.
+        assert_eq!(
+            forward_pow(&IntervalSet::of(-2, 3), &at_least(0)),
+            IntervalSet::top()
+        );
+        assert_eq!(
+            forward_pow(&IntervalSet::of(-2, 3), &IntervalSet::single(2)),
+            IntervalSet::of(0, 9)
+        );
     }
 }

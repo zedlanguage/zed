@@ -3,7 +3,8 @@
 //! int[0..] is at least 1, so `2^(2^k)` under `k >= 0` has a non-negative exponent; the note on
 //! a name a test narrows shows its narrowed type, `int[0..]`, not `int`; and each repair a
 //! rejection offers, in a note or as the headline's Try, is written into the program, which
-//! then checks.
+//! then checks. A test's narrowing of an exponent reaches the power, and a power is read at
+//! least at its least power: under `k > 0`, `2^(2^k - 2)` checks (POW-scope-exponent).
 
 use zed_tests::scaling;
 use zedc::run::load;
@@ -69,17 +70,56 @@ fn a_power_of_a_power_of_a_tested_exponent_checks() {
 }
 
 #[test]
-fn a_power_at_least_its_bernoulli_bound_checks() {
-    // A base of at least b to an exponent of at least n is read as at least 1 + n(b - 1):
-    // `3^(2^k)` is at least 3, and `5^(2^k + 1)` at least 9.
+fn a_power_at_least_its_least_power_checks() {
+    // A base of at least b to an exponent of at least n is at least b^n, read exactly:
+    // `3^(2^k)` is at least 3, and `5^(2^k + 1)` at least 25 (POW-scope-exponent; the bound by
+    // Bernoulli's inequality before it, 1 + n(b - 1), gave 9).
     checks("q(k: int) = if k >= 0 { 2^(3^(2^k) - 3) } else { 0 };\n");
-    checks("q(k: int) = if k >= 0 { 2^(5^(2^k + 1) - 9) } else { 0 };\n");
-    // One past the bound is rejected: `3^1 - 4` is -1 at k = 0.
-    let out = rejected("q(k: int) = if k >= 0 { 2^(3^(2^k) - 4) } else { 0 };\n");
-    assert!(
-        out.contains("Int power with an exponent that may be negative"),
-        "{out}"
-    );
+    checks("q(k: int) = if k >= 0 { 2^(5^(2^k + 1) - 25) } else { 0 };\n");
+    // One past the bound is rejected: `3^1 - 4` is -1 at k = 0, and `5^2 - 26` too.
+    for body in ["2^(3^(2^k) - 4)", "2^(5^(2^k + 1) - 26)"] {
+        let out = rejected(&format!(
+            "q(k: int) = if k >= 0 {{ {body} }} else {{ 0 }};\n"
+        ));
+        assert!(
+            out.contains("Int power with an exponent that may be negative"),
+            "{body}\n{out}"
+        );
+    }
+}
+
+#[test]
+fn a_test_s_narrowing_of_an_exponent_reaches_the_power() {
+    // `k` is int[1..] in the arm, so `2^k - 2` and `3^k - 3` are at least 0 (POW-scope-exponent).
+    for (test, body) in [
+        ("k > 0", "2^(2^k - 2)"),
+        ("k >= 1", "2^(3^k - 3)"),
+        ("k >= 3", "2^(2^k - 8)"),
+        ("k > 0 && k < 5", "2^(2^k - 2) + 2^(16 - 2^k)"),
+        ("k >= 1", "{ e = 2^k - 2; 2^e }"),
+        ("k > 0", "2^(2^(2^k - 2) - 1)"),
+    ] {
+        checks(&format!(
+            "q(k: int) = if {test} {{ {body} }} else {{ 0 }};\n"
+        ));
+    }
+    // One below the least power, or one bound too few, is still rejected.
+    for (test, body) in [
+        ("k > 0", "2^(2^k - 3)"),
+        ("k >= 1", "2^(3^k - 4)"),
+        ("k >= 3", "2^(2^k - 9)"),
+        ("k > 0 && k < 5", "2^(2^k - 2) + 2^(15 - 2^k)"),
+        ("k > 0", "2^(2^(2^k - 2) - 2)"),
+        ("k > 0", "2^((0 - 2)^k)"),
+    ] {
+        let out = rejected(&format!(
+            "q(k: int) = if {test} {{ {body} }} else {{ 0 }};\n"
+        ));
+        assert!(
+            out.contains("Int power with an exponent that may be negative"),
+            "{test}: {body}\n{out}"
+        );
+    }
 }
 
 #[test]
@@ -299,6 +339,25 @@ fn tower(n: usize) -> String {
 fn a_chain_of_powers_scales() {
     let made = scaling::inputs(64, |n| program(&tower(n)));
     scaling::check("checking a chain of n powers of powers", 64, |n| {
+        let src = &made[&n];
+        load(src.as_bytes()).unwrap_or_else(|e| panic!("{src}\n{e}"));
+    });
+}
+
+/// A tower of `n` powers under `k > 0`, each exponent one less than a power of 2 and so at least
+/// 0 only where the test's narrowing of `k` reaches it: `2^(2^(2^k - 1) - 1) ...`.
+fn narrowed_tower(n: usize) -> String {
+    let mut e = String::from("2^k - 1");
+    for _ in 1..n {
+        e = format!("2^({e}) - 1");
+    }
+    format!("q(k: int) = if k > 0 {{ {e} }} else {{ 0 }};\n")
+}
+
+#[test]
+fn a_tower_of_powers_under_a_test_scales() {
+    let made = scaling::inputs(64, |n| program(&narrowed_tower(n)));
+    scaling::check("checking a tower of n powers under a test", 64, |n| {
         let src = &made[&n];
         load(src.as_bytes()).unwrap_or_else(|e| panic!("{src}\n{e}"));
     });

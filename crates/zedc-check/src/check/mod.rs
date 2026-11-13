@@ -58,12 +58,11 @@ use zed_kernel::types::{Spell, Spelled, Type as KType, Universes, Verdict, defs}
 use zed_kernel::{Prim, Rat, Term, Universe, Value, eval};
 
 use zedc_base::rejection::Row;
-use zedc_int::int::Int;
 use zedc_lattice::interval::{
     End::{self, Fin, NegInf, PosInf},
     IntervalSet, Num, bit_word,
 };
-use zedc_lattice::revision::{Op, forward};
+use zedc_lattice::revision::{self, Op, forward};
 use zedc_preimage::images;
 use zedc_preimage::product::{Cause, Kept, Refused};
 use zedc_resolve::resolve::tables::Tables;
@@ -8743,7 +8742,6 @@ impl<'a> Ck<'_, 'a> {
             let v = eval(&Term::Prim(p, args.into_iter().map(Term::Lit).collect())).ok()?;
             matches!(v, Value::Int(_) | Value::Big(_)).then(|| Known::of(v))
         };
-        let nonnegative = IntervalSet::range(End::of(0), PosInf);
         match &e.kind {
             ExprKind::Int { radix, digits, .. } => Value::int_text(digits, *radix)
                 .ok()
@@ -8770,8 +8768,8 @@ impl<'a> Ck<'_, 'a> {
                 // An int power whose exponent may be below 0 is rejected at that power
                 // ([`Ck::exponent`], DESIGN.md L1.26, int ^ -k refused), so in a program the
                 // checker accepts the exponent of an int `^` is at least 0, and the power is read
-                // with its exponent's ints met with int[0..] (POW-nonneg-power): a base of
-                // int[1..] gives int[1..] for any such exponent, so `2^(2^k)` is accepted and
+                // at its exponent's ints met with int[0..] (POW-nonneg-power): a base of int[1..]
+                // gives int[1..] for any such exponent, so `2^(2^k)` is accepted and
                 // `3^(2^k - 1)` too, and only the inner `2^k` is rejected where `k` may be below
                 // 0; an exponent with no int at least 0 makes the power one that is rejected, with
                 // no int value, as a constant bit word outside its domain below. The same holds
@@ -8779,39 +8777,16 @@ impl<'a> Ck<'_, 'a> {
                 // ints are those of an int value only, and such a power has none.
                 //
                 // Complexity tradeoff: O(1) per node, from what the text gives of the base and
-                // the exponent, as for every node here. The naive method, the scope's forward
-                // evaluation of the power with the exponent's interval, is not available, since
-                // `zedc-preimage` evaluates `^` only at a constant exponent ([`super::arms`] reads
-                // `^` as opaque); and reading each power under the tests the walk is in would
-                // read a tower of `d` powers once at each of its `d` checks, O(d^2). The cost is
-                // precision: `(-2)^(2*k)` is read as any int, not as int[1..].
-                let n = n.ints.meet(&nonnegative);
-                let at_least_one = IntervalSet::range(End::of(1), PosInf);
-                let ints = match n.bounds() {
-                    None => IntervalSet::empty(),
-                    Some((Fin(lo), Fin(hi))) if lo == hi => {
-                        forward(&Op::Pow(Int::from(lo).into()), &x.ints, &x.ints)
-                    }
-                    // A base of at least b >= 1 to an exponent of at least k >= 0 is at least
-                    // b^k, which is read as 1 + k(b - 1) by Bernoulli's inequality,
-                    // (1 + x)^k >= 1 + kx: exact at k of 0 or 1, so `3^(2^k)` under `k >= 0` is
-                    // at least 3 and `2^(3^(2^k) - 3)` is accepted. (`2^(2^k - 2)` under `k > 0`
-                    // is still rejected: the text gives `k` no bound here, since a test's
-                    // narrowing is the scope's and does not reach inside `^`; plan row
-                    // POW-scope-exponent.) Computing b^k itself would be O(k log b) bits of
-                    // work for an exponent bound the program may make as large as it likes;
-                    // the bound here is one product, O(1) for words, at the cost of a lower
-                    // bound below b^k from k = 2 on.
-                    _ if x.ints.is_subset(&at_least_one) => match (x.ints.bounds(), n.bounds()) {
-                        (Some((Fin(b), _)), Some((Fin(k), _))) => {
-                            let lo = &Num::ONE + &(k * &(b - &Num::ONE));
-                            IntervalSet::range(Fin(lo), PosInf)
-                        }
-                        _ => at_least_one,
-                    },
-                    _ if x.ints.is_subset(&nonnegative) => nonnegative,
-                    _ => IntervalSet::top(),
-                };
+                // the exponent, as for every node here; [`revision::forward_pow`] reads the
+                // power at the corners of the two intervals, exact at any size through kept
+                // powers (`5^(2^k + 1)` under `k >= 0` is at least 25, so
+                // `2^(5^(2^k + 1) - 25)` is accepted). It replaces the lower bound by
+                // Bernoulli's inequality `b^k >= 1 + k(b - 1)` (POW-nonneg-power), the same
+                // order of work and below `b^k` from k = 2 on. A test's narrowing (`k > 0`)
+                // is the scope's: [`Ck::ints_here`] applies the same rule to the base and
+                // exponent read there (POW-scope-exponent). The cost is precision:
+                // `(-2)^(2*k)` is read as any int, not as int[1..].
+                let ints = revision::forward_pow(&x.ints, &n.ints);
                 Known { ints, value: None }
             }
             // A branch is read as either of its arms, whatever the condition, and a block that
