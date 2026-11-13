@@ -273,7 +273,6 @@ does not accept code that is wrong
   [4] 1:{outer_x} to 1:{outer_x}: `x` is int here
   [5] 1:3 to 1:8: `x` is declared `int`
   [6] 1:{outer} to 1:{outer_end}: repair: `if x >= 0 {{ 2 ^ x }} else {{ … }}`
-  [7] 1:{outer} to 1:{outer_end}: repair: `2r ^ x`
 ",
         outer_end = outer + 4,
     );

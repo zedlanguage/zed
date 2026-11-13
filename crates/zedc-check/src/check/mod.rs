@@ -1964,6 +1964,18 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// is at most the size of the graph of origins it walks. The walk keeps its own stack,
     /// since a chain of definitions can be as long as the program.
     fn derive_into(&self, spans: &[Span], out: &mut Vec<Note>) {
+        self.derive_narrowed(spans, &HashMap::new(), out);
+    }
+
+    /// [`Ck::derive_into`], with the type of each name of type `int` at a span of `narrowed`
+    /// shown as given there: its interval where a test the walk is in narrowed it, `k` as
+    /// int[0..] in the arm of `if k >= 0` (POW-nonneg-power).
+    fn derive_narrowed(
+        &self,
+        spans: &[Span],
+        narrowed: &HashMap<Span, String>,
+        out: &mut Vec<Note>,
+    ) {
         if self.trying {
             return;
         }
@@ -2013,6 +2025,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             let id = match src {
                 Src::Name(id) => {
                     let name = &self.t.res.binders[*id].name;
+                    let ty = match narrowed.get(&span) {
+                        Some(t) if ty == "int" => t.clone(),
+                        _ => ty,
+                    };
                     next.push(note(
                         span,
                         match self.defined_open(*id) {
@@ -5988,11 +6004,14 @@ pub(crate) struct Msg {
 /// A repair offered as a note of a rejected application, as "repair: write `rat(x)`; the
 /// checker accepts that", with the fix that writes it in the program's text and the span of
 /// the call that fix rewrites, which the headline shows whole: `rat(x) + y` for `x + y`, and
-/// `sum((rat(x), y))` for the `+` that `sum((x, y))` applies ([`Label::SumPlus`]).
+/// `sum((rat(x), y))` for the `+` that `sum((x, y))` applies ([`Label::SumPlus`]); and the
+/// words that follow the code in the headline, as ", and pass a float as `b` at each call"
+/// for a power's repair ([`Ck::power_rejects`]), most often none.
 struct NotedRepair {
     note: Note,
     at: Span,
     fix: Rewrite,
+    tail: String,
 }
 
 impl From<String> for Msg {
@@ -6060,11 +6079,12 @@ impl Msg {
             // headline"); none where the call takes more than one line. It is written here,
             // after the check, rather than when the error is found, so that a repair a later
             // check drops from the notes ([`Ck::fix_dropped`]) is not offered here either.
-            let first = (source.zip(self.noted.first())).and_then(|(s, r)| r.fix.within(s, r.at));
+            let first = (source.zip(self.noted.first()))
+                .and_then(|(s, r)| Some((r.fix.within(s, r.at)?, &r.tail)));
             let text = match (first, self.dropped) {
-                (Some(call), _) => {
+                (Some((call, tail)), _) => {
                     let head = self.text.strip_suffix('.').unwrap_or(&self.text);
-                    let text = shown(&format_args!("{head}. Try `{call}` instead."));
+                    let text = shown(&format_args!("{head}. Try `{call}` instead{tail}."));
                     text.unwrap_or_else(|_| self.text.clone())
                 }
                 (None, true) => {
@@ -8390,6 +8410,23 @@ fn int_op(o: BinaryOp) -> Option<(Op, Prim)> {
     }
 }
 
+/// The value of the block `e` when it only binds names and returns one value, as the arm `{ 2^k }`
+/// of an `if` or `{ q = k - 5; if q >= 0 { 2^q } else { 0 } }`; none for any other block, whose
+/// statements may run as a loop and change what its names hold.
+fn block_value(e: &Expr) -> Option<&Expr> {
+    let ExprKind::Block(stmts) = &e.kind else {
+        return None;
+    };
+    let (last, before) = stmts.split_last()?;
+    let binds = before
+        .iter()
+        .all(|s| matches!(s.kind, StmtKind::Bind { .. }));
+    match &last.kind {
+        StmtKind::Return(es) if binds && es.len() == 1 => Some(&es[0]),
+        _ => None,
+    }
+}
+
 impl<'a> Ck<'_, 'a> {
     /// What the text of `e` shows of its `int` value (see [`Known`]), from its literals, the
     /// names it uses, its integer operators and its calls of the bit words; any `int` for
@@ -8441,6 +8478,10 @@ impl<'a> Ck<'_, 'a> {
             ExprKind::Binary(o, a, b) if *o == BinaryOp::Pow || int_op(*o).is_some() => {
                 vec![&**a, &**b]
             }
+            ExprKind::If {
+                then, otherwise, ..
+            } => vec![&**then, &**otherwise],
+            ExprKind::Block(_) => block_value(e).into_iter().collect(),
             _ => self.bit_call(e).map_or_else(Vec::new, |(_, es)| es),
         }
     }
@@ -8553,17 +8594,51 @@ impl<'a> Ck<'_, 'a> {
                 if let (Some(x), Some(n)) = (&x.value, &n.value) {
                     return fold(Prim::Pow, vec![x.clone(), n.clone()]).unwrap_or_else(Known::top);
                 }
-                let ints = match n.ints.bounds() {
-                    Some((Fin(lo), Fin(hi))) if lo == hi && lo.signum() >= 0 => {
+                // An int power whose exponent may be below 0 is rejected at that power
+                // ([`Ck::exponent`], DESIGN.md L1.26, int ^ -k refused), so in a program the
+                // checker accepts the exponent of an int `^` is at least 0, and the power is read
+                // with its exponent's ints met with int[0..] (POW-nonneg-power): a base of
+                // int[1..] gives int[1..] for any such exponent, so `2^(2^k)` is accepted and
+                // `3^(2^k - 1)` too, and only the inner `2^k` is rejected where `k` may be below
+                // 0; an exponent with no int at least 0 makes the power one that is rejected, with
+                // no int value, as a constant bit word outside its domain below. The same holds
+                // where the program reads `x ^ n` as no int (`2r^k`, `x^k` with `x: f64`): these
+                // ints are those of an int value only, and such a power has none.
+                //
+                // Complexity tradeoff: O(1) per node, from what the text gives of the base and
+                // the exponent, as for every node here. The naive method, the scope's forward
+                // evaluation of the power with the exponent's interval, is not available, since
+                // `zedc-preimage` evaluates `^` only at a constant exponent ([`super::arms`] reads
+                // `^` as opaque); and reading each power under the tests the walk is in would
+                // read a tower of `d` powers once at each of its `d` checks, O(d^2). The cost is
+                // precision: `(-2)^(2*k)` is read as any int, not as int[1..].
+                let n = n.ints.meet(&nonnegative);
+                let at_least_one = IntervalSet::range(End::of(1), PosInf);
+                let ints = match n.bounds() {
+                    None => IntervalSet::empty(),
+                    Some((Fin(lo), Fin(hi))) if lo == hi => {
                         forward(&Op::Pow(Int::from(lo).into()), &x.ints, &x.ints)
                     }
-                    _ if x.ints.is_subset(&nonnegative) && n.ints.is_subset(&nonnegative) => {
-                        nonnegative
-                    }
+                    _ if x.ints.is_subset(&at_least_one) => at_least_one,
+                    _ if x.ints.is_subset(&nonnegative) => nonnegative,
                     _ => IntervalSet::top(),
                 };
                 Known { ints, value: None }
             }
+            // A branch is read as either of its arms, whatever the condition, and a block that
+            // only binds names as the value it returns (POW-nonneg-power): so a repair that tests
+            // an exponent, `if k >= 0 { 2^k } else { 0 }` or `{ q = k - 5; if q >= 0 { 2^q }
+            // else { 0 } }`, written as the exponent of another power, shows that exponent at
+            // least 0. O(1) per node, the join of two intervals; the arms are not read under the
+            // condition, which would need the scope of each arm (`Ck::ints_here`) and so a read
+            // per check above it.
+            ExprKind::If {
+                then, otherwise, ..
+            } => Known {
+                ints: self.memo(then).ints.join(&self.memo(otherwise).ints),
+                value: None,
+            },
+            ExprKind::Block(_) => block_value(e).map_or_else(Known::top, |v| self.memo(v)),
             ExprKind::Binary(o, a, b) => match int_op(*o) {
                 Some((o, p)) => {
                     let (a, b) = (self.memo(a), self.memo(b));

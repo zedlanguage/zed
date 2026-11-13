@@ -2692,6 +2692,10 @@ pub struct PowerUse {
     pub base_takes_float: bool,
     /// Whether the base is an `int`, which widens to a `rat` with no failure.
     pub base_int: bool,
+    /// The type variable of the base, if it has one alone, as a literal's class: the power's
+    /// value has the base's type, so a repair that makes it a `rat` or a float is checked
+    /// against the carriers that class may still take.
+    pub base_var: Option<Arc<str>>,
 }
 
 /// The ints a use takes, as `^`'s exponent and a bit word's operand do: those at least 0, and

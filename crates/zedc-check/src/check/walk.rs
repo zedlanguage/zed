@@ -5137,6 +5137,51 @@ impl<'a> Ck<'_, 'a> {
         (ints, changed)
     }
 
+    /// The interval of each name written in `e` that a test the walk is in narrows, by the
+    /// name's span, as `int[0..]` for `k` in the arm of `if k >= 0` (POW-nonneg-power), for the
+    /// derivation of a rejection of `e` ([`Ck::derive_narrowed`]). Read only for a rejection:
+    /// one [`Self::ints_here`] per name of `e`, O(m) reads for `m` names, against the one read of
+    /// `e` itself the check made; a name in a value a name of `e` is bound to is not read, since
+    /// its note stands where it is bound, where the tests here may not hold.
+    fn narrowed_names(&mut self, e: &'a Expr) -> HashMap<Span, String> {
+        let mut out = HashMap::new();
+        if self.trying || self.arms.here() == 0 {
+            return out;
+        }
+        let mut stack = vec![e];
+        while let Some(x) = stack.pop() {
+            match &x.kind {
+                ExprKind::Name(_) => {
+                    let (ints, narrowed) = self.ints_here(x);
+                    if narrowed {
+                        out.insert(x.span, format!("int{ints}"));
+                    }
+                }
+                ExprKind::Unary(_, a) => stack.push(a),
+                ExprKind::Binary(_, a, b) => stack.extend([&**a, &**b]),
+                ExprKind::If {
+                    cond,
+                    then,
+                    otherwise,
+                } => stack.extend([&**cond, &**then, &**otherwise]),
+                ExprKind::Block(stmts) => {
+                    for s in stmts {
+                        match &s.kind {
+                            StmtKind::Bind { value, .. } => stack.push(value),
+                            StmtKind::Return(es) => stack.extend(es),
+                            _ => {}
+                        }
+                    }
+                }
+                ExprKind::Call {
+                    positional, named, ..
+                } => stack.extend(positional.iter().chain(named.iter().map(|(_, a)| a))),
+                _ => {}
+            }
+        }
+        out
+    }
+
     /// The two nodes of the condition `e` checked here, where it holds and where it fails, with
     /// the products of its names taken from their types as they are here: a type an `is` has
     /// narrowed holds here, and may not where the scope is read.
@@ -7415,14 +7460,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             steps.extend(self.deciding_notes(e));
         }
         steps.extend(self.refused_notes(e));
-        steps.extend(self.derive(&[n.at.unwrap_or(span)]));
+        let shown_here = self.narrowed_names(e);
+        let mut derived = Vec::new();
+        self.derive_narrowed(&[n.at.unwrap_or(span)], &shown_here, &mut derived);
+        steps.extend(derived);
         let p =
             Arc::new(self.power_use(x, n, e, span, Some(shown.as_str().into()), negative, steps));
         if x_generic {
             self.power_vars(&x.ty, &p, x.at.unwrap_or(span));
         }
         if x_int {
-            let repairs = self.power_repairs(&p);
             let mut steps = p.steps.to_vec();
             let base = self.show(&Ty::set(&x.ty.set & &int));
             // A base that is no literal has its own derivation, as `x` defined as `2`.
@@ -7431,17 +7478,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             {
                 steps.extend(self.derive(&[xs]));
             }
-            let message = power_message(
-                (self.code(x.at), &base),
-                (self.code(n.at), &shown),
-                negative,
-                repairs.first(),
-            );
-            steps.extend(repairs.iter().map(|r| Note {
-                span,
-                text: repair_note(r),
-            }));
-            self.error_with(span, message, steps);
+            self.power_rejects(&p, (&base, &shown), steps, span);
         }
     }
 
@@ -7479,6 +7516,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             exponent_takes_float: n.lit.is_some() || !n.ty.vars.is_empty(),
             base_takes_float: !x.ty.vars.is_empty() || x.lit.is_some(),
             base_int: x.ty.numeric_carrier() == Some(Carrier::Int),
+            base_var: match (x.ty.vars.len(), x.ty.vars.first()) {
+                (1, Some(v)) => Some(v.clone()),
+                _ => None,
+            },
         }
     }
 
@@ -7538,28 +7579,132 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `note` says, may be `shown`: the exponent the `^` shows, or else `shown`, then the
     /// steps of the exponent's derivation, or else of the value at `span`, and the repairs.
     fn power_error(&mut self, p: &PowerUse, shown: &str, note: String, span: Span) {
-        let repairs = self.power_repairs(p);
         let mut notes = vec![Note { span, text: note }];
         match p.exponent {
             Some(_) => notes.extend(p.steps.iter().cloned()),
             None => self.derive_into(&[span], &mut notes),
         }
-        notes.extend(repairs.iter().map(|r| Note {
-            span,
-            text: repair_note(r),
-        }));
         // On the base, `shown` is the base's ints; on the exponent, the exponent's.
-        let (base, exponent) = match p.exponent.as_deref() {
-            Some(e) => (shown, e),
-            None => ("int", shown),
+        let (base, exponent) = match p.exponent.clone() {
+            Some(e) => (shown.to_string(), e.to_string()),
+            None => ("int".to_string(), shown.to_string()),
         };
-        let message = power_message(
+        self.power_rejects(p, (&base, &exponent), notes, span);
+    }
+
+    /// The error at `span` of the int power `p`, whose base and exponent show as `shown`, with
+    /// the notes `notes` and then its repairs ([`Self::power_repairs`]), the headline ending
+    /// with the first one still offered ([`Msg::noted`]). A repair on a `rat` or a float
+    /// changes the power's type, so it is checked where it is written ([`Self::power_swapped`]):
+    /// left out where that rejects it, as `2r^k` in the exponent of `2^(2^k)`, and otherwise
+    /// pending for the construct around it ([`Self::note_offered`]), which drops it where it
+    /// rejects a `rat` or a float in that place, as `n + 2r^k` for an int `n`.
+    ///
+    /// Complexity tradeoff: one check of a construct per repair that changes the type, at
+    /// most three, and only for a power that is rejected. The naive way, checking the whole
+    /// statement again with each repair written in, costs the statement per repair, and a
+    /// statement of n rejected powers O(n²); the construct's check costs its own operands'
+    /// types alone, which are already known. Not seen: a use of the power after the
+    /// construct that holds it, as a binding of it used as an int later, which the pending
+    /// fixes of every construct do not see either ([`Pending`]).
+    fn power_rejects(
+        &mut self,
+        p: &PowerUse,
+        shown: (&str, &str),
+        mut notes: Vec<Note>,
+        span: Span,
+    ) {
+        let (mut kept, mut dropped) = (Vec::new(), false);
+        for (r, swap) in self.power_repairs(p) {
+            let note = Note {
+                span,
+                text: repair_note(&r),
+            };
+            match swap.map(|s| self.power_swapped(p, s)) {
+                Some(Some(None)) => {
+                    dropped = true;
+                    continue;
+                }
+                Some(Some(got)) => self.note_offered(&note, got),
+                _ => {}
+            }
+            kept.push((r, note));
+        }
+        // With the program's text, the headline's repair is written when the check ends
+        // ([`Msg::written`]), so that one the construct around the power drops is not offered
+        // there either; each repair stands for the power at `p.at` rewritten whole. Without
+        // the text, the one repair is in words and the headline ends with it now.
+        let first = match self.t.text {
+            Some(_) => None,
+            None => kept.first().map(|(r, _)| r),
+        };
+        let noted = (kept.iter())
+            .filter(|_| first.is_none())
+            .filter_map(|((code, tail), note)| {
+                Some(NotedRepair {
+                    note: note.clone(),
+                    at: p.at,
+                    fix: Rewrite::new(&[(p.at, code)], &"", code)?,
+                    tail: tail.clone(),
+                })
+            })
+            .collect();
+        let (base, exponent) = shown;
+        let text = power_message(
             (self.code(p.base), base),
             (self.code(p.exponent_at), exponent),
             p.negative,
-            repairs.first(),
+            first,
         );
-        self.error_with(span, message, notes);
+        let no_repair = kept.is_empty();
+        notes.extend(kept.into_iter().map(|(_, note)| note));
+        let mut m = Msg::noted(text, noted);
+        // Every repair left out, the headline says that none is offered, as for a menu.
+        m.dropped = dropped && no_repair;
+        self.reject(None, span, m, notes);
+    }
+
+    /// Whether the repair of the int power `p` that writes a value of the carrier `c` as its
+    /// operand `i`, the base 0 or the exponent 1, checks where it is written: as
+    /// [`Self::written_with`] gives it, in the power itself where it is the construct being
+    /// checked ([`Self::written`]), or else in that construct where the power is one of its
+    /// operands, given the `rat` or float the repaired power is; `None` where it is neither, or
+    /// a repair is being tried. One check of the construct.
+    fn power_swapped(
+        &mut self,
+        p: &PowerUse,
+        (i, c): (usize, Carrier),
+    ) -> Option<Option<(Ty, Vec<Span>)>> {
+        if self.trying {
+            return None;
+        }
+        // A `rat` base to an int exponent gives a `rat`; a float anywhere gives a float.
+        let result = match (i, c) {
+            (0, Carrier::Rat) => Carrier::Rat,
+            _ => Carrier::F64,
+        };
+        let Some(w) = self.written.clone() else {
+            // The need of a literal's class is checked when the class takes its type, after
+            // the walk, with no construct being checked: the power's value has the base's
+            // class, whose carriers left then say whether every use of it takes the `rat` or
+            // the float, as `2r^-3` does not in `2^-3 + k` for an int `k`.
+            let r = self.class_root(p.base_var.as_deref()?)?;
+            return (self.classes[r].mask & result.bit() == 0).then_some(None);
+        };
+        if w.span == p.at && matches!(w.form, Construct::Binary(BinaryOp::Pow, _)) {
+            let at = [p.base, p.exponent_at][i];
+            let with = Arg {
+                at,
+                ..Arg::of(Ty::carrier(c))
+            };
+            return self.written_with(&w.form.what(), w.span, i, with);
+        }
+        let j = (w.args.iter()).position(|a| a.as_ref().and_then(|a| a.at) == Some(p.at))?;
+        let with = Arg {
+            at: Some(p.at),
+            ..Arg::of(Ty::carrier(result))
+        };
+        self.written_with(&w.form.what(), w.span, j, with)
     }
 
     /// The repairs of the int power `p`, whose exponent is not shown to be at least 0, each
@@ -7570,13 +7715,18 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// of a new name that holds it ([`fresh`]); and, last, on a `rat`, exact for an exponent
     /// of either sign, with an int base written `2r` for the literal `2` and `rat(x)` for
     /// anything else, a cast that cannot fail. No repair casts an int to a float: `f64(k)` may
-    /// fail, with `#inexact`. Without the program's text, the test in words.
-    fn power_repairs(&self, p: &PowerUse) -> Vec<Repair> {
+    /// fail, with `#inexact`. Without the program's text, the test in words. Each repair on a
+    /// `rat` or a float comes with the operand it rewrites, the base 0 or the exponent 1, and
+    /// the carrier it writes there, which [`Self::power_swapped`] checks.
+    fn power_repairs(&self, p: &PowerUse) -> Vec<(Repair, Option<(usize, Carrier)>)> {
         let (test, span) = (p.test, p.at);
         let words = || match test {
             true => vec![(
-                "if … >= 0 { … } else { … }".to_string(),
-                ", with the exponent tested and raised to inside the branch".to_string(),
+                (
+                    "if … >= 0 { … } else { … }".to_string(),
+                    ", with the exponent tested and raised to inside the branch".to_string(),
+                ),
+                None,
             )],
             false => Vec::new(),
         };
@@ -7616,10 +7766,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             None => String::new(),
         };
         match &param {
-            Some(b) if takes_float => out.push((format!("{b}: f64"), pass.clone())),
+            Some(b) if takes_float => {
+                out.push(((format!("{b}: f64"), pass.clone()), Some((0, Carrier::F64))));
+            }
             None if takes_float && int_literal(bt) => {
                 if let Some(p) = rewrite(&[(xs, &format!("{bt}.0f64"))]) {
-                    out.push((p, String::new()));
+                    out.push(((p, String::new()), Some((0, Carrier::F64))));
                 }
             }
             _ => {}
@@ -7628,13 +7780,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             && int_literal(et.strip_prefix('-').unwrap_or(et))
             && let Some(p) = rewrite(&[(ns, &format!("{et}.0"))])
         {
-            out.push((p, pass));
+            out.push(((p, pass), Some((1, Carrier::F64))));
         }
         if test {
             match &p.tested {
                 Some(k) => out.push((
-                    format!("if {k} >= 0 {{ {power} }} else {{ … }}"),
-                    String::new(),
+                    (
+                        format!("if {k} >= 0 {{ {power} }} else {{ … }}"),
+                        String::new(),
+                    ),
+                    None,
                 )),
                 None => {
                     // `exponent = exponent - 1` would define the name in terms of itself.
@@ -7642,8 +7797,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                     if let Some(p) = rewrite(&[(ns, &q)]) {
                         let et = unparen(et);
                         out.push((
-                            format!("{q} = {et}; if {q} >= 0 {{ {p} }} else {{ … }}"),
-                            String::new(),
+                            (
+                                format!("{q} = {et}; if {q} >= 0 {{ {p} }} else {{ … }}"),
+                                String::new(),
+                            ),
+                            None,
                         ));
                     }
                 }
@@ -7659,7 +7817,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 false => format!("rat({})", unparen(bt)),
             };
             if let Some(p) = rewrite(&[(xs, &base)]) {
-                out.push((p, String::new()));
+                out.push(((p, String::new()), Some((0, Carrier::Rat))));
             }
         }
         out
@@ -11646,6 +11804,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                             note,
                             at: call,
                             fix,
+                            tail: String::new(),
                         });
                     }
                     notes.push(r.note);
