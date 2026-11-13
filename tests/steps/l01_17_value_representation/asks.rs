@@ -186,9 +186,10 @@ fn reading_a_long_number_from_a_string_is_refused_when_memory_is_short() {
     }
 }
 
-/// [`three_primes`], `3^k + 7^k`, `(2^s - 1)^7`, the text of `2^s + 1`, and the reading of
-/// `n` nines and of `n/2` nines over `10^(n/2 - 1)`, each under a limit of its ask and 64 MiB
-/// more: each is answered, and equal to the value num-bigint builds.
+/// [`three_primes`], `3^k + 7^k`, the order of `3^k + 1` and `3^k`, `(2^s - 1)^7`, the text
+/// of `2^s + 1`, and the reading of `n` nines and of `n/2` nines over `10^(n/2 - 1)`, each
+/// under a limit of its ask and 64 MiB more: each is answered, and equal to the value
+/// num-bigint builds.
 #[test]
 fn kept_powers_sums_powers_texts_and_readings_are_exact_when_their_ask_is_given() {
     if !in_child("kept_powers_sums_powers_texts_and_readings_are_exact_when_their_ask_is_given") {
@@ -205,6 +206,7 @@ fn kept_powers_sums_powers_texts_and_readings_are_exact_when_their_ask_is_given(
     let ratio = format!("{half}/{tens}");
     let (a, b, wide, x) = (three_primes(k), kept(3, k), below(s), above(s));
     let (c, big) = (kept(7, k), Value::integer(x));
+    let close = Rat::int(power(3, k) + 1u32);
     let ask: u64 = [9 * k + 1, 3 * k + 3, 7 * s, print_ask(s)]
         .into_iter()
         .chain([6 * n as u64])
@@ -212,6 +214,8 @@ fn kept_powers_sums_powers_texts_and_readings_are_exact_when_their_ask_is_given(
         .expect("five asks");
     lower_limit_by(ask + (64 << 20));
     assert!(a.to_integer().expect("given") == product);
+    assert_eq!(close.try_cmp(&b), Ok(std::cmp::Ordering::Greater));
+    assert_eq!(close.cmp(&b), std::cmp::Ordering::Greater);
     assert!(b.add(&c).and_then(|r| r.to_integer()).expect("given") == sum);
     let built = wide.pow(&BigUint::from(7u32)).and_then(|r| r.to_integer());
     assert!(built.expect("given") == seventh);

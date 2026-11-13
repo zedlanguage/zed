@@ -175,3 +175,47 @@ fn zedc_run_reports_a_misplaced_argument_once_with_the_declaration() {
         bad.stderr
     );
 }
+
+/// Item NUM-huge-div: a misplaced argument is the one error of an expression around the call.
+/// The checker gives the rejected call no value, and an application that then refuses it,
+/// directly, through an operation that passes the empty type on, or through a name defined as
+/// the call, reports nothing more: it would print the call's type as `Never`, a type the
+/// program never has. A call that fits still has its application refused, with its type.
+#[test]
+fn a_misplaced_argument_is_the_one_error_of_the_expressions_around_it() {
+    let named = "this argument is passed by position, and the parameter it reaches, `x` of `dbl`, is a named parameter, which a call passes only by name, as `x: …`. [3]";
+    for call in [
+        "y = dbl(3) + \"a\";",
+        "y = \"a\" + dbl(3);",
+        "y = dbl(3) + 1.5f64 + \"a\";",
+        "y = (dbl(3) + 1) * \"a\";",
+        "z = dbl(3);\ny = z + \"a\";",
+    ] {
+        let text = format!("{DECLS}{call}\n");
+        assert_eq!(type_errors(&text), vec![named.to_string()], "{call}");
+    }
+    let text = format!("{DECLS}y = add(1, 2) + \"a\";\n");
+    let found = type_errors(&text);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(
+        found[0].starts_with("`+` does not take (int, \"a\")"),
+        "{found:?}"
+    );
+}
+
+/// Item NUM-huge-div: n misplaced arguments, each in an operation and in a name read once more,
+/// give their n errors and no more in linear time: an application of an argument with no value
+/// asks one set of spans, once per argument.
+#[test]
+fn many_misplaced_arguments_in_operations_check_in_linear_time() {
+    let units = super::scaling::resolved(40, |n| {
+        let mut text = DECLS.to_string();
+        text.extend((0..n).map(|i| {
+            format!("y{i} = (dbl(3) + 1) * \"a\";\nz{i} = dbl(3);\nw{i} = z{i} + \"a\";\n")
+        }));
+        text
+    });
+    zed_tests::scaling::check("n misplaced arguments in operations", 40, |n| {
+        assert_eq!(units[&n].check().errors.len(), 2 * n);
+    });
+}

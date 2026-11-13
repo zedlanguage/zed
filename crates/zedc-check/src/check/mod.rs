@@ -981,6 +981,15 @@ struct Class {
     /// compute, not only the literals that joined it ([`Ck::resolve_top_parts`]). A literal's
     /// own join does not ask. Of a merged class, whether either was.
     asked: bool,
+    /// Whether a use asked it for float formats alone, as `sqrt` does (its mask, of the
+    /// numeric carriers, holds `f32` or `f64` and nothing else), whether or not that removed a
+    /// carrier. Of a merged class, whether either was. Only then do integer literals that
+    /// nothing else gives a carrier take `f64` ([`floats_take_f64`]): carriers narrowed to the
+    /// float formats by uses that each take another carrier too, as `^` (`int | f32 | f64`
+    /// with an exponent in the base's class) and `/` (`f32 | f64 | rat`) do in
+    /// `2^(1 + 1) / 3`, leave a `/` of integer literals alone, which is rejected as at the top
+    /// level (DESIGN.md sec:domains).
+    floats: bool,
     /// Whether it is what a use of another class's values gives, as `args[k]` is in the body
     /// of `r(fs, args, k)`: at a call it may hold any atom, and a test narrows it by a need
     /// ([`Ck::narrowed`]). Of a merged class, whether both were. A parameter's class is not:
@@ -1114,6 +1123,14 @@ struct Ck<'t, 'a> {
     opened: bool,
     /// Whether a repair is being tried, so its errors offer none.
     trying: bool,
+    /// The span of each call whose arguments do not fit its function, outside a trial, and of
+    /// each application whose value is the empty type it took from one: the checker gives
+    /// such a call no value, and an application that refuses an argument from one of them
+    /// reports nothing, since the call's error is the program's one mistake there and the
+    /// argument's type, `Never`, says only that the checker gave it none
+    /// ([`Self::follows_error`]). An application refused for its own types stays out: a read
+    /// of `q` after the rejected `q = (1 + 2) / (3 + 4)` is reported with its own steps.
+    failed: HashSet<Span>,
     /// Whether a repair's rewritten call is being tried ([`Ck::repaired`]), so a decimal
     /// literal at `rat` takes the type `rat` and its digits are not read ([`adopted`]).
     rough: bool,
@@ -1385,6 +1402,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             defaults: HashMap::new(),
             next_found: 0,
             opened: false,
+            failed: HashSet::new(),
             trying: false,
             rough: false,
             lines_out: HashSet::new(),
@@ -2767,6 +2785,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             binder: None,
             generic: false,
             asked: false,
+            floats: false,
             given: false,
             narrowed_to: Vec::new(),
             narrows: false,
@@ -2880,6 +2899,15 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// [`Self::restrict`], which asks the class for a carrier if `asks`.
     fn restrict_asking(&mut self, k: usize, mask: u8, what: &str, span: Span, asks: bool) -> bool {
         let r = self.find(k);
+        // Complexity tradeoff: one test of the mask and one flag per use, O(1); the flag is
+        // kept on the class, as `asked` is, so a resolve reads it in O(1) and no use is walked
+        // again to learn whether a float-only word asked the class.
+        let floats = Carrier::F64.bit() | Carrier::F32.bit();
+        let numbers = mask & Carrier::NUMBER_BITS;
+        if numbers != 0 && numbers & !floats == 0 && !self.classes[r].floats {
+            self.touch(r);
+            self.classes[r].floats = true;
+        }
         let m = self.classes[r].mask & mask;
         if m == self.classes[r].mask {
             if asks && !self.classes[r].asked {
@@ -3046,15 +3074,22 @@ impl<'t, 'a> Ck<'t, 'a> {
         // class may be one, and otherwise, as for a decimal literal or a `/` of integer
         // literals, nothing chooses among the carriers left, and the first decimal literal,
         // or else the first literal, is rejected (steps L1.26a and L1.26b), unless the carriers
-        // left are float formats alone, `f64` among them, which take `f64` ([`floats_take_f64`]).
+        // left are float formats alone, `f64` among them, which take `f64` ([`floats_take_f64`]),
+        // and a decimal literal or a use of float formats alone left them ([`Class::floats`]):
+        // `2^(1 + 1) / 3` is rejected, as it is at the top level, and not read at `f64`.
         let left: Vec<Carrier> = Carrier::of_mask(mask).filter(|c| c.numeric()).collect();
+        let decimal = lits.iter().any(|(l, _)| is_decimal(&l.value));
         if numeric.is_some()
             && mask & Carrier::Int.bit() == 0
             && left.len() > 1
-            && !floats_take_f64(&left)
+            && !(floats_take_f64(&left) && (decimal || self.classes[r].floats))
         {
             let mut joined = lits.iter().filter(|(_, follows)| !follows).map(|(l, _)| l);
-            let first = joined.clone().next();
+            // The first in the text: merges join a class's literals in no order the program
+            // shows, and in `2^(1 + 1) / 3` the exponent's class is made first.
+            // Complexity tradeoff: one pass over the class's literals, as the `find` below
+            // makes, and only when the class is rejected.
+            let first = joined.clone().min_by_key(|l| l.site.start);
             if let Some(l) = joined.find(|l| is_decimal(&l.value)).or(first) {
                 let notes = self.derive(&[l.site]);
                 let m = unfixed(l, &left);
@@ -4580,7 +4615,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 [c, ..] => {
                     let decimal = lits.iter().any(|l| is_decimal(&l.value));
                     if !decimal
-                        && !floats_take_f64(&takes)
+                        && !(floats_take_f64(&takes) && self.classes[r].floats)
                         && let Some(l) = lits.first()
                     {
                         let notes = self.derive(&[l.site]);
@@ -6628,6 +6663,16 @@ fn rat_step(p: Prim, x: Option<RatFact>, y: Option<RatFact>) -> Option<RatFact> 
             let square = matches!(x, RatFact::Value(_));
             x.range()?.pow(&k, square).map(RatFact::Range)
         }
+        // An exponent the text does not give as a literal, as `2^100 - 1` in
+        // `2r^2^100 / 2r^(2^100 - 1)`: a power of a base that is no zero is no zero, whatever
+        // its `int` exponent, which is all a `/` by it needs. Its sign and size are not known.
+        // Complexity tradeoff: O(1), no bound of the power is computed, so an exponent such as
+        // `2^100 - 1` costs nothing here; a range with bounds would need the exponent's value.
+        (Prim::Pow, Some(x), None) if x.nonzero() => Some(RatFact::Range(RatRange {
+            lo: None,
+            hi: None,
+            nonzero: true,
+        })),
         (Prim::Div, Some(x), Some(y)) if y.nonzero() => {
             let x = x.range()?;
             let q = x.mul(&y.range()?.inverse()?)?;

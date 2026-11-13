@@ -4273,6 +4273,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                     None => self.error_with(at, message, menu.collect()),
                 }
             }
+            if !self.trying {
+                self.failed.insert(span);
+            }
             return m.ty(Ty::empty());
         }
         // The first misfit, the one elaboration would report first, explains the refusal.
@@ -6329,6 +6332,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let binder = self.classes[child].binder.clone();
         let generic = self.classes[child].generic;
         let asked = self.classes[child].asked;
+        let floats = self.classes[child].floats;
         let given = self.classes[child].given;
         let narrowed_to = std::mem::take(&mut self.classes[child].narrowed_to);
         let narrows = self.classes[child].narrows;
@@ -6338,6 +6342,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         c.size += size;
         c.generic &= generic;
         c.asked |= asked;
+        c.floats |= floats;
         // Its values are no longer those of one `min` or `max` use only.
         c.order_of = None;
         c.given &= given;
@@ -11080,6 +11085,34 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.apply_demanding(what, sig, args, pass, demand, span)
     }
 
+    /// Whether an application refused here follows an error already reported, outside a
+    /// trial: an argument has no value and is a call whose arguments do not fit, or an
+    /// application that took its empty type from one ([`Ck::failed`]). `f(true) + "a"`, with
+    /// `f(b: bool) = 7` called by position, has the one error of the call, and no second one
+    /// saying that `+` does not take `(Never, "a")`, where `Never` says only that the checker
+    /// gave the call no value.
+    ///
+    /// Complexity tradeoff: one lookup in a hash set per argument, only when the application
+    /// is refused or gives the empty type, O(arguments). The naive way, a search of the errors
+    /// reported for one inside each argument's text, is O(errors) per refused application and
+    /// O(n²) over a line of n refused operations; the set holds one span per misfit call and
+    /// per application its empty type flows into. A name defined as such a call, `y` after
+    /// `y = f(true)`, is followed to its definition by one more lookup.
+    fn follows_error(&self, args: &[Option<Arg<'a>>]) -> bool {
+        let failed = |e: &Expr| {
+            self.failed.contains(&e.span)
+                || match self.seen.get(&e.span) {
+                    Some((_, Src::Name(id))) => self.whence.get(id).is_some_and(|o| {
+                        matches!(o.why, Why::Defined(_))
+                            && o.from.is_some_and(|f| self.failed.contains(&f))
+                    }),
+                    _ => false,
+                }
+        };
+        !self.trying
+            && (args.iter().flatten()).any(|a| a.ty.is_empty() && a.expr.is_some_and(failed))
+    }
+
     /// [`Self::apply`], the arguments the call needs the values of given by `demand`.
     fn apply_demanding(
         &mut self,
@@ -11220,7 +11253,21 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.literals_refused(what, sig, &args, std::mem::take(&mut refused), pass, span);
         }
         match r {
-            Ok((t, kept)) => (out.union(&t), kept),
+            Ok((t, kept)) => {
+                let t = out.union(&t);
+                // `f(true) + 1.5f64` takes the `Never` of the rejected call and gives it.
+                if t.is_empty() && self.follows_error(&args) {
+                    self.failed.insert(span);
+                }
+                (t, kept)
+            }
+            Err(_) if self.follows_error(&args) => {
+                self.applied = None;
+                if out.is_empty() {
+                    self.failed.insert(span);
+                }
+                (out, Vec::new())
+            }
             Err(message) => {
                 self.applied = None;
                 refused.sort_by_key(|(s, _)| (s.start, s.end));

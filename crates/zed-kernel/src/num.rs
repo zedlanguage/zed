@@ -1733,8 +1733,9 @@ impl Rat {
         self.order(other, true)
     }
 
-    /// The order by value; when `check`, [`TooLarge`] as for [`Rat::try_cmp`], and otherwise
-    /// the build is not checked.
+    /// The order by value; [`TooLarge`] as for [`Rat::try_cmp`]. When not `check`, the copies of
+    /// the coefficients it multiplies, of the size of values already held, are not asked for;
+    /// the bounds and the build of two powers ([`bound::cmp`]) always are.
     fn order(&self, other: &Rat, check: bool) -> Result<Ordering, TooLarge> {
         if self.is_plain() && other.is_plain() && self.den.is_one() && other.den.is_one() {
             return Ok(self.num.cmp(&other.num));
@@ -1785,7 +1786,10 @@ impl Rat {
                     pows: pows(Sign::Minus),
                     coef: d,
                 };
-                bound::cmp(&up, &down, check)?
+                // Complexity tradeoff: each round of bounds and the build ask for their memory
+                // with or without a `Watch`, one allocation of the size asked, O(1) beside the
+                // round itself (NUM-huge-div); see [`bound::cmp`].
+                bound::cmp(&up, &down)?
             }
         })
     }
@@ -1826,15 +1830,17 @@ impl PartialEq for Rat {
 
 impl Eq for Rat {}
 
-/// The order by value. Under a `Watch`, a pair the system refuses the memory to order is
-/// recorded for `refused` and given the order of their normal forms, and the run stops at
-/// its next step; with no watch, the build is not checked.
+/// The order by value. A pair the system refuses the memory to order is given the order of
+/// their normal forms; under a `Watch` it is recorded for `refused`, and the run stops at its
+/// next step.
 impl Ord for Rat {
     fn cmp(&self, other: &Self) -> Ordering {
         match self.order(other, WATCHED.get()) {
             Ok(o) => o,
             Err(e) => {
-                record(Test::Order, e);
+                if WATCHED.get() {
+                    record(Test::Order, e);
+                }
                 self.form_cmp(other)
             }
         }

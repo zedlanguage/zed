@@ -7,7 +7,7 @@
 
 use super::fixes::{checked, pairs};
 use zed_tests::step_helpers::l01_16_elaboration::value;
-use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+use zed_tests::step_helpers::l01_26_type_resolution::{sig, type_errors};
 
 /// The value of `y` in `src`, which the checker accepts.
 fn y(src: &str) -> String {
@@ -185,4 +185,73 @@ fn a_menu_writes_the_exponent_of_a_power_that_its_carrier_does_not_reach() {
     );
     assert_eq!(y("y = f64(0xFF) / 2 ^ 2;\n"), "63.75");
     assert_eq!(y("y = rat(0xFF) / 2 ^ 2;\n"), "255r/4r");
+}
+
+/// Item NUM-huge-div: in a body, an exponent that is an operation on literals joins its base's
+/// literals, `^` narrows them to `int | f32 | f64` and `/` to `f32 | f64`, and they used to
+/// take `f64` there as the literal of a float-only word does, so `2 ^ 2 ^ 100 / 3` gave `inf`
+/// and `2 ^ 2 ^ 100 / 2 ^ (2 ^ 100 - 1)` gave `nan`. DESIGN.md sec:domains: "an operation on
+/// literals alone ... takes the carrier of what it meets", and nothing gives these one, so
+/// each is rejected, as at the top level, with the carrier written at its first literal.
+#[test]
+fn a_division_of_literal_powers_in_a_body_is_rejected_and_not_read_at_f64() {
+    for (body, fix) in [
+        ("2 ^ (1 + 1) / 3", "2.0f64 ^ (1 + 1) / 3"),
+        ("2 ^ 2 ^ 10 / 3", "2.0f64 ^ 2 ^ 10 / 3"),
+        ("2 ^ 2 ^ 100 / 3", "2.0f64 ^ 2 ^ 100 / 3"),
+        (
+            "2 ^ 2 ^ 100 / 2 ^ (2 ^ 100 - 1)",
+            "2.0f64 ^ 2 ^ 100 / 2 ^ (2 ^ 100 - 1)",
+        ),
+    ] {
+        let src = format!("h(positional c: bool) = {body};\n");
+        assert_eq!(
+            first(&src),
+            format!(
+                "Nothing gives the literal `2` a carrier of `f32 | f64`. \
+                 Try `h(positional c: bool) = {fix}` instead."
+            ),
+            "{src}"
+        );
+    }
+    // A word that takes float formats alone still gives its literals `f64` (`sqrt(2)`), with
+    // an operation on them as its argument, and a decimal literal still does.
+    let at = |body: &str| y(&format!("h(positional c: bool) = {body};\ny = h(true);\n"));
+    assert_eq!(at("sqrt(2)"), "1.4142135623730951");
+    assert_eq!(at("sqrt(2 ^ (1 + 1) / 3)"), "1.1547005383792515");
+    assert_eq!(at("2 ^ -1.0 / 3"), "0.16666666666666666");
+    // The fix the menu offers is the `f64` arithmetic it names.
+    assert_eq!(at("2.0f64 ^ (1 + 1) / 3"), "1.3333333333333333");
+    // With nothing to divide, the power is the `int` one.
+    assert_eq!(at("2 ^ (1 + 1)"), "4");
+}
+
+/// Item NUM-huge-div: at `rat` a power is kept as its prime's exponent, so the quotient of two
+/// powers of `2r` whose exponents are past any memory is divided in that form and is exact:
+/// `2r`. A power of a base that is no zero is no zero whatever its `int` exponent, so a `/` by
+/// one gives no `#divByZero` where the exponent is an operation, as `2 ^ 62 - 1` is.
+#[test]
+fn a_quotient_of_rat_powers_is_exact_in_the_power_form() {
+    for body in [
+        "2r ^ (2 ^ 62) / 2r ^ (2 ^ 62 - 1)",
+        "2r ^ 2 ^ 100 / 2r ^ (2 ^ 100 - 1)",
+        "1r / 2r ^ (1 + 1)",
+        "1r / (-3r) ^ (2 - 3)",
+    ] {
+        let src = format!("h(positional c: bool) = {body};\n");
+        assert_eq!(sig(&src, "h"), "(bool) -> rat", "{body}");
+    }
+    // A base that may be zero still may give `#divByZero`.
+    assert_eq!(
+        sig("h(positional c: bool) = 1r / 0r ^ (1 + 1);\n", "h"),
+        "(bool) -> rat | #divByZero"
+    );
+    assert_eq!(y("y = 2r ^ (2 ^ 62) / 2r ^ (2 ^ 62 - 1);\n"), "2r");
+    assert_eq!(
+        y("h(positional c: bool) = 2r ^ (2 ^ 62) / 2r ^ (2 ^ 62 - 1);\ny = h(true);\n"),
+        "2r"
+    );
+    assert_eq!(y("y = 2r ^ (2 ^ 62) > 2r ^ (2 ^ 62 - 1);\n"), "true");
+    assert_eq!(y("y = 1r / 2r ^ (1 + 1);\n"), "1r/4r");
+    assert_eq!(y("y = 1r / (-3r) ^ (2 - 3);\n"), "-3r");
 }

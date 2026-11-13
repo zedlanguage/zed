@@ -114,6 +114,26 @@ fn ordering_numbers_that_agree_in_many_bits_is_refused_when_memory_is_short() {
     );
 }
 
+/// Item NUM-huge-div: the same two numbers ordered by `Rat`'s own `try_cmp` and `Ord`, with no
+/// `Watch`. `try_cmp` is refused; `Ord` gives the order of the normal forms, records nothing,
+/// and does not abort, where its bounds and the build of `2^n` asked for no memory with no
+/// `Watch` and the process aborted.
+#[test]
+fn ordering_with_no_watch_is_refused_when_memory_is_short() {
+    if !in_child("ordering_with_no_watch_is_refused_when_memory_is_short") {
+        return;
+    }
+    let a = built_above(WIDE);
+    let b = two_to(WIDE);
+    lower_limit();
+    assert!(a.try_cmp(&b).is_err());
+    assert!(b.try_cmp(&a).is_err());
+    let _ = a.cmp(&b);
+    let _ = b.cmp(&a);
+    // Numbers apart in their leading bits still order at once.
+    assert_eq!(two_to(WIDE - 1).cmp(&a), std::cmp::Ordering::Less);
+}
+
 /// Two plain rationals of `2^30`-bit numerators are ordered by cross-multiplying, which needs
 /// a product wider than the memory left.
 #[test]

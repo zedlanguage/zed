@@ -287,10 +287,14 @@ fn start(n: &Product<'_>, d: &Product<'_>) -> u64 {
     64 + n.exp_bits().max(d.exp_bits())
 }
 
-/// The order of two positive products. When `check`, the system is asked for the memory of
-/// each precision before it is tried, `8k` bits for what a round holds at once (four `k`-bit
-/// bounds and the `2k`-bit product of two, with room to spare), and for the two products in full before they are built; [`TooLarge`] when it refuses.
-pub(super) fn cmp(n: &Product<'_>, d: &Product<'_>, check: bool) -> Result<Ordering, TooLarge> {
+/// The order of two positive products. The system is asked for the memory of each precision
+/// before it is tried, `8k` bits for what a round holds at once (four `k`-bit bounds and the
+/// `2k`-bit product of two, with room to spare), and for the two products in full before they
+/// are built; [`TooLarge`] when it refuses. This holds for every caller, the [`Ord`] of `Rat`
+/// with no `Watch` and `Rat::integer_text` among them: a pair close enough to reach a
+/// precision, or a build, past the free memory is refused and not built, where the build with
+/// no ask aborted the process (NUM-huge-div).
+pub(super) fn cmp(n: &Product<'_>, d: &Product<'_>) -> Result<Ordering, TooLarge> {
     // Complexity tradeoff (LIT-power-values): the order is tried first from the bit lengths in
     // exact integer arithmetic ([`by_bit_length`]), then from `log2` of each side in `f64` with
     // a proved error bound ([`by_logs`]), each O(terms) word operations for exponents of a
@@ -314,15 +318,15 @@ pub(super) fn cmp(n: &Product<'_>, d: &Product<'_>, check: bool) -> Result<Order
         // `close_products_compare_exactly` (COMPLEXITY.md K30). A complete solution would bound
         // `|log N - log D|` from below by Baker's theorem on linear forms in logarithms and
         // stop at the precision it names, which is polynomial in the exponents' bits.
+        // Complexity tradeoff: each ask is one allocation of the size asked, given and freed
+        // at once (`room`), O(1) beside the round or the build it comes before, which costs
+        // at least its size; the alternative of asking only under a `Watch` left an unwatched
+        // comparison to abort the process on a precision or a build the system cannot give.
         if BigUint::from(k) >= cost {
-            if check {
-                room(cost)?;
-            }
+            room(cost)?;
             return Ok(n.materialize()?.cmp(&d.materialize()?));
         }
-        if check {
-            room(BigUint::from(k) << 3u32)?;
-        }
+        room(BigUint::from(k) << 3u32)?;
         let (nl, nu) = (n.bound(k, false), n.bound(k, true));
         let (dl, du) = (d.bound(k, false), d.bound(k, true));
         if nl.cmp(&du) == Ordering::Greater {
@@ -532,7 +536,7 @@ mod tests {
         assert_eq!(by_bit_length(&a, &b), None);
         assert_eq!(by_logs(&a, &b, 1.0), Some(Ordering::Less));
         assert_eq!(by_logs(&b, &a, 1.0), Some(Ordering::Greater));
-        assert_eq!(cmp(&a, &b, false), Ok(Ordering::Less));
+        assert_eq!(cmp(&a, &b), Ok(Ordering::Less));
     }
 
     /// `2^16785921` and `3^10590737`, from a convergent of `log2 3`: their `log2` differ by
@@ -548,8 +552,8 @@ mod tests {
             BigUint::parse_bytes(b"15849625007211561814537389439478165087598", 10).expect("digits");
         let expected =
             (BigUint::from(p) * BigUint::from(10u32).pow(40u32)).cmp(&(BigUint::from(q) * log2_3));
-        assert_eq!(cmp(&a, &b, false), Ok(expected));
-        assert_eq!(cmp(&b, &a, false), Ok(expected.reverse()));
+        assert_eq!(cmp(&a, &b), Ok(expected));
+        assert_eq!(cmp(&b, &a), Ok(expected.reverse()));
     }
 
     /// `3^1000 + 1` and `3^1000 - 1` against `3^1000`: the f64 check leaves both, which agree
@@ -566,7 +570,7 @@ mod tests {
             let below = product(&x - 1u32, &[]);
             for (side, truth) in [(&above, Ordering::Greater), (&below, Ordering::Less)] {
                 assert_eq!(by_logs(side, &pow, 1.0), None);
-                assert_eq!(cmp(side, &pow, false), Ok(truth));
+                assert_eq!(cmp(side, &pow), Ok(truth));
                 if by_logs(side, &pow, 0.0).is_some_and(|o| o != truth) {
                     wrong += 1;
                 }
