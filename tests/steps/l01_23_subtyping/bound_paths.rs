@@ -19,12 +19,24 @@ const BAD: &str = "in a function type `L .. U -> V`, every function the guarante
                    and in this one the guarantee allows functions the permission does not. To \
                    repair it, narrow the type left of `..`, or widen the type right of it.";
 
-/// The diagnostics of `src` through `zedc::run::load`, one per line.
+/// The diagnostics of `src` through `zedc::run::load`, one per message: its first line, with
+/// the indented lines after it, as the reason a refused check gives.
 fn through_load(src: &str) -> Vec<String> {
-    match zedc::run::load(src.as_bytes()) {
+    let e = match zedc::run::load(src.as_bytes()) {
         Ok(_) => panic!("accepted:\n{src}"),
-        Err(e) => e.lines().map(str::to_string).collect(),
+        Err(e) => e,
+    };
+    let mut out: Vec<String> = Vec::new();
+    for line in e.lines() {
+        match out.last_mut() {
+            Some(m) if line.starts_with("  ") => {
+                m.push('\n');
+                m.push_str(line);
+            }
+            _ => out.push(line.to_string()),
+        }
     }
+    out
 }
 
 /// The type errors of `src` through `zedc::check::walk::check`, as `line:col: message`.
@@ -101,9 +113,8 @@ fn a_parameter_whose_morphism_bound_check_was_refused_says_why() {
     rejected_everywhere(
         src,
         &[format!(
-            "1:6: {BOUND}and the checker could not show that this one's guarantee is within its \
-             permission; this is not proved wrong: the checker could not decide whether it fits, \
-             because {}{REPAIR}",
+            "1:6: {BOUND}and the checker could not decide whether this one's guarantee is within \
+             its permission, so it is not proved wrong{REPAIR}\n  because {}",
             Refusal::MorphismSplit.message()
         )],
     );
@@ -139,7 +150,7 @@ fn the_bound_walk_scales_linearly() {
 fn an_old_output_port_is_refused_before_its_bound_is_read() {
     assert_eq!(
         through_load("main() -> (out: #a .. #b -> int) {\n  out <- \"x\";\n}\n"),
-        [
+        [[
             "1:11: Result of `main` that is not an `int`: `(out: #a .. #b -> int)`. Try `int` \
              instead.",
             "  [1] 1:11: `main` gives an `int`, the program's exit status, 0 for success; a body \
@@ -149,6 +160,7 @@ fn an_old_output_port_is_refused_before_its_bound_is_read() {
             "  [2] 1:11: the program writes lines with a push to `m.stdout`, as \
              `m.stdout <- lines;`, with `main(m: MainArgs)`"
         ]
+        .join("\n")]
     );
     assert_eq!(
         through_load("f() -> (out: #a .. #b -> int) { 0 }\nmain() = 0;\n"),

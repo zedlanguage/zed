@@ -271,7 +271,7 @@ fn the_checker_says_when_a_check_was_refused() {
     assert_eq!(
         lists.refused(&covered),
         format!(
-            "; this is not proved wrong: the checker could not decide whether it fits, because {}\n  \
+            "; the checker could not decide this, so it is not proved wrong\n  because {}\n  \
              the check reads the recursive type `L`, defined by:\n    \
              type L = #nil | #cons(int, L);",
             Refusal::Residues.message()
@@ -338,14 +338,24 @@ fn a_call_whose_check_was_refused_says_why() {
     // use. Item MSG-type-defs-layout: the definition stands on a line of its own after the
     // sentence, which names the part `T1`; before, the sentence read
     // `` `g` does not take (type T1 = #a | #b | #c; (T1, T1, T1)) ``.
+    // Item TESTS-L1.23-refusal-text: a refused check is no proof that `g` does not take the
+    // argument, so the headline says that the checker could not decide it, and the reason, with
+    // its repair, stands on the line after it. Before, the one sentence read `` `g` does not
+    // take ((T1, T1, T1)); this is not proved wrong: the checker could not decide whether it
+    // fits, because one part of the tuple types involved is decided only by ... ``.
     let shown = "(T1, T1, T1)";
+    let Err(all) = zedc::run::load(box_program(7).as_bytes()) else {
+        panic!("accepted")
+    };
     assert_eq!(
-        rejected(&box_program(7)),
-        format!(
-            "2:52: `g` does not take ({shown}); this is not proved wrong: the checker could not \
-             decide whether it fits, because {}.",
-            Refusal::TupleSplit.message()
-        )
+        all.lines().take(2).collect::<Vec<_>>(),
+        [
+            format!(
+                "2:52: The checker could not decide whether `g` takes ({shown}), so it is not \
+                 proved wrong."
+            ),
+            format!("  because {}", Refusal::TupleSplit.message()),
+        ]
     );
     // A decided failure names no cause.
     assert_eq!(
@@ -394,9 +404,9 @@ fn a_morphism_type_whose_bound_check_was_refused_says_why() {
             format!(
                 "in a function type `L .. U -> V`, every function the guarantee `L`, left of \
                  `..`, describes must also be allowed by the permission `U`, right of `..`, and \
-                 the checker could not show that this one's guarantee is within its permission; \
-                 this is not proved wrong: the checker could not decide whether it fits, because \
-                 {}. To repair it, narrow the type left of `..`, or widen the type right of it. \
+                 the checker could not decide whether this one's guarantee is within its \
+                 permission, so it is not proved wrong. To repair it, narrow the type left of \
+                 `..`, or widen the type right of it.\n  because {} \
                  [((int -> #a | #b) .. ((int -> #a) | (int -> #b)) -> int)]",
                 Refusal::MorphismSplit.message()
             )
@@ -449,31 +459,41 @@ fn an_overload_whose_check_was_refused_says_why() {
         ] {
             Type::forget_emptiness();
             let errors = operator_errors(op, &vec![Ty::set(t.clone()); n]);
-            let first = errors.first().unwrap_or_else(|| panic!("`{op}` took {t}"));
-            // The sentence, before the lines that define the parts it writes twice.
-            let first = first.lines().next().unwrap_or_default();
-            assert!(
-                first.starts_with(&format!("`{op}` does not take (")),
-                "{first}"
-            );
+            let message = errors.first().unwrap_or_else(|| panic!("`{op}` took {t}"));
+            // The headline, and the line after it, before the lines that define the parts it
+            // writes twice.
+            let mut lines = message.lines();
+            let first = lines.next().unwrap_or_default();
             match why {
+                // The headline says the check was not decided, with no reason; the reason
+                // is the line after it.
                 Some(r) => {
-                    let tail = format!(
-                        "; this is not proved wrong: the checker could not decide whether it \
-                         fits, because {}.",
-                        r.message()
-                    );
-                    // `walk::operator` gives the message as the checker builds it, before the place it
-                    // is printed adds the final period where it lacks one.
                     assert!(
-                        format!("{}.", first.trim_end_matches('.')).ends_with(&tail),
+                        first.starts_with(&format!(
+                            "The checker could not decide whether `{op}` takes ("
+                        )),
                         "{op} on {t}: {first}"
                     );
+                    // The period ends the first line, before the reason (`Msg::written`).
+                    assert!(
+                        first.ends_with("), so it is not proved wrong."),
+                        "{op} on {t}: {first}"
+                    );
+                    assert_eq!(
+                        lines.next(),
+                        Some(format!("  because {}", r.message()).as_str())
+                    );
                 }
-                None => assert!(
-                    !first.contains("this is not proved wrong"),
-                    "{op} on {t}: {first}"
-                ),
+                None => {
+                    assert!(
+                        first.starts_with(&format!("`{op}` does not take (")),
+                        "{first}"
+                    );
+                    assert!(
+                        !message.contains("not proved wrong"),
+                        "{op} on {t}: {message}"
+                    );
+                }
             }
         }
     }
@@ -531,7 +551,7 @@ fn an_overload_rejected_by_a_decided_check_names_no_cause() {
             first.starts_with(&format!("`{op}` does not take (")),
             "{first}"
         );
-        assert!(!first.contains("this is not proved wrong"), "{first}");
+        assert!(!first.contains("not proved wrong"), "{first}");
     }
 }
 

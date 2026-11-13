@@ -3053,12 +3053,21 @@ pub const OTHER: u8 = 1 << 5;
 /// The mask of every value.
 pub const EVERY: u8 = (1 << 6) - 1;
 
-/// The clause a message about a check that was refused ends with: the check is not proved to
-/// fail, the checker could not decide it, and `why` says why (DESIGN.md sec:diagnostics).
+/// The clause a message about a check that was refused ends with ([`UNDECIDED`]), and after
+/// it the note that says why ([`undecided_because`]): the headline stays short, the reason in
+/// a line of its own (DESIGN.md sec:diagnostics, "A short headline").
 pub fn undecided(why: &str) -> String {
-    format!(
-        "; this is not proved wrong: the checker could not decide whether it fits, because {why}"
-    )
+    format!("{UNDECIDED}{}", undecided_because(why))
+}
+
+/// The end of the headline of a message about a check that was refused: the check is not
+/// proved to fail, the checker could not decide it.
+pub const UNDECIDED: &str = "; the checker could not decide this, so it is not proved wrong";
+
+/// The note after the headline of a message about a refused check: `why` the checker could
+/// not decide it, and the repair the reason names.
+pub fn undecided_because(why: &str) -> String {
+    format!("\n  because {why}")
 }
 
 /// The mask `m` as a type, in type syntax: `_` when it holds [`OTHER`], since `int | _` is `_`

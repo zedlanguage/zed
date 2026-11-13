@@ -5683,7 +5683,10 @@ impl Msg {
     /// ([`Ck::fixes_checked`]), the message says that it offers none.
     fn written(mut self, source: Option<&str>) -> (String, String) {
         // A headline is a sentence and ends with a period, with a repair or without one
-        // (DESIGN.md sec:diagnostics, "A short headline").
+        // (DESIGN.md sec:diagnostics, "A short headline"). It is the first line: the lines
+        // after it, as the reason a refused check gives, stay after it and after its repair.
+        let end = self.text.find('\n').unwrap_or(self.text.len());
+        let notes = self.text.split_off(end);
         if !self.text.ends_with('.') {
             self.text.push('.');
         }
@@ -5698,7 +5701,7 @@ impl Msg {
                 }
                 false => self.text,
             };
-            return (text, String::new());
+            return (text + &notes, String::new());
         }
         let lines = source.and_then(|s| {
             (self.fixes.iter())
@@ -5748,8 +5751,8 @@ impl Msg {
             .map(|text| (Some(text), String::new())),
         };
         match written {
-            Ok((text, menu)) => (text.unwrap_or(self.text), menu),
-            Err(_) => (self.text, String::new()),
+            Ok((text, menu)) => (text.unwrap_or(self.text) + &notes, menu),
+            Err(_) => (self.text + &notes, String::new()),
         }
     }
 }
@@ -8878,11 +8881,19 @@ fn one_shape_per_length(t: &Ty) -> Ty {
 
 /// The message that `what` takes none of the argument types `shown`: `why` is the cause when
 /// one is known, and with none, the message says that no arrow of `what` takes them all,
-/// which the derivation then shows arrow by arrow.
+/// which the derivation then shows arrow by arrow. A cause that is a refused check
+/// ([`ty::undecided`]) is no proof that `what` does not take them, so the headline says that
+/// the checker could not decide it, and the reason follows in its note.
 pub(crate) fn does_not_take(what: &str, shown: &str, why: &str) -> String {
-    match why.is_empty() {
-        true => format!("{what} does not take ({shown}): no arrow of {what} takes these types"),
-        false => format!("{what} does not take ({shown}){why}"),
+    if why.is_empty() {
+        return format!("{what} does not take ({shown}): no arrow of {what} takes these types");
+    }
+    match why.strip_prefix(ty::UNDECIDED) {
+        Some(because) => format!(
+            "The checker could not decide whether {what} takes ({shown}), so it is not proved \
+             wrong{because}"
+        ),
+        None => format!("{what} does not take ({shown}){why}"),
     }
 }
 

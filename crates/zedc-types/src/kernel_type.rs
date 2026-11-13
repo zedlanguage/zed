@@ -127,15 +127,20 @@ fn kernel_form(
             if let Some(bounds) = bounds
                 && !l.subtype(&u)
             {
-                // A refused check is not a proved failure, so it is not stated as one.
-                let found = match l.subtype_verdict(&u) {
-                    zed_kernel::types::Verdict::Refused(r) => format!(
-                        "and the checker could not show that this one's guarantee is within its \
-                         permission{}",
-                        crate::ty::undecided(&r.message())
+                // A refused check is not a proved failure, so it is not stated as one. The
+                // headline ends with the repair, and the reason stands in a note after it.
+                let (found, because) = match l.subtype_verdict(&u) {
+                    zed_kernel::types::Verdict::Refused(r) => (
+                        "and the checker could not decide whether this one's guarantee is \
+                         within its permission, so it is not proved wrong"
+                            .to_string(),
+                        crate::ty::undecided_because(&r.message()),
                     ),
-                    _ => "and in this one the guarantee allows functions the permission does not"
-                        .to_string(),
+                    _ => (
+                        "and in this one the guarantee allows functions the permission does not"
+                            .to_string(),
+                        String::new(),
+                    ),
                 };
                 bounds.push((
                     t.span,
@@ -143,7 +148,7 @@ fn kernel_form(
                         "in a function type `L .. U -> V`, every function the guarantee `L`, left \
                          of `..`, describes must also be allowed by the permission `U`, right of \
                          `..`, {found}. To repair it, narrow the type left of `..`, or widen the \
-                         type right of it"
+                         type right of it.{because}"
                     ),
                 ));
             }

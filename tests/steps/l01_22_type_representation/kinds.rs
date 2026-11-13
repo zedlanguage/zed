@@ -1155,7 +1155,7 @@ fn two_payloads_that_need_a_later_shape_of_one_key_are_refused_with_the_reason()
     assert_eq!(bound(&l, &r), None);
     assert_eq!(
         l.refused(&r),
-        "; this is not proved wrong: the checker could not decide whether it fits, because the \
+        "; the checker could not decide this, so it is not proved wrong\n  because the \
          payloads #a(3, 5) and #a(4, 6) may each be held by one of the shapes \
          #a(1 | 2, _) | #a(int, _), which are told apart only at component 1, where they agree \
          with both, and neither is held by the first of those shapes; which shape holds each \
@@ -1191,9 +1191,7 @@ fn two_payloads_that_need_a_later_shape_of_one_key_are_refused_with_the_reason()
     let l = ty("(3, 5) | (4, 6)");
     assert_eq!(bound(&l, &rows), None);
     let why = l.refused(&rows);
-    assert!(
-        why.contains("could not decide whether it fits, because the tuples (3, 5) and (4, 6) ")
-    );
+    assert!(why.contains("not proved wrong\n  because the tuples (3, 5) and (4, 6) "));
     assert!(why.contains(
         "give (3, 5) a shape of its own, written just before the shape that \
                           should hold it and the same as that shape except at component 1, \
@@ -1361,8 +1359,8 @@ fn a_bounded_type_variable_in_a_refused_bucket_prints_by_name_with_where_it_is_b
         assert_eq!(
             type_errors(&src),
             vec![format!(
-                "`p` does not take {said}; this is not proved wrong: the checker could not \
-                 decide whether it fits, because the tuples ((int, int),) and ((int, int, int),) \
+                "The checker could not decide whether `p` takes {said}, so it is not proved \
+                 wrong.\n  because the tuples ((int, int),) and ((int, int, int),) \
                  may each be held by one of the shapes {bucket}, which have no component that \
                  is one value, of one carrier, of one atom name or of one tuple length, and \
                  neither is held by the first of those shapes; which shape holds each decides \
@@ -1370,7 +1368,7 @@ fn a_bounded_type_variable_in_a_refused_bucket_prints_by_name_with_where_it_is_b
                  shapes for one of the two only; here `U` is the type variable of `for U in \
                  int`; to repair it, give ((int, int),) a shape of its own, written just before \
                  the shape that should hold it: `((int, int),)`; or test the value with `is` \
-                 first, so that each test meets one of the two. [p(f: g)]"
+                 first, so that each test meets one of the two [p(f: g)]"
             )],
             "{src}"
         );
@@ -1389,8 +1387,8 @@ fn a_rigid_type_variable_in_a_refused_bucket_prints_by_name_in_the_shape_offered
     assert_eq!(
         type_errors(src),
         vec![
-            "`p` does not take ((x: W) -> ((W, W),) | ((W, W, W),) for W in int); this is not \
-             proved wrong: the checker could not decide whether it fits, because the tuples \
+            "The checker could not decide whether `p` takes ((x: W) -> ((W, W),) | ((W, W, W),) \
+             for W in int), so it is not proved wrong.\n  because the tuples \
              ((V, V),) and ((V, V, V),) may each be held by one of the shapes ((int, bool) | \
              (int, bool, bool),) | ((V, V) | (V, V, V),), which have no component that is one \
              value, of one carrier, of one atom name or of one tuple length, and neither is held \
@@ -1399,7 +1397,7 @@ fn a_rigid_type_variable_in_a_refused_bucket_prints_by_name_in_the_shape_offered
              two only; here `V` is the type variable of `for V in int`; to repair it, give \
              ((V, V),) a shape of its own, written just before the shape that should hold it: \
              `((V, V),)`; or test the value with `is` first, so that each test meets one of the \
-             two. [p(f: g)]"
+             two [p(f: g)]"
                 .to_string()
         ]
     );
@@ -1413,7 +1411,7 @@ fn a_rigid_type_variable_in_a_refused_bucket_prints_by_name_in_the_shape_offered
 /// pairs told apart only at component 1.
 fn pairs_refused_in(bucket: &str) -> String {
     format!(
-        "; this is not proved wrong: the checker could not decide whether it fits, because the \
+        "; the checker could not decide this, so it is not proved wrong\n  because the \
          tuples (3, 5) and (4, 6) may each be held by one of the shapes {bucket}, which are told \
          apart only at component 1, where they agree with both, and neither is held by the \
          first of those shapes; which shape holds each decides what the type variables are \
@@ -1445,8 +1443,7 @@ fn an_unbounded_type_variable_in_a_refused_bucket_prints_by_name_where_it_stands
         assert_eq!(
             g.refused(&p),
             format!(
-                "; this is not proved wrong: the checker could not decide whether it fits, \
-                 because the tuples ((int, int),) and ((int, int, int),) may each be held by \
+                "; the checker could not decide this, so it is not proved wrong\n  because the tuples ((int, int),) and ((int, int, int),) may each be held by \
                  one of the shapes {bucket}, which have no component that is one value, of one \
                  carrier, of one atom name or of one tuple length, and neither is held by the \
                  first of those shapes; which shape holds each decides what the type variables \
@@ -1498,7 +1495,7 @@ fn an_unbounded_type_variable_in_two_payload_shapes_of_a_refused_bucket_prints_b
     let l = with_payloads("a", vec![vec![int(3), int(5)], vec![int(4), int(6)]]);
     assert_eq!(
         l.refused(&r),
-        "; this is not proved wrong: the checker could not decide whether it fits, because the \
+        "; the checker could not decide this, so it is not proved wrong\n  because the \
          payloads #a(3, 5) and #a(4, 6) may each be held by one of the shapes \
          #a(1 | 2, T) | #a(int, T), which are told apart only at component 1, where they agree \
          with both, and neither is held by the first of those shapes; which shape holds each \
@@ -2314,7 +2311,8 @@ fn the_difference_of_many_wide_tuple_types_scales() {
     );
 }
 
-/// The clause of a refused bucket of two shapes, after "`p` does not take (…)": the tuples
+/// The note of a refused bucket of two shapes, after the headline "The checker could not
+/// decide whether `p` takes (…), so it is not proved wrong.": the tuples
 /// `first` and `second` held by `shapes`, the type variables named by `here`, and the repair
 /// `own`, a shape of its own for `first`, when one is offered.
 fn bucket_refused(first: &str, second: &str, shapes: &str, here: &str, own: bool) -> String {
@@ -2326,13 +2324,12 @@ fn bucket_refused(first: &str, second: &str, shapes: &str, here: &str, own: bool
         false => String::new(),
     };
     format!(
-        "; this is not proved wrong: the checker could not decide whether it fits, because the \
-         tuples {first} and {second} may each be held by one of the shapes {shapes}, which have \
+        "\n  because the tuples {first} and {second} may each be held by one of the shapes {shapes}, which have \
          no component that is one value, of one carrier, of one atom name or of one tuple \
          length, and neither is held by the first of those shapes; which shape holds each \
          decides what the type variables are bound to, and the checker looks through those \
          shapes for one of the two only; here {here}; to repair it, {repair}test the value with \
-         `is` first, so that each test meets one of the two. [p(f: g)]"
+         `is` first, so that each test meets one of the two [p(f: g)]"
     )
 }
 
@@ -2366,7 +2363,8 @@ fn a_function_in_a_tuple_of_a_refused_bucket_prints_as_its_type() {
         assert_eq!(
             type_errors(&src),
             vec![format!(
-                "`p` does not take ((x: {shapes}) -> int for U in int){clause}"
+                "The checker could not decide whether `p` takes ((x: {shapes}) -> int for U in int), so it is not proved \
+             wrong.{clause}"
             )],
             "{h}"
         );
@@ -2400,7 +2398,8 @@ fn functions_in_several_places_of_a_tuple_of_a_refused_bucket_print_as_their_typ
     assert_eq!(
         type_errors(&src),
         vec![format!(
-            "`p` does not take ((x: {shapes}) -> int for U in int){clause}"
+            "The checker could not decide whether `p` takes ((x: {shapes}) -> int for U in int), so it is not proved \
+             wrong.{clause}"
         )]
     );
 }
@@ -2424,7 +2423,8 @@ fn a_function_as_a_tuple_of_one_component_in_a_refused_bucket_prints_as_its_type
     assert_eq!(
         type_errors(&src),
         vec![format!(
-            "`p` does not take ((x: {shapes}) -> int for U in int){clause}"
+            "The checker could not decide whether `p` takes ((x: {shapes}) -> int for U in int), so it is not proved \
+             wrong.{clause}"
         )]
     );
 }
@@ -2454,7 +2454,8 @@ fn a_function_in_a_refused_bucket_prints_the_rigid_variable_it_holds_by_name() {
     assert_eq!(
         type_errors(&src),
         vec![format!(
-            "`p` does not take ((x: {shapes}) -> int for W in int){clause}"
+            "The checker could not decide whether `p` takes ((x: {shapes}) -> int for W in int), so it is not proved \
+             wrong.{clause}"
         )]
     );
 }
@@ -2481,7 +2482,8 @@ fn a_rigid_variable_of_an_outer_comparison_and_an_own_variable_of_the_same_name_
     assert_eq!(
         type_errors(&src),
         vec![format!(
-            "`p` does not take ((h: (k: (x: {shapes}) -> int for V in int) -> int) -> int){clause}"
+            "The checker could not decide whether `p` takes ((h: (k: (x: {shapes}) -> int for V in int) -> int) -> int), so it is not proved \
+             wrong.{clause}"
         )]
     );
 }
@@ -2508,8 +2510,9 @@ fn an_own_variable_of_an_outer_comparison_and_one_of_the_same_name_inside_print_
     assert_eq!(
         type_errors(&src),
         vec![format!(
-            "`p` does not take ((h: (x: ((V, int),) | ((V, int, int),)) -> int) -> int for V in \
-             int){clause}"
+            "The checker could not decide whether `p` takes ((h: (x: ((V, int),) | ((V, int, int),)) -> int) -> int for V in \
+             int), so it is not proved \
+             wrong.{clause}"
         )]
     );
 }

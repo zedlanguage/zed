@@ -112,8 +112,7 @@ fn refused(a: &Ty, b: &Ty) -> String {
     a.refused(b)
 }
 
-const FORK: &str = "; this is not proved wrong: the checker could not decide whether it fits, \
-     because no value of it was found, and two of the tuple types involved differ in a \
+const FORK: &str = "; the checker could not decide this, so it is not proved wrong\n  because no value of it was found, and two of the tuple types involved differ in a \
      component whose type refers back to itself; following both at once can take time \
      exponential in the size of the types, so the checker does not try; write the two tuple \
      types so that they agree in that component, or test the value with `is` first";

@@ -9,6 +9,7 @@
 use zed_kernel::types::rec::{Def, Expr, Group};
 use zed_kernel::types::{Refusal, Type, Verdict};
 use zed_tests::scaling;
+use zedc::check::ty::Ty;
 
 fn r(i: usize) -> Expr {
     Expr::Ref(i, vec![])
@@ -918,4 +919,104 @@ fn the_former_fixtures_are_inhabited() {
             }
         }
     }
+}
+
+/// What the checker writes when a check reads a refused member (item TESTS-L1.23-refusal-text):
+/// the headline ends with the clause that the check was not decided, and the reason stands on
+/// the line after it, naming the definition, the number of independent cycles and the tuple
+/// with two undecided components (DESIGN.md L1.23), followed by the group's definitions. Before
+/// this item the reason was part of the headline, after "this is not proved wrong: the checker
+/// could not decide whether it fits, because".
+#[test]
+fn a_check_reading_a_refused_member_names_the_definition_the_cycles_and_the_tuple() {
+    Type::forget_emptiness();
+    let types = group(placed(IN_ORDER));
+    // The check decides `A - Never`, the body of `A`; the first member met in the walk of its
+    // parts that the decider refuses is `B`, in `B & (_, _)`, so the message names `B`.
+    let detail = message(&types[1]);
+    let (a, never) = (Ty::set(types[0].clone()), Ty::set(Type::empty()));
+    assert!(!a.subtype(&never), "a refused member counts as inhabited");
+    let clause = a.refused(&never);
+    assert_eq!(
+        clause,
+        format!(
+            "; the checker could not decide this, so it is not proved wrong\n  because {detail}\n  \
+             the check reads the recursive type `B`, defined by:\n    \
+             type B = ((int) -> C & (_, _)) | (B & ((int) -> C), B) | (A & (_, _),);\n    \
+             type A = (#k, C & A) | (B & (_, _), (int) -> C);\n    \
+             type C = (B & (_, _), B) | ((int) -> A);"
+        )
+    );
+    // The headline holds none of the reason, and the reason all three parts.
+    let (head, reason) = clause.split_once('\n').unwrap();
+    assert!(
+        !head.contains("cycles") && !head.contains("tuple"),
+        "{head}"
+    );
+    for part in [
+        "deciding whether `B` has a value",
+        "these references make 6 independent cycles",
+        "the tuple `(B & (_, _), (int) -> C)` in `A`",
+    ] {
+        assert!(reason.contains(part), "{part}: {reason}");
+    }
+    // A decided failure, `int` against the member, adds nothing.
+    assert_eq!(Ty::set(Type::int()).refused(&a), "");
+}
+
+/// The family `indirect_alt_ladder` of the decider's tests (`bes_families`), written as type
+/// definitions: `L{i} = ((L{i}, _), L{i-1} | L{i+1}) | ((int) -> L{i+1})`, the indices taken
+/// modulo `n`, and with no function type in the last when `last_fn` is false.
+fn ladder(n: usize, last_fn: bool) -> Vec<(String, Expr)> {
+    (0..n)
+        .map(|i| {
+            let around = or(vec![r((i + n - 1) % n), r((i + 1) % n)]);
+            let mut body = vec![pair(pair(r(i), Expr::Type(Type::top())), around)];
+            if last_fn || i + 1 < n {
+                body.push(f(r((i + 1) % n)));
+            }
+            (format!("L{i}"), or(body))
+        })
+        .collect()
+}
+
+/// The ladder the decider refuses (item TESTS-L1.23-refusal-text) is decided by the search
+/// that every member the decider leaves open goes to: no member is reported as refused, so no
+/// program written with these definitions gets the refusal message. Each member is empty, as a
+/// value of `L{n-1}` would hold a smaller one, and each other member holds a value of the next
+/// or a smaller one of itself. With a function type in the last member too, every member is
+/// inhabited by functions, and the decider decides them all. Before GROUP-refusal, the
+/// decider's refusal was read as no answer (`empty.rs`, `Refused` mapped to `None`, the test
+/// audit of 2026-11-08, row 11).
+#[test]
+fn the_refused_ladder_is_decided_by_the_search() {
+    for n in [6, 48] {
+        Type::forget_emptiness();
+        let types = group(ladder(n, false));
+        for (i, t) in types.iter().enumerate() {
+            // The decider refuses the members before the last two, and decides those empty.
+            let by_group = (i + 2 >= n).then_some(true);
+            assert_eq!(t.decided_by_group(), by_group, "L{i} of {n}");
+            assert_eq!(t.verdict(), Verdict::Empty, "L{i} of {n}");
+            let (l, never) = (Ty::set(t.clone()), Ty::set(Type::empty()));
+            assert!(l.subtype(&never), "L{i} of {n}");
+        }
+        Type::forget_emptiness();
+        for (i, t) in group(ladder(n, true)).iter().enumerate() {
+            assert_eq!(t.decided_by_group(), Some(false), "L{i} of {n}");
+            assert_eq!(t.verdict(), Verdict::Inhabited, "L{i} of {n}");
+        }
+    }
+}
+
+/// Deciding every member of the ladder of `n` definitions, which the search decides where the
+/// decider refuses, at n and 8n, within the limit of the scaling test.
+#[test]
+fn the_refused_ladder_scales() {
+    scaling::check("the ladder the decider refuses, n definitions", 32, |n| {
+        Type::forget_emptiness();
+        for t in &group(ladder(n, false)) {
+            std::hint::black_box(t.verdict());
+        }
+    });
 }
