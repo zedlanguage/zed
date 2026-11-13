@@ -4231,7 +4231,7 @@ impl Scope {
 
     /// Meets the type of `x`, when in scope, with `ty`, the type `x` has where the scope is
     /// read. A join of a side that holds `x` with one that never read it holds `x` of no type
-    /// ([`Scope::join_settled`]), and its relation may still mention `x`: in `a >= n || a >=
+    /// (`Scope::join_settled`), and its relation may still mention `x`: in `a >= n || a >=
     /// 5`, the case `a >= 5` reads no `n`. Unlike [`Scope::bind`], which forgets what held of
     /// the name, the relation is kept, so a test on `x` below reaches the names it relates
     /// `x` to. O(log n) for `n` names.
@@ -4596,7 +4596,7 @@ impl Scope {
     /// value the question allows here, so the sets do not depend on the order the questions
     /// were met in. O(log k) in the k refusals kept, O(m log m) in the m variables of `kept`,
     /// and, for a new question, O(n log k) for the n names its constraint mentions
-    /// ([`Scope::refused_by`]). Every refused test and part of the relation is kept through
+    /// (`Scope::refused_by`). Every refused test and part of the relation is kept through
     /// here.
     pub fn refuse(&mut self, r: Refused, kept: Kept) {
         let kept = match self.refusals.get(&r) {
@@ -4613,7 +4613,7 @@ impl Scope {
     /// one of `names`, names of the scope, by the name the program wrote ([`written_name`]),
     /// once each, in the order of [`Refused`], with the sets it left its variables. O(m log k +
     /// q log q) for m names among k questions and the q questions found
-    /// ([`Scope::refused_by`]).
+    /// (`Scope::refused_by`).
     pub fn refused_on<'n>(
         &self,
         names: impl IntoIterator<Item = &'n str>,
