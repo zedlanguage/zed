@@ -1748,7 +1748,6 @@ fn unary_arms_scale() {
 }
 
 #[test]
-#[ignore = "PERF-l139-family: cuts, 14.6 times the bytes in the first runs at 4 and 32, over the limit of 13 since TESTS-scaling-limit-13; open"]
 fn cuts_scale() {
     scales("cuts", 4, 1);
 }
@@ -1761,7 +1760,6 @@ fn wide_scales() {
 }
 
 #[test]
-#[ignore = "PERF-coordmix-floor: quadratic on main, parts projected again (see below)"]
 fn coordmix_floor_scales() {
     scales("coordmix_floor", 4, 1);
 }
@@ -1808,10 +1806,22 @@ fn coordkk_scales() {
 // parts whose result can change needs, for each part, the ends of its names its result
 // depends on; a part with a constraint on several names in its base, or with holes, has no
 // such ends, so the fix is open (cross-review).
+//
+// Since PERF-l139-wake (2026-11-13) a part already projected is skipped when a test shows
+// that every value of each of its names has an integer point of the part (`Scope::idle`,
+// Fourier-Motzkin elimination with the dark shadow of Pugh 1991, on rows whose count never
+// grows), and other tests skip a punctured line with support at every value
+// (`Scope::puncture_idle`) and the parts of lower threshold clauses under one upper sum
+// (`LowerGaps`); `extreme_base` and `compact_abs` drop rows that other rows imply. The
+// families below then pass under 13 at 8n, measured as instructions and bytes of the first
+// runs: stair_holes 7.4 and 6.2, stair_holes_mix 7.4 and 6.2, stair_cover 8.2 and 6.6,
+// stair_cover_free 8.8 and 7.2, stair_holes_late 9.7 and 8.5, hop 10.7 and 10.0, hopon 11.6
+// and 10.8, boxstar 11.5 and 10.8, cuts 11.2 and 11.1, coordmix_floor 12.3 and 10.7, chain
+// 12.9 and 12.4, hoponb 12.9 and 12.1. star_extra, persist and hopb stay ignored.
 
 /// About `k^1.75` to `k^1.96`.
 #[test]
-#[ignore = "PERF-star-extra: quadratic on main, see ledger"]
+#[ignore = "PERF-l139-family: star_extra, 16.2 times the instructions at 8n (117.3M and 1,904.8M), over the limit of 13; open"]
 fn star_extra_scales() {
     scales("star_extra", 4, 1);
 }
@@ -1820,21 +1830,19 @@ fn star_extra_scales() {
 /// passes (31.9 times the work against 35.2); at `n = 4` each run of `k = 32` takes over 30 s,
 /// so the test would not finish in 60 s.
 #[test]
-#[ignore = "PERF-chain: above linear on main, see ledger"]
 fn chain_scales() {
     scales("chain", 2, 1);
 }
 
 /// About `k^2.1`.
 #[test]
-#[ignore = "PERF-boxstar: quadratic on main, see ledger"]
 fn boxstar_scales() {
     scales("boxstar", 2, 1);
 }
 
 /// About `k^2.5` from `k = 8` to 16.
 #[test]
-#[ignore = "PERF-persist: above quadratic on main, see ledger"]
+#[ignore = "PERF-l139-family: persist, 13.2 times the bytes at 8n (39.3M and 517.3M), over the limit of 13; open"]
 fn persist_scales() {
     scales("persist", 2, 1);
 }
@@ -1842,57 +1850,49 @@ fn persist_scales() {
 /// About `k^2.7` to `k^2.8` on stair_holes and stair_holes_mix, and `k^2` on
 /// stair_holes_late.
 #[test]
-#[ignore = "PERF-stair-holes: above quadratic on main, see ledger"]
 fn stair_holes_scale() {
     scales("stair_holes", 4, 1);
 }
 
 #[test]
-#[ignore = "PERF-stair-holes: above quadratic on main, see ledger"]
 fn stair_holes_mix_scales() {
     scales("stair_holes_mix", 4, 1);
 }
 
 #[test]
-#[ignore = "PERF-stair-holes: quadratic on main, see ledger"]
 fn stair_holes_late_scales() {
     scales("stair_holes_late", 8, 1);
 }
 
 /// About `k^2`.
 #[test]
-#[ignore = "PERF-stair-cover: quadratic on main, see ledger"]
 fn stair_cover_scales() {
     scales("stair_cover", 8, 1);
 }
 
 #[test]
-#[ignore = "PERF-stair-cover: quadratic on main, see ledger"]
 fn stair_cover_free_scales() {
     scales("stair_cover_free", 8, 1);
 }
 
 /// About `k^2` from `k = 8` to 16, each run of `k = 16` some 60 billion instructions.
 #[test]
-#[ignore = "PERF-hop: quadratic on main, see ledger"]
 fn hop_scales() {
     scales("hop", 2, 1);
 }
 
 #[test]
-#[ignore = "PERF-hop: quadratic on main, see ledger"]
 fn hopon_scales() {
     scales("hopon", 2, 1);
 }
 
 #[test]
-#[ignore = "PERF-hop: quadratic on main, see ledger"]
+#[ignore = "PERF-l139-family: hopb, 13.0 times the instructions at 8n (152.3M and 1,981.7M), at the limit of 13; open"]
 fn hopb_scales() {
     scales("hopb", 2, 1);
 }
 
 #[test]
-#[ignore = "PERF-hop: quadratic on main, see ledger"]
 fn hoponb_scales() {
     scales("hoponb", 2, 1);
 }
@@ -1917,3 +1917,493 @@ fn two_eq_case_against_the_oracle() {
         );
     }
 }
+
+/// The cases that review rounds of PERF-l139-wake built to break the shortcuts that skip a
+/// projection (the integer-witness test of an idle part, the punctured-line support test, the
+/// reflected gaps of lower threshold clauses, the unbounded-leaf rays, and the pruned rows
+/// of `extreme_base` and `compact_abs`): each case is checked against the oracle, and its
+/// facts are those origin/main gave before these shortcuts (abf5d24cd).
+#[test]
+fn projection_shortcut_cases() {
+    fn probe(out: &mut Vec<String>, label: &str, ns: &[&str], steps: Vec<Term>) {
+        let ns: Vec<Arc<str>> = ns.iter().map(|n| Arc::from(*n)).collect();
+        let p = Premises::new();
+        let mut s = ints(&ns);
+        for t in &steps {
+            s = s.assume(t, true, &p);
+        }
+        let window: Vec<_> = ns
+            .iter()
+            .map(|n| {
+                (
+                    n.to_string(),
+                    if &**n == "a" { -10 } else { 0 },
+                    if &**n == "a" { 10 } else { 4 },
+                )
+            })
+            .collect();
+        Oracle::of(&ns, &steps, &window).check_sound(label, &s, &facts(&s, &ns));
+        out.push(format!("{label}: {}", facts(&s, &ns)));
+    }
+    fn box4(n: &str) -> Term {
+        and(ge(var(n), int(0)), le(var(n), int(4)))
+    }
+    let out = &mut Vec::new();
+    // punctured line x != y with x + y = 4 on [0,4]^2: main can remove x = 2
+    probe(
+        out,
+        "P1 eq-then-ne",
+        &["x", "y"],
+        vec![
+            box4("x"),
+            box4("y"),
+            eq(add(var("x"), var("y")), int(4)),
+            or(
+                ge(sub(var("x"), var("y")), int(1)),
+                le(sub(var("x"), var("y")), int(-1)),
+            ),
+        ],
+    );
+    probe(
+        out,
+        "P2 ne-then-eq",
+        &["x", "y"],
+        vec![
+            box4("x"),
+            box4("y"),
+            or(
+                ge(sub(var("x"), var("y")), int(1)),
+                le(sub(var("x"), var("y")), int(-1)),
+            ),
+            eq(add(var("x"), var("y")), int(4)),
+        ],
+    );
+    probe(
+        out,
+        "P3 le-ge-sum",
+        &["x", "y"],
+        vec![
+            box4("x"),
+            box4("y"),
+            le(add(var("x"), var("y")), int(4)),
+            ge(add(var("x"), var("y")), int(4)),
+            or(
+                ge(sub(var("x"), var("y")), int(1)),
+                le(sub(var("x"), var("y")), int(-1)),
+            ),
+        ],
+    );
+    // hop-shaped with a third name
+    probe(
+        out,
+        "P4 hop3",
+        &["x", "y", "z"],
+        vec![
+            box4("x"),
+            box4("y"),
+            box4("z"),
+            eq(add(var("y"), var("z")), int(4)),
+            or(
+                le(var("x"), int(0)),
+                or(
+                    ge(add(var("y"), add(var("z"), var("z"))), int(7)),
+                    le(add(var("y"), add(var("z"), var("z"))), int(5)),
+                ),
+            ),
+        ],
+    );
+    // Opus D-class example
+    probe(
+        out,
+        "D1 x>=3||y>=3, x+y<=4",
+        &["x", "y"],
+        vec![
+            box4("x"),
+            box4("y"),
+            le(add(var("x"), var("y")), int(4)),
+            or(ge(var("x"), int(3)), ge(var("y"), int(3))),
+        ],
+    );
+    // Boundary fibers of a half-plane can be singletons: reject that shortcut.
+    for k in 0..=4 {
+        probe(
+            out,
+            &format!("B{k} singleton-edge"),
+            &["x", "y"],
+            vec![
+                box4("x"),
+                box4("y"),
+                ge(add(var("x"), times(2, "y")), int(8)),
+                or(
+                    ge(add(var("x"), var("y")), int(k + 5)),
+                    le(add(var("x"), var("y")), int(k + 3)),
+                ),
+            ],
+        );
+    }
+    // A unique minimizer removed by the puncture raises a star's leaf.
+    probe(
+        out,
+        "L1 leaf-minimum",
+        &["a", "x", "y"],
+        vec![
+            box4("x"),
+            box4("y"),
+            star(),
+            or(
+                ge(add(var("x"), var("y")), int(1)),
+                le(add(var("x"), var("y")), int(-1)),
+            ),
+        ],
+    );
+    // Leave a reflected-gap certificate through a third name and a join.
+    let ns: Vec<Arc<str>> = ["a", "x", "y"].into_iter().map(Arc::from).collect();
+    let p = Premises::new();
+    let mut s = ints(&ns);
+    for t in [
+        le(add(var("x"), var("y")), int(12)),
+        or(ge(var("x"), int(10)), ge(var("y"), int(7))),
+        or(ge(var("x"), int(20)), ge(var("y"), int(-3))),
+        star(),
+    ] {
+        s = s.assume(&t, true, &p);
+    }
+    let t = ge(sub(var("x"), var("y")), int(3));
+    s = s.assume(&t, true, &p).join(&s.assume(&t, false, &p));
+    s = s.assume(&or(ge(var("x"), int(30)), ge(var("y"), int(-13))), true, &p);
+    out.push(format!("C1 certificate-exit-join: {}", facts(&s, &ns)));
+    // Half-plane orientations, integer breakpoints, and both projection orders.
+    for j in [-5, -2, -1, 1, 2, 5] {
+        for c in -3..=7 {
+            for first in [false, true] {
+                let mut steps = vec![box4("x"), box4("y")];
+                let row = ge(add(var("x"), times(j, "y")), int(c));
+                if first {
+                    steps.extend([star(), row]);
+                } else {
+                    steps.extend([row, star()]);
+                }
+                probe(out, &format!("U{j},{c},{first}"), &["a", "x", "y"], steps);
+            }
+        }
+    }
+    // Rule G (idle parts): a part projected once, then woken by a new base row or a narrowed
+    // name. G1/G4: x + 1 <= 3y <= x + 2 has a real y for every x but an integer y only for
+    // x in {1, 2, 4} (the dark shadow's slack). G2: y = x where y has a hole at 2. G3: y
+    // bounded from below by two rows. G5: x <= 2y <= x + 1 has an integer y for every x.
+    let (x, y, z) = (|| var("x"), || var("y"), || var("z"));
+    let x5 = || and(ge(x(), int(0)), le(x(), int(5)));
+    probe(
+        out,
+        "G1 shadow, base after part",
+        &["x", "y"],
+        vec![
+            box4("x"),
+            box4("y"),
+            or(ge(x(), int(100)), le(times(3, "y"), add(x(), int(2)))),
+            ge(times(3, "y"), add(x(), int(1))),
+        ],
+    );
+    probe(
+        out,
+        "G2 hole in eliminated y",
+        &["x", "y"],
+        vec![
+            box4("x"),
+            box4("y"),
+            or(le(y(), int(1)), ge(y(), int(3))),
+            or(ge(x(), int(100)), le(y(), x())),
+            ge(y(), x()),
+        ],
+    );
+    probe(
+        out,
+        "G3 two lower rows",
+        &["x", "y", "z"],
+        vec![
+            box4("x"),
+            box4("y"),
+            box4("z"),
+            or(
+                le(x(), int(0)),
+                and(
+                    ge(add(y(), times(2, "z")), int(7)),
+                    ge(add(y(), z()), int(5)),
+                ),
+            ),
+            le(add(y(), z()), int(5)),
+            le(x(), int(3)),
+        ],
+    );
+    probe(
+        out,
+        "G4 shadow, woken by x <= 4",
+        &["x", "y"],
+        vec![
+            x5(),
+            box4("y"),
+            ge(times(3, "y"), add(x(), int(1))),
+            or(ge(x(), int(100)), le(times(3, "y"), add(x(), int(2)))),
+            le(x(), int(4)),
+        ],
+    );
+    probe(
+        out,
+        "G5 x <= 2y <= x + 1",
+        &["x", "y"],
+        vec![
+            x5(),
+            box4("y"),
+            ge(times(2, "y"), x()),
+            or(ge(x(), int(100)), le(times(2, "y"), add(x(), int(1)))),
+            le(x(), int(4)),
+        ],
+    );
+    // E1: G5 woken by y >= 1: the low end of y's interval, not a row, keeps x >= 1 once y is
+    // eliminated.
+    probe(
+        out,
+        "E1 G5 then y >= 1",
+        &["x", "y"],
+        vec![
+            x5(),
+            box4("y"),
+            ge(times(2, "y"), x()),
+            or(ge(x(), int(100)), le(times(2, "y"), add(x(), int(1)))),
+            ge(y(), int(1)),
+        ],
+    );
+    // Audit seed 26, steps 0 to 4 (a join at step 2): a dark shadow with coefficients 2 and 3,
+    // where the real shadow leaves x's upper part.
+    let ns: Vec<Arc<str>> = AUDIT_NAMES.into_iter().map(Arc::from).collect();
+    let (p, mut s) = (Premises::new(), ints(&ns));
+    for n in &ns {
+        s = s.assume(&and(ge(var(n), int(-8)), le(var(n), int(8))), true, &p);
+    }
+    for (i, t) in audit_tests()[26].iter().enumerate().take(5) {
+        s = if i == 2 {
+            s.assume(t, true, &p).join(&s.assume(t, false, &p))
+        } else {
+            s.assume(t, true, &p)
+        };
+    }
+    out.push(format!("A26 audit seed 26 steps 0-4: {}", facts(&s, &ns)));
+    // Classes: x = 2w (or 2w + 1, 3w + 1) gives x a class while x is eliminated or read at a
+    // corner in the part, which is projected once and woken by a new base row or y <= 3.
+    let b = |n: &str, l: i64, h: i64| and(ge(var(n), int(l)), le(var(n), int(h)));
+    let two_y = || add(y(), y());
+    probe(
+        out,
+        "C1 x = 2w, x = 2y + 1",
+        &["x", "y", "w"],
+        vec![
+            b("x", 0, 9),
+            b("y", 0, 4),
+            b("w", 0, 9),
+            eq(x(), times(2, "w")),
+            or(ge(y(), int(100)), le(x(), add(two_y(), int(1)))),
+            ge(x(), add(two_y(), int(1))),
+        ],
+    );
+    probe(
+        out,
+        "C2 x = 2w, x = y + 1",
+        &["x", "y", "w"],
+        vec![
+            b("x", 0, 9),
+            b("y", 0, 3),
+            b("w", 0, 9),
+            eq(x(), times(2, "w")),
+            or(ge(y(), int(100)), le(x(), add(y(), int(1)))),
+            ge(x(), add(y(), int(1))),
+        ],
+    );
+    probe(
+        out,
+        "C3 x = 2w + 1, x = 2y",
+        &["x", "y", "w"],
+        vec![
+            b("x", 0, 9),
+            b("y", 0, 4),
+            b("w", 0, 9),
+            eq(x(), add(times(2, "w"), int(1))),
+            or(ge(y(), int(100)), le(x(), two_y())),
+            ge(x(), two_y()),
+            le(y(), int(3)),
+        ],
+    );
+    probe(
+        out,
+        "C4 x = 3w + 1, x >= y",
+        &["x", "y", "w"],
+        vec![
+            b("x", 0, 9),
+            b("y", 0, 4),
+            b("w", 0, 9),
+            eq(x(), add(times(3, "w"), int(1))),
+            or(ge(y(), int(100)), ge(x(), y())),
+            le(y(), int(3)),
+        ],
+    );
+    let want = WANT_SHORTCUT_CASES.trim();
+    assert_eq!(out.join("\n"), want);
+}
+
+/// The facts of [`projection_shortcut_cases`] on origin/main abf5d24cd.
+const WANT_SHORTCUT_CASES: &str = "
+P1 eq-then-ne: x=[0..=1, 3..=4] y=[0..=1, 3..=4]
+P2 ne-then-eq: x=[0..=1, 3..=4] y=[0..=1, 3..=4]
+P3 le-ge-sum: x=[0..=1, 3..=4] y=[0..=1, 3..=4]
+P4 hop3: x=[0..=4] y=[0..=4] z=[0..=4]
+D1 x>=3||y>=3, x+y<=4: x=[0..=1, 3..=4] y=[0..=1, 3..=4]
+B0 singleton-edge: x=[1..=4] y=[2..=4]
+B1 singleton-edge: x=[0..=0, 2..=4] y=[2..=4]
+B2 singleton-edge: x=[0..=4] y=[3..=4]
+B3 singleton-edge: x=[0..=4] y=[2..=4]
+B4 singleton-edge: x=[0..=4] y=[2..=4]
+L1 leaf-minimum: a=[1..] x=[0..=4] y=[0..=4]
+C1 certificate-exit-join: a=[..] x=[..=5, 10..=15, 20..=25, 30..] y=[..=-18, -13..=-8, -3..=2, 7..]
+U-5,-3,false: a=[0..] x=[0..=4] y=[0..=1]
+U-5,-3,true: a=[0..] x=[0..=4] y=[0..=1]
+U-5,-2,false: a=[0..] x=[0..=4] y=[0..=1]
+U-5,-2,true: a=[0..] x=[0..=4] y=[0..=1]
+U-5,-1,false: a=[0..] x=[0..=4] y=[0..=1]
+U-5,-1,true: a=[0..] x=[0..=4] y=[0..=1]
+U-5,0,false: a=[0..] x=[0..=4] y=[0..=0]
+U-5,0,true: a=[0..] x=[0..=4] y=[0..=0]
+U-5,1,false: a=[1..] x=[1..=4] y=[0..=0]
+U-5,1,true: a=[1..] x=[1..=4] y=[0..=0]
+U-5,2,false: a=[2..] x=[2..=4] y=[0..=0]
+U-5,2,true: a=[2..] x=[2..=4] y=[0..=0]
+U-5,3,false: a=[3..] x=[3..=4] y=[0..=0]
+U-5,3,true: a=[3..] x=[3..=4] y=[0..=0]
+U-5,4,false: a=[4..] x=[4..=4] y=[0..=0]
+U-5,4,true: a=[4..] x=[4..=4] y=[0..=0]
+U-5,5,false: bottom
+U-5,5,true: bottom
+U-5,6,false: bottom
+U-5,6,true: bottom
+U-5,7,false: bottom
+U-5,7,true: bottom
+U-2,-3,false: a=[0..] x=[0..=4] y=[0..=3]
+U-2,-3,true: a=[0..] x=[0..=4] y=[0..=3]
+U-2,-2,false: a=[0..] x=[0..=4] y=[0..=3]
+U-2,-2,true: a=[0..] x=[0..=4] y=[0..=3]
+U-2,-1,false: a=[0..] x=[0..=4] y=[0..=2]
+U-2,-1,true: a=[0..] x=[0..=4] y=[0..=2]
+U-2,0,false: a=[0..] x=[0..=4] y=[0..=2]
+U-2,0,true: a=[0..] x=[0..=4] y=[0..=2]
+U-2,1,false: a=[1..] x=[1..=4] y=[0..=1]
+U-2,1,true: a=[1..] x=[1..=4] y=[0..=1]
+U-2,2,false: a=[2..] x=[2..=4] y=[0..=1]
+U-2,2,true: a=[2..] x=[2..=4] y=[0..=1]
+U-2,3,false: a=[3..] x=[3..=4] y=[0..=0]
+U-2,3,true: a=[3..] x=[3..=4] y=[0..=0]
+U-2,4,false: a=[4..] x=[4..=4] y=[0..=0]
+U-2,4,true: a=[4..] x=[4..=4] y=[0..=0]
+U-2,5,false: bottom
+U-2,5,true: bottom
+U-2,6,false: bottom
+U-2,6,true: bottom
+U-2,7,false: bottom
+U-2,7,true: bottom
+U-1,-3,false: a=[0..] x=[0..=4] y=[0..=4]
+U-1,-3,true: a=[0..] x=[0..=4] y=[0..=4]
+U-1,-2,false: a=[0..] x=[0..=4] y=[0..=4]
+U-1,-2,true: a=[0..] x=[0..=4] y=[0..=4]
+U-1,-1,false: a=[0..] x=[0..=4] y=[0..=4]
+U-1,-1,true: a=[0..] x=[0..=4] y=[0..=4]
+U-1,0,false: a=[0..] x=[0..=4] y=[0..=4]
+U-1,0,true: a=[0..] x=[0..=4] y=[0..=4]
+U-1,1,false: a=[1..] x=[1..=4] y=[0..=3]
+U-1,1,true: a=[1..] x=[1..=4] y=[0..=3]
+U-1,2,false: a=[2..] x=[2..=4] y=[0..=2]
+U-1,2,true: a=[2..] x=[2..=4] y=[0..=2]
+U-1,3,false: a=[3..] x=[3..=4] y=[0..=1]
+U-1,3,true: a=[3..] x=[3..=4] y=[0..=1]
+U-1,4,false: a=[4..] x=[4..=4] y=[0..=0]
+U-1,4,true: a=[4..] x=[4..=4] y=[0..=0]
+U-1,5,false: bottom
+U-1,5,true: bottom
+U-1,6,false: bottom
+U-1,6,true: bottom
+U-1,7,false: bottom
+U-1,7,true: bottom
+U1,-3,false: a=[0..] x=[0..=4] y=[0..=4]
+U1,-3,true: a=[0..] x=[0..=4] y=[0..=4]
+U1,-2,false: a=[0..] x=[0..=4] y=[0..=4]
+U1,-2,true: a=[0..] x=[0..=4] y=[0..=4]
+U1,-1,false: a=[0..] x=[0..=4] y=[0..=4]
+U1,-1,true: a=[0..] x=[0..=4] y=[0..=4]
+U1,0,false: a=[0..] x=[0..=4] y=[0..=4]
+U1,0,true: a=[0..] x=[0..=4] y=[0..=4]
+U1,1,false: a=[1..] x=[0..=4] y=[0..=4]
+U1,1,true: a=[1..] x=[0..=4] y=[0..=4]
+U1,2,false: a=[2..] x=[0..=4] y=[0..=4]
+U1,2,true: a=[2..] x=[0..=4] y=[0..=4]
+U1,3,false: a=[3..] x=[0..=4] y=[0..=4]
+U1,3,true: a=[3..] x=[0..=4] y=[0..=4]
+U1,4,false: a=[4..] x=[0..=4] y=[0..=4]
+U1,4,true: a=[4..] x=[0..=4] y=[0..=4]
+U1,5,false: a=[5..] x=[1..=4] y=[1..=4]
+U1,5,true: a=[5..] x=[1..=4] y=[1..=4]
+U1,6,false: a=[6..] x=[2..=4] y=[2..=4]
+U1,6,true: a=[6..] x=[2..=4] y=[2..=4]
+U1,7,false: a=[7..] x=[3..=4] y=[3..=4]
+U1,7,true: a=[7..] x=[3..=4] y=[3..=4]
+U2,-3,false: a=[0..] x=[0..=4] y=[0..=4]
+U2,-3,true: a=[0..] x=[0..=4] y=[0..=4]
+U2,-2,false: a=[0..] x=[0..=4] y=[0..=4]
+U2,-2,true: a=[0..] x=[0..=4] y=[0..=4]
+U2,-1,false: a=[0..] x=[0..=4] y=[0..=4]
+U2,-1,true: a=[0..] x=[0..=4] y=[0..=4]
+U2,0,false: a=[0..] x=[0..=4] y=[0..=4]
+U2,0,true: a=[0..] x=[0..=4] y=[0..=4]
+U2,1,false: a=[1..] x=[0..=4] y=[0..=4]
+U2,1,true: a=[1..] x=[0..=4] y=[0..=4]
+U2,2,false: a=[1..] x=[0..=4] y=[0..=4]
+U2,2,true: a=[1..] x=[0..=4] y=[0..=4]
+U2,3,false: a=[2..] x=[0..=4] y=[0..=4]
+U2,3,true: a=[2..] x=[0..=4] y=[0..=4]
+U2,4,false: a=[2..] x=[0..=4] y=[0..=4]
+U2,4,true: a=[2..] x=[0..=4] y=[0..=4]
+U2,5,false: a=[3..] x=[0..=4] y=[1..=4]
+U2,5,true: a=[3..] x=[0..=4] y=[1..=4]
+U2,6,false: a=[3..] x=[0..=4] y=[1..=4]
+U2,6,true: a=[3..] x=[0..=4] y=[1..=4]
+U2,7,false: a=[4..] x=[0..=4] y=[2..=4]
+U2,7,true: a=[4..] x=[0..=4] y=[2..=4]
+U5,-3,false: a=[0..] x=[0..=4] y=[0..=4]
+U5,-3,true: a=[0..] x=[0..=4] y=[0..=4]
+U5,-2,false: a=[0..] x=[0..=4] y=[0..=4]
+U5,-2,true: a=[0..] x=[0..=4] y=[0..=4]
+U5,-1,false: a=[0..] x=[0..=4] y=[0..=4]
+U5,-1,true: a=[0..] x=[0..=4] y=[0..=4]
+U5,0,false: a=[0..] x=[0..=4] y=[0..=4]
+U5,0,true: a=[0..] x=[0..=4] y=[0..=4]
+U5,1,false: a=[1..] x=[0..=4] y=[0..=4]
+U5,1,true: a=[1..] x=[0..=4] y=[0..=4]
+U5,2,false: a=[1..] x=[0..=4] y=[0..=4]
+U5,2,true: a=[1..] x=[0..=4] y=[0..=4]
+U5,3,false: a=[1..] x=[0..=4] y=[0..=4]
+U5,3,true: a=[1..] x=[0..=4] y=[0..=4]
+U5,4,false: a=[1..] x=[0..=4] y=[0..=4]
+U5,4,true: a=[1..] x=[0..=4] y=[0..=4]
+U5,5,false: a=[1..] x=[0..=4] y=[1..=4]
+U5,5,true: a=[1..] x=[0..=4] y=[1..=4]
+U5,6,false: a=[2..] x=[0..=4] y=[1..=4]
+U5,6,true: a=[2..] x=[0..=4] y=[1..=4]
+U5,7,false: a=[2..] x=[0..=4] y=[1..=4]
+U5,7,true: a=[2..] x=[0..=4] y=[1..=4]
+G1 shadow, base after part: x=[1..=4] y=[1..=2]
+G2 hole in eliminated y: x=[0..=1, 3..=4] y=[0..=1, 3..=4]
+G3 two lower rows: x=[0..=3] y=[0..=4] z=[0..=4]
+G4 shadow, woken by x <= 4: x=[1..=4] y=[1..=2]
+G5 x <= 2y <= x + 1: x=[0..=4] y=[0..=2]
+E1 G5 then y >= 1: x=[1..=5] y=[1..=3]
+A26 audit seed 26 steps 0-4: a=[-8..=5] x=[-8..=3] y=[-8..=5] z=[-4..=8]
+C1 x = 2w, x = 2y + 1: bottom
+C2 x = 2w, x = y + 1: x=[2..=4] y=[1..=3] w=[1..=2]
+C3 x = 2w + 1, x = 2y: bottom
+C4 x = 3w + 1, x >= y: x=[1..=7] y=[0..=3] w=[0..=2]
+";

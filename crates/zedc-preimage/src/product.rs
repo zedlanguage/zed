@@ -1028,6 +1028,7 @@ pub struct Scope {
     /// states them where its relation alone would lose them; an end the scope derived from
     /// the relation is not among them, since the relation gives it again.
     direct: imbl::OrdMap<(Arc<str>, bool), Num>,
+    gaps: LowerGaps,
 }
 
 /// A name's `let` binding in a [`Scope`]; the order of its binding is in [`Scope::orders`].
@@ -3076,7 +3077,7 @@ impl Split {
             on,
             groups,
             group,
-            base: Arc::new(Formula::and(cons.iter().map(|&g| (**g).clone()).collect())),
+            base: Arc::new(extreme_base(cons)),
             least: cons.iter().min().map(|&c| c.clone()),
             leaf: leaf.cloned(),
         }
@@ -4559,6 +4560,7 @@ impl Scope {
             in_case: false,
             spent: imbl::OrdSet::new(),
             direct: imbl::OrdMap::new(),
+            gaps: LowerGaps::default(),
         };
         s.reduce();
         s
@@ -4638,7 +4640,8 @@ impl Scope {
                 block.stair_due.as_ref() == Some(at)
                     || block.ray_due.as_ref() == Some(at)
                     || block.fired.contains(at)
-                    || !self.is_projected(&p.key, &p.with, &p.names)
+                    || (!self.is_projected(&p.key, &p.with, &p.names)
+                        && !self.puncture_idle(&block, &p.key.0))
             })
             .collect();
         (block, due)
@@ -5778,6 +5781,7 @@ impl Scope {
             }
         }
         Scope {
+            gaps: LowerGaps::default(),
             relation,
             written,
             written_by,
@@ -6288,6 +6292,18 @@ impl Scope {
     /// narrowing, is kept with the join of the cases, which keeps only what the cases share.
     fn narrow(&mut self, test: &Term, outcome: bool, prem: &Premises) {
         if self.bottom {
+            return;
+        }
+        // No aggregate exists for a bare upper sum. Avoid constructing its
+        // second relation before lower_gap_test declines it; a later lower
+        // clause will synchronize the sum from the actual relation.
+        if !self.exact
+            && !self.in_case
+            && lower_gap_syntax(test)
+            && (!matches!(test, Term::Prim(Prim::Le, _)) || !self.gaps.pairs.is_empty())
+            && let Some(body) = self.relation_of(test, outcome)
+            && self.lower_gap_test(&body, prem)
+        {
             return;
         }
         let (tree, pol) = Tree::of(test);
@@ -7693,6 +7709,9 @@ impl Scope {
     /// `whole`, every tree of blocks is projected as a whole: its constraints together, and
     /// each other conjunct with them.
     fn project(&mut self, due: Due, whole: bool) {
+        if !whole && self.gaps.holds(&self.relation, &self.names) {
+            return;
+        }
         // A projection of every block puts no edge in the potential, which may then fail at
         // the edges added since the last projection: it is found again where it is read. Each
         // name with holes then keeps its tree from shortest paths until the potential is found
@@ -8969,7 +8988,28 @@ impl Scope {
         while let Some(i) = work.pop_front() {
             queued.remove(&i);
             let part = &b.parts[&i].clone();
-            if b.managed(part) {
+            if b.managed(part) || self.puncture_idle(&b, &part.key.0) {
+                continue;
+            }
+            // Complexity tradeoff: repeated projection is replaced by a sufficient
+            // integer-witness certificate. It changes no marginal and cannot wake
+            // another part or contribute a movement to again. Pugh, "The Omega
+            // test: a fast and practical integer programming algorithm for dependence
+            // analysis", Proceedings of Supercomputing '91, ACM/IEEE, 1991, pp. 4-13,
+            // supplies the dark-shadow slack (a-1)(b-1). Parallel normalization and
+            // non-growing elimination are described at eliminate: unlike the round-2 version of
+            // this test, the number of rows is bounded by the input shape including box ends.
+            // For V mixed names and R rows this is polynomial (repeated indexed row
+            // passes), not a general O(n log n) projection algorithm. Measured in
+            // review round 3 of PERF-l139-wake (COMPLEXITY.md row PERF-l139-wake). A first projection
+            // is always retained. Classed or holed eliminands refuse this certificate.
+            // A skipped solver refusal is not reconstructed: equality of warnings
+            // remains a separate, explicitly tested limitation, not a consequence
+            // of marginal support. The covered guard is unnecessary: cover was
+            // called at loop entry and after the preceding actual projection; with
+            // unchanged names and block, calling it again is idempotent (its own
+            // documented invariant). No aggregate transition can be missed here.
+            if !b.ray_managed && self.projected.contains_key(&part.key) && self.idle(&b, part) {
                 continue;
             }
             // Complexity tradeoff: naive version, a covered block's names copied and their
@@ -9026,7 +9066,7 @@ impl Scope {
             }
             if again {
                 let all = Formula::and(b.parts.values().map(|p| b.formula(p)).collect());
-                self.project_part(&all);
+                self.project_part(&compact_abs(&all));
                 self.cover(&mut b, covered.is_some());
                 break;
             }
@@ -9531,10 +9571,11 @@ impl Scope {
                 *count.entry(n).or_default() += 1;
             }
         }
+        let allow_multi = self.in_case || tops.iter().any(|g| one_disjunction(g) == Some(1));
         let mut hung: Vec<Pendant> = Vec::new();
         let mut rest: Vec<Formula> = Vec::new();
         for t in &tops {
-            match self.pendant(t, |n| count.get(n).copied().unwrap_or(0)) {
+            match self.pendant(t, |n| count.get(n).copied().unwrap_or(0), allow_multi) {
                 Some(p) => hung.push(p),
                 None => rest.push(t.clone()),
             }
@@ -9556,6 +9597,12 @@ impl Scope {
         }
         if disjunctions > 1 {
             return None;
+        }
+        if allow_multi
+            && let [p] = &hung[..]
+            && let Some(out) = self.unbounded_unit(p, &rest)
+        {
+            return Some(out);
         }
         // Each form, with a new name for it and the values at which each of its pendants has
         // a value of its `x`. A name begins with `#` here, which no program writes.
@@ -9607,19 +9654,57 @@ impl Scope {
     /// `t` as a pendant of a part whose names have the counts `count`: a constraint of names
     /// alone, one of which, `x`, of coefficient one or minus one, no other conjunct mentions,
     /// with two names or more besides, and `x` of one interval and no class.
-    fn pendant(&self, t: &Formula, count: impl Fn(&str) -> usize) -> Option<Pendant> {
+    fn pendant(
+        &self,
+        t: &Formula,
+        count: impl Fn(&str) -> usize,
+        allow_multi: bool,
+    ) -> Option<Pendant> {
         let Formula::Con(c) = t else { return None };
-        let mut x: Option<(&Arc<str>, &Int)> = None;
+        let mut lone = None;
+        let mut multiple = false;
         for (a, k) in &c.lin.terms {
             let Atom::Sym(n) = a else { return None };
             if count(n) == 1 {
-                if x.is_some() {
-                    return None;
-                }
-                x = Some((n, k));
+                multiple |= lone.replace((n, k)).is_some();
             }
         }
-        let (x, k) = x?;
+        // Preserve the ordinary unique-pendant route without domain scans.
+        // If several coordinates are pendant, retain finite convex unit
+        // coordinates in the form only when exactly one is a free half-line.
+        // Complexity tradeoff: main rejects a row with multiple pendant
+        // coordinates. Select its unique free half-line and retain finite,
+        // convex unit coordinates in the form, using the same exact image-
+        // of-hulls argument as the original route. Selection costs O(v),
+        // followed by the original solver, not a new elimination algorithm.
+        // Measured in review round 3 of PERF-l139-wake (allocator calls, 8n ratio): hopb/hoponb R=14.66/14.53 without, 12.75/12.65 with;
+        // both-size totals increase about 18-19k here, largely startup work.
+        // This measured ratio gain is not an asymptotic complexity claim.
+        let (x, k) = if multiple {
+            if !allow_multi || c.rel != Rel::Ge {
+                return None;
+            }
+            let mut free = None;
+            for (a, k) in &c.lin.terms {
+                let Atom::Sym(n) = a else { return None };
+                if count(n) != 1 {
+                    continue;
+                }
+                let p = self.get(n);
+                if k.abs() != Int::ONE || classed(&p) {
+                    return None;
+                }
+                let (l, h) = p.ints().only()?;
+                let unbounded = (*k == Int::ONE && *h == End::PosInf)
+                    || (*k == -&Int::ONE && *l == End::NegInf);
+                if unbounded && free.replace((n, k)).is_some() {
+                    return None;
+                }
+            }
+            free?
+        } else {
+            lone?
+        };
         let s: i8 = if *k == Int::ONE {
             1
         } else if *k == -&Int::ONE {
@@ -9661,6 +9746,193 @@ impl Scope {
     /// Meets each name `part` mentions with its projection, within every interval; where the
     /// solver refuses the projection, with the bounds the box stage gives the rows of `part`
     /// ([`presburger::project_each_boxed`]).
+    // Complexity tradeoff: the old method invokes integer elimination for every
+    // stale punctured-line part. This boundary-support certificate instead reads
+    // its two-name line and the base rows, O(arms + rows), independent of the
+    // number of other parts. It is not entailment (the punctured-line rule of review round 1, which changed answers):
+    // it proves every marginal value has support even with the base present.
+    // This uses plan row PERF-l139-family's interval-constraint-propagation idea, with exact
+    // integer fibers rather than the residual supports of AC-2001 (Bessiere, Regin,
+    // Yap and Zhang, "An optimal coarse-grained arc consistency algorithm", Artificial
+    // Intelligence 165(2), 2005) or watched literals.
+    // Review round 3 of PERF-l139-wake, with a finite optimizer not kept: omitting this gives hop
+    // R=21.38, hopon=22.08, hopb=35.29, hoponb=35.36; retaining it gives
+    // 8.62, 8.89, 12.62, 12.66. Without that finite optimizer, the kept
+    // source measures 10.55, 11.32, 12.75, 12.65. User scans still preclude
+    // a global linear bound.
+    // One half-plane cuts each fiber at only one end; a singleton fiber must
+    // therefore be at a box edge. Only exact line/edge intersections can lose
+    // support. The pendant's current lower end has a separate constructed
+    // witness. No skipped projection changes a product or the again rule.
+    fn puncture_idle(&self, b: &Block, g: &Formula) -> bool {
+        self.puncture_support(b, g).unwrap_or(false)
+    }
+
+    fn puncture_support(&self, b: &Block, g: &Formula) -> Option<bool> {
+        let Formula::Or(arms) = g else { return None };
+        let c = arms.iter().find_map(|a| match a {
+            Formula::Con(c) if c.rel == Rel::Ge && c.lin.terms.len() == 2 => Some(c),
+            _ => None,
+        })?;
+        if !arms.iter().any(|a| {
+            matches!(a, Formula::Con(d)
+            if d.rel == Rel::Ge && d.lin.terms.len() == c.lin.terms.len()
+                && d.lin.terms.iter().zip(&c.lin.terms).all(|((n,k),(m,j))|
+                    n == m && k.is_positive() != j.is_positive() && *k == -j)
+                && &d.lin.constant + &c.lin.constant == -&Int::from(2))
+        }) {
+            return None;
+        }
+        let mut ts = c.lin.terms.iter();
+        let (Atom::Sym(x), p) = ts.next()? else {
+            return None;
+        };
+        let (Atom::Sym(y), q) = ts.next()? else {
+            return None;
+        };
+        let forbidden = &-&c.lin.constant - &Int::ONE;
+        let domain = |n: &str| -> Option<(Int, Int)> {
+            let v = self.get(n);
+            if classed(&v) || v.ints().len() != 1 {
+                return None;
+            }
+            let (End::Fin(lo), End::Fin(hi)) = v.ints().bounds()? else {
+                return None;
+            };
+            Some((Int::from(lo), Int::from(hi)))
+        };
+        let (xd, yd) = (domain(x)?, domain(y)?);
+        let mut row: Option<&Con> = None;
+        let mut pendant: Option<&Con> = None;
+        for f in &b.cons {
+            let Formula::Con(r) = &**f else { return None };
+            if r.rel != Rel::Ge {
+                return None;
+            }
+            if b.leaf
+                .as_ref()
+                .is_some_and(|n| r.lin.terms.contains_key(&Atom::Sym(n.clone())))
+            {
+                if pendant.replace(r).is_some() {
+                    return None;
+                }
+            } else if r.lin.terms.len() == 1 {
+                let (Atom::Sym(n), k) = r.lin.terms.iter().next()? else {
+                    return None;
+                };
+                let v = self.get(n);
+                if classed(&v) {
+                    return None;
+                }
+                let (lo, hi) = v.ints().bounds()?;
+                let End::Fin(e) = (if k.is_positive() { lo } else { hi }) else {
+                    return None;
+                };
+                if &r.lin.constant + &(k * &Int::from(e)) < Int::ZERO {
+                    return None;
+                }
+            } else {
+                if r.lin
+                    .terms
+                    .keys()
+                    .any(|a| !matches!(a, Atom::Sym(n) if n == x || n == y))
+                {
+                    return None;
+                }
+                row = Some(match row {
+                    Some(old) if old.lin.terms != r.lin.terms => return None,
+                    Some(old) if old.lin.constant < r.lin.constant => old,
+                    _ => r,
+                });
+            }
+        }
+        let coefficient = |r: &Con, n: &Arc<str>| {
+            r.lin
+                .terms
+                .get(&Atom::Sym(n.clone()))
+                .cloned()
+                .unwrap_or(Int::ZERO)
+        };
+        let (a, d, e) = row
+            .map(|r| (coefficient(r, x), coefficient(r, y), r.lin.constant.clone()))
+            .unwrap_or((Int::ZERO, Int::ZERO, Int::ZERO));
+        // The feasible fiber in v when u is fixed, using integer floor/ceiling.
+        let fiber = |u: &Int, au: &Int, av: &Int, bounds: &(Int, Int)| -> Option<(Int, Int)> {
+            let mut lo = bounds.0.clone();
+            let mut hi = bounds.1.clone();
+            let t = -&(&e + &(au * u));
+            if av.is_positive() {
+                lo = lo.max(-&(-&t).div_floor(av));
+            } else if av.is_negative() {
+                hi = hi.min(t.div_floor(av));
+            } else if t.is_positive() {
+                return None;
+            }
+            (lo <= hi).then_some((lo, hi))
+        };
+        for (u, v, pu, pv, au, av) in [(&xd, &yd, p, q, &a, &d), (&yd, &xd, q, p, &d, &a)] {
+            // Half-plane projection is an interval; supported ends support its interior.
+            fiber(&u.0, au, av, v)?;
+            fiber(&u.1, au, av, v)?;
+            for edge in [&v.0, &v.1] {
+                let t = &forbidden - &(pv * edge);
+                if t.mod_floor(pu) != Int::ZERO {
+                    continue;
+                }
+                let at = t.div_floor(pu);
+                if at < u.0 || at > u.1 {
+                    continue;
+                }
+                let (lo, hi) = fiber(&at, au, av, v)?;
+                if lo == hi && &lo == edge {
+                    return Some(false);
+                }
+            }
+        }
+        if let Some(r) = pendant {
+            let leaf = b.leaf.as_ref()?;
+            if coefficient(r, leaf) != Int::ONE {
+                return None;
+            }
+            let lp = self.get(leaf);
+            if classed(&lp) || lp.ints().len() != 1 {
+                return None;
+            }
+            let (End::Fin(low), End::PosInf) = lp.ints().bounds()? else {
+                return None;
+            };
+            // Construct one minimising box edge, clamped by the base half-plane.
+            let cx = coefficient(r, x);
+            let cy = coefficient(r, y);
+            let vx = if cx.is_negative() { &xd.0 } else { &xd.1 };
+            let (lo, hi) = fiber(vx, &a, &d, &yd)?;
+            let vy = if cy.is_negative() { lo } else { hi };
+            if &(p * vx) + &(q * &vy) == forbidden {
+                return Some(false);
+            }
+            let mut value = &r.lin.constant + &Int::from(low);
+            for (atom, k) in &r.lin.terms {
+                let Atom::Sym(n) = atom else { return None };
+                if n == leaf {
+                    continue;
+                }
+                let v = if n == x {
+                    vx.clone()
+                } else if n == y {
+                    vy.clone()
+                } else {
+                    let (lo, hi) = domain(n)?;
+                    if k.is_negative() { lo } else { hi }
+                };
+                value = &value + &(k * &v);
+            }
+            if value < Int::ZERO {
+                return Some(false);
+            }
+        }
+        Some(true)
+    }
+
     fn project_part(&mut self, part: &Formula) {
         if let Some(out) = self.project_by_pendants(part) {
             for (n, x) in out {
@@ -11385,6 +11657,239 @@ fn one_disjunction(t: &Formula) -> Option<usize> {
     }
 }
 
+/// Marginals of lower threshold clauses with at most one upper unit-sum row.
+/// Under x+y<=c, x>=a || y>=b excludes (c-b,a) from x and its reflection
+/// (c-a,b) from y. Starting with intervals, paired deletions preserve support
+/// at y=c-x, clamped to the original endpoints. With unchanged endpoints and
+/// both arms feasible, the union of these gaps gives the exact marginals.
+// Complexity tradeoff: replaying k parts and recording their snapshots in each
+// case costs O(k) projections and O(k log k) records per test. Apply only the
+// new clause's two gaps in O(log k) persistent interval-tree work; an upper
+// sum added after k clauses creates their gaps once in O(k log k). No earlier
+// part or snapshot is visited: reflected supports prove it cannot narrow.
+// A certificate is used only while the whole relation and both domains match;
+// otherwise the original worklist, including its again rule, runs unchanged.
+#[derive(Clone, Default, PartialEq, Debug)]
+struct LowerGaps {
+    relation: imbl::OrdSet<Arc<Formula>>,
+    pairs: imbl::OrdMap<NamePair, usize>,
+    other: imbl::OrdSet<Arc<Formula>>,
+    upper: imbl::OrdMap<Arc<Formula>, Int>,
+    at: Option<(NamePair, IntervalSet, IntervalSet)>,
+}
+
+/// Avoid constructing a second linear relation for tests outside the fragment.
+fn lower_gap_syntax(test: &Term) -> bool {
+    let unary = |t: &Term| {
+        matches!(t, Term::Prim(Prim::Ge, a)
+        if matches!(&a[..], [Term::Var(_), Term::Lit(Value::Int(_) | Value::Big(_))]))
+    };
+    match test {
+        Term::Prim(Prim::Or, a) => matches!(&a[..], [x, y] if unary(x) && unary(y)),
+        Term::Prim(Prim::Le, a) => {
+            matches!(&a[..], [Term::Prim(Prim::Add, ns), Term::Lit(Value::Int(_) | Value::Big(_))]
+            if matches!(&ns[..], [Term::Var(_), Term::Var(_)]))
+        }
+        _ => false,
+    }
+}
+
+/// A lower threshold disjunction on distinct names, in name order.
+fn lower_row(g: &Formula) -> Option<(NamePair, Int, Int)> {
+    let Formula::Or(arms) = g else { return None };
+    let [left, right] = &arms[..] else {
+        return None;
+    };
+    let unary = |g: &Formula| {
+        let Formula::Con(c) = g else { return None };
+        if c.rel != Rel::Ge {
+            return None;
+        }
+        let mut ts = c.lin.terms.iter();
+        let (Some((Atom::Sym(n), k)), None) = (ts.next(), ts.next()) else {
+            return None;
+        };
+        k.is_positive()
+            .then(|| (n.clone(), -&c.lin.constant.div_floor(k)))
+    };
+    let ((x, a), (y, b)) = (unary(left)?, unary(right)?);
+    if x < y {
+        Some(((x, y), a, b))
+    } else if y < x {
+        Some(((y, x), b, a))
+    } else {
+        None
+    }
+}
+
+fn upper_sum(g: &Formula) -> Option<(NamePair, Int)> {
+    let Formula::Con(c) = g else { return None };
+    if c.rel != Rel::Ge {
+        return None;
+    }
+    let mut ts = c.lin.terms.iter();
+    let (Some((Atom::Sym(x), p)), Some((Atom::Sym(y), q)), None) =
+        (ts.next(), ts.next(), ts.next())
+    else {
+        return None;
+    };
+    (*p == -&Int::ONE && *q == -&Int::ONE).then(|| ((x.clone(), y.clone()), c.lin.constant.clone()))
+}
+
+impl LowerGaps {
+    fn sync(&mut self, relation: &Conjuncts) {
+        let changes: Vec<_> = self
+            .relation
+            .diff(relation.set())
+            .map(|d| match d {
+                imbl::ordset::DiffItem::Add(g) => (g.clone(), true),
+                imbl::ordset::DiffItem::Remove(g) => (g.clone(), false),
+            })
+            .collect();
+        if !changes.is_empty() {
+            self.at = None;
+        }
+        for (g, add) in changes {
+            let pair = if let Some((pair, _, _)) = lower_row(&g) {
+                Some(pair)
+            } else if let Some((pair, c)) = upper_sum(&g) {
+                if add {
+                    self.upper.insert(g.clone(), c);
+                } else {
+                    self.upper.remove(&g);
+                }
+                Some(pair)
+            } else {
+                if add {
+                    self.other.insert(g.clone());
+                } else {
+                    self.other.remove(&g);
+                }
+                None
+            };
+            if let Some(pair) = pair {
+                if add {
+                    *self.pairs.entry(pair).or_default() += 1;
+                } else if let Some(k) = self.pairs.get_mut(&pair) {
+                    *k -= 1;
+                    if *k == 0 {
+                        self.pairs.remove(&pair);
+                    }
+                }
+            }
+        }
+        self.relation = relation.set().clone();
+    }
+
+    fn holds(&self, relation: &Conjuncts, names: &imbl::OrdMap<Arc<str>, Product>) -> bool {
+        self.at.as_ref().is_some_and(|((x, y), a, b)| {
+            self.relation == *relation.set()
+                && names.get(x).is_some_and(|p| !classed(p) && p.ints() == a)
+                && names.get(y).is_some_and(|p| !classed(p) && p.ints() == b)
+        })
+    }
+}
+
+impl Scope {
+    fn lower_gap_test(&mut self, body: &Formula, prem: &Premises) -> bool {
+        if !self.written.is_empty() {
+            return false;
+        }
+        let lower = lower_row(body);
+        let upper = upper_sum(body);
+        let pair = match (&lower, &upper) {
+            (Some((pair, ..)), _) | (_, Some((pair, _))) => pair.clone(),
+            _ => return false,
+        };
+        self.gaps.sync(&self.relation);
+        // A bare upper sum has no reflected gaps to aggregate. Keep its ordinary
+        // projection and history; start this certificate when a lower clause
+        // arrives. This removes an unnecessary subcase (and the startup R rise
+        // on peq), rather than switching at an input size.
+        if upper.is_some() && self.gaps.pairs.is_empty() {
+            return false;
+        }
+        if !self.gaps.other.is_empty()
+            || self.gaps.upper.len() > 1
+            || self.gaps.pairs.keys().any(|p| p != &pair)
+        {
+            return false;
+        }
+        let (px, py) = (self.get(&pair.0), self.get(&pair.1));
+        if classed(&px) || classed(&py) {
+            return false;
+        }
+        let (Some(xends), Some(yends)) = (px.ints().bounds(), py.ints().bounds()) else {
+            return false;
+        };
+        // An unrelated change ends the certificate; restart only from a convex box.
+        if !self.gaps.holds(&self.relation, &self.names) {
+            // Begin the reflected-gap invariant only at convex domains, with no
+            // lower clause already present. A sum alone is already projected.
+            if self.gaps.relation.len() != self.gaps.upper.len()
+                || px.ints().len() != 1
+                || py.ints().len() != 1
+            {
+                return false;
+            }
+        }
+        let mut x = px.ints().clone();
+        let mut y = py.ints().clone();
+        let mut rows = Vec::new();
+        let c = if let Some((_, c)) = upper {
+            if !self.gaps.upper.is_empty() {
+                return false;
+            }
+            rows.extend(self.gaps.relation.iter().filter_map(|g| lower_row(g)));
+            Some(c)
+        } else {
+            rows.extend(lower);
+            self.gaps.upper.values().next().cloned()
+        };
+        if let Some(c) = &c {
+            for (domain, other) in [(&mut x, yends.0), (&mut y, xends.0)] {
+                if let End::Fin(lo) = other {
+                    domain.clone_from(&domain.meet(&IntervalSet::range(
+                        End::NegInf,
+                        End::Fin(Num::from(&(c - &Int::from(lo)))),
+                    )));
+                }
+            }
+        }
+        for (_, a, b) in rows {
+            if xends.1 < &End::Fin(Num::from(&a)) || yends.1 < &End::Fin(Num::from(&b)) {
+                return false;
+            }
+            if let Some(c) = &c {
+                let (xl, xh) = (&(c - &b) + &Int::ONE, &a - &Int::ONE);
+                let (yl, yh) = (&(c - &a) + &Int::ONE, &b - &Int::ONE);
+                x = x.minus(&IntervalSet::range(
+                    End::Fin(Num::from(&xl)),
+                    End::Fin(Num::from(&xh)),
+                ));
+                y = y.minus(&IntervalSet::range(
+                    End::Fin(Num::from(&yl)),
+                    End::Fin(Num::from(&yh)),
+                ));
+            }
+        }
+        if x.bounds() != Some(xends) || y.bounds() != Some(yends) {
+            return false;
+        }
+        // Unchanged lower ends keep the upper sum projected too.
+        if let Some(p) = self.names.get_mut(&pair.0) {
+            p.meet_ints(x.clone(), prem);
+        }
+        if let Some(p) = self.names.get_mut(&pair.1) {
+            p.meet_ints(y.clone(), prem);
+        }
+        self.relation.and(body.clone());
+        self.gaps.sync(&self.relation);
+        self.gaps.at = Some((pair, x, y));
+        true
+    }
+}
+
 /// The top-level conjuncts of `part`, each once and in an order of their own: each constraint
 /// divided by the greatest common divisor of its coefficients ([`Con::reduced`], so `2t == 0`
 /// is `t == 0`, `2t == 1` is `false` and `2t + 1 >= 0` is `t >= 0`); an equation and its
@@ -12722,6 +13227,665 @@ fn upper_arms(g: &Formula, x: &Arc<str>, y: &Arc<str>) -> Option<Vec<(Int, Int, 
             (p.is_positive() && q.is_positive()).then(|| (p, q, c.lin.constant.clone()))
         })
         .collect()
+}
+
+/// An atom `sum of k * name + c >= 0`.
+type Row = (BTreeMap<Arc<str>, Num>, Num);
+
+/// The atom `s * lin + t >= 0`, when `lin` reads only names.
+fn row(lin: &Lin, s: i64, t: i64) -> Option<Row> {
+    let s = Num::from(s);
+    let mut terms = BTreeMap::new();
+    for (a, k) in &lin.terms {
+        let Atom::Sym(m) = a else { return None };
+        terms.insert(m.clone(), &s * &Num::from(k));
+    }
+    Some((terms, &(&s * &Num::from(&lin.constant)) + &Num::from(t)))
+}
+
+/// The atoms of `c` with the value `value`, as a union of conjunctions, when it reads only
+/// names.
+fn atoms_of(c: &Con, value: bool) -> Option<Vec<Vec<Row>>> {
+    let r = |s, t| row(&c.lin, s, t);
+    Some(match (c.rel, value) {
+        (Rel::Ge, true) => vec![vec![r(1, 0)?]],
+        (Rel::Ge, false) => vec![vec![r(-1, -1)?]],
+        (Rel::Eq, true) => vec![vec![r(1, 0)?, r(-1, 0)?]],
+        (Rel::Eq, false) => vec![vec![r(1, -1)?], vec![r(-1, -1)?]],
+    })
+}
+
+/// `rows` with each name other than `keep` that they bound from both sides eliminated, or
+/// `None` when such a name's interval has a hole or a class. The ends of its interval join
+/// the rows as bounds of coefficient 1, and each pair of a lower and an upper bound gives its
+/// dark shadow (Pugh 1991): when all hold, the pair of the greatest lower and least upper
+/// bound has an integer between them, and it meets every other bound.
+fn eliminate(
+    mut rows: Vec<Row>,
+    keep: Option<&Arc<str>>,
+    get: &impl Fn(&str) -> Product,
+) -> Option<Vec<Row>> {
+    // Complexity tradeoff: unrestricted Fourier-Motzkin may grow doubly
+    // exponentially (seen in review round 3 on pendants.rs's equalities to hubs). Add finite box ends once, normalize
+    // parallel integer rows, and eliminate only when p*q <= p+q. Thus each step
+    // replaces at least as many rows as it makes; at most the initial number of
+    // names disappear and the row count never exceeds its initial value.
+    // This is a structural refusal of the certificate, with no size cutoff.
+    // Pugh, The Omega test, Supercomputing '91 (1991), supplies the dark shadow;
+    // its sufficient integer-witness argument is unchanged by refusing a step.
+    let ns = both(&rows);
+    for n in ns.into_iter().filter(|n| Some(n) != keep) {
+        let p = get(&n);
+        let (lo, hi) = p.ints().only().filter(|_| !classed(&p))?;
+        for (k, e) in [(1, lo), (-1, hi)] {
+            if let End::Fin(e) = e {
+                rows.push((
+                    BTreeMap::from([(n.clone(), Num::from(k))]),
+                    if k == 1 { -e } else { e.clone() },
+                ));
+            }
+        }
+    }
+    rows = parallel_rows(rows);
+    loop {
+        let mut counts: BTreeMap<Arc<str>, (usize, usize)> = BTreeMap::new();
+        for (ts, _) in &rows {
+            for (n, k) in ts {
+                let c = counts.entry(n.clone()).or_default();
+                if k.signum() > 0 {
+                    c.0 += 1;
+                } else {
+                    c.1 += 1;
+                }
+            }
+        }
+        let mut unary: BTreeMap<Arc<str>, (Option<Num>, Option<Num>)> = BTreeMap::new();
+        for (ts, c) in &rows {
+            if ts.len() == 1 {
+                let (n, k) = ts.iter().next()?;
+                let u = unary.entry(n.clone()).or_default();
+                if *k == Num::ONE {
+                    u.0 = Some(c.clone());
+                }
+                if *k == -&Num::ONE {
+                    u.1 = Some(c.clone());
+                }
+            }
+        }
+        let mut needed = false;
+        let m = counts.into_iter().find_map(|(n, (p, q))| {
+            if Some(&n) == keep || p == 0 || q == 0 {
+                return None;
+            }
+            needed = true;
+            // A consistent pair of unit unary bounds makes the true constant
+            // upper-lower>=0, discarded by parallel_rows. Count that output as
+            // absent before deciding whether this step can grow.
+            let trivial = unary.get(&n).is_some_and(|(l, h)| {
+                matches!((l,h),
+                (Some(l),Some(h)) if l+h >= Num::ZERO)
+            });
+            (p.checked_mul(q)
+                .is_some_and(|pairs| pairs - usize::from(trivial) <= p + q))
+            .then_some(n)
+        });
+        let Some(m) = m else {
+            return (!needed).then_some(rows);
+        };
+        let (mut lower, mut upper) = (vec![], vec![]);
+        for r in std::mem::take(&mut rows) {
+            match r.0.get(&m).map(|k| k.signum()) {
+                Some(1) => lower.push(r),
+                Some(-1) => upper.push(r),
+                _ => rows.push(r),
+            }
+        }
+        let rest = |t: &BTreeMap<Arc<str>, Num>, f: &Num| -> Vec<(Arc<str>, Num)> {
+            t.iter()
+                .filter(|(x, _)| **x != m)
+                .map(|(x, k)| (x.clone(), f * k))
+                .collect()
+        };
+        for (lt, lc) in &lower {
+            let a = &lt[&m];
+            for (ut, uc) in &upper {
+                let b = &-&ut[&m];
+                let mut terms: BTreeMap<Arc<str>, Num> = BTreeMap::new();
+                for (x, k) in [rest(lt, b), rest(ut, a)].concat() {
+                    let v = &terms.remove(&x).unwrap_or(Num::ZERO) + &k;
+                    if !v.is_zero() {
+                        terms.insert(x, v);
+                    }
+                }
+                let slack = &(a - &Num::ONE) * &(b - &Num::ONE);
+                rows.push((terms, &(&(a * uc) + &(b * lc)) - &slack));
+            }
+        }
+        rows = parallel_rows(rows);
+    }
+}
+
+// Complexity tradeoff: group equal primitive term maps in O(T log r), retaining
+// their tightest constant. For integer variables gcd division with floor preserves
+// each row exactly. This is parallel-row normalization from Pugh's Omega test
+// (Supercomputing '91, 1991); no pairwise redundancy search is needed.
+fn parallel_rows(rows: Vec<Row>) -> Vec<Row> {
+    let mut out: BTreeMap<BTreeMap<Arc<str>, Num>, Num> = BTreeMap::new();
+    for (mut terms, mut c) in rows {
+        let d = terms.values().fold(Num::ZERO, |d, k| d.gcd(k));
+        if d > Num::ONE {
+            for k in terms.values_mut() {
+                *k = k.div_floor(&d);
+            }
+            c = c.div_floor(&d);
+        }
+        if terms.is_empty() && c >= Num::ZERO {
+            continue;
+        }
+        out.entry(terms)
+            .and_modify(|old| *old = old.clone().min(c.clone()))
+            .or_insert(c);
+    }
+    out.into_iter().collect()
+}
+
+/// The names that `rows` bound from both sides.
+fn both(rows: &[Row]) -> BTreeSet<Arc<str>> {
+    let mut sign: BTreeMap<&Arc<str>, bool> = BTreeMap::new();
+    let mut out = BTreeSet::new();
+    for (m, k) in rows.iter().flat_map(|r| r.0.iter()) {
+        if *sign.entry(m).or_insert(k.signum() > 0) != (k.signum() > 0) {
+            out.insert(m.clone());
+        }
+    }
+    out
+}
+
+/// The value of `k * end` for the end of `p` that most raises it, `None` when infinite;
+/// `None` outside when `p` is empty or has a class.
+fn top(k: &Num, p: &Product) -> Option<Option<Num>> {
+    let (lo, hi) = p.ints().bounds().filter(|_| !classed(p))?;
+    Some(match if k.signum() > 0 { hi } else { lo } {
+        End::Fin(v) => Some(k * v),
+        _ => None,
+    })
+}
+
+/// For each row, its greatest value over the box given by `get` and how many of its names
+/// are unbounded on the side that raises it; `None` when a name's interval is empty.
+fn sums(rows: &[Row], get: &impl Fn(&str) -> Product) -> Option<Vec<(Num, usize)>> {
+    rows.iter()
+        .map(|(terms, c)| {
+            terms
+                .iter()
+                .try_fold((c.clone(), 0), |(s, free), (x, k)| match top(k, &get(x))? {
+                    Some(v) => Some((&s + &v, free)),
+                    None => Some((s, free + 1)),
+                })
+        })
+        .collect()
+}
+
+/// The values of `n` at which every row holds at one integer point of the box of the other
+/// names, given each row's greatest value over the box ([`sums`]), when every other name has
+/// one sign in all rows: then the box's corner that most raises one row most raises them all,
+/// and each row bounds `n` from one side at that corner.
+fn range(rows: &[Row], sums: &[(Num, usize)], n: &Arc<str>, p: &Product) -> Option<(End, End)> {
+    let (mut up, mut down) = (End::NegInf, End::PosInf);
+    for ((terms, _), (s, free)) in rows.iter().zip(sums) {
+        let Some(c) = terms.get(n) else {
+            if *free == 0 && s.signum() < 0 {
+                return None;
+            }
+            continue;
+        };
+        let (m, free) = match top(c, p)? {
+            Some(v) => (s - &v, *free),
+            None => (s.clone(), free - 1),
+        };
+        match c.signum() {
+            _ if free > 0 => {}
+            1 => up = up.max(End::Fin(-&m.div_floor(c))),
+            _ => down = down.min(End::Fin(m.div_floor(&-c))),
+        }
+    }
+    (up <= down).then_some((up, down))
+}
+
+/// Appends to `out` conjunctions of rows, with `atoms`, whose union holds every point at
+/// which `f` has the value `value` and `atoms` hold: `f` is read as a union of conjunctions
+/// of atoms, a conjunction kept only where at most one of its members is no atom and does
+/// not have the value asked at every point of the box given by `get`; any other is dropped.
+fn conjunctions(
+    f: &Formula,
+    value: bool,
+    atoms: &mut Vec<Row>,
+    get: &impl Fn(&str) -> Product,
+    out: &mut Vec<Vec<Row>>,
+) {
+    match f {
+        Formula::Con(c) => {
+            for conj in atoms_of(c, value).into_iter().flatten() {
+                out.push([atoms.clone(), conj].concat());
+            }
+        }
+        Formula::Not(g) => conjunctions(g, !value, atoms, get, out),
+        Formula::And(gs) | Formula::Or(gs) if matches!(f, Formula::And(_)) == value => {
+            let k = atoms.len();
+            let mut rest = vec![];
+            for g in gs.iter().filter(|g| !fixed(g, value, get)) {
+                match g {
+                    Formula::Con(c) => match atoms_of(c, value).as_deref() {
+                        Some([conj]) => atoms.extend(conj.iter().cloned()),
+                        _ => rest.push(g),
+                    },
+                    _ => rest.push(g),
+                }
+            }
+            match rest[..] {
+                [] => out.push(atoms.clone()),
+                [g] => conjunctions(g, value, atoms, get, out),
+                _ => {}
+            }
+            atoms.truncate(k);
+        }
+        Formula::And(gs) | Formula::Or(gs) => {
+            for g in gs.iter() {
+                conjunctions(g, value, atoms, get, out);
+            }
+        }
+    }
+}
+
+/// Whether the union of `spans` holds every integer from `lo` to `hi`.
+fn covers(mut spans: Vec<(End, End)>, lo: &End, hi: &End) -> bool {
+    spans.sort();
+    let mut need = lo.clone();
+    for (a, b) in spans {
+        if a <= need && b >= need {
+            let End::Fin(b) = b else { return true };
+            need = End::Fin(&b + &Num::ONE);
+        }
+    }
+    &need > hi
+}
+
+/// The least (`up` false) or greatest value of `lin` over the hulls of its names' intervals
+/// given by `get`, when every end it reads is finite.
+fn lin_end(lin: &Lin, up: bool, get: &impl Fn(&str) -> Product) -> Option<Num> {
+    let mut sum = Num::from(&lin.constant);
+    for (a, k) in &lin.terms {
+        let Atom::Sym(n) = a else { return None };
+        let p = get(n);
+        let (lo, hi) = p.ints().bounds()?;
+        let End::Fin(v) = (if k.is_positive() == up { hi } else { lo }) else {
+            return None;
+        };
+        sum = &sum + &(&Num::from(k) * v);
+    }
+    Some(sum)
+}
+
+/// Whether `f` has the value `value` at every point of the hulls of its names' intervals
+/// given by `get`.
+fn fixed(f: &Formula, value: bool, get: &impl Fn(&str) -> Product) -> bool {
+    match f {
+        Formula::Con(c) => {
+            let (lo, hi) = (
+                || lin_end(&c.lin, false, get),
+                || lin_end(&c.lin, true, get),
+            );
+            let zero = &Num::ZERO;
+            match (c.rel, value) {
+                (Rel::Ge, true) => lo().is_some_and(|v| &v >= zero),
+                (Rel::Ge, false) => hi().is_some_and(|v| &v < zero),
+                (Rel::Eq, true) => {
+                    lo().is_some_and(|v| &v >= zero) && hi().is_some_and(|v| &v <= zero)
+                }
+                (Rel::Eq, false) => {
+                    lo().is_some_and(|v| &v > zero) || hi().is_some_and(|v| &v < zero)
+                }
+            }
+        }
+        Formula::Not(g) => fixed(g, !value, get),
+        Formula::And(gs) if value => gs.iter().all(|g| fixed(g, value, get)),
+        Formula::Or(gs) if !value => gs.iter().all(|g| fixed(g, value, get)),
+        Formula::And(gs) | Formula::Or(gs) => gs.iter().any(|g| fixed(g, value, get)),
+    }
+}
+
+impl Scope {
+    /// Whether projecting `part` of `b` leaves each name of its formula as it is: no name has
+    /// a class, and for every value of each name some integer point of the box of the others
+    /// satisfies the part's formula ([`conjunctions`], [`range`]). Each conjunction's rows
+    /// are eliminated and summed once for all names it bounds from one side.
+    fn idle(&self, b: &Block, part: &Part) -> bool {
+        // Complexity tradeoff: consult cached structural indexes before reading
+        // the base. A constraint-only part is considered only for a free leaf,
+        // and a base with names outside this part and leaf is left to the existing
+        // pendant projector. A base with equalities uses that route too.
+        // Thus peq/pleaves never scan a growing collection of sibling leaves in
+        // this certificate. These are fragment refusals, not count thresholds;
+        // subset testing costs O(|part| log |part|) and never scans extra names.
+        // An empty base is tested like any other (the part's own rows alone):
+        // refusing it, as the review round's version did, projected star_extra's
+        // split parts again at each new split, 1,773,848 against 2,405,039
+        // allocations at k = 32 (8n ratio 14.0 against 17.9 allocations).
+        if !b.split.eqs.is_empty() {
+            return false;
+        }
+        let g = if let Some(g) = part.of.as_deref() {
+            g
+        } else {
+            let Some(leaf) = &b.leaf else { return false };
+            let p = self.get(leaf);
+            if classed(&p) || !matches!(p.ints().only(), Some((_, End::PosInf))) {
+                return false;
+            }
+            &part.key.0
+        };
+        let mut allowed = factors(g);
+        if let Some(n) = &b.leaf {
+            allowed.insert(Factor::Sym(n.clone()));
+        }
+        if b.split.group.len() > allowed.len() || !b.split.group.keys().all(|n| allowed.contains(n))
+        {
+            return false;
+        }
+        let get = |m: &str| self.get(m);
+        let (f, mut conjs) = (b.formula(part), vec![]);
+        conjunctions(&f, true, &mut vec![], &get, &mut conjs);
+        let names = syms(&f);
+        let mut spans: BTreeMap<&Arc<str>, Vec<(End, End)>> = BTreeMap::new();
+        for rows in conjs {
+            let two = both(&rows);
+            let shared =
+                eliminate(rows.clone(), None, &get).and_then(|r| Some((sums(&r, &get)?, r)));
+            for n in &names {
+                let own = two
+                    .contains(n)
+                    .then(|| eliminate(rows.clone(), Some(n), &get));
+                let own = own.map(|r| r.and_then(|r| Some((sums(&r, &get)?, r))));
+                let Some((s, r)) = own.as_ref().unwrap_or(&shared) else {
+                    continue;
+                };
+                spans.entry(n).or_default().extend(range(r, s, n, &get(n)));
+            }
+        }
+        names.iter().all(|n| {
+            let p = self.get(n);
+            let Some((lo, hi)) = p.ints().bounds() else {
+                return false;
+            };
+            !classed(&p) && covers(spans.remove(n).unwrap_or_default(), lo, hi)
+        })
+    }
+}
+
+// Complexity tradeoff: carry r common-intercept two-name inequalities into every
+// projection, versus retain just the two extreme slopes per intercept in O(r log r).
+// A middle row is a convex combination of its extremes, so removing it preserves all
+// real and integer points. This is the common-intercept case of the envelope method
+// named in plan row PERF-l139-family (F. P. Preparata and M. I. Shamos, Computational Geometry: An Introduction, Springer-Verlag, 1985),
+// using ordered grouping rather than a dynamic general half-plane hull. Projection
+// syntax may still affect refusals; this is tested by families::projection_shortcut_cases.
+// Measured in review round 3 (allocator calls, 8n ratio), persist: without this rule R=26.29, with it R=12.66;
+// compact_abs is also present in both measurements.
+fn extreme_base(cons: &[&Arc<Formula>]) -> Formula {
+    let eligible = |g: &&&Arc<Formula>| {
+        matches!(&****g,Formula::Con(c)
+        if c.rel == Rel::Ge && c.lin.terms.len() == 2
+            && c.lin.terms.keys().all(|a| matches!(a,Atom::Sym(_))))
+    };
+    let mut candidates = cons.iter().filter(eligible);
+    if candidates.next().is_none() || candidates.next().is_none() {
+        return Formula::and(cons.iter().map(|g| (***g).clone()).collect());
+    }
+    let mut groups: BTreeMap<(&Atom, &Atom, &Int, &Int), (&Con, &Con)> = BTreeMap::new();
+    let mut out = vec![];
+    for g in cons {
+        let Formula::Con(c) = &***g else {
+            out.push((***g).clone());
+            continue;
+        };
+        let mut terms = c.lin.terms.iter();
+        match (c.rel, terms.next(), terms.next(), terms.next()) {
+            (Rel::Ge, Some((x @ Atom::Sym(_), a)), Some((y @ Atom::Sym(_), b)), None) => {
+                let key = (x, y, a, &c.lin.constant);
+                let (lo, hi) = groups.entry(key).or_insert((c, c));
+                if b < &lo.lin.terms[y] {
+                    *lo = c;
+                }
+                if b > &hi.lin.terms[y] {
+                    *hi = c;
+                }
+            }
+            _ => out.push(Formula::Con(c.clone())),
+        }
+    }
+    for (lo, hi) in groups.into_values() {
+        if lo != hi {
+            out.push(Formula::Con(hi.clone()));
+        }
+        out.push(Formula::Con(lo.clone()));
+    }
+    Formula::and(out)
+}
+
+/// The clauses of one form `F + |b y| + c >= 0` (key: `F`'s terms and `y`), by `|b|`, each
+/// with its least constant `c` and its formula.
+type AbsGroups = BTreeMap<(BTreeMap<Atom, Int>, Atom), BTreeMap<Int, (Int, Formula)>>;
+
+// Complexity tradeoff: the again projection previously carried every repeated absolute
+// linear lower bound into the integer solver. The two arms F+b*y>=0 or F-b*y>=0
+// mean F+|b*y|>=0. At fixed nonconstant F and y, a smaller |b| and smaller constant
+// imply a clause with larger ones. Sort and keep the Pareto frontier in O(T log r)
+// for T input terms in r clauses, rather than O(r^2) pairwise implication checks.
+// No arm combinations or values are searched. This algebraic redundancy test is used
+// instead of plan row PERF-l139-family's general half-plane hull, which does not apply to disjunctions.
+// Equivalence preserves integer points; families::projection_shortcut_cases compares the approximate
+// projector's outputs, since equivalence alone does not establish equal refusals.
+// Measured in review round 3 (allocator calls, 8n ratio) without/with: coordmix_floor 26.64/11.97, persist 15.94/12.66.
+fn compact_abs(part: &Formula) -> Formula {
+    let mut groups = AbsGroups::new();
+    let mut out = vec![];
+    for g in distinct_conjuncts(part) {
+        let shaped = (|| {
+            let Formula::Or(gs) = &g else { return None };
+            let [Formula::Con(a), Formula::Con(b)] = &gs[..] else {
+                return None;
+            };
+            if a.rel != Rel::Ge
+                || b.rel != Rel::Ge
+                || a.lin.constant != b.lin.constant
+                || a.lin.terms.len() != b.lin.terms.len()
+            {
+                return None;
+            }
+            let mut rest = a.lin.terms.clone();
+            let mut changed = None;
+            for (y, k) in &a.lin.terms {
+                let h = b.lin.terms.get(y)?;
+                if k != h {
+                    if changed.is_some() || *k != -h {
+                        return None;
+                    }
+                    changed = Some((y.clone(), k.abs()));
+                    rest.remove(y);
+                }
+            }
+            let (y, k) = changed?;
+            Some(((rest, y), k, a.lin.constant.clone()))
+        })();
+        match shaped {
+            Some((key, k, c)) => {
+                let rows = groups.entry(key).or_default();
+                if rows.get(&k).is_none_or(|(old, _)| c < *old) {
+                    rows.insert(k, (c, g));
+                }
+            }
+            None => out.push(g),
+        }
+    }
+    for rows in groups.into_values() {
+        let mut least = None;
+        for (c, g) in rows.into_values() {
+            if least.as_ref().is_none_or(|old| c < *old) {
+                least = Some(c);
+                out.push(g);
+            }
+        }
+    }
+    Formula::and(out)
+}
+
+impl Scope {
+    // Complexity tradeoff: the generic integer projector repeatedly asks about a
+    // free unit-sum leaf even when its minimum is minus infinity. For a two-name
+    // box and one half-plane, the recession cone has only axis rays and the two
+    // orientations of the row's kernel. A feasible ray with negative unit-sum
+    // objective proves an unbounded minimum. Project the hubs by the one-row
+    // corner formula in O(r) arithmetic; refuse if none of these rays certifies
+    // unboundedness. Measured in review round 3, star: R=7.19, against 7.60 without this
+    // certificate; work at 8n falls from 666544 to 447009 allocations. This
+    // elementary recession-cone certificate replaces general half-plane hull construction (Preparata and Shamos, Computational Geometry: An Introduction,
+    // Springer-Verlag, 1985) on this fragment, without enumerating integer points.
+    fn unbounded_unit(
+        &self,
+        p: &Pendant,
+        rest: &[Formula],
+    ) -> Option<Vec<(Arc<str>, IntervalSet)>> {
+        if p.s != 1
+            || p.sigma != -1
+            || p.eq
+            || !matches!(self.get(&p.x).ints().bounds()?.1, End::PosInf)
+        {
+            return None;
+        }
+        // The one-disjunction caller and name-only atoms ensure conjunctions
+        // returns the whole union here, rather than a partial support cover.
+        if rest.iter().any(|g| {
+            g.cons()
+                .iter()
+                .any(|c| c.lin.terms.keys().any(|a| !matches!(a, Atom::Sym(_))))
+        }) {
+            return None;
+        }
+        let mut ns = vec![];
+        let mut signs = vec![];
+        let mut domains = BTreeMap::new();
+        for (a, k) in &p.form.terms {
+            let Atom::Sym(n) = a else { return None };
+            if k.abs() != Int::ONE {
+                return None;
+            }
+            let v = self.get(n);
+            if classed(&v) || v.ints().only().is_none() {
+                return None;
+            }
+            ns.push(n.clone());
+            signs.push(Num::from(k));
+            domains.insert(n.clone(), v.ints().clone());
+        }
+        let [x, y] = &ns[..] else { return None };
+        if !ns.iter().zip(&signs).any(|(n, k)| {
+            domains[n].bounds().is_some_and(|(l, h)| {
+                (k.signum() > 0 && *l == End::NegInf) || (k.signum() < 0 && *h == End::PosInf)
+            })
+        }) {
+            return None;
+        }
+        let mut conjs = vec![];
+        conjunctions(
+            &Formula::and(rest.to_vec()),
+            true,
+            &mut vec![],
+            &|n| self.get(n),
+            &mut conjs,
+        );
+        let mut out: BTreeMap<Arc<str>, IntervalSet> = ns
+            .iter()
+            .chain(std::iter::once(&p.x))
+            .map(|n| (n.clone(), IntervalSet::empty()))
+            .collect();
+        for rows in conjs {
+            let mut dom = domains.clone();
+            let mut wide = None;
+            let mut empty = false;
+            for (ts, c) in rows {
+                if ts.is_empty() {
+                    empty |= c < Num::ZERO;
+                    continue;
+                }
+                if ts.len() == 1 {
+                    let (n, k) = ts.iter().next()?;
+                    let bound = if k.signum() > 0 {
+                        IntervalSet::range(End::Fin(-&c.div_floor(k)), End::PosInf)
+                    } else {
+                        IntervalSet::range(End::NegInf, End::Fin(c.div_floor(&-k)))
+                    };
+                    let d = dom.get_mut(n)?;
+                    *d = d.meet(&bound);
+                    empty |= d.is_empty();
+                } else {
+                    if wide.is_some() || ts.keys().any(|n| !dom.contains_key(n)) {
+                        return None;
+                    }
+                    wide = Some((ts, c));
+                }
+            }
+            if empty {
+                continue;
+            }
+            let r = wide.unwrap_or_else(|| (BTreeMap::new(), Num::ZERO));
+            let get = |n: &str| {
+                let mut v = self.get(n);
+                let prem = v.premises();
+                v.meet_ints(dom[n].clone(), &prem);
+                v
+            };
+            let ss = sums(std::slice::from_ref(&r), &get)?;
+            if ss[0].1 == 0 && ss[0].0 < Num::ZERO {
+                continue;
+            }
+            let k = [
+                r.0.get(x).cloned().unwrap_or(Num::ZERO),
+                r.0.get(y).cloned().unwrap_or(Num::ZERO),
+            ];
+            let allowed = |i: usize, d: &Num| -> bool {
+                let Some((l, h)) = dom[&ns[i]].bounds() else {
+                    return false;
+                };
+                d.is_zero()
+                    || (d.signum() > 0 && *h == End::PosInf)
+                    || (d.signum() < 0 && *l == End::NegInf)
+            };
+            let rays = [
+                [Num::ONE, Num::ZERO],
+                [-&Num::ONE, Num::ZERO],
+                [Num::ZERO, Num::ONE],
+                [Num::ZERO, -&Num::ONE],
+                [k[1].clone(), -&k[0]],
+                [-&k[1], k[0].clone()],
+            ];
+            if !rays.into_iter().any(|d| {
+                allowed(0, &d[0])
+                    && allowed(1, &d[1])
+                    && &(&signs[0] * &d[0]) + &(&signs[1] * &d[1]) < Num::ZERO
+                    && &(&k[0] * &d[0]) + &(&k[1] * &d[1]) >= Num::ZERO
+            }) {
+                return None;
+            }
+            for n in &ns {
+                let (l, h) = range(std::slice::from_ref(&r), &ss, n, &get(n))?;
+                let d = dom[n].meet(&IntervalSet::range(l, h));
+                let old = out.get_mut(n)?;
+                *old = old.join(&d);
+            }
+            out.insert(p.x.clone(), IntervalSet::top());
+        }
+        Some(out.into_iter().collect())
+    }
 }
 
 #[cfg(test)]
