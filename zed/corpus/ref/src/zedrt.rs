@@ -227,13 +227,17 @@ pub fn try_parse_int(s: &str) -> Option<BigInt> {
 //
 // Complexity tradeoff: a timed crossover of two algorithms with identical results, nothing
 // given up: num-bigint's `parse`, O(n^2), up to `LEAF_DIGITS` digits, and the reading by
-// halves above. The value is `zed_kernel::num::LEAF_DIGITS`, set from the timings in the
+// halves above. It was `zed_kernel::num::LEAF_DIGITS`, set from the timings in the
 // comment there (2026-11-07, item KERNEL-leaf-digits; COMPLEXITY.md, "Crossovers"): leaf 1024
 // had the fewest instructions, or tied, at every size from 700 to 10^6 digits but 1,500. Those
 // timings used the kernel's products, which are num-bigint's below 1024 words (about 19,700
-// digits), so the products the leaf decides between are the same here; not measured here. To
-// be measured again at the Zed port, with the kernel's.
-const LEAF_DIGITS: usize = 1024;
+// digits), so the products the leaf decides between are the same here. Measured here on
+// 2026-11-12 (CROSSOVER-bench, `crossover corpus-leaf-digits`, load 41 to 48) over 700 to 10^6
+// digits: summed over the sizes, each one's work over the least at that size, 4096 does the
+// least (8.08), 1024 1.031 times as much, more than the 1.0004 that repeated runs vary; the
+// kernel's own leaf is within that variation of its best there and keeps 1024. To be measured
+// again at the Zed port, with the kernel's.
+pub const LEAF_DIGITS: usize = 4096;
 
 /// The value of a nonempty text of ASCII decimal digits.
 ///
@@ -254,20 +258,27 @@ const LEAF_DIGITS: usize = 1024;
 /// twiddle factors is built once, for the longest transform the reading takes, and not at all
 /// when it takes none.
 fn read_digits(digits: &str) -> BigUint {
-    let Some(top) = split_depth(digits.len()) else {
+    read_digits_by(digits, LEAF_DIGITS)
+}
+
+/// [`read_digits`] with texts of at most `leaf` digits read whole, for the crossover benchmark
+/// of `LEAF_DIGITS` (crate zed-benches, binary `crossover`). Not for other use.
+#[doc(hidden)]
+pub fn read_digits_by(digits: &str, leaf: usize) -> BigUint {
+    let Some(top) = split_depth(digits.len(), leaf) else {
         return digits.parse().expect("ASCII decimal digits");
     };
-    let first = BigUint::from(5u32).pow(LEAF_DIGITS as u32);
-    // Upper bounds on the bits of the factors: `5^(LEAF_DIGITS * 2^i)` has at most `2^i` times
+    let first = BigUint::from(5u32).pow(leaf as u32);
+    // Upper bounds on the bits of the factors: `5^(leaf * 2^i)` has at most `2^i` times
     // the bits of `first`, and a part of `d` digits fewer than 3.322 d bits.
     let first_bits = first.bits();
     let power_bits = |i: usize| first_bits << i;
     let digit_bits = |d: usize| (d as u64 * 3322).div_ceil(1000);
-    let top_high = digit_bits(digits.len() - (LEAF_DIGITS << top));
+    let top_high = digit_bits(digits.len() - (leaf << top));
     let kept = |i: usize| i < top && power_bits(i).div_ceil(32) >= product::KEPT_WORDS;
     let kept_len = (0..top)
         .filter(|i| kept(*i))
-        .map(|i| product::transform_len(power_bits(i), digit_bits(LEAF_DIGITS << i)))
+        .map(|i| product::transform_len(power_bits(i), digit_bits(leaf << i)))
         .max();
     let top_len = (power_bits(top).min(top_high).div_ceil(32) >= product::TRANSFORM_WORDS)
         .then(|| product::transform_len(power_bits(top), top_high));
@@ -278,31 +289,36 @@ fn read_digits(digits: &str) -> BigUint {
     let mut power = first;
     for i in 0..top {
         let factor = match kept(i) {
-            true => product::Factor::new(power, digit_bits(LEAF_DIGITS << i), &roots),
+            true => product::Factor::new(power, digit_bits(leaf << i), &roots),
             false => product::Factor::plain(power),
         };
         power = factor.square(&roots);
         fives.push(factor);
     }
     fives.push(product::Factor::plain(power));
-    read_parts(digits, &fives, &roots)
+    read_parts(digits, &fives, &roots, leaf)
 }
 
-/// The `i` for which a text of `len` digits splits into a low part of `LEAF_DIGITS * 2^i`
+/// The `i` for which a text of `len` digits splits into a low part of `leaf * 2^i`
 /// digits and a high part of at least one and at most as many; `None` when it is read whole.
-fn split_depth(len: usize) -> Option<usize> {
-    (len > LEAF_DIGITS).then(|| ((len - 1) / LEAF_DIGITS).ilog2() as usize)
+fn split_depth(len: usize, leaf: usize) -> Option<usize> {
+    (len > leaf).then(|| ((len - 1) / leaf).ilog2() as usize)
 }
 
-/// [`read_digits`] of a part, `fives[i]` being `5^(LEAF_DIGITS * 2^i)`.
-fn read_parts(digits: &str, fives: &[product::Factor], roots: &[product::Twiddle]) -> BigUint {
-    let Some(i) = split_depth(digits.len()) else {
+/// [`read_digits_by`] of a part, `fives[i]` being `5^(leaf * 2^i)`.
+fn read_parts(
+    digits: &str,
+    fives: &[product::Factor],
+    roots: &[product::Twiddle],
+    leaf: usize,
+) -> BigUint {
+    let Some(i) = split_depth(digits.len(), leaf) else {
         return digits.parse().expect("ASCII decimal digits");
     };
-    let low_digits = LEAF_DIGITS << i;
+    let low_digits = leaf << i;
     let (high, low) = digits.split_at(digits.len() - low_digits);
-    (fives[i].times(&read_parts(high, fives, roots), roots) << low_digits)
-        + read_parts(low, fives, roots)
+    (fives[i].times(&read_parts(high, fives, roots, leaf), roots) << low_digits)
+        + read_parts(low, fives, roots, leaf)
 }
 
 /// `s` read as a float, or an error.

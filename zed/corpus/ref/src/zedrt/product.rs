@@ -80,8 +80,12 @@ pub const TRANSFORM_WORDS: u64 = 4450;
 // cores), the square and one product by a factor 1.43 times longer (a part of as many digits),
 // twiddles built once: 1,024 words, num-bigint 2.53 M, kept 2.75 M; 1,200 words 3.06 M, 2.89 M;
 // break-even about 1,120 words. With more products by it, as in the reading, the kept
-// transform gains more.
-pub const KEPT_WORDS: u64 = 1120;
+// transform gains more. Measured again on 2026-11-12 (CROSSOVER-bench, `crossover kept-words`,
+// load 41 to 48) over a square and a product by a factor 1.43 times longer at 512 to 2048
+// words: the plain products do less work up to 1818 words (the kept transform 1.010 times
+// theirs; 1.33 times at 1448, where the transform's points double) and the kept transform from
+// 1838 (0.991), so 1838.
+pub const KEPT_WORDS: u64 = 1838;
 
 /// `a * b`: num-bigint's product when either factor has fewer than [`TRANSFORM_WORDS`] words,
 /// else [`transform_mul`].
@@ -173,9 +177,17 @@ impl Factor {
     /// `a * value`: by the kept transform when `a` is as long as it was kept for, else as [`mul`]
     /// takes it; `roots` from [`twiddles`] of at least the product's [`transform_len`].
     pub fn times(&self, a: &BigUint, roots: &[Twiddle]) -> BigUint {
+        self.times_at(a, roots, KEPT_WORDS)
+    }
+
+    /// [`Factor::times`] with the kept transform used from `kept` words in place of
+    /// [`KEPT_WORDS`], for the crossover benchmark of `KEPT_WORDS` (crate zed-benches, binary
+    /// `crossover`). Not for other use.
+    #[doc(hidden)]
+    pub fn times_at(&self, a: &BigUint, roots: &[Twiddle], kept: u64) -> BigUint {
         let used = count(a.bits(), self.width) + count(self.value.bits(), self.width);
         let shorter = words(a).min(words(&self.value));
-        if shorter < KEPT_WORDS || used.next_power_of_two() != self.spectrum.len() {
+        if shorter < kept || used.next_power_of_two() != self.spectrum.len() {
             return match shorter < TRANSFORM_WORDS {
                 true => a * &self.value,
                 false => product(roots, a, &self.value),

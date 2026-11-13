@@ -93,19 +93,20 @@
 //! 16,384, 32,768 and 65,536 (load 15 to 17); printing, by the levels above, is slower than
 //! num-bigint's below [`PRINT_WHOLE`] words, where its fixed costs (the powers, the levels'
 //! transforms, one Newton reciprocal) outweigh num-bigint's `n^1.5` (COMPLEXITY.md K81).
-//! The gcd gains from about 300 words, since num-bigint's is quadratic. Open for the port:
-//! [`DIV_LEAF`] against the crossover near 8192 words measured above, by a computed cost as
-//! [`TOOM_COST`] is for products; and a cheaper first reciprocal or cached powers, which
-//! would lower the split's fixed costs and with them [`PRINT_WHOLE`].
+//! The gcd gains from about 300 words, since num-bigint's is quadratic. Past [`DIV_LEAF`],
+//! num-bigint's division is taken by a computed cost, [`DIV_COST`], as [`TOOM_COST`] is for
+//! products (CROSSOVER-bench, 2026-11-12). Open for the port: a cheaper first reciprocal or
+//! cached powers, which would lower the split's fixed costs and with them [`PRINT_WHOLE`].
 //!
 //! **At the port to Zed.** The results must stay those of num-bigint's operations, which the
 //! unit tests compare at every leaf setting. What depends on measurement and is to be measured
 //! again on the Zed code: the leaves [`MUL_LEAF`], [`DIV_LEAF`], [`RECIP_LEAF`], [`GCD_LEAF`],
-//! [`PRINT_HANDOFF`], [`PRINT_WHOLE`] and the cost constants [`TOOM_COST`],
-//! [`TRANSFORM_COST`], [`SPARSE_WORD`], [`SPARSE_STEP`]. [`HALF_LEAF`] and [`PRINT_LEAF`] are
-//! derived, not measured. The Rust constructs that need a Zed form are listed in
-//! ZED_PORT_GAPS.md, sections "Entries from NUM-subquad", "Entries from BIGINT-fast-mul" and
-//! "Entries from NUM-print-fast".
+//! [`PRINT_HANDOFF`], [`PRINT_WHOLE`] and the cost constants [`TOOM_COST`], [`DIV_COST`],
+//! [`TRANSFORM_COST`], [`SPARSE_WORD`], [`SPARSE_STEP`], [`CACHED_COST`]; the benchmark
+//! `crossover all` (crate zed-benches) measures each against its crossover. [`HALF_LEAF`] and
+//! [`PRINT_LEAF`] are derived, not measured. The Rust constructs that need a Zed form are
+//! listed in ZED_PORT_GAPS.md, sections "Entries from NUM-subquad", "Entries from
+//! BIGINT-fast-mul" and "Entries from NUM-print-fast".
 //!
 //! Each leaf is a crossover between two methods whose results are identical, set from timings
 //! rather than solved from the two methods' cost formulas. The author accepted this for now
@@ -134,10 +135,14 @@ use num_traits::{One, Signed, ToPrimitive, Zero};
 /// "Crossovers"). Measured again on 2026-11-12 (RADIX-depth) in instructions, in the test
 /// build, after the transform's constant fell to 7: at 512 by 512 words the transform takes
 /// 1.24 million against num-bigint's 1.02, at 1024 by 1024 2.68 against 2.76, so the
-/// instruction counts cross between, and 512 stands. The product does not depend on it; the
-/// unit tests use a smaller leaf, so that they reach the transforms at small sizes.
+/// instruction counts cross between, and 512 stood. Measured again on 2026-11-12
+/// (CROSSOVER-bench, `crossover mul 32`, load 41 to 48) at 256 to 2048 by 32 times the
+/// words, the shape where the transform gains soonest: num-bigint does less work up to 455
+/// words (1.012 times the transform's instructions) and the transform from 460 (0.988), so
+/// 459. The product does not depend on it; the unit tests use a smaller leaf, so that they
+/// reach the transforms at small sizes.
 #[cfg(not(test))]
-const MUL_LEAF: usize = 512;
+const MUL_LEAF: usize = 459;
 #[cfg(test)]
 const MUL_LEAF: usize = 48;
 
@@ -153,11 +158,14 @@ const MUL_LEAF: usize = 48;
 /// transform's 2.53) and the transform at 1024 by 1024 (2.68 against 2.76) and from 2048
 /// (5.54 against 8.12). Between, the two are near: the transform is taken at 1280 by 1280
 /// (3.99 against 3.92) and 1536 by 1536 (5.42 against 5.17), where the wrapped plan of
-/// [`points`] is estimated within 1% of num-bigint's product. The product does not depend on
-/// it; the unit tests never take num-bigint's product above [`MUL_LEAF`], so that they reach
-/// the transforms.
+/// [`points`] is estimated within 1% of num-bigint's product. Fitted again on 2026-11-12
+/// (CROSSOVER-bench) over `crossover mul 1`, `mul 4` and `mul 32` together, which alone ask
+/// for 5.92 to 6.22, 5.64 to 5.69 and above 5.94: from 5.71 to 5.87 the most work any of them
+/// does is the least, 1.047 times the less of the two methods', so 5.8; 6.8 did up to 1.17
+/// times. The product does not depend on it; the unit tests never take num-bigint's product
+/// above [`MUL_LEAF`], so that they reach the transforms.
 #[cfg(not(test))]
-const TOOM_COST: f64 = 6.8;
+const TOOM_COST: f64 = 5.8;
 #[cfg(test)]
 const TOOM_COST: f64 = f64::INFINITY;
 
@@ -165,21 +173,55 @@ const TOOM_COST: f64 = f64::INFINITY;
 const TOOM_POWER: f64 = 0.465;
 
 /// The bits at or below which the divisor, or the quotient, goes to num-bigint's division,
-/// which then costs at most this many bits times the dividend's. The result does not depend
-/// on it. Not measured when it was set. On 2026-11-06 at load 1, the Newton division then used
-/// took 1.13 times num-bigint's time at `w` = 64, 1.00 at 96, 2.03 at 1024, 3.84 at 2048 and
-/// 2.60 at 8192 words, for `2w` by `w`. The division by [`Level`] (KERNEL-div-newton) took, on
-/// 2026-11-09 at load 15 to 17, 1.31 times at 96, 2.54 at 1024, 1.88 at 2048, 1.36 at 4096,
-/// 1.02 at 8192, 0.76 at 16,384 and 0.46 at 65,536: the curves cross near 8192 words, not
-/// moved here (COMPLEXITY.md, "Crossovers").
+/// which then costs at most this many bits times the dividend's; above, [`DIV_COST`] decides.
+/// The result does not depend on it. Not measured when it was set. On 2026-11-06 at load 1,
+/// the Newton division then used took 1.13 times num-bigint's time at `w` = 64, 1.00 at 96,
+/// 2.03 at 1024, 3.84 at 2048 and 2.60 at 8192 words, for `2w` by `w`. The division by
+/// [`Level`] (KERNEL-div-newton) took, on 2026-11-09 at load 15 to 17, 1.31 times at 96, 2.54
+/// at 1024, 1.88 at 2048, 1.36 at 4096, 1.02 at 8192, 0.76 at 16,384 and 0.46 at 65,536.
+/// Measured in instructions on 2026-11-12 (CROSSOVER-bench, `crossover div-leaf`), num-bigint
+/// does less work from 16 words up to 3192 words for `2w` by `w`, 919 for a quotient of a
+/// quarter of the divisor's words, 899 for one of four times them, 417 for one of sixteen times
+/// them and 242 for one of 256 times them, so the leaf on the narrower of the two alone cannot
+/// sit at every crossover;
+/// [`DIV_COST`] sets them, and this leaf only spares the cost computation on small divisions.
 const DIV_LEAF: u64 = 64 * 64;
 
-/// The bits at or below which a reciprocal is found by num-bigint's division. Not measured
-/// apart from [`DIV_LEAF`]. The reciprocal does not depend on it; the unit tests use the
-/// least that Newton's step allows, 4 (a step to `p` bits starts from `ceil((p + 3) / 2)`,
-/// fewer only for `p >= 5`), so that every step is reached on small numbers.
+/// The cost of num-bigint's division past [`DIV_LEAF`], per unit of [`num_bigint_div_cost`], in
+/// the units of [`TRANSFORM_COST`]. Fitted on 2026-11-12 (CROSSOVER-bench) over `crossover
+/// div-leaf` for `2w` by `w` and for quotients of a quarter, four, sixteen and 256 times the
+/// divisor's words together, which alone ask for 10.6 to 11.9, 10.4 to 10.5, 9.06 to 9.22,
+/// 9.0 to 10.0 and 7.7 to 8.2: from 9.06 to 9.22 the most work any of them does is the least,
+/// 1.089 times the less of the two methods', so 9.1. The work past the leaf depends on it
+/// too, since a [`Divisor`] asks [`num_bigint_divides`] for its blocks, so it was fitted again
+/// at 9.1, where the fit holds. With [`DIV_LEAF`] alone num-bigint's division did up to 3.4
+/// times the work of the other methods. The quotient does not depend on it; infinite in the
+/// unit tests, so that the other methods are reached past the leaf.
 #[cfg(not(test))]
-const RECIP_LEAF: u64 = 64 * 32;
+const DIV_COST: f64 = 9.1;
+#[cfg(test)]
+const DIV_COST: f64 = f64::INFINITY;
+
+/// The exponent of num-bigint's division of `2w` by `w` words in `w`, measured: its work in
+/// instructions grows 2.88, 2.90, 2.83 and 2.79 times for each doubling of `w` from 1024 to
+/// 16,384 words (2026-11-12), `2^1.52 = 2.87`.
+const DIV_POWER: f64 = 1.52;
+
+/// The cost of each word of the divisor beyond the quotient's width in num-bigint's division of
+/// a narrow quotient, per `q^(DIV_POWER - 1)` for a quotient of `q` words, over that of a
+/// quotient word beyond the divisor's width per `n^(DIV_POWER - 1)`: measured, 0.45 for a
+/// quotient of a quarter of the divisor at 512 to 4096 words (2026-11-12).
+const DIV_NARROW: f64 = 0.45;
+
+/// The bits at or below which a reciprocal is found by num-bigint's division. It was 32 words,
+/// not measured. Measured on 2026-11-12 (CROSSOVER-bench, `crossover recip`, load 41 to 48):
+/// one division does less work up to 413 words (1.003 times a Newton step's instructions; 0.55
+/// times at 32 words) and a Newton step from 417 (0.998), so 416 words. The reciprocal does
+/// not depend on it; the unit tests use the least that Newton's step allows, 4 (a step to `p`
+/// bits starts from `ceil((p + 3) / 2)`, fewer only for `p >= 5`), so that every step is
+/// reached on small numbers.
+#[cfg(not(test))]
+const RECIP_LEAF: u64 = 64 * 416;
 #[cfg(test)]
 const RECIP_LEAF: u64 = 4;
 
@@ -187,12 +229,20 @@ const RECIP_LEAF: u64 = 4;
 /// crossover measured on 2026-11-05, 2.2 ms against 1.7 ms at 256 words and 12 ms against
 /// 30 ms at 1024 (load 75). Measured again on 2026-11-06 at load 1, the half gcd takes 1.20
 /// times num-bigint's time at 256 words, 0.76 at 384, 0.78 at 512 and 0.50 at 1024, so the
-/// curves cross near 300 words (COMPLEXITY.md, "Crossovers"). The gcd does not depend on it;
+/// curves cross near 300 words (COMPLEXITY.md, "Crossovers"). Measured in instructions on
+/// 2026-11-12 (CROSSOVER-bench, `crossover gcd-leaf`): Stein's gcd does less work up to 297
+/// words (1.002 times the half gcd's) and the half gcd from 300 (0.987), so 299 words, where
+/// it was 512. The gcd does not depend on it;
 /// the unit tests use a smaller leaf.
 #[cfg(not(test))]
-const GCD_LEAF: u64 = 64 * 512;
+const GCD_LEAF: u64 = 64 * 299;
 #[cfg(test)]
 const GCD_LEAF: u64 = 64 * 16;
+
+/// The valuation budget, in bits, at or below which [`half_low`] lifts the pair found from the
+/// residues rather than applying the matrix to the whole numbers: matrix entries of at most
+/// [`MUL_LEAF`] words (see [`half_low`]). The pair does not depend on it.
+const LIFT_BITS: u64 = 64 * MUL_LEAF as u64;
 
 /// The valuation budget at or below which the half gcd runs its steps on 128-bit integers:
 /// residues of `2k + 1 <= 121` bits stay below `2^120`, and so do the matrix entries.
@@ -257,14 +307,19 @@ const fn leaf_bits(handoff: usize) -> u64 {
 /// (RADIX-depth) in instructions, after the butterflies' reductions by a sign test, in the
 /// test build: a word product of `sparse_mul` takes 16.42 instructions, and a balanced product
 /// of `m` by `m` words on `n = 2m` points 7.37, 7.25, 6.86, 6.83, 6.54 and 6.53 units per
-/// `n log2(n)` at `m` = 512, 1024, 2048, 4096, 8192 and 16,384: 7.
-const TRANSFORM_COST: u128 = 7;
+/// `n log2(n)` at `m` = 512, 1024, 2048, 4096, 8192 and 16,384: 7. Fitted on 2026-11-12
+/// (CROSSOVER-bench, `crossover mul-rows`): rows and transforms cross at 199 nonzero words,
+/// which 7.07 to 7.14 puts at the crossover, so 7.1.
+const TRANSFORM_COST: f64 = 7.1;
 
 /// The cost of a word of a step of [`sparse_div_rem`], and of a step besides its words (the
 /// quotient word's estimate is a 128-bit division), in the units of [`TRANSFORM_COST`]:
-/// measured on 2026-11-05, 2.3 ns a word.
-const SPARSE_WORD: u128 = 2;
-const SPARSE_STEP: u128 = 20;
+/// measured on 2026-11-05, 2.3 ns a word, and set at 2. Fitted on 2026-11-12 (CROSSOVER-bench,
+/// `crossover div-rows`) with [`SPARSE_STEP`] kept: long division and the reciprocal cross at
+/// 240 words, which 1.68 to 1.72 puts at the crossover, so 1.7. [`SPARSE_STEP`] is not fitted;
+/// the benchmark's divisors have too few nonzero words for its share to show.
+const SPARSE_WORD: f64 = 1.7;
+const SPARSE_STEP: f64 = 20.0;
 
 /// The number of 64-bit words of `x`.
 fn words(x: &BigUint) -> usize {
@@ -840,13 +895,13 @@ const FIELDS: [Field; 3] = [
 /// for `n` points, the constant measured (see [`TRANSFORM_COST`]), on the power of two of
 /// points at or above the coefficients, or on half as many plus the cost of the top
 /// coefficients' product when that is less (see [`points`]).
-fn transform_cost(coeffs: usize) -> u128 {
+fn transform_cost(coeffs: usize) -> f64 {
     let (n, wrap) = points(coeffs.div_ceil(2), coeffs / 2 + 1);
     let top = match wrap {
         true => transform_cost(2 * (coeffs - n) - 1),
-        false => 0,
+        false => 0.0,
     };
-    TRANSFORM_COST * points_cost(n) + top
+    TRANSFORM_COST * points_cost(n) as f64 + top
 }
 
 /// `n log2(n)`, at least `n`, the steps of a transform on `n` points.
@@ -870,8 +925,8 @@ fn points(la: usize, lb: usize) -> (usize, bool) {
     }
     let r = coeffs - n / 2;
     let top = la.min(r) + lb.min(r) - 1;
-    match TRANSFORM_COST * points_cost(n / 2) + transform_cost(top)
-        < TRANSFORM_COST * points_cost(n)
+    match TRANSFORM_COST * points_cost(n / 2) as f64 + transform_cost(top)
+        < TRANSFORM_COST * points_cost(n) as f64
     {
         true => (n / 2, true),
         false => (n, false),
@@ -885,12 +940,12 @@ fn points(la: usize, lb: usize) -> (usize, bool) {
 /// each power from the shorter's width to the whole product's, so no more points are wasted
 /// to rounding up than in the product whole, and an unbalanced product costs
 /// O((long / short) M(short)).
-fn transform_plan(short: usize, long: usize) -> (u128, usize) {
+fn transform_plan(short: usize, long: usize) -> (f64, usize) {
     let mut best = (transform_cost(short + long - 1), long);
     let mut points = short.next_power_of_two();
     while points < short + long - 1 {
         let piece = points + 1 - short;
-        let cost = long.div_ceil(piece) as u128 * transform_cost(points);
+        let cost = long.div_ceil(piece) as f64 * transform_cost(points);
         if cost < best.0 {
             best = (cost, piece);
         }
@@ -910,6 +965,26 @@ fn nonzero_words(x: &BigUint) -> usize {
 /// transforms modulo three primes joined by the Chinese remainder theorem, O(n log n). Every
 /// method gives the same product; only the time depends on the choice.
 pub fn mul(a: &BigUint, b: &BigUint) -> BigUint {
+    match mul_method(a, b) {
+        MulBy::NumBigint => a * b,
+        MulBy::Rows => sparse_mul(a, b),
+        MulBy::Pieces(piece) => pieces_mul(a, b, piece),
+    }
+}
+
+/// How [`mul`] multiplies two factors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MulBy {
+    /// num-bigint's product.
+    NumBigint,
+    /// Rows over the nonzero words of one factor ([`sparse_mul`]).
+    Rows,
+    /// Transforms, the longer factor cut into pieces of this many words ([`pieces_mul`]).
+    Pieces(usize),
+}
+
+/// The method [`mul`] takes for `a * b`.
+fn mul_method(a: &BigUint, b: &BigUint) -> MulBy {
     let (la, lb) = (words(a), words(b));
     let (short, long) = (la.min(lb), la.max(lb));
     // Complexity tradeoff: two timed crossovers of algorithms with identical results, nothing
@@ -926,7 +1001,7 @@ pub fn mul(a: &BigUint, b: &BigUint) -> BigUint {
     // from timings; both constants are to be measured again at the Zed port (ZED_PORT_GAPS.md,
     // "Entries from BIGINT-fast-mul").
     if short <= MUL_LEAF {
-        return a * b;
+        return MulBy::NumBigint;
     }
     // Complexity tradeoff: rows over the nonzero words cost `nonzero(a) words(b)` word
     // products, below the transforms' O(n log n) when a factor has few nonzero words, as a
@@ -934,18 +1009,19 @@ pub fn mul(a: &BigUint, b: &BigUint) -> BigUint {
     // operands' counts and the measured `TRANSFORM_COST`, with no size constant, and both give
     // the same product. A dense factor costs O(n) more for the count. Tested by
     // `a_sparse_product_scales` and `products_agree_with_num_bigint` (COMPLEXITY.md K30).
-    let rows = (nonzero_words(a) as u128 * lb as u128).min(nonzero_words(b) as u128 * la as u128);
+    let rows =
+        (nonzero_words(a) as u128 * lb as u128).min(nonzero_words(b) as u128 * la as u128) as f64;
     let (cost, piece) = transform_plan(short, long);
     // The second crossover of the tradeoff above (`TOOM_COST`): num-bigint's product where its
     // computed cost is the least, which follows the transform's steps at each power of two of
     // its points.
-    if toom_cost(short, long) <= rows.min(cost) as f64 {
-        return a * b;
+    if toom_cost(short, long) <= rows.min(cost) {
+        return MulBy::NumBigint;
     }
     if rows <= cost {
-        return sparse_mul(a, b);
+        return MulBy::Rows;
     }
-    pieces_mul(a, b, piece)
+    MulBy::Pieces(piece)
 }
 
 /// A factor `x` that multiplies many numbers of at most `other` words, with its spectra on
@@ -962,17 +1038,25 @@ impl Factor {
     /// `x`, for `uses` products with numbers of at most `other` words.
     pub(crate) fn new(x: BigUint, other: usize, uses: usize) -> Factor {
         let (points, _) = self::points(words(&x), other);
-        // Complexity tradeoff: the spectra cost a third of a product's transforms, once, and
-        // each product by them then costs `cached_cost` (two of its three transforms, measured
-        // as `CACHED_COST`), so they are kept when the computed costs, in the
-        // units of `TRANSFORM_COST`, say `uses` products by them cost less than by `mul`'s
-        // cheapest method for dense factors; else `mul` alone, with no memory held. Both give
-        // the same products. Kept, they hold three words a point, about six of `x`'s words for
-        // each, for as long as the factor lives (COMPLEXITY.md C31, RADIX-depth).
-        let spectra = (uses as f64
-            * (cached_total(points, words(&x), other) - dense_cost(words(&x), other))
-            + transform_cost(points) as f64 / 3.0
-            < 0.0)
+        // Complexity tradeoff: the spectra cost one of a product's three transforms, once, and
+        // each product by them then costs `cached_cost` (the other two, measured as
+        // `CACHED_COST`), so they are kept when the computed costs, in the units of
+        // `TRANSFORM_COST`, say `uses` products by them cost less than by `mul`'s cheapest
+        // method for dense factors; else `mul` alone, with no memory held. Both give the same
+        // products. The one transform is costed as a whole product less the two
+        // (`TRANSFORM_COST - CACHED_COST` per `n log2(n)`). It was a third of a product's cost
+        // (`transform_cost / 3`), which disagrees with the measured constants: the two kept
+        // transforms measure 4.2 of the 7.1 (`crossover cached`, `crossover mul-rows`,
+        // CROSSOVER-bench, 2026-11-12), so the one left is 2.9, not 2.37. One use does the
+        // three transforms of one product either way, a tie the rounding of the costs could
+        // break either way, so it never keeps them. Kept, they hold three words a point, about
+        // six of `x`'s words for each, for as long as the factor lives (COMPLEXITY.md C31,
+        // RADIX-depth).
+        let spectra = (uses > 1
+            && uses as f64
+                * (cached_total(points, words(&x), other) - dense_cost(words(&x), other))
+                + (TRANSFORM_COST - CACHED_COST) * (points_cost(points) as f64)
+                < 0.0)
             .then(|| {
                 let tw = roots(points);
                 (spectra(&x.to_u64_digits(), points, &tw), tw)
@@ -985,43 +1069,50 @@ impl Factor {
     pub(crate) fn mul(&self, y: &BigUint) -> BigUint {
         let wy = words(y);
         match &self.spectra {
-            Some((s, tw))
-                if wy <= self.other
-                    && cached_total(s[0].len(), words(&self.x), wy)
-                        < dense_cost(wy, words(&self.x)) =>
-            {
-                // The cyclic product on the points, less the top coefficients above them, which
-                // wrapped around, as in [`Field::linear`]; then the carry out of its top word
-                // as in `transform_mul`.
-                let wx = words(&self.x);
-                let coeffs = wx + wy - 1;
-                let n = s[0].len();
-                let yw = y.to_u64_digits();
-                let mut fb = Vec::new();
-                let [mut r0, r1, r2] = [0, 1, 2].map(|k| {
-                    let mut v = FIELDS[k].cyclic(&yw, &s[k], &tw[k]);
-                    if coeffs > n {
-                        let r = coeffs - n;
-                        let (rx, ry) = (wx.min(r), wy.min(r));
-                        let top = Some((y, wy - ry));
-                        let d = FIELDS[k].linear(&self.x, wx - rx, top, &tw[k], &mut fb);
-                        let high = &d[rx + ry - 1 - r..];
-                        for (x, &h) in v.iter_mut().zip(high) {
-                            *x = FIELDS[k].sub(*x, h);
-                        }
-                        v.extend_from_slice(high);
-                    }
-                    v
-                });
-                let carry = garner(&mut r0, &r1, &r2);
-                drop((r1, r2));
-                let mut out = r0;
-                out.extend([carry as u64, (carry >> 64) as u64]);
-                trim(&mut out);
-                from_words(out)
-            }
+            Some((s, tw)) if self.takes_spectra(s[0].len(), wy) => self.spectra_mul(y, s, tw),
             _ => mul(y, &self.x),
         }
+    }
+
+    /// Whether a product by `y` of `wy` words takes spectra on `points` points: when `y` fits
+    /// them and they cost less than [`mul`].
+    fn takes_spectra(&self, points: usize, wy: usize) -> bool {
+        let wx = words(&self.x);
+        wy <= self.other && cached_total(points, wx, wy) < dense_cost(wy, wx)
+    }
+
+    /// `y * x` by the kept spectra `s` on the roots `tw`, for `y` of at most `other` words.
+    fn spectra_mul(&self, y: &BigUint, s: &[Vec<u64>; 3], tw: &Roots) -> BigUint {
+        let wy = words(y);
+        // The cyclic product on the points, less the top coefficients above them, which
+        // wrapped around, as in [`Field::linear`]; then the carry out of its top word
+        // as in `transform_mul`.
+        let wx = words(&self.x);
+        let coeffs = wx + wy - 1;
+        let n = s[0].len();
+        let yw = y.to_u64_digits();
+        let mut fb = Vec::new();
+        let [mut r0, r1, r2] = [0, 1, 2].map(|k| {
+            let mut v = FIELDS[k].cyclic(&yw, &s[k], &tw[k]);
+            if coeffs > n {
+                let r = coeffs - n;
+                let (rx, ry) = (wx.min(r), wy.min(r));
+                let top = Some((y, wy - ry));
+                let d = FIELDS[k].linear(&self.x, wx - rx, top, &tw[k], &mut fb);
+                let high = &d[rx + ry - 1 - r..];
+                for (x, &h) in v.iter_mut().zip(high) {
+                    *x = FIELDS[k].sub(*x, h);
+                }
+                v.extend_from_slice(high);
+            }
+            v
+        });
+        let carry = garner(&mut r0, &r1, &r2);
+        drop((r1, r2));
+        let mut out = r0;
+        out.extend([carry as u64, (carry >> 64) as u64]);
+        trim(&mut out);
+        from_words(out)
     }
 
     /// The factor itself.
@@ -1034,12 +1125,14 @@ impl Factor {
 /// units of [`TRANSFORM_COST`]: two of the three transforms of a product, so about two thirds
 /// of it. It was 11 from cycles measured on 2026-11-12 (load 50). Measured again the same day
 /// (RADIX-depth) in instructions, in the test build: 4.89, 4.82, 4.57, 4.54, 4.35, 4.35 and
-/// 4.15 units per `n log2(n)` at 1024 to 65,536 points: 5. Only which of two equal products is
+/// 4.15 units per `n log2(n)` at 1024 to 65,536 points: 5. Fitted on 2026-11-12 (CROSSOVER-bench,
+/// `crossover cached`): the products by spectra and by plain transforms cross at 602 words,
+/// which 4.17 to 4.22 puts at the crossover, so 4.2. Only which of two equal products is
 /// computed depends on it; the unit tests use the same value.
 #[cfg(not(test))]
-const CACHED_COST: u128 = 5;
+const CACHED_COST: f64 = 4.2;
 #[cfg(test)]
-const CACHED_COST: u128 = 5;
+const CACHED_COST: f64 = 4.2;
 
 /// The cost of a product of `wx` and `wy` words by spectra on `points` points: the cached
 /// product, plus, when the coefficients pass the points, the product of the top words that
@@ -1049,7 +1142,7 @@ fn cached_total(points: usize, wx: usize, wy: usize) -> f64 {
     let top = match coeffs > points {
         true => {
             let r = coeffs - points;
-            transform_cost(wx.min(r) + wy.min(r) - 1) as f64
+            transform_cost(wx.min(r) + wy.min(r) - 1)
         }
         false => 0.0,
     };
@@ -1060,7 +1153,7 @@ fn cached_total(points: usize, wx: usize, wy: usize) -> f64 {
 /// [`TRANSFORM_COST`]: [`CACHED_COST`] `n log2(n)` for `n` points.
 fn cached_cost(points: usize) -> f64 {
     let n = points.next_power_of_two() as u128;
-    (CACHED_COST * n * u128::from(n.trailing_zeros().max(1))) as f64
+    CACHED_COST * (n * u128::from(n.trailing_zeros().max(1))) as f64
 }
 
 /// The cost [`mul`] computes for its cheapest method on dense factors of `a` and `b` words,
@@ -1070,7 +1163,7 @@ fn dense_cost(a: usize, b: usize) -> f64 {
     let (short, long) = (a.min(b), a.max(b));
     match short <= MUL_LEAF {
         true => 0.0,
-        false => toom_cost(short, long).min(transform_plan(short, long).0 as f64),
+        false => toom_cost(short, long).min(transform_plan(short, long).0),
     }
 }
 
@@ -1333,15 +1426,49 @@ pub(crate) fn div_rem(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
     let k = m - n + 1;
     // Complexity tradeoff: a timed crossover with identical results, nothing given up. A
     // divisor or quotient of at most `DIV_LEAF` bits goes to num-bigint's division, which costs
-    // at most `DIV_LEAF` bits times the dividend's, O(n), and was measured faster there; the
-    // measured curves now cross near 8192 words, higher than this leaf (its doc comment).
-    // Both sides are tested by `tests::quotients_agree_with_num_bigint` and
+    // at most `DIV_LEAF` bits times the dividend's, O(n), and was measured faster there. Past
+    // the leaf, num-bigint's division is still taken where its computed cost
+    // (`num_bigint_div_cost`, fitted to its measured work) is at most the cheaper of the other
+    // two methods' (`past_leaf_cost`), as `mul` takes num-bigint's product by `TOOM_COST`.
+    // num-bigint 0.4.8 divides by Knuth's algorithm D (The Art of Computer Programming, vol. 2,
+    // 4.3.1) up to 64 words and above by Burnikel and Ziegler's recursive division (C.
+    // Burnikel, J. Ziegler, "Fast Recursive Division", Max-Planck-Institut fur Informatik,
+    // MPI-I-98-1-022, 1998), whose cost is that of its products, Toom-3, O(n^1.465); its
+    // work was measured to grow 2.79 to 2.90 times per doubling of `2w` by `w` (2026-11-12), so
+    // `DIV_POWER` 1.52, against about four squarings, O(n log n) each, by the reciprocal. The
+    // plan row asked for one threshold at the measured crossover; the curves cross at 3192 words
+    // for `2w` by `w`, 919 for a quotient of a quarter of the divisor's words, 899 for four
+    // times, 417 for sixteen times and 242 for 256 times them (2026-11-12, `crossover
+    // div-leaf`), so no one leaf sits at every crossover, and `DIV_LEAF` alone at 64 words did
+    // up to 3.38 times the least work. With `DIV_COST` fitted over the five shapes together
+    // the worst is 1.089 (COMPLEXITY.md, "Crossovers"). Both sides are tested by
+    // `tests::quotients_agree_with_num_bigint` and
     // `tests::wide_quotients_agree_with_num_bigint`; the growth above it by
     // `dividing_a_wide_number_scales` (COMPLEXITY.md K30, "Crossovers"; ZED_PORT_GAPS.md,
     // "Entries from KERNEL-div-newton").
-    if n.min(k) <= DIV_LEAF {
+    if n.min(k) <= DIV_LEAF || num_bigint_divides(words(a) - words(b) + 1, b) {
         return a.div_rem(b);
     }
+    div_rem_past_leaf(a, b)
+}
+
+/// Whether num-bigint's division of a quotient of `qw` words by `b`, past [`DIV_LEAF`], costs at
+/// most [`past_leaf_cost`].
+fn num_bigint_divides(qw: usize, b: &BigUint) -> bool {
+    let bw = words(b);
+    num_bigint_div_cost(qw, bw) <= past_leaf_cost(qw, bw, nonzero_words(b))
+}
+
+/// The cost of [`div_rem_past_leaf`] for a quotient of `qw` words by a divisor of `bw` words,
+/// `nonzero` of them nonzero: the cheaper of long division over the nonzero words and the
+/// division by a reciprocal.
+fn past_leaf_cost(qw: usize, bw: usize, nonzero: usize) -> f64 {
+    sparse_div_cost(qw, nonzero).min(newton_cost(qw, bw))
+}
+
+/// [`div_rem`] above [`DIV_LEAF`], for `a >= b`: the cheaper of long division over the
+/// divisor's nonzero words and the division by a reciprocal.
+fn div_rem_past_leaf(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
     // Complexity tradeoff: long division over the divisor's nonzero words costs
     // `nonzero(b)` word products for each quotient word, below the reciprocal's O(M(n)) when
     // the divisor has few nonzero words, as a kept power `2^s + 1` has; the cheaper of the two
@@ -1351,6 +1478,14 @@ pub(crate) fn div_rem(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
     if sparse_div_cost(aw - bw + 1, nonzero_words(b)) <= newton_cost(aw - bw + 1, bw) {
         return sparse_div_rem(a, b);
     }
+    div_rem_by_reciprocal(a, b)
+}
+
+/// [`div_rem`] by a reciprocal, for `a >= b`: block by block ([`div_rem_blocks`]) when the
+/// quotient is wider than the divisor, else by one [`Level`].
+fn div_rem_by_reciprocal(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
+    let (m, n) = (a.bits(), b.bits());
+    let k = m - n + 1;
     if k > n {
         return div_rem_blocks(a, b);
     }
@@ -1365,7 +1500,7 @@ pub(crate) fn div_rem(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
 /// [`Divisor::rem`] reads `a` block by block and keeps only the remainder.
 pub(crate) fn rem(a: &BigUint, b: &BigUint) -> BigUint {
     if a.bits().saturating_sub(b.bits()) >= b.bits() {
-        return Divisor::new(Cow::Borrowed(b)).rem(a);
+        return Divisor::new(Cow::Borrowed(b), a.bits()).rem(a);
     }
     div_rem(a, b).1
 }
@@ -1375,13 +1510,13 @@ pub(crate) fn rem(a: &BigUint, b: &BigUint) -> BigUint {
 /// below `b 2^(64 len)`, by `b` through one [`Divisor`], and the quotient's blocks are written
 /// into place. O((m / n) M(n)) for `m` bits by `n`, and the memory of a step is O(n).
 fn div_rem_blocks(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
-    Divisor::new(Cow::Borrowed(b)).div_rem(a)
+    Divisor::new(Cow::Borrowed(b), a.bits()).div_rem(a)
 }
 
 /// The cost of [`sparse_div_rem`] of a quotient of `qw` words by a divisor with `nonzero`
 /// nonzero words.
-fn sparse_div_cost(qw: usize, nonzero: usize) -> u128 {
-    (qw as u128 + 1) * (SPARSE_WORD * nonzero as u128 + SPARSE_STEP)
+fn sparse_div_cost(qw: usize, nonzero: usize) -> f64 {
+    (qw as f64 + 1.0) * (SPARSE_WORD * nonzero as f64 + SPARSE_STEP)
 }
 
 /// The cost of [`div_rem`] by a reciprocal of a quotient of `qw` words by a divisor of `bw`,
@@ -1390,11 +1525,31 @@ fn sparse_div_cost(qw: usize, nonzero: usize) -> u128 {
 /// product's transforms on half the points. A quotient wider than the divisor
 /// ([`div_rem_blocks`]) builds that once, about three products of the divisor's width, and
 /// then costs about one product for each block, its two factors' transforms kept.
-fn newton_cost(qw: usize, bw: usize) -> u128 {
+fn newton_cost(qw: usize, bw: usize) -> f64 {
     match qw > bw {
-        true => (qw.div_ceil(bw) as u128 + 3) * transform_cost(2 * bw),
-        false => 8 * transform_cost(2 * qw) / 3 + transform_cost(bw),
+        true => (qw.div_ceil(bw) as f64 + 3.0) * transform_cost(2 * bw),
+        false => 8.0 * transform_cost(2 * qw) / 3.0 + transform_cost(bw),
     }
+}
+
+/// num-bigint's cost of a division of a quotient of `qw` words by a divisor of `bw`, in the
+/// units of [`TRANSFORM_COST`]: `DIV_COST s^DIV_POWER` for the narrower `s` of the two, and
+/// for each word of the wider beyond it `DIV_COST s^(DIV_POWER - 1)`, times [`DIV_NARROW`]
+/// when the divisor is the wider. A quotient wider than the divisor so costs `qw / bw`
+/// divisions of `2 bw` by `bw` words, as num-bigint divides it.
+fn num_bigint_div_cost(qw: usize, bw: usize) -> f64 {
+    DIV_COST * num_bigint_div_units(qw, bw)
+}
+
+/// [`num_bigint_div_cost`] over [`DIV_COST`].
+fn num_bigint_div_units(qw: usize, bw: usize) -> f64 {
+    let (q, b) = (qw as f64, bw as f64);
+    let s = q.min(b);
+    let wider = match qw > bw {
+        true => q - b,
+        false => DIV_NARROW * (b - q),
+    };
+    s.powf(DIV_POWER - 1.0) * (s + wider)
 }
 
 /// `(a / b, a mod b)` by long division (Knuth's algorithm D) over the nonzero words of `b`,
@@ -1562,9 +1717,14 @@ fn settle(a: &BigUint, b: &BigUint, mut q: BigUint, mut qb: BigUint) -> (BigUint
 /// `2^2k / x`, floored, for `x` of exactly `k` bits: [`approx_reciprocal`], one below or
 /// exact, made exact by the sign of `2^2k - x y - x`, found by one cyclic product. O(M(k)).
 fn reciprocal(x: &BigUint, k: u64) -> BigUint {
+    reciprocal_from(x, k, RECIP_LEAF)
+}
+
+/// [`reciprocal`] with Newton's steps from `leaf` bits in place of [`RECIP_LEAF`].
+fn reciprocal_from(x: &BigUint, k: u64, leaf: u64) -> BigUint {
     let m = cyclic_points(k);
     let tw = roots(m);
-    let mut y = approx_reciprocal(x, k, &tw);
+    let mut y = approx_reciprocal(x, k, &tw, leaf);
     // `e = 2^2k - x y` lies in `(0, 2x)`, below `2^(64 m + 61)`; the floor is `y + 1` when
     // `e >= x`.
     let (xw, yw) = (x.to_u64_digits(), y.to_u64_digits());
@@ -1583,18 +1743,19 @@ fn reciprocal(x: &BigUint, k: u64) -> BigUint {
 /// `X` with `a X < 2^2p <= a (X + 2)`, for `a` of exactly `p` bits, so that
 /// `2^p <= X < 2^(p + 1)`, by Newton's iteration on the top bits of `a`, each precision `p`
 /// from `h = ceil((p + 3) / 2)` ([`newton`]), from num-bigint's division at or below
-/// [`RECIP_LEAF`] bits. Each precision costs five transforms on the points of a product of
-/// `p / 2` bits by `p / 2`, so the whole about 5/3 of a product of `p` bits by `p`. `tw` as for
+/// `leaf` bits ([`RECIP_LEAF`] except in a benchmark). Each precision costs five transforms on
+/// the points of a product of `p / 2` bits by `p / 2`, so the whole about 5/3 of a product of
+/// `p` bits by `p`. `tw` as for
 /// [`Field::forward`], of at least [`cyclic_points`]`(p)` points. Brent and Zimmermann, Modern
 /// Computer Arithmetic (2010), Algorithm 3.5, in bits rather than words.
-fn approx_reciprocal(a: &BigUint, p: u64, tw: &Roots) -> BigUint {
+fn approx_reciprocal(a: &BigUint, p: u64, tw: &Roots, leaf: u64) -> BigUint {
     debug_assert_eq!(a.bits(), p);
     let mut sizes = vec![p];
     // Complexity tradeoff: the precisions at or below `RECIP_LEAF` bits start from one
     // division by num-bigint, O(RECIP_LEAF^2) once, in place of further Newton steps whose
     // transforms cost more at that width; the reciprocal's bounds do not depend on it, which
     // `tests::approximate_reciprocals_keep_their_bounds` checks with the leaf at 4 bits.
-    while let Some(&s) = sizes.last().filter(|&&s| s > RECIP_LEAF) {
+    while let Some(&s) = sizes.last().filter(|&&s| s > leaf) {
         sizes.push((s + 3).div_ceil(2));
     }
     let mut h = sizes.pop().expect("p is listed");
@@ -1794,7 +1955,7 @@ fn matrix_product(l: [&BigInt; 4], r: &[&BigInt], shift: Option<u64>) -> Vec<Big
             q.max(wide.div_ceil(4)).next_power_of_two()
         }
     };
-    let shared = ((factors + 2 * c) as u128 * TRANSFORM_COST * points_cost(n)) as f64 / 3.0;
+    let shared = (factors + 2 * c) as f64 * TRANSFORM_COST * points_cost(n) as f64 / 3.0;
     if widest == 0 || shared >= separate {
         return one_by_one();
     }
@@ -2031,7 +2192,7 @@ impl Half {
 /// [`gcd_using`] asked for the pair only, it formed `R` and applied it to the whole numbers;
 /// without the product of the matrices a gcd of 4,153 words takes 7.1 % fewer instructions,
 /// one of 33,220 words 6.5 % fewer (2026-11-12). Test half_pairs_match_the_matrix.
-fn half(a: BigInt, b: BigInt, k: u64, want: Want) -> Half {
+fn half(a: BigInt, b: BigInt, k: u64, want: Want, lift: u64) -> Half {
     let (matrix, pair) = (want != Want::Pair, want != Want::Matrix);
     let done = |j, r: Mat, x, y| Half {
         j,
@@ -2051,7 +2212,7 @@ fn half(a: BigInt, b: BigInt, k: u64, want: Want) -> Half {
         return done(j, r, x, y);
     }
     let k1 = k / 2;
-    let (j1, r1, a2, b2) = half_low(a, b, k1);
+    let (j1, r1, a2, b2) = half_low(a, b, k1, lift);
     let j0 = match nu(&b2) {
         Some(v) if j1 + v <= k => v,
         _ => return done(j1, r1, a2, b2),
@@ -2061,12 +2222,12 @@ fn half(a: BigInt, b: BigInt, k: u64, want: Want) -> Half {
     let k2 = k - j1 - j0;
     let (j2, r2, last) = match pair {
         true => {
-            let (j2, r2, a4, b4) = half_low(a3, b3, k2);
+            let (j2, r2, a4, b4) = half_low(a3, b3, k2, lift);
             (j2, r2, Some((a4, b4)))
         }
         false => {
             let w = 2 * k2 + 1;
-            let h = half(cmod(&a3, w), cmod(&b3, w), k2, Want::Matrix);
+            let h = half(cmod(&a3, w), cmod(&b3, w), k2, Want::Matrix, lift);
             (h.j, h.r.expect("asked for the matrix"), None)
         }
     };
@@ -2110,21 +2271,21 @@ fn half(a: BigInt, b: BigInt, k: u64, want: Want) -> Half {
 /// the transforms of [`Mat::apply`] are planned for the quotient, about `bits(a) - k` bits,
 /// the same size as the lift's products, so the lift only adds the residues' pair: a gcd of
 /// 33,220 words took 7 % more when every level lifted. So the lift is taken for entries of
-/// at most `MUL_LEAF` words, `k <= 64 MUL_LEAF` bits. Measured on 2026-11-12, a gcd of two
+/// at most `MUL_LEAF` words, `k` at most [`LIFT_BITS`] bits. Measured on 2026-11-12, a gcd of two
 /// random odd numbers of 4,153 and of 33,220 words took 515.9 and 6,270.1 million
 /// instructions; with the limit at half, 537.0 and 6,443.6, and at double, 521.9 and 6,344.5.
 /// The same pair either way. Tests half_pairs_match_the_matrix,
 /// pncx_fast_bezout_matches_euclid, reading_a_rat_of_two_wide_parts_scales.
-fn half_low(a: BigInt, b: BigInt, k: u64) -> (u64, Mat, BigInt, BigInt) {
+fn half_low(a: BigInt, b: BigInt, k: u64, lift: u64) -> (u64, Mat, BigInt, BigInt) {
     // At the leaf the matrix has at most two words, and applying it to the whole numbers is
     // linear in their width, as a lift is.
     if k <= HALF_LEAF {
-        return half(a, b, k, Want::Both).both();
+        return half(a, b, k, Want::Both, lift).both();
     }
     let w = 2 * k + 1;
     let (al, bl) = (cmod(&a, w), cmod(&b, w));
-    if k > 64 * MUL_LEAF as u64 {
-        let h = half(al, bl, k, Want::Matrix);
+    if k > lift {
+        let h = half(al, bl, k, Want::Matrix, lift);
         let r = h.r.expect("asked for the matrix");
         let (x, y) = r.apply(&a, &b, h.j);
         return (h.j, r, x, y);
@@ -2133,7 +2294,7 @@ fn half_low(a: BigInt, b: BigInt, k: u64) -> (u64, Mat, BigInt, BigInt) {
     // centered residue is `r - 2^w`, one more `2^w` in the high part.
     let ah = (a >> w) + BigInt::from(al.is_negative());
     let bh = (b >> w) + BigInt::from(bl.is_negative());
-    let (j, r, x, y) = half(al, bl, k, Want::Both).both();
+    let (j, r, x, y) = half(al, bl, k, Want::Both, lift).both();
     let [m00, m01, m10, m11] = &r.0;
     let [c, d] = matrix_product([m00, m01, m10, m11], &[&ah, &bh], None)
         .try_into()
@@ -2383,22 +2544,22 @@ fn v128_from(v: &[u64]) -> u128 {
 /// parts then go through the binary gcd, half of what is left at a time by [`half`], whose
 /// steps keep the odd part of the gcd. O(M(n) log n).
 pub(crate) fn gcd(a: &BigUint, b: &BigUint) -> BigUint {
-    gcd_using(a, b, true)
+    gcd_using(a, b, true, GCD_LEAF, LIFT_BITS)
 }
 
 /// The same half-GCD without the historical wide Stein handoff. The solver
 /// already performs machine-sized gcds directly, so its big values take this
 /// path at every width. Test: pncx_fibonacci_scale and the gcd axis.
 pub(crate) fn gcd_recursive(a: &BigUint, b: &BigUint) -> BigUint {
-    gcd_using(a, b, false)
+    gcd_using(a, b, false, GCD_LEAF, LIFT_BITS)
 }
 
-fn gcd_using(a: &BigUint, b: &BigUint, handoff: bool) -> BigUint {
+fn gcd_using(a: &BigUint, b: &BigUint, handoff: bool, leaf: u64, lift: u64) -> BigUint {
     let (Some(za), Some(zb)) = (a.trailing_zeros(), b.trailing_zeros()) else {
         return a | b;
     };
     let z = za.min(zb);
-    if (a.bits() - za).max(b.bits() - zb) <= GCD_LEAF {
+    if (a.bits() - za).max(b.bits() - zb) <= leaf {
         return stein_odd(a, za, b, zb) << z;
     }
     let mut x = BigInt::from(a >> za);
@@ -2418,12 +2579,12 @@ fn gcd_using(a: &BigUint, b: &BigUint, handoff: bool) -> BigUint {
     // see `GCD_LEAF`. Test `a_gcd_of_wide_numbers_scales`.
     while !y.is_zero() {
         let n = x.bits().max(y.bits());
-        if handoff && n <= GCD_LEAF {
+        if handoff && n <= leaf {
             let (xm, ym) = (x.magnitude(), y.magnitude());
             let (zx, zy) = (xm.trailing_zeros().unwrap(), ym.trailing_zeros().unwrap());
             return (stein_odd(xm, zx, ym, zy) << zx.min(zy)) << z;
         }
-        (x, y) = half(x, y, n / 2, Want::Pair)
+        (x, y) = half(x, y, n / 2, Want::Pair, lift)
             .pair
             .expect("asked for the pair");
         if let Some(v) = nu(&y) {
@@ -2476,7 +2637,7 @@ fn inverse_mod_odd(a: &BigUint, b: &BigUint) -> Option<BigUint> {
     let mut e = 0u64;
     while !y.is_zero() {
         let n = x.bits().max(y.bits());
-        let (j, r, x1, y1) = half(x, y, n / 2, Want::Both).both();
+        let (j, r, x1, y1) = half(x, y, n / 2, Want::Both, LIFT_BITS).both();
         (x, y) = (x1, y1);
         if j > 0 {
             let [m00, m01, m10, m11] = &r.0;
@@ -2522,6 +2683,11 @@ fn inverse_mod_odd(a: &BigUint, b: &BigUint) -> Option<BigUint> {
 // returns None. Tests: pncx_fast_bezout_matches_euclid,
 // bezout_coefficients_with_unequal_widths, pncx_fibonacci_scale.
 pub(super) fn bezout(a: &BigUint, b: &BigUint) -> Option<(BigUint, BigInt, BigInt)> {
+    bezout_with(a, b, LIFT_BITS)
+}
+
+/// [`bezout`] with the lift of [`half_low`] up to `lift` bits in place of [`LIFT_BITS`].
+fn bezout_with(a: &BigUint, b: &BigUint, lift: u64) -> Option<(BigUint, BigInt, BigInt)> {
     let (Some(za), Some(zb)) = (a.trailing_zeros(), b.trailing_zeros()) else {
         return Some((
             a | b,
@@ -2542,7 +2708,7 @@ pub(super) fn bezout(a: &BigUint, b: &BigUint) -> Option<(BigUint, BigInt, BigIn
     let mut halvings = 0u64;
     while !y.is_zero() {
         let n = x.bits().max(y.bits());
-        let (j, r, x1, y1) = half(x, y, (n / 2).max(1), Want::Both).both();
+        let (j, r, x1, y1) = half(x, y, (n / 2).max(1), Want::Both, lift).both();
         (x, y) = (x1, y1);
         if j > 0 {
             let [m00, m01, m10, m11] = &r.0;
@@ -2631,9 +2797,11 @@ pub(super) fn bezout(a: &BigUint, b: &BigUint) -> Option<(BigUint, BigInt, BigIn
 // ------------------------------------------------------------------------------------------
 // Decimal printing
 
-/// A divisor used many times, with how it is divided by: num-bigint's division when it has at
-/// most [`DIV_LEAF`] bits, long division over its nonzero words when that costs less, else a
-/// [`Level`]: its reciprocal and itself transformed once, with the roots for every product.
+/// A divisor used many times, with how it is divided by, chosen as [`div_rem`] chooses for the
+/// widest dividend it is made for: num-bigint's division when it has at most [`DIV_LEAF`] bits
+/// or costs least, long division over its nonzero words when that costs less than the
+/// reciprocal, else a [`Level`]: its reciprocal and itself transformed once, with the roots for
+/// every product.
 pub(crate) struct Divisor<'a> {
     d: Cow<'a, BigUint>,
     /// The words of `d`.
@@ -2647,33 +2815,59 @@ enum By {
     Reciprocal(Box<Level>, Rc<Roots>),
 }
 
-/// The points of the transforms a [`Divisor`] of `d` keeps, the most of its [`level_points`],
-/// or `None` when it divides without them: by num-bigint, for at most [`DIV_LEAF`] bits, or by
-/// long division over its nonzero words when that costs less. Its memory is a multiple of
-/// these points (`num::Rat::rem_euclid` and `num::Rat::div_euclid` ask for it).
-pub(crate) fn reciprocal_points(d: &BigUint) -> Option<usize> {
+/// How a [`Divisor`] of `d` for dividends of at most `a_bits` bits divides.
+enum Way {
+    /// num-bigint's division, for at most [`DIV_LEAF`] bits or where it costs least.
+    Leaf,
+    /// Long division over the nonzero words, where it costs less than the reciprocal.
+    Sparse,
+    /// A [`Level`] on this many points.
+    Reciprocal(usize),
+}
+
+/// The way a [`Divisor`] of `d` for dividends of at most `a_bits` bits divides.
+fn divisor_way(d: &BigUint, a_bits: u64) -> Way {
     let (n, len) = (d.bits(), words(d));
-    // Complexity tradeoff: as in `div_rem`, the cheaper of long division over the nonzero
-    // words and the reciprocal, for a dividend of twice the divisor's words, by the computed
-    // costs and with no size constant (COMPLEXITY.md K30).
-    match n <= DIV_LEAF || sparse_div_cost(len, nonzero_words(d)) <= newton_cost(len, len) {
-        true => None,
-        false => {
-            let (linear, cyclic) = level_points(n, n);
-            Some(linear.max(cyclic))
-        }
+    // Complexity tradeoff: the choice `div_rem` makes for the whole quotient, of at least
+    // `len` words, by the same computed costs and with no size constant, so that a quotient
+    // `div_rem` costed by the reciprocal is divided by it. It was the choice for one division
+    // of `2 len` words by `d`, which charges the making of the reciprocal to one step, with no
+    // num-bigint past `DIV_LEAF`: a quotient of 256 times the divisor's words then went by long
+    // division from 91 to 235 words, 1.9 to 2.6 times num-bigint's work, where `div_rem` had
+    // costed the reciprocal (CROSSOVER-bench, `crossover div-leaf 256 1`, 2026-11-12;
+    // COMPLEXITY.md K30).
+    let qw = (a_bits.div_ceil(64) as usize).saturating_sub(len).max(len);
+    if n <= DIV_LEAF || num_bigint_divides(qw, d) {
+        return Way::Leaf;
+    }
+    if sparse_div_cost(qw, nonzero_words(d)) <= newton_cost(qw, len) {
+        return Way::Sparse;
+    }
+    let (linear, cyclic) = level_points(n, n);
+    Way::Reciprocal(linear.max(cyclic))
+}
+
+/// The points of the transforms a [`Divisor`] of `d` for dividends of at most `a_bits` bits
+/// keeps, the most of its [`level_points`], or `None` when it divides without them (see
+/// [`Way`]). Its memory is a multiple of these points (`num::Rat::rem_euclid` and
+/// `num::Rat::div_euclid` ask for it).
+pub(crate) fn reciprocal_points(d: &BigUint, a_bits: u64) -> Option<usize> {
+    match divisor_way(d, a_bits) {
+        Way::Reciprocal(points) => Some(points),
+        Way::Leaf | Way::Sparse => None,
     }
 }
 
 impl<'a> Divisor<'a> {
-    pub(crate) fn new(d: Cow<'a, BigUint>) -> Divisor<'a> {
+    /// `d`, for dividends of at most `a_bits` bits.
+    pub(crate) fn new(d: Cow<'a, BigUint>, a_bits: u64) -> Divisor<'a> {
         assert!(!d.is_zero(), "a division by zero");
-        let n = d.bits();
-        let by = match reciprocal_points(&d) {
-            None if n <= DIV_LEAF => By::Leaf,
-            None => By::Sparse,
-            Some(points) => {
+        let by = match divisor_way(&d, a_bits) {
+            Way::Leaf => By::Leaf,
+            Way::Sparse => By::Sparse,
+            Way::Reciprocal(points) => {
                 let tw = roots(points);
+                let n = d.bits();
                 By::Reciprocal(Box::new(Level::new(d.to_u64_digits(), n, n, &tw)), tw)
             }
         };
@@ -3069,7 +3263,7 @@ impl Level {
         let (linear, cyclic) = level_points(bits, k);
         let w = k.next_multiple_of(64);
         let t = from_words(shr_words(&d, bits - k)) << (w - k);
-        let x = approx_reciprocal(&t, w, tw);
+        let x = approx_reciprocal(&t, w, tw, RECIP_LEAF);
         drop(t);
         // `2^w <= X < 2^(w + 1)`: the top word is 1.
         let mut low = x.to_u64_digits();
@@ -3267,7 +3461,7 @@ impl Printer {
                     debug_assert!(*ea >= w + 2 * bits + 3, "the level above is precise enough");
                     derive(d, &dw, &dc, &tw, ya, *ea)
                 }
-                None => approx_reciprocal(&(d << (w - bits)), w, &tw),
+                None => approx_reciprocal(&(d << (w - bits)), w, &tw, RECIP_LEAF),
             };
             // `X + 1` for the widest: `X` is at most one below the floor.
             let over = u32::from(above.is_none());
@@ -3439,6 +3633,227 @@ pub(super) fn built(pows: &[(u64, BigUint)]) -> BigInt {
         out <<= e.to_u64().expect("a power of 2 whose bits fit in memory");
     }
     BigInt::from(out)
+}
+
+/// The methods on either side of each size threshold of `num`, one by one, for the
+/// crossover benchmarks (crate zed-benches, binary `crossover`; DESIGN.md sec:plan, A96),
+/// which time both methods on both sides of a threshold and check that they give the same
+/// output. Not for other use: each function forces one method whatever the size.
+#[doc(hidden)]
+pub mod crossover {
+    use num_bigint::{BigInt, BigUint};
+
+    use super::MulBy;
+
+    /// [`super::MUL_LEAF`] as built, in words.
+    pub const MUL_LEAF: usize = super::MUL_LEAF;
+    /// [`super::DIV_LEAF`] as built, in bits.
+    pub const DIV_LEAF: u64 = super::DIV_LEAF;
+    /// [`super::RECIP_LEAF`] as built, in bits.
+    pub const RECIP_LEAF: u64 = super::RECIP_LEAF;
+    /// [`super::GCD_LEAF`] as built, in bits.
+    pub const GCD_LEAF: u64 = super::GCD_LEAF;
+    /// [`super::LIFT_BITS`] as built, in bits.
+    pub const LIFT_BITS: u64 = super::LIFT_BITS;
+    /// The digits [`crate::num::read_digits`] reads whole, as built.
+    pub const LEAF_DIGITS: usize = crate::num::LEAF_DIGITS;
+    /// [`super::DIV_COST`] as built.
+    pub const DIV_COST: f64 = super::DIV_COST;
+    /// [`super::TOOM_COST`] as built.
+    pub const TOOM_COST: f64 = super::TOOM_COST;
+    /// [`super::TRANSFORM_COST`] as built.
+    pub const TRANSFORM_COST: f64 = super::TRANSFORM_COST;
+    /// [`super::SPARSE_WORD`] as built.
+    pub const SPARSE_WORD: f64 = super::SPARSE_WORD;
+    /// [`super::SPARSE_STEP`] as built.
+    pub const SPARSE_STEP: f64 = super::SPARSE_STEP;
+    /// [`super::CACHED_COST`] as built.
+    pub const CACHED_COST: f64 = super::CACHED_COST;
+
+    /// The method [`super::mul`] takes for `a * b`: "num-bigint", "rows" or "transforms".
+    pub fn mul_method(a: &BigUint, b: &BigUint) -> &'static str {
+        match super::mul_method(a, b) {
+            MulBy::NumBigint => "num-bigint",
+            MulBy::Rows => "rows",
+            MulBy::Pieces(_) => "transforms",
+        }
+    }
+
+    /// `a * b` by transforms, in the pieces [`super::transform_plan`] chooses, whatever the
+    /// sizes; both factors nonzero.
+    pub fn mul_by_transforms(a: &BigUint, b: &BigUint) -> BigUint {
+        let (la, lb) = (super::words(a), super::words(b));
+        let (_, piece) = super::transform_plan(la.min(lb), la.max(lb));
+        super::pieces_mul(a, b, piece)
+    }
+
+    /// `a * b` by rows over the nonzero words of one factor ([`super::sparse_mul`]).
+    pub fn mul_by_rows(a: &BigUint, b: &BigUint) -> BigUint {
+        super::sparse_mul(a, b)
+    }
+
+    /// `(a / b, a mod b)` past [`super::DIV_LEAF`], whatever the sizes: the cheaper of long
+    /// division over the nonzero words of `b` and the division by a reciprocal; `a >= b > 0`.
+    pub fn div_rem_past_leaf(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
+        super::div_rem_past_leaf(a, b)
+    }
+
+    /// `(a / b, a mod b)` by long division over the nonzero words of `b`, which has at least
+    /// two words; `a >= b`.
+    pub fn div_rem_sparse(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
+        super::sparse_div_rem(a, b)
+    }
+
+    /// `(a / b, a mod b)` by a reciprocal; `a >= b > 0`.
+    pub fn div_rem_by_reciprocal(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
+        super::div_rem_by_reciprocal(a, b)
+    }
+
+    /// Whether [`div_rem_past_leaf`] takes long division over the nonzero words of `b` for
+    /// `a / b`, rather than the reciprocal; `a >= b > 0`.
+    pub fn div_by_rows(a: &BigUint, b: &BigUint) -> bool {
+        let (aw, bw) = (super::words(a), super::words(b));
+        super::sparse_div_cost(aw - bw + 1, super::nonzero_words(b))
+            <= super::newton_cost(aw - bw + 1, bw)
+    }
+
+    /// Whether [`super::div_rem`] takes num-bigint's division for `a / b`; `a >= b > 0`.
+    pub fn div_by_num_bigint(a: &BigUint, b: &BigUint) -> bool {
+        div_flip(a, b).is_none_or(|flip| super::DIV_COST <= flip)
+    }
+
+    /// The value of [`super::DIV_COST`] at which [`super::div_rem`] changes method for `a / b`:
+    /// num-bigint's division at or below it. `None` at or below [`super::DIV_LEAF`], where it
+    /// does not decide; `a >= b > 0`.
+    pub fn div_flip(a: &BigUint, b: &BigUint) -> Option<f64> {
+        let (m, n) = (a.bits(), b.bits());
+        if n.min(m - n + 1) <= super::DIV_LEAF {
+            return None;
+        }
+        let (aw, bw) = (super::words(a), super::words(b));
+        let qw = aw - bw + 1;
+        let past = super::past_leaf_cost(qw, bw, super::nonzero_words(b));
+        Some(past / super::num_bigint_div_units(qw, bw))
+    }
+
+    /// The value of [`super::TOOM_COST`] at which [`super::mul`] changes method for `a * b`:
+    /// num-bigint's product at or below it, else the cheaper of rows and transforms. `None` at
+    /// or below [`super::MUL_LEAF`], where it does not decide.
+    pub fn toom_flip(a: &BigUint, b: &BigUint) -> Option<f64> {
+        let (la, lb) = (super::words(a), super::words(b));
+        let (short, long) = (la.min(lb), la.max(lb));
+        if short <= super::MUL_LEAF {
+            return None;
+        }
+        let rows = (super::nonzero_words(a) as u128 * lb as u128)
+            .min(super::nonzero_words(b) as u128 * la as u128);
+        let (cost, _) = super::transform_plan(short, long);
+        let per = super::toom_cost(short, long) / super::TOOM_COST;
+        Some((rows as f64).min(cost) / per)
+    }
+
+    /// The value of [`super::TRANSFORM_COST`] at which [`super::mul`] changes from transforms
+    /// to rows for `a * b`: rows at or above it. `None` at or below [`super::MUL_LEAF`].
+    pub fn transform_flip(a: &BigUint, b: &BigUint) -> Option<f64> {
+        let (la, lb) = (super::words(a), super::words(b));
+        let (short, long) = (la.min(lb), la.max(lb));
+        if short <= super::MUL_LEAF {
+            return None;
+        }
+        let rows = (super::nonzero_words(a) as u128 * lb as u128)
+            .min(super::nonzero_words(b) as u128 * la as u128);
+        let (cost, _) = super::transform_plan(short, long);
+        Some(rows as f64 * super::TRANSFORM_COST / cost)
+    }
+
+    /// The value of [`super::SPARSE_WORD`] at which [`div_rem_past_leaf`] changes method for
+    /// `a / b`: long division at or below it, the reciprocal above; `a >= b > 0`.
+    pub fn sparse_flip(a: &BigUint, b: &BigUint) -> Option<f64> {
+        let (aw, bw) = (super::words(a), super::words(b));
+        let q = (aw - bw + 1) as f64;
+        let newton = super::newton_cost(aw - bw + 1, bw);
+        Some((newton / (q + 1.0) - super::SPARSE_STEP) / super::nonzero_words(b) as f64)
+    }
+
+    /// A factor whose spectra are kept for products with numbers of at most `other` words
+    /// whatever the costs, where [`super::Factor`] keeps them only when they cost less.
+    pub struct Kept(super::Factor);
+
+    impl Kept {
+        /// `x` with its spectra on the points of a product with `other` words.
+        pub fn new(x: BigUint, other: usize) -> Kept {
+            let (points, _) = super::points(super::words(&x), other);
+            let tw = super::roots(points);
+            let spectra = super::spectra(&x.to_u64_digits(), points, &tw);
+            Kept(super::Factor {
+                x,
+                other,
+                spectra: Some((spectra, tw)),
+            })
+        }
+
+        /// `x`.
+        pub fn value(&self) -> &BigUint {
+            self.0.value()
+        }
+
+        /// `y * x` by the spectra, `y` of at most `other` words.
+        pub fn mul(&self, y: &BigUint) -> BigUint {
+            let (s, tw) = self.0.spectra.as_ref().expect("kept spectra");
+            self.0.spectra_mul(y, s, tw)
+        }
+
+        /// `y * x` as [`super::Factor::mul`] takes it with these spectra kept: by them when
+        /// they cost less than [`super::mul`], else by [`super::mul`].
+        pub fn factor_mul(&self, y: &BigUint) -> BigUint {
+            self.0.mul(y)
+        }
+
+        /// Whether [`super::Factor::mul`] takes the spectra for `y`.
+        pub fn by_spectra(&self, y: &BigUint) -> bool {
+            let (s, _) = self.0.spectra.as_ref().expect("kept spectra");
+            self.0.takes_spectra(s[0].len(), super::words(y))
+        }
+
+        /// The value of [`super::CACHED_COST`] at which [`super::Factor::mul`] changes method
+        /// for `y`: the spectra below it, [`super::mul`] at or above. `None` where it does not
+        /// decide: `y` wider than the spectra allow, or [`super::mul`] taking num-bigint's
+        /// product at or below [`super::MUL_LEAF`].
+        pub fn cached_flip(&self, y: &BigUint) -> Option<f64> {
+            let (s, _) = self.0.spectra.as_ref().expect("kept spectra");
+            let (points, wx, wy) = (s[0].len(), super::words(&self.0.x), super::words(y));
+            let dense = super::dense_cost(wy, wx);
+            if wy > self.0.other || dense == 0.0 {
+                return None;
+            }
+            let cached = super::cached_cost(points);
+            let top = super::cached_total(points, wx, wy) - cached;
+            Some((dense - top) * super::CACHED_COST / cached)
+        }
+    }
+
+    /// `2^2k / x`, floored, for `x` of exactly `k` bits, Newton's steps starting from
+    /// num-bigint's division at or below `leaf` bits (at least 4).
+    pub fn reciprocal(x: &BigUint, leaf: u64) -> BigUint {
+        super::reciprocal_from(x, x.bits(), leaf.max(4))
+    }
+
+    /// The gcd of `a` and `b` by [`super::gcd`] with the leaf of `leaf` bits and the lift of
+    /// `lift` bits.
+    pub fn gcd(a: &BigUint, b: &BigUint, leaf: u64, lift: u64) -> BigUint {
+        super::gcd_using(a, b, true, leaf, lift)
+    }
+
+    /// The value of a nonempty text of ASCII decimal digits, as [`crate::num::read_digits`]
+    /// reads it but with texts of at most `leaf` digits read whole; `leaf` at least 1.
+    pub fn read_digits(digits: &str, leaf: usize) -> BigUint {
+        crate::num::read_digits_by(digits, leaf)
+    }
+
+    /// [`super::bezout`] with the lift of `lift` bits.
+    pub fn bezout(a: &BigUint, b: &BigUint, lift: u64) -> Option<(BigUint, BigInt, BigInt)> {
+        super::bezout_with(a, b, lift)
+    }
 }
 
 #[cfg(test)]
@@ -3615,7 +4030,7 @@ mod tests {
         }
         // A sparse divisor reused, as a kept power's remainder uses one.
         let d = (BigUint::one() << 20_000u32) + 1u32;
-        let div = Divisor::new(Cow::Borrowed(&d));
+        let div = Divisor::new(Cow::Borrowed(&d), 2 * d.bits());
         assert!(matches!(div.by, By::Sparse));
         let x = (random(3, 600) % &d) << (64 * 313) | random(4, 313);
         assert_eq!(div.div_rem(&x), x.div_rem(&d));
@@ -3656,7 +4071,7 @@ mod tests {
         // A divisor reused, of bits not a multiple of 64, and dividends up to `d 2^(64 len)`.
         for (bits, seed) in [(4097u64, 41u64), (6000, 43), (8191, 47), (64 * 100, 53)] {
             let d = random(seed, 130) >> (130 * 64 - bits) | (BigUint::one() << (bits - 1));
-            let div = Divisor::new(Cow::Borrowed(&d));
+            let div = Divisor::new(Cow::Borrowed(&d), 2 * d.bits());
             let len = bits.div_ceil(64);
             let top = (&d << (64 * len)) - 1u32;
             for x in [
@@ -3684,7 +4099,7 @@ mod tests {
         let one = BigUint::one();
         let check = |a: &BigUint, p: u64| {
             let tw = roots(cyclic_points(p));
-            let x = approx_reciprocal(a, p, &tw);
+            let x = approx_reciprocal(a, p, &tw, RECIP_LEAF);
             let power = &one << (2 * p);
             assert!(a * &x < power, "{p} bits, a = {a}: a X is not below 2^2p");
             assert!(
@@ -3807,7 +4222,7 @@ mod tests {
                     let q = x >> (64 * (la - lb) as u64);
                     let z = &q * y + (y - 1u32);
                     assert_eq!(div_rem(&z, y), (q.clone(), y - 1u32), "{la} by {lb} words");
-                    let div = Divisor::new(Cow::Borrowed(y));
+                    let div = Divisor::new(Cow::Borrowed(y), 2 * y.bits());
                     let top = (y << (64 * lb as u64)) - 1u32;
                     for v in [&top, &(x % &top), &(&q * y)] {
                         assert_eq!(div.div_rem(v), v.div_rem(y), "{la} by {lb} words, reused");
@@ -3877,7 +4292,7 @@ mod tests {
             let a = BigInt::from(random(seed, words) | BigUint::one());
             let b = BigInt::from(random(seed + 10, words) << 1u32);
             for k in [64 * words as u64 / 4, 64 * words as u64 / 2] {
-                let h = half(a.clone(), b.clone(), k, Want::Matrix);
+                let h = half(a.clone(), b.clone(), k, Want::Matrix, LIFT_BITS);
                 let (j, m) = (h.j, h.r.expect("asked for the matrix"));
                 let [m00, m01, m10, m11] = &m.0;
                 let want = (
@@ -3914,7 +4329,8 @@ mod tests {
                         let b = BigInt::from(b.clone()) * sb;
                         for k in [1, HALF_LEAF, HALF_LEAF + 1, bits / 4, bits / 2, bits + 64] {
                             let at = format!("{words} words, form {i}, signs {sa} {sb}, k = {k}");
-                            let (j, m, x, y) = half(a.clone(), b.clone(), k, Want::Both).both();
+                            let (j, m, x, y) =
+                                half(a.clone(), b.clone(), k, Want::Both, LIFT_BITS).both();
                             assert!(j <= k, "{at}: {j} halvings");
                             let [m00, m01, m10, m11] = &m.0;
                             let (p, q) = (m00 * &a + m01 * &b, m10 * &a + m11 * &b);
@@ -3922,9 +4338,9 @@ mod tests {
                             assert!((&p & &low).is_zero() && (&q & &low).is_zero(), "{at}");
                             let pair = (p >> (2 * j), q >> (2 * j));
                             assert_eq!((&x, &y), (&pair.0, &pair.1), "{at}");
-                            let h = half(a.clone(), b.clone(), k, Want::Matrix);
+                            let h = half(a.clone(), b.clone(), k, Want::Matrix, LIFT_BITS);
                             assert_eq!((h.j, h.r.map(|r| r.0), h.pair), (j, Some(m.0), None));
-                            let h = half(a.clone(), b.clone(), k, Want::Pair);
+                            let h = half(a.clone(), b.clone(), k, Want::Pair, LIFT_BITS);
                             assert_eq!((h.j, h.r.is_none(), h.pair), (j, true, Some(pair)));
                         }
                     }

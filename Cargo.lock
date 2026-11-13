@@ -1003,7 +1003,9 @@ name = "zed-benches"
 version = "0.0.0"
 dependencies = [
  "num-bigint",
+ "num-integer",
  "object 0.40.0",
+ "zed-corpus-ref",
  "zed-kernel",
  "zed-tests",
  "zedc-preimage",

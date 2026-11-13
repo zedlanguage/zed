@@ -35,6 +35,8 @@ use num_traits::{One, Pow, Signed, ToPrimitive, Zero};
 use bound::{Format, Product};
 pub use factor::is_prime;
 use fast::built;
+#[doc(hidden)]
+pub use fast::crossover;
 pub use fast::{
     PRINT_HANDOFF, PRINT_WHOLE, mul as mul_uint, mul_int, pow as pow_uint, to_decimal,
     to_decimal_split, to_decimal_split_at,
@@ -963,14 +965,16 @@ impl Rat {
             // allocation asked for.
             let a = BigUint::from(self.num.bits());
             let b = m.num.magnitude();
-            room(match (b.to_u64(), fast::reciprocal_points(b)) {
-                (Some(_), _) => a,
-                // `k > n`: the quotient has more bits than the divisor (`fast::div_rem`).
-                (None, Some(points)) if self.num.bits() >= 2 * b.bits() => {
-                    BigUint::from(points) * (64 * POINT_WORDS) + (a << 1u32)
-                }
-                (None, _) => a << 4u32,
-            })?;
+            room(
+                match (b.to_u64(), fast::reciprocal_points(b, self.num.bits())) {
+                    (Some(_), _) => a,
+                    // `k > n`: the quotient has more bits than the divisor (`fast::div_rem`).
+                    (None, Some(points)) if self.num.bits() >= 2 * b.bits() => {
+                        BigUint::from(points) * (64 * POINT_WORDS) + (a << 1u32)
+                    }
+                    (None, _) => a << 4u32,
+                },
+            )?;
             return Ok(Rat::int(fast::div_euclid(&self.num, &m.num)));
         }
         if self.divides_by(m)? {
@@ -1675,11 +1679,11 @@ fn rem(a: &BigUint, m: &BigUint) -> Result<BigUint, TooLarge> {
     // the two. Tested by `a_wide_number_modulo_a_wide_one_answers_when_its_peak_is_given` and
     // `a_dense_divisor_asks_for_its_transforms` (COMPLEXITY.md K30). A complete solution would
     // ask each allocation of the division for its own memory.
-    room(match fast::reciprocal_points(m) {
+    room(match fast::reciprocal_points(m, a.bits()) {
         Some(points) => BigUint::from(points) * (64 * POINT_WORDS),
         None => BigUint::from(m.bits()) * REM_STEP,
     })?;
-    Ok(fast::Divisor::new(Cow::Borrowed(m)).rem(a))
+    Ok(fast::Divisor::new(Cow::Borrowed(m), a.bits()).rem(a))
 }
 
 /// The Euclidean remainder from `r = |a| mod |m|`: `r` itself, or `|m| - r` for a negative

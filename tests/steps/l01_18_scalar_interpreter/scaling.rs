@@ -99,9 +99,10 @@ fn reading_a_rat_of_n_digits_scales() {
 
 /// `int(s)` reads by halves, O(n log^2 n) (COMPLEXITY.md C31), held to the limit of 13 every
 /// scaling test meets. It passes, 11.8 times the work against the n log^2 n limit of that day,
-/// 12.1 (2026-11-12, RADIX-depth), and 12.0 (2026-11-13). It failed at 15.5 (2026-11-09): the
-/// split is `log2(n / 1024)` levels deep, and the products
-/// wider than `fast::MUL_LEAF` (512 words) are those of levels 4 and up, 4 levels at 160,000
+/// 12.1 (2026-11-12, RADIX-depth), 12.0 (2026-11-13), and 11.9 with `fast::TOOM_COST` at its
+/// measured 5.8 and `fast::MUL_LEAF` at 459 words (CROSSOVER-bench, 2026-11-13). It failed at
+/// 15.5 (2026-11-09): the split is `log2(n / 1024)` levels deep, and the products
+/// wider than `fast::MUL_LEAF` (then 512 words) are those of levels 4 and up, 4 levels at 160,000
 /// digits and 7 at 1,280,000, so their number grows 1.75 times where the limit allows 1.17 for
 /// each log; the ratio was 14.0 from 320,000 and 12.9 from 640,000
 /// (limits 11.9 and 11.8), falling toward the limit as n grows.
@@ -125,12 +126,14 @@ fn reading_an_int_of_n_digits_scales() {
 /// The check that a fraction of two wide parts is in lowest terms is one half gcd, O(n log^2 n)
 /// in the digits (`num::fast::gcd`, COMPLEXITY.md K30 and K41), where num-bigint's Stein gcd
 /// was O(n^2). At 80,000 digits, 4,153 words, both sizes are well above the gcd's leaf of 512
-/// words, num-bigint's gcd, so both run the half gcd; the ratio of the work, 22.4 at 20,000
+/// words (299 since CROSSOVER-bench), num-bigint's gcd, so both run the half gcd; the ratio of the work, 22.4 at 20,000
 /// digits and 21.7 at 40,000, is 18.6 here as the leaf's share falls (2026-11-07), held to the
 /// limit of 13 every scaling test meets (until 2026-11-13, the limit of work of order
 /// n log^2 n, 12.3; COMPLEXITY.md C31). It passes, 12.3 times the work and 11.1 times the bytes
 /// (2026-11-12, RADIX-depth), 12.3 and 11.6 (2026-11-13), in the band from 9 to 13; it failed
-/// on the bytes, 15.2 times (2026-11-09), as the recursion's deeper levels were dear.
+/// on the bytes, 15.2 times (2026-11-09), as the recursion's deeper levels were dear. With
+/// `fast::TOOM_COST` at its measured 5.8 and `fast::DIV_COST` 9.1 the smaller run gains a little
+/// more than the larger: 12.37 times the work and 12.06 the bytes (CROSSOVER-bench, 2026-11-13).
 #[test]
 fn reading_a_rat_of_two_wide_parts_scales() {
     check_reading("rat(s) of two parts of n digits each", 80_000, |n| {
@@ -165,17 +168,25 @@ fn fraction(x: &str, k: usize) -> String {
     format!("0.{}{x}", "0".repeat(k - x.len()))
 }
 
+/// The powers of 2 and 5 a decimal of [`valuation_family`] holds in its digits.
+#[derive(Clone, Copy)]
+enum Powers {
+    Five,
+    Two,
+    Both,
+    None,
+}
+
 /// Texts of decimals of about n digits, by the powers of 2 and 5 their digits hold: the texts
 /// `rat(s)` reads, and those of literals with an exponent, `<digits>e<exp>r` without the `r`,
 /// which `Rat::decimal` reads. In `0.<5^n>`, which is `1r/2r^n`, the n factors of 5 of the
 /// digits cancel against `10^n`; in `<5^m>.0` one of the m factors cancels; in `<5^m>e-n` the
 /// m are moved into the kept power of 5.
-fn valuation_families(n: usize) -> Vec<Family> {
+fn valuation_family(powers: Powers, n: usize) -> Family {
     // `5^m` and `2^m` of about n digits.
     let (m5, m2) = (n * 10 / 7, n * 10 / 3);
-    let both = product(&[(2, n), (5, n / 2), (7, 1)]);
-    vec![
-        (
+    match powers {
+        Powers::Five => (
             "a high power of 5",
             vec![
                 fraction(&product(&[(5, n)]), n),
@@ -183,7 +194,7 @@ fn valuation_families(n: usize) -> Vec<Family> {
             ],
             vec![format!("{}e-{n}", product(&[(5, m5)]))],
         ),
-        (
+        Powers::Two => (
             "a high power of 2",
             vec![
                 fraction(&product(&[(2, n)]), n),
@@ -191,12 +202,15 @@ fn valuation_families(n: usize) -> Vec<Family> {
             ],
             vec![format!("-{}e-{n}", product(&[(2, m2)]))],
         ),
-        (
-            "high powers of 2 and 5",
-            vec![fraction(&both, both.len() + n / 4), format!("{both}.0")],
-            vec![format!("{both}e{n}")],
-        ),
-        (
+        Powers::Both => {
+            let both = product(&[(2, n), (5, n / 2), (7, 1)]);
+            (
+                "high powers of 2 and 5",
+                vec![fraction(&both, both.len() + n / 4), format!("{both}.0")],
+                vec![format!("{both}e{n}")],
+            )
+        }
+        Powers::None => (
             "no high power",
             vec![format!(
                 "{}.{}",
@@ -205,11 +219,11 @@ fn valuation_families(n: usize) -> Vec<Family> {
             )],
             vec![format!("{}e-{}", digits(n, 23, '9'), digits(n, 24, '1'))],
         ),
-    ]
+    }
 }
 
-/// A family of [`valuation_families`]: its name, the texts `rat(s)` reads and the literals
-/// with an exponent.
+/// A family of [`valuation_family`]: its name, the texts `rat(s)` reads and the literals with an
+/// exponent.
 type Family = (&'static str, Vec<String>, Vec<String>);
 
 /// A decimal is reduced by the powers of 2 and 5 of its digits, which can be as many as the
@@ -217,44 +231,68 @@ type Family = (&'static str, Vec<String>, Vec<String>);
 /// read by its binary digits from the top and divided out at once, and the remaining power of
 /// 10 is built by squaring, all with `num::fast`'s products and quotients, O(n log^2 v), at
 /// most the order of the reading of the digits, O(M(n) log n). Each family runs through
-/// `rat(s)` and through `Rat::decimal`, the reading of a literal, at 160,000 and 1,280,000
-/// digits. At 80,000 the divisions lie where `num::fast::div_rem` takes long division, whose
-/// cost grows as the square of the width, and the family with both powers grew 32.5 times to
-/// 640,000 digits; from 160,000, 13.8 to 20.8 times (2026-11-07).
+/// `rat(s)` and through `Rat::decimal`, the reading of a literal, at 640,000 and 5,120,000
+/// digits, one test a family so that libtest runs them at once. At 80,000 the divisions lie
+/// where `num::fast::div_rem` takes long division, whose cost grows as the square of the width,
+/// and the family with both powers grew 32.5 times to 640,000 digits; from 160,000, 13.8 to 20.8
+/// times (2026-11-07). From 160,000 the family with both powers took 14.8 times the work in its
+/// first runs, against the limit of 13, once `fast::DIV_COST` let num-bigint divide past
+/// `DIV_LEAF` where it costs least (CROSSOVER-bench, 2026-11-13): the gain falls more at the
+/// smaller size, from divisions by a power of 5 of 75 to 1189 words that num-bigint does at both
+/// sizes (at 320,000 it took 14% off the smaller size's 526 M instructions and 4% off the
+/// larger's 5,758 M). From 640,000 the families are 10.6 to 11.2 times the work and 8.8 to 9.6
+/// times the bytes, and the step's tests take 17 s (2026-11-13, load 37).
+fn check_valuation_family(powers: Powers) {
+    let n = 640_000;
+    let built = zed_tests::scaling::inputs(n, |m| valuation_family(powers, m));
+    let what = built[&n].0;
+    let cast = |s: &String| Term::Prim(Prim::CastRat, vec![Term::Lit(Value::str(s))]);
+    let terms: std::collections::HashMap<usize, Vec<Term>> = built
+        .iter()
+        .map(|(&m, family)| (m, family.1.iter().map(cast).collect()))
+        .collect();
+    for t in &terms[&n] {
+        let v = zed_kernel::eval(t).unwrap();
+        assert!(!v.to_string().starts_with('#'), "{what}: the text reads");
+    }
+    zed_tests::scaling::check(
+        &format!("rat(s) of a decimal of n digits with {what}"),
+        n,
+        |m| {
+            for t in &terms[&m] {
+                zed_kernel::eval(t).unwrap();
+            }
+        },
+    );
+    zed_tests::scaling::check(
+        &format!("a rat literal with an exponent, of n digits with {what}"),
+        n,
+        |m| {
+            for s in &built[&m].2 {
+                Rat::decimal(s).unwrap().expect("a decimal literal");
+            }
+        },
+    );
+}
+
+#[test]
+fn reading_a_decimal_with_a_high_power_of_5_scales() {
+    check_valuation_family(Powers::Five);
+}
+
+#[test]
+fn reading_a_decimal_with_a_high_power_of_2_scales() {
+    check_valuation_family(Powers::Two);
+}
+
 #[test]
 fn reading_a_decimal_with_high_powers_of_2_and_5_scales() {
-    let n = 160_000;
-    let built = zed_tests::scaling::inputs(n, valuation_families);
-    let cast = |s: &String| Term::Prim(Prim::CastRat, vec![Term::Lit(Value::str(s))]);
-    for i in 0..built[&n].len() {
-        let what = built[&n][i].0;
-        let terms: std::collections::HashMap<usize, Vec<Term>> = built
-            .iter()
-            .map(|(&m, families)| (m, families[i].1.iter().map(cast).collect()))
-            .collect();
-        for t in &terms[&n] {
-            let v = zed_kernel::eval(t).unwrap();
-            assert!(!v.to_string().starts_with('#'), "{what}: the text reads");
-        }
-        zed_tests::scaling::check(
-            &format!("rat(s) of a decimal of n digits with {what}"),
-            n,
-            |m| {
-                for t in &terms[&m] {
-                    zed_kernel::eval(t).unwrap();
-                }
-            },
-        );
-        zed_tests::scaling::check(
-            &format!("a rat literal with an exponent, of n digits with {what}"),
-            n,
-            |m| {
-                for s in &built[&m][i].2 {
-                    Rat::decimal(s).unwrap().expect("a decimal literal");
-                }
-            },
-        );
-    }
+    check_valuation_family(Powers::Both);
+}
+
+#[test]
+fn reading_a_decimal_with_no_high_power_scales() {
+    check_valuation_family(Powers::None);
 }
 
 /// A chain of `n` bindings of `f32` arithmetic, each the one before through `*`, `+`, `/`, a

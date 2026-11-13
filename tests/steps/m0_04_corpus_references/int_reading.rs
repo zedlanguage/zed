@@ -9,7 +9,7 @@ use num_bigint::{BigInt, BigUint, Sign};
 use zed_corpus_ref::zedrt::product::{
     Factor, KEPT_WORDS, TRANSFORM_WORDS, mul, transform_len, transform_mul, twiddles,
 };
-use zed_corpus_ref::zedrt::{parse_int, try_parse_int};
+use zed_corpus_ref::zedrt::{LEAF_DIGITS, parse_int, try_parse_int};
 use zed_kernel::num::read_digits;
 use zed_tests::instances::Rng;
 use zed_tests::scaling;
@@ -242,7 +242,7 @@ fn a_kept_factor_multiplies_as_num_bigint_does() {
 
 /// Texts long enough that the reading's products go through the transform read as num-bigint
 /// reads them: random digits, nines (every coefficient of the parts at its largest), and a
-/// length of a power of two times `LEAF_DIGITS` (1024) and one past it.
+/// length of a power of two times `LEAF_DIGITS` and one past it.
 #[test]
 fn a_number_read_by_the_transform_reads_as_num_bigint_read_it() {
     let mut rng = Rng::new(40);
@@ -252,7 +252,7 @@ fn a_number_read_by_the_transform_reads_as_num_bigint_read_it() {
     // `TRANSFORM_WORDS` words, is by the transform too; one past it, the last power is squared
     // by its kept transform and multiplies a part of one digit.
     let long = 40 * TRANSFORM_WORDS as usize;
-    let power = 1024 * (long / 1024).next_power_of_two();
+    let power = LEAF_DIGITS * (long / LEAF_DIGITS).next_power_of_two();
     for len in [long, power, power + 1] {
         for text in [digits(&mut rng, len), "9".repeat(len)] {
             let expected: BigInt = text.parse().expect("digits");

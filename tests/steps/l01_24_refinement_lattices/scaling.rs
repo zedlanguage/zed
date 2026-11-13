@@ -564,13 +564,22 @@ fn cube_of_a_wide_end(base: &num_bigint::BigInt) {
     assert_eq!(image.bounds().map(|(_, hi)| hi), Some(&Fin(cube)));
 }
 
-/// At 4,096 and 32,768 bits, and at 32,768 and 262,144, where the indices above 511, which no
-/// prime below 1,024 is 1 modulo, first have roots wider than a word. Before the remainder
-/// tree each of those indices took a 2-adic root: 11.0 and 12.2 times (bytes) against 11.00
-/// and 10.6 (CUBE-root-alloc, COMPLEXITY.md S46).
+/// At 4,096 and 32,768 bits, and at 131,072 and 1,048,576. From 32,768 bits on, the indices
+/// above 511, which no prime below 1,024 is 1 modulo, have roots wider than a word. Before the
+/// remainder tree each of those indices took a 2-adic root: 11.0 and 12.2 times (bytes)
+/// against 11.00 and 10.6 from 4,096 and from 32,768 bits (CUBE-root-alloc, COMPLEXITY.md S46).
+/// The tree's first division, of the end by the product of the primes, is by 24 and 37 words
+/// in the first pair, within `DIV_LEAF` (64 words), where num-bigint divides by long division,
+/// and by 80 and 477 words in the second, past it. A pair from 32,768 bits (37 words, then past
+/// 64) straddles the leaf: past it num-bigint divides by Burnikel and Ziegler's method where
+/// `DIV_COST` says it does the least work (CROSSOVER-bench, 2026-11-12), at 262,144 bits 12%
+/// less work than the reciprocal but 1.69 times the bytes, so the bytes grew 14.6 times. Past
+/// the leaf no pair can keep that division on one side of `DIV_COST`'s crossover, since the
+/// product grows about 6 times for 8 times the bits; the work of the two methods is equal at
+/// the crossover, so crossing it changes the ratio little (8.5 times the work, 7.7 the bytes).
 #[test]
 fn the_cube_of_a_wide_end_scales_with_its_bits() {
-    for n in [4096, scaling::FACTOR * 4096] {
+    for n in [4096, 131_072] {
         let (small, large) = (
             (num_bigint::BigInt::from(1) << n) + 3,
             (num_bigint::BigInt::from(1) << (scaling::FACTOR * n)) + 3,

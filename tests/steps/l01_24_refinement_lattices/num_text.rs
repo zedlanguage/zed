@@ -4,7 +4,7 @@
 //! and each error is num-bigint's (item P14-bigint-parse).
 
 use num_bigint::{BigInt, BigUint};
-use zed_kernel::num::{PRINT_WHOLE, to_decimal_split};
+use zed_kernel::num::{PRINT_HANDOFF, PRINT_WHOLE, to_decimal_split};
 use zed_tests::instances::Rng;
 use zed_tests::scaling;
 use zedc::store::interval::Num;
@@ -287,8 +287,11 @@ fn a_written_end_is_the_text_it_was_read_from_on_both_sides_of_print_whole() {
 /// below `PRINT_WHOLE`, where `to_decimal` uses only the first. Random and all-ones numbers of
 /// 1 to 40 words and of every power's width `31 2^i` and one either side up to 3968 words; the
 /// powers `10^(597 2^i)` the split divides by and their neighbors; either side of the most bits
-/// the split prints as one leaf without building powers (31,712, with `PRINT_HANDOFF` at 248)
-/// and of the first power it divides by, `10^9552` (496 words).
+/// the split prints as one leaf without building powers, `floor(3.32 * 597) 2^i` for the least
+/// `i` with `31 2^i > PRINT_HANDOFF` (31,712 with `PRINT_HANDOFF` at 248), and of the first
+/// power it divides by, `10^(597 2^i)` (`10^9552`, 496 words); both computed from
+/// `PRINT_HANDOFF`, so that they follow it when the benchmark `crossover print-handoff` resets
+/// it.
 #[test]
 fn both_printing_methods_write_the_same_text() {
     let mut rng = Rng::new(597);
@@ -305,12 +308,16 @@ fn both_printing_methods_write_the_same_text() {
         let p = ten.pow(597 << i);
         values.extend([&p - 1u32, &p + 1u32, p]);
     }
+    let i = (0..)
+        .find(|&i| 31usize << i > PRINT_HANDOFF)
+        .expect("a power wider than the handoff");
+    let leaf_bits = (597 * 332 / 100) << i;
     let two = BigUint::from(2u32);
-    for bits in [31_711u32, 31_712, 31_713] {
+    for bits in [leaf_bits - 1, leaf_bits, leaf_bits + 1] {
         let p = two.pow(bits);
         values.extend([&p - 1u32, p]);
     }
-    let first = ten.pow(9552);
+    let first = ten.pow(597 << i);
     values.extend([&first - 1u32, &first + 1u32, first]);
     for x in &values {
         assert_eq!(to_decimal_split(x), x.to_string(), "{} bits", x.bits());

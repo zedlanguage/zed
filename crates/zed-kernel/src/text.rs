@@ -68,14 +68,18 @@ pub struct TooLong {
 // leaves of height 11 against 200,000 of height 18, `==` of two such texts 0.2 ms against 34
 // to 40 ms, a hash 0.3 to 3.6 ms against 22 to 24 ms, printing 0.3 to 1.3 ms against 18 to 23
 // ms; 8-byte pieces, `==` 2 to 5 ms against 11 to 39 ms; 128-byte pieces, which never merge,
-// the same. Staging keys a call at a string by the string's name ([`Names`]), which does not
+// the same. Set from 128 to 256 on 2026-11-12 (CROSSOVER-bench, `crossover text-leaf`, test
+// profile, load 41 to 48): over joins of 1-, 8- and 64-byte pieces, summed each one's work over
+// the least at that piece size, 256 does the least (3.04), 128 1.034 times as much and 512
+// 1.003. Staging keys a call at a string by the string's name ([`Names`]), which does not
 // depend on how the text is held, so it does not switch at `LEAF` (items STAGE-joined-eq and
 // STAGE-joined-eq-build). Trigger: a join whose parts'
 // adjacent blocks are short. Test:
 // `text::tests::a_string_built_a_character_at_a_time_is_held_in_blocks`; COMPLEXITY.md C29. A
 // solution with no constant would need blocks whose size follows the text's own pieces with
 // no node per piece, which no structure here has.
-const LEAF: usize = 128;
+#[doc(hidden)]
+pub const LEAF: usize = 256;
 
 impl Text {
     /// The text `a` then `b`. A join shares both parts; it builds `O(1)` new nodes, amortized,
@@ -95,6 +99,13 @@ impl Text {
     // bytes (see there); a sum of lengths past `usize::MAX` is refused with `TooLong`. Tests
     // `l01_36_cranelift::string_scaling`, `string_length` and `text::tests`; C29, K16.
     pub fn join(a: &Text, b: &Text) -> Result<Text, TooLong> {
+        Self::join_at(a, b, LEAF)
+    }
+
+    /// [`Text::join`] with blocks of at most `leaf` bytes in place of `LEAF`, for the crossover
+    /// benchmark of `LEAF` (crate zed-benches, binary `crossover`). Not for other use.
+    #[doc(hidden)]
+    pub fn join_at(a: &Text, b: &Text, leaf: usize) -> Result<Text, TooLong> {
         if a.is_empty() {
             return Ok(b.clone());
         }
@@ -108,12 +119,12 @@ impl Text {
             });
         }
         if let Tree::Block { block, chars } = &*b.0
-            && let Some(t) = a.with_last(block, *chars)
+            && let Some(t) = a.with_last(block, *chars, leaf)
         {
             return Ok(t);
         }
         if let Tree::Block { block, chars } = &*a.0
-            && let Some(t) = b.with_first(block, *chars)
+            && let Some(t) = b.with_first(block, *chars, leaf)
         {
             return Ok(t);
         }
@@ -234,9 +245,9 @@ impl Text {
 
     /// `self`, a text's tree, with `s`, of `chars` characters, added to its last block, when
     /// the two fit in one block: `O(LEAF)`, the deep tree at the top rebuilt.
-    fn with_last(&self, s: &str, chars: usize) -> Option<Text> {
+    fn with_last(&self, s: &str, chars: usize, leaf: usize) -> Option<Text> {
         match &*self.0 {
-            Tree::Block { block, chars: c } => (block.len() + s.len() <= LEAF)
+            Tree::Block { block, chars: c } => (block.len() + s.len() <= leaf)
                 .then(|| block_of([&**block, s].concat().into(), c + chars)),
             Tree::Deep {
                 front,
@@ -245,7 +256,7 @@ impl Text {
                 ..
             } => {
                 let i = count(back) - 1;
-                let last = back[i].as_ref()?.with_last(s, chars)?;
+                let last = back[i].as_ref()?.with_last(s, chars, leaf)?;
                 let mut back = back.clone();
                 back[i] = Some(last);
                 Some(deep(
@@ -266,9 +277,9 @@ impl Text {
 
     /// `s`, of `chars` characters, added before the first block of `self`, a text's tree, when
     /// the two fit in one block.
-    fn with_first(&self, s: &str, chars: usize) -> Option<Text> {
+    fn with_first(&self, s: &str, chars: usize, leaf: usize) -> Option<Text> {
         match &*self.0 {
-            Tree::Block { block, chars: c } => (s.len() + block.len() <= LEAF)
+            Tree::Block { block, chars: c } => (s.len() + block.len() <= leaf)
                 .then(|| block_of([s, &**block].concat().into(), chars + c)),
             Tree::Deep {
                 front,
@@ -276,7 +287,7 @@ impl Text {
                 back,
                 ..
             } => {
-                let first = front[0].as_ref()?.with_first(s, chars)?;
+                let first = front[0].as_ref()?.with_first(s, chars, leaf)?;
                 let mut front = front.clone();
                 front[0] = Some(first);
                 Some(deep(

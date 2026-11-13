@@ -388,7 +388,7 @@ fn a_kept_power_beside_its_built_successor_costs_n_log_n() {
     let s = p.add(&int(1)).unwrap();
     assert!(p < s && s > p && p != s);
     // `3^n` is built by squaring, so a run's work is a sum over squares of halving widths:
-    // those num-bigint's Toom-3 does faster (at most `fast::MUL_LEAF` = 512 words, and above
+    // those num-bigint's Toom-3 does faster (at most `fast::MUL_LEAF` = 459 words, and above
     // it where `toom_cost` is the least of `fast::mul`'s computed costs), and the wider by
     // transforms. The smaller run has three fewer squares by transforms than the larger, so
     // its sum stops short and the ratio counts the change of method as growth. Measured with

@@ -20,6 +20,8 @@ test = false
 # The meter of the scaling tests: instructions where the hardware counts them, and bytes.
 zed-tests = { path = "../tests" }
 zed-kernel.workspace = true
+zed-corpus-ref.workspace = true
+num-integer = "0.1"
 num-bigint = "0.4.8"
 # zed-tests brings zedc and its crates, dylibs whose file names do not change with their
 # features; asked for here with the features the workspace build gives them, so that a build of
