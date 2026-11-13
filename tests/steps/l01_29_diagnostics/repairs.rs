@@ -310,3 +310,100 @@ fn a_comparison_with_a_literal_is_repaired_by_the_literal_before_a_cast_of_the_o
         }
     }
 }
+
+#[test]
+fn a_comparison_of_an_f64_with_a_number_no_f64_writes_offers_only_its_answer() {
+    // Row REPAIR-both-sides-cast. No finite `f64` is `1/3` or `1/10`, and NaN and the
+    // infinities are no `rat`, so every comparison of the numbers, `rat(x) == rat("1/3")`
+    // included, is always `false`: no repair keeps the meaning, and `rat(x)` could not be
+    // offered anyway, as it gives `#invalid` at NaN and the infinities. The headline is the
+    // answer alone, in both orders of the operands, for `==` and `!=`, and for a text, a
+    // cast of a text and a `rat` literal.
+    const MAIN: &str = "main(m: MainArgs) {\n  m.stdout <- \"a\";\n}\n";
+    let cases = [
+        (
+            "x == rat(\"1/3\")",
+            "No value is both `f64` and `rat`: `x : f64 == rat(\"1/3\") : rat` is always \
+             `false`. Try `false` instead.",
+        ),
+        (
+            "rat(\"1/3\") == x",
+            "No value is both `rat` and `f64`: `rat(\"1/3\") : rat == x : f64` is always \
+             `false`. Try `false` instead.",
+        ),
+        (
+            "x != rat(\"1/3\")",
+            "No value is both `f64` and `rat`: `x : f64 != rat(\"1/3\") : rat` is always \
+             `true`. Try `true` instead.",
+        ),
+        (
+            "x == \"1/3\"",
+            "No value is both `f64` and `String`: `x : f64 == \"1/3\" : String` is always \
+             `false`. Try `false` instead.",
+        ),
+        (
+            "\"1/3\" != x",
+            "No value is both `String` and `f64`: `\"1/3\" : String != x : f64` is always \
+             `true`. Try `true` instead.",
+        ),
+        (
+            "x == rat(\"0.1\")",
+            "No value is both `f64` and `rat`: `x : f64 == rat(\"0.1\") : rat` is always \
+             `false`. Try `false` instead.",
+        ),
+        (
+            "x == 0.1r",
+            "No value is both `f64` and `rat`: `x : f64 == 0.1r : rat` is always `false`. \
+             Try `false` instead.",
+        ),
+    ];
+    for (expr, want) in cases {
+        let out = rejected(&format!("f(positional x: f64) = {expr};\n{MAIN}"));
+        let first = out.lines().next().unwrap_or("");
+        assert!(first.ends_with(want), "{out}");
+        assert!(
+            !out.contains("rat(x)") && !out.contains("f64(rat"),
+            "no cast of `x` and no cast around the cast: {out}"
+        );
+    }
+}
+
+#[test]
+fn a_comparison_with_a_cast_of_a_literal_is_repaired_by_the_literal_its_value_has() {
+    // Row REPAIR-both-sides-cast. An operand that is a number cast of a literal is one
+    // number; where a literal of the other side's type writes it exactly, that literal in
+    // its place keeps the comparison's meaning and comes first, as for a text operand. Where
+    // none does, no cast is wrapped around the cast.
+    const MAIN: &str = "main(m: MainArgs) {\n  m.stdout <- \"a\";\n}\n";
+    let cases = [
+        ("f(positional x: f64) = ", "x == rat(\"1/2\")", "x == 0.5"),
+        ("f(positional x: f64) = ", "rat(\"1/2\") != x", "0.5 != x"),
+        ("f(positional x: f64) = ", "x == rat(-2)", "x == -2.0"),
+        ("f(positional x: f64) = ", "x == rat(0.5r)", "x == 0.5"),
+        ("f(positional x: f64) = ", "x == int(\"3\")", "x == 3.0"),
+        ("f(positional n: int) = ", "n == rat(\"8\")", "n == 8"),
+        ("f(positional n: int) = ", "rat(\"8\") == n", "8 == n"),
+        ("f(positional n: int) = ", "n == f64(-3)", "n == -3"),
+        ("f(positional r: rat) = ", "r == f64(\"0.5\")", "r == 0.5r"),
+        // No `int` is `1/3`: the cast of the name, `rat(n)`, cannot fail and is offered.
+        (
+            "f(positional n: int) = ",
+            "n == rat(\"1/3\")",
+            "rat(n) == rat(\"1/3\")",
+        ),
+        // No `int` is `2.5`, and `f64(n)` can lose digits: the answer alone.
+        ("f(positional n: int) = ", "n == f64(2.5f64)", "false"),
+    ];
+    for (before, expr, want) in cases {
+        let out = rejected(&format!("{before}{expr};\n{MAIN}"));
+        assert_eq!(first_tried(&out), Some(want), "{out}");
+        assert!(
+            !out.contains("rat(rat") && !out.contains("f64(rat"),
+            "{out}"
+        );
+        if want != "false" {
+            let fixed = format!("{before}{want};\n{MAIN}");
+            load(fixed.as_bytes()).unwrap_or_else(|e| panic!("{fixed}\n{e}"));
+        }
+    }
+}

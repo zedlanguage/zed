@@ -564,6 +564,60 @@ fn offering_the_cast_of_a_literal_in_comparisons_scales() {
     );
 }
 
+/// `n` functions, each comparing an `f64` by `==` or `!=` with a number cast of a text, on
+/// either side (row REPAIR-both-sides-cast): `rat("i.5")`, which the literal `i.5` writes,
+/// or `rat("1/(3i + 3)")`, which no `f64` is, so the rejection offers the answer alone.
+fn casts_compared(n: usize) -> String {
+    (0..n)
+        .map(|i| match i % 4 {
+            0 => format!("h{i}(positional x: f64) = x == rat(\"{i}.5\");\n"),
+            1 => format!("h{i}(positional x: f64) = rat(\"1/{}\") != x;\n", 3 * i + 3),
+            2 => format!("h{i}(positional x: f64) = x != rat(\"{i}.5\");\n"),
+            _ => format!("h{i}(positional x: f64) = rat(\"1/{}\") == x;\n", 3 * i + 3),
+        })
+        .collect()
+}
+
+#[test]
+fn offering_the_literal_of_a_cast_of_a_literal_in_comparisons_scales() {
+    let srcs = scaling::inputs(200, casts_compared);
+    scaling::check(
+        "n comparisons with casts of texts, each repaired by a literal or answered",
+        200,
+        |n| {
+            let out = rejected(&srcs[&n]);
+            assert_eq!(out.matches("Try `x == ").count(), n.div_ceil(4), "{out}");
+            assert_eq!(out.matches("Try `x != ").count(), (n + 1) / 4, "{out}");
+            assert_eq!(
+                out.matches("Try `true` instead").count(),
+                (n + 2) / 4,
+                "{out}"
+            );
+            assert_eq!(out.matches("Try `false` instead").count(), n / 4, "{out}");
+            let last = n - 2;
+            assert!(out.contains(&format!("Try `x != {last}.5`")), "{out}");
+        },
+    );
+}
+
+#[test]
+fn offering_the_literal_of_a_long_cast_of_a_text_in_a_comparison_scales() {
+    // One cast of a text of d digits compared by `==` with an `int`: the cast run on the
+    // text's value, its printing, its reading back, and the cast written in the headline.
+    let srcs = scaling::inputs(4000, |d| {
+        format!("f(positional n: int) = n == rat(\"{}\");\n", "7".repeat(d))
+    });
+    scaling::check(
+        "the literal of a compared cast of a text of d digits",
+        4000,
+        |d| {
+            let out = rejected(&srcs[&d]);
+            let want = format!("Try `n == {}`", "7".repeat(d));
+            assert!(out.contains(&want), "{out}");
+        },
+    );
+}
+
 #[test]
 fn offering_the_cast_of_a_long_fraction_text_in_a_comparison_scales() {
     // One text of d digits over 9 compared by `==`: its cast, its printing, the failed

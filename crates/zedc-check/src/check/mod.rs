@@ -5783,6 +5783,28 @@ fn is_literal(e: &Expr) -> bool {
     )
 }
 
+/// Whether `e` is a number cast of a literal, `rat("1/3")` or `f64(2)`: a call of the prelude
+/// word `int`, `rat` or `f64` with one positional argument, a literal ([`is_literal`]) or a
+/// string literal. Its value is one number or an atom, known where it is checked.
+fn is_cast_of_literal(e: &Expr, uses: &BTreeMap<Span, Ref>) -> bool {
+    let ExprKind::Call {
+        callee,
+        positional,
+        named,
+        curry: false,
+    } = &e.kind
+    else {
+        return false;
+    };
+    let [arg] = positional.as_slice() else {
+        return false;
+    };
+    matches!(&callee.kind, ExprKind::Name(w) if matches!(w.as_str(), "int" | "rat" | "f64"))
+        && matches!(uses.get(&callee.span), Some(Ref::Prelude(_)))
+        && named.is_empty()
+        && (is_literal(arg) || matches!(arg.kind, ExprKind::Str(_)))
+}
+
 /// A place in a tuple, as the indices that reach it written `[0][1]`.
 struct Place<'p>(&'p [usize]);
 

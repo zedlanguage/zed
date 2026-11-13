@@ -11383,7 +11383,12 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `n == 8` for `n == "8"`, which keeps the other operand's type, as [`Ck::repairs`]
     /// puts such a repair first for `<` (row REPAIR-compare-order), or, where no literal
     /// writes that value, the cast kept around the literal, `r == rat("1/3")` (row
-    /// REPAIR-eq-kept-cast); then each cast of one
+    /// REPAIR-eq-kept-cast). An operand that is a number cast of a literal, `rat("1/2")`, is
+    /// one number, so it gets the literal of that number too, `x == 0.5` (row
+    /// REPAIR-both-sides-cast), but never a second cast around it: for `x == rat("1/3")` with
+    /// `x : f64` no repair keeps the meaning, since no finite `f64` is `1/3` and NaN and the
+    /// infinities are no `rat`, and `rat(x)`, which gives `#invalid` at those, is no widening.
+    /// Then each cast of one
     /// operand that makes the two meet, except the cast whose literal is offered; then each
     /// component of a tuple operand that may equal the other operand; with none, or inside
     /// the operands, the answer it always gives.
@@ -11408,14 +11413,57 @@ impl<'t, 'a> Ck<'t, 'a> {
             _ => exprs[s]
                 .filter(|_| path.is_empty())
                 .and_then(|e| match &e.kind {
-                    // A string literal is named as the program writes it, where that is one
-                    // line with no backtick to end the code span around it, `"8"`.
-                    ExprKind::Str(_) => (tables.text)
-                        .and_then(|t| t.get(e.span.start..e.span.end))
-                        .filter(|w| !w.contains(['\n', '`']))
-                        .map(Operand::Text),
+                    // A string literal, or a number cast of a literal, is named as the program
+                    // writes it, where that is one line with no backtick to end the code span
+                    // around it, `"8"`, `rat("1/3")`.
+                    _ if matches!(e.kind, ExprKind::Str(_))
+                        || is_cast_of_literal(e, &tables.res.uses) =>
+                    {
+                        (tables.text)
+                            .and_then(|t| t.get(e.span.start..e.span.end))
+                            .filter(|w| !w.contains(['\n', '`']))
+                            .map(Operand::Text)
+                    }
                     _ => is_literal(e).then_some(Operand::Literal(e, tables.text)),
                 }),
+        });
+        // An operand that is a number cast of a literal, `rat("1/3")`, whose value is one
+        // number known here.
+        let cast_of_literal =
+            exprs.map(|e| e.is_some_and(|e| is_cast_of_literal(e, &tables.res.uses)));
+        // The number such an operand gives: its cast run on the one value the check of its
+        // literal keeps, `1/2` for `rat("1/2")`, `None` where the cast gives an atom. The
+        // operand's own type is its carrier, `rat`, and lists no value. O(d) for a literal of
+        // d digits, one run of the cast.
+        let cast_values = [0, 1].map(|s| {
+            let e = exprs[s].filter(|_| cast_of_literal[s])?;
+            let ExprKind::Call {
+                callee, positional, ..
+            } = &e.kind
+            else {
+                return None;
+            };
+            let (ExprKind::Name(c), [arg]) = (&callee.kind, positional.as_slice()) else {
+                return None;
+            };
+            let listed = |t: &Ty| -> Option<Value> {
+                let [v] = t.kernel()?.values_listed()?.try_into().ok()?;
+                Some(v)
+            };
+            // A bare integer literal, `f64(2)`, lists no value until it meets a carrier; it
+            // is the same integer at every carrier, so it is read as written. A bare decimal
+            // is not read: its value at `rat` and at `f64` differ, `0.1`.
+            let v = match self.seen.get(&arg.span) {
+                Some((Some(t), _)) => listed(t),
+                _ => None,
+            }
+            .or_else(|| {
+                let l = read_literal(arg, tables.text).ok()??;
+                let int = l.bare && matches!(l.value, Value::Int(_) | Value::Big(_));
+                int.then(|| neg_value(&l.value, l.neg()))
+            })?;
+            let x = run(zedc_base::interp::prim(c)?, &v)?;
+            (!matches!(x, Value::Atom(_))).then(|| Ty::lit(&x))
         });
         let sides = [a, b];
         let mut fixes = [Vec::new(), Vec::new()];
@@ -11424,8 +11472,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             // The literals first, each tried below where a cast is written; only where the
             // message is shown, since the trial that finds the literal is what writes it.
             for s in (0..2).filter(|_| !self.trying) {
-                let literal =
-                    exprs[s].is_some_and(|e| is_literal(e) || matches!(e.kind, ExprKind::Str(_)));
+                let literal = cast_of_literal[s]
+                    || exprs[s]
+                        .is_some_and(|e| is_literal(e) || matches!(e.kind, ExprKind::Str(_)));
                 let Some(other) = widened[1 - s].as_ref().filter(|_| literal) else {
                     continue;
                 };
@@ -11484,6 +11533,13 @@ impl<'t, 'a> Ck<'t, 'a> {
         // where no literal writes the value, one application of the cast to the literal
         // ([`Ck::wrapped`]) besides, the cost of checking `rat("1/3")` as written (test
         // `l01_29_diagnostics::scaling::offering_the_cast_of_a_literal_in_comparisons_scales`).
+        // An operand that is a cast of a literal costs one more run of its cast on the
+        // literal's value first (`cast_values`), O(d) for d digits, and no cast around it;
+        // the naive way, a trial of the composed cast `w(rat("1/2"))` per word to read the
+        // value it lists, costs a check of two calls per word, the same order with a larger
+        // constant, and offers no repair where that check refuses the outer cast (tests
+        // `l01_29_diagnostics::scaling::offering_the_literal_of_a_cast_of_a_literal_in_comparisons_scales`
+        // and `offering_the_literal_of_a_long_cast_of_a_text_in_a_comparison_scales`).
         // The text of each literal kept, by side and word.
         let mut literals: Vec<(usize, &str, String)> = Vec::new();
         if !self.trying {
@@ -11501,7 +11557,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let checks = ats[s].and_then(|at| {
                         self.operand_replaced(span, at, |ck, a| match fix {
                             Fix::Cast(_, w) => ck.wrapped(w, a, &a.ty, at),
-                            Fix::Literal(s, w) => match ck.literal_repair(w, a, &a.ty, at) {
+                            Fix::Literal(s, w) => match ck.literal_repair(
+                                w,
+                                a,
+                                cast_values[s].as_ref().unwrap_or(&a.ty),
+                                at,
+                            ) {
                                 Some(l) => {
                                     // A `rat` literal's digits as the program writes them,
                                     // `0.5_0` for `0.5_0r`, as [`Ck::repairs`] writes them
@@ -11523,7 +11584,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                                 // No literal writes the value, as for `rat("1/3")`: the cast
                                 // kept around the literal, where it gives no atom the literal
                                 // lacks, so it cannot fail on it, as [`Ck::repairs`] offers
-                                // `r < rat("1/3")` (row REPAIR-eq-kept-cast).
+                                // `r < rat("1/3")` (row REPAIR-eq-kept-cast). An operand that
+                                // is already a cast of a literal gets no second cast around
+                                // it: where no literal writes its value, as for
+                                // `x == rat("1/3")` with `x : f64`, no repair keeps the
+                                // comparison's meaning (row REPAIR-both-sides-cast).
+                                None if cast_of_literal[s] => None,
                                 None => {
                                     let r = (ck.wrapped(w, a, &a.ty, at))
                                         .filter(|r| r.atoms() == a.ty.atoms())?;
