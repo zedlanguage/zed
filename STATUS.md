@@ -2186,8 +2186,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PRES-overlap-coeffs | impl attempt 1 | 2026-11-13 14:10 | started; worktree from origin/main 64dfe1c61 |
 | REPAIR-both-sides-cast | impl attempt 1 | 2026-11-13 16:03 | started; worktree from origin/main 25763d5ea |
 | REPAIR-past-binding | impl attempt 1 | 2026-11-13 14:51 | started; worktree from origin/main 8776f59cf |
+| SPEC-ffi-release-apply | running |  |  |
 | ST-churn-at-once | impl attempt 1 | 2026-11-13 16:18 | started; worktree from origin/main a42ee21d8 |
-| ST-class-case-reverse | running |  |  |
+| ST-class-case-reverse | impl attempt 1 | 2026-11-13 16:24 | started; load 44.00 |
 | TESTS-l01_26a-split | impl attempt 1 | 2026-11-13 15:45 | start; load 32.35 44.38 45.74 |
 | TESTS-unignore-all | impl attempt 1 | 2026-11-13 15:27 | started; worktree from origin/main a9818cd33 |
 
