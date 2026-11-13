@@ -743,7 +743,15 @@ costs!(nest_empty_answers, nest_empty, "x0", 'a', LINEAR, 1, 2);
 // k = 5 on before (QUESTIONS.md A87). The sizes start at 20, past the sizes where the method
 // answers: from k = 10 to 20 the work grows 255 times, as the method's answer at once gives
 // way to the solver's refusal (2026-11-13, rate 256).
-costs!(subset_sum_decide, subset_sum, "y0", 'd', [20, 40, 80, 160], 3, 1);
+costs!(
+    subset_sum_decide,
+    subset_sum,
+    "y0",
+    'd',
+    [20, 40, 80, 160],
+    3,
+    1
+);
 costs!(
     subset_sum_satisfiable,
     subset_sum,
