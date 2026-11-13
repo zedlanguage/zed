@@ -2177,6 +2177,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PORT-lines-int-name | impl attempt 1 | 2026-11-13 14:29 | started; worktree from df105e781 |
 | POW-nonneg-power | impl attempt 1 | 2026-11-13 12:32 | started; worktree /home/luke/Work/wt/pow-nonneg-power at ca7c70736 |
 | PRES-overlap-coeffs | impl attempt 1 | 2026-11-13 14:10 | started; worktree from origin/main 64dfe1c61 |
+| REPAIR-eq-kept-cast | running |  |  |
 | SPEC-release-dag | impl attempt 1 | 2026-11-13 14:18 | started; load 32.34 33.77 36.42 |
 | ST-walk-orders-left | impl attempt 1 | 2026-11-13 13:56 | started |
 
