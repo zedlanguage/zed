@@ -429,8 +429,8 @@ fn law_21_the_build_clause_needs_alg_strict_only_with_a_failure_member() {
     assert_ne!(b, a);
     // Without a failure member the build clause holds for that same non-strict `alg`, a
     // failure `alg` itself makes (`12 div 0`) included: the build gives no atom, and `alg`
-    // sees the same children on both sides. The strictness of `alg` is a condition only when
-    // the result type of `b` has a failure member, which sec:recursive-unions excludes.
+    // sees the same children on both sides. The strictness of `alg` matters only when the
+    // result type of `b` has a failure member, which the build clause (sec:type_language) excludes.
     let n = holds(seed_tables(false), |s| {
         (
             fold_of_build(s, lazy_alg),
