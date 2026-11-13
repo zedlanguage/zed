@@ -19,10 +19,11 @@
 use std::collections::BTreeSet;
 use std::ops::Range;
 
+use super::case;
 use super::clause::{self, Toks, depth, kind};
 use super::engine::{Expected, Node, Parser};
 use super::grammar::{Grammar, Kind};
-use super::{DOTS, Error, Recovery, case, dots_in_list, holes_of, parse_holes, shown};
+use super::tree::{DOTS, Error, Recovery, Tree, dots_in_list, holes_of, parse_holes, shown};
 use crate::lex::{Span, Token};
 
 /// The tree of the unit `tokens`, lexed from `text`, parsed as the rule `unit` (`Item* END`)
@@ -44,7 +45,7 @@ pub(super) fn recovering(
     item: usize,
     ring: u32,
     end: Span,
-) -> (super::Tree, Vec<Error>) {
+) -> (Tree, Vec<Error>) {
     let toks: Vec<(Kind, &str)> = tokens
         .iter()
         .map(|t| (kind(&t.tok), &text[t.span.start..t.span.end]))
@@ -56,7 +57,7 @@ pub(super) fn recovering(
         .filter(|&(e, _)| e + 1 >= toks.len())
         && let Ok(holes) = parse_holes(g, text, holes_of(tokens), ring)
     {
-        let tree = super::Tree {
+        let tree = Tree {
             nodes: p.nodes,
             root,
             holes,
@@ -115,7 +116,7 @@ pub(super) fn recovering(
         kids: kids.into_iter().map(|(k, _)| k).collect(),
         branches: Vec::new(),
     });
-    let tree = super::Tree {
+    let tree = Tree {
         nodes: p.nodes,
         root,
         holes,

@@ -13,12 +13,6 @@ path = "src/lib.rs"
 # that binary alone.
 # BEGIN step targets: written by `cargo run -p zed-tools --bin step_targets`; do not edit by hand.
 [[test]]
-name = "diag_control"
-path = "steps/diag_control/mod.rs"
-[[test]]
-name = "l00_poly_nf"
-path = "steps/l00_poly_nf/mod.rs"
-[[test]]
 name = "l01_01_source_loading"
 path = "steps/l01_01_source_loading/mod.rs"
 [[test]]
@@ -184,8 +178,14 @@ path = "steps/l02_08_import_pinning/mod.rs"
 name = "l02_08d_build_constant"
 path = "steps/l02_08d_build_constant/mod.rs"
 [[test]]
+name = "l02_12_diagnostics"
+path = "steps/l02_12_diagnostics/mod.rs"
+[[test]]
 name = "l03_01_parser"
 path = "steps/l03_01_parser/mod.rs"
+[[test]]
+name = "l03_09_egraph"
+path = "steps/l03_09_egraph/mod.rs"
 [[test]]
 name = "l06_01_parser"
 path = "steps/l06_01_parser/mod.rs"

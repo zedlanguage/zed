@@ -22,7 +22,8 @@ use unicode_normalization::char::is_combining_mark;
 use unicode_script::{Script, UnicodeScript};
 use unicode_security::skeleton;
 
-use super::token::is_blank;
+use super::punct;
+use super::token::{Error, ErrorKind, is_blank};
 
 /// Whether `c` may start a name: the grammar's `[A-Za-z]`.
 pub fn is_name_start(c: char) -> bool {
@@ -201,4 +202,21 @@ fn words(text: &str) -> HashSet<&str> {
     text.split(|c: char| !is_name_continue(c))
         .filter(|w| !w.is_empty())
         .collect()
+}
+
+impl Error {
+    /// Offers no name `taken` gives (a prelude name, which the lexer does not know) for a word
+    /// beyond ASCII lexed from `text`: the offer is made again with those names refused too.
+    /// The name offered is no keyword either. An atom or annotation (`#café`, `@tést`) is
+    /// offered its ASCII spelling whatever the names and keywords, since `#if` and `@test` are
+    /// an atom and an annotation; only another word of `text` is refused, so that the repair
+    /// does not turn it into an atom the program already uses.
+    pub fn avoid_names(&mut self, text: &str, taken: &dyn Fn(&str) -> bool) {
+        if let ErrorKind::NonAsciiName { word, repair } = &mut self.kind {
+            let body = word.trim_start_matches(['#', '@']);
+            let sign = &word[..word.len() - body.len()];
+            let refused = |n: &str| sign.is_empty() && (punct::keyword(n).is_some() || taken(n));
+            *repair = ascii_name(text, body, &refused).map(|n| format!("{sign}{n}"));
+        }
+    }
 }

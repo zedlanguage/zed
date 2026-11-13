@@ -85,10 +85,10 @@ pub enum Carrier {
 /// COMPLEXITY.md POLY-nf-power-value, open as QUESTIONS A98).
 ///
 /// Four is one above the most the corpus's obligations need: the measurement
-/// (`l00_poly_nf::measure`, COMPLEXITY.md POLY-nf-sums) found at most two, in `(a + b) * (a +
+/// (`l03_09_egraph::measure`, COMPLEXITY.md POLY-nf-sums) found at most two, in `(a + b) * (a +
 /// b)`, over the spec's laws and the associativity and commutativity obligations of the
 /// studies' reducers, and the plan's row needs `(a + b) * (c + d) * (e + f)`, three. Tested by
-/// `l00_poly_nf::refusal`. A complete solution would decide identity of arithmetic formulas
+/// `l03_09_egraph::refusal`. A complete solution would decide identity of arithmetic formulas
 /// deterministically in polynomial time, which no known algorithm does.
 pub const REFUSED_SUMS: u64 = 4;
 
@@ -750,7 +750,7 @@ impl<'t> Identity<'t> {
     /// refusal, as the factor's expansion would cost what the refusal guards against. The
     /// constants that do not cancel are multiplied out by a product tree, no larger than the
     /// coefficients the expansion would form. Tested by `poly::tests::products_of_powers` and
-    /// `l00_poly_nf::factored` (COMPLEXITY.md POLY-nf-power-value).
+    /// `l03_09_egraph::factored` (COMPLEXITY.md POLY-nf-power-value).
     fn factored(&self, shapes: &[Shape]) -> bool {
         let is_factor = |i: usize| {
             matches!(
@@ -951,7 +951,7 @@ impl<'t> Identity<'t> {
     /// is not zero at `at`'s coordinate, so one of any `degree + 1` distinct values, or that
     /// coordinate itself, keeps it nonzero: at most `degree + 2` passes for a binder, and
     /// usually one or two, a binder needing more only where the difference has that many
-    /// small integer roots in it. Tested by `l00_poly_nf::witness` (COMPLEXITY.md K107).
+    /// small integer roots in it. Tested by `l03_09_egraph::witness` (COMPLEXITY.md K107).
     fn witness(&self, mut at: Vec<u64>, degree: Option<u64>, vals: &mut Vec<u64>) -> Point {
         let tries = degree.map_or(u64::MAX, |d| d.saturating_add(1)).min(P - 1);
         let mut found = Vec::with_capacity(self.binders);
@@ -1084,7 +1084,7 @@ impl<'t> Identity<'t> {
     /// tried, at most `d + 1` values a binder; without the reduction, `x ^ (2^61 - 1) - x`
     /// tried all `2^61 - 1` values. Reached only when both points agreed and the normal forms
     /// differ, a chance of at most `degree / P` for each point. Tested by
-    /// `l00_poly_nf::witness` and `poly::tests::a_difference_zero_modulo_p_has_no_witness`
+    /// `l03_09_egraph::witness` and `poly::tests::a_difference_zero_modulo_p_has_no_witness`
     /// (COMPLEXITY.md POLY-nf-wide-root).
     fn expanded_witness<K: Key>(&self, diff: &Poly<K>, ctx: &Packing) -> Option<Point> {
         // The numerators modulo P, after dividing out their content, so not all zero.
@@ -1568,7 +1568,7 @@ impl<K: Key> Poly<K> {
     /// pairs fall on few indices spread over a long span, as `((x + y)^k + x)^2`, pays neither
     /// `t1 t2` nor its span with the support product ([`Poly::support_mul`]), `O(n log n)` in
     /// its output; it is tried first when its estimated cost is below both. Tested by
-    /// `l00_poly_nf::scaling` (COMPLEXITY.md K107, Crossovers, POLY-nf-sparse-product).
+    /// `l03_09_egraph::scaling` (COMPLEXITY.md K107, Crossovers, POLY-nf-sparse-product).
     fn mul(&self, o: &Poly<K>) -> Poly<K> {
         let den = &self.den * &o.den;
         if self.terms.is_empty() || o.terms.is_empty() {

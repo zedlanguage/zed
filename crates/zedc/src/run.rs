@@ -26,7 +26,7 @@ use crate::build::Build;
 use crate::elab::Unit;
 use crate::front::{Diagnostic, Quoted, Unloaded, compile};
 use crate::lex::Span;
-use crate::source::io_reason;
+use crate::source::{io_reason, unreadable};
 use crate::suppress::{InFile, Severity, Suppress};
 use crate::work::{self, Stage};
 use crate::{canon, interp, source, stage};
@@ -1135,7 +1135,7 @@ fn command_inner(
 }
 
 /// The program in `file`, built for the machine zedc runs on with the options `on` turned on
-/// ([`Build::at`]) and staged ([`Program::stage`]), its warnings that `suppress` does not name
+/// ([`crate::unit::package_build`]) and staged ([`Program::stage`]), its warnings that `suppress` does not name
 /// written to `stderr` as `zedc run` writes them, then a line for each address `suppress` names
 /// that no warning has; or the exit status and message: 2 when the file cannot be read or
 /// resolved to the place its addresses name ([`crate::place::Place`]) or an option of `on` is
@@ -1157,7 +1157,7 @@ pub fn load_file(
     // An option the manifest does not list, or a manifest that cannot be read, is a usage
     // error, reported before the package is read; a manifest that does not parse is reported
     // with the package, before the build it declares is needed.
-    let build = match Build::at(&place, on) {
+    let build = match crate::unit::package_build(&place, on) {
         Err((2, why)) => return Err((2, why)),
         build => build,
     };
@@ -1214,14 +1214,6 @@ pub fn load_file(
 /// The words of a command line after the program: the file `--record` names.
 struct Options<'a> {
     record_to: Option<&'a str>,
-}
-
-/// Why zedc could not read the file at `path`, which the command line names, with the repair.
-pub(crate) fn unreadable(path: &str, e: &std::io::Error) -> String {
-    format!(
-        "{path}: zedc could not read this file: {}. Check the path and that you may read the file.",
-        io_reason(e)
-    )
 }
 
 /// The field of `main`'s argument the port `port` is: `stdin` for `m.stdin`.

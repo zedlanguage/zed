@@ -344,13 +344,13 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
             Ok(bytes) => work::stage(Stage::Load, None, || source::load(&bytes))
                 .map_err(|e| e.render(&bytes)),
             Err(e) => {
-                let _ = writeln!(stderr, "{}", crate::run::unreadable(file, &e));
+                let _ = writeln!(stderr, "{}", crate::source::unreadable(file, &e));
                 return 2;
             }
         };
         let place = crate::place::Place::of(std::path::Path::new(file))
             .map_err(|why| (2, why))
-            .and_then(|place| Ok((InFile::at(&place), Build::at(&place, &on)?)));
+            .and_then(|place| Ok((InFile::at(&place), crate::unit::package_build(&place, &on)?)));
         let (at, build) = match place {
             Ok(taken) => taken,
             Err((status, why)) => {

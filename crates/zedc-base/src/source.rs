@@ -122,6 +122,14 @@ pub fn io_reason(e: &std::io::Error) -> String {
     }
 }
 
+/// Why zedc could not read the file at `path`, which the command line names, with the repair.
+pub fn unreadable(path: &str, e: &std::io::Error) -> String {
+    format!(
+        "{path}: zedc could not read this file: {}. Check the path and that you may read the file.",
+        io_reason(e)
+    )
+}
+
 /// `s` as code points, `U+0065 U+0301`.
 fn scalars(s: &str) -> String {
     s.chars()

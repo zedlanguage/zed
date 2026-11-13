@@ -75,48 +75,6 @@ impl Build {
         })
     }
 
-    /// The build for the machine zedc runs on of the package whose manifest lies above the
-    /// place `place`, with the options of `on` turned on; or why the manifest cannot be read
-    /// or an option of `on` is not one it lists, with the status of the command: 1 for a manifest
-    /// that does not parse, 2 for one that cannot be read and for an option it does not list.
-    pub fn at(place: &crate::place::Place, on: &[&str]) -> Result<Build, (u8, String)> {
-        let host = Build::default();
-        let declared = match place {
-            crate::place::Place::Loose(_) => Vec::new(),
-            crate::place::Place::Unit { root, .. } => {
-                let path = root.join(crate::place::MANIFEST);
-                match std::fs::read(&path) {
-                    Ok(bytes) => {
-                        let text = crate::source::load(&bytes).map_err(|e| {
-                            (1, format!("{}: {}", path.display(), e.render(&bytes)))
-                        })?;
-                        crate::unit::manifest(&text)
-                            .map_err(|es| {
-                                (
-                                    1,
-                                    es.iter()
-                                        .map(|e| {
-                                            let (l, c) = crate::source::line_col(
-                                                text.as_bytes(),
-                                                e.span.start,
-                                            );
-                                            format!("{}:{l}:{c}: {}", path.display(), e.message)
-                                        })
-                                        .collect::<Vec<_>>()
-                                        .join("\n"),
-                                )
-                            })?
-                            .options
-                    }
-                    Err(e) => {
-                        return Err((2, crate::run::unreadable(&path.display().to_string(), &e)));
-                    }
-                }
-            }
-        };
-        Build::new(&host.target, &declared, on).map_err(|why| (2, why))
-    }
-
     /// The target the build is for.
     pub fn target(&self) -> &str {
         &self.target

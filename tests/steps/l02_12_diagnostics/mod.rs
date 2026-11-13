@@ -5,6 +5,9 @@
 //! or a dependency's, cannot clear the reader's screen (DESIGN.md sec:diagnostics, "Characters a
 //! terminal does not show"). A printed string type is a Zed literal that reads back as the same
 //! type. The diagnostic itself keeps the text as it is: only its printing escapes.
+//!
+//! The tests sit in the folder of step L2.12, the diagnostics rows of L2; L2.14-diag joins
+//! DIAG-control with them.
 
 use std::path::{Path, PathBuf};
 
@@ -236,7 +239,7 @@ fn a_printed_string_type_reads_back_as_itself() {
 /// A package `name` of the files `files`, under the tests' directory for temporary files.
 fn package_dir(name: &str, files: &[(&str, &str)]) -> PathBuf {
     let d = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
-        .join("diag_control")
+        .join("l02_12_diagnostics")
         .join(name);
     for (file, text) in files {
         let path = d.join(file);
