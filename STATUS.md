@@ -2189,7 +2189,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | SPEC-ffi-release-apply | running |  |  |
 | ST-churn-at-once | impl attempt 1 | 2026-11-13 16:18 | started; worktree from origin/main a42ee21d8 |
 | ST-class-case-reverse | impl attempt 1 | 2026-11-13 16:24 | started; load 44.00 |
-| TESTS-unignore-all | impl attempt 1 | 2026-11-13 15:27 | started; worktree from origin/main a9818cd33 |
+| TESTS-unignore-all | merged and pushed (706fad4e8, f026086cb, 014d831dd, 6817c6740, bbcb71afd) | 2026-11-13 | 125 of 141 ignores removed; 79 tests fail on main, listed in wt/known-failing.md with their rows; 16 left (families.rs 10, live agents' files 6) |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
