@@ -1117,7 +1117,7 @@ fn a_case_a_class_empties_is_dropped() {
 /// the case it empties, as in the other orders. On main (cf505f0b6) it keeps `y` in `0..=20`
 /// too, with no warning: sound, but not the answer of the other orders.
 #[test]
-#[ignore = "ST-class-case-reverse: a class given after a disjunction does not drop the case it empties, y keeps 0..=20 with no warning; open"]
+#[ignore = "ST-class-case-reverse: a class given after a disjunction does not drop the case it empties, y keeps 0..=20 as well as -20..=-5, with no warning; open"]
 fn a_case_a_class_empties_is_dropped_when_the_class_comes_last() {
     class_case_is_exact(How::Backward);
 }
