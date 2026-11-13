@@ -81,7 +81,8 @@ fn periodic_lists_agree_with_their_lengths() {
             Verdict::Refused(why) => assert!(empty, "{t} is inhabited, and refused: {why:?}"),
         }
         // `is_empty` decides what the verdict decides: a type the verdict refuses at a fork
-        // (5 of the 600, all empty, mixing periods) counts as inhabited for it too.
+        // (3 of the 600, all empty, unions whose meets take out different cycles) counts as
+        // inhabited for it too.
         assert_eq!(t.is_empty(), v == Verdict::Empty, "{t}");
         *seen.entry(format!("{v:?}")).or_insert(0) += 1;
     }
@@ -379,4 +380,119 @@ fn copies_of_a_group_built_apart_get_the_same_answers() {
             }
         }
     }
+}
+
+/// The list of `n` integers, each 0.
+fn zeros(n: usize) -> Value {
+    (0..n).fold(Value::atom("nil"), |rest, _| {
+        Value::atom_with("cons", vec![Value::Int(0), rest])
+    })
+}
+
+#[test]
+fn a_union_of_cycles_less_one_is_decided() {
+    // Every length 4 modulo 6 or 12 is 1 modulo 3, and every length 9 or 3 modulo 12 is 3
+    // modulo 6: each class of the union lies inside the class taken out, so nothing is left.
+    // Refused at a fork before REFUSAL-periodic-split.
+    for (union, out) in [
+        (&period(6, 4) | &period(12, 4), period(3, 1)),
+        (&period(12, 9) | &period(12, 3), period(6, 3)),
+    ] {
+        let t = &union - &out;
+        Type::forget_emptiness();
+        assert_eq!(t.verdict(), Verdict::Empty, "{t}");
+        assert!(t.is_empty(), "{t}");
+        assert!(union.subtype(&out), "{union} <: {out}");
+        let pair = |l: Type| Type::tuple(vec![l, Type::int()]);
+        assert_eq!(
+            (&pair(union.clone()) - &pair(out.clone())).verdict(),
+            Verdict::Empty
+        );
+        // The union met with the class taken out is the union, shown by a list of its first
+        // class; met with a class it misses it is empty.
+        let met = &union & &out;
+        Type::forget_emptiness();
+        assert_eq!(met.verdict(), Verdict::Inhabited, "{met}");
+        assert_eq!(pair(met).verdict(), Verdict::Inhabited);
+    }
+    let missed = &(&period(6, 4) | &period(12, 4)) & &period(3, 0);
+    Type::forget_emptiness();
+    assert_eq!(missed.verdict(), Verdict::Empty, "{missed}");
+    // 5 modulo 12 is 2 modulo 3, outside 1 modulo 3: the lists of that class are left, and a
+    // list of them is shown. A wrong rule that took the union for its first class, or that
+    // took a class for inside the one taken out when only its period divides, says empty.
+    let union = &period(6, 4) | &period(12, 5);
+    let t = &union - &period(3, 1);
+    Type::forget_emptiness();
+    assert_eq!(t.verdict(), Verdict::Inhabited, "{t}");
+    assert!(!t.is_empty());
+    assert!(!union.subtype(&period(3, 1)));
+    for n in [5, 17, 29] {
+        assert!(t.contains(&zeros(n)), "{n} links");
+    }
+    for n in [4, 10, 16, 3, 6] {
+        assert!(!t.contains(&zeros(n)), "{n} links");
+    }
+    // In a pair, the list is the shown value's first component, built from its length by the
+    // rule on residues and checked against the pair type.
+    let pair = Type::tuple(vec![t.clone(), Type::int()]);
+    assert_eq!(pair.verdict(), Verdict::Inhabited);
+    // The class 2 modulo 3 of the union lies inside none taken out, and has lengths outside
+    // them all, 2 modulo 12 among them: shown with the classes of the other side unread.
+    let t = &(&period(3, 2) | &period(6, 4)) - &(&period(4, 0) | &period(3, 1));
+    Type::forget_emptiness();
+    assert_eq!(t.verdict(), Verdict::Inhabited, "{t}");
+    assert!(t.contains(&zeros(2)) && !t.contains(&zeros(4)) && !t.contains(&zeros(8)));
+}
+
+#[test]
+fn a_union_of_cycles_covered_only_jointly_is_not_decided_by_the_rule() {
+    // The lengths 0 modulo 2 lie inside no class taken out, but 0 and 2 modulo 4 cover them
+    // together: whether classes cover one jointly is the covering problem for residues, so the
+    // rule leaves it to the search, which refuses it at a fork, as before. The type is empty.
+    let t = &(&period(2, 0) | &period(6, 4)) - &(&(&period(4, 0) | &period(4, 2)) | &period(3, 1));
+    Type::forget_emptiness();
+    assert_eq!(t.verdict(), Verdict::Refused(Refusal::Fork), "{t}");
+    assert!(!t.is_empty());
+}
+
+/// The lists whose length is `r` modulo `2q` for `q` in `k..2k` and `r < q / 2`, less those
+/// whose length is `s` modulo `q` for `s < q / 2`: each class of the union lies inside one
+/// taken out, so the type is empty. With the definitions each class costs.
+fn halves(k: usize) -> (Type, usize) {
+    let (mut union, mut out, mut defs) = (Type::empty(), Type::empty(), 0);
+    for q in k..2 * k {
+        for r in 0..q / 2 {
+            union = &union | &period(2 * q, r);
+            out = &out | &period(q, r);
+            defs += 3 * q;
+        }
+    }
+    (&union - &out, defs)
+}
+
+#[test]
+fn a_union_of_cycles_less_one_scales() {
+    // Each class of the union is tested by one lookup in the residues covered modulo its
+    // period, built once per period over its divisors: O(n log n) in the definitions. The naive
+    // form, each class of the union decided against every class taken out by the rule on
+    // residues, is the classes squared, n^(4/3) here: run once and not committed, it took
+    // 11.5 times the work where this rule took 8.2 (REFUSAL-periodic-split).
+    let ((small, n), (large, m)) = (halves(16), halves(32));
+    assert_eq!((n, m), (13476, 111240));
+    let run = |t: &Type| {
+        Type::forget_emptiness();
+        assert_eq!(t.verdict(), Verdict::Empty);
+    };
+    scaling::compare(
+        "a union of cycles less a union holding each",
+        &format!(
+            "the input has 8.5 times the definitions; for work of order n log n in them the \
+             rule of low complexity allows at most {:.1} times (DESIGN.md Part G)",
+            scaling::limit(n, m, 1)
+        ),
+        scaling::limit(n, m, 1),
+        || run(&small),
+        || run(&large),
+    );
 }

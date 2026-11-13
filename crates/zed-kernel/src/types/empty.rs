@@ -1417,15 +1417,182 @@ fn prime_powers(mut n: u64) -> Vec<(u64, u64)> {
 }
 
 /// A list type made of pure cycles of one item, as the rule on pure cycles reads it: its
-/// lengths are those equal to `at` modulo `period` for each of `all` and for none of `none`,
-/// and 0 when `bare`.
+/// lengths are those equal to `at` modulo `period` for each of `all`, for one of `any` when
+/// `any` is not empty, and for none of `none`, and 0 when `bare`.
 struct Meet {
     stop: std::sync::Arc<str>,
     link: std::sync::Arc<str>,
     item: Type,
     bare: bool,
     all: Vec<(u64, u64)>,
+    any: Vec<(u64, u64)>,
     none: Vec<(u64, u64)>,
+}
+
+impl Meet {
+    /// Whether the rest length `n` is in the classes: one more is a length of the list.
+    fn fits(&self, n: &BigUint) -> bool {
+        let at = |&(p, at): &(u64, u64)| n % p == BigUint::from(at);
+        self.all.iter().all(at)
+            && (self.any.is_empty() || self.any.iter().any(at))
+            && !self.none.iter().any(at)
+    }
+
+    /// What the rule on pure cycles says of the lengths, with the classes a length is sought in
+    /// when it answers `Some`; `None` when it does not decide them.
+    fn lengths(&self) -> Option<(Lengths, Vec<(u64, u64)>)> {
+        match (
+            self.any.is_empty(),
+            self.all.is_empty(),
+            self.none.is_empty(),
+        ) {
+            (true, _, _) => Some((residues_meet(&self.all, &self.none), self.all.clone())),
+            (false, true, _) => union_classes(&self.any, &self.none),
+            (false, false, true) => Some(meet_union(&self.all, &self.any)),
+            (false, false, false) => None,
+        }
+    }
+}
+
+/// The lengths in every class of `all` and in one of `any`, with the classes a length is
+/// sought in when some are: `all` and the first class of `any` that meets them. Classes meet
+/// exactly when they agree modulo each prime power two of their periods share (the Chinese
+/// remainder theorem), so the residue of `all` modulo the highest power of each prime of its
+/// periods is kept once, and a class of `any` is tested against it on its own primes.
+///
+/// Complexity tradeoff: the naive form tests each class of `any` with every class of `all`,
+/// O(|any| × |all|). Used: one pass over `all` and one lookup for each prime of each class of
+/// `any`, O(n log n) in the classes and their periods, with a trial division of each distinct
+/// period, O(sqrt p) for a period of `p` definitions. Nothing is given up. Tests:
+/// `l01_23_subtyping::witnesses::a_union_of_cycles_less_one_is_decided` (the pairs, whose
+/// lists are met with the class taken out) and `a_union_of_cycles_less_one_scales`.
+fn meet_union(all: &[(u64, u64)], any: &[(u64, u64)]) -> (Lengths, Vec<(u64, u64)>) {
+    // The highest power of each prime among the periods of `all`, and the residue there.
+    let mut best: HashMap<u64, (u64, u64)> = HashMap::new();
+    for &(period, at) in all {
+        for (r, q) in prime_powers(period) {
+            let (q0, at0) = *best.entry(r).or_insert((q, at % q));
+            let m = q.min(q0);
+            if at % m != at0 % m {
+                return (Lengths::None, Vec::new());
+            }
+            if q > q0 {
+                best.insert(r, (q, at % q));
+            }
+        }
+    }
+    let mut factors: HashMap<u64, Vec<(u64, u64)>> = HashMap::new();
+    for &(p, at) in any {
+        let meets = factors
+            .entry(p)
+            .or_insert_with(|| prime_powers(p))
+            .iter()
+            .all(|&(r, q)| {
+                best.get(&r).is_none_or(|&(q0, at0)| {
+                    let m = q.min(q0);
+                    at % m == at0 % m
+                })
+            });
+        if meets {
+            let mut classes = all.to_vec();
+            classes.push((p, at));
+            return (Lengths::Some, classes);
+        }
+    }
+    (Lengths::None, Vec::new())
+}
+
+/// The divisors of `n`, from its prime powers, in increasing order.
+fn divisors(n: u64) -> Vec<u64> {
+    let mut out = vec![1];
+    for (r, q) in prime_powers(n) {
+        let below = out.len();
+        let mut power = r;
+        loop {
+            for i in 0..below {
+                out.push(out[i] * power);
+            }
+            if power == q {
+                break;
+            }
+            power *= r;
+        }
+    }
+    out.sort_unstable();
+    out
+}
+
+/// The lengths equal to `at` modulo `period` for one class of `any` and for none of `none`,
+/// with the class a length is sought in when some are left. They are none when each class of
+/// `any` lies inside one class of `none`; when a class of `any` lies inside none of them,
+/// `residue_classes` decides the first such class alone: when it keeps a length, so does the
+/// union. `None` when that class has none left or is refused, since whether the negated
+/// classes cover the class of `any` jointly is the covering problem for residues (NP-hard).
+///
+/// A class `(p, r)` lies inside `(q, s)` exactly when `q` divides `p` and `r` is `s` modulo
+/// `q`, so `(p, r)` lies inside a class of `none` exactly when the residue `r` modulo `p` is
+/// in `covered(p)`: the residues modulo `p` some class of `none` with a period dividing `p`
+/// holds. `covered` is built over the divisors of `p` in increasing order: `covered(d)` holds
+/// the residues of the classes of `none` of period `d`, and those of `covered(d / r)` for each
+/// prime `r` of `d` read modulo `d`, since every proper divisor of `d` divides some `d / r`.
+/// Each `covered(d)` is built once, kept by `d` and shared by every period it divides.
+///
+/// Complexity tradeoff: `n` is the periods of the cycles of `any` and `none` together, the
+/// definitions they cost (`period(p, k)` is `p` definitions), plus the classes. The naive form
+/// decides each class of `any` against all of `none` with `residues_meet`, O(|any| × |none|)
+/// tests (the split into open tuple types, 62x bytes at 8n, did the same); and testing each
+/// class of `any` against each class of `none` whose period divides `p` costs the divisors of
+/// `p` per class, which is not O(log n) (720720 has 240). Used: each `covered(d)` costs `d`
+/// for each prime of `d`, and the divisors `d` of `p` sum to O(p log log p), so a period `p`
+/// costs O(p log p) time and O(p log log p) memory, a class of `any` one lookup and a class of
+/// `none` one mark: O(n log n) time and memory in all, the trial division of each period
+/// O(sqrt p) besides; on the family of the scaling test it took 8.2 times the work at 8.5
+/// times `n`, where the naive form took 11.5. What is given up: a class of `any` that only
+/// several classes of `none` cover together is not decided here (the naive form decides it
+/// when one prime split does, at the cost above; the caller keeps its other rules). Tests:
+/// `l01_23_subtyping::witnesses::a_union_of_cycles_less_one_is_decided` and
+/// `a_union_of_cycles_less_one_scales`; COMPLEXITY.md K34.
+fn union_classes(any: &[(u64, u64)], none: &[(u64, u64)]) -> Option<(Lengths, Vec<(u64, u64)>)> {
+    let mut negated: HashMap<u64, Vec<u64>> = HashMap::new();
+    for &(q, s) in none {
+        negated.entry(q).or_default().push(s % q);
+    }
+    // The residues covered modulo each divisor built so far; empty when none is.
+    let mut covered: HashMap<u64, Vec<bool>> = HashMap::new();
+    for &(p, r) in any {
+        if !covered.contains_key(&p) {
+            let primes: Vec<u64> = prime_powers(p).into_iter().map(|(r, _)| r).collect();
+            for d in divisors(p) {
+                if covered.contains_key(&d) {
+                    continue;
+                }
+                let mut held = vec![false; d as usize];
+                let mut some = false;
+                for &s in negated.get(&d).into_iter().flatten() {
+                    held[s as usize] = true;
+                    some = true;
+                }
+                for &prime in primes.iter().filter(|&&prime| d % prime == 0) {
+                    let below = &covered[&(d / prime)];
+                    if !below.is_empty() {
+                        for (x, h) in held.iter_mut().enumerate() {
+                            *h |= below[x % below.len()];
+                        }
+                        some = true;
+                    }
+                }
+                covered.insert(d, if some { held } else { Vec::new() });
+            }
+        }
+        let held = &covered[&p];
+        if held.is_empty() || !held[r as usize] {
+            return match residue_classes(&[(p, r)], none) {
+                (Lengths::Some, classes) => Some((Lengths::Some, classes)),
+                _ => None,
+            };
+        }
+    }
+    Some((Lengths::None, Vec::new()))
 }
 
 /// What the rule on pure cycles says of a set of lengths.
@@ -4240,10 +4407,11 @@ impl<'m> Searching<'m> {
                 // differ in a recursive component on one box, instead of following both. Why:
                 // following both is the subset construction, exponential in the recursive types
                 // (hard by the reduction at the fork in `narrow_tuples`); `is_empty` stops here
-                // too and counts the type as inhabited. A union of open tuple types less one
-                // other, as `(P(6,4) | P(12,4))` less `P(3,1)` of lengths modulo periods, is
-                // decided exactly by the split into the open tuple types below, but run before
-                // this refusal the split is order `n` pieces by a part of `n` nodes on
+                // too and counts the type as inhabited. A union of pure cycles less one other,
+                // as `(P(6,4) | P(12,4))` less `P(3,1)` of lengths modulo periods, never reaches
+                // this refusal: `cycle_meet` reads it and `union_classes` decides it in
+                // `O(n log n)`. A split into the open tuple types below, run before this
+                // refusal, is order `n` pieces by a part of `n` nodes on
                 // `refusals::a_difference_of_forked_unions_is_refused_in_its_size` (62 times the
                 // bytes at 8 times `n`; REFUSAL-nfa-refuse, not kept). Trigger: a
                 // component on which the open tuple types fork, outside seeding. Tests:
@@ -4882,7 +5050,7 @@ impl<'m> Searching<'m> {
     }
 
     /// The meet of pure cycles that `t` is, when `t` is a stop atom or not, and a link atom
-    /// whose rest is the meet of pure cycles less at most one, all of one item.
+    /// whose rest is the meet of pure cycles, or their union, less some, all of one item.
     async fn cycle_meet(&'m self, t: &Type) -> Option<Meet> {
         let p = t.p();
         if p.structs || p.tuples.rest || !p.tuples.lens.is_empty() || !only_atoms(&p) {
@@ -4924,17 +5092,17 @@ impl<'m> Searching<'m> {
             .expect("taken or refused is non-empty")[0]
             .clone();
         let mut stop: Option<std::sync::Arc<str>> = bare;
+        let mut read = |s: &mut Search, a: &Row| -> Option<(u64, u64)> {
+            let c = s.cycle(&a[1])?;
+            let fits = a[0] == item && c.item == item && c.link == name;
+            let same = stop.get_or_insert_with(|| c.stop.clone()) == &c.stop;
+            // A length one more than a length of the rest.
+            (fits && same).then_some((c.period, (c.at + 1) % c.period))
+        };
         let mut all = Vec::with_capacity(taken.len());
         let mut none = Vec::with_capacity(refused.len());
         {
             let mut s = self.s();
-            let mut read = |s: &mut Search, a: &Row| -> Option<(u64, u64)> {
-                let c = s.cycle(&a[1])?;
-                let fits = a[0] == item && c.item == item && c.link == name;
-                let same = stop.get_or_insert_with(|| c.stop.clone()) == &c.stop;
-                // A length one more than a length of the rest.
-                (fits && same).then_some((c.period, (c.at + 1) % c.period))
-            };
             for a in &taken {
                 all.push(read(&mut s, a)?);
             }
@@ -4943,12 +5111,38 @@ impl<'m> Searching<'m> {
             }
         }
         let atoms = f.distinct_atoms();
-        if taken.len() + refused.len() != atoms.len() || atoms.is_empty() {
+        if atoms.is_empty() {
             return None;
         }
-        let taken_set: BTreeSet<&Row> = taken.iter().collect();
-        if !f.eval(&|a| taken_set.contains(a)) {
-            return None;
+        let mut any = Vec::new();
+        if taken.len() + refused.len() == atoms.len() {
+            let taken_set: BTreeSet<&Row> = taken.iter().collect();
+            if !f.eval(&|a| taken_set.contains(a)) {
+                return None;
+            }
+        } else {
+            // A meet of pure cycles with a union of them, less some: with the rows taken on
+            // every path taken and those refused on every path refused, the rest is the union
+            // of its rows, and the part is exactly their meet with that union, as it holds no
+            // value outside them. One walk of `f`.
+            let taken_set: BTreeSet<&Row> = taken.iter().collect();
+            let refused_set: BTreeSet<&Row> = refused.iter().collect();
+            let rows = f
+                .restrict(
+                    &|a| match (taken_set.contains(a), refused_set.contains(a)) {
+                        (true, _) => Some(true),
+                        (_, true) => Some(false),
+                        _ => None,
+                    },
+                )
+                .union_rows()?;
+            if rows.is_empty() {
+                return None;
+            }
+            let mut s = self.s();
+            for a in &rows {
+                any.push(read(&mut s, a)?);
+            }
         }
         if self.empty(&item).await {
             return None;
@@ -4959,25 +5153,35 @@ impl<'m> Searching<'m> {
             item,
             bare: p.atoms.names.values().any(|a| a.bare),
             all,
+            any,
             none,
         })
     }
 
     /// The answer for `t`, when `t` is a stop atom or not, and a link atom whose rest is the
-    /// meet of pure cycles less at most one, all of one item: the lengths are then residues,
-    /// and whether one survives is decided without walking their product.
+    /// meet of pure cycles, or their union, less some, all of one item: the lengths are then
+    /// residues, and whether one survives is decided without walking their product.
     async fn pure_cycles(&'m self, t: &Type) -> Option<Lengths> {
         let m = self.cycle_meet(t).await?;
-        Some(match m.bare {
-            true => Lengths::Some,
-            false => residues_meet(&m.all, &m.none),
-        })
+        match m.bare {
+            true => Some(Lengths::Some),
+            false => Some(m.lengths()?.0),
+        }
     }
 
     /// A list of `m`, of the length `residue_length` gives, kept as that length: the work is
     /// that of the rule on residues, polynomial in the cycles, whatever the length.
     async fn cycle_rep(&'m self, m: &Meet) -> Option<usize> {
-        let len = residue_length(&m.all, &m.none)?;
+        let len = match m.any.is_empty() {
+            true => residue_length(&m.all, &m.none)?,
+            false => {
+                let (lengths, classes) = m.lengths()?;
+                if lengths != Lengths::Some {
+                    return None;
+                }
+                residue_length(&classes, &m.none)?
+            }
+        };
         let item = self.rep(&m.item).await?;
         Some(self.s().show(Rep::List {
             stop: m.stop.clone(),
@@ -7180,8 +7384,7 @@ impl<'m> Searching<'m> {
                     m.link == *link && m.stop == *stop
                 };
                 if same {
-                    let fits = m.all.iter().all(|&(p, at)| &left % p == BigUint::from(at))
-                        && m.none.iter().all(|&(p, at)| &left % p != BigUint::from(at));
+                    let fits = m.fits(&left);
                     if !fits {
                         return Some(false);
                     }
@@ -7721,9 +7924,13 @@ impl<'m> Searching<'m> {
         {
             return Some(self.s().show(Rep::Value(Value::atom(name))));
         }
-        // A list of pure cycles with no stop in it: a list of it, kept as its length.
+        // A list of pure cycles with no stop in it: a list of it, kept as its length. A union of
+        // cycles the rule on residues does not decide is left to the rules below.
         if let Some(m) = self.cycle_meet(t).await {
-            return self.cycle_rep(&m).await;
+            let r = self.cycle_rep(&m).await;
+            if r.is_some() || m.any.is_empty() || m.lengths().is_some() {
+                return r;
+            }
         }
         // A root list in the front sweep's class: its checked value, or none when it is empty.
         if let Some(r) = self.swept(t) {
