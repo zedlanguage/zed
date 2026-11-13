@@ -2142,8 +2142,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | M5 merged 16429d383 (C55); 862 pieces pass; dump: 0 answers changed but one refusal now true; next old tree, holders_chain, rounds 4+ |
 | PERF-l139-family | running | 2026-11-12 18:45 | coordkk fixed d016b9cc3 90a844aa8; 14 tests in 8 families still ignored, cross-review next / 45.57 |
-| PERF-ref-memo-quadratic | impl attempt 4 | 2026-11-10 18:04 | resumed after 403 outage; round 2 Sol+Opus relaunched; CD r1 best 10,271.5 (0 coarser, no scaling gain) |
-| PRES-overlap-fast | impl attempt 1 | 2026-11-13 01:10 | started; worktree wt/pres-overlap-fast at 95b3d8a1f; load 37.88 41.70 48.12 |
+| PERF-ref-memo-quadratic | impl attempt 4 | 2026-11-10 18:04 | round 2 closed: Sol 447.091 best, Opus 756.221; round 3 seats launched, CD r3 2341097750046703617 in test |
+| PRES-overlap-fast | impl attempt 1 | 2026-11-13 01:10 | own attempt built: row_sums (exact join of row-sum tables run in alternation with the solver); overlap_rows decide k=16 0.45M, k=32 24.1M (54.1x per doubling of |
+| SPEC-no-verbatim | impl attempt 1 | 2026-11-13 05:23 | started; worktree from origin/main 812acc32e |
 | ST-walk-implicit | impl attempt 1 | 2026-11-11 01:43 | started: worktree /home/luke/Work/wt/st-walk-implicit on origin/main 89d83b4a3 / load 36.87 40.84 46.29 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
