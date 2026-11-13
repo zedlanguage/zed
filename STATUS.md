@@ -2035,7 +2035,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | MSG-is-repair-v | running | 2026-11-12 17:32 |  |
 | MSG-lines-headline | running | 2026-11-12 17:32 |  |
 | MSG-width-headline | running | 2026-11-12 17:32 |  |
-| NARROW-or-order | impl attempt 1 | 2026-11-12 15:40 | started; worktree /home/luke/Work/wt/narrow-or-order on cdd557f13 |
 | PERF-l139-family | impl attempt 1 | 2026-11-12 18:45 | started; worktree /home/luke/Work/wt/perf-l139-family on 163c04744 |
 | POLY-nf-power-value | impl attempt 1 | 2026-11-12 14:17 | started; worktree wt/poly-nf-power-value from origin/main f2d8e0094 |
 | POW-rat-literal-ops | impl attempt 1 | 2026-11-12 16:20 | tests pass (l01_26 all pieces, l01_26a 182, l01_29 366, l01_17 133, l01_39a 50 pieces, zedc-check 11); range facts with squares of text values; spec e9ef76d on  |

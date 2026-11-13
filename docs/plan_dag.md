@@ -2102,7 +2102,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 6 | NAN-cast-atoms, TESTS-L1.23-refusal-text | `crates/zed-kernel/src/types/empty.rs` |
 | 7 | L1.39g, RT-internal-fault | `crates/zed-rt/src/`, `crates/zed-native/src/` |
 | 7 | L1.39g, REFUSAL-front-quadratic | `crates/zed-kernel/src/types/empty.rs` |
-| 8 | FLOAT-interval, NARROW-or-order | `crates/zedc-check/src/check/product.rs` |
 | 9 | L1.26b, T11-ty | `crates/zedc-check/src/check/mod.rs` |
 | 10 | L2.5, T11-check | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs` |
 | 10 | L2.5, STAGE-print | `crates/zed-kernel/src/types.rs`, `crates/zed-kernel/src/types/bdd.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/rec.rs` |
