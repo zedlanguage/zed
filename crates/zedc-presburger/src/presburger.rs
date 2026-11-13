@@ -91,6 +91,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use imbl::{OrdMap, OrdSet};
+use rustc_hash::FxHashMap;
 
 use zed_kernel::refine::Refine;
 use zed_kernel::value::fresh_id;
@@ -5472,13 +5473,20 @@ fn by_cells(p: &Parts, solving: bool) -> Option<Result<bool, Refusal>> {
 // disjunction is placed make no choice, so an atom they rule out could still have decided the
 // parts; such parts go on to the methods after [`by_cells`] in [`has_point`].
 fn splitting(p: &Parts, atoms: OrdSet<Atom>) -> Vec<Atom> {
+    // Complexity tradeoff: rebuilding an R-child key at each of H parents costs O(H R),
+    // even when the visited set reads the shared part once. Intern each part's shape once:
+    // O(E) expected work and storage for E DAG edges, then one integer lookup per holder.
+    // FxHash: these maps are keyed by addresses and their lists, and SipHash on them cost
+    // 1.2 % of all instructions on holders_chain.
+    let mut keys: FxHashMap<*const Parts, usize> = FxHashMap::default();
+    let mut shapes: FxHashMap<Vec<*const Parts>, usize> = FxHashMap::default();
     let mut sets = 0usize;
     let mut allowed: HashMap<&Atom, usize> = HashMap::new();
     let mut seen: HashSet<*const Parts> = HashSet::new();
     let mut stack: Vec<&Parts> = vec![p];
     while let Some(u) = stack.pop() {
         for o in &u.ors {
-            let mut twins: HashMap<Vec<*const Parts>, Vec<&Parts>> = HashMap::new();
+            let mut twins: FxHashMap<usize, Vec<&Parts>> = FxHashMap::default();
             for d in o {
                 if seen.insert(Rc::as_ptr(d)) {
                     stack.push(d);
@@ -5486,10 +5494,14 @@ fn splitting(p: &Parts, atoms: OrdSet<Atom>) -> Vec<Atom> {
                 if d.cons.is_empty() {
                     continue;
                 }
-                // The parts of each disjunction, each disjunction closed by a null.
-                let key = (d.ors.iter())
-                    .flat_map(|e| e.iter().map(Rc::as_ptr).chain([std::ptr::null()]))
-                    .collect();
+                let key = *keys.entry(Rc::as_ptr(d)).or_insert_with(|| {
+                    // The parts of each disjunction, each disjunction closed by a null.
+                    let shape = (d.ors.iter())
+                        .flat_map(|e| e.iter().map(Rc::as_ptr).chain([std::ptr::null()]))
+                        .collect();
+                    let next = shapes.len();
+                    *shapes.entry(shape).or_insert(next)
+                });
                 twins.entry(key).or_default().push(d);
             }
             for set in twins.values().filter(|s| s.len() > 1) {
@@ -5866,6 +5878,10 @@ impl CellView {
                 hi,
             }));
         }
+        // Complexity tradeoff: counting runs through windows avoids materializing O(D R)
+        // runs for D pieces, but sort_by_key recomputes its O(log R) count in comparisons:
+        // O(D log D log R) metadata work. Caching the keys would remove one log factor;
+        // its allocation cost has not been measured in this change.
         pieces.sort_by_key(|p| (std::cmp::Reverse(p.count()), Rc::as_ptr(&p.set), p.lo));
         pieces
     }
@@ -5882,6 +5898,12 @@ struct CellWalk<'a> {
     owns: HashMap<*const Parts, Rc<Vec<Con>>>,
     /// Each list of pieces joined, with the pieces, so their sets outlive the key.
     joins: HashMap<Vec<PieceKey>, (Vec<CellPiece>, CellPiece)>,
+    /// The operands keep every set used in a pointer key alive for this walk.
+    meets: FxHashMap<(ViewKey, ViewKey), (CellView, CellView, CellView)>,
+    /// Whether some nested part has a one-atom row on an atom (not `x`) that no other part
+    /// reads: a disjunction over such payloads is a free choice, and [`Self::spread`] then
+    /// goes on past a disjunction it cannot place instead of giving up.
+    unary_payload: bool,
 }
 
 impl CellWalk<'_> {
@@ -5924,7 +5946,7 @@ impl CellWalk<'_> {
     // holders each join one or more shared sets of R runs with a few cells of their own (D·R).
     // Views of one set join to that set in the join of their windows. The pieces but the one
     // of fewest runs are joined once for each distinct list of them and kept by the list, and
-    // the last piece is kept as the extra, uncopied: O(D log D + D log R) for holders whose
+    // the last piece is kept as the extra, uncopied: O(D log D log R) for holders whose
     // pieces but one are shared, plus the runs of each distinct list joined.
     fn join(&mut self, views: Vec<CellView>) -> CellView {
         let mut views = views;
@@ -5959,6 +5981,46 @@ impl CellWalk<'_> {
                 extra,
             };
         }
+        // Complexity tradeoff: joining windows of the same bases separately costs O(H R)
+        // for H different windows and R base runs. When one common window represents all
+        // pieces, union distributes over that window. Join the full bases once, then clamp
+        // the shared result: O(R log R) once and O(D log D log R) per D pieces.
+        if pieces[0].count() > 1 {
+            let lo = pieces.iter().map(|p| p.lo).min().expect("nonempty pieces");
+            let hi = pieces.iter().map(|p| p.hi).max().expect("nonempty pieces");
+            let common = pieces.iter().all(|p| {
+                let w = CellPiece {
+                    set: p.set.clone(),
+                    lo,
+                    hi,
+                };
+                let (a, b) = w.window();
+                a < b && p.set[a].0.max(lo) >= p.lo && p.set[b - 1].1.min(hi) <= p.hi
+            });
+            if common {
+                let mut full: Vec<CellPiece> = pieces
+                    .iter()
+                    .map(|p| CellPiece {
+                        set: p.set.clone(),
+                        lo: p.set.first().map_or(1, |r| r.0),
+                        hi: p.set.last().map_or(0, |r| r.1),
+                    })
+                    .collect();
+                full.sort_by_key(|p| Rc::as_ptr(&p.set));
+                let key = full
+                    .iter()
+                    .map(|p| (Rc::as_ptr(&p.set), p.lo, p.hi))
+                    .collect();
+                let joined = self.joins.entry(key).or_insert_with(|| {
+                    let runs = cells_join(full.iter().flat_map(CellPiece::runs).collect());
+                    (full, CellPiece::of(runs))
+                });
+                return CellView {
+                    main: joined.1.clamp(lo, hi),
+                    extra,
+                };
+            }
+        }
         let key: Vec<PieceKey> = (pieces.iter())
             .map(|p| (Rc::as_ptr(&p.set), p.lo, p.hi))
             .collect();
@@ -5970,6 +6032,27 @@ impl CellWalk<'_> {
             main: joined.1.clone(),
             extra,
         }
+    }
+
+    /// The cells common to both views, retaining the result of a general meet.
+    // Complexity tradeoff: merging two multi-run views at every holder costs O(H R)
+    // for H holders and R runs. A pair of complete view keys is merged once: O(R log R)
+    // on its first use and expected O(log R) for the key and lookup thereafter.
+    // This does not bound the total for distinct pairs. One-run meets still clamp.
+    fn meet(&mut self, a: &CellView, b: &CellView) -> CellView {
+        if let Some((lo, hi)) = a.single() {
+            return b.clamp(lo, hi);
+        }
+        if let Some((lo, hi)) = b.single() {
+            return a.clamp(lo, hi);
+        }
+        let (ka, kb) = (a.key(), b.key());
+        let key = if ka <= kb { (ka, kb) } else { (kb, ka) };
+        self.meets
+            .entry(key)
+            .or_insert_with(|| (a.clone(), b.clone(), a.meet(b)))
+            .2
+            .clone()
     }
 
     /// `(may, holds)` of the disjunct `d`.
@@ -5984,9 +6067,9 @@ impl CellWalk<'_> {
         let mut holds = if other { CellView::of(Vec::new()) } else { own };
         for o in &d.ors {
             let (m, h) = self.of_or(o);
-            may = may.meet(&m);
+            may = self.meet(&may, &m);
             if !holds.is_empty() {
-                holds = holds.meet(&h);
+                holds = self.meet(&holds, &h);
             }
         }
         self.memo
@@ -6025,7 +6108,7 @@ impl CellWalk<'_> {
         at: &mut HashMap<*const Parts, Vec<CellView>>,
     ) -> bool {
         let mut frees: HashMap<ViewKey, (CellView, CellView)> = HashMap::new();
-        let mut meets: HashMap<(*const Parts, *const CellSet), CellView> = HashMap::new();
+        let mut complete = true;
         for o in ors {
             let holds = self.of_or(o).1;
             let free = (frees.entry(holds.key()))
@@ -6041,12 +6124,7 @@ impl CellWalk<'_> {
             let mut live: Vec<(CellView, &Rc<Parts>)> = Vec::new();
             for d in o {
                 let may = self.of(d).0;
-                let c = match may.single() {
-                    Some((a, b)) => free.clamp(a, b),
-                    None => (meets.entry((Rc::as_ptr(d), Rc::as_ptr(&free.main.set))))
-                        .or_insert_with(|| CellView::of(cells_meet(&may.runs(), &free.runs())))
-                        .clone(),
-                };
+                let c = self.meet(&may, &free);
                 if !c.is_empty() {
                     live.push((c, d));
                 }
@@ -6056,14 +6134,25 @@ impl CellWalk<'_> {
                     live.iter().flat_map(|(c, _)| c.runs()).collect();
                 all.sort_unstable();
                 if all.windows(2).any(|w| w[1].0 <= w[0].1) {
-                    return false;
+                    // These alternatives leave a choice. Keep only the other disjunctions'
+                    // necessary rows: they can still prove every cell empty.
+                    // Complexity tradeoff (Codex, round 4, sh_choice): before, one such
+                    // disjunction sent the whole formula on to the later methods, O(n²) on
+                    // sh_choice (R 50.7 at 8n). The rows placed are each necessary, so a cell
+                    // they leave empty is empty in the formula: a false answer stands, a true
+                    // one is not given (see `spread` in `cells_of`). Cost: the same walk.
+                    if !self.unary_payload {
+                        return false;
+                    }
+                    complete = false;
+                    continue;
                 }
             }
             for (c, d) in live {
                 at.entry(Rc::as_ptr(d)).or_default().push(c);
             }
         }
-        true
+        complete
     }
 
     /// The constraints of `d` other than those of `x` alone, memoized by part: by
@@ -6158,6 +6247,8 @@ fn cells_of<'p>(p: &'p Parts, x: &Atom, solving: bool) -> Option<Result<bool, Re
         memo: HashMap::new(),
         owns: HashMap::new(),
         joins: HashMap::new(),
+        meets: FxHashMap::default(),
+        unary_payload: false,
     };
     let Some(whole) = walk.span(&p.cons) else {
         return Some(Ok(false));
@@ -6167,13 +6258,22 @@ fn cells_of<'p>(p: &'p Parts, x: &Atom, solving: bool) -> Option<Result<bool, Re
     // where each comes after every part holding it (the reverse of the order they finish in).
     let mut ends: Vec<Int> = Vec::new();
     let mut uses: HashMap<&Atom, u32> = HashMap::new();
-    let mut count = |cons: &'p [Con]| {
+    let mut unary_atoms: Vec<&Atom> = Vec::new();
+    let mut count = |cons: &'p [Con], nested: bool| {
+        if nested {
+            unary_atoms.extend(
+                cons.iter()
+                    .filter(|c| c.lin.terms.len() == 1)
+                    .flat_map(|c| c.lin.terms.keys())
+                    .filter(|a| *a != x),
+            );
+        }
         let read: BTreeSet<&Atom> = cons.iter().flat_map(|c| c.lin.terms.keys()).collect();
         for a in read {
             *uses.entry(a).or_default() += 1;
         }
     };
-    count(&p.cons);
+    count(&p.cons, false);
     let mut seen: HashSet<*const Parts> = HashSet::new();
     let mut order: Vec<&Rc<Parts>> = Vec::new();
     type Kids<'a> = std::iter::Flatten<std::slice::Iter<'a, Vec<Rc<Parts>>>>;
@@ -6188,7 +6288,7 @@ fn cells_of<'p>(p: &'p Parts, x: &Atom, solving: bool) -> Option<Result<bool, Re
                     ends.extend(lo);
                     ends.extend(hi.map(|h| &h + &Int::ONE));
                 }
-                count(&d.cons);
+                count(&d.cons, true);
                 stack.push((d, d.ors.iter().flatten()));
             }
             let Some((d, kids)) = stack.last_mut() else {
@@ -6204,6 +6304,9 @@ fn cells_of<'p>(p: &'p Parts, x: &Atom, solving: bool) -> Option<Result<bool, Re
         }
     }
     order.reverse();
+    walk.unary_payload = unary_atoms
+        .into_iter()
+        .any(|a| uses.get(a).copied() == Some(1));
     ends.sort_unstable();
     ends.dedup();
     // The cells: from no bound or an end to just below the next end, met with `whole`.
@@ -6276,6 +6379,7 @@ fn cells_of<'p>(p: &'p Parts, x: &Atom, solving: bool) -> Option<Result<bool, Re
         walk.cells = keep.collect();
         walk.memo.clear();
         walk.joins.clear();
+        walk.meets.clear();
     }
     let k = walk.cells.len();
     let live: CellSet = vec![(0, k - 1)];
@@ -6289,10 +6393,10 @@ fn cells_of<'p>(p: &'p Parts, x: &Atom, solving: bool) -> Option<Result<bool, Re
     let mut at: HashMap<*const Parts, Vec<CellView>> = HashMap::new();
     let shared = |a: &Atom| uses.get(a).is_some_and(|&n| n > 1);
     let mut spread = walk.spread(&p.ors, &live, &mut at);
+    if !spread && !walk.unary_payload {
+        return None;
+    }
     for d in &order {
-        if !spread {
-            break;
-        }
         let Some(views) = at.remove(&Rc::as_ptr(d)) else {
             continue;
         };
@@ -6304,10 +6408,10 @@ fn cells_of<'p>(p: &'p Parts, x: &Atom, solving: bool) -> Option<Result<bool, Re
         if !cons.is_empty() {
             placed.push((cons, c.clone()));
         }
-        spread = walk.spread(&d.ors, &c, &mut at);
-    }
-    if !spread {
-        return None;
+        spread &= walk.spread(&d.ors, &c, &mut at);
+        if !spread && !walk.unary_payload {
+            return None;
+        }
     }
     let bound = |k: Int, c: Int| Con {
         lin: Lin {
@@ -6361,7 +6465,13 @@ fn cells_of<'p>(p: &'p Parts, x: &Atom, solving: bool) -> Option<Result<bool, Re
                 });
             }
         }
-        return Some(Ok(cells_point(0, k - 1, items, &live_cells)));
+        let point = cells_point(0, k - 1, items, &live_cells);
+        // With placement incomplete the rows placed are only necessary: no point is proof,
+        // a point is not.
+        return (!point || spread).then_some(Ok(point));
+    }
+    if !spread {
+        return None;
     }
     if !solving {
         return cells_by_sets(&placed, x, &walk.cells).map(Ok);
@@ -9684,7 +9794,7 @@ impl Parts {
             f: Formula,
             id: Option<Id>,
             mut at: Assumed,
-            twice: &std::collections::HashSet<Id>,
+            twice: &mut std::collections::HashSet<Id>,
         ) -> Frame {
             let mut p = Parts::default();
             let mut todo = Vec::new();
@@ -9706,6 +9816,23 @@ impl Parts {
                             id,
                             at,
                         };
+                    }
+                    // A part that a conjunction of `twice` holds is made at each place of
+                    // that conjunction, since the conjunction is spread into the part that
+                    // holds it; so it is one of `twice` too, and a disjunction a shared
+                    // conjunction holds is made once (HAS-point-probe: a shared
+                    // `0 <= i && (i == 0 || i == 2 || ..)` at each of n disjuncts was n copies
+                    // of its n disjuncts). Round 3 marked these in a separate walk of the
+                    // formula before lowering; here (Codex, round 4) each is marked as its
+                    // conjunction is spread, before the child is opened. A child not of
+                    // `twice` has this conjunction as its one parent, so it is opened only
+                    // after this mark, and the marks are those of the separate walk without it.
+                    if matches!(g, Formula::And(_)) {
+                        for h in g.kids() {
+                            if !matches!(h, Formula::Con(_)) {
+                                twice.insert(Id::any(h));
+                            }
+                        }
                     }
                     at.yes.insert(k);
                 }
@@ -9732,36 +9859,11 @@ impl Parts {
         // once and assumed by key, so the parts made follow the formula's own sharing, never the
         // handles that hold its parts outside it.
         let mut twice = Id::reached_twice(&f);
-        // A part that a conjunction of `twice` holds is made at each place of that conjunction,
-        // since the conjunction is spread into the part that holds it; so it is one of `twice`
-        // too, and a disjunction a shared conjunction holds is made once (HAS-point-probe: a
-        // shared `0 <= i && (i == 0 || i == 2 || ..)` at each of n disjuncts was n copies of
-        // its n disjuncts). One walk, each part entered once, and none when no part is shared:
-        // a part not of `twice` has one parent, so its mark is final when its parent is entered.
-        if !twice.is_empty() {
-            let mut entered: HashSet<Id> = HashSet::new();
-            let mut walk = vec![&f];
-            while let Some(g) = walk.pop() {
-                let spread = matches!(g, Formula::And(_)) && twice.contains(&Id::any(g));
-                for h in g.kids() {
-                    if matches!(h, Formula::Con(_)) {
-                        continue;
-                    }
-                    let id = Id::any(h);
-                    if spread {
-                        twice.insert(id);
-                    }
-                    if entered.insert(id) {
-                        walk.push(h);
-                    }
-                }
-            }
-        }
         // The disjunctions and the disjuncts already made that are held in more than one place,
         // each made with nothing assumed, so that it serves at every place.
         let mut ors: HashMap<Id, Vec<Rc<Parts>>> = HashMap::new();
         let mut arms: HashMap<Id, Rc<Parts>> = HashMap::new();
-        let mut stack = vec![open(f, None, Assumed::default(), &twice)];
+        let mut stack = vec![open(f, None, Assumed::default(), &mut twice)];
         let mut made: Option<Rc<Parts>> = None;
         while let Some(top) = stack.last_mut() {
             if let (Some(q), Some((_, _, done, _))) = (made.take(), &mut top.arms) {
@@ -9779,11 +9881,11 @@ impl Parts {
                                     done.push(Rc::clone(q))
                                 }
                             }
-                            None => stack.push(open(g, Some(id), Assumed::default(), &twice)),
+                            None => stack.push(open(g, Some(id), Assumed::default(), &mut twice)),
                         },
                         None => {
                             let at = at.clone();
-                            stack.push(open(g, None, at, &twice))
+                            stack.push(open(g, None, at, &mut twice))
                         }
                     }
                     continue;
@@ -24284,6 +24386,327 @@ mod cells_scaling {
             let from = Con::ge(&var("q0"), &Lin::constant(low));
             let p = chain_parts(n, vec![from], |j| vec![step_in(j, &evens), above.clone()]);
             assert_eq!(has_point(p), Ok(answer), "q_0 >= {low}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod r4_cells_tests {
+    use super::*;
+    use crate::scaling;
+
+    fn var(s: &str) -> Lin {
+        Lin::atom(Atom::Sym(s.into()))
+    }
+
+    fn part(cons: Vec<Con>, ors: Vec<Vec<Rc<Parts>>>) -> Rc<Parts> {
+        let mut p = Parts::default();
+        p.cons.extend(cons);
+        p.ors.extend(ors);
+        Rc::new(p)
+    }
+
+    fn holders(n: usize, end: i128) -> Parts {
+        let x = var("i");
+        let q = |j: usize| var(&format!("q{j:06}"));
+        let c = Lin::constant;
+        let pts = (0..n)
+            .map(|j| part(vec![Con::eq(&x, &c(2 * j as i128))], Vec::new()))
+            .collect();
+        let h = part(Vec::new(), vec![pts]);
+        let mut p = Parts::default();
+        p.cons.extend([
+            Con::ge(&x, &c(0)),
+            Con::ge(&c(2 * n as i128), &x),
+            Con::eq(&q(0), &x.times(2)),
+            Con::eq(&q(n), &c(end)),
+        ]);
+        for j in 1..=n {
+            p.ors.push(vec![
+                part(vec![Con::eq(&q(j), &q(j - 1))], vec![vec![h.clone()]]),
+                part(
+                    vec![
+                        Con::ge(&x, &c(2 * n as i128)),
+                        Con::eq(&q(j).plus(&q(j - 1)), &c(2)),
+                    ],
+                    Vec::new(),
+                ),
+            ]);
+        }
+        p
+    }
+
+    #[test]
+    fn a_shared_guard_chain_without_a_point_scales_linearly() {
+        scaling::check_order("shared guard chain, no point", 125, 1, |n| {
+            assert_eq!(has_point(holders(n, 1)), Ok(false));
+        });
+    }
+
+    #[test]
+    fn a_shared_guard_chain_with_a_point_scales_linearly() {
+        scaling::check_order("shared guard chain, point", 125, 1, |n| {
+            assert_eq!(has_point(holders(n, 0)), Ok(true));
+        });
+    }
+
+    fn window_parts(n: usize, choice: bool) -> Parts {
+        window_rows(n, choice, &[(1, 2), (2, 1)])
+    }
+
+    /// `rows` lists the values of `w` forced below and above 2: two crossed pairs leave no
+    /// value of `w`, one pair leaves a point.
+    fn window_rows(n: usize, choice: bool, rows: &[(i128, i128)]) -> Parts {
+        let x = var("i");
+        let c = Lin::constant;
+        let mut p = Parts::default();
+        p.cons
+            .extend([Con::ge(&x, &c(0)), Con::ge(&c(8 * n as i128), &x)]);
+        for &(l, r) in rows {
+            p.ors.push(vec![
+                part(
+                    vec![Con::ge(&c(1), &x), Con::eq(&var("w"), &c(l))],
+                    Vec::new(),
+                ),
+                part(
+                    vec![Con::ge(&x, &c(2)), Con::eq(&var("w"), &c(r))],
+                    Vec::new(),
+                ),
+            ]);
+        }
+        let base = |off| {
+            part(
+                vec![Con::ge(&x, &c(0))],
+                vec![
+                    (0..n)
+                        .map(|j| part(vec![Con::eq(&x, &c(4 * j as i128 + off))], Vec::new()))
+                        .collect(),
+                ],
+            )
+        };
+        let (a, b) = (base(0), base(2));
+        for j in 0..n {
+            let cut = if choice { 4 * n } else { 4 * n - j };
+            p.ors.push(vec![
+                part(vec![Con::ge(&c(cut as i128), &x)], vec![vec![a.clone()]]),
+                part(vec![Con::ge(&c(cut as i128), &x)], vec![vec![b.clone()]]),
+                part(
+                    vec![
+                        Con::ge(&x, &c(4 * n as i128)),
+                        Con::eq(&var(&format!("private{j}")), &c(j as i128)),
+                    ],
+                    Vec::new(),
+                ),
+            ]);
+        }
+        if choice {
+            p.ors.push(vec![
+                part(
+                    vec![Con::ge(&x, &c(0)), Con::eq(&var("y"), &c(1))],
+                    Vec::new(),
+                ),
+                part(
+                    vec![Con::ge(&x, &c(0)), Con::eq(&var("y"), &c(2))],
+                    Vec::new(),
+                ),
+            ]);
+        }
+        p
+    }
+
+    #[test]
+    fn two_shared_bases_with_different_windows_join_before_the_window() {
+        scaling::check_order("two bases under different windows", 250, 1, |n| {
+            assert_eq!(has_point(window_parts(n, false)), Ok(false));
+        });
+    }
+
+    #[test]
+    fn an_independent_choice_does_not_hide_inconsistent_forced_rows() {
+        scaling::check_order("forced rows beside a choice", 20, 1, |n| {
+            assert_eq!(has_point(window_parts(n, true)), Ok(false));
+        });
+    }
+
+    #[test]
+    fn a_point_beside_a_choice_is_left_to_the_later_methods() {
+        // Placement stops at the choice, so the rows placed are only necessary: a point among
+        // them is no proof, and the cells give no answer.
+        let p = window_rows(20, true, &[(1, 2)]);
+        assert!(cells_of(&p, &Atom::Sym("i".into()), false).is_none());
+        assert_eq!(has_point(p), Ok(true));
+    }
+
+    fn bipartite(s: usize) -> Parts {
+        let x = var("i");
+        let pts: Vec<_> = (0..2 * s)
+            .map(|a| part(vec![Con::eq(&x, &Lin::constant(a as i128))], Vec::new()))
+            .collect();
+        let sides: Vec<_> = (0..2)
+            .map(|off| {
+                part(
+                    Vec::new(),
+                    vec![(0..s).map(|a| pts[2 * a + off].clone()).collect()],
+                )
+            })
+            .collect();
+        let mut p = Parts::default();
+        // Distinct vertex wrappers share their side's neighbor list, as the cells do after
+        // joining the point lists in the direct kss fixture.
+        let vertices: Vec<_> = (0..2 * s)
+            .map(|a| part(Vec::new(), vec![vec![sides[1 - a % 2].clone()]]))
+            .collect();
+        p.ors.push(
+            (0..s)
+                .flat_map(|a| {
+                    let vertices = &vertices;
+                    (0..s).map(move |b| {
+                        part(
+                            Vec::new(),
+                            vec![
+                                vec![vertices[2 * a].clone()],
+                                vec![vertices[2 * b + 1].clone()],
+                            ],
+                        )
+                    })
+                })
+                .collect(),
+        );
+        p
+    }
+
+    #[test]
+    fn repeated_neighbor_set_meets_scale_in_the_number_of_edges() {
+        scaling::check_order("bipartite graph, edge count", 4096, 1, |edges| {
+            let side = (edges as f64).sqrt() as usize;
+            assert_eq!(has_point(bipartite(side)), Ok(false));
+        });
+    }
+
+    fn window_formula(n: usize, same: bool) -> Formula {
+        let k = (n as f64).sqrt() as usize;
+        let x = var("i");
+        let c = |j: usize| Lin::constant(j as i128);
+        let and = |v| Formula::And(Shared::new(v));
+        let or = |v| Formula::Or(Shared::new(v));
+        let eq = |a: &Lin, b: &Lin| Formula::Con(Con::eq(a, b));
+        let le = |a: &Lin, b: &Lin| Formula::Con(Con::ge(b, a));
+        let top = k * k + 4;
+        let bases: Vec<_> = (0..k)
+            .map(|b| {
+                and(vec![
+                    le(&c(0), &x),
+                    or((0..k).map(|j| eq(&x, &c(k * j + b))).collect()),
+                ])
+            })
+            .collect();
+        let mut fs = vec![le(&c(0), &x), le(&x, &c(top + 2))];
+        for (l, r) in [(1, 2), (2, 1)] {
+            fs.push(or(vec![
+                and(vec![le(&x, &c(1)), eq(&var("w"), &c(l))]),
+                and(vec![le(&c(2), &x), eq(&var("w"), &c(r))]),
+            ]));
+        }
+        for j in 0..k {
+            let mut ds: Vec<_> = bases
+                .iter()
+                .map(|b| and(vec![le(&c(if same { 0 } else { j }), &x), b.clone()]))
+                .collect();
+            ds.push(and(vec![
+                le(&c(top), &x),
+                eq(&var(&format!("p{j}")), &c(j)),
+            ]));
+            fs.push(or(ds));
+        }
+        and(fs)
+    }
+
+    #[test]
+    fn shared_conjunctions_preserve_their_disjunctions_under_different_windows() {
+        let fs = scaling::inputs(1000, |n| window_formula(n, false));
+        scaling::check_order("shared formula, different windows", 1000, 1, |n| {
+            assert_eq!(decide(&fs[&n]), Ok(false));
+        });
+    }
+
+    #[test]
+    fn shared_conjunctions_preserve_their_disjunctions_under_equal_windows() {
+        let fs = scaling::inputs(1000, |n| window_formula(n, true));
+        scaling::check_order("shared formula, equal windows", 1000, 1, |n| {
+            assert_eq!(decide(&fs[&n]), Ok(false));
+        });
+    }
+
+    #[test]
+    fn a_shared_guard_chain_with_an_odd_input_scales_linearly() {
+        scaling::check_order("a shared guard with an odd input", 125, 1, |n| {
+            let mut p = holders(n, 0);
+            p.cons.pop();
+            p.cons.push(Con::eq(
+                &var("i"),
+                &var("t").times(2).plus(&Lin::constant(1)),
+            ));
+            assert_eq!(has_point(p), Ok(false));
+        });
+    }
+
+    #[test]
+    fn view_operations_match_finite_sets() {
+        // Deliberately reuse one walk: the keys must distinguish both windows and both sets.
+        let atom = Atom::Sym("i".into());
+        let mut walk = CellWalk {
+            x: &atom,
+            cells: Vec::new(),
+            memo: HashMap::new(),
+            owns: HashMap::new(),
+            joins: HashMap::new(),
+            meets: FxHashMap::default(),
+            unary_payload: false,
+        };
+        let expand = |v: &CellView| -> BTreeSet<usize> {
+            v.runs().into_iter().flat_map(|(a, b)| a..=b).collect()
+        };
+        for seed in 0..64usize {
+            let a = CellView::of(
+                (0..32)
+                    .filter(|j| (j * 13 + seed) % 7 < 3)
+                    .map(|j| (j * 2, j * 2))
+                    .collect(),
+            );
+            let b = CellView::of(
+                (0..32)
+                    .filter(|j| (j * 11 + seed) % 5 < 2)
+                    .map(|j| (j * 2 + 1, j * 2 + 1))
+                    .collect(),
+            );
+            for lo in [0, 3, 19] {
+                for hi in [21, 47, 63] {
+                    let (a, b) = (a.clamp(lo, hi), b.clamp(lo, hi));
+                    let (sa, sb) = (expand(&a), expand(&b));
+                    let expected: BTreeSet<_> = sa.union(&sb).copied().chain([70]).collect();
+                    let joined =
+                        walk.join(vec![a.clone(), b.clone(), CellView::of(vec![(70, 70)])]);
+                    assert_eq!(expand(&joined), expected);
+                    let expected: BTreeSet<_> = sa.intersection(&sb).copied().collect();
+                    assert_eq!(expand(&walk.meet(&a, &b)), expected);
+                    assert_eq!(expand(&walk.meet(&b, &a)), expected);
+                    let narrow = b.clamp(lo + 1, hi - 1);
+                    let expected: BTreeSet<_> =
+                        sa.intersection(&expand(&narrow)).copied().collect();
+                    assert_eq!(expand(&walk.meet(&a, &narrow)), expected);
+                    // Different windows: no one window represents both pieces.
+                    let expected: BTreeSet<_> = sa.union(&expand(&narrow)).copied().collect();
+                    assert_eq!(
+                        expand(&walk.join(vec![a.clone(), narrow.clone()])),
+                        expected
+                    );
+                    // One run on either side is a clamp.
+                    let run = CellView::of(vec![(lo + 2, hi - 2)]);
+                    let expected: BTreeSet<_> = sa.intersection(&expand(&run)).copied().collect();
+                    assert_eq!(expand(&walk.meet(&a, &run)), expected);
+                    assert_eq!(expand(&walk.meet(&run, &a)), expected);
+                }
+            }
         }
     }
 }
