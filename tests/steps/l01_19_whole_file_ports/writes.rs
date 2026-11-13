@@ -136,6 +136,45 @@ fn only_strings_are_written_as_lines() {
     );
 }
 
+/// A name bound to an operation on number literals holds a number whatever carrier it takes,
+/// so pushing it is rejected when the program is checked, as `m.stdout <- 42` is, and not
+/// when the push runs (PORT-lines-int-name).
+#[test]
+fn a_number_computed_from_literals_is_rejected_before_the_run() {
+    let src = "main(m: MainArgs) { b = 2^62; m.stdout <- b; }\n";
+    let out = run("number_from_literals", src, "", &[]);
+    assert_eq!((out.status, out.stdout.as_str()), (1, ""), "{}", out.stderr);
+    let (_, rest) = out
+        .stderr
+        .split_once("prog.zed:")
+        .expect("a located message");
+    assert_eq!(
+        rest,
+        "1:43: A `Lines` port takes a `String` or a family of strings: `m.stdout <- b : int | \
+         f32 | f64 | rat`. Try `m.stdout <- \"${b}\";` instead.\n  \
+         [1] 1:43: `b` is int | f32 | f64 | rat here\n      \
+         1 | main(m: MainArgs) { b = 2^62; m.stdout <- b; }\n        \
+         |                         ^ [4]             ^ [1, 6, 7]\n        \
+         |                         ^^^^ [2, 3]\n        \
+         |                           ^^ [5]\n  \
+         [2] 1:25: `b` is defined as this expression, int | f32 | f64 | rat\n  \
+         [3] 1:25: this `^` gives int | f32 | f64 | rat\n  \
+         [4] 1:25: this literal, 2, is 2\n  \
+         [5] 1:27: this literal, 62, is 62\n  \
+         [6] 1:43: the port `m.stdout` writes each value pushed to it as one line of text\n  \
+         [7] 1:43: repair: write the value into a string, as `m.stdout <- \"${b}\";`\n"
+    );
+    // The repair the headline offers runs and writes the number.
+    let fixed = src.replace("m.stdout <- b;", "m.stdout <- \"${b}\";");
+    let out = run("number_from_literals_fixed", &fixed, "", &[]);
+    assert_eq!(
+        (out.status, out.stdout.as_str()),
+        (0, "4611686018427387904\n"),
+        "{}",
+        out.stderr
+    );
+}
+
 #[test]
 fn the_first_failed_write_aborts_the_rest() {
     let writes = vec![

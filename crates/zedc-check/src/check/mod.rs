@@ -3818,7 +3818,39 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// family of strings. A failure is disposed of before it reaches a port (sec:failure). A
     /// family writes its stored entries, so the `#notFound` of a key it lacks is not pushed;
     /// at L1 the families are the `Lines` and `CommandLine` ports, which store no `#notFound`.
+    ///
+    /// A class of values not yet resolved, as `b` of `b = 2^62;` in `main`, is judged by the
+    /// carriers it may still take: one that can take neither `String` nor a value of no
+    /// carrier (a family is one) holds a number whatever carrier it ends with, so the push is
+    /// rejected now, as a value of those carriers would be, and not at run time. A class that
+    /// may still take a string is left to the run time as before.
     fn pushed(&mut self, t: &Ty, port: &str, span: Span) {
+        // Complexity tradeoff: one find per class variable at the top of `t`, O(log N) in a
+        // union of N classes, and one rebuild of `t` where each is a class of numbers, O(|t|);
+        // no scan of a class's literals or uses (test `domain_repairs::a_pushed_chain_…`,
+        // COMPLEXITY.md C61). The other method, resolving the class to a carrier here as the
+        // end of `main` does, costs the same but would fix the carrier before the rest of the
+        // body narrows it; reading the mask decides the push and leaves the class unchanged.
+        let strings_or_other = Carrier::Str.bit() | OTHER;
+        let numbers: Option<Binds> = (!t.vars.is_empty())
+            .then(|| {
+                (t.vars.iter())
+                    .map(|v| {
+                        let r = self.class_of(&Piece::Var(v.clone()))?;
+                        let mask = self.classes[r].mask;
+                        (mask & strings_or_other == 0).then(|| (v.clone(), Ty::of_mask(mask)))
+                    })
+                    .collect()
+            })
+            .flatten();
+        let replaced;
+        let t = match &numbers {
+            Some(binds) => {
+                replaced = t.replace(binds);
+                &replaced
+            }
+            None => t,
+        };
         let strings = |t: &KType| t.subtype(&KType::string());
         let plain = |t: &Ty| t.tuples.is_empty() && t.vars.is_empty();
         let not_found = KType::atom("notFound");

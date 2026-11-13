@@ -313,6 +313,12 @@ fn a_lines_port_repair_writes_the_programs_value() {
         ("t = m.stdin[0];", "m.stdout <- t else \"\";"),
         // An int that may be an atom: both.
         ("t = int(m.stdin[0]);", "m.stdout <- \"${t}\" else \"\";"),
+        // A number computed from literals alone, whatever carrier it takes: written into a
+        // string (PORT-lines-int-name), through an operator, a name and an `else`.
+        ("t = 2^62;", "m.stdout <- \"${t}\";"),
+        ("t = 1 + 1;", "m.stdout <- \"${t}\";"),
+        ("b = 2^62; t = b - 1;", "m.stdout <- \"${t}\";"),
+        ("b = 2^62; t = b else 0;", "m.stdout <- \"${t}\";"),
     ] {
         let src = pushing(bind);
         let out = rejected(&src);
@@ -336,6 +342,23 @@ fn a_lines_port_repair_writes_the_programs_value() {
             .replace("m.stdout <- t;", "m.stdout <- t else #outOfBounds -> \"\";"),
     );
     assert!(out.contains("A `Lines` port takes"), "{out}");
+}
+
+#[test]
+fn a_pushed_chain_of_names_of_literals_is_rejected_in_linear_time() {
+    // `t1 = 2^62; t2 = t1 + 1; …; m.stdout <- tn;`: the push reads the carriers of one class
+    // of n merged operations (one find in the union of the classes), and the message derives
+    // `tn` through every name (COMPLEXITY.md, PORT-lines-int-name).
+    let srcs = scaling::inputs(1000, |n| {
+        let binds: String = (2..=n)
+            .map(|i| format!("t{i} = t{} + 1; ", i - 1))
+            .collect();
+        pushing(&format!("t1 = 2^62; {binds}t = t{n};"))
+    });
+    scaling::check("rejecting the push of a chain of n names", 1000, |n| {
+        let out = rejected(&srcs[&n]);
+        assert_eq!(tried(&out), Some("m.stdout <- \"${t}\";"), "{n}");
+    });
 }
 
 /// A function that binds `x2` to `x{n+1}` and passes `x` less all of them to `popCount`, so
