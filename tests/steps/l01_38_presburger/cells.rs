@@ -8,6 +8,7 @@
 //! propagation of the whole chain, round after round. The ends of the guards cut `i` into 8
 //! cells, in each of which the chain is one conjunction, solved once.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use zed_tests::scaling;
@@ -107,4 +108,177 @@ fn guarded_chains_with_no_point_scale() {
             "{n}"
         );
     });
+}
+
+/// The guard of one level of [`guarded`]: the then-branch keeps `t`, the else-branch gives
+/// `2 - t'`, with the guard as written.
+#[derive(Clone, Copy)]
+enum Guard {
+    /// `i <= g`.
+    Le(i128),
+    /// `lo <= i && i <= hi`: the else-branch holds `i < lo || i > hi`, a disjunction.
+    And(i128, i128),
+    /// `i <= lo || i >= hi`: a disjunction in the then-branch, its pieces overlapping when
+    /// `hi <= lo`.
+    Or(i128, i128),
+    /// `i <= g` with the nested `if (i >= h) { t } else { 2 - t' }` as its then-branch, and
+    /// `3 - t'` as its else-branch.
+    Nest(i128, i128),
+}
+
+/// `i <= k` or `i >= k`.
+fn bound(at_most: bool, k: i128) -> Formula {
+    let i = level(0, false);
+    match at_most {
+        true => Formula::Con(Con::ge(&Lin::constant(k), &i)),
+        false => Formula::Con(Con::ge(&i, &Lin::constant(k))),
+    }
+}
+
+fn not(f: Formula) -> Formula {
+    Formula::Not(Shared::new(f))
+}
+
+/// The chain of `n` levels guarded by `guard(n, j)` over `i` in `[-r, r]`, with `t_n == target`;
+/// each level but the last written twice, as [`chain`].
+fn guarded(n: usize, r: i128, guard: impl Fn(usize, usize) -> Guard, target: i128) -> Formula {
+    let mut parts = vec![bound(true, r), bound(false, -r)];
+    for j in 1..=n {
+        let copies: &[bool] = if j < n { &[false, true] } else { &[false] };
+        for &twin in copies {
+            let q = level(j, twin);
+            let same = Formula::Con(Con::eq(&level(j - 1, false), &q));
+            let flip =
+                |c: i128| Formula::Con(Con::eq(&level(j - 1, true).plus(&q), &Lin::constant(c)));
+            let (g, then, other) = match guard(n, j) {
+                Guard::Le(g) => (bound(true, g), same, flip(2)),
+                Guard::And(lo, hi) => (
+                    Formula::and(vec![bound(false, lo), bound(true, hi)]),
+                    same,
+                    flip(2),
+                ),
+                Guard::Or(lo, hi) => (
+                    Formula::or(vec![bound(true, lo), bound(false, hi)]),
+                    same,
+                    flip(2),
+                ),
+                Guard::Nest(g, h) => (
+                    bound(true, g),
+                    Formula::or(vec![
+                        Formula::and(vec![bound(false, h), same]),
+                        Formula::and(vec![not(bound(false, h)), flip(2)]),
+                    ]),
+                    flip(3),
+                ),
+            };
+            parts.push(Formula::or(vec![
+                Formula::and(vec![g.clone(), then]),
+                Formula::and(vec![not(g), other]),
+            ]));
+        }
+    }
+    parts.push(Formula::Con(Con::eq(
+        &level(n, false),
+        &Lin::constant(target),
+    )));
+    Formula::and(parts)
+}
+
+/// The values of `t_n` over `i` in `[-r, r]`, by running the chain at each.
+fn guarded_run(n: usize, r: i128, guard: impl Fn(usize, usize) -> Guard) -> BTreeSet<i128> {
+    (-r..=r)
+        .map(|i| {
+            (1..=n).fold(i, |t, j| match guard(n, j) {
+                Guard::Le(g) if i <= g => t,
+                Guard::And(lo, hi) if lo <= i && i <= hi => t,
+                Guard::Or(lo, hi) if i <= lo || i >= hi => t,
+                Guard::Nest(g, h) if i <= g => {
+                    if i >= h {
+                        t
+                    } else {
+                        2 - t
+                    }
+                }
+                Guard::Nest(..) => 3 - t,
+                _ => 2 - t,
+            })
+        })
+        .collect()
+}
+
+/// The guards of the families: `wide` cuts `i` into about `n / 2` cells; `nest` nests an `if` in
+/// each then-branch, also over about `n / 2` cells; `or` and `and` join guards by `||` and `&&`
+/// (the disjunctions that the cells of [`chain`] left to the probe).
+fn family(name: &str) -> fn(usize, usize) -> Guard {
+    match name {
+        "wide" => |n, j| Guard::Le((j / 2) as i128 - (n / 4) as i128),
+        "nest" => |n, j| {
+            let g = (j / 2) as i128 - (n / 4) as i128;
+            Guard::Nest(g, g - 3 - (j % 3) as i128)
+        },
+        "or" => |_, j| Guard::Or((j % 7) as i128 - 3, (j % 5) as i128 - 2),
+        "and" => |_, j| Guard::And((j % 5) as i128 - 2, (j % 7) as i128 - 3),
+        other => panic!("no family {other}"),
+    }
+}
+
+/// The range of `i` for a family at `n` levels: `[-n/2, n/2]` for the wide ones, `[-20, 20]`
+/// else.
+fn family_range(name: &str, n: usize) -> i128 {
+    match name {
+        "wide" | "nest" => (n / 2).max(1) as i128,
+        _ => 20,
+    }
+}
+
+/// A value of `t_n` inside the range of those reached that no `i` reaches, else one past it.
+fn missed(reached: &BTreeSet<i128>) -> i128 {
+    let (lo, hi) = (reached.first().copied(), reached.last().copied());
+    let (lo, hi) = (lo.expect("some value"), hi.expect("some value"));
+    (lo..=hi).find(|v| !reached.contains(v)).unwrap_or(hi + 1)
+}
+
+/// Every chain of each family from 1 to 40 levels is decided as running it decides, for the
+/// least value reached, the greatest, and one inside that is not reached.
+#[test]
+fn wide_nested_and_joined_guards_are_decided_as_run() {
+    for name in ["wide", "nest", "or", "and"] {
+        let guard = family(name);
+        for n in 1..=40 {
+            let r = family_range(name, n);
+            let reached = guarded_run(n, r, guard);
+            let first = *reached.first().expect("some value");
+            let last = *reached.last().expect("some value");
+            for target in [first, last, missed(&reached)] {
+                let got = decide(&guarded(n, r, guard, target)).expect("decided");
+                assert_eq!(
+                    got,
+                    reached.contains(&target),
+                    "{name}, {n} levels, {target}"
+                );
+            }
+        }
+    }
+}
+
+/// Each family with no point, at 12 levels and 96, in work linear in the levels: the wide ones
+/// over about 6 and 48 cells, the cells decided together. Control (once, not kept): before M5
+/// (C55), with each cell's conjunction solved alone, the wide family took 34.4 M and 694 M
+/// instructions, 20.2 times the work, and the test failed. On M5 it still passes with
+/// `has_point`'s three cell methods turned off (3.0 s against 1.4 s): the later methods
+/// decide these chains in linear work too, so the test now holds the whole decision to it.
+#[test]
+fn wide_nested_and_joined_guards_with_no_point_scale() {
+    for name in ["wide", "nest", "or", "and"] {
+        let guard = family(name);
+        let fs = scaling::inputs(12, |n| {
+            let r = family_range(name, n);
+            let target = missed(&guarded_run(n, r, guard));
+            guarded(n, r, guard, target)
+        });
+        let what = format!("decision of a {name} chain with no point");
+        scaling::check_order(&what, 12, 1, |n| {
+            assert!(!decide(&fs[&n]).expect("decided"), "{name} {n}");
+        });
+    }
 }

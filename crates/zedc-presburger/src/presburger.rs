@@ -2819,9 +2819,15 @@ fn found(p: Parts) -> Result<Option<Model>, Refusal> {
 // (`shared_holders`, `sh_two`, `pub_interface`: over 60 s at n = 250 to 2,000). Used: the cells
 // first, with each shared set read once through windowed views of it ([`CellView`]) and joins
 // memoized per list of pieces; 1.01 to 1.06 per doubling on those families and on the 17 of
-// BRIEF2 (hpx-xr-records/archive/r3/R3_CLAUDE.md). Still superlinear or slower than main:
-// COMPLEXITY.md row C55. Given up: nothing on the dump of the five test groups, where no answer
-// changed (hpx-cmp-hash.sh).
+// round 3's second brief (hpx-xr-records/archive/r3/R3_CLAUDE.md). Given up: nothing on the
+// dump of the five test groups (hpx-cmp-hash.sh, 34,692 formulas): no answer changed but one
+// main refused, now true, with a point; none moved to the probe. Still superlinear or slower
+// than main, with the numbers in COMPLEXITY.md row C55: `holders_chain` (25.0 G instructions at
+// n = 1,000 against main's 5.21 G, both near n²; 19.7 G against 29.3 M with a point, since
+// [`pick`] comes after the sweep), `split_windows` (1.88 per doubling, faster than main),
+// `kss`, `sh_choice`, `wideik`, `sh_windows2`, `sh_winsame2`, and `overlap2c` (refused, as on
+// main): the sweep updates each disjunction at every end of its cells, n² updates for n
+// disjunctions over one shared set of n cells.
 fn has_point(p: Parts) -> Result<bool, Refusal> {
     if let Some(answer) = by_cells(&p, false) {
         return answer;
@@ -24200,7 +24206,10 @@ mod cells_scaling {
             extra: set(&["w"]),
         };
         assert_eq!(met_atoms(&[one, other.clone()]), set(&["y", "z"]));
-        assert_eq!(met_atoms(&[other.clone()]), set(&["y", "z", "w"]));
+        assert_eq!(
+            met_atoms(std::slice::from_ref(&other)),
+            set(&["y", "z", "w"])
+        );
         assert_eq!(met_atoms(&[two, other, bare]), set(&["y"]));
         assert!(met_atoms(&[]).is_empty());
     }
