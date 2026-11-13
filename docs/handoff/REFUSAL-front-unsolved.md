@@ -28,7 +28,8 @@ All paths are on this machine. Nothing below has been deleted.
 
 Test builders named below are in tests/steps/l01_23_subtyping/refusals.rs on the branch; the
 probe families are built by `rfx_case(name, n, tag)` in the same file. A probe is run with
-`RFX_N=16,64,256,1024` and `--include-ignored --nocapture` (see the probe tests' bodies).
+`RFX_N=16,64,256,1024` in a build with `--cfg zed_probes` (TESTS-unignore-all; see the top Cargo.toml),
+with `--exact <probe> --nocapture` (see the probe tests' bodies).
 
 ## U1. X38: the escape's cell discovery reads super-linearly many empty cells
 

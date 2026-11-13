@@ -466,7 +466,10 @@ fn arms_of_named_limits_in_side_by_side_tiers_take_time_near_linear_in_the_depth
 }
 
 #[test]
-#[ignore = "probe for PERF-negated-chain-unsolved (docs/handoff/PERF-negated-chain-unsolved.md): needs PNCX_SIZES"]
+// A hand-run probe, not a test (PERF-negated-chain-unsolved,
+// docs/handoff/PERF-negated-chain-unsolved.md: prints the work at the sizes PNCX_SIZES): built only
+// with `--cfg zed_probes`; see [workspace.lints.rust] in the top Cargo.toml.
+#[cfg(zed_probes)]
 fn pncx_tiers_axis() {
     scaling::on_a_thread(1 << 29, || {
         let mut meter = scaling::Meter::new();

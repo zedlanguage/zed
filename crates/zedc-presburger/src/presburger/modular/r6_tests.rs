@@ -76,7 +76,10 @@ fn pncx_fibonacci_scale() {
 }
 
 #[test]
-#[ignore]
+// A hand-run probe, not a test (PERF-negated-chain-unsolved: prints the work at the sizes
+// PNCX_SIZES): built only with `--cfg zed_probes`; see [workspace.lints.rust] in the top
+// Cargo.toml.
+#[cfg(zed_probes)]
 fn pncx_gcd_axis() {
     let mut meter = scaling::Meter::new();
     for n in std::env::var("PNCX_SIZES")
@@ -536,7 +539,10 @@ fn pncx_prism_models() {
 }
 
 #[test]
-#[ignore]
+// A hand-run probe, not a test (PERF-negated-chain-unsolved: prints the work at the sizes
+// PNCX_SIZES): built only with `--cfg zed_probes`; see [workspace.lints.rust] in the top
+// Cargo.toml.
+#[cfg(zed_probes)]
 fn pncx_prism_formula_axis() {
     let mut meter = scaling::Meter::new();
     for n in std::env::var("PNCX_SIZES")
@@ -697,7 +703,9 @@ fn pncx_empty_pair_bound_scale() {
 }
 
 #[test]
-#[ignore]
+// A hand-run probe, not a test (PERF-negated-chain-unsolved: prints the work at four sizes, against
+// no limit): built only with `--cfg zed_probes`; see [workspace.lints.rust] in the top Cargo.toml.
+#[cfg(zed_probes)]
 fn pncx_preparation_axis() {
     let mut meter = scaling::Meter::new();
     for n in [512, 1024, 2048, 4096] {

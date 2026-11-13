@@ -80,7 +80,7 @@
 // that find no cell after the congruence filter are not bounded in general. Trigger:
 // `find_prefix_chains` returns `None` on a type of this class.
 
-#[cfg(test)]
+#[cfg(all(test, zed_probes))]
 use std::collections::HashSet;
 use std::collections::{BTreeSet, HashMap};
 
@@ -511,12 +511,12 @@ impl Ancestors {
 }
 
 /// The places in `[lo, hi]` of a sorted list.
-#[cfg(test)]
+#[cfg(all(test, zed_probes))]
 fn count(l: &[usize], lo: usize, hi: usize) -> usize {
     l.partition_point(|&j| j <= hi) - l.partition_point(|&j| j < lo)
 }
 
-#[cfg(test)]
+#[cfg(all(test, zed_probes))]
 fn range(l: &[usize], lo: usize, hi: usize) -> &[usize] {
     &l[l.partition_point(|&j| j < lo)..l.partition_point(|&j| j <= hi)]
 }
@@ -922,13 +922,13 @@ impl Live {
 }
 
 /// A `Live` that also tells how many positions lie in a range (a Fenwick tree), for the sweep.
-#[cfg(test)]
+#[cfg(all(test, zed_probes))]
 struct Counted {
     live: Live,
     fen: Vec<isize>,
 }
 
-#[cfg(test)]
+#[cfg(all(test, zed_probes))]
 impl Counted {
     fn new(n: usize) -> Counted {
         let mut fen = vec![1; n + 1];
@@ -975,7 +975,7 @@ impl Counted {
 }
 
 /// The rows still read: in Euler order over all heights (`g`), and at each tail height (`h`).
-#[cfg(test)]
+#[cfg(all(test, zed_probes))]
 struct Rows {
     gone: Vec<bool>,
     g: Counted,
@@ -991,7 +991,7 @@ struct Rows {
     pos_c: Vec<usize>,
 }
 
-#[cfg(test)]
+#[cfg(all(test, zed_probes))]
 impl Rows {
     fn retire(&mut self, i: usize) {
         if !self.gone[i] {
@@ -1009,7 +1009,7 @@ impl Rows {
 /// highest down, each reading the rows below it or the places that can separate there. The method
 /// before `cells_windows`, kept as the reference of the bench below; Theta(n^2) on r9cosets and
 /// on the stray3 family, where `cells_windows` stays near n log n.
-#[cfg(test)]
+#[cfg(all(test, zed_probes))]
 fn cells_sweep(
     nodes: &[Node],
     anc: &Ancestors,
@@ -1998,7 +1998,7 @@ fn cells_windows(
     counts.1 += bl.empty;
 }
 
-#[cfg(test)]
+#[cfg(all(test, zed_probes))]
 mod bench;
 
 #[cfg(test)]

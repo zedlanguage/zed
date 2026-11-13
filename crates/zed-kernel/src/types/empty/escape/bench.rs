@@ -16,7 +16,9 @@ fn ints(cof: &str, vals: &str) -> Ints {
 
 /// Reads the first instance of a dump; runs the method named by `ZED_ESCAPE_METHOD` on it.
 #[test]
-#[ignore]
+// A hand-run probe, not a test (REFUSAL-front-unsolved: times one method on a dump named by
+// `ZED_ESCAPE_BENCH`): built only with `--cfg zed_probes`; see [workspace.lints.rust] in the
+// top Cargo.toml.
 fn escape_cells_bench() {
     let path = std::env::var("ZED_ESCAPE_BENCH").expect("ZED_ESCAPE_BENCH");
     let method = std::env::var("ZED_ESCAPE_METHOD").expect("ZED_ESCAPE_METHOD");

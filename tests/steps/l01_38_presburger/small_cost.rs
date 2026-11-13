@@ -81,7 +81,9 @@ fn least(meter: &mut Meter, run: &dyn Fn()) -> u64 {
 }
 
 #[test]
-#[ignore = "benchmark of PRES-small-cost and PRES-small-front: prints instructions per call"]
+// A hand-run probe, not a test (PRES-small-cost and PRES-small-front: prints the instructions per
+// call): built only with `--cfg zed_probes`; see [workspace.lints.rust] in the top Cargo.toml.
+#[cfg(zed_probes)]
 fn bench_small_formulas() {
     let mut meter = Meter::new();
     let one = Formula::and(vec![

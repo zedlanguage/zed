@@ -185,7 +185,10 @@ fn pncx_domain_membership_matches_scan() {
 }
 
 #[test]
-#[ignore]
+// A hand-run probe, not a test (PERF-negated-chain-unsolved: prints the work at the sizes
+// PNCX_SIZES): built only with `--cfg zed_probes`; see [workspace.lints.rust] in the top
+// Cargo.toml.
+#[cfg(zed_probes)]
 fn pncx_shared_formula_axis() {
     let mut meter = scaling::Meter::new();
     for n in std::env::var("PNCX_SIZES")
@@ -219,7 +222,10 @@ fn pncx_kept_prefix_scale() {
 }
 
 #[test]
-#[ignore]
+// A hand-run probe, not a test (PERF-negated-chain-unsolved: prints the work at the sizes
+// PNCX_SIZES): built only with `--cfg zed_probes`; see [workspace.lints.rust] in the top
+// Cargo.toml.
+#[cfg(zed_probes)]
 fn pncx_kept_prefix_axis() {
     let mut meter = scaling::Meter::new();
     for n in std::env::var("PNCX_SIZES")
@@ -385,7 +391,10 @@ fn pncx_affine_images_match_enumeration() {
 }
 
 #[test]
-#[ignore]
+// A hand-run probe, not a test (PERF-negated-chain-unsolved: prints the work at the sizes
+// PNCX_SIZES): built only with `--cfg zed_probes`; see [workspace.lints.rust] in the top
+// Cargo.toml.
+#[cfg(zed_probes)]
 fn pncx_pair_components() {
     let sizes = std::env::var("PNCX_SIZES").unwrap();
     let mut meter = scaling::Meter::new();
@@ -414,7 +423,10 @@ fn pncx_pair_components() {
 // restrictions defeat the separate-pair sufficient witness and expose
 // replaying every unrelated component during Stage C (I3.3).
 #[test]
-#[ignore]
+// A hand-run probe, not a test (PERF-negated-chain-unsolved: prints the work at the sizes
+// PNCX_SIZES): built only with `--cfg zed_probes`; see [workspace.lints.rust] in the top
+// Cargo.toml.
+#[cfg(zed_probes)]
 fn pncx_color_components() {
     let sizes = std::env::var("PNCX_SIZES").unwrap();
     let mut meter = scaling::Meter::new();
@@ -681,7 +693,10 @@ fn pncx_coloring_relabelings() {
 }
 
 #[test]
-#[ignore]
+// A hand-run probe, not a test (PERF-negated-chain-unsolved: prints the work at the sizes
+// PNCX_SIZES): built only with `--cfg zed_probes`; see [workspace.lints.rust] in the top
+// Cargo.toml.
+#[cfg(zed_probes)]
 fn pncx_color_formula_axis() {
     let connected = std::env::var_os("PNCX_CONNECTED").is_some();
     let square = std::env::var_os("PNCX_SQUARE").is_some();

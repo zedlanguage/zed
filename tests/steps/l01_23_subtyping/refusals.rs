@@ -1239,7 +1239,10 @@ fn each_refusal_message_reads_as_written() {
 }
 
 #[test]
-#[ignore = "probe for REFUSAL-front-rest (docs/handoff/REFUSAL-front-unsolved.md): prints the verdict and work of case RFX at sizes RFX_N; asserts nothing"]
+// A hand-run probe, not a test (REFUSAL-front-rest, docs/handoff/REFUSAL-front-unsolved.md: prints
+// the verdict and work of case RFX at the sizes RFX_N): built only with `--cfg zed_probes`; see
+// [workspace.lints.rust] in the top Cargo.toml.
+#[cfg(zed_probes)]
 fn rfx_probe() {
     let which = std::env::var("RFX").unwrap_or_default();
     let sizes: Vec<usize> = std::env::var("RFX_N")
@@ -7479,7 +7482,10 @@ fn r9_compressed_and_expanded_runs_agree_with_enumeration() {
 }
 
 #[test]
-#[ignore = "probe for REFUSAL-front-rest (docs/handoff/REFUSAL-front-unsolved.md): needs RFX and RFX_N; prints the escape cells; asserts nothing"]
+// A hand-run probe, not a test (REFUSAL-front-rest, docs/handoff/REFUSAL-front-unsolved.md: prints
+// the escape cells of case RFX at the sizes RFX_N): built only with `--cfg zed_probes`; see
+// [workspace.lints.rust] in the top Cargo.toml.
+#[cfg(zed_probes)]
 fn r9_escape_probe() {
     let which = std::env::var("RFX").unwrap();
     let sizes: Vec<usize> = std::env::var("RFX_N")
@@ -7503,7 +7509,10 @@ fn r9_escape_probe() {
 }
 
 #[test]
-#[ignore = "probe for REFUSAL-front-rest (docs/handoff/REFUSAL-front-unsolved.md): prints how wide literals read; asserts nothing"]
+// A hand-run probe, not a test (REFUSAL-front-rest, docs/handoff/REFUSAL-front-unsolved.md: prints
+// how wide literals read): built only with `--cfg zed_probes`; see [workspace.lints.rust] in the
+// top Cargo.toml.
+#[cfg(zed_probes)]
 fn r9_wide_literal_probe() {
     for text in [
         "9223372036854775807",
@@ -8836,8 +8845,10 @@ fn r11_ternary_alignment_is_inhabited() {
 
 /// [`r11_ternary_alignment_is_inhabited`] at 4096, with the work printed.
 #[test]
-#[ignore = "probe for REFUSAL-front-rest (docs/handoff/REFUSAL-front-unsolved.md): size 4096 \
-            alone, too slow for a 60 s piece; the sizes up to 1024 run unignored"]
+// A hand-run probe, not a test (REFUSAL-front-rest, docs/handoff/REFUSAL-front-unsolved.md: size
+// 4096 alone takes past 60 s; the sizes up to 1024 are tested): built only with `--cfg zed_probes`;
+// see [workspace.lints.rust] in the top Cargo.toml.
+#[cfg(zed_probes)]
 fn r11_ternary_alignment_probe() {
     r11_ternary_alignment(&[4096]);
 }

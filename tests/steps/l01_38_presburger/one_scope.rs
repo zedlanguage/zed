@@ -5297,7 +5297,10 @@ fn one_variable_boundary_modes_do_not_depend_on_names() {
 }
 
 #[test]
-#[ignore = "probe for PERF-negated-chain-unsolved (docs/handoff/PERF-negated-chain-unsolved.md): prints the refused cases; asserts nothing"]
+// A hand-run probe, not a test (PERF-negated-chain-unsolved,
+// docs/handoff/PERF-negated-chain-unsolved.md: prints the refused cases of PNCX_CASES): built only
+// with `--cfg zed_probes`; see [workspace.lints.rust] in the top Cargo.toml.
+#[cfg(zed_probes)]
 fn pncx_refused_cases() {
     use zedc::store::int::Int;
     use zedc::store::presburger::{Model, decide, satisfiable};

@@ -285,7 +285,8 @@ Zimmermann 2010; van der Hoeven 2022. Each round's `METAn.md` §2 says which wer
 1. Port from `pncx-r7-codex`: cycle squares, the unit-image check, the nine-way test split,
    and the wide-alias test (ignored, open), keeping the candidate's I6.3 and I6.11 fixes.
 2. U1 and U2 share one fix in zed-kernel (the product); measure it with
-   `r7_tests::pncx_common_factor_parts_axis` (ignored) and `pncx_crt_bit_axis`.
+   `r7_tests::pncx_common_factor_parts_axis` (a probe built with `--cfg zed_probes`) and the `crt_bit_axis` command of
+   `benches/src/bin/pncx_probe.rs`.
 3. U3: offsets relative to the parent, never composed into a node.
 3a. U4: find the step that answers one orientation of `x = m q + r` and refuses the other on
    the 59 cases (section U4), make it orientation-free, then drop the `Atom`-order run and

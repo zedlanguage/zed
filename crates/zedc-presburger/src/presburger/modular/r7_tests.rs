@@ -36,7 +36,9 @@ fn fixed_chain(n: usize) -> Formula {
 }
 
 #[test]
-#[ignore]
+// A hand-run probe, not a test (PERF-negated-chain-unsolved: prints the work at four sizes, against
+// no limit): built only with `--cfg zed_probes`; see [workspace.lints.rust] in the top Cargo.toml.
+#[cfg(zed_probes)]
 fn pncx_fixed_chain_axis() {
     let mut meter = scaling::Meter::new();
     for n in [64, 128, 256, 512] {
@@ -62,6 +64,7 @@ fn pncx_fixed_chain_scale() {
 }
 
 /// `2 p` for the first `n` odd primes `p`, as `r4_tests::shared_moduli`.
+#[cfg(zed_probes)]
 fn twice_primes(n: usize) -> Vec<Int> {
     let mut ms = Vec::new();
     let mut p = 3i64;
@@ -79,7 +82,9 @@ fn twice_primes(n: usize) -> Vec<Int> {
 }
 
 #[test]
-#[ignore]
+// A hand-run probe, not a test (PERF-negated-chain-unsolved: prints the work at four sizes, against
+// no limit): built only with `--cfg zed_probes`; see [workspace.lints.rust] in the top Cargo.toml.
+#[cfg(zed_probes)]
 fn pncx_common_factor_parts_axis() {
     let mut meter = scaling::Meter::new();
     for n in [512, 1024, 2048, 4096] {
@@ -136,7 +141,9 @@ fn pncx_common_factor_parts_axis() {
 }
 
 #[test]
-#[ignore]
+// A hand-run probe, not a test (PERF-negated-chain-unsolved: prints the work at six widths, against
+// no limit): built only with `--cfg zed_probes`; see [workspace.lints.rust] in the top Cargo.toml.
+#[cfg(zed_probes)]
 fn pncx_multiply_bytes_axis() {
     // Bytes and work of one product of two numbers of `w` words, at the widths of the
     // Fibonacci scale test (44 to 355 words) and of the common-factor tree (up to 970 words).
