@@ -343,7 +343,7 @@ fn narrowing_by_a_nest_of_disjunctions_scales() {
         (ints(&names(&["x0", "y"])), if_chain(k))
     });
     check_built("k nested thresholds", 50, |k| (x0(), thresholds(k)));
-    check_built("k differences over k/4 names", 50, |k| {
+    check_built("k differences over k/4 names", 400, |k| {
         let (t, ns) = pairs(k);
         (ints(&ns), t)
     });

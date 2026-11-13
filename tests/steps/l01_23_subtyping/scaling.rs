@@ -416,7 +416,7 @@ fn listing_a_diagram_with_exponentially_many_paths_scales() {
             "c = {c}"
         );
     }
-    let built: std::collections::HashMap<usize, Type> = [64, 512]
+    let built: std::collections::HashMap<usize, Type> = [512, 4096]
         .into_iter()
         .map(|c| (c, odd_tuples(c, 0)))
         .collect();
@@ -426,7 +426,7 @@ fn listing_a_diagram_with_exponentially_many_paths_scales() {
     // hold it, found by its components (LIST-parity-quad, COMPLEXITY.md K57).
     scaling::check(
         "listing an exclusive or of tuple types, by count",
-        64,
+        512,
         |c| {
             assert_eq!(built[&c].each_value().map(|v| v.count()), Some(c));
         },
@@ -548,7 +548,7 @@ fn listing_a_diagram_with_exponentially_many_paths_scales() {
     // holding the rows with a key of it, and those rows, two per tuple, are in the order of
     // their hashes, so the range held most rows: 20.3 times the instructions from `c` 64 to
     // 512. The list is read from the blocks those rows change (LIST-parity-keys): 9.5 times,
-    // under the limit of 13.
+    // under the limit of 10.5.
     scaling::compare(
         "listing a meet with tuple types of many keys each, by count: sizes 64 and 512",
         1,

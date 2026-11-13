@@ -941,9 +941,7 @@ mod tests {
     fn a_held_ratio_must_be_under_the_limit() {
         assert_eq!(hold("nodes, n and 8n", "nodes", 100, 1049, 1), 10.49);
         assert!(fails(|| _ = hold("nodes, n and 8n", "nodes", 100, 1050, 1)));
-        assert!(fails(
-            || _ = hold("nodes, n and 8n", "nodes", 100, 8_400, 2)
-        ));
+        assert!(fails(|| _ = hold("nodes, n and 8n", "nodes", 100, 8_400, 2)));
         assert_eq!(hold("nodes, n and 8n", "nodes", 0, 8, 1), 8.0);
         let message = message_of(|| _ = hold("steps at 10 and 80", "steps", 10, 200, 1));
         assert!(

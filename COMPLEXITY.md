@@ -7,20 +7,24 @@ of its input a question mentions, and nothing cut short by a budget, a threshold
 of steps. This file lists every place an audit of
 2026-10-30 found that breaks the rule, and the state of each. An item is closed when its
 fix is in and a scaling test (size n against 8n, in instructions and, since SCALE-bytes, in
-bytes allocated) passes, or when the reason it stays is recorded here. Since TESTS-scaling-limit-13
-(author, 2026-11-13: "keep the 8x scaling under 13, but strongly prefer under 9 if such an
-algorithm can be found") the test requires T(8n)/T(n) < 13 for work of order n, and
-13 × 8^(k−1) for order n^k (`zed_tests::scaling::limit`), whatever n is; a ratio from 9 to 13
-(9 × 8^(k−1) to 13 × 8^(k−1)) passes and prints a note naming the test. Where no instruction
+bytes allocated) passes, or when the reason it stays is recorded here. Since TESTS-scaling-limit-10_5
+(author, 2026-11-13: "13 was too high anyway, I retract that. Let's keep things under 10.5 for
+8x scaling." and "Under 10.5, but ideally under 9") the test requires T(8n)/T(n) < 10.5 for work
+of order n, and 10.5 × 8^(k−1) for order n^k (`zed_tests::scaling::limit`), whatever n is; a
+ratio from 9 to 10.5 (9 × 8^(k−1) to 10.5 × 8^(k−1)) passes and prints a note naming the test.
+It replaces TESTS-scaling-limit-13 of the same day, which allowed 13. Where no instruction
 counter is open and the test falls back to processor time, it allows twice the limit, as
 before. A count that is linear in n by its construction and does not change with the load
 (calls of a function, nodes entered, bytes printed) is held to 9 as well
 (`scaling::hold_linear`): such a count measures near 8 times on every run, so 9 still finds an
-extra log n factor that 13 lets through; the six tests that use it held their count under 9,
+extra log n factor that 10.5 lets through; the six tests that use it held their count under 9,
 or under 5 at 4n, before. One limit holds every
 order n and n log n test, the radix conversion and gcd sites of C31 among them: n log n is
-10.4 times at n = 1000 and under 13 from n = 28, n log² n under 13 from n = 1936, n^1.25 is
-13.45 times and fails at every n. It replaces SCALE-ratio (2026-11-07), which allowed
+10.4 times at n = 1000 and under 10.5 from n = 777, n log² n under 10.5 from n = 1,587,343,
+n^1.13 is 10.48 times and passes at every n, n^1.14 is 10.70 times and fails at every n. The
+tests over 10.5 at their sizes were moved to 8 times those sizes where that passes within 60 s,
+or ignored with a plan row that owns the fix (TESTS-scaling-limit-10_5). The limit of 13
+replaced SCALE-ratio (2026-11-07), which allowed
 8^k ln(8n)/ln(n) × 1.1 (15.4 at n = 16, 11.4 at n = 1000), with 8 (ln(8n)/ln(n))² × 1.1 for C31
 (author decision A47, 2026-11-09, `check_log_squared`, now removed), and the limit of
 24 × 8^(k−1) before it. Setting `ZED_SCALING_RATIOS` to a file makes
@@ -791,7 +795,9 @@ on it (2026-11-09). What stays are the tests moved above the leaf, re-measured o
 tree: `powers::a_kept_power_beside_its_built_successor_costs_n_log_n` at 2^22 (9.67 against
 10.0) and `subquadratic::dividing_a_wide_number_scales` at 32768 words (10.05 against 10.56),
 both passing. The radix conversion and gcd tests were held to the n log² n limit (C31) until
-TESTS-scaling-limit-13 (2026-11-13), which holds every test to 13.
+TESTS-scaling-limit-13 (2026-11-13), which held every test to 13, and since
+TESTS-scaling-limit-10_5 the same day to 10.5; the radix conversion and gcd tests over 10.5 are
+ignored with the row RADIX-nlog2-10_5.
 
 ### POLY-nf, `zed-kernel/src/poly.rs` `Poly::mul`, cost formulas, 2026-11-12, fitted 2026-11-13
 
@@ -1008,7 +1014,8 @@ which the limit holds too, from divisions by a power of 5 of 75 to 1189 words th
 does at both sizes. The decimals now run at 640,000 and 5,120,000 digits as four tests, one a
 family, so that libtest runs them at once (`reading_a_decimal_with_a_high_power_of_5_scales`,
 `..._a_high_power_of_2_...`, `..._high_powers_of_2_and_5_...`, `..._no_high_power_...`). The
-step's tests take 17 s at load 37.
+step's tests take 17 s at load 37. Under the limit of 10.5 (TESTS-scaling-limit-10_5) all seven
+of these tests are over the limit and are ignored with the row RADIX-nlog2-10_5.
 
 `l01_24_refinement_lattices::scaling::the_cube_of_a_wide_end_scales_with_its_bits` now checks
 4,096 and 32,768 bits and 131,072 and 1,048,576. The remainder tree's first division, of the end

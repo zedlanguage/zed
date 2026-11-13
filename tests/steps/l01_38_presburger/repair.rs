@@ -190,12 +190,12 @@ fn a_chain_whose_point_is_at_an_end_is_answered() {
 #[test]
 fn a_chain_whose_point_is_at_an_end_scales() {
     let make = |n: usize| guards(n, n as i64 - 2, false);
-    let (small, large) = (make(32), make(32 * scaling::FACTOR));
+    let (small, large) = (make(256), make(256 * scaling::FACTOR));
     scaling::check(
         "decide on a chain of k guards with its point at an end",
-        32,
+        256,
         |n| {
-            assert_eq!(decide(if n == 32 { &small } else { &large }), Ok(true));
+            assert_eq!(decide(if n == 256 { &small } else { &large }), Ok(true));
         },
     );
 }

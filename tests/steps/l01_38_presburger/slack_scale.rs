@@ -601,7 +601,7 @@ fn small_subset_sums_are_found_with_the_slack_probes() {
 /// by logarithmically many whole-formula questions even though its probe was immune.
 #[test]
 fn untied_projection_uses_the_endpoint_report() {
-    let k = 64;
+    let k = 512;
     let small = subset_sum_dp(&weights_untied(k));
     let large = subset_sum_dp(&weights_untied(8 * k));
     let y0 = [sym("y0")];

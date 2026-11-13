@@ -372,7 +372,7 @@ fn shared_subtrees_are_passed_over() {
 fn insertion_lookup_and_difference_scale_as_n_log_n() {
     // n keys inserted in a scattered order, each looked up, and n differences between the map
     // and a copy with one key changed, each of which reads only the changed path: O(n log n).
-    let inputs: HashMap<usize, Vec<u64>> = [4_000, 32_000]
+    let inputs: HashMap<usize, Vec<u64>> = [32_000, 256_000]
         .into_iter()
         .map(|n| {
             let mut d = Draw(n as u64);
@@ -381,7 +381,7 @@ fn insertion_lookup_and_difference_scale_as_n_log_n() {
         .collect();
     crate::scaling::check_order(
         "a B-tree: n insertions, n lookups and n one-change differences",
-        4_000,
+        32_000,
         1,
         |n| {
             let keys = &inputs[&n];

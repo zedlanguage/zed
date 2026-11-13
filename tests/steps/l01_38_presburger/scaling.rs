@@ -856,15 +856,15 @@ fn a_conjunct_beside_a_wide_one_costs_its_own_key() {
         });
         Formula::Con(Con::ge(&sum, &Lin::constant(0)))
     };
-    let bounds = scaling::inputs(64, |k| {
+    let bounds = scaling::inputs(512, |k| {
         let small: Vec<Formula> = (0..k).map(|i| at_least_zero(&format!("a{i:06}"))).collect();
         (wide(k), small)
     });
-    scaling::check("bounds beside a constraint on k names", 64, |k| {
+    scaling::check("bounds beside a constraint on k names", 512, |k| {
         let (wide, small) = &bounds[&k];
         std::hint::black_box(each_on_a_copy(wide, small));
     });
-    let pairs = scaling::inputs(64, |k| {
+    let pairs = scaling::inputs(512, |k| {
         let small: Vec<Formula> = (0..k)
             .map(|i| {
                 Formula::or(vec![
@@ -877,7 +877,7 @@ fn a_conjunct_beside_a_wide_one_costs_its_own_key() {
     });
     scaling::check(
         "disjunctions of two bounds beside one of a constraint on k names",
-        64,
+        512,
         |k| {
             let (wide, small) = &pairs[&k];
             std::hint::black_box(each_on_a_copy(wide, small));

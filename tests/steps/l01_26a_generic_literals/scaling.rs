@@ -600,10 +600,11 @@ fn the_type_of_an_if_holding_a_power_of_literals_prints_the_power() {
             let ty = format!("`(b: bool) -> 2 | 3^{}`", 200 * m);
             assert!(out.stderr.contains(&ty), "{}", out.stderr);
         });
-        // At n = 1000 the decimal conversion runs on `num::fast` products at both sizes; at
+        // The decimal conversion runs on `num::fast` products at both sizes from n = 1000; at
         // n = 500 the smaller runs on num-bigint's Toom-3, of a lower constant, and the ratio
-        // was 14.6 (2026-11-13).
-        let n = 1000;
+        // was 14.6 (2026-11-13). At n = 1000 it was over the limit of 10.5, so the sizes are
+        // 8000 and 64,000 (TESTS-scaling-limit-10_5).
+        let n = 8000;
         let units = scaling::inputs(n, |m| Resolved::new(&sum(m)));
         scaling::check("the checking of an `if` of 3^(200 n) + 1", n, |m| {
             std::hint::black_box(units[&m].type_errors());

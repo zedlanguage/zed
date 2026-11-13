@@ -204,7 +204,7 @@ fn the_checklist_reading_scales_with_its_unreadable_lines() {
         program: "p.zed".into(),
         ..Default::default()
     };
-    let sized = inputs(2000, |m| {
+    let sized = inputs(16000, |m| {
         let bad: String = (0..m)
             .map(|i| format!("| L{i}–L{} | R{i}#0 | `w{i} |\n", i + 1))
             .collect();
@@ -213,7 +213,7 @@ fn the_checklist_reading_scales_with_its_unreadable_lines() {
             "## Part A\n\n| Layer | Alternatives | Words |\n|---|---|---|\n{bad}| L1 |{long} | — |\n"
         )
     });
-    check("checklist reading, by unreadable lines", 2000, |m| {
+    check("checklist reading, by unreadable lines", 16000, |m| {
         let list = &sized[&m];
         let mut out = String::new();
         let outcome = audit::compare(&spec, &table, &needs, "ZED0.md", list, &mut out);

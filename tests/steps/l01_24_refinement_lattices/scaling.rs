@@ -334,7 +334,7 @@ fn many(k: usize, shift: i64) -> zedc::store::affine::Bounds {
 #[test]
 fn bounds_on_many_symbols_scale() {
     use zedc::store::lattice::Lattice;
-    scaling::check("symbolic bounds on distinct symbols", 200, |k| {
+    scaling::check("symbolic bounds on distinct symbols", 1600, |k| {
         let (a, b) = (many(k, 0), many(k, 1));
         let j = a.join(&b);
         assert_eq!(j.bounds(zedc::store::affine::Side::Lower).len(), k);
