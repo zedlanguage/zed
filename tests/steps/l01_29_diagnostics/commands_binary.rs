@@ -643,3 +643,52 @@ fn zedc_run_prints_the_rejection_of_a_chain_of_names_holding_no_union_as_before(
         )
     );
 }
+
+/// MSG-wide-value-notes: `b = 2^64 + 13;` read by `rat(b) ^ (2^64)`. The notes on `b`, its
+/// `+` and its `^` printed `2 | 13`, and the note on the exponent `2^64` printed `2`: the
+/// literals of the operation, not its value. An operation on literals asks its class for a
+/// carrier, so its values are what it computes; each note now gives its type as the program
+/// could write it, the carriers the class may still take.
+const WIDE: &str =
+    "main(m: MainArgs) {\n  b = 2^64 + 13;\n  m.stdout <- String(rat(b) ^ (2^64));\n}\n";
+
+#[test]
+fn zedc_run_prints_the_type_of_an_operation_on_wide_literals_not_its_literals() {
+    let f = file("wide.zed", WIDE);
+    assert_eq!(
+        rejection("run", &f),
+        format!(
+            "{}:{}",
+            f.display(),
+            r#"3:15: A `Lines` port takes a `String` or a family of strings: `m.stdout <- String(rat(b) ^ (2^64)) : String | #invalid`. Try `m.stdout <- (String(rat(b) ^ (2^64))) else "";` instead.
+  [1]  3:15: this call of `String` gives String | #invalid
+       3 |   m.stdout <- String(rat(b) ^ (2^64));
+         |               ^^^^^^^^^^^^^^^^^^^^^^^ [1, 14, 15, 16]
+         |                      ^^^^^^ [3]  ^^ [13]
+         |                      ^^^^^^^^^^^^^^^ [2]
+         |                          ^ [4] ^ [12]
+         |                               ^^^^^^ [11]
+  [2]  3:22: this `^` gives rat | #invalid
+  [3]  3:22: this call of `rat` gives rat | #invalid
+  [4]  3:26: `b` is int | f32 | f64 | rat here
+  [5]  2:7: `b` is defined as this expression, int | f32 | f64 | rat
+       2 |   b = 2^64 + 13;
+         |       ^ [8]  ^^ [10]
+         |       ^^^^ [7]
+         |       ^^^^^^^^^ [5, 6]
+         |         ^^ [9]
+  [6]  2:7: this `+` gives int | f32 | f64 | rat
+  [7]  2:7: this `^` gives int | f32 | f64 | rat
+  [8]  2:7: this literal, 2, is 2
+  [9]  2:9: this literal, 64, is 64
+  [10] 2:14: this literal, 13, is 13
+  [11] 3:31: this `^` gives int
+  [12] 3:32: this literal, 2, is 2
+  [13] 3:34: this literal, 64, is 64
+  [14] 3:15: the port `m.stdout` writes each value pushed to it as one line of text
+  [15] 3:15: repair: write an empty line in place of each atom, as `m.stdout <- (String(rat(b) ^ (2^64))) else "";`
+  [16] 3:15: repair: handle each atom of the value with `match`, giving the line to write for it
+"#
+        )
+    );
+}

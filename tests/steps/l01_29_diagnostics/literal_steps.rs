@@ -189,3 +189,52 @@ fn a_name_defined_as_an_operation_on_literals_of_a_type_is_read_with_its_type() 
         "{out}"
     );
 }
+
+/// MSG-wide-value-notes: an operation on literals that meets a use asks its class for a
+/// carrier, so its values are what it computes, not the literals that joined the class. The
+/// steps and the sentence give the carriers the class may still take, never the union of the
+/// literals: `b = 2 + 13` is `int | f32 | f64 | rat`, not `2 | 13`.
+#[test]
+fn a_sum_of_literals_is_shown_by_its_carriers_not_by_its_literals() {
+    let out = rejected("main(m: MainArgs) {\n  b = 2 + 13;\n  m.stdout <- b - \"a\";\n}\n");
+    let s = steps(&out);
+    assert!(
+        out.starts_with("3:15: `-` does not take (int | f32 | f64 | rat, \"a\"): no arrow of `-` takes these types."),
+        "{out}"
+    );
+    assert!(s.contains(&"`b` is int | f32 | f64 | rat here"), "{out}");
+    assert!(
+        s.contains(&"`b` is defined as this expression, int | f32 | f64 | rat"),
+        "{out}"
+    );
+    assert!(s.contains(&"this `+` gives int | f32 | f64 | rat"), "{out}");
+    assert!(!out.contains("2 | 13"), "{out}");
+}
+
+/// The same through a call: `f(2 + 13)` with `f(x) = x + 1` gives 16, so the literals `2 | 13`
+/// are not its values either.
+#[test]
+fn a_call_on_a_sum_of_literals_is_shown_by_its_carriers() {
+    let out = rejected(
+        "f(positional x) = x + 1;\nmain(m: MainArgs) {\n  m.stdout <- f(2 + 13) - \"a\";\n}\n",
+    );
+    let s = steps(&out);
+    assert!(
+        out.starts_with("3:15: `-` does not take (int | f32 | f64 | rat, \"a\"): no arrow of `-` takes these types."),
+        "{out}"
+    );
+    assert!(
+        s.contains(&"this call of `f` gives int | f32 | f64 | rat"),
+        "{out}"
+    );
+    assert!(!out.contains("2 | 13"), "{out}");
+}
+
+/// A choice between literals computes nothing: its values are the literals, so the steps
+/// still give them, `2 | 13`.
+#[test]
+fn a_choice_between_literals_is_still_shown_by_its_literals() {
+    let out = rejected("g(c: bool) = (if c { 2 } else { 13 }) - \"a\";\n");
+    let s = steps(&out);
+    assert!(s.contains(&"this `if` gives 2 | 13"), "{out}");
+}

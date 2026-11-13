@@ -3209,18 +3209,32 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// `t` with each class of generic literals alone, not yet resolved, replaced by its
     /// literals, as written: `(1, 2, 3)`, not `(_, _, _)`, for the argument of
-    /// `g((1, 2, 3))` with `g(positional a) = min(a, (1, 2))` in a message.
+    /// `g((1, 2, 3))` with `g(positional a) = min(a, (1, 2))` in a message. A class that a
+    /// use asked for a carrier ([`Class::asked`]) holds what the use computes, `2^64 + 13` for
+    /// the class of `2`, `64` and `13`, not only the literals that joined it, so their union
+    /// `2 | 13` would be a wrong value: it is replaced by the union of the carriers it may
+    /// still take, `int | f32 | f64 | rat`, as [`Self::show`] writes a class narrowed to
+    /// carriers, so that every text of a message writes it alike.
+    // Complexity tradeoff: none; one flag read per class, O(1), beside the test of `generic`.
+    // The checker has no evaluator of constants (constants come from partial evaluation
+    // only), so the value itself is not known here; the carriers are the type the program
+    // could write.
     fn as_literals(&self, t: &Ty) -> Ty {
         let lits: Binds = (t.var_facts().classes.into_iter())
             .filter_map(|v| {
                 let r = self.find(class_id(&v).filter(|&k| k < self.classes.len())?);
                 let c = &self.classes[r];
-                (c.generic && c.resolved.is_none() && !c.lits.is_empty()).then(|| {
-                    let ty = (c.lits.iter())
-                        .filter(|(l, _)| !l.exponent)
-                        .fold(Ty::empty(), |t, (l, _)| t.union(&lit_ty(&l.value, l.neg())));
-                    (v, ty)
-                })
+                if !c.generic || c.resolved.is_some() || c.lits.is_empty() {
+                    return None;
+                }
+                if c.asked {
+                    let narrowed = c.mask != EVERY && c.mask & OTHER == 0;
+                    return narrowed.then(|| (v, Ty::of_mask(c.mask)));
+                }
+                let ty = (c.lits.iter())
+                    .filter(|(l, _)| !l.exponent)
+                    .fold(Ty::empty(), |t, (l, _)| t.union(&lit_ty(&l.value, l.neg())));
+                Some((v, ty))
             })
             .collect();
         t.replace(&lits)
