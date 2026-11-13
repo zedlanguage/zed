@@ -2039,10 +2039,11 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PERF-l139-family | impl attempt 1 | 2026-11-12 18:45 | started; worktree /home/luke/Work/wt/perf-l139-family on 163c04744 |
 | POLY-nf-power-value | impl attempt 1 | 2026-11-12 14:17 | started; worktree wt/poly-nf-power-value from origin/main f2d8e0094 |
 | PRINT-below-whole | impl attempt 1 | 2026-11-11 01:43 | started: rebase wt/print-below-whole (251 behind), benchmark for PRINT_WHOLE/PRINT_HANDOFF per A96 |
-| REFUSAL-census-now | impl attempt 1 | 2026-11-12 19:34 | built step binaries with a temporary capture hook in front::compile; running step groups to capture every unit text (load 55.09 66.05 59.44) |
+| REFUSAL-census-now | impl attempt 1 | 2026-11-12 19:34 | front::compile hook missed units checked through helpers (check_text, elab); moved hook to ast::unit_all_errors and rerunning step groups to capture every parse |
 | REGRESS-l01_26-overload | impl attempt 1 | 2026-11-12 20:07 | started; worktree /home/luke/Work/wt/regress-l0126 from origin/main |
 | STAGE-print | impl attempt 1 | 2026-11-04 03:10 | started; worktree wt/stage-print seeded |
-| UNITS-char16 | running | 2026-11-12 20:15 | spawned; IMPL-common rule 16 (resync fences after DESIGN edits) / 49.48 |
+| TESTS-l01_29-split | running | 2026-11-12 20:21 | spawned (+ two deep_ops tests over 60 s) / 45.83 |
+| UNITS-char16 | impl attempt 1 | 2026-11-12 20:15 | started; making worktrees |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
