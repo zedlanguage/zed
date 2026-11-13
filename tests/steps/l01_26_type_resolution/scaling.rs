@@ -817,7 +817,6 @@ fn destructured_parameters_check_in_linear_time() {
 /// `rows_made_from_disjoint_variable_sets_scale` (question A8). COMPLEXITY.md CK-every-bit, open
 /// for the hard-algorithm cross-review XR-algos.
 #[test]
-#[ignore = "O(n^2), open: COMPLEXITY.md CK-every-bit, for the hard-algorithm cross-review XR-algos (not an author question)"]
 fn replacing_variables_no_row_holds_in_rows_on_every_bit_scales() {
     use std::sync::Arc;
     use zedc::check::ty::Binds;

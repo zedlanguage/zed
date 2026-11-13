@@ -64,7 +64,6 @@ fn fibonacci_pair(n: usize) -> (Int, Int) {
 }
 
 #[test]
-#[ignore = "open: R7-CLAUDE-4, num-bigint products below the NTT crossover allocate about w^1.8 bytes (18.4x bytes, 15.8x work per 8x steps)"]
 fn pncx_fibonacci_scale() {
     let inputs = scaling::inputs(4096, fibonacci_pair);
     scaling::check_order("half-GCD coefficients on Fibonacci inputs", 4096, 1, |n| {
@@ -384,7 +383,6 @@ fn pncx_score_witness_oracle() {
     assert!(gained > 0);
 }
 
-#[ignore = "PRES-scaling-10_5: 10.5 times the work at 64 and 512 and 12.9 times the bytes at 512 and 4096, over the limit of 10.5; open"]
 #[test]
 fn pncx_score_witness_scale() {
     let inputs = scaling::inputs(64, |n| {

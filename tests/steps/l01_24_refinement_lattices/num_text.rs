@@ -110,7 +110,6 @@ fn a_text_that_is_not_an_integer_gets_num_bigints_error() {
 /// It measured 11.8 times (2026-11-12, RADIX-depth, against the n log^2 n limit of that day,
 /// 12.1, and 2026-11-13); it failed at 15.4 (2026-11-09), as the kernel's reading test did
 /// (COMPLEXITY.md C31).
-#[ignore = "RADIX-nlog2-10_5: 11.9 times the work at 160,000 and 1,280,000 digits and 10.8 at 8 times those, over the limit of 10.5; open"]
 #[test]
 fn reading_a_long_decimal_end_scales() {
     let texts = scaling::inputs(160_000, |n| digits(&mut Rng::new(n as u64), n));
@@ -156,7 +155,6 @@ fn writing_a_long_decimal_end_scales() {
 /// meets, so it is ignored until a printing below `PRINT_WHOLE` within it, or a lower
 /// crossover, is found (PRINT-below-whole-13).
 #[test]
-#[ignore = "PRINT-below-whole-13: num-bigint's printing below PRINT_WHOLE, 22.4 times the bytes at 10,000 and 80,000 digits, over the limit of 13 since TESTS-scaling-limit-13; open"]
 fn writing_an_end_below_print_whole_scales() {
     let ends = scaling::inputs(10_000, |n| {
         let text = digits(&mut Rng::new(n as u64), n);

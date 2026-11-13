@@ -1004,7 +1004,6 @@ fn by_one_place_from_the_front(n: usize, two: bool, tag: &str) -> Type {
     &list_named(Type::int(), tag) - &(&ts[n] | &ts[2 * n])
 }
 
-#[ignore = "SUB-fork-place-bytes: the fork, 11.3 times the bytes at 8 and 64 and 36.2 at 64 and 512, over the limit of 10.5; open"]
 #[test]
 fn a_union_of_lists_by_the_place_of_a_one_is_refused_in_its_size() {
     // The lists of integers against those with a 1 at each place from the end up to `n`, with
@@ -1071,7 +1070,6 @@ fn lists_by_the_place_of_a_one_are_decided_or_refused_by_their_cycles() {
 }
 
 #[test]
-#[ignore = "SUB-empty-fork-bytes: 14.1 times the bytes in the first runs at 8 and 64, over the limit of 13 since TESTS-scaling-limit-13; open"]
 fn emptiness_counts_a_fork_as_inhabited_in_its_size() {
     // `is_empty` meets the fork `verdict` refuses and counts the type as inhabited, in time
     // linear in `n`; on a70df51b it followed the fork: 8 ms, 277 ms and 32.5 s at `n` 1, 4 and
@@ -5114,7 +5112,6 @@ fn r7_round6_probe_cases_are_decided_in_their_size() {
 /// 1,044,569 and 16,634,849 for `r6twoun`, 15.9 times each (until then n log n with a slack of
 /// 1.1, 17.6 at `n` = 8). The other four cases measure 5.7 to 7.1 times the instructions.
 #[test]
-#[ignore = "SUB-r6two-bytes: r6two and r6twoun, 15.9 times the bytes in the first runs at 8 and 64, over the limit of 13 since TESTS-scaling-limit-13; open"]
 fn r7_round6_probe_cases_r6two_and_r6twoun_are_decided_in_their_size() {
     r5_cases_scale(&[("r6two", Verdict::Inhabited), ("r6twoun", Verdict::Empty)]);
 }
@@ -8547,7 +8544,6 @@ fn r10_precision_case(tag: &str, reverse: bool) -> Type {
 }
 
 #[test]
-#[ignore = "REFUSAL-front-rest U2 (R10-C3): Inhabited on 19bc4e25; Fork on 27a5b72b4"]
 fn r10_answer_preservation_nine_node_list_regression() {
     big(|| {
         for reverse in [false, true] {
@@ -8821,7 +8817,6 @@ fn r11_payload_name_prefix_probe() {
 }
 
 #[test]
-#[ignore = "REFUSAL-front-rest U4 (R11-C3): payload-bearing prefixes still reread a shared persistent name map"]
 fn r11_payload_name_prefixes_must_scale() {
     big(|| {
         let a = r11_payload_name_prefixes(128);

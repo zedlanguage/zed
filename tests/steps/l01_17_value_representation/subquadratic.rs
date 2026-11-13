@@ -134,7 +134,6 @@ fn dividing_a_wide_number_scales() {
 /// scaling test meets. It passes, 11.4 times the work against that order's limit of the day,
 /// 13.3 (2026-11-12, RADIX-depth), and 11.4 (2026-11-13); it failed at 16.4 (2026-11-09), as
 /// the transforms were dear.
-#[ignore = "RADIX-nlog2-10_5: 11.4 times the work at 8192 and 65,536 words, over the limit of 10.5; open"]
 #[test]
 fn a_gcd_of_wide_numbers_scales() {
     let n = 1 << 13;

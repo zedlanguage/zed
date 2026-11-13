@@ -1627,8 +1627,6 @@ fn a_morphism_on_a_cycle() {
 /// `R2 = ((int) -> R2) | ((R1) -> R0)`: the pool's closure that returns a pair holding itself
 /// is a member, and the kernel refuses it (`LISTED_LAYER`).
 #[test]
-#[ignore = "GROUP-layered-nowitness: a function type whose value is a pair of itself and a \
-            difference of two definitions is refused NoWitness"]
 fn layered_seed_799_member_3_is_inhabited() {
     let sys = gen_layer(&mut Rng::new(799));
     assert_eq!(both(&sys, "layer799")[3], Some((Verdict::Inhabited, 'I')));

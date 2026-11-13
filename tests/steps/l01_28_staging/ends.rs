@@ -285,7 +285,6 @@ fn arms_that_call_different_let_functions_on_a_shared_part_are_read_in_time_near
     });
 }
 
-#[ignore = "STAGE-scaling-10_5: 10.5 times the bytes at 1000 and 8000, over the limit of 10.5; open"]
 #[test]
 fn two_chains_of_calls_joined_at_every_level_are_read_in_time_near_their_size() {
     // `pj = aj(p(j-1))`, `qj = bj(q(j-1))` and `pj + qj` for every j, with the names `a1, b1,

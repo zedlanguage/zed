@@ -91,8 +91,6 @@ fn a_payload_pattern_that_binds_its_field_keeps_the_atom_for_underscore() {
 }
 
 #[test]
-#[ignore = "ISSUE1-payload: an atom type with a payload in a parameter type, `#e(int)`, is refused by \
-            zedc at L1"]
 fn a_declared_payload_pattern_keeps_the_atom_in_the_type() {
     // The program of the test audit of 2026-11-08, with a declared parameter. The printed
     // types are read from the printer's form for an inferred payload, `#e(code: 1)`.

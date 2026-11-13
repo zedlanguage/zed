@@ -825,7 +825,6 @@ fn shared_moduli(n: usize) -> BTreeSet<Int> {
 }
 
 #[test]
-#[ignore = "open: R7-CLAUDE-3, the remainder tree costs M(N) log k and products of 500 to 1,000 words grow about 4x per doubling (21.7x work per 8x moduli)"]
 // I3.4/I5.11: the strict preparation bound fails; see R7_CLAUDE.md.
 fn pncx_common_factor_scale() {
     let inputs = scaling::inputs(512, shared_moduli);
@@ -899,7 +898,6 @@ fn pncx_bound_merge_enumeration() {
     }
 }
 
-#[ignore = "PRES-scaling-10_5: 12.2 times the bytes at 64 and 512 and 10.8 at 512 and 4096, over the limit of 10.5; open"]
 #[test]
 fn pncx_bound_merge_scale() {
     let inputs = scaling::inputs(64, holes);

@@ -1253,7 +1253,6 @@ fn leaf_ranges(s: &Scope, k: usize) -> Vec<String> {
         .collect()
 }
 
-#[ignore = "RP-scaling-10_5: 11.5 times the work at 16 and 128, over the limit of 10.5; at 8 times those it runs past 60 s; open"]
 #[test]
 fn equalities_of_many_names_to_the_hubs_of_a_disjunction_scale() {
     // Each `a + b - zi == i` is a pendant of the hubs' block: projecting the whole block onto
@@ -1281,7 +1280,6 @@ fn equalities_of_many_names_to_the_hubs_of_a_disjunction_scale() {
     );
 }
 
-#[ignore = "RP-scaling-10_5: 10.8 times the work at 16 and 128, over the limit of 10.5; at 8 times those it runs past 60 s; open"]
 #[test]
 fn leaves_of_ordered_hubs_with_upper_bounds_scale() {
     // `zi >= a + b`, then `zi <= 1000`: each leaf a pendant of the hubs' block, which was

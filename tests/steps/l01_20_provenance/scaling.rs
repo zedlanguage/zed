@@ -81,7 +81,6 @@ fn the_term_of_every_fact_scales() {
     });
 }
 
-#[ignore = "PROV-scaling-10_5: 11.1 times the bytes at 64 and 512 and 10.5 at 512 and 4096, over the limit of 10.5; open"]
 #[test]
 fn the_origins_of_a_failure_with_many_members_scale() {
     // The product of `n` distinct loose atoms: its `#errs` has `n` members, each first

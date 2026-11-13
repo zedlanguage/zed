@@ -350,7 +350,6 @@ fn many_rows_scale_linearly() {
     scales("rows over three variables", 256, 1, &small, &large);
 }
 
-#[ignore = "PRES-scaling-10_5: 10.7 times the work at 64 and 512 bits, over the limit of 10.5; at 8 times those it runs past 60 s; open"]
 #[test]
 fn wide_coefficients_scale() {
     // From 64 bits, past the `i128` fast path of `Int`, so both sizes measure big integers. A
@@ -884,7 +883,6 @@ fn a_lens_of_tangent_planes_scales_in_point() {
 }
 
 #[test]
-#[ignore = "LIVE3-origin-long-path: 97.5 times the bytes in the first runs at 64 and 512 pairs, over the limit of 13 since TESTS-scaling-limit-13; 64 takes the shorter path; open"]
 fn a_lens_of_tangent_planes_over_the_origin_scales_in_point_on_its_long_path() {
     // The lens alone over the origin, at two sizes where `point` takes the same path: five
     // linear programs, e0 and -e0, then directions of 13 to 25 digits, the last vertex's

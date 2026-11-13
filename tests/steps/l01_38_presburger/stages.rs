@@ -602,7 +602,6 @@ fn split_bad_gor_scales() {
     });
 }
 
-#[ignore = "PRES-scaling-10_5: 10.8 times the work at k = 128 and 1024, over the limit of 10.5; open"]
 #[test]
 fn split_bad_gor_both_ways_scales() {
     // Slow for both quick searches on the graph and on its reverse, so Duong's search finishes

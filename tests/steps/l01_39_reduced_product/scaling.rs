@@ -1153,7 +1153,6 @@ fn tightenings_beside_disjunctions(
 /// the parts on a changed term due in the same way
 /// (`tightenings_of_a_term_compared_by_many_disjunctions_scale`).
 #[test]
-#[ignore = "TIGHTEN-k-parts: 62.4 times the bytes at 12 and 96 (2026-11-12), over the limit of 13; k parts due at each of k tightenings"]
 fn tightenings_of_a_sum_beside_many_disjunctions_on_both_names_scale() {
     let n = 12;
     let family = |k| {
@@ -1185,7 +1184,6 @@ fn tightenings_of_a_sum_beside_many_disjunctions_on_both_names_scale() {
 /// the bytes at 8k (12 and 96), as for a group of linked constraints
 /// (`tightenings_of_a_sum_beside_many_disjunctions_on_both_names_scale`).
 #[test]
-#[ignore = "TIGHTEN-k-parts: 62.3 times the bytes at 12 and 96 (2026-11-12) on main's rule, over the limit of 13; k parts on a term due at each of k tightenings"]
 fn tightenings_of_a_term_compared_by_many_disjunctions_scale() {
     let n = 12;
     let family = |k| {

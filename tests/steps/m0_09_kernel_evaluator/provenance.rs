@@ -157,7 +157,6 @@ fn two_uses_of_a_cloned_term_in_one_scope_are_two_facts() {
     assert_eq!(twos, 2);
 }
 
-#[ignore = "PROV-scaling-10_5: 10.9 times the work at 500 and 4000, over the limit of 10.5; open"]
 #[test]
 fn the_origins_of_a_failure_read_through_a_wide_tuple_scale() {
     // The runs are recorded before the timing, which covers the walk alone. A search per
@@ -583,7 +582,6 @@ fn the_sets_of_a_table_changed_entry_by_entry_agree_with_a_search() {
     agrees_with_search(&t);
 }
 
-#[ignore = "PROV-scaling-10_5: 10.6 times the bytes at 200 and 1600, over the limit of 10.5; open"]
 #[test]
 fn the_origins_of_a_set_every_row_holds_scale() {
     // `n` rows hold one `#errs` set of `n` members. Each row's set was counted member by

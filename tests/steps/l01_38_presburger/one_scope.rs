@@ -2720,7 +2720,6 @@ fn unit_relations_scale(what: &str, n: usize, unit: fn(usize) -> String) {
     });
 }
 
-#[ignore = "PRES-scaling-10_5: 12.9 times the bytes at 50 and 400 links, over the limit of 10.5; open"]
 #[test]
 fn the_questions_of_a_chain_calling_a_callee_that_keeps_a_congruence_scale() {
     // `p{i}(x) = h{n-1}(x: x) && p{i-1}(x: x + 1) && x < 1000 i` beside `h{j}(x) =
@@ -5520,7 +5519,6 @@ fn remainder_alias_case(
 // answered and 476 differ, each answered under one naming and refused under another (696 with
 // the round-6 rule alone).
 #[test]
-#[ignore = "PERF-negated-chain-unsolved U4: the remainder choice by Atom order; 476 of 1,000 cases are answered under one naming and refused under another (I6.3)"]
 fn remainder_alias_answers_do_not_depend_on_names() {
     // I6.3: the remainder of `x = m q + r` was the greater `Atom` of the two unit terms, so
     // `a == x mod m` and `z == x mod m` read different rows. Each case is asked with the alias

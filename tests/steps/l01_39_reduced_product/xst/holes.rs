@@ -132,7 +132,6 @@ fn ce_b_sets_are_exact_in_every_order() {
 /// The collective example: `z` in `{0, 1, 2, 3, 5, 6}` in all 120 orders. Main keeps `z = 4`
 /// (COMPLEXITY.md S25).
 #[test]
-#[ignore = "HOLES-exact-between: needs exact values between the ends (cross-review xst O4); ST-holes-moves gives exact ends only"]
 fn collective_sets_are_exact_in_every_order() {
     assert_eq!(collective().exact()[2], [0, 1, 2, 3, 5, 6]);
     check_named("collective", &collective(), true);
@@ -305,7 +304,6 @@ fn random_systems_have_exact_ends() {
 /// Every system of [`corpus`]: every name's whole set is exact, its tests in order and as
 /// one conjunction (META4 result 1).
 #[test]
-#[ignore = "HOLES-exact-between: needs exact values between the ends (cross-review xst O4); ST-holes-moves gives exact ends only"]
 fn random_systems_have_exact_sets() {
     for inst in corpus() {
         let want = inst.exact();
@@ -698,7 +696,6 @@ fn laps_without_the_closing_edge_take_near_linear_time() {
 
 /// Claude round 4 (`probe_r4_holes_collective_chain`): 4 and 32 copies of the collective
 /// example in one chain.
-#[ignore = "RP-scaling-10_5: 11.3 times the work at 4 and 32 and 17.9 times the bytes at 32 and 256, over the limit of 10.5; open"]
 #[test]
 fn a_chain_of_collective_examples_has_exact_ends_in_near_linear_time() {
     family("collective chain (copies)", 4, collective_chain);
@@ -708,7 +705,6 @@ fn a_chain_of_collective_examples_has_exact_ends_in_near_linear_time() {
 /// collective example in a chain; every name's set is exact in order, reversed and as one
 /// conjunction.
 #[test]
-#[ignore = "HOLES-exact-between: needs exact values between the ends (cross-review xst O4); ST-holes-moves gives exact ends only"]
 fn a_chain_of_two_collective_examples_has_exact_sets() {
     let inst = collective_chain(2);
     let want = inst.exact();
@@ -831,7 +827,6 @@ fn the_staircase_of_four_has_exact_sets() {
 /// simple cycle and has three names with holes, so META4 result 1 refuses it: a warning, and
 /// every exact value kept, in every rotation and as one conjunction.
 #[test]
-#[ignore = "HOLES-exact-between: needs hole tests written in one `&&` kept out of the relation's other conjuncts; ST-holes-moves refuses in every order of separate tests"]
 fn two_cycles_through_three_names_with_holes_are_refused() {
     let inst = Inst {
         range: vec![(0, 6); 3],

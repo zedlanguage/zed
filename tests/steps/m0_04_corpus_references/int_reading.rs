@@ -119,7 +119,6 @@ fn a_long_text_that_is_not_an_integer_is_refused() {
 /// 100,000 digits: below the product's crossover (`TRANSFORM_WORDS`, about 43,000 digits) the
 /// joins use num-bigint's n^1.46 product and 20,000 to 160,000 digits grow 15.89 times, a range the
 /// author accepted (2026-11-12; measurements at `TRANSFORM_WORDS`).
-#[ignore = "RADIX-nlog2-10_5: 11.7 times the work at 100,000 and 800,000 digits and 12.4 at 8 times those, over the limit of 10.5; open"]
 #[test]
 fn reading_a_long_number_scales() {
     let texts = scaling::inputs(100_000, |n| {

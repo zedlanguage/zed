@@ -768,7 +768,6 @@ scaling_tests! {
     nested_moduli_eq_4096_scales: "nested_moduli_eq_4096" at 160;
     nested_moduli_eq_long_scales: "nested_moduli_eq" at 128;
     nested_moduli_mod7_scales: "nested_moduli_mod7" at 2;
-    #[ignore = "REF-normal-abs-gap: 10.6 times the bytes at 8n, over the limit of 10.5; open"]
     normal_abs_gap_scales: "normal_abs_gap" at 16;
     normal_add_base_scales: "normal_add_base" at 16;
     normal_div_chain_scales: "normal_div_chain" at 16;
@@ -832,7 +831,6 @@ fn output_grid_work_grows_with_its_answer() {
 /// [`scales`] on `nested_moduli_eq_4096` with the constants of n = 6 mod 10 next to the root at
 /// every n, an answer of about 760 pieces at both sizes.
 #[test]
-#[ignore = "REF-nested-moduli-state: the reference preimage's remainder chain costs about 150M instructions a link, 21.4 times the instructions and 20.5 times the bytes at 16 and 128 links, 11.5 and 12.1 at 64 and 512, over the limit; open"]
 fn nested_moduli_eq_4096_at_6_scales() {
     scales("nested_moduli_eq_4096_at_6", 16);
 }

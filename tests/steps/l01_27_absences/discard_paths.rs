@@ -199,7 +199,6 @@ fn an_argument_with_a_default_carries_no_loose_failure_into_the_call() {
 }
 
 #[test]
-#[ignore = "`match` arrives at step L2.4; until then resolve refuses it before the checker"]
 fn a_match_arm_that_leaves_a_loose_failure_is_rejected() {
     // L2.4: each arm is checked on its own, as each branch of an `if` is.
     let t = in_f("_ = match lookup(c) { #notFound -> #ok, n -> lookup(n) };");

@@ -68,7 +68,6 @@ fn the_one_tuple_pattern_matches_a_tuple_of_one() {
 
 /// The test the row asks for on the surface `match`; it runs once step L2.4 elaborates `match`.
 #[test]
-#[ignore = "the surface `match` is elaborated from step L2.4"]
 fn a_surface_match_on_a_one_tuple_evaluates() {
     assert_eq!(value("v = (5,);\nx = match v { (a,) -> a };\n", "x"), "5");
 }

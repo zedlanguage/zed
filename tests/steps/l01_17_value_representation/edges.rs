@@ -279,7 +279,6 @@ fn the_natural_order_places_zeros_subnormals_and_nan() {
 // and the format, and sec:order: "a total order whose ties are exactly `==`"; `-0.0` and `0.0`
 // are the one rational 0 in one format and `-0.0 == 0.0`, so the two zeros tie.
 #[test]
-#[ignore = "SPEC-zero-order: DESIGN gives the two zeros one place in the natural order; value.rs number_cmp puts -0.0 first by total_cmp, and Value's Eq tells them apart, so a tie breaks Ord's contract"]
 fn the_two_float_zeros_tie_in_the_natural_order() {
     let vs = values("z = 0.0f64;\nm = -0.0f64;\n", &["z", "m"]);
     assert_eq!(vs[1].cmp(&vs[0]), Ordering::Equal);

@@ -2088,7 +2088,6 @@ fn satellite_built_in_a_random_order(d: usize, bounds: bool) {
 /// [`stars_formed_in_the_block_of_a_satellite_take_time_near_the_block`] and
 /// [`a_satellite_of_every_hub_taken_apart_takes_time_near_the_block_per_conjunct`].
 /// COMPLEXITY.md C37.
-#[ignore = "RP-scaling-10_5: built without bounds in a random order, 11.0 times the work at 64 and 512 and 10.9 at 512 and 4096, over the limit of 10.5; open"]
 #[test]
 fn a_satellite_of_every_hub_costs_its_related_names_once_in_any_order() {
     for bounds in [false, true] {
@@ -2176,7 +2175,6 @@ fn stars_formed_in_the_block_of_a_satellite_take_time_near_the_block() {
 /// times the bytes (2026-11-09). The star index is not the cost: the needs stay within three
 /// per hub ([`a_satellite_of_every_hub_costs_its_related_names_once_in_any_order`]).
 /// COMPLEXITY.md C37.
-#[ignore = "RP-scaling-10_5: 11.2 times the work at 64 and 512 and 11.0 at 512 and 4096, over the limit of 10.5; open"]
 #[test]
 fn a_satellite_of_every_hub_taken_apart_takes_time_near_the_block_per_conjunct() {
     let orders = satellite_orders(64, false);

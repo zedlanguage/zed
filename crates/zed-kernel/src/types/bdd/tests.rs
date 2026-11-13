@@ -1910,7 +1910,6 @@ fn joined_blocks(base: u64, m: usize) -> Bdd<Row> {
     f
 }
 
-#[ignore = "KERNEL-bdd-rejoin-bytes: 10.7 times the bytes at 512 and 4096 and 11.0 at 4096 and 32,768, over the limit of 10.5; open"]
 #[test]
 fn rejoining_one_atom_of_each_block_scales() {
     // Item CHAIN-deep-atom: a list of `m` blocks, one atom of each joined again, the

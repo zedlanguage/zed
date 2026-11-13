@@ -262,9 +262,6 @@ fn each_design_example_with_a_menu_stands_in_designs_order_and_zedc_writes_it_so
 }
 
 #[test]
-#[ignore = "LIT-menu-design-gaps: DESIGN's step form (`1. the division (1:13)` with the source line under each \
-            step) against its rule that a source line shared by steps is shown once, and the \
-            fixes that declare a type (layer L10); LIT-menu-match-design, QUESTIONS.md"]
 fn the_message_of_a_division_of_integer_literals_is_designs_whole() {
     // DESIGN.md sec:diagnostics, "A `/` of integer literals": the message, word for word, with
     // zedc's `line:col: ` in place of `error: `.

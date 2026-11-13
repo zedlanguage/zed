@@ -1240,7 +1240,6 @@ fn holes_family(fam: &str, n: usize) -> (Formula, Vec<Atom>) {
 /// revision, where each disjunction was asked about every symbol of its group before, Θ(n²)
 /// in all (item PROJECT-each-chain-xr; 16.5 to 41.5 times the instructions from 64 to 128
 /// before, 2.2 times from 128 to 256 after).
-#[ignore = "PRES-scaling-10_5: the family chain, 10.8 times the work at 16 and 128 and 10.6 at 128 and 1024, over the limit of 10.5; open"]
 #[test]
 fn holes_on_difference_chains_scale() {
     for fam in [
@@ -1255,7 +1254,6 @@ fn holes_on_difference_chains_scale() {
 /// measured 2026-11-13, 6,819,419 and 94,519,460 bytes in the first runs at 16 and 128, 13.9
 /// times (until then n log n with a slack of 1.1, 15.4 at `n` = 16).
 #[test]
-#[ignore = "PRES-holes-steps-cost: 13.9 times the bytes in the first runs at 16 and 128, over the limit of 13 since TESTS-scaling-limit-13; open"]
 fn holes_of_steps_of_ten_on_a_difference_chain_scale() {
     holes_family_scales("steps");
 }

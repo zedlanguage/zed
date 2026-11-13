@@ -553,7 +553,6 @@ fn overlap(order: [usize; 2], want: &str) -> String {
 /// arrows (rule 6 of sec:type_resolution), so swapping two declarations of one name changes
 /// the answer, which is why the permutations keep each name's declarations in written order.
 #[test]
-#[ignore = "needs overload dispatch (step L2.6) and refinement and result types (layer L10)"]
 fn swapping_two_declarations_of_one_name_changes_which_arrow_runs() {
     for (order, want) in [([0, 1], "a"), ([1, 0], "b")] {
         let unit = overlap(order, want);

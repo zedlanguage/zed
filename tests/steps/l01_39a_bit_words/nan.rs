@@ -261,7 +261,6 @@ fn the_square_root_of_a_negative_is_the_canonical_nan() {
 }
 
 #[test]
-#[ignore = "NAN-cast-atoms: the float casts do not yet take `#NaN`"]
 fn the_cast_of_the_nan_atom_is_the_canonical_nan() {
     // Outside `@fpwarn` code the cast gives the float with no atom (DESIGN.md sec:failure).
     assert_eq!(x("f64Bits(f64(#NaN))"), CANONICAL.to_string());
@@ -270,7 +269,6 @@ fn the_cast_of_the_nan_atom_is_the_canonical_nan() {
 }
 
 #[test]
-#[ignore = "L1.18a: `f32Bits`, `f16Bits` and `bf16Bits` are not yet defined"]
 fn the_other_formats_give_their_canonical_nan() {
     // The quiet NaN with cleared sign and zero payload of binary32, binary16 and bfloat16.
     assert_eq!(x("f32Bits(0.0f32 / 0.0f32)"), 0x7FC0_0000u32.to_string());

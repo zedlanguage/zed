@@ -104,8 +104,6 @@ fn underscore_drops_the_quotient_only_where_the_divisor_cannot_be_zero() {
 }
 
 #[test]
-#[ignore = "open: the refinement `int[1..=9]` in a parameter type is layer L10 (step L10.1), \
-            and zedc refuses it at L1"]
 fn a_divisor_declared_without_zero_adds_no_div_by_zero() {
     // DESIGN.md step L1.26: "A division, `div` or `mod` whose divisor's type holds no zero
     // adds no `#divByZero`."

@@ -2319,7 +2319,6 @@ fn chain_t3_gaps_scales() {
 }
 
 /// The chain that leaves `i64`, with the negative inputs meeting `t_k < 0`.
-#[ignore = "S22-scaling-10_5: 10.8 times the bytes at 256 and 2048 and 23.7 at 2048 and 16,384, over the limit of 10.5; open"]
 #[test]
 fn chain_t3_gaps_five_no_scales() {
     scales("t3_gaps_five_no", 256);
@@ -2549,7 +2548,6 @@ fn chains_on_two_inputs_keep_their_boxes() {
     });
 }
 
-#[ignore = "S22-scaling-10_5: 10.7 times the bytes at 32 and 256, over the limit of 10.5; at 8 times those it runs past 60 s; open"]
 #[test]
 fn chain_cross_live_scales() {
     scales("cross_live", 32);
@@ -3764,7 +3762,6 @@ fn x_with_holes(h: usize) -> Domains {
 /// union is met with the domain once. Meeting each range with the whole domain read `O(k)`
 /// pieces for each of `O(k)` ranges, `O(k^2)`: 2193 and 132225 pieces at `k = 8` and `64`,
 /// 60 times (negative control, not committed), where this reads 245 and 2693, 11 times.
-#[ignore = "S22-scaling-10_5: 10.99 times the pieces read at 8 and 64, over the limit of 10.5; open"]
 #[test]
 fn class_ranges_read_the_holes_once() {
     on_big_stack(|| {
@@ -3835,7 +3832,6 @@ fn forward_sets_of_a_chain_share_the_holes_scale() {
 /// Measured with `glibc.malloc.tcache_count=0`, load about 20: 10.1 times the instructions and
 /// 11.0 times the bytes from `k = 8` to `64`; main at 01eb1be0 took 19.3 times the instructions
 /// and 26.9 times the bytes (limit 17.6).
-#[ignore = "S22-scaling-10_5: 11.4 times the bytes at 8 and 64 and 17.0 at 64 and 512, over the limit of 10.5; open"]
 #[test]
 fn split_classes_share_the_holes_scale() {
     on_big_stack(|| {

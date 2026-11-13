@@ -353,7 +353,6 @@ fn writing_nested_lets_whose_part_reads_a_name_bound_twice_scales() {
     });
 }
 
-#[ignore = "STAGE-scaling-10_5: 11.5 times the work at 50 and 400, over the limit of 10.5; open"]
 #[test]
 fn writing_a_part_reading_many_names_bound_twice_scales() {
     deep(|| {
