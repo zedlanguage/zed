@@ -2126,6 +2126,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | NARROW-ne-divisor | impl attempt 1 | 2026-11-12 23:26 | cause: walk.rs nonzero read only the divisor's type, never the arm's interval (Scope narrowing of d != 0 already non-convex); fix reads ints_here for an int div |
 | PERF-deep-ops-slow | impl attempt 1 | 2026-11-12 21:38 | union_all atoms fast path: family ratio 9.06 -> 8.82 by callgrind; running battery / load 52.89 46.05 42.49 |
 | PERF-l139-family | running | 2026-11-12 18:45 | coordkk fixed d016b9cc3 90a844aa8; 14 tests in 8 families still ignored, cross-review next / 45.57 |
+| PERF-ref-memo-quadratic | running | 2026-11-10 18:04 | 2026-11-13: A88 answered (find a subquadratic algorithm); need on QUESTIONS-answered dropped |
 | RT-sites | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/rt-sites on origin/main 13bb12924 |
 | ST-K3-narrow | impl attempt 1 | 2026-11-11 01:43 | reproduced: no refusal of this kind on main; ping-pong and shifted ping-pong exact; random 6000 runs 5942 exact, 0 refused, 58 wider sound supersets; design in  |
 | ST-walk-implicit | impl attempt 1 | 2026-11-11 01:43 | started: worktree /home/luke/Work/wt/st-walk-implicit on origin/main 89d83b4a3 / load 36.87 40.84 46.29 |
