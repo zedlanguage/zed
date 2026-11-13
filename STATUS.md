@@ -2046,13 +2046,15 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | MSG-is-repair-v | running | 2026-11-12 17:32 |  |
 | MSG-lines-headline | running | 2026-11-12 17:32 |  |
 | MSG-width-headline | running | 2026-11-12 17:32 |  |
+| PERF-l139-family | running | 2026-11-12 18:45 | coordkk fixed d016b9cc3 90a844aa8; 14 tests in 8 families still ignored, cross-review next / 45.57 |
+| POLY-nf-power-value | running | 2026-11-12 14:17 | impl merged fast path 8c2710fc5; W <= K(n) refusal not merged (W does not track cost); CD xr POLY-nf-W spawned / 45.76 |
 | PRINT-below-whole | impl attempt 1 | 2026-11-11 01:43 | started: rebase wt/print-below-whole (251 behind), benchmark for PRINT_WHOLE/PRINT_HANDOFF per A96 |
-| REFUSAL-census-now | impl attempt 1 | 2026-11-12 19:34 | captured 59,664 distinct units (454 MB, most from scaling families); censusing them in 239 pieces of 250 units, 12 at a time, each run under 60 s (load 40.26 43 |
+| REFUSAL-census-now | impl attempt 1 | 2026-11-12 19:34 | full census done: 59,664 units, 1,414 refusal lines in 120 units; rerunning 27 units flagged at the 60 s range limit one by one (load 30.73 44.79 48.99) |
 | REGRESS-l01_26-overload | impl attempt 1 | 2026-11-12 20:07 | reproduced 4 failures on 969576f90 (16.5, 16.3, 15.0, 23.8x, load 46); bisect: first bad commit 502dc1de5 (GSX-unsolved merge), 151b26576 passes |
 | STAGE-print | impl attempt 1 | 2026-11-04 03:10 | started; worktree wt/stage-print seeded |
 | TESTS-l01_29-split | impl attempt 1 | 2026-11-12 20:21 | l01_29 split: 101 pieces, 393 passed 3 ignored (was 1 piece 387+3; two nested tests now 4 parts each), slowest piece 15.7 s at load 39.5 to 44.8 |
 | UNITS-char16 | impl attempt 1 | 2026-11-12 20:15 | started; making worktrees |
-| WARN-refused-shadowed | impl attempt 1 | 2026-11-12 20:35 | red on main: new shadow test fails with outer question steps [1-3] in inner rejection at 1:243; contrast passes; load 50.19 52.21 51.22 |
+| WARN-refused-shadowed | impl attempt 1 | 2026-11-12 20:35 | tests l01_29_diagnostics + l01_39_reduced_product: 264 pieces, 0 failed (l01_29 389 passed); load 35.27 to 59.24 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
