@@ -99,10 +99,11 @@ fn a_rejected_unit_is_kept_with_its_diagnostics() {
     let bad = "tax(positional cents: int) = cents * \"8\";\n";
     let first = checks(&mut db, bad);
     assert_eq!(first.len(), 1);
-    // The outcome carries the diagnostic's derivation, as `zedc test` prints it.
+    // The outcome carries the diagnostic's derivation, as `zedc test` prints it; its headline
+    // ends with the first repair (DESIGN sec:diagnostics, "A short headline").
     assert!(
         first[0]
-            .starts_with("1:30: `*` does not take (int, \"8\"): no arrow of `*` takes these types.\n  [1] 1:30: `cents` is int here\n"),
+            .starts_with("1:30: `*` does not take (int, \"8\"): no arrow of `*` takes these types. Try `cents * int(\"8\")` instead.\n  [1] 1:30: `cents` is int here\n"),
         "{first:?}"
     );
     assert_eq!(checks(&mut db, bad), first);

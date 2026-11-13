@@ -517,9 +517,9 @@ fn zedc_run_prints_each_syntax_error_and_the_type_errors_of_the_declarations_tha
 }
 
 /// MSG-derive-print-unions (COMPLEXITY.md K110): a chain of names each holding a union, and the
-/// same chain with literals in place of the union. A part holding a union is taken from an
-/// earlier step only where the later type uses the union as often, which `zedc run` prints as
-/// it did when each step printed its type anew.
+/// same chain with literals in place of the union. A union is named by the message, at the
+/// first step that uses it twice or more, and that name is kept in every later step
+/// (MSG-derive-print-union-names), so each link of the chain is named once.
 const UNIONS: &str = "g(positional c: bool) = if c { 1 } else { 2 };\na0 = (g(true), 0);\n\
                       a1 = (a0, g(false));\na2 = (a1, g(false));\na3 = (a2, g(false));\n\
                       u = a3 < 1;\n";
@@ -527,58 +527,61 @@ const NO_UNION: &str = "a0 = (1, 0);\na1 = (a0, 2);\na2 = (a1, 2);\na3 = (a2, 2)
 
 #[test]
 fn zedc_run_prints_the_rejection_of_a_chain_of_names_each_holding_a_union() {
-    // `a0`'s steps write `1 | 2` out, used once there; `a1` uses it twice, so from `a1` on the
-    // union is `T1`, and `a0`'s tuple is written `(T1, 0)` inside `T2`.
+    // The sentence, read first, uses `1 | 2` four times, so it names the union `T1` and every
+    // step after it writes `T1`, `a0`'s steps and `g`'s result too (DESIGN sec:diagnostics,
+    // "Types in a message"); `a0`'s tuple `(T1, 0)`, written in its steps and inside `T3`, is
+    // `T2`.
     let f = file("unions.zed", UNIONS);
     assert_eq!(
         rejection("run", &f),
         format!(
             "{}:{}",
             f.display(),
-            r#"6:5: Cannot compare unequal types: `a3 : (T3, T1)` with the right operand (`1`) in `a3 < 1`.
-  T1, T2 and T3 stand for parts written more than once:
+            r#"6:5: Cannot compare unequal types: `a3 : (T4, T1)` with the right operand (`1`) in `a3 < 1`.
+  T1, T2, T3 and T4 stand for parts written more than once:
     type T1 = 1 | 2;
-    type T2 = ((T1, 0), T1);
+    type T2 = (T1, 0);
     type T3 = (T2, T1);
-  [1]  6:5: `a3` is (T3, T1) here
+    type T4 = (T3, T1);
+  [1]  6:5: `a3` is (T4, T1) here
        6 | u = a3 < 1;
          |     ^^ [1]
          |     ^^^^^^ [19, 20]
-  [2]  5:6: `a3` is defined as this expression, (T3, T1)
+  [2]  5:6: `a3` is defined as this expression, (T4, T1)
        5 | a3 = (a2, g(false));
          |      ^^^^^^^^^^^^^^ [2, 3]
          |       ^^ [4]
          |           ^^^^^^^^ [18]
-  [3]  5:6: this expression gives (T3, T1)
-  [4]  5:7: `a2` is T3 here
-  [5]  4:6: `a2` is defined as this expression, T3
+  [3]  5:6: this expression gives (T4, T1)
+  [4]  5:7: `a2` is T4 here
+  [5]  4:6: `a2` is defined as this expression, T4
        4 | a2 = (a1, g(false));
          |      ^^^^^^^^^^^^^^ [5, 6]
          |       ^^ [7]
          |           ^^^^^^^^ [17]
-  [6]  4:6: this expression gives T3
-  [7]  4:7: `a1` is T2 here
-  [8]  3:6: `a1` is defined as this expression, T2
+  [6]  4:6: this expression gives T4
+  [7]  4:7: `a1` is T3 here
+  [8]  3:6: `a1` is defined as this expression, T3
        3 | a1 = (a0, g(false));
          |      ^^^^^^^^^^^^^^ [8, 9]
          |       ^^ [10]
          |           ^^^^^^^^ [16]
-  [9]  3:6: this expression gives T2
-  [10] 3:7: `a0` is (1 | 2, 0) here
-  [11] 2:6: `a0` is defined as this expression, (1 | 2, 0)
+  [9]  3:6: this expression gives T3
+  [10] 3:7: `a0` is T2 here
+  [11] 2:6: `a0` is defined as this expression, T2
        2 | a0 = (g(true), 0);
          |      ^^^^^^^^^^^^ [11, 12]
          |       ^^^^^^^ [13]
          |                ^ [15]
-  [12] 2:6: this expression gives (1 | 2, 0)
-  [13] 2:7: this call of `g` gives 1 | 2
-  [14] 1:1: `g` is declared here with no type written for its result; the type the checker found for `g` is `(bool) -> 1 | 2`
+  [12] 2:6: this expression gives T2
+  [13] 2:7: this call of `g` gives T1
+  [14] 1:1: `g` is declared here with no type written for its result; the type the checker found for `g` is `(bool) -> T1`
        1 | g(positional c: bool) = if c { 1 } else { 2 };
          | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   [15] 2:16: this literal, 0, is 0
-  [16] 3:11: this call of `g` gives 1 | 2
-  [17] 4:11: this call of `g` gives 1 | 2
-  [18] 5:11: this call of `g` gives 1 | 2
+  [16] 3:11: this call of `g` gives T1
+  [17] 4:11: this call of `g` gives T1
+  [18] 5:11: this call of `g` gives T1
   [19] 6:5: `<` compares a tuple only with a tuple, not `1`
   [20] 6:5: repair: change the type of `a3` or the right operand so that the two compare
 "#

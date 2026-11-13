@@ -2,7 +2,7 @@
 //! or its failure atom, and a `codePoint` is an int in `0 ..= 1114111`, so a bit word may read
 //! it, as a lexer encoding a scalar does.
 
-use super::{accepted, rejected, x};
+use super::{PASS, accepted, rejected, x};
 
 #[test]
 fn an_argument_of_another_kind_is_rejected() {
@@ -38,12 +38,18 @@ fn the_bytes_are_not_a_number() {
 
 #[test]
 fn a_failure_must_be_handled_before_a_string_is_written() {
-    let src = "main(m: MainArgs) {\n  m.stdout <- scalar(65);\n}\n";
-    let out = rejected(src);
+    // `whole` passes its int on, so `scalar` is judged on a value known only when the program
+    // runs and may give `#notScalar`.
+    let src = |push: &str| format!("{PASS}main(m: MainArgs) {{\n  m.stdout <- {push};\n}}\n");
+    let out = rejected(&src("scalar(whole(65))"));
     assert!(out.contains("String | #notScalar"), "{out}");
-    assert!(accepted(
-        "main(m: MainArgs) {\n  m.stdout <- scalar(65) else \"?\";\n}\n"
-    ));
+    assert!(accepted(&src("scalar(whole(65)) else \"?\"")));
+    // On a literal the checker lists only the atoms its value gives (DESIGN sec:failure): 65 is
+    // a scalar value, so `scalar(65)` is a `String` and needs no handling, and 55296, a
+    // surrogate, always fails, which is rejected.
+    assert!(accepted(&src("scalar(65)")));
+    let out = rejected(&src("scalar(55296) else \"?\""));
+    assert!(out.contains("always fails"), "{out}");
 }
 
 #[test]
