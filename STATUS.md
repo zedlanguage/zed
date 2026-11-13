@@ -2021,7 +2021,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | MSG-is-repair-v | running | 2026-11-12 17:32 |  |
 | MSG-lines-headline | running | 2026-11-12 17:32 |  |
 | MSG-width-headline | running | 2026-11-12 17:32 |  |
-| NAME-ascii-only | impl attempt 1 | 2026-11-12 16:11 | spec committed (541c9d7-amended) and rebased on f0d6c20; impl rebased on a596e044b, fences resynced; l01_02 45/45 pass; rebuilding for the other groups |
 | NARROW-or-order | impl attempt 1 | 2026-11-12 15:40 | started; worktree /home/luke/Work/wt/narrow-or-order on cdd557f13 |
 | POW-rat-literal-ops | impl attempt 1 | 2026-11-12 16:20 | reproduced: (2r/3r)^-2, 1r/(2r/3r), (3r/2r)^-2 refused at a port for #divByZero; (3/2)^-2 in main settles at f64; top-level offers no rat fix |
 | STAGE-print | impl attempt 1 | 2026-11-04 03:10 | started; worktree wt/stage-print seeded |
