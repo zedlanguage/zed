@@ -639,14 +639,14 @@ fn syntax_with_old_break() -> String {
 }
 
 /// The fuzz finds a sentence the old `break` derives with every lookahead satisfied but the
-/// parser rejects. Seed 122 at five sentences per ring was found by running seeds 1 to 500 (the
-/// first of them that finds it at this size; 149 and 329 do too) after `with carryForward`
-/// joined the grammar (MUTABLE-to-initial-facet); if a grammar change moves it, run the seeds
+/// parser rejects. Seed 39 at five sentences per ring was found by running seeds 1 to 500 (the
+/// first of them that finds it at this size; 42, 344 and 443 do too) after the test clause
+/// `test with` joined the grammar (TEST-ports); if a grammar change moves it, run the seeds
 /// again. The same seed on the real grammar finds nothing, so the failure comes from the change.
 #[test]
 fn fuzz_reports_a_sentence_the_old_break_derives_but_the_parser_rejects() {
     const N: usize = 5;
-    const SEED: i64 = 122;
+    const SEED: i64 = 39;
     let real = spec_dir("fuzz_real", &design(""), "");
     let real = Spec::open(&real.root()).expect("the spec reads");
     let (outcome, out) = fuzz_of(&real, N, SEED);
