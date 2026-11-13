@@ -263,7 +263,9 @@ fn a_cast_menu_costs_the_same_in_a_larger_program() {
     // its arena, and the difference came out 1.38 to 1.44 times (4 of 18 runs of this step on
     // 2026-11-09). `tools/run_tests.sh` turns that cache off: the difference then repeats to
     // within 0.04% when the checks run alone, and beside this step's other tests, which
-    // allocate at the same time, it was 0.97 to 1.02 times in 30 runs.
+    // allocate at the same time, it was 0.97 to 1.02 times in 30 runs. At m = 60,000 this test
+    // took 36 s alone at load 46, so m is now 30,000: a scan of that record once per offered
+    // repair still did 1.88 times the work there, against a limit of 1.32 (TESTS-l01_29-split).
     const R: usize = 100;
     let meter = &mut Meter::new();
     let mut rejections = |m: usize| {
@@ -287,7 +289,7 @@ fn a_cast_menu_costs_the_same_in_a_larger_program() {
             .checked_sub(without)
             .expect("the rejections add work")
     };
-    let m = 60_000;
+    let m = 30_000;
     let limit = scaling::limit(m, scaling::FACTOR * m, 0);
     let (small, large) = (rejections(m), rejections(scaling::FACTOR * m));
     let ratio = large as f64 / small as f64;
@@ -499,7 +501,8 @@ fn the_menus_of_calls_literals_and_comparisons_scale() {
 fn the_menus_of_calls_literals_and_comparisons_cost_the_same_in_a_larger_program() {
     // As `a_cast_menu_costs_the_same_in_a_larger_program`, for the menus of a call of `max`, a
     // `rat` literal and a comparison with a literal: the work of R functions of three
-    // rejections each, held to order n^0 as the program around them grows from m to 8m.
+    // rejections each, held to order n^0 as the program around them grows from m to 8m. The
+    // same scan per offered repair did 1.91 times the work at m = 30,000.
     const R: usize = 100;
     let meter = &mut Meter::new();
     let mut rejections = |m: usize| {
@@ -523,7 +526,7 @@ fn the_menus_of_calls_literals_and_comparisons_cost_the_same_in_a_larger_program
             .checked_sub(without)
             .expect("the rejections add work")
     };
-    let m = 60_000;
+    let m = 30_000;
     let limit = scaling::limit(m, scaling::FACTOR * m, 0);
     let (small, large) = (rejections(m), rejections(scaling::FACTOR * m));
     let ratio = large as f64 / small as f64;

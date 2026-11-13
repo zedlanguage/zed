@@ -141,12 +141,14 @@ fn every_offered_repair_checks_as_written() {
 /// had, so the repair fixes its own rejection and adds no error, in the construct around it
 /// either, as `min(1.0r, 0.5r) + 2.5f64` would. A program can hold two rejections, one in
 /// each construct, so one repair need not leave no error. The operands `-0.5` and `-n` put a
-/// `-` between the two constructs. One test per outer construct keeps each under the time
-/// limit.
-fn nested_repairs_check(outer: fn(&str, &str) -> String) {
+/// `-` between the two constructs. The left operands `a` are taken in four parts of four, part
+/// `part` here, each part a test of each outer construct: one test per outer construct took
+/// 24 s alone at load 62, and 59 to 61 s beside the other pieces of its step at load 52
+/// (TESTS-l01_29-split).
+fn nested_repairs_check(outer: fn(&str, &str) -> String, part: usize) {
     let mut failed = Vec::new();
     let mut tried = 0;
-    for a in OPERANDS {
+    for a in &OPERANDS[4 * part..4 * part + 4] {
         for c in OPERANDS {
             for op in ["+", "/", "^"] {
                 for d in ["2.5f64", "2.5r", "1", "n"] {
@@ -172,14 +174,62 @@ fn nested_repairs_check(outer: fn(&str, &str) -> String) {
     assert!(failed.is_empty(), "{}", failed.join("\n"));
 }
 
-#[test]
-fn every_offered_repair_inside_a_sum_checks_as_written() {
-    nested_repairs_check(|inner, d| format!("y = ({inner}) + {d};"));
+/// [`nested_repairs_check`] of `y = (a op c) + d`, in four parts of the operands `a`.
+mod every_offered_repair_inside_a_sum_checks_as_written {
+    use super::*;
+
+    fn part(part: usize) {
+        nested_repairs_check(|inner, d| format!("y = ({inner}) + {d};"), part);
+    }
+
+    #[test]
+    fn operands_0_to_3() {
+        part(0);
+    }
+
+    #[test]
+    fn operands_4_to_7() {
+        part(1);
+    }
+
+    #[test]
+    fn operands_8_to_11() {
+        part(2);
+    }
+
+    #[test]
+    fn operands_12_to_15() {
+        part(3);
+    }
 }
 
-#[test]
-fn every_offered_repair_inside_a_call_checks_as_written() {
-    nested_repairs_check(|inner, d| format!("y = min({inner}, {d});"));
+/// [`nested_repairs_check`] of `y = min(a op c, d)`, in four parts of the operands `a`.
+mod every_offered_repair_inside_a_call_checks_as_written {
+    use super::*;
+
+    fn part(part: usize) {
+        nested_repairs_check(|inner, d| format!("y = min({inner}, {d});"), part);
+    }
+
+    #[test]
+    fn operands_0_to_3() {
+        part(0);
+    }
+
+    #[test]
+    fn operands_4_to_7() {
+        part(1);
+    }
+
+    #[test]
+    fn operands_8_to_11() {
+        part(2);
+    }
+
+    #[test]
+    fn operands_12_to_15() {
+        part(3);
+    }
 }
 
 /// The message, the menu and the repair notes of each error of `src`, one string.

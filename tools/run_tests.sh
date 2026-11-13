@@ -475,7 +475,8 @@ fi
 # l01_39 took 49.5 s whole at load 14 once its check of every arm on concrete inputs (25.7 s
 # alone) joined its random module (2026-11-07, PA-walk-multi).
 # l01_26 ran past 60 s whole at load 24 once deep_ops joined it, its operations on types
-# 100,000 deep taking up to 15 s each (2026-11-09, T2-ty).
+# 100,000 deep taking up to 15 s each (2026-11-09, T2-ty). Two of them took 73 s and over 80 s
+# alone at load 42 and now run 20,000 deep on a fifth of the stack (2026-11-12, TESTS-l01_29-split).
 # l25_08 ran past 60 s whole at load 14 once bare literals made its chain of additions generic;
 # its generic chain takes 35 s alone and the int chain 11 s (2026-11-09, LIT-bare).
 # l01_39 pendants took 57 s whole at load 20 and ran past 60 s at load 25 once its tests of
@@ -519,6 +520,12 @@ fi
 # (2026-11-12, TESTS-split-l01_28-staging).
 # m0_12_refusal_census reads 120 units of programs.txt, 45 s together at load 41 and 18 s of it
 # one unit; each of its tests is a piece (2026-11-12, REFUSAL-census-now).
+# l01_29_diagnostics took 38 to 57 s whole at load 46 and more; its modules casts and
+# offered_repairs 37 and 32 s each, beside the rest at load 43 to 46. Each module is a piece,
+# and each test of casts and offered_repairs; the tests of repairs inside a sum and inside a call
+# (59 to 61 s each beside the other pieces at load 52) are each four parts, each a piece, and
+# the two tests of a menu's cost in a larger program (36 s each alone at load 46) check programs
+# half as large (2026-11-12, TESTS-l01_29-split).
 split="
   l01_08_parser l01_16_elaboration l01_16_elaboration::scaling
   l01_23_subtyping l01_23_subtyping::scaling l01_23_subtyping::r6_reduction
@@ -526,6 +533,9 @@ split="
   l01_25_preimage_catalog::exact_oracle
   l01_26_type_resolution l01_26_type_resolution::deep_ops
   l01_28_staging l01_28_staging::scaling l01_28_staging::dag
+  l01_29_diagnostics l01_29_diagnostics::casts l01_29_diagnostics::offered_repairs
+  l01_29_diagnostics::offered_repairs::every_offered_repair_inside_a_sum_checks_as_written
+  l01_29_diagnostics::offered_repairs::every_offered_repair_inside_a_call_checks_as_written
   l01_36_cranelift l01_36_cranelift::scaling l01_36_cranelift::table
   l01_36_cranelift::mul_edges
   l01_38_presburger l01_38_presburger::oracle l01_38_presburger::omega

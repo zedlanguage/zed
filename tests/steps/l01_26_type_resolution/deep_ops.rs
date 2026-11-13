@@ -1,5 +1,6 @@
 //! The operations on a type nested as deep as the program keep their own stack (T2-ty): each
-//! runs on a type 100,000 levels deep on a 2 MiB stack, and costs linear time in the depth.
+//! runs on a type 100,000 levels deep on a 2 MiB stack, or 20,000 deep on a fifth of it, and
+//! costs linear time in the depth.
 //!
 //! `Debug` of a type or signature, [`Ty::meet`], [`Ty::meets`] and [`Ty::contains`] recursed
 //! once a level and overflowed this stack; the others here passed before and are kept so that
@@ -16,6 +17,21 @@ use zed_tests::scaling;
 use zedc::check::ty::{self, Binds, SParam, Shape, Sig, Ty, Vars};
 
 const DEEP: usize = 100_000;
+
+/// The depth of the two slowest checks here, a fifth of [`DEEP`], on [`SHALLOW_STACK`]. At
+/// [`DEEP`] they took 73 s and over 80 s alone at load 42; their time is linear in the depth, and
+/// they need no more stack at 20,000 levels than at 100 (TESTS-l01_29-split).
+const SHALLOW: usize = 20_000;
+
+/// A 2 MiB stack scaled by [`SHALLOW`] / [`DEEP`], so a check that takes stack a level overflows
+/// it as it would overflow 2 MiB at [`DEEP`]: a walk of two tuples that recurses once a level,
+/// about 30 bytes a level, overflows both, while the checks here need under 128 KiB.
+const SHALLOW_STACK: usize = (2 << 20) * SHALLOW / DEEP;
+
+/// Runs `f` on a thread with a stack of [`SHALLOW_STACK`] bytes.
+fn on_shallow_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+    scaling::on_a_thread(SHALLOW_STACK, f)
+}
 
 fn z() -> Ty {
     Ty::set(Type::atom("z"))
@@ -215,12 +231,16 @@ fn subtype_of_deep_types_runs_on_a_2_mib_stack() {
 }
 
 #[test]
-fn subtype_of_deep_data_runs_on_a_2_mib_stack() {
-    on_small_stack(|| {
-        let (a, c) = (data(DEEP, z()), data(DEEP, y()));
+fn subtype_of_deep_data_runs_on_a_shallow_stack() {
+    on_shallow_stack(|| {
+        let (a, c) = (data(SHALLOW, z()), data(SHALLOW, y()));
         assert!(!a.subtype(&c));
         assert!(!a.refused(&c).contains("undecided"));
-        let (a, b, c) = (tuples(DEEP, z()), tuples(DEEP, z()), tuples(DEEP, y()));
+        let (a, b, c) = (
+            tuples(SHALLOW, z()),
+            tuples(SHALLOW, z()),
+            tuples(SHALLOW, y()),
+        );
         assert!(a.subtype(&b));
         assert!(!a.subtype(&c));
         let _ = a.verdict(&c);
@@ -286,10 +306,10 @@ fn signatures_of_deep_types_run_on_a_2_mib_stack() {
 }
 
 #[test]
-fn signatures_of_deep_tuples_that_differ_run_on_a_2_mib_stack() {
-    on_small_stack(|| {
-        let s = sig(tuples(DEEP, z()), tuples(DEEP, z()));
-        let r = sig(tuples(DEEP, y()), tuples(DEEP, z()));
+fn signatures_of_deep_tuples_that_differ_run_on_a_shallow_stack() {
+    on_shallow_stack(|| {
+        let s = sig(tuples(SHALLOW, z()), tuples(SHALLOW, z()));
+        let r = sig(tuples(SHALLOW, y()), tuples(SHALLOW, z()));
         assert!(!ty::fits_sig(&s, &r));
         let _ = ty::why_unfit(&s, &r);
     });
