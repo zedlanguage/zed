@@ -2160,6 +2160,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| DAGVIEW-wide-rows | running |  |  |
 | ENGINE-one | impl attempt 1 | 2026-11-13 09:45 | started; worktree wt/engine-one from origin/main 4ab375787 |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | rule change noted: accept against R < 10.5 (CD run keeps 13 step; acceptance scorer score-accept.py); load 55.74 59.14 57.03 |
 | MSG-headline-l01_26 | impl attempt 1 | 2026-11-13 09:40 | started; worktree from origin/main 3650dc7aa |
