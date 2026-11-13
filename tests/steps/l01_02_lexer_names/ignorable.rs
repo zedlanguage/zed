@@ -1,22 +1,23 @@
-//! Characters that show as nothing or as blank space are not part of a name (DESIGN.md
-//! sec:lexical, sec:grammar `Name`; QUESTIONS A97, 2026-11-12): every character with the
-//! Unicode property Default_Ignorable_Code_Point (UAX #31's Default Ignorable Exclusion Profile,
-//! section 7.3) and the three blank characters U+13441, U+13442 and U+16FE4. Each is an error in
-//! code, inside a name, at its start or end, after the wildcard, a number or a keyword, and in
-//! the code of a hole; a comment and the text of a string take it. The lexer and the grammar
-//! engine both follow the rule, and the message names the character by its code point.
+//! Characters that show as nothing or as blank space (DESIGN.md sec:lexical; QUESTIONS A97,
+//! 2026-11-12): every character with the Unicode property Default_Ignorable_Code_Point (UAX
+//! #31's Default Ignorable Exclusion Profile, section 7.3) and the three blank characters
+//! U+13441, U+13442 and U+16FE4. A name is ASCII (NAME-ascii-only), so none is a name
+//! character; each is an error in code, after a name, at its start or end, after the wildcard, a
+//! number or a keyword, and in the code of a hole, with the message of a character that may not
+//! show, which names it by its code point. A comment and the text of a string take it. The
+//! lexer and the grammar engine both follow the rule.
 //!
 //! `default_ignorable.txt` and `format.txt` are the sections of Default_Ignorable_Code_Point in
 //! DerivedCoreProperties.txt and of General_Category=Format in DerivedGeneralCategory.txt, of the
-//! Unicode version of unicode-ident's tables, copied unchanged with each file's header.
+//! Unicode version of the lexer's tables (`zedc::lex::UNICODE_VERSION`), copied unchanged with
+//! each file's header.
 
 use std::sync::Arc;
 
-use unicode_ident::{is_xid_continue, is_xid_start};
 use zed_tests::step_helpers::m0_03_grammar_tools::{design, spec_dir};
 use zed_tools::spec::Spec;
 use zedc::lex::{
-    ErrorKind, Part, Tok, is_default_ignorable, is_excluded_from_names, is_format,
+    ErrorKind, Part, Tok, UNICODE_VERSION, is_blank, is_default_ignorable, is_format,
     is_name_continue, is_name_start, lex, may_not_show, name_end,
 };
 
@@ -28,9 +29,8 @@ const DEFAULT_IGNORABLE: &str = include_str!("default_ignorable.txt");
 /// The section of General_Category=Format in DerivedGeneralCategory.txt.
 const FORMAT: &str = include_str!("format.txt");
 
-/// The characters of XID_Start or XID_Continue whose glyph is blank and which lack the property
-/// Default_Ignorable_Code_Point: EGYPTIAN HIEROGLYPH FULL BLANK, EGYPTIAN HIEROGLYPH HALF BLANK
-/// and KHITAN SMALL SCRIPT FILLER.
+/// The characters whose glyph is blank and which lack the property Default_Ignorable_Code_Point:
+/// EGYPTIAN HIEROGLYPH FULL BLANK, EGYPTIAN HIEROGLYPH HALF BLANK and KHITAN SMALL SCRIPT FILLER.
 const BLANK: [char; 3] = ['\u{13441}', '\u{13442}', '\u{16FE4}'];
 
 /// One past the last code point.
@@ -73,8 +73,8 @@ fn every_char() -> impl Iterator<Item = char> {
     (0..CODE_POINTS as u32).filter_map(char::from_u32)
 }
 
-/// The characters a name may not hold, in order.
-fn excluded() -> Vec<char> {
+/// The characters that show as nothing or as blank space, in order, by the data file.
+fn blank() -> Vec<char> {
     let listed = listed(DEFAULT_IGNORABLE, "Default_Ignorable_Code_Point");
     every_char()
         .filter(|&c| listed[c as usize] || BLANK.contains(&c))
@@ -92,8 +92,8 @@ fn show(wrong: &[char]) -> String {
 }
 
 #[test]
-fn the_data_files_are_of_the_unicode_version_of_the_identifier_tables() {
-    let (major, minor, update) = unicode_ident::UNICODE_VERSION;
+fn the_data_files_are_of_the_unicode_version_of_the_lexer_tables() {
+    let (major, minor, update) = UNICODE_VERSION;
     for (data, file) in [
         (DEFAULT_IGNORABLE, "DerivedCoreProperties"),
         (FORMAT, "DerivedGeneralCategory"),
@@ -106,7 +106,7 @@ fn the_data_files_are_of_the_unicode_version_of_the_identifier_tables() {
 }
 
 #[test]
-fn the_excluded_characters_are_the_default_ignorable_code_points() {
+fn the_blank_characters_are_the_default_ignorable_code_points_and_three_more() {
     let listed = listed(DEFAULT_IGNORABLE, "Default_Ignorable_Code_Point");
     let wrong: Vec<char> = every_char()
         .filter(|&c| is_default_ignorable(c) != listed[c as usize])
@@ -116,18 +116,10 @@ fn the_excluded_characters_are_the_default_ignorable_code_points() {
         "differ from the data file: {}",
         show(&wrong)
     );
-}
-
-#[test]
-fn the_excluded_characters_without_the_property_are_the_three_blank_characters() {
     let others: Vec<char> = every_char()
-        .filter(|&c| is_excluded_from_names(c) && !is_default_ignorable(c))
+        .filter(|&c| is_blank(c) && !is_default_ignorable(c))
         .collect();
     assert_eq!(others, BLANK);
-    for c in BLANK {
-        assert!(is_xid_continue(c), "{c:?}");
-    }
-    assert!(is_xid_start('\u{13441}') && is_xid_start('\u{13442}'));
 }
 
 #[test]
@@ -144,16 +136,14 @@ fn the_format_table_is_the_general_category_cf() {
 }
 
 #[test]
-fn a_name_takes_the_identifier_classes_less_the_excluded_characters() {
-    let excluded = excluded();
-    let mut is_excluded = vec![false; CODE_POINTS];
-    for &c in &excluded {
-        is_excluded[c as usize] = true;
-    }
+fn a_name_takes_exactly_the_ascii_name_characters() {
     for c in every_char() {
-        let out = is_excluded[c as usize];
-        assert_eq!(is_name_start(c), is_xid_start(c) && !out, "{c:?}");
-        assert_eq!(is_name_continue(c), is_xid_continue(c) && !out, "{c:?}");
+        assert_eq!(is_name_start(c), c.is_ascii_alphabetic(), "{c:?}");
+        assert_eq!(
+            is_name_continue(c),
+            c.is_ascii_alphanumeric() || c == '_',
+            "{c:?}"
+        );
         // After `a`, a name takes `c` exactly when `c` continues a name; `'` ends one.
         let end = match c {
             _ if is_name_continue(c) => 1 + c.len_utf8(),
@@ -168,8 +158,8 @@ fn a_name_takes_the_identifier_classes_less_the_excluded_characters() {
 }
 
 #[test]
-fn each_excluded_character_is_an_error_where_code_would_take_it() {
-    for c in excluded() {
+fn each_blank_character_is_an_error_where_code_would_take_it() {
+    for c in blank() {
         let hex = format!("{:X}", c as u32);
         let width = c.len_utf8();
         for (text, at) in [
@@ -262,8 +252,8 @@ fn a_message_names_a_character_that_may_not_show_by_its_code_point() {
 }
 
 #[test]
-fn each_excluded_character_is_taken_in_a_comment_and_in_string_text() {
-    for c in excluded() {
+fn each_blank_character_is_taken_in_a_comment_and_in_string_text() {
+    for c in blank() {
         for text in [
             format!("a = 1; // {c} x\n"),
             format!("/* {c} */ a = 1;"),
@@ -282,11 +272,11 @@ fn each_excluded_character_is_taken_in_a_comment_and_in_string_text() {
 }
 
 #[test]
-fn the_grammar_engine_rejects_each_excluded_character_in_code_and_takes_it_elsewhere() {
+fn the_grammar_engine_rejects_each_blank_character_in_code_and_takes_it_elsewhere() {
     let dir = spec_dir("default_ignorable", &design(""), "");
     let spec = Spec::open(&dir.root()).expect("the spec reads");
     let engine = |text: &str| zed_tools::syntax::lex(&spec.lexical, text);
-    // Without an excluded character each of these is read.
+    // Without a blank character each of these is read.
     for text in [
         "ab = 1;",
         "a = b;",
@@ -297,7 +287,7 @@ fn the_grammar_engine_rejects_each_excluded_character_in_code_and_takes_it_elsew
     ] {
         assert!(engine(text).is_ok(), "{text:?}");
     }
-    for c in excluded() {
+    for c in blank() {
         for text in [
             format!("a{c}b = 1;"),
             format!("a = {c}b;"),

@@ -559,7 +559,7 @@ pub(crate) type Syntax = (Vec<lex::Token>, Vec<lex::Doc>, Vec<Stmt>);
 pub(crate) fn syntax(text: &str, lines: &source::Lines) -> Result<Syntax, Vec<Diagnostic>> {
     let rejected = |errors| placed(text, lines, &[], Severity::Rejection, errors);
     let (tokens, docs) = work::stage(Stage::Lex, None, || lex::lex_with_docs(text))
-        .map_err(|e| rejected(vec![e.into()]))?;
+        .map_err(|e| rejected(vec![lex_error(text, e)]))?;
     let tree = work::stage(Stage::Parse, None, || parse(text, &tokens, "Unit", TOP))
         .map_err(|e| rejected(vec![ast::Error::of_parse(text, e)]))?;
     let stmts = work::stage(Stage::Syntax, None, || {
@@ -567,6 +567,13 @@ pub(crate) fn syntax(text: &str, lines: &source::Lines) -> Result<Syntax, Vec<Di
     })
     .map_err(rejected)?;
     Ok((tokens, docs, stmts))
+}
+
+/// The lexical error `e` of `text` as an error of the source. The ASCII name it may offer for a
+/// word beyond ASCII is no prelude name either, which the lexer does not know.
+fn lex_error(text: &str, mut e: lex::Error) -> Error {
+    e.avoid_names(text, &resolve::is_prelude_name);
+    e.into()
 }
 
 /// Why a file's unit was not read: what `zedc run`, `zedc build` and `zedc fmt` print for it,
@@ -1150,7 +1157,7 @@ pub(crate) fn error(span: Span, message: String) -> Error {
 ///
 /// [`Query::Parse`]: crate::query::Query::Parse
 pub(crate) fn parse_unit(text: &str) -> Parsed {
-    let tokens = lex::lex(text).map_err(|e| vec![e.into()])?;
+    let tokens = lex::lex(text).map_err(|e| vec![lex_error(text, e)])?;
     let tree =
         parse(text, &tokens, "Unit", TOP).map_err(|e| vec![ast::Error::of_parse(text, e)])?;
     let stmts = ast::unit_all_errors(text, &tokens, &tree)?;

@@ -4,7 +4,7 @@ expression: "out.join(\"\\n\")"
 ---
 # none       [0..1] `#` starts an atom, and the atom's name must follow it at once, as in `#none`. Write the name right after the `#`, with no space between.
 x = @        [4..5] `@` starts an annotation, and the annotation's name must follow it at once, as in `@test`. Write the name right after the `@`, with no space between.
-#pаypal      [1..8] the name `pаypal` mixes letters of the scripts Latin and Cyrillic, and a name is written in one script, so that no name looks like another and is a different one. Write it in one script: a letter that looks Latin may be, for instance, a Cyrillic or Greek letter of the same shape.
+#pаypal      [0..8] `#pаypal` is no atom: `а` (U+0430) is not ASCII. Try `#paypal` instead.
 cost = $5    [7..8] the character `$` (U+0024) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `"$"`.
 a % b        [2..3] the character `%` (U+0025) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `"%"`.
 x ~ y        [2..3] the character `~` (U+007E) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `"~"`.

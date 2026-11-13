@@ -51,8 +51,8 @@ fn at(bytes: &[u8], s: &str) -> usize {
         .expect("the string is written")
 }
 
-const STARTS: &str = ": a name starts with a letter or `_`";
-const UNDERSCORE: &str = ": a name that starts with `_` has a letter, a digit or `_` next";
+const STARTS: &str = ": a name starts with an ASCII letter or `_`";
+const UNDERSCORE: &str = ": a name that starts with `_` has an ASCII letter, a digit or `_` next";
 
 #[test]
 fn a_string_that_is_not_a_name_is_refused_where_a_name_belongs() {
@@ -95,6 +95,19 @@ fn a_string_that_is_not_a_name_is_refused_where_a_name_belongs() {
             "",
         ),
         ("a binder", bind("9lives"), "9lives", STARTS),
+        // A name is ASCII (NAME-ascii-only).
+        (
+            "a binder beyond ASCII",
+            bind("\u{e9}lan"),
+            "\u{e9}lan",
+            STARTS,
+        ),
+        (
+            "an atom's name with a letter beyond ASCII",
+            constant(Value::atom("gr\u{f6}\u{df}e")),
+            "gr\u{f6}\u{df}e",
+            "",
+        ),
         ("the wildcard as a binder", bind("_"), "_", UNDERSCORE),
         ("a binder `$` with no number", bind("$"), "$", STARTS),
         (
@@ -152,14 +165,14 @@ fn names_by_the_lexers_rule_and_the_binders_the_compiler_makes_read_back() {
         identity: false,
         ev: [(Arc::from("assoc"), Grade::Proved)].into_iter().collect(),
     };
-    let fields = Value::atom_named("größe", vec![("_a".into(), Value::Int(1))]).unwrap();
+    let fields = Value::atom_named("grosse", vec![("_a".into(), Value::Int(1))]).unwrap();
     let pattern = Pattern::Tuple(vec![
         Pattern::Bind("x'".into()),
         Pattern::Bind("$1".into()),
         Pattern::Bind("$10".into()),
         Pattern::Bind("\x000".into()),
         Pattern::Bind("\x0012".into()),
-        Pattern::Fields("面積".into(), vec![("x_1".into(), Pattern::Wild)]),
+        Pattern::Fields("area".into(), vec![("x_1".into(), Pattern::Wild)]),
     ]);
     let graphs = [
         constant(fields),

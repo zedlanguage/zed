@@ -10,7 +10,7 @@ use unicode_width::UnicodeWidthChar;
 use zed_kernel::num::{TooLarge, bytes_of};
 use zedc_base::terminal;
 
-use super::name;
+use super::{name, punct};
 
 /// A number literal's digits, without `_`: one copy of the source text, made in memory asked
 /// for first, and shared by the token and the syntax tree, which never copy it again.
@@ -97,8 +97,15 @@ pub struct Token {
 pub enum ErrorKind {
     /// A character that starts no token.
     Unexpected(char),
-    /// A name whose characters are not all of one script (UTS #39, "Highly Restrictive").
-    MixedScript(String),
+    /// A word that is a name but for a character beyond ASCII (`café`, `#pаypal`): the word as
+    /// written, with its `#` or `@` and its `'` if it has them, and the ASCII name offered for
+    /// it, written likewise, if there is one ([`super::name::ascii_name`]).
+    NonAsciiName {
+        /// The word.
+        word: String,
+        /// The ASCII name offered.
+        repair: Option<String>,
+    },
     /// A malformed number, and what is wrong with it.
     BadNumber(String),
     /// A malformed string, and what is wrong with it.
@@ -126,15 +133,52 @@ impl fmt::Display for Error {
                 write!(f, "{why}")
             }
             ErrorKind::Unread(r) => write!(f, "{}", unread_literal(r)),
-            ErrorKind::MixedScript(name) => write!(
-                f,
-                "the name `{name}` mixes letters of the scripts {}, and a name is written in one \
-                 script, so that no name looks like another and is a different one. Write it in \
-                 one script: a letter that looks Latin may be, for instance, a Cyrillic or Greek \
-                 letter of the same shape.",
-                name::scripts_of(name)
-            ),
+            ErrorKind::NonAsciiName { word, repair } => f.write_str(&non_ascii(word, repair)),
         }
+    }
+}
+
+impl Error {
+    /// Offers no name `taken` gives (a prelude name, which the lexer does not know) for a word
+    /// beyond ASCII lexed from `text`: the offer is made again with those names refused too.
+    /// The name offered is no keyword either. An atom or annotation (`#café`, `@tést`) is
+    /// offered its ASCII spelling whatever the names and keywords, since `#if` and `@test` are
+    /// an atom and an annotation; only another word of `text` is refused, so that the repair
+    /// does not turn it into an atom the program already uses.
+    pub fn avoid_names(&mut self, text: &str, taken: &dyn Fn(&str) -> bool) {
+        if let ErrorKind::NonAsciiName { word, repair } = &mut self.kind {
+            let body = word.trim_start_matches(['#', '@']);
+            let sign = &word[..word.len() - body.len()];
+            let refused = |n: &str| sign.is_empty() && (punct::keyword(n).is_some() || taken(n));
+            *repair = name::ascii_name(text, body, &refused).map(|n| format!("{sign}{n}"));
+        }
+    }
+}
+
+/// The message for `word`, which is a name but for a character beyond ASCII, with the ASCII
+/// name `repair` offered for it, if there is one. The first such character is named, by its
+/// code point too, since it may look like an ASCII letter (Cyrillic `а`).
+fn non_ascii(word: &str, repair: &Option<String>) -> String {
+    let c = word
+        .chars()
+        .find(|c| !c.is_ascii())
+        .expect("the word holds a character beyond ASCII");
+    let code = c as u32;
+    // A combining mark shows on the letter before it in `word`, but not alone.
+    let which = if may_not_show(c) {
+        format!("the character U+{code:04X}, which may not show on screen,")
+    } else {
+        format!("`{c}` (U+{code:04X})")
+    };
+    let what = match word.chars().next() {
+        Some('#') => "atom",
+        Some('@') => "annotation",
+        _ => "name",
+    };
+    let head = format!("`{word}` is no {what}: {which} is not ASCII.");
+    match repair {
+        Some(r) => format!("{head} Try `{r}` instead."),
+        None => format!("{head} Write the {what} in ASCII letters, digits and `_`."),
     }
 }
 
@@ -183,8 +227,96 @@ fn unexpected(c: char) -> String {
     }
 }
 
+/// The Unicode version of every character table the lexer reads (DESIGN.md step S.1c): the
+/// tables below, and those of unicode-script (scripts), unicode-normalization (NFC, NFKD and
+/// combining marks), unicode-security (the confusables of UTS #39) and unicode-width. Cargo.lock
+/// pins each crate; a crate of another Unicode version does not compile. any_ascii, whose
+/// tables are no Unicode data, is pinned by its version alone.
+pub const UNICODE_VERSION: (u8, u8, u8) = (18, 0, 0);
+
+const _: () = {
+    let v = UNICODE_VERSION;
+    let wide = (v.0 as u64, v.1 as u64, v.2 as u64);
+    let (s, c, n, w) = (
+        unicode_script::UNICODE_VERSION,
+        unicode_security::UNICODE_VERSION,
+        unicode_normalization::UNICODE_VERSION,
+        unicode_width::UNICODE_VERSION,
+    );
+    assert!(s.0 == wide.0 && s.1 == wide.1 && s.2 == wide.2);
+    assert!(c.0 == wide.0 && c.1 == wide.1 && c.2 == wide.2);
+    assert!(n.0 == v.0 && n.1 == v.1 && n.2 == v.2);
+    assert!(w.0 == v.0 && w.1 == v.1 && w.2 == v.2);
+};
+
+/// The characters with the Unicode property Default_Ignorable_Code_Point, as sorted, disjoint,
+/// inclusive ranges with a gap between each two: DerivedCoreProperties.txt of Unicode 18.0
+/// ([`UNICODE_VERSION`]), with its adjacent ranges joined. The test
+/// `the_blank_characters_are_the_default_ignorable_code_points_and_three_more` compares this
+/// table with that file for every code point.
+const DEFAULT_IGNORABLE: [(char, char); 17] = [
+    ('\u{AD}', '\u{AD}'),
+    ('\u{34F}', '\u{34F}'),
+    ('\u{61C}', '\u{61C}'),
+    ('\u{115F}', '\u{1160}'),
+    ('\u{17B4}', '\u{17B5}'),
+    ('\u{180B}', '\u{180F}'),
+    ('\u{200B}', '\u{200F}'),
+    ('\u{202A}', '\u{202E}'),
+    ('\u{2060}', '\u{206F}'),
+    ('\u{3164}', '\u{3164}'),
+    ('\u{FE00}', '\u{FE0F}'),
+    ('\u{FEFF}', '\u{FEFF}'),
+    ('\u{FFA0}', '\u{FFA0}'),
+    ('\u{FFF0}', '\u{FFF8}'),
+    ('\u{1BCA0}', '\u{1BCA3}'),
+    ('\u{1D173}', '\u{1D17A}'),
+    ('\u{E0000}', '\u{E0FFF}'),
+];
+
+/// The characters that lack the property Default_Ignorable_Code_Point but whose glyph is blank:
+/// in Unicode 18.0 these three, by their names and general categories in UnicodeData.txt (two
+/// Lo letters and one Mn mark): U+13441 EGYPTIAN HIEROGLYPH FULL BLANK, U+13442 EGYPTIAN
+/// HIEROGLYPH HALF BLANK and U+16FE4 KHITAN SMALL SCRIPT FILLER.
+const BLANK: [char; 3] = ['\u{13441}', '\u{13442}', '\u{16FE4}'];
+
+/// Whether `c` has the Unicode property Default_Ignorable_Code_Point.
+pub fn is_default_ignorable(c: char) -> bool {
+    // Complexity tradeoff: the naive form scans the r = 17 ranges, O(r) per character; this is
+    // a binary search, O(log r), and a character below U+00AD, which every ASCII character is,
+    // is answered by one comparison. Nothing is given up: the answer is exact for every code
+    // point, and the table costs 136 bytes.
+    c >= '\u{AD}' && in_ranges(&DEFAULT_IGNORABLE, c)
+}
+
+/// Whether `c` shows as nothing or as blank space: a Default_Ignorable_Code_Point character
+/// (a zero width joiner, a variation selector, a Hangul filler) or one of the three blank
+/// characters. A word beyond ASCII never holds one ([`super::name::ascii_name`]), so it keeps
+/// the message of a character that may not show.
+pub fn is_blank(c: char) -> bool {
+    // Complexity tradeoff: the table search of `is_default_ignorable`, O(log r), and three
+    // comparisons for the blank characters.
+    is_default_ignorable(c) || BLANK.contains(&c)
+}
+
+/// Whether `c` lies in one of the sorted, disjoint, inclusive `ranges`: a binary search,
+/// O(log r) for r ranges.
+fn in_ranges(ranges: &[(char, char)], c: char) -> bool {
+    ranges
+        .binary_search_by(|&(lo, hi)| {
+            if hi < c {
+                std::cmp::Ordering::Less
+            } else if lo > c {
+                std::cmp::Ordering::Greater
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        })
+        .is_ok()
+}
+
 /// The characters of the general category Cf (format): DerivedGeneralCategory.txt of Unicode
-/// 18.0, the version of unicode-ident's tables, as sorted, disjoint, inclusive ranges. The test
+/// 18.0 ([`UNICODE_VERSION`]), as sorted, disjoint, inclusive ranges. The test
 /// `the_format_table_is_the_general_category_cf` compares it with that file for every code point.
 const FORMAT: [(char, char); 21] = [
     ('\u{AD}', '\u{AD}'),
@@ -214,15 +346,15 @@ const FORMAT: [(char, char); 21] = [
 pub fn is_format(c: char) -> bool {
     // Complexity tradeoff: the naive form scans the r = 21 ranges, O(r); this is a binary
     // search, O(log r), with one comparison for a character below U+00AD.
-    c >= '\u{AD}' && name::in_ranges(&FORMAT, c)
+    c >= '\u{AD}' && in_ranges(&FORMAT, c)
 }
 
 /// Whether `c` may not show on screen, so that a message names it by its code point and never
 /// prints it: a character a diagnostic prints in its escape form ([`terminal::hidden`]: a
 /// control, a space other than U+0020, a format character of no width), a combining mark, which
 /// at the start of a token has no letter under it, a character of the general categories Cf,
-/// Co, Cs or Cn, or one a name may not hold ([`name::is_excluded_from_names`]), such as a Hangul
-/// filler, which shows as blank space one or two columns wide. With U+0020, which `Space` takes
+/// Co, Cs or Cn, or one that shows as blank space ([`is_blank`]), such as a Hangul filler, which
+/// shows as blank space one or two columns wide. With U+0020, which `Space` takes
 /// before any token, these are the general categories Cc, Cf, Zs, Zl, Zp, Co, Cs and Cn, the
 /// White_Space characters and those of no width. Co, Cs and Cn are the characters of the script
 /// Unknown (UAX #24; in Unicode 18.0 the two sets are equal), so a character assigned after the
@@ -232,7 +364,7 @@ pub fn may_not_show(c: char) -> bool {
         || c.width() == Some(0)
         || is_format(c)
         || c.script() == Script::Unknown
-        || name::is_excluded_from_names(c)
+        || is_blank(c)
 }
 
 /// The message for a numeric literal whose digits the system refused the memory to read. It

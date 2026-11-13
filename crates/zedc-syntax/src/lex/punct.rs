@@ -3,7 +3,7 @@
 //! ```peg
 //! AtomLit  = '#' Name
 //! AnnotLit = '@' Name
-//! Keyword  = KeywordWord !XID_CONTINUE
+//! Keyword  = KeywordWord !NameChar
 //! Operator = '->?' | '->' | '...' | '..<' | '..=' | '..' | … | '#_' | [+\-*/<>=!&|\\:,;.?()\[\]{}]
 //! ```
 //!

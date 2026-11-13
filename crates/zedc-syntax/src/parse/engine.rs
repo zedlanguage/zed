@@ -657,30 +657,16 @@ impl<'g, I: Input + ?Sized> Parser<'g, I> {
                             self.fail(pos, Expected::Class)
                         };
                     }
-                    Expr::Any => break self.char_class(pos, "ANY", |_| true),
-                    Expr::XidStart => {
-                        break self.char_class(pos, "XID_START", crate::lex::is_name_start);
-                    }
-                    Expr::XidContinue => {
-                        break self.char_class(pos, "XID_CONTINUE", crate::lex::is_name_continue);
+                    Expr::Any => {
+                        break if self.input.char_at(pos).is_some() {
+                            Some(pos + 1)
+                        } else {
+                            self.fail(pos, Expected::Name("ANY"))
+                        };
                     }
                     Expr::Undefined(name) => break self.fail(pos, Expected::Name(name)),
                 }
             };
-        }
-    }
-
-    /// Matches one character for which `hit` holds.
-    fn char_class(
-        &mut self,
-        pos: usize,
-        name: &'static str,
-        hit: impl Fn(char) -> bool,
-    ) -> Option<usize> {
-        if self.input.char_at(pos).is_some_and(hit) {
-            Some(pos + 1)
-        } else {
-            self.fail(pos, Expected::Name(name))
         }
     }
 }

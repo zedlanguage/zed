@@ -1,7 +1,7 @@
 //! Number literals (steps L1.3 and L1.4):
 //!
 //! ```peg
-//! Number   = (Rational | Float | Integer) !XID_CONTINUE
+//! Number   = (Rational | Float | Integer) !NameChar
 //! Rational = (Real | Decimal) 'r'
 //! Float    = Real 'f64'?
 //! Real     = Decimal '.' Decimal Exponent? | Decimal Exponent

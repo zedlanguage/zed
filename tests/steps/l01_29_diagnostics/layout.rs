@@ -67,22 +67,23 @@ fn a_diagnostic_without_steps_is_one_line() {
 
 #[test]
 fn the_underline_covers_a_multibyte_span_by_characters() {
+    // A name is ASCII (NAME-ascii-only), so the characters beyond ASCII are in a string.
     let out = super::rejected(
         "main(m: MainArgs) {
-  größe = 3;
-  größe = 4;
+  x = \"größe\";
+  x = \"Maß\";
   m.stdout <- \"x\";
 }
 ",
     );
     assert_eq!(
         out,
-        "3:3: `größe` is already bound in this scope.
-  [1] 2:3: the first binding of `größe`
-      2 |   größe = 3;
-        |   ^^^^^^^^^^
+        "3:3: `x` is already bound in this scope.
+  [1] 2:3: the first binding of `x`
+      2 |   x = \"größe\";
+        |   ^^^^^^^^^^^^
   [2] 3:3: repair: give this binding a new name
-      3 |   größe = 4;
+      3 |   x = \"Maß\";
         |   ^^^^^^^^^^
   [3] 3:3: repair: move this binding into a nested block, where it shadows the first"
     );

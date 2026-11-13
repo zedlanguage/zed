@@ -12,13 +12,12 @@ mod string;
 mod token;
 
 pub use name::name as name_end;
-pub use name::{
-    is_default_ignorable, is_excluded_from_names, is_name_continue, is_name_start, is_single_script,
-};
+pub use name::{ascii_name, is_name_continue, is_name_start, is_word_char};
 pub use punct::{KEYWORDS, OPERATORS};
 use string::{Holes, Reading, Stop};
 pub use token::{
-    Digits, Doc, Error, ErrorKind, Part, Span, Tok, Token, is_format, may_not_show, unread_literal,
+    Digits, Doc, Error, ErrorKind, Part, Span, Tok, Token, UNICODE_VERSION, is_blank,
+    is_default_ignorable, is_format, may_not_show, unread_literal,
 };
 
 /// The tokens of `text`, a loaded source text.
@@ -146,24 +145,25 @@ fn lex_from<'t>(
         } else if c == '"' {
             reading = Some(Reading::new(text, pos));
             None
-        } else if let Some(end) = matches!(c, '#' | '@')
-            .then(|| name::name(text, pos + 1))
+        } else if let Some(w) = matches!(c, '#' | '@')
+            .then(|| name::word(text, pos + 1))
             .flatten()
         {
-            pos = end;
-            let word = checked(text, start + 1, end)?;
+            pos = name_or_error(text, start, w)?;
+            let word = text[start + 1..pos].to_string();
             Some(if c == '#' {
                 Tok::Atom(word)
             } else {
                 Tok::Annot(word)
             })
-        } else if let Some(end) = name::name(text, pos) {
+        } else if let Some(w) = name::word(text, pos) {
+            let end = name_or_error(text, start, w)?;
             if let Some(k) = punct::keyword(text[start..end].trim_end_matches('\'')) {
                 pos = start + k.len();
                 Some(Tok::Keyword(k))
             } else {
                 pos = end;
-                Some(Tok::Name(checked(text, start, end)?))
+                Some(Tok::Name(text[start..end].into()))
             }
         } else if let Some(end) = name::wildcard(text, pos) {
             pos = end;
@@ -193,15 +193,21 @@ fn lex_from<'t>(
     }
 }
 
-/// The name from `start` to `end` of `text`, if its characters are of one script.
-fn checked(text: &str, start: usize, end: usize) -> Result<String, Error> {
-    let word = &text[start..end];
-    if is_single_script(word.trim_end_matches('\'')) {
-        Ok(word.into())
-    } else {
-        Err(Error {
-            kind: ErrorKind::MixedScript(word.into()),
-            span: Span { start, end },
-        })
+/// The end of the name `w` read from `start` of `text`, or the error for a word that is a name
+/// but for a character beyond ASCII, which offers an ASCII name for it.
+fn name_or_error(text: &str, start: usize, w: name::Word) -> Result<usize, Error> {
+    match w {
+        name::Word::Name(end) => Ok(end),
+        name::Word::Foreign(end) => {
+            let mut e = Error {
+                kind: ErrorKind::NonAsciiName {
+                    word: text[start..end].into(),
+                    repair: None,
+                },
+                span: Span { start, end },
+            };
+            e.avoid_names(text, &|_| false);
+            Err(e)
+        }
     }
 }

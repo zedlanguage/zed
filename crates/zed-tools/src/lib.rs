@@ -4,15 +4,13 @@
 //! that every section label and step id cited is defined in DESIGN.md; `plan` checks this
 //! repository's plan DAG; `conflicts` writes the plan's file-conflict lists; `step_targets`
 //! writes the test target of each step folder into `tests/Cargo.toml`; `imports` names every
-//! cycle of a Rust crate's file import graph; `ascii_names` checks that the names in the Zed code
-//! of a checkout such as libzed's are printable ASCII.
+//! cycle of a Rust crate's file import graph.
 //!
 //! Each tool is a module with a `run` function over its arguments, and a thin `main` in
 //! `src/bin/`. Grammar reading and matching are the compiler's (`zedc::parse`), so a rule of the
 //! grammar has one implementation. CI does not read the spec repository, so CI runs none of
 //! these on the spec; their tests build a small spec of their own.
 
-pub mod ascii_names;
 pub mod audit;
 pub mod cases;
 pub mod catalog;

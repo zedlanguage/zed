@@ -159,12 +159,12 @@ fn an_imported_unit_with_crlf_line_ends_loads() {
 
 #[test]
 fn reading_a_unit_as_source_is_linear_in_its_bytes() {
-    // A unit of `k` lines in NFC with `\r\n` line ends and accented names, so that the UTF-8,
+    // A unit of `k` lines in NFC with `\r\n` line ends and accented strings, so that the UTF-8,
     // NFC and line-end passes each read every byte; the files are written before timing.
     let n = 4000;
     let unit = |k: usize| -> Vec<u8> {
         (0..k)
-            .flat_map(|i| format!("café{i} = \"crème brûlée\";\r\n").into_bytes())
+            .flat_map(|i| format!("cafe{i} = \"crème brûlée\";\r\n").into_bytes())
             .collect()
     };
     let dirs: Vec<(usize, Dir)> = [n, 8 * n]

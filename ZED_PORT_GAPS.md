@@ -355,9 +355,9 @@ no new gap. There is still no character type: text is one-element strings ordere
 one-element strings.
 
 Missing: the rest (`starts_with`, `strip_prefix`, `split_once` and similar, 86 matches) are
-ordinary standard library functions in Zed (step L2.10), needing no spec change. `is_xid_*`,
-script and NFC data (`unicode-ident`, `unicode-script`, `unicode-normalization`, in `lex/name.rs`,
-`zir/text.rs` and `source.rs`) are tables in Zed, or built-ins for now. Substring slices are O(1) in Rust as
+ordinary standard library functions in Zed (step L2.10), needing no spec change. Script,
+NFC and NFKD, confusables and transliteration data (`unicode-script`, `unicode-normalization`,
+`unicode-security`, `any_ascii`, in `lex/name.rs`, `lex/token.rs` and `source.rs`) are tables in Zed, or built-ins for now. Substring slices are O(1) in Rust as
 `&str`; in Zed the cost is that of `slice` on a rope, inferred O(log n), and 150 range slices
 exist across all types. A recursion on `&xs[1..]` would become O(n log n) in total, not O(n);
 check at S.2.

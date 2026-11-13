@@ -304,7 +304,7 @@ impl<'g> Reading<'g> {
                 }
             }
             Expr::SetHead(x) | Expr::ClearHead(x) => self.walk(x, out, at0),
-            Expr::Class(_) | Expr::Any | Expr::XidStart | Expr::XidContinue => {
+            Expr::Class(_) | Expr::Any => {
                 out.problem("a character class in a grammar over tokens");
                 Sum::never(n)
             }

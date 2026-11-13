@@ -166,7 +166,7 @@ fn show(g: &Grammar, e: &Expr) -> String {
         Expr::SetHead(x) => format!("head({})", show(g, x)),
         Expr::ClearHead(x) => format!("nest({})", show(g, x)),
         Expr::Undefined(n) => n.clone(),
-        Expr::Class(_) | Expr::Any | Expr::XidStart | Expr::XidContinue => "[…]".to_string(),
+        Expr::Class(_) | Expr::Any => "[…]".to_string(),
     }
 }
 
@@ -326,7 +326,7 @@ impl Conv<'_> {
                 }
             },
             Expr::ClearHead(x) => return self.seq(x, false, rule),
-            Expr::Class(_) | Expr::Any | Expr::XidStart | Expr::XidContinue => {
+            Expr::Class(_) | Expr::Any => {
                 return Err(format!(
                     "rule {}: a character class in a grammar over tokens",
                     self.g.rules[rule].name

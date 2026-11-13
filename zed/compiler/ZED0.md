@@ -80,7 +80,7 @@ step that uses it.
 | read the command line | the `CommandLine` input port: the arguments after `--`, keyed from 0 | L1 | step L1.19a |
 | write an executable | `zedc build file -o out`, a deterministic link with the runtime (`zed-rt`, and libzed after step S.7a) | L1 | step L1.36a |
 | lex by code point | the `String` functions, and `codePoint`, `scalar`, `utf8`, `fromUtf8` | L1 | step L1.39c |
-| identifier and normalization tables | XID_Start, XID_Continue, the scripts and the NFC data as sorted range tables, each lookup O(log n) by `upTo` | L5 | step S.1c, with step L5.8a |
+| lexer and normalization tables | Default_Ignorable_Code_Point, Cf, the scripts, the NFC and NFKD data and the UTS #39 confusables as sorted range tables, and the any_ascii transliteration by block, each lookup O(log n) by `upTo` | L5 | step S.1c, with step L5.8a |
 | content addresses (BLAKE3) | `bitAnd`, `bitOr`, `bitXor`, `shl` and the other bit words of step L1.39a, and `mod 2^32` | L1 | step L1.39a; the `&` row of the glyph table |
 | syntax trees, ZIR nodes | structs, unions of atoms with fields, `match` | L2 | sec:grammar |
 | the types the checker's units share | `Ast` (the node kinds of every layer before row S), `Facet`, `Rejection`, `Interval`, `Congruence`, `Bound`, as plain types with no reads | L6 | step S.1b |

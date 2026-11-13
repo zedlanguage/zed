@@ -46,8 +46,6 @@ fn inner(e: &Expr) -> Vec<&Expr> {
         | Expr::Head
         | Expr::Class(_)
         | Expr::Any
-        | Expr::XidStart
-        | Expr::XidContinue
         | Expr::Undefined(_) => Vec::new(),
     }
 }
@@ -69,8 +67,6 @@ fn required(e: &Expr) -> Vec<&Expr> {
         | Expr::Not(_)
         | Expr::Class(_)
         | Expr::Any
-        | Expr::XidStart
-        | Expr::XidContinue
         | Expr::Undefined(_) => Vec::new(),
     }
 }

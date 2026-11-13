@@ -1,5 +1,5 @@
 //! Invisible and look-alike characters (DESIGN.md sec:lexical, sec:grammar `Space`,
-//! `Comment`, `Char`, `Name`). A character that is neither a space nor an identifier character
+//! `Comment`, `Char`, `Name`). A character that is neither a space nor a name character
 //! starts no token: U+FEFF after the start of the file, NUL, a zero-width joiner anywhere in a
 //! name, and every `Bidi_Control` character are lexical errors in code, the code of a hole
 //! included, and are taken by `ANY` in a comment and in the text of a string literal. A message
@@ -77,10 +77,9 @@ fn a_zero_width_joiner_starts_no_name() {
 
 #[test]
 fn a_zero_width_joiner_or_non_joiner_inside_a_name_is_an_error() {
-    // UAX #31 puts U+200C and U+200D in XID_Continue (Unicode 15.1), but DESIGN.md's
-    // `XID_CONTINUE` leaves out every Default_Ignorable_Code_Point character (QUESTIONS A97,
-    // 2026-11-12), so `a\u{200d}b` would otherwise be a name other than `ab` that looks the
-    // same. The name `a` ends before the joiner, which starts no token.
+    // A name is ASCII (NAME-ascii-only), so `a\u{200d}b` cannot be a name other than `ab` that
+    // looks the same. The name `a` ends before the joiner, which starts no token: a blank
+    // character is not read into a word beyond ASCII, and keeps its own message.
     for (c, hex) in [('\u{200d}', "200D"), ('\u{200c}', "200C")] {
         let text = format!("a{c}b = 1;");
         let (kind, span, message) = error(&text);
@@ -96,17 +95,18 @@ fn a_zero_width_joiner_or_non_joiner_inside_a_name_is_an_error() {
 }
 
 #[test]
-fn a_cyrillic_letter_before_a_latin_one_is_a_mixed_script_name() {
-    // `і` is U+0456 CYRILLIC SMALL LETTER BYELORUSSIAN-UKRAINIAN I, so `іf` is a name and not
-    // the keyword `if`.
-    let message = "the name `\u{456}f` mixes letters of the scripts Cyrillic and Latin, and a \
-                   name is written in one script, so that no name looks like another and is a \
-                   different one. Write it in one script: a letter that looks Latin may be, for \
-                   instance, a Cyrillic or Greek letter of the same shape.";
+fn a_cyrillic_letter_that_looks_like_a_keyword_is_no_name() {
+    // `і` is U+0456 CYRILLIC SMALL LETTER BYELORUSSIAN-UKRAINIAN I, so `іf` looks like the
+    // keyword `if`. It is rejected and named by its code point; its lookalike `if` is a keyword,
+    // so `if_2` is offered.
+    let message = "`\u{456}f` is no name: `\u{456}` (U+0456) is not ASCII. Try `if_2` instead.";
     assert_eq!(
         error("\u{456}f x { 1 } else { 2 }"),
         (
-            ErrorKind::MixedScript("\u{456}f".into()),
+            ErrorKind::NonAsciiName {
+                word: "\u{456}f".into(),
+                repair: Some("if_2".into()),
+            },
             (0, 3),
             message.to_string()
         )

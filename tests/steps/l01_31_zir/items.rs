@@ -122,14 +122,13 @@ fn named_payload_fields_sort() {
 
 #[test]
 fn names_the_lexer_accepts_read_back() {
-    // A name is what the lexer takes (lex/name.rs): `XID_Continue` characters, a combining
-    // mark among them, and one trailing prime.
+    // A name is what the lexer takes (lex/name.rs): ASCII name characters and one trailing
+    // prime.
     let one = Value::str("1");
     for v in [
         Value::atom("ok'"),
-        // `क्ष`: the virama U+094D joins two consonants and is a mark, not a letter.
-        Value::atom("क्ष"),
-        Value::atom_with("क्ष", vec![one.clone()]),
+        Value::atom("x_1"),
+        Value::atom_with("_x1", vec![one.clone()]),
         Value::atom_named("point", vec![("x'".into(), one.clone()), ("x".into(), one)])
             .expect("distinct fields"),
     ] {
@@ -138,7 +137,7 @@ fn names_the_lexer_accepts_read_back() {
     }
     for p in [
         Pattern::Bind("x'".into()),
-        Pattern::Bind("क्ष".into()),
+        Pattern::Bind("x_1".into()),
         Pattern::Atom("ok'".into(), vec![Pattern::Bind("x'".into())]),
         Pattern::Fields(
             "point".into(),
@@ -152,8 +151,11 @@ fn names_the_lexer_accepts_read_back() {
     }
     for (name, t) in [
         ("ok'", Type::atom("ok'")),
-        ("क्ष", Type::atom("क्ष")),
-        ("क्ष", Type::atom_with("क्ष", &Type::tuple(vec![Type::int()]))),
+        ("x_1", Type::atom("x_1")),
+        (
+            "_x1",
+            Type::atom_with("_x1", &Type::tuple(vec![Type::int()])),
+        ),
     ] {
         let text = t.to_string();
         assert!(text.contains(name), "{text} names {name}");
@@ -212,10 +214,10 @@ fn read_name_form(reader: &str, form: &str, name: &str) -> Result<String, String
 
 #[test]
 fn a_name_starts_as_the_lexer_starts_one() {
-    // lex/name.rs: a name starts with an `XID_Start` character, or with `_` before an
-    // `XID_Continue` character. `é` and `面` are `XID_Start`; `1` is only `XID_Continue`.
+    // lex/name.rs: a name starts with an ASCII letter, or with `_` before a name character;
+    // a name is ASCII (NAME-ascii-only), so `élan` and `面積` are no names.
     for (reader, form) in NAME_FORMS {
-        for name in ["élan", "面積", "_1"] {
+        for name in ["elan", "x1", "_1"] {
             let want = form.replacen("{}", name, 1);
             assert_eq!(
                 read_name_form(reader, form, name),
@@ -224,12 +226,14 @@ fn a_name_starts_as_the_lexer_starts_one() {
             );
         }
         let column = form.find("{}").expect("a place for the name") + 1;
-        let why = "`1x` is not a name: a name starts with a letter or `_`";
-        let want = match *reader {
-            "graph" => format!("line 3: column {column}: {why}"),
-            _ => format!("column {column}: {why}"),
-        };
-        assert_eq!(read_name_form(reader, form, "1x"), Err(want), "{form}");
+        for bad in ["1x", "\u{e9}lan", "\u{9762}\u{7a4d}"] {
+            let why = format!("`{bad}` is not a name: a name starts with an ASCII letter or `_`");
+            let want = match *reader {
+                "graph" => format!("line 3: column {column}: {why}"),
+                _ => format!("column {column}: {why}"),
+            };
+            assert_eq!(read_name_form(reader, form, bad), Err(want), "{form} {bad}");
+        }
     }
     // The head of a type form is read up to a space or a bracket, and checked when it ends.
     assert_eq!(
@@ -237,17 +241,23 @@ fn a_name_starts_as_the_lexer_starts_one() {
         Err("column 18: `(#1x …)`: `1x` is not a name".into())
     );
     assert_eq!(
-        parse_type("(#面積 (tuple int))").map(|t| t.to_string()),
-        Ok("(#面積 (tuple int))".into())
+        parse_type("(#Area (tuple int))").map(|t| t.to_string()),
+        Ok("(#Area (tuple int))".into())
+    );
+    // The column counts bytes: each of the two Han characters is three.
+    assert_eq!(
+        parse_type("(#\u{9762}\u{7a4d} (tuple int))"),
+        Err("column 22: `(#\u{9762}\u{7a4d} …)`: `\u{9762}\u{7a4d}` is not a name".into())
     );
     // A bare `_` is the wildcard: a binder pattern, never the name of an atom or a field.
     assert_eq!(parse_pattern("_"), Ok(Pattern::Wild));
-    let why = "`_` is not a name: a name that starts with `_` has a letter, a digit or `_` next";
+    let why = "`_` is not a name: a name that starts with `_` has an ASCII letter, a digit or `_` \
+               next";
     assert_eq!(parse_value("#_"), Err(format!("column 2: {why}")));
     assert_eq!(parse_pattern("#p(_: a)"), Err(format!("column 4: {why}")));
     assert_eq!(
         parse_pattern("(a, _')"),
-        Err("column 5: `_'` is not a name: a name that starts with `_` has a letter, a digit or `_` next".into())
+        Err("column 5: `_'` is not a name: a name that starts with `_` has an ASCII letter, a digit or `_` next".into())
     );
 }
 
@@ -442,7 +452,7 @@ fn a_port_named_by_a_field_of_main_args_reads_back() {
         ),
         (
             "state m.1x",
-            "column 9: `1x` is not a name: a name starts with a letter or `_`",
+            "column 9: `1x` is not a name: a name starts with an ASCII letter or `_`",
         ),
     ] {
         assert_eq!(

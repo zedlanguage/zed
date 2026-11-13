@@ -12,7 +12,7 @@
 //! layer.
 //!
 //! The lexical grammar adds what only a grammar over characters can read: double-quoted
-//! literals, `[a-z]` classes, `ANY`, `XID_START` and `XID_CONTINUE`.
+//! literals, `[a-z]` classes and `ANY`.
 
 use std::collections::HashMap;
 
@@ -79,12 +79,6 @@ pub enum Expr {
     Class(Vec<(char, char)>),
     /// `ANY`: any character. Only [`Grammar::read_open`] reads this.
     Any,
-    /// `XID_START`: XID_Start less the characters a name may not hold
-    /// ([`crate::lex::is_name_start`]). Only [`Grammar::read_open`] reads this.
-    XidStart,
-    /// `XID_CONTINUE`: XID_Continue less the characters a name may not hold
-    /// ([`crate::lex::is_name_continue`]). Only [`Grammar::read_open`] reads this.
-    XidContinue,
     /// A name that is no rule and nothing built in, which never matches. Only
     /// [`Grammar::read_open`] reads this, so that the grammar checker can report every one.
     Undefined(String),
@@ -551,8 +545,6 @@ impl Reader<'_> {
             GTok::Name(n) => match (self.index.get(&n), n.as_str(), self.open) {
                 (Some(&r), _, _) => Ok(Expr::Rule(r)),
                 (None, "ANY", true) => Ok(Expr::Any),
-                (None, "XID_START", true) => Ok(Expr::XidStart),
-                (None, "XID_CONTINUE", true) => Ok(Expr::XidContinue),
                 (None, _, true) => Ok(kind(&n).unwrap_or(Expr::Undefined(n))),
                 (None, _, false) => kind(&n).ok_or(format!("the rule {n} is not defined")),
             },

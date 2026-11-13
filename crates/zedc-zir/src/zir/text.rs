@@ -628,10 +628,11 @@ struct P<'a> {
     i: usize,
 }
 
-/// The length in bytes of the word at the start of `s`: its characters that continue a name
-/// and one prime after them, so that every name the lexer accepts (lex/name.rs) reads back.
+/// The length in bytes of the word at the start of `s`: its characters a word holds
+/// ([`lex::is_word_char`]) and one prime after them, so that every name the lexer accepts
+/// (lex/name.rs) reads back and a word beyond ASCII is read whole, to be refused by name.
 fn word_len(s: &str) -> usize {
-    let n = s.find(|c| !lex::is_name_continue(c)).unwrap_or(s.len());
+    let n = s.find(|c| !lex::is_word_char(c)).unwrap_or(s.len());
     n + usize::from(n > 0 && s[n..].starts_with('\''))
 }
 
@@ -647,9 +648,11 @@ pub(super) fn not_a_name(w: &str) -> Option<String> {
     let mut cs = w.chars();
     let why = match cs.next() {
         Some('_') if !cs.next().is_some_and(lex::is_name_continue) => {
-            ": a name that starts with `_` has a letter, a digit or `_` next"
+            ": a name that starts with `_` has an ASCII letter, a digit or `_` next"
         }
-        Some(c) if c != '_' && !lex::is_name_start(c) => ": a name starts with a letter or `_`",
+        Some(c) if c != '_' && !lex::is_name_start(c) => {
+            ": a name starts with an ASCII letter or `_`"
+        }
         _ => "",
     };
     Some(format!("`{w}` is not a name{why}"))
@@ -717,7 +720,7 @@ impl<'a> P<'a> {
         self.ws();
         let r = self.rest();
         if r.starts_with(w)
-            && !r[w.len()..].starts_with(|c: char| lex::is_name_continue(c) || c == '\'')
+            && !r[w.len()..].starts_with(|c: char| lex::is_word_char(c) || c == '\'')
         {
             self.i += w.len();
             true
@@ -1417,7 +1420,7 @@ impl<'a> P<'a> {
             .find(|c: char| !c.is_ascii_digit())
             .unwrap_or(digits.len());
         let (k, after) = digits.split_at(n);
-        let joined = after.starts_with(|c: char| lex::is_name_continue(c) || c == '\'');
+        let joined = after.starts_with(|c: char| lex::is_word_char(c) || c == '\'');
         let x: Arc<str> = match canonical {
             true => format!("\0{k}"),
             false => format!("${k}"),

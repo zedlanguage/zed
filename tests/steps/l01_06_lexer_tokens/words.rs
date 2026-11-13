@@ -62,7 +62,7 @@ fn where_and_sep_are_names_reserved_only_by_position() {
 
 #[test]
 fn a_prime_does_not_continue_a_keyword() {
-    // `if'` is the keyword `if` and a stray `'`, as `KeywordWord !XID_CONTINUE` reads it.
+    // `if'` is the keyword `if` and a stray `'`, as `KeywordWord !NameChar` reads it.
     let e = lex("if'").unwrap_err();
     assert_eq!((e.kind, e.span.start), (ErrorKind::Unexpected('\''), 2));
 }

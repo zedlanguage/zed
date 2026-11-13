@@ -131,8 +131,6 @@ impl Depths {
             | Expr::Not(_)
             | Expr::Class(_)
             | Expr::Any
-            | Expr::XidStart
-            | Expr::XidContinue
             | Expr::Undefined(_) => 0,
         }
     }
@@ -154,8 +152,6 @@ fn refs(e: &Expr, f: &mut impl FnMut(usize)) {
         | Expr::Not(_)
         | Expr::Class(_)
         | Expr::Any
-        | Expr::XidStart
-        | Expr::XidContinue
         | Expr::Undefined(_) => {}
     }
 }
@@ -309,12 +305,7 @@ impl<'g> Gen<'g, '_> {
             Expr::Not(x) => self.looks.push((self.out.len(), false, x, head)),
             Expr::SetHead(x) => self.gen_of(x, depth, true)?,
             Expr::ClearHead(x) => self.gen_of(x, depth, false)?,
-            Expr::Head
-            | Expr::Class(_)
-            | Expr::Any
-            | Expr::XidStart
-            | Expr::XidContinue
-            | Expr::Undefined(_) => {}
+            Expr::Head | Expr::Class(_) | Expr::Any | Expr::Undefined(_) => {}
         }
         Ok(())
     }

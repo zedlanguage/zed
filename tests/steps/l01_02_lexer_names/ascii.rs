@@ -1,23 +1,27 @@
-//! The keywords and every name the prelude declares are printable ASCII, U+0021 to U+007E
-//! (DESIGN.md sec:lexical; plan row NAME-ascii-library): a program's own names may be Unicode,
-//! but the words every program is given can be typed on any keyboard. The tool `ascii_names`
-//! checks the same of a standard library checkout (libzed); a planted `π` and `#café` show that
-//! it reports what it should.
+//! The keywords and every name the prelude declares are ASCII names, `[A-Za-z_][A-Za-z0-9_]*`
+//! (DESIGN.md sec:lexical; NAME-ascii-only, 2026-11-12, which takes in NAME-ascii-library). The
+//! lexer rejects a name beyond ASCII in any program, the standard library's included, so the
+//! tool `ascii_names` that checked a libzed checkout for such names was removed: a name it
+//! reported (`π`, `@größe`, `#café`) is now an error of the lexer, while the same characters in a
+//! comment or a string are still text.
 
-use zed_tests::step_helpers::m0_03_grammar_tools::{Dir, tool};
-use zed_tools::ascii_names::{is_printable_ascii, non_ascii_names, run};
-use zedc::lex::KEYWORDS;
+use zedc::lex::{KEYWORDS, lex, name_end};
 use zedc::resolve::{ANNOTATIONS, LATER_TYPES, TYPES, WORDS};
 
+/// Whether `w` is one ASCII name and nothing more.
+fn is_ascii_name(w: &str) -> bool {
+    name_end(w, 0) == Some(w.len())
+}
+
 #[test]
-fn every_keyword_is_printable_ascii() {
+fn every_keyword_is_an_ascii_name() {
     for k in KEYWORDS {
-        assert!(is_printable_ascii(k), "{k:?}");
+        assert!(is_ascii_name(k), "{k:?}");
     }
 }
 
 #[test]
-fn every_word_type_and_annotation_the_resolver_gives_the_prelude_is_printable_ascii() {
+fn every_word_type_and_annotation_the_resolver_gives_the_prelude_is_an_ascii_name() {
     let names = WORDS
         .iter()
         .chain(LATER_TYPES)
@@ -25,69 +29,38 @@ fn every_word_type_and_annotation_the_resolver_gives_the_prelude_is_printable_as
         .map(|&(w, _)| w)
         .chain(TYPES.iter().copied());
     for w in names {
-        assert!(is_printable_ascii(w), "{w:?}");
+        assert!(is_ascii_name(w), "{w:?}");
     }
 }
 
 #[test]
-fn every_name_in_the_prelude_source_is_printable_ascii() {
+fn every_file_of_the_prelude_source_lexes() {
     let prelude = format!("{}/zed/prelude", zed_tools::impl_root());
-    let files = std::fs::read_dir(&prelude)
-        .expect("the prelude directory")
-        .filter(|e| {
-            e.as_ref()
-                .is_ok_and(|e| e.path().extension().is_some_and(|x| x == "zed"))
-        })
-        .count();
-    assert!(files >= 7, "{files} prelude files in {prelude}");
-    assert_eq!(tool(run, &[&prelude]), (Ok(true), String::new()));
-}
-
-#[test]
-fn a_non_ascii_name_atom_or_annotation_in_code_is_reported_and_text_is_not() {
-    let text = "// π, #café and @größe in a comment are text.\n\
-                π = 3.14;\n\
-                s = \"π ${ä} π\";\n\
-                @größe f() -> int { #café }\n";
-    assert_eq!(
-        non_ascii_names(text),
-        Ok(vec![
-            (2, 1, "π".to_string()),
-            (3, 10, "ä".to_string()),
-            (4, 1, "@größe".to_string()),
-            (4, 21, "#café".to_string()),
-        ])
-    );
-    assert_eq!(non_ascii_names("x = 1; // π\n#ok;"), Ok(vec![]));
-}
-
-#[test]
-fn the_tool_reports_each_planted_name_and_skips_hidden_directories() {
-    let dir = Dir::new("ascii_names");
-    let root = dir.root();
-    for d in ["lib", "lib/geo", ".git"] {
-        std::fs::create_dir_all(format!("{root}/{d}")).expect("a test directory");
+    let mut files = 0;
+    for entry in std::fs::read_dir(&prelude).expect("the prelude directory") {
+        let path = entry.expect("a directory entry").path();
+        if path.extension().is_some_and(|x| x == "zed") {
+            let text = std::fs::read_to_string(&path).expect("a prelude file");
+            if let Err(e) = lex(&text) {
+                panic!("{}: {e}", path.display());
+            }
+            files += 1;
+        }
     }
-    dir.write("lib/a.zed", "x = 1; // π\n");
-    dir.write("lib/geo/pi.zed", "π = 3.14;\nf() -> int { #café }\n");
-    dir.write("lib/geo/notes.txt", "π = 3.14;\n");
-    dir.write(".git/b.zed", "π = 3.14;\n");
-    dir.write("lib/bad.zed", "x = \u{200d};\n");
-    let (outcome, out) = tool(run, &[&root]);
-    let at = |f: &str| format!("{root}/{f}");
-    assert_eq!(outcome, Ok(false));
-    assert_eq!(
-        out,
-        format!(
-            "{} FAIL {}\n{}:1:1: the name `π`\n{}:2:14: the name `#café`\n",
-            at("lib/bad.zed"),
-            zedc::lex::lex("x = \u{200d};\n").unwrap_err(),
-            at("lib/geo/pi.zed"),
-            at("lib/geo/pi.zed"),
-        )
-    );
-    // Without the planted names the same checkout passes.
-    dir.write("lib/geo/pi.zed", "pi = 3.14;\nf() -> int { #cafe }\n");
-    dir.write("lib/bad.zed", "x = 1;\n");
-    assert_eq!(tool(run, &[&root]), (Ok(true), String::new()));
+    assert!(files >= 7, "{files} prelude files in {prelude}");
+}
+
+#[test]
+fn a_name_atom_or_annotation_beyond_ascii_in_code_is_rejected_and_text_is_not() {
+    // The cases of the removed tool's test.
+    for (text, word) in [
+        ("π = 3.14;\n", "π"),
+        ("s = \"π ${ä} π\";\n", "ä"),
+        ("@größe f() -> int { 1 }\n", "@größe"),
+        ("f() -> int { #café }\n", "#café"),
+    ] {
+        let e = lex(text).expect_err(text);
+        assert_eq!(&text[e.span.start..e.span.end], word, "{text:?}");
+    }
+    assert!(lex("// π, #café and @größe in a comment are text.\nx = \"π\";\n").is_ok());
 }

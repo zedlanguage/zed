@@ -16,8 +16,10 @@ crate-type = ["rlib", "dylib"]
 zedc-base.workspace = true
 zed-kernel.workspace = true
 num-bigint.workspace = true
-unicode-ident.workspace = true
+any_ascii.workspace = true
+unicode-normalization.workspace = true
 unicode-script.workspace = true
+unicode-security.workspace = true
 unicode-width.workspace = true
 
 [lints]

@@ -62,7 +62,8 @@ fn a_name_cannot_start_with_a_digit_or_a_combining_mark() {
 
 #[test]
 fn spans_are_byte_ranges_of_the_text() {
-    let ts = lex("größe  x'").unwrap();
+    // `π` takes two bytes.
+    let ts = lex("\"π\"  x'").unwrap();
     let spans: Vec<_> = ts.iter().map(|t| (t.span.start, t.span.end)).collect();
-    assert_eq!(spans, [(0, 7), (9, 11)]);
+    assert_eq!(spans, [(0, 4), (6, 8)]);
 }
