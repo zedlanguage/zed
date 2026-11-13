@@ -640,6 +640,14 @@ impl<M: Module> Gen<'_, M> {
                     fx.b.ins().jump(slow, &[]);
                 }
                 Prim::Sqrt => {
+                    // IEEE 754 `squareRoot` (IEEE Std 754-2019, "IEEE Standard for
+                    // Floating-Point Arithmetic", IEEE, 2019, section 5.4.1): one `sqrtsd`,
+                    // O(1). Only an `f64` runs here. An `f32` has no word tag of its own (a
+                    // `Word::VAL` in the heap's table), so it takes the kernel call, as all
+                    // `f32` arithmetic in native code does; a tag for it would make every
+                    // `f32` operation inline, a change beyond this primitive. Measured: the
+                    // same bits as the kernel on 900 random operands (test
+                    // `l01_18_scalar_interpreter::sqrt_fma`).
                     let c = fx.b.ins().icmp_imm_s(IntCC::Equal, a.0, Word::FLOAT);
                     self.when(fx, c, slow);
                     let x = self.float(fx, a.1);
@@ -652,8 +660,12 @@ impl<M: Module> Gen<'_, M> {
                 _ => unreachable!("checked by `inline`"),
             }
         } else if p == Prim::Fma {
-            // One `fma` instruction, rounded once: `vfmadd` where the host has FMA, else the
-            // C library's `fma`, which Cranelift calls in its place.
+            // IEEE 754 `fusedMultiplyAdd` (IEEE Std 754-2019, section 5.4.1), rounded once:
+            // one `vfmadd` where the host has FMA, else the C library's `fma`, which Cranelift
+            // calls in its place; O(1) either way. As for `sqrt`, an `f32` takes the kernel
+            // call. Cranelift never fuses a separate `fmul` and `fadd`, so a written
+            // `a * b + c` keeps its two roundings (test `l01_18_scalar_interpreter::sqrt_fma`
+            // shows the two differ).
             let (b, c) = (self.get(fx, ins[1]), self.get(fx, ins[2]));
             let ab = self.both(fx, a, b, Word::FLOAT);
             let cf = fx.b.ins().icmp_imm_s(IntCC::Equal, c.0, Word::FLOAT);

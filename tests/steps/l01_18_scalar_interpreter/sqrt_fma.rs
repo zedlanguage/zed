@@ -362,7 +362,10 @@ fn nearest(v: &(BigInt, i64), r: f64, below: f64, above: f64, even: bool) -> boo
 
 /// Whether `r > 0` is the square root of `x > 0` correctly rounded, `below` and `above` its
 /// neighbors: `x` lies strictly between the squares of the midpoints of `r` and each neighbor.
-/// No square root of a float is a tie, so the bounds are strict.
+/// No square root of a float is a tie, so the bounds are strict: a midpoint is `m * 2^e` with
+/// `m` odd and 54 bits wide, so its square has the odd 107- or 108-bit factor `m^2`, which no
+/// `f64` (53 bits) holds. Cost: exact integers of O(p) bits for precision `p`, a few products
+/// per case, so O(1) per case at a fixed format.
 fn nearest_root(x: f64, r: f64, below: f64, above: f64) -> bool {
     let [x, r, below, above] = [x, r, below, above].map(|x| exact(x).expect("finite"));
     let e = [r.1, below.1, above.1].into_iter().min().unwrap();
