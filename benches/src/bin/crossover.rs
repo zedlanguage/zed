@@ -76,10 +76,10 @@ use num_integer::Integer;
 use zed_benches::{Constant, Crossover, Method, Setting, Steps, conditions, least};
 use zed_corpus_ref::zedrt::{self, product};
 use zed_kernel::num::crossover as x;
-use zed_kernel::poly::crossover as px;
 use zed_kernel::num::{
     PRINT_HANDOFF, PRINT_WHOLE, mul_uint, to_decimal, to_decimal_split, to_decimal_split_at,
 };
+use zed_kernel::poly::crossover as px;
 use zed_kernel::text::{self, Text};
 use zed_tests::instances::Rng;
 use zed_tests::scaling::Meter;
@@ -877,10 +877,7 @@ fn poly_dense(args: &[String]) -> ExitCode {
         let mut rng = Rng::new(t as u64);
         let n = t as u128;
         vec![
-            (
-                sum_at(&mut rng, 0..n, words),
-                sum_at(&mut rng, 0..n, words),
-            ),
+            (sum_at(&mut rng, 0..n, words), sum_at(&mut rng, 0..n, words)),
             // Sides of different spans: the second at every other index.
             (
                 sum_at(&mut rng, 0..n, words),
@@ -905,7 +902,10 @@ fn poly_dense(args: &[String]) -> ExitCode {
     };
     let verdict = bench.report(
         &mut Meter::new(),
-        &format!("poly-dense {words} {}", args.get(1).map_or("pair", String::as_str)),
+        &format!(
+            "poly-dense {words} {}",
+            args.get(1).map_or("pair", String::as_str)
+        ),
         &poly_constants(),
         &ladder(2, 256, 2),
         TOLERANCE,
@@ -950,7 +950,10 @@ fn poly_gaps(args: &[String]) -> ExitCode {
     };
     let verdict = bench.report(
         &mut Meter::new(),
-        &format!("poly-gaps {t} {}", args.get(1).map_or("pair", String::as_str)),
+        &format!(
+            "poly-gaps {t} {}",
+            args.get(1).map_or("pair", String::as_str)
+        ),
         &poly_constants(),
         &ladder(1, 4096, 2),
         TOLERANCE,
@@ -988,7 +991,10 @@ fn poly_wide(args: &[String]) -> ExitCode {
     };
     let verdict = bench.report(
         &mut Meter::new(),
-        &format!("poly-wide {t} {}", args.get(1).map_or("pair", String::as_str)),
+        &format!(
+            "poly-wide {t} {}",
+            args.get(1).map_or("pair", String::as_str)
+        ),
         &poly_constants(),
         &ladder(1, 1024, 2),
         TOLERANCE,

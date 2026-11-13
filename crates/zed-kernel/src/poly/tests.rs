@@ -612,11 +612,15 @@ fn packed(indices: &[u128], c: i64) -> Poly<u128> {
 fn the_choice_of_product_by_shape() {
     // 16 terms at every index, one-word coefficients: the dense product.
     let every: Vec<u128> = (0..16).collect();
-    let plan = packed(&every, 3).plan(&packed(&every, -5)).expect("packed keys");
+    let plan = packed(&every, 3)
+        .plan(&packed(&every, -5))
+        .expect("packed keys");
     assert!(plan.takes_dense, "{:?}", plan.choice);
     // 16 terms about every 4096 indices: the sparse product, as the span is mostly empty.
     let gaps: Vec<u128> = (0..16).map(|i| 4096 * i + (i * 7) % 13).collect();
-    let plan = packed(&gaps, 3).plan(&packed(&gaps, 5)).expect("packed keys");
+    let plan = packed(&gaps, 3)
+        .plan(&packed(&gaps, 5))
+        .expect("packed keys");
     assert_eq!(plan.step, 1);
     assert!(!plan.takes_dense, "{:?}", plan.choice);
     // A span past every integer's length: the sparse product, and no overflow.

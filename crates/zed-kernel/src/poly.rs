@@ -132,6 +132,10 @@ const SLOT_COST: f64 = 40.0;
 /// (0) the best that `PAIR_COST` and `SLOT_COST` reach is 1.41.
 const DENSE_COST: f64 = 700.0;
 
+/// The units of [`LIMIT`] in one unit of `num::mul_cost`, as [`PAIR`] and [`PAIR_COST`] measure
+/// the same cost of a pair in each: about 2 ns, a word product's 16 instructions.
+const CHOICE_UNIT: f64 = PAIR / PAIR_COST;
+
 /// The work an expansion has spent, the most it may spend, and the work it would have reached
 /// at the charge it refused, in the units of [`LIMIT`].
 struct Budget {
@@ -1922,11 +1926,16 @@ impl<K: Key> Poly<K> {
         // |c| < 2^(ba + bb + bits(min(ta, tb))), and one bit more for the sign.
         let slot_bits = bits(self) + bits(o) + u64::from(64 - ta.min(tb).leading_zeros()) + 1;
         let slot_words = slot_bits.div_ceil(32);
+        // The packed product's transforms, and the packing, setup and unpacking the choice
+        // below counts, which a product of few terms spends mostly in (`(x + y) ^ 72 - x`
+        // took 2.4 times its prediction without them).
         let dense = span
             .checked_mul(u128::from(slot_words))
-            .map_or(f64::INFINITY, |w| ntt_cost(w as f64));
+            .map_or(f64::INFINITY, |w| ntt_cost(w as f64))
+            + CHOICE_UNIT * (DENSE_COST + SLOT_COST * span as f64);
         let sparse = self.sparse_cost(o);
-        let words = |p: &Poly<K>| usize::try_from(bits(p).div_ceil(64).max(1)).unwrap_or(usize::MAX);
+        let words =
+            |p: &Poly<K>| usize::try_from(bits(p).div_ceil(64).max(1)).unwrap_or(usize::MAX);
         let packed = |hi: u128, lo: u128| {
             ((hi - lo) / step)
                 .checked_add(1)
