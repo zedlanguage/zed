@@ -2167,7 +2167,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | BLOCKING-gaps | impl attempt 1 | 2026-11-13 11:28 | start; worktree /home/luke/Work/wt/blocking-gaps |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | rule change noted: accept against R < 10.5 (CD run keeps 13 step; acceptance scorer score-accept.py); load 55.74 59.14 57.03 |
 | MSG-too-large-plain | impl attempt 1 | 2026-11-13 11:21 | started; worktree from origin/main 378a2cd0e |
-| NUM-expect-audit | impl attempt 1 | 2026-11-13 11:14 | baseline on f70a4733b (load 42.7): zed_kernel 305 pass/9 ignored, l01_17 135 pass/1 ignored, l01_18 121 pass; 0 failed |
 | PRES-overlap-fast | xr attempt  | 2026-11-13 01:10 | round 1 launched: Sol and Opus seats (medium); Gemini 429 (resets in 32h55m); CD next |
 | SCHED-dep-dag | impl attempt 2 | 2026-11-13 11:21 | start round 2 (fixpoint theory); worktrees wt/sched-dep-dag, wt/sched-dep-dag-spec reused |
 | ST-walk-orders | impl attempt 1 | 2026-11-13 06:31 | reproduced on f1c80798d (instructions/bytes at 8n): cycle0@back 35.7/22.7 n=8, 61/40 n=32 (quadratic); cycle1@back 38/24..65/41; walk@back 43/31 n=5, 68/47 n=20 |
