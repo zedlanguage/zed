@@ -5268,6 +5268,21 @@ impl<'a> Ck<'_, 'a> {
         let vars = sum.summary.vars();
         let limit = vars.len().min(names.len());
         let base = (self.reads.get(&b)).or_else(|| sum.widest.and_then(|w| self.reads.get(&w)));
+        // Complexity tradeoff: the diff below stops at `limit`, so a read never walks the
+        // whole difference of the two scopes, which is Θ(n²) over a chain of `n` difference
+        // tests (`x_i >= x_(i-1) + 1`), each of which moves the product of every name on the
+        // path. A summary of `k` inputs under such a chain still resets Θ(min(m, k)) leaves a
+        // read for `m` names changed, Θ(n²) over the chain when `k` is about `n`: each is an
+        // input whose product the solver changed, which moves the image, so an exact read
+        // from the map must visit it. Reading every input by name (`NameProducts::read`, as
+        // the ST-walk cross-review proposed) costs Θ(k) a read, twice as much there.
+        // Measured (WALK-read-image-n2, `zedc test` at n = 16 and 128): one input, 28 and 252
+        // names read, where the whole difference is 133 and 8,253; `n` inputs, 150 and 8,382,
+        // against 241 and 16,257 by name. When the checker admits difference paths
+        // (ST-walk-checker-admit), `names`, reached through `NameProducts`'s `Deref`, is the
+        // whole exact map, built in O(n log² n) for each scope version; the read must then
+        // take its inputs by name and the changes from the entries of the paths a test
+        // writes. COMPLEXITY.md row WALK-read-image-n2.
         let tree = base
             .and_then(|r| {
                 let own: Box<dyn Iterator<Item = &Arc<str>>> = if Rc::ptr_eq(&r.sum, sum) {
