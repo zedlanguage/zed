@@ -2174,8 +2174,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | cross-review round 5 launched on zed-impl 77a026349: Claude, Codex; Gemini 429 (gap recorded); main dump in progress; load 25.99 19.01 20.42 |
 | POW-nonneg-power | impl attempt 1 | 2026-11-13 12:32 | started; worktree /home/luke/Work/wt/pow-nonneg-power at ca7c70736 |
 | PRES-overlap-coeffs | impl attempt 1 | 2026-11-13 14:10 | started; worktree from origin/main 64dfe1c61 |
-| RED-l139-six | running |  |  |
+| RED-l139-six | impl attempt 1 | 2026-11-13 14:15 | started; worktree wt/red-l139-six from origin/main 783fd27c8 |
 | REPAIR-compare-order | impl attempt 1 | 2026-11-13 14:06 | started; worktree from origin/main 2bb162e92 |
+| SPEC-release-dag | running |  |  |
 | ST-walk-orders-left | impl attempt 1 | 2026-11-13 13:56 | started |
 | TEST-step-one-piece | impl attempt 1 | 2026-11-13 13:52 | started |
 
