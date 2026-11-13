@@ -198,7 +198,7 @@ test("a row of exactly 1.5 times the median count is not split", () => {
   assert.ok(splitRows(z, z.map((_, i) => i)));
 });
 
-test("after layers on the plan no edge points up, every source sits directly above its highest child unless that row holds K nodes, and the layers are a fixed point: balanceLayers and spreadSources at K each make one pass and no move", () => {
+test("after layers on the plan no edge points up, every source sits directly above its highest child unless that row holds K nodes, and the layers are a fixed point: balanceLayers at K makes one round and spreadSources one pass, and no move", () => {
   const { dag, nodes, parents, children } = dagOf(plan);
   const { y, K } = layers(dag, nodes, parents, children);
   edgesDown(y, children);
@@ -390,9 +390,11 @@ test("spreadSources on k sources crowded into one row spreads them to rows of at
     assert.ok(Math.max(...counts(g.y)) <= K);
     return m;
   });
-  const limit = scalingLimit(4000);
-  console.log(`spreadSources on crowded sources: ${show(r)}; step limit ${limit.toFixed(1)}`);
-  assert.ok(ratio(r) < limit, show(r));
+  // The standing limit of 2026-11-13: under 10.5 times the steps at 8n. The
+  // negative control, run once and not kept: with the sources' own row tried
+  // before the rows with room (main before DAGVIEW-spread-scaling), 14.19.
+  console.log(`spreadSources on crowded sources: ${show(r)}; step limit 10.5`);
+  assert.ok(ratio(r) < 10.5, show(r));
 });
 
 // The sources (no parents, some children) whose highest child is not exactly
@@ -474,18 +476,18 @@ function chain(k: number, K: number) {
   return { y: Int32Array.from(y), first, ...adjacency(y.length, edges) };
 }
 
-test("DAG-balance-bound: balanceLayers on the chain makes one move per pass, k moves in k + 1 passes, so the passes grow linearly with the graph, within the bound moves <= Q0 + (Q0 + 1) F_max", () => {
+test("DAG-balance-bound: balanceLayers on the chain makes one move per round, k moves in k + 1 rounds, so the rounds grow linearly with the graph, within the bound moves <= Q0 + (Q0 + 1) F_max", () => {
   const K = 5;
   for (const k of [10, 40, 160]) {
     const { y, parents, children } = chain(k, K);
     const n = y.length, m = children.reduce((s, c) => s + c.length, 0), L = counts(y).length;
     let moves = 0;
-    const passes = balanceLayers(y, parents, children, K, () => { moves++; });
+    const rounds = balanceLayers(y, parents, children, K, () => { moves++; });
     edgesDown(y, children);
     const Q0 = 0, Fmax = (2 * K + 1) * m * (L - 1) + n * n;
-    console.log(`chain k = ${k}, K = ${K}: ${n} nodes, ${passes} passes, ${moves} moves; bound ${Q0 + (Q0 + 1) * Fmax} moves`);
+    console.log(`chain k = ${k}, K = ${K}: ${n} nodes, ${rounds} rounds, ${moves} moves; bound ${Q0 + (Q0 + 1) * Fmax} moves`);
     assert.equal(moves, k);
-    assert.equal(passes, k + 1);
+    assert.equal(rounds, k + 1);
     assert.ok(Math.max(...counts(y)) <= K);
   }
 });
@@ -656,9 +658,13 @@ test("makeRoom then balanceLayers on k sources sharing one child moves them out 
     edgesDown(g.y, g.children);
     assert.ok(Math.max(...counts(g.y)) <= K, `k = ${k}: a layer of ${Math.max(...counts(g.y))}`);
     assert.deepEqual(pinGaps(g.y, g.parents, g.children, K), []);
+    assert.equal(balanceLayers(g.y, g.parents, g.children, K, () => assert.fail(`k = ${k}: a second call moved a node`)), 1);
     return m;
   });
   // The standing limit of 2026-11-13: under 10.5 times the steps at 8n.
+  // The negative control, run once and not kept: reading a parent again only
+  // when the moved node was its one highest child scans the shared child's k
+  // parents at each move, 62.33 times.
   console.log(`makeRoom and balanceLayers on sources sharing a child: ${show(r)}; step limit 10.5`);
   assert.ok(ratio(r) < 10.5, show(r));
 });

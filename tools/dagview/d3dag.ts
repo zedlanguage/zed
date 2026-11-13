@@ -522,18 +522,25 @@ export function scratchLayers(dag: any, nodes: any[], parents: number[][], child
 // 114, 3,868 x 82,548 px (w/h 0.047), edge spans median 8, 90th percentile
 // 181 and max 703 rows. Its only purpose was to keep rows under the split
 // limit; K now comes from the shape, so the loop is gone.
-// Complexity tradeoff: each round of the inner loop is one run of
-// balanceLayers and one of spreadSources, each O((n + m) log L) per pass (and
-// n K log L for balanceLayers' best layer), and it ends as both lower the same
-// (Q, F) (see spreadSources); makeRoom is O(n + L) and inserts at most n / K
-// layers. On the plan and the live plan of 2026-11-11 the inner loop ran 4
-// times in all, with 11 passes of balanceLayers (384 to 417 moves, 56 to 69
-// ms) and 9 to 10 of spreadSources (28 to 36 moves, 45 ms); on the
-// plan-shaped graph of 4,000 nodes 2 times, 6 and 2 passes.
+// Complexity tradeoff: the loop alternates balanceLayers and spreadSources
+// (see each for its cost) and ends as both lower the same (Q, F) (see
+// spreadSources); makeRoom is O(n + L) and inserts at most n / K layers. Each
+// call ends where it can move nothing, so the loop stops at the first call
+// after the first that moves nothing (returns 1); until
+// DAGVIEW-spread-scaling it ran pairs until a pair moved nothing, one call
+// more, which changes no layer. Measured then, on the plan and the live plan
+// of 2026-11-11 the loop ran 4 pairs in all, with 11 passes of balanceLayers
+// (384 to 417 moves, 56 to 69 ms) and 9 to 10 of spreadSources (28 to 36
+// moves, 45 ms); on the plan-shaped graph of 4,000 nodes 2 pairs, 6 and 2
+// passes. On the wide family of aspect.test.ts, with K growing with n,
+// layersAt now grows 9.2 to 10.2 times in steps at 8n (d3dag.test.ts).
 export function layersAt(base: Int32Array, parents: number[][], children: number[][], K: number, work?: Work): Int32Array {
   const y = Int32Array.from(base);
   makeRoom(y, K, work);
-  while (balanceLayers(y, parents, children, K, undefined, undefined, work) + spreadSources(y, parents, children, K, undefined, undefined, work) > 2);
+  // Each call ends where it can move nothing, so once a call after the first
+  // moves nothing (returns 1, or 0 for no nodes), neither can move: the other
+  // ended at these same layers.
+  for (let k = 0; ; k++) if ((k % 2 ? spreadSources(y, parents, children, K, undefined, undefined, work) : balanceLayers(y, parents, children, K, undefined, undefined, work)) <= 1 && k > 0) break;
   compactLayers(y, work);
   return y;
 }
@@ -884,9 +891,12 @@ export function balanceCounts(y: Int32Array, parents: number[][], children: numb
 // that change the edge lengths equally, as for a node with as many parents as
 // children: it moves to the least crowded layer if, with it, that holds fewer
 // nodes than the layer it left.
-// Each pass takes the nodes of the most crowded layers first, as counted at
-// the pass's start, and passes repeat until one moves nothing; it returns the
-// number of passes. onMove, if given, sees each move, for tests.
+// The first round reads every node, those of the most crowded layers first,
+// as counted at the start; each later round reads again only the nodes whose
+// move a change in the round before may have allowed (see the complexity
+// note below), until a round moves nothing. It returns the number of rounds,
+// 1 if nothing moved, and ends where no node can move. onMove, if given, sees
+// each move, for tests.
 //
 // It ends, with no pass count set. Let Q = sum over l of max(0, c[l] - K)^2.
 // A move out of a row over K (c[a] > K) lowers Q: into a row with room by
@@ -896,28 +906,56 @@ export function balanceCounts(y: Int32Array, parents: number[][], children: numb
 // and it lowers the integer F by at least 1. F lies between 0 and
 // F_max = (2K + 1) m (L - 1) + n^2 for m edges, so there are at most Q0 moves
 // out of rows over K, at most F_max other moves between two of those, and so
-// at most Q0 + (Q0 + 1) F_max moves, with at most one pass more than moves.
+// at most Q0 + (Q0 + 1) F_max moves, with at most one round more than moves.
 // After balanceCounts and lowerSources, Q0 = 1,554 on the plan of 2026-11-10
 // (K = 24, 15 rows over it, the widest 54, sources gathered in it) and 1,289 on
 // the live plan of 2026-11-11 (K = 25). Moving sources too keeps the
 // argument, which holds for any node. makeRoom changes the layers between
 // calls, not during one, so each call keeps it.
-// That bound is quadratic or worse in n. The number of passes can be linear in
-// n: in the chain of d3dag.test.ts ("a chain of moves"), each pass can move
+// That bound is quadratic or worse in n. The number of rounds can be linear in
+// n: in the chain of d3dag.test.ts ("a chain of moves"), each round can move
 // only the next node of a chain, as each move frees the row the next one
 // needs.
 //
-// Complexity tradeoff: scanning each node's slack costs O(n L) per pass, as
+// Complexity tradeoff: scanning each node's slack costs O(n L) per read, as
 // the slack can span every layer. A segment tree over c answers the least
 // count in a range and the first or last layer at or below a count in
 // O(log L), and a move updates it in O(log L); the best layer for a node with
-// s != 0 is found by Counts.bestLayer in at most K steps of O(log L). A pass
-// then costs O((n + m) log L + n K log L). The number of highest children of
-// each source (highest) costs O(n + m) per call and O(deg) per move to keep
-// (a moved source's own count O(C) for its C children). On k sources sharing
-// one child after makeRoom (d3dag.test.ts) the steps grow 10.3 times at 8k,
-// the log L of the tree; scanning the slack instead grew 57.9 times (run once
-// as a control, not kept).
+// s != 0 is found by Counts.bestLayer in at most K steps of O(log L). The
+// number of highest children of each source (highest) costs O(n + m) per
+// call and O(deg) per move to keep (a moved source's own count O(C) for its
+// C children).
+// Which nodes to read again. The naive method, used until
+// DAGVIEW-spread-scaling, reads every node in each pass until a pass moves
+// nothing: O((n + m) log L + n K log L) a pass, and the passes grow with n
+// (a move frees or fills a row that lets another move), so layersAt on the
+// wide plan-shaped family of aspect.test.ts grew 10.6 to 17.2 times in steps
+// at 8n. Here, as in a worklist solver of dataflow equations [Kildall73], a
+// node is read again only when something its move depends on changed:
+//   - its slack: a parent's slack widens only when i moved down out of the
+//     row above it (i may have been its highest child), a child's only when
+//     i moved up; a source's children are held while it has one highest
+//     child, so they are read again when that changes or the source moves;
+//   - the counts: a read that moves nothing leaves waits for the least change
+//     of c[a] (a rise, by a hash map on (layer, count)) or of a count in its
+//     slack (a fall, on the O(log L) segment-tree nodes covering the slack,
+//     by a hash map on (tree node, count), fired on the path above a layer
+//     that falls) that could allow a move; the conditions are derived at
+//     each site below. A rise elsewhere never allows a move, nor does a
+//     slack that shrinks.
+// A read costs O(deg + K log L) as before, a wait O(log L) to make and O(1)
+// to fire; each wait fires at most once, and a read made after it voids it
+// (ver), so the waits cost no more than the reads that made them. A move
+// queues O(deg) nodes. In all O((n + M deg) (K + 1) log L) for M moves,
+// against O(passes (n + m) K log L). On the wide family with K = row / 4 and
+// row / 2 (4 seeds each, K growing with n as fitLayers chooses it) layersAt
+// grows 9.2 to 10.2 times at 8n; at K = 23 for both sizes 12.6 to 13.3 times,
+// against 10.4 to 16.9 before, as the excess over K per node grows with n
+// there (0.51 to 0.83), and so must the moves. On k sources sharing one child
+// after makeRoom (d3dag.test.ts) the steps grow 10.4 times at 8k, the log L
+// of the tree; scanning the slack instead grew 57.9 times, and reading again
+// every parent of a shared child to test whether its slack widened 62.3
+// times (each run once as a control, not kept).
 export function balanceLayers(y: Int32Array, parents: number[][], children: number[][], K: number, onMove?: (i: number, from: number, to: number) => void, W = 2 * K + 1, work?: Work): number {
   const n = y.length;
   if (!n) return 0;
@@ -927,72 +965,150 @@ export function balanceLayers(y: Int32Array, parents: number[][], children: numb
   const c = countsFor(L, work);
   for (let i = 0; i < n; i++) c.add(y[i] - top, 1);
   const high = highest(y, parents, children, work);
-  // A pass reads every node, its parents twice and its children: perPass
-  // steps, the same in each pass, so the loop below counts nothing per node.
-  let perPass = 4 * n;
-  if (work) for (let i = 0; i < n; i++) perPass += 2 * parents[i].length + children[i].length;
-  let passes = 0, steps = 2 * n;
-  for (let moved = true; moved;) {
-    moved = false;
-    passes++;
-    // The nodes of the most crowded layers first, as counted at the start of
-    // the pass, by a counting sort (O(n + L)); in index order within a count.
-    const start = new Int32Array(n + 2);
-    for (let i = 0; i < n; i++) start[n - c.at(y[i] - top) + 1]++;
-    for (let k = 1; k <= n + 1; k++) start[k] += start[k - 1];
-    const order = new Int32Array(n);
-    for (let i = 0; i < n; i++) order[start[n - c.at(y[i] - top)]++] = i;
-    steps += perPass;
-    for (const i of order) {
-      if (parents[i].some((q) => isSource(q, parents, children) && y[q] === y[i] - 1 && high[q] === 1)) continue;
-      const a = y[i] - top;
-      let lo = 0, hi = L - 1;
-      for (const q of parents[i]) lo = Math.max(lo, y[q] - top + 1);
-      for (const k of children[i]) hi = Math.min(hi, y[k] - top - 1);
-      if (lo > hi) continue;
-      const s = W * (parents[i].length - children[i].length);
-      const ca = c.at(a);
-      let b: number;
-      if (s === 0) {
-        // Only the counts matter: a move needs c[b] + 1 < c[a], which leaves
-        // room in b when a is not full.
-        const m = c.min(lo, hi);
-        if (m + 1 >= ca) continue;
-        const up = a > lo ? c.last(lo, a - 1, m) : -1;
-        const down = a < hi ? c.first(a + 1, hi, m) : -1;
-        b = up < 0 ? down : down < 0 || a - up <= down - a ? up : down;
-      } else {
-        // f(b) = 2 c[b] + s b, so the change in F is f(b) - f(a) + 2.
-        b = c.bestLayer(lo, hi, s, 2, ca > K ? Infinity : 2 * ca + s * a - 2, K - 1);
-        if (b < 0 && ca > K) {
-          // Out of a full row with no room in the slack: to the least crowded
-          // layer if, with it, it holds fewer nodes than a did.
-          const m = c.min(lo, hi);
-          if (m + 1 < ca) b = s > 0 ? c.first(lo, hi, m) : c.last(lo, hi, m);
-        }
-        if (b < 0) continue;
-      }
-      c.add(a, -1);
-      c.add(b, 1);
-      steps += parents[i].length;
-      for (const q of parents[i]) {
-        if (!isSource(q, parents, children)) continue;
-        if (a === y[q] - top + 1) high[q]--;
-        if (b === y[q] - top + 1) high[q]++;
-      }
-      y[i] = b + top;
-      // A source that moved has new highest children: O(C) for its C children.
-      if (isSource(i, parents, children)) {
-        high[i] = 0;
-        steps += children[i].length;
-        for (const k of children[i]) if (y[k] === y[i] + 1) high[i]++;
-      }
-      onMove?.(i, a + top, b + top);
-      moved = true;
+  let rounds = 0, steps = 2 * n;
+  // ver[i] counts the reads of i; a wait holds the version it was made at,
+  // so a later read of i voids it.
+  const ver = new Int32Array(n);
+  // queued[i] = r if i is queued for round r; next holds round r + 1.
+  const queued = new Int32Array(n);
+  let next: number[] = [];
+  const queue = (i: number) => { if (queued[i] !== rounds + 1) { queued[i] = rounds + 1; next.push(i); } };
+  // Waits on a rise, key l * (n + 2) + v: nodes of layer l to read again
+  // when c[l] rises to v. Waits on a fall, key t * 2S + k for node k of a
+  // segment tree over the layers: nodes to read again when a layer under k
+  // falls to t. Counts change by 1 per move, so a count that passes a value
+  // reaches it.
+  let S = 1;
+  while (S < L) S *= 2;
+  const depth = Math.log2(S) + 1;
+  const rises = new Map<number, number[]>(), falls = new Map<number, number[]>();
+  const hold = (m: Map<number, number[]>, key: number, i: number) => {
+    const w = m.get(key);
+    if (w) w.push(i, ver[i]); else m.set(key, [i, ver[i]]);
+  };
+  const wake = (m: Map<number, number[]>, key: number) => {
+    const w = m.get(key);
+    if (!w) return;
+    m.delete(key);
+    steps += w.length / 2;
+    for (let j = 0; j < w.length; j += 2) if (ver[w[j]] === w[j + 1]) queue(w[j]);
+  };
+  const onRise = (i: number, l: number, v: number) => { steps++; hold(rises, l * (n + 2) + v, i); };
+  const onFall = (i: number, lo: number, hi: number, t: number) => {
+    if (t < 0) return;
+    for (let x = lo + S, z = hi + S + 1; x < z; x >>= 1, z >>= 1) {
+      steps++;
+      if (x & 1) hold(falls, t * 2 * S + x++, i);
+      if (z & 1) hold(falls, t * 2 * S + --z, i);
     }
+  };
+  // i, in layer a with slack lo..hi, moves once c[a] - c[l] >= 2 for a layer
+  // l of its slack other than a, or, with room >= 0, once a layer of the
+  // slack falls to room. With g = c[a] - (the least count of those layers),
+  // that takes r rises of a and f falls of the least with r + f >= 2 - g.
+  // Waiting for d = ceil((2 - g) / 2) of either misses none, as r, f <= d - 1
+  // give r + f <= 2d - 2 < 2 - g.
+  const gap = (i: number, a: number, lo: number, hi: number, room: number) => {
+    const m = Math.min(a > lo ? c.min(lo, a - 1) : Infinity, a < hi ? c.min(a + 1, hi) : Infinity);
+    if (m === Infinity) return;
+    const ca = c.at(a), d = Math.ceil((2 - (ca - m)) / 2);
+    onRise(i, a, ca + d);
+    onFall(i, lo, hi, Math.max(room, m - d));
+  };
+  // Reads node i: moves it if a move is allowed, else leaves waits for the
+  // counts that would allow one. Returns whether it moved.
+  const read = (i: number): boolean => {
+    ver[i]++;
+    steps += 4 + 2 * parents[i].length + children[i].length;
+    if (parents[i].some((q) => isSource(q, parents, children) && y[q] === y[i] - 1 && high[q] === 1)) return false;
+    const a = y[i] - top;
+    let lo = 0, hi = L - 1;
+    for (const q of parents[i]) lo = Math.max(lo, y[q] - top + 1);
+    for (const k of children[i]) hi = Math.min(hi, y[k] - top - 1);
+    if (lo > hi) return false;
+    const s = W * (parents[i].length - children[i].length);
+    const ca = c.at(a);
+    let b: number;
+    if (s === 0) {
+      // Only the counts matter: a move needs c[b] + 1 < c[a], which leaves
+      // room in b when a is not full.
+      const m = c.min(lo, hi);
+      if (m + 1 >= ca) { gap(i, a, lo, hi, -1); return false; }
+      const up = a > lo ? c.last(lo, a - 1, m) : -1;
+      const down = a < hi ? c.first(a + 1, hi, m) : -1;
+      b = up < 0 ? down : down < 0 || a - up <= down - a ? up : down;
+    } else {
+      // f(b) = 2 c[b] + s b, so the change in F is f(b) - f(a) + 2.
+      b = c.bestLayer(lo, hi, s, 2, ca > K ? Infinity : 2 * ca + s * a - 2, K - 1);
+      if (b < 0 && ca > K) {
+        // Out of a full row with no room in the slack: to the least crowded
+        // layer if, with it, it holds fewer nodes than a did.
+        const m = c.min(lo, hi);
+        if (m + 1 < ca) b = s > 0 ? c.first(lo, hi, m) : c.last(lo, hi, m);
+        else gap(i, a, lo, hi, K - 1);
+      } else if (b < 0) {
+        // |s| >= 2K + 1 outweighs any difference of counts, so with c[a] <= K
+        // i moves iff a layer of its slack on the side its edges pull it to
+        // has room: it waits for one to fall to K - 1, or for a to pass K.
+        onRise(i, a, K + 1);
+        if (s > 0) onFall(i, lo, a - 1, K - 1); else onFall(i, a + 1, hi, K - 1);
+      }
+      if (b < 0) return false;
+    }
+    c.add(a, -1);
+    c.add(b, 1);
+    steps += depth + 1;
+    for (let k = a + S; k; k >>= 1) wake(falls, c.at(a) * 2 * S + k);
+    wake(rises, b * (n + 2) + c.at(b));
+    // A parent's slack widens only if i was its one highest child and moved
+    // down, a child's only if i was its one lowest parent and moved up. Both
+    // are queued on the direction alone: testing "one highest child" scans
+    // the parent's children, O(n) a move when n sources share a child, and
+    // grew 62.3 times at 8k on sharedChild (d3dag.test.ts); a needless read
+    // costs O(deg + K log L) and moves nothing.
+    steps += parents[i].length;
+    for (const q of parents[i]) {
+      if (b > a) queue(q);
+      if (!isSource(q, parents, children)) continue;
+      const was = high[q];
+      if (a === y[q] - top + 1) high[q]--;
+      if (b === y[q] - top + 1) high[q]++;
+      // q's children are held below it only while it has one highest child.
+      if ((was === 1) !== (high[q] === 1)) { steps += children[q].length; for (const k of children[q]) queue(k); }
+    }
+    if (b < a) { steps += children[i].length; for (const k of children[i]) queue(k); }
+    queue(i);
+    y[i] = b + top;
+    // A source that moved has new highest children: O(C) for its C children.
+    // They need no read for it: moved up, they are queued above; it cannot
+    // move down while a child is directly below it, so a move down holds
+    // children, never frees one.
+    if (isSource(i, parents, children)) {
+      high[i] = 0;
+      steps += children[i].length;
+      for (const k of children[i]) if (y[k] === y[i] + 1) high[i]++;
+    }
+    onMove?.(i, a + top, b + top);
+    return true;
+  };
+  // Round 1 reads every node, those of the most crowded layers first, as
+  // counted at the start, by a counting sort (O(n + L)); in index order
+  // within a count. Each later round reads the nodes queued in the one
+  // before, in the order queued.
+  const start = new Int32Array(n + 2);
+  for (let i = 0; i < n; i++) start[n - c.at(y[i] - top) + 1]++;
+  for (let k = 1; k <= n + 1; k++) start[k] += start[k - 1];
+  const first = new Int32Array(n);
+  for (let i = 0; i < n; i++) first[start[n - c.at(y[i] - top)]++] = i;
+  steps += n;
+  for (let order: ArrayLike<number> = first; order.length; ) {
+    rounds++;
+    for (let j = 0; j < order.length; j++) read(order[j]);
+    order = next;
+    next = [];
   }
   if (work) work.steps += steps;
-  return passes;
+  return rounds;
 }
 
 // high[q] for each source q: the number of its children in the layer directly
@@ -1019,11 +1135,14 @@ function highest(y: Int32Array, parents: number[][], children: number[][], work?
 // b), with s, the change in edge length per layer moved, +1 for each other
 // parent of i, -1 for each child of i and -1 for each other child of a carried
 // source (the edge from a carried source to i keeps its length). Candidates,
-// in this order, the first that lowers (Q, F) taken: b = a - 1 (i into the
-// sources' own row, they into the one above), then the nearer and the farther
-// of the nearest layers above and below where neither b nor b - 1 holds
-// c[a - 1] - w nodes or more. Passes repeat until one moves nothing; it
-// returns the number of passes. onMove, if given, sees each move of i.
+// in this order, the first that lowers (Q, F) taken: first the nearer and the
+// farther of the nearest layers above and below where b - 1 and b have room
+// for the move (neither holds more than K - w nodes); only if neither lowers
+// (Q, F), b = a - 1 (i into the sources' own row, they into the one above),
+// then the nearer and the farther of the nearest layers where neither b nor
+// b - 1 holds c[a - 1] - w nodes or more. Passes repeat until one moves
+// nothing; it returns the number of passes. onMove, if given, sees each move
+// of i.
 //
 // It ends, with no pass count set: every move lowers (Q, F) in the order of
 // first Q then F, as every move of balanceLayers does, Q and F are integers
@@ -1039,9 +1158,16 @@ function highest(y: Int32Array, parents: number[][], children: number[][], work?
 // fewer than a bound in O(log L); a move changes six of its entries, each
 // O(log L). A source is carried only by its one highest child, so the carried
 // sources' edges are read once per pass: a pass costs O((n + m) + n log L).
-// On crowdedSources of d3dag.test.ts (k sources in one row) it made 18 passes
-// and 48,912 moves at k = 4,000 (56 ms) and 24 passes and 559,780 moves at
-// 32,000 (719 ms); the moves per source grow slowly, 12 to 17.5.
+// The candidates with room come first, as of DAGVIEW-spread-scaling: tried
+// first, b = a - 1 moves a source into the row above, which is then over K
+// in turn, so a source moved again and again. On crowdedSources of
+// d3dag.test.ts (k sources in one row) that order made 18 passes and 48,912
+// moves at k = 4,000 and 24 passes and 559,780 at 32,000 (12 to 17.5 moves a
+// source, 14.19 times the steps); with room first, 2 passes and one move a
+// source at both sizes, 372,762 and 3,637,168 steps (9.76 times). The layouts
+// of the plan, the live plan and the plan-shaped graph of 4,000 nodes came
+// out the same either way. fix updates the tree only where pair(l) changed,
+// as each update is O(log L) and an entry a move touches can keep its value.
 export function spreadSources(y: Int32Array, parents: number[][], children: number[][], K: number, onMove?: (i: number, from: number, to: number) => void, W = 2 * K + 1, work?: Work): number {
   const n = y.length;
   if (!n) return 0;
@@ -1053,7 +1179,7 @@ export function spreadSources(y: Int32Array, parents: number[][], children: numb
   const pair = (l: number) => (l ? Math.max(c[l - 1], c[l]) : 0x3fffffff);
   const p = countsFor(L, work);
   for (let l = 0; l < L; l++) p.add(l, pair(l));
-  const fix = (l: number) => { if (l >= 0 && l < L) p.add(l, pair(l) - p.at(l)); };
+  const fix = (l: number) => { if (l < 0 || l >= L) return; const d = pair(l) - p.at(l); if (d) p.add(l, d); };
   const over = (v: number) => (v > K ? (v - K) * (v - K) : 0);
   const high = highest(y, parents, children, work);
   const carried: number[] = [], isCarried = new Uint8Array(n);
@@ -1101,19 +1227,26 @@ export function spreadSources(y: Int32Array, parents: number[][], children: numb
         }
         return dQ < 0 || (dQ === 0 && dF < 0);
       };
-      // Candidates, nearest first: the layer of the sources themselves, and
-      // the nearest layers above and below where neither that layer nor the
-      // one above it holds c[a - 1] - w nodes or more.
-      const T = c[a - 1] - w - 1;
-      const up = a - 1 > lo ? p.last(lo, a - 2, T) : -1;
-      const down = a < hi ? p.first(a + 1, hi, T) : -1;
-      const [near, far] = up < 0 || (down >= 0 && down - a < a - up) ? [down, up] : [up, down];
+      // Candidates, in two rounds, the second only if the first finds no
+      // move: first the nearer and the farther of the nearest layers above
+      // and below where b - 1 and b have room for the move (neither holds
+      // more than K - w nodes); then the layer of the sources themselves, and
+      // the nearer and the farther of the nearest layers where neither b - 1
+      // nor b holds c[a - 1] - w nodes or more.
+      const nearest = (T: number) => {
+        const up = T >= 0 && a - 1 > lo ? p.last(lo, a - 2, T) : -1;
+        const down = T >= 0 && a < hi ? p.first(a + 1, hi, T) : -1;
+        return up < 0 || (down >= 0 && down - a < a - up) ? [down, up] : [up, down];
+      };
       let b = -1;
-      // Each candidate tried (t >= 0) is 4 steps, counted here so that no
-      // closure writes steps, which would keep it in memory, not a register.
-      for (const t of [a - 1 >= lo ? a - 1 : -1, near, far]) {
-        if (work && t >= 0) steps += 4;
-        if (lowers(t)) { b = t; break; }
+      for (let round = 0; b < 0 && round < 2; round++) {
+        const ts = round ? [a - 1 >= lo ? a - 1 : -1, ...nearest(c[a - 1] - w - 1)] : nearest(K - w);
+        // Each candidate tried (t >= 0) is 4 steps, counted here so that no
+        // closure writes steps, which would keep it in memory, not a register.
+        for (const t of ts) {
+          if (work && t >= 0) steps += 4;
+          if (lowers(t)) { b = t; break; }
+        }
       }
       if (b < 0) continue;
       for (let k = 0; k < rows.length; k++) c[rows[k]] += delta[k];
