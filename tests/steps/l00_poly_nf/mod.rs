@@ -7,8 +7,10 @@
 //!
 //! `rows` holds the plan row's tests, `refusal` the refused shapes, `witness` the points and
 //! witnesses, `measure` the measurement of the corpus's obligations that fixed the refused
-//! shapes, and `scaling` the rule of low complexity.
+//! shapes, `factored` the products of powers of the same factors, and `scaling` the rule of low
+//! complexity.
 
+mod factored;
 mod measure;
 mod refusal;
 mod rows;

@@ -3759,3 +3759,10 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | The one `Parser` table shared by every attempt, written by `rule_node` through `&mut self` | `recovering` | Shared tables across pure calls (gap 2) | the table threaded through the fold as a value, as the parser memo of Gap 2 |
 | A `BTreeSet` of tried edits filled from a closure that captures it mutably | `repairs` | Mutation (gap 11) | a fold that keeps a sorted set and the edits offered |
 | A `Vec<bool>` of dropped statements, a `Vec` work list, and a `HashMap` from each name to its users from which `remove` takes each name once, for the search from the statements that use a broken name | `without_broken` | Mutation (gap 11) | a depth-first search over the uses as a fold carrying the visited set and the names read as persistent sets |
+
+## Entries from POLY-nf-power-value (`crates/zed-kernel/src/poly.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `Vec<[u128; 2]>` of exponents filled in place by one reverse pass over the nodes, through a closure that adds into it with `checked_add` and returns `None` past `u128::MAX` | `Identity::exponents` | Mutation (gap 11) | A fold over the nodes in reverse order carrying a map from node to exponents, each an `int` held to `u128`'s range by a `with` bound whose failure gives the decline |
+| `HashMap<Vec<(K, BigInt)>, [u128; 2]>` keyed by a factor's whole primitive form, and `HashMap<(BigUint, BigUint), [u128; 2]>` keyed by a constant's numerator and denominator, each updated by `entry` | `Identity::same_factors` | Mutation (gap 11); hashing of a list of tuples | A fold into maps keyed by the form's content digest (gap 1), the value summed on a repeated key |

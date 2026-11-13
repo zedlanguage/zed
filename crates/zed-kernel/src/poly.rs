@@ -120,6 +120,10 @@ pub struct Decision {
     pub degree: Option<u64>,
     /// The number of terms of each side's normal form, when they were expanded.
     pub terms: Option<[usize; 2]>,
+    /// Whether the sides were found equal as products of powers of the same factors, each
+    /// factor expanded once and the sides not at all: `(1 + x) ^ 1000 == (1 + x) ^ 500 * (x +
+    /// 1) ^ 500`.
+    pub factored: bool,
 }
 
 /// Values for the binders, in the order given, at which the two sides differ.
@@ -207,14 +211,15 @@ pub fn decide(lhs: &Term, rhs: &Term, binders: &[&str], carrier: Carrier) -> Dec
 pub fn normal_form(t: &Term, binders: &[&str], carrier: Carrier) -> Result<String, Refusal> {
     let zero = Term::Lit(Value::Int(0));
     let id = Identity::new(t, &zero, binders, carrier);
-    if let Some(r) = id.refusal(Vec::new()) {
+    let shapes = id.shapes();
+    let reach = id.reachable(&id.sides);
+    if let Some(r) = id.refusal(&shapes, &reach, Vec::new()) {
         return Err(r);
     }
-    let reach = id.reachable();
-    Ok(match id.keys(&reach) {
-        Keys::Packed(ctx) => id.show(&id.expand::<u128>(&ctx, &reach)[0], &ctx),
+    Ok(match id.keys(&shapes, &reach) {
+        Keys::Packed(ctx) => id.show(&id.expand::<u128>(&ctx, &reach, &id.sides[..1])[0], &ctx),
         Keys::Sparse => id.show(
-            &id.expand::<Sparse>(&Packing::none(), &reach)[0],
+            &id.expand::<Sparse>(&Packing::none(), &reach, &id.sides[..1])[0],
             &Packing::none(),
         ),
     })
@@ -433,10 +438,11 @@ impl<'t> Identity<'t> {
         }
     }
 
-    /// The nodes the two sides reach; a `let` whose value the body never reads is not.
-    fn reachable(&self) -> Vec<bool> {
+    /// The nodes `roots` reach, the roots included; from the sides, a `let` whose value the body
+    /// never reads is not reached.
+    fn reachable(&self, roots: &[usize]) -> Vec<bool> {
         let mut r = vec![false; self.nodes.len()];
-        for s in self.sides {
+        for &s in roots {
             r[s] = true;
         }
         for i in (0..self.nodes.len()).rev() {
@@ -524,11 +530,9 @@ impl<'t> Identity<'t> {
         s
     }
 
-    /// The first refused product the sides reach, in the order the nodes were built, so the
-    /// smallest: with `agreed` the points that agreed.
-    fn refusal(&self, agreed: Vec<Point>) -> Option<Refusal> {
-        let shapes = self.shapes();
-        let reach = self.reachable();
+    /// The first refused product among the nodes `reach` marks, in the order the nodes were
+    /// built, so the smallest: with `agreed` the points that agreed.
+    fn refusal(&self, shapes: &[Shape], reach: &[bool], agreed: Vec<Point>) -> Option<Refusal> {
         for (i, n) in self.nodes.iter().enumerate() {
             if !reach[i] {
                 continue;
@@ -666,10 +670,11 @@ impl<'t> Identity<'t> {
         Some([vals[self.sides[0]], vals[self.sides[1]]])
     }
 
-    /// The decision: the points, then the refusal, then the expansion.
+    /// The decision: the points, then the sides as products of powers of the same factors,
+    /// then the refusal, then the expansion.
     fn decide(&self) -> Decision {
         let shapes = self.shapes();
-        let reach = self.reachable();
+        let reach = self.reachable(&self.sides);
         let sums = shapes
             .iter()
             .zip(&reach)
@@ -686,6 +691,7 @@ impl<'t> Identity<'t> {
             sums,
             degree,
             terms,
+            factored: false,
         };
         let refutable = self.refutable(&reach);
         let seed = self.seed();
@@ -703,13 +709,198 @@ impl<'t> Identity<'t> {
                 Some(_) => return decision(Verdict::Differs, None),
             }
         }
-        if let Some(r) = self.refusal(agreed) {
+        if self.factored(&shapes) {
+            return Decision {
+                factored: true,
+                ..decision(Verdict::Proved, None)
+            };
+        }
+        if let Some(r) = self.refusal(&shapes, &reach, agreed) {
             return decision(Verdict::Refused(r), None);
         }
-        match self.keys(&reach) {
+        match self.keys(&shapes, &reach) {
             Keys::Packed(ctx) => self.compare::<u128>(&ctx, &reach, refutable, decision),
             Keys::Sparse => self.compare::<Sparse>(&Packing::none(), &reach, refutable, decision),
         }
+    }
+
+    /// Whether the two sides are equal as products of powers of the same factors, found
+    /// without expanding either side. Each side is read as `c * f1 ^ e1 * … * fk ^ ek` through
+    /// its products, powers and negations, the exponents multiplied down (`((x + y) ^ 3 * z) ^
+    /// 2` is `(x + y) ^ 6 * z ^ 2`). Each factor, a sum, a name or a constant, is expanded once
+    /// and divided by its content and the sign of its first term, so `2 * y - 2 * x` is `-2`
+    /// times `x - y`. Equal factors merge by adding their exponents, and the sides are equal
+    /// when every factor has the same exponent on both and their constants agree. `false` when
+    /// the sides are not found equal so, and then the expansion decides. A side that is a sum or a
+    /// name is one factor at exponent 1, which the other side matches only as that factor times a
+    /// constant, a product the expansion forms as cheaply; so such an identity (`x * x - y * y ==
+    /// (x - y) * (x + y)`) is left to the expansion at once, not expanded twice.
+    ///
+    /// Complexity tradeoff: the naive way, expanding both sides, costs the size of the expanded
+    /// powers, `(1 + x) ^ k` `k + 1` terms of up to `k` bits, `O(k^2)` bits for an exponent of
+    /// `log k` written digits. This pass costs one step for each node and side, in `u128`
+    /// exponents, the expansion of each factor once, which the expansion of the sides would
+    /// pay too, and one hash of each factor's form, so `(1 + x) ^ 1000000 == (1 + x) ^ 500000 *
+    /// (1 + x) ^ 500000` costs as much as `1 + x`. Given up: an identity whose factors differ
+    /// (`(1 + x) ^ k * (1 - x) ^ k == (1 - x ^ 2) ^ k`) is left to the expansion, which forms the
+    /// factors again, so such an identity costs up to twice the expansion; and so is one
+    /// whose exponents multiply past `2^128`: as big integers, the exponents down a chain of `m`
+    /// powers of 64 bits would cost `O(m^2)` words, and the expansion refuses an exponent past
+    /// `u64::MAX` anyway. A factor that holds a refused product leaves the identity to the
+    /// refusal, as the factor's expansion would cost what the refusal guards against. The
+    /// constants that do not cancel are multiplied out by a product tree, no larger than the
+    /// coefficients the expansion would form. Tested by `poly::tests::products_of_powers` and
+    /// `l00_poly_nf::factored` (COMPLEXITY.md POLY-nf-power-value).
+    fn factored(&self, shapes: &[Shape]) -> bool {
+        let is_factor = |i: usize| {
+            matches!(
+                self.nodes[i],
+                Node::Add(..) | Node::Sub(..) | Node::Leaf(_) | Node::Const(..)
+            )
+        };
+        if self.sides.iter().any(|&root| {
+            matches!(
+                self.nodes[root],
+                Node::Add(..) | Node::Sub(..) | Node::Leaf(_)
+            )
+        }) {
+            return false;
+        }
+        let Some((exp, minus)) = self.exponents() else {
+            return false;
+        };
+        let factors: Vec<usize> = (0..self.nodes.len())
+            .filter(|&i| exp[i] != [0, 0] && is_factor(i))
+            .collect();
+        let reach = self.reachable(&factors);
+        if self.refusal(shapes, &reach, Vec::new()).is_some() {
+            return false;
+        }
+        match self.keys(shapes, &reach) {
+            Keys::Packed(ctx) => self.same_factors::<u128>(&ctx, &reach, &factors, &exp, minus),
+            Keys::Sparse => {
+                self.same_factors::<Sparse>(&Packing::none(), &reach, &factors, &exp, minus)
+            }
+        }
+    }
+
+    /// The exponent of every node in each side's product of powers, and whether each side's
+    /// negations are odd in number: a product passes its exponent to both children, a power
+    /// its exponent times its own, a negation its exponent; `None` past `u128::MAX`. Nodes are
+    /// built children first, so one pass from the last node visits every parent first.
+    fn exponents(&self) -> Option<(Vec<[u128; 2]>, [bool; 2])> {
+        let mut exp = vec![[0u128; 2]; self.nodes.len()];
+        let mut minus = [false; 2];
+        for (s, &root) in self.sides.iter().enumerate() {
+            exp[root][s] = 1;
+        }
+        for i in (0..self.nodes.len()).rev() {
+            for s in 0..2 {
+                let e = exp[i][s];
+                if e == 0 {
+                    continue;
+                }
+                let mut pass = |c: usize, by: u128| -> Option<()> {
+                    exp[c][s] = exp[c][s].checked_add(by)?;
+                    Some(())
+                };
+                match &self.nodes[i] {
+                    Node::Mul(a, b) => {
+                        pass(*a, e)?;
+                        pass(*b, e)?;
+                    }
+                    // `a ^ 0` is 1, as `Poly::pow` has it, even for `a` zero.
+                    Node::Pow(a, k) if !k.is_zero() => pass(*a, e.checked_mul(k.to_u128()?)?)?,
+                    Node::Neg(a) => {
+                        pass(*a, e)?;
+                        minus[s] ^= e % 2 == 1;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Some((exp, minus))
+    }
+
+    /// Whether the sides' products of `factors`, at the exponents `exp` and with the signs
+    /// `minus`, are equal, each factor expanded once with keys `K` ([`Identity::factored`]).
+    fn same_factors<K: Key>(
+        &self,
+        ctx: &Packing,
+        reach: &[bool],
+        factors: &[usize],
+        exp: &[[u128; 2]],
+        mut minus: [bool; 2],
+    ) -> bool {
+        let forms = self.expand::<K>(ctx, reach, factors);
+        let mut zero = [false; 2];
+        // Each factor's form without its content and sign, and the content `num / den`, each
+        // with its exponents on the two sides.
+        let mut forms_at: HashMap<Vec<(K, BigInt)>, [u128; 2]> = HashMap::new();
+        let mut constants: HashMap<(BigUint, BigUint), [u128; 2]> = HashMap::new();
+        let add = |to: &mut [u128; 2], e: [u128; 2]| -> Option<()> {
+            for s in 0..2 {
+                to[s] = to[s].checked_add(e[s])?;
+            }
+            Some(())
+        };
+        for (form, &i) in forms.into_iter().zip(factors) {
+            let e = exp[i];
+            let Some((first, c)) = form.terms.first() else {
+                for s in 0..2 {
+                    zero[s] |= e[s] > 0;
+                }
+                continue;
+            };
+            let negative = c.is_negative();
+            let constant = form.terms.len() == 1 && *first == K::unit();
+            let content = form.terms.iter().fold(BigInt::zero(), |g, (_, c)| g.gcd(c));
+            for s in 0..2 {
+                minus[s] ^= negative && e[s] % 2 == 1;
+            }
+            let g = content.gcd(&form.den);
+            let (num, den) = (
+                (&content / &g).into_parts().1,
+                (&form.den / &g).into_parts().1,
+            );
+            if !(num.is_one() && den.is_one())
+                && add(constants.entry((num, den)).or_default(), e).is_none()
+            {
+                return false;
+            }
+            if !constant {
+                let unit = if negative { -content } else { content };
+                let primitive = form
+                    .terms
+                    .into_iter()
+                    .map(|(k, c)| (k, c / &unit))
+                    .collect();
+                if add(forms_at.entry(primitive).or_default(), e).is_none() {
+                    return false;
+                }
+            }
+        }
+        if zero[0] || zero[1] {
+            return zero[0] && zero[1];
+        }
+        if forms_at.values().any(|[l, r]| l != r) || minus[0] != minus[1] {
+            return false;
+        }
+        // The constants that do not cancel: `l` over `r` on each side, compared crosswise.
+        let mut parts: [[Vec<BigUint>; 2]; 2] = Default::default();
+        for ((num, den), [l, r]) in constants {
+            let (s, d) = if l > r { (0, l - r) } else { (1, r - l) };
+            if d == 0 {
+                continue;
+            }
+            let Ok(d) = u64::try_from(d) else {
+                return false;
+            };
+            parts[s][0].push(pow_uint(&num, d));
+            parts[s][1].push(pow_uint(&den, d));
+        }
+        let [[ln, ld], [rn, rd]] = parts.map(|p| p.map(product));
+        mul_uint(&ln, &rd) == mul_uint(&rn, &ld)
     }
 
     /// The decision from the two normal forms with keys `K`.
@@ -720,7 +911,11 @@ impl<'t> Identity<'t> {
         refutable: bool,
         decision: impl Fn(Verdict, Option<[usize; 2]>) -> Decision,
     ) -> Decision {
-        let [l, r] = self.expand::<K>(ctx, reach);
+        let mut forms = self.expand::<K>(ctx, reach, &self.sides).into_iter();
+        let (l, r) = (
+            forms.next().expect("the left side expanded"),
+            forms.next().expect("the right side expanded"),
+        );
         let terms = Some([l.terms.len(), r.terms.len()]);
         let diff = l.add(&r, true);
         if diff.terms.is_empty() {
@@ -782,11 +977,11 @@ impl<'t> Identity<'t> {
     /// The keys the expansion uses: a monomial packed into a `u128` by Kronecker substitution,
     /// each name a digit of radix `degree + 1`, when every monomial fits; a list of names and
     /// exponents otherwise.
-    fn keys(&self, reach: &[bool]) -> Keys {
-        // Every node the sides reach, not only the sides: `(x ^ 9) ^ 0` is of degree 0, and
-        // `x ^ 9` is expanded on the way.
+    fn keys(&self, shapes: &[Shape], reach: &[bool]) -> Keys {
+        // Every node expanded, not only the sides: `(x ^ 9) ^ 0` is of degree 0, and `x ^ 9`
+        // is expanded on the way.
         let mut d = 0;
-        for (s, r) in self.shapes().iter().zip(reach) {
+        for (s, r) in shapes.iter().zip(reach) {
             if *r {
                 match s.degree {
                     Some(x) => d = d.max(x),
@@ -807,9 +1002,9 @@ impl<'t> Identity<'t> {
         Keys::Packed(Packing { radix, strides })
     }
 
-    /// The normal forms of the two sides. Each node is expanded once, from its children's
-    /// forms, and a form is dropped after its last use.
-    fn expand<K: Key>(&self, ctx: &Packing, reach: &[bool]) -> [Poly<K>; 2] {
+    /// The normal forms of `roots`, with `reach` the nodes they reach. Each node is expanded
+    /// once, from its children's forms, and a form is dropped after its last use.
+    fn expand<K: Key>(&self, ctx: &Packing, reach: &[bool], roots: &[usize]) -> Vec<Poly<K>> {
         let mut uses = vec![0usize; self.nodes.len()];
         for (i, n) in self.nodes.iter().enumerate() {
             if !reach[i] {
@@ -824,7 +1019,7 @@ impl<'t> Identity<'t> {
                 }
             }
         }
-        for s in self.sides {
+        for &s in roots {
             uses[s] += 1;
         }
         let mut forms: Vec<Option<Poly<K>>> = (0..self.nodes.len()).map(|_| None).collect();
@@ -857,14 +1052,19 @@ impl<'t> Identity<'t> {
             }
             forms[i] = Some(f);
         }
-        let [l, r] = self.sides;
-        let lf = forms[l].take().expect("the left side expanded");
-        let rf = if l == r {
-            lf.clone()
-        } else {
-            forms[r].take().expect("the right side expanded")
-        };
-        [lf, rf]
+        // A root named twice (both sides one node) is copied for all but its last naming.
+        roots
+            .iter()
+            .map(|&s| {
+                uses[s] -= 1;
+                let f = &mut forms[s];
+                if uses[s] == 0 {
+                    f.take().expect("a root expanded")
+                } else {
+                    f.clone().expect("a root expanded")
+                }
+            })
+            .collect()
     }
 
     /// A witness of small integers from `diff`, the difference of the normal forms, not zero:
@@ -1704,6 +1904,26 @@ const SAMPLES: u32 = 32;
 /// The primes tried for each round of [`coefficients`], the one that leaves the most indices alone
 /// for its size taken.
 const CANDIDATES: u32 = 4;
+
+/// The product of `v`, 1 when it is empty.
+///
+/// Complexity tradeoff: multiplying in turn costs `O(m B)` word products for `m` numbers of
+/// `B` words in all, the running product being up to `B` words long at each step; multiplying
+/// pairs, then pairs of those, costs `O(M(B) log m)`, `M` the cost of one product of `B` words.
+fn product(mut v: Vec<BigUint>) -> BigUint {
+    while v.len() > 1 {
+        let mut next = Vec::with_capacity(v.len().div_ceil(2));
+        let mut it = v.into_iter();
+        while let Some(a) = it.next() {
+            next.push(match it.next() {
+                Some(b) => mul_uint(&a, &b),
+                None => a,
+            });
+        }
+        v = next;
+    }
+    v.pop().unwrap_or_else(BigUint::one)
+}
 
 /// The cost of a product of `words` 32-bit words by the number-theoretic transform, in the
 /// sparse product's unit of one word product: `w log2 w` in its `w` 64-bit words.

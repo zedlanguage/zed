@@ -79,14 +79,26 @@ fn a_power_of_a_sum_counts_its_terms() {
     );
     assert_eq!(d.verdict, Verdict::Proved);
     assert_eq!(d.sums, 1);
+    // As a product of powers of one factor it is proved with neither side expanded.
     let d = law(
         "x: int, y: int",
         "(x + y) ^ 64",
         "(x + y) ^ 32 * (y + x) ^ 32",
         Carrier::Int,
     );
-    assert_eq!(d.verdict, Verdict::Proved);
-    assert_eq!(d.terms, Some([65, 65]));
+    assert_eq!(
+        (d.verdict, d.factored, d.terms),
+        (Verdict::Proved, true, None)
+    );
+    // In a sum it is expanded: 65 monomials less `x ^ 64`.
+    let d = law(
+        "x: int, y: int",
+        "(x + y) ^ 64 - x ^ 64",
+        "(x + y) ^ 32 * (y + x) ^ 32 - x ^ 64",
+        Carrier::Int,
+    );
+    assert_eq!((d.verdict, d.factored), (Verdict::Proved, false));
+    assert_eq!(d.terms, Some([64, 64]));
     // A false one is refuted at a point: every binder at 0 but `x` at 1 gives 1 against 2.
     let d = law(
         "x: int, y: int",
@@ -98,11 +110,12 @@ fn a_power_of_a_sum_counts_its_terms() {
         panic!("{:?}", d.verdict)
     };
     assert_eq!(p.to_string(), "x = 1, y = 0");
-    // A base of five monomials to the 4th counts the fewer of 4 and 5 - 1: refused.
+    // A base of five monomials to the 4th counts the fewer of 4 and 5 - 1: refused in a sum,
+    // where it must be expanded (as a product of powers of one factor it is proved).
     const FIVE: &str = "a: int, b: int, c: int, d: int, f: int";
     let (lhs, rhs) = (
-        "(a + b + c + d + f) ^ 4",
-        "(f + d + c + b + a) ^ 2 * (a + b + c + d + f) ^ 2",
+        "(a + b + c + d + f) ^ 4 - f ^ 4",
+        "(f + d + c + b + a) ^ 2 * (a + b + c + d + f) ^ 2 - f ^ 4",
     );
     let d = law(FIVE, lhs, rhs, Carrier::Int);
     let Verdict::Refused(r) = d.verdict else {
@@ -129,14 +142,21 @@ fn a_power_of_a_sum_counts_its_terms() {
         format!("  Try `{law_text} proof {{ … }}` instead.")
     );
     assert_eq!(lines.len(), 4);
+    let d = law(
+        FIVE,
+        "(a + b + c + d + f) ^ 4",
+        "(f + d + c + b + a) ^ 2 * (a + b + c + d + f) ^ 2",
+        Carrier::Int,
+    );
+    assert_eq!((d.verdict, d.factored), (Verdict::Proved, true));
     // To the 3rd it counts three, and is expanded.
     let d = law(
         FIVE,
-        "(a + b + c + d + f) ^ 3",
-        "(f + d + c + b + a) ^ 2 * (a + b + c + d + f)",
+        "(a + b + c + d + f) ^ 3 - f ^ 3",
+        "(f + d + c + b + a) ^ 2 * (a + b + c + d + f) - f ^ 3",
         Carrier::Int,
     );
-    assert_eq!(d.verdict, Verdict::Proved);
+    assert_eq!((d.verdict, d.factored), (Verdict::Proved, false));
     assert_eq!(d.sums, 3);
 }
 
@@ -144,12 +164,12 @@ fn a_power_of_a_sum_counts_its_terms() {
 fn sums_in_one_name_are_never_refused() {
     let d = law(
         "x: int",
-        "(1 + x) ^ 64",
-        "(1 + x) ^ 32 * (1 + x) ^ 32",
+        "(1 + x) ^ 64 - 1",
+        "(1 + x) ^ 32 * (1 + x) ^ 32 - 1",
         Carrier::Int,
     );
-    assert_eq!(d.verdict, Verdict::Proved);
-    assert_eq!(d.terms, Some([65, 65]));
+    assert_eq!((d.verdict, d.factored), (Verdict::Proved, false));
+    assert_eq!(d.terms, Some([64, 64]));
     // Sums in one name times a name: the sums are still in one name.
     let d = law(
         "x: int, y: int",

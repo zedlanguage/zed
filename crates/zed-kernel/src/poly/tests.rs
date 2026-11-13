@@ -300,11 +300,13 @@ fn refused_shapes() {
         ),
         Verdict::Proved
     );
-    // A base of five monomials to the 4th counts the fewer of 4 and 5 - 1: four sums.
+    // A base of five monomials to the 4th counts the fewer of 4 and 5 - 1: four sums. Each side
+    // here and below is a sum, not a product of powers, so the expansion decides, not
+    // `Identity::factored`.
     let names5 = &["a", "b", "c", "d", "f"];
     let Verdict::Refused(r) = verdict(
-        "(a + b + c + d + f) ^ 4",
-        "(f + d + c + b + a) ^ 4",
+        "(a + b + c + d + f) ^ 4 - f ^ 4",
+        "(f + d + c + b + a) ^ 4 - f ^ 4",
         names5,
         Carrier::Int,
     ) else {
@@ -315,14 +317,18 @@ fn refused_shapes() {
     // To the 3rd it counts three, and to the 4th a base of four monomials counts three too.
     for (l, r, n) in [
         (
-            "(a + b + c + d + f) ^ 3",
-            "(f + d + c + b + a) ^ 3",
+            "(a + b + c + d + f) ^ 3 - a",
+            "(f + d + c + b + a) ^ 3 - a",
             &names5[..],
         ),
-        ("(a + b + c + d) ^ 4", "(d + c + b + a) ^ 4", &names5[..4]),
         (
-            "((a + b) * (c + d)) ^ 9",
-            "(a * c + a * d + b * c + b * d) ^ 9",
+            "(a + b + c + d) ^ 4 - a",
+            "(d + c + b + a) ^ 4 - a",
+            &names5[..4],
+        ),
+        (
+            "((a + b) * (c + d)) ^ 9 - a",
+            "(a * c + a * d + b * c + b * d) ^ 9 - a",
             &names5[..4],
         ),
     ] {
@@ -330,8 +336,8 @@ fn refused_shapes() {
     }
     // A product of a base of three sums squared: the fewer of 6 and 8 - 1, refused.
     let Verdict::Refused(r) = verdict(
-        "((a + b) * (c + d) * (f + a)) ^ 2",
-        "((a + b) * (c + d) * (a + f)) ^ 2",
+        "((a + b) * (c + d) * (f + a)) ^ 2 - a",
+        "((a + b) * (c + d) * (a + f)) ^ 2 - a",
         names5,
         Carrier::Int,
     ) else {
@@ -341,17 +347,17 @@ fn refused_shapes() {
     // Sums all in one name are never refused, at any count.
     assert_eq!(
         verdict(
-            "(1 + x) ^ 40",
-            "(1 + x) ^ 20 * (1 + x) ^ 20",
+            "(1 + x) ^ 40 - x",
+            "(1 + x) ^ 20 * (1 + x) ^ 20 - x",
             &["x"],
             Carrier::Int
         ),
         Verdict::Proved
     );
-    // An exponent past u64::MAX on a name.
+    // An exponent past u64::MAX on a name, in a sum (alone it is a factor: `products_of_powers`).
     let Verdict::Refused(r) = verdict(
-        "x ^ 18446744073709551616",
-        "x ^ 18446744073709551616",
+        "x ^ 18446744073709551616 - x",
+        "x ^ 18446744073709551616 - x",
         &["x"],
         Carrier::Int,
     ) else {
@@ -366,11 +372,135 @@ fn refused_shapes() {
 }
 
 #[test]
+fn products_of_powers() {
+    let xy = &["x", "y"];
+    // Products of powers of the same factors, each factor expanded once, the sides never.
+    for (l, r, c) in [
+        (
+            "(1 + x) ^ 1048576",
+            "(1 + x) ^ 524288 * (x + 1) ^ 524288",
+            Carrier::Int,
+        ),
+        // Exponents past u64::MAX, which the expansion refuses.
+        (
+            "(x + y) ^ 18446744073709551616",
+            "(y + x) ^ 18446744073709551616",
+            Carrier::Int,
+        ),
+        (
+            "x ^ 18446744073709551616",
+            "x ^ 18446744073709551616",
+            Carrier::Int,
+        ),
+        // Powers of products and of powers.
+        ("((x + y) ^ 3 * x) ^ 2", "x ^ 2 * (y + x) ^ 6", Carrier::Int),
+        // Signs: `y - x` is -1 times `x - y`.
+        (
+            "(x - y) ^ 1000001 * (y - x)",
+            "-((y - x) ^ 1000002)",
+            Carrier::Int,
+        ),
+        (
+            "(-1) ^ 18446744073709551617 * (1 + x) ^ 99",
+            "-((x + 1) ^ 99)",
+            Carrier::Int,
+        ),
+        // Constants: the content of a factor, and constants that do not cancel.
+        ("(2 * x + 2 * y) ^ 3", "8 * (x + y) ^ 3", Carrier::Int),
+        ("(x / 2 + y / 2) ^ 4", "(x + y) ^ 4 / 16", Carrier::Rat),
+        ("2 ^ 10 * (x + y) ^ 9", "4 ^ 5 * (y + x) ^ 9", Carrier::Ring),
+        // A factor of zero.
+        ("(x - x) ^ 5 * (x + y) ^ 1000000", "0", Carrier::Int),
+    ] {
+        let d = decide(&t(l), &t(r), xy, c);
+        assert_eq!(d.verdict, Verdict::Proved, "{l} == {r}");
+        assert!(d.factored, "{l} == {r}");
+        assert_eq!(d.terms, None, "{l} == {r}");
+    }
+    // A shared value is read once: 60 squarings by `let` are `(x + y) ^ (2 ^ 60)`.
+    let mut shared = var("a60");
+    for i in (1..=60).rev() {
+        let value = if i == 1 {
+            t("(x + y) * (y + x)")
+        } else {
+            let a = format!("a{}", i - 1);
+            prim(Prim::Mul, vec![var(&a), var(&a)])
+        };
+        shared = let_(&format!("a{i}"), value, shared);
+    }
+    let d = decide(
+        &shared,
+        &t("(x + y) ^ 1152921504606846976"),
+        xy,
+        Carrier::Int,
+    );
+    assert_eq!((d.verdict, d.factored), (Verdict::Proved, true));
+    // Different factors are left to the expansion.
+    let d = decide(
+        &t("(1 + x) ^ 3 * (1 - x) ^ 3"),
+        &t("(1 - x ^ 2) ^ 3"),
+        xy,
+        Carrier::Int,
+    );
+    assert_eq!(
+        (d.verdict, d.factored, d.terms),
+        (Verdict::Proved, false, Some([4, 4]))
+    );
+    // A side that is a sum is one factor at exponent 1: the expansion decides at once.
+    let d = decide(
+        &t("x * x - y * y"),
+        &t("(x - y) * (x + y)"),
+        xy,
+        Carrier::Int,
+    );
+    assert_eq!(
+        (d.verdict, d.factored, d.terms),
+        (Verdict::Proved, false, Some([2, 2]))
+    );
+    // A factor that holds a refused product is refused, not expanded.
+    let eight = &["a", "b", "c", "d", "e", "f", "g", "h"];
+    let Verdict::Refused(r) = verdict(
+        "((a + b) * (c + d) * (e + f) * (g + h) + 1) ^ 2",
+        "((h + g) * (f + e) * (d + c) * (b + a) + 1) ^ 2",
+        eight,
+        Carrier::Int,
+    ) else {
+        panic!()
+    };
+    assert_eq!(r.why, Refused::Sums(4));
+    // Exponents that multiply past `2^128` are left to the expansion, which refuses them.
+    let Verdict::Refused(r) = verdict(
+        "((x + y) ^ 18446744073709551616) ^ 18446744073709551616",
+        "((y + x) ^ 18446744073709551616) ^ 18446744073709551616",
+        xy,
+        Carrier::Int,
+    ) else {
+        panic!()
+    };
+    assert_eq!(r.why, Refused::Exponent);
+    // A false identity of any size is refuted at a point first.
+    for (l, r) in [
+        ("(1 + x) ^ 1048576", "(1 + x) ^ 524288 * (1 + x) ^ 524289"),
+        ("(2 * x + 2) ^ 2", "2 * (x + 1) ^ 2"),
+        ("(x - y) ^ 3", "(y - x) ^ 3"),
+        (
+            "(x + y) ^ 18446744073709551616",
+            "(x + y) ^ 18446744073709551617",
+        ),
+    ] {
+        assert!(
+            matches!(verdict(l, r, xy, Carrier::Int), Verdict::Refuted(_)),
+            "{l} == {r}"
+        );
+    }
+}
+
+#[test]
 fn the_points_are_deterministic() {
     let a = || {
         decide(
-            &t("(a + b) * (c + d) * (e + f) * (g + h)"),
-            &t("(a + b) * (c + d) * (e + f) * (h + g)"),
+            &t("(a + b) * (c + d) * (e + f) * (g + h) - a"),
+            &t("(a + b) * (c + d) * (e + f) * (h + g) - a"),
             &["a", "b", "c", "d", "e", "f", "g", "h"],
             Carrier::Int,
         )
@@ -435,7 +565,10 @@ fn sparse_keys_past_u128() {
     let id_l = format!("({sum}) ^ 3 * v0 ^ 6");
     let (l, z) = (t(&id_l), t("0"));
     let id = Identity::new(&l, &z, &refs, Carrier::Int);
-    assert!(matches!(id.keys(&id.reachable()), Keys::Sparse));
+    assert!(matches!(
+        id.keys(&id.shapes(), &id.reachable(&id.sides)),
+        Keys::Sparse
+    ));
     assert_eq!(
         verdict(
             &id_l,

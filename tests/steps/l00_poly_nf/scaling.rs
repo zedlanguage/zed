@@ -28,6 +28,12 @@ fn pow(a: Term, n: i64) -> Term {
     prim(Prim::Pow, vec![a, lit(n)])
 }
 
+/// `a - x`: a sum, so that the expansion decides it, not the reading of a product of powers of
+/// the same factors (`Decision::factored`).
+fn less_x(a: Term) -> Term {
+    prim(Prim::Sub, vec![a, var("x")])
+}
+
 /// An identity and its binders.
 struct Id {
     lhs: Term,
@@ -58,7 +64,7 @@ fn square(k: usize) -> Id {
     }
 }
 
-/// `A * B == B * A` for `A` and `B` of `n` random coefficients of 62 bits each in `x`.
+/// `A * B - x == B * A - x` for `A` and `B` of `n` random coefficients of 62 bits each in `x`.
 fn commute(n: usize) -> Id {
     let mut rng = Rng::new(7);
     let mut poly = || {
@@ -72,8 +78,8 @@ fn commute(n: usize) -> Id {
     };
     let (a, b) = (poly(), poly());
     Id {
-        lhs: mul(a.clone(), b.clone()),
-        rhs: mul(b, a),
+        lhs: less_x(mul(a.clone(), b.clone())),
+        rhs: less_x(mul(b, a)),
         names: vec!["x".into()],
     }
 }
@@ -95,13 +101,13 @@ fn linear(n: usize) -> Id {
     }
 }
 
-/// `(1 + x + ... + x ^ (n-1)) * (1 + y + ... + y ^ (n-1))` and the same product commuted:
+/// `(1 + x + ... + x ^ (n-1)) * (1 + y + ... + y ^ (n-1)) - x` and the same product commuted:
 /// `n^2` distinct monomials, so order 2 in `n`, `n log n` in the output.
 fn grid(n: usize) -> Id {
     let side = |w: &str| sum(&(0..n).map(|i| pow(var(w), i as i64)).collect::<Vec<_>>());
     Id {
-        lhs: mul(side("x"), side("y")),
-        rhs: mul(side("y"), side("x")),
+        lhs: less_x(mul(side("x"), side("y"))),
+        rhs: less_x(mul(side("y"), side("x"))),
         names: vec!["x".into(), "y".into()],
     }
 }
@@ -134,18 +140,68 @@ fn a_grid_of_n_squared_monomials() {
     });
 }
 
-/// `(x + y) ^ k == (x + y) ^ (k / 2) * (y + x) ^ (k - k / 2)`: a power of a sum of two names
-/// counts one sum (POLY-nf-power), and expands to `k + 1` monomials of up to `k` bits, so order
-/// 2 in `k`, linear in the output's bits. Each side's squarings multiply homogeneous sums, whose
-/// packed indices are a common step apart (`Poly::dense_cost`).
+/// `(x + y) ^ k - x == (x + y) ^ (k / 2) * (y + x) ^ (k - k / 2) - x`: a power of a sum of two
+/// names counts one sum (POLY-nf-power), and expands to `k + 1` monomials of up to `k` bits, so
+/// order 2 in `k`, linear in the output's bits. Each side's squarings multiply homogeneous sums,
+/// whose packed indices are a common step apart (`Poly::dense_cost`).
 fn binomial(k: usize) -> Id {
     let s = |a: &str, b: &str| sum(&[var(a), var(b)]);
     let h = k / 2;
     Id {
-        lhs: pow(s("x", "y"), k as i64),
-        rhs: mul(pow(s("x", "y"), h as i64), pow(s("y", "x"), (k - h) as i64)),
+        lhs: less_x(pow(s("x", "y"), k as i64)),
+        rhs: less_x(mul(
+            pow(s("x", "y"), h as i64),
+            pow(s("y", "x"), (k - h) as i64),
+        )),
         names: vec!["x".into(), "y".into()],
     }
+}
+
+/// `(x0 + y) ^ 1 * (x1 + y) ^ 2 * ... * (x(n-1) + y) ^ n * (1 + y) ^ (2^62)` against the same
+/// factors written backward, each sum reversed, as balanced products: read as a product of
+/// powers of the same factors (POLY-nf-power-value), each factor expanded once and hashed, so
+/// order `n` (a hash map), though either side expanded has more than `2^n` monomials.
+fn factors(n: usize) -> Id {
+    let mut names: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
+    names.push("y".into());
+    let product = |backward: bool| {
+        let mut parts: Vec<Term> = (0..n)
+            .map(|i| {
+                let (a, b) = (var(&format!("x{i}")), var("y"));
+                let base = if backward { sum(&[b, a]) } else { sum(&[a, b]) };
+                pow(base, i as i64 + 1)
+            })
+            .collect();
+        parts.push(pow(sum(&[lit(1), var("y")]), 1 << 62));
+        if backward {
+            parts.reverse();
+        }
+        fn balanced(ts: &[Term]) -> Term {
+            match ts {
+                [t] => t.clone(),
+                _ => {
+                    let (a, b) = ts.split_at(ts.len() / 2);
+                    mul(balanced(a), balanced(b))
+                }
+            }
+        }
+        balanced(&parts)
+    };
+    Id {
+        lhs: product(false),
+        rhs: product(true),
+        names,
+    }
+}
+
+#[test]
+fn a_product_of_powers_of_n_factors() {
+    let ins = scaling::inputs(500, factors);
+    scaling::check(
+        "(x0 + y) * ... * (xn + y) ^ n, n factors read as powers",
+        500,
+        |n| proved(&ins[&n]),
+    );
 }
 
 #[test]
