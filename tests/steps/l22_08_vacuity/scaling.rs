@@ -502,7 +502,8 @@ fn the_joint_splits_scale() {
 /// - `inner`: `alternate` with `g` at the same choices on both sides, so two subtrees meet;
 /// - `keyed`: `alternate` with `x_j` for `y_j` in the right side's `h`, so a leaf meets a
 ///   subtree that holds its key at the pairs of classes i = j;
-/// - `deep`: `tagged` with each right `h` below a unary field of its own, `q_j(h(..))`;
+/// - `deep`: `tagged` with each right `h` below a unary field of its own, `q_j(h(..))`, and
+///   `deeper` with two, `q_j(r_j(h(..)))`, fields the left side never tests;
 /// - `crossed`: `s(h(g(x_i), x_i, g(x_i), ..)^m, y..) == t(h(x_j, p(x0, .., xm), x_j, ..)^m, y..)`,
 ///   so a leaf meets a subtree that holds its key at some pairs of classes and not at others, and
 ///   a subtree of one key or of all; `mirror` is `crossed` with its sides swapped.
@@ -573,7 +574,7 @@ fn picks(family: &str, m: usize) -> Theory {
             let r = side("t", r.iter().map(|y| alternate(y, p)).collect(), &[&xs]);
             (all(&[&xs, &ys]), l, r)
         }
-        "tagged" | "deep" => {
+        "tagged" | "deep" | "deeper" => {
             t.field("s", 3 * m).field("t", 3 * m).field("h", m + 1);
             let l = side(
                 "s",
@@ -583,13 +584,18 @@ fn picks(family: &str, m: usize) -> Theory {
             let hs = ws.iter().enumerate().map(|(j, w)| {
                 if family == "deep" {
                     format!("q{j}({})", tagged(&ys, w))
+                } else if family == "deeper" {
+                    format!("q{j}(r{j}({}))", tagged(&ys, w))
                 } else {
                     tagged(&ys, w)
                 }
             });
-            if family == "deep" {
+            if family != "tagged" {
                 for j in 0..m {
                     t.field(&format!("q{j}"), 1);
+                    if family == "deeper" {
+                        t.field(&format!("r{j}"), 1);
+                    }
                 }
             }
             let r = side("t", hs.collect(), &[&xs, &zs]);
@@ -616,7 +622,11 @@ fn picks(family: &str, m: usize) -> Theory {
 /// together from the other node's live children, a lookup each (`Theory::pair_form`). Before
 /// plan row TRIVIAL-walk-picks each list was made alone from the smaller side's live children,
 /// m^3 steps: at m = 64, 387214, 367246 and 321102 steps and 156, 93 and 81 million
-/// instructions, where these take 141970, 105874 and 63442 steps (COMPLEXITY.md C32).
+/// instructions, where these take 141970, 105874 and 63442 steps (COMPLEXITY.md C32). On `deep`
+/// and `deeper` the node of `t` meets each `h` of the left side only after `q_j` (and `r_j`), so
+/// the lists are made together for the whole frontier of `h` below the node of `t` (plan row
+/// TRIVIAL-walk-frontier); before, each `q_j` made its own, m^3 steps: at m = 64, 446482 and
+/// 521234 steps, where these take 180626 and 255378.
 #[test]
 fn the_picks_scale() {
     let m = 8;
@@ -631,13 +641,23 @@ fn the_picks_scale() {
             10 * m * m + 24 * m + 7,
             25 * m * m + 54 * m + 18,
         ),
+        "deep" => (
+            6 * m * m + 8 * m + 2,
+            20 * m * m + 32 * m + 7,
+            43 * m * m + 70 * m + 18,
+        ),
+        "deeper" => (
+            8 * m * m + 10 * m + 2,
+            30 * m * m + 40 * m + 7,
+            61 * m * m + 86 * m + 18,
+        ),
         _ => (
             3 * m * m + 4 * m + 2,
             5 * m * m + 14 * m + 7,
             15 * m * m + 31 * m + 18,
         ),
     };
-    for family in ["alternate", "tagged", "rotations"] {
+    for family in ["alternate", "tagged", "rotations", "deep", "deeper"] {
         let inputs = scaling::inputs(m, |m| picks(family, m));
         for (&m, t) in &inputs {
             let atom = t.laws[0].clauses()[0][0];
@@ -660,8 +680,9 @@ fn the_picks_scale() {
 }
 
 /// The lists made together keep exactly the choices the lists made one by one keep: the report
-/// on each family of [`picks`] at m = 2 and 3 agrees with brute force, and on `keyed` at m = 4,
-/// which reaches the lookup of each key below a subtree, as m = 2 and 3 do not.
+/// on each family of [`picks`] at m = 2 and 3 agrees with brute force, on `keyed` at m = 4,
+/// which reaches the lookup of each key below a subtree, as m = 2 and 3 do not, and on `deeper`
+/// at m = 2 (with `deeper` at m = 3 as well this test ran over a minute).
 #[test]
 fn the_picks_agree_with_brute_force() {
     for family in [
@@ -679,4 +700,67 @@ fn the_picks_agree_with_brute_force() {
         }
     }
     super::brute::check(&picks("keyed", 4));
+    super::brute::check(&picks("deeper", 2));
+}
+
+/// A node of `h` below fields that only one side tests, against `h` on the other side: random
+/// atoms `s(A, B) == t(V(C), W(D), E)` over `s`, `h` and `p` of two arguments, `t` of three
+/// and `q`, `r` of one, where `A`, `B`, `C` and `D` are nodes of `h` or binders and `V` and `W`
+/// wrap their argument in up to three of `q`, `r` and `p` (the other argument of `p` a binder
+/// or a node of `h`); the left side sometimes tests `p` too, so the way to the frontier is
+/// sometimes cut by a field both sides test; the sides are swapped half the time and the
+/// relation is `!=` now and then. The report agrees with brute force on each, so the lists a
+/// split node makes together for its whole frontier keep exactly the choices of the lists made
+/// one by one (`Theory::pair_form`).
+#[test]
+fn the_frontier_agrees_with_brute_force() {
+    let mut rng = Rng::new(0x0f20_47e1);
+    for _ in 0..400 {
+        super::brute::check(&frontier(&mut rng));
+    }
+}
+
+/// One random atom of [`the_frontier_agrees_with_brute_force`].
+fn frontier(rng: &mut Rng) -> Theory {
+    fn leaf(rng: &mut Rng) -> String {
+        rng.pick(&["a", "b", "c"]).to_string()
+    }
+    fn h(rng: &mut Rng) -> String {
+        if rng.below(4) == 0 {
+            leaf(rng)
+        } else {
+            format!("h({}, {})", leaf(rng), leaf(rng))
+        }
+    }
+    fn wrapped(rng: &mut Rng) -> String {
+        let mut c = h(rng);
+        for _ in 0..rng.below(4) {
+            c = match rng.below(4) {
+                0 => format!("q({c})"),
+                1 => format!("r({c})"),
+                2 => format!("p({c}, {})", h(rng)),
+                _ => format!("p({}, {c})", leaf(rng)),
+            };
+        }
+        c
+    }
+    let mut t = Theory::new("Frontier");
+    t.field("s", 2)
+        .field("t", 3)
+        .field("h", 2)
+        .field("q", 1)
+        .field("r", 1)
+        .field("p", 2);
+    let (a, b) = (h(rng), h(rng));
+    let b = if rng.below(4) == 0 {
+        format!("p({b}, {})", leaf(rng))
+    } else {
+        b
+    };
+    let (c, d, e) = (wrapped(rng), wrapped(rng), leaf(rng));
+    let (l, r) = (format!("s({a}, {b})"), format!("t({c}, {d}, {e})"));
+    let (l, r) = if rng.below(2) == 0 { (l, r) } else { (r, l) };
+    let rel = if rng.below(6) == 0 { "!=" } else { "==" };
+    t.law("frontier", "a b c", &format!("{l} {rel} {r}"));
+    t
 }

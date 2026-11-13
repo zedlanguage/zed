@@ -809,16 +809,19 @@ impl Theory {
     /// classes, groups and depth tables of the N nodes, the steps, then O(R + D) for the engine's
     /// lists of the R runs. On the families of plan row TRIVIAL-walk-picks (`scaling::picks`),
     /// m^2 pairs of `h` nodes of distinct pairs of classes, the steps are 5 to 6.4 times the
-    /// pairs. Open (plan row TRIVIAL-walk-frontier): when the split node's children of the field
-    /// lie deeper, below fields of their own (`q_j(h(..))`), each pair of classes still makes its
-    /// list alone, m^3 steps (`deep` at m = 64: 446482 steps for 25090 pairs). Not proved: a
-    /// bound of the steps by pairs plus tree size on every tree. Structural trigger: an atom whose sides
-    /// share a field. Tests:
+    /// pairs. When the split node's nodes of the field lie deeper, below fields the other tree
+    /// never tests (`q_j(h(..))`, `deep`), the lists are made together for that whole frontier
+    /// (plan row TRIVIAL-walk-frontier): `deep` and `deeper` at m = 64 take 180626 and 255378
+    /// steps for 25090 and 33410 pairs, where one list per pair of classes took 446482 and
+    /// 521234, m^3. Not proved: a bound of the steps by pairs plus tree size on every tree; a
+    /// way through a field both trees test is split, not batched. Structural trigger: an atom
+    /// whose sides share a field. Tests:
     /// `scaling::a_shared_field_atom_scales`, `scaling::a_shared_field_atom_with_cut_subtrees_scales`,
     /// `scaling::the_shared_field_families_scale`, `scaling::the_joint_splits_scale`,
-    /// `scaling::the_picks_scale`, with `brute`, `scaling::the_picks_agree_with_brute_force` and
-    /// the corpus for the verdicts; COMPLEXITY.md C32; plan rows TRIVIAL-shared-atom,
-    /// TRIVIAL-walk-index, TRIVIAL-walk-branches, TRIVIAL-walk-picks.
+    /// `scaling::the_picks_scale`, with `brute`, `scaling::the_picks_agree_with_brute_force`,
+    /// `scaling::the_frontier_agrees_with_brute_force` and the corpus for the verdicts;
+    /// COMPLEXITY.md C32; plan rows TRIVIAL-shared-atom, TRIVIAL-walk-index,
+    /// TRIVIAL-walk-branches, TRIVIAL-walk-picks, TRIVIAL-walk-frontier.
     fn pair_form(&self, a: &Atom, lf: &[usize], rf: &[usize]) -> PairForm {
         let mut scope = Vec::with_capacity(lf.len() + rf.len());
         scope.extend_from_slice(lf);
@@ -866,8 +869,14 @@ impl Theory {
             /// A child that tests a field, with a leaf of this key below.
             Below(Sym),
         }
-        let mut kin_classes: HashMap<(usize, usize, usize), std::ops::Range<usize>> =
-            HashMap::new();
+        // For a node split against nodes of a field: the classes of its frontier of that field
+        // (`kin_class`) and of the nodes passed on the way (`kin_path`).
+        type Frontier = (std::ops::Range<usize>, std::ops::Range<usize>);
+        let mut kin_classes: HashMap<(usize, usize, usize), Frontier> = HashMap::new();
+        let mut kin_path: Vec<usize> = Vec::new();
+        // The (side, class of the other side's node, class of a node) whose lists an outer batch
+        // already decided, the node lying on the way from that batch's node to its frontier.
+        let mut covered: HashSet<(usize, usize, usize)> = HashSet::new();
         let mut kin_records: HashMap<(usize, usize, usize), std::ops::Range<usize>> =
             HashMap::new();
         let mut kin: Vec<(Choice, Kin, usize)> = Vec::new();
@@ -1066,23 +1075,63 @@ impl Theory {
                     // than the lists of all of n's classes of f made one by one, times a log;
                     // it runs only when those not made yet would cost one by one (`apart`)
                     // more than live w. The index is built once for (n, f) and only when
-                    // a batch first needs it, and each node is a grandchild of one n, with one
-                    // record per entry of its own (`KeyIndex::below`), so all these indexes
-                    // together cost O((N + E) log(N + E)) for the N nodes and E index entries.
+                    // a batch first needs it, with one record per entry of a node of n's
+                    // frontier of f (below), and a node lies in the frontier of at most two such
+                    // n (argued below), so all these indexes together cost
+                    // O((N + E) log(N + E)) for the N nodes and E index entries.
                     // Counting the classes of n costs its children, once for (n, f), and the
                     // classes, once for (class of w, n): the split that follows pays as much.
+                    //
+                    // The frontier (plan row TRIVIAL-walk-frontier): w meets not only n's children
+                    // of f but every node of f below n reached through nodes whose fields w's
+                    // tree never tests, since the walk splits such a node, not w, and keeps w,
+                    // until it meets the node of f (`Reach::first` is `usize::MAX` on w's side).
+                    // So the batch takes that whole frontier, and the nodes passed on the way are
+                    // marked covered for w's class: their own frontiers lie inside n's, so their
+                    // splits against a node of w's class make no batch of their own. Before,
+                    // with `q_j(h(..))` below n, each pair of classes made its list alone, m^3
+                    // steps for m^2 pairs (`deep` of `scaling::picks`). Such a node is of one
+                    // class with a sibling exactly when they hold the same set of children's
+                    // classes, so the way is walked once for each class (a visited set), and
+                    // the walk enters at least one node of each of those classes against w: the
+                    // gather costs no more than the split that follows. A node of the way is met
+                    // against w only by splitting its parent, which is then batched or covered
+                    // for w's class, or by a joint step at a parent of a field both trees test;
+                    // so the frontiers that hold a node are those of the nearest node above the
+                    // way and of the way's first node, two (argued, not measured on all trees).
+                    // A batch is never needed for the answer: a list it does not make is made
+                    // alone when the walk reaches its pair. Not batched: a way through a field
+                    // w's tree tests, where the walk splits w instead; on random small atoms the
+                    // frontier costs up to 10% more steps than the children alone (inputs of
+                    // `scaling::the_frontier_agrees_with_brute_force`: at most 20 more steps).
                     let (o, n, w) = (1 - side, [u, v][side], [u, v][1 - side]);
                     let (f, a) = (trees[o].test[w], class[o].number[w]);
-                    if batched.insert((side, a, n)) {
+                    if !covered.contains(&(side, a, class[side].number[n]))
+                        && batched.insert((side, a, n))
+                    {
                         let (t, cl) = (trees[side], &class[side]);
-                        let classes = kin_classes
+                        let never_tested =
+                            |s: usize| reach[o].at_start[s] == reach[o].at_start[s + 1];
+                        let (classes, path) = kin_classes
                             .entry((side, n, f))
                             .or_insert_with(|| {
-                                let start = kin_class.len();
-                                for &b in &t.kid[t.kid_at[n].clone()] {
-                                    if t.test[b] == f && cl.number[b] != DEAD {
-                                        kin_class.push((cl.number[b], b));
+                                let (start, path_start) = (kin_class.len(), kin_path.len());
+                                let mut todo = vec![n];
+                                let mut seen: HashSet<usize> = HashSet::new();
+                                while let Some(x) = todo.pop() {
+                                    for &b in &t.kid[t.kid_at[x].clone()] {
+                                        let (s, number) = (t.test[b], cl.number[b]);
+                                        if s == NONE || number == DEAD {
+                                            continue;
+                                        }
+                                        if s == f {
+                                            kin_class.push((number, b));
+                                        } else if never_tested(s) && seen.insert(number) {
+                                            kin_path.push(number);
+                                            todo.push(b);
+                                        }
                                     }
+                                    steps += t.kid_at[x].len() as u64;
                                 }
                                 kin_class[start..].sort_unstable();
                                 let mut j = start;
@@ -1093,10 +1142,12 @@ impl Theory {
                                     }
                                 }
                                 kin_class.truncate(j);
-                                steps += t.kid_at[n].len() as u64;
-                                start..kin_class.len()
+                                (start..kin_class.len(), path_start..kin_path.len())
                             })
                             .clone();
+                        for &x in &kin_path[path] {
+                            covered.insert((side, a, x));
+                        }
                         let key = |b: usize| if side == 1 { (a, b) } else { (b, a) };
                         // Per pair of classes, the smaller side's live children; together, the
                         // other side's node's children once and a lookup for each.
