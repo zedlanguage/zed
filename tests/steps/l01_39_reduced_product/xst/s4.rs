@@ -5,8 +5,7 @@
 //!
 //! Where class K3 (META4 result 3) refuses a system, the answer the tests accept is a refusal
 //! (a warning on the scope) that keeps every value of the exact answer; where it accepts, the
-//! answer is the exact one with no warning. Tests that main does not pass yet wait for item
-//! ST-walk-implicit.
+//! answer is the exact one with no warning.
 
 use std::sync::Arc;
 
@@ -596,20 +595,17 @@ fn chain_answers(what: &str, close: impl Fn(usize) -> Option<i64> + Sync, empty:
 }
 
 #[test]
-#[ignore = "needs ST-walk-implicit: bounds kept implicitly (META4 O5), quadratic one test at a time"]
 fn a_cycle_of_weight_zero_fixes_each_name_in_near_linear_time() {
     chain_answers("cycle of weight 0", |n| Some(1 - n as i64), false);
 }
 
 #[test]
-#[ignore = "needs ST-walk-implicit: bounds kept implicitly (META4 O5), quadratic one test at a time"]
 fn a_cycle_of_weight_one_is_empty_in_near_linear_time() {
     chain_answers("cycle of weight 1", |n| Some(2 - n as i64), true);
 }
 
 /// CONTROL of the two above (Claude's open chain): no closing test.
 #[test]
-#[ignore = "needs ST-walk-implicit: bounds kept implicitly (META4 O5), quadratic one test at a time"]
 fn an_open_chain_narrows_in_near_linear_time() {
     chain_answers("open chain", |_| None, false);
 }
@@ -692,7 +688,6 @@ fn a_walk_that_leaves_no_point_empties_every_name() {
 }
 
 #[test]
-#[ignore = "needs ST-walk-implicit: exact, but one test at a time is quadratic (about 4x per doubling of n): each test is split into cases and each case narrows all earlier names again (COMPLEXITY S25, hard); the solver is 5% of the time at n = 320"]
 fn a_walk_of_disjunctions_narrows_in_near_linear_time() {
     family(
         "walk",
@@ -709,7 +704,6 @@ fn a_walk_of_disjunctions_narrows_in_near_linear_time() {
 }
 
 #[test]
-#[ignore = "needs ST-walk-implicit: exact, but one test at a time is quadratic (about 4x per doubling of n): each test is split into cases and each case narrows all earlier names again (COMPLEXITY S25, hard); the solver is 5% of the time at n = 320"]
 fn control_a_walk_without_its_start_narrows_nothing_in_near_linear_time() {
     family(
         "walk without its start",
@@ -850,7 +844,6 @@ fn chain_raise(k: usize) -> Sys {
 }
 
 #[test]
-#[ignore = "needs ST-walk-implicit: bounds kept implicitly (META4 O5), quadratic one test at a time"]
 fn a_chain_raise_narrows_in_near_linear_time() {
     family("chain raise", 16, chain_raise, |k| {
         let k = k as i64;

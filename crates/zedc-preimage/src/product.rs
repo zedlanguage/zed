@@ -486,17 +486,459 @@ fn listed(p: &Product) -> Option<Vec<i64>> {
         .collect()
 }
 
+type Products = imbl::OrdMap<Arc<str>, Product>;
+
+/// Products with a persistent affine-path representation and an exact ordinary-map view.
+#[derive(Clone, Debug, Default)]
+pub struct NameProducts {
+    base: Products,
+    paths: imbl::OrdMap<Arc<str>, (Arc<str>, Int)>,
+    ranges: imbl::OrdMap<Arc<str>, PathRange>,
+    relation: Option<RelationMark>,
+    view: Option<Arc<OnceLock<Products>>>,
+    blocker: Option<Arc<Formula>>,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+struct PathRange {
+    lo: End,
+    hi: End,
+    head: Arc<str>,
+    tail: Arc<str>,
+    size: usize,
+}
+
+fn offset_end(e: &End, k: &Int) -> End {
+    match e {
+        End::Fin(n) => End::Fin(Num::from(&(&Int::from(n) + k))),
+        e => e.clone(),
+    }
+}
+
+impl NameProducts {
+    // Complexity tradeoff: naive version, each difference test `b >= a + gap` on a chain is
+    // propagated by the solver to every name on it, Theta(n) products written per test and
+    // Theta(n^2) over a chain of n tests (on main the s4 chain, cycles and raise allocate 23
+    // to 26 times the bytes at 8n). Used: names joined by such tests into one directed path
+    // keep one interval in the coordinates of the path's root, and each name keeps its offset
+    // to its parent, so a name's bounds are the root's interval shifted by the sum of offsets
+    // to the root. This is the weighted union-find (a union-find whose links carry an offset, the
+    // "potential" of the name) with union by size: Galler and Fischer, "An improved
+    // equivalence algorithm", Communications of the ACM 7(5), 1964; Tarjan, "Efficiency of a
+    // good but not linear set union algorithm", Journal of the ACM 22(2), 1975. There is no
+    // path compression, since it writes on a read and these maps are persistent and shared
+    // between scope versions; union by size alone keeps every parent path O(log n) long. A
+    // link of a path's tail to another's head, or a bound on a path's head or tail, edits
+    // O(1) entries of persistent maps, O(log n); reading one name, O(log² n); the whole exact
+    // map (`Deref`), O(n log² n), built once per version and shared by its clones. A test
+    // is admitted only when the dominance check of `link` shows every member keeps the
+    // shifted root interval exactly; any other test, or any write through `DerefMut`,
+    // materializes the map and runs the solver as before, so no answer changes. The plan's
+    // method (the solver on every test) is kept for those. Tradeoffs: a reader that takes
+    // the whole map after every test pays O(n log² n) each time (`Scope::get` and
+    // [`NameProducts::read`] do not); the checker's scopes (lazy, names bound to
+    // themselves, premises on every test) are not admitted yet. Measured, instructions at
+    // 8n over n with the deferred [`Relation`]: s4 chain raise 8.3, cycles 7.8 (Forward),
+    // open chain 8.4 (Forward); bytes 8.0 to 8.9, against 23.0 to 26.1 on main.
+    /// The product of `name`, built alone when it is on a path and the exact map is not built:
+    /// O(log² n), where reading it through the map would build the whole map.
+    pub fn read(&self, name: &str) -> Option<std::borrow::Cow<'_, Product>> {
+        use std::borrow::Cow;
+        if !self.paths.contains_key(name) {
+            return self.base.get(name).map(Cow::Borrowed);
+        }
+        if let Some(view) = self.view.as_ref().and_then(|v| v.get()) {
+            return view.get(name).map(Cow::Borrowed);
+        }
+        self.product(name).map(Cow::Owned)
+    }
+
+    /// Membership reads need no product materialization.
+    pub fn contains_key(&self, name: &str) -> bool {
+        self.base.contains_key(name)
+    }
+
+    fn root(&self, name: &str) -> Option<(Arc<str>, Int, &PathRange)> {
+        let (mut n, _) = self.paths.get_key_value(name)?;
+        let mut off = Int::from(0);
+        loop {
+            if let Some(r) = self.ranges.get(n) {
+                return Some((n.clone(), off, r));
+            }
+            let (parent, k) = self.paths.get(n)?;
+            off = &off + k;
+            n = parent;
+        }
+    }
+
+    fn product(&self, name: &str) -> Option<Product> {
+        let mut p = self.base.get(name)?.clone();
+        if let Some((_, off, r)) = self.root(name) {
+            p.meet_ints(
+                IntervalSet::range(offset_end(&r.lo, &off), offset_end(&r.hi, &off)),
+                &Premises::new(),
+            );
+            while p.reduce_domains() {}
+        }
+        Some(p)
+    }
+
+    fn view(&self) -> &Products {
+        if self.paths.is_empty() {
+            return &self.base;
+        }
+        self.view
+            .as_ref()
+            .expect("implicit bounds have an exact-map cache")
+            .get_or_init(|| {
+                let mut out = self.base.clone();
+                for n in self.paths.keys() {
+                    let p = self.product(n).expect("a path member is in the base map");
+                    if self.base.get(n) != Some(&p) {
+                        out.insert(n.clone(), p);
+                    }
+                }
+                out
+            })
+    }
+
+    fn materialize(&mut self) {
+        if !self.paths.is_empty() {
+            self.base = self.view().clone();
+            self.paths.clear();
+            self.ranges.clear();
+            self.relation = None;
+            self.view = None;
+        }
+    }
+
+    fn member(&mut self, n: &Arc<str>) -> Option<()> {
+        if self.paths.contains_key(n) {
+            return Some(());
+        }
+        let p = self.base.get(n)?;
+        if p.ty.element != Type::int()
+            || classed(p)
+            || listed(p).is_some()
+            || !p.premises().is_empty()
+            || p.cell.ints.element != Bounds::ints(p.ints().clone())
+        {
+            return None;
+        }
+        let (lo, hi) = p.ints().only()?;
+        if lo >= hi {
+            return None;
+        }
+        self.paths.insert(n.clone(), (n.clone(), Int::from(0)));
+        self.ranges.insert(
+            n.clone(),
+            PathRange {
+                lo: lo.clone(),
+                hi: hi.clone(),
+                head: n.clone(),
+                tail: n.clone(),
+                size: 1,
+            },
+        );
+        Some(())
+    }
+
+    /// Links the tail of one directed path to the head of another by b >= a + gap.
+    fn link(&mut self, a: &Arc<str>, b: &Arc<str>, gap: &Int) -> Option<bool> {
+        self.member(a)?;
+        self.member(b)?;
+        let (ra, oa, left) = self.root(a)?;
+        let left = left.clone();
+        let (rb, ob, right) = self.root(b)?;
+        let right = right.clone();
+        let shift = &(&oa + gap) - &ob;
+        if ra == rb {
+            // The existing directed path proves b >= a + (ob - oa). A back edge
+            // closes it; positive cycle weight is inconsistent, zero is redundant.
+            if a != &left.tail || b != &left.head {
+                return None;
+            }
+            return Some(shift.is_positive());
+        }
+        if a != &left.tail || b != &right.head {
+            return None;
+        }
+        let rlo = offset_end(&right.lo, &-&shift);
+        let rhi = offset_end(&right.hi, &-&shift);
+        if left.lo < rlo || left.hi < rhi {
+            return None;
+        }
+        // A link that changes no bound needs no implicit product state.
+        if left.lo == rlo && left.hi == rhi {
+            return None;
+        }
+        let lo = left.lo;
+        let hi = rhi;
+        if lo >= hi {
+            return None;
+        }
+        let range = PathRange {
+            lo,
+            hi,
+            head: left.head,
+            tail: right.tail,
+            size: left.size + right.size,
+        };
+        if left.size >= right.size {
+            self.ranges.remove(&rb);
+            self.paths.insert(rb, (ra.clone(), shift));
+            self.ranges.insert(ra, range);
+        } else {
+            let range = PathRange {
+                lo: offset_end(&range.lo, &shift),
+                hi: offset_end(&range.hi, &shift),
+                ..range
+            };
+            self.ranges.remove(&ra);
+            self.paths.insert(ra, (rb.clone(), -&shift));
+            self.ranges.insert(rb, range);
+        }
+        self.view = Some(Arc::new(OnceLock::new()));
+        Some(false)
+    }
+
+    fn bound(&mut self, n: &Arc<str>, lower: bool, value: &Int) -> Option<bool> {
+        self.member(n)?;
+        let (root, off, r) = self.root(n)?;
+        if n != if lower { &r.head } else { &r.tail } {
+            return None;
+        }
+        let mut r = r.clone();
+        let end = End::Fin(Num::from(&(value - &off)));
+        if lower {
+            r.lo = r.lo.max(end);
+        } else {
+            r.hi = r.hi.min(end);
+        }
+        if r.lo == r.hi {
+            return None;
+        }
+        let bottom = r.lo > r.hi;
+        self.ranges.insert(root, r);
+        self.view = Some(Arc::new(OnceLock::new()));
+        Some(bottom)
+    }
+}
+
+impl std::ops::Deref for NameProducts {
+    type Target = Products;
+    fn deref(&self) -> &Products {
+        self.view()
+    }
+}
+
+impl std::ops::DerefMut for NameProducts {
+    fn deref_mut(&mut self) -> &mut Products {
+        self.materialize();
+        &mut self.base
+    }
+}
+
+impl PartialEq for NameProducts {
+    fn eq(&self, other: &Self) -> bool {
+        self.view() == other.view()
+    }
+}
+
+impl From<Products> for NameProducts {
+    fn from(base: Products) -> Self {
+        Self {
+            base,
+            ..Self::default()
+        }
+    }
+}
+
+impl FromIterator<(Arc<str>, Product)> for NameProducts {
+    fn from_iter<I: IntoIterator<Item = (Arc<str>, Product)>>(it: I) -> Self {
+        Self::from(it.into_iter().collect::<Products>())
+    }
+}
+
+impl<'a> IntoIterator for &'a NameProducts {
+    type Item = (&'a Arc<str>, &'a Product);
+    type IntoIter = <&'a Products as IntoIterator>::IntoIter;
+    fn into_iter(self) -> Self::IntoIter {
+        self.view().into_iter()
+    }
+}
+
+/// The relation of a scope: a conjunction, and the conjuncts of tests that
+/// [`Scope::extend_path`] and [`Scope::extend_threshold`] admitted since, held apart until the
+/// conjunction is read.
+// Complexity tradeoff: naive version, each admitted test is added to the conjunction at once,
+// which updates its persistent indexes (the set, the tightest constraint per term, the users of
+// each name, the blocks): O(log n) a test, and about 90 of 100 allocator calls of an admitted
+// test on a chain at n = 8 and 140 of 155 at n = 512 (allocator calls, measured in the
+// cross-review of item ST-walk-implicit), which set the ratio at 8n. Used: an
+// admitted conjunct is pushed on a persistent list, O(1) and one allocation; the first read adds
+// the list to the conjunction it started from, oldest first, with the same `and` calls, so every
+// read sees the same conjunction (O(k log n) once for k pending conjuncts). The built
+// conjunction is cached in a cell that clones share, so one version is built once however many
+// copies read it. The list is the persistent stack of Okasaki, "Purely Functional Data
+// Structures", Cambridge University Press, 1998, ch. 2. Tradeoffs: the cost moves to the first
+// reader (the solver on a refused test, `join`, `PartialEq`, the dump); a scope that is read
+// after every test pays O(k log n) per read, as main did per test. Measured, instructions at
+// 8n over n: s4 chain raise 10.3 without the list and 8.3 with it; cycle of weight 1
+// (Forward) 10.5 and 7.8; open chain (Forward) 11.5 and 8.4.
+#[derive(Clone, Debug, Default)]
+pub struct Relation {
+    base: Conjuncts,
+    pending: Option<Arc<Pending>>,
+    built: Arc<OnceLock<Conjuncts>>,
+}
+
+/// The admitted conjuncts not yet in the conjunction, latest first.
+#[derive(Debug)]
+struct Pending {
+    f: Formula,
+    rest: Option<Arc<Pending>>,
+}
+
+/// A relation's conjunction and pending list, by identity: the relation is the same while
+/// nothing was added or written in place since.
+type RelationMark = (imbl::OrdSet<Arc<Formula>>, Option<Arc<Pending>>);
+
+impl Relation {
+    /// Holds `f` apart, to be added at the next read.
+    fn defer(&mut self, f: Formula) {
+        let rest = self.pending.take();
+        self.pending = Some(Arc::new(Pending { f, rest }));
+        self.built = Arc::default();
+    }
+
+    fn mark(&self) -> RelationMark {
+        (self.base.set().clone(), self.pending.clone())
+    }
+
+    /// Whether this is the relation `m` marked.
+    fn at(&self, m: &RelationMark) -> bool {
+        self.base.set().ptr_eq(&m.0)
+            && match (&self.pending, &m.1) {
+                (None, None) => true,
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                _ => false,
+            }
+    }
+
+    fn build(&self) -> Conjuncts {
+        let mut fs = Vec::new();
+        let mut at = self.pending.as_deref();
+        while let Some(p) = at {
+            fs.push(&p.f);
+            at = p.rest.as_deref();
+        }
+        let mut c = self.base.clone();
+        for f in fs.into_iter().rev() {
+            c.and(f.clone());
+        }
+        c
+    }
+}
+
+impl std::ops::Deref for Relation {
+    type Target = Conjuncts;
+    fn deref(&self) -> &Conjuncts {
+        match self.pending {
+            None => &self.base,
+            Some(_) => self.built.get_or_init(|| self.build()),
+        }
+    }
+}
+
+impl std::ops::DerefMut for Relation {
+    fn deref_mut(&mut self) -> &mut Conjuncts {
+        if self.pending.is_some() {
+            self.base = std::ops::Deref::deref(self).clone();
+            self.pending = None;
+            self.built = Arc::default();
+        }
+        &mut self.base
+    }
+}
+
+impl PartialEq for Relation {
+    fn eq(&self, other: &Self) -> bool {
+        **self == **other
+    }
+}
+
+impl From<Conjuncts> for Relation {
+    fn from(base: Conjuncts) -> Self {
+        Self {
+            base,
+            ..Self::default()
+        }
+    }
+}
+
+impl std::fmt::Display for Relation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        (**self).fmt(f)
+    }
+}
+
+/// A small affine expression, without substitution or solver state.
+fn path_lin(t: &Term) -> Option<Lin> {
+    match t {
+        Term::Var(n) => Some(Lin::atom(Atom::Sym(n.clone()))),
+        Term::Lit(Value::Int(n)) => Some(Lin::constant(*n)),
+        Term::Prim(p, args) if args.len() == 2 => {
+            let literal = |t: &Term| matches!(t, Term::Lit(Value::Int(_)));
+            let offset = literal(&args[0]) || literal(&args[1]);
+            let difference = *p == Prim::Sub && args.iter().all(|t| matches!(t, Term::Var(_)));
+            if !offset && !difference {
+                return None;
+            }
+            let a = path_lin(&args[0])?;
+            let b = path_lin(&args[1])?;
+            match p {
+                Prim::Add => Some(a.plus(&b)),
+                Prim::Sub => Some(a.minus(&b)),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+fn path_con(t: &Term, outcome: bool) -> Option<Con> {
+    let Term::Prim(p, args) = t else {
+        return None;
+    };
+    if args.len() != 2 || !matches!(p, Prim::Ge | Prim::Le) {
+        return None;
+    }
+    let a = path_lin(&args[0])?;
+    let b = path_lin(&args[1])?;
+    let mut lin = if *p == Prim::Ge {
+        a.minus(&b)
+    } else {
+        b.minus(&a)
+    };
+    if !outcome {
+        lin = lin.times(-1).minus(&Lin::constant(1));
+    }
+    Some(Con { lin, rel: Rel::Ge })
+}
+
 /// The names in scope with their products, the linear relation among them, and the written
 /// constraints that hold. Each part is held in persistent maps, so that a case of a nest
 /// copies the scope in O(1), and the join of two cases and the reduction of a scope cost the
 /// parts that differ, found by the maps' difference, and not the whole scope.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Scope {
-    /// One product per name, in a persistent map, so that a case of a nest copies it in O(1) and
-    /// two scopes that share most of it are compared and joined in the names that differ.
-    pub names: imbl::OrdMap<Arc<str>, Product>,
+    /// Exact products. Plain scopes use a persistent map; admitted difference paths keep
+    /// translated bounds, with an exact map view on dereference. `get` reads one product.
+    /// Mutation materializes first, so ordinary map readers and writers remain exact.
+    pub names: NameProducts,
     /// The relation the integer names meet, with no auxiliary variable.
-    pub relation: Conjuncts,
+    pub relation: Relation,
     /// The written constraints that hold, a test and its negations by content address (each
     /// held as its canonical term, [`Address::term`]), each with its free names.
     pub written: imbl::OrdMap<Address, Vec<Arc<str>>>,
@@ -1120,6 +1562,8 @@ impl fmt::Debug for Reduced {
 /// are new or mention such a name, so that a test costs what it changes.
 #[derive(Clone, Default)]
 struct Seen {
+    /// A sequence of fresh-leaf rows certified not to change any product.
+    extension: Option<Arc<Extension>>,
     projection: Option<Projection>,
     enumeration: Option<Enumeration>,
     /// Each block as its last projection left it ([`Block::update`]), and the blocks whose
@@ -1143,6 +1587,26 @@ struct Seen {
     bounds: imbl::OrdMap<conjuncts::Class, LeafBound>,
     /// The leaves of the stars, ordered by their products ([`Order`]), in an eager scope.
     order: Order,
+}
+
+/// A lower-end witness for all rows added after independent unary bounds. The snapshots make
+/// the certificate invalid after any other change, including a direct public-field edit.
+enum Extension {
+    Certified {
+        hub: Arc<str>,
+        used: imbl::OrdSet<Arc<str>>,
+        names: imbl::OrdMap<Arc<str>, Product>,
+        relation: RelationMark,
+    },
+    /// A conjunct preventing an independent starting product. Remember it so a rejected
+    /// extension does not scan the unary bounds again at every later test.
+    Coupled(Arc<Formula>),
+}
+
+impl Extension {
+    fn certified(&self) -> bool {
+        matches!(self, Self::Certified { .. })
+    }
 }
 
 impl Seen {
@@ -4074,7 +4538,7 @@ impl Scope {
     fn of(names: impl IntoIterator<Item = (Arc<str>, Product)>, exact: bool) -> Scope {
         let mut s = Scope {
             names: names.into_iter().collect(),
-            relation: Conjuncts::default(),
+            relation: Conjuncts::default().into(),
             written: imbl::OrdMap::new(),
             written_by: Uses::default(),
             bottom: false,
@@ -4182,7 +4646,7 @@ impl Scope {
 
     /// Keeps `block` as its projection left it, with the names' products as they are now.
     fn keep(&mut self, mut block: Block) {
-        block.names_at = self.names.clone();
+        block.names_at = self.names.view().clone();
         for w in std::mem::take(&mut block.spends) {
             self.spent.insert(w);
         }
@@ -4494,7 +4958,7 @@ impl Scope {
         };
         self.clock += 1;
         if !self.bottom && !p.is_empty() && !self.names.contains_key(x) {
-            let before = self.names.clone();
+            let before = self.names.view().clone();
             self.names.insert(x.clone(), p);
             self.bindings.insert(x.clone(), binding);
             self.orders.insert(x.clone(), order);
@@ -4554,7 +5018,7 @@ impl Scope {
     pub fn unbind(&mut self, u: Unbind) {
         match u {
             Unbind::Fresh(x) => {
-                let before = self.names.clone();
+                let before = self.names.view().clone();
                 self.names.remove(&x);
                 self.bindings.remove(&x);
                 self.orders.remove(&x);
@@ -4587,7 +5051,7 @@ impl Scope {
         // binding and Θ(d²) over a block of d bindings; used, each cache rebased on the names
         // now, O(entries that differ · log n) per binding. Precondition: `x` is fresh, so its
         // product is already at its fixed point.
-        let now = &self.names;
+        let now = self.names.view();
         let rebase = |cache: &mut imbl::OrdMap<Arc<str>, Product>| {
             if cache.ptr_eq(before) {
                 *cache = now.clone();
@@ -4639,7 +5103,7 @@ impl Scope {
     /// bindings with their orders (a summary keeps its own last reads, `Held::last`). `O(1)`.
     fn basis(&self) -> Parts {
         Parts {
-            names: self.names.clone(),
+            names: self.names.view().clone(),
             bindings: self.bindings.clone(),
             orders: self.orders.clone(),
         }
@@ -4717,8 +5181,8 @@ impl Scope {
         names
             .into_iter()
             .filter_map(|n| {
-                let v = self.names.get(n)?.value()?;
-                Some((n.clone(), v.clone()))
+                let v = self.names.read(n)?.value()?.clone();
+                Some((n.clone(), v))
             })
             .collect()
     }
@@ -4778,7 +5242,7 @@ impl Scope {
         if self.bottom {
             return Product::bottom();
         }
-        self.names.get(name).cloned().unwrap_or_else(Product::top)
+        self.names.product(name).unwrap_or_else(Product::top)
     }
 
     /// A warning for each question the integer solver left undecided while this scope was
@@ -5113,7 +5577,7 @@ impl Scope {
     fn join_settled(&self, other: &Scope) -> Scope {
         // A name both sides share unchanged is its own join; the others are found by the
         // persistent maps' difference, which skips what they share.
-        let mut names = self.names.clone();
+        let mut names = self.names.view().clone();
         let mut seeds: BTreeSet<Arc<str>> = BTreeSet::new();
         for d in self.names.diff(&other.names) {
             match d {
@@ -5330,7 +5794,7 @@ impl Scope {
             bindings: self.bindings.clone(),
             orders: self.orders.clone(),
             clock: self.clock.max(other.clock),
-            names,
+            names: names.into(),
             // This side's reduced names and what it last projected and enumerated: the join
             // differs from them in what it changed.
             reduced: self.reduced.clone(),
@@ -5485,11 +5949,282 @@ impl Scope {
     /// This scope where `test` gave `outcome`, reduced.
     pub fn assume(&self, test: &Term, outcome: bool, premises: &Premises) -> Scope {
         let mut s = self.clone();
+        if premises.is_empty() && s.extend_path(test, outcome) {
+            if s.bottom {
+                s.reduce();
+            }
+            return s;
+        }
+        s.names.materialize();
         s.settle_test(test);
         let plain = plain_test(test, &s);
         s.narrow(plain.as_ref().unwrap_or(test), outcome, premises);
-        s.reduce();
+        if s.bottom
+            || !s
+                .seen
+                .extension
+                .as_deref()
+                .is_some_and(Extension::certified)
+        {
+            s.reduce();
+        }
         s
+    }
+
+    /// A path of difference constraints whose projections share affine bounds.
+    // Complexity tradeoff: naive version, `narrow` splits a disjunction into cases and
+    // propagates the live arm over every name on the chain, Theta(n) per test. Used: a test
+    // of one or two names with unit coefficients, or a two-armed `or` one of whose arms is a
+    // bound its name's current interval already falsifies, edits the path representation
+    // ([`NameProducts`]) in O(log n). For the `or`, the scope keeps what `narrow_linear`
+    // keeps when one arm is dead: the relation gains the live arm's relation (the whole
+    // test's when the arm is on one name), `refuse_looped` runs on the plain test, and an
+    // end of a single name that moves is recorded in `direct`; checked step by step against
+    // the solver's scopes on the lazy tests (products, bottom, relation and `direct` equal).
+    // Tradeoffs: `refuse_looped` and `relation_of` are O(size of the test) per test; a
+    // general incremental solve of difference constraints (Ramalingam, Song, Joskowicz and
+    // Miller, "Solving systems of difference constraints incrementally", Algorithmica
+    // 23(3), 1999) would admit more tests but keeps no shared interval per path.
+    fn extend_path(&mut self, test: &Term, outcome: bool) -> bool {
+        if self.bottom
+            || self.exact
+            || self.lazy
+            || self.in_case
+            || !self.written.is_empty()
+            || !self.bindings.is_empty()
+        {
+            return false;
+        }
+        if self
+            .names
+            .blocker
+            .as_ref()
+            .is_some_and(|g| self.relation.set().contains(g))
+        {
+            return false;
+        }
+        let mut live_side = None;
+        let c = if let Some(c) = path_con(test, outcome) {
+            c
+        } else if self.names.relation.is_some()
+            && outcome
+            && let Term::Prim(Prim::Or, sides) = test
+            && sides.len() == 2
+        {
+            let (Some(a), Some(b)) = (path_con(&sides[0], true), path_con(&sides[1], true)) else {
+                return false;
+            };
+            let dead = |c: &Con| {
+                if c.lin.terms.len() != 1 {
+                    return false;
+                }
+                let Some((Atom::Sym(n), k)) = c.lin.terms.first_key_value() else {
+                    return false;
+                };
+                let Some(p) = self.names.product(n) else {
+                    return false;
+                };
+                if p.ty.element != Type::int() || !p.premises().is_empty() {
+                    return false;
+                }
+                let Some((lo, hi)) = p.ints().bounds() else {
+                    return true;
+                };
+                let End::Fin(v) = (if k.is_positive() { hi } else { lo }) else {
+                    return false;
+                };
+                (&(&Int::from(v) * k) + &c.lin.constant).is_negative()
+            };
+            if dead(&a) {
+                live_side = Some(1);
+                b
+            } else if dead(&b) {
+                live_side = Some(0);
+                a
+            } else {
+                return false;
+            }
+        } else {
+            return false;
+        };
+        if !matches!(c.lin.terms.len(), 1 | 2) {
+            return false;
+        }
+        if self.names.relation.is_none() && c.lin.terms.len() == 1 {
+            return false;
+        }
+        if let Some(relation) = &self.names.relation {
+            if !self.relation.at(relation) {
+                return false;
+            }
+        } else {
+            if let Some(g) = self.relation.set().iter().find(|g| {
+                !matches!(&***g,
+                Formula::Con(c) if c.rel == Rel::Ge && c.lin.terms.len() == 1
+                    && c.lin.terms.keys().all(|a| matches!(a, Atom::Sym(_))))
+            }) {
+                self.names.blocker = Some(g.clone());
+                return false;
+            }
+        }
+        let mut names = Clone::clone(&self.names);
+        let mut positive = None;
+        let mut negative = None;
+        for (a, k) in &c.lin.terms {
+            let Atom::Sym(n) = a else {
+                return false;
+            };
+            if *k == Int::from(1) && positive.is_none() {
+                positive = Some(n);
+            } else if *k == Int::from(-1) && negative.is_none() {
+                negative = Some(n);
+            } else {
+                return false;
+            }
+        }
+        let result = match (positive, negative) {
+            (Some(b), Some(a)) => names.link(a, b, &-&c.lin.constant),
+            (Some(n), None) => names.bound(n, true, &-&c.lin.constant),
+            (None, Some(n)) => names.bound(n, false, &c.lin.constant),
+            _ => None,
+        };
+        let Some(bottom) = result else {
+            return false;
+        };
+        let end = |ns: &NameProducts, n: &Arc<str>, upper: bool| {
+            let p = ns.product(n)?;
+            let ints = p.ints();
+            let (lo, hi) = ints.bounds()?;
+            match if upper { hi } else { lo } {
+                End::Fin(v) => Some(v.clone()),
+                _ => None,
+            }
+        };
+        if let Some(i) = live_side {
+            let plain = plain_test(test, self);
+            let t = plain.as_ref().unwrap_or(test);
+            let Term::Prim(Prim::Or, plain_sides) = t else {
+                return false;
+            };
+            let Some(whole) = self.relation_of(t, outcome) else {
+                return false;
+            };
+            let body = self.relation_of(&plain_sides[i], true).unwrap_or(whole);
+            let (tree, pol) = Tree::of(t);
+            self.refuse_looped(t, &tree, outcome == pol, outcome);
+            self.relation.defer(body);
+        } else if c.lin.terms.len() == 2 {
+            self.relation.defer(Formula::Con(c.clone()));
+        }
+        if c.lin.terms.len() == 1 {
+            let (n, upper) = match (positive, negative) {
+                (Some(n), None) => (n, false),
+                (None, Some(n)) => (n, true),
+                _ => unreachable!("a unary constraint has one name"),
+            };
+            let (old, new) = (end(&self.names, n, upper), end(&names, n, upper));
+            if let Some(v) = new
+                && old.as_ref() != Some(&v)
+            {
+                self.direct.insert((n.clone(), upper), v);
+            }
+        }
+        names.relation = Some(self.relation.mark());
+        self.names = names;
+        self.bottom = bottom;
+        true
+    }
+
+    /// Certifies a row `x + w <= a || y - w >= b` with a fresh non-hub endpoint.
+    // Complexity tradeoff: splitting every row into reduced cases revisits all earlier rows,
+    // O(n²) over a walk. At the hub's lower end, a fresh y's upper end extends every old
+    // state, and the all-lower witness admits every y; for a fresh x, its lower end extends
+    // every old state and the all-upper witness admits every x. Thus all non-hub values
+    // remain attainable there. The all-upper witness at the hub's upper end still passes.
+    // This is a certificate for the walk's shape (one hub, each row's other names new), not a
+    // general incremental solver for such rows; any other row clears it and reduces as
+    // before. Products and affine hulls are unchanged; keeping each whole row (deferred, see
+    // [`Relation`]) and the set of used endpoints costs O(log n) a row, O(n log n) over the
+    // walk. Measured, instructions at 8n over n: s4 walk 10.4, walk without its start 9.5
+    // (its test count alone grows 39/4 = 9.75 times); main allocates 24.8 and 26.8 times
+    // the bytes. The walk's last test, which no certificate covers, runs the solver once over
+    // every row; the cross-review of ST-walk-implicit measured it at 79% of the walk's work at
+    // 8n (allocator calls), which keeps the walk above 9.
+    fn extend_threshold(&mut self, body: &Formula) -> bool {
+        if self.bottom
+            || self.exact
+            || self.lazy
+            || self.in_case
+            || !self.written.is_empty()
+            || !self.bindings.is_empty()
+        {
+            return false;
+        }
+        let previous = match self.seen.extension.as_deref() {
+            Some(Extension::Certified {
+                hub,
+                used,
+                names,
+                relation,
+            }) if names.ptr_eq(&self.names) && self.relation.at(relation) => Some((hub, used)),
+            Some(Extension::Certified { .. }) => return false,
+            Some(Extension::Coupled(g)) if self.relation.set().contains(g) => return false,
+            _ => None,
+        };
+        let Some(row) = threshold::leaf_row(body) else {
+            return false;
+        };
+        let threshold::LeafRow {
+            x,
+            y,
+            hub: w,
+            upper,
+            lower,
+        } = row;
+        if previous.is_some_and(|(hub, used)| *hub != w || (used.contains(&x) && used.contains(&y)))
+        {
+            return false;
+        }
+        let unary = |g: &Arc<Formula>| {
+            matches!(&**g, Formula::Con(c)
+            if c.rel == Rel::Ge && c.lin.terms.len() == 1
+                && c.lin.terms.keys().all(|a| matches!(a, Atom::Sym(_))))
+        };
+        let int = Type::int();
+        let ends = |n: &Arc<str>| {
+            let p = self.names.get(n)?;
+            if p.ty.element != int || classed(p) || listed(p).is_some() || !p.premises().is_empty()
+            {
+                return None;
+            }
+            let (End::Fin(lo), End::Fin(hi)) = p.ints().only()? else {
+                return None;
+            };
+            (lo < hi).then(|| (Int::from(lo), Int::from(hi)))
+        };
+        let (Some((xl, _)), Some((wl, wh)), Some((_, yh))) = (ends(&x), ends(&w), ends(&y)) else {
+            return false;
+        };
+        if &xl + &wl > upper || &yh - &wh < lower {
+            return false;
+        }
+        if previous.is_none()
+            && let Some(g) = self.relation.set().iter().find(|g| !unary(g))
+        {
+            self.seen.extension = Some(Arc::new(Extension::Coupled(g.clone())));
+            return false;
+        }
+        let mut used = previous.map_or_else(imbl::OrdSet::new, |(_, used)| used.clone());
+        used.insert(x);
+        used.insert(y);
+        self.relation.defer(body.clone());
+        self.seen.extension = Some(Arc::new(Extension::Certified {
+            hub: w,
+            used,
+            names: self.names.view().clone(),
+            relation: self.relation.mark(),
+        }));
+        true
     }
 
     /// [`Scope::assume`] for a scope that is read and not shown: one no state reaches keeps its
@@ -5803,7 +6538,7 @@ impl Scope {
         Some(match t {
             Term::Lit(Value::Int(k)) => Lin::constant(Int::from(*k)),
             Term::Var(n) => {
-                let p = self.names.get(n)?;
+                let p = self.names.read(n)?;
                 if !p.ty.element.subtype(&int) {
                     return None;
                 }
@@ -5848,6 +6583,22 @@ impl Scope {
             Kind::Nest(..) | Kind::If(_) => self.relation_of(&tree.term_at(n), value),
             Kind::Lit(_) | Kind::Atom => None,
         };
+        if prem.is_empty()
+            && body
+                .as_ref()
+                .is_some_and(|body| self.extend_threshold(body))
+        {
+            return;
+        }
+        if self
+            .seen
+            .extension
+            .as_deref()
+            .is_some_and(Extension::certified)
+        {
+            self.seen.extension = None;
+            self.reduce();
+        }
         let Some(body) = body else {
             match &tree.nodes[n].kind {
                 Kind::Nest(and, sides) if *and == value && n == 0 => {
@@ -5940,7 +6691,7 @@ impl Scope {
             .iter()
             .filter(|n| {
                 self.names
-                    .get(*n)
+                    .read(n)
                     .is_some_and(|p| p.ty.element.subtype(&int))
             })
             .cloned()
@@ -6559,7 +7310,7 @@ impl Scope {
             orders: self.orders.clone(),
             names: names.clone(),
         });
-        self.names = names;
+        self.names = names.into();
         self.emptied.0 = true;
     }
 
@@ -6625,7 +7376,7 @@ impl Scope {
                     break;
                 }
             }
-            let before = self.names.clone();
+            let before = self.names.view().clone();
             // The names whose bounds may have changed since the last projection, so that the
             // stars it finds are those of the bounds as they are.
             let moved: Vec<Arc<str>> = match &self.seen.projection {
@@ -6645,7 +7396,7 @@ impl Scope {
             // projection that moves a bound is followed by another, until none moves one.
             if let Some(due) = self.due(whole, force, &moved) {
                 force = false;
-                self.seen.projection = Some((self.names.clone(), self.relation.clone()));
+                self.seen.projection = Some((self.names.view().clone(), (*self.relation).clone()));
                 self.project(due, whole);
             }
             let dirty: Vec<Arc<str>> = if moved_since && self.names.ptr_eq(&before) {
@@ -6672,7 +7423,7 @@ impl Scope {
                     }
                 }
             }
-            last = self.names.clone();
+            last = self.names.view().clone();
             if dirty
                 .iter()
                 .any(|n| self.names.get(n).is_some_and(Product::is_empty))
@@ -7231,7 +7982,7 @@ impl Scope {
             // skips what they share, O(c log m) for `c` changed names. Tradeoffs: a scope that
             // turned bottom shows no change in its map, so it is checked first. COMPLEXITY.md
             // row C26.
-            let start = self.names.clone();
+            let start = self.names.view().clone();
             let refusals = self.refusals.clone();
             let (block, due) = self.block(&relation, b);
             self.project_block(block, due);
@@ -8144,7 +8895,7 @@ impl Scope {
     /// fixed point the steps tend to, and the worklist stops. That is an event of the
     /// projection, not a count of steps or a size.
     fn project_block(&mut self, mut b: Block, due: Vec<PartAt>) {
-        let start = self.names.clone();
+        let start = self.names.view().clone();
         let (was_stair, was_ray) = (b.stair_managed, b.ray_managed);
         let mut covered = self.cover(&mut b, true);
         let mut due = due;
@@ -8227,10 +8978,10 @@ impl Scope {
             // names of the block it differs at read after, O(c log N) for c changed names
             // ([`Scope::block_before`]). Tradeoffs: none; a part's own names, when the block
             // is not covered, are read as before, O(|part|).
-            let start_part = (self.names.clone(), self.bottom);
+            let start_part = (self.names.view().clone(), self.bottom);
             let part_before = (covered.is_none()).then(|| self.snapshot(&part.names));
             self.project_part(&b.formula(part));
-            let after_part = self.names.clone();
+            let after_part = self.names.view().clone();
             let was = (b.stair_managed, b.ray_managed);
             covered = self.cover(&mut b, covered.is_some());
             for j in b.released(was.0, was.1) {
@@ -8622,7 +9373,7 @@ impl Scope {
             let stays = bound == kept.bound;
             let record = LeafBound {
                 free: hubs.iter().map(here).collect(),
-                names: self.names.clone(),
+                names: self.names.view().clone(),
                 mentioned,
                 base: kept.base.clone(),
                 bound,
@@ -8641,7 +9392,7 @@ impl Scope {
                 }));
         let record = found.map(|(bound, base)| LeafBound {
             free: hubs.iter().map(here).collect(),
-            names: self.names.clone(),
+            names: self.names.view().clone(),
             mentioned: now
                 .iter()
                 .flat_map(|g| conjuncts::names(g))
@@ -9003,7 +9754,7 @@ impl Scope {
     /// for the names it changed.
     fn enumerate(&mut self) -> bool {
         let now = (
-            self.names.clone(),
+            self.names.view().clone(),
             self.written.clone(),
             self.enumerated.clone(),
         );
@@ -11526,7 +12277,7 @@ impl Scope {
         // A changing threshold aggregate must also solve the other lower cohort
         // in this prospective box. Otherwise preserve all individual movements.
         if changes && !b.rays.is_empty() {
-            let mut probe = self.names.clone();
+            let mut probe = self.names.view().clone();
             for (n, l, h) in [(x, &xl, &xh), (y, &yl, &yh)] {
                 if let Some(p) = probe.get_mut(n) {
                     let prem = p.premises();

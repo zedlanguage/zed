@@ -478,13 +478,23 @@ enum Bound {
 /// The term of a constraint `t >= 0` that `f` is, when `f` is one: `t >= 0` itself, or
 /// `-t - 1 >= 0` for `!(t >= 0)`.
 fn at_least_zero(f: &Formula) -> Option<Lin> {
+    let (t, negated) = ge_term(f)?;
+    Some(if negated {
+        Lin {
+            terms: t.terms.iter().map(|(a, k)| (a.clone(), -k)).collect(),
+            constant: &-&t.constant - &Int::ONE,
+        }
+    } else {
+        t.clone()
+    })
+}
+
+/// The term of an inequality, with whether the formula negates it.
+fn ge_term(f: &Formula) -> Option<(&Lin, bool)> {
     match f {
-        Formula::Con(c) if c.rel == Rel::Ge => Some(c.lin.clone()),
+        Formula::Con(c) if c.rel == Rel::Ge => Some((&c.lin, false)),
         Formula::Not(n) => match &**n {
-            Formula::Con(c) if c.rel == Rel::Ge => Some(Lin {
-                terms: c.lin.terms.iter().map(|(a, k)| (a.clone(), -k)).collect(),
-                constant: &-&c.lin.constant - &Int::ONE,
-            }),
+            Formula::Con(c) if c.rel == Rel::Ge => Some((&c.lin, true)),
             _ => None,
         },
         _ => None,
@@ -670,4 +680,53 @@ fn read(atoms: &[(usize, Lin)], ors: &[bool], hub: Option<Arc<str>>) -> Option<S
     }
     out.names = names;
     Some(out)
+}
+
+/// A unit-slope threshold row, read without building a component or copying its domains.
+pub struct LeafRow {
+    /// The name of the arm `x + w <= a`.
+    pub x: Arc<str>,
+    /// The name of the arm `y - w >= b`.
+    pub y: Arc<str>,
+    /// The name `w` both arms share.
+    pub hub: Arc<str>,
+    /// The bound `a` of `x + w <= a`.
+    pub upper: Int,
+    /// The bound `b` of `y - w >= b`.
+    pub lower: Int,
+}
+
+/// Reads `x + w <= a || y - w >= b`, with three distinct names.
+pub fn leaf_row(g: &Formula) -> Option<LeafRow> {
+    let Formula::Or(arms) = g else { return None };
+    let [a, b] = arms.as_slice() else { return None };
+    let ((a, _), (b, _)) = (ge_term(a)?, ge_term(b)?);
+    if a.terms.len() != 2 || b.terms.len() != 2 {
+        return None;
+    }
+    let mut common = a.terms.keys().filter(|n| b.terms.contains_key(*n));
+    let Atom::Sym(hub) = common.next()? else {
+        return None;
+    };
+    if common.next().is_some() {
+        return None;
+    }
+    let (Ok(a), Ok(b)) = (
+        bound(&at_least_zero(&arms[0])?, Some(hub))?,
+        bound(&at_least_zero(&arms[1])?, Some(hub))?,
+    ) else {
+        return None;
+    };
+    let (x, k, upper, y, m, lower) = match (a, b) {
+        (Bound::Upper(x, k, a), Bound::Lower(y, m, b))
+        | (Bound::Lower(y, m, b), Bound::Upper(x, k, a)) => (x, k, a, y, m, b),
+        _ => return None,
+    };
+    (k == Int::ONE && m == Int::ONE).then(|| LeafRow {
+        x,
+        y,
+        hub: hub.clone(),
+        upper,
+        lower,
+    })
 }

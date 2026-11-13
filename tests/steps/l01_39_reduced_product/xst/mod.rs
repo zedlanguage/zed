@@ -14,8 +14,7 @@
 //!   snapping.
 //! - [`s4`]: `Scope` on disjunctions (S4, results 2 and 3 of META4): the orchestrator's fan-in
 //!   and diamond families, the class K counterexamples in both orders, the B4 tests flipped to
-//!   their exact answers, B(S) on moving bounds and the round-3 scaling families. Tests that
-//!   main does not pass yet wait for item ST-walk-implicit.
+//!   their exact answers, B(S) on moving bounds and the round-3 scaling families.
 //! - [`s4_model`]: the box-only base and greatest fixpoint of S4 on two names, against
 //!   enumeration (Claude's model and Codex's), with Property P, order independence,
 //!   monotonicity and the controls that break each; Codex's round-3 integer octagon projection
