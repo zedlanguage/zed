@@ -2024,10 +2024,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| FENCE-copies-resync | running | 2026-11-12 19:34 |  |
 | FLOAT-f32 | impl attempt 1 | 2026-11-05 04:07 | scaling: a chain of n f32 bindings (check+elab+run) 100->800: 8.1x instr, 8.1x bytes, limit 12.77; negative control (n/100 repeats, quadratic) 64.7x bytes, fail |
 | L1.29d | impl attempt 1 | 2026-11-11 01:43 | started; worktree /home/luke/Work/wt/l129d from e52caa1bf |
 | LIT-tuple-decimal-body | impl attempt 1 | 2026-11-12 18:30 | started; worktree wt/lit-tuple-dec on origin/main 151b26576 (also MSG-callee-code) |
-| MAKER-file-chain | impl attempt 1 | 2026-11-12 17:24 | red on old code: new work tests t_n + 1 bytes 19.9x, a_n + 1 bytes 14.0x at n=40->320 (limit 13.8); load 76 |
 | MSG-callee-code | running | 2026-11-12 18:30 |  |
 | MSG-is-repair-v | running | 2026-11-12 17:32 |  |
 | MSG-lines-headline | running | 2026-11-12 17:32 |  |
@@ -2035,9 +2035,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | NARROW-or-order | impl attempt 1 | 2026-11-12 15:40 | started; worktree /home/luke/Work/wt/narrow-or-order on cdd557f13 |
 | PERF-l139-family | impl attempt 1 | 2026-11-12 18:45 | started; worktree /home/luke/Work/wt/perf-l139-family on 163c04744 |
 | POW-rat-literal-ops | impl attempt 1 | 2026-11-12 16:20 | reproduced: (2r/3r)^-2, 1r/(2r/3r), (3r/2r)^-2 refused at a port for #divByZero; (3/2)^-2 in main settles at f64; top-level offers no rat fix |
-| REFUSAL-periodic-split | impl attempt 1 | 2026-11-11 01:43 | both cases confirmed Refused(Fork) on main; rule written: a union of pure cycles less some is empty when each class lies inside one class taken out, tested by r |
+| REFUSAL-census-now | running | 2026-11-12 19:34 |  |
+| REFUSAL-periodic-split | impl attempt 1 | 2026-11-11 01:43 | tests pass: witnesses 11, refusals 132 (+17 ignored), all 28 l01_23 groups 0 failed, kernel unit 291 passed (17 ignored); red on old code (2 new tests Refused(F |
 | STAGE-print | impl attempt 1 | 2026-11-04 03:10 | started; worktree wt/stage-print seeded |
-| TESTS-l01_23-group-oracle-sweep | running | 2026-11-08 23:59 |  |
+| TESTS-l01_23-group-oracle-sweep | impl attempt 1 | 2026-11-08 23:59 | started; worktree /home/luke/Work/wt/group-oracle-sweep on origin/main |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
