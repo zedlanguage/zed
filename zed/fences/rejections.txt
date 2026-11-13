@@ -56,6 +56,10 @@ Emission-disjointness
 Bit-field of a foreign struct with no C unit
 Grammar item narrower than a byte with no bit order
 Release of a foreign value while a result that keeps it is still read
+Use of a foreign value after the program releases it
+Release function whose parameters the `release` does not fill
+Parameter declared `with consumes()` that is not typed `Ptr(…)` or is given a value Zed does not own
+Released foreign value that nothing uses
 One C symbol exported twice
 Misaligned foreign pointer in a run
 Rebinding in the same scope

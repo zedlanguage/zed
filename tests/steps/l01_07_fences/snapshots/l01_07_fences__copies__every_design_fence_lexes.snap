@@ -147,8 +147,8 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  18 | }
 == DESIGN.md [sec:codecs] 7 L20
   2 | @foreign «struct» Sample { t : u64 , value : f64 }
-  3 | @foreign ( str["sensor"] , str["sensor_free"] ) freeSamples : ( p : Ptr ( [ Sample ] «with» length ( 1024₍10₎ ) ) ) -> #ok ;
-  4 | @foreign ( str["sensor"] , str["sensor_read"] ) readSamples : ( count : i32 ) -> Ptr ( [ Sample ] «with» length ( 1024₍10₎ ) ) «with» release ( freeSamples ) ;
+  3 | @foreign ( str["sensor"] , str["sensor_free"] ) @nonblocking freeSamples : ( p : Ptr ( [ Sample ] «with» length ( 1024₍10₎ ) ) ) -> #ok ;
+  4 | @foreign ( str["sensor"] , str["sensor_read"] ) @blocking readSamples : ( count : i32 ) -> Ptr ( [ Sample ] «with» length ( 1024₍10₎ ) ) «with» release ( freeSamples ) ;
   6 | main ( m : MainArgs ) {
   7 | fs = main :: files ;
   8 | samples = readSamples ( count : 1024₍10₎ ) «else» [ ] ;
@@ -562,8 +562,49 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   6 | canonname : Ptr ( [ u8 ] «with» terminated ( 0₍10₎ ) ) | #none ,
   7 | next : Ptr ( AddrInfo ) | #none ,
   8 | }
-  9 | @foreign ( str["c"] , str["freeaddrinfo"] ) freeAddrInfo : ( res : Ptr ( AddrInfo ) ) -> #ok ;
- 10 | @foreign ( str["c"] , str["getaddrinfo"] ) getAddrInfo : ( node : [ u8 ] «with» terminated ( 0₍10₎ ) , service : [ u8 ] «with» terminated ( 0₍10₎ ) , hints : Ptr ( AddrInfo ) | #none ) -> ( i32 , Ptr ( AddrInfo ) | #none «with» release ( freeAddrInfo ) ) ;
+  9 | @foreign ( str["c"] , str["freeaddrinfo"] ) @nonblocking freeAddrInfo : ( res : Ptr ( AddrInfo ) ) -> #ok ;
+ 10 | @foreign ( str["c"] , str["getaddrinfo"] ) @blocking getAddrInfo : ( node : [ u8 ] «with» terminated ( 0₍10₎ ) , service : [ u8 ] «with» terminated ( 0₍10₎ ) , hints : Ptr ( AddrInfo ) | #none ) -> ( i32 , Ptr ( AddrInfo ) | #none «with» release ( freeAddrInfo ) ) ;
+== DESIGN.md [sec:ffi] 2 L7
+  1 | @foreign «struct» Device { }
+  2 | @foreign «struct» Buffer { }
+  3 | @foreign «struct» Extension { }
+  4 | @foreign «struct» AllocationCallbacks { }
+  5 | @foreign «struct» BufferCreateInfo {
+  6 | structType : i32 , next : Ptr ( Extension ) | #none , flags : u32 , size : u64 , usage : u32 ,
+  7 | sharingMode : i32 , queueFamilyCount : u32 , queueFamilies : Ptr ( [ u32 ] «with» length ( queueFamilyCount ) ) | #none ,
+  8 | }
+  9 | @foreign ( str["vulkan"] , str["vkDestroyBuffer"] ) @nonblocking destroyBuffer : ( device : Ptr ( Device ) , buffer : Ptr ( Buffer ) , allocator : Ptr ( AllocationCallbacks ) | #none ) -> #ok ;
+ 10 | @foreign ( str["vulkan"] , str["vkCreateBuffer"] ) @blocking createBuffer : ( device : Ptr ( Device ) , info : Ptr ( BufferCreateInfo ) , allocator : Ptr ( AllocationCallbacks ) | #none ) -> ( i32 , Ptr ( Buffer ) | #none «with» release ( destroyBuffer , device , allocator ) ) ;
+== DESIGN.md [sec:ffi] 3 L7
+  1 | @foreign «struct» Env { }
+  2 | @foreign «struct» Txn { }
+  3 | @foreign ( str["lmdb"] , str["mdb_txn_abort"] ) @nonblocking abort : ( txn : Ptr ( Txn ) ) -> #ok ;
+  4 | @foreign ( str["lmdb"] , str["mdb_txn_begin"] ) @blocking begin : ( env : Ptr ( Env ) , parent : Ptr ( Txn ) | #none , flags : u32 ) -> ( i32 , Ptr ( Txn ) | #none «with» release ( abort ) ) ;
+  5 | @foreign ( str["lmdb"] , str["mdb_txn_commit"] ) @blocking commit : ( txn : Ptr ( Txn ) «with» consumes ( ) ) -> i32 ;
+== DESIGN.md [sec:ffi] 4 L7
+  1 | @foreign «struct» Lock { }
+  2 | @foreign ( str["locks"] , str["lock_release"] ) @nonblocking unlock : ( lock : Ptr ( Lock ) ) -> #ok ;
+  3 | @foreign ( str["locks"] , str["lock_acquire"] ) @blocking acquire : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( Lock ) «with» release ( unlock ) ;
+== DESIGN.md [sec:ffi] 5 L7
+  1 | @foreign «struct» Db { }
+  2 | @foreign «struct» Stmt { }
+  3 | @foreign ( str["sqlite3"] , str["sqlite3_close_v2"] ) @blocking close : ( db : Ptr ( Db ) ) -> i32 ;
+  4 | @foreign ( str["sqlite3"] , str["sqlite3_finalize"] ) @nonblocking finalize : ( stmt : Ptr ( Stmt ) ) -> i32 ;
+  5 | @foreign ( str["sqlite3"] , str["sqlite3_open"] ) @blocking open : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> ( i32 , Ptr ( Db ) | #none «with» release ( close ) ) ;
+  6 | @foreign ( str["sqlite3"] , str["sqlite3_prepare_v2"] ) @blocking prepare : ( db : Ptr ( Db ) , sql : [ u8 ] «with» terminated ( 0₍10₎ ) , bytes : i32 , tail : Ptr ( Ptr ( [ u8 ] «with» terminated ( 0₍10₎ ) ) ) | #none ) -> ( i32 , Ptr ( Stmt ) | #none «with» arg ( 3₍10₎ ) , release ( finalize ) , keeps ( db ) ) ;
+  9 | openQuery ( path : Utf8String , sql : Utf8String ) -> ( Ptr ( Db ) , Ptr ( Stmt ) ) | i32 {
+ 10 | rc , opened = open ( path : ) ;
+ 11 | «match» opened {
+ 12 | #none -> rc ,
+ 13 | db -> «if» rc != 0₍10₎ { rc } «else» {
+ 14 | rc2 , prepared = prepare ( db : , sql : , bytes : - 1₍10₎ , tail : #none ) ;
+ 15 | «match» prepared {
+ 16 | #none -> rc2 ,
+ 17 | stmt -> ( db , stmt ) ,
+ 18 | }
+ 19 | } ,
+ 20 | }
+ 21 | }
 == DESIGN.md [sec:tour_basics] 1 L10
   2 | x = 42₍10₎ ;
   3 | port : int [ 1₍10₎ ..= 65535₍10₎ ] = 8080₍10₎ ;
