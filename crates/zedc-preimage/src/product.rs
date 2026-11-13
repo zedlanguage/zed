@@ -1620,6 +1620,15 @@ impl Potential {
     // `1.6^62` (about 4.5 * 10^12) components the range of all ranks is taken whatever it
     // holds, and the bound no longer holds. Test
     // `product::tests::ranks_given_in_one_place_scale`.
+    // Method chosen (PERF-pk-one-sided, against its plan row): the row named Dietz and
+    // Sleator ("Two algorithms for maintaining order in a list", STOC 1987), whose two-level
+    // list ranks O(1) amortized components again for each rank given, so each costs
+    // O(log n) here with `order` a B-tree. This is the one-level list of Bender et al., a
+    // simplification of the first of those algorithms, which ranks O(log n) amortized
+    // components again: O(log² n) amortized in all, one factor of log n more, for one level
+    // and no tag lists to keep. Measured: about 1.24 log₂ n components ranked again for each
+    // rank given, 8,000 to 64,000 components. The two-level list is the repair should ranks
+    // given dominate a profile.
     fn rank_after(&mut self, c: u64, after: Option<i64>) -> usize {
         let a = after.unwrap_or(-1);
         let b = self.order.range(a + 1..).next().map_or(RANKS, |(&r, _)| r);
