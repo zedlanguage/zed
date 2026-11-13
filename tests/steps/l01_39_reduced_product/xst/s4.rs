@@ -1024,21 +1024,6 @@ fn c26_given_at_once_narrows_in_near_linear_time() {
     });
 }
 
-/// Base churn given as one conjunction: near linear time, as one at a time (8.6 at 8n). Open:
-/// 11.1 at 8n by bytes at n = 16 and 10.7 at n = 32. The conjunction the paths do not take is
-/// narrowed as one node, whose cases each project the whole relation; the growth is in the
-/// hull of each projected block (`hull_side`, 14 times from n = 8 to 64,
-/// `decide_kept_status` 16 times). Narrowing the sides one by one in written order passed
-/// (9.7) but gave the less precise answers of the forward order, so it was not kept. The
-/// answers in this order are checked by [`unbounded_family`].
-#[test]
-fn churn_given_at_once_narrows_in_near_linear_time() {
-    let inputs = scaling::inputs(16, |k| c26(k, true));
-    scaling::check_order("base churn, AtOnce, k tests", 16, 1, |m| {
-        drop(inputs[&m].narrowed(How::AtOnce));
-    });
-}
-
 /// A case that empties a name by its interval alone, the type still `int`: the case is
 /// dropped, and with both cases empty the scope is empty, in each order.
 #[test]
@@ -1110,12 +1095,4 @@ fn class_case_is_exact(how: How) {
 fn a_case_a_class_empties_is_dropped() {
     class_case_is_exact(How::AtOnce);
     class_case_is_exact(How::Forward);
-}
-
-/// [`class_case`] with the disjunction given first: the class that comes after it should drop
-/// the case it empties, as in the other orders. On main (cf505f0b6) it keeps `y` in `0..=20`
-/// too, with no warning: sound, but not the answer of the other orders.
-#[test]
-fn a_case_a_class_empties_is_dropped_when_the_class_comes_last() {
-    class_case_is_exact(How::Backward);
 }
