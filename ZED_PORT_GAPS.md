@@ -3834,3 +3834,10 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 |---|---|---|---|
 | `f64::log2` from the platform libm, trusted to within `LOG2_ULPS` = 16 ulps, a margin the proof of the comparison's error bound rests on | `log2_sum`, `by_logs` | Zed's `log2` states no accuracy in ulps | a `log2` whose error in ulps DESIGN states (correctly rounded, as CORE-MATH gives, or a stated bound), and `LOG2_ULPS` set from it |
 | The leading 64 bits of a `BigUint` and its bit length, read without the rest | `leading`, `by_bit_length` | Bit operations on `int` (gap 4) | `::bits` and a shift right on `int` |
+
+## Entries from PERF-ref-memo-quadratic (`crates/zedc-preimage/src/preimage_ref.rs`, used by tests only)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A persistent AVL tree of `Arc` nodes whose node is changed in place by `Arc::make_mut` when it has one owner and copied otherwise (path copying with reuse) | `tree_apply`, `tree_round`, `tree_division` (the partition of `State1d`) | Mutation, identity (gap 1) | the tree as a value; the runtime reuses a node it holds once, or each relabeling copies its path, O(log n) per step either way |
+| `Arc::ptr_eq` to return a union of a tree with itself without walking it | `tree_union` | Equality shortcut (gap 1) | the content digest of gap 1, or the walk, which costs the tree's size only when both sides are the same tree |
