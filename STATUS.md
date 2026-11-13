@@ -2181,8 +2181,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PERF-tuple-print | impl attempt 1 | 2026-11-13 14:51 | started; worktree /home/luke/Work/wt/perf-tuple-print from 4a1a69d22 |
 | POW-scope-exponent | impl attempt 1 | 2026-11-13 14:51 | reproduced on 4a1a69d22 with zedc run: 2^(2^k - 2) under k > 0, 2^(3^k - 3) under k >= 1, 2^(5^(2^k + 1) - 10) under k >= 0 all rejected 'exponent that may be n |
 | PRES-overlap-coeffs | impl attempt 1 | 2026-11-13 14:10 | started; worktree from origin/main 64dfe1c61 |
-| REPAIR-past-binding | running | 2026-11-13 14:51 |  |
-| SPEC-main-limits | impl attempt 1 | 2026-11-13 15:14 | start: spec edits for A100 (address-space rejection, limits/@timeout on main) |
+| REPAIR-past-binding | impl attempt 1 | 2026-11-13 14:51 | started; worktree from origin/main 8776f59cf |
 | ST-walk-orders-left | impl attempt 1 | 2026-11-13 13:56 | started |
 | TESTS-unignore-all | impl attempt 1 | 2026-11-13 15:27 | started; worktree from origin/main a9818cd33 |
 | TYPE-op-table | impl attempt 1 | 2026-11-13 15:22 | started; load 35.92 39.67 40.25 |
