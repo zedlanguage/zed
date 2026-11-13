@@ -8,6 +8,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::lex::{Digits, Span};
+use zed_kernel::num::FloatFormat;
 use zedc_base::address::ContentAddress;
 
 /// An expression and its span.
@@ -32,9 +33,9 @@ pub enum ExprKind {
     Float {
         /// Its decimal text, shared with the token.
         digits: Digits,
-        /// Whether it is written with the suffix `f64`, which forces that format; without it,
-        /// the literal takes the carrier its use fixes (step L1.26b).
-        forced: bool,
+        /// The format its suffix names, `f32` or `f64`, which it is forced to; without one, the
+        /// literal takes the carrier its use fixes (step L1.26b).
+        forced: Option<FloatFormat>,
     },
     /// An exact rational, as its decimal text, shared with the token.
     Rat(Digits),

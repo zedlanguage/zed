@@ -46,7 +46,10 @@ use num_traits::ToPrimitive;
 
 use crate::deep::{self, Queue};
 use crate::digest::Digest;
-use crate::num::{Exact, Rat, TooLarge, bytes_of, read_decimal, room, sign_of};
+use crate::num::{
+    Exact, FloatFormat, LiteralRounding, Rat, TooLarge, bytes_of, literal_f32, literal_f64,
+    read_decimal, room, sign_of,
+};
 use crate::text::{Text, TooLong};
 
 /// `minimum(a, b)` (`min` true) or `maximum(a, b)` of IEEE 754-2019 (DESIGN.md sec:reduction,
@@ -105,6 +108,48 @@ impl PartialOrd for F64 {
 }
 
 impl fmt::Debug for F64 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self.0)
+    }
+}
+
+/// A 32-bit float, compared as [`F64`] is: bitwise after NaN canonicalization.
+#[derive(Clone, Copy)]
+pub struct F32(f32);
+
+impl F32 {
+    /// Wraps `x`, replacing any NaN by the canonical NaN.
+    pub fn new(x: f32) -> Self {
+        if x.is_nan() { F32(f32::NAN) } else { F32(x) }
+    }
+
+    /// The wrapped float.
+    pub fn get(self) -> f32 {
+        self.0
+    }
+}
+
+impl PartialEq for F32 {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.to_bits() == other.0.to_bits()
+    }
+}
+
+impl Eq for F32 {}
+
+impl Ord for F32 {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.total_cmp(&other.0)
+    }
+}
+
+impl PartialOrd for F32 {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl fmt::Debug for F32 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}", self.0)
     }
@@ -355,8 +400,10 @@ pub enum Value {
     Big(Arc<Rat>),
     /// A rational, `3r` or `1r/3r`.
     Rat(Arc<Rat>),
-    /// A float, compared bitwise.
+    /// An `f64`, compared bitwise.
     Float(F64),
+    /// An `f32`, compared bitwise.
+    Float32(F32),
     /// A string.
     Str(Text),
     /// A failure atom.
@@ -408,6 +455,20 @@ impl Value {
     /// A float value.
     pub fn float(x: f64) -> Self {
         Value::Float(F64::new(x))
+    }
+
+    /// An `f32` value.
+    pub fn float32(x: f32) -> Self {
+        Value::Float32(F32::new(x))
+    }
+
+    /// The float literal `text` as a value of the format `suffix` names, `f32` or `f64`, or of
+    /// `f64` with no suffix: the format a decimal no use fixes takes (DESIGN.md L1.26a).
+    pub fn literal_float(text: &str, suffix: Option<FloatFormat>) -> Result<Self, LiteralRounding> {
+        match suffix {
+            Some(FloatFormat::F32) => literal_f32(text).map(Value::float32),
+            _ => literal_f64(text).map(Value::float),
+        }
     }
 
     /// A bare atom such as `#empty`, given its name without the `#`.
@@ -574,6 +635,7 @@ impl Value {
     pub fn is_key(&self) -> bool {
         all_leaves(slice::from_ref(self), |v| match v {
             Value::Float(x) => !(x.get() == 0.0 && x.get().is_sign_negative()),
+            Value::Float32(x) => !(x.get() == 0.0 && x.get().is_sign_negative()),
             _ => true,
         })
     }
@@ -631,7 +693,9 @@ impl Value {
         match self {
             Value::Atom(_) => 0,
             Value::Bool(_) => 1,
-            Value::Int(_) | Value::Big(_) | Value::Rat(_) | Value::Float(_) => 2,
+            Value::Int(_) | Value::Big(_) | Value::Rat(_) | Value::Float(_) | Value::Float32(_) => {
+                2
+            }
             Value::Str(_) => 3,
             Value::Tuple(_) => 4,
             Value::Path(_) => 5,
@@ -639,12 +703,14 @@ impl Value {
         }
     }
 
-    /// The numeric kind: `int` (either width), `rat` or float; `None` for any other value.
+    /// The numeric kind: `int` (either width), `rat`, `f32` or `f64`, in the order of equal
+    /// values (DESIGN.md L1.17); `None` for any other value.
     pub fn number_kind(&self) -> Option<u8> {
         match self {
             Value::Int(_) | Value::Big(_) => Some(0),
             Value::Rat(_) => Some(1),
-            Value::Float(_) => Some(2),
+            Value::Float32(_) => Some(2),
+            Value::Float(_) => Some(3),
             _ => None,
         }
     }
@@ -659,6 +725,7 @@ impl Value {
             Value::Int(_) | Value::Big(_) => "int".into(),
             Value::Rat(_) => "rat".into(),
             Value::Float(_) => "f64".into(),
+            Value::Float32(_) => "f32".into(),
             Value::Str(_) => "String".into(),
             Value::Atom(a) if a.is_bare() => format!("#{}", a.name),
             Value::Atom(a) => format!("#{}(..)", a.name),
@@ -674,6 +741,8 @@ impl Value {
             Value::Int(n) => Exact::Finite(Cow::Owned(Rat::int(BigInt::from(*n)))),
             Value::Big(n) | Value::Rat(n) => Exact::Finite(Cow::Borrowed(n)),
             Value::Float(x) => Exact::float(x.get()),
+            // Every `f32` is an `f64`, exactly.
+            Value::Float32(x) => Exact::float(f64::from(x.get())),
             _ => unreachable!("only numbers are placed on the line"),
         }
     }
@@ -699,16 +768,18 @@ impl Value {
 fn key_leaf(v: &Value) -> Value {
     match v {
         Value::Float(x) if x.get() == 0.0 => Value::float(0.0),
+        Value::Float32(x) if x.get() == 0.0 => Value::float32(0.0),
         v => v.clone(),
     }
 }
 
-/// Two numbers by value; equal values by kind, `int` before `rat` before a float, and two
+/// Two numbers by value; equal values by kind, `int`, `rat`, `f32`, `f64`, and two
 /// floats by their total order, which puts `-0.0` before `0.0` and NaN last.
 pub(crate) fn number_cmp(a: &Value, b: &Value) -> Ordering {
     match (a, b) {
         (Value::Int(x), Value::Int(y)) => x.cmp(y),
         (Value::Float(x), Value::Float(y)) => x.cmp(y),
+        (Value::Float32(x), Value::Float32(y)) => x.cmp(y),
         (Value::Rat(x), Value::Rat(y)) => x.cmp(y),
         (Value::Big(x), Value::Big(y)) => x.cmp(y),
         // A `Big` is never in the 64-bit range.
@@ -735,6 +806,7 @@ pub(crate) fn number_eq(a: &Value, b: &Value) -> bool {
         (Value::Int(x), Value::Int(y)) => x == y,
         (Value::Big(x), Value::Big(y)) | (Value::Rat(x), Value::Rat(y)) => x == y,
         (Value::Float(x), Value::Float(y)) => x.cmp(y) == Ordering::Equal,
+        (Value::Float32(x), Value::Float32(y)) => x == y,
         _ => false,
     }
 }
@@ -796,6 +868,7 @@ fn leaf_digest(v: &Value) -> u64 {
         Value::Big(r) => (2, r.residues()).hash(&mut h),
         Value::Rat(r) => (3, r.residues()).hash(&mut h),
         Value::Float(x) => (4, x.get().to_bits()).hash(&mut h),
+        Value::Float32(x) => (10, x.get().to_bits()).hash(&mut h),
         Value::Str(s) => (5, s).hash(&mut h),
         Value::Family(f) => (6, f.len()).hash(&mut h),
         Value::Atom(_) | Value::Tuple(_) | Value::Path(_) => {
@@ -1804,6 +1877,10 @@ fn surface_order_step<'a>(a: &'a Value, b: &'a Value) -> Step<'a> {
             Some(Ordering::Equal) => Step::Same,
             o => Step::Ends(o),
         },
+        (Value::Float32(x), Value::Float32(y)) => match x.get().partial_cmp(&y.get()) {
+            Some(Ordering::Equal) => Step::Same,
+            o => Step::Ends(o),
+        },
         (Value::Tuple(x), Value::Tuple(y)) => items(x, y, Relation::SurfaceOrder),
         _ => plain_step(a, b, Relation::Total),
     }
@@ -1821,11 +1898,23 @@ fn min_max_step<'a>(a: &'a Value, b: &'a Value, r: Relation) -> Step<'a> {
     }
     match (a, b) {
         (Value::Float(x), Value::Float(y)) if x == y => Step::Same,
+        (Value::Float32(x), Value::Float32(y)) if x == y => Step::Same,
         (Value::Float(x), Value::Float(y)) => {
             let min = r == Relation::Min;
             // The float `minimum` or `maximum` gives is the lesser under `Min` and the greater
             // under `Max`; two floats that differ bitwise are never both given.
             let first = F64::new(ieee_min_max(min, x.get(), y.get())) == *x;
+            Step::Ends(Some(if first == min {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            }))
+        }
+        (Value::Float32(x), Value::Float32(y)) => {
+            let min = r == Relation::Min;
+            // The one taken is `x` or `y` widened, so narrowing it back is exact.
+            let (wx, wy) = (f64::from(x.get()), f64::from(y.get()));
+            let first = F32::new(ieee_min_max(min, wx, wy) as f32) == *x;
             Step::Ends(Some(if first == min {
                 Ordering::Less
             } else {
@@ -1842,6 +1931,10 @@ fn min_max_step<'a>(a: &'a Value, b: &'a Value, r: Relation) -> Step<'a> {
 fn plain_step<'a>(a: &'a Value, b: &'a Value, r: Relation) -> Step<'a> {
     match (a, b, r) {
         (Value::Float(x), Value::Float(y), Relation::SurfaceEq) => match x.get() == y.get() {
+            true => Step::Same,
+            false => Step::Ends(None),
+        },
+        (Value::Float32(x), Value::Float32(y), Relation::SurfaceEq) => match x.get() == y.get() {
             true => Step::Same,
             false => Step::Ends(None),
         },
@@ -2262,6 +2355,9 @@ fn show<'a>(v: &'a Value, f: &mut fmt::Formatter<'_>, todo: &mut Vec<Task<'a>>) 
         Value::Big(n) => write!(f, "{}", n.numer_text()),
         Value::Rat(r) => write!(f, "{r}"),
         Value::Float(x) => write!(f, "{}", crate::num::show_f64(x.get())),
+        // With its suffix, as a `rat` is written with its `r`: `0.5f32` and the `f64` `0.5` are
+        // two values, and a type or a ZIR text that holds both tells them apart.
+        Value::Float32(x) => write!(f, "{}f32", crate::num::show_f32(x.get())),
         Value::Str(s) => write!(f, "{}", s.literal()),
         Value::Atom(a) => {
             show_atom(a, todo);
@@ -2311,6 +2407,7 @@ fn debug<'a>(v: &'a Value, f: &mut fmt::Formatter<'_>, todo: &mut Vec<Task<'a>>)
         Value::Big(n) => write!(f, "Big({n:?})"),
         Value::Rat(r) => write!(f, "Rat({r:?})"),
         Value::Float(x) => write!(f, "Float({x:?})"),
+        Value::Float32(x) => write!(f, "Float32({x:?})"),
         Value::Str(s) => write!(f, "Str({s:?})"),
         Value::Atom(a) => {
             todo.push(Task::Text(" })"));

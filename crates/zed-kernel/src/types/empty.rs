@@ -650,6 +650,7 @@ impl Type {
                 lits(&p.rats, |q, l| q.rats = l),
                 lits(&p.floats, |q, l| q.floats = l),
                 lits(&p.strings, |q, l| q.strings = l),
+                lits(&p.f32s, |q, l| q.f32s = l),
             ],
             atoms,
             rest,
@@ -681,6 +682,7 @@ impl Type {
                 lits(&p.rats),
                 lits(&p.floats),
                 lits(&p.strings),
+                lits(&p.f32s),
             ],
             atoms,
             rest,
@@ -1102,6 +1104,7 @@ impl Simulation {
             && a.ints.within(&b.ints)
             && a.rats.within(&b.rats)
             && a.floats.within(&b.floats)
+            && a.f32s.within(&b.f32s)
             && a.strings.within(&b.strings)
             && (!a.structs || b.structs)
             && (a.morphisms.is_leaf() == Some(false) || a.morphisms == b.morphisms)
@@ -3474,7 +3477,7 @@ impl<'m> Searching<'m> {
         // A scalar in the type is a checked value, read off before the type is compared with
         // those met.
         let p = t.p();
-        let lits = [&p.ints, &p.rats, &p.floats, &p.strings];
+        let lits = [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings];
         if p.bools != 0 || lits.iter().any(|l| l.cofinite || !l.values.is_empty()) {
             return Stack::ready(false);
         }
@@ -3696,7 +3699,7 @@ impl<'m> Searching<'m> {
     }
 
     async fn parts(&'m self, p: &Parts) -> bool {
-        let lits = [&p.ints, &p.rats, &p.floats, &p.strings];
+        let lits = [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings];
         let canonical = self.s().canonical_blame;
         if p.bools != 0
             || lits.iter().any(|l| l.cofinite || !l.values.is_empty())
@@ -4055,6 +4058,7 @@ impl<'m> Searching<'m> {
         bits |= u16::from(p.tuples.rest || !p.tuples.lens.is_empty()) << 6;
         bits |= u16::from(p.structs) << 7;
         bits |= u16::from(p.morphisms.is_leaf() != Some(false)) << 8;
+        bits |= u16::from(p.f32s.cofinite || !p.f32s.values.is_empty()) << 9;
         self.s().outer_kinds.insert(t.node_id(), bits);
         bits
     }
@@ -5202,6 +5206,8 @@ impl<'m> Searching<'m> {
             && p.rats.values.is_empty()
             && !p.floats.cofinite
             && p.floats.values.is_empty()
+            && !p.f32s.cofinite
+            && p.f32s.values.is_empty()
             && !p.strings.cofinite
             && p.strings.values.is_empty()
             && !p.structs
@@ -5334,6 +5340,8 @@ impl<'m> Searching<'m> {
             || !p.rats.values.is_empty()
             || p.floats.cofinite
             || !p.floats.values.is_empty()
+            || p.f32s.cofinite
+            || !p.f32s.values.is_empty()
             || p.strings.cofinite
             || !p.strings.values.is_empty()
             || p.structs
@@ -5477,6 +5485,8 @@ impl<'m> Searching<'m> {
                 || !xp.rats.values.is_empty()
                 || xp.floats.cofinite
                 || !xp.floats.values.is_empty()
+                || xp.f32s.cofinite
+                || !xp.f32s.values.is_empty()
                 || xp.strings.cofinite
                 || !xp.strings.values.is_empty()
                 || xp.structs
@@ -6859,6 +6869,8 @@ impl<'m> Searching<'m> {
                 || !xp.rats.values.is_empty()
                 || xp.floats.cofinite
                 || !xp.floats.values.is_empty()
+                || xp.f32s.cofinite
+                || !xp.f32s.values.is_empty()
                 || xp.strings.cofinite
                 || !xp.strings.values.is_empty()
                 || xp.structs
@@ -7743,7 +7755,7 @@ impl<'m> Searching<'m> {
                 if !p.scalars_only()
                     || p.bools != 0
                     || !p.ints.cofinite
-                    || [&p.rats, &p.floats, &p.strings]
+                    || [&p.rats, &p.floats, &p.f32s, &p.strings]
                         .iter()
                         .any(|l| l.cofinite || !l.values.is_empty())
                 {
@@ -7817,7 +7829,7 @@ impl<'m> Searching<'m> {
                 let p = field.p();
                 if !p.scalars_only()
                     || p.bools != 0
-                    || [&p.rats, &p.floats, &p.strings]
+                    || [&p.rats, &p.floats, &p.f32s, &p.strings]
                         .iter()
                         .any(|l| l.cofinite || !l.values.is_empty())
                 {
@@ -7957,11 +7969,12 @@ impl<'m> Searching<'m> {
         }
         // A cofinite set of a carrier holds one of the first values not listed in it.
         type Fresh = fn(i64) -> Value;
-        let fresh: [(&Lits, Fresh); 4] = [
+        let fresh: [(&Lits, Fresh); 5] = [
             (&p.ints, Value::Int),
             (&p.strings, |i| Value::str(&i.to_string())),
             (&p.rats, |i| Value::rat(crate::Rat::int(i.into()))),
             (&p.floats, |i| Value::float(i as f64)),
+            (&p.f32s, |i| Value::float32(i as f32)),
         ];
         for (l, make) in fresh {
             let v = if l.cofinite {
@@ -10420,25 +10433,25 @@ enum Key {
     Len(usize),
     /// The bare atom of the name of the node.
     Bare,
-    /// A whole universe: 0 to 3 the literals of `Lits`, 4 the atoms, 5 the tuples, 6 the
-    /// structs, 7 the morphisms.
+    /// A whole universe: 0 to 4 the literals of `Lits`, 5 the atoms, 6 the tuples, 7 the
+    /// structs, 8 the morphisms.
     All(usize),
 }
 
-/// The keys `p` lists in universe `u` (0 to 3 the literals of `Lits`, 4 the atoms, 5 the
+/// The keys `p` lists in universe `u` (0 to 4 the literals of `Lits`, 5 the atoms, 6 the
 /// tuples), each with whether `p` holds a value of it, and whether `p` is cofinite there: it
 /// then holds every value of each key it does not list. `none` is the empty type.
 fn listed(p: &Parts, u: usize, none: &Type) -> (bool, Vec<(Key, bool)>) {
     match u {
-        0..4 => {
-            let l = [&p.ints, &p.rats, &p.floats, &p.strings][u];
+        0..5 => {
+            let l = [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings][u];
             let ks = l
                 .values
                 .iter()
                 .map(|v| (Key::Lit(u, v.clone()), !l.cofinite));
             (l.cofinite, ks.collect())
         }
-        4 => {
+        5 => {
             let ks = p.atoms.names.iter();
             let ks = ks.map(|(n, a)| (Key::Atom(n.clone()), a.bare || a.payload != *none));
             (p.atoms.cofinite, ks.collect())
@@ -10566,10 +10579,10 @@ fn local<'a>(p: &'a Parts, none: &Type) -> Local<'a> {
         .map(Key::Bool)
         .collect();
     if p.structs {
-        points.push(Key::All(6));
+        points.push(Key::All(7));
     }
     if p.morphisms.is_leaf() != Some(false) {
-        points.push(Key::All(7));
+        points.push(Key::All(8));
     }
     let mut kids = Vec::new();
     for (n, a) in &p.atoms.names {
@@ -10607,8 +10620,8 @@ fn local<'a>(p: &'a Parts, none: &Type) -> Local<'a> {
             inside,
         });
     }
-    let mut lists = Vec::with_capacity(6);
-    for u in 0..6 {
+    let mut lists = Vec::with_capacity(7);
+    for u in 0..7 {
         let (cofinite, ks) = listed(p, u, none);
         let lits = ks
             .iter()
@@ -10931,7 +10944,7 @@ struct ListState {
 /// holds anything but integers.
 fn int_set(t: &Type) -> Option<(bool, BTreeSet<Value>)> {
     let p = t.p();
-    let lits = [&p.rats, &p.floats, &p.strings];
+    let lits = [&p.rats, &p.floats, &p.f32s, &p.strings];
     if !p.scalars_only() || p.bools != 0 || lits.iter().any(|l| l.cofinite || !l.values.is_empty())
     {
         return None;

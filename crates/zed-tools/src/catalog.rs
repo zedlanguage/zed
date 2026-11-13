@@ -643,6 +643,7 @@ const SIGS: &[Sig] = &[
     sig("int", Count::Exactly(1)),
     sig("rat", Count::Exactly(1)),
     sig("f64", Count::Exactly(1)),
+    sig("f32", Count::Exactly(1)),
     sig("abs", Count::Exactly(1)),
     sig("min", Count::AtLeast(2)),
     sig("max", Count::AtLeast(2)),

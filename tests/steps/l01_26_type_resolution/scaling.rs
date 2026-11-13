@@ -56,9 +56,15 @@ fn a_function_of_many_untyped_parameters_scales() {
     // of 256 combinations gave `_`. The parameters now merge into one class, once each.
     // The body is a chain of `n` additions, nested `n` deep, on a 2 MiB stack.
     zed_tests::deep::on_small_stack(|| {
-        assert_eq!(sig(&sum(3), "f"), "(T, T, T) -> T for T in int | f64 | rat");
+        assert_eq!(
+            sig(&sum(3), "f"),
+            "(T, T, T) -> T for T in int | f32 | f64 | rat"
+        );
         let wide = sig(&sum(40), "f");
-        assert!(wide.ends_with(") -> T for T in int | f64 | rat"), "{wide}");
+        assert!(
+            wide.ends_with(") -> T for T in int | f32 | f64 | rat"),
+            "{wide}"
+        );
         scaling::check("a function of n untyped parameters", 400, |n| {
             let (info, _) = info(&sum(n));
             assert!(info.errors.is_empty(), "{:?}", info.errors);
@@ -78,7 +84,10 @@ fn chain(n: usize) -> String {
 #[test]
 fn a_chain_of_functions_with_untyped_parameters_scales() {
     // Each takes the bound of the one it calls, by its signature, with no search.
-    assert_eq!(sig(&chain(3), "g2"), "(T) -> T for T in int | f64 | rat");
+    assert_eq!(
+        sig(&chain(3), "g2"),
+        "(T) -> T for T in int | f32 | f64 | rat"
+    );
     let units = resolved(400, chain);
     scaling::check("a chain of n functions", 400, |n| {
         let info = units[&n].check();
@@ -138,7 +147,7 @@ fn needs_replayed_through_a_fan_of_calls_scale() {
     // Each of the two calls met the needs of the one before anew, so they doubled at each
     // function; a use met twice now gives what it gave the first time.
     let s = sig_of(&fan(3), "g2");
-    assert_eq!(s.to_string(), "(_) -> U for U in int | f64 | rat");
+    assert_eq!(s.to_string(), "(_) -> U for U in int | f32 | f64 | rat");
     assert_eq!(s.needs.len(), 1, "one need, met once for both calls");
     let units = resolved(250, fan);
     scaling::check(
@@ -337,11 +346,11 @@ fn nested_lambdas_name_their_variables_as_before() {
         ),
         (
             "g(positional f) = (x) -> (y) -> f(x, y) + x;\n",
-            "(_) -> (U) -> (_) -> U for U in int | f64 | rat",
+            "(_) -> (U) -> (_) -> U for U in int | f32 | f64 | rat",
         ),
         (
             "g(positional a, positional b) = ((c) -> (d) -> (c, d), a + b);\n",
-            "(V, V) -> ((T) -> (U) -> (T, U), V) for V in int | f64 | rat",
+            "(V, V) -> ((T) -> (U) -> (T, U), V) for V in int | f32 | f64 | rat",
         ),
         // The results of `h(x)` and `f(x)` are classes of `g`'s level that first appear
         // inside the lambdas, and are named in the order they appear there.

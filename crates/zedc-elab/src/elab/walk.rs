@@ -12,7 +12,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::mem;
 use std::sync::Arc;
 
-use zed_kernel::num::{LiteralRounding, literal_f64, show_f64};
+use zed_kernel::num::{FloatFormat, LiteralRounding, show_f32, show_f64};
 use zed_kernel::types::Type as KType;
 use zed_kernel::{Pattern as KPattern, Prim, Rat, Shared, Term, Value};
 
@@ -610,6 +610,7 @@ impl<'a> Elab<'a> {
                 if self.reading.insert(e.span) {
                     let p = match c {
                         check::ty::Carrier::Rat => Prim::CastRat,
+                        check::ty::Carrier::F32 => Prim::CastF32,
                         _ => Prim::CastF64,
                     };
                     m.k(Frame::Read(e.span, p));
@@ -663,26 +664,32 @@ impl<'a> Elab<'a> {
                 Ok(v) => Some(self.constant(e, v.expect("the lexer's digits"))),
                 Err(r) => self.error(e.span, unread_literal(&r)),
             },
-            ExprKind::Float { digits: s, .. } => match literal_f64(s) {
-                Ok(x) => lit(Value::float(x)),
-                Err(LiteralRounding::Infinite) => self.error(
-                    e.span,
-                    format!(
-                        "`{s}` is larger than the largest f64, {}, so as an f64 it rounds to \
-                         infinity. Write `{s}r` for the exact rational, or a number within the \
-                         range of f64.",
-                        show_f64(f64::MAX)
-                    ),
-                ),
-                Err(LiteralRounding::Zero) => self.error(
-                    e.span,
-                    format!(
-                        "`{s}` is not zero, and it lies nearer to zero than to the least positive \
-                         f64, {}, so as an f64 it rounds to zero. Write `{s}r` for the exact rational, or \
-                         `0.0` if zero is meant.",
-                        show_f64(f64::from_bits(1))
-                    ),
-                ),
+            // A literal with the suffix `f32` is read at `f32`; any other at `f64`, the format a
+            // decimal no use fixes takes (DESIGN.md L1.26a).
+            ExprKind::Float { digits: s, forced } => match Value::literal_float(s, *forced) {
+                Ok(v) => lit(v),
+                Err(LiteralRounding::Infinite) => {
+                    let (f, max) = float_bounds(*forced, false);
+                    self.error(
+                        e.span,
+                        format!(
+                            "`{s}` is larger than the largest {f}, {max}, so as an {f} it rounds \
+                             to infinity. Write `{s}r` for the exact rational, or a number \
+                             within the range of {f}."
+                        ),
+                    )
+                }
+                Err(LiteralRounding::Zero) => {
+                    let (f, least) = float_bounds(*forced, true);
+                    self.error(
+                        e.span,
+                        format!(
+                            "`{s}` is not zero, and it lies nearer to zero than to the least \
+                             positive {f}, {least}, so as an {f} it rounds to zero. Write `{s}r` \
+                             for the exact rational, or `0.0` if zero is meant."
+                        ),
+                    )
+                }
                 Err(LiteralRounding::TooLarge(_)) => {
                     unreachable!("a float literal is read with no memory asked for")
                 }
@@ -1990,4 +1997,15 @@ fn lit_span(e: &Expr) -> Option<Span> {
 
 fn if_(c: Term, a: Term, b: Term) -> Term {
     Term::If(Shared::new(c), Shared::new(a), Shared::new(b))
+}
+
+/// The name of the format a float literal with the suffix `forced` is read at, and its largest
+/// finite value, or its least positive one when `least`, as a message names them.
+fn float_bounds(forced: Option<FloatFormat>, least: bool) -> (&'static str, String) {
+    match (forced, least) {
+        (Some(FloatFormat::F32), false) => ("f32", show_f32(f32::MAX)),
+        (Some(FloatFormat::F32), true) => ("f32", show_f32(f32::from_bits(1))),
+        (_, false) => ("f64", show_f64(f64::MAX)),
+        (_, true) => ("f64", show_f64(f64::from_bits(1))),
+    }
 }

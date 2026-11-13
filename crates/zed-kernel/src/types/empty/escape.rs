@@ -199,7 +199,7 @@ impl Ints {
 /// Whether `p` holds integers only (or nothing).
 fn only_ints(p: &Parts) -> bool {
     p.bools == 0
-        && [&p.rats, &p.floats, &p.strings]
+        && [&p.rats, &p.floats, &p.f32s, &p.strings]
             .iter()
             .all(|l: &&Lits| !l.cofinite && l.values.is_empty())
         && !p.structs
@@ -278,7 +278,7 @@ fn finite_positive_alphabet(rows: &[Row]) -> Option<BTreeSet<Value>> {
             // The only recognized non-link terminal is one bare stop atom.
             let p = t.p();
             let scalar_empty = p.bools == 0
-                && [&p.ints, &p.rats, &p.floats, &p.strings]
+                && [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings]
                     .iter()
                     .all(|l: &&Lits| !l.cofinite && l.values.is_empty());
             if !scalar_empty
@@ -391,7 +391,7 @@ impl Nodes {
             }
             // The end: the bare stop atom and nothing else.
             let p = cur.p();
-            let lits_empty = [&p.ints, &p.rats, &p.floats, &p.strings]
+            let lits_empty = [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings]
                 .iter()
                 .all(|l: &&Lits| !l.cofinite && l.values.is_empty());
             if p.bools != 0
@@ -545,7 +545,7 @@ pub(super) fn cell_counts(t: &Type) -> (usize, usize) {
 
 fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
     let p = t.p();
-    let lits_empty = [&p.ints, &p.rats, &p.floats, &p.strings]
+    let lits_empty = [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings]
         .iter()
         .all(|l: &&Lits| !l.cofinite && l.values.is_empty());
     if p.bools != 0

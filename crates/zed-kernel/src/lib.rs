@@ -43,4 +43,4 @@ pub use provenance::{Fact, FactAddress, NodeAddress, Provenance};
 pub use term::{Evidence, FixKind, Grade, GuardPos, Pattern, Prim, Shared, Term, Witness};
 pub use text::Text;
 pub use types::Universe;
-pub use value::{Atom, F64, Family, Fields, Items, KernelError, Keypath, Value};
+pub use value::{Atom, F32, F64, Family, Fields, Items, KernelError, Keypath, Value};

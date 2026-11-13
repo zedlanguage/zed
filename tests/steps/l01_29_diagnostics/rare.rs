@@ -15,7 +15,7 @@ fn a_default_whose_type_its_uses_exclude_is_rejected() {
     // of that type.
     assert_eq!(
         shown("f(positional y = (y + 1, 2)) = y;\n"),
-        r#"1:18: the default of `y` is (_, 2), not int | f64 | rat: a default is a value of its parameter's type.
+        r#"1:18: the default of `y` is (_, 2), not int | f32 | f64 | rat: a default is a value of its parameter's type.
   [1] 1:18: this expression gives (_, 2)
       1 | f(positional y = (y + 1, 2)) = y;
         |   ^^^^^^^^^^^^^^^^^^^^^^^^^ [4]
@@ -23,14 +23,14 @@ fn a_default_whose_type_its_uses_exclude_is_rejected() {
         |                   ^^^^^ [2]
         |                       ^ [5, 7]
         |                  ^--------^ [1, 8, 9]
-  [2] 1:19: this `+` gives int | f64 | rat
-  [3] 1:19: `y` is int | f64 | rat here
+  [2] 1:19: this `+` gives int | f32 | f64 | rat
+  [3] 1:19: `y` is int | f32 | f64 | rat here
   [4] 1:3: `y` has no declared type; its uses give it _
   [5] 1:23: this literal, 1, is 1
   [6] 1:26: this literal, 2, is 2
-  [7] 1:23: the literal 1 takes int | f64 | rat
-  [8] 1:18: repair: write a default of type int | f64 | rat
-  [9] 1:18: repair: declare `y` with a type that holds (_, 2) as well, as `y: int | f64 | rat | (_, 2)`"#
+  [7] 1:23: the literal 1 takes int | f32 | f64 | rat
+  [8] 1:18: repair: write a default of type int | f32 | f64 | rat
+  [9] 1:18: repair: declare `y` with a type that holds (_, 2) as well, as `y: int | f32 | f64 | rat | (_, 2)`"#
     );
 }
 
@@ -102,7 +102,7 @@ fn a_component_of_a_destructured_tuple_is_named_with_its_place() {
   [1]  3:5: `a` is 1 here
        3 | c = a + b;
          |     ^ [1]
-         |     ^^^^^ [10, 11, 12]
+         |     ^^^^^ [10, 11, 12, 13]
          |         ^ [8]
   [2]  2:8: `a` is 1, component 0 of this tuple
        2 | a, b = p;
@@ -120,7 +120,8 @@ fn a_component_of_a_destructured_tuple_is_named_with_its_place() {
   [9]  2:8: `b` is "x", component 1 of this tuple
   [10] 3:5: `+` takes (int, int) -> int
   [11] 3:5: `+` takes (f64, f64) -> f64
-  [12] 3:5: `+` takes (rat, rat) -> rat"#
+  [12] 3:5: `+` takes (rat, rat) -> rat
+  [13] 3:5: `+` takes (f32, f32) -> f32"#
     );
 }
 
@@ -134,12 +135,13 @@ fn a_parameter_typed_by_its_default_says_so() {
       1 | f(positional n = "a") = n + 1;
         |   ^^^^^^^^^^^^^^^^^^ [2]    ^ [3]
         |                         ^ [1]
-        |                         ^^^^^ [4, 5, 6]
+        |                         ^^^^^ [4, 5, 6, 7]
   [2] 1:3: `n` is String, the type of its default
   [3] 1:29: this literal, 1, is 1
   [4] 1:25: `+` takes (int, int) -> int
   [5] 1:25: `+` takes (f64, f64) -> f64
-  [6] 1:25: `+` takes (rat, rat) -> rat"#
+  [6] 1:25: `+` takes (rat, rat) -> rat
+  [7] 1:25: `+` takes (f32, f32) -> f32"#
     );
 }
 
@@ -151,8 +153,8 @@ fn a_value_that_flows_into_a_class_another_use_fixed_shows_its_origin() {
          return a;\n}\n",
     );
     // Today:
-    // 2:7: this use gives "s", not int | f64 | rat: its result flows into a value that other uses have already made int | f64 | rat
-    //   [1] 2:7: this call of `g` gives int | f64 | rat
+    // 2:7: this use gives "s", not int | f32 | f64 | rat: its result flows into a value that other uses have already made int | f32 | f64 | rat
+    //   [1] 2:7: this call of `g` gives int | f32 | f64 | rat
     //       2 |   a = g(1) + 1;
     //         |       ^^^^ [1, 3, 5]
     //         |         ^ [2]

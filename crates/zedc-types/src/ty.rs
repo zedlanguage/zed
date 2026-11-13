@@ -2996,6 +2996,8 @@ pub enum Carrier {
     Int,
     /// `rat`.
     Rat,
+    /// `f32`.
+    F32,
     /// `f64`.
     F64,
     /// `String`.
@@ -3003,14 +3005,23 @@ pub enum Carrier {
 }
 
 impl Carrier {
-    /// The five, in the order a class of values holding a literal tries them.
-    pub const ALL: [Carrier; 5] = [
+    /// The six, in the order a class of values holding a literal tries them: `f64` before
+    /// `f32`, so a decimal no use fixes takes `f64` (DESIGN.md L1.26a). `f32` is last so that
+    /// the bits of the other five in a mask ([`Carrier::bit`]) are those they had before it.
+    pub const ALL: [Carrier; 6] = [
         Carrier::Int,
         Carrier::F64,
         Carrier::Rat,
         Carrier::Str,
         Carrier::Bool,
+        Carrier::F32,
     ];
+
+    /// The numeric carriers, in the order of [`Carrier::ALL`].
+    pub const NUMBERS: [Carrier; 4] = [Carrier::Int, Carrier::F64, Carrier::Rat, Carrier::F32];
+
+    /// The bits of [`Carrier::NUMBERS`] in a mask.
+    pub const NUMBER_BITS: u8 = 0b10_0111;
 
     /// Every value of the carrier.
     pub fn ty(self) -> KType {
@@ -3018,6 +3029,7 @@ impl Carrier {
             Carrier::Bool => KType::bool(),
             Carrier::Int => KType::int(),
             Carrier::Rat => KType::rat(),
+            Carrier::F32 => KType::f32(),
             Carrier::F64 => KType::f64(),
             Carrier::Str => KType::string(),
         }
@@ -3031,6 +3043,7 @@ impl Carrier {
             Carrier::Rat => 2,
             Carrier::F64 => 3,
             Carrier::Str => 4,
+            Carrier::F32 => 5,
         }
     }
 
@@ -3040,6 +3053,7 @@ impl Carrier {
             Carrier::Bool => "bool",
             Carrier::Int => "int",
             Carrier::Rat => "rat",
+            Carrier::F32 => "f32",
             Carrier::F64 => "f64",
             Carrier::Str => "String",
         }
@@ -3047,7 +3061,10 @@ impl Carrier {
 
     /// Whether it is a number.
     pub fn numeric(self) -> bool {
-        matches!(self, Carrier::Int | Carrier::Rat | Carrier::F64)
+        matches!(
+            self,
+            Carrier::Int | Carrier::Rat | Carrier::F32 | Carrier::F64
+        )
     }
 
     /// Its bit in a mask: its place in [`Carrier::ALL`].
@@ -3066,10 +3083,10 @@ impl Carrier {
 
 /// The bit of a mask that stands for every value that is not of a carrier: a tuple, a
 /// function, an atom.
-pub const OTHER: u8 = 1 << 5;
+pub const OTHER: u8 = 1 << 6;
 
 /// The mask of every value.
-pub const EVERY: u8 = (1 << 6) - 1;
+pub const EVERY: u8 = (1 << 7) - 1;
 
 /// The clause a message about a check that was refused ends with ([`UNDECIDED`]), and after
 /// it the note that says why ([`undecided_because`]): the headline stays short, the reason in
@@ -4366,6 +4383,7 @@ fn value_class(x: &Value) -> Option<ShapeKey> {
         Value::Int(_) | Value::Big(_) => ShapeKey::Carrier(Carrier::Int),
         Value::Rat(_) => ShapeKey::Carrier(Carrier::Rat),
         Value::Float(_) => ShapeKey::Carrier(Carrier::F64),
+        Value::Float32(_) => ShapeKey::Carrier(Carrier::F32),
         Value::Str(_) => ShapeKey::Carrier(Carrier::Str),
         Value::Atom(a) => ShapeKey::Atom(a.name.clone()),
         Value::Tuple(xs) => ShapeKey::Row(xs.len()),
@@ -5942,7 +5960,7 @@ impl Ty {
         // Its numbers are those of one numeric carrier: read off one split, where a meet and
         // a subtype test per carrier would build each part anew.
         let s = self.set.split();
-        let mut present = [Carrier::Int, Carrier::Rat, Carrier::F64]
+        let mut present = Carrier::NUMBERS
             .into_iter()
             .filter(|c| s.bases[c.base()].is_some());
         match (present.next(), present.next()) {
@@ -9747,6 +9765,24 @@ pub mod printed {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The carrier masks: `NUMBER_BITS` holds exactly the numbers, `f32` among them; each
+    /// carrier has its own bit below [`OTHER`] and its own base, and the five carriers that came
+    /// before `f32` keep the bits they had (FLOAT-f32).
+    #[test]
+    fn every_carrier_has_its_own_bit_and_the_numbers_are_the_number_bits() {
+        let numbers = Carrier::ALL.into_iter().filter(|c| c.numeric());
+        assert_eq!(numbers.clone().collect::<Vec<_>>(), Carrier::NUMBERS);
+        assert_eq!(numbers.fold(0, |m, c| m | c.bit()), Carrier::NUMBER_BITS);
+        assert_ne!(Carrier::NUMBER_BITS & Carrier::F32.bit(), 0);
+        let bits = Carrier::ALL.map(Carrier::bit);
+        assert_eq!(bits, [1, 2, 4, 8, 16, 32]);
+        assert_eq!(bits.iter().fold(OTHER, |m, b| m | b), EVERY);
+        let mut bases = Carrier::ALL.map(Carrier::base);
+        bases.sort_unstable();
+        assert_eq!(bases, [0, 1, 2, 3, 4, 5]);
+        assert_eq!(Carrier::of_mask(Carrier::NUMBER_BITS).count(), 4);
+    }
 
     /// How [`every_arrow_fits`] decides in a differential test.
     #[derive(Clone, Copy, PartialEq, Eq)]

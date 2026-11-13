@@ -92,7 +92,7 @@ fn a_type_found_that_relates_nothing_through_an_unbounded_variable_prints_it_as_
     assert_eq!(
         step,
         "`dbl` is declared here with no type written for `x` or its result; the type the checker \
-         found for `dbl` is `(T) -> T for T in int | f64 | rat`"
+         found for `dbl` is `(T) -> T for T in int | f32 | f64 | rat`"
     );
     // A parameter that reaches no other place.
     let step = declared_step(

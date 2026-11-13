@@ -127,13 +127,13 @@ main(m: MainArgs) {
     let first = out.lines().next().unwrap();
     assert_eq!(
         first,
-        "1:23: `++` does not take (\"#\", int | f64 | rat): no arrow of `++` takes these types."
+        "1:23: `++` does not take (\"#\", int | f32 | f64 | rat): no arrow of `++` takes these types."
     );
     let s = steps(&out);
     for step in [
-        "this `*` gives int | f64 | rat",
-        "`x` is int | f64 | rat here",
-        "the literal 2 takes int | f64 | rat",
+        "this `*` gives int | f32 | f64 | rat",
+        "`x` is int | f32 | f64 | rat here",
+        "the literal 2 takes int | f32 | f64 | rat",
         "`++` takes (String, String) -> String",
     ] {
         assert!(s.contains(&step), "{step}\n{out}");
@@ -152,14 +152,14 @@ main(m: MainArgs) {
     );
     assert_eq!(
         out.lines().next().unwrap(),
-        "1:36: `++` does not take (\"#\", int | f64 | rat): no arrow of `++` takes these types."
+        "1:36: `++` does not take (\"#\", int | f32 | f64 | rat): no arrow of `++` takes these types."
     );
     let s = steps(&out);
     for step in [
-        "`w` is int | f64 | rat here",
-        "`h` is int | f64 | rat here",
+        "`w` is int | f32 | f64 | rat here",
+        "`h` is int | f32 | f64 | rat here",
         "`*` gives these values one carrier",
-        "`*` takes int | f64 | rat",
+        "`*` takes int | f32 | f64 | rat",
     ] {
         assert!(s.contains(&step), "{step}\n{out}");
     }
@@ -306,21 +306,21 @@ fn equality_on_an_atom_whose_payload_holds_a_function_shows_where_the_function_c
     let out = rejected("inc = x -> x + 1;\nboxed = #box(inc);\nsame = boxed == boxed;\n");
     assert_eq!(
         out,
-        "3:8: `==` takes data, and this value may hold a function, `(T) -> T for T in int | f64 | rat`: data is a value that holds no function at any depth.
-  [1] 3:8: `boxed` is #box((T) -> T for T in int | f64 | rat) here
+        "3:8: `==` takes data, and this value may hold a function, `(T) -> T for T in int | f32 | f64 | rat`: data is a value that holds no function at any depth.
+  [1] 3:8: `boxed` is #box((T) -> T for T in int | f32 | f64 | rat) here
       3 | same = boxed == boxed;
         |        ^^^^^ [1]
         |        ^^^^^^^^^^^^^^ [7, 8]
-  [2] 2:9: `boxed` is defined as this expression, #box((T) -> T for T in int | f64 | rat)
+  [2] 2:9: `boxed` is defined as this expression, #box((T) -> T for T in int | f32 | f64 | rat)
       2 | boxed = #box(inc);
         |         ^^^^^^^^^ [2, 3]
         |              ^^^ [4]
-  [3] 2:9: this atom `#box` with its payload gives #box((T) -> T for T in int | f64 | rat)
-  [4] 2:14: `inc` is (T) -> T for T in int | f64 | rat here
-  [5] 1:7: `inc` is defined as this expression, (T) -> T for T in int | f64 | rat
+  [3] 2:9: this atom `#box` with its payload gives #box((T) -> T for T in int | f32 | f64 | rat)
+  [4] 2:14: `inc` is (T) -> T for T in int | f32 | f64 | rat here
+  [5] 1:7: `inc` is defined as this expression, (T) -> T for T in int | f32 | f64 | rat
       1 | inc = x -> x + 1;
         |       ^^^^^^^^^^
-  [6] 1:7: this expression is (T) -> T for T in int | f64 | rat
+  [6] 1:7: this expression is (T) -> T for T in int | f32 | f64 | rat
   [7] 3:8: repair: call the function before the value gets here, so that the value holds its result and not the function
   [8] 3:8: repair: keep the function under its own name, out of the value"
     );
@@ -340,7 +340,7 @@ s = g(h);
     );
     assert_eq!(
         out,
-        "4:5: `==` takes data, and this value may hold a function, `(T) -> T for T in int | f64 | rat`: data is a value that holds no function at any depth.
+        "4:5: `==` takes data, and this value may hold a function, `(T) -> T for T in int | f32 | f64 | rat`: data is a value that holds no function at any depth.
   [1] 3:36: `g` needs this of its argument here
       3 | g(positional x) { p = f(x); return p == p; }
         | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [2]

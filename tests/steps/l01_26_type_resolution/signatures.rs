@@ -10,11 +10,11 @@ use super::{menu, sig, sig_of, type_errors};
 fn arithmetic_gives_a_variable_bounded_by_the_numeric_carriers() {
     assert_eq!(
         sig("area(w, h) = w * h;\n", "area"),
-        "(w: T, h: T) -> T for T in int | f64 | rat"
+        "(w: T, h: T) -> T for T in int | f32 | f64 | rat"
     );
     assert_eq!(
         sig("neg(x) = -x;\n", "neg"),
-        "(x: T) -> T for T in int | f64 | rat"
+        "(x: T) -> T for T in int | f32 | f64 | rat"
     );
 }
 
@@ -32,17 +32,17 @@ fn an_operator_with_one_carrier_fixes_it() {
     // leave both (L1.26a, L1.26b).
     assert_eq!(
         sig("half(x) = x / 2.0;\n", "half"),
-        "(x: T) -> T for T in f64 | rat"
+        "(x: T) -> T for T in f32 | f64 | rat"
     );
     assert_eq!(
         sig("avg(a, b) = (a + b) / 2.0;\n", "avg"),
-        "(a: T, b: T) -> T for T in f64 | rat"
+        "(a: T, b: T) -> T for T in f32 | f64 | rat"
     );
     // The suffix fixes the carrier.
     assert_eq!(sig("half(x) = x / 2.0f64;\n", "half"), "(x: f64) -> f64");
     assert_eq!(
         sig("half(x) = x / 2;\n", "half"),
-        "(x: T) -> T for T in f64 | rat"
+        "(x: T) -> T for T in f32 | f64 | rat"
     );
 }
 
@@ -50,7 +50,7 @@ fn an_operator_with_one_carrier_fixes_it() {
 fn comparison_checks_at_every_ordered_carrier() {
     assert_eq!(
         sig("lt(a, b) = a < b;\n", "lt"),
-        "(a: T, b: T) -> bool for T in int | f64 | rat | bool | String"
+        "(a: T, b: T) -> bool for T in int | f32 | f64 | rat | bool | String"
     );
 }
 
@@ -125,7 +125,7 @@ fn a_default_is_checked_at_its_parameters_type() {
     // A default that reads a parameter is generic with it.
     assert_eq!(
         sig("tax(price, rate = price / 10.0) = price * rate;\n", "tax"),
-        "(price: T, rate: T) -> T for T in f64 | rat"
+        "(price: T, rate: T) -> T for T in f32 | f64 | rat"
     );
     // A default that reads no parameter is bound to it as a value is to a name: nothing gives
     // a decimal literal in it a carrier, as nothing does in `rate = 0.2;` (step L1.26b).

@@ -137,7 +137,7 @@ main(m: MainArgs) {
 ",
     );
     assert!(
-        out.contains("  [7] 1:34: the literal -2 takes int | f64 | rat\n"),
+        out.contains("  [7] 1:34: the literal -2 takes int | f32 | f64 | rat\n"),
         "{out}"
     );
     // The line is shown once, under its first step; the literal's underline is labeled [5, 7].

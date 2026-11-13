@@ -1858,11 +1858,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         lit_ty(&l.value, l.neg()).subtype(&s)
                             && !Ty::carrier(Carrier::F64).subtype(&s)
                     };
-                    if deep
-                        && l.bare
-                        && lit_carrier(&l.value) == Carrier::F64
-                        && (payload || !in_call || alone())
-                    {
+                    if deep && l.bare && is_decimal(&l.value) && (payload || !in_call || alone()) {
                         out.push((e, None));
                     }
                 }
@@ -1940,7 +1936,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 while let Some(e) = todo.pop() {
                     match self.tail_of(e, src) {
                         Tail::Lit(l) => {
-                            if l.bare && lit_carrier(&l.value) == Carrier::F64 {
+                            if l.bare && is_decimal(&l.value) {
                                 marked.insert(f);
                             }
                         }
@@ -2603,8 +2599,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // decimal ([`Ck::lit_open`]): one lookup per operand.
                 let open = |a: &Arg| {
                     a.expr.is_some_and(|e| self.lit_open.contains(&e.span))
-                        || (a.lit.as_ref())
-                            .is_some_and(|l| l.bare && lit_carrier(&l.value) == Carrier::F64)
+                        || (a.lit.as_ref()).is_some_and(|l| l.bare && is_decimal(&l.value))
                 };
                 let opened = op == BinaryOp::Div || open(x) || open(y);
                 // A trial records nothing here, as nothing undoes it, and one whose operation
@@ -3206,7 +3201,18 @@ impl<'t, 'a> Ck<'t, 'a> {
                     (None, Some(ExprKind::Name(n))) => n.clone(),
                     _ => "…".to_string(),
                 };
-                let sig = op_sig(Operator::Binary(op));
+                let mut sig = op_sig(Operator::Binary(op));
+                // A decimal literal base with no suffix meets an `int` exponent at `rat`, its
+                // one carrier there (DESIGN.md L1.17, `0.5 ^ n`): the arrow `f32 ^ int` is for
+                // a base already an `f32`, and the literal does not take `f32` through it.
+                if op == BinaryOp::Pow
+                    && x.lit
+                        .as_ref()
+                        .is_some_and(|l| l.bare && is_decimal(&l.value))
+                {
+                    let mixed = [Ty::carrier(Carrier::F32), Ty::carrier(Carrier::Int)];
+                    sig.arrows.retain(|a| a.params != mixed);
+                }
                 let a = x.expr;
                 let r = self.apply(&format!("`{op}`"), &sig, vec![Some(x), Some(y)], true, span);
                 // An operation at `rat` on `rat` literals and such operations has the value
@@ -3434,8 +3440,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         // is typed as with it. Each carrier's value is cast once, as
         // [`Self::always_fails_word`] casts it, at the cost it names.
         if self.level == 0
-            && let Some(l) =
-                (x.lit.clone()).filter(|l| l.bare && lit_carrier(&l.value) == Carrier::F64)
+            && let Some(l) = (x.lit.clone()).filter(|l| l.bare && is_decimal(&l.value))
             && let Some(p) = zedc_base::interp::prim(w)
         {
             let sig = word_sig(w);
@@ -3485,7 +3490,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         let sig = match w {
-            "f64" if self.exact_in_f64(&x) => f64_of_exact_int_sig(),
+            "f64" if self.exact_in(&x, Carrier::F64) => exact_int_cast_sig(Carrier::F64),
+            "f32" if self.exact_in(&x, Carrier::F32) => exact_int_cast_sig(Carrier::F32),
             _ => word_sig(w),
         };
         let values = self.operand_values(&x);
@@ -3509,7 +3515,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// fail (DESIGN.md step L1.17). A `rat`, `f64` or string operand may give `0r`. Cost: that
     /// of [`Self::ints_of`], as for [`Self::exact_in_f64`].
     fn ints_without_zero(&mut self, x: &Arg<'a>) -> bool {
-        let others = [KType::rat(), KType::f64(), KType::string()];
+        let others = [KType::rat(), KType::f64(), KType::f32(), KType::string()];
         if x.ty.numeric_carrier() != Some(Carrier::Int)
             || others.iter().any(|t| !(&x.ty.set & t).lists_nothing())
         {
@@ -3530,12 +3536,19 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// shows and one narrowing by the enclosing tests (COMPLEXITY.md C26, F175), the work a bit
     /// word's operand takes; building the text as well would print a type at each cast.
     fn exact_in_f64(&mut self, x: &Arg<'a>) -> bool {
+        self.exact_in(x, Carrier::F64)
+    }
+
+    /// Whether every int the operand `x` of the cast to the float format `c` may be lies within
+    /// ±[`exact_int_bound`] of `c`, as [`Self::exact_in_f64`] says for `f64`.
+    fn exact_in(&mut self, x: &Arg<'a>, c: Carrier) -> bool {
         let ns = &x.ty.set & &KType::int();
         let Some(e) = x.expr.filter(|_| !ns.is_empty()) else {
             return false;
         };
         let (ints, _, _) = self.ints_of(&ns, e);
-        ints.is_subset(&IntervalSet::of(-F64_EXACT_INT, F64_EXACT_INT))
+        let b = exact_int_bound(c);
+        ints.is_subset(&IntervalSet::of(-b, b))
     }
 
     /// A call of the bit word `w`, the primitive `p` (step L1.39a): its arguments placed by
@@ -4534,7 +4547,7 @@ fn read_carrier(p: &Ty) -> Option<Carrier> {
     if p.dynamic || !p.vars.is_empty() {
         return None;
     }
-    let held = [Carrier::Int, Carrier::Rat, Carrier::F64]
+    let held = [Carrier::Int, Carrier::Rat, Carrier::F64, Carrier::F32]
         .into_iter()
         .filter(|c| !(&p.set & &c.ty()).is_empty());
     match held.collect::<Vec<_>>()[..] {
@@ -4563,7 +4576,7 @@ fn listed_outside(t: &Ty, c: Carrier) -> Option<Vec<Value>> {
 /// Whether `t` lists a number: one or more values of some numeric carrier, each listed, as
 /// `1 | f64` lists `1` and `int | f64` lists none.
 fn lists_a_number(t: &Ty) -> bool {
-    [Carrier::Int, Carrier::Rat, Carrier::F64]
+    [Carrier::Int, Carrier::Rat, Carrier::F64, Carrier::F32]
         .into_iter()
         .any(|c| {
             (&t.set & &c.ty())
@@ -4575,7 +4588,7 @@ fn lists_a_number(t: &Ty) -> bool {
 /// The numeric carriers of which `t` holds a part whole, not as a list of values: `f64` for
 /// `1 | f64` and for `f64`, none for `1 | 2`, `int` and `f64` for `int | f64`.
 fn whole_carriers(t: &Ty) -> impl Iterator<Item = Carrier> + '_ {
-    [Carrier::Int, Carrier::Rat, Carrier::F64]
+    [Carrier::Int, Carrier::Rat, Carrier::F64, Carrier::F32]
         .into_iter()
         .filter(|c| {
             let part = &t.set & &c.ty();
@@ -4587,7 +4600,7 @@ fn whole_carriers(t: &Ty) -> impl Iterator<Item = Carrier> + '_ {
 /// them: each value of a part that lists its values, and else the part whole, for the numbers
 /// of each numeric carrier and for the other values. `1 | f64` gives `1` and `f64`.
 fn taken_apart(t: &Ty) -> Vec<Ty> {
-    let numeric = [Carrier::Int, Carrier::Rat, Carrier::F64];
+    let numeric = [Carrier::Int, Carrier::Rat, Carrier::F64, Carrier::F32];
     let all = numeric.iter().fold(KType::empty(), |s, c| &s | &c.ty());
     let parts = numeric.iter().map(|c| &t.set & &c.ty());
     let mut out = Vec::new();
@@ -4632,6 +4645,7 @@ fn read_at(t: &Ty, c: Carrier) -> Option<Result<Ty, Value>> {
     let vs = listed_outside(t, c)?;
     let cast = match c {
         Carrier::F64 => Prim::CastF64,
+        Carrier::F32 => Prim::CastF32,
         _ => Prim::CastRat,
     };
     // The part already of the carrier, as the `f64` of `1 | f64` or the `2.5` of `1 | 2.5` at
@@ -8240,7 +8254,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let mut fixed: [Option<Lit>; 2] = [None, None];
                 if let [Some(l), Some(m)] = lits {
                     for (side, l) in [l, m].into_iter().enumerate() {
-                        if lit_carrier(&l.value) == Carrier::F64 {
+                        if is_decimal(&l.value) {
                             let cs: Vec<Carrier> = [Carrier::F64, Carrier::Rat]
                                 .into_iter()
                                 .filter(|&c| fits(l, c))
@@ -10813,10 +10827,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             // proof is asked once, at the first decimal literal, for all of them.
             let mut exact = None;
             for (s, m) in &mut refused {
-                let Some(l) = lits
-                    .get(s)
-                    .filter(|l| lit_carrier(&l.value) == Carrier::F64)
-                else {
+                let Some(l) = lits.get(s).filter(|l| is_decimal(&l.value)) else {
                     continue;
                 };
                 let exact = *exact
@@ -11116,7 +11127,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     // rejection where it meets none ([`Ck::resolve`]). Outside one nothing
                     // else gives them a carrier: integer literals alone are `int` where the
                     // bound holds it, one carrier left is taken, and with two or more the
-                    // first decimal literal, or else the first literal, is rejected.
+                    // first decimal literal, or else the first literal, is rejected, unless they are
+                    // float formats alone, `f64` among them, which take `f64` ([`floats_take_f64`]).
                     let takes: Vec<Carrier> = Carrier::of_mask(m)
                         .filter(|&c| lits.iter().all(|l| fits(l, c)))
                         .collect();
@@ -11140,9 +11152,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                             let c = match takes[..] {
                                 _ if ints && takes.contains(&Carrier::Int) => Carrier::Int,
                                 [c] => c,
+                                // Float formats alone, `f64` among them, take `f64`.
+                                [c, ..] if floats_take_f64(&takes) => c,
                                 [c, ..] => {
                                     let l = (lits.iter())
-                                        .find(|l| lit_carrier(&l.value) == Carrier::F64)
+                                        .find(|l| is_decimal(&l.value))
                                         .unwrap_or(&lits[0]);
                                     let notes = self.derive(&[l.site]);
                                     let m = unfixed(l, &takes);
@@ -11507,7 +11521,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             };
             for (x, _) in value_parts(e).leaves {
                 if let Some(l) = literal(x, src_text).filter(|l| l.bare)
-                    && lit_carrier(&l.value) == Carrier::F64
+                    && is_decimal(&l.value)
                     && x.span != e.span
                 {
                     out.push(l);
@@ -11571,9 +11585,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 while let Some(src) = inner.pop() {
                     match src {
                         Src::Lit(l) if !l.bare => sets.fix_by(v, place),
-                        Src::Lit(l) if lit_carrier(&l.value) == Carrier::F64 => {
-                            lits.push((v, place, l))
-                        }
+                        Src::Lit(l) if is_decimal(&l.value) => lits.push((v, place, l)),
                         Src::Lit(_) => {}
                         Src::Parts(ps, e) => inner
                             .extend((ps.iter().enumerate()).map(|(j, part)| of(part, item(e, j)))),
@@ -11606,11 +11618,18 @@ impl<'t, 'a> Ck<'t, 'a> {
         // entry of `top_parts`, O(c l) once classes merge. Used: each class read once, by its
         // root, into a set of spans each literal looks up once, O(c + l). Tradeoff: one set
         // per application outside every function, empty where it has no literal component.
-        let decimal = Carrier::F64.bit() | Carrier::Rat.bit();
+        // The float formats alone, `f64` among them, count as one: they take `f64`
+        // ([`floats_take_f64`]), so `p[0] ^ 2.0` makes the `1.5` an `f64`, as `p ^ 2.0` makes
+        // the `1.5` of `h(1.5)` one.
+        let floats = Carrier::F64.bit() | Carrier::F32.bit();
+        let decimal = floats | Carrier::Rat.bit();
         let roots: HashSet<usize> = self.top_parts.iter().map(|&k| self.find(k)).collect();
         let fixed: HashSet<Span> = (roots.into_iter())
             .map(|r| &self.classes[r])
-            .filter(|c| c.asked && (c.mask & decimal).count_ones() == 1)
+            .filter(|c| {
+                let m = c.mask & decimal;
+                c.asked && (m.count_ones() == 1 || m == floats)
+            })
             .flat_map(|c| c.lits.iter().map(|(l, _)| l.span))
             .collect();
         let mut found: Vec<(Span, Msg)> = Vec::new();
@@ -13238,7 +13257,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 continue;
             }
             match literal(x, self.t.text) {
-                Some(l) if lit_carrier(&l.value) == Carrier::F64 => {
+                Some(l) if is_decimal(&l.value) => {
                     if !l.bare {
                         return None;
                     }
@@ -13567,7 +13586,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         });
         let mut first = None;
         for (l, left) in unfixed_lits {
-            let decimal = lit_carrier(&l.value) == Carrier::F64;
+            let decimal = is_decimal(&l.value);
             if first.is_none() || decimal {
                 first = Some((l.clone(), left));
             }

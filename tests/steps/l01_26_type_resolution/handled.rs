@@ -156,9 +156,9 @@ fn a_bounded_variable_takes_the_atoms_beside_it() {
     assert_eq!(type_errors(text), Vec::<String>::new());
     let (info, _) = info(text);
     let s = info.sigs.values().next().unwrap();
-    // One arrow for each of int, f64 and rat.
+    // One arrow for each of int, f32, f64 and rat.
     let arrows = s.expand();
-    assert_eq!(arrows.len(), 3, "{s}");
+    assert_eq!(arrows.len(), 4, "{s}");
     for a in &arrows {
         let c = Ty::carrier(a.result.pieces()[0].carrier().expect("a carrier"));
         assert!(same(&a.params[0], &c.union(&loose())), "{}", a.params[0]);
@@ -258,7 +258,7 @@ fn a_binding_passes_atoms_from_its_name_to_its_value_and_not_back() {
     let text = "r(positional a, positional b) = { s = a + b; s else 0 };\n";
     assert_eq!(
         sig(text, "r"),
-        "(T | #_, T | #_) -> 0 | T for T in int | f64 | rat"
+        "(T | #_, T | #_) -> 0 | T for T in int | f32 | f64 | rat"
     );
     let text = "r(positional a, positional b) = { s = a + b; (a else 0) + s };\n";
     assert_eq!(
@@ -281,12 +281,12 @@ fn a_handler_on_a_computed_value_prints_its_atoms_on_the_parameter_only() {
         ),
         (
             "(line + 1) else 0",
-            "(T | #_) -> 0 | T for T in int | f64 | rat",
+            "(T | #_) -> 0 | T for T in int | f32 | f64 | rat",
         ),
         ("line?.trim() else \"dflt\"", "(String | #_) -> String"),
         (
             "\"${line + 1}\" else \"dflt\"",
-            "(T | #_) -> String for T in int | f64 | rat",
+            "(T | #_) -> String for T in int | f32 | f64 | rat",
         ),
         (
             "if trim(line) is #nf { \"dflt\" } else { \"s\" }",
@@ -492,7 +492,7 @@ fn each_row_of_the_issue_prints_as_a_type_the_user_can_write() {
     let text = "add(positional a, positional b) = (a else b) + b;\n";
     assert_eq!(
         sig(text, "add"),
-        "(T | #_, T) -> T for T in int | f64 | rat"
+        "(T | #_, T) -> T for T in int | f32 | f64 | rat"
     );
     let text = "r(positional line: String | #notFound) = trim(line else \"\");\n";
     assert_eq!(sig(text, "r"), "(String | #notFound) -> String");
@@ -518,7 +518,7 @@ fn a_function_whose_handled_atoms_also_reach_its_result_has_two_arrows() {
             "r(positional n)",
             "{ d = n else 0; if n > 3 { \"big\" } else { \"small\" } }",
             "((T) -> \"big\" | \"small\") & ((T | #_) -> \"big\" | \"small\" | #_) \
-             for T in int | f64 | rat",
+             for T in int | f32 | f64 | rat",
         ),
     ] {
         let text = format!("{head} = {body};\n");

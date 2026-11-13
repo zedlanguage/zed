@@ -93,6 +93,8 @@ pub enum Prim {
     CastRat,
     /// `f64(x)`, the checked cast; from a string it reads what `String` prints.
     CastF64,
+    /// `f32(x)`, the checked cast; from a string it reads what `String` prints.
+    CastF32,
     /// `abs(x)` of a number.
     Abs,
     /// `len(s)`, the number of Unicode scalars of a string.
@@ -169,8 +171,8 @@ impl Prim {
     pub fn arity(self) -> Option<usize> {
         use Prim::*;
         match self {
-            Neg | Not | Count | PathLen | Show | CastInt | CastRat | CastF64 | Abs | Len
-            | Lower | Upper | Trim | Sum | PopCount | F64Bits | CodePoint | Scalar | Utf8
+            Neg | Not | Count | PathLen | Show | CastInt | CastRat | CastF64 | CastF32 | Abs
+            | Len | Lower | Upper | Trim | Sum | PopCount | F64Bits | CodePoint | Scalar | Utf8
             | FromUtf8 => Some(1),
             Rotl | Rotr | MulHi => Some(3),
             FunnelShl | FunnelShr => Some(4),
@@ -250,6 +252,7 @@ impl Prim {
             FunnelShl => 60,
             FunnelShr => 61,
             At => 62,
+            CastF32 => 63,
         }
     }
 }

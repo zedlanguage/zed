@@ -92,7 +92,10 @@ fn literal_branches_join_the_class_of_a_generic_operand() {
     let src = "f(positional c: bool, x) = x + (if c { 2 } else { 3 });\n\
                a = f(true, x: 0.5f64);\nb = f(false, x: 1);\n";
     assert_eq!(type_errors(src), Vec::<String>::new());
-    assert_eq!(sig(src, "f"), "(bool, x: T) -> T for T in int | f64 | rat");
+    assert_eq!(
+        sig(src, "f"),
+        "(bool, x: T) -> T for T in int | f32 | f64 | rat"
+    );
     assert_eq!(value(src, "a"), "2.5");
     assert_eq!(value(src, "b"), "4");
 }

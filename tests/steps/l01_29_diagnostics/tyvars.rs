@@ -104,7 +104,7 @@ fn several_variables_each_print_by_name_where_they_stand_twice_and_the_bounded_o
     let s = sig(src, "f");
     assert_eq!(
         s.to_string(),
-        "(T, T, U) -> (T, U) for T in int | f64 | rat"
+        "(T, T, U) -> (T, U) for T in int | f32 | f64 | rat"
     );
     writes_back(&s.to_string());
     // Two variables any value fits stay two in the signature, each named, as each stands in a
@@ -146,7 +146,7 @@ fn a_bounded_variable_inside_a_function_parameter_is_printed_in_its_own_clause()
     let s = sig(src, "ap");
     assert_eq!(
         s.to_string(),
-        "(((T) -> T for T in int | rat), U, U) -> U for U in int | f64 | rat"
+        "(((T) -> T for T in int | rat), U, U) -> U for U in int | f32 | f64 | rat"
     );
     writes_back(&s.to_string());
     // A higher-order parameter that is called: its type is `_`, and so is the call's result.
@@ -229,7 +229,7 @@ fn printing_signatures_of_many_variables_scales() {
     // takes a name of its own after the bounded `T`.
     assert_eq!(
         sig(&many(4), "f").to_string(),
-        "(T, T, U, V) -> (T, U, V) for T in int | f64 | rat"
+        "(T, T, U, V) -> (T, U, V) for T in int | f32 | f64 | rat"
     );
     let names = |text: &str| -> usize {
         let words: std::collections::HashSet<&str> = text
@@ -241,7 +241,7 @@ fn printing_signatures_of_many_variables_scales() {
     let text = input(n).to_string();
     assert!(!text.contains('_'), "{text}");
     assert_eq!(names(&text), 1 + (n - n / 2));
-    assert!(text.ends_with(" for T in int | f64 | rat"), "{text}");
+    assert!(text.ends_with(" for T in int | f32 | f64 | rat"), "{text}");
     scaling::check("printing a signature of n type variables", n, |size| {
         let text = input(size).to_string();
         assert_eq!(names(&text), 1 + (size - size / 2));

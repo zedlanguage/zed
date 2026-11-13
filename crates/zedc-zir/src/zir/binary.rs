@@ -30,6 +30,9 @@ const MAGIC: &[u8; 4] = b"ZIR\0";
 /// bits of `f64::NAN`, so the form fixes them itself.
 pub const NAN_BITS: u64 = 0x7ff8_0000_0000_0000;
 
+/// The one `f32` NaN word the form writes, as [`NAN_BITS`] is for `f64`.
+pub const NAN_BITS_F32: u32 = 0x7fc0_0000;
+
 const KINDS: [RegionKind; 5] = [
     RegionKind::Function,
     RegionKind::Match,
@@ -250,6 +253,15 @@ impl W {
                 self.tag(4);
                 let x = x.get();
                 self.n(if x.is_nan() { NAN_BITS } else { x.to_bits() });
+            }
+            Value::Float32(x) => {
+                self.tag(11);
+                let x = x.get();
+                self.n(u64::from(if x.is_nan() {
+                    NAN_BITS_F32
+                } else {
+                    x.to_bits()
+                }));
             }
             Value::Str(s) => {
                 self.tag(5);
@@ -657,7 +669,7 @@ impl<'a> R<'a> {
     /// A value with no parts, or a value whose parts are still to read.
     fn value_head(&mut self) -> Result<Result<Value, OpenValue>, String> {
         let at = self.i;
-        let t = self.tag(10, "a value")?;
+        let t = self.tag(11, "a value")?;
         Ok(Ok(match t {
             0 => Value::Bool(self.tag(1, "a boolean")? == 1),
             1 => Value::Int(self.n()? as i64),
@@ -670,6 +682,10 @@ impl<'a> R<'a> {
                 }
             }
             4 => Value::float(f64::from_bits(self.n()?)),
+            11 => match u32::try_from(self.n()?) {
+                Ok(bits) => Value::float32(f32::from_bits(bits)),
+                Err(_) => return self.err(at, "an f32 word wider than 32 bits"),
+            },
             5 => Value::str(&self.s()?),
             6 => {
                 let name = self.name()?;

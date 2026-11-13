@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use unicode_script::{Script, UnicodeScript};
 use unicode_width::UnicodeWidthChar;
-use zed_kernel::num::{TooLarge, bytes_of};
+use zed_kernel::num::{FloatFormat, TooLarge, bytes_of};
 use zedc_base::terminal;
 
 use super::{name, punct};
@@ -43,8 +43,8 @@ pub enum Tok {
     Float {
         /// Its decimal text, without `_` and the suffix.
         digits: Digits,
-        /// Whether it is written with the suffix `f64`, which forces that format.
-        forced: bool,
+        /// The format its suffix names, `f32` or `f64`, which it is forced to; none without.
+        forced: Option<FloatFormat>,
     },
     /// An exact rational, as its decimal text without `_` and the `r` (`0.1`).
     Rat(Digits),

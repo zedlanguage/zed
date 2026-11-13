@@ -3,7 +3,7 @@
 //! ```peg
 //! Number   = (Rational | Float | Integer) !NameChar
 //! Rational = (Real | Decimal) 'r'
-//! Float    = Real 'f64'?
+//! Float    = Real ('f32' | 'f64')?
 //! Real     = Decimal '.' Decimal Exponent? | Decimal Exponent
 //! Exponent = [eE] [+\-]? Decimal
 //! Integer  = '0x' Hex ('_'? Hex)* | '0o' [0-7] ('_'? [0-7])* | '0b' [01] ('_'? [01])* | Decimal
@@ -18,15 +18,15 @@
 //! rule reads a token starting with a digit: `200ms`, `1__000`, `1_000_`, `0b102`, `0x`.
 //!
 //! A literal is notation for a number, not a value of one carrier: its use fixes the carrier
-//! (steps L1.26a and L1.26b). So a literal takes no suffix but `r`, and `f64` after a decimal,
-//! which forces that format: `1n`, `1nx` and `1f64` are numbers running into a name. The
-//! grammar's other format suffixes, `f16`, `f32` and `bf16`, come with their formats (steps
-//! FLOAT-f32 and L1.18a) and run into a name until then.
+//! (steps L1.26a and L1.26b). So a literal takes no suffix but `r`, and `f32` or `f64` after a
+//! decimal, which forces that format: `1n`, `1nx` and `1f64` are numbers running into a name.
+//! The grammar's other format suffixes, `f16` and `bf16`, come with their formats (step
+//! L1.18a) and run into a name until then.
 
 use std::sync::Arc;
 
 use num_bigint::BigUint;
-use zed_kernel::num::TooLarge;
+use zed_kernel::num::{FloatFormat, TooLarge};
 
 use super::name::is_name_continue;
 use super::token::{Error, ErrorKind, Span, Tok};
@@ -57,10 +57,12 @@ pub(super) fn number(text: &str, pos: usize) -> Option<Result<(usize, Tok), Erro
         }
     }
     let rational = radix == 10 && b.get(end) == Some(&b'r');
-    let forced = end > int_end && !rational && text[end..].starts_with("f64");
+    let forced = [FloatFormat::F32, FloatFormat::F64]
+        .into_iter()
+        .find(|f| end > int_end && !rational && text[end..].starts_with(f.name()));
     let after = match (rational, forced) {
         (true, _) => end + 1,
-        (_, true) => end + 3,
+        (_, Some(f)) => end + f.name().len(),
         _ => end,
     };
     if text[after..].chars().next().is_some_and(is_name_continue) {
@@ -169,13 +171,14 @@ fn run_on(text: &str, pos: usize, end: usize, radix: u32) -> Error {
              is not one of them. Write the number with those digits, or in decimal without \
              `{prefix}`."
         )
-    } else if radix == 10 && &text[end..run] == "f64" {
-        // An integer takes no format suffix (DESIGN.md L1.26b): `1f64`. A decimal with `f64`
-        // is a literal, so `d` here is an integer.
-        format!("A format suffix needs a decimal literal: `{d}f64`. Try `{d}.0f64` instead.")
-    } else if radix == 10 && ["f16", "bf16", "f32"].contains(&&text[end..run]) {
-        // The grammar's other format suffixes come with their formats (steps FLOAT-f32 and
-        // L1.18a): `1.5f32`, `2bf16`. `d` is an integer or a decimal, so the repair keeps its
+    } else if radix == 10 && ["f32", "f64"].contains(&&text[end..run]) {
+        // An integer takes no format suffix (DESIGN.md L1.26b): `1f64`. A decimal with `f32`
+        // or `f64` is a literal, so `d` here is an integer.
+        let name = &text[end..run];
+        format!("A format suffix needs a decimal literal: `{d}{name}`. Try `{d}.0{name}` instead.")
+    } else if radix == 10 && ["f16", "bf16"].contains(&&text[end..run]) {
+        // The grammar's other format suffixes come with their formats (step L1.18a): `1.5f16`,
+        // `2bf16`. `d` is an integer or a decimal, so the repair keeps its
         // digits and makes it a decimal where it is not one.
         let name = &text[end..run];
         let decimal = if d.contains(['.', 'e', 'E']) {

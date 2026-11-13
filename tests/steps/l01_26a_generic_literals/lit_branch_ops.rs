@@ -65,13 +65,16 @@ fn an_operation_branch_joins_the_class_of_a_generic_operand() {
     let src = "f(positional c: bool, x) = x + (if c { 2 + 1 } else { 1 });\n\
                a = f(true, x: 0.5f64);\nb = f(false, x: 1);\n";
     assert_eq!(type_errors(src), Vec::<String>::new());
-    assert_eq!(sig(src, "f"), "(bool, x: T) -> T for T in int | f64 | rat");
+    assert_eq!(
+        sig(src, "f"),
+        "(bool, x: T) -> T for T in int | f32 | f64 | rat"
+    );
     assert_eq!(value(src, "a"), "3.5");
     assert_eq!(value(src, "b"), "2");
     let other = "g(positional c: bool, x) = if c { 2 + 1 } else { x };\n";
     assert_eq!(
         sig(other, "g"),
-        "(bool, x: T) -> T for T in int | f64 | rat"
+        "(bool, x: T) -> T for T in int | f32 | f64 | rat"
     );
 }
 
@@ -113,7 +116,7 @@ fn a_division_in_an_if_is_still_not_kept() {
     assert_eq!(
         type_errors(src),
         vec![
-            "Nothing gives the literal `1` a carrier of `f64 \
+            "Nothing gives the literal `1` a carrier of `f32 | f64 \
              | rat`. Try `g(positional c: bool) = if c { 1.0f64 \
              / 2 } else { 1 }` instead.\n  \
              fixes, each checked here:\n    \

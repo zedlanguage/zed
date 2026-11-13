@@ -151,6 +151,7 @@ impl Digest {
             Value::Tuple(_) => self.word(8),
             Value::Path(_) => self.word(9),
             Value::Family(_) => self.word(10),
+            Value::Float32(_) => self.word(11),
         }
     }
 

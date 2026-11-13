@@ -210,6 +210,10 @@ impl Out<'_> {
                 self.tag(2);
                 self.word(x.get().to_bits());
             }
+            Value::Float32(x) => {
+                self.tag(12);
+                self.word(u64::from(x.get().to_bits()));
+            }
             Value::Str(s) => {
                 self.tag(3);
                 // The text is written block by block, as `str` writes one block.

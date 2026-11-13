@@ -657,3 +657,46 @@ fn shown_as_before_on_edge_doubles() {
     assert_eq!(show_f64(1e-7), "1.0e-7");
     assert_eq!(show_f64(0.000001), "0.000001");
 }
+
+/// The significant digits of a shown float, without sign, point, exponent or leading and
+/// trailing zeros: `1.0e-45` is `1`, `0.30000001` is `30000001`.
+fn significant(text: &str) -> String {
+    let mantissa = text.split(['e', 'E']).next().expect("a mantissa");
+    let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
+    digits.trim_matches('0').to_string()
+}
+
+/// `show_f32` writes the shortest digits that read back to the same `f32` bits: as many as
+/// std's shortest `{:e}` text, never the longer digits of the `f64` the value widens to.
+#[test]
+fn show_f32_writes_the_shortest_text_that_reads_back_at_f32() {
+    assert_eq!(show_f32(0.1), "0.1");
+    assert_eq!(show_f32(0.1 + 0.2), "0.3");
+    assert_eq!(show_f32(1.0 / 3.0), "0.33333334");
+    assert_eq!(show_f32(16_777_216.0), "16777216.0");
+    assert_eq!(show_f32(f32::from_bits(1)), "1.0e-45");
+    assert_eq!(show_f32(f32::MAX), "3.4028235e38");
+    assert_eq!(show_f32(-0.0), "-0.0");
+    assert_eq!(show_f32(f32::NEG_INFINITY), "-inf");
+    assert_eq!(show_f32(f32::NAN), "nan");
+    let mut mix = Mix(11);
+    let edges = (0..4096)
+        .chain(0x7f7f_f000..0x7f80_0000)
+        .chain(0x0070_0000..0x0090_0000);
+    for b in (0..1_000_000).map(|_| mix.next() as u32).chain(edges) {
+        let x = f32::from_bits(b);
+        if !x.is_finite() {
+            continue;
+        }
+        let shown = show_f32(x);
+        let back = read_float(shown.trim_start_matches('-'), FloatFormat::F32);
+        assert_eq!(back, Some(Ok(u64::from(b & !(1 << 31)))), "{shown}");
+        if x != 0.0 {
+            assert_eq!(
+                significant(&shown),
+                significant(&format!("{x:e}")),
+                "{b:#x}"
+            );
+        }
+    }
+}

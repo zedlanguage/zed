@@ -39,7 +39,7 @@ pub use fast::{
     PRINT_HANDOFF, PRINT_WHOLE, mul as mul_uint, mul_int, pow as pow_uint, to_decimal,
     to_decimal_split, to_decimal_split_at,
 };
-pub use float_text::{FloatFormat, read_f64_ieee, read_float, show_f64};
+pub use float_text::{FloatFormat, read_f32_ieee, read_f64_ieee, read_float, show_f32, show_f64};
 pub use room::{LiteralRounding, TooLarge, bytes_of, room};
 
 /// An exact number `num/den * prod p^e`: `num/den` reduced with `den` positive, the primes
@@ -1914,6 +1914,15 @@ pub(crate) fn exact_f64(r: &Rat) -> Result<Option<f64>, TooLarge> {
         Exact::Finite(f) => (*f == *r).then_some(x),
         Exact::NegInf | Exact::PosInf | Exact::NaN => None,
     })
+}
+
+/// The `f32` equal to `r`, when there is one, by the rule of [`exact_f64`].
+pub(crate) fn exact_f32(r: &Rat) -> Result<Option<f32>, TooLarge> {
+    // Every f32 is an f64, so an f32 equal to `r` is the f64 equal to `r`, narrowed.
+    Ok(exact_f64(r)?.and_then(|x| {
+        let n = x as f32;
+        (f64::from(n) == x).then_some(n)
+    }))
 }
 
 #[cfg(test)]

@@ -1817,7 +1817,7 @@ impl<'g> Machine<'g, '_> {
                     self.inc(Some(c));
                     Some(c)
                 }
-                Value::Bool(_) | Value::Int(_) | Value::Float(_) => None,
+                Value::Bool(_) | Value::Int(_) | Value::Float(_) | Value::Float32(_) => None,
                 Value::Tuple(xs) if xs.is_empty() => None,
                 Value::Atom(a) if a.args().is_empty() => None,
                 Value::Tuple(xs) => {

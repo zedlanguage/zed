@@ -885,6 +885,7 @@ impl Printer<'_> {
         for (name, l, whole) in [
             ("int", &p.ints, Member::NumberType(NumberType::Int)),
             ("rat", &p.rats, Member::NumberType(NumberType::Rat)),
+            ("f32", &p.f32s, Member::NumberType(NumberType::F32)),
             ("f64", &p.floats, Member::NumberType(NumberType::F64)),
             ("String", &p.strings, Member::Named("String")),
         ] {

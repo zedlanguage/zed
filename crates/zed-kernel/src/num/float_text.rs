@@ -64,6 +64,16 @@ impl FloatFormat {
         }
     }
 
+    /// Its name, as a type and a literal suffix write it: `f64`, `bf16`.
+    pub const fn name(self) -> &'static str {
+        match self {
+            FloatFormat::F64 => "f64",
+            FloatFormat::F32 => "f32",
+            FloatFormat::F16 => "f16",
+            FloatFormat::BF16 => "bf16",
+        }
+    }
+
     /// The width of an encoding in bits.
     pub const fn width(self) -> u32 {
         match self {
@@ -245,6 +255,17 @@ pub fn read_f64_ieee(text: &str) -> Option<f64> {
     let x = match magnitude(&d, FloatFormat::F64) {
         Ok(bits) => f64::from_bits(bits),
         Err(Edge::Infinite) => f64::INFINITY,
+        Err(Edge::Zero) => 0.0,
+    };
+    Some(if d.negative { -x } else { x })
+}
+
+/// The `f32` written `text`, as IEEE 754 reads it: as [`read_f64_ieee`] does, at `f32`.
+pub fn read_f32_ieee(text: &str) -> Option<f32> {
+    let d = decimal(text)?;
+    let x = match magnitude(&d, FloatFormat::F32) {
+        Ok(bits) => f32::from_bits(bits as u32),
+        Err(Edge::Infinite) => f32::INFINITY,
         Err(Edge::Zero) => 0.0,
     };
     Some(if d.negative { -x } else { x })
@@ -457,7 +478,34 @@ pub fn show_f64(x: f64) -> String {
     if x == 0.0 {
         return format!("{sign}0.0");
     }
-    let (f, e) = shortest(x.to_bits() & !(1 << 63));
+    let (f, e) = shortest(x.to_bits() & !(1 << 63), F64_SHAPE);
+    show_decimal(sign, f, e)
+}
+
+/// `x` as `String` writes an `f32`: as [`show_f64`] does, with the shortest digits that read
+/// back to `x` at `f32` (`0.1`, not the `0.10000000149011612` of the `f64` that `x` widens
+/// to), so `f32(String(x))` is `x`, bit for bit.
+///
+/// Complexity tradeoff: showing the widened `f64` would print its longer digits; Schubfach
+/// at the `f32` shape costs the same three products as at `f64`. Both are O(1).
+pub fn show_f32(x: f32) -> String {
+    if x.is_nan() {
+        return "nan".into();
+    }
+    let sign = if x.is_sign_negative() { "-" } else { "" };
+    if x.is_infinite() {
+        return format!("{sign}inf");
+    }
+    if x == 0.0 {
+        return format!("{sign}0.0");
+    }
+    let (f, e) = shortest(u64::from(x.to_bits() & !(1 << 31)), F32_SHAPE);
+    show_decimal(sign, f, e)
+}
+
+/// The text of `f * 10^e` after `sign`, `f` nonzero with no trailing zero, laid out as
+/// [`show_f64`] says.
+fn show_decimal(sign: &str, f: u64, e: i32) -> String {
     // The digits of `f`, at the end of `digits`.
     let mut digits = [0u8; 20];
     let mut from = digits.len();
@@ -524,37 +572,59 @@ const PAIRS: &[u8; 200] = b"\
       0001020304050607080910111213141516171819202122232425262728293031323334353637383940414243444546474849\
       5051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899";
 
-/// The least exponent of an `f64`'s last bit.
-const Q_MIN: i32 = -1074;
-/// The least significand of a normal `f64`, `2^52`.
-const C_MIN: u64 = 1 << 52;
+/// The layout of a binary format, for Schubfach.
+#[derive(Clone, Copy)]
+struct Shape {
+    /// The bits of the stored significand: 52 for `f64`, 23 for `f32`.
+    bits: u32,
+    /// The least exponent of the last bit: -1074 for `f64`, -149 for `f32`.
+    q_min: i32,
+}
+
+impl Shape {
+    /// The least significand of a normal number, `2^bits`.
+    fn c_min(self) -> u64 {
+        1 << self.bits
+    }
+}
+
+const F64_SHAPE: Shape = Shape {
+    bits: 52,
+    q_min: -1074,
+};
+const F32_SHAPE: Shape = Shape {
+    bits: 23,
+    q_min: -149,
+};
 /// The low 63 bits.
 const MASK_63: u64 = (1 << 63) - 1;
 
-/// The shortest decimal `f * 10^e` that reads back to the positive finite `f64` of encoding
-/// `bits`, `f` with no trailing zero: Schubfach's `toDecimal(double)`.
-fn shortest(bits: u64) -> (u64, i32) {
-    let t = bits & (C_MIN - 1);
-    let field = (bits >> 52) as i32;
+/// The shortest decimal `f * 10^e` that reads back to the positive finite number of encoding
+/// `bits` in the format of `shape`, `f` with no trailing zero: Schubfach's `toDecimal`.
+fn shortest(bits: u64, shape: Shape) -> (u64, i32) {
+    let c_min = shape.c_min();
+    let t = bits & (c_min - 1);
+    let field = (bits >> shape.bits) as i32;
     if field == 0 {
-        return schubfach(Q_MIN, t);
+        return schubfach(shape.q_min, t, shape);
     }
-    let c = C_MIN | t;
-    let mq = -Q_MIN + 1 - field;
-    // An integer below 2^53 is its own shortest decimal.
-    if 0 < mq && mq < 53 && (c >> mq) << mq == c {
+    let c = c_min | t;
+    let mq = -shape.q_min + 1 - field;
+    // An integer below `2 * c_min` is its own shortest decimal.
+    if 0 < mq && mq <= shape.bits as i32 && (c >> mq) << mq == c {
         return without_zeros(c >> mq, 0);
     }
-    schubfach(-mq, c)
+    schubfach(-mq, c, shape)
 }
 
-/// Schubfach's `toDecimal(q, c, 0)` for `c * 2^q`: the shortest decimal in the rounding
-/// interval, and of two equally near, the larger.
-fn schubfach(q: i32, c: u64) -> (u64, i32) {
+/// Schubfach's `toDecimal(q, c, 0)` for `c * 2^q` in the format of `shape`: the shortest
+/// decimal in the rounding interval, and of two equally near, the larger. The 126-bit `g`
+/// of the table is more than `f32` needs (Java's `toDecimal(float)` uses 64 bits).
+fn schubfach(q: i32, c: u64, shape: Shape) -> (u64, i32) {
     let out = c & 1;
     let cb = c << 2;
     let cbr = cb + 2;
-    let (cbl, k) = if c != C_MIN || q == Q_MIN {
+    let (cbl, k) = if c != shape.c_min() || q == shape.q_min {
         (cb - 2, floor_log10_pow2(q))
     } else {
         (cb - 1, floor_log10_three_quarters_pow2(q))

@@ -50,6 +50,7 @@ fn args(c: Carrier) -> &'static [&'static str] {
     match c {
         Carrier::Int => &["0", "2", "-3"],
         Carrier::F64 => &["0.0f64", "1.5f64", "-2.25f64"],
+        Carrier::F32 => &["0.0f32", "1.5f32", "-2.25f32", "1e-45f32"],
         Carrier::Rat => &["0r", "3r/2r", "(0r - 2r)"],
         Carrier::Str => &["\"\"", "\"ab\""],
         Carrier::Bool => &["true", "false"],

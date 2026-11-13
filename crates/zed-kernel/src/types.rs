@@ -165,6 +165,10 @@ pub(crate) fn lit_text(v: &Value) -> String {
     }
 }
 
+// Each type is one `Arc<Node>`, nearly all of them `Parts`: boxing `Parts` would add a second
+// allocation and an indirection to every type, to save the unused bytes of the few recursive
+// nodes (`Rec`). The `f32` part (FLOAT-f32) took `Parts` past clippy's limit.
+#[allow(clippy::large_enum_variant)]
 enum Node {
     Parts(Parts, Shown),
     Rec(Rec),
@@ -909,6 +913,7 @@ fn types<'a>(a: &'a Type, b: &'a Type, steps: &mut Vec<Step<'a>>, equal: &Equal)
         .then_with(|| p.ints.cmp(&q.ints))
         .then_with(|| p.rats.cmp(&q.rats))
         .then_with(|| p.floats.cmp(&q.floats))
+        .then_with(|| p.f32s.cmp(&q.f32s))
         .then_with(|| p.strings.cmp(&q.strings))
         .then(p.atoms.cofinite.cmp(&q.atoms.cofinite));
     if c != Ordering::Equal {
@@ -1170,6 +1175,7 @@ struct Parts {
     ints: Lits,
     rats: Lits,
     floats: Lits,
+    f32s: Lits,
     strings: Lits,
     atoms: Atoms,
     tuples: Tuples,
@@ -1251,14 +1257,15 @@ struct Tuples {
 thread_local! {
     static EMPTY: Type = Type::build_empty();
     static TOP: Type = !Type::build_empty();
-    /// `bool`, `int`, `rat`, `f64` and `String`, made once, so that every use of one is one
-    /// node and compares equal to another by pointer.
-    static SCALARS: [Type; 5] = [
+    /// `bool`, `int`, `rat`, `f64`, `String` and `f32`, made once, so that every use of one is
+    /// one node and compares equal to another by pointer.
+    static SCALARS: [Type; 6] = [
         Type::with(|p| p.bools = 3),
         Type::with(|p| p.ints.cofinite = true),
         Type::with(|p| p.rats.cofinite = true),
         Type::with(|p| p.floats.cofinite = true),
         Type::with(|p| p.strings.cofinite = true),
+        Type::with(|p| p.f32s.cofinite = true),
     ];
     /// Each universe's type, made once, in the order of [`Universe`].
     static UNIVERSES: [Type; 4] = [
@@ -1286,13 +1293,22 @@ impl Parts {
             h = mix(mix(h, *len as u64), part.digest());
             named = mix(mix(named, *len as u64), part.name_digest());
         }
-        (
-            mix(mix(h, u64::from(self.structs)), self.morphisms.digest()),
-            mix(
-                mix(named, u64::from(self.structs)),
-                self.morphisms.name_digest(),
+        h = mix(mix(h, u64::from(self.structs)), self.morphisms.digest());
+        named = mix(
+            mix(named, u64::from(self.structs)),
+            self.morphisms.name_digest(),
+        );
+        // The `f32` part is mixed in only where it holds a value, so a type without `f32`
+        // values keeps the fingerprints it had before `f32` came (FLOAT-f32): orders that
+        // follow digests stay as they were.
+        let f = &self.f32s;
+        match f.cofinite || !f.values.is_empty() {
+            true => (
+                mix(mix(h, u64::from(f.cofinite)), f.sum),
+                mix(mix(named, u64::from(f.cofinite)), f.sum),
             ),
-        )
+            false => (h, named),
+        }
     }
 }
 
@@ -1313,7 +1329,7 @@ impl Type {
     fn new(mut p: Parts) -> Type {
         if crate::local::with(&COMPOUND_SEARCH, std::cell::Cell::get)
             && p.bools == 0
-            && [&p.ints, &p.rats, &p.floats, &p.strings]
+            && [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings]
                 .iter()
                 .all(|l| !l.cofinite && l.values.is_empty())
             && p.atoms.is_default()
@@ -1490,6 +1506,7 @@ impl Type {
             ints: Lits::default(),
             rats: Lits::default(),
             floats: Lits::default(),
+            f32s: Lits::default(),
             strings: Lits::default(),
             atoms: Atoms::default(),
             tuples: Tuples::default(),
@@ -1563,6 +1580,11 @@ impl Type {
         crate::local::with(&SCALARS, |s| s[4].clone())
     }
 
+    /// `f32`.
+    pub fn f32() -> Type {
+        crate::local::with(&SCALARS, |s| s[5].clone())
+    }
+
     /// The type of one scalar literal or bare atom; `None` for any other value.
     pub fn lit(v: &Value) -> Option<Type> {
         let one = |l: &mut Lits| l.insert(v);
@@ -1571,6 +1593,7 @@ impl Type {
             Value::Int(_) | Value::Big(_) => Type::with(|p| one(&mut p.ints)),
             Value::Rat(_) => Type::with(|p| one(&mut p.rats)),
             Value::Float(_) => Type::with(|p| one(&mut p.floats)),
+            Value::Float32(_) => Type::with(|p| one(&mut p.f32s)),
             Value::Str(_) => Type::with(|p| one(&mut p.strings)),
             Value::Atom(a) if a.is_bare() => Type::atom(&a.name),
             _ => return None,
@@ -1696,7 +1719,13 @@ impl Type {
         Type::with(|p| match u {
             Universe::Scalar => {
                 p.bools = 3;
-                for l in [&mut p.ints, &mut p.rats, &mut p.floats, &mut p.strings] {
+                for l in [
+                    &mut p.ints,
+                    &mut p.rats,
+                    &mut p.floats,
+                    &mut p.f32s,
+                    &mut p.strings,
+                ] {
                     l.cofinite = true;
                 }
                 p.atoms.cofinite = true;
@@ -1831,7 +1860,7 @@ impl Type {
         for (t, boxes) in below {
             let p = t.p();
             let literals = p.bools.count_ones() as usize
-                + [&p.ints, &p.rats, &p.floats, &p.strings]
+                + [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings]
                     .iter()
                     .map(|l| l.values.len())
                     .sum::<usize>()
@@ -1961,7 +1990,7 @@ impl Type {
             || p.morphisms.is_leaf() != Some(false)
             || p.atoms.cofinite
             || p.tuples.rest
-            || [&p.ints, &p.rats, &p.floats, &p.strings]
+            || [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings]
                 .iter()
                 .any(|l| l.cofinite)
             || p.atoms.names.values().any(|a| a.payload != Type::empty())
@@ -2044,6 +2073,7 @@ impl Type {
             Value::Int(_) | Value::Big(_) => p.ints.contains(v),
             Value::Rat(_) => p.rats.contains(v),
             Value::Float(_) => p.floats.contains(v),
+            Value::Float32(_) => p.f32s.contains(v),
             Value::Str(_) => p.strings.contains(v),
             Value::Atom(a) => match p.atoms.names.get(&a.name) {
                 None => p.atoms.cofinite,
@@ -2073,6 +2103,7 @@ impl Type {
             ints: a.ints.zip(&b.ints, op),
             rats: a.rats.zip(&b.rats, op),
             floats: a.floats.zip(&b.floats, op),
+            f32s: a.f32s.zip(&b.f32s, op),
             strings: a.strings.zip(&b.strings, op),
             atoms: a.atoms.zip(&b.atoms, op),
             tuples: a.tuples.zip(&b.tuples, op),
@@ -2126,12 +2157,14 @@ impl Type {
                 && a.ints.disjoint(&b.ints)
                 && a.rats.disjoint(&b.rats)
                 && a.floats.disjoint(&b.floats)
+                && a.f32s.disjoint(&b.f32s)
                 && a.strings.disjoint(&b.strings)
         } else {
             a.bools & !b.bools == 0
                 && a.ints.within(&b.ints)
                 && a.rats.within(&b.rats)
                 && a.floats.within(&b.floats)
+                && a.f32s.within(&b.f32s)
                 && a.strings.within(&b.strings)
         })
     }
@@ -2182,6 +2215,7 @@ impl Parts {
             (&self.ints, matches!(v, Value::Int(_) | Value::Big(_))),
             (&self.rats, matches!(v, Value::Rat(_))),
             (&self.floats, matches!(v, Value::Float(_))),
+            (&self.f32s, matches!(v, Value::Float32(_))),
             (&self.strings, matches!(v, Value::Str(_))),
         ];
         let bools = match v {
@@ -2198,17 +2232,23 @@ impl Parts {
     /// Whether it holds a boolean, number or string, read from the parts.
     fn has_scalars(&self) -> bool {
         self.bools != 0
-            || [&self.ints, &self.rats, &self.floats, &self.strings]
-                .iter()
-                .any(|l: &&Lits| l.cofinite || !l.values.is_empty())
+            || [
+                &self.ints,
+                &self.rats,
+                &self.floats,
+                &self.f32s,
+                &self.strings,
+            ]
+            .iter()
+            .any(|l: &&Lits| l.cofinite || !l.values.is_empty())
     }
 }
 
 /// A type split by universe: what [`Type::split`] gives.
 pub struct Split {
-    /// Its values of `bool`, `int`, `rat`, `f64` and `String`, in that order, each `None` when
-    /// it has none.
-    pub bases: [Option<Type>; 5],
+    /// Its values of `bool`, `int`, `rat`, `f64`, `String` and `f32`, in that order, each
+    /// `None` when it has none.
+    pub bases: [Option<Type>; 6],
     /// Its atoms, `None` when it has none.
     pub atoms: Option<Type>,
     /// Its tuples, structs and morphisms, `None` when it has none.
@@ -2219,8 +2259,8 @@ pub struct Split {
 /// that gives a type, as [`Type::universes`] reads them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Universes {
-    /// Whether it has values of `bool`, `int`, `rat`, `f64` and `String`, in that order.
-    pub bases: [bool; 5],
+    /// Whether it has values of `bool`, `int`, `rat`, `f64`, `String` and `f32`, in that order.
+    pub bases: [bool; 6],
     /// Whether it has atoms.
     pub atoms: bool,
     /// Whether it has tuples, structs or morphisms.
@@ -2228,10 +2268,11 @@ pub struct Universes {
 }
 
 impl Type {
-    /// Its one value, when it is one boolean or one literal of `int`, `rat`, `f64` or `String`,
-    /// and nothing else: its first such value, read from the parts. A node of parts is that
-    /// literal's type exactly when its parts are the literal's (`Parts::only`), which is read
-    /// with no type built; a recursive node is compared with the type of the literal alone.
+    /// Its one value, when it is one boolean or one literal of `int`, `rat`, `f64`, `f32` or
+    /// `String`, and nothing else: its first such value, read from the parts. A node of parts
+    /// is that literal's type exactly when its parts are the literal's (`Parts::only`), which
+    /// is read with no type built; a recursive node is compared with the type of the literal
+    /// alone.
     pub fn scalar(&self) -> Option<Value> {
         let p = self.p();
         let first = |l: &&Lits| match l.cofinite {
@@ -2241,7 +2282,7 @@ impl Type {
         let v = match p.bools {
             1 => Some(Value::Bool(false)),
             2 => Some(Value::Bool(true)),
-            _ => [&p.ints, &p.rats, &p.floats, &p.strings]
+            _ => [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings]
                 .iter()
                 .find_map(first),
         }?;
@@ -2301,6 +2342,7 @@ impl Type {
             q.ints = p.ints.clone();
             q.rats = p.rats.clone();
             q.floats = p.floats.clone();
+            q.f32s = p.f32s.clone();
             if !p.strings.cofinite {
                 q.strings = p.strings.clone();
             }
@@ -2701,6 +2743,7 @@ impl Not for &Type {
             ints: p.ints.not(),
             rats: p.rats.not(),
             floats: p.floats.not(),
+            f32s: p.f32s.not(),
             strings: p.strings.not(),
             atoms: p.atoms.not(),
             tuples: p.tuples.not(),
@@ -3008,6 +3051,7 @@ impl Type {
         for (name, l) in [
             ("int", &p.ints),
             ("rat", &p.rats),
+            ("f32", &p.f32s),
             ("f64", &p.floats),
             ("String", &p.strings),
         ] {
@@ -3747,7 +3791,7 @@ fn scalars(p: &Parts) -> Vec<Value> {
         .filter(|&b| p.bools & (1 << u8::from(b)) != 0)
         .map(Value::Bool)
         .collect();
-    for lits in [&p.ints, &p.rats, &p.floats, &p.strings] {
+    for lits in [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings] {
         made.extend(lits.values.iter().cloned());
     }
     made.extend(
@@ -3842,7 +3886,7 @@ impl Visit {
                 keys.push(Value::Bool(b));
             }
         }
-        for lits in [&p.ints, &p.rats, &p.floats, &p.strings] {
+        for lits in [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings] {
             keys.extend(lits.values.iter().cloned());
             listed &= !lits.cofinite;
         }
@@ -3975,6 +4019,7 @@ enum Kind {
     Int,
     Rat,
     Float,
+    Float32,
     Str,
     Atom,
     Tuple(usize),
@@ -3992,6 +4037,7 @@ fn kinds(x: &Value) -> Vec<Kind> {
             Value::Int(_) | Value::Big(_) => Kind::Int,
             Value::Rat(_) => Kind::Rat,
             Value::Float(_) => Kind::Float,
+            Value::Float32(_) => Kind::Float32,
             Value::Str(_) => Kind::Str,
             Value::Atom(_) => Kind::Atom,
             Value::Tuple(items) => Kind::Tuple(items.len()),
@@ -4016,6 +4062,7 @@ fn kind_status(t: &Type, kind: &Kind, first: impl Fn(&Type) -> Option<bool>) -> 
         Kind::Int => Some(p.ints.cofinite),
         Kind::Rat => Some(p.rats.cofinite),
         Kind::Float => Some(p.floats.cofinite),
+        Kind::Float32 => Some(p.f32s.cofinite),
         Kind::Str => Some(p.strings.cofinite),
         Kind::Atom => Some(p.atoms.cofinite),
         Kind::Other => None,
@@ -4106,7 +4153,7 @@ fn whole(x: &Value) -> bool {
     match x {
         Value::Tuple(items) => items.as_slice().is_empty(),
         Value::Bool(_) | Value::Int(_) | Value::Big(_) | Value::Rat(_) => true,
-        Value::Float(_) | Value::Str(_) => true,
+        Value::Float(_) | Value::Float32(_) | Value::Str(_) => true,
         _ => false,
     }
 }
@@ -4184,6 +4231,7 @@ fn erasable(x: &Value) -> Option<Kind> {
         Value::Int(_) | Value::Big(_) => Some(Kind::Int),
         Value::Rat(_) => Some(Kind::Rat),
         Value::Float(_) => Some(Kind::Float),
+        Value::Float32(_) => Some(Kind::Float32),
         Value::Str(_) => Some(Kind::Str),
         Value::Atom(a) if a.is_bare() => Some(Kind::Atom),
         _ => None,
@@ -4228,6 +4276,7 @@ fn witness(kind: &Kind, keys: &BTreeSet<Value>) -> Value {
             Kind::Int => Value::Int(n),
             Kind::Rat => Value::rat(Rat::int(n.into())),
             Kind::Float => Value::float(n as f64),
+            Kind::Float32 => Value::float32(n as f32),
             Kind::Str => Value::str(&n.to_string()),
             _ => Value::atom(&format!("_{n}")),
         })
@@ -4300,7 +4349,7 @@ fn place_regions(open: &[Open], (j, d, len, m): Place) -> BTreeMap<Value, usize>
             }
             let n = types.len();
             let p = u.p();
-            let lists = [&p.ints, &p.rats, &p.floats, &p.strings];
+            let lists = [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings];
             let atoms = &p.atoms;
             let names = atoms.names.iter().filter(|(_, a)| a.bare != atoms.cofinite);
             for k in lists
@@ -4950,7 +4999,13 @@ struct Class {
 fn whole_kinds(chain: &[Kind]) -> bool {
     matches!(
         chain,
-        [Kind::Bool | Kind::Int | Kind::Rat | Kind::Float | Kind::Str | Kind::Tuple(0)]
+        [Kind::Bool
+            | Kind::Int
+            | Kind::Rat
+            | Kind::Float
+            | Kind::Float32
+            | Kind::Str
+            | Kind::Tuple(0)]
     )
 }
 
@@ -6614,7 +6669,7 @@ pub mod rec {
             };
             (p.scalars_only()
                 && p.bools == 0
-                && [&p.rats, &p.floats, &p.strings]
+                && [&p.rats, &p.floats, &p.f32s, &p.strings]
                     .iter()
                     .all(|l| !l.cofinite && l.values.is_empty()))
             .then_some(&p.ints)

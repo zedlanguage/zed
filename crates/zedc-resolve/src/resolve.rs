@@ -341,6 +341,7 @@ pub const WORDS: &[(&str, u32)] = &[
     ("int", 1),
     ("rat", 1),
     ("f64", 1),
+    ("f32", 1),
     ("abs", 1),
     ("min", 1),
     ("max", 1),
@@ -567,6 +568,7 @@ pub const TYPES: &[&str] = &[
     "int",
     "rat",
     "f64",
+    "f32",
     "bool",
     "String",
     "Lines",
@@ -631,7 +633,7 @@ pub const LATER_TYPES: &[(&str, u32)] = &[
 
 /// The carriers, which a bounded type variable ranges over, in the order the checker prints
 /// them.
-const CARRIERS: &[&str] = &["int", "f64", "rat", "String", "bool"];
+const CARRIERS: &[&str] = &["int", "f32", "f64", "rat", "String", "bool"];
 
 /// The resolution of `unit`, read alone, or every error in it and every form it uses that a
 /// later step compiles, in text order.

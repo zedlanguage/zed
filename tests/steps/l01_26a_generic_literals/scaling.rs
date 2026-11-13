@@ -25,7 +25,10 @@ fn a_body_of_many_generic_literals_scales() {
     std::thread::Builder::new()
         .stack_size(1 << 29)
         .spawn(|| {
-            assert_eq!(sig(&sum(2), "f"), "(T, T) -> T for T in int | f64 | rat");
+            assert_eq!(
+                sig(&sum(2), "f"),
+                "(T, T) -> T for T in int | f32 | f64 | rat"
+            );
             let n = 1000;
             let units = [checked(&sum(n)), checked(&sum(scaling::FACTOR * n))];
             for (u, m) in units.iter().zip([n, scaling::FACTOR * n]) {
@@ -103,7 +106,10 @@ fn a_body_of_many_generic_literal_arguments_scales() {
     std::thread::Builder::new()
         .stack_size(1 << 29)
         .spawn(|| {
-            assert_eq!(sig(&calls(2), "f"), "(T) -> T for T in int | f64 | rat");
+            assert_eq!(
+                sig(&calls(2), "f"),
+                "(T) -> T for T in int | f32 | f64 | rat"
+            );
             let n = 1000;
             let units = [checked(&calls(n)), checked(&calls(scaling::FACTOR * n))];
             for (u, m) in units.iter().zip([n, scaling::FACTOR * n]) {

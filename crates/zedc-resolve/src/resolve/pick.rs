@@ -98,8 +98,10 @@ fn of_type(t: &Type) -> Mask {
 fn of_arg(e: &Expr, res: &Resolution, param_ty: &HashMap<Span, &Type>) -> Mask {
     match &e.kind {
         ExprKind::Int { .. } => NUMERIC,
-        ExprKind::Float { forced: true, .. } => F64,
-        ExprKind::Float { forced: false, .. } => RAT | FLOATS,
+        ExprKind::Float {
+            forced: Some(f), ..
+        } => named(f.name()),
+        ExprKind::Float { forced: None, .. } => RAT | FLOATS,
         ExprKind::Rat(_) => RAT,
         ExprKind::Bool(_) | ExprKind::Is { .. } => BOOL,
         ExprKind::Str(_) => TEXT,

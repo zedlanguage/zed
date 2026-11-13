@@ -84,7 +84,7 @@ fn a_call_of_a_literal_component_is_rejected_as_one_of_a_string() {
     let errors = type_errors("g(positional x) = (x + 1)(2);\nr = g(1);\n");
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(
-        errors[0].starts_with("`(x + 1)` is int | f64 | rat, not a function"),
+        errors[0].starts_with("`(x + 1)` is int | f32 | f64 | rat, not a function"),
         "{errors:?}"
     );
 }
@@ -307,6 +307,36 @@ fn a_decimal_component_takes_the_carrier_its_use_requires() {
         ("h(positional p) = p[0] * p[1];", "h((1.5, 2r))", "3r\n"),
     ] {
         assert_eq!(outcome(name, def, call), out, "{def} {call}");
+    }
+}
+
+/// A decimal component at a use that asks for `f32` takes `f32`, and one at a use that leaves
+/// it the float formats alone takes `f64` (author decision, 2026-11-12), as the literal passed
+/// alone does (row FLOAT-f32).
+#[test]
+fn a_decimal_component_takes_f32_or_the_float_formats_f64() {
+    let name = "l01_26a_tuple_arg_pair_decimal_f32";
+    for (def, pair, alone, ty, out) in [
+        (
+            "h(positional p) = p[0] + 1.0f32;",
+            "h((1.5, 2))",
+            "h(1.5)",
+            "f32",
+            "2.5\n",
+        ),
+        (
+            "h(positional p) = p[0] ^ 2.0;",
+            "h((1.5, 2))",
+            "h(1.5)",
+            "f64",
+            "2.25\n",
+        ),
+    ] {
+        let one = def.replace("p[0]", "p");
+        assert_eq!(outcome(name, def, pair), out, "{def} {pair}");
+        assert_eq!(outcome(name, &one, alone), out, "{one} {alone}");
+        assert_eq!(type_of_r(def, pair), ty, "{def} {pair}");
+        assert_eq!(type_of_r(&one, alone), ty, "{one} {alone}");
     }
 }
 

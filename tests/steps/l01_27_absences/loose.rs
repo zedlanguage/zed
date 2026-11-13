@@ -148,7 +148,7 @@ fn a_loose_atom_passes_through_a_declared_function_whose_type_omits_it() {
 
 #[test]
 fn a_loose_atom_passes_through_a_generic_function_bounded_to_carriers() {
-    // Rule 6 at an inferred parameter: `add` is `(T, T) -> T for T in int | f64 | rat`, a
+    // Rule 6 at an inferred parameter: `add` is `(T, T) -> T for T in int | f32 | f64 | rat`, a
     // bound that holds no atom, so `#nf` selects no arrow and is the call's value.
     let t = "add(positional a, positional b) = a + b;\n\
              h(positional y: int | #nf) = add(y, 1);\n";
@@ -169,7 +169,7 @@ fn a_call_takes_the_arrow_of_a_generic_function_that_takes_its_atoms() {
     assert!(type_errors(t).is_empty());
     assert_eq!(
         sig(t, "r"),
-        "((T, T) -> T) & ((T | #_, T) -> T | #_) for T in int | f64 | rat"
+        "((T, T) -> T) & ((T | #_, T) -> T | #_) for T in int | f32 | f64 | rat"
     );
     assert_eq!(sig(t, "h"), "(int | #nf) -> int | #_");
     let run = format!("{t}a = h(#nf);\nb = h(2);\n");

@@ -157,7 +157,7 @@ fn integer_literals_at_a_use_without_int_are_rejected() {
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(
         errors[0].starts_with(
-            "Nothing gives the literal `1` a carrier of `f64 | rat`. Try `r = h((1.0f64, 2))` \
+            "Nothing gives the literal `1` a carrier of `f32 | f64 | rat`. Try `r = h((1.0f64, 2))` \
              instead."
         ),
         "{errors:?}"

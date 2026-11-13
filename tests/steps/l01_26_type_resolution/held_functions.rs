@@ -54,7 +54,7 @@ fn two_functions_in_tuples_are_two_errors() {
     let text = format!(
         "{SCALE}shift(positional x) = x + 1;\na = (scale, 1);\nb = (shift, 1);\nc = (a, b);\n"
     );
-    let shift = "a tuple takes data, and this value may hold a function, `(T) -> T for T in int | f64 | rat`: data is a value that holds no function at any depth. [shift]";
+    let shift = "a tuple takes data, and this value may hold a function, `(T) -> T for T in int | f32 | f64 | rat`: data is a value that holds no function at any depth. [shift]";
     assert_eq!(
         type_errors(&text),
         [holds_scale("scale"), shift.to_string()]

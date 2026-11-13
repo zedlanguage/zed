@@ -3,6 +3,7 @@
 //! operands merge into `#errs`, and floats print in the shortest form that reads back.
 
 mod casts;
+mod f32;
 mod failures;
 mod floats;
 mod literals;

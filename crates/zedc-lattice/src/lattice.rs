@@ -337,11 +337,12 @@ impl Lattice for Card {
 }
 
 /// The base types whose part a widening of a type takes whole once it grows.
-fn bases() -> [Type; 5] {
+fn bases() -> [Type; 6] {
     [
         Type::bool(),
         Type::int(),
         Type::rat(),
+        Type::f32(),
         Type::f64(),
         Type::string(),
     ]

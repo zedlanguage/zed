@@ -40,7 +40,7 @@ fn the_text_of_a_type_holding_the_complement_of_an_atom_payload_is_made() {
     let t = &Type::top() - &Type::atom_with("a", &Type::tuple(vec![Type::int()]));
     assert_eq!(
         t.to_string(),
-        r"(| bool int rat f64 String (\ #_ (#a (tuple int))) tuple struct morphism)"
+        r"(| bool int rat f32 f64 String (\ #_ (#a (tuple int))) tuple struct morphism)"
     );
 }
 

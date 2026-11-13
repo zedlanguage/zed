@@ -344,7 +344,7 @@ fn a_bounded_variable_bound_to_two_carriers_fits_only_at_one_place() {
     assert_eq!(
         type_errors(text),
         [
-            "`add` is `(x: T, y: T) -> T for T in int | f64 | rat`, not `(x: T1, y: T1) -> T1`: at `(x: T1, y: T1) -> T1`, the arrow `(x: T, y: T) -> T for T in int | f64 | rat` takes it only with `T` bound to `int | f64`, values of more than one carrier, but a call fixes `T` to one carrier, and `T` stands at 2 places the arguments give, which could be given values of two carriers.\n  T1 stands for a part written more than once:\n    type T1 = int | f64; [add]"
+            "`add` is `(x: T, y: T) -> T for T in int | f32 | f64 | rat`, not `(x: T1, y: T1) -> T1`: at `(x: T1, y: T1) -> T1`, the arrow `(x: T, y: T) -> T for T in int | f32 | f64 | rat` takes it only with `T` bound to `int | f64`, values of more than one carrier, but a call fixes `T` to one carrier, and `T` stands at 2 places the arguments give, which could be given values of two carriers.\n  T1 stands for a part written more than once:\n    type T1 = int | f64; [add]"
         ]
     );
     let text = "p(f: (x: int | f64) -> ((y: int | f64) -> int)) = f(x: 1)(y: 1.5);\n\

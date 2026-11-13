@@ -81,6 +81,7 @@ fn kernel_form(
             "int" => KType::int(),
             "rat" => KType::rat(),
             "f64" => KType::f64(),
+            "f32" => KType::f32(),
             "bool" => KType::bool(),
             "String" => KType::string(),
             "Never" => KType::empty(),

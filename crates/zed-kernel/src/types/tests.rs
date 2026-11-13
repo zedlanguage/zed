@@ -176,7 +176,7 @@ fn scalar_read_from_the_parts_is_that_of_comparing_types() {
         let v = match p.bools {
             1 => Some(Value::Bool(false)),
             2 => Some(Value::Bool(true)),
-            _ => [&p.ints, &p.rats, &p.floats, &p.strings]
+            _ => [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings]
                 .iter()
                 .find_map(first),
         }?;

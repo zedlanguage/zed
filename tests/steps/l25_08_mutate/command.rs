@@ -36,9 +36,9 @@ fn undetected_mutants_do_not_change_the_exit_status() {
             "2 passed, 0 failed, 0 rejection units\n\
              {a}:1:31: undetected: `<` replaced by `<=` in `isMinor` at .0.1: every row that \
              reaches it passes\n\
-             {a}:1:33: undetected: `18` replaced by `17` in `isMinor` at .0.1.1.3: every row that \
+             {a}:1:33: undetected: `18` replaced by `17` in `isMinor` at .0.1.1.4: every row that \
              reaches it passes\n\
-             {a}:1:33: undetected: `18` replaced by `19` in `isMinor` at .0.1.1.3: every row that \
+             {a}:1:33: undetected: `18` replaced by `19` in `isMinor` at .0.1.1.4: every row that \
              reaches it passes\n\
              3 mutants: 0 detected, 3 undetected, 0 skipped, 0 not run\n"
         )

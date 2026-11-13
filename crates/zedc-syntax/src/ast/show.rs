@@ -74,8 +74,8 @@ fn expr<'a>(e: &'a Expr, out: &mut Vec<Show<'a>>) {
         }
         ExprKind::Float { digits, forced } => {
             out.push(Text(digits));
-            if *forced {
-                out.push(Text("f64"));
+            if let Some(f) = forced {
+                out.push(Text(f.name()));
             }
         }
         ExprKind::Rat(s) => out.extend([Text(s), Text("r")]),

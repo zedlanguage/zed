@@ -8,7 +8,6 @@
 
 use std::collections::HashSet;
 
-use zed_kernel::num::literal_f64;
 use zed_kernel::{Prim, Rat, Term, Value, eval};
 
 use super::builder::Builder;
@@ -177,7 +176,7 @@ fn bare_names(text: &str) -> HashSet<&str> {
 fn number(e: &Expr) -> Option<Value> {
     match &e.kind {
         ExprKind::Int { radix, digits, .. } => Value::int_text(digits, *radix).ok().flatten(),
-        ExprKind::Float { digits, .. } => literal_f64(digits).ok().map(Value::float),
+        ExprKind::Float { digits, forced } => Value::literal_float(digits, *forced).ok(),
         ExprKind::Rat(s) => Rat::decimal(s).ok().flatten().map(Value::rat),
         _ => None,
     }

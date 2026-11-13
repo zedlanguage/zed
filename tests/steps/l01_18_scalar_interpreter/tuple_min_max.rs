@@ -419,7 +419,7 @@ fn a_generic_function_that_calls_min_on_its_own_parameters_takes_numbers() {
     // its carriers (DESIGN.md sec:type_resolution: a prelude word removes the carriers it does
     // not take); neither is met with a tuple, so neither may hold one.
     let g = "g(positional a, positional b) = min(a, b);\n";
-    assert_eq!(sig(g, "g"), "(T, T) -> T for T in int | f64 | rat");
+    assert_eq!(sig(g, "g"), "(T, T) -> T for T in int | f32 | f64 | rat");
     assert_eq!(value(&format!("{g}x = g(3, 2);\n"), "x"), "2");
     assert_eq!(
         errors(&format!("{g}x = g((1, 2), (0, 9));\n")),

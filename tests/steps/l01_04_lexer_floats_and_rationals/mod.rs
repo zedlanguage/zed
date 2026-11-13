@@ -15,7 +15,7 @@ fn toks(text: &str) -> Vec<Tok> {
 fn float(s: &str) -> Tok {
     Tok::Float {
         digits: s.to_string().into(),
-        forced: false,
+        forced: None,
     }
 }
 

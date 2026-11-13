@@ -38,7 +38,9 @@ fn value(t: &Term) -> Value {
 fn an_elaborated_term_reads_back_as_itself() {
     // A power takes a parameter, not a literal, as its other operand: a literal without a
     // suffix beside an operand of no fixed carrier takes that operand's carrier at run time,
-    // and its elaboration binds the operand to a name no program can write (steps L1.26a).
+    // and its elaboration binds the operand to a name no program can write (steps L1.26a). A
+    // decimal base is such a literal since `f32` is a carrier: `2.0^-a` chooses `2.0f32` or
+    // `2.0` by the carrier of `-a`.
     let cases = [
         ("(a) -> -a", "a -> -a"),
         ("(c) -> !c", "c -> !c"),
@@ -50,7 +52,6 @@ fn an_elaborated_term_reads_back_as_itself() {
         ("(a, k) -> -a^k", "(a, k) -> -(a^k)"),
         ("(a, b, c) -> a^b^c", "(a, b, c) -> (a^(b^c))"),
         ("(a, b, c) -> (a^b)^c", "(a, b, c) -> ((a^b)^c)"),
-        ("(a) -> 2.0^-a", "a -> ((2.0)^-a)"),
         ("(a, b, k) -> (a + b)^k", "(a, b, k) -> ((a + b)^k)"),
         ("(a, b, k) -> a * b^k", "(a, b, k) -> (a * (b^k))"),
         ("(a, k) -> a ^ k", "(a, k) -> (a^k)"),

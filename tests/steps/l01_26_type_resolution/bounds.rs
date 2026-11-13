@@ -179,28 +179,28 @@ fn a_bound_that_is_no_union_of_carriers_is_an_error() {
         (
             "f(g: (T) -> T for T in #a) = 0;\n",
             "the bound of `T` is not a union of carriers: `#a` is an atom, no carrier; \
-             the carriers are int, f64, rat, String, bool [#a]",
+             the carriers are int, f32, f64, rat, String, bool [#a]",
         ),
         (
             "f(g: (T) -> T for T in int | (int, int)) = 0;\n",
             "the bound of `T` is not a union of carriers: this type is no carrier; \
-             the carriers are int, f64, rat, String, bool [(int, int)]",
+             the carriers are int, f32, f64, rat, String, bool [(int, int)]",
         ),
         (
             "f(g: (T) -> T for T in Lines) = 0;\n",
             "the bound of `T` is not a union of carriers: `Lines` is no carrier; \
-             the carriers are int, f64, rat, String, bool [Lines]",
+             the carriers are int, f32, f64, rat, String, bool [Lines]",
         ),
         // A bound is read outside its clause, so a variable of the same clause is no name there.
         (
             "f(g: (T, U) -> T for T in int, U in T) = 0;\n",
             "the bound of `U` is not a union of carriers: `T` is no carrier; \
-             the carriers are int, f64, rat, String, bool [T]",
+             the carriers are int, f32, f64, rat, String, bool [T]",
         ),
         (
             "f(g: ((U) -> U for U in T) -> T for T in int) = 0;\n",
             "the bound of `U` is not a union of carriers: `T` is a type variable; \
-             the carriers are int, f64, rat, String, bool [T]",
+             the carriers are int, f32, f64, rat, String, bool [T]",
         ),
     ];
     for (text, want) in cases {
@@ -277,7 +277,7 @@ fn a_bounded_signature_printed_and_read_back_is_the_same_type() {
     for text in [
         // A clause of every carrier, one of a variable only in the result, and one per
         // signature of a tuple and of a union.
-        "(a: T, b: T) -> bool for T in int | f64 | rat | String | bool",
+        "(a: T, b: T) -> bool for T in int | f32 | f64 | rat | String | bool",
         "() -> T for T in int | f64",
         "((x: T) -> T for T in rat, (y: U) -> String for U in String | bool)",
         "((x: T) -> T for T in int) | int",
@@ -793,13 +793,13 @@ fn a_lambda_whose_uses_the_bound_does_not_allow_is_an_error() {
         // A comparison gives a bool, not the carrier passed.
         (
             "y = p_wide(g: (x) -> x < x);\n",
-            "the lambda is `(x: T) -> bool for T in int | f64 | rat | bool | String`, \
+            "the lambda is `(x: T) -> bool for T in int | f32 | f64 | rat | bool | String`, \
              not `(x: T) -> T for T in int | f64`: it is passed where a function of that type is expected, and its own type does not fit that one. [(x) -> x < x]",
         ),
         // `a` and `b` take different carriers, so `a + b` is no sum of one carrier.
         (
             "y = two(g: (a, b) -> a + b);\n",
-            "the lambda is `(a: T, b: T) -> T for T in int | f64 | rat`, \
+            "the lambda is `(a: T, b: T) -> T for T in int | f32 | f64 | rat`, \
              not `(a: T, b: U) -> T for T in int | f64, U in int`: it is passed where a function of that type is expected, and its own type does not fit that one. [(a, b) -> a + b]",
         ),
         // `b` and the result have one type at each call, a variable; it is named `U`, since

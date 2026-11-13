@@ -220,3 +220,17 @@ r results (r.0^0, r.1^0, true)
 fn constants() {
     round(CONSTANTS);
 }
+
+/// `f32` constants beside the `f64` ones of the same digits: the text writes the suffix, and
+/// the text and the bytes read back to the same graph (FLOAT-f32).
+const F32_CONSTANTS: &str = "\
+zir 1
+r region function ()
+r.0 prim tuple (0.1f32, 0.1, -0.0f32, -0.0, 1.0e-45f32, nanf32, nan, -inff32) -> (_)
+r results (r.0^0)
+";
+
+#[test]
+fn f32_constants() {
+    round(F32_CONSTANTS);
+}

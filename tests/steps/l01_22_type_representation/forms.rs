@@ -33,7 +33,7 @@ fn complement_is_taken_within_each_universe() {
     // `!int` keeps every other scalar and every tuple, struct and morphism.
     assert_eq!(
         s(&!Type::int()),
-        "(| bool rat f64 String #_ tuple struct morphism)"
+        "(| bool rat f32 f64 String #_ tuple struct morphism)"
     );
     let not_int = !Type::int();
     assert!(not_int.contains(&Value::tuple(vec![Value::Int(1)])));
@@ -65,7 +65,7 @@ fn atoms_are_scalars_named_one_by_one() {
     let (a, b) = (Type::atom("a"), Type::atom("b"));
     assert_eq!(s(&(&a | &b)), "(| #a #b)");
     let atoms = Type::universe(Universe::Scalar)
-        - &(Type::bool() | Type::int() | Type::rat() | Type::f64() | Type::string());
+        - &(Type::bool() | Type::int() | Type::rat() | Type::f64() | Type::f32() | Type::string());
     assert_eq!(s(&atoms), "#_");
     assert_eq!(s(&(&atoms - &a)), "(\\ #_ #a)");
     let pair = Type::tuple(vec![Type::int(), Type::string()]);

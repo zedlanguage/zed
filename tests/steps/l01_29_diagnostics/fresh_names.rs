@@ -57,12 +57,12 @@ fn a_program_that_binds_t_and_u_sees_its_variable_named_v() {
     // …`, and a reader of `T` here could not tell the variable from the program's `T`.
     let defs = "T = 1;\nU = 2;\n";
     let shown = compared(&format!("{defs}inc = x -> x + 1;\nsame = inc == inc;\n"));
-    assert_eq!(shown, "(V) -> V for V in int | f64 | rat");
+    assert_eq!(shown, "(V) -> V for V in int | f32 | f64 | rat");
     assert_eq!(bound_names(&shown), ["V".into()] as [Arc<str>; 1]);
     writes_back_beside(defs, &shown);
     // The same function in a program that binds neither keeps the first name.
     let shown = compared("inc = x -> x + 1;\nsame = inc == inc;\n");
-    assert_eq!(shown, "(T) -> T for T in int | f64 | rat");
+    assert_eq!(shown, "(T) -> T for T in int | f32 | f64 | rat");
     writes_back_beside("", &shown);
 }
 
@@ -71,11 +71,13 @@ fn every_derivation_step_of_the_message_uses_the_same_free_name() {
     let out =
         rejected("T = 1;\nU = 2;\ninc = x -> x + 1;\nboxed = #box(inc);\nsame = boxed == boxed;\n");
     assert!(
-        out.contains("`boxed` is #box((V) -> V for V in int | f64 | rat) here"),
+        out.contains("`boxed` is #box((V) -> V for V in int | f32 | f64 | rat) here"),
         "{out}"
     );
     assert!(
-        out.contains("`inc` is defined as this expression, (V) -> V for V in int | f64 | rat"),
+        out.contains(
+            "`inc` is defined as this expression, (V) -> V for V in int | f32 | f64 | rat"
+        ),
         "{out}"
     );
     // No step names a variable `T` or `U`: each `T` or `U` of the message is the program's.
@@ -90,7 +92,7 @@ fn the_names_after_w_are_skipped_too() {
     // `T`, `U`, `V`, `W` and `T5` are the program's; the next free name is `T6`.
     let defs = "T = 1;\nU = 2;\nV = 3;\nW = 4;\nT5 = 5;\n";
     let shown = compared(&format!("{defs}inc = x -> x + 1;\nsame = inc == inc;\n"));
-    assert_eq!(shown, "(T6) -> T6 for T6 in int | f64 | rat");
+    assert_eq!(shown, "(T6) -> T6 for T6 in int | f32 | f64 | rat");
     writes_back_beside(defs, &shown);
 }
 
@@ -101,7 +103,7 @@ fn only_the_names_a_variable_could_take_are_skipped() {
     let shown = compared(&format!("U = 1;\n{pair}"));
     assert_eq!(
         shown,
-        "(T, V) -> (T, V) for T in int | f64 | rat, V in int | f64 | rat"
+        "(T, V) -> (T, V) for T in int | f32 | f64 | rat, V in int | f32 | f64 | rat"
     );
     writes_back_beside("U = 1;\n", &shown);
     // `T1` to `T4` and `T05` are no variable's name, so binding them changes nothing; a
@@ -110,13 +112,13 @@ fn only_the_names_a_variable_could_take_are_skipped() {
     let shown = compared(&format!("{defs}{pair}"));
     assert_eq!(
         shown,
-        "(T, U) -> (T, U) for T in int | f64 | rat, U in int | f64 | rat"
+        "(T, U) -> (T, U) for T in int | f32 | f64 | rat, U in int | f32 | f64 | rat"
     );
     writes_back_beside(defs, &shown);
     let shown = compared(&format!("g(positional T) = T;\n{pair}"));
     assert_eq!(
         shown,
-        "(U, V) -> (U, V) for U in int | f64 | rat, V in int | f64 | rat"
+        "(U, V) -> (U, V) for U in int | f32 | f64 | rat, V in int | f32 | f64 | rat"
     );
     // A field is in no scope: a struct's field `T` would leave `T` free (structs come at L2,
     // so this is the resolver's kind, not a program here).
@@ -188,7 +190,12 @@ fn naming_variables_beside_many_program_names_scales() {
     // size is 600.
     let n = 600;
     let inputs = scaling::inputs(n, crowded);
-    let first = |size: usize| format!("(T{m}) -> T{m} for T{m} in int | f64 | rat", m = size + 5);
+    let first = |size: usize| {
+        format!(
+            "(T{m}) -> T{m} for T{m} in int | f32 | f64 | rat",
+            m = size + 5
+        )
+    };
     assert_eq!(compared(&inputs[&n]), first(n));
     scaling::check_order(
         "naming the variables of n functions beside n program names",

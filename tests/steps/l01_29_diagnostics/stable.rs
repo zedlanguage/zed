@@ -143,7 +143,7 @@ fn check_piece(piece: usize) -> usize {
     let added = shown(BINDING);
     assert_eq!(
         added.tops.get(BOUND[1]).map(Vec::as_slice),
-        Some(&["(T) -> T for T in int | f64 | rat".to_string()][..]),
+        Some(&["(T) -> T for T in int | f32 | f64 | rat".to_string()][..]),
         "{added:?}"
     );
     let mut compared = 0;
@@ -244,7 +244,10 @@ fn generic_unit(i: usize) -> String {
 #[test]
 fn checking_printed_types_over_a_batch_scales() {
     let first = shown(&generic_unit(3));
-    assert_eq!(first.tops["scale3"], ["(T) -> T for T in int | f64 | rat"]);
+    assert_eq!(
+        first.tops["scale3"],
+        ["(T) -> T for T in int | f32 | f64 | rat"]
+    );
     assert!(!first.said.is_empty(), "{first:?}");
     let n = 30;
     let batch = |m: usize| -> Vec<String> { (0..m).map(generic_unit).collect() };

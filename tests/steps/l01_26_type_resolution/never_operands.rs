@@ -173,15 +173,15 @@ fn an_untyped_parameter_beside_never_takes_what_the_operator_takes() {
     for (e, want) in [
         (
             "h(1) + x",
-            "((int) -> Never, T) -> Never for T in int | f64 | rat",
+            "((int) -> Never, T) -> Never for T in int | f32 | f64 | rat",
         ),
         (
             "h(1) < x",
-            "((int) -> Never, T) -> Never for T in int | f64 | rat | bool | String",
+            "((int) -> Never, T) -> Never for T in int | f32 | f64 | rat | bool | String",
         ),
         (
             "max(h(1), x)",
-            "((int) -> Never, T) -> Never for T in int | f64 | rat",
+            "((int) -> Never, T) -> Never for T in int | f32 | f64 | rat",
         ),
         ("h(1) ++ x", "((int) -> Never, String) -> Never"),
     ] {
@@ -253,7 +253,7 @@ fn the_examples_of_the_guide() {
         (
             "f6(positional h: (int) -> Never, positional x) = h(1) + x;\n",
             "f6",
-            "((int) -> Never, T) -> Never for T in int | f64 | rat",
+            "((int) -> Never, T) -> Never for T in int | f32 | f64 | rat",
         ),
         (
             "f7(positional n: int) = { a = if n > 0 { #a } else { #b }; a + n };\n",

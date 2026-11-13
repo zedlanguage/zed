@@ -1906,6 +1906,7 @@ fn compared(v: &Value) -> bool {
             | Value::Big(_)
             | Value::Rat(_)
             | Value::Float(_)
+            | Value::Float32(_)
             | Value::Str(_) => {}
             Value::Tuple(items) | Value::Path(items) => {
                 if v.shared_parts().is_none_or(|(id, _)| met.insert(id)) {
@@ -2020,6 +2021,7 @@ impl Namer {
             | Value::Big(_)
             | Value::Rat(_)
             | Value::Float(_)
+            | Value::Float32(_)
             | Value::Atom(_)
             | Value::Family(_) => Canon::Other(v.clone()),
         })

@@ -2920,14 +2920,14 @@ enum Node<'t> {
 }
 
 /// The literal's own term in the match the elaborator writes for a literal compared with a
-/// value whose carrier is inferred: an arm `is f64` or `is rat` for each carrier it follows,
+/// value whose carrier is inferred: an arm `is f64`, `is rat` or `is f32` for each carrier it follows,
 /// each to a literal, and last the literal itself. Any other match is outside the catalog.
 pub(super) fn follow_own(arms: &[(Pattern, Term)]) -> Option<&Term> {
     let ((Pattern::Wild, own), rest) = arms.split_last()? else {
         return None;
     };
     let carrier = |(p, v): &(Pattern, Term)| {
-        matches!(p, Pattern::Is(t) if *t == Type::f64() || *t == Type::rat())
+        matches!(p, Pattern::Is(t) if *t == Type::f64() || *t == Type::rat() || *t == Type::f32())
             && matches!(v, Term::Lit(_))
     };
     (!rest.is_empty() && rest.iter().all(carrier)).then_some(own)

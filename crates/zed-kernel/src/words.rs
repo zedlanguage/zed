@@ -14,7 +14,10 @@ use num_bigint::{BigInt, BigUint, Sign};
 use num_traits::{ToPrimitive, Zero};
 
 use crate::KernelError;
-use crate::num::{Exact, Rat, TooLarge, exact_f64, read_decimal, read_f64_ieee, room, show_f64};
+use crate::num::{
+    Exact, Rat, TooLarge, exact_f32, exact_f64, read_decimal, read_f32_ieee, read_f64_ieee, room,
+    show_f32, show_f64,
+};
 use crate::term::Prim;
 use crate::text::Text;
 use crate::value::Family;
@@ -27,6 +30,7 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
     let out = match (p, x) {
         (Prim::Show, Value::Str(_)) => x.clone(),
         (Prim::Show, Value::Float(f)) => Value::str(&show_f64(f.get())),
+        (Prim::Show, Value::Float32(f)) => Value::str(&show_f32(f.get())),
         // Printing a number builds its digits; the system is asked for that memory first.
         (Prim::Show, Value::Big(n) | Value::Rat(n)) => match n.text_room() {
             Ok(()) => Value::str(&x.to_string()),
@@ -63,7 +67,19 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
                 None => invalid(),
             }
         }
-        (Prim::CastInt | Prim::CastRat | Prim::CastF64, _) => {
+        (Prim::CastF32, Value::Str(s)) => {
+            let s = s.try_flat().map_err(|e| refused("f32", e))?;
+            match read_f32(&s) {
+                Some(f) if f.is_infinite() && !s.ends_with("inf") => inexact(),
+                Some(f) => Value::float32(f),
+                None => invalid(),
+            }
+        }
+        // Every `f32` is an `f64`; an infinity or NaN is one in either format.
+        (Prim::CastF64, Value::Float32(f)) => Value::float(f64::from(f.get())),
+        (Prim::CastF32, Value::Float32(_)) => x.clone(),
+        (Prim::CastF32, Value::Float(f)) if !f.get().is_finite() => Value::float32(f.get() as f32),
+        (Prim::CastInt | Prim::CastRat | Prim::CastF64 | Prim::CastF32, _) => {
             if x.number_kind().is_none() {
                 return type_err(p, x);
             }
@@ -86,6 +102,16 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
                 (Prim::CastInt, _) if r.is_integer() => Value::integer(r.into_owned()),
                 (Prim::CastInt, _) => inexact(),
                 (Prim::CastRat, _) => Value::rat(r.into_owned()),
+                (Prim::CastF32, _) => match exact_f32(&r) {
+                    Ok(Some(f)) => Value::float32(f),
+                    Ok(None) => inexact(),
+                    Err(e) => {
+                        return Err(KernelError::RoundTooLarge {
+                            to: "f32",
+                            bits: e.bits,
+                        });
+                    }
+                },
                 _ => match exact_f64(&r) {
                     Ok(Some(f)) => Value::float(f),
                     Ok(None) => inexact(),
@@ -116,6 +142,7 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
         }
         (Prim::Abs, Value::Big(_) | Value::Rat(_)) => x.clone(),
         (Prim::Abs, Value::Float(f)) => Value::float(f.get().abs()),
+        (Prim::Abs, Value::Float32(f)) => Value::float32(f.get().abs()),
         // A string doubled 63 times holds more than `i64::MAX` characters.
         (Prim::Len, Value::Str(s)) => match i64::try_from(s.char_count()) {
             Ok(n) => Value::Int(n),
@@ -378,6 +405,7 @@ fn room_to_print(v: &Value) -> Result<Room, TooLarge> {
             Value::Bool(b) => (written(format_args!("{b}")), None),
             Value::Int(n) => (written(format_args!("{n}")), None),
             Value::Float(f) => (show_f64(f.get()).len() as u128, None),
+            Value::Float32(f) => (show_f32(f.get()).len() as u128, None),
             Value::Str(s) => (written(format_args!("{}", s.literal())), None),
             Value::Family(f) => {
                 let key = Shared::Family(f.id());
@@ -503,6 +531,21 @@ fn read_f64(s: &str) -> Option<f64> {
     if body == "inf" || body == "nan" {
         return s.parse().ok();
     }
+    float_text(body).then(|| read_f64_ieee(s))?
+}
+
+/// [`read_f64`] at `f32`.
+fn read_f32(s: &str) -> Option<f32> {
+    let body = s.strip_prefix('-').unwrap_or(s);
+    if body == "inf" || body == "nan" {
+        return s.parse().ok();
+    }
+    float_text(body).then(|| read_f32_ieee(s))?
+}
+
+/// Whether `body` is digits with an optional fraction and exponent, as `String` writes a
+/// finite float without its sign.
+fn float_text(body: &str) -> bool {
     let (mantissa, exp) = match body.split_once('e') {
         Some((m, e)) => (m, Some(e)),
         None => (body, None),
@@ -513,10 +556,7 @@ fn read_f64(s: &str) -> Option<f64> {
         None => digits(mantissa),
     };
     let exp_ok = exp.is_none_or(|e| digits(e.strip_prefix('-').unwrap_or(e)));
-    if !mantissa_ok || !exp_ok {
-        return None;
-    }
-    read_f64_ieee(s)
+    mantissa_ok && exp_ok
 }
 
 #[cfg(test)]

@@ -117,6 +117,7 @@ impl<'a> Member<'a> {
 fn carrier(v: &Value) -> NumberType {
     match v {
         Value::Rat(_) => NumberType::Rat,
+        Value::Float32(_) => NumberType::F32,
         Value::Float(_) => NumberType::F64,
         _ => NumberType::Int,
     }
@@ -154,7 +155,9 @@ pub fn cmp(a: &Member<'_>, b: &Member<'_>) -> Ordering {
 /// a string or an atom, and its kind for a tuple, a keypath or a family.
 pub fn of_value(v: &Value) -> Member<'_> {
     match v {
-        Value::Int(_) | Value::Big(_) | Value::Rat(_) | Value::Float(_) => Member::Number(v),
+        Value::Int(_) | Value::Big(_) | Value::Rat(_) | Value::Float(_) | Value::Float32(_) => {
+            Member::Number(v)
+        }
         Value::Bool(false) => Member::False,
         Value::Bool(true) => Member::True,
         Value::Str(s) => Member::Str(s),

@@ -171,6 +171,7 @@ impl Reader<'_> {
                 Type::int(),
                 Type::rat(),
                 Type::f64(),
+                Type::f32(),
                 Type::string(),
             ]
             .iter()
@@ -182,6 +183,7 @@ impl Reader<'_> {
             "int" => Type::int(),
             "rat" => Type::rat(),
             "f64" => Type::f64(),
+            "f32" => Type::f32(),
             "String" => Type::string(),
             _ => {
                 if let Ok(n) = w.parse() {
@@ -443,6 +445,7 @@ fn every_atom_every_tuple_and_every_struct_print_as_the_kind_wide_types() {
             Type::bool(),
             Type::int(),
             Type::rat(),
+            Type::f32(),
             Type::f64(),
             Type::string(),
         ]);

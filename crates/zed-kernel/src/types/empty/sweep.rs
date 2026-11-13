@@ -313,7 +313,7 @@ fn scalar_ok(p: &Parts) -> bool {
 
 /// Whether `p` lists no rational, float or string, and only integers of 64 bits.
 fn lits_ok(p: &Parts) -> bool {
-    [&p.rats, &p.floats, &p.strings]
+    [&p.rats, &p.floats, &p.f32s, &p.strings]
         .iter()
         .all(|l: &&Lits| !l.cofinite && l.values.is_empty())
         && p.ints.values.iter().all(|v| matches!(v, Value::Int(_)))

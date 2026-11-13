@@ -114,20 +114,20 @@ fn the_checker_and_elaboration_reject_a_misplaced_argument_alike() {
         // Through a value, the error names the value's type.
         (
             "k = dbl;\ny = k(4);",
-            vec![named("x", "(x: T) -> T for T in int | f64 | rat", "4")],
+            vec![named("x", "(x: T) -> T for T in int | f32 | f64 | rat", "4")],
         ),
         (
             "k = add;\ny = k(a: 1, b: 2);",
-            vec![positional("a", "(T, T) -> T for T in int | f64 | rat", "1")],
+            vec![positional("a", "(T, T) -> T for T in int | f32 | f64 | rat", "1")],
         ),
         (
             "inc = x -> x + 1;\ny = inc(x: 3);",
-            vec![positional("x", "(T) -> T for T in int | f64 | rat", "3")],
+            vec![positional("x", "(T) -> T for T in int | f32 | f64 | rat", "3")],
         ),
         (
             "k = sub;\ny = k(a: 1);",
             vec![
-                "this call of `(a: T, b: T) -> T for T in int | f64 | rat` gives no value to its parameter `b`, and `b` has no default, so the call cannot be made. [k(a: 1)]"
+                "this call of `(a: T, b: T) -> T for T in int | f32 | f64 | rat` gives no value to its parameter `b`, and `b` has no default, so the call cannot be made. [k(a: 1)]"
                     .into(),
             ],
         ),

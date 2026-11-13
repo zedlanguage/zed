@@ -589,7 +589,7 @@ fn a_unit_reversed_and_rotated_gives_the_same_types_and_diagnostics() {
     // A bare literal takes the carrier of its use (L1.26a), so `bump` is generic.
     assert!(
         want.0
-            .contains(&"bump: (x: T) -> T for T in int | f64 | rat".to_string()),
+            .contains(&"bump: (x: T) -> T for T in int | f32 | f64 | rat".to_string()),
         "{:?}",
         want.0
     );

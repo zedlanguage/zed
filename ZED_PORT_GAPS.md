@@ -3783,3 +3783,12 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | `Vec<Option<Arc<str>>>` of env names filled in place as the build reaches each node | `Builder::envs` | Mutation (gap 11) | map values set once per node in the fold |
 | `HashMap<Arc<str>, usize>` from a rebound name to its slot in the env | `Builder::slot`, `Builder::slots` | none | a map |
 | Binary lifting over a `Vec<Vec<usize>>` of ancestors, written in place per node | `dominators` | Mutation (gap 11) | a fold over the topological order building each node's ancestor list from its immediate dominator's |
+
+## Entries from FLOAT-f32 (`crates/zed-kernel/src/eval.rs`, `num.rs`, `num/float_text.rs`, `types.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `f64 as f32`, a narrowing that rounds to the nearest `f32`, where Zed's `f32(x)` is exact or `#inexact` | `prim_data` (`f32 ^ int`, `min` and `max`), `exact_f32` | Missing: no rounding narrowing word | the `f32` operations as kernel primitives, as `f64`'s are; `exact_f32` as `f32(x)` itself |
+| An exponent past ±2^53 replaced by the nearest `f64` of its parity (`as_integer`, `is_even`) before `powf` | `prim_data` (`f32 ^ int`) | None | `if n mod 2 == 0 { … } else { … }` on the `int` exponent |
+| `f32::to_bits` and `f32::from_bits` in the hash, the ZIR binary and the canonical serial | `Value` hash, `W::value`, `Out::value` | Float bits (gap 4, built) | `f32Bits` of L1.39a and its inverse |
+| The digest mixes the `f32s` part only when it is nonempty, so a type with no `f32` hashes as before | `Parts::hash` | None | a `match` on the part's emptiness, as written |

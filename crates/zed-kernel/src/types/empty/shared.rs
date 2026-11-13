@@ -292,7 +292,7 @@ impl TwoSat {
 
 /// Whether `p` has no value but atoms.
 pub(super) fn only_atoms(p: &Parts) -> bool {
-    let lits = [&p.ints, &p.rats, &p.floats, &p.strings];
+    let lits = [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings];
     p.bools == 0
         && lits
             .iter()

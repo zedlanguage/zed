@@ -63,7 +63,7 @@ fn a_tuple_doubled_at_each_level_is_named_once_per_level() {
   [1]  8:5: `t6` is (T5, T5) here
        8 | u = t6 + 1;
          |     ^^ [1]
-         |     ^^^^^^ [31, 32, 33]
+         |     ^^^^^^ [31, 32, 33, 34]
          |          ^ [30]
   [2]  7:6: `t6` is defined as this expression, (T5, T5)
        7 | t6 = (t5, t5);
@@ -124,7 +124,8 @@ fn a_tuple_doubled_at_each_level_is_named_once_per_level() {
   [30] 8:10: this literal, 1, is 1
   [31] 8:5: `+` takes (int, int) -> int
   [32] 8:5: `+` takes (f64, f64) -> f64
-  [33] 8:5: `+` takes (rat, rat) -> rat"#
+  [33] 8:5: `+` takes (rat, rat) -> rat
+  [34] 8:5: `+` takes (f32, f32) -> f32"#
     );
 }
 
@@ -287,7 +288,7 @@ fn a_chain_of_names_each_holding_the_one_before_names_each_link() {
   [1]  6:5: `a4` is (T3, 4) here
        6 | u = a4 + 1;
          |     ^^ [1]
-         |     ^^^^^^ [23, 24, 25]
+         |     ^^^^^^ [23, 24, 25, 26]
          |          ^ [22]
   [2]  5:6: `a4` is defined as this expression, (T3, 4)
        5 | a4 = (a3, 4);
@@ -332,7 +333,8 @@ fn a_chain_of_names_each_holding_the_one_before_names_each_link() {
   [22] 6:10: this literal, 1, is 1
   [23] 6:5: `+` takes (int, int) -> int
   [24] 6:5: `+` takes (f64, f64) -> f64
-  [25] 6:5: `+` takes (rat, rat) -> rat"#
+  [25] 6:5: `+` takes (rat, rat) -> rat
+  [26] 6:5: `+` takes (f32, f32) -> f32"#
     );
 }
 
@@ -346,7 +348,7 @@ fn a_chain_of_names_of_one_type_writes_the_type_whole_at_each_link() {
   [1]  6:5: `x4` is (0, 1, 2, 3, 4) here
        6 | u = x4 + 1;
          |     ^^ [1]
-         |     ^^^^^^ [18, 19, 20]
+         |     ^^^^^^ [18, 19, 20, 21]
          |          ^ [17]
   [2]  5:6: `x4` is defined as this expression, (0, 1, 2, 3, 4)
        5 | x4 = x3;
@@ -379,7 +381,8 @@ fn a_chain_of_names_of_one_type_writes_the_type_whole_at_each_link() {
   [17] 6:10: this literal, 1, is 1
   [18] 6:5: `+` takes (int, int) -> int
   [19] 6:5: `+` takes (f64, f64) -> f64
-  [20] 6:5: `+` takes (rat, rat) -> rat"#
+  [20] 6:5: `+` takes (rat, rat) -> rat
+  [21] 6:5: `+` takes (f32, f32) -> f32"#
     );
 }
 
@@ -519,7 +522,7 @@ fn a_value_written_in_two_ways_is_written_as_each_step_writes_it() {
   [1]  4:5: `a2` is (T1, T1) here
        4 | u = a2 + 1;
          |     ^^ [1]
-         |     ^^^^^^ [15, 16, 17]
+         |     ^^^^^^ [15, 16, 17, 18]
          |          ^ [14]
   [2]  3:6: `a2` is defined as this expression, (T1, T1)
        3 | a2 = (a1, a1);
@@ -548,7 +551,8 @@ fn a_value_written_in_two_ways_is_written_as_each_step_writes_it() {
   [14] 4:10: this literal, 1, is 1
   [15] 4:5: `+` takes (int, int) -> int
   [16] 4:5: `+` takes (f64, f64) -> f64
-  [17] 4:5: `+` takes (rat, rat) -> rat"#
+  [17] 4:5: `+` takes (rat, rat) -> rat
+  [18] 4:5: `+` takes (f32, f32) -> f32"#
     );
 }
 
@@ -564,7 +568,7 @@ fn a_zero_written_with_and_without_its_sign_is_written_as_each_step_writes_it() 
   [1]  4:5: `a2` is (T1, T1) here
        4 | u = a2 + 1;
          |     ^^ [1]
-         |     ^^^^^^ [16, 17, 18]
+         |     ^^^^^^ [16, 17, 18, 19]
          |          ^ [15]
   [2]  3:6: `a2` is defined as this expression, (T1, T1)
        3 | a2 = (a1, a1);
@@ -595,7 +599,8 @@ fn a_zero_written_with_and_without_its_sign_is_written_as_each_step_writes_it() 
   [15] 4:10: this literal, 1, is 1
   [16] 4:5: `+` takes (int, int) -> int
   [17] 4:5: `+` takes (f64, f64) -> f64
-  [18] 4:5: `+` takes (rat, rat) -> rat"#
+  [18] 4:5: `+` takes (rat, rat) -> rat
+  [19] 4:5: `+` takes (f32, f32) -> f32"#
     );
 }
 
@@ -617,7 +622,7 @@ fn a_union_of_tuples_printed_before_keeps_the_order_of_its_members() {
   [1]  7:5: `w` is (T3, T3) here
        7 | u = w + 1;
          |     ^ [1]
-         |     ^^^^^ [24, 25, 26]
+         |     ^^^^^ [24, 25, 26, 27]
          |         ^ [23]
   [2]  6:5: `w` is defined as this expression, (T3, T3)
        6 | w = (v, v);
@@ -665,7 +670,8 @@ fn a_union_of_tuples_printed_before_keeps_the_order_of_its_members() {
   [23] 7:9: this literal, 1, is 1
   [24] 7:5: `+` takes (int, int) -> int
   [25] 7:5: `+` takes (f64, f64) -> f64
-  [26] 7:5: `+` takes (rat, rat) -> rat"#
+  [26] 7:5: `+` takes (rat, rat) -> rat
+  [27] 7:5: `+` takes (f32, f32) -> f32"#
     );
 }
 
@@ -685,7 +691,7 @@ fn a_union_inside_a_tuple_printed_before_is_named_as_the_later_type_uses_it() {
   [1]  5:5: `a2` is (T2, T2) here
        5 | u = a2 + 1;
          |     ^^ [1]
-         |     ^^^^^^ [16, 17, 18]
+         |     ^^^^^^ [16, 17, 18, 19]
          |          ^ [15]
   [2]  4:6: `a2` is defined as this expression, (T2, T2)
        4 | a2 = (a1, a1);
@@ -717,6 +723,7 @@ fn a_union_inside_a_tuple_printed_before_is_named_as_the_later_type_uses_it() {
   [15] 5:10: this literal, 1, is 1
   [16] 5:5: `+` takes (int, int) -> int
   [17] 5:5: `+` takes (f64, f64) -> f64
-  [18] 5:5: `+` takes (rat, rat) -> rat"#
+  [18] 5:5: `+` takes (rat, rat) -> rat
+  [19] 5:5: `+` takes (f32, f32) -> f32"#
     );
 }

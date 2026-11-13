@@ -4,8 +4,8 @@
 //! float format or `rat`, never `int`, and is rejected where nothing fixes its carrier, as is
 //! a `/` of integer literals alone (DESIGN.md L1.26a, L1.26b, sec:domains).
 //!
-//! The carriers here are `int`, `f64` and `rat`: `bf16`, `f16` and `f32` join the bounds of
-//! these signatures with item FLOAT-f32.
+//! The carriers here are `int`, `f32`, `f64` and `rat` (FLOAT-f32): `bf16` and `f16` join the
+//! bounds of these signatures with step L1.18a.
 
 mod call_arguments;
 mod call_union_at_f64;
@@ -47,8 +47,8 @@ const RELU_NEXT: &str = "relu(x) = if x < 0 { 0 } else { x };\n\
                          sumPair(p) = p[0] + p[1];\n\
                          next(x) = sumPair(p: (x, 1));\n";
 
-const T: &str = "(x: T) -> T for T in int | f64 | rat";
-const T_NO_INT: &str = "(x: T) -> T for T in f64 | rat";
+const T: &str = "(x: T) -> T for T in int | f32 | f64 | rat";
+const T_NO_INT: &str = "(x: T) -> T for T in f32 | f64 | rat";
 
 #[test]
 fn an_integer_literal_leaves_the_parameter_generic() {
@@ -103,10 +103,12 @@ fn a_program_passes_a_generic_function_to_a_slot_of_two_arrows() {
 
 #[test]
 fn an_integer_literal_removes_the_carriers_that_do_not_hold_it() {
-    // 2^53 + 1 has no f64; 2^24 + 1, 2^53, 2049 and 257 have one.
+    // 2^53 + 1 has no f64 and no f32; 2^24 + 1 has an f64 and no f32; 2^24, 2^53, 2049 and 257
+    // have both.
     let cases = [
         ("9007199254740993", "(x: T) -> T for T in int | rat"),
-        ("16777217", T),
+        ("16777217", "(x: T) -> T for T in int | f64 | rat"),
+        ("16777216", T),
         ("9007199254740992", T),
         ("2049", T),
         ("257", T),
@@ -401,24 +403,29 @@ fn the_lexer_reads_no_suffix_on_an_integer() {
         err("1_000f64"),
         "A format suffix needs a decimal literal: `1_000f64`. Try `1_000.0f64` instead."
     );
-    // `bf16`, `f16` and `f32` are no formats yet, so neither an integer nor a decimal takes
-    // them; the repair is never the integer with `.0` and the same suffix, which is rejected
-    // too (item LEX-decimal-format-suffix).
+    // An integer takes `f32` no more than `f64` (FLOAT-f32).
+    assert_eq!(
+        err("2f32"),
+        "A format suffix needs a decimal literal: `2f32`. Try `2.0f32` instead."
+    );
+    // `bf16` and `f16` are no formats yet, so neither an integer nor a decimal takes them; the
+    // repair is never the integer with `.0` and the same suffix, which is rejected too (item
+    // LEX-decimal-format-suffix).
     assert_eq!(
         err("2bf16"),
         "The format suffix `bf16` is not available: `2bf16`. Try `2.0f64` instead."
     );
     assert_eq!(
-        err("1.5f32"),
-        "The format suffix `f32` is not available: `1.5f32`. Try `1.5f64` instead."
+        err("1.5f16"),
+        "The format suffix `f16` is not available: `1.5f16`. Try `1.5f64` instead."
     );
     assert_eq!(
         err("1e3f16"),
         "The format suffix `f16` is not available: `1e3f16`. Try `1e3f64` instead."
     );
     assert_eq!(
-        err("2.5e-3f32"),
-        "The format suffix `f32` is not available: `2.5e-3f32`. Try `2.5e-3f64` instead."
+        err("2.5e-3bf16"),
+        "The format suffix `bf16` is not available: `2.5e-3bf16`. Try `2.5e-3f64` instead."
     );
     // Each repair lexes as one literal.
     for t in [
@@ -428,6 +435,10 @@ fn the_lexer_reads_no_suffix_on_an_integer() {
         "1.5f64",
         "1e3f64",
         "2.5e-3f64",
+        "2.0f32",
+        "1.5f32",
+        "2.5e-3f32",
+        "1.0e-45f32",
     ] {
         assert!(lex_fence(t).is_ok(), "{t}");
     }

@@ -127,7 +127,8 @@ fn min_and_max_take_two_numbers_of_one_kind() {
         errors("x = min(1, true);\n"),
         ["`min` does not take (1, true): no arrow of `min` takes these types. [min(1, true)]"]
     );
-    let both = "((int, int) -> int) & ((f64, f64) -> f64) & ((rat, rat) -> rat)";
+    let both =
+        "((int, int) -> int) & ((f64, f64) -> f64) & ((rat, rat) -> rat) & ((f32, f32) -> f32)";
     assert_eq!(
         errors("x = min(1);\n"),
         [format!(

@@ -12,6 +12,7 @@ const WORDS: &[(&str, Prim)] = &[
     ("int", Prim::CastInt),
     ("rat", Prim::CastRat),
     ("f64", Prim::CastF64),
+    ("f32", Prim::CastF32),
     ("abs", Prim::Abs),
     ("min", Prim::Min),
     ("max", Prim::Max),

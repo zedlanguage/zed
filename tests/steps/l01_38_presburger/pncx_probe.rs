@@ -1521,13 +1521,13 @@ fn pncx_renamed_parameters_and_case56_match() {
     let mut sources = Vec::new();
     for x in names {
         let condition = condition.replace('x', x);
-        sources.push(format!("f{}({x}: int) = {condition};", sources.len()));
+        sources.push(format!("p{}({x}: int) = {condition};", sources.len()));
         for alias in names {
             if alias == x {
                 continue;
             }
             sources.push(format!(
-                "f{}({x}: int, {alias}: int) = {alias} == {x} - 8 && {condition};",
+                "p{}({x}: int, {alias}: int) = {alias} == {x} - 8 && {condition};",
                 sources.len()
             ));
         }

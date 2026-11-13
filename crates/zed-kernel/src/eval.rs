@@ -2589,7 +2589,7 @@ fn test_too_large(op: Option<&'static str>, t: Test, e: TooLarge) -> KernelError
 
 /// A primitive on data none of which is an atom.
 fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
-    use Value::{Bool, Float, Int, Str};
+    use Value::{Bool, Float, Float32, Int, Str};
     // These two keep the values they are given: copying a tuple that holds a list would make
     // building the list quadratic in its length.
     match p {
@@ -2650,6 +2650,12 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
         (Prim::Mul, [Float(a), Float(b)]) => Value::float(a.get() * b.get()),
         (Prim::Div, [Float(a), Float(b)]) => Value::float(a.get() / b.get()),
         (Prim::Neg, [Float(a)]) => Value::float(-a.get()),
+        // An `f32` operation rounds once to `f32`, as IEEE 754 binary32 arithmetic does.
+        (Prim::Add, [Float32(a), Float32(b)]) => Value::float32(a.get() + b.get()),
+        (Prim::Sub, [Float32(a), Float32(b)]) => Value::float32(a.get() - b.get()),
+        (Prim::Mul, [Float32(a), Float32(b)]) => Value::float32(a.get() * b.get()),
+        (Prim::Div, [Float32(a), Float32(b)]) => Value::float32(a.get() / b.get()),
+        (Prim::Neg, [Float32(a)]) => Value::float32(-a.get()),
         (Prim::Concat, [Str(a), Str(b)]) => Str(crate::text::Text::join(a, b)?),
         // NaN in, NaN out, as for every float operation (DESIGN.md sec:domains, NaN rule 5):
         // IEEE 754 `pow` gives `pow(NaN, 0) = 1` and `pow(1, NaN) = 1`, so a NaN operand is
@@ -2662,9 +2668,50 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
                 a.powf(b)
             })
         }
+        (Prim::Pow, [Float32(a), Float32(b)]) => {
+            let (a, b) = (a.get(), b.get());
+            Value::float32(if a.is_nan() || b.is_nan() {
+                f32::NAN
+            } else {
+                a.powf(b)
+            })
+        }
+        // `f32 ^ int`, the one operator arrow between two carriers (DESIGN.md L1.18): the power
+        // is taken in `f64` and rounded once to `f32`. An exponent beyond ±2^53 is read as the
+        // nearest `f64` of its parity, which keeps the sign of a negative base; every base but
+        // ±1 then overflows or underflows in `f64` as it would at the exact exponent.
+        (Prim::Pow, [Float32(a), b]) if b.number_kind() == Some(0) => {
+            let a = a.get();
+            let e = match b {
+                Int(n) if n.unsigned_abs() <= 1 << 53 => *n as f64,
+                _ => {
+                    let n = b.as_integer().expect("an integer");
+                    let m = if n.is_even() {
+                        2f64.powi(53)
+                    } else {
+                        2f64.powi(53) - 1.0
+                    };
+                    if n.is_negative() { -m } else { m }
+                }
+            };
+            Value::float32(if a.is_nan() {
+                f32::NAN
+            } else {
+                f64::from(a).powf(e) as f32
+            })
+        }
         (Prim::Eq, [a, b]) => Bool(a.surface_eq(b)),
         (Prim::Ne, [a, b]) => Bool(!a.surface_eq(b)),
         // Two floats compare as IEEE 754 does, so every comparison with a NaN is false.
+        (Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge, [Float32(a), Float32(b)]) => {
+            let (a, b) = (a.get(), b.get());
+            Bool(match p {
+                Prim::Lt => a < b,
+                Prim::Le => a <= b,
+                Prim::Gt => a > b,
+                _ => a >= b,
+            })
+        }
         (Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge, [Float(a), Float(b)]) => {
             let (a, b) = (a.get(), b.get());
             Bool(match p {
@@ -2676,6 +2723,12 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
         }
         (Prim::Min | Prim::Max, [Float(a), Float(b)]) => {
             Value::float(ieee_min_max(p == Prim::Min, a.get(), b.get()))
+        }
+        // Widening to `f64` is exact and the result is one of the two, so narrowing back is too.
+        (Prim::Min | Prim::Max, [Float32(a), Float32(b)]) => {
+            Value::float32(
+                ieee_min_max(p == Prim::Min, f64::from(a.get()), f64::from(b.get())) as f32,
+            )
         }
         // Two tuples: the first component in which they differ decides (DESIGN.md sec:reduction).
         (Prim::Min | Prim::Max, [a @ Value::Tuple(_), b @ Value::Tuple(_)]) => {
@@ -2752,6 +2805,7 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
             | Prim::CastInt
             | Prim::CastRat
             | Prim::CastF64
+            | Prim::CastF32
             | Prim::Abs
             | Prim::Len
             | Prim::Lower

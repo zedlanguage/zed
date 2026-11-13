@@ -85,6 +85,21 @@ fences changed, so test `l01_07` needs its expected output accepted at the next 
   executable's data copy a joined string only into memory asked first, or not at all.
 - Done: **L1.18**, the interpreter's scalar tier: the L1 prelude words (`zedc::interp`,
   `zed_kernel::words`), the `#errs` merge, float printing with the exact round trip.
+- Done: **FLOAT-f32**, `f32` beside `f64` (DESIGN.md L1.17, L1.18): `Value::Float32`, the
+  suffix `f32`, arithmetic rounded once to `f32`, IEEE order, `abs`, `min`, `max`, the casts
+  `f32(x)` of `int`, `rat`, `f64` and `String` (exact or `#inexact`; an `int` the checker
+  shows within ±2^24 is exact, as ±2^53 is for `f64`), `int`, `rat` and `f64` of an `f32`,
+  `f32 ^ int -> f32` (taken in `f64`, an exponent past ±2^53 kept to its parity), printing
+  by `show_f32`, the ZIR text suffix (`0.1f32`, `nanf32`) and binary tag 11, the canonical
+  tag 12, `Prim::CastF32` = 63, and `Carrier::F32` in every class bound (COMPLEXITY.md F192).
+  A bare decimal literal base takes `rat` with an `int` exponent, not `f32` (`0.5 ^ n`); a
+  decimal literal its uses leave the float formats alone takes `f64` (author decision
+  2026-11-12), so `g() = 2^-1.0` is `0.5`. A decimal component of a tuple argument takes
+  `f32` at a use that asks for it (`p[0] + 1.0f32` with `h((1.5, 2))`), and `f64` where the
+  uses leave it the float formats alone, as the literal passed alone does.
+  Division by ±0.0 and `0.0 ^ n` with `n < 0` give IEEE infinities as at `f64` until row
+  POW-domains. Declared-type bindings (`x: f32 = 0.1`) are not compiled at L1 for any type;
+  the literal-fixed-by-use case is tested through an `f32` parameter.
 - Done: **L1.19**, whole-file ports (`zedc::run`, `zedc run` and `zedc replay`): `Lines` and
   `Files` inputs read once, `Lines` outputs written once when the wave ends, acknowledgments,
   and the replay record.
@@ -132,7 +147,8 @@ fences changed, so test `l01_07` needs its expected output accepted at the next 
   is generic, `1n` is a number running into a name, an integer literal nothing fixes is `int`,
   and a decimal literal or a `/` of integer literals that nothing fixes is rejected with a
   menu (row UnfixedDecimal); a literal at a carrier it cannot take is row LiteralCarrier
-  (COMPLEXITY.md F135). The carriers are `int`, `f64` and `rat` until FLOAT-f32.
+  (COMPLEXITY.md F135). The carriers are `int`, `f32`, `f64` and `rat` since FLOAT-f32
+  (COMPLEXITY.md F192); `f16` and `bf16` come with step L1.18a.
 - Done: **L1.27**, absences and narrowing: types mark the atoms of named families; `else`
   strips only loose atoms, the pattern form strips the atom it names, and a family atom that
   selects no arrow is rejected.
@@ -2079,7 +2095,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| FLOAT-f32 | impl attempt 1 | 2026-11-05 04:07 | tuple decimal component at f32 fixed (red then green); rebased on 8679b15a8; clippy + full --doc suite running |
 | L1.29d-package | impl attempt 1 | 2026-11-12 20:48 | started; worktree /home/luke/Work/wt/l129d-package on origin/main ba655bbca |
 | LIT-tuple-branch-carrier | impl attempt 1 | 2026-11-12 20:34 | started; worktree /home/luke/Work/wt/lit-tuple-branch on origin/main 0c230df62 |
 | MAIN-red-m0_01-s_01f | impl attempt 1 | 2026-11-12 21:37 | reproduced on c24ad56b3: m0_01 2 failed (well_named, step_index), s_01f 1 failed: 14 files in 4 crates' cycles (zed-kernel 2, zedc 6, zedc-presburger 2, zedc-sy |

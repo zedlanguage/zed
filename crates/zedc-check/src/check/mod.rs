@@ -51,7 +51,7 @@ use std::fmt;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use zed_kernel::num::{TooLarge, literal_f64};
+use zed_kernel::num::{FloatFormat, TooLarge, literal_f32, literal_f64, show_f32};
 use zed_kernel::types::{Spell, Spelled, Type as KType, Universes, Verdict, defs};
 use zed_kernel::{Prim, Rat, Term, Universe, Value, eval};
 
@@ -436,7 +436,7 @@ struct Lit {
     generic: bool,
     witness: bool,
     /// Whether it is an integer exponent of `^` in a class of the base: `^` takes an `int`
-    /// exponent at `int` and `rat`, and an `f64` one at `f64` alone, so it follows the class
+    /// exponent at `int`, `rat` and `f32`, and an `f64` one at `f64` alone, so it follows the class
     /// only where it is an `f64` and does not restrict it ([`Ck::lit_follows`]).
     exponent: bool,
 }
@@ -2873,7 +2873,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .filter(|(_, s)| s.start <= l.span.start && l.span.end <= s.end)
                 .map(|(id, _)| id)
         };
-        let numeric = [Carrier::Int, Carrier::F64, Carrier::Rat]
+        let numeric = [Carrier::Int, Carrier::F64, Carrier::Rat, Carrier::F32]
             .into_iter()
             .find(|c| mask & c.bit() != 0)
             .filter(|_| {
@@ -2884,15 +2884,17 @@ impl<'t, 'a> Ck<'t, 'a> {
         // Literals that nothing gives a carrier: an integer literal is an `int` where the
         // class may be one, and otherwise, as for a decimal literal or a `/` of integer
         // literals, nothing chooses among the carriers left, and the first decimal literal,
-        // or else the first literal, is rejected (steps L1.26a and L1.26b).
+        // or else the first literal, is rejected (steps L1.26a and L1.26b), unless the carriers
+        // left are float formats alone, `f64` among them, which take `f64` ([`floats_take_f64`]).
         let left: Vec<Carrier> = Carrier::of_mask(mask).filter(|c| c.numeric()).collect();
-        if numeric.is_some() && mask & Carrier::Int.bit() == 0 && left.len() > 1 {
+        if numeric.is_some()
+            && mask & Carrier::Int.bit() == 0
+            && left.len() > 1
+            && !floats_take_f64(&left)
+        {
             let mut joined = lits.iter().filter(|(_, follows)| !follows).map(|(l, _)| l);
             let first = joined.clone().next();
-            if let Some(l) = joined
-                .find(|l| lit_carrier(&l.value) == Carrier::F64)
-                .or(first)
-            {
+            if let Some(l) = joined.find(|l| is_decimal(&l.value)).or(first) {
                 let notes = self.derive(&[l.site]);
                 let m = unfixed(l, &left);
                 self.reject(Some(Row::UnfixedDecimal), l.site, m, notes);
@@ -2901,7 +2903,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         // A bare literal compared with values of the class follows it without narrowing it, so
         // whether the class holds strings or `bool` and no number is known only now, whatever
         // order the body's uses come in (A15).
-        let numbers = Carrier::Int.bit() | Carrier::Rat.bit() | Carrier::F64.bit();
+        let numbers = Carrier::NUMBER_BITS;
         let others = Carrier::Str.bit() | Carrier::Bool.bit();
         if mask & (numbers | OTHER) == 0 && mask & others != 0 {
             let held = Ty::of_mask(mask);
@@ -2928,18 +2930,19 @@ impl<'t, 'a> Ck<'t, 'a> {
             // is exactly.
             None => {
                 for (l, _) in lits.iter().filter(|(l, follows)| *follows || l.generic) {
-                    let values: Vec<(Carrier, Value)> = [Carrier::Int, Carrier::F64, Carrier::Rat]
-                        .into_iter()
-                        .filter(|&c| mask & c.bit() != 0 && c != lit_carrier(&l.value))
-                        .filter(|&c| !(l.exponent && c == Carrier::Rat))
-                        .filter_map(|c| match adopt(l, c) {
-                            Ok(Some(v)) => Some((c, neg_value(&v, l.neg()))),
-                            // A literal that is not exactly a value of `c`, as `9007199254740993`
-                            // at `f64`, equals no value of `c`: it keeps its own carrier, and
-                            // the comparison is false there, as it is in exact arithmetic.
-                            _ => None,
-                        })
-                        .collect();
+                    let values: Vec<(Carrier, Value)> =
+                        [Carrier::Int, Carrier::F64, Carrier::Rat, Carrier::F32]
+                            .into_iter()
+                            .filter(|&c| mask & c.bit() != 0 && c != lit_carrier(&l.value))
+                            .filter(|&c| !(l.exponent && c == Carrier::Rat))
+                            .filter_map(|c| match adopt(l, c) {
+                                Ok(Some(v)) => Some((c, neg_value(&v, l.neg()))),
+                                // A literal that is not exactly a value of `c`, as `9007199254740993`
+                                // at `f64`, equals no value of `c`: it keeps its own carrier, and
+                                // the comparison is false there, as it is in exact arithmetic.
+                                _ => None,
+                            })
+                            .collect();
                     if !values.is_empty() {
                         self.put(Undo::Follows(l.span, Some(values)));
                         if l.witness {
@@ -3323,7 +3326,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The literal `l` adopting `c`, recorded; an error when it is not exactly a `c`.
     /// The literal `l` of a class whose carrier is `c`: an exponent of `^` ([`Lit::exponent`])
     /// takes `c` only where it is `f64`, and keeps its `int` where `^` takes an `int`
-    /// exponent, at `int` and `rat`; any other literal adopts `c` ([`Self::adopt_to`]).
+    /// exponent, at `int`, `rat` and `f32`; any other literal adopts `c` ([`Self::adopt_to`]).
     fn lit_follows(&mut self, l: &Lit, c: Carrier) {
         if !l.exponent || c == Carrier::F64 {
             self.adopt_to(l, c);
@@ -3645,7 +3648,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         {
             if !self.join(k, l, l.bare && !inner) {
                 let mask = self.classes[self.find(k)].mask;
-                let held: Vec<Carrier> = [Carrier::Int, Carrier::Rat, Carrier::F64]
+                let held: Vec<Carrier> = [Carrier::Int, Carrier::Rat, Carrier::F64, Carrier::F32]
                     .into_iter()
                     .filter(|c| mask & c.bit() != 0)
                     .collect();
@@ -4107,17 +4110,19 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `f(a: T, b: T)` takes no `rat` and `f64` together. An argument whose values are not
     /// all numbers of known carriers, an integer literal without a suffix among them, decides
     /// nothing.
-    /// One pass over the arguments per arrow, and the pairs of the seven sets of numeric
+    /// One pass over the arguments per arrow, and the pairs of the fifteen sets of numeric
     /// carriers, a constant.
     fn no_common_carrier(&self, sig: &Sig, args: &[Option<Arg>]) -> bool {
         let masks: Vec<Option<u8>> = args
             .iter()
             .map(|a| a.as_ref().and_then(|a| self.numbers_of(a)))
             .collect();
-        // The sets of carriers the arguments take, each a bit: a mask is below 16.
-        let kinds = masks.iter().flatten().fold(0u16, |k, &m| k | 1 << m);
-        let has = |m: u8| kinds & 1 << m != 0;
-        let disjoint = (1..16u8).any(|m| has(m) && (1..16u8).any(|n| has(n) && m & n == 0));
+        // The sets of carriers the arguments take, each a bit: a mask is within
+        // `Carrier::NUMBER_BITS`, below 64.
+        let kinds = masks.iter().flatten().fold(0u64, |k, &m| k | 1 << m);
+        // The masks present, at most fifteen: each is a nonempty subset of the four number bits.
+        let present: Vec<u8> = (1..64u8).filter(|&m| kinds & 1 << m != 0).collect();
+        let disjoint = (present.iter()).any(|&m| present.iter().any(|&n| m & n == 0));
         if !disjoint {
             return false;
         }
@@ -4153,8 +4158,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// a decimal one any but `int`, which a decimal never is.
     fn numbers_of(&self, a: &Arg) -> Option<u8> {
         match &a.lit {
-            Some(l) if l.bare && lit_carrier(&l.value) == Carrier::F64 => {
-                Some(Carrier::F64.bit() | Carrier::Rat.bit())
+            Some(l) if l.bare && is_decimal(&l.value) => {
+                Some(Carrier::F64.bit() | Carrier::Rat.bit() | Carrier::F32.bit())
             }
             Some(l) if l.bare => None,
             Some(l) => Some(lit_carrier(&l.value).bit()),
@@ -4166,7 +4171,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// of a known carrier, a class's carriers where it holds numbers only. Atoms, which pass
     /// by, are not read. One split of the set and one lookup per variable.
     fn numbers_in(&self, t: &Ty) -> Option<u8> {
-        let numbers = Carrier::Int.bit() | Carrier::Rat.bit() | Carrier::F64.bit();
+        let numbers = Carrier::NUMBER_BITS;
         if t.dynamic || !t.tuples.is_empty() || !t.fns.is_empty() {
             return None;
         }
@@ -4387,8 +4392,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 _ if ints && takes.contains(&Carrier::Int) => Some(Carrier::Int),
                 [c] => Some(c),
                 [c, ..] => {
-                    let decimal = lits.iter().any(|l| lit_carrier(&l.value) == Carrier::F64);
-                    if !decimal && let Some(l) = lits.first() {
+                    let decimal = lits.iter().any(|l| is_decimal(&l.value));
+                    if !decimal
+                        && !floats_take_f64(&takes)
+                        && let Some(l) = lits.first()
+                    {
                         let notes = self.derive(&[l.site]);
                         let m = unfixed(l, &takes);
                         self.reject(Some(Row::UnfixedDecimal), l.site, m, notes);
@@ -4479,7 +4487,7 @@ fn converted(sig: &Sig, t: &Ty) -> Option<Ty> {
 /// one conversion by the signature of the exact cast.
 fn widening(w: &str, t: &Ty, exact: bool) -> Option<Ty> {
     match w == "f64" && exact {
-        true => converted(&f64_of_exact_int_sig(), t).filter(|r| r.atoms() == t.atoms()),
+        true => converted(&exact_int_cast_sig(Carrier::F64), t).filter(|r| r.atoms() == t.atoms()),
         false => cast_widening(w, t),
     }
 }
@@ -4861,8 +4869,8 @@ fn read_literal(e: &Expr, src: Option<&str>) -> Result<Option<Lit>, TooLarge> {
             Some(v) => (v, true),
             None => return Ok(None),
         },
-        ExprKind::Float { digits: s, forced } => match literal_f64(s) {
-            Ok(x) => (Value::float(x), !forced),
+        ExprKind::Float { digits: s, forced } => match Value::literal_float(s, *forced) {
+            Ok(v) => (v, forced.is_none()),
             Err(_) => return Ok(None),
         },
         _ => return Ok(None),
@@ -5059,7 +5067,7 @@ fn adopted(a: &Arg, p: &Ty, rough: bool) -> Result<Option<(Ty, Adoptions)>, (Spa
         // `n` an int, needs only whether the call checks. Typed `rat`, the literal is read in
         // O(n) ([`fits`] read its syntax); a repair whose check needs the literal's value, as
         // at a parameter that takes only positive numbers, is not offered.
-        if rough && c == Carrier::Rat && lit_carrier(&l.value) == Carrier::F64 {
+        if rough && c == Carrier::Rat && is_decimal(&l.value) {
             ads.push((l.span, l.value.clone()));
             return Ok(Some(Ty::carrier(c)));
         }
@@ -5213,9 +5221,16 @@ fn lit_ty(v: &Value, neg: bool) -> Ty {
     Ty::lit(&neg_value(v, neg))
 }
 
+/// Whether the literal value `v` is a decimal's: a float, of the format its suffix names, or of
+/// `f64` where it has none.
+fn is_decimal(v: &Value) -> bool {
+    matches!(v, Value::Float(_) | Value::Float32(_))
+}
+
 fn lit_carrier(v: &Value) -> Carrier {
     match v {
         Value::Float(_) => Carrier::F64,
+        Value::Float32(_) => Carrier::F32,
         Value::Rat(_) => Carrier::Rat,
         _ => Carrier::Int,
     }
@@ -5231,6 +5246,15 @@ fn adopt(l: &Lit, c: Carrier) -> Result<Option<Value>, Msg> {
     if !adoptable(l, c) {
         return Err(menu(l, &[c]));
     }
+    // A decimal at `f32` is read from its digits straight to `f32`, rounded once, as one with no
+    // use to fix it is read to `f64` (DESIGN.md L1.26b): `x: f32 = 0.1` holds the `f32` nearest
+    // 0.1, not the `f64` nearest it rounded again.
+    if c == Carrier::F32 && is_decimal(&l.value) {
+        return match literal_f32(lit_digits(l)) {
+            Ok(x) => Ok(Some(Value::float32(x))),
+            Err(_) => Err(menu(l, &[c])),
+        };
+    }
     let exact = match &l.value {
         Value::Float(_) => Rat::decimal(&l.text)
             .map_err(|r| Msg::from(unread_literal(&r)))?
@@ -5241,6 +5265,7 @@ fn adopt(l: &Lit, c: Carrier) -> Result<Option<Value>, Msg> {
         Carrier::Int => run(Prim::CastInt, &exact),
         Carrier::Rat => Some(exact),
         Carrier::F64 => run(Prim::CastF64, &exact),
+        Carrier::F32 => run(Prim::CastF32, &exact),
         _ => None,
     });
     match v {
@@ -5254,7 +5279,7 @@ fn adopt(l: &Lit, c: Carrier) -> Result<Option<Value>, Msg> {
 /// its digits: reading them is O(n^1.47) (COMPLEXITY.md K41), and a literal is tried at
 /// every arrow and repair that holds `rat`. The digits are read when the literal adopts.
 fn fits(l: &Lit, c: Carrier) -> bool {
-    match lit_carrier(&l.value) == Carrier::F64 && c == Carrier::Rat {
+    match is_decimal(&l.value) && c == Carrier::Rat {
         true => adoptable(l, c) && Rat::is_decimal(&l.text),
         false => adopt(l, c).is_ok(),
     }
@@ -5280,7 +5305,7 @@ fn expected(l: &Lit, want: &[&Ty]) -> Result<Option<Carrier>, Msg> {
     if want.iter().any(|w| !w.vars.is_empty() || w.dynamic) {
         return Ok(None);
     }
-    let held: Vec<Carrier> = [Carrier::Int, Carrier::Rat, Carrier::F64]
+    let held: Vec<Carrier> = [Carrier::Int, Carrier::Rat, Carrier::F64, Carrier::F32]
         .into_iter()
         .filter(|&c| want.iter().any(|w| !(&w.set & &c.ty()).is_empty()))
         .collect();
@@ -5313,7 +5338,7 @@ fn holds_no_number(ts: &[&Ty]) -> bool {
             return false;
         }
         let u = t.set.universes();
-        let numeric = [Carrier::Int, Carrier::Rat, Carrier::F64];
+        let numeric = [Carrier::Int, Carrier::Rat, Carrier::F64, Carrier::F32];
         if numeric.iter().any(|c| u.bases[c.base()]) {
             return false;
         }
@@ -5361,7 +5386,7 @@ fn no_common_carrier(a: &Ty, b: &Ty) -> bool {
 fn only_numbers(t: &Ty) -> bool {
     let v = t.without_atoms();
     let u = v.set.universes();
-    let numeric = [Carrier::Int, Carrier::Rat, Carrier::F64].map(|c| c.base());
+    let numeric = [Carrier::Int, Carrier::Rat, Carrier::F64, Carrier::F32].map(|c| c.base());
     v.tuples.is_empty()
         && !u.rest
         && numeric.iter().any(|&i| u.bases[i])
@@ -5404,7 +5429,7 @@ impl fmt::Display for Operand<'_> {
                 write!(f, "{prefix}{digits}")
             }
             ExprKind::Float { digits, forced } => {
-                write!(f, "{digits}{}", if *forced { "f64" } else { "" })
+                write!(f, "{digits}{}", forced.map_or("", FloatFormat::name))
             }
             ExprKind::Rat(digits) => write!(f, "{digits}r"),
             ExprKind::Bool(b) => write!(f, "{b}"),
@@ -5478,7 +5503,7 @@ enum Fix {
 /// stand for one.
 fn takes_number(l: &Lit, cs: &[&Ty]) -> bool {
     let open = cs.iter().any(|c| c.dynamic || !c.vars.is_empty());
-    let numbers = [Carrier::Int, Carrier::Rat, Carrier::F64]
+    let numbers = [Carrier::Int, Carrier::Rat, Carrier::F64, Carrier::F32]
         .into_iter()
         .any(|n| cs.iter().any(|c| !(&c.set & &n.ty()).is_empty()));
     (open || numbers) && expected(l, cs).is_ok()
@@ -5538,14 +5563,19 @@ fn write_repairs<R: Copy>(
 /// The digits of the literal `l` as the lexer reads them, without its `-`, the `_` that
 /// separate them and the suffix `f64`, from which its value is read.
 fn lit_digits(l: &Lit) -> &str {
-    l.text.strip_suffix("f64").unwrap_or(&l.text)
+    let t = l.text.as_str();
+    t.strip_suffix("f64")
+        .or_else(|| t.strip_suffix("f32"))
+        .unwrap_or(t)
 }
 
 /// The digits of the literal `l` as the program writes them, with the `_` that separate them,
-/// without its `-` and the suffix `f64`: what a fix that rewrites the literal prints.
+/// without its `-` and its suffix `f32` or `f64`: what a fix that rewrites the literal prints.
 fn spelled_digits(l: &Lit) -> &str {
     let s = l.spelling();
-    s.strip_suffix("f64").unwrap_or(s)
+    s.strip_suffix("f64")
+        .or_else(|| s.strip_suffix("f32"))
+        .unwrap_or(s)
 }
 
 /// The digits before the point of the decimal literal `l` when every digit after it is `0`
@@ -5895,6 +5925,8 @@ fn lit_value(l: &Lit, c: Carrier) -> Option<Value> {
         (own, c) if own == c => l.value.clone(),
         (Carrier::F64, Carrier::Rat) => Value::rat(Rat::decimal(lit_digits(l)).ok()??),
         (Carrier::Int, Carrier::F64) => run(Prim::CastF64, &l.value)?,
+        (Carrier::F64, Carrier::F32) => Value::float32(literal_f32(lit_digits(l)).ok()?),
+        (Carrier::Int, Carrier::F32) => run(Prim::CastF32, &l.value)?,
         (Carrier::Int, Carrier::Rat) => run(Prim::CastRat, &l.value)?,
         _ => return None,
     };
@@ -5912,6 +5944,12 @@ fn lit_holds(l: &Lit, c: Carrier) -> impl fmt::Display + '_ {
         Carrier::F64 => match lit_value(l, c) {
             Some(v) => write!(f, "the literal is then the f64 {v}"),
             None => write!(f, "the literal is then the f64 nearest {sign}{d}"),
+        },
+        Carrier::F32 => match lit_value(l, c) {
+            Some(Value::Float32(x)) => {
+                write!(f, "the literal is then the f32 {}", show_f32(x.get()))
+            }
+            _ => write!(f, "the literal is then the f32 nearest {sign}{d}"),
         },
         Carrier::Rat => write!(f, "the literal is then exactly {sign}{d}, a rat"),
         c => write!(f, "the literal is then the {} {sign}{d}", c.name()),
@@ -6404,7 +6442,7 @@ struct LitFit {
 /// `0.5r`, where it is written in decimal digits, and otherwise in a cast, `f64(0xFF)`, since
 /// a literal in another base takes no suffix.
 fn with_carrier(l: &Lit, c: Carrier) -> impl fmt::Display + '_ {
-    let decimal = lit_carrier(&l.value) == Carrier::F64;
+    let decimal = is_decimal(&l.value);
     let digits = decimal || lit_digits(l).bytes().all(|b| b.is_ascii_digit());
     let d = spelled_digits(l);
     fmt::from_fn(move |f| match (digits, c) {
@@ -6586,6 +6624,17 @@ fn f64_cast_fix(l: &Lit, n: &str, at: Span, op: BinaryOp, left: bool) -> Option<
     )
 }
 
+/// Whether the carriers `cs` left to a literal that nothing gives a carrier are two or more
+/// float formats, `f64` among them, which the literal does not choose among: it takes `f64`
+/// (author decision, 2026-11-12: a decimal literal that no use fixes takes `f64`). So
+/// `y = 2^-1.0`, where `^` leaves the formats `f32` and `f64` to `-1.0`, is `0.5` at `f64`, as
+/// it was before `f32` was a carrier.
+fn floats_take_f64(cs: &[Carrier]) -> bool {
+    cs.len() > 1
+        && cs.contains(&Carrier::F64)
+        && cs.iter().all(|&c| matches!(c, Carrier::F64 | Carrier::F32))
+}
+
 /// The message for the literal `l`, which nothing gives a carrier, of the carriers `cs` that
 /// what it meets takes, two or more and no `int`: a decimal literal alone (`y = 0.1`), a
 /// decimal or an integer literal in an operation on literals alone (`y = 0.5 * 2`,
@@ -6596,7 +6645,7 @@ fn f64_cast_fix(l: &Lit, n: &str, at: Span, op: BinaryOp, left: bool) -> Option<
 /// literal then is ([`lit_holds`]); a binding's fixes, which name the value its binder holds,
 /// are [`unfixed_binding`]'s.
 fn unfixed(l: &Lit, cs: &[Carrier]) -> Msg {
-    let decimal = lit_carrier(&l.value) == Carrier::F64;
+    let decimal = is_decimal(&l.value);
     let mut fixes = Vec::new();
     let carriers = [Carrier::F64, Carrier::Rat].into_iter();
     for c in carriers.filter(|&c| cs.contains(&c) && (c != Carrier::Rat || !decimal || l.bare)) {
@@ -6701,7 +6750,7 @@ fn unfixed_comparison(
     // literals alone it is compared with ([`Ck::lit_pairs`]): in
     // `y = (1 + 2, 0) == (3.0f64, 0)`, `1 + 2` is an `f64`, so each pair is folded at its
     // carrier below, a `^` at `rat` with its integer exponent ([`folded`]).
-    let decimal = |l: &&Lit| l.bare && lit_carrier(&l.value) == Carrier::F64;
+    let decimal = |l: &&Lit| l.bare && is_decimal(&l.value);
     let open = |(xs, ys, rat): &&(Vec<Lit>, Vec<Lit>, bool)| {
         !rat && xs.iter().chain(ys).all(|l| l.bare) && xs.iter().chain(ys).any(|l| decimal(&l))
     };
@@ -6924,7 +6973,7 @@ fn unfixed_binding(
     ]
     .into_iter();
     // The literals come in the order of the text: the stack takes the left operand first.
-    let is_decimal = |l: &&Lit| lit_carrier(&l.value) == Carrier::F64;
+    let is_decimal = |l: &&Lit| is_decimal(&l.value);
     if let Some(l) = lits.iter().find(is_decimal) {
         let mut m = unfixed(l, &[]);
         // A decimal under a `^` with nothing to fix it is left to the fixes at `f64`, the
@@ -7494,11 +7543,11 @@ fn op_sig(op: Operator) -> Sig {
     let div0 = |c: Carrier| Ty::carrier(c).union(&Ty::set(KType::atom("divByZero")));
     let (n, arrows) = match op {
         Operator::Binary(BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul) => {
-            (2, arrows(&[Int, F64, Rat], 2, same))
+            (2, arrows(&[Int, F64, Rat, F32], 2, same))
         }
         Operator::Binary(BinaryOp::Div) => (
             2,
-            [arrows(&[F64], 2, same), arrows(&[Rat], 2, div0)].concat(),
+            [arrows(&[F64, F32], 2, same), arrows(&[Rat], 2, div0)].concat(),
         ),
         Operator::Binary(BinaryOp::IntDiv | BinaryOp::Mod) => (2, arrows(&[Int], 2, div0)),
         // A `rat` takes an integer exponent of either sign, exactly; `0r` to a negative power
@@ -7507,11 +7556,18 @@ fn op_sig(op: Operator) -> Sig {
         Operator::Binary(BinaryOp::Pow) => (
             2,
             [
-                arrows(&[Int, F64], 2, same),
-                vec![Arrow {
-                    params: vec![Ty::carrier(Rat), Ty::carrier(Int)],
-                    result: div0(Rat),
-                }],
+                arrows(&[Int, F64, F32], 2, same),
+                vec![
+                    Arrow {
+                        params: vec![Ty::carrier(Rat), Ty::carrier(Int)],
+                        result: div0(Rat),
+                    },
+                    // `f32 ^ int`, the one arrow between two carriers (DESIGN.md L1.18).
+                    Arrow {
+                        params: vec![Ty::carrier(F32), Ty::carrier(Int)],
+                        result: same(F32),
+                    },
+                ],
             ]
             .concat(),
         ),
@@ -7521,10 +7577,10 @@ fn op_sig(op: Operator) -> Sig {
         // make.
         Operator::Binary(
             BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge,
-        ) => (2, arrows(&[Int, F64, Rat, Str, Bool], 2, bool_)),
+        ) => (2, arrows(&[Int, F64, Rat, F32, Str, Bool], 2, bool_)),
         Operator::Binary(BinaryOp::And | BinaryOp::Or) => (2, arrows(&[Bool], 2, bool_)),
         Operator::Unary(UnaryOp::Not) => (1, arrows(&[Bool], 1, bool_)),
-        Operator::Unary(UnaryOp::Neg) => (1, arrows(&[Int, F64, Rat], 1, same)),
+        Operator::Unary(UnaryOp::Neg) => (1, arrows(&[Int, F64, Rat, F32], 1, same)),
     };
     Sig {
         params: positional(n),
@@ -7570,12 +7626,14 @@ fn word_sig(w: &str) -> Arc<Sig> {
         "int" => vec![
             arrow(Int, Int, &[]),
             arrow(F64, Int, &["inexact", "invalid"]),
+            arrow(F32, Int, &["inexact", "invalid"]),
             arrow(Rat, Int, &["inexact"]),
             arrow(Str, Int, &["invalid"]),
         ],
         "rat" => vec![
             arrow(Int, Rat, &[]),
             arrow(F64, Rat, &["invalid"]),
+            arrow(F32, Rat, &["invalid"]),
             arrow(Rat, Rat, &[]),
             arrow(Str, Rat, &["invalid"]),
         ],
@@ -7584,9 +7642,18 @@ fn word_sig(w: &str) -> Arc<Sig> {
             arrow(F64, F64, &[]),
             arrow(Rat, F64, &["inexact"]),
             arrow(Str, F64, &["inexact", "invalid"]),
+            // Every `f32` is an `f64`.
+            arrow(F32, F64, &[]),
         ],
-        "abs" => arrows(&[Int, F64, Rat], 1, Ty::carrier),
-        "min" | "max" => arrows(&[Int, F64, Rat], 2, Ty::carrier),
+        "f32" => vec![
+            arrow(Int, F32, &["inexact"]),
+            arrow(F64, F32, &["inexact"]),
+            arrow(Rat, F32, &["inexact"]),
+            arrow(Str, F32, &["inexact", "invalid"]),
+            arrow(F32, F32, &[]),
+        ],
+        "abs" => arrows(&[Int, F64, Rat, F32], 1, Ty::carrier),
+        "min" | "max" => arrows(&[Int, F64, Rat, F32], 2, Ty::carrier),
         "len" => vec![arrow(Str, Int, &[])],
         "codePoint" => vec![arrow(Str, Int, &["notScalar"])],
         "scalar" => vec![arrow(Int, Str, &["notScalar"])],
@@ -7615,19 +7682,26 @@ fn word_sig(w: &str) -> Arc<Sig> {
     })
 }
 
-/// The largest magnitude of the contiguous run of integers every one of which `f64` holds
-/// exactly, 2^53 (DESIGN.md "Casts are domain proofs": "`f64(n)` is exact when `|n| ≤ 2^53`").
-const F64_EXACT_INT: i64 = 1 << 53;
+/// The largest magnitude of the contiguous run of integers every one of which the float format
+/// `c` holds exactly: 2^53 for `f64` (DESIGN.md "Casts are domain proofs": "`f64(n)` is exact
+/// when `|n| ≤ 2^53`") and, by the same rule, 2^24 for `f32`, the other format.
+fn exact_int_bound(c: Carrier) -> i64 {
+    match c {
+        Carrier::F32 => 1 << 24,
+        _ => 1 << 53,
+    }
+}
 
-/// `f64`'s signature at an operand whose ints the checker proves lie within ±2^53: its arrow at
-/// `int` gives no `#inexact`, since each such int has an exact `f64` (DESIGN.md "Casts are
-/// domain proofs"). Its other arrows are those of [`word_sig`].
-fn f64_of_exact_int_sig() -> Arc<Sig> {
-    let mut sig = word_sig("f64");
+/// The cast to the float format `c`, `f64` or `f32`, at an operand whose ints the checker proves
+/// lie within ±[`exact_int_bound`]: its arrow at `int` gives no `#inexact`, since each such int
+/// has an exact value in `c` (DESIGN.md "Casts are domain proofs"). Its other arrows are those
+/// of [`word_sig`].
+fn exact_int_cast_sig(c: Carrier) -> Arc<Sig> {
+    let mut sig = word_sig(c.name());
     let int = Ty::carrier(Carrier::Int);
     for a in &mut Arc::make_mut(&mut sig).arrows {
         if a.params[0] == int {
-            a.result = Ty::carrier(Carrier::F64);
+            a.result = Ty::carrier(c);
         }
     }
     sig
@@ -8965,6 +9039,7 @@ impl<'a> Denote<'a> {
                 "int" => Ty::carrier(Carrier::Int),
                 "rat" => Ty::carrier(Carrier::Rat),
                 "f64" => Ty::carrier(Carrier::F64),
+                "f32" => Ty::carrier(Carrier::F32),
                 "bool" => Ty::carrier(Carrier::Bool),
                 "String" => Ty::carrier(Carrier::Str),
                 "Never" => Ty::empty(),

@@ -359,7 +359,7 @@ fn zedc_run_prints_the_rejection_of_1_added_to_a_chain_of_names() {
   [1]  4:5: `a2` is (T1, 2) here
        4 | u = a2 + 1;
          |     ^^ [1]
-         |     ^^^^^^ [15, 16, 17]
+         |     ^^^^^^ [15, 16, 17, 18]
          |          ^ [14]
   [2]  3:6: `a2` is defined as this expression, (T1, 2)
        3 | a2 = (a1, 2);
@@ -389,6 +389,7 @@ fn zedc_run_prints_the_rejection_of_1_added_to_a_chain_of_names() {
   [15] 4:5: `+` takes (int, int) -> int
   [16] 4:5: `+` takes (f64, f64) -> f64
   [17] 4:5: `+` takes (rat, rat) -> rat
+  [18] 4:5: `+` takes (f32, f32) -> f32
 "#
         )
     );
@@ -408,7 +409,7 @@ fn zedc_run_prints_the_rejection_of_1_added_to_a_doubled_tuple() {
   [1]  4:5: `t2` is (T1, T1) here
        4 | u = t2 + 1;
          |     ^^ [1]
-         |     ^^^^^^ [15, 16, 17]
+         |     ^^^^^^ [15, 16, 17, 18]
          |          ^ [14]
   [2]  3:6: `t2` is defined as this expression, (T1, T1)
        3 | t2 = (t1, t1);
@@ -438,6 +439,7 @@ fn zedc_run_prints_the_rejection_of_1_added_to_a_doubled_tuple() {
   [15] 4:5: `+` takes (int, int) -> int
   [16] 4:5: `+` takes (f64, f64) -> f64
   [17] 4:5: `+` takes (rat, rat) -> rat
+  [18] 4:5: `+` takes (f32, f32) -> f32
 "#
         )
     );

@@ -126,6 +126,7 @@ err `+` does not take ((int) -> (int, int, int), 1): no arrow of `+` takes these
   note `+` takes (int, int) -> int
   note `+` takes (f64, f64) -> f64
   note `+` takes (rat, rat) -> rat
+  note `+` takes (f32, f32) -> f32
 === "h = g;\nk = h(0)(\"a\");\n"
 sig g = (int) -> (int) -> (int) -> (int, int, int)
 top h = (int) -> (int) -> (int) -> (int, int, int)
@@ -137,23 +138,23 @@ err `h(0)` does not take ("a"): no arrow of `h(0)` takes these types. [h(0)("a")
   note `h(0)` takes (int) -> (int) -> (int, int, int)
 === "p(x) = (y) -> x + y;\nq = p(1)(2.5);\n"
 sig g = (int) -> (int) -> (int) -> (int, int, int)
-sig p = (x: T) -> (T) -> T for T in int | f64 | rat
+sig p = (x: T) -> (T) -> T for T in int | f32 | f64 | rat
 top q = Never
 err this argument is passed by position, and the parameter it reaches, `x` of `p`, is a named parameter, which a call passes only by name, as `x: …`. [1]
-  note `p` is declared here with no type written for `x` or its result; the type the checker found for `p` is `(x: T) -> (T) -> T for T in int | f64 | rat`
+  note `p` is declared here with no type written for `x` or its result; the type the checker found for `p` is `(x: T) -> (T) -> T for T in int | f32 | f64 | rat`
   note repair: pass `x` by name, as `x: …`
   note repair: declare `x` `positional` in `p`
 === "p(x) = (y) -> (z) -> x + y + z;\nq = p(1)(2)(3);\nr = p(1.5)(2.5)(3.5);\n"
 sig g = (int) -> (int) -> (int) -> (int, int, int)
-sig p = (x: T) -> (T) -> (T) -> T for T in int | f64 | rat
+sig p = (x: T) -> (T) -> (T) -> T for T in int | f32 | f64 | rat
 top q = Never
 top r = Never
 err this argument is passed by position, and the parameter it reaches, `x` of `p`, is a named parameter, which a call passes only by name, as `x: …`. [1]
-  note `p` is declared here with no type written for `x` or its result; the type the checker found for `p` is `(x: T) -> (T) -> (T) -> T for T in int | f64 | rat`
+  note `p` is declared here with no type written for `x` or its result; the type the checker found for `p` is `(x: T) -> (T) -> (T) -> T for T in int | f32 | f64 | rat`
   note repair: pass `x` by name, as `x: …`
   note repair: declare `x` `positional` in `p`
 err this argument is passed by position, and the parameter it reaches, `x` of `p`, is a named parameter, which a call passes only by name, as `x: …`. [1.5]
-  note `p` is declared here with no type written for `x` or its result; the type the checker found for `p` is `(x: T) -> (T) -> (T) -> T for T in int | f64 | rat`
+  note `p` is declared here with no type written for `x` or its result; the type the checker found for `p` is `(x: T) -> (T) -> (T) -> T for T in int | f32 | f64 | rat`
   note repair: pass `x` by name, as `x: …`
   note repair: declare `x` `positional` in `p`
 === "p(x) = (y) -> (z) -> (x div 1, y, z);\nq = p(1)(\"s\")(true);\nr = p(1)(2)(3) + 1;\n"

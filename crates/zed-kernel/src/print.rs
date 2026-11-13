@@ -170,6 +170,7 @@ fn name(p: Prim) -> &'static str {
         CastInt => "int",
         CastRat => "rat",
         CastF64 => "f64",
+        CastF32 => "f32",
         Abs => "abs",
         Len => "len",
         Lower => "lower",
@@ -767,9 +768,12 @@ fn primary(t: &Term) -> bool {
         Term::Lit(v) => match v {
             Value::Int(n) => *n >= 0,
             Value::Bool(_) | Value::Str(_) | Value::Atom(_) | Value::Tuple(_) => true,
-            Value::Big(_) | Value::Rat(_) | Value::Float(_) | Value::Path(_) | Value::Family(_) => {
-                false
-            }
+            Value::Big(_)
+            | Value::Rat(_)
+            | Value::Float(_)
+            | Value::Float32(_)
+            | Value::Path(_)
+            | Value::Family(_) => false,
         },
         Term::Prim(Prim::Neg | Prim::Not, args) => args.len() != 1,
         Term::Lam(..) | Term::Let(..) | Term::If(..) | Term::Match(..) => false,

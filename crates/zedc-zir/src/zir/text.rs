@@ -31,7 +31,7 @@ use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use zed_kernel::num::{Rat, TooLarge, bytes_of, read_f64_ieee};
+use zed_kernel::num::{Rat, TooLarge, bytes_of, read_f32_ieee, read_f64_ieee};
 use zed_kernel::term::{Evidence, Grade, GuardPos, Pattern, Prim, Witness};
 use zed_kernel::types::{Type, Universe};
 use zed_kernel::value::Family;
@@ -48,7 +48,7 @@ use zedc_syntax::lex;
 pub const VERSION: u32 = 1;
 
 /// Every primitive, in the order the binary form numbers them.
-pub const PRIMS: [Prim; 63] = {
+pub const PRIMS: [Prim; 64] = {
     use Prim::*;
     [
         Add,
@@ -114,6 +114,7 @@ pub const PRIMS: [Prim; 63] = {
         FunnelShl,
         FunnelShr,
         At,
+        CastF32,
     ]
 };
 
@@ -1111,6 +1112,7 @@ impl<'a> P<'a> {
             "bool" => Type::bool(),
             "int" => Type::int(),
             "rat" => Type::rat(),
+            "f32" => Type::f32(),
             "f64" => Type::f64(),
             "String" => Type::string(),
             "tuple" => Type::universe(Universe::Tuple),
@@ -1609,6 +1611,7 @@ fn all_atoms() -> Type {
         Type::bool(),
         Type::int(),
         Type::rat(),
+        Type::f32(),
         Type::f64(),
         Type::string(),
     ]
@@ -1625,6 +1628,16 @@ fn number(t: &str) -> Result<Value, String> {
         "false" => return Ok(Value::Bool(false)),
         "nan" | "inf" | "-inf" => return t.parse().map(Value::float).map_err(|_| not()),
         _ => {}
+    }
+    // An `f32` prints with its suffix (`0.1f32`, `nanf32`), as a `rat` prints with its `r`.
+    if let Some(body) = t.strip_suffix("f32") {
+        return match body {
+            "nan" | "inf" | "-inf" => body.parse().map(Value::float32).map_err(|_| not()),
+            _ if body.contains(['.', 'e']) => {
+                read_f32_ieee(body).map(Value::float32).ok_or_else(not)
+            }
+            _ => Err(not()),
+        };
     }
     let refused = |e: TooLarge| {
         format!(

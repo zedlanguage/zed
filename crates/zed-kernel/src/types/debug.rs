@@ -212,6 +212,8 @@ impl Queue for Node {
             Leaf(&p.rats),
             Text(", floats: "),
             Leaf(&p.floats),
+            Text(", f32s: "),
+            Leaf(&p.f32s),
             Text(", strings: "),
             Leaf(&p.strings),
             Text(", atoms: Atoms { cofinite: "),
