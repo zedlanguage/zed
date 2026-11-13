@@ -3651,7 +3651,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         // `f64(0.1)` lists `f64(0.1f64)` alone, since `0.1r` has no exact `f64`, and `f64(0.5)`
         // lists `0.5f64` and `0.5r`. The operand then takes the first carrier left, so the call
         // is typed as with it. Each carrier's value is cast once, as
-        // [`Self::always_fails_word`] casts it, at the cost it names.
+        // [`Self::word_atoms`] casts it, at the cost it names.
         if self.level == 0
             && let Some(l) = (x.lit.clone()).filter(|l| l.bare && is_decimal(&l.value))
             && let Some(p) = zedc_base::interp::prim(w)
@@ -3718,6 +3718,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             _ => word_sig(w),
         };
         let values = self.operand_values(&x);
+        let carried = x.ty.atoms();
         let at = x.at.unwrap_or(span);
         let no_zero = w == "rat" && self.ints_without_zero(&x);
         let mut r = self
@@ -3732,10 +3733,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         if no_zero && let Some(zero) = KType::lit(&Value::rat(Rat::int(0.into()))) {
             r.set = &r.set - &zero;
         }
-        if let Some(values) = values {
-            self.always_fails_word(w, values, &r, at, span);
+        match values {
+            Some(values) => self.word_atoms(w, values, r, &carried, at, span),
+            None => r,
         }
-        r
     }
 
     /// Whether the operand `x` of `rat` holds ints alone, none of them 0, by its type, its
@@ -13365,42 +13366,67 @@ impl<'a> Ck<'_, 'a> {
         Some((value.kernel()?.values_listed()?, None))
     }
 
-    /// Rejects the word `w` applied at `span` to an operand at `at` whose values are `values`,
-    /// `written` when it is a literal, and whose result is `r`, when every value the word takes
-    /// fails with an atom. A value the kernel cannot convert for want of memory leaves the call
-    /// unjudged.
+    /// The result `r` of the word `w` applied at `span` to an operand at `at` whose values are
+    /// `values`, `written` when it is a literal, and which carries the atoms `carried`, with each
+    /// atom of the word that no value gives taken out (DESIGN.md sec:failure: an atom-making
+    /// operation is typed from the inputs that reach it, a literal's domain being the singleton
+    /// of its value). When every value the word takes fails, the call is rejected and `r` kept,
+    /// so that nothing after it fails again. A value the kernel cannot convert for want of
+    /// memory leaves `r` as it is.
     ///
-    /// Complexity tradeoff: the cast is run on each listed value, which costs what the cast
-    /// costs when the program runs, O(d^1.47) for a literal of d digits (COMPLEXITY.md K41),
-    /// and O(V) such casts for V listed values. No cheaper test decides whether a long digit
-    /// string is exact in the target format. COMPLEXITY.md row C39.
-    fn always_fails_word(
+    /// Complexity tradeoff: the naive method types the call from the word's signature alone, in
+    /// O(1), and so lists `#inexact` and `#overflow` for `f64(3r)`, which never gives either
+    /// (item CAST-literal-exact). The method used runs the cast on each listed value, at most 3
+    /// for a literal (a bare integer as int, f64 and rat), and O(V) casts for V listed values.
+    /// Each costs what the cast costs when the program runs: O(d^1.47) for a literal of d digits
+    /// (COMPLEXITY.md K41), and no cheaper test decides whether a long digit string is exact in
+    /// the target format. A `rat` written with an exponent, `1e400000r`, holds its powers of 2
+    /// and 5 as exponents, and the kernel decides both atoms from them without building the
+    /// power (`beyond_float` compares magnitudes by bounds, `exact_f64` tests the dyadic shape
+    /// first), so its cast does not grow with the exponent. COMPLEXITY.md row C39.
+    fn word_atoms(
         &mut self,
         w: &str,
         (values, written): (Vec<Value>, Option<String>),
-        r: &Ty,
+        r: Ty,
+        carried: &KType,
         at: Span,
         span: Span,
-    ) {
+    ) -> Ty {
         if r.atoms().is_empty() {
-            return;
+            return r;
         }
         let Some(p) = zedc_base::interp::prim(w) else {
-            return;
+            return r;
         };
         let sig = word_sig(w);
         let mut fails = Vec::new();
+        let mut converts = false;
         for v in values {
             if !sig.arrows.iter().any(|a| a.params[0].contains(&v)) {
                 continue;
             }
             match run(p, &v) {
                 Some(a @ Value::Atom(_)) => fails.push((v, a)),
-                Some(_) | None => return,
+                Some(_) => converts = true,
+                None => return r,
             }
         }
+        if converts {
+            // Union of the atoms the values gave, each in O(1); an atom with no kernel type
+            // leaves the result as it is.
+            let mut given = carried.clone();
+            for (_, a) in &fails {
+                let Some(t) = KType::lit(a) else {
+                    return r;
+                };
+                given = &given | &t;
+            }
+            let unused = &r.atoms() - &given;
+            return r.without(&unused);
+        }
         let Some((first, _)) = fails.first() else {
-            return;
+            return r;
         };
         let carrier = match first {
             Value::Str(_) => "String".to_string(),
@@ -13450,6 +13476,7 @@ impl<'a> Ck<'_, 'a> {
             format!("`{w}` here always fails: {shown}, so this call never gives a value"),
             notes,
         );
+        r
     }
 
     /// The type of the read of the function `sig` at the key `x`, `of` the span of the map as

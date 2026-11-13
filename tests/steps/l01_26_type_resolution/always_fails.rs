@@ -178,17 +178,28 @@ fn a_cast_that_may_convert_keeps_its_atom() {
             "f(x: f64) = int(x);",
             "(x: f64) -> int | #inexact | #invalid",
         ),
-        // A literal that converts is accepted. Its result still lists the atoms, which the
-        // literal never gives (unfinished: the atoms could be dropped).
-        ("f(x: int) = int(\"12\");", "(x: int) -> int | #invalid"),
-        (
-            "f(x: int) = f64(3r);",
-            "(x: int) -> f64 | #inexact | #overflow",
-        ),
-        (
-            "f(x: int) = int(2.0f64);",
-            "(x: int) -> int | #inexact | #invalid",
-        ),
+    ];
+    for (src, want) in cases {
+        assert!(type_errors(src).is_empty(), "{src}");
+        assert_eq!(sig(src, "f"), want, "{src}");
+    }
+}
+
+/// Item CAST-literal-exact: a literal's domain is the one value it holds (DESIGN.md
+/// sec:failure), so a word applied to a literal that converts gives none of its atoms, and its
+/// result lists none.
+#[test]
+fn a_cast_of_a_literal_that_converts_gives_no_atom() {
+    let cases = [
+        ("f(x: int) = int(\"12\");", "(x: int) -> int"),
+        ("f(x: int) = f64(3r);", "(x: int) -> f64"),
+        ("f(x: int) = f32(3r);", "(x: int) -> f32"),
+        ("f(x: int) = f64(-0.5r);", "(x: int) -> f64"),
+        ("f(x: int) = int(2.0f64);", "(x: int) -> int"),
+        ("f(x: int) = rat(\"1/3\");", "(x: int) -> rat"),
+        // A name bound to a literal has the literal's type (A63).
+        ("r = 3r;\nf(x: int) = f64(r);", "(x: int) -> f64"),
+        ("f(x: int) = { r = 3r; f64(r) };", "(x: int) -> f64"),
     ];
     for (src, want) in cases {
         assert!(type_errors(src).is_empty(), "{src}");

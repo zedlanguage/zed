@@ -358,3 +358,110 @@ fn many_casts_of_ints_in_range_scale() {
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
 }
+
+/// Item CAST-literal-exact: a cast of a literal is typed from the one value the literal holds
+/// (DESIGN.md sec:failure, "a literal's domain being the singleton of its value"): `#inexact`
+/// only where that value has no equal float and `#overflow` only where it lies beyond the
+/// format's largest finite value. A bare integer literal may be an `int`, a `rat` or an `f64`,
+/// so its cast keeps each atom that one of those gives.
+fn literal_sig(cast: &str, literal: &str) -> String {
+    let src = format!("f(x: int) = {cast}({literal});\n");
+    assert!(type_errors(&src).is_empty(), "{src}");
+    sig(&src, "f")
+}
+
+/// The one rejection of `cast(literal)`, which always gives `atom`.
+fn always_fails(cast: &str, literal: &str, atom: &str) {
+    let src = format!("f(x: int) = {cast}({literal});\n");
+    let errors = type_errors(&src);
+    let head = format!(
+        "`{cast}` here always fails: its operand `{literal}` gives `{atom}`, so this call never \
+         gives a value."
+    );
+    assert!(
+        errors.len() == 1 && errors[0].starts_with(&head),
+        "{src}: {errors:?}"
+    );
+}
+
+#[test]
+fn a_literal_at_the_largest_float_gives_no_overflow() {
+    let f64_max = largest(53, 1023);
+    let f32_max = largest(24, 127);
+    let (f64_past, f32_past) = (&f64_max + 1u32, &f32_max + 1u32);
+    for (cast, literal, want) in [
+        // The largest finite value is exact; one past it is beyond the range, while the `f64`
+        // the bare literal is read as rounds down to the largest and converts.
+        ("f64", f64_max.to_string(), "f64"),
+        ("f64", format!("-{f64_max}"), "f64"),
+        ("f64", f64_past.to_string(), "f64 | #overflow"),
+        ("f64", format!("-{f64_past}"), "f64 | #overflow"),
+        ("f64", format!("{f64_max}r"), "f64"),
+        ("f32", f32_max.to_string(), "f32"),
+        ("f32", f32_past.to_string(), "f32 | #overflow"),
+        ("f32", format!("-{f32_past}"), "f32 | #overflow"),
+        ("f32", format!("{f32_max}r"), "f32"),
+        // Within the range, 2^53 is exact and 2^53 + 1 is not.
+        ("f64", "9007199254740992".to_string(), "f64"),
+        ("f64", "9007199254740993".to_string(), "f64 | #inexact"),
+    ] {
+        assert_eq!(literal_sig(cast, &literal), format!("(x: int) -> {want}"));
+    }
+    // A `rat` literal holds one value, so one past the largest always fails.
+    always_fails("f64", &format!("{f64_past}r"), "#overflow");
+    always_fails("f32", &format!("{f32_past}r"), "#overflow");
+    always_fails("f32", "16777217r", "#inexact");
+}
+
+#[test]
+fn a_rat_literal_written_with_an_exponent_is_decided_by_its_value() {
+    // `1e22` is 2^22 * 5^22 and 5^22 < 2^53, so it is an `f64`; 5^23 is not below 2^53. At
+    // `f32`, 5^10 < 2^24 < 5^11.
+    for (cast, literal) in [
+        ("f64", "1e22r"),
+        ("f64", "-1e22r"),
+        ("f64", "1.25e-1r"),
+        ("f32", "1e10r"),
+    ] {
+        assert_eq!(literal_sig(cast, literal), format!("(x: int) -> {cast}"));
+    }
+    for (cast, literal, atom) in [
+        ("f64", "1e23r", "#inexact"),
+        ("f64", "1e308r", "#inexact"),
+        ("f64", "1e309r", "#overflow"),
+        ("f64", "-1e309r", "#overflow"),
+        ("f64", "1e-400r", "#inexact"),
+        ("f32", "1e11r", "#inexact"),
+        ("f32", "1e39r", "#overflow"),
+        // Its powers are compared and never built: 10^400000000 would hold 1.3 * 10^9 bits.
+        ("f64", "1e400000000r", "#overflow"),
+        ("f64", "1e-400000000r", "#inexact"),
+    ] {
+        always_fails(cast, literal, atom);
+    }
+}
+
+#[test]
+fn many_casts_of_literals_scale() {
+    // n functions, each casting a `rat` literal that converts, so each result drops both atoms.
+    let units = resolved(200, |n| {
+        (0..n)
+            .map(|i| format!("g{i}(x: int) = f64({i}r);\n"))
+            .collect()
+    });
+    scaling::check("n functions, each a cast of a rat literal", 200, |n| {
+        let info = units[&n].check();
+        assert!(info.errors.is_empty(), "{:?}", info.errors);
+    });
+}
+
+#[test]
+fn a_cast_of_a_power_does_not_grow_with_its_exponent() {
+    // `1e<k>r` holds 2^k * 5^k as two exponents, so its cast costs the same at k and 8k: a cast
+    // that built the power would cost k^1.47 or more (COMPLEXITY.md K41).
+    let units = resolved(1_000_000, |k| format!("f(x: int) = f64(1e{k}r);\n"));
+    scaling::check_order("the cast of 1e<k>r", 1_000_000, 0, |k| {
+        let info = units[&k].check();
+        assert_eq!(info.errors.len(), 1, "{:?}", info.errors);
+    });
+}

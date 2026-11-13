@@ -70,13 +70,15 @@ fn a_cast_takes_each_value_of_a_call_at_its_own_arrow() {
         assert_eq!(y_type(&src), "f64");
         assert_eq!(value(&src, "y"), f);
         let src = format!("{FORCED}\ny = int(g({c}));\n");
-        assert_eq!(y_type(&src), "int | #inexact | #invalid");
+        // Neither value is text, so neither gives `#invalid` (item CAST-literal-exact).
+        assert_eq!(y_type(&src), "int | #inexact");
         assert_eq!(value(&src, "y"), i);
     }
     // As the `if` itself is, and as a `rat` value is at the `rat` arrow.
     assert_eq!(y_type("y = f64(if true { 1 } else { 2.5f64 });\n"), "f64");
     let src = format!("{RAT}\ny = f64(g(false));\n");
-    assert_eq!(y_type(&src), "f64 | #inexact | #overflow");
+    // `1` and `2.5r` both have an equal `f64`, so the cast gives no atom (CAST-literal-exact).
+    assert_eq!(y_type(&src), "f64");
     assert_eq!(value(&src, "y"), "2.5");
     // Integer values alone stay at the `int` arrow, as before; an `int` within ±2^53 casts exactly.
     let src = "g(positional c: bool) = if c { 1 } else { 2 };\ny = f64(g(false));\n";

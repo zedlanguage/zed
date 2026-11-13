@@ -67,6 +67,8 @@ main(m: MainArgs) {
             "`discount` takes (price: int, tier: _) -> int",
             "`discount` is declared here with no type written for `tier` or its result; the type \
              the checker found for `discount` is `(price: int, tier: _) -> int`",
+            // `int("12")` always converts, so it is `int` (item CAST-literal-exact).
+            "repair: wrap this in `int(…)`; the checker accepts that",
         ]
     );
 }

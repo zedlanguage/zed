@@ -47,14 +47,21 @@ main(m: MainArgs) {
 
 #[test]
 fn a_conversion_that_can_fail_is_not_offered_where_its_failure_is_not_taken() {
-    // `int("12")` is `int | #invalid`, and `discount` takes no `#invalid`.
+    // `int(m.stdin[0])` is `int | #invalid | …`, and `discount` takes no `#invalid`.
     let src = "discount(price: int, tier) = if tier == #gold { price * 8 } else { price * 10 };
 main(m: MainArgs) {
-  p = discount(price: \"12\", tier: #gold);
+  p = discount(price: m.stdin[0], tier: #gold);
   m.stdout <- String(p);
 }
 ";
-    assert!(!rejected(src).contains("repair:"));
-    let tried = wrapped(src, "\"12\"", "int");
+    let out = rejected(src);
+    assert!(!out.contains("repair: wrap this in `int"), "{out}");
+    let tried = wrapped(src, "m.stdin[0]", "int");
     assert!(load(tried.as_bytes()).is_err());
+    // `int("12")` always converts, so it is `int` and is offered (item CAST-literal-exact).
+    let src = src.replace("m.stdin[0]", "\"12\"");
+    let offered = "repair: wrap this in `int(…)`; the checker accepts that";
+    assert!(rejected(&src).contains(offered));
+    let fixed = wrapped(&src, "\"12\"", "int");
+    load(fixed.as_bytes()).unwrap_or_else(|e| panic!("{fixed}\n{e}"));
 }
