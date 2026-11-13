@@ -2168,12 +2168,13 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | ENGINE-one | impl attempt 1 | 2026-11-13 09:45 | started; worktree wt/engine-one from origin/main 4ab375787 |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | rule change noted: accept against R < 10.5 (CD run keeps 13 step; acceptance scorer score-accept.py); load 55.74 59.14 57.03 |
 | MAIN-files-rest | impl attempt 1 | 2026-11-13 10:39 | started; worktree from origin/main 10c508cf5 |
-| NUM-expect-audit | running |  |  |
-| PERF-l139-under9 | impl attempt 1 | 2026-11-13 09:15 | baseline on 9fbcc48eb (load 48-58), instr/bytes at 8n: star_extra 15.6 (fails), chain 13.0 (fails), persist bytes 13.2 (fails), hopb 12.9/12.1, hoponb 12.8/12.0 |
+| NUM-expect-audit | impl attempt 1 | 2026-11-13 11:14 | started; worktree from origin/main f70a4733b |
+| PERF-l139-under9 | impl attempt 3 | 2026-11-13 09:15 | not merged: eliminated_hulls (c9c2e5bf2, local branch wt/perf-l139-under9) gets chain 11.4 and hopb 12.0 running, but pendants leaves/equalities scale tests go  |
 | PRES-overlap-fast | xr attempt  | 2026-11-13 01:10 | round 1 launched: Sol and Opus seats (medium); Gemini 429 (resets in 32h55m); CD next |
 | RED-main-2026-11-13 | impl attempt 1 | 2026-11-13 10:33 | started: l01_35 layout (ast::Stmt 280 bytes vs record 256); other parts owned by MAIN-call-l01_16, MSG-headline-l01_26, SPEC-standalone |
 | SPEC-ffi-align | impl attempt 1 | 2026-11-13 10:53 | started: spec row from A85 B2 (alignment stop counted with Assumed) |
 | SPEC-standalone | impl attempt 1 | 2026-11-13 08:55 | started; worktree /home/luke/Work/wt/spec-standalone from origin/main c12614e6c |
+| ST-walk-checker-admit | impl attempt 1 | 2026-11-13 08:01 | merged 251d01b97 + docs f9e1d5c2d: checker admits difference tests on paths, read_image reads by name; zedc check instr at 8n chain 23.5->8.2, raise 25.9->8.1,  |
 | ST-walk-orders | impl attempt 1 | 2026-11-13 06:31 | started; load 42.57 |
 | TESTS-scaling-limit-10_5 | impl attempt 1 | 2026-11-13 09:29 | started; worktree wt/tests-scaling-limit-10_5 from origin/main 0a1ab1ee1 |
 
