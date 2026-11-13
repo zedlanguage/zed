@@ -171,6 +171,7 @@ rows! {
     UngrantedReach => "Dependency reaching what its importer did not grant",
     // No diagnostic uses this row yet: plan row L7.2 emits it.
     UncommutedPortOps => "Two operations on one port that may not commute, with nothing ordering them",
+    NonblockingCanBlock => "Function marked `@nonblocking` that can block",
     NoArrowAtCarrier => "Operator with no arrow at its operands' carrier",
     UnitsDiffer => "Units that differ where an operation requires equal ones",
     // No diagnostic uses the next twelve rows yet: plan rows L12.2a-L12.2d,

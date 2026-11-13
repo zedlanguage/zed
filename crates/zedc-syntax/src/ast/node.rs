@@ -449,6 +449,20 @@ pub struct Stmt {
     pub span: Span,
 }
 
+impl Stmt {
+    /// The declaration the statement makes, its annotations aside: the declaration of an
+    /// annotated statement, else the statement itself. A pass that types, elaborates or runs
+    /// declarations reads each statement through this, so `@nonblocking f(…) = …` is the
+    /// function `f`; the annotations are read where they mean something. The grammar puts no
+    /// annotated declaration under another (`Annotated = Annot+ Decl`), so one level is all.
+    pub fn bare(&self) -> &Stmt {
+        match &self.kind {
+            StmtKind::Annotated { decl, .. } => decl,
+            _ => self,
+        }
+    }
+}
+
 /// The kinds of statement.
 #[derive(Debug)]
 pub enum StmtKind {

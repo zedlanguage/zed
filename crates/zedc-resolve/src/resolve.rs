@@ -585,15 +585,19 @@ fn later_type_layer(name: &str) -> Option<u32> {
 }
 
 /// The annotations, each with the layer it belongs to (DESIGN.md, "Defined words by layer").
-/// `@hash`, of layer L2, pins an import and annotates no declaration.
+/// `@hash`, of layer L2, pins an import and annotates no declaration; `@nonblocking`, of layer
+/// L2 on a function written in Zed, marks one the checker proves never blocks, and at L7 a
+/// foreign function, as `@blocking` does.
 pub const ANNOTATIONS: &[(&str, u32)] = &[
     ("hash", 2),
+    ("nonblocking", 2),
     ("foreign", 7),
     ("export", 7),
     ("borrowed", 7),
     ("stateless", 7),
     ("log", 7),
     ("after", 7),
+    ("blocking", 7),
     ("checked", 10),
     ("invariant", 15),
     ("ensure", 15),
@@ -1964,7 +1968,7 @@ impl Resolver<'_> {
             StmtKind::Until(_) => self.later(s.span, "an `until` guard"),
             StmtKind::Expr(_) => self.later(s.span, "an expression statement"),
             StmtKind::Annotated { annots, decl } => {
-                annots.iter().for_each(|a| self.annotation(a));
+                self.annotations(annots, decl);
                 todo.push(Task::Stmt(decl, false));
             }
             StmtKind::UnitAnnot(a) => self.unit_annotation(a, s.span),
@@ -2026,15 +2030,78 @@ impl Resolver<'_> {
         todo.push(Task::Ty(&t.ty));
     }
 
-    /// The annotation `a`. None has a meaning before layer L7, so each is refused with its
-    /// reason: it is no annotation, it is `@hash`, which annotates no declaration, or it is of
-    /// a later layer.
+    /// The annotations `annots`, written before the declaration `decl`. One has a meaning at
+    /// this layer: `@nonblocking` before a function or a method, which the checker then proves
+    /// never blocks (DESIGN.md sec:ports, "Every port operation says whether it can block").
+    /// It takes no arguments and is written once; before `local` it marks the function `local`
+    /// marks. Every other annotation is refused, by [`Self::annotation`].
+    fn annotations(&mut self, annots: &[Annot], decl: &Stmt) {
+        let decl = match &decl.kind {
+            StmtKind::Local(d) => d,
+            _ => decl,
+        };
+        let mut marked = false;
+        for a in annots {
+            if a.name != "nonblocking" {
+                self.annotation(a);
+                continue;
+            }
+            let what = match &decl.kind {
+                StmtKind::Function(_) | StmtKind::Method(_) => None,
+                StmtKind::Bind { .. } => Some("a binding"),
+                StmtKind::Struct(_) => Some("a struct declaration"),
+                StmtKind::Type(_) => Some("a type declaration"),
+                StmtKind::Import(_) => Some("an import"),
+                StmtKind::Return(_) => Some("a `return`"),
+                StmtKind::Push { .. } => Some("a push"),
+                StmtKind::Initial(_) => Some("an `initial` statement"),
+                StmtKind::IndexedDef(_) => Some("an indexed definition"),
+                StmtKind::While(_) | StmtKind::Until(_) => Some("a loop guard"),
+                StmtKind::Expr(_) => Some("an expression statement"),
+                StmtKind::Local(_) => Some("a `local` declaration again"),
+                StmtKind::Annotated { .. } | StmtKind::UnitAnnot(_) => {
+                    unreachable!("an annotated declaration and a unit item are no `Decl`")
+                }
+            };
+            let message = if marked {
+                "`@nonblocking` is written twice before one declaration. Remove one.".into()
+            } else if a.called {
+                "`@nonblocking` takes no arguments. Write `@nonblocking` alone before the \
+                 function."
+                    .into()
+            } else if let Some(what) = what {
+                format!(
+                    "`@nonblocking` marks a function, and here it stands before {what}. Remove \
+                     it, or write it before a function declaration."
+                )
+            } else {
+                marked = true;
+                continue;
+            };
+            marked = true;
+            self.errors.push(Error {
+                row: None,
+                menu: String::new(),
+                span: a.span,
+                message,
+                notes: Vec::new(),
+            });
+        }
+    }
+
+    /// The annotation `a`, refused with its reason: it is no annotation; it is `@hash`, which
+    /// annotates no declaration; it is `@nonblocking` written as a unit item
+    /// ([`Self::annotations`] reads it before a declaration); or it is of a later layer.
     fn annotation(&mut self, a: &Annot) {
         let name = &a.name;
         let message = match annotation_layer(name) {
             None => format!("`@{name}` is not an annotation"),
-            Some(2) => "`@hash` pins an import and follows its unit path, as in \
+            Some(2) if name == "hash" => "`@hash` pins an import and follows its unit path, as in \
                  `import geometry.shapes @hash(\"…\");`; it annotates no declaration"
+                .into(),
+            Some(2) => "`@nonblocking;` is not a unit item: `@nonblocking` marks a function, \
+                 written before its declaration, as in `@nonblocking scale(positional x: int) = \
+                 x * 2;`"
                 .into(),
             Some(_) => not_yet(&format!("the annotation `@{name}`")),
         };

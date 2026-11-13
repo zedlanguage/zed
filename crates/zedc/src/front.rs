@@ -1059,7 +1059,7 @@ pub fn linear_questions(
     let mut extending = presburger::extend::Extending::new();
     let mut out = Vec::new();
     for s in stmts {
-        let StmtKind::Function(f) = &s.kind else {
+        let StmtKind::Function(f) = &s.bare().kind else {
             continue;
         };
         if f.name == "main" {

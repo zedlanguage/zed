@@ -385,7 +385,7 @@ impl<'a> Elab<'a> {
         for s in stmts {
             match &s.kind {
                 StmtKind::Return(es) => export = Some(&es[..]),
-                _ => items.push(s),
+                _ => items.push(s.bare()),
             }
         }
         let mut order = match self.t.order(&items) {
@@ -442,9 +442,11 @@ impl<'a> Elab<'a> {
             | StmtKind::Type(_)
             | StmtKind::Method(_)
             | StmtKind::Import(_)
-            | StmtKind::Local(_)
-            | StmtKind::Annotated { .. } => {
+            | StmtKind::Local(_) => {
                 unreachable!("resolve rejects the forms of layer L2")
+            }
+            StmtKind::Annotated { .. } => {
+                unreachable!("a scope holds the declaration of an annotated one, `Stmt::bare`")
             }
             StmtKind::IndexedDef(_)
             | StmtKind::Initial(_)

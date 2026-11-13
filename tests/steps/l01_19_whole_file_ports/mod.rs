@@ -7,6 +7,7 @@ mod files;
 mod line_ends;
 mod lines;
 mod main_args;
+mod nonblocking;
 mod outside;
 mod ports;
 mod replay;

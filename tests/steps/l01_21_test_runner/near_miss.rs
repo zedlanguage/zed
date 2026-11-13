@@ -367,6 +367,16 @@ const NEAR_MISSES: &[NearMiss] = &[
         "1:47",
         Some("`fee(positional base: int, rate: int) = base * rate;`"),
     ),
+    // BLOCKING-gaps: a function marked `@nonblocking` reads what its caller passes; given
+    // `m.args` it cannot block, given `m.stdin` it can.
+    (
+        Row::NonblockingCanBlock,
+        "@nonblocking\nopt(positional a) = a[0] else \"\";\n",
+        "main(m: MainArgs) -> int {\n  if opt(m.args) == \"x\" { 1 } else { 0 }\n}\n",
+        "main(m: MainArgs) -> int {\n  if opt(m.stdin) == \"x\" { 1 } else { 0 }\n}\n",
+        "1:1",
+        Some("remove `@nonblocking` before `opt`"),
+    ),
     // ROOTS-listed (A81): at the root `p = 4` of the divisor, the written `12 div (p - 4) > 0`
     // gives `#divByZero`; a range that starts at 5 holds no root.
     (

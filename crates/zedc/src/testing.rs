@@ -144,7 +144,7 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, Accepted
             {
                 let lines = source::Lines::new(text.as_bytes());
                 for s in stmts {
-                    let StmtKind::Function(f) = &s.kind else {
+                    let StmtKind::Function(f) = &s.bare().kind else {
                         continue;
                     };
                     for (input, expected) in &f.tests {
@@ -177,7 +177,7 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, Accepted
             }
             let main = stmts
                 .iter()
-                .find(|s| matches!(&s.kind, StmtKind::Function(f) if f.name == "main"));
+                .find(|s| matches!(&s.bare().kind, StmtKind::Function(f) if f.name == "main"));
             let mut program = None;
             let mut untaken = BTreeSet::new();
             accepted = Accepted::Yes;

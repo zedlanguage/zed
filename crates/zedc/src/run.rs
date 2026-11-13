@@ -367,7 +367,7 @@ pub(crate) fn write_warnings(
 pub(crate) fn program(stmts: &[Stmt], unit: Arc<Unit>) -> Result<Program, ast::Error> {
     let mains: Vec<(&Stmt, &Function)> = stmts
         .iter()
-        .filter_map(|s| match &s.kind {
+        .filter_map(|s| match &s.bare().kind {
             StmtKind::Function(f) if f.name == "main" => Some((s, f)),
             _ => None,
         })

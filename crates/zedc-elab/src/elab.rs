@@ -169,6 +169,7 @@ fn finish(
 pub fn top_order(unit: &[Stmt], res: &Resolution) -> Result<Vec<usize>, Vec<Vec<usize>>> {
     let items: Vec<&Stmt> = (unit.iter())
         .filter(|s| !matches!(s.kind, StmtKind::Return(_)))
+        .map(Stmt::bare)
         .collect();
     Tables::new(unit, res).order(&items)
 }

@@ -285,12 +285,13 @@ impl<'a> Tables<'a> {
                 todo.push(Collect::Expr(value))
             }
             StmtKind::Return(es) => todo.extend(es.iter().map(Collect::Expr)),
+            // `@nonblocking f(…) = …`: the function, its mark read by the checker.
+            StmtKind::Annotated { decl, .. } => todo.push(Collect::Stmt(decl)),
             StmtKind::Struct(_)
             | StmtKind::Type(_)
             | StmtKind::Method(_)
             | StmtKind::Import(_)
             | StmtKind::Local(_)
-            | StmtKind::Annotated { .. }
             | StmtKind::IndexedDef(_)
             | StmtKind::Initial(_)
             | StmtKind::While(_)
@@ -340,12 +341,13 @@ impl<'a> Tables<'a> {
                 .collect(),
             StmtKind::Function(f) => vec![self.id(s.span, &f.name)],
             StmtKind::Push { .. } | StmtKind::Return(_) | StmtKind::UnitAnnot(_) => Vec::new(),
+            // The resolver binds the declaration's names at its own text.
+            StmtKind::Annotated { decl, .. } => self.binders_of(decl),
             StmtKind::Struct(_)
             | StmtKind::Type(_)
             | StmtKind::Method(_)
             | StmtKind::Import(_)
-            | StmtKind::Local(_)
-            | StmtKind::Annotated { .. } => {
+            | StmtKind::Local(_) => {
                 unreachable!("resolve rejects the forms of layer L2")
             }
             StmtKind::IndexedDef(_)
@@ -442,7 +444,7 @@ impl<'a> Tables<'a> {
 
 /// Whether `u` lies in one of the `test` tables of the function `s` declares.
 fn in_tests(s: &Stmt, u: Span) -> bool {
-    let StmtKind::Function(f) = &s.kind else {
+    let StmtKind::Function(f) = &s.bare().kind else {
         return false;
     };
     let k = f.tests.partition_point(|(a, _)| a.span.start <= u.start);
@@ -479,7 +481,7 @@ fn deferred_spans(e: &Expr) -> Vec<Span> {
         match c {
             Collect::Expr(e) if matches!(e.kind, ExprKind::Lambda { .. }) => out.push(e.span),
             Collect::Expr(e) => collect_expr(e, &mut todo),
-            Collect::Stmt(s) => match &s.kind {
+            Collect::Stmt(s) => match &s.bare().kind {
                 StmtKind::Function(_) => out.push(s.span),
                 StmtKind::Bind { value, .. } | StmtKind::Push { value, .. } => {
                     todo.push(Collect::Expr(value))
@@ -819,7 +821,7 @@ impl<'a> Tables<'a> {
     /// `` `f(positional n: int)` ``, when another binder shares its name and the text is known:
     /// the name alone does not tell the overloads of a set apart.
     fn header(&self, s: &Stmt) -> Option<String> {
-        let StmtKind::Function(f) = &s.kind else {
+        let StmtKind::Function(f) = &s.bare().kind else {
             return None;
         };
         let text = self.text?;
@@ -916,12 +918,12 @@ fn what(s: &Stmt) -> String {
             unreachable!("a push or an export binds no name, so it is in no cycle")
         }
         StmtKind::UnitAnnot(_) => unreachable!("a unit item binds no name, so it is in no cycle"),
+        StmtKind::Annotated { decl, .. } => what(decl),
         StmtKind::Struct(_)
         | StmtKind::Type(_)
         | StmtKind::Method(_)
         | StmtKind::Import(_)
-        | StmtKind::Local(_)
-        | StmtKind::Annotated { .. } => {
+        | StmtKind::Local(_) => {
             unreachable!("resolve rejects the forms of layer L2")
         }
         StmtKind::IndexedDef(_)

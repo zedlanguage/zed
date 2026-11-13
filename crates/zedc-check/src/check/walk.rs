@@ -62,6 +62,13 @@ pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
         ck.bounds();
         ck.walk(unit);
     }
+    // A function marked `@nonblocking` that can block (DESIGN.md sec:ports), decided from the
+    // fact found once for every function: one lookup per mark.
+    let (blocking, marked) = super::blocking::facts_and_marks(t, unit);
+    for (span, message, notes) in super::blocking::marked_errors(&blocking, &marked, t.res, t.text)
+    {
+        ck.rejects_with(Row::NonblockingCanBlock, span, message, notes);
+    }
     ck.finish();
     #[cfg(debug_assertions)]
     clean_check::flush();
@@ -71,7 +78,7 @@ pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
         .errors
         .sort_by(|a, b| (a.span, &a.message, &a.menu).cmp(&(b.span, &b.message, &b.menu)));
     ck.info.errors.dedup();
-    ck.info.blocking = super::blocking::facts(t, unit);
+    ck.info.blocking = blocking;
     ck.info
 }
 
@@ -1428,7 +1435,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         for s in stmts {
             match &s.kind {
                 StmtKind::Return(es) => export = Some(&es[..]),
-                _ => items.push(s),
+                _ => items.push(s.bare()),
             }
         }
         // A cycle is a recursion, rejected until layer L6 (`recursion`). Every other statement
@@ -1582,11 +1589,13 @@ impl<'t, 'a> Ck<'t, 'a> {
             | StmtKind::Type(_)
             | StmtKind::Method(_)
             | StmtKind::Import(_)
-            | StmtKind::Local(_)
-            | StmtKind::Annotated { .. } => {
+            | StmtKind::Local(_) => {
                 unreachable!(
-                    "name resolution rejects every struct, type, method, import, local and annotated definition before the checker reads the program"
+                    "name resolution rejects every struct, type, method, import and local definition before the checker reads the program"
                 )
+            }
+            StmtKind::Annotated { .. } => {
+                unreachable!("a scope holds the declaration of an annotated one, `Stmt::bare`")
             }
             StmtKind::IndexedDef(_)
             | StmtKind::Initial(_)

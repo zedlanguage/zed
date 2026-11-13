@@ -24,8 +24,8 @@ use imbl::Vector;
 use zedc_resolve::resolve::tables::{ListKey, Tables};
 use zedc_resolve::resolve::{Kind, Ref, Resolution, prelude_layer};
 use zedc_syntax::ast::{
-    Annot, Expr, ExprKind, Field, Function, IndexKey, Param, RangeEnd, Stmt, StmtKind, StrPart,
-    Struct, Target, TypeKind,
+    Annot, Expr, ExprKind, Field, Function, IndexKey, Note, Param, RangeEnd, Stmt, StmtKind,
+    StrPart, Struct, Target, TypeKind,
 };
 use zedc_syntax::lex::Span;
 
@@ -162,6 +162,11 @@ struct Walk<'t, 'a> {
     /// The uses of names whose value is passed on whole, as an argument of a declared
     /// function, a binding's value or a result: not reads, which the receiver makes.
     passed: HashSet<Span>,
+    /// The `@nonblocking` written before each function declaration, by the declaration's
+    /// statement: the annotation's text.
+    mark_of: HashMap<Span, Span>,
+    /// Each function marked `@nonblocking`, by its binder, with the annotation's text.
+    marked: Vec<(usize, Span)>,
 }
 
 /// Each function of the unit whose tables are `t` and whose statements are `unit` that can
@@ -176,6 +181,16 @@ struct Walk<'t, 'a> {
 // is all the fact needs, not of every pair). The uses of an overload set of K arrows share one
 // junction node, as `Tables` groups them (COMPLEXITY.md F49): U uses cost U + K edges, not U·K.
 pub fn facts<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> BTreeMap<usize, Cause> {
+    facts_and_marks(t, unit).0
+}
+
+/// [`facts`], and each function marked `@nonblocking` (DESIGN.md sec:ports), by its binder, with
+/// the annotation's text, in the order of the text. The marks are found in the same walk, one
+/// lookup per declaration, so checking them costs nothing beyond the facts.
+pub fn facts_and_marks<'a>(
+    t: &Tables<'a>,
+    unit: &'a [Stmt],
+) -> (BTreeMap<usize, Cause>, Vec<(usize, Span)>) {
     let mut w = Walk {
         t,
         flow: vec![Vec::new(); t.res.binders.len()],
@@ -195,6 +210,8 @@ pub fn facts<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> BTreeMap<usize, Cause> {
         results: HashMap::new(),
         result_of: HashMap::new(),
         passed: HashSet::new(),
+        mark_of: HashMap::new(),
+        marked: Vec::new(),
     };
     w.walk(unit);
     w.join_calls();
@@ -202,7 +219,8 @@ pub fn facts<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> BTreeMap<usize, Cause> {
         w.flow[b].push(n);
     }
     let holds = w.holds();
-    w.blocking(&holds)
+    let marked = std::mem::take(&mut w.marked);
+    (w.blocking(&holds), marked)
 }
 
 impl<'t, 'a> Walk<'t, 'a> {
@@ -268,6 +286,9 @@ impl<'t, 'a> Walk<'t, 'a> {
         };
         self.decls.insert(id, f);
         self.functions.push(id);
+        if let Some(&a) = self.mark_of.get(&s.span) {
+            self.marked.push((id, a));
+        }
         if f.main.is_some() {
             for p in &f.params {
                 let Some(&b) = self.t.ids.get(&(p.span, p.name.as_str())) else {
@@ -312,6 +333,15 @@ impl<'t, 'a> Walk<'t, 'a> {
             }
             StmtKind::Local(decl) => todo.push((Part::Stmt(decl), owner)),
             StmtKind::Annotated { annots, decl } => {
+                // A misplaced or called `@nonblocking` is refused by resolution; one before a
+                // function is found by its declaration when [`Walk::function`] reaches it.
+                let bare = match &decl.kind {
+                    StmtKind::Local(d) => d,
+                    _ => decl,
+                };
+                if let Some(a) = annots.iter().find(|a| a.name == "nonblocking" && !a.called) {
+                    self.mark_of.insert(bare.span, a.span);
+                }
                 todo.push((Part::Stmt(decl), owner));
                 todo.extend(annots.iter().flat_map(annot).map(expr));
             }
@@ -926,6 +956,138 @@ fn kids<'a>(kind: &'a ExprKind, push: &mut impl FnMut(&'a Expr)) {
             push(otherwise);
         }
     }
+}
+
+/// The error of each function marked `@nonblocking` (`marked`, as [`facts_and_marks`] gives
+/// it) that can block by the facts `facts` of its unit, resolved as `res`, whose text is
+/// `text` (DESIGN.md sec:ports and sec:diagnostics, "Function marked `@nonblocking` that can
+/// block"): at the annotation, the headline, then one note at each step of the path of calls
+/// from the function to the blocking operation, each at its line, then the repairs. The path
+/// stops at a function whose steps another error shows: one marked `@nonblocking`, which has
+/// its own error, or one an earlier error of this list went through, at whose step it points.
+// Complexity tradeoff: the naive check runs a search from each marked function over its calls,
+// O(M·(V+E)) for M marks over a call graph of V functions and E calls (a chain of n marked
+// functions is O(n²)). Used: the facts, found once for every function by one backward search
+// (see [`facts`]), already hold each blocking function's first step, so a mark is decided by
+// one lookup, O(1). Writing each error's whole path would still cost the sum of the path
+// lengths, O(M·V) (n marked functions in a chain, each path running to its end), so a path
+// stops where another error shows the rest: each function's step is written once over all
+// the errors, O(M + V) in all, with `shown` as the visited set.
+pub fn marked_errors(
+    facts: &BTreeMap<usize, Cause>,
+    marked: &[(usize, Span)],
+    res: &Resolution,
+    text: Option<&str>,
+) -> Vec<(Span, String, Vec<Note>)> {
+    let name = |b: usize| format!("`{}`", res.binders[b].name);
+    let own: HashMap<usize, Span> = marked.iter().copied().collect();
+    let mut shown: HashMap<usize, Span> = HashMap::new();
+    let mut out = Vec::new();
+    for &(f, annot) in marked {
+        let Some(mut cause) = facts.get(&f) else {
+            continue;
+        };
+        let mut notes = Vec::new();
+        // Each step goes to a function the search marked before the one it leaves, so the
+        // path ends; `shown` is its visited set all the same.
+        let mut g = f;
+        loop {
+            let (at, says) = match cause {
+                Cause::Calls { callee, at } => (
+                    *at,
+                    format!("{} calls {}, which can block", name(g), name(*callee)),
+                ),
+                Cause::Reads { value, port, at } if value == port => (
+                    *at,
+                    format!(
+                        "{} reads {}, which can wait for its data",
+                        name(g),
+                        name(*port)
+                    ),
+                ),
+                Cause::Reads { value, port, at } => (
+                    *at,
+                    format!(
+                        "{} reads {}, which holds {}, which can wait for its data",
+                        name(g),
+                        name(*value),
+                        name(*port)
+                    ),
+                ),
+                Cause::Pushes { port, at } => (
+                    *at,
+                    format!(
+                        "{} pushes to {}, which can wait while its reader does not read",
+                        name(g),
+                        name(*port)
+                    ),
+                ),
+                Cause::CallsValue { at, callee } => {
+                    let written = text.map_or("a function value".to_string(), |t| {
+                        format!("`{}`", &t[callee.start..callee.end])
+                    });
+                    (
+                        *at,
+                        format!(
+                            "{} calls {written}, a function value whose body is not known \
+                             here, so the call may block",
+                            name(g)
+                        ),
+                    )
+                }
+            };
+            notes.push(Note {
+                span: at,
+                text: says,
+            });
+            shown.insert(g, at);
+            let Cause::Calls { callee, .. } = cause else {
+                break;
+            };
+            g = *callee;
+            if let Some(&a) = own.get(&g) {
+                notes.push(Note {
+                    span: a,
+                    text: format!(
+                        "{} is marked `@nonblocking` too, and its own error shows how it can block",
+                        name(g)
+                    ),
+                });
+                break;
+            }
+            if let Some(&step) = shown.get(&g) {
+                notes.push(Note {
+                    span: step,
+                    text: format!(
+                        "{} can block: another error shows the rest of the path from here",
+                        name(g)
+                    ),
+                });
+                break;
+            }
+            cause = facts
+                .get(&g)
+                .expect("a function a blocking call reaches is blocking");
+        }
+        notes.push(Note {
+            span: annot,
+            text: format!("repair: remove `@nonblocking` before {}", name(f)),
+        });
+        notes.push(Note {
+            span: annot,
+            text: format!(
+                "repair: move the blocking operation to a caller of {}, and pass in what it \
+                 reads or gives",
+                name(f)
+            ),
+        });
+        out.push((
+            annot,
+            format!("{} is marked `@nonblocking` but can block.", name(f)),
+            notes,
+        ));
+    }
+    out
 }
 
 /// Why the function `f` can block, in the program's words, from the facts `facts` of its unit

@@ -275,7 +275,7 @@ pub fn apply(term: &Term, at: &Position, to: &Change) -> Term {
 fn original(stmts: &[Stmt], unit: &Arc<Unit>) -> Option<run::Program> {
     let has_main = stmts
         .iter()
-        .any(|s| matches!(&s.kind, StmtKind::Function(f) if f.name == "main"));
+        .any(|s| matches!(&s.bare().kind, StmtKind::Function(f) if f.name == "main"));
     if has_main {
         run::program(stmts, Arc::clone(unit)).ok()
     } else {
