@@ -4671,7 +4671,8 @@ fn converted(sig: &Sig, t: &Ty) -> Option<Ty> {
 /// one conversion by the signature of the exact cast.
 fn widening(w: &str, t: &Ty, exact: bool) -> Option<Ty> {
     match w == "f64" && exact {
-        true => converted(&exact_int_cast_sig(Carrier::F64), t).filter(|r| r.atoms() == t.atoms()),
+        true => converted(&int_cast_sig(Carrier::F64, IntCast::Exact), t)
+            .filter(|r| r.atoms() == t.atoms()),
         false => cast_widening(w, t),
     }
 }
@@ -7895,19 +7896,23 @@ fn word_sig(w: &str) -> Arc<Sig> {
             arrow(Rat, Rat, &[]),
             arrow(Str, Rat, &["invalid"]),
         ],
+        // A float format has a largest finite value: a number beyond it is `#overflow` and one
+        // within it with no equal float `#inexact` (A36, DESIGN.md "Casts are domain proofs").
+        // A text is read correctly rounded, so it gives no `#inexact`: `#overflow` where it
+        // rounds past the largest finite value and `#invalid` where it is not a number.
         "f64" => vec![
-            arrow(Int, F64, &["inexact"]),
+            arrow(Int, F64, &["inexact", "overflow"]),
             arrow(F64, F64, &[]),
-            arrow(Rat, F64, &["inexact"]),
-            arrow(Str, F64, &["inexact", "invalid"]),
+            arrow(Rat, F64, &["inexact", "overflow"]),
+            arrow(Str, F64, &["invalid", "overflow"]),
             // Every `f32` is an `f64`.
             arrow(F32, F64, &[]),
         ],
         "f32" => vec![
-            arrow(Int, F32, &["inexact"]),
-            arrow(F64, F32, &["inexact"]),
-            arrow(Rat, F32, &["inexact"]),
-            arrow(Str, F32, &["inexact", "invalid"]),
+            arrow(Int, F32, &["inexact", "overflow"]),
+            arrow(F64, F32, &["inexact", "overflow"]),
+            arrow(Rat, F32, &["inexact", "overflow"]),
+            arrow(Str, F32, &["invalid", "overflow"]),
             arrow(F32, F32, &[]),
         ],
         "abs" => arrows(&[Int, F64, Rat, F32], 1, Ty::carrier),
@@ -7954,16 +7959,45 @@ fn exact_int_bound(c: Carrier) -> i64 {
     }
 }
 
+/// The largest finite value of the float format `c`, `f64` or `f32`, as an int: an int beyond
+/// it in magnitude makes the cast `#overflow` (A36, DESIGN.md "Casts are domain proofs").
+fn largest_float_int(c: Carrier) -> Num {
+    let f = match c {
+        Carrier::F32 => FloatFormat::F32,
+        _ => FloatFormat::F64,
+    };
+    Num::from(f.largest())
+}
+
+/// What the checker proves of the ints an operand of the cast to a float format may be.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum IntCast {
+    /// Nothing: an int may lie beyond the format's largest finite value.
+    Unproved,
+    /// Each lies within ±[`largest_float_int`]: the cast of an int gives no `#overflow`.
+    InRange,
+    /// Each lies within ±[`exact_int_bound`]: the cast of an int gives no atom.
+    Exact,
+}
+
 /// The cast to the float format `c`, `f64` or `f32`, at an operand whose ints the checker proves
-/// lie within ±[`exact_int_bound`]: its arrow at `int` gives no `#inexact`, since each such int
-/// has an exact value in `c` (DESIGN.md "Casts are domain proofs"). Its other arrows are those
-/// of [`word_sig`].
-fn exact_int_cast_sig(c: Carrier) -> Arc<Sig> {
+/// lie in range or exact (`proof`): its arrow at `int` gives no `#overflow` for one in range,
+/// and no atom for one exact, since each such int has an equal value in `c` (DESIGN.md "Casts
+/// are domain proofs"). Its other arrows, and every arrow when nothing is proved, are those of
+/// [`word_sig`].
+fn int_cast_sig(c: Carrier, proof: IntCast) -> Arc<Sig> {
     let mut sig = word_sig(c.name());
+    let fails: &[&str] = match proof {
+        IntCast::Unproved => return sig,
+        IntCast::InRange => &["inexact"],
+        IntCast::Exact => &[],
+    };
     let int = Ty::carrier(Carrier::Int);
     for a in &mut Arc::make_mut(&mut sig).arrows {
         if a.params[0] == int {
-            a.result = Ty::carrier(c);
+            a.result = fails
+                .iter()
+                .fold(Ty::carrier(c), |t, n| t.union(&Ty::set(KType::atom(n))));
         }
     }
     sig

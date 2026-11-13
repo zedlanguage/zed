@@ -178,10 +178,13 @@ fn a_cast_that_may_convert_keeps_its_atom() {
             "f(x: f64) = int(x);",
             "(x: f64) -> int | #inexact | #invalid",
         ),
-        // A literal that converts is accepted. Its result still lists the atom, which the
-        // literal never gives (unfinished: the atom could be dropped).
+        // A literal that converts is accepted. Its result still lists the atoms, which the
+        // literal never gives (unfinished: the atoms could be dropped).
         ("f(x: int) = int(\"12\");", "(x: int) -> int | #invalid"),
-        ("f(x: int) = f64(3r);", "(x: int) -> f64 | #inexact"),
+        (
+            "f(x: int) = f64(3r);",
+            "(x: int) -> f64 | #inexact | #overflow",
+        ),
         (
             "f(x: int) = int(2.0f64);",
             "(x: int) -> int | #inexact | #invalid",

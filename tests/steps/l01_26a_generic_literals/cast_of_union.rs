@@ -76,7 +76,7 @@ fn a_cast_takes_each_value_of_a_call_at_its_own_arrow() {
     // As the `if` itself is, and as a `rat` value is at the `rat` arrow.
     assert_eq!(y_type("y = f64(if true { 1 } else { 2.5f64 });\n"), "f64");
     let src = format!("{RAT}\ny = f64(g(false));\n");
-    assert_eq!(y_type(&src), "f64 | #inexact");
+    assert_eq!(y_type(&src), "f64 | #inexact | #overflow");
     assert_eq!(value(&src, "y"), "2.5");
     // Integer values alone stay at the `int` arrow, as before; an `int` within ±2^53 casts exactly.
     let src = "g(positional c: bool) = if c { 1 } else { 2 };\ny = f64(g(false));\n";

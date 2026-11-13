@@ -3,9 +3,10 @@
 //! and UTF-8 words `codePoint`, `scalar`, `utf8` and `fromUtf8` (step L1.39c).
 //!
 //! A cast is a domain proof (DESIGN.md, "Casts are domain proofs"): `T(x)` is `x` as a `T`
-//! when the value is the same number, `#inexact` when a numeric source has no equal `T`, and
-//! `#invalid` when the source is not a `T` at all: a string that does not read as one, or a
-//! float that is infinite or NaN cast to an exact kind.
+//! when the value is the same number, `#overflow` when a finite source lies beyond the largest
+//! finite `T` (a float format, or a text that rounds past it), `#inexact` when a numeric source
+//! in range has no equal `T`, and `#invalid` when the source is not a `T` at all: a string that
+//! does not read as one, or a float that is infinite or NaN cast to an exact kind.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -15,18 +16,27 @@ use num_traits::{ToPrimitive, Zero};
 
 use crate::KernelError;
 use crate::num::{
-    Exact, Rat, TooLarge, exact_f32, exact_f64, read_decimal, read_f32_ieee, read_f64_ieee, room,
-    show_f32, show_f64,
+    Exact, FloatFormat, Rat, TooLarge, beyond_float, exact_f32, exact_f64, read_decimal,
+    read_f32_ieee, read_f64_ieee, room, show_f32, show_f64,
 };
 use crate::term::Prim;
 use crate::text::Text;
 use crate::value::Family;
 use crate::value::Value;
 
+/// The format a float cast `p` gives: `f32` for `CastF32`, and `f64` for `CastF64`.
+fn float_format(p: Prim) -> FloatFormat {
+    match p {
+        Prim::CastF32 => FloatFormat::F32,
+        _ => FloatFormat::F64,
+    }
+}
+
 /// `p(x)` for one of the words above; a type error when `x` is not of a kind `p` takes.
 pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
     let inexact = || Value::atom("inexact");
     let invalid = || Value::atom("invalid");
+    let overflow = || Value::atom("overflow");
     let out = match (p, x) {
         (Prim::Show, Value::Str(_)) => x.clone(),
         (Prim::Show, Value::Float(f)) => Value::str(&show_f64(f.get())),
@@ -62,7 +72,7 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
         (Prim::CastF64, Value::Str(s)) => {
             let s = s.try_flat().map_err(|e| refused("f64", e))?;
             match read_f64(&s) {
-                Some(f) if f.is_infinite() && !s.ends_with("inf") => inexact(),
+                Some(f) if f.is_infinite() && !s.ends_with("inf") => overflow(),
                 Some(f) => Value::float(f),
                 None => invalid(),
             }
@@ -70,7 +80,7 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
         (Prim::CastF32, Value::Str(s)) => {
             let s = s.try_flat().map_err(|e| refused("f32", e))?;
             match read_f32(&s) {
-                Some(f) if f.is_infinite() && !s.ends_with("inf") => inexact(),
+                Some(f) if f.is_infinite() && !s.ends_with("inf") => overflow(),
                 Some(f) => Value::float32(f),
                 None => invalid(),
             }
@@ -102,6 +112,17 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
                 (Prim::CastInt, _) if r.is_integer() => Value::integer(r.into_owned()),
                 (Prim::CastInt, _) => inexact(),
                 (Prim::CastRat, _) => Value::rat(r.into_owned()),
+                // A number beyond the largest finite float is out of the format's range, which
+                // is `#overflow`, ahead of the test for an equal float (A36).
+                _ if beyond_float(&r, float_format(p)).map_err(|e| {
+                    KernelError::RoundTooLarge {
+                        to: float_format(p).name(),
+                        bits: e.bits,
+                    }
+                })? =>
+                {
+                    overflow()
+                }
                 (Prim::CastF32, _) => match exact_f32(&r) {
                     Ok(Some(f)) => Value::float32(f),
                     Ok(None) => inexact(),

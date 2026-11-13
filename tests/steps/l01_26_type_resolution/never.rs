@@ -317,12 +317,12 @@ fn a_bool_tested_again_on_its_own_path_takes_one_branch() {
                 .to_string(),
             "(bool, bool) -> int | f64 | \"s\"",
         ),
-        // `f64(1)` is exact; a cast of an int no test bounds keeps `#inexact`.
+        // `f64(1)` is exact; a cast of an int no test bounds keeps `#inexact` and `#overflow`.
         (
             "f(positional c, positional d, positional x, positional n: int) = if c { int(1) } \
              else { if d { f64(n) } else { x } };\n"
                 .to_string(),
-            "(bool, bool, T, int) -> int | f64 | T | #inexact",
+            "(bool, bool, T, int) -> int | f64 | T | #inexact | #overflow",
         ),
     ] {
         assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");

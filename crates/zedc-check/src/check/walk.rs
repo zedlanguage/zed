@@ -3643,8 +3643,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         let sig = match w {
-            "f64" if self.exact_in(&x, Carrier::F64) => exact_int_cast_sig(Carrier::F64),
-            "f32" if self.exact_in(&x, Carrier::F32) => exact_int_cast_sig(Carrier::F32),
+            "f64" => int_cast_sig(Carrier::F64, self.int_cast(&x, Carrier::F64)),
+            "f32" => int_cast_sig(Carrier::F32, self.int_cast(&x, Carrier::F32)),
             _ => word_sig(w),
         };
         let values = self.operand_values(&x);
@@ -3695,19 +3695,31 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// shows and one narrowing by the enclosing tests (COMPLEXITY.md C26, F175), the work a bit
     /// word's operand takes; building the text as well would print a type at each cast.
     fn exact_in_f64(&mut self, x: &Arg<'a>) -> bool {
-        self.exact_in(x, Carrier::F64)
+        self.int_cast(x, Carrier::F64) == IntCast::Exact
     }
 
-    /// Whether every int the operand `x` of the cast to the float format `c` may be lies within
-    /// ±[`exact_int_bound`] of `c`, as [`Self::exact_in_f64`] says for `f64`.
-    fn exact_in(&mut self, x: &Arg<'a>, c: Carrier) -> bool {
+    /// What the checker proves of the ints the operand `x` of the cast to the float format `c`
+    /// may be: that each lies within ±[`exact_int_bound`] of `c`, as [`Self::exact_in_f64`] says
+    /// for `f64`, so the cast is exact; or else that each lies within the format's largest finite
+    /// value, so it is not `#overflow` (A36). Both are read from one interval: the naive way,
+    /// a separate read for each fact, would walk the text and the enclosing tests twice. Cost:
+    /// one [`Self::ints_of`] and two subset tests against one interval, `O(log p)` each for `p`
+    /// pieces ([`IntervalSet::is_subset`]).
+    fn int_cast(&mut self, x: &Arg<'a>, c: Carrier) -> IntCast {
         let ns = &x.ty.set & &KType::int();
         let Some(e) = x.expr.filter(|_| !ns.is_empty()) else {
-            return false;
+            return IntCast::Unproved;
         };
         let (ints, _, _) = self.ints_of(&ns, e);
         let b = exact_int_bound(c);
-        ints.is_subset(&IntervalSet::of(-b, b))
+        if ints.is_subset(&IntervalSet::of(-b, b)) {
+            return IntCast::Exact;
+        }
+        let m = largest_float_int(c);
+        match ints.is_subset(&IntervalSet::range(Fin(-&m), Fin(m))) {
+            true => IntCast::InRange,
+            false => IntCast::Unproved,
+        }
     }
 
     /// A call of the bit word `w`, the primitive `p` (step L1.39a): its arguments placed by

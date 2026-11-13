@@ -61,9 +61,9 @@ fn overflow_rounds_to_infinity() {
     assert_eq!(x("String(-3.0e38f32 * 2.0f32)"), "\"-inf\"");
     // The same product at `f64` is finite.
     assert_eq!(x("String(3.0e38f64 * 2.0f64)"), "\"6.0e38\"");
-    // Text past the largest `f32` is not read as infinity, as at `f64`.
-    assert_eq!(x("f32(text(\"1e39\"))"), "#inexact");
-    assert_eq!(x("f64(text(\"1e400\"))"), "#inexact");
+    // Text past the largest `f32` is `#overflow`, not infinity, as at `f64` (A36).
+    assert_eq!(x("f32(text(\"1e39\"))"), "#overflow");
+    assert_eq!(x("f64(text(\"1e400\"))"), "#overflow");
 }
 
 #[test]

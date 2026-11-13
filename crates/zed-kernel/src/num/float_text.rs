@@ -25,7 +25,7 @@
 //! Schubfach takes the even one; and one significant digit where Java asks for two.
 
 use super::LiteralRounding;
-use num_bigint::BigUint;
+use num_bigint::{BigInt, BigUint};
 use std::cmp::Ordering;
 
 mod pow5;
@@ -56,12 +56,20 @@ impl FloatFormat {
     }
 
     /// The largest exponent of a finite value, which is also the exponent bias.
-    const fn emax(self) -> i64 {
+    pub(crate) const fn emax(self) -> i64 {
         match self {
             FloatFormat::F64 => 1023,
             FloatFormat::F32 | FloatFormat::BF16 => 127,
             FloatFormat::F16 => 15,
         }
+    }
+
+    /// The largest finite value, an integer: `(2^p - 1) * 2^(emax - p + 1)` with `p` bits of
+    /// precision, `65504` for `f16`. A finite number beyond it in magnitude is outside the
+    /// format's range, which makes a cast to it `#overflow` (DESIGN.md "Casts are domain proofs").
+    pub fn largest(self) -> BigInt {
+        let p = self.precision();
+        ((BigInt::from(1) << p) - 1) << (self.emax() - p + 1)
     }
 
     /// Its name, as a type and a literal suffix write it: `f64`, `bf16`.

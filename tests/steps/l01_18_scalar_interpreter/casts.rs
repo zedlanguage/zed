@@ -1,5 +1,6 @@
-//! The checked casts: `T(x)` is `x` as a `T` when it is the same number, `#inexact` when a
-//! number has no equal `T`, and `#invalid` when the source is not a `T` at all.
+//! The checked casts: `T(x)` is `x` as a `T` when it is the same number, `#overflow` when a
+//! number lies beyond the largest finite `T`, `#inexact` when one in range has no equal `T`,
+//! and `#invalid` when the source is not a `T` at all.
 
 use super::x;
 use num_bigint::BigUint;
@@ -70,15 +71,50 @@ fn a_number_to_f64_must_be_exactly_representable() {
 }
 
 #[test]
-fn a_float_reads_correctly_rounded_and_overflow_is_inexact() {
+fn a_float_reads_correctly_rounded_and_overflow_is_overflow() {
     assert_eq!(x("f64(\"0.1\") == 0.1"), "true");
     assert_eq!(x("f64(\"2.5e-3\")"), "0.0025");
     assert_eq!(x("f64(\"7\")"), "7.0");
-    assert_eq!(x("f64(text(\"1e400\"))"), "#inexact");
-    assert_eq!(x("f64(text(\"-1e400\"))"), "#inexact");
+    assert_eq!(x("f64(text(\"1e400\"))"), "#overflow");
+    assert_eq!(x("f64(text(\"-1e400\"))"), "#overflow");
     assert_eq!(x("f64(text(\"1,5\"))"), "#invalid");
     assert_eq!(x("f64(text(\"infinity\"))"), "#invalid");
     assert_eq!(x("f64(text(\"1e\"))"), "#invalid");
+}
+
+/// A36: a finite number beyond the largest finite value of a float format is `#overflow`, and
+/// one in range with no equal float `#inexact`. The largest `f64` is `(2^53 - 1) * 2^971`; one
+/// more rounds to it at the nearest, yet lies outside the range, so it is `#overflow` too.
+#[test]
+fn a_number_beyond_the_largest_float_is_overflow() {
+    let max = "(2^53 - 1) * 2^971";
+    assert_eq!(x(&format!("f64({max})")), "1.7976931348623157e308");
+    assert_eq!(x(&format!("f64(-({max}))")), "-1.7976931348623157e308");
+    assert_eq!(x(&format!("f64({max} + 1)")), "#overflow");
+    assert_eq!(x(&format!("f64(-({max}) - 1)")), "#overflow");
+    assert_eq!(x(&format!("f64({max} - 1)")), "#inexact");
+    assert_eq!(x("f64(2^1024)"), "#overflow");
+    // Rats beyond it, with and without a binary form, and just inside it.
+    assert_eq!(x(&format!("f64(rat({max}) + 1r/2r)")), "#overflow");
+    assert_eq!(x("f64(rat(10^400) / 3r)"), "#overflow");
+    assert_eq!(x("f64(rat(3)^700)"), "#overflow");
+    assert_eq!(x(&format!("f64(rat({max}) - 1r/2r)")), "#inexact");
+    assert_eq!(x("f64(1r / rat(3)^700)"), "#inexact");
+    // `f32`: its largest is `(2^24 - 1) * 2^104`, from an int, a rat or an `f64`.
+    let max32 = "(2^24 - 1) * 2^104";
+    assert_eq!(x(&format!("f32({max32})")), "3.4028235e38f32");
+    assert_eq!(x(&format!("f32({max32} + 1)")), "#overflow");
+    assert_eq!(x(&format!("f32({max32} - 1)")), "#inexact");
+    assert_eq!(x("f32(rat(2^128))"), "#overflow");
+    assert_eq!(x("f32(real(1.0e39f64))"), "#overflow");
+    assert_eq!(x("f32(real(-1.0e39f64))"), "#overflow");
+    assert_eq!(x(&format!("f32(f64({max32}))")), "3.4028235e38f32");
+    // An infinity is not finite: `f32` keeps it, and `int` and `rat` of it are `#invalid`.
+    assert_eq!(x("String(f32(real(1.0e308f64 * 10.0f64)))"), "\"inf\"");
+    assert_eq!(x("int(real(1.0e308f64 * 10.0f64))"), "#invalid");
+    // `int` and `rat` have no largest value.
+    assert_eq!(x("int(rat(2^2000)) == 2^2000"), "true");
+    assert_eq!(x("rat(2^2000) == rat(2^2000)"), "true");
 }
 
 #[test]
@@ -218,7 +254,7 @@ fn a_number_received_in_pieces_reads_as_one() {
         "true"
     );
     // A float of 393 digits after the point rounds to the nearest f64, and one past the
-    // largest f64 is inexact, written in pieces as in one.
+    // largest f64 is #overflow (A36), written in pieces as in one.
     let half = [
         format!("0.5{}", "0".repeat(130)),
         "0".repeat(130),
@@ -230,7 +266,7 @@ fn a_number_received_in_pieces_reads_as_one() {
         "0".repeat(130),
         "0".repeat(140),
     ];
-    assert_eq!(x(&format!("f64({})", joined(&huge))), "#inexact");
+    assert_eq!(x(&format!("f64({})", joined(&huge))), "#overflow");
 }
 
 #[test]
