@@ -122,7 +122,10 @@ fn mixing_nested_ifs_whose_arms_are_one_part_gives_what_the_tree_gives() {
         let (mixed_shared, report_shared) = stage::mix(&shared, &["main"]);
         let (mixed_tree, report_tree) = stage::mix(&tree, &["main"]);
         let printed = |u: &Unit| u.defs[1].term.to_string();
-        assert_eq!(printed(&mixed_shared), printed(&mixed_tree), "d = {d}");
+        assert_eq!(
+            mixed_shared.defs[1].term, mixed_tree.defs[1].term,
+            "d = {d}"
+        );
         assert_eq!(report_shared, report_tree);
         if d > 0 {
             assert!(!printed(&mixed_shared).contains('+'), "each `j + 1` built");
@@ -341,8 +344,10 @@ fn mixing_nested_lets_of_a_parameter_over_one_body_gives_what_the_tree_gives() {
         );
         let (mixed_shared, report_shared) = stage::mix(&shared, &["main"]);
         let (mixed_tree, report_tree) = stage::mix(&tree, &["main"]);
-        let printed = |u: &Unit| u.defs[0].term.to_string();
-        assert_eq!(printed(&mixed_shared), printed(&mixed_tree), "d = {d}");
+        assert_eq!(
+            mixed_shared.defs[0].term, mixed_tree.defs[0].term,
+            "d = {d}"
+        );
         assert_eq!(report_shared, report_tree);
         // Nothing is built, and the body below both `let`s of a level stays one node: per
         // level the `if`, its guard, the two `let`s and their two sums, and the `x` at the
@@ -418,7 +423,10 @@ fn mixing_nested_lets_of_a_built_value_over_one_body_gives_what_the_tree_gives()
             let (mixed_shared, report_shared) = stage::mix(&shared, &["main"]);
             let (mixed_tree, report_tree) = stage::mix(&tree, &["main"]);
             let printed = |u: &Unit| u.defs[0].term.to_string();
-            assert_eq!(printed(&mixed_shared), printed(&mixed_tree), "d = {d}");
+            assert_eq!(
+                mixed_shared.defs[0].term, mixed_tree.defs[0].term,
+                "d = {d}"
+            );
             assert_eq!(report_shared, report_tree);
             assert!(!printed(&mixed_shared).contains('+'), "each sum built");
             assert_eq!(
@@ -528,8 +536,10 @@ fn mixing_lets_of_composed_functions_over_one_body_gives_what_the_tree_gives() {
         assert_eq!(shared.defs[0].term, tree.defs[0].term, "d = {d}");
         let (mixed_shared, report_shared) = stage::mix(&shared, &["main"]);
         let (mixed_tree, report_tree) = stage::mix(&tree, &["main"]);
-        let printed = |u: &Unit| u.defs[0].term.to_string();
-        assert_eq!(printed(&mixed_shared), printed(&mixed_tree), "d = {d}");
+        assert_eq!(
+            mixed_shared.defs[0].term, mixed_tree.defs[0].term,
+            "d = {d}"
+        );
         assert_eq!(report_shared, report_tree);
     }
     // Each call `f(1)` at the bottom is built: f is y + s for the sum s of the path's steps.

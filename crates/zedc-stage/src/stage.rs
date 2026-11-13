@@ -51,8 +51,9 @@ pub struct Report {
     pub unread: Vec<String>,
     /// The build-stage terms left to run, each with why: a part held in a node and reached
     /// under the same bindings of its names from many places is listed once. Each entry holds
-    /// the term, its parts still shared, not its text: `Display` and `Debug` print a term as
-    /// a tree, which on a term with shared parts can be exponential in its size.
+    /// the term, its parts still shared, not its text. `print::pretty_in` writes it for a user,
+    /// each shared part once, in O(n log n) for n distinct parts; `Display` and `Debug` are for
+    /// debugging and label a shared part that reads a name bound in two places (`#1=`).
     pub left: Vec<(Shared, String)>,
 }
 

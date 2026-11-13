@@ -21,7 +21,11 @@
 //! the one the program wrote, and the `if` forms that elaboration gives `&&` and `||` as those
 //! operators, for a message about the term (sec:diagnostics).
 
+mod dag;
+
 use std::borrow::Cow;
+use std::collections::hash_map::Entry;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use crate::term::{Evidence, FixKind, Grade, GuardPos, Pattern, Prim, Term, Witness};
@@ -32,24 +36,60 @@ use crate::value::Value;
 /// ([`written`]).
 type Names = Option<fn(&str) -> &str>;
 
-/// `t` broken into lines of at most `width` columns where its parts allow.
+/// The names that resolve where a term is written: the program's own names and the prelude's.
+pub type Resolves<'r> = &'r dyn Fn(&str) -> bool;
+
+/// `t` with each of its shared parts written once (module `dag`), and the parts written with a
+/// label. Without `resolves` a part that reads a name bound in more than one place is labeled;
+/// with it no part is.
+fn form<'t>(
+    t: &'t Term,
+    resolves: Option<Resolves<'_>>,
+    names: Names,
+) -> (Cow<'t, Term>, HashSet<*const Term>) {
+    match dag::shared_form(t, resolves, names) {
+        Some(f) => (Cow::Owned(f.term), f.labels),
+        None => (Cow::Borrowed(t), HashSet::new()),
+    }
+}
+
+/// `t` broken into lines of at most `width` columns where its parts allow, for debugging: a
+/// part that reads a name bound in more than one place is written `#1=<text>` at its first
+/// place and `#1#` at the others, which is not a program. A message prints with [`pretty_in`].
 pub fn pretty(t: &Term, width: usize) -> String {
     let local = defs::local();
+    let (t, labels) = form(t, None, None);
     let mut out = String::new();
-    Doc::of(Piece::Term(t), None).render(width, &mut out);
+    Doc::of(Piece::Term(&t), None, &labels).render(width, &mut out);
     alone(local, out)
 }
 
-/// `t` on one line as the program wrote it, for a message: each name a variable, a binder or
-/// a call's head writes is `name` of it, and `if c { b } else { false }` and
-/// `if c { true } else { b }`, the terms elaboration gives `c && b` and `c || b`, are written
-/// `(c && b)` and `(c || b)`, parenthesized as every binary operator is. A program that wrote
-/// the `if` itself reads the operator, which means the same. Otherwise the text is that of
-/// `Display`, and costs the same: linear in the text.
-pub fn written(t: &Term, name: fn(&str) -> &str) -> String {
+/// `t` broken into lines of at most `width` columns where its parts allow, written where the
+/// names `resolves` accepts are in scope: the printer for a user. The text is a program that
+/// reads back to a term with the same value (not always an equal term: a part that reads a name
+/// bound in more than one place is a function of one value holding those names, module
+/// `dag`), in O(n log n) text and time for a term of n distinct parts.
+pub fn pretty_in(t: &Term, width: usize, resolves: Resolves<'_>) -> String {
     let local = defs::local();
+    let (t, labels) = form(t, Some(resolves), None);
+    debug_assert!(labels.is_empty(), "a scoped term has no label");
     let mut out = String::new();
-    Doc::of(Piece::Term(t), Some(name))
+    Doc::of(Piece::Term(&t), None, &labels).render(width, &mut out);
+    alone(local, out)
+}
+
+/// `t` on one line as the program wrote it, for a message, written where the names `resolves`
+/// accepts are in scope, as by [`pretty_in`]: each name a variable, a binder or a call's head
+/// writes is `name` of it, and `if c { b } else { false }` and `if c { true } else { b }`, the
+/// terms elaboration gives `c && b` and `c || b`, are written `(c && b)` and `(c || b)`,
+/// parenthesized as every binary operator is. A program that wrote the `if` itself reads the
+/// operator, which means the same. Otherwise the text is that of [`pretty_in`] on one line,
+/// and costs the same.
+pub fn written(t: &Term, name: fn(&str) -> &str, resolves: Resolves<'_>) -> String {
+    let local = defs::local();
+    let (t, labels) = form(t, Some(resolves), Some(name));
+    let mut out = String::new();
+    Doc::of(Piece::Term(&t), Some(name), &labels)
         .write_flat(&mut out)
         .expect("writing to a string does not fail");
     alone(local, out)
@@ -70,7 +110,8 @@ impl fmt::Display for Term {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let local = defs::local();
         let mut out = String::new();
-        Doc::of(Piece::Term(self), None).write_flat(&mut out)?;
+        let (t, labels) = form(self, None, None);
+        Doc::of(Piece::Term(&t), None, &labels).write_flat(&mut out)?;
         f.write_str(&alone(local, out))
     }
 }
@@ -79,7 +120,7 @@ impl fmt::Display for Pattern {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let local = defs::local();
         let mut out = String::new();
-        Doc::of(Piece::Pattern(self), None).write_flat(&mut out)?;
+        Doc::of(Piece::Pattern(self), None, &HashSet::new()).write_flat(&mut out)?;
         f.write_str(&alone(local, out))
     }
 }
@@ -763,8 +804,10 @@ enum Frame {
 
 impl<'a> Doc<'a> {
     /// The doc of what `root` lays out, one group. Each term and pattern is laid out once, its
-    /// pieces taken from a stack.
-    fn of(root: Piece<'a>, names: Names) -> Doc<'a> {
+    /// pieces taken from a stack. A term in `labels`, a part of a term shared by address
+    /// (identity only), is written `#n=` before its text at its first place and `#n#` alone
+    /// at each other, `n` counted from 1 in the order written.
+    fn of(root: Piece<'a>, names: Names, labels: &HashSet<*const Term>) -> Doc<'a> {
         let mut toks = Vec::new();
         let mut todo = vec![
             Piece::Tok(Tok::End),
@@ -772,7 +815,28 @@ impl<'a> Doc<'a> {
             Piece::Tok(Tok::Start(Group::Cat)),
         ];
         let mut out = Pieces(Vec::new(), names);
+        let mut seen: HashMap<*const Term, usize> = HashMap::new();
         while let Some(piece) = todo.pop() {
+            let whole = match piece {
+                Piece::Term(t) => Some(t),
+                Piece::Operand(t) if primary(t) => Some(t),
+                _ => None,
+            };
+            if let Some(t) = whole
+                && labels.contains(&std::ptr::from_ref(t))
+            {
+                let n = seen.len() + 1;
+                match seen.entry(std::ptr::from_ref(t)) {
+                    Entry::Occupied(e) => {
+                        toks.push(Tok::Text(format!("#{}#", e.get()).into()));
+                        continue;
+                    }
+                    Entry::Vacant(e) => {
+                        e.insert(n);
+                        toks.push(Tok::Text(format!("#{n}=").into()));
+                    }
+                }
+            }
             match piece {
                 Piece::Tok(t) => {
                     toks.push(t);

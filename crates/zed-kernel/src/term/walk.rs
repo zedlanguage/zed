@@ -1,13 +1,17 @@
 //! `Clone`, `==` and `Debug` of [`Term`] and [`Pattern`], each keeping its own stack on the
 //! heap, so a term of any depth is copied, compared and written on a small stack (COMPLEXITY.md
 //! K39). Each costs O(size): a copy shares every [`Shared`] subterm, `==` reads a pair of shared
-//! subterms once, and `Debug` writes each part once.
+//! subterms once, and `Debug` writes each part once: a part held in a [`Shared`] node that two
+//! places reach, and that is not a name, primitive or plain literal, is written `#n=…` at the
+//! first place and `#n#` at each later one, `n` counted from 1 in the order written.
 
-use std::collections::HashSet;
+use std::collections::hash_map::Entry;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
 use super::{FixKind, Pattern, Shared, Term};
+use crate::value::Value;
 
 /// Copies `t` with the parts that are not shared, the arguments of calls and primitives and
 /// the arms of a `match`, copied too; a [`Shared`] subterm is a reference count.
@@ -452,6 +456,8 @@ enum Show<'a> {
     /// A part that holds no term or pattern, written by its own `Debug`.
     Leaf(&'a dyn fmt::Debug),
     Term(&'a Term),
+    /// A part held in a [`Shared`] node: labeled when [`held_twice`].
+    Shared(&'a Shared),
     Pattern(&'a Pattern),
     Arm(&'a (Pattern, Term)),
     Field(&'a (Arc<str>, Pattern)),
@@ -477,7 +483,7 @@ fn list<'a, T>(todo: &mut Vec<Show<'a>>, items: &'a [T], each: fn(&'a T) -> Show
 /// Queues the text of `t`.
 fn show_term<'a>(t: &'a Term, todo: &mut Vec<Show<'a>>) {
     use Show::{Leaf, Text};
-    let tm = |s: &'a Shared| Show::Term(s);
+    let tm = |s: &'a Shared| Show::Shared(s);
     match t {
         Term::Lit(v) => put(todo, [Text("Lit("), Leaf(v), Text(")")]),
         Term::Var(x) => put(todo, [Text("Var("), Leaf(x), Text(")")]),
@@ -676,13 +682,28 @@ fn show_pattern<'a>(p: &'a Pattern, todo: &mut Vec<Show<'a>>) {
     }
 }
 
-/// Writes the queued text: the one line a derived `Debug` writes for `{:?}`, under `{:#?}` too.
-fn run(mut todo: Vec<Show<'_>>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+/// Writes the queued text: the one line a derived `Debug` writes for `{:?}`, under `{:#?}` too,
+/// except that a part two places hold (`twice`, [`held_twice`]) is written once, labeled
+/// `#n=` where it is first written and written `#n#` at each later place, the labels counted
+/// from 1 in the order written, so the text is linear in the number of distinct parts.
+fn run(mut todo: Vec<Show<'_>>, twice: &HashSet<u64>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let mut labels: HashMap<u64, usize> = HashMap::new();
     while let Some(s) = todo.pop() {
         match s {
             Show::Text(s) => f.write_str(s)?,
             Show::Leaf(x) => write!(f, "{x:?}")?,
             Show::Term(t) => show_term(t, &mut todo),
+            Show::Shared(s) if twice.contains(&s.id()) => {
+                let next = labels.len() + 1;
+                match labels.entry(s.id()) {
+                    Entry::Occupied(n) => write!(f, "#{}#", n.get())?,
+                    Entry::Vacant(v) => {
+                        write!(f, "#{}=", v.insert(next))?;
+                        show_term(s, &mut todo);
+                    }
+                }
+            }
+            Show::Shared(s) => show_term(s, &mut todo),
             Show::Pattern(p) => show_pattern(p, &mut todo),
             Show::Arm((p, t)) => put(
                 &mut todo,
@@ -711,12 +732,153 @@ fn run(mut todo: Vec<Show<'_>>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 
 impl fmt::Debug for Term {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        run(vec![Show::Term(self)], f)
+        run(vec![Show::Term(self)], &held_twice(self), f)
     }
 }
 
 impl fmt::Debug for Pattern {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        run(vec![Show::Pattern(self)], f)
+        run(vec![Show::Pattern(self)], &HashSet::new(), f)
     }
+}
+
+/// A part of a term: a subterm held in a [`Shared`] node, or one held in place (an argument of
+/// a call or primitive, the body of a `match` arm).
+#[derive(Clone, Copy)]
+pub(crate) enum Kid<'a> {
+    Shared(&'a Shared),
+    Inline(&'a Term),
+}
+
+/// The names a term binds over one of its parts.
+#[derive(Clone, Copy)]
+pub(crate) enum Binds<'a> {
+    Nothing,
+    Names(&'a [Arc<str>]),
+    /// The `this` and `key` of a definedness `fix`, over its step.
+    Two(&'a Arc<str>, &'a Arc<str>),
+    /// The names of a `match` arm's pattern, over the arm's body.
+    Pattern(&'a Pattern),
+}
+
+impl<'a> Binds<'a> {
+    /// Calls `each` on every name bound, in the order written.
+    pub(crate) fn each(self, mut each: impl FnMut(&'a Arc<str>)) {
+        match self {
+            Binds::Nothing => {}
+            Binds::Names(xs) => xs.iter().for_each(each),
+            Binds::Two(a, b) => {
+                each(a);
+                each(b);
+            }
+            Binds::Pattern(p) => {
+                let mut todo = vec![p];
+                while let Some(p) = todo.pop() {
+                    match p {
+                        Pattern::Bind(x) => each(x),
+                        Pattern::Atom(_, ps) | Pattern::Tuple(ps) => todo.extend(ps.iter().rev()),
+                        Pattern::Fields(_, fs) => todo.extend(fs.iter().rev().map(|(_, p)| p)),
+                        Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {}
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Calls `each` on every part of `t` that is a term, in the order the term is written, with
+/// the names `t` binds over it.
+pub(crate) fn kids<'a>(t: &'a Term, mut each: impl FnMut(Kid<'a>, Binds<'a>)) {
+    use Binds::Nothing;
+    let mut sh = |s: &'a Shared, b: Binds<'a>| each(Kid::Shared(s), b);
+    match t {
+        Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => {}
+        Term::Lam(xs, b) => sh(b, Binds::Names(xs)),
+        Term::Push(_, v) => sh(v, Nothing),
+        Term::App(f, args) => {
+            sh(f, Nothing);
+            args.iter().for_each(|a| each(Kid::Inline(a), Nothing));
+        }
+        Term::Prim(_, args) => args.iter().for_each(|a| each(Kid::Inline(a), Nothing)),
+        Term::Let(x, a, b) => {
+            sh(a, Nothing);
+            sh(b, Binds::Names(std::slice::from_ref(x)));
+        }
+        Term::If(a, b, c) => [a, b, c].into_iter().for_each(|s| sh(s, Nothing)),
+        Term::Match(e, arms) => {
+            sh(e, Nothing);
+            for (p, body) in arms {
+                each(Kid::Inline(body), Binds::Pattern(p));
+            }
+        }
+        Term::Fam { domain, var, body } => {
+            sh(domain, Nothing);
+            sh(body, Binds::Names(std::slice::from_ref(var)));
+        }
+        Term::Reindex { family, kf, vf, .. } => {
+            [family, kf, vf].into_iter().for_each(|s| sh(s, Nothing))
+        }
+        Term::Discard { family, sel } => [family, sel].into_iter().for_each(|s| sh(s, Nothing)),
+        Term::Fold {
+            family,
+            op,
+            identity,
+            ..
+        } => [Some(family), Some(op), identity.as_ref()]
+            .into_iter()
+            .flatten()
+            .for_each(|s| sh(s, Nothing)),
+        Term::Fix {
+            init,
+            step,
+            this,
+            key,
+            kind,
+            ..
+        } => {
+            sh(init, Nothing);
+            match kind {
+                FixKind::Lattice { join } => {
+                    sh(step, Nothing);
+                    sh(join, Nothing);
+                }
+                FixKind::Definedness => sh(step, Binds::Two(this, key)),
+            }
+        }
+        Term::Gen {
+            init, step, guard, ..
+        } => [init, step, guard].into_iter().for_each(|s| sh(s, Nothing)),
+    }
+}
+
+/// Whether `t` is written in a few characters whatever it holds: a name, a primitive as a
+/// function, a port read, or a bool, int or float literal. A part such as this is written out
+/// at each place that holds it, by `Debug` and `Display` alike.
+pub(crate) fn small(t: &Term) -> bool {
+    match t {
+        Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => true,
+        Term::Lit(v) => matches!(v, Value::Bool(_) | Value::Int(_) | Value::Float(_)),
+        _ => false,
+    }
+}
+
+/// The ids of the [`Shared`] nodes of `root` that two or more places hold and that are not
+/// [`small`]: the parts `Debug` labels. One walk, each node read once by its id.
+fn held_twice(root: &Term) -> HashSet<u64> {
+    let mut seen = HashSet::new();
+    let mut twice = HashSet::new();
+    let mut todo = vec![root];
+    while let Some(t) = todo.pop() {
+        kids(t, |k, _| match k {
+            Kid::Inline(u) => todo.push(u),
+            Kid::Shared(s) => {
+                if seen.insert(s.id()) {
+                    todo.push(s);
+                } else if !small(s) {
+                    twice.insert(s.id());
+                }
+            }
+        });
+    }
+    twice
 }

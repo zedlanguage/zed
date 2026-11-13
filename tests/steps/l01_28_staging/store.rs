@@ -107,14 +107,17 @@ fn mixing_calls_under_nested_ifs_whose_arms_bind_a_name_over_one_part_scales() {
     );
 }
 
-/// The shared form mixes to the text the tree form mixes to, leaves each call to run once
+/// The shared form mixes to the term the tree form mixes to, leaves each call to run once
 /// rather than once per place, and keeps its parts shared.
 #[test]
 fn mixing_calls_under_nested_ifs_whose_arms_are_one_part_gives_what_the_tree_gives() {
     deep(|| {
-        let text = |u: &Unit| {
-            let text = mixed_text(u);
-            text[..text.rfind("Report").expect("the report")].to_string()
+        // The terms, compared as terms: the text of the shared form names its parts.
+        let terms = |u: &Unit| {
+            let (out, _) = stage::mix(u, &["main"]);
+            let defs = out.defs.iter();
+            defs.map(|d| (d.name.clone(), (*d.term).clone()))
+                .collect::<Vec<_>>()
         };
         let calls = |u: &Unit| {
             let (_, report) = stage::mix(u, &["main"]);
@@ -125,7 +128,7 @@ fn mixing_calls_under_nested_ifs_whose_arms_are_one_part_gives_what_the_tree_giv
                 for n in 1..=8 {
                     let (one, tree) = (family(n, f0, true, lets), family(n, f0, false, lets));
                     let what = format!("n = {n}, lets = {lets}");
-                    assert_eq!(text(&one), text(&tree), "{what}");
+                    assert_eq!(terms(&one), terms(&tree), "{what}");
                     assert_eq!(calls(&one), calls(&tree), "{what}");
                     assert_eq!(mixed(&one), expected(n, f0), "{what}");
                 }

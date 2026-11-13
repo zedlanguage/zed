@@ -29,7 +29,7 @@ fn every_binder_is_named_through_the_function() {
         app(var("g@1"), vec![var("x@2"), var("$3")]),
     );
     assert_eq!(
-        written(&t, before_at),
+        written(&t, before_at, &|_| true),
         "{ g = (x, y) -> (x + y); g(x, $3) }"
     );
     // Display is unchanged.
@@ -45,16 +45,22 @@ fn every_binder_is_named_through_the_function() {
 #[test]
 fn the_elaborated_and_and_or_are_written_as_operators() {
     let and = if_(ge0("x@1"), ge0("y@2"), lit(false));
-    assert_eq!(written(&and, before_at), "((x >= 0) && (y >= 0))");
+    assert_eq!(
+        written(&and, before_at, &|_| true),
+        "((x >= 0) && (y >= 0))"
+    );
     let or = if_(ge0("x"), lit(true), ge0("y"));
-    assert_eq!(written(&or, before_at), "((x >= 0) || (y >= 0))");
+    assert_eq!(written(&or, before_at, &|_| true), "((x >= 0) || (y >= 0))");
     let nested = if_(if_(ge0("a"), ge0("b"), lit(false)), lit(true), ge0("c"));
     assert_eq!(
-        written(&nested, before_at),
+        written(&nested, before_at, &|_| true),
         "(((a >= 0) && (b >= 0)) || (c >= 0))"
     );
     let other = if_(ge0("x"), lit(1), lit(0));
-    assert_eq!(written(&other, before_at), "if (x >= 0) { 1 } else { 0 }");
+    assert_eq!(
+        written(&other, before_at, &|_| true),
+        "if (x >= 0) { 1 } else { 0 }"
+    );
     assert_eq!(
         pretty(&and, usize::MAX),
         "if (x@1 >= 0) { (y@2 >= 0) } else { false }"
@@ -82,7 +88,7 @@ fn written_text_scales_with_the_term() {
             let what = if left { "left" } else { "right" };
             zed_tests::scaling::check(&format!("written, && nested to the {what}"), n, |k| {
                 let t = &inputs[usize::from(k != n)];
-                std::hint::black_box(written(t, before_at));
+                std::hint::black_box(written(t, before_at, &|_| true));
             });
         }
     });
@@ -103,7 +109,7 @@ fn a_type_pattern_writes_its_type_in_type_syntax() {
             (Pattern::Is(&Type::int() | &Type::bool()), lit("scalar")),
         ],
     );
-    let shown = written(&t, before_at);
+    let shown = written(&t, before_at, &|_| true);
     assert_eq!(
         shown,
         "match v { is Never -> \"none\", is int \\ 0 -> \"nonzero\", \
@@ -122,7 +128,7 @@ fn a_type_pattern_writes_its_type_in_type_syntax() {
     };
     let t = Term::Match(v.clone(), vec![arms[0].clone(), arms[2].clone()]);
     assert_eq!(
-        reads_back(&t, &written(&t, before_at)),
+        reads_back(&t, &written(&t, before_at, &|_| true)),
         Seen {
             same: 2,
             ..Seen::default()
@@ -146,7 +152,7 @@ fn a_part_a_type_test_writes_twice_is_declared_before_the_term() {
         ],
     );
     let want = "type T1 = int | #x;\nmatch v { is (T1, T1) -> \"pair\", _ -> \"other\" }";
-    assert_eq!(written(&t, before_at), want);
+    assert_eq!(written(&t, before_at, &|_| true), want);
     assert_eq!(t.to_string(), want.replace("match v ", "match v@1 "));
     assert_eq!(reads_back(&t, want).same, 1);
 }
@@ -183,7 +189,7 @@ fn a_type_test_inside_other_patterns_reads_back() {
             (Pattern::Bind("w@2".into()), lit("other")),
         ],
     );
-    let shown = written(&t, before_at);
+    let shown = written(&t, before_at, &|_| true);
     assert_eq!(
         shown,
         "match v { is (int -> bool) -> \"function\", (is int | bool, _) -> \"pair\", \
@@ -229,7 +235,7 @@ fn any_atom_and_empty_tuple_patterns_read_back() {
             (Pattern::Wild, lit("other")),
         ],
     );
-    let shown = written(&t, before_at);
+    let shown = written(&t, before_at, &|_| true);
     assert_eq!(
         shown,
         "match v { is #_ -> \"failed\", is () -> \"unit\", (is #_, is ()) -> \"pair\", \
@@ -287,7 +293,7 @@ fn random_terms_with_type_tests_read_back() {
                 .collect();
             drawn += arms.iter().map(|(p, _)| type_tests(p)).sum::<usize>();
             let t = Term::Match(zed_tests::kernel::rc(var("v@1")), arms);
-            let seen = reads_back(&t, &written(&t, before_at));
+            let seen = reads_back(&t, &written(&t, before_at, &|_| true));
             seed_seen.same += seen.same;
             seed_seen.functions += seen.functions;
             seed_seen.payloads += seen.payloads;
@@ -371,7 +377,7 @@ fn random_terms_with_any_atom_and_empty_tuple_patterns_read_back() {
             })
             .collect();
         let t = Term::Match(zed_tests::kernel::rc(var("v@1")), arms);
-        same += reads_back(&t, &written(&t, before_at)).same;
+        same += reads_back(&t, &written(&t, before_at, &|_| true)).same;
     }
     // Each instance has at least one.
     assert!(same >= zed_tests::instances::RANDOM_INSTANCES, "{same}");

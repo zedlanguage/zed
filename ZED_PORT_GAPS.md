@@ -3773,3 +3773,13 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 |---|---|---|---|
 | A benchmark of two methods passed as `&dyn Fn(&I) -> O` trait objects, generic over the input and output, measured by the instruction counter of the scaling tests (`Meter`, `perf_event_open`) | `zed_benches::{Method, Crossover, settings, least}`, `crossover` | Missing (no hardware counters in Zed) | Functions as values, generic over the input and output; the counter is an OS intrinsic of libzed's OS layer, as for the scaling tests |
 | A crossover setting passed as an argument for the benchmark, the constant as the default (`to_decimal_split_at(x, handoff)`) | `fast::to_decimal_split_at`, `to_decimal_split` | None | A parameter of the routine, with the constant at the one call that does not set it |
+
+## Entries from STAGE-print (`crates/zed-kernel/src/print/dag.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| An explicit stack of `Job::Build` and `Job::Finish`, each `Finish` carrying the parts built so far, popped in a `while let` loop that pushes the built term onto a second `Vec` | `shared_form`, `Builder::start`, `Builder::finish` | Mutation (gap 11) | a fold over the nodes in topological order, each node's text built from its parts' text held in a map |
+| `HashSet<*const Term>` of the labeled nodes, by address, for identity only | `Builder::labels`, `Form::labels`, read by the writer in `print.rs` | Addresses | the node's index in the graph, which the writer is given with the term |
+| `Vec<Option<Arc<str>>>` of env names filled in place as the build reaches each node | `Builder::envs` | Mutation (gap 11) | map values set once per node in the fold |
+| `HashMap<Arc<str>, usize>` from a rebound name to its slot in the env | `Builder::slot`, `Builder::slots` | none | a map |
+| Binary lifting over a `Vec<Vec<usize>>` of ancestors, written in place per node | `dominators` | Mutation (gap 11) | a fold over the topological order building each node's ancestor list from its immediate dominator's |

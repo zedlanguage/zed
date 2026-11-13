@@ -96,10 +96,14 @@ fn run(u: &Unit, c: &Value) -> Option<Value> {
 }
 
 /// What a report says, each entry once: the definitions built, those nothing read, and the
-/// terms left to run, printed, with why. The tree form lists a part once per place, the graph
-/// once per map of the names it reads, so the lists are compared as sets.
+/// terms left to run, printed in their tree form (the text of a shared term names its parts),
+/// with why. The tree form lists a part once per place, the graph once per map of the names
+/// it reads, so the lists are compared as sets.
 fn said(r: &Report) -> (Vec<String>, BTreeSet<String>, BTreeSet<(String, String)>) {
-    let left = r.left.iter().map(|(t, why)| (t.to_string(), why.clone()));
+    let left = r
+        .left
+        .iter()
+        .map(|(t, why)| (tree(t).to_string(), why.clone()));
     (
         r.built.clone(),
         r.unread.iter().cloned().collect(),
@@ -126,16 +130,16 @@ fn agree(name: &str, u: &Unit, inputs: &[Value]) -> String {
     }
     let (mixed, report) = stage::mix(u, &["main"]);
     let (mixed_tree, report_tree) = stage::mix(&t, &["main"]);
-    let printed = |u: &Unit| {
+    let main = |u: &Unit| {
         let d = u.defs.iter().find(|d| d.name == "main").expect("`main`");
-        d.term.to_string()
+        d.term.clone()
     };
-    let out = printed(&mixed);
     assert_eq!(
-        out,
-        printed(&mixed_tree),
+        main(&mixed),
+        main(&mixed_tree),
         "{name}: graph and tree mix alike"
     );
+    let out = main(&mixed).to_string();
     assert_eq!(said(&report), said(&report_tree), "{name}: the reports");
     for c in inputs {
         let want = run(u, c);
@@ -462,7 +466,12 @@ fn a_part_left_to_run_under_two_bindings_is_reported_for_each() {
     // The `let` of each `x` is left to run whole, once for each binding of `x`.
     assert_eq!(report.left.len(), 2, "{report:?}");
     for (t, why) in &report.left {
-        assert!(t.to_string().contains("if (x >= 2) { (x + w(w)) }"), "{t}");
+        let text = t.to_string();
+        assert!(text.contains("part1 = (x + w(w));"), "{text}");
+        assert!(
+            text.contains("if (x >= 2) { part1 } else { part1 }"),
+            "{text}"
+        );
         assert_eq!(why, "its form does not show that it ends");
     }
 }

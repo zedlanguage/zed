@@ -5773,9 +5773,13 @@ impl Scope {
                         .map(|(n, d)| (n.clone(), d.clone()))
                         .collect(),
                 );
+                // The names read free in the test are in scope where it is written; a name it
+                // binds in two places is read in a part through one value (`print::pretty_in`).
+                let free = stage::free(written);
+                let constraint = print::written(written, written_name, &|x| free.contains(x));
                 self.refuse(
                     Refused {
-                        constraint: print::written(written, written_name).into(),
+                        constraint: constraint.into(),
                         asked: Asked::Test { outcome },
                         cause: cause.into(),
                     },
