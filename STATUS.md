@@ -2011,6 +2011,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| GSX-unsolved | hybrid-xr attempt  | 2026-11-11 16:53 | round 2 recorded (Opus pf1 moved it: sweep 3, lost 3, prints 3; CD best still 29); round 3 launched |
 | MSG-domain-repairs-v | impl attempt 1 | 2026-11-12 00:53 | running affected groups; load 44.01 39.14 34.67 |
 | NAME-ascii-only | impl attempt 1 | 2026-11-12 16:11 | spec committed (541c9d7-amended) and rebased on f0d6c20; impl rebased on a596e044b, fences resynced; l01_02 45/45 pass; rebuilding for the other groups |
 | NARROW-or-order | impl attempt 1 | 2026-11-12 15:40 | started; worktree /home/luke/Work/wt/narrow-or-order on cdd557f13 |
@@ -2019,6 +2020,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | STR-norm-layer | impl attempt 1 | 2026-11-12 16:19 | started; spec worktree made on zed f0d6c20 |
 | T6-refusal-cost | impl attempt 1 | 2026-11-05 04:07 | probe on 8d0bfe954 (load 36-45): x_tail nfa Refused(Fork) 26.7M/55.0M/145M/535M/2.92G/20.3G instr at n 4..128 (x6.97 per doubling at 64->128, N^1.40 with N ~ n^ |
 | TESTS-L1.23-refusal-text | impl attempt 1 | 2026-11-08 23:59 | started; worktree tests-l1.23-refusal-text on origin/main a596e044b |
+| TESTS-P14-MST-lattice-circles | impl attempt 1 | 2026-11-08 23:59 | started in /home/luke/Work/wt/tests-p14-lattice |
 | WARN-refused-in-rejection | impl attempt 1 | 2026-11-12 14:51 | started; worktree /home/luke/Work/wt/warn-refused-in-rejection on origin/main a596e044b |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
