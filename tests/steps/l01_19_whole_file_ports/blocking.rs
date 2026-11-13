@@ -1,5 +1,5 @@
 //! Which functions can block (DESIGN.md sec:ports, "Every port operation says whether it can
-//! block"; QUESTIONS A68): a read of `m.stdin` or `files()` and a push to an output port can;
+//! block"; QUESTIONS A68): a read of `m.stdin` or `main::files` and a push to an output port can;
 //! a read of `m.args` or `m.env` cannot; a function can when any path of calls from it reaches
 //! one, or calls a function value whose body the checker cannot see.
 
@@ -62,11 +62,46 @@ fn reading_standard_input_blocks_and_args_and_env_do_not() {
 
 #[test]
 fn reading_files_blocks() {
-    let text = "main(m: MainArgs) {\n  fs = files();\n  x = fs[\"a.txt\"] else \"\";\n  \
+    let text = "main(m: MainArgs) {\n  fs = main::files;\n  x = fs[\"a.txt\"] else \"\";\n  \
                 m.stdout <- x;\n}\n";
     assert_eq!(
         blocking(text)["main"],
-        "`main` can block: it reads `fs`, which holds `files()`, which can wait for its data."
+        "`main` can block: it reads `fs`, which holds `main::files`, which can wait for its data."
+    );
+}
+
+/// A function other than `main` reads the file port as `main::files` (QUESTIONS A68), written
+/// before `main` or after it, directly or through a name bound to it, and blocks; so do the
+/// functions that call it. A helper that only passes the port on reads nothing itself.
+#[test]
+fn reading_main_files_outside_main_blocks() {
+    let text = "size(positional p) = main::files[p] else \"\";\n\
+                held(positional p) = {\n  fs = main::files;\n  fs[p] else \"\"\n};\n\
+                port() = main::files;\n\
+                pure(positional x: int) = x + 1;\n\
+                main(m: MainArgs) -> int {\n  if size(\"a\") == later(\"b\") && pure(1) == 2 { 1 } else { 0 }\n}\n\
+                later(positional p) = main::files[p] else \"\";\n";
+    let got = blocking(text);
+    assert_eq!(
+        got.keys().collect::<Vec<_>>(),
+        ["held", "later", "main", "size"]
+    );
+    assert_eq!(
+        got["size"],
+        "`size` can block: it reads `main::files`, which can wait for its data."
+    );
+    assert_eq!(
+        got["later"],
+        "`later` can block: it reads `main::files`, which can wait for its data."
+    );
+    assert_eq!(
+        got["held"],
+        "`held` can block: it reads `fs`, which holds `main::files`, which can wait for its data."
+    );
+    assert_eq!(
+        got["main"],
+        "`main` can block: it calls `size`, which reads `main::files`, which can wait for its \
+         data."
     );
 }
 

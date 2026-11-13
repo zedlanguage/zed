@@ -1,6 +1,6 @@
 //! Which functions can block (DESIGN.md sec:ports, "Every port operation says whether it can
 //! block"; QUESTIONS A68). An operation on a port that can wait is blocking: a read of standard
-//! input (`m.stdin`) or of a file (`files()`), each of which waits for its data, and a push to
+//! input (`m.stdin`) or of a file (`main::files`, in any function), each of which waits for its data, and a push to
 //! an output port (`m.stdout`, `m.stderr`), which waits while the reader is not reading. A read
 //! of `m.args` or `m.env` takes a short, fixed time and is not. A function can block when its
 //! body performs a blocking operation or calls, or names as a value, a function that can, and
@@ -34,7 +34,7 @@ use zedc_syntax::lex::Span;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Cause {
     /// It reads, at `at`, the name `value`, which holds the input `port` of `main`, `m.stdin`
-    /// or `files()`; `value` is `port` itself when the body names the input.
+    /// or `main::files`; `value` is `port` itself when the body names the input.
     Reads {
         /// The binder read.
         value: usize,
@@ -87,7 +87,7 @@ enum Up {
 }
 
 /// Whether the parameter `p` of `main` is an input whose reads can block: `m.stdin` (`Lines`)
-/// and `files()` (`Files`) can; `m.args` (`CommandLine`) and `m.env` (a lookup by name) take a
+/// and `main::files` (`Files`) can; `m.args` (`CommandLine`) and `m.env` (a lookup by name) take a
 /// short, fixed time. The one place the inputs are classed: an input `main` gains is classed
 /// here.
 fn input_blocks(p: &Param) -> bool {
@@ -128,6 +128,15 @@ struct Walk<'t, 'a> {
     sources: Vec<usize>,
     /// The parameters of every `main`: ports, whose calls (`m.env("HOME")`) are reads.
     main_params: HashSet<usize>,
+    /// The file port `main::files` of the `main` at the top level, which a read of it outside
+    /// every `main` reads (QUESTIONS A68).
+    main_files: Option<usize>,
+    /// The one node of every value `main::files` read outside `main`, made at the first, which
+    /// [`facts`] joins to [`Walk::main_files`] after the walk: the `main` may come after the
+    /// reads in the text.
+    outside: Option<usize>,
+    /// Each read of `main::files` outside `main`: the function holding it and the use.
+    outside_reads: Vec<(usize, Span)>,
     /// The declaration of each function and method, by its binder.
     decls: HashMap<usize, &'a Function>,
     /// The functions, in the order of the text.
@@ -172,6 +181,9 @@ pub fn facts<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> BTreeMap<usize, Cause> {
         flow: vec![Vec::new(); t.res.binders.len()],
         sources: Vec::new(),
         main_params: HashSet::new(),
+        main_files: None,
+        outside: None,
+        outside_reads: Vec::new(),
         decls: HashMap::new(),
         functions: Vec::new(),
         uses: Vec::new(),
@@ -186,6 +198,9 @@ pub fn facts<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> BTreeMap<usize, Cause> {
     };
     w.walk(unit);
     w.join_calls();
+    if let (Some(n), Some(b)) = (w.outside, w.main_files) {
+        w.flow[b].push(n);
+    }
     let holds = w.holds();
     w.blocking(&holds)
 }
@@ -218,7 +233,7 @@ impl<'t, 'a> Walk<'t, 'a> {
             {
                 Some(ids)
             }
-            Some(Ref::Bound(_) | Ref::Prelude(_) | Ref::Unit { .. }) | None => None,
+            Some(Ref::Bound(_) | Ref::Prelude(_) | Ref::Unit { .. } | Ref::Main(_)) | None => None,
         }
     }
 
@@ -236,12 +251,13 @@ impl<'t, 'a> Walk<'t, 'a> {
 
     /// The function `f` declared by the statement `s` as `name`: a node of its own, its body
     /// and its parameters' defaults walked as its own. Its test rows are not its body and are
-    /// not walked.
+    /// not walked. `top` when `s` is a statement of the unit's top level.
     fn function(
         &mut self,
         s: &'a Stmt,
         name: &str,
         f: &'a Function,
+        top: bool,
         todo: &mut Vec<(Part<'a>, Option<usize>)>,
     ) {
         let Some(&id) = self.t.ids.get(&(s.span, name)) else {
@@ -260,6 +276,9 @@ impl<'t, 'a> Walk<'t, 'a> {
                 self.main_params.insert(b);
                 if input_blocks(p) {
                     self.sources.push(b);
+                }
+                if top && p.name == "main::files" {
+                    self.main_files = Some(b);
                 }
             }
         }
@@ -306,10 +325,10 @@ impl<'t, 'a> Walk<'t, 'a> {
             }
             StmtKind::While(e) | StmtKind::Until(e) | StmtKind::Expr(e) => todo.push(expr(e)),
             StmtKind::Return(es) => todo.extend(es.iter().rev().map(expr)),
-            StmtKind::Function(f) => self.function(s, &f.name, f, todo),
+            StmtKind::Function(f) => self.function(s, &f.name, f, owner.is_none(), todo),
             StmtKind::Method(m) => {
                 let name = format!("{}.{}", m.receiver, m.function.name);
-                self.function(s, &name, &m.function, todo)
+                self.function(s, &name, &m.function, owner.is_none(), todo)
             }
             StmtKind::Push { value, .. } => {
                 if let (Some(f), Some(Ref::Bound(ids))) = (owner, self.t.res.uses.get(&s.span)) {
@@ -375,11 +394,11 @@ impl<'t, 'a> Walk<'t, 'a> {
                 todo.extend(stmts.iter().rev().map(|s| (Part::Stmt(s), owner)));
                 return;
             }
-            ExprKind::Name(_) | ExprKind::This => {
-                if let (Some(f), Some(Ref::Bound(ids))) = (owner, uses.get(&e.span)) {
-                    self.uses.push((f, e.span, ids));
-                }
-            }
+            ExprKind::Name(_) | ExprKind::This => match (owner, uses.get(&e.span)) {
+                (Some(f), Some(Ref::Bound(ids))) => self.uses.push((f, e.span, ids)),
+                (Some(f), Some(Ref::Main(_))) => self.outside_reads.push((f, e.span)),
+                _ => {}
+            },
             // `x.f` names `f` when `f` is in scope: the call `f(x)`, whose receiver is its first
             // positional argument.
             ExprKind::Member { of, .. } => {
@@ -466,7 +485,9 @@ impl<'t, 'a> Walk<'t, 'a> {
         let Some(f) = owner else { return };
         let unseen = match (&callee.kind, r) {
             (ExprKind::Lambda { .. } | ExprKind::Section(_), _) => false,
-            (_, Some(Ref::Prelude(_))) => false,
+            // A prelude word, or a read of the file port by a call (`main::files(p)`), counted
+            // with the reads above.
+            (_, Some(Ref::Prelude(_) | Ref::Main(_))) => false,
             // A definition of another unit: its body is not in this unit, and until step L2.4
             // links units its fact is not known here, so the call counts as blocking.
             (_, Some(Ref::Unit { .. })) => true,
@@ -495,14 +516,25 @@ impl<'t, 'a> Walk<'t, 'a> {
         let mut todo = vec![e];
         while let Some(e) = todo.pop() {
             match &e.kind {
-                ExprKind::Name(_) => {
-                    if let Some(Ref::Bound(ids)) = uses.get(&e.span)
-                        && ids.len() == 1
-                    {
+                ExprKind::Name(_) => match uses.get(&e.span) {
+                    Some(Ref::Bound(ids)) if ids.len() == 1 => {
                         out.push(ids[0]);
                         self.passed.insert(e.span);
                     }
-                }
+                    Some(Ref::Main(_)) => {
+                        let n = match self.outside {
+                            Some(n) => n,
+                            None => {
+                                let n = self.node();
+                                self.outside = Some(n);
+                                n
+                            }
+                        };
+                        out.push(n);
+                        self.passed.insert(e.span);
+                    }
+                    _ => {}
+                },
                 ExprKind::If {
                     then, otherwise, ..
                 } => todo.extend([&**otherwise, &**then]),
@@ -706,6 +738,23 @@ impl<'t, 'a> Walk<'t, 'a> {
                 | Kind::Field
                 | Kind::Receiver
                 | Kind::Unit => {}
+            }
+        }
+        // A read of `main::files` outside `main` reads the port `main` opens for the program, as
+        // a read of it in `main`'s body does; one passed on whole is read by its receiver.
+        // Each read is one lookup, O(1), with no search for the `main` it belongs to.
+        if let Some(port) = self.main_files {
+            for &(f, at) in &self.outside_reads {
+                if !self.passed.contains(&at) {
+                    first(
+                        f,
+                        Cause::Reads {
+                            value: port,
+                            port,
+                            at,
+                        },
+                    );
+                }
             }
         }
         for &(f, at, port) in &self.pushes {
