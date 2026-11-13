@@ -10944,15 +10944,26 @@ fn int_set(t: &Type) -> Option<(bool, BTreeSet<Value>)> {
 /// else, or a stop or link atom other than `names`.
 fn list_rows(t: &Type, names: &mut [Option<Arc<str>>; 2]) -> Option<(bool, Part<Row>)> {
     let p = t.p();
-    if p.structs || !p.tuples.is_default() || !only_atoms(&p) || p.atoms.cofinite {
+    // A list type holds at most two atoms, its stop atom bare and its link atom with a
+    // payload, so a type of more names is refused before any is read: this is asked of every
+    // root of every search, and a scan of a union of n atoms there made n searches cost n^2
+    // (REGRESS-l01_26-overload). A second bare atom or a second link atom also ends or
+    // continues a list, so it is refused too: the rows of a second link atom passed over made a
+    // meet with lists through it read as empty.
+    if p.structs
+        || !p.tuples.is_default()
+        || !only_atoms(&p)
+        || p.atoms.cofinite
+        || p.atoms.names.len() > 2
+    {
         return None;
     }
     let (mut stop, mut link) = (None, None);
     for (name, a) in &p.atoms.names {
         match (a.bare, a.payload == Type::empty()) {
-            (true, true) => stop = Some(name.clone()),
+            (true, true) if stop.is_none() => stop = Some(name.clone()),
             (false, true) => {}
-            (false, false) => link = Some((name.clone(), a.payload.clone())),
+            (false, false) if link.is_none() => link = Some((name.clone(), a.payload.clone())),
             _ => return None,
         }
     }
@@ -11001,7 +11012,7 @@ type NamedRows = (BTreeMap<Value, Type>, Option<(BTreeSet<Value>, Type)>);
 // Given up: a usable integer that swaps three or more constraining operands, an operand of
 // three or more states, a nondeterministic operand, or an integer that keeps one state and
 // leaves the other; each goes to the search as before. Test:
-// `l01_23_subtyping::setop::bounded_parity_without_an_unmonitored_integer_is_empty_in_its_size`.
+// `l01_23_subtyping::setop::a_parity_meet_with_a_second_link_atom_is_inhabited`.
 fn affine_lists_empty(t: &Type) -> Option<bool> {
     let mut names = [None, None];
     let (root_stop, f) = list_rows(t, &mut names)?;

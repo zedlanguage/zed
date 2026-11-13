@@ -895,3 +895,47 @@ fn cofinite_integer_points_keep_large_powers_symbolic() {
         assert!(t.contains(&Value::tuple(vec![Value::Int(1)])));
     }
 }
+
+/// `A & B`, where `A` holds the lists of integers linked by `more` with an even count of 0 and
+/// `B` those with an odd count, both ending in `nil`; with `cons_too`, every state of both also
+/// holds `cons(int, nil)`, a second link atom that continues a list in any state.
+fn opposite_parities(cons_too: bool) -> Type {
+    let more = |head: Type, tail: Expr| Expr::Atom("more".into(), vec![Expr::Type(head), tail]);
+    let state = |accepts: bool, zero: usize, same: usize| {
+        let mut arms = Vec::new();
+        if accepts {
+            arms.push(nil());
+        }
+        if cons_too {
+            arms.push(cons(Type::int(), nil()));
+        }
+        arms.extend([more(lit(0), r(zero)), more(&Type::int() - &lit(0), r(same))]);
+        def(&format!("S{same}"), Expr::Union(arms))
+    };
+    // 0: A even (accepts), 1: A odd, 2: B even (accepts), 3: B odd.
+    let defs = vec![
+        state(true, 1, 0),
+        state(false, 0, 1),
+        state(true, 3, 2),
+        state(false, 2, 3),
+        def("M", Expr::And(vec![r(0), r(3)])),
+    ];
+    Group::new(defs).unwrap().instance(vec![]).pop().unwrap()
+}
+
+/// A meet of parity lists is proved empty by the count of each integer only when its link atom
+/// is the one way a list goes on: with `cons(int, nil)` in every state, `cons(1, nil)` is in both
+/// operands, so the meet is inhabited. Without it the counts of 0 contradict, and the meet is
+/// empty. Before REGRESS-l01_26-overload the parity proof read only the rows of the last link
+/// atom by name, `more`, and answered `Empty` here.
+#[test]
+fn a_parity_meet_with_a_second_link_atom_is_inhabited() {
+    Type::forget_emptiness();
+    assert_eq!(opposite_parities(false).verdict(), Verdict::Empty);
+    let t = opposite_parities(true);
+    let witness = Value::atom_with("cons", vec![Value::Int(1), Value::atom("nil")]);
+    assert!(t.contains(&witness));
+    Type::forget_emptiness();
+    assert_eq!(t.verdict(), Verdict::Inhabited);
+    assert!(!t.is_empty());
+}
