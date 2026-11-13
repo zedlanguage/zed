@@ -3900,6 +3900,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.unfixed_calls("`String`", &word_sig(w), &args);
             }
         }
+        if matches!(w, "int" | "rat" | "f64" | "f32") {
+            self.cast_takes_int(&mut x, w, span);
+        }
         let sig = match w {
             "f64" => int_cast_sig(Carrier::F64, self.int_cast(&x, Carrier::F64)),
             "f32" => int_cast_sig(Carrier::F32, self.int_cast(&x, Carrier::F32)),
@@ -3908,9 +3911,6 @@ impl<'t, 'a> Ck<'t, 'a> {
         let values = self.operand_values(&x);
         let carried = x.ty.atoms();
         let at = x.at.unwrap_or(span);
-        if w == "rat" {
-            self.rat_takes_int(&x, span);
-        }
         let no_zero = w == "rat" && self.ints_without_zero(&x);
         let mut r = self
             .apply(
@@ -3930,33 +3930,44 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
-    /// Takes the operand `x` of `rat` at `span` at `int` if it is an operation on integer
-    /// literals alone written in place, as `2^64 + 13` in `rat(2^64 + 13)`: `rat` of an int is
-    /// exact and gives no atom (QUESTIONS A36: a cast keeps an atom only where its operand can
-    /// give it), and nothing else reads the class, so it takes `int` when its function ends
-    /// ([`Ck::lits_take`]). Such a class keeps the float formats among its carriers until then,
-    /// and at `f64` `2^2000` is the infinity, of which `rat` is `#invalid`, so the atom of the
-    /// `f64` arrow is dropped by taking the class at `int` now, not by dropping it alone. A name
-    /// bound to such an operation, `b` with `b = 2^64 + 13`, is an `int` already, fixed where
-    /// it is bound (QUESTIONS A63, [`Self::fix_bound`]). Left as they are: a class that holds a
-    /// bare decimal literal, or a `/`, as `rat(1 / 2)`, which no use took `int` from but its
-    /// own operation, and which is rejected for want of a carrier when its function ends; and
-    /// a class of a parameter (`binder`) or merged with one (not `generic`), which may hold any
-    /// value of its carrier, a NaN among them.
+    /// Takes the operand `x` of the cast `w` (`int`, `rat`, `f64` or `f32`) at `span` at `int`
+    /// if it is an operation on integer literals alone written in place, as `2^64 + 13` in
+    /// `rat(2^64 + 13)`, and reads it as an `int` from then on. A cast keeps an atom only where
+    /// its operand can give it (QUESTIONS A36): `int` and `rat` of an int give none, and `f64`
+    /// or `f32` of an int gives `#inexact` only past the format's exact integers and
+    /// `#overflow` only past its largest finite value, which [`Self::int_cast`] then reads from
+    /// the operand's text, so `f64(2^3 + 1)` is an `f64` and `f64(2^53 + 1)` keeps `#inexact`.
+    /// Nothing else reads the class, so it takes `int` when its function ends anyway
+    /// ([`Ck::lits_take`]). Until then it keeps the float formats among its carriers, and at
+    /// `f64` `2^2000` is the infinity, of which `rat` is `#invalid` and `int` `#invalid`, so the
+    /// atoms of the float arrows are dropped by taking the class at `int` now, not by dropping
+    /// them alone. A name bound to such an operation, `b` with `b = 2^64 + 13`, is an `int`
+    /// already, fixed where it is bound (QUESTIONS A63, [`Self::fix_bound`]). Left as they are:
+    /// a class that holds a bare decimal literal, or a `/`, as `rat(1 / 2)`, which no use took
+    /// `int` from but its own operation, and which is rejected for want of a carrier when its
+    /// function ends; and a class of a parameter (`binder`) or merged with one (not
+    /// `generic`), which may hold any value of its carrier, a NaN among them.
     // Complexity tradeoff: naive version, a range of the value at each float carrier read
-    // from the text, which would keep `rat(b)` exact at `f64` too but must bound every
+    // from the text, which would keep the cast exact at `f64` too but must bound every
     // intermediate value (`2^2000 - 2^2000` is a NaN at `f64`) through every name read, O(size
     // of the expressions read) per cast. Used: the class's flags and one restriction of its
-    // mask, O(α(N)) for the find in a union of N classes. Before names were fixed where they
-    // are bound (LIT-name-int-fixed), this also rejected the cast where a later use had taken
-    // `int` from the class; that use is now rejected itself, at the use.
-    fn rat_takes_int(&mut self, x: &Arg<'a>, span: Span) {
+    // mask, O(α(N)) for the find in a union of N classes, then the operand's type rebuilt as
+    // `int` with its atoms, O(size of its atoms). Before names were fixed where they are bound
+    // (LIT-name-int-fixed), this also rejected the cast where a later use had taken `int`
+    // from the class; that use is now rejected itself, at the use. Before CAST-int-f64-lit-class
+    // it was done for `rat` alone, and `int(2^64 + 13)` and `f64(2^3 + 1)` kept the atoms of
+    // every arrow of the cast.
+    fn cast_takes_int(&mut self, x: &mut Arg<'a>, w: &str, span: Span) {
         let Some(k) = self.class_beside_atoms(&x.ty) else {
             return;
         };
         let c = &self.classes[k];
-        if c.generic && c.binder.is_none() && !c.decimal {
-            self.restrict_asking(k, Carrier::Int.bit(), "`rat`", span, false);
+        if c.generic
+            && c.binder.is_none()
+            && !c.decimal
+            && self.restrict_asking(k, Carrier::Int.bit(), &format!("`{w}`"), span, false)
+        {
+            x.ty = Ty::carrier(Carrier::Int).union(&Ty::set(x.ty.atoms()));
         }
     }
 

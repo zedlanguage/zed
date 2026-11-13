@@ -1006,7 +1006,7 @@ struct Class {
     /// a test of it is followed as one of that class is.
     narrows: bool,
     /// Whether a decimal literal with no suffix joined it, as the `0.5` of `b + 0.5`. Of a merged
-    /// class, whether either was. Kept as a flag so [`Ck::rat_takes_int`] reads it in O(1), not
+    /// class, whether either was. Kept as a flag so [`Ck::cast_takes_int`] reads it in O(1), not
     /// by a scan of [`Self::lits`] at each cast.
     decimal: bool,
 }

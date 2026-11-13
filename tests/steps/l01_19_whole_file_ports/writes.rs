@@ -150,15 +150,15 @@ fn a_number_computed_from_literals_is_rejected_before_the_run() {
         .expect("a located message");
     assert_eq!(
         rest,
-        "1:43: A `Lines` port takes a `String` or a family of strings: `m.stdout <- b : int | \
-         f32 | f64 | rat`. Try `m.stdout <- \"${b}\";` instead.\n  \
-         [1] 1:43: `b` is int | f32 | f64 | rat here\n      \
+        "1:43: A `Lines` port takes a `String` or a family of strings: `m.stdout <- b : int`. Try \
+         `m.stdout <- \"${b}\";` instead.\n  \
+         [1] 1:43: `b` is int here\n      \
          1 | main(m: MainArgs) { b = 2^62; m.stdout <- b; }\n        \
          |                         ^ [4]             ^ [1, 6, 7]\n        \
          |                         ^^^^ [2, 3]\n        \
          |                           ^^ [5]\n  \
-         [2] 1:25: `b` is defined as this expression, int | f32 | f64 | rat\n  \
-         [3] 1:25: this `^` gives int | f32 | f64 | rat\n  \
+         [2] 1:25: `b` is defined as this expression, int\n  \
+         [3] 1:25: this `^` gives int\n  \
          [4] 1:25: this literal, 2, is 2\n  \
          [5] 1:27: this literal, 62, is 62\n  \
          [6] 1:43: the port `m.stdout` writes each value pushed to it as one line of text\n  \
