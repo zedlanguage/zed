@@ -2036,7 +2036,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | POW-rat-literal-ops | impl attempt 1 | 2026-11-12 16:20 | reproduced: (2r/3r)^-2, 1r/(2r/3r), (3r/2r)^-2 refused at a port for #divByZero; (3/2)^-2 in main settles at f64; top-level offers no rat fix |
 | REFUSAL-periodic-split | impl attempt 1 | 2026-11-11 01:43 | both cases confirmed Refused(Fork) on main; rule written: a union of pure cycles less some is empty when each class lies inside one class taken out, tested by r |
 | STAGE-print | impl attempt 1 | 2026-11-04 03:10 | started; worktree wt/stage-print seeded |
-| WARN-refused-in-rejection | impl attempt 1 | 2026-11-12 14:51 | started; worktree /home/luke/Work/wt/warn-refused-in-rejection on origin/main a596e044b |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
