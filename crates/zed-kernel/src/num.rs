@@ -207,6 +207,50 @@ impl Rat {
         (&self.num, &self.pows)
     }
 
+    /// The form it is kept in, `num/den * prod p^e`: `num/den` reduced with `den` positive,
+    /// and the prime powers by increasing prime, each exponent nonzero, none of the primes
+    /// dividing `num` or `den`. Equal numbers can be kept in different forms (`1e3r` holds
+    /// `2^3 5^3`, the `1000r` written out holds none); [`Rat::from_kept`] reads this form back.
+    pub fn kept(&self) -> (&BigInt, &BigInt, &[(u64, BigInt)]) {
+        (&self.num, &self.den, &self.pows)
+    }
+
+    /// The number kept as `num/den * prod pows`, when the parts are in the form [`Rat::kept`]
+    /// gives; `None` otherwise. Nothing is built: the checks are a primality test of each
+    /// prime, the product of the primes, and three gcds, of `num` with `den` and of each with
+    /// the product, which is 1 exactly when no listed prime divides it (zero included); so the
+    /// cost is that of the parts as written, not of the number's digits.
+    ///
+    /// Complexity tradeoff: the product by halves and the half gcd (`fast::gcd`) cost
+    /// O(M(n) log n) in the bits n of the parts, where a remainder of `num` and `den` by each
+    /// prime costs O(n) a prime, O(n^2) for n/64 primes. Nothing is given up.
+    pub fn from_kept(num: BigInt, den: BigInt, pows: Vec<(u64, BigInt)>) -> Option<Rat> {
+        /// The product of `ps`, by halves.
+        fn product(ps: &[u64]) -> BigUint {
+            match ps {
+                [] => BigUint::one(),
+                [p] => BigUint::from(*p),
+                _ => {
+                    let (a, b) = ps.split_at(ps.len() / 2);
+                    fast::mul(&product(a), &product(b))
+                }
+            }
+        }
+        let primes: Vec<u64> = pows.iter().map(|(p, _)| *p).collect();
+        let listed = product(&primes);
+        let form_ok = den.is_positive()
+            && primes.windows(2).all(|w| w[0] < w[1])
+            && pows.iter().all(|(p, e)| !e.is_zero() && is_prime(*p))
+            && gcd(&num, &den).is_one()
+            && gcd_uint(num.magnitude(), &listed).is_one()
+            && gcd_uint(den.magnitude(), &listed).is_one();
+        form_ok.then(|| Rat {
+            num,
+            den,
+            pows: pows.into_boxed_slice(),
+        })
+    }
+
     /// Whether it is an integer.
     pub fn is_integer(&self) -> bool {
         self.den.is_one() && self.pows.iter().all(|(_, e)| !e.is_negative())
@@ -407,9 +451,7 @@ impl Rat {
     /// so the cost is the size of the coefficients and exponents, never of the value.
     pub fn residues(&self) -> (bool, u64, u64) {
         let side = |coef: &BigInt, sign: Sign| {
-            let mut r = (coef.magnitude() % MERSENNE_61)
-                .to_u64()
-                .expect("a residue below 2^61");
+            let mut r = rem_u64(coef.magnitude(), MERSENNE_61);
             for (p, e) in self.pows.iter().filter(|(_, e)| e.sign() == sign) {
                 r = mul_mod(r, pow_mod(*p, e.magnitude()));
             }
@@ -1189,6 +1231,23 @@ fn mul_mod(a: u64, b: u64) -> u64 {
     u64::try_from(r).expect("a residue below 2^61")
 }
 
+/// `x mod m`, by Horner over the limbs of `x` from the most significant, with nothing
+/// allocated.
+// Complexity tradeoff: `&x % m` in num-bigint 0.4 copies `x` and divides it by `m` as a big
+// number, so the residue of a constant of n words took 2n words that were never asked for,
+// and a wide constant written out aborted the lowering under a short memory limit
+// (`l01_17_value_representation::asks::addressing_a_wide_constant_is_refused_when_memory_is_short`,
+// item ENGINE-one). Here each limb is one `u128` remainder: O(n) time, as before, in O(1)
+// space.
+fn rem_u64(x: &BigUint, m: u64) -> u64 {
+    let m = u128::from(m);
+    let r = x
+        .iter_u64_digits()
+        .rev()
+        .fold(0u128, |r, d| ((r << 64) | u128::from(d)) % m);
+    u64::try_from(r).expect("a remainder below a u64 modulus")
+}
+
 /// `p^e mod 2^61 - 1`, by squaring after reducing `e` modulo `M - 1` (Fermat), so the cost
 /// is the length of `e` and 61 squarings. `p` is prime, so `p mod M` is zero only for
 /// `p = M`, whose powers are 0 for `e > 0`.
@@ -1197,9 +1256,7 @@ fn pow_mod(p: u64, e: &BigUint) -> u64 {
     if base == 0 {
         return u64::from(e.is_zero());
     }
-    let mut k = (e % (MERSENNE_61 - 1))
-        .to_u64()
-        .expect("an exponent below 2^61");
+    let mut k = rem_u64(e, MERSENNE_61 - 1);
     let (mut b, mut r) = (base, 1);
     while k > 0 {
         if k & 1 == 1 {
@@ -1603,12 +1660,7 @@ const POINT_WORDS: u32 = 16;
 /// [`REM_STEP`] times `m`'s width when it has none.
 fn rem(a: &BigUint, m: &BigUint) -> Result<BigUint, TooLarge> {
     if let Some(w) = m.to_u64() {
-        let w = u128::from(w);
-        let r = a
-            .iter_u64_digits()
-            .rev()
-            .fold(0u128, |r, d| ((r << 64) | u128::from(d)) % w);
-        return Ok(BigUint::from(r));
+        return Ok(BigUint::from(rem_u64(a, w)));
     }
     // Complexity tradeoff: the memory is asked as `POINT_WORDS` words a point of `m`'s
     // transforms, or `REM_STEP` times `m`'s width, measured bounds on its peak (see each), not
@@ -2192,5 +2244,59 @@ mod tests {
     #[should_panic(expected = "ASCII decimal digits")]
     fn read_digits_stops_at_a_mark() {
         read_digits("1_000");
+    }
+
+    #[test]
+    fn a_remainder_by_a_word_is_the_big_remainder() {
+        let xs = [
+            BigUint::from(0u8),
+            BigUint::from(5u8),
+            BigUint::from(u64::MAX),
+            BigUint::from(3u8).pow(1000u32),
+            (BigUint::from(1u8) << 4096u32) - 1u8,
+        ];
+        for x in &xs {
+            for m in [1, 2, 7, MERSENNE_61 - 1, MERSENNE_61, u64::MAX] {
+                assert_eq!(BigUint::from(rem_u64(x, m)), x % m, "{x} mod {m}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_kept_form_reads_back_and_nothing_out_of_it_does() {
+        // ENGINE-one: the binary form of a number writes `kept` and reads it with `from_kept`.
+        let k = BigUint::one() << 100u32;
+        let big = |b: u64| Rat::int(BigInt::from(b)).pow(&k).unwrap();
+        let frac = big(3).div(&big(7)).unwrap().unwrap().neg();
+        let lit = Rat::decimal("1.345e932").unwrap().unwrap();
+        for r in [
+            big(2),
+            frac,
+            lit,
+            Rat::int(BigInt::from(-5)),
+            Rat::int(BigInt::zero()),
+        ] {
+            let (num, den, pows) = r.kept();
+            let back = Rat::from_kept(num.clone(), den.clone(), pows.to_vec()).unwrap();
+            assert_eq!(back.kept(), r.kept());
+        }
+        let i = BigInt::from;
+        let e = || i(1) << 100u32;
+        let bad = [
+            (i(1), i(1), vec![(5, e()), (2, e())]), // primes out of order
+            (i(1), i(1), vec![(2, e()), (2, e())]), // a prime twice
+            (i(1), i(1), vec![(4, e())]),           // not a prime
+            (i(1), i(1), vec![(2, i(0))]),          // a zero exponent
+            (i(6), i(1), vec![(3, e())]),           // a prime dividing num
+            (i(1), i(9), vec![(3, e())]),           // a prime dividing den
+            (i(2), i(4), vec![]),                   // not reduced
+            (i(0), i(1), vec![(2, e())]),           // zero with powers
+        ];
+        for (num, den, pows) in bad {
+            let shown = format!("{num}/{den} {pows:?}");
+            assert!(Rat::from_kept(num, den, pows).is_none(), "{shown}");
+        }
+        assert!(Rat::from_kept(i(1), i(-1), vec![]).is_none());
+        assert!(Rat::from_kept(i(1), i(0), vec![]).is_none());
     }
 }

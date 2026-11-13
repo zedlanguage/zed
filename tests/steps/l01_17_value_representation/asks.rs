@@ -447,27 +447,52 @@ fn wide(v: Value) -> zedc::canon::Def {
     }
 }
 
-/// Item RAT-asks-rest: the content address of a constant is taken over its two sides built,
-/// and [`three_primes`] built asks a byte for each of the `9k + 2` bits of its two sides, its
-/// numerator and its denominator 1, where `to_integer` asks for the numerator alone:
-/// at `k = 2^22`, 36 MiB, refused under a limit 8 MiB above what the child holds, by the ZIR
-/// lowering, which names the memory, and by the kernel's address, where both built the number
-/// with no ask and aborted.
+/// Item RAT-asks-rest, revised by item ENGINE-one: a constant kept with prime powers, as
+/// [`three_primes`], is addressed by its powers with nothing built, so under a limit 8 MiB
+/// above what the child holds the ZIR lowering, the kernel's address and the program's address
+/// all answer for `k = 2^22` and `2^25`, where each once asked a byte for each of the `9k + 2`
+/// bits of its two sides built and was refused. The same numbers written out, built before the
+/// limit, are written by their limbs, which reserve `8 (w + 2)` bytes for the `w` words of the
+/// numerator and the denominator 1: at `k = 2^22`, 4 MB, which the limit gives, and at
+/// `k = 2^25`, 33 MB, refused with that count.
 #[test]
 fn addressing_a_wide_constant_is_refused_when_memory_is_short() {
     if !in_child("addressing_a_wide_constant_is_refused_when_memory_is_short") {
         return;
     }
     let all = [1u64 << 22, 1 << 25].map(|k| {
-        let v = Value::integer(three_primes(k));
-        (k, writes(v.clone()), wide(v))
+        let kept = Value::integer(three_primes(k));
+        let built = three_primes(k)
+            .to_integer()
+            .expect("built before the limit");
+        let words = built.iter_u64_digits().len() + 1;
+        let built = Value::int(built);
+        (
+            k,
+            words,
+            [writes(kept.clone()), writes(built.clone())],
+            [wide(kept), wide(built)],
+        )
     });
     let none = |_: &str| None;
+    let ports = zedc::run::Ports {
+        inputs: Vec::new(),
+        outputs: vec!["stdout".into()],
+    };
     lower_limit_by(SHORT);
-    for (k, t, d) in &all {
-        let bytes = 9 * k + 2;
+    for (k, words, [kept_t, built_t], [kept_d, built_d]) in &all {
+        assert!(zedc::zir::lower::lower(kept_t).is_ok(), "k = {k}");
+        assert!(zedc::canon::address(kept_d, &none).is_ok(), "k = {k}");
+        assert!(ports.address(kept_t.clone()).is_ok(), "k = {k}");
+        let bytes = 8 * (words + 2);
+        if *k == 1 << 22 {
+            assert!(zedc::zir::lower::lower(built_t).is_ok(), "k = {k}");
+            assert!(zedc::canon::address(built_d, &none).is_ok(), "k = {k}");
+            assert!(ports.address(built_t.clone()).is_ok(), "k = {k}");
+            continue;
+        }
         assert_eq!(
-            zedc::zir::lower::lower(t).err(),
+            zedc::zir::lower::lower(built_t).err(),
             Some(format!(
                 "zedc could not compile the program: one of its constants takes {bytes} bytes, \
                  and the system refused zedc that much memory to write the constant out and \
@@ -477,18 +502,14 @@ fn addressing_a_wide_constant_is_refused_when_memory_is_short() {
             "k = {k}"
         );
         assert_eq!(
-            asked(zedc::canon::address(d, &none)),
+            asked(zedc::canon::address(built_d, &none)),
             BigUint::from(bytes),
             "k = {k}"
         );
         // The program's own address, which `zedc run` takes of `main` and its ports, is
         // refused with the same count.
-        let ports = zedc::run::Ports {
-            inputs: Vec::new(),
-            outputs: vec!["stdout".into()],
-        };
         assert_eq!(
-            ports.address(t.clone()).err(),
+            ports.address(built_t.clone()).err(),
             Some(format!(
                 "zedc could not compile the program: one of its constants takes {bytes} bytes, \
                  and the system refused zedc that much memory to write the constant out and \
@@ -581,17 +602,16 @@ fn the_rest_of_k30_is_exact_when_its_ask_is_given() {
     }
     assert!(read(Prim::CastInt, &joined) == Value::int(nines.parse::<BigInt>().expect("digits")));
     assert!(report(x).starts_with(&format!("1:1: undetected: `{digits}` replaced by `0`")));
-    assert_eq!(
-        zedc::zir::canon::address(
-            &zedc::zir::lower::lower(&writes(kept.clone())).expect("lowered")
-        ),
-        zedc::zir::canon::address(
-            &zedc::zir::lower::lower(&writes(built.clone())).expect("lowered")
-        )
-    );
-    assert_eq!(
-        zedc::canon::address(&wide(kept), &none),
-        zedc::canon::address(&wide(built), &none)
+    // A kept power and the same number written out are each addressed, by the form each is
+    // kept in (item ENGINE-one), so the two addresses differ.
+    let zir = |v: &Value| {
+        zedc::zir::canon::address(&zedc::zir::lower::lower(&writes(v.clone())).expect("lowered"))
+            .expect("addressed")
+    };
+    assert_ne!(zir(&kept), zir(&built));
+    assert_ne!(
+        zedc::canon::address(&wide(kept), &none).expect("addressed"),
+        zedc::canon::address(&wide(built), &none).expect("addressed")
     );
     let messages: Vec<String> = zedc::check::walk::check(&units, &res)
         .errors

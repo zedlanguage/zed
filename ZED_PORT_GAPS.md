@@ -1661,7 +1661,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A closure `signed(x, y)` choosing `x - y` or `x + y` by a captured `bool`, so one body serves `add` and `sub` | `Rat::sum` | None | A local function of the flag, or the operator passed as a value |
-| `BigUint::iter_u64_digits().rev()` folded into a `u128` remainder | `num::rem` | Missing (no word view of an `int`) | A runtime primitive giving an `int`'s words, or `mod` by a word as a primitive |
+| `BigUint::iter_u64_digits().rev()` folded into a `u128` remainder | `num::rem_u64` (with `num::rem`, which calls it for a modulus of one word) | Missing (no word view of an `int`) | A runtime primitive giving an `int`'s words, or `mod` by a word as a primitive |
 | `BigUint::from_slice` of a block of `u64` words split into reversed `u32` pairs | `num::rem` | Missing (no word view of an `int`) | The same primitive, building an `int` from a slice of its words |
 | `Result<bool, TooLarge>` with `?` through `divides_by`, `magnitude_order` and `exact_div` | `Rat::divides_by`, `Rat::div_euclid`, `Rat::rem_euclid` | Early exit (gap 12) | A failure value returned and matched at each call |
 

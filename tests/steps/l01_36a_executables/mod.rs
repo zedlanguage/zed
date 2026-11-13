@@ -11,6 +11,7 @@ mod agreement;
 mod atoms;
 mod minmax;
 mod mul_edges;
+mod one_engine;
 mod runtime;
 mod scaling;
 mod sites;

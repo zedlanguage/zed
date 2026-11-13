@@ -8,7 +8,9 @@
 //! catalog entry and a string value are not names. A value is written by its structure, a
 //! number outside the 64-bit range and a rational by their sign and the 64-bit limbs of their
 //! numerator and denominator in lowest terms (not their decimal digits, whose conversion costs
-//! more than linear time), and a float by its bits, so every value comes back bit for bit. An
+//! more than linear time), a number kept with prime powers, such as `2^2^100`, by the form it is
+//! kept in, its numerator, denominator and powers, with no digits built ([`Rat::kept`]), and a
+//! float by its bits, so every value comes back bit for bit. An
 //! edge is written as its text form ([`super::text::edge`]): a type's representation is
 //! private to the kernel, and its printed form is its exact, canonical description; reading
 //! that text checks the names in it (a state edge's port, a facet's kind). A primitive is its
@@ -161,6 +163,36 @@ impl W {
         }
     }
 
+    /// A number kept with prime powers ([`Rat::kept`]), in the form it is kept in: the sign of
+    /// `num` as a tag, the magnitude of `num`, of a rational the magnitude of `den`, then the
+    /// count of powers and each power's prime as a word and its exponent's sign and magnitude.
+    /// No digits are built, so `2^2^100` is a few words.
+    // Complexity tradeoff: `number` builds the digits, O(n) words for a number of n bits and a
+    // refusal when the system cannot hold them, so a constant such as `2^2^100`, which staging
+    // folds and a run uses only through operations that never build it (`mod`, a comparison),
+    // made `zedc build` refuse a program `zedc run` runs (item ENGINE-one). Here the kept form
+    // is written as it is: O(w) words for the w words of its parts, whatever the number's
+    // size, and nothing is refused but the memory for those words. Tradeoff: equal numbers
+    // kept in different forms (`1e3r` holds 2^3 5^3, `1000r` none) are written differently,
+    // so two equal constants can get two node keys; a normal form would need the digits,
+    // which is what this avoids. A plain number keeps tags 2 and 3 and its bytes. Tests
+    // `l01_32_canonical_zir::wide_constants::a_kept_power_is_written_as_its_powers` and
+    // `..._in_time_linear_in_its_parts`; the same form in `canon/serial.rs`.
+    fn kept(&mut self, r: &Rat, rational: bool) {
+        let (num, den, pows) = r.kept();
+        self.tag(u8::from(num.sign() == Sign::Minus));
+        self.magnitude(num.magnitude());
+        if rational {
+            self.magnitude(den.magnitude());
+        }
+        self.n(pows.len() as u64);
+        for (p, e) in pows {
+            self.n(*p);
+            self.tag(u8::from(e.sign() == Sign::Minus));
+            self.magnitude(e.magnitude());
+        }
+    }
+
     fn many<T>(&mut self, xs: &[T], mut f: impl FnMut(&mut Self, &T)) {
         self.n(xs.len() as u64);
         for x in xs {
@@ -241,13 +273,21 @@ impl W {
                 self.tag(1);
                 self.n(*i as u64);
             }
-            Value::Big(b) => {
+            Value::Big(b) if b.kept().2.is_empty() => {
                 self.tag(2);
                 self.number(b, false);
             }
-            Value::Rat(r) => {
+            Value::Rat(r) if r.kept().2.is_empty() => {
                 self.tag(3);
                 self.number(r, true);
+            }
+            Value::Big(b) => {
+                self.tag(12);
+                self.kept(b, false);
+            }
+            Value::Rat(r) => {
+                self.tag(13);
+                self.kept(r, true);
             }
             Value::Float(x) => {
                 self.tag(4);
@@ -669,7 +709,7 @@ impl<'a> R<'a> {
     /// A value with no parts, or a value whose parts are still to read.
     fn value_head(&mut self) -> Result<Result<Value, OpenValue>, String> {
         let at = self.i;
-        let t = self.tag(11, "a value")?;
+        let t = self.tag(13, "a value")?;
         Ok(Ok(match t {
             0 => Value::Bool(self.tag(1, "a boolean")? == 1),
             1 => Value::Int(self.n()? as i64),
@@ -679,6 +719,27 @@ impl<'a> R<'a> {
                 match Rat::new(num, den) {
                     Some(r) => Value::rat(r),
                     None => return self.err(at, "a rational with denominator 0"),
+                }
+            }
+            12 | 13 => {
+                let rational = t == 13;
+                let num = self.big()?;
+                let den = match rational {
+                    true => BigInt::from(self.magnitude()?),
+                    false => BigInt::from(1),
+                };
+                let count = self.len()?;
+                let mut pows = Vec::with_capacity(count);
+                for _ in 0..count {
+                    pows.push((self.n()?, self.big()?));
+                }
+                let r = match Rat::from_kept(num, den, pows) {
+                    Some(r) if rational || r.is_integer() => Arc::new(r),
+                    _ => return self.err(at, "a number not in the form it is kept in"),
+                };
+                match rational {
+                    true => Value::Rat(r),
+                    false => Value::Big(r),
                 }
             }
             4 => Value::float(f64::from_bits(self.n()?)),

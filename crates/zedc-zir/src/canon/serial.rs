@@ -1,7 +1,9 @@
 //! The canonical serialization. Every node is a tag byte followed by its fields; a sequence
 //! is its length then its items, a string its length in bytes then its UTF-8, and lengths
 //! and integers are little-endian 64-bit words. An exact number past `i64` is its sign as a
-//! tag, then the limbs of its numerator, and of a rational its denominator, in lowest terms.
+//! tag, then the limbs of its numerator, and of a rational its denominator, in lowest terms;
+//! one kept with prime powers, such as `2^2^100`, is the form it is kept in, its numerator,
+//! denominator and powers, with no digits built ([`Rat::kept`]).
 //! Each tag fixes the fields that follow, so the encoding is self-delimiting and two different
 //! normal forms never share an encoding.
 //!
@@ -99,6 +101,33 @@ impl Out<'_> {
                 }
             }
             Err(e) => self.refused = Some(e),
+        }
+    }
+
+    /// A number kept with prime powers ([`Rat::kept`]), as `zir::binary` writes one: the sign
+    /// of its numerator as a tag, the magnitude of the numerator, of a rational the magnitude
+    /// of the denominator, then the count of powers and each power's prime as a word and its
+    /// exponent's sign and magnitude. No digits are built.
+    // Complexity tradeoff: as at `zir::binary`'s `kept`: `number` builds the digits, O(n) for
+    // n bits, and a literal such as `1e100000000000000000000r` made both `zedc run` and `zedc
+    // build` refuse a program for want of memory to address it (item ENGINE-one). Here O(w)
+    // for the w words of the kept parts. Tradeoff: `1e3r` and `1000r`, equal numbers written
+    // differently, already had different normal forms as written; now their serializations
+    // differ too, which changed the address of every program holding a kept power
+    // (`canon::VERSION` 5 to 6). Test
+    // `l01_32_canonical_zir::wide_constants::a_kept_power_is_written_as_its_powers`.
+    fn kept(&mut self, r: &Rat, rational: bool) {
+        let (num, den, pows) = r.kept();
+        self.tag(u8::from(num.sign() == Sign::Minus));
+        self.magnitude(num.magnitude());
+        if rational {
+            self.magnitude(den.magnitude());
+        }
+        self.word(pows.len() as u64);
+        for (p, e) in pows {
+            self.word(*p);
+            self.tag(u8::from(e.sign() == Sign::Minus));
+            self.magnitude(e.magnitude());
         }
     }
 
@@ -238,13 +267,21 @@ impl Out<'_> {
                 a.fields.iter().for_each(|f| self.str(f));
                 self.seq(a.args(), Job::Value, todo);
             }
-            Value::Big(n) => {
+            Value::Big(n) if n.kept().2.is_empty() => {
                 self.tag(8);
                 self.number(n, false);
             }
-            Value::Rat(r) => {
+            Value::Rat(r) if r.kept().2.is_empty() => {
                 self.tag(9);
                 self.number(r, true);
+            }
+            Value::Big(n) => {
+                self.tag(13);
+                self.kept(n, false);
+            }
+            Value::Rat(r) => {
+                self.tag(14);
+                self.kept(r, true);
             }
             Value::Tuple(vs) => {
                 self.tag(5);

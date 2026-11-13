@@ -42,8 +42,10 @@ use zedc_base::address::ContentAddress;
 /// The version of the rule set and the serialization, hashed into every address. Version 3
 /// writes a primitive by its fixed number ([`zed_kernel::Prim::code`]), not its Rust name;
 /// version 4 writes an exact number past `i64` by its limbs, not its decimal digits; version 5
-/// writes an interval end or a class past `i64` by its sign and limbs too.
-pub const VERSION: u32 = 5;
+/// writes an interval end or a class past `i64` by its sign and limbs too; version 6 writes a
+/// number kept with prime powers by the form it is kept in, with no digits built (item
+/// ENGINE-one).
+pub const VERSION: u32 = 6;
 
 /// A rewrite rule of the canonicalizer.
 pub struct Rule {

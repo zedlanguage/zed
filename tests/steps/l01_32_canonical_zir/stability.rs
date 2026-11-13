@@ -186,11 +186,12 @@ fn the_normal_form() {
 #[test]
 fn the_address_is_pinned() {
     // The binary form fixes its own layout (little-endian 64-bit words, floats by their
-    // IEEE-754 bits, big numbers by their 64-bit limbs), so this hash is the same on every
-    // machine.
+    // IEEE-754 bits, big numbers by their 64-bit limbs or their prime powers), so this hash is
+    // the same on every machine. It hashes the canonicalization VERSION, and is pinned again
+    // with each new one (version 6, item ENGINE-one).
     assert_eq!(
         address(&graph(DISCOUNT)).to_string(),
-        "5f8e7983c8c0fa467c552359cc4928d6559f2d756b99142128b6d375af63286a"
+        "bc863b44e5caeb73393dd5354e41b603138eb65a1f038effd7fb02f4b0e4d768"
     );
 }
 
