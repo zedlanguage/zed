@@ -3746,7 +3746,11 @@ pub fn render(t: &Theory, r: &Report) -> String {
                      itself. To list every trivial model, at the cost of that search, write \
                      `@exhaustive` before the interface:"
                 );
-                let _ = writeln!(out, "        @exhaustive interface {}(T) {{ ... }}", t.name);
+                let _ = writeln!(
+                    out,
+                    "        @exhaustive interface {}(positional T) {{ ... }}",
+                    t.name
+                );
             }
         }
     }

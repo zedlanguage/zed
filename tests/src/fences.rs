@@ -1,9 +1,10 @@
 //! The documentation's fences, each with its layer: those of DESIGN.md and EXAMPLES.md, read
 //! from the spec in place (`crate::spec`), and those of this repository's README.md, laid out
-//! against the spec's grammar (`zed_tools::fence_layers`); and the hand-written fixtures of
-//! their commented ✗ variants, in `zed/fences/variants/`. No copy of the spec is kept in this
-//! repository.
+//! against the spec's grammar (`zed_tools::fence_layers`); and the variants of their commented ✗
+//! lines, built from the spec's fences at test time by the table `zed/fences/variants.txt`. No
+//! copy of the spec is kept in this repository.
 
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -47,15 +48,16 @@ impl From<LaidFence> for DocFence {
 /// A rejected variant: a fence with one commented ✗ line made live.
 #[derive(Clone, Debug)]
 pub struct Variant {
-    /// The fixture's file name, without `.zed`.
+    /// Its name in the table.
     pub name: String,
     /// The commented line of the fence it is a variant of, trimmed.
     pub of: String,
-    /// The fixture's text, its first line, `// variant: …`, included.
+    /// Its text, built from its fence: the line `// variant: ` and its commented line, then the
+    /// fence with that line made live.
     pub text: String,
 }
 
-/// The directory `zed/fences/`, which holds the variant fixtures and the predictions.
+/// The directory `zed/fences/`, which holds the table of the variants and the predictions.
 pub fn dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../zed/fences")
 }
@@ -114,6 +116,44 @@ pub fn all() -> Vec<DocFence> {
     out
 }
 
+/// The passage of DESIGN.md that starts at the one line whose text, without its indentation,
+/// starts with `first`: that line and the lines after it up to a blank line, a line that ends
+/// a fence, or a line indented less, each without the first line's indentation and each
+/// ending in `\n`. A test compares the output of the compiler with the passage that documents
+/// it, read from the spec at test time, so that this repository keeps no copy of the passage
+/// (item SPEC-no-verbatim). Panics, naming `first`, where no line or more than one starts with
+/// it.
+///
+/// Complexity tradeoff: one scan of DESIGN.md's lines, O(D) for D bytes, on each call; a test
+/// reads a few passages, so an index of the lines by their start, O(D) to build once, would
+/// save nothing.
+pub fn passage(first: &str) -> String {
+    let path = &spec().design;
+    let design = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+    let lines: Vec<&str> = design.lines().collect();
+    let starts: Vec<usize> = (0..lines.len())
+        .filter(|&i| lines[i].trim_start().starts_with(first))
+        .collect();
+    let [start] = starts[..] else {
+        panic!(
+            "DESIGN.md has {} lines that start with `{first}`, and the test reads the passage \
+             that starts at exactly one",
+            starts.len()
+        );
+    };
+    let indent = lines[start].len() - lines[start].trim_start().len();
+    let mut out = String::new();
+    for line in &lines[start..] {
+        let body = line.trim_start();
+        if body.is_empty() || body == "```" || line.len() - body.len() < indent {
+            break;
+        }
+        out.push_str(&line[indent..]);
+        out.push('\n');
+    }
+    out
+}
+
 /// The fences of this repository's README.md (item README-fences), in order, laid out against
 /// the spec's grammar. They are not among [`all`]: the page states its own results, and its
 /// tests compare them with the run.
@@ -126,395 +166,286 @@ pub fn readme() -> Vec<DocFence> {
     )
 }
 
-/// Every variant fixture, by name.
+/// The table of the variants, `zed/fences/variants.txt`.
+pub fn table() -> PathBuf {
+    dir().join("variants.txt")
+}
+
+/// Every variant, by name, each built from its fence in the spec by [`build`]. Panics with a
+/// message for each entry of the table that cannot be built, naming its fence's key.
 pub fn variants() -> Vec<Variant> {
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(dir().join("variants"))
-        .expect("the variants directory")
-        .map(|e| e.expect("an entry").path())
-        .collect();
-    paths.sort();
-    paths
-        .into_iter()
-        .map(|p| {
-            let text = std::fs::read_to_string(&p).expect("a readable fixture");
-            let of = text
-                .lines()
-                .next()
-                .and_then(|l| l.strip_prefix("// variant: "))
-                .unwrap_or_else(|| panic!("{} has no `// variant:` line", p.display()))
-                .into();
-            Variant {
-                name: p.file_stem().expect("a name").to_string_lossy().into(),
-                of,
-                text,
-            }
-        })
-        .collect()
-}
-
-/// A way a variant fixture differs from its fence other than the commented ✗ line it makes
-/// live. The test names each one, so that every other line of a fixture follows its fence.
-#[derive(Clone, Copy, Debug)]
-pub enum Change {
-    /// The fixture writes `line` where the fence writes `stands_for`.
-    Stands {
-        /// The fixture's name, without `.zed`.
-        fixture: &'static str,
-        /// The fixture's line, as written.
-        line: &'static str,
-        /// The fence's line, as written.
-        stands_for: &'static str,
-    },
-    /// The fixture leaves out each line of the fence written `line` that it does not copy.
-    Omits {
-        /// The fixture's name, without `.zed`.
-        fixture: &'static str,
-        /// The fence's line, as written.
-        line: &'static str,
-    },
-}
-
-impl Change {
-    /// The fixture it belongs to.
-    fn fixture(&self) -> &'static str {
-        match self {
-            Change::Stands { fixture, .. } | Change::Omits { fixture, .. } => fixture,
-        }
-    }
-}
-
-/// The ways the fixtures in `zed/fences/variants/` differ from their fences.
-pub const CHANGES: &[Change] = &[
-    // A constructor call by position beside the call by name would bind q twice.
-    Change::Omits {
-        fixture: "constructor-called-by-position",
-        line: "q = Point(x:, y:);                 // Point(x: x, y: y)",
-    },
-    // The fence's variants each replace the line `prev = c*.bump(3);`, as its comment says, and
-    // no ✗ variant binds `prev`, so `until prev > 20` would read a name no line binds, and the
-    // fixture would fail on that line as well as on its ✗ line.
-    Change::Omits {
-        fixture: "dot-never-mutates",
-        line: "  prev = c*.bump(3);                // `*.` calls and mutates: writes c', yields the return",
-    },
-    Change::Stands {
-        fixture: "dot-never-mutates",
-        line: "  until c.n > 20;                    //   — one write of c' per step, as always",
-        stands_for: "  until prev > 20;                  //   — one write of c' per step, as always",
-    },
-    Change::Omits {
-        fixture: "two-writers-of-one-generation",
-        line: "  prev = c*.bump(3);                // `*.` calls and mutates: writes c', yields the return",
-    },
-    Change::Stands {
-        fixture: "two-writers-of-one-generation",
-        line: "  until c.n > 20;                    //   — one write of c' per step, as always",
-        stands_for: "  until prev > 20;                  //   — one write of c' per step, as always",
-    },
-    // The two commented field lines are edits of the field types of `orders`, not lines of
-    // their own: each fixture edits the declaration and keeps the commented lines.
-    Change::Stands {
-        fixture: "nullable-column-missing-none",
-        line: "orders: OrderId ->? { total: rat, note: Utf8String }   // ✗ Stored collection whose \
-               type and schema disagree: the column is nullable, and #none is missing from the \
-               field type",
-        stands_for: "orders: OrderId ->? { total: rat, note: Utf8String | #none }",
-    },
-    Change::Stands {
-        fixture: "numeric-is-not-binary-float",
-        line: "orders: OrderId ->? { total: f64, note: Utf8String | #none }   // ✗ Stored \
-               collection whose type and schema disagree: NUMERIC is not a binary float",
-        stands_for: "orders: OrderId ->? { total: rat, note: Utf8String | #none }",
-    },
-    // The fixture keeps the one binding the ✗ line reads and leaves out the others and the
-    // live ✗ line.
-    Change::Omits {
-        fixture: "decimal-literal-at-int",
-        line: "q   = 7 div 2;             // 3      integers divide with div and mod (Euclidean)",
-    },
-    Change::Omits {
-        fixture: "decimal-literal-at-int",
-        line: "r   = -7 mod 2;            // 1      (-7) mod 2 — unary minus binds tighter than \
-               mod; the remainder is never negative",
-    },
-    Change::Omits {
-        fixture: "decimal-literal-at-int",
-        line: "h   = f64(7) / 2;          // 3.5    a cast is the type applied to the value",
-    },
-    Change::Omits {
-        fixture: "decimal-literal-at-int",
-        line: "t   = 1r / 3r;             // exact: rat",
-    },
-    Change::Omits {
-        fixture: "decimal-literal-at-int",
-        line: "big = 2^100;              // int has no width; ^ binds tighter than * and than \
-               unary minus, and associates to the right",
-    },
-    Change::Omits {
-        fixture: "decimal-literal-at-int",
-        line: "m   = 1_000_000;  hex = 0xFF;  bits = 0b1011;  sci: f64 = 1.5e-3;",
-    },
-    Change::Omits {
-        fixture: "decimal-literal-at-int",
-        line: "half: f64 = 0.5;           // never .5: a float literal starts with a digit; a \
-               decimal literal takes the format its use fixes, here the declared f64, and one \
-               that nothing fixes is an error; a suffix, as in 0.5f64, forces the format",
-    },
-    Change::Omits {
-        fixture: "decimal-literal-at-int",
-        line: "dbl = h * 2;               // 7.0    h is an f64, and the literal 2 takes the \
-               carrier of the other operand",
-    },
-    Change::Omits {
-        fixture: "decimal-literal-at-int",
-        line: "y   = x^2 + 2*x + 1;",
-    },
-    Change::Omits {
-        fixture: "decimal-literal-at-int",
-        line: "b: u8 = 255;               // u8 = int[0..=255]; 256 here is a type error, not a \
-               wrap",
-    },
-    Change::Omits {
-        fixture: "decimal-literal-at-int",
-        line: "w: i32 = shl(1, 30);       // no bitwise operators: bitAnd, bitOr, shl are \
-               ordinary functions",
-    },
-    Change::Omits {
-        fixture: "decimal-literal-at-int",
-        line: "z   = 7 / 2;               // ✗ Decimal literal, or `/` of integer literals, \
-               that nothing gives a carrier: `/` is for the float formats and rat only, so 7 and \
-               2 stay without one; write f64(7) / 2 or declare z: f64",
-    },
-    // The sanitized call beside the ✗ call would bind rows twice.
-    Change::Omits {
-        fixture: "taint-through-concatenation",
-        line: "rows = exec(db, \"SELECT * WHERE name = \" ++ sanitize(userName));  // ✓ and the \
-               sanitizer is auditable",
-    },
-    // The ✗ line takes the place of the return that reads t.
-    Change::Omits {
-        fixture: "block-binding-never-read",
-        line: "  return s + t;",
-    },
-];
-
-/// Where each of `variants` disagrees with the fence of `fences` whose commented ✗ line it
-/// makes live, one message for each fixture that agrees with none of the fences holding its
-/// line. A fixture agrees with a fence when, after its `// variant:` line, it is the fence's
-/// lines in order with these differences only: its live ✗ line takes the place of the
-/// fence's commented ✗ line, the two equal once the `//` is removed and runs of white space
-/// are read as one space, and `changes` names each other difference. A live ✗ line that
-/// stands for another line by `changes` edits that line instead, and the commented line stays.
-/// Also named: a change a fixture that agrees does not use, a change of no fixture, and a
-/// commented ✗ line that several fences hold and no fixture agrees with in one of them.
-///
-/// The fences holding a line are found by hashing, and a fixture is read once along each
-/// fence holding its line, so the cost is linear in the lines of the fences, the fixtures and
-/// the changes, times the number of fences holding one commented ✗ line (one in the
-/// documents).
-pub fn disagreements(fences: &[DocFence], variants: &[Variant], changes: &[Change]) -> Vec<String> {
-    use std::collections::{HashMap, HashSet};
-
-    let lines: Vec<Vec<&str>> = fences
-        .iter()
-        .map(|f| f.text.split('\n').collect())
-        .collect();
-    // Each commented ✗ line, trimmed, with the fences and lines (from 0) that hold it.
-    let mut places: HashMap<&str, Vec<(usize, usize)>> = HashMap::new();
-    for (i, f) in fences.iter().enumerate() {
-        for k in fence::marks(&f.text).variants {
-            places
-                .entry(lines[i][k - 1].trim())
-                .or_default()
-                .push((i, k - 1));
-        }
-    }
-    let mut by_fixture: HashMap<&str, Vec<usize>> = HashMap::new();
-    for (c, change) in changes.iter().enumerate() {
-        by_fixture.entry(change.fixture()).or_default().push(c);
-    }
-    let mut used = vec![false; changes.len()];
-    let mut agreed: HashSet<(usize, usize)> = HashSet::new();
-    let mut failed: HashSet<&str> = HashSet::new();
-    let mut out = Vec::new();
-    for v in variants {
-        let live = fence::marks(&v.text).lines;
-        let [live] = live[..] else {
-            out.push(format!(
-                "{}.zed has {} live ✗ lines, not one",
-                v.name,
-                live.len()
-            ));
-            continue;
-        };
-        let Some(held) = places.get(v.of.as_str()) else {
-            out.push(format!(
-                "{}.zed: its `// variant:` line is the commented ✗ line of no fence: {}",
-                v.name, v.of
-            ));
-            continue;
-        };
-        let body: Vec<&str> = v.text.split('\n').skip(1).collect();
-        let body = match body.split_last() {
-            Some((&"", rest)) => rest,
-            _ => &body[..],
-        };
-        let mine = Mine::of(
-            changes,
-            by_fixture.get(v.name.as_str()).map_or(&[], |c| &c[..]),
-        );
-        let mut first = None;
-        let mut agrees = false;
-        for &(i, k) in held {
-            match mine.place(body, live - 2, &lines[i], k) {
-                Ok(uses) => {
-                    agreed.insert((i, k));
-                    agrees = true;
-                    for c in uses {
-                        used[c] = true;
-                    }
-                }
-                Err(why) => {
-                    first.get_or_insert_with(|| {
-                        format!("{}.zed:{why}; its fence is at {}", v.name, fences[i].at)
-                    });
-                }
-            }
-        }
-        if agrees {
-            for &c in by_fixture.get(v.name.as_str()).map_or(&[][..], |c| &c[..]) {
-                if !used[c] {
-                    out.push(format!(
-                        "{}.zed does not use the change {:?}",
-                        v.name, changes[c]
-                    ));
-                }
-            }
-        } else {
-            failed.insert(v.of.as_str());
-            out.extend(first);
-        }
-    }
-    let names: HashSet<&str> = variants.iter().map(|v| v.name.as_str()).collect();
-    for change in changes {
-        if !names.contains(change.fixture()) {
-            out.push(format!("no fixture has the change {change:?}"));
-        }
-    }
-    for (line, held) in &places {
-        if held.len() > 1 && !failed.contains(line) {
-            for &(i, k) in held {
-                if !agreed.contains(&(i, k)) {
-                    out.push(format!(
-                        "{}: no fixture agrees with the fence's commented ✗ line {}: {line}",
-                        fences[i].at,
-                        k + 1
-                    ));
-                }
-            }
-        }
-    }
-    out.sort();
+    let path = table();
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    let mut out = build(&text, &all()).unwrap_or_else(|errors| {
+        panic!(
+            "the variants of {} cannot be built from the spec:\n{}",
+            path.display(),
+            errors.join("\n")
+        )
+    });
+    out.sort_by(|a, b| a.name.cmp(&b.name));
     out
 }
 
-/// The changes of one fixture, by its line for a stand and by the fence's line for an omission,
-/// each with its place in the list of changes.
-struct Mine<'a> {
-    stands: std::collections::HashMap<&'a str, (&'a str, usize)>,
-    omits: std::collections::HashMap<&'a str, usize>,
+/// One change an entry of the table makes to its fence. Each names a line of the fence by a
+/// piece of text that exactly one line holds (for `live`, exactly one commented ✗ line).
+#[derive(Clone, Copy, Debug)]
+enum Op<'t> {
+    /// `live: TEXT`: the commented ✗ line made live; its `//` is removed.
+    Live(&'t str),
+    /// `omit: TEXT`: the line left out.
+    Omit(&'t str),
+    /// `keep: TEXT`: the line kept; where an entry keeps any line, it leaves out every line it
+    /// does not keep but the live one.
+    Keep(&'t str),
+    /// `edit: OLD => NEW`: OLD replaced by NEW in the line that holds OLD.
+    Edit(&'t str, &'t str),
+    /// `stands: OLD => NEW`: the live line stands for this edit of another line. The line that
+    /// holds OLD gets NEW in its place and the live line's `// ✗` comment at its end, and the
+    /// commented ✗ line stays commented.
+    Stands(&'t str, &'t str),
 }
 
-impl<'a> Mine<'a> {
-    /// The changes `which` of `changes`.
-    fn of(changes: &'a [Change], which: &[usize]) -> Self {
-        let mut mine = Mine {
-            stands: Default::default(),
-            omits: Default::default(),
-        };
-        for &c in which {
-            match changes[c] {
-                Change::Stands {
-                    line, stands_for, ..
-                } => {
-                    mine.stands.insert(line, (stands_for, c));
-                }
-                Change::Omits { line, .. } => {
-                    mine.omits.insert(line, c);
-                }
-            }
-        }
-        mine
-    }
+/// An entry of the table: from its `variant:` line, at line `at` of the table, to the next.
+struct Entry<'t> {
+    name: &'t str,
+    at: usize,
+    fence: Option<&'t str>,
+    ops: Vec<Op<'t>>,
+}
 
-    /// Whether the fixture lines `body`, whose line `live` (from 0) is its live ✗ line, are the
-    /// fence `lines` with its commented line `k` (from 0) made live and these changes made: the
-    /// changes used, or the first fixture line (counted as in its file) that differs, and how.
-    fn place(
-        &self,
-        body: &[&str],
-        live: usize,
-        lines: &[&str],
-        k: usize,
-    ) -> Result<Vec<usize>, String> {
-        // A live line that stands for another line of the fence makes the variant by editing
-        // that line, and the fence's commented line stays as it is; any other live line takes
-        // the commented line's place.
-        let anchored = !self.stands.contains_key(body[live]);
-        let mut uses = Vec::new();
-        let mut j = 0;
-        for (p, &want) in lines.iter().enumerate() {
-            if anchored && p == k {
-                let uncommented = want.trim_start().strip_prefix("//").unwrap_or(want);
-                if j != live
-                    || !body[live]
-                        .split_whitespace()
-                        .eq(uncommented.split_whitespace())
-                {
-                    return Err(format!(
-                        "{}: the fence's line {} made live belongs here: {}",
-                        j + 2,
-                        k + 1,
-                        uncommented.trim()
-                    ));
-                }
-                j += 1;
+/// The variants that the table `table` names, built from `fences`, in the table's order; or a
+/// message for each entry that cannot be built.
+///
+/// The table is a list of entries, one line per word, `#` lines and blank lines ignored:
+///
+/// ```text
+/// variant: two-writers-of-one-generation
+/// fence: DESIGN.md [sec:generations] 4
+/// live: _ = c*.bump(1);
+/// omit: prev = c*.bump(3);
+/// edit: until prev => until c.n
+/// ```
+///
+/// Each text after a word is a short piece of the line it names, never the line itself, so the
+/// table quotes no passage of the spec; the program is built in memory each time the tests run.
+/// The variant's text is `// variant: ` and its commented ✗ line, then the fence's lines with
+/// the changes made, so its lines are numbered as the fence's are, one higher.
+///
+/// Complexity tradeoff: the fences are found by key in a hash map, O(F) to build and O(1) per
+/// entry, where scanning the fences for each entry would be O(V·F) for V entries and F fences.
+/// Each change is found by one scan of its fence's lines, O(L) for L bytes of the fence, and
+/// the variant is written in one more pass, so an entry costs O(L·(1 + C)) for C changes, about
+/// the size of the text it writes.
+pub fn build(table: &str, fences: &[DocFence]) -> Result<Vec<Variant>, Vec<String>> {
+    let mut errors = Vec::new();
+    let entries = parse(table, &mut errors);
+    let by_key: HashMap<&str, &DocFence> = fences.iter().map(|f| (f.key.as_str(), f)).collect();
+    let mut names = HashSet::new();
+    let mut out = Vec::new();
+    for e in &entries {
+        let at = format!("variants.txt:{}: the variant `{}`", e.at, e.name);
+        if !names.insert(e.name) {
+            errors.push(format!("{at} is named twice"));
+            continue;
+        }
+        let Some(key) = e.fence else {
+            errors.push(format!("{at} has no `fence:` line"));
+            continue;
+        };
+        let Some(fence) = by_key.get(key) else {
+            errors.push(format!(
+                "{at} is built from the fence `{key}`, and the spec has no fence with that key; \
+                 find the fence that now holds its ✗ line and write that fence's key"
+            ));
+            continue;
+        };
+        match build_one(e, fence) {
+            Ok(v) => out.push(v),
+            Err(m) => errors.push(format!("{at}, of the fence `{key}` at {}: {m}", fence.at)),
+        }
+    }
+    if errors.is_empty() {
+        Ok(out)
+    } else {
+        Err(errors)
+    }
+}
+
+/// The entries of `table`, with a message in `errors` for each line that is not one.
+fn parse<'t>(table: &'t str, errors: &mut Vec<String>) -> Vec<Entry<'t>> {
+    let mut entries: Vec<Entry> = Vec::new();
+    for (k, raw) in table.lines().enumerate() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let at = k + 1;
+        let Some((word, rest)) = line.split_once(':').map(|(w, r)| (w, r.trim())) else {
+            errors.push(format!("variants.txt:{at}: `{line}` has no `word:`"));
+            continue;
+        };
+        if word == "variant" {
+            entries.push(Entry {
+                name: rest,
+                at,
+                fence: None,
+                ops: Vec::new(),
+            });
+            continue;
+        }
+        let Some(e) = entries.last_mut() else {
+            errors.push(format!(
+                "variants.txt:{at}: `{word}:` comes before any `variant:` line"
+            ));
+            continue;
+        };
+        let pair = || rest.split_once(" => ").map(|(a, b)| (a.trim(), b.trim()));
+        let op = match (word, pair()) {
+            ("fence", _) if e.fence.is_none() => {
+                e.fence = Some(rest);
                 continue;
             }
-            let got = body.get(j).filter(|_| !(anchored && j == live)).map(|&l| {
-                match self.stands.get(l) {
-                    Some(&(stands_for, c)) => (stands_for, Some(c)),
-                    None => (l, None),
-                }
-            });
-            match got {
-                Some((l, c)) if l == want => {
-                    uses.extend(c);
-                    j += 1;
-                }
-                _ => match self.omits.get(want) {
-                    Some(&c) => uses.push(c),
-                    None => {
-                        let at = match body.get(j) {
-                            Some(l) => format!("{}: `{}`", j + 2, l.trim()),
-                            None => format!("{}: the file ends", j + 2),
-                        };
-                        return Err(format!(
-                            "{at} where the fence's line {} is: `{}`",
-                            p + 1,
-                            want.trim()
-                        ));
-                    }
-                },
+            ("fence", _) => {
+                errors.push(format!("variants.txt:{at}: a second `fence:` line"));
+                continue;
             }
+            ("live", _) => Op::Live(rest),
+            ("omit", _) => Op::Omit(rest),
+            ("keep", _) => Op::Keep(rest),
+            ("edit", Some((old, new))) => Op::Edit(old, new),
+            ("stands", Some((old, new))) => Op::Stands(old, new),
+            ("edit" | "stands", None) => {
+                errors.push(format!("variants.txt:{at}: `{word}:` needs `OLD => NEW`"));
+                continue;
+            }
+            _ => {
+                errors.push(format!(
+                    "variants.txt:{at}: `{word}:` is not a word of the table; the words are \
+                     variant, fence, live, omit, keep, edit and stands"
+                ));
+                continue;
+            }
+        };
+        if rest.is_empty() {
+            errors.push(format!("variants.txt:{at}: `{word}:` names no text"));
+            continue;
         }
-        match body.get(j) {
-            Some(l) => Err(format!(
-                "{}: `{}` after the fence's last line",
-                j + 2,
-                l.trim()
-            )),
-            None => Ok(uses),
+        e.ops.push(op);
+    }
+    entries
+}
+
+/// The one line, of the fence lines `lines` at the places `among` (from 0), that holds `text`.
+fn the_line(lines: &[&str], among: &[usize], what: &str, text: &str) -> Result<usize, String> {
+    let hits: Vec<usize> = among
+        .iter()
+        .copied()
+        .filter(|&i| lines[i].contains(text))
+        .collect();
+    match hits[..] {
+        [i] => Ok(i),
+        [] => Err(format!("no {what} of the fence holds `{text}`")),
+        _ => Err(format!(
+            "{} {what}s of the fence hold `{text}`, its lines {}; write a longer piece of one",
+            hits.len(),
+            hits.iter()
+                .map(|i| (i + 1).to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
+}
+
+/// The variant entry `e` names, built from `fence`, or what stops it.
+fn build_one(e: &Entry, fence: &DocFence) -> Result<Variant, String> {
+    let lines: Vec<&str> = fence.text.split('\n').collect();
+    let every: Vec<usize> = (0..lines.len()).collect();
+    let commented: Vec<usize> = fence::marks(&fence.text)
+        .variants
+        .iter()
+        .map(|k| k - 1)
+        .collect();
+    let mut live = None;
+    let mut omitted = vec![false; lines.len()];
+    let mut kept: Option<Vec<bool>> = None;
+    let mut edits: Vec<(usize, &str, &str)> = Vec::new();
+    let mut stands = None;
+    for &op in &e.ops {
+        match op {
+            Op::Live(t) if live.is_none() => {
+                live = Some(the_line(&lines, &commented, "commented ✗ line", t)?);
+            }
+            Op::Live(_) => return Err("it has two `live:` lines".into()),
+            Op::Omit(t) => omitted[the_line(&lines, &every, "line", t)?] = true,
+            Op::Keep(t) => {
+                let i = the_line(&lines, &every, "line", t)?;
+                kept.get_or_insert_with(|| vec![false; lines.len()])[i] = true;
+            }
+            Op::Edit(old, new) => edits.push((the_line(&lines, &every, "line", old)?, old, new)),
+            Op::Stands(old, new) if stands.is_none() => {
+                stands = Some((the_line(&lines, &every, "line", old)?, old, new));
+            }
+            Op::Stands(..) => return Err("it has two `stands:` lines".into()),
         }
     }
+    let live = live.ok_or("it has no `live:` line")?;
+    let gone = |i: usize| omitted[i] || kept.as_ref().is_some_and(|k| !k[i] && i != live);
+    let changed = edits
+        .iter()
+        .map(|&(i, ..)| i)
+        .chain(stands.map(|(i, ..)| i));
+    if let Some(i) = std::iter::once(live).chain(changed).find(|&i| gone(i)) {
+        return Err(format!("its line {} is both left out and changed", i + 1));
+    }
+    if stands.is_some_and(|(i, ..)| i == live) {
+        return Err("its `stands:` line is its live line".into());
+    }
+    edits.sort_by_key(|&(i, ..)| i);
+    let of = lines[live].trim();
+    // Reserved once: the variant is about the fence's size, and growing by doubling would
+    // allocate about twice that in all.
+    let mut text = String::with_capacity(fence.text.len() + 2 * of.len() + 16);
+    text.push_str("// variant: ");
+    text.push_str(of);
+    text.push('\n');
+    let mut next = edits.iter().peekable();
+    for (i, &line) in lines.iter().enumerate() {
+        let mut l = if i == live && stands.is_none() {
+            uncomment(line)
+        } else {
+            line.to_string()
+        };
+        while let Some(&(_, old, new)) = next.next_if(|&&(j, ..)| j == i) {
+            l = l.replacen(old, new, 1);
+        }
+        if gone(i) {
+            continue;
+        }
+        if let Some((_, old, new)) = stands.filter(|&(j, ..)| j == i) {
+            l = format!("{}   {}", l.replacen(old, new, 1), mark(lines[live]));
+        }
+        text.push_str(&l);
+        text.push('\n');
+    }
+    Ok(Variant {
+        name: e.name.into(),
+        of: of.into(),
+        text,
+    })
+}
+
+/// The commented line `line` made live: its first `//` and the space after it removed, its
+/// indentation kept, so its code stands at the column the fence writes it at.
+fn uncomment(line: &str) -> String {
+    let body = line.trim_start();
+    let indent = &line[..line.len() - body.len()];
+    let rest = body.strip_prefix("//").unwrap_or(body);
+    format!("{indent}{}", rest.strip_prefix(' ').unwrap_or(rest))
+}
+
+/// The `// ✗ …` comment that ends the commented ✗ line `line`.
+fn mark(line: &str) -> &str {
+    let x = line.find('✗').expect("a ✗ line");
+    line[..x].rfind("//").map_or(&line[x..], |s| &line[s..])
 }

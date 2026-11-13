@@ -108,7 +108,7 @@ fn char_is_a_unit_only_on_a_rejected_line() {
 }
 
 #[test]
-fn every_commented_variant_has_exactly_one_fixture() {
+fn every_commented_variant_has_exactly_one_entry() {
     let wanted: Vec<String> = fences::all()
         .iter()
         .flat_map(|f| {
@@ -126,7 +126,7 @@ fn every_commented_variant_has_exactly_one_fixture() {
     have.sort();
     assert_eq!(have, want);
     for v in &variants {
-        // The fixture makes its one variant live: one ✗ line outside a comment, and it lexes.
+        // The variant makes its one ✗ line live: one ✗ line outside a comment, and it lexes.
         assert_eq!(marks(&v.text).lines.len(), 1, "{}", v.name);
         lex_fence(&v.text).unwrap_or_else(|e| panic!("{} does not lex: {e}", v.name));
     }
@@ -164,11 +164,16 @@ fn the_fences_are_those_the_extractor_finds() {
     );
 }
 
-/// Each fixture is its fence with the one commented ✗ line made live, and no other difference
-/// but those `fences::CHANGES` names, so that each fixture follows each edit of its fence
-/// (item VARIANT-sync).
+/// The table builds every variant from the spec: each entry names a fence the spec has, and
+/// each piece of text it gives is held by one line of that fence (items VARIANT-sync and
+/// SPEC-no-verbatim). An edit of a fence that moves or removes a line an entry names fails here,
+/// with a message naming the entry and the fence's key.
 #[test]
-fn every_variant_agrees_with_its_fence() {
-    let wrong = fences::disagreements(&fences::all(), &fences::variants(), fences::CHANGES);
-    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+fn every_variant_is_built_from_its_fence() {
+    let path = fences::table();
+    let table =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    if let Err(errors) = fences::build(&table, &fences::all()) {
+        panic!("{}", errors.join("\n"));
+    }
 }

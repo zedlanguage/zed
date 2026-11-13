@@ -1,12 +1,13 @@
-//! Item VARIANT-sync: a variant fixture agrees with its fence when it is the fence with one
-//! commented ✗ line made live and no other difference but the changes the test names.
+//! Item SPEC-no-verbatim: the variants are built from the spec's fences by a table that names
+//! each fence by key and each changed line by a short piece of it, so the repository keeps no
+//! copy of a fence.
 
-use zed_tests::fences::{Change, DocFence, Variant, disagreements};
+use zed_tests::fences::{DocFence, Variant, build};
 
-fn fence(at: &str, text: &str) -> DocFence {
+fn fence(key: &str, text: &str) -> DocFence {
     DocFence {
-        key: at.into(),
-        at: at.into(),
+        key: key.into(),
+        at: "DESIGN.md:10".into(),
         layer: 1,
         ring: 1,
         notation: false,
@@ -14,197 +15,133 @@ fn fence(at: &str, text: &str) -> DocFence {
     }
 }
 
-fn variant(name: &str, text: &str) -> Variant {
-    Variant {
-        name: name.into(),
-        of: text
-            .lines()
-            .next()
-            .and_then(|l| l.strip_prefix("// variant: "))
-            .expect("a `// variant:` line")
-            .into(),
-        text: text.into(),
-    }
+const KEY: &str = "DESIGN.md [sec:grammar] 1";
+const FENCE: &str = "a = 1;\n  // b = a + x;   // ✗ no x\nc = 2;\n// d = y;   // ✗ no y";
+
+fn one(table: &str) -> Result<Variant, Vec<String>> {
+    build(table, &[fence(KEY, FENCE)]).map(|mut v| {
+        assert_eq!(v.len(), 1);
+        v.remove(0)
+    })
 }
 
-const FENCE: &str = "a = 1;\n// b = a + x;   // ✗ no x\nc = 2;";
-const HEAD: &str = "// variant: // b = a + x;   // ✗ no x\n";
+fn err(table: &str) -> String {
+    one(table).expect_err("an error").join("\n")
+}
 
-fn check(fixture: &str, changes: &[Change]) -> Vec<String> {
-    disagreements(
-        &[fence("DESIGN.md:10", FENCE)],
-        &[variant("v", &format!("{HEAD}{fixture}"))],
-        changes,
+#[test]
+fn the_live_line_is_made_live_in_place() {
+    let v = one(&format!("variant: v\nfence: {KEY}\nlive: a + x")).unwrap();
+    assert_eq!(v.name, "v");
+    assert_eq!(v.of, "// b = a + x;   // ✗ no x");
+    // The first line names the variant, so each line stands one below its fence line; the
+    // live line keeps its indentation, and the other commented ✗ line stays commented.
+    assert_eq!(
+        v.text,
+        "// variant: // b = a + x;   // ✗ no x\na = 1;\n  b = a + x;   // ✗ no x\nc = 2;\n\
+         // d = y;   // ✗ no y\n"
+    );
+}
+
+#[test]
+fn omit_keep_and_edit_change_the_lines_they_name() {
+    let omit = one(&format!(
+        "variant: v\nfence: {KEY}\nlive: d = y\nomit: a = 1\nedit: c = 2 => c = 3"
+    ))
+    .unwrap();
+    assert_eq!(
+        omit.text,
+        "// variant: // d = y;   // ✗ no y\n  // b = a + x;   // ✗ no x\nc = 3;\nd = y;   // ✗ no y\n"
+    );
+    let keep = one(&format!(
+        "variant: v\nfence: {KEY}\nlive: d = y\nkeep: c = 2"
+    ))
+    .unwrap();
+    assert_eq!(
+        keep.text,
+        "// variant: // d = y;   // ✗ no y\nc = 2;\nd = y;   // ✗ no y\n"
+    );
+}
+
+#[test]
+fn a_line_that_stands_for_an_edit_makes_the_edit_and_stays() {
+    let text = "s = { n: int | #none };\n// n: int   // ✗ #none is missing\nt = 1;";
+    let v = build(
+        "variant: v\nfence: K\nlive: n: int\nstands: int | #none => int",
+        &[fence("K", text)],
     )
-}
-
-#[test]
-fn the_fence_with_its_line_made_live_agrees() {
+    .unwrap();
     assert_eq!(
-        check("a = 1;\nb = a + x;   // ✗ no x\nc = 2;\n", &[]),
-        [""; 0]
-    );
-    // The live line is compared with runs of white space as one space, and it may keep the
-    // indentation of the commented line.
-    assert_eq!(
-        check("a = 1;\n  b = a +  x; // ✗ no x\nc = 2;", &[]),
-        [""; 0]
+        v[0].text,
+        "// variant: // n: int   // ✗ #none is missing\ns = { n: int };   // ✗ #none is missing\n\
+         // n: int   // ✗ #none is missing\nt = 1;\n"
     );
 }
 
 #[test]
-fn any_other_line_must_be_the_fences_as_written() {
+fn a_fence_that_is_gone_is_named_by_its_key() {
     assert_eq!(
-        check("a  = 1;\nb = a + x;   // ✗ no x\nc = 2;", &[]),
-        ["v.zed:2: `a  = 1;` where the fence's line 1 is: `a = 1;`; its fence is at DESIGN.md:10"]
+        err("variant: v\nfence: DESIGN.md [sec:grammar] 2\nlive: a + x"),
+        "variants.txt:1: the variant `v` is built from the fence `DESIGN.md [sec:grammar] 2`, and the \
+         spec has no fence with that key; find the fence that now holds its ✗ line and write \
+         that fence's key"
     );
 }
 
 #[test]
-fn a_fixture_whose_fence_changed_disagrees() {
-    // The fence's other line was edited, the fence gained a line, the fixture has a line the
-    // fence lacks, and the live line differs from the commented one.
+fn each_text_names_one_line() {
+    let at = format!("variants.txt:1: the variant `v`, of the fence `{KEY}` at DESIGN.md:10");
     assert_eq!(
-        check("a = 1;\nb = a + x;   // ✗ no x\nc = 3;", &[]),
-        ["v.zed:4: `c = 3;` where the fence's line 3 is: `c = 2;`; its fence is at DESIGN.md:10"]
+        err(&format!("variant: v\nfence: {KEY}\nlive: a = 1")),
+        format!("{at}: no commented ✗ line of the fence holds `a = 1`")
     );
     assert_eq!(
-        check("a = 1;\nb = a + x;   // ✗ no x", &[]),
-        [
-            "v.zed:4: the file ends where the fence's line 3 is: `c = 2;`; its fence is at \
-          DESIGN.md:10"
-        ]
-    );
-    assert_eq!(
-        check("a = 1;\nb = a + x;   // ✗ no x\nc = 2;\nd = 4;", &[]),
-        ["v.zed:5: `d = 4;` after the fence's last line; its fence is at DESIGN.md:10"]
-    );
-    assert_eq!(
-        check("a = 1;\nb = a + y;   // ✗ no x\nc = 2;", &[]),
-        [
-            "v.zed:3: the fence's line 2 made live belongs here: b = a + x;   // ✗ no x; its \
-          fence is at DESIGN.md:10"
-        ]
-    );
-}
-
-#[test]
-fn the_live_line_takes_the_place_of_the_commented_one() {
-    assert_eq!(
-        check("a = 1;\nc = 2;\nb = a + x;   // ✗ no x", &[]),
-        [
-            "v.zed:3: the fence's line 2 made live belongs here: b = a + x;   // ✗ no x; its \
-          fence is at DESIGN.md:10"
-        ]
-    );
-}
-
-#[test]
-fn a_fixture_leaves_out_only_the_lines_the_test_names() {
-    let omits = [Change::Omits {
-        fixture: "v",
-        line: "a = 1;",
-    }];
-    assert_eq!(check("b = a + x;   // ✗ no x\nc = 2;", &omits), [""; 0]);
-    assert_eq!(
-        check("b = a + x;   // ✗ no x\nc = 2;", &[]),
-        [
-            "v.zed:2: `b = a + x;   // ✗ no x` where the fence's line 1 is: `a = 1;`; its fence \
-             is at DESIGN.md:10"
-        ]
-    );
-    // A change the fixture does not use is named, and so is one for another fixture.
-    let unused = format!("v.zed does not use the change {:?}", omits[0]);
-    assert_eq!(
-        check("a = 1;\nb = a + x;   // ✗ no x\nc = 2;", &omits),
-        [unused]
-    );
-    let elsewhere = [Change::Omits {
-        fixture: "w",
-        line: "a = 1;",
-    }];
-    let none = format!("no fixture has the change {:?}", elsewhere[0]);
-    assert_eq!(
-        check("a = 1;\nb = a + x;   // ✗ no x\nc = 2;", &elsewhere),
-        [none]
-    );
-}
-
-#[test]
-fn a_line_that_stands_for_another_may_make_the_variant() {
-    // The commented line names an edit of the declaration above it: the fixture makes that
-    // edit live and keeps the commented line.
-    let fence_text = "s = { n: int | #none };\n// n: int   // ✗ #none is missing\nt = 1;";
-    let fixture = "// variant: // n: int   // ✗ #none is missing\n\
-                   s = { n: int };   // ✗ #none is missing\n// n: int   // ✗ #none is missing\n\
-                   t = 1;\n";
-    let stands = [Change::Stands {
-        fixture: "v",
-        line: "s = { n: int };   // ✗ #none is missing",
-        stands_for: "s = { n: int | #none };",
-    }];
-    let run = |changes: &[Change]| {
-        disagreements(
-            &[fence("DESIGN.md:5", fence_text)],
-            &[variant("v", fixture)],
-            changes,
+        err(&format!("variant: v\nfence: {KEY}\nlive: ✗ no")),
+        format!(
+            "{at}: 2 commented ✗ lines of the fence hold `✗ no`, its lines 2, 4; write a \
+             longer piece of one"
         )
-    };
-    assert_eq!(run(&stands), [""; 0]);
+    );
     assert_eq!(
-        run(&[]),
-        [
-            "v.zed:2: `s = { n: int };   // ✗ #none is missing` where the fence's line 1 is: \
-             `s = { n: int | #none };`; its fence is at DESIGN.md:5"
-        ]
+        err(&format!("variant: v\nfence: {KEY}\nlive: a + x\nomit: zz")),
+        format!("{at}: no line of the fence holds `zz`")
+    );
+    assert_eq!(
+        err(&format!(
+            "variant: v\nfence: {KEY}\nlive: a + x\nomit: a + x"
+        )),
+        format!("{at}: its line 2 is both left out and changed")
+    );
+    assert_eq!(
+        err(&format!(
+            "variant: v\nfence: {KEY}\nlive: a + x\nkeep: c = 2\nedit: a = 1 => a = 0"
+        )),
+        format!("{at}: its line 1 is both left out and changed")
+    );
+    assert_eq!(
+        err(&format!("variant: v\nfence: {KEY}\nomit: c = 2")),
+        format!("{at}: it has no `live:` line")
     );
 }
 
 #[test]
-fn two_fences_with_one_commented_line_need_a_fixture_each() {
-    let fences = [
-        fence("DESIGN.md:10", FENCE),
-        fence("EXAMPLES.md:20", "// b = a + x;   // ✗ no x\nd = 4;"),
-    ];
-    let of_design = variant(
-        "v1",
-        &format!("{HEAD}a = 1;\nb = a + x;   // ✗ no x\nc = 2;"),
-    );
-    let of_examples = variant("v2", &format!("{HEAD}b = a + x;   // ✗ no x\nd = 4;"));
-    let copy = variant(
-        "v2",
-        &format!("{HEAD}a = 1;\nb = a + x;   // ✗ no x\nc = 2;"),
-    );
+fn a_table_that_is_not_one_is_named_line_by_line() {
     assert_eq!(
-        disagreements(&fences, &[of_design.clone(), of_examples], &[]),
-        [""; 0]
-    );
-    assert_eq!(
-        disagreements(&fences, &[of_design, copy], &[]),
+        err("# a comment\nlive: x\nvariant: v\nlive: a + x\nfrom: y\nedit: a\nomit:\n"),
         [
-            "EXAMPLES.md:20: no fixture agrees with the fence's commented ✗ line 1: // b = a + x;   \
-          // ✗ no x"
+            "variants.txt:2: `live:` comes before any `variant:` line",
+            "variants.txt:5: `from:` is not a word of the table; the words are variant, fence, \
+             live, omit, keep, edit and stands",
+            "variants.txt:6: `edit:` needs `OLD => NEW`",
+            "variants.txt:7: `omit:` names no text",
+            "variants.txt:3: the variant `v` has no `fence:` line",
         ]
+        .join("\n")
     );
-}
-
-#[test]
-fn a_fixture_must_name_one_commented_line_and_make_one_line_live() {
-    let fences = [fence("DESIGN.md:10", FENCE)];
-    let other = variant(
-        "w",
-        "// variant: // b = a + y;   // ✗ no y\nb = a + y;   // ✗ no y\n",
-    );
-    let two = variant(
-        "v",
-        &format!("{HEAD}a = 1;   // ✗ also\nb = a + x;   // ✗ no x\nc = 2;"),
-    );
+    let twice =
+        format!("variant: v\nfence: {KEY}\nlive: a + x\nvariant: v\nfence: {KEY}\nlive: d = y");
     assert_eq!(
-        disagreements(&fences, &[other, two], &[]),
-        [
-            "v.zed has 2 live ✗ lines, not one",
-            "w.zed: its `// variant:` line is the commented ✗ line of no fence: // b = a + y;   \
-             // ✗ no y",
-        ]
+        err(&twice),
+        "variants.txt:4: the variant `v` is named twice"
     );
 }

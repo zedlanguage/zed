@@ -164,61 +164,80 @@ pub fn all() -> Vec<Theory> {
     ]
 }
 
+/// The report DESIGN.md sec:theories prints for the theory named `name` ("The report's form",
+/// "Groups on which deciding is hard"), read from the spec at test time (item
+/// SPEC-no-verbatim); `None` where `ZED_SPEC_DIR=none` says not to read the spec.
+pub fn designs_report(name: &str) -> Option<String> {
+    zed_tests::spec::dir(&format!("the report of {name} against DESIGN.md"))?;
+    Some(zed_tests::fences::passage(&format!(
+        "trivial models of {name}"
+    )))
+}
+
+/// The line of a report for the model on one value where every law holds, as DESIGN.md
+/// writes it in the report of `CommRing`.
+fn every_law_holds() -> Option<String> {
+    let report = designs_report("CommRing")?;
+    let line = report
+        .lines()
+        .nth(1)
+        .expect("the report has a line for one value");
+    Some(line.to_string())
+}
+
 #[test]
 fn codec_with_no_size_law_lists_the_identity() {
+    let Some(one) = every_law_holds() else {
+        return;
+    };
     let t = codec();
     let r = report(&t, Mode::Default);
     assert_eq!(
         render(&t, &r),
-        "\
+        format!(
+            "\
 trivial models of Codec
-  on one value, #a, with every field returning #a: every law holds.
+{one}
   on two values, #a | #b:
     compress, decompress, linked by law roundTrip: exactly one model,
       compress: (x -> x), decompress: (x -> x)
   models on two values: 1.
 "
+        )
     );
 }
 
 #[test]
 fn twenty_fields_with_no_law_are_free() {
+    let Some(one) = every_law_holds() else {
+        return;
+    };
     let t = twenty_free();
     let r = report(&t, Mode::Default);
     assert_eq!(r.free.len(), 20);
     assert!(r.groups.is_empty());
     assert_eq!(
         render(&t, &r),
-        "\
+        format!(
+            "\
 trivial models of Twenty
-  on one value, #a, with every field returning #a: every law holds.
+{one}
   on two values, #a | #b:
     f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20 are named by no law: each may be any constant or any projection.
   models on two values: 2^20.
 "
+        )
     );
 }
 
 #[test]
 fn comm_ring_lists_the_one_element_ring() {
+    let Some(want) = designs_report("CommRing") else {
+        return;
+    };
     let t = comm_ring();
     let r = report(&t, Mode::Default);
-    assert_eq!(
-        render(&t, &r),
-        "\
-trivial models of CommRing
-  on one value, #a, with every field returning #a: every law holds.
-  on two values, #a | #b:
-    mul, one, add, zero, neg, linked by laws mulAssoc, oneMul, mulOne, addAssoc, addComm, addZero, addNeg, distrib, distribRight, mulComm: no model.
-      mul cannot be ((x, y) -> #a), by law oneMul: mul(one, a) == a
-      mul cannot be ((x, y) -> #b), by law oneMul: mul(one, a) == a
-      mul cannot be ((x, y) -> x), by law oneMul: mul(one, a) == a
-      mul cannot be ((x, y) -> y), by law mulOne: mul(a, one) == a
-      so no choice is left for mul
-  models on two values: 0.
-  So the model on one value is the only trivial model.
-"
-    );
+    assert_eq!(render(&t, &r), want);
 }
 
 /// Every theory of the corpus: the exhaustive report agrees with brute force, and no search

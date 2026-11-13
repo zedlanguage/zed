@@ -1,9 +1,0 @@
-// variant: // cleaned = userInput without taint(#user); // ✗ Fact removed from a facet that does not allow it: taint is lowered only by a named sanitizer
-n = 1200 with units("m");
-x = f64(n) else round(n);                    // 1200.0 with units("m")
-label = "${n}";                              // "1200 m"
-column = "${n without units("m")}";          // "1200"
-count = (n without units("m")) div 100;      // 12, no unit
-km = (f64(n) else round(n)).to("km");        // 1.2 with units("km")
-// wrongDrop = n without units("km");        // ✗ Fact removed that the value does not carry: n is in m, not km
-cleaned = userInput without taint(#user); // ✗ Fact removed from a facet that does not allow it: taint is lowered only by a named sanitizer

@@ -588,8 +588,10 @@ mod tests {
     #[test]
     fn argument_names_are_not_counted() {
         let mut t = WordTable::default();
-        t.read_row("| L27 | — | `recovery` | the target values `#gpu` and `#cluster`; the size `nodes:` of `target(…)` and `@require` |")
-            .unwrap();
+        t.read_row(
+            "| L27 | — | `recovery` | `#gpu`, `#cluster`; `nodes:` of `target(…)`, `@require` |",
+        )
+        .unwrap();
         assert_eq!(t.facets.get("recovery"), Some(&27));
         assert_eq!(t.atoms.get("#cluster"), Some(&27));
         assert!(!t.forms.contains_key("nodes") && !t.forms.contains_key("nodes:"));

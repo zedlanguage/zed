@@ -15,6 +15,7 @@
 use zed_tests::instances::Rng;
 
 use super::brute::{check, describe};
+use super::corpus::designs_report;
 use super::trivial::{BUDGET, End, Mode, Theory, render, report};
 
 /// A clause as its literals, each a variable and whether it is negated.
@@ -142,23 +143,9 @@ fn nae_fano_has_no_model() {
     let text = render(&t, &short);
     eprint!("{text}");
     assert!(matches!(short.groups[0].end, End::Stopped(_)), "{text}");
-    assert_eq!(
-        text,
-        "\
-trivial models of Fano
-  on one value, #a: law line1 (c1 != c2 || c2 != c3) does not hold, since on one value every two values are equal.
-  on two values, #a | #b:
-    c1, c2, c3, c4, c5, c6, c7, linked by laws line1, line2, line3, line4, line5, line6, line7: not decided.
-      The report stopped at a choice that leads to no model, so this list may be incomplete:
-        with c1: #a, c2: #a, c4: #a
-        c3 cannot be #a, by law line1: c1 != c2 || c2 != c3
-        c5 cannot be #a, by law line2: c1 != c4 || c4 != c5
-        c6 cannot be #a, by law line4: c2 != c4 || c4 != c6
-        so law line7: c3 != c5 || c5 != c6 does not hold
-      Whether laws like these have a model can take time exponential in the number of fields to decide, so the report does not search on by itself. To list every trivial model, at the cost of that search, write `@exhaustive` before the interface:
-        @exhaustive interface Fano(T) { ... }
-"
-    );
+    if let Some(want) = designs_report("Fano") {
+        assert_eq!(text, want);
+    }
 }
 
 /// The pigeonhole formula: `h + 1` pigeons each in one of `h` holes, no two in one hole. It is

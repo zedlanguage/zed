@@ -1,7 +1,0 @@
-// variant: // return s;                   // ✗ Block binding that nothing reads: t is bound and never read, so xs.map(x -> x * 2).sum is never computed
-total(positional xs: [int]) -> int {
-  s = xs.sum;
-  t = xs.map(x -> x * 2).sum;
-  // in place of the line above:
-  return s;                      // ✗ Block binding that nothing reads: t is bound and never read, so xs.map(x -> x * 2).sum is never computed
-}

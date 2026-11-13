@@ -1,8 +1,9 @@
 //! The menus of DESIGN.md sec:diagnostics, "A `/` of integer literals" and "The value a fix
-//! names", and the values its fixes give: each expected text is copied from DESIGN.md, with
-//! the passage quoted above it. An operation on literals alone at the top level takes the
-//! carrier of what it meets, so one literal with a carrier is enough, and the menu writes the
-//! carrier at the first literal of the value, or at the decimal it rejects.
+//! names", and the values its fixes give: each expected text is that of DESIGN.md, cited by
+//! section and passage above it (item SPEC-no-verbatim: the spec is not copied here). An
+//! operation on literals alone at the top level takes the carrier of what it meets, so one
+//! literal with a carrier is enough, and the menu writes the carrier at the first literal of
+//! the value, or at the decimal it rejects.
 
 use super::fixes::{checked, pairs};
 use zed_tests::step_helpers::l01_16_elaboration::value;
@@ -70,15 +71,8 @@ fn where_nothing_gives_a_carrier_an_operation_on_literals_stays_an_int() {
 #[test]
 fn a_division_of_operations_on_integer_literals_writes_one_carrier() {
     // DESIGN.md sec:diagnostics, "A `/` of integer literals": "the menu writes the carrier at
-    // the first literal of the value", and the message, whose first line and fixes that write a
-    // literal are:
-    //
-    //   error: Nothing gives the integer literals a carrier, and `/` has none at `int`: `q =
-    //   (1 + 2) / (3 + 4)`. Try `q = (1.0f64 + 2) / (3 + 4)` instead.
-    //   [...]
-    //     q = (1.0f64 + 2) / (3 + 4);    q is 0.42857142857142855
-    //     q = (1r + 2) / (3 + 4);        q is 3r/7r
-    //     q = (f64(1) + 2) / (3 + 4);    q is 0.42857142857142855
+    // the first literal of the value"; the message's first line and its three fixes that write a
+    // literal are those of the passage's `text` fence.
     //
     // The two fixes that declare a type, `q: f64 = ...` and `q: rat = ...`, are in
     // `fixes_declare_a_type`.
@@ -222,13 +216,8 @@ fn a_cast_of_a_decimal_names_the_literal() {
             (TypedBinding) is layer L10, and zedc refuses it at L1, so a fix that declares a \
             type cannot be checked; QUESTIONS.md"]
 fn fixes_declare_a_type() {
-    // DESIGN.md sec:diagnostics, "A `/` of integer literals", the fixes:
-    //
-    //     q: f64 = (1 + 2) / (3 + 4);    q is 0.42857142857142855
-    //     q: rat = (1 + 2) / (3 + 4);    q is 3r/7r
-    //     q = (1.0f64 + 2) / (3 + 4);    q is 0.42857142857142855
-    //     q = (1r + 2) / (3 + 4);        q is 3r/7r
-    //     q = (f64(1) + 2) / (3 + 4);    q is 0.42857142857142855
+    // DESIGN.md sec:diagnostics, "A `/` of integer literals", the five fixes of its `text`
+    // fence.
     assert_eq!(
         checked("q = (1 + 2) / (3 + 4);\n"),
         pairs(&[
@@ -239,12 +228,8 @@ fn fixes_declare_a_type() {
             ("q = (f64(1) + 2) / (3 + 4);", "q is 0.42857142857142855"),
         ])
     );
-    // "The value a fix names", the fixes for `y = inc(x: 2.5);`:
-    //
-    //     y: f64 = inc(x: 2.5);    the literal is then the f64 2.5
-    //     y: rat = inc(x: 2.5);    the literal is then exactly 2.5, a rat
-    //     y = inc(x: 2.5f64);      the literal is then the f64 2.5
-    //     y = inc(x: 2.5r);        the literal is then exactly 2.5, a rat
+    // DESIGN.md sec:diagnostics, "The value a fix names", the four fixes for
+    // `y = inc(x: 2.5);`.
     assert_eq!(
         checked("inc(x) = x + 1;\ny = inc(x: 2.5);\n"),
         pairs(&[

@@ -151,11 +151,9 @@ fn a_slash_among_operations_on_literals_is_rejected_once_at_the_literal_that_fix
     // writes the first literal of the value with a carrier, the suffixed forms before the
     // cast; an operation on literals alone takes the carrier of what it meets, so it reaches
     // the rest, a `/` of two literals and the base and literal exponent of a `^` among them
-    // (an integer exponent keeps `int` under a base at `rat`), and every fix checks. DESIGN.md sec:diagnostics, "A `/` of integer literals": "the menu
-    // writes the carrier at the first literal of the value":
-    //   q = (1.0f64 + 2) / (3 + 4);    q is 0.42857142857142855
-    //   q = (1r + 2) / (3 + 4);        q is 3r/7r
-    //   q = (f64(1) + 2) / (3 + 4);    q is 0.42857142857142855
+    // (an integer exponent keeps `int` under a base at `rat`), and every fix checks. DESIGN.md
+    // sec:diagnostics, "A `/` of integer literals": "the menu writes the carrier at the first
+    // literal of the value", as the three fixes of its `text` fence that write a literal show.
     // Each headline quotes the binding, the value being the whole of it.
     let why = "Nothing gives the integer literals a carrier, and `/` has none at `int`";
     let pow = "Nothing gives the integer literals a carrier, `/` has none at `int`, and `^` none \

@@ -1,16 +1,25 @@
-//! The ✗ fence variants of the spec (zed/fences/variants): what each gives at L1. One,
-//! decimal-literal-at-int, reaches its documented error; the others need forms of later
-//! layers, so each is pinned to the diagnostic it gives now, and the step that enables it
+//! The ✗ fence variants of the spec, built from it by zed/fences/variants.txt: what each gives
+//! at L1. One, decimal-literal-at-int, reaches its documented error; the others need forms of
+//! later layers, so each is pinned to the diagnostic it gives now, and the step that enables it
 //! changes the pin.
+
+use std::collections::HashMap;
 
 use zedc::testing::test;
 
-const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../zed/fences/variants");
+/// The text of each variant, by name, built from its fence in the spec, or `None` where
+/// `ZED_SPEC_DIR=none` says not to read the spec.
+fn texts() -> Option<HashMap<String, String>> {
+    zed_tests::spec::dir("the ✗ fence variants")?;
+    let texts = zed_tests::fences::variants()
+        .into_iter()
+        .map(|v| (v.name, v.text));
+    Some(texts.collect())
+}
 
-/// The first failure of the variant `name`, or `pass` when every check passes.
-fn first(name: &str) -> String {
-    let text = std::fs::read_to_string(format!("{DIR}/{name}.zed")).unwrap();
-    test(&text)
+/// The first failure of the variant `text`, or `pass` when every check passes.
+fn first(text: &str) -> String {
+    test(text)
         .into_iter()
         .find_map(|o| o.failure.map(|f| format!("{}: {f}", o.line)))
         .unwrap_or_else(|| "pass".into())
@@ -20,15 +29,21 @@ fn first(name: &str) -> String {
 fn each_variant_gives_its_pinned_diagnostic_at_l1() {
     // Each whole-line variant names its row; a marked line the checker does not reject yet
     // has no diagnostic, and one it rejects for another reason gives a diagnostic in no row.
+    let Some(texts) = texts() else { return };
     let none = |line: usize| format!("{line}: the line is marked ✗ and has no diagnostic");
     // The four variants of the units-and-taint fence share its line 49, which has no `;`: the
     // parse recovers at line 50 (step L1.29d), so the declarations around it are checked, and
-    // the first failure is the refusal of the grammar struct at line 3.
+    // the first failure is the refusal of the grammar struct `KeyVal` at line 3, which the
+    // message quotes.
+    let decl = texts["unit-mismatch-in-sum"]
+        .lines()
+        .nth(2)
+        .unwrap_or("")
+        .trim();
+    assert!(decl.starts_with("struct KeyVal"), "{decl}");
     let key_val = format!(
         "3: {}",
-        zed_tests::not_yet!(
-            "the struct declaration `struct KeyVal  grammar { key: Ident  \":\"  value: Json }`"
-        )
+        zed_tests::not_yet(&format!("the struct declaration `{decl}`"))
     );
     let cases = [
         (
@@ -191,18 +206,11 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
             ),
         ),
     ];
-    let names: Vec<String> = std::fs::read_dir(DIR)
-        .unwrap()
-        .map(|e| {
-            let p = e.unwrap().path();
-            p.file_stem().unwrap().to_string_lossy().into_owned()
-        })
-        .collect();
-    assert_eq!(names.len(), cases.len(), "{names:?}");
+    assert_eq!(texts.len(), cases.len(), "{:?}", texts.keys());
     let wrong: Vec<String> = cases
         .iter()
         .filter_map(|(name, want)| {
-            let got = first(name);
+            let got = first(&texts[*name]);
             (got != *want).then(|| format!("{name}\n  got  {got}\n  want {want}"))
         })
         .collect();
@@ -211,10 +219,8 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
 
 #[test]
 fn two_variants_are_rejected_for_a_reason_other_than_their_documented_error() {
-    let rejected = |n: &str| {
-        let text = std::fs::read_to_string(format!("{DIR}/{n}.zed")).unwrap();
-        super::rejected(&text)
-    };
+    let Some(texts) = texts() else { return };
+    let rejected = |n: &str| super::rejected(&texts[n]);
     assert_eq!(
         rejected("constructor-called-by-position"),
         "6:5: `Point` is not defined."

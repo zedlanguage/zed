@@ -1,4 +1,0 @@
-// variant: // bad = x * 2.0;          // ✗ Numeric literal at a carrier that cannot take it: x is an int, and a decimal literal is never an int; write x * 2 or f64(x) * 2.0
-// [d4] sec:domains, sec:lexical
-x   = 3;
-bad = x * 2.0;             // ✗ Numeric literal at a carrier that cannot take it: x is an int, and a decimal literal is never an int; write x * 2 or f64(x) * 2.0

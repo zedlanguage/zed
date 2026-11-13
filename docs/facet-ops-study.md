@@ -189,38 +189,11 @@ So dBm is `10.0 * log10(p / (1.0 with units("mW")))`, a number in `1`, and pH is
 
 ## Full examples
 
-The fences are in DESIGN.md sec:facets; values were computed with IEEE double arithmetic [C: perl `log`, `exp`, `POSIX::log10` on this machine, 2026-11-11].
-
-```zed
-len = 5.0 with units("m");
-y = log(len);                                // 1.6094379124341003 with units("log(m)")
-sq = log(len * len);                         // 3.2188758248682006 with units("log(m^2)")
-twice = 2.0 * y;                             // 3.2188758248682006 with units("log(m^2)")
-same = twice == sq;                          // true
-back = exp(y);                               // 4.999999999999999 with units("m")
-far = log10(1000.0 with units("m"));         // 3.0 with units("log10(m)")
-nearKm = far.to("log10(km)");                // 0.0 with units("log10(km)")
-inE = log(1.0 with units("km")).to("log(m)");  // 6.907755278982137 with units("log(m)")
-ratio = y - log(1.0 with units("m"));        // 1.6094379124341003 with units("1")
-// bad = y * y;                              // ✗ Logarithmic unit in an operation that would change with the unit: y is in log(m), and a product of two logarithms has no unit
-// big = y > 0.0;                            // ✗ Logarithmic unit in an operation that would change with the unit: y is in log(m) and 0.0 has no unit; compare with log(1.0 with units("m"))
-// wrong = exp(far);                         // ✗ Exponential whose base differs from the logarithm's: far is in log10(m); write 10.0^far
-```
-
-```zed
-n = 1200 with units("m");
-x = f64(n) else round(n);                    // 1200.0 with units("m")
-label = "${n}";                              // "1200 m"
-column = "${n without units("m")}";          // "1200"
-count = (n without units("m")) div 100;      // 12, no unit
-km = (f64(n) else round(n)).to("km");        // 1.2 with units("km")
-// wrongDrop = n without units("km");        // ✗ Fact removed that the value does not carry: n is in m, not km
-// cleaned = userInput without taint(#user); // ✗ Fact removed from a facet that does not allow it: taint is lowered only by a named sanitizer
-```
+The two examples of this study, with each line's value or rejection, are the fences DESIGN.md [sec:facets] 7 (the logarithmic algebra, "Logarithmic units", `len = 5.0 with units("m");`) and DESIGN.md [sec:facets] 8 (`without` and casts, `n = 1200 with units("m");`); this repository keeps no copy of them (item SPEC-no-verbatim). The values were computed with IEEE double arithmetic [C: perl `log`, `exp`, `POSIX::log10` on this machine, 2026-11-11].
 
 The author's own example, `log(5 with units("m"))`, gives 1.6094379124341003 with units `log(m)`: the bare literal takes `f64` from the argument of `log` (author, 2026-11-09).
 
-Each `✗` line is a variant fixture in `zed/fences/variants` (`log-unit-product`, `log-unit-compared-with-number`, `exponential-base-differs`, `removed-fact-not-carried`, `removed-fact-not-removable`), pinned in `l01_29_diagnostics::variants` to the diagnostic zedc gives today (the first `with units("m")` is not compiled yet). Plan row FACET-ops-tests turns the fences and the six new rows of sec:diagnostics into tests once L12.2k is done.
+Each `✗` line of those fences is a variant of `zed/fences/variants.txt`, built from the spec at test time (`log-unit-product`, `log-unit-compared-with-number`, `exponential-base-differs`, `removed-fact-not-carried`, `removed-fact-not-removable`), pinned in `l01_29_diagnostics::variants` to the diagnostic zedc gives today (the first `with units("m")` is not compiled yet). Plan row FACET-ops-tests turns the fences and the six new rows of sec:diagnostics into tests once L12.2k is done.
 
 ## The new rejection rows (sec:diagnostics)
 

@@ -125,69 +125,100 @@ fn menu(text: &str) -> Vec<(&str, &str)> {
         .collect()
 }
 
-/// The program of each DESIGN.md example with a menu, found by the source line its steps
-/// show, whether zedc compiles it yet, and whether its menu is compared ([`menu`]).
-const PROGRAMS: [(&str, &str, bool, bool); 9] = [
+/// The program of each DESIGN.md example with a menu: a piece of the source line its steps
+/// show, which finds the example; a piece of each line of the program, in order, which finds
+/// the line ([`program_of`]); whether zedc compiles it yet; and whether its menu is compared
+/// ([`menu`]). Each line is read from the spec at test time, so this repository keeps no copy
+/// of it (item SPEC-no-verbatim).
+const PROGRAMS: [(&str, &[&str], bool, bool); 9] = [
     (
         "twice(x: int) = x * 2.0;",
-        "twice(x: int) = x * 2.0;\n",
+        &["twice(x: int) = x * 2.0;"],
         true,
         false,
     ),
     (
         "y = inc(x: 2.5);",
-        "inc(x) = x + 1;\ny = inc(x: 2.5);\n",
+        &["inc(x) = x + 1;", "y = inc(x: 2.5);"],
         true,
         true,
     ),
     (
         "q = (1 + 2) / (3 + 4);",
-        "q = (1 + 2) / (3 + 4);\n",
+        &["q = (1 + 2) / (3 + 4);"],
         true,
         true,
     ),
     (
         "x: f64 = 9007199254740993;",
-        "x: f64 = 9007199254740993;\n",
+        &["x: f64 = 9007199254740993;"],
         false,
         false,
     ),
     // The level names of sec:level_names (plan rows L7.1b and L8.2c), at layers L7 and L8.
     (
-        "type Sales = Utf8String ->? [Utf8String ->? int] with names(\"region\", \"sku\", \"quantitySold\");",
-        "type Sales = Utf8String ->? [Utf8String ->? int] with names(\"region\", \"sku\", \"quantitySold\");\n",
+        "(\"region\", \"sku\"",
+        &["(\"region\", \"sku\""],
+        false,
+        false,
+    ),
+    ("\"quantity sold\")", &["\"quantity sold\")"], false, false),
+    ("type Counts", &["type Counts"], false, false),
+    (
+        "c = lookupOr(",
+        &[
+            "lookupOr(positional",
+            "catalog: Utf8String",
+            "c = lookupOr(",
+        ],
         false,
         false,
     ),
     (
-        "type Sales = Utf8String ->? [Utf8String ->? int] with names(\"region\", \"day\", \"sku\", \"quantity sold\");",
-        "type Sales = Utf8String ->? [Utf8String ->? int] with names(\"region\", \"day\", \"sku\", \"quantity sold\");\n",
-        false,
-        false,
-    ),
-    (
-        "type Counts = (region: Utf8String) ->? int with names(\"area\", \"count\");",
-        "type Counts = (region: Utf8String) ->? int with names(\"area\", \"count\");\n",
-        false,
-        false,
-    ),
-    (
-        "c = lookupOr(catalog, \"top\", { 0 -> 0 });",
-        "lookupOr(positional m: K ->? V with names(\"key\", \"value\"), positional k: K, positional d: V) -> V = m[k] else d;\n\
-         catalog: Utf8String ->? ((key: int) ->? int) with names(\"shelf\", \"_\", \"count\") = { \"top\" -> { 7 -> 2 } };\n\
-         c = lookupOr(catalog, \"top\", { 0 -> 0 });\n",
-        false,
-        false,
-    ),
-    (
-        "x = sales[day: \"Monday\"];",
-        "type Sales = Utf8String ->? [Utf8String ->? int] with names(\"region\", \"day\", \"sku\", \"quantitySold\");\n\
-         sales: Sales = { \"east\" -> [{ \"B7\" -> 5 }], \"west\" -> [{ \"A12\" -> 3, \"B7\" -> 1 }, { \"A12\" -> 2 }] };\n\
-         x = sales[day: \"Monday\"];\n",
+        "x = sales[day:",
+        &[
+            "\"day\", \"sku\", \"quantitySold\")",
+            "sales: Sales = {",
+            "x = sales[day:",
+        ],
         false,
         false,
     ),
 ];
+
+/// The source lines the steps of `example` show: its lines indented by seven spaces.
+fn shown(example: &str) -> impl Iterator<Item = &str> {
+    example
+        .lines()
+        .filter_map(|l| l.strip_prefix("       "))
+        .filter(|l| !l.starts_with(' '))
+}
+
+/// The program whose lines `pieces` name, each the first source line that holds its piece:
+/// of the lines `example` shows, else of DESIGN.md's fences. Prose is never searched, so a
+/// piece finds a line of code.
+fn program_of(example: &str, pieces: &[&str]) -> String {
+    let fences = zed_tests::fences::design();
+    let mut out = String::new();
+    for piece in pieces {
+        let line = shown(example)
+            .find(|l| l.contains(piece))
+            .map(str::to_string)
+            .or_else(|| {
+                fences.iter().find_map(|f| {
+                    (f.text.lines())
+                        .find(|l| l.contains(piece))
+                        .map(|l| l.trim().to_string())
+                })
+            })
+            .unwrap_or_else(|| {
+                panic!("no line of the example or of DESIGN.md's fences holds `{piece}`\n{example}")
+            });
+        out.push_str(&line);
+        out.push('\n');
+    }
+    out
+}
 
 #[test]
 fn each_design_example_with_a_menu_stands_in_designs_order_and_zedc_writes_it_so() {
@@ -208,11 +239,11 @@ fn each_design_example_with_a_menu_stands_in_designs_order_and_zedc_writes_it_so
         );
         let found: Vec<_> = PROGRAMS
             .iter()
-            .filter(|(line, ..)| example.contains(&format!("\n       {line}\n")))
+            .filter(|(piece, ..)| shown(example).any(|l| l.contains(piece)))
             .collect();
         assert_eq!(found.len(), 1, "the program of\n{example}");
-        let (_, src, compiled, compare_menu) = found[0];
-        let out = rejected(&program(src));
+        let (_, pieces, compiled, compare_menu) = found[0];
+        let out = rejected(&program(&program_of(example, pieces)));
         if !compiled {
             // Held back: zedc does not compile the example yet. Once it does, this fails, and
             // the example is to be compared like the others.
