@@ -99,14 +99,14 @@
 //! nor two bounds, a second disjunction on one atom, or a number past `i128` leaves the
 //! formula to the solver alone.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
 use zedc_int::int::Int;
 use zedc_lattice::interval::{End, IntervalSet, Num};
 
-use super::Refusal;
+use super::refusal::{Each, Refusal};
 use super::formula::{Atom, Conjuncts, Formula, Id, Model, Rel, one_bound};
 use super::row_domains::{self, Settled, range};
 
@@ -131,7 +131,7 @@ pub(super) struct Rows {
 
 impl Rows {
     /// The formula given as its top-level conjuncts (`Formula::conjunct_list`), when it is of
-    /// the class the module note names; `None` otherwise, and under [`super::ROW_SUMS_OFF`],
+    /// the class the module note names; `None` otherwise, and under [`ROW_SUMS_OFF`],
     /// so that the solver alone runs as before this module, and within a race.
     // Complexity tradeoff: each conjunct is read once, an arm that several disjunctions share
     // once by its id (as `row_domains::settle` reads them), the domains sorted once and each
@@ -142,7 +142,7 @@ impl Rows {
     // step per atom compares symbol strings, and each arm was hashed and cloned. Now only an
     // arm another holder shares is kept (`Id::of`).
     pub(super) fn of(conjuncts: &Conjuncts) -> Option<Rows> {
-        if super::ROW_SUMS_OFF.with(std::cell::Cell::get) {
+        if ROW_SUMS_OFF.with(Cell::get) {
             return None;
         }
         // Within a race (a question the solver asks while it answers another the method did
@@ -411,8 +411,8 @@ pub(super) fn point(
 pub(super) fn project(
     rows: Rows,
     syms: &[Atom],
-    old: impl FnOnce() -> Result<super::Each, Refusal>,
-) -> Result<super::Each, Refusal> {
+    old: impl FnOnce() -> Result<Each, Refusal>,
+) -> Result<Each, Refusal> {
     let (size, bound) = (rows.size, rows.bound(true, true));
     let syms = syms.to_vec();
     race(
@@ -1164,6 +1164,10 @@ struct Race {
 thread_local! {
     /// The races under way on this thread, innermost last.
     static RACES: RefCell<Vec<Race>> = const { RefCell::new(Vec::new()) };
+    /// Test control: the solver alone, with no method run in alternation with it, for the
+    /// tests that compare the two (PRES-overlap-fast). Kept here and re-exported by the parent,
+    /// which does not read it, so that this file names nothing of the parent's own.
+    pub static ROW_SUMS_OFF: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Charges the innermost race under way `units` of the solver's work: the terms of a system

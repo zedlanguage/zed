@@ -3484,4 +3484,60 @@ mod tests {
         let deep = shared(200_000);
         let _ = digest(&deep);
     }
+
+    /// `Rat::integer_text` of a power and of a product with one, and the value read back from
+    /// the text by `Value::power_text` or `Value::int_text`. The test is here and not in `num`,
+    /// since it reads through `Value`, which `num` does not import.
+    #[test]
+    fn an_integer_prints_its_shorter_text_and_reads_back() {
+        let power = |b: u64, k: u64| Rat::int(BigInt::from(b)).pow(&BigUint::from(k)).unwrap();
+        let neg = |r: Rat| r.neg();
+        let times = |c: i64, r: Rat| Rat::int(BigInt::from(c)).mul(&r).unwrap();
+        for (value, text) in [
+            (power(2, 3), "8"),
+            (power(2, 10), "1024"),
+            (power(10, 5), "10^5"),
+            (power(10, 3), "1000"),
+            // 2^64 has 20 digits, its power 4 characters.
+            (power(2, 64), "2^64"),
+            (power(3, 200000), "3^200000"),
+            (power(9, 100000), "3^200000"),
+            (neg(power(3, 200000)), "-3^200000"),
+            (times(5, power(3, 200000)), "5*3^200000"),
+            (times(-5, power(3, 200000)), "-5*3^200000"),
+            (power(5, 1).mul(&power(3, 200000)).unwrap(), "5*3^200000"),
+            (
+                power(7, 1)
+                    .mul(&power(11, 1))
+                    .unwrap()
+                    .mul(&power(2, 64))
+                    .unwrap(),
+                "77*2^64",
+            ),
+            (power(12, 100000), "12^100000"),
+            (power(6, 100), "6^100"),
+            (power(2, 200).mul(&power(3, 100)).unwrap(), "12^100"),
+            (power(2, 300).mul(&power(3, 100)).unwrap(), "24^100"),
+            (power(2, 300).mul(&power(3, 7)).unwrap(), "2^300*3^7"),
+            (
+                power(2, 300)
+                    .mul(&power(5, 300))
+                    .unwrap()
+                    .mul(&power(3, 7))
+                    .unwrap(),
+                "10^300*3^7",
+            ),
+        ] {
+            assert_eq!(value.integer_text(), text, "{text}");
+            let back = Value::power_text(text).unwrap();
+            let back = back.or_else(|| Value::int_text(text, 10).unwrap());
+            assert_eq!(*back.unwrap().as_integer().unwrap(), value, "{text}");
+        }
+        // Equal values print alike, however they were made.
+        assert_eq!(power(9, 100000), power(3, 200000));
+        assert_ne!(
+            power(3, 200000),
+            power(3, 200000).add(&Rat::int(BigInt::one())).unwrap()
+        );
+    }
 }

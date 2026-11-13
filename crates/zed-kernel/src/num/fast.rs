@@ -3648,6 +3648,103 @@ pub(super) fn built(pows: &[(u64, BigUint)]) -> Result<BigInt, TooLarge> {
     Ok(BigInt::from(out))
 }
 
+/// The digits `read_decimal` reads whole, with no split. The value read does not depend on it.
+//
+// Complexity tradeoff: a timed crossover of two algorithms with identical results, nothing
+// given up. A text of at most `LEAF_DIGITS` digits is read whole (`digit_text::read_whole`),
+// O(n^2), one word of 19 digits at a time (num-bigint's `parse` until SWAR-read-literals); a
+// longer one is split by halves (`read_digits_by`), O(n log^2 n). Both
+// give the same number for every text (test `num::tests::the_leaf_does_not_change_the_value`,
+// leaf 1 against `LEAF_DIGITS` and against num-bigint; COMPLEXITY.md K41). Measured on
+// 2026-11-07 (item KERNEL-leaf-digits, not committed): `read_digits` with each leaf on random
+// texts, the test build (opt-level 2), the fewest instructions of 2 to 20 runs, load5 28 to 36:
+//
+//   digits      leaf 32     64     128     256     512    1024    2048
+//   700          64,526  50,065  43,054  38,847  36,664  30,667  30,667
+//   1,000        94,516  73,183  62,109  56,689  52,879  47,480  47,480
+//   1,500       150,409 120,772 103,724  95,565  91,004  90,112  81,143
+//   3,000       351,391 291,238 258,980 242,832 233,841 232,414 236,825
+//   6,000       879,929 759,963 694,248 663,420 645,131 642,638 657,250
+//   10^4 (M)      1.906   1.705   1.597   1.544   1.514   1.511   1.536
+//   10^5 (M)     66.877  64.892  63.801  63.276  62.979  62.959  63.215
+//   10^6 (M)     1,314.2 1,294.4 1,283.4 1,278.2 1,275.3 1,275.1 1,277.6
+//
+// 1024 has the fewest at every size but 700 and 1,000 (tied with 2048, which reads them
+// whole) and 1,500 (2048, 10% fewer); from 3,000 digits 2048 costs 0.2% to 2.3% more, as the
+// O(n^2) leaves grow. Processor time agreed within its noise at this load (10^6: 153 to 157
+// ms for leaves 128 to 2048). The peak heap is the same at 512 and 1024, 23.6 bits per digit
+// on 2^16 to 2^22 nines, within the 48 that `read_decimal` asks for. Measured again with the
+// leaf read eight digits a step (EXP-swar-digits, 2026-11-12, leaves 128 to 4096 at 3,000 to
+// 10^6 digits): 1024 and 2048 are again the fewest, within 1% of each other, so a cheaper leaf
+// does not move the crossover. To be measured again at the Zed port, where both sides of the
+// crossover change.
+pub(super) const LEAF_DIGITS: usize = 1024;
+
+/// [`super::read_digits`] with texts of at most `leaf` digits read whole; `leaf` is at least 1.
+///
+/// It is here, beside the products it is built from, and not in `num`, which reads through it:
+/// the module `crossover` below also names it, and a name of `num` from this file would put the
+/// two files in an import cycle, which Zed forbids between files (DESIGN.md sec:units).
+pub(super) fn read_digits_by(digits: &str, leaf: usize) -> BigUint {
+    // Complexity tradeoff: reading by halves costs one widest product per level, `log2(n /
+    // leaf)` levels, O(M(n) log n) = O(n log^2 n), a log factor above a product, accepted
+    // because no faster radix conversion is known: the subquadratic method (Schönhage 1971;
+    // Bernstein, "Scaled remainder trees", 2004; Brent and Zimmermann, Modern Computer
+    // Arithmetic, 2010, section 1.7) takes O(M(n) log n) (author decision A47, 2026-11-09;
+    // COMPLEXITY.md C31), against num-bigint's O(n^2). The scaling tests of reading hold it to
+    // the limit of work of order n log^2 n.
+    //
+    // The levels are joined one at a time from the leaves up, not by a recursion from the top,
+    // so that each level's power `10^(leaf 2^j)` multiplies every pair of the level by spectra
+    // transformed once (`fast::Factor`), two transforms a product in place of three, and the
+    // spectra of one level only are held at a time. A recursion from the top visits every
+    // level along each path, so it would hold all levels' spectra at once, about six words for
+    // each word of the powers, over the 48 bits a digit that `read_decimal` asks for. Measured
+    // on 2026-11-12 (RADIX-depth) on `int(s)` of 160,000 and 1,280,000 digits, the reading by
+    // a recursion with `fast::mul` took 121.4 and 1,827.9 million instructions, and level by
+    // level with `fast::Factor` 121.5 and 1,756.4 (the spectra are kept from 1701 words, only
+    // at the larger size). The number is the same: every split of the text gives its value.
+    assert!(
+        !digits.is_empty(),
+        "a nonempty text of ASCII decimal digits"
+    );
+    let text = digits.as_bytes();
+    // A text of one leaf, which is every literal of up to `leaf` digits, is read with no vector
+    // of parts and no power of ten: building `10^leaf` alone cost about 9,500 instructions
+    // (EXP-swar-digits, 2026-11-12), 70% to 84% of reading a literal of 1 to 25 digits.
+    if text.len() <= leaf {
+        return super::digit_text::read_whole(text);
+    }
+    let mut parts: Vec<BigUint> = (0..text.len().div_ceil(leaf))
+        .map(|i| {
+            let end = text.len() - i * leaf;
+            super::digit_text::read_whole(&text[end.saturating_sub(leaf)..end])
+        })
+        .collect();
+    // `parts[i]` is below `power`, `10^(leaf 2^j)` at level `j`, and is the `i`-th group of
+    // `leaf 2^j` digits from the low end; the top one may have fewer.
+    let mut power = BigUint::from(10u32).pow(leaf as u32);
+    while parts.len() > 1 {
+        // Each high part is below the power, so it has at most the power's words.
+        let other = power.iter_u64_digits().len();
+        let factor = Factor::new(power, other, parts.len() / 2);
+        let mut joined = Vec::with_capacity(parts.len().div_ceil(2));
+        let mut each = parts.into_iter();
+        while let Some(low) = each.next() {
+            joined.push(match each.next() {
+                Some(high) => factor.mul(&high) + low,
+                None => low,
+            });
+        }
+        parts = joined;
+        power = match parts.len() > 1 {
+            true => mul(factor.value(), factor.value()),
+            false => BigUint::zero(),
+        };
+    }
+    parts.pop().expect("a nonempty text has a part")
+}
+
 /// The methods on either side of each size threshold of `num`, one by one, for the
 /// crossover benchmarks (crate zed-benches, binary `crossover`; DESIGN.md sec:plan, A96),
 /// which time both methods on both sides of a threshold and check that they give the same
@@ -3669,7 +3766,7 @@ pub mod crossover {
     /// `super::LIFT_BITS` as built, in bits.
     pub const LIFT_BITS: u64 = super::LIFT_BITS;
     /// The digits [`crate::num::read_digits`] reads whole, as built.
-    pub const LEAF_DIGITS: usize = crate::num::LEAF_DIGITS;
+    pub const LEAF_DIGITS: usize = super::LEAF_DIGITS;
     /// `super::DIV_COST` as built.
     pub const DIV_COST: f64 = super::DIV_COST;
     /// `super::TOOM_COST` as built.
@@ -3860,7 +3957,7 @@ pub mod crossover {
     /// The value of a nonempty text of ASCII decimal digits, as [`crate::num::read_digits`]
     /// reads it but with texts of at most `leaf` digits read whole; `leaf` at least 1.
     pub fn read_digits(digits: &str, leaf: usize) -> BigUint {
-        crate::num::read_digits_by(digits, leaf)
+        super::read_digits_by(digits, leaf)
     }
 
     /// `super::bezout` with the lift of `lift` bits.

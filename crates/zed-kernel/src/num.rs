@@ -34,7 +34,7 @@ use num_traits::{One, Pow, Signed, ToPrimitive, Zero};
 
 use bound::{Format, Product};
 pub use factor::is_prime;
-use fast::built;
+use fast::{LEAF_DIGITS, built, read_digits_by};
 #[doc(hidden)]
 pub use fast::crossover;
 pub use fast::{
@@ -1336,38 +1336,6 @@ pub fn bezout_int(a: &BigInt, b: &BigInt) -> Option<(BigInt, BigInt, BigInt)> {
     Some((BigInt::from(g), s, t))
 }
 
-/// The digits `read_decimal` reads whole, with no split. The value read does not depend on it.
-//
-// Complexity tradeoff: a timed crossover of two algorithms with identical results, nothing
-// given up. A text of at most `LEAF_DIGITS` digits is read whole (`digit_text::read_whole`),
-// O(n^2), one word of 19 digits at a time (num-bigint's `parse` until SWAR-read-literals); a
-// longer one is split by halves (`read_digits_by`), O(n log^2 n). Both
-// give the same number for every text (test `num::tests::the_leaf_does_not_change_the_value`,
-// leaf 1 against `LEAF_DIGITS` and against num-bigint; COMPLEXITY.md K41). Measured on
-// 2026-11-07 (item KERNEL-leaf-digits, not committed): `read_digits` with each leaf on random
-// texts, the test build (opt-level 2), the fewest instructions of 2 to 20 runs, load5 28 to 36:
-//
-//   digits      leaf 32     64     128     256     512    1024    2048
-//   700          64,526  50,065  43,054  38,847  36,664  30,667  30,667
-//   1,000        94,516  73,183  62,109  56,689  52,879  47,480  47,480
-//   1,500       150,409 120,772 103,724  95,565  91,004  90,112  81,143
-//   3,000       351,391 291,238 258,980 242,832 233,841 232,414 236,825
-//   6,000       879,929 759,963 694,248 663,420 645,131 642,638 657,250
-//   10^4 (M)      1.906   1.705   1.597   1.544   1.514   1.511   1.536
-//   10^5 (M)     66.877  64.892  63.801  63.276  62.979  62.959  63.215
-//   10^6 (M)     1,314.2 1,294.4 1,283.4 1,278.2 1,275.3 1,275.1 1,277.6
-//
-// 1024 has the fewest at every size but 700 and 1,000 (tied with 2048, which reads them
-// whole) and 1,500 (2048, 10% fewer); from 3,000 digits 2048 costs 0.2% to 2.3% more, as the
-// O(n^2) leaves grow. Processor time agreed within its noise at this load (10^6: 153 to 157
-// ms for leaves 128 to 2048). The peak heap is the same at 512 and 1024, 23.6 bits per digit
-// on 2^16 to 2^22 nines, within the 48 that `read_decimal` asks for. Measured again with the
-// leaf read eight digits a step (EXP-swar-digits, 2026-11-12, leaves 128 to 4096 at 3,000 to
-// 10^6 digits): 1024 and 2048 are again the fewest, within 1% of each other, so a cheaper leaf
-// does not move the crossover. To be measured again at the Zed port, where both sides of the
-// crossover change.
-const LEAF_DIGITS: usize = 1024;
-
 /// The sign of a text and the rest of it after an optional `-` or `+`.
 pub(crate) fn sign_of(text: &str) -> (Sign, &str) {
     match (text.strip_prefix('-'), text.strip_prefix('+')) {
@@ -1434,67 +1402,6 @@ pub fn read_decimal(digits: &str) -> Result<Option<BigUint>, TooLarge> {
 /// When `digits` is empty or holds anything but ASCII decimal digits.
 pub fn read_digits(digits: &str) -> BigUint {
     read_digits_by(digits, LEAF_DIGITS)
-}
-
-/// [`read_digits`] with texts of at most `leaf` digits read whole; `leaf` is at least 1.
-fn read_digits_by(digits: &str, leaf: usize) -> BigUint {
-    // Complexity tradeoff: reading by halves costs one widest product per level, `log2(n /
-    // leaf)` levels, O(M(n) log n) = O(n log^2 n), a log factor above a product, accepted
-    // because no faster radix conversion is known: the subquadratic method (Schönhage 1971;
-    // Bernstein, "Scaled remainder trees", 2004; Brent and Zimmermann, Modern Computer
-    // Arithmetic, 2010, section 1.7) takes O(M(n) log n) (author decision A47, 2026-11-09;
-    // COMPLEXITY.md C31), against num-bigint's O(n^2). The scaling tests of reading hold it to
-    // the limit of work of order n log^2 n.
-    //
-    // The levels are joined one at a time from the leaves up, not by a recursion from the top,
-    // so that each level's power `10^(leaf 2^j)` multiplies every pair of the level by spectra
-    // transformed once (`fast::Factor`), two transforms a product in place of three, and the
-    // spectra of one level only are held at a time. A recursion from the top visits every
-    // level along each path, so it would hold all levels' spectra at once, about six words for
-    // each word of the powers, over the 48 bits a digit that `read_decimal` asks for. Measured
-    // on 2026-11-12 (RADIX-depth) on `int(s)` of 160,000 and 1,280,000 digits, the reading by
-    // a recursion with `fast::mul` took 121.4 and 1,827.9 million instructions, and level by
-    // level with `fast::Factor` 121.5 and 1,756.4 (the spectra are kept from 1701 words, only
-    // at the larger size). The number is the same: every split of the text gives its value.
-    assert!(
-        !digits.is_empty(),
-        "a nonempty text of ASCII decimal digits"
-    );
-    let text = digits.as_bytes();
-    // A text of one leaf, which is every literal of up to `leaf` digits, is read with no vector
-    // of parts and no power of ten: building `10^leaf` alone cost about 9,500 instructions
-    // (EXP-swar-digits, 2026-11-12), 70% to 84% of reading a literal of 1 to 25 digits.
-    if text.len() <= leaf {
-        return digit_text::read_whole(text);
-    }
-    let mut parts: Vec<BigUint> = (0..text.len().div_ceil(leaf))
-        .map(|i| {
-            let end = text.len() - i * leaf;
-            digit_text::read_whole(&text[end.saturating_sub(leaf)..end])
-        })
-        .collect();
-    // `parts[i]` is below `power`, `10^(leaf 2^j)` at level `j`, and is the `i`-th group of
-    // `leaf 2^j` digits from the low end; the top one may have fewer.
-    let mut power = BigUint::from(10u32).pow(leaf as u32);
-    while parts.len() > 1 {
-        // Each high part is below the power, so it has at most the power's words.
-        let other = power.iter_u64_digits().len();
-        let factor = fast::Factor::new(power, other, parts.len() / 2);
-        let mut joined = Vec::with_capacity(parts.len().div_ceil(2));
-        let mut each = parts.into_iter();
-        while let Some(low) = each.next() {
-            joined.push(match each.next() {
-                Some(high) => factor.mul(&high) + low,
-                None => low,
-            });
-        }
-        parts = joined;
-        power = match parts.len() > 1 {
-            true => fast::mul(factor.value(), factor.value()),
-            false => BigUint::zero(),
-        };
-    }
-    parts.pop().expect("a nonempty text has a part")
 }
 
 /// The power of the prime `p` in `n`, and `n` without it ([`valuation_upto`] with no cap).
@@ -2128,58 +2035,6 @@ mod tests {
     /// `b^k` for a small base, kept as exponents.
     fn power(b: u64, k: u64) -> Rat {
         Rat::int(BigInt::from(b)).pow(&BigUint::from(k)).unwrap()
-    }
-
-    #[test]
-    fn an_integer_prints_its_shorter_text_and_reads_back() {
-        let neg = |r: Rat| r.neg();
-        let times = |c: i64, r: Rat| Rat::int(BigInt::from(c)).mul(&r).unwrap();
-        for (value, text) in [
-            (power(2, 3), "8"),
-            (power(2, 10), "1024"),
-            (power(10, 5), "10^5"),
-            (power(10, 3), "1000"),
-            // 2^64 has 20 digits, its power 4 characters.
-            (power(2, 64), "2^64"),
-            (power(3, 200000), "3^200000"),
-            (power(9, 100000), "3^200000"),
-            (neg(power(3, 200000)), "-3^200000"),
-            (times(5, power(3, 200000)), "5*3^200000"),
-            (times(-5, power(3, 200000)), "-5*3^200000"),
-            (power(5, 1).mul(&power(3, 200000)).unwrap(), "5*3^200000"),
-            (
-                power(7, 1)
-                    .mul(&power(11, 1))
-                    .unwrap()
-                    .mul(&power(2, 64))
-                    .unwrap(),
-                "77*2^64",
-            ),
-            (power(12, 100000), "12^100000"),
-            (power(6, 100), "6^100"),
-            (power(2, 200).mul(&power(3, 100)).unwrap(), "12^100"),
-            (power(2, 300).mul(&power(3, 100)).unwrap(), "24^100"),
-            (power(2, 300).mul(&power(3, 7)).unwrap(), "2^300*3^7"),
-            (
-                power(2, 300)
-                    .mul(&power(5, 300))
-                    .unwrap()
-                    .mul(&power(3, 7))
-                    .unwrap(),
-                "10^300*3^7",
-            ),
-        ] {
-            assert_eq!(value.integer_text(), text, "{text}");
-            let back = crate::value::Value::power_text(text).unwrap();
-            let back = back.or_else(|| crate::value::Value::int_text(text, 10).unwrap());
-            assert_eq!(*back.unwrap().as_integer().unwrap(), value, "{text}");
-        }
-        // Equal values print alike, however they were made.
-        assert_eq!(power(9, 100000), power(3, 200000));
-        assert_ne!(
-            power(3, 200000),
-            power(3, 200000).add(&Rat::int(BigInt::one())).unwrap()
-        );
     }
 
     #[test]
