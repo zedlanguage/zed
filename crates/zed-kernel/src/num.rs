@@ -295,7 +295,7 @@ impl Rat {
     }
 
     /// The numerator's digits, with its sign, or [`TooLarge`] when a kept exponent is too large
-    /// for any memory to hold the digits ([`built`]). The memory is not asked for here; a
+    /// for any memory to hold the digits (`built`). The memory is not asked for here; a
     /// caller that writes a wide number asks first with [`Rat::text_room`].
     pub fn numer_text(&self) -> Result<String, TooLarge> {
         let sign = if self.is_negative() { "-" } else { "" };
@@ -1855,7 +1855,7 @@ impl PartialOrd for Rat {
 }
 
 /// Written as its literal: `3r`, `-1r/3r`; or, when the system refuses the memory for the
-/// digits ([`Rat::digits_or_powers`]), as each side's powers cast, `rat(2^K)` or
+/// digits (`Rat::digits_or_powers`), as each side's powers cast, `rat(2^K)` or
 /// `rat(1)/rat(3^K)`.
 impl fmt::Display for Rat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

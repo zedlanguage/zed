@@ -14,16 +14,16 @@
 //!    of the 1-norm of the terms below the gap: with `f = g + x^m h`, `g` of degree `d` and
 //!    `2^(m - d) > ||g||_1`, a root `x` with `h(x) != 0` would give
 //!    `|x|^m <= |x^m h(x)| = |g(x)| <= ||g||_1 |x|^d`, so `2^(m - d) <= ||g||_1`; hence each
-//!    root with `|x| >= 2` is a root of `g` and of `h`, and so of every piece ([`split`]). Each
+//!    root with `|x| >= 2` is a root of `g` and of `h`, and so of every piece (`split`). Each
 //!    piece's degree is under `t` times the bits of the 1-norm, for `t` terms, whatever the
 //!    degree of the whole.
 //! 3. The positive roots of the piece of least degree, and those of its reflection `x -> -x`,
-//!    are found by branch and bound over integer intervals ([`positive_roots`]), in place of
+//!    are found by branch and bound over integer intervals (`positive_roots`), in place of
 //!    the paper's chain of derivatives: an interval is dropped when an interval evaluation
 //!    bounded by the carries of the terms below each term shows no root in it
-//!    ([`may_hold_a_root`]), and where `x p'(x)` has one sign on it the one sign change is found
+//!    (`may_hold_a_root`), and where `x p'(x)` has one sign on it the one sign change is found
 //!    by Newton's method on the integers, each step that does not halve the bracket followed
-//!    by a bisection ([`search`]).
+//!    by a bisection (`search`).
 //! 4. A candidate is kept when every other piece is 0 at it.
 
 use std::cmp::Ordering;
@@ -179,7 +179,7 @@ pub fn term_roots(
 /// polynomial, polynomial in its degree, which a term `p^1000000` makes 10^6. Here, after
 /// [Cucker, Koiran and Smale 1999], the cost is polynomial in the sparse size and in the log of
 /// the degree: for `t` terms whose 1-norm has `B` bits, the split is O(t) additions, and the
-/// search ([`positive_roots`]) costs O(t) products of numbers of O(B) bits per interval it
+/// search (`positive_roots`) costs O(t) products of numbers of O(B) bits per interval it
 /// keeps, linear in `t` where the roots are few (measured: 7.6 times the work at 8 times the
 /// terms). Given up: the paper's chain of `t` derivatives, O(t^3) evaluations (80.5 times the
 /// work at 8 times the terms), which bounds the number of intervals where this method has no

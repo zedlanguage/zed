@@ -6326,7 +6326,7 @@ impl Scope {
     /// its other names of one value each read as constants, `x`'s members are first met with
     /// the integer roots of `t` in `x`'s interval, a listed set (DESIGN.md sec:constraints,
     /// QUESTIONS A81), so that each written constraint on `x` alone is evaluated at each root
-    /// ([`Scope::enumerate`]) and a root it rules out is not reached. The solutions of a
+    /// (`Scope::enumerate`) and a root it rules out is not reached. The solutions of a
     /// congruence are not listed: only the roots of `t` are.
     ///
     /// Sound under overflow: the program's `t` is 0 only where the polynomial is, since an
