@@ -10,13 +10,13 @@ use zedc::rejection::Row;
 
 use super::checks;
 
-const ROWS: &str = include_str!("../../../zed/fences/rejections.txt");
-
+/// The rows of the rejection table, read from the spec's DESIGN.md in place.
 #[test]
 fn the_rows_are_those_of_the_spec_table() {
     let names: Vec<&str> = Row::ALL.iter().map(|r| r.name()).collect();
-    let spec: Vec<&str> = ROWS.lines().collect();
-    assert_eq!(names, spec);
+    let design = &zed_tests::fences::spec().design;
+    let text = std::fs::read_to_string(design).unwrap_or_else(|e| panic!("{design}: {e}"));
+    assert_eq!(names, zed_tools::fence_layers::rejection_rows(&text));
 }
 
 #[test]

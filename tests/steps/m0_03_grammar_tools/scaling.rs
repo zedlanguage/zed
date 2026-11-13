@@ -4,7 +4,9 @@
 
 use zed_tests::scaling::{check, inputs};
 use zed_tools::spec::Spec;
-use zed_tools::{audit, cases, check as check_tool, fences, fuzz, layer, progress, ring, sync};
+use zed_tools::{
+    audit, cases, check as check_tool, fence_layers, fences, fuzz, layer, progress, ring,
+};
 
 use super::{Dir, design, fence, spec_dir};
 
@@ -63,18 +65,29 @@ fn fences_scales_with_the_size_of_the_documents() {
 }
 
 #[test]
-fn sync_scales_with_the_number_of_fences() {
-    let dirs = specs("scale_sync", 25, many_fences);
-    let zed = Dir::new("scale_sync_zed");
-    for sub in ["fences", "grammar"] {
-        std::fs::create_dir(zed.at(sub)).expect("a copy directory");
-    }
-    scales("sync", 25, &dirs, |d| {
+fn fence_layers_scales_with_the_number_of_fences() {
+    let dirs = specs("scale_fence_layers", 25, many_fences);
+    scales("fence_layers", 25, &dirs, |d| {
         let spec = Spec::open(&d.root()).expect("the spec reads");
-        assert_eq!(
-            sync::sync_into(&spec, &zed.root(), false, &mut String::new()),
-            Ok(true)
-        );
+        let laid = fence_layers::of_document(&d.at("DESIGN.md"), &spec).expect("they lay out");
+        assert!(laid.len() >= 25);
+    });
+}
+
+#[test]
+fn rejection_rows_scale_with_the_number_of_rows() {
+    let tables: [(usize, String); 2] = [2000, 16000].map(|m| {
+        let rows: String = (0..m)
+            .map(|i| format!("| Row {i} (gloss) | a | b |\n"))
+            .collect();
+        (m, format!("| Rejection | W | M |\n|---|---|---|\n{rows}"))
+    });
+    check("rejection_rows", 2000, |m| {
+        let (_, table) = tables
+            .iter()
+            .find(|t| t.0 == m)
+            .expect("a size that was built");
+        assert_eq!(fence_layers::rejection_rows(table).len(), m);
     });
 }
 

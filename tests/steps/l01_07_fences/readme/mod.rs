@@ -1,9 +1,9 @@
-//! Item README-fences: the fences of README.md, copied into `zed/fences/readme.md` by the `sync`
-//! tool, are lexed and parsed, and from its own layer on each is checked and run, its ✗ lines
-//! and commented ✗ variants compared with the diagnostics, and the results the page states
-//! compared with the run by the checks of the table of expected results, `expected.txt` (the
-//! forms are in `zed_tests::readme`). Every fence has an entry in the table, and every entry
-//! lists exactly the results the page states.
+//! Item README-fences: the fences of README.md, laid out against the spec's grammar, are lexed
+//! and parsed, and from its own layer on each is checked and run, its ✗ lines and commented ✗
+//! variants compared with the diagnostics, and the results the page states compared with the
+//! run by the checks of the table of expected results, `expected.txt` (the forms are in
+//! `zed_tests::readme`). Every fence has an entry in the table, and every entry lists exactly
+//! the results the page states.
 
 mod scaling;
 
@@ -47,7 +47,7 @@ pub(super) fn problems(page: &str, fences: &[DocFence], table: &[Entry]) -> Vec<
     assert_eq!(
         stated.len(),
         fences.len(),
-        "the copy has every fence of the page"
+        "the table of stated results has every fence of the page"
     );
     let mut out = Vec::new();
     let mut by_key: HashMap<&str, &Entry> = HashMap::with_capacity(table.len());
@@ -88,7 +88,7 @@ pub(super) fn problems(page: &str, fences: &[DocFence], table: &[Entry]) -> Vec<
 }
 
 #[test]
-fn the_copy_matches_the_readme() {
+fn the_fences_are_those_the_extractor_finds() {
     let page = page();
     let want: Vec<(String, String)> = fence::extract(&page)
         .into_iter()
@@ -100,7 +100,7 @@ fn the_copy_matches_the_readme() {
         .collect();
     assert!(
         want == got,
-        "zed/fences/readme.md is out of date: run the sync tool"
+        "the two readers of README.md's fences disagree"
     );
 }
 

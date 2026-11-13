@@ -185,7 +185,7 @@ enum Site {
     NotBinder(&'static str),
 }
 
-/// Every rule of `zed/grammar/syntax.peg` that writes `Name`, and what it binds.
+/// Every rule of the spec's syntactic grammar that writes `Name`, and what it binds.
 const SITES: &[(&str, Site)] = &[
     ("Name", Site::NotBinder("the identifier itself")),
     ("Import", Site::Later("import geometry.shapes as int;\n")),
@@ -361,11 +361,7 @@ fn rules_writing_name(peg: &str) -> BTreeSet<&str> {
 
 #[test]
 fn every_rule_of_the_grammar_that_writes_a_name_is_classified_and_its_binders_rejected() {
-    let peg = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../zed/grammar/syntax.peg"),
-    )
-    .unwrap();
-    let rules = rules_writing_name(&peg);
+    let rules = rules_writing_name(&zed_tests::fences::spec().syn_text);
     let listed: BTreeSet<&str> = SITES.iter().map(|&(r, _)| r).collect();
     assert_eq!(listed.len(), SITES.len(), "a rule listed twice");
     assert_eq!(

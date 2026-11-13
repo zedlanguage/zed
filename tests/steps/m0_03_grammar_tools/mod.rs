@@ -1,7 +1,7 @@
 //! Step M0.3: the grammar tools and the hand-run commands of `zed-tools`.
 //!
 //! CI does not read the spec repository, so each test builds a small spec of its own: the
-//! grammars `sync` copied into `zed/grammar`, a table of defined words, and the fences the test
+//! grammars, read from the real spec in place, a table of defined words, and the fences the test
 //! needs. A spec author runs these tools on the real spec; the tests here run the same `run`
 //! functions the commands call.
 
@@ -12,13 +12,11 @@ mod plan;
 mod scaling;
 mod split;
 
-use std::fs;
-
 use zed_tools::spec::Spec;
-use zed_tools::{audit, cases, check, fences, fuzz, layer, progress, ring, sync};
+use zed_tools::{audit, cases, check, fence_layers, fences, fuzz, layer, progress, ring};
 
 pub(crate) use zed_tests::step_helpers::m0_03_grammar_tools::{
-    Dir, design, design_of, fence, grammar, spec_dir, tool,
+    Dir, Part, design, design_of, fence, grammar, spec_dir, tool,
 };
 
 /// A function that doubles a number, which parses at a low ring.
@@ -56,13 +54,13 @@ fn check_of_a_fence_that_is_not_there_says_so() {
 fn check_rejects_a_rule_with_no_definition() {
     let syn = format!(
         "{}\nStray         = NoSuchRule     L1\n",
-        grammar("syntax.peg")
+        grammar(Part::Syntax)
     );
     let text = design_of(
-        &grammar("lexical.peg"),
+        &grammar(Part::Lexical),
         &syn,
-        &grammar("notation.peg"),
-        &grammar("desugar.txt"),
+        &grammar(Part::Notation),
+        &grammar(Part::Desugar),
         "",
     );
     let dir = spec_dir("check_undefined", &text, "");
@@ -73,15 +71,15 @@ fn check_rejects_a_rule_with_no_definition() {
 
 #[test]
 fn check_rejects_a_production_with_no_desugaring_rule() {
-    let desugar: String = grammar("desugar.txt")
+    let desugar: String = grammar(Part::Desugar)
         .lines()
         .filter(|l| !l.starts_with("Name "))
         .map(|l| format!("{l}\n"))
         .collect();
     let text = design_of(
-        &grammar("lexical.peg"),
-        &grammar("syntax.peg"),
-        &grammar("notation.peg"),
+        &grammar(Part::Lexical),
+        &grammar(Part::Syntax),
+        &grammar(Part::Notation),
         &desugar,
         "",
     );
@@ -110,13 +108,13 @@ fn a_spec_with_too_few_grammars_is_refused() {
 fn a_rule_defined_in_both_grammars_is_refused() {
     let doc = format!(
         "{}\nUnit          = Name           L1\n",
-        grammar("notation.peg")
+        grammar(Part::Notation)
     );
     let text = design_of(
-        &grammar("lexical.peg"),
-        &grammar("syntax.peg"),
+        &grammar(Part::Lexical),
+        &grammar(Part::Syntax),
         &doc,
-        &grammar("desugar.txt"),
+        &grammar(Part::Desugar),
         "",
     );
     let dir = spec_dir("twice", &text, "");
@@ -629,7 +627,7 @@ fn fuzz_of(spec: &Spec, n: usize, seed: i64) -> (zed_tools::Outcome, String) {
 /// The real syntactic grammar with the `break` of before review round 2 put back in `Primary`:
 /// an optional operand, so in `if c || break { 1 } else { 2 }` the operand takes the body.
 fn syntax_with_old_break() -> String {
-    let syn = grammar("syntax.peg");
+    let syn = grammar(Part::Syntax);
     let loop_line = syn
         .lines()
         .find(|l| l.trim_start().starts_with("| ~Loop "))
@@ -655,10 +653,10 @@ fn fuzz_reports_a_sentence_the_old_break_derives_but_the_parser_rejects() {
     assert_eq!(outcome, Ok(true), "{out}");
 
     let text = design_of(
-        &grammar("lexical.peg"),
+        &grammar(Part::Lexical),
         &syntax_with_old_break(),
-        &grammar("notation.peg"),
-        &grammar("desugar.txt"),
+        &grammar(Part::Notation),
+        &grammar(Part::Desugar),
         "",
     );
     let old = spec_dir("fuzz_old_break", &text, "");
@@ -689,73 +687,97 @@ fn fuzz_of_the_real_grammar_at_500_per_ring_finds_no_failure() {
     );
 }
 
+/// Each fence of a document is read with its file, line, section and place, and laid out: a
+/// plain fence at ring 1, a fence written in the documentation notation as such, a label raising
+/// its layer, and a word of the table raising it to the word's layer.
 #[test]
-fn sync_writes_the_copies_and_check_finds_a_stale_one() {
-    let dir = spec_dir("sync", &design(&fence(DOUBLE)), &fence(DOUBLE));
+fn fence_layers_lays_out_each_fence_of_a_document() {
+    let body = format!(
+        "## (sec:units) One\n\n{}\n{}\n## (sec:memory) Two\n\n{}\n{}",
+        fence(DOUBLE),
+        fence("// layer L4\nx = 1;"),
+        fence("y = sorted(x);"),
+        fence("(+): (int, int) -> int")
+    );
+    let text = design(&body);
+    let dir = spec_dir("fence_layers", &text, "");
     let spec = Spec::open(&dir.root()).expect("the spec reads");
-    let zed = Dir::new("sync_zed");
-    for sub in ["fences", "grammar"] {
-        fs::create_dir(zed.at(sub)).expect("a copy directory");
-    }
-    let run = |check| {
-        let mut out = String::new();
-        (sync::sync_into(&spec, &zed.root(), check, &mut out), out)
-    };
-    let (outcome, _) = run(true);
-    assert_eq!(outcome, Ok(false), "nothing is written yet");
-    let (outcome, out) = run(false);
-    assert_eq!(outcome, Ok(true), "{out}");
+    let laid = fence_layers::of_document(&dir.at("DESIGN.md"), &spec).expect("the fences lay out");
+    let at: Vec<usize> = text
+        .split('\n')
+        .enumerate()
+        .filter(|(_, l)| *l == "```zed")
+        .map(|(k, _)| k + 1)
+        .collect();
+    let got: Vec<(&str, &str, usize, usize, bool)> = laid
+        .iter()
+        .map(|l| {
+            let f = &l.fence;
+            (
+                f.file.as_str(),
+                f.section.as_str(),
+                f.index,
+                f.line,
+                l.notation,
+            )
+        })
+        .collect();
     assert_eq!(
-        fs::read_to_string(zed.at("grammar/syntax.peg")).unwrap(),
-        grammar("syntax.peg")
+        got,
+        [
+            ("DESIGN.md", "sec:units", 1, at[0], false),
+            ("DESIGN.md", "sec:units", 2, at[1], false),
+            ("DESIGN.md", "sec:memory", 1, at[2], false),
+            ("DESIGN.md", "sec:memory", 2, at[3], true),
+        ]
     );
-    assert_eq!(
-        fs::read_to_string(zed.at("grammar/lexical.peg")).unwrap(),
-        grammar("lexical.peg")
-    );
-    assert_eq!(
-        fs::read_to_string(zed.at("grammar/desugar.txt")).unwrap(),
-        grammar("desugar.txt")
-    );
-    let copied = fs::read_to_string(zed.at("fences/design.md")).unwrap();
-    assert!(
-        copied.contains("DESIGN.md:") && copied.contains(DOUBLE),
-        "{copied}"
-    );
-    assert_eq!(run(true).0, Ok(true));
-
-    zed.write("fences/design.md", "edited by hand\n");
-    assert_eq!(run(true).0, Ok(false));
+    // DOUBLE parses at ring 1 and uses no word of the table; the label gives L4; `sorted`, at
+    // L3 in the table of `design`, raises a fence that parses at ring 1.
+    let layers: Vec<(u32, u32)> = laid[..3].iter().map(|l| (l.ring, l.layer)).collect();
+    assert_eq!(layers, [(1, 1), (1, 4), (1, 3)]);
+    assert_eq!(laid[0].fence.text, DOUBLE);
 }
 
-/// The rows `sync` copies from the rejection table: each row's name ends at its first
-/// parenthesis outside a code span, so a gloss `(sec:memory)` is dropped and a call in code,
-/// `` `@stack(bytes: b)` ``, is kept whole; a cell's `\|` is the `|` a reader sees.
+/// A fence that does not parse stops the layout with its document and line.
 #[test]
-fn sync_names_each_rejection_row_up_to_a_parenthesis_outside_code() {
+fn fence_layers_names_a_fence_that_does_not_parse() {
+    let body = format!("{}\n{}", fence(DOUBLE), fence("x = = 1;"));
+    let dir = spec_dir("fence_layers_bad", &design(&body), "");
+    let spec = Spec::open(&dir.root()).expect("the spec reads");
+    let why = fence_layers::of_document(&dir.at("DESIGN.md"), &spec)
+        .expect_err("the second fence does not parse");
+    let at = design(&body)
+        .split('\n')
+        .enumerate()
+        .filter(|(_, l)| *l == "```zed")
+        .map(|(k, _)| k + 1)
+        .nth(1)
+        .unwrap();
+    assert!(why.starts_with(&format!("DESIGN.md:{at}: ")), "{why}");
+}
+
+/// The rows of the rejection table: each row's name ends at its first parenthesis outside a
+/// code span, so a gloss `(sec:memory)` is dropped and a call in code, `` `@stack(bytes: b)` ``,
+/// is kept whole; a cell's `\|` is the `|` a reader sees. A document with no table has no rows.
+#[test]
+fn rejection_rows_name_each_row_up_to_a_parenthesis_outside_code() {
     let table = "| Rejection | Required witnesses | Menu |\n|---|---|---|\n\
                  | Collision (two keys meet) | a | b |\n\
                  | Stack depth over `@stack(bytes: b)` (sec:memory) | a | b |\n\
                  | Call `f(x)` and `g(y)` in a row (sec:units; `h(z)`) | a | b |\n\
                  | Pipe `a \\| b` written | a | b |\n\
-                 | Missing argument | a | b |\n";
-    let dir = spec_dir("sync_rows", &design(table), "");
-    let spec = Spec::open(&dir.root()).expect("the spec reads");
-    let zed = Dir::new("sync_rows_zed");
-    for sub in ["fences", "grammar"] {
-        fs::create_dir(zed.at(sub)).expect("a copy directory");
-    }
-    let mut out = String::new();
+                 | Missing argument | a | b |\n\nAfter the table.\n| Not | a row |\n";
     assert_eq!(
-        sync::sync_into(&spec, &zed.root(), false, &mut out),
-        Ok(true),
-        "{out}"
+        fence_layers::rejection_rows(&design(table)),
+        [
+            "Collision",
+            "Stack depth over `@stack(bytes: b)`",
+            "Call `f(x)` and `g(y)` in a row",
+            "Pipe `a | b` written",
+            "Missing argument",
+        ]
     );
-    assert_eq!(
-        fs::read_to_string(zed.at("fences/rejections.txt")).unwrap(),
-        "Collision\nStack depth over `@stack(bytes: b)`\nCall `f(x)` and `g(y)` in a row\n\
-         Pipe `a | b` written\nMissing argument\n"
-    );
+    assert!(fence_layers::rejection_rows(&design("")).is_empty());
 }
 
 /// A plan of three steps, one with a title of its own sentence.

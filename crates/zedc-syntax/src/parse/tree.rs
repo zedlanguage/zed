@@ -19,10 +19,11 @@ pub fn grammar() -> &'static Grammar {
     static G: OnceLock<Grammar> = OnceLock::new();
     G.get_or_init(|| {
         Grammar::read(&[
-            include_str!("../../../../zed/grammar/syntax.peg"),
-            include_str!("../../../../zed/grammar/notation.peg"),
+            // Read from the spec's DESIGN.md by `build.rs`.
+            include_str!(concat!(env!("OUT_DIR"), "/syntax.peg")),
+            include_str!(concat!(env!("OUT_DIR"), "/notation.peg")),
         ])
-        .expect("the copied grammar reads")
+        .expect("the spec's grammar reads")
     })
 }
 

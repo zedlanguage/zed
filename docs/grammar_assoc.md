@@ -1,6 +1,6 @@
 # Associativity of the rules of sec:grammar (item LR4)
 
-Each rule of the syntactic PEG (`zed/grammar/syntax.peg`, copied from DESIGN.md sec:grammar)
+Each rule of the syntactic PEG (DESIGN.md sec:grammar, which the compiler reads from the spec)
 states its associativity in one of two ways: by left or right recursion, or by a repetition
 whose reader folds in the direction the semantics needs. The author's rule (2026-11-03): a
 repetition is fine if its reader builds the correct left- or right-nested tree; otherwise the

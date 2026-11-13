@@ -19,6 +19,10 @@
 //! still agree, and a file the compiler reads is never left out, which is what the check needs.
 //! A literal with an escape in it, and a path built by a macro, are not followed; the only such
 //! paths in the workspace are under `OUT_DIR`, the output of a build script, which is hashed.
+//! One build script reads a file outside the workspace: `zedc-syntax`'s reads the compiler's
+//! grammar from the spec's DESIGN.md (`crates/zedc-syntax/spec_grammar.rs`), which this
+//! repository does not hold, so `build.rs` reads that grammar too and adds it to the hash with
+//! [`with_grammar`].
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read as _;
@@ -142,6 +146,19 @@ pub fn of(krate: &Path) -> Result<Sources, String> {
         hash: *hasher.finalize().as_bytes(),
         read,
     })
+}
+
+/// The hash of a build whose sources hash to `sources` and whose compiler embeds the grammar
+/// texts `grammar`, read from the spec when `zedc-syntax` is built: BLAKE3 over `sources`, then
+/// the length and bytes of each text. O(the length of the texts).
+pub fn with_grammar(sources: [u8; 32], grammar: &[&str]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&sources);
+    for text in grammar {
+        hasher.update(&(text.len() as u64).to_le_bytes());
+        hasher.update(text.as_bytes());
+    }
+    *hasher.finalize().as_bytes()
 }
 
 /// Adds `path` to `files`, and to `rust` to be searched for the files it names if it is a Rust

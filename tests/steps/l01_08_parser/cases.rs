@@ -89,26 +89,3 @@ fn a_string_hole_is_parsed_as_an_expression() {
     let err = parse(bad, &lex(bad).unwrap(), "Unit", 1).unwrap_err();
     assert_eq!(&bad[err.span.start..err.span.end], "}");
 }
-
-/// The copies in `zed/grammar` equal the PEG fences of the spec's DESIGN.md (the spec
-/// repository as `zed_tests::spec` finds it; CI does not read it).
-#[test]
-fn the_copies_match_the_spec() {
-    let Some(spec) = zed_tests::spec::dir("the drift of zed/grammar") else {
-        return;
-    };
-    let design = std::fs::read_to_string(spec.join("DESIGN.md")).unwrap();
-    let mut pegs = Vec::new();
-    let mut lines = design.lines();
-    while let Some(l) = lines.next() {
-        if l.trim() == "```peg" {
-            let body: Vec<&str> = lines.by_ref().take_while(|l| l.trim() != "```").collect();
-            pegs.push(body.join("\n") + "\n");
-        }
-    }
-    let read = |f: &str| std::fs::read_to_string(grammar_dir().join(f)).unwrap();
-    let stale = "zed/grammar is out of date: run the sync tool";
-    assert_eq!(read("lexical.peg"), pegs[0], "{stale}");
-    assert_eq!(read("syntax.peg"), pegs[1], "{stale}");
-    assert_eq!(read("notation.peg"), pegs[2], "{stale}");
-}

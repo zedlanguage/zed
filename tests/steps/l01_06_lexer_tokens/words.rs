@@ -29,10 +29,7 @@ fn every_keyword_is_a_keyword_and_a_longer_word_is_a_name() {
 /// so a word the grammar reserves for a later step is reserved by the lexer from L1 on.
 #[test]
 fn the_keywords_are_the_words_of_the_grammar() {
-    let peg = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../zed/grammar/lexical.peg"),
-    )
-    .unwrap();
+    let peg = &zed_tests::fences::spec().lex_text;
     let line = peg
         .lines()
         .find(|l| l.starts_with("KeywordWord"))

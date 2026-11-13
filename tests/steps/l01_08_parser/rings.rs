@@ -1,6 +1,5 @@
-//! Every fence of the documentation parses, and first parses at the ring
-//! the `sync` tool recorded with the spec's grammar tools: as a unit, or under the
-//! documentation notation.
+//! Every fence of the documentation parses, and first parses at the ring the spec's grammar
+//! tools give it (`zed_tools::fence_layers`): as a unit, or under the documentation notation.
 
 use zed_tests::fences;
 use zedc::lex::lex_fence;

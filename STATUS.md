@@ -1273,6 +1273,7 @@ LR4 added 27 tests (`lr4_assoc.rs` in `l01_08_parser`) and 23 bracketing cases t
 | RT-sites | merged and pushed (the commit that adds this row); spec zed 2332aee (DESIGN sec:diagnostics "Where a run stops"; DOCS-TODO 162) | A run-time error prints its site in the layout of a diagnostic, the same text from `zedc run` and from an executable: `FILE:L:C: message`, then `[1] L:C: the run stopped here` with the source line and a mark under the expression. Elaboration records each node's source span in a table kept beside the term (`zed_kernel::sites`, keyed by the node's address while it lives), never in the term, its content address or the ZIR text; lowering numbers the sites of the graph (`lower_sited`, `legalized_sites`) and the executable holds them with the file name and only the source lines a kept operation is written on (`zed_native::exe::kept_lines`, so step L2.8d holds). A prelude word is placed at the program's call of it; a node two expressions share takes the first site. Tests `l01_36a_executables::sites` (8), `exe::tests::an_executable_keeps_the_lines_of_its_sites_only`; l01_28 staging arms and the l01_19 replay record now read the placed text. Scaling: lowering 8.3x instructions and 8.9x bytes, loading 7.9x and 7.9x at n = 200 against 1600 (COMPLEXITY). Negative control, run once: with no site the five error tests fail. Open: an executable drops standard output written before the error, where `zedc run` keeps it |
 | TESTS-scaling-limit-13 | merged and pushed (the commit "TESTS-scaling-limit-13: every scaling test holds T(8n)/T(n) under 13 × 8^(k−1), prefers under 9" and the commit that adds this row); spec zed afe266c (DESIGN sec:plan, "Every algorithm is of low complexity") | COMPLEXITY.md header (limit) and C31. Author, 2026-11-13: under 13 at 8n, under 9 preferred. One helper, `zed_tests::scaling::hold`, holds every scaling test to 13 × 8^(k−1) for order n^k and prints a note naming the test from 9 × 8^(k−1); `check_log_squared` and the n log n slack are removed; `hold_linear` holds six counts linear by construction to 9. Of 856 measured tests, 193 sit from 9 to 13 (radix conversion and gcd 10.2 to 12.3, omega chains 10.6 to 11.9). Over 13 and ignored with an owner row (new rows, feeding L1.41-audit-eval or L1.41-audit-solver): SUB-empty-fork-bytes 14.1, SUB-r6two-bytes 15.9, PRINT-below-whole-13 22.4, PRES-holes-steps-cost 13.9, PRES-sum-chain-cost 13.6, LIVE3-origin-long-path 97.5, PRES-subset-project-cost (no n, 8n pair in 60 s); l01_39 families cuts 14.6 to PERF-l139-family. Split tests let pinned, pinlast and the front emptiness check run for the first time. Negative control at 8: 13 of 40 pieces failed, every message at 8.0 times or more; reverted. |
 | CROSSOVER-bench | merged and pushed (266e9de44 "CROSSOVER-bench: a benchmark for every crossover; thresholds and cost constants set where measured", bc88d2597 fences sync, and the commit that adds this row); spec zed 69b8d8c (DESIGN sec:plan, "Every algorithm is of low complexity": a choice by computed costs is a threshold too; no grammar change) (`benches/src/bin/crossover.rs` new, `benches/src/lib.rs`; `crates/zed-kernel/src/num.rs`, `num/fast.rs`, `text.rs`; `zed/corpus/ref/src/zedrt.rs`, `zedrt/product.rs`; tests l01_17 powers, l01_18 scaling, l01_24 num_text and scaling, m0_04 int_reading) | COMPLEXITY.md section "Crossovers", CROSSOVER-bench. `crossover all` benchmarks both sides of every threshold and cost constant, checks equal output, and exits 1 when one has moved past the spread of repeated runs. Now: `MUL_LEAF` 512 → 459 words, `TOOM_COST` 6.8 → 5.8, new `DIV_COST` 9.1 (num-bigint division past `DIV_LEAF` wherever its modeled cost is less; a `Divisor` chooses as `div_rem` does), `RECIP_LEAF` 32 → 416, `GCD_LEAF` 512 → 299, `LIFT_BITS` 32,768 → 29,376, `TRANSFORM_COST` 7 → 7.1, `SPARSE_WORD` 2 → 1.7, `CACHED_COST` 5 → 4.2, corpus `LEAF_DIGITS` 1024 → 4096, corpus `KEPT_WORDS` 1120 → 1838, text `LEAF` 128 → 256; `PRINT_WHOLE`, `PRINT_HANDOFF`, kernel `LEAF_DIGITS`, `TRANSFORM_WORDS` held. Negative control (`GCD_LEAF` 2048) exits 1, run once, not committed. The l01_18 decimals start at 640,000 digits as four tests; the l01_24 cube's second pair starts at 131,072 bits. Not benchmarked: `ty.rs` `Pairs` (reached only through checked programs), `SPARSE_STEP` (too few nonzero words to fit), `Poly::mul` (branch wt/poly-nf-w). |
+| SPEC-no-copies | merged and pushed (the commit that adds this row); spec zed 944cd36 (IMPL.md sections 1 and 3: no sync step) | This repository is public and the spec repository is not, so it keeps no copy or extract of the spec. Removed: `zed/grammar/{lexical,syntax,notation}.peg`, `zed/grammar/desugar.txt`, `zed/fences/rejections.txt`, `zed/fences/readme.md` (`zed/fences/design.md` and `examples.md` were removed by 070695fe6), the `sync` tool and the two token snapshots of every fence. Readers: `zed_tests::fences` lays out the fences of DESIGN.md, EXAMPLES.md and README.md from the spec in place with `zed_tools::fence_layers` (once per test binary); l01_06, l01_10, l01_21, l01_29, l03_01, s_01 and m0_03 read the grammars, the desugaring rules and the rejection table from `zed_tests::fences::spec()`; zedc-syntax's `build.rs` reads the syntactic grammar and the notation into `OUT_DIR` (rerun-if-changed on DESIGN.md, a failure naming `ZED_SPEC_DIR` where no spec is found), and zed-native adds that grammar to its source hash (`sources::with_grammar`). Scaling: `fence_layers` 4.3 (6.2 the bytes), `rejection_rows` 8.3, `with_grammar` 7.5; controls 60.4 and 34.3 fail (COMPLEXITY F38, RUNTIME-build-src). Tests: 144 pieces with 15 failed on 070695fe6 (the fences of the deleted copies) to 161 with none failed. Any DESIGN.md edit now rebuilds zedc-syntax and the crates above it; CI's `ZED_SPEC_DIR=none` mode cannot build zedc |
 
 ## Decisions made
 
@@ -1280,26 +1281,27 @@ LR4 added 27 tests (`lr4_assoc.rs` in `l01_08_parser`) and 23 bracketing cases t
 - Cargo's target directory is `build/cargo`, set in `.cargo/config.toml`.
 - Language tests: `tests/steps/<step>/`, all in one test binary. Unit tests of internal
   functions: `#[cfg(test)]` beside the code.
-- Fences: CI must not read the spec repository (the author's instruction, 2026-10-29).
-  The `sync` tool, run by hand, copies the fences into `zed/fences/design.md` and
-  `examples.md`, each under a header with its source line and layer; `sync --check` exits
-  1 when a copy is stale, and the step test `l01_07_fences::copies::the_copies_match_the_spec`
-  compares the texts.
-- Spec location for tests (TEST-spec-path): the tests that read the spec repository
-  (`l01_07_fences::copies::the_copies_match_the_spec`, `l01_08_parser::cases::the_copies_match_the_spec`,
-  `l02_03_name_resolution::later_words::the_resolver_holds_every_word_and_type_of_the_table`)
-  find it through `zed_tests::spec::dir`: the directory `$ZED_SPEC_DIR` if set, otherwise the
+- Fences and grammar (SPEC-no-copies, 2026-11-13): this repository is public and the spec
+  repository is not, so it keeps no copy or extract of DESIGN.md, EXAMPLES.md or README.md's
+  fences. The tests read the fences, the grammars, the desugaring rules and the rejection table
+  from the spec in place (`zed_tests::fences`, which lays out each fence with
+  `zed_tools::fence_layers`), and zedc-syntax's `build.rs` reads the syntactic grammar and the
+  documentation notation into its build directory (`crates/zedc-syntax/spec_grammar.rs`).
+  zed-native's `build.rs` adds that grammar to the hash of its sources. Any edit of DESIGN.md
+  reruns the two build scripts, and so rebuilds zedc-syntax and every crate above it. The
+  `sync` tool and the copies under `zed/fences/` and `zed/grammar/` are removed. CI cannot
+  build the compiler without the spec, so `ZED_SPEC_DIR=none` no longer runs anything.
+- Spec location for tests and the build (TEST-spec-path): `zed_tests::spec::dir` and
+  zedc-syntax's build script find the spec as the directory `$ZED_SPEC_DIR` if set, otherwise the
   first `zed/DESIGN.md` beside an ancestor of the checkout, so `/home/luke/Work/zed` is found
   from the main checkout and from every worktree under `/home/luke/Work/wt/`. Where neither
-  finds it the test fails, naming the paths tried; none passes without reading the spec. The
-  one exception is `ZED_SPEC_DIR=none`, which `.github/workflows/ci.yml` sets for the rule
-  above; the test then prints that it did not check. To test against a spec branch in a
-  worktree, set `ZED_SPEC_DIR=/home/luke/Work/wt/<name>-spec`.
+  finds it the build or the test fails, naming the paths tried and `ZED_SPEC_DIR`. To test
+  against a spec branch in a worktree, set `ZED_SPEC_DIR=/home/luke/Work/wt/<name>-spec`.
 - No Python (the author's instruction, 2026-10-31): the repositories hold Rust and Zed only, plus
   `tools/dagview` in TypeScript. The tools are the
   binaries of the crate `crates/zed-tools`, each taking the spec directory as its first
   argument, run as `cargo run -q -p zed-tools --bin TOOL -- ../zed ...`: `check`, `cases`,
-  `fences`, `fuzz`, `layer`, `ring`, `audit`, `sync`, `progress`, `cite`, which checks the
+  `fences`, `fuzz`, `layer`, `ring`, `audit`, `progress`, `cite`, which checks the
   spec's `sec:` labels and step ids cited in DESIGN.md and here, and `plan`, which checks
   `docs/plan_dag.md` and takes no spec directory (`plan --fix` first rewrites its level column
   and the counts of its first paragraph from the needs). They share the grammar rules
@@ -1321,9 +1323,8 @@ LR4 added 27 tests (`lr4_assoc.rs` in `l01_08_parser`) and 23 bracketing cases t
   names, as the compiler reads them (NAME-ascii-only). A duplicate rule across the syntax and
   documentation grammars is an error, `audit` passes on the exit status of `layer`, a crash
   exits 1, `check` reads fences from its spec argument, and `fuzz` computes depths by Knuth's
-  generalization of Dijkstra's algorithm. `sync` copies `lexical.peg` and `desugar.txt`, and not
-  `cases.txt` or `leftrec.txt`. A spec with fewer than three `peg` fences is refused by every
-  tool. A failure is a one-line message, not a stack trace.
+  generalization of Dijkstra's algorithm. A spec with fewer than three `peg` fences is
+  refused by every tool. A failure is a one-line message, not a stack trace.
 - The references: on a cycle, 15 and 27 give an error. The second rewrite (04, 07, 15, 27, 31
   and 02, 05, 16) agrees with the first on 13800 random and mutated inputs and 1800 well-formed
   typechecker inputs.

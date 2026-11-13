@@ -36,14 +36,14 @@ pub(super) fn marks_by_key(fences: &[DocFence]) -> String {
     out.join("\n")
 }
 
+/// Every fence of DESIGN.md and EXAMPLES.md lexes. The tokens are not kept as an expected
+/// output: that would copy the spec's fences into this repository.
 #[test]
-fn every_design_fence_lexes() {
-    insta::assert_snapshot!(tokens_by_key(&fences::of("design.md")));
-}
-
-#[test]
-fn every_examples_fence_lexes() {
-    insta::assert_snapshot!(tokens_by_key(&fences::of("examples.md")));
+fn every_fence_lexes() {
+    let all = fences::all();
+    assert!(!all.is_empty());
+    let tokens = tokens_by_key(&all);
+    assert_eq!(tokens.matches("\n== ").count() + 1, all.len());
 }
 
 #[test]
@@ -142,28 +142,26 @@ fn ellipsis_is_an_elision_only_in_a_fence() {
     assert!(lex("f(x) = …;").is_err());
 }
 
-/// The copies equal the spec's fences (the spec repository as `zed_tests::spec` finds it; CI
-/// does not read it). Layers are not compared: `sync --check` recomputes them with the
-/// spec's tools.
+/// The fences read from the spec are those the compiler's fence extractor finds in it: the same
+/// lines and texts.
 #[test]
-fn the_copies_match_the_spec() {
-    let Some(spec) = zed_tests::spec::dir("the drift of zed/fences") else {
-        return;
-    };
-    for (doc, copy) in [("DESIGN.md", "design.md"), ("EXAMPLES.md", "examples.md")] {
-        let path = spec.join(doc);
-        let md =
-            std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-        let theirs: Vec<(String, String)> = fence::extract(&md)
-            .into_iter()
-            .map(|f| (format!("{doc}:{}", f.line), f.text))
-            .collect();
-        let ours: Vec<(String, String)> = fences::of(copy)
-            .into_iter()
-            .map(|f| (f.at, f.text))
-            .collect();
-        assert!(ours == theirs, "{copy} is out of date: run the sync tool");
+fn the_fences_are_those_the_extractor_finds() {
+    let spec = &fences::spec().root;
+    let mut theirs = Vec::new();
+    for doc in ["DESIGN.md", "EXAMPLES.md"] {
+        let path = format!("{spec}/{doc}");
+        let md = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
+        theirs.extend(
+            fence::extract(&md)
+                .into_iter()
+                .map(|f| (format!("{doc}:{}", f.line), f.text)),
+        );
     }
+    let ours: Vec<(String, String)> = fences::all().into_iter().map(|f| (f.at, f.text)).collect();
+    assert!(
+        ours == theirs,
+        "the two readers of the spec's fences disagree"
+    );
 }
 
 /// Each fixture is its fence with the one commented ✗ line made live, and no other difference

@@ -31,7 +31,7 @@ crates/               the Rust-hosted toolchain, kept permanently as the bootstr
                       whose source is in zedc/src/main.rs, is a target of this crate
   zed-cert/           the independent certificate checker; depends on zed-kernel only
   zed-alloc-count/    the counting allocator the test binaries use to measure bytes allocated
-  zed-tools/          the commands: check, cases, fences, fuzz, layer, ring, audit, sync,
+  zed-tools/          the commands: check, cases, fences, fuzz, layer, ring, audit,
                       progress, catalog; each takes the spec directory, and shares `zedc::parse`;
                       conflicts writes the conflict lists of docs/plan_dag.md
 zed/                  Zed source code
@@ -42,10 +42,10 @@ zed/                  Zed source code
                       LEDGER.md
   compiler/           the compiler written in Zed (row S); for now ZED0.md and CATALOG.md, the
                       routines the Rust calls (row PORT-catalog)
-  grammar/            the syntactic grammar of sec:grammar and its bracketing cases (step
-                      L1.8), written by the sync tool
-  fences/             the spec's `zed` fences (step L1.7): design.md and examples.md, written
-                      by the sync tool, and variants/, one fixture per commented ✗ variant
+  grammar/            the bracketing cases of the grammar of sec:grammar (step L1.8) and the
+                      left-recursion cases; the grammar itself is read from the spec
+  fences/             fixtures of the spec's `zed` fences (step L1.7): variants/, one per
+                      commented ✗ variant, and predictions/
 tests/                the step tests (the `zed-tests` crate)
   Cargo.toml          one test target per step folder, written by the step_targets tool
   src/                helpers shared by every step; step_helpers/, those that the tests of
@@ -142,8 +142,8 @@ A step folder holds:
 Each step folder is a test binary of its own, named after the folder, with the folder's
 `mod.rs` as its crate root, so a change to one folder's tests recompiles and links that binary
 alone. To run one step: `cargo test -p zed-tests --test l01_07_fences`. Within the binary a
-test's name is its path below the folder: `copies::the_copies_match_the_spec`, not
-`l01_07_fences::copies::the_copies_match_the_spec`. The targets are listed in
+test's name is its path below the folder: `doc_fences::every_fence_lexes`, not
+`l01_07_fences::doc_fences::every_fence_lexes`. The targets are listed in
 `tests/Cargo.toml` between the lines `# BEGIN step targets` and `# END step targets`, which
 `cargo run -p zed-tools --bin step_targets` writes from the folders; run it after adding,
 renaming or removing a folder, and after a rebase that does. Code that the tests of more than
@@ -154,11 +154,14 @@ tests of zed-native, named in `crates/zed-native/Cargo.toml`, since only a test 
 can name the executable.
 
 **The design document's fences.** From step L1.7 on, every `zed` fence of DESIGN.md and
-EXAMPLES.md is a test. The extractor copies them into checked-in fixture files under
-`tests/steps/l01_07_fences/`, so that CI needs only this repository. A separate check fails
-when the copies no longer match the spec. It finds the spec repository through `$ZED_SPEC_DIR` or as the `zed` checkout
-beside an ancestor of this one (`tests/src/spec.rs`), fails where it finds none, and is
-skipped only under `ZED_SPEC_DIR=none`, which CI sets.
+EXAMPLES.md is a test. This repository is public and the spec repository is not, so no copy
+or extract of the spec is kept here: the tests read the fences, the grammars, the desugaring
+rules and the rejection table from the spec in place (`zed_tests::fences`,
+`zed_tools::fence_layers`), and the build script of `zedc-syntax` reads the grammar the
+compiler embeds into its build directory. Both find the spec repository through
+`$ZED_SPEC_DIR` or as the `zed` checkout beside an ancestor of this one (`tests/src/spec.rs`,
+`crates/zedc-syntax/spec_grammar.rs`), and fail, naming `ZED_SPEC_DIR`, where they find none.
+So the compiler builds only beside the spec.
 
 **Tests written in Zed.** Until the `test { }` runner lands (step L1.21), every step test is
 written in Rust, with the Zed source given as strings or fixture files. From then on, tests of
