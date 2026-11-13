@@ -531,6 +531,21 @@ fn function<'a>(func: &'a Function, out: &mut Vec<Show<'a>>) {
         }
         out.push(Text(")"));
     }
+    // Each table's clause: the rows it gives to, then each port and its value.
+    for g in &func.given {
+        out.push(Show::Owned(format!(
+            " (with (rows {} {})",
+            g.rows.start, g.rows.end
+        )));
+        for p in &g.ports {
+            out.extend([
+                Show::Owned(format!(" ({} ", p.port)),
+                Show::Expr(&p.value),
+                Text(")"),
+            ]);
+        }
+        out.push(Text(")"));
+    }
     out.push(Text(")"));
 }
 

@@ -615,6 +615,55 @@ pub struct Function {
     pub body: Expr,
     /// The cases of its `test` tables, `input -> expected`, in written order.
     pub tests: Vec<(Expr, Expr)>,
+    /// The tables of `tests` written with a clause `test with p = e, … { rows }` (DESIGN.md
+    /// sec:ports, "A test table gives a port its values"), in written order. A row outside
+    /// every one of them gives no port.
+    pub given: Vec<TestPorts>,
+}
+
+/// A table's clause `with p = e, …`: the ports it gives and the rows it gives them to.
+#[derive(Debug)]
+pub struct TestPorts {
+    /// The indices in [`Function::tests`] of the table's rows.
+    pub rows: std::ops::Range<usize>,
+    /// The ports, in written order.
+    pub ports: Vec<PortValue>,
+}
+
+/// `p = e` in a table's clause.
+#[derive(Debug)]
+pub struct PortValue {
+    /// The port.
+    pub port: PortName,
+    /// Its value while a row runs.
+    pub value: Expr,
+}
+
+/// The port a table's clause gives.
+#[derive(Debug)]
+pub enum PortName {
+    /// `main::f`: a field of `main`'s argument, by its name `f`.
+    Main(String, Span),
+    /// A name: a top-level port or a port constructor of the prelude.
+    Name(String, Span),
+}
+
+impl PortName {
+    /// Its text.
+    pub fn span(&self) -> Span {
+        match self {
+            PortName::Main(_, s) | PortName::Name(_, s) => *s,
+        }
+    }
+}
+
+impl fmt::Display for PortName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PortName::Main(n, _) => write!(f, "main::{n}"),
+            PortName::Name(n, _) => f.write_str(n),
+        }
+    }
 }
 
 /// The header of `main` as written, `main(m: MainArgs) -> int` (DESIGN.md sec:ports).

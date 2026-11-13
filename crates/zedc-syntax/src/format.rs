@@ -1132,11 +1132,36 @@ impl<'a> Formatter<'a> {
                 },
             ]);
         }
-        if !f.tests.is_empty() {
+        // The rows outside every clause are written as one table, as they always were, and
+        // each table with a clause `with p = e, …` as its own, in the order of their rows.
+        let mut at = 0;
+        let mut tables = Vec::new();
+        for g in &f.given {
+            if at < g.rows.start {
+                tables.push((at..g.rows.start, None));
+            }
+            tables.push((g.rows.clone(), Some(&g.ports)));
+            at = g.rows.end;
+        }
+        if at < f.tests.len() {
+            tables.push((at..f.tests.len(), None));
+        }
+        for (rows, ports) in tables {
+            jobs.push(put(format!("\n{}test ", indent(ind + 1))));
+            if let Some(ports) = ports {
+                jobs.push(put("with "));
+                for (k, p) in ports.iter().enumerate() {
+                    if k > 0 {
+                        jobs.push(put(", "));
+                    }
+                    jobs.extend([put(format!("{} = ", p.port)), value(&p.value)]);
+                }
+                jobs.push(put(" "));
+            }
             jobs.extend([
-                put(format!("\n{}test {{ ", indent(ind + 1))),
+                put("{ "),
                 Job::Cases {
-                    cases: &f.tests,
+                    cases: &f.tests[rows],
                     ind,
                 },
                 put(" }"),

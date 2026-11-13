@@ -70,7 +70,11 @@ pub(crate) fn wave(
     let mut stdin: Arc<[u8]> = Arc::from(&b""[..]);
     let mut args = Vec::new();
     let mut lookups: HashMap<&str, Arc<dyn Lookup>> = HashMap::new();
-    for (f, arg) in MAIN_KEY.iter().zip(&t.args) {
+    // The table's clause `test with main::f = e, …` gives its inputs after the key's, which
+    // gives none of them (`zedc_elab`'s `test_case`).
+    let (keyed, given) = t.args.split_at(t.args.len() - t.ports.len());
+    let fields = MAIN_KEY.iter().zip(keyed).chain(t.ports.iter().zip(given));
+    for (f, arg) in fields {
         match *f {
             "stdin" => match value(cones, swap, arg, map)? {
                 Value::Str(s) => stdin = Arc::from(s.flat().as_bytes()),

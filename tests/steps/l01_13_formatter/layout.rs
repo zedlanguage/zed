@@ -62,6 +62,24 @@ fn test_tables_join_into_one_line_under_the_function() {
 }
 
 #[test]
+fn a_table_with_a_clause_keeps_its_own_line() {
+    // The rows of a clause are a table of their own: the plain tables on each side of it join,
+    // and it stays where it stands. A lambda given as a value loses its parentheses, and the
+    // brace after it still opens the rows.
+    check(
+        "main(m:MainArgs){m.stdout<-\"a\";}\ntest{\"\"->\"a\\n\"} test with main::files=(p->\"1\"),\
+         main::args=\"x\"{\"\"->\"a\\n\",\"b\"->\"a\\n\"} test{\"c\"->\"a\\n\"} test{\"d\"->\"a\\n\"}\n",
+        "main(m: MainArgs) {\n  m.stdout <- \"a\";\n}\n  test { \"\" -> \"a\\n\" }\n  \
+         test with main::files = p -> \"1\", main::args = \"x\" { \"\" -> \"a\\n\", \"b\" -> \"a\\n\" }\n  \
+         test { \"c\" -> \"a\\n\", \"d\" -> \"a\\n\" }\n",
+    );
+    let once = fmt(
+        "main(m:MainArgs){m.stdout<-\"a\";}\ntest with main::files=(p->\"1\"){\"\"->\"a\\n\"}\n",
+    );
+    assert_eq!(fmt(&once), once);
+}
+
+#[test]
 fn lambdas_calls_and_else_are_written_short() {
     check(
         "f(xs)=map(xs,(x)->x+1);\ng(a)=h(a:a,b:2,...);\nd(p)=p else #none->0;\n",

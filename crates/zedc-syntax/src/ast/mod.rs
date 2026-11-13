@@ -44,8 +44,8 @@ use zedc_base::rejection::Row;
 pub use node::{
     Annot, Arm, BinaryOp, BoundaryItem, CARRY_FORWARD, Error, Every, Expr, ExprKind, Field,
     Function, Import, ImportKind, IndexKey, IndexedDef, Initial, MainHeader, Method, Note, Param,
-    Pattern, Port, RangeEnd, Stmt, StmtKind, StrPart, Struct, Target, Type, TypeBound, TypeDecl,
-    TypeKind, TypeParam, UnaryOp, Update,
+    Pattern, Port, PortName, PortValue, RangeEnd, Stmt, StmtKind, StrPart, Struct, Target,
+    TestPorts, Type, TypeBound, TypeDecl, TypeKind, TypeParam, UnaryOp, Update,
 };
 
 use crate::lex::{Part, Span, Tok, Token};

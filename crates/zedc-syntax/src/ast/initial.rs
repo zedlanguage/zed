@@ -360,6 +360,7 @@ fn stmt_kids<'e>(
             for (a, b) in &f.tests {
                 exprs.extend([a, b]);
             }
+            exprs.extend(f.given.iter().flat_map(|t| &t.ports).map(|p| &p.value));
         }
         StmtKind::Method(m) => {
             for p in &m.function.params {

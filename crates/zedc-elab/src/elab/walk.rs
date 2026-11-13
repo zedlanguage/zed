@@ -22,8 +22,8 @@ use zedc_resolve::resolve::topo::topo;
 use zedc_resolve::resolve::{Ref, prelude_layer};
 use zedc_stage::defs::Test;
 use zedc_syntax::ast::{
-    BinaryOp, Error, Expr, ExprKind, Function, Note, Pattern, Stmt, StmtKind, StrPart, Target,
-    UnaryOp,
+    BinaryOp, Error, Expr, ExprKind, Function, Note, Pattern, PortName, Stmt, StmtKind, StrPart,
+    Target, TestPorts, UnaryOp,
 };
 use zedc_syntax::lex::{Span, unread_literal};
 
@@ -229,7 +229,37 @@ struct TestsF<'a> {
     id: usize,
     /// The case being elaborated.
     i: usize,
+    /// The first of `f.given` whose rows do not end before the case: the clause that gives
+    /// the case its ports, if its rows hold the case.
+    g: usize,
     ok: bool,
+}
+
+impl<'a> TestsF<'a> {
+    /// The clause `test with p = e, …` of the table that holds the case, if it has one.
+    // Complexity tradeoff: a search of `f.given` for each case costs O(cases · tables); the
+    // cases come in written order, and so do the clauses, so `g` only moves forward, O(cases +
+    // tables) over the function.
+    fn clause(&mut self) -> Option<&'a TestPorts> {
+        let given = &self.f.given;
+        while given.get(self.g).is_some_and(|g| g.rows.end <= self.i) {
+            self.g += 1;
+        }
+        given.get(self.g).filter(|g| g.rows.contains(&self.i))
+    }
+}
+
+/// The field of [`MAIN_KEY`] a port of a clause on `main`'s table gives: `main::files` gives
+/// `files()`, and `main::stdin`, `main::args` and `main::env` their own names. The builder
+/// accepts no other port on `main`'s table, and the resolver no name.
+fn main_field(port: &PortName) -> Option<&'static str> {
+    match port {
+        PortName::Main(f, _) => MAIN_KEY
+            .iter()
+            .copied()
+            .find(|k| k.strip_suffix("()").unwrap_or(k) == f),
+        PortName::Name(..) => None,
+    }
 }
 
 /// The arguments of a call.
@@ -514,6 +544,7 @@ impl<'a> Elab<'a> {
             f,
             id,
             i: 0,
+            g: 0,
             ok: true,
         };
         self.test_case(m, Box::new(tf));
@@ -561,6 +592,35 @@ impl<'a> Elab<'a> {
                     continue;
                 }
             };
+            // A row of `main` takes the inputs its table's clause gives after those of its key
+            // (DESIGN.md sec:ports, "A test table gives a port its values"), and an input both
+            // give is given twice.
+            let mut args = args;
+            if f.main.is_some()
+                && let Some(clause) = tf.clause()
+            {
+                let keyed = &MAIN_KEY[..args.len()];
+                let twice = (clause.ports.iter())
+                    .find(|p| main_field(&p.port).is_some_and(|k| keyed.contains(&k)));
+                if let Some(p) = twice {
+                    tf.ok = false;
+                    self.error::<()>(
+                        input.span,
+                        format!(
+                            "this row's key gives `{}`, and so does its table's `test with`; \
+                             give it once, in the key or in the clause",
+                            p.port
+                        ),
+                    );
+                    tf.i += 1;
+                    continue;
+                }
+                let given = clause
+                    .ports
+                    .iter()
+                    .filter(|p| main_field(&p.port).is_some());
+                args.extend(given.map(|p| &p.value));
+            }
             m.k(Frame::TestArgs(tf));
             m.seq(args, true);
             return;
@@ -1658,12 +1718,23 @@ impl<'a> Elab<'a> {
                         };
                         let kernel = self.names[tf.id].clone();
                         let callee = Shared::new(Term::Var(kernel.clone()));
-                        let call = self.row_call(tf.f, input, callee, args.clone());
+                        // The ports a clause gives `main`'s row, by field; their values end
+                        // `args`, and the call takes the key's alone.
+                        let ports: Vec<&'static str> = match tf.f.main {
+                            Some(_) => (tf.clause().into_iter())
+                                .flat_map(|c| &c.ports)
+                                .filter_map(|p| main_field(&p.port))
+                                .collect(),
+                            None => Vec::new(),
+                        };
+                        let keyed = args[..args.len() - ports.len()].to_vec();
+                        let call = self.row_call(tf.f, input, callee, keyed);
                         self.tests.push(Test {
                             function: tf.f.name.clone(),
                             kernel,
                             check: Term::Prim(Prim::Eq, vec![call, want.clone()]),
                             args,
+                            ports,
                             want,
                             span: case,
                         });

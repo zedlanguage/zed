@@ -12,8 +12,8 @@ use std::collections::{HashMap, HashSet};
 use super::builder::{Builder, Built, MAIN_INPUTS, MAIN_OUTPUTS};
 use super::{
     Annot, BoundaryItem, Error, Expr, ExprKind, Field, Function, Import, ImportKind, IndexKey,
-    IndexedDef, Initial, MainHeader, Method, Note, Param, Port, Stmt, StmtKind, Struct, Type,
-    TypeDecl, TypeKind, TypeParam,
+    IndexedDef, Initial, MainHeader, Method, Note, Param, Port, PortName, PortValue, Stmt,
+    StmtKind, Struct, TestPorts, Type, TypeDecl, TypeKind, TypeParam,
 };
 use crate::lex::{Part, Span, Tok};
 use zedc_base::address::ContentAddress;
@@ -506,13 +506,25 @@ impl Builder<'_, '_> {
             self.body(first)?
         };
         let mut tests = Vec::new();
+        let mut given = Vec::new();
         for &t in trailers {
             if self.tree.name(t) != "TestTable" {
                 return Err(self.later(t));
             }
-            for &c in self.kids(t) {
+            let (ports, rows) = match self.kids(t).split_first() {
+                Some((&p, rows)) if self.tree.name(p) == "TestPorts" => (Some(p), rows),
+                _ => (None, self.kids(t)),
+            };
+            let first = tests.len();
+            for &c in rows {
                 let ck = self.kids(c);
                 tests.push((self.node(ck[0])?, self.node(ck[1])?));
+            }
+            if let Some(p) = ports {
+                given.push(TestPorts {
+                    rows: first..tests.len(),
+                    ports: self.test_ports(p, is_main)?,
+                });
             }
         }
         Ok(Function {
@@ -522,7 +534,82 @@ impl Builder<'_, '_> {
             equation,
             body,
             tests,
+            given,
         })
+    }
+
+    /// The ports of the `TestPorts` node `p`, `with p = e, …`, on a table of `main` when
+    /// `is_main` (DESIGN.md sec:ports, "A test table gives a port its values"). A field of
+    /// `main` is checked here: on `main`'s table, `main::stdin`, `main::args`, `main::env` and
+    /// `main::files` are the inputs a row's key gives, and any other field is rejected; the
+    /// outputs and a field given to another function's table are not compiled yet, since this
+    /// zedc compares the outputs by a row's value and lets no other function read `main`'s
+    /// ports (plan row MAIN-files). A name is left to the resolver, which knows what the unit
+    /// defines. A port given twice in one clause is rejected.
+    fn test_ports(&mut self, p: usize, is_main: bool) -> Result<Vec<PortValue>, Error> {
+        let mut out: Vec<PortValue> = Vec::new();
+        // Complexity tradeoff: a search of the ports before each one costs O(ports²) per
+        // clause; a map from each port given to its text costs O(1) per port.
+        let mut seen: HashMap<String, Span> = HashMap::new();
+        for &pv in self.kids(p) {
+            let (name, value) = (self.kids(pv)[0], self.kids(pv)[1]);
+            let node = &self.tree.nodes[name];
+            let span = self.span(name);
+            let port = match node.end - node.start {
+                1 => PortName::Name(self.word(node.start).to_string(), span),
+                _ => {
+                    let field = self.word(node.end - 1).to_string();
+                    match field.as_str() {
+                        _ if !is_main => {
+                            return Err(self.later_as(
+                                name,
+                                "in the table of a function other than `main`, a test clause \
+                                 giving",
+                            ));
+                        }
+                        "stdin" | "args" | "env" | "files" => PortName::Main(field, span),
+                        "stdout" | "stderr" => {
+                            return Err(self.later_as(name, "a test clause giving"));
+                        }
+                        _ => {
+                            let repair = |f: &str| Note {
+                                span,
+                                text: format!("repair: `main::{f} = …`"),
+                            };
+                            return Err(Error {
+                                row: None,
+                                menu: String::new(),
+                                span,
+                                message: format!(
+                                    "`main::{field}` in `test with` is not a port of `main`"
+                                ),
+                                notes: ["stdin", "args", "env", "files"].map(repair).to_vec(),
+                            });
+                        }
+                    }
+                }
+            };
+            if let Some(&twice) = seen.get(&port.to_string()) {
+                return Err(Error {
+                    row: None,
+                    menu: String::new(),
+                    span,
+                    message: format!("`{port}` is given twice in this `test with`"),
+                    notes: vec![Note {
+                        span: twice,
+                        text: format!(
+                            "`{port}` is first given here; repair: remove one of the two"
+                        ),
+                    }],
+                });
+            }
+            seen.insert(port.to_string(), span);
+            out.push(PortValue {
+                port,
+                value: self.node(value)?,
+            });
+        }
+        Ok(out)
     }
 
     /// The parameters and ports the rest of the compiler runs `main` with, from its written

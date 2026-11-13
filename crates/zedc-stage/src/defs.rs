@@ -32,8 +32,12 @@ pub struct Test {
     pub kernel: Arc<str>,
     /// The bool term that checks the case, over the unit's definitions.
     pub check: Term,
-    /// The arguments the key gives, in declaration order.
+    /// The arguments the key gives, in declaration order; for a row of `main`, the inputs its
+    /// key gives, then the values its table's clause `test with p = e, …` gives, by `ports`.
     pub args: Vec<Term>,
+    /// For a row of `main`, the field of `MainArgs` each of the last `ports.len()` of `args`
+    /// gives, written as `zedc_elab::MAIN_KEY` writes it; empty for any other row.
+    pub ports: Vec<&'static str>,
     /// The expected value.
     pub want: Term,
     /// The case's text.

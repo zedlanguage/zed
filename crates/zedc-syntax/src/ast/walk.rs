@@ -153,6 +153,7 @@ fn leaf_kids<'a>(kind: &'a mut StmtKind, out: &mut Vec<&'a mut Expr>) {
                 params,
                 body,
                 tests,
+                given,
                 ..
             } = f;
             param_kids(params, out);
@@ -160,6 +161,12 @@ fn leaf_kids<'a>(kind: &'a mut StmtKind, out: &mut Vec<&'a mut Expr>) {
             for (a, b) in tests {
                 out.extend([a, b]);
             }
+            out.extend(
+                given
+                    .iter_mut()
+                    .flat_map(|t| &mut t.ports)
+                    .map(|p| &mut p.value),
+            );
         }
         StmtKind::Struct(Struct { fields, .. }) => {
             out.extend(fields.iter_mut().filter_map(|f| match f {

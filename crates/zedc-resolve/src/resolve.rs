@@ -35,8 +35,8 @@ use imbl::Vector;
 use zedc_base::address::ContentAddress;
 use zedc_base::rejection::{Row, not_yet};
 use zedc_syntax::ast::{
-    Annot, Arm, Error, Expr, ExprKind, Field, Import, ImportKind, Param, Pattern, Port, RangeEnd,
-    Stmt, StmtKind, StrPart, Struct, Target, TypeDecl,
+    Annot, Arm, Error, Expr, ExprKind, Field, Function, Import, ImportKind, Param, Pattern, Port,
+    PortName, RangeEnd, Stmt, StmtKind, StrPart, Struct, Target, TypeDecl,
 };
 use zedc_syntax::ast::{BinaryOp, Every, Note, Type, TypeBound, TypeKind};
 use zedc_syntax::lex::Span;
@@ -1866,6 +1866,7 @@ impl Resolver<'_> {
                     todo.push(Task::Expr(b));
                     todo.push(Task::Expr(a));
                 }
+                self.test_ports(f, todo);
                 todo.extend(ports.iter().rev().map(|p| Task::Ty(&p.ty)));
             }
             StmtKind::Struct(st) => {
@@ -1891,6 +1892,7 @@ impl Resolver<'_> {
                     todo.push(Task::Expr(b));
                     todo.push(Task::Expr(a));
                 }
+                self.test_ports(f, todo);
                 todo.extend(ports.iter().rev().map(|p| Task::Ty(&p.ty)));
                 todo.push(Task::TypeName(&m.receiver, s.span));
             }
@@ -2140,6 +2142,71 @@ impl Resolver<'_> {
                 }
                 _ => {}
             }
+        }
+    }
+
+    /// The ports the clauses `test with p = e, …` of `f`'s tables give (DESIGN.md sec:ports,
+    /// "A test table gives a port its values"), each value resolved as a row is. The builder
+    /// has checked each field of `main`; a name is checked here, since what the unit defines
+    /// decides it. This zedc declares no port at the top level (no store, no foreign library),
+    /// so a name the unit or the prelude binds is Zed code, which a test never replaces, and is
+    /// rejected, as a name that names nothing is; a port constructor of the prelude that the
+    /// unit does not bind is refused as not compiled yet, since this zedc has none of them.
+    /// The menu of a rejection is the ports `f` reaches: `main`'s inputs on `main`'s table,
+    /// and none on another function's, which no port reaches in this zedc.
+    fn test_ports<'a>(&mut self, f: &'a Function, todo: &mut Vec<Task<'a>>) {
+        const CONSTRUCTORS: [&str; 7] = [
+            "now",
+            "clock",
+            "connect",
+            "listen",
+            "spawn",
+            "run",
+            "randomBytes",
+        ];
+        for p in f.given.iter().rev().flat_map(|g| g.ports.iter().rev()) {
+            todo.push(Task::Expr(&p.value));
+            let PortName::Name(name, span) = &p.port else {
+                continue;
+            };
+            let found = self.find(name);
+            if found.is_none() && CONSTRUCTORS.contains(&name.as_str()) {
+                self.later(
+                    *span,
+                    &format!("a test clause giving the prelude port `{name}`"),
+                );
+                continue;
+            }
+            let mut notes = Vec::new();
+            if found.is_some() {
+                notes.push(Note {
+                    span: *span,
+                    text: format!(
+                        "`{name}` is a value the program computes, and a test gives a port its \
+                         value, never a value of Zed code"
+                    ),
+                });
+            }
+            match f.main {
+                Some(_) => notes.extend(["stdin", "args", "env", "files"].map(|m| Note {
+                    span: *span,
+                    text: format!("repair: `main::{m} = …`"),
+                })),
+                None => notes.push(Note {
+                    span: *span,
+                    text: format!(
+                        "`{}` reaches no port; repair: `test {{ … }}`, the table without `{name} = …`",
+                        f.name
+                    ),
+                }),
+            }
+            self.errors.push(Error {
+                row: None,
+                menu: String::new(),
+                span: *span,
+                message: format!("`{name}` in `test with` is not a port"),
+                notes,
+            });
         }
     }
 

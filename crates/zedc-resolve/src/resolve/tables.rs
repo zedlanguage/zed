@@ -9,7 +9,7 @@ use imbl::Vector;
 use crate::resolve::{Ref, Resolution};
 use zedc_base::rejection::Row;
 use zedc_syntax::ast::{
-    Expr, ExprKind, Function, Note, Param, Stmt, StmtKind, StrPart, Target, Type,
+    Expr, ExprKind, Function, Note, Param, Stmt, StmtKind, StrPart, Target, TestPorts, Type,
 };
 use zedc_syntax::lex::Span;
 
@@ -275,6 +275,11 @@ impl<'a> Tables<'a> {
                 for (a, b) in &f.tests {
                     todo.extend([Collect::Expr(a), Collect::Expr(b)]);
                 }
+                todo.extend(
+                    (f.given.iter())
+                        .flat_map(|g| &g.ports)
+                        .map(|p| Collect::Expr(&p.value)),
+                );
             }
             StmtKind::Bind { value, .. } | StmtKind::Push { value, .. } => {
                 todo.push(Collect::Expr(value))
@@ -441,8 +446,21 @@ fn in_tests(s: &Stmt, u: Span) -> bool {
         return false;
     };
     let k = f.tests.partition_point(|(a, _)| a.span.start <= u.start);
-    k.checked_sub(1)
+    if k.checked_sub(1)
         .is_some_and(|k| u.end <= f.tests[k].1.span.end)
+    {
+        return true;
+    }
+    // A clause's values, `with p = e, …`, stand before its table's rows, and the clauses are in
+    // written order, so the one that may hold `u` is found by the same search.
+    let clause = |g: &TestPorts| {
+        let first = g.ports.first().map_or(0, |p| p.value.span.start);
+        let last = g.ports.last().map_or(0, |p| p.value.span.end);
+        (first, last)
+    };
+    let k = f.given.partition_point(|g| clause(g).0 <= u.start);
+    k.checked_sub(1)
+        .is_some_and(|k| u.end <= clause(&f.given[k]).1)
 }
 
 /// Whether `u` lies in one of the sorted, disjoint spans `spans`.

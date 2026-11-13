@@ -154,3 +154,45 @@ fn the_rows_of_a_rejected_unit_fail_in_linear_time() {
         assert_eq!(not_run, m);
     });
 }
+
+/// `main` with `n` tables, each with a clause giving `main::files` and `rows` rows, every row
+/// reading the file its clause gives.
+fn clause_tables(n: usize, rows: usize) -> String {
+    let mut text =
+        String::from("main(m: MainArgs) {\n  m.stdout <- files()(\"a\") else \"\";\n}\n");
+    for i in 0..n {
+        let row = format!("\"\" -> \"{i}\\n\"");
+        let rows = vec![row; rows].join(", ");
+        text.push_str(&format!(
+            "test with main::files = (p -> \"{i}\") {{ {rows} }}\n"
+        ));
+    }
+    text
+}
+
+#[test]
+fn the_rows_of_tables_with_clauses_scale() {
+    // Rows × clauses: elaborating `n` tables of one row each finds each row's clause by a
+    // cursor that moves forward, and running `n` rows of one clause gives each row the clause's
+    // value once.
+    let n = 2000;
+    let units: BTreeMap<usize, Checked> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| (m, checked(&clause_tables(m, 1))))
+        .collect();
+    scaling::check("elaborating n tables with a clause each", n, |m| {
+        assert_eq!(units[&m].elab().tests.len(), m);
+    });
+    let n = 200;
+    let warm = warm(n, |m| clause_tables(1, m));
+    scaling::check("running n rows of a table with a clause", n, |m| {
+        let (text, db) = &warm[&m];
+        let got = test_in(&mut db.clone(), text);
+        assert_eq!(got.len(), m);
+        assert!(
+            got.iter().all(|o| o.failure.is_none()),
+            "{:?}",
+            got.iter().find_map(|o| o.failure.as_ref())
+        );
+    });
+}

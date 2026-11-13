@@ -196,6 +196,7 @@ fn function_kids(f: Function, out: &mut Vec<Expr>) {
         params,
         body,
         tests,
+        given,
         ..
     } = f;
     param_kids(params, out);
@@ -203,6 +204,7 @@ fn function_kids(f: Function, out: &mut Vec<Expr>) {
     for (a, b) in tests {
         out.extend([a, b]);
     }
+    out.extend(given.into_iter().flat_map(|t| t.ports).map(|p| p.value));
 }
 
 fn param_kids(params: Vec<Param>, out: &mut Vec<Expr>) {

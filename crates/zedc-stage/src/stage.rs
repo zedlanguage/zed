@@ -1640,7 +1640,9 @@ impl<'u> Specializer<'u> {
         }
         let mut cases: HashMap<(&'u str, usize), BTreeSet<Value>> = HashMap::new();
         for t in unit.tests.iter() {
-            for (i, x) in t.args.iter().enumerate() {
+            // A clause's values give `main` its inputs, not an argument of a parameter.
+            let written = &t.args[..t.args.len() - t.ports.len()];
+            for (i, x) in written.iter().enumerate() {
                 if let Term::Lit(v) = x {
                     let key = (t.function.as_str(), i);
                     cases.entry(key).or_default().insert(v.clone());

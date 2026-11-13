@@ -227,6 +227,9 @@ impl<'t, 'a> Walk<'t, 'a> {
                     self.root(a, Label::Other);
                     self.root(b, Label::Other);
                 }
+                for p in f.given.iter().flat_map(|g| &g.ports) {
+                    self.root(&p.value, Label::Other);
+                }
             }
             StmtKind::Expr(e) | StmtKind::While(e) | StmtKind::Until(e) => {
                 self.root(e, Label::Other);
