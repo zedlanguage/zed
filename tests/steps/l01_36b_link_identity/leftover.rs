@@ -62,7 +62,7 @@ const LOCK_DIR: &str = "ZED_TEST_LOCK_DIR";
 /// a lock this process held would last past its own release while any child forked in another
 /// test thread before the release has not yet reached exec, since the child holds a copy of
 /// every open file until then, and the lock belongs to the open file, not to the descriptor.
-/// The process is this test executable, running only the ignored test
+/// The process is this test executable, running only the test
 /// [`a_process_that_locks_a_directory_for_another_test`] with [`LOCK_DIR`] set to `at`; it
 /// takes the lock as a build does, says `held`, and keeps it until it is killed or its
 /// standard input ends, as it does when this process ends however it ends.
@@ -75,7 +75,6 @@ impl Elsewhere {
             .args([
                 "leftover::a_process_that_locks_a_directory_for_another_test",
                 "--exact",
-                "--ignored",
                 "--nocapture",
                 "--test-threads=1",
             ])
@@ -112,10 +111,10 @@ impl Drop for Elsewhere {
 
 /// Run only by [`Elsewhere::new`], in a process of its own, with [`LOCK_DIR`] set: locks that
 /// directory with the call a build locks its working directory with, says `held`, and keeps
-/// the lock until its standard input ends. Run any other way, it does nothing.
+/// the lock until its standard input ends. Run any other way, as in every run of the tests, it
+/// returns at once and checks nothing: it is a helper that [`Elsewhere::new`] starts, not a test,
+/// but it must be a test of this executable for that process to run it.
 #[test]
-#[ignore = "TEST-l01_36b-leftover: a helper, not a test; run only by Elsewhere::new, in a \
-            process of its own"]
 fn a_process_that_locks_a_directory_for_another_test() {
     use std::io::{Read as _, Write as _};
     let Some(at) = std::env::var_os(LOCK_DIR) else {

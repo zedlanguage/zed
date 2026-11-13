@@ -897,7 +897,6 @@ fn a_fix_reads_its_entries_by_key() {
 }
 
 /// A chain of `n` entries, each reading the one before by a key that holds `-0.0`.
-#[ignore = "M0-scaling-10_5: 10.5 times the work at 1000 and 8000, over the limit of 10.5; open"]
 #[test]
 fn reads_by_a_key_holding_negative_zero_scale() {
     let chain = |n: usize| {

@@ -14765,7 +14765,6 @@ mod tests {
     /// stage `i` in about `i` rounds of the whole formula (COMPLEXITY.md
     /// PREIMAGE-slow-rounds).
     #[test]
-    #[ignore = "PRES-settle-chain-rounds: 22.4 times the bytes at 4 and 32 stages, over the limit of 13; a bound learned at stage i settles in about i rounds of the whole formula; open"]
     fn a_staged_chain_under_false_is_read_in_time_near_its_length() {
         crate::scaling::check_order(
             "the preimage under false of a chain of k stages",

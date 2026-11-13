@@ -751,7 +751,6 @@ fn alias_chain(n: usize) -> (UnitUf, Vec<Atom>, Formula) {
 }
 
 #[test]
-#[ignore]
 fn pncx_alias_chain_axis() {
     let mut meter = scaling::Meter::new();
     for n in [256, 512, 1024, 2048] {

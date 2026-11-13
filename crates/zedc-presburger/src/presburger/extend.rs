@@ -6815,7 +6815,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn r5_frontier_measurement() {
         let mut meter = crate::scaling::Meter::new();
         for (name, depth, shared) in [
@@ -6871,7 +6870,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn r5_parabola_rests_measurement() {
         let mut meter = crate::scaling::Meter::new();
         let sizes: Vec<i64> = std::env::var("R5_PARABOLA_SIZES")
@@ -6927,7 +6925,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn r5_folding_chain_measurement() {
         let mut meter = crate::scaling::Meter::new();
         for n in [100u32, 800] {
@@ -6952,7 +6949,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn r5_shared_prefix_symbol_unions_measurement() {
         let mut meter = crate::scaling::Meter::new();
         for n in [100u32, 800] {
@@ -7232,7 +7228,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn r5_actual_wide_questions_measurement() {
         let mut meter = crate::scaling::Meter::new();
         for (name, depth, prefix) in [
@@ -7264,7 +7259,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn r5_actual_wide_questions_scale() {
         let inputs = crate::scaling::inputs(100, |n| r5_actual_frontier_defs(n as u32, 4, 0));
         crate::scaling::check_order(
@@ -7502,7 +7496,6 @@ mod tests {
         (sums, defs, ends)
     }
     #[test]
-    #[ignore]
     fn r5_second_adversaries_measurement() {
         let mut meter = crate::scaling::Meter::new();
         for n in [100, 800] {
@@ -7966,7 +7959,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn independent_twin_unions_measurement() {
         let mut meter = crate::scaling::Meter::new();
         let sizes: Vec<usize> = std::env::var("LMD_SIZES")
@@ -8075,7 +8067,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn functional_key_buckets_measurement() {
         let mut meter = crate::scaling::Meter::new();
         for n in [100usize, 800] {
@@ -8159,7 +8150,6 @@ mod tests {
         eprintln!("in-place bounded-row comparisons={checked}");
     }
     #[test]
-    #[ignore]
     fn bounded_row_totals_measurement() {
         let mut meter = crate::scaling::Meter::new();
         for n in [100, 800] {

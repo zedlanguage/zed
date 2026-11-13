@@ -16,6 +16,12 @@ name = "crossover"
 path = "src/bin/crossover.rs"
 test = false
 
+# Hand-run checks too long for a run of the tests, each with the reason in its file.
+[[bin]]
+name = "every_f32"
+path = "src/bin/every_f32.rs"
+test = false
+
 [dependencies]
 # The meter of the scaling tests: instructions where the hardware counts them, and bytes.
 zed-tests = { path = "../tests" }

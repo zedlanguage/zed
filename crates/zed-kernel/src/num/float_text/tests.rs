@@ -265,40 +265,8 @@ fn shortest_texts_of_sampled_floats_read_back() {
     f32_bits_read_back(0x7f00_0000..0x7f80_0000);
 }
 
-/// The `f32` patterns from `part * 2^29` to the next part, split across every core. The eight
-/// parts cover all 2^32 (half are negative), each in under a minute on 32 cores.
-fn every_float_of_part(part: u64) {
-    let (start, end) = (part << 29, (part + 1) << 29);
-    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()) as u64;
-    let step = (end - start).div_ceil(threads);
-    std::thread::scope(|s| {
-        for i in 0..threads {
-            let (from, to) = (start + i * step, (start + (i + 1) * step).min(end));
-            s.spawn(move || f32_bits_read_back((from..to).map(|b| b as u32)));
-        }
-    });
-}
-
-macro_rules! every_float {
-    ($($name:ident = $part:expr;)*) => {$(
-        #[test]
-        #[ignore = "long: an eighth of every f32"]
-        fn $name() {
-            every_float_of_part($part);
-        }
-    )*};
-}
-
-every_float! {
-    every_float_read_back_0 = 0;
-    every_float_read_back_1 = 1;
-    every_float_read_back_2 = 2;
-    every_float_read_back_3 = 3;
-    every_float_read_back_4 = 4;
-    every_float_read_back_5 = 5;
-    every_float_read_back_6 = 6;
-    every_float_read_back_7 = 7;
-}
+// Every one of the 2^32 patterns is read back by the binary `every_f32` of zed-benches, run by
+// hand: about 70 minutes of processor time, past what a run of the tests may spend on one check.
 
 #[test]
 fn random_texts_of_up_to_800_digits() {
