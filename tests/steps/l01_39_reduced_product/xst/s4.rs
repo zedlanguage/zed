@@ -1032,7 +1032,6 @@ fn c26_given_at_once_narrows_in_near_linear_time() {
 /// (9.7) but gave the less precise answers of the forward order, so it was not kept. The
 /// answers in this order are checked by [`unbounded_family`].
 #[test]
-#[ignore = "ST-churn-at-once: base churn given at once is 11.1 at 8n by bytes at n = 16; open"]
 fn churn_given_at_once_narrows_in_near_linear_time() {
     let inputs = scaling::inputs(16, |k| c26(k, true));
     scaling::check_order("base churn, AtOnce, k tests", 16, 1, |m| {
@@ -1117,7 +1116,6 @@ fn a_case_a_class_empties_is_dropped() {
 /// the case it empties, as in the other orders. On main (cf505f0b6) it keeps `y` in `0..=20`
 /// too, with no warning: sound, but not the answer of the other orders.
 #[test]
-#[ignore = "ST-class-case-reverse: a class given after a disjunction does not drop the case it empties, y keeps 0..=20 as well as -20..=-5, with no warning; open"]
 fn a_case_a_class_empties_is_dropped_when_the_class_comes_last() {
     class_case_is_exact(How::Backward);
 }
