@@ -545,7 +545,7 @@ fn is_atom(v: Term, name: &str) -> Term {
 
 /// `e else #name -> d` when `name` is given, `e else d` when not: `d` in place of the atom
 /// `#name` with any payload or none, or in place of any atom, and `e` itself otherwise.
-fn or_else(e: Term, name: Option<&str>, d: Term) -> Term {
+pub(super) fn or_else(e: Term, name: Option<&str>, d: Term) -> Term {
     let arm = match name {
         Some(n) => Pattern::Is(Type::union_all([
             Type::atom(n),
@@ -869,77 +869,107 @@ fn law_19_contraction_needs_distribution_and_a_commutative_sum() {
     });
 }
 
+/// The two sides of law 19's star-join clause in the semiring `(sum, times)`: the
+/// `sum`-fold over all `(j, k, l)` of `a[i][j] ⊗ b[j][k] ⊗ c[j][l]`, and the `sum`-fold over
+/// `j` of `a[i][j] ⊗ (sum of b[j]) ⊗ (sum of c[j])`. A `j` where an arm is empty drops out of
+/// both sides.
+fn star_sides(t: &[Vec<(i64, i64, Value)>; 3], sum: &Term, times: &Term) -> (Term, Term) {
+    let [a, b, c] = t.clone().map(|m| matrix(&m));
+    let product =
+        |x: Term, y: Term, z: Term| app(times.clone(), vec![app(times.clone(), vec![x, y]), z]);
+    let cell = |i: Term, j: Term, k: Term, l: Term| {
+        if_(
+            and(
+                and(
+                    present(&a, i.clone(), j.clone()),
+                    present(&b, j.clone(), k.clone()),
+                ),
+                present(&c, j.clone(), l.clone()),
+            ),
+            product(
+                get(get(a.clone(), i), j.clone()),
+                get(get(b.clone(), j.clone()), k),
+                get(get(c.clone(), j), l),
+            ),
+            atom("drop"),
+        )
+    };
+    let all = fam_with(dims(), |i| {
+        fam_with(dims(), |j| {
+            fam_with(dims(), |k| {
+                discard_with(
+                    fam_with(dims(), |l| cell(i.clone(), j.clone(), k.clone(), l)),
+                    |_, e| not_atom_named(e, "drop"),
+                )
+            })
+        })
+    });
+    let lhs = fold_at(
+        fold_at(
+            fold_at(prune(all, 4), 4, sum.clone(), None),
+            3,
+            sum.clone(),
+            None,
+        ),
+        2,
+        sum.clone(),
+        None,
+    );
+    let rhs = fam_with(dims(), |i| {
+        let js = discard_with(dims(), |p, _| {
+            let j = key(p, 0);
+            and(
+                present(&a, i.clone(), j.clone()),
+                and(
+                    some(|q| present(&b, j.clone(), q)),
+                    some(|q| present(&c, j, q)),
+                ),
+            )
+        });
+        fold(
+            fam_with(js, |j| {
+                product(
+                    get(get(a.clone(), i.clone()), j.clone()),
+                    fold(get(b.clone(), j.clone()), sum.clone(), None),
+                    fold(get(c.clone(), j), sum.clone(), None),
+                )
+            }),
+            sum.clone(),
+            None,
+        )
+    });
+    (lhs, discard_with(rhs, |_, e| not_atom_named(e, "empty")))
+}
+
 #[test]
 fn law_19_a_star_join_folds_each_arm_before_the_join() {
     // Orders `a[i][j]` of customer i for product j, with the product's prices `b[j][k]` and
     // discounts `c[j][l]` per variant: the sum over all triples is the sum over `j` of the
-    // order times the arms' totals. A product with no prices or no discounts drops out.
+    // order times the arms' totals. A product with no prices or no discounts drops out. The
+    // same holds for the cheapest route through a hub `j` (`min`, `+`) and for the widest one
+    // (`max`, `min`).
     let ints: Vec<Value> = (-3..=3).map(Value::Int).collect();
-    let n = holds(triples(25, &ints), |t| {
-        let [a, b, c] = t.clone().map(|m| matrix(&m));
-        let cell = |i: Term, j: Term, k: Term, l: Term| {
-            if_(
-                and(
-                    and(
-                        present(&a, i.clone(), j.clone()),
-                        present(&b, j.clone(), k.clone()),
-                    ),
-                    present(&c, j.clone(), l.clone()),
-                ),
-                mul(
-                    mul(
-                        get(get(a.clone(), i), j.clone()),
-                        get(get(b.clone(), j.clone()), k),
-                    ),
-                    get(get(c.clone(), j), l),
-                ),
-                atom("drop"),
-            )
-        };
-        let all = fam_with(dims(), |i| {
-            fam_with(dims(), |j| {
-                fam_with(dims(), |k| {
-                    discard_with(
-                        fam_with(dims(), |l| cell(i.clone(), j.clone(), k.clone(), l)),
-                        |_, e| not_atom_named(e, "drop"),
-                    )
-                })
-            })
-        });
-        let lhs = fold_at(
-            fold_at(fold_at(prune(all, 4), 4, plus(), None), 3, plus(), None),
-            2,
-            plus(),
-            None,
-        );
-        let rhs = fam_with(dims(), |i| {
-            let js = discard_with(dims(), |p, _| {
-                let j = key(p, 0);
-                and(
-                    present(&a, i.clone(), j.clone()),
-                    and(
-                        some(|q| present(&b, j.clone(), q)),
-                        some(|q| present(&c, j, q)),
-                    ),
-                )
-            });
-            fold(
-                fam_with(js, |j| {
-                    mul(
-                        mul(
-                            get(get(a.clone(), i.clone()), j.clone()),
-                            fold(get(b.clone(), j.clone()), plus(), None),
-                        ),
-                        fold(get(c.clone(), j), plus(), None),
-                    )
-                }),
-                plus(),
-                None,
-            )
-        });
-        (lhs, discard_with(rhs, |_, e| not_atom_named(e, "empty")))
+    let semirings = [
+        (pf(Prim::Add), pf(Prim::Mul)),
+        (pf(Prim::Min), pf(Prim::Add)),
+        (pf(Prim::Max), pf(Prim::Min)),
+    ];
+    for (k, (sum, times)) in semirings.iter().enumerate() {
+        let n = holds(triples(25 + k as u64, &ints), |t| star_sides(t, sum, times));
+        assert_eq!(n, 512);
+    }
+}
+
+#[test]
+fn law_19_a_star_join_needs_distribution() {
+    // `max` does not distribute over `+`, so the arms' totals cannot be taken before the
+    // join: with an order of 0 and two prices of 1, `max(0, 1, d) + max(0, 1, d)` is not
+    // `max(0, 1 + 1, d)`.
+    let ints: Vec<Value> = (-3..=3).map(Value::Int).collect();
+    let (t, _, _) = refuted(triples(28, &ints), |t| {
+        star_sides(t, &pf(Prim::Add), &pf(Prim::Max))
     });
-    assert_eq!(n, 512);
+    assert!(t.iter().all(|m| !m.is_empty()));
 }
 
 /// `false` on the atom `#name`, `true` on anything else.

@@ -3,12 +3,12 @@
 //! reversal.
 
 use zed_kernel::term::build::{if_, let_, lit, prim, var};
-use zed_kernel::{Family, GuardPos, Prim, Term, Value};
+use zed_kernel::{Family, GuardPos, KernelError, Prim, Term, Value};
 use zed_tests::check::{holds, refuted};
 use zed_tests::instances::{Rng, bmc_floats, partial_maps, shortlex};
 use zed_tests::kernel::*;
 
-use super::laws_11_20::{N, compose, nodes, pf, relation, relations, union};
+use super::laws_11_20::{N, compose, nodes, or_else, pf, relation, relations, union};
 use super::{ints, seq};
 
 fn plus() -> Term {
@@ -209,6 +209,262 @@ fn law_21_a_fold_of_a_build_is_the_recursion_on_seeds() {
     assert_eq!(n, 1 + 5 + 25 + 125 + 625);
 }
 
+/// `x else d`: `d` in place of any atom.
+fn or(x: Term, d: i64) -> Term {
+    or_else(x, None, lit(d))
+}
+
+/// The layer `a(Node(v, l, r)) = l + r + 12 div v`: a tree of shares, each node splitting 12
+/// into `v` parts, which fails with `#divByZero` at a node of 0 parts.
+fn shares(v: Term, l: Term, r: Term) -> Term {
+    add(add(l, r), idiv(lit(12), v))
+}
+
+/// Each layer `(v, l, r)` with `v` in `-2..=2` and children in `-3..=3`, or `#divByZero` as
+/// well when `failures` is set.
+fn layers(failures: bool) -> Vec<(i64, Value, Value)> {
+    let mut children: Vec<Value> = (-3..=3).map(Value::Int).collect();
+    if failures {
+        children.push(Value::atom("divByZero"));
+    }
+    let mut out = Vec::new();
+    for v in -2..=2 {
+        for l in &children {
+            for r in &children {
+                out.push((v, l.clone(), r.clone()));
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn law_21_fusion_needs_h_strict_on_the_failure_channel() {
+    // `h(x) = 3x` is strict: three times an atom is the atom. It commutes with every layer,
+    // a failing child included, and fuses.
+    let strict = |v: Term, l: Term, r: Term| add(add(l, r), mul(lit(3), idiv(lit(12), v)));
+    let n = holds(layers(true), |(v, l, r)| {
+        let (v, l, r) = (lit(*v), lit(l.clone()), lit(r.clone()));
+        (
+            mul(lit(3), shares(v.clone(), l.clone(), r.clone())),
+            strict(v, mul(lit(3), l), mul(lit(3), r)),
+        )
+    });
+    assert_eq!(n, 5 * 8 * 8);
+    let n = holds(trees(), |t| {
+        (
+            mul(lit(3), tree_fold(tree(t), lit(0), shares)),
+            tree_fold(tree(t), lit(0), strict),
+        )
+    });
+    assert!(n > 900);
+    // `h(x) = x else 0` is not strict. With `b(v, L, R) = (L + R + 12 div v) else 0` the
+    // premise `h(a(n)) == b(F(h)(n))` holds on every layer whose children are numbers, so a
+    // check of the premise on the success members alone passes,
+    let lazy = |v: Term, l: Term, r: Term| or(shares(v, l, r), 0);
+    let n = holds(layers(false), |(v, l, r)| {
+        let (v, l, r) = (lit(*v), lit(l.clone()), lit(r.clone()));
+        (
+            or(shares(v.clone(), l.clone(), r.clone()), 0),
+            lazy(v, or(l, 0), or(r, 0)),
+        )
+    });
+    assert_eq!(n, 5 * 7 * 7);
+    // but not on a layer with a failing child: `h` turns the child's atom into 0 before `b`
+    // sees it, where `a` would have passed it up.
+    let ((_, l, r), a, b) = refuted(layers(true), |(v, l, r)| {
+        let (v, l, r) = (lit(*v), lit(l.clone()), lit(r.clone()));
+        (
+            or(shares(v.clone(), l.clone(), r.clone()), 0),
+            lazy(v, or(l, 0), or(r, 0)),
+        )
+    });
+    assert!(matches!(l, Value::Atom(_)) || matches!(r, Value::Atom(_)));
+    assert_ne!(a, b);
+    // And fusion fails: at `Node(1, Empty, Node(0, Empty, Empty))` the child fails, `a` passes
+    // the failure to the root and `h` makes it 0, while `b` makes the child 0 and the root 12.
+    let named: Tree = vec![(1, -1, 1), (0, -1, -1)];
+    let (_, a, b) = refuted(vec![named], |t| {
+        (
+            or(tree_fold(tree(t), lit(0), shares), 0),
+            tree_fold(tree(t), lit(0), lazy),
+        )
+    });
+    assert_eq!((a, b), (Ok(Value::Int(0)), Ok(Value::Int(12))));
+}
+
+/// A table of seeds `k -> c(k)`: the layer `(v, sl, sr)`, with -1 for no child seed, or the
+/// failure member `#notFound` (`None`).
+type Seeds = Vec<Option<(i64, i64, i64)>>;
+
+fn seed_table(s: &Seeds) -> Term {
+    let entries = s.iter().enumerate().map(|(k, c)| {
+        let c = match *c {
+            Some((v, l, r)) => Value::tuple(vec![Value::Int(v), Value::Int(l), Value::Int(r)]),
+            None => Value::atom("notFound"),
+        };
+        (k as i64, c)
+    });
+    lit(Value::Family(Family::of(entries)))
+}
+
+/// Seed tables with values in `0..=2` whose child seeds are greater than their parent, so
+/// that every build terminates: each table of three seeds, then 256 random tables of five.
+/// With `failures` set, a seed may be the failure member.
+fn seed_tables(failures: bool) -> Vec<Seeds> {
+    fn layers_at(k: i64, n: i64, failures: bool) -> Vec<Option<(i64, i64, i64)>> {
+        let children: Vec<i64> = std::iter::once(-1).chain(k + 1..n).collect();
+        let mut out = Vec::new();
+        for v in 0..=2 {
+            for &l in &children {
+                for &r in &children {
+                    out.push(Some((v, l, r)));
+                }
+            }
+        }
+        if failures {
+            out.push(None);
+        }
+        out
+    }
+    let mut out = vec![vec![]];
+    for k in 0..3 {
+        out = out
+            .into_iter()
+            .flat_map(|s: Seeds| {
+                layers_at(k, 3, failures).into_iter().map(move |c| {
+                    let mut s = s.clone();
+                    s.push(c);
+                    s
+                })
+            })
+            .collect();
+    }
+    let mut rng = Rng::new(2121);
+    for _ in 0..256 {
+        out.push(
+            (0..5)
+                .map(|k| rng.pick(&layers_at(k, 5, failures)))
+                .collect(),
+        );
+    }
+    out
+}
+
+/// `b(0)`, the tree a build unfolds from seed 0, as a node table in preorder; a seed reached
+/// twice is unfolded twice. `None` when the build reaches the failure member, so that `b(0)`
+/// is the failure.
+fn build(s: &Seeds) -> Option<Tree> {
+    fn unfold(s: &Seeds, k: i64, out: &mut Tree) -> Option<i64> {
+        let (v, sl, sr) = s[k as usize]?;
+        let at = out.len();
+        out.push((v, -1, -1));
+        if sl >= 0 {
+            out[at].1 = unfold(s, sl, out)?;
+        }
+        if sr >= 0 {
+            out[at].2 = unfold(s, sr, out)?;
+        }
+        Some(at as i64)
+    }
+    let mut out = Vec::new();
+    unfold(s, 0, &mut out).map(|_| out)
+}
+
+/// `b(0).fold(alg)`: the fold of the built tree, or the failure itself, since `.fold` passes
+/// a failure of its subject through.
+fn fold_of_build(s: &Seeds, alg: fn(Term, Term, Term) -> Term) -> Term {
+    match build(s) {
+        Some(t) => tree_fold(tree(&t), lit(0), alg),
+        None => atom("notFound"),
+    }
+}
+
+/// `go(0)` with `go(s) = alg(F(go)(c(s)))`, as the definedness fix over the seeds: the
+/// failure member has no recursive position, so `F(go)` passes it through, and `alg` sees a
+/// child's failure as data.
+fn on_seeds(s: Term, alg: fn(Term, Term, Term) -> Term) -> Term {
+    let table = s.clone();
+    let all = fix_defined(s, |this, k| {
+        let c = get(table, k);
+        let child = |x: Term| if_(eq(x.clone(), lit(-1)), lit(0), get(this.clone(), x));
+        unless_atom(
+            c.clone(),
+            alg(
+                nth(c.clone(), 0),
+                child(nth(c.clone(), 1)),
+                child(nth(c, 2)),
+            ),
+        )
+    });
+    get(all, lit(0))
+}
+
+/// `alg` that reads past a failing child: `(l else 0) + (r else 0) + 12 div v`.
+fn lazy_alg(v: Term, l: Term, r: Term) -> Term {
+    add(add(or(l, 0), or(r, 0)), idiv(lit(12), v))
+}
+
+#[test]
+fn law_21_the_build_clause_needs_alg_strict_only_with_a_failure_member() {
+    // Seeds are the parts of an assembly, each with its weight `v` and up to two sub-parts;
+    // `go` totals a part's weight without building the assembly tree.
+    let strict = |v: Term, l: Term, r: Term| add(add(v, l), r);
+    // With a failure member (a part missing from the catalog), a strict `alg` passes the
+    // failure up exactly as the build does.
+    let n = holds(seed_tables(true), |s| {
+        (fold_of_build(s, strict), on_seeds(seed_table(s), strict))
+    });
+    assert_eq!(n, 28 * 13 * 4 + 256);
+    // A non-strict one does not: the build fails as a whole, while `go` reads past the
+    // failing child, to a number or to a failure of its own (`12 div 0`).
+    let (s, a, b) = refuted(seed_tables(true), |s| {
+        (
+            fold_of_build(s, lazy_alg),
+            on_seeds(seed_table(s), lazy_alg),
+        )
+    });
+    assert!(build(&s).is_none());
+    assert_eq!(a, Ok(Value::atom("notFound")));
+    assert_ne!(b, a);
+    // Without a failure member the build clause holds for that same non-strict `alg`, a
+    // failure `alg` itself makes (`12 div 0`) included: the build gives no atom, and `alg`
+    // sees the same children on both sides. The strictness of `alg` is a condition only when
+    // the result type of `b` has a failure member, which sec:recursive-unions excludes.
+    let n = holds(seed_tables(false), |s| {
+        (
+            fold_of_build(s, lazy_alg),
+            on_seeds(seed_table(s), lazy_alg),
+        )
+    });
+    assert_eq!(n, 27 * 12 * 3 + 256);
+}
+
+#[test]
+fn law_21_the_build_clause_needs_termination_evidence() {
+    // A part listed as its own sub-part: the build never finishes, so the definedness fix that
+    // builds the assembly stalls, while `go` with an `alg` that reads no child gives a value.
+    let cyclic: Seeds = vec![Some((1, 0, -1))];
+    let (_, a, b) = refuted(vec![cyclic], |s| {
+        let table = seed_table(s);
+        let built = {
+            let t = table.clone();
+            fix_defined(table.clone(), |this, k| {
+                let c = get(t, k);
+                let child = |x: Term| if_(eq(x.clone(), lit(-1)), lit(true), get(this.clone(), x));
+                unless_atom(c.clone(), and(child(nth(c.clone(), 1)), child(nth(c, 2))))
+            })
+        };
+        let weight = |v: Term, _: Term, _: Term| v;
+        (
+            unless_atom(get(built, lit(0)), tree_fold(table.clone(), lit(0), weight)),
+            on_seeds(table, weight),
+        )
+    });
+    assert!(matches!(a, Err(KernelError::Stalled { .. })));
+    assert_eq!(b, Ok(Value::Int(1)));
+}
+
 // Law 22: bisection.
 
 /// The least `xs[i]` with `p(xs[i])`, found by halving the range of ranks `lo..hi`.
@@ -267,6 +523,64 @@ fn law_22_a_monotone_predicate_on_a_sorted_level_bisects() {
         (
             fold(discard_with(seq(xs), |_, v| equal(v)), first(), None),
             bisect(seq(xs), equal),
+        )
+    });
+    assert!(xs.contains(&t));
+}
+
+/// `last`: the entry with the greatest key.
+fn last() -> Term {
+    func(|[_, y]| y)
+}
+
+/// The greatest `xs[i]` with `p(xs[i])`, for a `p` that holds on a prefix of the order, found
+/// by halving the range of ranks `lo..hi` from the other end: `lo` ends at the first rank
+/// where `p` fails.
+fn bisect_last(xs: Term, p: impl Fn(Term) -> Term) -> Term {
+    let n = count(xs.clone());
+    let step = func(|[f]| {
+        let (lo, hi) = (nth(f.clone(), 0), nth(f, 1));
+        let mid = idiv(add(lo.clone(), hi.clone()), lit(2));
+        if_(
+            p(get(xs.clone(), mid.clone())),
+            tuple(vec![add(mid.clone(), lit(1)), hi]),
+            tuple(vec![lo, mid]),
+        )
+    });
+    let frames = Term::Gen {
+        init: rc(tuple(vec![lit(0), n])),
+        step: rc(step),
+        guard: rc(func(|[f]| lt(nth(f.clone(), 0), nth(f, 1)))),
+        pos: GuardPos::Before,
+    };
+    last_frame(frames, |last| {
+        let lo = nth(last, 0);
+        if_(
+            lt(lit(0), lo.clone()),
+            get(xs.clone(), sub(lo, lit(1))),
+            atom("empty"),
+        )
+    })
+}
+
+#[test]
+fn law_22_last_bisects_from_the_other_end_for_a_falling_predicate() {
+    // The dearest item within a budget, in a price list sorted by price: `v <= t` holds on a
+    // prefix and then fails (↓ along the order).
+    let n = holds(sorted_with_thresholds(), |(xs, t)| {
+        let at_most = |v: Term| le(v, lit(*t));
+        (
+            fold(discard_with(seq(xs), |_, v| at_most(v)), last(), None),
+            bisect_last(seq(xs), at_most),
+        )
+    });
+    assert_eq!(n, 330 * 9);
+    // `v == t` is not monotone along the order: the halving skips past an equal entry.
+    let ((xs, t), _, _) = refuted(sorted_with_thresholds(), |(xs, t)| {
+        let equal = |v: Term| eq(v, lit(*t));
+        (
+            fold(discard_with(seq(xs), |_, v| equal(v)), last(), None),
+            bisect_last(seq(xs), equal),
         )
     });
     assert!(xs.contains(&t));
@@ -366,6 +680,48 @@ fn law_23_over_a_recursive_union_two_folds_are_one_fold_at_the_pair() {
                 ])
             }),
         )
+    });
+    assert!(n > 900);
+}
+
+#[test]
+fn law_23_a_fold_that_reads_another_fold_is_one_fold_at_the_pair() {
+    // The longest chain of reports in an org chart, in nodes, reads each subtree's height:
+    // computed against a separate table of heights, and as one fold at (height, longest).
+    let n = holds(trees(), |t| {
+        let table = tree(t);
+        let at = |all: Term, c: Term| if_(eq(c.clone(), lit(-1)), lit(0), get(all, c));
+        let max = |a: Term, b: Term| prim(Prim::Max, vec![a, b]);
+        let heights = {
+            let table = table.clone();
+            fix_defined(table.clone(), |this, k| {
+                let n = get(table, k);
+                add(
+                    lit(1),
+                    max(at(this.clone(), nth(n.clone(), 1)), at(this, nth(n, 2))),
+                )
+            })
+        };
+        let h = fresh("h");
+        let longest = {
+            let table = table.clone();
+            fix_defined(table.clone(), |this, k| {
+                let n = get(table, k);
+                let (l, r) = (nth(n.clone(), 1), nth(n, 2));
+                max(
+                    max(at(this.clone(), l.clone()), at(this, r.clone())),
+                    add(add(lit(1), at(var(&h), l)), at(var(&h), r)),
+                )
+            })
+        };
+        let pair = tree_fold(table, tuple(vec![lit(0), lit(0)]), |_, l, r| {
+            let (hl, hr) = (nth(l.clone(), 0), nth(r.clone(), 0));
+            tuple(vec![
+                add(lit(1), max(hl.clone(), hr.clone())),
+                max(max(nth(l, 1), nth(r, 1)), add(add(lit(1), hl), hr)),
+            ])
+        });
+        (let_(&h, heights, get(longest, lit(0))), nth(pair, 1))
     });
     assert!(n > 900);
 }
@@ -488,6 +844,137 @@ fn law_25_a_left_multiplied_step_takes_the_invariant_form() {
         (term, lit(true))
     });
     assert_eq!(n, 512 + 256);
+}
+
+/// `x · e` for a set `x` and a relation `e` into `0..n`: the image of `x`, as a family of
+/// `w -> true`.
+fn image(x: Term, e: Term, n: i64) -> Term {
+    discard_with(
+        fam_with(lit(Value::Family(Family::set(0..n))), |w| {
+            let via = discard_with(x, |p, _| found(get(get(e, key(p, 0)), w)));
+            lt(lit(0), count(via))
+        }),
+        |_, b| b,
+    )
+}
+
+/// The set of the bits of `mask`, as a family of `w -> true`.
+fn set_of(mask: u32) -> Term {
+    let keys = (0..32).filter(|w| mask & (1 << w) != 0);
+    lit(Value::Family(Family::of(keys.map(|w| (w as i64, true)))))
+}
+
+/// The relation whose row `u` is the set of the bits of `rows[u]`.
+fn relation_of(rows: &[u32]) -> Term {
+    let pairs: Vec<(i64, i64)> = rows
+        .iter()
+        .enumerate()
+        .flat_map(|(u, &m)| {
+            (0..32)
+                .filter(move |w| m & (1 << w) != 0)
+                .map(move |w| (u as i64, w))
+        })
+        .collect();
+    relation(&pairs)
+}
+
+/// A finite model of fix fusion: `h(x) = x · H` from sets of `0..5` to sets of `0..4`, which
+/// preserves unions; the steps `s1(x) = x · E1` on `0..5` and `s2(y) = y · E2` on `0..4`; and
+/// a seed `x0`. Rows are bit masks.
+#[derive(Clone, Debug)]
+struct FixFusion {
+    h: [u32; 5],
+    e1: [u32; 5],
+    e2: [u32; 4],
+    x0: u32,
+}
+
+/// `x · M` for a set of bits `x` and the rows `m`.
+fn image_bits(x: u32, m: &[u32]) -> u32 {
+    (0..m.len())
+        .filter(|u| x & (1 << u) != 0)
+        .fold(0, |a, u| a | m[u])
+}
+
+/// 256 random models with `E1 · H = H · E2`, so that `h ∘ s1 = s2 ∘ h`: `H` and `E2` are
+/// drawn, and each row `i` of `E1` is the set of `j` with `H[j]` inside row `i` of `H · E2`,
+/// kept only when those `H[j]` cover the row.
+fn fix_fusions() -> Vec<FixFusion> {
+    let mut rng = Rng::new(25);
+    let mut out = Vec::new();
+    while out.len() < 256 {
+        let h: [u32; 5] = std::array::from_fn(|_| rng.below(16) as u32);
+        let e2: [u32; 4] = std::array::from_fn(|_| rng.below(16) as u32);
+        let e1: [u32; 5] = std::array::from_fn(|i| {
+            (0..5)
+                .filter(|&j| h[j] & !image_bits(h[i], &e2) == 0)
+                .fold(0, |a, j| a | 1 << j)
+        });
+        if (0..5).all(|i| image_bits(e1[i], &h) == image_bits(h[i], &e2)) {
+            out.push(FixFusion {
+                h,
+                e1,
+                e2,
+                x0: rng.below(32) as u32,
+            });
+        }
+    }
+    out
+}
+
+/// The two sides of fix fusion: `h(fix(x0, s1, ∪))` and `fix(h(x0), s2, ∪)`.
+fn fix_fusion_sides(m: &FixFusion) -> (Term, Term) {
+    let (h, e1, e2) = (relation_of(&m.h), relation_of(&m.e1), relation_of(&m.e2));
+    let s1 = func(|[x]| image(x, e1, 5));
+    let s2 = func(|[y]| image(y, e2, 4));
+    (
+        image(fix_lattice(set_of(m.x0), s1, pf(Prim::Union)), h.clone(), 4),
+        fix_lattice(image(set_of(m.x0), h, 4), s2, pf(Prim::Union)),
+    )
+}
+
+#[test]
+fn law_25_a_join_homomorphism_that_commutes_with_the_steps_fuses() {
+    // The zones a set of stations can reach: `h` maps stations to their fare zones, and a
+    // station step maps onto a zone step, so the reachable zones need no station search.
+    let n = holds(fix_fusions(), fix_fusion_sides);
+    assert_eq!(n, 256);
+    // Without `h ∘ s1 = s2 ∘ h` it fails: one more zone link breaks the commuting square.
+    let broken = fix_fusions().into_iter().map(|mut m| {
+        m.e2[0] |= 1 << 3;
+        m
+    });
+    let (m, _, _) = refuted(broken, fix_fusion_sides);
+    assert!((0..5).any(|i| image_bits(m.e1[i], &m.h) != image_bits(m.h[i], &m.e2)));
+}
+
+#[test]
+fn law_25_a_function_that_commutes_with_the_steps_but_not_the_join_does_not_fuse() {
+    // The number of stations reached on a ring line from station 0, with `h = count`, the join
+    // `max` on counts and `s2` the identity: a shift round the ring keeps the count, so
+    // `h ∘ s1 = s2 ∘ h`, but a count of a union is not the larger count.
+    let ring = relation(&[(0, 1), (1, 2), (2, 3), (3, 0)]);
+    let shift = |x: Term| image(x, ring.clone(), 4);
+    let n = holds(0..16u32, |&x| (count(shift(set_of(x))), count(set_of(x))));
+    assert_eq!(n, 16);
+    let pairs = (0..16u32).flat_map(|a| (0..16u32).map(move |b| (a, b)));
+    let _ = refuted(pairs, |&(a, b)| {
+        (
+            count(union(set_of(a), set_of(b))),
+            prim(Prim::Max, vec![count(set_of(a)), count(set_of(b))]),
+        )
+    });
+    let (_, a, b) = refuted(vec![1u32], |&x0| {
+        (
+            count(fix_lattice(
+                set_of(x0),
+                func(|[x]| shift(x)),
+                pf(Prim::Union),
+            )),
+            fix_lattice(count(set_of(x0)), func(|[y]| y), pf(Prim::Max)),
+        )
+    });
+    assert_eq!((a, b), (Ok(Value::Int(4)), Ok(Value::Int(1))));
 }
 
 // Law 26: generation fusion.
