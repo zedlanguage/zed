@@ -157,28 +157,43 @@ fn roots_scale_in_the_degree_and_in_the_bits() {
     );
 }
 
-/// `(x - 4)(1 + x^2 + x^4 + … + x^(2n - 2))`, expanded: `2n` terms of degree `2n`.
-fn of_terms(n: usize) -> Sparse {
+/// `(x - r)(1 + x^2 + x^4 + … + x^(2n - 2))`, expanded: `2n` terms of degree `2n`.
+fn of_terms(n: usize, r: &BigInt) -> Sparse {
     let mut terms = Vec::with_capacity(2 * n);
     for i in 0..n as u64 {
-        terms.push((2 * i, BigInt::from(-4)));
+        terms.push((2 * i, -r.clone()));
         terms.push((2 * i + 1, BigInt::from(1)));
     }
     Sparse::new(terms)
 }
 
-/// In the number of terms the method is of order `t^3` (`integer_roots`: a chain of `t`
-/// derivatives of up to `t` terms each, whose coefficients gain the bits of the exponents at
-/// each step), held to the limit of that order. Open for review (COMPLEXITY.md ROOTS-listed):
-/// a divisor written with many terms is rare, but the checker's work grows with the cube.
+/// In the number of terms the method is linear (`integer_roots`: each interval of its branch
+/// and bound costs O(t) products of numbers of the bits of the 1-norm, and the intervals kept
+/// lie about the roots), for a root at 4, which the cuts of the interval reach, and for one at
+/// `2^40`, which Newton's method reaches. The method it replaced, a chain of `t` derivatives
+/// of up to `t` terms each, was of order `t^3`: 80.5 times the work at 8 times the terms.
 #[test]
-fn roots_in_the_number_of_terms_are_of_order_three() {
-    assert_eq!(
-        integer_roots(&of_terms(8), None, None),
-        Roots::Listed(vec![BigInt::from(4)])
-    );
-    let fs = scaling::inputs(16, of_terms);
-    scaling::check_order("the integer roots of a polynomial of n terms", 16, 3, |n| {
-        integer_roots(&fs[&n], None, None);
+fn roots_are_linear_in_the_number_of_terms() {
+    let large = BigInt::from(1u8) << 40u32;
+    for r in [BigInt::from(4), large.clone()] {
+        for n in [8, 64] {
+            assert_eq!(
+                integer_roots(&of_terms(n, &r), None, None),
+                Roots::Listed(vec![r.clone()])
+            );
+        }
+    }
+    let small = scaling::inputs(16, |n| of_terms(n, &BigInt::from(4)));
+    scaling::check_order("the integer roots of a polynomial of n terms", 16, 1, |n| {
+        integer_roots(&small[&n], None, None);
     });
+    let far = scaling::inputs(16, |n| of_terms(n, &large));
+    scaling::check_order(
+        "the integer roots of a polynomial of n terms with a root at 2^40",
+        16,
+        1,
+        |n| {
+            integer_roots(&far[&n], None, None);
+        },
+    );
 }
