@@ -2149,6 +2149,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | MSG-prelude-word-args | impl attempt 1 | 2026-11-13 05:56 | started; worktree seeded |
 | NARROW-ne-rat-divisor | impl attempt 1 | 2026-11-13 01:12 | started in /home/luke/Work/wt/narrow-ne-rat-divisor from c75a68775 |
 | NUM-no-panic-built | impl attempt 1 | 2026-11-13 05:56 | started; worktree from origin/main c75a68775 |
+| PERF-l139-family | running | 2026-11-12 18:45 | coordkk fixed d016b9cc3 90a844aa8; 14 tests in 8 families still ignored, cross-review next / 45.57 |
 | PERF-ref-memo-quadratic | impl attempt 4 | 2026-11-10 18:04 | round 3 scored: mix of Sol r3 + Opus r3 SCORE 446.707, 0 coarser; porting into wt/prm4 |
 | POLY-work-250ms | running |  |  |
 | PRES-overlap-fast | xr attempt  | 2026-11-13 01:10 | round 1 launched: Sol and Opus seats (medium); Gemini 429 (resets in 32h55m); CD next |
