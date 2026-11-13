@@ -582,7 +582,7 @@ fn the_dense_and_sparse_products_agree() {
             let b = p(n + 5, 11, base_b, step_b);
             let sparse = a.sparse_mul(&b);
             let plan = a.plan(&b).expect("packed keys");
-            if plan.dense <= plan.sparse {
+            if plan.takes_dense {
                 assert_eq!(a.dense_mul(&b, plan.slot, plan.step), sparse, "n = {n}");
             }
             // Force the dense product at a slot wide enough, at the common step and at 1.
@@ -592,12 +592,56 @@ fn the_dense_and_sparse_products_agree() {
         }
     }
     let plan = p(300, 3, 0, 1).plan(&p(300, 4, 0, 1)).expect("packed keys");
-    assert!(plan.dense <= plan.sparse);
+    assert!(plan.takes_dense);
     // The step is the greatest common divisor of the distances from each side's lowest index.
     let step = |a: Poly<u128>, b: Poly<u128>| a.plan(&b).map(|p| p.step);
     assert_eq!(step(p(300, 3, 3, 5), p(300, 4, 7, 5)), Some(5));
     assert_eq!(step(p(300, 3, 2, 6), p(300, 4, 1, 10)), Some(2));
     assert_eq!(step(p(300, 3, 2, 7), p(300, 4, 1, 1)), Some(1));
+}
+
+/// The packed sum of `c` at each of `indices`, denominator 1.
+fn packed(indices: &[u128], c: i64) -> Poly<u128> {
+    Poly {
+        den: BigInt::one(),
+        terms: indices.iter().map(|&k| (k, BigInt::from(c))).collect(),
+    }
+}
+
+#[test]
+fn the_choice_of_product_by_shape() {
+    // 16 terms at every index, one-word coefficients: the dense product.
+    let every: Vec<u128> = (0..16).collect();
+    let plan = packed(&every, 3).plan(&packed(&every, -5)).expect("packed keys");
+    assert!(plan.takes_dense, "{:?}", plan.choice);
+    // 16 terms about every 4096 indices: the sparse product, as the span is mostly empty.
+    let gaps: Vec<u128> = (0..16).map(|i| 4096 * i + (i * 7) % 13).collect();
+    let plan = packed(&gaps, 3).plan(&packed(&gaps, 5)).expect("packed keys");
+    assert_eq!(plan.step, 1);
+    assert!(!plan.takes_dense, "{:?}", plan.choice);
+    // A span past every integer's length: the sparse product, and no overflow.
+    let far = [0, 1, 1 << 100];
+    let plan = packed(&far, 1).plan(&packed(&far, 1)).expect("packed keys");
+    assert_eq!(plan.choice.packed, f64::INFINITY);
+    assert!(!plan.takes_dense);
+    assert_eq!(packed(&far, 1).sparse_mul(&packed(&far, 1)).len(), 6);
+    // One term each: one pair against the fixed cost of the dense product.
+    let plan = packed(&[7], 2).plan(&packed(&[9], 3)).expect("packed keys");
+    assert!(!plan.takes_dense, "{:?}", plan.choice);
+}
+
+#[test]
+fn mul_cost_at_its_corners() {
+    // An empty factor is read as one word, so that no product is free.
+    assert_eq!(mul_cost(0, 0), 1.0);
+    assert_eq!(mul_cost(0, 5), mul_cost(1, 5));
+    assert_eq!(mul_cost(3, 1000), mul_cost(1000, 3));
+    assert_eq!(mul_cost(1, usize::MAX), f64::INFINITY);
+    assert_eq!(mul_cost(usize::MAX / 4 + 1, 1), f64::INFINITY);
+    assert!(mul_cost(usize::MAX / 4, usize::MAX / 4).is_finite());
+    // Below the transform, the word products; above, less than them.
+    assert_eq!(mul_cost(4, 9), 36.0);
+    assert!(mul_cost(1 << 16, 1 << 16) < (1u64 << 32) as f64);
 }
 
 #[test]

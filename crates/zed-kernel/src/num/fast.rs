@@ -1169,6 +1169,27 @@ fn dense_cost(a: usize, b: usize) -> f64 {
     }
 }
 
+/// The cost [`mul`] is estimated to take on dense factors of `a` and `b` 64-bit words, in the
+/// units of [`TRANSFORM_COST`] (one word product): num-bigint's product at or below
+/// [`MUL_LEAF`], `a b` word products or [`toom_cost`], whichever is less; above it the less of
+/// [`toom_cost`] and the transforms' [`transform_plan`], as [`mul_method`] chooses. Rows over
+/// nonzero words are not counted, so a factor with many zero words costs less than this.
+/// Infinite when the product's words do not fit in a `usize` with room to round up.
+pub(crate) fn mul_cost(a: usize, b: usize) -> f64 {
+    // Complexity tradeoff: `O(log)` in the sizes, as `transform_plan`; counting the rows over
+    // nonzero words would read the factors, `O(L)`, for a choice that is off by 1.30 at most
+    // without them (`crossover poly-wide 8`).
+    let (short, long) = (a.min(b).max(1), a.max(b).max(1));
+    if long > usize::MAX / 4 {
+        return f64::INFINITY;
+    }
+    let toom = toom_cost(short, long);
+    match short <= MUL_LEAF {
+        true => (short as f64 * long as f64).min(toom),
+        false => toom.min(transform_plan(short, long).0),
+    }
+}
+
 /// num-bigint's cost of a product of `short <= long` words, `TOOM_COST long short^0.465`, in
 /// the units of [`TRANSFORM_COST`].
 fn toom_cost(short: usize, long: usize) -> f64 {

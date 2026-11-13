@@ -33,7 +33,7 @@ use num_integer::Integer;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 
 use crate::digest::{Digest, step};
-use crate::num::{is_prime, mul_int, mul_uint, pow_uint};
+use crate::num::{is_prime, mul_cost, mul_int, mul_uint, pow_uint};
 use crate::term::{Prim, Term};
 use crate::value::Value;
 
@@ -105,6 +105,32 @@ const PAIR: f64 = 8.0;
 
 /// The charge for each unit the support product counts: about 30 ns.
 const SUPPORT: f64 = 2.0;
+
+/// The cost of a pair of the sparse product besides its coefficients' product, in `Poly::mul`'s
+/// choice of method, in the units of `num::mul_cost` (one word product, about 16 instructions).
+/// Measured in instructions by `crossover poly-dense|poly-gaps|poly-wide <shape> pair` on
+/// 2026-11-13 (load about 60 on 32 cores; instruction counts do not depend on it), with
+/// [`SLOT_COST`] and [`DENSE_COST`] as set. Each shape alone fits: `poly-dense 1` 48 to 67,
+/// `poly-dense 4` 67 to 84, `poly-gaps 16` 72 to 96, `poly-gaps 64` 59 to 69, `poly-wide 2`
+/// up to 210, `poly-wide 8` from 48. No value fits all, so the choice is off somewhere by at
+/// most 1.09 times the cheaper method's instructions, at any value from 60 to 66; `poly-wide 8`
+/// is off by 1.30 at every value of all three constants, since `num::mul_cost` overcounts its
+/// packed product.
+const PAIR_COST: f64 = 60.0;
+
+/// The cost of a slot of the dense product's output besides the product of the packed
+/// integers, in `Poly::mul`'s choice of method, in the units of `num::mul_cost`. Measured as
+/// [`PAIR_COST`], `... slot`: `poly-dense 1` fits 25 to 73, `poly-dense 4` up to 18,
+/// `poly-gaps 16` up to 19, `poly-gaps 64` 7 to 46, `poly-wide 8` up to 91; set within 1.09.
+const SLOT_COST: f64 = 40.0;
+
+/// The cost of the dense product besides its slots and its packed product (packing, the
+/// transform's setup, unpacking), over the sparse product's besides its pairs, in
+/// `Poly::mul`'s choice of method, in the units of `num::mul_cost`. Measured as
+/// [`PAIR_COST`], `... fixed`: `poly-dense 1` fits 596 to 996, `poly-dense 4` 106 to 455,
+/// `poly-wide 2` from 99, the rest up to 1158 or more; set within 1.09. Without this term
+/// (0) the best that `PAIR_COST` and `SLOT_COST` reach is 1.41.
+const DENSE_COST: f64 = 700.0;
 
 /// The work an expansion has spent, the most it may spend, and the work it would have reached
 /// at the charge it refused, in the units of [`LIMIT`].
@@ -1780,8 +1806,14 @@ impl<K: Key> Poly<K> {
     /// a monomial index (Kronecker substitution: a packed key's index is linear in its
     /// exponents, and the degree bound leaves no carry between digits), and multiplies the two
     /// integers with `num::mul_int`, `O(L log L)` in their `L` words by the number-theoretic
-    /// transform (BIGINT-fast-mul). The dense product is taken when `L log2 L` is at most
-    /// `t1 * t2 * w1 * w2`, both formulas with unit constants: so a product whose monomials
+    /// transform (BIGINT-fast-mul). The dense product is taken when its estimate,
+    /// [`DENSE_COST`] + [`SLOT_COST`] per output slot + `num::mul_cost` of the packed integers, is
+    /// at most the sparse product's, `t1 t2` times [`PAIR_COST`] + `num::mul_cost` of the
+    /// coefficients ([`Choice`]); the three constants are fitted by `crossover poly-*` (QUESTIONS
+    /// A96). The naive choice, `L log2 L` against `t1 t2 w1 w2` with unit constants, took the
+    /// slower method by up to 9.6 times its instructions (univariate sums of one-word
+    /// coefficients went sparse up to 45 terms each; the crossover is at 5); the fitted one by at most
+    /// 1.09, and 1.30 on 8 terms of 8 to 1024 words. So a product whose monomials
     /// merge densely, as of two univariate sums, costs `O(n log n)` in its output, and one of
     /// sums in different names, whose `t1 * t2` products are all distinct, costs
     /// `O(t1 t2 log(t1 t2))`, near-linear in its output too. Between them, a product whose
@@ -1792,11 +1824,8 @@ impl<K: Key> Poly<K> {
     ///
     /// Charged to `budget`, in the units of [`LIMIT`]: [`SUPPORT`] times what the support
     /// product counted, which it bounds by the cheaper of the dense and the sparse cost and by
-    /// what is left; and when it gives up, the cheaper method's charge, before it runs: the dense
-    /// cost, or [`Poly::sparse_charge`]. The method is chosen by the costs with unit constants,
-    /// as the crossover was benchmarked, though the sparse product's pair takes about 8 of the
-    /// dense product's units (COMPLEXITY.md POLY-nf-work). `None` when a charge would pass the
-    /// budget.
+    /// what is left; and when it gives up, the chosen method's charge, before it runs: the dense
+    /// cost, or [`Poly::sparse_charge`]. `None` when a charge would pass the budget.
     fn mul(&self, o: &Poly<K>, budget: &mut Budget) -> Option<Poly<K>> {
         let den = &self.den * &o.den;
         if self.terms.is_empty() || o.terms.is_empty() {
@@ -1819,12 +1848,12 @@ impl<K: Key> Poly<K> {
                 match support {
                     Some(terms) => terms,
                     None => {
-                        budget.spend(if plan.dense <= plan.sparse {
+                        budget.spend(if plan.takes_dense {
                             plan.dense
                         } else {
                             self.sparse_charge(o)
                         })?;
-                        if plan.dense <= plan.sparse {
+                        if plan.takes_dense {
                             self.dense_mul(o, plan.slot, plan.step)
                         } else {
                             self.sparse_mul(o)
@@ -1847,9 +1876,8 @@ impl<K: Key> Poly<K> {
     }
 
     /// The charge for the sparse product with `o`: [`PAIR`] plus `w1 * w2` for each of the
-    /// `t1 * t2` pairs, in units of the dense product's ([`LIMIT`]). Not [`Poly::sparse_cost`],
-    /// which chooses the method and so stays as the crossover was benchmarked: a pair's
-    /// allocation, sorting and merge take about 8 of the dense product's units.
+    /// `t1 * t2` pairs, in units of the dense product's ([`LIMIT`]): a pair's allocation, sorting
+    /// and merge take about 8 of the dense product's units.
     fn sparse_charge(&self, o: &Poly<K>) -> f64 {
         let pairs = self.terms.len() as f64 * o.terms.len() as f64;
         pairs * PAIR + self.sparse_cost(o)
@@ -1858,7 +1886,9 @@ impl<K: Key> Poly<K> {
     /// The costs of the dense and the sparse product with `o`, the dense product's slot width in
     /// 32-bit words, and the step between the indices that may hold a term: the greatest common
     /// divisor of every index's distance from its side's lowest. `None` for keys that are not
-    /// packed, which only the sparse product takes.
+    /// packed, which only the sparse product takes. The costs are charges, in the units of
+    /// [`LIMIT`]; which method to take is chosen apart from them, by [`Choice`], in the units of
+    /// `num::mul_cost`.
     ///
     /// Complexity tradeoff: the naive dense product gives every index between the lowest and
     /// the highest a slot, but a homogeneous polynomial of degree `d` in `x` and `y` uses only
@@ -1896,11 +1926,32 @@ impl<K: Key> Poly<K> {
             .checked_mul(u128::from(slot_words))
             .map_or(f64::INFINITY, |w| ntt_cost(w as f64));
         let sparse = self.sparse_cost(o);
+        let words = |p: &Poly<K>| usize::try_from(bits(p).div_ceil(64).max(1)).unwrap_or(usize::MAX);
+        let packed = |hi: u128, lo: u128| {
+            ((hi - lo) / step)
+                .checked_add(1)
+                .and_then(|n| n.checked_mul(u128::from(slot_words)))
+                .and_then(|w| usize::try_from(w.div_ceil(2)).ok())
+                .unwrap_or(usize::MAX)
+        };
+        // Complexity tradeoff: the choice was `dense <= sparse` on the charges above, both with
+        // unit constants; the dense product's fixed cost and its packed product's method
+        // (schoolbook, Toom or transform, as `num::mul` takes it) were not counted, so it took
+        // the slower method by up to 9.6 times. This estimate costs two `num::mul_cost` calls,
+        // `O(log L)` each, beside the `O(t1 + t2)` pass above; measured by `crossover poly-*`.
+        let choice = Choice {
+            pairs: ta as f64 * tb as f64,
+            pair: mul_cost(words(self), words(o)),
+            slots: span as f64,
+            packed: mul_cost(packed(hi_a, lo_a), packed(hi_b, lo_b)),
+        };
         Some(Plan {
             slot: slot_words,
             step,
             dense,
             sparse,
+            takes_dense: choice.takes_dense(),
+            choice,
         })
     }
 
@@ -2171,6 +2222,41 @@ struct Plan {
     dense: f64,
     /// The sparse product's cost.
     sparse: f64,
+    /// Whether [`Poly::mul`] takes the dense product when the support product gives way.
+    takes_dense: bool,
+    /// The sizes that choice is made from.
+    choice: Choice,
+}
+
+/// The sizes of a product that [`Poly::mul`] chooses the dense or the sparse product by, in
+/// the units of `num::mul_cost` (one word product).
+#[derive(Clone, Copy, Debug)]
+struct Choice {
+    /// The sparse product's pairs, `t1 t2`.
+    pairs: f64,
+    /// The cost of one pair's coefficient product, at the widest coefficients' words.
+    pair: f64,
+    /// The dense product's output slots, its span.
+    slots: f64,
+    /// The cost of the product of the two packed integers.
+    packed: f64,
+}
+
+impl Choice {
+    /// The dense product's estimated cost.
+    fn dense(&self) -> f64 {
+        DENSE_COST + SLOT_COST * self.slots + self.packed
+    }
+
+    /// The sparse product's estimated cost.
+    fn sparse(&self) -> f64 {
+        self.pairs * (PAIR_COST + self.pair)
+    }
+
+    /// Whether the dense product is estimated to cost no more than the sparse one.
+    fn takes_dense(&self) -> bool {
+        self.dense() <= self.sparse()
+    }
 }
 
 /// The pairs drawn to estimate the size of a product's support ([`Poly::support_mul`]): the
@@ -2546,6 +2632,100 @@ fn square(a: u128) -> [u32; 8] {
     let t3 = (t2 >> 64) + (hh >> 64);
     let limbs = [ll & m, t1 & m, t2 & m, t3];
     std::array::from_fn(|i| (limbs[i / 2] >> (32 * (i % 2))) as u32)
+}
+
+/// The dense and the sparse product of `Poly::mul`, one by one, for the crossover benchmarks
+/// (crate zed-benches, binary `crossover`; DESIGN.md sec:plan, QUESTIONS A96), which time both
+/// on both sides of the change of method and check that they give the same output. Not for
+/// other use: each function forces one method whatever the sizes.
+#[doc(hidden)]
+pub mod crossover {
+    use num_bigint::BigInt;
+    use num_traits::{One, Zero};
+
+    use super::Poly;
+
+    /// `super::PAIR_COST` as built.
+    pub const PAIR_COST: f64 = super::PAIR_COST;
+
+    /// `super::SLOT_COST` as built.
+    pub const SLOT_COST: f64 = super::SLOT_COST;
+
+    /// `super::DENSE_COST` as built.
+    pub const DENSE_COST: f64 = super::DENSE_COST;
+
+    /// A polynomial of packed monomials with denominator 1, as `Poly::mul` multiplies them.
+    #[derive(Clone, Debug)]
+    pub struct Sum(Poly<u128>);
+
+    impl Sum {
+        /// The sum of `terms`, each a monomial's packed index and its coefficient, in any order;
+        /// like indices are merged and zero coefficients dropped.
+        pub fn new(mut terms: Vec<(u128, BigInt)>) -> Sum {
+            terms.sort_by_key(|(k, _)| *k);
+            let mut merged: Vec<(u128, BigInt)> = Vec::with_capacity(terms.len());
+            for (k, c) in terms {
+                match merged.last_mut() {
+                    Some((lk, lc)) if *lk == k => *lc += c,
+                    _ => merged.push((k, c)),
+                }
+            }
+            merged.retain(|(_, c)| !c.is_zero());
+            Sum(Poly {
+                den: BigInt::one(),
+                terms: merged,
+            })
+        }
+
+        /// Its number of terms.
+        pub fn len(&self) -> usize {
+            self.0.terms.len()
+        }
+
+        /// Whether it has no terms.
+        pub fn is_empty(&self) -> bool {
+            self.0.terms.is_empty()
+        }
+    }
+
+    /// `a * b` by the dense product, at the slot and step `Poly::plan` gives.
+    pub fn dense(a: &Sum, b: &Sum) -> Vec<(u128, BigInt)> {
+        let plan = a.0.plan(&b.0).expect("packed keys");
+        a.0.dense_mul(&b.0, plan.slot, plan.step)
+    }
+
+    /// `a * b` by the sparse product.
+    pub fn sparse(a: &Sum, b: &Sum) -> Vec<(u128, BigInt)> {
+        a.0.sparse_mul(&b.0)
+    }
+
+    /// Whether `Poly::mul` takes the dense product for `a * b` when the support product gives
+    /// way.
+    pub fn takes_dense(a: &Sum, b: &Sum) -> bool {
+        let plan = a.0.plan(&b.0).expect("packed keys");
+        plan.takes_dense
+    }
+
+    /// The value of `super::PAIR_COST` at which `Poly::mul` changes method for `a * b`: the
+    /// dense product at or above it, the sparse one below.
+    pub fn pair_flip(a: &Sum, b: &Sum) -> Option<f64> {
+        let c = a.0.plan(&b.0).expect("packed keys").choice;
+        Some(c.dense() / c.pairs - c.pair)
+    }
+
+    /// The value of `super::SLOT_COST` at which `Poly::mul` changes method for `a * b`: the
+    /// dense product at or below it, the sparse one above.
+    pub fn slot_flip(a: &Sum, b: &Sum) -> Option<f64> {
+        let c = a.0.plan(&b.0).expect("packed keys").choice;
+        Some((c.sparse() - c.dense()) / c.slots + super::SLOT_COST)
+    }
+
+    /// The value of `super::DENSE_COST` at which `Poly::mul` changes method for `a * b`: the
+    /// dense product at or below it, the sparse one above.
+    pub fn fixed_flip(a: &Sum, b: &Sum) -> Option<f64> {
+        let c = a.0.plan(&b.0).expect("packed keys").choice;
+        Some(c.sparse() - c.dense() + super::DENSE_COST)
+    }
 }
 
 #[cfg(test)]

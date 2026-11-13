@@ -40,6 +40,18 @@
 //! In `zed_kernel::text`: `text-leaf`, `LEAF`, a setting: a `foldl` of 200,000 joins of pieces
 //! of 1, 8 and 64 bytes, then `==`, a hash and the print, with each leaf from 16 to 1024 bytes.
 //!
+//! In `zed_kernel::poly` (the normal form's product `Poly::mul`, its choice between the dense
+//! and the sparse product once the support product gives way): `PAIR_COST`, `SLOT_COST` and
+//! `DENSE_COST` of its cost estimates, each fitted over the six shapes below together, each
+//! shape run once per constant (`[shape args] pair|slot|fixed`):
+//!
+//! - `poly-dense [words]`: univariate sums of 2 to 256 terms at every index, coefficients of
+//!   `words` 64-bit words (1 and 4).
+//! - `poly-gaps [terms]`: two sums of `terms` terms (64 and 16), one about every `g` indices
+//!   at a random offset, `g` from 1 to 4096.
+//! - `poly-wide [terms]`: univariate sums of `terms` terms (2 and 8), coefficients of 1 to
+//!   1024 words.
+//!
 //! In `zed_corpus_ref::zedrt` (the corpus's reference programs):
 //!
 //! - `corpus-leaf-digits`: its `LEAF_DIGITS`, as `leaf-digits`.
@@ -59,11 +71,12 @@ use std::io::Read;
 use std::process::{Command, ExitCode, Stdio};
 use std::time::{Duration, Instant};
 
-use num_bigint::BigUint;
+use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use zed_benches::{Constant, Crossover, Method, Setting, Steps, conditions, least};
 use zed_corpus_ref::zedrt::{self, product};
 use zed_kernel::num::crossover as x;
+use zed_kernel::poly::crossover as px;
 use zed_kernel::num::{
     PRINT_HANDOFF, PRINT_WHOLE, mul_uint, to_decimal, to_decimal_split, to_decimal_split_at,
 };
@@ -799,6 +812,190 @@ fn text_leaf(_: &[String]) -> ExitCode {
     status(setting.report(&mut Meter::new()).holds())
 }
 
+/// Two sums of packed monomials, as `Poly::mul` multiplies them.
+type Sums = (px::Sum, px::Sum);
+
+/// A random signed coefficient of `words` 64-bit words, the top bit of its magnitude set.
+fn coefficient(rng: &mut Rng, words: usize) -> BigInt {
+    let sign = match rng.next_u64() & 1 {
+        0 => Sign::Plus,
+        _ => Sign::Minus,
+    };
+    BigInt::from_biguint(sign, random(rng, words))
+}
+
+/// A sum of a coefficient of `words` words at each of `indices`.
+fn sum_at(rng: &mut Rng, indices: impl Iterator<Item = u128>, words: usize) -> px::Sum {
+    px::Sum::new(indices.map(|i| (i, coefficient(rng, words))).collect())
+}
+
+/// The constant of `Poly::mul`'s choice of method that `which` names, `PAIR_COST` ("pair"),
+/// `SLOT_COST` ("slot") or `DENSE_COST` ("fixed"), with `below_at_most` as the benchmark orders
+/// the two methods: `sparse_first` when the sparse product is the first. A higher `PAIR_COST`
+/// or a lower `SLOT_COST` or `DENSE_COST` takes the dense product sooner.
+fn poly_constant(which: Option<&String>, sparse_first: bool) -> Constant<'static, Sums> {
+    match which.map(String::as_str) {
+        None | Some("pair") => Constant {
+            name: "PAIR_COST",
+            built: px::PAIR_COST,
+            flip: &|(a, b): &Sums| px::pair_flip(a, b),
+            below_at_most: sparse_first,
+        },
+        Some("slot") => Constant {
+            name: "SLOT_COST",
+            built: px::SLOT_COST,
+            flip: &|(a, b): &Sums| px::slot_flip(a, b),
+            below_at_most: !sparse_first,
+        },
+        Some("fixed") => Constant {
+            name: "DENSE_COST",
+            built: px::DENSE_COST,
+            flip: &|(a, b): &Sums| px::fixed_flip(a, b),
+            below_at_most: !sparse_first,
+        },
+        Some(other) => panic!("no constant {other}: pair, slot or fixed"),
+    }
+}
+
+/// The constants of `Poly::mul`'s choice of method as built, for the tables.
+fn poly_constants() -> String {
+    format!(
+        "PAIR_COST {}, SLOT_COST {}, DENSE_COST {}",
+        px::PAIR_COST,
+        px::SLOT_COST,
+        px::DENSE_COST
+    )
+}
+
+/// The sparse product against the dense one on univariate sums of `t` terms at every index,
+/// coefficients of `words` 64-bit words (1 and 4 in `all`): the dense product wins from a
+/// few terms on, as its `L log L` grows as `t log t` against the sparse product's `t^2`.
+fn poly_dense(args: &[String]) -> ExitCode {
+    let words: usize = args.first().map_or(1, |s| s.parse().expect("words"));
+    let note = move |_: usize| format!(" ({words}-word coefficients)");
+    let inputs = move |t: usize| {
+        let mut rng = Rng::new(t as u64);
+        let n = t as u128;
+        vec![
+            (
+                sum_at(&mut rng, 0..n, words),
+                sum_at(&mut rng, 0..n, words),
+            ),
+            // Sides of different spans: the second at every other index.
+            (
+                sum_at(&mut rng, 0..n, words),
+                sum_at(&mut rng, (0..n).map(|i| 2 * i), words),
+            ),
+        ]
+    };
+    let bench = Crossover {
+        unit: "terms",
+        note: &note,
+        inputs: &inputs,
+        below: Method {
+            name: "sparse",
+            run: &|(a, b): &Sums| px::sparse(a, b),
+        },
+        above: Method {
+            name: "dense",
+            run: &|(a, b): &Sums| px::dense(a, b),
+        },
+        takes_above: &|(a, b): &Sums| px::takes_dense(a, b),
+        constant: Some(poly_constant(args.get(1), true)),
+    };
+    let verdict = bench.report(
+        &mut Meter::new(),
+        &format!("poly-dense {words} {}", args.get(1).map_or("pair", String::as_str)),
+        &poly_constants(),
+        &ladder(2, 256, 2),
+        TOLERANCE,
+    );
+    status(verdict.holds())
+}
+
+/// The dense product against the sparse one on two sums of `t` terms (64 and 16 in `all`), one
+/// a gap of about `g` from the next: term `i` at `g i` plus a random offset below `g`, so no
+/// common step closes the gaps. The sparse product wins from some gap on, as the dense
+/// product's span grows as `t g` against its own `t^2`.
+fn poly_gaps(args: &[String]) -> ExitCode {
+    let t: u128 = args.first().map_or(64, |s| s.parse().expect("terms"));
+    let note = move |_: usize| format!(" ({t} terms a side)");
+    let inputs = move |g: usize| {
+        let mut rng = Rng::new(g as u64);
+        let g = g as u128;
+        let side = |rng: &mut Rng| {
+            let at: Vec<u128> = (0..t)
+                .map(|i| g * i + u128::from(rng.next_u64()) % g)
+                .collect();
+            sum_at(rng, at.into_iter(), 1)
+        };
+        let (a, b) = (side(&mut rng), side(&mut rng));
+        let (c, d) = (side(&mut rng), side(&mut rng));
+        vec![(a, b), (c, d)]
+    };
+    let bench = Crossover {
+        unit: "gap",
+        note: &note,
+        inputs: &inputs,
+        below: Method {
+            name: "dense",
+            run: &|(a, b): &Sums| px::dense(a, b),
+        },
+        above: Method {
+            name: "sparse",
+            run: &|(a, b): &Sums| px::sparse(a, b),
+        },
+        takes_above: &|(a, b): &Sums| !px::takes_dense(a, b),
+        constant: Some(poly_constant(args.get(1), false)),
+    };
+    let verdict = bench.report(
+        &mut Meter::new(),
+        &format!("poly-gaps {t} {}", args.get(1).map_or("pair", String::as_str)),
+        &poly_constants(),
+        &ladder(1, 4096, 2),
+        TOLERANCE,
+    );
+    status(verdict.holds())
+}
+
+/// The sparse product against the dense one on univariate sums of `t` terms at every index (2
+/// and 8 in `all`), coefficients of `w` 64-bit words: the sparse product's `t^2` coefficient
+/// products of `w^2` words against the dense product's `t w log(t w)`.
+fn poly_wide(args: &[String]) -> ExitCode {
+    let t: u128 = args.first().map_or(2, |s| s.parse().expect("terms"));
+    let note = move |_: usize| format!(" ({t} terms a side)");
+    let inputs = move |w: usize| {
+        let mut rng = Rng::new(w as u64);
+        vec![
+            (sum_at(&mut rng, 0..t, w), sum_at(&mut rng, 0..t, w)),
+            (sum_at(&mut rng, 0..t, w), sum_at(&mut rng, 0..t + 1, w)),
+        ]
+    };
+    let bench = Crossover {
+        unit: "words",
+        note: &note,
+        inputs: &inputs,
+        below: Method {
+            name: "sparse",
+            run: &|(a, b): &Sums| px::sparse(a, b),
+        },
+        above: Method {
+            name: "dense",
+            run: &|(a, b): &Sums| px::dense(a, b),
+        },
+        takes_above: &|(a, b): &Sums| px::takes_dense(a, b),
+        constant: Some(poly_constant(args.get(1), true)),
+    };
+    let verdict = bench.report(
+        &mut Meter::new(),
+        &format!("poly-wide {t} {}", args.get(1).map_or("pair", String::as_str)),
+        &poly_constants(),
+        &ladder(1, 1024, 2),
+        TOLERANCE,
+    );
+    status(verdict.holds())
+}
+
 fn print_never_slower(args: &[String]) -> ExitCode {
     let digits: Vec<u32> = match args.is_empty() {
         true => vec![
@@ -852,7 +1049,7 @@ type Bench = (
 );
 
 /// Every benchmark, with its arguments in `all`; `print-never-slower` is not a threshold.
-const BENCHES: [Bench; 22] = [
+const BENCHES: [Bench; 40] = [
     ("mul", mul, &["1"]),
     ("mul", mul, &["4"]),
     ("mul", mul, &["32"]),
@@ -875,6 +1072,24 @@ const BENCHES: [Bench; 22] = [
     ("transform-words", transform_words, &[]),
     ("kept-words", kept_words, &[]),
     ("text-leaf", text_leaf, &[]),
+    ("poly-dense", poly_dense, &["1", "pair"]),
+    ("poly-dense", poly_dense, &["4", "pair"]),
+    ("poly-gaps", poly_gaps, &["64", "pair"]),
+    ("poly-gaps", poly_gaps, &["16", "pair"]),
+    ("poly-wide", poly_wide, &["2", "pair"]),
+    ("poly-wide", poly_wide, &["8", "pair"]),
+    ("poly-dense", poly_dense, &["1", "slot"]),
+    ("poly-dense", poly_dense, &["4", "slot"]),
+    ("poly-gaps", poly_gaps, &["64", "slot"]),
+    ("poly-gaps", poly_gaps, &["16", "slot"]),
+    ("poly-wide", poly_wide, &["2", "slot"]),
+    ("poly-wide", poly_wide, &["8", "slot"]),
+    ("poly-dense", poly_dense, &["1", "fixed"]),
+    ("poly-dense", poly_dense, &["4", "fixed"]),
+    ("poly-gaps", poly_gaps, &["64", "fixed"]),
+    ("poly-gaps", poly_gaps, &["16", "fixed"]),
+    ("poly-wide", poly_wide, &["2", "fixed"]),
+    ("poly-wide", poly_wide, &["8", "fixed"]),
 ];
 
 /// The limit on each benchmark of `all`.
