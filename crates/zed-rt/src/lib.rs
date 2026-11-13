@@ -16,9 +16,9 @@ pub mod ports;
 pub mod stack;
 
 pub use bug::bug;
-#[cfg(feature = "counts")]
-pub use heap::Survivor;
 pub use heap::{Heap, Obj, Parts, Stats, Word};
+#[cfg(feature = "counts")]
+pub use heap::{Released, Survivor};
 // What `Heap::matches` records and `Heap::release` reads, shared with the counting machine.
 pub use stack::Stack;
 pub use zed_kernel::paths::Paths;

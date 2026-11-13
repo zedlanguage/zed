@@ -39,7 +39,7 @@ use crate::tables::Tables;
 
 use bug::bug;
 #[cfg(feature = "counts")]
-pub use hooks::{Counted, counted};
+pub use hooks::{Counted, counted, record_releases};
 pub use legal::{EXPANSIONS, legalize};
 pub use outcome::Outcome;
 use outcome::call;

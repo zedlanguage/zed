@@ -60,6 +60,10 @@ struct Shape {
 impl State {
     pub fn new(t: Arc<Tables>, ev: Evaluator) -> State {
         let mut heap = Heap::new();
+        #[cfg(feature = "counts")]
+        if RECORD.with(|r| r.get()) {
+            heap.record_releases();
+        }
         for (i, v) in t.consts.iter().enumerate() {
             let w = heap.uncounted(v.clone());
             debug_assert_eq!(w.bits as usize, i);
@@ -839,6 +843,9 @@ pub(crate) fn finish(t: &Tables, s: &mut Run, w: Word) -> Result<Value, String> 
         if s.heap.live() != 0 {
             c.left.push(survivors(t, &s.heap));
         }
+        if RECORD.with(|r| r.get()) {
+            c.released.push(s.heap.released());
+        }
     });
     r
 }
@@ -852,11 +859,23 @@ pub struct Counted {
     pub runs: u64,
     /// For each run that left cells live, those cells.
     pub left: Vec<String>,
+    /// For each run, once [`record_releases`] has asked for them, the cells it freed in the
+    /// order it freed them, the result's last.
+    pub released: Vec<Vec<zed_rt::Released>>,
 }
 
 #[cfg(feature = "counts")]
 thread_local! {
     static COUNTED: RefCell<Counted> = RefCell::new(Counted::default());
+    static RECORD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether the native runs this thread starts from now on record the cells they free, in
+/// order, for [`Counted::released`] (feature `counts`). Off by default, so other runs keep
+/// nothing per free.
+#[cfg(feature = "counts")]
+pub fn record_releases(on: bool) {
+    RECORD.with(|r| r.set(on));
 }
 
 /// The native runs of this thread since the last call, and what they left live (feature

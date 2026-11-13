@@ -20,6 +20,7 @@ mod minmax;
 mod mul_edges;
 mod ports;
 mod pow_nan;
+mod release_order;
 mod reuse;
 mod scalars;
 mod scaling;

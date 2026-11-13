@@ -378,6 +378,17 @@ pub struct Survivor {
     pub cells: u64,
 }
 
+/// A cell freed, as [`Heap::released`] lists them in the order they were freed (feature
+/// `counts`).
+#[cfg(feature = "counts")]
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Released {
+    /// The type of what the cell held.
+    pub kind: &'static str,
+    /// The string it held, for a string.
+    pub text: Option<Text>,
+}
+
 /// Where the parts of a tuple or an atom being matched are read: a live cell, or the entries
 /// of the parts of entry `entry` of the table, from `start`.
 #[derive(Clone, Copy)]
@@ -474,6 +485,10 @@ pub struct Heap {
     /// The node whose allocations are being made, none outside every node (feature `counts`).
     #[cfg(feature = "counts")]
     site: Option<usize>,
+    /// The cells freed, in order, once [`Heap::record_releases`] has asked for them (feature
+    /// `counts`); none otherwise, so a run that does not ask keeps nothing per free.
+    #[cfg(feature = "counts")]
+    released: Option<Vec<Released>>,
 }
 
 impl Heap {
@@ -523,6 +538,20 @@ impl Heap {
             .into_iter()
             .map(|((kind, node), cells)| Survivor { kind, node, cells })
             .collect()
+    }
+
+    /// Records each cell freed from now on, in order, for [`Heap::released`] (feature
+    /// `counts`). O(1) per free.
+    #[cfg(feature = "counts")]
+    pub fn record_releases(&mut self) {
+        self.released.get_or_insert_with(Vec::new);
+    }
+
+    /// The cells freed since [`Heap::record_releases`], in the order they were freed, taken
+    /// out of the record (feature `counts`).
+    #[cfg(feature = "counts")]
+    pub fn released(&mut self) -> Vec<Released> {
+        self.released.as_mut().map(mem::take).unwrap_or_default()
     }
 
     /// The word of `v`, uncounted: a scalar, or an entry of the table. The empty tuple, a bare
@@ -622,6 +651,16 @@ impl Heap {
         }
         self.stats.frees += 1;
         self.live -= 1;
+        #[cfg(feature = "counts")]
+        if let Some(r) = &mut self.released {
+            r.push(Released {
+                kind: obj.kind(),
+                text: match &obj {
+                    Obj::Str(t) => Some(t.clone()),
+                    _ => None,
+                },
+            });
+        }
         obj
     }
 
