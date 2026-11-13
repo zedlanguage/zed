@@ -3214,12 +3214,22 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // (`l01_26_type_resolution::divisors::chained_tests_and_divisions_check_in_linear_time`,
                 // n = 100 and 800 chained `if d != 0` arms each dividing by `d`): 8.0 times
                 // the work and 8.0 times the bytes; the per-arm read, 38.2 times the bytes.
+                //
+                // A `rat` divisor is read the same way (NARROW-ne-rat-divisor), by the type its
+                // product has in the arm's scope: `r != 0r` and the `else` of `r == 0r` take
+                // `0r` out of it as `d != 0` takes 0 out of the interval, and a comparison with
+                // a literal that `0r` fails takes it out too (`Scope::atom_names`); a literal
+                // with no suffix is read at the carrier it adopts beside `r` (`Ck::term`).
+                // The same one read per division, so the cost above holds; measured by
+                // `chained_rat_tests_and_divisions_check_in_linear_time`.
                 let divides = matches!(op, BinaryOp::Div | BinaryOp::IntDiv | BinaryOp::Mod);
-                let int_divisor = y.ty.without_atoms().subtype(&Ty::carrier(Carrier::Int));
+                let rat_zero = Value::rat(Rat::int(0.into()));
+                let carried_only = |c| y.ty.without_atoms().subtype(&Ty::carrier(c));
+                let int_divisor = carried_only(Carrier::Int);
                 let mut nonzero = divides
-                    && ((!y.ty.contains(&Value::Int(0))
-                        && !y.ty.contains(&Value::rat(Rat::int(0.into()))))
-                        || (int_divisor && !self.ints_here(b).0.contains(0)));
+                    && ((!y.ty.contains(&Value::Int(0)) && !y.ty.contains(&rat_zero))
+                        || (int_divisor && !self.ints_here(b).0.contains(0))
+                        || (carried_only(Carrier::Rat) && !self.may_be_here(b, &rat_zero)));
                 // An int divisor whose range holds 0 under the tests: whether a state reaches
                 // it at 0 at all, the written constraints evaluated at the integer roots of
                 // the divisor (QUESTIONS A81, `Scope::zero_reached`). Outside every test, or
@@ -3242,7 +3252,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 // A `rat` power fails only for `0r` to a negative power.
                 let total_power = op == BinaryOp::Pow
-                    && (!x.ty.contains(&Value::rat(Rat::int(0.into())))
+                    && (!x.ty.contains(&rat_zero)
                         || self.ints_here(b).0.is_subset(&at_least_zero()));
                 let carried = [&x.ty, &y.ty]
                     .iter()
@@ -3372,6 +3382,46 @@ impl<'t, 'a> Ck<'t, 'a> {
             _ => literal(e, None).and_then(|l| lit_value(&l, Carrier::Rat)),
         }
         .map(RatFact::Value)
+    }
+
+    /// The one carrier `e`'s value has where the walk read it, if it knows one: the carrier
+    /// the literal `e` adopted, as `0` in `r == 0` adopts `rat` with `r: rat`, or with `deep`
+    /// the one the leftmost literal of an operation on literals adopted, as all its literals
+    /// adopt one; else the one carrier of the type the walk last gave `e`, or of its class of
+    /// literals while the class is open. `deep` costs the depth of `e`'s leftmost path, so
+    /// [`Self::term`] asks it only of an expression whose operands it then does not visit.
+    fn carrier_here(&self, e: &Expr, deep: bool) -> Option<Carrier> {
+        let mut x = e;
+        if deep {
+            while let ExprKind::Unary(_, a) | ExprKind::Binary(_, a, _) = &x.kind {
+                x = a;
+            }
+        }
+        if let Some(l) = literal(x, None)
+            && let Some(v) = self.info.adopt.get(&l.span)
+        {
+            return Some(lit_carrier(v));
+        }
+        let t = self.seen.get(&e.span)?.0.as_ref()?;
+        let mask = match self.class_beside_atoms(t) {
+            Some(k) => self.classes[k].mask,
+            None => mask_of(t),
+        };
+        Carrier::ALL.into_iter().find(|c| c.bit() == mask)
+    }
+
+    /// The `rat` value of `e`, at `rat` ([`Self::carrier_here`]): a literal, perhaps under
+    /// `-`, or what [`Self::rat_folded`] kept of an operation on literals, as `-1r/2r`, or
+    /// `1/2` beside a `rat`, for [`Self::term`] to read a test such as `r != 0r`, `r == 0` or
+    /// `r <= -1/2` as one on a literal (NARROW-ne-rat-divisor). O(1).
+    fn rat_literal(&self, e: &Expr) -> Option<Value> {
+        let rat = matches!(e.kind, ExprKind::Rat(_))
+            || matches!(&e.kind, ExprKind::Unary(UnaryOp::Neg, x) if matches!(x.kind, ExprKind::Rat(_)))
+            || self.carrier_here(e, false) == Some(Carrier::Rat);
+        match self.rat_fact(e).filter(|_| rat)? {
+            RatFact::Value(v) => Some(v),
+            RatFact::Range(_) => None,
+        }
     }
 
     fn call(
@@ -5192,7 +5242,17 @@ impl<'a> Ck<'_, 'a> {
 
     /// The ints `e` may be in the scope of the node the walk is in.
     fn ints_in_scope(&mut self, e: &'a Expr) -> IntervalSet {
-        self.read_in_scope(e).0
+        self.read_in_scope(e).0.ints().clone()
+    }
+
+    /// Whether `e` may be `v` here, as far as the tests the walk is in show: false only where a
+    /// test keeps `v` from it, as `r != 0r` keeps `0r` from `r` in its arm. Outside every arm,
+    /// or where the text shows the value of `e`, the tests say nothing and the answer is true.
+    fn may_be_here(&mut self, e: &'a Expr, v: &Value) -> bool {
+        if self.known(e).value.is_some() || self.arms.here() == 0 {
+            return true;
+        }
+        self.read_in_scope(e).0.contains(v)
     }
 
     /// A note for each step of the derivation of each question the integer solver refused in
@@ -5243,9 +5303,9 @@ impl<'a> Ck<'_, 'a> {
             .unwrap_or(read)
     }
 
-    /// The ints `e` may be in the scope of the node the walk is in, and the scope as the read
-    /// leaves it, with the questions the read refused.
-    fn read_in_scope(&mut self, e: &'a Expr) -> (IntervalSet, Scope) {
+    /// The values `e` may have in the scope of the node the walk is in, and the scope as the
+    /// read leaves it, with the questions the read refused.
+    fn read_in_scope(&mut self, e: &'a Expr) -> (Product, Scope) {
         let t = self.term(e);
         let here = self.arms.here();
         let mut wanted = vec![Item::Scope(here)];
@@ -5255,9 +5315,9 @@ impl<'a> Ck<'_, 'a> {
         let before = s.refusals.clone();
         let mut s = self.with_bound(s, &t.binders);
         s.eager_on(&t.term);
-        let ints = product::forward(&t.term, &mut s).ints().clone();
+        let p = product::forward(&t.term, &mut s);
         self.place_refusals(e.span, &before, &s.refusals);
-        (ints, s)
+        (p, s)
     }
 
     /// Whether the int `e` may be 0 in the scope of the node the walk is in, with the roots at
@@ -5854,9 +5914,10 @@ impl<'a> Ck<'_, 'a> {
     }
 
     /// `e` as a kernel term ([`Translated`]): its int and bool literals and the values its text
-    /// shows ([`Ck::known`]), its names, its unary `-` and `!`, its integer operators, its
-    /// comparisons, `&&` and `||`; anything else is a name of its own, by its span, which the
-    /// scope knows nothing of. Built children first on an explicit stack, once for `e`.
+    /// shows ([`Ck::known`]), its `rat` literals ([`Ck::rat_literal`]), its names, its unary `-`
+    /// and `!`, its integer operators, its comparisons, `&&` and `||`; anything else is a name
+    /// of its own, by its span, which the scope knows nothing of. Built children first on an
+    /// explicit stack, once for `e`.
     fn term(&mut self, e: &'a Expr) -> Rc<Translated> {
         if let Some(t) = self.arms.terms.get(&e.span) {
             return t.clone();
@@ -5886,7 +5947,24 @@ impl<'a> Ck<'_, 'a> {
                 done.push(t);
                 continue;
             }
+            // A value the text shows at `int` ([`Ck::known`]) is that `int` only where `x` is
+            // one, or has no carrier yet: `0` in `r == 0` is `0r` with `r: rat`, and with
+            // `r: f64` a value the scope does not model, so a name of its own. Read as the
+            // `int` `0`, the test would empty `r`'s type where it holds and drop that arm, and
+            // with it the `#divByZero` of `x / r + 1r` there (NARROW-ne-rat-divisor). The
+            // operands of such an `x` are not visited.
             if let Some(v) = self.known(x).value {
+                done.push(match self.carrier_here(x, true) {
+                    None | Some(Carrier::Int) => Term::Lit(v),
+                    Some(Carrier::Rat) => match self.rat_fact(x) {
+                        Some(RatFact::Value(v)) => Term::Lit(v),
+                        _ => opaque(),
+                    },
+                    Some(_) => opaque(),
+                });
+                continue;
+            }
+            if let Some(v) = self.rat_literal(x) {
                 done.push(Term::Lit(v));
                 continue;
             }

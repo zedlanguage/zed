@@ -186,6 +186,100 @@ fn a_test_that_leaves_zero_keeps_div_by_zero() {
     }
 }
 
+/// A `rat` divisor the tests it is under keep from `0r` adds no `#divByZero`, as an `int` one
+/// does (NARROW-ne-rat-divisor): the row's function, the contrasts of the `int` lists above at
+/// `rat`, comparisons with a literal that `0r` fails, and literals with no suffix, which take
+/// `rat` beside `r`.
+#[test]
+fn every_test_that_rules_zero_out_narrows_a_rat_divisor() {
+    assert_eq!(
+        sig(
+            "f(x: rat, r: rat) = if r != 0r { x / r } else { 0r };\n",
+            "f"
+        ),
+        "(x: rat, r: rat) -> rat"
+    );
+    for body in [
+        "if 0r != r { x / r } else { 0r }",
+        "if r == 0r { 0r } else { x / r }",
+        "if 0r == r { 0r } else { x / r }",
+        "if !(r == 0r) { x / r } else { 0r }",
+        "if r > 0r || r < 0r { x / r } else { 0r }",
+        "if r >= 1r { x / r } else { 0r }",
+        "if 0r < r { x / r } else { 0r }",
+        "if r <= -1r/2r { x / r } else { 0r }",
+        "if r < 0r { x / r } else { 0r }",
+        "if r != 0r { if x > 0r { x / r } else { x / r + 1r } } else { 0r }",
+        "if r != 0r && x != 0r { x / r } else { 0r }",
+        "if r == 0r || x == 0r { 0r } else { x / r }",
+        "if r != 0 { x / r } else { 0r }",
+        "if r == 0 { 1r } else { x / r }",
+        "if r > 0 { x / r } else { 0r }",
+        "if r > 1/2 { x / r } else { 0r }",
+    ] {
+        let text = format!("f(x: rat, r: rat) = {body};\n");
+        assert_eq!(sig(&text, "f"), "(x: rat, r: rat) -> rat", "{body}");
+    }
+    let run = "f(x: rat, r: rat) = if r != 0r { x / r } else { 0r };\n\
+               a = f(x: 7r, r: 2r);\nb = f(x: 7r, r: 0r);\nc = f(x: -7r, r: -1r/2r);\n";
+    assert_eq!(value(run, "a"), "7r/2r");
+    assert_eq!(value(run, "b"), "0r");
+    assert_eq!(value(run, "c"), "14r");
+}
+
+/// Where the test leaves `0r` to the divisor, `#divByZero` stays, at `rat` as at `int`: a test
+/// against another value, a test of another name, a disjunction one side of which holds zero,
+/// a comparison `0r` passes, the arm where `r` is zero, and a division outside the arm.
+#[test]
+fn a_test_that_leaves_zero_keeps_div_by_zero_at_rat() {
+    for body in [
+        "if r != 1r { x / r } else { 0r }",
+        "if x != 0r { x / r } else { 0r }",
+        "if r >= 0r || r < -1r { x / r } else { 0r }",
+        "if r >= 0r { x / r } else { 0r }",
+        "if r <= 1r/2r { x / r } else { 0r }",
+        "if r > -1r && r < 1r { x / r } else { 0r }",
+        "if r > 0r { 0r } else { x / r }",
+        "if r == 0r { x / r } else { 0r }",
+        "if r != 0r && x != 0r { 0r } else { x / r }",
+        "(if r != 0r { 1r } else { 2r }) + x / r",
+        "{ y = if r != 0r { 1r } else { 0r }; y + x / r }",
+    ] {
+        let text = format!("f(x: rat, r: rat) = {body};\n");
+        assert_eq!(
+            sig(&text, "f"),
+            "(x: rat, r: rat) -> rat | #divByZero",
+            "{body}"
+        );
+    }
+}
+
+/// A literal with no suffix compared with a `rat` or an `f64` takes that carrier, and the arm
+/// where the test holds is reached: `f(x: 1r, r: 0r)` runs `x / r + 1r`. Read as the `int` the
+/// literal would be alone, the test emptied `r` in that arm, which was dropped with its
+/// `#divByZero`, and `f` was `(x: rat, r: rat) -> 0r` (NARROW-ne-rat-divisor).
+#[test]
+fn a_test_against_a_literal_with_no_suffix_keeps_the_arm_where_it_holds() {
+    for body in [
+        "if r == 0 { x / r + 1r } else { 0r }",
+        "if r == 1 + 1 { x / (r - 2) } else { 0r }",
+        "if r == 0 && x == 0 { x / r + 1r } else { 0r }",
+    ] {
+        let text = format!("f(x: rat, r: rat) = {body};\n");
+        assert_eq!(
+            sig(&text, "f"),
+            "(x: rat, r: rat) -> rat | #divByZero",
+            "{body}"
+        );
+    }
+    let text = "f(x: f64, r: f64) = if r == 0 { x / r + 1.0 } else { 0.0 };\n";
+    assert_eq!(sig(text, "f"), "(x: f64, r: f64) -> f64");
+    let run = "f(x: rat, r: rat) = if r == 0 { x / r + 1r } else { 0r };\n\
+               a = f(x: 1r, r: 0r) else #divByZero -> 5r;\nb = f(x: 1r, r: 2r) else #divByZero -> 5r;\n";
+    assert_eq!(value(run, "a"), "5r");
+    assert_eq!(value(run, "b"), "0r");
+}
+
 /// Through `zedc run`: the quotient under `d != 0` has no loose failure for `_` to drop, and
 /// under `d != 1` the rejection names the failure and where it enters.
 #[test]
@@ -268,6 +362,42 @@ fn chained_tests_and_divisions_check_in_linear_time() {
     });
     scaling::check(
         "n chained tests each with a division in its arm",
+        100,
+        |m| {
+            let (stmts, res) = &built[&m];
+            let info = zedc::check::walk::check(stmts, res);
+            assert!(info.errors.is_empty(), "{:?}", info.errors);
+        },
+    );
+}
+
+/// `f(x: rat, r: rat) = { a0 = x; a1 = if r != 0r { a0 / r } else { a0 }; …; an }`, the tests
+/// taking in turn `r != 0r`, `r >= 1r` and `r != 0`: `n` tests, each with a division by a
+/// `rat` in its arm.
+fn chained_rat_tests(n: usize) -> String {
+    let mut s = String::from("f(x: rat, r: rat) = { a0 = x; ");
+    for i in 1..=n {
+        let p = i - 1;
+        let test = ["r != 0r", "r >= 1r", "r != 0"][i % 3];
+        s += &format!("a{i} = if {test} {{ a{p} / r }} else {{ a{p} }}; ");
+    }
+    s += &format!("a{n} }};\n");
+    s
+}
+
+#[test]
+fn chained_rat_tests_and_divisions_check_in_linear_time() {
+    // Each division by a `rat` whose type holds `0r` reads the divisor's product in the scope
+    // of its arm once (`Ck::may_be_here`), and each test against a `rat` literal reads the
+    // literal's sign once (`Scope::atom_names`) (COMPLEXITY.md row NARROW-ne-rat-divisor).
+    assert_eq!(sig(&chained_rat_tests(3), "f"), "(x: rat, r: rat) -> rat");
+    let built = scaling::inputs(100, |m| {
+        let stmts = zed_tests::deep::statements(&chained_rat_tests(m));
+        let res = zedc::resolve::resolve(&stmts).unwrap();
+        (stmts, res)
+    });
+    scaling::check(
+        "n chained tests each with a division by a rat in its arm",
         100,
         |m| {
             let (stmts, res) = &built[&m];

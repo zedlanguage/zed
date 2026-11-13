@@ -7093,8 +7093,14 @@ impl Scope {
             let equal = (*op == Prim::Eq) == outcome;
             for (l, r) in [(&a[0], &a[1]), (&a[1], &a[0])] {
                 match (l, r) {
+                    // Both sides of `==` have one carrier, so an `int` literal beside a name
+                    // with no `int` value stands for a literal of the name's carrier that the
+                    // term's maker read at `int`, as `1 + 1` in `r == 1 + 1` with `r: rat`;
+                    // read as the `int`, it would empty the name where the test holds and drop
+                    // that arm. Such a test narrows nothing (NARROW-ne-rat-divisor).
                     (Term::Var(x), Term::Lit(v)) if equal || !convex => {
                         if let Some(p) = self.names.get_mut(x)
+                            && (int_lit(v).is_none() || !p.ty.element.subtype(&!&Type::int()))
                             && equality(p, v, equal, prem)
                         {
                             changed.push(x.clone());
@@ -7115,6 +7121,50 @@ impl Scope {
                         }
                     }
                     _ => {}
+                }
+            }
+        }
+        // An order test of a name against a `rat` literal that `0r` fails at this outcome, as
+        // `r > 0r`, `r >= 1r` or the `else` of `r > -1r`, takes `0r` from the name, as the
+        // `else` of `r == 0r` does (NARROW-ne-rat-divisor), so that a divisor the test keeps
+        // from zero gives no `#divByZero`.
+        // Complexity tradeoff: the complete method is an interval of rationals per name, a
+        // domain the reduced product does not have, met at each test in the size of its ends
+        // and joined at each arm's end; used: the one value a divisor needs, `0r`, read from
+        // the literal's sign alone, O(1) per test whatever the literal's size, and the name's
+        // type then excludes one value at most whatever the number of tests. Every other
+        // order fact on a `rat` name is given up, as the reduced product gives it up today.
+        if let Term::Prim(op @ (Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge), a) = &t
+            && a.len() == 2
+        {
+            let flipped = match op {
+                Prim::Lt => Prim::Gt,
+                Prim::Le => Prim::Ge,
+                Prim::Gt => Prim::Lt,
+                _ => Prim::Le,
+            };
+            for (l, r, op) in [(&a[0], &a[1], *op), (&a[1], &a[0], flipped)] {
+                if let (Term::Var(x), Term::Lit(Value::Rat(q))) = (l, r)
+                    && let Some(p) = self.names.get_mut(x)
+                {
+                    // Where `0r` lies beside the literal.
+                    let side = match (q.is_zero(), q.is_negative()) {
+                        (true, _) => std::cmp::Ordering::Equal,
+                        (false, true) => std::cmp::Ordering::Greater,
+                        (false, false) => std::cmp::Ordering::Less,
+                    };
+                    let holds = match op {
+                        Prim::Lt => side.is_lt(),
+                        Prim::Le => side.is_le(),
+                        Prim::Gt => side.is_gt(),
+                        _ => side.is_ge(),
+                    };
+                    if holds != outcome {
+                        let zero = Value::rat(zed_kernel::Rat::int(0.into()));
+                        if equality(p, &zero, false, prem) {
+                            changed.push(x.clone());
+                        }
+                    }
                 }
             }
         }
