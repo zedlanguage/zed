@@ -2808,10 +2808,16 @@ fn found(p: Parts) -> Result<Option<Model>, Refusal> {
 // (limit 16.2) and 68.0 times on `chain_cross_dead_scales` (limit 17.6). Test:
 // `l01_38_presburger::decide_sat::decide_answers_where_satisfiable_answers`.
 fn has_point(p: Parts) -> Result<bool, Refusal> {
+    if let Some(answer) = by_cells(&p, false) {
+        return answer;
+    }
+    if let Some(answer) = cell_sweep::decide_by_cells(&p) {
+        return answer;
+    }
     if pick(&p, true).is_ok() {
         return Ok(true);
     }
-    if let Some(answer) = by_cells(&p) {
+    if let Some(answer) = by_cells(&p, true) {
         return answer;
     }
     let mut points = Vec::new();
@@ -2836,106 +2842,3473 @@ fn has_point(p: Parts) -> Result<bool, Refusal> {
     }
 }
 
-/// Whether the parts `p` have a point, found by splitting the values of one atom `x` into
-/// cells, when every disjunct of every disjunction of `p` is a conjunction that bounds `x` by
-/// constraints of `x` alone, and the disjuncts of each disjunction bound it to disjoint
-/// intervals: guards `x <= g` and `x > g` on one input, as the definitions of an `if` chain
-/// over `x` give. The ends of those intervals cut the values of `x` into cells; in a cell each
-/// disjunction keeps at most the one disjunct whose interval holds the cell, so the parts in
-/// the cell are one conjunction, which [`solve`] decides exactly. The parts have a point
-/// exactly when one cell does, since the cells cover every value of `x` and the disjuncts
-/// whose interval misses a cell have no point there. `None` when `p` is not of that form, or
-/// when no cell has a point and the solver refused a cell, so that [`probe_to`] answers as
-/// before. Of several atoms that serve, the least is taken; the answer does not depend on it.
-// Complexity tradeoff: naive version, the probe ([`probe_to`]), which tests each disjunct by a
-// greedy search or a propagation of the whole formula and repeats while a round removes one,
-// O(n²) and more on a chain of `n` guarded definitions with no point (`t_j = if (i <= j mod 7
-// - 3) { t } else { 2 - t }`, `t_n == 0`: 54 G instructions at 80 levels, 418 G at 192, and as
-// erratic as 1.4 G at 112). Used: one solve of the parts' constraints and one disjunct of each
-// disjunction for each of `k` cells, O(k n log n) with the ends sorted and each cell's disjunct
-// found by binary search; `k` is at most the distinct ends within the bounds of `x` plus one
-// (8 cells here). Given up: with `k` near `n` (a guard `x <= j` at each level `j` on an `x`
-// without bounds) the cells cost O(n² log n); a complete solution would decide the cells in
-// order with an incremental solver, adding and retracting the one disjunct that changes at
-// each end. A disjunct with a disjunction inside, or a disjunction whose disjuncts overlap in
-// `x`, leaves the parts to the probe as before. Test:
-// `l01_38_presburger::cells::guarded_chains_with_no_point_scale`; COMPLEXITY.md row C50
-// (PERF-project-each-superlinear).
-fn by_cells(p: &Parts) -> Option<Result<bool, Refusal>> {
-    if p.ors.is_empty() || p.ors.iter().flatten().any(|d| !d.ors.is_empty()) {
-        return None;
-    }
-    // The atoms each disjunct bounds alone, met over every disjunct.
-    let alone = |d: &Parts| -> BTreeSet<Atom> {
-        (d.cons.iter())
-            .filter(|c| c.lin.terms.len() == 1)
-            .flat_map(|c| c.lin.terms.keys().cloned())
-            .collect()
-    };
-    let mut ds = p.ors.iter().flatten();
-    let mut atoms = alone(ds.next()?);
-    for d in ds {
-        let own = alone(d);
-        atoms.retain(|a| own.contains(a));
-        if atoms.is_empty() {
+mod cell_sweep {
+    use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
+    use std::rc::Rc;
+
+    use rustc_hash::{FxHashMap, FxHashSet};
+    use zedc_int::int::Int;
+
+    use super::{Atom, AtomBounds, Con, Lin, Parts, Refusal, Rel, Span, bezout, narrow, solve};
+
+    const NONE: usize = usize::MAX;
+
+    pub(super) fn decide_by_cells(p: &Parts) -> Option<Result<bool, Refusal>> {
+        if p.ors.is_empty() {
             return None;
         }
+        if p.ors.iter().any(Vec::is_empty) {
+            return Some(Ok(false));
+        }
+        let cands = candidate_atoms(p);
+        cands.iter().find_map(|x| cells_of(p, x))
     }
-    atoms.iter().find_map(|x| cells_of(p, x))
+
+    /// Candidate guard atoms along the conjunctive witness branch `T_0` obtained by taking the
+    /// first disjunct of every inner disjunction from `p.ors[0][0]`. Along one conjunctive branch
+    /// of a valid functional disjunction there is at most one payload equality, so at most two
+    /// distinct atoms can appear in single-atom constraints (`x` and, when the payload equality is
+    /// `q == const`, `q`). Visited set `seen` bounds the DAG walk to O(n).
+    fn candidate_atoms(p: &Parts) -> Vec<Atom> {
+        let mut cands = BTreeSet::new();
+        let mut multi_eqs = 0usize;
+        let mut seen = FxHashSet::default();
+        let mut stack: Vec<&Parts> = vec![&p.ors[0][0]];
+        while let Some(u) = stack.pop() {
+            let ptr = std::ptr::from_ref(u) as usize;
+            if !seen.insert(ptr) {
+                continue;
+            }
+            for c in &u.cons {
+                match c.lin.terms.len() {
+                    0 => {}
+                    1 => {
+                        if let Some(a) = c.lin.terms.keys().next() {
+                            cands.insert(a.clone());
+                            if cands.len() > 2 {
+                                return Vec::new();
+                            }
+                        }
+                    }
+                    _ => {
+                        if c.rel != Rel::Eq {
+                            return Vec::new();
+                        }
+                        multi_eqs += 1;
+                        if multi_eqs > 1 {
+                            return Vec::new();
+                        }
+                    }
+                }
+            }
+            for o in &u.ors {
+                let Some(first) = o.first() else {
+                    return Vec::new();
+                };
+                stack.push(first);
+            }
+        }
+        cands.into_iter().collect()
+    }
+
+    fn span_of(cons: &[Con], x: &Atom) -> Option<Span> {
+        let mut b = AtomBounds::from([(x.clone(), (None, None))]);
+        for c in cons {
+            if c.lin.terms.is_empty() {
+                let holds = match c.rel {
+                    Rel::Eq => c.lin.constant.is_zero(),
+                    Rel::Ge => !c.lin.constant.is_negative(),
+                };
+                if !holds {
+                    return None;
+                }
+            } else if c.lin.terms.len() == 1 && c.lin.terms.contains_key(x) && !narrow(c, &mut b) {
+                return None;
+            }
+        }
+        let s = b.remove(x).expect("x initialized");
+        non_empty_span(&s).then_some(s)
+    }
+
+    fn non_empty_span(s: &Span) -> bool {
+        s.0.as_ref().zip(s.1.as_ref()).is_none_or(|(l, h)| l <= h)
+    }
+
+    fn meet_span(a: &Span, b: &Span) -> Option<Span> {
+        let lo = match (&a.0, &b.0) {
+            (Some(l1), Some(l2)) => Some(l1.max(l2).clone()),
+            (Some(l), None) | (None, Some(l)) => Some(l.clone()),
+            (None, None) => None,
+        };
+        let hi = match (&a.1, &b.1) {
+            (Some(h1), Some(h2)) => Some(h1.min(h2).clone()),
+            (Some(h), None) | (None, Some(h)) => Some(h.clone()),
+            (None, None) => None,
+        };
+        let s = (lo, hi);
+        non_empty_span(&s).then_some(s)
+    }
+
+    fn cmp_lo(a: &Option<Int>, b: &Option<Int>) -> std::cmp::Ordering {
+        a.cmp(b)
+    }
+
+    fn coalesce_spans(mut spans: Vec<Span>) -> Vec<Span> {
+        spans.retain(non_empty_span);
+        if spans.len() <= 1 {
+            return spans;
+        }
+        spans.sort_by(|a, b| cmp_lo(&a.0, &b.0));
+        let mut out: Vec<Span> = Vec::with_capacity(spans.len());
+        for s in spans {
+            if let Some(last) = out.last_mut() {
+                let touches = match (&last.1, &s.0) {
+                    (None, _) | (_, None) => true,
+                    (Some(h), Some(l)) => &(h + &Int::ONE) >= l,
+                };
+                if touches {
+                    last.1 = match (&last.1, s.1) {
+                        (None, _) | (_, None) => None,
+                        (Some(h1), Some(h2)) => Some(h1.max(&h2).clone()),
+                    };
+                    continue;
+                }
+            }
+            out.push(s);
+        }
+        out
+    }
+
+    fn intersect_span_lists(a: &[Span], b: &[Span]) -> Vec<Span> {
+        let (mut i, mut j) = (0usize, 0usize);
+        let mut out = Vec::new();
+        while i < a.len() && j < b.len() {
+            if let Some(m) = meet_span(&a[i], &b[j]) {
+                out.push(m);
+            }
+            let adv_a = match (&a[i].1, &b[j].1) {
+                (Some(ha), Some(hb)) => ha <= hb,
+                (Some(_), None) => true,
+                (None, Some(_)) => false,
+                (None, None) => true,
+            };
+            if adv_a {
+                i += 1;
+            } else {
+                j += 1;
+            }
+        }
+        out
+    }
+
+    /// Evaluates a pure-`x` disjunction DAG into sorted, non-touching sub-spans of `whole`.
+    /// Memoized by `Rc::as_ptr` (`memo` serves as visited map); explicit post-order stack avoids
+    /// recursion on formula depth.
+    // Complexity tradeoff: naive expansion of nested `And`/`Or` into DNF can grow as 2^d; on 1D
+    // intervals of one atom `x`, coalesced `Or` and two-pointer `And` satisfy `|A ∩ B| <= |A| +
+    // |B|`, keeping interval counts linear in the DAG size and total work O(s log s).
+    fn resolve_pure_or(
+        ds: &[Rc<Parts>],
+        x: &Atom,
+        whole: &Span,
+        memo: &mut FxHashMap<usize, Rc<Vec<Span>>>,
+    ) -> Vec<Span> {
+        let mut stack: Vec<(&Parts, bool)> = Vec::new();
+        for d in ds {
+            let ptr = Rc::as_ptr(d) as usize;
+            if !memo.contains_key(&ptr) {
+                stack.push((d, false));
+            }
+        }
+        while let Some((u, done)) = stack.pop() {
+            let ptr = std::ptr::from_ref(u) as usize;
+            if memo.contains_key(&ptr) {
+                continue;
+            }
+            if !done {
+                stack.push((u, true));
+                for o in &u.ors {
+                    for v in o {
+                        let vptr = Rc::as_ptr(v) as usize;
+                        if !memo.contains_key(&vptr) {
+                            stack.push((v, false));
+                        }
+                    }
+                }
+                continue;
+            }
+            let Some(u_span) = span_of(&u.cons, x).and_then(|s| meet_span(&s, whole)) else {
+                memo.insert(ptr, Rc::new(Vec::new()));
+                continue;
+            };
+            if u.ors.is_empty() {
+                memo.insert(ptr, Rc::new(vec![u_span]));
+                continue;
+            }
+            let mut lists: VecDeque<Vec<Span>> = VecDeque::with_capacity(u.ors.len() + 1);
+            lists.push_back(vec![u_span]);
+            let mut empty = false;
+            for o in &u.ors {
+                let mut joined = Vec::new();
+                for v in o {
+                    let vptr = Rc::as_ptr(v) as usize;
+                    if let Some(vs) = memo.get(&vptr) {
+                        joined.extend(vs.iter().cloned());
+                    }
+                }
+                let joined = coalesce_spans(joined);
+                if joined.is_empty() {
+                    empty = true;
+                    break;
+                }
+                lists.push_back(joined);
+            }
+            if empty {
+                memo.insert(ptr, Rc::new(Vec::new()));
+                continue;
+            }
+            while lists.len() > 1 {
+                let a = lists.pop_front().expect("at least two");
+                let b = lists.pop_front().expect("at least two");
+                let m = intersect_span_lists(&a, &b);
+                if m.is_empty() {
+                    lists.clear();
+                    break;
+                }
+                lists.push_back(m);
+            }
+            let res = lists.pop_front().unwrap_or_default();
+            memo.insert(ptr, Rc::new(res));
+        }
+        let mut all = Vec::new();
+        for d in ds {
+            let ptr = Rc::as_ptr(d) as usize;
+            if let Some(vs) = memo.get(&ptr) {
+                all.extend(vs.iter().cloned());
+            }
+        }
+        coalesce_spans(all)
+    }
+
+    /// Lazy range-add, zero-minimum segment tree over `0..n` local cells. Tracks how many active
+    /// ancestor guards exclude each cell (`0` = active).
+    struct SegTree {
+        n: usize,
+        min_val: Vec<u32>,
+        lazy: Vec<i32>,
+    }
+
+    impl SegTree {
+        fn new(n: usize) -> Self {
+            Self {
+                n,
+                min_val: vec![0; 4 * n.max(1)],
+                lazy: vec![0; 4 * n.max(1)],
+            }
+        }
+
+        fn has_any_zero(&self) -> bool {
+            self.n > 0 && self.min_val[1] == 0
+        }
+
+        fn apply(&mut self, idx: usize, delta: i32) {
+            if delta >= 0 {
+                self.min_val[idx] = self.min_val[idx].saturating_add(delta as u32);
+            } else {
+                self.min_val[idx] = self.min_val[idx].saturating_sub((-delta) as u32);
+            }
+            self.lazy[idx] += delta;
+        }
+
+        fn push(&mut self, idx: usize) {
+            let lz = self.lazy[idx];
+            if lz != 0 {
+                let (l, r) = (idx * 2, idx * 2 + 1);
+                self.apply(l, lz);
+                self.apply(r, lz);
+                self.lazy[idx] = 0;
+            }
+        }
+
+        fn add_range(&mut self, ql: usize, qr: usize, delta: i32) {
+            if ql > qr || self.n == 0 {
+                return;
+            }
+            self.add_rec(1, 0, self.n - 1, ql, qr, delta);
+        }
+
+        fn add_rec(&mut self, idx: usize, l: usize, r: usize, ql: usize, qr: usize, delta: i32) {
+            if ql <= l && r <= qr {
+                self.apply(idx, delta);
+                return;
+            }
+            self.push(idx);
+            let mid = l + (r - l) / 2;
+            if ql <= mid {
+                self.add_rec(idx * 2, l, mid, ql, qr, delta);
+            }
+            if qr > mid {
+                self.add_rec(idx * 2 + 1, mid + 1, r, ql, qr, delta);
+            }
+            self.min_val[idx] = self.min_val[idx * 2].min(self.min_val[idx * 2 + 1]);
+        }
+
+        fn harvest_zeros(&mut self, out: &mut Vec<usize>) {
+            if self.n == 0 || self.min_val[1] > 0 {
+                return;
+            }
+            self.harvest_rec(1, 0, self.n - 1, out);
+        }
+
+        fn harvest_rec(&mut self, idx: usize, l: usize, r: usize, out: &mut Vec<usize>) {
+            if self.min_val[idx] > 0 {
+                return;
+            }
+            if l == r {
+                out.push(l);
+                return;
+            }
+            self.push(idx);
+            let mid = l + (r - l) / 2;
+            if self.min_val[idx * 2] == 0 {
+                self.harvest_rec(idx * 2, l, mid, out);
+            }
+            if self.min_val[idx * 2 + 1] == 0 {
+                self.harvest_rec(idx * 2 + 1, mid + 1, r, out);
+            }
+        }
+    }
+
+    fn collect_cuts_from_span(s: &Span, whole: &Span, cuts: &mut Vec<Int>) {
+        if let Some(l) = &s.0
+            && whole.0.as_ref().is_none_or(|wl| l > wl)
+            && whole.1.as_ref().is_none_or(|wh| l <= wh)
+        {
+            cuts.push(l.clone());
+        }
+        if let Some(h) = &s.1 {
+            let next = h + &Int::ONE;
+            if whole.0.as_ref().is_none_or(|wl| &next > wl)
+                && whole.1.as_ref().is_none_or(|wh| &next <= wh)
+            {
+                cuts.push(next);
+            }
+        }
+    }
+
+    fn build_cells(whole: &Span, cuts: &[Int]) -> Vec<Span> {
+        let mut cells = Vec::with_capacity(cuts.len() + 1);
+        for i in 0..=cuts.len() {
+            let lo = if i == 0 {
+                whole.0.clone()
+            } else {
+                Some(cuts[i - 1].clone())
+            };
+            let hi = if i == cuts.len() {
+                whole.1.clone()
+            } else {
+                Some(&cuts[i] - &Int::ONE)
+            };
+            cells.push((lo, hi));
+        }
+        cells
+    }
+
+    /// Maps a non-empty `s ⊆ whole` whose internal endpoints are in `cuts` to `[c_start, c_end)`.
+    fn span_cell_range(s: &Span, whole: &Span, cuts: &[Int]) -> (usize, usize) {
+        let num_cells = cuts.len() + 1;
+        let start = match &s.0 {
+            lo if *lo == whole.0 => 0,
+            Some(l) => cuts.binary_search(l).expect("lower cut registered") + 1,
+            None => 0,
+        };
+        let end = match &s.1 {
+            hi if *hi == whole.1 => num_cells,
+            Some(h) => {
+                let next = h + &Int::ONE;
+                cuts.binary_search(&next).expect("upper cut registered") + 1
+            }
+            None => num_cells,
+        };
+        (start, end)
+    }
+
+    /// Complement cell ranges in `0..num_cells` of a sorted disjoint list of `[start, end)` ranges.
+    fn complement_ranges(
+        num_cells: usize,
+        present: &[(usize, usize)],
+        out: &mut Vec<(usize, usize)>,
+    ) {
+        let mut cur = 0usize;
+        for &(s, e) in present {
+            if cur < s {
+                out.push((cur, s - 1));
+            }
+            cur = cur.max(e);
+        }
+        if cur < num_cells {
+            out.push((cur, num_cells - 1));
+        }
+    }
+
+    struct DisjNode<'a> {
+        dead: bool,
+        span: Option<Span>,
+        eq: Option<&'a Con>,
+        has_payload: bool,
+        payload_or: Option<usize>,
+    }
+
+    enum ResolvedOr {
+        Empty,
+        PureX(Vec<Span>),
+        DisjointDef {
+            eqs: Vec<Con>,
+            pieces: Vec<(Span, usize)>,
+        },
+        OverlapDef {
+            eqs: Vec<Con>,
+            /// Disjoint non-empty spans with bitmask (`1` = group 0 active, `2` = group 1 active).
+            pieces: Vec<(Span, u8)>,
+            group_of_eq: Vec<u8>,
+        },
+    }
+
+    fn is_tautology(c: &Con) -> bool {
+        c.lin.terms.is_empty()
+            && match c.rel {
+                Rel::Eq => c.lin.constant.is_zero(),
+                Rel::Ge => !c.lin.constant.is_negative(),
+            }
+    }
+
+    fn tautology_con() -> Con {
+        Con {
+            lin: Lin {
+                terms: BTreeMap::new(),
+                constant: Int::ZERO,
+            },
+            rel: Rel::Eq,
+        }
+    }
+
+    /// Classifies an equality `c` (`Rel::Eq`) for involution overlap mode:
+    /// - Two unit terms: `0` for `Id` (opposite signs, constant 0), `1` for `Flip` (same signs).
+    /// - One unit term (`u == val`, target assertion): returns solved `Int` value `val`.
+    enum OverlapClass {
+        TwoTerm(u8),
+        OneTerm(Int),
+    }
+
+    fn classify_overlap_eq(c: &Con) -> Option<OverlapClass> {
+        if c.rel != Rel::Eq {
+            return None;
+        }
+        match c.lin.terms.len() {
+            1 => {
+                let (_, k) = c.lin.terms.iter().next()?;
+                if !k.is_unit() {
+                    return None;
+                }
+                // `k * u + constant == 0  =>  u = -constant / k`.
+                let val = if k.is_positive() {
+                    -&c.lin.constant
+                } else {
+                    c.lin.constant.clone()
+                };
+                Some(OverlapClass::OneTerm(val))
+            }
+            2 => {
+                let mut it = c.lin.terms.values();
+                let (k1, k2) = (it.next()?, it.next()?);
+                if !k1.is_unit() || !k2.is_unit() {
+                    return None;
+                }
+                if k1.is_positive() != k2.is_positive() {
+                    c.lin.constant.is_zero().then_some(OverlapClass::TwoTerm(0))
+                } else {
+                    Some(OverlapClass::TwoTerm(1))
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Resolves one top-level disjunction `o` over `x ∈ whole` into disjoint pieces.
+    // Complexity tradeoff: naive bottom-up copying of piece vectors along an `else if` cascade of
+    // depth s copies 1 + 2 + ... + s = Theta(s²) pieces. Used: evaluate `o` top-down on a lazy
+    // segment tree over `o`'s k_j <= 2 s_j + 1 local cells; each cell is harvested at most once
+    // before sealing (or aborting to two-pass involution mode), costing O(s_j log s_j).
+    fn resolve_disj<'a>(
+        o: &'a [Rc<Parts>],
+        x: &Atom,
+        whole: &Span,
+        pure_memo: &mut FxHashMap<usize, Rc<Vec<Span>>>,
+    ) -> Option<ResolvedOr> {
+        let mut nodes: FxHashMap<usize, DisjNode<'a>> = FxHashMap::default();
+        let mut stack: Vec<(&'a Parts, bool)> = Vec::new();
+        for d in o {
+            stack.push((d, false));
+        }
+        while let Some((u, done)) = stack.pop() {
+            let ptr = std::ptr::from_ref(u) as usize;
+            if nodes.contains_key(&ptr) {
+                continue;
+            }
+            if !done {
+                let Some(sp) = span_of(&u.cons, x).and_then(|s| meet_span(&s, whole)) else {
+                    nodes.insert(
+                        ptr,
+                        DisjNode {
+                            dead: true,
+                            span: None,
+                            eq: None,
+                            has_payload: false,
+                            payload_or: None,
+                        },
+                    );
+                    continue;
+                };
+                let mut eq: Option<&'a Con> = None;
+                for c in &u.cons {
+                    if is_tautology(c) || (c.lin.terms.len() == 1 && c.lin.terms.contains_key(x)) {
+                        continue;
+                    }
+                    if c.rel != Rel::Eq || eq.is_some() {
+                        return None;
+                    }
+                    eq = Some(c);
+                }
+                stack.push((u, true));
+                for inner_o in &u.ors {
+                    for v in inner_o {
+                        let vptr = Rc::as_ptr(v) as usize;
+                        if !nodes.contains_key(&vptr) {
+                            stack.push((v, false));
+                        }
+                    }
+                }
+                // Stash `sp` and `eq` only on the post-order step below.
+                let _ = (sp, eq);
+                continue;
+            }
+            let sp = span_of(&u.cons, x)
+                .and_then(|s| meet_span(&s, whole))
+                .expect("checked live");
+            let mut eq: Option<&'a Con> = None;
+            for c in &u.cons {
+                if is_tautology(c) || (c.lin.terms.len() == 1 && c.lin.terms.contains_key(x)) {
+                    continue;
+                }
+                eq = Some(c);
+            }
+            let mut dead = false;
+            let mut payload_or: Option<usize> = None;
+            for (idx, inner_o) in u.ors.iter().enumerate() {
+                let live_children: Vec<&DisjNode<'a>> = inner_o
+                    .iter()
+                    .filter_map(|v| nodes.get(&(Rc::as_ptr(v) as usize)))
+                    .filter(|n| !n.dead)
+                    .collect();
+                if live_children.is_empty() {
+                    dead = true;
+                    break;
+                }
+                let any_pay = live_children.iter().any(|n| n.has_payload);
+                if any_pay {
+                    if eq.is_some() || payload_or.is_some() {
+                        return None;
+                    }
+                    payload_or = Some(idx);
+                }
+            }
+            if dead {
+                nodes.insert(
+                    ptr,
+                    DisjNode {
+                        dead: true,
+                        span: None,
+                        eq: None,
+                        has_payload: false,
+                        payload_or: None,
+                    },
+                );
+            } else {
+                let has_payload = eq.is_some() || payload_or.is_some();
+                nodes.insert(
+                    ptr,
+                    DisjNode {
+                        dead: false,
+                        span: Some(sp),
+                        eq,
+                        has_payload,
+                        payload_or,
+                    },
+                );
+            }
+        }
+
+        let mut seen_top = FxHashSet::default();
+        let live_top: Vec<&'a Parts> = o
+            .iter()
+            .map(Rc::as_ref)
+            .filter(|d| {
+                let ptr = std::ptr::from_ref(*d) as usize;
+                !nodes[&ptr].dead && seen_top.insert(ptr)
+            })
+            .collect();
+        if live_top.is_empty() {
+            return Some(ResolvedOr::Empty);
+        }
+        let any_top_pay = live_top
+            .iter()
+            .any(|d| nodes[&(std::ptr::from_ref(*d) as usize)].has_payload);
+        if !any_top_pay && live_top.iter().all(|d| d.ors.is_empty()) {
+            let spans = resolve_pure_or(o, x, whole, pure_memo);
+            return Some(if spans.is_empty() {
+                ResolvedOr::Empty
+            } else {
+                ResolvedOr::PureX(spans)
+            });
+        }
+
+        // Collect distinct payload equalities and pure-`x` sibling guard spans on payload nodes.
+        let mut eqs: Vec<Con> = Vec::new();
+        let mut eq_index: HashMap<Con, usize> = HashMap::new();
+        let mut node_pure_guards: FxHashMap<usize, Vec<Vec<Span>>> = FxHashMap::default();
+        let mut cuts: Vec<Int> = Vec::new();
+
+        // Walk reachable payload skeleton (explicit stack + `visited_pay` set).
+        // Reject diamond-shared payload nodes inside one disjunction so the segment-tree DFS walks
+        // a strict tree of size at most `s_j`.
+        let mut visited_pay = FxHashSet::default();
+        let mut pstack: Vec<&'a Parts> = live_top.clone();
+        while let Some(u) = pstack.pop() {
+            let ptr = std::ptr::from_ref(u) as usize;
+            if !visited_pay.insert(ptr) {
+                return None;
+            }
+            let info = &nodes[&ptr];
+            if info.dead {
+                continue;
+            }
+            if let Some(sp) = &info.span {
+                collect_cuts_from_span(sp, whole, &mut cuts);
+            }
+            let mut pure_guards = Vec::new();
+            for (idx, inner_o) in u.ors.iter().enumerate() {
+                if Some(idx) == info.payload_or {
+                    let mut seen_child = FxHashSet::default();
+                    for v in inner_o {
+                        let vptr = Rc::as_ptr(v) as usize;
+                        if !nodes[&vptr].dead && seen_child.insert(vptr) {
+                            pstack.push(v);
+                        }
+                    }
+                } else {
+                    let g_spans = resolve_pure_or(inner_o, x, whole, pure_memo);
+                    for gs in &g_spans {
+                        collect_cuts_from_span(gs, whole, &mut cuts);
+                    }
+                    pure_guards.push(g_spans);
+                }
+            }
+            if !pure_guards.is_empty() {
+                node_pure_guards.insert(ptr, pure_guards);
+            }
+            if info.payload_or.is_none() {
+                let c = info.eq.cloned().unwrap_or_else(tautology_con);
+                if !eq_index.contains_key(&c) {
+                    let id = eqs.len();
+                    eq_index.insert(c.clone(), id);
+                    eqs.push(c);
+                }
+            }
+        }
+
+        cuts.sort_unstable();
+        cuts.dedup();
+        let local_cells = build_cells(whole, &cuts);
+        let num_local = local_cells.len();
+
+        // Precompute complement cell ranges per visited payload node so DFS pushes/pops in O(1)
+        // amortized per complement range.
+        let mut node_blocks: FxHashMap<usize, Vec<(usize, usize)>> = FxHashMap::default();
+        let mut node_leaf_eq: FxHashMap<usize, usize> = FxHashMap::default();
+        for &ptr in &visited_pay {
+            let info = &nodes[&ptr];
+            if info.dead {
+                continue;
+            }
+            let mut blocks = Vec::new();
+            if let Some(sp) = &info.span {
+                let r = span_cell_range(sp, whole, &cuts);
+                complement_ranges(num_local, &[r], &mut blocks);
+            }
+            if let Some(gs_list) = node_pure_guards.get(&ptr) {
+                for gs in gs_list {
+                    let prs: Vec<(usize, usize)> = gs
+                        .iter()
+                        .map(|s| span_cell_range(s, whole, &cuts))
+                        .collect();
+                    complement_ranges(num_local, &prs, &mut blocks);
+                }
+            }
+            node_blocks.insert(ptr, blocks);
+            if info.payload_or.is_none() {
+                let c = info.eq.cloned().unwrap_or_else(tautology_con);
+                node_leaf_eq.insert(ptr, eq_index[&c]);
+            }
+        }
+
+        // Pass 1: Disjoint branch pass.
+        enum Frame<'a> {
+            Enter(&'a Parts),
+            Exit(usize),
+        }
+        let mut seg = SegTree::new(num_local);
+        let mut slot: Vec<Option<usize>> = vec![None; num_local];
+        let mut has_overlap = false;
+        let single_eq = eqs.len() == 1;
+        let mut dfs: Vec<Frame<'a>> = live_top.iter().rev().copied().map(Frame::Enter).collect();
+        let mut scratch_cells = Vec::new();
+        while let Some(fr) = dfs.pop() {
+            match fr {
+                Frame::Exit(ptr) => {
+                    if let Some(bs) = node_blocks.get(&ptr) {
+                        for &(l, r) in bs {
+                            seg.add_range(l, r, -1);
+                        }
+                    }
+                }
+                Frame::Enter(u) => {
+                    let ptr = std::ptr::from_ref(u) as usize;
+                    let info = &nodes[&ptr];
+                    if info.dead {
+                        continue;
+                    }
+                    if let Some(bs) = node_blocks.get(&ptr) {
+                        for &(l, r) in bs {
+                            seg.add_range(l, r, 1);
+                        }
+                    }
+                    if !seg.has_any_zero() {
+                        if let Some(bs) = node_blocks.get(&ptr) {
+                            for &(l, r) in bs {
+                                seg.add_range(l, r, -1);
+                            }
+                        }
+                        continue;
+                    }
+                    dfs.push(Frame::Exit(ptr));
+                    if let Some(po) = info.payload_or {
+                        let mut seen_child = FxHashSet::default();
+                        for v in u.ors[po].iter().rev() {
+                            let vptr = Rc::as_ptr(v) as usize;
+                            if !nodes[&vptr].dead && seen_child.insert(vptr) {
+                                dfs.push(Frame::Enter(v));
+                            }
+                        }
+                    } else {
+                        let eid = node_leaf_eq[&ptr];
+                        scratch_cells.clear();
+                        seg.harvest_zeros(&mut scratch_cells);
+                        for &c in &scratch_cells {
+                            if single_eq {
+                                slot[c] = Some(eid);
+                                seg.add_range(c, c, 1);
+                            } else if slot[c].is_none() {
+                                slot[c] = Some(eid);
+                            } else {
+                                has_overlap = true;
+                                break;
+                            }
+                        }
+                        if has_overlap {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if !has_overlap {
+            let mut pieces: Vec<(Span, usize)> = Vec::new();
+            for (c, eq_opt) in slot.into_iter().enumerate() {
+                let Some(eid) = eq_opt else {
+                    continue;
+                };
+                let sp = &local_cells[c];
+                if let Some((last_sp, last_id)) = pieces.last_mut()
+                    && *last_id == eid
+                    && last_sp
+                        .1
+                        .as_ref()
+                        .zip(sp.0.as_ref())
+                        .is_some_and(|(h, l)| &(h + &Int::ONE) == l)
+                {
+                    last_sp.1.clone_from(&sp.1);
+                } else {
+                    pieces.push((sp.clone(), eid));
+                }
+            }
+            if pieces.is_empty() {
+                return Some(ResolvedOr::Empty);
+            }
+            if !any_top_pay {
+                return Some(ResolvedOr::PureX(
+                    pieces.into_iter().map(|(sp, _)| sp).collect(),
+                ));
+            }
+            return Some(ResolvedOr::DisjointDef { eqs, pieces });
+        }
+
+        // Pass 2: Involution overlap mode (`Id` / `Flip` two-term definitions, or <= 2 distinct
+        // one-term target equalities).
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        enum OverlapKind {
+            TwoTerm,
+            OneTerm,
+        }
+        let mut group_of_eq = Vec::with_capacity(eqs.len());
+        let mut mode: Option<OverlapKind> = None;
+        let mut one_count = 0u8;
+        for eq in &eqs {
+            match classify_overlap_eq(eq)? {
+                OverlapClass::TwoTerm(g) => {
+                    if mode == Some(OverlapKind::OneTerm) {
+                        return None;
+                    }
+                    mode = Some(OverlapKind::TwoTerm);
+                    group_of_eq.push(g);
+                }
+                OverlapClass::OneTerm(_val) => {
+                    if mode == Some(OverlapKind::TwoTerm) || one_count >= 2 {
+                        return None;
+                    }
+                    mode = Some(OverlapKind::OneTerm);
+                    group_of_eq.push(one_count);
+                    one_count += 1;
+                }
+            }
+        }
+
+        let mut mask_per_cell = vec![0u8; num_local];
+        for grp in 0u8..2u8 {
+            if !group_of_eq.contains(&grp) {
+                continue;
+            }
+            let mut seg_g = SegTree::new(num_local);
+            let mut dfs_g: Vec<Frame<'a>> =
+                live_top.iter().rev().copied().map(Frame::Enter).collect();
+            while let Some(fr) = dfs_g.pop() {
+                match fr {
+                    Frame::Exit(ptr) => {
+                        if let Some(bs) = node_blocks.get(&ptr) {
+                            for &(l, r) in bs {
+                                seg_g.add_range(l, r, -1);
+                            }
+                        }
+                    }
+                    Frame::Enter(u) => {
+                        let ptr = std::ptr::from_ref(u) as usize;
+                        let info = &nodes[&ptr];
+                        if info.dead {
+                            continue;
+                        }
+                        if let Some(bs) = node_blocks.get(&ptr) {
+                            for &(l, r) in bs {
+                                seg_g.add_range(l, r, 1);
+                            }
+                        }
+                        if !seg_g.has_any_zero() {
+                            if let Some(bs) = node_blocks.get(&ptr) {
+                                for &(l, r) in bs {
+                                    seg_g.add_range(l, r, -1);
+                                }
+                            }
+                            continue;
+                        }
+                        dfs_g.push(Frame::Exit(ptr));
+                        if let Some(po) = info.payload_or {
+                            let mut seen_child = FxHashSet::default();
+                            for v in u.ors[po].iter().rev() {
+                                let vptr = Rc::as_ptr(v) as usize;
+                                if !nodes[&vptr].dead && seen_child.insert(vptr) {
+                                    dfs_g.push(Frame::Enter(v));
+                                }
+                            }
+                        } else {
+                            let eid = node_leaf_eq[&ptr];
+                            if group_of_eq[eid] == grp {
+                                scratch_cells.clear();
+                                seg_g.harvest_zeros(&mut scratch_cells);
+                                for &c in &scratch_cells {
+                                    mask_per_cell[c] |= 1u8 << grp;
+                                    seg_g.add_range(c, c, 1);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut pieces: Vec<(Span, u8)> = Vec::new();
+        for (c, m) in mask_per_cell.into_iter().enumerate() {
+            if m == 0 {
+                continue;
+            }
+            let sp = &local_cells[c];
+            if let Some((last_sp, last_m)) = pieces.last_mut()
+                && *last_m == m
+                && last_sp
+                    .1
+                    .as_ref()
+                    .zip(sp.0.as_ref())
+                    .is_some_and(|(h, l)| &(h + &Int::ONE) == l)
+            {
+                last_sp.1.clone_from(&sp.1);
+            } else {
+                pieces.push((sp.clone(), m));
+            }
+        }
+        if pieces.is_empty() {
+            return Some(ResolvedOr::Empty);
+        }
+        Some(ResolvedOr::OverlapDef {
+            eqs,
+            pieces,
+            group_of_eq,
+        })
+    }
+
+    fn collect_ors_atoms(ors: &[Vec<Rc<Parts>>], x: &Atom) -> HashSet<Atom> {
+        let mut out = HashSet::from([x.clone()]);
+        let mut seen = FxHashSet::default();
+        let mut stack: Vec<&Parts> = ors.iter().flatten().map(Rc::as_ref).collect();
+        while let Some(u) = stack.pop() {
+            let ptr = std::ptr::from_ref(u) as usize;
+            if !seen.insert(ptr) {
+                continue;
+            }
+            for c in &u.cons {
+                out.extend(c.lin.terms.keys().cloned());
+            }
+            for o in &u.ors {
+                for v in o {
+                    stack.push(v);
+                }
+            }
+        }
+        out
+    }
+
+    /// Connected-component filter and primitive-form normalization of `p.cons`.
+    /// Components of `p.cons` sharing no atom with `ors_atoms` were already verified satisfiable
+    /// by [`super::settle`]'s base solve right before [`super::has_point`].
+    fn filter_and_normalize_cons(
+        cons: &[Con],
+        x: &Atom,
+        ors_atoms: &HashSet<Atom>,
+    ) -> Result<Vec<Con>, ()> {
+        let n = cons.len();
+        let mut parent: Vec<usize> = (0..n).collect();
+        fn find(parent: &mut [usize], mut i: usize) -> usize {
+            while parent[i] != i {
+                parent[i] = parent[parent[i]];
+                i = parent[i];
+            }
+            i
+        }
+        let mut first_by_atom: HashMap<Atom, usize> = HashMap::new();
+        for (i, c) in cons.iter().enumerate() {
+            for a in c.lin.terms.keys() {
+                if let Some(&prev) = first_by_atom.get(a) {
+                    let (ra, rb) = (find(&mut parent, i), find(&mut parent, prev));
+                    if ra != rb {
+                        parent[ra] = rb;
+                    }
+                } else {
+                    first_by_atom.insert(a.clone(), i);
+                }
+            }
+        }
+        let mut active_roots = FxHashSet::default();
+        for a in ors_atoms {
+            if let Some(&idx) = first_by_atom.get(a) {
+                active_roots.insert(find(&mut parent, idx));
+            }
+        }
+
+        // Group active non-`x`-only rows by primitive positive linear form `L`:
+        // `L >= lo`, `L <= hi`, `L == eq_val`. `c.lin.terms` is already sorted by `Atom`, so
+        // collecting into `Vec<(Atom, Int)>` and hashing in `HashMap` takes O(N) total time
+        // regardless of row arity while `form_order` preserves deterministic order.
+        type FormKey = Vec<(Atom, Int)>;
+        type FormBounds = (Option<Int>, Option<Int>, Option<Int>);
+        let mut forms: HashMap<FormKey, FormBounds> = HashMap::new();
+        let mut form_order: Vec<FormKey> = Vec::new();
+        for (i, c) in cons.iter().enumerate() {
+            if c.lin.terms.is_empty() {
+                let ok = match c.rel {
+                    Rel::Eq => c.lin.constant.is_zero(),
+                    Rel::Ge => !c.lin.constant.is_negative(),
+                };
+                if !ok {
+                    return Err(());
+                }
+                continue;
+            }
+            if !active_roots.contains(&find(&mut parent, i)) {
+                continue;
+            }
+            if c.lin.terms.len() == 1 && c.lin.terms.contains_key(x) {
+                continue;
+            }
+            let g = c.lin.terms.values().fold(Int::ZERO, |acc, k| acc.gcd(k));
+            let first_pos = c
+                .lin
+                .terms
+                .values()
+                .next()
+                .expect("non-empty")
+                .is_positive();
+            let mut prim: FormKey = Vec::with_capacity(c.lin.terms.len());
+            for (a, k) in &c.lin.terms {
+                let pk = k.div_floor(&g);
+                prim.push((a.clone(), if first_pos { pk } else { -&pk }));
+            }
+            if !forms.contains_key(&prim) {
+                form_order.push(prim.clone());
+            }
+            let entry = forms.entry(prim).or_insert((None, None, None));
+            match c.rel {
+                Rel::Eq => {
+                    if !c.lin.constant.mod_floor(&g).is_zero() {
+                        return Err(());
+                    }
+                    let q = c.lin.constant.div_floor(&g);
+                    // `sign * g * L + c == 0  =>  L = -sign * (c / g)`.
+                    let val = if first_pos { -&q } else { q };
+                    if let Some(prev) = &entry.2
+                        && prev != &val
+                    {
+                        return Err(());
+                    }
+                    entry.2 = Some(val);
+                }
+                Rel::Ge => {
+                    let q = c.lin.constant.div_floor(&g);
+                    if first_pos {
+                        // `g * L + c >= 0  =>  L + floor(c / g) >= 0  =>  L >= -q`.
+                        let lo = -&q;
+                        if entry.0.as_ref().is_none_or(|prev| &lo > prev) {
+                            entry.0 = Some(lo);
+                        }
+                    } else {
+                        // `-g * L + c >= 0  =>  -L + floor(c / g) >= 0  =>  L <= q`.
+                        let hi = q;
+                        if entry.1.as_ref().is_none_or(|prev| &hi < prev) {
+                            entry.1 = Some(hi);
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut out = Vec::new();
+        for key in form_order {
+            let (lo, hi, mut eq_val) = forms.remove(&key).expect("present");
+            let terms: BTreeMap<Atom, Int> = key.into_iter().collect();
+            if let (Some(l), Some(h)) = (&lo, &hi) {
+                if l > h {
+                    return Err(());
+                }
+                if l == h {
+                    if let Some(ev) = &eq_val
+                        && ev != l
+                    {
+                        return Err(());
+                    }
+                    eq_val = Some(l.clone());
+                }
+            }
+            if let Some(ev) = eq_val {
+                if lo.as_ref().is_some_and(|l| &ev < l) || hi.as_ref().is_some_and(|h| &ev > h) {
+                    return Err(());
+                }
+                out.push(Con {
+                    lin: Lin {
+                        terms,
+                        constant: -&ev,
+                    },
+                    rel: Rel::Eq,
+                });
+            } else {
+                if let Some(l) = lo {
+                    out.push(Con {
+                        lin: Lin {
+                            terms: terms.clone(),
+                            constant: -&l,
+                        },
+                        rel: Rel::Ge,
+                    });
+                }
+                if let Some(h) = hi {
+                    let neg_terms = terms.into_iter().map(|(a, k)| (a, -&k)).collect();
+                    out.push(Con {
+                        lin: Lin {
+                            terms: neg_terms,
+                            constant: h,
+                        },
+                        rel: Rel::Ge,
+                    });
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    trait Monoid: Clone {
+        fn id() -> Self;
+        fn compose(outer: &Self, inner: &Self) -> Self;
+    }
+
+    /// Unit slope `{-1, 0, 1}` of a parent variable in [`Aff`]. Restricting slopes to unit values
+    /// guarantees [`Aff::compose`] uses only additions and negations, avoiding coefficient
+    /// bit-length growth across O(n) levels.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Slope {
+        Neg,
+        Zero,
+        Pos,
+    }
+
+    impl Slope {
+        fn as_i32(self) -> i32 {
+            match self {
+                Self::Neg => -1,
+                Self::Zero => 0,
+                Self::Pos => 1,
+            }
+        }
+
+        fn negated(self) -> Self {
+            match self {
+                Self::Neg => Self::Pos,
+                Self::Zero => Self::Zero,
+                Self::Pos => Self::Neg,
+            }
+        }
+    }
+
+    /// Affine map `w -> a * w + bx * x + bk * k + c` with `a: Slope`.
+    #[derive(Clone, Debug)]
+    struct Aff {
+        a: Slope,
+        bx: Int,
+        bk: Int,
+        c: Int,
+    }
+
+    impl Monoid for Aff {
+        fn id() -> Self {
+            Self {
+                a: Slope::Pos,
+                bx: Int::ZERO,
+                bk: Int::ZERO,
+                c: Int::ZERO,
+            }
+        }
+
+        fn compose(outer: &Self, inner: &Self) -> Self {
+            match outer.a {
+                Slope::Zero => outer.clone(),
+                Slope::Pos => Self {
+                    a: inner.a,
+                    bx: &outer.bx + &inner.bx,
+                    bk: &outer.bk + &inner.bk,
+                    c: &outer.c + &inner.c,
+                },
+                Slope::Neg => Self {
+                    a: inner.a.negated(),
+                    bx: &outer.bx - &inner.bx,
+                    bk: &outer.bk - &inner.bk,
+                    c: &outer.c - &inner.c,
+                },
+            }
+        }
+    }
+
+    /// Dihedral involution monoid over `{ v -> v, v -> c_0 - v }`: `Both` represents `{ v, c_0 - v }`.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    enum InvOp {
+        Id,
+        Flip,
+        Both,
+    }
+
+    impl Monoid for InvOp {
+        fn id() -> Self {
+            Self::Id
+        }
+
+        fn compose(outer: &Self, inner: &Self) -> Self {
+            match (*outer, *inner) {
+                (Self::Both, _) | (_, Self::Both) => Self::Both,
+                (Self::Id, Self::Id) | (Self::Flip, Self::Flip) => Self::Id,
+                (Self::Id, Self::Flip) | (Self::Flip, Self::Id) => Self::Flip,
+            }
+        }
+    }
+
+    /// Rooted link-cut splay forest (Sleator & Tarjan 1983) without `evert`. Each auxiliary splay
+    /// tree stores a preferred path ordered by tree depth (`left` shallower, `right` deeper), so
+    /// `sum[x]` after `access(x)` equals `f_x ∘ ... ∘ f_root`.
+    // Complexity tradeoff: naive re-evaluation or solve of the n-level chain in each of k cells
+    // costs O(k n) or O(k n log n), quadratic when k = Theta(n). Used: link-cut tree edge updates
+    // at cell boundaries and sink queries cost O(log n) amortized per operation, O((n + k) log n)
+    // across the entire sweep.
+    struct CellForest<M: Monoid> {
+        left: Vec<usize>,
+        right: Vec<usize>,
+        parent: Vec<usize>,
+        val: Vec<M>,
+        sum: Vec<M>,
+    }
+
+    impl<M: Monoid> CellForest<M> {
+        fn new(num_nodes: usize) -> Self {
+            Self {
+                left: vec![NONE; num_nodes],
+                right: vec![NONE; num_nodes],
+                parent: vec![NONE; num_nodes],
+                val: vec![M::id(); num_nodes],
+                sum: vec![M::id(); num_nodes],
+            }
+        }
+
+        fn is_root(&self, x: usize) -> bool {
+            let p = self.parent[x];
+            p == NONE || (self.left[p] != x && self.right[p] != x)
+        }
+
+        fn pull(&mut self, x: usize) {
+            let mut s = self.val[x].clone();
+            let l = self.left[x];
+            if l != NONE {
+                s = M::compose(&s, &self.sum[l]);
+            }
+            let r = self.right[x];
+            if r != NONE {
+                s = M::compose(&self.sum[r], &s);
+            }
+            self.sum[x] = s;
+        }
+
+        fn rotate(&mut self, x: usize) {
+            let p = self.parent[x];
+            let g = self.parent[p];
+            if !self.is_root(p) {
+                if self.left[g] == p {
+                    self.left[g] = x;
+                } else {
+                    self.right[g] = x;
+                }
+            }
+            if self.left[p] == x {
+                let b = self.right[x];
+                self.left[p] = b;
+                if b != NONE {
+                    self.parent[b] = p;
+                }
+                self.right[x] = p;
+            } else {
+                let b = self.left[x];
+                self.right[p] = b;
+                if b != NONE {
+                    self.parent[b] = p;
+                }
+                self.left[x] = p;
+            }
+            self.parent[p] = x;
+            self.parent[x] = g;
+            self.pull(p);
+            self.pull(x);
+        }
+
+        fn splay(&mut self, x: usize) {
+            while !self.is_root(x) {
+                let p = self.parent[x];
+                if !self.is_root(p) {
+                    let g = self.parent[p];
+                    if (self.left[g] == p) == (self.left[p] == x) {
+                        self.rotate(p);
+                    } else {
+                        self.rotate(x);
+                    }
+                }
+                self.rotate(x);
+            }
+        }
+
+        fn access(&mut self, x: usize) {
+            let mut last = NONE;
+            let mut cur = x;
+            while cur != NONE {
+                self.splay(cur);
+                self.right[cur] = last;
+                self.pull(cur);
+                last = cur;
+                cur = self.parent[cur];
+            }
+            self.splay(x);
+        }
+
+        fn cut(&mut self, v: usize) {
+            self.access(v);
+            let l = self.left[v];
+            if l != NONE {
+                self.parent[l] = NONE;
+                self.left[v] = NONE;
+                self.pull(v);
+            }
+        }
+
+        fn set_and_link(&mut self, v: usize, p: usize, val: M) {
+            self.access(v);
+            self.val[v] = val;
+            self.pull(v);
+            self.access(p);
+            debug_assert_eq!(self.left[v], NONE);
+            self.left[v] = p;
+            self.parent[p] = v;
+            self.pull(v);
+        }
+
+        fn query(&mut self, v: usize) -> M {
+            self.access(v);
+            self.sum[v].clone()
+        }
+    }
+
+    #[derive(Clone)]
+    struct EqItem {
+        /// `Some(or_idx)` if from `p.ors`, `None` if a permanent `Rel::Eq` row from `p.cons`.
+        from_or: Option<usize>,
+        eqs: Vec<Con>,
+        pieces: ItemPieces,
+    }
+
+    #[derive(Clone)]
+    enum ItemPieces {
+        Permanent,
+        Disjoint(Vec<(Span, usize)>),
+        Overlap {
+            pieces: Vec<(Span, u8)>,
+            group_of_eq: Vec<u8>,
+        },
+    }
+
+    struct Orientation {
+        param_k: Option<Atom>,
+        k_span: Span,
+        /// `(item_idx, node_id 1..=num_defs, defined_atom)` in topological order.
+        topo: Vec<(usize, usize, Atom)>,
+        known_defs: HashMap<Atom, usize>,
+        leftover_items: Vec<usize>,
+        leftover_ineqs: Vec<Con>,
+    }
+
+    /// Parses `c` (`Rel::Eq`) as defining `q`: `q = a * u + bx * x + bk * k + c_const` with
+    /// `a ∈ {-1, 0, 1}`, returning `(parent_id, Aff)`.
+    fn parse_def_eq(
+        c: &Con,
+        q: &Atom,
+        x: &Atom,
+        param_k: Option<&Atom>,
+        known_defs: &HashMap<Atom, usize>,
+    ) -> Option<(usize, Aff)> {
+        let q_coef = c.lin.terms.get(q)?;
+        if !q_coef.is_unit() {
+            return None;
+        }
+        // `q_coef * q + sum_{b != q} k_b * b + constant == 0`
+        // `=> q = -q_coef * (sum_{b != q} k_b * b + constant)`.
+        let flip_rhs = q_coef.is_positive();
+        let neg_if = |v: &Int| if flip_rhs { -v } else { v.clone() };
+        let mut parent_id = 0usize;
+        let mut a_parent = Slope::Zero;
+        let mut bx = Int::ZERO;
+        let mut bk = Int::ZERO;
+        for (atom, coef) in &c.lin.terms {
+            if atom == q {
+                continue;
+            }
+            if atom == x {
+                bx = neg_if(coef);
+            } else if param_k == Some(atom) {
+                bk = neg_if(coef);
+            } else if let Some(&uid) = known_defs.get(atom) {
+                if parent_id != 0 || !coef.is_unit() {
+                    return None;
+                }
+                parent_id = uid;
+                let rhs_c = neg_if(coef);
+                a_parent = if rhs_c.is_positive() {
+                    Slope::Pos
+                } else {
+                    Slope::Neg
+                };
+            } else {
+                return None;
+            }
+        }
+        let c_const = neg_if(&c.lin.constant);
+        Some((
+            parent_id,
+            Aff {
+                a: a_parent,
+                bx,
+                bk,
+                c: c_const,
+            },
+        ))
+    }
+
+    /// Parses `c` (`Rel::Eq`) as a single-unit-def target `a_u * q_u + bx * x + bk * k + cst == 0`.
+    fn parse_unit_target_eq(
+        c: &Con,
+        x: &Atom,
+        param_k: Option<&Atom>,
+        known_defs: &HashMap<Atom, usize>,
+    ) -> Option<(usize, Slope, Int, Int, Int)> {
+        if c.rel != Rel::Eq {
+            return None;
+        }
+        let mut uid = 0usize;
+        let mut a_u = Slope::Zero;
+        let mut bx = Int::ZERO;
+        let mut bk = Int::ZERO;
+        for (atom, coef) in &c.lin.terms {
+            if atom == x {
+                bx = coef.clone();
+            } else if param_k == Some(atom) {
+                bk = coef.clone();
+            } else if let Some(&id) = known_defs.get(atom) {
+                if uid != 0 || !coef.is_unit() {
+                    return None;
+                }
+                uid = id;
+                a_u = if coef.is_positive() {
+                    Slope::Pos
+                } else {
+                    Slope::Neg
+                };
+            } else {
+                return None;
+            }
+        }
+        Some((uid, a_u, bx, bk, c.lin.constant.clone()))
+    }
+
+    #[derive(Clone)]
+    struct GeneralTargetEq {
+        defs: Vec<(usize, Int)>,
+        bx: Int,
+        bk: Int,
+        cst: Int,
+    }
+
+    /// Parses `c` (`Rel::Eq`) as a linear target `sum coef_i * q_i + bx * x + bk * k + cst == 0`.
+    fn parse_general_target_eq(
+        c: &Con,
+        x: &Atom,
+        param_k: Option<&Atom>,
+        known_defs: &HashMap<Atom, usize>,
+    ) -> Option<GeneralTargetEq> {
+        if c.rel != Rel::Eq {
+            return None;
+        }
+        let mut defs = Vec::with_capacity(c.lin.terms.len());
+        let mut bx = Int::ZERO;
+        let mut bk = Int::ZERO;
+        for (atom, coef) in &c.lin.terms {
+            if atom == x {
+                bx = coef.clone();
+            } else if param_k == Some(atom) {
+                bk = coef.clone();
+            } else if let Some(&id) = known_defs.get(atom) {
+                defs.push((id, coef.clone()));
+            } else {
+                return None;
+            }
+        }
+        Some(GeneralTargetEq {
+            defs,
+            bx,
+            bk,
+            cst: c.lin.constant.clone(),
+        })
+    }
+
+    /// Runs Kahn's topological peeling to orient functional definitions from `{x} ∪ param_k`.
+    fn try_orient(
+        items: &[EqItem],
+        ineqs: &[Con],
+        x: &Atom,
+        whole: &Span,
+        param_k: Option<Atom>,
+    ) -> Option<Result<Orientation, ()>> {
+        let mut k_span: Span = (None, None);
+        if let Some(k) = &param_k {
+            let mut b = AtomBounds::from([(k.clone(), (None, None))]);
+            for c in ineqs {
+                if c.lin.terms.len() == 1 && c.lin.terms.contains_key(k) && !narrow(c, &mut b) {
+                    return Some(Err(()));
+                }
+            }
+            k_span = b.remove(k).expect("k initialized");
+            if !non_empty_span(&k_span) {
+                return Some(Err(()));
+            }
+        }
+
+        let n_items = items.len();
+        let mut unit_common: Vec<Vec<Atom>> = Vec::with_capacity(n_items);
+        let mut atom_to_items: HashMap<Atom, Vec<usize>> = HashMap::new();
+
+        for (idx, it) in items.iter().enumerate() {
+            let mut all_atoms = BTreeSet::new();
+            let mut common: Option<BTreeSet<Atom>> = None;
+            for c in &it.eqs {
+                if c.lin.terms.len() > 4 {
+                    return None;
+                }
+                let mut units = BTreeSet::new();
+                for (a, k) in &c.lin.terms {
+                    all_atoms.insert(a.clone());
+                    if a != x && param_k.as_ref() != Some(a) && k.is_unit() {
+                        units.insert(a.clone());
+                    }
+                }
+                common = Some(match common {
+                    None => units,
+                    Some(prev) => prev.intersection(&units).cloned().collect(),
+                });
+            }
+            let uc: Vec<Atom> = common.unwrap_or_default().into_iter().collect();
+            unit_common.push(uc);
+            for a in all_atoms {
+                atom_to_items.entry(a).or_default().push(idx);
+            }
+        }
+
+        let is_unit_cons = |idx: usize| -> bool {
+            items[idx].from_or.is_none() && items[idx].eqs[0].lin.terms.len() == 1
+        };
+
+        let can_define = |idx: usize, known_defs: &HashMap<Atom, usize>| -> Option<Atom> {
+            let mut unk = unit_common[idx]
+                .iter()
+                .filter(|a| !known_defs.contains_key(*a));
+            let q = unk.next()?.clone();
+            if unk.next().is_some() {
+                return None;
+            }
+            for c in &items[idx].eqs {
+                parse_def_eq(c, &q, x, param_k.as_ref(), known_defs)?;
+            }
+            Some(q)
+        };
+
+        let mut known_defs: HashMap<Atom, usize> = HashMap::new();
+        let mut oriented = vec![false; n_items];
+        let mut topo: Vec<(usize, usize, Atom)> = Vec::new();
+        // Two-tier queue: `main_q` holds `p.ors` and multi-atom `p.cons` definitions; `unit_cons_q`
+        // holds single-atom `p.cons` constants `q == val` so target assertions like `#00 == -2`
+        // never steal `q` before chain definitions like `#00 == #19`.
+        let mut main_q: VecDeque<usize> = VecDeque::new();
+        let mut unit_cons_q: VecDeque<usize> = VecDeque::new();
+
+        for pass_or in [true, false] {
+            for (idx, it) in items.iter().enumerate() {
+                if (it.from_or.is_some() == pass_or) && can_define(idx, &known_defs).is_some() {
+                    if is_unit_cons(idx) {
+                        unit_cons_q.push_back(idx);
+                    } else {
+                        main_q.push_back(idx);
+                    }
+                }
+            }
+        }
+
+        while let Some(idx) = main_q.pop_front().or_else(|| unit_cons_q.pop_front()) {
+            if oriented[idx] {
+                continue;
+            }
+            let Some(q) = can_define(idx, &known_defs) else {
+                continue;
+            };
+            oriented[idx] = true;
+            let id = known_defs.len() + 1;
+            known_defs.insert(q.clone(), id);
+            topo.push((idx, id, q.clone()));
+            if let Some(nbrs) = atom_to_items.get(&q) {
+                for &nbr in nbrs {
+                    if !oriented[nbr] && can_define(nbr, &known_defs).is_some() {
+                        if is_unit_cons(nbr) {
+                            unit_cons_q.push_back(nbr);
+                        } else {
+                            main_q.push_back(nbr);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Propagate forward interval bounds across `topo` and precompute per-definition hull
+        // summaries (`eq_hull_spans`, `uniform_hom`, `parents`) in O(N) total time to prune
+        // redundant hull inequalities added to `p.cons` by `disjunction_hulls`.
+        let mut bounds: HashMap<Atom, Span> = HashMap::new();
+        bounds.insert(x.clone(), whole.clone());
+        if let Some(k) = &param_k {
+            bounds.insert(k.clone(), k_span.clone());
+        }
+        let mut summaries: HashMap<Atom, DefSummary> = HashMap::with_capacity(topo.len());
+        for &(idx, _, ref q) in &topo {
+            let it = &items[idx];
+            let parsed_eqs: Vec<(usize, Aff)> = it
+                .eqs
+                .iter()
+                .map(|eq| {
+                    parse_def_eq(eq, q, x, param_k.as_ref(), &known_defs)
+                        .expect("verified in can_define")
+                })
+                .collect();
+            let mut eq_hull_spans: Vec<Option<Span>> = vec![None; it.eqs.len()];
+            match &it.pieces {
+                ItemPieces::Permanent => eq_hull_spans[0] = Some(whole.clone()),
+                ItemPieces::Disjoint(ps) => {
+                    for (sp, eid) in ps {
+                        eq_hull_spans[*eid] = Some(match eq_hull_spans[*eid].take() {
+                            None => sp.clone(),
+                            Some(prev) => hull_span(&prev, sp),
+                        });
+                    }
+                }
+                ItemPieces::Overlap {
+                    pieces,
+                    group_of_eq,
+                } => {
+                    for (sp, mask) in pieces {
+                        for (eid, &grp) in group_of_eq.iter().enumerate() {
+                            if (mask & (1u8 << grp)) != 0 {
+                                eq_hull_spans[eid] = Some(match eq_hull_spans[eid].take() {
+                                    None => sp.clone(),
+                                    Some(prev) => hull_span(&prev, sp),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
+            let mut active_eqs = Vec::new();
+            let mut parents = BTreeSet::new();
+            let mut q_span: Option<Span> = None;
+            let mut uniform_hom: Option<(usize, Slope, Int, Int, Span)> = None;
+            let mut uniform_ok = true;
+
+            for (eid, sp_opt) in eq_hull_spans.iter().enumerate() {
+                let Some(sp) = sp_opt else {
+                    continue;
+                };
+                active_eqs.push(eid);
+                let (uid, ref aff) = parsed_eqs[eid];
+                let mut term_spans: Vec<(Int, Span)> = Vec::new();
+                if aff.a != Slope::Zero {
+                    let u_atom = topo[uid - 1].2.clone();
+                    parents.insert(u_atom.clone());
+                    term_spans.push((Int::from(aff.a.as_i32()), bounds[&u_atom].clone()));
+                }
+                if !aff.bx.is_zero() {
+                    term_spans.push((aff.bx.clone(), sp.clone()));
+                }
+                if !aff.bk.is_zero() {
+                    term_spans.push((aff.bk.clone(), k_span.clone()));
+                }
+                let branch_span = eval_lin_span(&term_spans, &aff.c);
+                q_span = Some(match q_span.take() {
+                    None => branch_span,
+                    Some(prev) => hull_span(&prev, &branch_span),
+                });
+                if uniform_ok {
+                    match &mut uniform_hom {
+                        None => {
+                            uniform_hom = Some((
+                                uid,
+                                aff.a,
+                                aff.bx.clone(),
+                                aff.bk.clone(),
+                                (Some(aff.c.clone()), Some(aff.c.clone())),
+                            ));
+                        }
+                        Some((p_uid, p_a, p_bx, p_bk, c_sp))
+                            if *p_uid == uid
+                                && *p_a == aff.a
+                                && *p_bx == aff.bx
+                                && *p_bk == aff.bk =>
+                        {
+                            *c_sp = hull_span(c_sp, &(Some(aff.c.clone()), Some(aff.c.clone())));
+                        }
+                        Some(_) => {
+                            uniform_hom = None;
+                            uniform_ok = false;
+                        }
+                    }
+                }
+            }
+
+            bounds.insert(q.clone(), q_span.unwrap_or((None, None)));
+            summaries.insert(
+                q.clone(),
+                DefSummary {
+                    parsed_eqs,
+                    eq_hull_spans,
+                    active_eqs,
+                    parents,
+                    uniform_hom,
+                },
+            );
+        }
+
+        let env = OrientEnv {
+            x,
+            whole,
+            param_k: param_k.as_ref(),
+            k_span: &k_span,
+            topo: &topo,
+            bounds: &bounds,
+        };
+        let mut leftover_ineqs = Vec::new();
+        for c in ineqs {
+            if let Some(k) = &param_k
+                && c.lin.terms.len() == 1
+                && c.lin.terms.contains_key(k)
+            {
+                continue;
+            }
+            if c.lin.terms.keys().any(|a| !bounds.contains_key(a)) {
+                return None;
+            }
+            // Vacuous check 1: global forward bounds imply `c.lin >= 0`.
+            let term_spans: Vec<(Int, Span)> = c
+                .lin
+                .terms
+                .iter()
+                .map(|(a, coef)| (coef.clone(), bounds[a].clone()))
+                .collect();
+            let (min_v, _) = eval_lin_span(&term_spans, &c.lin.constant);
+            if min_v.as_ref().is_some_and(|m| !m.is_negative()) {
+                continue;
+            }
+            // Vacuous check 2: hull inequality implied across every branch of its highest-rank
+            // defined atom `q`.
+            if let Some(q) = c
+                .lin
+                .terms
+                .keys()
+                .filter(|a| summaries.contains_key(*a))
+                .max_by_key(|a| known_defs[*a])
+                && piecewise_implies_ge(c, q, &summaries[q], &env)
+            {
+                continue;
+            }
+            leftover_ineqs.push(c.clone());
+        }
+
+        let leftover_items: Vec<usize> = (0..n_items).filter(|&i| !oriented[i]).collect();
+        for &idx in &leftover_items {
+            for c in &items[idx].eqs {
+                if c.lin.terms.keys().any(|a| !bounds.contains_key(a)) {
+                    return None;
+                }
+            }
+        }
+
+        Some(Ok(Orientation {
+            param_k,
+            k_span,
+            topo,
+            known_defs,
+            leftover_items,
+            leftover_ineqs,
+        }))
+    }
+
+    struct DefSummary {
+        parsed_eqs: Vec<(usize, Aff)>,
+        eq_hull_spans: Vec<Option<Span>>,
+        active_eqs: Vec<usize>,
+        parents: BTreeSet<Atom>,
+        uniform_hom: Option<(usize, Slope, Int, Int, Span)>,
+    }
+
+    struct OrientEnv<'a> {
+        x: &'a Atom,
+        whole: &'a Span,
+        param_k: Option<&'a Atom>,
+        k_span: &'a Span,
+        topo: &'a [(usize, usize, Atom)],
+        bounds: &'a HashMap<Atom, Span>,
+    }
+
+    fn hull_span(a: &Span, b: &Span) -> Span {
+        let lo = match (&a.0, &b.0) {
+            (Some(l1), Some(l2)) => Some(l1.min(l2).clone()),
+            _ => None,
+        };
+        let hi = match (&a.1, &b.1) {
+            (Some(h1), Some(h2)) => Some(h1.max(h2).clone()),
+            _ => None,
+        };
+        (lo, hi)
+    }
+
+    fn eval_lin_span(terms: &[(Int, Span)], constant: &Int) -> Span {
+        let mut lo = Some(constant.clone());
+        let mut hi = Some(constant.clone());
+        for (coef, (tlo, thi)) in terms {
+            let (add_lo, add_hi) = if coef.is_positive() {
+                (
+                    tlo.as_ref().map(|v| coef * v),
+                    thi.as_ref().map(|v| coef * v),
+                )
+            } else {
+                (
+                    thi.as_ref().map(|v| coef * v),
+                    tlo.as_ref().map(|v| coef * v),
+                )
+            };
+            lo = lo.zip(add_lo).map(|(a, b)| &a + &b);
+            hi = hi.zip(add_hi).map(|(a, b)| &a + &b);
+        }
+        (lo, hi)
+    }
+
+    /// Checks whether `c.lin >= 0` is implied on every active piece of `q`'s definition.
+    // Complexity tradeoff: naive evaluation of `c.lin` on every piece `(sp, eid)` of `q` costs
+    // O(|ineqs(q)| * |pieces(q)|), which can reach O(N²) if many rows target an atom with Theta(N)
+    // pieces. Used: because affine forms on `x` achieve their extrema at convex-hull endpoints,
+    // `DefSummary` precomputes `eq_hull_spans[eid]` once in O(N); uniform homogeneous forms check
+    // in O(1), and unit-coefficient local forms over `A_q` (`|A_q| <= 5`, at most 242 deduplicated
+    // rows per `q`) check `active_eqs` in O(|active_eqs(q)|), totaling O(N) worst-case.
+    fn piecewise_implies_ge(c: &Con, q: &Atom, summary: &DefSummary, env: &OrientEnv<'_>) -> bool {
+        let kq = &c.lin.terms[q];
+        let subst_holds =
+            |uid: usize, slope: Slope, bx: &Int, bk: &Int, c_span: &Span, x_sp: &Span| -> bool {
+                let mut combined: BTreeMap<Atom, Int> = BTreeMap::new();
+                for (a, coef) in &c.lin.terms {
+                    if a != q {
+                        combined.insert(a.clone(), coef.clone());
+                    }
+                }
+                if slope != Slope::Zero {
+                    let u_atom = &env.topo[uid - 1].2;
+                    let add = if slope == Slope::Pos { kq.clone() } else { -kq };
+                    *combined.entry(u_atom.clone()).or_default() =
+                        &combined.get(u_atom).cloned().unwrap_or(Int::ZERO) + &add;
+                }
+                if !bx.is_zero() {
+                    *combined.entry(env.x.clone()).or_default() =
+                        &combined.get(env.x).cloned().unwrap_or(Int::ZERO) + &(kq * bx);
+                }
+                if let Some(ka) = env.param_k
+                    && !bk.is_zero()
+                {
+                    *combined.entry(ka.clone()).or_default() =
+                        &combined.get(ka).cloned().unwrap_or(Int::ZERO) + &(kq * bk);
+                }
+                let mut tspans: Vec<(Int, Span)> = combined
+                    .into_iter()
+                    .filter(|(_, v)| !v.is_zero())
+                    .map(|(a, v)| {
+                        let s = if &a == env.x {
+                            x_sp.clone()
+                        } else if env.param_k == Some(&a) {
+                            env.k_span.clone()
+                        } else {
+                            env.bounds[&a].clone()
+                        };
+                        (v, s)
+                    })
+                    .collect();
+                tspans.push((kq.clone(), c_span.clone()));
+                let (min_v, _) = eval_lin_span(&tspans, &c.lin.constant);
+                min_v.is_some_and(|m| !m.is_negative())
+            };
+
+        if let Some((uid, slope, ref bx, ref bk, ref c_span)) = summary.uniform_hom
+            && subst_holds(uid, slope, bx, bk, c_span, env.whole)
+        {
+            return true;
+        }
+
+        if c.lin.terms.len() > 4 || summary.parents.len() > 2 {
+            return false;
+        }
+        let local_unit = c.lin.terms.iter().all(|(a, coef)| {
+            coef.is_unit()
+                && (a == q || a == env.x || env.param_k == Some(a) || summary.parents.contains(a))
+        });
+        if !local_unit {
+            return false;
+        }
+
+        summary.active_eqs.iter().all(|&eid| {
+            let (uid, ref aff) = summary.parsed_eqs[eid];
+            let sp = summary.eq_hull_spans[eid]
+                .as_ref()
+                .expect("active eid has hull span");
+            let c_pt = (Some(aff.c.clone()), Some(aff.c.clone()));
+            subst_holds(uid, aff.a, &aff.bx, &aff.bk, &c_pt, sp)
+        })
+    }
+
+    /// Decides `m * x + k == 0` for `x ∈ span`.
+    fn holds_1var_eq(m: &Int, k: &Int, span: &Span) -> bool {
+        if m.is_zero() {
+            return k.is_zero();
+        }
+        let neg_k = -k;
+        if !neg_k.mod_floor(&m.abs()).is_zero() {
+            return false;
+        }
+        let x0 = neg_k.div_floor(m);
+        span.0.as_ref().is_none_or(|l| &x0 >= l) && span.1.as_ref().is_none_or(|h| &x0 <= h)
+    }
+
+    /// Narrows `span` by `lo_b <= m * x + c <= hi_b`, returning whether any integer remains.
+    fn holds_1var_span(m: &Int, c: &Int, target: &Span, x_span: &Span) -> bool {
+        if m.is_zero() {
+            return target.0.as_ref().is_none_or(|l| c >= l)
+                && target.1.as_ref().is_none_or(|h| c <= h);
+        }
+        let mut lo = x_span.0.clone();
+        let mut hi = x_span.1.clone();
+        let tighten_ge = |rhs: &Int, coef: &Int, lo: &mut Option<Int>, hi: &mut Option<Int>| {
+            // `coef * x >= rhs`.
+            if coef.is_positive() {
+                let bnd = -&(-rhs).div_floor(coef);
+                if lo.as_ref().is_none_or(|l| &bnd > l) {
+                    *lo = Some(bnd);
+                }
+            } else {
+                let bnd = (-rhs).div_floor(&-coef);
+                if hi.as_ref().is_none_or(|h| &bnd < h) {
+                    *hi = Some(bnd);
+                }
+            }
+        };
+        if let Some(tl) = &target.0 {
+            tighten_ge(&(tl - c), m, &mut lo, &mut hi);
+        }
+        if let Some(th) = &target.1 {
+            tighten_ge(&(c - th), &-m, &mut lo, &mut hi);
+        }
+        non_empty_span(&(lo, hi))
+    }
+
+    /// Decides `a * x + b * k + d == 0` for `(x, k) ∈ x_span × k_span` in closed form via [`bezout`].
+    fn holds_2var_eq(a: &Int, b: &Int, d: &Int, x_span: &Span, k_span: &Span) -> bool {
+        if a.is_zero() {
+            return holds_1var_eq(b, d, k_span);
+        }
+        if b.is_zero() {
+            return holds_1var_eq(a, d, x_span);
+        }
+        let (g, mut s, t) = bezout(&a.abs(), b);
+        if a.is_negative() {
+            s = -&s;
+        }
+        let neg_d = -d;
+        if !neg_d.mod_floor(&g).is_zero() {
+            return false;
+        }
+        let q = neg_d.div_floor(&g);
+        let x0 = &s * &q;
+        let k0 = &t * &q;
+        let ap = a.div_floor(&g);
+        let bp = b.div_floor(&g);
+        // General integer solution: `x = x0 + bp * m`, `k = k0 - ap * m` for `m ∈ Z`.
+        let mut m_span: Span = (None, None);
+        let bound_m = |coef: &Int, base: &Int, sp: &Span, ms: &mut Span| -> bool {
+            // `sp.0 <= base + coef * m <= sp.1`.
+            if let Some(l) = &sp.0 {
+                let rhs = l - base;
+                if coef.is_positive() {
+                    let bnd = -&(-&rhs).div_floor(coef);
+                    if ms.0.as_ref().is_none_or(|prev| &bnd > prev) {
+                        ms.0 = Some(bnd);
+                    }
+                } else {
+                    let bnd = (-&rhs).div_floor(&-coef);
+                    if ms.1.as_ref().is_none_or(|prev| &bnd < prev) {
+                        ms.1 = Some(bnd);
+                    }
+                }
+            }
+            if let Some(h) = &sp.1 {
+                let rhs = h - base;
+                if coef.is_positive() {
+                    let bnd = rhs.div_floor(coef);
+                    if ms.1.as_ref().is_none_or(|prev| &bnd < prev) {
+                        ms.1 = Some(bnd);
+                    }
+                } else {
+                    let bnd = -&rhs.div_floor(&-coef);
+                    if ms.0.as_ref().is_none_or(|prev| &bnd > prev) {
+                        ms.0 = Some(bnd);
+                    }
+                }
+            }
+            non_empty_span(ms)
+        };
+        bound_m(&bp, &x0, x_span, &mut m_span) && bound_m(&-&ap, &k0, k_span, &mut m_span)
+    }
+
+    fn cells_of(p: &Parts, x: &Atom) -> Option<Result<bool, Refusal>> {
+        let Some(whole) = span_of(&p.cons, x) else {
+            return Some(Ok(false));
+        };
+        let ors_atoms = collect_ors_atoms(&p.ors, x);
+        let Ok(norm_cons) = filter_and_normalize_cons(&p.cons, x, &ors_atoms) else {
+            return Some(Ok(false));
+        };
+
+        let mut pure_memo: FxHashMap<usize, Rc<Vec<Span>>> = FxHashMap::default();
+        let mut pure_ors: Vec<Vec<Span>> = Vec::new();
+        let mut items: Vec<EqItem> = Vec::new();
+        let mut has_overlap = false;
+
+        for (or_idx, o) in p.ors.iter().enumerate() {
+            match resolve_disj(o, x, &whole, &mut pure_memo)? {
+                ResolvedOr::Empty => return Some(Ok(false)),
+                ResolvedOr::PureX(spans) => pure_ors.push(spans),
+                ResolvedOr::DisjointDef { eqs, pieces } => items.push(EqItem {
+                    from_or: Some(or_idx),
+                    eqs,
+                    pieces: ItemPieces::Disjoint(pieces),
+                }),
+                ResolvedOr::OverlapDef {
+                    eqs,
+                    pieces,
+                    group_of_eq,
+                } => {
+                    has_overlap = true;
+                    items.push(EqItem {
+                        from_or: Some(or_idx),
+                        eqs,
+                        pieces: ItemPieces::Overlap {
+                            pieces,
+                            group_of_eq,
+                        },
+                    });
+                }
+            }
+        }
+
+        let mut ineqs = Vec::new();
+        for c in norm_cons {
+            if c.rel == Rel::Eq {
+                items.push(EqItem {
+                    from_or: None,
+                    eqs: vec![c],
+                    pieces: ItemPieces::Permanent,
+                });
+            } else {
+                ineqs.push(c);
+            }
+        }
+
+        // Detect any mandatory non-unit base parameter `k != x`.
+        let mut forced_k: Option<Atom> = None;
+        for it in &items {
+            for c in &it.eqs {
+                for (a, coef) in &c.lin.terms {
+                    if a != x && !coef.is_unit() {
+                        if let Some(prev) = &forced_k {
+                            if prev != a {
+                                return None;
+                            }
+                        } else {
+                            forced_k = Some(a.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        let orient = match try_orient(&items, &ineqs, x, &whole, forced_k.clone()) {
+            Some(Ok(o)) if o.leftover_items.len() <= 1 => o,
+            Some(Err(())) => return Some(Ok(false)),
+            _ if forced_k.is_none() => {
+                // Retry once if a unit-coefficient base parameter `k != x` bounded in `ineqs`
+                // stalled Kahn's queue at level 1.
+                let mut k_cands: BTreeSet<Atom> = ineqs
+                    .iter()
+                    .filter(|c| c.lin.terms.len() == 1)
+                    .flat_map(|c| c.lin.terms.keys().cloned())
+                    .filter(|a| a != x)
+                    .collect();
+                if k_cands.len() != 1 {
+                    return None;
+                }
+                let k = k_cands.pop_first().expect("one");
+                match try_orient(&items, &ineqs, x, &whole, Some(k)) {
+                    Some(Ok(o)) if o.leftover_items.len() <= 1 => o,
+                    Some(Err(())) => return Some(Ok(false)),
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        };
+
+        if has_overlap {
+            sweep_involution(p.ors.len(), &whole, x, &pure_ors, &items, &orient)
+        } else {
+            sweep_disjoint(p.ors.len(), &whole, x, &pure_ors, &items, &orient)
+        }
+    }
+
+    fn sweep_disjoint(
+        num_ors: usize,
+        whole: &Span,
+        x: &Atom,
+        pure_ors: &[Vec<Span>],
+        items: &[EqItem],
+        orient: &Orientation,
+    ) -> Option<Result<bool, Refusal>> {
+        // Classify the single optional sink constraint (`target_item` or `sink_span`).
+        #[derive(Clone)]
+        enum TargetSpec {
+            None,
+            SpanOn {
+                uid: usize,
+                span: Span,
+            },
+            EqPieces {
+                from_or: bool,
+                pieces: Vec<(Span, GeneralTargetEq)>,
+            },
+        }
+
+        let target = if let &[t_idx] = orient.leftover_items.as_slice() {
+            if !orient.leftover_ineqs.is_empty() {
+                return None;
+            }
+            let it = &items[t_idx];
+            let parsed_eqs: Vec<GeneralTargetEq> = it
+                .eqs
+                .iter()
+                .map(|c| parse_general_target_eq(c, x, orient.param_k.as_ref(), &orient.known_defs))
+                .collect::<Option<Vec<_>>>()?;
+            match &it.pieces {
+                ItemPieces::Permanent => TargetSpec::EqPieces {
+                    from_or: false,
+                    pieces: vec![(whole.clone(), parsed_eqs[0].clone())],
+                },
+                ItemPieces::Disjoint(ps) => TargetSpec::EqPieces {
+                    from_or: it.from_or.is_some(),
+                    pieces: ps
+                        .iter()
+                        .map(|(sp, eid)| (sp.clone(), parsed_eqs[*eid].clone()))
+                        .collect(),
+                },
+                ItemPieces::Overlap { .. } => return None,
+            }
+        } else if orient.leftover_items.is_empty() {
+            if orient.leftover_ineqs.is_empty() {
+                TargetSpec::None
+            } else {
+                // Allow single-atom bounds on one sink atom `q_sink ∈ known_defs`.
+                let mut sink_atom: Option<Atom> = None;
+                for c in &orient.leftover_ineqs {
+                    if c.lin.terms.len() != 1 {
+                        return None;
+                    }
+                    let a = c.lin.terms.keys().next().expect("len 1");
+                    if !orient.known_defs.contains_key(a) {
+                        return None;
+                    }
+                    if let Some(prev) = &sink_atom {
+                        if prev != a {
+                            return None;
+                        }
+                    } else {
+                        sink_atom = Some(a.clone());
+                    }
+                }
+                let sa = sink_atom.expect("non-empty leftover_ineqs");
+                let Some(sp) = span_of(&orient.leftover_ineqs, &sa) else {
+                    return Some(Ok(false));
+                };
+                TargetSpec::SpanOn {
+                    uid: orient.known_defs[&sa],
+                    span: sp,
+                }
+            }
+        } else {
+            return None;
+        };
+
+        // Collect all global cuts inside `whole` and pre-parse definition edges.
+        let mut cuts = Vec::new();
+        for spans in pure_ors {
+            for s in spans {
+                collect_cuts_from_span(s, whole, &mut cuts);
+            }
+        }
+        type DisjEdgeList = Vec<(Span, usize, Aff)>;
+        let num_defs = orient.topo.len();
+        let mut perm_edges: Vec<(usize, usize, Aff)> = Vec::new();
+        let mut disj_edges: Vec<(usize, DisjEdgeList)> = Vec::new();
+
+        for &(idx, nid, ref q) in &orient.topo {
+            let it = &items[idx];
+            let parsed: Vec<(usize, Aff)> = it
+                .eqs
+                .iter()
+                .map(|c| parse_def_eq(c, q, x, orient.param_k.as_ref(), &orient.known_defs))
+                .collect::<Option<Vec<_>>>()?;
+            match &it.pieces {
+                ItemPieces::Permanent => {
+                    let (pid, aff) = parsed[0].clone();
+                    perm_edges.push((nid, pid, aff));
+                }
+                ItemPieces::Disjoint(ps) => {
+                    let mut list = Vec::with_capacity(ps.len());
+                    for (sp, eid) in ps {
+                        collect_cuts_from_span(sp, whole, &mut cuts);
+                        let (pid, aff) = parsed[*eid].clone();
+                        list.push((sp.clone(), pid, aff));
+                    }
+                    disj_edges.push((nid, list));
+                }
+                ItemPieces::Overlap { .. } => return None,
+            }
+        }
+        if let TargetSpec::EqPieces { pieces, .. } = &target {
+            for (sp, _) in pieces {
+                collect_cuts_from_span(sp, whole, &mut cuts);
+            }
+        }
+
+        cuts.sort_unstable();
+        cuts.dedup();
+        let cells = build_cells(whole, &cuts);
+        let num_cells = cells.len();
+
+        enum StartEv {
+            PureCover,
+            DefEdge {
+                nid: usize,
+                pid: usize,
+                aff: Aff,
+            },
+            Target {
+                from_or: bool,
+                spec: GeneralTargetEq,
+            },
+        }
+        enum StopEv {
+            PureCover,
+            DefEdge { nid: usize },
+            Target { from_or: bool },
+        }
+
+        let mut starts: Vec<Vec<StartEv>> = (0..=num_cells).map(|_| Vec::new()).collect();
+        let mut stops: Vec<Vec<StopEv>> = (0..=num_cells).map(|_| Vec::new()).collect();
+
+        for spans in pure_ors {
+            for s in spans {
+                let (cs, ce) = span_cell_range(s, whole, &cuts);
+                starts[cs].push(StartEv::PureCover);
+                stops[ce].push(StopEv::PureCover);
+            }
+        }
+        for (nid, list) in disj_edges {
+            for (sp, pid, aff) in list {
+                let (cs, ce) = span_cell_range(&sp, whole, &cuts);
+                starts[cs].push(StartEv::DefEdge { nid, pid, aff });
+                stops[ce].push(StopEv::DefEdge { nid });
+            }
+        }
+        if let TargetSpec::EqPieces { from_or, pieces } = &target {
+            for (sp, spec) in pieces {
+                let (cs, ce) = span_cell_range(sp, whole, &cuts);
+                starts[cs].push(StartEv::Target {
+                    from_or: *from_or,
+                    spec: spec.clone(),
+                });
+                stops[ce].push(StopEv::Target { from_or: *from_or });
+            }
+        }
+
+        let mut forest = CellForest::<Aff>::new(num_defs + 1);
+        for (nid, pid, aff) in perm_edges {
+            forest.set_and_link(nid, pid, aff);
+        }
+
+        let mut active_ors = 0usize;
+        let mut active_target: Option<GeneralTargetEq> = None;
+
+        for (c, cell_span) in cells.iter().enumerate() {
+            for ev in std::mem::take(&mut stops[c]) {
+                match ev {
+                    StopEv::PureCover => active_ors -= 1,
+                    StopEv::DefEdge { nid } => {
+                        active_ors -= 1;
+                        forest.cut(nid);
+                    }
+                    StopEv::Target { from_or } => {
+                        if from_or {
+                            active_ors -= 1;
+                        }
+                        active_target = None;
+                    }
+                }
+            }
+            for ev in std::mem::take(&mut starts[c]) {
+                match ev {
+                    StartEv::PureCover => active_ors += 1,
+                    StartEv::DefEdge { nid, pid, aff } => {
+                        active_ors += 1;
+                        forest.set_and_link(nid, pid, aff);
+                    }
+                    StartEv::Target { from_or, spec } => {
+                        if from_or {
+                            active_ors += 1;
+                        }
+                        active_target = Some(spec);
+                    }
+                }
+            }
+            if active_ors < num_ors {
+                continue;
+            }
+            let hit = match &target {
+                TargetSpec::None => true,
+                TargetSpec::SpanOn { uid, span: tspan } => {
+                    let q_aff = forest.query(*uid);
+                    debug_assert_eq!(q_aff.a, Slope::Zero);
+                    if let Some(k_atom) = &orient.param_k {
+                        holds_2var_span(x, k_atom, &q_aff, tspan, cell_span, &orient.k_span)?
+                    } else {
+                        holds_1var_span(&q_aff.bx, &q_aff.c, tspan, cell_span)
+                    }
+                }
+                TargetSpec::EqPieces { .. } => {
+                    let Some(ref spec) = active_target else {
+                        continue;
+                    };
+                    let mut bx = spec.bx.clone();
+                    let mut bk = spec.bk.clone();
+                    let mut cst = spec.cst.clone();
+                    for &(uid, ref coef) in &spec.defs {
+                        let q_aff = forest.query(uid);
+                        debug_assert_eq!(q_aff.a, Slope::Zero);
+                        bx = &bx + &(coef * &q_aff.bx);
+                        bk = &bk + &(coef * &q_aff.bk);
+                        cst = &cst + &(coef * &q_aff.c);
+                    }
+                    if orient.param_k.is_none() {
+                        holds_1var_eq(&bx, &cst, cell_span)
+                    } else {
+                        holds_2var_eq(&bx, &bk, &cst, cell_span, &orient.k_span)
+                    }
+                }
+            };
+            if hit {
+                return Some(Ok(true));
+            }
+        }
+        Some(Ok(false))
+    }
+
+    fn holds_2var_span(
+        x: &Atom,
+        k: &Atom,
+        q_aff: &Aff,
+        tspan: &Span,
+        x_span: &Span,
+        k_span: &Span,
+    ) -> Option<bool> {
+        let mut cons: Vec<Con> = Vec::with_capacity(6);
+        let push_span = |a: &Atom, sp: &Span, out: &mut Vec<Con>| {
+            if let Some(l) = &sp.0 {
+                out.push(Con {
+                    lin: Lin {
+                        terms: BTreeMap::from([(a.clone(), Int::ONE)]),
+                        constant: -l,
+                    },
+                    rel: Rel::Ge,
+                });
+            }
+            if let Some(h) = &sp.1 {
+                out.push(Con {
+                    lin: Lin {
+                        terms: BTreeMap::from([(a.clone(), -&Int::ONE)]),
+                        constant: h.clone(),
+                    },
+                    rel: Rel::Ge,
+                });
+            }
+        };
+        push_span(x, x_span, &mut cons);
+        push_span(k, k_span, &mut cons);
+        let base_terms: BTreeMap<Atom, Int> =
+            [(x.clone(), q_aff.bx.clone()), (k.clone(), q_aff.bk.clone())]
+                .into_iter()
+                .filter(|(_, v)| !v.is_zero())
+                .collect();
+        if let Some(tl) = &tspan.0 {
+            cons.push(Con {
+                lin: Lin {
+                    terms: base_terms.clone(),
+                    constant: &q_aff.c - tl,
+                },
+                rel: Rel::Ge,
+            });
+        }
+        if let Some(th) = &tspan.1 {
+            let neg_terms = base_terms.into_iter().map(|(a, v)| (a, -&v)).collect();
+            cons.push(Con {
+                lin: Lin {
+                    terms: neg_terms,
+                    constant: th - &q_aff.c,
+                },
+                rel: Rel::Ge,
+            });
+        }
+        solve(&cons, false).ok().map(|m| m.is_some())
+    }
+
+    /// Sweeps involution-overlapping definitions in `D_1(c_0)` (`q = u` or `q = c_0 - u`) by
+    /// merging twin copies into canonical equivalence classes in topological order and maintaining
+    /// the 3-element monoid [`InvOp`] (`Id`, `Flip`, `Both`) in [`CellForest`].
+    fn sweep_involution(
+        num_ors: usize,
+        whole: &Span,
+        x: &Atom,
+        pure_ors: &[Vec<Span>],
+        items: &[EqItem],
+        orient: &Orientation,
+    ) -> Option<Result<bool, Refusal>> {
+        if orient.param_k.is_some() || !orient.leftover_ineqs.is_empty() {
+            return None;
+        }
+        // Extract unique `c_0` across all `Flip` equalities (`q + u == c_0`) in `topo`.
+        let mut c0_opt: Option<Int> = None;
+        for &(idx, _, ref q) in &orient.topo {
+            for c in &items[idx].eqs {
+                let (pid, aff) = parse_def_eq(c, q, x, None, &orient.known_defs)?;
+                let (is_flip, cst) = if pid == 0 {
+                    // Base step on `x`: either `q = x` (`bx = 1, c = 0`) or `q = c_0 - x` (`bx = -1`).
+                    if aff.bx == Int::ONE && aff.c.is_zero() {
+                        (false, Int::ZERO)
+                    } else if aff.bx == -&Int::ONE {
+                        (true, aff.c.clone())
+                    } else {
+                        return None;
+                    }
+                } else if aff.bx.is_zero() {
+                    match aff.a {
+                        Slope::Pos if aff.c.is_zero() => (false, Int::ZERO),
+                        Slope::Neg => (true, aff.c.clone()),
+                        _ => return None,
+                    }
+                } else {
+                    return None;
+                };
+                if is_flip {
+                    if let Some(prev) = &c0_opt {
+                        if prev != &cst {
+                            return None;
+                        }
+                    } else {
+                        c0_opt = Some(cst);
+                    }
+                }
+            }
+        }
+        let c0 = c0_opt.unwrap_or(Int::ZERO);
+
+        // Canonicalize twin equivalence classes in topological order (`0` = base atom `x`).
+        let mut rep_of_def: Vec<usize> = vec![0; orient.topo.len() + 1];
+        type CanonKey = Vec<(Span, InvOp, usize)>;
+        type RepEdgeList = Vec<(Span, usize, InvOp)>;
+        let mut twin_table: HashMap<CanonKey, usize> = HashMap::new();
+        let mut rep_perm_edges: Vec<(usize, usize, InvOp)> = Vec::new();
+        let mut rep_disj_edges: Vec<(usize, RepEdgeList)> = Vec::new();
+        let mut twin_cover_only: Vec<Vec<Span>> = Vec::new();
+        let mut num_reps = 0usize;
+
+        for &(idx, nid, ref q) in &orient.topo {
+            let it = &items[idx];
+            let parsed_inv: Vec<(InvOp, usize)> = it
+                .eqs
+                .iter()
+                .map(|c| {
+                    let (pid, aff) = parse_def_eq(c, q, x, None, &orient.known_defs)?;
+                    let rep_u = if pid == 0 { 0 } else { rep_of_def[pid] };
+                    let op =
+                        if (pid == 0 && aff.bx == Int::ONE) || (pid != 0 && aff.a == Slope::Pos) {
+                            InvOp::Id
+                        } else {
+                            InvOp::Flip
+                        };
+                    Some((op, rep_u))
+                })
+                .collect::<Option<Vec<_>>>()?;
+
+            let raw_pieces: CanonKey = match &it.pieces {
+                ItemPieces::Permanent => {
+                    let (op, ru) = parsed_inv[0];
+                    vec![(whole.clone(), op, ru)]
+                }
+                ItemPieces::Disjoint(ps) => ps
+                    .iter()
+                    .map(|(sp, eid)| {
+                        let (op, ru) = parsed_inv[*eid];
+                        (sp.clone(), op, ru)
+                    })
+                    .collect(),
+                ItemPieces::Overlap {
+                    pieces,
+                    group_of_eq,
+                } => {
+                    // Verify every active group in `it` reads the same canonical `rep_u`.
+                    let mut rep_g: [Option<usize>; 2] = [None, None];
+                    let mut op_g: [Option<InvOp>; 2] = [None, None];
+                    for (eid, &grp) in group_of_eq.iter().enumerate() {
+                        let (op, ru) = parsed_inv[eid];
+                        let gi = usize::from(grp);
+                        if let Some(prev_ru) = rep_g[gi] {
+                            if prev_ru != ru {
+                                return None;
+                            }
+                        } else {
+                            rep_g[gi] = Some(ru);
+                        }
+                        op_g[gi] = Some(match op_g[gi] {
+                            None => op,
+                            Some(prev) if prev == op => op,
+                            Some(_) => InvOp::Both,
+                        });
+                    }
+                    let mut out = Vec::with_capacity(pieces.len());
+                    for (sp, mask) in pieces {
+                        let mut cell_op: Option<InvOp> = None;
+                        let mut cell_ru: Option<usize> = None;
+                        for gi in 0..2 {
+                            if (mask & (1u8 << gi)) != 0 {
+                                let ru = rep_g[gi]?;
+                                let op = op_g[gi]?;
+                                if let Some(pru) = cell_ru {
+                                    if pru != ru {
+                                        return None;
+                                    }
+                                } else {
+                                    cell_ru = Some(ru);
+                                }
+                                cell_op = Some(match cell_op {
+                                    None => op,
+                                    Some(prev) if prev == op => op,
+                                    Some(_) => InvOp::Both,
+                                });
+                            }
+                        }
+                        out.push((sp.clone(), cell_op?, cell_ru?));
+                    }
+                    out
+                }
+            };
+
+            // Coalesce adjacent pieces with identical `(InvOp, rep_u)`.
+            let mut canon: CanonKey = Vec::with_capacity(raw_pieces.len());
+            for (sp, op, ru) in raw_pieces {
+                if let Some((lsp, lop, lru)) = canon.last_mut()
+                    && *lop == op
+                    && *lru == ru
+                    && lsp
+                        .1
+                        .as_ref()
+                        .zip(sp.0.as_ref())
+                        .is_some_and(|(h, l)| &(h + &Int::ONE) == l)
+                {
+                    lsp.1.clone_from(&sp.1);
+                } else {
+                    canon.push((sp, op, ru));
+                }
+            }
+
+            if let Some(&existing_rep) = twin_table.get(&canon) {
+                rep_of_def[nid] = existing_rep;
+                if it.from_or.is_some() {
+                    twin_cover_only.push(canon.into_iter().map(|(sp, _, _)| sp).collect());
+                }
+            } else {
+                num_reps += 1;
+                let my_rep = num_reps;
+                rep_of_def[nid] = my_rep;
+                if it.from_or.is_none() && canon.len() == 1 && &canon[0].0 == whole {
+                    rep_perm_edges.push((my_rep, canon[0].2, canon[0].1));
+                } else {
+                    let edges = canon
+                        .iter()
+                        .map(|(sp, op, ru)| (sp.clone(), *ru, *op))
+                        .collect();
+                    rep_disj_edges.push((my_rep, edges));
+                }
+                twin_table.insert(canon, my_rep);
+            }
+        }
+
+        // Parse optional target assertion (`Disjoint` or `Overlap` single-atom unit equalities).
+        // Each target option is `(rep_u, a_u, bx, cst)` representing `a_u * u + bx * x + cst == 0`.
+        type InvTargetOpt = (usize, Slope, Int, Int);
+        let mut target_from_or = false;
+        let mut target_pieces: Vec<(Span, Vec<InvTargetOpt>)> = Vec::new();
+        let has_target = !orient.leftover_items.is_empty();
+        if let &[t_idx] = orient.leftover_items.as_slice() {
+            let it = &items[t_idx];
+            target_from_or = it.from_or.is_some();
+            match &it.pieces {
+                ItemPieces::Permanent => {
+                    let (uid, a_u, bx, _, cst) =
+                        parse_unit_target_eq(&it.eqs[0], x, None, &orient.known_defs)?;
+                    let ru = if uid == 0 { 0 } else { rep_of_def[uid] };
+                    target_pieces.push((whole.clone(), vec![(ru, a_u, bx, cst)]));
+                }
+                ItemPieces::Disjoint(ps) => {
+                    for (sp, eid) in ps {
+                        let (uid, a_u, bx, _, cst) =
+                            parse_unit_target_eq(&it.eqs[*eid], x, None, &orient.known_defs)?;
+                        let ru = if uid == 0 { 0 } else { rep_of_def[uid] };
+                        target_pieces.push((sp.clone(), vec![(ru, a_u, bx, cst)]));
+                    }
+                }
+                ItemPieces::Overlap {
+                    pieces,
+                    group_of_eq,
+                } => {
+                    // Each group has one target value `val_g` and must share one `rep_u`.
+                    let mut grp_opt: [Option<InvTargetOpt>; 2] = [None, None];
+                    for (eid, &grp) in group_of_eq.iter().enumerate() {
+                        let (uid, a_u, bx, _, cst) =
+                            parse_unit_target_eq(&it.eqs[eid], x, None, &orient.known_defs)?;
+                        if uid == 0 || !bx.is_zero() {
+                            return None;
+                        }
+                        let ru = rep_of_def[uid];
+                        // Normalize to `+1 * u + (-val) == 0`.
+                        let norm_cst = if a_u == Slope::Pos { cst } else { -&cst };
+                        let spec = (ru, Slope::Pos, Int::ZERO, norm_cst);
+                        let gi = usize::from(grp);
+                        if let Some(prev) = &grp_opt[gi] {
+                            if prev != &spec {
+                                return None;
+                            }
+                        } else {
+                            grp_opt[gi] = Some(spec);
+                        }
+                    }
+                    for (sp, mask) in pieces {
+                        let mut opts = Vec::new();
+                        for (gi, slot) in grp_opt.iter().enumerate() {
+                            if (mask & (1u8 << gi)) != 0 {
+                                opts.push(slot.clone()?);
+                            }
+                        }
+                        target_pieces.push((sp.clone(), opts));
+                    }
+                }
+            }
+        }
+
+        let mut cuts = Vec::new();
+        for spans in pure_ors.iter().chain(twin_cover_only.iter()) {
+            for s in spans {
+                collect_cuts_from_span(s, whole, &mut cuts);
+            }
+        }
+        for (_, list) in &rep_disj_edges {
+            for (sp, _, _) in list {
+                collect_cuts_from_span(sp, whole, &mut cuts);
+            }
+        }
+        for (sp, _) in &target_pieces {
+            collect_cuts_from_span(sp, whole, &mut cuts);
+        }
+        cuts.sort_unstable();
+        cuts.dedup();
+        let cells = build_cells(whole, &cuts);
+        let num_cells = cells.len();
+
+        enum InvStart {
+            Cover,
+            Edge {
+                r: usize,
+                p: usize,
+                op: InvOp,
+            },
+            Target {
+                from_or: bool,
+                opts: Vec<InvTargetOpt>,
+            },
+        }
+        enum InvStop {
+            Cover,
+            Edge { r: usize },
+            Target { from_or: bool },
+        }
+
+        let mut starts: Vec<Vec<InvStart>> = (0..=num_cells).map(|_| Vec::new()).collect();
+        let mut stops: Vec<Vec<InvStop>> = (0..=num_cells).map(|_| Vec::new()).collect();
+
+        for spans in pure_ors.iter().chain(twin_cover_only.iter()) {
+            for s in spans {
+                let (cs, ce) = span_cell_range(s, whole, &cuts);
+                starts[cs].push(InvStart::Cover);
+                stops[ce].push(InvStop::Cover);
+            }
+        }
+        for (r, list) in rep_disj_edges {
+            for (sp, p, op) in list {
+                let (cs, ce) = span_cell_range(&sp, whole, &cuts);
+                starts[cs].push(InvStart::Edge { r, p, op });
+                stops[ce].push(InvStop::Edge { r });
+            }
+        }
+        for (sp, opts) in target_pieces {
+            let (cs, ce) = span_cell_range(&sp, whole, &cuts);
+            starts[cs].push(InvStart::Target {
+                from_or: target_from_or,
+                opts,
+            });
+            stops[ce].push(InvStop::Target {
+                from_or: target_from_or,
+            });
+        }
+
+        let mut forest = CellForest::<InvOp>::new(num_reps + 1);
+        for (r, p, op) in rep_perm_edges {
+            forest.set_and_link(r, p, op);
+        }
+
+        let mut active_ors = 0usize;
+        let mut active_target: Option<Vec<InvTargetOpt>> = None;
+
+        for (c, cell_span) in cells.iter().enumerate() {
+            for ev in std::mem::take(&mut stops[c]) {
+                match ev {
+                    InvStop::Cover => active_ors -= 1,
+                    InvStop::Edge { r } => {
+                        active_ors -= 1;
+                        forest.cut(r);
+                    }
+                    InvStop::Target { from_or } => {
+                        if from_or {
+                            active_ors -= 1;
+                        }
+                        active_target = None;
+                    }
+                }
+            }
+            for ev in std::mem::take(&mut starts[c]) {
+                match ev {
+                    InvStart::Cover => active_ors += 1,
+                    InvStart::Edge { r, p, op } => {
+                        active_ors += 1;
+                        forest.set_and_link(r, p, op);
+                    }
+                    InvStart::Target { from_or, opts } => {
+                        if from_or {
+                            active_ors += 1;
+                        }
+                        active_target = Some(opts);
+                    }
+                }
+            }
+            if active_ors < num_ors {
+                continue;
+            }
+            if !has_target {
+                return Some(Ok(true));
+            }
+            let Some(opts) = &active_target else {
+                continue;
+            };
+            for (ru, a_u, bx, cst) in opts {
+                let op = if *ru == 0 {
+                    InvOp::Id
+                } else {
+                    forest.query(*ru)
+                };
+                // Try `u = x` when `Id` or `Both`: `(a_u + bx) * x + cst == 0`.
+                if matches!(op, InvOp::Id | InvOp::Both) {
+                    let m = bx + &Int::from(a_u.as_i32());
+                    if holds_1var_eq(&m, cst, cell_span) {
+                        return Some(Ok(true));
+                    }
+                }
+                // Try `u = c0 - x` when `Flip` or `Both`: `(-a_u + bx) * x + (a_u * c0 + cst) == 0`.
+                if matches!(op, InvOp::Flip | InvOp::Both) {
+                    let m = bx - &Int::from(a_u.as_i32());
+                    let k = match a_u {
+                        Slope::Pos => &c0 + cst,
+                        Slope::Neg => cst - &c0,
+                        Slope::Zero => cst.clone(),
+                    };
+                    if holds_1var_eq(&m, &k, cell_span) {
+                        return Some(Ok(true));
+                    }
+                }
+            }
+        }
+        Some(Ok(false))
+    }
+}
+
+/// Whether the parts `p` have a point, found by splitting the values of one atom `x` into
+/// cells, when every disjunct of every disjunction of `p` bounds `x` by constraints of `x`
+/// alone, at its own level or in every disjunct of a disjunction inside it: guards `x <= g`
+/// and `x > g` on one input, as the definitions of an `if` chain over `x` give, nested `if`s
+/// and guards joined by `&&` and `||` among them. See [`cells_of`]. Of several atoms that
+/// serve, the least is taken first; the answer does not depend on it.
+fn by_cells(p: &Parts, solving: bool) -> Option<Result<bool, Refusal>> {
+    if p.ors.is_empty() {
+        return None;
+    }
+    let mut seen: HashMap<*const Parts, OrdSet<Atom>> = HashMap::new();
+    let all: Vec<OrdSet<Atom>> = (p.ors.iter().flatten())
+        .map(|d| bounded_atoms(d, &mut seen))
+        .collect();
+    let atoms = met_atoms(all);
+    if atoms.is_empty() {
+        return None;
+    }
+    atoms.iter().find_map(|x| cells_of(p, x, solving))
+}
+
+/// The atoms in every set of `all`: the smallest set's atoms, each looked up in the others.
+fn met_atoms(mut all: Vec<OrdSet<Atom>>) -> OrdSet<Atom> {
+    let Some(i) = (0..all.len()).min_by_key(|&i| all[i].len()) else {
+        return OrdSet::new();
+    };
+    let small = all.swap_remove(i);
+    if all.is_empty() {
+        return small;
+    }
+    (small.into_iter())
+        .filter(|a| all.iter().all(|s| s.contains(a)))
+        .collect()
+}
+
+/// The atoms that `d` bounds alone: by a constraint of its own on that atom alone, or in every
+/// disjunct of one of its disjunctions. Memoized by part in `seen`, so a part shared by many
+/// disjunctions is read once.
+// Complexity tradeoff: copying each part's set costs O(j) at depth j of a chain of parts each
+// bounding an atom of its own, O(n²) for a chain of n. The sets are persistent: a part's set
+// starts from its largest disjunction's set, uncopied, and adds the others' atoms and its own,
+// O(log n) each; a disjunction's set is its smallest disjunct's atoms looked up in the others.
+fn bounded_atoms(d: &Rc<Parts>, seen: &mut HashMap<*const Parts, OrdSet<Atom>>) -> OrdSet<Atom> {
+    if let Some(s) = seen.get(&Rc::as_ptr(d)) {
+        return s.clone();
+    }
+    let mut mets: Vec<OrdSet<Atom>> = (d.ors.iter())
+        .map(|o| {
+            let all = o.iter().map(|e| bounded_atoms(e, seen)).collect();
+            met_atoms(all)
+        })
+        .collect();
+    let mut out = match (0..mets.len()).max_by_key(|&i| mets[i].len()) {
+        Some(i) => mets.swap_remove(i),
+        None => OrdSet::new(),
+    };
+    for a in mets.into_iter().flatten() {
+        out.insert(a);
+    }
+    for c in d.cons.iter().filter(|c| c.lin.terms.len() == 1) {
+        out.extend(c.lin.terms.keys().cloned());
+    }
+    seen.insert(Rc::as_ptr(d), out.clone());
+    out
 }
 
 /// The interval of `x` that the constraints of `x` alone among `cons` leave, `None` when empty;
 /// an end `None` is unbounded.
 type Span = (Option<Int>, Option<Int>);
 
-/// [`by_cells`] splitting the values of `x`; `None` when two disjuncts of a disjunction overlap
-/// in `x`, or the cells leave the answer to the probe.
-fn cells_of(p: &Parts, x: &Atom) -> Option<Result<bool, Refusal>> {
-    let span = |cons: &[Con]| -> Option<Span> {
-        let mut b = AtomBounds::from([(x.clone(), (None, None))]);
+/// Cell indices `a..=b`, sorted, disjoint and not adjacent.
+type CellSet = Vec<(usize, usize)>;
+
+/// The cells in both `a` and `b`.
+fn cells_meet(a: &[(usize, usize)], b: &[(usize, usize)]) -> CellSet {
+    let (mut i, mut j, mut out) = (0, 0, Vec::new());
+    while i < a.len() && j < b.len() {
+        let (lo, hi) = (a[i].0.max(b[j].0), a[i].1.min(b[j].1));
+        if lo <= hi {
+            out.push((lo, hi));
+        }
+        if a[i].1 < b[j].1 {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    out
+}
+
+/// The cells in any of `all`'s ranges.
+fn cells_join(mut all: Vec<(usize, usize)>) -> CellSet {
+    all.sort_unstable();
+    let mut out: CellSet = Vec::with_capacity(all.len());
+    for (lo, hi) in all {
+        match out.last_mut() {
+            Some(last) if lo <= last.1 + 1 => last.1 = last.1.max(hi),
+            _ => out.push((lo, hi)),
+        }
+    }
+    out
+}
+
+/// The cells of `a` not in `b`.
+fn cells_minus(a: &[(usize, usize)], b: &[(usize, usize)]) -> CellSet {
+    let mut out = Vec::new();
+    let mut j = 0;
+    for &(lo, hi) in a {
+        let mut lo = lo;
+        while j < b.len() && b[j].1 < lo {
+            j += 1;
+        }
+        let mut k = j;
+        while k < b.len() && b[k].0 <= hi && lo <= hi {
+            if b[k].0 > lo {
+                out.push((lo, b[k].0 - 1));
+            }
+            lo = lo.max(b[k].1 + 1);
+            k += 1;
+        }
+        if lo <= hi {
+            out.push((lo, hi));
+        }
+    }
+    out
+}
+
+/// The cells of a shared [`CellSet`] in `lo..=hi`: a part held by many parts with different
+/// spans of `x` reads its set through one window each, not a copy each.
+#[derive(Clone, Debug)]
+struct CellPiece {
+    set: Rc<CellSet>,
+    lo: usize,
+    hi: usize,
+}
+
+impl CellPiece {
+    fn of(runs: CellSet) -> CellPiece {
+        let hi = runs.last().map_or(0, |r| r.1);
+        let lo = runs.first().map_or(1, |r| r.0);
+        CellPiece {
+            set: Rc::new(runs),
+            lo,
+            hi,
+        }
+    }
+
+    /// The indices of the runs of `set` that meet `lo..=hi`, by two binary searches.
+    fn window(&self) -> (usize, usize) {
+        if self.lo > self.hi {
+            return (0, 0);
+        }
+        let first = self.set.partition_point(|r| r.1 < self.lo);
+        let stop = self.set.partition_point(|r| r.0 <= self.hi);
+        (first, stop.max(first))
+    }
+
+    fn runs(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        let (first, stop) = self.window();
+        (self.set[first..stop].iter()).map(|&(a, b)| (a.max(self.lo), b.min(self.hi)))
+    }
+
+    fn count(&self) -> usize {
+        let (first, stop) = self.window();
+        stop - first
+    }
+
+    fn clamp(&self, a: usize, b: usize) -> CellPiece {
+        CellPiece {
+            set: self.set.clone(),
+            lo: self.lo.max(a),
+            hi: self.hi.min(b),
+        }
+    }
+}
+
+/// The cells of `main` and of `extra`: the set of a part held by many parts, read through a
+/// window, and the cells each holder adds of its own, so a holder costs its own cells and not
+/// a copy of the shared set.
+#[derive(Clone, Debug)]
+struct CellView {
+    main: CellPiece,
+    extra: CellPiece,
+}
+
+/// A [`CellPiece`] by its set and window.
+type PieceKey = (*const CellSet, usize, usize);
+
+/// A [`CellView`] by its sets and windows: views with equal keys have equal cells.
+type ViewKey = (*const CellSet, usize, usize, *const CellSet, usize, usize);
+
+impl CellView {
+    fn of(runs: CellSet) -> CellView {
+        CellView {
+            main: CellPiece::of(runs),
+            extra: CellPiece::of(Vec::new()),
+        }
+    }
+
+    /// Empty pieces count as one, whatever set they are windows of.
+    fn key(&self) -> ViewKey {
+        let at = |p: &CellPiece| match p.count() {
+            0 => (std::ptr::null(), 1, 0),
+            _ => (Rc::as_ptr(&p.set), p.lo, p.hi),
+        };
+        let (a, e) = (at(&self.main), at(&self.extra));
+        (a.0, a.1, a.2, e.0, e.1, e.2)
+    }
+
+    fn clamp(&self, a: usize, b: usize) -> CellView {
+        CellView {
+            main: self.main.clamp(a, b),
+            extra: self.extra.clamp(a, b),
+        }
+    }
+
+    fn runs(&self) -> CellSet {
+        match (self.main.count(), self.extra.count()) {
+            (_, 0) => self.main.runs().collect(),
+            (0, _) => self.extra.runs().collect(),
+            _ => cells_join(self.main.runs().chain(self.extra.runs()).collect()),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.main.count() == 0 && self.extra.count() == 0
+    }
+
+    /// The one run of the view, if it has exactly one.
+    fn single(&self) -> Option<(usize, usize)> {
+        match (self.main.count(), self.extra.count()) {
+            (1, 0) => self.main.runs().next(),
+            (0, 1) => self.extra.runs().next(),
+            (1, 1) => match self.runs().as_slice() {
+                [r] => Some(*r),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// The cells of both views.
+    // Complexity tradeoff: a merge of the two run lists costs O(R) for R runs even when one
+    // side is one run, which repeated over H holders of a part of R runs is O(H·R); when one
+    // side is one run the meet is the other side narrowed, O(log R) and no copy.
+    fn meet(&self, other: &CellView) -> CellView {
+        if let Some((a, b)) = self.single() {
+            return other.clamp(a, b);
+        }
+        if let Some((a, b)) = other.single() {
+            return self.clamp(a, b);
+        }
+        CellView::of(cells_meet(&self.runs(), &other.runs()))
+    }
+
+    /// The pieces of `views`, views of one set taken in the join of their windows, those with
+    /// the most runs first.
+    fn pieces(views: Vec<CellView>) -> Vec<CellPiece> {
+        let mut by_set: HashMap<*const CellSet, (Rc<CellSet>, CellSet)> = HashMap::new();
+        let pieces = views.into_iter().flat_map(|v| [v.main, v.extra]);
+        for p in pieces.filter(|p| p.count() > 0) {
+            let e = by_set
+                .entry(Rc::as_ptr(&p.set))
+                .or_insert((p.set.clone(), Vec::new()));
+            e.1.push((p.lo, p.hi));
+        }
+        let mut pieces: Vec<CellPiece> = Vec::new();
+        for (set, mut w) in by_set.into_values() {
+            w.sort_unstable();
+            let mut merged: CellSet = Vec::new();
+            for (lo, hi) in w {
+                match merged.last_mut() {
+                    Some(last) if lo <= last.1.saturating_add(1) => last.1 = last.1.max(hi),
+                    _ => merged.push((lo, hi)),
+                }
+            }
+            let set = &set;
+            pieces.extend(merged.into_iter().map(|(lo, hi)| CellPiece {
+                set: set.clone(),
+                lo,
+                hi,
+            }));
+        }
+        pieces.sort_by_key(|p| (std::cmp::Reverse(p.count()), Rc::as_ptr(&p.set), p.lo));
+        pieces
+    }
+}
+
+/// The cells of `x` and, for each disjunct read, the cells where it may hold (its constraints
+/// of `x` alone hold there and each of its disjunctions has a disjunct that may hold) and the
+/// cells where it holds whatever the other atoms are (it has no other constraint and each of
+/// its disjunctions holds so), memoized by part.
+struct CellWalk<'a> {
+    x: &'a Atom,
+    cells: Vec<Span>,
+    memo: HashMap<*const Parts, (CellView, CellView)>,
+    owns: HashMap<*const Parts, Rc<Vec<Con>>>,
+    /// Each list of pieces joined, with the pieces, so their sets outlive the key.
+    joins: HashMap<Vec<PieceKey>, (Vec<CellPiece>, CellPiece)>,
+}
+
+impl CellWalk<'_> {
+    fn span(&self, cons: &[Con]) -> Option<Span> {
+        let mut b = AtomBounds::from([(self.x.clone(), (None, None))]);
         let mut own =
-            (cons.iter()).filter(|c| c.lin.terms.len() == 1 && c.lin.terms.contains_key(x));
+            (cons.iter()).filter(|c| c.lin.terms.len() == 1 && c.lin.terms.contains_key(self.x));
         if !own.all(|c| narrow(c, &mut b)) {
             return None;
         }
-        let s = b.remove(x).expect("x has bounds");
+        let s = b.remove(self.x).expect("x has bounds");
         s.0.as_ref()
             .zip(s.1.as_ref())
             .is_none_or(|(l, h)| l <= h)
             .then_some(s)
+    }
+
+    /// The cells inside `cons`'s span of `x`: one range, since the span's ends are cell ends.
+    fn range(&self, cons: &[Con]) -> CellSet {
+        let Some((lo, hi)) = self.span(cons) else {
+            return Vec::new();
+        };
+        let first = match &lo {
+            None => 0,
+            Some(l) => (self.cells).partition_point(|c| c.1.as_ref().is_some_and(|h| h < l)),
+        };
+        let stop = match &hi {
+            None => self.cells.len(),
+            Some(h) => (self.cells).partition_point(|c| c.0.as_ref().is_none_or(|l| l <= h)),
+        };
+        if first < stop {
+            vec![(first, stop - 1)]
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// The cells of any of `views`.
+    // Complexity tradeoff: joining the views' runs costs O(Σ R log Σ R), quadratic when D
+    // holders each join one or more shared sets of R runs with a few cells of their own (D·R).
+    // Views of one set join to that set in the join of their windows. The pieces but the one
+    // of fewest runs are joined once for each distinct list of them and kept by the list, and
+    // the last piece is kept as the extra, uncopied: O(D log D + D log R) for holders whose
+    // pieces but one are shared, plus the runs of each distinct list joined.
+    fn join(&mut self, views: Vec<CellView>) -> CellView {
+        let mut views = views;
+        let total = |v: &CellView| v.main.count() + v.extra.count();
+        let Some(s) = (0..views.len()).rev().min_by_key(|&i| total(&views[i])) else {
+            return CellView::of(Vec::new());
+        };
+        let own = views.swap_remove(s);
+        let (extra, left) = if own.main.count() < own.extra.count() {
+            (own.main, own.extra)
+        } else {
+            (own.extra, own.main)
+        };
+        let (extra, left) = match extra.count() {
+            0 => (left, extra),
+            _ => (extra, left),
+        };
+        views.push(CellView {
+            main: left,
+            extra: CellPiece::of(Vec::new()),
+        });
+        let pieces = CellView::pieces(views);
+        if pieces.is_empty() {
+            return CellView {
+                main: extra,
+                extra: CellPiece::of(Vec::new()),
+            };
+        }
+        if let [main] = pieces.as_slice() {
+            return CellView {
+                main: main.clone(),
+                extra,
+            };
+        }
+        let key: Vec<PieceKey> = (pieces.iter())
+            .map(|p| (Rc::as_ptr(&p.set), p.lo, p.hi))
+            .collect();
+        let joined = self.joins.entry(key).or_insert_with(|| {
+            let runs = cells_join(pieces.iter().flat_map(CellPiece::runs).collect());
+            (pieces, CellPiece::of(runs))
+        });
+        CellView {
+            main: joined.1.clone(),
+            extra,
+        }
+    }
+
+    /// `(may, holds)` of the disjunct `d`.
+    fn of(&mut self, d: &Rc<Parts>) -> (CellView, CellView) {
+        if let Some(r) = self.memo.get(&Rc::as_ptr(d)) {
+            return r.clone();
+        }
+        let own = CellView::of(self.range(&d.cons));
+        let mut may = own.clone();
+        let other =
+            (d.cons.iter()).any(|c| !(c.lin.terms.len() == 1 && c.lin.terms.contains_key(self.x)));
+        let mut holds = if other { CellView::of(Vec::new()) } else { own };
+        for o in &d.ors {
+            let (m, h) = self.of_or(o);
+            may = may.meet(&m);
+            if !holds.is_empty() {
+                holds = holds.meet(&h);
+            }
+        }
+        self.memo
+            .insert(Rc::as_ptr(d), (may.clone(), holds.clone()));
+        (may, holds)
+    }
+
+    /// `(may, holds)` of the disjunction `o`: the cells where any disjunct may hold or holds.
+    fn of_or(&mut self, o: &[Rc<Parts>]) -> (CellView, CellView) {
+        if let [d] = o {
+            return self.of(d);
+        }
+        let (mut may, mut holds) = (Vec::new(), Vec::new());
+        for d in o {
+            let (m, h) = self.of(d);
+            may.push(m);
+            holds.push(h);
+        }
+        (self.join(may), self.join(holds))
+    }
+
+    /// Adds to `at`, for each disjunction of `ors` held on the cells `cells`, the cells where
+    /// each of its disjuncts is the one that may hold: those of `cells` where the disjunction
+    /// does not hold whatever the other atoms are. `false` when two disjuncts may hold in one
+    /// such cell: a choice the cells do not settle.
+    // Complexity tradeoff: computing each disjunction's free cells and meeting each disjunct's
+    // set with them costs O(R) per disjunction for R runs of a shared part, O(D·R) for D
+    // disjunctions holding it. Disjunctions with equal sets of cells where they hold share
+    // their free cells, computed once; a disjunct whose set is one run takes the free cells
+    // narrowed to it, O(log R) and no copy; a disjunct of more runs is met with given free
+    // cells once. The runs are read for the check of a choice only when two disjuncts are left.
+    fn spread(
+        &mut self,
+        ors: &[Vec<Rc<Parts>>],
+        cells: &[(usize, usize)],
+        at: &mut HashMap<*const Parts, Vec<CellView>>,
+    ) -> bool {
+        let mut frees: HashMap<ViewKey, (CellView, CellView)> = HashMap::new();
+        let mut meets: HashMap<(*const Parts, *const CellSet), CellView> = HashMap::new();
+        for o in ors {
+            let holds = self.of_or(o).1;
+            let free = (frees.entry(holds.key()))
+                .or_insert_with(|| {
+                    let free = CellView::of(cells_minus(cells, &holds.runs()));
+                    (holds, free)
+                })
+                .1
+                .clone();
+            if free.is_empty() {
+                continue;
+            }
+            let mut live: Vec<(CellView, &Rc<Parts>)> = Vec::new();
+            for d in o {
+                let may = self.of(d).0;
+                let c = match may.single() {
+                    Some((a, b)) => free.clamp(a, b),
+                    None => (meets.entry((Rc::as_ptr(d), Rc::as_ptr(&free.main.set))))
+                        .or_insert_with(|| CellView::of(cells_meet(&may.runs(), &free.runs())))
+                        .clone(),
+                };
+                if !c.is_empty() {
+                    live.push((c, d));
+                }
+            }
+            if live.len() > 1 {
+                let mut all: Vec<(usize, usize)> =
+                    live.iter().flat_map(|(c, _)| c.runs()).collect();
+                all.sort_unstable();
+                if all.windows(2).any(|w| w[1].0 <= w[0].1) {
+                    return false;
+                }
+            }
+            for (c, d) in live {
+                at.entry(Rc::as_ptr(d)).or_default().push(c);
+            }
+        }
+        true
+    }
+
+    /// The constraints of `d` other than those of `x` alone, memoized by part: by
+    /// [`cells_contract`] when all are of the class [`cells_point`] decides, `shared` telling
+    /// the atoms that other parts read.
+    fn own(&mut self, d: &Parts, shared: impl Fn(&Atom) -> bool) -> Rc<Vec<Con>> {
+        if let Some(r) = self.owns.get(&(d as *const Parts)) {
+            return r.clone();
+        }
+        let rest: Vec<&Con> = (d.cons.iter())
+            .filter(|c| !(c.lin.terms.len() == 1 && c.lin.terms.contains_key(self.x)))
+            .collect();
+        let x = self.x;
+        let cons = cells_contract(&rest, |a| a == x || shared(a))
+            .unwrap_or_else(|| rest.into_iter().cloned().collect());
+        let r = Rc::new(cons);
+        self.owns.insert(d as *const Parts, r.clone());
+        r
+    }
+}
+
+/// `cons`, each a bound of one atom or `u == ±v + c`, joined into classes and replaced by what
+/// they say of the atoms `shared` marks: for each class, its bounds on one such atom `u` and,
+/// for each other such atom `v`, the equality giving `v` from `u`; or one false constraint
+/// when no value is left. `None` when a constraint is not of the class. The other atoms
+/// occur in no other part, so a conjunction holding these in place of `cons` has a point
+/// exactly when it has one with `cons`: each class's atoms are `±root + off` for a root in
+/// the class's bounds, and the shared atoms' values fix the root.
+fn cells_contract(cons: &[&Con], shared: impl Fn(&Atom) -> bool) -> Option<Vec<Con>> {
+    let mut ids: BTreeMap<Atom, u32> = BTreeMap::new();
+    let mut links = Vec::new();
+    for c in cons {
+        links.extend(cell_link(c, &mut ids)?);
+    }
+    let mut classes = CellClasses::default();
+    if !links.iter().all(|l| classes.apply(l)) {
+        let fails = Lin {
+            terms: BTreeMap::new(),
+            constant: -&Int::ONE,
+        };
+        return Some(vec![Con {
+            lin: fails,
+            rel: Rel::Ge,
+        }]);
+    }
+    let con = |terms: Vec<(&Atom, Int)>, constant: Int, rel: Rel| Con {
+        lin: Lin {
+            terms: (terms.into_iter()).map(|(a, k)| (a.clone(), k)).collect(),
+            constant,
+        },
+        rel,
     };
-    let Some(whole) = span(&p.cons) else {
+    let mut first: HashMap<usize, (&Atom, bool, Int)> = HashMap::new();
+    let mut out = Vec::new();
+    for (a, &u) in ids.iter().filter(|(a, _)| shared(a)) {
+        let i = classes.id(u);
+        let (r, m, o) = classes.find(i);
+        match first.get(&r) {
+            None => {
+                // `a == ±r + o` over the root's bounds.
+                let (lo, hi) = cell_image(m, &o, &classes.bounds[r].0, &classes.bounds[r].1);
+                out.extend(lo.map(|l| con(vec![(a, Int::ONE)], -&l, Rel::Ge)));
+                out.extend(hi.map(|h| con(vec![(a, -&Int::ONE)], h, Rel::Ge)));
+                first.insert(r, (a, m, o));
+            }
+            Some((u0, m0, o0)) => {
+                // `r == s0·(u0 - o0)`, so `a == s·u0 + c` with `s = sa·s0`, `c = o - s·o0`.
+                let s = m ^ *m0;
+                let c = if s { &o + o0 } else { &o - o0 };
+                let k = if s { Int::ONE } else { -&Int::ONE };
+                out.push(con(vec![(a, Int::ONE), (*u0, k)], -&c, Rel::Eq));
+            }
+        }
+    }
+    Some(out)
+}
+
+/// [`by_cells`] splitting the values of `x`; `None` when a disjunction leaves a choice of two
+/// disjuncts in a cell, or the cells leave the answer to the probe.
+///
+/// The ends of every disjunct's span of `x`, at every level, cut the values of `x` into `k`
+/// cells. In a cell each constraint of `x` alone holds or fails throughout, so each
+/// disjunction holds there whatever the other atoms are, or keeps at most one disjunct (else
+/// `None`), and the parts in the cell are one conjunction. The parts have a point exactly
+/// when one cell's conjunction does, since the cells cover every value of `x`. When every
+/// constraint left is a bound of one atom or an equality `u == ±v + c`, the cells are decided
+/// together by [`cells_point`]; else each by [`solve`].
+fn cells_of<'p>(p: &'p Parts, x: &Atom, solving: bool) -> Option<Result<bool, Refusal>> {
+    let mut walk = CellWalk {
+        x,
+        cells: Vec::new(),
+        memo: HashMap::new(),
+        owns: HashMap::new(),
+        joins: HashMap::new(),
+    };
+    let Some(whole) = walk.span(&p.cons) else {
         return Some(Ok(false));
     };
-    // Each disjunction's disjuncts with a point, with their spans, in the order of their lower
-    // ends; disjoint, so each upper end is below the next lower end.
-    let mut ors: Vec<Vec<(Span, &Parts)>> = Vec::with_capacity(p.ors.len());
+    // One depth-first walk with a visited set: the ends of every disjunct's span, how many
+    // parts (`p` among them) have a constraint reading each atom, and the parts in an order
+    // where each comes after every part holding it (the reverse of the order they finish in).
     let mut ends: Vec<Int> = Vec::new();
-    for o in &p.ors {
-        let mut live: Vec<(Span, &Parts)> = (o.iter())
-            .filter_map(|d| span(&d.cons).map(|s| (s, &**d)))
-            .collect();
-        // `None`, no lower end, sorts first.
-        live.sort_by(|(a, _), (b, _)| a.0.cmp(&b.0));
-        let disjoint = live.windows(2).all(|w| match (&w[0].0.1, &w[1].0.0) {
-            (Some(h), Some(l)) => h < l,
-            _ => false,
-        });
-        if !disjoint {
-            return None;
+    let mut uses: HashMap<&Atom, u32> = HashMap::new();
+    let mut count = |cons: &'p [Con]| {
+        let read: BTreeSet<&Atom> = cons.iter().flat_map(|c| c.lin.terms.keys()).collect();
+        for a in read {
+            *uses.entry(a).or_default() += 1;
         }
-        for ((lo, hi), _) in &live {
-            ends.extend(lo.iter().cloned());
-            ends.extend(hi.iter().map(|h| h + &Int::ONE));
+    };
+    count(&p.cons);
+    let mut seen: HashSet<*const Parts> = HashSet::new();
+    let mut order: Vec<&Rc<Parts>> = Vec::new();
+    type Kids<'a> = std::iter::Flatten<std::slice::Iter<'a, Vec<Rc<Parts>>>>;
+    let mut stack: Vec<(&Rc<Parts>, Kids)> = Vec::new();
+    for top in p.ors.iter().flatten() {
+        let mut next = Some(top);
+        loop {
+            if let Some(d) = next.take()
+                && seen.insert(Rc::as_ptr(d))
+            {
+                if let Some((lo, hi)) = walk.span(&d.cons) {
+                    ends.extend(lo);
+                    ends.extend(hi.map(|h| &h + &Int::ONE));
+                }
+                count(&d.cons);
+                stack.push((d, d.ors.iter().flatten()));
+            }
+            let Some((d, kids)) = stack.last_mut() else {
+                break;
+            };
+            match kids.next() {
+                Some(e) => next = Some(e),
+                None => {
+                    order.push(*d);
+                    stack.pop();
+                }
+            }
         }
-        ors.push(live);
     }
+    order.reverse();
     ends.sort_unstable();
     ends.dedup();
     // The cells: from no bound or an end to just below the next end, met with `whole`.
     let starts = std::iter::once(None).chain(ends.iter().cloned().map(Some));
     let stops = (ends.iter().map(|e| Some(e - &Int::ONE))).chain(std::iter::once(None));
-    let mut refused = false;
     for (lo, hi) in starts.zip(stops) {
         let lo = match (lo, &whole.0) {
             (Some(l), Some(w)) => Some(l.max(w.clone())),
@@ -2945,37 +6318,172 @@ fn cells_of(p: &Parts, x: &Atom) -> Option<Result<bool, Refusal>> {
             (Some(h), Some(w)) => Some(h.min(w.clone())),
             (h, w) => h.or_else(|| w.clone()),
         };
-        if lo.as_ref().zip(hi.as_ref()).is_some_and(|(l, h)| l > h) {
+        if lo.as_ref().zip(hi.as_ref()).is_none_or(|(l, h)| l <= h) {
+            walk.cells.push((lo, hi));
+        }
+    }
+    // The cells where every disjunction may hold: those outside the join of the cells where
+    // some disjunction may not hold. A disjunction whose view is a window of a set `B` and an
+    // extra `E` may not hold outside the window and `E`, and outside `B` and `E`. The second
+    // part is the same for every disjunction reading `B` but for its `E`, so it is taken once
+    // for `B`: outside `B` and the meet of those disjunctions' extras.
+    // Complexity tradeoff: meeting the disjunctions' sets one after another costs O(D·R) for D
+    // disjunctions and R runs of the meet so far (quadratic when each disjunction removes a
+    // cell). This reads each distinct view's extra once and each main set once, and equal
+    // views once: O(T log T) for T runs read.
+    let all = [(0, walk.cells.len() - 1)];
+    let mut views: HashMap<ViewKey, CellView> = HashMap::new();
+    for o in &p.ors {
+        let (m, _) = walk.of_or(o);
+        views.insert(m.key(), m);
+    }
+    let mut sets: HashMap<*const CellSet, (Rc<CellSet>, Option<CellSet>)> = HashMap::new();
+    let mut dead: CellSet = Vec::new();
+    for v in views.into_values() {
+        let extra: CellSet = v.extra.runs().collect();
+        let window = if v.main.count() == 0 {
+            Vec::new()
+        } else {
+            vec![(v.main.lo, v.main.hi)]
+        };
+        dead.extend(cells_minus(&cells_minus(&all, &window), &extra));
+        let s = (sets.entry(Rc::as_ptr(&v.main.set))).or_insert((v.main.set.clone(), None));
+        s.1 = Some(match s.1.take() {
+            None => extra,
+            Some(m) => cells_meet(&m, &extra),
+        });
+    }
+    for (set, extras) in sets.into_values() {
+        let held = cells_join(
+            set.iter()
+                .copied()
+                .chain(extras.unwrap_or_default())
+                .collect(),
+        );
+        dead.extend(cells_minus(&all, &held));
+    }
+    let live = cells_minus(&all, &cells_join(dead));
+    if live.is_empty() {
+        return Some(Ok(false));
+    }
+    // Only the live cells are kept, numbered in order, so a span of `x` meets them in one run
+    // and every set below is counted in runs of live cells.
+    // Complexity tradeoff: keeping the dead cells gives a disjunct's set one run per dead cell
+    // inside its span, O(n²) runs in all when each of n disjunctions removes one cell; dropping
+    // them costs one more O(T) pass of the memoized walk.
+    if live.len() > 1 || live[0] != (0, walk.cells.len() - 1) {
+        let keep = (live.iter()).flat_map(|&(a, b)| walk.cells[a..=b].iter().cloned());
+        walk.cells = keep.collect();
+        walk.memo.clear();
+        walk.joins.clear();
+    }
+    let k = walk.cells.len();
+    let live: CellSet = vec![(0, k - 1)];
+    // Each part's constraints with every cell where it is the disjunct that may hold, gathered
+    // from all the parts holding it before it is read, so each part is read once.
+    let top: Vec<Con> = (p.cons.iter())
+        .filter(|c| !(c.lin.terms.len() == 1 && c.lin.terms.contains_key(x)))
+        .cloned()
+        .collect();
+    let mut placed: Vec<(Rc<Vec<Con>>, CellSet)> = vec![(Rc::new(top), live.clone())];
+    let mut at: HashMap<*const Parts, Vec<CellView>> = HashMap::new();
+    let shared = |a: &Atom| uses.get(a).is_some_and(|&n| n > 1);
+    let mut spread = walk.spread(&p.ors, &live, &mut at);
+    for d in &order {
+        if !spread {
+            break;
+        }
+        let Some(views) = at.remove(&Rc::as_ptr(d)) else {
+            continue;
+        };
+        let cons = walk.own(d, shared);
+        if cons.is_empty() && d.ors.is_empty() {
             continue;
         }
-        // A value of the cell, its lower end or, with none, its upper end; every disjunct
-        // holding it holds the whole cell, since no end falls inside the cell.
-        let at = lo.clone().or_else(|| hi.clone())?;
-        let mut cons: Vec<&Con> = p.cons.iter().collect();
-        let mut empty = false;
-        for live in &ors {
-            let k = live.partition_point(|((l, _), _)| l.as_ref().is_none_or(|l| *l <= at));
-            match k.checked_sub(1).map(|k| &live[k]) {
-                Some(((_, h), d)) if h.as_ref().is_none_or(|h| at <= *h) => cons.extend(&d.cons),
-                _ => {
-                    empty = true;
-                    break;
-                }
+        let c = cells_join(views.iter().flat_map(CellView::runs).collect());
+        if !cons.is_empty() {
+            placed.push((cons, c.clone()));
+        }
+        spread = walk.spread(&d.ors, &c, &mut at);
+    }
+    if !spread {
+        return None;
+    }
+    let bound = |k: Int, c: Int| Con {
+        lin: Lin {
+            terms: BTreeMap::from([(x.clone(), k)]),
+            constant: c,
+        },
+        rel: Rel::Ge,
+    };
+    let span_cons = |(lo, hi): &Span| -> Vec<Con> {
+        (lo.clone().map(|l| bound(Int::ONE, -&l)).into_iter())
+            .chain(hi.clone().map(|h| bound(-&Int::ONE, h)))
+            .collect()
+    };
+    let mut ids: BTreeMap<Atom, u32> = BTreeMap::new();
+    let mut items: Vec<CellItem> = Vec::new();
+    let mut linear = true;
+    for (c, at) in placed
+        .iter()
+        .flat_map(|(cs, at)| cs.iter().map(move |c| (c, at)))
+    {
+        match cell_link(c, &mut ids) {
+            Some(Some(link)) => {
+                items.extend(at.iter().map(|&(a, b)| CellItem {
+                    link: link.clone(),
+                    a,
+                    b,
+                }));
+            }
+            Some(None) => {}
+            None => {
+                linear = false;
+                break;
             }
         }
-        if empty {
+    }
+    let live_cells: Vec<bool> = {
+        let mut v = vec![false; k];
+        for &(a, b) in &live {
+            v[a..=b].fill(true);
+        }
+        v
+    };
+    if linear {
+        let xi = cell_atom(x, &mut ids);
+        for (i, (lo, hi)) in walk.cells.iter().enumerate() {
+            if live_cells[i] {
+                items.push(CellItem {
+                    link: CellLink::Bound(xi, lo.clone(), hi.clone()),
+                    a: i,
+                    b: i,
+                });
+            }
+        }
+        return Some(Ok(cells_point(0, k - 1, items, &live_cells)));
+    }
+    if !solving {
+        return None;
+    }
+    if let Some(answer) = cells_by_classes(&placed, x, &live_cells) {
+        return Some(Ok(answer));
+    }
+    // Each live cell's conjunction, solved alone.
+    let mut by_cell: Vec<Vec<&Con>> = vec![Vec::new(); k];
+    for (cs, at) in &placed {
+        for &(a, b) in at {
+            for cell in &mut by_cell[a..=b] {
+                cell.extend(cs.iter());
+            }
+        }
+    }
+    let mut refused = false;
+    for (i, mut cons) in by_cell.into_iter().enumerate() {
+        if !live_cells[i] {
             continue;
         }
-        let bound = |k: Int, c: Int| Con {
-            lin: Lin {
-                terms: BTreeMap::from([(x.clone(), k)]),
-                constant: c,
-            },
-            rel: Rel::Ge,
-        };
-        let ends: Vec<Con> = (lo.map(|l| bound(Int::ONE, -&l)).into_iter())
-            .chain(hi.map(|h| bound(-&Int::ONE, h)))
-            .collect();
+        let ends = span_cons(&walk.cells[i]);
         cons.extend(&ends);
         match solve(&cons, false) {
             Ok(Some(_)) => return Some(Ok(true)),
@@ -2984,6 +6492,426 @@ fn cells_of(p: &Parts, x: &Atom) -> Option<Result<bool, Refusal>> {
         }
     }
     (!refused).then_some(Ok(false))
+}
+
+/// Whether a live cell's conjunction has a point, when no constraint of `placed` reads `x`:
+/// `None` when one does or [`solve`] refuses. A cell's conjunction is then its constraints
+/// and the bounds of `x` to the cell, and it has a point exactly when each class of its
+/// constraints joined by shared atoms has one, since the classes share no atom and the cell
+/// has a value of `x`. Each class is solved once per stretch of cells where the same groups
+/// of `placed` hold its constraints, not once per cell.
+// Complexity tradeoff: solving each cell's whole conjunction costs O(k·C) for k cells and C
+// constraints on every cell, quadratic when the cells are many and the constraints held on
+// all of them are many. Here a class is solved once per stretch: O(Σ r log r) for the r runs
+// of the groups holding a class's constraints, and O(Σ s·c) to solve, for s stretches of a
+// class and c of its constraints held on a stretch. Still quadratic when one class has both
+// many stretches and many constraints held on all of them; cells read by `x` together with
+// other atoms are left to the solve of each cell.
+fn cells_by_classes(placed: &[(Rc<Vec<Con>>, CellSet)], x: &Atom, live: &[bool]) -> Option<bool> {
+    let cons =
+        || (placed.iter().enumerate()).flat_map(|(g, (cs, _))| cs.iter().map(move |c| (g, c)));
+    if cons().any(|(_, c)| c.lin.terms.contains_key(x)) {
+        return None;
+    }
+    // Union-find over the atoms, with path halving and union by size.
+    let mut ids: HashMap<&Atom, usize> = HashMap::new();
+    let (mut parent, mut size): (Vec<usize>, Vec<u32>) = (Vec::new(), Vec::new());
+    fn find(parent: &mut [usize], mut i: usize) -> usize {
+        while parent[i] != i {
+            parent[i] = parent[parent[i]];
+            i = parent[i];
+        }
+        i
+    }
+    let mut first: Vec<Option<usize>> = Vec::new();
+    for (_, c) in cons() {
+        let mut at = c.lin.terms.keys().map(|a| {
+            let n = ids.len();
+            *ids.entry(a).or_insert_with(|| {
+                parent.push(n);
+                size.push(1);
+                n
+            })
+        });
+        let Some(u) = at.next() else {
+            first.push(None);
+            continue;
+        };
+        for v in at.collect::<Vec<_>>() {
+            let (a, b) = (find(&mut parent, u), find(&mut parent, v));
+            if a != b {
+                let (a, b) = if size[a] < size[b] { (b, a) } else { (a, b) };
+                parent[b] = a;
+                size[a] += size[b];
+            }
+        }
+        first.push(Some(u));
+    }
+    // Each class's constraints by group; a constraint of no atom is a class of its own.
+    let mut classes: HashMap<usize, BTreeMap<usize, Vec<&Con>>> = HashMap::new();
+    for (i, (g, c)) in cons().enumerate() {
+        let key = match first[i] {
+            Some(u) => find(&mut parent, u),
+            None => ids.len() + i,
+        };
+        classes
+            .entry(key)
+            .or_default()
+            .entry(g)
+            .or_default()
+            .push(c);
+    }
+    let k = live.len();
+    let mut dead: CellSet = Vec::new();
+    for groups in classes.values() {
+        // The stretches: from each start or end of a run of a group holding the class, with
+        // the groups held there, by one sweep over the starts and ends in order.
+        let mut ends: Vec<(usize, bool, usize)> = Vec::new();
+        for &g in groups.keys() {
+            for &(a, b) in &placed[g].1 {
+                ends.push((a, true, g));
+                ends.push((b + 1, false, g));
+            }
+        }
+        ends.sort_unstable();
+        let mut held: BTreeMap<usize, u32> = BTreeMap::new();
+        let mut i = 0;
+        while i < ends.len() {
+            let at = ends[i].0;
+            while i < ends.len() && ends[i].0 == at {
+                let (_, start, g) = ends[i];
+                let n = held.entry(g).or_default();
+                if start {
+                    *n += 1;
+                } else {
+                    *n -= 1;
+                    if *n == 0 {
+                        held.remove(&g);
+                    }
+                }
+                i += 1;
+            }
+            let stop = ends.get(i).map_or(k, |e| e.0);
+            if held.is_empty() || at >= stop || !live[at..stop].contains(&true) {
+                continue;
+            }
+            let conj: Vec<&Con> = held
+                .keys()
+                .flat_map(|g| groups[g].iter().copied())
+                .collect();
+            match solve(&conj, false) {
+                Ok(Some(_)) => {}
+                Ok(None) => dead.push((at, stop - 1)),
+                Err(_) => return None,
+            }
+        }
+    }
+    let dead = cells_join(dead);
+    let mut j = 0;
+    Some((0..k).any(|c| {
+        while j < dead.len() && dead[j].1 < c {
+            j += 1;
+        }
+        live[c] && !(j < dead.len() && dead[j].0 <= c)
+    }))
+}
+
+/// A constraint of the class [`cells_point`] decides: a bound of one atom, `u == ±v + c` (the
+/// `bool` is the minus), or one that fails.
+#[derive(Clone, Debug)]
+enum CellLink {
+    Bound(u32, Option<Int>, Option<Int>),
+    Eq(u32, bool, u32, Int),
+    False,
+}
+
+/// A [`CellLink`] holding on the cells `a..=b`.
+#[derive(Clone, Debug)]
+struct CellItem {
+    link: CellLink,
+    a: usize,
+    b: usize,
+}
+
+fn cell_atom(a: &Atom, ids: &mut BTreeMap<Atom, u32>) -> u32 {
+    let n = ids.len() as u32;
+    *ids.entry(a.clone()).or_insert(n)
+}
+
+/// `c` as a [`CellLink`]: `Some(None)` when it holds always, `None` when it is not of the class.
+fn cell_link(c: &Con, ids: &mut BTreeMap<Atom, u32>) -> Option<Option<CellLink>> {
+    let unit = |k: &Int| *k == Int::ONE || *k == -&Int::ONE;
+    match c.lin.terms.len() {
+        0 => {
+            let holds = match c.rel {
+                Rel::Ge => !c.lin.constant.is_negative(),
+                Rel::Eq => c.lin.constant.is_zero(),
+            };
+            Some((!holds).then_some(CellLink::False))
+        }
+        1 => {
+            let (a, _) = c.lin.terms.iter().next().expect("one term");
+            let mut b = AtomBounds::from([(a.clone(), (None, None))]);
+            if !narrow(c, &mut b) {
+                return Some(Some(CellLink::False));
+            }
+            let (lo, hi) = b.remove(a).expect("a has bounds");
+            Some(Some(CellLink::Bound(cell_atom(a, ids), lo, hi)))
+        }
+        2 if c.rel == Rel::Eq && c.lin.terms.values().all(unit) => {
+            // `a·u + b·v + c == 0` with `a, b = ±1`: `u == -a·b·v - a·c`.
+            let mut t = c.lin.terms.iter();
+            let ((u, a), (v, b)) = (t.next().expect("two"), t.next().expect("two"));
+            let minus = a == b;
+            let off = if a.is_positive() {
+                -&c.lin.constant
+            } else {
+                c.lin.constant.clone()
+            };
+            Some(Some(CellLink::Eq(
+                cell_atom(u, ids),
+                minus,
+                cell_atom(v, ids),
+                off,
+            )))
+        }
+        _ => None,
+    }
+}
+
+/// `±x + off` over `x` in `lo..=hi`.
+fn cell_image(minus: bool, off: &Int, lo: &Option<Int>, hi: &Option<Int>) -> Span {
+    let at = |e: &Option<Int>| e.as_ref().map(|e| if minus { off - e } else { e + off });
+    if minus {
+        (at(hi), at(lo))
+    } else {
+        (at(lo), at(hi))
+    }
+}
+
+/// Classes of atoms joined by equalities `u == ±v + c`, each atom's value `±(its root's) +
+/// off`, and each root's bounds; a union-find with path compression and union by size.
+#[derive(Default)]
+struct CellClasses {
+    at: HashMap<u32, usize>,
+    atom: Vec<u32>,
+    parent: Vec<usize>,
+    minus: Vec<bool>,
+    off: Vec<Int>,
+    size: Vec<u32>,
+    bounds: Vec<Span>,
+}
+
+impl CellClasses {
+    fn id(&mut self, u: u32) -> usize {
+        if let Some(&i) = self.at.get(&u) {
+            return i;
+        }
+        let i = self.atom.len();
+        self.at.insert(u, i);
+        self.atom.push(u);
+        self.parent.push(i);
+        self.minus.push(false);
+        self.off.push(Int::ZERO);
+        self.size.push(1);
+        self.bounds.push((None, None));
+        i
+    }
+
+    /// The root of `i`, and `(minus, off)` with `i`'s value `±root + off`.
+    fn find(&mut self, i: usize) -> (usize, bool, Int) {
+        let mut path = Vec::new();
+        let mut r = i;
+        while self.parent[r] != r {
+            path.push(r);
+            r = self.parent[r];
+        }
+        for &n in path.iter().rev() {
+            let p = self.parent[n];
+            if p != r {
+                let op = self.off[p].clone();
+                self.off[n] = if self.minus[n] {
+                    &self.off[n] - &op
+                } else {
+                    &self.off[n] + &op
+                };
+                self.minus[n] ^= self.minus[p];
+                self.parent[n] = r;
+            }
+        }
+        if i == r {
+            (r, false, Int::ZERO)
+        } else {
+            (r, self.minus[i], self.off[i].clone())
+        }
+    }
+
+    /// Meets root `r`'s bounds with `lo..=hi`; `false` when none is left.
+    fn meet(&mut self, r: usize, lo: Option<Int>, hi: Option<Int>) -> bool {
+        let b = &mut self.bounds[r];
+        if let Some(l) = lo {
+            b.0 = Some(b.0.take().map_or(l.clone(), |o| o.max(l)));
+        }
+        if let Some(h) = hi {
+            b.1 = Some(b.1.take().map_or(h.clone(), |o| o.min(h)));
+        }
+        b.0.as_ref().zip(b.1.as_ref()).is_none_or(|(l, h)| l <= h)
+    }
+
+    /// Adds `link` to the classes; `false` when no value is left.
+    fn apply(&mut self, link: &CellLink) -> bool {
+        match link {
+            CellLink::False => false,
+            CellLink::Bound(u, lo, hi) => {
+                let i = self.id(*u);
+                let (r, m, o) = self.find(i);
+                // `u == ±r + o`, so `r == ±(u - o)`.
+                let (lo, hi) = cell_image(m, &(if m { o.clone() } else { -&o }), lo, hi);
+                self.meet(r, lo, hi)
+            }
+            CellLink::Eq(u, minus, v, c) => {
+                let (iu, iv) = (self.id(*u), self.id(*v));
+                let (ru, mu, ou) = self.find(iu);
+                let (rv, mv, ov) = self.find(iv);
+                // `±ru + ou == ±(±rv + ov) + c`: `ru == ±rv + m`.
+                let s_ov = if *minus { -&ov } else { ov };
+                let rhs = &(&s_ov + c) - &ou;
+                let m = if mu { -&rhs } else { rhs };
+                let k = mu ^ *minus ^ mv;
+                if ru == rv {
+                    return match k {
+                        false => m.is_zero(),
+                        true => {
+                            // `2·ru == m`.
+                            let two = &Int::ONE + &Int::ONE;
+                            let half = m.div_floor(&two);
+                            &half * &two == m && self.meet(ru, Some(half.clone()), Some(half))
+                        }
+                    };
+                }
+                let (child, root, cm) = if self.size[ru] <= self.size[rv] {
+                    (ru, rv, m)
+                } else {
+                    // `rv == ±(ru - m) == ±ru ∓ m`.
+                    (rv, ru, if k { m } else { -&m })
+                };
+                // `child == ±root + cm`; its bounds in terms of `root`: `root == ±(child - cm)`.
+                self.parent[child] = root;
+                self.minus[child] = k;
+                self.off[child] = cm.clone();
+                self.size[root] += self.size[child];
+                let (lo, hi) = self.bounds[child].clone();
+                let (lo, hi) = cell_image(k, &(if k { cm } else { -&cm }), &lo, &hi);
+                self.meet(root, lo, hi)
+            }
+        }
+    }
+
+    /// `link` in terms of the roots, with the roots it reads added to `touched`; `None` when it
+    /// holds always.
+    fn rewrite(&mut self, link: &CellLink, touched: &mut Vec<usize>) -> Option<CellLink> {
+        let mut root_of = |s: &mut Self, u: u32| -> (u32, bool, Int, bool) {
+            match s.at.get(&u).copied() {
+                None => (u, false, Int::ZERO, false),
+                Some(i) => {
+                    let (r, m, o) = s.find(i);
+                    touched.push(r);
+                    (s.atom[r], m, o, true)
+                }
+            }
+        };
+        match link {
+            CellLink::False => Some(CellLink::False),
+            CellLink::Bound(u, lo, hi) => {
+                let (r, m, o, _) = root_of(self, *u);
+                let (lo, hi) = cell_image(m, &(if m { o.clone() } else { -&o }), lo, hi);
+                Some(CellLink::Bound(r, lo, hi))
+            }
+            CellLink::Eq(u, minus, v, c) => {
+                let (ru, mu, ou, _) = root_of(self, *u);
+                let (rv, mv, ov, _) = root_of(self, *v);
+                let s_ov = if *minus { -&ov } else { ov };
+                let rhs = &(&s_ov + c) - &ou;
+                let m = if mu { -&rhs } else { rhs };
+                let k = mu ^ *minus ^ mv;
+                if ru == rv {
+                    return match k {
+                        false if m.is_zero() => None,
+                        false => Some(CellLink::False),
+                        true => {
+                            let two = &Int::ONE + &Int::ONE;
+                            let half = m.div_floor(&two);
+                            Some(if &half * &two == m {
+                                CellLink::Bound(ru, Some(half.clone()), Some(half))
+                            } else {
+                                CellLink::False
+                            })
+                        }
+                    };
+                }
+                Some(CellLink::Eq(ru, k, rv, m))
+            }
+        }
+    }
+}
+
+/// Whether some cell of `l..=r` that `live` marks has a point of the items that hold on it.
+/// The items holding on every cell of the range are joined into classes; the others are
+/// passed to the halves in terms of the classes' roots, with the bounds of the roots they
+/// read, so each half sees only what changes inside it.
+// Complexity tradeoff: naive version, one [`solve`] of each cell's conjunction, O(k n log n)
+// for `k` cells, O(n² log n) when `k` is near `n`. Used: an item holding on `a..=b` is
+// passed down only to the ranges it covers in part, at most two in each of the `log k`
+// levels, and each passed item brings at most two root bounds, so the items over all ranges
+// number O((I + k) log k) for `I` items, each costing a hash lookup and a near-constant find.
+fn cells_point(l: usize, r: usize, items: Vec<CellItem>, live: &[bool]) -> bool {
+    let mut classes = CellClasses::default();
+    let mut part = Vec::new();
+    for it in items {
+        if it.a <= l && r <= it.b {
+            if !classes.apply(&it.link) {
+                return false;
+            }
+        } else {
+            part.push(it);
+        }
+    }
+    if l == r {
+        return live[l];
+    }
+    let mut touched = Vec::new();
+    let part: Vec<CellItem> = (part.into_iter())
+        .filter_map(|it| {
+            (classes.rewrite(&it.link, &mut touched)).map(|link| CellItem { link, ..it })
+        })
+        .collect();
+    touched.sort_unstable();
+    touched.dedup();
+    let m = l + (r - l) / 2;
+    for (lo, hi) in [(l, m), (m + 1, r)] {
+        let mut next: Vec<CellItem> = (part.iter())
+            .filter(|it| it.a <= hi && lo <= it.b)
+            .map(|it| CellItem {
+                link: it.link.clone(),
+                a: it.a.max(lo),
+                b: it.b.min(hi),
+            })
+            .collect();
+        for &t in &touched {
+            let (blo, bhi) = classes.bounds[t].clone();
+            if blo.is_some() || bhi.is_some() {
+                next.push(CellItem {
+                    link: CellLink::Bound(classes.atom[t], blo, bhi),
+                    a: lo,
+                    b: hi,
+                });
+            }
+        }
+        if cells_point(lo, hi, next, live) {
+            return true;
+        }
+    }
+    false
 }
 
 /// `c` with each atom outside `free` replaced by its value in `model`.
@@ -19948,5 +23876,134 @@ mod r6_unary_queue_tests {
             let ratio = scaling::hold(&what, unit, counts[i], counts[i + 1], 1);
             println!("R6DRAIN ratio={ratio}");
         }
+    }
+}
+
+/// Scaling tests of [`by_cells`] on a part held by many disjunctions ([`CellWalk::join`], the
+/// dead cells of [`cells_of`], [`CellWalk::spread`]) and on cells that fall in few classes
+/// ([`cells_by_classes`]). Each formula has no point, by two disjunctions on `w` that no value
+/// of `i` satisfies together.
+#[cfg(test)]
+mod cells_scaling {
+    use super::*;
+    use crate::scaling;
+
+    fn var(s: &str) -> Lin {
+        Lin::atom(Atom::Sym(s.into()))
+    }
+
+    fn num(k: usize) -> Lin {
+        Lin::constant(k as i128)
+    }
+
+    fn eq(a: &Lin, b: &Lin) -> Formula {
+        Formula::Con(Con::eq(a, b))
+    }
+
+    /// `a <= b`.
+    fn le(a: &Lin, b: &Lin) -> Formula {
+        Formula::Con(Con::ge(b, a))
+    }
+
+    fn and(fs: Vec<Formula>) -> Formula {
+        Formula::And(Shared::new(fs))
+    }
+
+    fn or(fs: Vec<Formula>) -> Formula {
+        Formula::Or(Shared::new(fs))
+    }
+
+    /// `0 <= i <= top`, and `w` is 1 and 2 where `i <= 1`, and 2 and 1 where `i >= 2`.
+    fn frame(i: &Lin, top: usize) -> Vec<Formula> {
+        let w = var("w");
+        let mut fs = vec![le(&num(0), i), le(i, &num(top))];
+        for (a, b) in [(1, 2), (2, 1)] {
+            fs.push(or(vec![
+                and(vec![le(i, &num(1)), eq(&w, &num(a))]),
+                and(vec![le(&num(2), i), eq(&w, &num(b))]),
+            ]));
+        }
+        fs
+    }
+
+    /// `0 <= i && (i = off || i = step + off || ...)`, `n` points.
+    fn points(i: &Lin, n: usize, step: usize, off: usize) -> Formula {
+        let at = (0..n).map(|j| eq(i, &num(step * j + off))).collect();
+        and(vec![le(&num(0), i), or(at)])
+    }
+
+    /// `n` disjunctions each holding one shared part `H` of `n` points (and, with `two`, a
+    /// second shared part of `n` points) and a disjunct of its own above them.
+    fn shared_holders(n: usize, two: bool) -> Formula {
+        let i = var("i");
+        let (h, h3) = (points(&i, n, 2, 0), points(&i, n, 3, 1));
+        let top = 6 * n + 10;
+        let mut fs = frame(&i, top);
+        for j in 0..n {
+            let own = and(vec![
+                le(&num(top - 1), &i),
+                eq(&var(&format!("private{j}")), &num(j)),
+            ]);
+            fs.push(match two {
+                false => or(vec![h.clone(), own]),
+                true => or(vec![h.clone(), h3.clone(), own]),
+            });
+        }
+        and(fs)
+    }
+
+    /// `n` points of `i`, and one disjunction of two conjunctions of `n` equalities each,
+    /// `y_j = z_j + 1` where `i <= n` and `y_j = z_j + 2` where `i > n`, over bounded `y_j` and
+    /// `z_j`: the cells fall in three classes by the disjunct taken.
+    fn interface(n: usize) -> Formula {
+        let i = var("i");
+        let mut fs = frame(&i, 2 * n);
+        fs.push(or((0..n).map(|j| eq(&i, &num(2 * j))).collect()));
+        let mut lo = vec![le(&i, &num(n))];
+        let mut hi = vec![le(&num(n + 1), &i)];
+        for j in 0..n {
+            let (y, z) = (var(&format!("y_{j}")), var(&format!("z_{j}")));
+            fs.extend([
+                le(&num(0), &z),
+                le(&z, &num(j + 1)),
+                le(&num(0), &y),
+                le(&y, &num(j + 3)),
+            ]);
+            lo.push(eq(&y, &z.plus(&num(1))));
+            hi.push(eq(&y, &z.plus(&num(2))));
+        }
+        fs.push(or(vec![and(lo), and(hi)]));
+        and(fs)
+    }
+
+    fn no_point_scales(what: &str, n: usize, make: impl Fn(usize) -> Formula) {
+        let fs = scaling::inputs(n, make);
+        scaling::check_order(what, n, 1, |m| {
+            assert_eq!(decide(&fs[&m]), Ok(false), "{m}");
+        });
+    }
+
+    /// Control (63662d8d, not kept): fails by the 60 s limit; at n = 250 the base takes over
+    /// 60 s alone.
+    #[test]
+    fn a_part_held_by_many_disjunctions_is_decided_in_near_linear_work() {
+        no_point_scales("a part held by many disjunctions", 250, |n| {
+            shared_holders(n, false)
+        });
+    }
+
+    /// Control (63662d8d, not kept): fails by the 60 s limit, as above.
+    #[test]
+    fn two_parts_held_by_many_disjunctions_are_decided_in_near_linear_work() {
+        no_point_scales("two parts held by many disjunctions", 250, |n| {
+            shared_holders(n, true)
+        });
+    }
+
+    /// Control (63662d8d, not kept): fails; the base solves the `n` equalities once per cell,
+    /// and at sizes 62 and 496 its first runs allocate 47.6 times the bytes.
+    #[test]
+    fn cells_in_few_classes_are_solved_once_per_class() {
+        no_point_scales("cells in three classes", 62, interface);
     }
 }
