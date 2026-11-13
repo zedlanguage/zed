@@ -2020,9 +2020,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | CHK-replay-pair | running | 2026-11-12 15:51 |  |
+| COST-old-form | impl attempt 1 | 2026-11-12 18:18 | rewrote bare @cost(e) to @cost(O(e)) in README, cases.txt (3 trees updated), l02_02 tests, node.rs doc, plan L24.1a note; cases 540/0 wrong, readme fence resync |
 | FLOAT-f32 | impl attempt 1 | 2026-11-05 04:07 | started; worktrees /home/luke/Work/wt/float-f32 and float-f32-spec; load 50.77 50.76 45.34 |
 | GSX-unsolved | merge attempt 1 | 2026-11-11 16:53 | started: rebase combo (gsxh-claude) onto origin/main and apply decisions (a)-(d) of cd-xr/GSX-merge.md / load 43.50 38.06 40.03 |
-| MAKER-file-chain | impl attempt 1 | 2026-11-12 17:24 | started; worktree /home/luke/Work/wt/maker-file-chain on origin/main 2bfa16bd6 |
+| MAKER-file-chain | impl attempt 1 | 2026-11-12 17:24 | red on old code: new work tests t_n + 1 bytes 19.9x, a_n + 1 bytes 14.0x at n=40->320 (limit 13.8); load 76 |
 | MSG-is-repair-v | running | 2026-11-12 17:32 |  |
 | MSG-lines-headline | running | 2026-11-12 17:32 |  |
 | MSG-width-headline | running | 2026-11-12 17:32 |  |
