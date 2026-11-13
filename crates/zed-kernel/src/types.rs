@@ -1228,7 +1228,9 @@ impl PartialOrd for Lits {
 /// the set of listed names whose payload lists something, kept by [`Atoms::set`] in O(log n),
 /// so that a sweep finds the one payload name, or that there is none, without reading the
 /// others: the sweeps ask it of every type they are given, and reading every name there made a
-/// chain of `n` failure atoms cost `n^2 log n`.
+/// chain of `n` failure atoms cost `n^2 log n`. `bare_names` counts the listed names that hold
+/// their bare atom, kept by [`Atoms::set`] in O(1), so that whether a type holds a bare atom is
+/// read without reading the names.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 struct Atoms {
     name_sum: u64,
@@ -1236,6 +1238,7 @@ struct Atoms {
     names: OrdMap<Arc<str>, AtomPart>,
     sum: u64,
     payloads: OrdSet<Arc<str>>,
+    bare_names: usize,
 }
 
 /// The atoms of one name in a type: the bare atom, and those whose payload is in `payload`, a
@@ -1275,6 +1278,8 @@ thread_local! {
         Universe::Morphism,
     ]
     .map(Type::build_universe);
+    /// The values an atom's payload may be, tuples and structs, made once.
+    static PAYLOADS: Type = Type::universe(Universe::Tuple) | Type::universe(Universe::Struct);
 }
 
 impl Parts {
@@ -1743,7 +1748,7 @@ impl Type {
 
     /// The values an atom's payload may be: tuples and structs.
     fn payloads() -> Type {
-        Type::universe(Universe::Tuple) | Type::universe(Universe::Struct)
+        crate::local::with(&PAYLOADS, Type::clone)
     }
 
     /// The values of `self` in `u`.
@@ -2173,10 +2178,14 @@ impl Type {
 }
 
 type CompoundKey = (bool, bool, u64, Vec<(usize, u64)>);
-/// Each compound key with the id and the node built for it.
-type CompoundTypes = HashMap<Arc<CompoundKey>, (u64, Weak<Node>)>;
+/// Each compound key with the id and the node built for it. Complexity tradeoff
+/// (PERF-deep-ops-slow): the keys are flags, ids and digests the kernel drew, never a program's
+/// text, so the map hashes them by [`crate::digest::Digest`] with no seed, as its doc allows;
+/// SipHash-1-3 over each key showed in the profile of a deep tuple (GSX-unsolved made more
+/// compound types a level), the lookup O(1) either way.
+type CompoundTypes = crate::digest::DigestMap<Arc<CompoundKey>, (u64, Weak<Node>)>;
 thread_local! {
-    static COMPOUND_TYPES: RefCell<CompoundTypes> = RefCell::new(HashMap::new());
+    static COMPOUND_TYPES: RefCell<CompoundTypes> = RefCell::new(CompoundTypes::default());
     static COMPOUND_SEARCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
@@ -2208,6 +2217,16 @@ impl Parts {
             && self.morphisms.is_leaf() == Some(false)
     }
 
+    /// Whether it lists atoms and nothing else: no boolean, number, string, tuple, struct or
+    /// morphism. Its every value is then an atom, as an atom's payload is within the tuples
+    /// and structs ([`AtomPart`]).
+    fn atoms_only(&self) -> bool {
+        !self.has_scalars()
+            && self.tuples.is_default()
+            && !self.structs
+            && self.morphisms.is_leaf() == Some(false)
+    }
+
     /// Whether these are the parts of [`Type::lit`] of `v`, a boolean or a value of its
     /// carrier's part here: that one value in its carrier's part and every other part empty.
     /// Types of parts are equal exactly when their parts are, so this is `Type::lit(v) == t`
@@ -2229,6 +2248,12 @@ impl Parts {
                 .iter()
                 .all(|(l, here)| !l.cofinite && l.values.len() == usize::from(*here))
             && self.scalars_only()
+    }
+
+    /// Whether it holds a bare atom, `#a`, or the atoms of every name it does not list, read
+    /// from the parts in O(1) ([`Atoms`] counts the names that hold their bare atom).
+    fn has_bare_atoms(&self) -> bool {
+        self.atoms.cofinite || self.atoms.bare_names > 0
     }
 
     /// Whether it holds a boolean, number or string, read from the parts.
@@ -2299,6 +2324,13 @@ impl Type {
         !self.p().atoms.is_default()
     }
 
+    /// Whether its parts list atoms and nothing else, so that it is within every atom; read
+    /// from the parts in O(1). False for a recursive node and for parts that list another kind,
+    /// which may still hold no value of it: ask [`Type::subtype`] then.
+    pub fn atoms_only(&self) -> bool {
+        matches!(&*self.0, Node::Parts(p, _) if p.atoms_only())
+    }
+
     /// The names of its atoms, each with whether it holds the bare atom `#name`, read from its
     /// parts in name order; `None` when it holds the atoms of every name it does not list. A
     /// listed name may hold no value, when its payload type is empty but not built as empty. A
@@ -2321,6 +2353,40 @@ impl Type {
         };
         let map = map.into_iter().flatten().map(|(n, a)| (&**n, a.bare));
         Some(map.chain(list.into_iter().flatten().map(|(n, b)| (&**n, *b))))
+    }
+
+    /// The name of its one atom and whether it is bare, when it is `Type::atom(name)` or
+    /// `Type::atom_with(name, &Type::top())` and nothing else. A node of parts is read from
+    /// its parts, as types of parts are equal exactly when their parts are; a recursive node
+    /// is compared with the atom's type.
+    pub fn one_atom(&self) -> Option<(&str, bool)> {
+        // Complexity tradeoff (PERF-deep-ops-slow): naive, build the atom's type and compare
+        // it with `self`, about 3k instructions for each component of every row the checker
+        // makes (MSG-article-atom-value, 608b01025); here O(1) reads of the parts and one
+        // comparison of the payload with a type made once.
+        let mut names = self.atom_names()?;
+        let (name, bare) = names.next()?;
+        if names.next().is_some() {
+            return None;
+        }
+        let one = match &*self.0 {
+            Node::Parts(p, _) => {
+                let payload = match bare {
+                    true => Type::empty(),
+                    false => Type::payloads(),
+                };
+                p.atoms
+                    .names
+                    .get_min()
+                    .is_some_and(|(_, a)| a.payload == payload)
+                    && p.atoms_only()
+            }
+            Node::Rec(_) => match bare {
+                true => *self == Type::atom(name),
+                false => *self == Type::atom_with(name, &Type::top()),
+            },
+        };
+        one.then_some((name, bare))
     }
 
     /// `self` split by the places its members take in a union ([`mod@order`], DESIGN.md
@@ -2592,6 +2658,7 @@ impl Atoms {
             self.sum = self.sum.wrapping_sub(primary);
             self.name_sum = self.name_sum.wrapping_sub(named);
             self.payloads.remove(name);
+            self.bare_names -= usize::from(old.bare);
         }
         let default = if self.cofinite {
             AtomPart::all()
@@ -2605,6 +2672,7 @@ impl Atoms {
             if !p.payload.lists_nothing() {
                 self.payloads.insert(name.clone());
             }
+            self.bare_names += usize::from(p.bare);
             self.names.insert(name.clone(), p);
         }
     }
@@ -2697,6 +2765,25 @@ impl Tuples {
         match self.lens.get(&len) {
             Some(b) => b.clone(),
             None => Part::leaf(self.rest),
+        }
+    }
+
+    /// Whether the meet of `ts` may hold a tuple, read from their lengths with nothing built:
+    /// each holds the tuples of every length it does not list, or some length is held by each,
+    /// its part not the empty leaf. The meet of the parts at one length is empty by form alone
+    /// when one is the complement of another, which this does not see, so it may answer yes
+    /// where the meet holds no tuple, never no where it holds one. The lengths tried are those
+    /// of a part that holds no unlisted length, the one listing fewest, O(l·m log l) for `m`
+    /// parts each listing at most `l` lengths, no more than building the meet.
+    fn may_meet(ts: &[&Tuples]) -> bool {
+        match ts.iter().filter(|t| !t.rest).min_by_key(|t| t.lens.len()) {
+            None => true,
+            Some(fewest) => fewest.lens.keys().any(|n| {
+                ts.iter().all(|t| match t.lens.get(n) {
+                    Some(b) => b.is_leaf() != Some(false),
+                    None => t.rest,
+                })
+            }),
         }
     }
 

@@ -3138,7 +3138,12 @@ pub fn atoms() -> KType {
 
 /// Every tuple and every struct, the kinds that `set` holds only as the kind-wide part.
 pub fn wide() -> KType {
-    &KType::universe(Universe::Tuple) | &KType::universe(Universe::Struct)
+    thread_local! {
+        /// Made once: each row made asks it ([`Ty::held_wide`]), where building the union cost
+        /// more than the rest of the row (PERF-deep-ops-slow).
+        static WIDE: KType = &KType::universe(Universe::Tuple) | &KType::universe(Universe::Struct);
+    }
+    WIDE.with(KType::clone)
 }
 
 /// The atom `#errs` that two distinct failures merge into, with any payload.
@@ -3259,7 +3264,12 @@ impl Piece {
 
     /// Whether it is a piece of atoms.
     pub fn is_atoms(&self) -> bool {
-        matches!(self, Piece::Set(s) if s.subtype(&atoms()))
+        // Complexity tradeoff (PERF-deep-ops-slow): naive, the subtype check alone, which reads
+        // each of the piece's a atom names, O(a); `Ck::class_beside_atoms` asks it once per
+        // operator of a chain `#e0 + #e1 + …`, whose loose atoms grow by one at each, O(n²) in
+        // all (2.9·10^9 instructions at 8000 atoms). The parts answer in O(1) when they list
+        // atoms alone; the check runs only for a recursive type or parts listing another kind.
+        matches!(self, Piece::Set(s) if s.atoms_only() || s.subtype(&atoms()))
     }
 
     /// The type of this piece alone.
@@ -5212,12 +5222,6 @@ impl<'m, 's> Comparing<'m, 's> {
                 tuples: near.into_iter().map(|j| within.tuples[j].clone()).collect(),
                 ..bare.clone()
             };
-            let mut b = Binds::new();
-            // A refused comparison keeps the row, as a failed one does.
-            let held = (self.sub_near(&row, &within, Some((&near, &whole, &filed)), &mut b)).await;
-            if self.cx.borrow().decided(held) && b.is_empty() {
-                continue;
-            }
             // A row that `u` holds in part leaves the rest in the set, where the kernel holds it
             // exactly, keeping the shape's payloads, as in `Self::meet_rest`. Before
             // (FIX-ty-diff-wide-row), only a row that met `u`'s kind-wide part did, and a row
@@ -5241,8 +5245,30 @@ impl<'m, 's> Comparing<'m, 's> {
                     .map(|ks| KType::union_all(std::iter::once(w.clone()).chain(ks))),
                 _ => None,
             };
-            match (k, cut, &tk) {
-                (Some(k), Some(cut), _) if !(&k & &cut).is_empty() => rest.push(&k - &cut),
+            // Complexity tradeoff (PERF-deep-ops-slow): a row with a cut is tested against the
+            // cut before it is compared with `u`. A row that `u` holds is within the cut, as
+            // `u`'s tuples apart from it and its parts of other kinds share no value with it; so
+            // a row whose kernel type has a value and misses the cut is kept whole with no
+            // comparison. Comparing first, as FIX-ty-diff-wide-row did, ran the kernel's search
+            // twice for such a row (a tuple nested 20,000 deep less one that differs at the
+            // bottom: 462k instructions a level, 188k before that fix); now the meet's search is
+            // the one search, and a row that meets the cut pays both, as before.
+            let met = match (&k, &cut) {
+                (Some(k), Some(cut)) => Some(!(k & cut).is_empty()),
+                _ => None,
+            };
+            if met == Some(false) && !k.as_ref().is_some_and(KType::is_empty) {
+                kept.push(a);
+                continue;
+            }
+            let mut b = Binds::new();
+            // A refused comparison keeps the row, as a failed one does.
+            let held = (self.sub_near(&row, &within, Some((&near, &whole, &filed)), &mut b)).await;
+            if self.cx.borrow().decided(held) && b.is_empty() {
+                continue;
+            }
+            match (k, &cut, &tk) {
+                (Some(k), Some(cut), _) if met == Some(true) => rest.push(&k - cut),
                 (Some(k), None, Some(tk)) if !(&k & &w).is_empty() => rest.push(&k - tk),
                 _ => kept.push(a),
             }
@@ -6021,16 +6047,16 @@ impl Ty {
     /// Whether its set is one atom and nothing else: the bare atom `#a`, or the atom of one
     /// name whose one listed payload shape is one value, `#a(1)` ([`Ty::is_one_value`]).
     fn is_one_atom(&self) -> bool {
-        let Some(mut names) = self.set.atom_names() else {
-            return false;
-        };
-        match (names.next(), names.next()) {
-            (Some((n, true)), None) => self.set == KType::atom(n),
-            (Some((n, false)), None) => {
+        // Complexity tradeoff (PERF-deep-ops-slow): the set is read by `KType::one_atom` with
+        // no type built; building `#a` or `#a(_)` and comparing it cost about 3k
+        // instructions for each component of every row made.
+        match self.set.one_atom() {
+            Some((_, true)) => true,
+            Some((n, false)) => {
                 let one = matches!(self.payloads.get(n), Some(Some(ss)) if matches!(&ss[..], [s] if s.one));
-                one && self.payloads.len() == 1 && self.set == KType::atom_with(n, &KType::top())
+                one && self.payloads.len() == 1
             }
-            _ => false,
+            None => false,
         }
     }
 
@@ -8049,30 +8075,80 @@ impl<'t> ArrowIndex<'t> {
     /// The arrows of the shortest of `sources`, each the union of its lists, in order, kept
     /// when, at each parameter of `need`, the arrow is open or offers the key, and when
     /// `result` is given, it offers every key the arrow's result needs. Every arrow when there
-    /// is no source. The cost is the shortest source's length, times its logarithm and the
-    /// keys tested.
+    /// is no source. The cost is the shortest source's length times its logarithm, with the
+    /// filter's cost ([`Self::keep_missing`]).
     fn candidates(
         &self,
         need: &[(usize, &[usize])],
         result: Option<&HashSet<Key<'t>>>,
         sources: Vec<Vec<&[usize]>>,
     ) -> Vec<usize> {
-        let keep = |&i: &usize| {
-            need.iter()
-                .all(|&(k, l)| self.open[k][i] || l.binary_search(&i).is_ok())
-                && result.is_none_or(|r| self.result_needs[i].iter().all(|k| r.contains(k)))
-        };
-        let Some(lists) = sources
+        let mut out: Vec<usize> = match sources
             .into_iter()
             .min_by_key(|lists| lists.iter().map(|l| l.len()).sum::<usize>())
-        else {
-            return (0..self.n).filter(keep).collect();
+        {
+            Some(lists) => lists.into_iter().flatten().copied().collect(),
+            None => (0..self.n).collect(),
         };
-        let mut out: Vec<usize> = lists.into_iter().flatten().copied().collect();
         out.sort_unstable();
         out.dedup();
-        out.retain(keep);
+        self.keep_missing(&mut out, need, result, 0);
         out
+    }
+
+    /// Keeps the arrows of `out`, in order without repeats, that miss at most `misses`
+    /// parameters of `need` and, when `result` is given, offer every key their results need.
+    /// An arrow misses a parameter when it is not open there and lacks a key `need` lists
+    /// there.
+    fn keep_missing(
+        &self,
+        out: &mut Vec<usize>,
+        need: &[(usize, &[usize])],
+        result: Option<&HashSet<Key<'t>>>,
+        misses: usize,
+    ) {
+        // Complexity tradeoff (PERF-deep-ops-slow): naive, test each of the c arrows against
+        // each of the e needed keys by a binary search in the key's list, O(c·e·log l),
+        // quadratic when the arrows offer one key each of a parameter that needs one per
+        // arrow (3200 arrows `(x: #ai | #a(i+1)) -> …` covering `(x: #a0 | … | #a3200)`:
+        // 2.5·10^9 instructions). Here each key's list is walked against the arrows from the
+        // shorter side, counting the keys each arrow offers at each parameter: O(Σ min(l·log c,
+        // c·log l) + c·p) for p parameters with a key, at most the naive cost.
+        let mut params: Vec<usize> = need.iter().map(|e| e.0).collect();
+        params.sort_unstable();
+        params.dedup();
+        let c = out.len();
+        let mut wanted = vec![0usize; params.len()];
+        let mut offered = vec![0usize; params.len() * c];
+        for &(k, l) in need {
+            let p = params.binary_search(&k).expect("a parameter of `need`");
+            wanted[p] += 1;
+            let row = &mut offered[p * c..(p + 1) * c];
+            if l.len() <= c {
+                // `l` is in order and may repeat an arrow that offers the key twice.
+                for (at, &i) in l.iter().enumerate() {
+                    if at > 0 && l[at - 1] == i {
+                        continue;
+                    }
+                    if let Ok(x) = out.binary_search(&i) {
+                        row[x] += 1;
+                    }
+                }
+            } else {
+                for (x, i) in out.iter().enumerate() {
+                    row[x] += usize::from(l.binary_search(i).is_ok());
+                }
+            }
+        }
+        let mut x = 0;
+        out.retain(|&i| {
+            let missed = (0..params.len())
+                .filter(|&p| !self.open[params[p]][i] && offered[p * c + x] < wanted[p])
+                .count();
+            x += 1;
+            missed <= misses
+                && result.is_none_or(|r| self.result_needs[i].iter().all(|k| r.contains(k)))
+        });
     }
 
     /// The arrows that may fit `qa`, in order, to be tried until one fits. The candidates come
@@ -8149,23 +8225,13 @@ impl<'t> ArrowIndex<'t> {
                 sources.push(pieces.into_iter().flatten().collect());
             }
         }
-        let keep = |i: usize| {
-            let mut missed = None;
-            need.iter().all(|&(k, l)| {
-                self.open[k][i]
-                    || l.binary_search(&i).is_ok()
-                    || missed.replace(k).is_none_or(|m| m == k)
-            }) && result
-                .as_ref()
-                .is_none_or(|r| self.result_needs[i].iter().all(|k| r.contains(k)))
-        };
         let mut out: Vec<usize> = match sources.into_iter().min_by_key(|lists| len(lists)) {
             Some(lists) => lists.into_iter().flatten().copied().collect(),
             None => (0..self.n).collect(),
         };
         out.sort_unstable();
         out.dedup();
-        out.retain(|&i| keep(i));
+        self.keep_missing(&mut out, &need, result.as_ref(), 1);
         out
     }
 }

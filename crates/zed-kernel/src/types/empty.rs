@@ -83,7 +83,7 @@ use super::bes::{Answer, Bes, Decision, Kind, decide};
 use super::rec::unfold::eval;
 use super::rec::{self, Env, Judgment, Why};
 use super::{
-    Held, Lits, Morphism, Node, Parts, Refusal, Row, Split, Type, Universes, Verdict, blind,
+    Held, Lits, Morphism, Node, Parts, Refusal, Row, Split, Tuples, Type, Universes, Verdict, blind,
 };
 use crate::digest::{DigestMap, DigestSet};
 use crate::frames::{Deep, Stack};
@@ -578,10 +578,17 @@ impl Type {
         }
         // A type of scalars alone is empty when its parts list none, which costs less than
         // finding the type among those kept.
-        if let Node::Parts(p, _) = &*self.0
-            && p.scalars_only()
-        {
-            return !p.has_scalars();
+        if let Node::Parts(p, _) = &*self.0 {
+            if p.scalars_only() {
+                return !p.has_scalars();
+            }
+            // A type whose parts list a scalar, a bare atom or the atoms of every name not
+            // listed holds that value: it is read from the parts, where a search would build
+            // and try a value for each type asked, and keeps none of a root holding atoms
+            // (PERF-deep-ops-slow).
+            if p.has_scalars() || p.has_bare_atoms() {
+                return false;
+            }
         }
         if let Some(b) = MEMO.with(|m| m.borrow().get(self).copied()) {
             return b;
@@ -665,7 +672,7 @@ impl Type {
     pub fn universes(&self) -> Universes {
         let p = self.p();
         let lits = |l: &Lits| l.cofinite || !l.values.is_empty();
-        let bare = p.atoms.cofinite || p.atoms.names.values().any(|a| a.bare);
+        let bare = p.has_bare_atoms();
         let atoms = !p.atoms.is_default()
             && (bare || !Type::with(|q| q.atoms = p.atoms.clone()).is_empty());
         let rest = (!p.tuples.is_default() || p.structs || p.morphisms.is_leaf() != Some(false))
@@ -3949,16 +3956,21 @@ impl<'m> Searching<'m> {
                 }
             }
             let j = g.priority;
-            let projected = Type::pairwise(
-                std::iter::once(g.r[j].clone()).chain(taken.iter().map(|a| a[j].clone())),
-                Type::top(),
-                |a, b| self.cut(&a, &b, Cut::Meet),
-            );
-            let box_kinds = self.outer_kinds(&projected);
-            g.structural_empty = (0..9).all(|bit| {
-                let bit = 1u16 << bit;
-                box_kinds & bit == 0
-                    || f.eval3(&|a| {
+            // Complexity tradeoff (PERF-deep-ops-slow): a kind of the meet of the box's column
+            // with the taken cells is a kind of each of them, read from the cache with nothing
+            // built, so the formula is tried first on the kinds all of them have. Where only
+            // the tuple kind fails it, whether the meet holds a tuple is read from the lengths
+            // ([`Tuples::may_meet`]); the meet is built only where another kind fails. Naive
+            // version (GSX-unsolved): the meet built at every region, about 37k instructions a
+            // level of each search through tuples nested 20,000 deep (verdict 251k a level,
+            // 189k before the check). The lengths miss a meet empty only by form, one part the
+            // complement of another; such a region is then tested cell by cell, as before the
+            // check, where that meet is built and found empty, so no answer changes.
+            let operands = || std::iter::once(&g.r[j]).chain(taken.iter().map(|a| &a[j]));
+            let within = operands().fold(u16::MAX, |b, t| b & self.outer_kinds(t));
+            let failing = (0..9).map(|bit| 1u16 << bit).fold(0, |failing, bit| {
+                let fails = within & bit != 0
+                    && f.eval3(&|a| {
                         let k = g.index[a];
                         if required[k] {
                             Some(true)
@@ -3967,8 +3979,23 @@ impl<'m> Searching<'m> {
                         } else {
                             None
                         }
-                    }) == Some(false)
+                    }) != Some(false);
+                failing | if fails { bit } else { 0 }
             });
+            const TUPLE: u16 = 1 << 6;
+            g.structural_empty = match failing {
+                0 => true,
+                TUPLE => {
+                    let ps: Vec<_> = operands().map(Type::p).collect();
+                    !Tuples::may_meet(&ps.iter().map(|p| &p.tuples).collect::<Vec<_>>())
+                }
+                _ => {
+                    let projected = Type::pairwise(operands().cloned(), Type::top(), |a, b| {
+                        self.cut(&a, &b, Cut::Meet)
+                    });
+                    self.outer_kinds(&projected) & failing == 0
+                }
+            };
         }
         if !g.structural_empty {
             self.retest(&mut g).await;
