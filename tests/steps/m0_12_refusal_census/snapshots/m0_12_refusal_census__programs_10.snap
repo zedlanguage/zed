@@ -1,0 +1,24 @@
+---
+source: tests/steps/m0_12_refusal_census/mod.rs
+expression: programs_piece(10)
+---
+Growth: 7
+Holes: 10
+
+l01_38_presburger::one_scope::summaries_of_definitions_give_the_answers_of_the_definitions#2054840d	11:1	rejected	Growth	zedc could not decide whether the condition of `t5`, written `h5(x: x) < x div 64 - 1`, can be true for whole-number values of `x`, which it works out for every test function: to find whole numbers that meet these conditions, the checker removes one variable at a time, putting in place of the conditions on it conditions on the variables left. Here four variables or more are left, and removing any one of them would leave more conditions than there are now, so the work could grow without end. The checker stopped there, with no values found and none ruled out.
+l01_38_presburger::projection_oracle::each_answer_through_a_projected_callee_is_the_interpreters_on_a_box#9406ba39	6:1	rejected	Growth	zedc could not decide whether the condition of `p2`, written `v2(x: x - 2) == 7 && p1(x: x + 1) && x < 30`, can be true for whole-number values of `x`, which it works out for every test function: to find whole numbers that meet these conditions, the checker removes one variable at a time, putting in place of the conditions on it conditions on the variables left. Here four variables or more are left, and removing any one of them would leave more conditions than there are now, so the work could grow without end. The checker stopped there, with no values found and none ruled out.
+l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_refused#2b04ba3a	1:214	warning	Holes	Cannot find exactly the least and greatest values the conditions here allow.
+l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_refused#2b04ba3a	1:226	warning	Holes	Cannot find exactly the least and greatest values the conditions here allow.
+l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_refused#e7255f68	1:230	warning	Holes	Cannot find exactly the least and greatest values the conditions here allow.
+l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_refused#e1cdf5e7	1:190	warning	Holes	Cannot find exactly the least and greatest values the conditions here allow.
+l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_refused#e1cdf5e7	1:200	warning	Holes	Cannot find exactly the least and greatest values the conditions here allow.
+l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_refused#fc0a6066	1:226	warning	Holes	Cannot find exactly the least and greatest values the conditions here allow.
+l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_refused#fc0a6066	1:238	warning	Holes	Cannot find exactly the least and greatest values the conditions here allow.
+l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_refused#83d93546	1:242	warning	Holes	Cannot find exactly the least and greatest values the conditions here allow.
+l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_refused#f46fb061	1:200	warning	Holes	Cannot find exactly the least and greatest values the conditions here allow.
+l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_refused#f46fb061	1:210	warning	Holes	Cannot find exactly the least and greatest values the conditions here allow.
+l01_39_reduced_product::refused::a_refused_projection_names_the_bounds_it_kept#fb91d508	1:252	warning	Growth	Cannot find exactly which values meet the conditions here.
+l01_39_reduced_product::refused::a_refused_projection_names_the_bounds_it_kept#d05f8076	1:230	warning	Growth	Cannot find exactly which values `w` can take here.
+l01_39_reduced_product::refused::a_refused_projection_names_the_bounds_it_kept#d05f8076	1:230	warning	Growth	Cannot find exactly which values `x` can take here.
+l01_39_reduced_product::refused::a_refused_projection_names_the_bounds_it_kept#d05f8076	1:230	warning	Growth	Cannot find exactly which values `y` can take here.
+l01_39_reduced_product::refused::a_refused_projection_names_the_bounds_it_kept#d05f8076	1:230	warning	Growth	Cannot find exactly which values `z` can take here.

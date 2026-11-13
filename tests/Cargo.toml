@@ -229,6 +229,9 @@ path = "steps/m0_10_finite_model_harness/mod.rs"
 name = "m0_11_prelude_axioms_and_limits"
 path = "steps/m0_11_prelude_axioms_and_limits/mod.rs"
 [[test]]
+name = "m0_12_refusal_census"
+path = "steps/m0_12_refusal_census/mod.rs"
+[[test]]
 name = "s_01_port_catalog"
 path = "steps/s_01_port_catalog/mod.rs"
 [[test]]

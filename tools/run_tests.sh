@@ -517,6 +517,8 @@ fi
 # 100,000 deep on a small stack and 20 s the test of lets of built values (alone, load 41); those
 # are now four tests and two. Each module is a piece, and each test of scaling and dag
 # (2026-11-12, TESTS-split-l01_28-staging).
+# m0_12_refusal_census reads 120 units of programs.txt, 45 s together at load 41 and 18 s of it
+# one unit; each of its tests is a piece (2026-11-12, REFUSAL-census-now).
 split="
   l01_08_parser l01_16_elaboration l01_16_elaboration::scaling
   l01_23_subtyping l01_23_subtyping::scaling l01_23_subtyping::r6_reduction
@@ -550,6 +552,7 @@ split="
   l01_39_reduced_product::families
   l01_39a_bit_words l01_39a_bit_words::scaling
   l25_08_mutate l25_08_mutate::scaling
+  m0_12_refusal_census
 "
 # The pieces of step folder $1 in the test binary $2, or of its module $3 (a path in the
 # binary) when one is given. A module's piece filters by `$3::`, which libtest matches anywhere in
