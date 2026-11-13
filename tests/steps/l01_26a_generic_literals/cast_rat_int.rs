@@ -83,8 +83,8 @@ fn a_decimal_literal_is_still_given_no_carrier_by_rat() {
 fn a_use_that_takes_another_carrier_from_the_operand_is_rejected_at_the_use() {
     // `b` is an `int` where it is bound (QUESTIONS A63), so a use that would take another
     // carrier from it is rejected as it is with `b: int`, with a cast of `b` as the fix, whether
-    // it comes after the cast or before it. (The headline of `+` prints `b` as its first literal,
-    // `2`: MSG-wide-value-notes.)
+    // it comes after the cast or before it. The headlines are pinned in
+    // `the_headline_prints_a_bound_name_as_its_type`.
     for body in [
         "b = 2^3; y = rat(b); c = b + 0.5f64; return (y, c);",
         "b = 2^3; y = rat(b); c = b + 1r; return (y, c);",
@@ -120,6 +120,47 @@ fn a_use_that_takes_another_carrier_from_the_operand_is_rejected_at_the_use() {
             e.message
         );
         assert!(e.message.contains(fix), "{src}: {}", e.message);
+    }
+}
+
+#[test]
+fn the_headline_prints_a_bound_name_as_its_type() {
+    // Item MSG-literal-class-headline: `b` in a body was a class of the literals `2` and `3`
+    // until the function's end, and the headline of `+` printed it as its first literal:
+    // "`+` does not take (2, 0.5f64)". Since LIT-name-int-fixed (dba724818) `b` is an `int`
+    // where it is bound, and every headline shows it as `int`, a type the program could write,
+    // never as `2`.
+    for (body, headline) in [
+        (
+            "b = 2^3; y = rat(b); c = b + 0.5f64; return (y, c);",
+            "The suffix makes the literal `0.5f64` an `f64`, never `int`. Try `f() { b = 2^3; \
+             y = rat(b); c = f64(b) + 0.5f64; return (y, c); }` instead.",
+        ),
+        (
+            "b = 2^3; y = rat(b); c = b + 1r; return (y, c);",
+            "The suffix makes the literal `1r` a `rat`, never `int`. Try `f() { b = 2^3; \
+             y = rat(b); c = b + 1; return (y, c); }` instead.",
+        ),
+        (
+            "b = 2^3; c = b + 0.5; y = rat(b); return (y, c);",
+            "A decimal literal is never an `int`: `b : int + 0.5`. Try `f() { b = 2^3; \
+             c = rat(b) + 0.5; y = rat(b); return (y, c); }` instead.",
+        ),
+        (
+            "b = 2^3; y = rat(b); c = b + \"a\"; return (y, c);",
+            "`+` does not take (int, \"a\"): no arrow of `+` takes these types.",
+        ),
+        (
+            "b = 2 + 13; c = b < \"a\"; return c;",
+            "`<` does not take (int, \"a\"): no arrow of `<` takes these types. \
+             Try `String(b) < \"a\"` instead.",
+        ),
+    ] {
+        let src = format!("f() {{ {body} }}\n");
+        let (i, _) = info(&src);
+        assert_eq!(i.errors.len(), 1, "{src}: {:?}", i.errors);
+        let m = &i.errors[0].message;
+        assert_eq!(m.lines().next(), Some(headline), "{src}: {m}");
     }
 }
 
