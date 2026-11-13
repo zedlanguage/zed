@@ -2127,14 +2127,15 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | CK-apply-operator | impl attempt 1 | 2026-11-12 00:38 | baseline: 875 pieces of l01_17-29, l01_39*, diag_control, zedc_check, zedc pass with a message dump (load 25-54); Label enum written, compiling |
 | CROSSOVER-bench | impl attempt 1 | 2026-11-12 22:47 | started; worktree /home/luke/Work/wt/crossover-bench on origin/main |
 | LIT-power-values | impl attempt 1 | 2026-11-13 00:20 | started: worktree, then perf of the 233M-instruction rejection |
+| MSG-derive-print-union-names | running | 2026-11-13 00:05 | 2026-11-13 author: fix the O(n^2) union names the most sensible way; K110 option 1 |
 | PERF-deep-ops-slow | impl attempt 1 | 2026-11-12 21:38 | union_all atoms fast path: family ratio 9.06 -> 8.82 by callgrind; running battery / load 52.89 46.05 42.49 |
 | PERF-l139-family | running | 2026-11-12 18:45 | coordkk fixed d016b9cc3 90a844aa8; 14 tests in 8 families still ignored, cross-review next / 45.57 |
 | PERF-ref-memo-quadratic | impl attempt 4 | 2026-11-10 18:04 | started: A88 answered, own attempt then cross-review (4 seats, 3 rounds) |
-| PRES-overlap-fast | running | 2026-11-13 01:10 |  |
+| PRES-overlap-fast | impl attempt 1 | 2026-11-13 01:10 | started; worktree wt/pres-overlap-fast at 95b3d8a1f; load 37.88 41.70 48.12 |
 | RT-sites | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/rt-sites on origin/main 13bb12924 |
 | ST-K3-narrow | impl attempt 1 | 2026-11-11 01:43 | reproduced: no refusal of this kind on main; ping-pong and shifted ping-pong exact; random 6000 runs 5942 exact, 0 refused, 58 wider sound supersets; design in  |
 | ST-walk-implicit | impl attempt 1 | 2026-11-11 01:43 | started: worktree /home/luke/Work/wt/st-walk-implicit on origin/main 89d83b4a3 / load 36.87 40.84 46.29 |
-| TESTS-scaling-limit-13 | impl attempt 1 | 2026-11-12 23:54 | started; worktree /home/luke/Work/wt/tests-scaling-13 |
+| TESTS-scaling-limit-13 | impl attempt 1 | 2026-11-12 23:54 | negative control: LIMIT = 8 once on l01_17, l01_18, l01_24, l01_38 omega: 13 of 40 pieces failed, 48 tests, every message at 8.0 times or more (e.g. int(s) 9.8x |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
