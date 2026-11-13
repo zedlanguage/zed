@@ -1222,6 +1222,9 @@ struct Tally {
     /// The members the verdicts sent to the search, their group's decider leaving them open
     /// (`Type::members_searched`): a member asked counts each member of its group so sent.
     searched: usize,
+    /// Each refused member, in the order asked: its index, what the pool showed of it (`I` a
+    /// member, `E` no value of a pool built from every choice, `U` neither) and the reason.
+    refusals: Vec<(usize, char, Refusal)>,
 }
 
 /// Each member of system `sys` against the pool; panics on a wrong answer.
@@ -1285,7 +1288,15 @@ fn compare(sys: &[E], tag: &str, tally: &mut Tally) {
         match verdict {
             Verdict::Empty => tally.empty += 1,
             Verdict::Inhabited => tally.inhabited += 1,
-            Verdict::Refused(_) => tally.refused += 1,
+            Verdict::Refused(why) => {
+                tally.refused += 1;
+                let shown = match seen.seen[i] {
+                    Seen::Member(_) => 'I',
+                    Seen::None if seen.exhaustive => 'E',
+                    Seen::None | Seen::Open => 'U',
+                };
+                tally.refusals.push((i, shown, why));
+            }
         }
     }
 }
@@ -1356,6 +1367,151 @@ fn meets_and_differences_agree_with_the_values_0() {
 #[test]
 fn meets_and_differences_agree_with_the_values_1() {
     sweep("cells", gen_cells, 150..300, 0);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Seeds 300 to 1500, every refusal listed (plan item TESTS-l01_23-group-oracle-sweep)
+// ---------------------------------------------------------------------------------------------
+
+/// A refusal the wide sweep expects: the seed, the member, what the pool showed of it (as in
+/// `Tally::refusals`) and the reason.
+type Listed = (u64, usize, char, Refusal);
+
+/// The systems `generate` gives for `seeds`, each against the pool as in `sweep`, and every
+/// refusal among their verdicts on `listed` (the entries of `listed` outside `seeds` are not
+/// read). Panics on a wrong answer, on a refusal not listed, and on a listed refusal that is
+/// now a verdict or has another reason or member, so that the lists shrink as the checker
+/// decides more.
+fn sweep_listed(
+    name: &str,
+    generate: fn(&mut Rng) -> Vec<E>,
+    seeds: std::ops::Range<u64>,
+    listed: &[Listed],
+) {
+    let mut tally = Tally::default();
+    let mut got: Vec<Listed> = Vec::new();
+    for seed in seeds.clone() {
+        let sys = generate(&mut Rng::new(seed));
+        compare(&sys, &format!("{name}{seed}"), &mut tally);
+        got.extend(
+            (tally.refusals.drain(..)).map(|(member, shown, why)| (seed, member, shown, why)),
+        );
+    }
+    got.sort_by_key(|&(seed, member, ..)| (seed, member));
+    let want: Vec<Listed> = (listed.iter().copied())
+        .filter(|(seed, ..)| seeds.contains(seed))
+        .collect();
+    eprintln!("{name} {seeds:?}: {tally:?}");
+    let new: Vec<_> = got.iter().filter(|r| !want.contains(r)).collect();
+    let gone: Vec<_> = want.iter().filter(|r| !got.contains(r)).collect();
+    assert!(
+        new.is_empty() && gone.is_empty(),
+        "{name} {seeds:?}: refused and not listed: {new:?}; listed and not refused so: \
+         {gone:?}; the refusals now:\n{}",
+        (got.iter())
+            .map(|r| format!("    {r:?},"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+// The lists as of plan item TESTS-l01_23-group-oracle-sweep (2026-11-12): 39 refusals among the
+// 13,751 admitted members of 4,800 systems, 35 of members the pool shows inhabited (`I`), 4 of
+// members it leaves open (`U`), none of a member it proves empty. On 2026-11-07 (plan item
+// EMPTY-key-search) the same sweep refused 54 members shown inhabited: layered 34, cells 9,
+// X14 7, mixed 4.
+
+/// The X14 family: every member decided.
+const LISTED_CLAUDE: &[Listed] = &[];
+/// Partial morphisms: every member decided.
+const LISTED_MIXED: &[Listed] = &[];
+/// Layered groups: each refused member is, or reads, a function type whose value type is a pair
+/// of itself and a difference of two definitions, such as `R3 = (int) -> (R3, (R2 \ R0))` of
+/// seed 799 with `R0 = (int) -> int` and `R2 = ((int) -> R2) | ((R1) -> R0)`; the pool's value
+/// is a closure that returns a pair holding itself. All are refused `NoWitness` (STATUS.md Open
+/// points, GROUP-oracle: the refusals in groups holding `\` or `&`).
+const LISTED_LAYER: &[Listed] = &[
+    (332, 4, 'I', Refusal::NoWitness),
+    (440, 3, 'I', Refusal::NoWitness),
+    (508, 5, 'I', Refusal::NoWitness),
+    (626, 3, 'I', Refusal::NoWitness),
+    (642, 3, 'I', Refusal::NoWitness),
+    (642, 4, 'U', Refusal::NoWitness),
+    (692, 5, 'I', Refusal::NoWitness),
+    (764, 3, 'I', Refusal::NoWitness),
+    (764, 4, 'U', Refusal::NoWitness),
+    (799, 3, 'I', Refusal::NoWitness),
+    (815, 4, 'I', Refusal::NoWitness),
+    (831, 4, 'I', Refusal::NoWitness),
+    (857, 3, 'I', Refusal::NoWitness),
+    (955, 3, 'I', Refusal::NoWitness),
+    (975, 2, 'I', Refusal::NoWitness),
+    (975, 3, 'U', Refusal::NoWitness),
+    (987, 3, 'I', Refusal::NoWitness),
+    (987, 4, 'I', Refusal::NoWitness),
+    (996, 3, 'I', Refusal::NoWitness),
+    (1043, 4, 'I', Refusal::NoWitness),
+    (1048, 2, 'I', Refusal::NoWitness),
+    (1051, 4, 'I', Refusal::NoWitness),
+    (1068, 4, 'I', Refusal::NoWitness),
+    (1068, 5, 'I', Refusal::NoWitness),
+    (1147, 4, 'I', Refusal::NoWitness),
+    (1229, 4, 'I', Refusal::NoWitness),
+    (1241, 4, 'I', Refusal::NoWitness),
+    (1326, 2, 'I', Refusal::NoWitness),
+    (1354, 4, 'I', Refusal::NoWitness),
+    (1421, 2, 'I', Refusal::NoWitness),
+    (1421, 4, 'I', Refusal::NoWitness),
+    (1446, 3, 'I', Refusal::NoWitness),
+    (1454, 4, 'I', Refusal::NoWitness),
+    (1466, 2, 'I', Refusal::NoWitness),
+    (1483, 4, 'I', Refusal::NoWitness),
+    (1485, 4, 'U', Refusal::NoWitness),
+    (1498, 5, 'I', Refusal::NoWitness),
+];
+/// Meets and differences: one system, `R0 = (R0, R2) | (((#b | R1), (#b | R2)) \ (#b, #b))`,
+/// `R1 = (int, R2) | #stop | (int, R0)`, `R2 = (R0, R0)`, whose `R0` and `R2` the pool shows
+/// inhabited from every choice, refused `Fork`.
+const LISTED_CELLS: &[Listed] = &[(1140, 0, 'I', Refusal::Fork), (1140, 2, 'I', Refusal::Fork)];
+
+#[test]
+fn x14_family_seeds_300_to_1500_agree_or_are_listed_0() {
+    sweep_listed("claude", gen_claude, 300..900, LISTED_CLAUDE);
+}
+
+#[test]
+fn x14_family_seeds_300_to_1500_agree_or_are_listed_1() {
+    sweep_listed("claude", gen_claude, 900..1500, LISTED_CLAUDE);
+}
+
+#[test]
+fn partial_morphism_seeds_300_to_1500_agree_or_are_listed_0() {
+    sweep_listed("mixed", gen_mixed, 300..900, LISTED_MIXED);
+}
+
+#[test]
+fn partial_morphism_seeds_300_to_1500_agree_or_are_listed_1() {
+    sweep_listed("mixed", gen_mixed, 900..1500, LISTED_MIXED);
+}
+
+#[test]
+fn layered_seeds_300_to_1500_agree_or_are_listed_0() {
+    sweep_listed("layer", gen_layer, 300..900, LISTED_LAYER);
+}
+
+#[test]
+fn layered_seeds_300_to_1500_agree_or_are_listed_1() {
+    sweep_listed("layer", gen_layer, 900..1500, LISTED_LAYER);
+}
+
+#[test]
+fn meets_and_differences_seeds_300_to_1500_agree_or_are_listed_0() {
+    sweep_listed("cells", gen_cells, 300..900, LISTED_CELLS);
+}
+
+#[test]
+fn meets_and_differences_seeds_300_to_1500_agree_or_are_listed_1() {
+    sweep_listed("cells", gen_cells, 900..1500, LISTED_CELLS);
 }
 
 // ---------------------------------------------------------------------------------------------
