@@ -208,6 +208,7 @@ const PENDING: &[(&str, &str)] = &[
     ("names", "L38.2"),
     ("bitorder", "TERM-1"),
     ("stack", "L18.2c"),
+    ("equivalent", "COST-required"),
     ("fpwarn", "FPWARN"),
     ("fpsafe", "FPWARN"),
     ("approx", "L10.3d"),
@@ -262,6 +263,9 @@ const PENDING: &[(&str, &str)] = &[
     ("records", "CODEC-grammar"),
     ("json", "CODEC-json"),
     ("csv", "CODEC-json"),
+    ("countedIn", "UNITS-text-lengths"),
+    ("normalize", "STR-normalize-layer"),
+    ("utf16Units", "STR-normalize-layer"),
 ];
 
 /// A row of the table "Defined words by layer": its layer, and its annotations, facet words and
