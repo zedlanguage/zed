@@ -2081,14 +2081,13 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FLOAT-f32 | impl attempt 1 | 2026-11-05 04:07 | tuple decimal component at f32 fixed (red then green); rebased on 8679b15a8; clippy + full --doc suite running |
 | L1.29d-package | impl attempt 1 | 2026-11-12 20:48 | started; worktree /home/luke/Work/wt/l129d-package on origin/main ba655bbca |
 | LIT-tuple-branch-carrier | impl attempt 1 | 2026-11-12 20:34 | started; worktree /home/luke/Work/wt/lit-tuple-branch on origin/main 0c230df62 |
-| MAIN-red-m0_01-s_01f | impl attempt 1 | 2026-11-12 21:37 | started; worktree /home/luke/Work/wt/main-red |
+| MAIN-red-m0_01-s_01f | impl attempt 1 | 2026-11-12 21:37 | reproduced on c24ad56b3: m0_01 2 failed (well_named, step_index), s_01f 1 failed: 14 files in 4 crates' cycles (zed-kernel 2, zedc 6, zedc-presburger 2, zedc-sy |
 | MSG-fixnote-huge-value | impl attempt 1 | 2026-11-12 20:52 | started; worktree wt/msg-fixnote-huge |
 | PERF-deep-ops-slow | impl attempt 1 | 2026-11-12 21:38 | started; worktree /home/luke/Work/wt/deep-ops-slow on 46ebc3959 / load 33.44 41.60 45.23 |
 | PERF-l139-family | running | 2026-11-12 18:45 | coordkk fixed d016b9cc3 90a844aa8; 14 tests in 8 families still ignored, cross-review next / 45.57 |
 | POLY-nf-power-value | running | 2026-11-12 14:17 | impl merged fast path 8c2710fc5; W <= K(n) refusal not merged (W does not track cost); CD xr POLY-nf-W spawned / 45.76 |
-| STAGE-print | impl attempt 1 | 2026-11-04 03:10 | started; worktree wt/stage-print seeded |
 | ST-walk-implicit | impl attempt 1 | 2026-11-11 01:43 | started: worktree /home/luke/Work/wt/st-walk-implicit on origin/main 89d83b4a3 / load 36.87 40.84 46.29 |
-| TRIVIAL-walk-frontier | running | 2026-11-12 16:32 |  |
+| TRIVIAL-walk-frontier | impl attempt 1 | 2026-11-12 16:32 | reproduced on main 125023422: deep m=32/64 79890/446482 steps for 6402/25090 pairs, 128.8M instr at m=64 (load 41) |
 | WARN-refused-shadowed | impl attempt 1 | 2026-11-12 20:35 | after rebase on 0c230df62 with spec 481161f: spec groups + l01_39_reduced_product 300 pieces, 0 failed; load 32.22 to 49.84; build all targets + fmt check pass |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
