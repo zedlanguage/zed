@@ -154,7 +154,7 @@ fn whole_parts_of_two_carriers_are_named_in_the_headline() {
     assert_eq!(errors.len(), 1);
     assert_eq!(
         errors[0].message,
-        "`+` does not take (rat, int): no arrow of `+` takes these types."
+        "`+` does not take (rat, int): no arrow of `+` takes these types. Try `gr(b, r) + rat(n)` instead."
     );
     assert!(
         (errors[0].notes.iter())

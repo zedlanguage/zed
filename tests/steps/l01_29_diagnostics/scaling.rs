@@ -372,3 +372,27 @@ fn the_merges_between_a_value_and_its_use_scale() {
         },
     );
 }
+
+/// A call of one line whose first argument is a text of `n` letters and whose second is an
+/// `int` at a `rat` parameter, `y = h("aa…a", k)` (row MSG-apply-try-headline): its headline
+/// ends with the call rewritten, `h("aa…a", rat(k))`. The repairs' notes are copied once
+/// beside the notes, O(r), and only the first repair is written, once, in the length of the
+/// call, O(n), when the check ends; writing each repair's call as it is found would cost
+/// O(n) per repair. A call of `n` arguments is no test of this: its message has a step per
+/// argument, and placing those steps costs O(n²) before this row (4.5 s at 400 arguments,
+/// 20 s at 800).
+fn one_repair_in_a_long_call(n: usize) -> String {
+    let text = "a".repeat(n);
+    format!("k = 1;\nh(positional a: String, positional b: rat) = 1;\ny = h(\"{text}\", k);\n")
+}
+
+#[test]
+fn the_headline_repair_of_a_long_call_scales() {
+    let srcs = scaling::inputs(4000, one_repair_in_a_long_call);
+    scaling::check("the headline repair of a call n bytes long", 4000, |n| {
+        let out = rejected(&srcs[&n]);
+        let want = format!("Try `h(\"{}\", rat(k))` instead.", "a".repeat(n));
+        let head = out.lines().next().unwrap_or_default();
+        assert!(head.ends_with(&want), "{}", &out[..out.len().min(400)]);
+    });
+}

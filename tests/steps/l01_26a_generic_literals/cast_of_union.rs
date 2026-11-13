@@ -153,8 +153,9 @@ fn a_value_no_arrow_of_the_cast_takes_is_rejected_and_named() {
                 "`{word}` does not take (true): no arrow of `{word}` takes these types. [{word}(g(true))]"
             )]
         );
-        // The one repair, a wrap in `String`, checks.
-        assert_eq!(repairs_check(&src), 1, "{src}");
+        // No repair is offered: a wrap in `String`, `{word}(String(g(true)))`, checks but gives
+        // `#invalid` for `true`, a cast that can fail (row MSG-apply-try-headline).
+        assert_eq!(repairs_check(&src), 0, "{src}");
     }
 }
 

@@ -7480,32 +7480,6 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.t.text?.get(at.start..at.end)
     }
 
-    /// The program's code at `span` with the edits of `fix` made, as `sqrt(f64(n))` for
-    /// `sqrt(n)` and the cast of `n`; none where an edit lies outside `span`, the checker has
-    /// no text, or the code runs over more than one line, which a headline cannot show.
-    /// Unlike [`Rewrite::line`], which writes the whole source line, it writes the construct
-    /// alone. It costs the length of `span`.
-    fn rewritten(&self, span: Span, fix: &Rewrite) -> Option<String> {
-        let mut out = String::new();
-        let mut at = span.start;
-        for (s, with) in &fix.edits {
-            if s.start < at || s.end > span.end {
-                return None;
-            }
-            out.push_str(self.code(Some(Span {
-                start: at,
-                end: s.start,
-            }))?);
-            out.push_str(with);
-            at = s.end;
-        }
-        out.push_str(self.code(Some(Span {
-            start: at,
-            end: span.end,
-        }))?);
-        (!out.contains('\n')).then_some(out)
-    }
-
     /// The code of `callee`, the callee of the call at `span`, as the program writes it: with
     /// the parentheses around it, which the tree does not keep, as `(if c { f } else { g })`;
     /// none when the checker has no text or the code runs over more than one line, which a
@@ -8371,7 +8345,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let ty = &met[k].ty;
         let op = match what {
             Label::Operator(o) => o.as_str(),
-            Label::Text(t) => t.trim_matches('`'),
+            Label::Text(_) | Label::SumPlus(_) => what.text().trim_matches('`'),
         };
         // The value at `p` on side `s`, as code where the operand's text is known.
         let code = |s: usize, p: &[usize]| sides.names[s].map(|c| format!("{c}{}", Place(p)));
@@ -9754,6 +9728,18 @@ impl<'t, 'a> Ck<'t, 'a> {
             .and_then(|w| w.strip_suffix('`'))
             .is_some_and(|w| sig.word.as_deref() == Some(w));
         let kept = pass || word;
+        // A numeric cast word, `int(b)`, is not offered its argument as text, `int(String(b))`
+        // (row MSG-apply-try-headline). The repair is tried only where some value of `b` has
+        // no arrow of the cast, a `bool`, an atom or a tuple, and the text of such a value
+        // never reads as a number, so the repaired call gives `#invalid` for it: `int(true)`
+        // becomes `int("true")`. It checks, as `#invalid` is in the type of the cast from
+        // text, but it is a conversion that can fail, which no repair offers, and it changes
+        // what the call computes. Values the cast takes, as `1` in `f64(g(true))` with `g`
+        // giving `1 | true`, need no repair.
+        let cast_word = word
+            && Carrier::NUMBERS
+                .iter()
+                .any(|c| sig.word.as_deref() == Some(c.name()));
         for (i, a) in args.iter().enumerate() {
             let Some(Arg {
                 lit: None,
@@ -9832,7 +9818,6 @@ impl<'t, 'a> Ck<'t, 'a> {
                                 note: Note { span: *at, text },
                                 got,
                                 fix,
-                                cast: None,
                             });
                             break;
                         }
@@ -9841,6 +9826,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 continue;
             }
             for w in ["String", "int", "rat", "f64"] {
+                if cast_word && w == "String" {
+                    continue;
+                }
                 let Some(r) = self
                     .wrapped(w, a, &held, *at)
                     .filter(|r| r.atoms() == held.atoms())
@@ -9869,7 +9857,6 @@ impl<'t, 'a> Ck<'t, 'a> {
                         note: Note { span: *at, text },
                         got,
                         fix,
-                        cast: Some(w),
                     });
                 }
             }
@@ -10237,6 +10224,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             Offer::Note(at, text) => {
                 e.notes.retain(|n| n.span != *at || n.text != *text);
+                (e.m.noted).retain(|r| r.note.span != *at || r.note.text != *text);
                 e.m.dropped |=
                     e.m.fixes.is_empty() && !e.notes.iter().any(|n| n.text.starts_with("repair:"));
             }
@@ -11190,32 +11178,26 @@ impl<'t, 'a> Ck<'t, 'a> {
                     self.reject(Some(Row::NoCommonCarrier), at, Msg::new(text, fixes), notes);
                     return (out, Vec::new());
                 }
-                // A call of a prelude word, `sqrt(n)`, ends its headline with the first repair
-                // that casts an argument to a number, as the whole call rewritten,
-                // `sqrt(f64(n))` (DESIGN.md sec:diagnostics, "A short headline"), as a
-                // comparison ends with `f64(n) < x`. A word applied to one name that no repair
-                // fits, as `sqrt(n)` with `n` an `int` that may lie above 2^53, where `f64(n)`
-                // is inexact and no repair narrows, gets the repair of a comparison with no
-                // cast: a change of the type. Other applications keep their repairs in the notes
-                // alone (row MSG-apply-try-headline): there the first repair is often a cast to
-                // `String`, as `int(String(true))`, which no headline should offer. Cost: the
-                // naive way writes every repair's call, the length of the call for each of r
-                // repairs; used: the repairs already built are scanned once, O(r), and only the
-                // first numeric cast is written, once the length of the call.
+                // Every rejected application ends its headline with its first repair, as the
+                // whole call rewritten: `sqrt(f64(n))`, `rat(x) + y`, `h(f64(y))`, and
+                // `sum((rat(x), y))` for the `+` that `sum` applies, whose components are not
+                // an expression of their own ([`Label::SumPlus`]) (DESIGN.md sec:diagnostics,
+                // "A short headline"; row MSG-apply-try-headline). The repair is the first of
+                // the notes that the program's text can show, and the headline is written
+                // when the check ends ([`Msg::written`]), so a repair a later check drops
+                // from the notes ([`Ck::fix_dropped`]) leaves the headline too. A prelude
+                // word applied to one name that no repair fits, as `sqrt(n)` with `n` an
+                // `int` that may lie above 2^53, where `f64(n)` is inexact and no repair
+                // narrows, gets the repair of a comparison with no cast: a change of the
+                // type, a note with no rewrite. Cost: the naive way writes each repair's call
+                // as it is found, the length of the call for each of r repairs, for errors a
+                // later step may drop; used: each repair's note is copied once, O(r) beside
+                // the r notes already built, and only the first is written, once the length
+                // of the call, for the errors kept (as the menu, [`Ck::reject`]).
                 let word = (what.text().strip_prefix('`'))
                     .and_then(|w| w.strip_suffix('`'))
                     .filter(|w| sig.word.as_deref() == Some(*w))
                     .is_some_and(|w| zedc_resolve::resolve::prelude_layer(w).is_some());
-                let first = (repairs.iter())
-                    .filter(|r| word && matches!(r.cast, Some("int" | "rat" | "f64")))
-                    .find_map(|r| r.fix.as_ref());
-                let message = match first.and_then(|fix| self.rewritten(span, fix)) {
-                    Some(call) => {
-                        let head = message.strip_suffix('.').unwrap_or(&message);
-                        format!("{head}. Try `{call}` instead.")
-                    }
-                    None => message,
-                };
                 if repairs.is_empty()
                     && word
                     && let [Some(Arg { at: Some(at), .. })] = &args[..]
@@ -11225,14 +11207,31 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let text = format!("repair: change the type of `{n}` so that {what} takes it");
                     notes.push(Note { span: *at, text });
                 }
-                notes.extend(self.offered(repairs));
-                if self.no_arrow_at_carrier(what, sig, &args) {
-                    self.rejects_with(Row::NoArrowAtCarrier, span, message, notes);
-                } else if self.no_common_carrier(sig, &args) {
-                    self.rejects_with(Row::NoCommonCarrier, span, message, notes);
-                } else {
-                    self.error_with(span, message, notes);
+                let call = match what {
+                    Label::SumPlus(call) => call,
+                    _ => span,
+                };
+                let mut noted = Vec::new();
+                for r in repairs {
+                    self.note_offered(&r.note, r.got);
+                    if let Some(fix) = r.fix {
+                        let note = r.note.clone();
+                        noted.push(NotedRepair {
+                            note,
+                            at: call,
+                            fix,
+                        });
+                    }
+                    notes.push(r.note);
                 }
+                let row = if self.no_arrow_at_carrier(what, sig, &args) {
+                    Some(Row::NoArrowAtCarrier)
+                } else if self.no_common_carrier(sig, &args) {
+                    Some(Row::NoCommonCarrier)
+                } else {
+                    None
+                };
+                self.reject(row, span, Msg::noted(message, noted), notes);
                 if let Some(e) = self.errors.last_mut().filter(|_| !also.is_empty()) {
                     e.also = also;
                 }
@@ -12502,7 +12501,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         let pair = if i < at { [c, acc] } else { [acc, c] };
                         let ty = self
                             .apply(
-                                Label::Text("`+` in `sum`"),
+                                Label::SumPlus(span),
                                 &add,
                                 pair.map(Some).to_vec(),
                                 true,
@@ -14290,15 +14289,12 @@ struct Met {
     ty: [Ty; 2],
 }
 
-/// A repair of a rejected application ([`Ck::repairs`]): its note, what its trial gave, the
-/// fix that writes it in the program's text, where the text shows it, and its cast.
+/// A repair of a rejected application ([`Ck::repairs`]): its note, what its trial gave, and the
+/// fix that writes it in the program's text, where the text shows it.
 struct Repaired {
     note: Note,
     got: Option<(Ty, Vec<Span>)>,
     fix: Option<Rewrite>,
-    /// The word the repair casts the argument with, `f64` in `f64(n)`; none for a literal
-    /// written in another form.
-    cast: Option<&'static str>,
 }
 
 /// Why a pair of values does not compare under an ordering.

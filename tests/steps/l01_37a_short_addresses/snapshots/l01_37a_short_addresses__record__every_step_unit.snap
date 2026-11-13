@@ -216,7 +216,7 @@ l01_29_diagnostics/zed/narrowed.zed
     Diagnostic {
         line: 3,
         col: 22,
-        message: "`++` does not take (int, \"x\"): no arrow of `++` takes these types.",
+        message: "`++` does not take (int, \"x\"): no arrow of `++` takes these types. Try `String(v) ++ \"x\"` instead.",
         steps: [
             Step {
                 line: 3,

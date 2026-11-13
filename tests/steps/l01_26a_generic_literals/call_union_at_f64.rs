@@ -155,7 +155,9 @@ fn a_name_bound_to_the_call_is_fixed_at_its_binding() {
     // there and is not read again where it is used.
     assert_eq!(
         type_errors(&with("{ y = g(b, x); h(y) }")),
-        ["`h` does not take (1): no arrow of `h` takes these types. [h(y)]"]
+        [
+            "`h` does not take (1): no arrow of `h` takes these types. Try `h(f64(y))` instead. [h(y)]"
+        ]
     );
 }
 

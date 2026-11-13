@@ -464,3 +464,101 @@ fn a_value_no_arrow_takes_is_named_in_the_headline() {
         assert!(!got.contains("never `int`"), "{src}\n{got}");
     }
 }
+
+/// The one repair a headline ends with, `rat(x) + y` in "… Try `rat(x) + y` instead.", where
+/// it offers one; none where it offers two or more, as "Try `0.5f64` or `0.5r` instead.".
+fn headline_repair(message: &str) -> Option<&str> {
+    let head = message.lines().next()?;
+    let (_, tried) = head.rsplit_once(". Try `")?;
+    let tried = tried.strip_suffix("` instead.")?;
+    (!tried.contains("` or `") && !tried.contains("`, `")).then_some(tried)
+}
+
+/// Every rejected application ends its headline with its first repair, the call rewritten
+/// (row MSG-apply-try-headline), and that call, written in place of the call the error is
+/// at, gives a program with no error: `y = rat(n) + r` for `y = n + r`, `y = min(f64(n), x)`
+/// for `y = min(n, x)`. Over the grid, the headlines that end with a repair at the span of
+/// their error are each written, and at least one of each kind of application is seen.
+#[test]
+fn every_headline_repair_checks_as_written() {
+    let mut failed = Vec::new();
+    let mut tried = Vec::new();
+    for line in grid() {
+        let src = format!("{PRELUDE}{line}\n");
+        let (i, _) = info(&src);
+        for e in &i.errors {
+            let Some(call) = headline_repair(&e.message) else {
+                continue;
+            };
+            let at = &src[e.span.start..e.span.end];
+            // Only a rejected application, whose error is at the call it rewrites; an error
+            // at a decimal literal offers the literal, or its whole statement, rewritten.
+            if !e.message.contains(" does not take (")
+                || !e.notes.iter().any(|n| n.text.starts_with("repair:"))
+                || call.len() <= at.len()
+            {
+                continue;
+            }
+            let fixed = format!("{}{call}{}", &src[..e.span.start], &src[e.span.end..]);
+            tried.push(line.clone());
+            let errors = std::panic::catch_unwind(|| type_errors(&fixed))
+                .unwrap_or_else(|_| vec!["not resolved".to_string()]);
+            if !errors.is_empty() {
+                failed.push(format!("{line}\n  {call}\n  -> {}", errors.join("\n     ")));
+            }
+        }
+    }
+    eprintln!(
+        "{} headline repairs tried, {} fail",
+        tried.len(),
+        failed.len()
+    );
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
+    for kind in [" + ", " ^ ", "min("] {
+        assert!(
+            tried.iter().any(|l| l.contains(kind)),
+            "no headline repair of {kind}"
+        );
+    }
+}
+
+/// A numeric cast of a value none of its arrows takes, `int(b)` with `b` a `bool`, is not
+/// offered the value as text, `int(String(b))`, which gives `#invalid` for every `bool`
+/// (row MSG-apply-try-headline): the headline ends with no repair, and the one note is the
+/// change of `b`'s type. `String(b)` itself, and `"#" ++ b`, which `String(b)` repairs
+/// without changing what it computes, keep it.
+#[test]
+fn a_numeric_cast_is_not_offered_its_argument_as_text() {
+    for word in ["int", "rat", "f64", "f32"] {
+        let got = offered(&format!("b = true;\ny = {word}(b);"));
+        assert!(!got.contains("String("), "{word}: {got}");
+        assert!(!got.contains(" Try `"), "{word}: {got}");
+    }
+    let got = offered("b = true;\ny = \"#\" ++ b;");
+    assert!(got.contains("Try `\"#\" ++ String(b)` instead."), "{got}");
+}
+
+/// A call of a declared function ends its headline with its first repair, the call
+/// rewritten, as an operator and a prelude word do (row MSG-apply-try-headline).
+#[test]
+fn a_call_of_a_declared_function_ends_its_headline_with_its_repair() {
+    let got = offered("h(positional a: rat) = a;\nn = 1;\ny = h(n);");
+    assert!(got.starts_with("`h` does not take ("), "{got}");
+    assert!(got.contains("Try `h(rat(n))` instead."), "{got}");
+    let got = offered("h(positional a: rat, positional c: rat) = a;\nn = 1;\ny = h(2r, n);");
+    assert!(got.contains("Try `h(2r, rat(n))` instead."), "{got}");
+}
+
+/// A repair that the construct around it rejects is dropped from the notes, and from the
+/// headline too, which is written once the check ends (row MSG-apply-try-headline): in
+/// `(n + r) + x`, `rat(n)` makes the inner `+` a `rat`, which the outer one does not add to an
+/// `f64`, so the headline says that no fix is offered, not "Try `rat(n) + r` instead.".
+#[test]
+fn a_dropped_repair_leaves_the_headline_too() {
+    for body in ["(n + r) + x", "min(n, r) + x"] {
+        let got = offered(&format!("n = 1;\nr = 2.5r;\nx = 2.5f64;\ny = {body};"));
+        assert!(!got.contains(" Try `"), "{body}: {got}");
+        assert!(!got.contains("repair:"), "{body}: {got}");
+        assert!(got.contains("No fix is offered"), "{body}: {got}");
+    }
+}

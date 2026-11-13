@@ -5815,6 +5815,25 @@ impl Rewrite {
         })
     }
 
+    /// The code of `source` at `span` with the edits made, as `sqrt(f64(n))` for `sqrt(n)` and
+    /// the cast of `n`; none where an edit lies outside `span` or the code runs over more than
+    /// one line, which a headline cannot show. Unlike [`Rewrite::line`], which writes the
+    /// whole source line, it writes the construct alone. It costs the length of `span`.
+    fn within(&self, source: &str, span: Span) -> Option<String> {
+        let mut out = String::new();
+        let mut at = span.start;
+        for (s, with) in &self.edits {
+            if s.start < at || s.end > span.end {
+                return None;
+            }
+            out.push_str(source.get(at..s.start)?);
+            out.push_str(with);
+            at = s.end;
+        }
+        out.push_str(source.get(at..span.end)?);
+        (!out.contains('\n')).then_some(out)
+    }
+
     /// The fix that writes `with` in place of the literal `l`, after its `-`.
     fn lit(l: &Lit, with: &dyn fmt::Display, holds: &dyn fmt::Display) -> Option<Rewrite> {
         let sign = if l.neg() { "-" } else { "" };
@@ -5897,6 +5916,19 @@ pub(crate) struct Msg {
     /// it is written ([`Ck::fixes_checked`], [`Ck::pending_settled`]), so the message says that
     /// none is offered.
     dropped: bool,
+    /// The repairs of a rejected application, in the order its notes offer them, each with the
+    /// call it rewrites ([`Ck::repairs`]): the headline ends with the first one still offered.
+    noted: Vec<NotedRepair>,
+}
+
+/// A repair offered as a note of a rejected application, as "repair: write `rat(x)`; the
+/// checker accepts that", with the fix that writes it in the program's text and the span of
+/// the call that fix rewrites, which the headline shows whole: `rat(x) + y` for `x + y`, and
+/// `sum((rat(x), y))` for the `+` that `sum((x, y))` applies ([`Label::SumPlus`]).
+struct NotedRepair {
+    note: Note,
+    at: Span,
+    fix: Rewrite,
 }
 
 impl From<String> for Msg {
@@ -5905,6 +5937,7 @@ impl From<String> for Msg {
             text,
             fixes: Vec::new(),
             dropped: false,
+            noted: Vec::new(),
         }
     }
 }
@@ -5916,6 +5949,17 @@ impl Msg {
             text,
             fixes: fixes.into_iter().flatten().collect(),
             dropped: false,
+            noted: Vec::new(),
+        }
+    }
+
+    /// The message `text` of a rejected application whose notes offer the repairs `noted`.
+    fn noted(text: String, noted: Vec<NotedRepair>) -> Msg {
+        Msg {
+            text,
+            fixes: Vec::new(),
+            dropped: false,
+            noted,
         }
     }
 
@@ -5947,15 +5991,26 @@ impl Msg {
             self.text.push('.');
         }
         if self.fixes.is_empty() {
-            let text = match self.dropped {
-                true => {
+            // A rejected application ends its headline with its first repair still offered, as
+            // the call rewritten, `rat(x) + y` (DESIGN.md sec:diagnostics, "A short
+            // headline"); none where the call takes more than one line. It is written here,
+            // after the check, rather than when the error is found, so that a repair a later
+            // check drops from the notes ([`Ck::fix_dropped`]) is not offered here either.
+            let first = (source.zip(self.noted.first())).and_then(|(s, r)| r.fix.within(s, r.at));
+            let text = match (first, self.dropped) {
+                (Some(call), _) => {
+                    let head = self.text.strip_suffix('.').unwrap_or(&self.text);
+                    let text = shown(&format_args!("{head}. Try `{call}` instead."));
+                    text.unwrap_or_else(|_| self.text.clone())
+                }
+                (None, true) => {
                     let head = self.text.strip_suffix('.').unwrap_or(&self.text);
                     let text = shown(&format_args!(
                         "{head}. No fix is offered: each one the checker tried is rejected too."
                     ));
                     text.unwrap_or_else(|_| self.text.clone())
                 }
-                false => self.text,
+                (None, false) => self.text,
             };
             return (text + &notes, String::new());
         }
@@ -6080,6 +6135,7 @@ fn grouped(head: String, parts: Vec<(Span, Msg)>) -> (Msg, Vec<Note>) {
             text: head,
             fixes,
             dropped,
+            noted: Vec::new(),
         },
         notes,
     )
@@ -7758,6 +7814,10 @@ enum Label<'s> {
     Operator(Operator),
     /// A function, a prelude word or a family, named by this text.
     Text(&'s str),
+    /// The `+` that the call of `sum` at this span applies to two components of its tuple,
+    /// named "`+` in `sum`". It is reported where those components are written, `x, y` in
+    /// `sum((x, y))`, which is not an expression, so a repair of it rewrites the call.
+    SumPlus(Span),
 }
 
 impl<'s> Label<'s> {
@@ -7766,6 +7826,7 @@ impl<'s> Label<'s> {
         match self {
             Label::Operator(o) => o.quoted(),
             Label::Text(t) => t,
+            Label::SumPlus(_) => "`+` in `sum`",
         }
     }
 
@@ -7773,7 +7834,7 @@ impl<'s> Label<'s> {
     fn operator(self) -> Option<Operator> {
         match self {
             Label::Operator(o) => Some(o),
-            Label::Text(_) => None,
+            Label::Text(_) | Label::SumPlus(_) => None,
         }
     }
 }
@@ -9736,6 +9797,9 @@ mod tests {
             assert_eq!(Label::Operator(o).to_string(), format!("`{o}`"));
         }
         assert_eq!(Label::Text("this family").to_string(), "this family");
+        let call = Span { start: 0, end: 12 };
+        assert_eq!(Label::SumPlus(call).to_string(), "`+` in `sum`");
+        assert_eq!(Label::SumPlus(call).operator(), None);
     }
 
     /// A branch the checker rolls back, as [`Ck::try_outside`] and [`Ck::repairs`] roll back a

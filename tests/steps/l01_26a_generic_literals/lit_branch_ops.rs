@@ -397,7 +397,7 @@ fn a_name_and_a_call_of_a_parameter_are_not_read() {
         format!("{H}f(positional c: bool) = {{ y = if c {{ 2 + 1 }} else {{ 1 }}; h(y) }};\n");
     assert_eq!(
         type_errors(&name),
-        vec!["`h` does not take (1 | 3): no arrow of `h` takes these types. [h(y)]".to_string()]
+        vec!["`h` does not take (1 | 3): no arrow of `h` takes these types. Try `h(f64(y))` instead. [h(y)]".to_string()]
     );
     let param = format!(
         "k(positional x: int) = if x == 1 {{ x }} else {{ 2 }};\n{H}\
@@ -531,14 +531,14 @@ fn a_name_bound_to_a_call_of_literal_values_is_not_read() {
     let name = format!("{G}{H}f(positional c: bool) = {{ y = g(c); h(y) }};\n");
     assert_eq!(
         type_errors(&name),
-        vec!["`h` does not take (1 | 2): no arrow of `h` takes these types. [h(y)]".to_string()]
+        vec!["`h` does not take (1 | 2): no arrow of `h` takes these types. Try `h(f64(y))` instead. [h(y)]".to_string()]
     );
     // The same at an operator.
     let op = format!("{G}f(positional c: bool, x: f64) = {{ y = g(c); x * y }};\n");
     assert_eq!(
         type_errors(&op),
         vec![
-            "`*` does not take (f64, 1 | 2): no arrow of `*` takes these types. [x * y]"
+            "`*` does not take (f64, 1 | 2): no arrow of `*` takes these types. Try `x * f64(y)` instead. [x * y]"
                 .to_string()
         ]
     );
@@ -555,7 +555,7 @@ fn a_name_bound_to_a_call_of_literal_values_is_not_read() {
     let top = format!("{G}{H}y = g(true);\na = h(y);\n");
     assert_eq!(
         type_errors(&top),
-        vec!["`h` does not take (1 | 2): no arrow of `h` takes these types. [h(y)]".to_string()]
+        vec!["`h` does not take (1 | 2): no arrow of `h` takes these types. Try `h(f64(y))` instead. [h(y)]".to_string()]
     );
 }
 
@@ -893,7 +893,7 @@ fn a_call_of_literal_values_at_a_union_of_carriers_is_rejected_whole() {
     assert_eq!(
         type_errors(src),
         vec![
-            "`h` does not take (1 | 2): no arrow of `h` takes these types.\n  T1 stands for a part written more than once:\n    \
+            "`h` does not take (1 | 2): no arrow of `h` takes these types. Try `h(rat(g(c)))` instead.\n  T1 stands for a part written more than once:\n    \
              type T1 = f64 | rat; [h(g(c))]"
                 .to_string()
         ]

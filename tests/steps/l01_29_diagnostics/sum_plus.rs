@@ -131,12 +131,24 @@ fn sum_and_a_chain_of_plus_accept_and_reject_the_same_programs() {
             added.is_some(),
             "f({params}): sum({tuple}) and {chain} disagree\n{summed:?}\n{added:?}"
         );
-        // Where the written `+` fails, the `+` in `sum` fails with the same message.
+        // Where the written `+` fails, the `+` in `sum` fails with the same message, except
+        // for the repair the headline ends with, which rewrites the call it is in:
+        // `sum((rat(x), y))` for `rat(x) + y` (row MSG-apply-try-headline).
         if let (Some(summed), Some(added)) = (&summed, &added)
             && let Some((head, _)) = plus_error(added, "`+`")
         {
             let got = plus_error(summed, "`+` in `sum`").map(|(head, _)| head);
-            assert_eq!(got.as_deref(), Some(head.as_str()), "{summed}\n{added}");
+            let bare = |h: &str| h.split_once(" Try `").map_or(h, |(h, _)| h).to_string();
+            assert_eq!(
+                got.as_deref().map(bare),
+                Some(bare(&head)),
+                "{summed}\n{added}"
+            );
+            assert_eq!(
+                got.is_some_and(|h| h.contains(" Try `")),
+                head.contains(" Try `"),
+                "{summed}\n{added}"
+            );
         }
     }
 }
@@ -169,4 +181,63 @@ fn checking_sum_over_untracked_components_scales() {
         let out = rejected(&inputs[&n]);
         assert!(out.contains("`+` in `sum` does not take"), "{out}");
     });
+}
+
+/// The headline of the first diagnostic of `out`, without its place.
+fn headline(out: &str) -> String {
+    diagnostics(out)
+        .first()
+        .map_or_else(String::new, |(head, _)| head.to_string())
+}
+
+/// The `+` in `sum` reports its error where the components it adds are written, `x, y` in
+/// `sum((x, y))`, which is not an expression; its headline repair rewrites the whole call
+/// (row MSG-apply-try-headline). It once wrote the components alone, "Try `rat(x), y`
+/// instead." A tuple not written in the call gives no rewrite, and a call over two lines,
+/// which a headline cannot show, gives none either; the repair stays in the notes.
+#[test]
+fn a_repair_of_the_plus_in_sum_rewrites_the_whole_call() {
+    for (params, body, call) in [
+        (
+            "x: int, positional y: rat",
+            "sum((x, y))",
+            Some("sum((rat(x), y))"),
+        ),
+        (
+            "y: rat, positional x: int",
+            "sum((y, x))",
+            Some("sum((y, rat(x)))"),
+        ),
+        (
+            "x: int, positional y: rat, positional z: rat",
+            "sum((x, y, z))",
+            Some("sum((rat(x), y, z))"),
+        ),
+        ("x: int, positional y: rat", "sum((x,\n  y))", None),
+        ("t: (int, rat)", "sum(t)", None),
+    ] {
+        let out = rejected(&program(&format!("positional {params}"), body));
+        let pair = if body.starts_with("sum((y") {
+            "rat, int"
+        } else {
+            "int, rat"
+        };
+        let head = format!(
+            "`+` in `sum` does not take ({pair}): no arrow of `+` in `sum` takes these types."
+        );
+        let want = match call {
+            Some(c) => format!("{head} Try `{c}` instead."),
+            None => head,
+        };
+        assert_eq!(headline(&out), want, "{out}");
+        if call.is_none() && body.contains('\n') {
+            assert!(out.contains("repair: write `rat(x)`"), "{out}");
+        }
+    }
+    // The written chain rewrites the `+` alone.
+    let out = rejected(&program("positional x: int, positional y: rat", "x + y"));
+    assert!(
+        headline(&out).ends_with("Try `rat(x) + y` instead."),
+        "{out}"
+    );
 }
