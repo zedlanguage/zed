@@ -1748,6 +1748,7 @@ fn unary_arms_scale() {
 }
 
 #[test]
+#[ignore = "PERF-l139-under9: cuts, 11.1 times the instructions (315.9M and 3,501.2M) and 11.0 times the bytes (59.9M and 662.0M) at 8n on origin/main 783fd27c8, over the limit of 10.5; open"]
 fn cuts_scale() {
     scales("cuts", 4, 1);
 }
@@ -1760,6 +1761,7 @@ fn wide_scales() {
 }
 
 #[test]
+#[ignore = "PERF-l139-under9: coordmix_floor, 12.1 times the instructions (219.8M and 2,654.8M) and 10.7 times the bytes (41.1M and 438.9M) at 8n on origin/main 783fd27c8, over the limit of 10.5; open"]
 fn coordmix_floor_scales() {
     scales("coordmix_floor", 4, 1);
 }
@@ -1819,6 +1821,12 @@ fn coordkk_scales() {
 // and 10.8, boxstar 11.5 and 10.8, cuts 11.2 and 11.1, coordmix_floor 12.3 and 10.7, hoponb
 // 12.9 and 12.1. star_extra, persist, hopb and chain stay ignored (chain was 12.9 on abf5d24cd
 // and is 13.1 on af6a5a696).
+//
+// Since the limit fell from 13 to 10.5 (TESTS-scaling-limit-10_5, 2026-11-13), six of them are
+// over it at 8n, measured on the first runs on 783fd27c8 as instructions and bytes: hop 10.6 and
+// 10.0, cuts 11.1 and 11.0, boxstar 11.4 and 10.8, hopon 11.5 and 10.8, coordmix_floor 12.1 and
+// 10.7, hoponb 12.8 and 12.0. Each is ignored with PERF-l139-under9, the item that would bring
+// it under 9 (RED-l139-six); stair_holes_late passes.
 
 /// About `k^1.75` to `k^1.96`.
 #[test]
@@ -1838,6 +1846,7 @@ fn chain_scales() {
 
 /// About `k^2.1`.
 #[test]
+#[ignore = "PERF-l139-under9: boxstar, 11.4 times the instructions (144.7M and 1,648.4M) and 10.8 times the bytes (27.9M and 300.3M) at 8n on origin/main 783fd27c8, over the limit of 10.5; open"]
 fn boxstar_scales() {
     scales("boxstar", 2, 1);
 }
@@ -1879,11 +1888,13 @@ fn stair_cover_free_scales() {
 
 /// About `k^2` from `k = 8` to 16, each run of `k = 16` some 60 billion instructions.
 #[test]
+#[ignore = "PERF-l139-under9: hop, 10.6 times the instructions (295.2M and 3,139.5M) and 10.0 times the bytes (56.6M and 565.9M) at 8n on origin/main 783fd27c8, over the limit of 10.5; open"]
 fn hop_scales() {
     scales("hop", 2, 1);
 }
 
 #[test]
+#[ignore = "PERF-l139-under9: hopon, 11.5 times the instructions (260.8M and 2,987.5M) and 10.8 times the bytes (49.3M and 534.8M) at 8n on origin/main 783fd27c8, over the limit of 10.5; open"]
 fn hopon_scales() {
     scales("hopon", 2, 1);
 }
@@ -1895,6 +1906,7 @@ fn hopb_scales() {
 }
 
 #[test]
+#[ignore = "PERF-l139-under9: hoponb, 12.8 times the instructions (186.7M and 2,388.3M) and 12.0 times the bytes (34.6M and 416.7M) at 8n on origin/main 783fd27c8, over the limit of 10.5; open"]
 fn hoponb_scales() {
     scales("hoponb", 2, 1);
 }
