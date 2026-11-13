@@ -2007,14 +2007,13 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| GSX-unsolved | hybrid-xr attempt  | 2026-11-11 16:53 | round 2 recorded (Opus pf1 moved it: sweep 3, lost 3, prints 3; CD best still 29); round 3 launched |
 | MSG-derive-print-per-message | impl attempt 1 | 2026-11-12 04:27 | l01_29 354 pass; kernel 268, zedc-types 16, zedc-check 11 unit pass; rustdoc -D warnings clean after one fix; COMPLEXITY row + K108 MAKER-file-chain, plan_dag D |
 | MSG-domain-repairs-v | impl attempt 1 | 2026-11-12 00:53 | running affected groups; load 44.01 39.14 34.67 |
 | NAME-ascii-only | impl attempt 1 | 2026-11-12 16:11 | start: worktrees name-ascii-only (zed-impl) and name-ascii-only-spec (zed) |
 | NARROW-or-order | impl attempt 1 | 2026-11-12 15:40 | started; worktree /home/luke/Work/wt/narrow-or-order on cdd557f13 |
 | POW-rat-literal-ops | impl attempt 1 | 2026-11-12 16:20 | start; worktree wt/pow-rat-literal-ops on origin/main b43c23228, seeded |
-| T6-refusal-cost | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/t6-refusal-cost from origin/main 8d0bfe954 |
-| TESTS-split-s22-random | running | 2026-11-12 16:54 |  |
+| T6-refusal-cost | impl attempt 1 | 2026-11-05 04:07 | probe on 8d0bfe954 (load 36-45): x_tail nfa Refused(Fork) 26.7M/55.0M/145M/535M/2.92G/20.3G instr at n 4..128 (x6.97 per doubling at 64->128, N^1.40 with N ~ n^ |
+| TESTS-split-s22-random | impl attempt 1 | 2026-11-12 16:54 | started; worktree tests-split-s22-random |
 | TRIVIAL-walk-picks | impl attempt 1 | 2026-11-12 14:54 | code commit 0613b6f9c rebased; docs edited; building tests for m0_03 before docs commit and merge / load 78.93 64.48 50.98 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
