@@ -44,11 +44,11 @@ fn imports_and_annotations() {
     check(
         "import geometry.shapes;\nimport geometry.shapes as gs @hash(\
          \"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",);\n\
-         import a.{b,c,} ;\n@memoized fib(n)=n;\n@cost(n*log(n),space:n) @noalloc\nsort(xs)=xs;\n\
+         import a.{b,c,} ;\n@memoized fib(n)=n;\n@cost(O(n*log(n)),space:n) @noalloc\nsort(xs)=xs;\n\
          @log() f(x){@measure(x) g(y)=y;g(x)}\n",
         "import geometry.shapes;\nimport geometry.shapes as gs @hash(\
          \"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\");\n\
-         import a.{b, c};\n@memoized fib(n) = n;\n@cost(n * log(n), space: n) @noalloc sort(xs) = xs;\n\
+         import a.{b, c};\n@memoized fib(n) = n;\n@cost(O(n * log(n)), space: n) @noalloc sort(xs) = xs;\n\
          @log() f(x) {\n  @measure(x) g(y) = y;\n  g(x)\n}\n",
     );
 }

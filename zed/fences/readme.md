@@ -480,11 +480,11 @@ page = render("<p>" ++ escapeHtml(comment) ++ "</p>");
 
 <!-- README.md:2191 layer L18: ring L5, word L18 (@noalloc), label none; section [Cost] 1 -->
 ```zed
-@cost(xs::len)
+@cost(O(xs::len))
 @fused
 sumSquares(positional xs: [f64]) = xs.map(x -> x * x) >< (+);
 
-@cost(xs::len * log(xs::len))
+@cost(O(xs::len * log(xs::len)))
 ranked(positional xs: [int]) = xs.sort(desc x -> x);
 
 @noalloc

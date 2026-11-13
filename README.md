@@ -2183,17 +2183,17 @@ These are *facets*: extra facts about a value, tracked through every operation a
 
 Annotations turn performance requirements into build failures.
 
-**Syntax:** `f::cost`, `@cost(b)`, `@fused`, `@noalloc`
+**Syntax:** `f::cost`, `@cost(O(b))`, `@fused`, `@noalloc`
 
 > [!NOTE]
-> **`f::cost`** reads a function's computed upper bound on *work*, its total number of operations, and **`f::depth`** its bound on *parallel depth*, the longest chain of operations that must run one after another. **`@cost(b)`** states a bound on work, **`@fused`** says no intermediate collection is built, and **`@noalloc`** says the code uses no memory beyond registers. **`log`** is the natural logarithm.
+> **`f::cost`** reads a function's computed upper bound on *work*, its total number of operations, and **`f::depth`** its bound on *parallel depth*, the longest chain of operations that must run one after another. **`@cost(O(b))`** states that the work grows no faster than `b`, **`@fused`** says no intermediate collection is built, and **`@noalloc`** says the code uses no memory beyond registers. **`log`** is the natural logarithm.
 
 ```zed
-@cost(xs::len)
+@cost(O(xs::len))
 @fused
 sumSquares(positional xs: [f64]) = xs.map(x -> x * x) >< (+);
 
-@cost(xs::len * log(xs::len))
+@cost(O(xs::len * log(xs::len)))
 ranked(positional xs: [int]) = xs.sort(desc x -> x);
 
 @noalloc

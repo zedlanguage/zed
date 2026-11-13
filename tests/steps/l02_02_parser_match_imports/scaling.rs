@@ -113,7 +113,7 @@ fn a_deep_pattern_scales() {
 /// `n` functions, each with two annotations, one with arguments.
 fn annotated(n: usize) -> String {
     (0..n)
-        .map(|i| format!("@cost(n * {i}, space: n) @memoized\nf{i}(n) = n + {i};\n"))
+        .map(|i| format!("@cost(O(n * {i}), space: n) @memoized\nf{i}(n) = n + {i};\n"))
         .collect()
 }
 

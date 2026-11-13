@@ -525,7 +525,7 @@ pub enum ImportKind {
     Selective(Vec<String>),
 }
 
-/// An annotation: `@log`, or `@cost(n)` with its arguments.
+/// An annotation: `@log`, or `@cost(O(n))` with its arguments.
 #[derive(Debug)]
 pub struct Annot {
     /// Its name, without its `@`.

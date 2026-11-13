@@ -11,8 +11,8 @@ fn annotations_before_declarations() {
             "(annotated @memoized (def fib (n) = n))",
         ),
         (
-            "@cost(n * log(n), space: n)\n@noalloc\nsort(xs) = xs;",
-            "(annotated (@cost (* n (call log n)) (space: n)) @noalloc (def sort (xs) = xs))",
+            "@cost(O(n * log(n)), space: n)\n@noalloc\nsort(xs) = xs;",
+            "(annotated (@cost (call O (* n (call log n))) (space: n)) @noalloc (def sort (xs) = xs))",
         ),
         (
             "@log @exact\nf(x) = x;",
@@ -42,7 +42,7 @@ fn annotations_before_declarations() {
 fn malformed_annotations() {
     check(&[
         (
-            "@cost(n, ...)\nf(x) = x;",
+            "@cost(O(n), ...)\nf(x) = x;",
             "error: the arguments of `@cost` end in `...`, and only a call takes `...`, to leave its \
              other arguments open; an annotation is given all of its arguments. Remove the `...`.",
         ),
