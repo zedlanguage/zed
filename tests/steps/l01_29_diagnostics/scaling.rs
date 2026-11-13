@@ -470,3 +470,58 @@ fn writing_the_literal_of_a_long_text_scales() {
         },
     );
 }
+
+/// `n` functions, each comparing an `int` by `==` or `<` with a text the cast `int` takes, the
+/// text on either side, so each rejection offers first the literal the cast gives (row
+/// REPAIR-compare-order): at `==` up to three more trials of the comparison, one per number
+/// type, each after one cast of the one literal.
+fn texts_compared(n: usize) -> String {
+    (0..n)
+        .map(|i| match i % 4 {
+            0 => format!("h{i}(positional x: int) = x == \"{i}\";\n"),
+            1 => format!("h{i}(positional x: int) = \"{i}\" != x;\n"),
+            2 => format!("h{i}(positional x: int) = x < \"{i}\";\n"),
+            _ => format!("h{i}(positional x: int) = \"{i}\" >= x;\n"),
+        })
+        .collect()
+}
+
+#[test]
+fn offering_the_literal_first_in_comparisons_scales() {
+    let srcs = scaling::inputs(200, texts_compared);
+    scaling::check(
+        "n comparisons with texts, each repaired first by the literal a cast gives",
+        200,
+        |n| {
+            let out = rejected(&srcs[&n]);
+            assert_eq!(out.matches("Try `x == ").count(), n.div_ceil(4), "{out}");
+            assert_eq!(out.matches("String(x)").count(), n / 2, "{out}");
+            let last = n - 1;
+            assert!(
+                out.contains(&format!("Try `{last} >= x` instead.")),
+                "{out}"
+            );
+        },
+    );
+}
+
+#[test]
+fn offering_the_literal_of_a_long_text_in_a_comparison_scales() {
+    // One text of d digits compared by `==`: its cast, its printing, its reading back, and the
+    // text written in the headline.
+    let srcs = scaling::inputs(4000, |d| {
+        format!("f(positional x: int) = x == \"{}\";\n", "7".repeat(d))
+    });
+    scaling::check(
+        "the literal a cast gives on a compared text of d digits",
+        4000,
+        |d| {
+            let out = rejected(&srcs[&d]);
+            let want = format!(
+                "Try `x == {}` to compare the numbers instead.",
+                "7".repeat(d)
+            );
+            assert!(out.contains(&want), "{out}");
+        },
+    );
+}

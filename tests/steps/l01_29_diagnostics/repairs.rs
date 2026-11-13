@@ -136,3 +136,136 @@ fn a_cast_that_cannot_fail_on_a_literal_is_written_as_the_literal_it_gives() {
         }
     }
 }
+
+/// The first repair the headline of `out` offers, as in "Try `r` to compare the numbers
+/// instead".
+fn first_tried(out: &str) -> Option<&str> {
+    let (_, rest) = out.lines().next()?.rsplit_once("Try `")?;
+    rest.split_once('`').map(|(r, _)| r)
+}
+
+#[test]
+fn a_comparison_with_a_literal_is_repaired_by_the_literal_before_a_cast_of_the_other_side() {
+    // Row REPAIR-compare-order. Casting the other operand to `String` would compare text,
+    // which orders "10" before "8", so the literal the cast gives comes first, in both orders
+    // of the operands, for the orderings and for `==` and `!=`.
+    const MAIN: &str = "main(m: MainArgs) {\n  m.stdout <- \"a\";\n}\n";
+    // (declarations before, the rejected expression, the first repair of its headline, and
+    // whether that repair is the whole expression, applied and checked in its place).
+    let cases = [
+        ("f(positional n: int) = ", "n < \"8\"", Some("n < 8"), true),
+        ("f(positional n: int) = ", "\"8\" < n", Some("8 < n"), true),
+        (
+            "f(positional n: int) = ",
+            "n <= \"8\"",
+            Some("n <= 8"),
+            true,
+        ),
+        ("f(positional n: int) = ", "\"8\" > n", Some("8 > n"), true),
+        (
+            "f(positional n: int) = ",
+            "n >= \"-12\"",
+            Some("n >= -12"),
+            true,
+        ),
+        (
+            "f(positional x: f64) = ",
+            "x < \"8\"",
+            Some("x < 8.0"),
+            true,
+        ),
+        (
+            "f(positional x: f64) = ",
+            "\"0.5\" < x",
+            Some("0.5 < x"),
+            true,
+        ),
+        // `1/3` has no literal of its own, so the cast of the literal stays, still first.
+        (
+            "f(positional r: rat) = ",
+            "r < \"1/3\"",
+            Some("r < rat(\"1/3\")"),
+            true,
+        ),
+        // Text no number cast takes: only the cast of the other side is left.
+        (
+            "f(positional n: int) = ",
+            "n < \"x8\"",
+            Some("String(n) < \"x8\""),
+            true,
+        ),
+        (
+            "f(positional n: int) = ",
+            "n == \"8\"",
+            Some("n == 8"),
+            true,
+        ),
+        (
+            "f(positional n: int) = ",
+            "\"8\" == n",
+            Some("8 == n"),
+            true,
+        ),
+        (
+            "f(positional n: int) = ",
+            "n != \"8\"",
+            Some("n != 8"),
+            true,
+        ),
+        (
+            "f(positional n: int) = ",
+            "\"8\" != n",
+            Some("8 != n"),
+            true,
+        ),
+        (
+            "f(positional x: f64) = ",
+            "x == \"0.5\"",
+            Some("x == 0.5"),
+            true,
+        ),
+        (
+            "f(positional r: rat) = ",
+            "r == \"0.5\"",
+            Some("r == 0.5r"),
+            true,
+        ),
+        // A literal of another number type: its literal before the cast of the name.
+        ("f(positional n: int) = ", "n == 1r", Some("n == 1"), true),
+        // An operand with no name: the literal in place of the literal operand.
+        (
+            "f(positional n: int) = ",
+            "n + 1 == \"8\"",
+            Some("8"),
+            false,
+        ),
+        // Text no cast to a number writes as a literal: the comparison's one answer.
+        (
+            "f(positional n: int) = ",
+            "n == \"x8\"",
+            Some("false"),
+            false,
+        ),
+        (
+            "f(positional n: int) = ",
+            "\"x8\" != n",
+            Some("true"),
+            false,
+        ),
+        // A text holding a backtick is named by its side, as a code span cannot hold it.
+        (
+            "f(positional n: int) = ",
+            "n == \"a`b\"",
+            Some("false"),
+            false,
+        ),
+    ];
+    for (before, expr, want, whole) in cases {
+        let out = rejected(&format!("{before}{expr};\n{MAIN}"));
+        assert_eq!(first_tried(&out), want, "{out}");
+        if let Some(fix) = want.filter(|_| whole) {
+            let fixed = format!("{before}{fix};\n{MAIN}");
+            load(fixed.as_bytes()).unwrap_or_else(|e| panic!("{fixed}\n{e}"));
+        }
+    }
+}

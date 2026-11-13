@@ -9899,6 +9899,17 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// place of the words ([`rat_forms`]). Each comes with what its trial gave, which
     /// [`Self::note_offered`] records where the note is offered, and with the fix that writes
     /// it in the program's text, which a message offers in its place.
+    ///
+    /// The repairs of a literal argument come first, whichever argument it is: the literal a
+    /// cast gives written in its place, `8` for `"8"` or `1` for `1r`, or the cast where no
+    /// literal writes its value, `rat("1/3")`; the repairs of the other arguments, casts,
+    /// come after them. A repair of a literal keeps the type of every other argument, while
+    /// a cast of another argument changes what the application computes, as
+    /// `String(n) < "8"` does, which orders the text `"10"` before `"8"` (row
+    /// REPAIR-compare-order). Within each kind the order is the arguments' and then the
+    /// words'. Complexity tradeoff: none; the two kinds are kept in two lists and joined
+    /// once, O(r) for `r` repairs, where the naive order, one list in argument order, costs
+    /// the same and puts the cast of an earlier argument first.
     fn repairs(
         &mut self,
         what: Label<'_>,
@@ -9911,6 +9922,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         if self.trying {
             return out;
         }
+        // The literal repairs, offered before `out`, the casts.
+        let mut literals = Vec::new();
         // A word is called by its name and has its own signature; a declared function may
         // share the name only with a signature of its own.
         let word = what
@@ -10009,7 +10022,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                                     format_args!("the literal is then the {} {l}", c.name());
                                 Rewrite::new(&[(*at, &l)], &holds, &l)
                             });
-                            out.push(Repaired {
+                            literals.push(Repaired {
                                 note: Note { span: *at, text },
                                 got,
                                 fix,
@@ -10063,7 +10076,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                             },
                         );
                         let holds = format_args!("the literal is then the {w} {}", lit.text);
-                        out.push(Repaired {
+                        literals.push(Repaired {
                             note: Note { span: *at, text },
                             got,
                             fix: Rewrite::new(&[(*at, &lit.text)], &holds, &lit.text),
@@ -10083,7 +10096,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                             [(point(at.start), &open), (point(at.end), &")")];
                         Rewrite::new(&edits, &holds, &alone)
                     });
-                    out.push(Repaired {
+                    // A cast of a literal no literal writes, `rat("1/3")`, rewrites only the
+                    // literal too.
+                    let to = if literal { &mut literals } else { &mut out };
+                    to.push(Repaired {
                         note: Note { span: *at, text },
                         got,
                         fix,
@@ -10091,7 +10107,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             }
         }
-        out
+        literals.append(&mut out);
+        literals
     }
 
     /// Whether the application takes, as written, some value of argument `i`, of type `held`
@@ -10841,9 +10858,13 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// components at the place `path` (indices from the operands down), are of the types `a`
     /// and `b`, which share no value at any carrier ([`no_common_carrier`]), unless the
     /// operands' own checks rejected something first. The comparison always gives the same
-    /// answer. At the operands themselves the repairs are each cast of one operand that
-    /// makes the two meet, then each component of a tuple operand that may equal the other
-    /// operand; with none, or inside the operands, the answer it always gives.
+    /// answer. At the operands themselves the repairs are, first, the literal a cast that
+    /// cannot fail gives on a literal operand, written in its place ([`Ck::literal_repair`]),
+    /// `n == 8` for `n == "8"`, which keeps the other operand's type, as [`Ck::repairs`]
+    /// puts such a repair first for `<` (row REPAIR-compare-order); then each cast of one
+    /// operand that makes the two meet, except the cast whose literal is offered; then each
+    /// component of a tuple operand that may equal the other operand; with none, or inside
+    /// the operands, the answer it always gives.
     fn apart(&mut self, path: &[usize], a: &Ty, b: &Ty) {
         let Some(Comparison {
             op,
@@ -10863,13 +10884,40 @@ impl<'t, 'a> Ck<'t, 'a> {
         let labels = [0, 1].map(|s| match ats[s].and_then(|at| self.seen.get(&at)) {
             Some((_, Src::Name(id))) => Some(Operand::Name(&tables.res.binders[*id].name)),
             _ => exprs[s]
-                .filter(|e| path.is_empty() && is_literal(e))
-                .map(|e| Operand::Literal(e, tables.text)),
+                .filter(|_| path.is_empty())
+                .and_then(|e| match &e.kind {
+                    // A string literal is named as the program writes it, where that is one
+                    // line with no backtick to end the code span around it, `"8"`.
+                    ExprKind::Str(_) => (tables.text)
+                        .and_then(|t| t.get(e.span.start..e.span.end))
+                        .filter(|w| !w.contains(['\n', '`']))
+                        .map(Operand::Text),
+                    _ => is_literal(e).then_some(Operand::Literal(e, tables.text)),
+                }),
         });
         let sides = [a, b];
         let mut fixes = [Vec::new(), Vec::new()];
         if path.is_empty() {
             let widened = sides.map(widened);
+            // The literals first, each tried below where a cast is written; only where the
+            // message is shown, since the trial that finds the literal is what writes it.
+            for s in (0..2).filter(|_| !self.trying) {
+                let literal =
+                    exprs[s].is_some_and(|e| is_literal(e) || matches!(e.kind, ExprKind::Str(_)));
+                let Some(other) = widened[1 - s].as_ref().filter(|_| literal) else {
+                    continue;
+                };
+                let words = [
+                    ("int", Carrier::Int),
+                    ("rat", Carrier::Rat),
+                    ("f64", Carrier::F64),
+                ];
+                for (w, c) in words {
+                    if widened_meets(&Ty::carrier(c), other) {
+                        fixes[0].push(Fix::Literal(s, w));
+                    }
+                }
+            }
             for s in 0..2 {
                 let Some(other) = &widened[1 - s] else {
                     continue;
@@ -10908,21 +10956,43 @@ impl<'t, 'a> Ck<'t, 'a> {
         // size of the other operand and of the replacement, never the replaced tuple again
         // (test `l01_29_diagnostics::scaling::checking_the_components_offered_for_a_wide_tuple_scales`).
         // The naive way, checking the program again with each fix written in, costs the
-        // size of the program per fix.
+        // size of the program per fix. A literal fix adds at most three more trials, each
+        // after one run of its cast on the literal's one value ([`Ck::literal_repair`]) (test
+        // `l01_29_diagnostics::scaling::offering_the_literal_first_in_comparisons_scales`).
+        // The text of each literal kept, by side and word.
+        let mut literals: Vec<(usize, &str, String)> = Vec::new();
         if !self.trying {
             for group in &mut fixes {
                 let mut kept = Vec::new();
                 for fix in std::mem::take(group) {
-                    let (Fix::Cast(s, _) | Fix::Component(s, _)) = fix;
+                    let (Fix::Cast(s, _) | Fix::Literal(s, _) | Fix::Component(s, _)) = fix;
+                    // A cast whose literal is offered is not offered beside it.
+                    if let Fix::Cast(_, w) = fix
+                        && literals.iter().any(|&(t, v, _)| (t, v) == (s, w))
+                    {
+                        continue;
+                    }
+                    let mut text = None;
                     let checks = ats[s].and_then(|at| {
                         self.operand_replaced(span, at, |ck, a| match fix {
                             Fix::Cast(_, w) => ck.wrapped(w, a, &a.ty, at),
+                            Fix::Literal(_, w) => {
+                                let l = ck.literal_repair(w, a, &a.ty, at)?;
+                                text = Some(l.text);
+                                Some(l.arg.ty)
+                            }
                             Fix::Component(_, i) => ck.component_read(a, i, at),
                         })
                     });
-                    if checks != Some(false) {
-                        kept.push(fix);
+                    match (fix, text) {
+                        (Fix::Literal(_, w), Some(t)) if checks == Some(true) => {
+                            literals.push((s, w, t));
+                        }
+                        (Fix::Literal(..), _) => continue,
+                        _ if checks == Some(false) => continue,
+                        _ => {}
                     }
+                    kept.push(fix);
                 }
                 *group = kept;
             }
@@ -10939,7 +11009,18 @@ impl<'t, 'a> Ck<'t, 'a> {
             [Some(l), Some(m)] if path.is_empty() => Some((l, m)),
             _ => None,
         };
+        // The literal a kept literal fix writes; every one kept has one.
+        let literal = |s: usize, w: &str| {
+            (literals.iter())
+                .find(|&&(t, v, _)| (t, v) == (s, w))
+                .map_or("…", |(_, _, text)| text.as_str())
+        };
         let form = |f: &mut fmt::Formatter<'_>, r: Fix| match (named, r) {
+            (Some((_, m)), Fix::Literal(0, w)) => write!(f, "`{} {op} {m}`", literal(0, w)),
+            (Some((l, _)), Fix::Literal(s, w)) => write!(f, "`{l} {op} {}`", literal(s, w)),
+            (None, Fix::Literal(s, w)) => {
+                write!(f, "`{}` in place of the {} operand", literal(s, w), ends[s])
+            }
             (Some((l, m)), Fix::Cast(0, w)) => write!(f, "`{w}({l}) {op} {m}`"),
             (Some((l, m)), Fix::Cast(_, w)) => write!(f, "`{l} {op} {w}({m})`"),
             (Some((l, m)), Fix::Component(0, i)) => write!(f, "`{l}[{i}] {op} {m}`"),

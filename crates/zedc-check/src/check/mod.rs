@@ -5655,12 +5655,14 @@ enum Operand<'e> {
     /// A number or truth-value literal, with or without a `-` ([`is_literal`]), and the
     /// program's text, which writes it, where it is known.
     Literal(&'e Expr, Option<&'e str>),
+    /// A string literal, as the program's text writes it on one line, `"8"`.
+    Text(&'e str),
 }
 
 impl fmt::Display for Operand<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (mut e, src) = match self {
-            Operand::Name(n) => return f.write_str(n),
+            Operand::Name(n) | Operand::Text(n) => return f.write_str(n),
             Operand::Literal(e, src) => (*e, *src),
         };
         if let ExprKind::Unary(UnaryOp::Neg, a) = &e.kind {
@@ -5744,11 +5746,13 @@ fn article_of(t: &Ty, text: &impl fmt::Display) -> &'static str {
 }
 
 /// A repair of an `==` whose operands share no value ([`Ck::apart`]): a cast by the word of
-/// the operand at a side, 0 left and 1 right, or that operand's component at an index
-/// compared in its place.
+/// the operand at a side, 0 left and 1 right; the literal that cast gives on the literal
+/// operand at a side, written in its place (`8` for `"8"`); or that operand's component at
+/// an index compared in its place.
 #[derive(Clone, Copy)]
 enum Fix {
     Cast(usize, &'static str),
+    Literal(usize, &'static str),
     Component(usize, usize),
 }
 
