@@ -1760,7 +1760,7 @@ fn wide_scales() {
 }
 
 #[test]
-#[ignore = "PERF-coordmix-floor: quadratic on main, see ledger"]
+#[ignore = "PERF-coordmix-floor: quadratic on main, parts projected again (see below)"]
 fn coordmix_floor_scales() {
     scales("coordmix_floor", 4, 1);
 }
@@ -1779,18 +1779,34 @@ fn coordmix_slopes_scales() {
     scales("coordmix_slopes", 4, 1);
 }
 
-// The families below grow faster than linearly on main (TESTS-lhx-families, 2026-11-11, the
-// power per doubling of `k` as measured): each is held to order `k` and ignored with the item
-// that would fix it.
-
 /// About `k^1.2` to `k^1.8` from `k = 8` to 128 on main; with the threshold aggregate's
 /// upper disjunctions (LAZY-hub-unsolved), about `k^1.2` to `k^1.4`, 15.6 times the work from
-/// `k = 16` to 128 against the limit 15.4.
+/// `k = 16` to 128 against the limit 15.4. Each of the `k` tests took one constraint on two
+/// names out of a block of near `k` such constraints, and the work after it read every
+/// conjunct of that block: the names of each (`Scope::due`) and a search through it
+/// (`Blocks::peel`). Now the names of a block and its constraints on two names are counted as
+/// they come and go (`Blocks::names_of`, `Blocks::cut`), and the blocks a block went to are
+/// read from the difference of its persistent sets (`Blocks::now_of`): 9.6 times the work
+/// (106M and 1,017M instructions; 113.6M and 1,768M, 15.6 times, before) and 8.4 times the
+/// bytes (PERF-l139-family, COMPLEXITY.md PERF-l139-due).
 #[test]
-#[ignore = "PERF-coordkk: above linear on main, see ledger"]
 fn coordkk_scales() {
     scales("coordkk", 16, 1);
 }
+
+// The families below grow faster than linearly on main (TESTS-lhx-families, 2026-11-11, the
+// power per doubling of `k` as measured): each is held to order `k` and ignored with the item
+// that would fix it. The profile is the same for all (PERF-l139-family, 2026-11-12): the time
+// is in the projection of parts (`Scope::project_part`, 69 to 100 per cent at `n` and at
+// `8n`, 29 to 91 per cent in `hull_from`), and the parts stay small; what grows is the number
+// of projections, near `k^1.7` to `k^1.9` from `k = 4` to 16. Each time the interval of a
+// name moves, mostly in the copies of the scope that `cases` makes for the arms of a
+// disjunction, every part that mentions the name is projected again (`Scope::project_block`
+// wakes `due_users`), near `k` parts each time, and almost none of them changes. stair_holes
+// also projects each part in time near `k`, as `x` carries near `k` holes. Waking only the
+// parts whose result can change needs, for each part, the ends of its names its result
+// depends on; a part with a constraint on several names in its base, or with holes, has no
+// such ends, so the fix is open (cross-review).
 
 /// About `k^1.75` to `k^1.96`.
 #[test]

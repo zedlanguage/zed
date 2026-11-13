@@ -1993,12 +1993,33 @@ pub struct Blocks {
     // at O(log n) per name of a conjunct each time the conjunct changes block or hangs,
     // the order `at` already costs.
     moving_at: OrdMap<Arc<str>, OrdMap<BlockId, usize>>,
+    /// For each block, the number of its conjuncts that mention each name ([`names`]); none
+    /// zero.
+    // Complexity tradeoff: naive version, the names of a block read from its conjuncts,
+    // O(d log n) for a block of d conjuncts, so a scope that takes one conjunct out of a
+    // block of near k conjuncts at each of k tests and makes the block's names seeds
+    // (`Scope::due`) costs O(k² log n). This index gives a block's names in O(log n) and
+    // their number, at O(log n) per name of a conjunct each time the conjunct changes block,
+    // the order `at` already costs. Test
+    // `l01_39_reduced_product::families::coordkk_scales`; COMPLEXITY.md row PERF-l139-due.
+    names_in: OrdMap<(BlockId, Arc<str>), usize>,
+    /// For each block and two names `u < v`, the number of its conjuncts of those two names
+    /// and no other atom ([`pair`]); none zero.
+    // Complexity tradeoff: naive version, a conjunct of two names taken out of a block of
+    // others always searched for a second path between the names (`Blocks::peel`), whose
+    // breadth-first search reads every conjunct of the block at the first name before any
+    // reaches the second: O(d log n) for a block of d conjuncts on the two names, so k such
+    // removals O(k² log n). A second conjunct of the same two names leaves the block whole
+    // (a path through one can go through the other), which this count shows in O(log n), at
+    // O(log n) each time a conjunct of two names changes block. Test
+    // `l01_39_reduced_product::families::coordkk_scales`; COMPLEXITY.md row PERF-l139-due.
+    pairs: OrdMap<(BlockId, Arc<str>, Arc<str>), usize>,
 }
 
 /// Adds `by` to the count of `r` in `counts`, which holds no zero.
-fn tally(counts: &mut OrdMap<BlockId, usize>, r: BlockId, by: isize) {
+fn tally<K: Ord + Clone>(counts: &mut OrdMap<K, usize>, r: K, by: isize) {
     let n = counts.get(&r).copied().unwrap_or(0).checked_add_signed(by);
-    debug_assert!(n.is_some(), "a count of a tree below zero");
+    debug_assert!(n.is_some(), "a count below zero");
     let n = n.unwrap_or(0);
     if n == 0 {
         counts.remove(&r);
@@ -2021,6 +2042,45 @@ impl Blocks {
     /// The conjuncts of block `b` as their persistent set ([`Uses::set`]).
     pub fn member_set(&self, b: BlockId) -> Option<&OrdSet<Arc<Formula>>> {
         self.members.get(&b)
+    }
+
+    /// The names the conjuncts of block `b` mention ([`names`]), in O(log n) and their number.
+    pub fn names_of(&self, b: BlockId) -> impl Iterator<Item = &Arc<str>> {
+        self.names_in
+            .range((b, Arc::<str>::from(""))..)
+            .take_while(move |((c, _), _)| *c == b)
+            .map(|((_, n), _)| n)
+    }
+
+    /// The blocks that hold now the conjuncts of block `b` of `old`, an earlier state of
+    /// these blocks, that are still here.
+    // Complexity tradeoff: naive version, the block of each conjunct of `b` looked up,
+    // O(d log n) for a block of d conjuncts, so taking one conjunct out of a block of near k
+    // at each of k tests costs O(k² log n) (`Scope::due`). Used: when `b` is still a block,
+    // the difference of its conjuncts then and now, whose persistent sets share all but the
+    // paths to the changes (`OrdSet::diff` skips shared nodes), so O((c + 1) log n) for c
+    // conjuncts moved in or out of `b` since, each already paid for when it moved; a block
+    // gone is read whole, as before. Test `l01_39_reduced_product::families::coordkk_scales`;
+    // COMPLEXITY.md row PERF-l139-due.
+    pub fn now_of(&self, old: &Blocks, b: BlockId) -> BTreeSet<BlockId> {
+        let Some(then) = old.member_set(b) else {
+            return BTreeSet::new();
+        };
+        let Some(now) = self.member_set(b) else {
+            return then.iter().filter_map(|h| self.of(h)).collect();
+        };
+        let mut out = BTreeSet::new();
+        let mut left = then.len();
+        for d in then.diff(now) {
+            if let imbl::ordset::DiffItem::Remove(h) = d {
+                left -= 1;
+                out.extend(self.of(h));
+            }
+        }
+        if left > 0 {
+            out.insert(b);
+        }
+        out
     }
 
     /// The tree of block `b`: one number for all the blocks of one tree.
@@ -2136,6 +2196,12 @@ impl Blocks {
             return was;
         }
         for n in names(g) {
+            if let Some(w) = was {
+                tally(&mut self.names_in, (w, n.clone()), -1);
+            }
+            if let Some(t) = to {
+                tally(&mut self.names_in, (t, n.clone()), 1);
+            }
             if self.hung.has(&n, g) {
                 continue;
             }
@@ -2144,6 +2210,16 @@ impl Blocks {
             }
             if let Some(t) = to {
                 self.count_moving(&n, t, 1);
+            }
+        }
+        let mut two = atoms.iter();
+        if let (Some(Atom::Sym(u)), Some(Atom::Sym(v)), None) = (two.next(), two.next(), two.next())
+        {
+            if let Some(w) = was {
+                tally(&mut self.pairs, (w, u.clone(), v.clone()), -1);
+            }
+            if let Some(t) = to {
+                tally(&mut self.pairs, (t, u.clone(), v.clone()), 1);
             }
         }
         let in_forest = |b: Option<BlockId>| b.is_some_and(|b| !self.apart.contains(&b));
@@ -2278,6 +2354,29 @@ impl Blocks {
             .map(|(k, s)| (k.clone(), s.iter().cloned().collect()));
         if !held.eq(at) {
             return Err("the conjuncts of the names by block are not those of the blocks".into());
+        }
+        let mut names_in: BTreeMap<(BlockId, Arc<str>), usize> = BTreeMap::new();
+        let mut pairs: BTreeMap<(BlockId, Arc<str>, Arc<str>), usize> = BTreeMap::new();
+        for (&b, ms) in &self.members {
+            for h in ms {
+                for n in names(h) {
+                    *names_in.entry((b, n)).or_default() += 1;
+                }
+                if let Some([u, v]) = pair(h) {
+                    *pairs.entry((b, u, v)).or_default() += 1;
+                }
+            }
+        }
+        if !self
+            .names_in
+            .iter()
+            .map(|(k, &c)| (k.clone(), c))
+            .eq(names_in)
+        {
+            return Err("the counts of the names of the blocks are not those of the blocks".into());
+        }
+        if !self.pairs.iter().map(|(k, &c)| (k.clone(), c)).eq(pairs) {
+            return Err("the counts of the pairs of the blocks are not those of the blocks".into());
         }
         let held = (self.forest.0.iter()).map(|(k, s)| (k.clone(), s.iter().cloned().collect()));
         if !held.eq(forest) {
@@ -2738,9 +2837,12 @@ impl Blocks {
         let ms = self.members.get_mut(&b).expect("the block of a conjunct");
         ms.remove(g);
         let (iu, iv) = (self.name[u], self.name[v]);
+        // Another conjunct of `u` and `v` alone in `b` takes `g`'s place on any cycle through `g`
+        // but the one through both, whose edges meet at it: `b` stays one block (the count
+        // `pairs`).
         if ms.is_empty() {
             self.bridge(b, r, (u, iu), (v, iv));
-        } else {
+        } else if !self.pairs.contains_key(&(b, u.clone(), v.clone())) {
             self.peel(b, r, (u, iu), (v, iv));
         }
     }

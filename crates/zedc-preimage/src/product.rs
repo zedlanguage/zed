@@ -6270,6 +6270,8 @@ impl Scope {
         // two scopes hold the hubs alike (item NARROW-lazy-settle).
         let mut families: BTreeSet<conjuncts::Class> = BTreeSet::new();
         let mut gone: Vec<Arc<Formula>> = Vec::new();
+        // The blocks of `old` that lost a conjunct, and those whose names were made seeds.
+        let (mut lost, mut named): (BTreeSet<BlockId>, BTreeSet<BlockId>) = Default::default();
         for d in old.set().diff(self.relation.set()) {
             any = true;
             match d {
@@ -6289,15 +6291,27 @@ impl Scope {
                     // the bounds there a fixed point of those left. From any other tree, whose
                     // projection may have been refused, its names and its block's are made
                     // seeds, and so unsure, below.
+                    // Complexity tradeoff: naive version, the names and the block now of each
+                    // conjunct of the block `g` left, read for each conjunct removed: O(d log n)
+                    // for a block of d conjuncts, so one conjunct taken out of a block of near
+                    // k at each of k tests costs O(k² log n). Used: the block's names from their
+                    // counts ([`conjuncts::Blocks::names_of`]) and the blocks now of its
+                    // conjuncts from the difference of its conjuncts then and now
+                    // ([`conjuncts::Blocks::now_of`]), each read once for all the conjuncts
+                    // removed from it, in O(log n) per name and per conjunct moved. Test
+                    // `l01_39_reduced_product::families::coordkk_scales`; COMPLEXITY.md row
+                    // PERF-l139-due.
                     let names = conjuncts::names(g);
                     let was = old.blocks().of(g);
                     if names.iter().any(|n| !old.differences_only_at(n)) {
                         seeds.names.extend(names);
-                        let mates = was.into_iter().flat_map(|b| old.blocks().members(b));
-                        seeds.names.extend(mates.flat_map(|h| conjuncts::names(h)));
+                        if let Some(b) = was.filter(|&b| named.insert(b)) {
+                            seeds.names.extend(old.blocks().names_of(b).cloned());
+                        }
                     }
-                    let mates = was.into_iter().flat_map(|b| old.blocks().members(b));
-                    out.extend(mates.filter_map(|h| blocks.of(h)));
+                    if let Some(b) = was.filter(|&b| lost.insert(b)) {
+                        out.extend(blocks.now_of(old.blocks(), b));
+                    }
                     gone.push(g.clone());
                 }
             }

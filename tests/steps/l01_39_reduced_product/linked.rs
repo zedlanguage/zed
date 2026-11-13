@@ -887,6 +887,84 @@ fn the_blocks_stay_those_of_the_definition_as_constraints_on_two_names_come_and_
     assert!(several > 290, "{several} removals of several pairs at once");
 }
 
+/// Random constraints on two names come and go as in the test above, and after each removal
+/// the blocks the conjuncts of an earlier block went to ([`Blocks::now_of`]) and the names of
+/// each block ([`Blocks::names_of`]) are those found by reading every conjunct: the block of
+/// each conjunct of the earlier block that is still here, and the names its conjuncts mention.
+/// Many removals take out a constraint whose two names another constraint of its block links
+/// alone (`x - y >= 1` beside `x - y >= -2`), where the block stays whole without a search
+/// (`Blocks::cut`), and many take out one with no such twin, where the block may split; both
+/// are counted so that each is met, and the blocks after both are checked against those of
+/// the definition by the test above.
+#[test]
+fn the_blocks_an_earlier_block_went_to_and_the_names_of_a_block_are_those_of_its_conjuncts() {
+    let mut r = Rng::new(0x51ab);
+    // Removals of a constraint on two names with a twin left in its block, and without one.
+    let (mut twins, mut alone) = (0, 0);
+    for case in 0..300 {
+        let mut b = Blocks::default();
+        let mut set: BTreeSet<Arc<Formula>> = BTreeSet::new();
+        for step in 0..40 {
+            if r.below(10) < 4 && !set.is_empty() {
+                let gs: Vec<Arc<Formula>> = set.iter().cloned().collect();
+                let gone: Vec<Arc<Formula>> = if r.below(4) == 0 {
+                    gs.into_iter().filter(|_| r.below(3) == 0).collect()
+                } else {
+                    vec![r.pick(&gs)]
+                };
+                let old = b.clone();
+                if let [g] = &gone[..] {
+                    let two = |h: &Formula| {
+                        let a = h.atoms();
+                        (a.len() == 2 && a.iter().all(|a| matches!(a, Atom::Sym(_))))
+                            .then(|| names(h))
+                    };
+                    if let Some(uv) = two(g) {
+                        let ob = old.of(g).expect("a block");
+                        if old
+                            .members(ob)
+                            .any(|h| h != g && two(h).as_ref() == Some(&uv))
+                        {
+                            twins += 1;
+                        } else {
+                            alone += 1;
+                        }
+                    }
+                }
+                b.remove(&gone);
+                for g in &gone {
+                    set.remove(g);
+                }
+                let lost: BTreeSet<u64> = gone.iter().filter_map(|g| old.of(g)).collect();
+                for ob in lost {
+                    let want: BTreeSet<u64> = old
+                        .members(ob)
+                        .filter(|h| set.contains(*h))
+                        .map(|h| b.of(h).expect("a block"))
+                        .collect();
+                    assert_eq!(
+                        b.now_of(&old, ob),
+                        want,
+                        "case {case} step {step}: block {ob}"
+                    );
+                }
+            } else {
+                let g = Arc::new(pair_conjunct(&mut r));
+                if set.insert(g.clone()) {
+                    b.add(&g);
+                }
+            }
+            for id in b.all() {
+                let want: BTreeSet<Arc<str>> = b.members(id).flat_map(|h| names(h)).collect();
+                let got: BTreeSet<Arc<str>> = b.names_of(id).cloned().collect();
+                assert_eq!(got, want, "case {case} step {step}: block {id}");
+            }
+        }
+    }
+    assert!(twins > 300, "{twins} removals with a twin left");
+    assert!(alone > 300, "{alone} removals without one");
+}
+
 /// `x - y >= 0` as a conjunct.
 fn at_least(x: &str, y: &str) -> Arc<Formula> {
     let lin = Lin::atom(Atom::Sym(x.into())).plus(&Lin::atom(Atom::Sym(y.into())).times(-1));
