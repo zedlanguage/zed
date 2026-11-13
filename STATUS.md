@@ -2107,15 +2107,15 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | CK-apply-operator | impl attempt 1 | 2026-11-12 00:38 | baseline: 875 pieces of l01_17-29, l01_39*, diag_control, zedc_check, zedc pass with a message dump (load 25-54); Label enum written, compiling |
 | CROSSOVER-bench | impl attempt 1 | 2026-11-12 22:47 | started; worktree /home/luke/Work/wt/crossover-bench on origin/main |
-| FLOAT-sqrt | running | 2026-11-05 04:07 |  |
+| FLOAT-sqrt | impl attempt 1 | 2026-11-05 04:07 | started; worktrees float-sqrt and float-sqrt-spec made and seeded |
 | MSG-derive-print-unions | impl attempt 1 | 2026-11-12 17:24 | baseline on main: union chain bytes 20552106 at n=40, 898418051 at n=320 (43.7x, limit 13.8x) / load 29.24 35.60 37.43 |
 | MSG-flow-origin | impl attempt 1 | 2026-11-11 13:43 | started; worktree wt/msg-flow-origin / 28.82 31.73 34.72 |
-| MSG-literal-type-huge-power | impl attempt 1 | 2026-11-12 22:00 | negative control (run once, not committed): without the walk.rs change the 3 new tests fail; scaling of the checking of if 3^(200n)+1 took 6.1 times the bytes a |
 | PERF-deep-ops-slow | impl attempt 1 | 2026-11-12 21:38 | fix measured: verdict 207k fits 357k why 639k diff 189k a level (old 198/384/552/198, main 251/527/819/462); per-level test added, negative control fails on mai |
 | PERF-l139-family | running | 2026-11-12 18:45 | coordkk fixed d016b9cc3 90a844aa8; 14 tests in 8 families still ignored, cross-review next / 45.57 |
 | PERF-pk-one-sided | impl attempt 1 | 2026-11-12 22:06 | lockstep reorder + order list built; reach 126/254/510 at n=64/128/256 (was 1767/5205/18599); negative control on old code: new scaling test fails 22.7x bytes ( |
 | ST-walk-implicit | impl attempt 1 | 2026-11-11 01:43 | started: worktree /home/luke/Work/wt/st-walk-implicit on origin/main 89d83b4a3 / load 36.87 40.84 46.29 |
 | TESTS-ignores-and-owners | impl attempt 1 | 2026-11-08 23:59 | started; worktree /home/luke/Work/wt/tests-ignores-and-owners on 4b1e9d332 |
+| TESTS-small-sizes | running | 2026-11-08 23:59 |  |
 | TEST-staged | impl attempt 1 | 2026-11-12 21:50 | not-run rows via Mixer::taken + taken_reads (if evaluated whole at build: only the arm the build takes); l02_08d 26/26 pass; negative control (extra run per 25  |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
