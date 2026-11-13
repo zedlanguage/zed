@@ -32,6 +32,19 @@ type NearMiss = (
 
 const NEAR_MISSES: &[NearMiss] = &[
     (
+        Row::LoopedAlternatives,
+        "",
+        "f(x: int, y: int) =\n  if y - x >= 1 || y >= 0 {\n    if x - y >= 1 { 1 } else if x >= 0 { 2 } else { 0 }\n  } else { 0 };\n",
+        "f(x: int, y: int) = if (x - y >= 1 || x >= 0) && (y - x >= 1 || y >= 0) { 1 } else { 0 };\n",
+        "1:24",
+        Some(
+            "write the choice `x - y >= 1 || x >= 0` as an `if` on its alternatives, inside an \
+             `if` on the rest of the test, so that no loop of limits passes through it, with the \
+             body of the `if` at each `…`:\nif (y - x >= 1 || y >= 0) {\n    if x - y >= 1 {\n        \
+             …\n    } else if x >= 0 {\n        …\n    }\n}",
+        ),
+    ),
+    (
         Row::Rebinding,
         "f(x) {\n  y = x + 1;\n",
         "  z = y * 2;\n  z\n}\n",

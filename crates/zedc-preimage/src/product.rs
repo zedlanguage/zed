@@ -53,6 +53,7 @@ use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World};
 use super::address::Address;
 use super::holes;
 use super::images;
+use super::loops;
 use super::preimage::{
     Classes, Demand, Domains, LetIn, LetPa, Lets, Listed, Shift, TermBounds, follow_own,
     let_narrowing, let_summary, preimage_listed, relations, witness,
@@ -3786,6 +3787,11 @@ pub enum Cause {
         /// The number of names the constraints join.
         names: usize,
     },
+    /// The test's `||` alternatives limit each other's ranges in a loop, which the checker
+    /// would have to run a number of times that grows with the ranges (DESIGN.md step L1.39,
+    /// the class of S4): the checker rejects the test, with this message, instead of warning.
+    /// The scope is narrowed as before.
+    Looped(Arc<loops::Looped>),
 }
 
 impl From<presburger::Refusal> for Cause {
@@ -3925,6 +3931,9 @@ impl Refused {
         let c = &self.constraint;
         let cause = match &self.cause {
             Cause::Solver(r) => r,
+            Cause::Looped(l) => {
+                return (l.headline.clone(), l.steps.clone(), vec![l.repair.clone()]);
+            }
             Cause::Holes { holed, names } => {
                 let holed: Vec<String> = holed.iter().map(|n| format!("`{n}`")).collect();
                 return (
@@ -4777,6 +4786,17 @@ impl Scope {
     /// constraint, how it was asked, then cause, whatever order they were met in.
     pub fn warnings(&self) -> Vec<Warning> {
         (self.refusals.iter())
+            .filter(|(r, _)| !matches!(r.cause, Cause::Looped(_)))
+            .map(|(r, kept)| r.warning(kept))
+            .collect()
+    }
+
+    /// The message of each test this scope was narrowed by whose `||` alternatives limit each
+    /// other's ranges in a loop ([`Cause::Looped`]), which the checker rejects: its headline,
+    /// then its steps and its repair. In the order of [`Refused`].
+    pub fn looped(&self) -> Vec<Warning> {
+        (self.refusals.iter())
+            .filter(|(r, _)| matches!(r.cause, Cause::Looped(_)))
             .map(|(r, kept)| r.warning(kept))
             .collect()
     }
@@ -5536,7 +5556,282 @@ impl Scope {
             return;
         }
         let (tree, pol) = Tree::of(test);
+        self.refuse_looped(test, &tree, outcome == pol, outcome);
         self.narrow_linear(&tree, 0, outcome == pol, prem);
+    }
+
+    /// Keeps the refusal of `test`, whose tree is `tree` and whose root gives `value`, when its
+    /// `||` alternatives limit each other's ranges in a loop (DESIGN.md step L1.39, the class
+    /// of S4; [`loops::check`]): the checker rejects it ([`Cause::Looped`]). The scope is still
+    /// narrowed as before, which is sound. Tradeoff: DESIGN names S4, the greatest fixed point of
+    /// projection, promotion and join, as the narrowing of a test in the class; this keeps
+    /// [`Scope::narrow_linear`], which keeps the test's linear relation and narrows a part by
+    /// narrowing each case and joining them ([`Scope::cases`], COMPLEXITY.md C42), with no
+    /// fixed-point loop of its own. Within the class no join narrows a bound twice (DESIGN
+    /// L1.39), so a loop of S4's steps is expected to add nothing; measured, the arms of the eight
+    /// in-class tests of `l01_39_reduced_product::loops` have exactly the least and greatest
+    /// values that enumeration over `-6..=6` finds, both outcomes, every name (that test checks
+    /// it). Equality with S4 on every in-class test is not proved here. A test with no choice of two alternatives, the most
+    /// common, is passed over after one look at the root and its sides; any other costs
+    /// O(s + N log N) for `s` nodes and `N` atom terms.
+    fn refuse_looped(&mut self, test: &Term, tree: &Tree, value: bool, outcome: bool) {
+        if let Some(r) = self.looped_refusal(test, tree, value, outcome) {
+            self.refuse(r, Arc::new(BTreeMap::new()), &[]);
+        }
+    }
+
+    /// The refusal [`Cause::Looped`] of `test` giving `outcome` in this scope, as the checker
+    /// reports it at each `if` whose condition joins tests by `&&`, `||` or `!` (DESIGN.md step
+    /// L1.39: the class depends on the test as written, so a test outside it is rejected
+    /// whether or not its arms are read); none when the test is in the class. The scope gives
+    /// the names' ranges. Costs what [`Scope::refuse_looped`] does.
+    pub fn looped_test(&self, test: &Term, outcome: bool) -> Option<Refused> {
+        if self.bottom {
+            return None;
+        }
+        let mut s = self.clone();
+        s.settle_test(test);
+        let plain = plain_test(test, &s);
+        let t = plain.as_ref().unwrap_or(test);
+        let (tree, pol) = Tree::of(t);
+        s.looped_refusal(t, &tree, outcome == pol, outcome)
+    }
+
+    /// The refusal [`Scope::refuse_looped`] keeps, or none.
+    fn looped_refusal(
+        &self,
+        test: &Term,
+        tree: &Tree,
+        value: bool,
+        outcome: bool,
+    ) -> Option<Refused> {
+        // The parts: each node with its value whose sides or arms are alternatives.
+        let unforced = |n: usize, v: bool| match &tree.nodes[n].kind {
+            Kind::Nest(and, _) => *and != v,
+            Kind::If(_) => true,
+            Kind::Lit(_) | Kind::Atom => false,
+        };
+        type Sides = Vec<(usize, bool)>;
+        let (base_nodes, part_nodes): (Sides, Sides) = match &tree.nodes[0].kind {
+            Kind::Nest(and, sides) if *and == value => (sides.iter())
+                .map(|&(k, p)| (k, value == p))
+                .partition(|&(k, v)| !unforced(k, v)),
+            _ if unforced(0, value) => (Vec::new(), vec![(0, value)]),
+            _ => return None,
+        };
+        if part_nodes.is_empty() {
+            return None;
+        }
+        // The tree orders the sides of a nest by form ([`Tree`]); a message lists them as
+        // written: by where each node's term comes in a walk of the test, which holds every
+        // node's term. O(s log s) for `s` connectives and tests.
+        let mut at: BTreeMap<*const Term, usize> = BTreeMap::new();
+        let mut walk = vec![test];
+        while let Some(t) = walk.pop() {
+            let i = at.len();
+            at.entry(t as *const Term).or_insert(i);
+            match t {
+                Term::Prim(Prim::And | Prim::Or | Prim::Not, a) => walk.extend(a.iter().rev()),
+                Term::If(c, a, b) => walk.extend([&**b, &**a, &**c]),
+                _ => {}
+            }
+        }
+        let place = |n: usize| at.get(&(tree.nodes[n].term as *const Term)).copied();
+        let (mut base_nodes, mut part_nodes) = (base_nodes, part_nodes);
+        base_nodes.sort_by_key(|&(n, _)| place(n));
+        part_nodes.sort_by_key(|&(n, _)| place(n));
+        // Each text a message may print, as the nodes it joins by `&&` with their values: built
+        // into a term only when printed, so a test in the class copies no term.
+        let mut texts: Vec<Vec<(usize, bool)>> = Vec::new();
+        // Whether every atom gathered is read as linear atoms.
+        let gather = |n: usize,
+                      v: bool,
+                      out: &mut Vec<(usize, Lin)>,
+                      texts: &mut Vec<Vec<(usize, bool)>>| {
+            let mut whole = true;
+            let mut stack = vec![(n, v)];
+            while let Some((n, v)) = stack.pop() {
+                match &tree.nodes[n].kind {
+                    Kind::Lit(_) => whole = false,
+                    Kind::Atom => {
+                        let t = tree.nodes[n].term;
+                        let lins = self.atom_lins(t, v);
+                        whole &= !lins.is_empty();
+                        for l in lins {
+                            texts.push(vec![(n, v)]);
+                            out.push((texts.len() - 1, l));
+                        }
+                    }
+                    Kind::Nest(_, sides) => stack.extend(sides.iter().map(|&(k, p)| (k, v == p))),
+                    Kind::If([(c, pc), (a, pa), (b, pb)]) => {
+                        whole = false;
+                        stack.extend([(*c, *pc), (*c, !*pc), (*a, v == *pa), (*b, v == *pb)]);
+                    }
+                }
+            }
+            whole
+        };
+        let mut base = Vec::new();
+        let mut kept = Vec::new();
+        for &(k, v) in &base_nodes {
+            gather(k, v, &mut base, &mut texts);
+            texts.push(vec![(k, v)]);
+            kept.push(texts.len() - 1);
+        }
+        let mut parts = Vec::new();
+        for &(n, v) in &part_nodes {
+            // Each case: a node and its value, or for an `if` its condition and an arm.
+            let cases: Vec<Vec<(usize, bool)>> = match &tree.nodes[n].kind {
+                Kind::Nest(_, sides) => {
+                    let mut sides = sides.clone();
+                    sides.sort_by_key(|&(k, _)| place(k));
+                    sides.iter().map(|&(k, p)| vec![(k, v == p)]).collect()
+                }
+                Kind::If([(c, pc), (a, pa), (b, pb)]) => vec![
+                    vec![(*c, *pc), (*a, v == *pa)],
+                    vec![(*c, !*pc), (*b, v == *pb)],
+                ],
+                Kind::Lit(_) | Kind::Atom => unreachable!("a part has alternatives"),
+            };
+            let mut cs = Vec::new();
+            for case in cases {
+                let mut atoms = Vec::new();
+                let mut whole = true;
+                for &(k, w) in &case {
+                    whole &= gather(k, w, &mut atoms, &mut texts);
+                }
+                texts.push(case.clone());
+                cs.push(loops::Case {
+                    text: texts.len() - 1,
+                    atoms,
+                    whole,
+                });
+            }
+            texts.push(vec![(n, v)]);
+            parts.push(loops::Part {
+                text: texts.len() - 1,
+                cases: cs,
+            });
+        }
+        let mut boxes = BTreeMap::new();
+        let lins = (base.iter().map(|(_, l)| l)).chain(
+            parts
+                .iter()
+                .flat_map(|p| p.cases.iter().flat_map(|c| c.atoms.iter().map(|(_, l)| l))),
+        );
+        for l in lins {
+            for a in l.terms.keys() {
+                let Atom::Sym(n) = a else { continue };
+                boxes.entry(n.clone()).or_insert_with(|| {
+                    let x = self.get(n).ints().clone();
+                    let end = |e: &End| e.to_i64().map(i128::from);
+                    let (lo, hi) = x.bounds().map_or((None, None), |(l, h)| (end(l), end(h)));
+                    (lo, hi, format!("int{x}"))
+                });
+            }
+        }
+        let t = loops::Test {
+            base,
+            kept,
+            parts,
+            boxes,
+        };
+        let text = |i: usize| {
+            let shown: Vec<Term> = (texts[i].iter())
+                .map(|&(k, w)| negated_if(tree.nodes[k].term, !w))
+                .collect();
+            let t = balanced(Prim::And, shown);
+            let free = stage::free(&t);
+            plain_text(&t, &|u| {
+                print::written(u, written_name, &|x| free.contains(x))
+            })
+        };
+        let l = loops::check(&t, outcome, &text)?;
+        let free = stage::free(test);
+        let constraint: Arc<str> = print::written(test, written_name, &|x| free.contains(x)).into();
+        Some(Refused {
+            constraint,
+            asked: Asked::Test { outcome },
+            cause: Cause::Looped(Arc::new(l)),
+        })
+    }
+
+    /// The atoms `lin >= 0` of `t` giving `value`, a comparison of linear sums of this scope's
+    /// integer names and literals: one for `<`, `<=`, `>`, `>=`, two for `==`, and none for
+    /// `!=`, which narrows no bound, or for any other test. O(the size of `t`).
+    fn atom_lins(&self, t: &Term, value: bool) -> Vec<Lin> {
+        let Term::Prim(p, a) = t else {
+            return Vec::new();
+        };
+        let [x, y] = &a[..] else { return Vec::new() };
+        let p = if value {
+            *p
+        } else {
+            match p {
+                Prim::Lt => Prim::Ge,
+                Prim::Le => Prim::Gt,
+                Prim::Gt => Prim::Le,
+                Prim::Ge => Prim::Lt,
+                Prim::Eq => Prim::Ne,
+                Prim::Ne => Prim::Eq,
+                _ => return Vec::new(),
+            }
+        };
+        let (Some(x), Some(y)) = (self.lin_of(x), self.lin_of(y)) else {
+            return Vec::new();
+        };
+        let d = x.minus(&y);
+        let one = Int::from(1i64);
+        let shifted = |l: Lin, by: &Int| Lin {
+            constant: &l.constant - by,
+            ..l
+        };
+        match p {
+            Prim::Ge => vec![d],
+            Prim::Gt => vec![shifted(d, &one)],
+            Prim::Le => vec![d.times(-1i64)],
+            Prim::Lt => vec![shifted(d.times(-1i64), &one)],
+            Prim::Eq => vec![d.clone(), d.times(-1i64)],
+            _ => Vec::new(),
+        }
+    }
+
+    /// `t` as a linear sum of this scope's integer names, a name of one value read as its
+    /// value; `None` for any other term. O(the size of `t` times the names it holds).
+    fn lin_of(&self, t: &Term) -> Option<Lin> {
+        let int = Type::int();
+        Some(match t {
+            Term::Lit(Value::Int(k)) => Lin::constant(Int::from(*k)),
+            Term::Var(n) => {
+                let p = self.names.get(n)?;
+                if !p.ty.element.subtype(&int) {
+                    return None;
+                }
+                match p.value() {
+                    Some(Value::Int(k)) => Lin::constant(Int::from(*k)),
+                    Some(_) => return None,
+                    None => Lin::atom(Atom::Sym(n.clone())),
+                }
+            }
+            Term::Prim(Prim::Neg, a) if a.len() == 1 => self.lin_of(&a[0])?.times(-1i64),
+            Term::Prim(p @ (Prim::Add | Prim::Sub), a) if a.len() == 2 => {
+                let (x, y) = (self.lin_of(&a[0])?, self.lin_of(&a[1])?);
+                if *p == Prim::Add {
+                    x.plus(&y)
+                } else {
+                    x.minus(&y)
+                }
+            }
+            Term::Prim(Prim::Mul, a) if a.len() == 2 => {
+                let (x, y) = (self.lin_of(&a[0])?, self.lin_of(&a[1])?);
+                match (x.terms.is_empty(), y.terms.is_empty()) {
+                    (true, _) => y.times(x.constant.clone()),
+                    (_, true) => x.times(y.constant.clone()),
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        })
     }
 
     /// Narrows by node `n` of `tree` giving `value`, keeping the linear relation of the node's
@@ -9332,6 +9627,112 @@ fn signed(t: Term, pol: bool) -> Term {
     } else {
         Term::Prim(Prim::Not, vec![t])
     }
+}
+
+/// `t`, or when `negate` its negation as a program would write it: a comparison turned
+/// around (`x < 1` for `!(x >= 1)`), `&&` and `||` by De Morgan's laws, a `!` dropped, and
+/// any other test under a `!`. For the texts of a message, which name the alternatives of a
+/// test that narrows by its `false` outcome. O(the size of `t`).
+fn negated_if(t: &Term, negate: bool) -> Term {
+    if !negate {
+        return t.clone();
+    }
+    match t {
+        Term::Prim(p, a) if a.len() == 2 => {
+            let q = match p {
+                Prim::Lt => Prim::Ge,
+                Prim::Le => Prim::Gt,
+                Prim::Gt => Prim::Le,
+                Prim::Ge => Prim::Lt,
+                Prim::Eq => Prim::Ne,
+                Prim::Ne => Prim::Eq,
+                Prim::And => Prim::Or,
+                Prim::Or => Prim::And,
+                _ => return Term::Prim(Prim::Not, vec![t.clone()]),
+            };
+            let a = match q {
+                Prim::And | Prim::Or => a.iter().map(|x| negated_if(x, true)).collect(),
+                _ => a.clone(),
+            };
+            Term::Prim(q, a)
+        }
+        Term::Prim(Prim::Not, a) if a.len() == 1 => a[0].clone(),
+        _ => Term::Prim(Prim::Not, vec![t.clone()]),
+    }
+}
+
+/// `t` written as a program writes it, with the parentheses the operators' precedence needs
+/// and no others: `x - y >= 1 || x >= 0`. Comparisons, `+`, `-`, `*`, `-x`, `&&`, `||`, `!`,
+/// names and integers are written here; any other term is `other` of it, in parentheses
+/// below an operator. O(the size of `t`) besides `other`.
+fn plain_text(t: &Term, other: &dyn Fn(&Term) -> String) -> String {
+    /// `t` inside an operator of precedence `at`: 1 `||`, 2 `&&`, 3 comparisons, 4 `+ -`,
+    /// 5 `*`, 6 a prefix operator.
+    fn go(t: &Term, at: u8, other: &dyn Fn(&Term) -> String, out: &mut String) {
+        let binary = |p: Prim| match p {
+            Prim::Or => Some((1, "||")),
+            Prim::And => Some((2, "&&")),
+            Prim::Eq => Some((3, "==")),
+            Prim::Ne => Some((3, "!=")),
+            Prim::Lt => Some((3, "<")),
+            Prim::Le => Some((3, "<=")),
+            Prim::Gt => Some((3, ">")),
+            Prim::Ge => Some((3, ">=")),
+            Prim::Add => Some((4, "+")),
+            Prim::Sub => Some((4, "-")),
+            Prim::Mul => Some((5, "*")),
+            _ => None,
+        };
+        let (p, a): (Prim, Vec<&Term>) = match t {
+            Term::Prim(p, a) => (*p, a.iter().collect()),
+            Term::If(..) => match connective(t) {
+                Some((and, [(x, px), (y, py)])) if py => {
+                    let x = if px { x.clone() } else { negated_if(x, true) };
+                    let op = if and { Prim::And } else { Prim::Or };
+                    return go(&Term::Prim(op, vec![x, y.clone()]), at, other, out);
+                }
+                _ => return paren(&other(t), at, out),
+            },
+            Term::Var(n) => return out.push_str(written_name(n)),
+            Term::Lit(Value::Int(k)) => return out.push_str(&k.to_string()),
+            _ => return paren(&other(t), at, out),
+        };
+        match (p, &a[..]) {
+            (Prim::Neg | Prim::Not, [x]) => {
+                out.push(if p == Prim::Neg { '-' } else { '!' });
+                go(x, 6, other, out);
+            }
+            (_, [x, y]) if binary(p).is_some() => {
+                let (q, op) = binary(p).expect("matched");
+                if q < at {
+                    out.push('(');
+                }
+                // Comparisons do not chain, and `-` is not associative: the right side of
+                // either, and the left side of a comparison, are one level up.
+                go(x, if q == 3 { 4 } else { q }, other, out);
+                out.push_str(&format!(" {op} "));
+                go(
+                    y,
+                    if q == 3 || p == Prim::Sub { q + 1 } else { q },
+                    other,
+                    out,
+                );
+                if q < at {
+                    out.push(')');
+                }
+            }
+            _ => paren(&other(t), at, out),
+        }
+    }
+    fn paren(s: &str, at: u8, out: &mut String) {
+        match at > 0 && s.contains(' ') && !(s.starts_with('(') && s.ends_with(')')) {
+            true => out.push_str(&format!("({s})")),
+            false => out.push_str(s),
+        }
+    }
+    let mut out = String::new();
+    go(t, 0, other, &mut out);
+    out
 }
 
 /// The connective `p` over `sides`, nested in a balanced way: depth logarithmic in their

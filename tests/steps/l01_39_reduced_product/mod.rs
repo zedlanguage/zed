@@ -23,6 +23,7 @@ mod if_shortcut;
 mod lazy;
 mod let_terms;
 mod linked;
+mod loops;
 mod named_test;
 mod nests;
 mod pendants;

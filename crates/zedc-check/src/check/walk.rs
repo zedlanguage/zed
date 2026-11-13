@@ -876,6 +876,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 else {
                     unreachable!("an `if`")
                 };
+                self.looped_condition(cond);
                 let out = self.passing(&c, "the condition of `if`", cond.span, Some(cond.span));
                 let what = "the condition of `if`";
                 for p in c.pieces() {
@@ -4885,8 +4886,50 @@ impl<'a> Ck<'_, 'a> {
     /// narrowed holds here, and may not where the scope is read.
     pub(super) fn test_nodes(&mut self, e: &'a Expr) -> (usize, usize) {
         let t = self.term(e);
-        let fresh = t
-            .vars
+        let fresh = self.fresh(&t);
+        self.arms.test(e, fresh)
+    }
+
+    /// Keeps the refusal of the condition `e` of an `if` for each outcome when its `||`
+    /// alternatives limit each other's ranges in a loop ([`Scope::looped_test`]), which
+    /// [`Ck::finish`] rejects (DESIGN.md step L1.39 and sec:diagnostics). The walk narrows a
+    /// condition one comparison at a time, joining at each `||`, and so runs no such loop;
+    /// the class is still a property of the condition as written, whether or not an arm is
+    /// read, over the ranges its names have where the `if` is (the box of the class: an outer
+    /// test can make a bound finite, and the message shows the values). Only a condition that
+    /// joins tests by `&&`, `||` or `!` is read: one translation, the scope where the `if` is,
+    /// settled as any read there settles it, and one classification, O(s + N log N) for `s`
+    /// nodes and `N` atom terms.
+    pub(super) fn looped_condition(&mut self, e: &'a Expr) {
+        let joined = matches!(
+            e.kind,
+            ExprKind::Binary(BinaryOp::And | BinaryOp::Or, ..) | ExprKind::Unary(UnaryOp::Not, _)
+        );
+        if !joined || self.trying {
+            return;
+        }
+        let t = self.term(e);
+        let here = self.arms.here();
+        let scope = match here {
+            0 => Scope::new(self.fresh(&t)),
+            _ => {
+                let mut wanted = vec![Item::Scope(here)];
+                wanted.extend(t.binders.iter().map(|&b| Item::Bound(b)));
+                self.settle(wanted);
+                let s = self.arms.scopes[here].clone().expect("settled");
+                self.with_bound(s, &t.binders)
+            }
+        };
+        for outcome in [true, false] {
+            if let Some(r) = scope.looped_test(&t.term, outcome) {
+                self.refused_at.entry((e.span, r)).or_default();
+            }
+        }
+    }
+
+    /// The products of the names of `t` taken from their types as they are here.
+    fn fresh(&self, t: &Translated) -> Vec<(Arc<str>, Product)> {
+        t.vars
             .iter()
             .map(|(x, id)| {
                 let ty = self.env.get(id);
@@ -4902,8 +4945,7 @@ impl<'a> Ck<'_, 'a> {
                 };
                 (x.clone(), p)
             })
-            .collect();
-        self.arms.test(e, fresh)
+            .collect()
     }
 
     /// A note at each test the walk is in that bears on the operand `e`, innermost first, for a

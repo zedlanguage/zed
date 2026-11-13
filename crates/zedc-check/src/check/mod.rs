@@ -63,7 +63,7 @@ use zedc_lattice::interval::{
 };
 use zedc_lattice::revision::{Op, forward};
 use zedc_preimage::images;
-use zedc_preimage::product::{Kept, Refused};
+use zedc_preimage::product::{Cause, Kept, Refused};
 use zedc_resolve::resolve::tables::Tables;
 use zedc_resolve::resolve::{Handle, Ref, Resolution};
 use zedc_syntax::ast::{
@@ -3413,6 +3413,29 @@ impl<'t, 'a> Ck<'t, 'a> {
             .into_iter()
             .map(|(k, t)| (k, self.shown(&self.solved(&t))))
             .collect();
+        // A test whose `||` alternatives limit each other's ranges in a loop is rejected, not
+        // warned of (DESIGN.md L1.39): one error at each such test, for its `true` outcome
+        // when both outcomes narrow, which `Refused`'s order puts last at a place.
+        let mut looped: BTreeMap<Span, Refused> = BTreeMap::new();
+        self.refused_at.retain(|(span, r), _| match r.cause {
+            Cause::Looped(_) => {
+                looped.insert(*span, r.clone());
+                false
+            }
+            _ => true,
+        });
+        for (span, r) in looped {
+            let w = r.warning(&Kept::default());
+            let notes = (w.steps.into_iter())
+                .map(|text| Note { span, text })
+                .collect();
+            self.reject(
+                Some(Row::LoopedAlternatives),
+                span,
+                Msg::from(w.message),
+                notes,
+            );
+        }
         let text = self.t.text;
         let mut errors: Vec<Error> = (std::mem::take(&mut self.errors).into_iter())
             .map(|f| f.written(text))
