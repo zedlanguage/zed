@@ -94,9 +94,11 @@ impl Env {
             registered: AtomicU64::new(u64::MAX),
             group: None,
             digest: 0,
+            name_digest: 0,
             args,
             members: Vec::new(),
             judged: OnceLock::new(),
+            diagonal_empty: OnceLock::new(),
         }
     }
 

@@ -247,8 +247,8 @@ struct Nodes {
 // optional optimization; they keep the existing parser and finder.
 fn finite_positive_alphabet(rows: &[Row]) -> Option<BTreeSet<Value>> {
     let mut pending: Vec<Type> = rows.iter().map(|r| r[1].clone()).collect();
-    let mut seen = ByType::with_hasher(Digests::new());
-    let mut seen_heads = ByType::with_hasher(Digests::new());
+    let mut seen = ByType::new();
+    let mut seen_heads = ByType::new();
     let mut alphabet = BTreeSet::new();
     let mut add_head = |h: &Type| -> Option<()> {
         if seen_heads.insert(h.clone(), ()).is_some() {
@@ -347,7 +347,7 @@ impl Nodes {
     /// The node of `x`, reading the nodes after it first; `None` outside the class.
     fn node(&mut self, x: &Type) -> Option<usize> {
         let mut path: Vec<(Type, bool, Ints)> = Vec::new();
-        let mut on_path: ByType<()> = ByType::with_hasher(Digests::new());
+        let mut on_path: ByType<()> = ByType::new();
         let mut cur = x.clone();
         let mut below = loop {
             if let Some(&i) = self.of.get(&cur) {
@@ -589,12 +589,12 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
     // The nodes of every row tail.
     let mut ns = Nodes {
         nodes: Vec::new(),
-        of: ByType::with_hasher(Digests::new()),
+        of: ByType::new(),
         stop: None,
         link: link.clone(),
         carrier: None,
         alphabet: finite_positive_alphabet(&taken),
-        heads: ByType::with_hasher(Digests::new()),
+        heads: ByType::new(),
     };
     let mut pos: Vec<(Ints, usize)> = Vec::with_capacity(taken.len());
     for row in &taken {

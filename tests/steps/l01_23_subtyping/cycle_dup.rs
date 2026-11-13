@@ -90,6 +90,30 @@ fn the_group_as_written_is_decided() {
     assert!(decided(&v), "{v:?}");
 }
 
+#[test]
+fn a_group_of_closures_is_witnessed_in_its_written_size() {
+    let n = 64;
+    let inputs = scaling::inputs(n, |k| {
+        Group::new(
+            (0..k)
+                .map(|i| Def {
+                    name: format!("Closure{i}"),
+                    params: vec![],
+                    body: f(r((i + 1) % k)),
+                })
+                .collect(),
+        )
+        .unwrap()
+        .instance(vec![])
+    });
+    scaling::check_order("shared checked values for a group of closures", n, 1, |k| {
+        Type::forget_emptiness();
+        for t in &inputs[&k] {
+            assert_eq!(t.verdict(), Verdict::Inhabited);
+        }
+    });
+}
+
 /// `type Node = ((int) -> Thunk) | (Tree, Tree) | (Tree, Tree)`. Before this item each member
 /// was refused: the second `(Tree, Tree)` added a node and two edges, one more cycle.
 #[test]
@@ -947,4 +971,106 @@ fn morphism_types_met_with_a_union_of_morphism_types_scale() {
         Type::forget_emptiness();
         assert_eq!(groups[&m][NODE].verdict(), Verdict::Inhabited);
     });
+}
+
+/// The group of [`meets_in_orders`] at `m` arms, every meet written twice, with `Thunk` met
+/// with a union of `m` arms `(int) -> ((Node | #c<k>, top) & Tree)`, a union of morphism types
+/// met with morphism types; with `fork` also a refused fork joined to `Node`.
+fn arm_family(fork: bool, m: usize) -> Group {
+    let mut bodies = meets_in_orders(m, true);
+    let arms = (0..m)
+        .map(|k| {
+            returns_meet(vec![
+                pair(or(vec![r(NODE), atom(&format!("c{k}"))]), tt()),
+                r(TREE),
+            ])
+        })
+        .collect();
+    bodies[THUNK] = Expr::And(vec![bodies[THUNK].clone(), or(arms)]);
+    if fork {
+        bodies[NODE] = or(vec![
+            bodies[NODE].clone(),
+            Expr::Type(super::refusals::fork_empty()),
+        ]);
+    }
+    let defs = (["Node", "Tree", "Thunk"].into_iter().zip(bodies))
+        .map(|(name, body)| Def {
+            name: name.to_string(),
+            params: vec![],
+            body,
+        })
+        .collect();
+    Group::new(defs).unwrap_or_else(|e| panic!("{}", e.message))
+}
+
+/// Every arm has the same function constraint in its second component. It must be tested
+/// before unfolding each different literal context in its first component.
+#[test]
+fn shared_morphism_constraints_are_checked_in_the_size_of_the_union() {
+    let inputs = scaling::inputs(16, |m| arm_family(false, m).instance(vec![]));
+    scaling::check_order("shared morphism result constraints", 16, 1, |m| {
+        Type::forget_emptiness();
+        for t in &inputs[&m] {
+            assert_eq!(t.verdict(), Verdict::Empty);
+        }
+    });
+}
+
+#[test]
+fn shared_morphism_constraints_scale_without_a_group_query() {
+    for route in ["empty", "tuple", "value"] {
+        let inputs = scaling::inputs(16, |m| {
+            arm_family(false, m)
+                .instance(vec![])
+                .into_iter()
+                .map(|t| match route {
+                    "tuple" => Type::tuple(vec![t]),
+                    "value" => Type::morphism(Type::int(), Type::int(), t),
+                    _ => t,
+                })
+                .collect::<Vec<_>>()
+        });
+        scaling::check_order(
+            "shared morphism constraints outside group queries",
+            16,
+            1,
+            |m| {
+                Type::forget_emptiness();
+                for t in &inputs[&m] {
+                    if route == "empty" {
+                        assert!(t.is_empty());
+                    } else {
+                        assert_eq!(t.verdict(), Verdict::Empty);
+                    }
+                }
+            },
+        );
+    }
+}
+
+#[test]
+fn shared_morphism_constraints_scale_beside_a_refused_member() {
+    let n = 256;
+    let inputs = scaling::inputs(n, |m| arm_family(true, m).instance(vec![]));
+    for empty in [false, true] {
+        scaling::check_order(
+            "shared morphism constraints with a refused member",
+            n,
+            1,
+            |m| {
+                Type::forget_emptiness();
+                for (t, want) in inputs[&m].iter().zip([
+                    Verdict::Refused(Refusal::Fork),
+                    Verdict::Empty,
+                    Verdict::Empty,
+                ]) {
+                    if empty {
+                        assert_eq!(t.is_empty(), want == Verdict::Empty);
+                    } else {
+                        assert_eq!(t.verdict(), want);
+                    }
+                }
+            },
+        );
+    }
 }

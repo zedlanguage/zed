@@ -418,3 +418,47 @@ fn an_empty_payload_is_a_member_apart_from_the_bare_atom() {
     assert_eq!(Type::lit(&empty), None);
     assert!((&bare_ty & &empty_ty).is_empty());
 }
+
+/// A fixed b-cycle makes every state recursive; all states accept exactly the same words.
+/// Distinct a-edges still give distinct named graphs. With eight-bit hashes, 257 such
+/// graphs force a collision, so the fallback must compare their retained bodies.
+#[cfg(feature = "short-addresses")]
+#[test]
+fn colliding_presentation_hashes_keep_named_graphs_apart() {
+    use super::rec::{Def, Expr, Group};
+    let mut first = std::collections::HashMap::<(u64, u64), (usize, Type)>::new();
+    let mut primary = None;
+    let mut collisions = 0;
+    for pattern in 0..=256 {
+        let mut digits = pattern;
+        let defs = (0..5)
+            .map(|i| {
+                let a = digits % 5;
+                digits /= 5;
+                Def {
+                    name: format!("CollisionState{i}"),
+                    params: vec![],
+                    body: Expr::Union(vec![
+                        Expr::Atom("stop".into(), vec![]),
+                        Expr::Tuple(vec![Expr::Atom("a".into(), vec![]), Expr::Ref(a, vec![])]),
+                        Expr::Tuple(vec![
+                            Expr::Atom("b".into(), vec![]),
+                            Expr::Ref((i + 1) % 5, vec![]),
+                        ]),
+                    ]),
+                }
+            })
+            .collect();
+        let group = Group::new(defs).expect("a regular, contractive graph");
+        let member = group.instance(vec![]).remove(0);
+        assert_eq!(*primary.get_or_insert(member.digest()), member.digest());
+        let hash = (member.digest(), member.name_digest());
+        if let Some((prior, old)) = first.get(&hash) {
+            collisions += 1;
+            assert_ne!(&member, old, "named graphs {prior} and {pattern}");
+        } else {
+            first.insert(hash, (pattern, member));
+        }
+    }
+    assert!(collisions > 0, "257 graphs must collide in eight bits");
+}

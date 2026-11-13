@@ -254,6 +254,24 @@ impl Rat {
                 .is_some_and(|(p, e)| *p == 2 && e.is_positive())
     }
 
+    /// Twice this integer, without building its kept powers.
+    // Complexity tradeoff: expanding powers then doubling can require
+    // exponentially many bits in their written exponent length. Copy the
+    // coefficient and exponents and shift the coefficient or increment the
+    // exponent of 2, O(n) in the encoded size, with no answer given up.
+    // No general product or memory estimate is needed. Test:
+    // setop::cofinite_integer_points_keep_large_powers_symbolic.
+    pub(crate) fn twice_integer(&self) -> Rat {
+        debug_assert!(self.is_integer());
+        let mut twice = self.clone();
+        if let Some((2, e)) = twice.pows.first_mut() {
+            *e += 1;
+        } else {
+            twice.num <<= 1;
+        }
+        twice
+    }
+
     /// The integer it is, built, unless it is surely beyond 64 bits. It must be an integer.
     pub(crate) fn small_integer(&self) -> Option<BigInt> {
         // `|n| >= 2^(bits(n) - 1)` and `p^e >= 2^((bits(p) - 1) e)`, so past this bound the
@@ -1898,6 +1916,25 @@ pub(crate) fn exact_f64(r: &Rat) -> Result<Option<f64>, TooLarge> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn doubling_an_integer_preserves_its_value_and_kept_powers() {
+        let two = Rat::int(BigInt::from(2));
+        for text in [
+            "0",
+            "1",
+            "-1",
+            "9223372036854775807",
+            "1e100000000000000000000",
+            "-1e100000000000000000000",
+        ] {
+            let n = Rat::decimal(text).unwrap().unwrap();
+            let twice = n.twice_integer();
+            assert_eq!(twice, n.mul(&two).unwrap());
+            assert!(twice.is_integer());
+            assert_eq!(twice.integer_factors().1.len(), n.integer_factors().1.len());
+        }
+    }
 
     /// `len` digits from splitmix64 started at `seed`.
     fn digits(seed: u64, len: usize) -> String {

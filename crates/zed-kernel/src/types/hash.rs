@@ -11,6 +11,66 @@ pub(crate) fn mix(a: u64, b: u64) -> u64 {
     salted(crate::digest::step(a, b))
 }
 
+thread_local! {
+    /// Set while [`blind`] runs: names are then left out of the order of types.
+    static BLIND: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Set while [`names_first`] runs: the names-aware digests are then compared first.
+    static NAMED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// `f` run with the order of types reading the names-aware digests before the name-free ones
+/// ([`digests_cmp`]): the order of the atoms when they were ordered by the digests of names,
+/// which the printer follows so that the names it takes do not depend on the name-free order.
+/// Only comparisons may run inside: a table ordered by the other order is not to be read.
+pub(crate) fn names_first<R>(f: impl FnOnce() -> R) -> R {
+    /// Puts back the flag as it was, also when `f` panics.
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            NAMED.set(self.0);
+        }
+    }
+    let _restore = Restore(NAMED.replace(true));
+    f()
+}
+
+/// The order of two nodes by their name-free and names-aware digests `(p, n)`: the name-free
+/// first, then the names-aware ([`named_cmp`]); under [`names_first`], the names-aware first.
+pub(crate) fn digests_cmp((p, n): (u64, u64), (q, m): (u64, u64)) -> std::cmp::Ordering {
+    match NAMED.get() {
+        true => n.cmp(&m).then(p.cmp(&q)),
+        false => p.cmp(&q).then_with(|| named_cmp(n, m)),
+    }
+}
+
+/// `f` run with definition names left out of the order of types: the names-aware digests are
+/// not compared ([`named_cmp`]), and two keys of groups of one canonical form are equal
+/// (`rec::Key::order`), so that two types equal but for definition names compare equal.
+pub(crate) fn blind<R>(f: impl FnOnce() -> R) -> R {
+    /// Puts back the flag as it was, also when `f` panics.
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            BLIND.set(self.0);
+        }
+    }
+    let _restore = Restore(BLIND.replace(true));
+    f()
+}
+
+/// Whether [`blind`] is running.
+pub(crate) fn names_blind() -> bool {
+    BLIND.get()
+}
+
+/// The order of two names-aware digests: equal while [`blind`] runs.
+pub(crate) fn named_cmp(a: u64, b: u64) -> std::cmp::Ordering {
+    match names_blind() {
+        true => std::cmp::Ordering::Equal,
+        false => a.cmp(&b),
+    }
+}
+
 /// `mix` of the short-addresses build, whose digests keep 8 bits: a function of the two
 /// arguments' bytes folded together that is one-to-one in each argument while the other is
 /// fixed. Keeping the low 8 bits of the full mix made each step a random map of 256 values,

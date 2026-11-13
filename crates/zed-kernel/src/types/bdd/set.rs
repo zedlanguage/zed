@@ -27,6 +27,7 @@ pub(in crate::types) trait Atom: Ord + Clone + 'static {
     fn unsets(f: impl FnOnce(&mut SetTable<Self>));
     /// A hash of the atom, equal for equal atoms.
     fn digest(&self) -> u64;
+    fn name_digest(&self) -> u64;
     /// Drops a set node in the thread's loop of type parts (module `deep`).
     fn free_set(set: Arc<Set<Self>>);
 }
@@ -44,6 +45,7 @@ pub(in crate::types) struct Set<A: Atom> {
     pub(in crate::types) id: u64,
     /// A hash of the set's literals, equal for equal sets.
     pub(in crate::types) digest: u64,
+    pub(in crate::types) name_digest: u64,
     prio: u64,
     /// The node's slot in its bucket of the table (module `bucket`).
     slot: u32,
@@ -75,7 +77,7 @@ type Slot = (u64, bool, u64, u64);
 
 /// The bucket of the node of `key` over the children of ids `left` and `right`.
 fn slot<A: Atom>(key: &Key<A>, left: u64, right: u64) -> Slot {
-    (key.0.digest(), key.1, left, right)
+    (key.0.name_digest(), key.1, left, right)
 }
 
 /// A set node leaves its thread's table, and its children are freed in a loop (module `deep`),
@@ -116,6 +118,10 @@ pub(super) fn digest<A: Atom>(t: Option<&Arc<Set<A>>>) -> u64 {
     t.map_or(mix(14, 0), |s| s.digest)
 }
 
+pub(super) fn name_digest<A: Atom>(t: Option<&Arc<Set<A>>>) -> u64 {
+    t.map_or(mix(14, 0), |s| s.name_digest)
+}
+
 /// The number of literals.
 pub(super) fn len<A: Atom>(t: Option<&Arc<Set<A>>>) -> usize {
     t.map_or(0, |s| s.len)
@@ -134,8 +140,18 @@ fn make<A: Atom>(key: Key<A>, left: Tree<A>, right: Tree<A>) -> Arc<Set<A>> {
     let s = Arc::new(Set {
         id: NEXT.fetch_add(1, Atomic::Relaxed),
         digest: mix(
-            mix(mix(15, k.0 ^ u64::from(key.1)), digest(left.as_ref())),
+            mix(
+                mix(15, key.0.digest() ^ u64::from(key.1)),
+                digest(left.as_ref()),
+            ),
             digest(right.as_ref()),
+        ),
+        name_digest: mix(
+            mix(
+                mix(15, key.0.name_digest() ^ u64::from(key.1)),
+                name_digest(left.as_ref()),
+            ),
+            name_digest(right.as_ref()),
         ),
         prio: priority(&key),
         slot: place.slot(),

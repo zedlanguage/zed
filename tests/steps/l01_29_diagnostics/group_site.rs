@@ -117,7 +117,8 @@ const FORK: &str = "; the checker could not decide this, so it is not proved wro
      exponential in the size of the types, so the checker does not try; write the two tuple \
      types so that they agree in that component, or test the value with `is` first";
 
-/// The head is a group of one definition: the first recursive definition the check reads.
+/// The head is the first recursive definition the check reads, in a walk of its parts in
+/// their order, which is by contents and not by names: here `Even`, of the group of two.
 #[test]
 fn a_refused_check_names_the_head_of_the_group_it_reads() {
     Type::forget_emptiness();
@@ -126,8 +127,9 @@ fn a_refused_check_names_the_head_of_the_group_it_reads() {
         refused(&a, &b),
         format!(
             "{FORK}\n  \
-             the check reads the recursive type `Ones`, defined by:\n    \
-             type Ones = #nil | #cons(1, Ones);"
+             the check reads the recursive type `Even`, defined by:\n    \
+             type Even = #nil | #cons(int, Odd);\n    \
+             type Odd = #cons(int, Even);"
         )
     );
 }
@@ -141,10 +143,10 @@ fn a_refused_check_lists_every_definition_of_the_head_group() {
         refused(&a, &b),
         format!(
             "{FORK}\n  \
-             the check reads the recursive type `Odd0`, defined by:\n    \
-             type Odd0 = #cons(int, Even1);\n    \
+             the check reads the recursive type `Even0`, defined by:\n    \
              type Even0 = #nil | #cons(int, Odd0);\n    \
              type Even1 = #nil | #cons(int, Odd1);\n    \
+             type Odd0 = #cons(int, Even1);\n    \
              type Odd1 = #cons(int, Even0);"
         )
     );
@@ -188,7 +190,7 @@ fn the_listed_definitions_read_as_declarations() {
     let declared: Vec<&str> = (decls.iter())
         .map(|d| d["type ".len()..].split_once(' ').expect("a name").0)
         .collect();
-    assert_eq!(declared, ["Odd0", "Even0", "Even1", "Odd1"]);
+    assert_eq!(declared, ["Even0", "Even1", "Odd0", "Odd1"]);
     for word in unit.split(|c: char| !c.is_alphanumeric()) {
         let named = word.starts_with(['E', 'O']);
         assert!(!named || declared.contains(&word), "{word} in {unit}");

@@ -26,6 +26,7 @@ use std::sync::Arc;
 
 use super::TextPlace as At;
 use super::bdd::{Bdd, Form, Part};
+use super::hash::names_first;
 use super::{Lits, Morphism, Node, Row, Spell, Surface, Surfaces, Tuples, Type};
 use crate::value::Value;
 use order::{Member, NumberType};
@@ -1117,6 +1118,11 @@ impl Printer<'_> {
             Err(Form::Or(x, y)) => (signed(x, not), signed(y, not), not),
             Err(Form::And(x, y)) => (signed(x, not), signed(y, not), !not),
         };
+        // The operands in the order of the names, as the literals of a list ([`Printer::list`]).
+        let (x, y) = match p.view() {
+            Err(Form::Or(a, b) | Form::And(a, b)) if names_first(|| !a.before(b)) => (y, x),
+            _ => (x, y),
+        };
         if !and {
             let x = operand(self, &x);
             let y = operand(self, &y);
@@ -1229,7 +1235,18 @@ impl Printer<'_> {
         lit: &dyn Fn(&mut Printer, &A) -> Text,
         all: &dyn Fn(&mut Printer) -> Text,
     ) -> Text {
-        let list = b.list();
+        let mut list = b.list();
+        // The literals of each block in the order the atoms had when they were ordered by the
+        // digests of names ([`names_first`]). The walk makes the nodes in the order of the
+        // literals, and a part written in two ways, such as `R0 & R3` and `R3 & R0`, is one type
+        // named by the text of the node made first; so in this order the names and the layout
+        // of a printed type do not depend on the name-free order of the atoms.
+        // Complexity tradeoff: a sort of each block, O(b log b) comparisons for b literals, on
+        // printing only; the search keeps the name-free order. Naive version: the atoms' order,
+        // O(b), whose names then depend on the name-free digests. Given up: nothing printed.
+        for (_, lits) in &mut list.blocks {
+            names_first(|| lits.sort_by(|(x, _), (y, _)| x.cmp(y)));
+        }
         let m = list.blocks.len();
         // Whether the list from each block on holds the values outside every atom: the value
         // of the first block from there that refuses an atom, or the tail.

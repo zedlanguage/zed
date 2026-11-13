@@ -45,6 +45,7 @@ use std::sync::{Arc, Mutex, Weak};
 use crate::digest::{DigestMap, DigestSet};
 use crate::frames::{Deep, Stack};
 
+use super::hash::digests_cmp;
 use super::mix;
 
 mod set;
@@ -138,6 +139,7 @@ pub(super) trait Literal: Ord + Clone + 'static {
     fn untable(f: impl FnOnce(&mut Tables<Self>));
     /// A hash of the atom, equal for equal atoms.
     fn digest(&self) -> u64;
+    fn name_digest(&self) -> u64;
     /// Drops a part, cell or set in the thread's loop of type parts (module `deep`).
     fn free(part: Owned<Self>);
     /// The order of two lists, cells, sets, expressions or parts of the universe (`order` in
@@ -156,6 +158,9 @@ impl<A: Literal> set::Atom for A {
     }
     fn digest(&self) -> u64 {
         Literal::digest(self)
+    }
+    fn name_digest(&self) -> u64 {
+        Literal::name_digest(self)
     }
     fn free_set(set: Arc<Set<A>>) {
         Owned::Set(set).release();
@@ -238,6 +243,13 @@ impl<A: Literal> Bdd<A> {
         match self {
             Bdd::Leaf(b) => mix(7, u64::from(*b)),
             Bdd::List(c, v) => mix(mix(18, c.digest), u64::from(*v)),
+        }
+    }
+
+    pub(super) fn name_digest(&self) -> u64 {
+        match self {
+            Bdd::Leaf(b) => mix(7, u64::from(*b)),
+            Bdd::List(c, v) => mix(mix(18, c.name_digest), u64::from(*v)),
         }
     }
 
@@ -570,6 +582,7 @@ pub(super) struct Expr<A: Literal> {
     /// The node's id, unique among the nodes of the process.
     pub(super) id: u64,
     pub(super) digest: u64,
+    pub(super) name_digest: u64,
     /// The connective and its operands ([`Expr::form`]). An exclusive or's two halves are made
     /// when the form is first read, from `xor` (module `xor`); every other form is set when the
     /// expression is made.
@@ -694,6 +707,14 @@ impl<A: Literal> Form<A> {
         }
     }
 
+    fn name_digest(&self) -> u64 {
+        match self {
+            Form::Not(p) => mix(8, p.name_digest()),
+            Form::Or(a, b) => joined_digest(Op::Or, a.name_digest(), b.name_digest()),
+            Form::And(a, b) => joined_digest(Op::And, a.name_digest(), b.name_digest()),
+        }
+    }
+
     /// Whether `e` is an operand of the form.
     fn holds(&self, e: &Arc<Expr<A>>) -> bool {
         let is_e = |p: &Part<A>| matches!(p, Part::Expr(x) if Arc::ptr_eq(x, e));
@@ -721,6 +742,13 @@ impl<A: Literal> Part<A> {
         }
     }
 
+    pub(super) fn name_digest(&self) -> u64 {
+        match self {
+            Part::Bdd(b) => b.name_digest(),
+            Part::Expr(e) => e.name_digest,
+        }
+    }
+
     /// The id of the part's node, unique among the nodes of the process; a leaf's is its value.
     pub(super) fn id(&self) -> u64 {
         match self {
@@ -732,11 +760,13 @@ impl<A: Literal> Part<A> {
     /// Whether `self` goes first of the two operands of a connective: the smaller digest, and
     /// of equal digests the smaller in the order of contents, so that two distinct parts whose
     /// digests collide still have one order (step L1.37a).
-    fn before(&self, other: &Part<A>) -> bool {
-        self.digest()
-            .cmp(&other.digest())
-            .then_with(|| self.cmp(other))
-            .is_le()
+    pub(super) fn before(&self, other: &Part<A>) -> bool {
+        digests_cmp(
+            (self.digest(), self.name_digest()),
+            (other.digest(), other.name_digest()),
+        )
+        .then_with(|| self.cmp(other))
+        .is_le()
     }
 
     pub(super) fn leaf(b: bool) -> Part<A> {
@@ -761,24 +791,31 @@ impl<A: Literal> Part<A> {
 
     /// The expression of `form`, the one form of the exclusive or `xor` when given.
     fn expr_xor(form: Form<A>, xor: Option<(Arc<xor::Pair<A>>, bool)>) -> Part<A> {
-        Part::made(form.digest(), std::sync::OnceLock::from(form), xor)
+        Part::made(
+            form.digest(),
+            form.name_digest(),
+            std::sync::OnceLock::from(form),
+            xor,
+        )
     }
 
     /// The exclusive or `xor` of the digest `digest`, its halves made when its form is first
     /// read ([`Expr::form`]).
-    fn expr_unmade(digest: u64, xor: (Arc<xor::Pair<A>>, bool)) -> Part<A> {
-        Part::made(digest, std::sync::OnceLock::new(), Some(xor))
+    fn expr_unmade(digest: u64, name_digest: u64, xor: (Arc<xor::Pair<A>>, bool)) -> Part<A> {
+        Part::made(digest, name_digest, std::sync::OnceLock::new(), Some(xor))
     }
 
     /// The expression of `digest` and `form`, the exclusive or `xor` when given.
     fn made(
         digest: u64,
+        name_digest: u64,
         form: std::sync::OnceLock<Form<A>>,
         xor: Option<(Arc<xor::Pair<A>>, bool)>,
     ) -> Part<A> {
         Part::Expr(Arc::new(Expr {
             id: NEXT.fetch_add(1, Atomic::Relaxed),
             digest,
+            name_digest,
             form,
             complement: std::sync::OnceLock::new(),
             back: Mutex::new(Weak::new()),
@@ -1560,6 +1597,71 @@ impl<A: Literal> Part<A> {
         memo[&root.id].clone()
     }
 
+    /// Positive atoms written as mandatory meet factors or in a list's rejecting first
+    /// block. Every returned atom holds in every value, but this is not a complete list.
+    // Complexity tradeoff: the general three-valued analysis combines atom sets at every
+    // Boolean node, O(nodes * atoms). Walk only meet factors and first blocks here,
+    // visiting every shared expression and literal-set node once, O(nodes + atoms log atoms).
+    // Common atoms hidden under unions or negation are not inferred; the original
+    // narrowing still handles the rest. Test: cycle_dup::shared_morphism_constraints_are_checked_in_the_size_of_the_union.
+    pub(super) fn forced_factors(&self) -> Vec<A> {
+        let mut exprs = DigestSet::default();
+        let mut sets = DigestSet::default();
+        let mut first = DigestMap::default();
+        let mut taken = BTreeSet::new();
+        let mut parts = vec![self];
+        while let Some(p) = parts.pop() {
+            match p {
+                Part::Expr(e) => {
+                    if exprs.insert(e.id)
+                        && let Form::And(a, b) = e.form()
+                    {
+                        parts.push(b);
+                        parts.push(a);
+                    }
+                }
+                Part::Bdd(b) => {
+                    if let Some((a, positive)) = b.as_literal() {
+                        if positive {
+                            taken.insert(a.clone());
+                        }
+                        continue;
+                    }
+                    if let Bdd::List(c, false) = b {
+                        // Lists can share the path to their first block too.
+                        let mut path = Vec::new();
+                        let mut at = c.as_ref();
+                        let block = loop {
+                            if let Some(&block) = first.get(&at.id) {
+                                break block;
+                            }
+                            path.push(at.id);
+                            match at.left.as_deref() {
+                                Some(left) => at = left,
+                                None => break at.block.as_ref(),
+                            }
+                        };
+                        for id in path {
+                            first.insert(id, block);
+                        }
+                        let mut stack = vec![block];
+                        while let Some(s) = stack.pop() {
+                            if !sets.insert(s.id) {
+                                continue;
+                            }
+                            if !s.key.1 {
+                                taken.insert(s.key.0.clone());
+                            }
+                            stack.extend(s.right.as_deref());
+                            stack.extend(s.left.as_deref());
+                        }
+                    }
+                }
+            }
+        }
+        taken.into_iter().collect()
+    }
+
     /// The atoms in every value of the part (`.0`) and those in none (`.1`), among the atoms
     /// in it: for a diagram, those taken or refused on every path to `true`; for an expression,
     /// each atom whose refusal, or whose taking, makes the part `false` by three-valued logic.
@@ -1882,6 +1984,33 @@ impl<A: Literal> Part<A> {
             }
         }
         Some((taken, refused))
+    }
+
+    /// The atoms met and the atoms joined, if the part is a list that is the intersection of
+    /// the first with the union of the second (all values when none): a block of value `false`
+    /// that refuses each atom met, then one of value `true` that takes each atom joined.
+    pub(super) fn meet_rows(&self) -> Option<(Vec<A>, Option<Vec<A>>)> {
+        let Part::Bdd(list @ Bdd::List(_, false)) = self else {
+            return None;
+        };
+        let (mut met, mut joined) = (Vec::new(), None);
+        for (i, (v, c)) in list.cells().enumerate() {
+            if i > 1 || v != (i == 1) {
+                return None;
+            }
+            let mut atoms = Vec::new();
+            for (a, taken) in set::iter(Some(&c.block)) {
+                if *taken != v {
+                    return None;
+                }
+                atoms.push(a.clone());
+            }
+            match v {
+                false => met = atoms,
+                true => joined = Some(atoms),
+            }
+        }
+        Some((met, joined))
     }
 
     /// The id of an expression; a diagram part has none of its own.
@@ -2251,7 +2380,22 @@ mod xor {
                 (meet_digest(p, nq), meet_digest(np, q))
             };
             let digest = joined_digest(Op::Or, x.min(y), x.max(y));
-            Part::expr_unmade(digest, (pair.clone(), constant))
+            let meet_hash = |a: &Part<A>, b: &Part<A>| {
+                let (a, b) = ((a.digest(), a.name_digest()), (b.digest(), b.name_digest()));
+                let (a, b) = if a <= b { (a, b) } else { (b, a) };
+                (
+                    joined_digest(Op::And, a.0, b.0),
+                    joined_digest(Op::And, a.1, b.1),
+                )
+            };
+            let (x, y) = if constant {
+                (meet_hash(p, q), meet_hash(np, nq))
+            } else {
+                (meet_hash(p, nq), meet_hash(np, q))
+            };
+            let (x, y) = if x <= y { (x, y) } else { (y, x) };
+            let name_digest = joined_digest(Op::Or, x.1, y.1);
+            Part::expr_unmade(digest, name_digest, (pair.clone(), constant))
         };
         if let (Some(s), Part::Expr(e)) = (&pair.atoms, &r) {
             // An entry left by a node dropped on another thread is replaced.
@@ -2420,6 +2564,7 @@ mod list {
         pub(in crate::types) id: u64,
         /// A hash of the blocks in order, equal for equal sequences.
         pub(in crate::types) digest: u64,
+        pub(in crate::types) name_digest: u64,
         prio: u64,
         /// The number of blocks.
         pub(super) len: usize,
@@ -2500,6 +2645,10 @@ mod list {
         t.as_ref().map_or(mix(17, 0), |c| c.digest)
     }
 
+    fn name_digest<A: Literal>(t: &Seq<A>) -> u64 {
+        t.as_ref().map_or(mix(17, 0), |c| c.name_digest)
+    }
+
     /// The priority of the cell of `block`: a hash of the literal at the root of the block's treap,
     /// the literal of highest priority there (module `set`), by a hash other than that priority. So
     /// it is uniform whatever the size of the block, and a literal added to a block of `k` changes
@@ -2536,6 +2685,10 @@ mod list {
             let c = Arc::new(Cell {
                 id: NEXT.fetch_add(2, Atomic::Relaxed),
                 digest: mix(mix(mix(16, digest(&left)), block.digest), digest(&right)),
+                name_digest: mix(
+                    mix(mix(16, name_digest(&left)), block.name_digest),
+                    name_digest(&right),
+                ),
                 prio: priority(&block),
                 len: len(&left) + 1 + len(&right),
                 left,

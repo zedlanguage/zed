@@ -30,6 +30,7 @@ mod hash;
 #[cfg(test)]
 use hash::SALT;
 pub(crate) use hash::mix;
+use hash::{blind, digests_cmp, names_blind};
 mod print;
 pub use print::{defs, names, order};
 
@@ -40,7 +41,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, Bound, HashMap, HashSet};
 use std::fmt;
 use std::ops::{BitAnd, BitOr, Not, Sub};
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 
 use crate::deep;
 use crate::num::Rat;
@@ -48,9 +49,9 @@ use crate::value::{Id, Items, Value};
 use bdd::{Bdd, Form, Literal, Op, Owned, Part, Tables, Walk};
 use bucket::Bucket;
 
-/// A type: the set of values it denotes. Types are ordered by their digests first, so two
-/// types are ordered without reading their contents unless their digests are equal, and then by
-/// the loop of `order`, which reads the contents with a stack of its own.
+/// A type: the set of values it denotes. The primary fingerprint orders structure first;
+/// a second fingerprint distinguishes retained names before the loop of `order` compares
+/// contents, using its own stack. Both fingerprints are cached at construction.
 #[derive(Clone)]
 pub struct Type(Arc<Node>);
 
@@ -59,7 +60,7 @@ pub struct Type(Arc<Node>);
 // and `top` per call. Used: a deterministic digest made from the children's digests when a node
 // is made, compared first; the contents are read only on equal digests, by the loop of `order`,
 // once per pair of nodes. O(1) for types of different digest. Tradeoffs: one 64-bit digest per
-// node; the order is that of the digests, not of the text, so the printer sorts each part's
+// node for each fingerprint; the order is that of the hashes, so the printer sorts each part's
 // clauses as text itself; on a digest tie (a collision, or the short-addresses build) two
 // types are read in full, linear in their size.
 impl Ord for Type {
@@ -67,9 +68,11 @@ impl Ord for Type {
         if Arc::ptr_eq(&self.0, &other.0) {
             return std::cmp::Ordering::Equal;
         }
-        self.digest()
-            .cmp(&other.digest())
-            .then_with(|| order(Step::Types(self, other)))
+        digests_cmp(
+            (self.digest(), self.name_digest()),
+            (other.digest(), other.name_digest()),
+        )
+        .then_with(|| order(Step::Types(self, other)))
     }
 }
 
@@ -89,8 +92,8 @@ impl Eq for Type {}
 
 impl std::hash::Hash for Type {
     fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
-        // Equal types have equal digests.
-        self.digest().hash(h);
+        // Equal retained types have equal presentation hashes.
+        self.name_digest().hash(h);
     }
 }
 
@@ -171,6 +174,16 @@ enum Node {
 impl Drop for Node {
     fn drop(&mut self) {
         if let Node::Parts(p, shown) = self {
+            if let Some(key) = shown.compound.take() {
+                let id = shown.id;
+                let _ = COMPOUND_TYPES.try_with(|c| {
+                    if let Ok(mut c) = c.try_borrow_mut()
+                        && c.get(&key).is_some_and(|(n, _)| *n == id)
+                    {
+                        c.remove(&key);
+                    }
+                });
+            }
             if !p.atoms.names.is_empty() {
                 free(Freed::Atoms(std::mem::take(&mut p.atoms.names)));
             }
@@ -220,6 +233,7 @@ fn next_type_node() -> u64 {
 struct Shown {
     text: OnceLock<Rope>,
     id: u64,
+    compound: Option<Arc<CompoundKey>>,
 }
 
 impl Default for Shown {
@@ -227,6 +241,7 @@ impl Default for Shown {
         Self {
             text: OnceLock::new(),
             id: next_type_node(),
+            compound: None,
         }
     }
 }
@@ -430,11 +445,22 @@ impl Morphism {
             permission,
             value,
         };
-        Morphism(Shared::new(digest, arrow))
+        let name_digest = mix(
+            mix(
+                mix(6, arrow.guarantee.name_digest()),
+                arrow.permission.name_digest(),
+            ),
+            arrow.value.name_digest(),
+        );
+        Morphism(Shared::new(digest, name_digest, arrow))
     }
 
     pub(crate) fn digest(&self) -> u64 {
         self.0.digest
+    }
+
+    pub(crate) fn name_digest(&self) -> u64 {
+        self.0.name_digest
     }
 }
 
@@ -483,6 +509,7 @@ impl Eq for Morphism {}
 /// morphism types of the morphism parts.
 struct Shared<K: Tabled> {
     digest: u64,
+    name_digest: u64,
     /// The node's slot in its bucket of the table (module `bucket`).
     slot: u32,
     key: K,
@@ -536,11 +563,11 @@ impl<K: Tabled> Drop for Shared<K> {
         let me: *const Shared<K> = self;
         let _ = K::live().try_with(|t| {
             if let Ok(mut t) = t.try_borrow_mut()
-                && let Some(bucket) = t.get_mut(&self.digest)
+                && let Some(bucket) = t.get_mut(&self.name_digest)
             {
                 bucket.leave(self.slot, me);
                 if bucket.is_empty() {
-                    t.remove(&self.digest);
+                    t.remove(&self.name_digest);
                 }
             }
         });
@@ -549,15 +576,18 @@ impl<K: Tabled> Drop for Shared<K> {
 
 impl<K: Tabled> Shared<K> {
     /// The live node of the thread whose key equals `key`, or a new one put in the table.
-    fn new(digest: u64, key: K) -> Arc<Shared<K>> {
+    fn new(digest: u64, name_digest: u64, key: K) -> Arc<Shared<K>> {
         let bucket = |f: &mut dyn FnMut(&mut Bucket<Shared<K>>)| {
-            crate::local::with(K::live(), |t| f(t.borrow_mut().entry(digest).or_default()));
+            crate::local::with(K::live(), |t| {
+                f(t.borrow_mut().entry(name_digest).or_default())
+            });
         };
         match bucket::find(bucket, |r| K::order(&r.key, &key)) {
             Ok(r) => r,
             Err(place) => {
                 let r = Arc::new(Shared {
                     digest,
+                    name_digest,
                     slot: place.slot(),
                     key,
                 });
@@ -580,11 +610,16 @@ pub(crate) struct Row(Arc<Shared<Vec<Type>>>);
 impl Row {
     pub(crate) fn new(items: Vec<Type>) -> Row {
         let digest = items.iter().fold(5, |h, t| mix(h, t.digest()));
-        Row(Shared::new(digest, items))
+        let name_digest = items.iter().fold(5, |h, t| mix(h, t.name_digest()));
+        Row(Shared::new(digest, name_digest, items))
     }
 
     pub(crate) fn digest(&self) -> u64 {
         self.0.digest
+    }
+
+    pub(crate) fn name_digest(&self) -> u64 {
+        self.0.name_digest
     }
 }
 
@@ -608,10 +643,11 @@ impl Ord for Row {
         if Arc::ptr_eq(&self.0, &other.0) {
             return std::cmp::Ordering::Equal;
         }
-        self.0
-            .digest
-            .cmp(&other.0.digest)
-            .then_with(|| order(Step::Rows(self, other)))
+        digests_cmp(
+            (self.0.digest, self.name_digest()),
+            (other.0.digest, other.name_digest()),
+        )
+        .then_with(|| order(Step::Rows(self, other)))
     }
 }
 
@@ -644,6 +680,9 @@ impl Literal for Row {
     fn digest(&self) -> u64 {
         Row::digest(self)
     }
+    fn name_digest(&self) -> u64 {
+        Row::name_digest(self)
+    }
     fn free(part: Owned<Row>) {
         free(Freed::Tuples(part));
     }
@@ -661,6 +700,9 @@ impl Literal for Morphism {
     }
     fn digest(&self) -> u64 {
         Morphism::digest(self)
+    }
+    fn name_digest(&self) -> u64 {
+        Morphism::name_digest(self)
     }
     fn free(part: Owned<Morphism>) {
         free(Freed::Morphisms(part));
@@ -764,8 +806,7 @@ fn order(first: Step<'_>) -> Ordering {
                 if Arc::ptr_eq(&a.0, &b.0) {
                     continue;
                 }
-                a.digest()
-                    .cmp(&b.digest())
+                digests_cmp((a.digest(), a.name_digest()), (b.digest(), b.name_digest()))
                     .then_with(|| items(a.iter(), b.iter(), &mut steps, &equal))
             }
             Step::Morphisms(a, b) => {
@@ -844,7 +885,7 @@ fn types<'a>(a: &'a Type, b: &'a Type, steps: &mut Vec<Step<'a>>, equal: &Equal)
     if Arc::ptr_eq(&a.0, &b.0) {
         return Ordering::Equal;
     }
-    let c = a.digest().cmp(&b.digest());
+    let c = digests_cmp((a.digest(), a.name_digest()), (b.digest(), b.name_digest()));
     if c != Ordering::Equal {
         return c;
     }
@@ -1032,7 +1073,8 @@ fn walk<'a, A: Ordered>(w: Walk<'a, A>, steps: &mut Vec<Step<'a>>, equal: &Equal
         Walk::Bdds(Bdd::Leaf(_), Bdd::List(..)) => Ordering::Less,
         Walk::Bdds(Bdd::List(..), Bdd::Leaf(_)) => Ordering::Greater,
         Walk::Bdds(x @ Bdd::List(a, v), y @ Bdd::List(b, w)) => {
-            let c = x.digest().cmp(&y.digest()).then(v.cmp(w));
+            let c = digests_cmp((x.digest(), x.name_digest()), (y.digest(), y.name_digest()))
+                .then(v.cmp(w));
             if c != Ordering::Equal {
                 return c;
             }
@@ -1046,7 +1088,7 @@ fn walk<'a, A: Ordered>(w: Walk<'a, A>, steps: &mut Vec<Step<'a>>, equal: &Equal
             if key.0 == key.1 || equal.contains(&key) {
                 return Ordering::Equal;
             }
-            let c = a.digest.cmp(&b.digest);
+            let c = digests_cmp((a.digest, a.name_digest), (b.digest, b.name_digest));
             if c == Ordering::Equal {
                 // A sequence has one shape, so equal digests are compared cell by cell: the
                 // cells before, the blocks, then the cells after, each pushed after the next.
@@ -1064,7 +1106,8 @@ fn walk<'a, A: Ordered>(w: Walk<'a, A>, steps: &mut Vec<Step<'a>>, equal: &Equal
             if key.0 == key.1 || equal.contains(&key) {
                 return Ordering::Equal;
             }
-            let c = a.digest.cmp(&b.digest).then(a.key.1.cmp(&b.key.1));
+            let c = digests_cmp((a.digest, a.name_digest), (b.digest, b.name_digest))
+                .then(a.key.1.cmp(&b.key.1));
             if c == Ordering::Equal {
                 // The atoms are pushed last, so they are compared first, then the left sets.
                 steps.extend([
@@ -1083,7 +1126,7 @@ fn walk<'a, A: Ordered>(w: Walk<'a, A>, steps: &mut Vec<Step<'a>>, equal: &Equal
             }
             // The digests are compared first: an exclusive or's halves are made only when the
             // digests tie (`Expr::form`).
-            let c = a.digest.cmp(&b.digest);
+            let c = digests_cmp((a.digest, a.name_digest), (b.digest, b.name_digest));
             if c != Ordering::Equal {
                 return c;
             }
@@ -1118,6 +1161,7 @@ pub struct PrintGroups {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 struct Parts {
+    name_digest: u64,
     /// The hash of the other fields, set by [`Type::new`].
     digest: u64,
     /// Bit 0 for `false`, bit 1 for `true`.
@@ -1180,6 +1224,7 @@ impl PartialOrd for Lits {
 /// chain of `n` failure atoms cost `n^2 log n`.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 struct Atoms {
+    name_sum: u64,
     cofinite: bool,
     names: OrdMap<Arc<str>, AtomPart>,
     sum: u64,
@@ -1225,23 +1270,76 @@ thread_local! {
 }
 
 impl Parts {
-    fn hash(&self) -> u64 {
+    /// Both fingerprints share the literal prefix and one pass over tuple lengths.
+    fn hashes(&self) -> (u64, u64) {
         let mut h = mix(0, u64::from(self.bools));
         for l in [&self.ints, &self.rats, &self.floats, &self.strings] {
             h = mix(mix(h, u64::from(l.cofinite)), l.sum);
         }
-        h = mix(mix(h, u64::from(self.atoms.cofinite)), self.atoms.sum);
+        let base = mix(h, u64::from(self.atoms.cofinite));
+        let mut named = mix(base, self.atoms.name_sum);
+        h = mix(base, self.atoms.sum);
         h = mix(h, u64::from(self.tuples.rest));
+        named = mix(named, u64::from(self.tuples.rest));
         for (len, part) in &self.tuples.lens {
             h = mix(mix(h, *len as u64), part.digest());
+            named = mix(mix(named, *len as u64), part.name_digest());
         }
-        mix(mix(h, u64::from(self.structs)), self.morphisms.digest())
+        (
+            mix(mix(h, u64::from(self.structs)), self.morphisms.digest()),
+            mix(
+                mix(named, u64::from(self.structs)),
+                self.morphisms.name_digest(),
+            ),
+        )
     }
 }
 
 impl Type {
+    // Complexity tradeoff: rebuilding equal compound nodes during a search gives its
+    // memos distinct local graph numbers: q copies can repeat a walk of g nodes,
+    // costing O(q*g) work. Reuse a live node with identical retained diagram nodes
+    // instead, so those memos can share the walk.
+    // The key costs O(l) for l tuple lengths, the same as hashing these parts;
+    // lookup is expected O(l). No structural equivalence or scalar sets are
+    // compared. Nodes leave on drop on their creating thread; another thread's
+    // dead entries are cleared at forget_emptiness. Neither these local numbers
+    // nor this table affect the digest, comparison or printed text. Every search
+    // route enters CompoundScope; construction outside a search keeps no index.
+    // Exercised by
+    // shared_parts_are_read_once_when_deciding_their_groups and the morphism
+    // scaling tests, including the refused-member routes.
     fn new(mut p: Parts) -> Type {
-        p.digest = p.hash();
+        if crate::local::with(&COMPOUND_SEARCH, std::cell::Cell::get)
+            && p.bools == 0
+            && [&p.ints, &p.rats, &p.floats, &p.strings]
+                .iter()
+                .all(|l| !l.cofinite && l.values.is_empty())
+            && p.atoms.is_default()
+        {
+            let key = Arc::new((
+                p.tuples.rest,
+                p.structs,
+                p.morphisms.id(),
+                p.tuples.lens.iter().map(|(&n, f)| (n, f.id())).collect(),
+            ));
+            return crate::local::with(&COMPOUND_TYPES, |c| {
+                let mut c = c.borrow_mut();
+                if let Some(n) = c.get(&key).and_then(|(_, n)| Weak::upgrade(n)) {
+                    return Type(n);
+                }
+                (p.digest, p.name_digest) = p.hashes();
+                let shown = Shown {
+                    compound: Some(key.clone()),
+                    ..Shown::default()
+                };
+                let id = shown.id;
+                let n = Arc::new(Node::Parts(p, shown));
+                c.insert(key, (id, Arc::downgrade(&n)));
+                Type(n)
+            });
+        }
+        (p.digest, p.name_digest) = p.hashes();
         Type(Arc::new(Node::Parts(p, Shown::default())))
     }
 
@@ -1251,6 +1349,17 @@ impl Type {
         match &*self.0 {
             Node::Parts(p, _) => p.digest,
             Node::Rec(r) => r.key.digest(),
+        }
+    }
+
+    /// A cached hash of the retained spelling, used by identity tables, never as a proof.
+    // Complexity tradeoff: hashing a presentation by walking its DAG costs O(nodes) per
+    // lookup. Cache one word at construction from the children's cached words, O(1)
+    // per fixed-arity node and O(arity) for a variable-arity node.
+    pub(crate) fn name_digest(&self) -> u64 {
+        match &*self.0 {
+            Node::Parts(p, _) => p.name_digest,
+            Node::Rec(r) => r.key.name_digest(),
         }
     }
 
@@ -1375,6 +1484,7 @@ impl Type {
     fn build_empty() -> Type {
         Type::new(Parts {
             digest: 0,
+            name_digest: 0,
             bools: 0,
             ints: Lits::default(),
             rats: Lits::default(),
@@ -1951,6 +2061,7 @@ impl Type {
         let (a, b) = (self.p(), other.p());
         Type::new(Parts {
             digest: 0,
+            name_digest: 0,
             bools: match op {
                 Op::Or => a.bools | b.bools,
                 Op::And => a.bools & b.bools,
@@ -2020,6 +2131,34 @@ impl Type {
                 && a.strings.within(&b.strings)
         })
     }
+}
+
+type CompoundKey = (bool, bool, u64, Vec<(usize, u64)>);
+/// Each compound key with the id and the node built for it.
+type CompoundTypes = HashMap<Arc<CompoundKey>, (u64, Weak<Node>)>;
+thread_local! {
+    static COMPOUND_TYPES: RefCell<CompoundTypes> = RefCell::new(HashMap::new());
+    static COMPOUND_SEARCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Reuse is useful to the search's local graph memos; ordinary type construction
+/// needs neither that table nor its key allocation. Nesting restores the caller.
+struct CompoundScope(bool);
+
+impl CompoundScope {
+    fn enter() -> Self {
+        Self(COMPOUND_SEARCH.with(|s| s.replace(true)))
+    }
+}
+
+impl Drop for CompoundScope {
+    fn drop(&mut self) {
+        COMPOUND_SEARCH.with(|s| s.set(self.0));
+    }
+}
+
+fn clear_compound_types() {
+    COMPOUND_TYPES.with(|c| c.borrow_mut().clear());
 }
 
 impl Parts {
@@ -2390,17 +2529,20 @@ impl Atoms {
         }
     }
 
-    fn entry(name: &str, p: &AtomPart) -> u64 {
-        mix(
-            mix(bytes(name.as_bytes()), u64::from(p.bare)),
-            p.payload.digest(),
+    fn entries(name: &str, p: &AtomPart) -> (u64, u64) {
+        let head = mix(bytes(name.as_bytes()), u64::from(p.bare));
+        (
+            mix(head, p.payload.digest()),
+            mix(head, p.payload.name_digest()),
         )
     }
 
     /// Gives `name` the part `p`, unlisting it when `p` is what an unlisted name has.
     fn set(&mut self, name: &Arc<str>, p: AtomPart) {
         if let Some(old) = self.names.remove(name) {
-            self.sum = self.sum.wrapping_sub(Atoms::entry(name, &old));
+            let (primary, named) = Atoms::entries(name, &old);
+            self.sum = self.sum.wrapping_sub(primary);
+            self.name_sum = self.name_sum.wrapping_sub(named);
             self.payloads.remove(name);
         }
         let default = if self.cofinite {
@@ -2409,7 +2551,9 @@ impl Atoms {
             AtomPart::none()
         };
         if p != default {
-            self.sum = self.sum.wrapping_add(Atoms::entry(name, &p));
+            let (primary, named) = Atoms::entries(name, &p);
+            self.sum = self.sum.wrapping_add(primary);
+            self.name_sum = self.name_sum.wrapping_add(named);
             if !p.payload.lists_nothing() {
                 self.payloads.insert(name.clone());
             }
@@ -2548,6 +2692,7 @@ impl Not for &Type {
         let p = self.p();
         Type::new(Parts {
             digest: 0,
+            name_digest: 0,
             bools: !p.bools & 3,
             ints: p.ints.not(),
             rats: p.rats.not(),
@@ -3135,7 +3280,7 @@ fn only_row(t: &Type) -> Option<Row> {
 // l01_23_subtyping::scaling::finding_the_boxes_of_a_meet_with_an_exclusive_or_scales;
 // COMPLEXITY.md K69.
 fn merge_boxes(boxes: Vec<Row>, unions: &mut HashMap<Vec<Type>, Option<Type>>) -> Vec<Row> {
-    let hash = |j: usize, t: &Type| mix(j as u64, t.digest());
+    let hash = |j: usize, t: &Type| mix(j as u64, t.name_digest());
     let mut out = Vec::with_capacity(boxes.len());
     let mut boxes = boxes.into_iter().peekable();
     while let Some(first) = boxes.next() {
@@ -5799,6 +5944,8 @@ pub mod rec {
         /// types' digests are made from the canonical form's ([`Canon`]).
         digest: u64,
         defs: Vec<Def>,
+        /// Each definition identifier hashed once, before its occurrences and instances.
+        name_hashes: Vec<u64>,
         /// Each body as a shared tree.
         pub(in crate::types) bodies: Vec<Arc<Node>>,
         /// Whether each definition is plain: on no cycle of the group and naming only plain
@@ -5811,6 +5958,9 @@ pub mod rec {
         order: Vec<usize>,
         /// The canonical form, made when the group is first instantiated ([`canon`]).
         canon: OnceLock<Canon>,
+        /// The definitions by their classes, then their names, made when first asked
+        /// ([`Checked::by_name`]).
+        by_name: OnceLock<Vec<usize>>,
     }
 
     /// A group's canonical form (item REC-canon): the coarsest partition of its bodies' nodes in
@@ -5830,10 +5980,7 @@ pub mod rec {
         /// The class of each node, by its number (`Node::at`), an occurrence taking its body's;
         /// `u32::MAX` for an argument of a recursive occurrence, which is not read.
         at: Vec<u32>,
-        /// A hash of each node's spelling, by its number: its shape with each occurrence by the
-        /// name it is written with, which is what a part kept unevaluated prints as (`Show`).
         spell: Vec<u64>,
-        /// Each node, by its number; `None` for an argument of a recursive occurrence.
         node: Vec<Option<Arc<Node>>>,
     }
 
@@ -5842,6 +5989,8 @@ pub mod rec {
     pub(in crate::types) struct Node {
         /// A hash of the shape, from the children's: equal shapes hash alike.
         digest: u64,
+        /// The retained syntax, including names in the types it holds.
+        name_digest: u64,
         pub(in crate::types) recursive: bool,
         /// Whether the node names a definition that is not plain.
         open: bool,
@@ -5882,6 +6031,14 @@ pub mod rec {
                 Shape::Tuple(_) => 8,
                 Shape::Atom(name, _) => mix(9, bytes(name.as_bytes())),
                 Shape::Morphism(..) => 10,
+            }
+        }
+
+        /// The same constructor tag for retained syntax, with a held type's presentation.
+        fn name_tag(&self) -> u64 {
+            match self {
+                Shape::Type(t) => mix(3, t.name_digest()),
+                other => other.tag(),
             }
         }
 
@@ -6024,12 +6181,19 @@ pub mod rec {
         group: Option<Group>,
         /// A hash of the group's definitions and the arguments' digests.
         digest: u64,
+        name_digest: u64,
         args: Vec<Type>,
         /// Each member's type: a plain member's set when the group is instantiated, a recursive
         /// member's when first read and until the end of the unit that read it ([`Env::forget`]).
         members: Vec<Mutex<Option<Type>>>,
         /// What the group's decider found for each member (`empty::judge`), when first asked.
         pub(in crate::types) judged: OnceLock<Judgment>,
+        /// Empty meets proved by the diagonal occurrence-parity test, by member, when first
+        /// asked ([`diagonal_empty`]). It is kept with the instance, as [`Env::judged`] is, and not
+        /// with the group: groups are shared by every thread, so a result kept with the group
+        /// would outlive `Type::forget_emptiness` and make the cost of a first decision depend
+        /// on what other units and threads decided before (item GSX-unsolved, I6.7).
+        diagonal_empty: OnceLock<Vec<bool>>,
     }
 
     impl Env {
@@ -6097,19 +6261,13 @@ pub mod rec {
         Refused,
     }
 
-    /// What a recursive node stands for, by which it is hashed and ordered: a member of a group, or
-    /// a part of a body kept unevaluated (by its node's place, `Node::at`), at the group's
-    /// arguments. It is hashed and ordered by the group's canonical form ([`Canon`]), the class
-    /// of the member or part in it, what it prints as (a member's name, a part's spelling) and
-    /// the arguments, so a type's digest and its place in every order do not depend on what the
-    /// process built before it, and checking a program alone or after another agrees
-    /// (deterministic checking, repair REC-id-order); nor on the order the definitions are
-    /// listed in (item REC-canon). Two nodes with equal keys denote one type, since their classes
-    /// unfold alike at equal arguments, and print alike, so which of them a union keeps is never
-    /// seen. The names count for that alone: a copy with its definitions renamed is the same type
-    /// by two-way subtyping, but another node.
+    /// A member or unevaluated part at one instance's arguments. Its primary hash uses
+    /// the canonical form and class. Its presentation hash also uses the full named
+    /// definition graph and the node's own spelling, so equal unfoldings with different
+    /// printed bodies stay separate. Both are followed by structural collision checks.
     pub(super) struct Key {
         digest: u64,
+        name_digest: u64,
         env: Arc<Env>,
         at: At,
         /// The class of the member or part in its group's canonical form.
@@ -6126,21 +6284,40 @@ pub mod rec {
     }
 
     impl Key {
+        pub(in crate::types) fn diagonal_empty(&self) -> bool {
+            let At::Member(i) = self.at else {
+                return false;
+            };
+            let g = &self.env.group().0;
+            if !matches!(g.defs[i].body, Expr::And(_)) {
+                return false;
+            }
+            self.env.diagonal_empty.get_or_init(|| {
+                diagonal_empty(
+                    &g.defs,
+                    &g.canon.get().expect("a key has a canonical form").member,
+                )
+            })[i]
+        }
+
+        pub(in crate::types) fn search_class(&self) -> u32 {
+            self.class
+        }
+
         fn new(env: Arc<Env>, at: At) -> Key {
-            let (group, canon) = (env.group(), env.group().canon());
+            let canon = env.group().canon();
             let (class, spell) = match at {
-                At::Member(i) => (
-                    canon.member[i],
-                    mix(15, bytes(group.0.defs[i].name.as_bytes())),
-                ),
+                At::Member(i) => (canon.member[i], mix(15, env.group().0.name_hashes[i])),
                 At::Part(n) => (canon.at[n as usize], canon.spell[n as usize]),
             };
-            let digest = mix(
-                mix(mix(env.digest, u64::from(class)), u64::from(at.kind())),
+            let digest = mix(mix(env.digest, u64::from(class)), u64::from(at.kind()));
+            let name_digest = mix(
+                mix(mix(env.name_digest, u64::from(class)), u64::from(at.kind())),
                 spell,
             );
             Key {
                 digest,
+                name_digest,
                 env,
                 at,
                 class,
@@ -6169,6 +6346,10 @@ pub mod rec {
 
         pub(super) fn digest(&self) -> u64 {
             self.digest
+        }
+
+        pub(super) fn name_digest(&self) -> u64 {
+            self.name_digest
         }
 
         /// The group of the member the key names, by the number of the instance its members share,
@@ -6211,27 +6392,34 @@ pub mod rec {
             }
         }
 
-        /// The order of two keys: by digest, kind and class, the groups' canonical forms, the
-        /// spelling and the arguments. What the forms' shapes decide is decided here; the pairs of
-        /// types inside them that tie in digest, then the arguments, are pushed to `types` in the
-        /// order they are to be compared when the rest ties, by the caller's loop (`order`), so
-        /// that no type is compared by recursion here. Time linear in the classes where the groups
-        /// differ and tie in digest, linear in the part where two parts are spelled alike, and
-        /// constant otherwise.
+        /// The order of two keys: by digest, kind and class, the groups' canonical forms and the
+        /// arguments. What the forms' shapes decide is decided here; the pairs of types inside
+        /// them that tie in digest, then the arguments, are pushed to `types` in the order they
+        /// are to be compared when the rest ties, by the caller's loop (`order`), so that no type
+        /// is compared by recursion here. Two keys of one instance and one class are equal. Time
+        /// linear in the classes where the groups differ and tie in digest, and constant
+        /// otherwise.
         pub(super) fn order<'a>(
             &'a self,
             other: &'a Key,
             types: &mut Vec<(&'a Type, &'a Type)>,
         ) -> std::cmp::Ordering {
-            let c = self
-                .digest
-                .cmp(&other.digest)
-                .then(self.rank().cmp(&other.rank()));
+            let c = super::digests_cmp(
+                (self.digest, self.name_digest),
+                (other.digest, other.name_digest),
+            )
+            .then(self.rank().cmp(&other.rank()));
             if c.is_ne() {
                 return c;
             }
+            // Under `blind`, names are left out: two keys of one instance and one class, and two
+            // keys of groups of one form whose arguments tie, are then equal.
+            let blinded = super::names_blind();
             if Arc::ptr_eq(&self.env, &other.env) {
-                return self.spelling(other);
+                return match blinded {
+                    true => std::cmp::Ordering::Equal,
+                    false => self.spelling(other),
+                };
             }
             let (a, b) = (self.env.group(), other.env.group());
             if !Arc::ptr_eq(&a.0, &b.0) {
@@ -6239,14 +6427,211 @@ pub mod rec {
                 if c.is_ne() {
                     return c;
                 }
+                // Equal fingerprints still need the retained definition graph compared:
+                // reusing another spelling would carry its names through the type memos.
+                // The presentation hash already orders most renamed copies above, including
+                // members of one semantic class. This fallback confirms genuine collisions;
+                // it does not establish that the emptiness search is independent of that
+                // presentation order (item GSX-unsolved).
+                if !blinded {
+                    let c = a.0.names_order(&b.0);
+                    if c.is_ne() {
+                        return c;
+                    }
+                }
             }
-            let c = self.spelling(other);
+            if !blinded {
+                let c = self.spelling(other);
+                if c.is_ne() {
+                    return c;
+                }
+            }
+            // Two groups of one form can take different numbers of arguments, when a parameter
+            // is not read; `zip` would drop the extra ones.
+            let c = self.env.args.len().cmp(&other.env.args.len());
             if c.is_ne() {
                 return c;
             }
             types.extend(self.env.args.iter().zip(&other.env.args));
             std::cmp::Ordering::Equal
         }
+    }
+
+    /// A sufficient Empty proof for meets of written two-state occurrence counters.
+    // Complexity tradeoff: a product of k counters has 2^k states, and general
+    // affine elimination costs O(k^3). Read singleton counters, a length counter,
+    // and a finite alphabet directly, O((nodes + literal entries) log n) per
+    // written group, cached once per instance. The equations here are diagonal: x_a = b_a,
+    // and sum x_a = b_length. Other equations and non-list definitions receive
+    // no answer here and keep the existing search and its refusals. No names or
+    // written operand positions enter the proof. Test:
+    // setop::bounded_empty_parity_is_decided_in_the_size_of_the_constraints.
+    fn diagonal_empty(defs: &[Def], classes: &[u32]) -> Vec<bool> {
+        use super::Lits;
+        use crate::Value;
+        use std::collections::{BTreeMap, HashSet};
+        struct State<'a> {
+            nil: bool,
+            edges: Vec<(&'a Lits, usize)>,
+        }
+        enum Counter<'a> {
+            Symbol(&'a Value, bool),
+            Length(bool),
+            Alphabet(&'a Lits),
+        }
+        fn ints(e: &Expr) -> Option<&Lits> {
+            let Expr::Type(t) = e else { return None };
+            let super::Node::Parts(p, _) = &*t.0 else {
+                return None;
+            };
+            (p.scalars_only()
+                && p.bools == 0
+                && [&p.rats, &p.floats, &p.strings]
+                    .iter()
+                    .all(|l| !l.cofinite && l.values.is_empty()))
+            .then_some(&p.ints)
+        }
+        fn reference(e: &Expr) -> Option<usize> {
+            match e {
+                Expr::Ref(i, args) if args.is_empty() => Some(*i),
+                _ => None,
+            }
+        }
+        fn state(d: &Def) -> Option<State<'_>> {
+            if !d.params.is_empty() {
+                return None;
+            }
+            let mut s = State {
+                nil: false,
+                edges: Vec::new(),
+            };
+            // Expr is an owned tree; recursive references are edges, never unfolded.
+            let mut todo = vec![&d.body];
+            while let Some(e) = todo.pop() {
+                match e {
+                    Expr::Union(xs) => todo.extend(xs),
+                    Expr::Type(t) if *t == Type::atom("nil") => s.nil = true,
+                    Expr::Atom(name, xs) if name == "nil" && xs.is_empty() => s.nil = true,
+                    Expr::Atom(name, xs) if name == "cons" && xs.len() == 2 => {
+                        s.edges.push((ints(&xs[0])?, reference(&xs[1])?));
+                    }
+                    _ => return None,
+                }
+            }
+            Some(s)
+        }
+        let states: Vec<_> = defs.iter().map(state).collect();
+        let counters: Vec<_> = states
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let s = s.as_ref()?;
+                if s.edges.len() == 1 {
+                    let (head, j) = s.edges[0];
+                    if j == i && s.nil {
+                        return Some(Counter::Alphabet(head));
+                    }
+                    let other = states.get(j)?.as_ref()?;
+                    if j != i
+                        && s.nil != other.nil
+                        && head.cofinite
+                        && head.values.is_empty()
+                        && other.edges.len() == 1
+                        && other.edges[0].1 == i
+                        && other.edges[0].0.cofinite
+                        && other.edges[0].0.values.is_empty()
+                    {
+                        return Some(Counter::Length(!s.nil));
+                    }
+                    return None;
+                }
+                if s.edges.len() != 2 {
+                    return None;
+                }
+                let &(single, j) = s
+                    .edges
+                    .iter()
+                    .find(|(l, _)| !l.cofinite && l.values.len() == 1)?;
+                let &(rest, stay) = s.edges.iter().find(|(l, _)| l.cofinite)?;
+                if j == i || stay != i || rest.values != single.values {
+                    return None;
+                }
+                let other = states.get(j)?.as_ref()?;
+                if s.nil == other.nil || other.edges.len() != 2 {
+                    return None;
+                }
+                if !other.edges.iter().any(|&(l, to)| to == i && l == single)
+                    || !other.edges.iter().any(|&(l, to)| to == j && l == rest)
+                {
+                    return None;
+                }
+                Some(Counter::Symbol(single.values.iter().next()?, !s.nil))
+            })
+            .collect();
+        defs.iter()
+            .map(|d| {
+                let Expr::And(xs) = &d.body else { return false };
+                if !d.params.is_empty() {
+                    return false;
+                }
+                let (mut length, mut alphabet) = (None, None::<(&Lits, u32)>);
+                let mut symbols = BTreeMap::new();
+                let mut references = HashSet::new();
+                for e in xs {
+                    let Some(i) = reference(e) else { continue };
+                    if !references.insert(i) {
+                        continue;
+                    }
+                    let Some(c) = counters.get(i).and_then(Option::as_ref) else {
+                        continue;
+                    };
+                    match c {
+                        Counter::Symbol(a, b) => {
+                            if symbols.insert(*a, *b).is_some_and(|old| old != *b) {
+                                return true;
+                            }
+                        }
+                        Counter::Length(b) => {
+                            if length.replace(*b).is_some_and(|old| old != *b) {
+                                return true;
+                            }
+                        }
+                        Counter::Alphabet(a) if !a.cofinite => {
+                            // Reuse the group's exact stable classes to order a
+                            // fingerprint tie. Comparing tied large sets at every
+                            // reference would repeat their boundaries. Equal
+                            // classes unfold alike, including the scalar label.
+                            let key = (a.values.len(), a.sum, classes[i]);
+                            let old =
+                                alphabet.map(|(old, class)| (old.values.len(), old.sum, class));
+                            if old.is_none_or(|old| key < old) {
+                                alphabet = Some((a, classes[i]));
+                            }
+                        }
+                        Counter::Alphabet(_) => {}
+                    }
+                }
+                let Some((alphabet, _)) = alphabet else {
+                    return false;
+                };
+                if symbols.iter().any(|(a, b)| *b && !alphabet.contains(a)) {
+                    return true;
+                }
+                // A full alphabet walk is charged to the written singleton references
+                // in this meet; shared large alphabets with fewer counters are skipped.
+                if alphabet.values.len() > symbols.len() {
+                    return false;
+                }
+                let mut sum = false;
+                for a in &alphabet.values {
+                    let Some(b) = symbols.get(a) else {
+                        return false;
+                    };
+                    sum ^= *b;
+                }
+                length.is_some_and(|b| b != sum)
+            })
+            .collect()
     }
 
     impl At {
@@ -6270,7 +6655,7 @@ pub mod rec {
             // 17,071,066 bytes, 8.0 times, 2026-11-12), and so decides neither ring before.
             self.0
                 .canon
-                .get_or_init(|| canon(&self.0.bodies, &self.0.defs))
+                .get_or_init(|| canon(&self.0.bodies, &self.0.name_hashes))
         }
     }
 
@@ -6284,6 +6669,57 @@ pub mod rec {
         /// The spelling hashes of the nodes, by number ([`Canon::spell`]), so the form is made.
         fn spells(&self) -> &[u64] {
             &self.canon.get().expect("a key's group has its form").spell
+        }
+
+        /// The definitions in the order of their classes, then their names: what tells apart two
+        /// groups of one canonical form ([`Key::order`]). The list fixes the named binding
+        /// context; a key's own spelling distinguishes members of one class. Time O(d log d)
+        /// comparisons for d definitions, once per group.
+        fn by_name(&self) -> &[usize] {
+            self.by_name.get_or_init(|| {
+                let member = &self.canon.get().expect("a key has a canonical form").member;
+                let mut v: Vec<usize> = (0..self.defs.len()).collect();
+                v.sort_unstable_by(|&i, &j| {
+                    (member[i], &self.defs[i].name).cmp(&(member[j], &self.defs[j].name))
+                });
+                v
+            })
+        }
+
+        /// The order of two groups of one canonical form by their definitions' names, listed by
+        /// [`Checked::by_name`]. Time linear in the definitions.
+        fn names_order(&self, other: &Checked) -> std::cmp::Ordering {
+            let (ma, mb) = (
+                &self.canon.get().expect("a key has a canonical form").member,
+                &other
+                    .canon
+                    .get()
+                    .expect("a key has a canonical form")
+                    .member,
+            );
+            let a = self.by_name().iter().map(|&i| (ma[i], &self.defs[i].name));
+            let b = other
+                .by_name()
+                .iter()
+                .map(|&i| (mb[i], &other.defs[i].name));
+            let c = a.cmp(b);
+            if c.is_ne() {
+                return c;
+            }
+            // A hash collision must not equate different named graphs. All roots share
+            // one visited set so a shared body is not walked once per definition.
+            let roots = self
+                .by_name()
+                .iter()
+                .zip(other.by_name())
+                .map(|(&i, &j)| (&*self.bodies[i], &*other.bodies[j]));
+            spelled_roots(
+                roots,
+                &self.defs,
+                &other.defs,
+                self.spells(),
+                other.spells(),
+            )
         }
     }
 
@@ -6329,7 +6765,7 @@ pub mod rec {
     /// partition in which nodes of one class unfold alike. O((N + M) log N) for N nodes and M
     /// children, besides the O(N log N) comparisons of the starting sort, of which those of two
     /// types cost what [`Type::cmp`] costs.
-    fn canon(bodies: &[Arc<Node>], defs: &[Def]) -> Canon {
+    fn canon(bodies: &[Arc<Node>], names: &[u64]) -> Canon {
         // Complexity tradeoff (COMPLEXITY.md K72): the naive canonical form numbers each member
         // by a walk of its own reachable part, O(N) per member and O(N²) on one strongly
         // connected component; numbering by written order is O(N) but makes a reordered group a
@@ -6513,7 +6949,7 @@ pub mod rec {
         let mut spell = vec![0; count];
         for n in node.iter().flatten() {
             spell[n.at as usize] = match &n.e {
-                Shape::Ref(j, _) => mix(2, bytes(defs[*j].name.as_bytes())),
+                Shape::Ref(j, _) => mix(2, names[*j]),
                 // The operands of a meet in the order of their spellings, so that `A & B` and
                 // `B & A` spell alike and are one part (item GROUP-search-canon-key).
                 e @ Shape::And(_) => {
@@ -6521,9 +6957,11 @@ pub mod rec {
                     // Complexity tradeoff (COMPLEXITY.md K102): hashing in the written order is
                     // O(k) for k operands but depends on that order; the sort is O(k log k).
                     kids.sort_unstable();
-                    kids.into_iter().fold(e.tag(), mix)
+                    kids.into_iter().fold(e.name_tag(), mix)
                 }
-                e => e.kids().fold(e.tag(), |h, c| mix(h, spell[c.at as usize])),
+                e => e
+                    .kids()
+                    .fold(e.name_tag(), |h, c| mix(h, spell[c.at as usize])),
             };
         }
         Canon {
@@ -6535,7 +6973,6 @@ pub mod rec {
             node,
         }
     }
-
     /// The order of two nodes of one class by their spelling ([`Canon::spell`]), `defs` naming the
     /// definitions each one's occurrences name: by head, an occurrence by the name it is written
     /// with, then the children in place order, in a loop. The types they hold are not read: two
@@ -6548,14 +6985,33 @@ pub mod rec {
         (x, xs, xh): (&'a Node, &'a [Def], &[u64]),
         (y, ys, yh): (&'a Node, &'a [Def], &[u64]),
     ) -> std::cmp::Ordering {
+        spelled_roots([(x, y)], xs, ys, xh, yh)
+    }
+
+    /// Compares retained spellings, with one visited set across all the roots.
+    // Complexity tradeoff: comparing d roots independently can read a shared N-node DAG
+    // d times, O(d*N). One set of pairs visits each pair once across every root, with
+    // O(pairs) memory; meet operands still need their spelling-order sorts.
+    fn spelled_roots<'a>(
+        roots: impl IntoIterator<Item = (&'a Node, &'a Node)>,
+        xs: &'a [Def],
+        ys: &'a [Def],
+        xh: &[u64],
+        yh: &[u64],
+    ) -> std::cmp::Ordering {
         fn head<'a>(n: &'a Node, defs: &'a [Def]) -> (u8, usize, &'a str) {
             match &n.e {
                 Shape::Ref(i, _) => (2, 0, defs[*i].name.as_str()),
                 e => e.head(),
             }
         }
-        let mut stack: Vec<(&'a Node, &'a Node)> = vec![(x, y)];
+        let mut stack: Vec<(&'a Node, &'a Node)> = roots.into_iter().collect();
+        stack.reverse();
+        let mut visited = std::collections::HashSet::new();
         while let Some((x, y)) = stack.pop() {
+            if !visited.insert((x.at, y.at)) {
+                continue;
+            }
             let c = (head(x, xs).cmp(&head(y, ys)))
                 .then_with(|| x.e.kids().count().cmp(&y.e.kids().count()));
             if c.is_ne() {

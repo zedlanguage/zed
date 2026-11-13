@@ -992,6 +992,7 @@ fn tied(bottom: &str, depth: usize) -> Type {
         };
         let mut p = p.clone();
         p.digest = 0;
+        p.name_digest = 0;
         Type(Arc::new(Node::Parts(p, super::super::Shown::default())))
     };
     let mut t = zeroed(Type::atom(bottom));
@@ -1001,6 +1002,7 @@ fn tied(bottom: &str, depth: usize) -> Type {
         };
         let mut p = p.clone();
         p.digest = 0;
+        p.name_digest = 0;
         p.atoms.names = p.atoms.names.update(
             "a".into(),
             AtomPart {

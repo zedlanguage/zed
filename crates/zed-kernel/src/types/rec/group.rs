@@ -103,7 +103,11 @@ impl Node {
                 Shape::Ref(i, _) => !plain.get(*i).copied().unwrap_or(false),
                 _ => shape.kids().any(|c| c.open),
             };
-            let digest = shape.kids().fold(shape.tag(), |h, c| mix(h, c.digest));
+            let (digest, name_digest) = shape
+                .kids()
+                .fold((shape.tag(), shape.name_tag()), |(h, named), c| {
+                    (mix(h, c.digest), mix(named, c.name_digest))
+                });
             let at = numbering.next;
             numbering.next += 1;
             let equal = |c: &Node| {
@@ -115,10 +119,13 @@ impl Node {
                         .zip(shape.kids())
                         .all(|(a, b)| a.class == b.class)
             };
-            // The nodes of one digest and differing shapes are at probes 0, 1, 2 and on.
+            // Complexity tradeoff: equal-form external types can share a primary hash.
+            // Their cached presentation hashes separate retained syntax without walking
+            // those types at each lookup. Genuine collisions retain the structural probe.
+            // The nodes of one hash and differing shapes are at probes 0, 1, 2 and on.
             let mut probe = 0;
             let (class, vacant) = loop {
-                match numbering.first.entry((digest, probe)) {
+                match numbering.first.entry((name_digest, probe)) {
                     Entry::Occupied(c) if equal(c.get()) => break (c.get().class, None),
                     Entry::Occupied(_) => probe += 1,
                     Entry::Vacant(v) => break (at, Some(v)),
@@ -126,6 +133,7 @@ impl Node {
             };
             let node = Arc::new(Node {
                 digest,
+                name_digest,
                 recursive,
                 open,
                 at,
@@ -154,16 +162,19 @@ impl Group {
             .map(|d| Node::of(&d.body, &plain, &mut numbering))
             .collect();
         drop(numbering);
-        let digest = digest(&defs, &bodies);
+        let name_hashes: Vec<u64> = defs.iter().map(|d| bytes(d.name.as_bytes())).collect();
+        let digest = digest(&defs, &bodies, &name_hashes);
         let g = Group(Arc::new(Checked {
             number: NEXT.fetch_add(1, Ordering::Relaxed),
             digest,
             defs,
+            name_hashes,
             bodies,
             plain,
             cyclic,
             order,
             canon: OnceLock::new(),
+            by_name: OnceLock::new(),
         }));
         {
             // A part a rejection writes more than once is declared after its sentence, unless
@@ -529,9 +540,13 @@ impl Group {
             digest: args
                 .iter()
                 .fold(mix(12, self.canon().digest), |h, t| mix(h, t.digest())),
+            name_digest: args
+                .iter()
+                .fold(mix(12, self.canon().digest), |h, t| mix(h, t.name_digest())),
             args,
             members: (0..self.0.defs.len()).map(|_| Mutex::new(None)).collect(),
             judged: OnceLock::new(),
+            diagonal_empty: OnceLock::new(),
         });
         // A plain member names only plain members, each set before it. A recursive member is
         // made when first read ([`Env::member`]).
@@ -578,16 +593,17 @@ impl Group {
 
 /// A hash of the definitions, from their names, parameters and bodies' digests: equal
 /// definition lists hash alike. Time linear in the names and parameters.
-fn digest(defs: &[Def], bodies: &[Arc<Node>]) -> u64 {
-    defs.iter().zip(bodies).fold(11, |h, (d, body)| {
-        let h = d
-            .params
-            .iter()
-            .fold(mix(h, bytes(d.name.as_bytes())), |h, p| {
-                mix(h, bytes(p.as_bytes()))
-            });
-        mix(mix(h, d.params.len() as u64), body.digest)
-    })
+fn digest(defs: &[Def], bodies: &[Arc<Node>], names: &[u64]) -> u64 {
+    defs.iter()
+        .zip(bodies)
+        .zip(names)
+        .fold(11, |h, ((d, body), &name)| {
+            let h = d
+                .params
+                .iter()
+                .fold(mix(h, name), |h, p| mix(h, bytes(p.as_bytes())));
+            mix(mix(h, d.params.len() as u64), body.name_digest)
+        })
 }
 
 /// Where a domain that is exact everywhere else may be narrowed (`Group::flipped`).

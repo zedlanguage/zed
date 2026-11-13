@@ -82,11 +82,112 @@ use super::bdd::{Bdd, Form, Part};
 use super::bes::{Answer, Bes, Decision, Kind, decide};
 use super::rec::unfold::eval;
 use super::rec::{self, Env, Judgment, Why};
-use super::{Held, Lits, Morphism, Node, Parts, Refusal, Row, Split, Type, Universes, Verdict};
+use super::{
+    Held, Lits, Morphism, Node, Parts, Refusal, Row, Split, Type, Universes, Verdict, blind,
+};
 use crate::digest::{DigestMap, DigestSet};
 use crate::frames::{Deep, Stack};
 use crate::value::Value;
 use shared::{ByType, ChainHint, ChainPlan, Digests, Literal2, TwoSat, list_step, only_atoms};
+
+/// The numbers of the types of a search, one number for the types equal but for definition
+/// names ([`blind`]): two renamed copies of a group, and two types that hold them, have one
+/// answer, since no rule of the search reads a definition's name, so the search decides them once
+/// and its verdicts do not depend on which copy it met first.
+// Complexity tradeoff: keyed by both digests (`ByType`), each of k renamed copies of a group
+// live in one search is decided apart, down to its own nodes: k times the work of one (seed 32
+// of the harness, item GSX-unsolved, I7.3-Opus). Used: a map by the name-free digest, where a
+// type is compared with the keys of its digest with names left out, O(1) where the digests
+// differ and linear in the size of the two types where they tie. Given up: a copy met again is
+// compared in full with the first copy each time, and a collision of the name-free digest
+// leaves a list whose keys are compared one by one, O(b) comparisons for b keys.
+#[derive(Default)]
+struct Ids(HashMap<u64, Vec<(Type, usize)>, Digests>);
+
+impl Ids {
+    fn get(&self, t: &Type) -> Option<&usize> {
+        let keys = self.0.get(&t.digest())?;
+        blind(|| keys.iter().find(|(k, _)| k == t)).map(|(_, i)| i)
+    }
+
+    fn insert(&mut self, t: Type, i: usize) {
+        let keys = self.0.entry(t.digest()).or_default();
+        match blind(|| keys.iter().position(|(k, _)| *k == t)) {
+            Some(j) => keys[j].1 = i,
+            None => keys.push((t, i)),
+        }
+    }
+
+    fn remove(&mut self, t: &Type) {
+        let d = t.digest();
+        let Some(keys) = self.0.get_mut(&d) else {
+            return;
+        };
+        blind(|| keys.retain(|(k, _)| k != t));
+        if keys.is_empty() {
+            self.0.remove(&d);
+        }
+    }
+}
+
+// Complexity tradeoff: scanning b records at q dependency queries costs O(q*b)
+// even when none is a fork. Maintain their count, O(1) per query and insertion;
+// removals and compaction charge their work to existing log mutations. Nothing
+// is given up: the count is exact. Test: setop::canonical_blame_settlement_scales
+// and the Fork diagnostics in refusals; a repeated-query control fails scaling.
+/// Refusal records with the number of forks maintained by the same mutations.
+/// Testing whether a fork exists is constant time; scanning records at every
+/// dependency query otherwise multiplies the queries by the accumulated records.
+#[derive(Default)]
+struct Blames {
+    entries: Vec<(usize, Refusal, usize)>,
+    forks: usize,
+}
+
+impl std::ops::Deref for Blames {
+    type Target = [(usize, Refusal, usize)];
+    fn deref(&self) -> &Self::Target {
+        &self.entries
+    }
+}
+
+impl Blames {
+    fn push(&mut self, entry: (usize, Refusal, usize)) {
+        self.forks += usize::from(entry.1 == Refusal::Fork);
+        self.entries.push(entry);
+    }
+
+    fn extend(&mut self, entries: impl IntoIterator<Item = (usize, Refusal, usize)>) {
+        for entry in entries {
+            self.push(entry);
+        }
+    }
+
+    fn retain(&mut self, mut keep: impl FnMut(&(usize, Refusal, usize)) -> bool) {
+        self.entries.retain(|entry| {
+            if keep(entry) {
+                true
+            } else {
+                self.forks -= usize::from(entry.1 == Refusal::Fork);
+                false
+            }
+        });
+    }
+
+    fn truncate(&mut self, len: usize) {
+        for entry in self.entries.get(len..).unwrap_or_default() {
+            self.forks -= usize::from(entry.1 == Refusal::Fork);
+        }
+        self.entries.truncate(len);
+    }
+
+    fn copy_entry(&mut self, to: usize, from: usize) {
+        let entry = self.entries[from];
+        self.forks -= usize::from(self.entries[to].1 == Refusal::Fork);
+        self.forks += usize::from(entry.1 == Refusal::Fork);
+        self.entries[to] = entry;
+    }
+}
 
 /// A set of types, hashed by their digests.
 type TypeSet = HashSet<Type, Digests>;
@@ -95,13 +196,16 @@ type TypeSet = HashSet<Type, Digests>;
 type ForkSave = (Vec<usize>, Vec<(usize, Refusal)>);
 
 thread_local! {
-    static MEMO: RefCell<ByType<bool>> = const { RefCell::new(ByType::with_hasher(Digests::new())) };
+    static MEMO: RefCell<ByType<bool>> = const { RefCell::new(ByType::new()) };
+    /// The answer of [`Type::empty_past_forks`] for each type asked: a function of the type alone.
+    static PAST_FORKS: RefCell<ByType<bool>> =
+        const { RefCell::new(ByType::new()) };
     /// The verdict of each type asked. A verdict is decided by a search that reads no kept
     /// result, or with the other members of its recursive group ([`group_verdicts`]), so it is
     /// a function of the type alone, and keeping it changes no answer: these
     /// are the types proved empty and those with a checked value, and the refusals.
     static VERDICTS: RefCell<ByType<Verdict>> =
-        const { RefCell::new(ByType::with_hasher(Digests::new())) };
+        const { RefCell::new(ByType::new()) };
     /// The members of the groups whose verdicts are being decided ([`group_verdicts`]): a search
     /// decides such a member itself, where it reads the verdict of any other member.
     static DECIDING: RefCell<TypeSet> = const { RefCell::new(TypeSet::with_hasher(Digests::new())) };
@@ -121,7 +225,7 @@ thread_local! {
     /// For each member given `Inhabited` by [`group_verdicts`] with a value its searches built:
     /// the list in `STORES` and the value's number there.
     static SHARED: RefCell<ByType<(usize, usize)>> =
-        const { RefCell::new(ByType::with_hasher(Digests::new())) };
+        const { RefCell::new(ByType::new()) };
     /// The members of recursive groups this thread sent to the search of [`group_verdicts`]
     /// because their group's decider left them open ([`Type::members_searched`]).
     static SEARCHED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -140,7 +244,10 @@ thread_local! {
 /// whichever member is asked first.
 fn group_verdicts(members: &[Type]) {
     DECIDING.with(|d| d.borrow_mut().extend(members.iter().cloned()));
-    let open: Vec<Type> = (members.iter())
+    let order: Vec<usize> = (0..members.len()).collect();
+    let open: Vec<Type> = order
+        .iter()
+        .map(|&i| &members[i])
         .filter(|m| m.judged().is_none())
         .cloned()
         .collect();
@@ -148,7 +255,8 @@ fn group_verdicts(members: &[Type]) {
     let mut d = Search {
         strict: true,
         refuse_forks: true,
-        blame: Some(Vec::new()),
+        is_group: true,
+        blame: Some(Blames::default()),
         ..Search::default()
     };
     let answers = d.solve_all(&open);
@@ -173,7 +281,9 @@ fn group_verdicts(members: &[Type]) {
     // The search in which each closure is taken to have a value, run only for a member that
     // would be refused, and `None` inside when it showed no values.
     let mut o: Option<Option<Search>> = None;
-    for m in members {
+    let mut undecided = Vec::new();
+    for &i in &order {
+        let m = &members[i];
         let v = match m.judged() {
             Some(true) => Verdict::Empty,
             Some(false) if s.rep(m).is_some() => Verdict::Inhabited,
@@ -196,7 +306,7 @@ fn group_verdicts(members: &[Type]) {
                         .is_some_and(|o| o.rep(m).is_some())
                 {
                     Verdict::Inhabited
-                } else {
+                } else if m.refused_by_group() {
                     // Complexity tradeoff at `Type::verdict_alone`: neither proved empty nor
                     // shown inhabited, so refused. A member the group's decider refused is
                     // refused for that, whatever stopped the search, so that its message names
@@ -211,11 +321,10 @@ fn group_verdicts(members: &[Type]) {
                     // search deciding nothing. Tests: `l01_23_subtyping::group_refusal`.
                     // COMPLEXITY.md K85. A complete solution needs a game solver quadratic in
                     // the component.
-                    Verdict::Refused(if m.refused_by_group() {
-                        Refusal::Group
-                    } else {
-                        cause.or(d.gave_up).unwrap_or(Refusal::NoWitness)
-                    })
+                    Verdict::Refused(Refusal::Group)
+                } else {
+                    undecided.push(m.clone());
+                    Verdict::Refused(cause.or(d.gave_up).unwrap_or(Refusal::NoWitness))
                 }
             }
         };
@@ -225,6 +334,13 @@ fn group_verdicts(members: &[Type]) {
     // a member shown inhabited by a value of the search for values, else of the first search,
     // else of the search in which each closure was taken to have a value.
     let mut o = o.flatten();
+    if !undecided.is_empty() {
+        for t in 0..d.types.len() {
+            if s.reps.get(&d.types[t]).is_some_and(Option::is_some) {
+                d.witnessed.insert(t);
+            }
+        }
+    }
     STORES.with(|st| {
         let mut st = st.borrow_mut();
         let (first, values, taken) = (st.len(), st.len() + 1, st.len() + 2);
@@ -249,12 +365,111 @@ fn group_verdicts(members: &[Type]) {
             st.push(std::mem::take(&mut o.shown));
         }
     });
-    DECIDING.with(|d| {
-        let mut d = d.borrow_mut();
+    if !undecided.is_empty() {
+        DECIDING.with(|dec| {
+            let mut dec = dec.borrow_mut();
+            for m in members {
+                if !undecided.contains(m) {
+                    dec.remove(m);
+                }
+            }
+        });
         for m in members {
-            d.remove(m);
+            if VERDICTS.with(|k| k.borrow().get(m) == Some(&Verdict::Inhabited))
+                && let Some(&id) = d.ids.get(m)
+            {
+                d.witnessed.insert(id);
+                d.blamed_node[id] = false;
+            }
         }
+        d.settle_canonical_blame(&undecided);
+        let c_causes = d.causes();
+        VERDICTS.with(|k| {
+            let mut k = k.borrow_mut();
+            for m in &undecided {
+                let id = d.ids.get(m).copied();
+                // The reason, by a fixed priority over what this search recorded: the refusal
+                // that ended the search, else the cause the member's answer rests on
+                // (`Search::causes`), else the give-up first in `refusal_rank`, else
+                // NoWitness. It is a function of the group as written, the same in every build
+                // and run. It is not a function of the meaning alone: a group written with the
+                // operands of `&` or `|` in another order is another type, and one written with
+                // its definitions in another order is searched from its members in that order;
+                // either search may meet the parts in another order and record another cause.
+                // In the sweep of 16000 random groups, each in five presentations (plan item
+                // GSX-unsolved), three members get two reasons across the presentations of one
+                // group (seed 3390: MorphismSplit and NoWitness; 4502: Fork and NoWitness); no
+                // verdict changes. Searching the members in digest order moves the difference
+                // from 4502 to 5200, so the order of the roots alone does not fix it.
+                let r = d
+                    .refused
+                    .or(id.and_then(|i| c_causes[i]))
+                    .or(d.gave_up)
+                    .unwrap_or(Refusal::NoWitness);
+                k.insert(m.clone(), Verdict::Refused(r));
+            }
+        });
+        refine_tuple_forks(&undecided);
+        DECIDING.with(|dec| {
+            let mut dec = dec.borrow_mut();
+            for m in &undecided {
+                dec.remove(m);
+            }
+        });
+    } else {
+        DECIDING.with(|dec| {
+            let mut dec = dec.borrow_mut();
+            for m in members {
+                dec.remove(m);
+            }
+        });
+    }
+}
+
+/// Tries the exact tuple-universe identities only for settled Fork refusals.
+// Complexity tradeoff: leaving `(_, .., _)` as an open atom may create a recursive
+// fork that disappears when its known truth is substituted. Try this second proof
+// domain once for the refused roots together, each diagram normalized once there.
+// Only clean Empty proofs are retained; every other verdict and its settled reason
+// stay with the ordinary search. This is a fixed pair of proof domains, not a
+// retry budget or a size-dependent decision. Non-Fork refusals need no such proof.
+fn refine_tuple_forks(undecided: &[Type]) {
+    let roots: Vec<Type> = VERDICTS.with(|v| {
+        let v = v.borrow();
+        undecided
+            .iter()
+            .filter(|m| v.get(m) == Some(&Verdict::Refused(Refusal::Fork)))
+            .cloned()
+            .collect()
     });
+    if roots.is_empty() {
+        return;
+    }
+    let mut proof = Search {
+        strict: true,
+        refuse_forks: true,
+        is_group: true,
+        blame: Some(Blames::default()),
+        tuple_universe: true,
+        ..Search::default()
+    };
+    let empty = proof.solve_all(&roots);
+    let causes = proof.causes();
+    if proof.refused.is_none() {
+        VERDICTS.with(|v| {
+            let mut v = v.borrow_mut();
+            for (m, empty) in roots.into_iter().zip(empty) {
+                if empty
+                    && proof
+                        .ids
+                        .get(&m)
+                        .is_none_or(|&id| causes[id] != Some(Refusal::Fork))
+                {
+                    v.insert(m, Verdict::Empty);
+                }
+            }
+        });
+    }
 }
 
 /// The search for values of `members` in which each closure whose keys are permitted as written
@@ -285,8 +500,8 @@ fn optimistic_values(members: &[Type]) -> Option<Search> {
         optimistic: Some(Vec::new()),
         ..Search::default()
     };
-    for m in members {
-        o.rep(m);
+    for i in carrier_root_order(members) {
+        o.rep(&members[i]);
     }
     let mut shown = 0;
     while let Some(v) = (o.optimistic.as_ref()).and_then(|vs| vs.get(shown).cloned()) {
@@ -303,7 +518,9 @@ impl Type {
     /// another unit costs the size of the type at each lookup; and a recursive instance is a
     /// cycle, which only the end of its unit frees once no one holds it.
     pub fn forget_emptiness() {
+        super::clear_compound_types();
         MEMO.with(|m| m.borrow_mut().clear());
+        PAST_FORKS.with(|m| m.borrow_mut().clear());
         VERDICTS.with(|m| m.borrow_mut().clear());
         STORES.with(|m| m.borrow_mut().clear());
         CLASSES.with(|m| *m.borrow_mut() = Classes::default());
@@ -344,12 +561,21 @@ impl Type {
     /// inhabited. `None` for any other type, and for a member it refuses or leaves to the
     /// search.
     pub fn decided_by_group(&self) -> Option<bool> {
-        self.judged()
+        self.diagonal_empty()
+            .then_some(true)
+            .or_else(|| self.judged())
+    }
+
+    fn diagonal_empty(&self) -> bool {
+        matches!(&*self.0, Node::Rec(r) if r.key.diagonal_empty())
     }
 
     /// Whether no value is in `self`, as far as the search proves it: a type it does not prove
     /// empty, as one whose search meets a fork, counts as inhabited.
     pub fn is_empty(&self) -> bool {
+        if self.diagonal_empty() {
+            return true;
+        }
         // A type of scalars alone is empty when its parts list none, which costs less than
         // finding the type among those kept.
         if let Node::Parts(p, _) = &*self.0
@@ -379,11 +605,15 @@ impl Type {
         // comment).
         let mut s = Search {
             refuse_forks: true,
+            trials: Some(0),
             ..Search::default()
         };
         let b = s.solve(self);
         if s.refused.is_some() {
-            return false;
+            // A fork met in a component of a box with components left untried: a search that
+            // sets it aside may still prove `self` empty by a later component
+            // ([`Type::empty_past_forks`]).
+            return s.fork_later && self.empty_past_forks();
         }
         MEMO.with(|m| {
             m.borrow_mut()
@@ -467,6 +697,9 @@ impl Type {
     /// is decided by the rule on residues and reads neither group's values (plan item
     /// VERDICT-meet-cost).
     pub fn verdict(&self) -> Verdict {
+        if self.diagonal_empty() {
+            return Verdict::Empty;
+        }
         let kept = || VERDICTS.with(|m| m.borrow().get(self).copied());
         if let Some(v) = kept() {
             return v;
@@ -655,13 +888,14 @@ impl Type {
         let mut s = Search {
             strict: true,
             refuse_forks: true,
+            trials: Some(0),
             ..Search::default()
         };
         // The front sweep left `self` to the search above.
         s.swept.insert(self.clone(), None);
         let b = s.solve(self);
         let decided = s.refused.is_none();
-        if decided && b {
+        if (decided && b) || (s.fork_later && self.empty_past_forks()) {
             Verdict::Empty
         } else if decided
             && (s.ids.get(self).is_some_and(|t| s.witnessed.contains(t)) || s.rep(self).is_some())
@@ -700,6 +934,37 @@ impl Type {
             // run, each polynomial in the types written (module comment), and nothing more.
             Verdict::Refused(s.refused.or(s.gave_up).unwrap_or(Refusal::NoWitness))
         }
+    }
+
+    /// Whether a search that does not end at a fork proves `self` empty with no fork under it:
+    /// the search of [`group_verdicts`] with `self` its one root. Each fork is noted against
+    /// the type being decided, and a part proved empty by one component is not charged with a
+    /// fork met in another (`Searching::any_empty`), so a tuple with an empty component is
+    /// empty whichever component comes first.
+    // Complexity tradeoff: run only after the search of `verdict_alone` ended at a fork, so a
+    // type decided without a fork costs what it did; one more search over the same types, the
+    // cost of one group decision (module comment), once per type until `forget_emptiness`
+    // (`PAST_FORKS`). Naive version: the first search alone, which
+    // ends at the first fork in operand order, so `(F, E)` is refused and `(E, F)` is empty.
+    // What is given up: an Empty that only a search following both sides of the fork proves
+    // stays refused. Test: `l01_23_subtyping::refusals::a_tuple_with_an_empty_component_is_empty_in_either_order`.
+    fn empty_past_forks(&self) -> bool {
+        if let Some(e) = PAST_FORKS.with(|m| m.borrow().get(self).copied()) {
+            return e;
+        }
+        let mut d = Search {
+            strict: true,
+            refuse_forks: true,
+            blame: Some(Blames::default()),
+            trials: Some(0),
+            ..Search::default()
+        };
+        let b = d.solve(self);
+        let causes = d.causes();
+        let cause = d.refused.or(d.ids.get(self).and_then(|&i| causes[i]));
+        let e = b && cause != Some(Refusal::Fork);
+        PAST_FORKS.with(|m| m.borrow_mut().insert(self.clone(), e));
+        e
     }
 
     /// Whether every value of `self` is in `other`: `self <: other`.
@@ -909,7 +1174,7 @@ struct Building {
 struct Search {
     /// Each type read, by its number here; a type built apart from an equal one is compared
     /// with it in full once per read.
-    ids: ByType<usize>,
+    ids: Ids,
     types: Vec<Type>,
     /// One answer per type: true, empty, until the rule fails for it.
     answer: Vec<bool>,
@@ -926,6 +1191,9 @@ struct Search {
     /// Types shown inhabited by a checked value; permanent.
     witnessed: BTreeSet<usize>,
     reps: ByType<Option<usize>>,
+    /// The types whose failure in `reps` was kept while `past_fork` was set: a search not past
+    /// a fork builds them again ([`Searching::rep`]).
+    past_failures: ByType<()>,
     /// The values shown, each once, by number.
     shown: Vec<Rep>,
     /// The number here of each value of another search read ([`Rep::Of`]), by its list in
@@ -950,7 +1218,8 @@ struct Search {
     /// The types being decided, on the stack: met for the first time, or decided again by
     /// [`Searching::drain`].
     deciding: BTreeSet<usize>,
-    /// For each type, the types it read, each with the search epoch when it was read.
+    /// For each type, the types it read (with the high bit set when the read did not establish
+    /// emptiness), each with the search epoch when it was read.
     reads: Vec<Vec<(usize, usize)>>,
     /// The types whose value is being built, and how many closures rest on one of them.
     building: ByType<Building>,
@@ -1001,7 +1270,16 @@ struct Search {
     /// inhabited with nothing shown, with the type being decided when it was met, in the order
     /// met. A fork then refuses the types that read that type ([`Search::causes`]) and the
     /// search goes on; with no type being decided, it ends the search as with one root.
-    blame: Option<Vec<(usize, Refusal, usize)>>,
+    blame: Option<Blames>,
+    is_group: bool,
+    /// Uses the exact all-Top row identity for an additional Empty proof only.
+    tuple_universe: bool,
+    tuple_universes: HashMap<u64, Part<Row>, Digests>,
+    canonical_blame: bool,
+    in_subtype_check: bool,
+    canonical_roots: BTreeSet<usize>,
+    canonical_ready: Vec<bool>,
+    blamed_node: Vec<bool>,
     /// Monotone step counter stamping entries in `reads` and `blame` for fork rollback.
     epoch: usize,
     /// When `open_forks` is turned on inside a settled decision search, the table state to
@@ -1042,10 +1320,23 @@ struct Search {
     /// ([`Searching::cut`]), built once, by the nodes' local numbers ([`Type::node_id`]), which
     /// are never reused; the operands are kept with it. Read only by `entry`, never iterated.
     cuts: HashMap<(u64, u64, Cut), (Type, Type, Type), Digests>,
+    /// Outer carriers of an exposed node, independent of its emptiness answer.
+    outer_kinds: HashMap<u64, u16, Digests>,
+    /// Exact scalar cell results, once per pair of allocation-local node numbers.
+    scalar_cells: HashMap<(u64, u64, bool), bool, Digests>,
+    /// The isolated morphism carrier of each shared diagram node.
+    morphism_types: HashMap<u64, Type, Digests>,
     /// With a list, every closure whose keys are permitted as written is taken to have a value
     /// at once, and its value type is put on the list, to be shown to have a value after the
     /// search ([`optimistic_values`]).
     optimistic: Option<Vec<Type>>,
+    /// For [`Type::empty_past_forks`]: how many components of boxes are being tried for
+    /// emptiness ([`Searching::any_empty`]). A fork met outside such a trial ends the search.
+    trials: Option<usize>,
+    /// How many of those trials have components after the one tried, and whether the fork
+    /// that ended the search was met in one ([`Type::verdict_alone`]).
+    later: usize,
+    fork_later: bool,
 }
 
 /// What [`Searching::cut`] builds of two types.
@@ -1458,6 +1749,10 @@ struct Cell {
 // change log cost memory O(N); a prefix trie weighed against it measured `c^2.93`.
 #[derive(Default)]
 struct Region {
+    /// First column to test, chosen from the shared outer-carrier constraints.
+    priority: usize,
+    /// A contradiction in the original box and part, proved from outer carriers.
+    structural_empty: bool,
     r: Vec<Type>,
     atoms: Vec<Row>,
     index: BTreeMap<Row, usize>,
@@ -1757,12 +2052,29 @@ enum Each<'a> {
     },
 }
 
+const NON_EMPTY_READ: usize = 1 << (usize::BITS - 1);
+
+#[inline]
+fn pack_read(node: usize, empty_dep: bool) -> usize {
+    if empty_dep {
+        node
+    } else {
+        node | NON_EMPTY_READ
+    }
+}
+
+#[inline]
+fn unpack_read(packed: usize) -> (usize, bool) {
+    (packed & !NON_EMPTY_READ, (packed & NON_EMPTY_READ) == 0)
+}
+
 impl Search {
     /// Runs `root` and the calls it makes on a stack of their own, on this search's state.
     fn run<V: Unpin + 'static>(
         &mut self,
         root: impl for<'m> FnOnce(&'m Searching<'m>) -> Pin<Box<dyn Future<Output = V> + 'm>>,
     ) -> V {
+        let _compound = super::CompoundScope::enter();
         let s = RefCell::new(std::mem::take(self));
         let v = {
             let d = Searching {
@@ -1793,6 +2105,13 @@ impl Search {
         self.run(|d| Box::pin(d.rep(&t)))
     }
 
+    /// Re-evaluates blamed non-empty nodes reachable from `roots`, so clean disjunction arms
+    /// supersede blamed ones without re-running the search.
+    fn settle_canonical_blame(&mut self, roots: &[Type]) {
+        let roots = roots.to_vec();
+        self.run(|d| Box::pin(d.settle_canonical_blame(roots)));
+    }
+
     /// Drops every kept failure, between phases of a search, when no value is being built.
     fn forget_failures(&mut self) {
         self.reps.retain(|_, r| r.is_some());
@@ -1818,6 +2137,9 @@ impl Search {
             for t in 0..self.types.len() {
                 if !self.witnessed.contains(&t) && !self.dead.contains(&t) {
                     self.answer[t] = true;
+                    if let Some(b) = self.blamed_node.get_mut(t) {
+                        *b = false;
+                    }
                     self.again.insert(t);
                 }
             }
@@ -1830,6 +2152,9 @@ impl Search {
         for t in open {
             if !self.witnessed.contains(&t) {
                 self.answer[t] = true;
+                if let Some(b) = self.blamed_node.get_mut(t) {
+                    *b = false;
+                }
                 self.again.insert(t);
             }
         }
@@ -1848,9 +2173,19 @@ impl Search {
         }
         let ep = self.epoch;
         match (&mut self.blame, self.current) {
-            (Some(blame), Some(c)) if !self.open_forks => blame.push((c, r, ep)),
-            _ if self.strict => {
-                self.gave_up.get_or_insert(r);
+            (Some(blame), Some(c)) if !self.open_forks => {
+                blame.push((c, r, ep));
+                if !self.canonical_blame {
+                    self.blamed_node[c] = true;
+                }
+            }
+            (Some(_), _) if self.open_forks && self.is_group => {}
+            _ if self.strict
+                && self
+                    .gave_up
+                    .is_none_or(|old| Self::refusal_rank(r) < Self::refusal_rank(old)) =>
+            {
+                self.gave_up = Some(r);
             }
             _ => {}
         }
@@ -1863,11 +2198,54 @@ impl Search {
         self.readers[u].insert(c)
     }
 
+    /// Takes out the reads `c` made from epoch `ep` on, packed ([`pack_read`]), and drops `c`
+    /// from the readers of each type it no longer reads.
+    // Complexity tradeoff (COMPLEXITY.md K102): the naive test scans the reads kept for each
+    // read dropped, O(D K); a set of the kept reads makes it O(D + K) expected.
+    fn drop_reads_since(&mut self, c: usize, ep: usize) -> Vec<usize> {
+        let start = self.reads[c].partition_point(|&(_, e)| e < ep);
+        let dropped: Vec<usize> = self.reads[c].drain(start..).map(|(p, _)| p).collect();
+        if dropped.is_empty() {
+            return dropped;
+        }
+        let kept: HashSet<usize> = (self.reads[c].iter())
+            .map(|&(v, _)| unpack_read(v).0)
+            .collect();
+        for &packed in &dropped {
+            let (u, _) = unpack_read(packed);
+            if !kept.contains(&u) {
+                self.readers[u].remove(&c);
+            }
+        }
+        dropped
+    }
+
+    /// Takes out the blame of `c` added from epoch `ep` on, keeping the blame of other types in
+    /// its order. The epochs of the blame rise, so its start is found by binary search.
+    fn take_blame_since(&mut self, c: Option<usize>, ep: usize) -> Vec<(usize, Refusal)> {
+        let Some(b) = &mut self.blame else {
+            return Vec::new();
+        };
+        let start = b.partition_point(|&(_, _, e)| e < ep);
+        let mut saved = Vec::new();
+        let mut k = start;
+        for idx in start..b.len() {
+            if Some(b[idx].0) == c {
+                saved.push((b[idx].0, b[idx].1));
+            } else {
+                b.copy_entry(k, idx);
+                k += 1;
+            }
+        }
+        b.truncate(k);
+        saved
+    }
+
     fn push_open_forks(&mut self) -> Option<(usize, usize, usize, bool)> {
         if self.deciding.is_empty() && self.open_forks_mark.is_none() {
             let mark = (
                 self.types.len(),
-                self.blame.as_ref().map_or(0, Vec::len),
+                self.blame.as_ref().map_or(0, |b| b.len()),
                 self.dead.len(),
                 self.settled,
             );
@@ -1907,30 +2285,62 @@ impl Search {
             self.ids.remove(&ty);
         }
         self.answer.truncate(mark);
+        if self.canonical_ready.len() > mark {
+            self.canonical_ready.truncate(mark);
+        }
+        if self.blamed_node.len() > mark {
+            self.blamed_node.truncate(mark);
+        }
         self.readers.truncate(mark);
         self.reads.truncate(mark);
     }
 
+    fn refusal_rank(r: Refusal) -> (u8, usize) {
+        match r {
+            Refusal::Fork => (0, 0),
+            Refusal::Group => (1, 0),
+            Refusal::Residues => (2, 0),
+            Refusal::SharedCells(j) => (3, j),
+            Refusal::TupleSplit => (4, 0),
+            Refusal::MorphismSplit => (5, 0),
+            Refusal::NoWitness => (6, 0),
+        }
+    }
+
     /// For a search with `blame`, the cause each type's answer may rest on: a fork met in the
-    /// decision of a type it read, directly or through others, else the first part counted as
-    /// inhabited with nothing shown in such a decision. Each type is marked once, by walks over
-    /// the readers from the types blamed, forks first and then the rest in the order met:
-    /// O(types + reads + blame).
+    /// decision of a type it read, directly or through others, else the highest-priority part
+    /// counted as inhabited with nothing shown in such a decision. A non-fork cause does not
+    /// propagate through a type proved empty or shown inhabited by a checked value.
     fn causes(&self) -> Vec<Option<Refusal>> {
         let mut cause = vec![None; self.types.len()];
         let blame = self.blame.as_deref().unwrap_or_default();
-        let forks = blame.iter().filter(|(_, r, _)| *r == Refusal::Fork);
-        let rest = blame.iter().filter(|(_, r, _)| *r != Refusal::Fork);
+        let forks: Vec<(usize, Refusal)> = blame
+            .iter()
+            .filter(|(_, r, _)| *r == Refusal::Fork)
+            .map(|&(t, r, _)| (t, r))
+            .collect();
+        let mut rest: Vec<(usize, Refusal)> = blame
+            .iter()
+            .filter(|(_, r, _)| *r != Refusal::Fork)
+            .map(|&(t, r, _)| (t, r))
+            .collect();
+        rest.sort_by_key(|&(_, r)| Self::refusal_rank(r));
         let mut stack = Vec::new();
-        for &(t, r, _) in forks.chain(rest) {
-            if cause[t].is_some() {
+        for (t, r) in forks.into_iter().chain(rest) {
+            let is_fork = r == Refusal::Fork;
+            if cause[t].is_some() || (!is_fork && (self.answer[t] || self.witnessed.contains(&t))) {
                 continue;
             }
             cause[t] = Some(r);
             stack.push(t);
             while let Some(x) = stack.pop() {
                 for &y in &self.readers[x] {
-                    if (self.answer[x] || !self.answer[y]) && cause[y].is_none() {
+                    let propagates = if is_fork {
+                        self.answer[x] || !self.answer[y]
+                    } else {
+                        !self.answer[y] && !self.witnessed.contains(&y)
+                    };
+                    if propagates && cause[y].is_none() {
                         cause[y] = Some(r);
                         stack.push(y);
                     }
@@ -1945,11 +2355,22 @@ impl Search {
     /// type being decided and marked as being decided itself, and its number is given.
     fn met(&mut self, t: &Type) -> ControlFlow<bool, usize> {
         if let Some(&i) = self.ids.get(t) {
-            if let Some(c) = self.current
-                && self.add_reader(i, c)
-            {
-                let ep = self.epoch;
-                self.reads[c].push((i, ep));
+            if self.canonical_blame && !self.in_subtype_check && !self.canonical_ready[i] {
+                self.canonical_ready[i] = true;
+                self.again.insert(i);
+            }
+            if let Some(c) = self.current {
+                let fresh = self.add_reader(i, c);
+                if fresh {
+                    let ep = self.epoch;
+                    self.reads[c].push((pack_read(i, true), ep));
+                } else if self.canonical_blame {
+                    let ep = self.epoch;
+                    let packed = pack_read(i, true);
+                    if self.reads[c].last() != Some(&(packed, ep)) {
+                        self.reads[c].push((packed, ep));
+                    }
+                }
             }
             return ControlFlow::Break(self.answer[i]);
         }
@@ -1962,10 +2383,16 @@ impl Search {
         self.ids.insert(t.clone(), i);
         self.types.push(t.clone());
         self.answer.push(true);
+        if self.canonical_blame {
+            self.canonical_ready.push(!self.in_subtype_check);
+        }
+        if self.blame.is_some() {
+            self.blamed_node.push(self.canonical_blame);
+        }
         self.readers.push(BTreeSet::new());
         if let Some(c) = self.current {
             let ep = self.epoch;
-            self.reads[c].push((i, ep));
+            self.reads[c].push((pack_read(i, true), ep));
         }
         self.reads.push(Vec::new());
         self.deciding.insert(i);
@@ -1982,24 +2409,25 @@ impl Search {
         if self.refused == Some(Refusal::Fork) {
             return true;
         }
-        let Some(blame) = self.blame.as_deref() else {
+        let Some(blame) = self.blame.as_ref() else {
             return false;
         };
+        if blame.forks == 0 {
+            return false;
+        }
         let forked: BTreeSet<usize> = blame
             .iter()
             .filter_map(|&(x, r, _)| (r == Refusal::Fork).then_some(x))
             .collect();
-        if forked.is_empty() {
-            return false;
-        }
         let mut stack: Vec<usize> = ts.into_iter().filter(|&t| self.answer[t]).collect();
         let mut seen: HashSet<usize> = stack.iter().copied().collect();
         while let Some(x) = stack.pop() {
             if forked.contains(&x) {
                 return true;
             }
-            for &(y, _) in &self.reads[x] {
-                if self.answer[y] && seen.insert(y) {
+            for &(packed, _) in &self.reads[x] {
+                let (y, empty_dep) = unpack_read(packed);
+                if empty_dep && self.answer[y] && seen.insert(y) {
                     stack.push(y);
                 }
             }
@@ -2008,19 +2436,22 @@ impl Search {
     }
 
     /// For each type, whether its search or decision rests on a fork ([`Self::rests_on_fork`]):
-    /// a type with answer `true` that reads, through types with answer `true`, a forked type
-    /// with answer `true`. One walk back over the reads from the forked types, O(B + T + R).
+    /// a type with answer `true` that reads as empty, through types with answer `true`, a forked
+    /// type with answer `true`. One walk back over the reads from the forked types, O(B + T + R).
     fn fork_resting(&self) -> Vec<bool> {
         let n = self.types.len();
         if self.refused == Some(Refusal::Fork) {
             return vec![true; n];
         }
         let mut rest = vec![false; n];
-        let Some(blame) = self.blame.as_deref() else {
+        let Some(blame) = self.blame.as_ref() else {
             return rest;
         };
+        if blame.forks == 0 {
+            return rest;
+        }
         let mut stack: Vec<usize> = Vec::new();
-        for &(x, r, _) in blame {
+        for &(x, r, _) in blame.iter() {
             if r == Refusal::Fork && self.answer[x] && !rest[x] {
                 rest[x] = true;
                 stack.push(x);
@@ -2032,8 +2463,11 @@ impl Search {
         let mut read_by: Vec<Vec<usize>> = vec![Vec::new(); n];
         for (x, reads) in self.reads.iter().enumerate() {
             if self.answer[x] {
-                for &(y, _) in reads {
-                    read_by[y].push(x);
+                for &(packed, _) in reads {
+                    let (y, empty_dep) = unpack_read(packed);
+                    if empty_dep {
+                        read_by[y].push(x);
+                    }
                 }
             }
         }
@@ -2060,12 +2494,16 @@ impl Search {
         }
         let (mut seen, mut stack) = (BTreeSet::from([v]), vec![v]);
         while let Some(x) = stack.pop() {
-            for &(y, _) in &self.reads[x] {
+            for &(packed, _) in &self.reads[x] {
+                let (y, empty_dep) = unpack_read(packed);
+                if !empty_dep || !self.answer[y] {
+                    continue;
+                }
                 if self.deciding.contains(&y) || self.again.contains(&y) || self.round.contains(&y)
                 {
                     return;
                 }
-                if self.answer[y] && !self.dead.contains(&y) && seen.insert(y) {
+                if !self.dead.contains(&y) && seen.insert(y) {
                     stack.push(y);
                 }
             }
@@ -2502,6 +2940,14 @@ impl<'m> Searching<'m> {
             s.items.extend(items.into_iter().map(|r| (r, ())));
         }
         for (a, root) in answers.iter_mut().zip(roots) {
+            // A root read as a meet of parity lists and found empty is answered here, before a
+            // value is tried for it: that would test each of its rows against every row, the
+            // square of its operands (`affine_lists_empty`). Only roots are read, so a search
+            // reads each list once.
+            if affine_lists_empty(root) == Some(true) {
+                *a = Some(true);
+                continue;
+            }
             if root.p().atoms.names.is_empty() {
                 continue;
             }
@@ -2517,6 +2963,8 @@ impl<'m> Searching<'m> {
             let mut s = self.s();
             s.types.clear();
             s.answer.clear();
+            s.canonical_ready.clear();
+            s.blamed_node.clear();
             return answers.into_iter().flatten().collect();
         }
         if seeded {
@@ -2549,7 +2997,11 @@ impl<'m> Searching<'m> {
             for &t in &open {
                 let x = self.s().types[t].clone();
                 if self.rep(&x).await.is_some() {
-                    self.s().witnessed.insert(t);
+                    let mut s = self.s();
+                    s.witnessed.insert(t);
+                    if let Some(b) = s.blamed_node.get_mut(t) {
+                        *b = false;
+                    }
                     new = true;
                 }
             }
@@ -2570,6 +3022,59 @@ impl<'m> Searching<'m> {
         }
     }
 
+    async fn settle_canonical_blame(&'m self, roots: Vec<Type>) {
+        {
+            let mut guard = self.s();
+            let s = &mut *guard;
+            s.canonical_blame = true;
+            s.walking = false;
+            s.settled = false;
+            s.deciding.clear();
+            s.again.clear();
+            s.round.clear();
+            let mut reset = vec![false; s.types.len()];
+            s.canonical_ready = vec![true; s.types.len()];
+            let rest = s.fork_resting();
+            for t in 0..s.types.len() {
+                if s.answer[t] {
+                    if !rest[t] {
+                        s.dead.insert(t);
+                    }
+                } else if s.witnessed.contains(&t) {
+                    s.answer[t] = false;
+                    s.blamed_node[t] = false;
+                } else {
+                    reset[t] = true;
+                    s.canonical_ready[t] = false;
+                }
+            }
+            if let Some(blame) = &mut s.blame {
+                blame.retain(|&(x, _, _)| x >= reset.len() || !reset[x]);
+            }
+            for (t, &r) in reset.iter().enumerate() {
+                if r {
+                    for (packed, _) in std::mem::take(&mut s.reads[t]) {
+                        let (u, _) = unpack_read(packed);
+                        s.readers[u].remove(&t);
+                    }
+                    s.answer[t] = false;
+                    s.blamed_node[t] = true;
+                }
+            }
+            s.canonical_roots.clear();
+            for root in &roots {
+                if let Some(&id) = s.ids.get(root) {
+                    s.canonical_roots.insert(id);
+                    if !s.canonical_ready[id] {
+                        s.canonical_ready[id] = true;
+                        s.again.insert(id);
+                    }
+                }
+            }
+        }
+        self.drain().await;
+    }
+
     /// Decides again, in rounds, each type an answer it read has changed under. The round under
     /// way is kept in the search (`round`), so a drain started inside a decision decides the
     /// types still waiting in it before any answer is settled on ([`Searching::no_value`]); and a
@@ -2588,7 +3093,16 @@ impl<'m> Searching<'m> {
                 let Some(t) = s.round.pop_first() else {
                     return;
                 };
-                if !s.answer[t] {
+                if s.canonical_blame && !s.canonical_roots.contains(&t) && s.readers[t].is_empty() {
+                    s.canonical_ready[t] = false;
+                    continue;
+                }
+                let done = if s.canonical_blame {
+                    !s.answer[t] && !s.blamed_node[t]
+                } else {
+                    !s.answer[t]
+                };
+                if done {
                     continue;
                 }
                 (t, s.deciding.insert(t))
@@ -2609,16 +3123,29 @@ impl<'m> Searching<'m> {
         if self.s().refused.is_some() {
             return true;
         }
-        let (outer, ty) = {
+        let (outer, ty, prev_level) = {
             let mut guard = self.s();
             let s = &mut *guard;
+            let prev_level: u8 = if s.answer[t] {
+                0
+            } else if s.blamed_node.get(t).copied().unwrap_or(false) {
+                1
+            } else {
+                2
+            };
+            if !s.canonical_blame
+                && let Some(b) = s.blamed_node.get_mut(t)
+            {
+                *b = false;
+            }
             if let Some(blame) = &mut s.blame {
                 blame.retain(|&(x, _, _)| x != t);
             }
-            for (u, _) in std::mem::take(&mut s.reads[t]) {
+            for (packed, _) in std::mem::take(&mut s.reads[t]) {
+                let (u, _) = unpack_read(packed);
                 s.readers[u].remove(&t);
             }
-            (s.current.replace(t), s.types[t].clone())
+            (s.current.replace(t), s.types[t].clone(), prev_level)
         };
         let b = match self.pure_cycles(&ty).await {
             Some(Lengths::None) => true,
@@ -2690,7 +3217,38 @@ impl<'m> Searching<'m> {
         s.current = outer;
         if !b {
             s.answer[t] = false;
-            s.again.extend(s.readers[t].iter().copied());
+            if s.blame.is_some() {
+                let has_blame = if s.witnessed.contains(&t) {
+                    false
+                } else {
+                    let direct = s
+                        .blame
+                        .as_deref()
+                        .is_some_and(|bl| bl.iter().any(|&(x, _, _)| x == t));
+                    // The empty reads are tested for a fork in one walk ([`Search::rests_on_fork`]).
+                    let child =
+                        s.reads[t].iter().any(|&(packed, _)| {
+                            let (u, empty_dep) = unpack_read(packed);
+                            (!s.answer[u] && !s.witnessed.contains(&u) && s.blamed_node[u])
+                                || (s.answer[u] && !empty_dep && !s.dead.contains(&u))
+                        }) || s.rests_on_fork(s.reads[t].iter().filter_map(|&(packed, _)| {
+                            let (u, empty_dep) = unpack_read(packed);
+                            empty_dep.then_some(u)
+                        }));
+                    direct || child
+                };
+                s.blamed_node[t] = has_blame;
+                if s.canonical_blame {
+                    let new_level: u8 = if has_blame { 1 } else { 2 };
+                    if new_level > prev_level {
+                        s.again.extend(s.readers[t].iter().copied());
+                    }
+                } else {
+                    s.again.extend(s.readers[t].iter().copied());
+                }
+            } else {
+                s.again.extend(s.readers[t].iter().copied());
+            }
         }
         b
     }
@@ -2717,8 +3275,13 @@ impl<'m> Searching<'m> {
             Refusal::Fork if s.refuse_forks && !s.seeding => {
                 let ep = s.epoch;
                 match (&mut s.blame, s.current) {
-                    (Some(blame), Some(c)) => blame.push((c, Refusal::Fork, ep)),
-                    _ => s.refused = Some(Refusal::Fork),
+                    (Some(blame), Some(c)) if s.trials.is_none_or(|n| n > 0) => {
+                        blame.push((c, Refusal::Fork, ep))
+                    }
+                    _ => {
+                        s.refused = Some(Refusal::Fork);
+                        s.fork_later = s.later > 0;
+                    }
                 }
                 Some(true)
             }
@@ -2731,6 +3294,9 @@ impl<'m> Searching<'m> {
     }
 
     fn empty(&'m self, t: &Type) -> Deep<'m, bool> {
+        if t.diagonal_empty() {
+            return Stack::ready(true);
+        }
         // A member of a recursive group is answered by the group's decider (module `rec`).
         if let Some(b) = t.judged() {
             return Stack::ready(b);
@@ -2770,6 +3336,9 @@ impl<'m> Searching<'m> {
     fn fork_snapshot(&self) -> Option<(Option<usize>, usize)> {
         let mut guard = self.s();
         let s = &mut *guard;
+        if s.open_forks {
+            return None;
+        }
         s.blame.as_ref()?;
         s.epoch += 1;
         Some((s.current, s.epoch))
@@ -2794,48 +3363,89 @@ impl<'m> Searching<'m> {
                 &s.reads[c][start..]
             });
             let sub = sub.and_then(|t| s.ids.get(t)).copied();
-            let from: Vec<usize> = read.iter().map(|&(u, _)| u).chain(sub).collect();
+            let from: Vec<usize> = (read.iter())
+                .filter_map(|&(packed, _)| {
+                    let (u, empty_dep) = unpack_read(packed);
+                    empty_dep.then_some(u)
+                })
+                .chain(sub)
+                .collect();
             !from.is_empty() && s.rests_on_fork(from)
         };
         if !on_fork {
             return None;
         }
-        let saved_reads = if let Some(c) = c {
+        let saved_reads = c.map_or_else(Vec::new, |c| s.drop_reads_since(c, ep));
+        let saved_blame = s.take_blame_since(c, ep);
+        Some((saved_reads, saved_blame))
+    }
+
+    /// Drops reads and blame recorded for the type being decided since `snap`, when a speculative
+    /// subtype or split check does not apply and leaves the part unchanged.
+    fn discard_since(&self, snap: Option<(Option<usize>, usize)>) {
+        let Some((c, ep)) = snap else {
+            return;
+        };
+        let mut guard = self.s();
+        let s = &mut *guard;
+        if let Some(c) = c {
+            s.drop_reads_since(c, ep);
+        }
+        s.take_blame_since(c, ep);
+    }
+
+    /// Takes out the reads and blame recorded for the type being decided since `snap`, whatever
+    /// they rest on; `None` when there are none.
+    fn take_all_since(&self, snap: Option<(Option<usize>, usize)>) -> Option<ForkSave> {
+        let (c, ep) = snap?;
+        let mut guard = self.s();
+        let s = &mut *guard;
+        let saved_reads = c.map_or_else(Vec::new, |c| s.drop_reads_since(c, ep));
+        let saved_blame = s.take_blame_since(c, ep);
+        if saved_reads.is_empty() && saved_blame.is_empty() {
+            None
+        } else {
+            Some((saved_reads, saved_blame))
+        }
+    }
+
+    /// In `canonical_blame` mode, rolls back reads and blame added since `snap` when a non-empty
+    /// arm of a flat disjunction rests on blame, so an unblamed non-empty arm takes precedence and
+    /// blamed arms combine commutatively when no arm is clean.
+    fn take_blame_on_false(
+        &self,
+        snap: Option<(Option<usize>, usize)>,
+        sub: Option<&Type>,
+    ) -> Option<ForkSave> {
+        let (c, ep) = snap?;
+        let mut guard = self.s();
+        let s = &mut *guard;
+        if !s.canonical_blame || s.in_subtype_check {
+            return None;
+        }
+        let read: &[(usize, usize)] = c.map_or(&[], |c| {
             let start = s.reads[c].partition_point(|&(_, e)| e < ep);
-            let dropped: Vec<usize> = s.reads[c].drain(start..).map(|(u, _)| u).collect();
-            // Complexity tradeoff (COMPLEXITY.md K102): the naive test scans the reads kept for
-            // each read dropped, O(D K); a set of the kept reads makes it O(D + K) expected.
-            let kept: HashSet<usize> = if dropped.is_empty() {
-                HashSet::new()
-            } else {
-                s.reads[c].iter().map(|&(v, _)| v).collect()
-            };
-            for &u in &dropped {
-                if !kept.contains(&u) {
-                    s.readers[u].remove(&c);
-                }
-            }
-            dropped
-        } else {
-            Vec::new()
-        };
-        let saved_blame = if let Some(b) = &mut s.blame {
+            &s.reads[c][start..]
+        });
+        let refused = |u: usize| !s.answer[u] && !s.witnessed.contains(&u) && s.blamed_node[u];
+        // An empty read is blamed when it rests on a fork: the reads are tested in one walk
+        // ([`Search::rests_on_fork`]), O(B log B + T + R), not one walk each.
+        let blamed = s.blame.as_ref().is_some_and(|b| {
             let start = b.partition_point(|&(_, _, e)| e < ep);
-            let mut saved = Vec::new();
-            let mut k = start;
-            for idx in start..b.len() {
-                if Some(b[idx].0) == c {
-                    saved.push((b[idx].0, b[idx].1));
-                } else {
-                    b[k] = b[idx];
-                    k += 1;
-                }
-            }
-            b.truncate(k);
-            saved
-        } else {
-            Vec::new()
-        };
+            b[start..].iter().any(|&(x, _, _)| Some(x) == c)
+        }) || read.iter().any(|&(packed, _)| {
+            let (u, empty_dep) = unpack_read(packed);
+            refused(u) || (s.answer[u] && !empty_dep && !s.dead.contains(&u))
+        }) || sub.and_then(|t| s.ids.get(t)).is_some_and(|&i| refused(i))
+            || s.rests_on_fork(read.iter().filter_map(|&(packed, _)| {
+                let (u, empty_dep) = unpack_read(packed);
+                empty_dep.then_some(u)
+            }));
+        if !blamed {
+            return None;
+        }
+        let saved_reads = c.map_or_else(Vec::new, |c| s.drop_reads_since(c, ep));
+        let saved_blame = s.take_blame_since(c, ep);
         Some((saved_reads, saved_blame))
     }
 
@@ -2856,9 +3466,10 @@ impl<'m> Searching<'m> {
         s.epoch += 1;
         let ep = s.epoch;
         if let Some(c) = s.current {
-            for u in reads {
+            for packed in reads {
+                let (u, _) = unpack_read(packed);
                 s.add_reader(u, c);
-                s.reads[c].push((u, ep));
+                s.reads[c].push((packed, ep));
             }
         }
         if let Some(b) = &mut s.blame {
@@ -2869,57 +3480,117 @@ impl<'m> Searching<'m> {
     /// Whether one of `ts` is empty, tried in order up to the first that is without a fork, or
     /// the first that is with one.
     async fn any_empty(&'m self, ts: &[Type]) -> bool {
+        if !self.s().canonical_blame {
+            let mut first_fork = None;
+            for (k, t) in ts.iter().enumerate() {
+                let later = k + 1 < ts.len();
+                self.trial(1, later);
+                let tried = self.empty_fork(t).await;
+                self.trial(-1, later);
+                match tried {
+                    (true, None) => return true,
+                    (true, Some(fork)) => {
+                        first_fork.get_or_insert(fork);
+                    }
+                    (false, _) => {}
+                }
+            }
+            if let Some(fork) = first_fork {
+                self.restore_fork(fork);
+                return true;
+            }
+            return false;
+        }
         let mut first_fork = None;
+        let mut non_empty_snaps = Vec::new();
         for t in ts {
-            match self.empty_fork(t).await {
-                (true, None) => return true,
-                (true, Some(fork)) => {
+            let snap = self.fork_snapshot();
+            if !self.empty(t).await {
+                if let Some(saved) = self.take_all_since(snap) {
+                    non_empty_snaps.push(saved);
+                }
+                continue;
+            }
+            match self.take_fork(snap, Some(t)) {
+                None => return true,
+                Some(fork) => {
                     first_fork.get_or_insert(fork);
                 }
-                (false, _) => {}
             }
         }
         if let Some(fork) = first_fork {
             self.restore_fork(fork);
             return true;
         }
+        for saved in non_empty_snaps {
+            self.restore_fork(saved);
+        }
         false
     }
 
     async fn parts(&'m self, p: &Parts) -> bool {
         let lits = [&p.ints, &p.rats, &p.floats, &p.strings];
+        let canonical = self.s().canonical_blame;
         if p.bools != 0
             || lits.iter().any(|l| l.cofinite || !l.values.is_empty())
             || p.atoms.cofinite
+            || (canonical && (p.structs || p.tuples.rest || p.atoms.names.values().any(|a| a.bare)))
         {
             return false;
         }
         let mut forks = Vec::new();
+        let mut blamed_false = Vec::new();
         for a in p.atoms.names.values() {
             if a.bare {
                 return false;
             }
-            match self.empty_fork(&a.payload).await {
-                (false, _) => return false,
-                (true, Some(fork)) => forks.push(fork),
-                (true, None) => {}
+            let snap = self.fork_snapshot();
+            if !self.empty(&a.payload).await {
+                match self.take_blame_on_false(snap, Some(&a.payload)) {
+                    None => return false,
+                    Some(gu) => blamed_false.push(gu),
+                }
+                continue;
+            }
+            if let Some(fork) = self.take_fork(snap, Some(&a.payload)) {
+                forks.push(fork);
             }
         }
         if p.structs || p.tuples.rest {
             return false;
         }
         for (len, b) in &p.tuples.lens {
+            let normalized = if self.s().tuple_universe {
+                let cached = self.s().tuple_universes.get(&b.id()).cloned();
+                Some(cached.unwrap_or_else(|| {
+                    let p =
+                        b.restrict(&|row| row.iter().all(|t| *t == Type::top()).then_some(true));
+                    self.s().tuple_universes.insert(b.id(), p.clone());
+                    p
+                }))
+            } else {
+                None
+            };
+            let b = normalized.as_ref().unwrap_or(b);
             let snap = self.fork_snapshot();
             let empty = match b.union_rows() {
                 // A union of rows is empty when each row has an empty column, and only then.
                 Some(rows) => {
                     let mut all = true;
                     let mut row_forks = Vec::new();
+                    let mut row_blamed_false = Vec::new();
                     for a in &rows {
                         let row_snap = self.fork_snapshot();
                         if !self.any_empty(a).await {
                             all = false;
-                            break;
+                            match self.take_blame_on_false(row_snap, None) {
+                                None => {
+                                    row_blamed_false.clear();
+                                    break;
+                                }
+                                Some(gu) => row_blamed_false.push(gu),
+                            }
+                            continue;
                         }
                         if let Some(fork) = self.take_fork(row_snap, None) {
                             row_forks.push(fork);
@@ -2929,16 +3600,28 @@ impl<'m> Searching<'m> {
                         for fork in row_forks {
                             self.restore_fork(fork);
                         }
+                    } else {
+                        for gu in row_blamed_false {
+                            self.restore_fork(gu);
+                        }
                     }
                     all
                 }
                 None => {
-                    let g = self.region(vec![Type::top(); *len], b).await;
-                    self.tuples(g, b.clone(), true).await.0
+                    if self.cofinite_integer_rep(*len, b).is_some() {
+                        false
+                    } else {
+                        let g = self.region(vec![Type::top(); *len], b).await;
+                        self.tuples(g, b.clone(), true).await.0
+                    }
                 }
             };
             if !empty {
-                return false;
+                match self.take_blame_on_false(snap, None) {
+                    None => return false,
+                    Some(gu) => blamed_false.push(gu),
+                }
+                continue;
             }
             if let Some(fork) = self.take_fork(snap, None) {
                 forks.push(fork);
@@ -2947,14 +3630,25 @@ impl<'m> Searching<'m> {
         let snap = self.fork_snapshot();
         let morphisms_empty = match p.morphisms.union_rows() {
             // A union of morphism types is empty when each of them admits nothing.
-            Some(rows) => {
+            Some(mut rows) => {
+                // The rows whose value type is a union of morphism rows first: one admitting a
+                // morphism decides the union, and such a row needs no split of morphisms.
+                rows.sort_by_key(|a| a.value.p().morphisms.union_rows().is_none());
                 let mut all = true;
                 let mut row_forks = Vec::new();
+                let mut row_blamed_false = Vec::new();
                 for a in &rows {
                     let row_snap = self.fork_snapshot();
                     if !self.no_morphism(a).await {
                         all = false;
-                        break;
+                        match self.take_blame_on_false(row_snap, None) {
+                            None => {
+                                row_blamed_false.clear();
+                                break;
+                            }
+                            Some(gu) => row_blamed_false.push(gu),
+                        }
+                        continue;
                     }
                     if let Some(fork) = self.take_fork(row_snap, None) {
                         row_forks.push(fork);
@@ -2963,6 +3657,10 @@ impl<'m> Searching<'m> {
                 if all {
                     for fork in row_forks {
                         self.restore_fork(fork);
+                    }
+                } else {
+                    for gu in row_blamed_false {
+                        self.restore_fork(gu);
                     }
                 }
                 all
@@ -2977,6 +3675,15 @@ impl<'m> Searching<'m> {
             }
         };
         if !morphisms_empty {
+            match self.take_blame_on_false(snap, None) {
+                None => return false,
+                Some(gu) => blamed_false.push(gu),
+            }
+        }
+        if !blamed_false.is_empty() {
+            for gu in blamed_false {
+                self.restore_fork(gu);
+            }
             return false;
         }
         if let Some(fork) = self.take_fork(snap, None) {
@@ -2994,6 +3701,8 @@ impl<'m> Searching<'m> {
         let atoms = f.distinct_atoms();
         let n = r.len();
         let mut g = Region {
+            priority: 0,
+            structural_empty: false,
             cells: (0..n).map(|_| Vec::new()).collect(),
             cell_of: vec![0; atoms.len() * n],
             opens: vec![0; n],
@@ -3029,7 +3738,71 @@ impl<'m> Searching<'m> {
             g.index.insert(a.clone(), k);
         }
         g.atoms = atoms;
-        self.retest(&mut g).await;
+        if n != 0 {
+            // Complexity tradeoff: testing a varying column first unfolds n common
+            // constraints in n contexts, O(n^2) on the morphism result family. Cache
+            // each node's outer carriers and choose one shared column in O(incidences).
+            // Nine Boolean evaluations with row lookups cost O((part nodes + incidences) log n);
+            // its mandatory fields are met pairwise through the cut memo, O(n log n).
+            // Mandatory rows are a sufficient syntactic subset (forced_factors), not
+            // a full analysis of common atoms hidden under union arms. Only a false
+            // formula proves emptiness; otherwise
+            // the original tests run, with the most restrictive shared column first.
+            // Test: cycle_dup::shared_morphism_constraints_are_checked_in_the_size_of_the_union.
+            let taken = f.forced_factors();
+            let mut required = vec![false; g.atoms.len()];
+            for a in &taken {
+                required[g.index[a]] = true;
+            }
+            let kinds: Vec<Vec<u16>> = g
+                .cells
+                .iter()
+                .map(|cells| {
+                    cells
+                        .iter()
+                        .map(|cell| self.outer_kinds(&cell.ty))
+                        .collect()
+                })
+                .collect();
+            let mut best = u32::MAX;
+            for j in 0..n {
+                let mut union = 0u16;
+                for (k, _) in g.atoms.iter().enumerate() {
+                    if !required[k] {
+                        union |= kinds[j][g.cell(k, j)];
+                    }
+                }
+                let score = union.count_ones();
+                if score < best {
+                    best = score;
+                    g.priority = j;
+                }
+            }
+            let j = g.priority;
+            let projected = Type::pairwise(
+                std::iter::once(g.r[j].clone()).chain(taken.iter().map(|a| a[j].clone())),
+                Type::top(),
+                |a, b| self.cut(&a, &b, Cut::Meet),
+            );
+            let box_kinds = self.outer_kinds(&projected);
+            g.structural_empty = (0..9).all(|bit| {
+                let bit = 1u16 << bit;
+                box_kinds & bit == 0
+                    || f.eval3(&|a| {
+                        let k = g.index[a];
+                        if required[k] {
+                            Some(true)
+                        } else if kinds[j][g.cell(k, j)] & bit == 0 {
+                            Some(false)
+                        } else {
+                            None
+                        }
+                    }) == Some(false)
+            });
+        }
+        if !g.structural_empty {
+            self.retest(&mut g).await;
+        }
         g.log.clear();
         g
     }
@@ -3050,11 +3823,32 @@ impl<'m> Searching<'m> {
     /// at 34.0 times from depth 400 to 3200 (limit 24); used: one build per pair of operand
     /// nodes, a hash lookup by local node number per call.
     async fn settles(&'m self, x: &Type, y: &Type, both: bool) -> bool {
-        if let Some(b) = x.scalar_cell(y, both) {
+        if let Some(b) = self.scalar_cell(x, y, both) {
             return b;
         }
         let t = self.cut(x, y, if both { Cut::Meet } else { Cut::Minus });
         self.empty(&t).await
+    }
+
+    /// Exact scalar tests shared by cells and by the general settles query.
+    // Complexity tradeoff: checking one pair in c columns rereads its l literal
+    // entries O(c*l log l). Cache the exact result, O(l log l) once and O(1)
+    // expected per repeated query, with O(number of scalar pairs) stored bits.
+    // Node numbers are never reused. Non-scalar misses only inspect carrier
+    // heads and are recomputed, so the memo retains no operand graph.
+    // Equal nodes built apart miss the memo; no answer is given up. Test:
+    // setop::shared_integer_columns_scale_with_their_written_dag; the version
+    // without this memo fails the same check, even with scalar points memoized.
+    fn scalar_cell(&self, x: &Type, y: &Type, both: bool) -> Option<bool> {
+        let key = (x.node_id(), y.node_id(), both);
+        if let Some(&value) = self.s().scalar_cells.get(&key) {
+            return Some(value);
+        }
+        let value = x.scalar_cell(y, both);
+        if let Some(value) = value {
+            self.s().scalar_cells.insert(key, value);
+        }
+        value
     }
 
     /// `x op y`, built once per pair of nodes and kept in `cuts`, as for [`Searching::settles`]:
@@ -3079,6 +3873,25 @@ impl<'m> Searching<'m> {
         )
     }
 
+    /// A necessary outer value kind, cached for every exposed node of this search. Payloads
+    /// and function fields are not followed: a bit records only that their carrier is present.
+    fn outer_kinds(&self, t: &Type) -> u16 {
+        if let Some(bits) = self.s().outer_kinds.get(&t.node_id()).copied() {
+            return bits;
+        }
+        let p = t.p();
+        let mut bits = u16::from(p.bools != 0);
+        for (j, l) in [&p.ints, &p.rats, &p.floats, &p.strings].iter().enumerate() {
+            bits |= u16::from(l.cofinite || !l.values.is_empty()) << (j + 1);
+        }
+        bits |= u16::from(p.atoms.cofinite || !p.atoms.names.is_empty()) << 5;
+        bits |= u16::from(p.tuples.rest || !p.tuples.lens.is_empty()) << 6;
+        bits |= u16::from(p.structs) << 7;
+        bits |= u16::from(p.morphisms.is_leaf() != Some(false)) << 8;
+        self.s().outer_kinds.insert(t.node_id(), bits);
+        bits
+    }
+
     /// Tests each changed component of the box against its open cells that have a tuple type
     /// not yet known to miss the box, and closes those it settles. A tuple type that misses a
     /// component is out of the part, so whether it holds the others is not tested: every
@@ -3087,7 +3900,10 @@ impl<'m> Searching<'m> {
     /// longer has are not looked up: that costs the size of the part at each call, more than
     /// the tests it saves.
     async fn retest(&'m self, g: &mut Region) {
-        let changed: Vec<usize> = (0..g.r.len()).filter(|&j| g.changed[j]).collect();
+        let mut changed: Vec<usize> = (0..g.r.len()).filter(|&j| g.changed[j]).collect();
+        if let Some(at) = changed.iter().position(|&j| j == g.priority) {
+            changed[..=at].rotate_right(1);
+        }
         if changed.is_empty() {
             return;
         }
@@ -3104,7 +3920,7 @@ impl<'m> Searching<'m> {
                         continue;
                     }
                     if missed {
-                        if let Some(b) = g.r[j].scalar_cell(&cell.ty, true) {
+                        if let Some(b) = self.scalar_cell(&g.r[j], &cell.ty, true) {
                             if b {
                                 g.close(j, c, true);
                             }
@@ -3117,17 +3933,21 @@ impl<'m> Searching<'m> {
                             (false, _) => {}
                         }
                     } else {
-                        if let Some(b) = g.r[j].scalar_cell(&cell.ty, false) {
+                        if let Some(b) = self.scalar_cell(&g.r[j], &cell.ty, false) {
                             if b {
                                 g.close(j, c, false);
                             }
                             continue;
                         }
+                        let sub_snap = self.fork_snapshot();
                         let t = self.cut(&g.r[j], &cell.ty, Cut::Minus);
-                        match self.empty_fork(&t).await {
+                        let prev_sub = std::mem::replace(&mut self.s().in_subtype_check, true);
+                        let res = self.empty_fork(&t).await;
+                        self.s().in_subtype_check = prev_sub;
+                        match res {
                             (true, None) => g.close(j, c, false),
                             (true, Some(fork)) => g.forked_holds.push((j, c, fork)),
-                            (false, _) => {}
+                            (false, _) => self.discard_since(sub_snap),
                         }
                     }
                 }
@@ -3143,19 +3963,36 @@ impl<'m> Searching<'m> {
 
     /// Notes a fork met in the decision of a verdict: against the type being decided in a search
     /// with several roots, else as the refusal that ends the search.
+    /// Counts a trial of a component in [`Searching::any_empty`] begun (+1) or ended (-1).
+    fn trial(&self, step: isize, later: bool) {
+        let mut guard = self.s();
+        let s = &mut *guard;
+        if let Some(n) = &mut s.trials {
+            *n = n.wrapping_add_signed(step);
+            if later {
+                s.later = s.later.wrapping_add_signed(step);
+            }
+        }
+    }
+
     fn refuse_fork(&self) {
         let mut guard = self.s();
         let s = &mut *guard;
         let ep = s.epoch;
         match (&mut s.blame, s.current) {
-            (Some(blame), Some(c)) => blame.push((c, Refusal::Fork, ep)),
+            (Some(blame), Some(c)) if s.trials.is_none_or(|n| n > 0) => {
+                blame.push((c, Refusal::Fork, ep))
+            }
             // Complexity tradeoff: a fork met while no type is being decided cannot be put on
             // the roots that read it, so it ends the search and refuses every root the decider
             // left open, as it refuses the one root of a search of its own. Trigger: `current`
             // is none at a fork. COMPLEXITY.md K61. Naive version: a search of its own per open
             // member, n searches of a group of n, O(n²); used: one search with every open member
             // as a root, so one fork outside any type being decided refuses them all.
-            _ => s.refused = Some(Refusal::Fork),
+            _ => {
+                s.refused = Some(Refusal::Fork);
+                s.fork_later = s.later > 0;
+            }
         }
     }
 
@@ -3166,6 +4003,9 @@ impl<'m> Searching<'m> {
     /// cycle of its group, are a fork: the decision of a verdict refuses there, and the search
     /// of a value keeps that component.
     async fn narrow_tuples(&'m self, g: &mut Region, f: &mut Part<Row>) -> bool {
+        if g.structural_empty {
+            return true;
+        }
         loop {
             if self.any_empty(&g.r).await {
                 return true;
@@ -3190,7 +4030,20 @@ impl<'m> Searching<'m> {
                 let k = g.index[a];
                 for j in 0..g.r.len() {
                     if g.is_open(k, j) {
-                        g.shrink(j, &g.r[j] & &a[j]);
+                        // Complexity tradeoff: c scalar columns sharing l literals
+                        // rebuild their meet in O(c*l log l) work. Reuse the
+                        // cut memo: one meet per pair and one lookup per incidence,
+                        // with no precision change. The test
+                        // shared_integer_columns_scale_with_their_written_dag
+                        // passes here and fails without the memo. Non-scalar meets
+                        // keep their existing path, without retaining speculative
+                        // recursive operand graphs in an additional cache.
+                        let next = if self.scalar_cell(&g.r[j], &a[j], true).is_some() {
+                            self.cut(&g.r[j], &a[j], Cut::Meet)
+                        } else {
+                            &g.r[j] & &a[j]
+                        };
+                        g.shrink(j, next);
                         g.close(j, g.cell(k, j), false);
                         shrunk.insert(j);
                     }
@@ -3333,11 +4186,19 @@ impl<'m> Searching<'m> {
             {
                 let mut all = true;
                 let mut forks = Vec::new();
+                let mut blamed_false = Vec::new();
                 for a in &rows {
                     let snap = self.fork_snapshot();
                     if !self.any_empty(a).await {
                         all = false;
-                        break;
+                        match self.take_blame_on_false(snap, None) {
+                            None => {
+                                blamed_false.clear();
+                                break;
+                            }
+                            Some(gu) => blamed_false.push(gu),
+                        }
+                        continue;
                     }
                     if let Some(fork) = self.take_fork(snap, None) {
                         forks.push(fork);
@@ -3348,6 +4209,9 @@ impl<'m> Searching<'m> {
                         self.restore_fork(fork);
                     }
                     return true;
+                }
+                for gu in blamed_false {
+                    self.restore_fork(gu);
                 }
                 let open: Vec<usize> = f.distinct_atoms().iter().map(|a| g.index[a]).collect();
                 let forking = {
@@ -3409,6 +4273,7 @@ impl<'m> Searching<'m> {
                     continue;
                 }
                 let open_cells = g.open_cells(j, &open);
+                let split_snap = self.fork_snapshot();
                 let mut pieces: BTreeMap<Type, Vec<usize>> = BTreeMap::new();
                 let mut union = Type::empty();
                 let mut ok = true;
@@ -3426,11 +4291,14 @@ impl<'m> Searching<'m> {
                     pieces.insert(piece, vec![c]);
                 }
                 if !ok {
+                    self.discard_since(split_snap);
                     continue;
                 }
                 let mut all: Vec<(Type, Vec<usize>)> = pieces.into_iter().collect();
                 let rest = &g.r[j] - &union;
+                let rest_snap = self.fork_snapshot();
                 if self.empty_fork(&rest).await != (true, None) {
+                    self.discard_since(rest_snap);
                     all.push((rest, Vec::new()));
                 }
                 let mut forks = Vec::new();
@@ -3515,22 +4383,37 @@ impl<'m> Searching<'m> {
                 // below (`l01_23_subtyping::refusals::a_union_of_pairs_less_pairs_holding_them_is_empty_in_its_size`,
                 // COMPLEXITY.md K80).
                 if let Some(parts) = f.disjoint_disjuncts() {
+                    let mut all_empty = true;
                     let mut forks = Vec::new();
+                    let mut blamed_false = Vec::new();
                     for d in parts {
                         let snap = self.fork_snapshot();
                         if !self.piece(g.r.clone(), d, true).await {
-                            return false;
+                            all_empty = false;
+                            match self.take_blame_on_false(snap, None) {
+                                None => return false,
+                                Some(gu) => blamed_false.push(gu),
+                            }
+                            continue;
                         }
                         if let Some(fork) = self.take_fork(snap, None) {
                             forks.push(fork);
                         }
+                    }
+                    if !all_empty {
+                        for gu in blamed_false {
+                            self.restore_fork(gu);
+                        }
+                        return false;
                     }
                     for fork in forks {
                         self.restore_fork(fork);
                     }
                     return true;
                 }
+                let mut all_empty = true;
                 let mut forks = Vec::new();
+                let mut blamed_false = Vec::new();
                 for &k in &open {
                     let mark = g.log.len();
                     let holds_mark = g.forked_holds.len();
@@ -3547,11 +4430,22 @@ impl<'m> Searching<'m> {
                     g.forked_holds.truncate(holds_mark);
                     g.restore(mark);
                     if !b {
-                        return false;
+                        all_empty = false;
+                        match self.take_blame_on_false(snap, None) {
+                            None => return false,
+                            Some(gu) => blamed_false.push(gu),
+                        }
+                        continue;
                     }
                     if let Some(fork) = self.take_fork(snap, None) {
                         forks.push(fork);
                     }
+                }
+                if !all_empty {
+                    for gu in blamed_false {
+                        self.restore_fork(gu);
+                    }
+                    return false;
                 }
                 for fork in forks {
                     self.restore_fork(fork);
@@ -3570,10 +4464,12 @@ impl<'m> Searching<'m> {
                     }
                     let a = g.cells[j][cell].ty.clone();
                     for (c, missed) in [(&a & &g.r[j], false), (&g.r[j] - &a, true)] {
-                        if tried.contains(&c)
-                            || self.empty_fork(&c).await.0
-                            || self.empty_fork(&(&g.r[j] - &c)).await.0
-                        {
+                        if tried.contains(&c) {
+                            continue;
+                        }
+                        let cut_snap = self.fork_snapshot();
+                        if self.empty_fork(&c).await.0 || self.empty_fork(&(&g.r[j] - &c)).await.0 {
+                            self.discard_since(cut_snap);
                             continue;
                         }
                         tried.insert(c.clone());
@@ -3595,9 +4491,12 @@ impl<'m> Searching<'m> {
                                     break;
                                 }
                                 Some(fork) => {
+                                    self.discard_since(cut_snap);
                                     forked_cut.get_or_insert((j, c, cell, missed, fork));
                                 }
                             }
+                        } else {
+                            self.discard_since(cut_snap);
                         }
                     }
                 }
@@ -3957,6 +4856,11 @@ impl<'m> Searching<'m> {
             if s.answer[i] {
                 s.settle(i);
             }
+        } else if b {
+            let mut s = self.s();
+            if s.canonical_blame && s.answer[i] && !s.deciding.contains(&i) {
+                s.settle(i);
+            }
         }
         let mut guard = self.s();
         let s = &mut *guard;
@@ -3967,7 +4871,11 @@ impl<'m> Searching<'m> {
             s.add_reader(i, c);
             if dead {
                 let ep = s.epoch;
-                s.reads[c].push((i, ep));
+                s.reads[c].push((pack_read(i, true), ep));
+            } else if s.canonical_blame {
+                s.epoch += 1;
+                let ep = s.epoch;
+                s.reads[c].push((pack_read(i, false), ep));
             }
         }
         dead
@@ -4466,7 +5374,7 @@ impl<'m> Searching<'m> {
             run: 0,
             jump: None,
         }];
-        let mut node_of: ByType<Option<usize>> = ByType::with_hasher(Digests::new());
+        let mut node_of: ByType<Option<usize>> = ByType::new();
         for car in &carriers {
             node_of.insert(car.clone(), Some(0));
         }
@@ -4632,7 +5540,7 @@ impl<'m> Searching<'m> {
         }
 
         let mut neg_depth0: BTreeSet<Type> = BTreeSet::new();
-        let mut neg_rows_by_head: ByType<Vec<usize>> = ByType::with_hasher(Digests::new());
+        let mut neg_rows_by_head: ByType<Vec<usize>> = ByType::new();
         let mut neg_heads: BTreeSet<Type> = BTreeSet::new();
         for a in &refused {
             let b0 = norm_head(&a[0]);
@@ -4687,10 +5595,7 @@ impl<'m> Searching<'m> {
         let mut covered_neg_at: Vec<Vec<usize>> = vec![Vec::new(); max_step + 3];
         let mut pos_groups: Vec<ChainGroup> = Vec::new();
         let mut active_pos: Vec<usize> = Vec::new();
-        let mut pos_group_of: [ByType<usize>; 2] = [
-            ByType::with_hasher(Digests::new()),
-            ByType::with_hasher(Digests::new()),
-        ];
+        let mut pos_group_of: [ByType<usize>; 2] = [ByType::new(), ByType::new()];
         let mut neg_groups: Vec<ChainGroup> = Vec::new();
         let mut active_neg: Vec<usize> = Vec::new();
         let mut neg_group_of: HashMap<(bool, Type, Option<Type>), usize, Digests> =
@@ -5547,7 +6452,7 @@ impl<'m> Searching<'m> {
                 s.current.take(),
             )
         };
-        let mut head_reps: ByType<usize> = ByType::with_hasher(Digests::new());
+        let mut head_reps: ByType<usize> = ByType::new();
         let mut items: Vec<usize> = Vec::with_capacity(heads.len());
         for h in &heads {
             if let Some(&r) = head_reps.get(h) {
@@ -5718,7 +6623,7 @@ impl<'m> Searching<'m> {
         }
 
         let mut heads: Vec<Type> = Vec::new();
-        let mut head_ids: ByType<usize> = ByType::with_hasher(Digests::new());
+        let mut head_ids: ByType<usize> = ByType::new();
         let mut intern_head = |ty: &Type| -> usize {
             let norm = match &verified_carrier {
                 Some(ch) if *ty != *ch => self.cut(ty, ch, Cut::Meet),
@@ -5832,7 +6737,7 @@ impl<'m> Searching<'m> {
         };
 
         let mut nodes: Vec<VerifyNode> = Vec::new();
-        let mut node_of: ByType<Option<usize>> = ByType::with_hasher(Digests::new());
+        let mut node_of: ByType<Option<usize>> = ByType::new();
         let mut canon_verify: HashMap<(bool, usize, Option<(usize, usize)>, usize), usize> =
             HashMap::new();
 
@@ -5843,7 +6748,7 @@ impl<'m> Searching<'m> {
                 return res;
             }
             let mut path: Vec<(Type, bool, usize, Option<(usize, usize)>)> = Vec::new();
-            let mut seen_on_path: ByType<usize> = ByType::with_hasher(Digests::new());
+            let mut seen_on_path: ByType<usize> = ByType::new();
             let mut cur = start.clone();
             let mut child = loop {
                 if let Some(&res) = node_of.get(&cur) {
@@ -6388,7 +7293,14 @@ impl<'m> Searching<'m> {
                         Some(b) => !b.again && a > b.since,
                         None => (s.provisional.get(t)).is_some_and(|&(at, again)| !again && a > at),
                     });
-                if !nested {
+                // Complexity tradeoff (COMPLEXITY.md K35): a failure kept past a fork tried no
+                // candidate at the parts that met a fork, so it says nothing of the search of
+                // `t` not past a fork. Read there, it made the answer depend on whether `t` was
+                // first met past a fork or not, which follows the order of the atoms (2431 of the meets sweep). Such a failure is kept apart and `t` is built again
+                // when sought not past a fork: each type is built at most once in each of the two
+                // states, so the builds are at most twice those without. Given up: nothing.
+                let unforked = r.is_none() && !s.past_fork && s.past_failures.contains_key(t);
+                if !nested && !unforked {
                     if r.is_none() {
                         s.read.push(t.clone());
                     }
@@ -6401,6 +7313,7 @@ impl<'m> Searching<'m> {
             let (mark, resting, outer) = {
                 let mut s = self.s();
                 s.reps.insert(t.clone(), None);
+                s.past_failures.remove(&t);
                 let since = s.assumed;
                 let b = s.building.entry(t.clone()).or_insert(Building {
                     depth: 0,
@@ -6453,6 +7366,9 @@ impl<'m> Searching<'m> {
                 let inner = s.reps.get(&t).copied().flatten().filter(|_| r.is_none());
                 let r = r.or(inner);
                 s.reps.insert(t.clone(), r);
+                if r.is_none() && s.past_fork {
+                    s.past_failures.insert(t.clone(), ());
+                }
                 let read = std::mem::replace(&mut s.read, outer);
                 if r.is_none() {
                     if s.resting > resting {
@@ -6590,6 +7506,210 @@ impl<'m> Searching<'m> {
         Some(self.s().show(Rep::Tuple(vs)))
     }
 
+    /// A tuple in every cofinite integer row, when that valuation makes the
+    /// row formula true. No emptiness conclusion follows on another carrier.
+    // Complexity tradeoff: enumerating each row's shared excluded set costs
+    // O(r*l) entries for r rows sharing l boundaries. Instead visit each field
+    // once and use its greatest exclusion, O(P + U log S) ordered-set work for
+    // P field incidences, U distinct field nodes and largest set size S.
+    // Zero is kept when it fits every field. Otherwise 1, or twice the greatest
+    // positive exclusion, exceeds every exclusion. Doubling preserves symbolic
+    // powers and costs their encoding once. No answer is given up in this
+    // cofinite, all-rows-true class; other fields keep the original search.
+    // Tests: distinct_integer_columns_reuse_a_checked_point,
+    // shared_cofinite_boundaries_are_not_enumerated_per_row, and the symbolic
+    // integer scaling test.
+    fn cofinite_integer_rep(&self, len: usize, whole: &Part<Row>) -> Option<usize> {
+        if len == 0 || whole.eval3(&|_| Some(true)) != Some(true) {
+            return None;
+        }
+        let rows = whole.distinct_atoms();
+        if rows.is_empty() {
+            return None;
+        }
+        let mut seen = HashSet::<u64, Digests>::default();
+        let mut fields = Vec::new();
+        for row in &rows {
+            for t in row {
+                if !seen.insert(t.node_id()) {
+                    continue;
+                }
+                let Node::Parts(p, _) = &*t.0 else {
+                    return None;
+                };
+                if !p.scalars_only()
+                    || p.bools != 0
+                    || !p.ints.cofinite
+                    || [&p.rats, &p.floats, &p.strings]
+                        .iter()
+                        .any(|l| l.cofinite || !l.values.is_empty())
+                {
+                    return None;
+                }
+                fields.push(&p.ints);
+            }
+        }
+        let zero = Value::Int(0);
+        let value = if fields.iter().all(|l| l.contains(&zero)) {
+            zero
+        } else {
+            let mut greatest = &zero;
+            for l in fields {
+                if let Some(v) = l.values.get_max()
+                    && v != greatest
+                    && v > greatest
+                {
+                    greatest = v;
+                }
+            }
+            if greatest == &zero {
+                Value::Int(1)
+            } else {
+                Value::integer(greatest.as_integer()?.twice_integer())
+            }
+        };
+        let mut s = self.s();
+        let v = s.show(Rep::Value(value));
+        Some(s.show(Rep::Tuple(vec![v; len])))
+    }
+
+    /// Tries a checked common point first, then distinct choices per column.
+    // Complexity tradeoff: enumerating scalar boxes is exponential in the rows.
+    // Instead intersect mandatory integer constraints and avoid the other finite
+    // boundaries, O(s log s) per distinct column signature in its field
+    // incidences and boundary entries, and try one fresh integer per uniform column.
+    // Mixed carriers and candidates needing another recursive fork are left to the
+    // existing search. No Empty answer follows from failure. Exercised by
+    // parity_verdicts_scale_with_the_number_of_constraints, the name/order test,
+    // and shared_integer_columns_scale_with_their_written_dag. Distinct columns
+    // can still repeat shared boundary work; this is not a whole-DAG bound.
+    async fn fresh_integer_rep(&'m self, len: usize, whole: &Part<Row>) -> Option<usize> {
+        if let Some(v) = self.cofinite_integer_rep(len, whole) {
+            return Some(v);
+        }
+        // This selects a candidate; the two evaluations do not prove monotonicity.
+        if whole.eval3(&|_| Some(false)) != Some(false)
+            || whole.eval3(&|_| Some(true)) != Some(true)
+        {
+            return None;
+        }
+        let rows = whole.distinct_atoms();
+        let mandatory: BTreeSet<Row> = whole.forced_factors().into_iter().collect();
+        let mut point = vec![None; len];
+        let mut chosen = false;
+        // A column's scalar choice depends only on its distinct fields and on
+        // whether each is required. Compare those inputs by Type value, not address.
+        // Reusing a column reuses its point rather than walking its literal sets again.
+        let mut points: BTreeMap<Vec<(&Type, bool)>, Option<Value>> = BTreeMap::new();
+        for j in 0..len {
+            let mut fields: BTreeMap<&Type, bool> = BTreeMap::new();
+            let (mut integer, mut cofinite) = (true, false);
+            for row in &rows {
+                let required = mandatory.contains(row);
+                let field = &row[j];
+                if let Some(taken) = fields.get_mut(field) {
+                    *taken |= required;
+                    continue;
+                }
+                let p = field.p();
+                if !p.scalars_only()
+                    || p.bools != 0
+                    || [&p.rats, &p.floats, &p.strings]
+                        .iter()
+                        .any(|l| l.cofinite || !l.values.is_empty())
+                {
+                    integer = false;
+                    break;
+                }
+                cofinite |= p.ints.cofinite;
+                fields.insert(field, required);
+            }
+            if !integer || !cofinite {
+                continue;
+            }
+            let signature: Vec<_> = fields.into_iter().collect();
+            if let Some(value) = points.get(&signature) {
+                point[j] = value.clone();
+                chosen |= point[j].is_some();
+                continue;
+            }
+            let mut mentioned = BTreeSet::new();
+            let mut allowed = Lits {
+                cofinite: true,
+                ..Lits::default()
+            };
+            for &(field, required) in &signature {
+                let p = field.p();
+                if required {
+                    allowed = allowed.zip(&p.ints, super::Op::And);
+                } else {
+                    mentioned.extend(p.ints.values.iter().cloned());
+                }
+            }
+            let mut i = num_bigint::BigInt::from(0);
+            point[j] = if allowed.cofinite {
+                Some(loop {
+                    let value = Value::int(i.clone());
+                    if !mentioned.contains(&value) && allowed.contains(&value) {
+                        break value;
+                    }
+                    i += 1;
+                })
+            } else {
+                allowed
+                    .values
+                    .iter()
+                    .find(|v| !mentioned.contains(*v))
+                    .cloned()
+            };
+            chosen |= point[j].is_some();
+            points.insert(signature, point[j].clone());
+        }
+        if !chosen {
+            return None;
+        }
+        // A shared row can occur at several diagram nodes. Test its fields once;
+        // restriction then uses a lookup, not another walk of those same fields.
+        let misses: BTreeSet<&Row> = rows
+            .iter()
+            .filter(|row| {
+                point
+                    .iter()
+                    .enumerate()
+                    .any(|(j, v)| v.as_ref().is_some_and(|v| !row[j].p().ints.contains(v)))
+            })
+            .collect();
+        let residual = whole.restrict(&|row| misses.contains(&row).then_some(false));
+        if residual.is_leaf() == Some(false) {
+            return None;
+        }
+        // Intersect every remaining row for this one candidate, rather than computing
+        // the mandatory rows. This can miss a witness, so row_rep still checks it.
+        let taken = residual.distinct_atoms();
+        let row: Vec<Type> = point
+            .iter()
+            .enumerate()
+            .map(|(j, v)| match v {
+                Some(v) => Type::lit(v).expect("an integer has a literal type"),
+                None => Type::meet_all(taken.iter().map(|a| a[j].clone())),
+            })
+            .collect();
+        let forked = (0..len).any(|j| {
+            let mut cells = rows.iter().map(|a| &a[j]).filter(|t| t.is_recursive());
+            cells.next().is_some_and(|a| cells.any(|b| b != a))
+        });
+        let past = self.s().past_fork;
+        if past && forked {
+            return None;
+        }
+        if forked {
+            self.s().past_fork = true;
+        }
+        let found = self.row_rep(&row, whole).await;
+        self.s().past_fork = past;
+        found
+    }
+
     async fn find_rep(&'m self, t: &Type) -> Option<usize> {
         // A bare atom is a value: the empty list of a list type.
         if let Some(name) = t
@@ -6680,7 +7800,25 @@ impl<'m> Searching<'m> {
         if p.structs {
             return Some(self.s().show(Rep::Struct));
         }
-        if p.morphisms.is_leaf() != Some(false) {
+        let mixed = !p.atoms.is_default() || !p.tuples.is_default();
+        if mixed && p.morphisms.is_leaf() != Some(false) {
+            // Complexity tradeoff: n mixed types can share one union of n
+            // morphisms. Enumerating that union for each type costs O(n^2).
+            // Give the shared carrier one Type and use the existing value
+            // memo and retry worklist, O(1) expected lookup per occurrence,
+            // plus the union's own search. Node numbers are never addresses.
+            // This tries the same carrier first; other carriers still follow
+            // when no closure is found. Test: shared_morphism_constraints_scale_beside_a_refused_member.
+            let carrier = self
+                .s()
+                .morphism_types
+                .entry(p.morphisms.id())
+                .or_insert_with(|| Type::with(|q| q.morphisms = p.morphisms.clone()))
+                .clone();
+            if let Some(v) = self.rep(&carrier).await {
+                return Some(v);
+            }
+        } else if p.morphisms.is_leaf() != Some(false) {
             let top = Morphism::new(Type::empty(), Type::top(), Type::top());
             // A closure is shown only for a meet of morphism types whose keys are all
             // permitted as written and whose value type has a value, which may be one being
@@ -6844,7 +7982,10 @@ impl<'m> Searching<'m> {
             }
         }
         if self.s().seeding {
-            for f in p.tuples.lens.values() {
+            for (len, f) in &p.tuples.lens {
+                if let Some(v) = self.fresh_integer_rep(*len, f).await {
+                    return Some(v);
+                }
                 for row in f.distinct_atoms() {
                     if let Some(v) = self.row_rep(&row, f).await {
                         return Some(v);
@@ -6857,6 +7998,16 @@ impl<'m> Searching<'m> {
         for (len, whole) in &p.tuples.lens {
             if whole.union_rows().is_some() {
                 continue;
+            }
+            // Complexity tradeoff: enumerating all scalar boxes branches exponentially.
+            // One point outside the finite integer boundaries costs O(L log L) for L
+            // literals, respecting exposed mandatory finite bounds; it reduces the row formula
+            // once and meets residual fields in
+            // pairs. Nothing is given up: row_rep checks the candidate, and failure
+            // proceeds to the old search. Nested fork candidates retain the existing
+            // past_fork rule. Test: setop::parity_verdicts_scale_with_the_number_of_constraints.
+            if let Some(v) = self.fresh_integer_rep(*len, whole).await {
+                return Some(v);
             }
             let forks = self.s().kept_forks;
             let (mut whole_box, mut narrowed) = (
@@ -7304,12 +8455,15 @@ impl<'m> Searching<'m> {
     /// Whether every morphism `m` admits is in `n`, by the variance law. With no value, the
     /// empty morphism is the only one, and its domain is the guarantee.
     async fn within(&'m self, m: &Morphism, n: &Morphism) -> bool {
+        let prev_sub = std::mem::replace(&mut self.s().in_subtype_check, true);
         let no_value = self.no_value(&m.value).await;
-        self.settles(&n.guarantee, &m.guarantee, false).await
+        let ok = self.settles(&n.guarantee, &m.guarantee, false).await
             && (no_value || self.settles(&m.permission, &n.permission, false).await)
             && (no_value
                 || self.empty(&m.permission).await
-                || self.settles(&m.value, &n.value, false).await)
+                || self.settles(&m.value, &n.value, false).await);
+        self.s().in_subtype_check = prev_sub;
+        ok
     }
 
     /// Whether no morphism `r` admits is in `f`, decided as for tuples: `r` meets the morphism
@@ -7336,6 +8490,8 @@ impl<'m> Searching<'m> {
                 }
                 let mut st: BTreeMap<Morphism, Option<bool>> = BTreeMap::new();
                 let mut forked_atoms = Vec::new();
+                let mut atom_non_empty: BTreeMap<Morphism, (bool, Option<ForkSave>)> =
+                    BTreeMap::new();
                 for a in f.distinct_atoms() {
                     let s = if inside.contains(&a) {
                         Some(true)
@@ -7350,7 +8506,13 @@ impl<'m> Searching<'m> {
                                 }
                             }
                         } else {
-                            let _ = self.take_fork(snap, None);
+                            if snap.is_some() && self.s().canonical_blame {
+                                let saved = match self.take_blame_on_false(snap, None) {
+                                    None => (false, self.take_all_since(snap)),
+                                    Some(gu) => (true, Some(gu)),
+                                };
+                                atom_non_empty.insert(a.clone(), saved);
+                            }
                             let snap = self.fork_snapshot();
                             if self.within(&r, &a).await {
                                 match self.take_fork(snap, None) {
@@ -7361,7 +8523,7 @@ impl<'m> Searching<'m> {
                                     }
                                 }
                             } else {
-                                let _ = self.take_fork(snap, None);
+                                self.discard_since(snap);
                                 None
                             }
                         }
@@ -7385,19 +8547,44 @@ impl<'m> Searching<'m> {
                     continue;
                 }
                 if may_cover && f.eval3(&|_| Some(false)) == Some(false) {
+                    let atoms = f.distinct_atoms();
+                    let mut all_empty = true;
                     let mut forks = Vec::new();
-                    for a in f.distinct_atoms().iter() {
+                    let mut blamed_false = Vec::new();
+                    for a in &atoms {
                         let piece = f.restrict(&|b| (b == a).then_some(true));
                         if piece.is_leaf() == Some(true) {
-                            return false;
+                            let (blamed, saved) = atom_non_empty.remove(a).unwrap_or((false, None));
+                            if !blamed {
+                                if let Some(gu) = saved {
+                                    self.restore_fork(gu);
+                                }
+                                return false;
+                            }
+                            all_empty = false;
+                            if let Some(gu) = saved {
+                                blamed_false.push(gu);
+                            }
+                            continue;
                         }
                         let snap = self.fork_snapshot();
                         if !self.morphisms(self.meet(&r, a), piece, false).await {
-                            return false;
+                            all_empty = false;
+                            match self.take_blame_on_false(snap, None) {
+                                None => return false,
+                                Some(gu) => blamed_false.push(gu),
+                            }
+                            continue;
                         }
                         if let Some(fork) = self.take_fork(snap, None) {
                             forks.push(fork);
                         }
+                    }
+                    if !all_empty {
+                        for gu in blamed_false {
+                            self.restore_fork(gu);
+                        }
+                        return false;
                     }
                     for fork in forks {
                         self.restore_fork(fork);
@@ -9301,7 +10488,7 @@ thread_local! {
     // made once, where made for each cell a ring of k types costs k per cell and order k^2 in
     // all (COMPLEXITY.md K36). Trigger: any split into classes.
     static GROUPS: RefCell<ByType<(std::rc::Rc<Group>, usize)>> =
-        const { RefCell::new(ByType::with_hasher(Digests::new())) };
+        const { RefCell::new(ByType::new()) };
     /// The number of the next [`Group`] made on this thread.
     static GROUP_IDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
@@ -9522,6 +10709,317 @@ fn root(parent: &mut [usize], mut i: usize) -> usize {
 fn join(parent: &mut [usize], a: usize, b: usize) {
     let (a, b) = (root(parent, a), root(parent, b));
     parent[a.max(b)] = a.min(b);
+}
+
+/// A state of a list type read by [`affine_lists_empty`]: whether it holds the stop atom, the
+/// rest type taken by each integer it names, and the rest type taken by the integers it does
+/// not name, with the integers that one excludes; a missing rest type is no list.
+struct ListState {
+    stop: bool,
+    named: BTreeMap<Value, Type>,
+    rest: Option<(BTreeSet<Value>, Type)>,
+}
+
+/// The integers of `t` as a finite set, or as the complement of one (`true`); none when `t`
+/// holds anything but integers.
+fn int_set(t: &Type) -> Option<(bool, BTreeSet<Value>)> {
+    let p = t.p();
+    let lits = [&p.rats, &p.floats, &p.strings];
+    if !p.scalars_only() || p.bools != 0 || lits.iter().any(|l| l.cofinite || !l.values.is_empty())
+    {
+        return None;
+    }
+    Some((p.ints.cofinite, p.ints.values.iter().cloned().collect()))
+}
+
+/// The stop atom, link atom and rows of a list type whose items are integers: the stop atom
+/// when `t` holds it bare, and the part of its link atom's pairs; none when `t` holds anything
+/// else, or a stop or link atom other than `names`.
+fn list_rows(t: &Type, names: &mut [Option<Arc<str>>; 2]) -> Option<(bool, Part<Row>)> {
+    let p = t.p();
+    if p.structs || !p.tuples.is_default() || !only_atoms(&p) || p.atoms.cofinite {
+        return None;
+    }
+    let (mut stop, mut link) = (None, None);
+    for (name, a) in &p.atoms.names {
+        match (a.bare, a.payload == Type::empty()) {
+            (true, true) => stop = Some(name.clone()),
+            (false, true) => {}
+            (false, false) => link = Some((name.clone(), a.payload.clone())),
+            _ => return None,
+        }
+    }
+    let (name, payload) = link?;
+    let q = payload.p();
+    if q.tuples.rest || q.tuples.lens.len() != 1 || !q.atoms.is_default() || q.structs {
+        return None;
+    }
+    let f = q.tuples.lens.get(&2)?.clone();
+    for (known, name) in names.iter_mut().zip([stop.clone(), Some(name)]) {
+        match (&*known, name) {
+            (_, None) => {}
+            (None, name) => *known = name,
+            (Some(k), Some(n)) if *k == n => {}
+            _ => return None,
+        }
+    }
+    Some((stop.is_some(), f))
+}
+
+/// The rows of a list operand read by integer: each integer a finite row names, with its next
+/// type, and the cofinite row if any: the finite set of integers it leaves out, and its next type.
+type NamedRows = (BTreeMap<Value, Type>, Option<(BTreeSet<Value>, Type)>);
+
+/// Whether a meet of lists of integers is proved empty by the parities of its operands:
+/// `Some(true)` when proved empty, else none (the search decides it).
+///
+/// The class read: `t`'s link atom holds a meet of operands, each a union of rows
+/// `link(H, R)` with `H` a set of integers, and every rest type `R` reached from an operand is
+/// again such a union. Each operand is then a deterministic automaton over the integers whose
+/// states are the rest types. The class takes the operands whose automaton has at most two
+/// states and in which each integer usable in every operand swaps the two states or keeps
+/// them; a state of an operand is accepting when it holds the stop atom. Then the state of
+/// each operand after a list is its first state plus, over GF(2), the number of items of each
+/// integer that swaps it: an affine system (Schaefer 1978, Theorem 2.1(e)). A usable integer
+/// that swaps at most two of the operands that constrain the end (one accepting state of
+/// two) is an edge between them, or to a ground node when it swaps one; a list ends accepted
+/// by all exactly when, in each connected part of this graph without the ground node, an even
+/// number of operands must change state (the column space of a graph's incidence matrix over
+/// GF(2)). A list of length at least one exists when that holds and some integer is usable;
+/// the empty list exactly when `t` holds the stop atom.
+// Complexity tradeoff: the meet of k two-state lists is decided as a linear system over
+// GF(2) by union-find over the operands, O(s log s) in the size s of the rows read, where the
+// search walks their product, 2^k states, and refuses it as a fork (`narrow_tuples`). Naive
+// version: dense Gaussian elimination, O(L k min(L, k)) for L integers and k operands, cubic.
+// Given up: a usable integer that swaps three or more constraining operands, an operand of
+// three or more states, a nondeterministic operand, or an integer that keeps one state and
+// leaves the other; each goes to the search as before. Test:
+// `l01_23_subtyping::setop::bounded_parity_without_an_unmonitored_integer_is_empty_in_its_size`.
+fn affine_lists_empty(t: &Type) -> Option<bool> {
+    let mut names = [None, None];
+    let (root_stop, f) = list_rows(t, &mut names)?;
+    if root_stop {
+        return None;
+    }
+    // The operands: the conjuncts of the meet, each once.
+    // A list met with rows holds one operand per row met, and one for the rows it joins.
+    let mut conjuncts: Vec<Vec<Row>> = Vec::new();
+    let (mut seen, mut stack) = (HashSet::new(), vec![f.clone()]);
+    while let Some(p) = stack.pop() {
+        if !seen.insert(p.id()) {
+            continue;
+        }
+        match (p.view(), p.meet_rows()) {
+            (Err(Form::And(a, b)), _) => {
+                stack.push(b.clone());
+                stack.push(a.clone());
+            }
+            (_, Some((met, joined))) => {
+                conjuncts.extend(met.into_iter().map(|r| vec![r]));
+                conjuncts.extend(joined);
+            }
+            _ => conjuncts.push(p.union_rows()?),
+        }
+    }
+    if conjuncts.len() < 2 {
+        return None;
+    }
+    // Each state read once, by its type; local to this call.
+    let mut states: Vec<ListState> = Vec::new();
+    let mut rows_of: Vec<Vec<Row>> = Vec::new();
+    let mut number: ByType<usize> = ByType::default();
+    let read_rows = |rows: &[Row]| -> Option<NamedRows> {
+        let mut named = BTreeMap::new();
+        let mut rest: Option<(BTreeSet<Value>, Type)> = None;
+        for row in rows {
+            let (cofinite, values) = int_set(&row[0])?;
+            if cofinite {
+                if rest.is_some() {
+                    return None;
+                }
+                rest = Some((values, row[1].clone()));
+            } else {
+                for v in values {
+                    if named.insert(v, row[1].clone()).is_some() {
+                        return None;
+                    }
+                }
+            }
+        }
+        if let Some((out, _)) = &rest
+            && named.keys().any(|v| !out.contains(v))
+        {
+            return None;
+        }
+        Some((named, rest))
+    };
+    // Per operand: its states (one or two) by number, its first state, and its accepting ones.
+    let mut operands: Vec<(Vec<usize>, usize)> = Vec::new();
+    for c in &conjuncts {
+        let mut first_rows = c.clone();
+        first_rows.sort();
+        first_rows.dedup();
+        let mut own: Vec<usize> = Vec::new();
+        let mut todo: Vec<Type> = first_rows.iter().map(|r| r[1].clone()).collect();
+        while let Some(x) = todo.pop() {
+            let i = match number.get(&x) {
+                Some(&i) => i,
+                None => {
+                    let (stop, g) = list_rows(&x, &mut names)?;
+                    let mut rows = g.union_rows()?;
+                    rows.sort();
+                    rows.dedup();
+                    let (named, rest) = read_rows(&rows)?;
+                    let i = states.len();
+                    states.push(ListState { stop, named, rest });
+                    rows_of.push(rows);
+                    number.insert(x.clone(), i);
+                    i
+                }
+            };
+            if own.contains(&i) {
+                continue;
+            }
+            own.push(i);
+            if own.len() > 2 {
+                return None;
+            }
+            let st = &states[i];
+            todo.extend(st.named.values().cloned());
+            todo.extend(st.rest.iter().map(|(_, r)| r.clone()));
+        }
+        // The first state is the state whose rows are the operand's: the two agree on every
+        // list of length one or more, and the empty list is read off `t` itself.
+        let start = *own.iter().find(|&&i| rows_of[i] == first_rows)?;
+        own.sort();
+        operands.push((own, start));
+    }
+    // The action of an integer on an operand: 0 dead in every state, 1 keeps, 2 swaps, and 3
+    // anything else.
+    fn step<'a>(st: &'a ListState, v: Option<&Value>) -> Option<&'a Type> {
+        match v.and_then(|v| st.named.get(v)) {
+            Some(r) => Some(r),
+            None => match &st.rest {
+                Some((out, r)) if v.is_none_or(|v| !out.contains(v)) => Some(r),
+                _ => None,
+            },
+        }
+    }
+    let act = |own: &[usize], v: Option<&Value>| -> u8 {
+        let to = |i: usize| step(&states[i], v).map(|r| number[r]);
+        match own {
+            [x] => match to(*x) {
+                None => 0,
+                Some(y) if y == *x => 1,
+                Some(_) => 3,
+            },
+            [x, y] => match (to(*x), to(*y)) {
+                (None, None) => 0,
+                (Some(a), Some(b)) if a == *x && b == *y => 1,
+                (Some(a), Some(b)) if a == *y && b == *x => 2,
+                _ => 3,
+            },
+            _ => 3,
+        }
+    };
+    // Per operand: whether it constrains the end, and the change it needs (first state to the
+    // accepting one).
+    let mut need: Vec<Option<bool>> = Vec::with_capacity(operands.len());
+    for (own, start) in &operands {
+        let accepting: Vec<usize> = own.iter().copied().filter(|&i| states[i].stop).collect();
+        match accepting[..] {
+            [] => return Some(true),
+            [a] if own.len() == 2 => need.push(Some(a != *start)),
+            _ => need.push(None),
+        }
+    }
+    // The integers named by some operand, with the operands naming each; the rest act as the
+    // operands' unnamed integers do.
+    let mut by_value: BTreeMap<&Value, Vec<usize>> = BTreeMap::new();
+    for (o, (own, _)) in operands.iter().enumerate() {
+        for &i in own {
+            let st = &states[i];
+            for v in st
+                .named
+                .keys()
+                .chain(st.rest.iter().flat_map(|(out, _)| out.iter()))
+            {
+                let e = by_value.entry(v).or_default();
+                if e.last() != Some(&o) {
+                    e.push(o);
+                }
+            }
+        }
+    }
+    let unnamed: Vec<u8> = operands.iter().map(|(own, _)| act(own, None)).collect();
+    let dead_unnamed = unnamed.iter().filter(|&&a| a == 0).count();
+    let other_unnamed = unnamed.iter().filter(|&&a| a == 3).count();
+    let swaps_unnamed: Vec<usize> = (0..operands.len())
+        .filter(|&o| unnamed[o] == 2 && need[o].is_some())
+        .collect();
+    // Union-find over the constraining operands, the last node the ground.
+    let n = operands.len();
+    let mut parent: Vec<usize> = (0..=n).collect();
+    let mut usable = false;
+    let edge = |parent: &mut Vec<usize>, swapped: &[usize]| -> Option<()> {
+        match *swapped {
+            [] => {}
+            [a] => join(parent, a, n),
+            [a, b] => join(parent, a, b),
+            _ => return None,
+        }
+        Some(())
+    };
+    for (v, ops) in &by_value {
+        let acts: Vec<u8> = ops.iter().map(|&o| act(&operands[o].0, Some(v))).collect();
+        let (mut dead, mut other) = (dead_unnamed, other_unnamed);
+        for (&o, &a) in ops.iter().zip(&acts) {
+            dead = dead - usize::from(unnamed[o] == 0) + usize::from(a == 0);
+            other = other - usize::from(unnamed[o] == 3) + usize::from(a == 3);
+        }
+        if dead > 0 {
+            continue;
+        }
+        // At most two operands swap, so the operands swapping every unnamed integer are at
+        // most two more than those naming `v`; this keeps the step linear in `ops`.
+        if other > 0 || swaps_unnamed.len() > ops.len() + 2 {
+            return None;
+        }
+        let mut flips: BTreeSet<usize> = swaps_unnamed.iter().copied().collect();
+        for (&o, &a) in ops.iter().zip(&acts) {
+            if need[o].is_some() {
+                flips.remove(&o);
+                if a == 2 {
+                    flips.insert(o);
+                }
+            }
+        }
+        if flips.len() > 2 {
+            return None;
+        }
+        usable = true;
+        let swapped: Vec<usize> = flips.into_iter().collect();
+        edge(&mut parent, &swapped)?;
+    }
+    // The integers no operand names: there are always some.
+    if dead_unnamed == 0 {
+        if other_unnamed > 0 {
+            return None;
+        }
+        usable = true;
+        edge(&mut parent, &swaps_unnamed)?;
+    }
+    if !usable {
+        return Some(true);
+    }
+    let mut odd: HashMap<usize, bool> = HashMap::new();
+    for (o, &d) in need.iter().enumerate() {
+        if d == Some(true) {
+            *odd.entry(root(&mut parent, o)).or_default() ^= true;
+        }
+    }
+    let ground = root(&mut parent, n);
+    odd.iter().any(|(&r, &b)| b && r != ground).then_some(true)
 }
 
 /// One step of `overlaps` placing the types inside a type: place a type at a node for a cell,
@@ -10154,9 +11652,9 @@ fn judge(env: &Arc<Env>) -> Judgment {
     // `Inhabited` answer on a node that reaches a meet or a difference. Cost: linear in the
     // meet's operands when a short value exists (`l01_23_subtyping::setop::meets_of_k_members_scale`,
     // 7.1 times at k 8 and 64); exponential when the search forks on the product, which the
-    // verdict refuses as `Refusal::Fork` after a search for a value
-    // (`the_product_of_k_parity_lists_is_refused_by_its_fork`: 178M, 1.11G and 4.51G
-    // instructions at k 2, 3 and 4). COMPLEXITY.md K84. Naive version: a recursive occurrence
+    // verdict refuses as `Refusal::Fork` after a search for a value. The parity
+    // product instead uses its checked singleton
+    // (`parity_verdicts_scale_with_the_number_of_constraints`). COMPLEXITY.md K84. Naive version: a recursive occurrence
     // under `&` or `\` makes the decider give up the whole group, so every member goes to the
     // search (3.15M and 73.2M instructions at k 8 and 64, 23 times). Used: the decider reads
     // `a & b` as an `And` node of its operands and `a \ b` as `a`, linear in the group, its
@@ -10697,3 +12195,12 @@ mod sweep;
 
 #[cfg(test)]
 mod tests;
+
+fn carrier_root_order(members: &[Type]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..members.len()).collect();
+    order.sort_by_key(|&i| match &*members[i].0 {
+        Node::Rec(r) => u64::from(r.key.search_class()) + 1,
+        Node::Parts(..) => 0,
+    });
+    order
+}

@@ -179,6 +179,10 @@ fn expr(e: &E, pos: &[Option<usize>], built: &[Option<Type>]) -> Option<Expr> {
 /// every component it reaches, so the whole costs the definitions and their references, where a
 /// search from each definition cost their square and a pass per component their cube.
 fn kernel(sys: &[E], tag: &str) -> Vec<Option<Type>> {
+    kernel_named(sys, tag, None)
+}
+
+fn kernel_named(sys: &[E], tag: &str, names: Option<&[usize]>) -> Vec<Option<Type>> {
     let n = sys.len();
     let edges: Vec<Vec<usize>> = sys
         .iter()
@@ -238,7 +242,7 @@ fn kernel(sys: &[E], tag: &str) -> Vec<Option<Type>> {
                 .iter()
                 .map(|&d| {
                     expr(&sys[d], &pos, &built).map(|body| Def {
-                        name: format!("{tag}_{d}"),
+                        name: format!("{tag}_{}", names.map_or(d, |ns| ns[d])),
                         params: vec![],
                         body,
                     })
@@ -2337,7 +2341,7 @@ fn a_member_whose_tuple_part_its_body_shares_prints_as_definitions() {
     );
     // Two such cycles: the shared `#a | #b` is named once, and each part names the other.
     assert_eq!(
-        prints_as_syntax(&shared_chain(2, "chain-two"), "a chain of 2"),
+        prints_as_syntax(&shared_chain(2, false, "chain-two"), "a chain of 2"),
         concat!(
             "type T1 = #a | #b;\ntype T2 = T4 | #a | #b;\n",
             "type T3 = ((T1, T2) \\ (#b, #a)) | #a | #b;\ntype T4 = (T1, T3) \\ (#b, #a);\nT4"
@@ -2347,12 +2351,18 @@ fn a_member_whose_tuple_part_its_body_shares_prints_as_definitions() {
 
 /// A chain of `n` definitions, each a pair whose second component is `#a | #b` or the next
 /// definition, the last's the first: `R(k) = ((#a | #b), (#a | #b | R(k + 1))) \ (#b, #a)`.
-fn shared_chain(n: usize, tag: &str) -> Type {
+/// When `marked`, the last definition's second component also holds `#c`, so no two
+/// definitions unfold alike and the chain is `n` types; otherwise it is one.
+fn shared_chain(n: usize, marked: bool, tag: &str) -> Type {
     let ab = || E::Union(vec![E::Atom("a"), E::Atom("b")]);
     let sys: Vec<E> = (0..n)
         .map(|k| {
+            let mut second = vec![ab(), E::Ref((k + 1) % n)];
+            if marked && k == n - 1 {
+                second.push(E::Atom("c"));
+            }
             diff(
-                tup(vec![ab(), E::Union(vec![ab(), E::Ref((k + 1) % n)])]),
+                tup(vec![ab(), E::Union(second)]),
                 tup(vec![E::Atom("b"), E::Atom("a")]),
             )
         })
@@ -2366,7 +2376,7 @@ fn shared_chain(n: usize, tag: &str) -> Type {
 #[test]
 fn a_chain_of_shared_tuple_parts_prints_in_its_size() {
     let chains = scaling::inputs(64, |n| {
-        let t = shared_chain(n, &format!("chain{n}"));
+        let t = shared_chain(n, true, &format!("chain{n}"));
         // The unfoldings are made once, before the runs.
         prints_as_syntax(&t, &format!("a chain of {n}"));
         t
@@ -2942,4 +2952,102 @@ fn the_first_tuples_of_a_wide_tuple_type_scale() {
             std::hint::black_box(first_tuples(&opts[&m], 36));
         },
     );
+}
+
+/// All four states unfold alike, but their named edges are different. Keeping a renamed
+/// instance alive must not supply the bodies printed for the original instance.
+#[test]
+fn named_graphs_of_one_class_keep_their_own_printed_bodies() {
+    let printed = |warm_first: bool| {
+        std::thread::spawn(move || {
+            let targets = [(0, 1), (0, 2), (1, 3), (2, 0)];
+            let sys: Vec<E> = targets
+                .into_iter()
+                .map(|(a, b)| {
+                    E::Union(vec![
+                        E::Atom("stop"),
+                        E::Tup(vec![E::Atom("a"), E::Ref(a)]),
+                        E::Tup(vec![E::Atom("b"), E::Ref(b)]),
+                    ])
+                })
+                .collect();
+            let names = [3, 2, 1, 0];
+            let warm = warm_first.then(|| kernel_named(&sys, "named_graph_identity", Some(&names)));
+            if let Some(types) = &warm {
+                let _ = alone(types);
+            }
+            let original = kernel(&sys, "named_graph_identity");
+            let texts: Vec<String> = original
+                .iter()
+                .map(|t| {
+                    t.as_ref()
+                        .expect("the regular graph is admitted")
+                        .surface()
+                        .to_string()
+                })
+                .collect();
+            std::hint::black_box(&warm);
+            texts
+        })
+        .join()
+        .expect("the printing thread finishes")
+    };
+    assert_eq!(printed(false), printed(true));
+}
+
+/// Seed 3228 of the X14 family with meets (GSX-unsolved). The operands of a meet print in the
+/// order of their digests, names-aware first (`digests_cmp` in zed-kernel), so its first
+/// member writes `T8 & T6`. The text is the same when copies of the group with the definitions
+/// reversed, other names, or the arms in another order were built and decided first, and when
+/// the members print last first.
+#[test]
+fn a_group_prints_the_same_text_whatever_was_built_before_it() {
+    let printed = |history: bool, last_first: bool| {
+        std::thread::spawn(move || {
+            let sys = gen_meets(&mut Rng::new(3228));
+            let mut before = Vec::new();
+            if history {
+                let rev: Vec<usize> = (0..sys.len()).rev().collect();
+                let mut g = Rng::new(1);
+                let arms: Vec<E> = sys.iter().map(|e| shuffled(e, &mut g)).collect();
+                for (s, tag) in [
+                    (moved(&sys, &rev), "meets3228_order"),
+                    (sys.clone(), "a_renamed_definition_3228"),
+                    (arms, "meets3228_arms"),
+                ] {
+                    let types = kernel(&s, tag);
+                    let _ = alone(&types);
+                    before.push(types);
+                }
+            }
+            let types = kernel(&sys, "meets3228");
+            let mut idx: Vec<usize> = (0..types.len()).collect();
+            if last_first {
+                idx.reverse();
+            }
+            let mut texts: Vec<(usize, String)> = idx
+                .into_iter()
+                .map(|i| {
+                    let t = types[i].as_ref().expect("the group is admitted");
+                    (i, t.surface().to_string().replace('\n', " / "))
+                })
+                .collect();
+            texts.sort();
+            std::hint::black_box(&before);
+            texts.into_iter().map(|(_, s)| s).collect::<Vec<_>>()
+        })
+        .join()
+        .expect("the printing thread finishes")
+    };
+    let fresh = printed(false, false);
+    assert_eq!(
+        fresh[0],
+        "type T1 = (#k, T1); / type T2 = T8 & T6; / type T3 = (#k, T1) & (#k, T3); / \
+         type T4 = (#k, T3) & ((T2, T5) | (#k, T2)); / \
+         type T5 = (#k, T3) & ((T1, T7) | (#k, T4)); / type T6 = (T2, T5) | (#k, T2); / \
+         type T7 = int -> T6; / type T8 = (T1, T7) | (#k, T4); / type T9 = T8 | (int -> T3); / T9"
+    );
+    assert_eq!(printed(true, false), fresh);
+    assert_eq!(printed(false, true), fresh);
+    assert_eq!(printed(true, true), fresh);
 }

@@ -106,7 +106,7 @@ fn fork() -> Type {
 /// has an even length, those whose first holds only 2s and whose second has an odd length, and
 /// the rest of each: empty, but the excluded first lists meet at `[]` and differ, so following
 /// them is the subset construction.
-fn fork_empty() -> Type {
+pub(super) fn fork_empty() -> Type {
     let l = list(Type::int());
     let pair = |a: Type, b: Type| Type::tuple(vec![a, b]);
     let (ones, twos) = (list(lit(1)), list(lit(2)));
@@ -272,8 +272,13 @@ fn the_checker_says_when_a_check_was_refused() {
         lists.refused(&covered),
         format!(
             "; the checker could not decide this, so it is not proved wrong\n  because {}\n  \
-             the check reads the recursive type `L`, defined by:\n    \
-             type L = #nil | #cons(int, L);",
+             the check reads the recursive type `P1`, defined by:\n    \
+             type P1 = #cons(int, P2);\n    \
+             type P0 = #cons(int, P1);\n    \
+             type P2 = #cons(int, P3);\n    \
+             type P3 = #cons(int, P4);\n    \
+             type P4 = #cons(int, P5);\n    \
+             type P5 = #nil | #cons(int, P0);",
             Refusal::Residues.message()
         )
     );
@@ -8981,5 +8986,164 @@ fn r11_named_payload_probe() {
             assert_eq!(v, Some(Verdict::Inhabited));
             eprintln!("R11NAMED n {n} {v:?} units {} bytes {}", w.units, w.bytes);
         }
+    });
+}
+
+/// `fork_empty` with the lists of `2i + 1` and `2i + 2` in place of those of 1 and 2: a type for
+/// each `i`, each refused for its fork.
+fn fork_empty_at(i: i64) -> Type {
+    let l = list(Type::int());
+    let pair = |a: Type, b: Type| Type::tuple(vec![a, b]);
+    let (ones, twos) = (list(lit(2 * i + 1)), list(lit(2 * i + 2)));
+    [
+        pair(ones.clone(), period(2, 0)),
+        pair(twos.clone(), period(2, 1)),
+        pair(&l - &ones, period(2, 0)),
+        pair(&l - &twos, period(2, 1)),
+    ]
+    .iter()
+    .fold(pair(l.clone(), l.clone()), |t, x| &t - x)
+}
+
+/// The meet `(int, int) & (bool, int)`: empty, as its first component is no value.
+fn pair_meet_empty() -> Type {
+    &Type::tuple(vec![Type::int(), Type::int()]) & &Type::tuple(vec![Type::bool(), Type::int()])
+}
+
+#[test]
+fn a_tuple_with_an_empty_component_is_empty_in_either_order() {
+    // A tuple is empty when one of its components is. The search of a verdict ends at the
+    // first fork it meets, so with the forked `fork_empty` first and an empty component after
+    // it the tuple was refused (Fork), and in the other order empty. A search that sets the
+    // fork aside and tries the later components proves it empty in both orders. Measured on
+    // r5-base e82e6cff: `(F, E)` Refused(Fork), `(E, F)` Empty.
+    let (fork, empty) = (fork_empty(), pair_meet_empty());
+    for t in [
+        Type::tuple(vec![fork.clone(), empty.clone()]),
+        Type::tuple(vec![empty.clone(), fork.clone()]),
+        Type::tuple(vec![fork.clone(), fork.clone(), empty.clone()]),
+    ] {
+        Type::forget_emptiness();
+        assert_eq!(t.verdict(), Verdict::Empty, "{t}");
+        Type::forget_emptiness();
+        assert!(t.is_empty(), "{t}");
+    }
+    // With no empty component the fork still refuses the tuple.
+    Type::forget_emptiness();
+    let t = Type::tuple(vec![fork.clone(), Type::int()]);
+    assert_eq!(t.verdict(), Verdict::Refused(Refusal::Fork), "{t}");
+    // n forked components before the empty one: the second search sets each fork aside once.
+    big(|| {
+        scaling::check("Empty, n forked components and an empty one", 8, |n| {
+            Type::forget_emptiness();
+            let mut parts: Vec<Type> = (0..n as i64).map(fork_empty_at).collect();
+            parts.push(pair_meet_empty());
+            let t = Type::tuple(parts);
+            assert_eq!(t.verdict(), Verdict::Empty, "at {n}");
+        });
+    });
+}
+
+/// The second blame search must walk n distinct forked components before the
+/// empty component. Both presentations and both public routes are measured;
+/// constructing the groups and tuples is outside the counters.
+#[test]
+fn a_chain_of_forks_before_an_empty_component_scales() {
+    let n = 8;
+    let inputs = scaling::inputs(n, |k| {
+        let mut parts: Vec<Type> = (0..k as i64).map(fork_empty_at).collect();
+        parts.push(pair_meet_empty());
+        let last = Type::tuple(parts.clone());
+        parts.reverse();
+        [last, Type::tuple(parts)]
+    });
+    scaling::check_order(
+        "second blame search over distinct forked components",
+        n,
+        1,
+        |k| {
+            for t in &inputs[&k] {
+                Type::forget_emptiness();
+                assert_eq!(t.verdict(), Verdict::Empty);
+                Type::forget_emptiness();
+                assert!(t.is_empty());
+            }
+        },
+    );
+}
+
+/// Independent finite-set checks with a mathematically empty fork as one
+/// leaf. No closure or recursive-list approximation is used by this model.
+#[test]
+fn standalone_empty_proofs_agree_with_finite_sets_beside_forks() {
+    use std::collections::BTreeSet;
+    let inputs: Vec<(Type, BTreeSet<Value>)> = vec![
+        (fork_empty(), BTreeSet::new()),
+        (pair_meet_empty(), BTreeSet::new()),
+        (Type::empty(), BTreeSet::new()),
+        (lit(0), BTreeSet::from([Value::Int(0)])),
+        (lit(1), BTreeSet::from([Value::Int(1)])),
+        (
+            &lit(0) | &lit(1),
+            BTreeSet::from([Value::Int(0), Value::Int(1)]),
+        ),
+    ];
+    let mut checked = 0;
+    for (a, av) in &inputs {
+        for (b, bv) in &inputs {
+            let pairs: BTreeSet<Value> = av
+                .iter()
+                .flat_map(|x| {
+                    bv.iter()
+                        .map(move |y| Value::tuple(vec![x.clone(), y.clone()]))
+                })
+                .collect();
+            for (t, values) in [
+                (a | b, av.union(bv).cloned().collect()),
+                (a & b, av.intersection(bv).cloned().collect()),
+                (a - b, av.difference(bv).cloned().collect()),
+                (Type::tuple(vec![a.clone(), b.clone()]), pairs),
+            ] {
+                Type::forget_emptiness();
+                let v = t.verdict();
+                Type::forget_emptiness();
+                let e = t.is_empty();
+                assert!(
+                    (v != Verdict::Empty && !e) || values.is_empty(),
+                    "{t}: {v:?}"
+                );
+                for value in &values {
+                    assert!(t.contains(value));
+                }
+                checked += 1;
+            }
+        }
+    }
+    eprintln!("STANDALONE finite-set checks {checked}");
+}
+
+/// `(F0, (F1, ... (F(n-1), E)))`: `n` forked components `fork_empty_at(i)`, each met before the
+/// nested tuple that holds the empty component `pair_meet_empty()`.
+fn forks_nested_before_empty(n: usize) -> Type {
+    (0..n as i64).rev().fold(pair_meet_empty(), |t, i| {
+        Type::tuple(vec![fork_empty_at(i), t])
+    })
+}
+
+#[test]
+fn a_chain_of_forks_nested_before_an_empty_component_is_empty_in_its_size() {
+    // The search of a verdict ends at the first fork; the second search (`empty_past_forks`)
+    // sets the fork in each of the n nested tuples aside once and reaches the empty component.
+    big(|| {
+        let inputs = scaling::inputs(8, forks_nested_before_empty);
+        scaling::check_order(
+            "Empty, n forks nested before an empty component",
+            8,
+            1,
+            |n| {
+                Type::forget_emptiness();
+                assert_eq!(inputs[&n].verdict(), Verdict::Empty, "at {n}");
+            },
+        );
     });
 }

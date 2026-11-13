@@ -3,7 +3,8 @@
 //! file below all three so that no import cycle runs between the files (ZED_PORT_GAPS gap 10,
 //! test S.1f); the procedures over them stay where they were.
 
-use std::collections::HashMap;
+use std::collections::hash_map::Entry;
+use std::collections::{BTreeMap, HashMap};
 use std::hash::BuildHasherDefault;
 
 use super::super::{Lits, Parts, Row, Type};
@@ -15,8 +16,155 @@ use crate::digest::Digest;
 /// Equal digests are told apart by `Eq`, which compares contents.
 pub(super) type Digests = BuildHasherDefault<Digest>;
 
-/// A map keyed by types, hashed by their digests.
-pub(super) type ByType<V> = HashMap<Type, V, Digests>;
+/// A map keyed by retained types, bucketed by their cached presentation hash.
+// Complexity tradeoff: a primary fingerprint is shared by renamed copies of one form;
+// using it for table identity gave b-way collisions and repeated structural comparisons.
+// The presentation hash separates those copies in expected O(1); genuine hash collisions
+// retain one inline key or a BTreeMap, O(log b) comparisons, each checking real contents.
+pub(super) struct ByType<V>(HashMap<u64, Tied<V>, Digests>);
+
+/// The keys of one digest in a [`ByType`], with their values.
+enum Tied<V> {
+    One(Type, V),
+    Many(BTreeMap<Type, V>),
+}
+
+impl<V> Default for ByType<V> {
+    fn default() -> Self {
+        ByType::new()
+    }
+}
+
+impl<V> ByType<V> {
+    pub(super) const fn new() -> Self {
+        ByType(HashMap::with_hasher(Digests::new()))
+    }
+
+    pub(super) fn get(&self, t: &Type) -> Option<&V> {
+        match self.0.get(&t.name_digest())? {
+            Tied::One(k, v) => (k == t).then_some(v),
+            Tied::Many(m) => m.get(t),
+        }
+    }
+
+    pub(super) fn get_mut(&mut self, t: &Type) -> Option<&mut V> {
+        match self.0.get_mut(&t.name_digest())? {
+            Tied::One(k, v) => (*k == *t).then_some(v),
+            Tied::Many(m) => m.get_mut(t),
+        }
+    }
+
+    pub(super) fn contains_key(&self, t: &Type) -> bool {
+        self.get(t).is_some()
+    }
+
+    pub(super) fn insert(&mut self, t: Type, v: V) -> Option<V> {
+        let mut v = Some(v);
+        let slot = self
+            .entry(t)
+            .or_insert_with(|| v.take().expect("one value"));
+        v.map(|v| std::mem::replace(slot, v))
+    }
+
+    pub(super) fn remove(&mut self, t: &Type) -> Option<V> {
+        let d = t.name_digest();
+        let tied = self.0.get_mut(&d)?;
+        let (got, empty) = match tied {
+            Tied::One(k, _) if *k != *t => return None,
+            Tied::One(..) => (None, true),
+            Tied::Many(m) => {
+                let v = m.remove(t);
+                (v, m.is_empty())
+            }
+        };
+        if !empty {
+            return got;
+        }
+        match self.0.remove(&d) {
+            Some(Tied::One(_, v)) => Some(v),
+            _ => got,
+        }
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    pub(super) fn retain(&mut self, mut keep: impl FnMut(&Type, &mut V) -> bool) {
+        self.0.retain(|_, tied| match tied {
+            Tied::One(k, v) => keep(k, v),
+            Tied::Many(m) => {
+                m.retain(|k, v| keep(k, v));
+                !m.is_empty()
+            }
+        });
+    }
+
+    pub(super) fn entry(&mut self, t: Type) -> TypeEntry<'_, V> {
+        TypeEntry { map: self, key: t }
+    }
+}
+
+impl<V> std::ops::Index<&Type> for ByType<V> {
+    type Output = V;
+    fn index(&self, t: &Type) -> &V {
+        self.get(t).expect("a key of the map")
+    }
+}
+
+impl<V> Extend<(Type, V)> for ByType<V> {
+    fn extend<I: IntoIterator<Item = (Type, V)>>(&mut self, items: I) {
+        for (t, v) in items {
+            self.insert(t, v);
+        }
+    }
+}
+
+/// The place of a key in a [`ByType`], filled or not.
+pub(super) struct TypeEntry<'a, V> {
+    map: &'a mut ByType<V>,
+    key: Type,
+}
+
+impl<'a, V> TypeEntry<'a, V> {
+    pub(super) fn or_insert_with(self, f: impl FnOnce() -> V) -> &'a mut V {
+        let tied = match self.map.0.entry(self.key.name_digest()) {
+            Entry::Vacant(e) => {
+                let Tied::One(_, v) = e.insert(Tied::One(self.key, f())) else {
+                    unreachable!("just put in")
+                };
+                return v;
+            }
+            Entry::Occupied(e) => e.into_mut(),
+        };
+        if let Tied::One(k, _) = tied
+            && *k != self.key
+        {
+            let Tied::One(k, v) = std::mem::replace(tied, Tied::Many(BTreeMap::new())) else {
+                unreachable!("matched above")
+            };
+            let Tied::Many(m) = tied else {
+                unreachable!("just put in")
+            };
+            m.insert(k, v);
+        }
+        match tied {
+            Tied::One(_, v) => v,
+            Tied::Many(m) => m.entry(self.key).or_insert_with(f),
+        }
+    }
+
+    pub(super) fn or_insert(self, v: V) -> &'a mut V {
+        self.or_insert_with(|| v)
+    }
+
+    pub(super) fn or_default(self) -> &'a mut V
+    where
+        V: Default,
+    {
+        self.or_insert_with(V::default)
+    }
+}
 
 /// What [`super::Searching::prefix_chains`] finds for a list type whose link payload is a period-1
 /// carrier cycle less prefix chains: either no list remains, or a witness list with item types

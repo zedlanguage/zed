@@ -316,8 +316,9 @@ fn reordered_copies_of_family_groups_are_the_groups() {
 }
 
 /// A group of one member with its parameter renamed is the group; two groups that differ at
-/// one member keep that member, and every member reaching it, apart; a member is the member of
-/// another group that unfolds alike and has its name.
+/// one member keep that member, and every member reaching it, apart; a member and the member of
+/// another group that unfolds alike hold the same values, and members that differ in one element
+/// type do not.
 #[test]
 fn the_canonical_form_keeps_apart_what_differs() {
     let ring = |a: &str| {
@@ -343,13 +344,24 @@ fn the_canonical_form_keeps_apart_what_differs() {
         "the differing member and the one reaching it"
     );
     assert!(x[0] == three("b")[0] && x[1] == three("b")[1]);
-    // A cycle of two members that unfold alike, and a cycle of one: each member is the one of
-    // its name, and the two members are apart, since they print otherwise.
+    // A cycle of two members that unfold alike, and a cycle of one: they hold the same values.
+    // Whether the two members share one representation is not checked: only their meaning is.
     let twins = group_named(vec![
         ("L", Expr::Union(vec![nil(), cons(Type::int(), r(1))])),
         ("M", Expr::Union(vec![nil(), cons(Type::int(), r(0))])),
     ]);
-    assert!(twins[0] == ring("L") && twins[1] == ring("M") && twins[0] != twins[1]);
+    assert!(twins[0].subtype(&ring("L")) && ring("L").subtype(&twins[0]));
+    assert!(twins[1].subtype(&ring("M")) && ring("M").subtype(&twins[1]));
+    assert!(twins[0].subtype(&twins[1]) && twins[1].subtype(&twins[0]));
+    // The contrast: a cycle of two members that differ at one element type. The lists [1] and
+    // ["a"] each lie in one member only, so neither member is a subtype of the other; [1, "a"]
+    // lies in `L` and not in the cycle of one, and [1, 2] in the cycle of one and not in `L`.
+    let apart = group_named(vec![
+        ("L", Expr::Union(vec![nil(), cons(Type::int(), r(1))])),
+        ("M", Expr::Union(vec![nil(), cons(Type::string(), r(0))])),
+    ]);
+    assert!(!apart[0].subtype(&apart[1]) && !apart[1].subtype(&apart[0]));
+    assert!(!apart[0].subtype(&ring("L")) && !ring("L").subtype(&apart[0]));
 }
 
 static RINGS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
