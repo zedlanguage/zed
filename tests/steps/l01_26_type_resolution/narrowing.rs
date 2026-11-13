@@ -44,7 +44,9 @@ fn the_right_operand_sees_the_left_ones_narrowing() {
     assert!(type_errors("short(x: int | String) = x is int || len(x) < 2;\n").is_empty());
     assert_eq!(
         type_errors("long(x: int | String) = x is int && len(x) > 2;\n"),
-        ["`len` does not take (int): no arrow of `len` takes these types. [len(x)]"]
+        [
+            "`len` does not take (int): no arrow of `len` takes these types. Try `len(String(x))` instead. [len(x)]"
+        ]
     );
 }
 

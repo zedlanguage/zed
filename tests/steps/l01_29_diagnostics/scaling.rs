@@ -396,3 +396,36 @@ fn the_headline_repair_of_a_long_call_scales() {
         assert!(head.ends_with(&want), "{}", &out[..out.len().min(400)]);
     });
 }
+
+/// A call `g(x)` of a function that takes only a `String`, with `x` a union of tuples of every
+/// length from 1 to k, `(int) | (int, int) | …`, about `n` components in all (row
+/// MSG-headline-l01_26). `String(x)` checks, so before it is offered the call is tried with
+/// each tuple length alone, to see whether it takes some value that `String` would change;
+/// it takes none, so all k = O(√n) are tried and the headline ends with `g(String(x))`. A
+/// trial costs about the same at both sizes, as types are shared, so the trials add O(√n) to
+/// the O(n) check. Negative control, run once: a trial that also writes out the whole type,
+/// O(n) each, O(n^1.5) in all, failed at 21.7 times the bytes.
+fn a_call_of_many_tuple_lengths(n: usize) -> String {
+    let k = (1..).find(|k| k * (k + 1) / 2 >= n).unwrap_or(1);
+    let shapes: Vec<String> = (1..=k)
+        .map(|len| format!("({})", vec!["int"; len].join(", ")))
+        .collect();
+    format!(
+        "g(positional s: String) = 1;\nf(x: {}) = g(x);\n",
+        shapes.join(" | ")
+    )
+}
+
+#[test]
+fn a_text_repair_of_many_shapes_scales() {
+    let srcs = scaling::inputs(800, a_call_of_many_tuple_lengths);
+    scaling::check(
+        "the text repair of a union of n tuple components",
+        800,
+        |n| {
+            let out = rejected(&srcs[&n]);
+            let head = out.lines().next().unwrap_or_default();
+            assert!(head.ends_with("Try `g(String(x))` instead."), "{head}");
+        },
+    );
+}

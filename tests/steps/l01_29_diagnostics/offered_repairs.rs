@@ -562,3 +562,29 @@ fn a_dropped_repair_leaves_the_headline_too() {
         assert!(got.contains("No fix is offered"), "{body}: {got}");
     }
 }
+
+/// A repair `String(a)` is offered only where the application takes no value of `a` that
+/// `String` would change, a value that is neither text nor an atom (row MSG-headline-l01_26).
+/// `m[String(k)]` for a key `k: int | bool` of a map keyed `int | String` checks, but it reads
+/// the key `5` as `"5"`, another key, so it is not offered: the headline ends with no repair.
+/// `len(String(x))` for `x: int`, which `len` never takes, is offered, and so is
+/// `"#" ++ String(s)` for `s: String | bool`, where `String` leaves the text as it is.
+#[test]
+fn a_text_repair_is_offered_only_where_it_changes_no_value_taken() {
+    let got = offered("f(m: int .. int | String -> bool, k: int | bool) = m[k];");
+    assert!(
+        got.starts_with("this function does not take (bool)"),
+        "{got}"
+    );
+    assert!(!got.contains("String(k)"), "{got}");
+    assert!(!got.contains(" Try `"), "{got}");
+    let got = offered("h(positional a: int | String) = 1;\nf(k: int | bool) = h(k);");
+    assert!(!got.contains("String(k)"), "{got}");
+    let got = offered("f(x: int) = len(x);");
+    assert!(got.contains("Try `len(String(x))` instead."), "{got}");
+    let got = offered("f(s: String | bool) = \"#\" ++ s;");
+    assert!(got.contains("Try `\"#\" ++ String(s)` instead."), "{got}");
+    // A number a numeric cast widens keeps its repair: the number is the same.
+    let got = offered("h(positional a: rat) = a;\nf(k: int) = h(k);");
+    assert!(got.contains("Try `h(rat(k))` instead."), "{got}");
+}

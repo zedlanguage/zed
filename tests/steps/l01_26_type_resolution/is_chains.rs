@@ -75,7 +75,9 @@ fn a_side_far_along_a_chain_is_checked_with_the_tests_that_hold_there() {
             "f(x: int | String, y: int | String) = \
              if y is String && x is int && len(y) > 0 && len(x) > 2 { 1 } else { 0 };\n"
         ),
-        ["`len` does not take (int): no arrow of `len` takes these types. [len(x)]"]
+        [
+            "`len` does not take (int): no arrow of `len` takes these types. Try `len(String(x))` instead. [len(x)]"
+        ]
     );
 }
 

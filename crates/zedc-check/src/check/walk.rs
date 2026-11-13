@@ -9941,6 +9941,18 @@ impl<'t, 'a> Ck<'t, 'a> {
                     ..Arg::of(r)
                 };
                 if let Some(got) = self.repaired(what, sig, args, (i, with), pass, span) {
+                    if w == "String"
+                        && self.takes_some(
+                            what,
+                            sig,
+                            args,
+                            (i, &held, kept.then_some(*at)),
+                            pass,
+                            span,
+                        )
+                    {
+                        continue;
+                    }
                     let text = match name {
                         Some(n) => format!("repair: write `{w}({n})`; the checker accepts that"),
                         None => format!("repair: wrap this in `{w}(…)`; the checker accepts that"),
@@ -9963,6 +9975,46 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         out
+    }
+
+    /// Whether the application takes, as written, some value of argument `i`, of type `held`
+    /// and shown at `at` as [`Self::repairs`] shows it, that `String` would change: a value
+    /// that is neither text nor an atom. A repair `String(a)` is offered only where it takes
+    /// none (row MSG-headline-l01_26). `String(k)` for a key `k: int | bool` of a map keyed
+    /// `int | String` checks, but it reads the key `5` as `"5"`, another key, so it changes what
+    /// the read gives for every key the map already took: a conversion, not a cast that keeps
+    /// the program's meaning (DESIGN.md sec:diagnostics, "A repair never narrows a type").
+    /// Where no value is taken, as in `len(x)` with `x: int`, the call has no meaning to keep,
+    /// and `len(String(x))` is offered. A numeric cast keeps the number, so `rat(x)` needs no
+    /// such test; `String` keeps text as it is, and atoms pass by the cast.
+    ///
+    /// Complexity tradeoff: the naive test tries each value of `held`, which a type does not
+    /// list; used: the application is tried once per piece of `held` (a carrier, the other
+    /// scalars, a tuple shape, a function), with that piece alone at `i`, stopping at the first
+    /// piece taken. For p pieces that is p trials, each of the application with one piece where
+    /// the trial of `String(a)` had one piece too, so O(p) times that trial, linear in the
+    /// argument's type. Measured on a union of k tuple lengths, k ≈ √(2n), a trial costs about
+    /// the same at n = 800 and 6400, and the check grows 5.9 times at 8n, against 6.3 without
+    /// this test (scaling test `a_text_repair_of_many_shapes_scales` in
+    /// tests/steps/l01_29_diagnostics). It runs only where `String(a)` itself checks.
+    fn takes_some(
+        &mut self,
+        what: Label<'_>,
+        sig: &Sig,
+        args: &[Option<Arg<'a>>],
+        (i, held, at): (usize, &Ty, Option<Span>),
+        pass: bool,
+        span: Span,
+    ) -> bool {
+        let changed = held.without_atoms().without(&Carrier::Str.ty());
+        changed.pieces().iter().any(|p| {
+            let with = Arg {
+                at,
+                ..Arg::of(changed.of_piece(p))
+            };
+            self.repaired(what, sig, args, (i, with), pass, span)
+                .is_some()
+        })
     }
 
     /// The type of the argument `a` at `at`, of type `held`, wrapped in the prelude word `w`, where
