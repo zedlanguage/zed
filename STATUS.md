@@ -2102,6 +2102,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| CK-apply-operator | running | 2026-11-12 00:38 |  |
 | LIT-tuple-branch-carrier | impl attempt 1 | 2026-11-12 20:34 | started; worktree /home/luke/Work/wt/lit-tuple-branch on origin/main 0c230df62 |
 | MAIN-red-m0_01-s_01f | impl attempt 1 | 2026-11-12 21:37 | folders renamed: tests/steps/l00_poly_nf is now tests/steps/l03_09_egraph (POLY-nf-W: rebase onto the new folder name), diag_control is now l02_12_diagnostics;  |
 | MSG-flow-origin | impl attempt 1 | 2026-11-11 13:43 | started; worktree wt/msg-flow-origin / 28.82 31.73 34.72 |
@@ -2111,9 +2112,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PERF-pk-one-sided | impl attempt 1 | 2026-11-12 22:06 | started; worktree /home/luke/Work/wt/pk-one-sided on 97a7d13b8 / 28.69 31.99 36.31 |
 | POLY-nf-power-value | running | 2026-11-12 14:17 | impl merged fast path 8c2710fc5; W <= K(n) refusal not merged (W does not track cost); CD xr POLY-nf-W spawned / 45.76 |
 | ST-walk-implicit | impl attempt 1 | 2026-11-11 01:43 | started: worktree /home/luke/Work/wt/st-walk-implicit on origin/main 89d83b4a3 / load 36.87 40.84 46.29 |
-| TESTS-ignores-and-owners | running | 2026-11-08 23:59 |  |
+| TESTS-ignores-and-owners | impl attempt 1 | 2026-11-08 23:59 | started; worktree /home/luke/Work/wt/tests-ignores-and-owners on 4b1e9d332 |
 | TEST-staged | impl attempt 1 | 2026-11-12 21:50 | not-run rows via Mixer::taken + taken_reads (if evaluated whole at build: only the arm the build takes); l02_08d 26/26 pass; negative control (extra run per 25  |
-| WARN-refused-shadowed | impl attempt 1 | 2026-11-12 20:35 | after rebase on 72f19d26a: build all targets, fmt check pass; l01_29_diagnostics, l01_39_reduced_product, zedc_check: 367 pieces, 0 failed; load 25.64 to 35.1 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
