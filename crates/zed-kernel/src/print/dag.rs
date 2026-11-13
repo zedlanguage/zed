@@ -21,7 +21,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::term::{Binds, Kid, Prim, Shared, Term, kids, small};
+use crate::term::walk::{Binds, Kid, kids, small};
+use crate::term::{Prim, Shared, Term};
 use crate::value::Value;
 
 /// A node of the graph of a term: the root, a part held in place, or a [`Shared`] node, each
