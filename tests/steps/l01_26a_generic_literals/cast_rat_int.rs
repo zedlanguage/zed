@@ -1,13 +1,13 @@
 //! `rat` of an operation on integer literals alone (item CAST-rat-int). In a body, a name bound
-//! to such an operation, `b = 2^64 + 13`, has the type of the literals' class until the class
-//! resolves, and `rat(b)` took the `#invalid` of the `f64`, `f32` and `String` arrows of `rat`
-//! from it, so `String(rat(b) ^ (2^64))` asked for an `else`. A cast keeps an atom only where its
-//! operand can give it (QUESTIONS A36), and `rat` of an int never gives one: the cast now takes
-//! the class at `int`, the carrier a name bound to integer literals alone has where it is bound
-//! (QUESTIONS A63), and gives `rat`. A use that takes `int` from the class is then rejected,
-//! whether it comes before the cast or after it. `rat` of a `String` or an `f64` keeps
-//! `#invalid`, and so does `rat` of a parameter, which may be any value of its carrier. A name
-//! bound at the top level is already an `int` where it is read, so only bodies had the defect.
+//! to such an operation, `b = 2^64 + 13`, took the type of the literals' class, which only
+//! resolved at the function's end, and `rat(b)` took the `#invalid` of the `f64`, `f32` and
+//! `String` arrows of `rat` from it, so `String(rat(b) ^ (2^64))` asked for an `else`. A cast
+//! keeps an atom only where its operand can give it (QUESTIONS A36), and `rat` of an int never
+//! gives one. A name bound to integer literals alone is an `int` where it is bound (QUESTIONS
+//! A63, item LIT-name-int-fixed), in a body as outside every function, so `rat(b)` gives `rat`,
+//! and a use that would take another carrier from `b` is rejected at the use, before the cast or
+//! after it. `rat` of a `String` or an `f64` keeps `#invalid`, and so does `rat` of a parameter,
+//! which may be any value of its carrier.
 
 use zed_tests::scaling;
 use zed_tests::step_helpers::l01_16_elaboration::value;
@@ -71,9 +71,6 @@ fn a_decimal_literal_is_still_given_no_carrier_by_rat() {
         "return rat(1.5);",
         "return rat(1.5 + 1);",
         "b = 1.5 + 1; return rat(b);",
-        // `0.5` before the cast joins the class, which then holds a decimal; after it, `0.5` is
-        // rejected beside an `int` (below).
-        "b = 2^3; c = b + 0.5; y = rat(b); return (y, c);",
     ] {
         let src = format!("f() {{ {body} }}\n");
         let errors = type_errors(&src);
@@ -83,49 +80,46 @@ fn a_decimal_literal_is_still_given_no_carrier_by_rat() {
 }
 
 #[test]
-fn a_use_that_takes_int_from_the_operand_is_rejected_before_or_after_the_cast() {
-    // After the cast: the use is rejected as it is with `b: int`, with a cast of `b` as
-    // the fix. (The headline of `+` prints `b` as its first literal, `2`: MSG-wide-value-notes.)
+fn a_use_that_takes_another_carrier_from_the_operand_is_rejected_at_the_use() {
+    // `b` is an `int` where it is bound (QUESTIONS A63), so a use that would take another
+    // carrier from it is rejected as it is with `b: int`, with a cast of `b` as the fix, whether
+    // it comes after the cast or before it. (The headline of `+` prints `b` as its first literal,
+    // `2`: MSG-wide-value-notes.)
     for body in [
         "b = 2^3; y = rat(b); c = b + 0.5f64; return (y, c);",
         "b = 2^3; y = rat(b); c = b + 1r; return (y, c);",
         "b = 2^3; y = rat(b); c = b + 0.5; return (y, c);",
+        "b = 2^3; c = b + 0.5; y = rat(b); return (y, c);",
     ] {
         let src = format!("f() {{ {body} }}\n");
         let errors = type_errors(&src);
         assert_eq!(errors.len(), 1, "{src}: {errors:?}");
         assert!(errors[0].contains("(b) + "), "{src}: {errors:?}");
     }
-    // Before it, where the use takes `int` from the class first: the cast is rejected, naming
-    // the use.
-    for (use_, cast) in [
+    // Before the cast: the error is at the use, never at the cast, which reads an `int`.
+    for (use_, cast, fix) in [
         (
             "c = b + 0.5f64;",
             "m.stdout <- String(rat(b)) else \"${c}\";",
+            "Try `c = f64(b) + 0.5f64` instead.",
         ),
-        ("c = b + 1r;", "m.stdout <- String(rat(b) + c);"),
+        (
+            "c = b + 1r;",
+            "m.stdout <- String(rat(b) + c);",
+            "Try `c = b + 1` instead.",
+        ),
     ] {
         let src = format!("main(m: MainArgs) {{\n    b = 2^3;\n    {use_}\n    {cast}\n}}\n");
         let (i, _) = info(&src);
         assert_eq!(i.errors.len(), 1, "{src}");
         let e = &i.errors[0];
+        let line = src.find(use_).expect("the use");
         assert!(
-            e.message.starts_with(
-                "`rat(b)` reads `b`, an operation on integer literals alone, as an `int`, but \
-                 another use takes `int` from it"
-            ),
+            (line..line + use_.len()).contains(&e.span.start),
             "{src}: {}",
             e.message
         );
-        // A note shows the use that took `int`, on its line.
-        let line = src.find(use_).expect("the use");
-        assert!(
-            (e.notes.iter())
-                .any(|n| (line..line + use_.len()).contains(&n.span.start)
-                    && n.text.contains("takes")),
-            "{src}: {:?}",
-            e.notes
-        );
+        assert!(e.message.contains(fix), "{src}: {}", e.message);
     }
 }
 

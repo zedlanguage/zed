@@ -1006,7 +1006,7 @@ struct Class {
     /// a test of it is followed as one of that class is.
     narrows: bool,
     /// Whether a decimal literal with no suffix joined it, as the `0.5` of `b + 0.5`. Of a merged
-    /// class, whether either was. Kept as a flag so [`Ck::rat_reads_int`] reads it in O(1), not
+    /// class, whether either was. Kept as a flag so [`Ck::rat_takes_int`] reads it in O(1), not
     /// by a scan of [`Self::lits`] at each cast.
     decimal: bool,
 }
@@ -1166,6 +1166,9 @@ struct Ck<'t, 'a> {
     level: usize,
     /// The classes each of those functions resolves when it ends, by its level.
     pending: Vec<Vec<usize>>,
+    /// For each level, the rows and payload shapes and the variables [`Ck::fix_bound`] has met
+    /// in the bindings of the function being checked there, so each is walked once in its body.
+    bound: Vec<Vars>,
     /// The needs recorded so far.
     needs: usize,
     /// How many checks of a generic function's needs are under way; they write nothing for
@@ -1422,6 +1425,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             ends: 0,
             level: 0,
             pending: vec![Vec::new()],
+            bound: Vec::new(),
             needs: 0,
             replaying: 0,
             refused: Vec::new(),
@@ -3097,31 +3101,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                     !follows && (!l.generic || (l.witness && witness(l).is_none()))
                 })
             });
-        // Literals that nothing gives a carrier: an integer literal is an `int` where the
-        // class may be one, and otherwise, as for a decimal literal or a `/` of integer
-        // literals, nothing chooses among the carriers left, and the first decimal literal,
-        // or else the first literal, is rejected (steps L1.26a and L1.26b), unless the carriers
-        // left are float formats alone, `f64` among them, which take `f64` ([`floats_take_f64`]),
-        // and a decimal literal or a use of float formats alone left them ([`Class::floats`]):
-        // `2^(1 + 1) / 3` is rejected, as it is at the top level, and not read at `f64`.
-        let left: Vec<Carrier> = Carrier::of_mask(mask).filter(|c| c.numeric()).collect();
-        let decimal = lits.iter().any(|(l, _)| is_decimal(&l.value));
         if numeric.is_some()
-            && mask & Carrier::Int.bit() == 0
-            && left.len() > 1
-            && !(floats_take_f64(&left) && (decimal || self.classes[r].floats))
+            && let LitsTake::Rejected(l, left) = self.lits_take(r)
         {
-            let mut joined = lits.iter().filter(|(_, follows)| !follows).map(|(l, _)| l);
-            // The first in the text: merges join a class's literals in no order the program
-            // shows, and in `2^(1 + 1) / 3` the exponent's class is made first.
-            // Complexity tradeoff: one pass over the class's literals, as the `find` below
-            // makes, and only when the class is rejected.
-            let first = joined.clone().min_by_key(|l| l.site.start);
-            if let Some(l) = joined.find(|l| is_decimal(&l.value)).or(first) {
-                let notes = self.derive(&[l.site]);
-                let m = unfixed(l, &left);
-                self.reject(Some(Row::UnfixedDecimal), l.site, m, notes);
-            }
+            let notes = self.derive(&[l.site]);
+            let m = unfixed(&l, &left);
+            self.reject(Some(Row::UnfixedDecimal), l.site, m, notes);
         }
         // A bare literal compared with values of the class follows it without narrowing it, so
         // whether the class holds strings or `bool` and no number is known only now, whatever
@@ -3177,6 +3162,49 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         self.classes[r].resolved = Some(ty);
+    }
+
+    /// The carrier the literals of the class `r` take where nothing else gives them one, of
+    /// the carriers its mask leaves ([`Self::resolve`] when its function ends, and
+    /// [`Ck::fix_bound`] where a name in a body is bound to it). An integer literal is an
+    /// `int` where the class may be one. Otherwise, as for a decimal literal or a `/` of
+    /// integer literals, nothing chooses among the carriers left, and the first decimal
+    /// literal, or else the first literal, is rejected (steps L1.26a and L1.26b), unless the
+    /// carriers left are float formats alone, `f64` among them, which take `f64`
+    /// ([`floats_take_f64`]), and a decimal literal or a use of float formats alone left them
+    /// ([`Class::floats`]): `2^(1 + 1) / 3` is rejected, as it is at the top level, and not
+    /// read at `f64`.
+    // Complexity tradeoff: O(1) where the mask holds `int` or one carrier, which is every
+    // class a binding has already fixed; otherwise one pass over the class's literals for
+    // whether one is decimal, and, only where the class is rejected, one more for the first
+    // in the text, O(l) for l literals. A flag kept on the class would make the first pass
+    // O(1), but must be merged at every union, and such a class is passed over once: the
+    // pass ends in `f64` or a rejection, which leaves one carrier.
+    fn lits_take(&self, r: usize) -> LitsTake {
+        let c = &self.classes[r];
+        if c.mask & Carrier::Int.bit() != 0 {
+            return LitsTake::Int;
+        }
+        let left: Vec<Carrier> = Carrier::of_mask(c.mask).filter(|c| c.numeric()).collect();
+        if left.len() <= 1 {
+            return LitsTake::Left;
+        }
+        let decimal = || c.lits.iter().any(|(l, _)| is_decimal(&l.value));
+        if floats_take_f64(&left) && (c.floats || decimal()) {
+            return LitsTake::F64;
+        }
+        let mut joined = c
+            .lits
+            .iter()
+            .filter(|(_, follows)| !follows)
+            .map(|(l, _)| l);
+        // The first in the text: merges join a class's literals in no order the program
+        // shows, and in `2^(1 + 1) / 3` the exponent's class is made first.
+        let first = joined.clone().min_by_key(|l| l.site.start);
+        match joined.find(|l| is_decimal(&l.value)).or(first) {
+            Some(l) => LitsTake::Rejected(l.clone(), left),
+            None => LitsTake::Left,
+        }
     }
 
     /// The class `p` is, if it is a class not yet resolved: its root.
@@ -6999,6 +7027,19 @@ fn f64_cast_fix(l: &Lit, n: &str, at: Span, op: BinaryOp, left: bool) -> Option<
         &format_args!("{n} is cast to f64, exactly, since it lies within ±2^53"),
         &alone,
     )
+}
+
+/// What the literals of a class take where nothing else gives them a carrier
+/// ([`Ck::lits_take`]).
+enum LitsTake {
+    /// `int`, which the class may be.
+    Int,
+    /// `f64`, of two or more float formats left ([`floats_take_f64`]).
+    F64,
+    /// The one carrier left, or none.
+    Left,
+    /// No carrier: the literal rejected and the two or more carriers left.
+    Rejected(Lit, Vec<Carrier>),
 }
 
 /// Whether the carriers `cs` left to a literal that nothing gives a carrier are two or more

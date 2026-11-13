@@ -16,6 +16,7 @@ mod fixes;
 mod lazy_carrier;
 mod lit_branch_ops;
 mod lit_branches;
+mod name_fixed;
 mod parts_type;
 mod scaling;
 mod spelling;

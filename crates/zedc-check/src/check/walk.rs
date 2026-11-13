@@ -1625,25 +1625,35 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// The binding `s` of a value of `v`, whose check found the errors after the first
     /// `before`.
-    fn bind(&mut self, s: &'a Stmt, v: Ty, before: usize) {
+    fn bind(&mut self, s: &'a Stmt, mut v: Ty, before: usize) {
         let StmtKind::Bind { targets, value, .. } = &s.kind else {
             unreachable!("a binding")
         };
+        // Each target is bound to its component where the value is a tuple display of
+        // as many components, `a, b = (0.5, 1)`; `_` names none.
+        let name = |t: &'a Target| match t {
+            Target::Name(n, _) => n.as_str(),
+            Target::Wild => "_",
+        };
+        let text = self.t.text;
+        let parts = || match (&targets[..], &value.kind) {
+            ([t], _) => unfixed_parts(value, name(t), true, text),
+            (ts, ExprKind::Tuple(items)) if items.len() == ts.len() => (ts.iter().zip(items))
+                .flat_map(|(t, x)| unfixed_parts(x, name(t), false, text))
+                .collect(),
+            _ => Vec::new(),
+        };
+        let what = match &targets[..] {
+            [Target::Name(n, _)] => format!("the value of `{n}`"),
+            [_] => "the value".to_string(),
+            ts => format!(
+                "the value bound to `{}`",
+                ts.iter().map(name).collect::<Vec<_>>().join(", ")
+            ),
+        };
         if self.level == 0 {
             self.drop_met(before);
-            // Each target is bound to its component where the value is a tuple display of
-            // as many components, `a, b = (0.5, 1)`; `_` names none.
-            let name = |t: &'a Target| match t {
-                Target::Name(n, _) => n.as_str(),
-                Target::Wild => "_",
-            };
-            let mut found = match (&targets[..], &value.kind) {
-                ([t], _) => unfixed_parts(value, name(t), true, self.t.text),
-                (ts, ExprKind::Tuple(items)) if items.len() == ts.len() => (ts.iter().zip(items))
-                    .flat_map(|(t, x)| unfixed_parts(x, name(t), false, self.t.text))
-                    .collect(),
-                _ => Vec::new(),
-            };
+            let mut found = parts();
             // The literals the value ends in through a branch, a block, an index or a call,
             // for every form of the targets; a literal in a called body may stand before the
             // binding in the text, and the parts are put back in the order of the text.
@@ -1652,15 +1662,17 @@ impl<'t, 'a> Ck<'t, 'a> {
                 found.extend(tails);
                 found.sort_by_key(|(p, _, _)| p.start);
             }
-            let what = match &targets[..] {
-                [Target::Name(n, _)] => format!("the value of `{n}`"),
-                [_] => "the value".to_string(),
-                ts => format!(
-                    "the value bound to `{}`",
-                    ts.iter().map(name).collect::<Vec<_>>().join(", ")
-                ),
-            };
             self.rejects_unfixed(before, found, &what);
+        } else {
+            let names: Vec<&str> = targets.iter().map(name).collect();
+            let bound = format!("the binding of `{}`", names.join(", "));
+            let (rejected, binds) = self.fix_bound(&v, value.span, &bound);
+            if !rejected.is_empty() {
+                self.reject_bound(before, rejected, parts(), &what);
+            }
+            // The name reads as the carrier it takes, as one outside every function does: a
+            // use of it then meets an `int`, not a class it could narrow.
+            v = v.replace_outside(&binds);
         }
         match &targets[..] {
             [Target::Name(n, _)] => {
@@ -1714,6 +1726,153 @@ impl<'t, 'a> Ck<'t, 'a> {
                     }
                 }
             }
+        }
+    }
+
+    /// Fixes, at `span`, where a name in a body is bound to the value `v`, the carrier of each
+    /// class of literals alone that `v` holds outside the functions it holds: a name has one
+    /// value and one type, fixed where it is bound, and no read of it gives it a carrier
+    /// (QUESTIONS A63, author, 2026-11-13; DESIGN.md sec:diagnostics). So with `b = 2^62`, `b`
+    /// is an `int`, and `c = b + 0.5f64` is rejected at the `+`, as it is outside every
+    /// function; with `q = 1.5 + 1`, `q` is rejected at its binding. The carrier is the one
+    /// [`Ck::lits_take`] gives when the function ends, so a class that no later use narrows
+    /// resolves as it did. `what` names the binding in the reason the class records. Returns
+    /// the literals rejected, each with the carriers left, and each class variable of `v` whose
+    /// class is left one carrier, bound to it, so the name reads as that carrier. A rejected
+    /// class takes `f64` where it may, else the first carrier left, as a binding outside
+    /// every function is read after its rejection, so it is not rejected a second time when
+    /// it resolves. Left as they are: a class of a parameter (`binder`) or merged with one
+    /// (not `generic`), which a call gives its carrier, and one with no literal that fixes a
+    /// carrier (as [`Ck::resolve`] reads it).
+    // Complexity tradeoff: the classes are found by a walk of `v` outside its functions that
+    // enters each row and shape once in the whole body ([`Ty::vars_outside`] with the
+    // function's own [`Vars`], `Ck::bound`), so the walks of a body's n bindings cost
+    // O(size of the types they make) in all, plus the variables at the top of each value,
+    // read again at each binding, O(width of `v`). A fresh walk at each binding re-enters
+    // the shapes an earlier binding shares: `t1 = #a(t0, t0); t2 = #a(t1, t1); …` costs
+    // O(n²) (ATOM-nested-sq). A variable met at an earlier binding is not examined again
+    // unless it is at the top of `v`: its class was fixed there, or left to a call or to the
+    // function's end, and a later binding that adds to it holds it, or a variable merged
+    // with it, at the top or in a shape it makes. Each class costs a find, O(α(N)), and at
+    // most three passes over its l literals ([`Ck::lits_take`]), O(l); the name's type is
+    // rebuilt with the carriers in place, O(size of `v` outside the shapes holding no
+    // variable bound). A class of literals alone reaches one binding: the name then reads
+    // as its carrier, so in `b1 = b0 + 1; b2 = b1 + 1; …` each `+` meets an `int` and makes
+    // no class, and each literal is passed over a constant number of times in all. The
+    // method before this change waited for the function's end and resolved each class once,
+    // O(l), but let a later use give the name its carrier, which A63 forbids.
+    fn fix_bound(&mut self, v: &Ty, span: Span, what: &str) -> (Vec<(Lit, Vec<Carrier>)>, Binds) {
+        let level = self.level;
+        if self.bound.len() <= level {
+            self.bound.resize_with(level + 1, Vars::default);
+        }
+        let met = self.bound[level].order.len();
+        v.vars_outside(&mut self.bound[level]);
+        let found: Vec<Arc<str>> = (self.bound[level].order[met..].iter())
+            .chain(v.vars.iter())
+            .cloned()
+            .collect();
+        let numbers = [Carrier::Int, Carrier::F64, Carrier::Rat, Carrier::F32]
+            .iter()
+            .fold(0, |m, c| m | c.bit());
+        // The carrier each class takes, by its root, or none where it is left as it is.
+        let mut fixed: HashMap<usize, Option<Carrier>> = HashMap::new();
+        let mut rejected = Vec::new();
+        let mut binds = Vec::new();
+        for x in found {
+            let Some(r) = class_id(&x).filter(|&k| k < self.classes.len()) else {
+                continue;
+            };
+            let r = self.find(r);
+            let takes = match fixed.get(&r) {
+                Some(&t) => t,
+                None => {
+                    let t = self.fix_class(r, span, what, &mut rejected, numbers);
+                    fixed.insert(r, t);
+                    t
+                }
+            };
+            if let Some(c) = takes {
+                binds.push((x, Ty::carrier(c)));
+            }
+        }
+        (rejected, binds.into_iter().collect())
+    }
+
+    /// The carrier the class `r` takes where a name is bound to it at `span`
+    /// ([`Self::fix_bound`]), with the literal pushed to `rejected` where nothing gives it
+    /// one, if `r` is a class of literals alone with a literal that fixes a carrier (of the
+    /// carriers `numbers`), and one carrier is left.
+    fn fix_class(
+        &mut self,
+        r: usize,
+        span: Span,
+        what: &str,
+        rejected: &mut Vec<(Lit, Vec<Carrier>)>,
+        numbers: u8,
+    ) -> Option<Carrier> {
+        let c = &self.classes[r];
+        let fixes = c.mask & numbers != 0
+            && (c.lits.iter()).any(|(l, follows)| !follows && (!l.generic || l.witness));
+        if c.resolved.is_some() || !c.generic || c.binder.is_some() || !fixes {
+            return None;
+        }
+        let takes = match self.lits_take(r) {
+            LitsTake::Int => Carrier::Int,
+            LitsTake::F64 => Carrier::F64,
+            LitsTake::Left => {
+                let mask = self.classes[r].mask;
+                return (mask & OTHER == 0 && mask.count_ones() == 1)
+                    .then(|| Carrier::of_mask(mask).next().expect("one carrier"));
+            }
+            LitsTake::Rejected(l, left) => {
+                let c = match left.contains(&Carrier::F64) {
+                    true => Carrier::F64,
+                    false => left[0],
+                };
+                rejected.push((l, left));
+                c
+            }
+        };
+        let fixed = self.restrict_asking(r, takes.bit(), what, span, false);
+        debug_assert!(fixed, "a class may take the carrier its literals take");
+        Some(takes)
+    }
+
+    /// Rejects, at a binding in a body, the literals `rejected` that nothing gives a carrier,
+    /// each with the carriers left ([`Self::fix_bound`]). One in a part of the value that
+    /// [`unfixed_parts`] finds, of `parts` in the order of the text, is rejected as that part
+    /// of a binding outside every function is ([`Self::rejects_unfixed`]), with the fixes
+    /// written as the binding, `q = 1.5f64 + 1;    q is 2.5`; another, which the value reaches
+    /// through a branch or a call, as [`Ck::resolve`] rejects it. The errors after the first
+    /// `before` are those of the value's check; `what` names the value.
+    // Complexity tradeoff: the parts lie apart in the order of the text, so each literal finds
+    // its part by binary search, O(r log p) for r literals and p parts; the naive test of each
+    // literal against each part costs O(r p), the square of the width of a tuple display.
+    fn reject_bound(
+        &mut self,
+        before: usize,
+        rejected: Vec<(Lit, Vec<Carrier>)>,
+        parts: Vec<(Span, Span, Msg)>,
+        what: &str,
+    ) {
+        let mut taken = vec![false; parts.len()];
+        let mut alone = Vec::new();
+        for (l, left) in rejected {
+            let k = parts.partition_point(|(p, _, _)| p.start <= l.site.start);
+            match k.checked_sub(1) {
+                Some(k) if l.site.end <= parts[k].0.end => taken[k] = true,
+                _ => alone.push((l, left)),
+            }
+        }
+        let parts = (parts.into_iter().zip(taken))
+            .filter_map(|(p, t)| t.then_some(p))
+            .collect();
+        self.rejects_unfixed(before, parts, what);
+        for (l, left) in alone {
+            let notes = self.derive(&[l.site]);
+            let m = unfixed(&l, &left);
+            self.reject(Some(Row::UnfixedDecimal), l.site, m, notes);
         }
     }
 
@@ -3746,8 +3905,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         let values = self.operand_values(&x);
         let carried = x.ty.atoms();
         let at = x.at.unwrap_or(span);
-        if w == "rat" && !self.rat_reads_int(&x, span, at) {
-            return Ty::empty();
+        if w == "rat" {
+            self.rat_takes_int(&x, span);
         }
         let no_zero = w == "rat" && self.ints_without_zero(&x);
         let mut r = self
@@ -3768,59 +3927,34 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
-    /// Restricts the operand `x` of `rat` at `span` to `int` if it is an operation on integer
-    /// literals alone, as `b` with `b = 2^64 + 13` is, or `2^64 + 13` in `rat(2^64 + 13)`:
-    /// `rat` of an int is exact and gives no atom (QUESTIONS A36: a cast keeps an atom only
-    /// where its operand can give it). False, after an error at `at`, if another use has
-    /// already taken `int` from it, as `c = b + 0.5f64` does.
-    ///
-    /// Such a value has no carrier until its class resolves, and the class keeps the float
-    /// formats among its carriers until then. At `f64`, `b = 2^2000` is the infinity, and
-    /// `rat` of it is `#invalid`, so dropping the atom of the `f64` arrow alone would be
-    /// unsound wherever a later use, as `c = b + 0.5f64`, gives the class `f64`. Restricting
-    /// the class instead makes that later use the rejection, and a use before the cast this
-    /// error, so the verdict does not depend on which comes first in the text. `int` is the
-    /// carrier a name bound to integer literals alone has where it is bound (QUESTIONS A63),
-    /// so each program this rejects A63 rejects too. Not `int | rat`: a bare decimal literal
-    /// joined later, as `c = b + 0.5`, would then fix the class at `rat`, while before the
-    /// cast it is rejected for want of a carrier. Left as they are: a class holding a bare
-    /// decimal literal, which is rejected for want of a carrier or fixed by another use, as
-    /// `rat(1.5)` is rejected; and a class of a parameter (`binder`) or merged with one (not
-    /// `generic`), which may hold any value of its carrier, a NaN among them.
+    /// Takes the operand `x` of `rat` at `span` at `int` if it is an operation on integer
+    /// literals alone written in place, as `2^64 + 13` in `rat(2^64 + 13)`: `rat` of an int is
+    /// exact and gives no atom (QUESTIONS A36: a cast keeps an atom only where its operand can
+    /// give it), and nothing else reads the class, so it takes `int` when its function ends
+    /// ([`Ck::lits_take`]). Such a class keeps the float formats among its carriers until then,
+    /// and at `f64` `2^2000` is the infinity, of which `rat` is `#invalid`, so the atom of the
+    /// `f64` arrow is dropped by taking the class at `int` now, not by dropping it alone. A name
+    /// bound to such an operation, `b` with `b = 2^64 + 13`, is an `int` already, fixed where
+    /// it is bound (QUESTIONS A63, [`Self::fix_bound`]). Left as they are: a class that holds a
+    /// bare decimal literal, or a `/`, as `rat(1 / 2)`, which no use took `int` from but its
+    /// own operation, and which is rejected for want of a carrier when its function ends; and
+    /// a class of a parameter (`binder`) or merged with one (not `generic`), which may hold any
+    /// value of its carrier, a NaN among them.
     // Complexity tradeoff: naive version, a range of the value at each float carrier read
     // from the text, which would keep `rat(b)` exact at `f64` too but must bound every
     // intermediate value (`2^2000 - 2^2000` is a NaN at `f64`) through every name read, O(size
     // of the expressions read) per cast. Used: the class's flags and one restriction of its
-    // mask, O(log N) for the find in a union of N classes, plus O(r) for its r recorded
-    // reasons where it fails, which the error prints.
-    fn rat_reads_int(&mut self, x: &Arg<'a>, span: Span, at: Span) -> bool {
+    // mask, O(α(N)) for the find in a union of N classes. Before names were fixed where they
+    // are bound (LIT-name-int-fixed), this also rejected the cast where a later use had taken
+    // `int` from the class; that use is now rejected itself, at the use.
+    fn rat_takes_int(&mut self, x: &Arg<'a>, span: Span) {
         let Some(k) = self.class_beside_atoms(&x.ty) else {
-            return true;
+            return;
         };
         let c = &self.classes[k];
-        if !c.generic || c.binder.is_some() || c.decimal {
-            return true;
+        if c.generic && c.binder.is_none() && !c.decimal {
+            self.restrict_asking(k, Carrier::Int.bit(), "`rat`", span, false);
         }
-        let int = Carrier::Int.bit();
-        if self.restrict_asking(k, int, "`rat`", span, false) {
-            return true;
-        }
-        let shown = self.code(Some(at)).unwrap_or("its operand");
-        let mut notes = self.derive(&[at]);
-        notes.extend(
-            (self.classes[k].reasons.iter())
-                .filter(|r| r.takes.is_some_and(|m| m & int == 0))
-                .map(Reason::note),
-        );
-        self.error_with(
-            at,
-            format!(
-                "`rat({shown})` reads `{shown}`, an operation on integer literals alone, as an \
-                 `int`, but another use takes `int` from it"
-            ),
-            notes,
-        );
-        false
     }
 
     /// Whether the operand `x` of `rat` holds ints alone, none of them 0, by its type, its
@@ -6361,6 +6495,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.gens.resize(level + 1, 0);
         }
         self.gens[level] = self.ends;
+        if let Some(b) = self.bound.get_mut(level) {
+            *b = Vars::default();
+        }
         self.level -= 1;
         Arc::new(sig)
     }
