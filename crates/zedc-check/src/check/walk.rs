@@ -7776,9 +7776,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             _ => {}
         }
+        // The exponent is written with its carrier, `2^-3.0f64`: an unfixed `-3.0` takes none
+        // in an operation on literals alone, `c = 2^-3.0` at the top level, and `f64` is the
+        // carrier [`Self::power_swapped`] checks.
         if p.base_takes_float
             && int_literal(et.strip_prefix('-').unwrap_or(et))
-            && let Some(p) = rewrite(&[(ns, &format!("{et}.0"))])
+            && let Some(p) = rewrite(&[(ns, &format!("{et}.0f64"))])
         {
             out.push(((p, pass), Some((1, Carrier::F64))));
         }

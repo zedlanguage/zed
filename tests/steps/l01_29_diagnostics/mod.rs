@@ -29,6 +29,7 @@ mod offered_repairs;
 mod order;
 mod overload_cycles;
 mod package_recovery;
+mod power_repairs;
 mod printed;
 mod quoted;
 mod rare;

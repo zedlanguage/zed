@@ -6971,8 +6971,9 @@ fn f64_cast_fix(l: &Lit, n: &str, at: Span, op: BinaryOp, left: bool) -> Option<
 /// Whether the carriers `cs` left to a literal that nothing gives a carrier are two or more
 /// float formats, `f64` among them, which the literal does not choose among: it takes `f64`
 /// (author decision, 2026-11-12: a decimal literal that no use fixes takes `f64`). So
-/// `y = 2^-1.0`, where `^` leaves the formats `f32` and `f64` to `-1.0`, is `0.5` at `f64`, as
-/// it was before `f32` was a carrier.
+/// `g() = 2^-1.0;`, where `^` leaves the formats `f32` and `f64` to `-1.0`, is `0.5` at `f64`,
+/// as it was before `f32` was a carrier. (At the top level, `y = 2^-1.0` is an operation on
+/// literals alone and is rejected.)
 fn floats_take_f64(cs: &[Carrier]) -> bool {
     cs.len() > 1
         && cs.contains(&Carrier::F64)
@@ -8619,7 +8620,23 @@ impl<'a> Ck<'_, 'a> {
                     Some((Fin(lo), Fin(hi))) if lo == hi => {
                         forward(&Op::Pow(Int::from(lo).into()), &x.ints, &x.ints)
                     }
-                    _ if x.ints.is_subset(&at_least_one) => at_least_one,
+                    // A base of at least b >= 1 to an exponent of at least k >= 0 is at least
+                    // b^k, which is read as 1 + k(b - 1) by Bernoulli's inequality,
+                    // (1 + x)^k >= 1 + kx: exact at k of 0 or 1, so `3^(2^k)` under `k >= 0` is
+                    // at least 3 and `2^(3^(2^k) - 3)` is accepted. (`2^(2^k - 2)` under `k > 0`
+                    // is still rejected: the text gives `k` no bound here, since a test's
+                    // narrowing is the scope's and does not reach inside `^`; plan row
+                    // POW-scope-exponent.) Computing b^k itself would be O(k log b) bits of
+                    // work for an exponent bound the program may make as large as it likes;
+                    // the bound here is one product, O(1) for words, at the cost of a lower
+                    // bound below b^k from k = 2 on.
+                    _ if x.ints.is_subset(&at_least_one) => match (x.ints.bounds(), n.bounds()) {
+                        (Some((Fin(b), _)), Some((Fin(k), _))) => {
+                            let lo = &Num::ONE + &(k * &(b - &Num::ONE));
+                            IntervalSet::range(Fin(lo), PosInf)
+                        }
+                        _ => at_least_one,
+                    },
                     _ if x.ints.is_subset(&nonnegative) => nonnegative,
                     _ => IntervalSet::top(),
                 };

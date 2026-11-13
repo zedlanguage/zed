@@ -132,7 +132,7 @@ fn an_int_power_rejection_shows_the_negative_exponent() {
     assert!(out.contains("the base `2` is int here"), "{out}");
     assert!(!out.contains("`v"), "{out}");
     // Each repair is the power rewritten in full, and each runs.
-    for fix in ["2.0f64^-1", "2^-1.0"] {
+    for fix in ["2.0f64^-1", "2^-1.0f64"] {
         assert!(out.contains(&format!("repair: `{fix}`")), "{out}");
         assert_eq!(runs("", &format!(r#""${{{fix}}}""#), ""), "0.5\n");
     }
@@ -342,7 +342,7 @@ fn a_power_of_a_parameter_under_a_negative_exponent_takes_no_int() {
             "{out}"
         );
         assert!(
-            out.contains("repair: `b ^ -1.0`, and pass a float as `b` at each call"),
+            out.contains("repair: `b ^ -1.0f64`, and pass a float as `b` at each call"),
             "{out}"
         );
         assert!(!out.contains("`v"), "{out}");
@@ -842,7 +842,7 @@ fn a_port_takes_an_operation_on_literals_whose_divisor_is_no_zero() {
     );
     for (repair, want) in [
         ("2.0f64 ^ -1", "0.5"),
-        ("2 ^ -1.0", "0.5"),
+        ("2 ^ -1.0f64", "0.5"),
         ("2r ^ -1", "1r/2r"),
     ] {
         assert!(
