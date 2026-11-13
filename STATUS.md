@@ -2164,7 +2164,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PORT-out-param | impl attempt 1 | 2026-11-13 07:46 | reproduced on ffc8b6170: say("hi", out: m.stdout) refused by the builder (zedc-syntax main_field) as a read of m.stdout; DESIGN's own say(out: Lines, positional |
 | PRES-overlap-fast | xr attempt  | 2026-11-13 01:10 | round 1 launched: Sol and Opus seats (medium); Gemini 429 (resets in 32h55m); CD next |
 | ROOTS-terms-cubic | impl attempt 1 | 2026-11-13 08:29 | start; worktree from origin/main 9171c9beb |
-| SPEC-standalone | running |  |  |
+| SPEC-standalone | impl attempt 1 | 2026-11-13 08:55 | started; worktree /home/luke/Work/wt/spec-standalone from origin/main c12614e6c |
 | ST-walk-checker-admit | impl attempt 1 | 2026-11-13 08:01 | started; worktree from origin/main bce53b287 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
