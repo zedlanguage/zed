@@ -2041,19 +2041,19 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | FLOAT-f32 | impl attempt 1 | 2026-11-05 04:07 | negative control: O(n^2) in Value::float32 makes the f32 chain scaling test fail at 24.7x (limit 12.8x); reverted, not committed |
-| L1.29d | impl attempt 1 | 2026-11-11 01:43 | started; worktree /home/luke/Work/wt/l129d from e52caa1bf |
+| MSG-fixnote-huge-value | running | 2026-11-12 20:52 | spawned / 55.25 |
 | MSG-is-repair-v | running | 2026-11-12 17:32 |  |
 | MSG-lines-headline | running | 2026-11-12 17:32 |  |
 | MSG-width-headline | running | 2026-11-12 17:32 |  |
 | PERF-l139-family | impl attempt 1 | 2026-11-12 18:45 | started; worktree /home/luke/Work/wt/perf-l139-family on 163c04744 |
 | POLY-nf-power-value | impl attempt 1 | 2026-11-12 14:17 | started; worktree wt/poly-nf-power-value from origin/main f2d8e0094 |
 | PRINT-below-whole | impl attempt 1 | 2026-11-11 01:43 | started: rebase wt/print-below-whole (251 behind), benchmark for PRINT_WHOLE/PRINT_HANDOFF per A96 |
-| REFUSAL-census-now | impl attempt 1 | 2026-11-12 19:34 | front::compile hook missed units checked through helpers (check_text, elab); moved hook to ast::unit_all_errors and rerunning step groups to capture every parse |
+| REFUSAL-census-now | impl attempt 1 | 2026-11-12 19:34 | captured 59,664 distinct units (454 MB, most from scaling families); censusing them in 239 pieces of 250 units, 12 at a time, each run under 60 s (load 40.26 43 |
 | REGRESS-l01_26-overload | impl attempt 1 | 2026-11-12 20:07 | reproduced 4 failures on 969576f90 (16.5, 16.3, 15.0, 23.8x, load 46); bisect: first bad commit 502dc1de5 (GSX-unsolved merge), 151b26576 passes |
 | STAGE-print | impl attempt 1 | 2026-11-04 03:10 | started; worktree wt/stage-print seeded |
-| TESTS-l01_29-split | impl attempt 1 | 2026-11-12 20:21 | started; worktree /home/luke/Work/wt/tests-l0129-split; load 38.25 45.09 49.73 |
+| TESTS-l01_29-split | impl attempt 1 | 2026-11-12 20:21 | l01_29 split: 101 pieces, 393 passed 3 ignored (was 1 piece 387+3; two nested tests now 4 parts each), slowest piece 15.7 s at load 39.5 to 44.8 |
 | UNITS-char16 | impl attempt 1 | 2026-11-12 20:15 | started; making worktrees |
-| WARN-refused-shadowed | running | 2026-11-12 20:35 | spawned / 51.08 |
+| WARN-refused-shadowed | impl attempt 1 | 2026-11-12 20:35 | red on main: new shadow test fails with outer question steps [1-3] in inner rejection at 1:243; contrast passes; load 50.19 52.21 51.22 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
