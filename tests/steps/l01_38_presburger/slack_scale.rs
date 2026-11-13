@@ -13,7 +13,7 @@ use std::sync::Arc;
 use zed_tests::scaling;
 use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::presburger::{
-    Atom, Con, Formula, Lin, Refusal, Shared, decide, project_each, satisfiable,
+    Atom, Con, Formula, Lin, ROW_SUMS_OFF, Refusal, Shared, decide, project_each, satisfiable,
 };
 
 fn sym(s: &str) -> Atom {
@@ -232,11 +232,39 @@ fn ss_decide_scales() {
         subset_sum_dp(&weights_untied(k_imm)),
         subset_sum_dp(&weights_untied(scaling::FACTOR * k_imm)),
     );
+    // The join of row sums (module `row_sums`) runs beside the solver once the solver has been
+    // charged the method's bound over its rate; at the rate of 256 the solver refuses first at
+    // both sizes, 87.9M with the method against 87.8M alone at k = 16, and 729.4M against 729.6M
+    // at k = 128 (2026-11-13). At the rate of 384 it answered k = 16 exactly at 24.6M, and the
+    // growth from 16 to 128 measured with the method was 29.7 times, because the small size
+    // became cheaper; so the order is checked on the solver alone, and the method is held to the
+    // solver's cost at each size.
     assert_eq!(decide(&imm_s), Err(Refusal::Disjuncts));
     assert_eq!(decide(&imm_l), Err(Refusal::Disjuncts));
-    scaling::check_order("decide: ss_untied immune", k_imm, 1, |m| {
-        drop(decide(if m == k_imm { &imm_s } else { &imm_l }));
-    });
+    let alone = |f: &Formula| {
+        ROW_SUMS_OFF.with(|o| o.set(true));
+        let d = decide(f);
+        ROW_SUMS_OFF.with(|o| o.set(false));
+        d
+    };
+    assert_eq!(alone(&imm_s), Err(Refusal::Disjuncts));
+    scaling::check_order(
+        "decide: ss_untied immune, the solver alone",
+        k_imm,
+        1,
+        |m| {
+            drop(alone(if m == k_imm { &imm_s } else { &imm_l }));
+        },
+    );
+    let mut meter = scaling::Meter::new();
+    for f in [&imm_s, &imm_l] {
+        let with = meter.work(|| drop(decide(f))).units;
+        let without = meter.work(|| drop(alone(f))).units;
+        assert!(
+            with as f64 <= 1.02 * without as f64,
+            "{with} with the method against {without} alone"
+        );
+    }
 
     // Forced-cascade subset-sum regime (unreachable target sum - gap with gap in 4500..5052
     // outside w, refuting ~27% of y_i == 0 arms in round 1 while leaving ~73% unforced,
@@ -615,6 +643,9 @@ fn ss_project_each_costs_at_most_four_decides() {
     if meter.unit() != "instructions" {
         return;
     }
+    // The solver alone: with the join of row sums (module `row_sums`) the questions the
+    // halving asks are narrow enough for it, and q is the exact empty set.
+    ROW_SUMS_OFF.with(|o| o.set(true));
     let f = subset_sum_dp(&weights(64));
     let y0 = [sym("y0")];
     let least = |meter: &mut Meter, run: &dyn Fn()| {
@@ -640,6 +671,16 @@ fn ss_project_each_costs_at_most_four_decides() {
             .ok()
             .zip(q[0].as_ref().ok())
             .is_some_and(|(p, q)| p.is_subset(q))
+    );
+    ROW_SUMS_OFF.with(|o| o.set(false));
+    let (with, _) = project_each(&f, &y0).expect("ss 64 project, with the method");
+    assert!(
+        with[0]
+            .as_ref()
+            .ok()
+            .zip(p[0].as_ref().ok())
+            .is_some_and(|(w, p)| w.is_subset(p)),
+        "{with:?} against {p:?}"
     );
     assert!(
         reported <= 4 * d,

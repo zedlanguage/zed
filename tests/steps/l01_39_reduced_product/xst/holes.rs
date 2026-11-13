@@ -124,7 +124,6 @@ fn heap_invariant_sets_are_exact_in_every_rotation() {
 
 /// CE-B: `a` in `{3, 5}` in all 120 orders. Main keeps `a = 4` (COMPLEXITY.md S25).
 #[test]
-#[ignore = "HOLES-exact-between: needs exact values between the ends (cross-review xst O4); ST-holes-moves gives exact ends only"]
 fn ce_b_sets_are_exact_in_every_order() {
     assert_eq!(ce_b().exact()[0], [3, 5]);
     check_named("CE-B", &ce_b(), true);
@@ -781,13 +780,11 @@ fn check_exact_holes(collective: bool) {
 }
 
 #[test]
-#[ignore = "HOLES-exact-between: needs exact values between the ends (cross-review xst O4); ST-holes-moves gives exact ends only"]
 fn ce_b_with_each_bound_a_test_is_exact_in_every_rotation() {
     check_exact_holes(false);
 }
 
 #[test]
-#[ignore = "HOLES-exact-between: needs exact values between the ends (cross-review xst O4); ST-holes-moves gives exact ends only"]
 fn the_collective_example_with_each_bound_a_test_is_exact_in_every_rotation() {
     check_exact_holes(true);
 }

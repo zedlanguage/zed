@@ -173,24 +173,6 @@ impl System {
         }
     }
 
-    /// Checks, in each order, that the ends are exact, that the interpreter gives `exact` for
-    /// the name at `i`, and that the scope keeps `today` for it, a value between its ends that
-    /// no solution has.
-    fn check(&self, i: usize, exact: &[i64], today: &[i64]) {
-        let (exact, today): (BTreeSet<i64>, BTreeSet<i64>) = (
-            exact.iter().copied().collect(),
-            today.iter().copied().collect(),
-        );
-        for (order, src, solved, kept) in self.ends() {
-            assert_eq!(solved[i], exact, "{order}: the exact answer of {src}");
-            assert_ne!(
-                kept[i], exact,
-                "{order}: the answer is exact, the limit is closed: {src}"
-            );
-            assert_eq!(kept[i], today, "{order}: {src}");
-        }
-    }
-
     /// Checks, in each order, that no point holds every test and that the arm where they all
     /// hold is one no state reaches.
     fn check_empty(&self) {
@@ -217,41 +199,37 @@ impl System {
     }
 }
 
-/// A known precision limit (item O4 of the cross-review xst, COMPLEXITY.md S25): `a` in
-/// `{3, 4, 5}`, `b` in `{5, 7}`, `c` in `{6, 8}`, `b - c <= 0`, `c - a <= 3`, `a - b <= -2`.
-/// The solutions are `(3, 5, 6)` and `(5, 7, 8)`, so the exact answer is `a` in `{3, 5}`; the
-/// scope keeps `a` in `{3, 4, 5}` in every order, with each name's ends exact. At `a = 4`,
-/// `b >= 6` leaves `b = 7`, so `c >= 7` leaves `c = 8`, and `c - a <= 3` fails. Without the
-/// hole of `b`, `(4, 6, 6)` is a solution, and without the hole of `c`, `(4, 7, 7)`: only the
-/// two holes together leave out `a = 4`. Sound: it keeps every value of every name some
-/// solution has. If this test fails because the answer is exact, the limit is closed: assert
-/// the exact answer and remove the sentence in S25.
+/// Once a known precision limit (item O4 of the cross-review xst, COMPLEXITY.md S25), closed
+/// by the join of row sums (PRES-overlap-fast): `a` in `{3, 4, 5}`, `b` in `{5, 7}`, `c` in
+/// `{6, 8}`, `b - c <= 0`, `c - a <= 3`, `a - b <= -2`. The solutions are `(3, 5, 6)` and
+/// `(5, 7, 8)`, so the exact answer is `a` in `{3, 5}`. At `a = 4`, `b >= 6` leaves `b = 7`, so
+/// `c >= 7` leaves `c = 8`, and `c - a <= 3` fails. Without the hole of `b`, `(4, 6, 6)` is a
+/// solution, and without the hole of `c`, `(4, 7, 7)`: only the two holes together leave out
+/// `a = 4`, which the scope kept before.
 #[test]
-fn two_holes_that_together_leave_out_a_middle_value_are_a_known_precision_limit() {
+fn two_holes_that_together_leave_out_a_middle_value_are_found_exactly() {
     System {
         names: &[("a", 3, 5, &[]), ("b", 5, 7, &[6]), ("c", 6, 8, &[7])],
         differences: &["b - c <= 0", "c - a <= 3", "a - b <= -2"],
     }
-    .check(0, &[3, 5], &[3, 4, 5]);
+    .check_exact();
 }
 
-/// A known precision limit (item O4 of the cross-review xst, COMPLEXITY.md S25): `x`, `y`,
-/// `z` in `0..=6`, `z <= y <= x <= z + 1`, `x != 5`, `y != 4`. At `z = 4`, `y` is 4 or 5 and
-/// `x` is 4 or 5; `y != 4` leaves `y = 5`, so `x = 5`, which `x != 5` leaves out. Every other
-/// `z` has a solution (as `(x, y, z)`: `(z, z, z)` for `z` up to 3, `(6, 5, 5)` and
-/// `(6, 6, 6)`), so the exact answer is `z` in `{0, 1, 2, 3, 5, 6}`; the scope keeps `z` in
-/// `0..=6` in every order, with each name's ends exact. Without the hole of `x`, `(5, 5, 4)`
-/// is a solution, and without the hole of `y`, `(4, 4, 4)`: only the two holes together leave
-/// out `z = 4`. Sound: it keeps every value of every name some solution has. If this test
-/// fails because the answer is exact, the limit is closed: assert the exact answer and remove
-/// the sentence in S25.
+/// Once a known precision limit (item O4 of the cross-review xst, COMPLEXITY.md S25), closed
+/// by the join of row sums (PRES-overlap-fast): `x`, `y`, `z` in `0..=6`,
+/// `z <= y <= x <= z + 1`, `x != 5`, `y != 4`. At `z = 4`, `y` is 4 or 5 and `x` is 4 or 5;
+/// `y != 4` leaves `y = 5`, so `x = 5`, which `x != 5` leaves out. Every other `z` has a
+/// solution (as `(x, y, z)`: `(z, z, z)` for `z` up to 3, `(6, 5, 5)` and `(6, 6, 6)`), so the
+/// exact answer is `z` in `{0, 1, 2, 3, 5, 6}`. Without the hole of `x`, `(5, 5, 4)` is a
+/// solution, and without the hole of `y`, `(4, 4, 4)`: only the two holes together leave out
+/// `z = 4`, which the scope kept before.
 #[test]
-fn two_holes_on_a_cycle_that_together_leave_out_a_value_are_a_known_precision_limit() {
+fn two_holes_on_a_cycle_that_together_leave_out_a_value_are_found_exactly() {
     System {
         names: &[("x", 0, 6, &[5]), ("y", 0, 6, &[4]), ("z", 0, 6, &[])],
         differences: &["z <= y", "y <= x", "x <= z + 1"],
     }
-    .check(2, &[0, 1, 2, 3, 5, 6], &[0, 1, 2, 3, 4, 5, 6]);
+    .check_exact();
 }
 
 /// A slot booking: `a` in `{4, 5}`, `b` in `{4, 6}`, `c` in `{2, 4}`, `c <= b - 2`,

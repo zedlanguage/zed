@@ -1602,22 +1602,22 @@ fn audit_counts(seeds: std::ops::Range<u64>, ends: usize, equal: usize) {
 
 #[test]
 fn audit_seeds_0_to_31() {
-    audit_counts(0..32, 134, 103);
+    audit_counts(0..32, 134, 110);
 }
 
 #[test]
 fn audit_seeds_32_to_63() {
-    audit_counts(32..64, 128, 113);
+    audit_counts(32..64, 128, 114);
 }
 
 #[test]
 fn audit_seeds_64_to_95() {
-    audit_counts(64..96, 130, 110);
+    audit_counts(64..96, 130, 116);
 }
 
 #[test]
 fn audit_seeds_96_to_127() {
-    audit_counts(96..128, 136, 111);
+    audit_counts(96..128, 136, 119);
 }
 
 /// The record of the audit at `seed` and `step`, as the scope and the oracle give it.

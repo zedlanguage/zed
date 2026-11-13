@@ -164,10 +164,10 @@ pub(super) fn settle(conjuncts: &Conjuncts) -> Option<Settled> {
 /// The atom of `arm`, a constraint or a conjunction of constraints on one atom other than a
 /// product, with its least and greatest value; `None` for any other arm, or one with an end
 /// unbounded.
-fn range(arm: &Formula) -> Option<(Atom, Int, Int)> {
-    let parts: Vec<&Formula> = match arm {
-        Formula::Con(_) => vec![arm],
-        Formula::And(gs) => gs.iter().collect(),
+pub(super) fn range(arm: &Formula) -> Option<(Atom, Int, Int)> {
+    let parts: &[Formula] = match arm {
+        Formula::Con(_) => std::slice::from_ref(arm),
+        Formula::And(gs) => gs,
         Formula::Or(_) | Formula::Not(_) => return None,
     };
     let (mut lo, mut hi): (Option<Int>, Option<Int>) = (None, None);

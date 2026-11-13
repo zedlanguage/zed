@@ -108,6 +108,7 @@ mod modular;
 mod one_row;
 mod pairs;
 mod row_domains;
+mod row_sums;
 mod slack;
 mod values;
 
@@ -1015,10 +1016,11 @@ fn satisfiable_written(f: &Formula) -> Result<Option<Model>, Refusal> {
                 }
                 return Ok(b.point());
             }
-            match row_domains::settle(&conjuncts) {
-                Some(row_domains::Settled::Empty) => Ok(None),
-                Some(row_domains::Settled::Point(m)) => Ok(Some(m)),
-                None => solver(),
+            match row_sums::read(&conjuncts) {
+                Ok(row_domains::Settled::Empty) => Ok(None),
+                Ok(row_domains::Settled::Point(m)) => Ok(Some(m)),
+                Err(Some(rows)) => row_sums::point(rows, solver),
+                Err(None) => solver(),
             }
         }
     }
@@ -1110,10 +1112,13 @@ fn decide_written(f: &Formula) -> Result<bool, Refusal> {
             if let Some(b) = one_row::OneRow::of(&conjuncts) {
                 return Ok(b.exists());
             }
-            if let Some(s) = row_domains::settle(&conjuncts) {
-                return Ok(matches!(s, row_domains::Settled::Point(_)));
-            }
-            match reduced(&facts) {
+            // One equation over finite unions of ranges that its residue or its ends settle (module
+            // `row_domains`), read once with the rows of module `row_sums`.
+            let rows = match row_sums::read(&conjuncts) {
+                Ok(s) => return Ok(matches!(s, row_domains::Settled::Point(_))),
+                Err(rows) => rows,
+            };
+            let solver = || match reduced(&facts) {
                 None => or_old(|| decide_named(f)),
                 // Complexity tradeoff: a formula the solver refuses with the facts is asked
                 // again as written, so it costs up to twice what it cost before, and no answer
@@ -1128,6 +1133,12 @@ fn decide_written(f: &Formula) -> Result<bool, Refusal> {
                 // written gave no refusals but 0.83, since fewer formulas kept any fact.
                 // COMPLEXITY.md row PRES-small-point.
                 Some(g) => or_old(|| decide_named(&g)).or_else(|_| or_old(|| decide_named(f))),
+            };
+            // Rows over atoms confined to finite unions of ranges: the exact join of their
+            // sums (module `row_sums`) in alternation with the solver.
+            match rows {
+                Some(rows) => row_sums::decide(rows, solver),
+                None => solver(),
             }
         }
     }
@@ -1726,6 +1737,23 @@ fn old_path() -> bool {
     OLD_PATH.with(Cell::get)
 }
 
+/// A flag of this thread set for the life of the value, and put back as it was when the value
+/// is dropped, also when the solver is left by the unwind of a race (module `row_sums`), which
+/// must not leave the flag set for the questions after it.
+struct SetFor(&'static std::thread::LocalKey<Cell<bool>>, bool);
+
+impl SetFor {
+    fn new(flag: &'static std::thread::LocalKey<Cell<bool>>) -> SetFor {
+        SetFor(flag, flag.with(|f| f.replace(true)))
+    }
+}
+
+impl Drop for SetFor {
+    fn drop(&mut self) {
+        self.0.with(|f| f.set(self.1));
+    }
+}
+
 thread_local! {
     static OLD_PATH: Cell<bool> = const { Cell::new(false) };
     static REVERSED: Cell<bool> = const { Cell::new(false) };
@@ -1749,12 +1777,23 @@ fn modular_answer(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     }
     let found = modular::solve_modular(f, want_model)?;
     if found.is_none() && MODULAR_CHECK.with(|c| c.borrow().is_some()) {
+        // The check is off while the path without the modular solver is asked, and on again
+        // when `On` is dropped, also when that path is left by the unwind of a race (module
+        // `row_sums`).
+        struct On;
+        impl Drop for On {
+            fn drop(&mut self) {
+                MODULAR_CHECK.with(|c| c.borrow_mut().as_mut().map(|c| c.off = false));
+            }
+        }
         MODULAR_CHECK.with(|c| c.borrow_mut().as_mut().map(|c| c.off = true));
-        let main = decide_named(f);
+        let main = {
+            let _on = On;
+            decide_named(f)
+        };
         MODULAR_CHECK.with(|c| {
             let mut c = c.borrow_mut();
             let c = c.as_mut().expect("the check is on");
-            c.off = false;
             match main {
                 Ok(false) => c.agreed += 1,
                 Ok(true) => c.wrong.push(f.to_string()),
@@ -1964,10 +2003,8 @@ fn equation(c: &Con, negated: bool, both: bool) -> Option<Formula> {
 fn or_old<T>(run: impl Fn() -> Result<T, Refusal>) -> Result<T, Refusal> {
     match run() {
         Err(_) if !old_path() => {
-            OLD_PATH.with(|o| o.set(true));
-            let again = run();
-            OLD_PATH.with(|o| o.set(false));
-            again
+            let _old = SetFor::new(&OLD_PATH);
+            run()
         }
         r => r,
     }
@@ -10876,6 +10913,15 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
 /// the same under every naming of the variables and every order of the constraints.
 fn solve<C: std::borrow::Borrow<Con>>(cons: &[C], want: bool) -> Result<Option<Model>, Refusal> {
     let raw_cons: Vec<&Con> = cons.iter().map(|c| c.borrow()).collect();
+    // A method run in alternation with this search (module `row_sums`) is charged the terms
+    // of each system asked. Once it has answered, the search is left by an unwind from
+    // `row_sums::charge` where the build unwinds, and otherwise stops here; the refusal is
+    // dropped by the race, which answers with the method's answer.
+    let terms = raw_cons.iter().map(|c| c.lin.terms.len() as u64 + 1).sum();
+    row_sums::charge(terms);
+    if row_sums::stopped() {
+        return Err(Refusal::Growth);
+    }
     let reduced_buf: Vec<Con>;
     let cons: Vec<&Con> = if raw_cons
         .iter()
@@ -12396,6 +12442,9 @@ impl System {
     }
 
     fn add(&mut self, r: Row) {
+        // Each row the elimination makes is charged to a method run in alternation with the
+        // search (module `row_sums`): making it costs at least its terms.
+        row_sums::charge(r.a.len() as u64 + 1);
         let r = match r.normal(false) {
             Norm::False => {
                 self.empty = true;
@@ -14564,45 +14613,56 @@ pub type Each = (Vec<Result<IntervalSet, Refusal>>, Vec<Refusal>);
 // COMPLEXITY.md row PROJECT-each-canon.
 pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
     // A box and one row, or one equation that its residue or its ends settle, is projected
-    // exactly without the solver (modules `one_row` and `row_domains`).
+    // exactly without the solver (modules `one_row` and `row_domains`); rows over atoms
+    // confined to finite unions of ranges, by the exact join of their sums in alternation with
+    // the solver (module `row_sums`).
     let conjuncts = f.conjunct_list();
+    let solver = || {
+        // Complexity tradeoff: projecting a contradiction by repeatedly settling the whole
+        // formula can cost O(k^2) on k paired disjunctions in a chain. The forced propagator
+        // already used by decide visits each part/term through its incidence queues, O(n)
+        // work and storage; use only its proof of emptiness, then return exact empty sets in
+        // O(syms.len()). Other results leave the existing projection untouched, at the price
+        // of this extra O(n) pass, which is not built where the top-level conjuncts give the
+        // propagation no first step (`forced::empty`). In particular a trial point is not a
+        // unique projection. I17; one_row::a_forced_contradiction_projects_to_empty_in_linear_work.
+        if forced::empty(f, &conjuncts) {
+            return Ok(no_points(syms));
+        }
+        // The formula with each shared part taken out of the disjunctions that hold it in every
+        // disjunct ([`factored`]) is asked first, and the formula as written where that leaves
+        // anything refused, so no refusal or cause appears that the formula as written does not
+        // give.
+        if let Some(g) = factored(f) {
+            let r = project_each_written(&g, syms);
+            if matches!(&r, Ok(each) if !refused(each)) {
+                return r;
+            }
+        }
+        project_each_written(f, syms)
+    };
     if !syms.iter().any(|a| matches!(a, Atom::Product(..))) {
         if let Some(b) = one_row::OneRow::of(&conjuncts) {
             return Ok((syms.iter().map(|a| Ok(b.project(a))).collect(), Vec::new()));
         }
-        if let Some(s) = row_domains::settle(&conjuncts) {
-            let at = |a: &Atom| match &s {
-                row_domains::Settled::Empty => IntervalSet::empty(),
-                row_domains::Settled::Point(m) => match m.get(a) {
-                    Some(v) => IntervalSet::range(End::Fin(Num::from(v)), End::Fin(Num::from(v))),
-                    None => IntervalSet::range(End::NegInf, End::PosInf),
-                },
-            };
-            return Ok((syms.iter().map(|a| Ok(at(a))).collect(), Vec::new()));
+        match row_sums::read(&conjuncts) {
+            Ok(s) => {
+                let at = |a: &Atom| match &s {
+                    row_domains::Settled::Empty => IntervalSet::empty(),
+                    row_domains::Settled::Point(m) => match m.get(a) {
+                        Some(v) => {
+                            IntervalSet::range(End::Fin(Num::from(v)), End::Fin(Num::from(v)))
+                        }
+                        None => IntervalSet::range(End::NegInf, End::PosInf),
+                    },
+                };
+                return Ok((syms.iter().map(|a| Ok(at(a))).collect(), Vec::new()));
+            }
+            Err(Some(rows)) => return row_sums::project(rows, syms, solver),
+            Err(None) => {}
         }
     }
-    // Complexity tradeoff: projecting a contradiction by repeatedly settling the whole
-    // formula can cost O(k^2) on k paired disjunctions in a chain. The forced propagator
-    // already used by decide visits each part/term through its incidence queues, O(n)
-    // work and storage; use only its proof of emptiness, then return exact empty sets in
-    // O(syms.len()). Other results leave the existing projection untouched, at the price
-    // of this extra O(n) pass, which is not built where the top-level conjuncts give the
-    // propagation no first step (`forced::empty`). In particular a trial point is not a
-    // unique projection. I17; one_row::a_forced_contradiction_projects_to_empty_in_linear_work.
-    if forced::empty(f, &conjuncts) {
-        return Ok(no_points(syms));
-    }
-    // The formula with each shared part taken out of the disjunctions that hold it in every
-    // disjunct ([`factored`]) is asked first, and the formula as written where that leaves
-    // anything refused, so no refusal or cause appears that the formula as written does not
-    // give.
-    if let Some(g) = factored(f) {
-        let r = project_each_written(&g, syms);
-        if matches!(&r, Ok(each) if !refused(each)) {
-            return r;
-        }
-    }
-    project_each_written(f, syms)
+    solver()
 }
 
 /// [`project_each`] of `f` as it is written, with no part taken out of its disjunctions.
@@ -14651,6 +14711,9 @@ thread_local! {
     pub static UNIT_RESCAN: Cell<bool> = const { Cell::new(false) };
     /// Test control: retain hull bisection without the I22 endpoint shortcuts.
     pub static HULL_BISECT: Cell<bool> = const { Cell::new(false) };
+    /// Test control: the solver alone, with no method run in alternation with it (module
+    /// `row_sums`), for the tests that compare the two (PRES-overlap-fast).
+    pub static ROW_SUMS_OFF: Cell<bool> = const { Cell::new(false) };
 }
 
 /// `f` with each shared part `u` that every disjunct of a disjunction holds as a conjunct
@@ -14878,9 +14941,10 @@ fn project_each_signed(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
     let new = or_old(|| project_each_named(f, syms));
     match new {
         Ok(mut each) if refused(&each) && !old_path() => {
-            OLD_PATH.with(|o| o.set(true));
-            let old = project_each_named(f, syms);
-            OLD_PATH.with(|o| o.set(false));
+            let old = {
+                let _old = SetFor::new(&OLD_PATH);
+                project_each_named(f, syms)
+            };
             if let Ok((olds, skipped)) = old {
                 meet_each(&mut each.0, olds);
                 each.1 = skipped;

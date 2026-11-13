@@ -699,12 +699,14 @@ fn projected_two_values(
         .collect()
 }
 
-/// Random case 1063 of the harness: the one point is `(3, 0, 0, 29, 17, 16)`. The question
-/// `y4 <= 16` is refused after the removals by bounds, so the hull of `y4` is `16..=17`,
-/// which holds the point's 17, as on main before PRES-disj-cost-xr. Item I21 asked the
-/// refused question again without the removals, which made the hull exact, at 1.77 times
+/// Random case 1063 of the harness: the one point is `(3, 0, 0, 29, 17, 16)`. The solver alone
+/// refuses the question `y4 <= 16` after the removals by bounds, so its hull of `y4` is
+/// `16..=17`, which holds the point's 17, as on main before PRES-disj-cost-xr. Item I21 asked
+/// the refused question again without the removals, which made the hull exact, at 1.77 times
 /// main's instructions on `overlap_rows` projected at k = 16; it was removed
 /// (PRES-disj-regressions, comment at `ask` in `project_parts`). The other hulls are exact.
+/// With the method of PRES-overlap-fast (module `row_sums`), which answers first here, every
+/// hull is exact.
 #[test]
 fn a_hull_question_refused_after_the_removals_by_bounds_keeps_its_point() {
     let doms = [
@@ -715,10 +717,15 @@ fn a_hull_question_refused_after_the_removals_by_bounds_keeps_its_point() {
         (0, 16, Some(18)),
         (0, 16, None),
     ];
-    let got = projected_two_values(&doms, &[-1, -1, 1, 2, 1, 1], 88);
-    let mut want = [3, 0, 0, 29, 17, 16].map(|v| Some((v, v)));
+    let cs = [-1, -1, 1, 2, 1, 1];
+    let want = [3, 0, 0, 29, 17, 16].map(|v| Some((v, v)));
+    assert_eq!(projected_two_values(&doms, &cs, 88), want);
+    presburger::ROW_SUMS_OFF.with(|o| o.set(true));
+    let alone = projected_two_values(&doms, &cs, 88);
+    presburger::ROW_SUMS_OFF.with(|o| o.set(false));
+    let mut want = want;
     want[4] = Some((16, 17));
-    assert_eq!(got, want);
+    assert_eq!(alone, want);
 }
 
 /// Random case 98 of the harness has no point, by parity of the row with the box. For
@@ -737,4 +744,486 @@ fn a_hull_whose_two_sides_are_shown_empty_is_empty() {
     ];
     let got = projected_two_values(&doms, &[1, 1, 1, 1, 1, 1, 2], 119);
     assert_eq!(got, vec![None; 7]);
+}
+
+/// Rows of sums over atoms each confined to a finite union of ranges (PRES-overlap-fast,
+/// QUESTIONS A87): the module `row_sums` joins one table of sums per group of atoms that appear
+/// in the same rows, in alternation with the solver.
+mod row_sums {
+    use std::collections::BTreeSet;
+    use std::sync::Arc;
+
+    use zed_tests::scaling::{self, Meter};
+    use zedc::store::presburger::{Atom, Con, Formula, Lin, ROW_SUMS_OFF, decide, project_each};
+
+    use super::super::repair::answers;
+
+    fn v(i: usize) -> Atom {
+        Atom::Sym(Arc::from(format!("y{i}")))
+    }
+
+    /// The row `Σ cs[i]·y_i - t`, `== 0` or `>= 0`.
+    fn row(cs: &[i64], t: i64, eq: bool) -> Formula {
+        let lin = (cs.iter().enumerate())
+            .filter(|(_, c)| **c != 0)
+            .fold(Lin::constant(-i128::from(t)), |l, (i, c)| {
+                l.plus(&Lin::atom(v(i)).times(i128::from(*c)))
+            });
+        let zero = Lin::constant(0);
+        Formula::Con(if eq {
+            Con::eq(&lin, &zero)
+        } else {
+            Con::ge(&lin, &zero)
+        })
+    }
+
+    /// `y_i` in one of `ranges`, each `(l, h)` written `y_i == l` when `l == h`.
+    fn one_of(i: usize, ranges: &[(i64, i64)]) -> Formula {
+        let y = Lin::atom(v(i));
+        let bound = |l: &Lin| Formula::Con(Con::ge(l, &Lin::constant(0)));
+        Formula::or(
+            (ranges.iter())
+                .map(|&(l, h)| {
+                    if l == h {
+                        Formula::Con(Con::eq(&y, &Lin::constant(i128::from(l))))
+                    } else {
+                        Formula::and(vec![
+                            bound(&y.minus(&Lin::constant(i128::from(l)))),
+                            bound(&Lin::constant(i128::from(h)).minus(&y)),
+                        ])
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    /// Atoms with their ranges, and rows `(coefficients, target, equation)`.
+    struct Case {
+        ranges: Vec<Vec<(i64, i64)>>,
+        rows: Vec<(Vec<i64>, i64, bool)>,
+    }
+
+    impl Case {
+        fn formula(&self) -> Formula {
+            let mut fs: Vec<Formula> = (self.ranges.iter().enumerate())
+                .map(|(i, r)| one_of(i, r))
+                .collect();
+            fs.extend(self.rows.iter().map(|(cs, t, e)| row(cs, *t, *e)));
+            Formula::and(fs)
+        }
+
+        /// Each atom's set of values over the points, by trying every point.
+        fn brute(&self) -> Vec<BTreeSet<i64>> {
+            let doms: Vec<Vec<i64>> = (self.ranges.iter())
+                .map(|r| r.iter().flat_map(|&(l, h)| l..=h).collect())
+                .collect();
+            let mut sets = vec![BTreeSet::new(); doms.len()];
+            if doms.iter().any(Vec::is_empty) {
+                return sets;
+            }
+            let mut idx = vec![0usize; doms.len()];
+            'next: loop {
+                let pt: Vec<i64> = (0..doms.len()).map(|i| doms[i][idx[i]]).collect();
+                let meets = self.rows.iter().all(|(cs, t, e)| {
+                    let s: i64 = cs.iter().zip(&pt).map(|(c, x)| c * x).sum();
+                    if *e { s == *t } else { s >= *t }
+                });
+                if meets {
+                    for (s, x) in sets.iter_mut().zip(&pt) {
+                        s.insert(*x);
+                    }
+                }
+                for i in 0..doms.len() {
+                    idx[i] += 1;
+                    if idx[i] < doms[i].len() {
+                        continue 'next;
+                    }
+                    idx[i] = 0;
+                }
+                return sets;
+            }
+        }
+
+        /// `decide`, `satisfiable` and each atom's projection are the exact answers.
+        fn is_answered_exactly(&self) {
+            let (f, sets) = (self.formula(), self.brute());
+            answers(&f, !sets[0].is_empty());
+            let atoms: Vec<Atom> = (0..sets.len()).map(v).collect();
+            let (each, _) = project_each(&f, &atoms).expect("a projection");
+            for (i, (got, want)) in each.iter().zip(&sets).enumerate() {
+                let got = got.as_ref().expect("an answer");
+                let lo = want.first().copied().unwrap_or(0) - 50;
+                let hi = want.last().copied().unwrap_or(0) + 50;
+                let seen: BTreeSet<i64> = (lo..=hi).filter(|x| got.contains(*x)).collect();
+                assert_eq!(&seen, want, "y{i} of {f}");
+                assert!(
+                    !got.contains(-1_000_000) && !got.contains(1_000_000),
+                    "y{i}: {got:?}"
+                );
+            }
+        }
+    }
+
+    fn weights(k: usize) -> Vec<i64> {
+        (0..k).map(|i| 1000 + 37 * (i * i) as i64 % 991).collect()
+    }
+
+    /// Each atom `y_i` in `{0, w_i}`.
+    fn two_values(w: &[i64]) -> Vec<Vec<(i64, i64)>> {
+        w.iter().map(|&wi| vec![(0, 0), (wi, wi)]).collect()
+    }
+
+    /// The coefficients 1 on `y_lo .. y_(hi-1)` of k atoms.
+    fn ones(k: usize, lo: usize, hi: usize) -> Vec<i64> {
+        (0..k).map(|i| i64::from(lo <= i && i < hi)).collect()
+    }
+
+    /// The sum of the even-numbered weights of `y_lo .. y_(hi-1)`.
+    fn even(w: &[i64], lo: usize, hi: usize) -> i64 {
+        (lo..hi).filter(|i| i % 2 == 0).map(|i| w[i]).sum()
+    }
+
+    /// `y_0 + .. + y_(a-1) == t1` and `y_b + .. + y_(k-1) == t2`, a = 2k/3, b = k/3: two sums
+    /// that share the atoms `y_b .. y_(a-1)` (the family of QUESTIONS A87).
+    fn overlap_rows(k: usize) -> Case {
+        let w = weights(k);
+        let (a, b) = (2 * k / 3, k / 3);
+        Case {
+            ranges: two_values(&w),
+            rows: vec![
+                (ones(k, 0, a), even(&w, 0, a), true),
+                (ones(k, b, k), even(&w, b, k), true),
+            ],
+        }
+    }
+
+    /// m rows, row i over `y_(3i) .. y_(3i+5)`, each sharing three atoms with the next.
+    fn chain(m: usize) -> Case {
+        let k = 3 * m + 3;
+        let w = weights(k);
+        let rows = (0..m).map(|i| (ones(k, 3 * i, 3 * i + 6), even(&w, 3 * i, 3 * i + 6), true));
+        Case {
+            ranges: two_values(&w),
+            rows: rows.collect(),
+        }
+    }
+
+    /// The parity example of A87: `a1 + a2 + c + d == 4` and `b1 + b2 + c + d == 3`, the `a`s
+    /// and `b`s in {0, 2}, `c` and `d` in {0, 1}. Each value of c and d is possible in each
+    /// sum alone; together the sums need `c + d` even and odd.
+    #[test]
+    fn two_sums_whose_shared_atoms_meet_neither_parity_have_no_point() {
+        let (two, one) = (vec![(0, 0), (2, 2)], vec![(0, 1)]);
+        let case = Case {
+            ranges: vec![two.clone(), two.clone(), two.clone(), two, one.clone(), one],
+            rows: vec![
+                (vec![1, 1, 0, 0, 1, 1], 4, true),
+                (vec![0, 0, 1, 1, 1, 1], 3, true),
+            ],
+        };
+        case.is_answered_exactly();
+        for (i, r) in case.rows.iter().enumerate() {
+            let alone = Case {
+                ranges: case.ranges.clone(),
+                rows: vec![r.clone()],
+            };
+            let sets = alone.brute();
+            assert_eq!((sets[4].len(), sets[5].len()), (2, 2), "row {i} alone");
+        }
+    }
+
+    /// Two equations that share a group: the closing one is met by a lookup (the key join).
+    #[test]
+    fn two_overlapping_sums_are_answered_exactly() {
+        overlap_rows(9).is_answered_exactly();
+        overlap_rows(12).is_answered_exactly();
+        let mut none = overlap_rows(9);
+        none.rows[1].1 += 1;
+        none.is_answered_exactly();
+    }
+
+    /// An inequality that closes beside an equation, checked on each pair of a key's bucket;
+    /// and one that closes alone.
+    #[test]
+    fn an_inequality_sharing_atoms_with_an_equation_is_answered_exactly() {
+        let w = weights(8);
+        for t2 in [0, even(&w, 3, 8), even(&w, 3, 8) + 1, 7000] {
+            Case {
+                ranges: two_values(&w),
+                rows: vec![
+                    (ones(8, 0, 5), even(&w, 0, 5), true),
+                    (ones(8, 3, 8), t2, false),
+                ],
+            }
+            .is_answered_exactly();
+        }
+        Case {
+            ranges: two_values(&w),
+            rows: vec![(ones(8, 0, 5), 3000, false), (ones(8, 3, 8), 4000, false)],
+        }
+        .is_answered_exactly();
+    }
+
+    /// A row over one group alone, with coefficients -1 and 2, ranges of several values, and an
+    /// atom in no row, which takes each of its values.
+    #[test]
+    fn a_row_of_one_group_with_ranges_and_a_free_atom_is_answered_exactly() {
+        Case {
+            ranges: vec![
+                vec![(0, 0), (3, 5)],
+                vec![(1, 2), (7, 7)],
+                vec![(0, 0), (4, 6)],
+                vec![(3, 3), (7, 9)],
+            ],
+            rows: vec![(vec![2, -1, 1, 0], 8, true)],
+        }
+        .is_answered_exactly();
+        Case {
+            ranges: vec![
+                vec![(0, 0), (3, 5)],
+                vec![(1, 2), (7, 7)],
+                vec![(0, 0), (4, 6)],
+                vec![(3, 3)],
+            ],
+            rows: vec![(vec![2, -1, 1, 0], 100, true)],
+        }
+        .is_answered_exactly();
+    }
+
+    /// An atom whose bound leaves none of its values: no point.
+    #[test]
+    fn an_atom_with_no_value_leaves_no_point() {
+        let f = Formula::and(vec![
+            one_of(0, &[(0, 0), (2, 2)]),
+            row(&[1], 5, false),
+            one_of(1, &[(0, 0), (2, 2)]),
+            row(&[1, 1], 2, true),
+        ]);
+        answers(&f, false);
+        let (each, _) = project_each(&f, &[v(0), v(1)]).expect("a projection");
+        assert!(
+            each.iter().all(|s| s.as_ref().is_ok_and(|s| s.is_empty())),
+            "{each:?}"
+        );
+    }
+
+    /// The 3,000 shared-sum formulas of seed 777 (`decide_sat.rs`): every answer is right, and
+    /// no answer is coarser than the solver's alone; the first 100 are compared with it.
+    #[test]
+    fn random_shared_sums_are_answered_and_never_coarser_than_the_solver_alone() {
+        let cases = random_cases(3000);
+        let (mut exact, mut finer) = (0, 0);
+        for (c, (case, sets)) in cases.iter().enumerate() {
+            let f = case.formula();
+            let atoms: Vec<Atom> = (0..sets.len()).map(v).collect();
+            let ask = || (decide(&f), project_each(&f, &atoms).map(|e| e.0));
+            let (d, p) = ask();
+            if let Ok(d) = d {
+                assert_eq!(d, !sets[0].is_empty(), "case {c}: {f}");
+            }
+            let p = p.expect("a projection");
+            let mut all_exact = true;
+            for (i, s) in p.iter().enumerate() {
+                let Ok(s) = s else {
+                    all_exact = false;
+                    continue;
+                };
+                let got: Vec<i64> = (-200..=200).filter(|x| s.contains(*x)).collect();
+                assert!(
+                    sets[i].iter().all(|x| got.contains(x)),
+                    "case {c}: y{i} lost a value"
+                );
+                all_exact &= got.len() == sets[i].len() && !s.contains(1000) && !s.contains(-1000);
+            }
+            exact += usize::from(all_exact);
+            if c < 100 {
+                ROW_SUMS_OFF.with(|o| o.set(true));
+                let (d_old, p_old) = ask();
+                ROW_SUMS_OFF.with(|o| o.set(false));
+                assert!(d_old.is_err() || d.is_ok(), "case {c}: decide coarser");
+                let p_old = p_old.expect("a projection");
+                for (i, (new, old)) in p.iter().zip(&p_old).enumerate() {
+                    match (new, old) {
+                        (Ok(new), Ok(old)) => {
+                            let n: Vec<i64> = (-200..=200).filter(|x| new.contains(*x)).collect();
+                            let o: Vec<i64> = (-200..=200).filter(|x| old.contains(*x)).collect();
+                            assert!(n.iter().all(|x| o.contains(x)), "case {c}: y{i} coarser");
+                            finer += usize::from(n.len() < o.len());
+                        }
+                        (Err(_), Ok(_)) => panic!("case {c}: y{i} refused"),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        eprintln!(
+            "random shared sums: {exact} of 3000 exact; {finer} projections finer than the \
+             solver's in the first 100"
+        );
+        assert_eq!(exact, 3000);
+    }
+
+    /// Cases `0..n` of the seed-777 generator of `decide_sat.rs`, with each atom's values over
+    /// the points.
+    fn random_cases(n: u64) -> Vec<(Case, Vec<BTreeSet<i64>>)> {
+        struct Rng(u64);
+        impl Rng {
+            fn next(&mut self, n: u64) -> i64 {
+                self.0 =
+                    (self.0.wrapping_mul(6364136223846793005)).wrapping_add(1442695040888963407);
+                ((self.0 >> 33) % n) as i64
+            }
+        }
+        let mut rng = Rng(777);
+        let mut out = Vec::new();
+        for _ in 0..n {
+            let k = 3 + rng.next(5) as usize;
+            let mut ranges = Vec::new();
+            let mut doms: Vec<Vec<i64>> = Vec::new();
+            for _ in 0..k {
+                let a = if rng.next(3) == 0 { rng.next(6) } else { 0 };
+                let b = a + 1 + rng.next(30);
+                let c = if rng.next(6) == 0 { b + rng.next(3) } else { b };
+                ranges.push(vec![(a, a), (b, c)]);
+                doms.push(std::iter::once(a).chain(b..=c).collect());
+            }
+            let mut rows = Vec::new();
+            for r in 0..1 + u64::from(rng.next(4) == 0) {
+                let cs: Vec<i64> = (0..k)
+                    .map(|_| [1, 1, 1, 1, 1, -1, 2][rng.next(7) as usize])
+                    .collect();
+                let is_eq = r == 0 || rng.next(2) == 0;
+                let t = if rng.next(2) == 0 {
+                    (0..k)
+                        .map(|i| cs[i] * doms[i][rng.next(doms[i].len() as u64) as usize])
+                        .sum()
+                } else {
+                    let hi: i64 = (0..k)
+                        .map(|i| cs[i].abs() * doms[i][doms[i].len() - 1])
+                        .sum();
+                    rng.next(hi.max(1) as u64 + 1)
+                };
+                rows.push((cs, t, is_eq));
+            }
+            let case = Case { ranges, rows };
+            let sets = case.brute();
+            out.push((case, sets));
+        }
+        out
+    }
+
+    fn work(f: impl FnOnce()) -> u64 {
+        Meter::new().work(f).units
+    }
+
+    /// `overlap_rows` at k and 2k: the solver alone refused both after 5,443M and 33,783M
+    /// instructions (2026-11-13); the join answers, below the 2^k assignments a plain
+    /// enumeration tries: 0.45M at k = 16, where it runs first, and 24.1M at k = 32, where it
+    /// runs beside the solver once the solver has been charged its bound over the rate (256):
+    /// 54.1 times from k to 2k, against 65,536 times for enumeration.
+    #[test]
+    fn two_overlapping_sums_of_16_and_32_atoms_are_decided_below_enumeration() {
+        let (f16, f32) = (overlap_rows(16).formula(), overlap_rows(32).formula());
+        let w16 = work(|| assert_eq!(decide(&f16), Ok(true)));
+        let w32 = work(|| assert_eq!(decide(&f32), Ok(true)));
+        eprintln!(
+            "overlap_rows decided: k = 16 {w16}, k = 32 {w32}, growth {:.1}",
+            w32 as f64 / w16 as f64
+        );
+        assert!(w32 < 1 << 32, "{w32}");
+        let p = project_each(&f32, &[v(0), v(31)]).expect("a projection");
+        assert!(
+            p.0.iter().all(|s| s.as_ref().is_ok_and(|s| !s.is_empty())),
+            "{p:?}"
+        );
+    }
+
+    /// A chain of m sums, each sharing three atoms with the next: the groups are joined one
+    /// after another, in time linear in m.
+    #[test]
+    fn a_chain_of_overlapping_sums_is_decided_and_projected_in_n_log_n() {
+        let inputs = scaling::inputs(8, |m| chain(m).formula());
+        scaling::check_order("a chain of overlapping sums decided", 8, 1, |m| {
+            assert_eq!(decide(&inputs[&m]), Ok(true));
+        });
+        scaling::check_order("a chain of overlapping sums projected", 8, 1, |m| {
+            let r = project_each(&inputs[&m], &[v(3 * m / 2)]).expect("a projection");
+            assert!(r.0[0].as_ref().is_ok_and(|s| !s.is_empty()));
+        });
+    }
+
+    /// One sum over k atoms in `{0, w_i}` whose target, the least unreachable sum from half
+    /// the total up, no subset meets.
+    fn unreachable(k: usize) -> Case {
+        let w = weights(k);
+        let mut sums = vec![false; w.iter().sum::<i64>() as usize + 1];
+        sums[0] = true;
+        for &x in &w {
+            for s in (x as usize..sums.len()).rev() {
+                sums[s] |= sums[s - x as usize];
+            }
+        }
+        let t = (sums.len() / 2..sums.len())
+            .find(|&s| !sums[s])
+            .expect("a gap") as i64;
+        Case {
+            ranges: two_values(&w),
+            rows: vec![(vec![1; k], t, true)],
+        }
+    }
+
+    /// The work of `ask` on `f` with the method and with the solver alone, and the two answers.
+    fn both_and_alone<T>(f: &Formula, ask: impl Fn(&Formula) -> T) -> ((u64, T), (u64, T)) {
+        let mut answer = None;
+        let both = work(|| answer = Some(ask(f)));
+        let with = answer.take().expect("an answer");
+        ROW_SUMS_OFF.with(|o| o.set(true));
+        let alone = work(|| answer = Some(ask(f)));
+        ROW_SUMS_OFF.with(|o| o.set(false));
+        ((both, with), (alone, answer.expect("an answer")))
+    }
+
+    /// Each way the race goes, measured in instructions against the solver alone
+    /// (2026-11-13, figures at the rate of 256):
+    /// - the bound is within the first allowance, so the method answers before the solver
+    ///   starts: an unreachable sum of 10 atoms, 0.40M against the solver's refusal at 55.0M;
+    /// - the method runs beside the solver once the charge reaches its bound over the rate, and
+    ///   answers: the same sum of 16 atoms, 51.1M against the solver's refusal at 87.9M;
+    /// - the solver answers before the charge reaches the bound: the same sum of 32 atoms
+    ///   projected, 112.6M against 112.8M;
+    /// - the bound is past `u64` (ranges of 1e9 values), so the method never runs: 128.1M against 128.2M.
+    #[test]
+    fn each_way_the_race_goes_costs_at_most_a_little_more_than_the_solver_alone() {
+        let decided = |f: &Formula| decide(f).ok();
+        let projected = |f: &Formula| {
+            project_each(f, &[v(0)]).map(|e| e.0[0].as_ref().map(|s| s.is_empty()).ok())
+        };
+        let ((both, with), (alone, without)) = both_and_alone(&unreachable(10).formula(), decided);
+        assert_eq!((with, without), (Some(false), None));
+        assert!(both * 20 < alone, "first run: {both} against {alone}");
+        let ((both, with), (alone, without)) = both_and_alone(&unreachable(16).formula(), decided);
+        assert_eq!((with, without), (Some(false), None));
+        assert!(
+            both * 3 < alone * 2,
+            "run beside the solver: {both} against {alone}"
+        );
+        for (what, f) in [
+            ("the solver first", unreachable(32).formula()),
+            (
+                "a bound past u64",
+                Case {
+                    ranges: vec![vec![(0, 1_000_000_000), (2_000_000_000, 3_000_000_000)]; 8],
+                    rows: vec![(vec![1; 8], 1_000_000_007, true)],
+                }
+                .formula(),
+            ),
+        ] {
+            let ((both, with), (alone, without)) = both_and_alone(&f, projected);
+            assert_eq!(with, without, "{what}");
+            assert!(
+                both as f64 <= 1.02 * alone as f64,
+                "{what}: {both} against {alone}"
+            );
+        }
+    }
 }

@@ -17,7 +17,7 @@ use zed_tests::scaling::{self, Meter, Work};
 use zedc::store::interval::IntervalSet;
 use zedc::store::presburger::extend::Extending;
 use zedc::store::presburger::{
-    Atom, Con, Formula, Lin, Model, Refusal, decide, project_each, satisfiable,
+    Atom, Con, Formula, Lin, Model, ROW_SUMS_OFF, Refusal, decide, project_each, satisfiable,
 };
 
 /// The stack of the thread each measured run takes.
@@ -396,16 +396,25 @@ fn subset_sum_has_no_point() {
         member: &none,
         near: (-10, 2010),
     };
-    for k in 1..=6 {
-        // From k = 5 on, `decide`, `satisfiable` and `answers` refuse (`Disjuncts`), and the
-        // projection is wider than the empty set: COMPLEXITY.md PRES-exp-families, A87.
-        let answered = if k <= 4 { "dsap" } else { "h" };
+    for (k, alone) in (1..=6).flat_map(|k| [(k, false), (k, true)]) {
+        // The method of PRES-overlap-fast (module `row_sums`) answers every entry point
+        // exactly. The solver alone, from k = 5 on, refuses `decide`, `satisfiable` and
+        // `answers` (`Disjuncts`), and its projection is wider than the empty set:
+        // COMPLEXITY.md PRES-exp-families, A87.
+        let answered = if k <= 4 || !alone { "dsap" } else { "h" };
         let f = subset_sum(k);
-        agrees(&format!("subset sum, k = {k}"), &f, &truth, answered);
+        ROW_SUMS_OFF.with(|o| o.set(alone));
+        agrees(
+            &format!("subset sum, k = {k}, solver alone: {alone}"),
+            &f,
+            &truth,
+            answered,
+        );
         if let Ok(s) = projection(&f, "y0") {
             let w0 = weights(1)[0];
             assert!(s.is_subset(&IntervalSet::of(0, w0)), "k = {k}: {s:?}");
         }
+        ROW_SUMS_OFF.with(|o| o.set(false));
     }
 }
 
@@ -726,25 +735,21 @@ costs!(nest_empty_satisfiable, nest_empty, "x0", 's', LINEAR, 1, 2);
 costs!(nest_empty_project_each, nest_empty, "x0", 'p', LINEAR, 1, 2);
 costs!(nest_empty_answers, nest_empty, "x0", 'a', LINEAR, 1, 2);
 
-// Subset sum is held to its measured order, about k^2.7 (`decide`) and k^2.6 (`project_each`),
-// above the rule of low complexity: the open item PRES-disj-cost-xr (QUESTIONS.md A87). From
-// k = 5 on the entry points refuse, below it they answer, so the sizes start at 5; one run each,
-// so that each test runs in under 60 s.
-costs!(
-    subset_sum_decide,
-    subset_sum,
-    "y0",
-    'd',
-    [5, 10, 20, 40],
-    3,
-    1
-);
+// Subset sum is held to order k^3 log k at k = 20 to 80, one run each. The exact method of
+// PRES-overlap-fast (module `row_sums`) answers it, in alternation with the solver: at k = 10
+// at once, from its bound alone (0.43M instructions), and at k = 12 to 18 after the solver
+// has been charged the method's bound over its rate (9.9M at 12, 91.3M at 18); from k = 20 on the
+// solver refuses first (110M at k = 20, 448M at 80, 2.06 times per doubling), as it did from
+// k = 5 on before (QUESTIONS.md A87). The sizes start at 20, past the sizes where the method
+// answers: from k = 10 to 20 the work grows 255 times, as the method's answer at once gives
+// way to the solver's refusal (2026-11-13, rate 256).
+costs!(subset_sum_decide, subset_sum, "y0", 'd', [20, 40, 80, 160], 3, 1);
 costs!(
     subset_sum_satisfiable,
     subset_sum,
     "y0",
     's',
-    [5, 10, 20, 40],
+    [20, 40, 80, 160],
     3,
     1
 );
@@ -753,21 +758,18 @@ costs!(
     subset_sum,
     "y0",
     'a',
-    [5, 10, 20, 40],
+    [20, 40, 80, 160],
     3,
     1
 );
-// `project_each` changes how it answers at k = 5 and again at k = 7 (12.5G instructions, from
-// 1.73G at k = 6), and costs 98.7G at k = 16: only k = 8 and 16 fit in 60 s. Until 2026-11-13
-// it was held per doubling to k^3 log k with a slack of 1.1, 11.7 from 8 to 16; [`doubling`]
-// holds sizes 8 times apart, and k = 64 does not fit in 60 s, so it is ignored.
+// `project_each`: the solver answers first at k = 16, 32 and 64 (54.9M, 113.0M, 265.8M); the
+// method answers first at k = 8 and 12 (0.17M and 28.4M).
 costs!(
-    #[ignore = "PRES-subset-project-cost: k = 8 and 16 are 2 times apart and k = 64 does not run in 60 s, so it cannot be held at n and 8n under the limit of 13 since TESTS-scaling-limit-13; open"]
     subset_sum_project_each,
     subset_sum,
     "y0",
     'p',
-    [8, 16],
+    [16, 32, 64, 128],
     3,
     1
 );

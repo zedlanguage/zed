@@ -704,10 +704,10 @@ impl Con {
 /// The atom of a constraint of one atom, with the least and the greatest value it allows that
 /// atom; a least above the greatest allows none.
 pub(super) fn one_bound(c: &Con) -> Option<(&Atom, Option<Int>, Option<Int>)> {
-    let mut terms = c.lin.terms.iter();
-    let (Some((a, coef)), None) = (terms.next(), terms.next()) else {
+    if c.lin.terms.len() != 1 {
         return None;
-    };
+    }
+    let (a, coef) = c.lin.terms.first_key_value()?;
     // `coef·a + k` compared with zero.
     let k = &c.lin.constant;
     let m = coef.abs();
