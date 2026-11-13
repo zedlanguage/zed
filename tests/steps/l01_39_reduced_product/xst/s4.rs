@@ -915,3 +915,25 @@ fn a_test_between_two_names_after_a_disjunction_on_both_is_exact() {
         }
     }
 }
+
+/// A cycle of weight 0 makes `x_i = x0 + i` (ST-walk-orders): a bound on `x0` (the head of
+/// the chain) or on `x_{n-1}` (its tail) afterward reaches every name, through the closing
+/// test as well as through the chain, in every order.
+#[test]
+fn a_bound_on_an_end_of_a_closed_cycle_reaches_every_name() {
+    let n = 8;
+    let last = format!("x{}", n - 1);
+    for how in HOWS {
+        let s = chain(n, Some(1 - n as i64)).narrowed(how);
+        let p = Premises::new();
+        let head = s.assume(&prim(Prim::Le, var("x0"), int(5)), true, &p);
+        let tail = s.assume(&prim(Prim::Ge, var(&last), int(30)), true, &p);
+        for i in 0..n {
+            let x = format!("x{i}");
+            let want: Vec<i64> = (i as i64..=5 + i as i64).collect();
+            assert_eq!(kept(&head, &x, 0, 32), want, "{how:?}, x0 <= 5: {x}");
+            let want: Vec<i64> = (30 - (n - 1 - i) as i64..=3 * n as i64 + 1 + i as i64).collect();
+            assert_eq!(kept(&tail, &x, 0, 32), want, "{how:?}, {last} >= 30: {x}");
+        }
+    }
+}

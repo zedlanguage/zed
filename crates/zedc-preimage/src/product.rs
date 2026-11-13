@@ -499,6 +499,10 @@ pub struct NameProducts {
     relation: Option<RelationMark>,
     view: Option<Arc<OnceLock<Products>>>,
     blocker: Option<Arc<Formula>>,
+    /// A difference test `b >= a + gap` that moved no end when it came, between two names on
+    /// different paths, kept as (a, b, gap) until a later test moves an end of `a` or `b`
+    /// or puts them on one path (`NameProducts::pending_holds`).
+    pending: Option<(Arc<str>, Arc<str>, Int)>,
 }
 
 /// A directed path of names: the interval they share in the root's coordinates, its head and
@@ -513,6 +517,11 @@ struct PathRange {
     size: usize,
     head_hi: Option<End>,
     tail_lo: Option<End>,
+    /// A test from a member back to an earlier one closed a cycle (`NameProducts::link`).
+    /// Every point with all members at one value of the shared interval satisfies it, so
+    /// the members keep the shifted interval; an own end of the head or the tail would pass
+    /// through the cycle to the other members, so a closed path takes none.
+    closed: bool,
 }
 
 impl PathRange {
@@ -687,6 +696,7 @@ impl NameProducts {
             self.ranges.clear();
             self.relation = None;
             self.view = None;
+            self.pending = None;
         }
     }
 
@@ -758,6 +768,7 @@ impl NameProducts {
                 size: 1,
                 head_hi: None,
                 tail_lo: None,
+                closed: false,
             },
         );
         Some(())
@@ -779,24 +790,19 @@ impl NameProducts {
             return None;
         }
         if ra == rb {
-            // The existing directed path proves b >= a + (ob - oa). A back edge
-            // closes it; positive cycle weight is inconsistent, zero is redundant.
-            if a != &left.tail || b != &left.head || left.head_hi.is_some() {
-                return None;
-            }
-            return Some(shift.is_positive());
+            return self.close(a, b, &shift);
         }
         if a != &left.tail || b != &right.head {
-            return None;
+            return self.hold(a, b, gap);
         }
         let rlo = offset_end(&right.lo, &-&shift);
         let rhi = offset_end(&right.hi, &-&shift);
         if left.lo < rlo || left.hi < rhi {
-            return None;
+            return self.hold(a, b, gap);
         }
         // A link that changes no bound needs no implicit product state.
         if left.lo == rlo && left.hi == rhi {
-            return None;
+            return self.hold(a, b, gap);
         }
         // The test's own meet in `Scope::narrow` moves b's lower end when left.lo > rlo and
         // a's upper end when left.hi > rhi, and only a meet that moves an end adds the test's
@@ -822,6 +828,7 @@ impl NameProducts {
             size: left.size + right.size,
             head_hi: left.head_hi,
             tail_lo: right.tail_lo.map(|e| offset_end(&e, &-&shift)),
+            closed: left.closed || right.closed,
         };
         if left.size >= right.size {
             self.ranges.remove(&rb);
@@ -835,6 +842,85 @@ impl NameProducts {
         }
         self.view = Some(Arc::new(OnceLock::new()));
         Some(false)
+    }
+
+    /// Closes the path of `a` and `b` by `b >= a + gap`, `shift` being `gap` less what the path
+    /// already proves of `b - a`: admitted only as a back edge from the tail to the head with
+    /// no own end, and then empty when `shift` is positive (a cycle of positive weight) and
+    /// otherwise redundant, since every point with all members at one value of the shared
+    /// interval satisfies it. The path is marked closed, so that it takes no own end.
+    fn close(&mut self, a: &Arc<str>, b: &Arc<str>, shift: &Int) -> Option<bool> {
+        let (root, _, r) = self.root(a)?;
+        if a != &r.tail || b != &r.head || r.head_hi.is_some() || r.tail_lo.is_some() {
+            return None;
+        }
+        let r = PathRange {
+            closed: true,
+            ..r.clone()
+        };
+        self.ranges.insert(root, r);
+        Some(shift.is_positive())
+    }
+
+    /// Keeps `b >= a + gap` aside, between names on two paths, when it moves no end of either
+    /// (`NameProducts::slack`) and no other test is kept aside: the scope's products are then
+    /// still the exact projections (see `pending`).
+    // Complexity tradeoff (ST-walk-orders): naive version, such a test ran the solver, and its
+    // conjunct, between two names on no path, blocked every later test from the paths: the
+    // s4 cycles assumed in reverse order start with the closing test, and every later test
+    // ran the solver, Theta(n) each and Theta(n²) in all (measured 35 to 65 at 8n over n).
+    // Used: the test is kept aside, O(log² n), and checked after each later test the paths
+    // admit, O(log² n): while a and b are on two paths the test is their one link, so the
+    // pair of paths with it forms a tree of difference constraints, in which a bound
+    // propagates only along the test, and a test that moves no end of a or b moves nothing
+    // (on difference constraints as shortest paths: Bellman, "On a routing problem",
+    // Quarterly of Applied Mathematics 16(1), 1958; Shostak, "Deciding linear inequalities
+    // by computing loop residues", JACM 28(4), 1981). When a later test puts a and b on one
+    // path, the test is admitted only as the back edge of `close`. Any other case
+    // materializes and runs the solver as before. Tradeoff: one test aside at a time; with
+    // two, a cycle can pass through both, which the one-hop check does not see.
+    fn hold(&mut self, a: &Arc<str>, b: &Arc<str>, gap: &Int) -> Option<bool> {
+        if self.pending.is_some() || !self.slack(a, b, gap)? {
+            return None;
+        }
+        self.pending = Some((a.clone(), b.clone(), gap.clone()));
+        // `link` may have put a and b on paths of their own; their products are unchanged.
+        if self.view.is_none() {
+            self.view = Some(Arc::new(OnceLock::new()));
+        }
+        Some(false)
+    }
+
+    /// Whether `b >= a + gap` moves no end of `a` or `b`, these being on two paths: `a`'s
+    /// lower end plus `gap` is at most `b`'s, and so is its upper end. `None` on one path.
+    fn slack(&self, a: &Arc<str>, b: &Arc<str>, gap: &Int) -> Option<bool> {
+        let ends = |n: &Arc<str>| {
+            let (root, off, r) = self.root(n)?;
+            let (lo, hi) = r.of(n);
+            Some((root, offset_end(&lo, &off), offset_end(&hi, &off)))
+        };
+        let ((ra, alo, ahi), (rb, blo, bhi)) = (ends(a)?, ends(b)?);
+        if ra == rb {
+            return None;
+        }
+        Some(offset_end(&alo, gap) <= blo && offset_end(&ahi, gap) <= bhi)
+    }
+
+    /// After a test the paths admitted, whether the test kept aside (`hold`) still moves no
+    /// end, or now closes a path (`close`): `Some(bottom)`, or `None` when it would move an
+    /// end, and the scope must then run the solver.
+    fn pending_holds(&mut self) -> Option<bool> {
+        let Some((a, b, gap)) = self.pending.clone() else {
+            return Some(false);
+        };
+        if let Some(slack) = self.slack(&a, &b, &gap) {
+            return slack.then_some(false);
+        }
+        let (_, oa, _) = self.root(&a)?;
+        let (_, ob, _) = self.root(&b)?;
+        let bottom = self.close(&a, &b, &(&(&oa + &gap) - &ob))?;
+        self.pending = None;
+        Some(bottom)
     }
 
     /// Bounds `n` below (`lower`) or above by `value`, the test holding under `prem`: on the
@@ -867,6 +953,8 @@ impl NameProducts {
             if r.lo == r.hi {
                 return None;
             }
+        } else if r.closed {
+            return None;
         } else if lower && n == &r.tail {
             r.tail_lo = Some(lo.max(end));
         } else if !lower && n == &r.head {
@@ -6429,15 +6517,22 @@ impl Scope {
                 return false;
             }
         }
+        let held = names.pending.is_some();
         let result = match (positive, negative) {
             (Some(b), Some(a)) => names.link(a, b, &-&c.lin.constant, prem),
             (Some(n), None) => names.bound(n, true, &-&c.lin.constant, prem),
             (None, Some(n)) => names.bound(n, false, &c.lin.constant, prem),
             _ => None,
         };
-        let Some(bottom) = result else {
+        let Some(mut bottom) = result else {
             return false;
         };
+        if held && !bottom {
+            let Some(b) = names.pending_holds() else {
+                return false;
+            };
+            bottom = b;
+        }
         let end = |ns: &NameProducts, n: &Arc<str>, upper: bool| {
             let p = ns.product(n)?;
             let ints = p.ints();
@@ -6534,7 +6629,9 @@ impl Scope {
                 used,
                 names,
                 relation,
-            }) if names.ptr_eq(&self.names) && self.relation.at(relation) => Some((hub, used)),
+            }) if names.ptr_eq(&self.names) && self.relation.at(relation) => {
+                Some((hub.clone(), used.clone()))
+            }
             Some(Extension::Certified { .. }) => return false,
             Some(Extension::Coupled(g)) if self.relation.set().contains(g) => return false,
             _ => None,
@@ -6549,7 +6646,7 @@ impl Scope {
             upper,
             lower,
         } = row;
-        if previous.is_some_and(|(hub, used)| *hub != w || (used.contains(&x) && used.contains(&y)))
+        if previous.as_ref().is_some_and(|(hub, used)| *hub != w || (used.contains(&x) && used.contains(&y)))
             || ![&x, &y, &w].into_iter().all(|n| self.self_bound(n))
         {
             return false;
@@ -6574,28 +6671,99 @@ impl Scope {
         else {
             return false;
         };
-        if &xl + &wl > upper || &yh - &wh < lower {
+        if &yh - &wh < lower {
             return false;
         }
-        if previous.is_none()
-            && let Some(g) = self.relation.set().iter().find(|g| !unary(g))
-        {
-            self.seen.extension = Some(Arc::new(Extension::Coupled(g.clone())));
-            return false;
-        }
-        for (n, narrowed) in [
-            (&x, &xh + &wl > upper),
-            (&w, &wh + &xl > upper),
-            (&y, &yl - &wl < lower),
-        ] {
-            if narrowed {
-                self.names.rest_on(n, prem);
+        let forced = &xl + &wl > upper;
+        // A first row may follow conjuncts of the hub and one other name `z`, `c z + d w + k
+        // >= 0` with `d < 0`, that hold at both witnesses: the all-lower point (`zl`, `wl`) and
+        // the all-upper point (`zh`, `wh`). Each is antitone in `w`, so lowering `w` keeps it,
+        // and the box of the products is their exact projection: `w = v` is met at the
+        // all-upper point with `w` lowered to `v`; `z = v` at the all-lower point with `z`
+        // raised to `v` when `c >= 0`, and when `c < 0` since `c v + d wl >= c zh + d wh`. So
+        // the argument above holds for the rows after them, with `z` taken as used: such a
+        // `z` may be a row's `x` or `y`, but not both. This is the start test `v0 - w >= 1` a
+        // walk gives before its rows (ST-walk-orders).
+        let mut base = Vec::new();
+        if previous.is_none() {
+            for g in self.relation.set().iter().filter(|g| !unary(g)) {
+                let z = match &**g {
+                    Formula::Con(c) if c.rel == Rel::Ge && c.lin.terms.len() == 2 => c
+                        .lin
+                        .terms
+                        .iter()
+                        .find_map(|(a, k)| match a {
+                            Atom::Sym(z) if *z != w => Some((z, k, c)),
+                            _ => None,
+                        })
+                        .filter(|_| {
+                            c.lin
+                                .terms
+                                .get(&Atom::Sym(w.clone()))
+                                .is_some_and(|d| d.is_negative())
+                        }),
+                    _ => None,
+                };
+                let held = z.and_then(|(z, k, c)| {
+                    let (zl, zh) = ends(z)?;
+                    let d = c.lin.terms.get(&Atom::Sym(w.clone()))?;
+                    let at = |zv: &Int, wv: &Int| &(&(k * zv) + &(d * wv)) + &c.lin.constant;
+                    (!at(&zl, &wl).is_negative() && !at(&zh, &wh).is_negative()).then_some(z)
+                });
+                match held {
+                    Some(z) => base.push(z.clone()),
+                    None => {
+                        self.seen.extension = Some(Arc::new(Extension::Coupled(g.clone())));
+                        return false;
+                    }
+                }
             }
         }
-        let mut used = previous.map_or_else(imbl::OrdSet::new, |(_, used)| used.clone());
+        let fresh = |n: &Arc<str>| {
+            !base.contains(n) && previous.as_ref().is_none_or(|(_, u)| !u.contains(n))
+        };
+        if !fresh(&x) && !fresh(&y) || forced && !fresh(&y) {
+            return false;
+        }
+        // A row whose first case no point of the box meets (`xl + wl > a`, as each row of a
+        // walk after its start `v0 - w >= 1`: `v0 >= 1` kills `v0 + w <= 0`, and the row
+        // raises `v1` to 1, which kills the next row's first case) is `y - w >= b` on the box.
+        // With `y` fresh it raises `y`'s lower end to `b + wl` and nothing else: an old point
+        // with `y` raised to `yh` meets it, as the all-lower point with `y` at any value of
+        // its new interval does, and the all-upper point still holds it, so the argument above
+        // holds after it. Main's join is its second case alone, which narrows `y` with the
+        // row's premises and not `w`, since `yh - wh >= b`.
+        if forced {
+            let lo = &lower + &wl;
+            if lo > yl {
+                let d = IntervalSet::range(End::Fin(Num::from(&lo)), End::PosInf);
+                self.meet_name(&y, &d, true, prem);
+            }
+        } else {
+            for (n, narrowed) in [
+                (&x, &xh + &wl > upper),
+                (&w, &wh + &xl > upper),
+                (&y, &yl - &wl < lower),
+            ] {
+                if narrowed {
+                    self.names.rest_on(n, prem);
+                }
+            }
+        }
+        let mut used = previous.map_or_else(|| base.into_iter().collect(), |(_, used)| used);
+        // A forced row keeps its live case alone, as `narrow_linear` does for a nest a case of
+        // which no point meets.
+        let kept = match body {
+            Formula::Or(arms) if forced => arms.iter().find(|a| {
+                a.cons()
+                    .iter()
+                    .any(|c| c.lin.terms.contains_key(&Atom::Sym(y.clone())))
+            }),
+            _ => None,
+        };
+        self.relation.defer(kept.unwrap_or(body).clone());
         used.insert(x);
         used.insert(y);
-        self.relation.defer(body.clone());
         self.seen.extension = Some(Arc::new(Extension::Certified {
             hub: w,
             used,
@@ -7075,15 +7243,41 @@ impl Scope {
             self.seen.extension = None;
             self.reduce();
         }
-        let Some(body) = body else {
-            match &tree.nodes[n].kind {
-                Kind::Nest(and, sides) if *and == value && n == 0 => {
-                    for &(k, p) in sides {
-                        self.narrow_linear(tree, k, value == p, prem);
-                    }
-                }
-                _ => self.narrow_node(tree, n, value, prem),
+        // Complexity tradeoff: naive, a root nest the value forces whose test has a relation is
+        // narrowed as one node (`narrow_node`), which splits each `or` side into cases and
+        // joins them against the whole relation: a walk of n rows `v_i + w <= 0 || v_{i+1} - w
+        // >= 1` given as one conjunction takes Θ(n) per row and Θ(n²) in all (measured 44 to
+        // 57 at 8n, ST-walk-orders). Used: the sides are narrowed one by one, as when the test
+        // has no relation, so `a && b` narrows as `a` then `b` do and each row may be certified
+        // by `extend_threshold` (Freuder, "A sufficient condition for backtrack-free search",
+        // JACM 1982: a tree of constraints that are arc consistent is solved without search);
+        // the conjunction then adds the whole relation, whose conjuncts the sides gave
+        // already, but for those of sides of one name, which the products hold. O(s log s) more
+        // for a test of `s` nodes; measured as the forward order, 10.5 to 11 at 8n.
+        if let Kind::Nest(and, sides) = &tree.nodes[n].kind
+            && *and == value
+            && n == 0
+        {
+            // The sides in the tree's order of rank, and among one rank in the order the test
+            // gives them: the tree numbers a root's sides from its last to its first
+            // ([`Tree::of`]), where its own order sorts them by form, so that a walk's rows
+            // would come in the order of their names' texts (`v1`, `v10`, `v11`, ..., `v2`),
+            // each joining two names that rows before it hold and no row certified.
+            let mut sides = sides.clone();
+            sides.sort_by_key(|&(k, _)| (tree.nodes[k].rank, std::cmp::Reverse(k)));
+            for (k, p) in sides {
+                self.narrow_linear(tree, k, value == p, prem);
             }
+            if let Some(body) = body
+                && !self.bottom
+                && !self.seen.extension.as_deref().is_some_and(Extension::certified)
+            {
+                self.relation.and(body);
+            }
+            return;
+        }
+        let Some(body) = body else {
+            self.narrow_node(tree, n, value, prem);
             return;
         };
         let before = self.relation.clone();
