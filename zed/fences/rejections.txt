@@ -11,6 +11,7 @@ Selection keys not in one order
 Table law not decided
 Operator outside the normal forms
 A definition that reads its own value
+Compile-time value needed to check its own computation
 Quantifier in a law over a domain that is not finite
 Obligation below proof grade
 Work above its cost claim

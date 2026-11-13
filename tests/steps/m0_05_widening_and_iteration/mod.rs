@@ -14,6 +14,7 @@ mod iteration;
 mod order;
 mod revision;
 mod scaling;
+mod schedule;
 mod widening;
 mod wto;
 

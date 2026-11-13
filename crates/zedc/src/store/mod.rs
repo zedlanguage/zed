@@ -14,6 +14,7 @@ pub use zedc_lattice::iterate;
 pub use zedc_lattice::landmarks;
 pub use zedc_lattice::lattice;
 pub use zedc_lattice::revision;
+pub use zedc_lattice::schedule;
 pub use zedc_lattice::wto;
 pub use zedc_preimage::images;
 pub use zedc_preimage::preimage;

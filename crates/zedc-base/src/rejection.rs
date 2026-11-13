@@ -51,6 +51,9 @@ rows! {
     // A cycle of values each read as the next is computed (`Tables::cycle_reports`); plan row
     // TERM-stall compiles the loops and indexed definitions its repairs offer.
     ReadsOwnValue => "A definition that reads its own value",
+    // No diagnostic uses this row yet: plan row SCHED-eval-before-check emits it, from a
+    // `zedc::store::schedule::Refusal`.
+    NeededToCheckItsOwnComputation => "Compile-time value needed to check its own computation",
     QuantifierNotFinite => "Quantifier in a law over a domain that is not finite",
     BelowProofGrade =>
         "Obligation below proof grade",

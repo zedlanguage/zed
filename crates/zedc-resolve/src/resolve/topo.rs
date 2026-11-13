@@ -6,6 +6,14 @@ use std::collections::{BTreeMap, BinaryHeap};
 /// An order of `0..deps.len()` with each item after its dependencies, ties by index; else the
 /// items of one cycle, in order along it. The ready items wait in a heap, smallest first, each
 /// counting the dependencies it still waits on, so the order takes `O((n + e) log n)`.
+///
+/// Kahn's method (A. Kahn, "Topological sorting of large networks", Communications of the
+/// ACM 5(11), 558-562, 1962) with a heap in place of its queue. Tarjan's search (`cycles` below)
+/// alone also gives an order, the components in the order it closes them, in `O(n + e)`; it is
+/// not used for the order because that order follows the depth-first search, not the text,
+/// and the order here fixes the order of the checks and so of the messages (DESIGN
+/// sec:checking_in_zed, "Checks and evaluations on one dependency graph"). The heap costs the
+/// `log n`; `n log n` work passes the scaling limit from `n = 777` (DESIGN sec:plan).
 #[doc(hidden)]
 pub fn topo(deps: &[Vec<usize>]) -> Result<Vec<usize>, Vec<usize>> {
     let (order, done) = place(deps, deps.len(), &vec![false; deps.len()]);
@@ -63,8 +71,10 @@ pub fn topo_around_cycles(deps: &[Vec<usize>], items: usize) -> (Vec<usize>, Vec
 
 /// The strongly connected components of the nodes not `done` that hold a cycle, each as its
 /// items, those below `items`, in increasing order, the components in order of their least
-/// item. Tarjan's algorithm with an explicit stack of (node, next dependency to read): each
-/// node and edge is visited once, then the components are sorted, `O(n + e + c log c)`.
+/// item. Tarjan's algorithm (R. Tarjan, "Depth-First Search and Linear Graph Algorithms",
+/// SIAM Journal on Computing 1(2), 146-160, 1972) with an explicit stack of (node, next
+/// dependency to read): each node and edge is visited once, then the components are sorted,
+/// `O(n + e + c log c)`.
 fn cycles(deps: &[Vec<usize>], items: usize, done: &[bool]) -> Vec<Vec<usize>> {
     const UNSEEN: usize = usize::MAX;
     let n = deps.len();
