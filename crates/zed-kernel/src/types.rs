@@ -3418,14 +3418,17 @@ struct Maker {
     done: bool,
 }
 
-/// Where a [`Maker`] is in its box.
+/// Where a [`Maker`] is in its box. A step that waits for a component's value keeps how far
+/// its scan of the components got, and the step after that value is made resumes there
+/// ([`Maker::step`]).
 enum At {
-    /// Before the box: its components are not yet known to have a value.
-    Start,
+    /// Before the box: the components before the first `k` are known to have a value.
+    Start(usize),
     /// At a position, one per component, whose values are all made.
     Tuple(Vec<usize>),
-    /// Past a position, before moving to the next one.
-    Past(Vec<usize>),
+    /// Past a position, before moving to the next one: the components from the `k`-th on are
+    /// known to have no value after theirs in the position.
+    Past(Vec<usize>, usize),
 }
 
 /// A value a maker waits for: the maker and the position.
@@ -5508,7 +5511,7 @@ impl Maker {
             by_value,
             tried: HashSet::new(),
             next: 0,
-            at: At::Start,
+            at: At::Start(0),
             made,
             ids,
             done: false,
@@ -5527,21 +5530,37 @@ impl Maker {
 
     /// One step of the maker `me` of `makers`: it enters a box, makes the tuple at its
     /// position, or moves past it, or says which value of a component it needs first, before
-    /// changing anything. The components' makers come before `me`.
+    /// changing anything but how far it got. The components' makers come before `me`.
+    // Complexity tradeoff: a scan of a box's components that stops at one whose value is not
+    // made yet keeps where it stopped, and the next step resumes there: what it found holds
+    // for good, since a maker's values only grow and one done makes no more. A first version
+    // scanned again from the box's first component (from its last, past a position) at each
+    // step, 1 + 2 + ... + L checks for a box of L components each made on demand, O(L²):
+    // 4.7·10⁷ instructions at L = 400 and 7.8·10⁸ at L = 3200, 16.6 times, for the one value
+    // of a tuple of L literals (PERF-tuple-print). Resumed, each component is checked once on
+    // entering the box and once per position past it, O(L) per tuple made. Test:
+    // l01_23_subtyping::listing::listing_one_wide_tuple_scales; COMPLEXITY.md K116.
     fn step(makers: &mut [Maker], numbers: &mut Numbers, me: usize) -> Result<(), Need> {
         let (below, rest) = makers.split_at_mut(me);
         let m = &mut rest[0];
-        match std::mem::replace(&mut m.at, At::Start) {
-            At::Start => {
+        match std::mem::replace(&mut m.at, At::Start(0)) {
+            At::Start(from) => {
                 let Some((cols, _)) = m.boxes.get(m.next) else {
                     m.done = true;
                     return Ok(());
                 };
-                for &c in cols {
-                    if !below[c].has(c, 0)? {
-                        // A component with no value: the box has no tuple.
-                        m.next += 1;
-                        return Ok(());
+                for (k, &c) in cols.iter().enumerate().skip(from) {
+                    match below[c].has(c, 0) {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            // A component with no value: the box has no tuple.
+                            m.next += 1;
+                            return Ok(());
+                        }
+                        Err(need) => {
+                            m.at = At::Start(k);
+                            return Err(need);
+                        }
                     }
                 }
                 m.at = At::Tuple(vec![0; cols.len()]);
@@ -5562,7 +5581,7 @@ impl Maker {
                 // box the positions give distinct tuples, since each maker gives each value
                 // once, and a box's makers give every value of its columns. The tuple is
                 // looked up by its components' numbers, never by their contents.
-                m.at = At::Past(pos);
+                m.at = At::Past(pos, cols.len());
                 if !m.tried.insert(key.clone()) {
                     return Ok(());
                 }
@@ -5585,10 +5604,10 @@ impl Maker {
                     m.ids.push(numbers.tuple(key));
                 }
             }
-            At::Past(mut pos) => {
+            At::Past(mut pos, upto) => {
                 let cols = &m.boxes[m.next].0;
                 // The next position, the last component fastest; past the last, the next box.
-                for k in (0..pos.len()).rev() {
+                for k in (0..upto).rev() {
                     match below[cols[k]].has(cols[k], pos[k] + 1) {
                         Ok(true) => {
                             pos[k] += 1;
@@ -5598,7 +5617,7 @@ impl Maker {
                         }
                         Ok(false) => {}
                         Err(need) => {
-                            m.at = At::Past(pos);
+                            m.at = At::Past(pos, k + 1);
                             return Err(need);
                         }
                     }

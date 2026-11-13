@@ -13742,6 +13742,32 @@ fn zero_rat(e: &Expr) -> bool {
     }
 }
 
+/// The operand of a word as [`Ck::word_atoms`] reads it ([`Ck::operand_values`]).
+enum WordOperand {
+    /// A literal's values, at most three, and the literal as written.
+    Values(Vec<Value>, Option<String>),
+    /// A type without its atoms, whose values are not listed yet.
+    Type(Ty),
+}
+
+impl WordOperand {
+    /// The operand's values, if the checker can list them, and the literal as written.
+    // Complexity tradeoff: the values of a type are listed here, after the word's result is
+    // known to hold an atom, not where the operand is read. Listed there, each call of a word
+    // that gives no atom, such as `String` and its repair trials, listed its operand for
+    // nothing: for `x + (0.50r, ..., (n-1).50r)` with `x: String`, the trial `String((...))`
+    // listed the one value of the tuple, 47 M of the checker's 127 M instructions at n = 400
+    // (PERF-tuple-print). Listing costs O(L) per value of length L (COMPLEXITY.md K116);
+    // deferred, it costs nothing for a word that gives no atom, and the same for one that
+    // does. The operand's type is kept without its atoms either way, O(size of the type).
+    fn listed(self) -> Option<(Vec<Value>, Option<String>)> {
+        match self {
+            WordOperand::Values(values, written) => Some((values, written)),
+            WordOperand::Type(t) => Some((t.kernel()?.values_listed()?, None)),
+        }
+    }
+}
+
 /// The exact rational value of an int or rat `v`.
 fn as_rat(v: &Value) -> Option<Rat> {
     match v {
@@ -13968,12 +13994,12 @@ impl<'a> Ck<'_, 'a> {
         );
     }
 
-    /// The values the operand `x` of a word may take, when the checker can list them, and the
-    /// literal as written when it is one: a literal, in each carrier a bare integer literal may
-    /// adopt, or the values of a type that lists them one by one (`"a" | "b"`). A bare decimal
-    /// literal is left out: it is rejected as a literal with no carrier. Linear in the size of
-    /// the type.
-    fn operand_values(&self, x: &Arg<'a>) -> Option<(Vec<Value>, Option<String>)> {
+    /// The operand `x` of a word as [`Self::word_atoms`] reads it, when the checker can list its
+    /// values: a literal, in each carrier a bare integer literal may adopt, with the literal as
+    /// written, or a type that may list its values one by one (`"a" | "b"`), listed only if
+    /// the word may give an atom ([`WordOperand::listed`]). A bare decimal literal is left out: it
+    /// is rejected as a literal with no carrier. Linear in the size of the type.
+    fn operand_values(&self, x: &Arg<'a>) -> Option<WordOperand> {
         if let Some(l) = &x.lit {
             let v = neg_value(&l.value, l.neg());
             let mut values = vec![v.clone()];
@@ -13986,13 +14012,13 @@ impl<'a> Ck<'_, 'a> {
                 }
                 values.push(Value::rat(r));
             }
-            return Some((values, Some(l.written().to_string())));
+            return Some(WordOperand::Values(values, Some(l.written().to_string())));
         }
         let value = x.ty.without_atoms();
         if value.lists_nothing() {
             return None;
         }
-        Some((value.kernel()?.values_listed()?, None))
+        Some(WordOperand::Type(value))
     }
 
     /// The result `r` of the word `w` applied at `span` to an operand at `at` whose values are
@@ -14016,7 +14042,7 @@ impl<'a> Ck<'_, 'a> {
     fn word_atoms(
         &mut self,
         w: &str,
-        (values, written): (Vec<Value>, Option<String>),
+        operand: WordOperand,
         r: Ty,
         carried: &KType,
         at: Span,
@@ -14026,6 +14052,9 @@ impl<'a> Ck<'_, 'a> {
             return r;
         }
         let Some(p) = zedc_base::interp::prim(w) else {
+            return r;
+        };
+        let Some((values, written)) = operand.listed() else {
             return r;
         };
         let sig = word_sig(w);
