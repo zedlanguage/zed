@@ -103,10 +103,12 @@ fn a_use_that_takes_another_carrier_from_the_operand_is_rejected_at_the_use() {
             "m.stdout <- String(rat(b)) else \"${c}\";",
             "Try `c = f64(b) + 0.5f64` instead.",
         ),
+        // `c = b + 1` is not offered: it makes `rat(b) + c` add an int to a rat
+        // (REPAIR-past-binding).
         (
             "c = b + 1r;",
             "m.stdout <- String(rat(b) + c);",
-            "Try `c = b + 1` instead.",
+            "Try `c = rat(b) + 1r` instead.",
         ),
     ] {
         let src = format!("main(m: MainArgs) {{\n    b = 2^3;\n    {use_}\n    {cast}\n}}\n");
