@@ -2142,10 +2142,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | M5 merged 16429d383 (C55); 862 pieces pass; dump: 0 answers changed but one refusal now true; next old tree, holders_chain, rounds 4+ |
 | PERF-l139-family | running | 2026-11-12 18:45 | coordkk fixed d016b9cc3 90a844aa8; 14 tests in 8 families still ignored, cross-review next / 45.57 |
-| PERF-ref-memo-quadratic | impl attempt 4 | 2026-11-10 18:04 | round 2 closed: Sol 447.091 best, Opus 756.221; round 3 seats launched, CD r3 2341097750046703617 in test |
-| PRES-overlap-fast | own attempt merged, cross-review next | 2026-11-13 01:10 | own attempt merged 24981fcda, 21f10e120, 0418e6e46: row_sums (exact join of row-sum tables, in alternation with the solver); overlap_rows decide 0.45M at k = 16, 24.1M at 32 (main 5,443M and a refusal at 16); random2 3,000: 0 coarser, 0 wrong, 258 finer, 126 refusals decided, 0.0045 of main in all; open: up to 1.010 times main on mid2 where the method does not answer first; cross-review r1 (CD, Sol, Opus, Gemini) next |
+| PERF-ref-memo-quadratic | impl attempt 4 | 2026-11-10 18:04 | round 3 scored: mix of Sol r3 + Opus r3 SCORE 446.707, 0 coarser; porting into wt/prm4 |
+| PRES-overlap-fast | impl attempt 1 | 2026-11-13 01:10 | own attempt merged zed-impl 24981fcda 21f10e120 0418e6e46 (row_sums join of row-sum tables; overlap_rows 0.45M at 16 vs main 5,443M+refusal; random2 0 coarser 2 |
 | SPEC-no-verbatim | impl attempt 1 | 2026-11-13 05:23 | started; worktree from origin/main 812acc32e |
-| ST-walk-implicit | impl attempt 1 | 2026-11-11 01:43 | started: worktree /home/luke/Work/wt/st-walk-implicit on origin/main 89d83b4a3 / load 36.87 40.84 46.29 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
