@@ -577,6 +577,12 @@ pub struct Scope {
     /// The entries of [`Block::bounds`] the two-name rule of [`Block::reframe`] has projected
     /// for on this path of tests: each is projected for once.
     spent: imbl::OrdSet<BoundsKey>,
+    /// The ends a test of one name gave each name, the upper one `true`, each the tightest
+    /// such a test gave on this path: every state of the scope holds them, and the relation
+    /// need not, since a test of one name narrows only the name's product. [`Scope::stated`]
+    /// states them where its relation alone would lose them; an end the scope derived from
+    /// the relation is not among them, since the relation gives it again.
+    direct: imbl::OrdMap<(Arc<str>, bool), Num>,
 }
 
 /// A name's `let` binding in a [`Scope`]; the order of its binding is in [`Scope::orders`].
@@ -3888,6 +3894,7 @@ impl Scope {
             lazy: false,
             in_case: false,
             spent: imbl::OrdSet::new(),
+            direct: imbl::OrdMap::new(),
         };
         s.reduce();
         s
@@ -4222,6 +4229,32 @@ impl Scope {
         self.bind(x, p, e)
     }
 
+    /// Meets the type of `x`, when in scope, with `ty`, the type `x` has where the scope is
+    /// read. A join of a side that holds `x` with one that never read it holds `x` of no type
+    /// ([`Scope::join_settled`]), and its relation may still mention `x`: in `a >= n || a >=
+    /// 5`, the case `a >= 5` reads no `n`. Unlike [`Scope::bind`], which forgets what held of
+    /// the name, the relation is kept, so a test on `x` below reaches the names it relates
+    /// `x` to. O(log n) for `n` names.
+    pub fn meet_type(&mut self, x: &Arc<str>, ty: &Type) {
+        let Some(p) = self.names.get(x) else {
+            return;
+        };
+        let met = p.ty.element.meet(ty);
+        if self.bottom || met == p.ty.element {
+            return;
+        }
+        let mut p = p.clone();
+        p.ty.element = met;
+        // Until no reduction changes a domain; each change is a meet, so the loop descends.
+        while p.reduce_domains() {}
+        let empty = p.is_empty();
+        self.names.insert(x.clone(), p);
+        if empty {
+            self.bottom = true;
+            self.empty_if_bottom();
+        }
+    }
+
     fn bind_with(
         &mut self,
         x: &Arc<str>,
@@ -4303,6 +4336,10 @@ impl Scope {
         for k in &gone {
             self.unwrite(k);
         }
+        // The ends tests gave the old `x` do not hold of the new one.
+        for upper in [false, true] {
+            self.direct.remove(&(x.clone(), upper));
+        }
         self.bindings.insert(x.clone(), binding);
         self.orders.insert(x.clone(), order);
         self.names.insert(x.clone(), p);
@@ -4321,6 +4358,9 @@ impl Scope {
                 self.names.remove(&x);
                 self.bindings.remove(&x);
                 self.orders.remove(&x);
+                for upper in [false, true] {
+                    self.direct.remove(&(x.clone(), upper));
+                }
                 self.seen_fresh(&x, &before);
             }
             Unbind::Saved(s) => *self = *s,
@@ -4747,8 +4787,8 @@ impl Scope {
         // refreshed (C45), O(k) for `k` stars per join and O(k²) over a nest of `k` `if`s on
         // the hubs. Used: the leaves the family bounds cut ([`Scope::cut_leaves`]), O(F·p +
         // (c + 1) log k) per hub for `F` families and `c` leaves cut. A join with a lazy side
-        // keeps the naive version, as lazy stars are not kept at their projection. COMPLEXITY.md
-        // row C49.
+        // settles the leaves at a hub moved after the first join, below, as lazy stars are not
+        // kept at their projection. COMPLEXITY.md row C49.
         let eager = !self.lazy && !other.lazy;
         for side in [&mut a, &mut b] {
             if eager {
@@ -4757,8 +4797,6 @@ impl Scope {
             for n in &moved {
                 if eager {
                     leaves.extend(side.cut_leaves(&side.relation, n));
-                } else {
-                    leaves.extend(side.relation.hanging(n).flat_map(|g| conjuncts::names(g)));
                 }
                 leaves.extend(side.relation.around(n));
             }
@@ -4791,8 +4829,39 @@ impl Scope {
             (free(s, h).diff(&free(&joined, h)))
                 .all(|d| matches!(d, imbl::ordset::DiffItem::Add(_)))
         };
+        // Whether the join holds hub `h` as side `s` does: of one interval and class, with the
+        // free conjuncts of `s` at it.
+        let as_side = |s: &Scope, h: &Arc<str>| {
+            let h = std::slice::from_ref(h);
+            within(s, &h[0]) && joined.snapshot(h) == s.snapshot(h)
+        };
+        // A hub moved in a lazy join leaves the stars at it stale where the join holds it as
+        // one side does, with that side's free conjuncts: each such star is that side's, whose
+        // leaf is settled when read; otherwise each leaf at it is settled on both sides.
+        // Complexity tradeoff (NARROW-or-order): naive version, every leaf hanging at each hub
+        // moved settled on both sides, O(k) projections per join for k stars at the hub, and
+        // O(k²) over k tests of `a_i >= n || a_i >= 5` on the hub `n`. Used: one comparison of
+        // the hub's interval and class and one difference of its free conjuncts per side,
+        // O(log n + c) for c conjuncts that differ; a hub the join holds unlike both sides
+        // costs its leaves as before. COMPLEXITY.md row C54; test
+        // `l01_39a_bit_words::scaling::a_hub_settles_its_scopes_in_time_linear_in_the_tests`.
+        if !eager {
+            for n in &moved {
+                if [self, other].iter().any(|s| as_side(s, n)) {
+                    continue;
+                }
+                for side in [self, other] {
+                    due.extend(side.relation.hanging(n).flat_map(|g| conjuncts::names(g)));
+                }
+            }
+        }
         let mut checked: BTreeSet<&conjuncts::Class> = BTreeSet::new();
-        for n in &cored {
+        let at: Vec<&Arc<str>> = if eager {
+            Vec::new()
+        } else {
+            moved.iter().collect()
+        };
+        for n in cored.iter().chain(at) {
             for side in [self, other] {
                 for c in side.relation.classes_at(n) {
                     if !checked.insert(c) {
@@ -4804,7 +4873,7 @@ impl Scope {
                         .collect();
                     if ![self, other]
                         .iter()
-                        .any(|s| hubs.iter().all(|h| within(s, h)))
+                        .any(|s| hubs.iter().all(|h| as_side(s, h)))
                     {
                         due.extend(self.relation.class_leaves(c).cloned());
                         due.extend(other.relation.class_leaves(c).cloned());
@@ -4893,8 +4962,12 @@ impl Scope {
         // Each side states the bounds of the names the other's relation mentions and its own
         // does not, which its products hold and its relation leaves out: otherwise a side of
         // relation `true` makes the disjunction `true`, and the join depends on how the cases
-        // are grouped.
-        let (a, b) = (self.stated(&mine, &theirs), other.stated(&theirs, &mine));
+        // are grouped. It states as well its bounds tighter than the other side's on the names both
+        // sides' own conjuncts mention, which its relation need not hold either.
+        let (a, b) = (
+            self.stated(other, &mine, &theirs),
+            other.stated(self, &theirs, &mine),
+        );
         let mut relation = self.relation.clone();
         // The joined names as the relation reads them for its stars ([`Scope::sync_bounds`]):
         // only names among the seeds differ from `self`'s.
@@ -5049,12 +5122,54 @@ impl Scope {
                 }
                 spent
             },
+            direct: {
+                // The join's states are either side's, so an end holds of them where both
+                // sides hold one, as the looser of the two.
+                // Complexity tradeoff: O(d log e) for the d ends that differ, of e, by the
+                // maps' difference; the naive version, the two maps walked whole, costs every
+                // name a test of one name bounded on this path.
+                let mut direct = self.direct.clone();
+                for d in self.direct.diff(&other.direct) {
+                    match d {
+                        DiffItem::Remove(k, _) => {
+                            direct.remove(k);
+                        }
+                        DiffItem::Update {
+                            old: (k, mine),
+                            new: (_, theirs),
+                        } => {
+                            let looser = if k.1 {
+                                mine.max(theirs)
+                            } else {
+                                mine.min(theirs)
+                            };
+                            direct.insert(k.clone(), looser.clone());
+                        }
+                        DiffItem::Add(..) => {}
+                    }
+                }
+                direct
+            },
         }
     }
 
     /// `mine`, the conjuncts of the relation the other side does not hold, with the finite
-    /// bounds of each name `theirs` mentions and the relation does not.
-    fn stated(&self, mine: &[Arc<Formula>], theirs: &[Arc<Formula>]) -> Formula {
+    /// bounds of each name `theirs` mentions and the relation does not, and, of each name both
+    /// `mine` and `theirs` mention, the ends a test of that name alone gave it on this side
+    /// ([`Scope::direct`]) where tighter than `other`'s bound.
+    ///
+    /// The second part keeps what a test of one name adds to a test the two sides take in
+    /// opposite ways: the case `a < n && a >= 5`, whose relation is `a <= n - 1` alone and
+    /// whose `a >= 5` is a test of `a` alone, joined with the case `a >= n`, gives `a >= n ||
+    /// a >= 5` ([`Formula::either`] drops `a <= n - 1` against `a >= n`), where the relations
+    /// alone give `true` and the join would forget both cases. The case's `n >= 6` is not
+    /// stated: the relation gives it again from `a >= 5`, and with it `a` would be no star's
+    /// leaf ([`Conjuncts::star`]). Nor is a bound the case derived from the relation, as `b >=
+    /// 8` of the case `a + 2 * b == 1000` beside `a <= 2 || b >= 8`: the shared relation gives
+    /// it again, and stated it would add one conjunct to the join at each such test. A bound
+    /// no tighter than the other side's holds of the join's product of the name, so the
+    /// disjunction does not need it.
+    fn stated(&self, other: &Scope, mine: &[Arc<Formula>], theirs: &[Arc<Formula>]) -> Formula {
         let mut out: Vec<Formula> = Vec::new();
         let mut seen: BTreeSet<Arc<str>> = BTreeSet::new();
         // Complexity tradeoff: naive version, the atoms of each conjunct that mentions a name
@@ -5066,27 +5181,50 @@ impl Scope {
         // conjunct read. COMPLEXITY.md C51; test
         // `l01_39_reduced_product::nests::excluded_sides_cost_the_names_they_change`.
         let mut atoms_of: HashMap<*const Formula, BTreeSet<Atom>> = HashMap::new();
+        // The names of `mine`, once each: O(s log s) for `s` atoms, as the loop below.
+        let shared: BTreeSet<Arc<str>> = mine.iter().flat_map(|g| syms(g)).collect();
+        let bound = |n: &Arc<str>, upper: bool, v: &Num| {
+            let (x, v) = (Lin::atom(Atom::Sym(n.clone())), Lin::constant(v));
+            Formula::Con(match upper {
+                false => Con::ge(&x, &v),
+                true => Con::ge(&v, &x),
+            })
+        };
         for n in theirs.iter().flat_map(|g| syms(g)) {
-            let x = Atom::Sym(n.clone());
-            if !seen.insert(n.clone())
-                || self.relation.mentioning(&n).any(|g| {
-                    atoms_of
-                        .entry(Arc::as_ptr(g))
-                        .or_insert_with(|| g.atoms())
-                        .contains(&x)
-                })
-            {
+            if !seen.insert(n.clone()) {
                 continue;
             }
             let Some((lo, hi)) = self.names.get(&n).and_then(|p| p.ints().bounds()) else {
                 continue;
             };
-            let x = Lin::atom(x);
+            if shared.contains(&n) {
+                let theirs = other.names.get(&n).and_then(|p| p.ints().bounds());
+                for (upper, end) in [(false, theirs.map(|b| b.0)), (true, theirs.map(|b| b.1))] {
+                    if let Some(v) = self.direct.get(&(n.clone(), upper))
+                        && end.is_none_or(|e| match upper {
+                            false => End::Fin(v.clone()) > *e,
+                            true => End::Fin(v.clone()) < *e,
+                        })
+                    {
+                        out.push(bound(&n, upper, v));
+                    }
+                }
+                continue;
+            }
+            let x = Atom::Sym(n.clone());
+            if self.relation.mentioning(&n).any(|g| {
+                atoms_of
+                    .entry(Arc::as_ptr(g))
+                    .or_insert_with(|| g.atoms())
+                    .contains(&x)
+            }) {
+                continue;
+            }
             if let End::Fin(v) = lo {
-                out.push(Formula::Con(Con::ge(&x, &Lin::constant(v))));
+                out.push(bound(&n, false, v));
             }
             if let End::Fin(v) = hi {
-                out.push(Formula::Con(Con::ge(&Lin::constant(v), &x)));
+                out.push(bound(&n, true, v));
             }
         }
         out.extend(mine.iter().map(|g| (**g).clone()));
@@ -5676,9 +5814,25 @@ impl Scope {
             // reports every change): the same names, O(log m) per name changed and nothing
             // copied for one unchanged (COMPLEXITY.md C51). Test:
             // `l01_39_reduced_product::nests::excluded_sides_cost_the_names_they_change`.
+            // A test of one name keeps the ends it moved ([`Scope::direct`]).
+            let one = (inputs.len() == 1 && through.is_empty()).then(|| inputs[0].clone());
+            let ends = |s: &Scope, n: &Arc<str>| {
+                let b = s.names.get(n).and_then(|p| p.ints().bounds());
+                b.map(|(l, h)| (l.clone(), h.clone()))
+            };
             for (n, d) in pre.domains.iter().chain(&through) {
+                let before = ends(self, n);
                 if self.meet_name(n, d, convex, prem) {
                     changed.push(n.clone());
+                    if one.as_ref() == Some(n)
+                        && let (Some((lo0, hi0)), Some((lo, hi))) = (before, ends(self, n))
+                    {
+                        for (upper, moved, end) in [(false, lo > lo0, lo), (true, hi < hi0, hi)] {
+                            if let (true, End::Fin(v)) = (moved, end) {
+                                self.direct.insert((n.clone(), upper), v);
+                            }
+                        }
+                    }
                 }
             }
         }

@@ -641,8 +641,9 @@ impl Conjuncts {
     /// The block of the star of which `x` is the leaf, if any. A leaf is a name no written
     /// constraint holds of ([`Conjuncts::pin`]) each conjunct at which is a constraint
     /// `a * x + b1 * y1 + … + c >= 0` of names alone with at least one other name, its hubs,
-    /// or a disjunction of such constraints, such as `x < n || x < m`, which holds for `x` far
-    /// enough on the side each of its constraints does;
+    /// or a disjunction of such constraints, such as `x < n || x < m`, of which some may be of
+    /// `x` alone, such as `x >= 5` of `x >= n || x >= 5`, and one at least is not, which holds
+    /// for `x` far enough on the side each of its constraints does;
     /// `a` is of one sign at every conjunct, so is each hub's coefficient, each hub is
     /// mentioned by more conjuncts than `x`, and where a conjunct mentions two hubs or more,
     /// `x` is unbounded on the side away from it ([`Conjuncts::bound`]). The leaf's conjuncts
@@ -1023,9 +1024,12 @@ impl Conjuncts {
                         });
                     }
                 }
-                if c.lin.terms.len() == 1 {
+                if c.lin.terms.len() == 1 && parts.len() == 1 {
                     return Err(why(vec![g.clone()]));
                 }
+            }
+            if others.is_empty() {
+                return Err(why(vec![g.clone()]));
             }
             // `x` is bounded by `g` below when `up`, so a large enough `x` meets it when `x`
             // is unbounded above.

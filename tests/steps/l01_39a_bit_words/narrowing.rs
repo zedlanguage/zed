@@ -784,3 +784,47 @@ fn an_input_reached_through_a_summary_over_several_inputs_keeps_its_bounds() {
     let out = rejected(&remainders_probe(3, 1));
     assert!(out.contains("popCount"), "{out}");
 }
+
+/// A reading `a` checked against a threshold `n` or a constant, `a >= n || a >= 5`, and then
+/// the threshold checked, `n >= 0`: either side gives `a >= 0`, so `popCount(a)` is accepted
+/// whichever test comes first and whichever side of the `||` is written first (item
+/// NARROW-or-order: with the `||` outermost, `a` stayed `int`).
+#[test]
+fn an_or_test_relating_two_names_narrows_in_any_order() {
+    for src in [
+        "f(positional a: int, positional n: int) =\n  \
+           if a >= n || a >= 5 { if n >= 0 { popCount(a) } else { 0 } } else { 0 }\n\
+         test { (3, 2) -> 2, (7, 4) -> 3, (7, -4) -> 0, (-3, 4) -> 0, (1, -2) -> 0 }\n",
+        "f(positional a: int, positional n: int) =\n  \
+           if a >= 5 || a >= n { if n >= 0 { popCount(a) } else { 0 } } else { 0 }\n\
+         test { (3, 2) -> 2, (7, 4) -> 3, (7, -4) -> 0, (-3, 4) -> 0, (1, -2) -> 0 }\n",
+        "f(positional a: int, positional n: int) =\n  \
+           if n >= 0 { if a >= n || a >= 5 { popCount(a) } else { 0 } } else { 0 }\n\
+         test { (3, 2) -> 2, (7, 4) -> 3, (7, -4) -> 0, (-3, 4) -> 0, (1, -2) -> 0 }\n",
+        "f(positional a: int, positional n: int) =\n  \
+           if n >= 0 { if a >= 5 || a >= n { popCount(a) } else { 0 } } else { 0 }\n\
+         test { (3, 2) -> 2, (7, 4) -> 3, (7, -4) -> 0, (-3, 4) -> 0, (1, -2) -> 0 }\n",
+    ] {
+        assert!(accepted(src), "{src}\n{}", rejected(src));
+        assert!(rows_pass(src), "{src}");
+    }
+}
+
+/// The bound the `||` gives once the threshold is tested is the join of its two sides: with
+/// `n >= -1`, `a >= n` gives `a >= -1` and `a >= 5` gives `a >= 5`, so `a` is `int[-1..]` in
+/// either order, and the rejection names both tests that give the bound.
+#[test]
+fn an_or_test_relating_two_names_gives_the_join_of_its_sides_in_any_order() {
+    for src in [
+        "f(positional a: int, positional n: int) =\n  \
+           if a >= n || a >= 5 { if n >= -1 { popCount(a) } else { 0 } } else { 0 };\n",
+        "f(positional a: int, positional n: int) =\n  \
+           if a >= 5 || a >= n { if n >= -1 { popCount(a) } else { 0 } } else { 0 };\n",
+        "f(positional a: int, positional n: int) =\n  \
+           if n >= -1 { if a >= n || a >= 5 { popCount(a) } else { 0 } } else { 0 };\n",
+    ] {
+        let out = rejected(src);
+        assert!(out.contains("this `x` is int[-1..]"), "{src}\n{out}");
+        assert!(out.contains("n >= -1"), "{src}\n{out}");
+    }
+}

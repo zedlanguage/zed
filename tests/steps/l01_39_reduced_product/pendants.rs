@@ -1170,7 +1170,7 @@ fn a_program_whose_refused_parts_are_projected_by_pendants_ends_narrower() {
         "z3:",
         "  ints [..=-7]",
         "  type int",
-        "relation a + b <= 11 && a + b + c == z0 - 1 && a + b + c == z2 + 8 && a + z1 >= c - 3 && 2 * a + 2 * c >= b + 1 && 2 * a + c >= z1 - 11 && b + 2 * c <= z3 + 4 && z0 >= z1 + 7 && (a >= 3 || b <= 5) && (c >= -1 || z2 <= 7 || !(c >= -1 || z2 <= 7))",
+        "relation a + b <= 11 && a + b + c == z0 - 1 && a + b + c == z2 + 8 && a + z1 >= c - 3 && 2 * a + 2 * c >= b + 1 && 2 * a + c >= z1 - 11 && b + 2 * c <= z3 + 4 && z0 >= z1 + 7 && (a >= 3 || b <= 5) && (c >= -1 || z2 <= 7 || (c <= -2 && z2 >= 8 && !(c >= -1 || z2 <= 7)))",
     ];
     assert_eq!(format!("{s}").trim_end(), want.join("\n"));
 }

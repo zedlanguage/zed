@@ -432,15 +432,27 @@ fn a_test_the_relation_carries_to_each_reading_names_the_path_to_it_only() {
 fn readings_each_related_to_a_hub_or_a_constant_are_checked_in_linear_work() {
     // `k` readings `ai`, each under `ai >= n || ai >= 5`, then `n >= -1` and `popCount(ai)` of
     // each: every read is rejected, since `ai` may be -1. The `||` family of the probes of item
-    // NARROW-if (verify 6) that no test held, at 100 and 800 (test audit 2026-11-08). Only the
-    // work is held here: the checker gives each `ai` the type `int`, not `int[-1..]`, and names
-    // no test, since the relation `ai >= n` of the first side is not used once `n` is bounded
-    // after the `||` (TESTS-scaling-gaps, 2026-11-12).
-    check_rejected_in_linear_work(
-        "checking k readings each related to n or to 5, under a test on n",
-        100,
-        |k| hub(k, "", "a# >= n || a# >= 5", &|i| i),
-    );
+    // NARROW-if (verify 6) that no test held, at 100 and 800 (test audit 2026-11-08), in both
+    // orders of the `||`. Each `ai` is `int[-1..]`, the join of `ai >= n` with `n >= -1` and of
+    // `ai >= 5`. Before item NARROW-or-order each was `int` in linear work in either order: the
+    // join of the two sides kept neither relation. Kept by the join of each `||`, the
+    // relations made the join settle every leaf hanging at `n`, the `k` of the tests before,
+    // so `k` such tests took quadratic work; now the join settles only the leaves at a hub it
+    // holds unlike either side (`Scope::join`).
+    for rel in ["a# >= n || a# >= 5", "a# >= 5 || a# >= n"] {
+        check_rejected_as_in_linear_work(
+            "checking k readings each related to n or to 5, under a test on n",
+            100,
+            move |k| hub(k, "", rel, &|i| i),
+            move |k, out| {
+                let typed = out.matches("is int[-1..]").count();
+                assert_eq!(
+                    typed, k,
+                    "{rel}, k = {k}: {typed} reads of int[-1..]\n{out}"
+                );
+            },
+        );
+    }
 }
 
 #[test]
@@ -535,12 +547,23 @@ fn a_test_the_relation_carries_names_its_path_and_not_the_weaker_tests_around_it
 /// Runs the checker on `src` at sizes `n` and `8n` and checks that each is rejected, in work
 /// and bytes linear in the size, on a stack that holds the nest.
 fn check_rejected_in_linear_work(what: &'static str, n: usize, src: impl Fn(usize) -> String) {
+    check_rejected_as_in_linear_work(what, n, src, |_, _| {});
+}
+
+/// [`check_rejected_in_linear_work`], with `expect` called on each size and its message.
+fn check_rejected_as_in_linear_work(
+    what: &'static str,
+    n: usize,
+    src: impl Fn(usize) -> String,
+    expect: impl Fn(usize, &str) + Send + Sync + 'static,
+) {
     let srcs = scaling::inputs(n, src);
     let t = std::thread::Builder::new()
         .stack_size(1 << 29)
         .spawn(move || {
-            scaling::check_order(what, n, 1, |m| {
-                assert!(zedc::run::load(srcs[&m].as_bytes()).is_err())
+            scaling::check_order(what, n, 1, |m| match zedc::run::load(srcs[&m].as_bytes()) {
+                Ok(_) => panic!("size {m}: accepted"),
+                Err(e) => expect(m, &e.to_string()),
             });
         });
     t.unwrap().join().unwrap();

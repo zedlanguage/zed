@@ -5324,11 +5324,18 @@ impl<'a> Ck<'_, 'a> {
                 // reads `q` as an input has its bounds. Costs the value's names, once.
                 if !s.bottom {
                     for (x, id) in &t.vars {
-                        if self.facts.contains_key(id) || s.names.contains_key(x) {
+                        if self.facts.contains_key(id) {
                             continue;
                         }
-                        if let Some(ty) = self.param_type(b, *id).and_then(plain) {
-                            s.bind(x, Product::of_type(ty), &Shared::new(Term::Var(x.clone())));
+                        let Some(ty) = self.param_type(b, *id).and_then(plain) else {
+                            continue;
+                        };
+                        match s.names.contains_key(x) {
+                            false => {
+                                s.bind(x, Product::of_type(ty), &Shared::new(Term::Var(x.clone())));
+                            }
+                            // One a join holds of no type, as from a side that never read it.
+                            true => s.meet_type(x, &ty),
                         }
                     }
                 }
@@ -5359,8 +5366,12 @@ impl<'a> Ck<'_, 'a> {
             && !p.bottom
         {
             for (x, q) in fresh.iter() {
-                if !p.names.contains_key(x) {
-                    p.bind(x, q.clone(), &Shared::new(Term::Var(x.clone())));
+                match p.names.contains_key(x) {
+                    false => {
+                        p.bind(x, q.clone(), &Shared::new(Term::Var(x.clone())));
+                    }
+                    // One a join holds of no type, as from a side that never read it.
+                    true => p.meet_type(x, &q.ty.element),
                 }
             }
         }

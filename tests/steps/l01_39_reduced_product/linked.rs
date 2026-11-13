@@ -213,6 +213,7 @@ pub(super) fn stars_by_definition(c: &Conjuncts) -> BTreeMap<Arc<str>, BTreeSet<
         let gs = at(&x);
         let mut signs: BTreeMap<Arc<str>, bool> = BTreeMap::new();
         for g in &gs {
+            let lone = matches!(&**g, Formula::Con(_));
             let parts: Vec<&Con> = match &**g {
                 Formula::Con(k) => vec![k],
                 Formula::Or(fs) if fs.len() > 1 => {
@@ -235,7 +236,10 @@ pub(super) fn stars_by_definition(c: &Conjuncts) -> BTreeMap<Arc<str>, BTreeSet<
                 if k.rel != Rel::Ge || k.lin.terms.keys().any(|a| !matches!(a, Atom::Sym(_))) {
                     continue 'name;
                 }
-                if !k.lin.terms.contains_key(&Atom::Sym(x.clone())) || k.lin.terms.len() < 2 {
+                // A disjunction may hold a part of `x` alone, as `x >= 5` of `x >= n || x >= 5`.
+                if !k.lin.terms.contains_key(&Atom::Sym(x.clone()))
+                    || (lone && k.lin.terms.len() < 2)
+                {
                     continue 'name;
                 }
                 others.extend(k.lin.terms.keys().filter(|a| **a != Atom::Sym(x.clone())));
@@ -245,6 +249,9 @@ pub(super) fn stars_by_definition(c: &Conjuncts) -> BTreeMap<Arc<str>, BTreeSet<
                         continue 'name;
                     }
                 }
+            }
+            if others.is_empty() {
+                continue 'name;
             }
             if others.len() > 1 && c.bounded(&x, signs[&x]) {
                 continue 'name;
