@@ -125,7 +125,7 @@ fn reading_a_long_number_scales() {
         let mut rng = Rng::new(n as u64);
         format!("-{}", digits(&mut rng, n))
     });
-    scaling::check_log_squared("reading an integer of n digits", 100_000, |n| {
+    scaling::check("reading an integer of n digits", 100_000, |n| {
         let value = try_parse_int(&texts[&n]).expect("digits");
         assert!(value < BigInt::from(0));
     });

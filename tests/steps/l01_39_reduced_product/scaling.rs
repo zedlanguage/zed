@@ -1153,7 +1153,7 @@ fn tightenings_beside_disjunctions(
 /// the parts on a changed term due in the same way
 /// (`tightenings_of_a_term_compared_by_many_disjunctions_scale`).
 #[test]
-#[ignore = "TIGHTEN-k-parts: 62.4 times the bytes at 12 and 96 (2026-11-12), k parts due at each of k tightenings"]
+#[ignore = "TIGHTEN-k-parts: 62.4 times the bytes at 12 and 96 (2026-11-12), over the limit of 13; k parts due at each of k tightenings"]
 fn tightenings_of_a_sum_beside_many_disjunctions_on_both_names_scale() {
     let n = 12;
     let family = |k| {
@@ -1185,7 +1185,7 @@ fn tightenings_of_a_sum_beside_many_disjunctions_on_both_names_scale() {
 /// the bytes at 8k (12 and 96), as for a group of linked constraints
 /// (`tightenings_of_a_sum_beside_many_disjunctions_on_both_names_scale`).
 #[test]
-#[ignore = "TIGHTEN-k-parts: 62.3 times the bytes at 12 and 96 (2026-11-12) on main's rule, k parts on a term due at each of k tightenings"]
+#[ignore = "TIGHTEN-k-parts: 62.3 times the bytes at 12 and 96 (2026-11-12) on main's rule, over the limit of 13; k parts on a term due at each of k tightenings"]
 fn tightenings_of_a_term_compared_by_many_disjunctions_scale() {
     let n = 12;
     let family = |k| {
@@ -1388,10 +1388,12 @@ fn a_binding_over_many_inputs_narrows_each_and_is_read_in_linear_time() {
             zedc::store::preimage::counts::image_sets() - before
         })
     };
-    let (small, large) = (counted(40), counted(320));
-    assert!(
-        large as f64 <= scaling::limit(40, 320, 1) * small as f64,
-        "leaves set: {small} at 40 tests, {large} at 320"
+    scaling::hold(
+        "tests of a binding over many inputs: 40 and 320 tests",
+        "image sets made",
+        counted(40),
+        counted(320),
+        1,
     );
     scaling::check("tests of a binding over many inputs", 40, |k| {
         let (s, t) = &built[&k];
@@ -1457,10 +1459,12 @@ fn tests_of_a_name_over_many_inputs_take_the_bounds_of_the_inputs_they_narrow() 
             zedc::store::preimage::counts::term_bounds() - before
         })
     };
-    let (small, large) = (counted(40), counted(320));
-    assert!(
-        large as f64 <= scaling::limit(40, 320, 1) * small as f64,
-        "term bounds: {small} at 40 tests, {large} at 320"
+    scaling::hold(
+        "tests over many inputs, their term bounds: 40 and 320 tests",
+        "term bounds taken",
+        counted(40),
+        counted(320),
+        1,
     );
 }
 
@@ -1538,10 +1542,12 @@ fn tests_of_summaries_over_one_input_read_that_input() {
             zedc::store::preimage::counts::inputs() - before
         })
     };
-    let (small, large) = (given(40), given(320));
-    assert!(
-        large as f64 <= scaling::limit(40, 320, 1) * small as f64,
-        "inputs given: {small} at 40 tests, {large} at 320"
+    scaling::hold(
+        "tests over many inputs, their inputs: 40 and 320 tests",
+        "inputs given",
+        given(40),
+        given(320),
+        1,
     );
 }
 

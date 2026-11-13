@@ -240,13 +240,8 @@ fn the_meet_of_prime_cycles_scales() {
         );
     };
     scaling::compare(
-        "a meet of cycles, the first 10 and 25 primes",
-        &format!(
-            "the input has 8.2 times the definitions; for work of order n log n in them the \
-             rule of low complexity allows at most {:.1} times (DESIGN.md Part G)",
-            scaling::limit(129, 1060, 1)
-        ),
-        scaling::limit(129, 1060, 1),
+        "a meet of cycles, the first 10 and 25 primes: 129 and 1060 definitions, 8.2 times",
+        1,
         || run(&small),
         || run(&large),
     );
@@ -485,13 +480,10 @@ fn a_union_of_cycles_less_one_scales() {
         assert_eq!(t.verdict(), Verdict::Empty);
     };
     scaling::compare(
-        "a union of cycles less a union holding each",
         &format!(
-            "the input has 8.5 times the definitions; for work of order n log n in them the \
-             rule of low complexity allows at most {:.1} times (DESIGN.md Part G)",
-            scaling::limit(n, m, 1)
+            "a union of cycles less a union holding each: {n} and {m} definitions, 8.25 times"
         ),
-        scaling::limit(n, m, 1),
+        1,
         || run(&small),
         || run(&large),
     );

@@ -109,9 +109,7 @@ fn testing_the_kind_of_a_large_tuple_scales() {
             "{TESTS} tests by kind of a tuple of {n} and {} strings",
             scaling::FACTOR * n
         ),
-        "the tests do not read the parts, so the work should not grow with the tuple; 3 allows \
-         for the noise of processor time where instructions are not counted",
-        3.0,
+        0,
         || run(&small),
         || run(&large),
     );

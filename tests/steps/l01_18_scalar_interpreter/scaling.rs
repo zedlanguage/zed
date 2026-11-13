@@ -63,7 +63,7 @@ fn check_reading(what: &str, n: usize, texts: impl Fn(usize) -> Vec<String>) {
             assert!(!v.to_string().starts_with('#'), "{what}: the text reads");
         }
     }
-    zed_tests::scaling::check_log_squared(what, n, |size| {
+    zed_tests::scaling::check(what, n, |size| {
         for t in &built[&size] {
             zed_kernel::eval(t).unwrap();
         }
@@ -97,9 +97,10 @@ fn reading_a_rat_of_n_digits_scales() {
     });
 }
 
-/// `int(s)` reads by halves, O(n log^2 n) (COMPLEXITY.md C31). It passes, 11.8 times the work
-/// against 12.1 (2026-11-12, RADIX-depth). It failed at 15.5 (2026-11-09): the split is
-/// `log2(n / 1024)` levels deep, and the products
+/// `int(s)` reads by halves, O(n log^2 n) (COMPLEXITY.md C31), held to the limit of 13 every
+/// scaling test meets. It passes, 11.8 times the work against the n log^2 n limit of that day,
+/// 12.1 (2026-11-12, RADIX-depth), and 12.0 (2026-11-13). It failed at 15.5 (2026-11-09): the
+/// split is `log2(n / 1024)` levels deep, and the products
 /// wider than `fast::MUL_LEAF` (512 words) are those of levels 4 and up, 4 levels at 160,000
 /// digits and 7 at 1,280,000, so their number grows 1.75 times where the limit allows 1.17 for
 /// each log; the ratio was 14.0 from 320,000 and 12.9 from 640,000
@@ -116,7 +117,7 @@ fn reading_an_int_of_n_digits_scales() {
             )
         })
         .collect();
-    zed_tests::scaling::check_log_squared("int(s) of n digits", 160_000, |n| {
+    zed_tests::scaling::check("int(s) of n digits", 160_000, |n| {
         zed_kernel::eval(&built[&n]).unwrap();
     });
 }
@@ -126,9 +127,10 @@ fn reading_an_int_of_n_digits_scales() {
 /// was O(n^2). At 80,000 digits, 4,153 words, both sizes are well above the gcd's leaf of 512
 /// words, num-bigint's gcd, so both run the half gcd; the ratio of the work, 22.4 at 20,000
 /// digits and 21.7 at 40,000, is 18.6 here as the leaf's share falls (2026-11-07), held to the
-/// limit of work of order n log^2 n, 12.3 (COMPLEXITY.md C31). It passes, 12.3 times the work
-/// and 11.1 times the bytes (2026-11-12, RADIX-depth); it failed on the bytes, 15.2 times
-/// (2026-11-09), as the recursion's deeper levels were dear.
+/// limit of 13 every scaling test meets (until 2026-11-13, the limit of work of order
+/// n log^2 n, 12.3; COMPLEXITY.md C31). It passes, 12.3 times the work and 11.1 times the bytes
+/// (2026-11-12, RADIX-depth), 12.3 and 11.6 (2026-11-13), in the band from 9 to 13; it failed
+/// on the bytes, 15.2 times (2026-11-09), as the recursion's deeper levels were dear.
 #[test]
 fn reading_a_rat_of_two_wide_parts_scales() {
     check_reading("rat(s) of two parts of n digits each", 80_000, |n| {
@@ -234,7 +236,7 @@ fn reading_a_decimal_with_high_powers_of_2_and_5_scales() {
             let v = zed_kernel::eval(t).unwrap();
             assert!(!v.to_string().starts_with('#'), "{what}: the text reads");
         }
-        zed_tests::scaling::check_log_squared(
+        zed_tests::scaling::check(
             &format!("rat(s) of a decimal of n digits with {what}"),
             n,
             |m| {
@@ -243,7 +245,7 @@ fn reading_a_decimal_with_high_powers_of_2_and_5_scales() {
                 }
             },
         );
-        zed_tests::scaling::check_log_squared(
+        zed_tests::scaling::check(
             &format!("a rat literal with an exponent, of n digits with {what}"),
             n,
             |m| {

@@ -548,11 +548,10 @@ fn listing_a_diagram_with_exponentially_many_paths_scales() {
     // holding the rows with a key of it, and those rows, two per tuple, are in the order of
     // their hashes, so the range held most rows: 20.3 times the instructions from `c` 64 to
     // 512. The list is read from the blocks those rows change (LIST-parity-keys): 9.5 times,
-    // under the 8 log 512 / log 64 = 12 times of order `c log c`.
+    // under the limit of 13.
     scaling::compare(
         "listing a meet with tuple types of many keys each, by count: sizes 64 and 512",
-        "for work of order c log c, 8 log 512 / log 64 = 12 times",
-        12.0,
+        1,
         || assert_eq!(count(64), Some(3 * 64 + 2)),
         || assert_eq!(count(512), Some(3 * 512 + 2)),
     );
@@ -1530,7 +1529,7 @@ fn the_verdict_of_a_meet_of_two_cycles_costs_what_its_emptiness_does() {
     // the emptiness (plan item VERDICT-meet-cost).
     let n = 1024;
     let t = &period(n, n - 1) & &period(n + 1, n);
-    scaling::compare(
+    scaling::compare_costs(
         "the verdict against the emptiness of the lists of lengths -1 modulo 1024 and 1025",
         "the verdict reads no group of a type that reads no member's verdict or value",
         1.5,

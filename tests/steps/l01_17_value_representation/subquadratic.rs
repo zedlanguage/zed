@@ -7,7 +7,7 @@ use num_bigint::{BigInt, BigUint};
 use num_integer::Integer;
 use num_traits::{One, Zero};
 use zed_kernel::Rat;
-use zed_tests::scaling::{check, check_log_squared};
+use zed_tests::scaling::check;
 
 /// A number of `words` 64-bit words drawn from `seed` (splitmix64), its top word not zero.
 fn random(words: usize, seed: u64) -> BigInt {
@@ -130,9 +130,10 @@ fn dividing_a_wide_number_scales() {
 }
 
 /// `(a c) / (b c)` reduced to lowest terms, `a`, `b` and `c` of n/2 words: the half gcd, O(n
-/// log^2 n), and two exact quotients by it, held to that order's limit (COMPLEXITY.md C31). It
-/// passes, 11.4 times the work against 13.3 (2026-11-12, RADIX-depth); it failed at 16.4
-/// (2026-11-09), as the transforms were dear.
+/// log^2 n), and two exact quotients by it (COMPLEXITY.md C31), held to the limit of 13 every
+/// scaling test meets. It passes, 11.4 times the work against that order's limit of the day,
+/// 13.3 (2026-11-12, RADIX-depth), and 11.4 (2026-11-13); it failed at 16.4 (2026-11-09), as
+/// the transforms were dear.
 #[test]
 fn a_gcd_of_wide_numbers_scales() {
     let n = 1 << 13;
@@ -145,7 +146,7 @@ fn a_gcd_of_wide_numbers_scales() {
     let g = num.gcd(den);
     assert!(g.bits() >= 64 * (n as u64 / 2 - 1));
     assert_eq!(r, Rat::new(num / &g, den / &g).expect("not zero"));
-    check_log_squared(
+    check(
         "(a c) / (b c) in lowest terms, a, b and c of n/2 words",
         n,
         |m| {
@@ -160,7 +161,8 @@ fn a_gcd_of_wide_numbers_scales() {
 }
 
 /// The decimal text of a dense number of n words: by halves, each power of ten's reciprocal
-/// built once, O(n log^2 n), held to that order's limit (COMPLEXITY.md C31). Both sizes are
+/// built once, O(n log^2 n) (COMPLEXITY.md C31), held to the limit of 13 every scaling test
+/// meets; 10.2 times (2026-11-13). Both sizes are
 /// above `PRINT_WHOLE`, 7845 words, below which num-bigint's printing, faster there, writes the
 /// text (`zed_kernel::num::to_decimal`). When that threshold was 60,000 words, the smaller size
 /// was num-bigint's, and the change of method made 18.5 times the work (2026-11-08,
@@ -176,7 +178,7 @@ fn printing_a_wide_number_scales() {
         (sparse(n) - 1u32).to_string()
     );
     assert_eq!(int(BigInt::zero()).numer_text(), "0");
-    check_log_squared("the decimal text of a number of n words", n, |m| {
+    check("the decimal text of a number of n words", n, |m| {
         assert!(!at(&inputs, n, m).numer_text().is_empty());
     });
 }

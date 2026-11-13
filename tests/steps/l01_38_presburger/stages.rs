@@ -569,7 +569,7 @@ fn the_race_costs_little_more_than_duong_where_duong_wins() {
     // times (9.6G), which this test fails (RACE-constant).
     let (n, rows) = split_bad_gor_both_ways(1024);
     let terms: Vec<(&[(usize, Int)], &Int)> = rows.iter().map(|(t, k)| (&t[..], k)).collect();
-    scaling::compare(
+    scaling::compare_costs(
         "the race against Duong's search alone, BAD-GOR split both ways at k = 1,024",
         "the race should cost about twice the search that finishes first (RACE-constant)",
         3.5,

@@ -48,14 +48,16 @@ fn nodes(g: &Region) -> usize {
 
 #[test]
 fn a_chain_of_functions_that_push_lowers_to_a_graph_linear_in_its_length() {
-    let (small, large) = (
-        nodes(&lower(&chain(4)).unwrap()),
-        nodes(&lower(&chain(16)).unwrap()),
-    );
-    assert!(
-        large <= 5 * small,
-        "a chain of 4 functions that push lowers to {small} nodes and one of 16 to {large}, \
-         and the graph is to grow linearly in the chain's length"
+    let n = 4;
+    let nodes_of = |k: usize| nodes(&lower(&chain(k)).unwrap()) as u64;
+    scaling::hold_linear(
+        &format!(
+            "a chain of {n} and {} functions that push, lowered",
+            scaling::FACTOR * n
+        ),
+        "nodes of the graph",
+        nodes_of(n),
+        nodes_of(scaling::FACTOR * n),
     );
 }
 

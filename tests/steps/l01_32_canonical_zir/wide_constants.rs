@@ -7,7 +7,7 @@
 use num_bigint::{BigInt, BigUint, Sign};
 use zed_kernel::term::build::lit;
 use zed_kernel::{Rat, Term, Value};
-use zed_tests::scaling::{check_order, compare, limit};
+use zed_tests::scaling::check_order;
 use zedc::address::ContentAddress;
 use zedc::canon::{self, Def};
 use zedc::zir::canon::address;
@@ -167,6 +167,9 @@ fn a_cut_count_of_limbs_is_an_error() {
     }
 }
 
+/// The decimal digits cost about `n^1.5` here, 22.3 times the work at 8n: over the limit of 13,
+/// though under the 24 allowed until SCALE-ratio, when a second test held it at 64 times the
+/// bits (removed by TESTS-scaling-limit-13).
 #[test]
 fn addressing_a_wide_constant_is_linear_in_its_bits() {
     const N: usize = 1 << 17;
@@ -209,37 +212,6 @@ fn addressing_a_wide_constant_is_linear_in_its_bits() {
         1,
         |k| {
             canon::address(&defs[usize::from(k != N)], &none).expect("memory for the address");
-        },
-    );
-}
-
-/// The decimal digits cost about `n^1.5` here, 22.3 times the work for 8 times the bits, which
-/// was under the 24 times that [`check_order`] allowed for order `n` until SCALE-ratio; over 64
-/// times the bits they cost about 500 times, far over the limit of about 100 times, so this test
-/// tells the two apart with a wider margin than [`check_order`].
-#[test]
-fn addressing_a_wide_constant_stays_linear_over_64_times_the_bits() {
-    const N: usize = 1 << 14;
-    let (small, large) = (
-        graph(Value::int(wide(N, Sign::Plus))),
-        graph(Value::int(wide(64 * N, Sign::Plus))),
-    );
-    let limit = limit(N, 64 * N, 1);
-    compare(
-        &format!(
-            "the ZIR address of a random number of n bits: sizes {N} and {}",
-            64 * N
-        ),
-        &format!(
-            "for work of order n log n the rule of low complexity allows at most {limit:.1} times \
-             for 64 times the size (DESIGN.md Part G)"
-        ),
-        limit,
-        || {
-            address(&small).expect("memory for the address");
-        },
-        || {
-            address(&large).expect("memory for the address");
         },
     );
 }

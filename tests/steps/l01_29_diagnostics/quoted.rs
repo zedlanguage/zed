@@ -260,14 +260,7 @@ fn listing_many_diagnostics_on_one_line_scales() {
     ] {
         let made = scaling::inputs(n, make);
         let bytes = |k: usize| listing(&made[&k]).len();
-        let (ratio, limit) = (
-            bytes(large) as f64 / bytes(n) as f64,
-            scaling::limit(n, large, 1),
-        );
-        assert!(
-            ratio <= limit,
-            "{what}: {ratio} times the bytes, more than {limit}"
-        );
+        scaling::hold(what, "bytes", bytes(n) as u64, bytes(large) as u64, 1);
         scaling::check(what, n, |k| {
             std::hint::black_box(listing(&made[&k]));
         });

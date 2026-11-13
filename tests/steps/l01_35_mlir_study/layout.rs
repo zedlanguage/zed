@@ -9,7 +9,7 @@ use zed_rt::Word;
 use zed_rt::heap::CELL_BYTES;
 use zed_tests::layout::{Native, Record, ast_stage, record};
 use zed_tests::oracle::step_units;
-use zed_tests::scaling::check;
+use zed_tests::scaling::{self, check};
 use zedc::ast::{Expr, ExprKind, Pattern, Stmt, Type};
 use zedc::zir::{Edge, Node, Op, Region, Src};
 
@@ -156,16 +156,20 @@ fn many(n: usize) -> String {
 }
 
 #[test]
-fn the_peak_bytes_of_n_and_8n_definitions_are_within_24_times() {
+fn the_peak_bytes_of_n_and_8n_definitions_scale() {
     let peak = |n: usize| {
         let text = many(n);
         let (r, l) = zed_alloc_count::live(|| record(&text).unwrap_or_else(|e| panic!("{e}")));
         assert_eq!(r.native.runs, n as u64);
         l.peak
     };
-    let (small, large) = (peak(100), peak(800));
-    println!("peak bytes: {small} at 100 definitions, {large} at 800");
-    assert!(large <= 24 * small, "{large} > 24 * {small}");
+    scaling::hold(
+        "the peak bytes of recording 100 and 800 definitions",
+        "bytes",
+        peak(100),
+        peak(800),
+        1,
+    );
 }
 
 #[test]

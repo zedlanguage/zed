@@ -268,6 +268,7 @@ fn a_cast_menu_costs_the_same_in_a_larger_program() {
     // repair still did 1.88 times the work there, against a limit of 1.32 (TESTS-l01_29-split).
     const R: usize = 100;
     let meter = &mut Meter::new();
+    let unit = meter.unit();
     let mut rejections = |m: usize| {
         let mut work = |r: usize| {
             let (stmts, res) = padded(m, r);
@@ -290,16 +291,15 @@ fn a_cast_menu_costs_the_same_in_a_larger_program() {
             .expect("the rejections add work")
     };
     let m = 30_000;
-    let limit = scaling::limit(m, scaling::FACTOR * m, 0);
-    let (small, large) = (rejections(m), rejections(scaling::FACTOR * m));
-    let ratio = large as f64 / small as f64;
-    assert!(
-        ratio <= limit,
-        "{R} rejections beside {m} and {} expressions: {small} and {large} {}, {ratio:.2} \
-         times the work; for work of order n^0 the rule of low complexity allows at most \
-         {limit:.2} times (DESIGN.md Part G)",
-        scaling::FACTOR * m,
-        meter.unit(),
+    scaling::hold(
+        &format!(
+            "{R} rejections beside {m} and {} expressions",
+            scaling::FACTOR * m
+        ),
+        unit,
+        rejections(m),
+        rejections(scaling::FACTOR * m),
+        0,
     );
 }
 
@@ -505,6 +505,7 @@ fn the_menus_of_calls_literals_and_comparisons_cost_the_same_in_a_larger_program
     // same scan per offered repair did 1.91 times the work at m = 30,000.
     const R: usize = 100;
     let meter = &mut Meter::new();
+    let unit = meter.unit();
     let mut rejections = |m: usize| {
         let mut work = |r: usize| {
             let (stmts, res) = padded_with(m, &called(r));
@@ -527,15 +528,14 @@ fn the_menus_of_calls_literals_and_comparisons_cost_the_same_in_a_larger_program
             .expect("the rejections add work")
     };
     let m = 30_000;
-    let limit = scaling::limit(m, scaling::FACTOR * m, 0);
-    let (small, large) = (rejections(m), rejections(scaling::FACTOR * m));
-    let ratio = large as f64 / small as f64;
-    assert!(
-        ratio <= limit,
-        "{R} functions beside {m} and {} expressions: {small} and {large} {}, {ratio:.2} \
-         times the work; for work of order n^0 the rule of low complexity allows at most \
-         {limit:.2} times (DESIGN.md Part G)",
-        scaling::FACTOR * m,
-        meter.unit(),
+    scaling::hold(
+        &format!(
+            "{R} functions beside {m} and {} expressions",
+            scaling::FACTOR * m
+        ),
+        unit,
+        rejections(m),
+        rejections(scaling::FACTOR * m),
+        0,
     );
 }

@@ -385,17 +385,19 @@ fn many_decimals_on_one_line_print_the_line_once() {
     // Negative control (run once, not committed): one message for each decimal, each quoting
     // the line, as before this item, printed 16.2 times the bytes for 4 times the decimals
     // (964335 bytes for n = 200, 15605535 for 800), and failed the bound below. One message
-    // prints 4.0 times (zedc: 51340 bytes for 200, 207641 for 800).
+    // prints 4.0 times (zedc: 51340 bytes for 200, 207641 for 800). Held at 200 and 1,600
+    // decimals since the limit of 13 (TESTS-scaling-limit-13).
     scaling::on_a_thread(1 << 28, || {
         let n = 200;
-        let out: Vec<usize> = [n, 4 * n].map(|m| printed(&decimals(m)).len()).into();
-        let ratio = out[1] as f64 / out[0] as f64;
-        assert!(
-            ratio < 5.0,
-            "{n} decimals print {} bytes, {} print {}: {ratio:.1} times",
-            out[0],
-            4 * n,
-            out[1]
+        let bytes = |m: usize| printed(&decimals(m)).len() as u64;
+        scaling::hold_linear(
+            &format!(
+                "{n} and {} decimals on one line, rejected",
+                scaling::FACTOR * n
+            ),
+            "bytes printed",
+            bytes(n),
+            bytes(scaling::FACTOR * n),
         );
         assert_eq!(
             printed(&decimals(n)).matches(&decimals(n)[..20]).count(),

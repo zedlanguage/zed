@@ -311,10 +311,12 @@ fn check_note_counts(
         (per * n, per * scaling::FACTOR * n),
         "{what}"
     );
-    assert!(
-        large_text as f64 <= scaling::limit(n, scaling::FACTOR * n, 1) * small_text as f64,
-        "{what}: {small_text} and {large_text} bytes of text, over {:.1} times",
-        scaling::limit(n, scaling::FACTOR * n, 1)
+    scaling::hold(
+        &format!("{what}: the text of its notes"),
+        "bytes",
+        small_text as u64,
+        large_text as u64,
+        1,
     );
     srcs
 }
@@ -1008,7 +1010,9 @@ fn the_names_of_a_tested_block_read_under_the_test_are_checked_in_time_linear_in
     // narrowed input, in either order of reads (item PA-let-narrow). Measured 2026-11-07, last
     // first: 3.57e8 instructions at d = 256 and 2.81e9 at d = 2048, 7.9 times. A negative
     // control in which a summary sums the whole chain of those it reads, not their formed sums,
-    // measured 16.8 times; the limit of 24 at sizes this test can afford does not fail it.
+    // measured 16.8 times, which the limit of 24 of that day let pass; the count of nodes in
+    // `the_summaries_of_a_tested_block_are_formed_from_each_node_a_bounded_number_of_times`
+    // finds it.
     for last_first in [false, true] {
         let what = if last_first {
             "reading each of a block of d lets under a test, last first"
@@ -1084,9 +1088,10 @@ fn sum_nodes(src: &str) -> u64 {
 fn the_summaries_of_a_tested_block_are_formed_from_each_node_a_bounded_number_of_times() {
     // The work of the two tests above is mostly linear in the bindings for other causes, so it
     // hides a summary formed from the whole chain below it, `Θ(d²)`: measured 16.8 times the
-    // instructions at 8x, under the limit of 24. The nodes `LetPa::sum` enters are linear in the
-    // bindings only when each summary is formed from the formed sums of those it reads (item
-    // PA-let-narrow), and a count does not change with the load. Measured 2026-11-07: 129 nodes
+    // instructions at 8x, under the limit of 24 of that day; it would fail the limit of 13 now.
+    // The nodes `LetPa::sum` enters are linear in the bindings only when each summary is formed
+    // from the formed sums of those it reads (item PA-let-narrow), and a count does not change
+    // with the load, so it is held to 9 (`scaling::hold_linear`). Measured 2026-11-07: 129 nodes
     // at d = 64 and 1,025 at d = 512 (7.95 times) for each block. A negative control in which
     // `sum` ignores the formed sums entered 2,145 and 131,841 nodes for the first block (61.5
     // times) and failed this test.
@@ -1105,11 +1110,12 @@ fn the_summaries_of_a_tested_block_are_formed_from_each_node_a_bounded_number_of
         let (small_src, large_src) = (super::program(&make(n)), super::program(&make(large)));
         let (a, b) =
             scaling::on_a_thread(1 << 29, || (sum_nodes(&small_src), sum_nodes(&large_src)));
-        let ratio = b as f64 / a as f64;
-        assert!(
-            a > 0 && ratio <= 9.0,
-            "{what}: `LetPa::sum` entered {a} nodes at d = {n} and {b} at d = {large}: \
-             {ratio:.2} times, above 9"
+        assert!(a > 0, "{what}: `LetPa::sum` entered no node at d = {n}");
+        scaling::hold_linear(
+            &format!("{what}: `LetPa::sum`, d = {n} and {large}"),
+            "nodes entered",
+            a,
+            b,
         );
     }
 }
@@ -1155,10 +1161,12 @@ fn a_chain_of_sums_over_many_inputs_reads_each_summary_in_its_narrowed_inputs() 
     let (a, b) = scaling::on_a_thread(1 << 29, || {
         (term_bounds(&small_src), term_bounds(&large_src))
     });
-    let ratio = b as f64 / a as f64;
-    assert!(
-        a > 0 && ratio <= 9.0,
-        "`pa_bounds` ran {a} times at d = {n} and {b} at d = {large}: {ratio:.2} times, above 9"
+    assert!(a > 0, "`pa_bounds` did not run at d = {n}");
+    scaling::hold_linear(
+        &format!("a chain of sums over many inputs, d = {n} and {large}"),
+        "runs of `pa_bounds`",
+        a,
+        b,
     );
 }
 
@@ -1207,11 +1215,15 @@ fn a_chain_of_sums_under_a_test_of_each_input_reads_each_summary_from_the_one_be
         let (a, b) = scaling::on_a_thread(1 << 29, || {
             (term_bounds(&small_src), term_bounds(&large_src))
         });
-        let ratio = b as f64 / a as f64;
         assert!(
-            a > 0 && ratio <= 9.0,
-            "parameters {params}: `pa_bounds` ran {a} times at d = {n} and {b} at d = {large}: \
-             {ratio:.2} times, above 9"
+            a > 0,
+            "parameters {params}: `pa_bounds` did not run at d = {n}"
+        );
+        scaling::hold_linear(
+            &format!("a chain of sums under tests, parameters {params}, d = {n} and {large}"),
+            "runs of `pa_bounds`",
+            a,
+            b,
         );
     }
 }
@@ -1252,10 +1264,13 @@ fn tests_of_a_name_over_many_inputs_take_the_bounds_of_the_inputs_they_narrow() 
     let (a, b) = scaling::on_a_thread(1 << 29, || {
         (term_bounds(&small_src), term_bounds(&large_src))
     });
-    let ratio = b as f64 / a as f64;
-    assert!(
-        a > 0 && ratio <= scaling::limit(n, large, 1),
-        "`pa_bounds` ran {a} times at k = {n} and {b} at k = {large}: {ratio:.2} times"
+    assert!(a > 0, "`pa_bounds` did not run at k = {n}");
+    scaling::hold(
+        &format!("k tests of a sum of k inputs, k = {n} and {large}"),
+        "runs of `pa_bounds`",
+        a,
+        b,
+        1,
     );
 }
 

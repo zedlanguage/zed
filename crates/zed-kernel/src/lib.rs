@@ -35,7 +35,7 @@ pub mod words;
 #[path = "../../../tests/src/scaling.rs"]
 #[expect(
     dead_code,
-    reason = "the kernel's tests hold no radix conversion or gcd to the log-squared limit (`check_log_squared`)"
+    reason = "the kernel's tests use only some of the shared checks"
 )]
 mod scaling;
 

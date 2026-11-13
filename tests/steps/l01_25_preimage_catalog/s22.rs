@@ -3731,13 +3731,15 @@ fn class_ranges_read_the_holes_once() {
         };
         let (small, large) = (reads(n), reads(scaling::FACTOR * n));
         assert!(small > 0, "the tests are read by their classes");
-        let ratio = large as f64 / small as f64;
-        assert!(
-            ratio <= scaling::limit(n, scaling::FACTOR * n, 1),
-            "pieces of the domain read at sizes {n} and {}: {small} and {large}, {ratio:.1} times, \
-             over {}",
-            scaling::FACTOR * n,
-            scaling::limit(n, scaling::FACTOR * n, 1)
+        scaling::hold(
+            &format!(
+                "pieces of the domain read: sizes {n} and {}",
+                scaling::FACTOR * n
+            ),
+            "pieces",
+            small,
+            large,
+            1,
         );
     });
 }
@@ -3763,13 +3765,15 @@ fn forward_sets_of_a_chain_share_the_holes_scale() {
         };
         let (small, large) = (made(n), made(scaling::FACTOR * n));
         assert!(small > 0, "the forward transfer makes sets");
-        let ratio = large as f64 / small as f64;
-        assert!(
-            ratio <= scaling::limit(n, scaling::FACTOR * n, 1),
-            "pieces of the forward sets at sizes {n} and {}: {small} and {large}, {ratio:.1} \
-             times, over {}",
-            scaling::FACTOR * n,
-            scaling::limit(n, scaling::FACTOR * n, 1)
+        scaling::hold(
+            &format!(
+                "pieces of the forward sets: sizes {n} and {}",
+                scaling::FACTOR * n
+            ),
+            "pieces",
+            small,
+            large,
+            1,
         );
     });
 }

@@ -1161,9 +1161,9 @@ fn pncx_fibonacci_parts() {
 /// Two consecutive Fibonacci moduli, the slowest case of the Euclidean extended gcd: the whole
 /// question costs at most 10 times the kernel's gcd of the same two moduli, at F(80001) (55,540
 /// bits) and F(750001) (520,682 bits). Measured 5.8 and 6.5 times with the half gcd; 190 times
-/// at F(80001) with the Euclidean `bezout` (R6-CLAUDE-7). `check_log_squared` cannot hold it:
-/// the kernel's gcd alone on these numbers grows 17.5 times in instructions and 13.9 times in
-/// bytes from F(750001) to F(6000001), above the 11.7 that rule allows. Ignored for its time,
+/// at F(80001) with the Euclidean `bezout` (R6-CLAUDE-7). A scaling test cannot hold it: the
+/// kernel's gcd alone on these numbers grows 17.5 times in instructions and 13.9 times in bytes
+/// from F(750001) to F(6000001), above the limit of 13. Ignored for its time,
 /// about 3 seconds.
 #[test]
 fn pncx_fibonacci_crt_scale() {

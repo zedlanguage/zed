@@ -2048,7 +2048,7 @@ mod r6_row_order_tests {
     #[test]
     fn disjoint_row_orders_scale_and_match() {
         let red = std::env::var_os("PDCX_RED").is_some();
-        let mut counts = Vec::new();
+        let (mut counts, mut unit) = (Vec::new(), "");
         for n in [64, 512, 4096] {
             let atoms: Vec<Atom> = (0..4 * n)
                 .map(|i| Atom::Sym(format!("a{i}").into()))
@@ -2083,6 +2083,7 @@ mod r6_row_order_tests {
             }
             super::ROW_ORDER_SCAN.with(|c| c.set(red));
             let mut meter = scaling::Meter::new();
+            unit = meter.unit();
             let w = meter.work(|| {
                 for row in &rows {
                     black_box(row_order(row, &atoms, &rank));
@@ -2090,13 +2091,12 @@ mod r6_row_order_tests {
             });
             super::ROW_ORDER_SCAN.with(|c| c.set(false));
             println!("R6ORDER n={n} red={red} work={}", w.units);
-            counts.push(w.units as f64);
+            counts.push(w.units);
         }
         for (i, n) in [64, 512].into_iter().enumerate() {
-            let ratio = counts[i + 1] / counts[i];
-            let limit = scaling::limit(n, 8 * n, 1);
-            println!("R6ORDER ratio={ratio} limit={limit}");
-            assert!(ratio <= limit, "row orders: {ratio} > {limit}");
+            let what = format!("row orders, red {red}: n = {n} and {}", 8 * n);
+            let ratio = scaling::hold(&what, unit, counts[i], counts[i + 1], 1);
+            println!("R6ORDER ratio={ratio}");
         }
     }
 }

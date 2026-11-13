@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use num_bigint::{BigInt, Sign};
 use zed_kernel::num::bytes_of;
 use zed_kernel::term::build::var;
-use zed_tests::scaling::{check_order, compare, limit};
+use zed_tests::scaling::check_order;
 use zed_tests::step_helpers::l01_17_value_representation::{in_child_at, lower_limit_by};
 use zedc::canon::{Def, Domain, address};
 use zedc::store::interval::{IntervalSet, Num};
@@ -167,7 +167,10 @@ fn wide(bytes: usize) -> Num {
 }
 
 /// Addressing a definition whose end and class hold a number past `i64` is linear in the
-/// number's bits; its decimal text took more than linear time.
+/// number's bits; its decimal text took more than linear time. The decimal text cost about
+/// `n^1.5`, 22.6 times the work at 8n: over the limit of 13, though under the 24 allowed until
+/// SCALE-ratio, when a second test held it at 64 times the bits (removed by
+/// TESTS-scaling-limit-13).
 #[test]
 fn addressing_a_wide_end_and_class_scales() {
     let (n, sizes) = (128usize << 10, [128usize << 10, 1 << 20]);
@@ -187,37 +190,5 @@ fn addressing_a_wide_end_and_class_scales() {
             addr(end);
             addr(class);
         },
-    );
-}
-
-/// The decimal text cost about `n^1.5`, under the 24 times that [`check_order`] allowed for
-/// order `n` at 8 times the bits until SCALE-ratio; over 64 times the bits it costs about 500
-/// times, far over the limit of about 100 times, so this test tells the two apart with a
-/// wider margin than [`check_order`] (as `l01_32_canonical_zir::wide_constants` does for
-/// constants).
-#[test]
-fn addressing_a_wide_end_and_class_stays_linear_over_64_times_the_bits() {
-    const N: usize = 16 << 10;
-    let defs = [N, 64 * N].map(|b| {
-        let v = wide(b);
-        (at(v.clone()), class(&v + &v, v))
-    });
-    let limit = limit(N, 64 * N, 1);
-    let run = |(end, class): &(Def, Def)| {
-        addr(end);
-        addr(class);
-    };
-    compare(
-        &format!(
-            "addressing a wide end and a wide class, by the bytes of the number: sizes {N} and {}",
-            64 * N
-        ),
-        &format!(
-            "for work of order n log n the rule of low complexity allows at most {limit:.1} times \
-             for 64 times the size (DESIGN.md Part G)"
-        ),
-        limit,
-        || run(&defs[0]),
-        || run(&defs[1]),
     );
 }

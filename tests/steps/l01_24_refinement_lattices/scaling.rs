@@ -437,9 +437,7 @@ fn power_bounds_scale_with_the_bits_of_the_exponent() {
     let n = 1_000_000;
     scaling::compare(
         "the bound of x^k: k = 10^6 and 8 * 10^6",
-        "the work is of order the bits of k, which grow by 3 of about 20, so 3 times allows \
-         for noise and fails for any work that grows with k itself",
-        3.0,
+        0,
         || power_bounds(n),
         || power_bounds(scaling::FACTOR * n),
     );
@@ -518,9 +516,7 @@ fn kept_arithmetic_scales_with_the_bits_of_the_exponent() {
     scaling::compare(
         "x^k + 1, k * x^k - 1, the cube root of 2^k, 3^k + 5^k, 3^(k + 1) - 3^k and \
          (2^k + 1)^3: k = 10^6 + 1 and 8 times it",
-        "the work is of order the bits of k, which grow by 3 of about 20, so 3 times allows \
-         for noise and fails for any work that grows with k itself",
-        3.0,
+        0,
         || kept_arithmetic(n),
         || kept_arithmetic(scaling::FACTOR * n),
     );
@@ -546,9 +542,7 @@ fn equal_cores_scale_with_the_bits_of_the_exponent() {
     scaling::compare(
         "3^e * 9^(e + 1) - 3^(3e + 2) and 6^e * 5^(e + 1) - 2^e * 3^e * \
          5^(e + 1): e = 10^6 and 8 * 10^6",
-        "the work is of order the bits of e, which grow by 3 of about 20, so 3 times allows \
-         for noise and fails for any work that grows with e itself",
-        3.0,
+        0,
         || equal_cores(n),
         || equal_cores(scaling::FACTOR * n),
     );

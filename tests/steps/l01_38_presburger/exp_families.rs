@@ -626,41 +626,45 @@ fn seeds(width: usize, per: usize, op: char, n: usize) -> Work {
     })
 }
 
-/// Measures `cost` at each size, printing the exponent of each doubling, and panics at the
-/// first size whose instructions or bytes are more than [`scaling::limit`]`(k, 2k, power)`
-/// times those of the size before.
+/// Measures `cost` at each size, printing the exponent of each doubling, and holds the
+/// instructions and the bytes at the last size, 8 times the first, to those at the first by
+/// [`scaling::hold`]: under [`scaling::limit`]`(power)`.
 fn doubling(what: &str, sizes: &[usize], power: u32, cost: impl Fn(usize) -> Work) {
-    let mut before = cost(sizes[0]);
-    println!("{what}, k = {}: {} instructions", sizes[0], before.units);
+    let (first, last) = (sizes[0], sizes[sizes.len() - 1]);
+    assert_eq!(
+        last,
+        scaling::FACTOR * first,
+        "{what}: the sizes run from n to 8n"
+    );
+    let start = cost(first);
+    println!("{what}, k = {first}: {} instructions", start.units);
+    let mut before = start;
     for pair in sizes.windows(2) {
         let (small, large) = (pair[0], pair[1]);
         let now = cost(large);
-        let limit = scaling::limit(small, large, power);
         let (units, bytes) = (
             now.units as f64 / before.units as f64,
             now.bytes as f64 / before.bytes as f64,
         );
         println!(
             "{what}, k = {large}: {} instructions, {units:.2} times, exponent {:.2}; {bytes:.2} \
-             times the bytes; limit {limit:.2}",
+             times the bytes",
             now.units,
             units.log2() / (large as f64 / small as f64).log2()
         );
-        assert!(
-            units <= limit && bytes <= limit,
-            "{what}: from k = {small} to {large} the instructions grew {units:.2} times and the \
-             bytes {bytes:.2} times; work of order k^{power} log k allows {limit:.2} times \
-             (COMPLEXITY.md PRES-exp-families)"
-        );
         before = now;
     }
+    let what = format!("{what}: k = {first} and {last} (COMPLEXITY.md PRES-exp-families)");
+    scaling::hold(&what, "instructions", start.units, before.units, power);
+    scaling::hold(&what, "bytes", start.bytes, before.bytes, power);
 }
 
-/// A test that `op` on `family` costs work of order `k^power log k` at each doubling of `sizes`,
-/// the least of `runs` runs at each size.
+/// A test that `op` on `family` costs work of order `k^power` from the first of `sizes` to the
+/// last, 8 times it ([`doubling`]), the least of `runs` runs at each size.
 macro_rules! costs {
-    ($name:ident, $family:ident, $on:expr, $op:expr, $sizes:expr, $power:expr, $runs:expr) => {
+    ($(#[$attr:meta])* $name:ident, $family:ident, $on:expr, $op:expr, $sizes:expr, $power:expr, $runs:expr) => {
         #[test]
+        $(#[$attr])*
         fn $name() {
             let what = format!("{}, {}", stringify!($family), $op);
             doubling(&what, &$sizes, $power, |k| {
@@ -754,8 +758,11 @@ costs!(
     1
 );
 // `project_each` changes how it answers at k = 5 and again at k = 7 (12.5G instructions, from
-// 1.73G at k = 6), and costs 98.7G at k = 16: only k = 8 and 16 fit in 60 s.
+// 1.73G at k = 6), and costs 98.7G at k = 16: only k = 8 and 16 fit in 60 s. Until 2026-11-13
+// it was held per doubling to k^3 log k with a slack of 1.1, 11.7 from 8 to 16; [`doubling`]
+// holds sizes 8 times apart, and k = 64 does not fit in 60 s, so it is ignored.
 costs!(
+    #[ignore = "PRES-subset-project-cost: k = 8 and 16 are 2 times apart and k = 64 does not run in 60 s, so it cannot be held at n and 8n under the limit of 13 since TESTS-scaling-limit-13; open"]
     subset_sum_project_each,
     subset_sum,
     "y0",

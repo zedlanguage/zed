@@ -110,7 +110,7 @@ fn a_chain_of_following_comparisons_costs_what_the_plain_chain_costs() {
     }
     // Finding each compared value again for each test around it cost 2^d; finding it once
     // per test, d times the plain chain. The terms differ by the match of each level only.
-    scaling::compare(
+    scaling::compare_costs(
         "the arms of a chain of 48 following comparisons against the plain chain",
         "the value compared is found once, as in the plain chain",
         3.0,

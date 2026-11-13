@@ -19923,13 +19923,14 @@ mod r6_unary_queue_tests {
     #[test]
     fn unary_queue_scales() {
         let red = std::env::var_os("PDCX_RED").is_some();
-        let mut counts = Vec::new();
+        let (mut counts, mut unit) = (Vec::new(), "");
         for n in [64, 512, 4096] {
             let mut p = fixture(n);
             let mut base = Linked::default();
             let mut near = Near::default();
             UNIT_RESCAN.with(|c| c.set(red));
             let mut meter = scaling::Meter::new();
+            unit = meter.unit();
             let w = meter.work(|| {
                 let ok = if UNIT_RESCAN.with(Cell::get) {
                     drain_unary_rescan(&mut p, &mut base, &mut near)
@@ -19940,13 +19941,12 @@ mod r6_unary_queue_tests {
             });
             UNIT_RESCAN.with(|c| c.set(false));
             println!("R6DRAIN n={n} red={red} work={}", w.units);
-            counts.push(w.units as f64);
+            counts.push(w.units);
         }
         for (i, n) in [64, 512].into_iter().enumerate() {
-            let ratio = counts[i + 1] / counts[i];
-            let limit = scaling::limit(n, 8 * n, 1);
-            println!("R6DRAIN ratio={ratio} limit={limit}");
-            assert!(ratio <= limit, "unary drain: {ratio} > {limit}");
+            let what = format!("unary drain, red {red}: n = {n} and {}", 8 * n);
+            let ratio = scaling::hold(&what, unit, counts[i], counts[i + 1], 1);
+            println!("R6DRAIN ratio={ratio}");
         }
     }
 }

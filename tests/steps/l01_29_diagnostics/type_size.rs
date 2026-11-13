@@ -392,15 +392,8 @@ fn a_chain_of_names_of_one_type_writes_the_type_whole_at_each_link() {
 fn scales(what: &str, n: usize, make: fn(usize) -> String) {
     use zed_tests::scaling;
     let large = scaling::FACTOR * n;
-    let bytes = |k: usize| rejected(&make(k)).len();
-    let (ratio, limit) = (
-        bytes(large) as f64 / bytes(n) as f64,
-        scaling::limit(n, large, 1),
-    );
-    assert!(
-        ratio <= limit,
-        "{what}: {ratio} times the bytes, more than {limit}"
-    );
+    let bytes = |k: usize| rejected(&make(k)).len() as u64;
+    scaling::hold(what, "bytes of the rejection", bytes(n), bytes(large), 1);
 }
 
 #[test]

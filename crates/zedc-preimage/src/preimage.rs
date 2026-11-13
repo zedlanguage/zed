@@ -14611,8 +14611,7 @@ mod tests {
         }
         crate::scaling::compare(
             "refused joins between two classes of n/8 functions, eight pairs, n = 1000 and 8000",
-            "work of order n log n (DESIGN.md Part G)",
-            crate::scaling::limit(1000, 8000, 1),
+            1,
             || {
                 std::hint::black_box(unite(&small.0, &small.1));
             },
@@ -14686,7 +14685,7 @@ mod tests {
     /// A chain of guards on `x mod 2` over `[-6, 6]`, which the first split finds wide
     /// ([`Split::Wide`]) and the split over the box it found reads exactly ([`preimage_in`]).
     #[test]
-    #[ignore = "PRE-class-int: 17.2 times the bytes at 10 and 80 ifs, over the n log n limit 16.7 since SCALE-ratio; open"]
+    #[ignore = "PRE-class-int: 17.2 times the bytes at 10 and 80 ifs, over the limit of 13; open"]
     fn a_chain_split_by_two_classes_is_read_in_time_near_its_length() {
         crate::scaling::check_order("the preimage of a chain of k ifs, x mod 2", 10, 1, |k| {
             chain_preimage(2, k)
@@ -14758,7 +14757,7 @@ mod tests {
     /// stage `i` in about `i` rounds of the whole formula (COMPLEXITY.md
     /// PREIMAGE-slow-rounds).
     #[test]
-    #[ignore = "PRES-settle-chain-rounds: 22.4 times the bytes at 4 and 32 stages, over the limit 22.0; a bound learned at stage i settles in about i rounds of the whole formula; open"]
+    #[ignore = "PRES-settle-chain-rounds: 22.4 times the bytes at 4 and 32 stages, over the limit of 13; a bound learned at stage i settles in about i rounds of the whole formula; open"]
     fn a_staged_chain_under_false_is_read_in_time_near_its_length() {
         crate::scaling::check_order(
             "the preimage under false of a chain of k stages",

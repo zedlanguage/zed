@@ -12,6 +12,6 @@ pub mod presburger;
 #[path = "../../../tests/src/scaling.rs"]
 #[expect(
     dead_code,
-    reason = "presburger's tests hold no radix conversion or gcd to the log-squared limit (`check_log_squared`)"
+    reason = "presburger's tests use only some of the shared checks"
 )]
 mod scaling;

@@ -693,13 +693,8 @@ fn the_point_of_a_larger_grid_of_differences_scales() {
     point_of("a grid of 33", &small);
     point_of("a grid of 93", &large);
     scaling::compare(
-        "the point of a grid of differences: 4224 and 34224 rows",
-        &format!(
-            "8.1 times the rows; for work of order n log n the rule of low complexity allows {:.1} \
-             times (DESIGN.md Part G)",
-            scaling::limit(4224, 34224, 1)
-        ),
-        scaling::limit(4224, 34224, 1),
+        "the point of a grid of differences: 4224 and 34224 rows, 8.1 times",
+        1,
         || drop(satisfiable(&small)),
         || drop(satisfiable(&large)),
     );

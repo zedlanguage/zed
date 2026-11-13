@@ -187,11 +187,13 @@ fn rendering_many_steps_on_one_line_scales() {
     let large = scaling::FACTOR * n;
     let made = scaling::inputs(n, |k| diagnostic(terms(k)));
     let bytes = |k: usize| made[&k].to_string().len();
-    let (ratio, limit) = (
-        bytes(large) as f64 / bytes(n) as f64,
-        scaling::limit(n, large, 1),
+    scaling::hold(
+        "rendering n steps on one line",
+        "bytes",
+        bytes(n) as u64,
+        bytes(large) as u64,
+        1,
     );
-    assert!(ratio <= limit, "{ratio} times the bytes, more than {limit}");
     scaling::check("rendering n steps on one line", n, |k| {
         std::hint::black_box(made[&k].to_string());
     });
@@ -212,11 +214,13 @@ fn rejecting_a_line_of_many_literals_scales() {
     let n = 300;
     let bytes = |k: usize| super::rejected(&literals(k)).len();
     let large = scaling::FACTOR * n;
-    let (ratio, limit) = (
-        bytes(large) as f64 / bytes(n) as f64,
-        scaling::limit(n, large, 1),
+    scaling::hold(
+        "rejecting a line of n literals",
+        "bytes",
+        bytes(n) as u64,
+        bytes(large) as u64,
+        1,
     );
-    assert!(ratio <= limit, "{ratio} times the bytes, more than {limit}");
     scaling::check("rejecting a line of n literals", n, |k| {
         std::hint::black_box(super::rejected(&literals(k)));
     });
@@ -373,11 +377,13 @@ fn rendering_a_line_of_nested_sums_scales() {
     let large = scaling::FACTOR * n;
     let made = scaling::inputs(n, |k| diagnostic(sums(k)));
     let bytes = |k: usize| made[&k].to_string().len();
-    let (ratio, limit) = (
-        bytes(large) as f64 / bytes(n) as f64,
-        scaling::limit(n, large, 1),
+    scaling::hold(
+        "rendering n nested sums on one line",
+        "bytes",
+        bytes(n) as u64,
+        bytes(large) as u64,
+        1,
     );
-    assert!(ratio <= limit, "{ratio} times the bytes, more than {limit}");
     scaling::check("rendering n nested sums on one line", n, |k| {
         std::hint::black_box(made[&k].to_string());
     });
@@ -461,11 +467,13 @@ fn rejecting_a_line_of_nested_sums_scales() {
     let n = 200;
     let bytes = |k: usize| super::rejected(&summed(k)).len();
     let large = scaling::FACTOR * n;
-    let (ratio, limit) = (
-        bytes(large) as f64 / bytes(n) as f64,
-        scaling::limit(n, large, 1),
+    scaling::hold(
+        "rejecting a line of n nested sums",
+        "bytes",
+        bytes(n) as u64,
+        bytes(large) as u64,
+        1,
     );
-    assert!(ratio <= limit, "{ratio} times the bytes, more than {limit}");
     scaling::check("rejecting a line of n nested sums", n, |k| {
         std::hint::black_box(super::rejected(&summed(k)));
     });

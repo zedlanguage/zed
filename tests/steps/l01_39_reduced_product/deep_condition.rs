@@ -343,20 +343,6 @@ fn arms_of_a_chain_of_accounts_take_time_near_linear_in_its_depth() {
     });
 }
 
-/// Panics when `run` at `8n` does more than `8 ln(8n) / ln(n)` times its work at `n`, the
-/// ratio work of order `n log n` has. The rule's limit of 24 times does not tell `n log n`
-/// from a small `n²` term at these sizes.
-fn within_n_log_n(what: &str, n: usize, run: impl Fn(usize) + Sync) {
-    let limit = 8.0 * (8.0 * n as f64).ln() / (n as f64).ln();
-    scaling::compare(
-        &format!("{what}: sizes {n} and {}", 8 * n),
-        &format!("work of order n log n does at most {limit:.2} times the work"),
-        limit,
-        || run(n),
-        || run(8 * n),
-    );
-}
-
 #[test]
 fn arms_of_a_long_chain_of_accounts_take_time_within_n_log_n() {
     // A lookup of a conjunct in the relation's maps finds the very formula it holds; compared
@@ -371,7 +357,7 @@ fn arms_of_a_long_chain_of_accounts_take_time_within_n_log_n() {
                 )
             })
             .into();
-        within_n_log_n("arms of a chain of accounts d deep", 240, |d| {
+        scaling::check("arms of a chain of accounts d deep", 240, |d| {
             let (t, scope) = &cases[&d];
             std::hint::black_box(arms(t, scope));
         });
@@ -435,7 +421,7 @@ fn arms_of_a_chain_of_paired_choices_take_time_within_n_log_n() {
                 )
             })
             .into();
-        within_n_log_n("arms of a chain of paired choices d deep", 120, |d| {
+        scaling::check("arms of a chain of paired choices d deep", 120, |d| {
             let (t, scope) = &cases[&d];
             std::hint::black_box(arms(t, scope));
         });

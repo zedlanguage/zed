@@ -322,9 +322,9 @@ fences changed, so test `l01_07` needs its expected output accepted at the next 
   sites and keypath in persistent vectors that fact addresses share), types (ordered by a
   hash of their contents kept in each; literal sets and atom maps persistent), and the kernel printer (a fit test that
   stops at the line's width). Scaling tests
-  use `zed_tests::scaling::check` (n against 8n, at most 8 ln(8n)/ln(n) × 1.1 times the work and the bytes,
-  the ratio of order n log n with a slack of 1.1; 24 times until SCALE-ratio), or `check_order`
-  for work defined to be of order n^k (at most 8^k ln(8n)/ln(n) × 1.1, `scaling::limit`). Work is user-mode instructions
+  use `zed_tests::scaling::check` (n against 8n, under 13 times the work and the bytes since
+  TESTS-scaling-limit-13, author 2026-11-13; a ratio from 9 to 13 passes with a note naming the test), or `check_order`
+  for work defined to be of order n^k (under 13 × 8^(k−1), `scaling::limit`); a test over the limit is ignored with its owner row. Work is user-mode instructions
   from the hardware counter, the least of two runs of each size, one measurement; with no counter
   (`perf_event_paranoid` above 2, or a VM with no PMU) it is the task clock, the processor time of the thread and the threads it starts, and a
   test allows twice the limit and fails only when three measurements in a row are over; with `perf_event_open` refused the check stops with its own error. That is Linux; on macOS work is

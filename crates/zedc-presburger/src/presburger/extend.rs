@@ -6285,7 +6285,7 @@ mod tests {
     fn single_use_equations_of_one_shared_atom_are_dropped_in_linear_work() {
         // Cross-review of LOAD-max-div-xr, round 3 (Codex): `y_i == x` for i = 1..n. Counting
         // the uses of `x` left after each drop by a scan of its occurrence list read O(n²)
-        // entries; a count kept per atom reads O(n). Limit for 8 times the rows: 24 times the
+        // entries; a count kept per atom reads O(n). Limit for 8 times the rows: 13 times the
         // work.
         let work = |n: u32| {
             let rows = (1..=n)
@@ -6295,10 +6295,12 @@ mod tests {
             assert!(without_free_pairs(rows).is_empty());
             OCCURRENCE_VISITS.with(|v| v.get())
         };
-        let (small, large) = (work(100), work(800));
-        assert!(
-            large <= 24 * small,
-            "occurrence visits {small} at 100 rows, {large} at 800"
+        crate::scaling::hold(
+            "equations `y_i == x` of one shared atom: 100 and 800 rows",
+            "occurrence visits",
+            work(100) as u64,
+            work(800) as u64,
+            1,
         );
     }
 
@@ -6307,8 +6309,8 @@ mod tests {
         // Cross-review of LOAD-max-div-xr, round 3 (Codex): `x_i == 0` for every i and
         // `x_i == 2` for every i, r atoms: the rests differ on every form, so each of the r
         // forms tried reads the other piece's forms. Made again for each, O(r³) rows read; made
-        // once when the piece is put in, O(r²). Limit for 8 times the atoms: 128 times the work
-        // (64 for r², 512 for r³).
+        // once when the piece is put in, O(r²). Limit for 8 times the atoms: 104 times the work
+        // (13 × 8 for r², 512 for r³).
         let work = |r: u32| {
             let p = (0..r).map(|i| con(&[(i, 1)], 0, Rel::Eq)).collect();
             let q = (0..r).map(|i| con(&[(i, 1)], -2, Rel::Eq)).collect();
@@ -6316,10 +6318,12 @@ mod tests {
             assert_eq!(merge_pieces(BTreeSet::from([p, q])).len(), 2);
             REST_ROW_VISITS.with(|v| v.get())
         };
-        let (small, large) = (work(10), work(80));
-        assert!(
-            large <= 128 * small,
-            "rest rows read {small} at 10 atoms, {large} at 80"
+        crate::scaling::hold(
+            "forms of a piece in a merge: 10 and 80 atoms",
+            "rest rows read",
+            work(10) as u64,
+            work(80) as u64,
+            2,
         );
     }
 

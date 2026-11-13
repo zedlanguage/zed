@@ -676,11 +676,12 @@ fn the_text_of_a_type_written_by_name_scales() {
     // pair has when each part is written out at each use.
     let pairs = scaling::inputs(1000, shared);
     let bytes = |n: usize| pairs[&n].surface_by_name(TextPlace::Any).to_string().len();
-    let (small, large) = (bytes(1000), bytes(8000));
-    assert!(
-        large as f64 <= small as f64 * scaling::limit(1000, 8000, 1),
-        "the text of a pair type shared n deep, written by name, grows from {small} bytes at \
-         n = 1000 to {large} bytes at n = 8000"
+    scaling::hold(
+        "the text of a pair type shared n deep, written by name: n = 1000 and 8000",
+        "bytes of text",
+        bytes(1000) as u64,
+        bytes(8000) as u64,
+        1,
     );
     scaling::check(
         "the text of a pair type shared n deep, written by name",

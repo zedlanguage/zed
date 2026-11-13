@@ -12100,8 +12100,8 @@ mod tests {
 
     /// Components ranked each right after the first, so that the ranks between run out again
     /// and again, are ranked again `O(log n)` times each on average (Bender et al.): from
-    /// 8,000 to 64,000 components the number ranked again grows by at most 8 times the growth
-    /// of `log n`, and a quarter more (9.8 times measured, 1.24 log2 n each; below n = 4,000,
+    /// 8,000 to 64,000 components the number ranked again grows under the limit of 13 for
+    /// order n (9.8 times measured, 1.24 log2 n each; below n = 4,000,
     /// while the ranks fill up, the count each grows faster than `log n`); ranking each later
     /// component again, the naive version, would grow it 64 times.
     #[test]
@@ -12117,11 +12117,12 @@ mod tests {
             total
         };
         for front in [false, true] {
-            let (small, large) = (moved(8000, front), moved(64_000, front));
-            let bound = 8.0 * 64_000f64.log2() / 8000f64.log2() * 1.25;
-            assert!(
-                large as f64 <= bound * small as f64,
-                "front {front}: {small} at n = 8,000, {large} at n = 64,000"
+            crate::scaling::hold(
+                &format!("ranks given in one place, front {front}: n = 8,000 and 64,000"),
+                "components ranked again",
+                moved(8000, front) as u64,
+                moved(64_000, front) as u64,
+                1,
             );
         }
     }

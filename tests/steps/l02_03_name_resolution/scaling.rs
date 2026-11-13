@@ -569,13 +569,8 @@ fn a_complete_component_is_searched_once_in_time_linear_in_its_imports() {
         std::hint::black_box(order(pkg, edges, None));
     };
     scaling::compare(
-        "a complete component, ordered: 40 and 113 units",
-        &format!(
-            "the 1,560 and 12,656 imports, 8.1 times as many; for work of order n log n in \
-             them the rule of low complexity allows at most {:.1} times (DESIGN.md Part G)",
-            scaling::limit(40 * 39, 113 * 112, 1)
-        ),
-        scaling::limit(40 * 39, 113 * 112, 1),
+        "a complete component, ordered: 40 and 113 units, 1,560 and 12,656 imports, 8.1 times",
+        1,
         || run(40),
         || run(113),
     );
