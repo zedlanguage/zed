@@ -2164,7 +2164,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | ENGINE-one | impl attempt 1 | 2026-11-13 09:45 | started; worktree wt/engine-one from origin/main 4ab375787 |
-| HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | rule change noted: accept against R < 10.5 (CD run keeps 13 step; acceptance scorer score-accept.py); load 55.74 59.14 57.03 |
+| HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | round 4 merged 3aaa8a2aa (Claude seat: cells_by_sets + shared-disjunction lowering; holders_chain R 58.8 -> 8.12, sh_windows2 7.91, sh_winsame2 6.95); Codex seat and CD still running; rounds 5+ on split_windows, kss, sh_choice, wideik, overlap2c, point_rows, holders_stairs; load 46.87 62.43 66.25 |
 | MAIN-files-rest | impl attempt 1 | 2026-11-13 10:39 | started; worktree from origin/main 10c508cf5 |
 | MSG-headline-l01_26 | impl attempt 1 | 2026-11-13 09:40 | started; worktree from origin/main 3650dc7aa |
 | PERF-l139-under9 | impl attempt 1 | 2026-11-13 09:15 | baseline on 9fbcc48eb (load 48-58), instr/bytes at 8n: star_extra 15.6 (fails), chain 13.0 (fails), persist bytes 13.2 (fails), hopb 12.9/12.1, hoponb 12.8/12.0 |
