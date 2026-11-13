@@ -4628,7 +4628,11 @@ impl<'a> Ck<'_, 'a> {
                  {name} <= 255 {{ {name} }} else {{ 1 }}`"
             ),
         ];
-        self.error_offering(e.span, message, menu);
+        // A question refused behind the value is named before the derivation, as at `^`.
+        let mut notes = self.refused_notes(e);
+        self.derive_into(&[e.span], &mut notes);
+        notes.extend(menu.into_iter().map(|text| Note { span: e.span, text }));
+        self.error_with(e.span, message, notes);
     }
 
     /// The ints `e` may be here: what its text shows ([`Ck::known`]) met with what the tests
@@ -4796,6 +4800,60 @@ impl<'a> Ck<'_, 'a> {
 
     /// The ints `e` may be in the scope of the node the walk is in.
     fn ints_in_scope(&mut self, e: &'a Expr) -> IntervalSet {
+        self.read_in_scope(e).0
+    }
+
+    /// A note for each step of the derivation of each question the integer solver refused in
+    /// the scope `e` is read in ([`Ck::ints_here`]) whose constraint mentions a name `e` reads
+    /// ([`Ck::read_names`]), for a rejection of the value of `e`: such a question leaves the
+    /// value wider than the tests may make it, so it may be behind the rejection, which names
+    /// it as its warning would in a unit the checker accepts (DESIGN.md L1.39). Each note is
+    /// at the place the program asks the question ([`Ck::asked_at`]). None where the read
+    /// does not take the scope, a value the text shows or a read outside every test, and none
+    /// while a repair is tried, whose derivations are not written ([`Ck::derive_into`]).
+    ///
+    /// Complexity tradeoff: the questions are found through the scope's index of them by name
+    /// ([`Scope::refused_on`]), O(m log k) for the m names `e` reads among k questions, and
+    /// not by reading each question of the scope, O(k) for each rejection, which `r`
+    /// rejections under `k` refused tests would make O(r k). The read is taken again, at the
+    /// cost of the read [`Ck::ints_here`] took, only for a rejection. Tests:
+    /// `l01_29_diagnostics::refused_in_rejection::many_rejections_under_many_refused_tests_scale`
+    /// and `l01_39_reduced_product::refused::finding_the_refusals_on_many_names_scales`.
+    pub(super) fn refused_notes(&mut self, e: &'a Expr) -> Vec<Note> {
+        if self.trying || self.known(e).value.is_some() || self.arms.here() == 0 {
+            return Vec::new();
+        }
+        let (_, s) = self.read_in_scope(e);
+        if s.refusals.is_empty() {
+            return Vec::new();
+        }
+        let names = self.read_names(e);
+        let mut notes = Vec::new();
+        for (r, kept) in s.refused_on(names.iter().map(|(n, _)| &**n)) {
+            let span = self.asked_at(r, e.span);
+            notes.extend((r.derivation(kept).into_iter()).map(|text| Note { span, text }));
+        }
+        notes
+    }
+
+    /// Where the program asks `r`, a question refused in the scope a value read at `read` is
+    /// read in: the last place before the read that the walk placed it at
+    /// ([`Ck::place_refusals`]), the test whose arm the read is in or the read itself, or the
+    /// read where the walk placed it at none. O(log p) in the p places of `r`.
+    fn asked_at(&self, r: &Refused, read: Span) -> Span {
+        let last = Span {
+            start: read.start,
+            end: usize::MAX,
+        };
+        (self.asked_where.get(r))
+            .and_then(|at| at.range(..=last).next_back())
+            .copied()
+            .unwrap_or(read)
+    }
+
+    /// The ints `e` may be in the scope of the node the walk is in, and the scope as the read
+    /// leaves it, with the questions the read refused.
+    fn read_in_scope(&mut self, e: &'a Expr) -> (IntervalSet, Scope) {
         let t = self.term(e);
         let here = self.arms.here();
         let mut wanted = vec![Item::Scope(here)];
@@ -4807,7 +4865,7 @@ impl<'a> Ck<'_, 'a> {
         s.eager_on(&t.term);
         let ints = product::forward(&t.term, &mut s).ints().clone();
         self.place_refusals(e.span, &before, &s.refusals);
-        ints
+        (ints, s)
     }
 
     /// Keeps each question refused in `after`, the refusals of a scope, and not in `before`,
@@ -4830,6 +4888,7 @@ impl<'a> Ck<'_, 'a> {
             match self.refused_at.entry((at, r.clone())) {
                 std::collections::btree_map::Entry::Vacant(v) => {
                     v.insert(kept.clone());
+                    self.asked_where.entry(r.clone()).or_default().insert(at);
                 }
                 std::collections::btree_map::Entry::Occupied(mut o) => {
                     let met = product::kept_meet(o.get(), kept);
@@ -6548,6 +6607,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         if narrowed {
             steps.extend(self.deciding_notes(e));
         }
+        steps.extend(self.refused_notes(e));
         steps.extend(self.derive(&[n.at.unwrap_or(span)]));
         if x_generic {
             let p = PowerUse {
@@ -7113,6 +7173,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             if r.narrowed {
                 notes.extend(self.deciding_notes(e));
             }
+            notes.extend(self.refused_notes(e));
             self.derive_into(&[at], &mut notes);
             let outside_all = match &r.values {
                 Some(vs) => vs.iter().all(|v| !value_in(domain, v)),
@@ -8163,6 +8224,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             if r.narrowed {
                 notes.extend(self.deciding_notes(e));
             }
+            notes.extend(self.refused_notes(e));
             self.derive_into(&[at], &mut notes);
             notes.push(Note {
                 span,

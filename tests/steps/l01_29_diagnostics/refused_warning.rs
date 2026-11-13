@@ -6,19 +6,19 @@
 use zed_tests::scaling;
 
 /// Writes the unit `src` as `file` in test directory `name`, kept apart from the other tests'.
-fn unit(name: &str, file: &str, src: &str) -> String {
+pub(super) fn unit(name: &str, file: &str, src: &str) -> String {
     super::widen_test::unit(&format!("refused_{name}"), file, src)
 }
 
 /// Four conditions on four variables that the checker cannot solve exactly: removing any one
 /// variable would leave more conditions than there are (L1.39 "refused questions").
-const GROWTH: &str = "4 * x - 12 * w - 10 * y - 12 * z + 11 >= 0 && \
+pub(super) const GROWTH: &str = "4 * x - 12 * w - 10 * y - 12 * z + 11 >= 0 && \
                       4 * w + 10 * x - 10 * y - 11 * z - 28 >= 0 && \
                       11 * w + 4 * x - y + 12 * z - 28 >= 0 && \
                       0 - 8 * w - 5 * x + 12 * y - z + 31 >= 0";
 
 /// The last conjunct of [`GROWTH`]: the narrowing by it is the one that asks the question.
-const LAST: &str = "0 - 8 * w - 5 * x + 12 * y - z + 31 >= 0";
+pub(super) const LAST: &str = "0 - 8 * w - 5 * x + 12 * y - z + 31 >= 0";
 
 /// [`GROWTH`] with every constant 0: the checker asks for the values of each variable apart,
 /// and refuses each.
@@ -53,7 +53,7 @@ fn test(files: &[&str]) -> (u8, String, String) {
 }
 
 /// `zedc run <file> <more>` with no input: its status and standard error.
-fn run(file: &str, more: &[&str]) -> (u8, String) {
+pub(super) fn run(file: &str, more: &[&str]) -> (u8, String) {
     let args: Vec<&str> = ["run", file].iter().chain(more).copied().collect();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let status = zedc::run::command(&args, &mut "".as_bytes(), &mut out, &mut err);

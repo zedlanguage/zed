@@ -546,6 +546,11 @@ pub struct Scope {
     /// S18 (the solver) and S28 (this report). A complete solution would decide every question
     /// (see `presburger`).
     pub refusals: imbl::OrdMap<Refused, Kept>,
+    /// Each question of [`Scope::refusals`] under each name its constraint mentions, as the
+    /// program wrote it ([`presburger::names_in`]), kept with it by [`Scope::refuse`] and the
+    /// join: so the questions behind a read of m names are found in O(m log k) among k
+    /// questions, and not by reading each question ([`Scope::refused_on`]).
+    refused_by: imbl::OrdMap<Arc<str>, imbl::OrdSet<Refused>>,
     /// Each name a `let` of the walk bound, with the order of its binding and, for a function,
     /// its lambda: a test that calls a function is closed over it before its preimage is taken
     /// ([`Scope::close`]). Shared between the scopes of a walk's arms, not copied.
@@ -3521,6 +3526,14 @@ pub struct Refused {
 /// alternative set aside, or the ends of names with holes.
 pub type Kept = Arc<BTreeMap<Arc<str>, IntervalSet>>;
 
+/// `by` with the question `r` under each name its constraint mentions ([`Scope::refused_by`]),
+/// O(n log k) for the n names among k questions.
+fn index_refused(by: &mut imbl::OrdMap<Arc<str>, imbl::OrdSet<Refused>>, r: &Refused) {
+    for n in presburger::names_in(&r.constraint) {
+        by.entry(n.into()).or_default().insert(r.clone());
+    }
+}
+
 /// The sets of one refused question met twice, each of whose sets holds every value the
 /// question allows: their meet for each variable both hold, and the set of a variable only
 /// one holds. So the sets kept do not depend on the order the two were met in. O(m log m) in
@@ -3696,16 +3709,32 @@ impl Refused {
     /// The warning that reports this refusal, with its derivation and its repairs, and the sets
     /// `sets` it left its variables.
     pub fn warning(&self, sets: &Kept) -> Warning {
+        let (message, steps, repairs) = self.parts(sets);
+        Warning {
+            message,
+            steps: steps.into_iter().chain(repairs).collect(),
+        }
+    }
+
+    /// The steps of the derivation of this refusal's warning, without its message and its
+    /// repairs, with the sets `sets` it left its variables: what a rejection the refusal may
+    /// have caused names of it (DESIGN.md L1.39).
+    pub fn derivation(&self, sets: &Kept) -> Vec<String> {
+        self.parts(sets).1
+    }
+
+    /// The message of this refusal's warning, the steps of its derivation, and its repairs.
+    fn parts(&self, sets: &Kept) -> (String, Vec<String>, Vec<String>) {
         let c = &self.constraint;
         let cause = match &self.cause {
             Cause::Solver(r) => r,
             Cause::Holes { holed, names } => {
                 let holed: Vec<String> = holed.iter().map(|n| format!("`{n}`")).collect();
-                return Warning {
-                    message: "Cannot find exactly the least and greatest values the conditions \
-                              here allow"
+                return (
+                    "Cannot find exactly the least and greatest values the conditions here \
+                     allow"
                         .to_string(),
-                    steps: vec![
+                    vec![
                         format!("the constraints `{c}` hold in the scope"),
                         format!(
                             "they join their {names} names both ways in more than one cycle, \
@@ -3719,7 +3748,8 @@ impl Refused {
                              their ends may be wider than the constraints make them; {SOUND}"
                         ),
                     ],
-                };
+                    Vec::new(),
+                );
             }
         };
         // A refused projection or test keeps sets for its variables, and its cause ends by
@@ -3815,13 +3845,11 @@ impl Refused {
             conjuncts: &[joined.as_str()],
             names: &names,
         });
-        Warning {
+        (
             message,
-            steps: [given, asked, format!("{kept}; {SOUND}")]
-                .into_iter()
-                .chain(repairs)
-                .collect(),
-        }
+            vec![given, asked, format!("{kept}; {SOUND}")],
+            repairs,
+        )
     }
 }
 
@@ -3850,6 +3878,7 @@ impl Scope {
             exact,
             exactly: imbl::OrdMap::new(),
             refusals: imbl::OrdMap::new(),
+            refused_by: imbl::OrdMap::new(),
             bindings: imbl::OrdMap::new(),
             orders: imbl::OrdMap::new(),
             clock: 0,
@@ -4525,14 +4554,39 @@ impl Scope {
     /// projected, once, with `kept`, the sets it left its variables. The same question asked
     /// again in this scope keeps the meet of the sets of each time, each of which holds every
     /// value the question allows here, so the sets do not depend on the order the questions
-    /// were met in. O(log k) in the k refusals kept and O(m log m) in the m variables of `kept`.
-    /// Every refused test and part of the relation is kept through here.
+    /// were met in. O(log k) in the k refusals kept, O(m log m) in the m variables of `kept`,
+    /// and, for a new question, O(n log k) for the n names its constraint mentions
+    /// ([`Scope::refused_by`]). Every refused test and part of the relation is kept through
+    /// here.
     pub fn refuse(&mut self, r: Refused, kept: Kept) {
         let kept = match self.refusals.get(&r) {
             Some(old) => kept_meet(old, &kept),
-            None => kept,
+            None => {
+                index_refused(&mut self.refused_by, &r);
+                kept
+            }
         };
         self.refusals.insert(r, kept);
+    }
+
+    /// Each question the integer solver left undecided in this scope whose constraint mentions
+    /// one of `names`, names of the scope, by the name the program wrote ([`written_name`]),
+    /// once each, in the order of [`Refused`], with the sets it left its variables. O(m log k +
+    /// q log q) for m names among k questions and the q questions found
+    /// ([`Scope::refused_by`]).
+    pub fn refused_on<'n>(
+        &self,
+        names: impl IntoIterator<Item = &'n str>,
+    ) -> Vec<(&Refused, &Kept)> {
+        let mut found: Vec<&Refused> = (names.into_iter())
+            .filter_map(|n| self.refused_by.get(written_name(n)))
+            .flatten()
+            .collect();
+        found.sort_unstable();
+        found.dedup();
+        (found.into_iter())
+            .filter_map(|r| self.refusals.get_key_value(r))
+            .collect()
     }
 
     /// The names with one value each, and their values.
@@ -4934,6 +4988,7 @@ impl Scope {
         // in, since this side's constraints need not hold at them.
         let exactly = self.exactly.clone();
         let mut refusals = self.refusals.clone();
+        let mut refused_by = self.refused_by.clone();
         // A question refused on both sides keeps, for each variable, the join of its sets, since
         // the join's values are those of either side; one refused on one side keeps that
         // side's sets.
@@ -4941,6 +4996,7 @@ impl Scope {
             match d {
                 DiffItem::Add(r, kept) => {
                     refusals.insert(r.clone(), kept.clone());
+                    index_refused(&mut refused_by, r);
                 }
                 DiffItem::Update {
                     old: (r, mine),
@@ -4963,6 +5019,7 @@ impl Scope {
             exact: self.exact,
             exactly,
             refusals,
+            refused_by,
             // Both sides narrow one scope, which bound the names; neither binds one the other
             // does not.
             bindings: self.bindings.clone(),

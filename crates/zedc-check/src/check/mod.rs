@@ -1175,6 +1175,9 @@ struct Ck<'t, 'a> {
     /// narrowed or read, by where the program asks it and the question, with the sets it left
     /// its variables ([`Ck::place_refusals`]): a warning each once the walk is done.
     refused_at: BTreeMap<(Span, Refused), Kept>,
+    /// Each place [`Self::refused_at`] holds a question at, by the question: where a rejection
+    /// the question may be behind names it ([`Ck::refused_notes`]).
+    asked_where: BTreeMap<Refused, BTreeSet<Span>>,
     /// For each binder read by a binder's value, what its summary read in the scope of its
     /// last such read ([`images::Read`]), from which the next is found.
     reads: HashMap<usize, images::Read<Rc<arms::Summarized>, zedc_preimage::product::Product>>,
@@ -1342,6 +1345,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             tried: HashMap::new(),
             arms: arms::Arms::new(),
             refused_at: BTreeMap::new(),
+            asked_where: BTreeMap::new(),
             reads: HashMap::new(),
             spelled: HashMap::new(),
             mixed: HashSet::new(),

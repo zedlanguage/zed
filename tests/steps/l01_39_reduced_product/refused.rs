@@ -369,6 +369,75 @@ fn keeping_many_refusals_scales() {
     });
 }
 
+/// A scope with `k` refusals on disjoint names, each found by a name of its constraint: the
+/// questions behind a rejection that reads the name (DESIGN.md L1.39). One look-up finds its
+/// one question, a name of no question finds none, and each name of a question finds it.
+#[test]
+fn the_refusals_on_a_name_are_found_by_that_name() {
+    let names = refused_names(3);
+    let s = names.chunks(4).fold(super::ints(&[]), |mut s, c| {
+        let r = Refused {
+            constraint: growth_test([&*c[0], &*c[1], &*c[2], &*c[3]]).into(),
+            asked: Asked::Test { outcome: true },
+            cause: Refusal::Growth.into(),
+        };
+        s.refuse(r, Arc::new(Default::default()));
+        s
+    });
+    let found = |ns: &[&str]| -> Vec<String> {
+        (s.refused_on(ns.iter().copied()).into_iter())
+            .map(|(r, _)| r.constraint.to_string())
+            .collect()
+    };
+    let test = |i: usize| growth_test([0, 1, 2, 3].map(|j| &*names[4 * i + j]));
+    assert_eq!(found(&["v5"]), [test(1)]);
+    // A name of the scope is matched by the name the program wrote, before its `@`.
+    assert_eq!(found(&["v5@7"]), [test(1)]);
+    assert_eq!(found(&["v0", "v3", "v9"]), [test(0), test(2)]);
+    assert_eq!(found(&["v1", "v2"]), [test(0)], "one question once");
+    assert!(found(&["v12", "v"]).is_empty());
+    // A join keeps the questions of both sides under their names.
+    let other = names[..4].chunks(4).fold(super::ints(&[]), |mut o, c| {
+        let r = Refused {
+            constraint: growth_test([&*c[3], &*c[2], &*c[1], &*c[0]]).into(),
+            asked: Asked::Test { outcome: false },
+            cause: Refusal::Growth.into(),
+        };
+        o.refuse(r, Arc::new(Default::default()));
+        o
+    });
+    let joined = other.join(&s);
+    assert_eq!(joined.refused_on(["v9"]).len(), 1);
+    assert_eq!(joined.refused_on(["v0"]).len(), 2);
+}
+
+/// Finding the refusals on each of `k` names among `k` refusals in one scope costs near linear
+/// in `k`: each look-up goes through the scope's index by name, and not through every refusal.
+#[test]
+fn finding_the_refusals_on_many_names_scales() {
+    use zed_tests::scaling::{self, FACTOR};
+    let n = 4096;
+    let scopes = [n, FACTOR * n].map(|k| {
+        let names = refused_names(k);
+        let s = names.chunks(4).fold(super::ints(&[]), |mut s, c| {
+            let r = Refused {
+                constraint: growth_test([&*c[0], &*c[1], &*c[2], &*c[3]]).into(),
+                asked: Asked::Test { outcome: true },
+                cause: Refusal::Growth.into(),
+            };
+            s.refuse(r, Arc::new(Default::default()));
+            s
+        });
+        let firsts: Vec<Arc<str>> = names.chunks(4).map(|c| c[0].clone()).collect();
+        (s, firsts)
+    });
+    scaling::check("finding the refusals on a name", n, |k| {
+        let (s, firsts) = &scopes[usize::from(k != n)];
+        let found: usize = (firsts.iter()).map(|x| s.refused_on([&**x]).len()).sum();
+        assert_eq!(found, k);
+    });
+}
+
 /// The join of two arms that share `k - 2` refused tests on disjoint names and add one refused
 /// test each, and the join's warnings, cost near linear in `k`.
 #[test]
