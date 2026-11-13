@@ -26,6 +26,7 @@ mod linked;
 mod loops;
 mod named_test;
 mod nests;
+mod path_check;
 mod pendants;
 mod pow_nan;
 mod random;

@@ -203,10 +203,11 @@ fn prio(key: &str) -> u64 {
 
 /// What a summary read in one scope: the scope's names, what the caller keeps of the summary
 /// and of the scope beside them (`S`), and the tree of the inputs it read there, each with its
-/// leaf ([`Leaf`]). The scope gives each name a `P`, its product in the walks that read here.
-pub struct Read<S, P, L = Leaf> {
+/// leaf ([`Leaf`]). The scope's names are an `N`: a [`Names`] map, or a map that gives each
+/// name's product by name (`NameProducts` in [`product`](crate::product)).
+pub struct Read<S, N, L = Leaf> {
     /// The scope's names.
-    pub names: Names<P>,
+    pub names: N,
     /// What the caller keeps of the summary and of the scope.
     pub sum: S,
     /// The inputs the summary read, each with its leaf.
@@ -241,6 +242,21 @@ pub fn updated<'a, P, L: Sum>(
     limit: usize,
     leaf: impl Fn(&Arc<str>, &P) -> L,
 ) -> Option<Tree<L>> {
+    updated_with(base, changed, limit, |v| {
+        let q = names.get(v).filter(|_| vars.contains(v));
+        q.map(|q| leaf(v, q))
+    })
+}
+
+/// [`updated`] for a scope that gives each input's leaf by name: `leaf_of(v)` is the leaf of
+/// the input `v`, `None` when the summary does not read it or the scope has no product of it.
+/// `O(m log k)` for `m` names changed, plus `m` calls of `leaf_of`.
+pub fn updated_with<'a, L: Sum>(
+    base: &Tree<L>,
+    changed: impl Iterator<Item = &'a Arc<str>>,
+    limit: usize,
+    leaf_of: impl Fn(&Arc<str>) -> Option<L>,
+) -> Option<Tree<L>> {
     let mut keys = Vec::new();
     for v in changed {
         if keys.len() >= limit {
@@ -255,8 +271,7 @@ pub fn updated<'a, P, L: Sum>(
         .set(crate::preimage::counts::IMAGE_SETS.get() + keys.len() as u64);
     let mut tree = base.clone();
     for v in keys {
-        let q = names.get(v).filter(|_| vars.contains(v));
-        tree = set(&tree, v, q.map(|q| leaf(v, q)));
+        tree = set(&tree, v, leaf_of(v));
     }
     Some(tree)
 }
@@ -268,16 +283,30 @@ pub fn fresh<P, L: Sum>(
     names: &Names<P>,
     leaf: impl Fn(&Arc<str>, &P) -> L,
 ) -> Tree<L> {
-    let here: Vec<(&Arc<str>, &P)> = if vars.len() <= names.len() {
-        vars.iter().filter_map(|v| names.get_key_value(v)).collect()
+    if vars.len() <= names.len() {
+        let here = vars.iter().filter_map(|v| names.get_key_value(v));
+        fresh_with(here.map(|(v, q)| (v, leaf(v, q))))
     } else {
-        (names.iter()).filter(|(v, _)| vars.contains(*v)).collect()
-    };
+        let here = (names.iter()).filter(|(v, _)| vars.contains(*v));
+        fresh_with(here.map(|(v, q)| (v, leaf(v, q))))
+    }
+}
+
+/// The tree of the inputs `leaves`, each with its leaf, made afresh: `O(h log h)` for `h`
+/// inputs.
+pub fn fresh_with<'a, L: Sum>(leaves: impl Iterator<Item = (&'a Arc<str>, L)>) -> Tree<L> {
     #[cfg(feature = "counts")]
-    crate::preimage::counts::IMAGE_SETS
-        .set(crate::preimage::counts::IMAGE_SETS.get() + here.len() as u64);
-    here.into_iter()
-        .fold(None, |t, (v, q)| set(&t, v, Some(leaf(v, q))))
+    let mut count = 0u64;
+    let tree = leaves.fold(None, |t, (v, l)| {
+        #[cfg(feature = "counts")]
+        {
+            count += 1;
+        }
+        set(&t, v, Some(l))
+    });
+    #[cfg(feature = "counts")]
+    crate::preimage::counts::IMAGE_SETS.set(crate::preimage::counts::IMAGE_SETS.get() + count);
+    tree
 }
 
 /// A summary's inputs as a test reads them ([`SummaryRead`]): the scope's names, of which the

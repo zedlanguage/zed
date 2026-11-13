@@ -16,7 +16,7 @@ use zed_kernel::Shared;
 use zedc_lattice::cell::Premises;
 use zedc_lattice::lattice::Lattice;
 use zedc_preimage::preimage::{Domains, LetIn, Lets, let_summary};
-use zedc_preimage::product::{self, Product, RootFailure, Scope};
+use zedc_preimage::product::{self, NameProducts, Product, RootFailure, Scope};
 
 /// Checks a resolved unit.
 pub fn check(unit: &[Stmt], res: &Resolution) -> Info {
@@ -5538,26 +5538,39 @@ impl<'a> Ck<'_, 'a> {
         &mut self,
         b: usize,
         sum: &Rc<Summarized>,
-        names: &images::Names<Product>,
+        names: &NameProducts,
     ) -> (Option<IntervalSet>, Premises) {
         let vars = sum.summary.vars();
         let limit = vars.len().min(names.len());
         let base = (self.reads.get(&b)).or_else(|| sum.widest.and_then(|w| self.reads.get(&w)));
+        let leaf_of = |v: &Arc<str>| {
+            let q = vars.contains(v).then(|| names.read(v)).flatten()?;
+            Some(leaf(sum, v, &q))
+        };
         // Complexity tradeoff: the diff below stops at `limit`, so a read never walks the
         // whole difference of the two scopes, which is Θ(n²) over a chain of `n` difference
         // tests (`x_i >= x_(i-1) + 1`), each of which moves the product of every name on the
         // path. A summary of `k` inputs under such a chain still resets Θ(min(m, k)) leaves a
         // read for `m` names changed, Θ(n²) over the chain when `k` is about `n`: each is an
         // input whose product the solver changed, which moves the image, so an exact read
-        // from the map must visit it. Reading every input by name (`NameProducts::read`, as
-        // the ST-walk cross-review proposed) costs Θ(k) a read, twice as much there.
-        // Measured (WALK-read-image-n2, `zedc test` at n = 16 and 128): one input, 28 and 252
-        // names read, where the whole difference is 133 and 8,253; `n` inputs, 150 and 8,382,
-        // against 241 and 16,257 by name. When the checker admits difference paths
-        // (ST-walk-checker-admit), `names`, reached through `NameProducts`'s `Deref`, is the
-        // whole exact map, built in O(n log² n) for each scope version; the read must then
-        // take its inputs by name and the changes from the entries of the paths a test
-        // writes. COMPLEXITY.md row WALK-read-image-n2.
+        // from the map must visit it. Reading every input by name at every read costs Θ(k) a
+        // read, twice as much there. Measured before the checker admitted difference paths
+        // (WALK-read-image-n2, `zedc test` at n = 16 and 128): one input, 28 and 252 names
+        // read, where the whole difference is 133 and 8,253; `n` inputs, 150 and 8,382,
+        // against 241 and 16,257 by name.
+        //
+        // Complexity tradeoff: naive version, `names` taken as the exact map through
+        // `NameProducts`'s `Deref`, which builds the whole map, O(n log² n), for each scope
+        // version a binder is read in, Θ(n² log² n) over a chain of n difference tests the
+        // checker admits as one path. Used: each input read by name (`NameProducts::read`,
+        // O(log² n)), and the names changed since the last read from the diff of the base
+        // maps and, when the paths moved, the inputs on a path (`NameProducts::changed`,
+        // O(k log n)): O(min(m, k) log² n) a read for m names changed. Measured (`zedc check`,
+        // the chain with `w_i = y + x_i` for `y = x_0 + 1`, n = 16 and 128): this read built
+        // the map 15 and 127 times before and builds it none after; with `Relation::state_fresh`
+        // as well, the check does 9.5 times the instructions at n = 128 as at 16, where it did
+        // 31 times with neither and 21 on main, which takes no test of the checker onto a path.
+        // COMPLEXITY.md row WALK-read-image-n2.
         let tree = base
             .and_then(|r| {
                 let own: Box<dyn Iterator<Item = &Arc<str>>> = if Rc::ptr_eq(&r.sum, sum) {
@@ -5566,10 +5579,18 @@ impl<'a> Ck<'_, 'a> {
                     let terms = sum.summary.changed_since(&r.sum.summary)?;
                     Box::new(terms.chain(images::changed(&r.sum.inputs, &sum.inputs)))
                 };
-                let changed = own.chain(images::changed(&r.names, names));
-                images::updated(&r.tree, changed, vars, names, limit, |v, q| leaf(sum, v, q))
+                let changed = own.chain(names.changed(&r.names, vars));
+                images::updated_with(&r.tree, changed, limit, leaf_of)
             })
-            .unwrap_or_else(|| images::fresh(vars, names, |v, q| leaf(sum, v, q)));
+            .unwrap_or_else(|| {
+                // The smaller of the inputs and the names, as `images::fresh`.
+                let here: Box<dyn Iterator<Item = &Arc<str>>> = if vars.len() <= names.len() {
+                    Box::new(vars.iter())
+                } else {
+                    Box::new(names.keys().filter(|v| vars.contains(*v)))
+                };
+                images::fresh_with(here.filter_map(|v| Some((v, leaf_of(v)?))))
+            });
         let total = images::total(&tree);
         let read = images::Read {
             names: names.clone(),

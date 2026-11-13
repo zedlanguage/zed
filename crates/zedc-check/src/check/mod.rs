@@ -1256,7 +1256,7 @@ struct Ck<'t, 'a> {
     asked_where: BTreeMap<Refused, BTreeSet<Span>>,
     /// For each binder read by a binder's value, what its summary read in the scope of its
     /// last such read ([`images::Read`]), from which the next is found.
-    reads: HashMap<usize, images::Read<Rc<arms::Summarized>, zedc_preimage::product::Product>>,
+    reads: HashMap<usize, images::Read<Rc<arms::Summarized>, zedc_preimage::product::NameProducts>>,
     /// Each numeric literal the program writes: its value, without its `-`, and where each
     /// literal of that value starts, to where it ends, a zero under `-` with its `-`
     /// ([`Self::spells`]); a message prints the value as one of them ([`Self::spelling`]).
