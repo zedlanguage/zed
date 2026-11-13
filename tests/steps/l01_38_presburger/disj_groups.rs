@@ -898,6 +898,18 @@ mod row_sums {
         }
     }
 
+    /// `overlap_rows` with the second sum's coefficients 1 and 2 in turn: the shared atoms'
+    /// two coefficients are not proportional, so the sums over them take two numbers each.
+    fn coefficients_one_and_two(k: usize) -> Case {
+        let mut case = overlap_rows(k);
+        let w = weights(k);
+        let c = |i: usize| 1 + (i % 2) as i64;
+        let row = &mut case.rows[1];
+        row.0 = (0..k).map(|i| if i >= k / 3 { c(i) } else { 0 }).collect();
+        row.1 = (k / 3..k).filter(|i| i % 2 == 0).map(|i| c(i) * w[i]).sum();
+        case
+    }
+
     /// m rows, row i over `y_(3i) .. y_(3i+5)`, each sharing three atoms with the next.
     fn chain(m: usize) -> Case {
         let k = 3 * m + 3;
@@ -941,6 +953,18 @@ mod row_sums {
         let mut none = overlap_rows(9);
         none.rows[1].1 += 1;
         none.is_answered_exactly();
+    }
+
+    /// Two overlapping sums whose shared atoms have coefficients 1 and 2 in turn in one and 1 in
+    /// the other: exact at k = 12 and 16 (the solver alone gives `y0` both 0 and 1000 at k = 16,
+    /// where only 1000 is in a point). The work is not of order k here: decided at k = 16, 32
+    /// and 64 in 0.38M, 3.8M and 3,873M instructions, projected in 0.28M, 5.7M and 7,386M,
+    /// against 0.45M, 29.5M and 25,199M, and 0.46M, 51.9M and 58,170M before PRES-overlap-fast
+    /// (2026-11-13); the solver alone runs past 60 s at k = 64. Plan row PRES-overlap-coeffs.
+    #[test]
+    fn two_overlapping_sums_with_coefficients_one_and_two_are_answered_exactly() {
+        coefficients_one_and_two(12).is_answered_exactly();
+        coefficients_one_and_two(16).is_answered_exactly();
     }
 
     /// An inequality that closes beside an equation, checked on each pair of a key's bucket;
@@ -1119,9 +1143,9 @@ mod row_sums {
 
     /// `overlap_rows` at k and 2k: the solver alone refused both after 5,443M and 33,783M
     /// instructions (2026-11-13); the join answers, below the 2^k assignments a plain
-    /// enumeration tries: 0.45M at k = 16, where it runs first, and 24.1M at k = 32, where it
-    /// runs beside the solver once the solver has been charged its bound over the rate (256):
-    /// 54.1 times from k to 2k, against 65,536 times for enumeration.
+    /// enumeration tries, in its run first at both sizes: 0.37M at k = 16 and 0.88M at k = 32,
+    /// 2.4 times from k to 2k, against 65,536 times for enumeration (before PRES-overlap-fast,
+    /// at the rate of 256, the method ran beside the solver at k = 32: 0.45M and 24.1M).
     #[test]
     fn two_overlapping_sums_of_16_and_32_atoms_are_decided_below_enumeration() {
         let (f16, f32) = (overlap_rows(16).formula(), overlap_rows(32).formula());
@@ -1137,6 +1161,24 @@ mod row_sums {
             p.0.iter().all(|s| s.as_ref().is_ok_and(|s| !s.is_empty())),
             "{p:?}"
         );
+    }
+
+    /// `overlap_rows` at k = 64 and 512, decided and projected onto its first, middle and last
+    /// atoms: the work of order k, not 2^k (2026-11-13: decided 2.02M and 13.93M, 6.9 times;
+    /// projected 1.87M and 10.53M, 5.6 times).
+    #[test]
+    fn two_overlapping_sums_of_64_and_512_atoms_are_decided_and_projected_in_n_log_n() {
+        let inputs = scaling::inputs(64, |k| overlap_rows(k).formula());
+        scaling::check_order("two overlapping sums decided", 64, 1, |k| {
+            assert_eq!(decide(&inputs[&k]), Ok(true));
+        });
+        scaling::check_order("two overlapping sums projected", 64, 1, |k| {
+            let p = project_each(&inputs[&k], &[v(0), v(k / 2), v(k - 1)]).expect("a projection");
+            assert!(
+                p.0.iter().all(|s| s.as_ref().is_ok_and(|s| !s.is_empty())),
+                "{p:?}"
+            );
+        });
     }
 
     /// A chain of m sums, each sharing three atoms with the next: the groups are joined one
@@ -1185,14 +1227,16 @@ mod row_sums {
     }
 
     /// Each way the race goes, measured in instructions against the solver alone
-    /// (2026-11-13, figures at the rate of 256):
-    /// - the bound is within the first allowance, so the method answers before the solver
-    ///   starts: an unreachable sum of 10 atoms, 0.40M against the solver's refusal at 55.0M;
-    /// - the method runs beside the solver once the charge reaches its bound over the rate, and
-    ///   answers: the same sum of 16 atoms, 51.1M against the solver's refusal at 87.9M;
-    /// - the solver answers before the charge reaches the bound: the same sum of 32 atoms
-    ///   projected, 112.6M against 112.8M;
-    /// - the bound is past `u64` (ranges of 1e9 values), so the method never runs: 128.1M against 128.2M.
+    /// (2026-11-13, figures at the rate of 2048):
+    /// - the method answers in its run first, before the solver starts: an unreachable sum of 10
+    ///   atoms, 0.22M against the solver's refusal at 57.0M, and of 16 atoms, 0.36M against
+    ///   91.2M (of 32 atoms, 0.63M against 178.6M);
+    /// - the solver answers: a sum of 8 atoms, each in 0..=1e5 or 2e5..=3e5, at most 200,003,
+    ///   projected, 13.57M against 13.55M;
+    /// - ranges of 1e9 values, where the method does not answer: 128.0M against 128.2M.
+    ///
+    /// The branches of the race itself are tested with a stand-in method and solver in
+    /// `row_sums::tests::each_branch_of_the_race`.
     #[test]
     fn each_way_the_race_goes_costs_at_most_a_little_more_than_the_solver_alone() {
         let decided = |f: &Formula| decide(f).ok();
@@ -1204,12 +1248,16 @@ mod row_sums {
         assert!(both * 20 < alone, "first run: {both} against {alone}");
         let ((both, with), (alone, without)) = both_and_alone(&unreachable(16).formula(), decided);
         assert_eq!((with, without), (Some(false), None));
-        assert!(
-            both * 3 < alone * 2,
-            "run beside the solver: {both} against {alone}"
-        );
+        assert!(both * 20 < alone, "first run: {both} against {alone}");
         for (what, f) in [
-            ("the solver first", unreachable(32).formula()),
+            (
+                "the solver first",
+                Case {
+                    ranges: vec![vec![(0, 100_000), (200_000, 300_000)]; 8],
+                    rows: vec![(vec![1; 8], 200_003, true)],
+                }
+                .formula(),
+            ),
             (
                 "a bound past u64",
                 Case {

@@ -745,21 +745,18 @@ costs!(nest_empty_satisfiable, nest_empty, "x0", 's', LINEAR, 1, 2);
 costs!(nest_empty_project_each, nest_empty, "x0", 'p', LINEAR, 1, 2);
 costs!(nest_empty_answers, nest_empty, "x0", 'a', LINEAR, 1, 2);
 
-// Subset sum is held to order k^3 log k at k = 20 to 160, one run each. The exact method of
-// PRES-overlap-fast (module `row_sums`) answers it, in alternation with the solver: at k = 10
-// at once, from its bound alone (0.43M instructions), and at k = 12 to 18 after the solver
-// has been charged the method's bound over its rate (9.9M at 12, 91.3M at 18); from k = 20 on the
-// solver refuses first (114M at k = 20, 1.12G at 160, 9.8 times from 20 to 160), as it did from
-// k = 5 on before (QUESTIONS.md A87). The sizes start at 20, past the sizes where the method
-// answers: from k = 10 to 20 the work grows 255 times, as the method's answer at once gives
-// way to the solver's refusal (2026-11-13, rate 256).
+// Subset sum is held to order k log k at k = 20 to 160, one run each (k^3 log k before
+// PRES-overlap-fast). The exact method of PRES-overlap-fast (module `row_sums`) answers it at
+// every size (2026-11-13, rate 2048): decided in 0.48M instructions at k = 20 and 3.11M at 160
+// (6.5 times), where the solver alone refuses (114M at k = 20, 1.12G at 160; QUESTIONS.md
+// A87); `answers` costs 5.8M and 48.5M (8.3 times).
 costs!(
     subset_sum_decide,
     subset_sum,
     "y0",
     'd',
     [20, 40, 80, 160],
-    3,
+    1,
     1
 );
 costs!(
@@ -768,7 +765,7 @@ costs!(
     "y0",
     's',
     [20, 40, 80, 160],
-    3,
+    1,
     1
 );
 costs!(
@@ -777,18 +774,18 @@ costs!(
     "y0",
     'a',
     [20, 40, 80, 160],
-    3,
+    1,
     1
 );
-// `project_each`: the solver answers first at k = 16 to 128 (54.8M at 16, 594M at 128); the
-// method answers first at k = 8 and 12 (0.17M and 28.4M).
+// `project_each`: the method answers first at k = 16 to 128 (0.28M at 16, 1.68M at 128, 6.0
+// times), where the solver answered first before (54.8M at 16, 594M at 128).
 costs!(
     subset_sum_project_each,
     subset_sum,
     "y0",
     'p',
     [16, 32, 64, 128],
-    3,
+    1,
     1
 );
 

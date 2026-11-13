@@ -232,15 +232,12 @@ fn ss_decide_scales() {
         subset_sum_dp(&weights_untied(k_imm)),
         subset_sum_dp(&weights_untied(scaling::FACTOR * k_imm)),
     );
-    // The join of row sums (module `row_sums`) runs beside the solver once the solver has been
-    // charged the method's bound over its rate; at the rate of 256 the solver refuses first at
-    // both sizes, 87.9M with the method against 87.8M alone at k = 16, and 729.4M against 729.6M
-    // at k = 128 (2026-11-13). At the rate of 384 it answered k = 16 exactly at 24.6M, and the
-    // growth from 16 to 128 measured with the method was 29.7 times, because the small size
-    // became cheaper; so the order is checked on the solver alone, and the method is held to the
-    // solver's cost at each size.
-    assert_eq!(decide(&imm_s), Err(Refusal::Disjuncts));
-    assert_eq!(decide(&imm_l), Err(Refusal::Disjuncts));
+    // The solver alone refuses both sizes. The join of row sums (module `row_sums`) answers both
+    // exactly: the target is unreachable by construction. Its cost relative to the solver's
+    // depends on which side of the race wins at each size, so the order is checked on the
+    // solver alone, and the method is held to the solver's cost at each size.
+    assert_eq!(decide(&imm_s), Ok(false));
+    assert_eq!(decide(&imm_l), Ok(false));
     let alone = |f: &Formula| {
         ROW_SUMS_OFF.with(|o| o.set(true));
         let d = decide(f);
@@ -248,6 +245,7 @@ fn ss_decide_scales() {
         d
     };
     assert_eq!(alone(&imm_s), Err(Refusal::Disjuncts));
+    assert_eq!(alone(&imm_l), Err(Refusal::Disjuncts));
     scaling::check_order(
         "decide: ss_untied immune, the solver alone",
         k_imm,
@@ -289,8 +287,9 @@ fn ss_decide_scales() {
         subset_sum_dp(&weights(k)),
         subset_sum_dp(&weights(scaling::FACTOR * k)),
     );
-    assert_eq!(decide(&ss_s), Err(Refusal::Disjuncts));
-    assert!(matches!(decide(&ss_l), Err(Refusal::Unordered(_))));
+    // Unreachable by construction; the solver alone refuses both sizes.
+    assert_eq!(decide(&ss_s), Ok(false));
+    assert_eq!(decide(&ss_l), Ok(false));
     scaling::check_order("decide: ss", k, 1, |m| {
         drop(decide(if m == k { &ss_s } else { &ss_l }));
     });
@@ -306,8 +305,10 @@ fn ss_project_scales() {
     );
     let (p_s, _) = project_each(&ss_s, &y0).expect("ss 64 project");
     let (p_l, _) = project_each(&ss_l, &y0).expect("ss 512 project");
-    assert_eq!(p_s[0], Ok(pt_set(&[0, 1000])));
-    assert_eq!(p_l[0], Ok(pt_set(&[1000])));
+    // The target is unreachable by construction, so the exact projection is empty; the solver
+    // alone gives {0, 1000} and {1000}.
+    assert_eq!(p_s[0], Ok(IntervalSet::empty()));
+    assert_eq!(p_l[0], Ok(IntervalSet::empty()));
     // The large size has ties (from k = 497), so it is answered by the tied path, which is
     // cheaper than the untied one at k = 64: this compares two paths, not one at n and 8n.
     // Untied subset sums are not near linear here: `ss_untied` project_each costs 5.4G
@@ -341,8 +342,10 @@ fn sat_half_decide_scales() {
         choice_sum(&w, t)
     };
     let (small, large) = (build_u(k), build_u(scaling::FACTOR * k));
-    assert_eq!(decide(&small), Err(Refusal::Disjuncts));
-    assert_eq!(decide(&large), Err(Refusal::Disjuncts));
+    // The target is a sum of weights by construction; the solver alone refuses both sizes, and
+    // the join of row sums (module `row_sums`) answers them.
+    assert_eq!(decide(&small), Ok(true));
+    assert_eq!(decide(&large), Ok(true));
     scaling::check_order("decide: sat_half_untied", k, 1, |m| {
         drop(decide(if m == k { &small } else { &large }));
     });
@@ -397,7 +400,8 @@ fn two_rows_scales() {
         build_two_rows(&weights_untied(k)),
         build_two_rows(&weights_untied(scaling::FACTOR * k)),
     );
-    assert_eq!(decide(&u_s), Err(Refusal::Disjuncts));
+    // Satisfiable by construction; the solver alone refuses k = 64.
+    assert_eq!(decide(&u_s), Ok(true));
     assert_eq!(decide(&u_l), Ok(true));
     let m_l = satisfiable(&u_l).expect("decided").expect("satisfiable");
     assert!(u_l.holds(&m_l));
@@ -416,8 +420,8 @@ fn two_rows_scales() {
         build_two_rows(&weights(k)),
         build_two_rows(&weights(scaling::FACTOR * k)),
     );
-    assert_eq!(decide(&t_s), Err(Refusal::Disjuncts));
-    assert!(matches!(decide(&t_l), Err(Refusal::Unordered(_))));
+    assert_eq!(decide(&t_s), Ok(true));
+    assert_eq!(decide(&t_l), Ok(true));
     scaling::check_order("decide: two_rows", k, 1, |m| {
         drop(decide(if m == k { &t_s } else { &t_l }));
     });
@@ -606,11 +610,19 @@ fn untied_projection_uses_the_endpoint_report() {
     let large = subset_sum_dp(&weights_untied(8 * k));
     let y0 = [sym("y0")];
     let red = std::env::var_os("PDCX_RED").is_some();
+    // The solver alone: the join of row sums (module `row_sums`) answers both sizes exactly with
+    // the empty set, since the target is unreachable, and the endpoint report is not reached.
     scaling::check_order("I22 untied endpoint reports", k, 1, |m| {
+        ROW_SUMS_OFF.with(|o| o.set(true));
         zedc::store::presburger::HULL_BISECT.with(|c| c.set(red));
         let got = project_each(if m == k { &small } else { &large }, &y0).expect("projection");
         assert!(got.0[0].as_ref().expect("set").contains(3000));
         zedc::store::presburger::HULL_BISECT.with(|c| c.set(false));
+        ROW_SUMS_OFF.with(|o| o.set(false));
+    });
+    scaling::check_order("I22 untied, with the method", k, 1, |m| {
+        let got = project_each(if m == k { &small } else { &large }, &y0).expect("projection");
+        assert_eq!(got.0[0], Ok(IntervalSet::empty()));
     });
 }
 
@@ -621,9 +633,16 @@ fn tied_projection_endpoint_reports_scale_past_512() {
     let small = subset_sum_dp(&weights(k));
     let large = subset_sum_dp(&weights(8 * k));
     let y0 = [sym("y0")];
+    // The solver alone, as in the untied test above.
     scaling::check_order("I22 tied endpoint reports", k, 1, |m| {
+        ROW_SUMS_OFF.with(|o| o.set(true));
         let got = project_each(if m == k { &small } else { &large }, &y0).expect("projection");
         assert_eq!(got.0[0], Ok(pt_set(&[1000])));
+        ROW_SUMS_OFF.with(|o| o.set(false));
+    });
+    scaling::check_order("I22 tied, with the method", k, 1, |m| {
+        let got = project_each(if m == k { &small } else { &large }, &y0).expect("projection");
+        assert_eq!(got.0[0], Ok(IntervalSet::empty()));
     });
 }
 
@@ -709,34 +728,60 @@ fn sat_half_project_each_scales_past_512() {
     });
 }
 
-/// Negative control for the scaling checks above: `k/2` rows `y_{2r} + y_{2r+1} = w_{2r}` over
-/// two-point atoms with one inequality over every atom, whose `project_each` is not near
-/// linear (175M and 4,963M instructions at 64 and 512 in round 6, over 60 s at 4,096), fails
-/// the same limit on instructions (its bytes grow 13.9 times, too near the limit of 13.2 to
-/// test). If this test stops panicking, the family has become near linear, or the check has
-/// stopped measuring. (Claude round 6.)
+/// `k/2` rows `y_{2r} + y_{2r+1} = w_{2r}` over two-point atoms, with one inequality over every
+/// atom.
+fn build_many_linked(k: usize) -> Formula {
+    let w = weights(k);
+    let names: Vec<String> = (0..k).map(|i| format!("y{i}")).collect();
+    let mut fs: Vec<Formula> = names
+        .iter()
+        .zip(&w)
+        .map(|(n, &wi)| Formula::or(vec![eq(&[(n, 1)], 0), eq(&[(n, 1)], -wi)]))
+        .collect();
+    for r in 0..k / 2 {
+        fs.push(eq(&[(&names[2 * r], 1), (&names[2 * r + 1], 1)], -w[2 * r]));
+    }
+    let all: Vec<(&str, i64)> = names.iter().map(|n| (n.as_str(), -1)).collect();
+    fs.push(ge(&all, w.iter().sum::<i64>() - 1));
+    Formula::and(fs)
+}
+
+/// Negative control for the scaling checks above: `build_many_linked`, whose `project_each` by
+/// the solver alone is not near linear (175M and 4,963M instructions at 64 and 512 in round 6,
+/// over 60 s at 4,096), fails the same limit on instructions (its bytes grow 13.9 times, too
+/// near the limit of 13.2 to test). If this test stops panicking, the solver has become near
+/// linear on this family, or the check has stopped measuring. (Claude round 6.)
 #[test]
 #[should_panic(expected = "times the work")]
 fn many_linked_rows_project_each_fails_the_order_check() {
-    let build = |k: usize| {
-        let w = weights(k);
-        let names: Vec<String> = (0..k).map(|i| format!("y{i}")).collect();
-        let mut fs: Vec<Formula> = names
-            .iter()
-            .zip(&w)
-            .map(|(n, &wi)| Formula::or(vec![eq(&[(n, 1)], 0), eq(&[(n, 1)], -wi)]))
-            .collect();
-        for r in 0..k / 2 {
-            fs.push(eq(&[(&names[2 * r], 1), (&names[2 * r + 1], 1)], -w[2 * r]));
-        }
-        let all: Vec<(&str, i64)> = names.iter().map(|n| (n.as_str(), -1)).collect();
-        fs.push(ge(&all, w.iter().sum::<i64>() - 1));
-        Formula::and(fs)
-    };
     let k = 64;
     let y0 = [sym("y0")];
-    let (s, l) = (build(k), build(scaling::FACTOR * k));
+    let (s, l) = (build_many_linked(k), build_many_linked(scaling::FACTOR * k));
+    // The solver alone, set on the thread each run is measured on: the join of row sums (module
+    // `row_sums`) makes this family near linear, as
+    // `many_linked_rows_project_each_scales_with_the_method` checks.
     scaling::check_instructions_only("project_each: many linked rows", k, 1, |m| {
+        ROW_SUMS_OFF.with(|o| o.set(true));
         drop(project_each(if m == k { &s } else { &l }, &y0));
+        ROW_SUMS_OFF.with(|o| o.set(false));
     });
+}
+
+/// The same family with the join of row sums (module `row_sums`): the first row forces
+/// `y0 = w_0 = 1000` and `y1 = 0`, since `w_1 = 1037`, and the inequality holds whenever a value
+/// is 0, so `y0` is exactly {1000}; `project_each` is near linear.
+#[test]
+fn many_linked_rows_project_each_scales_with_the_method() {
+    let k = 64;
+    let y0 = [sym("y0")];
+    let (s, l) = (build_many_linked(k), build_many_linked(scaling::FACTOR * k));
+    scaling::check_order(
+        "project_each: many linked rows, with the method",
+        k,
+        1,
+        |m| {
+            let got = project_each(if m == k { &s } else { &l }, &y0).expect("projection");
+            assert_eq!(got.0[0], Ok(pt_set(&[1000])));
+        },
+    );
 }
