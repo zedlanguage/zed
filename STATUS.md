@@ -2180,16 +2180,17 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | CAST-int-f64-lit-class | impl attempt 1 | 2026-11-13 15:45 | name forms fixed by dba724818; in-place int(2^64 + 13), f64(2^3 + 1) still atoms on 640d14847 (3 of 6 new tests red); fix Ck::cast_takes_int for int/rat/f64/f32 |
-| HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | round 5 Claude seat merged 7c8f994b4 (core classes, repair memo; point_rows R 65.8 -> 7.92); Codex seat still running; CD round 5 ends ~02:20 UTC; open: split_skew, wideik, overlap2c, general meet; load 46.62 45.99 45.05 |
+| HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | round 5 Claude seat merged 7c8f994b4 (core classes, repair memo; point_rows R 65.8 -> 7.92), plan/STATUS f23d3185a; load 46.10 45.93 45.05 |
 | PERF-l139-family | impl attempt 3 | 2026-11-12 18:45 | start: worktree from origin/main 25a9b75b4, re-measuring all l01_39 families |
 | POW-scope-exponent | impl attempt 1 | 2026-11-13 14:51 | reproduced on 4a1a69d22 with zedc run: 2^(2^k - 2) under k > 0, 2^(3^k - 3) under k >= 1, 2^(5^(2^k + 1) - 10) under k >= 0 all rejected 'exponent that may be n |
 | PRES-overlap-coeffs | impl attempt 1 | 2026-11-13 14:10 | started; worktree from origin/main 64dfe1c61 |
 | REPAIR-both-sides-cast | impl attempt 1 | 2026-11-13 16:03 | started; worktree from origin/main 25763d5ea |
 | REPAIR-past-binding | impl attempt 1 | 2026-11-13 14:51 | started; worktree from origin/main 8776f59cf |
-| SPEC-ffi-release-apply | running |  |  |
+| SPEC-ffi-release-apply | impl attempt 1 | 2026-11-13 16:29 | started; spec worktree /home/luke/Work/wt/spec-ffi-release-apply-spec; load 63.31 57.12 51.32 |
 | ST-churn-at-once | impl attempt 1 | 2026-11-13 16:18 | started; worktree from origin/main a42ee21d8 |
 | ST-class-case-reverse | impl attempt 1 | 2026-11-13 16:24 | started; load 44.00 |
-| TESTS-unignore-all | merged and pushed (706fad4e8, f026086cb, 014d831dd, 6817c6740, bbcb71afd) | 2026-11-13 | 125 of 141 ignores removed; 79 tests fail on main, listed in wt/known-failing.md with their rows; 16 left (families.rs 10, live agents' files 6) |
+| STUDY-eval-pull-body | running |  |  |
+| TESTS-defer-failing | impl attempt 1 | 2026-11-13 16:54 | started; load 41.38 47.39 48.09 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
