@@ -26,6 +26,7 @@ mod payload_scaling;
 mod r6_reduction;
 mod rec;
 mod rec_order;
+mod refusal_cost;
 mod refusals;
 mod scaling;
 mod setop;

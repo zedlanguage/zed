@@ -116,6 +116,8 @@ thread_local! {
     // kept value, deciding again the part of the group it reaches, O(m·n) for m readers of a
     // group of n; used: the kept values read by index, O(1) per read.
     static STORES: RefCell<Vec<Vec<Rep>>> = const { RefCell::new(Vec::new()) };
+    /// The classes of the values in `STORES` ([`stored_class`]).
+    static CLASSES: RefCell<Classes> = RefCell::new(Classes::default());
     /// For each member given `Inhabited` by [`group_verdicts`] with a value its searches built:
     /// the list in `STORES` and the value's number there.
     static SHARED: RefCell<ByType<(usize, usize)>> =
@@ -304,6 +306,7 @@ impl Type {
         MEMO.with(|m| m.borrow_mut().clear());
         VERDICTS.with(|m| m.borrow_mut().clear());
         STORES.with(|m| m.borrow_mut().clear());
+        CLASSES.with(|m| *m.borrow_mut() = Classes::default());
         SHARED.with(|m| m.borrow_mut().clear());
         GROUPS.with(|m| m.borrow_mut().clear());
         super::rec::unfold::end_unit();
@@ -931,7 +934,14 @@ struct Search {
     /// For each such value whose parts were read in ([`Search::local`]), the number of the value
     /// made of them.
     expanded: DigestMap<usize, usize>,
+    /// Whether a value is in a type, by the class of the value ([`Search::class`]) and the type.
     members: HashMap<(usize, Type), Option<bool>, Digests>,
+    /// The class of each value shown that was given one, by its number.
+    classes: DigestMap<usize, usize>,
+    /// The classes of the values this search built whose keys no value of `STORES` has, by key,
+    /// and the number of classes it gave.
+    own_keys: HashMap<ValueKey, usize>,
+    own_classes: usize,
     /// Each type read as the value type of a morphism.
     value_reads: BTreeSet<usize>,
     /// Types proved empty for good: a morphism with such a value type has no value. All other
@@ -1602,6 +1612,114 @@ enum Rep {
     Struct,
 }
 
+impl Rep {
+    /// The numbers of the values it is made of, in the list that holds it.
+    fn parts(&self) -> Vec<usize> {
+        match self {
+            Rep::Tuple(vs) => vs.clone(),
+            Rep::Atom(_, p) => vec![*p],
+            Rep::List { item, .. } => vec![*item],
+            _ => vec![],
+        }
+    }
+
+    /// The key of a value that is neither a closure nor a value of another search, with each
+    /// part given as its class.
+    fn key(&self, class: impl Fn(usize) -> usize) -> ValueKey {
+        match self {
+            Rep::Value(x) => ValueKey::Value(x.clone()),
+            Rep::Tuple(vs) => ValueKey::Tuple(vs.iter().map(|&v| class(v)).collect()),
+            Rep::Atom(name, p) => ValueKey::Atom(name.clone(), class(*p)),
+            Rep::List {
+                stop,
+                link,
+                item,
+                len,
+            } => ValueKey::List {
+                stop: stop.clone(),
+                link: link.clone(),
+                item: class(*item),
+                len: len.clone(),
+            },
+            Rep::Struct => ValueKey::Struct,
+            Rep::Of { .. } | Rep::Closure(_) => unreachable!("a value with no key"),
+        }
+    }
+}
+
+/// A value, with each of its parts given as its class: two values with one key are equal. A
+/// value's class is a number given to it and to every value equal to it, so that the membership
+/// of a value in a type, a function of the value, is tested once for all values equal to it
+/// ([`Searching::member_known`]). A closure is not compared: each has a class of its own.
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum ValueKey {
+    Value(Value),
+    Tuple(Vec<usize>),
+    Atom(Arc<str>, usize),
+    List {
+        stop: Arc<str>,
+        link: Arc<str>,
+        item: usize,
+        len: BigUint,
+    },
+    Struct,
+}
+
+/// The classes of the values of `STORES`, numbered up from 0; a search numbers the classes of
+/// the values it builds itself down from `usize::MAX` ([`Search::class`]). The keys hold atom
+/// names, a program's text, so they keep the standard map's seeded hasher ([`DigestMap`]).
+#[derive(Default)]
+struct Classes {
+    keys: HashMap<ValueKey, usize>,
+    /// The class of each value kept, by its list in `STORES` and its number there.
+    stored: DigestMap<(usize, usize), usize>,
+}
+
+/// The class of the value numbered `at` in the list `store` of `STORES`. The value and each of
+/// its parts not yet given a class are given one, the parts first, on a list of their own rather
+/// than the thread's stack, so a value nested to any depth is read with no more of the stack
+/// than a shallow one. Each value kept is given its class once for all searches: it is a
+/// function of the value, and the lists are never changed until `Type::forget_emptiness`, which
+/// drops the classes with them.
+fn stored_class(store: usize, at: usize) -> usize {
+    CLASSES.with(|c| {
+        STORES.with(|st| {
+            let (mut c, st) = (c.borrow_mut(), st.borrow());
+            let mut todo = vec![(store, at)];
+            while let Some(&(s, a)) = todo.last() {
+                if c.stored.contains_key(&(s, a)) {
+                    todo.pop();
+                    continue;
+                }
+                let rep = &st[s][a];
+                let parts: Vec<(usize, usize)> = match rep {
+                    Rep::Of { store, at, .. } => vec![(*store, *at)],
+                    r => r.parts().into_iter().map(|p| (s, p)).collect(),
+                };
+                let missing: Vec<_> = (parts.into_iter())
+                    .filter(|p| !c.stored.contains_key(p))
+                    .collect();
+                if !missing.is_empty() {
+                    todo.extend(missing);
+                    continue;
+                }
+                todo.pop();
+                let next = c.keys.len() + c.stored.len();
+                let class = match rep {
+                    Rep::Of { store, at, .. } => c.stored[&(*store, *at)],
+                    Rep::Closure(_) => next,
+                    r => {
+                        let key = r.key(|p| c.stored[&(s, p)]);
+                        *c.keys.entry(key).or_insert(next)
+                    }
+                };
+                c.stored.insert((s, a), class);
+            }
+            c.stored[&(store, at)]
+        })
+    })
+}
+
 /// A [`Search`] running on an explicit stack on the heap (module [`crate::frames`]). The
 /// methods that may recurse through a type's parts are `async` here, so a type nested to any
 /// depth is decided with no more of the thread's stack than a shallow one; those that start a
@@ -2046,6 +2164,58 @@ impl Search {
     fn show(&mut self, v: Rep) -> usize {
         self.shown.push(v);
         self.shown.len() - 1
+    }
+
+    /// The class of the value numbered `v`: one number for it and every value equal to it,
+    /// shown here or kept in `STORES` ([`ValueKey`]). It and each of its parts not yet given a
+    /// class are given one, the parts first, on a list rather than the thread's stack. A value
+    /// whose key a kept value has takes that value's class; another is given one of this
+    /// search's own, numbered down from `usize::MAX`, which a value kept later with the same key
+    /// does not take, so such a value may have two classes: its membership is then tested twice,
+    /// never answered for another value.
+    fn class(&mut self, v: usize) -> usize {
+        let mut todo = vec![v];
+        while let Some(&w) = todo.last() {
+            if self.classes.contains_key(&w) {
+                todo.pop();
+                continue;
+            }
+            let missing: Vec<usize> = (self.shown[w].parts().into_iter())
+                .filter(|p| !self.classes.contains_key(p))
+                .collect();
+            if !missing.is_empty() {
+                todo.extend(missing);
+                continue;
+            }
+            todo.pop();
+            let class = match &self.shown[w] {
+                Rep::Of { store, at, .. } => stored_class(*store, *at),
+                Rep::Closure(_) => self.own_class(),
+                r => {
+                    let classes = &self.classes;
+                    let key = r.key(|p| classes[&p]);
+                    match CLASSES.with(|c| c.borrow().keys.get(&key).copied()) {
+                        Some(class) => class,
+                        None => match self.own_keys.get(&key) {
+                            Some(&class) => class,
+                            None => {
+                                let class = self.own_class();
+                                self.own_keys.insert(key, class);
+                                class
+                            }
+                        },
+                    }
+                }
+            };
+            self.classes.insert(w, class);
+        }
+        self.classes[&v]
+    }
+
+    /// A class of this search's own ([`Search::class`]).
+    fn own_class(&mut self) -> usize {
+        self.own_classes += 1;
+        usize::MAX - self.own_classes
     }
 
     /// The number of the value of another search at `at` in the list `store` of `STORES`.
@@ -3990,7 +4160,8 @@ impl<'m> Searching<'m> {
             return Some(Some(r));
         }
         let r = s.show(Rep::Value(v));
-        s.members.insert((r, t.clone()), Some(true));
+        let c = s.class(r);
+        s.members.insert((c, t.clone()), Some(true));
         s.reps.insert(t.clone(), Some(r));
         Some(Some(r))
     }
@@ -5411,7 +5582,8 @@ impl<'m> Searching<'m> {
             cur = self.s().show(Rep::Atom(link.clone(), tup));
         }
         let mut s = self.s();
-        s.members.insert((cur, t.clone()), Some(true));
+        let c = s.class(cur);
+        s.members.insert((c, t.clone()), Some(true));
         s.reps.insert(t.clone(), Some(cur));
         Some(cur)
     }
@@ -7066,7 +7238,16 @@ impl<'m> Searching<'m> {
                 return Stack::ready(Some(u.contains(x)));
             }
         }
-        let key = (v, u.clone());
+        // Complexity tradeoff (COMPLEXITY.md K111): the answer is kept by the value's class
+        // (`Search::class`), so it is tested once for all values equal to it, at the cost of a
+        // class for each value tested, O(1) a part, each kept value's class given once for all
+        // searches.
+        // Naive version: kept by the value's number. The values of the groups decided first
+        // (`group_verdicts`) are each read in under a number of their own, so a value kept by k
+        // groups, such as a list of n items that n groups each build, was tested k times against
+        // each type: Θ(n³) tests on the x_tail lists of size Θ(n²) (T6-refusal-cost), where by
+        // class the tests are those of the distinct values against the types.
+        let key = (self.s().class(v), u.clone());
         if let Some(&b) = self.s().members.get(&key) {
             return Stack::ready(b);
         }
