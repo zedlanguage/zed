@@ -26,6 +26,7 @@ use crate::query::{self, Db, Query};
 use crate::rejection::Row;
 use crate::rows::{row, wave};
 use crate::run::{self, Program, Through};
+use crate::stage::Report;
 use crate::suppress::{InFile, Severity, Suppress};
 use crate::work::{self, Stage};
 use crate::{fence, front, source};
@@ -37,8 +38,11 @@ pub struct Outcome {
     pub line: usize,
     /// Its column, counted from 1.
     pub col: usize,
-    /// Why it fails; `None` when it passes.
+    /// Why it fails; `None` when it passes or is not run.
     pub failure: Option<String>,
+    /// Why it is not run, a row of a function only branches the build does not take reach
+    /// (plan row TEST-staged); `None` when it runs.
+    pub not_run: Option<String>,
     /// The part its text decides ([`front::Diagnostic::address`]) of the address of the
     /// rejection its failure reports, if it reports one: `zedc test` prints the address under
     /// it, joined with the file's part, as it prints a warning's (DIAG-addr-rest).
@@ -101,6 +105,7 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, Accepted
                     line,
                     col: ds.first().map_or(1, |d| d.col),
                     failure,
+                    not_run: None,
                     address,
                 });
             }
@@ -127,6 +132,7 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, Accepted
                             .1
                             .into(),
                     ),
+                    not_run: None,
                     address: Some(d.address),
                 });
             }
@@ -151,6 +157,7 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, Accepted
                                 "`{case}` of `{}`: not run, since the unit is rejected",
                                 f.name
                             )),
+                            not_run: None,
                             address: None,
                         });
                     }
@@ -159,12 +166,12 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, Accepted
         }
         Ok((stmts, unit, _)) => {
             let lines = source::Lines::new(text.as_bytes());
-            let cones = Cones::new(unit);
             for &line in &marked {
                 out.push(Outcome {
                     line,
                     col: 1,
                     failure: Some("the line is marked ✗ and the unit is accepted".into()),
+                    not_run: None,
                     address: None,
                 });
             }
@@ -172,10 +179,14 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, Accepted
                 .iter()
                 .find(|s| matches!(&s.kind, StmtKind::Function(f) if f.name == "main"));
             let mut program = None;
+            let mut untaken = BTreeSet::new();
             accepted = Accepted::Yes;
             if main.is_some() {
-                match main_program(stmts, unit) {
-                    Ok(p) => program = Some(p),
+                match program_of(stmts, unit) {
+                    Ok((p, report)) => {
+                        program = Some(p);
+                        untaken = report.untaken;
+                    }
                     Err(e) => {
                         // Placed and addressed as the front end's rejections are, with its
                         // derivation after the place the outcome already gives.
@@ -192,16 +203,36 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, Accepted
                                     .1
                                     .into(),
                             ),
+                            not_run: None,
                             address: Some(d.address),
                         });
                         accepted = Accepted::Refused(d);
                     }
                 }
             }
-            let main_def = unit.defs.iter().find(|d| d.name == "main");
+            // The rows run on the program staged as `zedc run` runs it, or, for a unit with no
+            // program, on the unit as the front end leaves it.
+            let staged = program.as_ref().map_or(unit, |p| &p.unit);
+            let cones = Cones::new(staged);
+            let main_def = staged.defs.iter().find(|d| d.name == "main");
             for t in unit.tests.iter() {
                 let (line, col) = lines.line_col(text.as_bytes(), t.span.start);
                 let case = &text[t.span.start..t.span.end];
+                if untaken.contains(&t.kernel) {
+                    out.push(Outcome {
+                        line,
+                        col,
+                        failure: None,
+                        not_run: Some(format!(
+                            "`{case}` of `{f}`: not run, since the build for {} takes no branch \
+                             that reaches `{f}`",
+                            db.build().named(),
+                            f = t.function
+                        )),
+                        address: None,
+                    });
+                    continue;
+                }
                 let failure = match (&program, t.function.as_str()) {
                     (Some(p), "main") => {
                         let main =
@@ -226,6 +257,7 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, Accepted
                     line,
                     col,
                     failure: failure.map(|why| format!("`{case}` of `{}`: {why}", t.function)),
+                    not_run: None,
                     address: None,
                 });
             }
@@ -233,6 +265,13 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, Accepted
     }
     out.sort_by_key(|o| (o.line, o.col));
     (out, accepted)
+}
+
+/// The program `zedc test` runs the tables of the accepted unit `unit` on, elaborated from
+/// `stmts` and staged as `zedc run` stages it ([`Program::stage`]), with what the build did;
+/// or why `run::program` refuses the unit.
+pub fn program_of(stmts: &[Stmt], unit: &Arc<Unit>) -> Result<(Program, Report), ast::Error> {
+    Ok(main_program(stmts, unit)?.stage())
 }
 
 /// The program of the accepted unit `unit`, elaborated from `stmts`, sharing `unit` with the
@@ -318,9 +357,11 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
         _ => (false, args),
     };
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
-    let taken = Suppress::take(&words)
-        .and_then(|(suppress, rest)| Ok((suppress, crate::build::take(&rest)?)));
-    let (mut suppress, (on, args)) = match taken {
+    let taken = Suppress::take(&words).and_then(|(suppress, rest)| {
+        let (on, rest) = crate::build::take(&rest)?;
+        Ok((suppress, on, crate::build::take_target(&rest)?))
+    });
+    let (mut suppress, on, (target, args)) = match taken {
         Ok(taken) => taken,
         Err(why) => {
             let _ = writeln!(stderr, "{why}");
@@ -331,11 +372,11 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
         let _ = writeln!(
             stderr,
             "usage: zedc test [--mutate] [--suppress <address> …] [--addresses] [--option <name> …] \
-             <file> …"
+             [--target <target>] <file> …"
         );
         return 2;
     }
-    let (mut passed, mut failed, mut rejection) = (0, 0, 0);
+    let (mut passed, mut failed, mut not_run, mut rejection) = (0, 0, 0, 0);
     let mut db = Db::new();
     let mut texts = Vec::new();
     for file in args {
@@ -351,6 +392,10 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
         let place = crate::place::Place::of(std::path::Path::new(file))
             .map_err(|why| (2, why))
             .and_then(|place| Ok((InFile::at(&place), crate::unit::package_build(&place, &on)?)));
+        let place = place.map(|(at, build)| match target {
+            Some(t) => (at, build.for_target(t)),
+            None => (at, build),
+        });
         let (at, build) = match place {
             Ok(taken) => taken,
             Err((status, why)) => {
@@ -396,9 +441,13 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
             failed += 1;
         }
         for o in outcomes {
-            match o.failure {
-                None => passed += 1,
-                Some(why) => {
+            match (o.failure, o.not_run) {
+                (None, None) => passed += 1,
+                (None, Some(why)) => {
+                    let _ = writeln!(stdout, "{file}:{}:{}: {why}", o.line, o.col);
+                    not_run += 1;
+                }
+                (Some(why), _) => {
                     let address = o.address.map(|a| suppress.address_line(at.join(a)));
                     let address = address.unwrap_or_default();
                     let _ = writeln!(stdout, "{file}:{}:{}: {why}{address}", o.line, o.col);
@@ -411,9 +460,15 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
         let _ = writeln!(stderr, "{line}");
     }
     let units = if rejection == 1 { "unit" } else { "units" };
+    // The count of rows not run is written when one is not, so a run whose build takes every
+    // branch reports as before.
+    let not_run = match not_run {
+        0 => String::new(),
+        n => format!("{n} not run, "),
+    };
     let _ = writeln!(
         stdout,
-        "{passed} passed, {failed} failed, {rejection} rejection {units}"
+        "{passed} passed, {failed} failed, {not_run}{rejection} rejection {units}"
     );
     if failed > 0 {
         if mutate {

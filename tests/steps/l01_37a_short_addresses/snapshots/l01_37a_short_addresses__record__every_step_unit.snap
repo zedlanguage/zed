@@ -4,15 +4,15 @@ expression: without_addresses(&out)
 ---
 l01_21_test_runner/zed/config.zed
   warnings: []
-  checks: [Outcome { line: 9, col: 3, failure: None }, Outcome { line: 11, col: 3, failure: None }, Outcome { line: 12, col: 3, failure: None }]
+  checks: [Outcome { line: 9, col: 3, failure: None, not_run: None }, Outcome { line: 11, col: 3, failure: None, not_run: None }, Outcome { line: 12, col: 3, failure: None, not_run: None }]
 
 l01_21_test_runner/zed/fahrenheit.zed
   warnings: []
-  checks: [Outcome { line: 4, col: 8, failure: None }, Outcome { line: 4, col: 17, failure: None }, Outcome { line: 4, col: 29, failure: None }, Outcome { line: 4, col: 41, failure: None }, Outcome { line: 4, col: 51, failure: None }, Outcome { line: 11, col: 3, failure: None }, Outcome { line: 12, col: 3, failure: None }, Outcome { line: 13, col: 3, failure: None }]
+  checks: [Outcome { line: 4, col: 8, failure: None, not_run: None }, Outcome { line: 4, col: 17, failure: None, not_run: None }, Outcome { line: 4, col: 29, failure: None, not_run: None }, Outcome { line: 4, col: 41, failure: None, not_run: None }, Outcome { line: 4, col: 51, failure: None, not_run: None }, Outcome { line: 11, col: 3, failure: None, not_run: None }, Outcome { line: 12, col: 3, failure: None, not_run: None }, Outcome { line: 13, col: 3, failure: None, not_run: None }]
 
 l01_21_test_runner/zed/greeting.zed
   warnings: []
-  checks: [Outcome { line: 3, col: 8, failure: None }, Outcome { line: 3, col: 32, failure: None }, Outcome { line: 3, col: 57, failure: None }, Outcome { line: 9, col: 3, failure: None }, Outcome { line: 10, col: 3, failure: None }, Outcome { line: 11, col: 3, failure: None }]
+  checks: [Outcome { line: 3, col: 8, failure: None, not_run: None }, Outcome { line: 3, col: 32, failure: None, not_run: None }, Outcome { line: 3, col: 57, failure: None, not_run: None }, Outcome { line: 9, col: 3, failure: None, not_run: None }, Outcome { line: 10, col: 3, failure: None, not_run: None }, Outcome { line: 11, col: 3, failure: None, not_run: None }]
 
 l01_21_test_runner/zed/labels.zed
   rejected: [
@@ -184,32 +184,32 @@ l01_21_test_runner/zed/labels.zed
         ),
     },
 ]
-  checks: [Outcome { line: 5, col: 5, failure: None }, Outcome { line: 6, col: 17, failure: None }, Outcome { line: 7, col: 5, failure: None }, Outcome { line: 8, col: 25, failure: None }]
+  checks: [Outcome { line: 5, col: 5, failure: None, not_run: None }, Outcome { line: 6, col: 17, failure: None, not_run: None }, Outcome { line: 7, col: 5, failure: None, not_run: None }, Outcome { line: 8, col: 25, failure: None, not_run: None }]
 
 l01_21_test_runner/zed/username.zed
   warnings: []
-  checks: [Outcome { line: 4, col: 8, failure: None }, Outcome { line: 4, col: 24, failure: None }, Outcome { line: 4, col: 40, failure: None }, Outcome { line: 13, col: 3, failure: None }, Outcome { line: 14, col: 3, failure: None }]
+  checks: [Outcome { line: 4, col: 8, failure: None, not_run: None }, Outcome { line: 4, col: 24, failure: None, not_run: None }, Outcome { line: 4, col: 40, failure: None, not_run: None }, Outcome { line: 13, col: 3, failure: None, not_run: None }, Outcome { line: 14, col: 3, failure: None, not_run: None }]
 
 l01_22_type_representation/zed/kinds.zed
   warnings: []
-  checks: [Outcome { line: 11, col: 3, failure: None }, Outcome { line: 12, col: 3, failure: None }, Outcome { line: 13, col: 3, failure: None }, Outcome { line: 14, col: 3, failure: None }, Outcome { line: 15, col: 3, failure: None }, Outcome { line: 16, col: 3, failure: None }, Outcome { line: 17, col: 3, failure: None }, Outcome { line: 18, col: 3, failure: None }, Outcome { line: 19, col: 3, failure: None }, Outcome { line: 20, col: 3, failure: None }, Outcome { line: 21, col: 3, failure: None }, Outcome { line: 27, col: 3, failure: None }, Outcome { line: 28, col: 3, failure: None }, Outcome { line: 29, col: 3, failure: None }, Outcome { line: 30, col: 3, failure: None }, Outcome { line: 31, col: 3, failure: None }, Outcome { line: 37, col: 3, failure: None }, Outcome { line: 38, col: 3, failure: None }, Outcome { line: 39, col: 3, failure: None }]
+  checks: [Outcome { line: 11, col: 3, failure: None, not_run: None }, Outcome { line: 12, col: 3, failure: None, not_run: None }, Outcome { line: 13, col: 3, failure: None, not_run: None }, Outcome { line: 14, col: 3, failure: None, not_run: None }, Outcome { line: 15, col: 3, failure: None, not_run: None }, Outcome { line: 16, col: 3, failure: None, not_run: None }, Outcome { line: 17, col: 3, failure: None, not_run: None }, Outcome { line: 18, col: 3, failure: None, not_run: None }, Outcome { line: 19, col: 3, failure: None, not_run: None }, Outcome { line: 20, col: 3, failure: None, not_run: None }, Outcome { line: 21, col: 3, failure: None, not_run: None }, Outcome { line: 27, col: 3, failure: None, not_run: None }, Outcome { line: 28, col: 3, failure: None, not_run: None }, Outcome { line: 29, col: 3, failure: None, not_run: None }, Outcome { line: 30, col: 3, failure: None, not_run: None }, Outcome { line: 31, col: 3, failure: None, not_run: None }, Outcome { line: 37, col: 3, failure: None, not_run: None }, Outcome { line: 38, col: 3, failure: None, not_run: None }, Outcome { line: 39, col: 3, failure: None, not_run: None }]
 
 l01_22_type_representation/zed/retry.zed
   warnings: []
-  checks: [Outcome { line: 5, col: 3, failure: None }, Outcome { line: 6, col: 3, failure: None }, Outcome { line: 7, col: 3, failure: None }, Outcome { line: 8, col: 3, failure: None }, Outcome { line: 9, col: 3, failure: None }, Outcome { line: 10, col: 3, failure: None }]
+  checks: [Outcome { line: 5, col: 3, failure: None, not_run: None }, Outcome { line: 6, col: 3, failure: None, not_run: None }, Outcome { line: 7, col: 3, failure: None, not_run: None }, Outcome { line: 8, col: 3, failure: None, not_run: None }, Outcome { line: 9, col: 3, failure: None, not_run: None }, Outcome { line: 10, col: 3, failure: None, not_run: None }]
 
 l01_22_type_representation/zed/shape.zed
   warnings: []
-  checks: [Outcome { line: 15, col: 3, failure: None }, Outcome { line: 16, col: 3, failure: None }, Outcome { line: 17, col: 3, failure: None }, Outcome { line: 18, col: 3, failure: None }, Outcome { line: 19, col: 3, failure: None }, Outcome { line: 20, col: 3, failure: None }, Outcome { line: 21, col: 3, failure: None }, Outcome { line: 22, col: 3, failure: None }, Outcome { line: 23, col: 3, failure: None }, Outcome { line: 24, col: 3, failure: None }, Outcome { line: 25, col: 3, failure: None }]
+  checks: [Outcome { line: 15, col: 3, failure: None, not_run: None }, Outcome { line: 16, col: 3, failure: None, not_run: None }, Outcome { line: 17, col: 3, failure: None, not_run: None }, Outcome { line: 18, col: 3, failure: None, not_run: None }, Outcome { line: 19, col: 3, failure: None, not_run: None }, Outcome { line: 20, col: 3, failure: None, not_run: None }, Outcome { line: 21, col: 3, failure: None, not_run: None }, Outcome { line: 22, col: 3, failure: None, not_run: None }, Outcome { line: 23, col: 3, failure: None, not_run: None }, Outcome { line: 24, col: 3, failure: None, not_run: None }, Outcome { line: 25, col: 3, failure: None, not_run: None }]
 
 l01_26_type_resolution/zed/readings.zed
   warnings: []
-  checks: [Outcome { line: 4, col: 8, failure: None }, Outcome { line: 4, col: 19, failure: None }, Outcome { line: 4, col: 35, failure: None }, Outcome { line: 4, col: 47, failure: None }, Outcome { line: 4, col: 59, failure: None }, Outcome { line: 8, col: 8, failure: None }, Outcome { line: 8, col: 24, failure: None }, Outcome { line: 8, col: 41, failure: None }, Outcome { line: 12, col: 8, failure: None }, Outcome { line: 12, col: 19, failure: None }, Outcome { line: 12, col: 35, failure: None }, Outcome { line: 12, col: 47, failure: None }, Outcome { line: 18, col: 8, failure: None }, Outcome { line: 22, col: 8, failure: None }, Outcome { line: 22, col: 20, failure: None }, Outcome { line: 27, col: 8, failure: None }, Outcome { line: 27, col: 28, failure: None }, Outcome { line: 30, col: 8, failure: None }]
+  checks: [Outcome { line: 4, col: 8, failure: None, not_run: None }, Outcome { line: 4, col: 19, failure: None, not_run: None }, Outcome { line: 4, col: 35, failure: None, not_run: None }, Outcome { line: 4, col: 47, failure: None, not_run: None }, Outcome { line: 4, col: 59, failure: None, not_run: None }, Outcome { line: 8, col: 8, failure: None, not_run: None }, Outcome { line: 8, col: 24, failure: None, not_run: None }, Outcome { line: 8, col: 41, failure: None, not_run: None }, Outcome { line: 12, col: 8, failure: None, not_run: None }, Outcome { line: 12, col: 19, failure: None, not_run: None }, Outcome { line: 12, col: 35, failure: None, not_run: None }, Outcome { line: 12, col: 47, failure: None, not_run: None }, Outcome { line: 18, col: 8, failure: None, not_run: None }, Outcome { line: 22, col: 8, failure: None, not_run: None }, Outcome { line: 22, col: 20, failure: None, not_run: None }, Outcome { line: 27, col: 8, failure: None, not_run: None }, Outcome { line: 27, col: 28, failure: None, not_run: None }, Outcome { line: 30, col: 8, failure: None, not_run: None }]
 
 l01_26a_generic_literals/zed/generic.zed
   warnings: []
   `mask`: Ok(Int(256))
-  checks: [Outcome { line: 3, col: 8, failure: None }, Outcome { line: 3, col: 16, failure: None }, Outcome { line: 3, col: 31, failure: None }, Outcome { line: 7, col: 8, failure: None }, Outcome { line: 7, col: 33, failure: None }, Outcome { line: 11, col: 8, failure: None }, Outcome { line: 11, col: 31, failure: None }]
+  checks: [Outcome { line: 3, col: 8, failure: None, not_run: None }, Outcome { line: 3, col: 16, failure: None, not_run: None }, Outcome { line: 3, col: 31, failure: None, not_run: None }, Outcome { line: 7, col: 8, failure: None, not_run: None }, Outcome { line: 7, col: 33, failure: None, not_run: None }, Outcome { line: 11, col: 8, failure: None, not_run: None }, Outcome { line: 11, col: 31, failure: None, not_run: None }]
 
 l01_29_diagnostics/zed/narrowed.zed
   rejected: [
@@ -267,7 +267,7 @@ l01_29_diagnostics/zed/narrowed.zed
         ),
     },
 ]
-  checks: [Outcome { line: 3, col: 22, failure: None }]
+  checks: [Outcome { line: 3, col: 22, failure: None, not_run: None }]
 
 l01_29_diagnostics/zed/offsets.zed
   rejected: [
@@ -318,8 +318,8 @@ l01_29_diagnostics/zed/offsets.zed
         ),
     },
 ]
-  checks: [Outcome { line: 4, col: 9, failure: None }]
+  checks: [Outcome { line: 4, col: 9, failure: None, not_run: None }]
 
 l25_08_mutate/zed/fares.zed
   warnings: []
-  checks: [Outcome { line: 3, col: 8, failure: None }, Outcome { line: 3, col: 20, failure: None }, Outcome { line: 3, col: 33, failure: None }, Outcome { line: 7, col: 8, failure: None }, Outcome { line: 7, col: 19, failure: None }, Outcome { line: 11, col: 8, failure: None }, Outcome { line: 11, col: 19, failure: None }]
+  checks: [Outcome { line: 3, col: 8, failure: None, not_run: None }, Outcome { line: 3, col: 20, failure: None, not_run: None }, Outcome { line: 3, col: 33, failure: None, not_run: None }, Outcome { line: 7, col: 8, failure: None, not_run: None }, Outcome { line: 7, col: 19, failure: None, not_run: None }, Outcome { line: 11, col: 8, failure: None, not_run: None }, Outcome { line: 11, col: 19, failure: None, not_run: None }]

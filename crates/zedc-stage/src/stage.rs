@@ -55,6 +55,11 @@ pub struct Report {
     /// each shared part once, in O(n log n) for n distinct parts; `Display` and `Debug` are for
     /// debugging and label a shared part that reads a name bound in two places (`#1=`).
     pub left: Vec<(Shared, String)>,
+    /// The definitions, by kernel name, that the roots reach as written only through an arm of
+    /// an `if` the build does not take: one whose condition the build evaluated to the other
+    /// arm's `bool`, or to an atom, which takes neither arm. A definition the build evaluates,
+    /// or one whose run a cut read keeps ([`keep_cut_reads`]), is reached.
+    pub untaken: BTreeSet<Arc<str>>,
 }
 
 /// The names `t` reads and does not bind. The term is read as the graph of its distinct parts:
@@ -1374,6 +1379,8 @@ fn mix_keeping(unit: &Unit, roots: &[&str]) -> (Unit, Mixer) {
         }
     }
     let mut m = Mixer::default();
+    // What each definition mixed reads in the parts the build takes, by kernel name.
+    let mut taken: HashMap<&str, Vec<Arc<str>>> = HashMap::new();
     let mut out = Unit {
         defs: Vec::new(),
         tests: unit.tests.clone(),
@@ -1386,6 +1393,8 @@ fn mix_keeping(unit: &Unit, roots: &[&str]) -> (Unit, Mixer) {
             continue;
         }
         let (term, _) = m.bind_mixed(d);
+        let names = m.frees.names_in(m.taken).into_iter().cloned().collect();
+        taken.insert(&d.kernel, names);
         if matches!(*term, Term::Lit(_)) && term != d.term {
             m.report.built.push(d.name.clone());
         }
@@ -1396,8 +1405,36 @@ fn mix_keeping(unit: &Unit, roots: &[&str]) -> (Unit, Mixer) {
             first_order: d.first_order,
         });
     }
-    m.runs = keep_cut_reads(&mut out.defs, &read);
+    m.runs = keep_cut_reads(&mut out.defs, &read, &mut taken);
+    let roots: Vec<&str> = (unit.defs.iter())
+        .filter(|d| roots.contains(&d.name.as_str()))
+        .map(|d| &*d.kernel)
+        .collect();
+    let reached = reach(&roots, &taken);
+    m.report.untaken = (reach(&roots, &read).into_iter())
+        .filter(|x| !reached.contains(x))
+        .map(Arc::from)
+        .collect();
     (out, m)
+}
+
+/// The definitions `roots` reach, by kernel name, where `edges` gives the names each
+/// definition reads; a name `edges` does not hold is no definition. Each definition is
+/// visited once: O(D + E) hash operations for the D definitions reached and their E names.
+fn reach<'a, C>(roots: &[&'a str], edges: &'a HashMap<&str, C>) -> HashSet<&'a str>
+where
+    &'a C: IntoIterator<Item = &'a Arc<str>>,
+{
+    let mut seen: HashSet<&str> = roots.iter().copied().collect();
+    let mut todo: Vec<&str> = roots.to_vec();
+    while let Some(d) = todo.pop() {
+        for x in edges.get(d).into_iter().flatten() {
+            if edges.contains_key(&**x) && seen.insert(x) {
+                todo.push(x);
+            }
+        }
+    }
+    seen
 }
 
 /// The binder of a read [`keep_cut_reads`] adds: `$0`, a binder the compiler made, which the
@@ -1405,7 +1442,8 @@ fn mix_keeping(unit: &Unit, roots: &[&str]) -> (Unit, Mixer) {
 const CUT_READ: &str = "$0";
 
 /// `defs`, the mixed definitions of a unit in its order, each still reading every definition
-/// it read as written whose run can stop or not end; gives the kernel names of those that run.
+/// it read as written whose run can stop or not end; gives the kernel names of those that run,
+/// and adds each cut read it keeps to the names the definition reads in `taken`.
 ///
 /// A run evaluates the definitions a term reaches, each a let around it, call by value (DESIGN
 /// step M0.9), so a definition `main` names only in a branch is evaluated, and when it stops
@@ -1428,7 +1466,11 @@ const CUT_READ: &str = "$0";
 // as written does. `Remix::mix` keeps the cut reads of one term at the cost of two `free`s of
 // it, O(s log s) for its s distinct parts. Test:
 // `l01_28_staging::arms::cut_reads_are_kept_in_time_that_scales`.
-fn keep_cut_reads(defs: &mut [Def], read: &HashMap<&str, BTreeSet<Arc<str>>>) -> HashSet<Arc<str>> {
+fn keep_cut_reads(
+    defs: &mut [Def],
+    read: &HashMap<&str, BTreeSet<Arc<str>>>,
+    taken: &mut HashMap<&str, Vec<Arc<str>>>,
+) -> HashSet<Arc<str>> {
     let mut runs: HashSet<Arc<str>> = HashSet::new();
     for d in defs.iter_mut() {
         let now = free(&d.term);
@@ -1446,6 +1488,10 @@ fn keep_cut_reads(defs: &mut [Def], read: &HashMap<&str, BTreeSet<Arc<str>>>) ->
         }
         if !cut.is_empty() {
             d.term = with_reads(&d.term, &cut);
+            // The run evaluates a cut definition kept so: the build takes it.
+            if let Some(names) = taken.get_mut(&*d.kernel) {
+                names.extend(cut);
+            }
         }
     }
     runs
@@ -2404,6 +2450,10 @@ struct Mixer {
     /// The definitions of the unit whose run can stop or not end, by kernel name, as
     /// [`keep_cut_reads`] found them, so that [`Remix::mix`] keeps a cut read as `mix` does.
     runs: HashSet<Arc<str>>,
+    /// The names the term [`Mixer::mix_top`] is mixing reads in the parts the build takes:
+    /// each part the mix keeps as written or evaluates adds what it reads, and the arms of an
+    /// `if` the build does not take add nothing.
+    taken: Set,
 }
 
 impl Mixer {
@@ -3173,6 +3223,64 @@ impl Mixer {
         }
     }
 
+    /// Adds `free`, what a part the build takes reads, to [`Mixer::taken`]. A union stops where
+    /// the two sets share a node ([`Sets::union`]), so a part adding one name reads one path.
+    fn read_taken(&mut self, free: Set) {
+        self.taken = self.frees.sets.union(self.taken, free);
+    }
+
+    /// What the build-stage term `t`, which the build has evaluated, reads on the arms its run
+    /// takes: what [`Frees::summary`] gives, except that an `if` outside every binder of `t`
+    /// whose condition the build evaluates to a `bool` reads its condition and that one arm.
+    /// Under a binder an arm may read the bound name, which the scope cannot tell from an
+    /// outer name of the same spelling, so both arms are read there; a condition the build
+    /// cannot evaluate reads both arms too. Each part held in a node is walked once.
+    // Complexity tradeoff (COMPLEXITY.md TEST-staged): reading `t`'s summary costs one lookup but
+    // counts the arm the run leaves as taken; this walk costs O(parts outside binders) plus one
+    // evaluation of each condition on the path the run takes, which the run itself evaluates
+    // too, so at most twice the run's work on those conditions.
+    fn taken_reads(&mut self, t: &Term) -> Set {
+        let (mut out, mut seen, mut todo) = (EMPTY, HashSet::new(), vec![t]);
+        while let Some(t) = todo.pop() {
+            if let Term::If(c, x, y) = t {
+                let sum = self.frees.summary(Part::held(c));
+                let names = (self.maps).restrict(&self.frees.sets, self.scope.top, sum.free);
+                let arm = match self.build(sum, names).then(|| self.eval(c, sum.free)) {
+                    Some(Ok(Value::Bool(true))) => Some(x),
+                    Some(Ok(Value::Bool(false))) => Some(y),
+                    _ => None,
+                };
+                if let Some(arm) = arm {
+                    out = self.frees.sets.union(out, sum.free);
+                    if seen.insert(arm.id()) {
+                        todo.push(arm);
+                    }
+                    continue;
+                }
+            }
+            if let Term::Var(x) = t {
+                let x = self.frees.name(x);
+                let one = self.frees.sets.one(x);
+                out = self.frees.sets.union(out, one);
+            }
+            for (p, names, _) in subs(t) {
+                if names.is_empty() {
+                    if p.node.is_none_or(|n| seen.insert(n.id())) {
+                        todo.push(p.term);
+                    }
+                    continue;
+                }
+                let mut free = self.frees.summary(p).free;
+                for x in names.iter() {
+                    let x = self.frees.name(x);
+                    free = self.frees.sets.remove(free, x).unwrap_or(free);
+                }
+                out = self.frees.sets.union(out, free);
+            }
+        }
+        out
+    }
+
     /// `t` with its build-stage subterms evaluated.
     fn mix_top(&mut self, t: Part<'_>) -> Out {
         self.memo.clear();
@@ -3182,6 +3290,7 @@ impl Mixer {
         self.watch.clear();
         self.arena.clear();
         self.frees.of.clear();
+        self.taken = EMPTY;
         let site = match t.node {
             Some(s) => Site::Held(s),
             None => {
@@ -3375,6 +3484,7 @@ impl Mixer {
         // A port read is never build-stage.
         let leaf = matches!(t, Term::Lit(_) | Term::Var(_) | Term::PrimFn(_));
         if (!value && leaf) || matches!(t, Term::Read(_)) {
+            self.read_taken(sum.free);
             done.push(as_written());
             return;
         }
@@ -3400,11 +3510,16 @@ impl Mixer {
         }
         if value && self.build(sum, names) {
             done.push(match self.eval(t, sum.free) {
-                Ok(v) => Out {
-                    term: Mixed::Inline(Term::Lit(v)),
-                    sum: Summary::default(),
-                },
+                Ok(v) => {
+                    let read = self.taken_reads(t);
+                    self.read_taken(read);
+                    Out {
+                        term: Mixed::Inline(Term::Lit(v)),
+                        sum: Summary::default(),
+                    }
+                }
                 Err(why) => {
+                    self.read_taken(sum.free);
                     // The term itself, not its text: printing a term with shared parts within
                     // O(n log n) is the ledger item STAGE-print.
                     let left = match held {
@@ -3424,7 +3539,10 @@ impl Mixer {
         let mut parts = self.sites(t, at);
         match t {
             // A recursion's binders are left as written; recursion arrives at L6.
-            Term::Var(_) | Term::Fix { .. } => done.push(as_written()),
+            Term::Var(_) | Term::Fix { .. } => {
+                self.read_taken(sum.free);
+                done.push(as_written());
+            }
             Term::Lam(..) | Term::Fam { .. } | Term::Match(..) => {
                 todo.push(Mix::Build(t, parts.len()));
                 todo.extend(
@@ -3447,6 +3565,8 @@ impl Mixer {
                 let read = self.frees.summary(Part::held(b)).free;
                 let read = self.frees.sets.contains(read, name);
                 if self.build(bound, names) && !read {
+                    // Not an arm the build leaves out: the bound term is read as taken.
+                    self.read_taken(bound.free);
                     self.report
                         .unread
                         .push(crate::defs::written_name(x).to_string());

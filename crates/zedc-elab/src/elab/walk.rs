@@ -1639,10 +1639,12 @@ impl<'a> Elab<'a> {
                             start: input.span.start,
                             end: expected.span.end,
                         };
-                        let callee = Shared::new(Term::Var(self.names[tf.id].clone()));
+                        let kernel = self.names[tf.id].clone();
+                        let callee = Shared::new(Term::Var(kernel.clone()));
                         let call = self.row_call(tf.f, input, callee, args.clone());
                         self.tests.push(Test {
                             function: tf.f.name.clone(),
+                            kernel,
                             check: Term::Prim(Prim::Eq, vec![call, want.clone()]),
                             args,
                             want,

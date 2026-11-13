@@ -4,7 +4,7 @@ expression: without_addresses(&out)
 ---
 DESIGN.md [sec:ports] 1
   warnings: []
-  checks: [Outcome { line: 7, col: 3, failure: Some("this file declares 2 functions named `main`, at the places listed below, and a program starts at exactly one. Keep the `main` the program should start at, and rename or remove each of the others.\n  [1] 2:3: `main` is declared here\n      2 |   main(m: MainArgs) {\n        |   ^^^^^^^^^^^^^^^^^^^\n  [2] 7:3: `main` is declared here\n      7 |   main(m: MainArgs) -> int {\n        |   ^^^^^^^^^^^^^^^^^^^^^^^^^^") }]
+  checks: [Outcome { line: 7, col: 3, failure: Some("this file declares 2 functions named `main`, at the places listed below, and a program starts at exactly one. Keep the `main` the program should start at, and rename or remove each of the others.\n  [1] 2:3: `main` is declared here\n      2 |   main(m: MainArgs) {\n        |   ^^^^^^^^^^^^^^^^^^^\n  [2] 7:3: `main` is declared here\n      7 |   main(m: MainArgs) -> int {\n        |   ^^^^^^^^^^^^^^^^^^^^^^^^^^"), not_run: None }]
 
 EXAMPLES.md [2. Bindings and values] 2
   rejected: [
@@ -41,7 +41,7 @@ EXAMPLES.md [2. Bindings and values] 2
         ),
     },
 ]
-  checks: [Outcome { line: 4, col: 3, failure: None }]
+  checks: [Outcome { line: 4, col: 3, failure: None, not_run: None }]
 
 EXAMPLES.md [5. Conditionals] 1
   rejected: [
@@ -54,7 +54,7 @@ EXAMPLES.md [5. Conditionals] 1
         row: None,
     },
 ]
-  checks: [Outcome { line: 3, col: 14, failure: Some("the declared result type `-> Utf8String` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.") }]
+  checks: [Outcome { line: 3, col: 14, failure: Some("the declared result type `-> Utf8String` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }]
 
 EXAMPLES.md [5. Conditionals] 2
   rejected: [
@@ -99,7 +99,7 @@ EXAMPLES.md [5. Conditionals] 2
         row: None,
     },
 ]
-  checks: [Outcome { line: 2, col: 11, failure: Some("`age` is not defined.") }, Outcome { line: 2, col: 24, failure: Some("`country` is not defined.") }, Outcome { line: 3, col: 11, failure: Some("`age` is not defined.") }, Outcome { line: 3, col: 24, failure: Some("`member` is not defined.") }, Outcome { line: 3, col: 34, failure: Some("`override` is not defined.") }]
+  checks: [Outcome { line: 2, col: 11, failure: Some("`age` is not defined."), not_run: None }, Outcome { line: 2, col: 24, failure: Some("`country` is not defined."), not_run: None }, Outcome { line: 3, col: 11, failure: Some("`age` is not defined."), not_run: None }, Outcome { line: 3, col: 24, failure: Some("`member` is not defined."), not_run: None }, Outcome { line: 3, col: 34, failure: Some("`override` is not defined."), not_run: None }]
 
 EXAMPLES.md [6. Functions] 2
   warnings: []
@@ -166,7 +166,7 @@ EXAMPLES.md [6. Functions] 3
         row: None,
     },
 ]
-  checks: [Outcome { line: 2, col: 8, failure: Some("`greet` is not defined.") }, Outcome { line: 3, col: 8, failure: Some("`add` is not defined.") }, Outcome { line: 4, col: 14, failure: Some("`add` is not defined.") }, Outcome { line: 5, col: 8, failure: Some("the mark names the row \"Missing argument\", and the diagnostic is in no row of the rejection table: `greet` is not defined.") }, Outcome { line: 6, col: 8, failure: Some("the mark names the row \"Argument in the wrong form\", and the diagnostic is in no row of the rejection table: `greet` is not defined.") }, Outcome { line: 7, col: 36, failure: Some("The type `Utf8String` is not defined.") }, Outcome { line: 7, col: 51, failure: Some("The type `Utf8String` is not defined.") }, Outcome { line: 9, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 14, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }]
+  checks: [Outcome { line: 2, col: 8, failure: Some("`greet` is not defined."), not_run: None }, Outcome { line: 3, col: 8, failure: Some("`add` is not defined."), not_run: None }, Outcome { line: 4, col: 14, failure: Some("`add` is not defined."), not_run: None }, Outcome { line: 5, col: 8, failure: Some("the mark names the row \"Missing argument\", and the diagnostic is in no row of the rejection table: `greet` is not defined."), not_run: None }, Outcome { line: 6, col: 8, failure: Some("the mark names the row \"Argument in the wrong form\", and the diagnostic is in no row of the rejection table: `greet` is not defined."), not_run: None }, Outcome { line: 7, col: 36, failure: Some("The type `Utf8String` is not defined."), not_run: None }, Outcome { line: 7, col: 51, failure: Some("The type `Utf8String` is not defined."), not_run: None }, Outcome { line: 9, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }, Outcome { line: 14, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }]
 
 EXAMPLES.md [18. Files, stores, and the world] 8
   warnings: []
@@ -191,4 +191,4 @@ EXAMPLES.md [18. Files, stores, and the world] 11
         row: None,
     },
 ]
-  checks: [Outcome { line: 2, col: 8, failure: Some("`http` is not defined.") }, Outcome { line: 2, col: 17, failure: Some("`url` is not defined.") }]
+  checks: [Outcome { line: 2, col: 8, failure: Some("`http` is not defined."), not_run: None }, Outcome { line: 2, col: 17, failure: Some("`url` is not defined."), not_run: None }]

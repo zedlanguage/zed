@@ -28,6 +28,8 @@ pub struct Def {
 pub struct Test {
     /// The function's source name.
     pub function: String,
+    /// The function's kernel name, unique in the unit.
+    pub kernel: Arc<str>,
     /// The bool term that checks the case, over the unit's definitions.
     pub check: Term,
     /// The arguments the key gives, in declaration order.

@@ -298,8 +298,16 @@ pub fn run(
     let main = unit.defs.iter().find(|d| d.name == "main");
     // The rows that reach each definition, in written order: an index built once from each
     // row's cone, so a mutant finds its rows by its definition.
+    // A row `zedc test` does not run, of a function only branches the build does not take
+    // reach (plan row TEST-staged), detects no mutant: it is in no definition's list.
+    let untaken = (program.as_ref())
+        .map(|p| p.stage().1.untaken)
+        .unwrap_or_default();
     let mut rows: Vec<Vec<usize>> = vec![Vec::new(); unit.defs.len()];
     for (j, t) in unit.tests.iter().enumerate() {
+        if untaken.contains(&t.kernel) {
+            continue;
+        }
         let reach = match (t.function.as_str(), main, &program) {
             ("main", Some(main), Some(_)) => {
                 let main = Term::Var(main.kernel.clone());
@@ -326,6 +334,10 @@ pub fn run(
         let term = Shared::new(apply(original, &mutant.at, &mutant.to));
         let verdict = if built[def].as_ref() == Some(&remix.mix(&term)) {
             Verdict::Skipped
+        } else if rows[def].is_empty() && untaken.contains(&unit.defs[def].kernel) {
+            Verdict::Undetected(
+                "the build takes no branch that reaches the definition, so no row that reaches it runs",
+            )
         } else if rows[def].is_empty() {
             Verdict::Undetected("no table reaches the definition")
         } else {

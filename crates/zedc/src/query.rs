@@ -190,6 +190,11 @@ impl Db {
         }
     }
 
+    /// The build every unit is compiled for.
+    pub fn build(&self) -> &Build {
+        &self.build
+    }
+
     /// The front end's result for the unit `text`, built for this database's build.
     pub fn front(&mut self, text: &str) -> Arc<Front> {
         front_at(&mut self.front, &mut self.computed, text, &self.build)

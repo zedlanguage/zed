@@ -80,6 +80,29 @@ impl Build {
         &self.target
     }
 
+    /// This build for `target`, one of [`TARGETS`], in place of its own.
+    pub fn for_target(self, target: &str) -> Build {
+        Build {
+            target: target.to_string(),
+            ..self
+        }
+    }
+
+    /// The build, for a message: its target and each option it turns on, in the manifest's
+    /// order, as the command line writes them: "`x86_64-linux`" or "`x86_64-linux` with
+    /// `--option fast`".
+    pub fn named(&self) -> String {
+        let on: Vec<String> = (self.declared.iter())
+            .filter(|o| self.options.get(*o) == Some(&true))
+            .map(|o| format!("`--option {o}`"))
+            .collect();
+        match &on[..] {
+            [] => format!("`{}`", self.target),
+            [one] => format!("`{}` with {one}", self.target),
+            [init @ .., last] => format!("`{}` with {} and {last}", self.target, init.join(", ")),
+        }
+    }
+
     /// This build with every option off: the build a unit's pins are taken at, so that the
     /// options a build turns on leave the pins as they are.
     pub fn pinned(&self) -> Build {
@@ -127,6 +150,41 @@ pub fn take<'a>(words: &[&'a str]) -> Result<(Vec<&'a str>, Vec<&'a str>), Strin
         on.push(*o);
     }
     Ok((on, rest))
+}
+
+/// The target the one `--target <t>` of `words` names, if one does, and the other words; or
+/// why `--target` is the last word, is given twice, or names no target of [`TARGETS`], which
+/// the message lists. O(the words).
+pub fn take_target<'a>(words: &[&'a str]) -> Result<(Option<&'a str>, Vec<&'a str>), String> {
+    let mut target = None;
+    let mut rest = Vec::with_capacity(words.len());
+    let mut words = words.iter();
+    while let Some(&w) = words.next() {
+        if w != "--target" {
+            rest.push(w);
+            continue;
+        }
+        let &t = words.next().ok_or_else(|| {
+            format!(
+                "`--target` is the last word of the command line, and it needs the target to \
+                 build for after it, one of {}. Write `--target <target>`, or remove `--target`.",
+                targets()
+            )
+        })?;
+        if !TARGETS.contains(&t) {
+            return Err(format!(
+                "`--target {t}`: `{t}` is no target. Write one of {}.",
+                targets()
+            ));
+        }
+        if let Some(first) = target.replace(t) {
+            return Err(format!(
+                "`--target {first}` and `--target {t}`: a build is for one target. Keep one \
+                 `--target`."
+            ));
+        }
+    }
+    Ok((target, rest))
 }
 
 /// What the package declares, for a message: "declares the options `a` and `b`" or "declares

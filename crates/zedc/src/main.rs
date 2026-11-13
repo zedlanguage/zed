@@ -26,7 +26,8 @@ const USAGE: &str = "The commands of zedc are:
       run the program again on the inputs a record of an earlier run holds
   zedc build <file> -o <out> [--suppress <address> …] [--addresses] [--option <name> …]
       compile the program to an executable
-  zedc test [--mutate] [--suppress <address> …] [--addresses] [--option <name> …] <file> …
+  zedc test [--mutate] [--suppress <address> …] [--addresses] [--option <name> …]
+          [--target <target>] <file> …
       run the tests of each file
   zedc --report <command> …
       run the command, then print the work it did by stage
