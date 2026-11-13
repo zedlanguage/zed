@@ -3,7 +3,8 @@
 //! O(n log^2 n) for n digits; num-bigint's own reading, which it replaced, is O(n^2). Each value
 //! and each error is num-bigint's (item P14-bigint-parse).
 
-use num_bigint::BigInt;
+use num_bigint::{BigInt, BigUint};
+use zed_kernel::num::{PRINT_WHOLE, to_decimal_split};
 use zed_tests::instances::Rng;
 use zed_tests::scaling;
 use zedc::store::interval::Num;
@@ -117,24 +118,53 @@ fn reading_a_long_decimal_end_scales() {
     });
 }
 
-/// An end of 20,000 and of 160,000 digits written in decimal, the value built before timing.
-/// num-bigint writes a number of 32 words or more by halves, dividing by the square powers of
-/// its base, and divides by Burnikel and Ziegler's recursion above 64 words: O(M(n) log n),
-/// with num-bigint's product M (Toom-3 at these sizes, about n^1.46). Measured, it grows about
-/// 2.85 times per doubling at every size from 10,000 to 1,280,000 digits, 23.6 times here, close
-/// to the limit; built without num-bigint as one codegen unit it took 24.8 times. Both sizes are
-/// below the 60,000 words where `Num` turns to the kernel's printer, which is slower there; the
-/// printer is held to n log^2 n by `writing_a_wide_end_scales` (COMPLEXITY.md K81).
+/// An end of 160,000 and of 1,280,000 digits written in decimal, the value built before timing,
+/// held to n log^2 n, the order of radix conversion (author decision A47, COMPLEXITY.md C31),
+/// as `writing_a_wide_end_scales` is. Both sizes are above `PRINT_WHOLE` words (160,000 digits
+/// is 8304 words), so both are split by halves. Below `PRINT_WHOLE`, num-bigint's printing,
+/// faster there, grows faster: `writing_an_end_below_print_whole_scales`.
 #[test]
-#[ignore = "PRINT-below-whole: 23.6 times the bytes at 20,000 and 160,000 digits, over the n log n limit 10.6 since SCALE-ratio; open"]
 fn writing_a_long_decimal_end_scales() {
-    let ends = scaling::inputs(20_000, |n| {
+    let ends = scaling::inputs(160_000, |n| {
         let text = digits(&mut Rng::new(n as u64), n);
         text.parse::<Num>().expect("digits")
     });
-    scaling::check("writing a decimal end of n digits", 20_000, |n| {
+    let words = 160_000.0 / (64.0 * std::f64::consts::LOG10_2);
+    assert!(words > PRINT_WHOLE as f64 + 1.0, "160,000 digits are split");
+    scaling::check_log_squared("writing a decimal end of n digits", 160_000, |n| {
         assert!(!ends[&n].to_string().is_empty());
     });
+}
+
+/// An end of 10,000 and of 80,000 digits (520 and 4153 words), both below `PRINT_WHOLE`, so
+/// written by num-bigint's printing whole, held to num-bigint's order there: 8^log2(3) = 27
+/// times, with `SLACK`, 29.7. num-bigint divides by squared powers of its base, the halves
+/// each printed alone, so T(n) = 2 T(n/2) + D(n), which is Θ(D(n)) when the division D grows
+/// faster than n; its division is Burnikel and Ziegler's above 64 words of divisor, which costs
+/// a few products of the divisor's size, and its products are Karatsuba's up to 256 words and
+/// Toom-3's above, n^1.465. Karatsuba's n^1.585 is the fastest-growing of these, so the limit is
+/// 8^1.585. It measured 23.2 times the instructions and 22.4 times the bytes (2026-11-12); a
+/// printing by repeated division by 10^19, quadratic, failed at 55.5 times the bytes.
+#[test]
+fn writing_an_end_below_print_whole_scales() {
+    let ends = scaling::inputs(10_000, |n| {
+        let text = digits(&mut Rng::new(n as u64), n);
+        text.parse::<Num>().expect("digits")
+    });
+    let words = 80_000.0 / (64.0 * std::f64::consts::LOG10_2);
+    assert!(
+        words < PRINT_WHOLE as f64,
+        "80,000 digits are printed whole"
+    );
+    let limit = 8f64.powf(3f64.log2()) * scaling::SLACK;
+    scaling::compare(
+        "writing a decimal end of 10,000 and of 80,000 digits",
+        "num-bigint's printing below PRINT_WHOLE: halves over Burnikel and Ziegler's division \
+         by Karatsuba's products at most, 8^log2(3) times SLACK",
+        limit,
+        || assert!(!ends[&10_000].to_string().is_empty()),
+        || assert!(!ends[&80_000].to_string().is_empty()),
+    );
 }
 
 /// A random number of `words` 64-bit words, the top one not zero.
@@ -150,8 +180,8 @@ fn wide(rng: &mut Rng, words: usize) -> BigInt {
 /// for both signs: zero and the edges of `i64` and `i128`, where the form changes; the powers
 /// of ten `10^(597 2^i)` that the printer divides by and their neighbors, where a half is zero
 /// or all nines; random numbers of every power's width in words `31 2^i` and one either side;
-/// and numbers past 60,000 words, where the kernel's printer takes over from num-bigint's,
-/// among them powers made by `pow`, which are kept unexpanded until written.
+/// and numbers of `PRINT_WHOLE` words and more, where the kernel's split takes over from
+/// num-bigint's, among them powers made by `pow`, which are kept unexpanded until written.
 #[test]
 fn a_written_end_is_num_bigints_text() {
     let mut rng = Rng::new(81);
@@ -177,7 +207,7 @@ fn a_written_end_is_num_bigints_text() {
             values.extend([&p * &p - 1, &p * &p + &p]);
         }
     }
-    values.extend([wide(&mut rng, 60_000), wide(&mut rng, 70_000)]);
+    values.extend([wide(&mut rng, PRINT_WHOLE), wide(&mut rng, 2 * PRINT_WHOLE)]);
     for x in &values {
         for x in [x.clone(), -x] {
             let text = x.to_string();
@@ -195,6 +225,96 @@ fn a_written_end_is_num_bigints_text() {
     }
 }
 
+/// Item PRINT-below-whole: an end's text is num-bigint's, both signs, at the edges where the
+/// kernel's printer changes how it works: zero and every one-digit number; `10^k`, `10^k - 1`
+/// and `10^k + 1` for `k` up to 40; and random numbers and all-ones numbers of `PRINT_WHOLE - 1`,
+/// `PRINT_WHOLE` and `PRINT_WHOLE + 1` words, the first printed by num-bigint whole, the others
+/// by the split. The split's own edges are in `both_printing_methods_write_the_same_text`.
+#[test]
+fn a_written_end_is_num_bigints_text_at_the_edges() {
+    let mut rng = Rng::new(2026);
+    let ten = BigInt::from(10);
+    let mut values: Vec<BigInt> = (0..10).map(BigInt::from).collect();
+    for k in 1..=40u32 {
+        let p = ten.pow(k);
+        values.extend([&p - 1, &p + 1, p]);
+    }
+    for w in [PRINT_WHOLE - 1, PRINT_WHOLE, PRINT_WHOLE + 1] {
+        values.push(wide(&mut rng, w));
+        values.push((BigInt::from(1) << (64 * w)) - 1);
+    }
+    for x in &values {
+        for x in [x.clone(), -x] {
+            let text = x.to_string();
+            assert_eq!(Num::from(&x).to_string(), text, "{} digits", text.len());
+        }
+    }
+}
+
+/// Item PRINT-below-whole: an end's text against a reference that shares no code with either
+/// way of printing: the text it was read from by num-bigint's parser (`BigInt::from_str`, by
+/// products of powers of the base), both signs. Random texts of the digits in the middle of
+/// 1, 2, 31, 500, `PRINT_WHOLE - 1`, `PRINT_WHOLE` and `2 PRINT_WHOLE` words, so that the
+/// smaller are printed by num-bigint whole and the larger by the split; and at the same lengths
+/// the texts `99...9`, `10...0` and `10...01`, whose halves at every split are all nines or
+/// zeros.
+#[test]
+fn a_written_end_is_the_text_it_was_read_from_on_both_sides_of_print_whole() {
+    let mut rng = Rng::new(4096);
+    for w in [1, 2, 31, 500, PRINT_WHOLE - 1, PRINT_WHOLE, 2 * PRINT_WHOLE] {
+        // In the middle of the numbers of `w` words: 32 bits, more than 9 digits, from each end.
+        let len = ((64 * w - 32) as f64 * std::f64::consts::LOG10_2) as usize;
+        let random = format!("{}{}", rng.int(1, 9), digits(&mut rng, len - 1));
+        let texts = [
+            random,
+            "9".repeat(len),
+            format!("1{}", "0".repeat(len - 1)),
+            format!("1{}1", "0".repeat(len - 2)),
+        ];
+        for text in texts {
+            let x: BigInt = text.parse().expect("digits");
+            assert_eq!(x.magnitude().bits().div_ceil(64), w as u64, "{len} digits");
+            assert_eq!(Num::from(&x).to_string(), text, "{w} words");
+            assert_eq!(Num::from(-&x).to_string(), format!("-{text}"), "{w} words");
+        }
+    }
+}
+
+/// Item PRINT-below-whole: the two ways of printing, forced, write the same text: num-bigint's
+/// printing of the whole number and the kernel's split (`zed_kernel::num::to_decimal_split`),
+/// below `PRINT_WHOLE`, where `to_decimal` uses only the first. Random and all-ones numbers of
+/// 1 to 40 words and of every power's width `31 2^i` and one either side up to 3968 words; the
+/// powers `10^(597 2^i)` the split divides by and their neighbors; either side of the most bits
+/// the split prints as one leaf without building powers (31,712, with `PRINT_HANDOFF` at 248)
+/// and of the first power it divides by, `10^9552` (496 words).
+#[test]
+fn both_printing_methods_write_the_same_text() {
+    let mut rng = Rng::new(597);
+    let ones = |w: usize| (BigUint::from(1u32) << (64 * w)) - 1u32;
+    let mut values: Vec<BigUint> = (1..=40)
+        .flat_map(|w| [wide(&mut rng, w).into_parts().1, ones(w)])
+        .collect();
+    let ten = BigUint::from(10u32);
+    for i in 0..8 {
+        let words = 31usize << i;
+        for w in [words - 1, words, words + 1] {
+            values.extend([wide(&mut rng, w).into_parts().1, ones(w)]);
+        }
+        let p = ten.pow(597 << i);
+        values.extend([&p - 1u32, &p + 1u32, p]);
+    }
+    let two = BigUint::from(2u32);
+    for bits in [31_711u32, 31_712, 31_713] {
+        let p = two.pow(bits);
+        values.extend([&p - 1u32, p]);
+    }
+    let first = ten.pow(9552);
+    values.extend([&first - 1u32, &first + 1u32, first]);
+    for x in &values {
+        assert_eq!(to_decimal_split(x), x.to_string(), "{} bits", x.bits());
+    }
+}
+
 /// An end of 65,536 and 524,288 words (about 1.26 and 10.1 million digits) written in decimal,
 /// by the kernel's printer: O(M(n) log n) = O(n log^2 n), about 2.3 times the work per
 /// doubling, 12 times here (COMPLEXITY.md K81, C31).
@@ -205,44 +325,4 @@ fn writing_a_wide_end_scales() {
     scaling::check_log_squared("writing a decimal end of n words", n, |m| {
         assert!(!ends[&m].to_string().is_empty());
     });
-}
-
-/// Item NUM-print-fast: writing an end takes at most 1.1 times num-bigint's processor time at
-/// each size of COMPLEXITY.md K81, 10,000 to 1,280,000 digits (519 to 66,439 words), the
-/// fastest of five runs each, in up to three tries. Below 60,000 words the end is written by
-/// num-bigint itself; at 66,439 the kernel's printer took 0.93 to 0.96 times its time
-/// (2026-11-08). Processor time, not instructions: there the printer runs 1.06 times
-/// num-bigint's instructions in less time.
-#[test]
-fn writing_an_end_is_never_slower_than_num_bigint() {
-    let mut meter = scaling::Meter::of_cpu_time();
-    for digits in [
-        10_000u32, 20_000, 40_000, 80_000, 160_000, 320_000, 640_000, 1_280_000,
-    ] {
-        let mut rng = Rng::new(u64::from(digits));
-        let x: BigInt = (BigInt::from(10).pow(digits - 1) * rng.int(1, 9))
-            + digits_of(&mut rng, digits as usize - 1);
-        let num = Num::from(&x);
-        let mut seen = Vec::new();
-        let fastest = |meter: &mut scaling::Meter, f: &dyn Fn()| {
-            (0..5)
-                .map(|_| meter.work(f).units)
-                .min()
-                .expect("five runs")
-        };
-        let held = (0..3).any(|_| {
-            let ours = fastest(&mut meter, &|| assert!(!num.to_string().is_empty()));
-            let theirs = fastest(&mut meter, &|| assert!(!x.to_string().is_empty()));
-            let ratio = ours as f64 / theirs as f64;
-            seen.push(format!("{ours} against {theirs} ns, {ratio:.3}"));
-            ratio <= 1.1
-        });
-        assert!(held, "{digits} digits: {}", seen.join("; "));
-        eprintln!("{digits} digits: {}", seen.join("; "));
-    }
-}
-
-/// `len` random digits as a number.
-fn digits_of(rng: &mut Rng, len: usize) -> BigInt {
-    digits(rng, len).parse().expect("digits")
 }

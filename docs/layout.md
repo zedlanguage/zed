@@ -54,6 +54,9 @@ tests/                the step tests (the `zed-tests` crate)
                       suite, which needs only the Rust toolchain
   full/<step>/        tests of a step that need outside tools, listed in the folder's file
                       `needs`; run by tools/run_tests.sh --full
+benches/              the crossover benchmarks (the `zed-benches` crate): each times the two
+                      methods either side of a threshold where the code changes method at a
+                      size and sets the threshold; run by hand on each target platform, not tests
 docs/                 documentation of the implementation
 tools/                run_tests.sh and fetch_test_deps.sh
 build/                every generated file; ignored by git

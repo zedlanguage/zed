@@ -1,0 +1,34 @@
+[package]
+name = "zed-benches"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# The crossover benchmarks of DESIGN.md sec:plan: each times the two methods on either side of a
+# threshold where the code changes method at a size, checks that they give the same output, and
+# finds the size where one overtakes the other. Not tests: run by hand on each target platform,
+# on real hardware, to set that platform's thresholds (docs/layout.md, COMPLEXITY.md section
+# "Crossovers").
+[[bin]]
+name = "crossover"
+path = "src/bin/crossover.rs"
+test = false
+
+[dependencies]
+# The meter of the scaling tests: instructions where the hardware counts them, and bytes.
+zed-tests = { path = "../tests" }
+zed-kernel.workspace = true
+num-bigint = "0.4.8"
+# zed-tests brings zedc and its crates, dylibs whose file names do not change with their
+# features; asked for here with the features the workspace build gives them, so that a build of
+# this package alone does not overwrite the copies the tests load (see crates/zedc/Cargo.toml).
+zedc-presburger = { workspace = true, features = ["two-at-a-time"] }
+zedc-solvers = { workspace = true, features = ["counts"] }
+zedc-preimage = { workspace = true, features = ["counts", "preimage-ref"] }
+# object as zed-native's tests have it in the workspace build: zed-native is a dylib too.
+object = { workspace = true, features = ["build"] }
+
+[lints]
+workspace = true

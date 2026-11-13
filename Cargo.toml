@@ -23,6 +23,7 @@ members = [
     "crates/zed-alloc-count",
     "zed/corpus/ref",
     "tests",
+    "benches",
 ]
 
 [workspace.package]

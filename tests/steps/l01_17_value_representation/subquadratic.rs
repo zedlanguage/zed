@@ -161,9 +161,10 @@ fn a_gcd_of_wide_numbers_scales() {
 
 /// The decimal text of a dense number of n words: by halves, each power of ten's reciprocal
 /// built once, O(n log^2 n), held to that order's limit (COMPLEXITY.md C31). Both sizes are
-/// above the 60,000 words below which num-bigint's printing, faster there, writes the text
-/// (`zed_kernel::num::to_decimal`): at 16,384 and 131,072 words the smaller was num-bigint's, and
-/// the change of method made 18.5 times the work (2026-11-08, COMPLEXITY.md K81).
+/// above `PRINT_WHOLE`, 7845 words, below which num-bigint's printing, faster there, writes the
+/// text (`zed_kernel::num::to_decimal`). When that threshold was 60,000 words, the smaller size
+/// was num-bigint's, and the change of method made 18.5 times the work (2026-11-08,
+/// COMPLEXITY.md K81).
 #[test]
 fn printing_a_wide_number_scales() {
     let n = 1 << 16;

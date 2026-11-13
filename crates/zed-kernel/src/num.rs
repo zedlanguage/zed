@@ -35,7 +35,10 @@ use num_traits::{One, Pow, Signed, ToPrimitive, Zero};
 use bound::{Format, Product};
 pub use factor::is_prime;
 use fast::built;
-pub use fast::{mul as mul_uint, mul_int, pow as pow_uint, to_decimal};
+pub use fast::{
+    PRINT_HANDOFF, PRINT_WHOLE, mul as mul_uint, mul_int, pow as pow_uint, to_decimal,
+    to_decimal_split, to_decimal_split_at,
+};
 pub use float_text::{FloatFormat, read_f64_ieee, read_float, show_f64};
 pub use room::{LiteralRounding, TooLarge, bytes_of, room};
 

@@ -69,14 +69,14 @@
 //! or below [`GCD_LEAF`]. Reference: Stehlé and Zimmermann, "A binary recursive gcd
 //! algorithm", ANTS 2004.
 //!
-//! **Printing** ([`to_decimal`]). The powers `10^(L 2^i)`, `L` being [`PRINT_LEAF`], are built
-//! once by squaring. `x` is written as `high 10^(L 2^i) + low` by one division by the largest
-//! power at most `x`, and each half is printed by the next power down, the low half padded with
-//! zeros to its fixed width. The largest power's reciprocal is found by Newton's iteration to
-//! only the precision that division and the level below need; each power below is a
-//! [`Level`] whose reciprocal is derived from the one above by one product and one cyclic
-//! product ([`derive()`]), and whose reciprocal and power are transformed once for all its
-//! divisions. A division at a level takes one product for the quotient and one cyclic product
+//! **Printing** ([`to_decimal`], [`to_decimal_split`]). The powers `10^(L 2^i)`, `L` being
+//! [`PRINT_LEAF`], are built once by squaring. `x` is written as `high 10^(L 2^i) + low` by one
+//! division by the largest power at most `x`, and each half is printed by the next power down,
+//! the low half padded with zeros to its fixed width. The largest power's reciprocal is found
+//! by Newton's iteration to only the precision that division and the level below need; each
+//! power below is a [`Level`] whose reciprocal is derived from the one above by one product and
+//! one cyclic product ([`derive()`]), and whose reciprocal and power are transformed once for
+//! all its divisions. A division at a level takes one product for the quotient and one cyclic product
 //! of half its length for the remainder, which lies in `[0, 4d)` and so is found modulo
 //! `2^(64 m) - 1`. Each level divides numbers of `n` bits in total, O(M(n)), over
 //! `log2(n / L)` levels: O(M(n) log n). Parts below powers of [`PRINT_HANDOFF`] words, and
@@ -91,12 +91,12 @@
 //! was 7.4 to 12.4 before), and takes 1.3 to 2.5 times num-bigint's Burnikel and Ziegler
 //! division's time from 96 to 4096 words, the same at 8192 and 0.76, 0.59 and 0.46 times at
 //! 16,384, 32,768 and 65,536 (load 15 to 17); printing, by the levels above, is slower than
-//! num-bigint's up to about 60,000 words (2026-11-08), where its fixed costs (the powers, one
-//! Newton reciprocal) outweigh num-bigint's `n^1.5`.
+//! num-bigint's below [`PRINT_WHOLE`] words, where its fixed costs (the powers, the levels'
+//! transforms, one Newton reciprocal) outweigh num-bigint's `n^1.5` (COMPLEXITY.md K81).
 //! The gcd gains from about 300 words, since num-bigint's is quadratic. Open for the port:
 //! [`DIV_LEAF`] against the crossover near 8192 words measured above, by a computed cost as
-//! [`TOOM_COST`] is for products; and [`PRINT_WHOLE`], set when [`reciprocal`] cost about
-//! three products and is now [`approx_reciprocal`] and one cyclic product, not measured again.
+//! [`TOOM_COST`] is for products; and a cheaper first reciprocal or cached powers, which
+//! would lower the split's fixed costs and with them [`PRINT_WHOLE`].
 //!
 //! **At the port to Zed.** The results must stay those of num-bigint's operations, which the
 //! unit tests compare at every leaf setting. What depends on measurement and is to be measured
@@ -205,29 +205,51 @@ const HALF_LEAF: u64 = 60;
 const PRINT_LEAF: usize = 597;
 
 /// The widest power of ten, in words, by which [`to_decimal`] hands a part to num-bigint rather
-/// than split it further. Measured on 2026-11-08 (load 23 to 28), the whole print of 320,000
-/// and 1,280,000 digits takes 72.9 and 386 ms with 62 words, 69.0 and 351 with 124, 67.0 and
-/// 345 with 248, 66.8 and 343 with 496, 65.6 and 344 with 992, 68.1 and 413 with 1984 and
-/// 80.5 and 383 with 3968: flat from 248 to 992 words. The digits do not depend on it.
+/// than split it further, so that the leaves are parts below `10^9552`. The setting has one
+/// effect for each power's words, 31, 62, 124, 248, 496 and so on; the benchmark `crossover
+/// print-handoff` (crate zed-benches) prints numbers of 160,000, 320,000 and 1,280,000 digits
+/// with each, and 248 does the least work at all three: 159.4, 365.1 and 1784.8 million
+/// instructions, against 162.0, 372.4 and 1820.1 million at 496 and 172.5, 389.8 and 1877.8
+/// million splitting down to `10^597`; its bytes are 1.13 times the latter's and 0.91 times those
+/// at 496 (2026-11-12, load 42 to 51; COMPLEXITY.md K81). The digits do not depend on it.
 #[cfg(not(test))]
-const PRINT_HANDOFF: usize = 496;
+pub const PRINT_HANDOFF: usize = 248;
 /// One in the unit tests, below every power's words, so that their small numbers reach the
 /// transforms.
 #[cfg(test)]
-const PRINT_HANDOFF: usize = 1;
+pub const PRINT_HANDOFF: usize = 1;
 
-/// The fewest words of a number that [`to_decimal`] splits itself; a narrower one is printed
-/// whole by num-bigint. Measured on 2026-11-08 (load 6 to 5, five runs each), num-bigint
-/// against [`to_decimal`] above this takes 211 against 239 ms at 49,829 words (1.13), 236
-/// against 251 at 53,982 (1.07), 262 against 264 at 58,134 (1.01), 292 against 273 at 62,287
-/// (0.93), 353 against 337 at 66,439 (0.96), 396 against 374 at 74,744 (0.94), 664 against
-/// 575 at 107,963 (0.87) and 1304 against 961 at 166,097 (0.74). The digits do not depend on
-/// it.
+/// The fewest words of a number that [`to_decimal`] splits ([`to_decimal_split`]); a narrower
+/// one is printed whole by num-bigint. The benchmark `crossover print-whole` (crate zed-benches)
+/// times both on random numbers of 256 to 65,536 words. Below 496 words both run num-bigint.
+/// From there the split divides: at 512 words once, by `10^9552` of 496 words, which costs
+/// 0.977 times num-bigint's instructions; from 609 to 7803 words more, 1.57 times at 861
+/// words and 1.005 at 7803; from 7845 words fewer at every size measured, 0.998 times there,
+/// 0.87 at 8192 words, 0.70 at 16,384 and 0.43 at 65,536 (2026-11-12, load 36 to 51;
+/// COMPLEXITY.md K81). It allocates fewer bytes from 2048 words on. The digits do not depend
+/// on it.
 #[cfg(not(test))]
-const PRINT_WHOLE: usize = 60_000;
-/// One in the unit tests, so that every number of at least `3 L` bits is split.
+pub const PRINT_WHOLE: usize = 7845;
+/// One in the unit tests, so that every number reaches the split.
 #[cfg(test)]
-const PRINT_WHOLE: usize = 1;
+pub const PRINT_WHOLE: usize = 1;
+
+/// The most bits of a number that the split writes as one leaf without building the powers,
+/// for parts handed to num-bigint below powers of more than `handoff` words:
+/// `floor(3.32 L) 2^i`, for `i` the least with `31 * 2^i > handoff` (31,712 bits, 496 words,
+/// with [`PRINT_HANDOFF`] at 248; 1982 bits in the unit tests). The split divides a number
+/// only by a power `10^(L 2^j)` of more than `handoff` words, and that power has at most
+/// `31 * 2^j` words (see [`PRINT_LEAF`]), so `j >= i`; a number of at most these bits is below
+/// `2^(3.32 L 2^i) < 10^(L 2^i)`, as `log2(10) > 3.32`, and is not split. Derived, not
+/// measured, so the same leaves are printed with or without it: it only spares a leaf the
+/// powers, built and then not divided by.
+const fn leaf_bits(handoff: usize) -> u64 {
+    let mut i = 0;
+    while 31 << i <= handoff {
+        i += 1;
+    }
+    (PRINT_LEAF as u64 * 332 / 100) << i
+}
 
 /// The cost of a transform product on `n` points, per `n log2(n)`, in units of one word
 /// product of [`sparse_mul`]. Only which of two equal results is computed depends on it. It was
@@ -2912,21 +2934,43 @@ fn remainder(x: &[u64], d: &[u64], dc: &[Vec<u64>; 3], q: &[u64], tw: &Roots) ->
     unfold(r, m, low)
 }
 
-/// The decimal digits of `x`, by halves: `x = high * 10^(L 2^i) + low`, `L` being 597, each
-/// half written alone and the low half padded with zeros to its width. The widest power, which
-/// divides once, is divided by a reciprocal of only the precision that division and the level
-/// below need; each power below it has its reciprocal derived from the one above by one
-/// product and one cyclic product, transformed once and reused by every division at its level.
-/// O(M(n) log n), the recursion `log2(n / L)` deep. Numbers of fewer than 60,000 words are
-/// written by num-bigint, which is faster there; the text is the same.
+/// The decimal digits of `x`, as num-bigint writes them: by num-bigint whole below
+/// [`PRINT_WHOLE`] words, in O(n^1.5), and by halves ([`to_decimal_split`]) from there, in
+/// O(M(n) log n) = O(n log^2 n).
 pub fn to_decimal(x: &BigUint) -> String {
-    // Complexity tradeoff: a number of fewer than `PRINT_WHOLE` words is printed whole by
-    // num-bigint, whose printing is faster there: it costs about 2.85 times as much per
-    // doubling of the words, against about 2.3 for the split below, whose fixed costs (the
-    // powers and one reciprocal) make it slower up to about 60,000 words. The two print the
-    // same digits. The crossover is measured (see `PRINT_WHOLE`) and measured again at the
-    // port to Zed (COMPLEXITY.md K81). `x < 2^(3 L) < 10^L` is a single leaf.
-    if words(x) < PRINT_WHOLE || x.bits() < 3 * PRINT_LEAF as u64 {
+    // Complexity tradeoff: the naive method, num-bigint's printing of the whole number, costs
+    // O(n^1.5) (Toom-3 products under Burnikel and Ziegler's division, about 2.85 times per
+    // doubling of the words); the split costs O(M(n) log n) = O(n log^2 n), but its fixed
+    // costs (the powers, the levels' transforms, one Newton reciprocal) make it slower below
+    // `PRINT_WHOLE` words. The crossover is set by the benchmark `crossover print-whole`
+    // (crate zed-benches; COMPLEXITY.md K81) and set again on each target platform. The two
+    // methods print the same digits.
+    if words(x) < PRINT_WHOLE {
+        return x.to_string();
+    }
+    to_decimal_split(x)
+}
+
+/// The decimal digits of `x` by halves, at any size: `x = high * 10^(L 2^i) + low`, `L` being
+/// 597, each half written alone and the low half padded with zeros to its width. The widest
+/// power, which divides once, is divided by a reciprocal of only the quotient's precision; the
+/// next power down has one Newton reciprocal, and each power below it has its reciprocal
+/// derived from the one above by one product and one cyclic product, transformed once and
+/// reused by every division at its level. O(M(n) log n), the recursion `log2(n / L)` deep; the
+/// leaves, below powers of at most [`PRINT_HANDOFF`] words, are written by num-bigint. The text
+/// is num-bigint's. [`to_decimal`] uses it from [`PRINT_WHOLE`] words; the tests and the
+/// benchmark call it to force the split below there.
+pub fn to_decimal_split(x: &BigUint) -> String {
+    to_decimal_split_at(x, PRINT_HANDOFF)
+}
+
+/// [`to_decimal_split`] with parts below powers of at most `handoff` words handed to
+/// num-bigint, in place of [`PRINT_HANDOFF`]: for the benchmark that sets it. The text does not
+/// depend on `handoff`.
+pub fn to_decimal_split_at(x: &BigUint, handoff: usize) -> String {
+    // Complexity tradeoff: a number of at most `leaf_bits(handoff)` bits is a single leaf and
+    // builds no power, O(1) against building powers it would not divide by.
+    if x.bits() <= leaf_bits(handoff) {
         return x.to_string();
     }
     let mut powers = vec![BigUint::from(10u32).pow(PRINT_LEAF as u32)];
@@ -2946,10 +2990,10 @@ pub fn to_decimal(x: &BigUint) -> String {
     // above it, so `high` and `low` below are each under the next power down squared.
     let top = powers.pop().expect("the first power is listed");
     // Complexity tradeoff: a number whose split would divide by a power of ten of at most
-    // `PRINT_HANDOFF` words is printed by num-bigint, whose printing is faster there; the two
-    // print the same digits. The crossover is measured (see `PRINT_HANDOFF`) and measured
-    // again at the port to Zed (COMPLEXITY.md K81).
-    if top > *x || words(&top) <= PRINT_HANDOFF {
+    // `handoff` words is printed by num-bigint, whose printing is faster there; the two
+    // print the same digits. The crossover `PRINT_HANDOFF` is set by the benchmark `crossover
+    // print-handoff` (crate zed-benches; COMPLEXITY.md K81) and set again on each target.
+    if top > *x || words(&top) <= handoff {
         return x.to_string();
     }
     // Complexity tradeoff: the digits are written by halves, each level of the recursion
@@ -2961,13 +3005,11 @@ pub fn to_decimal(x: &BigUint) -> String {
     // `printing_a_wide_number_scales` and `writing_a_wide_end_scales` (COMPLEXITY.md K30,
     // K81).
     let n = top.bits();
-    // The quotient has at most `k` bits. The reciprocal of `top` is taken to `p` bits, enough
-    // for the quotient and for the level below (see [`derive()`]), which needs `p >= w + 3`
-    // for its `w` bits of words, its square being `top`.
+    // The quotient has at most `k` bits, and the reciprocal of `top` is taken to `p = k`
+    // bits, only what it needs: the levels below do not derive theirs from it (see
+    // [`Printer::new`]).
     let k = x.bits() - n + 1;
-    let p = powers
-        .last()
-        .map_or(k, |d| k.max(d.bits().next_multiple_of(64) + 4));
+    let p = k;
     // `r = 2^2p / t`, floored, for `t` the top `p` bits of `top` (or `top 2^(p - n)`), lies in
     // `[R, R + 4]`, `R = 2^(p + n) / top` floored: `t <= top / 2^(n - p) < t + 1`, and
     // `2^2p / t - 2^2p / (t + 1) < 2^2p / t^2 <= 4`.
@@ -2984,7 +3026,7 @@ pub fn to_decimal(x: &BigUint) -> String {
     let product = mul(&estimate, &top);
     let (high, low) = settle(x, &top, estimate, product);
     drop(top);
-    let printer = Printer::new(powers, (r, p + n));
+    let printer = Printer::new(powers, handoff);
     // `log10(2) < 1234 / 4096`.
     let digits = usize::try_from(x.bits() * 1234 / 4096 + 2).expect("a text that fits in memory");
     let mut out = String::with_capacity(digits);
@@ -3178,13 +3220,14 @@ fn derive(
 
 impl Printer {
     /// The levels of the powers `10^(L 2^i)` listed, each the square of the one before,
-    /// those of at most [`PRINT_HANDOFF`] words left to leaves, given `above = (ya, ea)`, the
-    /// reciprocal of the square of the widest as [`derive()`] takes it; each level's reciprocal
-    /// is derived from the one above.
-    fn new(powers: Vec<BigUint>, above: (BigUint, u64)) -> Printer {
+    /// those of at most `handoff` words left to leaves. The widest level's reciprocal
+    /// is [`approx_reciprocal`]'s `X`, at most one below the floor, which [`Level::div_rem`]
+    /// allows; each level below derives its own from the one above ([`derive()`]), given `X + 1`
+    /// for the widest, at most one above the floor.
+    fn new(powers: Vec<BigUint>, handoff: usize) -> Printer {
         let first = powers
             .iter()
-            .position(|p| words(p) > PRINT_HANDOFF)
+            .position(|p| words(p) > handoff)
             .unwrap_or(powers.len());
         let powers = powers.get(first..).unwrap_or(&[]);
         // The points of each level's products: `xh y'` for `xh` and `y' < 2^w` of at most `W`
@@ -3208,16 +3251,26 @@ impl Printer {
         let tw = FIELDS.each_ref().map(|f| f.twiddles(most));
         let spectra = |x: &[u64], n: usize| [0, 1, 2].map(|k| FIELDS[k].spectrum(x, n, &tw[k]));
         let mut levels = Vec::with_capacity(powers.len());
-        // The reciprocal `floor(2^e / d)` of the level above, and `e`.
-        let mut above = above;
+        // The reciprocal `floor(2^e / d)` of the level above, or one above it, and `e`.
+        let mut above: Option<(BigUint, u64)> = None;
         for d in powers.iter().rev() {
             let (linear, cyclic) = points(d);
             let bits = d.bits();
             let w = bits.next_multiple_of(64);
             let dw = d.to_u64_digits();
             let dc = spectra(&dw, cyclic);
-            // `y = 2^2w / (d 2^s)` = `2^(w + n) / d`, floored.
-            let y = derive(d, &dw, &dc, &tw, &above.0, above.1);
+            // `y = 2^2w / (d 2^s)` = `2^(w + n) / d`, floored, or one below for the widest.
+            // `d` is at least the first power, of 31 words, so the `e` above it is at least
+            // `w + 2n + 3`, as [`derive()`] needs for a reciprocal one above the floor.
+            let y = match &above {
+                Some((ya, ea)) => {
+                    debug_assert!(*ea >= w + 2 * bits + 3, "the level above is precise enough");
+                    derive(d, &dw, &dc, &tw, ya, *ea)
+                }
+                None => approx_reciprocal(&(d << (w - bits)), w, &tw),
+            };
+            // `X + 1` for the widest: `X` is at most one below the floor.
+            let over = u32::from(above.is_none());
             let low = (&y - (BigUint::one() << w)).to_u64_digits();
             levels.push(Level {
                 y: spectra(&low, linear),
@@ -3226,7 +3279,7 @@ impl Printer {
                 d: dw,
                 bits,
             });
-            above = (y, w + bits);
+            above = Some((y + over, w + bits));
         }
         levels.reverse();
         Printer { first, levels, tw }
@@ -3989,6 +4042,24 @@ mod tests {
         check(&f, &g, "Fibonacci neighbours");
         check(&g, &f, "Fibonacci neighbours, swapped");
         check(&(&f << 3u32), &g, "Fibonacci, times 8");
+    }
+
+    /// The split's text does not depend on where it hands parts to num-bigint: every handoff
+    /// from none (0) to past every power's words, at the powers' widths `31 * 2^i` and next to
+    /// them, where the leaves change.
+    #[test]
+    fn decimals_do_not_depend_on_the_handoff() {
+        for handoff in [0, 30, 31, 32, 62, 124, 496, 992, 4000] {
+            for words in [1, 31, 32, 61, 62, 63, 500, 1000, 1984, 3000] {
+                for x in forms(words, 7 + words as u64) {
+                    assert_eq!(
+                        to_decimal_split_at(&x, handoff),
+                        x.to_string(),
+                        "{words} words, handoff {handoff}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
