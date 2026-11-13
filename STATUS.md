@@ -2087,8 +2087,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PERF-l139-family | running | 2026-11-12 18:45 | coordkk fixed d016b9cc3 90a844aa8; 14 tests in 8 families still ignored, cross-review next / 45.57 |
 | POLY-nf-power-value | running | 2026-11-12 14:17 | impl merged fast path 8c2710fc5; W <= K(n) refusal not merged (W does not track cost); CD xr POLY-nf-W spawned / 45.76 |
 | ST-walk-implicit | impl attempt 1 | 2026-11-11 01:43 | started: worktree /home/luke/Work/wt/st-walk-implicit on origin/main 89d83b4a3 / load 36.87 40.84 46.29 |
+| TEST-staged | running | 2026-11-12 21:50 |  |
 | TRIVIAL-walk-frontier | impl attempt 1 | 2026-11-12 16:32 | reproduced on main 125023422: deep m=32/64 79890/446482 steps for 6402/25090 pairs, 128.8M instr at m=64 (load 41) |
-| WARN-refused-shadowed | impl attempt 1 | 2026-11-12 20:35 | after rebase on 0c230df62 with spec 481161f: spec groups + l01_39_reduced_product 300 pieces, 0 failed; load 32.22 to 49.84; build all targets + fmt check pass |
+| WARN-refused-shadowed | impl attempt 1 | 2026-11-12 20:35 | after rebase on ef8b848ea: build all targets, fmt check pass; l01_29_diagnostics, l01_39_reduced_product, zedc_check, l01_07: 267 pieces, 0 failed; load 29.33 t |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
