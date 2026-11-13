@@ -2151,6 +2151,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| CAST-literal-exact | running |  |  |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | CD 1409134102157721601 launched RUN_TYPE_SHORT after test run 15,583.6 (sandbox ns); load 94.95 77.65 61.21 |
 | MAIN-files | impl attempt 1 | 2026-11-13 06:50 | reproduced on 77af58128: main::files is refused as 'a metadata read :: ... not yet' in main and in a helper; files() still accepted; main(1) gets the arity mess |
 | MSG-apply-try-headline | impl attempt 1 | 2026-11-13 07:36 | started; worktree from origin/main 2bd599913 |
@@ -2161,6 +2162,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PRES-overlap-fast | xr attempt  | 2026-11-13 01:10 | round 1 launched: Sol and Opus seats (medium); Gemini 429 (resets in 32h55m); CD next |
 | ROOTS-listed | impl attempt 1 | 2026-11-13 05:56 | started; load 24.38 28.00 29.26 |
 | S1F-num-cycle | impl attempt 1 | 2026-11-13 07:51 | started; worktree /home/luke/Work/wt/s1f-num-cycle from origin/main 4de851624 |
+| ST-walk-checker-admit | running |  |  |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
