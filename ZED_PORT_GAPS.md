@@ -3809,3 +3809,10 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 |---|---|---|---|
 | Two searches stepped in turn, each a struct holding borrowed iterators part way through (an `imbl::ordset::Iter` over a component's ends, a `Box<dyn Iterator>` over the conjuncts at one end) | `reorder`, `Search::step` | Iterators, trait objects | each search a value of its stack, the component and the place in its ends and in the end's conjuncts as keys, `step` a function from that value to the next; the conjuncts at a name read as a list |
 | An `imbl::OrdMap<i64, u64>` of ranks to components changed in place, with a range of it read, cleared and filled again with spread ranks | `Potential::rank_after` | Mutation (gap 11) | the map value replaced by a fold over the range read |
+
+## Entries from FLOAT-sqrt (`crates/zed-kernel/src/eval.rs`, `crates/zed-native/src/codegen.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `f64::sqrt`, `f32::sqrt`, `f64::mul_add` and `f32::mul_add`, each rounded once | `prim_data` (`Prim::Sqrt`, `Prim::Fma`) | None: they are the kernel primitives `sqrt` and `fma` themselves | `sqrt(x)` and `fma(a, b, c)` |
+| Cranelift `sqrt` and `fma` instructions at `f64` | `Lower` (the inline float arms) | None | the same primitives, lowered by the Zed back end |
