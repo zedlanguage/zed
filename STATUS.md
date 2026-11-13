@@ -2173,8 +2173,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | DAGVIEW-aspect-plan-time | impl attempt 1 | 2026-11-13 14:01 | started; load 37.71 41.62 39.04 |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | cross-review round 5 launched on zed-impl 77a026349: Claude, Codex; Gemini 429 (gap recorded); main dump in progress; load 25.99 19.01 20.42 |
-| LIT-name-int-fixed | running |  |  |
-| PORT-lines-int-name | running |  |  |
+| LIT-name-int-fixed | impl attempt 1 | 2026-11-13 14:29 | started; worktree from origin/main df105e781 |
+| PORT-lines-int-name | impl attempt 1 | 2026-11-13 14:29 | started; worktree from df105e781 |
 | POW-nonneg-power | impl attempt 1 | 2026-11-13 12:32 | started; worktree /home/luke/Work/wt/pow-nonneg-power at ca7c70736 |
 | PRES-overlap-coeffs | impl attempt 1 | 2026-11-13 14:10 | started; worktree from origin/main 64dfe1c61 |
 | RED-l139-six | impl attempt 1 | 2026-11-13 14:15 | started; worktree wt/red-l139-six from origin/main 783fd27c8 |
