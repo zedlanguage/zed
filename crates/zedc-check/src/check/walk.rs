@@ -60,6 +60,7 @@ pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
         .errors
         .sort_by(|a, b| (a.span, &a.message, &a.menu).cmp(&(b.span, &b.message, &b.menu)));
     ck.info.errors.dedup();
+    ck.info.blocking = super::blocking::facts(t, unit);
     ck.info
 }
 

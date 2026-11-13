@@ -37,6 +37,7 @@
 //! checker's types and the steps the walk calls that call nothing of the walk.
 
 pub(crate) use zedc_types::kernel_type;
+pub mod blocking;
 pub mod read;
 pub use zedc_types::ty;
 pub mod widen;
@@ -408,6 +409,10 @@ pub struct Info {
     /// narrowed by a test or read under one, placed at that test or read, with its derivation:
     /// in order of place, then of the question (DESIGN.md L1.39).
     pub warnings: Vec<Error>,
+    /// Each function of the unit that can block, by its binder, with why (DESIGN.md sec:ports,
+    /// "Every port operation says whether it can block"); a function not here cannot block.
+    /// [`blocking::explain`] says why in the program's words, for an editor to show.
+    pub blocking: std::collections::BTreeMap<usize, blocking::Cause>,
 }
 
 /// The two operands of `==` that [`Ck::equal`] pairs, built before a scaling test, so that

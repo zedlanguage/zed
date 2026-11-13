@@ -59,7 +59,7 @@ struct Uses {
 // uses by their shared list makes U + K entries and edges. The key hashes the first binder
 // and the length only, O(1) per use; two different lists that agree on both collide and
 // are compared by content, O(K) per such comparison, which only lists not shared reach.
-struct ListKey<'a>(&'a Vector<usize>);
+pub struct ListKey<'a>(pub &'a Vector<usize>);
 
 impl Hash for ListKey<'_> {
     fn hash<H: Hasher>(&self, h: &mut H) {
