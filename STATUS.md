@@ -91,7 +91,7 @@ fences changed, so test `l01_07` needs its expected output accepted at the next 
   shows within ±2^24 is exact, as ±2^53 is for `f64`), `int`, `rat` and `f64` of an `f32`,
   `f32 ^ int -> f32` (taken in `f64`, an exponent past ±2^53 kept to its parity), printing
   by `show_f32`, the ZIR text suffix (`0.1f32`, `nanf32`) and binary tag 11, the canonical
-  tag 12, `Prim::CastF32` = 63, and `Carrier::F32` in every class bound (COMPLEXITY.md F192).
+  tag 12, `Prim::CastF32` = 63, and `Carrier::F32` in every class bound (COMPLEXITY.md F193).
   A bare decimal literal base takes `rat` with an `int` exponent, not `f32` (`0.5 ^ n`); a
   decimal literal its uses leave the float formats alone takes `f64` (author decision
   2026-11-12), so `g() = 2^-1.0` is `0.5`. A decimal component of a tuple argument takes
@@ -148,7 +148,7 @@ fences changed, so test `l01_07` needs its expected output accepted at the next 
   and a decimal literal or a `/` of integer literals that nothing fixes is rejected with a
   menu (row UnfixedDecimal); a literal at a carrier it cannot take is row LiteralCarrier
   (COMPLEXITY.md F135). The carriers are `int`, `f32`, `f64` and `rat` since FLOAT-f32
-  (COMPLEXITY.md F192); `f16` and `bf16` come with step L1.18a.
+  (COMPLEXITY.md F193); `f16` and `bf16` come with step L1.18a.
 - Done: **L1.27**, absences and narrowing: types mark the atoms of named families; `else`
   strips only loose atoms, the pattern form strips the atom it names, and a family atom that
   selects no arrow is rejected.
