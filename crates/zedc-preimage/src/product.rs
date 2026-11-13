@@ -6260,7 +6260,7 @@ impl Scope {
     /// with no reduction after a row [`Scope::extend_threshold`] certified, since it leaves
     /// the products as they were and reducing would split every row again, Theta(n) a test.
     /// With the feature `preimage-ref`, an admitted test or certified row is compared with
-    /// the solver's scope ([`path_check`]).
+    /// the solver's scope (`path_check`).
     fn assume_with(
         &self,
         test: &Term,
@@ -14606,8 +14606,8 @@ mod tests {
     }
 }
 
-/// The comparison of the tests [`Scope::extend_path`] admits and the rows
-/// [`Scope::extend_threshold`] certifies with the solver's scope for the same test (item
+/// The comparison of the tests `Scope::extend_path` admits and the rows
+/// `Scope::extend_threshold` certifies with the solver's scope for the same test (item
 /// ST-walk-checker-admit): while it is on, on this thread, each admitted test also runs the
 /// solver's path on a copy of the scope it started from, with no test admitted on the way,
 /// and records where the two scopes differ: `bottom`, the settled product of each name

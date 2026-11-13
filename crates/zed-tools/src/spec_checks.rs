@@ -319,7 +319,7 @@ const MODES: &[&str] = &[
 ];
 
 /// Whether the "Build modes" bullet of `design` has the table of the debug build and the
-/// optimized build, each keeping the program's values, and defines [`MODES`], and every kind of
+/// optimized build, each keeping the program's values, and defines `MODES`, and every kind of
 /// build `design` names elsewhere is one it defines. The first difference otherwise.
 pub fn build_modes(design: &str) -> Result<(), String> {
     let b = bullet(design)?;
