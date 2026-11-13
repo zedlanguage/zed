@@ -824,7 +824,7 @@ fn an_or_test_relating_two_names_gives_the_join_of_its_sides_in_any_order() {
            if n >= -1 { if a >= n || a >= 5 { popCount(a) } else { 0 } } else { 0 };\n",
     ] {
         let out = rejected(src);
-        assert!(out.contains("this `x` is int[-1..]"), "{src}\n{out}");
+        assert!(out.contains("`popCount(a : int[-1..])`"), "{src}\n{out}");
         assert!(out.contains("n >= -1"), "{src}\n{out}");
     }
 }

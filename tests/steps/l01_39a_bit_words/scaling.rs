@@ -445,7 +445,7 @@ fn readings_each_related_to_a_hub_or_a_constant_are_checked_in_linear_work() {
             100,
             move |k| hub(k, "", rel, &|i| i),
             move |k, out| {
-                let typed = out.matches("is int[-1..]").count();
+                let typed = out.matches(" : int[-1..])`").count();
                 assert_eq!(
                     typed, k,
                     "{rel}, k = {k}: {typed} reads of int[-1..]\n{out}"
