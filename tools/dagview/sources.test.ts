@@ -1,7 +1,11 @@
-// The author's rule (2026-11-11): a source (a node with no needs) sits
-// directly above its highest child, never higher. Checked on the final layout
-// as the page draws it: Layout.layers and the drawn rows (box centers), from
-// scratch and from an earlier layout after edits.
+// The author's rules: a source (a node with no needs) sits directly above its
+// highest child (2026-11-11), unless that row would hold more than the row
+// limit, K = Layout.rowLimit; then it may stagger into a less full row higher
+// up (2026-11-13). So a source more than one layer above its highest child is
+// allowed only where the layer directly above that child holds K nodes or
+// more. Checked on the final layout as the page draws it: Layout.layers and the
+// drawn rows (box centers), from scratch and from an earlier layout after
+// edits; a source allowed above in the layers is not checked in the rows.
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -56,14 +60,23 @@ function drawnRow(l: Layout): (id: string) => number {
   return (id) => at.get(Math.round(l.boxes[id].y))!;
 }
 
+// The sources of finalGaps in Layout.layers that the row limit does not
+// allow: the layer directly above the highest child holds fewer than K nodes.
+function pinGaps(g: Graph, l: Omit<Layout, "key">): [string, number][] {
+  const L = l.layers!, count = new Map<number, number>();
+  for (const v of Object.values(L)) count.set(v, (count.get(v) ?? 0) + 1);
+  return finalGaps(g, (id) => L[id]).filter(([id, gap]) => gap < 1 || (count.get(L[id] + gap - 1) ?? 0) < l.rowLimit!);
+}
+
 function finalProperty(name: string, g: Graph, l: Omit<Layout, "key">): void {
-  const inLayers = finalGaps(g, (id) => l.layers![id]);
-  const inRows = finalGaps(g, drawnRow(l as Layout));
+  const inLayers = pinGaps(g, l);
+  const raised = new Set(finalGaps(g, (id) => l.layers![id]).map(([id]) => id));
+  const inRows = finalGaps(g, drawnRow(l as Layout)).filter(([id]) => !raised.has(id));
   assert.deepEqual(inLayers, [], `${name}: sources not directly above their highest child in Layout.layers`);
   assert.deepEqual(inRows, [], `${name}: sources not directly above their highest child in the drawn rows`);
 }
 
-test("in the final layout of the plan, of the live plan of 2026-11-11, of a plan-shaped graph and of sources whose child sits deep, every source sits directly above its highest child, in Layout.layers and in the drawn rows", () => {
+test("in the final layout of the plan, of the live plan of 2026-11-11, of a plan-shaped graph and of sources whose child sits deep, every source sits directly above its highest child unless that row is full, in Layout.layers and in the drawn rows", () => {
   for (const [name, g] of [["the plan", plan], ["the live plan", live], ["a plan-shaped graph of 1000 nodes", planLike(1000, 2700)], ["12 sources over deep children", deepSources(12, 6)]] as const) {
     const t0 = Date.now();
     const l = d3dagLayout(g);
@@ -75,7 +88,7 @@ test("in the final layout of the plan, of the live plan of 2026-11-11, of a plan
   }
 });
 
-test("the property check fires: a source two layers above its child is reported, in the layers and in the drawn rows, and one layer above is not", () => {
+test("the property check fires: a source two layers above its child is reported, in the layers and in the drawn rows, and one layer above is not; two above is allowed when the row above the child is full", () => {
   // Chain a -> b -> c and source s with child c, laid out by hand.
   const g: Graph = { nodes: ["a", "b", "c", "s"].map((id) => ({ id, w: 210, h: 52 })), edges: [["a", "b"], ["b", "c"], ["s", "c"]] };
   const at = (L: Record<string, number>) => ({ w: 0, h: 0, edges: [], layers: L, boxes: Object.fromEntries(Object.entries(L).map(([id, l]) => [id, { x: 0, y: 100 * l + 26, w: 210, h: 52 }])) }) as unknown as Layout;
@@ -83,9 +96,12 @@ test("the property check fires: a source two layers above its child is reported,
   const up = at({ a: 0, b: 1, c: 2, s: 0 });
   assert.deepEqual(finalGaps(g, (id) => up.layers![id]), [["s", 2]]);
   assert.deepEqual(finalGaps(g, drawnRow(up)), [["s", 2]]);
+  assert.deepEqual(pinGaps(g, { ...up, rowLimit: 2 }), [["s", 2]]);
+  // The layer above c (layer 1) holds b alone: full at K = 1.
+  assert.deepEqual(pinGaps(g, { ...up, rowLimit: 1 }), []);
 });
 
-test("from an earlier layout of the live plan: unchanged it keeps its layers; after an added source with a deep child, an added edge from a source to a deep node, a removed child and a batch of changes, every source sits directly above its highest child, in Layout.layers and in the drawn rows", () => {
+test("from an earlier layout of the live plan: unchanged it keeps its layers; after an added source with a deep child, an added edge from a source to a deep node, a removed child and a batch of changes, every source sits directly above its highest child unless that row is full, in Layout.layers and in the drawn rows", () => {
   const base = d3dagLayout(live);
   finalProperty("the live plan", live, base);
   const at = Object.fromEntries(Object.entries(base.boxes).map(([id, b]) => [id, { x: b.x, y: b.y }]));

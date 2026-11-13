@@ -31,7 +31,7 @@ export interface Layout {
 // Names the layout method in each key, so a layout saved by an older method is
 // not taken for a layout of the same graph by this one. Change it whenever the
 // layout changes.
-const METHOD = "d3-dag 1.2.2 count-balanced layers then edges shortened within full rows of 1.5 x median, every source directly above its highest child, rows over 1.5 x median split, from the earlier layers, row limit and order 2026-11-11b";
+const METHOD = "d3-dag 1.2.2 count-balanced layers then edges shortened within full rows of 1.5 x median, rows over it staggered into rows inserted above them first, every source directly above its highest child unless that row is full, rows over 1.5 x median split, from the earlier layers, row limit rounded and order 2026-11-13";
 
 // What a layout depends on: the node ids, each node's size and the edges.
 // Nodes are sorted by id and edges by their two ids, so the order the plan

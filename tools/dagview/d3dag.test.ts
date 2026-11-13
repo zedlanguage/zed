@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { graph, layerSeparation, layeringSimplex } from "d3-dag";
-import { balanceCounts, balanceLayers, compactLayers, fromPrevious, layers, lowerSources, rowLimit, splitRows, spreadSources } from "./d3dag.ts";
+import { balanceCounts, balanceLayers, compactLayers, fromPrevious, layers, lowerSources, makeRoom, rowLimit, splitRows, spreadSources } from "./d3dag.ts";
 import type { Work } from "./d3dag.ts";
 import type { Graph } from "./layout.ts";
 import { planLike } from "./synthetic.ts";
@@ -198,19 +198,20 @@ test("a row of exactly 1.5 times the median count is not split", () => {
   assert.ok(splitRows(z, z.map((_, i) => i)));
 });
 
-test("after layers on the plan no edge points up, every source sits directly above its highest child, and the layers are a fixed point: balanceLayers and spreadSources at K each make one pass and no move", () => {
+test("after layers on the plan no edge points up, every source sits directly above its highest child unless that row holds K nodes, and the layers are a fixed point: balanceLayers and spreadSources at K each make one pass and no move", () => {
   const { dag, nodes, parents, children } = dagOf(plan);
   const { y, K } = layers(dag, nodes, parents, children);
   edgesDown(y, children);
-  assert.deepEqual(sourceGaps(y, parents, children), []);
+  assert.deepEqual(pinGaps(y, parents, children, K), []);
   const z = Int32Array.from(y);
   assert.equal(balanceLayers(z, parents, children, K, () => assert.fail("balanceLayers moved")), 1);
   assert.equal(spreadSources(z, parents, children, K, () => assert.fail("spreadSources moved")), 1);
-  // Sources pinned above their highest child can leave rows over the split
-  // limit (27 boxes or more are forced in the row of SCALE-cover's 27
-  // sources); splitRows splits those for drawing.
+  // Sources leave a row over K for a less full row above (2026-11-13), so no
+  // row of the plan is over K; before, 27 boxes or more were forced in the
+  // row of SCALE-cover's 27 sources, and 23 rows were over the split limit.
   const c = counts(y);
-  console.log(`plan: K = ${K}, ${c.length} layers, widest ${Math.max(...c)}, rows over the split limit ${c.filter((v) => v > rowLimit(y)).length}`);
+  console.log(`plan: K = ${K}, ${c.length} layers, widest ${Math.max(...c)}, rows over the split limit ${c.filter((v) => v > rowLimit(y)).length}, sources raised ${sourceGaps(y, parents, children).length}`);
+  assert.ok(Math.max(...c) <= K, `a layer of ${Math.max(...c)} nodes, over K = ${K}`);
 });
 
 test("splitting keeps every edge pointing down", () => {
@@ -272,10 +273,15 @@ test("from an earlier layering: an unchanged graph keeps its layers; one added e
       const full = layersOf(h);
       const fullMs = Date.now() - t1;
       const ci = counts(inc.y), cf = counts(full.y);
-      // No more layers than the earlier layering had or the longest path needs.
+      // fromPrevious gives no more layers than the earlier layering had or the
+      // longest path needs. makeRoom then inserts at most n / K empty layers
+      // in each round of layers (ceil((c - K) / K) <= c / K above a row of
+      // c > K), and the balancing passes add none.
       const d = dagOf(h);
       const longest = counts(fromPrevious(h.nodes.map(() => 0), d.parents, d.children)!).length;
-      assert.ok(ci.length <= Math.max(counts(base.y).length, longest), `${what}: ${ci.length} layers`);
+      const start = counts(fromPrevious(h.nodes.map((v) => base.byId[v.id]), d.parents, d.children)!).length;
+      assert.ok(start <= Math.max(counts(base.y).length, longest), `${what}: fromPrevious gives ${start} layers`);
+      assert.ok(ci.length <= start + h.nodes.length / inc.K, `${what}: ${ci.length} layers from ${start}`);
       console.log(`${name}, ${what}: from the earlier layers ${ci.length} layers, widest ${Math.max(...ci)} nodes, ${ms} ms; from scratch ${cf.length} layers, widest ${Math.max(...cf)}, ${fullMs} ms`);
     }
   }
@@ -399,6 +405,15 @@ function sourceGaps(y: Int32Array, parents: number[][], children: number[][]): [
     if (gap !== 1) out.push([i, gap]);
   }
   return out;
+}
+
+// The sources of sourceGaps that the row limit K does not allow above their
+// highest child: the layer directly above it holds fewer than K nodes (see
+// balanceLayers in d3dag.ts).
+function pinGaps(y: Int32Array, parents: number[][], children: number[][], K: number): [number, number][] {
+  const count = new Map<number, number>();
+  for (const v of y) count.set(v, (count.get(v) ?? 0) + 1);
+  return sourceGaps(y, parents, children).filter(([i, gap]) => gap < 1 || (count.get(y[i] + gap - 1) ?? 0) < K);
 }
 
 // parents and children of a graph given as edges between n numbered nodes.
@@ -532,9 +547,9 @@ test("the spring rule: a node with more parents than children moves up to the ro
   }
 });
 
-test("balanceLayers and balanceCounts never move a source; lowerSources puts it in the row above its child whether the rows between have room or are full", () => {
+test("balanceCounts never moves a source; balanceLayers moves a raised source down to the row above its child when that row has room, and not into a full row; lowerSources puts it in the row above its child whether the rows between have room or are full", () => {
   // Spine 0 -> 1 -> 2 -> 3; source s = 4 in layer 0 with child spine 3; `fill`
-  // fixed fillers in each of layers 1 and 2.
+  // fixed fillers in each of layers 1 and 2, which then hold fill + 1 nodes.
   const K = 3;
   for (const fill of [0, K - 1]) {
     const edges: [number, number][] = [[0, 1], [1, 2], [2, 3], [4, 3]];
@@ -542,16 +557,20 @@ test("balanceLayers and balanceCounts never move a source; lowerSources puts it 
     for (const l of [1, 2]) for (let f = 0; f < fill; f++) { const v = y.length; y.push(l); edges.push([l - 1, v], [v, l + 1]); }
     const { parents, children } = adjacency(y.length, edges);
     const Y = Int32Array.from(y);
-    balanceLayers(Y, parents, children, K, (i) => assert.notEqual(i, 4, "balanceLayers moved the source"));
     balanceCounts(Y, parents, children, (i) => assert.notEqual(i, 4, "balanceCounts moved the source"));
     assert.equal(Y[4], 0);
+    const Z = Int32Array.from(Y);
+    balanceLayers(Z, parents, children, K);
+    edgesDown(Z, children);
+    assert.equal(Z[4], fill ? 0 : 2, `balanceLayers with ${fill} fillers per row`);
+    assert.deepEqual(pinGaps(Z, parents, children, K), []);
     lowerSources(Y, parents, children);
     edgesDown(Y, children);
     assert.equal(Y[4], Y[3] - 1, `with ${fill} fillers per row`);
   }
 });
 
-test("on the plan balanceCounts leaves sources above their highest child (it moves the children, not the sources); lowerSources then puts every one directly above, and balanceLayers keeps them there; no move of balanceLayers fills a row past K except the move out of a fuller row", () => {
+test("on the plan balanceCounts leaves sources above their highest child (it moves the children, not the sources); lowerSources then puts every one directly above, and balanceLayers keeps them there unless that row is full; no move of balanceLayers fills a row past K except the move out of a fuller row", () => {
   const { dag, nodes, parents, children } = dagOf(plan);
   layeringSimplex()(dag as any, layerSeparation);
   const y = Int32Array.from(nodes, (n: any) => n.y);
@@ -562,14 +581,16 @@ test("on the plan balanceCounts leaves sources above their highest child (it mov
   const K = rowLimit(y);
   let top = Infinity;
   for (const v of y) top = Math.min(top, v);
-  const c = counts(y.map((v) => v - top));
+  // Counts by layer; balanceLayers can use empty layers above the top one.
+  const c = new Map(counts(y.map((v) => v - top)).entries());
+  const at = (l: number) => c.get(l) ?? 0;
   let fallbacks = 0;
   balanceLayers(y, parents, children, K, (_i, a, b) => {
     a -= top; b -= top;
-    if (c[b] + 1 > K) { assert.ok(c[b] + 1 < c[a], `a move to layer ${b} of ${c[b]} from one of ${c[a]}`); fallbacks++; }
-    c[a]--; c[b]++;
+    if (at(b) + 1 > K) { assert.ok(at(b) + 1 < at(a), `a move to layer ${b} of ${at(b)} from one of ${at(a)}`); fallbacks++; }
+    c.set(a, at(a) - 1); c.set(b, at(b) + 1);
   });
-  assert.deepEqual(sourceGaps(y, parents, children), []);
+  assert.deepEqual(pinGaps(y, parents, children, K), []);
   console.log(`plan: K = ${K}; sources above their highest child by more than one layer after balanceCounts ${before}; ${fallbacks} moves out of rows over K into rows at K or more`);
   assert.ok(before > 0, "control: balanceCounts leaves sources where they were while their children move");
 });
@@ -584,4 +605,72 @@ test("a long row whose nodes all go to one half is not split, so no row is left 
   const parents: number[][] = children.map(() => []);
   children.forEach((cs, i) => cs.forEach((c) => parents[c].push(i)));
   assert.equal(splitRows(y, y.map((_, i) => i), undefined, parents, children), null);
+});
+
+// A spine s_0 -> ... -> s_39, one node per layer; in each layer l from 1 to 38
+// ten fillers, each with parent s_(l-1) and child s_(l+1); a node T with
+// parent s_19 and child s_21, so it is fixed in layer 20; and `fan` sources,
+// each with T as its only child. The rows hold 11 nodes, so K = 16, and
+// lowerSources puts every source in layer 19, the row above T.
+function fanIn(fan: number): Graph {
+  const ids: string[] = [], edges: [string, string][] = [];
+  for (let l = 0; l < 40; l++) { ids.push(`s${l}`); if (l) edges.push([`s${l - 1}`, `s${l}`]); }
+  for (let l = 1; l < 39; l++) for (let j = 0; j < 10; j++) { ids.push(`f${l}_${j}`); edges.push([`s${l - 1}`, `f${l}_${j}`], [`f${l}_${j}`, `s${l + 1}`]); }
+  ids.push("T"); edges.push(["s19", "T"], ["T", "s21"]);
+  for (let j = 0; j < fan; j++) { ids.push(`q${j}`); edges.push([`q${j}`, "T"]); }
+  return { nodes: ids.map((id) => ({ id, w: 210, h: 52 })), edges };
+}
+
+test("a node with 80 parents that are sources (DAGVIEW-wide-rows): the sources stagger into the rows above, so no layer holds more than K, and each source is directly above its child unless that row holds K", () => {
+  const g = fanIn(80);
+  const { y, K } = layersOf(g);
+  const { parents, children } = dagOf(g);
+  const c = counts(y);
+  console.log(`80 sources over one child: K = ${K}, ${c.length} layers, widest ${Math.max(...c)}, sources raised ${sourceGaps(y, parents, children).length}`);
+  assert.equal(K, 16);
+  assert.ok(Math.max(...c) <= K, `a layer of ${Math.max(...c)} nodes, over K = ${K}`);
+  assert.deepEqual(pinGaps(y, parents, children, K), []);
+});
+
+// k sources sharing one child T, all in the row above it (layer 1 of a spine
+// of k / 4 layers; T has parent s_0 and child the last spine node). makeRoom
+// inserts the empty layers above that row that balanceLayers fills.
+function sharedChild(k: number) {
+  const D = k / 4, T = D, n = D + 1 + k;
+  const y = new Int32Array(n);
+  const edges: [number, number][] = [[0, T], [T, D - 1]];
+  for (let l = 0; l < D; l++) { y[l] = l + 1; if (l) edges.push([l - 1, l]); }
+  y[T] = 2;
+  for (let j = 0; j < k; j++) { y[T + 1 + j] = 1; edges.push([T + 1 + j, T]); }
+  return { y, ...adjacency(n, edges) };
+}
+
+test("makeRoom then balanceLayers on k sources sharing one child moves them out of their row into rows of at most K above it, and scales as n log n: k = 4000 and 32000", () => {
+  const K = 16;
+  const r = [4000, 32000].map((k) => {
+    const g = sharedChild(k);
+    const h = sharedChild(k);
+    const m = measured(() => { makeRoom(h.y, K); balanceLayers(h.y, h.parents, h.children, K); }, (w) => { makeRoom(g.y, K, w); balanceLayers(g.y, g.parents, g.children, K, undefined, undefined, w); });
+    edgesDown(g.y, g.children);
+    assert.ok(Math.max(...counts(g.y)) <= K, `k = ${k}: a layer of ${Math.max(...counts(g.y))}`);
+    assert.deepEqual(pinGaps(g.y, g.parents, g.children, K), []);
+    return m;
+  });
+  // The standing limit of 2026-11-13: under 10.5 times the steps at 8n.
+  console.log(`makeRoom and balanceLayers on sources sharing a child: ${show(r)}; step limit 10.5`);
+  assert.ok(ratio(r) < 10.5, show(r));
+});
+
+test("makeRoom inserts above each row over K enough empty layers to hold its excess in rows of K, keeps every edge going down, and changes nothing when no row is over K", () => {
+  // Rows of 1, 7, 2 and 5 nodes at K = 3: row 1 gets ceil(4 / 3) = 2 empty
+  // layers above it, row 3 ceil(2 / 3) = 1.
+  const y = Int32Array.from([0, 1, 1, 1, 1, 1, 1, 1, 2, 2, 3, 3, 3, 3, 3]);
+  const { children } = adjacency(y.length, [[0, 1], [1, 8], [8, 10], [0, 7], [7, 14]]);
+  assert.equal(makeRoom(y, 3), 3);
+  assert.deepEqual(counts(y), [1, 0, 0, 7, 2, 0, 5]);
+  edgesDown(y, children);
+  const z = Int32Array.from([0, 1, 1, 2]);
+  assert.equal(makeRoom(z, 2), 0);
+  assert.deepEqual([...z], [0, 1, 1, 2]);
+  assert.equal(makeRoom(new Int32Array(0), 2), 0);
 });

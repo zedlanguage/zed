@@ -80,7 +80,7 @@ export interface Operators { decross: any; coord: any; narrow: boolean }
 //   lowered only added sources, so in the final layers of the live plan of
 //   2026-11-11 (1,707 nodes, 2,693 edges) 141 of 327 sources sat more than one
 //   layer above their highest child (up to 22), and 173 in the drawn rows (up
-//   to 45). Now no balancing pass moves a source; lowerSources places them
+//   to 45). Now (until 2026-11-13, see below) no balancing pass moves a source; lowerSources places them
 //   after balanceCounts; balanceLayers leaves alone a source's only highest
 //   child; and spreadSources moves a source together with its only highest
 //   child out of a row over K. Old and new run at once, load 24 to 26, so the
@@ -123,6 +123,49 @@ export interface Operators { decross: any; coord: any; narrow: boolean }
 //       against 27,857 from scratch (the method before: 35,454 against
 //       32,432); the layers keep 104 rows where the fresh layout has 101.
 //   A layout from an earlier one depends on it, not only on the graph.
+// - Wide rows staggered (2026-11-13, the author's rule: when a row is wide,
+//   moving a node to a less full row comes before the spring of its edges,
+//   at a cost growing with the square of the excess). The live plan of
+//   2026-11-13 (2,077 nodes, 3,193 edges) had a drawn row of 52 boxes from
+//   scratch, and 83 in the page's saved layout, whose K had fallen to 11 (see
+//   layers). Now balanceLayers moves sources out of rows over K, as Q, the
+//   sum of squared excesses, is lowered before F; makeRoom inserts the rows
+//   they go to directly above the row they leave; and K from an earlier
+//   layout is rounded to the nearest. Three methods were compared, each from
+//   scratch, run several at once at load 36 to 51, so the times are rough:
+//   (1) this one, (2) the pinned sources of a row over K dealt round-robin
+//   over the ceil(c / K) rows above their child, after the loop, (3) the
+//   split rule's limit lowered from 1.5 to 1 times the median. Drawn rows,
+//   most boxes in a drawn row (most nodes in a layer), w x h px, crossings of
+//   the drawn edges, edge span in layers, time:
+//                          rows  most       w x h px          cross   span    time
+//     live 13, before       138  52 (56)  14,470 x 15,206  35,112  20,014   7.4 s
+//     live 13, (1)          139  27 (27)   8,962 x 15,312  33,379  25,165   4.4 s
+//     live 13, (2)          135  36 (63)  11,148 x 14,962  35,913  20,248  10.3 s
+//     live 13, (3)          154  52 (56)  14,542 x 16,828  36,697  21,587  10.9 s
+//     plan, before          105  28 (32)   8,756 x 11,930  25,983  15,620   6.0 s
+//     plan, (1)             117  24 (24)   7,638 x 13,202  22,900  17,266   3.6 s
+//     plan, (2)             112  27 (36)   8,032 x 12,672  25,092  15,742   8.1 s
+//     plan, (3)             141  28 (32)   8,828 x 15,820  25,314  17,945   8.6 s
+//     live 11, before       113  30 (37)   8,914 x 12,630  26,373  16,774   5.8 s
+//     live 11, (1)          125  25 (25)   7,702 x 13,902  25,021  17,885   3.4 s
+//     500 nodes, all but (3) 47  15 (15)   3,600 x  6,128  18,084   4,977   1.0 to 1.7 s
+//     500 nodes, (3)         50  11 (14)   3,520 x  6,446  18,784   5,395   2.0 s
+//     4,000 nodes, before   372  15 (15)   4,594 x 48,698 200,045  53,645  12.0 s
+//     4,000 nodes, (1)      376  15 (15)   4,660 x 49,122 200,982  53,904   9.7 s
+//     4,000 nodes, (2)      372  15 (15)   4,594 x 48,698 200,045  53,645  14.2 s
+//     4,000 nodes, (3)      378  11 (13)   4,000 x 49,218 210,488  55,127  18.2 s
+//   (2) moves sources into rows already full (a layer of 63); (3) splits more
+//   rows but cannot split a row of pinned sources further (splitRows splits
+//   once). (1) leaves no layer over K on these graphs, takes the live plan
+//   from 14,470 px wide to 8,962 at the same height, and has fewer crossings,
+//   for 26 % more edge span; raised sources sit at most 3 layers above their
+//   child (70 of them on live 13). Inserting the rooms only above the top
+//   layer instead gave the same widest row within one (28), but 124 rows,
+//   52,362 crossings, and sources up to 32 layers above their child. Letting
+//   sources move with no room inserted left the 25 top layers of live 13 at
+//   35 or 36 nodes. The saved layout of live 13 at K = 11 is discarded, as
+//   METHOD in layout.ts changed.
 export const operators: Operators = {
   decross: decrossSweeps([decrossDfs().topDown(true), decrossDfs().topDown(false)], 4),
   coord: coordCenter(),
@@ -304,44 +347,65 @@ export function d3dagLayout(g: Graph, ops: Operators = operators, prev?: Record<
 }
 
 // The layers, top = 0, every edge going down at least one layer, every source
-// (no parents, some children) exactly one layer above its highest child, and
-// K, the row limit they were balanced at. With no earlier layering, or none of
-// whose nodes is still in the graph, they come from network simplex and nodes
-// other than sources move to less crowded layers until none can
-// (balanceCounts). Otherwise they start from the earlier layering
-// (fromPrevious). Either way every source is then put directly above its
-// highest child (lowerSources: on the earlier path a source whose children
-// moved since is put back too), and K is the split rule's row limit of those
-// layers (rowLimit) from scratch, or the earlier one, prevK, times the number
-// of nodes over the earlier number (prev's size), rounded down: for an
-// unchanged graph the same K. Then, until neither moves a node, nodes move to
-// shorten their edges into rows with room (balanceLayers) and sources move
-// with their only highest child out of rows over K (spreadSources). If that
-// leaves the rows' own limit below K, both run again at that limit. Last,
-// empty layers are dropped (compactLayers), which keeps every source directly
-// above its highest child as it keeps the order of the layers.
-// No step after lowerSources moves a source away from its highest child:
-// balanceCounts and balanceLayers never move a source, balanceLayers never
-// moves a source's only highest child (another highest child may move, as
-// one stays), a child moving up to the layer below a source becomes one of
-// its highest children, and spreadSources moves a source only with its only
-// highest child, one layer above it. Rows can stay over K where sources share
-// a child (27 over one child on the live plan of 2026-11-11); splitRows
-// splits those for the picture, keeping each source in the row above its
-// child.
+// (no parents, some children) exactly one layer above its highest child unless
+// that layer holds K nodes, and K, the row limit they were balanced at. With
+// no earlier layering, or none of whose nodes is still in the graph, they come
+// from network simplex, nodes other than sources move to less crowded layers
+// until none can (balanceCounts), and every source is put directly above its
+// highest child (lowerSources). Otherwise they start from the earlier
+// layering (fromPrevious, which puts an added source directly above its
+// highest child). K is the split rule's row limit of those layers (rowLimit)
+// from scratch, or the earlier one, prevK, times the number of nodes over the
+// earlier number (prev's size), rounded to the nearest: for an unchanged graph
+// the same K. Then, in each round, makeRoom inserts empty layers above each
+// row over K, and until neither moves a node, nodes move to less full rows
+// and to shorten their edges into rows with room (balanceLayers) and sources
+// move with their only highest child out of rows over K (spreadSources). If
+// that leaves the rows' own limit below K, the round runs again at that
+// limit. Last, empty layers are dropped (compactLayers), which keeps the
+// order of the layers.
+// The two rules of the author's and how they meet (see balanceLayers): a
+// source sits directly above its highest child (2026-11-11), and a row over K
+// sheds nodes into less full rows before any edge is shortened (2026-11-13).
+// The second overrides the first only for rows over K. A source leaves the
+// row above its child only to leave a row over K, for a row with room further
+// up, and the spring of its edge brings it back down whenever a row nearer
+// its child has room; spreadSources moves a source only with its only
+// highest child. balanceLayers never moves a source's only highest child
+// (another highest child may move, as one stays), and a child moving up to
+// the layer below a source becomes one of its highest children. Before
+// (2026-11-11) no step moved a source, and rows stayed over K where sources
+// share a child (27 over SCALE-cover on the live plan of 2026-11-11; on that
+// of 2026-11-13 the widest layer held 56 at K = 27, 52 boxes in the widest
+// drawn row).
+// lowerSources runs only from scratch: on the earlier path it would put back
+// every source that left a row over K, refilling that row, and the passes
+// would then move different sources out of it, so an unchanged graph would
+// not keep its layers. A source whose child moved since is brought down by
+// balanceLayers instead, as far as rows with room allow.
 // An unchanged graph keeps its layers: the loop ended on them at K, with
 // balanceLayers and spreadSources each making no move, their limit at K or
-// more, and from them K is the same. With balanceCounts on the earlier path
+// more, and from them K is the same; makeRoom inserts nothing where no row is
+// over K. With balanceCounts on the earlier path
 // too, or K taken from the rows each time, it did not: on the plan of
 // 2026-11-10 K went 25, 27, 25, 27 ... (moves each round) when recomputed from
 // the result, and from an unchanged graph 14 nodes moved.
+// K from prevK was rounded down until 2026-11-13: each removed and re-added
+// node took one off it, Math.floor(prevK * (n - 1) / n) = prevK - 1 for
+// n > prevK, and as the loop only lowers K it never came back. The live
+// plan's saved layout had K = 11 where its rows' median was 19 (a limit of 27
+// from scratch), so balanceLayers packed rows to 11 and the rows it could not
+// relieve, with pinned sources, went to 95. Rounding to the nearest keeps K
+// for a one-node change both ways (27 over 12 removals and re-additions on the
+// live plan of 2026-11-13, against 27 down to 21 before).
 // The result is what Layout.layers keeps, and K Layout.rowLimit; splitRows
 // then splits the most crowded rows for the picture only.
 // Complexity tradeoff: each round of the inner loop is one run of
 // balanceLayers and one of spreadSources, each O((n + m) log L) per pass (and
 // n K log L for balanceLayers' best layer), and it ends as both lower the same
 // (Q, F) (see spreadSources); K falls by at least one per outer round, so at
-// most K outer rounds. On the plan and the live plan of 2026-11-11 the inner
+// most K outer rounds, each with one makeRoom, O(n + L), inserting at most
+// n / K layers. On the plan and the live plan of 2026-11-11 the inner
 // loop ran 4 times in all, with 11 passes of balanceLayers (384 to 417 moves,
 // 56 to 69 ms) and 9 to 10 of spreadSources (28 to 36 moves, 45 ms); on the
 // plan-shaped graph of 4,000 nodes 2 times, 6 and 2 passes. Running
@@ -355,10 +419,11 @@ export function layers(dag: any, nodes: any[], parents: number[][], children: nu
     layeringSimplex()(dag, layerSeparation);
     y = Int32Array.from(nodes, (n) => n.y);
     balanceCounts(y, parents, children, undefined, work);
+    lowerSources(y, parents, children, work);
   }
-  lowerSources(y, parents, children, work);
-  let K = fresh || prevK === undefined ? rowLimit(y, work) : Math.max(1, Math.floor((prevK * nodes.length) / Object.keys(prev!).length));
+  let K = fresh || prevK === undefined ? rowLimit(y, work) : Math.max(1, Math.round((prevK * nodes.length) / Object.keys(prev!).length));
   for (;;) {
+    makeRoom(y, K, work);
     while (balanceLayers(y, parents, children, K, undefined, undefined, work) + spreadSources(y, parents, children, K, undefined, undefined, work) > 2);
     const k = rowLimit(y, work);
     if (k >= K) break;
@@ -458,9 +523,10 @@ export function lowerSources(y: Int32Array, parents: number[][], children: numbe
 // costs a local integer count in each loop and one test at the end.
 export interface Work { steps: number }
 
-// A source here is a node with no parents and at least one child: its layer
-// is fixed by its children (lowerSources), so the balancing passes never move
-// it.
+// A source here is a node with no parents and at least one child: lowerSources
+// puts it directly above its highest child, balanceCounts never moves it, and
+// balanceLayers moves it only out of a row over K or, with the spring of its
+// edges, down toward that child (see balanceLayers).
 function isSource(i: number, parents: number[][], children: number[][]): boolean {
   return !parents[i].length && children[i].length > 0;
 }
@@ -557,12 +623,22 @@ export function balanceCounts(y: Int32Array, parents: number[][], children: numb
 }
 
 // Moves nodes, one at a time, within their slack (the layers below their
-// lowest parent and above their highest child, within the current top and
-// bottom layers), so every edge still goes down and the number of layers does
-// not grow. Sources are not moved, nor is a node that is the only highest
-// child of a source (the one child in the layer directly below it), so every
-// source stays directly above its highest child (see layers). The author's
-// rule (2026-11-11): each edge pulls its two ends
+// lowest parent and above their highest child, within layer 0, or the top
+// layer if it is above 0, and the bottom layer), so every edge still goes down
+// and the number of layers does not grow. A node that is the only highest
+// child of a source (the one child in the layer directly below it) is not
+// moved, so a source directly above its highest child stays there unless it
+// moves itself.
+// Two rules of the author's, and how they meet. The source rule (2026-11-11):
+// a source sits directly above its highest child. The row rule (2026-11-13):
+// a node of a row over K moves to a less full row before its edges are
+// shortened. The second wins, and only for rows over K: a source moves only
+// out of a row over K (Q falls), up into a row with room (makeRoom inserts
+// those directly above a row over K), or down, by the spring of its edge,
+// toward its child into a row with room; it never moves up out of a row of K
+// or fewer, as that lowers neither Q nor F. So a source sits directly above
+// its highest child unless that row holds K nodes. The spring rule
+// (2026-11-11): each edge pulls its two ends
 // together like a spring, so a node with more edges up than down is pulled
 // up and one with more down than up is pulled down, by how much the moves
 // shorten its edges; a move to a less crowded row is better than one to a
@@ -599,7 +675,9 @@ export function balanceCounts(y: Int32Array, parents: number[][], children: numb
 // at most Q0 + (Q0 + 1) F_max moves, with at most one pass more than moves.
 // After balanceCounts and lowerSources, Q0 = 1,554 on the plan of 2026-11-10
 // (K = 24, 15 rows over it, the widest 54, sources gathered in it) and 1,289 on
-// the live plan of 2026-11-11 (K = 25).
+// the live plan of 2026-11-11 (K = 25). Moving sources too keeps the
+// argument, which holds for any node. makeRoom changes the layers between
+// calls, not during one, so each call keeps it.
 // That bound is quadratic or worse in n. The number of passes can be linear in
 // n: in the chain of d3dag.test.ts ("a chain of moves"), each pass can move
 // only the next node of a chain, as each move frees the row the next one
@@ -611,11 +689,15 @@ export function balanceCounts(y: Int32Array, parents: number[][], children: numb
 // O(log L), and a move updates it in O(log L); the best layer for a node with
 // s != 0 is found by Counts.bestLayer in at most K steps of O(log L). A pass
 // then costs O((n + m) log L + n K log L). The number of highest children of
-// each source (highest) costs O(n + m) per call and O(deg) per move to keep.
+// each source (highest) costs O(n + m) per call and O(deg) per move to keep
+// (a moved source's own count O(C) for its C children). On k sources sharing
+// one child after makeRoom (d3dag.test.ts) the steps grow 10.3 times at 8k,
+// the log L of the tree; scanning the slack instead grew 57.9 times (run once
+// as a control, not kept).
 export function balanceLayers(y: Int32Array, parents: number[][], children: number[][], K: number, onMove?: (i: number, from: number, to: number) => void, W = 2 * K + 1, work?: Work): number {
   const n = y.length;
   if (!n) return 0;
-  let top = Infinity, bottom = -Infinity;
+  let top = 0, bottom = -Infinity;
   for (const v of y) { top = Math.min(top, v); bottom = Math.max(bottom, v); }
   const L = bottom - top + 1;
   const c = countsFor(L, work);
@@ -638,7 +720,7 @@ export function balanceLayers(y: Int32Array, parents: number[][], children: numb
     for (let i = 0; i < n; i++) order[start[n - c.at(y[i] - top)]++] = i;
     steps += perPass;
     for (const i of order) {
-      if (isSource(i, parents, children) || parents[i].some((q) => isSource(q, parents, children) && y[q] === y[i] - 1 && high[q] === 1)) continue;
+      if (parents[i].some((q) => isSource(q, parents, children) && y[q] === y[i] - 1 && high[q] === 1)) continue;
       const a = y[i] - top;
       let lo = 0, hi = L - 1;
       for (const q of parents[i]) lo = Math.max(lo, y[q] - top + 1);
@@ -675,6 +757,12 @@ export function balanceLayers(y: Int32Array, parents: number[][], children: numb
         if (b === y[q] - top + 1) high[q]++;
       }
       y[i] = b + top;
+      // A source that moved has new highest children: O(C) for its C children.
+      if (isSource(i, parents, children)) {
+        high[i] = 0;
+        steps += children[i].length;
+        for (const k of children[i]) if (y[k] === y[i] + 1) high[i]++;
+      }
       onMove?.(i, a + top, b + top);
       moved = true;
     }
@@ -948,6 +1036,47 @@ class CountedCounts extends Counts {
 }
 
 const countsFor = (L: number, work?: Work): Counts => (work ? new CountedCounts(L, work) : new Counts(L));
+
+// The author's rule (2026-11-13): a wide row's nodes stagger up or down into
+// less full rows, and that takes priority over the spring of their edges.
+// makeRoom inserts, directly above each layer l holding c[l] > K nodes,
+// ceil((c[l] - K) / K) empty layers, enough to hold its excess in rows of K;
+// returns the number inserted (at most n / K, as ceil((c - K) / K) <= c / K).
+// Every layer moves down by the empty layers inserted above it and above every
+// layer over it, so the order of the layers is kept and every edge still goes
+// down; the empty layers above the top one become layers 0 and on, which
+// balanceLayers counts from. balanceLayers then fills them: a source in a row
+// over K moves to the lowest row with room above its highest child, now a few
+// layers up, and other nodes whose slack reaches them follow (see layers).
+// Before (2026-11-11), a source stayed directly above its highest child
+// whatever the count, so 80 sources over one child made a row of 81; and
+// letting balanceLayers move sources within the existing layers alone left
+// every row above such a child full (on the live plan of 2026-11-13, the 25
+// top layers at 35 or 36 nodes against K = 27).
+// Complexity tradeoff: O(n + L), a count per layer and one sweep. Inserting
+// the empty layers only above the top layer took the same O(n + L) but put
+// raised sources up to 32 layers above their child, against 3 here: 52,362
+// crossings against 33,379 on the live plan of 2026-11-13 (top comment). Run
+// once per round of layers, not in each balanceLayers call, so every move of
+// the inner loop still lowers (Q, F) and the loop ends (see balanceLayers).
+export function makeRoom(y: Int32Array, K: number, work?: Work): number {
+  const n = y.length;
+  if (!n) return 0;
+  let top = Infinity, bottom = -Infinity;
+  for (const v of y) { top = Math.min(top, v); bottom = Math.max(bottom, v); }
+  const count = new Int32Array(bottom - top + 1);
+  for (const v of y) count[v - top]++;
+  // shift[l]: the empty layers inserted above layer l and every layer above it.
+  const shift = new Int32Array(count.length);
+  let added = 0;
+  for (let l = 0; l < count.length; l++) {
+    if (count[l] > K) added += Math.ceil((count[l] - K) / K);
+    shift[l] = added;
+  }
+  if (added) for (let i = 0; i < n; i++) y[i] += shift[y[i] - top];
+  if (work) work.steps += 3 * n + 2 * count.length;
+  return added;
+}
 
 // Drops empty layers and puts the top layer at 0, keeping the order of the
 // layers; returns the number of layers. An edge that went down still goes down.
