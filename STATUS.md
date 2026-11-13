@@ -2122,7 +2122,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | CK-apply-operator | impl attempt 1 | 2026-11-12 00:38 | baseline: 875 pieces of l01_17-29, l01_39*, diag_control, zedc_check, zedc pass with a message dump (load 25-54); Label enum written, compiling |
 | CROSSOVER-bench | impl attempt 1 | 2026-11-12 22:47 | started; worktree /home/luke/Work/wt/crossover-bench on origin/main |
 | LIT-power-values | impl attempt 1 | 2026-11-13 00:20 | started: worktree, then perf of the 233M-instruction rejection |
-| MSG-derive-print-unions | impl attempt 1 | 2026-11-12 17:24 | baseline on main, family B (a union of its own at each link): bytes 35286086 at n=40, 1265721515 at n=320 (35.9x, limit 13.8x) / load 34.01 32.66 33.90 |
 | NARROW-ne-divisor | impl attempt 1 | 2026-11-12 23:26 | cause: walk.rs nonzero read only the divisor's type, never the arm's interval (Scope narrowing of d != 0 already non-convex); fix reads ints_here for an int div |
 | PERF-deep-ops-slow | impl attempt 1 | 2026-11-12 21:38 | union_all atoms fast path: family ratio 9.06 -> 8.82 by callgrind; running battery / load 52.89 46.05 42.49 |
 | PERF-l139-family | running | 2026-11-12 18:45 | coordkk fixed d016b9cc3 90a844aa8; 14 tests in 8 families still ignored, cross-review next / 45.57 |

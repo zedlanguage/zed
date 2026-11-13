@@ -30,10 +30,12 @@ use super::hash::names_first;
 use super::{Lits, Morphism, Node, Row, Spell, Surface, Surfaces, Tuples, Type};
 use crate::value::Value;
 use order::{Member, NumberType};
+use uses::{Use, Uses};
 
 pub mod defs;
 pub mod names;
 pub mod order;
+mod uses;
 
 impl Type {
     /// The type in the surface syntax (module `print`).
@@ -191,6 +193,32 @@ impl Printer<'_> {
                 ..Printer::default()
             }
             .print(types);
+        }
+        // A part named by how often the type uses it is used inside the parts taken from
+        // earlier prints too. Where one of those writes such a part in full, as used once,
+        // and the type uses it twice or more, the print is made again with those parts printed
+        // anew; once is enough, since the uses each part brings are exact. Every other such
+        // part counts the uses the type has in all.
+        if defs::active() && p.reused.contains(&true) {
+            let counted = p.counted();
+            let numbers = p.numbers(&counted);
+            let all = p.all_uses(&roots, &counted, &numbers);
+            let conflict = |p: &Printer| (0..p.texts.len()).any(|i| p.leaf_uses[i].conflicts(&all));
+            if p.deny.is_none() && conflict(p) {
+                return Printer {
+                    by_name: p.by_name,
+                    spell: p.spell,
+                    apart: std::mem::take(&mut p.apart),
+                    deny: Some(all),
+                    ..Printer::default()
+                }
+                .print(types);
+            }
+            debug_assert!(
+                !conflict(p),
+                "the uses of a print made again are those it was made for"
+            );
+            p.count_uses(&all, &counted, &numbers);
         }
         p.canon(&roots);
         p.render(&roots)
@@ -527,34 +555,54 @@ struct Printer<'s> {
     /// ([`super::Spelled::everywhere`]); and that of the node being given its text.
     fixed: Vec<bool>,
     fixed_now: bool,
+    /// The nodes each node's text refers to, once for each use [`Printer::refer`] counts.
+    kids: Vec<Vec<usize>>,
+    /// The node whose text is being made, to which [`Printer::refer`] adds a child.
+    building: Option<usize>,
+    /// The uses inside each part taken from an earlier print ([`Uses`]); empty for the others.
+    leaf_uses: Vec<Uses>,
+    /// In a print made again with the parts that conflict with the type's uses printed anew,
+    /// those uses ([`Printer::all_uses`]).
+    deny: Option<Uses>,
 }
 
 /// A part's key in the table of parts printed so far ([`printed`]): whether written by name,
 /// whether with the program's spellings, and the item's key.
 type Printed = (bool, bool, Key);
 
-/// The parts printed so far for the message's table of definitions, each with its reference
-/// and class, kept in that table ([`defs::with_kept`]) so that they end with it.
+/// The parts printed so far for the message's table of definitions, each with its reference,
+/// class and the uses inside it, kept in that table ([`defs::with_kept`]) so that they end with
+/// it; and a number for each part any print of the message met, by which [`Uses`] knows it.
 #[derive(Default)]
-struct Kept(BTreeMap<Printed, (String, Class)>);
-
-/// The reference and class of a part an earlier print of the message wrote, and which prints
-/// the same in any type ([`Printer::remember`]): a type that holds it writes the reference
-/// rather than print it again, so the steps of a derivation that each print the next of a
-/// chain print each part once (step MSG-derive-print-per-message).
-fn printed(key: &Printed) -> Option<(String, Class)> {
-    defs::with_kept(|kept| kept.as_ref()?.downcast_ref::<Kept>()?.0.get(key).cloned()).flatten()
+struct Kept {
+    parts: BTreeMap<Printed, (String, Class, Uses)>,
+    numbers: BTreeMap<Printed, u32>,
 }
 
-/// Keeps `parts` for [`printed`], each with its reference and class.
-fn keep(parts: impl Iterator<Item = (Printed, String, Class)>) {
+/// Runs `f` on the parts kept so far, made empty if there are none.
+fn with_kept<R>(f: impl FnOnce(&mut Kept) -> R) -> Option<R> {
     defs::with_kept(|kept| {
         let kept = kept.get_or_insert_with(|| Box::new(Kept::default()));
-        let kept = kept
+        f(kept
             .downcast_mut::<Kept>()
-            .expect("only the printer keeps parts");
-        for (key, name, class) in parts {
-            kept.0.entry(key).or_insert((name, class));
+            .expect("only the printer keeps parts"))
+    })
+}
+
+/// The reference, class and uses of a part an earlier print of the message wrote, and which
+/// prints the same in any type that uses the parts in it as that print did
+/// ([`Printer::remember`]): a type that holds it writes the reference rather than print it
+/// again, so the steps of a derivation that each print the next of a chain print each part
+/// once (steps MSG-derive-print-per-message, MSG-derive-print-unions).
+fn printed(key: &Printed) -> Option<(String, Class, Uses)> {
+    with_kept(|kept| kept.parts.get(key).cloned()).flatten()
+}
+
+/// Keeps `parts` for [`printed`], each with its reference, class and uses.
+fn keep(parts: impl Iterator<Item = (Printed, String, Class, Uses)>) {
+    with_kept(|kept| {
+        for (key, name, class, uses) in parts {
+            kept.parts.entry(key).or_insert((name, class, uses));
         }
     });
 }
@@ -578,8 +626,9 @@ fn push_children(stack: &mut Vec<Step>, segs: &[Seg]) {
 impl Printer<'_> {
     /// The text that refers to `item`, counting the use; `put` says where it stands.
     /// A part an earlier print of the message wrote, and which prints the same in any type
-    /// ([`Printer::remember`]), is the reference that print gave it, a node with no item to
-    /// visit.
+    /// that uses the parts in it as that print did ([`Printer::remember`]), is the reference
+    /// that print gave it, a node with no item to visit; in a print made again for the uses
+    /// of the type, `deny`, not one whose uses conflict with those.
     fn refer(&mut self, item: Item) -> Text {
         let key = item.key();
         let i = match self.index.get(&key) {
@@ -588,7 +637,9 @@ impl Printer<'_> {
                 let i = self.texts.len();
                 let probe = (self.by_name, self.spell.is_some(), key);
                 let found = match self.reuse {
-                    true => printed(&probe),
+                    true => printed(&probe).filter(|(.., uses)| {
+                        self.deny.as_ref().is_none_or(|all| !uses.conflicts(all))
+                    }),
                     false => None,
                 };
                 self.index.insert(probe.2, i);
@@ -596,20 +647,26 @@ impl Printer<'_> {
                 self.forced.push(None);
                 self.fixed.push(true);
                 self.reused.push(found.is_some());
+                self.kids.push(Vec::new());
                 match found {
-                    Some((name, class)) => {
+                    Some((name, class, uses)) => {
                         self.texts.push(Some(Text::word(name, class)));
                         self.items.push(None);
+                        self.leaf_uses.push(uses);
                     }
                     None => {
                         self.texts.push(None);
                         self.items.push(Some(item));
+                        self.leaf_uses.push(Uses::default());
                     }
                 }
                 i
             }
         };
         self.uses[i] += 1;
+        if let Some(parent) = self.building {
+            self.kids[parent].push(i);
+        }
         Text {
             segs: vec![Seg::Node(i, At::Any)],
             class: Class::Of(i),
@@ -629,7 +686,9 @@ impl Printer<'_> {
                         continue;
                     };
                     self.fixed_now = true;
+                    self.building = Some(i);
                     let text = self.text(&item);
+                    self.building = None;
                     self.fixed[i] = self.fixed_now;
                     stack.push(Step::Leave(i));
                     push_children(&mut stack, &text.segs);
@@ -1652,20 +1711,38 @@ impl Printer<'_> {
         if !self.exact {
             return;
         }
-        let mut same = vec![false; self.texts.len()];
+        let n = self.texts.len();
+        let counted = self.counted();
+        let numbers = self.numbers(&counted);
+        // Whether each node's text, and those of the nodes in it, depend only on which parts
+        // named by count are named: no recursive type, no literal spelled near one message
+        // only, and no group, whose order follows whether a tuple in it is named.
+        let mut clean = vec![false; n];
+        let mut uses: Vec<Uses> = self.leaf_uses.clone();
+        let mut same = vec![false; n];
         for &i in &self.post {
+            if self.reused[i] {
+                (clean[i], same[i]) = (true, true);
+                continue;
+            }
             let segs = &self.texts[i].as_ref().expect("visited").segs;
-            let token = matches!(&segs[..], [Seg::Str(s)] if !s.contains([' ', '(', ',']));
-            let tuple = self.is_row(i) && named[i].as_deref().is_some_and(defs::is_soft);
-            let one = matches!(&segs[..], [Seg::Node(..)]);
-            same[i] = self.reused[i]
-                || ((token || tuple || one)
-                    && self.forced[i].is_none()
-                    && self.fixed[i]
-                    && Pieces::new(segs).all(|p| match p {
-                        Piece::Node(j, _) => same[j],
-                        Piece::Str(_) => true,
-                    }));
+            let kids = self.counted_kids(i);
+            clean[i] = self.forced[i].is_none()
+                && self.fixed[i]
+                && !segs.iter().any(|s| matches!(s, Seg::Group(_)))
+                && kids.iter().all(|&(j, _)| clean[j]);
+            if !clean[i] {
+                continue;
+            }
+            let mut u = Uses::default();
+            for &(j, _) in &kids {
+                u = u.union(&uses[j]);
+            }
+            for (c, used) in self.edges(i, &kids, &counted, &numbers) {
+                u = u.with(c, used);
+            }
+            same[i] = !u.named_once();
+            uses[i] = u;
         }
         // The reference node `i` is written as, if it is a tuple or one reference to one.
         let reference = |mut i: usize| loop {
@@ -1685,8 +1762,155 @@ impl Printer<'_> {
             }
             let name = reference(i)?;
             let printed = (self.by_name, spelled, key.clone());
-            Some((printed, name.to_string(), self.own_class(i)))
+            Some((
+                printed,
+                name.to_string(),
+                self.own_class(i),
+                uses[i].clone(),
+            ))
         }));
+    }
+
+    /// Whether each node is one whose text a message writes by a definition or in full by how
+    /// often the type uses it ([`Printer::named`]): neither a token, nor a recursive type, nor
+    /// a tuple, which is a reference to the table always ([`Printer::collect`]), nor a part
+    /// taken from an earlier print, nor one reference to one of these but a recursive type. A
+    /// node not visited is not. Each node is followed once, as in [`Printer::same_names`].
+    fn counted(&self) -> Vec<bool> {
+        let n = self.texts.len();
+        // Whether each node is written as a reference whatever the uses.
+        let mut reference: Vec<Option<bool>> = vec![None; n];
+        let mut waiting = vec![false; n];
+        let mut path = Vec::new();
+        for &start in &self.post {
+            let mut i = start;
+            let found = loop {
+                if let Some(r) = reference[i] {
+                    break r;
+                }
+                if self.reused[i] || (self.forced[i].is_none() && self.is_row(i)) {
+                    break true;
+                }
+                match &self.texts[i].as_ref().expect("visited").segs[..] {
+                    [Seg::Node(j, _)] if self.forced[i].is_none() && !waiting[i] => {
+                        waiting[i] = true;
+                        path.push(i);
+                        i = *j;
+                    }
+                    _ => break false,
+                }
+            };
+            reference[i] = Some(found);
+            for i in path.drain(..) {
+                waiting[i] = false;
+                reference[i] = Some(found);
+            }
+        }
+        (0..n)
+            .map(|i| match &self.texts[i] {
+                Some(text) => {
+                    let token =
+                        matches!(&text.segs[..], [Seg::Str(s)] if !s.contains([' ', '(', ',']));
+                    !token && self.forced[i].is_none() && reference[i] == Some(false)
+                }
+                None => false,
+            })
+            .collect()
+    }
+
+    /// Each node's number in the message ([`Kept`]), by its key; none are needed when no node
+    /// is `counted`, since then no use is recorded.
+    fn numbers(&self, counted: &[bool]) -> Vec<u32> {
+        if !counted.contains(&true) {
+            return Vec::new();
+        }
+        let mut numbers = vec![0; self.texts.len()];
+        let spelled = self.spell.is_some();
+        with_kept(|kept| {
+            for (key, &i) in &self.index {
+                let printed = (self.by_name, spelled, key.clone());
+                let next = u32::try_from(kept.numbers.len()).expect("fewer parts than 2^32");
+                numbers[i] = *kept.numbers.entry(printed).or_insert(next);
+            }
+        });
+        numbers
+    }
+
+    /// The nodes node `i`'s text refers to, each with how many times.
+    fn counted_kids(&self, i: usize) -> Vec<(usize, usize)> {
+        let mut kids = self.kids[i].clone();
+        kids.sort_unstable();
+        let mut out: Vec<(usize, usize)> = Vec::with_capacity(kids.len());
+        for j in kids {
+            match out.last_mut() {
+                Some((last, times)) if *last == j => *times += 1,
+                _ => out.push((j, 1)),
+            }
+        }
+        out
+    }
+
+    /// The uses node `i` makes of the `counted` nodes among its `kids`, by their numbers: one
+    /// use, named if the type names the node all the same, or many.
+    fn edges<'a>(
+        &'a self,
+        i: usize,
+        kids: &'a [(usize, usize)],
+        counted: &'a [bool],
+        numbers: &'a [u32],
+    ) -> impl Iterator<Item = (u32, Use)> + 'a {
+        kids.iter()
+            .filter(|&&(j, _)| counted[j])
+            .map(move |&(j, times)| {
+                let used = match times {
+                    1 => Use::One {
+                        from: numbers[i],
+                        named: self.uses[j] >= 2,
+                    },
+                    _ => Use::Many,
+                };
+                (numbers[j], used)
+            })
+    }
+
+    /// The uses the whole print makes of the parts named by count: those inside the parts
+    /// taken from earlier prints, those of the nodes printed now, and one for each root not
+    /// printed apart, from a number of its own past every part's.
+    // Complexity tradeoff: each node's uses are added to one persistent map ([`Uses`]), O(32)
+    // each and O(32 m) for the m references of the print, and each part taken again brings its
+    // map whole, O(32 k) for one whose map shares no subtree with the rest and holds k keys,
+    // and nothing for a subtree shared. Printing those parts anew to count their uses would
+    // cost their size, O(n) per step and O(n²) for a derivation of n steps.
+    fn all_uses(&self, roots: &[(usize, At)], counted: &[bool], numbers: &[u32]) -> Uses {
+        let mut all = Uses::default();
+        for (i, uses) in self.leaf_uses.iter().enumerate() {
+            if self.reused[i] {
+                all = all.union(uses);
+            }
+        }
+        for &i in &self.post {
+            let kids = self.counted_kids(i);
+            for (c, used) in self.edges(i, &kids, counted, numbers) {
+                all = all.with(c, used);
+            }
+        }
+        for (k, &(i, _)) in roots.iter().enumerate() {
+            if counted[i] && !self.apart.get(k).copied().unwrap_or(false) {
+                let from = u32::MAX - u32::try_from(k).expect("fewer roots than 2^32");
+                all = all.with(numbers[i], Use::One { from, named: false });
+            }
+        }
+        all
+    }
+
+    /// Counts a use of twice or more for each node `all` uses so ([`Printer::all_uses`]), so
+    /// that it is named as a type that printed every part anew would name it.
+    fn count_uses(&mut self, all: &Uses, counted: &[bool], numbers: &[u32]) {
+        for &i in &self.post {
+            if counted[i] && all.get(numbers[i]) == Some(Use::Many) {
+                self.uses[i] = self.uses[i].max(2);
+            }
+        }
     }
 
     /// Writes node `i` at `at` by its own text, not by a name, following a text that is one
@@ -2047,6 +2271,54 @@ mod tests {
                 ("T2".to_string(), "#a | #b".to_string())
             ]
         );
+    }
+
+    /// Each type printed in one table after the others, as the messages of one checked unit
+    /// are, and lifted as a message of its own.
+    fn printed_in_turn(ts: &[Type]) -> Vec<(String, Vec<(String, String)>)> {
+        let _on = collect();
+        let roots: Vec<String> = ts.iter().map(|t| t.surface().root).collect();
+        roots
+            .into_iter()
+            .map(|mut root| {
+                let defs = lift(&mut [&mut root], &|_| false);
+                (root, defs)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_part_printed_before_is_taken_again_only_where_it_names_the_union_it_holds_alike() {
+        // Step MSG-derive-print-unions. `u = 1 | 2`, `a = (u, 0)`, `c = (a, 0)`: in `a` and
+        // `c` the union is written once and not named. `(c, 0)` takes `c` again as printed.
+        // In `(a, u)` and `(c, u)` the union is written twice and named, so the part printed
+        // before, which writes it out, is not taken again: each prints as in a table of its own.
+        let u = lit(1) | lit(2);
+        let a = Type::tuple(vec![u.clone(), lit(0)]);
+        let c = Type::tuple(vec![a.clone(), lit(0)]);
+        let ts = [
+            a.clone(),
+            c.clone(),
+            Type::tuple(vec![c.clone(), lit(0)]),
+            Type::tuple(vec![a, u.clone()]),
+            Type::tuple(vec![c, u]),
+        ];
+        let alone: Vec<_> = ts
+            .iter()
+            .map(|t| printed_in_turn(std::slice::from_ref(t))[0].clone())
+            .collect();
+        let t1 = || vec![("T1".to_string(), "1 | 2".to_string())];
+        assert_eq!(
+            alone,
+            [
+                ("(1 | 2, 0)".to_string(), vec![]),
+                ("((1 | 2, 0), 0)".to_string(), vec![]),
+                ("(((1 | 2, 0), 0), 0)".to_string(), vec![]),
+                ("((T1, 0), T1)".to_string(), t1()),
+                ("(((T1, 0), 0), T1)".to_string(), t1()),
+            ]
+        );
+        assert_eq!(printed_in_turn(&ts), alone);
     }
 
     #[test]

@@ -727,3 +727,89 @@ fn a_union_inside_a_tuple_printed_before_is_named_as_the_later_type_uses_it() {
   [19] 5:5: `+` takes (f32, f32) -> f32"#
     );
 }
+
+// A part holding a union is taken again by later steps where it writes the union as the type
+// it stands in does (MSG-derive-print-unions). A union is named by how often the whole type
+// uses it, so a part printed before, where the union was used once and written out, is not the
+// text it has in a type that uses the union twice; each kept part carries how often it uses
+// each such inner part, and is taken again only where those uses agree with the type's.
+// Before, no part holding a union was kept, and a chain of n links each holding one printed
+// each link's whole type at each of its steps, O(n²) (COMPLEXITY.md row K110).
+
+/// `g` gives `1 | 2`, `a0 = (g(true), 0);` and `a_i = (a_{i-1}, g(false))` up to `a_n`, then
+/// `u = a_n < 1;`: each link holds the union, and from `a1` on uses it twice.
+fn unions(n: usize) -> String {
+    let mut src =
+        "g(positional c: bool) = if c { 1 } else { 2 };\na0 = (g(true), 0);\n".to_string();
+    for i in 1..=n {
+        src += &format!("a{i} = (a{}, g(false));\n", i - 1);
+    }
+    src + &format!("u = a{n} < 1;\n")
+}
+
+/// [`unions`] with a union of its own at each link: `g_i` gives `i | i + 1`.
+fn unions_each_its_own(n: usize) -> String {
+    let mut src =
+        "g0(positional c: bool) = if c { 0 } else { 1 };\na0 = (g0(true), 0);\n".to_string();
+    for i in 1..=n {
+        src += &format!(
+            "g{i}(positional c: bool) = if c {{ {i} }} else {{ {} }};\na{i} = (a{}, g{i}(false));\n",
+            i + 1,
+            i - 1
+        );
+    }
+    src + &format!("u = a{n} < 1;\n")
+}
+
+/// `a_i = (a_{i-1}, 0)` holds the union of `a0` once, deep inside, `d_i = (a_i, g(false))`
+/// uses it twice, and `e_i = (e_{i-1}, d_i)` holds every `d_i`, then `u = e_n < 1;`: each
+/// `a_i` is printed where the union is used once and inside a `d_i`, where it is used twice.
+fn unions_inside(n: usize) -> String {
+    let mut src = "g(positional c: bool) = if c { 1 } else { 2 };\na0 = (g(true), 0);\n\
+                   d0 = (a0, g(false));\ne0 = (d0, 0);\n"
+        .to_string();
+    for i in 1..=n {
+        src += &format!(
+            "a{i} = (a{}, 0);\nd{i} = (a{i}, g(false));\ne{i} = (e{}, d{i});\n",
+            i - 1,
+            i - 1
+        );
+    }
+    src + &format!("u = e{n} < 1;\n")
+}
+
+#[test]
+fn rejecting_a_chain_of_n_names_each_holding_a_union_writes_a_text_linear_in_n() {
+    scales(
+        "rejecting a chain of n names each holding a union",
+        40,
+        unions,
+    );
+}
+
+#[test]
+fn rejecting_a_chain_of_n_names_each_holding_a_union_does_work_linear_in_n() {
+    works(
+        "rejecting a chain of n names each holding a union",
+        40,
+        unions,
+    );
+}
+
+#[test]
+fn rejecting_a_chain_of_n_names_each_holding_a_union_of_its_own_does_work_linear_in_n() {
+    works(
+        "rejecting a chain of n names each holding a union of its own",
+        40,
+        unions_each_its_own,
+    );
+}
+
+#[test]
+fn rejecting_a_chain_of_n_names_each_using_a_union_once_and_twice_does_work_linear_in_n() {
+    works(
+        "rejecting a chain of n names each using a union once and twice",
+        40,
+        unions_inside,
+    );
+}
