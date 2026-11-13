@@ -819,8 +819,8 @@ fn chain_demand(rng: &mut Rng, t: Term) -> (Term, Demand) {
 
 /// The families in `sets` at sizes on both sides of the domain's width (50), where the hull of
 /// a term starts to merge demands, and each under three more domains of `i`; the extra sizes
-/// of each family follow its name.
-fn chain_families(sets: &[(&str, &[usize])], least: usize) {
+/// of each family follow its name. Checks that exactly `cases` cases were compared.
+fn chain_families(sets: &[(&str, &[usize])], cases: usize) {
     on_big_stack(|| {
         let wide = (0..=8).chain([13, 16, 21, 32, 49, 50, 51, 64]);
         let mut diffs = Diffs::default();
@@ -839,47 +839,89 @@ fn chain_families(sets: &[(&str, &[usize])], least: usize) {
                 }
             }
         }
-        diffs.none(least, 0);
+        assert_eq!(diffs.cases, cases, "cases compared");
+        diffs.none(cases, 0);
     });
 }
 
-/// The families with one guard each, at the sizes above.
+/// The families with one guard each, with the extra sizes of each, in the order of the one test
+/// they were.
+const SHARED_FAMILIES: [(&str, &[usize]); 29] = [
+    ("probe", &[256]),
+    ("live", &[64, 128]),
+    ("probe_all", &[256]),
+    ("probe_half", &[256]),
+    ("alt", &[256]),
+    ("alt_live", &[64, 128]),
+    ("eq0", &[256]),
+    ("eq0_live", &[64, 128]),
+    ("ne0", &[]),
+    ("range", &[256]),
+    ("range_live", &[64, 128]),
+    ("rangeand", &[]),
+    ("gt", &[]),
+    ("le", &[]),
+    ("swapped", &[]),
+    ("constfirst", &[]),
+    ("sub", &[]),
+    ("twoin", &[]),
+    ("conj", &[]),
+    ("conj_live", &[]),
+    ("ne_guard", &[]),
+    ("abs_guard", &[]),
+    ("jt", &[]),
+    ("jt_range", &[256]),
+    ("jt_range_live", &[64, 128]),
+    ("five_range", &[]),
+    ("five_range_live", &[64]),
+    ("min", &[]),
+    ("neg", &[]),
+];
+
+/// The parts of [`SHARED_FAMILIES`], one test each: a run of consecutive families and the cases
+/// it compares, four for each size (17 sizes, and the extra ones). As one test, the 2044 cases
+/// took 33.8 s at load about 40 and 27.6 s at load 48, against the 60 s limit on a piece; the
+/// parts take 8.2 to 10.1 s each in a run of the whole step at load 38 to 39 (item
+/// TESTS-split-s22-random).
+const SHARED_FAMILY_PARTS: [(std::ops::Range<usize>, usize); 3] =
+    [(0..9, 656), (9..19, 692), (19..29, 696)];
+
+/// The families of part `part` of [`SHARED_FAMILY_PARTS`].
+fn chains_of_shared_terms(part: usize) {
+    let (families, cases) = SHARED_FAMILY_PARTS[part].clone();
+    chain_families(&SHARED_FAMILIES[families], cases);
+}
+
 #[test]
-fn chains_of_shared_terms_keep_their_preimages() {
-    chain_families(
-        &[
-            ("probe", &[256]),
-            ("live", &[64, 128]),
-            ("probe_all", &[256]),
-            ("probe_half", &[256]),
-            ("alt", &[256]),
-            ("alt_live", &[64, 128]),
-            ("eq0", &[256]),
-            ("eq0_live", &[64, 128]),
-            ("ne0", &[]),
-            ("range", &[256]),
-            ("range_live", &[64, 128]),
-            ("rangeand", &[]),
-            ("gt", &[]),
-            ("le", &[]),
-            ("swapped", &[]),
-            ("constfirst", &[]),
-            ("sub", &[]),
-            ("twoin", &[]),
-            ("conj", &[]),
-            ("conj_live", &[]),
-            ("ne_guard", &[]),
-            ("abs_guard", &[]),
-            ("jt", &[]),
-            ("jt_range", &[256]),
-            ("jt_range_live", &[64, 128]),
-            ("five_range", &[]),
-            ("five_range_live", &[64]),
-            ("min", &[]),
-            ("neg", &[]),
-        ],
-        1612,
-    );
+fn chains_of_shared_terms_keep_their_preimages_0() {
+    chains_of_shared_terms(0);
+}
+
+#[test]
+fn chains_of_shared_terms_keep_their_preimages_1() {
+    chains_of_shared_terms(1);
+}
+
+#[test]
+fn chains_of_shared_terms_keep_their_preimages_2() {
+    chains_of_shared_terms(2);
+}
+
+/// The parts of [`SHARED_FAMILY_PARTS`] take each family once, in order, and compare the 2044
+/// cases of the one test they were.
+#[test]
+fn the_parts_of_the_shared_families_take_each_family_once() {
+    let mut next = 0;
+    for (families, _) in SHARED_FAMILY_PARTS {
+        assert_eq!(
+            families.start, next,
+            "the parts leave out or repeat a family"
+        );
+        next = families.end;
+    }
+    assert_eq!(next, SHARED_FAMILIES.len(), "the parts leave out a family");
+    let cases: usize = SHARED_FAMILY_PARTS.iter().map(|(_, n)| n).sum();
+    assert_eq!(cases, 2044, "the cases of the parts");
 }
 
 /// The families whose constants grow with the chain (`c_j = j`), at the sizes above, one test
@@ -1618,22 +1660,50 @@ pub(super) fn cases(run: Run, mut each: impl FnMut(Case)) {
     }
 }
 
+/// The parts of the cases of [`RUNS`], numbered in order from 0 across the runs, one test each
+/// so that each stays well under 60 s (since S22-exact-mislabel every case runs the interpreter
+/// over its points, not only the cases that differ): the cases of each part, and its narrower,
+/// made exact and unlisted counts. As three tests of runs 0 to 4, 5 to 7 and 8 to 17 (cases 0
+/// to 2799, 2800 to 4699 and 4700 to 6799), the first two took 39.7 and 29.1 s at load about
+/// 40, and the three 25.7, 18.3 and 14.6 s at load 48; the parts take 5.3 to 9.9 s each in a run
+/// of the whole step at load 41 to 42 (item TESTS-split-s22-random).
+const RANDOM_TERM_PARTS: [(std::ops::Range<usize>, (usize, usize, usize)); 7] = [
+    (0..1100, (0, 2, 0)),
+    (1100..1950, (1, 2, 0)),
+    (1950..2800, (1, 4, 0)),
+    (2800..3750, (0, 3, 0)),
+    (3750..4700, (0, 8, 0)),
+    (4700..5750, (2, 8, 0)),
+    (5750..6800, (1, 1, 1)),
+];
+
 /// The random terms of `random.rs`, with its seeds and others, and its exact preimages: the
-/// runs `RUNS[runs]`, in three tests so each stays under 60 s (since S22-exact-mislabel every
-/// case runs the interpreter over its points, not only the cases that differ), with the least
-/// number of cases and the narrower, made exact and unlisted counts of each.
-fn random_terms(
-    runs: std::ops::Range<usize>,
-    (least, narrower, exact, unlisted): (usize, usize, usize, usize),
-) {
+/// cases of part `part` of [`RANDOM_TERM_PARTS`], each compared once, with exactly the part's
+/// number of cases and its narrower, made exact and unlisted counts. The cases before the part
+/// in its first run are made and passed over, so that each case is the one the whole sequence
+/// gives at its number.
+fn random_terms(part: usize) {
+    let (numbers, (narrower, exact, unlisted)) = RANDOM_TERM_PARTS[part].clone();
     on_big_stack(|| {
         let mut diffs = Diffs::default();
-        for run in RUNS[runs].iter().copied() {
-            cases(run, |c| match &c.classes {
-                None => diffs.preimage_listed(c.what, &c.term, &c.domains, &c.listed, &c.demand),
-                Some(cs) => diffs.exact(c.what, &c.term, &c.domains, cs, &c.demand),
+        let mut at = 0;
+        for run in RUNS {
+            if at >= numbers.end {
+                break;
+            }
+            cases(run, |c| {
+                if numbers.contains(&at) {
+                    match &c.classes {
+                        None => {
+                            diffs.preimage_listed(c.what, &c.term, &c.domains, &c.listed, &c.demand)
+                        }
+                        Some(cs) => diffs.exact(c.what, &c.term, &c.domains, cs, &c.demand),
+                    }
+                }
+                at += 1;
             });
         }
+        assert_eq!(diffs.cases, numbers.len(), "cases compared by part {part}");
         // The one box S22b changes here, `((5 mod (3 - x)) mod abs(5))` with `x` in `[-4, ∞)`
         // and the demand `[-3, 5]`, is now exact (`x` in `[-4, 2] | [4, ∞)`, where `3 - x` is
         // not zero) and was inexact (`[-4, ∞)`), so it counts as made exact, not reflected.
@@ -1673,23 +1743,70 @@ fn random_terms(
         // 7); the narrower and unlisted counts are unchanged and the interpreter refutes none.
         // With those two summaries turned off and the rest of the change kept, the old counts
         // return.
-        diffs.unlisted(unlisted).none_but(least, narrower, 0, exact);
+        //
+        // Since TESTS-split-s22-random the three tests are the seven parts of
+        // [`RANDOM_TERM_PARTS`]; the counts of the three, (2, 8, 0), (0, 11, 0) and (3, 9, 1),
+        // are the sums of the parts' counts within each.
+        diffs
+            .unlisted(unlisted)
+            .none_but(numbers.len(), narrower, 0, exact);
     });
 }
 
 #[test]
 fn random_terms_keep_their_preimages_0() {
-    random_terms(0..5, (2800, 2, 8, 0));
+    random_terms(0);
 }
 
 #[test]
 fn random_terms_keep_their_preimages_1() {
-    random_terms(5..8, (1900, 0, 11, 0));
+    random_terms(1);
 }
 
 #[test]
 fn random_terms_keep_their_preimages_2() {
-    random_terms(8..18, (2100, 3, 9, 1));
+    random_terms(2);
+}
+
+#[test]
+fn random_terms_keep_their_preimages_3() {
+    random_terms(3);
+}
+
+#[test]
+fn random_terms_keep_their_preimages_4() {
+    random_terms(4);
+}
+
+#[test]
+fn random_terms_keep_their_preimages_5() {
+    random_terms(5);
+}
+
+#[test]
+fn random_terms_keep_their_preimages_6() {
+    random_terms(6);
+}
+
+/// The parts of [`RANDOM_TERM_PARTS`] take each of the 6800 cases of [`RUNS`] once, in order,
+/// and their counts add up to those of the three tests they were: 5 narrower, 28 made exact
+/// and 1 unlisted.
+#[test]
+fn the_parts_of_the_random_terms_take_each_case_once() {
+    let mut all = 0;
+    for run in RUNS {
+        cases(run, |_| all += 1);
+    }
+    assert_eq!(all, 6800, "the cases of the runs");
+    let mut next = 0;
+    let mut sums = (0, 0, 0);
+    for (numbers, (narrower, exact, unlisted)) in RANDOM_TERM_PARTS {
+        assert_eq!(numbers.start, next, "the parts leave out or repeat a case");
+        next = numbers.end;
+        sums = (sums.0 + narrower, sums.1 + exact, sums.2 + unlisted);
+    }
+    assert_eq!(next, all, "the parts leave out a case");
+    assert_eq!(sums, (5, 28, 1), "the counts of the parts");
 }
 
 /// Guards, domains, offsets and demands at the two ends of `i64`, values that leave `i64`
