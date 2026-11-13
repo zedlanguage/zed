@@ -3746,6 +3746,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         let values = self.operand_values(&x);
         let carried = x.ty.atoms();
         let at = x.at.unwrap_or(span);
+        if w == "rat" && !self.rat_reads_int(&x, span, at) {
+            return Ty::empty();
+        }
         let no_zero = w == "rat" && self.ints_without_zero(&x);
         let mut r = self
             .apply(
@@ -3763,6 +3766,61 @@ impl<'t, 'a> Ck<'t, 'a> {
             Some(values) => self.word_atoms(w, values, r, &carried, at, span),
             None => r,
         }
+    }
+
+    /// Restricts the operand `x` of `rat` at `span` to `int` if it is an operation on integer
+    /// literals alone, as `b` with `b = 2^64 + 13` is, or `2^64 + 13` in `rat(2^64 + 13)`:
+    /// `rat` of an int is exact and gives no atom (QUESTIONS A36: a cast keeps an atom only
+    /// where its operand can give it). False, after an error at `at`, if another use has
+    /// already taken `int` from it, as `c = b + 0.5f64` does.
+    ///
+    /// Such a value has no carrier until its class resolves, and the class keeps the float
+    /// formats among its carriers until then. At `f64`, `b = 2^2000` is the infinity, and
+    /// `rat` of it is `#invalid`, so dropping the atom of the `f64` arrow alone would be
+    /// unsound wherever a later use, as `c = b + 0.5f64`, gives the class `f64`. Restricting
+    /// the class instead makes that later use the rejection, and a use before the cast this
+    /// error, so the verdict does not depend on which comes first in the text. `int` is the
+    /// carrier a name bound to integer literals alone has where it is bound (QUESTIONS A63),
+    /// so each program this rejects A63 rejects too. Not `int | rat`: a bare decimal literal
+    /// joined later, as `c = b + 0.5`, would then fix the class at `rat`, while before the
+    /// cast it is rejected for want of a carrier. Left as they are: a class holding a bare
+    /// decimal literal, which is rejected for want of a carrier or fixed by another use, as
+    /// `rat(1.5)` is rejected; and a class of a parameter (`binder`) or merged with one (not
+    /// `generic`), which may hold any value of its carrier, a NaN among them.
+    // Complexity tradeoff: naive version, a range of the value at each float carrier read
+    // from the text, which would keep `rat(b)` exact at `f64` too but must bound every
+    // intermediate value (`2^2000 - 2^2000` is a NaN at `f64`) through every name read, O(size
+    // of the expressions read) per cast. Used: the class's flags and one restriction of its
+    // mask, O(log N) for the find in a union of N classes, plus O(r) for its r recorded
+    // reasons where it fails, which the error prints.
+    fn rat_reads_int(&mut self, x: &Arg<'a>, span: Span, at: Span) -> bool {
+        let Some(k) = self.class_beside_atoms(&x.ty) else {
+            return true;
+        };
+        let c = &self.classes[k];
+        if !c.generic || c.binder.is_some() || c.decimal {
+            return true;
+        }
+        let int = Carrier::Int.bit();
+        if self.restrict_asking(k, int, "`rat`", span, false) {
+            return true;
+        }
+        let shown = self.code(Some(at)).unwrap_or("its operand");
+        let mut notes = self.derive(&[at]);
+        notes.extend(
+            (self.classes[k].reasons.iter())
+                .filter(|r| r.takes.is_some_and(|m| m & int == 0))
+                .map(Reason::note),
+        );
+        self.error_with(
+            at,
+            format!(
+                "`rat({shown})` reads `{shown}`, an operation on integer literals alone, as an \
+                 `int`, but another use takes `int` from it"
+            ),
+            notes,
+        );
+        false
     }
 
     /// Whether the operand `x` of `rat` holds ints alone, none of them 0, by its type, its
@@ -6381,6 +6439,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let generic = self.classes[child].generic;
         let asked = self.classes[child].asked;
         let floats = self.classes[child].floats;
+        let decimal = self.classes[child].decimal;
         let given = self.classes[child].given;
         let narrowed_to = std::mem::take(&mut self.classes[child].narrowed_to);
         let narrows = self.classes[child].narrows;
@@ -6391,6 +6450,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         c.generic &= generic;
         c.asked |= asked;
         c.floats |= floats;
+        c.decimal |= decimal;
         // Its values are no longer those of one `min` or `max` use only.
         c.order_of = None;
         c.given &= given;

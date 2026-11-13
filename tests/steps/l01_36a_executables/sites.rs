@@ -103,11 +103,12 @@ fn a_power_too_large_is_named_as_written_with_its_size() {
     );
 }
 
-/// The same power of the rational `rat(b)`: the same size, named as written.
+/// The same power of the rational `rat(b)`: the same size, named as written. `rat(b)` of an
+/// operation on integer literals gives no atom, so the push needs no `else` (CAST-rat-int).
 #[test]
 fn a_rational_power_too_large_is_named_as_written_with_its_size() {
     let src = "main(m: MainArgs) {\n    b = 2^64 + 13;\n    \
-               m.stdout <- String(rat(b) ^ (2^64)) else \"\";\n}\n";
+               m.stdout <- String(rat(b) ^ (2^64));\n}\n";
     stops(
         "rat_power",
         src,
@@ -115,7 +116,7 @@ fn a_rational_power_too_large_is_named_as_written_with_its_size() {
         &format!(
             "FILE:3:24: Number too large for memory: `rat(b) ^ (2^64)` needs a number of about \
              3.6 × 10^20 digits (130 EiB){}.\n  [1] 3:24: the run stopped here\n      \
-             3 |     m.stdout <- String(rat(b) ^ (2^64)) else \"\";\n        \
+             3 |     m.stdout <- String(rat(b) ^ (2^64));\n        \
                |                        ^^^^^^^^^^^^^^^\n",
             beyond_machine()
         ),

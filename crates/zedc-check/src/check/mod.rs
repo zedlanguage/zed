@@ -1005,6 +1005,10 @@ struct Class {
     /// Whether it is what a test of such a class gave, of [`Self::narrowed_to`] of another:
     /// a test of it is followed as one of that class is.
     narrows: bool,
+    /// Whether a decimal literal with no suffix joined it, as the `0.5` of `b + 0.5`. Of a merged
+    /// class, whether either was. Kept as a flag so [`Ck::rat_reads_int`] reads it in O(1), not
+    /// by a scan of [`Self::lits`] at each cast.
+    decimal: bool,
 }
 
 struct Ck<'t, 'a> {
@@ -2794,6 +2798,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             given: false,
             narrowed_to: Vec::new(),
             narrows: false,
+            decimal: false,
         });
         self.pending[self.level].push(id);
         id
@@ -3039,6 +3044,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let r = self.find(k);
         self.touch(r);
+        self.classes[r].decimal |= l.bare && lit_carrier(&l.value) != Carrier::Int;
         self.classes[r].lits.push((l.clone(), follower));
         true
     }
