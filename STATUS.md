@@ -2180,7 +2180,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | CAST-int-f64-lit-class | impl attempt 1 | 2026-11-13 15:45 | name forms fixed by dba724818; in-place int(2^64 + 13), f64(2^3 + 1) still atoms on 640d14847 (3 of 6 new tests red); fix Ck::cast_takes_int for int/rat/f64/f32 |
-| HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | cross-review round 5 launched on zed-impl 77a026349: Claude, Codex; Gemini 429 (gap recorded); main dump in progress; load 25.99 19.01 20.42 |
+| HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | round 5 Claude seat merged 7c8f994b4 (core classes, repair memo; point_rows R 65.8 -> 7.92); Codex seat still running; CD round 5 ends ~02:20 UTC; open: split_skew, wideik, overlap2c, general meet; load 46.62 45.99 45.05 |
 | PERF-l139-family | impl attempt 3 | 2026-11-12 18:45 | start: worktree from origin/main 25a9b75b4, re-measuring all l01_39 families |
 | POW-scope-exponent | impl attempt 1 | 2026-11-13 14:51 | reproduced on 4a1a69d22 with zedc run: 2^(2^k - 2) under k > 0, 2^(3^k - 3) under k >= 1, 2^(5^(2^k + 1) - 10) under k >= 0 all rejected 'exponent that may be n |
 | PRES-overlap-coeffs | impl attempt 1 | 2026-11-13 14:10 | started; worktree from origin/main 64dfe1c61 |
