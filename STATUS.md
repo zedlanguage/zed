@@ -2169,7 +2169,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | CAST-rat-int | impl attempt 1 | 2026-11-13 12:32 | started; load 9.50 13.72 17.90 |
-| DAGVIEW-spread-scaling | impl attempt 1 | 2026-11-13 13:13 | started; worktree at ca7c70736; load 10.43 13.78 17.87 |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | cross-review round 5 launched on zed-impl 77a026349: Claude, Codex; Gemini 429 (gap recorded); main dump in progress; load 25.99 19.01 20.42 |
 | MSG-wide-value-notes | impl attempt 1 | 2026-11-13 12:32 | started; load 9.94 13.74 17.88 |
 | POW-nonneg-power | impl attempt 1 | 2026-11-13 12:32 | started; worktree /home/luke/Work/wt/pow-nonneg-power at ca7c70736 |
