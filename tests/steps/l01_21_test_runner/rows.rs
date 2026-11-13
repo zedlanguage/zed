@@ -10,13 +10,17 @@ use zedc::rejection::Row;
 
 use super::checks;
 
-/// The rows of the rejection table, read from the spec's DESIGN.md in place.
+const ROWS: &str = include_str!("../../../zed/fences/rejections.txt");
+
+/// The words no message prints, one to a line, as the `sync` tool wrote them from DESIGN.md
+/// (`zed_tools::spec_checks::kernel_rules`).
+const KERNEL_RULES: &str = include_str!("../../../zed/fences/kernel-rules.txt");
+
 #[test]
 fn the_rows_are_those_of_the_spec_table() {
     let names: Vec<&str> = Row::ALL.iter().map(|r| r.name()).collect();
-    let design = &zed_tests::fences::spec().design;
-    let text = std::fs::read_to_string(design).unwrap_or_else(|e| panic!("{design}: {e}"));
-    assert_eq!(names, zed_tools::fence_layers::rejection_rows(&text));
+    let spec: Vec<&str> = ROWS.lines().collect();
+    assert_eq!(names, spec);
 }
 
 #[test]
@@ -223,53 +227,6 @@ f(x) = fee(x, 1, rate: 3) + fee(x, 1, cap: 4, rate: 3) test { 2 -> 27 }
     assert_eq!(checks(unit), ["2:63: ok"]);
 }
 
-/// The words no message prints (DESIGN.md sec:diagnostics): the name of each typing rule of the
-/// kernel calculus, `T-` and the generator for each generator of sec:kernel's grammar `F ::= …`
-/// (`fam` gives `T-Fam`), with every other `T-` rule the spec names; and `Boom`, since a menu
-/// says a reduction owes its operator's laws, not its Boom obligations (item MSG-words).
-fn unsaid_words(design: &str) -> HashSet<String> {
-    let kernel = design
-        .split_once("\n# (sec:kernel)")
-        .expect("DESIGN.md has the section sec:kernel")
-        .1;
-    let kernel = kernel.split_once("\n# (").map_or(kernel, |(k, _)| k);
-    let mut words = HashSet::from(["Boom".to_string()]);
-    let mut generators = 0;
-    for line in kernel.lines() {
-        let Some(rest) = line
-            .strip_prefix("F ::= ")
-            .or_else(|| line.trim_start().strip_prefix("| "))
-        else {
-            continue;
-        };
-        let Some((name, _)) = rest.split_once('(') else {
-            continue;
-        };
-        let mut chars = name.chars();
-        let Some(first) = chars.next().filter(|c| c.is_ascii_lowercase()) else {
-            continue;
-        };
-        let rest = chars.as_str();
-        if rest.chars().all(|c| c.is_ascii_alphanumeric()) {
-            words.insert(format!("T-{}{rest}", first.to_ascii_uppercase()));
-            generators += 1;
-        }
-    }
-    // The grammar names seven generators; a parse that found none would ban nothing.
-    assert!(generators >= 7, "{generators} kernel generators found");
-    for (at, _) in design.match_indices("T-") {
-        let before = design[..at].chars().next_back();
-        let rule: String = design[at + 2..]
-            .chars()
-            .take_while(|c| c.is_alphanumeric())
-            .collect();
-        if !before.is_some_and(is_word_char) && rule.starts_with(|c: char| c.is_uppercase()) {
-            words.insert(format!("T-{rule}"));
-        }
-    }
-    words
-}
-
 /// Whether `c` is part of a word: a letter, a digit or `_`.
 fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
@@ -332,14 +289,12 @@ fn files_under(dir: &Path) -> Vec<PathBuf> {
 /// No message names a kernel rule (DESIGN.md sec:diagnostics). Checked on what the front end
 /// prints for every fence of the spec, every ✗ variant and every unit of a step's `zed/` folder,
 /// derivations and warnings included, and on every expected output the step tests and the
-/// fence copies hold: each line of their files but a comment line.
+/// fence copies hold, the spec's ```` ```text ```` fences among them: each line of their files but a
+/// comment line. The words are those the `sync` tool wrote to `zed/fences/kernel-rules.txt`
+/// (`zed_tools::spec_checks::kernel_rules`).
 #[test]
 fn no_message_names_a_kernel_rule() {
-    let Some(spec) = zed_tests::spec::dir("the words of messages") else {
-        return;
-    };
-    let design = std::fs::read_to_string(spec.join("DESIGN.md")).expect("a readable DESIGN.md");
-    let words = unsaid_words(&design);
+    let words: HashSet<String> = KERNEL_RULES.lines().map(String::from).collect();
     let mut found = Vec::new();
     let mut runs: Vec<(String, String)> = zed_tests::fences::all()
         .into_iter()
@@ -370,30 +325,19 @@ fn no_message_names_a_kernel_rule() {
             }
         }
     }
-    // A message the spec prints in a ```text fence, as the collision of sec:remap_law.
+    // The fence copies hold the messages the spec prints in its ```text fences, as the collision
+    // of sec:remap_law (`zed/fences/messages.md`).
     let mut lines = 0;
-    for doc in ["DESIGN.md", "EXAMPLES.md"] {
-        let text = std::fs::read_to_string(spec.join(doc)).expect("a readable spec document");
-        let mut inside = false;
-        for (k, line) in text.lines().enumerate() {
-            if line.starts_with("```") {
-                inside = line == "```text";
-            } else if inside {
-                lines += 1;
-                let w = said(line, &words);
-                if !w.is_empty() {
-                    found.push(format!("{doc}:{}: names {w:?}: {line}", k + 1));
-                }
-            }
-        }
-    }
     let fences = zed_tests::fences::dir();
-    // This file names the words to test the search for them.
+    // This file names the words to test the search for them, the list of the words names each,
+    // and the tests of `sync` name them to test the list.
     let this = zed_tests::steps_dir().join("l01_21_test_runner/rows.rs");
+    let sync = zed_tests::steps_dir().join("m0_03_grammar_tools/sync.rs");
+    let list = fences.join("kernel-rules.txt");
     for p in files_under(&zed_tests::steps_dir())
         .into_iter()
         .chain(files_under(&fences))
-        .filter(|p| *p != this)
+        .filter(|p| *p != this && *p != sync && *p != list)
     {
         let text = std::fs::read_to_string(&p).expect("a readable test file");
         for (k, line) in expected_lines(&text) {
@@ -454,8 +398,7 @@ F ::= fam(D, i -> e)   -- introduce
 # (sec:categories) Appendix
     | other(x)
 ";
-    let mut got: Vec<String> = unsaid_words(design).into_iter().collect();
-    got.sort();
+    let got = zed_tools::spec_checks::kernel_rules(design).expect("seven generators");
     assert_eq!(
         got,
         [

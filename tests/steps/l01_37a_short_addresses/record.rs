@@ -37,70 +37,39 @@ fn verdict(text: &str) -> String {
     out
 }
 
-/// The snapshot of the verdicts `entries`, each a fence's key or a variant's name with its
-/// verdict: one line for each, `key: accepted|rejected, N diagnostics, DIGEST`. The verdicts of
-/// the spec's fences quote the fences (a diagnostic writes the code it refuses), and this
-/// repository keeps no passage of the spec (item SPEC-no-verbatim), so the snapshot keeps a
-/// digest of each verdict in place of its text; any change of a verdict's text changes its
-/// digest. The whole text, for reading a change, is written to `test`.txt under the build's
-/// temporary directory, outside the repository.
-fn summarized(test: &str, entries: impl IntoIterator<Item = (String, String)>) -> String {
-    let (mut full, mut out) = (String::new(), String::new());
-    for (key, v) in entries {
-        let v = without_addresses(&v);
-        let word = if v.trim_start().starts_with("rejected") {
-            "rejected"
-        } else {
-            "accepted"
-        };
-        let n = v.matches("Diagnostic {").count();
-        writeln!(full, "{key}\n{v}").expect("a String takes any write");
-        writeln!(out, "{key}: {word}, {n} diagnostics, {:016x}", digest(&v))
-            .expect("a String takes any write");
-    }
-    let path = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("{test}.txt"));
-    std::fs::write(&path, full).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    out
-}
-
-/// The 64-bit FNV-1a digest of `text` (Fowler, Noll and Vo), the same on every platform and
-/// every build, unlike the standard library's hasher.
-fn digest(text: &str) -> u64 {
-    text.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
-        (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
-    })
-}
-
 #[test]
 fn every_enabled_fence() {
-    let entries = zed_tests::fences::all()
-        .into_iter()
+    let mut out = String::new();
+    for f in zed_tests::fences::all()
+        .iter()
         .filter(|f| f.layer <= ENABLED && !f.notation)
-        .map(|f| (f.key, verdict(&f.text)));
-    insta::assert_snapshot!(summarized("every_enabled_fence", entries));
+    {
+        writeln!(out, "{}\n{}", f.key, verdict(&f.text)).expect("a String takes any write");
+    }
+    insta::assert_snapshot!(without_addresses(&out));
 }
 
 #[test]
 fn every_fence_front_verdict() {
-    let entries = zed_tests::fences::all()
-        .into_iter()
-        .filter(|f| !f.notation)
-        .map(|f| {
-            let v = match &*Db::new().front(&f.text) {
-                Ok((_, _, warnings)) => format!("accepted, warnings {warnings:?}"),
-                Err(ds) => format!("rejected: {ds:?}"),
-            };
-            (f.key, v)
-        });
-    insta::assert_snapshot!(summarized("every_fence_front_verdict", entries));
+    let mut out = String::new();
+    for f in zed_tests::fences::all().iter().filter(|f| !f.notation) {
+        let front = Db::new().front(&f.text);
+        let v = match &*front {
+            Ok((_, _, warnings)) => format!("accepted, warnings {warnings:?}"),
+            Err(ds) => format!("rejected: {ds:?}"),
+        };
+        writeln!(out, "{}: {v}", f.key).expect("a String takes any write");
+    }
+    insta::assert_snapshot!(without_addresses(&out));
 }
 
 #[test]
 fn every_rejected_variant() {
-    let entries = zed_tests::fences::variants()
-        .into_iter()
-        .map(|v| (v.name, verdict(&v.text)));
-    insta::assert_snapshot!(summarized("every_rejected_variant", entries));
+    let mut out = String::new();
+    for v in zed_tests::fences::variants() {
+        writeln!(out, "{}\n{}", v.name, verdict(&v.text)).expect("a String takes any write");
+    }
+    insta::assert_snapshot!(without_addresses(&out));
 }
 
 #[test]

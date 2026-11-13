@@ -8,15 +8,10 @@
 //!   are told apart by this.
 //! - `sources.rs`: the BLAKE3 hash of the sources of this crate and of the workspace crates it
 //!   depends on (`sources::of`, RUNTIME-build-src). The crate's own hash leaves out the contents
-//!   of every source file, so two builds that differ only in them are told apart by this. The
-//!   compiler's grammar, which `zedc-syntax`'s build script reads from the spec's DESIGN.md
-//!   outside the workspace, is read here the same way and added (`sources::with_grammar`).
+//!   of every source file, so two builds that differ only in them are told apart by this.
 
 #[path = "src/sources.rs"]
 mod sources;
-
-#[path = "../zedc-syntax/spec_grammar.rs"]
-mod spec_grammar;
 
 fn main() {
     let flags = std::env::var_os("CARGO_ENCODED_RUSTFLAGS").unwrap_or_default();
@@ -39,11 +34,7 @@ fn main() {
         std::env::var_os("CARGO_MANIFEST_DIR").expect("Cargo sets CARGO_MANIFEST_DIR"),
     );
     let sources = sources::of(&krate).unwrap_or_else(|e| panic!("the sources of zed-native: {e}"));
-    println!("cargo::rerun-if-env-changed={}", spec_grammar::VAR);
-    let grammar = spec_grammar::read(&krate).unwrap_or_else(|e| panic!("{e}"));
-    println!("cargo::rerun-if-changed={}", grammar.design.display());
-    let hash = sources::with_grammar(sources.hash, &[&grammar.syntax, &grammar.notation]);
-    write("sources.rs", format!("{hash:?}"));
+    write("sources.rs", format!("{:?}", sources.hash));
     // Cargo runs this script in a directory of its own for each set of compiler flags
     // (measured with Cargo 1.99, with and without `--target`), so for the flags it need not
     // run again; for the sources it runs again when a file read changes, or a file is added

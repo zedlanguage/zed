@@ -1,8 +1,8 @@
 //! The rows of the rejection table (DESIGN.md sec:diagnostics, "What a rejection owes"). Each
 //! diagnostic of a rejection the table lists names its row, and every `// ✗ Row: …` comment
 //! names the row it is checked against (step L1.21). The names are the table's first column up to
-//! any parenthesis; a test holds this list equal to the rows of the spec's table, read in
-//! place.
+//! any parenthesis; the sync tool copies them into `zed/fences/rejections.txt`, and a test
+//! holds this list equal to that copy.
 
 /// Declares `Row`, each variant documented by its name, with `Row::ALL` and `Row::name`.
 macro_rules! rows {

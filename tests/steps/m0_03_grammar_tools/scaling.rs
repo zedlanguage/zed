@@ -5,10 +5,11 @@
 use zed_tests::scaling::{check, inputs};
 use zed_tools::spec::Spec;
 use zed_tools::{
-    audit, cases, check as check_tool, fence_layers, fences, fuzz, layer, progress, ring,
+    audit, cases, check as check_tool, fence_layers, fences, fuzz, layer, progress, ring, sync,
 };
 
 use super::{Dir, design, fence, spec_dir};
+use zed_tests::step_helpers::m0_03_grammar_tools::KERNEL;
 
 /// `n` functions, each with its own name.
 fn functions(n: usize) -> String {
@@ -258,5 +259,29 @@ fn progress_scales_with_the_length_of_the_plan() {
     check("progress", n, |m| {
         let (plan, done) = &plans[usize::from(m != n)];
         assert!(progress::render(plan, done, None).is_ok());
+    });
+}
+
+/// `sync` lays out each `zed` fence and copies each `text` fence, so its work grows with the
+/// number of both; each size writes into a `zed/` of its own directory.
+#[test]
+fn sync_scales_with_the_number_of_fences() {
+    let body = |m: usize| {
+        let texts: String = (0..m)
+            .map(|i| format!("- Item {i}:\n\n  ```text\n  report {i}\n  ```\n\n"))
+            .collect();
+        format!("{}\n{texts}{KERNEL}", many_fences(m))
+    };
+    let dirs = specs("scale_sync", 25, body);
+    for (_, d) in &dirs {
+        for sub in ["zed/fences", "zed/grammar"] {
+            std::fs::create_dir_all(d.at(sub)).expect("a copy directory");
+        }
+    }
+    scales("sync", 25, &dirs, |d| {
+        let spec = Spec::open(&d.root()).expect("the spec reads");
+        let mut out = String::new();
+        let outcome = sync::sync_into(&spec, &d.at("zed"), false, &mut out);
+        assert_eq!(outcome, Ok(true), "{out}");
     });
 }

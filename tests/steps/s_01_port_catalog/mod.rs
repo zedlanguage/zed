@@ -12,7 +12,7 @@ use zed_tools::layer::WordTable;
 use zed_tools::plan::row_ids;
 use zed_tools::spec::Spec;
 
-use zed_tests::step_helpers::m0_03_grammar_tools::{Dir, Part, grammar, tool};
+use zed_tests::step_helpers::m0_03_grammar_tools::{Dir, grammar, tool};
 
 fn varint(mut v: u64, out: &mut Vec<u8>) {
     while v >= 0x80 {
@@ -199,9 +199,9 @@ fn spec_dir(name: &str) -> Dir {
             "# Test spec\n\n| Layer | Annotations | Facet words | Words |\n|---|---|---|---|\n\
              | L1 | | | `len` |\n| L30 | | | `deep` |\n\n```peg\n{}```\n\n```peg\n{}```\n\n\
              ```peg\n{}```\n",
-            grammar(Part::Lexical),
-            grammar(Part::Syntax),
-            grammar(Part::Notation)
+            grammar("lexical.peg"),
+            grammar("syntax.peg"),
+            grammar("notation.peg")
         ),
     );
     dir.write("EXAMPLES.md", "");
@@ -511,7 +511,8 @@ fn a_routine_listed_twice_is_a_problem() {
 }
 
 /// The committed catalog: rows sorted with no repeat, each Zed column a form the tool takes under
-/// the spec's grammars and words table and the plan, and each row surviving a rewrite.
+/// the grammars and words table of this repository (`zed/grammar/`, which the `sync` tool copies
+/// from the spec) and the plan, and each row surviving a rewrite.
 #[test]
 fn the_committed_catalog_is_well_formed() {
     let root = zed_tools::impl_root();
@@ -523,14 +524,14 @@ fn the_committed_catalog_is_well_formed() {
         rows.windows(2).all(|w| w[0].routine < w[1].routine),
         "rows sorted and unique"
     );
-    let spec = zed_tests::fences::spec();
+    let spec = Spec::of_impl(&root).expect("the grammars");
     let words = WordTable::read(&spec.design).expect("its table");
     let plan = std::fs::read_to_string(format!("{root}/docs/plan_dag.md")).expect("the plan");
     let plan_rows: HashSet<&str> = row_ids(&plan).expect("its rows").into_iter().collect();
     let bad: Vec<String> = rows
         .iter()
         .filter_map(|r| {
-            check_zed(&r.zed, spec, &words, &plan_rows).map(|p| format!("{}: {p}", r.routine))
+            check_zed(&r.zed, &spec, &words, &plan_rows).map(|p| format!("{}: {p}", r.routine))
         })
         .collect();
     assert!(bad.is_empty(), "{bad:#?}");

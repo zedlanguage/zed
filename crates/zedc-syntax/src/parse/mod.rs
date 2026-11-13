@@ -1,6 +1,6 @@
 //! The parser (step L1.8): tokens become a tree of the rules of DESIGN.md sec:grammar.
 //!
-//! The parser runs that grammar itself, read from the spec by `build.rs`, as a packrat parser: each
+//! The parser runs that grammar itself, copied into `zed/grammar/`, as a packrat parser: each
 //! rule tries its alternatives in order and memoizes its result at each token. So the
 //! precedence ladder is the grammar's, rung for rung, and its trees are the trees
 //! the `check` tool of `crates/zed-tools` builds, with this same parser. A parse is at a ring:

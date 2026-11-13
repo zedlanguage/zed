@@ -2928,15 +2928,12 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | The digits appended by a recursion to one `String` reserved once from a bound on the digits (`String::with_capacity`, `&mut String`) | `to_decimal`, `Printer::write` | Mutation (gap 11) | A text built by joining the halves' texts (a rope, as `Text`), or a buffer threaded through the recursion |
 | Explicit `drop` of an operand once its last use is past, to lower the peak heap | `to_decimal`, `Printer::write` | None | The last use frees the value; no statement needed |
 
-## Entries from VARIANT-sync and SPEC-no-verbatim (`tests/src/fences.rs`, `tests/steps/l01_07_fences/variants.rs`)
-
-VARIANT-sync compared fixture files with their fences (`disagreements`); SPEC-no-verbatim removed the fixtures, and `build` now writes each variant from its fence and the entry of `zed/fences/variants.txt` that names it.
+## Entries from VARIANT-sync (`tests/src/fences.rs`, `tests/steps/l01_07_fences/variants.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| A slice pattern (`match hits[..] { [i] => …, [] => …, _ => … }`) to require exactly one line holding a piece of text | `the_line` | None | A `match` on the sequence's length |
-| A `Vec<bool>` of omitted lines and an `Option<Vec<bool>>` of kept lines set by index as the entry's words are read | `build_one` | Mutation | A fold over the words whose accumulator holds the omitted and kept places as sets |
-| A `String` reserved once and appended to line by line | `build_one` | Mutation (gap 11) | A text built by joining the lines' texts |
+| A slice pattern with `else` (`let [live] = live[..] else { … continue }`) to require exactly one live ✗ line | `disagreements` | None | A `match` on the sequence's length |
+| A `Vec<bool>` of used changes set by index as fixtures agree, and a `HashSet` of agreed places filled in the loop | `disagreements` | Mutation | A fold over the fixtures whose accumulator holds the used changes and agreed places as sets |
 
 ## Entries from NARROW-hub-seed-edges (`zedc-preimage/src/product.rs`)
 

@@ -165,31 +165,26 @@ pub fn all() -> Vec<Theory> {
 }
 
 /// The report DESIGN.md sec:theories prints for the theory named `name` ("The report's form",
-/// "Groups on which deciding is hard"), read from the spec at test time (item
-/// SPEC-no-verbatim); `None` where `ZED_SPEC_DIR=none` says not to read the spec.
-pub fn designs_report(name: &str) -> Option<String> {
-    zed_tests::spec::dir(&format!("the report of {name} against DESIGN.md"))?;
-    Some(zed_tests::fences::passage(&format!(
-        "trivial models of {name}"
-    )))
+/// "Groups on which deciding is hard"), from the copy of the spec's `text` fences in
+/// `zed/fences/messages.md`.
+pub fn designs_report(name: &str) -> String {
+    zed_tests::fences::passage(&format!("trivial models of {name}"))
 }
 
 /// The line of a report for the model on one value where every law holds, as DESIGN.md
 /// writes it in the report of `CommRing`.
-fn every_law_holds() -> Option<String> {
-    let report = designs_report("CommRing")?;
+fn every_law_holds() -> String {
+    let report = designs_report("CommRing");
     let line = report
         .lines()
         .nth(1)
         .expect("the report has a line for one value");
-    Some(line.to_string())
+    line.to_string()
 }
 
 #[test]
 fn codec_with_no_size_law_lists_the_identity() {
-    let Some(one) = every_law_holds() else {
-        return;
-    };
+    let one = every_law_holds();
     let t = codec();
     let r = report(&t, Mode::Default);
     assert_eq!(
@@ -209,9 +204,7 @@ trivial models of Codec
 
 #[test]
 fn twenty_fields_with_no_law_are_free() {
-    let Some(one) = every_law_holds() else {
-        return;
-    };
+    let one = every_law_holds();
     let t = twenty_free();
     let r = report(&t, Mode::Default);
     assert_eq!(r.free.len(), 20);
@@ -232,9 +225,7 @@ trivial models of Twenty
 
 #[test]
 fn comm_ring_lists_the_one_element_ring() {
-    let Some(want) = designs_report("CommRing") else {
-        return;
-    };
+    let want = designs_report("CommRing");
     let t = comm_ring();
     let r = report(&t, Mode::Default);
     assert_eq!(render(&t, &r), want);

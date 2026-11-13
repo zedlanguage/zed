@@ -1,9 +1,8 @@
 # The local test suite on every commit (DESIGN.md step M0.1); it needs only the Rust toolchain.
 # Clippy also compiles the full battery, which runs locally with tools/run_tests.sh --full,
 # so that it cannot stop building unnoticed. CI=true makes insta fail on a
-# snapshot mismatch instead of writing a pending one. ZED_SPEC_DIR=none: CI does not read
-# the spec repository (the author's instruction, 2026-10-29), so the tests that compare with
-# it say that they did not check instead of failing (tests/src/spec.rs).
+# snapshot mismatch instead of writing a pending one. No test reads the spec repository: the
+# grammar and fixtures are this repository's own, which the hand-run `sync` tool refreshes.
 name: CI
 on:
   push:
@@ -15,7 +14,6 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       CI: "true"
-      ZED_SPEC_DIR: none
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -35,7 +33,6 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       CI: "true"
-      ZED_SPEC_DIR: none
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable

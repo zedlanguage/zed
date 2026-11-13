@@ -42,7 +42,7 @@ fn every_chain_in_the_fences_builds_or_names_its_step() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     // 512 and 170 at step L1.9; later steps build more.
     assert!(
-        built >= 512 && built + later == 973,
+        built >= 512 && built + later == 981,
         "built {built}, later {later}"
     );
 }

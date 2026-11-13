@@ -1,12 +1,194 @@
 ---
 source: tests/steps/l01_37a_short_addresses/record.rs
-expression: "summarized(\"every_enabled_fence\", entries)"
+expression: without_addresses(&out)
 ---
-DESIGN.md [sec:ports] 1: accepted, 0 diagnostics, 12de81a8acbe08e0
-EXAMPLES.md [2. Bindings and values] 2: rejected, 1 diagnostics, d39a212bdf776069
-EXAMPLES.md [5. Conditionals] 1: rejected, 1 diagnostics, ec45087495b33cd6
-EXAMPLES.md [5. Conditionals] 2: rejected, 5 diagnostics, 6fe96dcae43b8cee
-EXAMPLES.md [6. Functions] 2: accepted, 0 diagnostics, 40b9aabb09e992d2
-EXAMPLES.md [6. Functions] 3: rejected, 7 diagnostics, 39ab0c4633cbd587
-EXAMPLES.md [18. Files, stores, and the world] 8: accepted, 0 diagnostics, 3a25ef2ea33ff993
-EXAMPLES.md [18. Files, stores, and the world] 11: rejected, 2 diagnostics, 1100c30fb3f2fa94
+DESIGN.md [sec:ports] 1
+  warnings: []
+  checks: [Outcome { line: 7, col: 3, failure: Some("this file declares 2 functions named `main`, at the places listed below, and a program starts at exactly one. Keep the `main` the program should start at, and rename or remove each of the others.\n  [1] 2:3: `main` is declared here\n      2 |   main(m: MainArgs) {\n        |   ^^^^^^^^^^^^^^^^^^^\n  [2] 7:3: `main` is declared here\n      7 |   main(m: MainArgs) -> int {\n        |   ^^^^^^^^^^^^^^^^^^^^^^^^^^"), not_run: None }]
+
+EXAMPLES.md [2. Bindings and values] 2
+  rejected: [
+    Diagnostic {
+        line: 4,
+        col: 3,
+        message: "`y` is already bound in this scope.",
+        steps: [
+            Step {
+                line: 3,
+                col: 3,
+                text: "the first binding of `y`",
+                source: "  y = x + 1;",
+                width: 10,
+            },
+            Step {
+                line: 4,
+                col: 3,
+                text: "repair: give this binding a new name",
+                source: "  y = y * 2;                     // ✗ Rebinding in the same scope: y is bound above",
+                width: 10,
+            },
+            Step {
+                line: 4,
+                col: 3,
+                text: "repair: move this binding into a nested block, where it shadows the first",
+                source: "  y = y * 2;                     // ✗ Rebinding in the same scope: y is bound above",
+                width: 10,
+            },
+        ],
+        menu: "",
+        row: Some(
+            Rebinding,
+        ),
+    },
+]
+  checks: [Outcome { line: 4, col: 3, failure: None, not_run: None }]
+
+EXAMPLES.md [5. Conditionals] 1
+  rejected: [
+    Diagnostic {
+        line: 3,
+        col: 14,
+        message: "the declared result type `-> Utf8String` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        steps: [],
+        menu: "",
+        row: None,
+    },
+]
+  checks: [Outcome { line: 3, col: 14, failure: Some("the declared result type `-> Utf8String` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }]
+
+EXAMPLES.md [5. Conditionals] 2
+  rejected: [
+    Diagnostic {
+        line: 2,
+        col: 11,
+        message: "`age` is not defined.",
+        steps: [],
+        menu: "",
+        row: None,
+    },
+    Diagnostic {
+        line: 2,
+        col: 24,
+        message: "`country` is not defined.",
+        steps: [],
+        menu: "",
+        row: None,
+    },
+    Diagnostic {
+        line: 3,
+        col: 11,
+        message: "`age` is not defined.",
+        steps: [],
+        menu: "",
+        row: None,
+    },
+    Diagnostic {
+        line: 3,
+        col: 24,
+        message: "`member` is not defined.",
+        steps: [],
+        menu: "",
+        row: None,
+    },
+    Diagnostic {
+        line: 3,
+        col: 34,
+        message: "`override` is not defined.",
+        steps: [],
+        menu: "",
+        row: None,
+    },
+]
+  checks: [Outcome { line: 2, col: 11, failure: Some("`age` is not defined."), not_run: None }, Outcome { line: 2, col: 24, failure: Some("`country` is not defined."), not_run: None }, Outcome { line: 3, col: 11, failure: Some("`age` is not defined."), not_run: None }, Outcome { line: 3, col: 24, failure: Some("`member` is not defined."), not_run: None }, Outcome { line: 3, col: 34, failure: Some("`override` is not defined."), not_run: None }]
+
+EXAMPLES.md [6. Functions] 2
+  warnings: []
+  `five`: Ok(Int(5))
+  `seven`: Ok(Int(7))
+  checks: []
+
+EXAMPLES.md [6. Functions] 3
+  rejected: [
+    Diagnostic {
+        line: 2,
+        col: 8,
+        message: "`greet` is not defined.",
+        steps: [],
+        menu: "",
+        row: None,
+    },
+    Diagnostic {
+        line: 3,
+        col: 8,
+        message: "`add` is not defined.",
+        steps: [],
+        menu: "",
+        row: None,
+    },
+    Diagnostic {
+        line: 4,
+        col: 14,
+        message: "`add` is not defined.",
+        steps: [],
+        menu: "",
+        row: None,
+    },
+    Diagnostic {
+        line: 5,
+        col: 8,
+        message: "`greet` is not defined.",
+        steps: [],
+        menu: "",
+        row: None,
+    },
+    Diagnostic {
+        line: 6,
+        col: 8,
+        message: "`greet` is not defined.",
+        steps: [],
+        menu: "",
+        row: None,
+    },
+    Diagnostic {
+        line: 7,
+        col: 36,
+        message: "The type `Utf8String` is not defined.",
+        steps: [],
+        menu: "",
+        row: None,
+    },
+    Diagnostic {
+        line: 7,
+        col: 51,
+        message: "The type `Utf8String` is not defined.",
+        steps: [],
+        menu: "",
+        row: None,
+    },
+]
+  checks: [Outcome { line: 2, col: 8, failure: Some("`greet` is not defined."), not_run: None }, Outcome { line: 3, col: 8, failure: Some("`add` is not defined."), not_run: None }, Outcome { line: 4, col: 14, failure: Some("`add` is not defined."), not_run: None }, Outcome { line: 5, col: 8, failure: Some("the mark names the row \"Missing argument\", and the diagnostic is in no row of the rejection table: `greet` is not defined."), not_run: None }, Outcome { line: 6, col: 8, failure: Some("the mark names the row \"Argument in the wrong form\", and the diagnostic is in no row of the rejection table: `greet` is not defined."), not_run: None }, Outcome { line: 7, col: 36, failure: Some("The type `Utf8String` is not defined."), not_run: None }, Outcome { line: 7, col: 51, failure: Some("The type `Utf8String` is not defined."), not_run: None }, Outcome { line: 9, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }, Outcome { line: 14, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }]
+
+EXAMPLES.md [18. Files, stores, and the world] 8
+  warnings: []
+  checks: []
+
+EXAMPLES.md [18. Files, stores, and the world] 11
+  rejected: [
+    Diagnostic {
+        line: 2,
+        col: 8,
+        message: "`http` is not defined.",
+        steps: [],
+        menu: "",
+        row: None,
+    },
+    Diagnostic {
+        line: 2,
+        col: 17,
+        message: "`url` is not defined.",
+        steps: [],
+        menu: "",
+        row: None,
+    },
+]
+  checks: [Outcome { line: 2, col: 8, failure: Some("`http` is not defined."), not_run: None }, Outcome { line: 2, col: 17, failure: Some("`url` is not defined."), not_run: None }]

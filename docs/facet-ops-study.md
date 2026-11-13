@@ -193,7 +193,7 @@ The two examples of this study, with each line's value or rejection, are the fen
 
 The author's own example, `log(5 with units("m"))`, gives 1.6094379124341003 with units `log(m)`: the bare literal takes `f64` from the argument of `log` (author, 2026-11-09).
 
-Each `✗` line of those fences is a variant of `zed/fences/variants.txt`, built from the spec at test time (`log-unit-product`, `log-unit-compared-with-number`, `exponential-base-differs`, `removed-fact-not-carried`, `removed-fact-not-removable`), pinned in `l01_29_diagnostics::variants` to the diagnostic zedc gives today (the first `with units("m")` is not compiled yet). Plan row FACET-ops-tests turns the fences and the six new rows of sec:diagnostics into tests once L12.2k is done.
+Each `✗` line of those fences is a variant fixture in `zed/fences/variants/` (`log-unit-product`, `log-unit-compared-with-number`, `exponential-base-differs`, `removed-fact-not-carried`, `removed-fact-not-removable`), pinned in `l01_29_diagnostics::variants` to the diagnostic zedc gives today (the first `with units("m")` is not compiled yet). Plan row FACET-ops-tests turns the fences and the six new rows of sec:diagnostics into tests once L12.2k is done.
 
 ## The new rejection rows (sec:diagnostics)
 

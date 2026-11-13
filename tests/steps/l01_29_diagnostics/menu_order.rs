@@ -83,8 +83,8 @@ fn first(text: &str) -> &str {
     }
 }
 
-/// The messages DESIGN.md writes with a menu of fixes: each `text` fence holding the menu's
-/// heading.
+/// The messages DESIGN.md writes with a menu of fixes: each `text` fence of `design` (the copy
+/// `zed/fences/messages.md`) holding the menu's heading.
 fn design_examples(design: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut fence: Option<String> = None;
@@ -128,8 +128,7 @@ fn menu(text: &str) -> Vec<(&str, &str)> {
 /// The program of each DESIGN.md example with a menu: a piece of the source line its steps
 /// show, which finds the example; a piece of each line of the program, in order, which finds
 /// the line ([`program_of`]); whether zedc compiles it yet; and whether its menu is compared
-/// ([`menu`]). Each line is read from the spec at test time, so this repository keeps no copy
-/// of it (item SPEC-no-verbatim).
+/// ([`menu`]). Each line is read from the copies of the spec's fences in `zed/fences/`.
 const PROGRAMS: [(&str, &[&str], bool, bool); 9] = [
     (
         "twice(x: int) = x * 2.0;",
@@ -222,11 +221,7 @@ fn program_of(example: &str, pieces: &[&str]) -> String {
 
 #[test]
 fn each_design_example_with_a_menu_stands_in_designs_order_and_zedc_writes_it_so() {
-    let Some(spec) = zed_tests::spec::dir("the order of the parts of DESIGN.md's menus") else {
-        return;
-    };
-    let design = std::fs::read_to_string(spec.join("DESIGN.md")).expect("DESIGN.md");
-    let examples = design_examples(&design);
+    let examples = design_examples(&zed_tests::fences::messages());
     assert_eq!(examples.len(), PROGRAMS.len(), "{examples:#?}");
     for example in &examples {
         // DESIGN's own order, the same in every example: the definitions, where there are
@@ -273,11 +268,7 @@ fn each_design_example_with_a_menu_stands_in_designs_order_and_zedc_writes_it_so
 fn the_message_of_a_division_of_integer_literals_is_designs_whole() {
     // DESIGN.md sec:diagnostics, "A `/` of integer literals": the message, word for word, with
     // zedc's `line:col: ` in place of `error: `.
-    let Some(spec) = zed_tests::spec::dir("DESIGN.md's message for q") else {
-        return;
-    };
-    let design = std::fs::read_to_string(spec.join("DESIGN.md")).expect("DESIGN.md");
-    let example = (design_examples(&design).into_iter())
+    let example = (design_examples(&zed_tests::fences::messages()).into_iter())
         .find(|e| e.contains("\n       q = (1 + 2) / (3 + 4);\n"))
         .expect("the example");
     let out = rejected(&program("q = (1 + 2) / (3 + 4);"));

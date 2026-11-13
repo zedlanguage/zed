@@ -1,6 +1,6 @@
-//! The grammars of DESIGN.md sec:grammar, read from their text. The compiler reads the
-//! syntactic grammar, read from the spec by `build.rs`, with [`Grammar::read`]; the grammar tools
-//! read all three fences with [`Grammar::read_open`].
+//! The grammars of DESIGN.md sec:grammar, read from their text. The compiler reads the syntactic
+//! grammar's copy in `zed/grammar/` with [`Grammar::read`]; the grammar tools read all three
+//! fences with [`Grammar::read_open`].
 //!
 //! Each line is `Rule = body Lk` or `| body Lk`, then an optional `-- comment`: an alternative
 //! and the layer it joins. A body is a parsing expression: ordered choice `|` below sequence,
@@ -478,7 +478,7 @@ impl Reader<'_> {
     // place it reads (about six thread-stack frames per level), and the derived `Drop` and
     // `Clone` of [`Expr`] recurse once per level of the expression read, so a grammar line
     // nested thousands deep would overflow the thread stack instead of being read or refused. Every
-    // line is written by the spec's author (sec:grammar, read in place),
+    // line is written by the spec's author (sec:grammar and its copies in `zed/grammar/`),
     // whose deepest nest is a few levels, and the cost stays linear in the line. An explicit
     // stack of open groups, each with its alternatives, items and pending prefixes, would read
     // any depth; a complete solution also needs an iterative `Drop` for [`Expr`] and explicit

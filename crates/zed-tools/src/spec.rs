@@ -101,8 +101,14 @@ pub fn zed_fences(path: &str) -> Result<Vec<Fence>, String> {
 
 /// The ```` ```zed ```` fences of the document `text` read from `path`.
 pub fn zed_fences_in(text: &str, path: &str) -> Result<Vec<Fence>, String> {
+    fences_in(text, "zed", path)
+}
+
+/// The fences of kind `kind` (```` ```text ````, say) of the document `text` read from `path`,
+/// each line as written, the fence's own indentation included.
+pub fn fences_in(text: &str, kind: &str, path: &str) -> Result<Vec<Fence>, String> {
     let file = base_name(path);
-    let found = fenced(text, "zed", path)?;
+    let found = fenced(text, kind, path)?;
     let at: Vec<usize> = found.iter().map(|(line, _)| *line).collect();
     let keys = sections(text, &at);
     let to_fence = |((line, text), (section, index)): ((usize, String), (&str, usize))| Fence {
@@ -120,7 +126,8 @@ pub fn zed_fences_in(text: &str, path: &str) -> Result<Vec<Fence>, String> {
 pub struct Spec {
     /// The checkout's directory.
     pub root: String,
-    /// The path of `DESIGN.md`.
+    /// The path of the document with the table of defined words (sec:grammar): the spec's
+    /// `DESIGN.md`, or this repository's copy of the table, `zed/grammar/words.md`.
     pub design: String,
     /// The text of the lexical grammar.
     pub lex_text: String,
@@ -147,6 +154,34 @@ impl Spec {
         else {
             return Err(format!("{design} has fewer than three peg fences"));
         };
+        Spec::of_texts(root, design, lex_text, syn_text, doc_text)
+    }
+
+    /// The grammars of this repository at `root`: `zed/grammar/lexical.peg`, `syntax.peg` and
+    /// `notation.peg`, with the table of defined words `zed/grammar/words.md`. The `sync` tool
+    /// writes each from the spec, the grammar with a newline after its last line.
+    pub fn of_impl(root: &str) -> Result<Spec, String> {
+        let grammar = |name: &str| {
+            let text = read_text(&format!("{root}/zed/grammar/{name}"))?;
+            Ok::<_, String>(text.strip_suffix('\n').unwrap_or(&text).to_string())
+        };
+        Spec::of_texts(
+            root,
+            format!("{root}/zed/grammar/words.md"),
+            grammar("lexical.peg")?,
+            grammar("syntax.peg")?,
+            grammar("notation.peg")?,
+        )
+    }
+
+    /// The spec of the grammar texts, the table of words at `design`, under `root`.
+    fn of_texts(
+        root: &str,
+        design: String,
+        lex_text: String,
+        syn_text: String,
+        doc_text: String,
+    ) -> Result<Spec, String> {
         Ok(Spec {
             root: root.into(),
             lexical: Grammar::read_open(&[&lex_text])?,

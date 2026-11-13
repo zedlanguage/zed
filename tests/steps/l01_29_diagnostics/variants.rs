@@ -1,4 +1,4 @@
-//! The ✗ fence variants of the spec, built from it by zed/fences/variants.txt: what each gives
+//! The ✗ fence variants of the spec, the fixtures in zed/fences/variants/: what each gives
 //! at L1. One, decimal-literal-at-int, reaches its documented error; the others need forms of
 //! later layers, so each is pinned to the diagnostic it gives now, and the step that enables it
 //! changes the pin.
@@ -7,14 +7,12 @@ use std::collections::HashMap;
 
 use zedc::testing::test;
 
-/// The text of each variant, by name, built from its fence in the spec, or `None` where
-/// `ZED_SPEC_DIR=none` says not to read the spec.
-fn texts() -> Option<HashMap<String, String>> {
-    zed_tests::spec::dir("the ✗ fence variants")?;
-    let texts = zed_tests::fences::variants()
+/// The text of each variant, by name.
+fn texts() -> HashMap<String, String> {
+    zed_tests::fences::variants()
         .into_iter()
-        .map(|v| (v.name, v.text));
-    Some(texts.collect())
+        .map(|v| (v.name, v.text))
+        .collect()
 }
 
 /// The first failure of the variant `text`, or `pass` when every check passes.
@@ -29,7 +27,7 @@ fn first(text: &str) -> String {
 fn each_variant_gives_its_pinned_diagnostic_at_l1() {
     // Each whole-line variant names its row; a marked line the checker does not reject yet
     // has no diagnostic, and one it rejects for another reason gives a diagnostic in no row.
-    let Some(texts) = texts() else { return };
+    let texts = texts();
     let none = |line: usize| format!("{line}: the line is marked ✗ and has no diagnostic");
     // The four variants of the units-and-taint fence share its line 49, which has no `;`: the
     // parse recovers at line 50 (step L1.29d), so the declarations around it are checked, and
@@ -219,7 +217,7 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
 
 #[test]
 fn two_variants_are_rejected_for_a_reason_other_than_their_documented_error() {
-    let Some(texts) = texts() else { return };
+    let texts = texts();
     let rejected = |n: &str| super::rejected(&texts[n]);
     assert_eq!(
         rejected("constructor-called-by-position"),

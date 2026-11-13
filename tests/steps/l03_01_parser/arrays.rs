@@ -5,11 +5,11 @@
 //! desugaring rules copied from the spec say so.
 
 use super::{check, fmt, refused};
-use zed_tests::step_helpers::m0_03_grammar_tools::{Part, grammar};
+use zed_tests::step_helpers::m0_03_grammar_tools::grammar;
 
-/// The desugaring rule of `rule` in the spec's desugaring rules.
+/// The desugaring rule of `rule` in `zed/grammar/desugar.txt`.
 fn rule(rule: &str) -> String {
-    let text = grammar(Part::Desugar);
+    let text = grammar("desugar.txt");
     let line = text
         .lines()
         .find(|l| l.split(':').next().map(str::trim) == Some(rule))

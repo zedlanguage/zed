@@ -1,10 +1,10 @@
 //! The hand-run tools of the Zed implementation. The grammar tools check the grammar and the
-//! fences of a spec checkout and report the layers of programs; `fence_layers` gives the tests
-//! each fence with its layer, read from the spec in place; `progress` writes the spec's
-//! PROGRESS.md; `cite` checks that every section label and step id cited is defined in
-//! DESIGN.md; `plan` checks this repository's plan DAG; `conflicts` writes the plan's
-//! file-conflict lists; `step_targets` writes the test target of each step folder into
-//! `tests/Cargo.toml`; `imports` names every cycle of a Rust crate's file import graph.
+//! fences of a spec checkout and report the layers of programs; `sync` brings this repository's
+//! grammar and fixtures up to the spec; `progress` writes the spec's PROGRESS.md; `cite` checks
+//! that every section label and step id cited is defined in DESIGN.md; `plan` checks this
+//! repository's plan DAG; `conflicts` writes the plan's file-conflict lists; `step_targets`
+//! writes the test target of each step folder into `tests/Cargo.toml`; `imports` names every
+//! cycle of a Rust crate's file import graph.
 //!
 //! Each tool is a module with a `run` function over its arguments, and a thin `main` in
 //! `src/bin/`. Grammar reading and matching are the compiler's (`zedc::parse`), so a rule of the
@@ -28,8 +28,10 @@ pub mod progress;
 pub mod random;
 pub mod ring;
 pub mod spec;
+pub mod spec_checks;
 pub mod split;
 pub mod step_targets;
+pub mod sync;
 pub mod syntax;
 pub mod text;
 

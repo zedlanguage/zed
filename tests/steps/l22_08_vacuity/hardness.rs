@@ -143,9 +143,7 @@ fn nae_fano_has_no_model() {
     let text = render(&t, &short);
     eprint!("{text}");
     assert!(matches!(short.groups[0].end, End::Stopped(_)), "{text}");
-    if let Some(want) = designs_report("Fano") {
-        assert_eq!(text, want);
-    }
+    assert_eq!(text, designs_report("Fano"));
 }
 
 /// The pigeonhole formula: `h + 1` pigeons each in one of `h` holes, no two in one hole. It is

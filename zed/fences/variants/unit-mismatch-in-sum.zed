@@ -1,0 +1,51 @@
+// variant: // e = v + t;                      // ✗ Units that differ where an operation requires equal ones: m/s + s
+// one declaration: type + parser + serializer (round-trip canonical)
+struct KeyVal  grammar { key: Ident  ":"  value: Json }
+struct JsonObj grammar { "{"  entries: KeyVal sep ","  "}" }
+type   Json = JsonObj | JsonArr | JsonStr | JsonNum | #true | #false | #null;
+
+cfg = Json.parse(bytes);         // Json | #syntaxError(..)  — recovery structural
+out = cfg?.serialize;            // entries in parsed order: parse(serialize(x)) == x; ?. carries the union
+
+type Ident = Utf8String matching grammar { alpha (alpha | digit)* };  // typed strings, not regexes
+// whitespace: struct grammars (phrase level) skip insignificant whitespace between elements;
+// matching grammars (token level, as here) are exact. serialize emits none — the canonical form.
+
+// a binary grammar (a PNG chunk): the format facets of sec:ffi on items, no whitespace skipped;
+// n is a stored field, and the type carries data.count == n
+struct Chunk grammar {
+  n: int with bits(32) with endian(#big)
+  kind: u8* with length(4)
+  data: u8* with length(n)
+  crc: int with bits(32) with endian(#big)
+}
+// a tagged choice: tag 1 selects Ping, 2 selects Data; distinct tags discharge emission-disjointness
+struct Message grammar { tag: u8  body: (Ping | Data) with tagged(tag, 1, 2) }
+
+// tests are data, attached to the definition, run in the dirty cone only
+double(positional x) = x * 2       // the `test` clause ends the declaration, so no `;` here
+  test { 0 -> 0, 2 -> 4, -3 -> -6 }
+law doubleIsSum(x: int) = double(x) == x + x;   // a test over the whole domain: graded, never run (sec:verification)
+
+// ports are the only outside world
+main(m: MainArgs) {
+  m.stdout <- m.stdin.map(l -> l.upper else "");
+}
+
+// a stored collection is a port too; its schema is a build input, matched statically
+orders: OrderId ->? { total: rat, note: Utf8String | #none }
+  with store(postgres(dbUrl, table: "orders", schema: sql("db/orders.sql")));
+
+n = orders[id]?.note;              // Utf8String | #ioError(…) | #none | #notFound — no db, NULL, no row
+// note:  Utf8String                   // ✗ Stored collection whose type and schema disagree: the column is nullable, and #none is missing from the field type
+// total: f64                      // ✗ Stored collection whose type and schema disagree: NUMERIC is not a binary float
+
+// facets: units and taint are checked like types
+v = 3.0f64 with units("m/s");
+t = 2.0f64 with units("s");
+d = v * t;                         // d::units == "m"
+e = v + t;                      // ✗ Units that differ where an operation requires equal ones: m/s + s
+
+exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type
+// exec(db, userInput);            // ✗ Taint at a sink whose parameter does not take it: #userInput taint reaches a #clean sink
+rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers

@@ -1,0 +1,141 @@
+Collision
+Unlifted carrier
+Missing algebraic obligation
+Undischargeable `@ensure`
+Unsatisfiable declared constraints
+A test whose `||` alternatives limit each other's ranges in a loop
+Undecidable premise class
+Number too wide to factor
+Expansion too costly
+Selection keys not in one order
+Table law not decided
+Operator outside the normal forms
+A definition that reads its own value
+Quantifier in a law over a domain that is not finite
+Obligation below proof grade
+Work above its cost claim
+Unbounded work under a cost claim
+Function without a cost claim in a unit under `@cost(#required);`
+Cost claim above `O(n log n)` without a reason
+Cost claim that bounds nothing
+Cost claim with no kind of bound, or with a lower bound
+Equivalent switch of another shape
+Equivalent switch below proof grade without inputs
+Non-exhaustive `match`
+Unreachable `match` arm
+`.fold` on a type that has none
+`.map` at a parameter outside the value positions
+Positional `.map`, or a name that is no parameter, on a value that is not a morphism
+Key outside the permission bound
+Operation that always fails
+Undischarged region assertion
+Read below the domain with no boundary entry
+Boundary item with neither `initial` nor an index
+A `with initial` item
+A boundary entry of a loop written without `initial`
+An `initial` statement outside a loop, or under `local`
+An `initial` statement for a name the loop does not update
+An `initial` value that reads a name of its own loop
+Two sentinel values for one variable
+A loop variable not updated on every path of a step
+`with carryForward` on a keyed boundary entry
+A `mutable` declaration
+A word other than `carryForward` after `with` at the end of an `initial` statement
+Cross-unit overlapping incomparable arrows
+Ambiguous imported name
+Name used above its definition
+Name that resolves to nothing
+Need met only by an arrow in the caller's scope
+Two members of one name with different declarations in a struct or interface body
+File read at the compile-time stage by a path that leaves the package root
+Pinned file whose content no longer matches its pin
+Import cycle
+Order read on a level with no natural order — origin keys outside their `Seq`
+Two declared orders meet in one key type
+Emission-disjointness
+Bit-field of a foreign struct with no C unit
+Grammar item narrower than a byte with no bit order
+Release of a foreign value while a result that keeps it is still read
+One C symbol exported twice
+Rebinding in the same scope
+Binder naming a type
+Numeric literal at a carrier that cannot take it
+Decimal literal, or `/` of integer literals, that nothing gives a carrier
+Two numeric values with no common carrier
+Two values compared by `==` or `!=` whose types share no value
+Match binder unused in its guard and arm
+Capitalized free name used once in a signature and nowhere in the body
+Capitalized name in a `struct` field that is neither a declared type parameter nor a name in scope
+Type parameter that no field of its `struct`, or the body of its `type`, uses
+`struct` type parameter with the name of a field
+Struct law not proved at a value built, ascribed or passed at the struct type
+Remap output name that names a source level and resolves to a value in scope
+Method declared on a value
+Prefix `-` on a numeric literal's postfix chain
+Display in body position
+Syntax error
+Reserved word written where a name stands
+Named argument before a positional one
+`positional` parameter after a named one
+Argument in the wrong form
+Function whose parameter kinds do not fit the expected function type
+Missing argument
+Argument beyond the parameters
+Argument named for no parameter
+Parameter given two values
+Value before the dot for a function with no parameters
+`...` with no named parameter left out
+Positional constructor call or pattern
+Inner-domain dependency outside the fragment
+Operator or literal ambiguous at a theory's carrier
+Operator or literal at a theory's carrier with no field to name
+Instance of a generic definition that fails to type
+Demanded history of a loop whose step count has no proven bound
+Bound on a history keyed by step number, or an overflow policy on a history bound
+Stack depth over `@stack(bytes: b)`
+Stack overflow in a run
+Size with no proven bound under `@preallocated` or the `preallocated` mode
+Cell read on a path back to its own cell
+Meaning function with a case `@decides` cannot reify
+Linear question outside the polynomial fragment of the linear-relation domain
+Statement that writes nothing, or drops a declared result
+One target for a call with several results
+A root of an obligation's equation at which a written constraint does not yield `true` or `false`
+Block binding that nothing reads
+Hole in the program
+Dependency reaching what its importer did not grant
+Two operations on one port that may not commute, with nothing ordering them
+Operator with no arrow at its operands' carrier
+Units that differ where an operation requires equal ones
+Unit name not declared
+Cycle of unit declarations
+Two different declarations of one unit name, or of one spelling
+`UnitDef` that is not a constant at a unit's top level
+Conversion whose factor the carrier cannot hold
+`.to` between units of different full expansions
+Argument whose unit does not convert to its parameter's
+Number with no unit for a parameter declared `units(u)`
+`assumedUnits` beside `units` on one declaration, or written where it does not attach
+No `+` of two point readings
+Point unit in a product, quotient or power
+Point reading compared with a value that is not a reading
+Fact written on a value that carries a different one
+Fact removed that the value does not carry
+Fact removed from a facet that does not allow it
+Unit that an operation does not take
+Logarithmic unit in an operation that would change with the unit
+Exponential whose base differs from the logarithm's
+Taint at a sink whose parameter does not take it
+`*.` call on a receiver that is not a state variable
+Stored collection whose type and schema disagree
+Levels of one name with different domains
+Argument outside its parameter's refinement
+Loose atom inside an argument at a position from which it cannot pass out of the call
+Atom of a named family reaching a call, an index, the condition of `if`, `sum`, destructuring or an ordering of tuples, none of which has a case for it
+Level names that do not fit the type
+Two levels of one map with one name at the instantiation of a generic type
+Named slice of a name the value's type does not have, or of one level twice
+Codec of a map type with an unnamed level
+String read with no view
+View a string's type does not have
+`countedIn` written where it does not attach, or twice

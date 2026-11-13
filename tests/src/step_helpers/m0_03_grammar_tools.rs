@@ -47,31 +47,10 @@ impl Drop for Dir {
     }
 }
 
-/// A part of the spec's sec:grammar.
-#[derive(Clone, Copy, Debug)]
-pub enum Part {
-    /// The lexical grammar, its first ```` ```peg ```` fence.
-    Lexical,
-    /// The syntactic grammar, its second.
-    Syntax,
-    /// The documentation notation, its third.
-    Notation,
-    /// The desugaring rules, its ```` ```desugar ```` fences joined by newlines.
-    Desugar,
-}
-
-/// The text of `part`, read from the spec in place, with a final newline.
-pub fn grammar(part: Part) -> String {
-    let spec = crate::fences::spec();
-    let text = match part {
-        Part::Lexical => spec.lex_text.clone(),
-        Part::Syntax => spec.syn_text.clone(),
-        Part::Notation => spec.doc_text.clone(),
-        Part::Desugar => zed_tools::spec::fence_texts(&spec.design, "desugar")
-            .unwrap_or_else(|e| panic!("{e}"))
-            .join("\n"),
-    };
-    text + "\n"
+/// The copy of a grammar file in `zed/grammar`.
+pub fn grammar(name: &str) -> String {
+    fs::read_to_string(format!("{}/zed/grammar/{name}", zed_tools::impl_root()))
+        .expect("a file of zed/grammar")
 }
 
 /// A table with `sorted` at L3 and the `log` port at L7.
@@ -89,10 +68,10 @@ pub fn design_of(lex: &str, syn: &str, doc: &str, desugar: &str, body: &str) -> 
 /// A `DESIGN.md` with the real grammars, then `body`.
 pub fn design(body: &str) -> String {
     design_of(
-        &grammar(Part::Lexical),
-        &grammar(Part::Syntax),
-        &grammar(Part::Notation),
-        &grammar(Part::Desugar),
+        &grammar("lexical.peg"),
+        &grammar("syntax.peg"),
+        &grammar("notation.peg"),
+        &grammar("desugar.txt"),
         body,
     )
 }
@@ -116,4 +95,19 @@ pub fn tool(run: fn(&[String], &mut String) -> Outcome, args: &[&str]) -> (Outco
     let mut out = String::new();
     let outcome = run(&args, &mut out);
     (outcome, out)
+}
+
+/// The kernel grammar of a test spec: seven generators, so `sync` can list the words no message
+/// prints (`zed_tools::spec_checks::kernel_rules`). A spec `sync` copies must have one.
+pub const KERNEL: &str = "# (sec:kernel) Kernel\n\n```\nF ::= fam(D, i -> e)\n    | reindex(F, kf, vf)\n    \
+                          | discard(F, sel)\n    | fold(F, op, ev)\n    | fix(F0, step, ev)\n    \
+                          | gen(init, step, guard)\n    | port(decl)\n```\n";
+
+/// A directory standing for `zed/` with its two subdirectories, for `sync` to write.
+pub fn zed_dir(name: &str) -> Dir {
+    let zed = Dir::new(name);
+    for sub in ["fences", "grammar"] {
+        fs::create_dir(zed.at(sub)).expect("a copy directory");
+    }
+    zed
 }

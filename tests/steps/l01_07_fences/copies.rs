@@ -1,6 +1,6 @@
 use zed_tests::fences::{self, DocFence};
 use zed_tests::tokens::render_lines;
-use zedc::fence::{self, label, marks};
+use zedc::fence::{label, marks};
 use zedc::lex::{lex, lex_fence};
 
 /// The tokens of each of `fences`, under its key: the expected output of the lexer. A fence that
@@ -36,14 +36,14 @@ pub(super) fn marks_by_key(fences: &[DocFence]) -> String {
     out.join("\n")
 }
 
-/// Every fence of DESIGN.md and EXAMPLES.md lexes. The tokens are not kept as an expected
-/// output: that would copy the spec's fences into this repository.
 #[test]
-fn every_fence_lexes() {
-    let all = fences::all();
-    assert!(!all.is_empty());
-    let tokens = tokens_by_key(&all);
-    assert_eq!(tokens.matches("\n== ").count() + 1, all.len());
+fn every_design_fence_lexes() {
+    insta::assert_snapshot!(tokens_by_key(&fences::of("design.md")));
+}
+
+#[test]
+fn every_examples_fence_lexes() {
+    insta::assert_snapshot!(tokens_by_key(&fences::of("examples.md")));
 }
 
 #[test]
@@ -108,7 +108,7 @@ fn char_is_a_unit_only_on_a_rejected_line() {
 }
 
 #[test]
-fn every_commented_variant_has_exactly_one_entry() {
+fn every_commented_variant_has_exactly_one_fixture() {
     let wanted: Vec<String> = fences::all()
         .iter()
         .flat_map(|f| {
@@ -126,7 +126,7 @@ fn every_commented_variant_has_exactly_one_entry() {
     have.sort();
     assert_eq!(have, want);
     for v in &variants {
-        // The variant makes its one ✗ line live: one ✗ line outside a comment, and it lexes.
+        // The fixture makes its one variant live: one ✗ line outside a comment, and it lexes.
         assert_eq!(marks(&v.text).lines.len(), 1, "{}", v.name);
         lex_fence(&v.text).unwrap_or_else(|e| panic!("{} does not lex: {e}", v.name));
     }
@@ -142,38 +142,11 @@ fn ellipsis_is_an_elision_only_in_a_fence() {
     assert!(lex("f(x) = …;").is_err());
 }
 
-/// The fences read from the spec are those the compiler's fence extractor finds in it: the same
-/// lines and texts.
+/// Each fixture is its fence with the one commented ✗ line made live, and no other difference
+/// but those `fences::CHANGES` names, so that each fixture follows each edit of its fence
+/// (item VARIANT-sync).
 #[test]
-fn the_fences_are_those_the_extractor_finds() {
-    let spec = &fences::spec().root;
-    let mut theirs = Vec::new();
-    for doc in ["DESIGN.md", "EXAMPLES.md"] {
-        let path = format!("{spec}/{doc}");
-        let md = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
-        theirs.extend(
-            fence::extract(&md)
-                .into_iter()
-                .map(|f| (format!("{doc}:{}", f.line), f.text)),
-        );
-    }
-    let ours: Vec<(String, String)> = fences::all().into_iter().map(|f| (f.at, f.text)).collect();
-    assert!(
-        ours == theirs,
-        "the two readers of the spec's fences disagree"
-    );
-}
-
-/// The table builds every variant from the spec: each entry names a fence the spec has, and
-/// each piece of text it gives is held by one line of that fence (items VARIANT-sync and
-/// SPEC-no-verbatim). An edit of a fence that moves or removes a line an entry names fails here,
-/// with a message naming the entry and the fence's key.
-#[test]
-fn every_variant_is_built_from_its_fence() {
-    let path = fences::table();
-    let table =
-        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    if let Err(errors) = fences::build(&table, &fences::all()) {
-        panic!("{}", errors.join("\n"));
-    }
+fn every_variant_agrees_with_its_fence() {
+    let wrong = fences::disagreements(&fences::all(), &fences::variants(), fences::CHANGES);
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }

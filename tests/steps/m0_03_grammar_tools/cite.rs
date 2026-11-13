@@ -3,7 +3,7 @@
 //! not read, and the plan DAG's steps to come are accepted. This file is itself one of the exempt fixtures.
 
 use zed_tests::scaling::check;
-use zed_tools::cite::{FIXTURES, PLAN, check_citations, run};
+use zed_tools::cite::{FIXTURES, PLAN, check_citations};
 
 /// A DESIGN.md with the labels `order` and `checking_in_zed`, and the steps L1.1, L1.2 and
 /// L1.2a, with `extra` at the end of its first section.
@@ -152,16 +152,6 @@ fn an_exempt_path_that_is_not_tracked_is_reported() {
 fn a_design_with_no_plan_stops_the_tool() {
     let mut out = String::new();
     assert!(check_citations("## (sec:order) Order\n", &tree(&[]), &mut out).is_err());
-}
-
-#[test]
-fn this_repository_s_citations_are_defined() {
-    let Some(spec) = zed_tests::spec::dir("the citations of DESIGN.md and this repository") else {
-        return;
-    };
-    let mut out = String::new();
-    let spec = spec.to_str().expect("UTF-8 path").to_string();
-    assert_eq!(run(&[spec], &mut out), Ok(true), "{out}");
 }
 
 #[test]

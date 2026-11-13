@@ -2,14 +2,10 @@ use super::render;
 use zed_tests::tokens::render_lines;
 use zedc::lex::{Doc, lex, lex_with_docs};
 
-/// The `sec:tour_failure` example of EXAMPLES.md, section 12, read from the spec at test time
-/// (item SPEC-no-verbatim): it lexes, and each form of the lexer it shows gives its tokens.
+/// The `sec:tour_failure` example of EXAMPLES.md, section 12, from the copy
+/// `zed/fences/examples.md`: it lexes, and each form of the lexer it shows gives its tokens.
 #[test]
 fn expected_example_program() {
-    let Some(_) = zed_tests::spec::dir("the lexing of EXAMPLES.md's sec:tour_failure example")
-    else {
-        return;
-    };
     let fence = zed_tests::fences::examples()
         .into_iter()
         .find(|f| f.text.starts_with("// [d4] sec:tour_failure"))

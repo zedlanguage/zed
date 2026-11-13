@@ -277,11 +277,9 @@ struct Row {
     forms: Vec<String>,
 }
 
-/// Each row of the table "Defined words by layer" in `design`.
+/// Each row of the table "Defined words by layer" in `design`: DESIGN.md, or the copy of the
+/// table the `sync` tool writes, `zed/grammar/words.md`.
 fn table(design: &str) -> Vec<Row> {
-    let start = design
-        .find("**Defined words by layer.**")
-        .expect("the table's paragraph");
     let spans = |cell: &str| -> Vec<String> {
         cell.split('`')
             .skip(1)
@@ -289,7 +287,7 @@ fn table(design: &str) -> Vec<Row> {
             .map(str::to_string)
             .collect()
     };
-    design[start..]
+    design
         .lines()
         .skip_while(|l| !l.starts_with("| L1 "))
         .take_while(|l| l.starts_with("| L"))
@@ -307,11 +305,7 @@ fn table(design: &str) -> Vec<Row> {
 
 #[test]
 fn the_resolver_holds_every_word_and_type_of_the_table() {
-    let Some(spec) = zed_tests::spec::dir("the table \"Defined words by layer\"") else {
-        return;
-    };
-    let design = std::fs::read_to_string(spec.join("DESIGN.md")).unwrap();
-    let rows = table(&design);
+    let rows = table(include_str!("../../../zed/grammar/words.md"));
     assert!(rows.len() > 20, "the table has {} rows", rows.len());
     // The first layer a name is listed at is its layer: `Ast` returns at L11 with members.
     let mut words: BTreeMap<String, u32> = BTreeMap::new();

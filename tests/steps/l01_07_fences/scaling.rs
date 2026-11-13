@@ -38,11 +38,11 @@ fn one_long_fence_scales() {
     );
 }
 
-/// n fences with a commented ✗ line each, and a table entry for each: building the variants is
-/// linear in the table and the fences (item SPEC-no-verbatim).
+/// n fences with a commented ✗ line each, and a fixture of each: comparing them is linear
+/// (item VARIANT-sync).
 #[test]
-fn building_n_variants_scales() {
-    use zed_tests::fences::{DocFence, build};
+fn comparing_n_variants_with_their_fences_scales() {
+    use zed_tests::fences::{DocFence, Variant, disagreements};
 
     let made = inputs(1_000, |n| {
         let fences: Vec<DocFence> = (0..n)
@@ -55,31 +55,38 @@ fn building_n_variants_scales() {
                 text: format!("a{i} = 1;\n// b{i} = a{i} + x;   // \u{2717} no x\nc{i} = 2;"),
             })
             .collect();
-        let table: String = (0..n)
+        let variants: Vec<Variant> = (0..n)
             .map(|i| {
-                format!(
-                    "variant: v{i}\nfence: DESIGN.md [sec:grammar] {i}\nlive: b{i} =\n\
-                     edit: c{i} = 2 => c{i} = 3\n"
-                )
+                let of = format!("// b{i} = a{i} + x;   // \u{2717} no x");
+                Variant {
+                    name: format!("v{i}"),
+                    text: format!(
+                        "// variant: {of}\na{i} = 1;\nb{i} = a{i} + x;   // \u{2717} no x\nc{i} = 2;\n"
+                    ),
+                    of,
+                }
             })
             .collect();
-        (fences, table)
+        (fences, variants)
     });
-    check("building n variants from n fences", 1_000, |n| {
-        let (fences, table) = &made[&n];
-        assert_eq!(build(table, fences).expect("variants").len(), n);
-    });
+    check(
+        "comparing n variant fixtures with their fences",
+        1_000,
+        |n| {
+            let (fences, variants) = &made[&n];
+            assert_eq!(disagreements(fences, variants, &[]), [""; 0]);
+        },
+    );
 }
 
-/// One fence of n lines, and a variant that leaves out one of them and edits another: building
-/// it is linear in n.
+/// One fence of n lines and its fixture: comparing them is linear in n.
 #[test]
-fn building_one_long_variant_scales() {
-    use zed_tests::fences::{DocFence, build};
+fn comparing_one_long_variant_scales() {
+    use zed_tests::fences::{DocFence, Variant, disagreements};
 
     let made = inputs(2_000, |n| {
         let lines: String = (0..n).map(|i| format!("a{i} = {i};\n")).collect();
-        let more: String = (0..n).map(|i| format!("c{i} = {i};\n")).collect();
+        let of = "// b = x;   // \u{2717} no x";
         let fence = DocFence {
             key: "DESIGN.md [sec:grammar] 1".into(),
             at: "DESIGN.md:1".into(),
@@ -87,15 +94,21 @@ fn building_one_long_variant_scales() {
             ring: 1,
             notation: false,
             // A fence from `extract` ends without a line break.
-            text: format!("{lines}// b = x;   // \u{2717} no x\n{more}z = 0;"),
+            text: format!("{lines}{of}\n{lines}").trim_end().into(),
         };
-        let table = "variant: v\nfence: DESIGN.md [sec:grammar] 1\nlive: b = x\nomit: z = 0\nedit: a0 = 0; => a0 = 1;"
-            .to_string();
-        (vec![fence], table)
+        let variant = Variant {
+            name: "v".into(),
+            of: of.into(),
+            text: format!("// variant: {of}\n{lines}b = x;   // \u{2717} no x\n{lines}"),
+        };
+        (vec![fence], vec![variant])
     });
-    check("building a variant of a fence of 2n lines", 2_000, |n| {
-        let (fences, table) = &made[&n];
-        let v = build(table, fences).expect("a variant");
-        assert_eq!(v[0].text.lines().count(), 2 * n + 2);
-    });
+    check(
+        "comparing a variant fixture of 2n lines with its fence",
+        2_000,
+        |n| {
+            let (fences, variants) = &made[&n];
+            assert_eq!(disagreements(fences, variants, &[]), [""; 0]);
+        },
+    );
 }

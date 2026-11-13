@@ -1,5 +1,5 @@
 ---
-source: tests/steps/l01_07_fences/doc_fences.rs
+source: tests/steps/l01_07_fences/copies.rs
 expression: "marks_by_key(&fences::all())"
 ---
 DESIGN.md [sec:remap_law] 5: ✗ [1] variants []

@@ -66,7 +66,7 @@ fn prose_words(layer: u32) -> &'static [&'static str] {
 const UNCOUNTED: [&str; 2] = [".fold", "abs"];
 
 /// The non-empty backtick spans of `s`.
-fn spans(s: &str) -> Vec<&str> {
+pub(crate) fn spans(s: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut rest = s;
     while let Some(a) = rest.find('`') {

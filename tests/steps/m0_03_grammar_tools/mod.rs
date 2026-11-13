@@ -1,7 +1,7 @@
 //! Step M0.3: the grammar tools and the hand-run commands of `zed-tools`.
 //!
 //! CI does not read the spec repository, so each test builds a small spec of its own: the
-//! grammars, read from the real spec in place, a table of defined words, and the fences the test
+//! grammars `sync` copied into `zed/grammar`, a table of defined words, and the fences the test
 //! needs. A spec author runs these tools on the real spec; the tests here run the same `run`
 //! functions the commands call.
 
@@ -11,12 +11,13 @@ mod llp;
 mod plan;
 mod scaling;
 mod split;
+mod sync;
 
 use zed_tools::spec::Spec;
 use zed_tools::{audit, cases, check, fence_layers, fences, fuzz, layer, progress, ring};
 
 pub(crate) use zed_tests::step_helpers::m0_03_grammar_tools::{
-    Dir, Part, design, design_of, fence, grammar, spec_dir, tool,
+    Dir, design, design_of, fence, grammar, spec_dir, tool,
 };
 
 /// A function that doubles a number, which parses at a low ring.
@@ -54,13 +55,13 @@ fn check_of_a_fence_that_is_not_there_says_so() {
 fn check_rejects_a_rule_with_no_definition() {
     let syn = format!(
         "{}\nStray         = NoSuchRule     L1\n",
-        grammar(Part::Syntax)
+        grammar("syntax.peg")
     );
     let text = design_of(
-        &grammar(Part::Lexical),
+        &grammar("lexical.peg"),
         &syn,
-        &grammar(Part::Notation),
-        &grammar(Part::Desugar),
+        &grammar("notation.peg"),
+        &grammar("desugar.txt"),
         "",
     );
     let dir = spec_dir("check_undefined", &text, "");
@@ -71,15 +72,15 @@ fn check_rejects_a_rule_with_no_definition() {
 
 #[test]
 fn check_rejects_a_production_with_no_desugaring_rule() {
-    let desugar: String = grammar(Part::Desugar)
+    let desugar: String = grammar("desugar.txt")
         .lines()
         .filter(|l| !l.starts_with("Name "))
         .map(|l| format!("{l}\n"))
         .collect();
     let text = design_of(
-        &grammar(Part::Lexical),
-        &grammar(Part::Syntax),
-        &grammar(Part::Notation),
+        &grammar("lexical.peg"),
+        &grammar("syntax.peg"),
+        &grammar("notation.peg"),
         &desugar,
         "",
     );
@@ -108,13 +109,13 @@ fn a_spec_with_too_few_grammars_is_refused() {
 fn a_rule_defined_in_both_grammars_is_refused() {
     let doc = format!(
         "{}\nUnit          = Name           L1\n",
-        grammar(Part::Notation)
+        grammar("notation.peg")
     );
     let text = design_of(
-        &grammar(Part::Lexical),
-        &grammar(Part::Syntax),
+        &grammar("lexical.peg"),
+        &grammar("syntax.peg"),
         &doc,
-        &grammar(Part::Desugar),
+        &grammar("desugar.txt"),
         "",
     );
     let dir = spec_dir("twice", &text, "");
@@ -627,7 +628,7 @@ fn fuzz_of(spec: &Spec, n: usize, seed: i64) -> (zed_tools::Outcome, String) {
 /// The real syntactic grammar with the `break` of before review round 2 put back in `Primary`:
 /// an optional operand, so in `if c || break { 1 } else { 2 }` the operand takes the body.
 fn syntax_with_old_break() -> String {
-    let syn = grammar(Part::Syntax);
+    let syn = grammar("syntax.peg");
     let loop_line = syn
         .lines()
         .find(|l| l.trim_start().starts_with("| ~Loop "))
@@ -653,10 +654,10 @@ fn fuzz_reports_a_sentence_the_old_break_derives_but_the_parser_rejects() {
     assert_eq!(outcome, Ok(true), "{out}");
 
     let text = design_of(
-        &grammar(Part::Lexical),
+        &grammar("lexical.peg"),
         &syntax_with_old_break(),
-        &grammar(Part::Notation),
-        &grammar(Part::Desugar),
+        &grammar("notation.peg"),
+        &grammar("desugar.txt"),
         "",
     );
     let old = spec_dir("fuzz_old_break", &text, "");

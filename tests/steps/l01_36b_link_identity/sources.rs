@@ -88,17 +88,12 @@ fn hash(krate: &Path) -> [u8; 32] {
 fn the_runtime_library_names_the_sources_it_was_built_from() {
     let native = Path::new(env!("CARGO_MANIFEST_DIR")).join("../crates/zed-native");
     let id = build_id(&std::env::current_exe().unwrap()).unwrap();
-    // The grammar zedc embeds is read from the spec by its build script, and added to the hash.
-    let spec = zed_tests::fences::spec();
-    let grammar = [spec.syn_text.clone() + "\n", spec.doc_text.clone() + "\n"];
-    let built = sources::with_grammar(hash(&native), &[&grammar[0], &grammar[1]]);
     assert!(
-        id.ends_with(&built),
-        "the section of this test's zed-native ends with the hash of its sources and the \
-         spec's grammar as they are now"
+        id.ends_with(&hash(&native)),
+        "the section of this test's zed-native ends with the hash of its sources as they are now"
     );
-    // zedc's sources, through which zed-native depends on them, and the module the build
-    // scripts read the grammar with, are among them; a test's sources are not.
+    // zedc's sources, through which zed-native depends on them, and a file zedc includes
+    // from outside every crate, are among them; a test's sources are not.
     let read = sources::of(&native).unwrap().read;
     let root = native.join("../..").canonicalize().unwrap();
     for wanted in [
@@ -107,8 +102,7 @@ fn the_runtime_library_names_the_sources_it_was_built_from() {
         "crates/zedc/src/lib.rs",
         "crates/zed-kernel/src/lib.rs",
         "crates/zed-rt/src/lib.rs",
-        "crates/zedc-syntax/build.rs",
-        "crates/zedc-syntax/spec_grammar.rs",
+        "zed/grammar/syntax.peg",
     ] {
         assert!(
             read.iter()
@@ -197,29 +191,6 @@ fn one_tree_in_two_directories_gives_one_hash() {
     assert_eq!(hash(&a), hash(&b));
 }
 
-/// The grammar added to the hash changes it with each edit of a part, and with text moved from
-/// one part to the other; the same grammar gives the same hash.
-#[test]
-fn an_edit_of_the_grammar_changes_the_hash() {
-    let base = [7u8; 32];
-    let first = sources::with_grammar(base, &["Unit <- A\n", "Doc <- B\n"]);
-    assert_eq!(
-        sources::with_grammar(base, &["Unit <- A\n", "Doc <- B\n"]),
-        first
-    );
-    for other in [
-        ["Unit <- A B\n", "Doc <- B\n"],
-        ["Unit <- A\n", "Doc <- C\n"],
-        ["Unit <- A\nDoc <- B\n", ""],
-    ] {
-        assert_ne!(sources::with_grammar(base, &other), first, "{other:?}");
-    }
-    assert_ne!(
-        sources::with_grammar([8u8; 32], &["Unit <- A\n", "Doc <- B\n"]),
-        first
-    );
-}
-
 #[test]
 fn a_missing_source_directory_is_named() {
     let d = dir("sources-missing");
@@ -248,17 +219,5 @@ fn the_hash_of_the_sources_scales() {
     assert_eq!(trees.len(), 2, "sizes {n} and {}", FACTOR * n);
     scaling::check(&format!("the sources of a crate of {n} modules"), n, |m| {
         std::hint::black_box(hash(&trees[&m]));
-    });
-}
-
-/// Adding the grammar to the hash reads each byte of it once. It allocates nothing, so its bytes
-/// are not measured.
-#[test]
-fn adding_the_grammar_scales() {
-    let n = 20_000;
-    let texts = scaling::inputs(n, |m| "Rule <- A / B\n".repeat(m));
-    let what = format!("the hash of a grammar of {n} rules");
-    scaling::check_instructions_only(&what, n, 1, |m| {
-        std::hint::black_box(sources::with_grammar([0; 32], &[&texts[&m], "Doc <- B\n"]));
     });
 }

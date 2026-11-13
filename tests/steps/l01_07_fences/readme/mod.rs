@@ -1,6 +1,6 @@
-//! Item README-fences: the fences of README.md, laid out against the spec's grammar, are lexed
-//! and parsed, and from its own layer on each is checked and run, its ✗ lines and commented ✗
-//! variants compared with the diagnostics, and the results the page states compared with the
+//! Item README-fences: the fences of README.md, laid out against the grammar `zed/grammar/`, are
+//! lexed and parsed, and from its own layer on each is checked and run, its ✗ lines and commented
+//! ✗ variants compared with the diagnostics, and the results the page states compared with the
 //! run by the checks of the table of expected results, `expected.txt` (the forms are in
 //! `zed_tests::readme`). Every fence has an entry in the table, and every entry lists exactly
 //! the results the page states.
