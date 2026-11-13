@@ -35,7 +35,8 @@ fn part_wrong(part: u64) -> Option<(u32, String)> {
                 s.spawn(move || first_wrong(from..to))
             })
             .collect();
-        runs.into_iter().find_map(|r| r.join().expect("a part's thread"))
+        runs.into_iter()
+            .find_map(|r| r.join().expect("a part's thread"))
     })
 }
 
@@ -52,7 +53,9 @@ fn main() -> ExitCode {
     };
     for part in parts {
         if let Some((b, text)) = part_wrong(part) {
-            println!("part {part}: the bits {b:#010x} print as `{text}`, which reads back otherwise");
+            println!(
+                "part {part}: the bits {b:#010x} print as `{text}`, which reads back otherwise"
+            );
             return ExitCode::FAILURE;
         }
         println!("part {part}: every pattern reads back");

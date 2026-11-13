@@ -3117,8 +3117,9 @@ fn r3_all_probe_and_family_orders() {
     });
 }
 
+/// Every shape of the round-3 cofinite cases up to 6 names (1,494 cases), built in both orders,
+/// has the verdict of the oracle `r3_oracle`. 3.6 s alone.
 #[test]
-#[ignore = "probe for REFUSAL-front-rest (docs/handoff/REFUSAL-front-unsolved.md): prints the count of mismatches; asserts nothing"]
 fn r3_cofinite_survey() {
     big(|| {
         let (mut bad, mut cases) = (0, 0);
@@ -3164,6 +3165,7 @@ fn r3_cofinite_survey() {
             }
         }
         eprintln!("survey cases={cases} mismatches={bad}");
+        assert_eq!(bad, 0, "cases whose verdict is not the oracle's");
     });
 }
 
@@ -4491,15 +4493,13 @@ fn r5_sat(k: usize, cls: &[Vec<(usize, bool)>]) -> bool {
     })
 }
 
+/// Every formula of one to four clauses of three literals over three variables (162 cases) is
+/// decided as `r5_sat` decides it, by the verdict and by each mechanism that answers alone.
+/// Other shapes: `r5_sat_run(vec![k, fewest clauses, most clauses, fewest literals, shard,
+/// shards])`.
 #[test]
-#[ignore = "probe for REFUSAL-front-rest (docs/handoff/REFUSAL-front-unsolved.md): prints wrong answers for the clause shape R5SAT; asserts nothing"]
 fn r5_sat_check() {
-    let spec: Vec<usize> = std::env::var("R5SAT")
-        .unwrap_or("3,1,4,3,0,1".into())
-        .split(',')
-        .map(|s| s.parse().unwrap())
-        .collect();
-    r5_sat_run(spec);
+    r5_sat_run(vec![3, 1, 4, 3, 0, 1]);
 }
 
 /// Round 6: every formula of three clauses over three variables (2,600), as in `r5_sat_check`.
