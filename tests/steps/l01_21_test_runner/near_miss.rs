@@ -367,6 +367,16 @@ const NEAR_MISSES: &[NearMiss] = &[
         "1:47",
         Some("`fee(positional base: int, rate: int) = base * rate;`"),
     ),
+    // ROOTS-listed (A81): at the root `p = 4` of the divisor, the written `12 div (p - 4) > 0`
+    // gives `#divByZero`; a range that starts at 5 holds no root.
+    (
+        Row::RootConstraintFails,
+        "",
+        "g(p: int) = if p >= 5 && p <= 12 && 12 div (p - 4) > 0 { 10 div (p - 4) } else { 0 };\n",
+        "g(p: int) = if p >= 4 && p <= 12 && 12 div (p - 4) > 0 { 10 div (p - 4) } else { 0 };\n",
+        "1:58",
+        Some("write `(12 div (p - 4)) > 0` so that it gives `true` or `false` at `p = 4`"),
+    ),
 ];
 
 /// Rows whose accepted program holds a form name resolution does not compile yet (a boundary
