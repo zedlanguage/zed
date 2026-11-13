@@ -2173,7 +2173,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | MSG-wide-value-notes | running | 2026-11-13 12:32 |  |
 | POW-nonneg-power | running | 2026-11-13 12:32 |  |
 | PRES-overlap-fast | xr attempt  | 2026-11-13 01:10 | round 1 launched: Sol and Opus seats (medium); Gemini 429 (resets in 32h55m); CD next |
-| RED-main-2026-11-13c | impl attempt 1 | 2026-11-13 13:00 | started; worktree at origin/main e3f0a690e |
 | REPAIR-literal-cast | running |  |  |
 | ST-walk-orders | impl attempt 1 | 2026-11-13 06:31 | reproduced on f1c80798d (instructions/bytes at 8n): cycle0@back 35.7/22.7 n=8, 61/40 n=32 (quadratic); cycle1@back 38/24..65/41; walk@back 43/31 n=5, 68/47 n=20 |
 
