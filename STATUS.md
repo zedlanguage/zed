@@ -2139,10 +2139,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | started: M5 merge onto origin/main 3ae0befe8, worktree has-point-xr; load 35.33 59.73 61.58 |
-| MSG-derive-print-union-names | impl attempt 1 | 2026-11-13 00:05 | family test added; building baseline |
+| HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | M5 merged 16429d383 (C55); 862 pieces pass; dump: 0 answers changed but one refusal now true; next old tree, holders_chain, rounds 4+ |
 | PERF-l139-family | running | 2026-11-12 18:45 | coordkk fixed d016b9cc3 90a844aa8; 14 tests in 8 families still ignored, cross-review next / 45.57 |
-| PERF-ref-memo-quadratic | impl attempt 4 | 2026-11-10 18:04 | started: A88 answered, own attempt then cross-review (4 seats, 3 rounds) |
+| PERF-ref-memo-quadratic | impl attempt 4 | 2026-11-10 18:04 | resumed after 403 outage; round 2 Sol+Opus relaunched; CD r1 best 10,271.5 (0 coarser, no scaling gain) |
 | PRES-overlap-fast | impl attempt 1 | 2026-11-13 01:10 | started; worktree wt/pres-overlap-fast at 95b3d8a1f; load 37.88 41.70 48.12 |
 | ST-walk-implicit | impl attempt 1 | 2026-11-11 01:43 | started: worktree /home/luke/Work/wt/st-walk-implicit on origin/main 89d83b4a3 / load 36.87 40.84 46.29 |
 
