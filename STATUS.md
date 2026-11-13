@@ -2117,13 +2117,14 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | CROSSOVER-bench | impl attempt 1 | 2026-11-12 22:47 | started; worktree /home/luke/Work/wt/crossover-bench on origin/main |
 | FLOAT-sqrt | impl attempt 1 | 2026-11-05 04:07 | started; worktrees float-sqrt and float-sqrt-spec made and seeded |
 | MSG-derive-print-unions | impl attempt 1 | 2026-11-12 17:24 | baseline on main, family B (a union of its own at each link): bytes 35286086 at n=40, 1265721515 at n=320 (35.9x, limit 13.8x) / load 34.01 32.66 33.90 |
-| NARROW-ne-divisor | impl attempt 1 | 2026-11-12 23:26 | started; worktree /home/luke/Work/wt/narrow-ne-divisor on b5cb5925f |
+| NARROW-ne-divisor | impl attempt 1 | 2026-11-12 23:26 | cause: walk.rs nonzero read only the divisor's type, never the arm's interval (Scope narrowing of d != 0 already non-convex); fix reads ints_here for an int div |
 | PERF-deep-ops-slow | impl attempt 1 | 2026-11-12 21:38 | fix measured: verdict 207k fits 357k why 639k diff 189k a level (old 198/384/552/198, main 251/527/819/462); per-level test added, negative control fails on mai |
 | PERF-l139-family | running | 2026-11-12 18:45 | coordkk fixed d016b9cc3 90a844aa8; 14 tests in 8 families still ignored, cross-review next / 45.57 |
 | RT-sites | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/rt-sites on origin/main 13bb12924 |
 | ST-K3-narrow | impl attempt 1 | 2026-11-11 01:43 | reproduced: no refusal of this kind on main; ping-pong and shifted ping-pong exact; random 6000 runs 5942 exact, 0 refused, 58 wider sound supersets; design in  |
 | ST-walk-implicit | impl attempt 1 | 2026-11-11 01:43 | started: worktree /home/luke/Work/wt/st-walk-implicit on origin/main 89d83b4a3 / load 36.87 40.84 46.29 |
-| TESTS-small-sizes | impl attempt 1 | 2026-11-08 23:59 | baseline: 96 pieces of m0_05, m0_07, l01_15, l01_23, l01_37a pass at load 29-41; rename 512x1 0.03 s, printer 512 terms 0.02 s |
+| TESTS-scaling-limit-13 | running | 2026-11-12 23:54 |  |
+| TESTS-small-sizes | impl attempt 1 | 2026-11-08 23:59 | new sizes pass: rename 20,000x6 3.9 s, printer 20,000x8 4.6 s, tie order 810,000 pairs 0.05 s full build, group short-l01_37a 8.2 s; 134 pieces pass at load 33- |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
