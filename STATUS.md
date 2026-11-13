@@ -2187,9 +2187,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PRES-overlap-coeffs | impl attempt 1 | 2026-11-13 14:10 | started; worktree from origin/main 64dfe1c61 |
 | REPAIR-both-sides-cast | impl attempt 1 | 2026-11-13 16:03 | started; worktree from origin/main 25763d5ea |
 | REPAIR-past-binding | impl attempt 1 | 2026-11-13 14:51 | started; worktree from origin/main 8776f59cf |
+| ST-churn-at-once | running |  |  |
 | TESTS-l01_26a-split | impl attempt 1 | 2026-11-13 15:45 | start; load 32.35 44.38 45.74 |
 | TESTS-unignore-all | impl attempt 1 | 2026-11-13 15:27 | started; worktree from origin/main a9818cd33 |
-| TYPE-op-table | impl attempt 1 | 2026-11-13 15:22 | merged 039365b0d, 005e29ba7; op_table 4652 cases in tests/fixtures/type_table: 3078 agree, 1574 marked (1147 later steps, 77 POW-domains, 1 L2.12e, 349 under 7  |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
