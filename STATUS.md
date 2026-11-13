@@ -2030,9 +2030,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| FLOAT-f32 | impl attempt 1 | 2026-11-05 04:07 | temporary worktree wt/float-f32-main at c81960b90 to measure main's l01_26 scaling tests |
+| FLOAT-f32 | impl attempt 1 | 2026-11-05 04:07 | negative control: O(n^2) in Value::float32 makes the f32 chain scaling test fail at 24.7x (limit 12.8x); reverted, not committed |
 | L1.29d | impl attempt 1 | 2026-11-11 01:43 | started; worktree /home/luke/Work/wt/l129d from e52caa1bf |
-| LIT-tuple-decimal-body | impl attempt 1 | 2026-11-12 18:30 | red on old code: 3 of 9 tuple_arg_pair tests fail on the rejection; green with the fix; affected groups 137 pieces 0 failed (load 61-95); scaling n=100->800 dec |
 | MSG-is-repair-v | running | 2026-11-12 17:32 |  |
 | MSG-lines-headline | running | 2026-11-12 17:32 |  |
 | MSG-width-headline | running | 2026-11-12 17:32 |  |
@@ -2040,10 +2039,11 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | POLY-nf-power-value | impl attempt 1 | 2026-11-12 14:17 | started; worktree wt/poly-nf-power-value from origin/main f2d8e0094 |
 | PRINT-below-whole | impl attempt 1 | 2026-11-11 01:43 | started: rebase wt/print-below-whole (251 behind), benchmark for PRINT_WHOLE/PRINT_HANDOFF per A96 |
 | REFUSAL-census-now | impl attempt 1 | 2026-11-12 19:34 | front::compile hook missed units checked through helpers (check_text, elab); moved hook to ast::unit_all_errors and rerunning step groups to capture every parse |
-| REGRESS-l01_26-overload | impl attempt 1 | 2026-11-12 20:07 | started; worktree /home/luke/Work/wt/regress-l0126 from origin/main |
+| REGRESS-l01_26-overload | impl attempt 1 | 2026-11-12 20:07 | reproduced 4 failures on 969576f90 (16.5, 16.3, 15.0, 23.8x, load 46); bisect: first bad commit 502dc1de5 (GSX-unsolved merge), 151b26576 passes |
 | STAGE-print | impl attempt 1 | 2026-11-04 03:10 | started; worktree wt/stage-print seeded |
-| TESTS-l01_29-split | running | 2026-11-12 20:21 | spawned (+ two deep_ops tests over 60 s) / 45.83 |
+| TESTS-l01_29-split | impl attempt 1 | 2026-11-12 20:21 | started; worktree /home/luke/Work/wt/tests-l0129-split; load 38.25 45.09 49.73 |
 | UNITS-char16 | impl attempt 1 | 2026-11-12 20:15 | started; making worktrees |
+| WARN-refused-shadowed | running | 2026-11-12 20:35 | spawned / 51.08 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
