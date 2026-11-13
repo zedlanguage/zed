@@ -2293,3 +2293,63 @@ fn holes_in_every_name_of_a_grid_take_time_m_cubed() {
         grid_holes(m, &p);
     });
 }
+
+/// The scope of integers `x0`, …, `x{k-1}`, each at least 0, and the tests
+/// `x{i+1} - x{i} >= 1` in turn, a chain each of whose edges is put in against the order the
+/// potential keeps its names in.
+fn chain_against_the_order(k: usize) -> (Scope, Vec<Term>) {
+    let n = named(k, "x");
+    let low = n
+        .iter()
+        .map(|x| prim(Prim::Ge, var(x), int(0)))
+        .reduce(super::nests::and);
+    let s = ints(&n).assume(&low.expect("a name"), true, &Premises::new());
+    let tests = (0..k - 1).map(|i| ge(&n[i + 1], &n[i], 1)).collect();
+    (s, tests)
+}
+
+#[test]
+fn a_chain_put_in_against_the_order_reads_only_what_it_moves() {
+    // The bounds rank each x{i+1} after x{i}, so the edge of `x{i+1} - x{i} >= 1` goes against
+    // the order: the search back from x{i+1} finds it alone, the one forward from x{i} the i
+    // names before it. The search that ends first decides, and x{i+1} alone moves, to just
+    // before x{i}. 9.2 times the work and 8.7 times the bytes from k = 64 to 512 (item
+    // PERF-pk-one-sided); on the code before, which ran both searches to their ends, 36 times
+    // the work and 22.7 times the bytes (1,767 and 99,933 components read).
+    let p = Premises::new();
+    let built: BTreeMap<usize, (Scope, Vec<Term>)> = [64, 512]
+        .into_iter()
+        .map(|k| (k, chain_against_the_order(k)))
+        .collect();
+    scaling::check_order("a chain put in against the order", 64, 1, |k| {
+        let (s, tests) = &built[&k];
+        tests.iter().fold(s.clone(), |s, t| s.assume(t, true, &p));
+    });
+}
+
+#[test]
+fn a_chain_put_in_against_the_order_keeps_its_bounds_and_its_cycles() {
+    // The chain of the test above, then `x0 - x{k-1} >= c`: at c = -(k - 1) the edge closes a
+    // cycle of weight 0, which the search that ends first finds, merging the chain into one
+    // component; at c = -(k - 2) the cycle is positive and the scope empty.
+    let p = Premises::new();
+    for k in [2, 3, 16] {
+        let (s, tests) = chain_against_the_order(k);
+        let s = tests.iter().fold(s, |s, t| s.assume(t, true, &p));
+        let last = format!("x{}", k - 1);
+        let bound = |s: &Scope| {
+            s.names
+                .get(last.as_str())
+                .expect("the last name")
+                .ints()
+                .to_string()
+        };
+        assert!(!s.bottom, "k = {k}: {s}");
+        assert_eq!(bound(&s), format!("[{}..]", k - 1), "k = {k}: {s}");
+        let tied = s.assume(&ge("x0", &last, -(k as i64 - 1)), true, &p);
+        assert!(!tied.bottom, "k = {k}: {tied}");
+        assert_eq!(bound(&tied), format!("[{}..]", k - 1), "k = {k}: {tied}");
+        let empty = s.assume(&ge("x0", &last, -(k as i64 - 2)), true, &p);
+        assert!(empty.bottom, "k = {k}: {empty}");
+    }
+}

@@ -3802,3 +3802,10 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | An exponent past ±2^53 replaced by the nearest `f64` of its parity (`as_integer`, `is_even`) before `powf` | `prim_data` (`f32 ^ int`) | None | `if n mod 2 == 0 { … } else { … }` on the `int` exponent |
 | `f32::to_bits` and `f32::from_bits` in the hash, the ZIR binary and the canonical serial | `Value` hash, `W::value`, `Out::value` | Float bits (gap 4, built) | `f32Bits` of L1.39a and its inverse |
 | The digest mixes the `f32s` part only when it is nonempty, so a type with no `f32` hashes as before | `Parts::hash` | None | a `match` on the part's emptiness, as written |
+
+## Entries from PERF-pk-one-sided (`crates/zedc-preimage/src/product.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| Two searches stepped in turn, each a struct holding borrowed iterators part way through (an `imbl::ordset::Iter` over a component's ends, a `Box<dyn Iterator>` over the conjuncts at one end) | `reorder`, `Search::step` | Iterators, trait objects | each search a value of its stack, the component and the place in its ends and in the end's conjuncts as keys, `step` a function from that value to the next; the conjuncts at a name read as a list |
+| An `imbl::OrdMap<i64, u64>` of ranks to components changed in place, with a range of it read, cleared and filled again with spread ranks | `Potential::rank_after` | Mutation (gap 11) | the map value replaced by a fold over the range read |

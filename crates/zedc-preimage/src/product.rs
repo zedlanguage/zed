@@ -1462,22 +1462,25 @@ impl fmt::Debug for Seen {
 /// (Pearce and Kelly, "A dynamic topological sort algorithm for directed acyclic graphs", ACM
 /// JEA 11, 2006): an edge to a later component costs O(1), an edge within one or a gap raised
 /// searches that component alone, and an edge against the order searches the components ranked
-/// between its ends from the end with fewer names first, merging those on a cycle; when every
-/// component that search finds is on the cycle the other search is skipped ([`reorder`]), and a
-/// merge reads the edge ends of the components it moves, never those of the largest
+/// between its ends from both ends in step, the one that ends first moving what it found, and
+/// merging those on a cycle ([`reorder`]), so that it costs the components moved; the ranks
+/// are an order-maintenance list, which gives a rank between two neighbors ([`Potential::rank_after`]),
+/// and a merge reads the edge ends of the components it moves, never those of the largest
 /// ([`merge`]). A new name with an edge back to a component joins it rather than taking a
 /// component of its own ([`put_in`]). Tradeoffs: a component is never split when an
 /// edge goes, so a join that keeps the side whose edges closed cycles leaves the components
 /// larger than the strongly connected ones, and a later search of one reads all of it; an edge
-/// against the order costs the components ranked between its ends, O(n) at worst for one edge.
+/// against the order costs the components the search that ends first finds, O(n) at worst for
+/// one edge.
 /// Tests: `l01_39_reduced_product::linked::if_statements_joined_one_after_another_on_a_linked_chain_take_time_near_their_number`,
 /// `…::if_statements_on_skip_links_of_a_chain_take_time_near_their_number`,
 /// `…::if_statements_that_put_a_hole_in_a_ladder_between_rungs_are_linear`,
 /// `…::a_ladder_grown_by_k_if_statements_is_linear`,
 /// `…::holes_put_in_a_ladder_built_first_are_linear`,
 /// `…::a_chain_linked_from_a_source_made_later_is_linear`,
+/// `…::a_chain_put_in_against_the_order_reads_only_what_it_moves`,
 /// `l01_39_reduced_product::scaling::a_join_keeps_the_equalities_of_its_sides_and_scales`.
-/// COMPLEXITY.md S25.
+/// COMPLEXITY.md S25, S25b.
 ///
 /// Each value is a pair, compared first by its first part: an edge of weight `k` weighs
 /// `(k, -1)`, or `(k, 0)` when it is tied, less the gap in both cases, and no edge has a
@@ -1497,10 +1500,10 @@ struct Potential {
     comp: imbl::OrdMap<Arc<str>, u64>,
     /// Each component; no two share a rank.
     parts: imbl::OrdMap<u64, Component>,
-    /// The number of the next component, and the least and greatest ranks given.
+    /// Each component by its rank, the inverse of their ranks.
+    order: imbl::OrdMap<i64, u64>,
+    /// The number of the next component.
     next: u64,
-    low: i64,
-    high: i64,
 }
 
 impl Potential {
@@ -1538,21 +1541,16 @@ impl Potential {
     /// Gives `n`, new to the potential, the value `at` and a component of its own, ranked
     /// before every other with `first`, after every other otherwise.
     fn fresh(&mut self, n: &Arc<str>, at: (Int, i64), first: bool) {
-        let r = if first {
-            self.low -= 1;
-            self.low
-        } else {
-            self.high += 1;
-            self.high
-        };
         self.at.insert(n.clone(), at);
         self.comp.insert(n.clone(), self.next);
         let part = Component {
-            rank: r,
+            rank: 0,
             names: imbl::OrdSet::unit(n.clone()),
             ends: imbl::OrdSet::new(),
         };
         self.parts.insert(self.next, part);
+        let after = if first { None } else { self.last() };
+        self.rank_after(self.next, after);
         self.next += 1;
     }
 
@@ -1575,11 +1573,101 @@ impl Potential {
             p.names.remove(n);
             p.ends.remove(n);
             if p.names.is_empty() {
+                let r = p.rank;
                 self.parts.remove(&c);
+                self.order.remove(&r);
             }
         }
     }
+
+    /// The greatest rank given, if any.
+    fn last(&self) -> Option<i64> {
+        self.order.get_max().map(|&(r, _)| r)
+    }
+
+    /// Gives component `c`, one of `parts` and with no rank in `order`, the rank `r`, free.
+    fn set_rank(&mut self, c: u64, r: i64) {
+        self.order.insert(r, c);
+        if let Some(p) = self.parts.get_mut(&c) {
+            p.rank = r;
+        }
+    }
+
+    /// Takes component `c`, one of `parts`, out of `order`, to be ranked again.
+    fn unrank(&mut self, c: u64) {
+        self.order.remove(&self.rank(c));
+    }
+
+    /// Gives component `c`, one of `parts`, the rank `r`, free or its own.
+    fn rerank(&mut self, c: u64, r: i64) {
+        self.unrank(c);
+        self.set_rank(c, r);
+    }
+
+    /// Gives component `c`, one of `parts` and with no rank in `order`, a rank right after
+    /// `after`, or before every other with none, from `0..RANKS`: the middle one of those
+    /// between `after` and the next rank given; when none is free, the components of the
+    /// smallest range of `2^i` ranks aligned at a multiple of `2^i` around `after` that holds
+    /// at most `1.6^i` components, `c` counted, take ranks spread evenly over it (Bender, Cole,
+    /// Demaine, Farach-Colton and Zito, "Two simplified algorithms for maintaining order in a
+    /// list", ESA 2002). Returns the number of other components ranked again.
+    // Complexity tradeoff: naive version, the ranks of the components after `after` each
+    // raised by one, O(n log n) a rank given, and ranks of `i64` given only before the first
+    // or after the last (as before item PERF-pk-one-sided), O(1) but unable to put a component
+    // between two. Used: O(log n) amortized components ranked again for each rank given, each
+    // O(log n) in `order`, O(log² n) amortized; a range is counted half by half as it doubles,
+    // so counting costs the components of the range taken. Tradeoff: with more than
+    // `1.6^62` (about 4.5 * 10^12) components the range of all ranks is taken whatever it
+    // holds, and the bound no longer holds. Test
+    // `product::tests::ranks_given_in_one_place_scale`.
+    fn rank_after(&mut self, c: u64, after: Option<i64>) -> usize {
+        let a = after.unwrap_or(-1);
+        let b = self.order.range(a + 1..).next().map_or(RANKS, |(&r, _)| r);
+        if b - a >= 2 {
+            self.set_rank(c, a + (b - a) / 2);
+            return 0;
+        }
+        // The smallest range of `2^i` ranks around `at` sparse enough, counted half by half.
+        let at = a.max(0);
+        let mut base = at;
+        let mut held = usize::from(self.order.contains_key(&at));
+        let mut level = 0;
+        while level < 62 {
+            level += 1;
+            let half = 1i64 << (level - 1);
+            let wider = at & !((half << 1) - 1);
+            let other = if wider == base {
+                base + half..base + 2 * half
+            } else {
+                wider..base
+            };
+            held += self.order.range(other).count();
+            base = wider;
+            if (held + 1) as f64 <= 1.6f64.powi(level) {
+                break;
+            }
+        }
+        let size = 1i64 << level;
+        let mut range: Vec<(i64, u64)> = self
+            .order
+            .range(base..base + size)
+            .map(|(&r, &d)| (r, d))
+            .collect();
+        let place = range.partition_point(|&(r, _)| r <= a);
+        range.insert(place, (RANKS, c));
+        for &(r, _) in &range {
+            self.order.remove(&r);
+        }
+        let step = size / range.len() as i64;
+        for (k, &(_, d)) in range.iter().enumerate() {
+            self.set_rank(d, base + k as i64 * step);
+        }
+        range.len() - 1
+    }
 }
+
+/// The ranks a component of a [`Potential`] may take: `0..RANKS`.
+const RANKS: i64 = 1 << 62;
 
 /// A strongly connected component of the edges of a [`Potential`], or several merged.
 #[derive(Clone)]
@@ -1923,24 +2011,31 @@ fn put_in(
 
 /// Restores the order of the components of the potential `pot` of tree `t` of the forest
 /// after an edge from component `cu` to component `cv`, ranked before it, was put in, the
-/// edges `waiting` not yet (Pearce and Kelly): the components ranked from `cv` to `cu` that
-/// `cv` reaches, and those that reach `cu`, take the ranks they held, those that reach `cu`
-/// alone the least, those `cv` reaches alone the greatest. Those that both reach `cu` and are
-/// reached from `cv` lie on a cycle with the edge, and are merged into one component ranked
-/// between ([`merge`]): whether there were any, so that the edge is then put in within it.
-/// The search from the end with fewer names runs first, and when each component it finds is
-/// on such a cycle, these are merged into one with the rank of the other end, and the other
-/// search is not run: no other component ranked between the two ends has an edge to or from
-/// them that the new rank turns against the order. The names the searches find at no edge to
-/// another component leave the components' ends. `Err` when the search reads a name the
-/// potential lacks or an edge against the order. In O(m log n) for the `m` edges at the ends
-/// of the components ranked from `cv` to `cu` that the searches reach, of `n` names.
-// Complexity tradeoff: naive version, both searches each time, as Pearce and Kelly, so an
-// edge back from a new name to a hub of `d` edges in a large component read all `d`, O(d²)
-// for `d` equalities to the hub (`l01_39_reduced_product::scaling::a_join_keeps_the_equalities_of_its_sides_and_scales`).
-// Used: the search from the smaller end first, the other only when a component it finds is
-// off the cycle: O(e log n) for the `e` edges at the new name, and the hub read only when
-// the cycle leaves out a component between.
+/// edges `waiting` not yet (Pearce and Kelly, one side): a search forward from `cv` and one
+/// backward from `cu`, both within the components ranked from `cv` to `cu`, run in step, one
+/// conjunct each in turn, and the first to finish decides. When the forward one finishes, the
+/// components it found, `cv` among them, move in their order to just after `cu`: each edge
+/// out of them goes to one of them or to a component ranked after `cu`, so every edge goes up
+/// the order again. When the backward one finishes, those it found move likewise to just
+/// before `cv`. When the search found the end it goes towards, the edge closes a cycle: the
+/// components it found that reach that end lie on it ([`on_cycle`]), and are merged into one
+/// ([`merge`]) that takes the rank of that end, the others moving past it as above; whether
+/// there were any, so that the edge is then put in within the merged one. The names the
+/// search reads at no edge to another component leave the components' ends. `Err` when a
+/// search reads a name the potential lacks or an edge against the order.
+// Complexity tradeoff: naive version, both searches to the end, as Pearce and Kelly, the
+// components then taking the ranks they held: O(m log n) for the `m` edges at the ends of the
+// components ranked between the edge's ends that either search reaches, so a chain whose
+// every edge is put in against the order, one search reaching one component and the other
+// all `i` before it, read `i` components for the `i`th edge, O(n²) for `n` edges (1,766,
+// 5,204 and 18,598 components read at n = 64, 128 and 256, item PERF-pk-one-sided). Used:
+// the searches in step stop when either ends, O(m log n) for the `m` edges at the ends of the
+// components the one that ends first reaches (the other reads at most one conjunct more), and
+// the components found move to new ranks between two neighbors, which an order-maintenance
+// list gives in O(log² n) amortized each ([`Potential::rank_after`]). Tradeoff: the ranks
+// are no longer reused, so a move costs the relabeling of a range now and then. Tests
+// `l01_39_reduced_product::linked::a_chain_put_in_against_the_order_reads_only_what_it_moves`
+// and the tests of [`Potential`]; COMPLEXITY.md S25b.
 fn reorder(
     relation: &Conjuncts,
     t: BlockId,
@@ -1949,88 +2044,77 @@ fn reorder(
     cu: u64,
     cv: u64,
 ) -> Result<bool, Fall> {
-    let (lo, hi) = (pot.rank(cv), pot.rank(cu));
+    let window = (pot.rank(cv), pot.rank(cu));
     let mut idle: Vec<Arc<str>> = Vec::new();
-    let back_first = pot.parts[&cu].names.len() <= pot.parts[&cv].names.len();
-    let (start, other) = if back_first { (cu, cv) } else { (cv, cu) };
-    let mut links: Vec<(u64, u64)> = Vec::new();
-    let first = reach(
-        relation,
-        t,
-        waiting,
-        pot,
-        start,
-        !back_first,
-        (lo, hi),
-        &mut idle,
-        &mut links,
-    )?;
-    if first.contains(&other) {
-        // Those found on a cycle with the edge: found from `other` back along the search.
-        let mut from: BTreeMap<u64, Vec<u64>> = BTreeMap::new();
-        for (d, c) in links {
-            from.entry(d).or_default().push(c);
-        }
-        let mut on = BTreeSet::from([other]);
-        let mut stack = vec![other];
-        while let Some(d) = stack.pop() {
-            for &c in from.get(&d).into_iter().flatten() {
-                if on.insert(c) {
-                    stack.push(c);
-                }
+    let (forward, found, links) = {
+        let mut ahead = Search::new(relation, t, waiting, pot, window, cv, true);
+        let mut behind = Search::new(relation, t, waiting, pot, window, cu, false);
+        let done = loop {
+            if ahead.step(&mut idle)? {
+                break ahead;
             }
-        }
-        if on.len() == first.len() {
-            let rank = pot.rank(other);
-            let keep = merge(relation, t, waiting, pot, &first);
-            if let Some(p) = pot.parts.get_mut(&keep) {
-                p.rank = rank;
+            if behind.step(&mut idle)? {
+                break behind;
             }
-            drop_idle(pot, idle);
-            return Ok(true);
-        }
-    }
-    let (end, forward) = if back_first { (cv, true) } else { (cu, false) };
-    let second = reach(
-        relation,
-        t,
-        waiting,
-        pot,
-        end,
-        forward,
-        (lo, hi),
-        &mut idle,
-        &mut Vec::new(),
-    )?;
-    let (ahead, behind) = if back_first {
-        (second, first)
-    } else {
-        (first, second)
+        };
+        (done.forward, done.seen, done.links)
     };
-    let mut ranks: Vec<i64> = ahead.union(&behind).map(|&c| pot.rank(c)).collect();
-    ranks.sort_unstable();
-    let by_rank = |cs: &mut Vec<u64>| cs.sort_unstable_by_key(|&c| pot.rank(c));
-    let mut before: Vec<u64> = behind.difference(&ahead).copied().collect();
-    let mut after: Vec<u64> = ahead.difference(&behind).copied().collect();
-    by_rank(&mut before);
-    by_rank(&mut after);
-    let cycle: BTreeSet<u64> = ahead.intersection(&behind).copied().collect();
-    let merged = !cycle.is_empty();
-    if merged {
-        before.push(merge(relation, t, waiting, pot, &cycle));
+    // The end the search went towards, which the components found move past.
+    let far = if forward { cu } else { cv };
+    let mut moved: Vec<u64> = found.iter().copied().collect();
+    let merged = found.contains(&far);
+    let anchor = if merged {
+        let cycle = on_cycle(links, far);
+        moved.retain(|c| !cycle.contains(c));
+        let rank = pot.rank(far);
+        let keep = merge(relation, t, waiting, pot, &cycle);
+        pot.rerank(keep, rank);
+        keep
+    } else {
+        far
+    };
+    moved.sort_unstable_by_key(|&c| pot.rank(c));
+    for &c in &moved {
+        pot.unrank(c);
     }
-    let late = ranks.len() - after.len();
-    for (c, r) in before
-        .iter()
-        .zip(&ranks)
-        .chain(after.iter().zip(&ranks[late..]))
-    {
-        if let Some(p) = pot.parts.get_mut(c) {
-            p.rank = *r;
+    if forward {
+        let mut at = pot.rank(anchor);
+        for c in moved {
+            pot.rank_after(c, Some(at));
+            at = pot.rank(c);
+        }
+    } else {
+        for c in moved {
+            let before = pot
+                .order
+                .range(..pot.rank(anchor))
+                .next_back()
+                .map(|(&r, _)| r);
+            pot.rank_after(c, before);
         }
     }
     drop_idle(pot, idle);
     Ok(merged)
+}
+
+/// The components of a search of [`reorder`] that lie on a cycle with the edge just put in:
+/// those found that reach `far`, the end the search went towards, along the links it followed,
+/// each the component found and the one it was found from. In O(k log k) for `k` links.
+fn on_cycle(links: Vec<(u64, u64)>, far: u64) -> BTreeSet<u64> {
+    let mut from: BTreeMap<u64, Vec<u64>> = BTreeMap::new();
+    for (d, c) in links {
+        from.entry(d).or_default().push(c);
+    }
+    let mut on = BTreeSet::from([far]);
+    let mut stack = vec![far];
+    while let Some(d) = stack.pop() {
+        for &c in from.get(&d).into_iter().flatten() {
+            if on.insert(c) {
+                stack.push(c);
+            }
+        }
+    }
+    on
 }
 
 /// Takes the names `idle`, found at no edge to another component, out of their components'
@@ -2045,78 +2129,141 @@ fn drop_idle(pot: &mut Potential, idle: Vec<Arc<str>>) {
     }
 }
 
-/// The components of the potential `pot` of tree `t` of the forest ranked within `window`,
-/// both ends included, that component `start` reaches along the edges, or against them when
-/// not `forward`, `start` among them, the edges `waiting` and the edge just put in, against
-/// the order, left out. Only the edges at each component's ends are read ([`Component`]); an
-/// end with no edge to another component is added to `idle`, and each edge followed adds to
-/// `links` the component found and the one it was found from. The component at the far end of
-/// the window is not searched from, for no edge goes on from it within the window. `Err` when
-/// the search reads a name the potential lacks or another edge against the order. In
-/// O(m log n) for the `m` edges at the ends of the components reached.
-#[allow(clippy::too_many_arguments)]
-fn reach(
-    relation: &Conjuncts,
+/// A search of [`reorder`] in the potential `pot` of tree `t` of the forest, one conjunct at a
+/// step: the components ranked within `window`, both ends included, that its start reaches
+/// along the edges, or against them when not `forward`, the edges `waiting` and the edge just
+/// put in, against the order, left out. Only the edges at each component's ends are read
+/// ([`Component`]); the component at the far end of the window is not searched from, for no
+/// edge goes on from it within the window.
+struct Search<'a> {
+    relation: &'a Conjuncts,
     t: BlockId,
-    waiting: &BTreeSet<(Arc<Formula>, bool)>,
-    pot: &Potential,
-    start: u64,
-    forward: bool,
+    waiting: &'a BTreeSet<(Arc<Formula>, bool)>,
+    pot: &'a Potential,
     window: (i64, i64),
-    idle: &mut Vec<Arc<str>>,
-    links: &mut Vec<(u64, u64)>,
-) -> Result<BTreeSet<u64>, Fall> {
-    let mut seen = BTreeSet::from([start]);
-    let mut stack = vec![start];
-    while let Some(c) = stack.pop() {
-        let rc = pot.rank(c);
-        // No edge goes on within the window from the component at its far end, which may be
-        // a large one with a hub: it is not read.
-        if rc == if forward { window.1 } else { window.0 } {
-            continue;
-        }
-        for x in &pot.parts[&c].ends {
-            let mut linked = false;
-            for (g, back, e) in tree_edges(relation, t, x) {
-                let (Some(a), Some(b)) = (&e.from, &e.to) else {
-                    continue;
-                };
-                let other = if a == x { b } else { a };
-                linked |= pot.comp.get(other) != Some(&c);
-                let (near, far) = if forward { (a, b) } else { (b, a) };
-                if near != x || waiting.contains(&(g, back)) {
-                    continue;
-                }
-                let d = pot.comp_of(far)?;
-                let rd = pot.rank(d);
-                if d == c || !(window.0..=window.1).contains(&rd) {
-                    continue;
-                }
-                // Within the window an edge goes on in the search's direction, but for the
-                // edge just put in, from the window's last component to its first.
-                if (rd > rc) != forward {
-                    if (rc, rd)
-                        == if forward {
-                            (window.1, window.0)
-                        } else {
-                            window
-                        }
-                    {
-                        continue;
-                    }
-                    return Err(Fall::Potential);
-                }
-                links.push((d, c));
-                if seen.insert(d) {
-                    stack.push(d);
-                }
-            }
-            if !linked {
-                idle.push(x.clone());
-            }
+    forward: bool,
+    /// The components found.
+    seen: BTreeSet<u64>,
+    /// The components found and not yet read.
+    stack: Vec<u64>,
+    /// Each edge followed: the component found and the one it was found from.
+    links: Vec<(u64, u64)>,
+    /// The component being read and its ends not yet read.
+    reading: Option<(
+        u64,
+        imbl::ordset::Iter<'a, Arc<str>, imbl::shared_ptr::DefaultSharedPtr>,
+    )>,
+    /// The end being read, its conjuncts not yet read, and whether one went to another
+    /// component.
+    end: Option<(&'a Arc<str>, ForestAt<'a>, bool)>,
+}
+
+/// The conjuncts of the forest at a name ([`Conjuncts::in_forest`]).
+type ForestAt<'a> = Box<dyn Iterator<Item = &'a Arc<Formula>> + 'a>;
+
+impl<'a> Search<'a> {
+    fn new(
+        relation: &'a Conjuncts,
+        t: BlockId,
+        waiting: &'a BTreeSet<(Arc<Formula>, bool)>,
+        pot: &'a Potential,
+        window: (i64, i64),
+        start: u64,
+        forward: bool,
+    ) -> Search<'a> {
+        Search {
+            relation,
+            t,
+            waiting,
+            pot,
+            window,
+            forward,
+            seen: BTreeSet::from([start]),
+            stack: vec![start],
+            links: Vec::new(),
+            reading: None,
+            end: None,
         }
     }
-    Ok(seen)
+
+    /// Takes the search one step on: a component, an end of it or a conjunct at that end
+    /// read, an end with no edge to another component added to `idle`. `Ok(true)` once the
+    /// search has ended. In O(log n) and O(1) amortized allocations.
+    fn step(&mut self, idle: &mut Vec<Arc<str>>) -> Result<bool, Fall> {
+        let pot = self.pot;
+        let Some((c, ends)) = &mut self.reading else {
+            let Some(c) = self.stack.pop() else {
+                return Ok(true);
+            };
+            // No edge goes on within the window from the component at its far end, which may
+            // be a large one with a hub: it is not read.
+            let far = if self.forward {
+                self.window.1
+            } else {
+                self.window.0
+            };
+            if pot.rank(c) != far {
+                self.reading = Some((c, pot.parts[&c].ends.iter()));
+            }
+            return Ok(false);
+        };
+        let c = *c;
+        let Some((x, conjuncts, linked)) = &mut self.end else {
+            match ends.next() {
+                Some(x) => {
+                    self.end = Some((x, Box::new(self.relation.blocks().in_forest(x)), false))
+                }
+                None => self.reading = None,
+            }
+            return Ok(false);
+        };
+        let x: &Arc<str> = x;
+        let Some(g) = conjuncts.next() else {
+            if !*linked {
+                idle.push(x.clone());
+            }
+            self.end = None;
+            return Ok(false);
+        };
+        let blocks = self.relation.blocks();
+        if !blocks.of(g).is_some_and(|b| blocks.tree(b) == self.t) {
+            return Ok(false);
+        }
+        let Some((e, back)) = conjuncts::edges(g) else {
+            return Ok(false);
+        };
+        let rc = pot.rank(c);
+        let (lo, hi) = self.window;
+        for (e, back) in std::iter::once((e, false)).chain(back.map(|e| (e, true))) {
+            let (Some(a), Some(b)) = (&e.from, &e.to) else {
+                continue;
+            };
+            let other = if a == x { b } else { a };
+            *linked |= pot.comp.get(other) != Some(&c);
+            let (near, far) = if self.forward { (a, b) } else { (b, a) };
+            if near != x || self.waiting.contains(&(g.clone(), back)) {
+                continue;
+            }
+            let d = pot.comp_of(far)?;
+            let rd = pot.rank(d);
+            if d == c || !(lo..=hi).contains(&rd) {
+                continue;
+            }
+            // Within the window an edge goes on in the search's direction, but for the edge
+            // just put in, from the window's last component to its first.
+            if (rd > rc) != self.forward {
+                if (rc, rd) == if self.forward { (hi, lo) } else { (lo, hi) } {
+                    continue;
+                }
+                return Err(Fall::Potential);
+            }
+            self.links.push((d, c));
+            if self.seen.insert(d) {
+                self.stack.push(d);
+            }
+        }
+        Ok(false)
+    }
 }
 
 /// Merges the components `cycle` of the potential `pot` of tree `t` of the forest, each on a
@@ -2201,6 +2348,7 @@ fn merge(
         let Some(part) = pot.parts.remove(&c) else {
             continue;
         };
+        pot.order.remove(&part.rank);
         let by = pair_minus(&shift[&c], &base);
         for x in &part.names {
             if by != zero
@@ -7163,7 +7311,8 @@ impl Scope {
     ///
     /// In O(m log n) for the `m` edges at the names of the component of each edge whose
     /// potential falls, of `n` names, and once more for each cycle of weight 0 tied; an edge
-    /// against the order of the components costs those ranked between its ends ([`reorder`]).
+    /// against the order of the components costs those the search that ends first finds
+    /// ([`reorder`]).
     fn repair(
         &mut self,
         relation: &Conjuncts,
@@ -7613,10 +7762,9 @@ impl Scope {
             for (k, (n, _)) in main.iter().enumerate() {
                 let c = parts[k];
                 let id = self.potential.next + c as u64;
-                let rank = self.potential.high + (count - c) as i64;
                 self.potential.comp.insert(n.clone(), id);
                 let part = self.potential.parts.entry(id).or_insert_with(|| Component {
-                    rank,
+                    rank: 0,
                     names: imbl::OrdSet::new(),
                     ends: imbl::OrdSet::new(),
                 });
@@ -7633,8 +7781,15 @@ impl Scope {
                     }
                 }
             }
+            // Ranked after every other, each after those it reaches.
+            for c in (0..count).rev() {
+                let id = self.potential.next + c as u64;
+                if self.potential.parts.contains_key(&id) {
+                    let last = self.potential.last();
+                    self.potential.rank_after(id, last);
+                }
+            }
             self.potential.next += count as u64;
-            self.potential.high += count as i64;
             // Numbered with each component after those it reaches.
             let comp = zedc_solvers::utvpi::components(&out, |j| *j);
             tight.sort_unstable_by_key(|(i, _, _, _)| comp[*i]);
@@ -11447,5 +11602,117 @@ mod tests {
             assert_eq!(got, want.into_iter().collect::<Vec<_>>(), "{stair} {ray}");
         }
         assert_eq!(users.due(false, false).count(), 7);
+    }
+
+    /// Gives `pot` a new component without names, ranked by [`Potential::rank_after`] at
+    /// `place` in `list`, the components in the order of their ranks, and returns the number
+    /// of other components ranked again.
+    fn rank_at(pot: &mut Potential, list: &mut Vec<u64>, place: usize) -> usize {
+        let c = pot.next;
+        pot.next += 1;
+        let part = Component {
+            rank: 0,
+            names: imbl::OrdSet::new(),
+            ends: imbl::OrdSet::new(),
+        };
+        pot.parts.insert(c, part);
+        let after = place.checked_sub(1).map(|k| pot.rank(list[k]));
+        let moved = pot.rank_after(c, after);
+        list.insert(place, c);
+        moved
+    }
+
+    /// The ranks of `pot` are those of `list`, in order, each its component's, and within
+    /// `0..RANKS`.
+    fn check_ranks(pot: &Potential, list: &[u64]) {
+        assert_eq!(pot.order.values().copied().collect::<Vec<u64>>(), list);
+        for (&r, &c) in &pot.order {
+            assert_eq!(pot.rank(c), r);
+            assert!((0..RANKS).contains(&r), "{r}");
+        }
+    }
+
+    /// Components ranked first, last and between two, the empty potential first, keep the
+    /// order they were given in, and their ranks are their components'.
+    #[test]
+    fn ranks_keep_the_order_they_are_given_in() {
+        let mut pot = Potential::default();
+        let mut list = Vec::new();
+        assert_eq!(pot.last(), None);
+        assert_eq!(rank_at(&mut pot, &mut list, 0), 0);
+        check_ranks(&pot, &list);
+        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+        for k in 0..1500 {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            let place = match k % 4 {
+                0 => 0,
+                1 => list.len(),
+                _ => seed as usize % (list.len() + 1),
+            };
+            rank_at(&mut pot, &mut list, place);
+            check_ranks(&pot, &list);
+        }
+    }
+
+    /// Ranks given one after another at either end reach the end of `0..RANKS`, after which
+    /// the next is given by ranking a range again, the order kept.
+    #[test]
+    fn ranks_given_at_either_end_rank_a_full_range_again() {
+        for last in [false, true] {
+            let mut pot = Potential::default();
+            let mut list = Vec::new();
+            let mut k = 0;
+            loop {
+                let place = if last { list.len() } else { 0 };
+                let end = if last {
+                    pot.last()
+                } else {
+                    pot.order.get_min().map(|&(r, _)| r)
+                };
+                let moved = rank_at(&mut pot, &mut list, place);
+                check_ranks(&pot, &list);
+                k += 1;
+                if moved > 0 {
+                    assert_eq!(end, Some(if last { RANKS - 1 } else { 0 }), "{last}");
+                    break;
+                }
+                assert!(k < 70, "{last}: no range ranked again after {k} ranks");
+            }
+            for _ in 0..200 {
+                let place = if last { list.len() } else { 0 };
+                rank_at(&mut pot, &mut list, place);
+            }
+            check_ranks(&pot, &list);
+        }
+    }
+
+    /// Components ranked each right after the first, so that the ranks between run out again
+    /// and again, are ranked again `O(log n)` times each on average (Bender et al.): from
+    /// 8,000 to 64,000 components the number ranked again grows by at most 8 times the growth
+    /// of `log n`, and a quarter more (9.8 times measured, 1.24 log2 n each; below n = 4,000,
+    /// while the ranks fill up, the count each grows faster than `log n`); ranking each later
+    /// component again, the naive version, would grow it 64 times.
+    #[test]
+    fn ranks_given_in_one_place_scale() {
+        let moved = |n: usize, front: bool| -> usize {
+            let mut pot = Potential::default();
+            let mut list = Vec::new();
+            rank_at(&mut pot, &mut list, 0);
+            let total = (0..n)
+                .map(|_| rank_at(&mut pot, &mut list, usize::from(!front)))
+                .sum();
+            check_ranks(&pot, &list);
+            total
+        };
+        for front in [false, true] {
+            let (small, large) = (moved(8000, front), moved(64_000, front));
+            let bound = 8.0 * 64_000f64.log2() / 8000f64.log2() * 1.25;
+            assert!(
+                large as f64 <= bound * small as f64,
+                "front {front}: {small} at n = 8,000, {large} at n = 64,000"
+            );
+        }
     }
 }

@@ -2112,7 +2112,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | MSG-flow-origin | impl attempt 1 | 2026-11-11 13:43 | started; worktree wt/msg-flow-origin / 28.82 31.73 34.72 |
 | PERF-deep-ops-slow | impl attempt 1 | 2026-11-12 21:38 | fix measured: verdict 207k fits 357k why 639k diff 189k a level (old 198/384/552/198, main 251/527/819/462); per-level test added, negative control fails on mai |
 | PERF-l139-family | running | 2026-11-12 18:45 | coordkk fixed d016b9cc3 90a844aa8; 14 tests in 8 families still ignored, cross-review next / 45.57 |
-| PERF-pk-one-sided | impl attempt 1 | 2026-11-12 22:06 | lockstep reorder + order list built; reach 126/254/510 at n=64/128/256 (was 1767/5205/18599); negative control on old code: new scaling test fails 22.7x bytes ( |
 | ST-walk-implicit | impl attempt 1 | 2026-11-11 01:43 | started: worktree /home/luke/Work/wt/st-walk-implicit on origin/main 89d83b4a3 / load 36.87 40.84 46.29 |
 | TESTS-ignores-and-owners | impl attempt 1 | 2026-11-08 23:59 | started; worktree /home/luke/Work/wt/tests-ignores-and-owners on 4b1e9d332 |
 | TESTS-small-sizes | running | 2026-11-08 23:59 |  |
