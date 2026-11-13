@@ -233,7 +233,11 @@ pub struct Refusal {
 
 impl Refusal {
     /// The message, in the form of sec:diagnostics: a short headline naming the product, the
-    /// notes, and the repair, a written proof of `law`, the law's text without its `;`.
+    /// notes, and the repair, a written proof of `law`, the law's text without its `;`. For
+    /// [`Refused::Work`] it is the row "Expansion too costly" of the rejection table: the law (in
+    /// the repair), the product, the predicted time against 250 ms, the predicted work against
+    /// [`LIMIT`], that the limit was measured once so that every machine refuses the same laws,
+    /// and the points at which the two sides agreed.
     pub fn message(&self, law: &str) -> String {
         let mut out = match &self.why {
             Refused::Work(work) => format!(

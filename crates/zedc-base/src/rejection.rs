@@ -38,6 +38,9 @@ rows! {
     UndecidablePremise => "Undecidable premise class",
     // No diagnostic uses this row yet: plan row HULL-conic emits it.
     NumberTooWide => "Number too wide to factor",
+    // No diagnostic uses this row yet: `zed_kernel::poly::Refusal::message` writes its text for
+    // `Refused::Work`, and plan rows L3.9 (rung 3) and ASSOC-demand (rung 2) emit it.
+    ExpansionTooCostly => "Expansion too costly",
     // No diagnostic uses this row yet: plan row ASSOC-select emits it.
     SelectionKeysNotInOneOrder => "Selection keys not in one order",
     // No diagnostic uses this row yet: plan row ASSOC-table emits it.
