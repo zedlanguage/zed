@@ -2184,6 +2184,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | REPAIR-eq-kept-cast | impl attempt 1 | 2026-11-13 14:45 | started; worktree from origin/main 50eadf267 |
 | SPEC-main-limits | impl attempt 1 | 2026-11-13 15:14 | start: spec edits for A100 (address-space rejection, limits/@timeout on main) |
 | ST-walk-orders-left | impl attempt 1 | 2026-11-13 13:56 | started |
+| TESTS-unignore-all | running | 2026-11-13 16:40 |  |
 | TYPE-op-table | impl attempt 1 | 2026-11-13 15:22 | started; load 35.92 39.67 40.25 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
