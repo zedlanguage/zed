@@ -269,6 +269,152 @@ fn a_first_component_of_another_type_is_rejected() {
     }
 }
 
+/// A decimal literal component takes the carrier its use in the body requires, and has the
+/// type and value of the literal passed alone (item LIT-tuple-decimal-body); it was rejected
+/// with "Nothing gives the literal `1.5` a carrier". Two components added together, a component
+/// of a nested tuple, and one that meets a `rat` component take it too.
+#[test]
+fn a_decimal_component_takes_the_carrier_its_use_requires() {
+    let name = "l01_26a_tuple_arg_pair_decimal";
+    for (def, pair, alone, ty, out) in [
+        (ADD_R, "h((1.5, 2))", "h(1.5)", "rat", "5r/2r\n"),
+        (ADD_R, "h((-1.5, 2))", "h(-1.5)", "rat", "-1r/2r\n"),
+        (
+            "h(positional p) = p[0] + 1.0f64;",
+            "h((0.1, 2))",
+            "h(0.1)",
+            "f64",
+            "1.1\n",
+        ),
+    ] {
+        let one = def.replace("p[0]", "p");
+        assert_eq!(outcome(name, def, pair), out, "{def} {pair}");
+        assert_eq!(outcome(name, &one, alone), out, "{one} {alone}");
+        assert_eq!(type_of_r(def, pair), ty, "{def} {pair}");
+        assert_eq!(type_of_r(&one, alone), ty, "{one} {alone}");
+    }
+    for (def, call, out) in [
+        (
+            "h(positional p) = p[0] + p[1] + 1r;",
+            "h((1.5, 0.25))",
+            "11r/4r\n",
+        ),
+        (
+            "h(positional p) = p[0][1] + 1r;",
+            "h(((1, 2.5), 2))",
+            "7r/2r\n",
+        ),
+        ("h(positional p) = p[0] * p[1];", "h((1.5, 2r))", "3r\n"),
+    ] {
+        assert_eq!(outcome(name, def, call), out, "{def} {call}");
+    }
+}
+
+/// A decimal component that no use gives one carrier is rejected as before: one the body does
+/// not read, one beside a component a use does fix, which alone is rejected, and one that `*`
+/// with a literal leaves `f64` or `rat`. One at an `int` use is rejected for that use.
+#[test]
+fn a_decimal_component_no_use_fixes_is_rejected() {
+    let name = "l01_26a_tuple_arg_pair_decimal_rejected";
+    assert_eq!(
+        outcome(name, "h(positional p) = p[0];", "h((1.5, 2))"),
+        "2:8: Nothing gives the literal `1.5` a carrier. Try `r = h((1.5f64, 2))` instead.\n\
+         \x20 [1] 2:8: this expression is 1.5\n\
+         \x20     2 | r = h((1.5, 2));\n\
+         \x20       |        ^^^\n\
+         \x20 [2] 1:1: `h` is declared here with no type written for `p` or its result; the \
+         type the checker found for `h` is `(_) -> _`\n\
+         \x20     1 | h(positional p) = p[0];\n\
+         \x20       | ^^^^^^^^^^^^^^^^^^^^^^^\n\
+         \x20 fixes, each checked here:\n\
+         \x20   r = h((1.5f64, 2));    the literal is then the f64 1.5\n\
+         \x20   r = h((1.5r, 2));      the literal is then exactly 1.5, a rat\n"
+    );
+    assert_eq!(
+        outcome(name, ADD_R, "h((1.5, 2.5))"),
+        "2:13: Nothing gives the literal `2.5` a carrier. Try `r = h((1.5, 2.5f64))` instead.\n\
+         \x20 [1] 2:13: this expression is 2.5\n\
+         \x20     2 | r = h((1.5, 2.5));\n\
+         \x20       |             ^^^\n\
+         \x20 [2] 1:1: `h` is declared here with no type written for `p` or its result; the \
+         type the checker found for `h` is `(_) -> rat`\n\
+         \x20     1 | h(positional p) = p[0] + 1r;\n\
+         \x20       | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\
+         \x20 fixes, each checked here:\n\
+         \x20   r = h((1.5, 2.5f64));    the literal is then the f64 2.5\n\
+         \x20   r = h((1.5, 2.5r));      the literal is then exactly 2.5, a rat\n"
+    );
+    for (def, call, head) in [
+        (
+            "h(positional p) = p[1] + 1r;",
+            "h((1.5, 2))",
+            "2:8: Nothing gives the literal `1.5` a carrier.",
+        ),
+        (
+            "h(positional p) = p[0] * 2;",
+            "h((1.5, 2))",
+            "2:8: Nothing gives the literal `1.5` a carrier.",
+        ),
+        (
+            PICK,
+            "h((1.5, 2))",
+            "2:5: `h` gives 1.5 here, which is not int: the use requires a value of int.",
+        ),
+    ] {
+        let got = outcome(name, def, call);
+        assert!(got.starts_with(head), "{def} {call}\n{got}");
+    }
+}
+
+/// `n` decimal components and a call with `n` decimal literals: a tuple of the components each
+/// added to `1r`, or the sum of all of them and `1r`. Each literal keeps a class of its own in
+/// both, and the sum reads all of them in one expression.
+fn decimals(n: usize, together: bool) -> String {
+    let reads: Vec<String> = (0..n).map(|i| format!("p[{i}]")).collect();
+    let body = match together {
+        true => format!("{} + 1r", reads.join(" + ")),
+        false => format!(
+            "({})",
+            reads
+                .iter()
+                .map(|r| format!("{r} + 1r"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    };
+    let args: Vec<String> = (0..n).map(|i| format!("{}.5", i % 9)).collect();
+    format!("h(positional p) = {body};\nr = h(({}));\n", args.join(", "))
+}
+
+#[test]
+fn many_decimal_components_check_in_linear_time() {
+    std::thread::Builder::new()
+        .stack_size(1 << 29)
+        .spawn(|| {
+            for together in [false, true] {
+                assert_eq!(type_errors(&decimals(3, together)), Vec::<String>::new());
+                let n = 100;
+                let srcs = [
+                    decimals(n, together),
+                    decimals(scaling::FACTOR * n, together),
+                ];
+                let what = match together {
+                    false => "checking a call of n decimal components, each added to 1r",
+                    true => "checking a call of n decimal components summed",
+                };
+                scaling::check(what, n, |m| {
+                    assert_eq!(
+                        type_errors(&srcs[usize::from(m != n)]),
+                        Vec::<String>::new()
+                    );
+                });
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
 /// `n` components, each returned beside a literal, and a call with `n` integer literals: the
 /// replay restricts each component's class once.
 fn picks(n: usize) -> String {

@@ -4354,8 +4354,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// so the class is the whole carrier: `int` in `r = h((1, 2))` with `h(positional p) =
     /// p[0] + p[1]`, whose value is `3`, and `rat` for `2` in `y = f(x: 1r, p: (2, 1))` with
     /// `f(x, p) = x + p[0]`. The carrier is chosen as for literals alone at a bounded
-    /// variable: `int` for integer literals where the class holds it, the one carrier left,
-    /// and with two or more the first literal is rejected, unless a decimal literal is in
+    /// variable: `int` for integer literals where the class holds it, the one carrier left
+    /// (`rat` for `1.5` in `r = h((1.5, 2))` with `h(positional p) = p[0] + 1r`, whose value
+    /// is `5r/2r`), and with two or more the first literal is rejected, unless a decimal literal is in
     /// the class, which is rejected where the arguments are read ([`Self::unfixed_args`]).
     /// The literals adopt the carrier. A class no use asked, as `p` in `h(p) = p[0]`,
     /// keeps its literals' own types, `1` for `h((1, 2))`, since only a copy of a literal

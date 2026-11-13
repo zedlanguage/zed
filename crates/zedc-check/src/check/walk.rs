@@ -11407,10 +11407,27 @@ impl<'t, 'a> Ck<'t, 'a> {
                 takes[r] &= m;
             }
         }
+        // The literals of tuple arguments whose classes ([`Self::generic_parts`]) a use in the
+        // body asked for one carrier of a decimal as the call was replayed
+        // ([`Self::gives_within`]): `p[0] + 1r` makes the `1.5` of `h((1.5, 2))` a rat, as it
+        // makes the `1.5` of `h(1.5)` one, and [`Self::resolve_top_parts`] gives it that
+        // carrier.
+        // Complexity tradeoff (COMPLEXITY.md row F189): naive version, a scan of the classes
+        // for each unfixed literal, O(l c) for l literals and c classes, or a read of each
+        // entry of `top_parts`, O(c l) once classes merge. Used: each class read once, by its
+        // root, into a set of spans each literal looks up once, O(c + l). Tradeoff: one set
+        // per application outside every function, empty where it has no literal component.
+        let decimal = Carrier::F64.bit() | Carrier::Rat.bit();
+        let roots: HashSet<usize> = self.top_parts.iter().map(|&k| self.find(k)).collect();
+        let fixed: HashSet<Span> = (roots.into_iter())
+            .map(|r| &self.classes[r])
+            .filter(|c| c.asked && (c.mask & decimal).count_ones() == 1)
+            .flat_map(|c| c.lits.iter().map(|(l, _)| l.span))
+            .collect();
         let mut found: Vec<(Span, Msg)> = Vec::new();
         for (v, from, l) in lits {
             let r = sets.find(v);
-            if sets.fixed_for(r, from) || self.is_class(&sets.names[v]) {
+            if sets.fixed_for(r, from) || self.is_class(&sets.names[v]) || fixed.contains(&l.span) {
                 continue;
             }
             let cs: Vec<Carrier> = [Carrier::F64, Carrier::Rat]
