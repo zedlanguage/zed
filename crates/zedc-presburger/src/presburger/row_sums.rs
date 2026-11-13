@@ -3057,6 +3057,26 @@ thread_local! {
     /// tests that compare the two (PRES-overlap-fast). Kept here and re-exported by the parent,
     /// which does not read it, so that this file names nothing of the parent's own.
     pub static ROW_SUMS_OFF: Cell<bool> = const { Cell::new(false) };
+    /// The units charged on this thread so far, whether or not a race was under way, and the
+    /// races started on it so far ([`charged`]).
+    static CHARGED: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
+}
+
+/// The units charged on this thread so far and the races started on it so far, both counted
+/// from the thread's start: a caller that reads them before and after a solve knows what the
+/// solve charged and whether a race started inside it (`solve_repair` in the parent).
+pub(super) fn charged() -> (u64, u64) {
+    CHARGED.with(Cell::get)
+}
+
+/// Test control: counts a race started, as [`race`] does, for the test of the parent's memo of
+/// repairs, which needs a solve inside which a race starts.
+#[cfg(test)]
+pub(super) fn count_race_started() {
+    CHARGED.with(|c| {
+        let (u, r) = c.get();
+        c.set((u, r.wrapping_add(1)));
+    });
 }
 
 /// Charges the innermost race under way `units` of the solver's work: the terms of a system
@@ -3069,6 +3089,10 @@ thread_local! {
 // `overlap_rows` at k = 16, the solver spends about 90K instructions per term of the systems
 // it is asked, which alone left the method too little to answer.
 pub(super) fn charge(units: u64) {
+    CHARGED.with(|c| {
+        let (u, r) = c.get();
+        c.set((u.wrapping_add(units), r));
+    });
     let answered = RACES.with(|races| {
         let mut races = races.borrow_mut();
         let Some(r) = races.last_mut() else {
@@ -3142,6 +3166,10 @@ fn race<T: 'static>(
         let done = t.is_some();
         *slot.borrow_mut() = t;
         Ok(done)
+    });
+    CHARGED.with(|c| {
+        let (u, r) = c.get();
+        c.set((u, r.wrapping_add(1)));
     });
     RACES.with(|races| {
         races.borrow_mut().push(Race {

@@ -6520,9 +6520,9 @@ fn cells_of<'p>(p: &'p Parts, x: &Atom, solving: bool) -> Option<Result<bool, Re
 // set's rows with its result (each O(m log m) for m terms; Pugh, "The Omega test", 1992, the
 // exact shadow), then one solve per cell of rows over `x` alone: O(k + T + M log M + s·c +
 // k·d) for M terms, s sets, a core of c rows and set results of d rows, linear where the core
-// shrinks to `x` (0.23 G instructions at n = 1,000 on `holders_chain`). Given up: where the
-// core of the rows held everywhere cannot shrink, each set reads it whole, O(s·c), as main's
-// solve of each cell after the sweep does (`point_rows`, equal to main within 0.2%). Sets
+// shrinks to `x` (0.23 G instructions at n = 1,000 on `holders_chain`); where it cannot
+// shrink, each set reads only the classes of the core it reads ([`CoreClasses`]). Given up:
+// where one class of the core is read by every set, each set reads it whole, O(s·c). Sets
 // that overlap (the guards of `andg`, the prefixes of `stretch_chain`) are refused at the
 // first marked cell they meet, in O(k + T), and left to the sweep.
 fn cells_by_sets(placed: &[(Rc<Vec<Con>>, CellSet)], x: &Atom, cells: &[Span]) -> Option<bool> {
@@ -6557,7 +6557,7 @@ fn cells_by_sets(placed: &[(Rc<Vec<Con>>, CellSet)], x: &Atom, cells: &[Span]) -
             sets.entry(at).or_default().extend(cs.iter());
         }
     }
-    let read: HashSet<&Atom> = (sets.values().flatten())
+    let read: rustc_hash::FxHashSet<&Atom> = (sets.values().flatten())
         .flat_map(|c| c.lin.terms.keys())
         .collect();
     let Some(core) = shadow(&all, &|a| a == x || read.contains(a), true) else {
@@ -6589,18 +6589,332 @@ fn cells_by_sets(placed: &[(Rc<Vec<Con>>, CellSet)], x: &Atom, cells: &[Span]) -
         false
     };
     let only_x = |a: &Atom| a == x;
+    let Some(classes) = CoreClasses::of(&core, x) else {
+        return Some(false);
+    };
     let mut rest = (0..k).filter(|&c| owner[c].is_none());
-    if any_cell(shadow(&core, &only_x, true), &mut rest) {
+    if any_cell(shadow(&classes.with(&[]), &only_x, true), &mut rest) {
         return Some(true);
     }
     for (set, own) in sets {
-        let rows: Vec<Con> = core.iter().chain(own).cloned().collect();
+        let rows = classes.with(&own);
         let mut at = set.iter().flat_map(|&(a, b)| a..=b);
         if any_cell(shadow(&rows, &only_x, true), &mut at) {
             return Some(true);
         }
     }
     (!refused).then_some(false)
+}
+
+/// The rows of the core of [`cells_by_sets`], over `x` and other atoms, split into the classes
+/// that atoms other than `x` join, for questions that each read few classes. For a value of
+/// `x`, the core has a point exactly where each class has one, since the classes share no
+/// atom but `x`. A class has one exactly where `x` lies in an interval when its rows read one
+/// atom besides `x`, always with coefficient 1 or -1 ([`unit_interval`]); the other classes
+/// are reduced by [`shadow`] (exact: W. Pugh, "A practical algorithm for exact array
+/// dependence analysis", Communications of the ACM 35(8), 1992, p. 106), and
+/// what it keeps of them is read with every question. So a question, rows `own` with the core,
+/// reads the rows of the classes that `own` reads, the intervals of the others as one, and the
+/// rows kept of the classes not over one interval; an interval of a class that `own` reads is
+/// implied by the class's rows.
+// Complexity tradeoff: naive version, each question asked with the whole core, O(s·c) for s
+// questions and a core of c rows: quadratic on `point_rows`, where each disjunct reads an
+// atom `y_j` of its own and the core keeps every `y_j` (8.49 G instructions at n = 128,
+// exponent 2.06). Used: one union-find over the core's atoms other than `x`, the interval or
+// shadow of each class (O(c log c) in all), and per question the rows of the classes it
+// reads, so the questions read O(c + Σ own) rows in all where each class is read by O(1) of
+// them (0.10 G instructions at n = 128, 1.62 G at n = 2,048, exponent 1.00). Still O(s·c)
+// when one class of c rows is read by every question, or when the shadow of a class keeps
+// c rows that every question reads.
+struct CoreClasses<'c> {
+    /// The class of each atom of the core other than `x`.
+    class: FxHashMap<&'c Atom, usize>,
+    /// The rows of each class.
+    rows: Vec<Vec<&'c Con>>,
+    /// The rows read with every question: those of the core with no atom but `x`, the shadows
+    /// of the classes not over `x` alone, and the bounds of `x` the other shadows give.
+    always: Vec<Con>,
+}
+
+/// The values of `x` where `rows`, over `x` and one other atom `y` whose coefficients are all 1
+/// or -1, have a point, as the least and greatest (a least above the greatest when there is
+/// none, `None` where there is no bound); `None` when `rows` are not of that shape. Each row
+/// bounds `y` by a line in `x`: `y >= p·x + q` or `y <= s·x + t`. For an integer `x` the lines
+/// take integer values, so an integer `y` lies between them exactly when `E(x) <= F(x)`, for
+/// `E` the greatest of the lower lines and `F` the least of the upper ones. `E - F` is convex,
+/// so these `x` are the integers of one interval, the union over the pieces of `E - F` of where
+/// each piece is at most zero.
+// Complexity tradeoff: naive version, each lower line against each upper one (Fourier–Motzkin
+// on `y`), O(L·U) for L lower and U upper rows, quadratic for one class of many rows. Used:
+// `E` and `-F` as upper envelopes of lines, O(m log m) to sort the m rows' lines by slope and
+// O(m) to build the envelopes, merge their pieces and read each piece: O(m log m).
+fn unit_interval(rows: &[&Con], x: &Atom) -> Option<(Option<Int>, Option<Int>)> {
+    // `y >= p·x + q` as `(p, q)` among the lower lines, `y <= s·x + t` as `(-s, -t)` among the
+    // negated upper ones, so both are bounds of a greatest of lines: `E` and `-F`.
+    let mut y: Option<&Atom> = None;
+    let mut lower: Vec<(Int, Int)> = Vec::new();
+    let mut upper: Vec<(Int, Int)> = Vec::new();
+    for c in rows {
+        let mut others = c.lin.terms.iter().filter(|(a, _)| *a != x);
+        let (a, k) = others.next()?;
+        if others.next().is_some() || y.is_some_and(|y| y != a) || !k.is_unit() {
+            return None;
+        }
+        y = Some(a);
+        // The row is `k·y + a·x + b` compared with zero.
+        let ax = c.lin.terms.get(x).cloned().unwrap_or_default();
+        let line = (-&ax, -&c.lin.constant);
+        // `k = 1`: `y >= -a·x - b`, a lower line; `k = -1`: `y <= a·x + b`, so `-y >= -a·x - b`.
+        if k.is_positive() || c.rel == Rel::Eq {
+            let l = if k.is_positive() {
+                line.clone()
+            } else {
+                (-&line.0, -&line.1)
+            };
+            lower.push(l);
+        }
+        if k.is_negative() || c.rel == Rel::Eq {
+            let u = if k.is_negative() {
+                line
+            } else {
+                (-&line.0, -&line.1)
+            };
+            upper.push(u);
+        }
+    }
+    if lower.is_empty() || upper.is_empty() {
+        return Some((None, None));
+    }
+    let (e, f) = (envelope(lower), envelope(upper));
+    // The pieces of `E - F = E + (-F)`: from a start (`None` below every value) to the next
+    // start of either envelope, the sum of the two lines then in force.
+    let (mut lo, mut hi): (Option<Option<Ratio>>, Option<Option<Ratio>>) = (None, None);
+    let (mut i, mut j) = (0, 0);
+    let mut start: Option<Ratio> = None;
+    loop {
+        let (sl, ic) = (&e[i].1 + &f[j].1, &e[i].2 + &f[j].2);
+        let (ne, nf) = (
+            e.get(i + 1).and_then(|l| l.0.clone()),
+            f.get(j + 1).and_then(|l| l.0.clone()),
+        );
+        let end = match (&ne, &nf) {
+            (Some(a), Some(b)) => Some(if ratio_le(a, b) { a.clone() } else { b.clone() }),
+            (a, b) => a.clone().or_else(|| b.clone()),
+        };
+        // Where `sl·x + ic <= 0` on `[start, end]`.
+        let (mut a, mut b) = (start.clone(), end.clone());
+        let root = |n: Int, d: Int| Some(Ratio(n, d));
+        let some = if sl.is_zero() {
+            !ic.is_positive()
+        } else if sl.is_positive() {
+            let r = root(-&ic, sl.clone());
+            b = ratio_min(b, r);
+            a.as_ref()
+                .zip(b.as_ref())
+                .is_none_or(|(a, b)| ratio_le(a, b))
+        } else {
+            let r = root(ic.clone(), -&sl);
+            a = ratio_max(a, r);
+            a.as_ref()
+                .zip(b.as_ref())
+                .is_none_or(|(a, b)| ratio_le(a, b))
+        };
+        if some {
+            lo = Some(match lo {
+                None => a,
+                Some(l) => l.and_then(|l| a.map(|a| if ratio_le(&l, &a) { l } else { a })),
+            });
+            hi = Some(match hi {
+                None => b,
+                Some(h) => h.and_then(|h| b.map(|b| if ratio_le(&h, &b) { b } else { h })),
+            });
+        }
+        let Some(end) = end else {
+            break;
+        };
+        if ne.as_ref().is_some_and(|n| ratio_eq(n, &end)) {
+            i += 1;
+        }
+        if nf.as_ref().is_some_and(|n| ratio_eq(n, &end)) {
+            j += 1;
+        }
+        start = Some(end);
+    }
+    let (Some(lo), Some(hi)) = (lo, hi) else {
+        return Some((Some(Int::ONE), Some(Int::ZERO)));
+    };
+    // The integers of the interval: its least end rounded up, its greatest rounded down.
+    let lo = lo.map(|Ratio(n, d)| -&(-&n).div_floor(&d));
+    let hi = hi.map(|Ratio(n, d)| n.div_floor(&d));
+    Some((lo, hi))
+}
+
+/// A rational `n / d` with `d > 0`.
+#[derive(Clone)]
+struct Ratio(Int, Int);
+
+fn ratio_le(a: &Ratio, b: &Ratio) -> bool {
+    &a.0 * &b.1 <= &b.0 * &a.1
+}
+
+fn ratio_eq(a: &Ratio, b: &Ratio) -> bool {
+    &a.0 * &b.1 == &b.0 * &a.1
+}
+
+/// The lesser of an end (`None` above every value) and a value.
+fn ratio_min(a: Option<Ratio>, b: Option<Ratio>) -> Option<Ratio> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(if ratio_le(&a, &b) { a } else { b }),
+        (a, b) => a.or(b),
+    }
+}
+
+/// The greater of an end (`None` below every value) and a value.
+fn ratio_max(a: Option<Ratio>, b: Option<Ratio>) -> Option<Ratio> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(if ratio_le(&a, &b) { b } else { a }),
+        (a, b) => a.or(b),
+    }
+}
+
+/// The upper envelope of lines `p·x + q` given as `(p, q)`: the lines on it in order of
+/// slope, each with the `x` it starts at (`None` for the first, from below every value).
+fn envelope(mut lines: Vec<(Int, Int)>) -> Vec<(Option<Ratio>, Int, Int)> {
+    lines.sort_unstable_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    let mut hull: Vec<(Int, Int)> = Vec::new();
+    for l in lines {
+        // Of lines of one slope only the last, the highest, can be on the envelope.
+        if hull.last().is_some_and(|h| h.0 == l.0) {
+            hull.pop();
+        }
+        // The last line is under the envelope when the new one meets the one before it no
+        // later than it does: `(q1 - q3)/(p3 - p1) <= (q1 - q2)/(p2 - p1)`.
+        while let [.., a, b] = hull.as_slice() {
+            if &(&a.1 - &l.1) * &(&b.0 - &a.0) <= &(&a.1 - &b.1) * &(&l.0 - &a.0) {
+                hull.pop();
+            } else {
+                break;
+            }
+        }
+        hull.push(l);
+    }
+    let starts = std::iter::once(None).chain(
+        hull.windows(2)
+            .map(|w| Some(Ratio(&w[0].1 - &w[1].1, &w[1].0 - &w[0].0))),
+    );
+    starts
+        .zip(hull.iter())
+        .map(|(s, (p, q))| (s, p.clone(), q.clone()))
+        .collect()
+}
+
+impl<'c> CoreClasses<'c> {
+    /// `None` when a class has no point, and so the core none.
+    fn of(core: &'c [Con], x: &Atom) -> Option<Self> {
+        // Union-find over the atoms other than `x`, with path halving and union by size.
+        fn find(parent: &mut [usize], mut i: usize) -> usize {
+            while parent[i] != i {
+                parent[i] = parent[parent[i]];
+                i = parent[i];
+            }
+            i
+        }
+        let mut ids: FxHashMap<&Atom, usize> = FxHashMap::default();
+        let (mut parent, mut size): (Vec<usize>, Vec<u32>) = (Vec::new(), Vec::new());
+        for c in core {
+            let at: Vec<usize> = (c.lin.terms.keys().filter(|a| *a != x))
+                .map(|a| {
+                    let n = ids.len();
+                    *ids.entry(a).or_insert_with(|| {
+                        parent.push(n);
+                        size.push(1);
+                        n
+                    })
+                })
+                .collect();
+            for w in at.windows(2) {
+                let (a, b) = (find(&mut parent, w[0]), find(&mut parent, w[1]));
+                if a != b {
+                    let (a, b) = if size[a] < size[b] { (b, a) } else { (a, b) };
+                    parent[b] = a;
+                    size[a] += size[b];
+                }
+            }
+        }
+        let mut index: FxHashMap<usize, usize> = FxHashMap::default();
+        let mut rows: Vec<Vec<&Con>> = Vec::new();
+        let mut always: Vec<Con> = Vec::new();
+        for c in core {
+            let Some(a) = c.lin.terms.keys().find(|a| *a != x) else {
+                always.push(c.clone());
+                continue;
+            };
+            let root = find(&mut parent, ids[a]);
+            let next = rows.len();
+            let i = *index.entry(root).or_insert(next);
+            if i == next {
+                rows.push(Vec::new());
+            }
+            rows[i].push(c);
+        }
+        let class = (ids.into_iter())
+            .map(|(a, id)| (a, index[&find(&mut parent, id)]))
+            .collect();
+        let mut ends = AtomBounds::default();
+        for r in &rows {
+            if let Some((lo, hi)) = unit_interval(r, x) {
+                if !narrow_to(&mut ends, x, lo, hi) {
+                    return None;
+                }
+                continue;
+            }
+            let r: Vec<Con> = r.iter().map(|c| (*c).clone()).collect();
+            let shadowed = shadow(&r, &|a| a == x, true)?;
+            for c in shadowed {
+                if c.lin.terms.is_empty() {
+                    let k = &c.lin.constant;
+                    if (c.rel == Rel::Ge && k.is_negative()) || (c.rel == Rel::Eq && !k.is_zero()) {
+                        return None;
+                    }
+                    continue;
+                }
+                match one_bound(&c) {
+                    Some((_, lo, hi)) if c.lin.terms.contains_key(x) => {
+                        if !narrow_to(&mut ends, x, lo, hi) {
+                            return None;
+                        }
+                    }
+                    _ => always.push(c),
+                }
+            }
+        }
+        let xl = Lin::atom(x.clone());
+        if let Some((lo, hi)) = ends.get(x) {
+            always.extend(lo.as_ref().map(|l| Con::ge(&xl, &Lin::constant(l.clone()))));
+            always.extend(hi.as_ref().map(|h| Con::ge(&Lin::constant(h.clone()), &xl)));
+        }
+        Some(CoreClasses {
+            class,
+            rows,
+            always,
+        })
+    }
+
+    /// The rows of a question `own` with the core, as described at [`CoreClasses`].
+    fn with(&self, own: &[&Con]) -> Vec<Con> {
+        let mut seen = vec![false; self.rows.len()];
+        let read: Vec<usize> = (own.iter().flat_map(|c| c.lin.terms.keys()))
+            .filter_map(|a| self.class.get(a).copied())
+            .filter(|&i| !std::mem::replace(&mut seen[i], true))
+            .collect();
+        (self.always.iter().cloned())
+            .chain(
+                read.iter()
+                    .flat_map(|&i| self.rows[i].iter().map(|c| (*c).clone())),
+            )
+            .chain(own.iter().map(|c| (*c).clone()))
+            .collect()
+    }
 }
 
 /// Whether a live cell's conjunction has a point, when no constraint of `placed` reads `x`:
@@ -7077,7 +7391,7 @@ fn own_repair_in(
     for a in &own {
         nears.iter().for_each(|n| n.bounds(a, &mut local));
     }
-    let mut m = solve(&local, true).ok()??;
+    let mut m = solve_repair(&local, true).ok()??;
     for a in own {
         m.entry(a).or_insert(Int::ZERO);
     }
@@ -7125,7 +7439,7 @@ fn local_repair(acc: &[Con], near: &Near, model: &Model, extra: &[Con]) -> Optio
     for id in ids {
         local.push(specialize_con(&acc[id], &seed, model));
     }
-    let mut m = solve(&local, true).ok()??;
+    let mut m = solve_repair(&local, true).ok()??;
     for a in seed {
         m.entry(a).or_insert(Int::ZERO);
     }
@@ -7151,7 +7465,7 @@ fn local_refute(acc: &[Con], near: &Near, extra: &[Con]) -> bool {
         .chain(&bounds)
         .chain(ids.into_iter().map(|i| &acc[i]))
         .collect();
-    matches!(solve(&local, false), Ok(None))
+    matches!(solve_repair(&local, false), Ok(None))
 }
 
 thread_local! {
@@ -8426,6 +8740,7 @@ fn probe_kept_status(
     kept: &HashSet<u64>,
     report_immunity: bool,
 ) -> (Result<Option<Parts>, Refusal>, bool) {
+    let _memo = RepairMemo::open();
     let mut immune = false;
     let answer = (|| {
         // The bounds on single atoms that the formula implies, found by [`learn`]. The formula
@@ -10839,6 +11154,106 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
             return Ok(Some(p));
         }
     }
+}
+
+/// For each hash of a system asked of [`solve_repair`] and `want`, the systems with that hash,
+/// each with its answer and the units [`solve`] charged for it.
+type Repaired = FxHashMap<(u64, bool), Vec<(Vec<Con>, Option<Model>, u64)>>;
+
+thread_local! {
+    /// The answers of [`solve_repair`] while a probe runs ([`RepairMemo`]): for each hash of a
+    /// system and `want`, the systems with that hash and their answers.
+    static REPAIRS: RefCell<Option<Repaired>> =
+        const { RefCell::new(None) };
+}
+
+/// Keeps the answers of [`solve_repair`] from its opening to its drop; one opened inside
+/// another keeps the outer one's.
+struct RepairMemo(bool);
+
+impl RepairMemo {
+    fn open() -> RepairMemo {
+        RepairMemo(REPAIRS.with(|m| {
+            let mut m = m.borrow_mut();
+            m.is_none() && m.replace(FxHashMap::default()).is_none()
+        }))
+    }
+}
+
+impl Drop for RepairMemo {
+    fn drop(&mut self) {
+        if self.0 {
+            REPAIRS.with(|m| m.borrow_mut().take());
+        }
+    }
+}
+
+/// [`solve`] for the repairs and the refutation of [`settle`] and [`pick`], with an answer
+/// given before for the same system (the same rows in the same order, and the same `want`)
+/// while a [`RepairMemo`] is open given again. [`solve`] reads nothing but its rows, `want`
+/// and the race of [`row_sums`], so a system asked again has the answer it had; the race is
+/// charged here the units [`solve`] charged it for that system, and read as [`solve`] reads
+/// it, so it is charged as much between any two systems as without the memo. Refusals are
+/// not kept.
+///
+/// Complexity tradeoff: the failed-literal probe settles the parts once per literal, and the
+/// repairs of each settle re-solve, for most disjuncts, a system they solved in an earlier
+/// settle (on wideik, 72 to 90 % of the repair systems at n = 40 repeat one asked before).
+/// Each is now solved once; the systems are still built and hashed each time, and the number
+/// of distinct systems still grows as the number of settles times the number of disjunctions.
+fn solve_repair<C: std::borrow::Borrow<Con> + std::hash::Hash>(
+    cons: &[C],
+    want: bool,
+) -> Result<Option<Model>, Refusal> {
+    solve_kept(cons, want, solve)
+}
+
+/// [`solve_repair`] with the solver given, so that a test can give one that starts a race.
+fn solve_kept<C: std::borrow::Borrow<Con> + std::hash::Hash>(
+    cons: &[C],
+    want: bool,
+    solve: impl FnOnce(&[C], bool) -> Result<Option<Model>, Refusal>,
+) -> Result<Option<Model>, Refusal> {
+    use std::hash::BuildHasher;
+    if REPAIRS.with(|m| m.borrow().is_none()) {
+        return solve(cons, want);
+    }
+    let key = (rustc_hash::FxBuildHasher.hash_one(cons), want);
+    let same = |kept: &Vec<Con>| {
+        kept.len() == cons.len() && kept.iter().zip(cons).all(|(a, b)| a == b.borrow())
+    };
+    let hit = REPAIRS.with(|m| {
+        let m = m.borrow();
+        let list = m.as_ref()?.get(&key)?;
+        (list.iter().find(|(kept, ..)| same(kept))).map(|(_, a, u)| (a.clone(), *u))
+    });
+    if let Some((answer, units)) = hit {
+        row_sums::charge(units);
+        if row_sums::stopped() {
+            return Err(Refusal::Growth);
+        }
+        return Ok(answer);
+    }
+    let (before, races) = row_sums::charged();
+    let answer = solve(cons, want)?;
+    let (after, races_after) = row_sums::charged();
+    // A race started inside the solve took the charges made while it ran, which a hit would
+    // give the race under way at the hit instead: such a solve is not kept. No solve starts a
+    // race today (races start only at the public questions, through `row_sums::read`), so
+    // this keeps the memo exact should one come to.
+    if races_after != races {
+        return Ok(answer);
+    }
+    let units = after.wrapping_sub(before);
+    REPAIRS.with(|m| {
+        if let Some(m) = m.borrow_mut().as_mut() {
+            let kept = cons.iter().map(|c| c.borrow().clone()).collect();
+            m.entry(key)
+                .or_default()
+                .push((kept, answer.clone(), units));
+        }
+    });
+    Ok(answer)
 }
 
 /// Whether a conjunction of constraints holds somewhere, and, when `want`, where; without
@@ -24391,6 +24806,136 @@ mod cells_scaling {
 }
 
 #[cfg(test)]
+mod unit_interval_tests {
+    use super::*;
+
+    /// `unit_interval` against a search of the points, on random classes of one atom `y` of
+    /// unit coefficients, with equalities among them: the same integers `x` in `[-30, 30]`.
+    #[test]
+    fn unit_interval_matches_points() {
+        let (x, y) = (Atom::Sym("x".into()), Atom::Sym("y".into()));
+        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+        let mut next = |m: i128| {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            ((seed >> 33) as i128).rem_euclid(m)
+        };
+        let mut nonempty = 0;
+        for _ in 0..3000 {
+            let rows: Vec<Con> = (0..1 + next(6))
+                .map(|_| {
+                    let k = if next(2) == 0 { 1 } else { -1 };
+                    let lin = Lin {
+                        terms: [
+                            (y.clone(), Int::from(k)),
+                            (x.clone(), Int::from(next(9) - 4)),
+                        ]
+                        .into_iter()
+                        .filter(|(_, c)| !c.is_zero())
+                        .collect(),
+                        constant: Int::from(next(41) - 20),
+                    };
+                    let rel = if next(8) == 0 { Rel::Eq } else { Rel::Ge };
+                    Con { lin, rel }
+                })
+                .collect();
+            let refs: Vec<&Con> = rows.iter().collect();
+            let (lo, hi) = unit_interval(&refs, &x).expect("one atom of unit coefficients");
+            for xv in -30i128..=30 {
+                let holds = |yv: i128| {
+                    rows.iter().all(|c| {
+                        let v = c.lin.constant.to_i128().unwrap()
+                            + c.lin.terms.get(&x).map_or(0, |k| k.to_i128().unwrap()) * xv
+                            + c.lin.terms[&y].to_i128().unwrap() * yv;
+                        if c.rel == Rel::Eq { v == 0 } else { v >= 0 }
+                    })
+                };
+                let point = (-400..=400).any(holds);
+                let inside = lo.as_ref().is_none_or(|l| Int::from(xv) >= *l)
+                    && hi.as_ref().is_none_or(|h| Int::from(xv) <= *h);
+                assert_eq!(
+                    point, inside,
+                    "x = {xv}, rows {rows:?}, interval {lo:?} {hi:?}"
+                );
+                nonempty += usize::from(point);
+            }
+        }
+        // Negative control on the test itself: both answers occur.
+        assert!(nonempty > 1000 && nonempty < 3000 * 61 - 1000, "{nonempty}");
+    }
+
+    /// [`CoreClasses`] against the whole core: for random cores over `x` and four other atoms
+    /// (classes of unit and of other coefficients, classes joined by a row, rows over `x`
+    /// alone) and random questions, a question with the classes has a point exactly where it
+    /// has one with the whole core, and a core [`CoreClasses::of`] answers `None` for has none.
+    #[test]
+    fn core_classes_answer_as_the_whole_core() {
+        let x = Atom::Sym("x".into());
+        let others: Vec<Atom> = (0..4).map(|i| Atom::Sym(format!("y{i}").into())).collect();
+        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = |m: i128| {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            ((seed >> 33) as i128).rem_euclid(m)
+        };
+        let row = |next: &mut dyn FnMut(i128) -> i128, unit: bool| {
+            let mut terms = BTreeMap::new();
+            if next(3) > 0 {
+                terms.insert(x.clone(), Int::from(next(7) - 3));
+            }
+            for _ in 0..1 + next(2) {
+                let k = if unit { 1 - 2 * next(2) } else { next(7) - 3 };
+                terms.insert(others[next(4) as usize].clone(), Int::from(k));
+            }
+            terms.retain(|_, k| !k.is_zero());
+            let rel = if next(6) == 0 { Rel::Eq } else { Rel::Ge };
+            Con {
+                lin: Lin {
+                    terms,
+                    constant: Int::from(next(31) - 15),
+                },
+                rel,
+            }
+        };
+        let (mut empty, mut points, mut none) = (0, 0, 0);
+        for _ in 0..1500 {
+            let unit = next(2) == 0;
+            let mut core: Vec<Con> = (0..2 + next(6)).map(|_| row(&mut next, unit)).collect();
+            core.push(Con::ge(&Lin::atom(x.clone()), &Lin::constant(-20)));
+            core.push(Con::ge(&Lin::constant(20), &Lin::atom(x.clone())));
+            let whole = |own: &[Con]| {
+                let rows: Vec<&Con> = core.iter().chain(own).collect();
+                solve(&rows, false).map(|m| m.is_some())
+            };
+            let Some(classes) = CoreClasses::of(&core, &x) else {
+                assert_eq!(whole(&[]), Ok(false), "core {core:?}");
+                none += 1;
+                continue;
+            };
+            for _ in 0..4 {
+                let own: Vec<Con> = (0..next(3))
+                    .map(|_| {
+                        let unit = next(2) == 0;
+                        row(&mut next, unit)
+                    })
+                    .collect();
+                let Ok(expect) = whole(&own) else { continue };
+                let refs: Vec<&Con> = own.iter().collect();
+                assert_eq!(
+                    solve(&classes.with(&refs), false).map(|m| m.is_some()),
+                    Ok(expect),
+                    "core {core:?}, own {own:?}"
+                );
+                if expect { points += 1 } else { empty += 1 }
+            }
+        }
+        // Negative control on the test itself: each kind of answer occurs.
+        assert!(
+            none > 20 && points > 200 && empty > 200,
+            "{none} {points} {empty}"
+        );
+    }
+}
+
+#[cfg(test)]
 mod r4_cells_tests {
     use super::*;
     use crate::scaling;
@@ -24648,6 +25193,112 @@ mod r4_cells_tests {
             ));
             assert_eq!(has_point(p), Ok(false));
         });
+    }
+
+    /// Each `y_j` is bounded by three lines in `q0 = 2i` on each side, so [`shadow`] keeps it in
+    /// the core, and is read by one disjunct only; no value of `i` is left (round 4's
+    /// `point_rows`).
+    fn point_rows(n: usize) -> Parts {
+        let x = var("i");
+        let q0 = var("q0");
+        let c = Lin::constant;
+        let mut p = Parts::default();
+        p.cons.extend([
+            Con::ge(&x, &c(2)),
+            Con::ge(&c(2 * n as i128), &x),
+            Con::eq(&q0, &x.times(2)),
+            Con::eq(&x, &var("t").times(2)),
+        ]);
+        for j in 1..=n as i128 {
+            let y = var(&format!("y{j:06}"));
+            let n = n as i128;
+            p.cons.extend([
+                Con::ge(&y, &q0.plus(&c(j))),
+                Con::ge(&q0.plus(&c(j + 1)), &y),
+                Con::ge(&y, &c(j)),
+                Con::ge(&c(3 * n + j), &y),
+                Con::ge(&y.plus(&q0), &c(j)),
+                Con::ge(&c(9 * n), &y.plus(&q0)),
+            ]);
+            p.ors.push(vec![
+                part(vec![Con::eq(&x, &c(2 * j)), Con::eq(&y, &c(1))], Vec::new()),
+                part(vec![Con::ge(&c(2 * j - 1), &x)], Vec::new()),
+                part(vec![Con::ge(&x, &c(2 * j + 1))], Vec::new()),
+            ]);
+        }
+        p
+    }
+
+    #[test]
+    fn rows_read_by_one_disjunct_each_scale_linearly() {
+        scaling::check_order("rows read by one disjunct each", 16, 1, |n| {
+            assert_eq!(has_point(point_rows(n)), Ok(false));
+        });
+    }
+
+    /// The systems kept for `rows` and `want` by the open [`RepairMemo`].
+    fn kept(rows: &[Con], want: bool) -> usize {
+        use std::hash::BuildHasher;
+        let key = (rustc_hash::FxBuildHasher.hash_one(rows), want);
+        REPAIRS.with(|m| {
+            m.borrow()
+                .as_ref()
+                .map_or(0, |m| m.get(&key).map_or(0, Vec::len))
+        })
+    }
+
+    /// Each branch of [`solve_kept`]: no memo open (solved, nothing kept); asked first (solved
+    /// and kept with its charge); asked again (the kept answer, charged the same units, not
+    /// solved); a solve in which a race starts (not kept); a refusal (not kept).
+    #[test]
+    fn a_repair_asked_again_has_its_answer_and_charge() {
+        let (a, b) = (var("a"), var("b"));
+        let c = Lin::constant;
+        let rows = [
+            vec![
+                Con::ge(&a, &b.times(3)),
+                Con::ge(&c(7), &a),
+                Con::ge(&b, &c(2)),
+            ],
+            vec![
+                Con::ge(&a, &b.times(3)),
+                Con::ge(&c(5), &a),
+                Con::ge(&b, &c(2)),
+            ],
+        ];
+        let units = || row_sums::charged().0;
+        // No memo open.
+        assert_eq!(solve_repair(&rows[0], true), solve(&rows[0], true));
+        assert_eq!(kept(&rows[0], true), 0);
+        let _memo = RepairMemo::open();
+        for want in [true, false] {
+            for r in &rows {
+                let before = units();
+                let first = solve_repair(r, want);
+                let charged = units() - before;
+                assert_eq!(first, solve(r, want));
+                assert_eq!(kept(r, want), 1);
+                let before = units();
+                let again = solve_kept(r, want, |_, _| panic!("a kept system is solved again"));
+                assert_eq!(again, first);
+                assert_eq!(units() - before, charged);
+                assert_eq!(kept(r, want), 1);
+            }
+        }
+        // A race starts inside the solve: answered, not kept.
+        let other = vec![Con::ge(&a, &c(1))];
+        let started = solve_kept(&other, true, |r, w| {
+            row_sums::count_race_started();
+            solve(r, w)
+        });
+        assert_eq!(started, solve(&other, true));
+        assert_eq!(kept(&other, true), 0);
+        // A refusal: not kept.
+        assert_eq!(
+            solve_kept(&other, false, |_, _| Err(Refusal::Growth)),
+            Err(Refusal::Growth)
+        );
+        assert_eq!(kept(&other, false), 0);
     }
 
     #[test]
