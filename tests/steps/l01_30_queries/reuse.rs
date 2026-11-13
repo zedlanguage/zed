@@ -103,7 +103,7 @@ fn a_rejected_unit_is_kept_with_its_diagnostics() {
     // ends with the first repair (DESIGN sec:diagnostics, "A short headline").
     assert!(
         first[0]
-            .starts_with("1:30: `*` does not take (int, \"8\"): no arrow of `*` takes these types. Try `cents * int(\"8\")` instead.\n  [1] 1:30: `cents` is int here\n"),
+            .starts_with("1:30: `*` does not take (int, \"8\"): no arrow of `*` takes these types. Try `cents * 8` instead.\n  [1] 1:30: `cents` is int here\n"),
         "{first:?}"
     );
     assert_eq!(checks(&mut db, bad), first);

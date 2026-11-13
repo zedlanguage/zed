@@ -429,3 +429,44 @@ fn a_text_repair_of_many_shapes_scales() {
         },
     );
 }
+
+/// `n` functions, each multiplying an `int` by a text the cast `int` takes, so each rejection
+/// offers the literal the cast gives (row REPAIR-literal-cast).
+fn texts_for_ints(n: usize) -> String {
+    (0..n)
+        .map(|i| format!("h{i}(positional x: int) = x * \"{i}\";\n"))
+        .collect()
+}
+
+#[test]
+fn writing_the_literal_a_cast_gives_scales() {
+    let srcs = scaling::inputs(200, texts_for_ints);
+    scaling::check(
+        "n rejections, each repaired by the literal a cast gives",
+        200,
+        |n| {
+            let out = rejected(&srcs[&n]);
+            let last = n - 1;
+            assert!(out.contains(&format!("Try `x * {last}` instead.")), "{out}");
+        },
+    );
+}
+
+#[test]
+fn writing_the_literal_of_a_long_text_scales() {
+    // One text of d digits: its cast, its printing and its reading back.
+    let srcs = scaling::inputs(4000, |d| {
+        format!("f(positional x: int) = x * \"{}\";\n", "7".repeat(d))
+    });
+    scaling::check(
+        "the literal a cast gives on a text of d digits",
+        4000,
+        |d| {
+            let out = rejected(&srcs[&d]);
+            assert!(
+                out.contains(&format!("Try `x * {}` instead.", "7".repeat(d))),
+                "{out}"
+            );
+        },
+    );
+}

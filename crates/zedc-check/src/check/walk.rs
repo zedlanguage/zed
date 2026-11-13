@@ -9886,10 +9886,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                 _ => ty.clone(),
             };
             let t = self.t;
-            let (name, written) = match self.seen.get(at) {
-                Some((_, Src::Name(id))) => (Some(&t.res.binders[*id].name), None),
-                Some((_, Src::Other(e))) => (None, rat_forms(e, self.t.text)),
-                _ => (None, None),
+            let (name, written, literal) = match self.seen.get(at) {
+                Some((_, Src::Name(id))) => (Some(&t.res.binders[*id].name), None, false),
+                Some((_, Src::Other(e))) => (
+                    None,
+                    rat_forms(e, self.t.text),
+                    is_literal(e) || matches!(e.kind, ExprKind::Str(_)),
+                ),
+                _ => (None, None, false),
             };
             let a = a.as_ref().expect("an argument");
             if let Some(forms) = written {
@@ -9983,6 +9987,29 @@ impl<'t, 'a> Ck<'t, 'a> {
                     {
                         continue;
                     }
+                    // On a literal the cast cannot fail on, the repair writes the literal the
+                    // cast gives, `8` for `int("8")`, which says the same (REPAIR-literal-cast).
+                    if literal
+                        && let Some(lit) = self.literal_repair(w, a, &held, *at)
+                        && let Some(got) = self.repaired(what, sig, args, (i, lit.arg), pass, span)
+                    {
+                        let text = quoting(
+                            &format_args!("repair: write `{}`; the checker accepts that", lit.text),
+                            || {
+                                format!(
+                                    "repair: write the literal `{w}(…)` gives on this one; the \
+                                     checker accepts that"
+                                )
+                            },
+                        );
+                        let holds = format_args!("the literal is then the {w} {}", lit.text);
+                        out.push(Repaired {
+                            note: Note { span: *at, text },
+                            got,
+                            fix: Rewrite::new(&[(*at, &lit.text)], &holds, &lit.text),
+                        });
+                        continue;
+                    }
                     let text = match name {
                         Some(n) => format!("repair: write `{w}({n})`; the checker accepts that"),
                         None => format!("repair: wrap this in `{w}(…)`; the checker accepts that"),
@@ -10070,6 +10097,39 @@ impl<'t, 'a> Ck<'t, 'a> {
             ..a.clone()
         };
         self.tried(|ck| ck.word_end(w, arg, at))
+    }
+
+    /// The literal that the cast `w` gives on the literal argument `a` at `at`, of type `held`,
+    /// as the program writes it, with the argument it is where the checker reads it alone
+    /// ([`Self::written_arg`]): `8` for `int("8")`, which says the same as the cast and is
+    /// what a repair offers in its place (row REPAIR-literal-cast). `None` where `held` is not
+    /// one value, the cast gives an atom on it, or the value has no literal the checker reads
+    /// back, as `rat("1/3")`, whose `rat` no decimal literal writes; the repair is then the
+    /// cast. A `rat` is written with its point where that is no longer ([`plain_rat`]).
+    ///
+    /// Complexity tradeoff: the naive repair writes the cast around the literal, O(1), and
+    /// shows a call that cannot fail as if it could. This runs the cast once on the one value,
+    /// O(d^1.47) for a literal of d digits, as [`Self::word_atoms`] already does for the same
+    /// call (COMPLEXITY.md row C39), prints the result, O(d), and reads it back, O(d).
+    fn literal_repair(&mut self, w: &str, a: &Arg<'a>, held: &Ty, at: Span) -> Option<Literal<'a>> {
+        let [v] = held.kernel()?.values_listed()?.try_into().ok()?;
+        let x = run(zedc_base::interp::prim(w)?, &v)?;
+        if matches!(x, Value::Atom(_)) {
+            return None;
+        }
+        let text = self.text(&Ty::lit(&x));
+        let text = match x {
+            Value::Rat(_) => plain_rat(&text).unwrap_or(text),
+            _ => text,
+        };
+        let was = self.t.text?.get(at.start..at.end)?;
+        match self.written_arg(&text, was, a, at) {
+            Mapped::Args(mut one) => Some(Literal {
+                arg: one.pop().flatten()?,
+                text,
+            }),
+            _ => None,
+        }
     }
 
     /// `f` run as a trial: its result where it adds no error, refuses no literal and makes no
@@ -14548,6 +14608,50 @@ struct Repaired {
     fix: Option<Rewrite>,
 }
 
+/// The literal a cast gives on a literal argument ([`Ck::literal_repair`]): its text as the
+/// program writes it, and the argument it is where the checker reads it alone.
+struct Literal<'a> {
+    text: String,
+    arg: Arg<'a>,
+}
+
+/// The `rat` literal `text`, written `meKr` as a type prints it (`5e-1r`, `125e-2r`, `1e3r`),
+/// with its point in place of the exponent, `0.5r` or `1.25r`, where that is no longer;
+/// `None` where it is longer, as `1000r` for `1e3r` or `0.0001r` for `1e-4r`, or where
+/// `text` has no exponent. As `Rat::integer_text` chooses between digits and powers, the
+/// shorter of the two forms is written, a tie going to the point, which the program's own
+/// literals use. The length of the form with the point is counted before it is built, so a
+/// literal `1e400000r` costs its own length, O(|text|), and not the exponent's.
+fn plain_rat(text: &str) -> Option<String> {
+    let body = text.strip_suffix('r')?;
+    let (sign, body) = match body.strip_prefix('-') {
+        Some(b) => ("-", b),
+        None => ("", body),
+    };
+    let (m, k) = body.split_once('e')?;
+    let (point, k) = match k.strip_prefix('-') {
+        Some(k) => (true, k),
+        None => (false, k),
+    };
+    let k: usize = k.parse().ok()?;
+    // The digits of `m` with `k` zeros after them; or with the point `k` places from their
+    // end, preceded by `0.` and zeros where it falls before them.
+    let len = match point {
+        false => m.len().checked_add(k)?,
+        true if k < m.len() => m.len() + 1,
+        true => k.checked_add(2)?,
+    };
+    if len > body.len() {
+        return None;
+    }
+    let plain = match point {
+        false => format!("{m}{}", "0".repeat(k)),
+        true if k < m.len() => format!("{}.{}", &m[..m.len() - k], &m[m.len() - k..]),
+        true => format!("0.{}{m}", "0".repeat(k - m.len())),
+    };
+    Some(format!("{sign}{plain}r"))
+}
+
 /// Why a pair of values does not compare under an ordering.
 enum Unordered {
     /// The values of each side that are not tuples, numbers of two kinds or two values of two
@@ -14734,5 +14838,34 @@ mod tests {
         let mut dynamic = Binds::new();
         dynamic.insert(v, Ty::dynamic());
         assert_eq!(ck.bound(&row, &mut Binds::new()), row.replace(&dynamic));
+    }
+
+    /// A `rat` literal is written with its point where that is no longer than its exponent
+    /// form, a tie going to the point, and keeps the exponent form where that is shorter
+    /// (row REPAIR-literal-cast).
+    #[test]
+    fn a_rat_literal_is_written_with_its_point_where_that_is_no_longer() {
+        let cases = [
+            ("5e-1r", Some("0.5r")),
+            ("-5e-1r", Some("-0.5r")),
+            ("125e-2r", Some("1.25r")),
+            ("125e-1r", Some("12.5r")),
+            ("5e-2r", Some("0.05r")),
+            ("1e1r", Some("10r")),
+            // Ties: `12e2r` and `1200r` are as long, as are `1e-2r` and `0.01r`.
+            ("12e2r", Some("1200r")),
+            ("1e3r", None),
+            ("1e-4r", None),
+            ("-1e-4r", None),
+            ("1e-2r", Some("0.01r")),
+            // No exponent, as `8r`, or not a `rat` literal at all.
+            ("8r", None),
+            ("8", None),
+            ("1e400000r", None),
+            ("1e-400000r", None),
+        ];
+        for (text, want) in cases {
+            assert_eq!(plain_rat(text).as_deref(), want, "{text}");
+        }
     }
 }
