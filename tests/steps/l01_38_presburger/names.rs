@@ -925,7 +925,6 @@ fn disjunctions_whose_atoms_share_a_color() {
 }
 
 #[test]
-#[ignore]
 fn pncx_gained_color_systems_match_enumeration() {
     // The 21 systems accounting for all 504 gains of this family in R4's
     // answer log, seed 0x5eed, 24 namings each. Every system is inside [-2,2]^4

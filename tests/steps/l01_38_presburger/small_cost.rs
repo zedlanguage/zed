@@ -81,7 +81,7 @@ fn least(meter: &mut Meter, run: &dyn Fn()) -> u64 {
 }
 
 #[test]
-#[ignore = "benchmark: prints instructions per call"]
+#[ignore = "benchmark of PRES-small-cost and PRES-small-front: prints instructions per call"]
 fn bench_small_formulas() {
     let mut meter = Meter::new();
     let one = Formula::and(vec![

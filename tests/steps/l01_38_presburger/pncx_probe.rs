@@ -69,7 +69,7 @@ fn run(src: &str, reps: usize) {
 const CHAIN8: &str = include_str!("pncx_chain8.zed");
 
 #[test]
-#[ignore]
+#[ignore = "probe for PERF-negated-chain-unsolved (docs/handoff/PERF-negated-chain-unsolved.md): prints the time of each question of chain 8; checks only with PNCX_CHECK"]
 fn pncx_chain8() {
     let src = std::env::var("PNC_SRC")
         .map(|p| std::fs::read_to_string(p).unwrap())
@@ -206,7 +206,6 @@ fn enumerated(w: &zedc::store::presburger::Relation) -> Option<(bool, bool)> {
 /// PNCX_SEEDS=a..b: random chains; each answer, faced and plain, in both orders, against
 /// points. Prints one line per question and MISMATCH lines.
 #[test]
-#[ignore]
 fn pncx_random() {
     let seeds = std::env::var("PNCX_SEEDS").unwrap_or_else(|_| "0..20".into());
     let (a, b) = seeds.split_once("..").unwrap();
@@ -551,7 +550,7 @@ fn axis_src(axis: &str, n: usize) -> String {
 }
 
 #[test]
-#[ignore]
+#[ignore = "probe for PERF-negated-chain-unsolved (docs/handoff/PERF-negated-chain-unsolved.md): needs PNCX_AXIS; prints work at PNCX_SIZES; asserts nothing"]
 fn pncx_scaling() {
     let axis = std::env::var("PNCX_AXIS").unwrap();
     let sizes: Vec<usize> = std::env::var("PNCX_SIZES")
@@ -692,7 +691,7 @@ fn pncx_formula(axis: &str, n: usize) -> zedc::store::presburger::Formula {
 }
 
 #[test]
-#[ignore]
+#[ignore = "probe for PERF-negated-chain-unsolved (docs/handoff/PERF-negated-chain-unsolved.md): needs PNCX_AXIS and PNCX_N"]
 fn pncx_six_axis() {
     use zed_tests::scaling::Meter;
     use zedc::store::presburger::satisfiable;
@@ -734,7 +733,7 @@ fn pncx_distinct_moduli_scale() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "probe for PERF-negated-chain-unsolved (docs/handoff/PERF-negated-chain-unsolved.md): its default cases take past 60 s; run with PNCX_CASES"]
 fn pncx_pairs_enumeration() {
     use std::sync::Arc;
     use zedc::store::int::Int;
@@ -895,7 +894,7 @@ fn pncx_sat_crt_construction_scale() {
 /// clauses over `v` variables; each line prints `decide` and, for at most 7 variables
 /// (`P <= 510510`), the truth by enumeration over `0..P`.
 #[test]
-#[ignore]
+#[ignore = "probe for PERF-negated-chain-unsolved (docs/handoff/PERF-negated-chain-unsolved.md): needs PNCX_SAT_RANDOM"]
 fn pncx_sat_reduction() {
     use std::sync::Arc;
     use zedc::store::int::Int;
@@ -1086,7 +1085,7 @@ fn pncx_crt_bits(n: usize) -> zedc::store::presburger::Formula {
 }
 
 #[test]
-#[ignore]
+#[ignore = "probe for PERF-negated-chain-unsolved (docs/handoff/PERF-negated-chain-unsolved.md): needs PNCX_SIZES"]
 fn pncx_crt_bit_axis() {
     use zedc::store::presburger::satisfiable;
     let sizes = std::env::var("PNCX_SIZES").unwrap();
@@ -1122,7 +1121,7 @@ fn pncx_crt_bit_axis() {
 /// The kernel's inverse and gcd alone on the moduli of [`pncx_crt_bits`], for `PNCX_SIZES`: the
 /// part of `pncx_crt_bit_axis`'s work they take.
 #[test]
-#[ignore]
+#[ignore = "probe for PERF-negated-chain-unsolved (docs/handoff/PERF-negated-chain-unsolved.md): needs PNCX_SIZES"]
 fn pncx_fibonacci_parts() {
     use zedc::store::int::Num;
     let sizes = std::env::var("PNCX_SIZES").unwrap();
@@ -1201,7 +1200,7 @@ fn pncx_fibonacci_crt_scale() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "probe for PERF-negated-chain-unsolved (docs/handoff/PERF-negated-chain-unsolved.md): needs PNCX_AXIS and PNCX_N"]
 fn pncx_profile() {
     let axis = std::env::var("PNCX_AXIS").unwrap();
     let n: usize = std::env::var("PNCX_N").unwrap().parse().unwrap();
@@ -1239,7 +1238,7 @@ fn pncx_pairs_scale() {
     pncx_front_scale("pairs");
 }
 #[test]
-#[ignore]
+#[ignore = "probe for PERF-negated-chain-unsolved (docs/handoff/PERF-negated-chain-unsolved.md): takes past 60 s"]
 fn pncx_t8_enum_suite() {
     use std::sync::Arc;
     use zedc::store::int::Int;

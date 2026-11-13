@@ -198,6 +198,20 @@ fn natively_too() {
     }
 }
 
+/// The unit `natively_too` leaves out: its run stops holding a function in a tuple.
+#[test]
+#[ignore = "NATIVE-stop-cells: a native run that stops leaves the cells it holds live, and \
+            `native` refuses the run"]
+fn natively_with_a_function_in_a_tuple() {
+    let (what, u) = units()
+        .into_iter()
+        .find(|(what, _)| *what == FUNCTION)
+        .expect(FUNCTION);
+    let ((want, got), _) = native(|engines| (alone(&u, engines), bindings(&u, engines)));
+    assert_eq!(got.compared, want.compared, "{what}");
+    assert_eq!(got.mismatches, want.mismatches, "{what}");
+}
+
 #[test]
 fn the_outcomes_are_those_expected() {
     // What the interpreter gives each binding of the first unit, as the refusing engine's

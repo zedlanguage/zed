@@ -122,9 +122,8 @@ fn a_divisor_declared_without_zero_adds_no_div_by_zero() {
 }
 
 #[test]
-#[ignore = "open: zedc narrows by `==` and `!=` only against an atom, so `d != 0` leaves `d` \
-            an `int` and the quotient keeps `#divByZero`; the type `int` without `0` is a \
-            refinement of layer L10"]
+#[ignore = "NARROW-ne-divisor: under the test `d != 0` the read `d` stays an `int`, so the \
+            quotient keeps `#divByZero`"]
 fn a_divisor_narrowed_by_a_test_adds_no_div_by_zero() {
     // DESIGN.md sec:type_resolution rule 3: "The checker maintains per-node proposition sets
     // (facts learned by tests)", and step L1.26 on a divisor whose type holds no zero.

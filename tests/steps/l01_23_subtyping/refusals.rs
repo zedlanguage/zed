@@ -1228,7 +1228,7 @@ fn each_refusal_message_reads_as_written() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "probe for REFUSAL-front-rest (docs/handoff/REFUSAL-front-unsolved.md): prints the verdict and work of case RFX at sizes RFX_N; asserts nothing"]
 fn rfx_probe() {
     let which = std::env::var("RFX").unwrap_or_default();
     let sizes: Vec<usize> = std::env::var("RFX_N")
@@ -3107,7 +3107,7 @@ fn r3_all_probe_and_family_orders() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "probe for REFUSAL-front-rest (docs/handoff/REFUSAL-front-unsolved.md): prints the count of mismatches; asserts nothing"]
 fn r3_cofinite_survey() {
     big(|| {
         let (mut bad, mut cases) = (0, 0);
@@ -3459,7 +3459,6 @@ fn r4_boundary(n: usize, holes: bool, tag: &str) -> Type {
 }
 
 #[test]
-#[ignore]
 fn r4_diagnostic_routes_and_head_width() {
     big(|| {
         for case in [
@@ -4482,7 +4481,7 @@ fn r5_sat(k: usize, cls: &[Vec<(usize, bool)>]) -> bool {
 }
 
 #[test]
-#[ignore]
+#[ignore = "probe for REFUSAL-front-rest (docs/handoff/REFUSAL-front-unsolved.md): prints wrong answers for the clause shape R5SAT; asserts nothing"]
 fn r5_sat_check() {
     let spec: Vec<usize> = std::env::var("R5SAT")
         .unwrap_or("3,1,4,3,0,1".into())
@@ -7458,7 +7457,7 @@ fn r9_compressed_and_expanded_runs_agree_with_enumeration() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "probe for REFUSAL-front-rest (docs/handoff/REFUSAL-front-unsolved.md): needs RFX and RFX_N; prints the escape cells; asserts nothing"]
 fn r9_escape_probe() {
     let which = std::env::var("RFX").unwrap();
     let sizes: Vec<usize> = std::env::var("RFX_N")
@@ -7482,7 +7481,7 @@ fn r9_escape_probe() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "probe for REFUSAL-front-rest (docs/handoff/REFUSAL-front-unsolved.md): prints how wide literals read; asserts nothing"]
 fn r9_wide_literal_probe() {
     for text in [
         "9223372036854775807",
@@ -7709,7 +7708,6 @@ fn r9_x43_a_list_as_the_head_of_a_list_is_decided_as_the_list_alone() {
 
 /// Diagnostic for the remaining same-constructor tail boundary (R9-C5).
 #[test]
-#[ignore]
 fn r9_tail_admission_probe() {
     big(|| {
         for n in [3, 4, 8, 16] {
@@ -8518,7 +8516,7 @@ fn r10_precision_case(tag: &str, reverse: bool) -> Type {
 }
 
 #[test]
-#[ignore = "R10-C3: Inhabited on 19bc4e25; Fork on 27a5b72b4"]
+#[ignore = "REFUSAL-front-rest U2 (R10-C3): Inhabited on 19bc4e25; Fork on 27a5b72b4"]
 fn r10_answer_preservation_nine_node_list_regression() {
     big(|| {
         for reverse in [false, true] {
@@ -8555,7 +8553,6 @@ fn r10_shared_payloads(n: usize, tag: &str) -> Type {
 }
 
 #[test]
-#[ignore]
 fn r10_shared_payload_probe() {
     let sizes = std::env::var("RFX_N").unwrap_or("16,64,256,1024".into());
     big(move || {
@@ -8628,7 +8625,6 @@ fn r11_group_reads_skip_bare_atom_names_and_scale() {
 }
 
 #[test]
-#[ignore]
 fn r11_failure_prefix_probe() {
     big(|| {
         for n in [16, 64, 256, 1024] {
@@ -8654,7 +8650,6 @@ fn r11_tagged_payloads(n: usize) -> Type {
 }
 
 #[test]
-#[ignore]
 fn r11_tagged_payload_probe() {
     big(|| {
         for n in [16, 64, 256, 1024] {
@@ -8727,7 +8722,6 @@ fn r11_boolean_tail_behind_literal_prefix_scales() {
 }
 
 #[test]
-#[ignore]
 fn r11_literal_prefix_probe() {
     big(|| {
         for n in [16, 64, 256, 1024] {
@@ -8783,7 +8777,6 @@ fn r11_payload_name_prefixes(n: usize) -> Type {
 }
 
 #[test]
-#[ignore]
 fn r11_payload_name_prefix_probe() {
     big(|| {
         for n in [16, 64, 256, 1024] {
@@ -8797,7 +8790,7 @@ fn r11_payload_name_prefix_probe() {
 }
 
 #[test]
-#[ignore = "R11-C3: payload-bearing prefixes still reread a shared persistent name map"]
+#[ignore = "REFUSAL-front-rest U4 (R11-C3): payload-bearing prefixes still reread a shared persistent name map"]
 fn r11_payload_name_prefixes_must_scale() {
     big(|| {
         let a = r11_payload_name_prefixes(128);
@@ -8815,7 +8808,7 @@ fn r11_payload_name_prefixes_must_scale() {
 /// A ternary-density alignment family: one row class has only the final two
 /// coordinates, two classes have every coordinate. Every product entry is 1.
 #[test]
-#[ignore]
+#[ignore = "probe for REFUSAL-front-rest (docs/handoff/REFUSAL-front-unsolved.md): its sizes up to 4096 take past 60 s"]
 fn r11_ternary_alignment_probe() {
     big(|| {
         for n in [16usize, 64, 256, 1024, 4096] {
@@ -8934,7 +8927,6 @@ fn r11_names_family(n: usize, tag: &str) -> Type {
 }
 
 #[test]
-#[ignore]
 fn r11_many_names_probe() {
     let sizes = std::env::var("RFX_N").unwrap_or("16,64,256,1024".into());
     big(move || {
@@ -8968,7 +8960,6 @@ fn r11_many_names_must_scale() {
 /// R11 probe for what the R10-C4 memo leaves: n tags sharing one payload diagram whose n rows
 /// each hold a component with an atom name, which every tag still reads.
 #[test]
-#[ignore]
 fn r11_named_payload_probe() {
     let sizes = std::env::var("RFX_N").unwrap_or("16,64,256,1024".into());
     big(move || {

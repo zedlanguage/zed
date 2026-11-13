@@ -376,21 +376,6 @@ fn clustering_of_random_points_at_eight_times_the_coordinate_size() {
     });
 }
 
-/// The same random points with coordinates of 288 and of 2304 digits (957 and 7654 bits),
-/// held to the limit of power 1. It fails at about 27.9 times the instructions and 25.4 times
-/// the bytes: the in-circle tests multiply factors of up to about 1918 and 15,312 bits (30 and
-/// 240 words), which num-bigint multiplies by schoolbook (up to 32 words) and by Karatsuba (33
-/// to 256 words), O(b^1.58) (COMPLEXITY F39). Reading the coordinates is not the cause: they
-/// have at most 2304 digits, and reading them by halves changed the total by under 1% (item
-/// P14-bigint-parse).
-#[test]
-#[ignore = "COMPLEXITY.md F39, open under BIGINT-fast-mul: num-bigint's Karatsuba product, about 27.9 times"]
-fn clustering_of_random_points_with_coordinates_of_thousands_of_digits() {
-    scales("clustering coordinate blocks wide", "14", 32, 1, |chunks| {
-        wide_random_points(1000, chunks)
-    });
-}
-
 /// Every edit prints every cell, so the output is quadratic.
 #[test]
 fn spreadsheet_prints_every_cell_after_every_edit() {

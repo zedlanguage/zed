@@ -680,7 +680,7 @@ fn growth_of_weighted_sliding_windows() {
 }
 
 #[test]
-#[ignore = "Q1-LOCAL: refused with Growth though a point holds; what is left needs inexact eliminations, and dark shadows taken by the terms they write still end in Growth (2026-11-08)"]
+#[ignore = "Q1-LOCAL-method: refused with Growth though a point holds; what is left needs inexact eliminations, and dark shadows taken by the terms they write still end in Growth (2026-11-08)"]
 fn weighted_sliding_windows_are_decided() {
     grows("weighted sliding windows", 64, Ok(true), |n| {
         weighted_windows(n).0
@@ -718,7 +718,7 @@ fn growth_of_sums_over_grid_squares() {
 }
 
 #[test]
-#[ignore = "Q1-LOCAL: refused with Growth though a point holds; every row unit, and every exact elimination left adds 2 terms or more even counted by the rows it writes (treewidth about the side of the grid)"]
+#[ignore = "Q1-LOCAL-method: refused with Growth though a point holds; every row unit, and every exact elimination left adds 2 terms or more even counted by the rows it writes (treewidth about the side of the grid)"]
 fn sums_over_grid_squares_are_decided() {
     grows("sums over grid squares", 144, Ok(true), |n| {
         grid_squares(side(n)).0
@@ -732,7 +732,7 @@ fn growth_of_a_band_of_four() {
 }
 
 #[test]
-#[ignore = "Q1-LOCAL: refused with Growth though a point holds; what is left needs inexact eliminations, and dark shadows taken by the terms they write still end in Growth (2026-11-08)"]
+#[ignore = "Q1-LOCAL-method: refused with Growth though a point holds; what is left needs inexact eliminations, and dark shadows taken by the terms they write still end in Growth (2026-11-08)"]
 fn a_band_of_four_is_decided() {
     grows("a band of four", 64, Ok(true), |n| band(n).0);
 }
@@ -746,7 +746,7 @@ fn growth_of_sparse_random_rows() {
 }
 
 #[test]
-#[ignore = "Q1-LOCAL: refused with Growth though a point holds; random rows of 3 and 4 variables, where every elimination left adds terms even counted by the rows it writes"]
+#[ignore = "Q1-LOCAL-method: refused with Growth though a point holds; random rows of 3 and 4 variables, where every elimination left adds terms even counted by the rows it writes"]
 fn sparse_random_rows_are_decided() {
     grows("sparse random rows", 64, Ok(true), |n| sparse_random(n).0);
 }
@@ -760,7 +760,7 @@ fn growth_of_chained_blocks_of_five() {
 }
 
 #[test]
-#[ignore = "Q1-LOCAL: refused with Growth though a point holds; what is left needs inexact eliminations, and dark shadows taken by the terms they write still end in Growth (2026-11-08)"]
+#[ignore = "Q1-LOCAL-method: refused with Growth though a point holds; what is left needs inexact eliminations, and dark shadows taken by the terms they write still end in Growth (2026-11-08)"]
 fn chained_blocks_of_five_are_decided() {
     grows("chained blocks of five", 32, Ok(true), |n| {
         chained_blocks(n).0
@@ -776,7 +776,7 @@ fn growth_of_a_tree_of_blocks_of_five() {
 }
 
 #[test]
-#[ignore = "Q1-LOCAL: refused with Growth though a point holds; what is left needs inexact eliminations, and dark shadows taken by the terms they write still end in Growth (2026-11-08)"]
+#[ignore = "Q1-LOCAL-method: refused with Growth though a point holds; what is left needs inexact eliminations, and dark shadows taken by the terms they write still end in Growth (2026-11-08)"]
 fn a_tree_of_blocks_of_five_is_decided() {
     grows("a tree of blocks of five", 32, Ok(true), |n| {
         tree_blocks(n).0

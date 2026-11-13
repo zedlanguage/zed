@@ -5296,7 +5296,7 @@ fn one_variable_boundary_modes_do_not_depend_on_names() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "probe for PERF-negated-chain-unsolved (docs/handoff/PERF-negated-chain-unsolved.md): prints the refused cases; asserts nothing"]
 fn pncx_refused_cases() {
     use zedc::store::int::Int;
     use zedc::store::presburger::{Model, decide, satisfiable};
@@ -5341,7 +5341,6 @@ fn pncx_refused_cases() {
 }
 
 #[test]
-#[ignore]
 fn pncx_boundary_modes_match_complete_periods() {
     use zedc::store::int::Int;
     use zedc::store::presburger::{Model, decide, satisfiable};
@@ -5517,7 +5516,7 @@ fn remainder_alias_case(
 // answered and 476 differ, each answered under one naming and refused under another (696 with
 // the round-6 rule alone).
 #[test]
-#[ignore]
+#[ignore = "PERF-negated-chain-unsolved U4: the remainder choice by Atom order; 476 of 1,000 cases are answered under one naming and refused under another (I6.3)"]
 fn remainder_alias_answers_do_not_depend_on_names() {
     // I6.3: the remainder of `x = m q + r` was the greater `Atom` of the two unit terms, so
     // `a == x mod m` and `z == x mod m` read different rows. Each case is asked with the alias

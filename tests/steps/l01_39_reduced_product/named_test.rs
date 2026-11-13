@@ -466,7 +466,7 @@ fn arms_of_named_limits_in_side_by_side_tiers_take_time_near_linear_in_the_depth
 }
 
 #[test]
-#[ignore]
+#[ignore = "probe for PERF-negated-chain-unsolved (docs/handoff/PERF-negated-chain-unsolved.md): needs PNCX_SIZES"]
 fn pncx_tiers_axis() {
     scaling::on_a_thread(1 << 29, || {
         let mut meter = scaling::Meter::new();

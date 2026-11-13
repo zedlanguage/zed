@@ -427,7 +427,7 @@ fn the_split_repair_in_an_imported_unit_ignores_the_names_its_importers_define()
         &format!("ok({all}) && ok1({all}) && ok2({all})"),
     );
     let built = package(&mut db, &pricing, &before);
-    assert_eq!(problems(&built), Vec::<String>::new(), "{before}");
+    let reported = problems(&built);
     let imported = refusal(&mut db);
     assert_eq!(imported, alone);
     let [d] = &alone[..] else {
@@ -441,6 +441,12 @@ fn the_split_repair_in_an_imported_unit_ignores_the_names_its_importers_define()
              called, call `ok1(…) && ok2(…)` with the same arguments"
         ),
         "{split}"
+    );
+    // `pricing` imports nothing, so the build of `app` reports its refusal once, in its own
+    // file, with the repair it prints alone (DESIGN.md step L1.29d), and nothing of `app`.
+    assert!(
+        matches!(&reported[..], [r] if r.starts_with("pricing.zed:") && r.contains(split)),
+        "{before}\n{reported:#?}"
     );
 
     // Followed as printed: `pricing` holds the two functions, `app` calls them through its
@@ -1048,7 +1054,6 @@ fn written_wide_divisors_keep_the_question() {
 }
 
 #[test]
-#[ignore = "I4.5: record the CLI behavior of kept powers without claiming they are handled"]
 fn pncx_kept_number_cli() {
     let rows = "ok(x, y, z, w) = 4 * x - 12 * w - 10 * y - 12 * z + 11 >= 0 && 4 * w + 10 * x - 10 * y - 11 * z - 28 >= 0 && 11 * w + 4 * x - y + 12 * z - 28 >= 0 && -8 * w - 5 * x + 12 * y - z + 31 >= 0";
     let mut rejected = true;
