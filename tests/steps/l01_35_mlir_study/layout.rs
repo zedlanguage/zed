@@ -143,6 +143,19 @@ fn an_empty_node_and_a_six_field_node_are_measured() {
     assert!(node.zir.nodes > leaf.zir.nodes && node.term.nodes > leaf.term.nodes);
 }
 
+#[test]
+fn the_value_a_tables_clause_gives_is_a_node_of_a_function_and_of_a_method() {
+    let nodes = |text: &str| ast_stage(text).unwrap().nodes;
+    for head in ["f(positional x: int) = x", "T.m(positional x: int) = x"] {
+        let plain = nodes(&format!("{head}\ntest {{ 1 -> 1 }}\n"));
+        let given = nodes(&format!(
+            "{head}\ntest with main::files = \"1\" {{ 1 -> 1 }}\n"
+        ));
+        // The clause adds one expression, the string it gives the port.
+        assert_eq!(given, plain + 1, "{head}");
+    }
+}
+
 /// A unit of `n` definitions, each with a table of one row.
 fn many(n: usize) -> String {
     (0..n)
