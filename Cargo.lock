@@ -1200,6 +1200,7 @@ name = "zedc-preimage"
 version = "0.0.0"
 dependencies = [
  "imbl",
+ "num-bigint",
  "perf-event2",
  "rustix",
  "stacker",

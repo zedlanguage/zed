@@ -30,6 +30,7 @@ mod pendants;
 mod pow_nan;
 mod random;
 mod refused;
+mod roots;
 mod scaling;
 mod seed_edges;
 mod spec;

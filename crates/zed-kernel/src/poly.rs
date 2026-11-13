@@ -2449,3 +2449,5 @@ fn square(a: u128) -> [u32; 8] {
 
 #[cfg(test)]
 mod tests;
+
+pub mod roots;

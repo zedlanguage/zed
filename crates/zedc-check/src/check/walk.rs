@@ -16,7 +16,7 @@ use zed_kernel::Shared;
 use zedc_lattice::cell::Premises;
 use zedc_lattice::lattice::Lattice;
 use zedc_preimage::preimage::{Domains, LetIn, Lets, let_summary};
-use zedc_preimage::product::{self, Product, Scope};
+use zedc_preimage::product::{self, Product, RootFailure, Scope};
 
 /// Checks a resolved unit.
 pub fn check(unit: &[Stmt], res: &Resolution) -> Info {
@@ -3215,11 +3215,31 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // n = 100 and 800 chained `if d != 0` arms each dividing by `d`): 8.0 times
                 // the work and 8.0 times the bytes; the per-arm read, 38.2 times the bytes.
                 let divides = matches!(op, BinaryOp::Div | BinaryOp::IntDiv | BinaryOp::Mod);
-                let nonzero = divides
+                let int_divisor = y.ty.without_atoms().subtype(&Ty::carrier(Carrier::Int));
+                let mut nonzero = divides
                     && ((!y.ty.contains(&Value::Int(0))
                         && !y.ty.contains(&Value::rat(Rat::int(0.into()))))
-                        || (y.ty.without_atoms().subtype(&Ty::carrier(Carrier::Int))
-                            && !self.ints_here(b).0.contains(0)));
+                        || (int_divisor && !self.ints_here(b).0.contains(0)));
+                // An int divisor whose range holds 0 under the tests: whether a state reaches
+                // it at 0 at all, the written constraints evaluated at the integer roots of
+                // the divisor (QUESTIONS A81, `Scope::zero_reached`). Outside every test, or
+                // for a divisor the text gives a value, the range is the answer. Complexity
+                // tradeoff: evaluating the constraints at each member of the range costs one
+                // evaluation per member (10^9 for `0..=1000000000`); at the roots, after Cucker,
+                // Koiran and Smale 1999, it costs one per root, and the roots of `t` terms of
+                // `B` bits cost O(t^3) evaluations of the divisor, whatever its degree.
+                if divides
+                    && !nonzero
+                    && int_divisor
+                    && self.arms.here() != 0
+                    && self.known(b).value.is_none()
+                {
+                    let (reached, failures) = self.zero_reached_here(b);
+                    match failures.into_iter().next() {
+                        Some(f) => self.root_constraint_fails(b, span, &f),
+                        None => nonzero = !reached,
+                    }
+                }
                 // A `rat` power fails only for `0r` to a negative power.
                 let total_power = op == BinaryOp::Pow
                     && (!x.ty.contains(&Value::rat(Rat::int(0.into())))
@@ -5238,6 +5258,68 @@ impl<'a> Ck<'_, 'a> {
         let ints = product::forward(&t.term, &mut s).ints().clone();
         self.place_refusals(e.span, &before, &s.refusals);
         (ints, s)
+    }
+
+    /// Whether the int `e` may be 0 in the scope of the node the walk is in, with the roots at
+    /// which a written constraint gave neither `true` nor `false` ([`Scope::zero_reached`]).
+    /// The questions the read refuses are those [`Ck::read_in_scope`] placed for `e` already.
+    fn zero_reached_here(&mut self, e: &'a Expr) -> (bool, imbl::OrdSet<RootFailure>) {
+        let t = self.term(e);
+        let here = self.arms.here();
+        let mut wanted = vec![Item::Scope(here)];
+        wanted.extend(t.binders.iter().map(|&b| Item::Bound(b)));
+        self.settle(wanted);
+        let s = self.arms.scopes[here].clone().expect("settled");
+        let mut s = self.with_bound(s, &t.binders);
+        s.eager_on(&t.term);
+        s.zero_reached(&t.term, &Premises::new())
+    }
+
+    /// Rejects the division at `span` by `b`, an int divisor that is 0 at the root `f.root`
+    /// of `f.name`, where the written constraint `f.constraint` gives `f.gave` and so neither
+    /// rules the root out nor lets it through (DESIGN.md sec:diagnostics, QUESTIONS A81).
+    fn root_constraint_fails(&mut self, b: &'a Expr, span: Span, f: &RootFailure) {
+        let text = |s: Span| self.t.text.map(|t| t[s.start..s.end].to_string());
+        let divisor =
+            text(b.span).map_or_else(|| "the divisor".to_string(), |d| unparen(&d).to_string());
+        let division = text(span).unwrap_or_else(|| "the division".to_string());
+        let (name, root, constraint, gave) = (&f.name, f.root, unparen(&f.constraint), &f.gave);
+        let message = format!(
+            "`{division}` may divide by 0: `{constraint}` gives `{gave}` at `{name} = {root}`, a \
+             root of `{divisor} == 0`"
+        );
+        let mut notes = vec![
+            Note {
+                span: b.span,
+                text: format!(
+                    "the division fails with `#divByZero` where `{divisor} == 0`; its integer \
+                     roots in the range the tests leave `{name}` are the only values of `{name}` \
+                     that reach it, and `{name} = {root}` is one"
+                ),
+            },
+            Note {
+                span: b.span,
+                text: format!(
+                    "the tests around the division include `{constraint}`, evaluated at \
+                     `{name} = {root}` to see whether that root reaches the division; it gives \
+                     `{gave}`, which is neither `true` nor `false`, so it does not say"
+                ),
+            },
+        ];
+        notes.extend(self.derive(&[b.span]));
+        let menu = [
+            format!(
+                "repair: write `{constraint}` so that it gives `true` or `false` at \
+                 `{name} = {root}`"
+            ),
+            "repair: annotate the declaration `@exact`".to_string(),
+            format!(
+                "repair: give `{name}` a listed set of values in its type, as `{name}: {{…}}` \
+                 with each value it takes"
+            ),
+        ];
+        notes.extend(menu.into_iter().map(|text| Note { span, text }));
+        self.rejects_with(Row::RootConstraintFails, span, message, notes);
     }
 
     /// Keeps each question refused in `after`, the refusals of a scope, and not in `before`,

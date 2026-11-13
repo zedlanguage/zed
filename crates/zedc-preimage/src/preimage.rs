@@ -10363,6 +10363,7 @@ pub mod counts {
         pub(crate) static IMAGE_SETS: Cell<u64> = const { Cell::new(0) };
         pub(crate) static INPUTS: Cell<u64> = const { Cell::new(0) };
         pub(crate) static TERM_READS: Cell<u64> = const { Cell::new(0) };
+        pub(crate) static EVALUATIONS: Cell<u64> = const { Cell::new(0) };
     }
 
     /// The nodes `LetPa::sum` has entered on this thread since it started.
@@ -10397,6 +10398,13 @@ pub mod counts {
     /// started: each once a test, and only those whose integers the test changed.
     pub fn term_reads() -> u64 {
         TERM_READS.get()
+    }
+
+    /// The written constraints evaluated at one member of a listed name (`Scope::enumerate_on`)
+    /// on this thread since it started: a constraint on a name whose members are the integer
+    /// roots of an obligation's equation is evaluated once at each root (ROOTS-listed).
+    pub fn evaluations() -> u64 {
+        EVALUATIONS.get()
     }
 }
 

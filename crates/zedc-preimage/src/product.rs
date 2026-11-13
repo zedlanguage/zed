@@ -44,7 +44,9 @@ use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap};
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 
+use num_bigint::BigInt;
 use zed_kernel::frames::{Deep, Stack};
+use zed_kernel::poly::roots::{Roots, term_roots};
 use zed_kernel::print;
 use zed_kernel::provenance::{FactAddress, NodeAddress, Position, Vector};
 use zed_kernel::types::Type;
@@ -1029,6 +1031,13 @@ pub struct Scope {
     /// the relation is not among them, since the relation gives it again.
     direct: imbl::OrdMap<(Arc<str>, bool), Num>,
     gaps: LowerGaps,
+    /// The names whose members an obligation's equation listed as its integer roots
+    /// ([`Scope::zero_reached`]): a written constraint that gives neither `true` nor `false`
+    /// at such a member is kept in `root_failures`.
+    rooted: imbl::OrdSet<Arc<str>>,
+    /// Each root of an obligation's equation at which a written constraint gave neither
+    /// `true` nor `false` (DESIGN.md sec:constraints, QUESTIONS A81).
+    pub root_failures: imbl::OrdSet<RootFailure>,
 }
 
 /// A name's `let` binding in a [`Scope`]; the order of its binding is in [`Scope::orders`].
@@ -4150,6 +4159,22 @@ pub struct Refused {
     pub cause: Cause,
 }
 
+/// A root of an obligation's equation ([`Scope::zero_reached`]) at which a written constraint
+/// gave neither `true` nor `false` (DESIGN.md sec:constraints, QUESTIONS A81): the constraint
+/// cannot rule the root out, and the program does not say what it means there. Ordered by
+/// name, root and constraint, so that the reports do not depend on the order they were met in.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct RootFailure {
+    /// The name the equation is in, as the program writes it.
+    pub name: Arc<str>,
+    /// The root.
+    pub root: i64,
+    /// The constraint, as written.
+    pub constraint: Arc<str>,
+    /// What it gave at the root, as printed.
+    pub gave: Arc<str>,
+}
+
 /// The sets a refused question left its variables, each by its name in the scope: a set holds
 /// every value the question allows the variable and may hold more. For a refused projection
 /// they are the bounds the box stage gives the rows (DESIGN step L1.38), and for a refused test
@@ -4561,6 +4586,8 @@ impl Scope {
             spent: imbl::OrdSet::new(),
             direct: imbl::OrdMap::new(),
             gaps: LowerGaps::default(),
+            rooted: imbl::OrdSet::new(),
+            root_failures: imbl::OrdSet::new(),
         };
         s.reduce();
         s
@@ -5807,6 +5834,12 @@ impl Scope {
             potential: self.potential.clone(),
             lazy: self.lazy || other.lazy,
             in_case: self.in_case && other.in_case,
+            // A root a constraint failed at on either side is reported.
+            rooted: self.rooted.clone().union(other.rooted.clone()),
+            root_failures: self
+                .root_failures
+                .clone()
+                .union(other.root_failures.clone()),
             spent: {
                 // An entry either side spent is spent on the join, so that no later test
                 // projects for it again on this path: a bound on the work, not a fact of the
@@ -6285,6 +6318,89 @@ impl Scope {
                 (!s.bottom, s.refusals)
             }
         }
+    }
+
+    /// Whether some state may reach this scope where the integer `t` is 0, as
+    /// [`Scope::reaches`] answers it for `t == 0`, with the roots at which a written constraint
+    /// gave neither `true` nor `false`. When `t` is a polynomial in one open integer name `x`,
+    /// its other names of one value each read as constants, `x`'s members are first met with
+    /// the integer roots of `t` in `x`'s interval, a listed set (DESIGN.md sec:constraints,
+    /// QUESTIONS A81), so that each written constraint on `x` alone is evaluated at each root
+    /// ([`Scope::enumerate`]) and a root it rules out is not reached. The solutions of a
+    /// congruence are not listed: only the roots of `t` are.
+    ///
+    /// Sound under overflow: the program's `t` is 0 only where the polynomial is, since an
+    /// operation that overflows gives `#overflow` and not a number, so the states where `t` is
+    /// 0 are among those at the roots.
+    ///
+    /// Complexity tradeoff: the naive method evaluates each constraint at each member of `x`'s
+    /// interval, O(w) for w members (10^9 for `p: int[0..10^9]`), and an interval of no bound
+    /// is never done. Used: the integer roots of a sparse polynomial of t terms, whose
+    /// coefficients have at most B bits, in time polynomial in t and B and not in the degree
+    /// (Cucker, Koiran and Smale, "A polynomial time algorithm for Diophantine equations in one
+    /// variable", J. Symbolic Comput. 27 (1999)), [`zed_kernel::poly::roots::integer_roots`];
+    /// then one evaluation of each constraint on `x` at each of the at most t distinct roots
+    /// the algorithm leaves after its gap split, and O(1) for a `t` with no root. Given up: a
+    /// polynomial in two or more open names, whose integer roots are not a finite list in
+    /// general (Hilbert's tenth problem for several variables); `Scope::reaches` answers it.
+    pub fn zero_reached(&self, t: &Term, premises: &Premises) -> (bool, imbl::OrdSet<RootFailure>) {
+        if self.bottom {
+            return (false, imbl::OrdSet::new());
+        }
+        let test = Term::Prim(Prim::Eq, vec![t.clone(), Term::Lit(Value::Int(0))]);
+        let mut s = self.clone();
+        s.settle_test(&test);
+        let int = Type::int();
+        let free = stage::free(t);
+        let statics = s.statics_of(&free);
+        let open: Vec<&Arc<str>> = (free.iter())
+            .filter(|n| !statics.contains_key(*n))
+            .collect();
+        if let [x] = open[..]
+            && let Some(p) = s.names.get(x)
+            && p.ty.element.subtype(&int)
+        {
+            let constant = |n: &str| match statics.get(n)? {
+                Value::Int(k) => Some(BigInt::from(*k)),
+                _ => None,
+            };
+            let ints = p.ints().clone();
+            let end = |e: &End| e.to_i64().map(BigInt::from);
+            let (lo, hi) = match ints.bounds() {
+                Some((lo, hi)) => (end(lo), end(hi)),
+                None => return (false, imbl::OrdSet::new()),
+            };
+            let roots = term_roots(t, x, &constant, lo.as_ref(), hi.as_ref());
+            let listed: Option<Vec<i64>> = match roots {
+                Some(Roots::Listed(rs)) => {
+                    rs.iter().map(i64::try_from).collect::<Result<_, _>>().ok()
+                }
+                _ => None,
+            };
+            if let Some(rs) = listed {
+                let rs: Vec<i64> = rs.into_iter().filter(|&r| ints.contains(r)).collect();
+                if rs.is_empty() {
+                    return (false, imbl::OrdSet::new());
+                }
+                let p = s.names.get_mut(x).expect("a name in scope");
+                let prem = p.premises();
+                p.cell
+                    .finite
+                    .meet(&FiniteSet::of(rs.iter().map(|&r| Value::Int(r))), &prem);
+                p.meet_ints(
+                    IntervalSet::from_pieces(
+                        rs.iter().map(|&r| (End::of(r), End::of(r))).collect(),
+                    ),
+                    &prem,
+                );
+                s.rooted.insert(x.clone());
+            }
+        }
+        let plain = plain_test(&test, &s);
+        let (tree, pol) = Tree::of(plain.as_ref().unwrap_or(&test));
+        s.narrow_node(&tree, 0, pol, premises);
+        s.reduce_case();
+        (!s.bottom, s.root_failures)
     }
 
     /// Narrows by `test`, read by [`plain_test`], giving `outcome`. The test is read as a
@@ -10090,6 +10206,9 @@ impl Scope {
         let int = Type::int();
         for (c, open, key) in pending {
             let at = |extra: Option<(&Arc<str>, i64)>| {
+                #[cfg(feature = "counts")]
+                super::preimage::counts::EVALUATIONS
+                    .set(super::preimage::counts::EVALUATIONS.get() + 1);
                 let t = match extra {
                     Some((n, v)) => Term::Let(
                         n.clone(),
@@ -10100,9 +10219,20 @@ impl Scope {
                 };
                 Evaluator::new(World::new()).run(&t)
             };
+            // A constraint that gives neither `true` nor `false` at a root of an obligation's
+            // equation is reported, since it then cannot say whether the root is reached
+            // ([`Scope::zero_reached`]); as at any other member, the member is not kept.
             match &open[..] {
                 [] => {
-                    if let Ok(v) = at(None)
+                    let gave = at(None);
+                    if !matches!(gave, Ok(Value::Bool(_)))
+                        && let Some((n, Value::Int(v))) =
+                            key.1.iter().find(|(n, _)| self.rooted.contains(n))
+                    {
+                        self.root_failures
+                            .insert(root_failure(&key, n, *v, gave.clone()));
+                    }
+                    if let Ok(v) = gave
                         && v != Value::Bool(true)
                     {
                         self.bottom = true;
@@ -10119,11 +10249,18 @@ impl Scope {
                     let Some(vs) = listed(p) else {
                         continue;
                     };
-                    let kept: Vec<i64> = vs
-                        .iter()
-                        .copied()
-                        .filter(|v| matches!(at(Some((n, *v))), Ok(Value::Bool(true))))
-                        .collect();
+                    let rooted = self.rooted.contains(n);
+                    let mut kept: Vec<i64> = Vec::with_capacity(vs.len());
+                    for &v in &vs {
+                        match at(Some((n, v))) {
+                            Ok(Value::Bool(true)) => kept.push(v),
+                            Ok(Value::Bool(false)) => {}
+                            gave if rooted => {
+                                self.root_failures.insert(root_failure(&key, n, v, gave));
+                            }
+                            _ => {}
+                        }
+                    }
                     if kept.len() < vs.len() {
                         let x = IntervalSet::from_pieces(
                             kept.iter().map(|&v| (End::of(v), End::of(v))).collect(),
@@ -10132,11 +10269,43 @@ impl Scope {
                         let prem = p.premises();
                         p.meet_ints(x, &prem);
                     }
+                    // One member kept makes `n` static, and the constraint then has another
+                    // key, with `n` among its static names: it gave `true` there just now, so
+                    // it is not evaluated at that member a second time.
+                    if let [v] = kept[..] {
+                        let mut statics: BTreeMap<Arc<str>, Value> =
+                            key.1.iter().cloned().collect();
+                        statics.insert(n.clone(), Value::Int(v));
+                        self.enumerated
+                            .insert((key.0.clone(), statics.into_iter().collect()));
+                    }
                 }
                 _ => continue,
             }
             self.enumerated.insert(key);
         }
+    }
+}
+
+/// The report that the written constraint of `key` gave `gave`, neither `true` nor `false`,
+/// at the root `v` of `n` ([`Scope::zero_reached`]): the constraint as written.
+fn root_failure(
+    key: &Enumerated,
+    n: &Arc<str>,
+    v: i64,
+    gave: Result<Value, zed_kernel::KernelError>,
+) -> RootFailure {
+    let k = key.0.term();
+    let free = stage::free(k);
+    RootFailure {
+        name: written_name(n).into(),
+        root: v,
+        constraint: print::written(k, written_name, &|x| free.contains(x)).into(),
+        gave: match gave {
+            Ok(w) => w.to_string(),
+            Err(e) => e.to_string(),
+        }
+        .into(),
     }
 }
 
