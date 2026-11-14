@@ -5,6 +5,7 @@
 //! reason.
 
 mod bench;
+mod combinations;
 mod items;
 mod modes;
 mod resolution;

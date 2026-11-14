@@ -7,6 +7,7 @@
 // `command_line_binary`, since only a test of that package can name the zedc executable.
 mod arguments;
 mod bench;
+mod combinations;
 mod replay;
 
 pub(crate) use zed_tests::step_helpers::l01_19a_command_line::{

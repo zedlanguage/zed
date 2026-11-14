@@ -5,6 +5,7 @@
 //! it, and step S.1 regenerates it the same way.
 
 mod bench;
+mod combinations;
 
 use std::collections::{HashMap, HashSet};
 

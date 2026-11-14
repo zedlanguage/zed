@@ -4,6 +4,7 @@
 //! unit, in the pin file `zed.pins` at the package root, the one file every later pin goes in.
 
 mod bench;
+mod combinations;
 mod command;
 mod imports;
 mod pin_file;

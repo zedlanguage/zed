@@ -7,6 +7,7 @@
 // binary.rs is not a module of this target: crates/zed-native/Cargo.toml builds it as the test
 // `environment_binary`, since only a test of that package can name the zedc executable.
 mod bench;
+mod combinations;
 mod reads;
 mod replay;
 

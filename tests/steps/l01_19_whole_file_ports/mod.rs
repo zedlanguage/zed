@@ -5,6 +5,7 @@
 mod bench;
 mod blocking;
 mod blocking_word;
+mod combinations;
 mod files;
 mod line_ends;
 mod lines;

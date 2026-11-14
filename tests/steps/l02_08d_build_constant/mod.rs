@@ -4,6 +4,7 @@
 
 mod bench;
 mod branches;
+mod combinations;
 mod command;
 mod reads;
 mod scaling;

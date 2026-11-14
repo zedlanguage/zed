@@ -3,6 +3,7 @@
 //! ports, so a change of local names or layout keeps it and a change of meaning does not.
 
 mod bench;
+mod combinations;
 
 use std::path::PathBuf;
 
