@@ -713,6 +713,47 @@ pub(super) fn even_chain(n: usize, meets: bool) -> String {
     )
 }
 
+/// Plan row CONST-coprime-check-many-sets: `x` of `k` roots, `k = isqrt(n)`, past half the
+/// address space; `u_i` and `v_j` for `i, j < k`, each `1 / (b_1 ... b_k)` for `k` roots of its
+/// own; `w_i_j = x * (u_i * v_j)` for each pair, in turn, each checking the roots of `x` against
+/// the `2k` of `u_i` and `v_j`; and `w * w` for the last `w`, past the address space. The roots
+/// are [`coprime_fourth_powers`], so no check fails; with `meets`, the last `u` has the first
+/// root of `x` too, and the last `w`, and so `w * w`, proves nothing.
+pub(super) fn pool_products(n: usize, meets: bool) -> String {
+    let k = n.isqrt().max(1);
+    let r = coprime_fourth_powers(3 * k * k);
+    let over = |rs: &[u128]| -> String { rs.iter().map(|b| format!(" / rat({b})")).collect() };
+    let mut s = format!("main(m: MainArgs) {{\n    x = rat({}) ^ (2^60)", r[0]);
+    s.extend(r[1..k].iter().map(|b| format!(" * rat({b})")));
+    s += ";\n";
+    for i in 0..k {
+        let mut u = over(&r[k * (1 + i)..k * (2 + i)]);
+        if meets && i + 1 == k {
+            u += &format!(" / rat({})", r[0]);
+        }
+        let v = over(&r[k * (1 + k + i)..k * (2 + k + i)]);
+        s += &format!("    u{i} = rat(1){u};\n    v{i} = rat(1){v};\n");
+    }
+    for i in 0..k {
+        for j in 0..k {
+            s += &format!("    w{i}_{j} = x * (u{i} * v{j});\n");
+        }
+    }
+    let w = format!("w{}_{}", k - 1, k - 1);
+    s + &format!("    m.stdout <- String({w} * {w}) else \"\";\n}}\n")
+}
+
+#[test]
+fn products_of_one_value_and_unions_from_one_pool_are_decided_by_their_roots() {
+    // Each `w` checks `x` against a union of `u_i` and `v_j`, whose checks against `x` the
+    // first `w` through each keeps (`coprime::disjoint`): `w * w` is rejected where no root of
+    // the last `u` meets `x`, and compiles where one does.
+    for n in [1, 4, 9, 10] {
+        rejected_times(&pool_products(n, false), 1);
+        assert_eq!(built(&pool_products(n, true)), None, "{n}");
+    }
+}
+
 #[test]
 fn a_product_through_parts_whose_roots_share_a_prime_is_decided_by_the_base() {
     // The numerator's roots all share 2, which the coprime base of the end of the walk keeps

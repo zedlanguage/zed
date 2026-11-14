@@ -39,6 +39,8 @@
 pub(crate) use zedc_types::kernel_type;
 pub mod blocking;
 mod coprime;
+#[doc(hidden)]
+pub use coprime::Pool;
 mod limits;
 pub mod ports;
 pub mod read;

@@ -122,6 +122,58 @@ fn bounding_a_chain_of_products_whose_roots_all_share_a_prime_scales() {
     );
 }
 
+/// The first `n` primes, by a sieve that doubles its range until it holds them.
+fn primes(n: usize) -> Vec<u128> {
+    let mut top = 64;
+    loop {
+        let mut composite = vec![false; top];
+        let mut out = Vec::with_capacity(n);
+        for p in 2..top {
+            if composite[p] {
+                continue;
+            }
+            out.push(p as u128);
+            if out.len() == n {
+                return out;
+            }
+            for m in (p * p..top).step_by(p) {
+                composite[m] = true;
+            }
+        }
+        top *= 2;
+    }
+}
+
+/// `x` of `k = isqrt(n)` primes and `k` sets `u_i` and `k` sets `v_j` of `k` primes each, all
+/// distinct, and a check of `x` against each union of a `u_i` and a `v_j`: `n` checks.
+fn pool(n: usize) -> zedc::check::Pool {
+    let k = n.isqrt().max(1);
+    let ps = primes(k * (1 + 2 * k));
+    let mut sets = ps.chunks(k).map(<[u128]>::to_vec);
+    let x = sets.next().expect("k primes for x");
+    let us = sets.by_ref().take(k).collect();
+    zedc::check::Pool::new(x, us, sets.collect())
+}
+
+#[test]
+fn settling_checks_of_one_set_against_unions_from_one_pool_scales() {
+    // Plan row CONST-coprime-check-many-sets, past the walk and the base: `n` checks of `x`
+    // against a union of `u_i` and `v_j`, each of `k = isqrt(n)` roots. The first check
+    // through each `u_i` and `v_j` keeps its answer against `x`, and only `x`, the `u_i` and
+    // the `v_j` are built (`coprime::Sets`): O(n log n) in all, where a lookup per root at
+    // each check, or each union built, is O(n^1.5).
+    let pools = scaling::inputs(N_SETTLE, pool);
+    scaling::check(
+        "settling checks of one set of isqrt(n) roots against each union of two sets from one \
+         pool",
+        N_SETTLE,
+        |k| assert!(pools[&k].settle().iter().all(|h| *h)),
+    );
+}
+
+/// The checks settled past the walk: 67 ms at n and 0.94 s at 8n, at load 56.
+const N_SETTLE: usize = 20_000;
+
 /// The size of the chains of roots, at about 1 s a run.
 const N_ROOTS: usize = 2000;
 

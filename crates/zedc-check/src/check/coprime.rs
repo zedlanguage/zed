@@ -154,52 +154,215 @@ impl Roots {
     /// element O(log n) times, O(n log^2 n) lookups and no gcd past the base, and a chain
     /// `z = z / rat(q)` whose every link meets one fixed set `x`, as `y = x * z` at each link,
     /// costs O(log n) a link, where the lookups alone cost the link's length, O(n^2) in all.
-    /// What it gives up: a set checked against many sets none of which was checked against a
-    /// part of it, as `x * z_i` for `n` unrelated `z_i` of `r` roots each, costs `r` lookups
-    /// at each; no method is known that decides, for every pair of nodes of a DAG, whether
-    /// their reachable sets meet in less.
+    /// Plan row CONST-coprime-check-many-sets: many unions from one pool checked against one
+    /// set, as `x * (u_i * v_j)` for `k` sets `u_i` and `k` sets `v_j` of `r` roots each, cost
+    /// `r` lookups at each of the `k^2` checks, O(k^2 r). Used: a check of one set against
+    /// each half of the other, a half not checked before by lookups, keeps the answer of each
+    /// half; where a half is shared (a half of two unions or more, or in two checks), that way
+    /// counts half its lookups and wins a tie, so it costs at most twice the cheapest way and
+    /// each later check through that half finds it kept; and a union is built only when a check
+    /// looks it up ([`Sets`]), so the `k^2` unions whose halves were each checked before are
+    /// never built: O(k r log n + k^2) for the family, measured in `bench::too_large`. What it
+    /// gives up: deciding every pair `(u_i, v_j)` of two pools
+    /// for a shared element is Boolean matrix multiplication, with no known combinatorial
+    /// method below O(k^2 r / polylog); only the part repeated against one set is saved, and a
+    /// set checked against many unrelated sets, as `x * z_i` for `n` `z_i` sharing no part,
+    /// still costs `r` lookups at each.
     pub(super) fn settle(&self) -> Vec<bool> {
-        let base = base_of(&self.values);
-        let mut sets: Vec<OrdSet<u32>> = Vec::with_capacity(self.sets.len());
-        // For a union, the half whose set it extends and the other half.
+        self.settle_with(&base_of(&self.values))
+    }
+
+    /// [`Roots::settle`] with `base`, the base of the roots.
+    fn settle_with(&self, base: &[Vec<u32>]) -> Vec<bool> {
+        let mut sets = Sets {
+            defs: &self.sets,
+            base,
+            made: vec![None; self.sets.len()],
+            size: Vec::with_capacity(self.sets.len()),
+        };
+        // For a union, the half of the larger size and the other half.
         let mut halves: Vec<Option<(SetId, SetId)>> = Vec::with_capacity(self.sets.len());
         for s in &self.sets {
-            let (made, split) = match s {
-                Set::Empty => (OrdSet::new(), None),
-                Set::Leaf(r) => (base[*r as usize].iter().copied().collect(), None),
+            let (size, split) = match s {
+                Set::Empty => (0, None),
+                Set::Leaf(r) => (base[*r as usize].len(), None),
                 Set::Union(a, b) => {
-                    let (a, b) = match sets[*a as usize].len() >= sets[*b as usize].len() {
+                    let (a, b) = match sets.size[*a as usize] >= sets.size[*b as usize] {
                         true => (*a, *b),
                         false => (*b, *a),
                     };
-                    let mut u = sets[a as usize].clone();
-                    u.extend(sets[b as usize].iter().copied());
-                    (u, Some((a, b)))
+                    let size = sets.size[a as usize].saturating_add(sets.size[b as usize]);
+                    (size, Some((a, b)))
                 }
             };
-            sets.push(made);
+            sets.size.push(size);
             halves.push(split);
         }
+        // The sets a later check may ask about again: a half of two unions or more, or in two
+        // checks.
+        let mut uses: Vec<u8> = vec![0; self.sets.len()];
+        let mut used = |s: SetId| uses[s as usize] = uses[s as usize].saturating_add(1);
+        for s in &self.sets {
+            if let Set::Union(a, b) = s {
+                used(*a);
+                used(*b);
+            }
+        }
+        for &(a, b) in self.proofs.iter().flat_map(|p| &p.checks) {
+            used(a);
+            used(b);
+        }
+        let shared: Vec<bool> = uses.iter().map(|&n| n >= 2).collect();
         let mut checked: HashMap<(SetId, SetId), bool> = HashMap::new();
         let mut holds: Vec<bool> = Vec::with_capacity(self.proofs.len());
         for p in &self.proofs {
             let h = p.needs.iter().flatten().all(|n| holds[*n as usize])
-                && (p.checks.iter()).all(|&(a, b)| disjoint(&sets, &halves, &mut checked, a, b));
+                && (p.checks.iter())
+                    .all(|&(a, b)| disjoint(&mut sets, &halves, &shared, &mut checked, a, b));
             holds.push(h);
         }
         holds
     }
 }
 
-/// A way [`disjoint`] can decide a check: the lookups it costs, the answer of the check made
-/// before that it rests on, if any, and the pairs of sets it looks up.
-type Way = (usize, Option<bool>, Vec<(SetId, SetId)>);
+/// Plan row CONST-coprime-check-many-sets: the set `x`, each union of one of the sets `us` and
+/// one of `vs`, a check of `x` against each union, and the base of their roots, built before a
+/// scaling test, so that it times [`Roots::settle`] past the base alone, as [`super::Operands`]
+/// does for [`super::Ck::equal`].
+#[doc(hidden)]
+pub struct Pool {
+    x: Vec<u128>,
+    us: Vec<Vec<u128>>,
+    vs: Vec<Vec<u128>>,
+    base: Vec<Vec<u32>>,
+}
+
+impl Pool {
+    /// `x`, `us` and `vs` hold numbers above 1.
+    #[doc(hidden)]
+    pub fn new(x: Vec<u128>, us: Vec<Vec<u128>>, vs: Vec<Vec<u128>>) -> Pool {
+        let mut pool = Pool {
+            x,
+            us,
+            vs,
+            base: Vec::new(),
+        };
+        pool.base = base_of(&pool.roots().values);
+        pool
+    }
+
+    /// The roots, sets and checks: O(n) for `n` roots and checks, the same each time, so that
+    /// the base made once fits them. They hold [`Rc`], which a scaling test cannot share with
+    /// the thread it times.
+    fn roots(&self) -> Roots {
+        let mut roots = Roots::default();
+        let mut set_of = |ns: &[u128]| {
+            (ns.iter()).fold(EMPTY, |s, &n| {
+                let leaf = roots.leaf(BigUint::from(n));
+                roots.union(s, leaf)
+            })
+        };
+        let x = set_of(&self.x);
+        let us: Vec<SetId> = self.us.iter().map(|ns| set_of(ns)).collect();
+        let vs: Vec<SetId> = self.vs.iter().map(|ns| set_of(ns)).collect();
+        for &u in &us {
+            for &v in &vs {
+                let s = roots.union(u, v);
+                roots.proof([None, None], vec![(x, s)]);
+            }
+        }
+        roots
+    }
+
+    /// Whether each check holds, in the order of `us`, then `vs`.
+    #[doc(hidden)]
+    pub fn settle(&self) -> Vec<bool> {
+        self.roots().settle_with(&self.base)
+    }
+}
+
+/// The sets of base elements of [`Roots::settle`], each built the first time a check looks it
+/// up, so that a union no lookup needs, as `u_i * v_j` whose halves were each checked before
+/// against the one set it meets, costs nothing past its size.
+///
+/// Complexity tradeoff: building each union from its halves as the walk made it, the smaller
+/// inserted into a copy of the larger, costs O(s log n) for `s` inserted at every union, so
+/// `k^2` unions of two of `2k` sets of `r` roots cost O(k^2 r log n) whatever the checks need
+/// (plan row CONST-coprime-check-many-sets). Built on demand, a set costs that only where a
+/// check looks it up, at most once, and never more than all built at once; a set not yet built
+/// has the sum of its halves' sizes as its size, an upper bound that only steers the choice
+/// of way.
+struct Sets<'a> {
+    defs: &'a [Set],
+    base: &'a [Vec<u32>],
+    made: Vec<Option<OrdSet<u32>>>,
+    /// The size of each set built, and of each other set at most this.
+    size: Vec<usize>,
+}
+
+impl Sets<'_> {
+    /// Builds `s`, and each set under it not yet built, by a stack, not recursion: a chain of
+    /// `n` unions is `n` deep. Each set is built once, its halves first.
+    fn build(&mut self, s: SetId) {
+        let mut todo = vec![s];
+        while let Some(&t) = todo.last() {
+            let t = t as usize;
+            if self.made[t].is_some() {
+                todo.pop();
+                continue;
+            }
+            let made = match self.defs[t] {
+                Set::Empty => OrdSet::new(),
+                Set::Leaf(r) => self.base[r as usize].iter().copied().collect(),
+                Set::Union(a, b) => {
+                    let (sa, sb) = (&self.made[a as usize], &self.made[b as usize]);
+                    let (Some(sa), Some(sb)) = (sa, sb) else {
+                        todo.extend(
+                            [a, b]
+                                .into_iter()
+                                .filter(|h| self.made[*h as usize].is_none()),
+                        );
+                        continue;
+                    };
+                    let (big, small) = if sa.len() >= sb.len() {
+                        (sa, sb)
+                    } else {
+                        (sb, sa)
+                    };
+                    let mut u = big.clone();
+                    u.extend(small.iter().copied());
+                    u
+                }
+            };
+            self.size[t] = made.len();
+            self.made[t] = Some(made);
+            todo.pop();
+        }
+    }
+
+    /// Whether `s` and `t` share no element: the smaller looked up in the larger.
+    fn free(&mut self, s: SetId, t: SetId) -> bool {
+        self.build(s);
+        self.build(t);
+        let made = |s: SetId| self.made[s as usize].as_ref().expect("built above");
+        let (s, t) = (made(s), made(t));
+        let (big, small) = if s.len() >= t.len() { (s, t) } else { (t, s) };
+        !small.iter().any(|e| big.contains(e))
+    }
+}
+
+/// A way [`disjoint`] can decide a check: the lookups it costs, the answer of the checks made
+/// before that it rests on, if any, the pairs of sets it looks up, and whether it keeps the
+/// answer of a pair a later check may ask again.
+type Way = (usize, Option<bool>, Vec<(SetId, SetId)>, bool);
 
 /// Whether the sets `a` and `b` share no element, by the least of the ways of
-/// [`Roots::settle`], the answer kept in `checked` by the pair.
+/// [`Roots::settle`], the answer kept in `checked` by the pair, with that of each pair it
+/// looked up. `shared` tells the sets that are a half of two unions or more, or in two checks.
 fn disjoint(
-    sets: &[OrdSet<u32>],
+    sets: &mut Sets,
     halves: &[Option<(SetId, SetId)>],
+    shared: &[bool],
     checked: &mut HashMap<(SetId, SetId), bool>,
     a: SetId,
     b: SetId,
@@ -208,20 +371,26 @@ fn disjoint(
     if let Some(&known) = checked.get(&pair(a, b)) {
         return known;
     }
-    let size = |s: SetId| sets[s as usize].len();
+    let size = |s: SetId| sets.size[s as usize];
     // The lookups that test `s` against `t`, and their answer.
     let cost = |s: SetId, t: SetId| size(s).min(size(t));
-    let free = |s: SetId, t: SetId| {
-        let (s, t) = (&sets[s as usize], &sets[t as usize]);
-        let (big, small) = if s.len() >= t.len() { (s, t) } else { (t, s) };
-        !small.iter().any(|e| big.contains(e))
-    };
-    let mut ways: Vec<Way> = vec![(cost(a, b), None, vec![(a, b)])];
+    let mut ways: Vec<Way> = vec![(cost(a, b), None, vec![(a, b)], false)];
+    // One set against each half of the other, each half by its check made before or by
+    // lookups.
     for (x, y) in [(a, b), (b, a)] {
-        if let Some((big, small)) = halves[y as usize]
-            && let Some(&known) = checked.get(&pair(x, big))
-        {
-            ways.push((cost(x, small), Some(known), vec![(x, small)]));
+        if let Some((big, small)) = halves[y as usize] {
+            let mut way: Way = (0, Some(true), Vec::new(), false);
+            for h in [big, small] {
+                match checked.get(&pair(x, h)) {
+                    Some(&known) => way.1 = Some(way.1 == Some(true) && known),
+                    None => {
+                        way.0 += cost(x, h);
+                        way.2.push((x, h));
+                        way.3 |= shared[h as usize];
+                    }
+                }
+            }
+            ways.push(way);
         }
     }
     if let (Some((ab, asm)), Some((bb, bsm))) = (halves[a as usize], halves[b as usize])
@@ -231,16 +400,26 @@ fn disjoint(
             cost(asm, b) + cost(bsm, a),
             Some(known),
             vec![(asm, b), (bsm, a)],
+            false,
         ));
     }
-    // A check made before that found a shared element decides at once.
-    let (_, before, rest) = (ways.into_iter())
-        .min_by_key(|(n, before, _)| match before {
-            Some(false) => 0,
-            _ => n + 1,
+    // A check made before that found a shared element decides at once. A way that keeps the
+    // answer of a shared half counts half its lookups, and wins a tie.
+    let (_, before, rest, _) = (ways.into_iter())
+        .min_by_key(|(n, before, _, keeps)| match before {
+            Some(false) => (0, false),
+            _ if *keeps => (1 + n.div_ceil(2), false),
+            _ => (1 + n, true),
         })
         .expect("the lookups are one way");
-    let known = before != Some(false) && rest.iter().all(|&(s, t)| free(s, t));
+    let mut known = before != Some(false);
+    for (s, t) in rest {
+        if !known {
+            break;
+        }
+        known = sets.free(s, t);
+        checked.insert(pair(s, t), known);
+    }
     checked.insert(pair(a, b), known);
     known
 }
@@ -706,6 +885,59 @@ mod tests {
         assert_eq!(got, want);
         // `x` against `z` holds for the six links before 15 and fails from it on.
         assert_eq!(want.iter().step_by(2).filter(|h| **h).count(), 6);
+    }
+
+    /// Plan row CONST-coprime-check-many-sets: each union of a set of one pool and one of
+    /// another, checked against one set `x` either way round, gives what a direct test of the
+    /// roots gives, whether a half meets `x` or not, and whichever half a check finds kept.
+    #[test]
+    fn checks_of_unions_from_one_pool_agree_with_the_roots() {
+        let mut r = Roots::default();
+        let set_of = |r: &mut Roots, ns: &[u64]| {
+            (ns.iter()).fold(EMPTY, |s, &n| {
+                let leaf = r.leaf(BigUint::from(n));
+                r.union(s, leaf)
+            })
+        };
+        let meets = |ms: &[u64], ns: &[u64]| {
+            let big = |n: &u64| BigUint::from(*n);
+            (ms.iter()).any(|m| ns.iter().any(|n| gcd_uint(&big(m), &big(n)).bits() > 1))
+        };
+        let xr = [3, 5, 7];
+        let x = set_of(&mut r, &xr);
+        // `u[2]` meets `x` by 15, `v[2]` by 49.
+        let us = [[11, 13], [17, 19], [23, 15], [29, 31]];
+        let vs = [[37, 41], [43, 47], [53, 49], [59, 61]];
+        let u: Vec<SetId> = us.iter().map(|ns| set_of(&mut r, ns)).collect();
+        let v: Vec<SetId> = vs.iter().map(|ns| set_of(&mut r, ns)).collect();
+        let (mut ids, mut want) = (Vec::new(), Vec::new());
+        for (i, ui) in us.iter().enumerate() {
+            for (j, vj) in vs.iter().enumerate() {
+                let s = r.union(u[i], v[j]);
+                let check = match (i + j) % 2 == 0 {
+                    true => (x, s),
+                    false => (s, x),
+                };
+                ids.push(r.proof([None, None], vec![check]));
+                want.push(!meets(&xr, ui) && !meets(&xr, vj));
+            }
+        }
+        let held = r.settle();
+        let got: Vec<bool> = ids.iter().map(|p| held[p.unwrap() as usize]).collect();
+        assert_eq!(got, want);
+        assert_eq!(want.iter().filter(|h| **h).count(), 9);
+    }
+
+    /// The checks a scaling test settles past the base ([`Pool`]) come in the order of `us`,
+    /// then `vs`, and fail where a half meets `x`, `u_1` by 2 and `v_0` by 3.
+    #[test]
+    fn a_pool_settles_each_union_against_x() {
+        let pool = Pool::new(
+            vec![2, 3],
+            vec![vec![5], vec![7, 4]],
+            vec![vec![9], vec![11, 13]],
+        );
+        assert_eq!(pool.settle(), [false, true, false, false]);
     }
 
     #[test]
