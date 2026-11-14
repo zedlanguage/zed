@@ -2334,12 +2334,11 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | FAIL-check-arm-call-bench-hang | impl attempt 1 | 2026-11-14 11:16 | started in wt/fix-arm-call-hang at 07af08b86, load 51.40 |
-| FAIL-judgments-query-order-seed | impl attempt 1 | 2026-11-14 10:45 | done, pushed 521de84af; is_empty/verdict_alone ran empty_past_forks only for a fork with later components (fork_later), so answers hung on MEMO from earlier que |
 | FAIL-linked-holes-scratch-seed | running | 2026-11-14 07:58 |  |
 | FAIL-linked-sums-between-seed | running | 2026-11-14 11:43 |  |
 | FAIL-or-ifs-no-longer-exact-seed | impl attempt 1 | 2026-11-14 12:17 | started, worktree fail-or-ifs |
 | FAIL-pendants-growth-scaled-seed | impl attempt 1 | 2026-11-14 11:58 | fix-growth started on d5d733341 |
-| FAIL-pendants-route-parity | waiting on QUESTIONS A105 | 2026-11-14 | impl attempt 1 (fix-parity): cause traced (route name unbounded, so solver hulls against the whole's exact join); fix patch in wt/failing-tests/FAIL-pendants-route-parity.form-hull.patch passes the seeds but raises the opposite mismatch 0 to 16 in 156,000 parts; the test's equality depends on project_each precision, A105 |
+| FAIL-pendants-route-parity | impl attempt 1 | 2026-11-14 11:49 | waiting on QUESTIONS A105 (zed 6fb105c, zed-impl 9cbef6ac3); no code merged; route patch saved in failing-tests |
 | FAIL-preimage-stop-entry-seed | running | 2026-11-14 11:43 |  |
 | FAIL-print-function-in-union | impl attempt 1 | 2026-11-14 12:05 | started in wt/fix-need-print, load 35.50 |
 | FAIL-returned-generic-need-fit | impl attempt 1 | 2026-11-14 11:42 | started in wt/fix-need-print, load 35.50 |
@@ -2349,9 +2348,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-types-own-same-name | running | 2026-11-14 11:00 |  |
 | FAIL-types-payload-vars-unread | running | 2026-11-14 11:00 |  |
 | FAIL-types-three-variable-shapes | running | 2026-11-14 12:16 |  |
-| FAIL-whole-projection-parity | waiting on QUESTIONS A105 | 2026-11-14 | impl attempt 1 (fix-parity): the whole part's join loses the race to the solver (bound 24.0M against first allowance 188K), which gives the documented hull; sound; A105 |
-| KERNEL-eval-step-cost | running |  |  |
-| MSG-range-error-not-hidden | impl attempt 1 | 2026-11-14 10:45 | done, pushed 11a0209c0; the hidden case was unsuffixed 1e400 (1e400f64 was always reported); elab drops the range error only inside a checker error span or a st |
+| FAIL-whole-projection-parity | impl attempt 1 | 2026-11-14 11:49 | waiting on QUESTIONS A105 (zed 6fb105c, zed-impl 9cbef6ac3); no code merged; route patch saved in failing-tests |
+| KERNEL-eval-step-cost | impl attempt 1 | 2026-11-14 12:21 | baseline: 56 pieces 0 failed (m0_*, zed_kernel, op_table); instructions law_04 2.135G law_06 2.028G law_10 1.955G law_20(order) 2.143G law_28(sequence) 2.169G b |
 | MUTATE-follows-operation | running | 2026-11-14 11:29 | 2026-11-14: found by STAGE-generic-fold-div; sink given a consumer |
 | POLY-square-sparse-half | impl attempt 1 | 2026-11-14 11:26 | support test moved to k=640 (square now beats support at k=256: 6.4 vs 10.1 ms); crossover build for refit / load 40.93 38.65 42.23 |
 | STAGE-generic-fold-int-arm | running | 2026-11-14 11:29 | 2026-11-14: found by STAGE-generic-fold-div; sink given a consumer |
