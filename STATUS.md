@@ -2310,8 +2310,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CONST-coprime-base-shared-primes | impl attempt 1 | 2026-11-14 09:23 | started in /home/luke/Work/wt/coprime-2; load 43.52 |
-| CONST-coprime-check-many-sets | impl attempt 1 | 2026-11-14 09:23 | started in /home/luke/Work/wt/coprime-2; load 43.52 |
 | FAIL-judgments-query-order-seed | impl attempt 1 | 2026-11-14 10:45 | started in worktree fix-judg-range on origin/main b56f4fb5d |
 | FAIL-linked-piled-holes-count | running | 2026-11-14 07:09 |  |
 | FAIL-pendants-rewrite-empty-seed | running | 2026-11-14 10:10 |  |
