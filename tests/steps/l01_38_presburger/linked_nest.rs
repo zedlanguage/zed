@@ -89,8 +89,10 @@ fn set_of(vs: impl IntoIterator<Item = i64>) -> IntervalSet {
         .fold(IntervalSet::empty(), |s, x| s.join(&IntervalSet::single(x)))
 }
 
-const WEIGHTS: [fn(usize) -> i64; 3] = [|i| 1 << i, |i| 2 * i as i64 + 1, |i| 3 * i as i64];
-const RESIDUES: [(i64, i64); 7] = [(2, 0), (2, 1), (4, 2), (4, 3), (8, 6), (3, 1), (5, 0)];
+pub(super) const WEIGHTS: [fn(usize) -> i64; 3] =
+    [|i| 1 << i, |i| 2 * i as i64 + 1, |i| 3 * i as i64];
+pub(super) const RESIDUES: [(i64, i64); 7] =
+    [(2, 0), (2, 1), (4, 2), (4, 3), (8, 6), (3, 1), (5, 0)];
 
 /// Each symbol's projection is the set of its values over the ways whose top meets the residue,
 /// counted one by one, and the nest held once projects as the nest written out.
@@ -125,31 +127,50 @@ fn a_linked_nest_projects_to_the_values_of_the_ways_through_it() {
 }
 
 /// Two nests whose symbols pair up, answered as sets: the pair held once projects as the pair
-/// written out, and each projection holds every value of the ways counted one by one.
+/// written out, and each projection holds every value of the ways counted one by one. Depth 1
+/// with both weights and every residue; depth 2 with four residues of each weight, among them
+/// `x2 + y2 == 4 h + 3` over the weights `2^i`, the slowest at that depth (0.2 s at load 60).
+/// Depths 1 to 3 with every residue are in `bench::linked_nest` (4.7 s at load 25; 4.2 s at
+/// load 60 of it in two cases at depth 3).
 #[test]
 fn twin_linked_nests_project_as_written_out_and_keep_every_value() {
-    for k in 1..=3 {
-        for weight in &WEIGHTS[..2] {
-            let w: Vec<i64> = (0..=k).map(weight).collect();
-            let ways = ways(k, &w);
-            for (m, r) in RESIDUES {
-                let syms = [v("x0"), v(&format!("x{k}")), v(&format!("y{k}"))];
-                let what = format!("k = {k}, w = {w:?}, x{k} + y{k} == {m} h + {r}");
-                let shared = project_each(&twin(k, &w, (m, r), true), &syms);
-                let apart = project_each(&twin(k, &w, (m, r), false), &syms);
-                assert_eq!(format!("{shared:?}"), format!("{apart:?}"), "{what}");
-                let Ok((each, _)) = shared else { continue };
-                for x in &ways {
-                    for y in &ways {
-                        if (x[k] + y[k] - r).rem_euclid(m) != 0 {
-                            continue;
-                        }
-                        for (s, value) in each.iter().zip([x[0], x[k], y[k]]) {
-                            if let Ok(s) = s {
-                                assert!(s.contains(value), "{what}: {value} missing from {s:?}");
-                            }
-                        }
-                    }
+    for weight in &WEIGHTS[..2] {
+        for (m, r) in RESIDUES {
+            twin_projects_as_written_out(1, weight, (m, r));
+        }
+    }
+    for (m, r) in [(2, 0), (4, 2), (4, 3), (5, 0)] {
+        twin_projects_as_written_out(2, &WEIGHTS[0], (m, r));
+    }
+    for (m, r) in [(2, 0), (2, 1), (4, 3), (5, 0)] {
+        twin_projects_as_written_out(2, &WEIGHTS[1], (m, r));
+    }
+}
+
+/// The twin nests of depth `k` and weights `weight(i)` with `x{k} + y{k} == m h + r`: the pair
+/// held once projects as the pair written out, and each projection holds every value of the
+/// ways counted one by one.
+pub(super) fn twin_projects_as_written_out(
+    k: usize,
+    weight: &fn(usize) -> i64,
+    (m, r): (i64, i64),
+) {
+    let w: Vec<i64> = (0..=k).map(weight).collect();
+    let ways = ways(k, &w);
+    let syms = [v("x0"), v(&format!("x{k}")), v(&format!("y{k}"))];
+    let what = format!("k = {k}, w = {w:?}, x{k} + y{k} == {m} h + {r}");
+    let shared = project_each(&twin(k, &w, (m, r), true), &syms);
+    let apart = project_each(&twin(k, &w, (m, r), false), &syms);
+    assert_eq!(format!("{shared:?}"), format!("{apart:?}"), "{what}");
+    let Ok((each, _)) = shared else { return };
+    for x in &ways {
+        for y in &ways {
+            if (x[k] + y[k] - r).rem_euclid(m) != 0 {
+                continue;
+            }
+            for (s, value) in each.iter().zip([x[0], x[k], y[k]]) {
+                if let Ok(s) = s {
+                    assert!(s.contains(value), "{what}: {value} missing from {s:?}");
                 }
             }
         }

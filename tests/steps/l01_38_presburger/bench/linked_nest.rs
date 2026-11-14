@@ -43,3 +43,16 @@ fn twin_linked_nests_project_in_time_linear_in_their_depth() {
         assert_twin_answered(&inputs[&k]);
     });
 }
+
+/// `linked_nest::twin_linked_nests_project_as_written_out_and_keep_every_value` as first
+/// written, 4.7 s (2026-11-14, load 25): depths 1 to 3, the first two weights, every residue.
+#[test]
+fn twin_linked_nests_of_depths_to_3_project_as_written_out_and_keep_every_value() {
+    for k in 1..=3 {
+        for weight in &WEIGHTS[..2] {
+            for (m, r) in RESIDUES {
+                twin_projects_as_written_out(k, weight, (m, r));
+            }
+        }
+    }
+}
