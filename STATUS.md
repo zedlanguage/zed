@@ -2217,6 +2217,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | CONST-too-large-coprime-base | impl attempt 1 | 2026-11-14 00:07 | started; load 26.51 34.74 41.48 |
 | DOC-deferred-refs | running | 2026-11-14 00:03 |  |
 | STAGE-generic-fold | impl attempt 1 | 2026-11-09 09:24 | started; worktree from 93fde8efa |
+| TEST-bench-cover-l0126 | impl attempt 1 | 2026-11-14 04:17 | started; worktree /home/luke/Work/wt/test-bench-cover-l0126 |
 | TEST-bench-cover-l0138 | running | 2026-11-14 04:03 |  |
 | TEST-bench-move-crates | impl attempt 1 | 2026-11-14 01:43 | started; worktree from origin/main 271806cab |
 | TEST-bench-move-l0123 | impl attempt 1 | 2026-11-14 01:43 | started; worktree made and seeded |
