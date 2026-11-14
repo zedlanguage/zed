@@ -1,6 +1,7 @@
 //! Step L1.5: string literals, their escapes, `"""` indentation stripping, and `${…}` holes
 //! split into parts, each hole lexed into its tokens.
 
+mod bench;
 mod holes;
 mod scaling;
 mod strings;

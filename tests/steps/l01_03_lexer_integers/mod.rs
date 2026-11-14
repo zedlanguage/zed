@@ -1,5 +1,6 @@
 //! Step L1.3: integer literals in four bases, with `_` between digits.
 
+mod bench;
 mod scaling;
 
 use zedc::lex::{Tok, lex};

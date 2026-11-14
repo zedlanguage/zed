@@ -1,49 +1,64 @@
-//! Lexing keywords, operators, comments and doc comments, and rendering tokens by line, are of
-//! order n log n in the length of the text (DESIGN.md Part G).
+//! The long texts the benchmarks of `bench.rs` lex and render, and what each must give, checked
+//! here at small sizes (TEST-bench-move-rest, P170).
 
-use zed_tests::scaling::{check, inputs};
 use zed_tests::tokens::render_lines;
-use zedc::lex::{KEYWORDS, OPERATORS, lex, lex_with_docs};
+use zedc::lex::{KEYWORDS, OPERATORS, Token, lex, lex_with_docs};
 
-#[test]
-fn many_keywords_and_operators_scale() {
+/// `n` lines of every keyword and operator, an annotation and an atom.
+pub(super) fn keywords_and_operators(n: usize) -> String {
     let line = format!("{} {} @log #ok ", KEYWORDS.join(" "), OPERATORS.join(" "));
-    let texts = inputs(200, |n| line.repeat(n));
-    check("lexing n lines of every keyword and operator", 200, |n| {
-        let want = (KEYWORDS.len() + OPERATORS.len() + 2) * n;
-        assert_eq!(lex(&texts[&n]).unwrap().len(), want);
-    });
+    line.repeat(n)
+}
+
+pub(super) fn lexes_every_keyword_and_operator(text: &str, n: usize) {
+    let want = (KEYWORDS.len() + OPERATORS.len() + 2) * n;
+    assert_eq!(lex(text).unwrap().len(), want);
+}
+
+/// Block comments nested `n` deep between two names.
+pub(super) fn nested_comments(n: usize) -> String {
+    format!("a {}{}b", "/* ".repeat(n), "*/ ".repeat(n))
+}
+
+pub(super) fn lexes_two_names(text: &str, _: usize) {
+    assert_eq!(lex(text).unwrap().len(), 2);
+}
+
+/// `n` doc comments, each before a statement of four tokens.
+pub(super) fn doc_comments(n: usize) -> String {
+    "/// a doc\nx = 1;\n".repeat(n)
+}
+
+pub(super) fn lexes_a_doc_a_statement(text: &str, n: usize) {
+    let (tokens, docs) = lex_with_docs(text).unwrap();
+    assert_eq!((tokens.len(), docs.len()), (4 * n, n));
+}
+
+/// `n` lines of code and a comment, with their tokens.
+pub(super) fn code_lines(n: usize) -> (String, Vec<Token>) {
+    let text = "total = price * qty; // a comment\n".repeat(n);
+    let tokens = lex(&text).unwrap();
+    (text, tokens)
+}
+
+pub(super) fn renders_a_line_a_line((text, tokens): &(String, Vec<Token>), n: usize) {
+    assert_eq!(render_lines(text, tokens).lines().count(), n);
 }
 
 #[test]
-fn block_comments_nested_deep_scale() {
-    let texts = inputs(20_000, |n| {
-        format!("a {}{}b", "/* ".repeat(n), "*/ ".repeat(n))
-    });
-    check("lexing block comments nested n deep", 20_000, |n| {
-        assert_eq!(lex(&texts[&n]).unwrap().len(), 2);
-    });
-}
-
-#[test]
-fn many_doc_comments_scale() {
-    let texts = inputs(2_000, |n| "/// a doc\nx = 1;\n".repeat(n));
-    check("lexing n doc comments", 2_000, |n| {
-        let (tokens, docs) = lex_with_docs(&texts[&n]).unwrap();
-        assert_eq!((tokens.len(), docs.len()), (4 * n, n));
-    });
-}
-
-#[test]
-fn rendering_tokens_by_line_scales() {
-    // Each line's tokens were found by a pass over every token of the text.
-    let texts = inputs(2_000, |n| {
-        let text = "total = price * qty; // a comment\n".repeat(n);
-        let tokens = lex(&text).unwrap();
-        (text, tokens)
-    });
-    check("rendering the tokens of n lines", 2_000, |n| {
-        let (text, tokens) = &texts[&n];
-        assert_eq!(render_lines(text, tokens).lines().count(), n);
-    });
+fn each_benchmark_text_lexes_as_its_benchmark_expects_at_small_sizes() {
+    type Case = (fn(usize) -> String, fn(&str, usize));
+    let cases: [Case; 3] = [
+        (keywords_and_operators, lexes_every_keyword_and_operator),
+        (nested_comments, lexes_two_names),
+        (doc_comments, lexes_a_doc_a_statement),
+    ];
+    for (make, expect) in cases {
+        for n in [1, 2, 9] {
+            expect(&make(n), n);
+        }
+    }
+    for n in [1, 2, 9] {
+        renders_a_line_a_line(&code_lines(n), n);
+    }
 }

@@ -2,6 +2,7 @@
 //! ASCII with the ASCII name it offers.
 
 mod ascii;
+mod bench;
 mod ignorable;
 mod invisible;
 mod names;

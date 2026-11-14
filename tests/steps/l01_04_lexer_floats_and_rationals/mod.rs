@@ -1,5 +1,6 @@
 //! Step L1.4: float literals, which need a leading digit, and exact `r` rationals.
 
+mod bench;
 mod scaling;
 
 use zedc::lex::{Tok, lex};

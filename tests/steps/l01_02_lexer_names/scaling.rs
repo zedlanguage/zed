@@ -1,9 +1,7 @@
-//! Lexing names is of order n log n in the length of the text: many names among text beyond
-//! ASCII, one long name, and the error for a long word beyond ASCII with the name it offers,
-//! whether the letter beyond ASCII ends a long ASCII run, the whole word is in another script,
-//! or the offer must pass n names it may not take (DESIGN.md Part G).
+//! The long texts the benchmarks of `bench.rs` lex, and what lexing each must give, checked
+//! here at small sizes (TEST-bench-move-rest, P170): every check a benchmark makes besides its
+//! ratio has an instance among these correctness tests.
 
-use zed_tests::scaling::{check, inputs};
 use zedc::lex::{ErrorKind, lex};
 
 /// The offer of the error for the text `text`, which must be rejected.
@@ -14,55 +12,71 @@ fn offer(text: &str) -> Option<String> {
     }
 }
 
-#[test]
-fn many_names_among_text_beyond_ascii_scale() {
-    // A name, a string holding German, a prime, the wildcard, a name starting with `_` and a
-    // comment in Chinese: five tokens.
-    let line = "grosse \"gr\u{f6}\u{df}e\" x' _ _y // \u{9762}\u{7a4d}\n";
-    let texts = inputs(2_000, |n| line.repeat(n));
-    check("lexing 5n tokens", 2_000, |n| {
-        assert_eq!(lex(&texts[&n]).unwrap().len(), 5 * n);
-    });
+/// `n` lines of a name, a string holding German, a prime, the wildcard, a name starting with
+/// `_` and a comment in Chinese: five tokens each.
+pub(super) fn names_among_text_beyond_ascii(n: usize) -> String {
+    "grosse \"gr\u{f6}\u{df}e\" x' _ _y // \u{9762}\u{7a4d}\n".repeat(n)
+}
+
+pub(super) fn lexes_five_tokens_a_line(text: &str, n: usize) {
+    assert_eq!(lex(text).unwrap().len(), 5 * n);
+}
+
+/// One name of `2n` letters.
+pub(super) fn long_name(n: usize) -> String {
+    "ab".repeat(n)
+}
+
+pub(super) fn lexes_one_name(text: &str, _: usize) {
+    assert_eq!(lex(text).unwrap().len(), 1);
+}
+
+/// A name of `2n` letters and `é`. The ASCII run is read by bytes, then read again as a word:
+/// twice, not once per letter.
+pub(super) fn long_name_ending_beyond_ascii(n: usize) -> String {
+    "ab".repeat(n) + "\u{e9}"
+}
+
+pub(super) fn offers_the_ascii_spelling(text: &str, n: usize) {
+    assert_eq!(offer(text).unwrap().len(), 2 * n + 1);
+}
+
+/// Hangul `한글` n times, transliterated as a whole.
+pub(super) fn hangul_word(n: usize) -> String {
+    "\u{d55c}\u{ae00}".repeat(n)
+}
+
+pub(super) fn offers_the_transliteration(text: &str, n: usize) {
+    assert_eq!(offer(text).unwrap(), "HanGeul".repeat(n));
+}
+
+/// `cafe`, `cafe_2`, ..., `cafe_n` are taken, so `café` is offered `cafe_{n+1}`: n suffixes
+/// are tried, each one hash lookup.
+pub(super) fn taken_names(n: usize) -> String {
+    let mut t = "cafe = 1;\n".to_string();
+    for k in 2..=n {
+        t += &format!("cafe_{k} = 1;\n");
+    }
+    t + "caf\u{e9} = 1;\n"
+}
+
+pub(super) fn offers_the_first_free_suffix(text: &str, n: usize) {
+    assert_eq!(offer(text), Some(format!("cafe_{}", n + 1)));
 }
 
 #[test]
-fn one_long_name_scales() {
-    let texts = inputs(20_000, |n| "ab".repeat(n));
-    check("lexing a name of 2n letters", 20_000, |n| {
-        assert_eq!(lex(&texts[&n]).unwrap().len(), 1);
-    });
-}
-
-#[test]
-fn a_long_name_ending_in_a_letter_beyond_ascii_scales() {
-    // The ASCII run is read by bytes, then read again as a word: twice, not once per letter.
-    let texts = inputs(20_000, |n| "ab".repeat(n) + "\u{e9}");
-    check("rejecting a name of 2n letters and `é`", 20_000, |n| {
-        assert_eq!(offer(&texts[&n]).unwrap().len(), 2 * n + 1);
-    });
-}
-
-#[test]
-fn a_long_word_in_another_script_scales() {
-    // Hangul `한글` n times, transliterated as a whole.
-    let texts = inputs(20_000, |n| "\u{d55c}\u{ae00}".repeat(n));
-    check("rejecting a Hangul word of 2n letters", 20_000, |n| {
-        assert_eq!(offer(&texts[&n]).unwrap(), "HanGeul".repeat(n));
-    });
-}
-
-#[test]
-fn an_offer_past_many_taken_names_scales() {
-    // `cafe`, `cafe_2`, ..., `cafe_n` are taken, so `café` is offered `cafe_{n+1}`: n suffixes
-    // are tried, each one hash lookup.
-    let texts = inputs(2_000, |n| {
-        let mut t = "cafe = 1;\n".to_string();
-        for k in 2..=n {
-            t += &format!("cafe_{k} = 1;\n");
+fn each_benchmark_text_lexes_as_its_benchmark_expects_at_small_sizes() {
+    type Case = (fn(usize) -> String, fn(&str, usize));
+    let cases: [Case; 5] = [
+        (names_among_text_beyond_ascii, lexes_five_tokens_a_line),
+        (long_name, lexes_one_name),
+        (long_name_ending_beyond_ascii, offers_the_ascii_spelling),
+        (hangul_word, offers_the_transliteration),
+        (taken_names, offers_the_first_free_suffix),
+    ];
+    for (make, expect) in cases {
+        for n in [1, 2, 9] {
+            expect(&make(n), n);
         }
-        t + "caf\u{e9} = 1;\n"
-    });
-    check("offering a name past n taken names", 2_000, |n| {
-        assert_eq!(offer(&texts[&n]), Some(format!("cafe_{}", n + 1)));
-    });
+    }
 }

@@ -1,24 +1,21 @@
-//! The lexing of strings at the rule of low complexity (DESIGN.md Part G).
+//! The long strings the benchmarks of `bench.rs` lex, and what lexing each must give, checked
+//! here at small sizes (TEST-bench-move-rest, P170).
 
-use std::collections::HashMap;
-
-use zed_tests::scaling;
 use zedc::lex::lex;
 
 use super::parts;
 
 /// A `"""` string of `n` indented lines, each holding a hole.
-fn lines(n: usize) -> String {
+pub(super) fn lines(n: usize) -> String {
     let body: String = (0..n).map(|i| format!("    line ${{{i}}}\n")).collect();
     format!("\"\"\"\n{body}    \"\"\"")
 }
 
 #[test]
-fn a_long_indented_string_scales() {
-    // Each character was tested against every line's cut of indentation.
-    scaling::check("a \"\"\" string of n lines", 1000, |n| {
+fn an_indented_string_of_lines_with_holes_has_a_text_and_a_hole_a_line() {
+    for n in [1, 2, 9] {
         assert_eq!(parts(&lines(n)).len(), 2 * n);
-    });
+    }
     let p = parts(&lines(2));
     assert_eq!([&p[0][..], &p[2][..]], ["line ", "\nline "]);
     assert!(
@@ -28,21 +25,15 @@ fn a_long_indented_string_scales() {
 }
 
 /// A string whose holes nest `d` deep: `"${"${…"${0}"…}"}"`.
-fn nested(d: usize) -> String {
+pub(super) fn nested(d: usize) -> String {
     "\"${".repeat(d) + "0" + &"}\"".repeat(d)
 }
 
 #[test]
-fn nested_holes_scale() {
-    // Each hole was scanned for its `}` once for each hole around it, and its text searched
-    // for a line break as many times.
-    let texts: HashMap<usize, String> = [2_000, 16_000]
-        .into_iter()
-        .map(|d| (d, nested(d)))
-        .collect();
-    scaling::check("a string with holes nested d deep", 2_000, |d| {
-        assert_eq!(lex(&texts[&d]).unwrap().len(), 1);
-    });
+fn nested_holes_lex_as_one_string() {
+    for d in [1, 2, 9] {
+        assert_eq!(lex(&nested(d)).unwrap().len(), 1);
+    }
     assert_eq!(
         parts(&nested(2)),
         [
@@ -69,21 +60,15 @@ fn an_open_hole_at_the_bottom_of_a_deep_nest_is_reported() {
 }
 
 /// `n` lines, each a one-line string whose hole holds a block comment and a `"""` string.
-fn one_line_holes(n: usize) -> String {
+pub(super) fn one_line_holes(n: usize) -> String {
     (0..n)
         .map(|i| format!("\"row ${{x{i} /* cell */ ++ \"\"\"t\"\"\"}}\"\n"))
         .collect()
 }
 
 #[test]
-fn one_line_holes_with_comments_and_strings_scale() {
-    // Each block comment and inner string is checked for a line break by a search in the
-    // text's line breaks, not by a pass over them.
-    let texts: HashMap<usize, String> = [4_000, 32_000]
-        .into_iter()
-        .map(|n| (n, one_line_holes(n)))
-        .collect();
-    scaling::check_order("n lines of one-line strings with holes", 4_000, 1, |n| {
-        assert_eq!(lex(&texts[&n]).unwrap().len(), n);
-    });
+fn one_line_holes_with_comments_and_strings_lex_a_string_a_line() {
+    for n in [1, 2, 9] {
+        assert_eq!(lex(&one_line_holes(n)).unwrap().len(), n);
+    }
 }

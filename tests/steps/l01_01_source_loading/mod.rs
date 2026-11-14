@@ -4,4 +4,5 @@
 mod accepted;
 mod places;
 mod rejected;
+mod bench;
 mod scaling;
