@@ -2207,7 +2207,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | CONST-too-large-coprime-base | impl attempt 1 | 2026-11-14 00:07 | started; load 26.51 34.74 41.48 |
 | DOC-deferred-refs | running | 2026-11-14 00:03 |  |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | CD round 6 launched (SHORT): experiment 6664553392322379777 from main 8a3e0859b, 56 cases, 3 regions (new PICK_RS); local main-vs-main 2,357.953, test run 8,535 |
-| LIT-generic-class-follows | impl attempt 2 | 2026-11-13 23:24 | resumed from handoff; rebasing (6 behind); load 0.80 0.55 1.32 |
 | LIT-rat-int-op-exponent | impl attempt 1 | 2026-11-13 23:21 | started |
 | REPAIR-pow-use-f64-drops-rat | impl attempt 2 | 2026-11-13 23:20 | resumed from handoff; load 0.67 0.52 1.32 |
 | REPAIR-text-cast-spelling | impl attempt 2 | 2026-11-13 23:35 | resumed from handoff; rebasing both trees |
