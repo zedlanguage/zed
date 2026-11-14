@@ -13373,6 +13373,9 @@ fn splinters(
     vars: usize,
     name: &dyn Fn(usize) -> String,
 ) -> Result<Option<Vec<Int>>, Refusal> {
+    if let Some(t) = broken_swap(top, base) {
+        return Err(t.written(vars, name));
+    }
     for (live, batch) in &top.gray {
         let mut refused: Option<Refusal> = None;
         for &(at, n) in batch {
@@ -13441,6 +13444,75 @@ fn splinters(
         }
     }
     Ok(None)
+}
+
+/// The first tie `top` took by symmetry ([`Omega::untie`]) whose swaps do not each map onto
+/// themselves the rows its splinters are built from that were there at the tie: the rows of
+/// `base`, and the definitions and dark eliminations among the steps before the tie. The run
+/// itself reads neither, so only the splinters can tell the two orders of the tie apart, and
+/// only through these rows ([`Omega::splinter`]); `None` when the run left no splinters.
+///
+/// Complexity tradeoff: the rows are indexed once by the variables of the swaps, O(r·w log v)
+/// for r rows of w terms, and each swap then compares the rows of its two variables with
+/// their images, sorted, as [`System::swaps_onto_itself`] does at the tie; the splinters
+/// themselves copy every row of `base` each. A broken swap gives the tie's refusal, as the
+/// tie gave before symmetry was used, for both orders alike, since the rows compared are the
+/// same in both. Test: `l01_38_omega_test::names::a_tie_that_a_swap_maps_onto_itself_is_decided`.
+fn broken_swap<'a>(top: &'a Omega, base: &[(Row, Rel)]) -> Option<&'a Tied> {
+    if top.gray.is_empty() || top.swaps.is_empty() {
+        return None;
+    }
+    let near: BTreeSet<usize> = (top.swaps.iter())
+        .flat_map(|(t, _)| t.vars.iter().copied())
+        .collect();
+    let dark: BTreeSet<usize> = (top.gray.iter())
+        .flat_map(|(_, batch)| batch.iter().map(|(at, _)| *at))
+        .collect();
+    // The rows the splinters read, each with its source (`None` for `base`, else its step)
+    // and relation; a definition `x[v] = def` is read as `def`, since no swap moves `x[v]`.
+    let mut read: Vec<(Option<usize>, &Row, Rel)> =
+        base.iter().map(|(r, rel)| (None, r, *rel)).collect();
+    for (i, step) in top.steps.iter().enumerate() {
+        match step {
+            Step::Defined(_, def) => read.push((Some(i), def, Rel::Eq)),
+            Step::Chosen(_, rows) if dark.contains(&i) => {
+                read.extend(rows.iter().map(|r| (Some(i), r, Rel::Ge)));
+            }
+            _ => {}
+        }
+    }
+    let mut by_var: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for (n, (_, r, _)) in read.iter().enumerate() {
+        for (i, _) in r.a.iter().filter(|(i, _)| near.contains(i)) {
+            by_var.entry(*i).or_default().push(n);
+        }
+    }
+    let none = Vec::new();
+    let holds = |x: usize, y: usize, at: usize| {
+        let mut ns: Vec<usize> = (by_var.get(&x).unwrap_or(&none).iter())
+            .chain(by_var.get(&y).unwrap_or(&none))
+            .copied()
+            .filter(|n| read[*n].0.is_none_or(|i| i < at))
+            .collect();
+        ns.sort_unstable();
+        ns.dedup();
+        let mut rows: Vec<(Option<usize>, Vec<Term>, &Int, Rel)> = Vec::with_capacity(ns.len());
+        let mut images = Vec::with_capacity(ns.len());
+        for n in ns {
+            let (from, r, rel) = read[n];
+            rows.push((from, r.a.to_vec(), &r.k, rel));
+            images.push((from, swapped(&r.a, x, y), &r.k, rel));
+        }
+        rows.sort_unstable();
+        images.sort_unstable();
+        rows == images
+    };
+    top.swaps.iter().find_map(|(t, at)| {
+        let [x, ref others @ ..] = t.vars[..] else {
+            unreachable!("a tie holds two variables or more")
+        };
+        (!others.iter().all(|&y| holds(x, y, *at))).then_some(t)
+    })
 }
 
 /// The equalities `x - y == d` as a forest with union by rank, so that each root is found in
@@ -13807,6 +13879,18 @@ fn opposite(a: &[Term]) -> Vec<Term> {
     a.iter().map(|(i, c)| (*i, -c)).collect()
 }
 
+/// The coefficients with the variables `x` and `y` swapped, in variable order.
+fn swapped(a: &[Term], x: usize, y: usize) -> Vec<Term> {
+    let swap = |i: usize| match i {
+        i if i == x => y,
+        i if i == y => x,
+        i => i,
+    };
+    let mut out: Vec<Term> = a.iter().map(|(i, c)| (swap(*i), c.clone())).collect();
+    out.sort_unstable_by_key(|t| t.0);
+    out
+}
+
 /// Whether every real point `(x, y)` of the box `b` = [x least, x greatest, y least, y
 /// greatest] with `p·(x, y) + pk >= 0` has `q·(x, y) + qk >= 0`, for rows `p` and `q` over
 /// the same two variables. That part of the box is a polygon, and `q` is least over it at a
@@ -13963,6 +14047,9 @@ impl Sides {
 /// least fill and color; the place only orders variables that tie in both, among which no
 /// choice is made by it (see [`System::least`]).
 type Rank = (isize, usize, usize);
+
+/// What [`System::least`] gives: the fill, and the variables or the tie.
+type Least = (isize, Result<Vec<usize>, Tied>);
 
 /// A row of a [`System`]: its constant, and its place in the system's list.
 struct Held {
@@ -14315,7 +14402,7 @@ impl System {
     /// their other variables, none of which is `x[j]`, since no row holds both, so the rows of
     /// `x[j]`, and with them its elimination, are the same before and after; and adding a row
     /// keeps the least constant of each set of coefficients, which no order changes.
-    fn least(&self, sets: &[&BTreeSet<Rank>]) -> Option<(isize, Result<Vec<usize>, Tied>)> {
+    fn least(&self, sets: &[&BTreeSet<Rank>]) -> Option<Least> {
         let &(fill, key, _) = sets.iter().filter_map(|s| s.first()).min()?;
         let js: Vec<usize> = sets
             .iter()
@@ -14348,6 +14435,19 @@ impl System {
                 }),
             ))
         }
+    }
+
+    /// Whether swapping `x[x]` with `x[y]` maps the rows onto themselves: the image of each
+    /// row of either, with its constant, is held. Rows of neither are their own images. Two
+    /// variables [`System::least`] ties have one color, so the swap keeps the colors too.
+    /// O(d·w log m) for the d rows of the two, of w terms, among m rows.
+    fn swaps_onto_itself(&self, x: usize, y: usize) -> bool {
+        let rows = self.vars[x].rows.iter().chain(&self.vars[y].rows);
+        rows.into_iter().all(|&id| {
+            let a = self.ids[id].as_ref().expect("a row held");
+            let image = swapped(a, x, y);
+            (self.rows.get(image.as_slice())).is_some_and(|held| held.k == self.rows[a].k)
+        })
     }
 
     /// The value of the bound row of `x[j]` on the side `upper`, if it has one.
@@ -15141,6 +15241,9 @@ struct Omega {
     /// Whether the cycles of the rows have been searched for the equalities they imply
     /// ([`Omega::cycles`]).
     cycled: bool,
+    /// The ties taken by symmetry ([`Omega::untie`]), each with the number of steps before it,
+    /// which [`splinters`] checks against the rows the splinters are built from.
+    swaps: Vec<(Tied, usize)>,
 }
 
 impl Omega {
@@ -15245,6 +15348,7 @@ impl Omega {
                     loose_tie: None,
                     working: Vec::new(),
                     cycled: false,
+                    swaps: Vec::new(),
                 };
             }
         }
@@ -15266,6 +15370,7 @@ impl Omega {
             loose_tie: None,
             working: Vec::new(),
             cycled: false,
+            swaps: Vec::new(),
         }
     }
 
@@ -15290,8 +15395,10 @@ impl Omega {
             }
             // No step below chooses by the names of the variables: each takes what the
             // structure gives first (by color, through `System::least` and
-            // `Equalities::least`), all such candidates together when no two share a row, and
-            // none when two do, which ends the eliminations at `tie`. Equalities tied so are
+            // `Equalities::least`), all such candidates together when no two share a row, the
+            // first alone when two do and swapping it with each other maps the rows onto
+            // themselves (`Omega::untie`), and none otherwise, which ends the eliminations at
+            // `tie`. Equalities tied so are
             // kept as pairs of opposite rows, which the stages below decide by the same rule.
             let working = std::mem::take(&mut self.working);
             let slots: Vec<usize> = working
@@ -15356,7 +15463,8 @@ impl Omega {
                 continue;
             }
             let mut tie: Option<Tied> = None;
-            match self.sys.least(&[&self.sys.exact]) {
+            let least = self.sys.least(&[&self.sys.exact]);
+            match self.untie(least, |fill| fill <= 0) {
                 Some((fill, _)) if fill > 0 => {}
                 Some((_, Ok(js))) => {
                     for j in js {
@@ -15406,7 +15514,8 @@ impl Omega {
                 break;
             }
             if tie.is_none() {
-                match self.sys.least(&[&self.sys.inexact]) {
+                let least = self.sys.least(&[&self.sys.inexact]);
+                match self.untie(least, |fill| fill <= 0) {
                     Some((fill, Ok(js))) if fill <= 0 => {
                         // An empty real shadow, which keeps every integer point, shows the
                         // problem empty; from here on the dark shadow is solved, whose points
@@ -15453,7 +15562,8 @@ impl Omega {
                     Some(false) => {}
                     None => {
                         self.sys.refresh();
-                        if let Some((_, Ok(js))) = self.sys.least(&[&self.sys.shrinking]) {
+                        let least = self.sys.least(&[&self.sys.shrinking]);
+                        if let Some((_, Ok(js))) = self.untie(least, |_| true) {
                             for j in js {
                                 let rows = self.sys.eliminate(j, false);
                                 self.steps.push(Step::Chosen(j, rows));
@@ -15552,10 +15662,14 @@ impl Omega {
             // names would choose; refusing keeps every answer, refusals included, the same
             // under every naming of the variables, while trying every order is exponential
             // in the tied variables and telling them apart for good (canonical labeling of
-            // the rows) has no known polynomial algorithm. Trigger: two variables of one
-            // color, both of least fill, sharing a row, in a system no other stage decides;
-            // the size of the system plays no part. Tests:
+            // the rows) has no known polynomial algorithm. A tie that swapping the tied
+            // variables maps onto itself is taken instead (`Omega::untie`), since then every
+            // order gives the same answer. Trigger: two variables of one color, both of least
+            // fill, sharing a row, that no swap of the two maps the rows onto themselves (or
+            // with rows kept loose), in a system no other stage decides; the size of the
+            // system plays no part. Tests:
             // `l01_38_omega_test::names::a_tie_that_shares_a_row_is_refused`,
+            // `l01_38_omega_test::names::a_tie_that_a_swap_maps_onto_itself_is_decided`,
             // `l01_38_omega_test::names::every_naming_gives_one_answer_on_the_regular_family_of_five_103`.
             // COMPLEXITY.md row NAME-ties. A complete solution would search every order of
             // the tied candidates, or decide the rows by a complete method (plan item
@@ -16018,6 +16132,53 @@ impl Omega {
             self.es.push(r, &mut self.sys);
         }
         found
+    }
+
+    /// `least` as [`System::least`] gave it, with a tie the step will take (`taken` of its
+    /// fill) turned into its first variable alone when, for each other tied variable, swapping
+    /// the two maps the rows onto themselves; the tie is kept in `swaps`.
+    ///
+    /// Why this keeps every answer the same under every naming. Call the state of the run
+    /// `S`, and `τ` the swap of the first tied variable `x` with another, `y`. Here no
+    /// equality is left (the loop takes them first) and no rows were kept loose (declined
+    /// otherwise), so what the loop reads from here on is the rows, which `τ` maps onto
+    /// themselves, and flags that hold no variable. Every step of the loop is the same under
+    /// a renaming of the variables (the invariant [`solve`] states), so the run that takes `y`
+    /// first is the image under `τ` of the run that takes `x` first, step for step, and ends
+    /// in the same kind of leaf: a point (its image is a point, both valid), no point, or the
+    /// same refusal. By induction on the steps left, the same holds when later ties are taken
+    /// so too. What else a run reads, the input rows and the steps before the tie, enters only
+    /// the splinters; [`splinters`] checks that `τ` maps those onto themselves as well before
+    /// it builds any, and gives the tie's refusal otherwise, which both runs then give alike.
+    ///
+    /// Complexity tradeoff: the check is one swap per other tied variable, each looking up
+    /// the image of every row of the two variables, O(t·d·w log m) for t tied variables of d
+    /// rows of w terms among m rows, against the refusal it replaces. It is a sufficient test,
+    /// not a complete one: a tie whose variables a symmetry of the rows maps onto each other
+    /// only through other variables (a swap of `x` with `y` that needs `u` swapped with `v`
+    /// too) is still refused, and so is a tie when rows were kept loose. Why: a swap is
+    /// checked locally, while finding every symmetry is canonical labeling of the rows,
+    /// which has no known polynomial algorithm (the reason ties are refused at all). Trigger
+    /// for the refusal left: tied variables that only such a wider symmetry, or none, maps
+    /// onto each other. Tests: `l01_38_omega_test::names::a_tie_that_a_swap_maps_onto_itself_is_decided`,
+    /// `l01_38_omega_test::names::a_tie_that_shares_a_row_is_refused`. COMPLEXITY.md row
+    /// NAME-ties.
+    fn untie(&mut self, least: Option<Least>, taken: impl Fn(isize) -> bool) -> Option<Least> {
+        let Some((fill, Err(t))) = least else {
+            return least;
+        };
+        let [x, ref others @ ..] = t.vars[..] else {
+            unreachable!("a tie holds two variables or more")
+        };
+        let symmetric = taken(fill)
+            && self.sys.loose.is_empty()
+            && self.es.order.is_empty()
+            && others.iter().all(|&y| self.sys.swaps_onto_itself(x, y));
+        if !symmetric {
+            return Some((fill, Err(t)));
+        }
+        self.swaps.push((t, self.steps.len()));
+        Some((fill, Ok(vec![x])))
     }
 
     /// Keeps the equalities in `slots`, which tie as `t` says, as pairs of opposite rows. Each

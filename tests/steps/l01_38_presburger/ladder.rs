@@ -1168,6 +1168,21 @@ pub(super) fn product_chain_with_abs(k: usize) -> (Relation, Relation) {
     product_chain_with(k, &extra)
 }
 
+/// [`product_chain_with_abs`] with each `abs` written as `max(x{i} - y{i}, y{i} - x{i})`,
+/// which has the same two hull rows and the same tie between `x{i}` and `y{i}`.
+#[test]
+fn a_chain_with_max_in_place_of_abs_is_proved() {
+    scaling::on_a_thread(8 << 20, || {
+        for k in [1, 2, 4] {
+            let extra: Vec<String> = (0..k)
+                .map(|i| format!("max(x{i} - y{i}, y{i} - x{i}) <= z{i} + 1"))
+                .collect();
+            let (p, g) = product_chain_with(k, &extra);
+            proved_with_sides_asked(&p, &g);
+        }
+    });
+}
+
 /// The checks of the benchmarks of `bench/ladder.rs` at small sizes, on a thread of the
 /// benchmarks' 8 MiB stack: each verdict, the sides asked where the benchmark counts them, and
 /// the relations of the shared divisors built.

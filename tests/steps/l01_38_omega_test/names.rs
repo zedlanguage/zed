@@ -628,6 +628,132 @@ fn a_tie_that_shares_a_row_is_refused() {
     );
 }
 
+/// The rows the solver meets for two links of `ladder::product_chain_with_abs`, over `z0`,
+/// `z1`, `x0`, `y0`, `x1`, `y1`, `q0`, `q1` by place: `0 <= z0 < z1 <= 4`, `x[i] >= z[i]`,
+/// `y[i] >= z[i]`, and `|x[i] - y[i]| <= q[i] <= z[i] + 1`, where `q[i] >= x[i] - y[i]` and
+/// `q[i] >= y[i] - x[i]` are the two hull rows of `abs`. `x[i]` and `y[i]` share the hull
+/// rows and occur alike, and swapping them maps the rows onto themselves.
+fn two_abs_links() -> Vec<Row> {
+    vec![
+        ge(&[-1, 1, 0, 0, 0, 0, 0, 0], -1),
+        ge(&[1, 0, 0, 0, 0, 0, 0, 0], 0),
+        ge(&[0, -1, 0, 0, 0, 0, 0, 0], 4),
+        ge(&[1, 0, 0, 0, 0, 0, -1, 0], 1),
+        ge(&[0, 1, 0, 0, 0, 0, 0, -1], 1),
+        ge(&[-1, 0, 1, 0, 0, 0, 0, 0], 0),
+        ge(&[-1, 0, 0, 1, 0, 0, 0, 0], 0),
+        ge(&[0, -1, 0, 0, 1, 0, 0, 0], 0),
+        ge(&[0, -1, 0, 0, 0, 1, 0, 0], 0),
+        ge(&[0, 0, -1, 1, 0, 0, 1, 0], 0),
+        ge(&[0, 0, 1, -1, 0, 0, 1, 0], 0),
+        ge(&[0, 0, 0, 0, -1, 1, 0, 1], 0),
+        ge(&[0, 0, 0, 0, 1, -1, 0, 1], 0),
+    ]
+}
+
+#[test]
+fn a_tie_that_a_swap_maps_onto_itself_is_decided() {
+    // The rows have a point, which the box stage finds before any tie matters.
+    let rows = two_abs_links();
+    assert!(holds(&rows, &[0, 1, 0, 0, 1, 1, 0, 0]));
+    let named: Vec<usize> = (0..8).collect();
+    assert_eq!(decide(&formula(&rows, &named)), Ok(true));
+    // With `q0 <= -1`, which the two hull rows of `q0` contradict, no point. Until
+    // FAIL-abs-hull-rows-tie this was refused with a tie between `x1` and `y1`, which share
+    // their hull rows: which goes first was left to their names. Swapping them maps the rows
+    // onto themselves, so either order gives the same answer, and the solver takes one.
+    let mut empty = rows.clone();
+    empty.push(ge(&[0, 0, 0, 0, 0, 0, -1, 0], -1));
+    assert_eq!(decide(&formula(&empty, &named)), Ok(false));
+    // Under other namings, the same answers.
+    let (mut rng, seed) = Rng::fresh("a tie that a swap maps onto itself");
+    for (rows, answer) in [(&rows, "Ok(true)"), (&empty, "Ok(false)")] {
+        let seen = sampled_namings(rows, 8, &mut rng, 100);
+        assert_eq!(
+            seen.into_keys().collect::<Vec<_>>(),
+            [answer],
+            "seed {seed:#x}"
+        );
+    }
+    // The cycle of `a_tie_that_shares_a_row_is_refused` is the control: its symmetries turn
+    // the cycle, and no swap of two of its variables maps its rows onto themselves, so its
+    // tie is still refused.
+}
+
+/// Random rows over `v0`..`v3` that swapping `v0` and `v1` maps onto themselves: each row
+/// over `v0`, `v2` and `v3` with its image over `v1`, and one row with `v0` and `v1` at one
+/// coefficient, all in the box `-4..=4`. The coefficients reach 13, as in Pugh's example,
+/// so that eliminations are dark and splinters are searched after the tie is taken.
+fn swap_symmetric(rng: &mut Rng) -> Vec<Row> {
+    let mut rows = Vec::new();
+    for _ in 0..1 + rng.below(3) {
+        let (a, b, c, k) = (
+            rng.int(-13, 13),
+            rng.int(-13, 13),
+            rng.int(-3, 3),
+            rng.int(-30, 30),
+        );
+        rows.push(ge(&[a, 0, b, c], k));
+        rows.push(ge(&[0, a, b, c], k));
+    }
+    let (a, b) = (rng.int(-5, 5), rng.int(-5, 5));
+    rows.push(ge(&[a, a, b, 0], rng.int(-20, 20)));
+    with_box(&rows, 4, 4)
+}
+
+#[test]
+fn ties_taken_by_a_swap_agree_with_enumeration() {
+    // The answer, whether or not the tie is taken and whatever splinters follow it, is that
+    // of enumerating the box, under the naming as written and under the swap.
+    let (mut rng, seed) = Rng::fresh("ties taken by a swap");
+    let span = -4..=4i64;
+    let mut answered = 0;
+    for case in 0..200 {
+        let rows = swap_symmetric(&mut rng);
+        let mut has_point = false;
+        'search: for a in span.clone() {
+            for b in span.clone() {
+                for c in span.clone() {
+                    for d in span.clone() {
+                        if holds(&rows, &[a, b, c, d]) {
+                            has_point = true;
+                            break 'search;
+                        }
+                    }
+                }
+            }
+        }
+        // The control: the same rows with `v0 <= w <= 4` over a fifth variable `w`, which the
+        // swap does not map onto themselves. Its projection `v0 <= 4` the box holds, so `w`
+        // changes no answer; but `v0` and `v1` now differ in color, and no tie is taken.
+        let mut with_w: Vec<Row> = rows
+            .iter()
+            .map(|r| Row {
+                c: [&r.c[..], &[0]].concat(),
+                ..r.clone()
+            })
+            .collect();
+        with_w.push(ge(&[-1, 0, 0, 0, 1], 0));
+        with_w.push(ge(&[0, 0, 0, 0, -1], 4));
+        for rows in [&rows, &with_w] {
+            let [written, swapped] =
+                [[0, 1, 2, 3, 4], [1, 0, 2, 3, 4]].map(|name| formula(rows, &name));
+            assert_eq!(
+                answer(&written),
+                answer(&swapped),
+                "seed {seed:#x}, case {case}: {rows:?}"
+            );
+            if let Ok(got) = decide(&written) {
+                assert_eq!(got, has_point, "seed {seed:#x}, case {case}: {rows:?}");
+                answered += 1;
+            }
+        }
+    }
+    // Most cases are answered (358 to 372 of 400 in three runs); some are refused with
+    // `Growth`, as they are without the rule.
+    assert!(answered > 0, "seed {seed:#x}: no case answered");
+}
+
 #[test]
 fn tied_equalities_are_kept_as_rows_and_decided() {
     // `x + y == 5` with `x` and `y` alike: either could be defined by the other, so neither
