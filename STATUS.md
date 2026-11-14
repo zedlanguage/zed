@@ -1450,6 +1450,7 @@ LR4 added 27 tests (`lr4_assoc.rs` in `l01_08_parser`) and 23 bracketing cases t
 | TEST-shared-tmpdir-race | merged and pushed (the commit "TEST-shared-tmpdir-race: ..." that marks the row Done); no spec change | Found by FAIL-bitword-arity-message. Worktrees never shared a scratch directory (zrun mounts each one's own build); two tests of one binary wrote one name with different texts (four names in l01_19; two directories of l01_36a, shared with distinct file names, were split for the guard). `tests/src/scratch.rs`: a directory per running process of a test binary, the first free lock slot, kept from run to run for the link cache; `scratch(path)` panics when a second test of the process names the same path. 4 new tests |
 | TEST-fixture-write-race | merged and pushed (the commit "TEST-fixture-write-race: ..." that marks the row Done); no spec change | Found by TEST-l01_29-widen-flake. Every scratch file of tests/steps and tests/full now lies in its own process's directory (`scratch` of `tests/src/scratch.rs`; 35 uses of CARGO_TARGET_TMPDIR or `temp_dir()` in 35 files replaced; 8 zed-native targets compile the module in by `#[path]`). widen_test.rs keeps its rename, which a test checks. The widen tests in 4 processes at once failed 76 of 200 processes before, 0 of 200 after. m0_03 `Dir` left as is |
 | TEST-seed-test-once | merged and pushed (the commit "TEST-seed-test-once: ..." that marks the row Done); no spec change | Found by TEST-scaling-module-tests-once and TEST-l01_29-widen-flake. The own test of `tests/src/seed.rs` moved to `tests/src/seed_tests.rs`, declared only from zed-tests, so it runs once a run, not also in the 7 crates that compile seed.rs in by `#[path]` (each lists one test fewer; zedc-types 23) |
+| TEST-cov-run-settings | merged and pushed (the commit "TEST-cov-run-settings: ..." that marks the row Done); no spec change | Found by TEST-cov-scaling-noise and TEST-malloc-state-under-cov. `tools/run_tests.sh --cov <dir>`: an instrumented build in build/cov, each piece run as now (GLIBC_TUNABLES included) with its own profiles `<dir>/<piece>-<pid>.profraw`; scaling verdicts printed, not to be relied on. Checked on zed_tests and zedc_types, with a merge and an llvm-cov report. IMPL.md and IMPL-common.md do not name it yet: row DOC-cov-command |
 
 ## Decisions made
 
@@ -2327,7 +2328,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | MSG-range-error-not-hidden | impl attempt 1 | 2026-11-14 10:45 | started in worktree fix-judg-range on origin/main b56f4fb5d |
 | POLY-square-choice-cost | running |  |  |
 | STAGE-generic-fold-div | impl attempt 1 | 2026-11-14 09:08 | started in wt/generic-fold-2, load 64.11 |
-| TEST-cov-run-settings | running | 2026-11-14 09:42 |  |
 | TEST-l0123-leftovers | running | 2026-11-14 10:33 |  |
 | TEST-l0123-slow-pieces | running | 2026-11-14 10:33 |  |
 | TEST-law25-time | running | 2026-11-14 10:54 |  |

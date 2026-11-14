@@ -2,7 +2,7 @@
 # Runs the tests in pieces, one test binary, step folder, module or slow test each, each under a
 # limit of 20 s (more under load, below), and prints a line per piece as it ends. Usage, from a
 # checkout's root:
-#   tools/run_tests.sh [--full] [--bench] [--each-test] [--only <ERE>] [--doc] [--list] [--reuse-table] [--logs <dir>] [jobs]
+#   tools/run_tests.sh [--full] [--bench] [--each-test] [--only <ERE>] [--doc] [--list] [--reuse-table] [--logs <dir>] [--cov <dir>] [jobs]
 #   tools/run_tests.sh --short-clone-remove
 # A run is of the correctness tests or, with --bench, of the benchmarks alone (TEST-bench-split,
 # author P169). A benchmark is a test whose path holds `bench::`: it lies in a module `bench`,
@@ -53,8 +53,18 @@
 # cores raises the limit of the pieces that start under it in proportion. It was 60 s until
 # TEST-bench-split (author P169), which puts the measurements at two sizes in benchmarks, run
 # apart with --bench, and asks each correctness test to take well under 1 s alone.
+# --cov <dir> is a coverage run (TEST-cov-run-settings): the build goes to build/cov, apart from
+# build/cargo, with `-C instrument-coverage` added to RUSTFLAGS, and each piece runs as in any
+# other run, with the settings it gives every run (GLIBC_TUNABLES above all: a test binary run
+# directly lacks it, and its malloc-state and bytes checks fail or vary), writing its profiles
+# to <dir>/<piece>-<pid>.profraw; build scripts and the links made before the timed pieces write
+# <dir>/other-<pid>.profraw. Merge them with `llvm-profdata merge -sparse <dir>/*.profraw -o
+# <file>` and read them with `llvm-cov report` or `llvm-cov show` and the binaries the run built.
+# A coverage run's scaling verdicts are printed but not to be relied on: each pass of a loop adds
+# to a counter all threads share, and with tests beside each other the instruction counter read
+# up to 5% high (TEST-cov-scaling-noise). The short-addresses pieces are not built for coverage.
 args=$*
-features= full_suite= only= list= reuse= logs= doc= jobs=6 clone_remove= run_kind=test each_test=
+features= full_suite= only= list= reuse= logs= doc= jobs=6 clone_remove= run_kind=test each_test= cov=
 while [ $# -gt 0 ]; do
   case $1 in
     --full) full_suite=1 ;;
@@ -81,9 +91,17 @@ while [ $# -gt 0 ]; do
       logs=$2
       shift
       ;;
+    --cov)
+      if [ $# -lt 2 ] || [ -z "$2" ]; then
+        echo "--cov needs a directory for the profiles"
+        exit 2
+      fi
+      cov=$2
+      shift
+      ;;
     [1-9]*) jobs=$1 ;;
     *)
-      echo "unknown argument: $1 (usage: tools/run_tests.sh [--full] [--bench] [--each-test] [--only <ERE>] [--doc] [--list] [--reuse-table] [--logs <dir>] [--short-clone-remove] [jobs])"
+      echo "unknown argument: $1 (usage: tools/run_tests.sh [--full] [--bench] [--each-test] [--only <ERE>] [--doc] [--list] [--reuse-table] [--logs <dir>] [--cov <dir>] [--short-clone-remove] [jobs])"
       exit 2
       ;;
   esac
@@ -122,6 +140,17 @@ if [ -n "$full_suite" ]; then
   fi
 fi
 root=$(pwd)
+# A coverage run builds apart, so the build/cargo of ordinary runs stays as it is. Without a
+# LLVM_PROFILE_FILE an instrumented program writes default_<hash>.profraw in the directory it
+# runs in, a step folder or a package's source, so one is set before the build, whose build
+# scripts are instrumented too; each piece sets its own (piece, below).
+if [ -n "$cov" ]; then
+  [[ $cov == /* ]] || cov=$root/$cov
+  mkdir -p "$cov" || exit 1
+  export CARGO_TARGET_DIR=$root/build/cov
+  export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-C instrument-coverage"
+  export LLVM_PROFILE_FILE=$cov/other-%p.profraw
+fi
 # The short-addresses build (step L1.37a) keeps 8 bits of every content address and type digest,
 # so distinct values collide; its pieces check that every place that compares by address
 # confirms equal addresses by contents, and that verdicts and outputs match the full build.
@@ -430,6 +459,10 @@ short_build=
 for s in $short_steps; do
   selected "short-$s" "short-$s" && short_build=1
 done
+if [ -n "$short_build" ] && [ -n "$cov" ]; then
+  echo "--cov: the short-addresses pieces are not built for coverage; leave them out of --only"
+  exit 2
+fi
 if [ -n "$short_build" ] && [ "$root" != /home/luke/Work/wt/.build-root ]; then
   echo "The short-addresses pieces build in a clone mounted in the zrun namespace; run" \
     "/home/luke/Work/wt/zrun tools/run_tests.sh from the checkout's root."
@@ -813,7 +846,7 @@ never=0xffffffffffffffff
 malloc=glibc.malloc.tcache_count=0
 export GLIBC_TUNABLES=glibc.cpu.hwcaps=-ERMS,-FSRM:glibc.cpu.x86_rep_movsb_threshold=$never:glibc.cpu.x86_rep_stosb_threshold=$never:$malloc
 cores=$(nproc)
-export root out slots slot_dir cores run_kind
+export root out slots slot_dir cores run_kind cov
 take_slot() {
   exec 5>"$slot_dir/queue"
   flock 5
@@ -841,6 +874,8 @@ piece() {
   read -r load _ </proc/loadavg
   limit=$(awk -v l="$load" -v c="$cores" 'BEGIN { x = 20 * l / c; print (x > 20 ? int(x + 1) : 20) }')
   start=$(date +%s%N)
+  # %p: a test may run other programs of the build, each writing a profile of its own.
+  [ -z "$cov" ] || export LLVM_PROFILE_FILE=$cov/$name-%p.profraw
   (cd "$root/$dir" && CARGO_MANIFEST_DIR=$root/$dir \
     systemd-run --user --scope --quiet --same-dir --slice=zedtests.slice \
     timeout -k 5 "$limit" "$@" >"$scratch" 2>&1)
@@ -932,4 +967,5 @@ if [ -s "$out/bench.log" ]; then
   cat "$out/bench.log"
 fi
 echo "pieces: $(wc -l <"$out/summary"), failed: $bad, load: $load, cores: $cores"
+[ -z "$cov" ] || echo "coverage profiles in $cov; a scaling verdict of this run is not to be relied on"
 [ "$bad" = 0 ]
