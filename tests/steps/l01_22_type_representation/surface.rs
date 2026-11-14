@@ -368,13 +368,23 @@ impl Seed {
     }
 }
 
-#[test]
-fn unions_differences_and_intersections_of_rows_read_back_as_the_same_type() {
-    for s in 0..400 {
+/// The unions, differences and intersections of rows made from the first `cases` seeds read
+/// back as the same type.
+fn formulas_read_back(cases: u64) {
+    for s in 0..cases {
         let mut seed = Seed(s * 7919 + 1);
         let w = 1 + seed.next(3) as usize;
         round_trip(&seed.formula(w, 3));
     }
+}
+
+/// Small instance of
+/// `bench::unions_differences_and_intersections_of_rows_read_back_as_the_same_type`
+/// (TEST-bench-move-l0123, author P178: many cases make a benchmark): the first 50 of its 400
+/// seeds.
+#[test]
+fn a_few_unions_differences_and_intersections_of_rows_read_back_as_the_same_type() {
+    formulas_read_back(50);
 }
 
 /// `n` levels of a pair of the level below: `2^n` paths, `n` nodes.

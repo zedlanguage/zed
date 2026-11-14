@@ -1,11 +1,12 @@
-//! Types, terms and patterns as deep as a program builds them, on the default stack of a test
-//! thread: a list type nested 100,000 deep, an atom payload as deep, a chain of morphism types,
-//! a program of nested `let`s, built, compared, printed and released. No test here sets a stack
-//! size other than the 2 MiB of a test thread, and no depth is refused.
+//! Types, terms and patterns nested in each other: a list type, an atom payload, a chain of
+//! morphism types, a program of nested `let`s, built, compared, printed and released.
 //!
-//! Each of these overflowed the 2 MiB stack at depth 100,000 when dropping, comparing or
-//! printing was a recursion (COMPLEXITY.md K39). Deciding whether a deep type is empty is still
-//! a recursion, and is not tested here (ledger item T2-types-rest).
+//! The tests here are small, on the default test thread. The same checks at the depths that
+//! overflowed the 2 MiB stack when dropping, comparing or printing was a recursion (100,000,
+//! COMPLEXITY.md K39) are in `deep_types/bench.rs`, run only under `--bench`
+//! (TEST-bench-move-l0123, author P178: a test that needs an unusual size is a benchmark).
+//! Deciding whether a deep type is empty is still a recursion, and is not tested here (ledger
+//! item T2-types-rest).
 
 use std::cell::RefCell;
 use std::sync::Mutex;
@@ -17,20 +18,9 @@ use zed_kernel::value::Value;
 use zed_kernel::{Pattern, Term};
 use zed_tests::scaling;
 
-/// How deep the types, terms, patterns and definition bodies go: 100,000, the depth at which
-/// each overflowed the 2 MiB stack when its release, comparison or text was a recursion (file
-/// header, COMPLEXITY.md K39), the smallest depth that record shows overflowing. It was 200,000
-/// for types and 1,000,000 for terms, patterns and bodies, which took 4 to 10 s a test under
-/// load (TEST-bench-move-l0123, author P169: a deep-stack test uses the smallest depth that
-/// still overflows a default stack). At 1,000,000 every test here passes too.
-const DEPTH: usize = 100_000;
-
-/// How deep the chains of morphism types go: each level costs about 127,000 instructions to
-/// build, 25 times a tuple's.
-const MORPHISMS: usize = 100_000;
-
-/// The size of the scaling tests, and 8 times it.
-const N: usize = 20_000;
+/// How deep the small tests nest their types, terms, patterns and bodies, on the default test
+/// thread (TEST-bench-move-l0123, author P178); the deep forms are in `bench`.
+const SMALL: usize = 40;
 
 /// A list of integers as a type, `(… ((int, int), int) …, int)`, nested `d` deep.
 fn list(d: usize) -> Type {
@@ -54,33 +44,29 @@ fn curried(d: usize) -> Type {
     (0..d).fold(Type::int(), |t, _| Type::exact(Type::int(), t))
 }
 
-/// A list type [`DEPTH`] deep built twice, compared, and released, on a thread of the usual
-/// 2 MiB stack of its own, so that the thread's tables of diagram nodes free the type when the
-/// thread ends, as `bench::releasing_deep_types_terms_and_patterns_scales` frees it.
-/// TEST-bench-move-l0123 (author P169): was 200,000 deep on the test's own thread; now 100,000
-/// deep (see [`DEPTH`]), and released at the end of a thread of its own, a path that only the
-/// benchmark checked before.
+/// Small instance of `bench::a_list_type_nested_deep_is_built_compared_and_released`
+/// (TEST-bench-move-l0123, author P178), on the test's own thread, which frees the type when
+/// it ends.
 #[test]
-fn a_list_type_nested_deep_is_built_compared_and_released() {
-    scaling::on_a_thread(2 << 20, || {
-        let (a, b) = (list(DEPTH), list(DEPTH));
-        assert_eq!(a, b);
-        assert!(a.subtype(&b));
-        assert!(a.contains(&list_value(DEPTH)));
-        assert!(!a.contains(&list_value(DEPTH - 1)));
-        assert!((&a - &b).is_empty());
-    });
+fn a_list_type_is_built_compared_and_released() {
+    let (a, b) = (list(SMALL), list(SMALL));
+    assert_eq!(a, b);
+    assert!(a.subtype(&b));
+    assert!(a.contains(&list_value(SMALL)));
+    assert!(!a.contains(&list_value(SMALL - 1)));
+    assert!((&a - &b).is_empty());
 }
 
-/// TEST-bench-move-l0123 (author P169): was 200,000 deep, now 100,000 (see [`DEPTH`]).
+/// Small instance of `bench::the_text_of_a_list_type_nested_deep_is_made`
+/// (TEST-bench-move-l0123, author P178).
 #[test]
-fn the_text_of_a_list_type_nested_deep_is_made() {
-    let t = list(DEPTH);
+fn the_text_of_a_list_type_is_made() {
+    let t = list(SMALL);
     let text = t.to_string();
     assert!(text.starts_with("(tuple (tuple (tuple"));
     assert!(text.ends_with("int) int) int)"));
-    assert_eq!(text.matches("tuple").count(), DEPTH);
-    assert!(t.surface().to_string().len() > DEPTH);
+    assert_eq!(text.matches("tuple").count(), SMALL);
+    assert!(t.surface().to_string().len() > SMALL);
 }
 
 #[path = "debug_samples.rs"]
@@ -157,47 +143,36 @@ fn debug_writes_the_derived_text_with_each_shared_node_once() {
     assert!(shared > 0, "some sample shares a node");
 }
 
-/// How deep the types whose `Debug` text is made go: each level of a list type writes about
-/// 1,000 bytes. The recursion of the derived `Debug`s overflowed the 2 MiB stack at 2,000 levels of a list or a
-/// curried function and at 1,000 of a numeral. TEST-bench-move-l0123 (author P169): was
-/// 20,000; now 2,000, the smallest depth this record shows overflowing for each of the three.
-/// The text of each nests as deep as when the derived `Debug`s overflowed: measured on the
-/// code of 2026-11-14, the text nests 16,005 brackets deep for a list 2,000 deep, 28,005 for a
-/// numeral (14,005 at 1,000) and 12,005 for a curried function.
-const DEBUG_DEPTH: usize = 2_000;
-
-/// TEST-bench-move-l0123 (author P169): was 20,000 levels, now 2,000 (see [`DEBUG_DEPTH`]).
+/// Small instance of `bench::the_debug_text_of_types_nested_deep_is_made`
+/// (TEST-bench-move-l0123, author P178).
 #[test]
-fn the_debug_text_of_types_nested_deep_is_made() {
-    let text = format!("{:?}", list(DEBUG_DEPTH));
+fn the_debug_text_of_nested_types_is_made() {
+    let text = format!("{:?}", list(SMALL));
     // Each level is a type with one tuple length, and the integers of each row are one more.
-    assert_eq!(text.matches("Type(").count(), 2 * DEBUG_DEPTH + 1);
+    assert_eq!(text.matches("Type(").count(), 2 * SMALL + 1);
     assert!(text.ends_with("morphisms: Bdd(false) }))"));
-    let text = format!("{:?}", numeral(DEBUG_DEPTH));
-    assert_eq!(text.matches("\"succ\": AtomPart").count(), DEBUG_DEPTH);
-    let text = format!("{:?}", curried(DEBUG_DEPTH));
-    assert_eq!(text.matches("Morphism { guarantee: ").count(), DEBUG_DEPTH);
+    let text = format!("{:?}", numeral(SMALL));
+    assert_eq!(text.matches("\"succ\": AtomPart").count(), SMALL);
+    let text = format!("{:?}", curried(SMALL));
+    assert_eq!(text.matches("Morphism { guarantee: ").count(), SMALL);
 }
 
-/// A numeral type [`DEPTH`] deep built twice, compared, printed and released, on a thread of the
-/// usual 2 MiB stack of its own, so that the thread's tables free it when the thread ends, as
-/// `bench::releasing_deep_types_terms_and_patterns_scales` frees it. TEST-bench-move-l0123
-/// (author P169): was 200,000 deep on the test's own thread; now 100,000 deep (see [`DEPTH`]),
-/// and released at the end of a thread of its own, a path only the benchmark checked before.
+/// Small instance of `bench::a_numeral_type_nested_deep_is_built_compared_and_released`
+/// (TEST-bench-move-l0123, author P178), on the test's own thread.
 #[test]
-fn a_numeral_type_nested_deep_is_built_compared_and_released() {
-    scaling::on_a_thread(2 << 20, || {
-        let n = numeral(DEPTH);
-        assert_eq!(n, numeral(DEPTH));
-        assert_eq!(n.to_string().matches("#succ").count(), DEPTH);
-    });
+fn a_numeral_type_is_built_compared_and_released() {
+    let n = numeral(SMALL);
+    assert_eq!(n, numeral(SMALL));
+    assert_eq!(n.to_string().matches("#succ").count(), SMALL);
 }
 
+/// Small instance of `bench::a_curried_function_type_is_built_compared_printed_and_released`
+/// (TEST-bench-move-l0123, author P178).
 #[test]
-fn a_curried_function_type_is_built_compared_printed_and_released() {
-    let f = curried(MORPHISMS);
-    assert_eq!(f, curried(MORPHISMS));
-    assert!(f.surface().to_string().len() > MORPHISMS);
+fn a_short_curried_function_type_is_built_compared_printed_and_released() {
+    let f = curried(SMALL);
+    assert_eq!(f, curried(SMALL));
+    assert!(f.surface().to_string().len() > SMALL);
 }
 
 /// `x = 0; x = x + 1; …; x`, `d` lets deep, as the elaborator builds a long block.
@@ -226,17 +201,16 @@ fn pattern(d: usize) -> Pattern {
     (0..d).fold(Pattern::Wild, |p, _| Pattern::Tuple(vec![Pattern::Wild, p]))
 }
 
-/// TEST-bench-move-l0123 (author P169): was 1,000,000 deep, now [`DEPTH`], 100,000, the depth
-/// at which a term and a pattern overflowed the 2 MiB stack when their release was a recursion
-/// (COMPLEXITY.md K39).
+/// Small instance of `bench::a_program_and_a_pattern_nested_deep_are_released`
+/// (TEST-bench-move-l0123, author P178).
 #[test]
-fn a_program_and_a_pattern_nested_deep_are_released() {
-    drop(block(DEPTH));
-    drop(matches(DEPTH));
-    drop(pattern(DEPTH));
+fn a_program_and_a_pattern_are_released() {
+    drop(block(SMALL));
+    drop(matches(SMALL));
+    drop(pattern(SMALL));
     drop(Term::App(
         Shared::new(Term::Var("f".into())),
-        vec![block(DEPTH), matches(DEPTH)],
+        vec![block(SMALL), matches(SMALL)],
     ));
 }
 
@@ -247,23 +221,21 @@ fn bodies(d: usize) -> (Expr, Expr) {
     (not, tuple)
 }
 
-/// TEST-bench-move-l0123 (author P169): was 1,000,000 deep, now [`DEPTH`], 100,000, the depth
-/// at which a definition body overflowed the 2 MiB stack when its release was a recursion
-/// (COMPLEXITY.md K39).
+/// Small instance of `bench::the_body_of_a_definition_nested_deep_is_released`
+/// (TEST-bench-move-l0123, author P178).
 #[test]
-fn the_body_of_a_definition_nested_deep_is_released() {
-    drop(bodies(DEPTH));
+fn the_body_of_a_definition_is_released() {
+    drop(bodies(SMALL));
 }
 
-/// TEST-bench-move-l0123 (author P169): was 4,000 types from the fixed seed 11; now 1,000 types
-/// from a new seed each run, printed (`ZED_SEED=<seed>` repeats it).
-#[test]
-fn the_text_of_a_type_made_from_the_outside_in_is_its_text_made_from_the_inside_out() {
+/// The text of `cases` random types made from the outside in is their text made from the
+/// inside out, from a new seed each run, printed (`ZED_SEED=<seed>` repeats it).
+fn outside_in_is_inside_out(cases: usize) {
     // The text of a type is made in a loop that tries a type, makes the texts it found
     // missing, and tries again. Printing every part first makes each text at the first try,
     // as the recursion did; both must give the same text.
     let (mut rng, seed) = zed_tests::instances::Rng::fresh("types made outside in and inside out");
-    for k in 0..1000 {
+    for k in 0..cases {
         let case = rng.next_u64();
         let outside_in = random(&mut case.clone(), 5, false);
         let inside_out = random(&mut case.clone(), 5, true);
@@ -275,6 +247,14 @@ fn the_text_of_a_type_made_from_the_outside_in_is_its_text_made_from_the_inside_
             "{why}"
         );
     }
+}
+
+/// Small instance of
+/// `bench::the_text_of_a_type_made_from_the_outside_in_is_its_text_made_from_the_inside_out`
+/// (TEST-bench-move-l0123, author P178): 50 random types, against its 1,000.
+#[test]
+fn the_text_of_a_few_types_made_from_the_outside_in_is_their_text_made_from_the_inside_out() {
+    outside_in_is_inside_out(50);
 }
 
 fn next(s: &mut u64) -> u64 {
@@ -335,18 +315,11 @@ fn random_in(s: &mut u64, d: u32, print: bool, tree: Option<&Trees>) -> Type {
     t
 }
 
-/// Checks that `run` scales as n log n at sizes [`N`] and 8 times it. Each run takes an input of
+/// Checks that `run` scales as n log n at sizes `n` and 8 times it. Each run takes an input of
 /// its own, `make(n, i)` for the `i`-th run at size `n`, all built before any run is timed, and
 /// what it returns is kept until the check ends, so its release is not timed either.
-fn scales<I: Send, O: Send>(
-    what: &str,
-    make: impl Fn(usize, usize) -> I,
-    run: impl Fn(usize, I) -> O + Sync,
-) {
-    scales_at(what, N, make, run);
-}
-
-/// [`scales`] at sizes `n` and 8 times it.
+/// (TEST-bench-move-l0123, author P169: `scales`, the same at the one size 20,000 for every
+/// benchmark, was removed when each benchmark was given its own size.)
 fn scales_at<I: Send, O: Send>(
     what: &str,
     n: usize,
@@ -397,9 +370,6 @@ fn a_recursive_type_inside_a_type_is_named_with_its_arguments() {
     assert_eq!(pair.to_string(), "(tuple Tree((| 12345 String)) int)");
 }
 
-/// How deep [`trees`] nests.
-const TREES: usize = 10_000;
-
 /// `type Tree(A) = #leaf(A) | #fork(Tree(A), Tree(A))`, its parameter named `param` and the
 /// type `name`. Groups that differ in either have instances of their own.
 fn tree(name: &str, param: &str) -> Group {
@@ -420,15 +390,17 @@ fn trees(group: &Group, leaf: Type, d: usize) -> Type {
     (0..d).fold(leaf, |t, _| group.instance(vec![t]).remove(0))
 }
 
+/// Small instance of `bench::a_recursive_type_nested_deep_in_its_own_arguments_is_printed`
+/// (TEST-bench-move-l0123, author P178).
 #[test]
-fn a_recursive_type_nested_deep_in_its_own_arguments_is_printed() {
+fn a_recursive_type_nested_in_its_own_arguments_is_printed() {
     // The name of each `Tree(…)` holds the text of its argument, another `Tree(…)` whose name
     // is not made yet: the loop that makes texts takes each name as an item of its stack.
-    let t = trees(&tree("Tree", "A"), Type::int(), TREES);
+    let t = trees(&tree("Tree", "A"), Type::int(), SMALL);
     let text = t.to_string();
     assert_eq!(
         text,
-        format!("{}int{}", "Tree(".repeat(TREES), ")".repeat(TREES))
+        format!("{}int{}", "Tree(".repeat(SMALL), ")".repeat(SMALL))
     );
     let pair = Type::tuple(vec![t, Type::int()]).to_string();
     assert_eq!(pair, format!("(tuple {text} int)"));
@@ -479,29 +451,26 @@ fn a_group_gives_one_instance_for_each_argument() {
     }
 }
 
+/// Small instance of `bench::a_recursive_type_nested_deep_in_its_own_arguments_is_released`
+/// (TEST-bench-move-l0123, author P178), on the test's own thread: freed at the end of its
+/// unit, and when the test's thread ends.
 #[test]
-fn a_recursive_type_nested_deep_in_its_own_arguments_is_released() {
-    // Each `Tree(…)` holds its argument, the instance below it, and was dropped by a recursion as
-    // deep as the nesting once the end of its unit or of its thread freed it (repair
-    // DEEP-types-regress). Freed both ways, on a thread of the usual 2 MiB stack.
-    scaling::on_a_thread(2 << 20, || {
-        drop(trees(&tree("Ended", "A"), Type::int(), TREES));
-        Type::forget_emptiness();
-    });
-    scaling::on_a_thread(2 << 20, || {
-        drop(trees(&tree("Exited", "A"), Type::int(), TREES));
-    });
+fn a_recursive_type_nested_in_its_own_arguments_is_released() {
+    drop(trees(&tree("SmallEnded", "A"), Type::int(), SMALL));
+    Type::forget_emptiness();
+    drop(trees(&tree("SmallExited", "A"), Type::int(), SMALL));
 }
 
-#[test]
-fn the_text_of_a_type_with_recursive_types_is_the_same_made_outside_in_and_inside_out() {
+/// The text of `cases` random types holding instances of `Tree(…)` is the same made from the
+/// outside in and from the inside out.
+fn outside_in_is_inside_out_with_trees(cases: u64) {
     // `Tree(…)` stands among the other parts, its arguments random too. Two groups would give
     // two sets of recursive nodes, which order the parts of a type differently, so both texts
     // are made with one group: first from the outside in, the loop making every name, then for
     // the type built again with the text of each part made before it is used, which shares the
     // recursive nodes and makes the other parts' texts anew. Each name must spell out the text
     // of its argument. A group of its own for each type keeps the names of one from another.
-    for k in 0..1500 {
+    for k in 0..cases {
         let trees = Trees {
             group: tree(&format!("T{k}"), "A"),
             made: RefCell::new(Vec::new()),
@@ -517,13 +486,21 @@ fn the_text_of_a_type_with_recursive_types_is_the_same_made_outside_in_and_insid
     }
 }
 
+/// Small instance of
+/// `bench::the_text_of_a_type_with_recursive_types_is_the_same_made_outside_in_and_inside_out`
+/// (TEST-bench-move-l0123, author P178): the first 100 of its 1,500 seeds.
+#[test]
+fn the_text_of_a_few_types_with_recursive_types_is_the_same_made_outside_in_and_inside_out() {
+    outside_in_is_inside_out_with_trees(100);
+}
+
 /// Operands of an xor chain on the default stack. The derived `Debug` wrote `2^n` copies of the
 /// first operand: 2.9 MB at 12 operands, 183 MB in 1 s at 18; this size would never end.
 /// TEST-bench-move-l0123 (author P169): was 16,000, now 256. What this guards is the size of
 /// the text, not the stack: measured on the code of 2026-11-14, the `Debug` text of the chain
 /// nests 93 brackets deep at 100 operands, 189 at 2,000 and 225 at 16,000 (the one form is
 /// built over a tree of the operands), against 12,000 to 16,000 where the derived `Debug`s
-/// overflowed the stack (see [`DEBUG_DEPTH`]). At 256 operands a `Debug` that writes a copy for
+/// overflowed the stack (see `DEBUG_DEPTH` in `bench`). At 256 operands a `Debug` that writes a copy for
 /// each path would write `2^256` copies, and the counts below still tell a text linear in the
 /// operands from one that is not.
 const XORS: usize = 256;
@@ -561,17 +538,16 @@ fn doubled(leaf: usize, d: usize) -> Type {
     (0..d).fold(leaf, |t, _| Type::tuple(vec![t.clone(), t]))
 }
 
-/// How deep [`doubled`] goes on the default stack. The `Debug` that wrote a type once per path
-/// wrote `2^d` copies of the leaf; this depth would never end.
-const DOUBLINGS: usize = 20_000;
-
+/// Small instance of `bench::the_debug_text_of_a_shared_type_writes_it_once`
+/// (TEST-bench-move-l0123, author P178): [`SMALL`] doublings, `2^40` paths, which a `Debug`
+/// that wrote the type once per path would never end either.
 #[test]
-fn the_debug_text_of_a_shared_type_writes_it_once() {
-    let text = format!("{:?}", doubled(0, DOUBLINGS));
+fn the_debug_text_of_a_type_shared_a_few_times_writes_it_once() {
+    let text = format!("{:?}", doubled(0, SMALL));
     // Each `t_k` below the top is numbered where first written and referred to once after.
-    assert_eq!(text.matches('=').count(), DOUBLINGS - 1);
-    assert_eq!(text.matches('#').count(), 3 * (DOUBLINGS - 1));
-    assert!(text.len() < 1_000 * DOUBLINGS);
+    assert_eq!(text.matches('=').count(), SMALL - 1);
+    assert_eq!(text.matches('#').count(), 3 * (SMALL - 1));
+    assert!(text.len() < 1_000 * SMALL);
 }
 
 #[path = "deep_types/bench.rs"]
