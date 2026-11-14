@@ -7,6 +7,7 @@ mod cases;
 mod fail_reading;
 mod int_reading;
 mod lattice_circles;
+mod layer_labels;
 mod p14_oracle;
 mod scaling;
 

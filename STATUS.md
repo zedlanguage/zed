@@ -1405,6 +1405,7 @@ LR4 added 27 tests (`lr4_assoc.rs` in `l01_08_parser`) and 23 bracketing cases t
 | FAIL-ports-key-past-i64 | merged and pushed (the commit that marks the row Done); no spec change | Found by TEST-complete-ports. Cause: `Frame::Index1` in `crates/zedc-check/src/check/walk.rs` gave a literal index past 64 bits the unknown type before `at_index`, so no dense read was recorded and the elaborator wrote a lookup that misses with `#notFound`. Fix: such a key goes to `at_index` with no tuple position, as a negative key does: `m.stdin[2^63]` and `m.args[2^63]` miss with `#outOfBounds`, and `(1, 2)[2^63]` is rejected (it was accepted). Tests: `l01_19_whole_file_ports::key_past_i64` (three tests, two red before the fix) |
 | FAIL-layer-mcu-target-value | merged and pushed (the commit that marks the row Done); no spec change | Found by TEST-complete-crates. Cause: `TARGET_ATOMS` in crates/zed-tools/src/layer.rs listed four target values, so `#mcu` outside `target(…)` counted as an L31 atom read; DESIGN sec:layers lists five. Fix: `#mcu` added, with a doc comment quoting DESIGN. Tests: `fail_layer_mcu` (2 tests: the row's, and the five values in each position); m0_03 133/133 |
 | TEST-m0_03-flake | merged and pushed (the commit that marks the row Done); no spec change | Found by TEST-complete-zir. Cause: two tests of m0_03 used the test directory `fuzz_real`, which `Dir::new` deletes and remakes, so one could delete the other's spec while both ran; not seen again in 90 runs, and the random fuzz seed is ruled out (1,200 seeds clean). `Dir::new` now gives a name once per test binary (a second use fails at once) and puts it under the binary's name; that found and fixed three more shared names in m0_03 and two in s_01 (test and benchmark). Test `m0_03_grammar_tools::test_dirs`; m0_03 134/134 |
+| TEST-m0-layer-label | merged and pushed (the commit that marks the row Done); no spec change | Found by TEST-complete-m0. `m0_04_corpus_references::layer_labels` checks each corpus program's `// layer` label with the `layer` tool against this repository's copy of the word table (`zed/grammar/words.md`, `Spec::of_impl`), not against `ZED_SPEC_DIR` as the row first said, which SPEC-standalone forbids; all 31 agree; a label below, no label and a label above are tested; m0_04 68/68 |
 
 ## Decisions made
 
@@ -2290,7 +2291,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-trivial-stop-after-model | running |  |  |
 | FAIL-types-sig-reflexive | running | 2026-11-14 07:40 |  |
 | STAGE-generic-fold | impl attempt 2 | 2026-11-09 09:24 | resumed from handoff; committing WIP tests, rebasing onto origin/main (386 behind); load 45.39 |
-| TEST-m0-layer-label | running |  |  |
 | XR-ffi-stateful-r45 | impl attempt 1 | 2026-11-13 22:45 | round 4 seats launched (Sol, Opus, Gemini; Gemini quota OK); load 43.71 44.82 43.20 |
 | XR-l139-family | orchestrator attempt  | 2026-11-13 18:59 | round 1 merge: f9936c4fe hull sides over two atoms from twovar::ends; cuts_scale 7.1, boxstar_scales 8.8 back; 262 pieces pass; load 51.10 48.05 49.56 |
 
