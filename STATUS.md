@@ -2315,18 +2315,16 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-check-if-carrier-branch-literal-at-rat | running | 2026-11-14 07:10 |  |
 | FAIL-curried-positional-lambda-order | running | 2026-11-14 08:57 |  |
 | FAIL-exact-oracle-mod-zero-seed | running | 2026-11-14 09:25 |  |
-| FAIL-fences-chain-count | impl attempt 2 | 2026-11-14 09:03 | Done, pushed: count 1044 confirmed by diffing chains over the fixtures before/after 7f5a483dc (+Current(), +makeCurrent(glfw:, window:), -terminate()); no code  |
-| FAIL-generic-fold-l0125 | impl attempt 1 | 2026-11-14 09:25 | own error: chained 'git rebase ...; git push' with ; once; rebase stopped on a conflict, push sent HEAD = origin/main 47f5e9383 (no-op, remote unchanged, checke |
 | FAIL-lattice-f32-literal | running | 2026-11-14 07:10 |  |
-| FAIL-pendants-rewrite-empty-seed | running |  |  |
-| FAIL-pendants-rewrite-growth-seed | running |  |  |
-| FAIL-pendants-route-quarter-seed | running |  |  |
-| FAIL-preimage-generic-literal-match | running |  |  |
+| FAIL-pendants-rewrite-empty-seed | running | 2026-11-14 10:10 |  |
+| FAIL-pendants-rewrite-growth-seed | running | 2026-11-14 10:10 |  |
+| FAIL-pendants-route-quarter-seed | running | 2026-11-14 10:10 |  |
 | FAIL-types-overload-bounded-tuple | impl attempt 1 | 2026-11-14 09:32 | started in wt/fix-types-overload at 9d4c6b7f1; load 37.18 49.72 50.76 |
 | FAIL-values-function-in-payload-run | impl attempt 2 | 2026-11-14 09:22 | start in /home/luke/Work/wt/fix-values, load 38.11 |
 | FAIL-values-function-in-tuple | impl attempt 2 | 2026-11-14 07:33 | start in /home/luke/Work/wt/fix-values, load 38.11 |
 | FAIL-window-two-shadows-seed | running | 2026-11-14 08:57 |  |
-| MUTATE-generic-constants | impl attempt 1 | 2026-11-14 09:08 | started in wt/generic-fold-2, load 64.11 |
+| FIX-functions-in-tuples | running | 2026-11-11 16:34 |  |
+| MUTATE-generic-constants | impl attempt 1 | 2026-11-14 09:08 | bench finding generic chain 100/800 ratio 7.926 (instr), finding n functions 7.900, chain 7.946, running generic chain 25/200 54.142 (order 2); negative control |
 | STAGE-generic-fold-div | impl attempt 1 | 2026-11-14 09:08 | started in wt/generic-fold-2, load 64.11 |
 | TEST-cov-run-settings | running | 2026-11-14 09:42 |  |
 | TEST-fixture-write-race | running | 2026-11-14 09:42 |  |
