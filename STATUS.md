@@ -2231,12 +2231,15 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | CONST-too-large-coprime-base | impl attempt 1 | 2026-11-14 00:07 | started; load 26.51 34.74 41.48 |
 | DOC-deferred-refs | running | 2026-11-14 00:03 |  |
 | FAIL-diag-wide-literals-notes | impl attempt 1 | 2026-11-14 06:06 | started; load 27.50 38.87 42.82 |
+| FAIL-scaling-cold-8n-bytes | impl attempt 1 | 2026-11-14 06:09 | started; worktree /home/luke/Work/wt/fail-scaling-cold-8n |
 | STAGE-generic-fold | impl attempt 1 | 2026-11-09 09:24 | started; worktree from 93fde8efa |
 | TEST-bench-move-l0123 | impl attempt 1 | 2026-11-14 01:43 | started; worktree made and seeded |
+| TEST-complete-lattices | impl attempt 1 | 2026-11-14 06:09 | started; worktree test-complete-lattices on 28be33f10 |
 | TEST-complete-literals | impl attempt 1 | 2026-11-14 05:43 | started; worktree made and seeded / 46.93 50.40 50.21 |
 | TEST-complete-m0 | impl attempt 1 | 2026-11-14 05:28 | m0_11 merged: 4 tests added (24 pass), COMPLETENESS.md; axioms.rs 61->83%; row FAIL-limits-steps-memory filed |
 | TEST-complete-misc | impl attempt 1 | 2026-11-14 05:46 | started; worktree seeded at a047ea74c |
 | TEST-complete-ports | impl attempt 1 | 2026-11-14 05:21 | survey done; coverage build started (build/cov, -j 4) / load 55.24 56.11 49.65 |
+| TEST-complete-preimage | impl attempt 1 | 2026-11-14 06:10 | started; worktree made and seeded at 28be33f10 |
 | TEST-complete-reduced | impl attempt 1 | 2026-11-14 05:52 | started; worktree made and seeded; load 52.75 |
 | TEST-corr-slow-l0138 | running | 2026-11-14 04:03 |  |
 | XR-ffi-stateful-r45 | impl attempt 1 | 2026-11-13 22:45 | round 4 seats launched (Sol, Opus, Gemini; Gemini quota OK); load 43.71 44.82 43.20 |
