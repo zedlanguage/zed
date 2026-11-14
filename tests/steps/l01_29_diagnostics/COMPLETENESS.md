@@ -34,7 +34,7 @@ outside linear arithmetic, tested in `l01_38_presburger`.
 | Addresses: printed only under `--addresses`, stable; `--suppress` | `rejection_addresses.rs`, `suppress.rs`, `suppress_binary.rs` | |
 | Warnings: widening, a refused question in an accepted unit and in a rejection | `widen.rs`, `widen_test.rs`, `refused_warning.rs`, `refused_in_rejection.rs` | |
 | A refused check over a recursive type group; an overload set's waits | `group_site.rs`, `overload_cycles.rs` | |
-| Constants folded the same on every machine; a power larger than the address space; `main`'s limits | `fold_machine.rs`, `too_large.rs`, `main_limits.rs` | |
+| Constants folded the same on every machine; a power larger than the address space; `main`'s limits, the memory limit up to the address space, 2^64 bytes, and the rejection past it naming `2^64`, which compiles | `fold_machine.rs`, `too_large.rs`, `main_limits.rs` | |
 | A panic in zedc reported as a bug in zedc | `bug.rs` | |
 | Every command of the executable prints a rejection in full | `commands_binary.rs` | |
 | Batch and single-file checking agree | `batch.rs`; `syntax_recovery.rs`, `package_recovery.rs` | |

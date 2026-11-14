@@ -153,3 +153,56 @@ fn rejecting_many_powers_past_the_memory_limit() {
         powers_past_the_memory_limit_rejected(&powers(n), n);
     }
 }
+
+/// `main` with the memory limit `memory`, which writes one string.
+fn with_memory_limit(memory: &str) -> String {
+    format!("@limits(memory: {memory})\nmain(m: MainArgs) {{\n    m.stdout <- \"a\";\n}}\n")
+}
+
+#[test]
+fn the_largest_memory_limit_is_the_address_space_and_a_larger_one_names_it() {
+    // FAIL-check-memory-limit-2-63 (found by TEST-complete-crates): the rejection of a limit
+    // past the address space said "write at most `2^63`", and `2^63` was rejected with the same
+    // message. The address space of Linux x86_64 is 2^64 bytes, 16 EiB (DESIGN.md
+    // sec:checking_in_zed, "Linux x86_64 addresses 16 EiB"), so every limit up to it compiles,
+    // and the rejection of one past it names it; a repair is code the checker accepts
+    // (sec:diagnostics).
+    for fits in ["1", "2^63 - 1", "2^63", "2^64 - 1", "2^64"] {
+        assert_eq!(built(&with_memory_limit(fits)), None, "memory: {fits}");
+    }
+    for past in ["2^64 + 1", "2^65", "2^(2^70)"] {
+        let out = built(&with_memory_limit(past)).unwrap_or_else(|| panic!("memory: {past}"));
+        assert!(
+            out.contains(&format!(
+                "`memory: {past}` is more memory than Linux x86_64 addresses: write at most \
+                 `2^64`."
+            )),
+            "memory: {past}\n{out}"
+        );
+        let at_most = out
+            .split("write at most `")
+            .nth(1)
+            .and_then(|rest| rest.split('`').next())
+            .unwrap_or_else(|| panic!("no largest limit named: {out}"));
+        assert_eq!(
+            built(&with_memory_limit(at_most)),
+            None,
+            "memory: {at_most}"
+        );
+    }
+}
+
+#[test]
+fn a_repair_that_raises_the_memory_limit_past_2_to_the_63_compiles() {
+    // `b ^ (2^60)`, `b = 2^64 + 13`, needs a little more than 2^63 bytes, within the address
+    // space: the repair of the limit is the least power of two that holds it, `2^64`, which is
+    // the address space itself and must compile (FAIL-check-memory-limit-2-63).
+    let src = "@limits(memory: 1048576)\nmain(m: MainArgs) {\n    b = 2^64 + 13;\n    \
+               m.stdout <- String(b ^ (2^60) > 0);\n}\n";
+    let out = rejected(src);
+    assert!(out.contains("@limits(memory: 2^64)"), "{out}");
+    assert_eq!(
+        built(&src.replace("@limits(memory: 1048576)", "@limits(memory: 2^64)")),
+        None
+    );
+}

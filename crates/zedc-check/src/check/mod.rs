@@ -1340,7 +1340,7 @@ struct Ck<'t, 'a> {
     /// The memory limit written before `main`, in bytes, the span of its `@limits` and that of
     /// the argument of `memory:` ([`Self::main_limits`]): a number proved larger is rejected
     /// ([`Self::too_large_power`]).
-    main_memory: Option<(u64, Span, Span)>,
+    main_memory: Option<(u128, Span, Span)>,
     /// The powers of a wide base found within the address space, by span, with what the walk
     /// found of each at its site, for [`Self::powers_over_main_limit`] to judge against the
     /// memory limit of `main` once it is read.
@@ -7248,7 +7248,7 @@ fn binary_prim(op: BinaryOp) -> Option<Prim> {
 // `(2^64 + 13) ^ 258111`, the largest power of that base the bound allows, takes about 0.3 s
 // of processor time beyond the rest of the check, and `(2^64 + 13) ^ (2^22)`, at eight times
 // the bound, several seconds. It also lies far below the address space of every target (2^64
-// bytes on Linux x86_64, `walk::ADDRESS_BYTES_LOG2`), so a fold the bound lets through is one
+// bytes on Linux x86_64, `limits::ADDRESS_BYTES_LOG2`), so a fold the bound lets through is one
 // the target could hold.
 //
 // Left open (plan row CONST-fold-budget-failure): DESIGN.md ("Limits", sec:checking_in_zed)

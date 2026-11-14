@@ -34,6 +34,13 @@ pub(super) fn target_text(target: &str) -> String {
     format!("{os} {arch}")
 }
 
+/// The base-2 logarithm of the bytes every target zedc builds for addresses: each is a 64-bit
+/// architecture (`zedc::build::TARGETS`: x86_64, aarch64 and riscv64), whose pointers count
+/// 2^64 bytes, 16 EiB. A result larger than this is held by no memory of the target, whatever
+/// the machine that builds it ([`Ck::too_large_power`]), and it is the largest memory limit of
+/// `main` ([`Ck::bytes_limit`]; DESIGN.md sec:ports).
+pub(super) const ADDRESS_BYTES_LOG2: u32 = 64;
+
 /// `r` seconds as a [`Duration`], rounded up to a whole nanosecond, so that a limit is never
 /// shorter than written; `None` where `r` is not above 0 or is longer than `u64::MAX`
 /// nanoseconds (585 years). O(size of `r`).
@@ -63,25 +70,40 @@ impl<'a> Ck<'_, 'a> {
     }
 
     /// The bytes of `memory: code`, written at `at`, whose fixed value is `value`, a positive
-    /// `int`; `None`, with the rejection, where the text fixes no value, or one that is not
-    /// positive or passes the target's address space.
+    /// `int` of at most the target's address space, 2^[`ADDRESS_BYTES_LOG2`] bytes; `None`,
+    /// with the rejection, where the text fixes no value, or one that is not positive or passes
+    /// the address space. The rejection names the largest limit, `2^64`, which compiles
+    /// (FAIL-check-memory-limit-2-63: it named `2^63` and accepted only up to `2^63 - 1`, the
+    /// largest `i64`). A limit above `2^64 - 1` bytes is held here exactly; the run's limit is
+    /// a `u64` ([`zed_kernel::limits::MainLimits::memory`]), and [`Ck::main_limits`] writes it
+    /// as `u64::MAX`. A value past `i64::MAX` is compared with `2^64` by [`Rat`]'s order, which
+    /// orders a factored value such as `2^(2^70)` by its bounds without building it
+    /// (`main_limits::the_largest_memory_limit_is_the_address_space_and_a_larger_one_names_it`
+    /// in tests/steps/l01_29_diagnostics); only a value within the address space, at most 65
+    /// bits, is built. O(1) beyond that comparison.
     pub(super) fn bytes_limit(
         &mut self,
         at: Span,
         code: &str,
         value: Option<Value>,
-    ) -> Option<u64> {
+    ) -> Option<u128> {
+        let space: i128 = 1 << ADDRESS_BYTES_LOG2;
         let why = match value {
-            Some(Value::Int(b)) if b > 0 => return Some(b.unsigned_abs()),
+            Some(Value::Int(b)) if b > 0 => return Some(u128::from(b.unsigned_abs())),
             Some(Value::Int(_)) => format!(
                 "`memory: {code}` leaves the run no memory: the memory limit of `main` is a \
                  number of bytes above 0, as `memory: 1048576` for 1 MiB."
             ),
+            Some(Value::Big(r)) if !r.is_negative() && *r <= Rat::int(space.into()) => {
+                let (n, _) = r.built_parts().expect("at most 65 bits");
+                return Some(u128::try_from(&*n).expect("at most 2^64"));
+            }
             Some(Value::Big(r)) if !r.is_negative() => format!(
-                "`memory: {code}` is more memory than {} addresses: write at most `2^63`.",
+                "`memory: {code}` is more memory than {} addresses: write at most `2^{}`.",
                 self.t
                     .target
-                    .map_or("a 64-bit target".to_string(), target_text)
+                    .map_or("a 64-bit target".to_string(), target_text),
+                ADDRESS_BYTES_LOG2
             ),
             Some(_) => format!(
                 "`memory: {code}` is not a number of bytes: the memory limit of `main` is an \

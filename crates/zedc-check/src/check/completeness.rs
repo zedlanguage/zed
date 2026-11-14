@@ -36,7 +36,7 @@ fn rat(n: i128, d: i128) -> Value {
 }
 
 /// `bytes_limit` of `value` with the target `target`: the bytes, or the one message.
-fn bytes(target: Option<&str>, value: Option<Value>) -> Result<u64, String> {
+fn bytes(target: Option<&str>, value: Option<Value>) -> Result<u128, String> {
     let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
     let mut t = Tables::new(&[], &res);
     t.target = target;
@@ -77,22 +77,32 @@ fn duration(value: Option<Value>) -> Result<Duration, String> {
 #[test]
 fn a_memory_limit_is_a_positive_int_of_bytes_within_the_address_space() {
     assert_eq!(bytes(None, Some(Value::Int(1))), Ok(1));
-    assert_eq!(bytes(None, Some(Value::Int(i64::MAX))), Ok(i64::MAX as u64));
+    assert_eq!(
+        bytes(None, Some(Value::Int(i64::MAX))),
+        Ok(i64::MAX as u128)
+    );
     let none = "`memory: n` leaves the run no memory: the memory limit of `main` is a number of \
                 bytes above 0, as `memory: 1048576` for 1 MiB.";
     assert_eq!(bytes(None, Some(Value::Int(0))), Err(none.into()));
     assert_eq!(bytes(None, Some(Value::Int(-1))), Err(none.into()));
-    // Past `i64::MAX`, the target's address space is named, system first.
-    let big = Value::int((1i128 << 64).into());
+    // Past `i64::MAX` and up to the address space, 2^64 bytes, the limit is kept exactly
+    // (FAIL-check-memory-limit-2-63).
+    for b in [1u128 << 63, (1 << 64) - 1, 1 << 64] {
+        let v = Value::int(i128::try_from(b).expect("below 2^127").into());
+        assert!(matches!(v, Value::Big(_)));
+        assert_eq!(bytes(None, Some(v)), Ok(b));
+    }
+    // Past the address space, it is named, system first, and the largest limit with it.
+    let big = Value::int(((1i128 << 64) + 1).into());
     assert!(matches!(big, Value::Big(_)));
     assert_eq!(
         bytes(Some("x86_64-linux"), Some(big.clone())),
-        Err("`memory: n` is more memory than Linux x86_64 addresses: write at most `2^63`.".into())
+        Err("`memory: n` is more memory than Linux x86_64 addresses: write at most `2^64`.".into())
     );
     assert_eq!(
         bytes(None, Some(big)),
         Err(
-            "`memory: n` is more memory than a 64-bit target addresses: write at most `2^63`."
+            "`memory: n` is more memory than a 64-bit target addresses: write at most `2^64`."
                 .into()
         )
     );

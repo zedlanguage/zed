@@ -11,7 +11,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use super::arms::{Item, Node, Summarized, Translated, prim_of, var};
-use super::limits::target_text;
+use super::limits::{ADDRESS_BYTES_LOG2, target_text};
 use super::*;
 use zed_kernel::Shared;
 use zed_kernel::limits::{Kill, MainLimits};
@@ -8384,9 +8384,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                 "limits" => {
                     if let Some(e) = arg("memory") {
                         let (code, value) = self.limit_value(e);
-                        limits.memory = self.bytes_limit(e.span, code, value);
-                        if let Some(b) = limits.memory {
+                        if let Some(b) = self.bytes_limit(e.span, code, value) {
                             self.main_memory = Some((b, a.span, e.span));
+                            // The run's limit is a `u64`: the one limit it cannot hold, 2^64
+                            // bytes, the whole address space, is written `u64::MAX`, one byte
+                            // less, which no 64-bit process can reach either (RLIMIT_DATA's
+                            // `u64::MAX` is RLIM_INFINITY, no limit).
+                            limits.memory = Some(u64::try_from(b).unwrap_or(u64::MAX));
                         }
                     }
                     if let Some(e) = arg("cpu") {
@@ -8438,7 +8442,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let Some((b, ..)) = self.main_memory else {
             return;
         };
-        let room = Num::from(i128::from(b) * 8);
+        let room = Num::from(i128::try_from(b * 8).expect("at most 2^67"));
         // Every operation past the limit, as `(start, end)`: an operation is reported only
         // where no operation inside it is past the limit too, so `String(x * x)` with `x * x`
         // past the limit is reported at `x * x` alone, the one cause.
@@ -8521,12 +8525,12 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The note of the memory limit of `main`, `b` bytes, written at `at`.
-    fn main_limit_note(b: u64, at: Span) -> Note {
+    fn main_limit_note(b: u128, at: Span) -> Note {
         Note {
             span: at,
             text: format!(
                 "the memory limit of `main` lets the run hold {}",
-                bytes_text_of(&Num::from(b))
+                bytes_text_of(&Num::from(i128::try_from(b).expect("at most 2^64")))
             ),
         }
     }
@@ -8535,7 +8539,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// the memory limit of `main` in bytes, its `@limits` and the argument of `memory:`, than
     /// that limit: the message, the derivation of the least size, and the repairs, a smaller
     /// exponent and, for the limit, a larger limit.
-    fn power_too_large(&mut self, p: &WidePower<'a>, main_limit: Option<(u64, Span, Span)>) {
+    fn power_too_large(&mut self, p: &WidePower<'a>, main_limit: Option<(u128, Span, Span)>) {
         let WidePower {
             a,
             e,
@@ -8550,7 +8554,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             ref k,
         } = *p;
         let space_bits = 1u128 << (ADDRESS_BYTES_LOG2 + 3);
-        let room_bits = main_limit.map_or(space_bits, |(b, ..)| u128::from(b) * 8);
+        let room_bits = main_limit.map_or(space_bits, |(b, ..)| b * 8);
         let power = self.code(Some(span)).unwrap_or("this power");
         let base_code = self.code(Some(a.span)).unwrap_or("the base");
         let exponent_code = self.code(Some(e.span)).unwrap_or("the exponent");
@@ -8770,7 +8774,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `main_limit`, the memory limit of `main` in bytes, its `@limits` and the argument of
     /// `memory:`, than that limit: the message, the derivation of the least size, and, for the
     /// limit, a larger limit.
-    fn product_too_large(&mut self, p: &WideProduct<'a>, main_limit: Option<(u64, Span, Span)>) {
+    fn product_too_large(&mut self, p: &WideProduct<'a>, main_limit: Option<(u128, Span, Span)>) {
         let WideProduct {
             op,
             a,
@@ -8952,7 +8956,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Rejects the operation `w`, which builds more than the target's address space, or, with
     /// `main_limit`, the memory limit of `main` in bytes, its `@limits` and the argument of
     /// `memory:`, than that limit: the message, why the operation builds, and the repairs.
-    fn build_too_large(&mut self, w: &WideBuild, main_limit: Option<(u64, Span, Span)>) {
+    fn build_too_large(&mut self, w: &WideBuild, main_limit: Option<(u128, Span, Span)>) {
         let code = self.code(Some(w.span)).unwrap_or("this operation");
         let message = match main_limit {
             Some((_, at, _)) => self.main_limit_headline(code, &w.bits, at),
@@ -15583,12 +15587,6 @@ fn default_repairs(name: &str, got: &str, want: &str, both: &str, span: Span) ->
 
 /// A repair of an int `^`: the rewritten code, and the words that follow it, or none.
 type Repair = (String, String);
-
-/// The base-2 logarithm of the bytes every target zedc builds for addresses: each is a 64-bit
-/// architecture (`zedc::build::TARGETS`: x86_64, aarch64 and riscv64), whose pointers count
-/// 2^64 bytes, 16 EiB. A result larger than this is held by no memory of the target, whatever
-/// the machine that builds it ([`Ck::too_large_power`]).
-const ADDRESS_BYTES_LOG2: u32 = 64;
 
 /// The number `v` as a `rat`, as `rat(v)` widens an `int`; `None` for any other value.
 fn at_rat(v: Value) -> Option<Value> {

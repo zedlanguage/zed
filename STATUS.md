@@ -1407,6 +1407,7 @@ LR4 added 27 tests (`lr4_assoc.rs` in `l01_08_parser`) and 23 bracketing cases t
 | TEST-m0_03-flake | merged and pushed (the commit that marks the row Done); no spec change | Found by TEST-complete-zir. Cause: two tests of m0_03 used the test directory `fuzz_real`, which `Dir::new` deletes and remakes, so one could delete the other's spec while both ran; not seen again in 90 runs, and the random fuzz seed is ruled out (1,200 seeds clean). `Dir::new` now gives a name once per test binary (a second use fails at once) and puts it under the binary's name; that found and fixed three more shared names in m0_03 and two in s_01 (test and benchmark). Test `m0_03_grammar_tools::test_dirs`; m0_03 134/134 |
 | TEST-m0-layer-label | merged and pushed (the commit that marks the row Done); no spec change | Found by TEST-complete-m0. `m0_04_corpus_references::layer_labels` checks each corpus program's `// layer` label with the `layer` tool against this repository's copy of the word table (`zed/grammar/words.md`, `Spec::of_impl`), not against `ZED_SPEC_DIR` as the row first said, which SPEC-standalone forbids; all 31 agree; a label below, no label and a label above are tested; m0_04 68/68 |
 | FAIL-lattice-f32-literal | merged and pushed (the commit that marks the row Done); no spec change | An `f32` literal's cell left the float class at the top: `Cell::literal` (crates/zedc-lattice/src/cell.rs) matched `Value::Float` only. New arm for `Value::Float32`, through the exact conversion to `f64`. l01_24 f32_literal.rs, 3 tests: 92 passed 2 failed before, 94 passed after. l01_24, m0_05, zedc_lattice, l01_39, l01_39b, l01_21, l01_37a, m0_01, m0_12: 222 pieces, 0 failed; the twelve checker groups that use `f32`: 1595 pieces, the two failures being the tests of FAIL-check-decimal-past-f64-at-rat and FAIL-check-if-carrier-branch-literal-at-rat, not yet committed. |
+| FAIL-check-memory-limit-2-63 | merged and pushed (the commit "FAIL-check-memory-limit-2-63: ..." that marks the row Done); DESIGN sec:ports states the largest memory limit, 2^64 bytes (zed 13d5b87) | Found by TEST-complete-crates. `@limits(memory: 2^63)`, the limit the rejection named, was rejected too; the limit is now 1 to 2^64 bytes, the target's address space, and the rejection past it names `2^64`. |
 
 ## Decisions made
 
@@ -2278,7 +2279,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-check-decimal-past-f64-at-rat | running | 2026-11-14 07:10 |  |
 | FAIL-check-generic-need-ignores-arm | running |  |  |
 | FAIL-check-if-carrier-branch-literal-at-rat | running | 2026-11-14 07:10 |  |
-| FAIL-check-memory-limit-2-63 | running | 2026-11-14 07:40 |  |
 | FAIL-diagnostics-follow-on | running | 2026-11-14 07:10 |  |
 | FAIL-diagnostics-member-headline | running | 2026-11-14 07:10 |  |
 | FAIL-initial-reads-shadowed | running | 2026-11-14 07:40 |  |
