@@ -3798,6 +3798,23 @@ struct Split {
     /// and constraints, and the group of each variable ([`Split::with`]).
     groups: Vec<(BTreeSet<Factor>, Vec<Con>)>,
     group: BTreeMap<Factor, usize>,
+    /// Each group's constraints as [`Split::with`] writes them for a part that holds two of
+    /// its variables and no other constraint, made the first time a part asks, and shared by
+    /// every such part.
+    // Complexity tradeoff: naive version, the group's g constraints copied, sorted and joined
+    // into a new formula for each part that holds two of its variables, O(g log g) per part,
+    // and the formula hashed again when it is compared with the part's old one, O(g): for
+    // `persist`'s k disjunctions on `x` and `y` under one group of its k constraints
+    // `x + j*y >= -1000`, each of the O(k) constraints added makes all O(k) parts read it
+    // again, O(k^3 log k) in all (36.4M instructions of 98.4M in `Block::update` at k = 16).
+    // Used: one formula per group per split, made once, O(g log g), and shared by the parts,
+    // O(log g) each; its hash is kept with it (`Formula::sig`), so the comparison with an old
+    // formula of another length costs O(1) after the first. The formula is the one the naive
+    // version makes, from the same sorted and deduplicated constraints, so every `PartWith`
+    // is equal to what it was, and no record or answer changes. Measured (`probe_l139`,
+    // persist, k = 16): 537.1M instructions before, 500.1M after. Prior work: one shared copy
+    // of a value built on first use (memoization, as in hash-consing). COMPLEXITY.md C64.
+    joined: Vec<OnceLock<Arc<Formula>>>,
     // Complexity tradeoff: built once per split, O(t) in the t terms of the constraints; the
     // part's key and what it is projected with take a reference to it, O(1), where they took
     // a deep copy each, O(t). COMPLEXITY.md C41.
@@ -3828,11 +3845,13 @@ impl Split {
             }
         }
         let (groups, group) = linked(cons);
+        let joined = groups.iter().map(|_| OnceLock::new()).collect();
         Split {
             eqs: eqs.into(),
             on,
             groups,
             group,
+            joined,
             base: Arc::new(extreme_base(cons)),
             least: cons.iter().min().map(|&c| c.clone()),
             leaf: leaf.cloned(),
@@ -3873,7 +3892,29 @@ impl Split {
                 *held.entry(i).or_insert(0) += 1;
             }
         }
-        let mut boxed: Vec<Con> = terms(g)
+        let ts = terms(g);
+        // One group that holds two of `g`'s variables, and every constraint on `g`'s terms in
+        // it: the constraints are that group's, written once ([`Split::joined`]).
+        let mut two = held.iter().filter(|&(_, &k)| k >= 2).map(|(&i, _)| i);
+        if let (Some(i), None) = (two.next(), two.next()) {
+            let own = |c: &Con| -> bool {
+                let Some(x) = factors_of(c.lin.terms.keys()).into_iter().next() else {
+                    return false;
+                };
+                groups.group.get(&x) == Some(&i)
+                    && groups.on.get(&unsigned(c)).is_some_and(|cs| cs.contains(c))
+            };
+            if ts.iter().filter_map(|t| self.on.get(t)).flatten().all(own) {
+                let f = groups.joined[i].get_or_init(|| {
+                    let mut cs = groups.groups[i].1.clone();
+                    cs.sort_unstable();
+                    cs.dedup();
+                    Arc::new(Formula::and(cs.into_iter().map(Formula::Con).collect()))
+                });
+                return (self.eqs.clone(), Some(f.clone()));
+            }
+        }
+        let mut boxed: Vec<Con> = ts
             .iter()
             .filter_map(|t| self.on.get(t))
             .flatten()
@@ -4576,7 +4617,7 @@ impl Block {
     fn reframe(
         &mut self,
         changed: &BTreeSet<BTreeMap<Atom, Int>>,
-        due: &mut BTreeSet<PartAt>,
+        due: &mut Vec<PartAt>,
         groups: bool,
         spent: &imbl::OrdSet<BoundsKey>,
     ) -> bool {
@@ -4767,7 +4808,7 @@ impl Block {
                     self.unindex_bounds(&at, &was);
                     self.index_bounds(&at, &bounds);
                 }
-                due.insert(at);
+                due.push(at);
             }
         }
         true
@@ -4804,7 +4845,7 @@ impl Block {
         names: &imbl::OrdMap<Arc<str>, Product>,
         groups: bool,
         spent: &imbl::OrdSet<BoundsKey>,
-    ) -> Option<(Block, BTreeSet<PartAt>)> {
+    ) -> Option<(Block, Vec<PartAt>)> {
         let blocks = relation.blocks();
         if blocks.is_apart(self.id) != self.apart {
             return None;
@@ -4876,7 +4917,20 @@ impl Block {
                 next.free.insert(n.clone(), now.clone());
             }
         }
-        let mut due: BTreeSet<PartAt> = BTreeSet::new();
+        // Complexity tradeoff: naive version, each part made due put in a `BTreeSet` as it is
+        // found. A node of the set is searched in order, so u parts that fall in one node cost
+        // O(u) comparisons each, and two parts of one name differ only deep in their formulas:
+        // in `hopb` a case on `x` makes its k disjunctions due at each wake, O(k^2) deep
+        // comparisons per wake (15.2M instructions at k = 16, 0.1M at k = 2). Used: the parts
+        // pushed on a vector, which is sorted once (a stable sort, which finds the runs each
+        // name's users already give in order) and then rid of each part equal to the one
+        // before it, O(u log r) comparisons for r runs. The set kept the first of two equal
+        // parts and gave them in order; the stable sort and `dedup_by` keep the first and give
+        // the same order, so the same parts are due in the same order and no answer changes.
+        // Measured (`probe_l139`, hopb, k = 16): 5.9M instructions fewer. Prior work: building
+        // a set from a sorted run in one pass, as `BTreeSet::from_iter` does, instead of
+        // inserting each element.
+        let mut due: Vec<PartAt> = Vec::new();
         // The constraints first, so that a part added after reads them as they are now.
         let mut changed: BTreeSet<BTreeMap<Atom, Int>> = BTreeSet::new();
         for (g, (added, gone)) in &delta {
@@ -4962,6 +5016,8 @@ impl Block {
         }
         let forgot = std::mem::take(&mut next.forgot);
         due.extend(forgot);
+        due.sort();
+        due.dedup_by(|a, b| a.0 == b.0 && a.1.cmp(&b.1).is_eq());
         // A part made due above may be gone since, with its conjunct.
         due.retain(|at| {
             next.parts.get(at).is_some_and(|p| {
@@ -14183,7 +14239,28 @@ fn bounds_at(
     let own = g.atoms();
     let mut context = Vec::new();
     let mut renamed = BTreeSet::new();
-    for c in with.0.iter().chain(with.1.iter().flat_map(|f| rows(f))) {
+    // When the block has no equalities and `g` has two names, which every row of every arm
+    // holds both of, the rows of `with` change no entry: the rows kept from `with` are then on
+    // `g`'s two names alone (an equality is kept on other names, and the block has none: its
+    // splits all share the equalities, `Block::reframe`, so `with.1` holds none when `with.0`
+    // is empty), such a row holds no name an arm's row lacks, so [`cancelled`] adds no row,
+    // and the pair of names it gives below is the arms' own pair, there already.
+    // Complexity tradeoff: naive version, every row of `with` read and kept, then read again
+    // for each row of each arm, O(w) per call for w rows of `with`: `persist`'s k disjunctions
+    // on `x` and `y`, made due by each of its k constraints `x + j*y >= -1000` in their group,
+    // read all of them each time, O(k^2) per test and O(k^3) in all (`bounds_at` took 14.2M
+    // instructions at k = 16). Used: the arms' rows read first, O(r) for r rows, and `with`
+    // not read when the rule above holds; otherwise as before. No entry changes, so no part is
+    // due other than before and no answer changes. Measured (`probe_l139`, persist, k = 16):
+    // 7.0M instructions fewer. Prior work: none beyond skipping a scan whose result is known.
+    let closed = with.0.is_empty()
+        && own.len() == 2
+        && own.iter().all(|x| matches!(x, Atom::Sym(_)))
+        && arms.iter().all(|a| {
+            rows(a).all(|r| r.lin.terms.len() == 2 && r.lin.terms.keys().all(|x| own.contains(x)))
+        });
+    let context_rows = with.0.iter().chain(with.1.iter().flat_map(|f| rows(f)));
+    for c in context_rows.filter(|_| !closed) {
         let mut on = c.lin.terms.keys();
         if on.clone().all(|x| own.contains(x))
             || (c.rel == Rel::Eq
