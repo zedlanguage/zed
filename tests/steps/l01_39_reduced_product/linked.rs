@@ -1372,9 +1372,10 @@ fn shortest_paths_with_holes_and_sums_between_give_the_projection_block_by_block
 
 /// Counts of [`holes_in_trees`]: tests that moved an interval, left a name with holes, left
 /// two names or more with holes, or made the scope empty; pairs of inequalities that made a
-/// cycle of weight 0; tests that joined both arms.
+/// cycle of weight 0; tests that joined both arms; trees drawn.
 #[derive(Debug, Default)]
 struct HoleCounts {
+    trees: usize,
     moved: usize,
     holes: usize,
     piled: usize,
@@ -1389,12 +1390,20 @@ struct HoleCounts {
 /// (`Scope::raise`); holes of two integers, cycles lighter than the sum of their names' gaps,
 /// and cycles of weight 0 from equalities and from two inequalities go block by block. With
 /// `pile`, the step's own test is the hole test half the time, so that holes pile up in many
-/// names of one tree. The first `cases` trees of `seed` are checked and counted.
-fn holes_in_trees(seed: u64, pile: bool, cases: usize) -> HoleCounts {
+/// names of one tree. The trees of `seed` are checked and counted in turn until `enough` holds
+/// of the counts: the counts of a few trees vary widely from seed to seed (piled, over 4 trees
+/// of 300 seeds, 0 to 234), so a test asks for the cases it means to meet and draws trees
+/// until they are met, rather than asserting them of a fixed number of trees. A change that
+/// stops the trees from meeting them makes the test run past its time limit.
+fn holes_in_trees(seed: u64, pile: bool, enough: impl Fn(&HoleCounts) -> bool) -> HoleCounts {
     let mut r = Rng::new(seed);
     let p = Premises::new();
     let mut out = HoleCounts::default();
-    for case in 0..cases {
+    for case in 0.. {
+        if enough(&out) {
+            break;
+        }
+        out.trees += 1;
         let k = 3 + r.below(6);
         let ns = named(k, "x");
         let mut s = ints(&ns);
@@ -1488,40 +1497,67 @@ fn holes_in_trees(seed: u64, pile: bool, cases: usize) -> HoleCounts {
     out
 }
 
-/// [`holes_in_trees`] without piling, on 4 trees of a new seed each run. As one test of the
-/// 150 trees of seed 0x1e4e it took about 20 s alone at load 23 to 25, and as three tests of
-/// 50 trees about 5 s each (item SPLIT-l01_39-linked); those 150 trees counted moved 6096,
-/// holes 2330, empty 662, tied 77, joined 109. Each tree has about one tied pair and one joined
-/// `if`, too few in 4 trees to assert a count; each run asserts the counts met in every tree.
+/// [`holes_in_trees`] without piling, on trees of a new seed each run, at least 4 and until
+/// the counts are met. As one test of the 150 trees of seed 0x1e4e it took about 20 s alone at
+/// load 23 to 25, and as three tests of 50 trees about 5 s each (item SPLIT-l01_39-linked);
+/// those 150 trees counted moved 6096, holes 2330, empty 662, tied 77, joined 109. Each tree
+/// has about one tied pair and one joined `if`, too few in a few trees to ask for a count.
 /// 4 trees took 0.15 to 1.3 s alone at load 49 on 32 cores.
 #[test]
 fn holes_in_a_tree_of_differences_give_the_projection_from_scratch() {
     let (_, seed) = Rng::fresh("holes in a tree of differences");
-    let n = holes_in_trees(seed, false, 4);
-    // Over 17 seeds: moved 66 to 275, holes 15 to 137, empty 6 to 41; piled, 0 to 21, is not
-    // asserted.
-    let counts = [n.moved, n.holes, n.empty];
-    assert!(
-        counts.iter().zip([30, 6, 2]).all(|(&c, l)| c > l),
-        "seed {seed}: {n:?}"
-    );
+    // Over 17 seeds, 4 trees each: moved 66 to 275, holes 15 to 137, empty 6 to 41.
+    holes_in_trees(seed, false, met_without_piling);
+}
+
+/// At least 4 trees, and more than 30 tests that moved an interval, 6 that left a hole and 2
+/// that made the scope empty.
+fn met_without_piling(n: &HoleCounts) -> bool {
+    n.trees >= 4 && n.moved > 30 && n.holes > 6 && n.empty > 2
 }
 
 /// As [`holes_in_a_tree_of_differences_give_the_projection_from_scratch`], with the holes piled
-/// up in many names of each tree, on 4 trees of a new seed each run (6 took 0.8 s at load 42).
-/// As one test of the 150 trees of seed 0x9a1e it took about 22 s alone at load 23 to 25 (item
-/// SPLIT-l01_39-linked); those trees counted moved 6773, holes 4803, piled 2296, empty 763,
-/// tied 45, joined 45.
+/// up in many names of each tree, on trees of a new seed each run, at least 4 and until the
+/// counts are met (4 trees took 0.8 s at load 42). As one test of the 150 trees of seed 0x9a1e
+/// it took about 22 s alone at load 23 to 25 (item SPLIT-l01_39-linked); those trees counted
+/// moved 6773, holes 4803, piled 2296, empty 763, tied 45, joined 45.
 #[test]
 fn holes_piled_in_many_names_of_a_tree_give_the_projection_from_scratch() {
     let (_, seed) = Rng::fresh("holes piled in many names of a tree");
-    let n = holes_in_trees(seed, true, 4);
-    // Over 12 seeds: moved 125 to 243, holes 92 to 180, piled 23 to 111, empty 8 to 31.
-    let counts = [n.moved, n.holes, n.piled, n.empty];
-    assert!(
-        counts.iter().zip([60, 45, 10, 3]).all(|(&c, l)| c > l),
-        "seed {seed}: {n:?}"
+    holes_in_trees(seed, true, met_with_piling);
+}
+
+/// At least 4 trees, and more than 60 tests that moved an interval, 45 that left a hole, 10
+/// that left holes in two names or more, and 3 that made the scope empty. Over 4 trees of each
+/// of 300 seeds (1000 to 1299), 11 seeds met fewer: piled 0 to 9 in those, and 0 to 234 over
+/// all, with holes 15 to 68 and moved 51 to 149 in the 11 (item FAIL-linked-piled-holes-count).
+fn met_with_piling(n: &HoleCounts) -> bool {
+    n.trees >= 4 && n.moved > 60 && n.holes > 45 && n.piled > 10 && n.empty > 3
+}
+
+/// The first 4 trees of seed 10423609239771793175 pile holes in two names or more 9 times
+/// (moved 130, holes 67, piled 9, empty 15), so a test that asserted the counts of 4 trees
+/// failed on it (FAIL-linked-piled-holes-count); the trees after them meet the counts.
+#[test]
+fn holes_piled_in_the_trees_of_seed_10423609239771793175() {
+    let first = holes_in_trees(10423609239771793175, true, |n| n.trees == 4);
+    assert_eq!(
+        [first.moved, first.holes, first.piled, first.empty],
+        [130, 67, 9, 15],
+        "{first:?}"
     );
+    let n = holes_in_trees(10423609239771793175, true, met_with_piling);
+    assert!(n.trees > 4 && met_with_piling(&n), "{n:?}");
+}
+
+/// As [`holes_piled_in_the_trees_of_seed_10423609239771793175`], for seed 1226, whose first 4
+/// trees pile no holes (moved 86, holes 22, empty 9).
+#[test]
+fn holes_piled_in_the_trees_of_seed_1226() {
+    let first = holes_in_trees(1226, true, |n| n.trees == 4);
+    assert_eq!([first.holes, first.piled], [22, 0], "{first:?}");
+    let n = holes_in_trees(1226, true, met_with_piling);
+    assert!(n.trees > 4 && met_with_piling(&n), "{n:?}");
 }
 
 /// A star goes when one step both takes a conjunct from its hub and gives one to its leaf:
