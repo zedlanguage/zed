@@ -176,3 +176,122 @@ fn the_record_of_a_unit_of_a_few_definitions_is_made() {
         assert_eq!(r.native.runs, n as u64);
     }
 }
+
+/// The syntax-tree count of each kind of expression and statement: a statement is one node,
+/// each expression in it one more, and an expression inside a pattern or a type is part of that
+/// pattern or type. Each count below is worked out by hand from that rule; the unit is only
+/// parsed, so forms this step does not compile yet are counted too.
+#[test]
+fn each_kind_of_expression_and_statement_is_counted_once() {
+    let cases: [(&str, &str, usize); 41] = [
+        ("a range below", "x = 1..<3;\n", 4),
+        ("a range through", "x = 1..=3;\n", 4),
+        ("an open range", "x = 1..;\n", 3),
+        (
+            "a for: source, block, its return",
+            "x = for d in xs { d };\n",
+            6,
+        ),
+        (
+            "a for with a guard",
+            "x = for d in xs where d > 0 { d };\n",
+            9,
+        ),
+        (
+            "a match: patterns not counted",
+            "x = match y { 1 -> 2, _ -> 3 };\n",
+            5,
+        ),
+        (
+            "a match arm with a guard",
+            "x = match y { a where a > 0 -> 2, _ -> 3 };\n",
+            8,
+        ),
+        ("a record, `y:` one name", "x = {a: 1, y:};\n", 4),
+        ("an update", "x = p with { x = 3 };\n", 4),
+        ("a map display", "x = {1 -> 2, 3 -> 4};\n", 6),
+        ("the empty map", "x = {};\n", 2),
+        ("a set display", "x = {1, 2};\n", 4),
+        ("an array, an index, else", "x = [1, 2][0] else 3;\n", 8),
+        ("a tuple", "x = (1, 2);\n", 4),
+        ("a membership", "x = 1 in xs;\n", 4),
+        ("a reduction of a section", "x = xs >< (+);\n", 4),
+        ("a metadata read", "x = xs::len;\n", 3),
+        ("a member", "x = m.stdin;\n", 3),
+        ("a writing call `*.`", "x = c*.m(1);\n", 5),
+        ("sort keys", "x = xs.sortBy(asc k, desc j);\n", 8),
+        (
+            "a call with a lambda argument",
+            "x = xs.reduce((a, b) -> a + b);\n",
+            8,
+        ),
+        ("a lambda called", "x = (y -> y)(1);\n", 5),
+        ("a unary operator", "x = !y;\n", 3),
+        ("`is`: the type not counted", "x = y is int;\n", 3),
+        ("a string with a hole", "x = \"a${b}c\";\n", 3),
+        ("`this`", "x = this;\n", 2),
+        (
+            "a loop: block, statements, until",
+            "x = loop { n = 1; n' = n + 1; until n' == 1; };\n",
+            13,
+        ),
+        (
+            "a loop with while and a local",
+            "x = loop { n = 1; while n < 3; local t' = n; };\n",
+            11,
+        ),
+        (
+            "a loop with initial",
+            "x = loop { initial n = 0; n' = n + 1; until n' == 3; };\n",
+            13,
+        ),
+        (
+            "a named loop, break in an if",
+            "x = loop t { initial x = 0; x' = x + 1; _ = if x > 2 { break x } else { 0 }; };\n",
+            21,
+        ),
+        (
+            "an indexed definition: key set and value",
+            "x[i in 0..<3] = i;\n",
+            5,
+        ),
+        (
+            "a bare annotation",
+            "@inline\nf(positional x: int) = x;\n",
+            2,
+        ),
+        (
+            "an annotation with arguments",
+            "@pure(1, a: 2)\nf(positional x: int) = x;\n",
+            4,
+        ),
+        ("an annotation of the unit", "@log(#off);\nx = 1;\n", 4),
+        ("a local function", "local sq(positional v) = v * v;\n", 4),
+        ("a parameter default", "f(positional x: int = 3) = x;\n", 3),
+        (
+            "a method using `this`",
+            "T.m(positional x: int) = this.f + x;\n",
+            5,
+        ),
+        (
+            "a struct field default",
+            "struct S { a: int = 1, b: int }\n",
+            2,
+        ),
+        (
+            "a block body: a push and a return of two",
+            "f(positional x: int) {\n  out <- x;\n  return x, 1;\n}\n",
+            7,
+        ),
+        (
+            "a table row",
+            "f(positional x: int) = x\ntest { 1 -> 1 }\n",
+            4,
+        ),
+        ("two statements", "x = 1;\ny = x;\n", 4),
+    ];
+    for (case, text, want) in cases {
+        let got = ast_stage(text).unwrap_or_else(|e| panic!("{case}: {e}"));
+        assert_eq!(got.nodes, want, "{case}: {text:?}");
+    }
+}
