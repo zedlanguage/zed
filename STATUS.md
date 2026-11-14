@@ -2326,7 +2326,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | TEST-fixture-write-race | running | 2026-11-14 09:42 |  |
 | TEST-l0123-leftovers | running | 2026-11-14 10:33 |  |
 | TEST-l0123-slow-pieces | running | 2026-11-14 10:33 |  |
-| TEST-presburger-unreached-paths | impl attempt 1 | 2026-11-14 10:07 | cell_sweep tests committed (11 tests, cell_sweep unreached 556 -> 242 lines, crate 2,367 -> 2,050, tests only); row FAIL-pres-overlap-every-level-refused; row m |
+| TEST-presburger-unreached-paths | part done, merging | 2026-11-14 10:34 | cell sweep tested (cell_sweep.rs); the rest listed in the plan row; found FAIL-pres-overlap-every-level-refused |
 | TEST-seed-test-once | running | 2026-11-14 09:42 |  |
 | TEST-shared-tmpdir-race | running | 2026-11-14 08:57 |  |
 | TEST-types-unreached-paths | impl attempt 2 | 2026-11-14 08:15 | started in /home/luke/Work/wt/types-unreached-2; load 26.18 30.39 36.84 |
