@@ -21,9 +21,10 @@
 //!
 //! The least point is the greatest of the system negated. Every point lies between the two,
 //! and each name takes its least and greatest values at them, so its values are its integers
-//! between them, within the holes of each name that an equality ties to it. Values between
-//! the ends of a name of a component with a cycle and a hole may have no point; the ends are
-//! exact.
+//! between them, within the holes of each name that an equality ties to it: two opposite edges
+//! as above, or a cycle of edges of weight 0, found as the cycles of the edges tight at the
+//! greatest point (`tie_cycles`). Values between the ends of a name of a component with a
+//! cycle of weight above 0 and a hole may have no point; the ends are exact.
 
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap, VecDeque};
@@ -125,13 +126,16 @@ pub(crate) fn solve(g: &Graph) -> Outcome {
         // refused.
         Err(_) => return Outcome::Empty,
     };
+    let Some(dom) = tie_cycles(m.dom, &m.edges, &hi) else {
+        return Outcome::Empty;
+    };
     let half = &big * &Int::from(2i64);
     let end = |x: Int| (x.abs() < half).then_some(x);
     Outcome::Kept(
         m.of.iter()
             .map(|(r, o)| {
                 let (l, h) = (&lo[*r], &hi[*r]);
-                m.dom[*r]
+                dom[*r]
                     .iter()
                     .filter(|(a, b)| a <= h && b >= l)
                     .map(|(a, b)| {
@@ -233,31 +237,14 @@ fn merge(
             roots.push(v);
         }
     }
-    // Each class's integers: the values every member covers, by one sweep over the members'
-    // pieces shifted to the root.
-    let mut members = vec![0i64; roots.len()];
-    let mut events: Vec<Vec<(Int, i64)>> = vec![Vec::new(); roots.len()];
-    for (v, (r, o)) in of.iter().enumerate() {
-        members[index[*r]] += 1;
-        for (a, b) in &dom[v] {
-            events[index[*r]].push((a - o, 1));
-            events[index[*r]].push((&(b - o) + &Int::ONE, -1));
-        }
+    // Each class's integers: the values every member covers, shifted to the root.
+    let mut members: Vec<Vec<usize>> = vec![Vec::new(); roots.len()];
+    for (v, (r, _)) in of.iter().enumerate() {
+        members[index[*r]].push(v);
     }
     let mut cdom: Vec<Vec<(Int, Int)>> = Vec::with_capacity(roots.len());
-    for (mut ev, k) in events.into_iter().zip(members) {
-        ev.sort_unstable();
-        let mut depth = 0i64;
-        let mut open: Option<Int> = None;
-        let mut d: Vec<(Int, Int)> = Vec::new();
-        for (x, e) in ev {
-            depth += e;
-            match open.take() {
-                None if depth == k => open = Some(x),
-                Some(a) if depth < k => d.push((a, &x - &Int::ONE)),
-                kept => open = kept,
-            }
-        }
+    for vs in &members {
+        let d = meet(vs.iter().map(|&v| (&dom[v][..], &of[v].1)));
         if d.is_empty() {
             return None;
         }
@@ -287,6 +274,83 @@ fn merge(
         potential: roots.iter().map(|r| potential[*r].clone()).collect(),
         of: of.into_iter().map(|(r, o)| (index[r], o)).collect(),
     })
+}
+
+/// The integers every member covers, each member's pieces with its offset `o` taken away
+/// (`x - o` for each `x` of it), in increasing order: one sweep over the pieces' ends, in
+/// O(p log p) for `p` pieces. Empty when they have no integer in common.
+fn meet<'a>(members: impl Iterator<Item = (&'a [(Int, Int)], &'a Int)>) -> Vec<(Int, Int)> {
+    let mut k = 0i64;
+    let mut events: Vec<(Int, i64)> = Vec::new();
+    for (d, o) in members {
+        k += 1;
+        for (a, b) in d {
+            events.push((a - o, 1));
+            events.push((&(b - o) + &Int::ONE, -1));
+        }
+    }
+    events.sort_unstable();
+    let mut depth = 0i64;
+    let mut open: Option<Int> = None;
+    let mut out: Vec<(Int, Int)> = Vec::new();
+    for (x, e) in events {
+        depth += e;
+        match open.take() {
+            None if depth == k => open = Some(x),
+            Some(a) if depth < k => out.push((a, &x - &Int::ONE)),
+            kept => open = kept,
+        }
+    }
+    out
+}
+
+/// `dom` with the classes a cycle of edges of weight 0 joins made one, as [`merge`] makes one
+/// the names two opposite edges tie: each class in the integers every class of its cycle
+/// covers, shifted to it. `at` is a point of the system (its greatest). The edges tight at
+/// it, `at_v = at_u + w`, are found, and the strongly connected components of those edges:
+/// round any cycle of them the weights add up to the sum of `at_v - at_u`, which is 0, so
+/// every edge of the cycle holds with equality at every point, and `x_c = x_r + at_c - at_r`
+/// for any two classes `r`, `c` of one component. Conversely every edge of a cycle of weight
+/// 0 is tight at every point, so every such cycle is found. The equalities show up after the
+/// merge: from three edges or more round a cycle, `c - 1 <= a <= b <= c - 1`, or from two
+/// that are opposite only once an equality's names are one, `x2 >= x1` and `x3 - x2 >= 3`
+/// with `x3 = x1 + 3`; without them the holes of `c` stay out of `a` and `b`
+/// (FAIL-linked-holes-scratch-seed, FAIL-linked-sums-between-seed). `None` when a component's
+/// classes have no integer in common, so the system has no point.
+// Complexity tradeoff: naive version, an implicit equality found by a shortest-path search
+// from each name for a cycle of weight 0 back to it, O(n m), or by the closure of the
+// constraints. Used: one point of the system, which the search for the greatest point has
+// already found, and the components of the edges tight at it (Tarjan, the same
+// `components`), O(n + m), then one sweep per component over its pieces, O(p log p).
+// Tradeoffs: none in what is found, as every cycle of weight 0 is tight at any point; the
+// tight edges are built once, O(m) memory.
+fn tie_cycles(
+    mut dom: Vec<Vec<(Int, Int)>>,
+    edges: &[(usize, usize, Int)],
+    at: &[Int],
+) -> Option<Vec<Vec<(Int, Int)>>> {
+    let mut tight: Vec<Vec<(usize, Int)>> = vec![Vec::new(); dom.len()];
+    for (u, v, w) in edges {
+        if at[*v] == &at[*u] + w {
+            tight[*u].push((*v, w.clone()));
+        }
+    }
+    for c in components(&tight) {
+        let [r, ..] = c[..] else { continue };
+        if c.len() == 1 {
+            continue;
+        }
+        // `x_c = x_r + shift_c`.
+        let shift: Vec<Int> = c.iter().map(|&v| &at[v] - &at[r]).collect();
+        let joint = meet(c.iter().zip(&shift).map(|(&v, s)| (&dom[v][..], s)));
+        if joint.is_empty() {
+            return None;
+        }
+        for (&v, s) in c.iter().zip(&shift) {
+            dom[v] = joint.iter().map(|(a, b)| (a + s, b + s)).collect();
+        }
+    }
+    Some(dom)
 }
 
 /// Why [`greatest`] stopped: no point, or a component refused, its names and those of them
@@ -1004,5 +1068,87 @@ mod tests {
                 (Some(Int::from(5i64)), Some(Int::from(10i64)))
             ]
         );
+    }
+
+    /// The values of each name `solve` keeps, all finite.
+    fn kept(dom: &[Vec<(i64, i64)>], edges: &[(usize, usize, i64)]) -> Vec<Vec<i64>> {
+        let Outcome::Kept(k) = solve(&graph(dom, edges)) else {
+            panic!("no answer: {dom:?} {edges:?}")
+        };
+        k.iter()
+            .map(|d| {
+                d.iter()
+                    .flat_map(|(a, b)| {
+                        let a = a.as_ref().and_then(Int::to_i128).expect("finite") as i64;
+                        let b = b.as_ref().and_then(Int::to_i128).expect("finite") as i64;
+                        a..=b
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// A cycle of three edges of weight 0, `c - 1 <= a <= b <= c - 1`, ties `a` and `b` to
+    /// `c` as an equality would, so the hole of `c` in `{0, 2}` is in them, and through the
+    /// equality `d = a - 1` in `d` too (FAIL-linked-holes-scratch-seed: the hulls `-1..=1`
+    /// were kept, since only two opposite edges were read as an equality).
+    #[test]
+    fn a_cycle_of_weight_0_ties_its_names_as_an_equality_does() {
+        let dom = [
+            vec![(-1, 1)],
+            vec![(-1, 1)],
+            vec![(0, 0), (2, 2)],
+            vec![(-2, 0)],
+        ];
+        let edges = [(0, 2, 1), (1, 0, 0), (2, 1, -1), (0, 3, -1), (3, 0, 1)];
+        let exact = brute(&dom, &edges).expect("a point");
+        assert_eq!(exact, [vec![-1, 1], vec![-1, 1], vec![0, 2], vec![-2, 0]]);
+        assert_eq!(kept(&dom, &edges), exact);
+    }
+
+    /// Two edges between a name and an equality's other names, `x2 >= x1` and
+    /// `x3 - x2 >= 3` with `x3 = x1 + 3`, are opposite only once the equality is merged, and
+    /// tie `x2` to `x1` with its hole, on unbounded names (FAIL-linked-sums-between-seed:
+    /// `x2` was kept whole).
+    #[test]
+    fn edges_opposite_after_a_merge_tie_their_names() {
+        let i = |x: i64| Some(Int::from(x));
+        let all = vec![(None, None)];
+        let g = Graph {
+            dom: vec![
+                vec![(None, i(1)), (i(3), None)],
+                all.clone(),
+                all.clone(),
+                all,
+            ],
+            edges: [
+                (0, 1, 2),
+                (1, 0, -2),
+                (1, 3, 3),
+                (3, 1, -3),
+                (2, 1, 0),
+                (3, 2, -3),
+            ]
+            .map(|(u, v, w)| (u, v, Int::from(w)))
+            .to_vec(),
+            potential: vec![None; 4],
+        };
+        let Outcome::Kept(k) = solve(&g) else {
+            panic!("no answer")
+        };
+        assert_eq!(k[2], vec![(None, i(3)), (i(5), None)]);
+        assert_eq!(k[1], k[2]);
+        assert_eq!(k[3], vec![(None, i(6)), (i(8), None)]);
+    }
+
+    /// Control: a cycle of weight 1 ties nothing, and the hole of `c` stays in `c` alone, as
+    /// enumeration finds.
+    #[test]
+    fn a_cycle_of_weight_1_ties_nothing() {
+        let dom = [vec![(-1, 1)], vec![(0, 0), (2, 2)]];
+        let edges = [(0, 1, 1), (1, 0, 0)];
+        let exact = brute(&dom, &edges).expect("a point");
+        assert_eq!(exact, [vec![-1, 0, 1], vec![0, 2]]);
+        assert_eq!(kept(&dom, &edges), exact);
     }
 }

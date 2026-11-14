@@ -1298,14 +1298,24 @@ fn shortest_paths_give_the_intervals_of_the_projection_block_by_block() {
 
 #[test]
 fn shortest_paths_with_holes_and_sums_between_give_the_projection_block_by_block() {
-    // As above, with tests that leave a tree to the projection block by block between the
-    // difference constraints: `x != c`, which gives `x` a hole until a bound closes it, and
-    // `x + y >= c`, not a difference constraint. An edge that comes while its tree goes block
-    // by block is in the potential before any later edge is read (`Scope::repair`).
-    let (mut r, seed) = Rng::fresh("shortest paths with holes and sums");
+    let (_, seed) = Rng::fresh("shortest paths with holes and sums");
+    sums_between(seed);
+}
+
+/// As in the ladders above, with tests that leave a tree to the projection block by block
+/// between the difference constraints: `x != c`, which gives `x` a hole until a bound closes
+/// it, and `x + y >= c`, not a difference constraint. An edge that comes while its tree goes
+/// block by block is in the potential before any later edge is read (`Scope::repair`). At
+/// least 15 cases of `seed` are drawn, and more until steps that moved an interval, ladders
+/// that became empty and steps that left a name with holes are all met, as in
+/// [`holes_in_trees`]: over 15 cases the empty ladders vary from seed to seed, and 4 of 400
+/// runs met only 4 (FAIL-linked-sums-between-seed). Returns the number of cases drawn.
+fn sums_between(seed: u64) -> usize {
+    let mut r = Rng::new(seed);
     let p = Premises::new();
     let (mut moved, mut empty, mut holes) = (0, 0, 0);
-    for case in 0..15 {
+    let mut case = 0;
+    while case < 15 || moved <= 60 || empty <= 4 || holes <= 40 {
         let k = 3 + r.below(6);
         let ns = named(k, "x");
         let mut tests: Vec<(Term, bool, bool)> = Vec::new();
@@ -1360,14 +1370,35 @@ fn shortest_paths_with_holes_and_sums_between_give_the_projection_block_by_block
                 s = got;
             }
         }
+        case += 1;
     }
-    // Over 10 seeds: moved 129 to 168, empty 12 to 20, holes 92 to 161.
-    assert!(moved > 60, "seed {seed}: {moved} steps moved an interval");
-    assert!(empty > 4, "seed {seed}: {empty} ladders became empty");
-    assert!(
-        holes > 40,
-        "seed {seed}: {holes} steps left a name with holes"
-    );
+    case
+}
+
+/// The sums-between ladders of seed 4360659011783558506 give the projection from scratch: a
+/// cycle of weight 0 made of two edges that are opposite only after an equality's names merge
+/// ties `x2` to the hole of `x1` (`holes::tie_cycles`).
+#[test]
+fn shortest_paths_with_holes_and_sums_between_of_seed_4360659011783558506() {
+    sums_between(4360659011783558506);
+}
+
+/// The sums-between ladders of seed 16499876031534905745 give the projection from scratch.
+#[test]
+fn shortest_paths_with_holes_and_sums_between_of_seed_16499876031534905745() {
+    sums_between(16499876031534905745);
+}
+
+/// Seed 8574908458420171230 empties only 4 ladders in 15 cases, and draws more.
+#[test]
+fn shortest_paths_with_holes_and_sums_between_of_seed_8574908458420171230() {
+    assert!(sums_between(8574908458420171230) > 15);
+}
+
+/// Seed 16626066307386781116 empties only 4 ladders in 15 cases, and draws more.
+#[test]
+fn shortest_paths_with_holes_and_sums_between_of_seed_16626066307386781116() {
+    assert!(sums_between(16626066307386781116) > 15);
 }
 
 /// Counts of [`holes_in_trees`]: tests that moved an interval, left a name with holes, left
@@ -2312,3 +2343,12 @@ fn stars_formed_in_the_block_of_a_satellite_in_a_random_order_are_those_of_the_d
 }
 
 mod bench;
+
+/// The trees of differences of seed 1597508919132665080 give the projection from scratch: at
+/// case 3 step 9, `x0 - x6 >= -1`, `x6 - x2 >= 1`, `x2 - x0 >= 0` with `x6` in `{0, 2}` make a
+/// cycle of weight 0 of three edges, so `x0 = x2 = x6 - 1` keep the hole of `x6`
+/// (`holes::tie_cycles`; the projection from scratch kept the hulls).
+#[test]
+fn holes_in_the_tree_of_differences_of_seed_1597508919132665080() {
+    holes_in_trees(1597508919132665080, false, |n| n.trees == 4);
+}
