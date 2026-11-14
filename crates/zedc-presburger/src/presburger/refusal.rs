@@ -13,8 +13,9 @@ use std::sync::Arc;
 use zedc_lattice::interval::IntervalSet;
 
 /// Why a question lies outside the fragment the solver decides. Each is reported in its own
-/// words (sec:diagnostics), and each is a property of the system's shape, never of its size
-/// or of the names of its variables; narrowing keeps the written constraint, which is sound.
+/// words (sec:diagnostics), and each but [`Refusal::Work`] is a property of the system's
+/// shape, never of its size or of the names of its variables; narrowing keeps the written
+/// constraint, which is sound.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum Refusal {
     /// Every elimination of a variable would enlarge the system, which has four variables or
@@ -36,6 +37,12 @@ pub enum Refusal {
     /// an order chosen by name; the one choice of disjuncts that the structure fixes, when
     /// there is one, has no point with the rest. The rows of the [`Tie`] are the disjunctions left.
     Unordered(Arc<Tie>),
+    /// The values of the variables asked were to be found by adding up, row by row, the values
+    /// their alternatives allow (module `row_sums`), and that work passed its measured limit,
+    /// `row_sums::JOIN_LIMIT` (about 250 ms). The one refusal by size: the author refuses a
+    /// question that provably blows up, by a measured limit (P196, as A99 does), rather than
+    /// answer with the solver's coarser set (P197; PRES-switchover-not-race).
+    Work,
 }
 
 /// The variables of a [`Refusal::Tie`], and the rows they share, written over the variables
@@ -313,6 +320,13 @@ impl fmt::Display for Closed<'_> {
                  never lets a name change an answer.",
                 quoted(&t.vars),
                 conditions(&t.rows)
+            ),
+            Refusal::Work => write!(
+                f,
+                "{ALTERNATIVES}. To find every value each variable can take, it adds up the \
+                 values the cases allow, one condition at a time. Here the sums take so many \
+                 different values that this would take longer than the checker allows (about \
+                 a quarter of a second)."
             ),
             Refusal::Unordered(t) => write!(
                 f,

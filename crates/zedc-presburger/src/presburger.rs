@@ -118,7 +118,7 @@ use forced::{Facts, Forced};
 pub use formula::{Atom, Con, Factor, Formula, Id, Lin, Model, Rel, Shared};
 use formula::{Ends, one_bound};
 pub use refusal::{Each, Refusal, Split, Tie, Written, free_names, names_in};
-pub use row_sums::ROW_SUMS_OFF;
+pub use row_sums::{JOIN_LIMIT, JOIN_LIMIT_SET, JOINED, ROW_SUMS_JOIN, ROW_SUMS_OFF};
 pub use slack::ROW_ORDER_SCAN;
 use slack::{
     DisjInfo, DisjointWide, HitKind, RowPlan, fill_row_model, has_product_con, meet_ends,
@@ -831,7 +831,7 @@ fn decide_written(f: &Formula) -> Result<bool, Refusal> {
                 Some(g) => or_old(|| decide_named(&g)).or_else(|_| or_old(|| decide_named(f))),
             };
             // Rows over atoms confined to finite unions of ranges: the exact join of their
-            // sums (module `row_sums`) in alternation with the solver.
+            // sums (module `row_sums`), the solver where the join stops at its work limit.
             match rows {
                 Some(rows) => row_sums::decide(rows, solver),
                 None => solver(),
@@ -1445,8 +1445,8 @@ fn old_path() -> bool {
 }
 
 /// A flag of this thread set for the life of the value, and put back as it was when the value
-/// is dropped, also when the solver is left by the unwind of a race (module `row_sums`), which
-/// must not leave the flag set for the questions after it.
+/// is dropped, also when the solver is left by an unwind, which must not leave the flag set for
+/// the questions after it.
 struct SetFor(&'static std::thread::LocalKey<Cell<bool>>, bool);
 
 impl SetFor {
@@ -1485,8 +1485,7 @@ fn modular_answer(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     let found = modular::solve_modular(f, want_model)?;
     if found.is_none() && MODULAR_CHECK.with(|c| c.borrow().is_some()) {
         // The check is off while the path without the modular solver is asked, and on again
-        // when `On` is dropped, also when that path is left by the unwind of a race (module
-        // `row_sums`).
+        // when `On` is dropped, also when that path is left by an unwind.
         struct On;
         impl Drop for On {
             fn drop(&mut self) {
@@ -2085,7 +2084,7 @@ impl Renamed {
                 vars: t.vars.iter().map(|v| self.back_text(v)).collect(),
                 rows: t.rows.iter().map(|v| self.back_text(v)).collect(),
             })),
-            Refusal::Growth | Refusal::Shadows | Refusal::Disjuncts => e,
+            Refusal::Growth | Refusal::Shadows | Refusal::Disjuncts | Refusal::Work => e,
         }
     }
 }
@@ -12363,8 +12362,8 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
 }
 
 /// For each hash of a system asked of [`solve_repair`] and `want`, the systems with that hash,
-/// each with its answer and the units [`solve`] charged for it.
-type Repaired = FxHashMap<(u64, bool), Vec<(Vec<Con>, Option<Model>, u64)>>;
+/// each with its answer.
+type Repaired = FxHashMap<(u64, bool), Vec<(Vec<Con>, Option<Model>)>>;
 
 thread_local! {
     /// The answers of [`solve_repair`] while a probe runs ([`RepairMemo`]): for each hash of a
@@ -12396,11 +12395,8 @@ impl Drop for RepairMemo {
 
 /// [`solve`] for the repairs and the refutation of [`settle`] and [`pick`], with an answer
 /// given before for the same system (the same rows in the same order, and the same `want`)
-/// while a [`RepairMemo`] is open given again. [`solve`] reads nothing but its rows, `want`
-/// and the race of [`row_sums`], so a system asked again has the answer it had; the race is
-/// charged here the units [`solve`] charged it for that system, and read as [`solve`] reads
-/// it, so it is charged as much between any two systems as without the memo. Refusals are
-/// not kept.
+/// while a [`RepairMemo`] is open given again. [`solve`] reads nothing but its rows and
+/// `want`, so a system asked again has the answer it had. Refusals are not kept.
 ///
 /// Complexity tradeoff: the failed-literal probe settles the parts once per literal, and the
 /// repairs of each settle re-solve, for most disjuncts, a system they solved in an earlier
@@ -12414,7 +12410,7 @@ fn solve_repair<C: std::borrow::Borrow<Con> + std::hash::Hash>(
     solve_kept(cons, want, solve)
 }
 
-/// [`solve_repair`] with the solver given, so that a test can give one that starts a race.
+/// [`solve_repair`] with the solver given, so that a test can give one that refuses.
 fn solve_kept<C: std::borrow::Borrow<Con> + std::hash::Hash>(
     cons: &[C],
     want: bool,
@@ -12431,32 +12427,16 @@ fn solve_kept<C: std::borrow::Borrow<Con> + std::hash::Hash>(
     let hit = REPAIRS.with(|m| {
         let m = m.borrow();
         let list = m.as_ref()?.get(&key)?;
-        (list.iter().find(|(kept, ..)| same(kept))).map(|(_, a, u)| (a.clone(), *u))
+        (list.iter().find(|(kept, _)| same(kept))).map(|(_, a)| a.clone())
     });
-    if let Some((answer, units)) = hit {
-        row_sums::charge(units);
-        if row_sums::stopped() {
-            return Err(Refusal::Growth);
-        }
+    if let Some(answer) = hit {
         return Ok(answer);
     }
-    let (before, races) = row_sums::charged();
     let answer = solve(cons, want)?;
-    let (after, races_after) = row_sums::charged();
-    // A race started inside the solve took the charges made while it ran, which a hit would
-    // give the race under way at the hit instead: such a solve is not kept. No solve starts a
-    // race today (races start only at the public questions, through `row_sums::read`), so
-    // this keeps the memo exact should one come to.
-    if races_after != races {
-        return Ok(answer);
-    }
-    let units = after.wrapping_sub(before);
     REPAIRS.with(|m| {
         if let Some(m) = m.borrow_mut().as_mut() {
             let kept = cons.iter().map(|c| c.borrow().clone()).collect();
-            m.entry(key)
-                .or_default()
-                .push((kept, answer.clone(), units));
+            m.entry(key).or_default().push((kept, answer.clone()));
         }
     });
     Ok(answer)
@@ -12473,15 +12453,6 @@ fn solve_kept<C: std::borrow::Borrow<Con> + std::hash::Hash>(
 /// the same under every naming of the variables and every order of the constraints.
 fn solve<C: std::borrow::Borrow<Con>>(cons: &[C], want: bool) -> Result<Option<Model>, Refusal> {
     let raw_cons: Vec<&Con> = cons.iter().map(|c| c.borrow()).collect();
-    // A method run in alternation with this search (module `row_sums`) is charged the terms
-    // of each system asked. Once it has answered, the search is left by an unwind from
-    // `row_sums::charge` where the build unwinds, and otherwise stops here; the refusal is
-    // dropped by the race, which answers with the method's answer.
-    let terms = raw_cons.iter().map(|c| c.lin.terms.len() as u64 + 1).sum();
-    row_sums::charge(terms);
-    if row_sums::stopped() {
-        return Err(Refusal::Growth);
-    }
     let reduced_buf: Vec<Con>;
     let cons: Vec<&Con> = if raw_cons
         .iter()
@@ -14002,9 +13973,6 @@ impl System {
     }
 
     fn add(&mut self, r: Row) {
-        // Each row the elimination makes is charged to a method run in alternation with the
-        // search (module `row_sums`): making it costs at least its terms.
-        row_sums::charge(r.a.len() as u64 + 1);
         let r = match r.normal(false) {
             Norm::False => {
                 self.empty = true;
@@ -16170,8 +16138,8 @@ pub fn project(f: &Formula, sym: &Atom) -> Result<IntervalSet, Refusal> {
 pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
     // A box and one row, or one equation that its residue or its ends settle, is projected
     // exactly without the solver (modules `one_row` and `row_domains`); rows over atoms
-    // confined to finite unions of ranges, by the exact join of their sums in alternation with
-    // the solver (module `row_sums`).
+    // confined to finite unions of ranges, by the exact join of their sums (module `row_sums`),
+    // refused where the join stops at its work limit.
     let conjuncts = f.conjunct_list();
     let solver = || {
         // Complexity tradeoff: projecting a contradiction by repeatedly settling the whole
@@ -27148,10 +27116,9 @@ mod r4_cells_tests {
     }
 
     /// Each branch of [`solve_kept`]: no memo open (solved, nothing kept); asked first (solved
-    /// and kept with its charge); asked again (the kept answer, charged the same units, not
-    /// solved); a solve in which a race starts (not kept); a refusal (not kept).
+    /// and kept); asked again (the kept answer, not solved); a refusal (not kept).
     #[test]
-    fn a_repair_asked_again_has_its_answer_and_charge() {
+    fn a_repair_asked_again_has_its_answer() {
         let (a, b) = (var("a"), var("b"));
         let c = Lin::constant;
         let rows = [
@@ -27166,34 +27133,22 @@ mod r4_cells_tests {
                 Con::ge(&b, &c(2)),
             ],
         ];
-        let units = || row_sums::charged().0;
         // No memo open.
         assert_eq!(solve_repair(&rows[0], true), solve(&rows[0], true));
         assert_eq!(kept(&rows[0], true), 0);
         let _memo = RepairMemo::open();
         for want in [true, false] {
             for r in &rows {
-                let before = units();
                 let first = solve_repair(r, want);
-                let charged = units() - before;
                 assert_eq!(first, solve(r, want));
                 assert_eq!(kept(r, want), 1);
-                let before = units();
                 let again = solve_kept(r, want, |_, _| panic!("a kept system is solved again"));
                 assert_eq!(again, first);
-                assert_eq!(units() - before, charged);
                 assert_eq!(kept(r, want), 1);
             }
         }
-        // A race starts inside the solve: answered, not kept.
-        let other = vec![Con::ge(&a, &c(1))];
-        let started = solve_kept(&other, true, |r, w| {
-            row_sums::count_race_started();
-            solve(r, w)
-        });
-        assert_eq!(started, solve(&other, true));
-        assert_eq!(kept(&other, true), 0);
         // A refusal: not kept.
+        let other = vec![Con::ge(&a, &c(1))];
         assert_eq!(
             solve_kept(&other, false, |_, _| Err(Refusal::Growth)),
             Err(Refusal::Growth)

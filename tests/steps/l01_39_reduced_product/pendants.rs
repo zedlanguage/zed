@@ -1070,9 +1070,10 @@ const PENDANT_PARTS_MAX: usize = 240;
 
 /// Random parts drawn from `r` until [`PENDANT_COMPARED`] are compared, within
 /// [`PENDANT_PARTS_MAX`] parts: where the projection by pendants is taken and neither it nor
-/// that of the whole part refuses, the two are the same, or else both pass [`compared`]
-/// (brute force runs only on such parts). Prints the count of names that differ by the
-/// precision of each answer.
+/// that of the whole part refuses, the two are the same, since each is the exact set
+/// (PRES-switchover-not-race); where they differ, [`compared`] (brute force) names the
+/// wrong one in the failure. Prints the count of names that differ by the precision of each
+/// answer, which is empty when the test passes.
 fn pendants_against_whole(mut r: Rng, seed: u64) {
     let (mut same, mut taken, mut cases, mut compared_on) = (0, 0, 0, 0);
     let mut kinds: BTreeMap<(Precision, Precision), usize> = BTreeMap::new();
@@ -1090,16 +1091,20 @@ fn pendants_against_whole(mut r: Rng, seed: u64) {
             same += 1;
             continue;
         }
-        match compared(&items, &bs, &got, &want) {
+        // Both projections are exact (PRES-switchover-not-race), so they must be equal; the
+        // check by brute force names which one is wrong.
+        let e = match compared(&items, &bs, &got, &want) {
             Ok(differ) => {
-                for (_, p, q) in differ {
-                    *kinds.entry((p, q)).or_default() += 1;
+                for (_, p, q) in &differ {
+                    *kinds.entry((*p, *q)).or_default() += 1;
                 }
+                format!("{differ:?}")
             }
-            Err(e) => wrong.push(format!(
-                "part {cases}: {f}\n  boxes {bs:?}\n  hung  {got:?}\n  whole {want:?}\n  {e}"
-            )),
-        }
+            Err(e) => e,
+        };
+        wrong.push(format!(
+            "part {cases}: {f}\n  boxes {bs:?}\n  hung  {got:?}\n  whole {want:?}\n  {e}"
+        ));
     }
     assert!(
         wrong.is_empty(),
@@ -2490,18 +2495,17 @@ fn the_route_by_pendants_keeps_parities_and_holes() {
 }
 
 /// A part where `2 * b + 2 * c + z3 == 7` makes `z3` odd (FAIL-whole-projection-parity): the
-/// projection by pendants gives the exact set `{1, 3, 5}`, and both it and that of the whole
-/// part are sound. The whole part gives `[1, 5]`, which is wrong (author P197): the test that
-/// it gives `{1, 3, 5}` waits on PRES-switchover-not-race.
+/// projection by pendants and that of the whole part both give the exact set `{1, 3, 5}`.
+/// The whole part's projection was the hull `[1, 5]` while the solver could answer first in
+/// the race of `row_sums` (QUESTIONS A105, overruled by the author, P196/P197); since
+/// PRES-switchover-not-race the join answers it within its limit.
 #[test]
-fn seed_12035647242373093243_part_52_by_pendants_is_exact_and_both_are_sound() {
+fn seed_12035647242373093243_part_52_is_exact_both_ways() {
     let (items, bs, f, route, all) = answers(12035647242373093243, 52);
     assert_eq!(route["z3"], "[1,1 3,3 5,5]", "{f}");
-    let differ = compared(&items, &bs, &route, &all).expect("both sound");
-    assert!(
-        differ.iter().all(|(_, p, _)| *p == Precision::Exact),
-        "{f}: {differ:?}"
-    );
+    assert_eq!(all["z3"], "[1,1 3,3 5,5]", "{f}");
+    assert_eq!(route, all, "{f}");
+    assert_eq!(compared(&items, &bs, &route, &all), Ok(Vec::new()), "{f}");
 }
 
 /// Negative controls of [`compared`] on part 52 of seed 12035647242373093243, where
@@ -2550,4 +2554,35 @@ fn seed_16705573548664468879_part_16_by_pendants_leaves_the_other_names_their_bo
     let (items, bs, f, route, all) = answers(16705573548664468879, 16);
     assert_eq!(route, all, "{f}");
     assert_eq!(compared(&items, &bs, &route, &all), Ok(Vec::new()), "{f}");
+}
+
+/// On the seeds of FAIL-pendants-route-parity and FAIL-whole-projection-parity, the
+/// projection by pendants and that of the whole part each give, for every name, the exact
+/// set of its values that brute force finds (author P197: a projection is the exact set on
+/// every path; PRES-switchover-not-race).
+#[test]
+fn projections_by_pendants_and_of_the_whole_part_are_exact_on_the_parity_seeds() {
+    let mut wrong = Vec::new();
+    for (seed, part) in [
+        (12317615902327464975u64, 352),
+        (11157326757344143999, 200),
+        (11291320176478098157, 117),
+        (12035647242373093243, 52),
+        (16705573548664468879, 16),
+    ] {
+        let (items, bs, f, route, all) = answers(seed, part);
+        let truth = brute(&items, &bs, WIDE, true);
+        for (side, answer) in [("by pendants", &route), ("whole", &all)] {
+            for (n, x) in answer {
+                let exact = shown_set(&truth[n].1);
+                if shown_set(x) != exact {
+                    wrong.push(format!(
+                        "seed {seed} part {part} {side}: {n} is {x}, not the exact set {}; {f}",
+                        show(&exact)
+                    ));
+                }
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }

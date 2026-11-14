@@ -676,12 +676,14 @@ fn a_hull_whose_two_sides_are_shown_empty_is_empty() {
 /// QUESTIONS A87): the module `row_sums` joins one table of sums per group of atoms that appear
 /// in the same rows, in alternation with the solver.
 pub(super) mod row_sums {
+    use std::cell::Cell;
     use std::collections::BTreeSet;
     use std::sync::Arc;
 
     use zed_tests::scaling::Meter;
     use zedc::store::presburger::{
-        Atom, Con, Formula, Lin, ROW_SUMS_OFF, Refusal, decide, project_each,
+        Atom, Con, Formula, JOIN_LIMIT_SET, JOINED, Lin, ROW_SUMS_JOIN, ROW_SUMS_OFF, Refusal,
+        decide, project_each, satisfiable,
     };
 
     use super::super::repair::answers;
@@ -1185,6 +1187,128 @@ pub(super) mod row_sums {
                 .formula(),
             ),
         ]
+    }
+
+    /// The units the join spends on `ask` with no limit, which it must answer within, and
+    /// its answer.
+    fn units_of<T>(ask: impl Fn() -> T) -> (u64, T) {
+        ROW_SUMS_JOIN.with(|o| o.set(true));
+        let answer = ask();
+        ROW_SUMS_JOIN.with(|o| o.set(false));
+        let (units, answered) = JOINED.with(Cell::get).expect("a plan");
+        assert!(answered);
+        (units, answer)
+    }
+
+    /// `ask` with the join's limit set to `limit`, and whether the join answered.
+    fn at_limit<T>(limit: u64, ask: impl Fn() -> T) -> (T, bool) {
+        JOIN_LIMIT_SET.with(|l| l.set(Some(limit)));
+        let answer = ask();
+        JOIN_LIMIT_SET.with(|l| l.set(None));
+        (answer, JOINED.with(Cell::get).expect("a plan").1)
+    }
+
+    /// Whether the solver answered, below the limit, `decide` and `satisfiable`.
+    type SolverAnswered = (bool, bool);
+
+    /// `f` asked on both sides of the switch (`row_sums::JOIN_LIMIT`, PRES-switchover-not-race):
+    /// with the limit at the units the join takes, the join answers, as it does with no
+    /// limit; one unit below, it stops, `decide` and `satisfiable` give the solver's answer,
+    /// equal to the join's wherever the solver does not refuse (a model holding `f`), and
+    /// `project_each` refuses with `Refusal::Work`, since the solver's projection is coarser.
+    fn both_sides_of_the_limit(name: &str, f: &Formula, atoms: &[Atom]) -> SolverAnswered {
+        let (u, d) = units_of(|| decide(f));
+        assert_eq!(
+            at_limit(u, || decide(f)),
+            (d.clone(), true),
+            "{name}: decide at {u}"
+        );
+        let (below, joined) = at_limit(u - 1, || decide(f));
+        assert!(!joined, "{name}: decide below {u}");
+        if below.is_ok() {
+            assert_eq!(below, d, "{name}: decide below {u}");
+        }
+        let (u, p) = units_of(|| satisfiable(f));
+        let p = p.expect("the join answers");
+        assert!(p.as_ref().is_none_or(|m| f.holds(m)), "{name}");
+        assert_eq!(
+            at_limit(u, || satisfiable(f)),
+            (Ok(p.clone()), true),
+            "{name}: point at {u}"
+        );
+        let (point_below, joined) = at_limit(u - 1, || satisfiable(f));
+        assert!(!joined, "{name}: point below {u}");
+        if let Ok(m) = &point_below {
+            assert_eq!(m.is_some(), p.is_some(), "{name}: point below {u}");
+            assert!(m.as_ref().is_none_or(|m| f.holds(m)), "{name}");
+        }
+        let ask = || project_each(f, atoms).map(|e| e.0);
+        let (u, each) = units_of(ask);
+        assert!(each.is_ok(), "{name}");
+        assert_eq!(at_limit(u, ask), (each, true), "{name}: project at {u}");
+        assert_eq!(
+            at_limit(u - 1, ask),
+            (Err(Refusal::Work), false),
+            "{name}: project"
+        );
+        (below.is_ok(), point_below.is_ok())
+    }
+
+    /// The families of the benchmarks at small sizes and an unreachable sum, on both sides of
+    /// the switch.
+    #[test]
+    fn each_family_is_answered_alike_on_both_sides_of_the_join_limit() {
+        let cases = [
+            ("overlap_rows k=16", overlap_rows(16), 16),
+            ("coefficients 1, 2 k=12", coefficients_one_and_two(12), 12),
+            ("chain m=4", chain(4), 15),
+            ("unreachable k=10", unreachable(10), 10),
+        ];
+        let mut answered = Vec::new();
+        for (name, case, k) in cases {
+            let atoms: Vec<Atom> = (0..k).map(v).collect();
+            answered.push(both_sides_of_the_limit(name, &case.formula(), &atoms));
+        }
+        // The solver refuses the unreachable sum (`Disjuncts`), so below the limit the answer
+        // is a refusal: the switch to the solver is taken, and the join is the side that
+        // answers.
+        assert_eq!(answered[3], (false, false));
+    }
+
+    /// 200 formulas of the generator of `decide_sat.rs` at a fresh seed, each on both sides of
+    /// the switch, with the projection at the limit checked against brute force; prints how
+    /// often the solver answered below the limit.
+    #[test]
+    fn random_shared_sums_are_answered_alike_on_both_sides_of_the_join_limit() {
+        let (_, seed) = zed_tests::instances::Rng::fresh("row_sums: both sides of the limit");
+        let (mut decided, mut pointed, mut count) = (0, 0, 0);
+        for (c, (case, sets)) in random_cases(seed, 200).into_iter().enumerate() {
+            let f = case.formula();
+            let atoms: Vec<Atom> = (0..sets.len()).map(v).collect();
+            if !has_plan(&f) {
+                continue;
+            }
+            count += 1;
+            let (d, p) = both_sides_of_the_limit(&format!("seed {seed} case {c}: {f}"), &f, &atoms);
+            decided += usize::from(d);
+            pointed += usize::from(p);
+            case.is_answered_exactly();
+        }
+        eprintln!(
+            "both sides of the limit, seed {seed}: {count} of 200 with a plan; below the limit \
+             the solver decided {decided} and found a point or none for {pointed}"
+        );
+        assert!(count >= 150, "seed {seed}: {count} with a plan");
+    }
+
+    /// Whether the join plans `f`: a formula of the class, not settled by its bounds alone,
+    /// whose keys stay below 2^62.
+    fn has_plan(f: &Formula) -> bool {
+        JOINED.with(|j| j.set(None));
+        ROW_SUMS_JOIN.with(|o| o.set(true));
+        let _ = decide(f);
+        ROW_SUMS_JOIN.with(|o| o.set(false));
+        JOINED.with(Cell::get).is_some()
     }
 
     /// The checks of the benchmarks of sums in `bench/disj_groups.rs` at small sizes, but their

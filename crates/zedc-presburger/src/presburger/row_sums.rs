@@ -1,6 +1,6 @@
 //! The exact answer of rows over atoms each confined to a finite union of ranges, found by
-//! joining tables of the rows' partial sums, in alternation with the solver
-//! (PRES-overlap-fast, question A87).
+//! joining tables of the rows' partial sums, with the solver after it where the join passes
+//! its measured work limit (PRES-overlap-fast, question A87; PRES-switchover-not-race).
 //!
 //! A formula such as `(y[i] == 0 || y[i] == w[i])` for each i, with `y[0] + .. + y[a-1] == t1`
 //! and `y[b] + .. + y[k-1] == t2` (b < a), is two subset sums that share the atoms `y[b..a]`.
@@ -61,45 +61,42 @@
 //! and, inferred, the sums of a group turn from sparse to dense), and 1.97, 1.89 and 1.90 from
 //! 64 to 512. Subset sum with no point costs 1.21M at k = 64, 9.91M at k = 512 and 20.0M at
 //! k = 1,024.
-//! A range of 0..1e9 makes a table of up to 1.6·10^7 words where the solver may answer at
-//! once by its bounds.
+//! A range of n values is added by doubling, and the table is settled into intervals after
+//! each doubling ([`Plan::add`]), so a range of 0..1e9 costs a few intervals per step rather
+//! than 1.6·10^7 words; a point takes each sum apart by the intervals of the table before it
+//! ([`least_step`]) rather than value by value.
 //!
-//! That is why the method runs in alternation with the solver (after Levin's universal
-//! search, which runs two methods with doubling allowances, the first to finish answering).
-//! Before any table is built, a bound on the method's work is computed from the ranges alone
-//! ([`Plan::bound`]): each table bounded by its keys and its words, as if none were full, each
-//! operation by the charge it is given, and the join's pairs from these. The bound is not
-//! proved: a set can hold more intervals than it would hold words where an intersection or a
-//! clip cuts intervals short, and a run that exceeds its allowance stops, leaving the answer to
-//! the solver; no measured run did. Where the bound is at most [`FIRST`] · [`RATE`] times the
-//! formula's size, the method runs first and alone, with the bound, but at most [`FIRST`] times
-//! the size, as its allowance: the intervals keep most runs far below their bound
-//! (`overlap_rows` at k = 1,024, whose bound is past [`FIRST`] per unit of size, answers in
-//! this first run). Otherwise, or where that run stops, the solver runs, each system it is
-//! asked charging its number of terms, and when the charge reaches the bound over [`RATE`] the
-//! method runs once more, with the whole bound as its allowance. A plan with a [`Fused`] join,
-//! whose bound is the loose product of its pairs, runs first whatever its bound and, where a
-//! run stops, runs again with twice the allowance, up to the bound ([`race`]). When it answers, the solver is
-//! left at once and its answer dropped; a bound past `u64` never runs. The work units of both
-//! sides are counts, so the answer and its cost are the same at every run. [`RATE`] is set
-//! where the method's whole run costs about what the solver spent before it, so a question
-//! costs at most about twice the cheaper of the two. Building the plan costs more than main
-//! spends on some questions the solver settles by its bounds, so a floor of the bound, read
-//! from the ranges of the atoms that are on one row alone ([`Rows::floor`], O(a + e)), comes
-//! first: where it is past [`FIRST`] · [`RATE`] times the size, the plan is built only when the
-//! charge reaches the floor over [`RATE`], and the method then runs when the charge reaches
-//! the plan's bound over [`RATE`], as before. On `wide` the bound is about 10^17 and the floor
-//! 2.8·10^9 at k = 4, so neither the plan nor the method is ever built or run: 683.1K to 683.9K
-//! instructions decided at k = 4 against 690.3K to 690.9K on main (three runs each); building
-//! the plan at once cost 695.6K to 696.3K, 0.8% past main.
+//! The switchover (PRES-switchover-not-race, author P196/P197: one exact answer on every
+//! path, by the fastest method; no race between methods). Where the formula has a plan
+//! ([`Plan::of`]), the join runs first, alone, with the fixed allowance [`JOIN_LIMIT`]; its
+//! work is charged before each operation runs ([`Work`]), so a run either answers exactly or
+//! stops at the limit, at the same point on every run. Where it stops, `decide` and `point`
+//! ask the solver, whose answers there are exact; `project` refuses with [`Refusal::Work`],
+//! since the solver's projection is the union of the hulls of its disjuncts, a coarser set
+//! (author P197: refuse rather than answer coarser). A formula with no plan (a key past
+//! [`LIMIT`]) goes to the solver as before. The one metric is the join's work in units of
+//! [`Work`], counted, not timed, so the switch is the same on every machine; only the time a
+//! unit takes differs, and [`JOIN_LIMIT`] is that limit measured on one machine
+//! (`bench::disj_groups::switchover`, to be measured again on each target).
 //!
-//! Two other schedules were measured. Rerunning the method each time the charge doubles, from
-//! an allowance of the formula's size, cost at most 5% more than the solver alone but reran
-//! the method from the start at each doubling: `overlap_rows` decided at k = 64 cost 33,600M,
-//! and subset sum with no point was refused from k = 14 on, where its tables need 2.4M
-//! instructions. Running it at each doubling of the charge, with [`RATE`] times the charge as
-//! its allowance (round 2 below), ran it on `wide`, where it never finishes, and cost 1.097
-//! times the solver alone there (764.6K instructions against 697.5K decided at k = 4).
+//! Why the join first, with no prediction of the solver's cost. Measured (2026-11-14, Ryzen 9
+//! 5950X, test build, instructions and best of three): the join answered every family of
+//! `disj_groups` at no more than the solver's cost, within 3% where both are about equal,
+//! and far below it elsewhere: `wide` at k = 32 decided in 2.4M against 7.2M and projected in
+//! 2.4M against 7,960M (whose projection was also coarser); `overlap_rows` at k = 16 in 0.36M,
+//! where the solver alone ran for minutes. No family was found where the solver answered and
+//! the join passed its limit, except rows with weights far apart (`sparse`, the module
+//! `bench::disj_groups::switchover`), whose sums are one interval per value of the lighter
+//! atoms; there the solver answers by its bounds. No cheap predictor of the solver's cost is
+//! known (the A98/A99 predictor covers polynomial factoring, not this search), and the bound
+//! on the join's work read from the ranges was 10^6 to 10^15 times its runs, so neither side
+//! is predicted: the join's own count is the switch. Its cost past the limit is the limit
+//! itself, wasted, about 250 ms, before the solver starts.
+//!
+//! The race this replaces (Levin's universal search, 2026-11-13: the method and the solver run
+//! in alternation with doubling allowances, the first to finish answering) let the answer
+//! depend on which finished first, and its projection was the solver's coarser one where the
+//! method lost; its bound on the method's work was not proved.
 //!
 //! The six rounds of PRES-disj-cost-xr (2026-11-11) tried endpoint reports, a rank table and a
 //! queue inside the search, and a binary search over the points of the hull after a refusal;
@@ -112,21 +109,15 @@
 //! version kept each table as a sorted list of keys (`overlap_rows` decided at k = 32 in
 //! 24.1M). The cross-review of PRES-overlap-fast (2026-11-13) replaced the lists by words of 64
 //! keys with signature groups and joins of whole words (round 1), and then added the
-//! intervals of full words, projection by intervals, buffers kept between steps, and the rate
-//! 2048 (round 2); a set of intervals alone and a set of repeated words were smaller but grew
-//! more than 10.5 times from k = 64 to 512. After round 2 the floor of the bound above kept the
-//! plan from costing more than main on `wide`. Two sums whose shared atoms have different
+//! intervals of full words, projection by intervals, buffers kept between steps, and a
+//! schedule of the race (round 2); a set of intervals alone and a set of repeated words were smaller but grew
+//! more than 10.5 times from k = 64 to 512. Two sums whose shared atoms have different
 //! coefficients in each (1 and 2 in one, 1 in the other) split the shared atoms into classes
-//! whose box is the product of their ranges, so the bound passed [`FIRST`] · [`RATE`] and the
-//! method waited for the solver: 3,873M instructions decided at k = 64. PRES-overlap-coeffs
+//! whose box is the product of their ranges, so the race's bound on the method's work was
+//! loose and the method waited for the solver: 3,873M instructions decided at k = 64. PRES-overlap-coeffs
 //! (2026-11-13) splits the shared atoms by their ratio into two groups and joins the two at
-//! once ([`Fused`], [`lattice`]); the bound of that join stays far past its runs, since the
-//! sets it meets are sparse only near the ends of their range, so a plan with such a join runs
-//! first whatever its bound and doubles its allowance after each run that stops ([`race`]):
-//! 167.7M decided at k = 64 and 76.7M at k = 512. The doubling schedules above reran the
-//! method from an allowance of the size and cost `overlap_rows` and subset sum more; this one
-//! starts at [`FIRST`] times the size, waits [`RATE`] for each doubling, and runs only for
-//! plans with such a join. Sumsets by FFT (K. Koiliaris
+//! once ([`Fused`], [`lattice`]): 167.7M decided at k = 64 and 76.7M at k = 512 under the
+//! race. Sumsets by FFT (K. Koiliaris
 //! and C. Xu, "A faster pseudopolynomial time algorithm for subset sum", SODA 2017; K.
 //! Bringmann, "A near-linear pseudopolynomial time algorithm for subset sum", SODA 2017) cost
 //! O(W log W log n) for the sumset of n atoms whose sums span W, against O(n · log m · W/64)
@@ -157,9 +148,8 @@
 //! formula to the solver alone.
 
 use std::borrow::Cow;
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap};
-use std::rc::Rc;
 
 use zedc_int::int::Int;
 use zedc_lattice::interval::{End, IntervalSet, Num};
@@ -183,8 +173,6 @@ pub(super) struct Rows {
     rows: Vec<Row>,
     /// Some conjunct has no point.
     empty: bool,
-    /// The number of terms and arms read: the method's first allowance.
-    size: u64,
 }
 
 impl Rows {
@@ -203,12 +191,12 @@ impl Rows {
         if ROW_SUMS_OFF.with(Cell::get) {
             return None;
         }
-        // Within a race (a question the solver asks while it answers another the method did
-        // not answer at once) the solver's steps are charged to the outer race, which an
-        // inner race would take: the outer method then ran later or never. Leaving inner
-        // questions to the solver took m2_p5 from 0.66 to 0.24 of main's units, m2_p8 from
-        // 1.0 to 0.60 and w_p from 1.04 to 1.003 (2026-11-13).
-        if RACES.with(|races| !races.borrow().is_empty()) {
+        // Inside the solver run after a join that stopped at its limit, the questions the
+        // solver asks go to the solver too: each would otherwise run a join of its own up to
+        // the limit, and the work could be the limit times the number of questions. Leaving
+        // such inner questions to the solver took m2_p5 from 0.66 to 0.24 of main's units
+        // under the race this replaces (2026-11-13).
+        if AFTER_STOP.with(Cell::get) {
             return None;
         }
         let mut domains: Vec<(Atom, Vec<(i128, i128)>)> = Vec::new();
@@ -217,11 +205,10 @@ impl Rows {
         // Bounds of one atom (`0 <= c && c <= 1` is written so, not as a disjunction): the
         // least and greatest value each allows.
         let mut bounds: BTreeMap<Atom, (Option<Int>, Option<Int>)> = BTreeMap::new();
-        let (mut size, mut empty) = (0u64, false);
+        let mut empty = false;
         for g in conjuncts.iter() {
             let arms = match g {
                 Formula::Con(c) => {
-                    size += c.lin.terms.len() as u64 + 1;
                     if let Some((a, l, h)) = one_bound(c)
                         && !matches!(a, Atom::Product(..))
                     {
@@ -247,7 +234,6 @@ impl Rows {
             let mut atom: Option<Atom> = None;
             let mut ranges = Vec::new();
             for arm in arms.iter() {
-                size += 1;
                 // Only an arm another holder shares can be met again ([`Id::of`]).
                 let key = Id::of(arm);
                 let (a, l, h) = match key.and_then(|key| arms_read.get(&key).cloned()) {
@@ -349,7 +335,6 @@ impl Rows {
             domains,
             rows,
             empty,
-            size,
         })
     }
 }
@@ -434,59 +419,10 @@ impl Rows {
             None
         })
     }
-
-    /// A lower bound on [`Plan::bound`] of every pass, read from the rows alone, for a formula
-    /// whose plan the method could not run first: the charges of the first table of each
-    /// group of atoms on one row. Such a group has one class, so its key is the sum itself
-    /// over one primitive coefficient p ≠ 0 per atom: for its first atom, with values from L to
-    /// H, `n` values and the step |p| ≥ 1, the table may hold `cap` = min(n, (H - L)/64 + 1)
-    /// words and a range of m values `min((m - 1)/64 + 3, cap)` of them, charged times
-    /// `bits(m - 1)` as [`Plan::bound`] charges it. A group's first atom is not known before
-    /// the sort, so each group counts its least such charge.
-    // Complexity tradeoff: O(a + e) for a atoms and e terms, no table built, where building
-    // the plan to learn its bound cost 5.3K instructions more than main on `wide` at k = 4
-    // (+0.78%), whose bound is far past what the method may run first: [`planned`] then
-    // builds the plan only when the race would run it.
-    fn floor(&self) -> u64 {
-        // Each atom's only row, `usize::MAX` where it has none or several.
-        let (none, many) = (usize::MAX, usize::MAX - 1);
-        let mut only = vec![none; self.atoms.len()];
-        // Each row's least charge of an atom on it alone, `None` where it has none; 0 where an
-        // atom has the coefficient 0, which [`Plan::bound`] does not charge as above.
-        let mut least: Vec<Option<u64>> = vec![None; self.rows.len()];
-        for (r, row) in self.rows.iter().enumerate() {
-            for &(j, c) in &row.terms {
-                only[j] = if only[j] == none { r } else { many };
-                if c == 0 {
-                    least[r] = Some(0);
-                }
-            }
-        }
-        for (j, &r) in only.iter().enumerate() {
-            if r >= many {
-                continue;
-            }
-            // Saturating: the floor is read before [`Plan::of`], which refuses a key past
-            // [`LIMIT`], so a span past `u64` never meets a bound.
-            let span = |l: i128, h: i128| u64::try_from(h.saturating_sub(l)).unwrap_or(u64::MAX);
-            let d = &self.domains[j];
-            let width = span(d[0].0, d[d.len() - 1].1);
-            let n = (d.iter()).fold(0u64, |c, &(l, h)| {
-                c.saturating_add(span(l, h)).saturating_add(1)
-            });
-            let cap = n.min(width / 64 + 1);
-            let own = |m: u64| ((m - 1) / 64 + 3).min(cap);
-            let charge = (d.iter()).fold(0u64, |u, &(l, h)| {
-                let m = span(l, h).saturating_add(1);
-                u.saturating_add(bits(m - 1).saturating_mul(3 * own(m) + 2))
-            });
-            least[r] = Some(least[r].map_or(charge, |u| u.min(charge)));
-        }
-        (least.iter().flatten()).fold(0u64, |s, &u| s.saturating_add(u))
-    }
 }
 
-/// [`super::decide`] of a formula of the class, in alternation with the solver's `old`.
+/// [`super::decide`] of a formula of the class: the join's answer where it finishes within
+/// [`JOIN_LIMIT`], the solver's `old` otherwise.
 pub(super) fn decide(
     rows: Rows,
     old: impl FnOnce() -> Result<bool, Refusal>,
@@ -494,16 +430,17 @@ pub(super) fn decide(
     if rows.empty {
         return Ok(false);
     }
-    planned(
-        rows,
-        Vec::new(),
-        |_| Pass::Decide,
-        |plan, rows, _, allowance| Some(plan.forward(rows, &mut Work::new(allowance))?.is_some()),
-        old,
-    )
+    match join_run(&rows, &[], |plan, rows, _, work| {
+        Some(plan.forward(rows, work)?.is_some())
+    }) {
+        Ok(t) => Ok(t),
+        Err(Stop::NoPlan) => old(),
+        Err(Stop::Limit) => after_stop(old),
+    }
 }
 
-/// [`super::satisfiable`] of a formula of the class, in alternation with the solver's `old`.
+/// [`super::satisfiable`] of a formula of the class: the join's answer where it finishes
+/// within [`JOIN_LIMIT`], the solver's `old` otherwise.
 pub(super) fn point(
     rows: Rows,
     old: impl FnOnce() -> Result<Option<Model>, Refusal>,
@@ -511,17 +448,16 @@ pub(super) fn point(
     if rows.empty {
         return Ok(None);
     }
-    planned(
-        rows,
-        Vec::new(),
-        |_| Pass::Point,
-        |plan, rows, _, allowance| plan.point(rows, &mut Work::new(allowance)),
-        old,
-    )
+    match join_run(&rows, &[], |plan, rows, _, work| plan.point(rows, work)) {
+        Ok(t) => Ok(t),
+        Err(Stop::NoPlan) => old(),
+        Err(Stop::Limit) => after_stop(old),
+    }
 }
 
-/// [`super::project_each`] of a formula of the class onto `syms`, in alternation with the
-/// solver's `old`.
+/// [`super::project_each`] of a formula of the class onto `syms`: the join's exact sets where
+/// it finishes within [`JOIN_LIMIT`], [`Refusal::Work`] where it stops there, and the solver's
+/// `old` where the formula has no plan.
 pub(super) fn project(
     rows: Rows,
     syms: &[Atom],
@@ -540,78 +476,104 @@ pub(super) fn project(
     for a in wanted.iter().flatten() {
         want[*a] = true;
     }
-    planned(
-        rows,
-        want,
-        |want| Pass::Project(want),
-        move |plan, rows, want, allowance| {
-            let mut sets = plan.project(rows, want, &mut Work::new(allowance))?;
-            let each = (wanted.iter())
-                .map(|w| {
-                    Ok(match w.and_then(|a| sets[a].take()) {
-                        Some(set) => set,
-                        None => IntervalSet::range(End::NegInf, End::PosInf),
-                    })
+    let answer = join_run(&rows, &want, move |plan, rows, want, work| {
+        let mut sets = plan.project(rows, want, work)?;
+        let each = (wanted.iter())
+            .map(|w| {
+                Ok(match w.and_then(|a| sets[a].take()) {
+                    Some(set) => set,
+                    None => IntervalSet::range(End::NegInf, End::PosInf),
                 })
-                .collect();
-            Some((each, Vec::new()))
-        },
-        old,
-    )
+            })
+            .collect();
+        Some((each, Vec::new()))
+    });
+    match answer {
+        Ok(t) => Ok(t),
+        Err(Stop::NoPlan) => old(),
+        // Complexity tradeoff: the solver's projection here is the union of the hulls of its
+        // disjuncts, coarser than the exact set (FAIL-projection-not-exact: `[1, 5]` where the
+        // set is {1, 3, 5}); a refusal keeps the written conditions, which is sound, where a
+        // coarser set would be a wrong answer (author P197).
+        Err(Stop::Limit) => Err(Refusal::Work),
+    }
 }
 
-/// The plan of `rows` for the atoms `want` and the pass `pass`, raced with the solver's `old`;
-/// `run` runs the method on the plan with an allowance. The solver alone answers where there
-/// is no plan.
-// Complexity tradeoff: where [`Rows::floor`] is past what the method may run first, the plan
-// and its bound are built only when the solver's charge reaches the floor over [`RATE`], and
-// the method runs once the charge reaches the bound over the rate, as when they are built at
-// once: O(a + e) where the solver answers before, against the plan's O((a + e) log a).
-fn planned<T: 'static>(
-    rows: Rows,
-    want: Vec<bool>,
-    pass: for<'a> fn(&'a [bool]) -> Pass<'a>,
-    run: impl Fn(&Plan, &Rows, &[bool], u64) -> Option<T> + 'static,
-    old: impl FnOnce() -> Result<T, Refusal>,
-) -> Result<T, Refusal> {
-    let (size, floor) = (rows.size, rows.floor());
-    if floor <= size.saturating_mul(FIRST).saturating_mul(RATE) {
-        let Some(plan) = Plan::of(&rows, &want) else {
-            return old();
-        };
-        let bound = plan.bound(&rows, pass(&want));
-        debug_assert!(floor <= bound, "floor {floor} past the bound {bound}");
-        let grow = !plan.joins.fused.is_empty();
-        return race(
-            size,
-            bound,
-            grow,
-            move |allowance| Ok(run(&plan, &rows, &want, allowance)),
-            old,
-        );
-    }
-    let mut built: Option<Option<(Plan, u64)>> = None;
-    let new = move |_| {
-        if let Some(built) = &built {
-            return Ok(built
-                .as_ref()
-                .and_then(|(plan, bound)| run(plan, &rows, &want, *bound)));
-        }
-        let plan = Plan::of(&rows, &want).map(|plan| {
-            let bound = plan.bound(&rows, pass(&want));
-            (plan, bound)
-        });
-        let next = match &plan {
-            Some((_, bound)) if *bound != u64::MAX => {
-                debug_assert!(floor <= *bound, "floor {floor} past the bound {bound}");
-                Err(bound.div_ceil(RATE))
-            }
-            _ => Ok(None),
-        };
-        built = Some(plan);
-        next
+/// Why [`join_run`] gave no answer.
+#[derive(Debug, PartialEq, Eq)]
+enum Stop {
+    /// The formula has no plan ([`Plan::of`]: a key past [`LIMIT`]).
+    NoPlan,
+    /// The join's work reached its limit.
+    Limit,
+}
+
+/// The join's answer, from `run` with an allowance of [`JOIN_LIMIT`] units (or the test
+/// controls' limit), or why there is none; the units spent are left in [`JOINED`].
+// Complexity tradeoff: the join runs first, with no prediction of either side's cost. It
+// answered every measured family at no more than the solver's cost (module note); a predictor
+// would save at most the limit, about 250 ms, on a formula past it, and the bound read from
+// the ranges (removed with the race) was 10^6 to 10^15 times the runs, so it could not tell the
+// sides apart. The count is charged before each operation, so the stop falls at the same
+// operation on every run and machine.
+fn join_run<T>(
+    rows: &Rows,
+    want: &[bool],
+    run: impl FnOnce(&Plan, &Rows, &[bool], &mut Work) -> Option<T>,
+) -> Result<T, Stop> {
+    let Some(plan) = Plan::of(rows, want) else {
+        JOINED.with(|j| j.set(None));
+        return Err(Stop::NoPlan);
     };
-    race(size, floor, false, new, old)
+    let limit = if ROW_SUMS_JOIN.with(Cell::get) {
+        u64::MAX
+    } else {
+        JOIN_LIMIT_SET.with(Cell::get).unwrap_or(JOIN_LIMIT)
+    };
+    let mut work = Work::new(limit);
+    let answer = run(&plan, rows, want, &mut work);
+    JOINED.with(|j| j.set(Some((limit - work.left, answer.is_some()))));
+    answer.ok_or(Stop::Limit)
+}
+
+/// `old`, the solver, run after a join that stopped at its limit, with the questions it asks
+/// inside left to the solver as well ([`Rows::of`]).
+fn after_stop<T>(old: impl FnOnce() -> Result<T, Refusal>) -> Result<T, Refusal> {
+    /// Puts the flag back as it was, also when `old` panics.
+    struct Back(bool);
+    impl Drop for Back {
+        fn drop(&mut self) {
+            AFTER_STOP.with(|f| f.set(self.0));
+        }
+    }
+    let _back = Back(AFTER_STOP.with(|f| f.replace(true)));
+    old()
+}
+
+/// The join's work limit, in units of its work (`Work`): about 250 ms on the machine below,
+/// the time A99 allows a predicted computation (poly.rs `LIMIT`). Past it, `decide` and
+/// `point` ask the solver and `project` refuses ([`Refusal::Work`]).
+// Measured on a Ryzen 9 5950X (x86_64, Linux, the test build at -j 4 with other work running,
+// load 30-60), 2026-11-14, by `bench::disj_groups::switchover`: TBD.
+// To be measured again on each other target (A96): run that benchmark there and set the limit
+// to 250 ms over its worst time per unit.
+pub const JOIN_LIMIT: u64 = 20_000_000;
+
+thread_local! {
+    /// Test control: the solver alone, with the join not run, for the tests that compare the
+    /// two (PRES-overlap-fast). Kept here and re-exported by the parent, which does not read
+    /// it, so that this file names nothing of the parent's own.
+    pub static ROW_SUMS_OFF: Cell<bool> = const { Cell::new(false) };
+    /// Test control: the join with no work limit, where the formula has a plan.
+    pub static ROW_SUMS_JOIN: Cell<bool> = const { Cell::new(false) };
+    /// Test control: a work limit in place of [`JOIN_LIMIT`], to ask a formula on both sides
+    /// of the switch.
+    pub static JOIN_LIMIT_SET: Cell<Option<u64>> = const { Cell::new(None) };
+    /// The units the last join on this thread spent and whether it answered; `None` where
+    /// the last formula of the class had no plan.
+    pub static JOINED: Cell<Option<(u64, bool)>> = const { Cell::new(None) };
+    /// Set while the solver runs after a join that stopped ([`after_stop`]).
+    static AFTER_STOP: Cell<bool> = const { Cell::new(false) };
 }
 
 /// The number of bits of `n`: 1 + the floor of its base-2 logarithm, 0 for 0.
@@ -1454,6 +1416,52 @@ impl Set {
     }
 }
 
+/// The least e in `0..n` with `top - e·delta` in `set`, from the intervals of `set` within
+/// the candidates' range, by division: O(words of `set`). Equal to trying e = 0, 1, … in turn.
+fn least_step(set: &Set, top: i64, delta: i64, n: i64) -> Option<i64> {
+    if n <= 0 {
+        return None;
+    }
+    let (top, delta, last) = (i128::from(top), i128::from(delta), i128::from(n - 1));
+    if delta == 0 || last == 0 {
+        return (top >= 0 && set.contains(top as i64)).then_some(0);
+    }
+    let (lo, hi) = if delta > 0 {
+        (top - last * delta, top)
+    } else {
+        (top, top - last * delta)
+    };
+    let (lo, hi) = (lo.max(0), hi.min(i128::from(i64::MAX)));
+    if lo > hi {
+        return None;
+    }
+    let part = set.clipped(lo as i64, hi as i64);
+    let mut best: Option<i128> = None;
+    for (a, z) in part.intervals(u64::MAX)? {
+        // top - e·delta in [a, z]: e·delta in [top - z, top - a].
+        let (p, q) = (top - i128::from(z), top - i128::from(a));
+        let (e0, e1) = if delta > 0 {
+            (
+                p.div_euclid(delta) + i128::from(p.rem_euclid(delta) != 0),
+                q.div_euclid(delta),
+            )
+        } else {
+            let d = -delta;
+            // e·d in [a - top, z - top].
+            let (p, q) = (-q, -p);
+            (
+                p.div_euclid(d) + i128::from(p.rem_euclid(d) != 0),
+                q.div_euclid(d),
+            )
+        };
+        let (e0, e1) = (e0.max(0), e1.min(last));
+        if e0 <= e1 && best.is_none_or(|b| e0 < b) {
+            best = Some(e0);
+        }
+    }
+    best.map(|e| e as i64)
+}
+
 /// Sorts intervals and joins those that overlap or touch.
 fn joined(mut v: Vec<(i64, i64)>) -> Vec<(i64, i64)> {
     v.sort_unstable();
@@ -1468,7 +1476,8 @@ fn joined(mut v: Vec<(i64, i64)>) -> Vec<(i64, i64)> {
 }
 
 /// The work the method may still do, in units: each operation on sets is charged the words it
-/// reads and one more, before it is done ([`Plan::bound`] adds up the same charges).
+/// reads and one more, before it is done, so a stop at a limit falls at the same operation
+/// on every run ([`JOIN_LIMIT`]).
 // Complexity tradeoff: a shifted or reflected set read once by an intersection or a union is
 // built in `tmp`, kept from one operation to the next, where a set made and freed per operation
 // cost two allocations and two frees (eqchain projected at k = 128: five such sets per group,
@@ -2659,8 +2668,6 @@ impl Joins {
 /// The joins of a formula, planned from its rows before any table is built.
 struct Plan {
     groups: Groups,
-    /// Layout i: the key of the layer before group i.
-    layouts: Layouts,
     /// Join i: of the layer before group i and the group's table.
     joins: Joins,
     /// The atoms in no row.
@@ -2676,13 +2683,6 @@ struct Tables {
     layers: Vec<Set>,
     /// For a join made with words, the class digits that meet the rows closing there.
     met: Vec<Set>,
-}
-
-#[derive(Clone, Copy)]
-enum Pass<'a> {
-    Decide,
-    Point,
-    Project(&'a [bool]),
 }
 
 /// Each atom's signature, its rows in order, and its coefficients on them: those of atom j at
@@ -2869,7 +2869,6 @@ impl Plan {
         }
         Some(Plan {
             groups,
-            layouts,
             joins,
             free,
         })
@@ -3346,6 +3345,10 @@ impl Plan {
             while done < n {
                 let s = done.min(n - done);
                 u = work.union_shifted(&u, s * delta)?;
+                if u.lit.words.len() >= MIN_FILL {
+                    work.spend(u.words() + 1)?;
+                    u = Set::settled(u.lit, u.fill);
+                }
                 done += s;
             }
             acc = Some(Cow::Owned(match acc {
@@ -3496,14 +3499,31 @@ impl Plan {
             let (a, before, delta) = (gr.atoms[tt], &t.prefix[self.table(i) + tt], gr.delta(tt));
             let each = before.lookup();
             let mut found = None;
-            'v: for (v0, off, n) in gr.ranges(rows, tt) {
-                for e in 0..n {
-                    work.spend(each)?;
-                    let rest = key - off - if e == 0 { 0 } else { e * delta };
-                    if before.contains(rest) {
-                        found = Some((v0 + i128::from(e), rest));
-                        break 'v;
+            for (v0, off, n) in gr.ranges(rows, tt) {
+                let top = key - off;
+                // Complexity tradeoff: the least step e with `top - e·delta` in `before`, by
+                // the cheaper of two exact methods, both giving that same least e. The walk
+                // tries e = 0, 1, … at one lookup each, O(n·log runs); the intervals of
+                // `before` in the range of the n candidates each give their steps by
+                // division, O(words of `before`). A range of 10^9 values over a settled
+                // table costs a few intervals, not 10^9 lookups.
+                let e = if (n as u64).saturating_mul(each) <= before.words() + 1 {
+                    let mut hit = None;
+                    for e in 0..n {
+                        work.spend(each)?;
+                        if before.contains(top - if e == 0 { 0 } else { e * delta }) {
+                            hit = Some(e);
+                            break;
+                        }
                     }
+                    hit
+                } else {
+                    work.spend(before.words() + 1)?;
+                    least_step(before, top, delta, n)
+                };
+                if let Some(e) = e {
+                    found = Some((v0 + i128::from(e), top - if e == 0 { 0 } else { e * delta }));
+                    break;
                 }
             }
             let (v, rest) = found?;
@@ -3719,140 +3739,6 @@ impl Plan {
         let kept = work.and(before, &back)?;
         Some(Some((kept, pieces)))
     }
-
-    /// A bound on the units the pass spends, adding up each operation's charge with each set
-    /// bounded by the number of its keys and by its words: a table of the first t atoms of a
-    /// group holds at most the product of their numbers of values, at most the product of its
-    /// digits' ranges, and one word per 64 keys up to its largest key. A run given this
-    /// allowance is never stopped for want of it. Saturates at `u64::MAX`.
-    // Complexity tradeoff: O(a + p·r) for a atoms, p groups and r rows, no table built.
-    fn bound(&self, rows: &Rows, pass: Pass) -> u64 {
-        let mut units = 0u64;
-        let mut add = |u: u64| units = units.saturating_add(u);
-        let count = |t: usize, g: &Group| {
-            (rows.domains[g.atoms[t]].iter())
-                .fold(0u64, |c, &(l, h)| c.saturating_add((h - l + 1) as u64))
-        };
-        // Each group's tables: keys and words, in one vector, group after group: group i's
-        // a + 1 entries start at `o`, after those of the groups before it.
-        let mut nw: Vec<(u64, u64)> = Vec::with_capacity(self.groups.atoms.len() + self.len());
-        let mut last = Vec::with_capacity(self.len());
-        for g in (0..self.len()).map(|i| self.group(i)) {
-            let o = nw.len();
-            nw.push((1u64, 1u64));
-            for t in 0..g.atoms.len() {
-                let (reach, boxes, _) = g.fill[t + 1];
-                let n = nw[o + t].0.saturating_mul(count(t, &g)).min(boxes);
-                // A range's table, and each set its doubling makes, is within the table shifted
-                // by all the range's values: of w0 words, so at most w0 runs, each run of L words
-                // covering at most L + 2 + (len - 1)·delta/64 words. The union of the ranges'
-                // tables is within the sum of theirs.
-                let (w0, cap) = (nw[o + t].1, n.min(reach / 64 + 1));
-                let mut w1 = 0u64;
-                for (k, r) in g.ranges(rows, t).enumerate() {
-                    let spread = ((r.2 - 1) as u64).saturating_mul(g.delta(t) as u64) / 64;
-                    let own = w0.saturating_mul(spread.saturating_add(3)).min(cap);
-                    w1 = w1.saturating_add(own).min(cap);
-                    add(w0 + 1);
-                    add(bits(r.2 as u64 - 1).saturating_mul(3 * own + 2));
-                    if k > 0 {
-                        add(2 * w1 + 1);
-                    }
-                }
-                // The clip to the window, and the table within it.
-                add(w1 + 2);
-                let (lo, hi) = g.window(t + 1);
-                let width = u64::try_from(hi - lo + 1).unwrap_or(0);
-                nw.push((n.min(width), w1.min(width / 64 + 2)));
-            }
-            last.push(nw[nw.len() - 1]);
-        }
-        // The layers, and each join's charges forward and back.
-        let (mut layers, mut met) = (
-            Vec::with_capacity(self.len() + 1),
-            Vec::with_capacity(self.len()),
-        );
-        layers.push((1u64, 1u64));
-        let mut back = 0u64;
-        for (i, j) in (0..self.len()).map(|i| self.join(i)).enumerate() {
-            let ((nx, wx), (ng, wg)) = (layers[i], last[i]);
-            let size = self.layouts.get(i + 1).size as u64;
-            let (mut ny, mut wy);
-            match j.word {
-                Some(w) => {
-                    let (nm, wm) = match w.side {
-                        Some(Side::Eq { .. }) => {
-                            add(2 * (wx + 1) + wg + (2 * wx).min(nx) + 1);
-                            (ng.min(nx), wg.min(nx))
-                        }
-                        _ => {
-                            add(1);
-                            (ng, wg)
-                        }
-                    };
-                    add(wg + 1);
-                    add(2 * (wm + 1));
-                    (ny, wy) = (nm, (2 * wm).min(nm));
-                    if w.out.is_none() {
-                        (ny, wy) = (1, 1);
-                    }
-                    // Back: the marks of the class digits, then of the layer.
-                    back = back.saturating_add(2 * (wy + 1) + wm + (2 * wy).min(ny) + 1);
-                    back = back.saturating_add(2 * (wm + 1) + wx + (2 * wm).min(nm) + 1 + 1);
-                    met.push((nm, wm));
-                }
-                None => {
-                    let span = j.span as u64;
-                    let matched = ng.saturating_mul(nx.min(span));
-                    let walk = (wg + ng.saturating_mul(2 + bits(wx) + wx.min(span / 64 + 2)))
-                        .saturating_add(matched);
-                    add(walk.saturating_add(sorted(matched)).saturating_add(matched));
-                    (ny, wy) = (matched, matched);
-                    let marks = 2 * (sorted(matched).saturating_add(matched));
-                    let looked = matched.saturating_mul(1 + bits(wy.min(size / 64 + 1)));
-                    back = back
-                        .saturating_add(walk)
-                        .saturating_add(marks)
-                        .saturating_add(looked);
-                    met.push((ng, wg));
-                }
-            }
-            ny = ny.min(size);
-            wy = wy.min(ny).min((size - 1) / 64 + 1);
-            layers.push((ny, wy));
-        }
-        if matches!(pass, Pass::Decide) {
-            return units;
-        }
-        add(back.saturating_add(layers.last().map_or(1, |l| l.1) + 1));
-        let mut o = 0;
-        for (i, g) in (0..self.len()).map(|i| self.group(i)).enumerate() {
-            let t = &nw[o..o + g.atoms.len() + 1];
-            o += g.atoms.len() + 1;
-            let (ng, wg) = met[i];
-            match pass {
-                Pass::Point => {
-                    add(wg + ng.saturating_mul(2 + 1 + bits(layers[i + 1].1)));
-                    for (k, tk) in t[..g.atoms.len()].iter().enumerate() {
-                        add(count(k, &g).saturating_mul(1 + bits(tk.1)));
-                    }
-                }
-                Pass::Project(want) => {
-                    let Some(first) = g.atoms.iter().position(|&a| want[a]) else {
-                        continue;
-                    };
-                    add(wg + 1);
-                    for k in first..g.atoms.len() {
-                        // The walk value by value, and before it at most three times its cost reading the
-                        // sets as intervals ([`Plan::by_intervals`]).
-                        add(count(k, &g).saturating_mul(8 * t[k].1 + 5 * t[k + 1].1 + 11));
-                    }
-                }
-                Pass::Decide => {}
-            }
-        }
-        units
-    }
 }
 
 /// The rows of `a` and of `b`, both sorted, that `keep` keeps, once each and sorted, written to
@@ -3877,431 +3763,9 @@ fn merge_into(a: &[usize], b: &[usize], keep: impl Fn(usize) -> bool, out: &mut 
     }
 }
 
-/// The allowance, in units per unit of the formula's size, of the method's run before the solver
-/// starts; it is run so where its bound is at most this times [`RATE`] units per unit of size.
-// Complexity tradeoff: measured in round 1, with words alone (the module note). A run first
-// costs the method's instructions per unit, c_m, times at most FIRST units per unit of size.
-// Measured c_m: 6.7 on `overlap_rows` at k = 1024 (112M
-// instructions for 16.6M units), 8.2 at k = 512, 16 on `mid2` at k = 192 (10.8M for 676K),
-// with its fixed cost (the formula read, plan and bound) above that on small runs. At 4096
-// and c_m = 16 a run first costs at most about 65K instructions per unit of size, about the
-// least the solver alone was measured to spend per unit of size (54K on `wide` decided at
-// k = 4, 64K at k = 32; 186K or more on every family the method applies to). The families'
-// bounds are at most 483 per unit of size (`overlap_rows` projected at k = 64), so each runs
-// first, as do all 5,334 races of the 3,000 random2 formulas; `overlap_rows` reaches 1,548 per
-// unit at k = 256 and 3,092 at k = 512, where at FIRST 1024 it waited for the solver and cost
-// 145.8M and 535M decided, against 11.7M and 34.0M first. Measured on the families and
-// random2 at FIRST 256 to 65536: the families cost 608M to 799M at 256 and 550M to 551M from
-// 1024, random2 1,230M to 1,519M at 256, 1,137M to 1,151M at 1024 and 1,131M from 4096; with
-// this bound random2 costs 1,143.1M at 1024 (rate 256) and 1,133.8M at 4096 (rate 2048), the
-// families 551.5M and 551.3M. The case it makes costly: a formula of the class that the solver
-// answers in far less than 54K instructions per unit of size (its bounds alone settle it) and
-// whose bound is near 4096 per unit; none was found. `overlap_rows` passes 4096 per unit near
-// k = 680, from where in round 1 the race below decided it (341M instructions at k = 1,024).
-// Round 2, with intervals: a run costs far less than its bound, so the run first is kept up
-// to FIRST · RATE per unit, with FIRST per unit as its allowance; a run that stops there costs
-// at most what a run first cost before, and the race follows. `overlap_rows` at k = 1,024 now
-// answers in it (25.3M), and random2 costs 1,114.6M (1,226.0M on main). On `wide` the floor
-// of the bound ([`Rows::floor`]) is past FIRST · RATE, so the plan is not built: 683.1K
-// decided at k = 4 (690.3K on main).
-const FIRST: u64 = 4096;
-
-/// The method runs once the solver has been charged its bound over this number.
-// Complexity tradeoff: measured in round 1, with words alone, and kept in round 2. The race
-// of Levin (Problems of Information Transmission 9(3), 1973) with one run of the method, at
-// the charge where its whole run costs about what the solver has spent: rate = c_s / c_m, for
-// the solver's instructions per unit charged c_s. Measured c_s, as the instructions spent
-// before the method ran over the units charged: 22.5K on
-// `overlap_rows` decided at k = 1024 (229M for 10,187 units) and on subset sum with no point
-// at k = 512, 26K to 48K on `overlap_rows` at k = 256 and 34K on subset sum at k = 256 (rates
-// 256 and 1024; the charge comes in steps, so it overshoots). With c_m from 6.7 to 16 (above),
-// c_s / c_m is 1.4K to 3.4K, and 2048 lies between. Where the method answers after the
-// solver started, the race costs 1 + (c_s / (rate · c_m)) · (bound / units) times the method
-// alone: 3.05 on `overlap_rows` decided at k = 1024 (341M against 112M; bound / units = 1.26),
-// 2.0 predicted at rate 4096. Where the solver would answer just after the method starts, it
-// costs up to 1 + rate · c_m / c_s times the solver alone: 2.5 at c_m = 16 and c_s = 22.5K,
-// the case this rate makes costly; no measured case is of this kind. Measured at rates 64 to
-// 1024: from FIRST 4096 the rate changes neither the families nor random2 (1,130.9M at every
-// rate); at FIRST 1024 random2 costs 1,151.1M at 64 and 1,136.7M at 1024. Past FIRST the rate
-// shows (FIRST 1024): `overlap_rows` projected at k = 512 costs 12,952M at 256, 236M at 1024,
-// 144M at 2048 and 112M at 4096.
-const RATE: u64 = 2048;
-
-/// A method run beside the solver: what the solver has been charged, the charge at which the
-/// method next runs, the allowance it then runs with, whether that allowance doubles after a
-/// run that does not answer (up to the bound), the method, and whether it has answered. The
-/// method answers whether it has answered, or the charge at which it runs again.
-struct Race {
-    charged: u64,
-    next: u64,
-    allow: u64,
-    grow: bool,
-    bound: u64,
-    run: Box<dyn FnMut(u64) -> Result<bool, u64>>,
-    done: bool,
-}
-
-thread_local! {
-    /// The races under way on this thread, innermost last.
-    static RACES: RefCell<Vec<Race>> = const { RefCell::new(Vec::new()) };
-    /// Test control: the solver alone, with no method run in alternation with it, for the
-    /// tests that compare the two (PRES-overlap-fast). Kept here and re-exported by the parent,
-    /// which does not read it, so that this file names nothing of the parent's own.
-    pub static ROW_SUMS_OFF: Cell<bool> = const { Cell::new(false) };
-    /// The units charged on this thread so far, whether or not a race was under way, and the
-    /// races started on it so far ([`charged`]).
-    static CHARGED: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
-}
-
-/// The units charged on this thread so far and the races started on it so far, both counted
-/// from the thread's start: a caller that reads them before and after a solve knows what the
-/// solve charged and whether a race started inside it (`solve_repair` in the parent).
-pub(super) fn charged() -> (u64, u64) {
-    CHARGED.with(Cell::get)
-}
-
-/// Test control: counts a race started, as [`race`] does, for the test of the parent's memo of
-/// repairs, which needs a solve inside which a race starts.
-#[cfg(test)]
-pub(super) fn count_race_started() {
-    CHARGED.with(|c| {
-        let (u, r) = c.get();
-        c.set((u, r.wrapping_add(1)));
-    });
-}
-
-/// Charges the innermost race under way `units` of the solver's work: the terms of a system
-/// the solver is asked, or of a row its elimination makes. The race's method runs when the
-/// charge reaches the method's bound over [`RATE`], or, built when first needed ([`planned`]),
-/// a floor of the bound over the rate, and then the charge it names.
-// Complexity tradeoff: O(1) where no race has answered; the method's own runs are paid for by
-// the charge, as the module note says. The charge counts only rows, which the solver makes at
-// a cost of at least their terms, so it is below the solver's work: measured on
-// `overlap_rows` at k = 16, the solver spends about 90K instructions per term of the systems
-// it is asked, which alone left the method too little to answer.
-pub(super) fn charge(units: u64) {
-    CHARGED.with(|c| {
-        let (u, r) = c.get();
-        c.set((u.wrapping_add(units), r));
-    });
-    let answered = RACES.with(|races| {
-        let mut races = races.borrow_mut();
-        let Some(r) = races.last_mut() else {
-            return false;
-        };
-        if r.done {
-            return false;
-        }
-        r.charged = r.charged.saturating_add(units);
-        while !r.done && r.charged >= r.next {
-            r.next = u64::MAX;
-            match (r.run)(r.allow) {
-                Ok(true) => r.done = true,
-                Ok(false) if r.grow && r.allow < r.bound => {
-                    r.allow = r.allow.saturating_mul(2).min(r.bound);
-                    r.next = r.allow.div_ceil(RATE);
-                }
-                Ok(false) => {}
-                Err(at) => r.next = at,
-            }
-        }
-        r.done
-    });
-    // The solver is left at once, by an unwind that the race stops, where the build unwinds;
-    // otherwise each system asked after this one is refused (`stopped`), and the solver's
-    // own work between the systems it asks is still done. Measured on the random2 formulas:
-    // refusing each system alone left up to 143 systems asked after the answer, the run 6.5
-    // times main's.
-    #[cfg(panic = "unwind")]
-    if answered {
-        std::panic::resume_unwind(Box::new(Stop));
-    }
-    #[cfg(not(panic = "unwind"))]
-    let _ = answered;
-}
-
-/// The payload of the unwind that leaves the solver once the innermost race's method has
-/// answered.
-struct Stop;
-
-/// Whether the solver stops at the system it is asked: some race under way has been answered
-/// by its method. O(d) for d races nested on the thread, the depth of nested public questions.
-pub(super) fn stopped() -> bool {
-    RACES.with(|races| races.borrow().iter().any(|r| r.done))
-}
-
-/// Takes the innermost race off the thread when dropped, also when the solver panics.
-struct Off;
-
-impl Drop for Off {
-    fn drop(&mut self) {
-        RACES.with(|races| races.borrow_mut().pop());
-    }
-}
-
-/// The answer of `new` (the method, given an allowance) or of `old` (the solver), whichever
-/// finishes first, as the module note describes; `bound` is the most `new` spends, `u64::MAX`
-/// where it cannot be told, or at most that where `new` answers `Err(at)`: it runs again once
-/// the solver has been charged `at` ([`planned`]). Where `grow` is set, the method runs first
-/// whatever its bound, and each run that does not answer doubles the allowance of the next,
-/// up to the bound, which runs once the solver has been charged that allowance over [`RATE`].
-// Complexity tradeoff: the bound adds up each operation's charge with each set at its most;
-// where a plan joins two groups that share their rows ([`Fused`]) the sets the join meets are
-// sparse only in the middle of their range, which the bound cannot see, and the bound is far
-// past the run: 1.66·10^9 units at k = 64 for `coefficients_one_and_two` decided, against
-// 1.24M spent, so the method waited for the solver to be charged 810K units (27,900M
-// instructions), and from k = 128 never ran first. Doubling the allowance from the run first
-// (the doubling of Levin's search, Problems of Information Transmission 9(3), 1973) spends at
-// most four times what the run needs (each allowance below twice the need, the runs before it
-// at most as much again), and the solver at most twice the need over the rate; the plans
-// without such a join keep the race as before, whose bound is near their runs.
-fn race<T: 'static>(
-    size: u64,
-    bound: u64,
-    grow: bool,
-    mut new: impl FnMut(u64) -> Result<Option<T>, u64> + 'static,
-    old: impl FnOnce() -> Result<T, Refusal>,
-) -> Result<T, Refusal> {
-    let first = size.saturating_mul(FIRST);
-    if (grow || bound <= first.saturating_mul(RATE))
-        && let Ok(Some(t)) = new(bound.min(first))
-    {
-        return Ok(t);
-    }
-    let found: Rc<RefCell<Option<T>>> = Rc::default();
-    let slot = Rc::clone(&found);
-    let run = Box::new(move |allowance| {
-        let t = new(allowance)?;
-        let done = t.is_some();
-        *slot.borrow_mut() = t;
-        Ok(done)
-    });
-    CHARGED.with(|c| {
-        let (u, r) = c.get();
-        c.set((u, r.wrapping_add(1)));
-    });
-    RACES.with(|races| {
-        races.borrow_mut().push(Race {
-            charged: 0,
-            next: match bound {
-                b if b <= first || b == u64::MAX => u64::MAX,
-                _ if grow => first.saturating_mul(2).min(bound).div_ceil(RATE),
-                _ => bound.div_ceil(RATE),
-            },
-            allow: if grow {
-                first.saturating_mul(2).min(bound)
-            } else {
-                bound
-            },
-            grow,
-            bound,
-            run,
-            done: false,
-        })
-    });
-    let off = Off;
-    // Only the innermost race is charged, and a race nested in the solver stops its own
-    // unwind, so a `Stop` that reaches here is this race's.
-    #[cfg(panic = "unwind")]
-    let answer = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(old)) {
-        Ok(answer) => answer,
-        Err(stop) if stop.is::<Stop>() => Err(Refusal::Growth),
-        Err(panic) => std::panic::resume_unwind(panic),
-    };
-    #[cfg(not(panic = "unwind"))]
-    let answer = old();
-    drop(off);
-    match found.borrow_mut().take() {
-        Some(t) => Ok(t),
-        None => answer,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// A stand-in method that answers 1 when its allowance is at least `cost`, and counts its
-    /// runs in `runs`.
-    fn method(
-        cost: u64,
-        runs: &Rc<Cell<u32>>,
-    ) -> impl FnMut(u64) -> Result<Option<u32>, u64> + 'static {
-        let runs = Rc::clone(runs);
-        move |allowance| {
-            runs.set(runs.get() + 1);
-            Ok((allowance >= cost).then_some(1))
-        }
-    }
-
-    /// A stand-in solver that charges `units` one at a time and then answers 2.
-    fn solver(units: u64) -> impl FnOnce() -> Result<u32, Refusal> {
-        move || {
-            for _ in 0..units {
-                charge(1);
-            }
-            Ok(2)
-        }
-    }
-
-    /// Each branch of [`race`] at size 1, where the first allowance is `FIRST` and the run
-    /// first is tried for a bound of at most `FIRST · RATE`.
-    #[test]
-    fn each_branch_of_the_race() {
-        let runs = Rc::new(Cell::new(0));
-        let ask = |bound, cost, units| {
-            runs.set(0);
-            let answer = race(1, bound, false, method(cost, &runs), solver(units));
-            (answer, runs.get())
-        };
-        // The run first answers; the solver never starts.
-        assert_eq!(ask(FIRST, FIRST, u64::MAX), (Ok(1), 1));
-        // The run first stops at its allowance; the bound is within it, so the method does not
-        // run again and the solver answers.
-        assert_eq!(ask(FIRST, FIRST + 1, 10 * FIRST), (Ok(2), 1));
-        // The run first stops at its allowance; the method runs again, with its whole bound,
-        // once the solver's charge reaches the bound over the rate, and answers.
-        let bound = 4 * FIRST;
-        assert_eq!(ask(bound, bound, bound / RATE + 5), (Ok(1), 2));
-        // The same, where the solver answers before its charge reaches the bound over the rate.
-        assert_eq!(ask(bound, bound, bound / RATE - 1), (Ok(2), 1));
-        // The bound is past the run first: the method runs only beside the solver.
-        let bound = 4 * FIRST * RATE;
-        assert_eq!(ask(bound, bound, bound / RATE + 5), (Ok(1), 1));
-        assert_eq!(ask(bound, bound, bound / RATE - 1), (Ok(2), 0));
-        // A bound that cannot be told: the method never runs.
-        assert_eq!(ask(u64::MAX, 0, 1000), (Ok(2), 0));
-        // A method built when first run ([`planned`]): it names the charge at which it runs
-        // with its bound, and runs there; where the solver answers before, it never runs.
-        let lazy = |at: u64, units: u64| {
-            runs.set(0);
-            let mut named = false;
-            let r = Rc::clone(&runs);
-            let new = move |_| {
-                r.set(r.get() + 1);
-                match std::mem::replace(&mut named, true) {
-                    false => Err(at),
-                    true => Ok(Some(1)),
-                }
-            };
-            (
-                race(1, 4 * FIRST * RATE, false, new, solver(units)),
-                runs.get(),
-            )
-        };
-        let at = 8 * FIRST;
-        assert_eq!(lazy(at, at + 5), (Ok(1), 2));
-        assert_eq!(lazy(at, at - 1), (Ok(2), 1));
-        // A charge already past the one named: the method runs at once.
-        assert_eq!(lazy(1, 4 * FIRST + 5), (Ok(1), 2));
-        // No race is left on the thread.
-        assert!(RACES.with(|r| r.borrow().is_empty()));
-    }
-
-    /// A race whose allowance doubles ([`Fused`] plans): the method runs first whatever its
-    /// bound, then with twice the allowance once the solver has been charged that allowance
-    /// over the rate, and so on up to the bound, which it never passes.
-    #[test]
-    fn a_race_that_doubles_its_allowance() {
-        let (runs, given) = (Rc::new(Cell::new(0)), Rc::new(RefCell::new(Vec::new())));
-        let ask = |bound: u64, cost: u64, units: u64| {
-            runs.set(0);
-            given.borrow_mut().clear();
-            let (r, g) = (Rc::clone(&runs), Rc::clone(&given));
-            let new = move |allowance: u64| {
-                r.set(r.get() + 1);
-                g.borrow_mut().push(allowance);
-                Ok((allowance >= cost).then_some(1))
-            };
-            (race(1, bound, true, new, solver(units)), runs.get())
-        };
-        // Past the run first's limit, the run first still answers.
-        let far = 4 * FIRST * RATE;
-        assert_eq!(ask(far, FIRST, 0), (Ok(1), 1));
-        // A run of 5·FIRST: allowances FIRST, 2·FIRST, 4·FIRST, 8·FIRST, the last at a charge
-        // of 8·FIRST / RATE.
-        assert_eq!(ask(far, 5 * FIRST, u64::MAX), (Ok(1), 4));
-        assert_eq!(*given.borrow(), [1, 2, 4, 8].map(|m| m * FIRST));
-        // The solver answers before the charge of the last run.
-        assert_eq!(ask(far, 5 * FIRST, 8 * FIRST / RATE - 1), (Ok(2), 3));
-        // The allowance stops at the bound, and a method that needs more never answers.
-        assert_eq!(ask(3 * FIRST, u64::MAX, 1000), (Ok(2), 3));
-        assert_eq!(*given.borrow(), [FIRST, 2 * FIRST, 3 * FIRST]);
-        // A bound within the run first: one run.
-        assert_eq!(ask(FIRST, u64::MAX, 1000), (Ok(2), 1));
-        assert!(RACES.with(|r| r.borrow().is_empty()));
-    }
-
-    /// [`Rows::floor`] is at most [`Plan::bound`] of each pass: on `wide` (each atom from 0 to
-    /// 1e9 or from 2e9 to 3e9, their sum 1e9 + 7), where it is past what the method may run
-    /// first, and on rows with negative and non-unit coefficients, atoms on two rows, narrow
-    /// ranges, and a row no sum meets.
-    #[test]
-    fn floor_within_the_bound() {
-        let rows = |domains: Vec<Vec<(i128, i128)>>, rows: Vec<(Vec<(usize, i128)>, i128)>| Rows {
-            atoms: (0..domains.len())
-                .map(|i| Atom::Sym(format!("y{i}").into()))
-                .collect(),
-            domains,
-            rows: (rows.into_iter())
-                .map(|(terms, k)| Row { terms, k, eq: true })
-                .collect(),
-            empty: false,
-            size: 16,
-        };
-        let wide = vec![(0, 1_000_000_000), (2_000_000_000, 3_000_000_000)];
-        let two = vec![(0, 0), (5, 5)];
-        let cases = [
-            rows(
-                vec![wide.clone(); 4],
-                vec![((0..4).map(|j| (j, 1)).collect(), -1_000_000_007)],
-            ),
-            rows(
-                vec![wide.clone(); 3],
-                vec![(vec![(0, 3), (1, -6), (2, 9)], -7)],
-            ),
-            rows(
-                vec![wide.clone(), vec![(0, 70), (100, 300)], two.clone(), two],
-                vec![
-                    (vec![(0, 1), (1, 1), (2, 1)], -50),
-                    (vec![(2, 2), (3, -1)], 0),
-                ],
-            ),
-            rows(vec![vec![(0, 3)]; 2], vec![(vec![(0, 1), (1, 1)], -3)]),
-            // No sum meets the row, so the tables after the first are empty: only the first
-            // atom of a group is charged as the floor charges it.
-            rows(
-                vec![vec![(0, 1)], wide.clone(), wide.clone(), wide.clone()],
-                vec![((0..4).map(|j| (j, 1)).collect(), 5)],
-            ),
-        ];
-        for (i, rows) in cases.iter().enumerate() {
-            let floor = rows.floor();
-            let all = vec![true; rows.atoms.len()];
-            for (want, pass) in [
-                (&[][..], Pass::Decide),
-                (&[][..], Pass::Point),
-                (&all[..], Pass::Project(&all)),
-            ] {
-                let plan = Plan::of(rows, want).expect("a plan");
-                let bound = plan.bound(rows, pass);
-                assert!(
-                    floor <= bound,
-                    "case {i}: floor {floor} past the bound {bound}"
-                );
-            }
-        }
-        // On `wide` the floor alone shows the method cannot run first.
-        assert!(cases[0].floor() > 16 * FIRST * RATE);
-        // Ranges whose widths pass `i128` and `u64`: the floor is read before the plan, which
-        // refuses them, so it saturates instead of overflowing.
-        let huge = rows(
-            vec![vec![(i128::MIN + 1, 0), (1, i128::MAX)]],
-            vec![(vec![(0, 1)], 0)],
-        );
-        assert_eq!(huge.floor(), u64::MAX);
-        assert!(Plan::of(&huge, &[]).is_none());
-    }
 
     /// [`lattice`] on random sets of words and intervals, with `d` given and not, against the
     /// points taken pair by pair: each part of the points (y in words; x in words; `x + y` in
@@ -4467,5 +3931,50 @@ mod tests {
             by_intervals(&every_other(10), &every_other(10), &[(0, 0, 8)], 1),
             (None, 2 + 3 + 20)
         );
+    }
+
+    /// [`least_step`] against the walk it replaces, trying e = 0, 1, … in turn: random sets
+    /// of keys and intervals ([`Set::settled`]), both signs of the step, candidate ranges that
+    /// reach below key 0, and ranges of one value. Each kind of answer is met.
+    #[test]
+    fn least_step_finds_the_step_the_walk_finds() {
+        let mut seed = 0x2545_F491_4F6C_DD1D_u64;
+        let mut next = move |n: u64| {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (seed >> 33) % n
+        };
+        let (mut found, mut none) = (0, 0);
+        for case in 0..3000 {
+            let top_key = [50, 300, 5000][case % 3];
+            let mut keys: Vec<i64> = (0..next(20)).map(|_| next(top_key) as i64).collect();
+            let mut fill: Vec<(i64, i64)> = (0..next(4))
+                .map(|_| {
+                    let a = next(top_key as u64) as i64;
+                    (a, a + next(700) as i64)
+                })
+                .collect();
+            fill.sort_unstable();
+            let set = Set::settled(Lits::of(&mut keys), joined(fill));
+            let top = next(2 * top_key as u64) as i64 - 20;
+            let delta = [1, 2, 3, 7, -1, -2, -5, 64][next(8) as usize];
+            let n = [1, 2, 10, 100, 1000][next(5) as usize];
+            let walk = (0..n).find(|&e| {
+                let k = top - e * delta;
+                k >= 0 && set.contains(k)
+            });
+            assert_eq!(
+                least_step(&set, top, delta, n),
+                walk,
+                "case {case}: top {top}, delta {delta}, n {n}"
+            );
+            if walk.is_some() {
+                found += 1;
+            } else {
+                none += 1;
+            }
+        }
+        assert!(found > 500 && none > 500, "{found} found, {none} none");
     }
 }

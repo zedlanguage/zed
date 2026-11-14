@@ -171,28 +171,23 @@ mod row_sums {
         });
     }
 
-    /// Each way the race goes, measured in instructions against the solver alone
-    /// (2026-11-13, figures at the rate of 2048):
-    /// - the method answers in its run first, before the solver starts: an unreachable sum of 10
-    ///   atoms, 0.22M against the solver's refusal at 57.0M, and of 16 atoms, 0.36M against
-    ///   91.2M (of 32 atoms, 0.63M against 178.6M);
-    /// - the solver answers: a sum of 8 atoms, each in 0..=1e5 or 2e5..=3e5, at most 200,003,
-    ///   projected, 13.57M against 13.55M;
-    /// - ranges of 1e9 values, where the method does not answer: 128.0M against 128.2M.
-    ///
-    /// The branches of the race itself are tested with a stand-in method and solver in
-    /// `row_sums::tests::each_branch_of_the_race`.
+    /// Each side of the switch (`row_sums::JOIN_LIMIT`), measured in instructions against the
+    /// solver alone: an unreachable sum of 10 and of 16 atoms, which the join answers and the
+    /// solver alone refuses; and the solver's cases, a sum of 8 atoms each in 0..=1e5 or
+    /// 2e5..=3e5 and the same with ranges of 1e9 (no plan: a key past 2^62), answered alike
+    /// both ways. Measured figures are in the module note of `row_sums`.
     #[test]
-    fn each_way_the_race_goes_costs_at_most_a_little_more_than_the_solver_alone() {
-        let ((both, with), (alone, without)) = both_and_alone(&unreachable(10).formula(), decided);
-        assert_eq!((with, without), (Some(false), None));
-        assert!(both * 20 < alone, "first run: {both} against {alone}");
-        let ((both, with), (alone, without)) = both_and_alone(&unreachable(16).formula(), decided);
-        assert_eq!((with, without), (Some(false), None));
-        assert!(both * 20 < alone, "first run: {both} against {alone}");
+    fn each_side_of_the_switch_costs_at_most_a_little_more_than_the_solver_alone() {
+        for k in [10, 16] {
+            let ((both, with), (alone, without)) =
+                both_and_alone(&unreachable(k).formula(), decided);
+            assert_eq!((with, without), (Some(false), None));
+            assert!(both * 20 < alone, "k = {k}: {both} against {alone}");
+        }
         for (what, f) in solver_cases() {
             let ((both, with), (alone, without)) = both_and_alone(&f, projected);
             assert_eq!(with, without, "{what}");
+            eprintln!("switchover: {what}: {both} against the solver's {alone}");
             assert!(
                 both as f64 <= 1.02 * alone as f64,
                 "{what}: {both} against {alone}"
@@ -208,5 +203,160 @@ mod row_sums {
     #[test]
     fn the_3000_shared_sums_of_seed_777_are_answered_and_never_coarser_than_the_solver_alone() {
         shared_sums_are_answered(777, 3000, 100);
+    }
+}
+
+/// The measurements behind the switch of `row_sums` between the join of row sums, the solver
+/// and refusal (PRES-switchover-not-race, author P196/P197, A96): the join's time per unit of
+/// its work, which sets `JOIN_LIMIT`, and both sides of the switch on a family where the
+/// solver is the faster of the two and one where the join is.
+mod switchover {
+    use std::time::Instant;
+
+    use zedc::store::presburger::{
+        Formula, JOIN_LIMIT, JOINED, ROW_SUMS_JOIN, ROW_SUMS_OFF, Refusal, decide, project_each,
+        satisfiable,
+    };
+
+    use crate::disj_groups::row_sums::*;
+
+    /// k atoms each in `0..=1e9` or `2e9..=3e9`, summing to 1e9 + 7.
+    fn wide(k: usize) -> Case {
+        Case {
+            ranges: vec![vec![(0, 1_000_000_000), (2_000_000_000, 3_000_000_000)]; k],
+            rows: vec![(vec![1; k], 1_000_000_007, true)],
+        }
+    }
+
+    /// k atoms each in `0..=m` or `2m..=3m`, with coefficients the powers of `10m`: every
+    /// choice of values gives its own sum, so the join's tables hold `(2m)^(k-1)` intervals,
+    /// while the solver splits the target by the coefficients at once.
+    fn sparse(k: usize, m: i64) -> Case {
+        let g = 10 * m;
+        Case {
+            ranges: vec![vec![(0, m), (2 * m, 3 * m)]; k],
+            rows: vec![((0..k).map(|i| g.pow(i as u32)).collect(), 3 + g * m, true)],
+        }
+    }
+
+    /// The least time of three runs of `f`, the last answer, and the join's units, with the
+    /// join (`join`) or the solver alone; the formula is built before the timer starts.
+    fn timed<T>(join: bool, f: impl Fn() -> T) -> (u128, T, Option<(u64, bool)>) {
+        ROW_SUMS_OFF.with(|o| o.set(!join));
+        ROW_SUMS_JOIN.with(|o| o.set(join));
+        let (mut best, mut out) = (u128::MAX, None);
+        for _ in 0..3 {
+            let t = Instant::now();
+            out = Some(std::hint::black_box(f()));
+            best = best.min(t.elapsed().as_nanos());
+        }
+        let joined = JOINED.with(|j| j.take());
+        ROW_SUMS_OFF.with(|o| o.set(false));
+        ROW_SUMS_JOIN.with(|o| o.set(false));
+        (best, out.expect("an answer"), joined)
+    }
+
+    /// The join's time per unit on the families of `disj_groups.rs` and the sparse family,
+    /// each at a size where the join does at least a million units, so that the reading of
+    /// the formula and the other fixed costs do not count (at 10^4 units they are most of the
+    /// time: `wide` at k = 32 took 40 ns per unit, a chain of 128 sums 126), each asked for a
+    /// point. The worst, times `JOIN_LIMIT`, is the most time a join stopped at the limit
+    /// takes; it is checked against twice A99's 250 ms, the factor for the load of the test
+    /// machine. Measured 2026-11-14 (Ryzen 9 5950X, load 52): see `JOIN_LIMIT`.
+    #[test]
+    fn the_join_takes_a_few_nanoseconds_per_unit_of_work() {
+        let cases: [(&str, Formula); 4] = [
+            ("overlap_rows k=1024", overlap_rows(1024).formula()),
+            (
+                "coefficients 1, 2 k=512",
+                coefficients_one_and_two(512).formula(),
+            ),
+            ("sparse k=2 m=1e6", sparse(2, 1_000_000).formula()),
+            ("sparse k=3 m=300", sparse(3, 300).formula()),
+        ];
+        let mut worst = 0f64;
+        for (name, f) in &cases {
+            let (ns, p, joined) = timed(true, || satisfiable(f).map(|m| m.is_some()));
+            let (units, answered) = joined.expect("a plan");
+            assert!(
+                answered && p.is_ok() && units >= 1_000_000,
+                "{name}: {units}"
+            );
+            let per = ns as f64 / units as f64;
+            worst = worst.max(per);
+            eprintln!("switchover: {name}: {units} units in {ns} ns, {per:.2} ns per unit");
+        }
+        let most = worst * JOIN_LIMIT as f64 / 1e6;
+        eprintln!("switchover: worst {worst:.2} ns per unit; the limit takes at most {most:.0} ms");
+        assert!(most <= 500.0, "{most:.0} ms at the limit");
+    }
+
+    /// Each question on `f` by the join alone, by the solver alone and by the default path,
+    /// with the time of each and whether the default path's join answered (else the solver
+    /// answered `decide` and `satisfiable`, and `project_each` refused, `Refusal::Work`).
+    fn three_ways<T: PartialEq + std::fmt::Debug>(name: &str, ask: &str, f: impl Fn() -> T) -> T {
+        let (join_ns, by_join, _) = timed(true, &f);
+        let (solver_ns, by_solver, _) = timed(false, &f);
+        let t = Instant::now();
+        let by_default = f();
+        let default_ns = t.elapsed().as_nanos();
+        let (units, joined) = JOINED.with(|j| j.take()).expect("a plan");
+        eprintln!(
+            "switchover: {name} {ask}: join {join_ns} ns, solver {solver_ns} ns, default \
+             {default_ns} ns ({}, {units} units)",
+            if joined {
+                "the join answered"
+            } else {
+                "the join stopped"
+            }
+        );
+        if joined {
+            assert_eq!(by_default, by_join, "{name} {ask}");
+        } else {
+            assert_eq!(by_default, by_solver, "{name} {ask}");
+        }
+        by_join
+    }
+
+    /// Both sides of the switch on the sparse family, where the solver is the faster (the join
+    /// answers below the limit and stops past it), and the wide family, where the join is
+    /// (and the solver's projection is coarser): the join's and the solver's answers to
+    /// `decide` and `satisfiable` are equal, and the default path gives the answer of the side
+    /// it takes; its projection is the join's or, past the limit, `Refusal::Work`.
+    #[test]
+    fn each_side_of_the_switch_gives_the_same_answer_and_the_faster_side_is_measured() {
+        for (name, case, k) in [
+            ("sparse k=2 m=1e4", sparse(2, 10_000), 2),
+            ("sparse k=2 m=1e5", sparse(2, 100_000), 2),
+            ("sparse k=2 m=1e6", sparse(2, 1_000_000), 2),
+            ("sparse k=3 m=300", sparse(3, 300), 3),
+            ("wide k=16", wide(16), 16),
+            ("wide k=32", wide(32), 32),
+        ] {
+            let f = case.formula();
+            let atoms: Vec<_> = (0..k).map(v).collect();
+            let d = three_ways(name, "decide", || decide(&f));
+            let (_, d_alone, _) = timed(false, || decide(&f));
+            assert_eq!(d, d_alone, "{name}");
+            let p = three_ways(name, "point", || satisfiable(&f).map(|m| m.is_some()));
+            let (_, p_alone, _) = timed(false, || satisfiable(&f).map(|m| m.is_some()));
+            assert_eq!(p, p_alone, "{name}");
+            let ask = || project_each(&f, &atoms).map(|e| e.0);
+            ROW_SUMS_JOIN.with(|o| o.set(true));
+            let exact = ask();
+            ROW_SUMS_JOIN.with(|o| o.set(false));
+            let t = Instant::now();
+            let by_default = ask();
+            let default_ns = t.elapsed().as_nanos();
+            let (units, joined) = JOINED.with(|j| j.take()).expect("a plan");
+            assert_eq!(
+                by_default,
+                if joined { exact } else { Err(Refusal::Work) },
+                "{name} project"
+            );
+            eprintln!(
+                "switchover: {name} project: default {default_ns} ns, joined {joined}, {units} units"
+            );
+        }
     }
 }
