@@ -13,12 +13,15 @@ use zed_tests::oracle::{self, ENABLED};
 use super::{Ran, built, dir, executable, interpreter};
 
 /// Builds `src` twice under different names, checks the two executables are the same bytes,
-/// and returns the path of the first.
+/// and returns the path of the first. The two builds run at once: each is mostly the link's
+/// wait, about 1.5 s, so two serial builds cost twice that.
 fn built_twice(name: &str, src: &Path) -> std::path::PathBuf {
     let d = dir(name);
     let (one, two) = (d.join(name), d.join(format!("{name}-again")));
-    built(src, &one);
-    built(src, &two);
+    std::thread::scope(|s| {
+        s.spawn(|| built(src, &one));
+        built(src, &two);
+    });
     let (a, b) = (std::fs::read(&one).unwrap(), std::fs::read(&two).unwrap());
     assert!(a == b, "two builds of {} differ", src.display());
     one
@@ -33,17 +36,24 @@ fn step_program_agrees(name: &str) {
         .unwrap();
     let exe = built_twice(name, &src);
     let corpus = oracle::corpus();
-    for (c, _) in &corpus {
-        let input = std::fs::read(c.with_extension("in")).unwrap();
-        let native = executable(&exe, &[], &input);
-        assert_eq!(
-            native,
-            interpreter(&src, &[], &input),
-            "{name} on {}",
-            c.display()
-        );
-    }
     assert_eq!(corpus.len(), 31);
+    // Each input on a thread of its own: the 31 runs of each engine are independent, so the
+    // test waits for the slowest run, not for the sum of them.
+    std::thread::scope(|s| {
+        for (c, _) in &corpus {
+            let (exe, src) = (&exe, &src);
+            s.spawn(move || {
+                let input = std::fs::read(c.with_extension("in")).unwrap();
+                let native = executable(exe, &[], &input);
+                assert_eq!(
+                    native,
+                    interpreter(src, &[], &input),
+                    "{name} on {}",
+                    c.display()
+                );
+            });
+        }
+    });
 }
 
 #[test]
