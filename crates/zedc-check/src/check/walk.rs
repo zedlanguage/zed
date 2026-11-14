@@ -1848,32 +1848,104 @@ impl<'t, 'a> Ck<'t, 'a> {
         rejected: &mut Vec<(Lit, Vec<Carrier>)>,
         numbers: u8,
     ) -> Option<Carrier> {
+        let (takes, how) = self.class_takes(r, numbers)?;
+        match how {
+            LitsTake::Left => return Some(takes),
+            LitsTake::Rejected(l, left) => rejected.push((l, left)),
+            LitsTake::Int | LitsTake::F64 => {}
+        }
+        let fixed = self.restrict_asking(r, takes.bit(), what, span, false);
+        debug_assert!(fixed, "a class may take the carrier its literals take");
+        Some(takes)
+    }
+
+    /// The carrier the class `r` takes where nothing narrows it after this point, read
+    /// without a change ([`Self::fix_class`] records it), with how its literals took it: a
+    /// rejected class takes `f64` where it may, else the first carrier left. `None` where
+    /// [`Self::fix_class`] leaves the class as it is.
+    fn class_takes(&self, r: usize, numbers: u8) -> Option<(Carrier, LitsTake)> {
         let c = &self.classes[r];
         let fixes = c.mask & numbers != 0
             && (c.lits.iter()).any(|(l, follows)| !follows && (!l.generic || l.witness));
         if c.resolved.is_some() || !c.generic || c.binder.is_some() || !fixes {
             return None;
         }
-        let takes = match self.lits_take(r) {
+        let how = self.lits_take(r);
+        let takes = match &how {
             LitsTake::Int => Carrier::Int,
             LitsTake::F64 => Carrier::F64,
             LitsTake::Left => {
-                let mask = self.classes[r].mask;
-                return (mask & OTHER == 0 && mask.count_ones() == 1)
-                    .then(|| Carrier::of_mask(mask).next().expect("one carrier"));
+                let mask = c.mask;
+                (mask & OTHER == 0 && mask.count_ones() == 1)
+                    .then(|| Carrier::of_mask(mask).next().expect("one carrier"))?
             }
-            LitsTake::Rejected(l, left) => {
-                let c = match left.contains(&Carrier::F64) {
-                    true => Carrier::F64,
-                    false => left[0],
-                };
-                rejected.push((l, left));
-                c
-            }
+            LitsTake::Rejected(_, left) => match left.contains(&Carrier::F64) {
+                true => Carrier::F64,
+                false => left[0],
+            },
         };
-        let fixed = self.restrict_asking(r, takes.bit(), what, span, false);
-        debug_assert!(fixed, "a class may take the carrier its literals take");
-        Some(takes)
+        Some((takes, how))
+    }
+
+    /// In a function body, the operands `x` and `y` of `==` or `!=` at `span`, neither a
+    /// literal, given the carriers their operations on literals alone take, so that the
+    /// comparison is checked between carriers, as it is outside every function. `==` and
+    /// `!=` keep their sides apart, so each side is a class of its own, and the check of the
+    /// pair saw two class variables and passed them: `g() = 2^0.5 == 1 + 1` gave `false`
+    /// where `y = 2^0.5 == 1 + 1` is rejected (author decision 2026-11-12: no implicit
+    /// coercion). First, a side that is such a class alone and meets a value of one numeric
+    /// carrier other than `int` takes that carrier, as [`Self::lit_op_meets`] gives it
+    /// outside every function: with `a: f64`, `a == 1 + 1` compares two `f64`s. Then each
+    /// class the sides hold takes the carrier [`Self::class_takes`] reads, the one it takes
+    /// where the function ends: no later use narrows it, since a class of literals alone
+    /// that a comparison's side holds is reached from no name (a name is fixed where it is
+    /// bound, [`Self::fix_bound`]) and no parameter (a class with a `binder` is left). A
+    /// class whose literals are rejected is left to that rejection.
+    // Complexity tradeoff: naive version, check the pair again where the function ends,
+    // after its classes resolve, which keeps every comparison and its types to the end,
+    // O(size of the sides) each again, and reports the rejection out of the order of the
+    // text. Used: one walk of each side outside its functions where it holds a variable
+    // ([`Ty::vars_outside`], O(size of the side)), one find per variable, O(log N) for N
+    // classes, and the l literals of each class read at most three times
+    // ([`Ck::lits_take`]), O(l), then the sides rebuilt with the carriers in place, O(size
+    // of the sides). A side that holds no variable costs one test. A class of a side is
+    // read at this comparison alone, so each literal is read a constant number of times.
+    fn equal_classes(&mut self, op: BinaryOp, x: &mut Arg<'a>, y: &mut Arg<'a>, span: Span) {
+        let meets = |t: &Ty| t.numeric_carrier().filter(|&c| c != Carrier::Int);
+        let (cx, cy) = (meets(&x.ty), meets(&y.ty));
+        for (side, c) in [(&mut *x, cy), (&mut *y, cx)] {
+            let Some(c) = c else {
+                continue;
+            };
+            if let Some(k) = self.class_of_ty(&side.ty)
+                && self.classes[k].generic
+                && self.classes[k].binder.is_none()
+                && self.restrict(k, c.bit(), &format!("`{op}`"), span)
+            {
+                side.ty = Ty::carrier(c);
+            }
+        }
+        let mut vars = Vars::default();
+        for t in [&x.ty, &y.ty] {
+            if t.holds_vars() {
+                t.vars_outside(&mut vars);
+            }
+        }
+        let mut binds = Vec::new();
+        for v in vars.order {
+            let Some(k) = class_id(&v).filter(|&k| k < self.classes.len()) else {
+                continue;
+            };
+            match self.class_takes(self.find(k), Carrier::NUMBER_BITS) {
+                Some((_, LitsTake::Rejected(..))) | None => {}
+                Some((c, _)) => binds.push((v, Ty::carrier(c))),
+            }
+        }
+        if !binds.is_empty() {
+            let binds: Binds = binds.into_iter().collect();
+            x.ty = x.ty.replace_outside(&binds);
+            y.ty = y.ty.replace_outside(&binds);
+        }
     }
 
     /// Rejects, at a binding in a body, the literals `rejected` that nothing gives a carrier,
@@ -3472,6 +3544,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                         }
                         None => {}
                     }
+                }
+                if self.level > 0 && x.lit.is_none() && y.lit.is_none() {
+                    self.equal_classes(op, &mut x, &mut y, span);
                 }
                 let from = self.errors.len();
                 self.data(&x.ty, &format!("`{op}`"), span, x.at.unwrap_or(span));
