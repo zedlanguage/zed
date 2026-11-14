@@ -270,6 +270,42 @@ fn casts_between_number_kinds() {
             Some(Value::float32(-0.0)),
         ),
         (Prim::CastF32, two_1024, Some(atom("overflow"))),
+        // A float narrowed keeps the sign of a zero (FAIL-values-cast-negzero), as `f64` of an
+        // `f64` keeps the value whole; a rational has no sign of zero to keep.
+        (
+            Prim::CastF32,
+            Value::float(-0.0),
+            Some(Value::float32(-0.0)),
+        ),
+        (Prim::CastF32, Value::float(0.0), Some(Value::float32(0.0))),
+        (Prim::CastF64, Value::float(-0.0), Some(Value::float(-0.0))),
+        (Prim::CastF64, Value::float(0.0), Some(Value::float(0.0))),
+        // The least `f32` subnormal, `2^-149`, is exact; a float below half of it rounds to a
+        // zero, which is not equal to it, at either sign.
+        (
+            Prim::CastF32,
+            Value::float(f64::from(f32::from_bits(1))),
+            Some(Value::float32(f32::from_bits(1))),
+        ),
+        (Prim::CastF32, Value::float(1e-46), Some(atom("inexact"))),
+        (Prim::CastF32, Value::float(-1e-46), Some(atom("inexact"))),
+        // The largest `f32` is exact; the next `f64` above it is past the format's range,
+        // though it rounds to the largest `f32` (A36), at either sign.
+        (
+            Prim::CastF32,
+            Value::float(f64::from(f32::MAX)),
+            Some(Value::float32(f32::MAX)),
+        ),
+        (
+            Prim::CastF32,
+            Value::float(f64::from(f32::MAX).next_up()),
+            Some(atom("overflow")),
+        ),
+        (
+            Prim::CastF32,
+            Value::float(-f64::from(f32::MAX).next_up()),
+            Some(atom("overflow")),
+        ),
     ]);
 }
 

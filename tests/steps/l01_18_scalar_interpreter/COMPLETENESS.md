@@ -80,7 +80,7 @@ out), lines covered before the completeness tests and after:
 | `f64` of an `int` or `rat`: equal, `#overflow`, `#inexact` | `casts.rs` `a_number_to_f64_must_be_exactly_representable`, `a_number_beyond_the_largest_float_is_overflow`, `f64_of_an_int_or_rat_is_equal_or_fails_by_the_reason` | |
 | `f32` of an `int`, `rat` or `f64`: equal, `#overflow` at either sign, `#inexact`, infinities and the NaN kept, an underflow `#inexact` | `f32_of_an_int_rat_or_f64_is_equal_or_fails_by_the_reason`, `f32.rs` `casts_to_f32_are_exact_or_fail` | |
 | `f32` of an `f32` is itself | `f32_of_an_int_rat_or_f64_is_equal_or_fails_by_the_reason` | |
-| `f32` and `f64` of an `f64` `-0.0` keep the sign | **FAIL-values-cast-negzero** | Both give `0.0`; filed, test in `wt/failing-tests/FAIL-values-cast-negzero.rs` |
+| `f32` and `f64` of an `f64` `-0.0` keep the sign | `cast_negzero.rs` | Fixed by row FAIL-values-cast-negzero; neighbors (`0.0`, tiny floats of each sign, the least subnormal, `f64` of `-inf` and `nan`) in the same file |
 | `f64` of an `f32` is exact, `-0.0`, infinities, the NaN and subnormals included | `f64_of_an_f32_is_exact`, `f32.rs` `casts_from_f32` | |
 | `f32(n)` exact for an `n` the checker shows within ±2^24; one past keeps `#inexact` | `f32_of_an_int_shown_within_two_to_the_24_is_exact` | |
 | A cast that always fails is rejected | `f32.rs` `a_cast_that_always_fails_is_rejected` | |

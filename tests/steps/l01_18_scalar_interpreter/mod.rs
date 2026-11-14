@@ -3,6 +3,7 @@
 //! operands merge into `#errs`, and floats print in the shortest form that reads back.
 
 mod bench;
+mod cast_negzero;
 mod casts;
 mod completeness;
 mod f32;

@@ -87,8 +87,23 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
         }
         // Every `f32` is an `f64`; an infinity or NaN is one in either format.
         (Prim::CastF64, Value::Float32(f)) => Value::float(f64::from(f.get())),
-        (Prim::CastF32, Value::Float32(_)) => x.clone(),
+        (Prim::CastF32, Value::Float32(_)) | (Prim::CastF64, Value::Float(_)) => x.clone(),
         (Prim::CastF32, Value::Float(f)) if !f.get().is_finite() => Value::float32(f.get() as f32),
+        // A finite `f64` is narrowed as a float, not through its exact rational, which has no
+        // sign of zero: `f32(-0.0f64)` is `-0.0f32`. Past the largest finite `f32` is
+        // `#overflow`, ahead of the test for an equal float (A36), as for the other kinds below;
+        // `as f32` rounds to nearest, so the narrowing is exact just when it widens back to `f`.
+        (Prim::CastF32, Value::Float(f)) => {
+            let f = f.get();
+            let n = f as f32;
+            if f.abs() > f64::from(f32::MAX) {
+                overflow()
+            } else if f64::from(n) == f {
+                Value::float32(n)
+            } else {
+                inexact()
+            }
+        }
         (Prim::CastInt | Prim::CastRat | Prim::CastF64 | Prim::CastF32, _) => {
             if x.number_kind().is_none() {
                 return type_err(p, x);
