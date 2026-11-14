@@ -581,7 +581,7 @@ fn planned<T: 'static>(
         };
         let bound = plan.bound(&rows, pass(&want));
         debug_assert!(floor <= bound, "floor {floor} past the bound {bound}");
-        let grow = (0..plan.len()).any(|i| plan.join(i).fuse.is_some());
+        let grow = !plan.joins.fused.is_empty();
         return race(
             size,
             bound,
@@ -2593,10 +2593,15 @@ struct Fused {
     out: Map,
 }
 
-/// A join's part in a pair of [`Fused`] groups: the first, with the pair's maps, or the second.
+/// A join's part in a pair of [`Fused`] groups: the first, with the index of the pair's maps
+/// in [`Joins`], or the second.
+// Complexity tradeoff: an index into [`Joins`], in place of the maps (56 bytes) in every join,
+// which made each [`JoinAt`] and [`Join`] 48 bytes larger: with them, and a second vector of
+// each row's first group in place of `last`, many linked rows (no pair) took 1,310K
+// instructions at k = 64 against 1,304K now and 1,296K before pairs (2026-11-13).
 #[derive(Clone, Copy, Debug)]
 enum Fuse {
-    First(Fused),
+    First(usize),
     Second,
 }
 
@@ -2627,6 +2632,8 @@ struct Joins {
     at: Vec<JoinAt>,
     entries: Vec<Entry>,
     keyed: Vec<Keyed>,
+    /// The maps of each pair of [`Fused`] groups.
+    fused: Vec<Fused>,
 }
 
 impl Joins {
@@ -2757,14 +2764,14 @@ impl Plan {
                 .then(a.cmp(&b))
         });
         let mut groups = Groups::with_capacity(order.len(), sigs.rows.len());
-        let mut last = vec![0; rows.rows.len()];
+        // Each row's last group, `usize::MAX` before its first (every row has a term, so a group),
+        // and the first group of each pair split for [`Fused`].
+        let (mut last, mut pairs) = (vec![usize::MAX; rows.rows.len()], Vec::new());
         let mut sc = Scratch::default();
-        // Each row's first group, and the first group of each pair split for [`Fused`].
-        let (mut first, mut pairs) = (vec![usize::MAX; rows.rows.len()], Vec::new());
         for atoms in order.chunk_by(|&a, &b| sigs.sig(a) == sigs.sig(b)) {
             let sig = sigs.sig(atoms[0]);
             let halves = fuse
-                .then(|| Plan::halves(&sigs, &first, sig, atoms))
+                .then(|| Plan::halves(rows, &sigs, &last, sig, atoms))
                 .flatten();
             let parts = match &halves {
                 Some((e, o)) => {
@@ -2778,7 +2785,6 @@ impl Plan {
                 let i = groups.at.len();
                 for &r in sig {
                     last[r] = i;
-                    first[r] = first[r].min(i);
                 }
                 groups.push(rows, &sigs, sig, atoms, &mut sc)?;
             }
@@ -2857,7 +2863,8 @@ impl Plan {
         }
         for &i in &pairs {
             let f = Plan::fused(rows, &last, i, &groups, &layouts)?;
-            joins.at[i].fuse = Some(Fuse::First(f));
+            joins.at[i].fuse = Some(Fuse::First(joins.fused.len()));
+            joins.fused.push(f);
             joins.at[i + 1].fuse = Some(Fuse::Second);
         }
         Some(Plan {
@@ -2870,21 +2877,27 @@ impl Plan {
 }
 
 impl Plan {
-    /// The atoms of a group of two rows, r open before it (`first`) and s opening here, in two
-    /// parts by the ratio of their coefficients on s and r, the ratio of the second part twice
-    /// that of the first; `None` where they are not so.
+    /// The atoms of a group of two rows, r open before it (`last`, each row's last group so
+    /// far) and s opening here, in two parts by the ratio of their coefficients on s and r, the
+    /// ratio of the second part twice that of the first; `None` where they are not so.
     fn halves(
+        rows: &Rows,
         sigs: &Sigs,
-        first: &[usize],
+        last: &[usize],
         sig: &[usize],
         atoms: &[usize],
     ) -> Option<(Vec<usize>, Vec<usize>)> {
         let &[a, b] = sig else { return None };
-        let (r, s) = match (first[a] != usize::MAX, first[b] != usize::MAX) {
+        let (r, s) = match (last[a] != usize::MAX, last[b] != usize::MAX) {
             (true, false) => (0, 1),
             (false, true) => (1, 0),
             _ => return None,
         };
+        // [`Plan::fused`] takes only a pair whose r closes as an equation, and where it does not
+        // the plan is made again without pairs: no ratio is read.
+        if !rows.rows[sig[r]].eq {
+            return None;
+        }
         // The ratio s/r as a pair, and whether two are equal or the second twice the first.
         let ratio = |j: usize| (sigs.coefs[sigs.at[j] + s], sigs.coefs[sigs.at[j] + r]);
         let same =
@@ -2892,14 +2905,29 @@ impl Plan {
         let twice = |p: (i128, i128), q: (i128, i128)| {
             Some(q.0.checked_mul(p.1)? == p.0.checked_mul(q.1)?.checked_mul(2)?)
         };
-        if atoms.iter().any(|&j| ratio(j).1 == 0) {
+        // Complexity tradeoff: one pass to the first atom of another ratio, a pair equal to the
+        // first atom's passed without multiplying, in place of a pass for zero coefficients and
+        // a pass of cross products: a group of one ratio, the usual one, cost 116K instructions
+        // of the 46.0M of a chain of overlapping sums at k = 8 and 64 (+0.25%, 2026-11-13).
+        let x = ratio(atoms[0]);
+        if x.1 == 0 {
             return None;
         }
-        let x = ratio(atoms[0]);
-        let y = atoms
-            .iter()
-            .map(|&j| ratio(j))
-            .find(|&p| same(p, x) != Some(true))?;
+        let mut y = None;
+        for &j in &atoms[1..] {
+            let p = ratio(j);
+            if p == x {
+                continue;
+            }
+            if p.1 == 0 || same(p, x) != Some(true) {
+                y = Some(p);
+                break;
+            }
+        }
+        let y = y?;
+        if y.1 == 0 {
+            return None;
+        }
         let lo = if twice(x, y)? {
             x
         } else if twice(y, x)? {
@@ -2909,7 +2937,9 @@ impl Plan {
         };
         let (mut e, mut o) = (Vec::new(), Vec::new());
         for &j in atoms {
-            if same(ratio(j), lo)? {
+            if ratio(j).1 == 0 {
+                return None;
+            } else if same(ratio(j), lo)? {
                 e.push(j);
             } else if twice(lo, ratio(j))? {
                 o.push(j);
@@ -3243,7 +3273,8 @@ impl Plan {
         for i in 0..self.len() {
             let (layer, table) = (&layers[i], self.sum(&prefix, i));
             match self.join(i).fuse {
-                Some(Fuse::First(f)) => {
+                Some(Fuse::First(k)) => {
+                    let f = self.joins.fused[k];
                     // The pair at once: its two sums as `s` and `q`, kept for the pass back in
                     // `met`, layer i + 1 left empty.
                     let s = f.s.set(table, work)?;
@@ -3336,7 +3367,8 @@ impl Plan {
         for i in (0..p).rev() {
             let (layer, gy) = (&t.layers[i], &good[i + 1]);
             match self.join(i).fuse {
-                Some(Fuse::First(f)) => {
+                Some(Fuse::First(k)) => {
+                    let f = self.joins.fused[k];
                     let d = f.out.inverse().set(&good[i + 2], work)?;
                     let want = [true, true, true, false];
                     let (s, q) = (&t.met[i], &t.met[i + 1]);
@@ -3407,7 +3439,8 @@ impl Plan {
         for (i, gr) in (0..self.len()).map(|i| self.group(i)).enumerate() {
             let j = self.join(i);
             match j.fuse {
-                Some(Fuse::First(f)) => {
+                Some(Fuse::First(k)) => {
+                    let f = self.joins.fused[k];
                     // q in the pair's q sums with x + q in its s sums and x - q + h in the next
                     // layer's good keys; the least such q.
                     let q = f.q.set(&sums[i + 1], work)?;
