@@ -2294,19 +2294,14 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-agree-few-arms-seed | running | 2026-11-14 08:46 |  |
 | FAIL-check-decimal-past-f64-at-rat | running | 2026-11-14 07:10 |  |
 | FAIL-check-if-carrier-branch-literal-at-rat | running | 2026-11-14 07:10 |  |
-| FAIL-check-memory-limit-2-63 | running | 2026-11-14 07:40 |  |
 | FAIL-curried-positional-lambda-order | running | 2026-11-14 08:57 |  |
 | FAIL-exact-oracle-mod-zero-seed | running | 2026-11-14 09:25 |  |
+| FAIL-fences-chain-count | impl attempt 2 | 2026-11-14 09:03 | Done, pushed: count 1044 confirmed by diffing chains over the fixtures before/after 7f5a483dc (+Current(), +makeCurrent(glfw:, window:), -terminate()); no code  |
 | FAIL-generic-fold-l0125 | running | 2026-11-14 09:25 |  |
-| FAIL-initial-reads-shadowed | running | 2026-11-14 07:40 |  |
 | FAIL-kernel-xor-firsts-seed | running | 2026-11-14 08:46 |  |
 | FAIL-lattice-f32-literal | running | 2026-11-14 07:10 |  |
 | FAIL-linked-piled-holes-count | running | 2026-11-14 07:09 |  |
-| FAIL-memory-callee-no-plan | running | 2026-11-14 07:40 |  |
 | FAIL-product-refused-box-renamed | running | 2026-11-14 07:09 |  |
-| FAIL-queries-reorder | running | 2026-11-14 07:40 |  |
-| FAIL-types-sig-reflexive | running | 2026-11-14 07:40 |  |
-| FAIL-types-overload-bounded-tuple | running |  |  |
 | FAIL-values-function-in-payload-run | impl attempt 2 | 2026-11-14 09:22 | start in /home/luke/Work/wt/fix-values, load 38.11 |
 | FAIL-values-function-in-tuple | impl attempt 2 | 2026-11-14 07:33 | start in /home/luke/Work/wt/fix-values, load 38.11 |
 | FAIL-window-two-shadows-seed | running | 2026-11-14 08:57 |  |
