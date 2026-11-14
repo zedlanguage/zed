@@ -6803,7 +6803,10 @@ impl<'m, 't> Walk<'m, 't> {
     }
 
     async fn scan_at(&'m self, t: Tid, env: Eid) {
-        if self.mentions(t, env).await == Some(false) {
+        // A term that reads no input and runs to a value has no stop; one that reads no input
+        // but does not run (a foreign call on constants, `hash(1)`) is scanned, so that its
+        // stop is reported. `constant` is kept per (term, scope), so this costs one lookup.
+        if self.mentions(t, env).await == Some(false) && self.constant(t, env).await.is_some() {
             return;
         }
         match self.node(t) {

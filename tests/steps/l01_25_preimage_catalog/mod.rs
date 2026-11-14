@@ -17,6 +17,7 @@ mod div0_false;
 mod entries;
 mod exact;
 mod exact_oracle;
+mod foreign_constant;
 mod kept_ends;
 mod overflow;
 mod powers;
