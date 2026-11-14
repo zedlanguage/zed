@@ -8235,7 +8235,11 @@ fn unfixed_binding(
     let divisor = literal(b, src).filter(|_| two);
     let bound = whole.then_some(n);
     let fixes = (forms.into_iter()).map(|f| {
-        let leaves = if f.carrier() == Carrier::Rat { &rat_leaves } else { &leaves };
+        let leaves = if f.carrier() == Carrier::Rat {
+            &rat_leaves
+        } else {
+            &leaves
+        };
         leaves_with(leaves, f, place, bound, e, divisor.as_ref(), src)
     });
     Some((d.span, Msg::new(m, fixes.collect())))

@@ -451,31 +451,20 @@ fn a_power_whose_exponent_is_no_int_operation_stays_rejected() {
 }
 
 /// A top-level binding and a function's value, each `2r` times a power whose exponent is `n`
-/// powers of `1` nested by `^` over `(1 + 1)`: `y = 2r * 2^1^1^…^(1 + 1);`.
-fn nested_int_exponents(n: usize) -> String {
+/// powers of `1` nested by `^` over `(1 + 1)`: `y = 2r * 2^1^1^…^(1 + 1);`. The benchmark of
+/// this family is in `bench.rs`.
+pub(super) fn nested_int_exponents(n: usize) -> String {
     let e = format!("2r * 2^{}(1 + 1)", "1^".repeat(n));
     format!("y = {e};\ng() = {e};\n")
 }
 
 #[test]
-fn nested_int_operation_exponents_are_read_in_linear_time() {
-    // Each `^` reads its exponent as an `int` (plan row LIT-rat-int-op-exponent): read anew
-    // at each of the n powers, as the text walk does, that is O(n^2); kept by operation, and
-    // not entered again at the top level, O(n).
-    std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(|| {
-            assert_eq!(type_errors(&nested_int_exponents(3)), Vec::<String>::new());
-            let n = 300;
-            let srcs = [
-                nested_int_exponents(n),
-                nested_int_exponents(scaling::FACTOR * n),
-            ];
-            scaling::check("checking n nested int exponents", n, |m| {
-                type_errors(&srcs[usize::from(m != n)]);
-            });
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+fn nested_int_operation_exponents_take_rat() {
+    for n in [0, 1, 3] {
+        assert_eq!(
+            type_errors(&nested_int_exponents(n)),
+            Vec::<String>::new(),
+            "n = {n}"
+        );
+    }
 }

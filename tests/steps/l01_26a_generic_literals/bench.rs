@@ -30,3 +30,27 @@ fn comparisons_with_a_parameter_are_checked_in_linear_time() {
         );
     });
 }
+
+#[test]
+fn nested_int_operation_exponents_are_read_in_linear_time() {
+    // Each `^` reads its exponent as an `int` (plan row LIT-rat-int-op-exponent): read anew
+    // at each of the n powers, as the text walk does, that is O(n^2); kept by operation, and
+    // not entered again at the top level, O(n). The correctness test is in
+    // `top_body_agree.rs`.
+    use super::top_body_agree::nested_int_exponents;
+    std::thread::Builder::new()
+        .stack_size(1 << 29)
+        .spawn(|| {
+            let n = 300;
+            let srcs = [
+                nested_int_exponents(n),
+                nested_int_exponents(scaling::FACTOR * n),
+            ];
+            scaling::check("checking n nested int exponents", n, |m| {
+                type_errors(&srcs[usize::from(m != n)]);
+            });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
