@@ -12,7 +12,6 @@ use zed_kernel::{Prim, Shared, Term, Value};
 use zedc::elab::{Def, Unit};
 use zedc::stage::{self, Stage, color, free, passed};
 
-
 fn prim(p: Prim, args: Vec<Term>) -> Term {
     Term::Prim(p, args)
 }

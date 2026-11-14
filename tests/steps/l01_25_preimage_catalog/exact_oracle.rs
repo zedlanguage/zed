@@ -199,27 +199,18 @@ fn check(case: &Case) -> Found {
 /// made and passed over.
 fn check_runs(runs: &[Run], each: usize, exact: Option<usize>) {
     let (mut found, mut exact_now) = (Vec::new(), 0);
-    std::thread::scope(|s| {
-        let thread = std::thread::Builder::new().stack_size(1 << 28);
-        thread
-            .spawn_scoped(s, || {
-                for &run in runs {
-                    let mut at = 0;
-                    cases(run, |c| {
-                        at += 1;
-                        if at > each {
-                            return;
-                        }
-                        let f = check(&c);
-                        found.extend(f.disagreements);
-                        exact_now += f.exact;
-                    });
-                }
-            })
-            .unwrap()
-            .join()
-            .unwrap()
-    });
+    for &run in runs {
+        let mut at = 0;
+        cases(run, |c| {
+            at += 1;
+            if at > each {
+                return;
+            }
+            let f = check(&c);
+            found.extend(f.disagreements);
+            exact_now += f.exact;
+        });
+    }
     assert!(
         found.is_empty(),
         "{} disagreements with the interpreter:\n{}",
@@ -328,7 +319,6 @@ fn mixed(seed: u64, cases: usize) -> Run {
 // more_deep_1 35195 -> 35196 and more_deep_2 35178 -> 35182, 26 more exact marks of the
 // transfer before in all, with no disagreement with the interpreter in either transfer. The
 // transfer itself is unchanged.
-
 
 /// The first two runs of `s22.rs` (500 mixed terms, the second with tests), with their count
 /// of exact preimages pinned, so that a change in precision shows.

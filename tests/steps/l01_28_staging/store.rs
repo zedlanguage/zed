@@ -16,7 +16,6 @@ use zedc::stage;
 
 use super::cone::{F0, chain, def, left, mixed_text, sites, unit};
 use super::dag::distinct;
-use super::scaling::deep;
 
 /// `body` under `d` nested `if c >= j`s whose two arms are one part when `shared`, and two
 /// copies of it otherwise; each arm first binds `g = (y) -> y` when `lets`.
@@ -71,30 +70,28 @@ pub(super) fn expected(n: usize, f0: F0) -> (usize, usize) {
 /// calls). The tree form doubles at each level, so the sizes stop at 6 (they went to 8).
 #[test]
 fn mixing_calls_under_nested_ifs_whose_arms_are_one_part_gives_what_the_tree_gives() {
-    deep(|| {
-        // The terms, compared as terms: the text of the shared form names its parts.
-        let terms = |u: &Unit| {
-            let (out, _) = stage::mix(u, &["main"]);
-            let defs = out.defs.iter();
-            defs.map(|d| (d.name.clone(), (*d.term).clone()))
-                .collect::<Vec<_>>()
-        };
-        let calls = |u: &Unit| {
-            let (_, report) = stage::mix(u, &["main"]);
-            left(&report).into_iter().collect::<BTreeSet<_>>()
-        };
-        for f0 in [F0::Ends, F0::Loops, F0::Fails] {
-            for lets in [false, true] {
-                for n in 1..=6 {
-                    let (one, tree) = (family(n, f0, true, lets), family(n, f0, false, lets));
-                    let what = format!("n = {n}, lets = {lets}");
-                    assert_eq!(terms(&one), terms(&tree), "{what}");
-                    assert_eq!(calls(&one), calls(&tree), "{what}");
-                    assert_eq!(mixed(&one), expected(n, f0), "{what}");
-                }
+    // The terms, compared as terms: the text of the shared form names its parts.
+    let terms = |u: &Unit| {
+        let (out, _) = stage::mix(u, &["main"]);
+        let defs = out.defs.iter();
+        defs.map(|d| (d.name.clone(), (*d.term).clone()))
+            .collect::<Vec<_>>()
+    };
+    let calls = |u: &Unit| {
+        let (_, report) = stage::mix(u, &["main"]);
+        left(&report).into_iter().collect::<BTreeSet<_>>()
+    };
+    for f0 in [F0::Ends, F0::Loops, F0::Fails] {
+        for lets in [false, true] {
+            for n in 1..=6 {
+                let (one, tree) = (family(n, f0, true, lets), family(n, f0, false, lets));
+                let what = format!("n = {n}, lets = {lets}");
+                assert_eq!(terms(&one), terms(&tree), "{what}");
+                assert_eq!(calls(&one), calls(&tree), "{what}");
+                assert_eq!(mixed(&one), expected(n, f0), "{what}");
             }
         }
-    });
+    }
 }
 
 /// One part under three sibling arms that bind `f1` at the same depth, to `y + 1`, `y + 1`

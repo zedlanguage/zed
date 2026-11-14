@@ -4,9 +4,14 @@
 //! is followed by the numbers of its steps. Texts nested in a chain are drawn by their ends on
 //! one rule, and a text that cannot be drawn clearly is given by its range in its step.
 
+use std::sync::Arc;
+
 use zedc::front::{Diagnostic, Step};
 
-fn step(line: usize, col: usize, text: &str, source: &str, width: usize) -> Step {
+/// A step on `source`. The generators of many steps on one line pass one `Arc` of the line, as
+/// the compiler does, so a line of `n` steps is held once, not `n` times (O(n), not O(n²),
+/// bytes; TEST-bench-move-l0125).
+fn step(line: usize, col: usize, text: &str, source: impl Into<Arc<str>>, width: usize) -> Step {
     Step {
         line,
         col,
@@ -106,16 +111,16 @@ pub(super) fn diagnostic(steps: Vec<Step>) -> Diagnostic {
 /// on the whole sum.
 pub(super) fn terms(n: usize) -> Vec<Step> {
     let names: Vec<String> = (0..n).map(|i| format!("a{i}")).collect();
-    let source = format!("  total = {};", names.join(" + "));
+    let source: Arc<str> = format!("  total = {};", names.join(" + ")).into();
     let mut col = 11;
     let mut steps = Vec::new();
     for name in &names {
         let text = format!("`{name}` is int here");
-        steps.push(step(1, col, &text, &source, name.len()));
+        steps.push(step(1, col, &text, source.clone(), name.len()));
         col += name.len() + 3;
     }
     let sum = source.len() - 11;
-    steps.push(step(1, 11, "this `+` gives int", &source, sum));
+    steps.push(step(1, 11, "this `+` gives int", source.clone(), sum));
     steps
 }
 
@@ -178,7 +183,6 @@ fn wide_characters_tabs_and_combining_marks_are_underlined_under_their_columns()
     );
 }
 
-
 /// A program whose rejection has a step on each of `n` literals of one line.
 pub(super) fn literals(n: usize) -> String {
     let xs: Vec<String> = (0..n).map(|i| i.to_string()).collect();
@@ -205,7 +209,7 @@ pub(super) fn sums(n: usize) -> Vec<Step> {
     for i in 1..n {
         width += 3 + format!("a{i}").len();
         let text = format!("this `+` gives int, the sum to a{i}");
-        steps.push(step(1, 11, &text, &source, width));
+        steps.push(step(1, 11, &text, source.clone(), width));
     }
     steps
 }
@@ -213,14 +217,14 @@ pub(super) fn sums(n: usize) -> Vec<Step> {
 /// The source line `  y = f(f(…f(x)…));` of `n` calls, a step on each call from the outermost,
 /// then one on `x`.
 fn calls(n: usize) -> Vec<Step> {
-    let source = format!("  y = {}x{};", "f(".repeat(n), ")".repeat(n));
+    let source: Arc<str> = format!("  y = {}x{};", "f(".repeat(n), ")".repeat(n)).into();
     let mut steps: Vec<Step> = (0..n)
         .map(|i| {
             let text = format!("this call of `f`, {} deep, gives int", i + 1);
-            step(1, 7 + 2 * i, &text, &source, 3 * (n - i) + 1)
+            step(1, 7 + 2 * i, &text, source.clone(), 3 * (n - i) + 1)
         })
         .collect();
-    steps.push(step(1, 7 + 2 * n, "`x` is int here", &source, 1));
+    steps.push(step(1, 7 + 2 * n, "`x` is int here", source.clone(), 1));
     steps
 }
 
@@ -336,12 +340,11 @@ fn a_balanced_nesting_is_underlined_in_full() {
     );
 }
 
-
 /// The source line `  y = a0^a1^…;` of `n` terms, a step on each power `ai^…` from the
 /// outermost, then one on each term: `^` groups from the right, so the powers share their end.
 fn powers(n: usize) -> Vec<Step> {
     let names: Vec<String> = (0..n).map(|i| format!("a{i}")).collect();
-    let source = format!("  y = {};", names.join("^"));
+    let source: Arc<str> = format!("  y = {};", names.join("^")).into();
     let mut starts = Vec::new();
     let mut col = 7;
     for name in &names {
@@ -352,7 +355,7 @@ fn powers(n: usize) -> Vec<Step> {
     let mut steps: Vec<Step> = (0..n - 1)
         .map(|i| {
             let text = format!("this `^` gives int, from a{i}");
-            step(1, starts[i], &text, &source, end - starts[i])
+            step(1, starts[i], &text, source.clone(), end - starts[i])
         })
         .collect();
     for (name, &col) in names.iter().zip(&starts) {
@@ -360,7 +363,7 @@ fn powers(n: usize) -> Vec<Step> {
             1,
             col,
             &format!("`{name}` is int here"),
-            &source,
+            source.clone(),
             name.len(),
         ));
     }

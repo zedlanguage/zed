@@ -26,7 +26,7 @@ use zed_tests::instances::Rng;
 use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::preimage_ref::{Demand, Domains, Listed, Preimage, preimage, preimage_listed};
 
-use super::s22::{bits, chain, i_in, int, on_big_stack, over, prim, var};
+use super::s22::{bits, chain, i_in, int, over, prim, var};
 
 // ---- Main's answers ----
 
@@ -295,7 +295,11 @@ fn check_line(line: &str, kept: &mut Kept, at_points: bool) {
         "{line}\nmain's relation lost"
     );
     let names: Vec<Arc<str>> = c.inputs.keys().cloned().collect();
-    let at = if at_points { points(&c, &p.domains) } else { Vec::new() };
+    let at = if at_points {
+        points(&c, &p.domains)
+    } else {
+        Vec::new()
+    };
     for pt in at {
         let hit = names.iter().zip(&pt).all(|(n, v)| {
             p.domains
@@ -329,29 +333,72 @@ fn lines(fixture: &str) -> impl Iterator<Item = &str> {
 /// changes: each kept or made finer. 85 are made exact, 113 narrower and still inexact; 28
 /// keep main's domains and exactness and differ in a stop, a listing, a relation or a
 /// refusal, which the replay compares and this file does not keep. Every call is answered
-/// and compared with main's box; the interpreter runs at the [`points`] of 20 calls drawn from
-/// a new seed each run. Until TEST-bench-move-l0125 (author P169: a correctness test runs well
-/// under 1 s, a random one takes fewer cases and a new seed each run) it ran at the points of
-/// every call, 4.6 s.
+/// and compared with main's box; the interpreter runs at the [`points`] of 5 calls of each part
+/// drawn from a new seed each run. The calls are checked in four parts, the lines whose index
+/// is `part` mod 4, each part with its own counts (`want`), which sum to those above. Until
+/// TEST-bench-move-l0125 (author P169: a correctness test runs well under 1 s, a random one
+/// takes fewer cases and a new seed each run) one test ran at the points of every call, 4.6 s;
+/// one test of all the calls at the points of 20 took 1.7 s alone.
+fn changed_answers_kept_or_made_finer(part: usize, want: Kept) {
+    let test =
+        format!("ref_memo::the_changed_answers_of_main_s_dump_are_kept_or_made_finer_{part}");
+    let mut rng = Rng::new(super::run_seed(&test));
+    let ours: Vec<usize> = (0..lines(CHANGED).count())
+        .filter(|i| i % 4 == part)
+        .collect();
+    let at: BTreeSet<usize> = (0..5).map(|_| rng.pick(&ours)).collect();
+    let mut kept = Kept::default();
+    for (i, l) in lines(CHANGED).enumerate().filter(|(i, _)| i % 4 == part) {
+        check_line(l, &mut kept, at.contains(&i));
+    }
+    assert_eq!(kept, want, "part {part}");
+}
+
 #[test]
-fn the_changed_answers_of_main_s_dump_are_kept_or_made_finer() {
-    let mut rng = Rng::new(super::run_seed(
-        "ref_memo::the_changed_answers_of_main_s_dump_are_kept_or_made_finer",
-    ));
-    let n = lines(CHANGED).count();
-    let at: BTreeSet<usize> = (0..20).map(|_| rng.below(n)).collect();
-    let kept = on_big_stack(|| {
-        let mut kept = Kept::default();
-        (lines(CHANGED).enumerate()).for_each(|(i, l)| check_line(l, &mut kept, at.contains(&i)));
-        kept
-    });
-    assert_eq!(
-        kept,
+fn the_changed_answers_of_main_s_dump_are_kept_or_made_finer_0() {
+    changed_answers_kept_or_made_finer(
+        0,
         Kept {
-            same: 28,
-            narrower: 113,
-            made_exact: 85
-        }
+            same: 5,
+            narrower: 28,
+            made_exact: 24,
+        },
+    );
+}
+
+#[test]
+fn the_changed_answers_of_main_s_dump_are_kept_or_made_finer_1() {
+    changed_answers_kept_or_made_finer(
+        1,
+        Kept {
+            same: 6,
+            narrower: 32,
+            made_exact: 19,
+        },
+    );
+}
+
+#[test]
+fn the_changed_answers_of_main_s_dump_are_kept_or_made_finer_2() {
+    changed_answers_kept_or_made_finer(
+        2,
+        Kept {
+            same: 11,
+            narrower: 24,
+            made_exact: 21,
+        },
+    );
+}
+
+#[test]
+fn the_changed_answers_of_main_s_dump_are_kept_or_made_finer_3() {
+    changed_answers_kept_or_made_finer(
+        3,
+        Kept {
+            same: 6,
+            narrower: 29,
+            made_exact: 21,
+        },
     );
 }
 
@@ -361,11 +408,11 @@ fn the_changed_answers_of_main_s_dump_are_kept_or_made_finer() {
 /// (-inf, -7]: main answers y in (-inf, 0], not exact (the exact answer is y <= -1).
 #[test]
 fn calls_22_45_and_86_keep_main_s_answer_or_a_finer_one() {
-    let kept = on_big_stack(|| {
+    let kept = {
         let mut kept = Kept::default();
         lines(PINNED).for_each(|l| check_line(l, &mut kept, true));
         kept
-    });
+    };
     assert_eq!(
         kept,
         Kept {
@@ -712,11 +759,10 @@ pub(super) fn answer_pieces(case: &(Term, Domains, Demand)) -> usize {
 #[test]
 fn output_grid_answers_have_k_n_pieces() {
     for (n, k) in [(8, 1), (8, 4), (16, 8), (64, 4), (64, 32), (512, 4)] {
-        let pieces = on_big_stack(|| answer_pieces(&output_grid(n, k)));
+        let pieces = answer_pieces(&output_grid(n, k));
         assert_eq!(pieces, k * n, "output_grid at n = {n}, k = {k}");
     }
 }
-
 
 /// The families that `bench::ref_memo` times, each named once.
 pub(super) const FAMILIES: [&str; 44] = [
@@ -772,43 +818,47 @@ pub(super) const FAMILIES: [&str; 44] = [
 /// benchmarks time these families at 2 to 1280 links and check only their work.
 #[test]
 fn every_family_the_benchmarks_time_is_answered_soundly_at_small_sizes() {
-    on_big_stack(|| {
-        for name in FAMILIES.iter().chain(&["random_chains"]) {
-            // `output_grid` demands four odd values, so it needs 8 links.
-            let sizes = if *name == "output_grid" { 8..=8 } else { 1..=4 };
-            for n in sizes {
-                for (t, ds, d) in family(name, n) {
-                    let p = preimage(&t, &ds, &d);
-                    let names: Vec<Arc<str>> = ds.keys().cloned().collect();
-                    let mut all: Vec<Vec<Num>> = vec![vec![]];
-                    for name in &names {
-                        let axis: Vec<Num> = (-12..=12)
-                            .map(Num::from)
-                            .filter(|v| ds[name].contains_end(&End::Fin(v.clone())))
-                            .collect();
-                        all = all
-                            .into_iter()
-                            .flat_map(|q| {
-                                axis.iter().map(move |v| {
-                                    let mut q = q.clone();
-                                    q.push(v.clone());
-                                    q
-                                })
+    for name in FAMILIES.iter().chain(&["random_chains"]) {
+        // `output_grid` demands four odd values, so it needs 8 links.
+        let sizes = if *name == "output_grid" { 8..=8 } else { 1..=4 };
+        for n in sizes {
+            for (t, ds, d) in family(name, n) {
+                let p = preimage(&t, &ds, &d);
+                let names: Vec<Arc<str>> = ds.keys().cloned().collect();
+                let mut all: Vec<Vec<Num>> = vec![vec![]];
+                for name in &names {
+                    let axis: Vec<Num> = (-12..=12)
+                        .map(Num::from)
+                        .filter(|v| ds[name].contains_end(&End::Fin(v.clone())))
+                        .collect();
+                    all = all
+                        .into_iter()
+                        .flat_map(|q| {
+                            axis.iter().map(move |v| {
+                                let mut q = q.clone();
+                                q.push(v.clone());
+                                q
                             })
-                            .collect();
-                    }
-                    for pt in &all {
-                        let hit = names.iter().zip(pt).all(|(x, v)| {
-                            p.domains
-                                .get(x)
-                                .is_none_or(|s| s.contains_end(&End::Fin(v.clone())))
-                        });
-                        let meets = meets(&t, &names, pt, &d);
-                        assert!(!meets || hit, "{name} at {n}: {pt:?} meets {d:?} outside {p:?}");
-                        assert!(!p.exact || !hit || meets, "{name} at {n}: {pt:?} in exact {p:?}");
-                    }
+                        })
+                        .collect();
+                }
+                for pt in &all {
+                    let hit = names.iter().zip(pt).all(|(x, v)| {
+                        p.domains
+                            .get(x)
+                            .is_none_or(|s| s.contains_end(&End::Fin(v.clone())))
+                    });
+                    let meets = meets(&t, &names, pt, &d);
+                    assert!(
+                        !meets || hit,
+                        "{name} at {n}: {pt:?} meets {d:?} outside {p:?}"
+                    );
+                    assert!(
+                        !p.exact || !hit || meets,
+                        "{name} at {n}: {pt:?} in exact {p:?}"
+                    );
                 }
             }
         }
-    });
+    }
 }

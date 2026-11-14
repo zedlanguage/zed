@@ -408,7 +408,6 @@ fn a_product_with_a_different_factor_holds_powers_inside_it() {
     check(&t, &ds, &Demand::Bool(true), &p, (-3, 3));
 }
 
-
 /// `x1 = i * i; x2 = x1 * i; x3 = x2 * x1; …`: the count at depth `d` is the Fibonacci
 /// number `F(d + 2)`, a sum of two earlier counts at each name, as nested squares are.
 pub(super) fn fibonacci(depth: usize, test: Term) -> Term {
@@ -430,7 +429,6 @@ pub(super) fn fibonacci(depth: usize, test: Term) -> Term {
     }
     body
 }
-
 
 /// `i * i * j * i * j * … ` with `k` factors: no product but the innermost is a power, and
 /// the first factor of each product lies as deep as the product, so a reading that looks into

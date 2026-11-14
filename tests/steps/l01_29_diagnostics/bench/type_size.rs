@@ -7,8 +7,8 @@ use zed_tests::scaling;
 
 use crate::rejected;
 use crate::type_size::{
-    compared, compared_with_1, doubling, growing, same, unions, unions_each_its_own,
-    unions_inside, unions_named_one_by_one,
+    compared, compared_with_1, doubling, growing, same, unions, unions_each_its_own, unions_inside,
+    unions_named_one_by_one,
 };
 
 /// Checks that the rejection of `make(8n)` is at most about 8 times as long as that of

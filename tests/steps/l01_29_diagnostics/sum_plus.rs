@@ -3,7 +3,6 @@
 //! reports a failing `+` with the same message and derivation. A component the checker does
 //! not track (`_`) is left to `+`, as in `x.a + 1`, rather than refused by `sum` itself.
 
-
 use super::{rejected, steps};
 use zedc::run::load;
 

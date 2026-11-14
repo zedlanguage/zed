@@ -169,7 +169,6 @@ fn a_comb_of_pieces_is_kept_exactly() {
     assert_eq!(p.domains["x"].len(), 24);
 }
 
-
 // Plan item S22b-rest: the summary of a term of one input (`Pa`) reads `c - u` as the affine
 // map `-1 * u + c` for every constant `c`; before, it read only `0 - u`, so an `if` chain with
 // an arm `c - t` was left to the transfer level by level (`s22::chain_jt_range_live_scales`).

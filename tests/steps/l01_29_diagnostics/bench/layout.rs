@@ -24,14 +24,14 @@ fn rendered(what: &str, n: usize, text: impl Fn(usize) -> String + Sync) {
 /// numbers, so `n` steps on one line print O(n) bytes, not a copy of the line for each step.
 #[test]
 fn rendering_many_steps_on_one_line_scales() {
-    let n = 1000;
+    let n = 100_000;
     let made = scaling::inputs(n, |k| diagnostic(terms(k)));
     rendered("rendering n steps on one line", n, |k| made[&k].to_string());
 }
 
 #[test]
 fn rejecting_a_line_of_many_literals_scales() {
-    let n = 300;
+    let n = 4300;
     let srcs = scaling::inputs(n, literals);
     rendered("rejecting a line of n literals", n, |k| rejected(&srcs[&k]));
 }
@@ -41,7 +41,7 @@ fn rejecting_a_line_of_many_literals_scales() {
 /// O(n²).
 #[test]
 fn rendering_a_line_of_nested_sums_scales() {
-    let n = 1000;
+    let n = 50_000;
     let made = scaling::inputs(n, |k| diagnostic(sums(k)));
     rendered("rendering n nested sums on one line", n, |k| {
         made[&k].to_string()
@@ -50,7 +50,7 @@ fn rendering_a_line_of_nested_sums_scales() {
 
 #[test]
 fn rejecting_a_line_of_nested_sums_scales() {
-    let n = 200;
+    let n = 2900;
     let srcs = scaling::inputs(n, summed);
     rendered("rejecting a line of n nested sums", n, |k| {
         rejected(&srcs[&k])

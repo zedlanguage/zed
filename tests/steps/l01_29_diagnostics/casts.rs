@@ -5,7 +5,6 @@
 //! a `rat` with `n: int`. A cast that narrows is never offered (DESIGN.md sec:diagnostics), so
 //! `r + x` has none: `f64(r)` is inexact and `rat(x)` is `#invalid` at NaN and the infinities.
 
-use zed_tests::scaling::on_a_thread;
 use zed_tests::step_helpers::l01_19a_command_line::run;
 
 use super::{rejected, steps};
@@ -242,7 +241,7 @@ pub(super) fn padded(m: usize, r: usize) -> (Vec<Stmt>, Resolution) {
 /// The number of errors of the check of `stmts` with a repair among their notes: those with a
 /// menu.
 pub(super) fn rejections_with_a_menu(stmts: &[Stmt], res: &Resolution) -> usize {
-    on_a_thread(256 << 20, || zedc::check::walk::check(stmts, res))
+    zedc::check::walk::check(stmts, res)
         .errors
         .iter()
         .filter(|e| e.notes.iter().any(|n| n.text.starts_with("repair:")))
@@ -569,7 +568,7 @@ pub(super) fn nested(d: usize) -> String {
 
 /// The parentheses are matched in one pass over the operand's tokens: O(d) for `d` pairs.
 pub(super) fn a_cast_in_place_of_parentheses(src: &str) {
-    let out = on_a_thread(256 << 20, || rejected(src));
+    let out = rejected(src);
     assert!(
         out.contains("Try `String(2 + 13) < \"a\"` instead."),
         "{out}"

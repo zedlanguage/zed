@@ -3,7 +3,9 @@
 
 use zed_tests::scaling;
 
-use crate::too_large::{chain, kept_sums, powers, product_chain, rat_product_chain, rejected_times};
+use crate::too_large::{
+    chain, kept_sums, powers, product_chain, rat_product_chain, rejected_times,
+};
 
 /// Checks that rejecting `make(n)`, with `per * n` rejections, scales as a pass of order n.
 fn rejecting(what: &str, n: usize, per: usize, make: fn(usize) -> String) {
@@ -14,7 +16,12 @@ fn rejecting(what: &str, n: usize, per: usize, make: fn(usize) -> String) {
 #[test]
 fn rejecting_many_powers_scales() {
     // The bound is O(1) words per power: one division and one comparison.
-    rejecting("n powers past the address space, each rejected", 200, 1, powers);
+    rejecting(
+        "n powers past the address space, each rejected",
+        200,
+        1,
+        powers,
+    );
 }
 
 #[test]

@@ -4,7 +4,9 @@
 use zed_tests::scaling;
 use zedc::suppress::InFile;
 
-use crate::rejection_addresses::{a_deep_file, a_package_of_problems, the_problems_of_a_package_addressed};
+use crate::rejection_addresses::{
+    a_deep_file, a_package_of_problems, the_problems_of_a_package_addressed,
+};
 
 /// `Package::report_on_disk` on a package with problems in `n` files, each a unit that imports
 /// `per` names its import does not define, with every address suppressed: placing, addressing
@@ -14,7 +16,7 @@ use crate::rejection_addresses::{a_deep_file, a_package_of_problems, the_problem
 /// and a scan of all problems per problem then grows 50 times, not the 24 allowed.
 #[test]
 fn addressing_the_problems_of_a_package_scales() {
-    let n = 200;
+    let n = 450;
     let made = scaling::inputs(n, |m| a_package_of_problems(m, 40));
     scaling::check("addressing the problems of a package in n files", n, |m| {
         the_problems_of_a_package_addressed(&made[&m]);

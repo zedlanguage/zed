@@ -8,7 +8,6 @@ use zed_kernel::Term;
 use zed_tests::scaling::{self, FACTOR};
 
 use crate::print::{arms, lets, shown};
-use crate::scaling::deep;
 
 /// The text's length at `d` and at `FACTOR * d` is held to a constant over the factor (a
 /// logarithm included), and the time to the order check.
@@ -34,36 +33,32 @@ fn scales(
 
 #[test]
 fn writing_nested_ifs_over_one_part_scales() {
-    deep(|| {
-        scales(
-            "pretty_in on d nested ifs over one part",
-            400,
-            |d| arms(d, true),
-            shown,
-        );
-        scales(
-            "Display on d nested ifs over one part",
-            400,
-            |d| arms(d, true),
-            |t| t.to_string(),
-        );
-    });
+    scales(
+        "pretty_in on d nested ifs over one part",
+        400,
+        |d| arms(d, true),
+        shown,
+    );
+    scales(
+        "Display on d nested ifs over one part",
+        400,
+        |d| arms(d, true),
+        |t| t.to_string(),
+    );
 }
 
 #[test]
 fn writing_nested_lets_whose_part_reads_a_name_bound_twice_scales() {
-    deep(|| {
-        scales(
-            "pretty_in on d nested ifs binding a name over one part",
-            400,
-            lets,
-            shown,
-        );
-        scales(
-            "Display on d nested ifs binding a name over one part",
-            400,
-            lets,
-            |t| t.to_string(),
-        );
-    });
+    scales(
+        "pretty_in on d nested ifs binding a name over one part",
+        400,
+        lets,
+        shown,
+    );
+    scales(
+        "Display on d nested ifs binding a name over one part",
+        400,
+        lets,
+        |t| t.to_string(),
+    );
 }

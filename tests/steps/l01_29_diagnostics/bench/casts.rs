@@ -110,7 +110,7 @@ fn the_menus_of_calls_literals_and_comparisons_cost_the_same_in_a_larger_program
 
 #[test]
 fn a_cast_in_place_of_many_parentheses_scales() {
-    let n = 777;
+    let n = 19_000;
     let srcs = scaling::inputs(n, nested);
     scaling::check(
         "the cast repair of an operand in n pairs of parentheses",
@@ -121,6 +121,9 @@ fn a_cast_in_place_of_many_parentheses_scales() {
 
 #[test]
 fn the_message_of_a_long_literal_with_a_suffix_scales() {
+    // At 8,000 and 64,000 digits the work grew 13.3 times, and at 64,000 and 512,000 14.5 times,
+    // past the limit and past the 12.1 of n log² n (COMPLEXITY.md K41), so the size stays
+    // (TEST-bench-move-l0125; plan row PERF-long-literal-digits).
     let n = 1000;
     let srcs = scaling::inputs(n, long_suffixed_literals);
     scaling::check(
@@ -132,7 +135,7 @@ fn the_message_of_a_long_literal_with_a_suffix_scales() {
 
 #[test]
 fn a_literal_of_many_digits_ordered_with_a_text_is_offered_as_text_and_scales() {
-    let n = 4000;
+    let n = 260_000;
     let srcs = scaling::inputs(n, a_literal_of_digits_ordered_with_a_text);
     scaling::check(
         "the text repair of a literal of d digits ordered with a text",

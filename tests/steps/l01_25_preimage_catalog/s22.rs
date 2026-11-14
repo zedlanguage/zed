@@ -341,14 +341,6 @@ pub(super) fn old(d: &Demand) -> before::Demand {
     }
 }
 
-/// Runs `f` on a thread with a stack deep enough for chains of thousands of terms.
-pub(super) fn on_big_stack<R: Send>(f: impl FnOnce() -> R + Send) -> R {
-    std::thread::scope(|s| {
-        let thread = std::thread::Builder::new().stack_size(1 << 28);
-        thread.spawn_scoped(s, f).unwrap().join().unwrap()
-    })
-}
-
 /// The cases compared, the differences found, each shown, the cases whose inexact box is
 /// narrower than the one before and still sound, the other boxes of `c - x` that S22b changed,
 /// the cases now exact that the transfer before left inexact, refused or listed (by
@@ -422,7 +414,12 @@ fn refuted(t: &Term, ds: &Domains, d: &Demand, domains: &Domains, exact: bool) -
 /// The index of a box of `boxes` (each a box and whether it is marked exact) that the
 /// interpreter refutes as [`refuted`] does, if any. The term runs once at each point, whatever
 /// the number of boxes.
-pub(super) fn first_refuted(t: &Term, ds: &Domains, d: &Demand, boxes: &[(&Domains, bool)]) -> Option<usize> {
+pub(super) fn first_refuted(
+    t: &Term,
+    ds: &Domains,
+    d: &Demand,
+    boxes: &[(&Domains, bool)],
+) -> Option<usize> {
     let names: Vec<Arc<str>> = ds.keys().cloned().collect();
     super::points(ds, &names, (-60, 60)).iter().find_map(|pt| {
         let meets = super::meets(t, &names, pt, d);
@@ -844,16 +841,14 @@ fn chain_family(diffs: &mut Diffs, name: &str, k: usize) {
 /// The families in `sets` at each size of [`CHAIN_SIZES`] and the extra sizes that follow each
 /// name ([`chain_family`]). Checks that exactly `cases` cases were compared.
 fn chain_families(sets: &[(&str, &[usize])], cases: usize) {
-    on_big_stack(|| {
-        let mut diffs = Diffs::default();
-        for &(name, more) in sets {
-            for k in CHAIN_SIZES.iter().chain(more) {
-                chain_family(&mut diffs, name, *k);
-            }
+    let mut diffs = Diffs::default();
+    for &(name, more) in sets {
+        for k in CHAIN_SIZES.iter().chain(more) {
+            chain_family(&mut diffs, name, *k);
         }
-        assert_eq!(diffs.cases, cases, "cases compared");
-        diffs.none(cases, 0);
-    });
+    }
+    assert_eq!(diffs.cases, cases, "cases compared");
+    diffs.none(cases, 0);
 }
 
 /// The families with one guard each, with the extra sizes of each, in the order of the one test
@@ -900,19 +895,17 @@ const SHARED_FAMILIES: [(&str, &[usize]); 29] = [
 fn chains_of_shared_terms_keep_their_preimages() {
     let seed = super::run_seed("s22::chains_of_shared_terms_keep_their_preimages");
     let mut rng = Rng::new(seed);
-    on_big_stack(|| {
-        let mut diffs = Diffs::default();
-        for (name, more) in SHARED_FAMILIES {
-            let rest: Vec<usize> = (CHAIN_SIZES.iter().chain(more))
-                .copied()
-                .filter(|&k| k != 1)
-                .collect();
-            for k in [1, rng.pick(&rest)] {
-                chain_family(&mut diffs, name, k);
-            }
+    let mut diffs = Diffs::default();
+    for (name, more) in SHARED_FAMILIES {
+        let rest: Vec<usize> = (CHAIN_SIZES.iter().chain(more))
+            .copied()
+            .filter(|&k| k != 1)
+            .collect();
+        for k in [1, rng.pick(&rest)] {
+            chain_family(&mut diffs, name, k);
         }
-        diffs.none(2 * SHARED_FAMILIES.len(), 0);
-    });
+    }
+    diffs.none(2 * SHARED_FAMILIES.len(), 0);
 }
 
 /// The families whose constants grow with the chain (`c_j = j`), at the sizes above, one test
@@ -948,34 +941,32 @@ fn chains_of_growing_constants_keep_their_preimages_altj_live() {
 fn chains_of_slow_families_keep_their_preimages() {
     let seed = super::run_seed("s22::chains_of_slow_families_keep_their_preimages");
     let mut rng = Rng::new(seed);
-    on_big_stack(|| {
-        let small = (0..=8).chain([13, 16, 21, 32]);
-        let mut diffs = Diffs::default();
-        for (name, ks) in [
-            ("cross", small.clone().take(10).collect::<Vec<_>>()),
-            ("cross_live", small.clone().take(10).collect()),
-            ("mod7", small.clone().take(5).collect()),
-            ("pow2", small.clone().take(10).collect()),
-            ("t3", small.clone().take(9).collect()),
-            ("mul", small.clone().collect()),
-            ("indep_2j", vec![1, 2, 3, 5, 8]),
-            ("indep_1", vec![1, 2, 3, 5, 8]),
-            ("subset", vec![1, 2, 3, 5, 8, 10]),
-            ("abs_chain", vec![1, 2, 3, 5, 8]),
-        ] {
-            let (few, more): (Vec<usize>, Vec<usize>) =
-                ks.into_iter().filter(|&k| k <= 13).partition(|&k| k <= 1);
-            for k in few.into_iter().chain([rng.pick(&more)]) {
-                let (t, ds, d) = family(name, k);
-                diffs.preimage(&format!("{name} k={k}"), &t, &ds, &d);
-            }
+    let small = (0..=8).chain([13, 16, 21, 32]);
+    let mut diffs = Diffs::default();
+    for (name, ks) in [
+        ("cross", small.clone().take(10).collect::<Vec<_>>()),
+        ("cross_live", small.clone().take(10).collect()),
+        ("mod7", small.clone().take(5).collect()),
+        ("pow2", small.clone().take(10).collect()),
+        ("t3", small.clone().take(9).collect()),
+        ("mul", small.clone().collect()),
+        ("indep_2j", vec![1, 2, 3, 5, 8]),
+        ("indep_1", vec![1, 2, 3, 5, 8]),
+        ("subset", vec![1, 2, 3, 5, 8, 10]),
+        ("abs_chain", vec![1, 2, 3, 5, 8]),
+    ] {
+        let (few, more): (Vec<usize>, Vec<usize>) =
+            ks.into_iter().filter(|&k| k <= 13).partition(|&k| k <= 1);
+        for k in few.into_iter().chain([rng.pick(&more)]) {
+            let (t, ds, d) = family(name, k);
+            diffs.preimage(&format!("{name} k={k}"), &t, &ds, &d);
         }
-        // 0, was 7: CANON-stable (the solver takes the variables and rows breadth first in the
-        // order of their stable colors, and the transfer before shares it) stopped `mod7` at
-        // k = 3 to 8 from being refused by its shadows, and LIVE3 (the Omega test decides three
-        // live variables) did the same for `mod7 k=2`, so both are exact and alike there.
-        diffs.none_but(26, 0, 0, 0);
-    });
+    }
+    // 0, was 7: CANON-stable (the solver takes the variables and rows breadth first in the
+    // order of their stable colors, and the transfer before shares it) stopped `mod7` at
+    // k = 3 to 8 from being refused by its shadows, and LIVE3 (the Omega test decides three
+    // live variables) did the same for `mod7 k=2`, so both are exact and alike there.
+    diffs.none_but(26, 0, 0, 0);
 }
 
 /// Random chains of shared terms, under random domains of one to three pieces and random
@@ -984,33 +975,33 @@ fn chains_of_slow_families_keep_their_preimages() {
 /// of one fixed seed, 2 s.
 #[test]
 fn random_chains_of_shared_terms_keep_their_preimages() {
-    on_big_stack(|| {
-        let mut diffs = Diffs::default();
-        // Guards `i >= c` and translations, as the summary reads them.
-        let mut rng = Rng::new(super::run_seed("s22::random_chains_of_shared_terms_keep_their_preimages"));
-        for _ in 0..600 {
-            let mut t = var("i");
-            for _ in 0..rng.int(0, 12) {
-                let prev = Shared::new(t);
-                let g = ge_i(rng.int(-25, 25));
-                let c = rng.int(-6, 6);
-                let more = if rng.below(10) == 0 {
-                    prim(Prim::Sub, (*prev).clone(), int(-c))
-                } else {
-                    prim(Prim::Add, (*prev).clone(), int(c))
-                };
-                t = Term::If(Shared::new(g), prev, Shared::new(more));
-            }
-            let lo = rng.int(-30, 5);
-            let mut ds = i_in(lo, lo + rng.int(0, 40));
-            if rng.below(10) == 0 {
-                ds.insert("y".into(), IntervalSet::of(0, 3));
-            }
-            let (t, d) = chain_demand(&mut rng, t);
-            diffs.preimage("translations", &t, &ds, &d);
+    let mut diffs = Diffs::default();
+    // Guards `i >= c` and translations, as the summary reads them.
+    let mut rng = Rng::new(super::run_seed(
+        "s22::random_chains_of_shared_terms_keep_their_preimages",
+    ));
+    for _ in 0..600 {
+        let mut t = var("i");
+        for _ in 0..rng.int(0, 12) {
+            let prev = Shared::new(t);
+            let g = ge_i(rng.int(-25, 25));
+            let c = rng.int(-6, 6);
+            let more = if rng.below(10) == 0 {
+                prim(Prim::Sub, (*prev).clone(), int(-c))
+            } else {
+                prim(Prim::Add, (*prev).clone(), int(c))
+            };
+            t = Term::If(Shared::new(g), prev, Shared::new(more));
         }
-        diffs.none(600, 0);
-    });
+        let lo = rng.int(-30, 5);
+        let mut ds = i_in(lo, lo + rng.int(0, 40));
+        if rng.below(10) == 0 {
+            ds.insert("y".into(), IntervalSet::of(0, 3));
+        }
+        let (t, d) = chain_demand(&mut rng, t);
+        diffs.preimage("translations", &t, &ds, &d);
+    }
+    diffs.none(600, 0);
 }
 
 /// The one kind of difference the comparison allows. Lemma 4 of the synthesis (meeting a
@@ -1058,25 +1049,23 @@ fn meeting_a_demand_with_the_hull_may_narrow_a_box_the_map2_cap_widened() {
 /// sequence from `seed`, each compared with the transfer before and both boxes checked against
 /// the interpreter; every difference is of a kind [`Diffs`] counts.
 fn random_guarded_chains(seed: u64, cases: usize) {
-    on_big_stack(|| {
-        let mut diffs = Diffs::default();
-        let mut rng = Rng::new(seed);
-        for _ in 0..cases {
-            let t = random_chain(&mut rng);
-            let ds = over(&[("i", chain_domain(&mut rng))]);
-            let (t, d) = if rng.below(3) == 0 {
-                let p = rng.pick(&[Prim::Ge, Prim::Le, Prim::Eq, Prim::Ne, Prim::Lt]);
-                (
-                    prim(p, t, int(rng.int(-10, 10))),
-                    Demand::Bool(rng.below(2) == 0),
-                )
-            } else {
-                (t, int_demand(&mut rng))
-            };
-            diffs.preimage("random chain", &t, &ds, &d);
-        }
-        diffs.explained(cases);
-    });
+    let mut diffs = Diffs::default();
+    let mut rng = Rng::new(seed);
+    for _ in 0..cases {
+        let t = random_chain(&mut rng);
+        let ds = over(&[("i", chain_domain(&mut rng))]);
+        let (t, d) = if rng.below(3) == 0 {
+            let p = rng.pick(&[Prim::Ge, Prim::Le, Prim::Eq, Prim::Ne, Prim::Lt]);
+            (
+                prim(p, t, int(rng.int(-10, 10))),
+                Demand::Bool(rng.below(2) == 0),
+            )
+        } else {
+            (t, int_demand(&mut rng))
+        };
+        diffs.preimage("random chain", &t, &ds, &d);
+    }
+    diffs.explained(cases);
 }
 
 /// [`random_guarded_chains`] from a new seed each run.
@@ -1528,84 +1517,82 @@ fn random_terms(seed: u64, each: usize) {
             each / 2,
         ),
     ];
-    on_big_stack(|| {
-        let mut diffs = Diffs::default();
-        for (run, first) in runs {
-            let mut at = 0;
-            cases(run, |c| {
-                at += 1;
-                if at > first {
-                    return;
-                }
-                match &c.classes {
-                    None => diffs.preimage_listed(c.what, &c.term, &c.domains, &c.listed, &c.demand),
-                    Some(cs) => diffs.exact(c.what, &c.term, &c.domains, cs, &c.demand),
-                }
-            });
-        }
-        // Until TEST-bench-move-l0125 (author P169: a correctness test runs well under 1 s, a
-        // random one takes fewer cases and a new seed each run), the 6800 cases of [`RUNS`]
-        // ran as seven tests of 850 to 1100 cases, 5 to 10 s each, with their counts pinned:
-        // over all of them 4 narrower, 27 made exact, 1 unlisted, 1 renamed and 4 boxes before
-        // narrower than the boxes now. The history of those counts follows.
-        //
-        // The one box S22b changes here, `((5 mod (3 - x)) mod abs(5))` with `x` in `[-4, ∞)`
-        // and the demand `[-3, 5]`, is now exact (`x` in `[-4, 2] | [4, ∞)`, where `3 - x` is
-        // not zero) and was inexact (`[-4, ∞)`), so it counts as made exact, not reflected.
-        // One more is made exact since PRODUCT-nested-chain summarizes the sum or difference
-        // of two lines of one input.
-        //
-        // Since PA-plus-if, which summarizes the sum or difference of any two summaries of one
-        // input (an `if` among them) and inverts such a sum where the transfer projected it,
-        // 22 more boxes are exact (24), 6 inexact boxes are narrower than the transfer
-        // before and sound, and one exact preimage the transfer before listed point by point,
-        // `(x <= x) || …`, is the same set read without a listing.
-        //
-        // 25, was 24, since SOUND-div-exact: the linear stage reads `c^0` only where `c`
-        // translates, so the transfer before now lists the points of `((y mod y)^0) > ((x +
-        // x)^1)` with `y` in `{-12}`, where it read `(y mod y)^0` as 1; the transfer reads the
-        // same box, `x <= 0`, exact without a listing.
-        //
-        // Since PRES-pendants-wider, which tightens a hull end whose other end is infinite and
-        // reads the bounds that rows give each other, the transfer before, which shares the
-        // solver, gives one of those 6 narrower boxes as the transfer does (5). Five results
-        // change, each inside the one before (`x` in `[0, ∞)` with `y` in `[3, 8]` to the
-        // exact `[4, ∞)`, `y` in `(-∞, 22]` to `[11, 22]`), and the interpreter refutes none.
-        //
-        // 24, was 25, since PROJECT-canon-precision, which tests each disjunct for a point whether
-        // or not the greedy search found one first: the transfer before, which shares the solver,
-        // gives one more of those boxes exactly as the transfer does, `x` in `[-2, 2]` with `y` in
-        // `(-∞, 13]`, where it kept all of `x`. Two boxes of the transfer narrow, still inexact
-        // (`x` in `[-21, ∞)` for all of `x`; `y` in `[-47, -23] ∪ [-1, 23]` for `[-47, 23]`), and
-        // two exact boxes are read by both transfers without listing their points; the
-        // interpreter refutes none.
-        //
-        // The counts above are of all 18 runs, one test before S22-exact-mislabel: 6800 cases,
-        // 5 narrower, 24 made exact and 1 unlisted, now split over the three tests below.
-        //
-        // Since PA-let-unsummarized-narrow, which summarizes `abs` and the `min` or `max` of two
-        // terms, 4 more boxes are made exact, 2 in each of the last two tests (11, was 9; 9, was
-        // 7); the narrower and unlisted counts are unchanged and the interpreter refutes none.
-        // With those two summaries turned off and the rest of the change kept, the old counts
-        // return.
-        //
-        // Since TESTS-split-s22-random the three tests are the seven parts of
-        // `RANDOM_TERM_PARTS`; the counts of the three, (2, 8, 0), (0, 11, 0) and (3, 9, 1),
-        // are the sums of the parts' counts within each.
-        //
-        // Since PERF-ref-memo-quadratic, whose transfer before reads guarded chains by intervals
-        // of their one input (the module comment of `preimage_ref`), 4 boxes before are narrower
-        // than the boxes now or exact without their listing, and the transfer's boxes are as
-        // they were: `y` in `[1, 14]` for `[0, 14]` in `(x mod y) * y` (part 3; `y = 0` fails),
-        // the empty box of `((1 + (x mod -6)) + 0^3) < 2` and a box of `g0((x + 2)) <= 10` read
-        // exact without the listing the transfer makes (parts 3 and 5), and one in part 1. One
-        // box before narrowed (part 2) and one became exact (part 2) as the transfer's, so they
-        // no longer count. In part 6 the relation before of `5 + abs(if (y <= x) { 0 } else { y }
-        // + 2)` is stated on `x` and `y` (`x >= y`, or `y > x` and `y` in `[-9, 5]`, the exact
-        // solution set) where the transfer's names the `if` by an auxiliary variable; the box
-        // and its exactness are the same, so it counts as renamed.
-        diffs.explained(2 * each + 2 * (each / 2));
-    });
+    let mut diffs = Diffs::default();
+    for (run, first) in runs {
+        let mut at = 0;
+        cases(run, |c| {
+            at += 1;
+            if at > first {
+                return;
+            }
+            match &c.classes {
+                None => diffs.preimage_listed(c.what, &c.term, &c.domains, &c.listed, &c.demand),
+                Some(cs) => diffs.exact(c.what, &c.term, &c.domains, cs, &c.demand),
+            }
+        });
+    }
+    // Until TEST-bench-move-l0125 (author P169: a correctness test runs well under 1 s, a
+    // random one takes fewer cases and a new seed each run), the 6800 cases of [`RUNS`]
+    // ran as seven tests of 850 to 1100 cases, 5 to 10 s each, with their counts pinned:
+    // over all of them 4 narrower, 27 made exact, 1 unlisted, 1 renamed and 4 boxes before
+    // narrower than the boxes now. The history of those counts follows.
+    //
+    // The one box S22b changes here, `((5 mod (3 - x)) mod abs(5))` with `x` in `[-4, ∞)`
+    // and the demand `[-3, 5]`, is now exact (`x` in `[-4, 2] | [4, ∞)`, where `3 - x` is
+    // not zero) and was inexact (`[-4, ∞)`), so it counts as made exact, not reflected.
+    // One more is made exact since PRODUCT-nested-chain summarizes the sum or difference
+    // of two lines of one input.
+    //
+    // Since PA-plus-if, which summarizes the sum or difference of any two summaries of one
+    // input (an `if` among them) and inverts such a sum where the transfer projected it,
+    // 22 more boxes are exact (24), 6 inexact boxes are narrower than the transfer
+    // before and sound, and one exact preimage the transfer before listed point by point,
+    // `(x <= x) || …`, is the same set read without a listing.
+    //
+    // 25, was 24, since SOUND-div-exact: the linear stage reads `c^0` only where `c`
+    // translates, so the transfer before now lists the points of `((y mod y)^0) > ((x +
+    // x)^1)` with `y` in `{-12}`, where it read `(y mod y)^0` as 1; the transfer reads the
+    // same box, `x <= 0`, exact without a listing.
+    //
+    // Since PRES-pendants-wider, which tightens a hull end whose other end is infinite and
+    // reads the bounds that rows give each other, the transfer before, which shares the
+    // solver, gives one of those 6 narrower boxes as the transfer does (5). Five results
+    // change, each inside the one before (`x` in `[0, ∞)` with `y` in `[3, 8]` to the
+    // exact `[4, ∞)`, `y` in `(-∞, 22]` to `[11, 22]`), and the interpreter refutes none.
+    //
+    // 24, was 25, since PROJECT-canon-precision, which tests each disjunct for a point whether
+    // or not the greedy search found one first: the transfer before, which shares the solver,
+    // gives one more of those boxes exactly as the transfer does, `x` in `[-2, 2]` with `y` in
+    // `(-∞, 13]`, where it kept all of `x`. Two boxes of the transfer narrow, still inexact
+    // (`x` in `[-21, ∞)` for all of `x`; `y` in `[-47, -23] ∪ [-1, 23]` for `[-47, 23]`), and
+    // two exact boxes are read by both transfers without listing their points; the
+    // interpreter refutes none.
+    //
+    // The counts above are of all 18 runs, one test before S22-exact-mislabel: 6800 cases,
+    // 5 narrower, 24 made exact and 1 unlisted, now split over the three tests below.
+    //
+    // Since PA-let-unsummarized-narrow, which summarizes `abs` and the `min` or `max` of two
+    // terms, 4 more boxes are made exact, 2 in each of the last two tests (11, was 9; 9, was
+    // 7); the narrower and unlisted counts are unchanged and the interpreter refutes none.
+    // With those two summaries turned off and the rest of the change kept, the old counts
+    // return.
+    //
+    // Since TESTS-split-s22-random the three tests are the seven parts of
+    // `RANDOM_TERM_PARTS`; the counts of the three, (2, 8, 0), (0, 11, 0) and (3, 9, 1),
+    // are the sums of the parts' counts within each.
+    //
+    // Since PERF-ref-memo-quadratic, whose transfer before reads guarded chains by intervals
+    // of their one input (the module comment of `preimage_ref`), 4 boxes before are narrower
+    // than the boxes now or exact without their listing, and the transfer's boxes are as
+    // they were: `y` in `[1, 14]` for `[0, 14]` in `(x mod y) * y` (part 3; `y = 0` fails),
+    // the empty box of `((1 + (x mod -6)) + 0^3) < 2` and a box of `g0((x + 2)) <= 10` read
+    // exact without the listing the transfer makes (parts 3 and 5), and one in part 1. One
+    // box before narrowed (part 2) and one became exact (part 2) as the transfer's, so they
+    // no longer count. In part 6 the relation before of `5 + abs(if (y <= x) { 0 } else { y }
+    // + 2)` is stated on `x` and `y` (`x >= y`, or `y > x` and `y` in `[-9, 5]`, the exact
+    // solution set) where the transfer's names the `if` by an auxiliary variable; the box
+    // and its exactness are the same, so it counts as renamed.
+    diffs.explained(2 * each + 2 * (each / 2));
 }
 
 /// [`random_terms`] from a new seed each run.
@@ -1623,137 +1610,135 @@ fn ends_of_i64_and_other_corners_keep_their_preimages() {
     let fin = End::of;
     const MIN: i64 = i64::MIN;
     const MAX: i64 = i64::MAX;
-    on_big_stack(|| {
-        let mut diffs = Diffs::default();
-        let ends = [MIN, MIN + 1, MIN + 2, -1, 0, 1, MAX - 2, MAX - 1, MAX];
-        let doms = [(-2, 2), (MIN, MIN + 3), (MAX - 3, MAX), (MIN, MAX)];
-        let demands = [
-            Demand::Ints(IntervalSet::single(0)),
-            Demand::Ints(IntervalSet::range(fin(MAX - 1), PosInf)),
-            Demand::Ints(IntervalSet::range(NegInf, fin(MIN + 1))),
-            Demand::Ints(IntervalSet::from_pieces(vec![
-                (NegInf, fin(MIN + 2)),
-                (fin(MAX - 2), PosInf),
-            ])),
-        ];
-        let guards: [fn(i64) -> Term; 3] = [
-            ge_i,
-            |b| prim(Prim::Le, var("i"), int(b)),
-            |b| prim(Prim::Gt, var("i"), int(b)),
-        ];
-        // Every end, constant and guard, each under one domain and one demand drawn from a
-        // new seed each run; until TEST-bench-move-l0125 (author P169), under every domain and
-        // demand, 5184 cases, most of the 1.5 s this test took.
-        let mut rng = Rng::new(super::run_seed(
-            "s22::ends_of_i64_and_other_corners_keep_their_preimages",
-        ));
-        for b in ends {
-            for c in [-2, -1, 1, 2, MAX, MIN] {
-                for g in guards {
-                    let (lo, hi) = rng.pick(&doms);
-                    let d = &demands[rng.below(demands.len())];
-                    let t = chain(1, var("i"), |_| g(b), plus(|_| c));
-                    diffs.preimage("ends", &t, &i_in(lo, hi), d);
-                    // Two levels, the second guard at the other end.
-                    let t = chain(
-                        2,
-                        var("i"),
-                        |j| g(if j == 1 { b } else { -b.saturating_add(1) }),
-                        plus(|_| c),
-                    );
-                    diffs.preimage("ends, two levels", &t, &i_in(lo, hi), d);
-                }
-            }
-        }
-        // Sums that leave `i64` on some inputs and not others, deep in a chain.
-        for c in [MAX / 2, MAX / 3, MIN / 2, MAX - 5] {
-            for k in [2, 3, 5, 8] {
-                for (lo, hi) in [(0, 10), (-10, 10), (MAX - 20, MAX), (MIN, MIN + 20)] {
-                    let t = adds(k, |_| c);
-                    for d in &demands {
-                        diffs.preimage("overflow", &t, &i_in(lo, hi), d);
-                    }
-                    diffs.preimage(
-                        "overflow",
-                        &prim(Prim::Ge, t.clone(), int(0)),
-                        &i_in(lo, hi),
-                        &Demand::Bool(true),
-                    );
-                    let t = chain(k, var("i"), ge_i, |_, t| prim(Prim::Mul, t, int(c)));
-                    diffs.preimage("overflow, product", &t, &i_in(lo, hi), &ints(-5, 5));
-                }
-            }
-        }
-        // Reflections and products under demands of several pieces on both signs.
-        let neg = |t: Term| Term::Prim(Prim::Neg, vec![t]);
-        let arms: [(Term, Term); 7] = [
-            (prim(Prim::Sub, int(0), var("i")), var("i")),
-            (neg(var("i")), var("i")),
-            (
-                prim(Prim::Sub, int(0), prim(Prim::Add, var("i"), int(12))),
-                var("i"),
-            ),
-            (var("i"), prim(Prim::Sub, int(0), var("i"))),
-            (prim(Prim::Sub, int(7), var("i")), var("i")),
-            (
-                prim(Prim::Mul, var("i"), int(3)),
-                prim(Prim::Mul, int(-2), var("i")),
-            ),
-            (
-                prim(Prim::Mul, int(-1), var("i")),
-                prim(Prim::Add, var("i"), int(4)),
-            ),
-        ];
-        let zs = [
-            pieces(&[(-10, 0), (10, 25)]),
-            pieces(&[(-25, -20), (-10, -5), (3, 4), (10, 12)]),
-            pieces(&[(-30, -28), (-20, -18), (-9, -7), (-3, -2)]),
-            pieces(&[(2, 3), (6, 7), (11, 12), (20, 21)]),
-            pieces(&[(-60, 60)]),
-            IntervalSet::empty(),
-        ];
-        for (b, (yes, no)) in [0, 5, -3]
-            .into_iter()
-            .zip(arms.iter().cycle())
-            .chain(arms.iter().enumerate().map(|(n, a)| (n as i64 - 3, a)))
-        {
-            let t = Term::If(
-                Shared::new(ge_i(b)),
-                Shared::new(yes.clone()),
-                Shared::new(no.clone()),
-            );
-            for z in &zs {
-                for ds in [
-                    i_in(-30, 30),
-                    over(&[("i", pieces(&[(-30, -20), (-5, 5), (12, 40)]))]),
-                ] {
-                    diffs.preimage("reflection", &t, &ds, &Demand::Ints(z.clone()));
-                }
-            }
-        }
-        // An empty demand on each family.
-        for name in ["probe", "alt", "range", "cross", "twoin", "neg", "mul"] {
-            for k in [1, 4, 60] {
-                let (t, ds, _) = family(name, k);
-                diffs.preimage(
-                    &format!("empty demand {name} k={k}"),
-                    &t,
-                    &ds,
-                    &Demand::Ints(IntervalSet::empty()),
+    let mut diffs = Diffs::default();
+    let ends = [MIN, MIN + 1, MIN + 2, -1, 0, 1, MAX - 2, MAX - 1, MAX];
+    let doms = [(-2, 2), (MIN, MIN + 3), (MAX - 3, MAX), (MIN, MAX)];
+    let demands = [
+        Demand::Ints(IntervalSet::single(0)),
+        Demand::Ints(IntervalSet::range(fin(MAX - 1), PosInf)),
+        Demand::Ints(IntervalSet::range(NegInf, fin(MIN + 1))),
+        Demand::Ints(IntervalSet::from_pieces(vec![
+            (NegInf, fin(MIN + 2)),
+            (fin(MAX - 2), PosInf),
+        ])),
+    ];
+    let guards: [fn(i64) -> Term; 3] = [
+        ge_i,
+        |b| prim(Prim::Le, var("i"), int(b)),
+        |b| prim(Prim::Gt, var("i"), int(b)),
+    ];
+    // Every end, constant and guard, each under one domain and one demand drawn from a
+    // new seed each run; until TEST-bench-move-l0125 (author P169), under every domain and
+    // demand, 5184 cases, most of the 1.5 s this test took.
+    let mut rng = Rng::new(super::run_seed(
+        "s22::ends_of_i64_and_other_corners_keep_their_preimages",
+    ));
+    for b in ends {
+        for c in [-2, -1, 1, 2, MAX, MIN] {
+            for g in guards {
+                let (lo, hi) = rng.pick(&doms);
+                let d = &demands[rng.below(demands.len())];
+                let t = chain(1, var("i"), |_| g(b), plus(|_| c));
+                diffs.preimage("ends", &t, &i_in(lo, hi), d);
+                // Two levels, the second guard at the other end.
+                let t = chain(
+                    2,
+                    var("i"),
+                    |j| g(if j == 1 { b } else { -b.saturating_add(1) }),
+                    plus(|_| c),
                 );
+                diffs.preimage("ends, two levels", &t, &i_in(lo, hi), d);
             }
         }
-        // Two reflections, counted as reflected until S22-exact-mislabel: the boxes before
-        // were marked exact while holding points that fail the demand; they are now inexact,
-        // so the new exact boxes count as made exact. One, since PERF-s22-const-chain: the
-        // other box before, `i` in `[-25, -20] ∪ {-5} ∪ [3, 5] ∪ [12, 17] ∪ [27, 32]` over
-        // `[-30, -20] ∪ [-5, 5] ∪ [12, 40]` with demand `[-25, -20] ∪ [-10, -5] ∪ [3, 4] ∪
-        // [10, 12]`, doubted only `i = 5`, which the linear stage decides alone; the box
-        // before is now the exact box of the transfer, without 5. None since
-        // PERF-ref-memo-quadratic: the transfer before reads the other one's guarded chain by
-        // intervals of `i` and finds the transfer's exact box.
-        diffs.none_but(849, 0, 0, 0);
-    });
+    }
+    // Sums that leave `i64` on some inputs and not others, deep in a chain.
+    for c in [MAX / 2, MAX / 3, MIN / 2, MAX - 5] {
+        for k in [2, 3, 5, 8] {
+            for (lo, hi) in [(0, 10), (-10, 10), (MAX - 20, MAX), (MIN, MIN + 20)] {
+                let t = adds(k, |_| c);
+                for d in &demands {
+                    diffs.preimage("overflow", &t, &i_in(lo, hi), d);
+                }
+                diffs.preimage(
+                    "overflow",
+                    &prim(Prim::Ge, t.clone(), int(0)),
+                    &i_in(lo, hi),
+                    &Demand::Bool(true),
+                );
+                let t = chain(k, var("i"), ge_i, |_, t| prim(Prim::Mul, t, int(c)));
+                diffs.preimage("overflow, product", &t, &i_in(lo, hi), &ints(-5, 5));
+            }
+        }
+    }
+    // Reflections and products under demands of several pieces on both signs.
+    let neg = |t: Term| Term::Prim(Prim::Neg, vec![t]);
+    let arms: [(Term, Term); 7] = [
+        (prim(Prim::Sub, int(0), var("i")), var("i")),
+        (neg(var("i")), var("i")),
+        (
+            prim(Prim::Sub, int(0), prim(Prim::Add, var("i"), int(12))),
+            var("i"),
+        ),
+        (var("i"), prim(Prim::Sub, int(0), var("i"))),
+        (prim(Prim::Sub, int(7), var("i")), var("i")),
+        (
+            prim(Prim::Mul, var("i"), int(3)),
+            prim(Prim::Mul, int(-2), var("i")),
+        ),
+        (
+            prim(Prim::Mul, int(-1), var("i")),
+            prim(Prim::Add, var("i"), int(4)),
+        ),
+    ];
+    let zs = [
+        pieces(&[(-10, 0), (10, 25)]),
+        pieces(&[(-25, -20), (-10, -5), (3, 4), (10, 12)]),
+        pieces(&[(-30, -28), (-20, -18), (-9, -7), (-3, -2)]),
+        pieces(&[(2, 3), (6, 7), (11, 12), (20, 21)]),
+        pieces(&[(-60, 60)]),
+        IntervalSet::empty(),
+    ];
+    for (b, (yes, no)) in [0, 5, -3]
+        .into_iter()
+        .zip(arms.iter().cycle())
+        .chain(arms.iter().enumerate().map(|(n, a)| (n as i64 - 3, a)))
+    {
+        let t = Term::If(
+            Shared::new(ge_i(b)),
+            Shared::new(yes.clone()),
+            Shared::new(no.clone()),
+        );
+        for z in &zs {
+            for ds in [
+                i_in(-30, 30),
+                over(&[("i", pieces(&[(-30, -20), (-5, 5), (12, 40)]))]),
+            ] {
+                diffs.preimage("reflection", &t, &ds, &Demand::Ints(z.clone()));
+            }
+        }
+    }
+    // An empty demand on each family.
+    for name in ["probe", "alt", "range", "cross", "twoin", "neg", "mul"] {
+        for k in [1, 4, 60] {
+            let (t, ds, _) = family(name, k);
+            diffs.preimage(
+                &format!("empty demand {name} k={k}"),
+                &t,
+                &ds,
+                &Demand::Ints(IntervalSet::empty()),
+            );
+        }
+    }
+    // Two reflections, counted as reflected until S22-exact-mislabel: the boxes before
+    // were marked exact while holding points that fail the demand; they are now inexact,
+    // so the new exact boxes count as made exact. One, since PERF-s22-const-chain: the
+    // other box before, `i` in `[-25, -20] ∪ {-5} ∪ [3, 5] ∪ [12, 17] ∪ [27, 32]` over
+    // `[-30, -20] ∪ [-5, 5] ∪ [12, 40]` with demand `[-25, -20] ∪ [-10, -5] ∪ [3, 4] ∪
+    // [10, 12]`, doubted only `i = 5`, which the linear stage decides alone; the box
+    // before is now the exact box of the transfer, without 5. None since
+    // PERF-ref-memo-quadratic: the transfer before reads the other one's guarded chain by
+    // intervals of `i` and finds the transfer's exact box.
+    diffs.none_but(849, 0, 0, 0);
 }
 
 /// Chains of guarded translations, checked with the interpreter: their preimages are exact,
@@ -1782,45 +1767,6 @@ fn guarded_translation_chains_match_the_interpreter() {
     }
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 /// `cross` below its domain's width: `m` plus the number of guards `i >= j` that fail, for
 /// `j` up to 40 and both inputs in `[-50, 50]`. The transfer's box is inexact, so the
 /// preimage asks whether the box can be listed; it cannot (two inputs are ranges), and that is
@@ -1828,13 +1774,11 @@ fn guarded_translation_chains_match_the_interpreter() {
 /// chain, whose arms share their term (ledger ENDS-dag).
 #[test]
 fn a_chain_on_two_inputs_below_its_domains_width_ends() {
-    on_big_stack(|| {
-        let (t, ds, d) = family("cross", 40);
-        let p = preimage(&t, &ds, &d);
-        assert!(!p.exact);
-        assert_eq!(p.domains["i"], IntervalSet::of(-50, 50));
-        assert_eq!(p.domains["m"], IntervalSet::of(-40, 50));
-    });
+    let (t, ds, d) = family("cross", 40);
+    let p = preimage(&t, &ds, &d);
+    assert!(!p.exact);
+    assert_eq!(p.domains["i"], IntervalSet::of(-50, 50));
+    assert_eq!(p.domains["m"], IntervalSet::of(-40, 50));
 }
 
 /// `3 * t - 1` in every else arm, over `i` in `[-24, -21]` and `[-15, -4]` (and `5` in the
@@ -1845,46 +1789,41 @@ fn a_chain_on_two_inputs_below_its_domains_width_ends() {
 /// past `i64`, so every preimage here is exact without listing the box.
 #[test]
 fn a_chain_that_leaves_i64_keeps_its_exact_preimage() {
-    on_big_stack(|| {
-        let negative = pieces(&[(-24, -21), (-15, -4)]);
-        for k in [36, 37, 38, 40, 64, 256] {
-            for (name, want) in [
-                ("t3_gaps", IntervalSet::empty()),
-                ("t3_gaps_no", negative.clone()),
-                ("t3_gaps_five", IntervalSet::of(5, 5)),
-                ("t3_gaps_five_no", negative.clone()),
-            ] {
-                let (t, ds, d) = family(name, k);
-                let p = preimage(&t, &ds, &d);
-                assert_eq!(p.domains["i"], want, "{name} k={k}: {p:?}");
-                assert!(p.exact, "{name} k={k}: {p:?}");
-                assert!(!p.enumerated, "{name} k={k}");
-                assert!(
-                    p.stops.is_empty() && p.relation.is_none() && p.refusal.is_none(),
-                    "{name} k={k}: {p:?}"
-                );
-                check(&t, &ds, &d, &p, (-30, 30));
-            }
+    let negative = pieces(&[(-24, -21), (-15, -4)]);
+    for k in [36, 37, 38, 40, 64, 256] {
+        for (name, want) in [
+            ("t3_gaps", IntervalSet::empty()),
+            ("t3_gaps_no", negative.clone()),
+            ("t3_gaps_five", IntervalSet::of(5, 5)),
+            ("t3_gaps_five_no", negative.clone()),
+        ] {
+            let (t, ds, d) = family(name, k);
+            let p = preimage(&t, &ds, &d);
+            assert_eq!(p.domains["i"], want, "{name} k={k}: {p:?}");
+            assert!(p.exact, "{name} k={k}: {p:?}");
+            assert!(!p.enumerated, "{name} k={k}");
+            assert!(
+                p.stops.is_empty() && p.relation.is_none() && p.refusal.is_none(),
+                "{name} k={k}: {p:?}"
+            );
+            check(&t, &ds, &d, &p, (-30, 30));
         }
-    });
+    }
 }
 
 /// The same chains where they stay in `i64`, compared with the transfer before, which from
 /// `k = 37` takes `2^k` steps on `t3_gaps`.
 #[test]
 fn chains_that_stay_in_i64_keep_their_preimages() {
-    on_big_stack(|| {
-        let mut diffs = Diffs::default();
-        for name in ["t3_gaps", "t3_gaps_no", "t3_gaps_five", "t3_gaps_five_no"] {
-            for k in (0..=36).step_by(4).chain([35, 36]) {
-                let (t, ds, d) = family(name, k);
-                diffs.preimage(&format!("{name} k={k}"), &t, &ds, &d);
-            }
+    let mut diffs = Diffs::default();
+    for name in ["t3_gaps", "t3_gaps_no", "t3_gaps_five", "t3_gaps_five_no"] {
+        for k in (0..=36).step_by(4).chain([35, 36]) {
+            let (t, ds, d) = family(name, k);
+            diffs.preimage(&format!("{name} k={k}"), &t, &ds, &d);
         }
-        diffs.none(44, 0);
-    });
+    }
+    diffs.none(44, 0);
 }
-
 
 /// COMPLEXITY.md S22e. The chain `mod7`, of eleven guards `i mod 7 == j mod 7` with else arm
 /// `t + 1`: each remainder of `i` keeps `t` at one guard in seven, so `t11 = i + 9` for
@@ -1894,14 +1833,12 @@ fn chains_that_stay_in_i64_keep_their_preimages() {
 /// finds the preimage exact, with no relation and no refusal.
 #[test]
 fn a_chain_of_guards_on_remainders_is_read_class_by_class() {
-    on_big_stack(|| {
-        let (t, ds, d) = family("mod7", 11);
-        let p = preimage(&t, &ds, &d);
-        assert!(p.exact && !p.enumerated, "{p:?}");
-        assert!(p.relation.is_none() && p.refusal.is_none() && p.stops.is_empty());
-        assert_eq!(p.domains["i"], IntervalSet::of(-9, 50));
-        check(&t, &ds, &d, &p, (-60, 60));
-    });
+    let (t, ds, d) = family("mod7", 11);
+    let p = preimage(&t, &ds, &d);
+    assert!(p.exact && !p.enumerated, "{p:?}");
+    assert!(p.relation.is_none() && p.refusal.is_none() && p.stops.is_empty());
+    assert_eq!(p.domains["i"], IntervalSet::of(-9, 50));
+    check(&t, &ds, &d, &p, (-60, 60));
 }
 
 /// `t = i + 1` where `keep` holds and `i` elsewhere, asked `t` in `[3, 30]`.
@@ -2040,7 +1977,6 @@ fn a_split_by_remainders_is_given_up_where_it_cannot_be_exact() {
     check(&wide, &ds, &d, &now, (-60, 1060));
 }
 
-
 /// The chain of `k` guards `i mod 1024 == j`, else `t + 1`, over `i` in `[-5000, 5000]`, asked
 /// `tk >= 0`.
 pub(super) fn many_remainders(k: usize) -> (Term, Domains, Demand) {
@@ -2058,15 +1994,13 @@ pub(super) fn many_remainders(k: usize) -> (Term, Domains, Demand) {
 /// `1..=k` and `i + k` elsewhere, so the preimage is `[-k, 5000]`.
 #[test]
 fn remainders_many_classes_cost_one_transfer_each() {
-    on_big_stack(|| {
-        for k in [1, 2, 7, 40] {
-            let (t, ds, d) = many_remainders(k);
-            let p = preimage(&t, &ds, &d);
-            assert!(p.exact && p.refusal.is_none(), "{p:?}");
-            assert_eq!(p.domains["i"], IntervalSet::of(-(k as i64), 5000));
-            check(&t, &ds, &d, &p, (-60, 60));
-        }
-    });
+    for k in [1, 2, 7, 40] {
+        let (t, ds, d) = many_remainders(k);
+        let p = preimage(&t, &ds, &d);
+        assert!(p.exact && p.refusal.is_none(), "{p:?}");
+        assert_eq!(p.domains["i"], IntervalSet::of(-(k as i64), 5000));
+        check(&t, &ds, &d, &p, (-60, 60));
+    }
 }
 
 /// The chains on two inputs keep the boxes they had before LIN-cross, whose repair of the
@@ -2075,53 +2009,56 @@ fn remainders_many_classes_cost_one_transfer_each() {
 /// where its box stops being exact). Each box is inexact with its relation kept, and no point
 /// within the interpreter's window meets the demand outside it. Before the
 /// change and after, the whole preimage, relation included, was equal on every family of this
-/// file (running log, LIN-cross).
-#[test]
-fn chains_on_two_inputs_keep_their_boxes() {
-    on_big_stack(|| {
-        for k in [1, 2, 5, 13, 50, 51] {
-            for name in ["cross", "cross_live", "cross_dead"] {
-                if name == "cross_dead" && k < 5 {
-                    continue;
-                }
-                let (t, ds, d) = family(name, k);
-                let p = preimage(&t, &ds, &d);
-                let what = format!("{name} k={k}");
-                let ki = k as i64;
-                let (i, m) = match name {
-                    "cross" => (IntervalSet::of(-50, 50), IntervalSet::of(-ki.min(50), 50)),
-                    "cross_live" => (IntervalSet::of(-ki, ki), IntervalSet::of(-ki, ki)),
-                    _ => (
-                        IntervalSet::of(2 - ki, ki - 2),
-                        IntervalSet::of(2 - ki, ki - 2),
-                    ),
-                };
-                assert_eq!((&p.domains["i"], &p.domains["m"]), (&i, &m), "{what}");
-                assert!(!p.exact && p.relation.is_some(), "{what}: {p:?}");
-                if k <= 13 {
-                    assert!(!refuted(&t, &ds, &d, &p.domains, p.exact), "{what}");
-                }
+/// file (running log, LIN-cross). Checked at `ks`, in two tests: one test of all six sizes took
+/// 1.1 s to 1.4 s alone until TEST-bench-move-l0125 (author P169: a correctness test runs
+/// well under 1 s).
+fn chains_on_two_inputs_keep_their_boxes(ks: &[usize]) {
+    for &k in ks {
+        for name in ["cross", "cross_live", "cross_dead"] {
+            if name == "cross_dead" && k < 5 {
+                continue;
+            }
+            let (t, ds, d) = family(name, k);
+            let p = preimage(&t, &ds, &d);
+            let what = format!("{name} k={k}");
+            let ki = k as i64;
+            let (i, m) = match name {
+                "cross" => (IntervalSet::of(-50, 50), IntervalSet::of(-ki.min(50), 50)),
+                "cross_live" => (IntervalSet::of(-ki, ki), IntervalSet::of(-ki, ki)),
+                _ => (
+                    IntervalSet::of(2 - ki, ki - 2),
+                    IntervalSet::of(2 - ki, ki - 2),
+                ),
+            };
+            assert_eq!((&p.domains["i"], &p.domains["m"]), (&i, &m), "{what}");
+            assert!(!p.exact && p.relation.is_some(), "{what}: {p:?}");
+            if k <= 13 {
+                assert!(!refuted(&t, &ds, &d, &p.domains, p.exact), "{what}");
             }
         }
-    });
+    }
 }
 
+#[test]
+fn chains_on_two_inputs_keep_their_boxes_up_to_13() {
+    chains_on_two_inputs_keep_their_boxes(&[1, 2, 5, 13]);
+}
 
-
+#[test]
+fn chains_on_two_inputs_keep_their_boxes_at_50_and_51() {
+    chains_on_two_inputs_keep_their_boxes(&[50, 51]);
+}
 
 /// `cross_dead` at the sizes below 5, where its inputs are at most two wide and its box is
 /// exact or empty of points outside: the preimage agrees with the interpreter on a window.
 #[test]
 fn chain_cross_dead_at_small_sizes() {
-    on_big_stack(|| {
-        for k in 2..=4 {
-            let (t, ds, d) = family("cross_dead", k);
-            let p = preimage(&t, &ds, &d);
-            check(&t, &ds, &d, &p, (-8, 8));
-        }
-    });
+    for k in 2..=4 {
+        let (t, ds, d) = family("cross_dead", k);
+        let p = preimage(&t, &ds, &d);
+        check(&t, &ds, &d, &p, (-8, 8));
+    }
 }
-
 
 /// The chain of `k` guards `i mod 1024 == j`, else `min(t + 1, 2^40)`, asked `tk >= 0`: the
 /// summary over every class does not read `min`, so each class's run reads the guards itself.
@@ -2153,7 +2090,6 @@ pub(super) fn above_remainders(k: usize) -> Term {
     prim(Prim::Ge, t, int(0))
 }
 
-
 /// COMPLEXITY.md S22e-quad, the three families of
 /// `remainders_read_by_each_class_keep_the_transfer_first_scales` over one period, and the
 /// `min` and `!=` chains over many periods, where the split before the first transfer is given
@@ -2162,25 +2098,23 @@ pub(super) fn above_remainders(k: usize) -> Term {
 /// `0` and `k + 1..=1000`).
 #[test]
 fn remainders_read_by_each_class_keep_their_preimages() {
-    on_big_stack(|| {
-        let d = Demand::Bool(true);
-        for k in [0, 1, 2, 5] {
-            for (t, lo, hi) in [
-                (min_remainders(k), 0, 1000),
-                (no_remainder_of(k), 0, 1000),
-                (min_remainders(k), -3000, 3000),
-                (no_remainder_of(k), -3000, 3000),
-                (above_remainders(k), 0, 1000),
-            ] {
-                let ds = i_in(lo, hi);
-                let p = preimage(&t, &ds, &d);
-                if lo == 0 {
-                    assert!(p.exact, "{t} over {ds:?}: {p:?}");
-                }
-                check(&t, &ds, &d, &p, (-1100, 1100));
+    let d = Demand::Bool(true);
+    for k in [0, 1, 2, 5] {
+        for (t, lo, hi) in [
+            (min_remainders(k), 0, 1000),
+            (no_remainder_of(k), 0, 1000),
+            (min_remainders(k), -3000, 3000),
+            (no_remainder_of(k), -3000, 3000),
+            (above_remainders(k), 0, 1000),
+        ] {
+            let ds = i_in(lo, hi);
+            let p = preimage(&t, &ds, &d);
+            if lo == 0 {
+                assert!(p.exact, "{t} over {ds:?}: {p:?}");
             }
+            check(&t, &ds, &d, &p, (-1100, 1100));
         }
-    });
+    }
 }
 
 /// The chain of guards `i mod m(j) == r(j)` for `j` in `1..=k`, else arm `arm(j, t)`, asked
@@ -2220,50 +2154,48 @@ fn check_at(what: &str, t: &Term, d: &Demand, p: &zedc::store::preimage::Preimag
 /// interpreter.
 #[test]
 fn remainder_chains_of_every_shape_match_the_interpreter() {
-    on_big_stack(|| {
-        let plus1 = plus(|_| 1);
-        let cases: Vec<(&str, (Term, Demand))> = vec![
-            ("k=0", remainder_chain(0, |_| 16, |j| j, &plus1)),
-            ("k=1", remainder_chain(1, |_| 16, |j| j, &plus1)),
-            ("k=2", remainder_chain(2, |_| 16, |j| j, &plus1)),
-            ("j mod 3", remainder_chain(9, |_| 16, |j| j % 3, &plus1)),
-            ("all 5", remainder_chain(6, |_| 16, |_| 5, &plus1)),
-            ("m = -16", remainder_chain(5, |_| -16, |j| j, &plus1)),
-            (
-                "m = +-16",
-                remainder_chain(6, |j| if j % 2 == 0 { 16 } else { -16 }, |j| j, &plus1),
+    let plus1 = plus(|_| 1);
+    let cases: Vec<(&str, (Term, Demand))> = vec![
+        ("k=0", remainder_chain(0, |_| 16, |j| j, &plus1)),
+        ("k=1", remainder_chain(1, |_| 16, |j| j, &plus1)),
+        ("k=2", remainder_chain(2, |_| 16, |j| j, &plus1)),
+        ("j mod 3", remainder_chain(9, |_| 16, |j| j % 3, &plus1)),
+        ("all 5", remainder_chain(6, |_| 16, |_| 5, &plus1)),
+        ("m = -16", remainder_chain(5, |_| -16, |j| j, &plus1)),
+        (
+            "m = +-16",
+            remainder_chain(6, |j| if j % 2 == 0 { 16 } else { -16 }, |j| j, &plus1),
+        ),
+        (
+            "outside",
+            remainder_chain(6, |_| 16, |j| j * 7 - 20, &plus1),
+        ),
+        (
+            "arms",
+            remainder_chain(
+                6,
+                |_| 16,
+                |j| j,
+                |j, t| {
+                    let s = prim(Prim::Sub, int(0), prim(Prim::Add, int(j), t));
+                    Term::Prim(Prim::Neg, vec![prim(Prim::Mul, int(1), s)])
+                },
             ),
-            (
-                "outside",
-                remainder_chain(6, |_| 16, |j| j * 7 - 20, &plus1),
-            ),
-            (
-                "arms",
-                remainder_chain(
-                    6,
-                    |_| 16,
-                    |j| j,
-                    |j, t| {
-                        let s = prim(Prim::Sub, int(0), prim(Prim::Add, int(j), t));
-                        Term::Prim(Prim::Neg, vec![prim(Prim::Mul, int(1), s)])
-                    },
-                ),
-            ),
-        ];
-        for (what, (t, d)) in cases {
-            for ds in [
-                i_in(-60, 60),
-                over(&[("i", pieces(&[(-60, -31), (-9, 50)]))]),
-            ] {
-                let p = preimage(&t, &ds, &d);
-                assert!(
-                    p.exact && p.refusal.is_none(),
-                    "{what}: {t} over {ds:?}: {p:?}"
-                );
-                check(&t, &ds, &d, &p, (-70, 70));
-            }
+        ),
+    ];
+    for (what, (t, d)) in cases {
+        for ds in [
+            i_in(-60, 60),
+            over(&[("i", pieces(&[(-60, -31), (-9, 50)]))]),
+        ] {
+            let p = preimage(&t, &ds, &d);
+            assert!(
+                p.exact && p.refusal.is_none(),
+                "{what}: {t} over {ds:?}: {p:?}"
+            );
+            check(&t, &ds, &d, &p, (-70, 70));
         }
-    });
+    }
 }
 
 /// COMPLEXITY.md S22e-quad, the terms the summary over every class does not read, which each
@@ -2278,50 +2210,48 @@ fn remainder_chains_outside_the_shared_summary_keep_their_preimages() {
     use End::{NegInf, PosInf};
     const MIN: i64 = i64::MIN;
     const MAX: i64 = i64::MAX;
-    on_big_stack(|| {
-        let plus1 = plus(|_| 1);
-        let r16 = |j: i64| prim(Prim::Eq, prim(Prim::Mod, var("i"), int(16)), int(j));
-        let other = |j: i64| if j == 3 { ge_i(5) } else { r16(j) };
-        let mixed = prim(Prim::Ge, chain(6, var("i"), other, &plus1), int(0));
-        let min = |_, t| prim(Prim::Min, prim(Prim::Add, t, int(1)), int(20));
-        let cases: Vec<(&str, (Term, Demand))> = vec![
-            ("i >= 5 at j = 3", (mixed, Demand::Bool(true))),
-            ("min", remainder_chain(6, |_| 16, |j| j, min)),
-            ("plus", remainder_chain(6, |_| 16, |j| j, &plus1)),
-            (
-                "r = MAX",
-                remainder_chain(3, |_| 16, |j| if j == 2 { MAX } else { j }, &plus1),
-            ),
-            (
-                "r = MIN",
-                remainder_chain(3, |_| 16, |j| if j == 2 { MIN } else { j }, &plus1),
-            ),
-            ("m = MAX", remainder_chain(4, |_| MAX, |j| MAX - j, &plus1)),
-            ("m = MIN", remainder_chain(4, |_| MIN, |j| j, &plus1)),
-            (
-                "m = MIN + 1",
-                remainder_chain(4, |_| MIN + 1, |j| MAX - j, &plus1),
-            ),
-        ];
-        let top = IntervalSet::range(NegInf, PosInf);
-        let high = IntervalSet::range(End::of(MAX - 40), End::of(MAX));
-        let low = IntervalSet::range(End::of(MIN), End::of(MIN + 40));
-        let mut ends: Vec<i64> = (0..=40).flat_map(|d| [MIN + d, MAX - d]).collect();
-        ends.extend(-70..=70);
-        for (what, (t, d)) in cases {
-            for dom in [
-                IntervalSet::of(-60, 60),
-                top.clone(),
-                high.clone(),
-                low.clone(),
-            ] {
-                let ds = over(&[("i", dom.clone())]);
-                let p = preimage(&t, &ds, &d);
-                let at: Vec<i64> = ends.iter().copied().filter(|&i| dom.contains(i)).collect();
-                check_at(what, &t, &d, &p, &at);
-            }
+    let plus1 = plus(|_| 1);
+    let r16 = |j: i64| prim(Prim::Eq, prim(Prim::Mod, var("i"), int(16)), int(j));
+    let other = |j: i64| if j == 3 { ge_i(5) } else { r16(j) };
+    let mixed = prim(Prim::Ge, chain(6, var("i"), other, &plus1), int(0));
+    let min = |_, t| prim(Prim::Min, prim(Prim::Add, t, int(1)), int(20));
+    let cases: Vec<(&str, (Term, Demand))> = vec![
+        ("i >= 5 at j = 3", (mixed, Demand::Bool(true))),
+        ("min", remainder_chain(6, |_| 16, |j| j, min)),
+        ("plus", remainder_chain(6, |_| 16, |j| j, &plus1)),
+        (
+            "r = MAX",
+            remainder_chain(3, |_| 16, |j| if j == 2 { MAX } else { j }, &plus1),
+        ),
+        (
+            "r = MIN",
+            remainder_chain(3, |_| 16, |j| if j == 2 { MIN } else { j }, &plus1),
+        ),
+        ("m = MAX", remainder_chain(4, |_| MAX, |j| MAX - j, &plus1)),
+        ("m = MIN", remainder_chain(4, |_| MIN, |j| j, &plus1)),
+        (
+            "m = MIN + 1",
+            remainder_chain(4, |_| MIN + 1, |j| MAX - j, &plus1),
+        ),
+    ];
+    let top = IntervalSet::range(NegInf, PosInf);
+    let high = IntervalSet::range(End::of(MAX - 40), End::of(MAX));
+    let low = IntervalSet::range(End::of(MIN), End::of(MIN + 40));
+    let mut ends: Vec<i64> = (0..=40).flat_map(|d| [MIN + d, MAX - d]).collect();
+    ends.extend(-70..=70);
+    for (what, (t, d)) in cases {
+        for dom in [
+            IntervalSet::of(-60, 60),
+            top.clone(),
+            high.clone(),
+            low.clone(),
+        ] {
+            let ds = over(&[("i", dom.clone())]);
+            let p = preimage(&t, &ds, &d);
+            let at: Vec<i64> = ends.iter().copied().filter(|&i| dom.contains(i)).collect();
+            check_at(what, &t, &d, &p, &at);
         }
-    });
+    }
 }
 
 /// `many_remainders(k)` below `if (i mod 1024 == 0) { false }`: over the whole box a stretch
@@ -2337,28 +2267,25 @@ pub(super) fn zero_excluded(k: usize) -> Term {
     )
 }
 
-
 /// COMPLEXITY.md S22e-wide: the four programs over many periods are exact and agree with the
 /// interpreter.
 #[test]
 fn remainders_over_many_periods_keep_their_preimages() {
-    on_big_stack(|| {
-        let ds = i_in(-5000, 5000);
-        let d = Demand::Bool(true);
-        for k in [1, 2, 5, 9] {
-            for t in [
-                min_remainders(k),
-                above_remainders(k),
-                no_remainder_of(k),
-                zero_excluded(k),
-            ] {
-                let p = preimage(&t, &ds, &d);
-                assert!(p.exact, "{t}: {p:?}");
-                check(&t, &ds, &d, &p, (-1100, 1100));
-                check(&t, &ds, &d, &p, (3000, 5000));
-            }
+    let ds = i_in(-5000, 5000);
+    let d = Demand::Bool(true);
+    for k in [1, 2, 5, 9] {
+        for t in [
+            min_remainders(k),
+            above_remainders(k),
+            no_remainder_of(k),
+            zero_excluded(k),
+        ] {
+            let p = preimage(&t, &ds, &d);
+            assert!(p.exact, "{t}: {p:?}");
+            check(&t, &ds, &d, &p, (-1100, 1100));
+            check(&t, &ds, &d, &p, (3000, 5000));
         }
-    });
+    }
 }
 
 /// The split by remainders at the moduli 1, 2, 3, 1024, `i64::MAX` and `i64::MIN + 1`, over an
@@ -2367,56 +2294,54 @@ fn remainders_over_many_periods_keep_their_preimages() {
 /// interpreter, is exact wherever the one before was, and lies inside it.
 #[test]
 fn remainder_splits_at_their_corners_keep_their_preimages() {
-    on_big_stack(|| {
-        let top = i64::MAX;
-        for m in [1, 2, 3, 1024, i64::MAX, i64::MIN + 1] {
-            let r = 3.min(m.unsigned_abs() - 1) as i64;
-            let rem = || prim(Prim::Mod, var("i"), int(m));
-            let is = |c: i64| prim(Prim::Eq, rem(), int(c));
-            let not = |c: i64, t: Term| {
-                Term::If(
-                    Shared::new(prim(Prim::Ne, rem(), int(c))),
-                    Shared::new(t),
-                    Shared::new(Term::Lit(Value::Bool(false))),
-                )
-            };
-            let picked = Term::If(
-                Shared::new(is(r)),
-                Shared::new(var("i")),
-                Shared::new(int(0)),
-            );
-            let terms = [
-                (picked, ints(10, 2000)),
-                (not(1, not(2, ge_i(0))), Demand::Bool(true)),
-                (is(r), Demand::Bool(true)),
-            ];
-            // Pieces holding the remainders 0 to 2 of 10 in each of ten periods.
-            let comb: Vec<(i64, i64)> = (0..10).map(|p| (10 * p, 10 * p + 2)).collect();
-            let boxes = [
-                (IntervalSet::empty(), (-60, 60)),
-                (IntervalSet::of(7, 7), (-60, 60)),
-                (IntervalSet::of(-7, -7), (-60, 60)),
-                (IntervalSet::of(-3, 2), (-60, 60)),
-                (IntervalSet::of(-40, 40), (-60, 60)),
-                (IntervalSet::of(-5000, 5000), (-1100, 1100)),
-                (IntervalSet::of(top - 40, top), (top - 60, top)),
-                (pieces(&comb), (-10, 110)),
-            ];
-            for (t, d) in &terms {
-                for (set, window) in &boxes {
-                    let ds = over(&[("i", set.clone())]);
-                    let (now, then) = (preimage(t, &ds, d), before::preimage(t, &ds, &old(d)));
-                    let what = format!("{t} over {ds:?}, demand {d:?}");
-                    check(t, &ds, d, &now, *window);
-                    assert!(now.exact || !then.exact, "{what}: {now:?} before {then:?}");
-                    let inside = now.domains["i"].pieces().all(|(lo, hi)| {
-                        then.domains["i"].pieces().any(|(l, h)| l <= lo && hi <= h)
-                    });
-                    assert!(inside, "{what}: {now:?} before {then:?}");
-                }
+    let top = i64::MAX;
+    for m in [1, 2, 3, 1024, i64::MAX, i64::MIN + 1] {
+        let r = 3.min(m.unsigned_abs() - 1) as i64;
+        let rem = || prim(Prim::Mod, var("i"), int(m));
+        let is = |c: i64| prim(Prim::Eq, rem(), int(c));
+        let not = |c: i64, t: Term| {
+            Term::If(
+                Shared::new(prim(Prim::Ne, rem(), int(c))),
+                Shared::new(t),
+                Shared::new(Term::Lit(Value::Bool(false))),
+            )
+        };
+        let picked = Term::If(
+            Shared::new(is(r)),
+            Shared::new(var("i")),
+            Shared::new(int(0)),
+        );
+        let terms = [
+            (picked, ints(10, 2000)),
+            (not(1, not(2, ge_i(0))), Demand::Bool(true)),
+            (is(r), Demand::Bool(true)),
+        ];
+        // Pieces holding the remainders 0 to 2 of 10 in each of ten periods.
+        let comb: Vec<(i64, i64)> = (0..10).map(|p| (10 * p, 10 * p + 2)).collect();
+        let boxes = [
+            (IntervalSet::empty(), (-60, 60)),
+            (IntervalSet::of(7, 7), (-60, 60)),
+            (IntervalSet::of(-7, -7), (-60, 60)),
+            (IntervalSet::of(-3, 2), (-60, 60)),
+            (IntervalSet::of(-40, 40), (-60, 60)),
+            (IntervalSet::of(-5000, 5000), (-1100, 1100)),
+            (IntervalSet::of(top - 40, top), (top - 60, top)),
+            (pieces(&comb), (-10, 110)),
+        ];
+        for (t, d) in &terms {
+            for (set, window) in &boxes {
+                let ds = over(&[("i", set.clone())]);
+                let (now, then) = (preimage(t, &ds, d), before::preimage(t, &ds, &old(d)));
+                let what = format!("{t} over {ds:?}, demand {d:?}");
+                check(t, &ds, d, &now, *window);
+                assert!(now.exact || !then.exact, "{what}: {now:?} before {then:?}");
+                let inside = now.domains["i"]
+                    .pieces()
+                    .all(|(lo, hi)| then.domains["i"].pieces().any(|(l, h)| l <= lo && hi <= h));
+                assert!(inside, "{what}: {now:?} before {then:?}");
             }
         }
-    });
+    }
 }
 
 /// A stamp sheet of 1024 slots a page: slot 0 of a page is never stamped, slots below 512
@@ -2427,33 +2352,30 @@ fn remainder_splits_at_their_corners_keep_their_preimages() {
 /// holds `3072`, slot 0 of a page, which is never stamped.
 #[test]
 fn a_stretch_wrapping_past_the_modulus_inside_one_class_is_checked_by_remainder() {
-    on_big_stack(|| {
-        let rem = || prim(Prim::Mod, var("i"), int(1024));
-        let tt = || Term::Lit(Value::Bool(true));
-        let ff = || Term::Lit(Value::Bool(false));
-        let ite =
-            |g: Term, a: Term, b: Term| Term::If(Shared::new(g), Shared::new(a), Shared::new(b));
-        for periods in [3i64, 4, 6, 9] {
-            let mut runs = ff();
-            for t in (0..periods).rev() {
-                let run = prim(
-                    Prim::And,
-                    prim(Prim::Ge, var("i"), int(1024 * t + 300)),
-                    prim(Prim::Le, var("i"), int(1024 * t + 1100)),
-                );
-                runs = ite(run, tt(), runs);
-            }
-            let stamped = ite(
-                prim(Prim::Eq, rem(), int(0)),
-                ff(),
-                ite(prim(Prim::Lt, rem(), int(512)), tt(), runs),
+    let rem = || prim(Prim::Mod, var("i"), int(1024));
+    let tt = || Term::Lit(Value::Bool(true));
+    let ff = || Term::Lit(Value::Bool(false));
+    let ite = |g: Term, a: Term, b: Term| Term::If(Shared::new(g), Shared::new(a), Shared::new(b));
+    for periods in [3i64, 4, 6, 9] {
+        let mut runs = ff();
+        for t in (0..periods).rev() {
+            let run = prim(
+                Prim::And,
+                prim(Prim::Ge, var("i"), int(1024 * t + 300)),
+                prim(Prim::Le, var("i"), int(1024 * t + 1100)),
             );
-            let ds = i_in(0, 1024 * periods + 1023);
-            let d = Demand::Bool(true);
-            let p = preimage(&stamped, &ds, &d);
-            check(&stamped, &ds, &d, &p, (0, 1024 * periods + 1023));
+            runs = ite(run, tt(), runs);
         }
-    });
+        let stamped = ite(
+            prim(Prim::Eq, rem(), int(0)),
+            ff(),
+            ite(prim(Prim::Lt, rem(), int(512)), tt(), runs),
+        );
+        let ds = i_in(0, 1024 * periods + 1023);
+        let d = Demand::Bool(true);
+        let p = preimage(&stamped, &ds, &d);
+        check(&stamped, &ds, &d, &p, (0, 1024 * periods + 1023));
+    }
 }
 
 /// A chain of `k` guards `x mod m == r`, each `r` drawn in `[0, m)`, whose two arms each move
@@ -2547,57 +2469,55 @@ pub(super) fn counted_shapes(c: Term) -> [Term; 5] {
 /// the last two keep their hull, with the ends `-60` and `60` apart, and a relation.
 #[test]
 fn remainder_reads_outside_a_split_have_their_preimages() {
-    on_big_stack(|| {
-        let (ds, d) = (xy_in(60), Demand::Bool(true));
-        let all = || pieces(&[(-60, 60)]);
-        // The hull of the even numbers in `[-60, hi]`, less the odd ends `-59` and `59`.
-        let evens = |hi: i64| {
-            let ps = [(-60, -60), (-58, hi.min(58)), (60, 60)];
-            pieces(
-                &ps.into_iter()
-                    .filter(|&(a, b)| a <= b && b <= hi)
-                    .collect::<Vec<_>>(),
-            )
-        };
-        for k in [3, 6, 30, 96] {
-            let q = k as i64 / 3;
-            // `x + 2q <= 2` at `x <= 2 - 2q`, and `x + 2q >= 1` at `x >= 1 - 2q`.
-            let (le, ge) = ((2 - 2 * q).max(-61), (1 - 2 * q).max(-60));
-            let upto = |hi: i64| {
-                if hi < -60 {
-                    IntervalSet::empty()
-                } else {
-                    pieces(&[(-60, hi)])
-                }
-            };
-            let want: [(IntervalSet, IntervalSet, bool); 5] = [
-                // `x >= 0` meets the chain only at `x = 0`, `q = 1`; `x < 0` asks `y <= 2`.
-                if q == 1 {
-                    (upto(0), all(), false)
-                } else {
-                    (upto(-1), pieces(&[(-60, 2)]), true)
-                },
-                (upto(le), pieces(&[(0, 60)]), true),
-                (pieces(&[(ge, 60)]), pieces(&[(-60, 2)]), true),
-                (upto(le), evens(60), false),
-                (evens(le), all(), false),
-            ];
-            for (t, (x, y, exact)) in counted_shapes(counted_remainder_chain(k, 3))
-                .iter()
-                .zip(want)
-            {
-                let p = preimage(t, &ds, &d);
-                let got = (&p.domains["x"], &p.domains["y"], p.exact);
-                if x.is_empty() {
-                    assert!(got.0.is_empty() || got.1.is_empty(), "k={k}: {t}: {p:?}");
-                } else {
-                    assert_eq!(got, (&x, &y, exact), "k={k}: {t}: {p:?}");
-                }
-                check(t, &ds, &d, &p, (-15, 15));
-                check(t, &ds, &d, &p, (-60, -45));
+    let (ds, d) = (xy_in(60), Demand::Bool(true));
+    let all = || pieces(&[(-60, 60)]);
+    // The hull of the even numbers in `[-60, hi]`, less the odd ends `-59` and `59`.
+    let evens = |hi: i64| {
+        let ps = [(-60, -60), (-58, hi.min(58)), (60, 60)];
+        pieces(
+            &ps.into_iter()
+                .filter(|&(a, b)| a <= b && b <= hi)
+                .collect::<Vec<_>>(),
+        )
+    };
+    for k in [3, 6, 30, 96] {
+        let q = k as i64 / 3;
+        // `x + 2q <= 2` at `x <= 2 - 2q`, and `x + 2q >= 1` at `x >= 1 - 2q`.
+        let (le, ge) = ((2 - 2 * q).max(-61), (1 - 2 * q).max(-60));
+        let upto = |hi: i64| {
+            if hi < -60 {
+                IntervalSet::empty()
+            } else {
+                pieces(&[(-60, hi)])
             }
+        };
+        let want: [(IntervalSet, IntervalSet, bool); 5] = [
+            // `x >= 0` meets the chain only at `x = 0`, `q = 1`; `x < 0` asks `y <= 2`.
+            if q == 1 {
+                (upto(0), all(), false)
+            } else {
+                (upto(-1), pieces(&[(-60, 2)]), true)
+            },
+            (upto(le), pieces(&[(0, 60)]), true),
+            (pieces(&[(ge, 60)]), pieces(&[(-60, 2)]), true),
+            (upto(le), evens(60), false),
+            (evens(le), all(), false),
+        ];
+        for (t, (x, y, exact)) in counted_shapes(counted_remainder_chain(k, 3))
+            .iter()
+            .zip(want)
+        {
+            let p = preimage(t, &ds, &d);
+            let got = (&p.domains["x"], &p.domains["y"], p.exact);
+            if x.is_empty() {
+                assert!(got.0.is_empty() || got.1.is_empty(), "k={k}: {t}: {p:?}");
+            } else {
+                assert_eq!(got, (&x, &y, exact), "k={k}: {t}: {p:?}");
+            }
+            check(t, &ds, &d, &p, (-15, 15));
+            check(t, &ds, &d, &p, (-60, -45));
         }
-    });
+    }
 }
 
 /// COMPLEXITY.md S22-transfer-rem: on the shape `shape` of [`remainder_shape`], three chains of
@@ -2605,17 +2525,15 @@ fn remainder_reads_outside_a_split_have_their_preimages() {
 /// with the interpreter: every point that meets the demand lies in the box, and when the box
 /// is exact every point in it meets the demand.
 fn remainder_shape_matches_the_interpreter(shape: &str) {
-    on_big_stack(|| {
-        let (ds, d) = (xy_in(60), Demand::Bool(true));
-        for seed in 1..=3 {
-            for k in [1, 2, 5, 13] {
-                let t = remainder_shape(shape, moved_remainder_chain(seed, k, "x", 3));
-                let p = preimage(&t, &ds, &d);
-                check(&t, &ds, &d, &p, (-20, 20));
-                check(&t, &ds, &d, &p, (45, 60));
-            }
+    let (ds, d) = (xy_in(60), Demand::Bool(true));
+    for seed in 1..=3 {
+        for k in [1, 2, 5, 13] {
+            let t = remainder_shape(shape, moved_remainder_chain(seed, k, "x", 3));
+            let p = preimage(&t, &ds, &d);
+            check(&t, &ds, &d, &p, (-20, 20));
+            check(&t, &ds, &d, &p, (45, 60));
         }
-    });
+    }
 }
 
 /// One test per shape of [`REMAINDER_SHAPES`]. The five shapes in one test took 56.5 s at load
@@ -2728,53 +2646,55 @@ fn wide_remainders_match_the_interpreter(test: &str, cases: &[(i64, i64, usize)]
     let only: Option<u64> = std::env::var(WIDE_REMAINDER_SEED)
         .ok()
         .map(|s| s.parse().expect("a seed is a number"));
-    on_big_stack(|| {
-        let d = Demand::Bool(true);
-        let all: Vec<(i64, i64, usize)>;
-        let cases = match only {
-            // The seed names its case, so it runs whether or not this run drew it.
-            Some(o) => {
-                all = vec![((o >> 16) as i64, ((o >> 8) & 0xff) as i64, (o & 0xff) as usize)];
-                &all[..]
-            }
-            None => cases,
-        };
-        for &(m, p, s) in cases {
-            let shape = &REMAINDER_SHAPES[s];
-            let seed = wide_remainder_seed(m, p, s);
-                    let mut rng = Rng::new(seed);
-                    let k = rng.int(1, 13) as usize;
-                    let chain = moved_remainder_chain(rng.next_u64(), k, "x", m);
-                    let t = remainder_shape(shape, chain);
-                    let x0 = rng.int(-100, 100);
-                    let x1 = x0 + p * m - 1 - rng.int(0, m - 1);
-                    let y0 = rng.int(-8, 8);
-                    let y1 = rng.int(y0, 8);
-                    let ds = over(&[
-                        ("x", IntervalSet::of(x0, x1)),
-                        ("y", IntervalSet::of(y0, y1)),
-                    ]);
-                    let pre = preimage(&t, &ds, &d);
-                    let window = (x0.min(y0), x1.max(y1));
-                    if let Some(why) = wide_remainder_refuted(&t, &ds, &d, &pre, window) {
-                        // The chain shares its arms, so the term printed as a tree can run to
-                        // hundreds of kilobytes; it is printed only when the case runs alone.
-                        let term = match only {
-                            Some(_) => t.to_string(),
-                            None => "the term (printed when the case runs alone)".to_string(),
-                        };
-                        panic!(
-                            "seed {seed} (modulus {m}, {p} periods, shape {shape:?}, {k} guards): \
-                             {term} over {ds:?}: {why}; the preimage is {} with relation {:?}.\n\
-                             Rerun this case alone from the worktree root:\n  \
-                             {WIDE_REMAINDER_SEED}={seed} /home/luke/Work/wt/zcargo test -p zed-tests \
-                             --test l01_25_preimage_catalog -- --exact s22::{test}",
-                            super::shown(&pre),
-                            pre.relation.as_ref().map(|r| r.to_string()),
-                        );
-                    }
+    let d = Demand::Bool(true);
+    let all: Vec<(i64, i64, usize)>;
+    let cases = match only {
+        // The seed names its case, so it runs whether or not this run drew it.
+        Some(o) => {
+            all = vec![(
+                (o >> 16) as i64,
+                ((o >> 8) & 0xff) as i64,
+                (o & 0xff) as usize,
+            )];
+            &all[..]
         }
-    });
+        None => cases,
+    };
+    for &(m, p, s) in cases {
+        let shape = &REMAINDER_SHAPES[s];
+        let seed = wide_remainder_seed(m, p, s);
+        let mut rng = Rng::new(seed);
+        let k = rng.int(1, 13) as usize;
+        let chain = moved_remainder_chain(rng.next_u64(), k, "x", m);
+        let t = remainder_shape(shape, chain);
+        let x0 = rng.int(-100, 100);
+        let x1 = x0 + p * m - 1 - rng.int(0, m - 1);
+        let y0 = rng.int(-8, 8);
+        let y1 = rng.int(y0, 8);
+        let ds = over(&[
+            ("x", IntervalSet::of(x0, x1)),
+            ("y", IntervalSet::of(y0, y1)),
+        ]);
+        let pre = preimage(&t, &ds, &d);
+        let window = (x0.min(y0), x1.max(y1));
+        if let Some(why) = wide_remainder_refuted(&t, &ds, &d, &pre, window) {
+            // The chain shares its arms, so the term printed as a tree can run to
+            // hundreds of kilobytes; it is printed only when the case runs alone.
+            let term = match only {
+                Some(_) => t.to_string(),
+                None => "the term (printed when the case runs alone)".to_string(),
+            };
+            panic!(
+                "seed {seed} (modulus {m}, {p} periods, shape {shape:?}, {k} guards): \
+                         {term} over {ds:?}: {why}; the preimage is {} with relation {:?}.\n\
+                         Rerun this case alone from the worktree root:\n  \
+                         {WIDE_REMAINDER_SEED}={seed} /home/luke/Work/wt/zcargo test -p zed-tests \
+                         --test l01_25_preimage_catalog -- --exact s22::{test}",
+                super::shown(&pre),
+                pre.relation.as_ref().map(|r| r.to_string()),
+            );
+        }
+    }
 }
 
 /// [`wide_remainders_match_the_interpreter`] at modulus 2 with one period in every shape, and
@@ -2801,65 +2721,71 @@ fn wide_remainders_match_the_interpreter_at_random_moduli() {
 /// The shapes of [`counted_shapes`] at their corners, each agreeing with the interpreter: the
 /// moduli 1, -3, 1024 (one period), `2^62` and `i64::MIN`, whose classes do not fit `i64`, so
 /// the transfer reads the guards as before; `x` unbounded, in pieces or empty; and the demand
-/// `false` over `[-60, 60]`.
+/// `false` over `[-60, 60]`. Here every modulus at `k = 1`; the next test one modulus at a
+/// longer chain. The two ran as one test, 0.9 s to 1.0 s alone, until TEST-bench-move-l0125
+/// (author P169: a correctness test runs well under 1 s).
 #[test]
 fn remainder_reads_outside_a_split_at_their_corners() {
-    on_big_stack(|| {
-        let y = ("y", IntervalSet::of(-60, 60));
-        let domains = [
-            over(&[("x", IntervalSet::of(-60, 60)), y.clone()]),
-            over(&[
-                ("x", IntervalSet::range(End::NegInf, End::PosInf)),
-                y.clone(),
-            ]),
-            over(&[("x", pieces(&[(-60, -31), (-9, 50)])), y.clone()]),
-            over(&[("x", IntervalSet::empty()), y]),
-        ];
-        // k = 5, which repeats two guards' classes, runs at one modulus drawn from a new seed
-        // each run; until TEST-bench-move-l0125 (author P169) k = 6 ran at every modulus, 0.7 s
-        // each. Two shapes are slow at sizes this test skips, with `x` unbounded (debug build,
-        // plan row PERF-wide-modulus-cliffs): `if x >= 0 { c } else { y } <= 2` at k = 4 alone
-        // takes 2.4 s at `2^62`, 0.5 s at 1024, 0.2 s at -3 and 2.3 s at `i64::MIN`, where k = 3
-        // and k = 5 take 30 ms and 1 ms; and `c <= 2 && y mod 2 == 0` at a modulus of `-2^62` or
-        // below takes 1.5 s at k = 4 and 4.6 s at k = 6, about 25 times as long as at `2^62`,
-        // with the same box. So `i64::MIN` is drawn at k = 3.
-        let moduli = [1, -3, 1024, 1 << 62, i64::MIN];
-        let mut rng = Rng::new(super::run_seed(
-            "s22::remainder_reads_outside_a_split_at_their_corners",
-        ));
-        let longer = rng.pick(&moduli);
-        for m in moduli {
-            let ks: &[usize] = match m {
-                _ if m != longer => &[1],
-                i64::MIN => &[1, 3],
-                _ => &[1, 5],
-            };
-            for &k in ks {
-                for t in counted_shapes(counted_remainder_chain(k, m)) {
-                    for (i, ds) in domains.iter().enumerate() {
-                        // The demand `false` on the first domain only, to keep the test short.
-                        for d in [Demand::Bool(true), Demand::Bool(false)]
-                            .iter()
-                            .take(if i == 0 { 2 } else { 1 })
-                        {
-                            let p = preimage(&t, ds, d);
-                            check(&t, ds, d, &p, (-12, 12));
-                        }
-                    }
-                }
-            }
-        }
-        // At `m = 1` the guard `x mod 1 == j mod 3` holds at `j = 0, 3, ...` alone, so the chain
-        // is `x + 4` at `k = 6`: `if y >= 0 { x + 4 } else { 9 } <= 2`.
-        let t = &counted_shapes(counted_remainder_chain(6, 1))[1];
-        let p = preimage(t, &xy_in(60), &Demand::Bool(true));
-        assert!(p.exact, "{p:?}");
-        assert_eq!(p.domains["x"], IntervalSet::of(-60, -2));
-        assert_eq!(p.domains["y"], IntervalSet::of(0, 60));
-    });
+    for m in CORNER_MODULI {
+        remainder_corners_at(m, 1);
+    }
+    // At `m = 1` the guard `x mod 1 == j mod 3` holds at `j = 0, 3, ...` alone, so the chain
+    // is `x + 4` at `k = 6`: `if y >= 0 { x + 4 } else { 9 } <= 2`.
+    let t = &counted_shapes(counted_remainder_chain(6, 1))[1];
+    let p = preimage(t, &xy_in(60), &Demand::Bool(true));
+    assert!(p.exact, "{p:?}");
+    assert_eq!(p.domains["x"], IntervalSet::of(-60, -2));
+    assert_eq!(p.domains["y"], IntervalSet::of(0, 60));
 }
 
+/// The moduli of [`remainder_reads_outside_a_split_at_their_corners`].
+const CORNER_MODULI: [i64; 5] = [1, -3, 1024, 1 << 62, i64::MIN];
 
+/// [`remainder_reads_outside_a_split_at_their_corners`] at a longer chain, at one modulus drawn
+/// from a new seed each run.
+#[test]
+fn remainder_reads_outside_a_split_at_their_corners_on_a_longer_chain() {
+    // k = 5, which repeats two guards' classes, runs at one modulus drawn from a new seed
+    // each run; until TEST-bench-move-l0125 (author P169) k = 6 ran at every modulus, 0.7 s
+    // each. Two shapes are slow at sizes this test skips, with `x` unbounded (debug build,
+    // plan row PERF-wide-modulus-cliffs): `if x >= 0 { c } else { y } <= 2` at k = 4 alone
+    // takes 2.4 s at `2^62`, 0.5 s at 1024, 0.2 s at -3 and 2.3 s at `i64::MIN`, where k = 3
+    // and k = 5 take 30 ms and 1 ms; and `c <= 2 && y mod 2 == 0` at a modulus of `-2^62` or
+    // below takes 1.5 s at k = 4 and 4.6 s at k = 6, about 25 times as long as at `2^62`,
+    // with the same box. So `i64::MIN` is drawn at k = 3.
+    let mut rng = Rng::new(super::run_seed(
+        "s22::remainder_reads_outside_a_split_at_their_corners_on_a_longer_chain",
+    ));
+    let m = rng.pick(&CORNER_MODULI);
+    remainder_corners_at(m, if m == i64::MIN { 3 } else { 5 });
+}
+
+/// Each shape of the chain of `k` remainders at modulus `m` against the interpreter, on the
+/// domains of [`remainder_reads_outside_a_split_at_their_corners`].
+fn remainder_corners_at(m: i64, k: usize) {
+    let y = ("y", IntervalSet::of(-60, 60));
+    let domains = [
+        over(&[("x", IntervalSet::of(-60, 60)), y.clone()]),
+        over(&[
+            ("x", IntervalSet::range(End::NegInf, End::PosInf)),
+            y.clone(),
+        ]),
+        over(&[("x", pieces(&[(-60, -31), (-9, 50)])), y.clone()]),
+        over(&[("x", IntervalSet::empty()), y]),
+    ];
+    for t in counted_shapes(counted_remainder_chain(k, m)) {
+        for (i, ds) in domains.iter().enumerate() {
+            // The demand `false` on the first domain only, to keep the test short.
+            for d in [Demand::Bool(true), Demand::Bool(false)]
+                .iter()
+                .take(if i == 0 { 2 } else { 1 })
+            {
+                let p = preimage(&t, ds, d);
+                check(&t, ds, d, &p, (-12, 12));
+            }
+        }
+    }
+}
 
 /// A box of `x` as its pieces `(lo, hi)`.
 type Boxes = &'static [(i64, i64)];
@@ -2919,24 +2845,22 @@ const HOLE_WIDER: (usize, u64, usize) = (4, 1, 5);
 /// level-by-level box, and agreeing with the interpreter.
 #[test]
 fn remainder_cases_cut_at_their_neighbors_keep_the_holes() {
-    on_big_stack(|| {
-        let (ds, d) = (xy_in(60), Demand::Bool(true));
-        for (s, seed, k, want, level) in CUT_BOXES {
-            let shape = REMAINDER_SHAPES[s];
-            let t = remainder_shape(shape, moved_remainder_chain(seed, k, "x", 3));
-            let p = preimage(&t, &ds, &d);
-            let (want, level) = (pieces(want), pieces(level));
-            assert_eq!(p.domains["x"], want, "{shape}, seed {seed}, k = {k}: {t}");
-            let within = (s, seed, k) != HOLE_WIDER;
-            assert_eq!(
-                want.is_subset(&level),
-                within,
-                "{shape}, seed {seed}, k = {k}"
-            );
-            check(&t, &ds, &d, &p, (-20, 20));
-            check(&t, &ds, &d, &p, (45, 60));
-        }
-    });
+    let (ds, d) = (xy_in(60), Demand::Bool(true));
+    for (s, seed, k, want, level) in CUT_BOXES {
+        let shape = REMAINDER_SHAPES[s];
+        let t = remainder_shape(shape, moved_remainder_chain(seed, k, "x", 3));
+        let p = preimage(&t, &ds, &d);
+        let (want, level) = (pieces(want), pieces(level));
+        assert_eq!(p.domains["x"], want, "{shape}, seed {seed}, k = {k}: {t}");
+        let within = (s, seed, k) != HOLE_WIDER;
+        assert_eq!(
+            want.is_subset(&level),
+            within,
+            "{shape}, seed {seed}, k = {k}"
+        );
+        check(&t, &ds, &d, &p, (-20, 20));
+        check(&t, &ds, &d, &p, (45, 60));
+    }
 }
 
 /// The boxes of `x` at a modulus other than 3 that cutting at the neighbors leaves wider than
@@ -2977,60 +2901,70 @@ const FARTHER_HOLES: [(i64, usize, u64, usize, Boxes, Boxes); 3] = [
     ),
 ];
 
-/// COMPLEXITY.md S22-case-cuts: the five shapes of [`REMAINDER_SHAPES`] on the chains of seeds
-/// 1 to 3 at k = 1, 2, 5, 13 of modulus `m`, over `x` and `y` in `[-60, 60]`: every box agrees
-/// with the interpreter, the boxes of [`FARTHER_HOLES`] are as recorded, and the boxes of `x`
-/// hold `points` points in all. Measured when this was written: at modulus 5, 6951 points,
-/// against 7030 level by level and 6936 cut at every range's starts; at modulus 7, 6906
-/// against 6951 and 6864. Level by level, a box is wider than cut at the neighbors only in
-/// [`FARTHER_HOLES`]. Since row S22-hole-summaries no summary is cut at a hole of the domain
-/// of `x`, which widened 3 boxes at modulus 5 by 2 to 4 points, 6959 points (exact: 5482),
-/// and none at modulus 7. A change that loses more holes raises `points`.
+/// COMPLEXITY.md S22-case-cuts: the five shapes of [`REMAINDER_SHAPES`] on the chain of `seed`
+/// (1 to 3, one test each) at k = 1, 2, 5, 13 of modulus `m`, over `x` and `y` in `[-60, 60]`:
+/// every box agrees with the interpreter, the boxes of [`FARTHER_HOLES`] are as recorded, and
+/// the boxes of `x` hold `points` points. At a modulus the points of the three seeds sum to the
+/// totals that follow. Measured when this was written: at modulus 5, 6951 points, against 7030
+/// level by level and 6936 cut at every range's starts; at modulus 7, 6906 against 6951 and
+/// 6864. Level by level, a box is wider than cut at the neighbors only in [`FARTHER_HOLES`].
+/// Since row S22-hole-summaries no summary is cut at a hole of the domain of `x`, which widened
+/// 3 boxes at modulus 5 by 2 to 4 points, 6959 points (exact: 5482), and none at modulus 7. A
+/// change that loses more holes raises `points`.
 ///
-/// The interpreter runs at every point of `[-8, 8]` of each box, and at every point of `[-60,
-/// 60]` of one case drawn from a new seed each run. Until TEST-bench-move-l0125 (author
-/// P169: a correctness test runs well under 1 s, a random one takes fewer cases and a new seed
-/// each run) it ran at every point of `[-60, 60]` of every box, 10 s at each modulus.
-fn boxes_at_modulus(test: &str, m: i64, points: usize) {
+/// The interpreter runs at every point of `[-8, 8]` of each box, and at every point of
+/// `[-60, 60]` of one case of the seed, drawn from a new seed each run. Until
+/// TEST-bench-move-l0125 (author P169: a correctness test runs well under 1 s, a random one
+/// takes fewer cases and a new seed each run) it ran at every point of `[-60, 60]` of every
+/// box, 10 s at each modulus, and then one test of the three seeds took 1.0 s alone.
+fn boxes_at_modulus(test: &str, m: i64, seed: u64, points: usize) {
     let mut rng = Rng::new(super::run_seed(test));
-    let shapes = REMAINDER_SHAPES.len();
-    let whole: Vec<(usize, u64, usize)> = (0..1)
-        .map(|_| (rng.below(shapes), rng.int(1, 3) as u64, rng.pick(&[1, 2, 5, 13])))
-        .collect();
-    on_big_stack(|| {
-        let (ds, d) = (xy_in(60), Demand::Bool(true));
-        let mut total = 0;
-        for (s, shape) in REMAINDER_SHAPES.iter().enumerate() {
-            for seed in 1..=3 {
-                for k in [1, 2, 5, 13] {
-                    let t = remainder_shape(shape, moved_remainder_chain(seed, k, "x", m));
-                    let p = preimage(&t, &ds, &d);
-                    let window = if whole.contains(&(s, seed, k)) { 60 } else { 8 };
-                    check(&t, &ds, &d, &p, (-window, window));
-                    let x = &p.domains["x"];
-                    total += (-60..=60).filter(|&v| x.contains(v)).count();
-                    let held = FARTHER_HOLES.iter().find(|(fm, fs, fseed, fk, _, _)| {
-                        (*fm, *fs, *fseed, *fk) == (m, s, seed, k)
-                    });
-                    if let Some((_, _, _, _, want, level)) = held {
-                        assert_eq!(*x, pieces(want), "{shape}, seed {seed}, k = {k}: {t}");
-                        assert!(!pieces(want).is_subset(&pieces(level)));
-                    }
-                }
+    let whole = (rng.below(REMAINDER_SHAPES.len()), rng.pick(&[1, 2, 5, 13]));
+    let (ds, d) = (xy_in(60), Demand::Bool(true));
+    let mut total = 0;
+    for (s, shape) in REMAINDER_SHAPES.iter().enumerate() {
+        for k in [1, 2, 5, 13] {
+            let t = remainder_shape(shape, moved_remainder_chain(seed, k, "x", m));
+            let p = preimage(&t, &ds, &d);
+            let window = if whole == (s, k) { 60 } else { 8 };
+            check(&t, &ds, &d, &p, (-window, window));
+            let x = &p.domains["x"];
+            total += (-60..=60).filter(|&v| x.contains(v)).count();
+            let held = FARTHER_HOLES
+                .iter()
+                .find(|(fm, fs, fseed, fk, _, _)| (*fm, *fs, *fseed, *fk) == (m, s, seed, k));
+            if let Some((_, _, _, _, want, level)) = held {
+                assert_eq!(*x, pieces(want), "{shape}, seed {seed}, k = {k}: {t}");
+                assert!(!pieces(want).is_subset(&pieces(level)));
             }
         }
-        assert_eq!(total, points, "points of the boxes of `x` at modulus {m}");
-    });
+    }
+    assert_eq!(
+        total, points,
+        "points of the boxes of `x` at modulus {m}, seed {seed}"
+    );
 }
 
-#[test]
-fn remainder_cases_cut_at_their_neighbors_at_modulus_5() {
-    boxes_at_modulus("s22::remainder_cases_cut_at_their_neighbors_at_modulus_5", 5, 6959);
+/// Defines one test per modulus and seed of [`boxes_at_modulus`]: the name, the modulus, the
+/// seed and the points of the boxes of `x` at that seed.
+macro_rules! boxes_at_modulus_tests {
+    ($($name:ident $m:literal $seed:literal $points:literal),* $(,)?) => {
+        $(
+            #[test]
+            fn $name() {
+                boxes_at_modulus(concat!("s22::", stringify!($name)), $m, $seed, $points);
+            }
+        )*
+    };
 }
 
-#[test]
-fn remainder_cases_cut_at_their_neighbors_at_modulus_7() {
-    boxes_at_modulus("s22::remainder_cases_cut_at_their_neighbors_at_modulus_7", 7, 6906);
+boxes_at_modulus_tests! {
+    remainder_cases_cut_at_their_neighbors_at_modulus_5_seed_1 5 1 2261,
+    remainder_cases_cut_at_their_neighbors_at_modulus_5_seed_2 5 2 2348,
+    remainder_cases_cut_at_their_neighbors_at_modulus_5_seed_3 5 3 2350,
+    remainder_cases_cut_at_their_neighbors_at_modulus_7_seed_1 7 1 2215,
+    remainder_cases_cut_at_their_neighbors_at_modulus_7_seed_2 7 2 2352,
+    remainder_cases_cut_at_their_neighbors_at_modulus_7_seed_3 7 3 2339,
 }
 
 /// The constant `c(j)` of level `j` of [`spread_remainder_chain`] and
@@ -3098,18 +3032,16 @@ fn remainder_cases(p: &Preimage) -> usize {
 /// until TEST-bench-move-l0125 (author P169); `bench::s22` times the cases at larger k.
 #[test]
 fn remainder_cases_cut_at_their_neighbors_stay_linear() {
-    on_big_stack(|| {
-        let (ds, d) = (xy_in(100000), Demand::Bool(true));
-        for k in [1, 4, 16] {
-            let t = below_three_and_even_y(spread_remainder_chain(k));
-            let p = preimage(&t, &ds, &d);
-            let two = (1..=k as i64).filter(|&j| spread_constant(j) <= 1).count();
-            assert_eq!(remainder_cases(&p), 2 * k + 1 + 3 * two, "k = {k}");
-            check(&t, &ds, &d, &p, (-110, -90));
-            check(&t, &ds, &d, &p, (90, 110));
-            check(&t, &ds, &d, &p, (-100000, -99900));
-        }
-    });
+    let (ds, d) = (xy_in(100000), Demand::Bool(true));
+    for k in [1, 4, 16] {
+        let t = below_three_and_even_y(spread_remainder_chain(k));
+        let p = preimage(&t, &ds, &d);
+        let two = (1..=k as i64).filter(|&j| spread_constant(j) <= 1).count();
+        assert_eq!(remainder_cases(&p), 2 * k + 1 + 3 * two, "k = {k}");
+        check(&t, &ds, &d, &p, (-110, -90));
+        check(&t, &ds, &d, &p, (90, 110));
+        check(&t, &ds, &d, &p, (-100000, -99900));
+    }
 }
 
 /// COMPLEXITY.md S22-hole-summaries: the cases of the chain of [`select_remainder_chain`],
@@ -3119,21 +3051,17 @@ fn remainder_cases_cut_at_their_neighbors_stay_linear() {
 /// TEST-bench-move-l0125 (author P169); `bench::s22` times the cases at larger k.
 #[test]
 fn remainder_cases_sliced_by_a_test_stay_linear() {
-    on_big_stack(|| {
-        let (ds, d) = (xy_in(100000), Demand::Bool(true));
-        for k in [1, 4, 16] {
-            let t = below_three_and_even_y(select_remainder_chain(k));
-            let p = preimage(&t, &ds, &d);
-            let cases = remainder_cases(&p);
-            assert!(cases <= 5 * k + 1, "k = {k}: {cases} cases");
-            check(&t, &ds, &d, &p, (-110, -90));
-            check(&t, &ds, &d, &p, (-60, -40));
-            check(&t, &ds, &d, &p, (-100000, -99900));
-        }
-    });
+    let (ds, d) = (xy_in(100000), Demand::Bool(true));
+    for k in [1, 4, 16] {
+        let t = below_three_and_even_y(select_remainder_chain(k));
+        let p = preimage(&t, &ds, &d);
+        let cases = remainder_cases(&p);
+        assert!(cases <= 5 * k + 1, "k = {k}: {cases} cases");
+        check(&t, &ds, &d, &p, (-110, -90));
+        check(&t, &ds, &d, &p, (-60, -40));
+        check(&t, &ds, &d, &p, (-100000, -99900));
+    }
 }
-
-
 
 /// `x` in `[-100000, 100000]` with `h` holes of one point, spread evenly, and `y` in
 /// `[-100000, 100000]`.
@@ -3149,7 +3077,6 @@ pub(super) fn x_with_holes(h: usize) -> Domains {
     ps.push((lo, 100000));
     over(&[("x", pieces(&ps)), ("y", IntervalSet::of(-100000, 100000))])
 }
-
 
 /// The cases of [`split_pieces_reach_each_kind_of_touched`]: programs split by the remainder of
 /// `x` over domains whose pieces were placed so that, per modulus, some piece of a class's set
@@ -3265,42 +3192,37 @@ fn touched_cases() -> Vec<(String, Term, Domains, Demand)> {
 /// For `m = 10` and for `m = -5`, each kind of answer of `touched` occurs at least once.
 #[test]
 fn split_pieces_reach_each_kind_of_touched() {
-    on_big_stack(|| {
-        let want = include_str!("touched_cases.txt");
-        let cases = touched_cases();
-        assert_eq!(cases.len(), want.lines().count());
-        let mut sums = [TouchedPaths::default(); 2];
-        touched_paths();
-        for ((name, t, ds, d), w) in cases.into_iter().zip(want.lines()) {
-            let p = preimage(&t, &ds, &d);
-            assert_eq!(format!("{name}\t{p:?}"), w, "{name}");
-            let c = touched_paths();
-            let s = match name.split(' ').next() {
-                Some("ten") => &mut sums[0],
-                Some("five" | "five_bare" | "five_chain") => &mut sums[1],
-                _ => continue,
-            };
-            s.half_line += c.half_line;
-            s.period += c.period;
-            s.one_range += c.one_range;
-            s.two_ranges += c.two_ranges;
-            s.wrapped_into_its_class += c.wrapped_into_its_class;
-        }
-        for (m, s) in [10, -5].into_iter().zip(sums) {
-            assert!(
-                s.half_line > 0
-                    && s.period > 0
-                    && s.one_range > 0
-                    && s.two_ranges > 0
-                    && s.wrapped_into_its_class > 0,
-                "m = {m}: {s:?}"
-            );
-        }
-    });
+    let want = include_str!("touched_cases.txt");
+    let cases = touched_cases();
+    assert_eq!(cases.len(), want.lines().count());
+    let mut sums = [TouchedPaths::default(); 2];
+    touched_paths();
+    for ((name, t, ds, d), w) in cases.into_iter().zip(want.lines()) {
+        let p = preimage(&t, &ds, &d);
+        assert_eq!(format!("{name}\t{p:?}"), w, "{name}");
+        let c = touched_paths();
+        let s = match name.split(' ').next() {
+            Some("ten") => &mut sums[0],
+            Some("five" | "five_bare" | "five_chain") => &mut sums[1],
+            _ => continue,
+        };
+        s.half_line += c.half_line;
+        s.period += c.period;
+        s.one_range += c.one_range;
+        s.two_ranges += c.two_ranges;
+        s.wrapped_into_its_class += c.wrapped_into_its_class;
+    }
+    for (m, s) in [10, -5].into_iter().zip(sums) {
+        assert!(
+            s.half_line > 0
+                && s.period > 0
+                && s.one_range > 0
+                && s.two_ranges > 0
+                && s.wrapped_into_its_class > 0,
+            "m = {m}: {s:?}"
+        );
+    }
 }
-
-
-
 
 /// Plan item SOUND-div-exact: `c^0` is 1 where `c` is defined and fails where `c` does
 /// (DESIGN.md sec:failure: a loose atom operand selects no arrow and passes out), so a power 0
@@ -3360,46 +3282,44 @@ fn a_power_zero_of_a_quotient_by_a_term_is_not_exact_where_the_divisor_is_zero()
 /// start another round of the propagation.
 fn reversed_boxes_are_the_same(seed: u64, cases: usize) {
     use zedc::store::presburger::with_parts_reversed as reversed;
-    on_big_stack(|| {
-        let mut rng = Rng::new(seed);
-        let mut differ = Vec::new();
-        for i in 0..cases {
-            let t = random_chain(&mut rng);
-            let ds = over(&[("i", chain_domain(&mut rng))]);
-            let (t, d) = if rng.below(3) == 0 {
-                let p = rng.pick(&[Prim::Ge, Prim::Le, Prim::Eq, Prim::Ne, Prim::Lt]);
-                (
-                    prim(p, t, int(rng.int(-10, 10))),
-                    Demand::Bool(rng.below(2) == 0),
-                )
-            } else {
-                (t, int_demand(&mut rng))
-            };
-            let (a, b) = (preimage(&t, &ds, &d), reversed(|| preimage(&t, &ds, &d)));
-            if a.domains != b.domains || a.exact != b.exact {
-                differ.push(format!(
-                    "case {i}: {:?} | reversed {:?}",
-                    a.domains, b.domains
-                ));
-            }
-            let d = old(&d);
-            let (a, b) = (
-                before::preimage(&t, &ds, &d),
-                reversed(|| before::preimage(&t, &ds, &d)),
-            );
-            if a.domains != b.domains || a.exact != b.exact {
-                differ.push(format!(
-                    "case {i} before: {:?} | reversed {:?}",
-                    a.domains, b.domains
-                ));
-            }
+    let mut rng = Rng::new(seed);
+    let mut differ = Vec::new();
+    for i in 0..cases {
+        let t = random_chain(&mut rng);
+        let ds = over(&[("i", chain_domain(&mut rng))]);
+        let (t, d) = if rng.below(3) == 0 {
+            let p = rng.pick(&[Prim::Ge, Prim::Le, Prim::Eq, Prim::Ne, Prim::Lt]);
+            (
+                prim(p, t, int(rng.int(-10, 10))),
+                Demand::Bool(rng.below(2) == 0),
+            )
+        } else {
+            (t, int_demand(&mut rng))
+        };
+        let (a, b) = (preimage(&t, &ds, &d), reversed(|| preimage(&t, &ds, &d)));
+        if a.domains != b.domains || a.exact != b.exact {
+            differ.push(format!(
+                "case {i}: {:?} | reversed {:?}",
+                a.domains, b.domains
+            ));
         }
-        assert!(
-            differ.is_empty(),
-            "boxes that depend on the order:\n{}",
-            differ.join("\n")
+        let d = old(&d);
+        let (a, b) = (
+            before::preimage(&t, &ds, &d),
+            reversed(|| before::preimage(&t, &ds, &d)),
         );
-    });
+        if a.domains != b.domains || a.exact != b.exact {
+            differ.push(format!(
+                "case {i} before: {:?} | reversed {:?}",
+                a.domains, b.domains
+            ));
+        }
+    }
+    assert!(
+        differ.is_empty(),
+        "boxes that depend on the order:\n{}",
+        differ.join("\n")
+    );
 }
 
 /// [`reversed_boxes_are_the_same`] from a new seed each run. Until TEST-bench-move-l0125
@@ -3410,24 +3330,19 @@ fn reversed_parts_give_the_same_boxes() {
     reversed_boxes_are_the_same(seed, 20);
 }
 
-
-
-
 /// The probe with `i` in `[-100, 2^62]` and in `[-100, i64::MAX]`, whose sums pass `i64::MAX`
 /// at an end, at the sizes up to 32 that `bench::s22` times at 256 and 2048: each box agrees
 /// with the transfer before and with the interpreter.
 #[test]
 fn probes_near_the_end_of_i64_keep_their_preimages() {
-    on_big_stack(|| {
-        let mut diffs = Diffs::default();
-        for name in ["probe_wide", "probe_max"] {
-            for k in [0, 1, 2, 3, 5, 8, 32] {
-                let (t, ds, d) = family(name, k);
-                diffs.preimage(&format!("{name} k={k}"), &t, &ds, &d);
-            }
+    let mut diffs = Diffs::default();
+    for name in ["probe_wide", "probe_max"] {
+        for k in [0, 1, 2, 3, 5, 8, 32] {
+            let (t, ds, d) = family(name, k);
+            diffs.preimage(&format!("{name} k={k}"), &t, &ds, &d);
         }
-        diffs.none(14, 0);
-    });
+    }
+    diffs.none(14, 0);
 }
 
 /// The chains that `bench::s22` times over `x` with `64k` holes, at small `k`: the box of the
@@ -3437,25 +3352,26 @@ fn probes_near_the_end_of_i64_keep_their_preimages() {
 /// shared, not copied into each level's set).
 #[test]
 fn chains_over_the_holes_of_x_at_small_sizes() {
-    on_big_stack(|| {
-        let d = Demand::Bool(true);
-        for k in [1, 2, 4] {
-            let boxed = counted_shapes(spread_remainder_chain(k))[0].clone();
-            assert!(!preimage(&boxed, &x_with_holes(64 * k), &d).exact, "k = {k}");
-            let t = counted_shapes(spread_remainder_chain(k))[1].clone();
-            let pieces = |holes: usize| {
-                let ds = x_with_holes(holes);
-                forward_pieces();
-                let p = preimage(&t, &ds, &d);
-                assert!(p.exact, "k = {k}, {holes} holes: {p:?}");
-                check(&t, &ds, &d, &p, (-100000, -99990));
-                forward_pieces()
-            };
-            let few = pieces(64 * k);
-            assert!(few > 0, "the forward transfer makes sets");
-            assert_eq!(pieces(512 * k), few, "k = {k}");
-        }
-    });
+    let d = Demand::Bool(true);
+    for k in [1, 2, 4] {
+        let boxed = counted_shapes(spread_remainder_chain(k))[0].clone();
+        assert!(
+            !preimage(&boxed, &x_with_holes(64 * k), &d).exact,
+            "k = {k}"
+        );
+        let t = counted_shapes(spread_remainder_chain(k))[1].clone();
+        let pieces = |holes: usize| {
+            let ds = x_with_holes(holes);
+            forward_pieces();
+            let p = preimage(&t, &ds, &d);
+            assert!(p.exact, "k = {k}, {holes} holes: {p:?}");
+            check(&t, &ds, &d, &p, (-100000, -99990));
+            forward_pieces()
+        };
+        let few = pieces(64 * k);
+        assert!(few > 0, "the forward transfer makes sets");
+        assert_eq!(pieces(512 * k), few, "k = {k}");
+    }
 }
 
 /// The cases of `bench::s22`'s `constant_minus_holes_scale`, `guarded_holes_scale` and
@@ -3465,26 +3381,24 @@ fn chains_over_the_holes_of_x_at_small_sizes() {
 /// interpreter.
 #[test]
 fn holes_of_c_minus_t_at_small_sizes() {
-    on_big_stack(|| {
-        for n in [1_i64, 2, 5] {
-            let c = 4 * n + 3;
-            let z = pieces(&(-n..n).map(|j| (4 * j, 4 * j + 1)).collect::<Vec<_>>());
-            let reflected = (-n..n).rev().map(|j| (c - 4 * j - 1, c - 4 * j));
-            let ds = over(&[("i", pieces(&reflected.collect::<Vec<_>>()))]);
-            let (t, d) = (prim(Prim::Sub, int(c), var("i")), Demand::Ints(z));
+    for n in [1_i64, 2, 5] {
+        let c = 4 * n + 3;
+        let z = pieces(&(-n..n).map(|j| (4 * j, 4 * j + 1)).collect::<Vec<_>>());
+        let reflected = (-n..n).rev().map(|j| (c - 4 * j - 1, c - 4 * j));
+        let ds = over(&[("i", pieces(&reflected.collect::<Vec<_>>()))]);
+        let (t, d) = (prim(Prim::Sub, int(c), var("i")), Demand::Ints(z));
+        let p = before::preimage(&t, &ds, &old(&d));
+        assert!(p.exact && p.domains == ds, "{t}: {p:?}");
+    }
+    let constants: [fn(i64) -> i64; 3] = [|j| 3 * j + 1, |_| 2, |j| j % 5];
+    for c in constants {
+        for n in [1, 2, 7, 16] {
+            let g = |j: i64| prim(Prim::Le, var("i"), int(j % 7 - 3));
+            let t = chain(n, var("i"), g, |j, t| prim(Prim::Sub, int(c(j)), t));
+            let (t, ds, d) = (prim(Prim::Ne, t, int(0)), i_in(-20, 20), Demand::Bool(true));
             let p = before::preimage(&t, &ds, &old(&d));
-            assert!(p.exact && p.domains == ds, "{t}: {p:?}");
+            assert!(p.exact && !p.enumerated, "n = {n}: {p:?}");
+            assert_eq!(first_refuted(&t, &ds, &d, &[(&p.domains, true)]), None);
         }
-        let constants: [fn(i64) -> i64; 3] = [|j| 3 * j + 1, |_| 2, |j| j % 5];
-        for c in constants {
-            for n in [1, 2, 7, 16] {
-                let g = |j: i64| prim(Prim::Le, var("i"), int(j % 7 - 3));
-                let t = chain(n, var("i"), g, |j, t| prim(Prim::Sub, int(c(j)), t));
-                let (t, ds, d) = (prim(Prim::Ne, t, int(0)), i_in(-20, 20), Demand::Bool(true));
-                let p = before::preimage(&t, &ds, &old(&d));
-                assert!(p.exact && !p.enumerated, "n = {n}: {p:?}");
-                assert_eq!(first_refuted(&t, &ds, &d, &[(&p.domains, true)]), None);
-            }
-        }
-    });
+    }
 }

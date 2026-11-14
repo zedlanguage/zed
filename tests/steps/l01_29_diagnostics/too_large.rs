@@ -147,7 +147,6 @@ pub(super) fn powers(n: usize) -> String {
         .collect()
 }
 
-
 /// `main` binding `b = 5 * 2^100 + 1` (103 bits) and `x` to `rat`, then the lines `body`
 /// (plan row CONST-too-large-rat-names).
 fn with_x(x: &str, body: &str) -> String {
@@ -300,7 +299,6 @@ pub(super) fn chain(n: usize) -> String {
         .collect();
     with_x("rat(b) / rat(b + 1)", &body)
 }
-
 
 // Products and quotients (plan row CONST-too-large-products). `b = 2^64 + 13` has 65 bits,
 // so `b ^ (2^60)` has at least `2^66 + 1` bits, 8 EiB, and a product of two such factors at
@@ -588,7 +586,6 @@ pub(super) fn product_chain(n: usize) -> String {
     format!("main(m: MainArgs) {{\n    b = 2^64 + 13;\n    x = b ^ (2^59);\n{body}}}\n")
 }
 
-
 /// `n` names, each the one before times `rat(b)`, from `x = rat(b) ^ (2^59) / rat(c)`, and
 /// for each a product with `x` three times and the square of a product with `x`, both past
 /// the address space.
@@ -611,7 +608,6 @@ pub(super) fn rat_product_chain(n: usize) -> String {
          x = rat(b) ^ (2^59) / rat(c);\n{body}}}\n"
     )
 }
-
 
 // Plan row CONST-too-large-kept-powers: the size checked is the size of what each operation
 // builds, by the list of DESIGN's numbers section. A number is kept as `n/d · ∏ p^e`, so a
@@ -801,7 +797,6 @@ pub(super) fn kept_sums(n: usize) -> String {
         .collect();
     format!("main(m: MainArgs) {{\n{body}}}\n")
 }
-
 
 /// `src` is rejected with `count` diagnostics "Number too large for any memory of the target".
 pub(super) fn rejected_times(src: &str, count: usize) {

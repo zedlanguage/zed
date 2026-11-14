@@ -6,7 +6,7 @@ use crate::sum_plus::{sum_over_untracked_components_rejected, untracked_componen
 
 #[test]
 fn checking_sum_over_untracked_components_scales() {
-    let n = 400;
+    let n = 3700;
     let inputs = scaling::inputs(n, untracked_components);
     scaling::check("checking `sum` of n components, the first `_`", n, |k| {
         sum_over_untracked_components_rejected(&inputs[&k]);

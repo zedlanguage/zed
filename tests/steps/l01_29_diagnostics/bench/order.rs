@@ -9,7 +9,7 @@ use crate::order::{
 /// Cutting a unit into items is O(i): the lex and parse, and one pass over the root's items.
 #[test]
 fn cutting_a_unit_into_items_scales() {
-    let n = 2000;
+    let n = 21_000;
     let units = scaling::inputs(n, rates);
     scaling::check("cutting n items of seven names", n, |k| {
         cut_into_items(&units[&k], k);
@@ -41,7 +41,7 @@ fn moving_items_of_several_names_scales() {
 
 #[test]
 fn checking_a_unit_with_its_items_moved_scales() {
-    let n = 200;
+    let n = 1300;
     let units = scaling::inputs(n, chain);
     scaling::check(
         "cutting, moving and checking n items, with a test on every tenth",

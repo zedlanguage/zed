@@ -686,7 +686,10 @@ fn offering_the_cast_of_a_long_fraction_text_in_a_comparison() {
     // `777/9` is not in lowest terms, so `rat` reads no number from it and the comparison is
     // always `false`.
     let out = rejected(&a_long_fraction_text_compared(3));
-    assert!(out.contains("is always `false`. Try `false` instead."), "{out}");
+    assert!(
+        out.contains("is always `false`. Try `false` instead."),
+        "{out}"
+    );
 }
 
 /// One `int` ordered against the fraction text `10…0/3` of d + 3 characters, which `rat` reads

@@ -8,8 +8,6 @@ use zed_kernel::term::build::{lam, lit, var};
 use zed_kernel::{FixKind, GuardPos, Pattern, Prim, Term};
 use zedc::stage::{ends, reading};
 
-use super::scaling::deep;
-
 fn app(f: Term, args: Vec<Term>) -> Term {
     Term::App(Shared::new(f), args)
 }
@@ -208,16 +206,14 @@ pub(super) fn shared_arms_read((plain, both): &(Term, Term)) {
 /// The walk read the term as a tree: 2^k steps (`bench::ends` times 1000 and 8000 levels).
 #[test]
 fn a_chain_whose_if_arms_share_their_term_is_read() {
-    deep(|| {
-        for k in [1, 2, 9] {
-            let terms = shared_arms_terms(k);
-            shared_arms_read(&terms);
-            let Term::If(_, by_let, _) = &terms.1 else {
-                unreachable!("built as an if")
-            };
-            assert!(ends(by_let));
-        }
-    });
+    for k in [1, 2, 9] {
+        let terms = shared_arms_terms(k);
+        shared_arms_read(&terms);
+        let Term::If(_, by_let, _) = &terms.1 else {
+            unreachable!("built as an if")
+        };
+        assert!(ends(by_let));
+    }
 }
 
 /// `f1 = (x) -> x + 1; …; fk = (x) -> x + k; f1(f2(…fk(0)))`: the names the body needs grow
@@ -235,16 +231,14 @@ pub(super) fn let_functions(k: usize) -> Term {
 /// `bench::ends` times 1000 and 8000 functions.
 #[test]
 fn many_let_functions_called_at_the_end_are_read() {
-    deep(move || {
-        for k in [0, 1, 2, 9] {
-            assert!(ends(&let_functions(k)));
-        }
-        // A parameter `f7` around the chain is shadowed by the `let` of `f7`.
-        assert!(ends(&Term::Lam(
-            vec!["f7".into()],
-            Shared::new(let_functions(10))
-        )));
-    });
+    for k in [0, 1, 2, 9] {
+        assert!(ends(&let_functions(k)));
+    }
+    // A parameter `f7` around the chain is shadowed by the `let` of `f7`.
+    assert!(ends(&Term::Lam(
+        vec!["f7".into()],
+        Shared::new(let_functions(10))
+    )));
 }
 
 /// `tj = if c { fj(t(j-1)) } else { hj(t(j-1)) }` under `let`s of every `fj` and `hj`: the
@@ -266,17 +260,15 @@ pub(super) fn arms_calling_let_functions(k: usize) -> Term {
 /// `bench::ends` times 1000 and 8000 levels.
 #[test]
 fn arms_that_call_different_let_functions_on_a_shared_part_are_read() {
-    deep(move || {
-        for k in [1, 2, 9] {
-            assert!(ends(&arms_calling_let_functions(k)));
-        }
-        // With the outer `let`, of `h1`, taken out, `h1` is a parameter instead and the chain
-        // does not end.
-        let Term::Let(_, _, rest) = &arms_calling_let_functions(3) else {
-            unreachable!("built as a let")
-        };
-        assert!(!ends(&Term::Lam(vec!["h1".into()], rest.clone())));
-    });
+    for k in [1, 2, 9] {
+        assert!(ends(&arms_calling_let_functions(k)));
+    }
+    // With the outer `let`, of `h1`, taken out, `h1` is a parameter instead and the chain
+    // does not end.
+    let Term::Let(_, _, rest) = &arms_calling_let_functions(3) else {
+        unreachable!("built as a let")
+    };
+    assert!(!ends(&Term::Lam(vec!["h1".into()], rest.clone())));
 }
 
 /// `k` levels of shared `if` arms, each level's arm either `t + 1` or a call of a `let`
@@ -393,9 +385,7 @@ pub(super) fn mixed_levels_read(t: &Term) {
 /// `bench::ends` times 1000 and 8000 levels; [`three_allocation_orders_read_alike`] reads 64.
 #[test]
 fn reading_a_term_built_into_freed_blocks() {
-    deep(|| {
-        for k in [1, 2, 9] {
-            mixed_levels_read(&built_into_freed_blocks(k));
-        }
-    });
+    for k in [1, 2, 9] {
+        mixed_levels_read(&built_into_freed_blocks(k));
+    }
 }

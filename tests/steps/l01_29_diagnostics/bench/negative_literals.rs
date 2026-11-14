@@ -7,7 +7,7 @@ use crate::negative_literals::{negatives_rejected_at_their_minus, resolved_negat
 
 #[test]
 fn rejecting_negative_literals_at_their_minus_scales() {
-    let n = 256;
+    let n = 1700;
     // The inputs are built before the timing.
     let units = scaling::inputs(n, resolved_negatives);
     scaling::on_a_thread(1 << 29, || {

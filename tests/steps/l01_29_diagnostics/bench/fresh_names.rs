@@ -13,7 +13,7 @@ fn naming_variables_beside_many_program_names_scales() {
     // 18.3 times the work at 600 and 4800, against 8.0 here and a limit of 11.7. At 200 the
     // check of each binding hides the n² lookups (11.9 times, under the limit of 12.25), so the
     // size is 600.
-    let n = 600;
+    let n = 1600;
     let inputs = scaling::inputs(n, crowded);
     scaling::check_order(
         "naming the variables of n functions beside n program names",

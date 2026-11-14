@@ -10,7 +10,7 @@ use crate::suppress::{
 /// matching together are within n log n. The files and the words are made before the timing.
 #[test]
 fn suppressing_every_warning_scales() {
-    let n = 400;
+    let n = 1400;
     let runs = scaling::inputs(n, every_warning_suppressed);
     scaling::check("zedc run suppressing each of n warnings", n, |m| {
         run_with_every_warning_suppressed(&runs[&m]);
@@ -20,7 +20,7 @@ fn suppressing_every_warning_scales() {
 /// Matching `n` suppressions against `n` warnings is O(n): each address is found in a set.
 #[test]
 fn matching_suppressions_scales() {
-    let n = 20_000;
+    let n = 270_000;
     let sizes = scaling::inputs(n, suppressed);
     scaling::check_order("matching n suppressions against n warnings", n, 1, |m| {
         suppressions_matched(&sizes[&m]);

@@ -4,16 +4,13 @@
 use zed_tests::scaling;
 
 use crate::cone::F0;
-use crate::scaling::deep;
 use crate::store::{expected, family, mixed};
 
 fn mixing_scales(what: &'static str, f0: F0, lets: bool) {
-    deep(move || {
-        let n = 400;
-        let units = scaling::inputs(n, |n| family(n, f0, true, lets));
-        scaling::check(what, n, |n| {
-            assert_eq!(mixed(&units[&n]), expected(n, f0));
-        });
+    let n = 400;
+    let units = scaling::inputs(n, |n| family(n, f0, true, lets));
+    scaling::check(what, n, |n| {
+        assert_eq!(mixed(&units[&n]), expected(n, f0));
     });
 }
 

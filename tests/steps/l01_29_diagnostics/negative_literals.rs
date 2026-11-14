@@ -165,11 +165,7 @@ fn negatives(n: usize) -> String {
 
 /// [`negatives`]`(n)` resolved: its text, statements and resolution, so that only its check
 /// is measured.
-pub(super) type Resolved = (
-    String,
-    Vec<zedc::ast::Stmt>,
-    zedc::resolve::Resolution,
-);
+pub(super) type Resolved = (String, Vec<zedc::ast::Stmt>, zedc::resolve::Resolution);
 
 /// [`negatives`]`(n)`, resolved.
 pub(super) fn resolved_negatives(n: usize) -> Resolved {
@@ -183,9 +179,11 @@ pub(super) fn resolved_negatives(n: usize) -> Resolved {
 pub(super) fn negatives_rejected_at_their_minus((src, stmts, res): &Resolved, n: usize) {
     let info = zedc::check::walk::check(stmts, res);
     assert_eq!(info.errors.len(), 2 * n);
-    assert!(info.errors.iter().all(|e| {
-        e.message.contains("the literal `-") && src[e.span.start..].starts_with('-')
-    }));
+    assert!(
+        info.errors.iter().all(|e| {
+            e.message.contains("the literal `-") && src[e.span.start..].starts_with('-')
+        })
+    );
 }
 
 #[test]

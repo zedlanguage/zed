@@ -102,7 +102,6 @@ fn preimages_within_the_depth_are_exact() {
     }
 }
 
-
 /// A function is summarized once for each abstraction of its arguments, so a chain of
 /// functions each calling the one before twice is read in time linear in its length, not
 /// exponential; and the preimage is still exact.
@@ -159,7 +158,6 @@ pub(super) fn hyperbola(n: usize) -> (Term, zedc::store::preimage::Domains) {
     (t, doms(&[("x", Some(1), n), ("y", Some(1), n)]))
 }
 
-
 /// `f0 = (v) -> v; f1 = (v) -> f0(v) + f0(v + d); …; fk(i) - j >= 0`: a sum, which the catalog
 /// does not invert exactly with two inputs, so the linear-relation translation reads it.
 pub(super) fn sums(k: usize, d: i64) -> Term {
@@ -185,7 +183,6 @@ pub(super) fn sums(k: usize, d: i64) -> Term {
     }
     body
 }
-
 
 /// `x1 = max(i, i); x2 = max(x1, i); …; xk >= 0`: each name reads the input past every other.
 pub(super) fn reading_the_input(k: usize) -> Term {
@@ -220,11 +217,9 @@ pub(super) fn many_inputs(k: usize) -> Domains {
         .collect()
 }
 
-
 pub(super) fn one(_: usize) -> Domains {
     doms(&[("i", Some(-50), Some(50))])
 }
-
 
 /// `y = i + 1 + … + 1; y * y + … + y * y >= 0`, with `k` ones and `k` products: each product
 /// is read as a square, and its two factors are found to be one term by its number, not by
@@ -249,7 +244,6 @@ pub(super) fn shared_arms(k: usize) -> Term {
         Term::If(Shared::new(prim(Prim::Ge, var("i"), int(j))), t.clone(), t)
     })
 }
-
 
 /// `t0 = i; tj = if (i >= j) { t(j-1) + 1 } else { j - i }; tk >= 0`: each value nested in
 /// the arm of the next, so each auxiliary variable of the linear-relation domain names one
@@ -283,7 +277,6 @@ pub(super) fn shared_values(k: usize) -> Term {
     prim(Prim::Ge, t, int(0))
 }
 
-
 /// `c0 = i >= 0 && i <= 9; cj = (if (i >= j) { c(j-1) } else { c(j-1) }) && i != j &&
 /// i <= j + 9`, with `||` in place of `&&` at each odd `j`: chains of `&&` and `||` whose
 /// `if` arms read one shared chain, `k` distinct chains and `2^k` paths. The inner `&&` of a
@@ -316,7 +309,6 @@ pub(super) fn shared_chains(k: usize) -> Term {
     prim(Prim::And, t, prim(Prim::Ge, var("i"), int(-5)))
 }
 
-
 /// `a0 >= 0 && a1 >= 1 && … && a(k-1) >= k - 1` as the elaborator writes it, each `a && b` as
 /// `if a { b } else { false }`, nested to the left: a chain of k `&&` on k names. Read as an
 /// `if`, the conjunction of each prefix was made in turn, copying the prefix's constraints
@@ -329,7 +321,6 @@ pub(super) fn and_ifs(k: usize) -> Term {
     })
 }
 
-
 /// `a0 >= 0 || a1 >= 1 || … || a(k-1) >= k - 1` as the elaborator writes it, each `a || b` as
 /// `if a { true } else { b }`, nested to the left: a chain of k `||` on k names. Read as an
 /// `if`, each level made `g || (!g && b)` and copied the disjuncts of `g` into a new
@@ -341,7 +332,6 @@ pub(super) fn or_ifs(k: usize) -> Term {
         Term::If(Shared::new(t), yes(), Shared::new(ge(j)))
     })
 }
-
 
 /// `w = (g, v) -> let ok = i >= 0 && i >= 1 && … && i >= k - 2 && seen(g(g, v)) in ok && (i
 /// >= 1 || ok) && … && (i >= r - 1 || ok)`, read as `w(w, i)` with `seen = (u) -> i <= 1000`:
@@ -386,7 +376,6 @@ fn a_chain_read_at_many_places_under_recursion_is_translated() {
         assert_eq!(rs[0].to_string(), want, "r={r} k={k}");
     }
 }
-
 
 /// The preimage of [`shared_values`]: its value is `i + k` below 1, `k` up to `k` and `i`
 /// above, so `t >= 0` holds exactly on `i >= -k`. The summary of the shared term as one
@@ -515,7 +504,6 @@ pub(super) fn failing_max_all(k: usize) -> Term {
     failing_max(k, -50)
 }
 
-
 /// `f(a)`, a call of the term `f`.
 fn call(f: Term, args: Vec<Term>) -> Term {
     Term::App(Shared::new(f), args)
@@ -566,7 +554,6 @@ pub(super) fn chain_of_doubled_calls(k: usize) -> Term {
     let max = lambda(&["a", "b"], prim(Prim::Max, var("a"), var("b")));
     let_in("f", max, let_in("x0", int(1), body))
 }
-
 
 #[test]
 fn closed_terms_have_the_values_of_the_tree_walk() {

@@ -127,26 +127,10 @@ fn check(body: &Term, ds: &Domains, demand: &Demand, p: &Preimage, window: (i64,
     met
 }
 
-/// The variable that fixes the seed of a random test, so that a failing run can be repeated.
-const SEED: &str = "ZED_TEST_SEED";
-
-/// The seed of the random test `test` (its path in this group, as `--exact` takes it):
-/// [`SEED`] when it is set, else one from the clock, so that each run takes new cases. The seed
-/// is printed with the command that reruns the test with it; the test harness shows it when
-/// the test fails (TEST-bench-move-l0125, author P169: random tests take fewer cases, a new
-/// seed each run, and print it).
+/// The seed of the random test `test` (its path in this group, as `--exact` takes it), from
+/// [`zed_tests::seed::seed`]: `ZED_TEST_SEED` when it is set, else a new one each run, printed
+/// (TEST-bench-move-l0125, author P169: random tests take fewer cases, a new seed each run,
+/// and print it).
 pub(crate) fn run_seed(test: &str) -> u64 {
-    let seed = match std::env::var(SEED) {
-        Ok(s) => s.parse().expect("a seed is a number"),
-        Err(_) => std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("the clock is after 1970")
-            .as_nanos() as u64,
-    };
-    eprintln!(
-        "{test}: seed {seed}. Rerun from the worktree root:\n  {SEED}={seed} \
-         /home/luke/Work/wt/zcargo test -p zed-tests --test l01_25_preimage_catalog -- \
-         --exact {test}"
-    );
-    seed
+    zed_tests::seed::seed(&format!("l01_25_preimage_catalog::{test}"))
 }

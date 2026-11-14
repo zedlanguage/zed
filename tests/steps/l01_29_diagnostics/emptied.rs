@@ -3,7 +3,6 @@
 //! empties it, from the innermost part out. A rejection whose types all have values gets no
 //! such step.
 
-
 use super::{rejected, steps};
 
 /// The steps of `out` that explain why a written type has no value.

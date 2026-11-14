@@ -4,7 +4,6 @@
 
 use std::path::PathBuf;
 
-
 /// A directory of its own for test `name`, under the test target's scratch directory; files
 /// in it are overwritten by each run, never deleted.
 fn dir(name: &str) -> PathBuf {

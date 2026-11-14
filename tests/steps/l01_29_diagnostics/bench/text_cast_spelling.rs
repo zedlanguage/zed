@@ -40,11 +40,12 @@ fn writing_the_number_a_text_reads_beside_literals_of_its_value_scales() {
     // the work is linear in the n sites. Before the fix the value was written through the
     // program's spellings of literals near the site, a search of O(log s) for s spelled
     // literals, and came out as the other operand's spelling. The check reads each headline once
-    // and looks its repair up in the set of expected repairs, O(n) in all.
-    let srcs = scaling::inputs(750, texts_beside_their_values);
+    // and looks its repair up in the set of expected repairs, O(n) in all. At 750 and 6000 the
+    // piece took 14 s to 20 s at load 27 to 45, so it runs at 400 (TEST-bench-move-l0125).
+    let srcs = scaling::inputs(400, texts_beside_their_values);
     scaling::check(
         "n texts ordered with literals of their values in other spellings",
-        750,
+        400,
         |n| {
             let (src, repairs) = &srcs[&n];
             let out = rejected(src);

@@ -14,9 +14,9 @@ use crate::stops::stops_over_one_term;
 fn many_stops_over_one_shared_term_make_no_text() {
     let ds = doms(&[("x", None, None)]);
     let ds = &ds;
-    let terms = scaling::inputs(64, stops_over_one_term);
+    let terms = scaling::inputs(2048, stops_over_one_term);
     scaling::on_a_thread(2 << 20, || {
-        scaling::check("stops over one shared term", 64, |n| {
+        scaling::check("stops over one shared term", 2048, |n| {
             let p = preimage(&terms[&n], ds, &Demand::Bool(true));
             assert_eq!(p.stops.len(), n);
         })

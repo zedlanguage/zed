@@ -6,7 +6,6 @@
 //! the step for `k(x, y) = y` was "`k` is declared here, `(_, _) -> _`"; before
 //! UNDERSCORE-print, it said in words that `y` and the result have the same type.
 
-
 use super::tyvars::writes_back;
 use super::{rejected, steps};
 
@@ -145,10 +144,7 @@ fn wide_type(n: usize) -> String {
 /// The rejection of [`wide`]`(n)` shows the type found for `all`: [`wide_type`]`(n)`.
 pub(super) fn the_declared_step_of_wide(src: &str, n: usize) {
     let out = rejected(src);
-    let want = format!(
-        "the type the checker found for `all` is `{}`",
-        wide_type(n)
-    );
+    let want = format!("the type the checker found for `all` is `{}`", wide_type(n));
     assert!(out.contains(&want), "{n}");
 }
 

@@ -235,11 +235,7 @@ pub(super) fn long(n: usize) -> String {
 }
 
 /// A unit's text, statements and resolution.
-pub(super) type Resolved = (
-    String,
-    Vec<zedc::ast::Stmt>,
-    zedc::resolve::Resolution,
-);
+pub(super) type Resolved = (String, Vec<zedc::ast::Stmt>, zedc::resolve::Resolution);
 
 /// [`long`]`(n)` resolved.
 pub(super) fn a_long_cycle(n: usize) -> Resolved {
@@ -261,7 +257,10 @@ pub(super) fn the_report_of_a_long_cycle((text, stmts, res): &Resolved, n: usize
     assert_eq!(reports.len(), 1);
     assert_eq!(reports[0].notes.len(), n + 1);
     let message = &reports[0].message;
-    assert!(message.starts_with("`c0`") && message.contains("`c1`"), "{message}");
+    assert!(
+        message.starts_with("`c0`") && message.contains("`c1`"),
+        "{message}"
+    );
 }
 
 /// The check of [`a_long_cycle`]`(n)` reports the cycle once, with its `n` uses.

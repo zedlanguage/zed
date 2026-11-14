@@ -237,11 +237,7 @@ fn resolved(text: &str) -> (Vec<zedc::ast::Stmt>, zedc::resolve::Resolution) {
 }
 
 /// A unit's text, statements and resolution.
-pub(super) type Resolved = (
-    String,
-    Vec<zedc::ast::Stmt>,
-    zedc::resolve::Resolution,
-);
+pub(super) type Resolved = (String, Vec<zedc::ast::Stmt>, zedc::resolve::Resolution);
 
 /// A chain of `n` overloads, each calling the next by its parameter's name, the last the
 /// first, resolved.

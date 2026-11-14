@@ -1,30 +1,14 @@
 //! Deep terms (PRE-stack, PRE-stack-explicit): each analysis of the transfer recurses on the
-//! depth of the term through frames kept on the heap, so a term nested 10,000 deep has its
-//! preimage on a 2 MiB thread stack. Before PRE-stack the transfer overflowed that stack at
-//! depth 3,000, so 10,000 is the depth checked here, above that with room for smaller frames;
-//! `bench::deep` times depths up to 100,000.
+//! depth of the term through frames kept on the heap. The tests here check the preimages of the
+//! terms a few levels deep on the default stack; `bench::deep` checks the same preimages 10,000
+//! deep on a 2 MiB thread stack (before PRE-stack the transfer overflowed that stack at depth
+//! 3,000) and times depths up to 100,000.
 
 use zed_kernel::{Prim, Shared, Term, Value};
 
 use zedc::store::preimage::{Demand, preimage};
 
 use super::{doms, shown};
-
-/// The default stack of a test thread.
-const STACK: usize = 2 << 20;
-
-/// How deep the terms are.
-const DEEP: usize = 10_000;
-
-/// Runs `f` on a thread with a 2 MiB stack, whatever `RUST_MIN_STACK` says.
-pub(super) fn on_small_stack(f: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(STACK)
-        .spawn(f)
-        .expect("a test thread")
-        .join()
-        .expect("the test passes on a 2 MiB stack");
-}
 
 fn var(x: &str) -> Term {
     Term::Var(x.into())
@@ -71,30 +55,32 @@ pub(super) fn ifs(k: usize) -> Term {
     prim(Prim::Ge, t, int(0))
 }
 
-/// The preimage of `true` under `make(DEEP)` for `i` in `[-50, 50]`, on a 2 MiB stack.
-fn deep(make: fn(usize) -> Term, expected: &'static str) {
-    on_small_stack(move || {
-        let t = make(DEEP);
+/// The preimage of `true` under `make(k)` for `i` in `[-50, 50]`, on the default stack, at each
+/// of the small depths `ks`. The same terms 10,000 deep on a 2 MiB stack, deeper than the
+/// transfer reached before PRE-stack, are benchmarks since TEST-bench-move-l0125 (author P178):
+/// `bench::deep` checks those preimages too.
+fn shallow(make: fn(usize) -> Term, ks: &[usize], expected: &str) {
+    for &k in ks {
         let p = preimage(
-            &t,
+            &make(k),
             &doms(&[("i", Some(-50), Some(50))]),
             &Demand::Bool(true),
         );
-        assert_eq!(shown(&p), expected);
-    });
+        assert_eq!(shown(&p), expected, "{k} deep");
+    }
 }
 
 #[test]
-fn a_sum_10000_deep_has_its_preimage_on_a_2_mib_stack() {
-    deep(sum, "i [0..=50]; exact");
+fn a_short_sum_has_its_preimage() {
+    shallow(sum, &[0, 1, 2, 5], "i [0..=50]; exact");
 }
 
 #[test]
-fn a_chain_of_10000_lets_has_its_preimage_on_a_2_mib_stack() {
-    deep(lets, "i [0..=50]; exact");
+fn a_short_chain_of_lets_has_its_preimage() {
+    shallow(lets, &[0, 1, 2, 5], "i [0..=50]; exact");
 }
 
 #[test]
-fn ifs_nested_10000_deep_have_their_preimage_on_a_2_mib_stack() {
-    deep(ifs, "i [-50..=50]; exact");
+fn a_few_nested_ifs_have_their_preimage() {
+    shallow(ifs, &[1, 2, 5], "i [-50..=50]; exact");
 }

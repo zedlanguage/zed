@@ -14,7 +14,7 @@ use crate::shared::levels;
 /// numbered and transferred once. The terms are built before the timing.
 #[test]
 fn shared_levels_scale_with_the_distinct_parts() {
-    let n = 64;
+    let n = 3300;
     let terms: HashMap<usize, Shared> = [n, scaling::FACTOR * n]
         .into_iter()
         .map(|d| (d, levels(d, 0)))

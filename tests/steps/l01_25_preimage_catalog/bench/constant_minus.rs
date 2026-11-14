@@ -8,7 +8,7 @@ use crate::constant_minus::comb;
 
 #[test]
 fn a_comb_of_pieces_scales() {
-    let n = 16_384;
+    let n = 55_000;
     let made = scaling::inputs(n, comb);
     scaling::check("the preimage of c - x over a demand of n pieces", n, |k| {
         let (t, ds, d) = &made[&k];

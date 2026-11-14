@@ -10,7 +10,7 @@ use crate::overload_cycles::*;
 /// carrier, `O(n log n)` in all; testing each call against each overload would be `O(n^2)`.
 #[test]
 fn a_cycle_through_n_overloads_scales() {
-    let n = 1_000;
+    let n = 11_000;
     let units = scaling::inputs(n, a_cycle_of_overloads);
     scaling::check_order("a cycle through n overloads", n, 1, |k| {
         the_cycle_of_overloads_reported(&units[&k], k);
@@ -21,7 +21,7 @@ fn a_cycle_through_n_overloads_scales() {
 /// that two or more overloads admit, which refer to none.
 #[test]
 fn n_calls_of_n_overloads_scale() {
-    let n = 1_000;
+    let n = 4800;
     let units = scaling::inputs(n, calls_of_overloads);
     scaling::check_order("n calls of n overloads", n, 1, |k| {
         the_calls_of_overloads_ordered(&units[&k], k);

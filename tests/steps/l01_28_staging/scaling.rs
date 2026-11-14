@@ -1,8 +1,8 @@
 //! Staging at the rule of low complexity (DESIGN.md Part G). Deciding the stage of a term
 //! read its free names, and `mix` decided it at every node it entered, so a body of `n`
 //! nested definitions was read `O(n)` times, each reading through a scope of `O(n)` names.
-//! The checks at `n` and `8n` are in `bench::scaling`; these tests run the same checks at
-//! small sizes, and each deep shape once at a depth that overflowed a stack of 2 MiB.
+//! The checks at `n` and `8n`, and of each deep shape at depths that overflowed a stack of 2 MiB,
+//! are in `bench::scaling`; these tests run the same checks at small sizes on the default stack.
 
 use zed_kernel::Shared;
 
@@ -34,12 +34,6 @@ pub(super) fn chain(n: usize, all: bool) -> String {
     };
     s += &format!("  m.stdout <- String({last});\n}}\n");
     s
-}
-
-/// `f` on a thread whose stack holds the recursion of a body `O(n)` deep.
-pub(super) fn deep(f: impl FnOnce() + Send + 'static) {
-    let t = std::thread::Builder::new().stack_size(1 << 29).spawn(f);
-    t.unwrap().join().unwrap();
 }
 
 /// `p`, a loaded [`chain`], stages with nothing left to run.
@@ -215,40 +209,20 @@ pub(super) fn a_deep_unit_colored(u: &Unit) {
     assert_eq!(color(u), [("main".to_string(), Stage::Build)]);
 }
 
-/// The depth at which reading the free names, the effects and whether a term ends, indexing it
-/// and mixing it, each of which recursed once per level of the term, overflowed a stack of
-/// 2 MiB: near 10,000 levels.
-const OVERFLOWED: usize = 12_500;
-
-/// Mixes and colors `shape` [`OVERFLOWED`] deep, and decides that the sum ends, on a stack of
-/// 2 MiB (`bench::scaling` times 12,500 and 100,000 deep).
-fn staged_on_a_2_mib_stack(shape: Shape) {
-    zed_tests::deep::on_small_stack(move || {
-        let (u, ends_term) = deep_unit(shape, OVERFLOWED);
-        a_deep_unit_mixed(&u, shape);
-        a_deep_unit_colored(&u);
-        assert!(ends(&ends_term));
-    });
-}
-
+/// Each shape a few levels deep mixes and colors, and its sum ends, on the default stack. The
+/// shapes deeper than a 2 MiB stack held before the walks kept their frames on the heap (about
+/// 10,000 levels) are benchmarks since TEST-bench-move-l0125 (author P178): `bench::scaling`
+/// runs them 6,250 and 50,000 deep on a 2 MiB stack, with the same checks.
 #[test]
-fn a_let_chain_12500_deep_is_staged_on_a_2_mib_stack() {
-    staged_on_a_2_mib_stack(Shape::Chain);
-}
-
-#[test]
-fn a_left_nested_sum_12500_deep_is_staged_on_a_2_mib_stack() {
-    staged_on_a_2_mib_stack(Shape::Sum);
-}
-
-#[test]
-fn ifs_12500_deep_are_staged_on_a_2_mib_stack() {
-    staged_on_a_2_mib_stack(Shape::Ifs);
-}
-
-#[test]
-fn lambdas_12500_deep_are_staged_on_a_2_mib_stack() {
-    staged_on_a_2_mib_stack(Shape::Lams);
+fn each_shape_a_few_levels_deep_is_staged() {
+    for shape in [Shape::Chain, Shape::Sum, Shape::Ifs, Shape::Lams] {
+        for depth in [1, 2, 3, 10] {
+            let (u, ends_term) = deep_unit(shape, depth);
+            a_deep_unit_mixed(&u, shape);
+            a_deep_unit_colored(&u);
+            assert!(ends(&ends_term), "{} {depth} deep", shape.name());
+        }
+    }
 }
 
 /// `main` with `n` bindings, each the square of a machine-word integer, so each is warned.

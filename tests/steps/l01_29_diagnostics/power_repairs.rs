@@ -500,7 +500,6 @@ pub(super) fn bound_uses(n: usize) -> String {
     src + "  return y;\n}\n"
 }
 
-
 /// A chain of `n` bindings under `k >= 0`, each a power of 2 to the one before, and each
 /// exponent shown to be at least 1 by the power that gives it.
 pub(super) fn tower(n: usize) -> String {
@@ -511,7 +510,6 @@ pub(super) fn tower(n: usize) -> String {
     src + &format!("  return y{};\n}}\n", n - 1)
 }
 
-
 /// A tower of `n` powers under `k > 0`, each exponent one less than a power of 2 and so at least
 /// 0 only where the test's narrowing of `k` reaches it: `2^(2^(2^k - 1) - 1) ...`.
 pub(super) fn narrowed_tower(n: usize) -> String {
@@ -521,7 +519,6 @@ pub(super) fn narrowed_tower(n: usize) -> String {
     }
     format!("q(k: int) = if k > 0 {{ {e} }} else {{ 0 }};\n")
 }
-
 
 /// Asserts that `src` is rejected with an int power whose headline shows `power`, its code
 /// annotated with the types the checker derived, as `2 : int ^ (2^k - 3) : int[-1..]`.

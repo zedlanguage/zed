@@ -75,13 +75,9 @@ fn the_linear_translation_of_calls_scales() {
     let ds = &ds;
     for d in [0, 1] {
         let terms = scaling::inputs(6, |k| sums(k, d));
-        scaling::check(
-            "sums of calls, each calling the one before twice",
-            6,
-            |k| {
-                preimage(&terms[&k], ds, &Demand::Bool(true));
-            },
-        );
+        scaling::check("sums of calls, each calling the one before twice", 6, |k| {
+            preimage(&terms[&k], ds, &Demand::Bool(true));
+        });
     }
 }
 
@@ -348,8 +344,8 @@ fn long_shared_arms_under_recursion() {
 
 #[test]
 fn a_listed_set_is_enumerated_in_time_of_its_length() {
-    let inputs = scaling::inputs(512, listed_multiples_of_3);
-    scaling::check("a listed set of `n` members, enumerated", 512, |n| {
+    let inputs = scaling::inputs(16384, listed_multiples_of_3);
+    scaling::check("a listed set of `n` members, enumerated", 16384, |n| {
         let (t, ds) = &inputs[&n];
         pre_listed(t, ds, &Demand::Bool(true));
     });
@@ -358,8 +354,8 @@ fn a_listed_set_is_enumerated_in_time_of_its_length() {
 #[test]
 fn an_exact_search_reads_only_the_inputs_it_touches() {
     for points in [true, false] {
-        let made = scaling::inputs(64, |n| unread_inputs(n, points));
-        scaling::check("an `@exact` search beside n unread inputs", 64, |n| {
+        let made = scaling::inputs(1024, |n| unread_inputs(n, points));
+        scaling::check("an `@exact` search beside n unread inputs", 1024, |n| {
             let (t, ds) = &made[&n];
             let p = exact_preimage(t, ds, &Classes::new(), &Demand::Bool(true));
             assert!(p.exact && p.domains.len() == n + 1);

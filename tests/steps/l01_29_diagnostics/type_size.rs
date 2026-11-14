@@ -771,7 +771,8 @@ fn declared_parts(out: &str) -> Vec<&str> {
 /// at 16 links is at most 3 × 8 times the text at 2 (the benchmarks time 40 and 320 links).
 #[test]
 fn rejecting_short_chains_of_names_holding_unions() {
-    let makers: [(&str, fn(usize) -> String); 4] = [
+    type Maker = (&'static str, fn(usize) -> String);
+    let makers: [Maker; 4] = [
         ("unions", unions),
         ("unions_each_its_own", unions_each_its_own),
         ("unions_inside", unions_inside),
@@ -798,6 +799,9 @@ fn rejecting_short_chains_of_names_holding_unions() {
             assert_eq!(unions, want, "{name} {n}:\n{out}");
         }
         let (small, large) = (rejected(&make(2)).len(), rejected(&make(16)).len());
-        assert!(large <= 3 * 8 * small, "{name}: {small} at 2, {large} at 16");
+        assert!(
+            large <= 3 * 8 * small,
+            "{name}: {small} at 2, {large} at 16"
+        );
     }
 }

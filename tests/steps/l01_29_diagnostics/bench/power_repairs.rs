@@ -31,7 +31,11 @@ fn checking_repairs_at_uses_scales() {
 
 #[test]
 fn a_chain_of_powers_scales() {
-    checking("checking a chain of n powers of powers", tower, checks_whole);
+    checking(
+        "checking a chain of n powers of powers",
+        tower,
+        checks_whole,
+    );
 }
 
 #[test]

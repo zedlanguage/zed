@@ -114,17 +114,15 @@ fn a_term_whose_form_does_not_show_it_ends_is_left_to_run() {
     // out of them.
     assert!(term(&s, "main").contains("spin"), "{}", term(&s, "main"));
     for (what, p) in [("as written", p), ("staged", s)] {
-        super::scaling::deep(move || {
-            let fuel = |t: &zed_kernel::Term, ev: &mut zed_kernel::Evaluator| {
-                let fresh = zed_kernel::Evaluator::new(zed_kernel::World::new());
-                *ev = std::mem::replace(ev, fresh).with_fuel(20_000);
-                zedc::run::direct(t, ev)
-            };
-            let none = |_: &str| -> std::sync::Arc<dyn zed_kernel::Lookup> { unreachable!() };
-            let r = p.run_through(&Default::default(), &[], none, &fuel);
-            let e = r.err().unwrap_or_else(|| panic!("{what}: the run ended"));
-            assert!(e.contains("steps") || e.contains("fuel"), "{what}: {e}");
-        });
+        let fuel = |t: &zed_kernel::Term, ev: &mut zed_kernel::Evaluator| {
+            let fresh = zed_kernel::Evaluator::new(zed_kernel::World::new());
+            *ev = std::mem::replace(ev, fresh).with_fuel(20_000);
+            zedc::run::direct(t, ev)
+        };
+        let none = |_: &str| -> std::sync::Arc<dyn zed_kernel::Lookup> { unreachable!() };
+        let r = p.run_through(&Default::default(), &[], none, &fuel);
+        let e = r.err().unwrap_or_else(|| panic!("{what}: the run ended"));
+        assert!(e.contains("steps") || e.contains("fuel"), "{what}: {e}");
     }
 }
 

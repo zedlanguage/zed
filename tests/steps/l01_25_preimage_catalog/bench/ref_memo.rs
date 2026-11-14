@@ -8,8 +8,8 @@ use zed_kernel::Term;
 use zed_tests::scaling;
 use zedc::store::preimage_ref::{Demand, Domains, preimage};
 
+use crate::bench::s22::on_big_stack;
 use crate::ref_memo::{answer_pieces, family, output_grid};
-use crate::s22::on_big_stack;
 
 /// [`scaling::compare`] on the reference preimage of the family `name` at `n` and `8n` links: a
 /// pass of order n, held to [`scaling::LIMIT`] with the note from [`scaling::PREFERRED`]. Every

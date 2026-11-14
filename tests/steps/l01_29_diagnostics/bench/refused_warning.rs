@@ -2,7 +2,9 @@
 
 use zed_tests::scaling;
 
-use crate::refused_warning::{many_placed_refusals, many_refusals, placed_refusals, refusals, unit};
+use crate::refused_warning::{
+    many_placed_refusals, many_refusals, placed_refusals, refusals, unit,
+};
 
 /// A function whose scope places `2 n` refused questions, at its bound values and its reads:
 /// placing them all is within n log n.

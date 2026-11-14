@@ -3,9 +3,7 @@
 use zed_tests::scaling::{self, Meter};
 use zedc::run::load;
 
-use crate::arms::{
-    cut_reads_loaded, mixed_from, staging_work, stopped_each, stopped_read_by,
-};
+use crate::arms::{cut_reads_loaded, mixed_from, staging_work, stopped_each, stopped_read_by};
 
 /// DESIGN step L1.28: an evaluation that stops leaves the term to run whole, and the name it
 /// binds becomes run-stage, so nothing evaluates it twice. The evaluations are counted by

@@ -7,7 +7,7 @@ use crate::scaling::*;
 
 #[test]
 fn placing_a_diagnostic_on_every_line_scales() {
-    let n = 500;
+    let n = 13_000;
     let srcs = scaling::inputs(n, unresolved);
     scaling::check("placing a diagnostic on each of n lines", n, |k| {
         a_diagnostic_on_every_line(&srcs[&k], k);
@@ -16,7 +16,7 @@ fn placing_a_diagnostic_on_every_line_scales() {
 
 #[test]
 fn deriving_through_values_read_twice_scales() {
-    let n = 400;
+    let n = 2100;
     let srcs = scaling::inputs(n, doubled);
     scaling::check(
         "the derivation of a chain read twice at each of n bindings",
@@ -43,7 +43,7 @@ fn the_reasons_of_a_class_narrowed_many_times_scale() {
 
 #[test]
 fn a_message_with_many_definitions_scales() {
-    let n = 200;
+    let n = 2600;
     let srcs = scaling::inputs(n, shared_parts);
     scaling::check("a message with n parts written more than once", n, |k| {
         a_message_with_definitions(&srcs[&k], k);
@@ -64,7 +64,7 @@ fn deriving_reads_of_many_divisions_of_literals_scales() {
 
 #[test]
 fn a_chain_of_names_to_a_negated_zero_prints_in_linear_time() {
-    let n = 1000;
+    let n = 5700;
     let srcs = scaling::inputs(n, zero_chain);
     scaling::check(
         "the message of a division by the last of a chain of n names from -0r",
@@ -84,13 +84,11 @@ fn checking_each_offered_fix_as_written_scales() {
 
 #[test]
 fn checking_the_components_offered_for_a_wide_tuple_scales() {
-    let n = 200;
+    let n = 2800;
     let srcs = scaling::inputs(n, tuple_compared);
-    scaling::check(
-        "checking the n components offered for an n-tuple",
-        n,
-        |k| the_components_offered_for_a_tuple(&srcs[&k], k),
-    );
+    scaling::check("checking the n components offered for an n-tuple", n, |k| {
+        the_components_offered_for_a_tuple(&srcs[&k], k)
+    });
 }
 
 /// The message of a call of `n` literals at `n` parameters of carrier `c`.
@@ -116,7 +114,7 @@ fn many_literal_arguments_refused_at_int_parameters_scale() {
 
 #[test]
 fn the_carried_fixes_of_many_arguments_scale() {
-    let n = 100;
+    let n = 200;
     let srcs = scaling::inputs(n, carried_fixes);
     scaling::check(
         "checking the carried fixes of a call of n arguments",
@@ -127,7 +125,7 @@ fn the_carried_fixes_of_many_arguments_scale() {
 
 #[test]
 fn many_unfixed_decimal_arguments_scale() {
-    let n = 200;
+    let n = 3900;
     let srcs = scaling::inputs(n, unfixed_decimal_arguments);
     scaling::check(
         "the message of a call of n decimal literals at n parameters with no type",
@@ -138,7 +136,7 @@ fn many_unfixed_decimal_arguments_scale() {
 
 #[test]
 fn the_merges_between_a_value_and_its_use_scale() {
-    let n = 1000;
+    let n = 4000;
     let srcs = scaling::inputs(n, defaults_chain);
     scaling::check(
         "the merges between a value and its use, 2n defaults",
@@ -149,7 +147,7 @@ fn the_merges_between_a_value_and_its_use_scale() {
 
 #[test]
 fn the_headline_repair_of_a_long_call_scales() {
-    let n = 4000;
+    let n = 260_000;
     let srcs = scaling::inputs(n, one_repair_in_a_long_call);
     scaling::check("the headline repair of a call n bytes long", n, |k| {
         the_headline_repair_of_a_call(&srcs[&k], k);
@@ -158,13 +156,11 @@ fn the_headline_repair_of_a_long_call_scales() {
 
 #[test]
 fn a_text_repair_of_many_shapes_scales() {
-    let n = 800;
+    let n = 19_000;
     let srcs = scaling::inputs(n, a_call_of_many_tuple_lengths);
-    scaling::check(
-        "the text repair of a union of n tuple components",
-        n,
-        |k| a_text_repair_of_shapes(&srcs[&k]),
-    );
+    scaling::check("the text repair of a union of n tuple components", n, |k| {
+        a_text_repair_of_shapes(&srcs[&k])
+    });
 }
 
 #[test]
@@ -182,11 +178,9 @@ fn writing_the_literal_a_cast_gives_scales() {
 fn writing_the_literal_of_a_long_text_scales() {
     let d = 4000;
     let srcs = scaling::inputs(d, a_long_text_multiplied);
-    scaling::check(
-        "the literal a cast gives on a text of d digits",
-        d,
-        |k| the_literal_of_a_long_text(&srcs[&k], k),
-    );
+    scaling::check("the literal a cast gives on a text of d digits", d, |k| {
+        the_literal_of_a_long_text(&srcs[&k], k)
+    });
 }
 
 #[test]
@@ -224,7 +218,7 @@ fn deciding_an_ordering_with_a_long_number_text_offers_no_text_comparison_scales
 
 #[test]
 fn offering_the_cast_of_a_literal_in_comparisons_scales() {
-    let n = 200;
+    let n = 640;
     let srcs = scaling::inputs(n, fractions_compared);
     scaling::check(
         "n comparisons with fraction texts, each repaired by the cast kept around the text",
@@ -235,7 +229,7 @@ fn offering_the_cast_of_a_literal_in_comparisons_scales() {
 
 #[test]
 fn offering_the_literal_of_a_cast_of_a_literal_in_comparisons_scales() {
-    let n = 200;
+    let n = 500;
     let srcs = scaling::inputs(n, casts_compared);
     scaling::check(
         "n comparisons with casts of texts, each repaired by a literal or answered",

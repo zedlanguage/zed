@@ -6,7 +6,7 @@ use crate::printed::*;
 
 #[test]
 fn reading_a_printed_type_back_scales() {
-    let n = 400;
+    let n = 16_000;
     let inputs = scaling::inputs(n, wide);
     scaling::check(
         "reading back a union of n atoms and a tuple of n components",
@@ -19,7 +19,7 @@ fn reading_a_printed_type_back_scales() {
 /// timed alone: the printer takes the payload atoms out of the kernel set in one difference.
 #[test]
 fn printing_atoms_with_payloads_scales() {
-    let n = 400;
+    let n = 2800;
     let inputs = scaling::inputs(n, |m| {
         let t = atoms_with_payloads(m);
         let text = t.to_string();
@@ -38,7 +38,7 @@ fn printing_atoms_with_payloads_scales() {
 /// lists are compared with the first once each, and the arrows joined into one signature.
 #[test]
 fn reading_an_overload_of_many_arrows_back_scales() {
-    let n = 200;
+    let n = 7100;
     let inputs = scaling::inputs(n, overload);
     scaling::check("reading back an overload of n arrows", n, |size| {
         an_overload_read_back(&inputs[&size], size);
@@ -50,7 +50,7 @@ fn reading_an_overload_of_many_arrows_back_scales() {
 /// and not a walk of the inner arrows at each depth.
 #[test]
 fn reading_an_overload_nested_in_parentheses_back_scales() {
-    let n = 100;
+    let n = 3200;
     for (side, left) in [("left", true), ("right", false)] {
         let inputs = scaling::inputs(n, |m| nested_overload(m, left));
         scaling::check(

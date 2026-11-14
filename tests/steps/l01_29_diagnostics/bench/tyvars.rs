@@ -11,7 +11,7 @@ use crate::tyvars::{
 
 #[test]
 fn printing_signatures_of_many_variables_scales() {
-    let n = 300;
+    let n = 7200;
     let wide = scaling::inputs(n, |m| sig(&many(m), "f"));
     scaling::check("printing a signature of n type variables", n, |size| {
         a_signature_of_many_variables_printed(&wide[&size], size);
@@ -28,7 +28,7 @@ fn printing_signatures_of_many_variables_scales() {
 fn naming_many_variables_that_each_stand_twice_scales() {
     // Counting the places of each variable, then naming each in one pass with a hash lookup
     // per mark, is linear in the text here: these types hold no union (COMPLEXITY.md F169).
-    let n = 1000;
+    let n = 15_000;
     let built = scaling::inputs(n, |m| sig(&each_twice(m), "f"));
     scaling::check("naming n variables that each stand twice", n, |size| {
         variables_that_each_stand_twice_named(&built[&size], size);

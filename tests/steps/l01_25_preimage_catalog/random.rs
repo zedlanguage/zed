@@ -268,13 +268,20 @@ fn test_preimages_are_sound_and_exact_where_claimed() {
 }
 
 /// The same through calls of functions that call one another, so that summaries are reached
-/// from more than one call.
+/// from more than one call: integer terms here, tests in the next. The two ran as one test,
+/// 0.8 s to 1.2 s alone, until TEST-bench-move-l0125 (author P169: a correctness test runs
+/// well under 1 s).
 #[test]
 fn preimages_through_calls_are_sound_and_exact_where_claimed() {
-    for (seed, test) in [(7, false), (77, true)] {
-        let t = run_with(seed, 400, test, true);
-        assert!(t.nonempty >= 100, "{t:?}");
-    }
+    let t = run_with(7, 400, false, true);
+    assert!(t.nonempty >= 100, "{t:?}");
+}
+
+/// [`preimages_through_calls_are_sound_and_exact_where_claimed`] on tests.
+#[test]
+fn test_preimages_through_calls_are_sound_and_exact_where_claimed() {
+    let t = run_with(77, 400, true, true);
+    assert!(t.nonempty >= 100, "{t:?}");
 }
 
 #[test]

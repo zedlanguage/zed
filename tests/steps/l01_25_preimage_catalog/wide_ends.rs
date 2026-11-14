@@ -224,9 +224,11 @@ fn compared(t: &Term, ds: &Domains, d: &Demand, near: &[Num]) -> Same {
 /// every preimage is sound, lies inside the one before and is exact wherever it is. The summary
 /// and the clip now read these; the one before reads each arm by the catalog. Every preimage
 /// equals the one before but for the reflections the one before got wrong, and the chains whose
-/// values pass `i128`, which the summary now reads (counts held below).
-#[test]
-fn chains_over_wide_domains_keep_their_preimages() {
+/// values pass `i128`, which the summary now reads (counts held below). The nine domains are
+/// checked in three parts of three, each part with its own counts (`want`), which sum to the
+/// counts below; one test of all nine took 1.3 s alone until TEST-bench-move-l0125 (author
+/// P169: a correctness test runs well under 1 s).
+fn wide_domains_part(part: usize, want: (usize, usize, usize)) {
     let wide = pow2(62, 0);
     let past = pow2(70, 0);
     let (lo, hi) = (num(MIN.into()), num(MAX.into()));
@@ -270,7 +272,7 @@ fn chains_over_wide_domains_keep_their_preimages() {
             Same::Differ => differ.push(what),
         }
     };
-    for ds in &doms {
+    for ds in &doms[3 * part..3 * part + 3] {
         for (marker, d) in demands() {
             for g in &guards {
                 let near = [g.clone(), num(0)];
@@ -286,7 +288,7 @@ fn chains_over_wide_domains_keep_their_preimages() {
         }
     }
     drop(note);
-    assert!(cases >= 2500, "only {cases} cases");
+    assert!(cases >= 2500 / 3, "only {cases} cases");
     // No box of the transfer before is refuted by the interpreter. Until item
     // S22-exact-mislabel, 25 were: `MAX - i` under a demand of two pieces on both sides of
     // zero, where the transfer before took `c - x` as the forward image of `{c} - z`, whose
@@ -297,7 +299,8 @@ fn chains_over_wide_domains_keep_their_preimages() {
     // one, and they count as narrower (20 before the item, then 27). Since
     // PERF-ref-memo-quadratic, whose transfer before reads guarded chains by intervals of `i`,
     // more boxes before equal the new ones: 16 count as narrower (27 before it) and 247 as now
-    // exact (246 before it), and the interpreter refutes no box before.
+    // exact (246 before it), and the interpreter refutes no box before. The counts here are of
+    // all nine domains; each part has its share.
     assert!(
         refuted_before.is_empty(),
         "the boxes before that the interpreter refutes:\n{}",
@@ -310,7 +313,7 @@ fn chains_over_wide_domains_keep_their_preimages() {
     // Each is sound by the interpreter, inside the box before and exact wherever it was.
     assert_eq!(
         (narrower.len(), now_exact.len(), not_enumerated.len()),
-        (16, 247, 0),
+        want,
         "narrower:\n{}\nnow exact:\n{}",
         narrower[..narrower.len().min(3)].join("\n"),
         now_exact[..now_exact.len().min(3)].join("\n")
@@ -321,6 +324,21 @@ fn chains_over_wide_domains_keep_their_preimages() {
         differ.len(),
         differ[..differ.len().min(5)].join("\n")
     );
+}
+
+#[test]
+fn chains_over_wide_domains_keep_their_preimages_0() {
+    wide_domains_part(0, (0, 62, 0));
+}
+
+#[test]
+fn chains_over_wide_domains_keep_their_preimages_1() {
+    wide_domains_part(1, (1, 23, 0));
+}
+
+#[test]
+fn chains_over_wide_domains_keep_their_preimages_2() {
+    wide_domains_part(2, (15, 162, 0));
 }
 
 /// The probe over unbounded and wide domains, with the preimage written out: the infinite end

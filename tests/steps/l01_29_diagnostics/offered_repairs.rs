@@ -26,19 +26,34 @@ const OPERANDS: [&str; 16] = [
     "gf(true)", "gr(true)", "-n",
 ];
 
-/// The one-line programs of the grid, each `y = …;` after the prelude.
-fn grid() -> Vec<String> {
+/// The right operand beside the left operand `OPERANDS[a]` in the construct `j` of a test
+/// whose seed is `seed`: `OPERANDS[(a + shift) % 16]`, the shift four bits of the seed. Over
+/// the 16 left operands of one construct, each operand is the right one once, so each run
+/// takes every operand on both sides of every construct, and the pairs, a Latin square of
+/// the 16 × 16, change from run to run.
+fn right_of(a: usize, j: usize, seed: u64) -> &'static str {
+    let shift = (seed >> (4 * j)) as usize % OPERANDS.len();
+    OPERANDS[(a + shift) % OPERANDS.len()]
+}
+
+/// The one-line programs of the grid, each `y = …;` after the prelude: each operand under
+/// each cast and `abs`, and each operand on the left of each operator and of `min` with the
+/// right operand of [`right_of`]. Until TEST-bench-move-l0125 (author P169: a correctness
+/// test runs well under 1 s) the grid took every pair of operands, 2,384 programs, and its
+/// two tests took 8.1 s and 6.6 s at load 52; now 224.
+fn grid(seed: u64) -> Vec<String> {
     let mut lines = Vec::new();
-    for a in OPERANDS {
+    for (ai, a) in OPERANDS.iter().enumerate() {
         for w in ["f64", "int", "rat", "String", "abs"] {
             lines.push(format!("y = {w}({a});"));
         }
-        for c in OPERANDS {
-            for op in ["+", "-", "*", "/", "==", "!=", "<", "^"] {
-                lines.push(format!("y = {a} {op} {c};"));
-            }
-            lines.push(format!("y = min({a}, {c});"));
+        for (j, op) in ["+", "-", "*", "/", "==", "!=", "<", "^"]
+            .iter()
+            .enumerate()
+        {
+            lines.push(format!("y = {a} {op} {};", right_of(ai, j, seed)));
         }
+        lines.push(format!("y = min({a}, {});", right_of(ai, 8, seed)));
     }
     lines
 }
@@ -116,9 +131,12 @@ fn repaired(src: &str) -> Vec<(String, String)> {
 #[test]
 fn every_offered_repair_checks_as_written() {
     assert_eq!(type_errors(PRELUDE), Vec::<String>::new());
+    let seed = zed_tests::seed::seed(
+        "l01_29_diagnostics::offered_repairs::every_offered_repair_checks_as_written",
+    );
     let mut failed = Vec::new();
     let mut tried = 0;
-    for line in grid() {
+    for line in grid(seed) {
         let src = format!("{PRELUDE}{line}\n");
         for (fixed, repair) in repaired(&src) {
             tried += 1;
@@ -141,31 +159,32 @@ fn every_offered_repair_checks_as_written() {
 /// had, so the repair fixes its own rejection and adds no error, in the construct around it
 /// either, as `min(1.0r, 0.5r) + 2.5f64` would. A program can hold two rejections, one in
 /// each construct, so one repair need not leave no error. The operands `-0.5` and `-n` put a
-/// `-` between the two constructs. The left operands `a` are taken in four parts of four, part
-/// `part` here, each part a test of each outer construct: one test per outer construct took
-/// 24 s alone at load 62, and 59 to 61 s beside the other pieces of its step at load 52
-/// (TESTS-l01_29-split).
-fn nested_repairs_check(outer: fn(&str, &str) -> String, part: usize) {
+/// `-` between the two constructs. Each operand `a` is on the left of each `op` once, with
+/// the right operand `c` of [`right_of`] and an outer operand `d` drawn the same way from
+/// four, so each `d` is beside each `op` four times. Until TEST-bench-move-l0125 (author
+/// P169: a correctness test runs well under 1 s) every `c` and `d` was taken, 768 programs
+/// for each outer construct in four tests of 4.8 to 6.0 s at load 52; now 48.
+fn nested_repairs_check(test: &str, outer: fn(&str, &str) -> String) {
+    let seed = zed_tests::seed::seed(&format!("l01_29_diagnostics::offered_repairs::{test}"));
+    let outers = ["2.5f64", "2.5r", "1", "n"];
     let mut failed = Vec::new();
     let mut tried = 0;
-    for a in &OPERANDS[4 * part..4 * part + 4] {
-        for c in OPERANDS {
-            for op in ["+", "/", "^"] {
-                for d in ["2.5f64", "2.5r", "1", "n"] {
-                    let line = outer(&format!("{a} {op} {c}"), d);
-                    let src = format!("{PRELUDE}{line}\n");
-                    let before = type_errors(&src).len();
-                    for (fixed, repair) in repaired(&src) {
-                        tried += 1;
-                        let errors = std::panic::catch_unwind(|| type_errors(&fixed))
-                            .unwrap_or_else(|_| vec!["not resolved".to_string(); before]);
-                        if errors.len() >= before {
-                            failed.push(format!(
-                                "{line}\n  {repair}\n  -> {}",
-                                errors.join("\n     ")
-                            ));
-                        }
-                    }
+    for (ai, a) in OPERANDS.iter().enumerate() {
+        for (j, op) in ["+", "/", "^"].iter().enumerate() {
+            let c = right_of(ai, j, seed);
+            let d = outers[(ai + (seed >> (48 + 2 * j)) as usize) % outers.len()];
+            let line = outer(&format!("{a} {op} {c}"), d);
+            let src = format!("{PRELUDE}{line}\n");
+            let before = type_errors(&src).len();
+            for (fixed, repair) in repaired(&src) {
+                tried += 1;
+                let errors = std::panic::catch_unwind(|| type_errors(&fixed))
+                    .unwrap_or_else(|_| vec!["not resolved".to_string(); before]);
+                if errors.len() >= before {
+                    failed.push(format!(
+                        "{line}\n  {repair}\n  -> {}",
+                        errors.join("\n     ")
+                    ));
                 }
             }
         }
@@ -174,62 +193,22 @@ fn nested_repairs_check(outer: fn(&str, &str) -> String, part: usize) {
     assert!(failed.is_empty(), "{}", failed.join("\n"));
 }
 
-/// [`nested_repairs_check`] of `y = (a op c) + d`, in four parts of the operands `a`.
-mod every_offered_repair_inside_a_sum_checks_as_written {
-    use super::*;
-
-    fn part(part: usize) {
-        nested_repairs_check(|inner, d| format!("y = ({inner}) + {d};"), part);
-    }
-
-    #[test]
-    fn operands_0_to_3() {
-        part(0);
-    }
-
-    #[test]
-    fn operands_4_to_7() {
-        part(1);
-    }
-
-    #[test]
-    fn operands_8_to_11() {
-        part(2);
-    }
-
-    #[test]
-    fn operands_12_to_15() {
-        part(3);
-    }
+/// [`nested_repairs_check`] of `y = (a op c) + d`.
+#[test]
+fn every_offered_repair_inside_a_sum_checks_as_written() {
+    nested_repairs_check(
+        "every_offered_repair_inside_a_sum_checks_as_written",
+        |inner, d| format!("y = ({inner}) + {d};"),
+    );
 }
 
-/// [`nested_repairs_check`] of `y = min(a op c, d)`, in four parts of the operands `a`.
-mod every_offered_repair_inside_a_call_checks_as_written {
-    use super::*;
-
-    fn part(part: usize) {
-        nested_repairs_check(|inner, d| format!("y = min({inner}, {d});"), part);
-    }
-
-    #[test]
-    fn operands_0_to_3() {
-        part(0);
-    }
-
-    #[test]
-    fn operands_4_to_7() {
-        part(1);
-    }
-
-    #[test]
-    fn operands_8_to_11() {
-        part(2);
-    }
-
-    #[test]
-    fn operands_12_to_15() {
-        part(3);
-    }
+/// [`nested_repairs_check`] of `y = min(a op c, d)`.
+#[test]
+fn every_offered_repair_inside_a_call_checks_as_written() {
+    nested_repairs_check(
+        "every_offered_repair_inside_a_call_checks_as_written",
+        |inner, d| format!("y = min({inner}, {d});"),
+    );
 }
 
 /// The message, the menu and the repair notes of each error of `src`, one string.
@@ -481,9 +460,12 @@ fn headline_repair(message: &str) -> Option<&str> {
 /// their error are each written, and at least one of each kind of application is seen.
 #[test]
 fn every_headline_repair_checks_as_written() {
+    let seed = zed_tests::seed::seed(
+        "l01_29_diagnostics::offered_repairs::every_headline_repair_checks_as_written",
+    );
     let mut failed = Vec::new();
     let mut tried = Vec::new();
-    for line in grid() {
+    for line in grid(seed) {
         let src = format!("{PRELUDE}{line}\n");
         let (i, _) = info(&src);
         for e in &i.errors {

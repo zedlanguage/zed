@@ -20,7 +20,6 @@ use zed_kernel::term::build::{lit, var};
 use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World};
 use zed_tests::step_helpers::l01_16_elaboration::{elab, with_prelude};
 
-
 fn prim(p: Prim, args: Vec<Term>) -> Term {
     Term::Prim(p, args)
 }
@@ -301,7 +300,11 @@ fn the_text_of_8_times_the_levels_is_at_most_24_times_as_long() {
         for print in printers {
             for make in [|d| arms(d, true), lets] {
                 let (small, large) = (print(&make(d)).len(), print(&make(8 * d)).len());
-                assert!(large <= 3 * 8 * small, "{small} at {d}, {large} at {}", 8 * d);
+                assert!(
+                    large <= 3 * 8 * small,
+                    "{small} at {d}, {large} at {}",
+                    8 * d
+                );
             }
         }
     }

@@ -4,7 +4,6 @@
 //! paths through it, and the result does not depend on where or in what order the parts were
 //! allocated.
 
-
 use zed_kernel::{Prim, Shared, Term, Value};
 use zedc::store::preimage::{Demand, preimage};
 
@@ -72,4 +71,3 @@ fn shared_terms_have_one_preimage_in_any_allocation_order() {
         "i [0..=20]; exact"
     );
 }
-

@@ -287,7 +287,6 @@ pub(super) fn stops_over_one_term(n: usize) -> Term {
     })
 }
 
-
 /// [`stops_over_one_term`] at small sizes: one stop at each of its `n` calls, each a foreign
 /// name, and the whole domain kept (`bench::stops` times 64 and 512 calls).
 #[test]
@@ -299,6 +298,10 @@ fn stops_over_one_shared_term_are_each_reported() {
         for s in &p.stops {
             assert_eq!(s.kind, StopKind::Foreign("hash".into()));
         }
-        assert!(shown(&p).starts_with("x [..]; necessary; stop: "), "{}", shown(&p));
+        assert!(
+            shown(&p).starts_with("x [..]; necessary; stop: "),
+            "{}",
+            shown(&p)
+        );
     }
 }

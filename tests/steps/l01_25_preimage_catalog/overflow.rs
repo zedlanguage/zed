@@ -150,7 +150,6 @@ pub(super) fn ones(k: usize) -> (Term, Domains) {
     )
 }
 
-
 /// The sets and terms `bench::overflow` times, at small sizes: the complement of [`spread`]
 /// is the gaps between its pieces and beyond `i64` at both ends, and the preimage of
 /// [`ones`] keeps every `y` but `MAX - k`, the sum passing `MAX` from `MAX - k + 1` up.
@@ -160,7 +159,17 @@ fn the_complement_at_the_ends_and_a_sum_passing_max() {
     for n in [1, 2, 5] {
         let s = spread(n);
         let c = s.complement_in(&top);
-        for v in [MIN, MIN + 1, MIN + 2, MIN + 3, MAX - 3, MAX - 2, MAX - 1, MAX, 0] {
+        for v in [
+            MIN,
+            MIN + 1,
+            MIN + 2,
+            MIN + 3,
+            MAX - 3,
+            MAX - 2,
+            MAX - 1,
+            MAX,
+            0,
+        ] {
             assert_ne!(s.contains(v), c.contains(v), "n={n}, {v}");
         }
         assert_eq!(c.complement_in(&top), s, "n={n}");
@@ -171,7 +180,12 @@ fn the_complement_at_the_ends_and_a_sum_passing_max() {
         let below = MAX - k;
         assert_eq!(
             checked(&t, &ds, &Demand::Bool(true), (MAX - k - 5, MAX)),
-            format!("y [{}..={}, {}..]; exact", MAX - k - 5, below - 1, below + 1),
+            format!(
+                "y [{}..={}, {}..]; exact",
+                MAX - k - 5,
+                below - 1,
+                below + 1
+            ),
             "k={k}"
         );
     }

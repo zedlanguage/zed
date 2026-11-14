@@ -3,7 +3,6 @@
 //! read or bound value that asked it, in order of place and then of question, from `zedc run` and `zedc test`
 //! alike, the same in a batch as alone, and only for a unit with no rejection.
 
-
 /// Writes the unit `src` as `file` in test directory `name`, kept apart from the other tests'.
 pub(super) fn unit(name: &str, file: &str, src: &str) -> String {
     super::widen_test::unit(&format!("refused_{name}"), file, src)

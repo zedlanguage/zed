@@ -11,7 +11,7 @@ use crate::widen_test::{
 /// printing together, is within n log n. The files are written before the timing.
 #[test]
 fn printing_many_warnings_scales() {
-    let n = 400;
+    let n = 2600;
     let files = scaling::inputs(n, a_unit_of_warnings);
     scaling::check("zedc test on a unit of n warnings", n, |m| {
         many_warnings_printed(&files[&m], m);
@@ -23,7 +23,7 @@ fn printing_many_warnings_scales() {
 /// in work linear in the units. The files are written before the timing.
 #[test]
 fn a_batch_of_rejected_and_repaired_units_scales() {
-    let n = 40;
+    let n = 240;
     let batches = scaling::inputs(n, a_batch_of_halves);
     scaling::check_order("zedc test on a batch of n units", n, 1, |m| {
         a_batch_of_halves_printed(&batches[&m], m);

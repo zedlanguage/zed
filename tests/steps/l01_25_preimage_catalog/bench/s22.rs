@@ -10,6 +10,16 @@ use zedc::store::preimage_ref as before;
 
 use crate::s22::*;
 
+/// Runs `f` on a thread with a 256 MiB stack, deep enough for chains of thousands of terms: the
+/// chains of the benchmarks here and in `bench::ref_memo` overflow a default 2 MiB stack. The
+/// tests of `s22.rs` and `ref_memo.rs` run on the default stack (author P178).
+pub(crate) fn on_big_stack<R: Send>(f: impl FnOnce() -> R + Send) -> R {
+    std::thread::scope(|s| {
+        let thread = std::thread::Builder::new().stack_size(1 << 28);
+        thread.spawn_scoped(s, f).unwrap().join().unwrap()
+    })
+}
+
 #[test]
 fn chain_probe_scales() {
     scales("probe", 256);

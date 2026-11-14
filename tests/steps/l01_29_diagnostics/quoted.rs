@@ -249,7 +249,6 @@ pub(super) fn listing(ds: &[Diagnostic]) -> String {
         .join("\n")
 }
 
-
 #[test]
 fn listing_many_diagnostics_on_one_line_shows_it_once() {
     // `bench::quoted` holds the bytes of these listings to order n; here the line they share
@@ -258,7 +257,11 @@ fn listing_many_diagnostics_on_one_line_shows_it_once() {
         for ds in [sums(n), operands(n)] {
             let out = listing(&ds);
             assert_eq!(out.matches("f(x) = ").count(), 1, "{out}");
-            assert_eq!(out.matches("this expression is _").count(), ds.len(), "{out}");
+            assert_eq!(
+                out.matches("this expression is _").count(),
+                ds.len(),
+                "{out}"
+            );
         }
     }
 }

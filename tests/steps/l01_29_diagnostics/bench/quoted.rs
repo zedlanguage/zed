@@ -9,7 +9,7 @@ use crate::quoted::{listing, many_errors_rendered_on_one_line, operands, sums, u
 fn rendering_many_errors_on_one_line_scales() {
     // The sum gives three diagnostics per component, each with a few steps, so the listing is
     // O(n) once the line is shown once.
-    let n = 100;
+    let n = 390;
     let inputs = scaling::inputs(n, untracked_sum);
     scaling::check("n errors of `sum` on one line of n components", n, |k| {
         many_errors_rendered_on_one_line(&inputs[&k]);
@@ -18,7 +18,7 @@ fn rendering_many_errors_on_one_line_scales() {
 
 #[test]
 fn listing_many_diagnostics_on_one_line_scales() {
-    let n = 1000;
+    let n = 3800;
     let large = scaling::FACTOR * n;
     for (what, make) in [
         (

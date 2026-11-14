@@ -13,8 +13,6 @@ use zed_tests::instances::Rng;
 use zedc::elab::{Def, Unit};
 use zedc::stage::{self, Remix, Stage};
 
-use super::scaling::deep;
-
 const FORM: &str = "its form does not show that it ends";
 
 pub(super) fn def(name: &str, term: Term) -> Def {
@@ -104,18 +102,16 @@ fn left_on_chain(n: usize) -> Vec<String> {
 
 #[test]
 fn calls_of_a_chain_whose_form_does_not_show_it_ends_are_left_to_run() {
-    deep(|| {
-        for two in [false, true] {
-            let (_, report) = stage::mix(&with_main(3, F0::Loops, two), &["main"]);
-            assert_eq!(left(&report), left_on_chain(3));
-            let (mixed, report) = stage::mix(&with_main(3, F0::Ends, two), &["main"]);
-            assert!(report.left.is_empty());
-            assert_eq!(
-                mixed.defs[4].term.to_string(),
-                "c -> ((1 + c), (1 + c), (1 + c))"
-            );
-        }
-    });
+    for two in [false, true] {
+        let (_, report) = stage::mix(&with_main(3, F0::Loops, two), &["main"]);
+        assert_eq!(left(&report), left_on_chain(3));
+        let (mixed, report) = stage::mix(&with_main(3, F0::Ends, two), &["main"]);
+        assert!(report.left.is_empty());
+        assert_eq!(
+            mixed.defs[4].term.to_string(),
+            "c -> ((1 + c), (1 + c), (1 + c))"
+        );
+    }
 }
 
 /// A call of a chain whose every call fails is run with stubs and fails at the stub of the
@@ -125,17 +121,14 @@ fn calls_of_a_chain_whose_form_does_not_show_it_ends_are_left_to_run() {
 /// times it).
 #[test]
 fn failing_calls_of_a_long_chain_are_left_to_run() {
-    deep(|| {
-        let (_, report) = stage::mix(&with_main(2, F0::Fails, false), &["main"]);
-        let error =
-            zed_kernel::KernelError::Type("`+` applied to `int`, `bool`".into()).to_string();
-        let call = |j: usize| format!("{:?}: {error}", app(var(&f(j)), vec![lit(0i64)]));
-        assert_eq!(left(&report), vec![call(1), call(2)]);
-        for n in [1, 9] {
-            let (_, report) = stage::mix(&with_main(n, F0::Fails, false), &["main"]);
-            assert_eq!(report.left.len(), n);
-        }
-    });
+    let (_, report) = stage::mix(&with_main(2, F0::Fails, false), &["main"]);
+    let error = zed_kernel::KernelError::Type("`+` applied to `int`, `bool`".into()).to_string();
+    let call = |j: usize| format!("{:?}: {error}", app(var(&f(j)), vec![lit(0i64)]));
+    assert_eq!(left(&report), vec![call(1), call(2)]);
+    for n in [1, 9] {
+        let (_, report) = stage::mix(&with_main(n, F0::Fails, false), &["main"]);
+        assert_eq!(report.left.len(), n);
+    }
 }
 
 /// `(z) -> z`, a function no stub stands for.
@@ -162,19 +155,17 @@ pub(super) fn at_a_lambda(n: usize, f0: F0) -> Unit {
 /// argument was `-0.0` until item STAGE-stub-fast, after which a stub answers it.
 #[test]
 fn failing_calls_no_answer_table_takes_are_run_as_written() {
-    deep(|| {
-        let (_, report) = stage::mix(&at_a_lambda(2, F0::Fails), &["main"]);
-        let error = zed_kernel::KernelError::Type("`>=` applied to a function".into()).to_string();
-        let call = |j: usize| {
-            let t = app(var(&f(j)), vec![identity()]);
-            format!("{t:?}: {error}")
-        };
-        assert_eq!(left(&report), vec![call(1), call(2)]);
-        for n in [1, 9] {
-            let (_, report) = stage::mix(&at_a_lambda(n, F0::Fails), &["main"]);
-            assert_eq!(report.left.len(), n);
-        }
-    });
+    let (_, report) = stage::mix(&at_a_lambda(2, F0::Fails), &["main"]);
+    let error = zed_kernel::KernelError::Type("`>=` applied to a function".into()).to_string();
+    let call = |j: usize| {
+        let t = app(var(&f(j)), vec![identity()]);
+        format!("{t:?}: {error}")
+    };
+    assert_eq!(left(&report), vec![call(1), call(2)]);
+    for n in [1, 9] {
+        let (_, report) = stage::mix(&at_a_lambda(n, F0::Fails), &["main"]);
+        assert_eq!(report.left.len(), n);
+    }
 }
 
 /// `k = e`, `g = (y) -> if y >= 1 { k } else { 0 }`, `f = (x) -> g(-0.0) + x` and
@@ -253,28 +244,26 @@ pub(super) fn chain_reading_k(n: usize) -> Unit {
 /// F43). The argument was `-0.0` until item STAGE-stub-fast, after which a stub answers it.
 #[test]
 fn calls_reading_a_definition_the_trick_builds_are_split() {
-    deep(|| {
-        let ge = zed_kernel::KernelError::Type("`>=` applied to a function".into()).to_string();
-        let (_, report) = stage::split(
-            &chain_reading_k(2),
-            "g",
-            0,
-            &stage::Domain::Ints(Some(0), Some(9)),
-        )
-        .expect("split");
-        let call = |j: usize| app(var(&f(j)), vec![identity()]);
-        let site = |j: usize| prim(Prim::Add, vec![call(j), var("x")]);
-        // The tuple fails at its first site, and each call is left with its own error.
-        let tuple = prim(Prim::Tuple, vec![site(1), site(2)]);
-        let want: Vec<String> = [tuple, call(1), call(2)]
-            .iter()
-            .map(|t| format!("{t:?}: {ge}"))
-            .collect();
-        assert_eq!(left(&report), want);
-        for n in [1, 9] {
-            a_split_of_calls_reading_k(&chain_reading_k(n), n);
-        }
-    });
+    let ge = zed_kernel::KernelError::Type("`>=` applied to a function".into()).to_string();
+    let (_, report) = stage::split(
+        &chain_reading_k(2),
+        "g",
+        0,
+        &stage::Domain::Ints(Some(0), Some(9)),
+    )
+    .expect("split");
+    let call = |j: usize| app(var(&f(j)), vec![identity()]);
+    let site = |j: usize| prim(Prim::Add, vec![call(j), var("x")]);
+    // The tuple fails at its first site, and each call is left with its own error.
+    let tuple = prim(Prim::Tuple, vec![site(1), site(2)]);
+    let want: Vec<String> = [tuple, call(1), call(2)]
+        .iter()
+        .map(|t| format!("{t:?}: {ge}"))
+        .collect();
+    assert_eq!(left(&report), want);
+    for n in [1, 9] {
+        a_split_of_calls_reading_k(&chain_reading_k(n), n);
+    }
 }
 
 /// `u`, [`chain_reading_k`]`(n)`, splits `g` leaving its tuple and each of its `n` calls.
@@ -297,13 +286,11 @@ pub(super) fn a_root_remixed((u, root): &(Unit, Term), n: usize) {
 /// `bench::cone` times 400 and 3200 calls.
 #[test]
 fn remixing_a_root_held_inline_over_a_chain() {
-    deep(|| {
-        let (_, mut r) = Remix::new(&with_main(3, F0::Ends, false));
-        assert_eq!(r.mix(&sites(3)).to_string(), "((1 + c), (1 + c), (1 + c))");
-        for n in [1, 9] {
-            a_root_remixed(&(with_main(n, F0::Ends, false), sites(n)), n);
-        }
-    });
+    let (_, mut r) = Remix::new(&with_main(3, F0::Ends, false));
+    assert_eq!(r.mix(&sites(3)).to_string(), "((1 + c), (1 + c), (1 + c))");
+    for n in [1, 9] {
+        a_root_remixed(&(with_main(n, F0::Ends, false), sites(n)), n);
+    }
 }
 
 /// A random unit: definitions `d0`, `d1`, .. each a literal, a function of one parameter, a
@@ -430,25 +417,23 @@ pub(super) fn mixed_text(u: &Unit) -> String {
 
 #[test]
 fn what_a_mix_keeps_across_evaluations_does_not_change_what_they_give() {
-    deep(|| {
-        for seed in 0..256u64 {
-            let mut rng = Rng::new(seed);
-            let n = 1 + rng.below(12);
-            let u = random_unit(&mut rng, n);
-            // Mixing twice, each time with a reader of its own, gives one result.
-            assert_eq!(mixed_text(&u), mixed_text(&u), "seed {seed}");
-            // Each root mixes alike first, second, or alone: what the remix keeps from one
-            // root does not change what the other gives.
-            let roots = random_roots(&mut rng, &u, n);
-            let alone = roots.clone().map(|t| Remix::new(&u).1.mix(&t).to_string());
-            for order in [[0, 1], [1, 0]] {
-                let (_, mut r) = Remix::new(&u);
-                for i in order {
-                    assert_eq!(r.mix(&roots[i]).to_string(), alone[i], "seed {seed}");
-                }
+    for seed in 0..256u64 {
+        let mut rng = Rng::new(seed);
+        let n = 1 + rng.below(12);
+        let u = random_unit(&mut rng, n);
+        // Mixing twice, each time with a reader of its own, gives one result.
+        assert_eq!(mixed_text(&u), mixed_text(&u), "seed {seed}");
+        // Each root mixes alike first, second, or alone: what the remix keeps from one
+        // root does not change what the other gives.
+        let roots = random_roots(&mut rng, &u, n);
+        let alone = roots.clone().map(|t| Remix::new(&u).1.mix(&t).to_string());
+        for order in [[0, 1], [1, 0]] {
+            let (_, mut r) = Remix::new(&u);
+            for i in order {
+                assert_eq!(r.mix(&roots[i]).to_string(), alone[i], "seed {seed}");
             }
         }
-    });
+    }
 }
 
 /// `h = (g, y) -> g(y) + 1`, then `f0`, `f1`, .. each `(y) -> ..` built from `y + a`,
@@ -511,14 +496,12 @@ fn stub_fail_unit(rng: &mut Rng, n: usize) -> (Unit, Vec<Term>) {
 /// or the call itself, left to run with the error the call as written stops with.
 #[test]
 fn calls_that_fail_in_a_chain_give_what_they_give_as_written() {
-    deep(|| {
-        for seed in 0..400u64 {
-            let mut rng = Rng::new(seed);
-            let n = 1 + rng.below(16);
-            let (u, calls) = stub_fail_unit(&mut rng, n);
-            mixes_as_written(&u, &calls, seed);
-        }
-    });
+    for seed in 0..400u64 {
+        let mut rng = Rng::new(seed);
+        let n = 1 + rng.below(16);
+        let (u, calls) = stub_fail_unit(&mut rng, n);
+        mixes_as_written(&u, &calls, seed);
+    }
 }
 
 /// Checks that the mixed `main` of `u`, `(c) -> (s1 + c, ..)` with the sites `s` the terms
@@ -663,14 +646,12 @@ fn stub_float_unit(rng: &mut Rng, n: usize) -> (Unit, Vec<Term>) {
 /// function argument by the stub bound to it.
 #[test]
 fn calls_at_float_zeros_and_at_functions_give_what_they_give_as_written() {
-    deep(|| {
-        for seed in 0..400u64 {
-            let mut rng = Rng::new(seed);
-            let n = 1 + rng.below(12);
-            let (u, calls) = stub_float_unit(&mut rng, n);
-            mixes_as_written(&u, &calls, seed);
-        }
-    });
+    for seed in 0..400u64 {
+        let mut rng = Rng::new(seed);
+        let n = 1 + rng.below(12);
+        let (u, calls) = stub_float_unit(&mut rng, n);
+        mixes_as_written(&u, &calls, seed);
+    }
 }
 
 /// `d0 = (y) -> y + 1.0` and four functions that call through a name not bound by `let`:
@@ -683,52 +664,50 @@ fn calls_at_float_zeros_and_at_functions_give_what_they_give_as_written() {
 /// stub, its call would be run at build time and give a value or a type error instead.
 #[test]
 fn calls_through_a_parameter_a_pattern_a_result_or_a_key_are_left_to_run() {
-    deep(|| {
-        let y = || var("y");
-        let d0 = lam(&["y"], prim(Prim::Add, vec![y(), float(1.0)]));
-        let apply = lam(&["q", "y"], app(var("q"), vec![y()]));
-        let arm = Term::Match(
-            Shared::new(var("d0")),
-            vec![(Pattern::Bind("g".into()), app(var("g"), vec![y()]))],
-        );
-        let pick = lam(&["x"], var("d0"));
-        let twice = app(app(var("pick"), vec![y()]), vec![y()]);
-        let keys = Term::Fam {
-            domain: Shared::new(Term::Lit(Value::Family(Family::set([1i64])))),
-            var: "i".into(),
-            body: Shared::new(app(var("i"), vec![y()])),
-        };
-        let calls = vec![
-            app(var("apply"), vec![var("d0"), float(1.0)]),
-            app(var("arm"), vec![float(1.0)]),
-            app(var("twice"), vec![float(1.0)]),
-            app(var("keys"), vec![float(1.0)]),
-        ];
-        let site = |t: &Term| prim(Prim::Add, vec![t.clone(), var("c")]);
-        let main = lam(&["c"], prim(Prim::Tuple, calls.iter().map(site).collect()));
-        let u = unit(vec![
-            def("d0", d0),
-            def("apply", apply),
-            def("arm", lam(&["y"], arm)),
-            def("pick", pick),
-            def("twice", lam(&["y"], twice)),
-            def("keys", lam(&["y"], keys)),
-            def("main", main.clone()),
-        ]);
-        for t in &calls {
-            assert!(!stage::ends(&u.close(t.clone())), "{t:?}");
-        }
-        let (mixed, report) = stage::mix(&u, &["main"]);
-        let main_mixed = mixed.defs.last().expect("main");
-        assert_eq!(main_mixed.term.to_string(), main.to_string());
-        let mut want: Vec<String> = calls.iter().map(|t| format!("{t:?}: {FORM}")).collect();
-        let site = |s: &String| calls.iter().any(|t| s.starts_with(&format!("{t:?}: ")));
-        let mut got: Vec<String> = left(&report).into_iter().filter(site).collect();
-        got.sort();
-        want.sort();
-        assert_eq!(got, want);
-        mixes_as_written(&u, &calls, 0);
-    });
+    let y = || var("y");
+    let d0 = lam(&["y"], prim(Prim::Add, vec![y(), float(1.0)]));
+    let apply = lam(&["q", "y"], app(var("q"), vec![y()]));
+    let arm = Term::Match(
+        Shared::new(var("d0")),
+        vec![(Pattern::Bind("g".into()), app(var("g"), vec![y()]))],
+    );
+    let pick = lam(&["x"], var("d0"));
+    let twice = app(app(var("pick"), vec![y()]), vec![y()]);
+    let keys = Term::Fam {
+        domain: Shared::new(Term::Lit(Value::Family(Family::set([1i64])))),
+        var: "i".into(),
+        body: Shared::new(app(var("i"), vec![y()])),
+    };
+    let calls = vec![
+        app(var("apply"), vec![var("d0"), float(1.0)]),
+        app(var("arm"), vec![float(1.0)]),
+        app(var("twice"), vec![float(1.0)]),
+        app(var("keys"), vec![float(1.0)]),
+    ];
+    let site = |t: &Term| prim(Prim::Add, vec![t.clone(), var("c")]);
+    let main = lam(&["c"], prim(Prim::Tuple, calls.iter().map(site).collect()));
+    let u = unit(vec![
+        def("d0", d0),
+        def("apply", apply),
+        def("arm", lam(&["y"], arm)),
+        def("pick", pick),
+        def("twice", lam(&["y"], twice)),
+        def("keys", lam(&["y"], keys)),
+        def("main", main.clone()),
+    ]);
+    for t in &calls {
+        assert!(!stage::ends(&u.close(t.clone())), "{t:?}");
+    }
+    let (mixed, report) = stage::mix(&u, &["main"]);
+    let main_mixed = mixed.defs.last().expect("main");
+    assert_eq!(main_mixed.term.to_string(), main.to_string());
+    let mut want: Vec<String> = calls.iter().map(|t| format!("{t:?}: {FORM}")).collect();
+    let site = |s: &String| calls.iter().any(|t| s.starts_with(&format!("{t:?}: ")));
+    let mut got: Vec<String> = left(&report).into_iter().filter(site).collect();
+    got.sort();
+    want.sort();
+    assert_eq!(got, want);
+    mixes_as_written(&u, &calls, 0);
 }
 
 /// `f0 = (y) -> 1.0 / y`, then for k = 1 to n `fk = (y) -> f(k-1)(y) + 1.0`, and
@@ -765,16 +744,14 @@ pub(super) fn float_chain_at_minus_zero(n: usize) -> Unit {
 /// below it, in time quadratic in `n` (COMPLEXITY.md row F83).
 #[test]
 fn calls_at_minus_zero_of_a_long_chain_are_answered() {
-    deep(|| {
-        let (mixed, report) = stage::mix(&float_chain_at_minus_zero(2), &["main"]);
-        assert!(report.left.is_empty(), "{:?}", left(&report));
-        let inf = float(f64::NEG_INFINITY).to_string();
-        let want = format!("c -> (({inf} + c), ({inf} + c))");
-        assert_eq!(mixed.defs[3].term.to_string(), want);
-        for n in [1, 9] {
-            nothing_left(&float_chain_at_minus_zero(n));
-        }
-    });
+    let (mixed, report) = stage::mix(&float_chain_at_minus_zero(2), &["main"]);
+    assert!(report.left.is_empty(), "{:?}", left(&report));
+    let inf = float(f64::NEG_INFINITY).to_string();
+    let want = format!("c -> (({inf} + c), ({inf} + c))");
+    assert_eq!(mixed.defs[3].term.to_string(), want);
+    for n in [1, 9] {
+        nothing_left(&float_chain_at_minus_zero(n));
+    }
 }
 
 /// `u` mixes from `main` with nothing left to run.
@@ -815,14 +792,12 @@ pub(super) fn chain_passing_functions(n: usize) -> Unit {
 /// (COMPLEXITY.md row F83).
 #[test]
 fn calls_passing_functions_of_a_long_chain_are_answered() {
-    deep(|| {
-        let (mixed, report) = stage::mix(&chain_passing_functions(2), &["main"]);
-        assert!(report.left.is_empty(), "{:?}", left(&report));
-        assert_eq!(mixed.defs[4].term.to_string(), "c -> ((3 + c), (3 + c))");
-        for n in [1, 9] {
-            nothing_left(&chain_passing_functions(n));
-        }
-    });
+    let (mixed, report) = stage::mix(&chain_passing_functions(2), &["main"]);
+    assert!(report.left.is_empty(), "{:?}", left(&report));
+    assert_eq!(mixed.defs[4].term.to_string(), "c -> ((3 + c), (3 + c))");
+    for n in [1, 9] {
+        nothing_left(&chain_passing_functions(n));
+    }
 }
 
 /// `f = (y) -> y + 1`, `g = (x) -> f`, `h = (p, y) -> y` and `main = (c) -> h(g(1), 2) + c`.
@@ -832,27 +807,25 @@ fn calls_passing_functions_of_a_long_chain_are_answered() {
 /// with an error the call as written never meets.
 #[test]
 fn a_call_that_gives_a_function_is_run_as_written() {
-    deep(|| {
-        let defs = vec![
-            def("f", lam(&["y"], prim(Prim::Add, vec![var("y"), lit(1i64)]))),
-            def("g", lam(&["x"], var("f"))),
-            def("h", lam(&["p", "y"], var("y"))),
-            def(
-                "main",
-                lam(
-                    &["c"],
-                    prim(
-                        Prim::Add,
-                        vec![
-                            app(var("h"), vec![app(var("g"), vec![lit(1i64)]), lit(2i64)]),
-                            var("c"),
-                        ],
-                    ),
+    let defs = vec![
+        def("f", lam(&["y"], prim(Prim::Add, vec![var("y"), lit(1i64)]))),
+        def("g", lam(&["x"], var("f"))),
+        def("h", lam(&["p", "y"], var("y"))),
+        def(
+            "main",
+            lam(
+                &["c"],
+                prim(
+                    Prim::Add,
+                    vec![
+                        app(var("h"), vec![app(var("g"), vec![lit(1i64)]), lit(2i64)]),
+                        var("c"),
+                    ],
                 ),
             ),
-        ];
-        let (mixed, report) = stage::mix(&unit(defs), &["main"]);
-        assert!(report.left.is_empty(), "{:?}", left(&report));
-        assert_eq!(mixed.defs[3].term.to_string(), "c -> (2 + c)");
-    });
+        ),
+    ];
+    let (mixed, report) = stage::mix(&unit(defs), &["main"]);
+    assert!(report.left.is_empty(), "{:?}", left(&report));
+    assert_eq!(mixed.defs[3].term.to_string(), "c -> (2 + c)");
 }
