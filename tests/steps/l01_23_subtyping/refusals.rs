@@ -1975,379 +1975,375 @@ fn permute_defs(defs: Vec<Def>, perm: &[usize]) -> (Vec<Def>, Vec<usize>) {
 
 #[test]
 fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle() {
-    big(|| {
-        let int_samples = [Value::Int(0), Value::Int(1), Value::Int(2)];
-        // X18: the random heads list 0, 1 and 2; 3 stands for every other integer.
-        let random_int_samples = [Value::Int(0), Value::Int(1), Value::Int(2), Value::Int(3)];
-        let bool_samples = [Value::Bool(false), Value::Bool(true)];
-        let bool_tys = [
-            Type::lit(&Value::Bool(false)).unwrap(),
-            Type::lit(&Value::Bool(true)).unwrap(),
-        ];
-        let mut tag_id = 0usize;
-        let mut next_tag = || {
-            tag_id += 1;
-            format!("_or{tag_id}")
-        };
+    let int_samples = [Value::Int(0), Value::Int(1), Value::Int(2)];
+    // X18: the random heads list 0, 1 and 2; 3 stands for every other integer.
+    let random_int_samples = [Value::Int(0), Value::Int(1), Value::Int(2), Value::Int(3)];
+    let bool_samples = [Value::Bool(false), Value::Bool(true)];
+    let bool_tys = [
+        Type::lit(&Value::Bool(false)).unwrap(),
+        Type::lit(&Value::Bool(true)).unwrap(),
+    ];
+    let mut tag_id = 0usize;
+    let mut next_tag = || {
+        tag_id += 1;
+        format!("_or{tag_id}")
+    };
 
-        let (mut pick, seed) = Rng::fresh("lists by the place from the front");
-        // Every case to n = 3, one in two at n = 4 and one in four at n = 5, drawn afresh (author
-        // P169): every case was asked, in 3.2 s with the rest, until TEST-bench-move-l0123.
-        for n in 1..=5 {
-            for skip_idx in 0..=n {
-                let skip = (skip_idx > 0).then_some(skip_idx);
-                for m in 1..=n + 1 {
-                    for split in [false, true] {
-                        for (is_bool, all, one) in [
-                            (false, Type::int(), lit(1)),
-                            (true, Type::bool(), bool_tys[1].clone()),
-                        ] {
-                            if pick.below([1, 1, 1, 1, 2, 4][n]) != 0 {
-                                continue;
-                            }
-                            Type::forget_emptiness();
-                            let tag = next_tag();
-                            let (l, u) = rfx_family(n, skip, m, &all, &one, split, &tag);
-                            let t = &l - &u;
-                            let samples: &[Value] = if is_bool {
-                                &bool_samples[..]
-                            } else {
-                                &int_samples[..2]
-                            };
-                            let max_len = n.max(m) + 1;
-                            let inhab = list_oracle_inhabited(&t, samples, max_len);
-                            let want = if inhab {
-                                Verdict::Inhabited
-                            } else {
-                                Verdict::Empty
-                            };
-                            assert_eq!(
-                                t.verdict(),
-                                want,
-                                "rfx_family n={n} skip={skip:?} m={m} split={split} bool={is_bool}"
-                            );
-                            assert_eq!(
-                                t.is_empty(),
-                                !inhab,
-                                "is_empty rfx_family n={n} skip={skip:?} m={m} split={split} bool={is_bool}"
-                            );
-                        }
-                    }
-                }
-            }
-
-            // Meet and pair combinations at size n.
-            for (s1, s2) in [(None, Some(n)), (Some(1), Some(n)), (Some(n), Some(n))] {
-                Type::forget_emptiness();
-                let (t1, t2) = (next_tag(), next_tag());
-                let (l1, u1) = rfx_family(n, s1, n, &Type::int(), &lit(1), false, &t1);
-                let (l2, u2) = rfx_family(n, s2, n, &Type::int(), &lit(1), false, &t2);
-                let f1 = &l1 - &u1;
-                let f2 = &l2 - &u2;
-                let meet = &f1 & &f2;
-                let want_meet = if list_oracle_inhabited(&meet, &int_samples[..2], n + 1) {
-                    Verdict::Inhabited
-                } else {
-                    Verdict::Empty
-                };
-                assert_eq!(meet.verdict(), want_meet, "meet n={n} s1={s1:?} s2={s2:?}");
-
-                let pair = Type::tuple(vec![f1, f2]);
-                let want_pair = if list_oracle_inhabited(&(&l1 - &u1), &int_samples[..2], n + 1)
-                    && list_oracle_inhabited(&(&l2 - &u2), &int_samples[..2], n + 1)
-                {
-                    Verdict::Inhabited
-                } else {
-                    Verdict::Empty
-                };
-                assert_eq!(pair.verdict(), want_pair, "pair n={n} s1={s1:?} s2={s2:?}");
-            }
-
-            // Multi, groups, groupsholes, manyheads, stagger, and chain variants at small sizes.
+    let (mut pick, seed) = Rng::fresh("lists by the place from the front");
+    // Every case to n = 3, one in two at n = 4 and one in four at n = 5, drawn afresh (author
+    // P169): every case was asked, in 3.2 s with the rest, until TEST-bench-move-l0123.
+    for n in 1..=5 {
+        for skip_idx in 0..=n {
+            let skip = (skip_idx > 0).then_some(skip_idx);
             for m in 1..=n + 1 {
-                Type::forget_emptiness();
-                let tag = next_tag();
-                let l = list_named(Type::int(), &tag);
-                let t = &l - &rfx_multi(n, m, &tag);
-                let want = if list_oracle_inhabited(&t, &int_samples, n.max(m) + 1) {
-                    Verdict::Inhabited
-                } else {
-                    Verdict::Empty
-                };
-                assert_eq!(t.verdict(), want, "rfx_multi n={n} m={m}");
-            }
-            if n >= 2 {
-                let mh_samples: Vec<Value> = (1..=n as i64).map(Value::Int).collect();
-                for far in [false, true] {
-                    Type::forget_emptiness();
-                    let tag = next_tag();
-                    let l = list_named(Type::int(), &tag);
-                    let tg = &l - &rfx_groups(n, far, &tag);
-                    let want_g = if list_oracle_inhabited(&tg, &int_samples[..2], n + 1) {
-                        Verdict::Inhabited
-                    } else {
-                        Verdict::Empty
-                    };
-                    assert_eq!(tg.verdict(), want_g, "rfx_groups n={n} far={far}");
-
-                    // To n = 4: at n = 5 the oracle lists 7^6 lists for each `far`, 2 s of the test
-                    // (TEST-bench-move-l0123); n = 5 is a larger instance of the same kind.
-                    if n <= 4 {
+                for split in [false, true] {
+                    for (is_bool, all, one) in [
+                        (false, Type::int(), lit(1)),
+                        (true, Type::bool(), bool_tys[1].clone()),
+                    ] {
+                        if pick.below([1, 1, 1, 1, 2, 4][n]) != 0 {
+                            continue;
+                        }
                         Type::forget_emptiness();
                         let tag = next_tag();
-                        let l = list_named(Type::int(), &tag);
-                        let tgh = &l - &rfx_groups_holes(n, far, &tag);
-                        // X18: one value of every class: 1, each excluded `k + 2`, and 0 for the rest.
-                        let gh_samples: Vec<Value> = [0, 1]
-                            .into_iter()
-                            .chain(3..=n as i64 + 2)
-                            .map(Value::Int)
-                            .collect();
-                        let want_gh = if list_oracle_inhabited(&tgh, &gh_samples, n + 1) {
+                        let (l, u) = rfx_family(n, skip, m, &all, &one, split, &tag);
+                        let t = &l - &u;
+                        let samples: &[Value] = if is_bool {
+                            &bool_samples[..]
+                        } else {
+                            &int_samples[..2]
+                        };
+                        let max_len = n.max(m) + 1;
+                        let inhab = list_oracle_inhabited(&t, samples, max_len);
+                        let want = if inhab {
                             Verdict::Inhabited
                         } else {
                             Verdict::Empty
                         };
-                        assert_eq!(tgh.verdict(), want_gh, "rfx_groups_holes n={n} far={far}");
+                        assert_eq!(
+                            t.verdict(),
+                            want,
+                            "rfx_family n={n} skip={skip:?} m={m} split={split} bool={is_bool}"
+                        );
+                        assert_eq!(
+                            t.is_empty(),
+                            !inhab,
+                            "is_empty rfx_family n={n} skip={skip:?} m={m} split={split} bool={is_bool}"
+                        );
                     }
-
-                    Type::forget_emptiness();
-                    let tag = next_tag();
-                    let tmh = rfx_many_heads(n, far, &tag);
-                    let want_mh = if list_oracle_inhabited(&tmh, &mh_samples, n + 1) {
-                        Verdict::Inhabited
-                    } else {
-                        Verdict::Empty
-                    };
-                    assert_eq!(tmh.verdict(), want_mh, "rfx_many_heads n={n} far={far}");
-
-                    Type::forget_emptiness();
-                    let tag = next_tag();
-                    let l = list_named(Type::int(), &tag);
-                    let tst = &l - &rfx_stagger(n, far, &tag);
-                    let want_st = if list_oracle_inhabited(&tst, &int_samples[..2], n + 1) {
-                        Verdict::Inhabited
-                    } else {
-                        Verdict::Empty
-                    };
-                    assert_eq!(tst.verdict(), want_st, "rfx_stagger n={n} far={far}");
-
-                    Type::forget_emptiness();
-                    let tag = next_tag();
-                    let l = list_named(Type::int(), &tag);
-                    let tc = &l - &rfx_chain(n, far, &tag);
-                    let want_c = if list_oracle_inhabited(&tc, &int_samples[..2], n + 1) {
-                        Verdict::Inhabited
-                    } else {
-                        Verdict::Empty
-                    };
-                    assert_eq!(tc.verdict(), want_c, "rfx_chain n={n} far={far}");
                 }
-            }
-
-            // Tuple and tupleflip variants at small sizes.
-            let pair_samples = [
-                Value::tuple(vec![Value::Int(0), Value::Int(0)]),
-                Value::tuple(vec![Value::Int(1), Value::Int(0)]),
-                Value::tuple(vec![Value::Int(0), Value::Int(1)]),
-                Value::tuple(vec![Value::Int(1), Value::Int(1)]),
-            ];
-            for case in ["tuple", "tuplefar", "tupleflip", "tupleflipfar"] {
-                Type::forget_emptiness();
-                let tag = next_tag();
-                let t = rfx_case(case, n, &tag);
-                let want = if list_oracle_inhabited(&t, &pair_samples, n + 1) {
-                    Verdict::Inhabited
-                } else {
-                    Verdict::Empty
-                };
-                assert_eq!(t.verdict(), want, "{case} n={n}");
             }
         }
 
-        // Random small prefix-chain families over int (including cofinite heads) and bool, from the
-        // seed printed above (40 from one fixed seed until TEST-bench-move-l0123).
-        let mut rng = || pick.next_u64();
-        let head_for = |bits: u64, is_bool: bool| -> Type {
-            if is_bool {
-                match bits % 3 {
-                    0 => bool_tys[0].clone(),
-                    1 => bool_tys[1].clone(),
-                    _ => Type::bool(),
-                }
-            } else {
-                let mask = (bits % 7) + 1;
-                if bits & 8 != 0 {
-                    let mut t = Type::int();
-                    for i in 0..3 {
-                        if (mask >> i) & 1 == 0 {
-                            t = &t - &lit(i as i64);
-                        }
-                    }
-                    t
-                } else {
-                    let mut t = Type::empty();
-                    for i in 0..3 {
-                        if (mask >> i) & 1 != 0 {
-                            t = &t | &lit(i as i64);
-                        }
-                    }
-                    t
-                }
-            }
-        };
-        for case in 0..20 {
+        // Meet and pair combinations at size n.
+        for (s1, s2) in [(None, Some(n)), (Some(1), Some(n)), (Some(n), Some(n))] {
             Type::forget_emptiness();
-            let is_bool = (rng() & 1) != 0;
-            let all = if is_bool { Type::bool() } else { Type::int() };
-            let samples: &[Value] = if is_bool {
-                &bool_samples
-            } else {
-                &random_int_samples
-            };
-            let tag = next_tag();
-            let mut defs = vec![def(
-                &format!("L{tag}"),
-                Expr::Union(vec![nil(), cons(Expr::Type(all.clone()), r(0))]),
-            )];
-            let num_chains = 2 + (rng() % 3) as usize;
-            let mut endpoints = Vec::new();
-            let mut max_depth = 1usize;
-            for c in 0..num_chains {
-                let depth = 1 + (rng() % 4) as usize;
-                max_depth = max_depth.max(depth);
-                let allow_nil = (rng() & 1) != 0;
-                for k in 1..=depth {
-                    let h = head_for(rng(), is_bool);
-                    let prev = if k == 1 { 0 } else { defs.len() - 1 };
-                    let step = cons(Expr::Type(h), r(prev));
-                    let body = if allow_nil && ((rng() & 1) != 0 || k == 1) {
-                        Expr::Union(vec![nil(), step])
-                    } else {
-                        step
-                    };
-                    defs.push(def(&format!("C{c}_{k}{tag}"), body));
-                }
-                endpoints.push(defs.len() - 1);
-            }
-            let ts = Group::new(defs).unwrap().instance(vec![]);
-            let u = endpoints
-                .iter()
-                .map(|&i| &ts[i])
-                .fold(Type::empty(), |u, t| &u | t);
-            let l = list_named(all, &tag);
-            let t = &l - &u;
-            let inhab = list_oracle_inhabited(&t, samples, max_depth + 1);
-            let want = if inhab {
+            let (t1, t2) = (next_tag(), next_tag());
+            let (l1, u1) = rfx_family(n, s1, n, &Type::int(), &lit(1), false, &t1);
+            let (l2, u2) = rfx_family(n, s2, n, &Type::int(), &lit(1), false, &t2);
+            let f1 = &l1 - &u1;
+            let f2 = &l2 - &u2;
+            let meet = &f1 & &f2;
+            let want_meet = if list_oracle_inhabited(&meet, &int_samples[..2], n + 1) {
                 Verdict::Inhabited
             } else {
                 Verdict::Empty
             };
-            assert_eq!(t.verdict(), want, "random chain {case}, ZED_SEED={seed}");
-            assert_eq!(
-                t.is_empty(),
-                !inhab,
-                "is_empty random chain {case}, ZED_SEED={seed}"
-            );
-        }
-    });
-}
+            assert_eq!(meet.verdict(), want_meet, "meet n={n} s1={s1:?} s2={s2:?}");
 
-#[test]
-fn lists_by_the_place_from_the_front_verdicts_are_independent_of_order() {
-    big(|| {
-        let int_samples = [Value::Int(0), Value::Int(1)];
-        let mut tag_id = 0usize;
-        let mut next_tag = || {
-            tag_id += 1;
-            format!("_ord{tag_id}")
-        };
-        for n in 2..=6 {
-            for skip in [None, Some(1), Some(n / 2), Some(n)] {
-                let tag_base = next_tag();
-                let want = {
+            let pair = Type::tuple(vec![f1, f2]);
+            let want_pair = if list_oracle_inhabited(&(&l1 - &u1), &int_samples[..2], n + 1)
+                && list_oracle_inhabited(&(&l2 - &u2), &int_samples[..2], n + 1)
+            {
+                Verdict::Inhabited
+            } else {
+                Verdict::Empty
+            };
+            assert_eq!(pair.verdict(), want_pair, "pair n={n} s1={s1:?} s2={s2:?}");
+        }
+
+        // Multi, groups, groupsholes, manyheads, stagger, and chain variants at small sizes.
+        for m in 1..=n + 1 {
+            Type::forget_emptiness();
+            let tag = next_tag();
+            let l = list_named(Type::int(), &tag);
+            let t = &l - &rfx_multi(n, m, &tag);
+            let want = if list_oracle_inhabited(&t, &int_samples, n.max(m) + 1) {
+                Verdict::Inhabited
+            } else {
+                Verdict::Empty
+            };
+            assert_eq!(t.verdict(), want, "rfx_multi n={n} m={m}");
+        }
+        if n >= 2 {
+            let mh_samples: Vec<Value> = (1..=n as i64).map(Value::Int).collect();
+            for far in [false, true] {
+                Type::forget_emptiness();
+                let tag = next_tag();
+                let l = list_named(Type::int(), &tag);
+                let tg = &l - &rfx_groups(n, far, &tag);
+                let want_g = if list_oracle_inhabited(&tg, &int_samples[..2], n + 1) {
+                    Verdict::Inhabited
+                } else {
+                    Verdict::Empty
+                };
+                assert_eq!(tg.verdict(), want_g, "rfx_groups n={n} far={far}");
+
+                // To n = 4: at n = 5 the oracle lists 7^6 lists for each `far`, 2 s of the test
+                // (TEST-bench-move-l0123); n = 5 is a larger instance of the same kind.
+                if n <= 4 {
                     Type::forget_emptiness();
-                    let (l, u) = rfx_family(n, skip, n, &Type::int(), &lit(1), false, &tag_base);
-                    let t = &l - &u;
-                    let v = t.verdict();
-                    let oracle = if list_oracle_inhabited(&t, &int_samples, n + 1) {
+                    let tag = next_tag();
+                    let l = list_named(Type::int(), &tag);
+                    let tgh = &l - &rfx_groups_holes(n, far, &tag);
+                    // X18: one value of every class: 1, each excluded `k + 2`, and 0 for the rest.
+                    let gh_samples: Vec<Value> = [0, 1]
+                        .into_iter()
+                        .chain(3..=n as i64 + 2)
+                        .map(Value::Int)
+                        .collect();
+                    let want_gh = if list_oracle_inhabited(&tgh, &gh_samples, n + 1) {
                         Verdict::Inhabited
                     } else {
                         Verdict::Empty
                     };
-                    assert_eq!(v, oracle, "base order n={n} skip={skip:?}");
-                    v
-                };
-
-                // Test permutations of both Group definition indices and union operand order,
-                // including staggered chains sharing `Fd` and holes chains.
-                for perm_kind in 0..4 {
-                    Type::forget_emptiness();
-                    let tag = next_tag();
-                    let mut defs = vec![def(
-                        &format!("L{tag}"),
-                        Expr::Union(vec![nil(), cons(int(), r(0))]),
-                    )];
-                    defs.push(def(&format!("F1{tag}"), cons(Expr::Type(lit(1)), r(0))));
-                    defs.extend((2..=n).map(|i| def(&format!("F{i}{tag}"), cons(int(), r(i - 1)))));
-                    let not_one = Expr::Type(&Type::int() - &lit(1));
-                    defs.extend((1..=n).map(|k| {
-                        let rest = if k == 1 { r(0) } else { r(n + k - 1) };
-                        def(
-                            &format!("M{k}{tag}"),
-                            Expr::Union(vec![nil(), cons(not_one.clone(), rest)]),
-                        )
-                    }));
-                    let d = (n / 2).max(1);
-                    let ha = &Type::int() | &Type::atom("a");
-                    defs.push(def(&format!("P1{tag}"), cons(Expr::Type(ha.clone()), r(d))));
-                    defs.push(def(&format!("P2{tag}"), cons(Expr::Type(ha), r(2 * n + 1))));
-
-                    let k_len = defs.len();
-                    let mut perm: Vec<usize> = (0..k_len).collect();
-                    match perm_kind {
-                        0 => perm.reverse(),
-                        1 => perm.rotate_left(k_len / 2),
-                        2 => {
-                            perm = (0..k_len).step_by(2).chain((1..k_len).step_by(2)).collect();
-                        }
-                        _ => {
-                            perm[1..].reverse();
-                        }
-                    }
-                    let (pdefs, inv) = permute_defs(defs, &perm);
-                    let ts = Group::new(pdefs).unwrap().instance(vec![]);
-                    let mut u_indices: Vec<usize> = (1..=n)
-                        .filter(|&i| Some(i) != skip)
-                        .chain([2 * n])
-                        .collect();
-                    if d < n && skip != Some(d + 1) {
-                        u_indices.push(2 * n + 1);
-                    }
-                    if d + 2 <= n && skip != Some(d + 2) {
-                        u_indices.push(2 * n + 2);
-                    }
-                    if perm_kind % 2 == 1 {
-                        u_indices.reverse();
-                    } else {
-                        let mid = u_indices.len() / 2;
-                        u_indices.rotate_left(mid);
-                    }
-                    let u = u_indices
-                        .iter()
-                        .map(|&old_i| &ts[inv[old_i]])
-                        .fold(Type::empty(), |acc, t| &acc | t);
-                    let l = list_named(Type::int(), &tag);
-                    let t = &l - &u;
-                    assert_eq!(
-                        t.verdict(),
-                        want,
-                        "order-independence n={n} skip={skip:?} perm_kind={perm_kind}"
-                    );
+                    assert_eq!(tgh.verdict(), want_gh, "rfx_groups_holes n={n} far={far}");
                 }
+
+                Type::forget_emptiness();
+                let tag = next_tag();
+                let tmh = rfx_many_heads(n, far, &tag);
+                let want_mh = if list_oracle_inhabited(&tmh, &mh_samples, n + 1) {
+                    Verdict::Inhabited
+                } else {
+                    Verdict::Empty
+                };
+                assert_eq!(tmh.verdict(), want_mh, "rfx_many_heads n={n} far={far}");
+
+                Type::forget_emptiness();
+                let tag = next_tag();
+                let l = list_named(Type::int(), &tag);
+                let tst = &l - &rfx_stagger(n, far, &tag);
+                let want_st = if list_oracle_inhabited(&tst, &int_samples[..2], n + 1) {
+                    Verdict::Inhabited
+                } else {
+                    Verdict::Empty
+                };
+                assert_eq!(tst.verdict(), want_st, "rfx_stagger n={n} far={far}");
+
+                Type::forget_emptiness();
+                let tag = next_tag();
+                let l = list_named(Type::int(), &tag);
+                let tc = &l - &rfx_chain(n, far, &tag);
+                let want_c = if list_oracle_inhabited(&tc, &int_samples[..2], n + 1) {
+                    Verdict::Inhabited
+                } else {
+                    Verdict::Empty
+                };
+                assert_eq!(tc.verdict(), want_c, "rfx_chain n={n} far={far}");
             }
         }
-    });
+
+        // Tuple and tupleflip variants at small sizes.
+        let pair_samples = [
+            Value::tuple(vec![Value::Int(0), Value::Int(0)]),
+            Value::tuple(vec![Value::Int(1), Value::Int(0)]),
+            Value::tuple(vec![Value::Int(0), Value::Int(1)]),
+            Value::tuple(vec![Value::Int(1), Value::Int(1)]),
+        ];
+        for case in ["tuple", "tuplefar", "tupleflip", "tupleflipfar"] {
+            Type::forget_emptiness();
+            let tag = next_tag();
+            let t = rfx_case(case, n, &tag);
+            let want = if list_oracle_inhabited(&t, &pair_samples, n + 1) {
+                Verdict::Inhabited
+            } else {
+                Verdict::Empty
+            };
+            assert_eq!(t.verdict(), want, "{case} n={n}");
+        }
+    }
+
+    // Random small prefix-chain families over int (including cofinite heads) and bool, from the
+    // seed printed above (40 from one fixed seed until TEST-bench-move-l0123).
+    let mut rng = || pick.next_u64();
+    let head_for = |bits: u64, is_bool: bool| -> Type {
+        if is_bool {
+            match bits % 3 {
+                0 => bool_tys[0].clone(),
+                1 => bool_tys[1].clone(),
+                _ => Type::bool(),
+            }
+        } else {
+            let mask = (bits % 7) + 1;
+            if bits & 8 != 0 {
+                let mut t = Type::int();
+                for i in 0..3 {
+                    if (mask >> i) & 1 == 0 {
+                        t = &t - &lit(i as i64);
+                    }
+                }
+                t
+            } else {
+                let mut t = Type::empty();
+                for i in 0..3 {
+                    if (mask >> i) & 1 != 0 {
+                        t = &t | &lit(i as i64);
+                    }
+                }
+                t
+            }
+        }
+    };
+    for case in 0..20 {
+        Type::forget_emptiness();
+        let is_bool = (rng() & 1) != 0;
+        let all = if is_bool { Type::bool() } else { Type::int() };
+        let samples: &[Value] = if is_bool {
+            &bool_samples
+        } else {
+            &random_int_samples
+        };
+        let tag = next_tag();
+        let mut defs = vec![def(
+            &format!("L{tag}"),
+            Expr::Union(vec![nil(), cons(Expr::Type(all.clone()), r(0))]),
+        )];
+        let num_chains = 2 + (rng() % 3) as usize;
+        let mut endpoints = Vec::new();
+        let mut max_depth = 1usize;
+        for c in 0..num_chains {
+            let depth = 1 + (rng() % 4) as usize;
+            max_depth = max_depth.max(depth);
+            let allow_nil = (rng() & 1) != 0;
+            for k in 1..=depth {
+                let h = head_for(rng(), is_bool);
+                let prev = if k == 1 { 0 } else { defs.len() - 1 };
+                let step = cons(Expr::Type(h), r(prev));
+                let body = if allow_nil && ((rng() & 1) != 0 || k == 1) {
+                    Expr::Union(vec![nil(), step])
+                } else {
+                    step
+                };
+                defs.push(def(&format!("C{c}_{k}{tag}"), body));
+            }
+            endpoints.push(defs.len() - 1);
+        }
+        let ts = Group::new(defs).unwrap().instance(vec![]);
+        let u = endpoints
+            .iter()
+            .map(|&i| &ts[i])
+            .fold(Type::empty(), |u, t| &u | t);
+        let l = list_named(all, &tag);
+        let t = &l - &u;
+        let inhab = list_oracle_inhabited(&t, samples, max_depth + 1);
+        let want = if inhab {
+            Verdict::Inhabited
+        } else {
+            Verdict::Empty
+        };
+        assert_eq!(t.verdict(), want, "random chain {case}, ZED_SEED={seed}");
+        assert_eq!(
+            t.is_empty(),
+            !inhab,
+            "is_empty random chain {case}, ZED_SEED={seed}"
+        );
+    }
+}
+
+#[test]
+fn lists_by_the_place_from_the_front_verdicts_are_independent_of_order() {
+    let int_samples = [Value::Int(0), Value::Int(1)];
+    let mut tag_id = 0usize;
+    let mut next_tag = || {
+        tag_id += 1;
+        format!("_ord{tag_id}")
+    };
+    for n in 2..=6 {
+        for skip in [None, Some(1), Some(n / 2), Some(n)] {
+            let tag_base = next_tag();
+            let want = {
+                Type::forget_emptiness();
+                let (l, u) = rfx_family(n, skip, n, &Type::int(), &lit(1), false, &tag_base);
+                let t = &l - &u;
+                let v = t.verdict();
+                let oracle = if list_oracle_inhabited(&t, &int_samples, n + 1) {
+                    Verdict::Inhabited
+                } else {
+                    Verdict::Empty
+                };
+                assert_eq!(v, oracle, "base order n={n} skip={skip:?}");
+                v
+            };
+
+            // Test permutations of both Group definition indices and union operand order,
+            // including staggered chains sharing `Fd` and holes chains.
+            for perm_kind in 0..4 {
+                Type::forget_emptiness();
+                let tag = next_tag();
+                let mut defs = vec![def(
+                    &format!("L{tag}"),
+                    Expr::Union(vec![nil(), cons(int(), r(0))]),
+                )];
+                defs.push(def(&format!("F1{tag}"), cons(Expr::Type(lit(1)), r(0))));
+                defs.extend((2..=n).map(|i| def(&format!("F{i}{tag}"), cons(int(), r(i - 1)))));
+                let not_one = Expr::Type(&Type::int() - &lit(1));
+                defs.extend((1..=n).map(|k| {
+                    let rest = if k == 1 { r(0) } else { r(n + k - 1) };
+                    def(
+                        &format!("M{k}{tag}"),
+                        Expr::Union(vec![nil(), cons(not_one.clone(), rest)]),
+                    )
+                }));
+                let d = (n / 2).max(1);
+                let ha = &Type::int() | &Type::atom("a");
+                defs.push(def(&format!("P1{tag}"), cons(Expr::Type(ha.clone()), r(d))));
+                defs.push(def(&format!("P2{tag}"), cons(Expr::Type(ha), r(2 * n + 1))));
+
+                let k_len = defs.len();
+                let mut perm: Vec<usize> = (0..k_len).collect();
+                match perm_kind {
+                    0 => perm.reverse(),
+                    1 => perm.rotate_left(k_len / 2),
+                    2 => {
+                        perm = (0..k_len).step_by(2).chain((1..k_len).step_by(2)).collect();
+                    }
+                    _ => {
+                        perm[1..].reverse();
+                    }
+                }
+                let (pdefs, inv) = permute_defs(defs, &perm);
+                let ts = Group::new(pdefs).unwrap().instance(vec![]);
+                let mut u_indices: Vec<usize> = (1..=n)
+                    .filter(|&i| Some(i) != skip)
+                    .chain([2 * n])
+                    .collect();
+                if d < n && skip != Some(d + 1) {
+                    u_indices.push(2 * n + 1);
+                }
+                if d + 2 <= n && skip != Some(d + 2) {
+                    u_indices.push(2 * n + 2);
+                }
+                if perm_kind % 2 == 1 {
+                    u_indices.reverse();
+                } else {
+                    let mid = u_indices.len() / 2;
+                    u_indices.rotate_left(mid);
+                }
+                let u = u_indices
+                    .iter()
+                    .map(|&old_i| &ts[inv[old_i]])
+                    .fold(Type::empty(), |acc, t| &acc | t);
+                let l = list_named(Type::int(), &tag);
+                let t = &l - &u;
+                assert_eq!(
+                    t.verdict(),
+                    want,
+                    "order-independence n={n} skip={skip:?} perm_kind={perm_kind}"
+                );
+            }
+        }
+    }
 }
 
 // Ported from the round-3 peer patch (oracle, order and scaling tests).
@@ -2550,44 +2546,42 @@ fn r3_cofinite_shapes(pick: &mut Rng, n: usize) -> Vec<(usize, usize, usize, usi
 
 #[test]
 fn r3_cofinite_redundant_oracle_and_order() {
-    big(|| {
-        let mut cases = 0;
-        // Every shape to 2 names, and of each of the nine kinds 10, 6, 3 and 1 shapes drawn afresh
-        // at 3, 4, 5 and 6 names (author P169, TEST-bench-move-l0123; every case, in 2.3 s, until
-        // the first cut, every case to 4 names, one in six at 5 and one in 24 at 6, in 1.23 s
-        // alone).
-        let (mut pick, seed) = Rng::fresh("R3 cofinite redundant oracle and order");
-        for n in 1..=6 {
-            for (m, skip, mode, holes, stagger) in r3_cofinite_shapes(&mut pick, n) {
-                let (ns, roots, mut all) = r3_spec(n, m, skip, holes, stagger);
-                if mode == 2 {
-                    all = 3;
-                }
-                let expected = if r3_oracle(&ns, &roots, all) {
-                    Verdict::Inhabited
-                } else {
-                    Verdict::Empty
-                };
-                let tag = format!("{n}_{m}_{skip}_{holes}_{stagger}");
-                let a = r3_build(&ns, &roots, all, false, &tag, mode);
-                let b = r3_build(&ns, &roots, all, true, &tag, mode);
-                Type::forget_emptiness();
-                let av = a.verdict();
-                let bv = b.verdict();
-                assert_eq!(
-                    av, expected,
-                    "oracle n={n} m={m} skip={skip} holes={holes} mode={mode} stagger={stagger} ZED_SEED={seed}"
-                );
-                assert_eq!(bv, av, "definition/union order {tag}");
-                assert_eq!(a.is_empty(), expected == Verdict::Empty, "is_empty {tag}");
-                Type::forget_emptiness();
-                assert_eq!(b.verdict(), bv, "b first {tag}");
-                assert_eq!(a.verdict(), av, "a second {tag}");
-                cases += 1;
+    let mut cases = 0;
+    // Every shape to 2 names, and of each of the nine kinds 10, 6, 3 and 1 shapes drawn afresh
+    // at 3, 4, 5 and 6 names (author P169, TEST-bench-move-l0123; every case, in 2.3 s, until
+    // the first cut, every case to 4 names, one in six at 5 and one in 24 at 6, in 1.23 s
+    // alone).
+    let (mut pick, seed) = Rng::fresh("R3 cofinite redundant oracle and order");
+    for n in 1..=6 {
+        for (m, skip, mode, holes, stagger) in r3_cofinite_shapes(&mut pick, n) {
+            let (ns, roots, mut all) = r3_spec(n, m, skip, holes, stagger);
+            if mode == 2 {
+                all = 3;
             }
+            let expected = if r3_oracle(&ns, &roots, all) {
+                Verdict::Inhabited
+            } else {
+                Verdict::Empty
+            };
+            let tag = format!("{n}_{m}_{skip}_{holes}_{stagger}");
+            let a = r3_build(&ns, &roots, all, false, &tag, mode);
+            let b = r3_build(&ns, &roots, all, true, &tag, mode);
+            Type::forget_emptiness();
+            let av = a.verdict();
+            let bv = b.verdict();
+            assert_eq!(
+                av, expected,
+                "oracle n={n} m={m} skip={skip} holes={holes} mode={mode} stagger={stagger} ZED_SEED={seed}"
+            );
+            assert_eq!(bv, av, "definition/union order {tag}");
+            assert_eq!(a.is_empty(), expected == Verdict::Empty, "is_empty {tag}");
+            Type::forget_emptiness();
+            assert_eq!(b.verdict(), bv, "b first {tag}");
+            assert_eq!(a.verdict(), av, "a second {tag}");
+            cases += 1;
         }
-        eprintln!("R3 cofinite oracle/order cases={cases}");
-    });
+    }
+    eprintln!("R3 cofinite oracle/order cases={cases}");
 }
 
 // Test input construction only. The kernel reads neither this flag nor any
@@ -2645,130 +2639,128 @@ fn r3_union(a: &Type, b: &Type) -> Type {
 
 #[test]
 fn r3_all_probe_and_family_orders() {
-    big(|| {
-        // Each case at one size of 3 to 6, and the families at every size to 4, one in six at 5
-        // and one in 24 at 6, drawn afresh (author P169): every size, in 1.3 s to 2.4 s, until
-        // TEST-bench-move-l0123.
-        let (mut pick, _) = Rng::fresh("R3 all-probe and family orders");
-        let cases = [
-            "front",
-            "far",
-            "skip1",
-            "skipmid",
-            "bool",
-            "boolfar",
-            "mshort",
-            "mlong",
-            "split",
-            "splitfar",
-            "meet",
-            "pair",
-            "pairfar",
-            "tuple",
-            "tuplefar",
-            "tupleflip",
-            "tupleflipfar",
-            "multi",
-            "multifar",
-            "groups",
-            "groupsfar",
-            "groupsholes",
-            "groupsholesfar",
-            "groupssingles",
-            "groupssinglesfar",
-            "cxstagger",
-            "cxstaggerfar",
-            "cxstaggerwide",
-            "cxstaggerwidefar",
-            "clmanyheads",
-            "clmanyheadsfar",
-            "clstagger",
-            "clstaggerfar",
-            "clstaggerholes",
-            "clcofront",
-            "clcofrontones",
-            "clcofrontsame",
-            "clcofrontsameones",
-            "clcofrontsameblock",
-            "clcofrontshared",
-            "emitheads",
-            "emitheadsfar",
-            "manyheads",
-            "manyheadsfar",
-            "stagger",
-            "staggerfar",
-            "chain",
-            "chainfar",
-            "one",
-            "onetwo",
-            "end",
-            "boundaryinside",
-            "boundaryoutside",
-            "cxprivateheads",
-            "cxprivateheadsfar",
-            "manyheadsv0",
-            "manyheadsfarv0",
-        ];
-        let mut count = 0;
-        for case in cases {
-            for n in [3 + pick.below(4)] {
-                let tag = format!("_order3_{case}_{n}");
-                R3_REVERSE.with(|x| x.set(false));
-                let a = rfx_case(case, n, &tag);
-                R3_REVERSE.with(|x| x.set(true));
-                let b = rfx_case(case, n, &tag);
-                R3_REVERSE.with(|x| x.set(false));
-                Type::forget_emptiness();
-                let av = a.verdict();
-                let bv = b.verdict();
-                assert_eq!(av, bv, "probe definition/operand order {case} {n}");
-                Type::forget_emptiness();
-                assert_eq!(b.verdict(), bv);
-                assert_eq!(a.verdict(), av);
-                count += 1;
-            }
+    // Each case at one size of 3 to 6, and the families at every size to 4, one in six at 5
+    // and one in 24 at 6, drawn afresh (author P169): every size, in 1.3 s to 2.4 s, until
+    // TEST-bench-move-l0123.
+    let (mut pick, _) = Rng::fresh("R3 all-probe and family orders");
+    let cases = [
+        "front",
+        "far",
+        "skip1",
+        "skipmid",
+        "bool",
+        "boolfar",
+        "mshort",
+        "mlong",
+        "split",
+        "splitfar",
+        "meet",
+        "pair",
+        "pairfar",
+        "tuple",
+        "tuplefar",
+        "tupleflip",
+        "tupleflipfar",
+        "multi",
+        "multifar",
+        "groups",
+        "groupsfar",
+        "groupsholes",
+        "groupsholesfar",
+        "groupssingles",
+        "groupssinglesfar",
+        "cxstagger",
+        "cxstaggerfar",
+        "cxstaggerwide",
+        "cxstaggerwidefar",
+        "clmanyheads",
+        "clmanyheadsfar",
+        "clstagger",
+        "clstaggerfar",
+        "clstaggerholes",
+        "clcofront",
+        "clcofrontones",
+        "clcofrontsame",
+        "clcofrontsameones",
+        "clcofrontsameblock",
+        "clcofrontshared",
+        "emitheads",
+        "emitheadsfar",
+        "manyheads",
+        "manyheadsfar",
+        "stagger",
+        "staggerfar",
+        "chain",
+        "chainfar",
+        "one",
+        "onetwo",
+        "end",
+        "boundaryinside",
+        "boundaryoutside",
+        "cxprivateheads",
+        "cxprivateheadsfar",
+        "manyheadsv0",
+        "manyheadsfarv0",
+    ];
+    let mut count = 0;
+    for case in cases {
+        for n in [3 + pick.below(4)] {
+            let tag = format!("_order3_{case}_{n}");
+            R3_REVERSE.with(|x| x.set(false));
+            let a = rfx_case(case, n, &tag);
+            R3_REVERSE.with(|x| x.set(true));
+            let b = rfx_case(case, n, &tag);
+            R3_REVERSE.with(|x| x.set(false));
+            Type::forget_emptiness();
+            let av = a.verdict();
+            let bv = b.verdict();
+            assert_eq!(av, bv, "probe definition/operand order {case} {n}");
+            Type::forget_emptiness();
+            assert_eq!(b.verdict(), bv);
+            assert_eq!(a.verdict(), av);
+            count += 1;
         }
-        for (all, one) in [
-            (Type::int(), lit(1)),
-            (Type::bool(), Type::lit(&Value::Bool(true)).unwrap()),
-            (
-                Type::tuple(vec![Type::int(), Type::int()]),
-                Type::tuple(vec![lit(1), Type::int()]),
-            ),
-        ] {
-            for n in 1..=6 {
-                for skip in std::iter::once(None).chain((1..=n).map(Some)) {
-                    for m in 1..=n + 2 {
-                        for split in [false, true] {
-                            if pick.below([1, 1, 1, 1, 1, 6, 24][n]) != 0 {
-                                continue;
-                            }
-                            let tag = format!("_orderf3_{count}");
-                            R3_REVERSE.with(|x| x.set(false));
-                            let (l, u) = rfx_family(n, skip, m, &all, &one, split, &tag);
-                            let a = &l - &u;
-                            R3_REVERSE.with(|x| x.set(true));
-                            let (l, u) = rfx_family(n, skip, m, &all, &one, split, &tag);
-                            let b = &l - &u;
-                            R3_REVERSE.with(|x| x.set(false));
-                            Type::forget_emptiness();
-                            let av = a.verdict();
-                            let bv = b.verdict();
-                            assert_eq!(
-                                av, bv,
-                                "family definitions/operands n={n} skip={skip:?} m={m} split={split}"
-                            );
-                            Type::forget_emptiness();
-                            assert_eq!(b.verdict(), bv);
-                            assert_eq!(a.verdict(), av);
-                            count += 1;
+    }
+    for (all, one) in [
+        (Type::int(), lit(1)),
+        (Type::bool(), Type::lit(&Value::Bool(true)).unwrap()),
+        (
+            Type::tuple(vec![Type::int(), Type::int()]),
+            Type::tuple(vec![lit(1), Type::int()]),
+        ),
+    ] {
+        for n in 1..=6 {
+            for skip in std::iter::once(None).chain((1..=n).map(Some)) {
+                for m in 1..=n + 2 {
+                    for split in [false, true] {
+                        if pick.below([1, 1, 1, 1, 1, 6, 24][n]) != 0 {
+                            continue;
                         }
+                        let tag = format!("_orderf3_{count}");
+                        R3_REVERSE.with(|x| x.set(false));
+                        let (l, u) = rfx_family(n, skip, m, &all, &one, split, &tag);
+                        let a = &l - &u;
+                        R3_REVERSE.with(|x| x.set(true));
+                        let (l, u) = rfx_family(n, skip, m, &all, &one, split, &tag);
+                        let b = &l - &u;
+                        R3_REVERSE.with(|x| x.set(false));
+                        Type::forget_emptiness();
+                        let av = a.verdict();
+                        let bv = b.verdict();
+                        assert_eq!(
+                            av, bv,
+                            "family definitions/operands n={n} skip={skip:?} m={m} split={split}"
+                        );
+                        Type::forget_emptiness();
+                        assert_eq!(b.verdict(), bv);
+                        assert_eq!(a.verdict(), av);
+                        count += 1;
                     }
                 }
             }
         }
-        eprintln!("R3 all-probe/family order cases={count}");
-    });
+    }
+    eprintln!("R3 all-probe/family order cases={count}");
 }
 
 /// Every shape of the round-3 cofinite cases up to 6 names (1,494 cases), built in both orders,
@@ -2778,312 +2770,308 @@ fn r3_all_probe_and_family_orders() {
 /// at 6, in 0.84 s to 1.34 s alone).
 #[test]
 fn r3_cofinite_survey() {
-    big(|| {
-        let (mut bad, mut cases) = (0, 0);
-        let (mut pick, seed) = Rng::fresh("R3 cofinite survey");
-        for n in 1..=6 {
-            for (m, skip, mode, holes, stagger) in r3_cofinite_shapes(&mut pick, n) {
-                let (ns, roots, mut all) = r3_spec(n, m, skip, holes, stagger);
-                if mode == 2 {
-                    all = 3;
-                }
-                let expected = if r3_oracle(&ns, &roots, all) {
-                    Verdict::Inhabited
-                } else {
-                    Verdict::Empty
-                };
-                let tag = format!("s{n}_{m}_{skip}_{holes}_{stagger}_{mode}");
-                let a = r3_build(&ns, &roots, all, false, &tag, mode);
-                let b = r3_build(&ns, &roots, all, true, &tag, mode);
-                Type::forget_emptiness();
-                let av = a.verdict();
-                Type::forget_emptiness();
-                let bv = b.verdict();
-                cases += 1;
-                if av != expected || bv != expected {
-                    bad += 1;
-                    eprintln!(
-                        "MISMATCH n={n} m={m} skip={skip} mode={mode} holes={holes} stagger={stagger} want={expected:?} fwd={av:?} rev={bv:?}"
-                    );
-                }
+    let (mut bad, mut cases) = (0, 0);
+    let (mut pick, seed) = Rng::fresh("R3 cofinite survey");
+    for n in 1..=6 {
+        for (m, skip, mode, holes, stagger) in r3_cofinite_shapes(&mut pick, n) {
+            let (ns, roots, mut all) = r3_spec(n, m, skip, holes, stagger);
+            if mode == 2 {
+                all = 3;
+            }
+            let expected = if r3_oracle(&ns, &roots, all) {
+                Verdict::Inhabited
+            } else {
+                Verdict::Empty
+            };
+            let tag = format!("s{n}_{m}_{skip}_{holes}_{stagger}_{mode}");
+            let a = r3_build(&ns, &roots, all, false, &tag, mode);
+            let b = r3_build(&ns, &roots, all, true, &tag, mode);
+            Type::forget_emptiness();
+            let av = a.verdict();
+            Type::forget_emptiness();
+            let bv = b.verdict();
+            cases += 1;
+            if av != expected || bv != expected {
+                bad += 1;
+                eprintln!(
+                    "MISMATCH n={n} m={m} skip={skip} mode={mode} holes={holes} stagger={stagger} want={expected:?} fwd={av:?} rev={bv:?}"
+                );
             }
         }
-        eprintln!("survey cases={cases} mismatches={bad}");
-        assert_eq!(
-            bad, 0,
-            "cases whose verdict is not the oracle's ZED_SEED={seed}"
-        );
-    });
+    }
+    eprintln!("survey cases={cases} mismatches={bad}");
+    assert_eq!(
+        bad, 0,
+        "cases whose verdict is not the oracle's ZED_SEED={seed}"
+    );
 }
 
 // ---- Codex R4 tests and helpers, verbatim ----
 
 #[test]
 fn codex_r3_variants_agree_with_the_oracle() {
-    big(|| {
-        // Every case to n = 4, one in two at n = 5 and one in four at n = 6, drawn afresh, and 40
-        // random trials from the printed seed (author P169): every case and 120 trials from one
-        // fixed seed, in 2 s to 3.4 s, until TEST-bench-move-l0123.
-        const KEEP: [usize; 7] = [1, 1, 1, 1, 1, 2, 4];
-        let (mut pick, seed) = Rng::fresh("codex R3 variants");
-        let int_ty = Type::int();
-        let one_ty = lit(1);
-        let bool_ty = Type::bool();
-        let yes_ty = Type::lit(&Value::Bool(true)).unwrap();
-        let tup_all = Type::tuple(vec![int_ty.clone(), int_ty.clone()]);
-        let tup_one = Type::tuple(vec![one_ty.clone(), int_ty.clone()]);
+    // Every case to n = 4, one in two at n = 5 and one in four at n = 6, drawn afresh, and 40
+    // random trials from the printed seed (author P169): every case and 120 trials from one
+    // fixed seed, in 2 s to 3.4 s, until TEST-bench-move-l0123.
+    const KEEP: [usize; 7] = [1, 1, 1, 1, 1, 2, 4];
+    let (mut pick, seed) = Rng::fresh("codex R3 variants");
+    let int_ty = Type::int();
+    let one_ty = lit(1);
+    let bool_ty = Type::bool();
+    let yes_ty = Type::lit(&Value::Bool(true)).unwrap();
+    let tup_all = Type::tuple(vec![int_ty.clone(), int_ty.clone()]);
+    let tup_one = Type::tuple(vec![one_ty.clone(), int_ty.clone()]);
 
-        let carriers: [(&str, &Type, &Type, Vec<Value>); 3] = [
-            ("int", &int_ty, &one_ty, vec![Value::Int(0), Value::Int(1)]),
-            (
-                "bool",
-                &bool_ty,
-                &yes_ty,
-                vec![Value::Bool(false), Value::Bool(true)],
-            ),
-            (
-                "tuple",
-                &tup_all,
-                &tup_one,
-                vec![
-                    Value::tuple(vec![Value::Int(0), Value::Int(0)]),
-                    Value::tuple(vec![Value::Int(1), Value::Int(0)]),
-                ],
-            ),
-        ];
+    let carriers: [(&str, &Type, &Type, Vec<Value>); 3] = [
+        ("int", &int_ty, &one_ty, vec![Value::Int(0), Value::Int(1)]),
+        (
+            "bool",
+            &bool_ty,
+            &yes_ty,
+            vec![Value::Bool(false), Value::Bool(true)],
+        ),
+        (
+            "tuple",
+            &tup_all,
+            &tup_one,
+            vec![
+                Value::tuple(vec![Value::Int(0), Value::Int(0)]),
+                Value::tuple(vec![Value::Int(1), Value::Int(0)]),
+            ],
+        ),
+    ];
 
-        let mut seq = 0usize;
-        for (cname, all, one, alpha) in &carriers {
-            for n in 1..=6 {
-                for skip in std::iter::once(None).chain((1..=n).map(Some)) {
-                    for m in 1..=n + 2 {
-                        for split in [false, true] {
-                            seq += 1;
-                            if pick.below(KEEP[n]) != 0 {
-                                continue;
-                            }
-                            Type::forget_emptiness();
-                            let tag = format!("_or_{cname}_{seq}");
-                            let (l, u) = rfx_family(n, skip, m, all, one, split, &tag);
-                            let t = &l - &u;
-                            let inhab = oracle_inhabited(&t, alpha, n.max(m) + 1);
-                            let want = if inhab {
-                                Verdict::Inhabited
-                            } else {
-                                Verdict::Empty
-                            };
-                            assert_eq!(
-                                t.verdict(),
-                                want,
-                                "carrier={cname} n={n} skip={skip:?} m={m} split={split}"
-                            );
-                            assert_eq!(
-                                t.is_empty(),
-                                !inhab,
-                                "is_empty carrier={cname} n={n} skip={skip:?} m={m} split={split}"
-                            );
+    let mut seq = 0usize;
+    for (cname, all, one, alpha) in &carriers {
+        for n in 1..=6 {
+            for skip in std::iter::once(None).chain((1..=n).map(Some)) {
+                for m in 1..=n + 2 {
+                    for split in [false, true] {
+                        seq += 1;
+                        if pick.below(KEEP[n]) != 0 {
+                            continue;
                         }
+                        Type::forget_emptiness();
+                        let tag = format!("_or_{cname}_{seq}");
+                        let (l, u) = rfx_family(n, skip, m, all, one, split, &tag);
+                        let t = &l - &u;
+                        let inhab = oracle_inhabited(&t, alpha, n.max(m) + 1);
+                        let want = if inhab {
+                            Verdict::Inhabited
+                        } else {
+                            Verdict::Empty
+                        };
+                        assert_eq!(
+                            t.verdict(),
+                            want,
+                            "carrier={cname} n={n} skip={skip:?} m={m} split={split}"
+                        );
+                        assert_eq!(
+                            t.is_empty(),
+                            !inhab,
+                            "is_empty carrier={cname} n={n} skip={skip:?} m={m} split={split}"
+                        );
                     }
                 }
             }
         }
+    }
 
-        let int_alpha = [Value::Int(0), Value::Int(1)];
-        let multi_alpha = [Value::Int(0), Value::Int(1), Value::Int(2)];
-        let group_alpha = [Value::Int(0), Value::Int(1), Value::atom("a1")];
-        for n in 2..=6 {
-            for m in 1..=n + 1 {
+    let int_alpha = [Value::Int(0), Value::Int(1)];
+    let multi_alpha = [Value::Int(0), Value::Int(1), Value::Int(2)];
+    let group_alpha = [Value::Int(0), Value::Int(1), Value::atom("a1")];
+    for n in 2..=6 {
+        for m in 1..=n + 1 {
+            seq += 1;
+            if pick.below(KEEP[n]) != 0 {
+                continue;
+            }
+            Type::forget_emptiness();
+            let tag = format!("_orm_{seq}");
+            let l = list_named(Type::int(), &tag);
+            let t = &l - &rfx_multi(n, m, &tag);
+            let inhab = oracle_inhabited(&t, &multi_alpha, n.max(m) + 1);
+            let want = if inhab {
+                Verdict::Inhabited
+            } else {
+                Verdict::Empty
+            };
+            assert_eq!(t.verdict(), want, "multi n={n} m={m}");
+            assert_eq!(t.is_empty(), !inhab, "multi is_empty n={n} m={m}");
+        }
+        for far in [false, true] {
+            for which in ["chain", "groups", "one"] {
                 seq += 1;
                 if pick.below(KEEP[n]) != 0 {
                     continue;
                 }
                 Type::forget_emptiness();
-                let tag = format!("_orm_{seq}");
-                let l = list_named(Type::int(), &tag);
-                let t = &l - &rfx_multi(n, m, &tag);
-                let inhab = oracle_inhabited(&t, &multi_alpha, n.max(m) + 1);
+                let tag = format!("_orcg_{seq}");
+                let t = match (which, far) {
+                    ("chain", false) => rfx_case("chain", n, &tag),
+                    ("chain", true) => rfx_case("chainfar", n, &tag),
+                    ("groups", false) => rfx_case("groups", n, &tag),
+                    ("groups", true) => rfx_case("groupsfar", n, &tag),
+                    ("one", false) => rfx_case("one", n, &tag),
+                    _ => rfx_case("onetwo", n, &tag),
+                };
+                let alpha: &[Value] = if which == "groups" {
+                    &group_alpha
+                } else if which == "one" {
+                    &multi_alpha
+                } else {
+                    &int_alpha
+                };
+                let inhab = oracle_inhabited(&t, alpha, n + 1);
                 let want = if inhab {
                     Verdict::Inhabited
                 } else {
                     Verdict::Empty
                 };
-                assert_eq!(t.verdict(), want, "multi n={n} m={m}");
-                assert_eq!(t.is_empty(), !inhab, "multi is_empty n={n} m={m}");
+                assert_eq!(t.verdict(), want, "{which} far={far} n={n}");
+                assert_eq!(t.is_empty(), !inhab, "{which} is_empty far={far} n={n}");
             }
-            for far in [false, true] {
-                for which in ["chain", "groups", "one"] {
-                    seq += 1;
-                    if pick.below(KEEP[n]) != 0 {
-                        continue;
-                    }
-                    Type::forget_emptiness();
-                    let tag = format!("_orcg_{seq}");
-                    let t = match (which, far) {
-                        ("chain", false) => rfx_case("chain", n, &tag),
-                        ("chain", true) => rfx_case("chainfar", n, &tag),
-                        ("groups", false) => rfx_case("groups", n, &tag),
-                        ("groups", true) => rfx_case("groupsfar", n, &tag),
-                        ("one", false) => rfx_case("one", n, &tag),
-                        _ => rfx_case("onetwo", n, &tag),
-                    };
-                    let alpha: &[Value] = if which == "groups" {
-                        &group_alpha
-                    } else if which == "one" {
-                        &multi_alpha
-                    } else {
-                        &int_alpha
-                    };
-                    let inhab = oracle_inhabited(&t, alpha, n + 1);
-                    let want = if inhab {
+        }
+        for s1 in [None, Some(1), Some(n / 2), Some(n)] {
+            for s2 in [None, Some(1), Some(n - 1), Some(n)] {
+                seq += 1;
+                if pick.below(KEEP[n]) != 0 {
+                    continue;
+                }
+                Type::forget_emptiness();
+                let tag1 = format!("_ormp1_{seq}");
+                let tag2 = format!("_ormp2_{seq}");
+                let (l1, u1) = rfx_family(n, s1, n, &int_ty, &one_ty, false, &tag1);
+                let (l2, u2) = rfx_family(n, s2, n, &int_ty, &one_ty, false, &tag2);
+                let t1 = &l1 - &u1;
+                let t2 = &l2 - &u2;
+                let i1 = oracle_inhabited(&t1, &int_alpha, n + 1);
+                let i2 = oracle_inhabited(&t2, &int_alpha, n + 1);
+                let meet = &t1 & &t2;
+                let i_meet = oracle_inhabited(&meet, &int_alpha, n + 1);
+                assert_eq!(
+                    meet.verdict(),
+                    if i_meet {
                         Verdict::Inhabited
                     } else {
                         Verdict::Empty
-                    };
-                    assert_eq!(t.verdict(), want, "{which} far={far} n={n}");
-                    assert_eq!(t.is_empty(), !inhab, "{which} is_empty far={far} n={n}");
-                }
-            }
-            for s1 in [None, Some(1), Some(n / 2), Some(n)] {
-                for s2 in [None, Some(1), Some(n - 1), Some(n)] {
-                    seq += 1;
-                    if pick.below(KEEP[n]) != 0 {
-                        continue;
-                    }
-                    Type::forget_emptiness();
-                    let tag1 = format!("_ormp1_{seq}");
-                    let tag2 = format!("_ormp2_{seq}");
-                    let (l1, u1) = rfx_family(n, s1, n, &int_ty, &one_ty, false, &tag1);
-                    let (l2, u2) = rfx_family(n, s2, n, &int_ty, &one_ty, false, &tag2);
-                    let t1 = &l1 - &u1;
-                    let t2 = &l2 - &u2;
-                    let i1 = oracle_inhabited(&t1, &int_alpha, n + 1);
-                    let i2 = oracle_inhabited(&t2, &int_alpha, n + 1);
-                    let meet = &t1 & &t2;
-                    let i_meet = oracle_inhabited(&meet, &int_alpha, n + 1);
-                    assert_eq!(
-                        meet.verdict(),
-                        if i_meet {
-                            Verdict::Inhabited
-                        } else {
-                            Verdict::Empty
-                        },
-                        "meet n={n} s1={s1:?} s2={s2:?}"
-                    );
-                    assert_eq!(meet.is_empty(), !i_meet, "meet is_empty n={n}");
-                    let pair = Type::tuple(vec![t1, t2]);
-                    let i_pair = i1 && i2;
-                    assert_eq!(
-                        pair.verdict(),
-                        if i_pair {
-                            Verdict::Inhabited
-                        } else {
-                            Verdict::Empty
-                        },
-                        "pair n={n} s1={s1:?} s2={s2:?}"
-                    );
-                    assert_eq!(pair.is_empty(), !i_pair, "pair is_empty n={n}");
-                }
-            }
-        }
-
-        // Random small chain families over `int` with predicates from `{1, 2, 1|2, int\1, int\2, int\(1|2), int}`.
-        let preds = [
-            lit(1),
-            lit(2),
-            &lit(1) | &lit(2),
-            &Type::int() - &lit(1),
-            &Type::int() - &lit(2),
-            &Type::int() - &(&lit(1) | &lit(2)),
-            Type::int(),
-        ];
-        let mut next_u64 = || pick.next_u64();
-        for trial in 0..40 {
-            Type::forget_emptiness();
-            let tag = format!("_orr_{trial}");
-            let mut defs = vec![def(
-                &format!("L{tag}"),
-                Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]),
-            )];
-            let num_neg = 1 + (next_u64() % 5) as usize;
-            let mut neg_roots = Vec::new();
-            let mut max_d = 1usize;
-            for c in 0..num_neg {
-                let d = 1 + (next_u64() % 5) as usize;
-                max_d = max_d.max(d);
-                let leaf_h = preds[(next_u64() as usize) % preds.len()].clone();
-                let leaf_stop = (next_u64() & 1) != 0;
-                let step_h = if (next_u64() % 4) == 0 {
-                    preds[(next_u64() as usize) % preds.len()].clone()
-                } else {
-                    Type::int()
-                };
-                let step_stop = (next_u64() & 1) != 0;
-                let base_idx = defs.len();
-                let leaf_body = if leaf_stop {
-                    Expr::Union(vec![nil(), cons(Expr::Type(leaf_h), r(0))])
-                } else {
-                    cons(Expr::Type(leaf_h), r(0))
-                };
-                defs.push(def(&format!("N{c}_1{tag}"), leaf_body));
-                for k in 2..=d {
-                    let step_body = if step_stop {
-                        Expr::Union(vec![
-                            nil(),
-                            cons(Expr::Type(step_h.clone()), r(base_idx + k - 2)),
-                        ])
-                    } else {
-                        cons(Expr::Type(step_h.clone()), r(base_idx + k - 2))
-                    };
-                    defs.push(def(&format!("N{c}_{k}{tag}"), step_body));
-                }
-                neg_roots.push(base_idx + d - 1);
-            }
-            let reverse_defs = defs.clone();
-            let ts = r3_instance(defs);
-            let u = neg_roots
-                .iter()
-                .map(|&i| &ts[i])
-                .fold(Type::empty(), |acc, x| &acc | x);
-            let t = &ts[0] - &u;
-            let inhab = oracle_inhabited(&t, &multi_alpha, max_d + 1);
-            match t.verdict() {
-                Verdict::Empty => assert!(
-                    !inhab,
-                    "random trial {trial} of ZED_SEED={seed} unsound Empty"
-                ),
-                Verdict::Inhabited => assert!(
-                    inhab,
-                    "random trial {trial} of ZED_SEED={seed} unsound Inhabited"
-                ),
-                Verdict::Refused(_) => {}
-            }
-            if t.is_empty() {
-                assert!(
-                    !inhab,
-                    "random trial {trial} of ZED_SEED={seed} unsound is_empty=true"
+                    },
+                    "meet n={n} s1={s1:?} s2={s2:?}"
                 );
+                assert_eq!(meet.is_empty(), !i_meet, "meet is_empty n={n}");
+                let pair = Type::tuple(vec![t1, t2]);
+                let i_pair = i1 && i2;
+                assert_eq!(
+                    pair.verdict(),
+                    if i_pair {
+                        Verdict::Inhabited
+                    } else {
+                        Verdict::Empty
+                    },
+                    "pair n={n} s1={s1:?} s2={s2:?}"
+                );
+                assert_eq!(pair.is_empty(), !i_pair, "pair is_empty n={n}");
             }
-            let original = t.verdict();
-            R3_REVERSE.with(|x| x.set(true));
-            let rev = r3_instance(reverse_defs);
-            let ru = neg_roots
-                .iter()
-                .fold(Type::empty(), |u, &i| r3_union(&u, &rev[i]));
-            let rt = &rev[0] - &ru;
-            R3_REVERSE.with(|x| x.set(false));
-            Type::forget_emptiness();
-            assert_eq!(
-                rt.verdict(),
-                original,
-                "random definition/union order {trial} of ZED_SEED={seed}"
-            );
-            assert_eq!(
-                t.verdict(),
-                original,
-                "random query order {trial} of ZED_SEED={seed}"
+        }
+    }
+
+    // Random small chain families over `int` with predicates from `{1, 2, 1|2, int\1, int\2, int\(1|2), int}`.
+    let preds = [
+        lit(1),
+        lit(2),
+        &lit(1) | &lit(2),
+        &Type::int() - &lit(1),
+        &Type::int() - &lit(2),
+        &Type::int() - &(&lit(1) | &lit(2)),
+        Type::int(),
+    ];
+    let mut next_u64 = || pick.next_u64();
+    for trial in 0..40 {
+        Type::forget_emptiness();
+        let tag = format!("_orr_{trial}");
+        let mut defs = vec![def(
+            &format!("L{tag}"),
+            Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]),
+        )];
+        let num_neg = 1 + (next_u64() % 5) as usize;
+        let mut neg_roots = Vec::new();
+        let mut max_d = 1usize;
+        for c in 0..num_neg {
+            let d = 1 + (next_u64() % 5) as usize;
+            max_d = max_d.max(d);
+            let leaf_h = preds[(next_u64() as usize) % preds.len()].clone();
+            let leaf_stop = (next_u64() & 1) != 0;
+            let step_h = if (next_u64() % 4) == 0 {
+                preds[(next_u64() as usize) % preds.len()].clone()
+            } else {
+                Type::int()
+            };
+            let step_stop = (next_u64() & 1) != 0;
+            let base_idx = defs.len();
+            let leaf_body = if leaf_stop {
+                Expr::Union(vec![nil(), cons(Expr::Type(leaf_h), r(0))])
+            } else {
+                cons(Expr::Type(leaf_h), r(0))
+            };
+            defs.push(def(&format!("N{c}_1{tag}"), leaf_body));
+            for k in 2..=d {
+                let step_body = if step_stop {
+                    Expr::Union(vec![
+                        nil(),
+                        cons(Expr::Type(step_h.clone()), r(base_idx + k - 2)),
+                    ])
+                } else {
+                    cons(Expr::Type(step_h.clone()), r(base_idx + k - 2))
+                };
+                defs.push(def(&format!("N{c}_{k}{tag}"), step_body));
+            }
+            neg_roots.push(base_idx + d - 1);
+        }
+        let reverse_defs = defs.clone();
+        let ts = r3_instance(defs);
+        let u = neg_roots
+            .iter()
+            .map(|&i| &ts[i])
+            .fold(Type::empty(), |acc, x| &acc | x);
+        let t = &ts[0] - &u;
+        let inhab = oracle_inhabited(&t, &multi_alpha, max_d + 1);
+        match t.verdict() {
+            Verdict::Empty => assert!(
+                !inhab,
+                "random trial {trial} of ZED_SEED={seed} unsound Empty"
+            ),
+            Verdict::Inhabited => assert!(
+                inhab,
+                "random trial {trial} of ZED_SEED={seed} unsound Inhabited"
+            ),
+            Verdict::Refused(_) => {}
+        }
+        if t.is_empty() {
+            assert!(
+                !inhab,
+                "random trial {trial} of ZED_SEED={seed} unsound is_empty=true"
             );
         }
-    });
+        let original = t.verdict();
+        R3_REVERSE.with(|x| x.set(true));
+        let rev = r3_instance(reverse_defs);
+        let ru = neg_roots
+            .iter()
+            .fold(Type::empty(), |u, &i| r3_union(&u, &rev[i]));
+        let rt = &rev[0] - &ru;
+        R3_REVERSE.with(|x| x.set(false));
+        Type::forget_emptiness();
+        assert_eq!(
+            rt.verdict(),
+            original,
+            "random definition/union order {trial} of ZED_SEED={seed}"
+        );
+        assert_eq!(
+            t.verdict(),
+            original,
+            "random query order {trial} of ZED_SEED={seed}"
+        );
+    }
 }
 
 fn oracle_inhabited(t: &Type, alphabet: &[Value], max_len: usize) -> bool {
@@ -3144,70 +3132,68 @@ fn r4_boundary(n: usize, holes: bool, tag: &str) -> Type {
 
 #[test]
 fn r4_exact_classes_random_and_short_escape() {
-    big(|| {
-        // 60 random trials from a seed new each run (author P169): 200 from one fixed seed until
-        // TEST-bench-move-l0123.
-        let (mut pick, seed) = Rng::fresh("R4 exact classes");
-        let mut rng = || pick.next_u64();
-        let mut cases = 0;
-        for trial in 0..60 {
-            let n = 2 + (rng() % 4) as usize;
-            let m = 1 + (rng() % (n + 2) as u64) as usize;
-            let (mut ns, roots, all) = r3_spec(n, m, 0, n, true);
-            // Bit zero is a fresh integer; bits 1..=n+2 are all listed literals.
-            for nd in &mut ns[1..] {
-                if rng() % 3 == 0 {
-                    nd.mask = rng() & all;
-                }
+    // 60 random trials from a seed new each run (author P169): 200 from one fixed seed until
+    // TEST-bench-move-l0123.
+    let (mut pick, seed) = Rng::fresh("R4 exact classes");
+    let mut rng = || pick.next_u64();
+    let mut cases = 0;
+    for trial in 0..60 {
+        let n = 2 + (rng() % 4) as usize;
+        let m = 1 + (rng() % (n + 2) as u64) as usize;
+        let (mut ns, roots, all) = r3_spec(n, m, 0, n, true);
+        // Bit zero is a fresh integer; bits 1..=n+2 are all listed literals.
+        for nd in &mut ns[1..] {
+            if rng() % 3 == 0 {
+                nd.mask = rng() & all;
             }
-            let inhab = r3_oracle(&ns, &roots, all);
-            let a = r3_build(&ns, &roots, all, false, &format!("r4random{trial}"), 0);
-            let b = r3_build(&ns, &roots, all, true, &format!("r4random{trial}"), 0);
-            let av = a.sweep_verdict();
-            let bv = b.sweep_verdict();
-            assert_eq!(
-                av, bv,
-                "sweep definition order trial {trial} of ZED_SEED={seed}"
-            );
-            for t in [&a, &b] {
-                Type::forget_emptiness();
-                match t.verdict() {
-                    Verdict::Empty => {
-                        assert!(!inhab, "oracle has witness {trial} of ZED_SEED={seed}")
-                    }
-                    Verdict::Inhabited => assert!(inhab, "oracle empty {trial} of ZED_SEED={seed}"),
-                    Verdict::Refused(_) => {}
+        }
+        let inhab = r3_oracle(&ns, &roots, all);
+        let a = r3_build(&ns, &roots, all, false, &format!("r4random{trial}"), 0);
+        let b = r3_build(&ns, &roots, all, true, &format!("r4random{trial}"), 0);
+        let av = a.sweep_verdict();
+        let bv = b.sweep_verdict();
+        assert_eq!(
+            av, bv,
+            "sweep definition order trial {trial} of ZED_SEED={seed}"
+        );
+        for t in [&a, &b] {
+            Type::forget_emptiness();
+            match t.verdict() {
+                Verdict::Empty => {
+                    assert!(!inhab, "oracle has witness {trial} of ZED_SEED={seed}")
                 }
-                assert!(!t.is_empty() || !inhab);
+                Verdict::Inhabited => assert!(inhab, "oracle empty {trial} of ZED_SEED={seed}"),
+                Verdict::Refused(_) => {}
             }
+            assert!(!t.is_empty() || !inhab);
+        }
+        cases += 1;
+    }
+    for n in 2..=6 {
+        for (case, want) in [
+            ("clcofront", Verdict::Inhabited),
+            ("clstaggerholes", Verdict::Inhabited),
+            ("boundaryinside", Verdict::Inhabited),
+            ("boundaryoutside", Verdict::Empty),
+        ] {
+            let tag = format!("r4boundary{n}{case}");
+            R3_REVERSE.with(|v| v.set(false));
+            let a = rfx_case(case, n, &tag);
+            R3_REVERSE.with(|v| v.set(true));
+            let b = rfx_case(case, n, &tag);
+            R3_REVERSE.with(|v| v.set(false));
+            assert_eq!(a.sweep_verdict(), Some(want), "{case} {n}");
+            assert_eq!(b.sweep_verdict(), Some(want), "reverse {case} {n}");
+            Type::forget_emptiness();
+            assert_eq!(a.verdict(), want);
+            assert_eq!(b.verdict(), want);
+            Type::forget_emptiness();
+            assert_eq!(b.verdict(), want);
+            assert_eq!(a.verdict(), want);
             cases += 1;
         }
-        for n in 2..=6 {
-            for (case, want) in [
-                ("clcofront", Verdict::Inhabited),
-                ("clstaggerholes", Verdict::Inhabited),
-                ("boundaryinside", Verdict::Inhabited),
-                ("boundaryoutside", Verdict::Empty),
-            ] {
-                let tag = format!("r4boundary{n}{case}");
-                R3_REVERSE.with(|v| v.set(false));
-                let a = rfx_case(case, n, &tag);
-                R3_REVERSE.with(|v| v.set(true));
-                let b = rfx_case(case, n, &tag);
-                R3_REVERSE.with(|v| v.set(false));
-                assert_eq!(a.sweep_verdict(), Some(want), "{case} {n}");
-                assert_eq!(b.sweep_verdict(), Some(want), "reverse {case} {n}");
-                Type::forget_emptiness();
-                assert_eq!(a.verdict(), want);
-                assert_eq!(b.verdict(), want);
-                Type::forget_emptiness();
-                assert_eq!(b.verdict(), want);
-                assert_eq!(a.verdict(), want);
-                cases += 1;
-            }
-        }
-        eprintln!("R4 exact-class random/boundary cases={cases}");
-    });
+    }
+    eprintln!("R4 exact-class random/boundary cases={cases}");
 }
 
 fn r4_private_heads(n: usize, far: bool, tag: &str) -> Type {
@@ -3341,546 +3327,541 @@ fn rfx_cl_stagger_boundary(n: usize, overlap: bool, tag: &str) -> Type {
 
 #[test]
 fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle_gemini() {
-    big(|| {
-        let int_samples = [Value::Int(0), Value::Int(1), Value::Int(2)];
-        let bool_samples = [Value::Bool(false), Value::Bool(true)];
-        let bool_tys = [
-            Type::lit(&Value::Bool(false)).unwrap(),
-            Type::lit(&Value::Bool(true)).unwrap(),
-        ];
-        let mut tag_id = 0usize;
-        let mut next_tag = || {
-            tag_id += 1;
-            format!("_or{tag_id}")
-        };
+    let int_samples = [Value::Int(0), Value::Int(1), Value::Int(2)];
+    let bool_samples = [Value::Bool(false), Value::Bool(true)];
+    let bool_tys = [
+        Type::lit(&Value::Bool(false)).unwrap(),
+        Type::lit(&Value::Bool(true)).unwrap(),
+    ];
+    let mut tag_id = 0usize;
+    let mut next_tag = || {
+        tag_id += 1;
+        format!("_or{tag_id}")
+    };
 
-        // Every family to n = 3, one in two at n = 4 and one in four at n = 5, drawn afresh (author
-        // P169): every family until TEST-bench-move-l0123 (1.37 s alone under load; 0.68 s
-        // before the cuts of the tuple kinds and the kinds with many heads below).
-        let (mut pick, seed) = Rng::fresh("lists by the place from the front, gemini");
-        for n in 1..=5 {
-            for skip_idx in 0..=n {
-                let skip = (skip_idx > 0).then_some(skip_idx);
-                for m in 1..=n + 1 {
-                    for split in [false, true] {
-                        for (is_bool, all, one) in [
-                            (false, Type::int(), lit(1)),
-                            (true, Type::bool(), bool_tys[1].clone()),
-                        ] {
-                            if pick.below([1, 1, 1, 1, 2, 4][n]) != 0 {
-                                continue;
-                            }
-                            Type::forget_emptiness();
-                            let tag = next_tag();
-                            let (l, u) = rfx_family(n, skip, m, &all, &one, split, &tag);
-                            let t = &l - &u;
-                            let samples: &[Value] = if is_bool {
-                                &bool_samples[..]
-                            } else {
-                                &int_samples[..2]
-                            };
-                            let max_len = n.max(m) + 1;
-                            let inhab = list_oracle_inhabited(&t, samples, max_len);
-                            let want = if inhab {
-                                Verdict::Inhabited
-                            } else {
-                                Verdict::Empty
-                            };
-                            assert_eq!(
-                                t.verdict(),
-                                want,
-                                "rfx_family n={n} skip={skip:?} m={m} split={split} bool={is_bool} ZED_SEED={seed}"
-                            );
-                            assert_eq!(
-                                t.is_empty(),
-                                !inhab,
-                                "is_empty rfx_family n={n} skip={skip:?} m={m} split={split} bool={is_bool} ZED_SEED={seed}"
-                            );
-                        }
-                    }
-                }
-            }
-
-            // Meet and pair combinations at size n.
-            for (s1, s2) in [(None, Some(n)), (Some(1), Some(n)), (Some(n), Some(n))] {
-                Type::forget_emptiness();
-                let (t1, t2) = (next_tag(), next_tag());
-                let (l1, u1) = rfx_family(n, s1, n, &Type::int(), &lit(1), false, &t1);
-                let (l2, u2) = rfx_family(n, s2, n, &Type::int(), &lit(1), false, &t2);
-                let f1 = &l1 - &u1;
-                let f2 = &l2 - &u2;
-                let meet = &f1 & &f2;
-                let want_meet = if list_oracle_inhabited(&meet, &int_samples[..2], n + 1) {
-                    Verdict::Inhabited
-                } else {
-                    Verdict::Empty
-                };
-                assert_eq!(meet.verdict(), want_meet, "meet n={n} s1={s1:?} s2={s2:?}");
-
-                let pair = Type::tuple(vec![f1, f2]);
-                let want_pair = if list_oracle_inhabited(&(&l1 - &u1), &int_samples[..2], n + 1)
-                    && list_oracle_inhabited(&(&l2 - &u2), &int_samples[..2], n + 1)
-                {
-                    Verdict::Inhabited
-                } else {
-                    Verdict::Empty
-                };
-                assert_eq!(pair.verdict(), want_pair, "pair n={n} s1={s1:?} s2={s2:?}");
-            }
-
-            // Multi, groups, groupsholes, manyheads, stagger, and chain variants at small sizes. The
-            // twelve kinds with many heads run at n = 2 and one in three at n = 3, where their oracle
-            // reads 7^4 lists (each at n = 3 until TEST-bench-move-l0123, author P169).
+    // Every family to n = 3, one in two at n = 4 and one in four at n = 5, drawn afresh (author
+    // P169): every family until TEST-bench-move-l0123 (1.37 s alone under load; 0.68 s
+    // before the cuts of the tuple kinds and the kinds with many heads below).
+    let (mut pick, seed) = Rng::fresh("lists by the place from the front, gemini");
+    for n in 1..=5 {
+        for skip_idx in 0..=n {
+            let skip = (skip_idx > 0).then_some(skip_idx);
             for m in 1..=n + 1 {
-                Type::forget_emptiness();
-                let tag = next_tag();
-                let l = list_named(Type::int(), &tag);
-                let t = &l - &rfx_multi(n, m, &tag);
-                let want = if list_oracle_inhabited(&t, &int_samples, n.max(m) + 1) {
-                    Verdict::Inhabited
-                } else {
-                    Verdict::Empty
-                };
-                assert_eq!(t.verdict(), want, "rfx_multi n={n} m={m}");
-            }
-            if n >= 2 {
-                let mh_samples: Vec<Value> = (0..=(n as i64 + 3)).map(Value::Int).collect();
-                for far in [false, true] {
-                    for case in [
-                        if far { "groupsfar" } else { "groups" },
-                        if far { "groupsholesfar" } else { "groupsholes" },
-                        if far {
-                            "groupssinglesfar"
-                        } else {
-                            "groupssingles"
-                        },
-                        if far { "manyheadsfar" } else { "manyheads" },
-                        if far { "staggerfar" } else { "stagger" },
-                        if far { "chainfar" } else { "chain" },
-                        if far { "cxstaggerfar" } else { "cxstagger" },
-                        if far {
-                            "cxstaggerwidefar"
-                        } else {
-                            "cxstaggerwide"
-                        },
-                        if far { "emitheadsfar" } else { "emitheads" },
-                        if far { "clmanyheadsfar" } else { "clmanyheads" },
+                for split in [false, true] {
+                    for (is_bool, all, one) in [
+                        (false, Type::int(), lit(1)),
+                        (true, Type::bool(), bool_tys[1].clone()),
                     ] {
-                        if n <= 2
-                            || (n == 3 && pick.below(3) == 0)
-                            || !matches!(
-                                case,
-                                "manyheads"
-                                    | "manyheadsfar"
-                                    | "groupsholes"
-                                    | "groupsholesfar"
-                                    | "groupssingles"
-                                    | "groupssinglesfar"
-                                    | "cxstagger"
-                                    | "cxstaggerfar"
-                                    | "emitheads"
-                                    | "emitheadsfar"
-                                    | "clmanyheads"
-                                    | "clmanyheadsfar"
-                            )
-                        {
-                            Type::forget_emptiness();
-                            let tag = next_tag();
-                            let t = rfx_case(case, n, &tag);
-                            let samples = if matches!(
-                                case,
-                                "manyheads"
-                                    | "manyheadsfar"
-                                    | "groupsholes"
-                                    | "groupsholesfar"
-                                    | "groupssingles"
-                                    | "groupssinglesfar"
-                                    | "cxstagger"
-                                    | "cxstaggerfar"
-                                    | "emitheads"
-                                    | "emitheadsfar"
-                                    | "clmanyheads"
-                                    | "clmanyheadsfar"
-                            ) {
-                                &mh_samples[..]
-                            } else {
-                                &int_samples[..2]
-                            };
-                            let want = if list_oracle_inhabited(&t, samples, n + 1) {
-                                Verdict::Inhabited
-                            } else {
-                                Verdict::Empty
-                            };
-                            assert_eq!(
-                                t.sweep_verdict(),
-                                Some(want),
-                                "sweep {case} n={n} ZED_SEED={seed}"
-                            );
-                            Type::forget_emptiness();
-                            assert_eq!(t.verdict(), want, "{case} n={n} ZED_SEED={seed}");
+                        if pick.below([1, 1, 1, 1, 2, 4][n]) != 0 {
+                            continue;
                         }
-                    }
-                }
-                if n <= 2 {
-                    let stag_samples: Vec<Value> =
-                        (0..=(2 * n as i64 + 3)).map(Value::Int).collect();
-                    for case in [
-                        "clstagger",
-                        "clstaggerfar",
-                        "clstaggerholes",
-                        "clstaggerholesin",
-                        "clstaggerholesout",
-                        "clcofront",
-                    ] {
                         Type::forget_emptiness();
                         let tag = next_tag();
-                        let t = rfx_case(case, n, &tag);
-                        let samples = if matches!(case, "clstagger" | "clstaggerfar") {
+                        let (l, u) = rfx_family(n, skip, m, &all, &one, split, &tag);
+                        let t = &l - &u;
+                        let samples: &[Value] = if is_bool {
+                            &bool_samples[..]
+                        } else {
                             &int_samples[..2]
-                        } else if case == "clcofront" {
-                            &mh_samples[..]
-                        } else {
-                            &stag_samples[..]
                         };
-                        let max_l = if case == "clcofront" {
-                            n + 1
-                        } else {
-                            2 * n + 1
-                        };
-                        let want = if list_oracle_inhabited(&t, samples, max_l) {
+                        let max_len = n.max(m) + 1;
+                        let inhab = list_oracle_inhabited(&t, samples, max_len);
+                        let want = if inhab {
                             Verdict::Inhabited
                         } else {
                             Verdict::Empty
                         };
-                        if case == "clstaggerholesout" {
-                            // The prefix chains leave this case to the search (Gemini R4); in the
-                            // combined tree the front sweep decides it.
-                            assert_eq!(
-                                t.chain_verdict(),
-                                None,
-                                "chains {case} n={n} ZED_SEED={seed}"
-                            );
-                            assert_eq!(
-                                t.sweep_verdict(),
-                                Some(want),
-                                "sweep {case} n={n} ZED_SEED={seed}"
-                            );
+                        assert_eq!(
+                            t.verdict(),
+                            want,
+                            "rfx_family n={n} skip={skip:?} m={m} split={split} bool={is_bool} ZED_SEED={seed}"
+                        );
+                        assert_eq!(
+                            t.is_empty(),
+                            !inhab,
+                            "is_empty rfx_family n={n} skip={skip:?} m={m} split={split} bool={is_bool} ZED_SEED={seed}"
+                        );
+                    }
+                }
+            }
+        }
+
+        // Meet and pair combinations at size n.
+        for (s1, s2) in [(None, Some(n)), (Some(1), Some(n)), (Some(n), Some(n))] {
+            Type::forget_emptiness();
+            let (t1, t2) = (next_tag(), next_tag());
+            let (l1, u1) = rfx_family(n, s1, n, &Type::int(), &lit(1), false, &t1);
+            let (l2, u2) = rfx_family(n, s2, n, &Type::int(), &lit(1), false, &t2);
+            let f1 = &l1 - &u1;
+            let f2 = &l2 - &u2;
+            let meet = &f1 & &f2;
+            let want_meet = if list_oracle_inhabited(&meet, &int_samples[..2], n + 1) {
+                Verdict::Inhabited
+            } else {
+                Verdict::Empty
+            };
+            assert_eq!(meet.verdict(), want_meet, "meet n={n} s1={s1:?} s2={s2:?}");
+
+            let pair = Type::tuple(vec![f1, f2]);
+            let want_pair = if list_oracle_inhabited(&(&l1 - &u1), &int_samples[..2], n + 1)
+                && list_oracle_inhabited(&(&l2 - &u2), &int_samples[..2], n + 1)
+            {
+                Verdict::Inhabited
+            } else {
+                Verdict::Empty
+            };
+            assert_eq!(pair.verdict(), want_pair, "pair n={n} s1={s1:?} s2={s2:?}");
+        }
+
+        // Multi, groups, groupsholes, manyheads, stagger, and chain variants at small sizes. The
+        // twelve kinds with many heads run at n = 2 and one in three at n = 3, where their oracle
+        // reads 7^4 lists (each at n = 3 until TEST-bench-move-l0123, author P169).
+        for m in 1..=n + 1 {
+            Type::forget_emptiness();
+            let tag = next_tag();
+            let l = list_named(Type::int(), &tag);
+            let t = &l - &rfx_multi(n, m, &tag);
+            let want = if list_oracle_inhabited(&t, &int_samples, n.max(m) + 1) {
+                Verdict::Inhabited
+            } else {
+                Verdict::Empty
+            };
+            assert_eq!(t.verdict(), want, "rfx_multi n={n} m={m}");
+        }
+        if n >= 2 {
+            let mh_samples: Vec<Value> = (0..=(n as i64 + 3)).map(Value::Int).collect();
+            for far in [false, true] {
+                for case in [
+                    if far { "groupsfar" } else { "groups" },
+                    if far { "groupsholesfar" } else { "groupsholes" },
+                    if far {
+                        "groupssinglesfar"
+                    } else {
+                        "groupssingles"
+                    },
+                    if far { "manyheadsfar" } else { "manyheads" },
+                    if far { "staggerfar" } else { "stagger" },
+                    if far { "chainfar" } else { "chain" },
+                    if far { "cxstaggerfar" } else { "cxstagger" },
+                    if far {
+                        "cxstaggerwidefar"
+                    } else {
+                        "cxstaggerwide"
+                    },
+                    if far { "emitheadsfar" } else { "emitheads" },
+                    if far { "clmanyheadsfar" } else { "clmanyheads" },
+                ] {
+                    if n <= 2
+                        || (n == 3 && pick.below(3) == 0)
+                        || !matches!(
+                            case,
+                            "manyheads"
+                                | "manyheadsfar"
+                                | "groupsholes"
+                                | "groupsholesfar"
+                                | "groupssingles"
+                                | "groupssinglesfar"
+                                | "cxstagger"
+                                | "cxstaggerfar"
+                                | "emitheads"
+                                | "emitheadsfar"
+                                | "clmanyheads"
+                                | "clmanyheadsfar"
+                        )
+                    {
+                        Type::forget_emptiness();
+                        let tag = next_tag();
+                        let t = rfx_case(case, n, &tag);
+                        let samples = if matches!(
+                            case,
+                            "manyheads"
+                                | "manyheadsfar"
+                                | "groupsholes"
+                                | "groupsholesfar"
+                                | "groupssingles"
+                                | "groupssinglesfar"
+                                | "cxstagger"
+                                | "cxstaggerfar"
+                                | "emitheads"
+                                | "emitheadsfar"
+                                | "clmanyheads"
+                                | "clmanyheadsfar"
+                        ) {
+                            &mh_samples[..]
                         } else {
-                            assert_eq!(
-                                t.sweep_verdict(),
-                                Some(want),
-                                "sweep {case} n={n} ZED_SEED={seed}"
-                            );
-                        }
+                            &int_samples[..2]
+                        };
+                        let want = if list_oracle_inhabited(&t, samples, n + 1) {
+                            Verdict::Inhabited
+                        } else {
+                            Verdict::Empty
+                        };
+                        assert_eq!(
+                            t.sweep_verdict(),
+                            Some(want),
+                            "sweep {case} n={n} ZED_SEED={seed}"
+                        );
                         Type::forget_emptiness();
                         assert_eq!(t.verdict(), want, "{case} n={n} ZED_SEED={seed}");
                     }
                 }
             }
-
-            // Tuple and tupleflip variants at small sizes: each to n = 3 and one drawn at n = 4 and at
-            // n = 5, whose oracle over 4^5 and 4^6 lists took 0.04 s and 0.16 s for the four (all
-            // four at every n until TEST-bench-move-l0123, author P169).
-            let pair_samples = [
-                Value::tuple(vec![Value::Int(0), Value::Int(0)]),
-                Value::tuple(vec![Value::Int(1), Value::Int(0)]),
-                Value::tuple(vec![Value::Int(0), Value::Int(1)]),
-                Value::tuple(vec![Value::Int(1), Value::Int(1)]),
-            ];
-            let drawn = pick.below(4);
-            for (i, case) in ["tuple", "tuplefar", "tupleflip", "tupleflipfar"]
-                .into_iter()
-                .enumerate()
-            {
-                if n >= 4 && i != drawn {
-                    continue;
-                }
-                Type::forget_emptiness();
-                let tag = next_tag();
-                let t = rfx_case(case, n, &tag);
-                let want = if list_oracle_inhabited(&t, &pair_samples, n + 1) {
-                    Verdict::Inhabited
-                } else {
-                    Verdict::Empty
-                };
-                assert_eq!(t.verdict(), want, "{case} n={n} ZED_SEED={seed}");
-            }
-        }
-
-        // Random small prefix-chain families over int (including cofinite heads) and bool.
-        // Fix X18: heads exclude/include literals from 0..4, and `rand_int_samples` includes
-        // every literal 0..4 plus one fresh integer 4 so every equivalence class of the head
-        // predicates is sampled.
-        let rand_int_samples = [
-            Value::Int(0),
-            Value::Int(1),
-            Value::Int(2),
-            Value::Int(3),
-            Value::Int(4),
-        ];
-        // 20 and 20 random cases from a seed new each run (author P169): 60 and 60 from one fixed
-        // seed until TEST-bench-move-l0123.
-        let mut rng = || pick.next_u64();
-        let head_for = |bits: u64, is_bool: bool| -> Type {
-            if is_bool {
-                match bits % 3 {
-                    0 => bool_tys[0].clone(),
-                    1 => bool_tys[1].clone(),
-                    _ => Type::bool(),
-                }
-            } else {
-                let mask = (bits % 15) + 1;
-                if bits & 16 != 0 {
-                    let mut t = Type::int();
-                    for i in 0..4 {
-                        if (mask >> i) & 1 == 0 {
-                            t = &t - &lit(i as i64);
-                        }
-                    }
-                    t
-                } else {
-                    let mut t = Type::empty();
-                    for i in 0..4 {
-                        if (mask >> i) & 1 != 0 {
-                            t = &t | &lit(i as i64);
-                        }
-                    }
-                    t
-                }
-            }
-        };
-        for _ in 0..20 {
-            Type::forget_emptiness();
-            let is_bool = (rng() & 1) != 0;
-            let all = if is_bool { Type::bool() } else { Type::int() };
-            let samples: &[Value] = if is_bool {
-                &bool_samples
-            } else {
-                &rand_int_samples
-            };
-            let tag = next_tag();
-            let mut defs = vec![def(
-                &format!("L{tag}"),
-                Expr::Union(vec![nil(), cons(Expr::Type(all.clone()), r(0))]),
-            )];
-            let num_chains = 2 + (rng() % 3) as usize;
-            let mut endpoints = Vec::new();
-            let mut max_depth = 1usize;
-            for c in 0..num_chains {
-                let depth = 1 + (rng() % 4) as usize;
-                max_depth = max_depth.max(depth);
-                let allow_nil = (rng() & 1) != 0;
-                for k in 1..=depth {
-                    let h = head_for(rng(), is_bool);
-                    let prev = if k == 1 { 0 } else { defs.len() - 1 };
-                    let step = cons(Expr::Type(h), r(prev));
-                    let body = if allow_nil && ((rng() & 1) != 0 || k == 1) {
-                        Expr::Union(vec![nil(), step])
-                    } else {
-                        step
-                    };
-                    defs.push(def(&format!("C{c}_{k}{tag}"), body));
-                }
-                endpoints.push(defs.len() - 1);
-            }
-            let ts = Group::new(defs).unwrap().instance(vec![]);
-            let u = endpoints
-                .iter()
-                .map(|&i| &ts[i])
-                .fold(Type::empty(), |u, t| &u | t);
-            let l = list_named(all, &tag);
-            let t = &l - &u;
-            let inhab = list_oracle_inhabited(&t, samples, max_depth + 1);
-            let want = if inhab {
-                Verdict::Inhabited
-            } else {
-                Verdict::Empty
-            };
-            if let Some(sv) = t.sweep_verdict() {
-                assert_eq!(sv, want, "sweep random chain ZED_SEED={seed}");
-            }
-            Type::forget_emptiness();
-            match t.verdict() {
-                Verdict::Empty => assert!(!inhab, "random chain ZED_SEED={seed}"),
-                Verdict::Inhabited => assert!(inhab, "random chain ZED_SEED={seed}"),
-                Verdict::Refused(_) => {}
-            }
-            assert!(
-                !(t.is_empty() && inhab),
-                "is_empty random chain ZED_SEED={seed}"
-            );
-        }
-
-        // Random in-class prefix-chain families (uniform carrier prefix per chain, cofinite/finite
-        // leaf heads over 0..4, sampled over 0..=4): must be decided (Empty or Inhabited, never
-        // Refused) and agree with the oracle.
-        for _ in 0..20 {
-            Type::forget_emptiness();
-            let is_bool = (rng() & 1) != 0;
-            let all = if is_bool { Type::bool() } else { Type::int() };
-            let samples: &[Value] = if is_bool {
-                &bool_samples
-            } else {
-                &rand_int_samples
-            };
-            let tag = next_tag();
-            let mut defs = vec![def(
-                &format!("L{tag}"),
-                Expr::Union(vec![nil(), cons(Expr::Type(all.clone()), r(0))]),
-            )];
-            let num_chains = 2 + (rng() % 4) as usize;
-            let mut endpoints = Vec::new();
-            let mut max_depth = 1usize;
-            for c in 0..num_chains {
-                let depth = 1 + (rng() % 4) as usize;
-                max_depth = max_depth.max(depth);
-                let leaf_h = head_for(rng(), is_bool);
-                let leaf_nil = c == 0 || (rng() & 1) != 0;
-                let step_nil = c == 0 || (leaf_nil && (rng() & 1) != 0);
-                for k in 1..=depth {
-                    let h = if k == 1 { leaf_h.clone() } else { all.clone() };
-                    let prev = if k == 1 { 0 } else { defs.len() - 1 };
-                    let step = cons(Expr::Type(h), r(prev));
-                    let has_nil = if k == 1 { leaf_nil } else { step_nil };
-                    let body = if has_nil {
-                        Expr::Union(vec![nil(), step])
-                    } else {
-                        step
-                    };
-                    defs.push(def(&format!("U{c}_{k}{tag}"), body));
-                }
-                endpoints.push(defs.len() - 1);
-            }
-            let ts = Group::new(defs).unwrap().instance(vec![]);
-            let u = endpoints
-                .iter()
-                .map(|&i| &ts[i])
-                .fold(Type::empty(), |u, t| &u | t);
-            let l = list_named(all, &tag);
-            let t = &l - &u;
-            let inhab = list_oracle_inhabited(&t, samples, max_depth + 1);
-            let want = if inhab {
-                Verdict::Inhabited
-            } else {
-                Verdict::Empty
-            };
-            assert_eq!(
-                t.sweep_verdict(),
-                Some(want),
-                "sweep uniform random ZED_SEED={seed}"
-            );
-            Type::forget_emptiness();
-            assert_eq!(t.verdict(), want, "uniform random ZED_SEED={seed}");
-            assert_eq!(
-                t.is_empty(),
-                !inhab,
-                "is_empty uniform random ZED_SEED={seed}"
-            );
-        }
-    });
-}
-
-#[test]
-fn lists_by_the_place_from_the_front_verdicts_are_independent_of_order_gemini() {
-    big(|| {
-        let int_samples = [Value::Int(0), Value::Int(1)];
-        let mut tag_id = 0usize;
-        let mut next_tag = || {
-            tag_id += 1;
-            format!("_ord{tag_id}")
-        };
-        for n in 2..=6 {
-            for skip in [None, Some(1), Some(n / 2), Some(n)] {
-                let tag_base = next_tag();
-                let want = {
+            if n <= 2 {
+                let stag_samples: Vec<Value> = (0..=(2 * n as i64 + 3)).map(Value::Int).collect();
+                for case in [
+                    "clstagger",
+                    "clstaggerfar",
+                    "clstaggerholes",
+                    "clstaggerholesin",
+                    "clstaggerholesout",
+                    "clcofront",
+                ] {
                     Type::forget_emptiness();
-                    let (l, u) = rfx_family(n, skip, n, &Type::int(), &lit(1), false, &tag_base);
-                    let t = &l - &u;
-                    let v = t.verdict();
-                    let oracle = if list_oracle_inhabited(&t, &int_samples, n + 1) {
+                    let tag = next_tag();
+                    let t = rfx_case(case, n, &tag);
+                    let samples = if matches!(case, "clstagger" | "clstaggerfar") {
+                        &int_samples[..2]
+                    } else if case == "clcofront" {
+                        &mh_samples[..]
+                    } else {
+                        &stag_samples[..]
+                    };
+                    let max_l = if case == "clcofront" {
+                        n + 1
+                    } else {
+                        2 * n + 1
+                    };
+                    let want = if list_oracle_inhabited(&t, samples, max_l) {
                         Verdict::Inhabited
                     } else {
                         Verdict::Empty
                     };
-                    assert_eq!(v, oracle, "base order n={n} skip={skip:?}");
-                    v
-                };
-
-                // Test permutations of both Group definition indices and union operand order,
-                // including staggered chains sharing `Fd` and holes chains.
-                for perm_kind in 0..4 {
-                    Type::forget_emptiness();
-                    let tag = next_tag();
-                    let mut defs = vec![def(
-                        &format!("L{tag}"),
-                        Expr::Union(vec![nil(), cons(int(), r(0))]),
-                    )];
-                    defs.push(def(&format!("F1{tag}"), cons(Expr::Type(lit(1)), r(0))));
-                    defs.extend((2..=n).map(|i| def(&format!("F{i}{tag}"), cons(int(), r(i - 1)))));
-                    let not_one = Expr::Type(&Type::int() - &lit(1));
-                    defs.extend((1..=n).map(|k| {
-                        let rest = if k == 1 { r(0) } else { r(n + k - 1) };
-                        def(
-                            &format!("M{k}{tag}"),
-                            Expr::Union(vec![nil(), cons(not_one.clone(), rest)]),
-                        )
-                    }));
-                    let d = (n / 2).max(1);
-                    let ha = &Type::int() | &Type::atom("a");
-                    defs.push(def(&format!("P1{tag}"), cons(Expr::Type(ha.clone()), r(d))));
-                    defs.push(def(&format!("P2{tag}"), cons(Expr::Type(ha), r(2 * n + 1))));
-
-                    let k_len = defs.len();
-                    let mut perm: Vec<usize> = (0..k_len).collect();
-                    match perm_kind {
-                        0 => perm.reverse(),
-                        1 => perm.rotate_left(k_len / 2),
-                        2 => {
-                            perm = (0..k_len).step_by(2).chain((1..k_len).step_by(2)).collect();
-                        }
-                        _ => {
-                            perm[1..].reverse();
-                        }
-                    }
-                    let (pdefs, inv) = permute_defs(defs, &perm);
-                    let ts = Group::new(pdefs).unwrap().instance(vec![]);
-                    let mut u_indices: Vec<usize> = (1..=n)
-                        .filter(|&i| Some(i) != skip)
-                        .chain([2 * n])
-                        .collect();
-                    if d < n && skip != Some(d + 1) {
-                        u_indices.push(2 * n + 1);
-                    }
-                    if d + 2 <= n && skip != Some(d + 2) {
-                        u_indices.push(2 * n + 2);
-                    }
-                    if perm_kind % 2 == 1 {
-                        u_indices.reverse();
+                    if case == "clstaggerholesout" {
+                        // The prefix chains leave this case to the search (Gemini R4); in the
+                        // combined tree the front sweep decides it.
+                        assert_eq!(
+                            t.chain_verdict(),
+                            None,
+                            "chains {case} n={n} ZED_SEED={seed}"
+                        );
+                        assert_eq!(
+                            t.sweep_verdict(),
+                            Some(want),
+                            "sweep {case} n={n} ZED_SEED={seed}"
+                        );
                     } else {
-                        let mid = u_indices.len() / 2;
-                        u_indices.rotate_left(mid);
+                        assert_eq!(
+                            t.sweep_verdict(),
+                            Some(want),
+                            "sweep {case} n={n} ZED_SEED={seed}"
+                        );
                     }
-                    let u = u_indices
-                        .iter()
-                        .map(|&old_i| &ts[inv[old_i]])
-                        .fold(Type::empty(), |acc, t| &acc | t);
-                    let l = list_named(Type::int(), &tag);
-                    let t = &l - &u;
-                    assert_eq!(
-                        t.sweep_verdict(),
-                        Some(want),
-                        "sweep order-independence n={n} skip={skip:?} perm_kind={perm_kind}"
-                    );
                     Type::forget_emptiness();
-                    assert_eq!(
-                        t.verdict(),
-                        want,
-                        "order-independence n={n} skip={skip:?} perm_kind={perm_kind}"
-                    );
+                    assert_eq!(t.verdict(), want, "{case} n={n} ZED_SEED={seed}");
                 }
             }
         }
-    });
+
+        // Tuple and tupleflip variants at small sizes: each to n = 3 and one drawn at n = 4 and at
+        // n = 5, whose oracle over 4^5 and 4^6 lists took 0.04 s and 0.16 s for the four (all
+        // four at every n until TEST-bench-move-l0123, author P169).
+        let pair_samples = [
+            Value::tuple(vec![Value::Int(0), Value::Int(0)]),
+            Value::tuple(vec![Value::Int(1), Value::Int(0)]),
+            Value::tuple(vec![Value::Int(0), Value::Int(1)]),
+            Value::tuple(vec![Value::Int(1), Value::Int(1)]),
+        ];
+        let drawn = pick.below(4);
+        for (i, case) in ["tuple", "tuplefar", "tupleflip", "tupleflipfar"]
+            .into_iter()
+            .enumerate()
+        {
+            if n >= 4 && i != drawn {
+                continue;
+            }
+            Type::forget_emptiness();
+            let tag = next_tag();
+            let t = rfx_case(case, n, &tag);
+            let want = if list_oracle_inhabited(&t, &pair_samples, n + 1) {
+                Verdict::Inhabited
+            } else {
+                Verdict::Empty
+            };
+            assert_eq!(t.verdict(), want, "{case} n={n} ZED_SEED={seed}");
+        }
+    }
+
+    // Random small prefix-chain families over int (including cofinite heads) and bool.
+    // Fix X18: heads exclude/include literals from 0..4, and `rand_int_samples` includes
+    // every literal 0..4 plus one fresh integer 4 so every equivalence class of the head
+    // predicates is sampled.
+    let rand_int_samples = [
+        Value::Int(0),
+        Value::Int(1),
+        Value::Int(2),
+        Value::Int(3),
+        Value::Int(4),
+    ];
+    // 20 and 20 random cases from a seed new each run (author P169): 60 and 60 from one fixed
+    // seed until TEST-bench-move-l0123.
+    let mut rng = || pick.next_u64();
+    let head_for = |bits: u64, is_bool: bool| -> Type {
+        if is_bool {
+            match bits % 3 {
+                0 => bool_tys[0].clone(),
+                1 => bool_tys[1].clone(),
+                _ => Type::bool(),
+            }
+        } else {
+            let mask = (bits % 15) + 1;
+            if bits & 16 != 0 {
+                let mut t = Type::int();
+                for i in 0..4 {
+                    if (mask >> i) & 1 == 0 {
+                        t = &t - &lit(i as i64);
+                    }
+                }
+                t
+            } else {
+                let mut t = Type::empty();
+                for i in 0..4 {
+                    if (mask >> i) & 1 != 0 {
+                        t = &t | &lit(i as i64);
+                    }
+                }
+                t
+            }
+        }
+    };
+    for _ in 0..20 {
+        Type::forget_emptiness();
+        let is_bool = (rng() & 1) != 0;
+        let all = if is_bool { Type::bool() } else { Type::int() };
+        let samples: &[Value] = if is_bool {
+            &bool_samples
+        } else {
+            &rand_int_samples
+        };
+        let tag = next_tag();
+        let mut defs = vec![def(
+            &format!("L{tag}"),
+            Expr::Union(vec![nil(), cons(Expr::Type(all.clone()), r(0))]),
+        )];
+        let num_chains = 2 + (rng() % 3) as usize;
+        let mut endpoints = Vec::new();
+        let mut max_depth = 1usize;
+        for c in 0..num_chains {
+            let depth = 1 + (rng() % 4) as usize;
+            max_depth = max_depth.max(depth);
+            let allow_nil = (rng() & 1) != 0;
+            for k in 1..=depth {
+                let h = head_for(rng(), is_bool);
+                let prev = if k == 1 { 0 } else { defs.len() - 1 };
+                let step = cons(Expr::Type(h), r(prev));
+                let body = if allow_nil && ((rng() & 1) != 0 || k == 1) {
+                    Expr::Union(vec![nil(), step])
+                } else {
+                    step
+                };
+                defs.push(def(&format!("C{c}_{k}{tag}"), body));
+            }
+            endpoints.push(defs.len() - 1);
+        }
+        let ts = Group::new(defs).unwrap().instance(vec![]);
+        let u = endpoints
+            .iter()
+            .map(|&i| &ts[i])
+            .fold(Type::empty(), |u, t| &u | t);
+        let l = list_named(all, &tag);
+        let t = &l - &u;
+        let inhab = list_oracle_inhabited(&t, samples, max_depth + 1);
+        let want = if inhab {
+            Verdict::Inhabited
+        } else {
+            Verdict::Empty
+        };
+        if let Some(sv) = t.sweep_verdict() {
+            assert_eq!(sv, want, "sweep random chain ZED_SEED={seed}");
+        }
+        Type::forget_emptiness();
+        match t.verdict() {
+            Verdict::Empty => assert!(!inhab, "random chain ZED_SEED={seed}"),
+            Verdict::Inhabited => assert!(inhab, "random chain ZED_SEED={seed}"),
+            Verdict::Refused(_) => {}
+        }
+        assert!(
+            !(t.is_empty() && inhab),
+            "is_empty random chain ZED_SEED={seed}"
+        );
+    }
+
+    // Random in-class prefix-chain families (uniform carrier prefix per chain, cofinite/finite
+    // leaf heads over 0..4, sampled over 0..=4): must be decided (Empty or Inhabited, never
+    // Refused) and agree with the oracle.
+    for _ in 0..20 {
+        Type::forget_emptiness();
+        let is_bool = (rng() & 1) != 0;
+        let all = if is_bool { Type::bool() } else { Type::int() };
+        let samples: &[Value] = if is_bool {
+            &bool_samples
+        } else {
+            &rand_int_samples
+        };
+        let tag = next_tag();
+        let mut defs = vec![def(
+            &format!("L{tag}"),
+            Expr::Union(vec![nil(), cons(Expr::Type(all.clone()), r(0))]),
+        )];
+        let num_chains = 2 + (rng() % 4) as usize;
+        let mut endpoints = Vec::new();
+        let mut max_depth = 1usize;
+        for c in 0..num_chains {
+            let depth = 1 + (rng() % 4) as usize;
+            max_depth = max_depth.max(depth);
+            let leaf_h = head_for(rng(), is_bool);
+            let leaf_nil = c == 0 || (rng() & 1) != 0;
+            let step_nil = c == 0 || (leaf_nil && (rng() & 1) != 0);
+            for k in 1..=depth {
+                let h = if k == 1 { leaf_h.clone() } else { all.clone() };
+                let prev = if k == 1 { 0 } else { defs.len() - 1 };
+                let step = cons(Expr::Type(h), r(prev));
+                let has_nil = if k == 1 { leaf_nil } else { step_nil };
+                let body = if has_nil {
+                    Expr::Union(vec![nil(), step])
+                } else {
+                    step
+                };
+                defs.push(def(&format!("U{c}_{k}{tag}"), body));
+            }
+            endpoints.push(defs.len() - 1);
+        }
+        let ts = Group::new(defs).unwrap().instance(vec![]);
+        let u = endpoints
+            .iter()
+            .map(|&i| &ts[i])
+            .fold(Type::empty(), |u, t| &u | t);
+        let l = list_named(all, &tag);
+        let t = &l - &u;
+        let inhab = list_oracle_inhabited(&t, samples, max_depth + 1);
+        let want = if inhab {
+            Verdict::Inhabited
+        } else {
+            Verdict::Empty
+        };
+        assert_eq!(
+            t.sweep_verdict(),
+            Some(want),
+            "sweep uniform random ZED_SEED={seed}"
+        );
+        Type::forget_emptiness();
+        assert_eq!(t.verdict(), want, "uniform random ZED_SEED={seed}");
+        assert_eq!(
+            t.is_empty(),
+            !inhab,
+            "is_empty uniform random ZED_SEED={seed}"
+        );
+    }
+}
+
+#[test]
+fn lists_by_the_place_from_the_front_verdicts_are_independent_of_order_gemini() {
+    let int_samples = [Value::Int(0), Value::Int(1)];
+    let mut tag_id = 0usize;
+    let mut next_tag = || {
+        tag_id += 1;
+        format!("_ord{tag_id}")
+    };
+    for n in 2..=6 {
+        for skip in [None, Some(1), Some(n / 2), Some(n)] {
+            let tag_base = next_tag();
+            let want = {
+                Type::forget_emptiness();
+                let (l, u) = rfx_family(n, skip, n, &Type::int(), &lit(1), false, &tag_base);
+                let t = &l - &u;
+                let v = t.verdict();
+                let oracle = if list_oracle_inhabited(&t, &int_samples, n + 1) {
+                    Verdict::Inhabited
+                } else {
+                    Verdict::Empty
+                };
+                assert_eq!(v, oracle, "base order n={n} skip={skip:?}");
+                v
+            };
+
+            // Test permutations of both Group definition indices and union operand order,
+            // including staggered chains sharing `Fd` and holes chains.
+            for perm_kind in 0..4 {
+                Type::forget_emptiness();
+                let tag = next_tag();
+                let mut defs = vec![def(
+                    &format!("L{tag}"),
+                    Expr::Union(vec![nil(), cons(int(), r(0))]),
+                )];
+                defs.push(def(&format!("F1{tag}"), cons(Expr::Type(lit(1)), r(0))));
+                defs.extend((2..=n).map(|i| def(&format!("F{i}{tag}"), cons(int(), r(i - 1)))));
+                let not_one = Expr::Type(&Type::int() - &lit(1));
+                defs.extend((1..=n).map(|k| {
+                    let rest = if k == 1 { r(0) } else { r(n + k - 1) };
+                    def(
+                        &format!("M{k}{tag}"),
+                        Expr::Union(vec![nil(), cons(not_one.clone(), rest)]),
+                    )
+                }));
+                let d = (n / 2).max(1);
+                let ha = &Type::int() | &Type::atom("a");
+                defs.push(def(&format!("P1{tag}"), cons(Expr::Type(ha.clone()), r(d))));
+                defs.push(def(&format!("P2{tag}"), cons(Expr::Type(ha), r(2 * n + 1))));
+
+                let k_len = defs.len();
+                let mut perm: Vec<usize> = (0..k_len).collect();
+                match perm_kind {
+                    0 => perm.reverse(),
+                    1 => perm.rotate_left(k_len / 2),
+                    2 => {
+                        perm = (0..k_len).step_by(2).chain((1..k_len).step_by(2)).collect();
+                    }
+                    _ => {
+                        perm[1..].reverse();
+                    }
+                }
+                let (pdefs, inv) = permute_defs(defs, &perm);
+                let ts = Group::new(pdefs).unwrap().instance(vec![]);
+                let mut u_indices: Vec<usize> = (1..=n)
+                    .filter(|&i| Some(i) != skip)
+                    .chain([2 * n])
+                    .collect();
+                if d < n && skip != Some(d + 1) {
+                    u_indices.push(2 * n + 1);
+                }
+                if d + 2 <= n && skip != Some(d + 2) {
+                    u_indices.push(2 * n + 2);
+                }
+                if perm_kind % 2 == 1 {
+                    u_indices.reverse();
+                } else {
+                    let mid = u_indices.len() / 2;
+                    u_indices.rotate_left(mid);
+                }
+                let u = u_indices
+                    .iter()
+                    .map(|&old_i| &ts[inv[old_i]])
+                    .fold(Type::empty(), |acc, t| &acc | t);
+                let l = list_named(Type::int(), &tag);
+                let t = &l - &u;
+                assert_eq!(
+                    t.sweep_verdict(),
+                    Some(want),
+                    "sweep order-independence n={n} skip={skip:?} perm_kind={perm_kind}"
+                );
+                Type::forget_emptiness();
+                assert_eq!(
+                    t.verdict(),
+                    want,
+                    "order-independence n={n} skip={skip:?} perm_kind={perm_kind}"
+                );
+            }
+        }
+    }
 }
 
 // Round-4 union probe (orchestrator): the new families of all three reviewers under u4 names.
@@ -4156,13 +4137,18 @@ fn r5_sat_run(spec: Vec<usize>) {
         .filter(|(i, _)| (i + 1) % nsh == shard)
         .map(|(_, s)| s)
         .collect();
-    r5_sat_decide(
-        k,
-        &all,
-        mine,
-        &format!("m {mlo}..{mhi} w {wmin} shard {shard}/{nsh}"),
-        None,
-    );
+    // Only the bench tests run whole shards, on the stack of `big` that `r5_sat_decide` used to
+    // give every caller; `r5_sat_sample` decides its few formulas on the test's own thread
+    // (TEST-bench-move-l0123, author P178).
+    big(|| {
+        r5_sat_decide(
+            k,
+            &all,
+            mine,
+            &format!("m {mlo}..{mhi} w {wmin} shard {shard}/{nsh}"),
+            None,
+        )
+    });
 }
 
 /// [`r5_sat_formulas`] grouped by kind (the clause count, the clause widths and whether the
@@ -4206,89 +4192,84 @@ fn r5_sat_decide(
     seed: Option<u64>,
 ) {
     let seed = seed.map_or(String::new(), |s| format!(" ZED_SEED={s}"));
-    big(move || {
-        let mut counts = std::collections::BTreeMap::new();
-        let (mut bad, mut units, mut most) = (0, 0u64, 0u64);
-        for set in &sets {
-            let cls: Vec<_> = set.iter().map(|&i| all[i].clone()).collect();
-            Type::forget_emptiness();
-            let t = r5_sat_type(
-                k,
-                &cls,
-                &format!(
-                    "_sat{k}_{}",
-                    set.iter()
-                        .map(|i| i.to_string())
-                        .collect::<Vec<_>>()
-                        .join("_")
-                ),
-            );
-            let sat = r5_sat(k, &cls);
-            let mut m = scaling::Meter::new();
-            let mut v = None;
-            let w = m.work(|| v = Some(t.verdict()));
-            let v = v.unwrap();
-            units += w.units;
-            most = most.max(w.units);
-            let wrong = matches!(
-                (&v, sat),
-                (Verdict::Empty, true) | (Verdict::Inhabited, false)
-            );
-            if wrong {
-                bad += 1;
-                eprintln!("r5sat WRONG k {k} {cls:?} sat {sat} {v:?}{seed}");
-            }
-            *counts
-                .entry(format!("m{} sat {sat} {v:?}", set.len()))
-                .or_insert(0usize) += 1;
-            // Which mechanism answers on its own: the front sweep, the prefix chains, or
-            // neither (the instance is in the remainder and goes to the search).
-            Type::forget_emptiness();
-            let sw = t.sweep_verdict();
-            Type::forget_emptiness();
-            let ch = t.chain_verdict();
-            let by = match (&sw, &ch) {
-                (None, _) => "none",
-                (Some(_), Some(_)) => "chains",
-                (Some(_), None) => "front",
-            };
-            if matches!(
-                (&sw, sat),
-                (Some(Verdict::Empty), true) | (Some(Verdict::Inhabited), false)
-            ) {
-                bad += 1;
-                eprintln!("r5sat WRONG SWEEP k {k} {cls:?} sat {sat} {sw:?}{seed}");
-            }
-            if matches!(
-                (&ch, sat),
-                (Some(Verdict::Empty), true) | (Some(Verdict::Inhabited), false)
-            ) {
-                bad += 1;
-                eprintln!("r5sat WRONG CHAINS k {k} {cls:?} sat {sat} {ch:?}{seed}");
-            }
-            *counts
-                .entry(format!("mech m{} {by} {sw:?} chains {ch:?}", set.len()))
-                .or_insert(0usize) += 1;
-        }
-        for (key, c) in &counts {
-            eprintln!("r5sat k {k} {key}: {c}");
-        }
-        eprintln!(
-            "r5sat k {k} {label} cases {} wrong {bad} units {units} most {most}{seed}",
-            sets.len()
+    let mut counts = std::collections::BTreeMap::new();
+    let (mut bad, mut units, mut most) = (0, 0u64, 0u64);
+    for set in &sets {
+        let cls: Vec<_> = set.iter().map(|&i| all[i].clone()).collect();
+        Type::forget_emptiness();
+        let t = r5_sat_type(
+            k,
+            &cls,
+            &format!(
+                "_sat{k}_{}",
+                set.iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<_>>()
+                    .join("_")
+            ),
         );
-        assert_eq!(bad, 0, "{label}{seed}");
-    });
+        let sat = r5_sat(k, &cls);
+        let mut m = scaling::Meter::new();
+        let mut v = None;
+        let w = m.work(|| v = Some(t.verdict()));
+        let v = v.unwrap();
+        units += w.units;
+        most = most.max(w.units);
+        let wrong = matches!(
+            (&v, sat),
+            (Verdict::Empty, true) | (Verdict::Inhabited, false)
+        );
+        if wrong {
+            bad += 1;
+            eprintln!("r5sat WRONG k {k} {cls:?} sat {sat} {v:?}{seed}");
+        }
+        *counts
+            .entry(format!("m{} sat {sat} {v:?}", set.len()))
+            .or_insert(0usize) += 1;
+        // Which mechanism answers on its own: the front sweep, the prefix chains, or
+        // neither (the instance is in the remainder and goes to the search).
+        Type::forget_emptiness();
+        let sw = t.sweep_verdict();
+        Type::forget_emptiness();
+        let ch = t.chain_verdict();
+        let by = match (&sw, &ch) {
+            (None, _) => "none",
+            (Some(_), Some(_)) => "chains",
+            (Some(_), None) => "front",
+        };
+        if matches!(
+            (&sw, sat),
+            (Some(Verdict::Empty), true) | (Some(Verdict::Inhabited), false)
+        ) {
+            bad += 1;
+            eprintln!("r5sat WRONG SWEEP k {k} {cls:?} sat {sat} {sw:?}{seed}");
+        }
+        if matches!(
+            (&ch, sat),
+            (Some(Verdict::Empty), true) | (Some(Verdict::Inhabited), false)
+        ) {
+            bad += 1;
+            eprintln!("r5sat WRONG CHAINS k {k} {cls:?} sat {sat} {ch:?}{seed}");
+        }
+        *counts
+            .entry(format!("mech m{} {by} {sw:?} chains {ch:?}", set.len()))
+            .or_insert(0usize) += 1;
+    }
+    for (key, c) in &counts {
+        eprintln!("r5sat k {k} {key}: {c}");
+    }
+    eprintln!(
+        "r5sat k {k} {label} cases {} wrong {bad} units {units} most {most}{seed}",
+        sets.len()
+    );
+    assert_eq!(bad, 0, "{label}{seed}");
 }
 
-/// Round 5: every probe case of rounds 3 and 4 (and `u4width`, of `w` columns) is decided in
-/// its size, with the verdict the round-5 measurements found. `end` is out of shape and kept
-/// on the search, so it is not here.
-fn r5_cases_scale(cases: &[(&str, Verdict)]) {
-    cases_scale_from(cases, 8);
-}
-
-/// [`r5_cases_scale`] at the sizes `base` and `8 * base`.
+/// Each case of `cases`, a probe case of rounds 3 and 4 (and `u4width`, of `w` columns) with the
+/// verdict the round-5 measurements found, decided at the sizes `base` and `8 * base`, a fresh
+/// copy of the type for each run. Its one caller, `r5_cases_scale` (all cases at 8), went when
+/// each case became its own test in refusals/bench.rs (TEST-bench-move-l0123, author P169).
+/// `end` is out of shape and kept on the search, so it is not among the cases.
 fn cases_scale_from(cases: &[(&str, Verdict)], base: usize) {
     big(|| {
         for &(case, want) in cases {
@@ -4317,20 +4298,18 @@ fn cases_scale_from(cases: &[(&str, Verdict)], base: usize) {
 /// prefix chains); the value [4, 2, 1, 1] is in the type.
 #[test]
 fn holes_not_nested_as_prefixes_are_not_matched_greedily() {
-    big(|| {
-        let t = r5_greedy("_r5greedy_t");
-        let v = [4, 2, 1, 1]
-            .iter()
-            .rev()
-            .fold(Value::atom("nil"), |tl, &h| {
-                Value::atom_with("cons", vec![Value::Int(h), tl])
-            });
-        assert!(t.contains(&v));
-        Type::forget_emptiness();
-        assert_ne!(t.chain_verdict(), Some(Verdict::Empty));
-        Type::forget_emptiness();
-        assert_eq!(t.verdict(), Verdict::Inhabited);
-    });
+    let t = r5_greedy("_r5greedy_t");
+    let v = [4, 2, 1, 1]
+        .iter()
+        .rev()
+        .fold(Value::atom("nil"), |tl, &h| {
+            Value::atom_with("cons", vec![Value::Int(h), tl])
+        });
+    assert!(t.contains(&v));
+    Type::forget_emptiness();
+    assert_ne!(t.chain_verdict(), Some(Verdict::Empty));
+    Type::forget_emptiness();
+    assert_eq!(t.verdict(), Verdict::Inhabited);
 }
 
 /// Round 5: a negative chain group killed at one step and started again by a later token kept
@@ -4338,17 +4317,15 @@ fn holes_not_nested_as_prefixes_are_not_matched_greedily() {
 /// chains. The formula is satisfiable (x2 = x3 = x4 = false).
 #[test]
 fn a_negative_chain_group_started_again_ignores_its_old_jumps() {
-    big(|| {
-        let cls = vec![
-            vec![(2, false), (4, false)],
-            vec![(1, false), (2, false), (4, true)],
-            vec![(3, false), (4, false)],
-        ];
-        assert!(r5_sat(4, &cls));
-        let t = r5_sat_type(4, &cls, "_r5_regroup");
-        Type::forget_emptiness();
-        assert_ne!(t.verdict(), Verdict::Empty);
-    });
+    let cls = vec![
+        vec![(2, false), (4, false)],
+        vec![(1, false), (2, false), (4, true)],
+        vec![(3, false), (4, false)],
+    ];
+    assert!(r5_sat(4, &cls));
+    let t = r5_sat_type(4, &cls, "_r5_regroup");
+    Type::forget_emptiness();
+    assert_ne!(t.verdict(), Verdict::Empty);
 }
 
 /// Round 5, Q2: the boundary of the sweeps on the 3-SAT reduction. Clauses without literals
@@ -4356,18 +4333,16 @@ fn a_negative_chain_group_started_again_ignores_its_old_jumps() {
 /// was left to the search in round 5 and is decided by the escape solve since round 6.
 #[test]
 fn the_reduction_without_literals_is_swept_and_with_literals_is_not() {
-    big(|| {
-        let none = r5_sat_type(2, &vec![vec![]; 4], "_r5_bnone");
-        Type::forget_emptiness();
-        assert_eq!(none.sweep_verdict(), Some(Verdict::Empty));
-        Type::forget_emptiness();
-        assert_eq!(none.verdict(), Verdict::Empty);
-        let one = r5_sat_type(2, &vec![vec![(1, true)]; 4], "_r5_bone");
-        Type::forget_emptiness();
-        assert_eq!(one.sweep_verdict(), Some(Verdict::Inhabited));
-        Type::forget_emptiness();
-        assert_eq!(one.verdict(), Verdict::Inhabited);
-    });
+    let none = r5_sat_type(2, &vec![vec![]; 4], "_r5_bnone");
+    Type::forget_emptiness();
+    assert_eq!(none.sweep_verdict(), Some(Verdict::Empty));
+    Type::forget_emptiness();
+    assert_eq!(none.verdict(), Verdict::Empty);
+    let one = r5_sat_type(2, &vec![vec![(1, true)]; 4], "_r5_bone");
+    Type::forget_emptiness();
+    assert_eq!(one.sweep_verdict(), Some(Verdict::Inhabited));
+    Type::forget_emptiness();
+    assert_eq!(one.verdict(), Verdict::Inhabited);
 }
 
 // rfx port (verification only)
@@ -4640,19 +4615,17 @@ fn r6_sat_type(k: usize, cls: &[Vec<(usize, bool)>], tag: &str, filler: Type, ba
 
 #[test]
 fn r6_two_atom_roots_over_many_variables_are_decided() {
-    big(|| {
-        for n in [8, 16, 64] {
-            for (kind, want) in [(0, Verdict::Inhabited), (1, Verdict::Empty)] {
-                let (k, cls) = r6_two_clauses(n, kind);
-                assert_eq!(r5_sat(k, &cls), kind == 0, "the formula at {n} kind {kind}");
-                Type::forget_emptiness();
-                let t = r5_sat_type(k, &cls, &format!("_r6two_{n}_{kind}"));
-                assert_eq!(t.chain_verdict(), Some(want), "chains at {n} kind {kind}");
-                Type::forget_emptiness();
-                assert_eq!(t.verdict(), want, "verdict at {n} kind {kind}");
-            }
+    for n in [8, 16, 64] {
+        for (kind, want) in [(0, Verdict::Inhabited), (1, Verdict::Empty)] {
+            let (k, cls) = r6_two_clauses(n, kind);
+            assert_eq!(r5_sat(k, &cls), kind == 0, "the formula at {n} kind {kind}");
+            Type::forget_emptiness();
+            let t = r5_sat_type(k, &cls, &format!("_r6two_{n}_{kind}"));
+            assert_eq!(t.chain_verdict(), Some(want), "chains at {n} kind {kind}");
+            Type::forget_emptiness();
+            assert_eq!(t.verdict(), want, "verdict at {n} kind {kind}");
         }
-    });
+    }
 }
 
 /// The 3-colouring reduction for crossing atoms: place `u` holds vertex `u`'s colour in
@@ -4756,99 +4729,97 @@ fn r6_colour_list(xs: &[i64]) -> Value {
 /// membership), and no mechanism answers wrongly. With `comb`, also the comb form
 /// ([`r6_colour_comb`]), which the escape solve reads and must decline (its atoms cross).
 fn r6_colouring_check(nv: usize, count: usize, comb: bool) {
-    big(move || {
-        let mut counts = std::collections::BTreeMap::new();
-        {
-            let pairs: Vec<(usize, usize)> = (1..=nv)
-                .flat_map(|u| (u + 1..=nv).map(move |v| (u, v)))
+    let mut counts = std::collections::BTreeMap::new();
+    {
+        let pairs: Vec<(usize, usize)> = (1..=nv)
+            .flat_map(|u| (u + 1..=nv).map(move |v| (u, v)))
+            .collect();
+        let what = format!("r6 colouring nv {nv}");
+        let (mut rng, _) = Rng::fresh(&what);
+        for mask in pick_seeds(&mut rng, &what, 1..1 << pairs.len(), count) {
+            let edges: Vec<(usize, usize)> = pairs
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| mask >> i & 1 == 1)
+                .map(|(_, &e)| e)
                 .collect();
-            let what = format!("r6 colouring nv {nv}");
-            let (mut rng, _) = Rng::fresh(&what);
-            for mask in pick_seeds(&mut rng, &what, 1..1 << pairs.len(), count) {
-                let edges: Vec<(usize, usize)> = pairs
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, _)| mask >> i & 1 == 1)
-                    .map(|(_, &e)| e)
-                    .collect();
-                if edges.is_empty() {
-                    continue;
-                }
-                let t = r6_colour_type(nv, &edges, &format!("_r6col{nv}_{mask}"));
-                let mut colourable = false;
-                for code in 0..3u32.pow(nv as u32) {
-                    let xs: Vec<i64> = (0..nv)
-                        .map(|i| (code / 3u32.pow(i as u32) % 3) as i64 + 1)
-                        .collect();
-                    let proper = edges.iter().all(|&(u, v)| xs[u - 1] != xs[v - 1]);
-                    assert_eq!(
-                        t.contains(&r6_colour_list(&xs)),
-                        proper,
-                        "nv {nv} mask {mask} {xs:?}"
-                    );
-                    colourable |= proper;
-                }
-                Type::forget_emptiness();
-                let ch = t.chain_verdict();
-                Type::forget_emptiness();
-                let v = t.verdict();
-                let wrong = |x: &Verdict| {
-                    matches!(
-                        (x, colourable),
-                        (Verdict::Empty, true) | (Verdict::Inhabited, false)
-                    )
-                };
-                assert!(
-                    !wrong(&v) && !ch.as_ref().is_some_and(wrong),
-                    "nv {nv} mask {mask} colourable {colourable} {v:?} {ch:?}"
-                );
-                *counts
-                    .entry(format!(
-                        "nv {nv} colourable {colourable} {v:?} chains {ch:?}"
-                    ))
-                    .or_insert(0usize) += 1;
-                if !comb {
-                    continue;
-                }
-                // The comb form: the same colourings, padded with the block values.
-                let (t, len) = r6_colour_comb(nv, &edges, &format!("_r6cc{nv}_{mask}"));
-                for code in 0..3u32.pow(nv as u32) {
-                    let mut xs: Vec<i64> = (0..nv)
-                        .map(|i| (code / 3u32.pow(i as u32) % 3) as i64 + 1)
-                        .collect();
-                    let proper = edges.iter().all(|&(u, v)| xs[u - 1] != xs[v - 1]);
-                    xs.extend((nv + 1..=len).map(|p| {
-                        if (p - nv).is_multiple_of(nv + 1) {
-                            0
-                        } else {
-                            7
-                        }
-                    }));
-                    assert_eq!(
-                        t.contains(&r6_colour_list(&xs)),
-                        proper,
-                        "comb nv {nv} mask {mask} {xs:?}"
-                    );
-                }
-                Type::forget_emptiness();
-                let ch = t.chain_verdict();
-                Type::forget_emptiness();
-                let v = t.verdict();
-                assert!(
-                    !wrong(&v) && !ch.as_ref().is_some_and(wrong),
-                    "comb nv {nv} mask {mask} colourable {colourable} {v:?} {ch:?}"
-                );
-                *counts
-                    .entry(format!(
-                        "comb nv {nv} colourable {colourable} {v:?} chains {ch:?}"
-                    ))
-                    .or_insert(0usize) += 1;
+            if edges.is_empty() {
+                continue;
             }
+            let t = r6_colour_type(nv, &edges, &format!("_r6col{nv}_{mask}"));
+            let mut colourable = false;
+            for code in 0..3u32.pow(nv as u32) {
+                let xs: Vec<i64> = (0..nv)
+                    .map(|i| (code / 3u32.pow(i as u32) % 3) as i64 + 1)
+                    .collect();
+                let proper = edges.iter().all(|&(u, v)| xs[u - 1] != xs[v - 1]);
+                assert_eq!(
+                    t.contains(&r6_colour_list(&xs)),
+                    proper,
+                    "nv {nv} mask {mask} {xs:?}"
+                );
+                colourable |= proper;
+            }
+            Type::forget_emptiness();
+            let ch = t.chain_verdict();
+            Type::forget_emptiness();
+            let v = t.verdict();
+            let wrong = |x: &Verdict| {
+                matches!(
+                    (x, colourable),
+                    (Verdict::Empty, true) | (Verdict::Inhabited, false)
+                )
+            };
+            assert!(
+                !wrong(&v) && !ch.as_ref().is_some_and(wrong),
+                "nv {nv} mask {mask} colourable {colourable} {v:?} {ch:?}"
+            );
+            *counts
+                .entry(format!(
+                    "nv {nv} colourable {colourable} {v:?} chains {ch:?}"
+                ))
+                .or_insert(0usize) += 1;
+            if !comb {
+                continue;
+            }
+            // The comb form: the same colourings, padded with the block values.
+            let (t, len) = r6_colour_comb(nv, &edges, &format!("_r6cc{nv}_{mask}"));
+            for code in 0..3u32.pow(nv as u32) {
+                let mut xs: Vec<i64> = (0..nv)
+                    .map(|i| (code / 3u32.pow(i as u32) % 3) as i64 + 1)
+                    .collect();
+                let proper = edges.iter().all(|&(u, v)| xs[u - 1] != xs[v - 1]);
+                xs.extend((nv + 1..=len).map(|p| {
+                    if (p - nv).is_multiple_of(nv + 1) {
+                        0
+                    } else {
+                        7
+                    }
+                }));
+                assert_eq!(
+                    t.contains(&r6_colour_list(&xs)),
+                    proper,
+                    "comb nv {nv} mask {mask} {xs:?}"
+                );
+            }
+            Type::forget_emptiness();
+            let ch = t.chain_verdict();
+            Type::forget_emptiness();
+            let v = t.verdict();
+            assert!(
+                !wrong(&v) && !ch.as_ref().is_some_and(wrong),
+                "comb nv {nv} mask {mask} colourable {colourable} {v:?} {ch:?}"
+            );
+            *counts
+                .entry(format!(
+                    "comb nv {nv} colourable {colourable} {v:?} chains {ch:?}"
+                ))
+                .or_insert(0usize) += 1;
         }
-        for (k, c) in &counts {
-            eprintln!("r6 colouring {k}: {c}");
-        }
-    });
+    }
+    for (k, c) in &counts {
+        eprintln!("r6 colouring {k}: {c}");
+    }
 }
 
 #[test]
@@ -5147,40 +5118,38 @@ fn r6_oracle_run(what: &'static str, count: usize, np_max: u64, nr_max: u64) {
 /// TEST-bench-move-l0123 each test had a fixed seed and 600 to 3,000 inputs, the two tests at
 /// 1,500 differing only in their seed, now one test of 800).
 fn r6_oracle_run_with(what: &'static str, count: usize, np_max: u64, nr_max: u64, alt_rows: bool) {
-    big(move || {
-        let (_, seed) = Rng::fresh(what);
-        let mut g = R6Rng(seed);
-        let mut counts = std::collections::BTreeMap::new();
-        for i in 0..count {
-            let x = r6_random_input(&mut g, np_max, nr_max, alt_rows);
-            let truth = r6_oracle(&x);
-            let t = r6_input_type(&x, &format!("_r6o{seed}_{i}"));
-            Type::forget_emptiness();
-            let ch = t.chain_verdict();
-            Type::forget_emptiness();
-            let v = t.verdict();
-            let wrong = |y: &Verdict| {
-                matches!(
-                    (y, truth),
-                    (Verdict::Empty, true) | (Verdict::Inhabited, false)
-                )
-            };
-            assert!(
-                !wrong(&v),
-                "verdict {v:?} truth {truth} on {x:?}, ZED_SEED={seed}"
-            );
-            assert!(
-                !ch.as_ref().is_some_and(wrong),
-                "chains {ch:?} truth {truth} on {x:?}, ZED_SEED={seed}"
-            );
-            *counts
-                .entry(format!("truth {truth} {v:?} chains {ch:?}"))
-                .or_insert(0usize) += 1;
-        }
-        for (k, c) in &counts {
-            eprintln!("r6 oracle seed {seed} {k}: {c}");
-        }
-    });
+    let (_, seed) = Rng::fresh(what);
+    let mut g = R6Rng(seed);
+    let mut counts = std::collections::BTreeMap::new();
+    for i in 0..count {
+        let x = r6_random_input(&mut g, np_max, nr_max, alt_rows);
+        let truth = r6_oracle(&x);
+        let t = r6_input_type(&x, &format!("_r6o{seed}_{i}"));
+        Type::forget_emptiness();
+        let ch = t.chain_verdict();
+        Type::forget_emptiness();
+        let v = t.verdict();
+        let wrong = |y: &Verdict| {
+            matches!(
+                (y, truth),
+                (Verdict::Empty, true) | (Verdict::Inhabited, false)
+            )
+        };
+        assert!(
+            !wrong(&v),
+            "verdict {v:?} truth {truth} on {x:?}, ZED_SEED={seed}"
+        );
+        assert!(
+            !ch.as_ref().is_some_and(wrong),
+            "chains {ch:?} truth {truth} on {x:?}, ZED_SEED={seed}"
+        );
+        *counts
+            .entry(format!("truth {truth} {v:?} chains {ch:?}"))
+            .or_insert(0usize) += 1;
+    }
+    for (k, c) in &counts {
+        eprintln!("r6 oracle seed {seed} {k}: {c}");
+    }
 }
 
 /// 500 random inputs (800 until TEST-bench-move-l0123, author P169: 0.50 s alone, now about
@@ -5239,68 +5208,64 @@ fn r6_parity(n: usize, tag: &str) -> Type {
 /// positive chain, so it holds just `nil`, and [0, 0] is in the type.
 #[test]
 fn an_empty_carrier_head_bounds_only_a_top_carrier_row() {
-    big(|| {
-        // 0: L = nil | cons(E, L); 1: E = cons(int, E) (no finite value); 2: Q = cons(int, L);
-        // 3: P = cons(int, Q); 4: N = cons(5, L).
-        let ts = Group::new(vec![
-            def("L_e0", Expr::Union(vec![nil(), cons(r(1), r(0))])),
-            def("E_e0", cons(int(), r(1))),
-            def("Q_e0", cons(int(), r(0))),
-            def("P_e0", cons(int(), r(2))),
-            def("N_e0", cons(Expr::Type(lit(5)), r(0))),
-        ])
-        .unwrap()
-        .instance(vec![]);
-        let t = &ts[3] - &ts[4];
-        let v = [0, 0].iter().rev().fold(Value::atom("nil"), |tl, &h| {
-            Value::atom_with("cons", vec![Value::Int(h), tl])
-        });
-        assert!(t.contains(&v));
-        Type::forget_emptiness();
-        assert_ne!(t.chain_verdict(), Some(Verdict::Empty));
-        Type::forget_emptiness();
-        assert_eq!(t.verdict(), Verdict::Inhabited);
+    // 0: L = nil | cons(E, L); 1: E = cons(int, E) (no finite value); 2: Q = cons(int, L);
+    // 3: P = cons(int, Q); 4: N = cons(5, L).
+    let ts = Group::new(vec![
+        def("L_e0", Expr::Union(vec![nil(), cons(r(1), r(0))])),
+        def("E_e0", cons(int(), r(1))),
+        def("Q_e0", cons(int(), r(0))),
+        def("P_e0", cons(int(), r(2))),
+        def("N_e0", cons(Expr::Type(lit(5)), r(0))),
+    ])
+    .unwrap()
+    .instance(vec![]);
+    let t = &ts[3] - &ts[4];
+    let v = [0, 0].iter().rev().fold(Value::atom("nil"), |tl, &h| {
+        Value::atom_with("cons", vec![Value::Int(h), tl])
     });
+    assert!(t.contains(&v));
+    Type::forget_emptiness();
+    assert_ne!(t.chain_verdict(), Some(Verdict::Empty));
+    Type::forget_emptiness();
+    assert_eq!(t.verdict(), Verdict::Inhabited);
 }
 
 /// Round 6: the prefix chains followed only the chain row of a positive node that also has a row
 /// into the carrier, and answered Empty; [0, 0, 1] is in the type through the carrier row.
 #[test]
 fn a_positive_row_into_the_carrier_below_the_top_is_not_dropped() {
-    big(|| {
-        // 0: L = nil | cons(int, L); 1: B = cons(3, L); 2: A = cons(1, L) | cons(2, B);
-        // 3: Z = cons(int, A); 4: P = cons(int, Z); 5: N = cons(int, cons(int, cons(2, B))).
-        let ts = Group::new(vec![
-            def("L_pe", Expr::Union(vec![nil(), cons(int(), r(0))])),
-            def("B_pe", cons(Expr::Type(lit(3)), r(0))),
-            def(
-                "A_pe",
-                Expr::Union(vec![
-                    cons(Expr::Type(lit(1)), r(0)),
-                    cons(Expr::Type(lit(2)), r(1)),
-                ]),
-            ),
-            def("Z_pe", cons(int(), r(2))),
-            def("P_pe", cons(int(), r(3))),
-            def(
-                "N_pe",
-                cons(int(), cons(int(), cons(Expr::Type(lit(2)), r(1)))),
-            ),
-        ])
-        .unwrap()
-        .instance(vec![]);
-        let t = &(&ts[4] & &ts[0]) - &ts[5];
-        for (xs, member) in [(vec![0, 0, 1], true), (vec![0, 0, 2, 3], false)] {
-            let v = xs.iter().rev().fold(Value::atom("nil"), |tl, &h| {
-                Value::atom_with("cons", vec![Value::Int(h), tl])
-            });
-            assert_eq!(t.contains(&v), member);
-        }
-        Type::forget_emptiness();
-        assert_ne!(t.chain_verdict(), Some(Verdict::Empty));
-        Type::forget_emptiness();
-        assert_eq!(t.verdict(), Verdict::Inhabited);
-    });
+    // 0: L = nil | cons(int, L); 1: B = cons(3, L); 2: A = cons(1, L) | cons(2, B);
+    // 3: Z = cons(int, A); 4: P = cons(int, Z); 5: N = cons(int, cons(int, cons(2, B))).
+    let ts = Group::new(vec![
+        def("L_pe", Expr::Union(vec![nil(), cons(int(), r(0))])),
+        def("B_pe", cons(Expr::Type(lit(3)), r(0))),
+        def(
+            "A_pe",
+            Expr::Union(vec![
+                cons(Expr::Type(lit(1)), r(0)),
+                cons(Expr::Type(lit(2)), r(1)),
+            ]),
+        ),
+        def("Z_pe", cons(int(), r(2))),
+        def("P_pe", cons(int(), r(3))),
+        def(
+            "N_pe",
+            cons(int(), cons(int(), cons(Expr::Type(lit(2)), r(1)))),
+        ),
+    ])
+    .unwrap()
+    .instance(vec![]);
+    let t = &(&ts[4] & &ts[0]) - &ts[5];
+    for (xs, member) in [(vec![0, 0, 1], true), (vec![0, 0, 2, 3], false)] {
+        let v = xs.iter().rev().fold(Value::atom("nil"), |tl, &h| {
+            Value::atom_with("cons", vec![Value::Int(h), tl])
+        });
+        assert_eq!(t.contains(&v), member);
+    }
+    Type::forget_emptiness();
+    assert_ne!(t.chain_verdict(), Some(Verdict::Empty));
+    Type::forget_emptiness();
+    assert_eq!(t.verdict(), Verdict::Inhabited);
 }
 // R6 boundary: root at offset i escapes iff x_i=0 or x_(i+1)=1 (plus
 // an additional x_(i+1)=0 before the final x_(i+2)=1 in the three-atom arm).
@@ -5342,25 +5307,23 @@ fn r6_distinct_atoms(n: usize, three: bool, tag: &str) -> Type {
 
 #[test]
 fn r6_remout_short_witness_and_negative_controls() {
-    big(|| {
-        let word = |x| {
-            [x, 1, 1].iter().rev().fold(Value::atom("nil"), |tail, &v| {
-                Value::atom_with("cons", vec![Value::Int(v), tail])
-            })
-        };
-        for n in [3, 16, 64, 256, 1024] {
-            let t = r5_remainder_boundary(n, true, &format!("_r6remwit{n}"));
-            assert!(t.contains(&word(5)), "short witness at {n}");
-            assert!(
-                !t.contains(&word(1)),
-                "F1 captures the first negative control"
-            );
-            assert!(
-                !t.contains(&word(4)),
-                "F3 captures the second negative control"
-            );
-        }
-    });
+    let word = |x| {
+        [x, 1, 1].iter().rev().fold(Value::atom("nil"), |tail, &v| {
+            Value::atom_with("cons", vec![Value::Int(v), tail])
+        })
+    };
+    for n in [3, 16, 64, 256, 1024] {
+        let t = r5_remainder_boundary(n, true, &format!("_r6remwit{n}"));
+        assert!(t.contains(&word(5)), "short witness at {n}");
+        assert!(
+            !t.contains(&word(1)),
+            "F1 captures the first negative control"
+        );
+        assert!(
+            !t.contains(&word(4)),
+            "F3 captures the second negative control"
+        );
+    }
 }
 
 /// A period-three boundary for the height-congruence filter. All roots have heights
@@ -5399,34 +5362,32 @@ fn r7_congruence(n: usize, outside: bool, tag: &str) -> Type {
 /// class once, a number fixed by the family (2 here), not by `n`.
 #[test]
 fn r7_height_congruence_skips_only_empty_cells() {
-    big(|| {
-        let mut first = None;
-        for n in [16, 64, 256] {
-            let t = r6_parity(n, &format!("_r7p{n}"));
-            let e = t.escape_cell_counts().1;
-            assert_eq!(*first.get_or_insert(e), e, "parity at {n}: {e} empty");
+    let mut first = None;
+    for n in [16, 64, 256] {
+        let t = r6_parity(n, &format!("_r7p{n}"));
+        let e = t.escape_cell_counts().1;
+        assert_eq!(*first.get_or_insert(e), e, "parity at {n}: {e} empty");
+        assert_eq!(t.chain_verdict(), Some(Verdict::Inhabited));
+        for outside in [false, true] {
+            let t = r7_congruence(n, outside, &format!("_r7g{n}_{outside}"));
+            let word = |first| {
+                (1..=n).rev().fold(Value::atom("nil"), |tail, j| {
+                    let h = if j == 1 {
+                        first
+                    } else {
+                        ((4 - j % 3) % 3) as i64
+                    };
+                    Value::atom_with("cons", vec![Value::Int(h), tail])
+                })
+            };
+            assert!(t.contains(&word(2)));
+            assert!(!t.contains(&word(7)), "F2 must reject the bad witness");
+            Type::forget_emptiness();
             assert_eq!(t.chain_verdict(), Some(Verdict::Inhabited));
-            for outside in [false, true] {
-                let t = r7_congruence(n, outside, &format!("_r7g{n}_{outside}"));
-                let word = |first| {
-                    (1..=n).rev().fold(Value::atom("nil"), |tail, j| {
-                        let h = if j == 1 {
-                            first
-                        } else {
-                            ((4 - j % 3) % 3) as i64
-                        };
-                        Value::atom_with("cons", vec![Value::Int(h), tail])
-                    })
-                };
-                assert!(t.contains(&word(2)));
-                assert!(!t.contains(&word(7)), "F2 must reject the bad witness");
-                Type::forget_emptiness();
-                assert_eq!(t.chain_verdict(), Some(Verdict::Inhabited));
-                Type::forget_emptiness();
-                assert_eq!(t.verdict(), Verdict::Inhabited);
-            }
+            Type::forget_emptiness();
+            assert_eq!(t.verdict(), Verdict::Inhabited);
         }
-    });
+    }
 }
 
 /// Two sound Empty inputs at the guards' boundary. The first has a partial jump remainder
@@ -5434,93 +5395,89 @@ fn r7_height_congruence_skips_only_empty_cells() {
 /// by contradictory positive heads. Their negative controls have the displayed finite words.
 #[test]
 fn r7_guard_admissions_are_sound() {
-    big(|| {
-        let chain = |heads: &[Type]| {
-            heads
-                .iter()
-                .rev()
-                .fold(r(0), |tail, h| cons(Expr::Type(h.clone()), tail))
-        };
-        let ts = u4_inst(vec![
-            def("R7GuardCoverL", Expr::Union(vec![nil(), cons(int(), r(0))])),
-            def(
-                "R7GuardCoverP",
-                chain(&[Type::int(), Type::int(), Type::int(), lit(1)]),
-            ),
-            def("R7GuardCoverA", chain(&[Type::int(), lit(3), lit(2)])),
-            def(
-                "R7GuardCoverN",
-                chain(&[Type::int(), Type::int(), Type::int(), Type::int()]),
-            ),
-        ]);
-        let t = &ts[1] - &(&ts[2] | &ts[3]);
-        Type::forget_emptiness();
-        let direct = t.chain_verdict();
-        Type::forget_emptiness();
-        let ordinary = t.verdict();
-        eprintln!("r7 guard remainder cover direct {direct:?} full {ordinary:?}");
-        assert_ne!(direct, Some(Verdict::Inhabited));
-        assert_eq!(ordinary, Verdict::Empty); // P is a subset of N coordinate by coordinate.
-        let control = &ts[1] - &ts[2];
-        assert!(control.contains(&r6_colour_list(&[0, 0, 0, 1])));
-        Type::forget_emptiness();
-        assert_eq!(control.verdict(), Verdict::Inhabited);
+    let chain = |heads: &[Type]| {
+        heads
+            .iter()
+            .rev()
+            .fold(r(0), |tail, h| cons(Expr::Type(h.clone()), tail))
+    };
+    let ts = u4_inst(vec![
+        def("R7GuardCoverL", Expr::Union(vec![nil(), cons(int(), r(0))])),
+        def(
+            "R7GuardCoverP",
+            chain(&[Type::int(), Type::int(), Type::int(), lit(1)]),
+        ),
+        def("R7GuardCoverA", chain(&[Type::int(), lit(3), lit(2)])),
+        def(
+            "R7GuardCoverN",
+            chain(&[Type::int(), Type::int(), Type::int(), Type::int()]),
+        ),
+    ]);
+    let t = &ts[1] - &(&ts[2] | &ts[3]);
+    Type::forget_emptiness();
+    let direct = t.chain_verdict();
+    Type::forget_emptiness();
+    let ordinary = t.verdict();
+    eprintln!("r7 guard remainder cover direct {direct:?} full {ordinary:?}");
+    assert_ne!(direct, Some(Verdict::Inhabited));
+    assert_eq!(ordinary, Verdict::Empty); // P is a subset of N coordinate by coordinate.
+    let control = &ts[1] - &ts[2];
+    assert!(control.contains(&r6_colour_list(&[0, 0, 0, 1])));
+    Type::forget_emptiness();
+    assert_eq!(control.verdict(), Verdict::Inhabited);
 
-        let ts = u4_inst(vec![
-            def(
-                "R7GuardOptionalL",
-                Expr::Union(vec![nil(), cons(int(), r(0))]),
-            ),
-            def(
-                "R7GuardOptionalP",
-                chain(&[Type::int(), Type::int(), Type::int(), Type::int(), lit(1)]),
-            ),
-            def(
-                "R7GuardOptionalQ",
-                chain(&[Type::int(), Type::int(), Type::int(), Type::int(), lit(2)]),
-            ),
-            def("R7GuardOptionalF1", cons(Expr::Type(lit(1)), r(0))),
-            def(
-                "R7GuardOptionalF2",
-                cons(Expr::Type(&Type::int() - &lit(2)), r(3)),
-            ),
-        ]);
-        let t = &(&ts[1] & &ts[2]) - &ts[4];
-        Type::forget_emptiness();
-        let direct = t.chain_verdict();
-        Type::forget_emptiness();
-        let ordinary = t.verdict();
-        eprintln!("r7 guard optional contradiction direct {direct:?} full {ordinary:?}");
-        assert_ne!(direct, Some(Verdict::Inhabited));
-        assert_eq!(ordinary, Verdict::Empty); // The fifth item cannot be both 1 and 2.
-        let control = &ts[1] - &ts[4];
-        assert!(control.contains(&r6_colour_list(&[0, 0, 0, 0, 1])));
-        Type::forget_emptiness();
-        assert_eq!(control.verdict(), Verdict::Inhabited);
-    });
+    let ts = u4_inst(vec![
+        def(
+            "R7GuardOptionalL",
+            Expr::Union(vec![nil(), cons(int(), r(0))]),
+        ),
+        def(
+            "R7GuardOptionalP",
+            chain(&[Type::int(), Type::int(), Type::int(), Type::int(), lit(1)]),
+        ),
+        def(
+            "R7GuardOptionalQ",
+            chain(&[Type::int(), Type::int(), Type::int(), Type::int(), lit(2)]),
+        ),
+        def("R7GuardOptionalF1", cons(Expr::Type(lit(1)), r(0))),
+        def(
+            "R7GuardOptionalF2",
+            cons(Expr::Type(&Type::int() - &lit(2)), r(3)),
+        ),
+    ]);
+    let t = &(&ts[1] & &ts[2]) - &ts[4];
+    Type::forget_emptiness();
+    let direct = t.chain_verdict();
+    Type::forget_emptiness();
+    let ordinary = t.verdict();
+    eprintln!("r7 guard optional contradiction direct {direct:?} full {ordinary:?}");
+    assert_ne!(direct, Some(Verdict::Inhabited));
+    assert_eq!(ordinary, Verdict::Empty); // The fifth item cannot be both 1 and 2.
+    let control = &ts[1] - &ts[4];
+    assert!(control.contains(&r6_colour_list(&[0, 0, 0, 0, 1])));
+    Type::forget_emptiness();
+    assert_eq!(control.verdict(), Verdict::Inhabited);
 }
 
 #[test]
 fn r7_named_payload_is_not_a_list_pair() {
-    big(|| {
-        let l = list_named(Type::int(), "_r7struct");
-        let n = cons_of(Type::int(), l.clone());
-        let p = cons_of(Type::int(), n.clone());
-        let named = Type::atom_with("cons", &Type::universe(zed_kernel::types::Universe::Struct));
-        let t = &(&p | &named) - &n;
-        let v = Value::atom_named("cons", vec![("field".into(), Value::Int(0))]).unwrap();
-        assert!(t.contains(&v));
-        Type::forget_emptiness();
-        let direct = t.chain_verdict();
-        Type::forget_emptiness();
-        let ordinary = t.verdict();
-        Type::forget_emptiness();
-        let empty = t.is_empty();
-        eprintln!("r7 named payload direct {direct:?} full {ordinary:?} is_empty {empty}");
-        assert_ne!(direct, Some(Verdict::Empty));
-        assert_eq!(ordinary, Verdict::Refused(Refusal::NoWitness));
-        assert!(!empty);
-    });
+    let l = list_named(Type::int(), "_r7struct");
+    let n = cons_of(Type::int(), l.clone());
+    let p = cons_of(Type::int(), n.clone());
+    let named = Type::atom_with("cons", &Type::universe(zed_kernel::types::Universe::Struct));
+    let t = &(&p | &named) - &n;
+    let v = Value::atom_named("cons", vec![("field".into(), Value::Int(0))]).unwrap();
+    assert!(t.contains(&v));
+    Type::forget_emptiness();
+    let direct = t.chain_verdict();
+    Type::forget_emptiness();
+    let ordinary = t.verdict();
+    Type::forget_emptiness();
+    let empty = t.is_empty();
+    eprintln!("r7 named payload direct {direct:?} full {ordinary:?} is_empty {empty}");
+    assert_ne!(direct, Some(Verdict::Empty));
+    assert_eq!(ordinary, Verdict::Refused(Refusal::NoWitness));
+    assert!(!empty);
 }
 
 fn r7_reader_member(t: Type, v: Value, label: &str, expected: Verdict) {
@@ -5539,69 +5496,61 @@ fn r7_reader_member(t: Type, v: Value, label: &str, expected: Verdict) {
 
 #[test]
 fn r7_named_payload_below_top_is_not_a_list_step() {
-    big(|| {
-        let l = list_named(Type::int(), "_r7structtail");
-        let one = cons_of(Type::int(), l);
-        let named = Type::atom_with("cons", &Type::universe(zed_kernel::types::Universe::Struct));
-        let p = cons_of(Type::int(), &one | &named);
-        let n = cons_of(Type::int(), one);
-        let tail = Value::atom_named("cons", vec![("field".into(), Value::Int(0))]).unwrap();
-        r7_reader_member(
-            &p - &n,
-            Value::atom_with("cons", vec![Value::Int(0), tail]),
-            "named tail",
-            Verdict::Refused(Refusal::NoWitness),
-        );
-    });
+    let l = list_named(Type::int(), "_r7structtail");
+    let one = cons_of(Type::int(), l);
+    let named = Type::atom_with("cons", &Type::universe(zed_kernel::types::Universe::Struct));
+    let p = cons_of(Type::int(), &one | &named);
+    let n = cons_of(Type::int(), one);
+    let tail = Value::atom_named("cons", vec![("field".into(), Value::Int(0))]).unwrap();
+    r7_reader_member(
+        &p - &n,
+        Value::atom_with("cons", vec![Value::Int(0), tail]),
+        "named tail",
+        Verdict::Refused(Refusal::NoWitness),
+    );
 }
 
 #[test]
 fn r7_two_stop_names_are_not_one_stop() {
-    big(|| {
-        let l = list_named(Type::int(), "_r7stops");
-        let p = cons_of(Type::int(), &l | &Type::atom("aaa_stop"));
-        let n = cons_of(Type::int(), l);
-        r7_reader_member(
-            &p - &n,
-            Value::atom_with("cons", vec![Value::Int(0), Value::atom("aaa_stop")]),
-            "two stops",
-            Verdict::Inhabited,
-        );
-    });
+    let l = list_named(Type::int(), "_r7stops");
+    let p = cons_of(Type::int(), &l | &Type::atom("aaa_stop"));
+    let n = cons_of(Type::int(), l);
+    r7_reader_member(
+        &p - &n,
+        Value::atom_with("cons", vec![Value::Int(0), Value::atom("aaa_stop")]),
+        "two stops",
+        Verdict::Inhabited,
+    );
 }
 
 #[test]
 fn r7_two_link_names_are_not_one_link() {
-    big(|| {
-        let l = list_named(Type::int(), "_r7links");
-        let extra = Type::atom_with("aaa_link", &Type::tuple(vec![Type::int(), l.clone()]));
-        let p = cons_of(Type::int(), &l | &extra);
-        let n = cons_of(Type::int(), l);
-        let tail = Value::atom_with("aaa_link", vec![Value::Int(0), Value::atom("nil")]);
-        r7_reader_member(
-            &p - &n,
-            Value::atom_with("cons", vec![Value::Int(0), tail]),
-            "two links",
-            Verdict::Inhabited,
-        );
-    });
+    let l = list_named(Type::int(), "_r7links");
+    let extra = Type::atom_with("aaa_link", &Type::tuple(vec![Type::int(), l.clone()]));
+    let p = cons_of(Type::int(), &l | &extra);
+    let n = cons_of(Type::int(), l);
+    let tail = Value::atom_with("aaa_link", vec![Value::Int(0), Value::atom("nil")]);
+    r7_reader_member(
+        &p - &n,
+        Value::atom_with("cons", vec![Value::Int(0), tail]),
+        "two links",
+        Verdict::Inhabited,
+    );
 }
 
 #[test]
 fn r7_cycle_meet_does_not_drop_another_link_name() {
-    big(|| {
-        let l = list_named(Type::int(), "_r7rootlinks");
-        let even = period_named(2, 0, "_r7rooteven");
-        let p = cons_of(Type::int(), even);
-        let n = cons_of(Type::int(), l.clone());
-        let extra = Type::atom_with("aaa_link", &Type::tuple(vec![Type::int(), l]));
-        r7_reader_member(
-            &(&p | &extra) - &n,
-            Value::atom_with("aaa_link", vec![Value::Int(0), Value::atom("nil")]),
-            "cycle root names",
-            Verdict::Inhabited,
-        );
-    });
+    let l = list_named(Type::int(), "_r7rootlinks");
+    let even = period_named(2, 0, "_r7rooteven");
+    let p = cons_of(Type::int(), even);
+    let n = cons_of(Type::int(), l.clone());
+    let extra = Type::atom_with("aaa_link", &Type::tuple(vec![Type::int(), l]));
+    r7_reader_member(
+        &(&p | &extra) - &n,
+        Value::atom_with("aaa_link", vec![Value::Int(0), Value::atom("nil")]),
+        "cycle root names",
+        Verdict::Inhabited,
+    );
 }
 
 /// R7 Q3 boundary (just inside `K <= 2`): Thue-Morse aperiodic comb over two bi-repeated channels
@@ -5692,50 +5641,41 @@ fn r7_aperiodic_matches_its_closed_form() {
             .into_iter()
             .map(|n| n as usize),
     );
-    big(move || {
-        let tm = |m: usize| m.count_ones() % 2;
-        let mut empties = 0;
-        for n in sizes {
-            let q = n / 3;
-            let inhabited = (2 * q + 3..=n).all(|d| {
-                (2 * q + 1..=2 * q + 3).any(|i| i + q > d && i <= d && tm(d - i + 1) == 0)
-            });
-            let want = if inhabited {
-                Verdict::Inhabited
-            } else {
-                Verdict::Empty
-            };
-            empties += usize::from(!inhabited);
-            Type::forget_emptiness();
-            let t = rfx_case("r7aperiodic", n, &format!("_r7ac{n}"));
-            assert_eq!(t.verdict(), want, "r7aperiodic at {n} ZED_SEED={seed}");
-        }
-        assert!(empties > 0, "the closed form must include empty sizes");
-    });
+    let tm = |m: usize| m.count_ones() % 2;
+    let mut empties = 0;
+    for n in sizes {
+        let q = n / 3;
+        let inhabited = (2 * q + 3..=n)
+            .all(|d| (2 * q + 1..=2 * q + 3).any(|i| i + q > d && i <= d && tm(d - i + 1) == 0));
+        let want = if inhabited {
+            Verdict::Inhabited
+        } else {
+            Verdict::Empty
+        };
+        empties += usize::from(!inhabited);
+        Type::forget_emptiness();
+        let t = rfx_case("r7aperiodic", n, &format!("_r7ac{n}"));
+        assert_eq!(t.verdict(), want, "r7aperiodic at {n} ZED_SEED={seed}");
+    }
+    assert!(empties > 0, "the closed form must include empty sizes");
 }
 
-/// X39: initialize the emptiness tables before the first type, and leave a deep
-/// type in them until thread exit. No recursive group or escape solver is needed.
+/// X39 in its smallest form: initialize the emptiness tables before the first type, and leave a
+/// nested type in them until the test thread exits. The depth that overflowed a 2 MiB stack at
+/// thread exit is checked in `refusals::bench::r8_deep_type_cached_before_queue_initialization_drops_on_small_stack`
+/// (TEST-bench-move-l0123, author P178).
 #[test]
-fn r8_deep_type_cached_before_queue_initialization_drops_on_small_stack() {
-    std::thread::Builder::new()
-        .stack_size(2 << 20)
-        .spawn(|| {
-            Type::forget_emptiness();
-            let mut t = Type::int();
-            for _ in 0..12000 {
-                t = Type::tuple(vec![t]);
-            }
-            assert_eq!(t.verdict(), Verdict::Inhabited);
-            let body = (0..12000).fold(int(), |tail, _| Expr::Tuple(vec![tail]));
-            let group = Group::new(vec![def("R8DeepCachedGroup", body)]).unwrap();
-            let member = group.instance(vec![]).remove(0);
-            assert_eq!(member.verdict(), Verdict::Inhabited);
-            eprintln!("r8 deep cached verdict complete");
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+fn r8_type_cached_before_queue_initialization_drops_at_thread_exit() {
+    Type::forget_emptiness();
+    let mut t = Type::int();
+    for _ in 0..16 {
+        t = Type::tuple(vec![t]);
+    }
+    assert_eq!(t.verdict(), Verdict::Inhabited);
+    let body = (0..16).fold(int(), |tail, _| Expr::Tuple(vec![tail]));
+    let group = Group::new(vec![def("R8DeepCachedGroup", body)]).unwrap();
+    let member = group.instance(vec![]).remove(0);
+    assert_eq!(member.verdict(), Verdict::Inhabited);
 }
 
 /// Preserve cb709f13 answers when list queries are nested in products and atom payloads.
@@ -5743,30 +5683,28 @@ fn r8_deep_type_cached_before_queue_initialization_drops_on_small_stack() {
 /// R9 (X42) the payload gets the list's verdict there too.
 #[test]
 fn r8_roots_only_preserves_nested_list_answers() {
-    big(|| {
-        for name in [
-            "chain",
-            "chainfar",
-            "r6parity",
-            "r7congruenceout",
-            "r7aperiodic",
-        ] {
-            for n in [16, 64, 128] {
-                Type::forget_emptiness();
-                let t = rfx_case(name, n, &format!("_r8nest{name}{n}"));
-                let direct = t.verdict();
-                let tuple = Type::tuple(vec![Type::int(), t.clone()]);
-                let atom = Type::atom_with("r8box", &Type::tuple(vec![t.clone()]));
-                Type::forget_emptiness();
-                let tv = tuple.verdict();
-                Type::forget_emptiness();
-                let av = atom.verdict();
-                eprintln!("r8nested {name} {n} direct {direct:?} tuple {tv:?} atom {av:?}");
-                assert_eq!(tv, direct, "tuple {name} {n}");
-                assert_eq!(av, direct, "payload {name} {n}: the list's verdict");
-            }
+    for name in [
+        "chain",
+        "chainfar",
+        "r6parity",
+        "r7congruenceout",
+        "r7aperiodic",
+    ] {
+        for n in [16, 64, 128] {
+            Type::forget_emptiness();
+            let t = rfx_case(name, n, &format!("_r8nest{name}{n}"));
+            let direct = t.verdict();
+            let tuple = Type::tuple(vec![Type::int(), t.clone()]);
+            let atom = Type::atom_with("r8box", &Type::tuple(vec![t.clone()]));
+            Type::forget_emptiness();
+            let tv = tuple.verdict();
+            Type::forget_emptiness();
+            let av = atom.verdict();
+            eprintln!("r8nested {name} {n} direct {direct:?} tuple {tv:?} atom {av:?}");
+            assert_eq!(tv, direct, "tuple {name} {n}");
+            assert_eq!(av, direct, "payload {name} {n}: the list's verdict");
         }
-    });
+    }
 }
 
 /// X38 boundary: move the outlier from the shallow end to the tallest height.
@@ -5800,25 +5738,23 @@ fn r8_height_boundary(n: usize, outside: bool, tag: &str) -> Type {
 
 #[test]
 fn r8_height_boundary_keeps_the_checked_witness() {
-    big(|| {
-        for n in [16, 64, 256] {
-            for outside in [false, true] {
-                Type::forget_emptiness();
-                let t = r8_height_boundary(n, outside, &format!("_r8hb{n}{outside}"));
-                let good = (1..=n).rev().fold(Value::atom("nil"), |tail, j| {
-                    let h = if j == 1 { 2 } else { ((4 - j % 3) % 3) as i64 };
-                    Value::atom_with("cons", vec![Value::Int(h), tail])
-                });
-                let bad = (1..=n).rev().fold(Value::atom("nil"), |tail, _| {
-                    Value::atom_with("cons", vec![Value::Int(7), tail])
-                });
-                assert!(t.contains(&good));
-                assert!(!t.contains(&bad));
-                Type::forget_emptiness();
-                assert_eq!(t.verdict(), Verdict::Inhabited);
-            }
+    for n in [16, 64, 256] {
+        for outside in [false, true] {
+            Type::forget_emptiness();
+            let t = r8_height_boundary(n, outside, &format!("_r8hb{n}{outside}"));
+            let good = (1..=n).rev().fold(Value::atom("nil"), |tail, j| {
+                let h = if j == 1 { 2 } else { ((4 - j % 3) % 3) as i64 };
+                Value::atom_with("cons", vec![Value::Int(h), tail])
+            });
+            let bad = (1..=n).rev().fold(Value::atom("nil"), |tail, _| {
+                Value::atom_with("cons", vec![Value::Int(7), tail])
+            });
+            assert!(t.contains(&good));
+            assert!(!t.contains(&bad));
+            Type::forget_emptiness();
+            assert_eq!(t.verdict(), Verdict::Inhabited);
         }
-    });
+    }
 }
 
 /// Round 8 boundary of the escape's skips. `F_e = cons(int \ {0}, F_(e-1))` for `e` 0 or 1
@@ -5872,26 +5808,24 @@ fn r8_residues(n: usize, outside: bool, tag: &str) -> Type {
 /// counts each empty pair of a place class and a node class once; the pair listing reads none).
 #[test]
 fn r8_escape_empty_reads_are_linear() {
-    big(|| {
-        let mut first = None;
-        for n in [64, 512] {
-            for case in [
-                "r7congruenceout",
-                "r7aperiodic",
-                "r8heightout",
-                "r8residuesout",
-            ] {
-                let t = rfx_case(case, n, &format!("_r8e_{case}_{n}"));
-                let (reads, empty) = t.escape_cell_counts();
-                assert!(empty <= n, "{case} at {n}: {empty} empty of {reads} reads");
-                assert_eq!(t.verdict(), Verdict::Inhabited, "{case} at {n}");
-            }
-            let t = rfx_case("r8residues", n, &format!("_r8e_in_{n}"));
-            let e = t.escape_cell_counts().1;
-            assert_eq!(*first.get_or_insert(e), e, "r8residues at {n}: {e} empty");
-            assert_eq!(t.verdict(), Verdict::Inhabited);
+    let mut first = None;
+    for n in [64, 512] {
+        for case in [
+            "r7congruenceout",
+            "r7aperiodic",
+            "r8heightout",
+            "r8residuesout",
+        ] {
+            let t = rfx_case(case, n, &format!("_r8e_{case}_{n}"));
+            let (reads, empty) = t.escape_cell_counts();
+            assert!(empty <= n, "{case} at {n}: {empty} empty of {reads} reads");
+            assert_eq!(t.verdict(), Verdict::Inhabited, "{case} at {n}");
         }
-    });
+        let t = rfx_case("r8residues", n, &format!("_r8e_in_{n}"));
+        let e = t.escape_cell_counts().1;
+        assert_eq!(*first.get_or_insert(e), e, "r8residues at {n}: {e} empty");
+        assert_eq!(t.verdict(), Verdict::Inhabited);
+    }
 }
 
 /// R8 Q2 boundary between Stage A (multi-residue congruence skip, `R_P <= ceil(log2(V + 2))`)
@@ -5985,407 +5919,381 @@ fn r8_stage_boundary(n: usize, outside: bool, tag: &str) -> Type {
 /// committed escape read Θ(n²) empty cells (X38, open); the verdict and the work stay linear.
 #[test]
 fn r8_stage_boundary_keeps_the_checked_witness() {
-    big(|| {
-        for n in 16usize..=64 {
-            let p_mod = (n + 3).ilog2() as usize;
-            let sentinel = (7 + p_mod) as i64;
-            let tin = r8_stage_boundary(n, false, &format!("_r8in_{n}"));
-            let win_in = (1..=n).rev().fold(Value::atom("nil"), |tail, j| {
-                let v = if j == 1 {
-                    0
-                } else {
-                    ((2 * p_mod + 2 - j % p_mod) % p_mod) as i64
-                };
-                Value::atom_with("cons", vec![Value::Int(v), tail])
-            });
-            let bad_in = (1..=n).rev().fold(Value::atom("nil"), |tail, j| {
-                let v = if j == 1 {
-                    sentinel
-                } else {
-                    ((2 * p_mod + 2 - j % p_mod) % p_mod) as i64
-                };
-                Value::atom_with("cons", vec![Value::Int(v), tail])
-            });
-            assert!(tin.contains(&win_in), "r8stagein witness at {n}");
-            assert!(!tin.contains(&bad_in), "r8stagein negative control at {n}");
+    for n in 16usize..=64 {
+        let p_mod = (n + 3).ilog2() as usize;
+        let sentinel = (7 + p_mod) as i64;
+        let tin = r8_stage_boundary(n, false, &format!("_r8in_{n}"));
+        let win_in = (1..=n).rev().fold(Value::atom("nil"), |tail, j| {
+            let v = if j == 1 {
+                0
+            } else {
+                ((2 * p_mod + 2 - j % p_mod) % p_mod) as i64
+            };
+            Value::atom_with("cons", vec![Value::Int(v), tail])
+        });
+        let bad_in = (1..=n).rev().fold(Value::atom("nil"), |tail, j| {
+            let v = if j == 1 {
+                sentinel
+            } else {
+                ((2 * p_mod + 2 - j % p_mod) % p_mod) as i64
+            };
+            Value::atom_with("cons", vec![Value::Int(v), tail])
+        });
+        assert!(tin.contains(&win_in), "r8stagein witness at {n}");
+        assert!(!tin.contains(&bad_in), "r8stagein negative control at {n}");
 
-            let q = n / 4;
-            let c = |m: usize| -> i64 {
-                if m % 2 == 1 {
-                    1
+        let q = n / 4;
+        let c = |m: usize| -> i64 {
+            if m % 2 == 1 {
+                1
+            } else {
+                2 * ((m / 2).count_ones() % 2) as i64
+            }
+        };
+        let tout = r8_stage_boundary(n, true, &format!("_r8out_{n}"));
+        let make_out = |x1: i64, x_even: i64| {
+            (1..=n).rev().fold(Value::atom("nil"), |tail, j| {
+                let v = if j == 1 {
+                    x1
+                } else if j <= q {
+                    (c(q + 1 - j) + 1) % 3
+                } else if j == 2 * q + 1 {
+                    0
+                } else if j == 2 * q + 2 || j == 2 * q + 3 {
+                    x_even
                 } else {
-                    2 * ((m / 2).count_ones() % 2) as i64
-                }
-            };
-            let tout = r8_stage_boundary(n, true, &format!("_r8out_{n}"));
-            let make_out = |x1: i64, x_even: i64| {
-                (1..=n).rev().fold(Value::atom("nil"), |tail, j| {
-                    let v = if j == 1 {
-                        x1
-                    } else if j <= q {
-                        (c(q + 1 - j) + 1) % 3
-                    } else if j == 2 * q + 1 {
-                        0
-                    } else if j == 2 * q + 2 || j == 2 * q + 3 {
-                        x_even
-                    } else {
-                        7
-                    };
-                    Value::atom_with("cons", vec![Value::Int(v), tail])
-                })
-            };
-            assert!(tout.contains(&make_out(0, 1)), "r8stageout witness at {n}");
-            assert!(
-                !tout.contains(&make_out(7, 1)),
-                "r8stageout low negative control at {n}"
-            );
-            assert!(
-                !tout.contains(&make_out(0, 7)),
-                "r8stageout high negative control at {n}"
-            );
-            Type::forget_emptiness();
-            assert_eq!(tout.verdict(), Verdict::Inhabited, "r8stageout at {n}");
-        }
-    });
+                    7
+                };
+                Value::atom_with("cons", vec![Value::Int(v), tail])
+            })
+        };
+        assert!(tout.contains(&make_out(0, 1)), "r8stageout witness at {n}");
+        assert!(
+            !tout.contains(&make_out(7, 1)),
+            "r8stageout low negative control at {n}"
+        );
+        assert!(
+            !tout.contains(&make_out(0, 7)),
+            "r8stageout high negative control at {n}"
+        );
+        Type::forget_emptiness();
+        assert_eq!(tout.verdict(), Verdict::Inhabited, "r8stageout at {n}");
+    }
 }
 
+/// X39 in its smallest form, on threads of the default size: a thread that calls
+/// `Type::forget_emptiness()` before building a nested `cons(int, ...)` chain, and a thread whose
+/// own thread-local, initialized first, holds such a chain at thread exit. The depth that
+/// overflowed a 2 MiB stack at thread exit (25,000 links) is checked in
+/// `refusals::bench::r8_x39_deep_type_drop_does_not_overflow_stack` (TEST-bench-move-l0123,
+/// author P178).
 #[test]
-fn r8_x39_deep_type_drop_does_not_overflow_stack() {
-    // Negative control on __COMMIT__ and main `f5ecad1d`: a 2 MiB thread that calls
-    // `Type::forget_emptiness()` before building a deep nested `cons(int, ...)` chain (25,000
-    // links = 50,000 nested `Node::Parts` / `BTreeMap<usize, Part<Row>>` levels, matching `P` in
-    // `r6two` at `n = 4096`) initializes `VERDICTS` before `types::FREED`, and an external
-    // thread-local initialized first outlives `types::FREED`; both overflow a 2 MiB stack
-    // (`SIGSEGV`, `rc = 139`) at thread exit without `hold()` and `ENDING`.
-    //
-    // The two threads run at once; until TEST-bench-move-l0123 (author P169) the second started
-    // after the first ended (1.36 s alone under load). The depth stays at 25,000: nothing shows
-    // a smaller chain still overflowed the 2 MiB stack in the code this guards against.
-    let run_forget_first = std::thread::Builder::new()
-        .name("r8-x39-forget".into())
-        .stack_size(2 * 1024 * 1024)
-        .spawn(|| {
-            Type::forget_emptiness();
-            let mut chain = Type::atom("nil");
-            for _ in 0..25_000 {
-                chain = cons_of(Type::int(), chain);
-            }
-            assert_eq!(chain.verdict(), Verdict::Inhabited);
-        })
-        .unwrap();
-
-    let run_external_tls = std::thread::Builder::new()
-        .name("r8-x39-ext-tls".into())
-        .stack_size(2 * 1024 * 1024)
-        .spawn(|| {
-            thread_local! {
-                static EXT: std::cell::RefCell<Option<Type>> = const { std::cell::RefCell::new(None) };
-            }
-            EXT.with(|slot| *slot.borrow_mut() = None);
-            let mut chain = Type::atom("nil");
-            for _ in 0..25_000 {
-                chain = cons_of(Type::int(), chain);
-            }
-            EXT.with(|slot| *slot.borrow_mut() = Some(chain));
-        })
-        .unwrap();
+fn r8_x39_type_drop_at_thread_exit_in_either_initialization_order() {
+    let run_forget_first = std::thread::spawn(|| {
+        Type::forget_emptiness();
+        let mut chain = Type::atom("nil");
+        for _ in 0..16 {
+            chain = cons_of(Type::int(), chain);
+        }
+        assert_eq!(chain.verdict(), Verdict::Inhabited);
+    });
+    let run_external_tls = std::thread::spawn(|| {
+        thread_local! {
+            static EXT: std::cell::RefCell<Option<Type>> = const { std::cell::RefCell::new(None) };
+        }
+        EXT.with(|slot| *slot.borrow_mut() = None);
+        let mut chain = Type::atom("nil");
+        for _ in 0..16 {
+            chain = cons_of(Type::int(), chain);
+        }
+        EXT.with(|slot| *slot.borrow_mut() = Some(chain));
+    });
     run_forget_first.join().unwrap();
     run_external_tls.join().unwrap();
 }
 
 #[test]
 fn r8_nested_prefix_chains_do_not_coarsen() {
-    big(|| {
-        let l_inhab = r5_remainder_boundary(32, true, "_r8_nest_in");
-        let l_empty = r5_sat_type(2, &vec![vec![]; 16], "_r8_nest_em");
-        let cases = [
-            (
-                "tuple_inhab",
-                Type::tuple(vec![l_inhab.clone(), Type::int()]),
-                Verdict::Inhabited,
-                false,
-            ),
-            (
-                "tuple_empty",
-                Type::tuple(vec![l_empty.clone(), Type::int()]),
-                Verdict::Empty,
-                true,
-            ),
-            (
-                "record_inhab",
-                Type::exact(Type::atom("x"), l_inhab.clone()),
-                Verdict::Inhabited,
-                false,
-            ),
-            (
-                "record_empty",
-                Type::exact(Type::atom("x"), l_empty.clone()),
-                Verdict::Empty,
-                true,
-            ),
-            // Not asserted: `#wrap((l_inhab,))` is Refused(Fork) on this tree; Gemini R8 decides
-            // it Inhabited and reports cb709f13 refused it too (X42, open).
-            (
-                "atom_empty",
-                Type::atom_with("wrap", &Type::tuple(vec![l_empty])),
-                Verdict::Empty,
-                true,
-            ),
-        ];
-        for (label, t, want_v, want_empty) in cases {
-            Type::forget_emptiness();
-            assert_eq!(t.verdict(), want_v, "nested verdict: {label}");
-            Type::forget_emptiness();
-            assert_eq!(t.is_empty(), want_empty, "nested is_empty: {label}");
-        }
-    });
+    let l_inhab = r5_remainder_boundary(32, true, "_r8_nest_in");
+    let l_empty = r5_sat_type(2, &vec![vec![]; 16], "_r8_nest_em");
+    let cases = [
+        (
+            "tuple_inhab",
+            Type::tuple(vec![l_inhab.clone(), Type::int()]),
+            Verdict::Inhabited,
+            false,
+        ),
+        (
+            "tuple_empty",
+            Type::tuple(vec![l_empty.clone(), Type::int()]),
+            Verdict::Empty,
+            true,
+        ),
+        (
+            "record_inhab",
+            Type::exact(Type::atom("x"), l_inhab.clone()),
+            Verdict::Inhabited,
+            false,
+        ),
+        (
+            "record_empty",
+            Type::exact(Type::atom("x"), l_empty.clone()),
+            Verdict::Empty,
+            true,
+        ),
+        // Not asserted: `#wrap((l_inhab,))` is Refused(Fork) on this tree; Gemini R8 decides
+        // it Inhabited and reports cb709f13 refused it too (X42, open).
+        (
+            "atom_empty",
+            Type::atom_with("wrap", &Type::tuple(vec![l_empty])),
+            Verdict::Empty,
+            true,
+        ),
+    ];
+    for (label, t, want_v, want_empty) in cases {
+        Type::forget_emptiness();
+        assert_eq!(t.verdict(), want_v, "nested verdict: {label}");
+        Type::forget_emptiness();
+        assert_eq!(t.is_empty(), want_empty, "nested is_empty: {label}");
+    }
 }
 
 #[test]
 fn r8_batch_and_single_file_checking_agree() {
-    big(|| {
-        let make_types = |tag: &str| -> Vec<Type> {
-            let l_in = r5_remainder_boundary(16, true, &format!("_r8b_in{tag}"));
-            let l_em = r5_sat_type(2, &vec![vec![]; 8], &format!("_r8b_em{tag}"));
-            vec![
-                r8_stage_boundary(24, false, &format!("_r8b_sin{tag}")),
-                r8_stage_boundary(24, true, &format!("_r8b_sout{tag}")),
-                r7_congruence(24, true, &format!("_r8b_cout{tag}")),
-                r7_aperiodic(127, &format!("_r8b_ap127{tag}")),
-                r7_aperiodic(129, &format!("_r8b_ap129{tag}")),
-                Type::tuple(vec![l_in.clone(), Type::int()]),
-                Type::tuple(vec![l_em.clone(), Type::int()]),
-                Type::exact(Type::atom("x"), l_in),
-                Type::exact(Type::atom("x"), l_em),
-            ]
-        };
-        let ts_batch = make_types("_batch");
-        Type::forget_emptiness();
-        let batch: Vec<(Verdict, bool)> = ts_batch
-            .iter()
-            .map(|t| {
-                let empty = t.is_empty();
-                (t.verdict(), empty)
+    let make_types = |tag: &str| -> Vec<Type> {
+        let l_in = r5_remainder_boundary(16, true, &format!("_r8b_in{tag}"));
+        let l_em = r5_sat_type(2, &vec![vec![]; 8], &format!("_r8b_em{tag}"));
+        vec![
+            r8_stage_boundary(24, false, &format!("_r8b_sin{tag}")),
+            r8_stage_boundary(24, true, &format!("_r8b_sout{tag}")),
+            r7_congruence(24, true, &format!("_r8b_cout{tag}")),
+            r7_aperiodic(127, &format!("_r8b_ap127{tag}")),
+            r7_aperiodic(129, &format!("_r8b_ap129{tag}")),
+            Type::tuple(vec![l_in.clone(), Type::int()]),
+            Type::tuple(vec![l_em.clone(), Type::int()]),
+            Type::exact(Type::atom("x"), l_in),
+            Type::exact(Type::atom("x"), l_em),
+        ]
+    };
+    let ts_batch = make_types("_batch");
+    Type::forget_emptiness();
+    let batch: Vec<(Verdict, bool)> = ts_batch
+        .iter()
+        .map(|t| {
+            let empty = t.is_empty();
+            (t.verdict(), empty)
+        })
+        .collect();
+    Type::forget_emptiness();
+    let mut rev: Vec<(Verdict, bool)> = ts_batch
+        .iter()
+        .rev()
+        .map(|t| {
+            let empty = t.is_empty();
+            (t.verdict(), empty)
+        })
+        .collect();
+    rev.reverse();
+    let alone: Vec<(Verdict, bool)> = (0..batch.len())
+        .map(|i| {
+            std::thread::spawn(move || {
+                let ts = make_types("_alone");
+                let v = ts[i].verdict();
+                Type::forget_emptiness();
+                let e = ts[i].is_empty();
+                (v, e)
             })
-            .collect();
-        Type::forget_emptiness();
-        let mut rev: Vec<(Verdict, bool)> = ts_batch
-            .iter()
-            .rev()
-            .map(|t| {
-                let empty = t.is_empty();
-                (t.verdict(), empty)
-            })
-            .collect();
-        rev.reverse();
-        let alone: Vec<(Verdict, bool)> = (0..batch.len())
-            .map(|i| {
-                std::thread::Builder::new()
-                    .stack_size(16 * 1024 * 1024)
-                    .spawn(move || {
-                        let ts = make_types("_alone");
-                        let v = ts[i].verdict();
-                        Type::forget_emptiness();
-                        let e = ts[i].is_empty();
-                        (v, e)
-                    })
-                    .unwrap()
-                    .join()
-                    .unwrap()
-            })
-            .collect();
-        assert_eq!(alone, batch, "alone vs forward batch");
-        assert_eq!(alone, rev, "alone vs reversed batch");
+            .join()
+            .unwrap()
+        })
+        .collect();
+    assert_eq!(alone, batch, "alone vs forward batch");
+    assert_eq!(alone, rev, "alone vs reversed batch");
 
-        let units = [
-            "f(x: #a .. #a | #b -> int) = 0;\nmain() = 0;\n",
-            "f(x: (int, #a .. #a | #b -> int)) = 0;\nmain() = 0;\n",
-            "f(x: #a | #b .. #a -> int) = 0;\nmain() = 0;\n",
-            "f(x: (int -> #a | #b) .. ((int -> #a) | (int -> #b)) -> int) = 0;\nmain() = 0;\n",
-        ];
-        let u_alone: Vec<Option<String>> = units
-            .iter()
-            .map(|&s| {
-                std::thread::spawn(move || zedc::run::load(s.as_bytes()).err())
-                    .join()
-                    .unwrap()
-            })
-            .collect();
-        let u_batch: Vec<Option<String>> = units
-            .iter()
-            .map(|s| zedc::run::load(s.as_bytes()).err())
-            .collect();
-        let mut u_rev: Vec<Option<String>> = units
-            .iter()
-            .rev()
-            .map(|s| zedc::run::load(s.as_bytes()).err())
-            .collect();
-        u_rev.reverse();
-        assert_eq!(u_alone, u_batch, "zedc single-file vs forward batch");
-        assert_eq!(u_alone, u_rev, "zedc single-file vs reversed batch");
-        assert!(u_alone[0].is_none() && u_alone[1].is_none());
-        assert!(u_alone[2].is_some() && u_alone[3].is_some());
-    });
+    let units = [
+        "f(x: #a .. #a | #b -> int) = 0;\nmain() = 0;\n",
+        "f(x: (int, #a .. #a | #b -> int)) = 0;\nmain() = 0;\n",
+        "f(x: #a | #b .. #a -> int) = 0;\nmain() = 0;\n",
+        "f(x: (int -> #a | #b) .. ((int -> #a) | (int -> #b)) -> int) = 0;\nmain() = 0;\n",
+    ];
+    let u_alone: Vec<Option<String>> = units
+        .iter()
+        .map(|&s| {
+            std::thread::spawn(move || zedc::run::load(s.as_bytes()).err())
+                .join()
+                .unwrap()
+        })
+        .collect();
+    let u_batch: Vec<Option<String>> = units
+        .iter()
+        .map(|s| zedc::run::load(s.as_bytes()).err())
+        .collect();
+    let mut u_rev: Vec<Option<String>> = units
+        .iter()
+        .rev()
+        .map(|s| zedc::run::load(s.as_bytes()).err())
+        .collect();
+    u_rev.reverse();
+    assert_eq!(u_alone, u_batch, "zedc single-file vs forward batch");
+    assert_eq!(u_alone, u_rev, "zedc single-file vs reversed batch");
+    assert!(u_alone[0].is_none() && u_alone[1].is_none());
+    assert!(u_alone[2].is_some() && u_alone[3].is_some());
 }
 
 #[test]
 fn r8_escape_laminar_boundary_declines_crossing_atoms() {
-    big(|| {
-        let l = list_named(Type::int(), "_r8_lam");
-        let p = cons_of(
-            &(&lit(0) | &lit(1)) | &lit(2),
-            cons_of(lit(7), Type::atom("nil")),
-        );
-        let f01 = cons_of(&Type::int() - &(&lit(0) | &lit(1)), l.clone());
-        let f12 = cons_of(&Type::int() - &(&lit(1) | &lit(2)), l.clone());
-        let f02 = cons_of(&Type::int() - &(&lit(0) | &lit(2)), l.clone());
-        let f1 = cons_of(&Type::int() - &lit(1), l);
+    let l = list_named(Type::int(), "_r8_lam");
+    let p = cons_of(
+        &(&lit(0) | &lit(1)) | &lit(2),
+        cons_of(lit(7), Type::atom("nil")),
+    );
+    let f01 = cons_of(&Type::int() - &(&lit(0) | &lit(1)), l.clone());
+    let f12 = cons_of(&Type::int() - &(&lit(1) | &lit(2)), l.clone());
+    let f02 = cons_of(&Type::int() - &(&lit(0) | &lit(2)), l.clone());
+    let f1 = cons_of(&Type::int() - &lit(1), l);
 
-        // Inside laminar boundary: `{1}` is nested inside `{0, 1}`.
-        let laminar = &p - &(&f01 | &f1);
-        Type::forget_emptiness();
-        assert_eq!(laminar.chain_verdict(), Some(Verdict::Inhabited));
-        assert_eq!(laminar.verdict(), Verdict::Inhabited);
+    // Inside laminar boundary: `{1}` is nested inside `{0, 1}`.
+    let laminar = &p - &(&f01 | &f1);
+    Type::forget_emptiness();
+    assert_eq!(laminar.chain_verdict(), Some(Verdict::Inhabited));
+    assert_eq!(laminar.verdict(), Verdict::Inhabited);
 
-        // Outside laminar boundary: `{0, 1}` and `{1, 2}` cross (`in_place_tree` declines to `None`),
-        // and the base search still decides both inhabited (`[1, 7]`) and empty (`+ {0, 2}`).
-        let cross_inhab = &p - &(&f01 | &f12);
-        Type::forget_emptiness();
-        assert_eq!(cross_inhab.chain_verdict(), None);
-        assert_eq!(cross_inhab.verdict(), Verdict::Inhabited);
+    // Outside laminar boundary: `{0, 1}` and `{1, 2}` cross (`in_place_tree` declines to `None`),
+    // and the base search still decides both inhabited (`[1, 7]`) and empty (`+ {0, 2}`).
+    let cross_inhab = &p - &(&f01 | &f12);
+    Type::forget_emptiness();
+    assert_eq!(cross_inhab.chain_verdict(), None);
+    assert_eq!(cross_inhab.verdict(), Verdict::Inhabited);
 
-        let cross_empty = &p - &(&(&f01 | &f12) | &f02);
-        Type::forget_emptiness();
-        assert_eq!(cross_empty.chain_verdict(), None);
-        assert_eq!(cross_empty.verdict(), Verdict::Empty);
-    });
+    let cross_empty = &p - &(&(&f01 | &f12) | &f02);
+    Type::forget_emptiness();
+    assert_eq!(cross_empty.chain_verdict(), None);
+    assert_eq!(cross_empty.verdict(), Verdict::Empty);
 }
 
 #[test]
 fn r8_light_edges_and_wide_rows_agree_with_the_witness() {
-    big(|| {
-        // Aperiodic positive list `P` of length `l0 = 40` (`p_pl = 39`) with heavy spine `F_1..F_36`,
-        // four interior light branches hanging off `F_4, F_9, F_14, F_19` (heights up to 24, giving
-        // `R_P >= 12` residue classes so Stage B runs), and an optional `wide` root (`>= 5` atoms).
-        let build_case = |spine6_separates: bool, include_wide: bool, tag: &str| -> Type {
-            let l0 = 40usize;
-            let ch_val = |j: usize| -> i64 { ((j.count_ones() as usize + j % 3) % 4) as i64 };
-            let mut defs = vec![def(
-                &format!("L{tag}"),
-                Expr::Union(vec![nil(), cons(int(), r(0))]),
-            )];
-            // Heavy spine `F_1 .. F_36` (`defs` indices `1 ..= 36`, heights `1 ..= 36`).
-            // `F_10 .. F_36` exclude `{0, 1, 2, 3}` (`27` cons nodes * `14` residue buckets >
-            // `2 * (|cons| + l0 + |S|)`, forcing Stage B), while `F_1 .. F_9` (`e != 6`) are `int`
-            // so light branch `B_9` (attached at `F_9`, tip height 12) can separate ONLY on spine
-            // node `F_6` (`j = 12 - 6 + 2 = 8`) across the light edge `B_9 -> F_9`.
-            for e in 1..=36usize {
-                let h = if e == 6 && spine6_separates {
+    // Aperiodic positive list `P` of length `l0 = 40` (`p_pl = 39`) with heavy spine `F_1..F_36`,
+    // four interior light branches hanging off `F_4, F_9, F_14, F_19` (heights up to 24, giving
+    // `R_P >= 12` residue classes so Stage B runs), and an optional `wide` root (`>= 5` atoms).
+    let build_case = |spine6_separates: bool, include_wide: bool, tag: &str| -> Type {
+        let l0 = 40usize;
+        let ch_val = |j: usize| -> i64 { ((j.count_ones() as usize + j % 3) % 4) as i64 };
+        let mut defs = vec![def(
+            &format!("L{tag}"),
+            Expr::Union(vec![nil(), cons(int(), r(0))]),
+        )];
+        // Heavy spine `F_1 .. F_36` (`defs` indices `1 ..= 36`, heights `1 ..= 36`).
+        // `F_10 .. F_36` exclude `{0, 1, 2, 3}` (`27` cons nodes * `14` residue buckets >
+        // `2 * (|cons| + l0 + |S|)`, forcing Stage B), while `F_1 .. F_9` (`e != 6`) are `int`
+        // so light branch `B_9` (attached at `F_9`, tip height 12) can separate ONLY on spine
+        // node `F_6` (`j = 12 - 6 + 2 = 8`) across the light edge `B_9 -> F_9`.
+        for e in 1..=36usize {
+            let h = if e == 6 && spine6_separates {
+                &Type::int() - &lit(5)
+            } else if e >= 10 {
+                &Type::int() - &(&(&lit(0) | &lit(1)) | &(&lit(2) | &lit(3)))
+            } else {
+                Type::int()
+            };
+            defs.push(def(&format!("F{e}{tag}"), cons(Expr::Type(h), r(e - 1))));
+        }
+        // Light branches:
+        // - `B_9`: 3 links (`ht = 10, 11, 12`) onto `F_9`, all heads `int` -> separates ONLY at `F_6`!
+        let mut prev = 9usize;
+        for k in 1..=3usize {
+            let idx = defs.len();
+            defs.push(def(&format!("B9_{k}{tag}"), cons(int(), r(prev))));
+            prev = idx;
+        }
+        let b9_tip = prev; // ht = 12
+        // - Three more light branches onto `F_12`, `F_15`, `F_18` of lengths 2, 3, 4 (distinct heights
+        //   `14, 18, 22`, plus spine roots at `25..=34` giving 14 distinct residue classes!).
+        let mut tips = vec![b9_tip];
+        for (attach, len, bname) in [(12usize, 2usize, "B12"), (15, 3, "B15"), (18, 4, "B18")] {
+            let mut cur = attach;
+            for k in 1..=len {
+                let idx = defs.len();
+                let h = if k == len {
                     &Type::int() - &lit(5)
-                } else if e >= 10 {
-                    &Type::int() - &(&(&lit(0) | &lit(1)) | &(&lit(2) | &lit(3)))
                 } else {
                     Type::int()
                 };
-                defs.push(def(&format!("F{e}{tag}"), cons(Expr::Type(h), r(e - 1))));
+                defs.push(def(
+                    &format!("{bname}_{k}{tag}"),
+                    cons(Expr::Type(h), r(cur)),
+                ));
+                cur = idx;
             }
-            // Light branches:
-            // - `B_9`: 3 links (`ht = 10, 11, 12`) onto `F_9`, all heads `int` -> separates ONLY at `F_6`!
-            let mut prev = 9usize;
-            for k in 1..=3usize {
+            tips.push(cur);
+        }
+        // Optional wide branch onto `F_20` with 6 consecutive `int \ {5}` heads (`d >= 6` -> `Wide`).
+        if include_wide {
+            let mut cur = 20usize;
+            for k in 1..=6usize {
                 let idx = defs.len();
-                defs.push(def(&format!("B9_{k}{tag}"), cons(int(), r(prev))));
-                prev = idx;
+                defs.push(def(
+                    &format!("BW_{k}{tag}"),
+                    cons(Expr::Type(&Type::int() - &lit(5)), r(cur)),
+                ));
+                cur = idx;
             }
-            let b9_tip = prev; // ht = 12
-            // - Three more light branches onto `F_12`, `F_15`, `F_18` of lengths 2, 3, 4 (distinct heights
-            //   `14, 18, 22`, plus spine roots at `25..=34` giving 14 distinct residue classes!).
-            let mut tips = vec![b9_tip];
-            for (attach, len, bname) in [(12usize, 2usize, "B12"), (15, 3, "B15"), (18, 4, "B18")] {
-                let mut cur = attach;
-                for k in 1..=len {
-                    let idx = defs.len();
-                    let h = if k == len {
-                        &Type::int() - &lit(5)
-                    } else {
-                        Type::int()
-                    };
-                    defs.push(def(
-                        &format!("{bname}_{k}{tag}"),
-                        cons(Expr::Type(h), r(cur)),
-                    ));
-                    cur = idx;
-                }
-                tips.push(cur);
-            }
-            // Optional wide branch onto `F_20` with 6 consecutive `int \ {5}` heads (`d >= 6` -> `Wide`).
-            if include_wide {
-                let mut cur = 20usize;
-                for k in 1..=6usize {
-                    let idx = defs.len();
-                    defs.push(def(
-                        &format!("BW_{k}{tag}"),
-                        cons(Expr::Type(&Type::int() - &lit(5)), r(cur)),
-                    ));
-                    cur = idx;
-                }
-                tips.push(cur);
-            }
-            for ht_r in 25..=34usize {
-                tips.push(ht_r);
-            }
-            let mut p = nil();
-            for j in (1..=l0).rev() {
-                let h = if j == 1 {
-                    lit(9)
-                } else {
-                    &lit(ch_val(j)) | &lit(5)
-                };
-                p = cons(Expr::Type(h), p);
-            }
-            defs.push(def(&format!("P{tag}"), p));
-            let p_idx = defs.len() - 1;
-            let ts = u4_inst(defs);
-            let neg = tips.into_iter().fold(Type::empty(), |u, idx| {
-                &u | &cons_of(Type::int(), ts[idx].clone())
-            });
-            &ts[p_idx] - &neg
-        };
-
-        let t_inhab_wide = build_case(true, true, "_r8sb_iw");
-        Type::forget_emptiness();
-        let c_iw = t_inhab_wide.escape_cell_counts();
-        assert!(c_iw.0 > 0, "inhab+wide cells: {c_iw:?}");
-        Type::forget_emptiness();
-        assert_eq!(t_inhab_wide.chain_verdict(), Some(Verdict::Inhabited));
-        Type::forget_emptiness();
-        assert_eq!(t_inhab_wide.verdict(), Verdict::Inhabited);
-
-        let t_empty_light = build_case(false, false, "_r8sb_el");
-        Type::forget_emptiness();
-        let c_el = t_empty_light.escape_cell_counts();
-        assert!(c_el.0 > 0, "empty+light cells: {c_el:?}");
-        Type::forget_emptiness();
-        assert_eq!(t_empty_light.chain_verdict(), Some(Verdict::Empty));
-        Type::forget_emptiness();
-        assert_eq!(t_empty_light.verdict(), Verdict::Empty);
-
-        // Witness: the list of length 40 with 9 at place 1, 5 at places 2 and 8, and `ch_val(j)`
-        // at every other place j is in `t_inhab_wide` and not in `t_empty_light`.
-        let ch_val = |j: usize| -> i64 { ((j.count_ones() as usize + j % 3) % 4) as i64 };
-        let w_bad_for_el = (1..=40usize).rev().fold(Value::atom("nil"), |tail, j| {
-            let v = if j == 1 {
-                9
-            } else if j == 2 || j == 8 {
-                5
+            tips.push(cur);
+        }
+        for ht_r in 25..=34usize {
+            tips.push(ht_r);
+        }
+        let mut p = nil();
+        for j in (1..=l0).rev() {
+            let h = if j == 1 {
+                lit(9)
             } else {
-                ch_val(j)
+                &lit(ch_val(j)) | &lit(5)
             };
-            Value::atom_with("cons", vec![Value::Int(v), tail])
+            p = cons(Expr::Type(h), p);
+        }
+        defs.push(def(&format!("P{tag}"), p));
+        let p_idx = defs.len() - 1;
+        let ts = u4_inst(defs);
+        let neg = tips.into_iter().fold(Type::empty(), |u, idx| {
+            &u | &cons_of(Type::int(), ts[idx].clone())
         });
-        assert!(t_inhab_wide.contains(&w_bad_for_el));
-        assert!(!t_empty_light.contains(&w_bad_for_el));
+        &ts[p_idx] - &neg
+    };
+
+    let t_inhab_wide = build_case(true, true, "_r8sb_iw");
+    Type::forget_emptiness();
+    let c_iw = t_inhab_wide.escape_cell_counts();
+    assert!(c_iw.0 > 0, "inhab+wide cells: {c_iw:?}");
+    Type::forget_emptiness();
+    assert_eq!(t_inhab_wide.chain_verdict(), Some(Verdict::Inhabited));
+    Type::forget_emptiness();
+    assert_eq!(t_inhab_wide.verdict(), Verdict::Inhabited);
+
+    let t_empty_light = build_case(false, false, "_r8sb_el");
+    Type::forget_emptiness();
+    let c_el = t_empty_light.escape_cell_counts();
+    assert!(c_el.0 > 0, "empty+light cells: {c_el:?}");
+    Type::forget_emptiness();
+    assert_eq!(t_empty_light.chain_verdict(), Some(Verdict::Empty));
+    Type::forget_emptiness();
+    assert_eq!(t_empty_light.verdict(), Verdict::Empty);
+
+    // Witness: the list of length 40 with 9 at place 1, 5 at places 2 and 8, and `ch_val(j)`
+    // at every other place j is in `t_inhab_wide` and not in `t_empty_light`.
+    let ch_val = |j: usize| -> i64 { ((j.count_ones() as usize + j % 3) % 4) as i64 };
+    let w_bad_for_el = (1..=40usize).rev().fold(Value::atom("nil"), |tail, j| {
+        let v = if j == 1 {
+            9
+        } else if j == 2 || j == 8 {
+            5
+        } else {
+            ch_val(j)
+        };
+        Value::atom_with("cons", vec![Value::Int(v), tail])
     });
+    assert!(t_inhab_wide.contains(&w_bad_for_el));
+    assert!(!t_empty_light.contains(&w_bad_for_el));
 }
 
 /// R9 X38: the shift encoding of Boolean matrix multiplication as an escape. For `m × m`
@@ -6522,57 +6430,55 @@ fn r9_product_all_ones(a: &[Vec<bool>], b: &[Vec<bool>]) -> bool {
 #[test]
 fn r9_bmm_encoding_decides_as_the_boolean_product() {
     let (mut rng, seed) = Rng::fresh("r9bmm matrices");
-    big(move || {
-        let mut seen = (0, 0);
-        for m in 2usize..=5 {
-            for num in [3u64, 4, 6] {
-                for draw in 0..3 {
-                    let (mut a, mut b) = r9_matrices(m, num, rng.next_u64());
-                    if draw == 0 {
-                        // One planted all-ones product per size: column 0 of `a` and row 0 of
-                        // `b` all 1.
-                        b[0] = vec![true; m];
-                        for row in a.iter_mut() {
-                            row[0] = true;
-                        }
+    let mut seen = (0, 0);
+    for m in 2usize..=5 {
+        for num in [3u64, 4, 6] {
+            for draw in 0..3 {
+                let (mut a, mut b) = r9_matrices(m, num, rng.next_u64());
+                if draw == 0 {
+                    // One planted all-ones product per size: column 0 of `a` and row 0 of
+                    // `b` all 1.
+                    b[0] = vec![true; m];
+                    for row in a.iter_mut() {
+                        row[0] = true;
                     }
-                    let tag = format!("_r9bmm_{m}_{num}_{draw}");
-                    let at = format!("m {m} num {num} draw {draw} ZED_SEED={seed}");
+                }
+                let tag = format!("_r9bmm_{m}_{num}_{draw}");
+                let at = format!("m {m} num {num} draw {draw} ZED_SEED={seed}");
+                Type::forget_emptiness();
+                let t = r9_bmm(&a, &b, &tag);
+                let want = if r9_product_all_ones(&a, &b) {
+                    seen.0 += 1;
+                    Verdict::Inhabited
+                } else {
+                    seen.1 += 1;
+                    Verdict::Empty
+                };
+                assert_eq!(t.verdict(), want, "r9bmm {at}");
+                if want == Verdict::Inhabited {
+                    let l0 = (m - 1) * (m + 1) + m + 1 + (m - 1) * m;
+                    let w = (1..=l0).rev().fold(Value::atom("nil"), |tail, j| {
+                        let v = if (2..2 + m * m).contains(&j) && a[(j - 2) / m][(j - 2) % m] {
+                            100 + ((j - 2) % m) as i64
+                        } else {
+                            7
+                        };
+                        Value::atom_with("cons", vec![Value::Int(v), tail])
+                    });
+                    assert!(t.contains(&w), "r9bmm witness {at}");
+                    let mut a0 = a.clone();
+                    a0[0] = vec![false; m];
                     Type::forget_emptiness();
-                    let t = r9_bmm(&a, &b, &tag);
-                    let want = if r9_product_all_ones(&a, &b) {
-                        seen.0 += 1;
-                        Verdict::Inhabited
-                    } else {
-                        seen.1 += 1;
-                        Verdict::Empty
-                    };
-                    assert_eq!(t.verdict(), want, "r9bmm {at}");
-                    if want == Verdict::Inhabited {
-                        let l0 = (m - 1) * (m + 1) + m + 1 + (m - 1) * m;
-                        let w = (1..=l0).rev().fold(Value::atom("nil"), |tail, j| {
-                            let v = if (2..2 + m * m).contains(&j) && a[(j - 2) / m][(j - 2) % m] {
-                                100 + ((j - 2) % m) as i64
-                            } else {
-                                7
-                            };
-                            Value::atom_with("cons", vec![Value::Int(v), tail])
-                        });
-                        assert!(t.contains(&w), "r9bmm witness {at}");
-                        let mut a0 = a.clone();
-                        a0[0] = vec![false; m];
-                        Type::forget_emptiness();
-                        let t0 = r9_bmm(&a0, &b, &format!("{tag}_z"));
-                        assert_eq!(t0.verdict(), Verdict::Empty, "r9bmm control {at}");
-                    }
+                    let t0 = r9_bmm(&a0, &b, &format!("{tag}_z"));
+                    assert_eq!(t0.verdict(), Verdict::Empty, "r9bmm control {at}");
                 }
             }
         }
-        assert!(
-            seen.0 >= 4 && seen.1 >= 4,
-            "both verdicts occur: {seen:?} ZED_SEED={seed}"
-        );
-    });
+    }
+    assert!(
+        seen.0 >= 4 && seen.1 >= 4,
+        "both verdicts occur: {seen:?} ZED_SEED={seed}"
+    );
 }
 
 /// R9 X38: the sparse adversary has an all-ones product with one witness per entry, and the
@@ -6580,27 +6486,25 @@ fn r9_bmm_encoding_decides_as_the_boolean_product() {
 /// the row of `(i, 0)`, so the answer must be `Empty`.
 #[test]
 fn r9_sparse_bmm_adversary_has_one_atom_per_row() {
-    big(|| {
-        for side in [4usize, 9, 16] {
-            let (a, mut b) = r9_one_matrices(side);
-            let m = a.len();
-            for (i, ai) in a.iter().enumerate() {
-                for k in 0..m {
-                    let hits = ai.iter().zip(&b).filter(|&(&x, bq)| x && bq[k]).count();
-                    assert_eq!(hits, 1, "one witness for ({i}, {k}) at side {m}");
-                }
+    for side in [4usize, 9, 16] {
+        let (a, mut b) = r9_one_matrices(side);
+        let m = a.len();
+        for (i, ai) in a.iter().enumerate() {
+            for k in 0..m {
+                let hits = ai.iter().zip(&b).filter(|&(&x, bq)| x && bq[k]).count();
+                assert_eq!(hits, 1, "one witness for ({i}, {k}) at side {m}");
             }
-            Type::forget_emptiness();
-            let t = r9_bmm(&a, &b, &format!("_r9one_{m}"));
-            assert_eq!(t.verdict(), Verdict::Inhabited, "r9bmmone side {m}");
-            for row in b.iter_mut() {
-                row[0] = false;
-            }
-            Type::forget_emptiness();
-            let t0 = r9_bmm(&a, &b, &format!("_r9one_{m}_z"));
-            assert_eq!(t0.verdict(), Verdict::Empty, "r9bmmone control side {m}");
         }
-    });
+        Type::forget_emptiness();
+        let t = r9_bmm(&a, &b, &format!("_r9one_{m}"));
+        assert_eq!(t.verdict(), Verdict::Inhabited, "r9bmmone side {m}");
+        for row in b.iter_mut() {
+            row[0] = false;
+        }
+        Type::forget_emptiness();
+        let t0 = r9_bmm(&a, &b, &format!("_r9one_{m}_z"));
+        assert_eq!(t0.verdict(), Verdict::Empty, "r9bmmone control side {m}");
+    }
 }
 
 fn r9_swapping_groups(n: usize, negative: bool, tag: &str) -> Type {
@@ -6629,39 +6533,37 @@ fn r9_swapping_groups(n: usize, negative: bool, tag: &str) -> Type {
 
 #[test]
 fn r9_wrapped_witnesses_are_checked_and_empty_fields_remain_empty() {
-    big(|| {
-        for n in [4, 16, 32] {
-            for case in [
-                "chain",
-                "chainfar",
-                "r5remout",
-                "u4holesout",
-                "clstaggerholesout",
+    for n in [4, 16, 32] {
+        for case in [
+            "chain",
+            "chainfar",
+            "r5remout",
+            "u4holesout",
+            "clstaggerholesout",
+        ] {
+            let t = rfx_case(case, n, "_r9nest");
+            let want = t.verdict();
+            for wrap in [
+                "tup", "rec", "atom", "atom2", "nested", "option", "map", "listhead",
             ] {
-                let t = rfx_case(case, n, "_r9nest");
-                let want = t.verdict();
-                for wrap in [
-                    "tup", "rec", "atom", "atom2", "nested", "option", "map", "listhead",
-                ] {
-                    Type::forget_emptiness();
-                    let w = rfx_case(&format!("{wrap}:{case}"), n, "_r9nest");
-                    let got = w.verdict();
-                    eprintln!("r9 nesting {wrap}:{case} n {n}: {got:?}, bare {want:?}");
-                    assert_eq!(got, want, "{wrap}:{case} at {n}");
-                    assert_eq!(w.is_empty(), want == Verdict::Empty);
-                }
+                Type::forget_emptiness();
+                let w = rfx_case(&format!("{wrap}:{case}"), n, "_r9nest");
+                let got = w.verdict();
+                eprintln!("r9 nesting {wrap}:{case} n {n}: {got:?}, bare {want:?}");
+                assert_eq!(got, want, "{wrap}:{case} at {n}");
+                assert_eq!(w.is_empty(), want == Verdict::Empty);
             }
         }
-        let t = r5_remainder_boundary(16, true, "_r9member");
-        let good = r6_colour_list(&[5, 1, 1]);
-        let bad = r6_colour_list(&[1, 1, 1]);
-        assert!(t.contains(&good));
-        assert!(!t.contains(&bad)); // negative control for the concrete witness
-        let w = Type::atom_with("wrap", &Type::tuple(vec![t]));
-        assert!(w.contains(&Value::atom_with("wrap", vec![good])));
-        assert!(!w.contains(&Value::atom_with("wrap", vec![bad])));
-        assert_eq!(w.verdict(), Verdict::Inhabited);
-    });
+    }
+    let t = r5_remainder_boundary(16, true, "_r9member");
+    let good = r6_colour_list(&[5, 1, 1]);
+    let bad = r6_colour_list(&[1, 1, 1]);
+    assert!(t.contains(&good));
+    assert!(!t.contains(&bad)); // negative control for the concrete witness
+    let w = Type::atom_with("wrap", &Type::tuple(vec![t]));
+    assert!(w.contains(&Value::atom_with("wrap", vec![good])));
+    assert!(!w.contains(&Value::atom_with("wrap", vec![bad])));
+    assert_eq!(w.verdict(), Verdict::Inhabited);
 }
 
 /// Growing-alphabet adversary: every requested tail height is even. The colours of a
@@ -6703,37 +6605,35 @@ fn r9_balanced(n: usize, tag: &str) -> Type {
 #[test]
 fn r9_compressed_and_expanded_runs_agree_with_enumeration() {
     let (_, seed) = Rng::fresh("r9 compressed and expanded runs");
-    big(move || {
-        let mut rng = R6Rng(seed);
-        for i in 0..800 {
-            let input = r6_random_input(&mut rng, 4, 4, true);
-            let want = r6_oracle(&input);
-            let t = r6_input_type(&input, &format!("_r9expand{i}"));
-            for expanded in [false, true] {
-                Type::forget_emptiness();
-                let got = if expanded {
-                    t.chain_verdict_expanded()
-                } else {
-                    t.chain_verdict()
-                };
-                if let Some(v) = got {
-                    assert_eq!(
-                        v == Verdict::Inhabited,
-                        want,
-                        "case {i} expanded {expanded}: {input:?} {v:?} ZED_SEED={seed}"
-                    );
-                }
+    let mut rng = R6Rng(seed);
+    for i in 0..800 {
+        let input = r6_random_input(&mut rng, 4, 4, true);
+        let want = r6_oracle(&input);
+        let t = r6_input_type(&input, &format!("_r9expand{i}"));
+        for expanded in [false, true] {
+            Type::forget_emptiness();
+            let got = if expanded {
+                t.chain_verdict_expanded()
+            } else {
+                t.chain_verdict()
+            };
+            if let Some(v) = got {
+                assert_eq!(
+                    v == Verdict::Inhabited,
+                    want,
+                    "case {i} expanded {expanded}: {input:?} {v:?} ZED_SEED={seed}"
+                );
             }
         }
-        for n in [2, 16, 64] {
-            let t = r9_swapping_groups(n, false, "_r9expand_swap");
-            assert_eq!(t.chain_verdict(), t.chain_verdict_expanded());
-        }
-        let yes = rfx_case("chainfar", 3, "_r9oracle_yes");
-        let no = rfx_case("chain", 3, "_r9oracle_no");
-        assert_eq!(yes.chain_verdict_expanded(), Some(Verdict::Inhabited));
-        assert_eq!(no.chain_verdict_expanded(), Some(Verdict::Empty));
-    });
+    }
+    for n in [2, 16, 64] {
+        let t = r9_swapping_groups(n, false, "_r9expand_swap");
+        assert_eq!(t.chain_verdict(), t.chain_verdict_expanded());
+    }
+    let yes = rfx_case("chainfar", 3, "_r9oracle_yes");
+    let no = rfx_case("chain", 3, "_r9oracle_no");
+    assert_eq!(yes.chain_verdict_expanded(), Some(Verdict::Inhabited));
+    assert_eq!(no.chain_verdict_expanded(), Some(Verdict::Empty));
 }
 
 /// X38 adversary with two positive and two negative residues mod 7. The tall
@@ -6779,58 +6679,54 @@ fn r9_cosets(n: usize, subtract: bool, tag: &str) -> Type {
 
 #[test]
 fn r9_wide_literals_are_preserved_and_compile_limits_are_reported() {
-    big(|| {
-        for text in [
-            "9223372036854775807",
-            "9223372036854775808",
-            "-9223372036854775809",
-            "18446744073709551616",
-        ] {
-            let v = Value::int(text.parse().unwrap());
-            let t = zedc::check::read::parse_type(text).unwrap();
-            assert!(!t.is_empty(), "{text}");
-            assert!(t.contains(&v), "{text}");
-            assert!(
-                !t.contains(&Value::Int(0)),
-                "negative membership control at {text}"
-            );
-            let src = format!(
-                "f(x: {text}) = 0;
+    for text in [
+        "9223372036854775807",
+        "9223372036854775808",
+        "-9223372036854775809",
+        "18446744073709551616",
+    ] {
+        let v = Value::int(text.parse().unwrap());
+        let t = zedc::check::read::parse_type(text).unwrap();
+        assert!(!t.is_empty(), "{text}");
+        assert!(t.contains(&v), "{text}");
+        assert!(
+            !t.contains(&Value::Int(0)),
+            "negative membership control at {text}"
+        );
+        let src = format!(
+            "f(x: {text}) = 0;
 main() = f(x: {text});
 "
-            );
-            let batch = zedc::run::load(src.as_bytes())
-                .err()
-                .expect("literal type compilation must be reported");
-            assert!(batch.contains("does not compile it yet"), "{batch}");
-            let alone = std::thread::spawn(move || zedc::run::load(src.as_bytes()).err())
-                .join()
-                .unwrap();
-            assert_eq!(alone, Some(batch));
-        }
-    });
+        );
+        let batch = zedc::run::load(src.as_bytes())
+            .err()
+            .expect("literal type compilation must be reported");
+        assert!(batch.contains("does not compile it yet"), "{batch}");
+        let alone = std::thread::spawn(move || zedc::run::load(src.as_bytes()).err())
+            .join()
+            .unwrap();
+        assert_eq!(alone, Some(batch));
+    }
 }
 
 #[test]
 fn r9_coset_cover_agrees_with_enumeration() {
-    big(|| {
-        let t = r9_cosets(16, true, "_r9cosets");
-        let p = r9_cosets(16, false, "_r9cosetscontrol");
-        let variable: Vec<usize> = (1..=16).filter(|j| matches!(j % 7, 0 | 1)).collect();
-        for mask in 0..1usize << variable.len() {
-            let mut xs = vec![-1; 16];
-            for (i, &j) in variable.iter().enumerate() {
-                if mask >> i & 1 == 1 {
-                    xs[j - 1] = 0;
-                }
+    let t = r9_cosets(16, true, "_r9cosets");
+    let p = r9_cosets(16, false, "_r9cosetscontrol");
+    let variable: Vec<usize> = (1..=16).filter(|j| matches!(j % 7, 0 | 1)).collect();
+    for mask in 0..1usize << variable.len() {
+        let mut xs = vec![-1; 16];
+        for (i, &j) in variable.iter().enumerate() {
+            if mask >> i & 1 == 1 {
+                xs[j - 1] = 0;
             }
-            let value = r6_colour_list(&xs);
-            assert!(p.contains(&value));
-            assert!(!t.contains(&value), "mask {mask}");
         }
-        assert_eq!(t.verdict(), Verdict::Empty);
-        assert_eq!(p.verdict(), Verdict::Inhabited);
-    });
+        let value = r6_colour_list(&xs);
+        assert!(p.contains(&value));
+        assert!(!t.contains(&value), "mask {mask}");
+    }
+    assert_eq!(t.verdict(), Verdict::Empty);
+    assert_eq!(p.verdict(), Verdict::Inhabited);
 }
 
 #[test]
@@ -6845,43 +6741,38 @@ fn r9_nested_queries_agree_alone_forward_and_reverse() {
             })
             .collect()
     }
-    big(|| {
-        let ts = make();
-        Type::forget_emptiness();
-        let forward: Vec<_> = ts
-            .iter()
-            .map(|t| {
-                let empty = t.is_empty();
-                (t.verdict(), empty)
-            })
-            .collect();
-        Type::forget_emptiness();
-        let mut reverse: Vec<_> = ts
-            .iter()
-            .rev()
-            .map(|t| {
-                let empty = t.is_empty();
-                (t.verdict(), empty)
-            })
-            .collect();
-        reverse.reverse();
-        assert_eq!(forward, reverse);
-        for (i, want) in forward.iter().enumerate() {
-            let got = std::thread::Builder::new()
-                .stack_size(16 * 1024 * 1024)
-                .spawn(move || {
-                    let ts = make();
-                    {
-                        let empty = ts[i].is_empty();
-                        (ts[i].verdict(), empty)
-                    }
-                })
-                .unwrap()
-                .join()
-                .unwrap();
-            assert_eq!(&got, want, "index {i}");
-        }
-    });
+    let ts = make();
+    Type::forget_emptiness();
+    let forward: Vec<_> = ts
+        .iter()
+        .map(|t| {
+            let empty = t.is_empty();
+            (t.verdict(), empty)
+        })
+        .collect();
+    Type::forget_emptiness();
+    let mut reverse: Vec<_> = ts
+        .iter()
+        .rev()
+        .map(|t| {
+            let empty = t.is_empty();
+            (t.verdict(), empty)
+        })
+        .collect();
+    reverse.reverse();
+    assert_eq!(forward, reverse);
+    for (i, want) in forward.iter().enumerate() {
+        let got = std::thread::spawn(move || {
+            let ts = make();
+            {
+                let empty = ts[i].is_empty();
+                (ts[i].verdict(), empty)
+            }
+        })
+        .join()
+        .unwrap();
+        assert_eq!(&got, want, "index {i}");
+    }
 }
 
 /// X43 (round 9; fixed in round 10): a list of the front-sweep class as the head of another list of
@@ -6890,46 +6781,42 @@ fn r9_nested_queries_agree_alone_forward_and_reverse() {
 /// a fresh thread. The item is now a root (`fields`) and is swept inside the outer fallback.
 #[test]
 fn r9_x43_a_list_as_the_head_of_a_list_is_decided_as_the_list_alone() {
-    big(|| {
-        for case in ["chain", "chainfar", "r5remout", "u4holesout"] {
-            let want = rfx_case(case, 8, "_r9x43").verdict();
-            Type::forget_emptiness();
-            let t = rfx_case(&format!("listhead:{case}"), 8, "_r9x43");
-            assert_eq!(t.verdict(), want, "listhead:{case}");
-            assert_eq!(t.is_empty(), want == Verdict::Empty, "listhead:{case}");
-        }
-    });
+    for case in ["chain", "chainfar", "r5remout", "u4holesout"] {
+        let want = rfx_case(case, 8, "_r9x43").verdict();
+        Type::forget_emptiness();
+        let t = rfx_case(&format!("listhead:{case}"), 8, "_r9x43");
+        assert_eq!(t.verdict(), want, "listhead:{case}");
+        assert_eq!(t.is_empty(), want == Verdict::Empty, "listhead:{case}");
+    }
 }
 
 /// Diagnostic for the remaining same-constructor tail boundary (R9-C5).
 #[test]
 fn r9_tail_admission_probe() {
-    big(|| {
-        for n in [3, 4, 8, 16] {
-            let t = rfx_case("listtail:r5remout", n, "_r9tailmember");
-            let good = Value::atom_with("cons", vec![Value::Int(0), r6_colour_list(&[5, 1, 1])]);
-            let bad = Value::atom_with("cons", vec![Value::Int(0), r6_colour_list(&[1, 1, 1])]);
-            assert!(t.contains(&good));
-            assert!(!t.contains(&bad));
-            eprintln!("r9 tail n {n}: {:?}, member [0,5,1,1] checked", t.verdict());
-        }
-        for n in 1..=6 {
-            let t = rfx_case("listtail:chain", n, "_r9tailempty");
-            // Integer heads distinguish only equality with 1. A chain test has
-            // horizon n; one extra tail item covers the unbounded carrier case.
-            for length in 0..=n + 1 {
-                for mask in 0..1usize << length {
-                    let xs: Vec<i64> = (0..length).map(|i| ((mask >> i) & 1) as i64).collect();
-                    let v = Value::atom_with("cons", vec![Value::Int(0), r6_colour_list(&xs)]);
-                    assert!(!t.contains(&v));
-                }
+    for n in [3, 4, 8, 16] {
+        let t = rfx_case("listtail:r5remout", n, "_r9tailmember");
+        let good = Value::atom_with("cons", vec![Value::Int(0), r6_colour_list(&[5, 1, 1])]);
+        let bad = Value::atom_with("cons", vec![Value::Int(0), r6_colour_list(&[1, 1, 1])]);
+        assert!(t.contains(&good));
+        assert!(!t.contains(&bad));
+        eprintln!("r9 tail n {n}: {:?}, member [0,5,1,1] checked", t.verdict());
+    }
+    for n in 1..=6 {
+        let t = rfx_case("listtail:chain", n, "_r9tailempty");
+        // Integer heads distinguish only equality with 1. A chain test has
+        // horizon n; one extra tail item covers the unbounded carrier case.
+        for length in 0..=n + 1 {
+            for mask in 0..1usize << length {
+                let xs: Vec<i64> = (0..length).map(|i| ((mask >> i) & 1) as i64).collect();
+                let v = Value::atom_with("cons", vec![Value::Int(0), r6_colour_list(&xs)]);
+                assert!(!t.contains(&v));
             }
-            eprintln!(
-                "r9 empty tail n {n}: {:?}, enumeration found no member",
-                t.verdict()
-            );
         }
-    });
+        eprintln!(
+            "r9 empty tail n {n}: {:?}, enumeration found no member",
+            t.verdict()
+        );
+    }
 }
 
 /// `t(d) = (t(d-1), t(d-1))`, one type shared by both components at every level.
@@ -6947,28 +6834,26 @@ fn r9_shared_tuple_type(n: usize, leaf: Type) -> Type {
 /// `listtail:r5remout` were Refused(Fork).
 #[test]
 fn r10_a_boolean_list_tail_is_decided_as_the_tail() {
-    big(|| {
-        for n in [4, 16, 32] {
-            for case in [
-                "chain",
-                "chainfar",
-                "r5remout",
-                "u4holesout",
-                "clstaggerholesout",
-            ] {
-                Type::forget_emptiness();
-                let want = rfx_case(case, n, "_r10tail").verdict();
-                Type::forget_emptiness();
-                let t = rfx_case(&format!("listtail:{case}"), n, "_r10tail");
-                assert_eq!(t.verdict(), want, "listtail:{case} at {n}");
-                assert_eq!(
-                    t.is_empty(),
-                    want == Verdict::Empty,
-                    "listtail:{case} at {n}"
-                );
-            }
+    for n in [4, 16, 32] {
+        for case in [
+            "chain",
+            "chainfar",
+            "r5remout",
+            "u4holesout",
+            "clstaggerholesout",
+        ] {
+            Type::forget_emptiness();
+            let want = rfx_case(case, n, "_r10tail").verdict();
+            Type::forget_emptiness();
+            let t = rfx_case(&format!("listtail:{case}"), n, "_r10tail");
+            assert_eq!(t.verdict(), want, "listtail:{case} at {n}");
+            assert_eq!(
+                t.is_empty(),
+                want == Verdict::Empty,
+                "listtail:{case} at {n}"
+            );
         }
-    });
+    }
 }
 
 /// X45 (Codex R9-C6, round 10): a map whose required keys lie strictly within its allowed ones is
@@ -6976,29 +6861,27 @@ fn r10_a_boolean_list_tail_is_decided_as_the_tail() {
 /// twins and a map whose required keys are not all allowed stay Empty.
 #[test]
 fn r10_required_keys_within_allowed_keys_are_built() {
-    big(|| {
-        let inhabited = [
-            Type::morphism(lit(0), Type::int(), Type::int()),
-            Type::morphism(lit(1), Type::int(), Type::int()),
-            Type::morphism(&lit(0) | &lit(3), Type::int(), Type::int()),
-            Type::morphism(lit(0), Type::int(), rfx_case("r5remout", 16, "_r10map")),
-        ];
-        for t in &inhabited {
-            Type::forget_emptiness();
-            assert_eq!(t.verdict(), Verdict::Inhabited, "{t:?}");
-            assert!(!t.is_empty(), "{t:?}");
-        }
-        let empty = [
-            Type::morphism(lit(0), Type::int(), Type::empty()),
-            Type::morphism(lit(0), Type::int(), rfx_case("chain", 16, "_r10map")),
-            Type::morphism(Type::int(), lit(0), Type::int()),
-        ];
-        for t in &empty {
-            Type::forget_emptiness();
-            assert_eq!(t.verdict(), Verdict::Empty, "{t:?}");
-            assert!(t.is_empty(), "{t:?}");
-        }
-    });
+    let inhabited = [
+        Type::morphism(lit(0), Type::int(), Type::int()),
+        Type::morphism(lit(1), Type::int(), Type::int()),
+        Type::morphism(&lit(0) | &lit(3), Type::int(), Type::int()),
+        Type::morphism(lit(0), Type::int(), rfx_case("r5remout", 16, "_r10map")),
+    ];
+    for t in &inhabited {
+        Type::forget_emptiness();
+        assert_eq!(t.verdict(), Verdict::Inhabited, "{t:?}");
+        assert!(!t.is_empty(), "{t:?}");
+    }
+    let empty = [
+        Type::morphism(lit(0), Type::int(), Type::empty()),
+        Type::morphism(lit(0), Type::int(), rfx_case("chain", 16, "_r10map")),
+        Type::morphism(Type::int(), lit(0), Type::int()),
+    ];
+    for t in &empty {
+        Type::forget_emptiness();
+        assert_eq!(t.verdict(), Verdict::Empty, "{t:?}");
+        assert!(t.is_empty(), "{t:?}");
+    }
 }
 
 /// The `Value::Big` gap (round 10): `r7congruenceout` with the first place's 7 replaced by
@@ -7033,30 +6916,28 @@ fn r10_big_congruence(n: usize, tag: &str) -> Type {
 /// atom payload agrees with enumeration of every 0/1 list up to length 4.
 #[test]
 fn r9_atom_chain_narrowing_agrees_with_finite_oracle() {
-    big(|| {
-        let empty = Type::atom_with(
-            "r8box",
-            &Type::tuple(vec![rfx_case("chain", 3, "_r9atomoracle")]),
-        );
-        let yes = Type::atom_with(
-            "r8box",
-            &Type::tuple(vec![rfx_case("chainfar", 3, "_r9atomoracle_far")]),
-        );
-        let mut found = false;
-        for length in 0..=4 {
-            for mask in 0..1usize << length {
-                let xs: Vec<i64> = (0..length).map(|i| ((mask >> i) & 1) as i64).collect();
-                let value = Value::atom_with("r8box", vec![r6_colour_list(&xs)]);
-                assert!(!empty.contains(&value));
-                found |= yes.contains(&value);
-            }
+    let empty = Type::atom_with(
+        "r8box",
+        &Type::tuple(vec![rfx_case("chain", 3, "_r9atomoracle")]),
+    );
+    let yes = Type::atom_with(
+        "r8box",
+        &Type::tuple(vec![rfx_case("chainfar", 3, "_r9atomoracle_far")]),
+    );
+    let mut found = false;
+    for length in 0..=4 {
+        for mask in 0..1usize << length {
+            let xs: Vec<i64> = (0..length).map(|i| ((mask >> i) & 1) as i64).collect();
+            let value = Value::atom_with("r8box", vec![r6_colour_list(&xs)]);
+            assert!(!empty.contains(&value));
+            found |= yes.contains(&value);
         }
-        assert!(found, "escaping twin is the oracle control");
-        assert_eq!(empty.verdict(), Verdict::Empty);
-        assert_eq!(yes.verdict(), Verdict::Inhabited);
-        assert!(empty.is_empty());
-        assert!(!yes.is_empty());
-    });
+    }
+    assert!(found, "escaping twin is the oracle control");
+    assert_eq!(empty.verdict(), Verdict::Empty);
+    assert_eq!(yes.verdict(), Verdict::Inhabited);
+    assert!(empty.is_empty());
+    assert!(!yes.is_empty());
 }
 
 fn r10_big_congruence_cx(n: usize, wide: bool, tag: &str) -> Type {
@@ -7097,106 +6978,101 @@ fn r10_big_congruence_cx(n: usize, wide: bool, tag: &str) -> Type {
 
 #[test]
 fn r10_scalar_required_keys_within_allowed_keys() {
-    big(|| {
-        for value in [Type::int(), rfx_case("r5remout", 16, "_r10map")] {
-            let t = Type::morphism(lit(0), Type::int(), value.clone());
-            let good = if value == Type::int() {
-                Value::Int(0)
-            } else {
-                r6_colour_list(&[5, 1, 1])
-            };
-            // Runtime membership deliberately rejects bounded morphisms; check the
-            // returned value and the scalar domain certificate independently.
-            assert!(value.contains(&good));
-            assert!(Type::int().contains(&Value::Int(0)));
-            assert_eq!(t.verdict(), Verdict::Inhabited);
-        }
-        assert_eq!(
-            Type::morphism(lit(0), Type::int(), Type::empty()).verdict(),
-            Verdict::Empty
-        );
-        assert_eq!(
-            Type::morphism(lit(0), lit(1), Type::int()).verdict(),
-            Verdict::Empty
-        );
-        assert_eq!(
-            Type::morphism(Type::bool(), Type::bool(), Type::int()).verdict(),
-            Verdict::Inhabited
-        );
-    });
+    for value in [Type::int(), rfx_case("r5remout", 16, "_r10map")] {
+        let t = Type::morphism(lit(0), Type::int(), value.clone());
+        let good = if value == Type::int() {
+            Value::Int(0)
+        } else {
+            r6_colour_list(&[5, 1, 1])
+        };
+        // Runtime membership deliberately rejects bounded morphisms; check the
+        // returned value and the scalar domain certificate independently.
+        assert!(value.contains(&good));
+        assert!(Type::int().contains(&Value::Int(0)));
+        assert_eq!(t.verdict(), Verdict::Inhabited);
+    }
+    assert_eq!(
+        Type::morphism(lit(0), Type::int(), Type::empty()).verdict(),
+        Verdict::Empty
+    );
+    assert_eq!(
+        Type::morphism(lit(0), lit(1), Type::int()).verdict(),
+        Verdict::Empty
+    );
+    assert_eq!(
+        Type::morphism(Type::bool(), Type::bool(), Type::int()).verdict(),
+        Verdict::Inhabited
+    );
 }
 
 /// H has simultaneous landings at K and J, H2 lands only at K. Their union
 /// covers K's incoming slice but must not be reused as coverage of J.
 #[test]
 fn r10_partial_multi_target_coverage_is_per_child() {
-    big(|| {
-        let l = list_named(Type::int(), "_r10targets");
-        let all = small(7);
-        for a in 1..=7 {
-            for b in 1..=7 {
-                for k in 1..=7 {
-                    let tail = |h: Type, t: Type| cons_of(h, t);
-                    let u = tail(small(a), tail(small(k), l.clone()));
-                    let v = tail(small(a), tail(all.clone(), l.clone()));
-                    let w = tail(small(b), tail(small(k), l.clone()));
-                    let negatives =
-                        &(&tail(Type::int(), u) | &tail(Type::int(), v)) | &tail(Type::int(), w);
-                    let positive = tail(
-                        lit(0),
-                        tail(all.clone(), tail(all.clone(), Type::atom("nil"))),
-                    );
-                    let t = &positive - &negatives;
-                    let mut inhabited = false;
-                    for x in 1..=3 {
-                        for y in 1..=3 {
-                            inhabited |= t.contains(&r6_colour_list(&[0, x, y]));
-                        }
+    let l = list_named(Type::int(), "_r10targets");
+    let all = small(7);
+    for a in 1..=7 {
+        for b in 1..=7 {
+            for k in 1..=7 {
+                let tail = |h: Type, t: Type| cons_of(h, t);
+                let u = tail(small(a), tail(small(k), l.clone()));
+                let v = tail(small(a), tail(all.clone(), l.clone()));
+                let w = tail(small(b), tail(small(k), l.clone()));
+                let negatives =
+                    &(&tail(Type::int(), u) | &tail(Type::int(), v)) | &tail(Type::int(), w);
+                let positive = tail(
+                    lit(0),
+                    tail(all.clone(), tail(all.clone(), Type::atom("nil"))),
+                );
+                let t = &positive - &negatives;
+                let mut inhabited = false;
+                for x in 1..=3 {
+                    for y in 1..=3 {
+                        inhabited |= t.contains(&r6_colour_list(&[0, x, y]));
                     }
-                    let want = if inhabited {
-                        Verdict::Inhabited
-                    } else {
-                        Verdict::Empty
-                    };
-                    for got in [
-                        t.chain_verdict(),
-                        t.chain_verdict_expanded(),
-                        Some(t.verdict()),
-                    ] {
-                        if let Some(got @ (Verdict::Empty | Verdict::Inhabited)) = got {
-                            assert_eq!(got, want, "heads {a} {b} {k}");
-                        }
+                }
+                let want = if inhabited {
+                    Verdict::Inhabited
+                } else {
+                    Verdict::Empty
+                };
+                for got in [
+                    t.chain_verdict(),
+                    t.chain_verdict_expanded(),
+                    Some(t.verdict()),
+                ] {
+                    if let Some(got @ (Verdict::Empty | Verdict::Inhabited)) = got {
+                        assert_eq!(got, want, "heads {a} {b} {k}");
                     }
                 }
             }
         }
-        // Falsifiable pair: changing the final positive head changes the answer.
-        for (last, want) in [(lit(2), Verdict::Inhabited), (lit(1), Verdict::Empty)] {
-            let k = cons_of(lit(1), l.clone());
-            let j = cons_of(all.clone(), l.clone());
-            let n = &(&cons_of(Type::int(), cons_of(small(3), k.clone()))
-                | &cons_of(Type::int(), cons_of(small(3), j)))
-                | &cons_of(Type::int(), cons_of(small(6), k));
-            let p = cons_of(
-                lit(0),
-                cons_of(all.clone(), cons_of(last, Type::atom("nil"))),
-            );
-            let t = &p - &n;
-            assert_eq!(t.verdict(), want);
-        }
-    });
+    }
+    // Falsifiable pair: changing the final positive head changes the answer.
+    for (last, want) in [(lit(2), Verdict::Inhabited), (lit(1), Verdict::Empty)] {
+        let k = cons_of(lit(1), l.clone());
+        let j = cons_of(all.clone(), l.clone());
+        let n = &(&cons_of(Type::int(), cons_of(small(3), k.clone()))
+            | &cons_of(Type::int(), cons_of(small(3), j)))
+            | &cons_of(Type::int(), cons_of(small(6), k));
+        let p = cons_of(
+            lit(0),
+            cons_of(all.clone(), cons_of(last, Type::atom("nil"))),
+        );
+        let t = &p - &n;
+        assert_eq!(t.verdict(), want);
+    }
 }
 
 #[test]
 fn r10_is_empty_on_a_nested_list_is_independent_of_a_prior_verdict() {
     for case in ["chain", "chainfar", "r5remout", "u4holesout"] {
         for wrap in ["listhead", "listtail", "atom"] {
-            let got = std::thread::Builder::new()
-                .stack_size(16 * 1024 * 1024)
-                .spawn(move || rfx_case(&format!("{wrap}:{case}"), 8, "_r10freshbool").is_empty())
-                .unwrap()
-                .join()
-                .unwrap();
+            let got = std::thread::spawn(move || {
+                rfx_case(&format!("{wrap}:{case}"), 8, "_r10freshbool").is_empty()
+            })
+            .join()
+            .unwrap();
             assert_eq!(got, case == "chain", "fresh is_empty {wrap}:{case}");
         }
     }
@@ -7238,149 +7114,141 @@ fn r10_padded_congruence(n: usize, tag: &str) -> Type {
 
 #[test]
 fn r10_irrelevant_shared_holes_preserve_the_finite_language() {
-    big(|| {
-        for n in 4..=6usize {
-            let a = r7_congruence(n, true, "_r10pad_a");
-            let b = r10_padded_congruence(n, "_r10pad_b");
-            let mut found = false;
-            for word in 0..4usize.pow(n as u32) {
-                let mut code = word;
-                let xs: Vec<i64> = (0..n)
-                    .map(|_| {
-                        let v = [0, 1, 2, 7][code % 4];
-                        code /= 4;
-                        v
-                    })
-                    .collect();
-                let v = r6_colour_list(&xs);
-                let want = a.contains(&v);
-                assert_eq!(b.contains(&v), want, "n={n} word={xs:?}");
-                found |= want;
-            }
-            assert!(found);
-            assert!(!b.contains(&r6_colour_list(&vec![7; n])));
-            assert_eq!(b.verdict(), Verdict::Inhabited);
+    for n in 4..=6usize {
+        let a = r7_congruence(n, true, "_r10pad_a");
+        let b = r10_padded_congruence(n, "_r10pad_b");
+        let mut found = false;
+        for word in 0..4usize.pow(n as u32) {
+            let mut code = word;
+            let xs: Vec<i64> = (0..n)
+                .map(|_| {
+                    let v = [0, 1, 2, 7][code % 4];
+                    code /= 4;
+                    v
+                })
+                .collect();
+            let v = r6_colour_list(&xs);
+            let want = a.contains(&v);
+            assert_eq!(b.contains(&v), want, "n={n} word={xs:?}");
+            found |= want;
         }
-    });
+        assert!(found);
+        assert!(!b.contains(&r6_colour_list(&vec![7; n])));
+        assert_eq!(b.verdict(), Verdict::Inhabited);
+    }
 }
 
 #[test]
 fn r10_projection_uses_every_positive_head_and_keeps_finite_and_cofinite_meanings() {
-    big(|| {
-        let l = list_named(&lit(1) | &lit(3), "_r10alphascope");
-        let p = cons_of(lit(2), cons_of(lit(3), l.clone()));
-        let w = r6_colour_list(&[2, 3]);
-        for h in [
-            &lit(1) | &lit(10000),
-            &Type::int() - &(&lit(3) | &lit(10000)),
-        ] {
-            let t = &p - &cons_of(lit(2), cons_of(h, l.clone()));
-            assert!(t.contains(&w));
-            assert!(
-                t.escape_cell_counts().0 > 0,
-                "the direct escape parsed the global alphabet"
-            );
-            assert_eq!(t.verdict(), Verdict::Inhabited);
-        }
-        let empty = &p - &cons_of(lit(2), cons_of(&lit(3) | &lit(10000), l));
-        assert!(!empty.contains(&w));
-        assert_eq!(empty.verdict(), Verdict::Empty);
-    });
+    let l = list_named(&lit(1) | &lit(3), "_r10alphascope");
+    let p = cons_of(lit(2), cons_of(lit(3), l.clone()));
+    let w = r6_colour_list(&[2, 3]);
+    for h in [
+        &lit(1) | &lit(10000),
+        &Type::int() - &(&lit(3) | &lit(10000)),
+    ] {
+        let t = &p - &cons_of(lit(2), cons_of(h, l.clone()));
+        assert!(t.contains(&w));
+        assert!(
+            t.escape_cell_counts().0 > 0,
+            "the direct escape parsed the global alphabet"
+        );
+        assert_eq!(t.verdict(), Verdict::Inhabited);
+    }
+    let empty = &p - &cons_of(lit(2), cons_of(&lit(3) | &lit(10000), l));
+    assert!(!empty.contains(&w));
+    assert_eq!(empty.verdict(), Verdict::Empty);
 }
 
 #[test]
 fn r10_scalar_domain_certificates_match_all_class_domains() {
-    big(|| {
-        let carriers = vec![
-            (
-                Type::int(),
-                vec![Value::Int(-1), Value::Int(0), Value::Int(1)],
-                true,
-            ),
-            (
-                Type::rat(),
-                (-1..=1)
-                    .map(|i: i64| Value::rat(zed_kernel::Rat::int(i.into())))
-                    .collect(),
-                true,
-            ),
-            (
-                Type::f64(),
-                vec![Value::float(-1.0), Value::float(0.0), Value::float(1.0)],
-                true,
-            ),
-            (
-                Type::string(),
-                vec![Value::str("a"), Value::str("b"), Value::str("c")],
-                true,
-            ),
-            (
-                Type::bool(),
-                vec![Value::Bool(false), Value::Bool(true)],
-                false,
-            ),
-        ];
-        let mut checked = 0;
-        let mut answers = [0usize; 2];
-        for (carrier, pool, fresh) in carriers {
-            let listed = 1usize << pool.len();
-            let full = (1usize << (pool.len() + usize::from(fresh))) - 1;
-            let make = |bits: usize, cof: bool| {
-                let s = pool
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, _)| bits >> i & 1 != 0)
-                    .fold(Type::empty(), |s, (_, v)| &s | &Type::lit(v).unwrap());
-                if cof { &carrier - &s } else { s }
-            };
-            for r in 0..listed {
-                for u in 0..listed {
-                    for rc in [false, true] {
-                        for uc in [false, true] {
-                            for empty_value in [false, true] {
-                                // One exact class for each listed literal and one for all
-                                // remaining values of an infinite carrier. Enumerate every
-                                // possible domain in this quotient, independently of the kernel.
-                                let required = if rc { full ^ r } else { r };
-                                let allowed = if uc { full ^ u } else { u };
-                                let exists = (0..=full).any(|d| {
-                                    required & !d == 0
-                                        && d & !allowed == 0
-                                        && (d == 0 || !empty_value)
-                                });
-                                let t = Type::morphism(
-                                    make(r, rc),
-                                    make(u, uc),
-                                    if empty_value {
-                                        Type::empty()
-                                    } else {
-                                        Type::int()
-                                    },
-                                );
-                                Type::forget_emptiness();
-                                assert_eq!(
-                                    t.verdict(),
-                                    if exists {
-                                        Verdict::Inhabited
-                                    } else {
-                                        Verdict::Empty
-                                    },
-                                    "carrier {carrier}, masks {r}/{u}, complements {rc}/{uc}, empty value {empty_value}"
-                                );
-                                checked += 1;
-                                answers[usize::from(exists)] += 1;
-                            }
+    let carriers = vec![
+        (
+            Type::int(),
+            vec![Value::Int(-1), Value::Int(0), Value::Int(1)],
+            true,
+        ),
+        (
+            Type::rat(),
+            (-1..=1)
+                .map(|i: i64| Value::rat(zed_kernel::Rat::int(i.into())))
+                .collect(),
+            true,
+        ),
+        (
+            Type::f64(),
+            vec![Value::float(-1.0), Value::float(0.0), Value::float(1.0)],
+            true,
+        ),
+        (
+            Type::string(),
+            vec![Value::str("a"), Value::str("b"), Value::str("c")],
+            true,
+        ),
+        (
+            Type::bool(),
+            vec![Value::Bool(false), Value::Bool(true)],
+            false,
+        ),
+    ];
+    let mut checked = 0;
+    let mut answers = [0usize; 2];
+    for (carrier, pool, fresh) in carriers {
+        let listed = 1usize << pool.len();
+        let full = (1usize << (pool.len() + usize::from(fresh))) - 1;
+        let make = |bits: usize, cof: bool| {
+            let s = pool
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| bits >> i & 1 != 0)
+                .fold(Type::empty(), |s, (_, v)| &s | &Type::lit(v).unwrap());
+            if cof { &carrier - &s } else { s }
+        };
+        for r in 0..listed {
+            for u in 0..listed {
+                for rc in [false, true] {
+                    for uc in [false, true] {
+                        for empty_value in [false, true] {
+                            // One exact class for each listed literal and one for all
+                            // remaining values of an infinite carrier. Enumerate every
+                            // possible domain in this quotient, independently of the kernel.
+                            let required = if rc { full ^ r } else { r };
+                            let allowed = if uc { full ^ u } else { u };
+                            let exists = (0..=full).any(|d| {
+                                required & !d == 0 && d & !allowed == 0 && (d == 0 || !empty_value)
+                            });
+                            let t = Type::morphism(
+                                make(r, rc),
+                                make(u, uc),
+                                if empty_value {
+                                    Type::empty()
+                                } else {
+                                    Type::int()
+                                },
+                            );
+                            Type::forget_emptiness();
+                            assert_eq!(
+                                t.verdict(),
+                                if exists {
+                                    Verdict::Inhabited
+                                } else {
+                                    Verdict::Empty
+                                },
+                                "carrier {carrier}, masks {r}/{u}, complements {rc}/{uc}, empty value {empty_value}"
+                            );
+                            checked += 1;
+                            answers[usize::from(exists)] += 1;
                         }
                     }
                 }
             }
         }
-        assert!(answers[0] > 0 && answers[1] > 0);
-        eprintln!(
-            "R10 scalar domains: {checked} cases, Empty {}, Inhabited {}",
-            answers[0], answers[1]
-        );
-    });
+    }
+    assert!(answers[0] > 0 && answers[1] > 0);
+    eprintln!(
+        "R10 scalar domains: {checked} cases, Empty {}, Inhabited {}",
+        answers[0], answers[1]
+    );
 }
 
 /// Two selector positions encode an orthogonal red/blue pair using d negative
@@ -7411,42 +7279,40 @@ fn r10_ov_selector_type(a: &[Vec<bool>], b: &[Vec<bool>]) -> Type {
 
 #[test]
 fn r10_ov_selector_reduction_matches_every_small_matrix_and_pair() {
-    big(|| {
-        let (n, d) = (3usize, 2usize);
-        let mut words = 0;
-        for am in 0..1usize << (n * d) {
-            for bm in 0..1usize << (n * d) {
-                let a: Vec<Vec<bool>> = (0..n)
-                    .map(|i| (0..d).map(|q| am >> (i * d + q) & 1 != 0).collect())
-                    .collect();
-                let b: Vec<Vec<bool>> = (0..d)
-                    .map(|q| (0..n).map(|j| bm >> (q * n + j) & 1 != 0).collect())
-                    .collect();
-                let t = r10_ov_selector_type(&a, &b);
-                for (i, ai) in a.iter().enumerate() {
-                    for (j, _) in b[0].iter().enumerate() {
-                        let orthogonal = !(0..d).any(|q| ai[q] && b[q][j]);
-                        assert_eq!(
-                            t.contains(&r6_colour_list(&[i as i64, j as i64])),
-                            orthogonal,
-                            "A mask {am}, B mask {bm}, pair {i}/{j}"
-                        );
-                        words += 1;
-                    }
+    let (n, d) = (3usize, 2usize);
+    let mut words = 0;
+    for am in 0..1usize << (n * d) {
+        for bm in 0..1usize << (n * d) {
+            let a: Vec<Vec<bool>> = (0..n)
+                .map(|i| (0..d).map(|q| am >> (i * d + q) & 1 != 0).collect())
+                .collect();
+            let b: Vec<Vec<bool>> = (0..d)
+                .map(|q| (0..n).map(|j| bm >> (q * n + j) & 1 != 0).collect())
+                .collect();
+            let t = r10_ov_selector_type(&a, &b);
+            for (i, ai) in a.iter().enumerate() {
+                for (j, _) in b[0].iter().enumerate() {
+                    let orthogonal = !(0..d).any(|q| ai[q] && b[q][j]);
+                    assert_eq!(
+                        t.contains(&r6_colour_list(&[i as i64, j as i64])),
+                        orthogonal,
+                        "A mask {am}, B mask {bm}, pair {i}/{j}"
+                    );
+                    words += 1;
                 }
             }
         }
-        let a = vec![vec![true; d]; n];
-        assert_eq!(
-            r10_ov_selector_type(&a, &vec![vec![true; n]; d]).verdict(),
-            Verdict::Empty
-        );
-        assert_eq!(
-            r10_ov_selector_type(&a, &vec![vec![false; n]; d]).verdict(),
-            Verdict::Inhabited
-        );
-        eprintln!("R10 OV: 4096 matrix pairs, {words} exact selector-word checks");
-    });
+    }
+    let a = vec![vec![true; d]; n];
+    assert_eq!(
+        r10_ov_selector_type(&a, &vec![vec![true; n]; d]).verdict(),
+        Verdict::Empty
+    );
+    assert_eq!(
+        r10_ov_selector_type(&a, &vec![vec![false; n]; d]).verdict(),
+        Verdict::Inhabited
+    );
+    eprintln!("R10 OV: 4096 matrix pairs, {words} exact selector-word checks");
 }
 
 /// The naive compact rectangular version of the r9 shift encoding. Root heights
@@ -7499,42 +7365,40 @@ fn r10_rectangular_shift(a: &[Vec<bool>], b: &[Vec<bool>], tag: &str) -> Type {
 
 #[test]
 fn r10_low_dimension_shift_collisions_mask_an_orthogonal_pair() {
-    big(|| {
-        let a = vec![
-            vec![true, false],
-            vec![true, true],
-            vec![true, true],
-            vec![false, true],
-        ];
-        let b = vec![vec![true, true, false, true], vec![true, true, true, true]];
-        let zeroes: Vec<_> = a
-            .iter()
-            .enumerate()
-            .flat_map(|(i, ai)| {
-                (0..4)
-                    .filter(|&k| !(0..2).any(|q| ai[q] && b[q][k]))
-                    .map(move |k| (i, k))
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        assert_eq!(zeroes, vec![(0, 2)]);
-        let height = |i: usize, k: usize| k * 3 + 3 + i * 2;
-        assert_eq!(height(0, 2), height(3, 0));
-        let t = r10_rectangular_shift(&a, &b, "_r10collision");
-        let mut xs = vec![7; 18];
-        for (i, ai) in a.iter().enumerate() {
-            for (q, &bit) in ai.iter().enumerate() {
-                if bit {
-                    xs[1 + i * 2 + q] = 100 + q as i64;
-                }
+    let a = vec![
+        vec![true, false],
+        vec![true, true],
+        vec![true, true],
+        vec![false, true],
+    ];
+    let b = vec![vec![true, true, false, true], vec![true, true, true, true]];
+    let zeroes: Vec<_> = a
+        .iter()
+        .enumerate()
+        .flat_map(|(i, ai)| {
+            (0..4)
+                .filter(|&k| !(0..2).any(|q| ai[q] && b[q][k]))
+                .map(move |k| (i, k))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    assert_eq!(zeroes, vec![(0, 2)]);
+    let height = |i: usize, k: usize| k * 3 + 3 + i * 2;
+    assert_eq!(height(0, 2), height(3, 0));
+    let t = r10_rectangular_shift(&a, &b, "_r10collision");
+    let mut xs = vec![7; 18];
+    for (i, ai) in a.iter().enumerate() {
+        for (q, &bit) in ai.iter().enumerate() {
+            if bit {
+                xs[1 + i * 2 + q] = 100 + q as i64;
             }
         }
-        assert!(t.contains(&r6_colour_list(&xs)));
-        assert_eq!(t.verdict(), Verdict::Inhabited); // AB is nevertheless not all ones.
-        let none = r10_rectangular_shift(&a, &vec![vec![false; 4]; 2], "_r10collision_no");
-        assert!(!none.contains(&r6_colour_list(&xs)));
-        assert_eq!(none.verdict(), Verdict::Empty);
-    });
+    }
+    assert!(t.contains(&r6_colour_list(&xs)));
+    assert_eq!(t.verdict(), Verdict::Inhabited); // AB is nevertheless not all ones.
+    let none = r10_rectangular_shift(&a, &vec![vec![false; 4]; 2], "_r10collision_no");
+    assert!(!none.contains(&r6_colour_list(&xs)));
+    assert_eq!(none.verdict(), Verdict::Empty);
 }
 
 /// R10-C4: many tags share one positive union of diagonal scalar tuples.
@@ -7596,18 +7460,16 @@ fn r11_front_end_keeps_wide_integer_literals() {
 
 #[test]
 fn r11_boolean_tail_two_links_down() {
-    big(|| {
-        for depth in [2, 3, 8] {
-            for (case, want) in [("chain", Verdict::Empty), ("r5remout", Verdict::Inhabited)] {
-                let mut t = rfx_case(case, 8, "_r11tail");
-                for _ in 0..depth {
-                    t = cons_of(Type::int(), t);
-                }
-                Type::forget_emptiness();
-                assert_eq!(t.verdict(), want, "{case}, depth {depth}");
+    for depth in [2, 3, 8] {
+        for (case, want) in [("chain", Verdict::Empty), ("r5remout", Verdict::Inhabited)] {
+            let mut t = rfx_case(case, 8, "_r11tail");
+            for _ in 0..depth {
+                t = cons_of(Type::int(), t);
             }
+            Type::forget_emptiness();
+            assert_eq!(t.verdict(), want, "{case}, depth {depth}");
         }
-    });
+    }
 }
 
 #[test]
@@ -7681,19 +7543,17 @@ fn r11_ternary_alignment(sizes: &[usize]) {
 
 #[test]
 fn r11_fields_within_a_list_item_are_admitted_as_written_fields() {
-    big(|| {
-        for n in [3, 4, 8, 16] {
-            let inner = rfx_case("r5remout", n, "_r11mapitem");
-            assert!(inner.contains(&r6_colour_list(&[5, 1, 1])));
-            let map = Type::morphism(lit(0), Type::int(), inner);
-            assert_eq!(&lit(0) - &Type::int(), Type::empty());
-            Type::forget_emptiness();
-            assert_eq!(map.verdict(), Verdict::Inhabited);
-            let t = cons_of(map, list_named(Type::top(), "_r11outermapitem"));
-            Type::forget_emptiness();
-            assert_eq!(t.verdict(), Verdict::Inhabited, "map item at {n}");
-        }
-    });
+    for n in [3, 4, 8, 16] {
+        let inner = rfx_case("r5remout", n, "_r11mapitem");
+        assert!(inner.contains(&r6_colour_list(&[5, 1, 1])));
+        let map = Type::morphism(lit(0), Type::int(), inner);
+        assert_eq!(&lit(0) - &Type::int(), Type::empty());
+        Type::forget_emptiness();
+        assert_eq!(map.verdict(), Verdict::Inhabited);
+        let t = cons_of(map, list_named(Type::top(), "_r11outermapitem"));
+        Type::forget_emptiness();
+        assert_eq!(t.verdict(), Verdict::Inhabited, "map item at {n}");
+    }
 }
 
 #[test]
@@ -7704,34 +7564,29 @@ fn r11_item_field_scopes_agree_alone_forward_and_reverse() {
             .map(|c| rfx_case(c, 8, "_r11scopeorder"))
             .collect()
     }
-    big(|| {
-        let types = make();
-        Type::forget_emptiness();
-        let batch: Vec<_> = types.iter().map(|t| (t.is_empty(), t.verdict())).collect();
-        Type::forget_emptiness();
-        let mut reverse: Vec<_> = types
-            .iter()
-            .rev()
-            .map(|t| (t.is_empty(), t.verdict()))
-            .collect();
-        reverse.reverse();
-        let alone: Vec<_> = (0..types.len())
-            .map(|i| {
-                std::thread::Builder::new()
-                    .stack_size(16 * 1024 * 1024)
-                    .spawn(move || {
-                        let t = make().swap_remove(i);
-                        (t.is_empty(), t.verdict())
-                    })
-                    .unwrap()
-                    .join()
-                    .unwrap()
+    let types = make();
+    Type::forget_emptiness();
+    let batch: Vec<_> = types.iter().map(|t| (t.is_empty(), t.verdict())).collect();
+    Type::forget_emptiness();
+    let mut reverse: Vec<_> = types
+        .iter()
+        .rev()
+        .map(|t| (t.is_empty(), t.verdict()))
+        .collect();
+    reverse.reverse();
+    let alone: Vec<_> = (0..types.len())
+        .map(|i| {
+            std::thread::spawn(move || {
+                let t = make().swap_remove(i);
+                (t.is_empty(), t.verdict())
             })
-            .collect();
-        assert_eq!(batch, vec![(false, Verdict::Inhabited); types.len()]);
-        assert_eq!(reverse, batch);
-        assert_eq!(alone, batch);
-    });
+            .join()
+            .unwrap()
+        })
+        .collect();
+    assert_eq!(batch, vec![(false, Verdict::Inhabited); types.len()]);
+    assert_eq!(reverse, batch);
+    assert_eq!(alone, batch);
 }
 
 /// R11 probe for the name loop of `decide_groups_read`'s walk: n distinct types `E | i`, each
@@ -7988,22 +7843,20 @@ fn a_pair_type_met_with_a_few_forked_differences_is_refused() {
 /// until TEST-bench-move-l0123).
 #[test]
 fn refining_a_box_of_pairs_is_refused_at_the_end_family_fork() {
-    big(|| {
-        for n in 1..=4 {
-            for skip in [false, true] {
-                Type::forget_emptiness();
-                let t = refined_pairs(n, skip, &format!("_rfs{skip}{n}"));
-                assert_eq!(
-                    t.verdict(),
-                    Verdict::Refused(Refusal::Fork),
-                    "skip {skip} at {n}"
-                );
-            }
+    for n in 1..=4 {
+        for skip in [false, true] {
             Type::forget_emptiness();
-            let t = refined_pairs(n, false, &format!("_rfse{n}"));
-            assert!(!t.is_empty(), "at {n}");
+            let t = refined_pairs(n, skip, &format!("_rfs{skip}{n}"));
+            assert_eq!(
+                t.verdict(),
+                Verdict::Refused(Refusal::Fork),
+                "skip {skip} at {n}"
+            );
         }
-    });
+        Type::forget_emptiness();
+        let t = refined_pairs(n, false, &format!("_rfse{n}"));
+        assert!(!t.is_empty(), "at {n}");
+    }
 }
 
 /// Small instance of `bench::r4_diagnostic_routes_and_head_width`: the front sweep of `front`
@@ -8011,15 +7864,13 @@ fn refining_a_box_of_pairs_is_refused_at_the_end_family_fork() {
 /// first is inhabited.
 #[test]
 fn a_list_family_over_wide_boolean_heads_is_inhabited() {
-    big(|| {
+    Type::forget_emptiness();
+    std::hint::black_box(rfx_case("front", 8, "_r4route_front").sweep_verdict());
+    for w in [4, 8] {
         Type::forget_emptiness();
-        std::hint::black_box(rfx_case("front", 8, "_r4route_front").sweep_verdict());
-        for w in [4, 8] {
-            Type::forget_emptiness();
-            let t = u4_width(w, &format!("_r4width{w}"));
-            assert_eq!(t.verdict(), Verdict::Inhabited, "width {w}");
-        }
-    });
+        let t = u4_width(w, &format!("_r4width{w}"));
+        assert_eq!(t.verdict(), Verdict::Inhabited, "width {w}");
+    }
 }
 
 /// Small instance of `bench::r5_probe_cases_are_decided_in_their_size_3`: the round-4 cases
@@ -8096,16 +7947,14 @@ fn round_six_probe_cases_are_decided_at_small_sizes() {
 /// encoding outside the cover is inhabited, and its escape reads at most `4n` empty cells.
 #[test]
 fn the_boolean_product_outside_its_cover_is_decided_at_small_sizes() {
-    big(|| {
-        for n in [8, 16, 32] {
-            Type::forget_emptiness();
-            let t = rfx_case("r7bmmout", n, &format!("_r7bmm_small{n}"));
-            let counts = t.escape_cell_counts();
-            assert!(counts.1 <= 4 * n, "r7bmmout {n}: {counts:?}");
-            Type::forget_emptiness();
-            assert_eq!(t.verdict(), Verdict::Inhabited, "r7bmmout at {n}");
-        }
-    });
+    for n in [8, 16, 32] {
+        Type::forget_emptiness();
+        let t = rfx_case("r7bmmout", n, &format!("_r7bmm_small{n}"));
+        let counts = t.escape_cell_counts();
+        assert!(counts.1 <= 4 * n, "r7bmmout {n}: {counts:?}");
+        Type::forget_emptiness();
+        assert_eq!(t.verdict(), Verdict::Inhabited, "r7bmmout at {n}");
+    }
 }
 
 /// Small instance of `bench::r8_escape_and_width_instruction_scaling` (`r5varywidth`) and
@@ -8113,16 +7962,14 @@ fn the_boolean_product_outside_its_cover_is_decided_at_small_sizes() {
 /// tuples of `w` Booleans is inhabited at widths 4, 8 and 16.
 #[test]
 fn a_list_of_varying_width_heads_is_inhabited() {
-    big(|| {
-        for w in [4, 8, 16] {
-            Type::forget_emptiness();
-            assert_eq!(
-                r5_varying_width(w).verdict(),
-                Verdict::Inhabited,
-                "width {w}"
-            );
-        }
-    });
+    for w in [4, 8, 16] {
+        Type::forget_emptiness();
+        assert_eq!(
+            r5_varying_width(w).verdict(),
+            Verdict::Inhabited,
+            "width {w}"
+        );
+    }
 }
 
 /// Small instance of `bench::r8_a_list_in_a_field_is_decided_as_the_list_alone`: a list of
@@ -8130,20 +7977,18 @@ fn a_list_of_varying_width_heads_is_inhabited() {
 /// verdict of the list alone.
 #[test]
 fn a_list_in_a_field_gets_the_verdict_of_the_list_alone() {
-    big(|| {
-        for n in [8, 16] {
-            let tag = format!("_r8field_small{n}");
-            for case in ["chain", "r5remin", "r6twoun"] {
+    for n in [8, 16] {
+        let tag = format!("_r8field_small{n}");
+        for case in ["chain", "r5remin", "r6twoun"] {
+            Type::forget_emptiness();
+            let want = rfx_case(case, n, &tag).verdict();
+            for wrap in ["tup:", "rec:"] {
                 Type::forget_emptiness();
-                let want = rfx_case(case, n, &tag).verdict();
-                for wrap in ["tup:", "rec:"] {
-                    Type::forget_emptiness();
-                    let got = rfx_case(&format!("{wrap}{case}"), n, &tag).verdict();
-                    assert_eq!(got, want, "{wrap}{case} at {n}");
-                }
+                let got = rfx_case(&format!("{wrap}{case}"), n, &tag).verdict();
+                assert_eq!(got, want, "{wrap}{case} at {n}");
             }
         }
-    });
+    }
 }
 
 /// Small instance of `bench::r9_a_front_sweep_list_in_a_field_is_decided_as_the_list_alone`:
@@ -8151,20 +7996,18 @@ fn a_list_in_a_field_gets_the_verdict_of_the_list_alone() {
 /// same cofinite front, in a tuple or record field gets the verdict of the list alone.
 #[test]
 fn a_front_sweep_list_in_a_field_gets_the_verdict_of_the_list_alone() {
-    big(|| {
-        for n in [4, 16] {
-            let tag = format!("_r9field_small{n}");
-            for case in ["u4cofrontshared", "boundaryinside", "clcofrontsame"] {
+    for n in [4, 16] {
+        let tag = format!("_r9field_small{n}");
+        for case in ["u4cofrontshared", "boundaryinside", "clcofrontsame"] {
+            Type::forget_emptiness();
+            let want = rfx_case(case, n, &tag).verdict();
+            for wrap in ["tup:", "rec:"] {
                 Type::forget_emptiness();
-                let want = rfx_case(case, n, &tag).verdict();
-                for wrap in ["tup:", "rec:"] {
-                    Type::forget_emptiness();
-                    let got = rfx_case(&format!("{wrap}{case}"), n, &tag).verdict();
-                    assert_eq!(got, want, "{wrap}{case} at {n}");
-                }
+                let got = rfx_case(&format!("{wrap}{case}"), n, &tag).verdict();
+                assert_eq!(got, want, "{wrap}{case} at {n}");
             }
         }
-    });
+    }
 }
 
 /// Small instance of `bench::r9_a_list_in_an_atom_payload_is_decided_as_the_list_alone`: a
@@ -8172,26 +8015,24 @@ fn a_front_sweep_list_in_a_field_gets_the_verdict_of_the_list_alone() {
 /// the list alone.
 #[test]
 fn a_list_in_an_atom_payload_gets_the_verdict_of_the_list_alone() {
-    big(|| {
-        for n in [4, 16] {
-            let tag = format!("_r9atom_small{n}");
-            for case in [
-                "r5remout",
-                "chain",
-                "r6twoun",
-                "clstagger",
-                "clstaggerholesout",
-            ] {
+    for n in [4, 16] {
+        let tag = format!("_r9atom_small{n}");
+        for case in [
+            "r5remout",
+            "chain",
+            "r6twoun",
+            "clstagger",
+            "clstaggerholesout",
+        ] {
+            Type::forget_emptiness();
+            let want = rfx_case(case, n, &tag).verdict();
+            for wrap in ["atom:", "tup:atom:", "rec:atom:", "atom:tup:"] {
                 Type::forget_emptiness();
-                let want = rfx_case(case, n, &tag).verdict();
-                for wrap in ["atom:", "tup:atom:", "rec:atom:", "atom:tup:"] {
-                    Type::forget_emptiness();
-                    let got = rfx_case(&format!("{wrap}{case}"), n, &tag).verdict();
-                    assert_eq!(got, want, "{wrap}{case} at {n}");
-                }
+                let got = rfx_case(&format!("{wrap}{case}"), n, &tag).verdict();
+                assert_eq!(got, want, "{wrap}{case} at {n}");
             }
         }
-    });
+    }
 }
 
 /// Small instance of `bench::r8_stage_boundary_scale` (`r8stagein`): the congruence on the
@@ -8205,19 +8046,17 @@ fn the_stage_boundary_inside_is_decided_inhabited() {
 /// a shared cofinite front is inhabited inside each product wrapper.
 #[test]
 fn a_shared_cofinite_front_is_inhabited_inside_each_wrapper() {
-    big(|| {
-        for n in [4, 16, 32] {
-            for wrap in [
-                "tup", "rec", "atom", "atom2", "nested", "option", "map", "listhead",
-            ] {
-                Type::forget_emptiness();
-                let t = rfx_case(&format!("{wrap}:u4cofrontshared"), n, "_r9shared_small");
-                assert_eq!(t.verdict(), Verdict::Inhabited, "{wrap} at {n}");
-                Type::forget_emptiness();
-                assert!(!t.is_empty(), "{wrap} at {n}");
-            }
+    for n in [4, 16, 32] {
+        for wrap in [
+            "tup", "rec", "atom", "atom2", "nested", "option", "map", "listhead",
+        ] {
+            Type::forget_emptiness();
+            let t = rfx_case(&format!("{wrap}:u4cofrontshared"), n, "_r9shared_small");
+            assert_eq!(t.verdict(), Verdict::Inhabited, "{wrap} at {n}");
+            Type::forget_emptiness();
+            assert!(!t.is_empty(), "{wrap} at {n}");
         }
-    });
+    }
 }
 
 /// Small instance of `bench::r9_active_groups_have_one_entry_across_simultaneous_reentry`: two
@@ -8226,17 +8065,15 @@ fn a_shared_cofinite_front_is_inhabited_inside_each_wrapper() {
 /// benchmark's own loop until TEST-bench-move-l0123).
 #[test]
 fn chains_that_reenter_each_others_groups_are_inhabited() {
-    big(|| {
-        for n in 1..=6 {
-            let t = r9_swapping_groups(n, false, "_r9swap_oracle");
-            // The last positive item is 1, previous items 0, and the first is 0.
-            let mut xs = vec![0; n + 1];
-            xs.push(1);
-            assert!(t.contains(&r6_colour_list(&xs)));
-            assert!(!t.contains(&r6_colour_list(&vec![0; n + 2])));
-            assert_eq!(t.chain_verdict(), Some(Verdict::Inhabited));
-        }
-    });
+    for n in 1..=6 {
+        let t = r9_swapping_groups(n, false, "_r9swap_oracle");
+        // The last positive item is 1, previous items 0, and the first is 0.
+        let mut xs = vec![0; n + 1];
+        xs.push(1);
+        assert!(t.contains(&r6_colour_list(&xs)));
+        assert!(!t.contains(&r6_colour_list(&vec![0; n + 2])));
+        assert_eq!(t.chain_verdict(), Some(Verdict::Inhabited));
+    }
 }
 
 /// Small instance of `bench::escape_cells_scale_on_the_coset_and_product_chains`: the escape
@@ -8244,18 +8081,16 @@ fn chains_that_reenter_each_others_groups_are_inhabited() {
 /// cells are among those read.
 #[test]
 fn escape_cells_of_cosets_and_products_are_counted() {
-    big(|| {
-        for case in ["r9cosets", "r9bmmlate", "r10alternating"] {
-            for n in [16, 64] {
-                let t = rfx_case(case, n, &format!("_esc_small_{case}_{n}"));
-                let (reads, empty) = t.escape_cell_counts();
-                assert!(
-                    empty <= reads,
-                    "{case} at {n}: {empty} empty of {reads} reads"
-                );
-            }
+    for case in ["r9cosets", "r9bmmlate", "r10alternating"] {
+        for n in [16, 64] {
+            let t = rfx_case(case, n, &format!("_esc_small_{case}_{n}"));
+            let (reads, empty) = t.escape_cell_counts();
+            assert!(
+                empty <= reads,
+                "{case} at {n}: {empty} empty of {reads} reads"
+            );
         }
-    });
+    }
 }
 
 /// Small instance of `bench::r9_decidable_shared_dag_scales_and_rejects_bounded_leaves` (its
@@ -8263,21 +8098,19 @@ fn escape_cells_of_cosets_and_products_are_counted() {
 /// payload are decidable with Boolean leaves and not with a bounded leaf.
 #[test]
 fn shared_dags_are_decidable_unless_a_leaf_is_bounded() {
-    big(|| {
-        let bounded = || Type::exact(lit(0), Type::int());
-        for n in [0, 1, 16, 128, 1024] {
-            assert!(r9_shared_tuple_type(n, Type::bool()).decidable());
-            assert!(!r9_shared_tuple_type(n, bounded()).decidable());
-        }
-        assert!(list_named(Type::bool(), "_r9decidable_cycle").decidable());
-        assert!(!list_named(bounded(), "_r9undecidable_cycle").decidable());
-        let in_payload = |leaf: Type| {
-            Type::atom_with("r9dec", &Type::tuple(vec![r9_shared_tuple_type(64, leaf)]))
-                | Type::atom("r9other")
-        };
-        assert!(in_payload(Type::bool()).decidable());
-        assert!(!in_payload(bounded()).decidable());
-    });
+    let bounded = || Type::exact(lit(0), Type::int());
+    for n in [0, 1, 16, 128, 1024] {
+        assert!(r9_shared_tuple_type(n, Type::bool()).decidable());
+        assert!(!r9_shared_tuple_type(n, bounded()).decidable());
+    }
+    assert!(list_named(Type::bool(), "_r9decidable_cycle").decidable());
+    assert!(!list_named(bounded(), "_r9undecidable_cycle").decidable());
+    let in_payload = |leaf: Type| {
+        Type::atom_with("r9dec", &Type::tuple(vec![r9_shared_tuple_type(64, leaf)]))
+            | Type::atom("r9other")
+    };
+    assert!(in_payload(Type::bool()).decidable());
+    assert!(!in_payload(bounded()).decidable());
 }
 
 /// Small instance of `bench::r10_a_wide_head_literal_is_decided_by_the_escape` (its own first
@@ -8286,31 +8119,29 @@ fn shared_dags_are_decidable_unless_a_leaf_is_bounded() {
 /// is not.
 #[test]
 fn a_wide_head_literal_is_decided_by_the_escape_at_small_sizes() {
-    big(|| {
-        let big = Value::int("9223372036854775808".parse().unwrap());
-        for n in [16, 64] {
-            let t = r10_big_congruence(n, &format!("_r10big{n}"));
-            let word = |first: Value| {
-                (1..=n).rev().fold(Value::atom("nil"), |tail, j| {
-                    let h = if j == 1 {
-                        first.clone()
-                    } else {
-                        Value::Int(((4 - j % 3) % 3) as i64)
-                    };
-                    Value::atom_with("cons", vec![h, tail])
-                })
-            };
-            assert!(t.contains(&word(Value::Int(2))));
-            assert!(
-                !t.contains(&word(big.clone())),
-                "F2 must reject the wide head"
-            );
-            Type::forget_emptiness();
-            assert_eq!(t.chain_verdict(), Some(Verdict::Inhabited), "escape at {n}");
-            Type::forget_emptiness();
-            assert_eq!(t.verdict(), Verdict::Inhabited);
-        }
-    });
+    let big = Value::int("9223372036854775808".parse().unwrap());
+    for n in [16, 64] {
+        let t = r10_big_congruence(n, &format!("_r10big{n}"));
+        let word = |first: Value| {
+            (1..=n).rev().fold(Value::atom("nil"), |tail, j| {
+                let h = if j == 1 {
+                    first.clone()
+                } else {
+                    Value::Int(((4 - j % 3) % 3) as i64)
+                };
+                Value::atom_with("cons", vec![h, tail])
+            })
+        };
+        assert!(t.contains(&word(Value::Int(2))));
+        assert!(
+            !t.contains(&word(big.clone())),
+            "F2 must reject the wide head"
+        );
+        Type::forget_emptiness();
+        assert_eq!(t.chain_verdict(), Some(Verdict::Inhabited), "escape at {n}");
+        Type::forget_emptiness();
+        assert_eq!(t.verdict(), Verdict::Inhabited);
+    }
 }
 
 /// Small instance of `bench::r10_big_integer_escape_is_a_renaming_and_scales`: a wide integer
@@ -8318,17 +8149,15 @@ fn a_wide_head_literal_is_decided_by_the_escape_at_small_sizes() {
 /// the same verdict, Inhabited.
 #[test]
 fn a_wide_integer_in_escape_heads_is_a_renaming() {
-    big(|| {
-        for n in [16, 64] {
-            let small = r10_big_congruence_cx(n, false, "_r10bigsmall");
-            let wide = r10_big_congruence_cx(n, true, "_r10bigwide");
-            assert_eq!(wide.escape_cell_counts(), small.escape_cell_counts());
-            Type::forget_emptiness();
-            assert_eq!(wide.verdict(), Verdict::Inhabited, "wide at {n}");
-            Type::forget_emptiness();
-            assert_eq!(small.verdict(), Verdict::Inhabited, "small at {n}");
-        }
-    });
+    for n in [16, 64] {
+        let small = r10_big_congruence_cx(n, false, "_r10bigsmall");
+        let wide = r10_big_congruence_cx(n, true, "_r10bigwide");
+        assert_eq!(wide.escape_cell_counts(), small.escape_cell_counts());
+        Type::forget_emptiness();
+        assert_eq!(wide.verdict(), Verdict::Inhabited, "wide at {n}");
+        Type::forget_emptiness();
+        assert_eq!(small.verdict(), Verdict::Inhabited, "small at {n}");
+    }
 }
 
 /// Small instance of `bench::r10_shared_product_list_is_swept_and_checked_once`: a tuple whose
@@ -8336,16 +8165,14 @@ fn a_wide_integer_in_escape_heads_is_a_renaming() {
 /// one empty list type is empty (the benchmark's own tail until TEST-bench-move-l0123).
 #[test]
 fn a_list_type_shared_by_tuple_components_is_checked_once() {
-    big(|| {
-        for n in [2, 4, 8] {
-            Type::forget_emptiness();
-            let t = rfx_case("r10sharedfront", n, &format!("_r10shared_small{n}"));
-            assert_eq!(t.verdict(), Verdict::Inhabited, "at {n}");
-        }
+    for n in [2, 4, 8] {
         Type::forget_emptiness();
-        let empty = rfx_case("chain", 3, "_r10sharedempty");
-        assert_eq!(Type::tuple(vec![empty; 16]).verdict(), Verdict::Empty);
-    });
+        let t = rfx_case("r10sharedfront", n, &format!("_r10shared_small{n}"));
+        assert_eq!(t.verdict(), Verdict::Inhabited, "at {n}");
+    }
+    Type::forget_emptiness();
+    let empty = rfx_case("chain", 3, "_r10sharedempty");
+    assert_eq!(Type::tuple(vec![empty; 16]).verdict(), Verdict::Empty);
 }
 
 /// Small instance of `bench::r10_shared_payload_probe` and
@@ -8353,17 +8180,15 @@ fn a_list_type_shared_by_tuple_components_is_checked_once() {
 /// inhabited, hold an equal pair and not an unequal one.
 #[test]
 fn tags_sharing_one_payload_are_inhabited() {
-    big(|| {
-        for n in [1, 2, 8] {
-            Type::forget_emptiness();
-            let tag = format!("_shared_small{n}");
-            let t = r10_shared_payloads(n, &tag);
-            assert_eq!(t.verdict(), Verdict::Inhabited, "at {n}");
-            let tagged = |a, b| Value::atom_with(format!("r10tag0{tag}"), vec![a, b]);
-            assert!(t.contains(&tagged(Value::Int(0), Value::Int(0))), "at {n}");
-            assert!(!t.contains(&tagged(Value::Int(0), Value::Int(1))), "at {n}");
-        }
-    });
+    for n in [1, 2, 8] {
+        Type::forget_emptiness();
+        let tag = format!("_shared_small{n}");
+        let t = r10_shared_payloads(n, &tag);
+        assert_eq!(t.verdict(), Verdict::Inhabited, "at {n}");
+        let tagged = |a, b| Value::atom_with(format!("r10tag0{tag}"), vec![a, b]);
+        assert!(t.contains(&tagged(Value::Int(0), Value::Int(0))), "at {n}");
+        assert!(!t.contains(&tagged(Value::Int(0), Value::Int(1))), "at {n}");
+    }
 }
 
 /// Small instance of `bench::r11_group_reads_skip_bare_atom_names_and_scale` and
@@ -8371,90 +8196,78 @@ fn tags_sharing_one_payload_are_inhabited() {
 /// inhabited.
 #[test]
 fn a_tuple_of_prefixes_of_bare_atoms_is_inhabited() {
-    big(|| {
-        for n in [1, 2, 16] {
-            Type::forget_emptiness();
-            assert_eq!(
-                r11_failure_prefixes(n).verdict(),
-                Verdict::Inhabited,
-                "at {n}"
-            );
-        }
-    });
+    for n in [1, 2, 16] {
+        Type::forget_emptiness();
+        assert_eq!(
+            r11_failure_prefixes(n).verdict(),
+            Verdict::Inhabited,
+            "at {n}"
+        );
+    }
 }
 
 /// Small instance of `bench::r11_tagged_payload_probe`: outer tags sharing one payload whose
 /// components are tagged atoms are inhabited.
 #[test]
 fn outer_tags_over_a_tagged_payload_are_inhabited() {
-    big(|| {
-        for n in [1, 2, 16] {
-            Type::forget_emptiness();
-            assert_eq!(
-                r11_tagged_payloads(n).verdict(),
-                Verdict::Inhabited,
-                "at {n}"
-            );
-        }
-    });
+    for n in [1, 2, 16] {
+        Type::forget_emptiness();
+        assert_eq!(
+            r11_tagged_payloads(n).verdict(),
+            Verdict::Inhabited,
+            "at {n}"
+        );
+    }
 }
 
 /// Small instance of `bench::r11_literal_prefix_probe`: the remainder boundary behind a few
 /// integer links holds the word of zeros followed by `[5, 1, 1]`, and is inhabited.
 #[test]
 fn a_boolean_tail_behind_integer_links_holds_its_witness() {
-    big(|| {
-        for n in [1, 4, 16] {
-            let mut t = rfx_case("r5remout", 8, "_r11prefix_small");
-            for _ in 0..n {
-                t = cons_of(Type::int(), t);
-            }
-            Type::forget_emptiness();
-            assert_eq!(t.verdict(), Verdict::Inhabited, "at {n}");
-            let mut word = vec![0; n];
-            word.extend([5, 1, 1]);
-            assert!(t.contains(&r6_colour_list(&word)), "at {n}");
+    for n in [1, 4, 16] {
+        let mut t = rfx_case("r5remout", 8, "_r11prefix_small");
+        for _ in 0..n {
+            t = cons_of(Type::int(), t);
         }
-    });
+        Type::forget_emptiness();
+        assert_eq!(t.verdict(), Verdict::Inhabited, "at {n}");
+        let mut word = vec![0; n];
+        word.extend([5, 1, 1]);
+        assert!(t.contains(&r6_colour_list(&word)), "at {n}");
+    }
 }
 
 /// Small instance of `bench::r11_payload_name_prefix_probe`: a tuple of the prefixes of a
 /// union of payload-bearing atoms is inhabited.
 #[test]
 fn a_tuple_of_prefixes_of_payload_atoms_is_inhabited() {
-    big(|| {
-        for n in [1, 2, 16] {
-            Type::forget_emptiness();
-            let t = r11_payload_name_prefixes(n);
-            assert_eq!(t.verdict(), Verdict::Inhabited, "at {n}");
-        }
-    });
+    for n in [1, 2, 16] {
+        Type::forget_emptiness();
+        let t = r11_payload_name_prefixes(n);
+        assert_eq!(t.verdict(), Verdict::Inhabited, "at {n}");
+    }
 }
 
 /// Small instance of `bench::r11_many_names_probe` and `bench::r11_many_names_must_scale`:
 /// tuples of types that share many atom names are inhabited.
 #[test]
 fn types_sharing_many_atom_names_are_inhabited() {
-    big(|| {
-        for n in [1, 2, 16] {
-            Type::forget_emptiness();
-            let t = r11_names_family(n, &format!("_n_small{n}"));
-            assert_eq!(t.verdict(), Verdict::Inhabited, "at {n}");
-        }
-    });
+    for n in [1, 2, 16] {
+        Type::forget_emptiness();
+        let t = r11_names_family(n, &format!("_n_small{n}"));
+        assert_eq!(t.verdict(), Verdict::Inhabited, "at {n}");
+    }
 }
 
 /// Small instance of `bench::r11_named_payload_probe`: tags sharing one payload whose rows
 /// each hold an atom name are inhabited.
 #[test]
 fn tags_sharing_a_payload_of_named_rows_are_inhabited() {
-    big(|| {
-        for n in [1, 2, 16] {
-            Type::forget_emptiness();
-            let t = r11_named_payloads(n, &format!("_small{n}"));
-            assert_eq!(t.verdict(), Verdict::Inhabited, "at {n}");
-        }
-    });
+    for n in [1, 2, 16] {
+        Type::forget_emptiness();
+        let t = r11_named_payloads(n, &format!("_small{n}"));
+        assert_eq!(t.verdict(), Verdict::Inhabited, "at {n}");
+    }
 }
 
 /// The ternary-density alignment family of [`r11_ternary_alignment`] at sides 4 and 8, which
@@ -8495,20 +8308,18 @@ fn a_tuple_with_an_empty_component_is_empty_beside_a_fork() {
 /// components and an empty one, the empty one last or first, are empty.
 #[test]
 fn a_few_distinct_forks_beside_an_empty_component_are_empty() {
-    big(|| {
-        for n in 1..=4 {
-            let mut parts: Vec<Type> = (0..n).map(fork_empty_at).collect();
-            parts.push(pair_meet_empty());
-            let last = Type::tuple(parts.clone());
-            parts.reverse();
-            for t in [last, Type::tuple(parts)] {
-                Type::forget_emptiness();
-                assert_eq!(t.verdict(), Verdict::Empty, "{t}");
-                Type::forget_emptiness();
-                assert!(t.is_empty(), "{t}");
-            }
+    for n in 1..=4 {
+        let mut parts: Vec<Type> = (0..n).map(fork_empty_at).collect();
+        parts.push(pair_meet_empty());
+        let last = Type::tuple(parts.clone());
+        parts.reverse();
+        for t in [last, Type::tuple(parts)] {
+            Type::forget_emptiness();
+            assert_eq!(t.verdict(), Verdict::Empty, "{t}");
+            Type::forget_emptiness();
+            assert!(t.is_empty(), "{t}");
         }
-    });
+    }
 }
 
 /// Small instance of
@@ -8516,15 +8327,13 @@ fn a_few_distinct_forks_beside_an_empty_component_are_empty() {
 /// four forks, each met before the nested tuple that holds the empty component, are empty.
 #[test]
 fn a_few_forks_nested_before_an_empty_component_are_empty() {
-    big(|| {
-        for n in 1..=4 {
-            Type::forget_emptiness();
-            let t = forks_nested_before_empty(n);
-            assert_eq!(t.verdict(), Verdict::Empty, "at {n}");
-            Type::forget_emptiness();
-            assert!(t.is_empty(), "at {n}");
-        }
-    });
+    for n in 1..=4 {
+        Type::forget_emptiness();
+        let t = forks_nested_before_empty(n);
+        assert_eq!(t.verdict(), Verdict::Empty, "at {n}");
+        Type::forget_emptiness();
+        assert!(t.is_empty(), "at {n}");
+    }
 }
 
 /// Formulas of one to four clauses of three literals over three variables (162 in all), as
