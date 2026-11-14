@@ -963,14 +963,34 @@ fn whole(s: &Scope, f: &Formula) -> Option<BTreeMap<String, String>> {
 }
 
 /// On random parts from a new seed each run, the projection by pendants, where it is taken,
-/// and that of the whole part, where neither refuses, are the same; the route is taken, and
-/// compared, on a quarter of them or more. Seed 0x7e4d at 400 parts took 1.6 s.
+/// and that of the whole part, where neither refuses, are the same; parts are drawn until
+/// [`PENDANT_COMPARED`] are compared. Seed 0x7e4d at 400 parts took 1.6 s.
 #[test]
 fn the_projection_by_pendants_is_that_of_the_whole_part_where_neither_refuses() {
-    let (mut r, seed) = Rng::fresh("the projection by pendants");
+    let (r, seed) = Rng::fresh("the projection by pendants");
+    pendants_against_whole(r, seed);
+}
+
+/// The parts [`pendants_against_whole`] compares in a run. Over 956 seeds (FAIL-pendants-route-
+/// quarter-seed) 30.8% of the parts are compared, 4.9 parts in 120 the standard deviation,
+/// so a fixed 120 parts compared fewer than a quarter (30) on 58 seeds, and 400 parts fewer
+/// than a quarter (100) on 4: the floor of a quarter lies 2.5 standard deviations under the
+/// mean at either size. Reaching 40 took 130 parts on average and 193 at most.
+const PENDANT_COMPARED: usize = 40;
+
+/// The parts [`pendants_against_whole`] may draw before it has compared [`PENDANT_COMPARED`]:
+/// 240, where 74 are compared on average, 55 at least over the 956 seeds, and 40 lies 4.9
+/// standard deviations under the mean. It fails when the route is taken on fewer than one
+/// part in six, half the rate measured.
+const PENDANT_PARTS_MAX: usize = 240;
+
+/// Random parts drawn from `r` until [`PENDANT_COMPARED`] are compared: the projection by
+/// pendants, where it is taken, and that of the whole part, where neither refuses, are the
+/// same on each, and the count is met within [`PENDANT_PARTS_MAX`] parts.
+fn pendants_against_whole(mut r: Rng, seed: u64) {
     let (mut same, mut taken, mut cases) = (0, 0, 0);
     let mut wrong = Vec::new();
-    for _ in 0..120 {
+    while same + wrong.len() < PENDANT_COMPARED && cases < PENDANT_PARTS_MAX {
         let nz = 2 + r.below(5);
         let items = random_part(&mut r, nz);
         let bs = random_boxes(&mut r, nz);
@@ -996,7 +1016,7 @@ fn the_projection_by_pendants_is_that_of_the_whole_part_where_neither_refuses() 
     );
     eprintln!("{cases} parts, the route taken on {taken}, the same as the whole on {same}");
     assert!(
-        same >= cases / 4,
+        same >= PENDANT_COMPARED,
         "seed {seed}: {same} compared of {cases}: too few to show anything"
     );
 }
@@ -2188,4 +2208,19 @@ fn a_refused_box_does_not_depend_on_the_names_seed_6277671696228035587() {
 #[test]
 fn a_refused_box_does_not_depend_on_the_names_seed_15900465239627589939() {
     refused_names_in(15900465239627589939, 11, true);
+}
+
+/// The seeds on which a fixed 120 parts compared fewer than a quarter of them
+/// (FAIL-pendants-route-quarter-seed), no part differing: 4023886734010713935 compared 28,
+/// 11312057540586612196 compared 26 and 6901888717729865865 compared 24. Drawn until
+/// [`PENDANT_COMPARED`] are compared, each reaches the count.
+#[test]
+fn the_seeds_that_compared_too_few_parts_reach_the_count() {
+    for seed in [
+        4023886734010713935,
+        11312057540586612196,
+        6901888717729865865,
+    ] {
+        pendants_against_whole(Rng::new(seed), seed);
+    }
 }
