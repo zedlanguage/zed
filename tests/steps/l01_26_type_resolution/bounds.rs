@@ -353,6 +353,61 @@ fn a_bounded_variable_beside_a_free_one_takes_only_what_its_bound_holds() {
     }
 }
 
+/// A signature of `n` parameters, parameter `i` taking `(Ti,) | ({other},)` with `Ti` free,
+/// returning `(T0, ..., T(n-1))`; and the same under the names `Ui`, with `{given}` for
+/// `{other}`. The result puts a ceiling on each `Ti`, `Ui`, so `(Ui,)` binds `Ti` and
+/// `({given},)` is left to `({other},)` where `{other}` holds it
+/// (FAIL-types-first-shape-unbounded): the first fits the second exactly then.
+pub(super) fn free_beside_a_carrier(n: usize, other: &str, given: &str) -> (String, String) {
+    let sig = |v: &str, k: &str| {
+        let ps: Vec<String> = (0..n)
+            .map(|i| format!("x{i}: ({v}{i},) | ({k},)"))
+            .collect();
+        let rs: Vec<String> = (0..n).map(|i| format!("{v}{i}")).collect();
+        let comma = if n == 1 { "," } else { "" };
+        format!("({}) -> ({}{comma})", ps.join(", "), rs.join(", "))
+    };
+    (sig("T", other), sig("U", given))
+}
+
+/// One parameter taking `(T0, ..., T(n-1)) | ({other}, ..., {other})` with each `Ti` free,
+/// returning `(T0, ..., T(n-1))`; and the same under the names `Ui`, with `{given}` for
+/// `{other}`. As [`free_beside_a_carrier`], in one tuple of `n` places: one shape searched.
+pub(super) fn free_in_one_tuple(n: usize, other: &str, given: &str) -> (String, String) {
+    let sig = |v: &str, k: &str| {
+        let comma = if n == 1 { "," } else { "" };
+        let vs: Vec<String> = (0..n).map(|i| format!("{v}{i}")).collect();
+        let ks = vec![k; n];
+        let (vs, ks) = (vs.join(", "), ks.join(", "));
+        format!("(x0: ({vs}{comma}) | ({ks}{comma})) -> ({vs}{comma})")
+    };
+    (sig("T", other), sig("U", given))
+}
+
+/// `free_beside_a_carrier` and `free_in_one_tuple` at small sizes, both ways of each boundary.
+#[test]
+fn free_variables_fit_themselves_under_other_names() {
+    use zedc::check::ty::fits_sig;
+    let fits = |(s, q): (String, String)| {
+        let s = parse_type(&s).unwrap_or_else(|e| panic!("{e}"));
+        let q = parse_type(&q).unwrap_or_else(|e| panic!("{e}"));
+        fits_sig(&s.fns[0], &q.fns[0])
+    };
+    for n in 1..=4 {
+        for (other, given, want) in [
+            ("int", "int", true),
+            ("int", "1", true),
+            ("int | String", "String", true),
+            ("int", "String", false),
+        ] {
+            let pair = free_beside_a_carrier(n, other, given);
+            assert_eq!(fits(pair.clone()), want, "{pair:?}");
+            let pair = free_in_one_tuple(n, other, given);
+            assert_eq!(fits(pair.clone()), want, "{pair:?}");
+        }
+    }
+}
+
 #[test]
 fn the_checker_reads_a_one_tuple_and_a_morphism_type() {
     let one = "f(p: (int,)) = p;\n";

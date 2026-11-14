@@ -3316,11 +3316,20 @@ pub struct Binds {
     /// the piece ([`accepts`]). Shared, so a copy of the binding tried for one shape and
     /// dropped copies no bound.
     bounds: Option<SortedBounds>,
+    /// For the variables of an arrow of `s` compared with an arrow of `q` ([`Binds::of_arrow`]),
+    /// a type each binding of some of them must stay within for the result to fit, by name, in
+    /// the order of the names, when there is one: a variable is bound to a piece only where its
+    /// type there may hold it ([`accepts`]). Shared, as `bounds` is.
+    ceilings: Option<Ceilings>,
 }
 
 /// The bounds of a signature's bounded variables, each name with its mask, in the order of the
 /// names ([`Binds::bound`]).
 type SortedBounds = Arc<[(Arc<str>, u8)]>;
+
+/// The types the bindings of some variables must stay within, each name with its type, in the
+/// order of the names ([`Binds::ceiling`]).
+type Ceilings = Arc<[(Arc<str>, Ty)]>;
 
 impl Binds {
     /// No binding.
@@ -3336,6 +3345,44 @@ impl Binds {
                 .then(|| bounds.iter().map(|(v, &m)| (v.clone(), m)).collect()),
             ..Binds::default()
         }
+    }
+
+    /// No binding, of the variables of the arrow `sa` of `s`, as read in `cx`, whose unbounded
+    /// own variables of `s` are [`Cx::free`]: the bounds of `s`, the ceilings of its variables
+    /// where its result is to be within `within`, the result of an arrow of `q` ([`ceilings`]),
+    /// and each unbounded own variable of `s` in `sa`'s result bound to `Never`. A cover of
+    /// several arrows ([`part_of`]) is not given `within`: each arrow there may return outside
+    /// it.
+    ///
+    /// A variable bound to `Never` is bound to no piece yet, so the parameters bind it as an
+    /// unbound one ([`accepts`]), and the result reads it as `Never` where they bind nothing:
+    /// a call binds such a variable to `Never` (sec:type_resolution, "the call's type is its
+    /// arrow's result with the parameter's variables bound to `Never`"), so `(x0: int | T) ->
+    /// T` fits `(x0: int) -> int` (FAIL-types-first-shape-unbounded). Left unbound, `T` stayed
+    /// a variable in the result, which no result of `q` holds. A bounded variable is not so
+    /// bound: a call fixes it to a carrier of its bound, which `Never` is not. Cost: a walk of
+    /// `sa`'s result, with a binary search of `free` for each variable in it.
+    fn of_arrow(s: &Sig, sa: &Arrow, within: Option<&Ty>, cx: &Cx) -> Binds {
+        let mut b = Binds::bounded(&s.bounds);
+        if cx.free.is_empty() {
+            return b;
+        }
+        let free = |v: &str| cx.free.binary_search_by(|w| (**w).cmp(v)).is_ok();
+        b.ceilings = within.and_then(|qr| ceilings(&sa.result, qr, &free));
+        let mut vs = Vars::default();
+        sa.result.vars_in(&mut vs);
+        for v in vs.order.into_iter().filter(|v| free(v)) {
+            b.insert(v, Ty::empty());
+        }
+        b
+    }
+
+    /// The ceiling of the variable `v`, if it has one ([`ceilings`]): by binary search, as
+    /// the ceilings are in the order of their names.
+    fn ceiling(&self, v: &str) -> Option<&Ty> {
+        let ceilings = self.ceilings.as_deref()?;
+        let at = ceilings.binary_search_by(|(w, _)| (**w).cmp(v)).ok()?;
+        Some(&ceilings[at].1)
     }
 
     /// The bound of the variable `v`, if it has one: by binary search, as the bounds are in
@@ -3435,6 +3482,7 @@ impl FromIterator<(Arc<str>, Ty)> for Binds {
             map: iter.into_iter().collect(),
             keys: std::sync::OnceLock::new(),
             bounds: None,
+            ceilings: None,
         }
     }
 }
@@ -3451,6 +3499,7 @@ impl From<BTreeMap<Arc<str>, Ty>> for Binds {
             map,
             keys: std::sync::OnceLock::new(),
             bounds: None,
+            ceilings: None,
         }
     }
 }
@@ -3473,6 +3522,9 @@ type Env = imbl::OrdMap<Arc<str>, Read>;
 
 /// A mask for each variable named, as `Sig::bounds` and `Cx::rigid` keep them.
 type Masks = BTreeMap<Arc<str>, u8>;
+
+/// Variable names in sorted order, found by binary search, as `Cx::free` keeps them.
+type SortedNames = Arc<[Arc<str>]>;
 
 /// The type a class variable the checker solved stands for, if it was solved to one that
 /// holds no variable: a signature solved before the functions around it keeps such a
@@ -3539,20 +3591,23 @@ struct Cx<'s> {
     /// message about the comparison prints them as the program wrote them
     /// ([`Scope::of_comparison`]).
     own: Vec<(Arc<str>, Option<u8>)>,
-    /// How many entries of `own` each name has.
+    /// The names of the entries of `own`. Each entry has a name no other one has: an own
+    /// variable is read under a new name when its name is owned around it, or held by the other
+    /// side ([`Cx::open`]).
     // Complexity tradeoff (COMPLEXITY.md F174): naive version, `own` searched for each own
     // variable opened, O(depth) each and O(depth^2) for a nest of function types that deep.
-    // Used: the count of each name, O(1) expected per variable. Tradeoff: one map entry per
-    // name kept, dropped with the last entry of that name.
-    owned: HashMap<Arc<str>, usize>,
+    // Used: a set of the names, O(1) expected per variable. Tradeoff: one set entry per
+    // entry of `own`, dropped with it.
+    owned: HashSet<Arc<str>>,
     /// The bound of each entry of `own` that has one, by name: a variable a comparison binds
     /// within that bound, whose values are of its carriers, wherever it is held as a piece
-    /// ([`var_mask`]). A bounded own variable reads under a name of its own (an `s` variable
-    /// under a new name when the name is owned around it, a `q` variable as rigid or as its
-    /// mask), so one entry has the name; a name `owned` counts more than once is shared with an
-    /// unbounded own variable, which stands for every type, and is not read by this bound.
-    /// O(1) expected per variable opened or looked up, as for `owned`.
+    /// ([`var_mask`]). O(1) expected per variable opened or looked up, as for `owned`.
     own_bounds: HashMap<Arc<str>, u8>,
+    /// The unbounded own variables of `s` in the innermost comparison of function types open
+    /// now ([`fits_in`]), by the names they are read as, in order: the variables an arrow of
+    /// `s` may bind as it likes, read as `Never` where its parameters do not bind them
+    /// ([`Binds::of_arrow`]).
+    free: SortedNames,
 }
 
 /// A verdict kept in [`Cx::fitted`]: whether the function fits, and why the comparison was
@@ -3668,12 +3723,7 @@ impl Cx<'_> {
             if bound.is_some() {
                 self.own_bounds.remove(&w);
             }
-            if let Some(n) = self.owned.get_mut(&w) {
-                *n -= 1;
-                if *n == 0 {
-                    self.owned.remove(&w);
-                }
-            }
+            self.owned.remove(&w);
         }
     }
 
@@ -7176,6 +7226,14 @@ async fn accepts<'m>(
     // when bound; so the binding keeps the cost of a union.
     let cx = c.cx.borrow();
     let admits = |v: &Arc<str>| {
+        // A piece outside the variable's ceiling is not bound to it either: bound so, the result
+        // would not be within the result of `q` ([`ceilings`]).
+        if binds
+            .ceiling(v)
+            .is_some_and(|ceil| !may_be_within(p, ceil, &cx))
+        {
+            return false;
+        }
         let Some(m) = binds.bound(v) else {
             return true;
         };
@@ -7272,8 +7330,12 @@ async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, 
     // by the first shape in written order that holds it, which may bind a variable that the
     // result then does not keep (`(x0: (T,) | (U,)) -> (T,)`, whose `(U,)` binds `T` in
     // `(T,)`), and a bounded variable of `q` is read under a new name, so no arrow of `s` is
-    // equal to its arrow as read. Cost: the digests, kept with each signature, and where
-    // they agree a walk of both as written, which the comparison would have cost.
+    // equal to its arrow as read. The ceilings the result puts on the variables
+    // ([`ceilings`]) now steer a tuple piece past such a shape where a union has two shapes of
+    // variables, but not three or more, which [`Comparing::search`] refuses: `(x0: (B,) | (T,)
+    // | (U,)) -> (T,)` fits itself only here (FAIL-types-three-variable-shapes). Cost: the
+    // digests, kept with each signature, and where they agree a walk of both as written, which
+    // the comparison would have cost.
     if s.digest() == q.digest() && s == q && read_alike(s, se, qe) {
         return true;
     }
@@ -7285,7 +7347,8 @@ async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, 
     if !same_params {
         return false;
     }
-    let (mark, sas, qas, renamed) = c.cx.borrow_mut().open(s, se, q, qe);
+    let (mark, sas, qas, renamed, free) = c.cx.borrow_mut().open(s, se, q, qe);
+    let outer = std::mem::replace(&mut c.cx.borrow_mut().free, free);
     // The bounds of `s` by the names its arrows are read with: a function type inside another
     // whose bounded variable has the name of one the comparison around it reads as itself is
     // read under a new name, and its bound, kept under the name written, was not checked
@@ -7316,7 +7379,9 @@ async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, 
         }
         c.cx.borrow_mut().why = Some(why);
     }
-    c.cx.borrow_mut().forget(mark);
+    let mut cx = c.cx.borrow_mut();
+    cx.free = outer;
+    cx.forget(mark);
     fits
 }
 
@@ -7335,24 +7400,31 @@ impl Cx<'_> {
     /// Opens the comparison of [`fits_in`] of `s`, read by `se`, with `q`, read by `qe`: the
     /// mark of the names made and the own variables kept for it ([`Self::forget`]), the arrows
     /// of each as read, and the bounds of `s` by the names its variables are read as, where a
-    /// bounded variable of `s` is read under a new name ([`Self::own_name`]).
+    /// bounded variable of `s` is read under a new name ([`Self::own_name`]), and the unbounded
+    /// own variables of `s` by the names they are read as, in order ([`Cx::free`]).
     fn open(
         &mut self,
         s: &Sig,
         se: &Env,
         q: &Sig,
         qe: &Env,
-    ) -> (Mark, Vec<Arrow>, Vec<Arrow>, Option<Masks>) {
+    ) -> (Mark, Vec<Arrow>, Vec<Arrow>, Option<Masks>, SortedNames) {
         let cx = self;
         let mark = Mark {
             made: cx.made.len(),
             own: cx.own.len(),
         };
         // Each own variable names its own binder here, so the reading of the same name around it
-        // is dropped, or replaced as above. The own variables read as themselves are counted
-        // in `owned` only once both sides are read, so a variable of `s` and one of `q` of the
-        // same name still meet by name, as before.
-        let mut kept = Vec::new();
+        // is dropped, or replaced by a new name. An own variable of `s` whose name `q` holds, as
+        // an unbounded own variable or as one of an enclosing scope, is read under a new name too
+        // (FAIL-types-own-same-name): the two are different variables, and met by name, a piece
+        // `T` of `q` was held by the `T` of `s` with no binding, so `(x0: T) -> T` fit
+        // `(x0: T | int) -> int`, its `T` bound to `int` alone. A bounded own variable of `q` is
+        // read as rigid under a new name or as its mask, so it needs none. The names `q` holds
+        // are those at any depth ([`Sig::facts`]): a name held only inside a function of `q`
+        // that binds it again, or that `qe` reads as something else, is renamed as well, which
+        // is sound and binds as before. Cost: a lookup in those names, made once for each
+        // signature, and one in `owned`, for each own variable of `s`.
         let mut qe = qe.clone();
         for v in &q.own {
             match q.bounds.get(v) {
@@ -7364,34 +7436,36 @@ impl Cx<'_> {
                 Some(&m) => {
                     qe.insert(v.clone(), Read::Mask(m));
                 }
-                None => kept.push((cx.own_name(v, &mut qe), None)),
+                None => {
+                    let w = cx.own_name(v, &mut qe, false);
+                    cx.keep_own(w, None);
+                }
             }
         }
         let mut se = se.clone();
         let mut renamed = None;
+        let mut free = Vec::new();
         for v in &s.own {
             match s.bounds.get(v) {
                 Some(&m) if !s.held.contains(v) => {
                     se.insert(v.clone(), Read::Mask(m));
                 }
                 bound => {
-                    let w = cx.own_name(v, &mut se);
+                    let apart =
+                        q.facts().holds(v) && !(q.own.contains(v) && q.bounds.contains_key(v));
+                    let w = cx.own_name(v, &mut se, apart);
                     if bound.is_some() && w != *v {
                         let bounds: &mut BTreeMap<_, _> =
                             renamed.get_or_insert_with(|| s.bounds.clone());
                         let m = bounds.remove(v).expect("a bounded variable has its bound");
                         bounds.insert(w.clone(), m);
                     }
-                    kept.push((w, bound.copied()));
+                    if bound.is_none() {
+                        free.push(w.clone());
+                    }
+                    cx.keep_own(w, bound.copied());
                 }
             }
-        }
-        for (w, bound) in kept {
-            *cx.owned.entry(w.clone()).or_default() += 1;
-            if let Some(m) = bound {
-                cx.own_bounds.insert(w.clone(), m);
-            }
-            cx.own.push((w, bound));
         }
         let read = |a: &Arrow, env: &Env, cx: &mut Cx| Arrow {
             params: a.params.iter().map(|p| cx.read(p, env)).collect(),
@@ -7399,16 +7473,17 @@ impl Cx<'_> {
         };
         let sas: Vec<Arrow> = s.arrows.iter().map(|a| read(a, &se, cx)).collect();
         let qas: Vec<Arrow> = q.arrows.iter().map(|a| read(a, &qe, cx)).collect();
-        (mark, sas, qas, renamed)
+        free.sort();
+        (mark, sas, qas, renamed, free.into())
     }
 
     /// The name an own variable `v` of a function type opened is read as, in `env`, the
     /// reading of its side: `v` itself, or, when a comparison around this one already reads
-    /// `v` as itself (`owned`), a new name made from `v`. Without the new name, the two
-    /// variables, bound by different signatures, would be one variable in the types compared,
-    /// and a message would print them as one.
-    fn own_name(&mut self, v: &Arc<str>, env: &mut Env) -> Arc<str> {
-        if self.owned.contains_key(v) {
+    /// `v` as itself (`owned`) or `apart` (the other side holds `v`), a new name made from `v`.
+    /// Without the new name, the two variables, bound by different signatures, would be one
+    /// variable in the types compared, and a message would print them as one.
+    fn own_name(&mut self, v: &Arc<str>, env: &mut Env, apart: bool) -> Arc<str> {
+        if apart || self.owned.contains(v) {
             let w = self.fresh(v);
             env.insert(v.clone(), Read::Rigid(w.clone()));
             w
@@ -7416,6 +7491,16 @@ impl Cx<'_> {
             env.remove(v);
             v.clone()
         }
+    }
+
+    /// Keeps the own variable read as `w`, with its bound if it has one, until [`Self::forget`].
+    fn keep_own(&mut self, w: Arc<str>, bound: Option<u8>) {
+        let new = self.owned.insert(w.clone());
+        debug_assert!(new, "an own variable is read under a name no other one has");
+        if let Some(m) = bound {
+            self.own_bounds.insert(w.clone(), m);
+        }
+        self.own.push((w, bound));
     }
 }
 
@@ -7513,9 +7598,10 @@ async fn every_arrow_fits<'m>(
             // the same name in `q` (FAIL-types-sig-reflexive), so it is taken without
             // comparing, unless it holds a bounded variable of `s` whose bound the variable
             // of `q` does not keep. Comparing would bind in written order and could miss
-            // that binding: in `(x0: (T,) | (U,)) -> (T,)`, `(U,)` is found in `(T,)` first,
-            // binding `T` to `U`. Cost: the size of `sa`, once per arrow of `q`, and nothing
-            // when `s` has no bounded variable.
+            // that binding where a union has three or more shapes of variables, which
+            // [`Comparing::search`] refuses (FAIL-types-three-variable-shapes); with two, the
+            // ceilings of the result ([`ceilings`]) find it. Cost: the size of `sa`, once per
+            // arrow of `q`, and nothing when `s` has no bounded variable.
             if equal_fits(s, sa, &c.cx.borrow())
                 || arrow_fits_alone(s, sa, qa, c, &mut refused).await
             {
@@ -7610,7 +7696,7 @@ async fn refused_cover<'m>(
     let mut outside = Vec::new();
     let mut split = None;
     for (i, sa) in sas.iter().enumerate() {
-        let mut b = Binds::bounded(&s.bounds);
+        let mut b = Binds::of_arrow(s, sa, None, &c.cx.borrow());
         let mut miss = Vec::new();
         for (j, (x, y)) in qa.params.iter().zip(&sa.params).enumerate() {
             if !c.sub_in(x, y, &mut b).await {
@@ -7863,7 +7949,7 @@ async fn part_of<'m>(
     qa: &Arrow,
     c: &'m Comparing<'m, '_>,
 ) -> Option<(Part, Binds)> {
-    let mut b = Binds::bounded(&s.bounds);
+    let mut b = Binds::of_arrow(s, sa, None, &c.cx.borrow());
     let mut miss = None;
     for (j, (x, y)) in qa.params.iter().zip(&sa.params).enumerate() {
         if !c.sub_in(x, y, &mut b).await {
@@ -8482,15 +8568,38 @@ impl std::hash::Hash for Sig {
 
 /// Whether the arrow `sa` of `s` takes the parameters of the arrow `qa` and returns within its
 /// result, each bounded variable of `s` bound to carriers of its bound ([`fits_in`]).
+///
+/// Where the result puts ceilings on the variables ([`ceilings`]), the parameters are compared
+/// first within them, as an attempt of its own ([`Comparing::begin_alone`]), and, where that
+/// fails, again with no ceiling, first-fit as before. So the ceilings only add fits: a fit
+/// found with no ceiling is still found. A loop, not a second call of a helper, so that each
+/// depth of function types puts one future on the stack, as before.
+///
+/// Complexity tradeoff: at most two comparisons of the parameters per arrow, the second only
+/// where the first fails; a function type nested in a parameter is compared once for each
+/// pair of names ([`Comparing::fits_read`]), so the second attempt reads its verdict, and the
+/// attempts do not multiply with the depth.
 async fn arrow_fits<'m>(s: &Sig, sa: &Arrow, qa: &Arrow, c: &'m Comparing<'m, '_>) -> bool {
-    let mut b = Binds::bounded(&s.bounds);
-    for (x, y) in qa.params.iter().zip(&sa.params) {
-        if !c.sub_in(x, y, &mut b).await {
-            return false;
+    let mut b = Binds::of_arrow(s, sa, Some(&qa.result), &c.cx.borrow());
+    loop {
+        let before = b.ceilings.is_some().then(|| c.begin_alone());
+        let mut ok = true;
+        for (x, y) in qa.params.iter().zip(&sa.params) {
+            if !c.sub_in(x, y, &mut b).await {
+                ok = false;
+                break;
+            }
         }
+        ok = ok && bounds_hold(s, sa, &b, &c.cx.borrow());
+        ok = ok && result_within(sa, qa, &b, c).await;
+        let Some(before) = before else {
+            return ok;
+        };
+        if c.end_alone(before).is_none() && ok {
+            return true;
+        }
+        b = Binds::of_arrow(s, sa, None, &c.cx.borrow());
     }
-    let held = bounds_hold(s, sa, &b, &c.cx.borrow());
-    held && result_within(sa, qa, &b, c).await
 }
 
 /// Whether each bounded variable of `s` that `b` binds is bound to carriers of its bound, and,
@@ -8531,17 +8640,90 @@ fn piece_within(p: &Piece, m: u8, cx: &Cx) -> bool {
     }
 }
 
+/// The ceilings of the variables `free` holds that the result `sr` of an arrow of `s` names,
+/// compared with the result `qr` of an arrow of `q` ([`Binds::of_arrow`]): for each, a type
+/// that holds every piece of its binding wherever `sr`, so bound, is within `qr`
+/// ([`result_within`]), when the two results give one. `sr` is the variable: `qr`. A component
+/// of a tuple shape of `sr` of length k is the variable, and `qr` holds no kind-wide part,
+/// `(..)` or `{..}`, only tuple shapes: the union of the component at that place of `qr`'s
+/// shapes of length k, as a tuple of `sr` is within `qr` only in one of them. Otherwise none.
+///
+/// A ceiling only tells [`accepts`] which variable not to bind to a piece the ceiling cannot
+/// hold, so that the search goes on to the next shape ([`Comparing::search`]): `(X,) | (W,)`
+/// in `(T,) | (U,)`, for `(x0: (T,) | (U,)) -> (T,)` compared with `(x0: (X,) | (W,)) ->
+/// (X,)`, binds `T` to `X` and `U` to `W` in either order of the members, where the first shape
+/// took both (FAIL-types-first-shape-unbounded); and `(T, V)` with each variable in a
+/// parameter of its own. A ceiling is a necessary condition only where the tuple holds a
+/// value: `(T, V)` with `V` bound to `Never` holds none, whatever `T` is. So [`arrow_fits`]
+/// compares again with no ceiling where the comparison within them fails, and no fit found
+/// first-fit is lost.
+///
+/// Complexity tradeoff: naive version, each shape of the parameter tried for each piece with
+/// the result compared at the end, backtracking over the shapes: exponential in the members
+/// of a union. Used: the condition the result puts on each variable read once, from the two
+/// results, before the parameters are compared, and checked on each piece as it is bound
+/// (`may_be_within`, O(1) for a variable or a set of scalars), so first-fit stays first-fit
+/// on the shapes the result leaves; one walk of `sr` and of `qr`'s shapes per arrow compared,
+/// each place of `qr`'s shapes of one length joined once, not once per variable there.
+/// What is given up: a variable whose ceiling holds two shapes alike, or with no ceiling, is
+/// still bound first-fit, as is a union of more than two shapes of one bucket, which
+/// [`Comparing::search`] refuses. Prior work: the upper bounds that local type inference
+/// propagates from the expected type into the arguments (Pierce and Turner, "Local Type
+/// Inference", TOPLAS 2000), here only one level deep.
+fn ceilings(sr: &Ty, qr: &Ty, free: &impl Fn(&str) -> bool) -> Option<Ceilings> {
+    if qr.dynamic {
+        return None;
+    }
+    let mut out: BTreeMap<Arc<str>, Ty> = BTreeMap::new();
+    if let Some(v) = sr.as_var() {
+        if free(v) {
+            out.insert(v.clone(), qr.clone());
+        }
+    } else if (&qr.set & &wide()).is_empty() {
+        // `qr`'s shapes by length, and the union at each place read once: each shape of `qr`
+        // is walked once whatever the shapes of `sr`.
+        let mut by_len: HashMap<usize, Vec<&Row>> = HashMap::new();
+        for q in &qr.tuples {
+            by_len.entry(q.len()).or_default().push(q);
+        }
+        let mut at: HashMap<(usize, usize), Ty> = HashMap::new();
+        for r in &sr.tuples {
+            for (i, c) in r.iter().enumerate() {
+                let Some(v) = c.as_var().filter(|v| free(v) && !out.contains_key(*v)) else {
+                    continue;
+                };
+                let ceil = at.entry((r.len(), i)).or_insert_with(|| {
+                    let shapes = by_len.get(&r.len()).map_or(&[][..], Vec::as_slice);
+                    Ty::union_all(shapes.iter().map(|q| &q[i]))
+                });
+                out.insert(v.clone(), ceil.clone());
+            }
+        }
+    }
+    (!out.is_empty()).then(|| out.into_iter().collect())
+}
+
+/// Whether the piece `p` may be within the ceiling `ceil` of a variable ([`ceilings`]): false
+/// only where it surely is not, as [`result_within`] compares, where no variable of the
+/// result of `q` may be bound. Cost: O(1) for a variable, a check of the sets for scalars.
+fn may_be_within(p: &Piece, ceil: &Ty, cx: &Cx) -> bool {
+    let special = |w: &Arc<str>| cx.rigid.contains_key(w) || cx.fns.contains_key(w);
+    if ceil.dynamic || ceil.vars.iter().any(special) {
+        return true;
+    }
+    match p {
+        Piece::Var(w) => special(w) || ceil.vars.contains(w),
+        Piece::Set(s) => s.subtype(&ceil.set) || !ceil.tuples.is_empty() || !ceil.fns.is_empty(),
+        Piece::Tuple(_) | Piece::Fn(_) | Piece::Dyn => true,
+    }
+}
+
 /// The mask of the carriers the variable `w` is of, where the comparison knows it: a rigid
 /// variable's ([`Cx::rigid`]), or the bound of a bounded own variable of a comparison open now
 /// ([`Cx::own_bounds`]), which that comparison binds within its bound. A variable of no known
 /// mask, free or unbounded, may be of any type.
 fn var_mask(w: &str, cx: &Cx) -> Option<u8> {
-    (cx.rigid.get(w).copied()).or_else(|| {
-        cx.own_bounds
-            .get(w)
-            .filter(|_| cx.owned.get(w) == Some(&1))
-            .copied()
-    })
+    (cx.rigid.get(w).copied()).or_else(|| cx.own_bounds.get(w).copied())
 }
 
 /// The carrier of the piece `p`: its own ([`Piece::carrier`]), or, for a variable whose mask
@@ -10199,7 +10381,7 @@ mod tests {
         skip: usize,
         c: &'m Comparing<'m, '_>,
     ) -> bool {
-        let mut b = Binds::new();
+        let mut b = Binds::of_arrow(s, sa, None, &c.cx.borrow());
         for (j, (x, y)) in qa.params.iter().zip(&sa.params).enumerate() {
             if j != skip && !c.sub_in(x, y, &mut b).await {
                 return false;
@@ -11102,6 +11284,145 @@ mod tests {
                 assert_eq!(why_unfit_with(&s, q, &solve), None, "{q} in {s}, C = {c}");
             }
         }
+    }
+
+    #[test]
+    fn an_unbounded_variable_in_the_first_shape_does_not_take_every_piece() {
+        let v = |x: &str| Ty::var(x.into());
+        let tup = |t: Ty| Ty::tuple(vec![t]);
+        let int = Ty::carrier(Carrier::Int);
+        let one = Ty::lit(&Value::int(1.into()));
+        let s = owning(
+            one_param(tup(v("T")).union(&tup(v("U"))), tup(v("T")), &[], false),
+            &["T", "U"],
+            "T",
+        );
+        let q = owning(
+            one_param(tup(v("X")).union(&tup(v("W"))), tup(v("X")), &[], false),
+            &["X", "W"],
+            "X",
+        );
+        assert!(fits_sig(&s, &q), "{q} in {s}");
+        let s = owning(
+            one_param(
+                tup(v("T")).union(&tup(int.clone())),
+                tup(v("T")),
+                &[],
+                false,
+            ),
+            &["T"],
+            "T",
+        );
+        let q = owning(
+            one_param(tup(v("U")).union(&tup(one)), tup(v("U")), &[], false),
+            &["U"],
+            "U",
+        );
+        assert!(fits_sig(&s, &q), "{q} in {s}");
+        let s = owning(
+            one_param(int.union(&v("T")), v("T"), &[], false),
+            &["T"],
+            "T",
+        );
+        let q = owning(one_param(int.clone(), int.clone(), &[], false), &[], "T");
+        assert!(fits_sig(&s, &q), "{q} in {s}");
+        // The members in the other order, and the variable returned bound to the second.
+        let tx = |x: &str| tup(v(x));
+        let s = owning(
+            one_param(tx("T").union(&tx("U")), tx("T"), &[], false),
+            &["T", "U"],
+            "T",
+        );
+        let q = owning(
+            one_param(tx("W").union(&tx("X")), tx("X"), &[], false),
+            &["X", "W"],
+            "X",
+        );
+        assert!(fits_sig(&s, &q), "{q} in {s}");
+        let q = owning(
+            one_param(tx("X").union(&tx("W")), tx("W"), &[], false),
+            &["X", "W"],
+            "X",
+        );
+        assert!(fits_sig(&s, &q), "{q} in {s}");
+        // Neither variable may take `(String,)` where the result must be `(U,)`.
+        let string = Ty::carrier(Carrier::Str);
+        let s = owning(
+            one_param(tx("T").union(&tup(int.clone())), tx("T"), &[], false),
+            &["T"],
+            "T",
+        );
+        let q = owning(
+            one_param(tx("U").union(&tup(string.clone())), tx("U"), &[], false),
+            &["U"],
+            "U",
+        );
+        assert!(!fits_sig(&s, &q), "{q} in {s}");
+        // A variable beside another in the result, each in a parameter of its own: the ceiling
+        // of each is the place it stands at in `q`'s result.
+        let pair = |a: &str, b: &str, k: &Ty| {
+            let p = |x: &str| tx(x).union(&tup(k.clone()));
+            let result = Ty::tuple(vec![v(a), v(b)]);
+            let mut s = sig(
+                vec![Arrow {
+                    params: vec![p(a), p(b)],
+                    result,
+                }],
+                2,
+                false,
+            );
+            s.own = [a.into(), b.into()].into_iter().collect();
+            s.note_held();
+            s
+        };
+        let s = pair("T", "V", &int);
+        for (q, fits) in [
+            (pair("U", "W", &int), true),
+            (pair("U", "W", &Ty::lit(&Value::int(1.into()))), true),
+            (pair("U", "W", &string), false),
+        ] {
+            assert_eq!(fits_sig(&s, &q), fits, "{q} in {s}");
+        }
+        // Where a variable beside it is bound to `Never`, the tuple holds no value and the
+        // ceiling does not hold: compared again first-fit, `T` takes `(String,)` and the
+        // result `(String, Never)` is within any result.
+        let mut s = one_param(
+            tx("T").union(&tx("V")),
+            Ty::tuple(vec![v("T"), v("V")]),
+            &[],
+            false,
+        );
+        s.own = ["T".into(), "V".into()].into_iter().collect();
+        s.note_held();
+        let q = one_param(tup(string), Ty::tuple(vec![int.clone(), int]), &[], false);
+        let q = owning(q, &[], "T");
+        assert!(fits_sig(&s, &q), "{q} in {s}");
+    }
+
+    #[test]
+    fn own_variables_of_the_same_name_on_both_sides_are_apart() {
+        let v = |x: &str| Ty::var(x.into());
+        let int = Ty::carrier(Carrier::Int);
+        let s = owning(one_param(v("T"), v("T"), &[], false), &["T"], "T");
+        for name in ["T", "U"] {
+            let q = owning(
+                one_param(v(name).union(&int), int.clone(), &[], false),
+                &[name],
+                name,
+            );
+            assert!(!fits_sig(&s, &q), "{q} in {s}");
+        }
+        // Controls: the same signature with its own `T`, and the one carrier it may return.
+        let same = owning(one_param(v("T"), v("T"), &[], false), &["T"], "T");
+        assert!(fits_sig(&s, &same), "{same} in {s}");
+        let ints = owning(one_param(int.clone(), int.clone(), &[], false), &[], "T");
+        assert!(fits_sig(&s, &ints), "{ints} in {s}");
+        // A bounded own `B` of `s` against an unbounded own `B` of `q`: given `(String,)`, `s`
+        // returns a `(B,)` of `int | f64`, not the `(String,)` `q` returns.
+        let tup = |t: Ty| Ty::tuple(vec![t]);
+        let s = one_param(tup(v("B")).union(&tup(v("U"))), tup(v("B")), &[], true);
+        let q = owning(one_param(tup(v("B")), tup(v("B")), &[], false), &["B"], "B");
+        assert!(!fits_sig(&s, &q), "{q} in {s}");
     }
 
     /// A bound that holds [`OTHER`] (written `_`) holds a piece of no carrier: the tuple

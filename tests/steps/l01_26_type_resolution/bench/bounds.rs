@@ -6,8 +6,8 @@ use zedc::parse::{TOP, parse};
 use zedc::resolve::resolve;
 
 use super::super::bounds::{
-    bounded_chain, bounded_or_free, distinct_bounds_chain, many_bounds, nested, nested_lambdas,
-    passed, passed_deep, shared_bounded_chain, wide, wide_lambda,
+    bounded_chain, bounded_or_free, distinct_bounds_chain, free_in_one_tuple, many_bounds, nested,
+    nested_lambdas, passed, passed_deep, shared_bounded_chain, wide, wide_lambda,
 };
 use super::super::info;
 
@@ -231,6 +231,32 @@ fn a_signature_of_many_bounded_variables_beside_a_free_one_fits_in_time_near_its
         1,
         |m| {
             let (s, q) = &inputs[&m];
+            assert!(zedc::check::ty::fits_sig(&s.fns[0], &q.fns[0]));
+        },
+    );
+}
+
+#[test]
+fn signatures_of_many_free_variables_fit_themselves_renamed_in_time_near_their_size() {
+    // `free_in_one_tuple`: `(T0, ..., T(n-1)) | (int, ..., int)`, given
+    // `(U0, ..., U(n-1)) | (1, ..., 1)`, returning the n variables: one shape searched. The
+    // ceilings of the result (`ceilings`, each place of `q`'s result joined once) and the free
+    // variables (`Cx::free`, sorted, found by binary search) cost O(n log n); a linear scan of
+    // the free variables per variable would be O(n^2). (With n parameters, each its own union
+    // searched, the binding is copied for each shape tried: O(n^2) before this change too,
+    // FAIL-types-binds-copied-per-shape.) Read before timing.
+    let n = 2000;
+    let read = |t: &str| parse_type(t).unwrap_or_else(|e| panic!("{e}"));
+    let free = zed_tests::scaling::inputs(n, |m| {
+        let (s, q) = free_in_one_tuple(m, "int", "1");
+        (read(&s), read(&q))
+    });
+    zed_tests::scaling::check_order(
+        "a signature of n free variables beside a carrier, fitting itself renamed",
+        n,
+        1,
+        |m| {
+            let (s, q) = &free[&m];
             assert!(zedc::check::ty::fits_sig(&s.fns[0], &q.fns[0]));
         },
     );
