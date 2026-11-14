@@ -2184,7 +2184,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CONST-too-large-products | running | 2026-11-13 16:26 |  |
+| CONST-too-large-products | impl attempt 1 | 2026-11-13 16:26 | started; worktree from origin/main f2e511526 |
 | FENCE-checking-mains | impl attempt 1 | 2026-11-13 18:38 | reproduced on origin/main: l01_14 39 passed 1 failed, DESIGN.md:2161 `main` is already declared (load 62.8) |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | round 5 Claude seat merged 7c8f994b4 (core classes, repair memo; point_rows R 65.8 -> 7.92), plan/STATUS f23d3185a; load 46.10 45.93 45.05 |
 | MAIN-limits | impl attempt 1 | 2026-11-13 15:20 | started; load 36.82 |
