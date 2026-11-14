@@ -108,25 +108,26 @@ rows! {
     EmissionDisjointness => "Emission-disjointness",
     // No diagnostic uses these nineteen rows yet: plan rows L7.4 (the first, the third to the
     // sixth, the eighth, and the nineteenth), IMPL-consume-unless (the
-    // seventh), FFI-release-failure (the ninth), FFI-release-zed (the tenth), FFI-teardown (the
+    // seventh), FFI-release-failure (the ninth), FFI-release-zed (the tenth), FFI-token-check (the
     // eleventh and twelfth), FFI-held (the thirteenth to fifteenth), FFI-thread (the sixteenth
     // and seventeenth), TERM-1 and EXPORT-unique emit them.
     BitFieldWithNoUnit => "Bit-field of a foreign struct with no C unit",
     ItemWithNoBitOrder => "Grammar item narrower than a byte with no bit order",
     ReleaseWhileKept => "Release of a foreign value while a result that keeps it is still read",
-    UseAfterRelease => "Use of a foreign value after the program releases it",
+    UseAfterRelease => "Use of a value after the program releases it",
     ReleaseParametersUnfilled => "Release function whose parameters the `release` does not fill",
     ConsumesMisplaced => "Parameter declared `with consumes()` that is not typed `Ptr(…)` or is given a value Zed does not own",
     UseOfPossiblyTakenValue => "Use of a value that a call may have taken",
-    ReleasedValueUnused => "Released foreign value that nothing uses",
+    ReleasedValueUnused => "Released value that nothing uses",
     ReleaseCanFail => "Release that Zed makes whose function can report a failure",
     ZedReleaseKeepsValue => "Release function written in Zed that does not free the value",
-    TeardownMisdeclared => "Teardown that Zed cannot call once after its library's last use",
-    TeardownCalled => "Call of a library's teardown by the program",
+    NotPassedMisused =>
+        "Parameter declared `with notPassed()` that cannot keep its argument",
+    SecondRelease => "Value given a second release",
     UseOfHeldValue => "Use of a value after a call that holds it",
     HoldNeverEnds => "Hold that Zed cannot end",
     HolderCallUnordered =>
-        "Call on a holder with nothing ordering it with the call that lends to it",
+        "Call on a holder with nothing ordering it with a call that changes its holds",
     StatefulLibraryOnTwoThreads => "Stateful library on two threads",
     CallbackCrossesThread => "Callback that calls a library bound to another thread",
     SymbolExportedTwice => "One C symbol exported twice",

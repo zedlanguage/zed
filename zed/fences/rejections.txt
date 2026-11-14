@@ -58,18 +58,18 @@ Emission-disjointness
 Bit-field of a foreign struct with no C unit
 Grammar item narrower than a byte with no bit order
 Release of a foreign value while a result that keeps it is still read
-Use of a foreign value after the program releases it
+Use of a value after the program releases it
 Release function whose parameters the `release` does not fill
 Parameter declared `with consumes()` that is not typed `Ptr(…)` or is given a value Zed does not own
 Use of a value that a call may have taken
-Released foreign value that nothing uses
+Released value that nothing uses
 Release that Zed makes whose function can report a failure
 Release function written in Zed that does not free the value
-Teardown that Zed cannot call once after its library's last use
-Call of a library's teardown by the program
+Parameter declared `with notPassed()` that cannot keep its argument
+Value given a second release
 Use of a value after a call that holds it
 Hold that Zed cannot end
-Call on a holder with nothing ordering it with the call that lends to it
+Call on a holder with nothing ordering it with a call that changes its holds
 Stateful library on two threads
 Callback that calls a library bound to another thread
 One C symbol exported twice
