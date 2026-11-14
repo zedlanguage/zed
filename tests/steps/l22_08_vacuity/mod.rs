@@ -8,6 +8,7 @@
 
 mod bench;
 mod brute;
+mod cases;
 mod corpus;
 mod hardness;
 mod scaling;

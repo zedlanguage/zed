@@ -3,6 +3,7 @@
 //! tables run against the rest, and each mutant no row detects is reported.
 
 mod bench;
+mod cases;
 mod command;
 mod examples;
 mod order;
