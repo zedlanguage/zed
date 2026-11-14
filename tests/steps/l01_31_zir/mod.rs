@@ -3,11 +3,14 @@
 //! order, and the binary form gives back the same graph.
 
 mod bench;
+mod binary_forms;
 mod graphs;
 mod items;
 mod names;
+mod reading;
 mod rejections;
 pub(crate) mod scaling;
+mod validation;
 
 use zedc::zir::validate::validate;
 use zedc::zir::{Region, binary, text};
