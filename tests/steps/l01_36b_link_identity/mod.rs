@@ -71,6 +71,44 @@ pub(crate) fn link(src: &Path, out: &Path, tools: &Toolchain) -> Link {
     }
 }
 
+/// The results of `cases`, each run on a thread of its own, all at once. A link takes a second
+/// or more, most of it the linker reading the runtime library, so a test whose cases each link
+/// on an output of their own runs them at once rather than one after another.
+pub(crate) fn at_once<R: Send>(cases: &[&(dyn Fn() -> R + Sync)]) -> Vec<R> {
+    std::thread::scope(|s| {
+        let threads: Vec<_> = cases.iter().map(|case| s.spawn(case)).collect();
+        threads
+            .into_iter()
+            .map(|t| t.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
+            .collect()
+    })
+}
+
+/// A copy at `copy` of the executable `out` and its record: an output last linked as `out`
+/// was, since the output's path enters neither the key nor the bytes. A test that changes an
+/// input links the copy with it and leaves `out` as it was, so the next run finds `out` linked
+/// with the inputs of its first build and keeps it, where it would link it again. `cp` writes
+/// the copy in a process of its own, for the reason given at [`script`].
+pub(crate) fn copied(out: &Path, copy: &Path) {
+    use zed_native::link::Record;
+    for (from, to) in [
+        (out.to_path_buf(), copy.to_path_buf()),
+        (Record::path(out), Record::path(copy)),
+    ] {
+        let status = std::process::Command::new("cp")
+            .arg(&from)
+            .arg(&to)
+            .status()
+            .unwrap();
+        assert!(
+            status.success(),
+            "cp {} {}: {status}",
+            from.display(),
+            to.display()
+        );
+    }
+}
+
 /// The program of a shop's sign: it writes `text` on one line.
 pub(crate) fn sign(text: &str) -> String {
     format!("main(m: MainArgs) {{\n  m.stdout <- \"{text}\";\n}}\n")

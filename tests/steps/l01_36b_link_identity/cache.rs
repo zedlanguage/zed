@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use zed_native::link::{Toolchain, recorded};
 
-use super::{Link, dir, driver, executable, link, sign, toolchain};
+use super::{Link, at_once, copied, dir, driver, executable, link, sign, toolchain};
 
 /// The line the executable `exe` writes when run with no words.
 fn says(exe: &Path) -> String {
@@ -26,37 +26,49 @@ fn on_path(name: &str) -> PathBuf {
         .unwrap_or_else(|| panic!("no {name} on PATH"))
 }
 
+/// The program is edited, and edited back, each on a source of its own, at once. The output
+/// linked before the edit is left as it is, and a copy of it is linked after. The executable
+/// names its source's path, so the key after an edit back is compared with that of a second
+/// output of the same source, which never saw the edit.
 #[test]
 fn an_edited_program_links_again() {
     let d = dir("edited");
-    let (src, out) = (d.join("sign.zed"), d.join("sign"));
     let tools = toolchain();
-    std::fs::write(&src, sign("open")).unwrap();
-    // Linked, or kept from the run before: either way it says "open".
-    link(&src, &out, &tools);
-    assert_eq!(says(&out), "open\n");
-    let open = recorded(&out).expect("a built executable records its key");
-    assert_eq!(open.len(), 32, "the key is a BLAKE3 hash");
-
-    std::fs::write(&src, sign("closed")).unwrap();
-    assert_eq!(link(&src, &out, &tools), Link::Ran);
-    assert_eq!(says(&out), "closed\n");
-    assert_ne!(recorded(&out).unwrap(), open);
-
-    std::fs::write(&src, sign("open")).unwrap();
-    assert_eq!(link(&src, &out, &tools), Link::Ran);
-    assert_eq!(says(&out), "open\n");
-    assert_eq!(
-        recorded(&out).unwrap(),
-        open,
-        "the key is a function of the inputs"
-    );
+    let edit = |name: &str, from: &str, to: &str| {
+        let d = d.join(name);
+        std::fs::create_dir_all(&d).unwrap();
+        let (src, out) = (d.join("sign.zed"), d.join("sign"));
+        let (edited, unedited) = (d.join("edited"), d.join("unedited"));
+        std::fs::write(&src, sign(from)).unwrap();
+        // Linked, or kept from the run before: either way it says `from`.
+        link(&src, &out, &tools);
+        assert_eq!(says(&out), format!("{from}\n"));
+        let before = recorded(&out).expect("a built executable records its key");
+        assert_eq!(before.len(), 32, "the key is a BLAKE3 hash");
+        copied(&out, &edited);
+        std::fs::write(&src, sign(to)).unwrap();
+        let ran = at_once(&[&|| link(&src, &edited, &tools), &|| {
+            link(&src, &unedited, &tools)
+        }]);
+        assert_eq!(ran[0], Link::Ran, "{from} became {to}");
+        assert_eq!(says(&edited), format!("{to}\n"));
+        let after = recorded(&edited).unwrap();
+        assert_ne!(after, before);
+        assert_eq!(
+            Some(after),
+            recorded(&unedited),
+            "the key is a function of the inputs"
+        );
+    };
+    at_once(&[&|| edit("closed", "open", "closed"), &|| {
+        edit("opened", "closed", "open")
+    }]);
 }
 
 #[test]
 fn another_release_of_the_driver_or_the_linker_links_again() {
     let d = dir("releases");
-    let (src, out) = (d.join("sign.zed"), d.join("sign"));
+    let src = d.join("sign.zed");
     std::fs::write(&src, sign("sale")).unwrap();
     let (gcc_next, ld_next) = (d.join("gcc-next"), d.join("ld-next"));
     driver(&gcc_next, Some("cc (GCC) 99.1.0"), None);
@@ -66,20 +78,31 @@ fn another_release_of_the_driver_or_the_linker_links_again() {
         linker: linker.into(),
         ..system.clone()
     };
-    link(&src, &out, &system);
-    assert_eq!(
-        link(&src, &out, &with(&gcc_next)),
-        Link::Ran,
-        "another driver release"
-    );
-    assert_eq!(
-        link(&src, &out, &with(&ld_next)),
-        Link::Ran,
-        "another linker release under the same driver"
-    );
-    assert_eq!(link(&src, &out, &system), Link::Ran, "the system's again");
-    // Each driver linked with `cc` itself, so each executable runs alike.
-    assert_eq!(says(&out), "sale\n");
+    // Each change on an output of its own, at once with the others: linked with `from`
+    // (linked, or kept from the run before), then a copy of it linked with `to`.
+    let change = |name: &str, from: &Toolchain, to: &Toolchain, what: &str| {
+        let (out, changed) = (d.join(name), d.join(format!("{name}_changed")));
+        link(&src, &out, from);
+        copied(&out, &changed);
+        assert_eq!(link(&src, &changed, to), Link::Ran, "{what}");
+        // Each driver linked with `cc` itself, so each executable runs alike.
+        assert_eq!(says(&changed), "sale\n");
+    };
+    at_once(&[
+        &|| {
+            change(
+                "driver",
+                &system,
+                &with(&gcc_next),
+                "another driver release",
+            )
+        },
+        &|| {
+            let what = "another linker release under the same driver";
+            change("linker", &with(&gcc_next), &with(&ld_next), what)
+        },
+        &|| change("system", &with(&ld_next), &system, "the system's again"),
+    ]);
 }
 
 #[test]
@@ -141,8 +164,7 @@ fn one_program_built_at_two_outputs_records_one_key() {
     let (one, two) = (d.join("sign"), d.join("bakery").join("sign"));
     std::fs::create_dir_all(two.parent().unwrap()).unwrap();
     let tools = toolchain();
-    link(&src, &one, &tools);
-    link(&src, &two, &tools);
+    at_once(&[&|| link(&src, &one, &tools), &|| link(&src, &two, &tools)]);
     assert_eq!(recorded(&one), recorded(&two));
     assert_eq!(
         std::fs::read(&one).unwrap(),

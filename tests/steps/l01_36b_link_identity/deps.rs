@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use zed_native::link::{Inputs, Record, Toolchain, dependencies, recorded};
 
-use super::{Link, dir, executable, link, script, sign, toolchain};
+use super::{Link, at_once, copied, dir, executable, link, script, sign, toolchain};
 
 /// The line the executable `exe` writes when run with no words.
 fn says(exe: &Path) -> String {
@@ -47,42 +47,60 @@ fn written(path: &Path) -> (u64, i64, i64) {
     (m.ino(), m.mtime(), m.mtime_nsec())
 }
 
+/// The two notes of `libutil` in the test below: the library as the system ships it, and
+/// after an update.
+const SHIPPED: &str = "libutil: its functions are in libc";
+const UPDATED: &str = "libutil, after a system update";
+
+/// The library changes, and changes back. Each change has a directory of its own, with its own
+/// `libutil` and driver, and runs at once with the other: `from` is the library the output is
+/// first linked with (linked, or kept from the run before), `to` the one a copy of it is linked
+/// with after.
 #[test]
 fn a_changed_library_the_link_read_links_again() {
     let d = dir("library");
-    let (src, out, lib) = (d.join("sign.zed"), d.join("sign"), d.join("lib"));
+    let src = d.join("sign.zed");
     std::fs::write(&src, sign("today's special")).unwrap();
-    let util = libutil(&lib, "libutil: its functions are in libc");
-    let tools = with_lib(&d.join("cc-lib"), &lib);
-    // Linked, or kept from the run before.
-    link(&src, &out, &tools);
-    let record = Record::read(&out).expect("a link leaves its record");
-    assert!(
-        record.inputs.iter().any(|p| p == &util),
-        "the record names the libutil the linker read: {:?}",
-        record.inputs
-    );
-    assert!(
-        record.inputs.iter().any(|p| p
-            .file_name()
-            .is_some_and(|n| n.to_string_lossy().starts_with("libc.so"))),
-        "and the system's libc: {:?}",
-        record.inputs
-    );
-    let before = (written(&out), written(&Record::path(&out)));
-    assert_eq!(link(&src, &out, &tools), Link::Kept, "nothing changed");
-    assert_eq!(
-        (written(&out), written(&Record::path(&out))),
-        before,
-        "a kept executable and its record are not written"
-    );
-
-    libutil(&lib, "libutil, after a system update");
-    assert_eq!(link(&src, &out, &tools), Link::Ran, "the library changed");
-    assert_eq!(says(&out), "today's special\n");
-    assert_eq!(link(&src, &out, &tools), Link::Kept);
-    libutil(&lib, "libutil: its functions are in libc");
-    assert_eq!(link(&src, &out, &tools), Link::Ran, "and changed back");
+    let change = |name: &str, from: &str, to: &str| {
+        let d = d.join(name);
+        let (out, lib) = (d.join("sign"), d.join("lib"));
+        let util = libutil(&lib, from);
+        let tools = with_lib(&d.join("cc-lib"), &lib);
+        link(&src, &out, &tools);
+        let record = Record::read(&out).expect("a link leaves its record");
+        assert!(
+            record.inputs.iter().any(|p| p == &util),
+            "the record names the libutil the linker read: {:?}",
+            record.inputs
+        );
+        assert!(
+            record.inputs.iter().any(|p| p
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with("libc.so"))),
+            "and the system's libc: {:?}",
+            record.inputs
+        );
+        let before = (written(&out), written(&Record::path(&out)));
+        assert_eq!(link(&src, &out, &tools), Link::Kept, "nothing changed");
+        assert_eq!(
+            (written(&out), written(&Record::path(&out))),
+            before,
+            "a kept executable and its record are not written"
+        );
+        let changed = d.join("changed");
+        copied(&out, &changed);
+        libutil(&lib, to);
+        assert_eq!(
+            link(&src, &changed, &tools),
+            Link::Ran,
+            "{from} became {to}"
+        );
+        assert_eq!(says(&changed), "today's special\n");
+        assert_eq!(link(&src, &changed, &tools), Link::Kept);
+    };
+    at_once(&[&|| change("updated", SHIPPED, UPDATED), &|| {
+        change("changed_back", UPDATED, SHIPPED)
+    }]);
 }
 
 /// The system's toolchain with the environment variable `name` of [`zed_native::link::DRIVER_ENV`]
@@ -94,32 +112,39 @@ fn with_env(name: &str, value: Option<&std::ffi::OsStr>) -> Toolchain {
     tools
 }
 
+/// The output `out` of `src` linked with the driver's environment `from` (linked, or kept from
+/// the run before), then a copy of it at `changed` linked with `to`, which links again. Each
+/// build after the first that changes nothing keeps the executable.
+fn relinks(src: &Path, out: &Path, changed: &Path, from: &Toolchain, to: &Toolchain, what: &str) {
+    link(src, out, from);
+    assert_eq!(link(src, out, from), Link::Kept, "{what}: nothing changed");
+    copied(out, changed);
+    assert_eq!(link(src, changed, to), Link::Ran, "{what}");
+    assert_eq!(
+        link(src, changed, to),
+        Link::Kept,
+        "{what}: nothing changed"
+    );
+}
+
+/// `LIBRARY_PATH` set, changed and unset, each on an output of its own, at once.
 #[test]
 fn another_library_path_links_again() {
     let d = dir("library_path");
-    let (src, out, empty) = (d.join("sign.zed"), d.join("sign"), d.join("empty"));
+    let (src, empty) = (d.join("sign.zed"), d.join("empty"));
     std::fs::create_dir_all(&empty).unwrap();
     std::fs::write(&src, sign("closed on Sunday")).unwrap();
     let with = |value: Option<&Path>| with_env("LIBRARY_PATH", value.map(Path::as_os_str));
-    link(&src, &out, &with(None));
-    assert_eq!(link(&src, &out, &with(None)), Link::Kept);
-    assert_eq!(
-        link(&src, &out, &with(Some(&empty))),
-        Link::Ran,
-        "LIBRARY_PATH set"
-    );
-    assert_eq!(link(&src, &out, &with(Some(&empty))), Link::Kept);
-    assert_eq!(
-        link(&src, &out, &with(Some(&d))),
-        Link::Ran,
-        "LIBRARY_PATH changed"
-    );
-    assert_eq!(
-        link(&src, &out, &with(None)),
-        Link::Ran,
-        "LIBRARY_PATH unset"
-    );
-    assert_eq!(says(&out), "closed on Sunday\n");
+    let change = |name: &str, from: Option<&Path>, to: Option<&Path>| {
+        let (out, changed) = (d.join(name), d.join(format!("{name}_changed")));
+        relinks(&src, &out, &changed, &with(from), &with(to), name);
+        assert_eq!(says(&changed), "closed on Sunday\n");
+    };
+    at_once(&[
+        &|| change("set", None, Some(&empty)),
+        &|| change("changed", Some(&empty), Some(&d)),
+        &|| change("unset", Some(&d), None),
+    ]);
 }
 
 /// The executable `out` stripped in place by binutils' `strip`, which comes with the GNU ld
@@ -383,14 +408,15 @@ fn a_linker_that_writes_no_build_id_is_refused() {
 
 /// An output may have any name, those the build once gave its object file and its other files
 /// in the working directory among them (`program.o`, `read.d`, `record`): the link did not
-/// overwrite its own input, and the record is not lost.
+/// overwrite its own input, and the record is not lost. The five builds run at once, beside
+/// the source and each other.
 #[test]
 fn an_output_may_take_any_name() {
     let d = dir("any_name");
     let src = d.join("sign.zed");
     std::fs::write(&src, sign("any name")).unwrap();
     let tools = toolchain();
-    for name in ["program.o", "read.d", "record", "sign.o", "sign.zed-link"] {
+    let named = |name: &str| {
         let out = d.join(name);
         // An output that records no key, so the build links even where the run before left
         // the executable.
@@ -398,30 +424,30 @@ fn an_output_may_take_any_name() {
         assert_eq!(link(&src, &out, &tools), Link::Ran, "{name}");
         assert_eq!(link(&src, &out, &tools), Link::Kept, "{name}");
         assert_eq!(says(&out), "any name\n", "{name}");
-    }
+    };
+    at_once(&[
+        &|| named("program.o"),
+        &|| named("read.d"),
+        &|| named("record"),
+        &|| named("sign.o"),
+        &|| named("sign.zed-link"),
+    ]);
 }
 
 /// GNU ld's default input object format, `GNUTARGET`, set to the format the link reads anyway:
 /// the executable is the same program, and the key differs, since another value could change
-/// how the linker reads its inputs.
+/// how the linker reads its inputs. Set and unset, each on an output of its own, at once.
 #[test]
 fn another_input_format_links_again() {
     let d = dir("gnutarget");
-    let (src, out) = (d.join("sign.zed"), d.join("sign"));
+    let src = d.join("sign.zed");
     std::fs::write(&src, sign("formats")).unwrap();
     let elf = Some(std::ffi::OsStr::new("elf64-x86-64"));
-    link(&src, &out, &with_env("GNUTARGET", None));
-    assert_eq!(link(&src, &out, &with_env("GNUTARGET", None)), Link::Kept);
-    assert_eq!(
-        link(&src, &out, &with_env("GNUTARGET", elf)),
-        Link::Ran,
-        "GNUTARGET set"
-    );
-    assert_eq!(link(&src, &out, &with_env("GNUTARGET", elf)), Link::Kept);
-    assert_eq!(
-        link(&src, &out, &with_env("GNUTARGET", None)),
-        Link::Ran,
-        "GNUTARGET unset"
-    );
-    assert_eq!(says(&out), "formats\n");
+    let change = |name: &str, from, to| {
+        let (out, changed) = (d.join(name), d.join(format!("{name}_changed")));
+        let (from, to) = (with_env("GNUTARGET", from), with_env("GNUTARGET", to));
+        relinks(&src, &out, &changed, &from, &to, name);
+        assert_eq!(says(&changed), "formats\n");
+    };
+    at_once(&[&|| change("set", None, elf), &|| change("unset", elf, None)]);
 }
