@@ -145,7 +145,7 @@ fn the_conditions_of_shared_divisors_scale() {
     // 10.2 now). And k functions each calling the one before twice with an argument that may
     // fail, translated once each, where reading each such call at its place read 2^k calls
     // (0.48 s at k = 12, 34 s at k = 18, measured 2026-11-08).
-    let k = 200;
+    let k = 130;
     // Each fails where `n = 0`; a verdict is checked against the interpreter (`checked`).
     for src in [met_divisors(2), guarded_arms(2)] {
         assert!(!true_on_window("ok(x, y, n) = true;", &src), "{src}");

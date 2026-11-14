@@ -34,7 +34,7 @@ costs!(shared_sums_project_each, shared_sums, "x0", 'p', 16, 1, 2);
 costs!(shared_sums_answers, shared_sums, "x0", 'a', 60, 1, 2);
 costs!(dark_chain_decide, dark_chain, "x0", 'd', 16, 1, 2);
 costs!(dark_chain_satisfiable, dark_chain, "x0", 's', 16, 1, 2);
-costs!(dark_chain_project_each, dark_chain, "x0", 'p', 360, 1, 2);
+costs!(dark_chain_project_each, dark_chain, "x0", 'p', 260, 1, 2);
 costs!(dark_chain_answers, dark_chain, "x0", 'a', 16, 1, 2);
 costs!(skew_block_decide, skew_block, "a0", 'd', 550, 1, 2);
 costs!(skew_block_satisfiable, skew_block, "a0", 's', 370, 1, 2);
@@ -46,7 +46,7 @@ costs!(nest_point_answers, nest_point, "x0", 'a', 1900, 1, 2);
 costs!(nest_empty_decide, nest_empty, "x0", 'd', 2800, 1, 2);
 costs!(nest_empty_satisfiable, nest_empty, "x0", 's', 3400, 1, 2);
 costs!(nest_empty_project_each, nest_empty, "x0", 'p', 16, 1, 2);
-costs!(nest_empty_answers, nest_empty, "x0", 'a', 2600, 1, 2);
+costs!(nest_empty_answers, nest_empty, "x0", 'a', 2000, 1, 2);
 
 // Subset sum is held to order k log k, one run each (k^3 log k before PRES-overlap-fast). The
 // exact method of PRES-overlap-fast (module `row_sums`) answers it at every size (2026-11-13,
@@ -78,10 +78,10 @@ macro_rules! window_costs {
 }
 
 window_costs!(windows_of_three_decide, 3, 2, 'd', 180);
-window_costs!(windows_of_three_satisfiable, 3, 2, 's', 200);
-window_costs!(windows_of_three_project_each, 3, 2, 'p', 120);
+window_costs!(windows_of_three_satisfiable, 3, 2, 's', 150);
+window_costs!(windows_of_three_project_each, 3, 2, 'p', 95);
 window_costs!(windows_of_three_answers, 3, 2, 'a', 70);
-window_costs!(windows_of_two_decide, 2, 3, 'd', 300);
+window_costs!(windows_of_two_decide, 2, 3, 'd', 230);
 window_costs!(windows_of_two_satisfiable, 2, 3, 's', 290);
 window_costs!(windows_of_two_project_each, 2, 3, 'p', 260);
-window_costs!(windows_of_two_answers, 2, 3, 'a', 280);
+window_costs!(windows_of_two_answers, 2, 3, 'a', 220);

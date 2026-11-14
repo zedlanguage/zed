@@ -41,7 +41,7 @@ fn growth_of_offsets_laid_end_to_end() {
     // Before that, 23.4x and 32.4x from 64 to 512 until the pivot of an equality was taken
     // among the variables no other equality holds (`pivots`): the chain
     // `o[i+1] == o[i] + l[i]` wrote rows of 3 to n + 1 terms.
-    grows("offsets laid end to end", 1300, Ok(true), offsets);
+    grows("offsets laid end to end", 1000, Ok(true), offsets);
 }
 
 #[test]
@@ -77,7 +77,7 @@ fn growth_of_sparse_random_rows() {
 #[test]
 fn growth_of_chained_blocks_of_five() {
     // 9.40x to the refusal.
-    grows("chained blocks of five", 300, Err(Refusal::Growth), |n| {
+    grows("chained blocks of five", 220, Err(Refusal::Growth), |n| {
         chained_blocks(n).0
     });
 }

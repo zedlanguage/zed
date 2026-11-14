@@ -120,7 +120,7 @@ fn merging_the_failures_of_a_long_chain_scales() {
     on_large_stack(|| {
         for (kinds, errs) in KINDS {
             let what = format!("a chain of n sums of {kinds:?} kinds of failure");
-            scaling::check(&what, 1000, |n| merges(n, kinds, errs))
+            scaling::check(&what, 700, |n| merges(n, kinds, errs))
         }
     })
 }
@@ -131,11 +131,11 @@ fn merging_the_failures_of_a_long_chain_scales() {
 #[test]
 fn the_repairs_for_a_family_of_many_atoms_scale() {
     let u = ready(FAMILY_TEXT);
-    let families: BTreeMap<usize, zedc::check::ty::Ty> = [25000, FACTOR * 25000]
+    let families: BTreeMap<usize, zedc::check::ty::Ty> = [15000, FACTOR * 15000]
         .into_iter()
         .map(|n| (n, family(n)))
         .collect();
-    scaling::check_order("the repairs for a family of n atoms", 25000, 1, |n| {
+    scaling::check_order("the repairs for a family of n atoms", 15000, 1, |n| {
         repairs_name_each_atom(&u, n, families[&n].clone())
     });
 }

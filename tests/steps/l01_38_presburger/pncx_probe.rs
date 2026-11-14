@@ -148,34 +148,23 @@ fn pncx_divisor_past_i128_is_read() {
     }
 }
 
+// The three families of `t8_enum_suite` at their first formulas: 40 of families 1 and 2, which
+// take each of the four kinds of range family 1 picks by its index, and 6 of family 3, which take
+// both kinds of offset it picks by its index; none is refused. All 1,200 of each family are many
+// cases, so they run in `bench::pncx_probe` (author P178).
 #[test]
-fn pncx_t8_enum_suite_sign12() {
-    t8_enum_suite(1, 0..1200, 33);
+fn pncx_t8_enum_suite_sign12_first_formulas() {
+    t8_enum_suite(1, 0..40, 0);
 }
 
 #[test]
-fn pncx_t8_enum_suite_padic() {
-    t8_enum_suite(2, 0..1200, 33);
+fn pncx_t8_enum_suite_padic_first_formulas() {
+    t8_enum_suite(2, 0..40, 0);
 }
 
 #[test]
-fn pncx_t8_enum_suite_pairs_0() {
-    t8_enum_suite(3, 0..300, 7);
-}
-
-#[test]
-fn pncx_t8_enum_suite_pairs_1() {
-    t8_enum_suite(3, 300..600, 5);
-}
-
-#[test]
-fn pncx_t8_enum_suite_pairs_2() {
-    t8_enum_suite(3, 600..900, 16);
-}
-
-#[test]
-fn pncx_t8_enum_suite_pairs_3() {
-    t8_enum_suite(3, 900..1200, 6);
+fn pncx_t8_enum_suite_pairs_first_formulas() {
+    t8_enum_suite(3, 0..6, 0);
 }
 
 #[test]

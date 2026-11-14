@@ -41,3 +41,10 @@ fn deciding_a_chain_costs_its_size() {
         });
     });
 }
+
+#[test]
+fn a_chain_of_guards_100000_deep_is_mapped_copied_compared_printed_decided_and_dropped() {
+    // The depth and the stack are unusual sizes, so this is a benchmark (author P178); its
+    // checks run at depth 30 in `deep::a_chain_of_guards_is_mapped_copied_compared_printed_decided_and_dropped`.
+    on_small_stack(|| chain_checks(DEEP));
+}

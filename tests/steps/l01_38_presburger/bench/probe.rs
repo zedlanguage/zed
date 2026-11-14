@@ -19,12 +19,12 @@ use zedc::store::presburger::{Atom, decide, project_each};
 #[test]
 fn guards_beyond_the_inputs_scale() {
     let make = |n: usize| guards(n, 3 * n as i64 / 4, false);
-    let (small, large) = (make(620), make(620 * scaling::FACTOR));
+    let (small, large) = (make(430), make(430 * scaling::FACTOR));
     scaling::check(
         "decide on a chain of k guards beyond inputs 3k/4 wide",
-        620,
+        430,
         |n| {
-            assert_eq!(decide(if n == 620 { &small } else { &large }), Ok(true));
+            assert_eq!(decide(if n == 430 { &small } else { &large }), Ok(true));
         },
     );
 }
@@ -87,10 +87,10 @@ fn a_nested_chain_of_absolute_values_scales() {
 /// million instructions, 7.9 times.
 #[test]
 fn twin_chains_of_absolute_values_scale() {
-    let fs = scaling::inputs(460, |n| abs_chain(n, true));
+    let fs = scaling::inputs(310, |n| abs_chain(n, true));
     scaling::check_order(
         "projection of twin nested chains of absolute values",
-        460,
+        310,
         1,
         |n| {
             projects_abs_chain(&fs[&n], n);

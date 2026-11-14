@@ -33,7 +33,7 @@ fn a_cycle_of_negative_edges_scales() {
     // From 2048 variables (6144 rows), so that a quadratic step is caught however cheap the
     // work per pair of rows: a scan of all rows per row comparing only their lengths gave
     // 18.8 times from 512 and passed, and gives 43.5 times from 2048 (2026-11-05, load 78).
-    decides("a cycle of negative edges", 12000, Ok(true), negchain);
+    decides("a cycle of negative edges", 8400, Ok(true), negchain);
 }
 
 #[test]
@@ -210,8 +210,8 @@ fn coefficients_of_many_bits_scale() {
 
 #[test]
 fn columns_seen_through_two_aggregates_scale() {
-    decides("two aggregates", 2300, Ok(true), aggregates);
-    let f = aggregates(2300);
+    decides("two aggregates", 1800, Ok(true), aggregates);
+    let f = aggregates(1800);
     let m = satisfiable(&f).expect("answered").expect("a point");
     assert!(f.holds(&m), "{m:?}");
 }

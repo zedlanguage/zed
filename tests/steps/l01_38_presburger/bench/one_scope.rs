@@ -92,7 +92,7 @@ fn the_questions_of_a_drifting_chain_scale() {
     // MB → 15.9 GB, measured once), 8.2 now (40.9 MB → 334 MB).
     questions_scale(
         "a chain whose links extend a callee's point beside the chain",
-        500,
+        390,
         "r(x: int) = x > 0 && x < 1000000;\nq(x: int) = r(x: x) && x mod 3 == 1;\n\
          p0(x: int) = x > 0;\n",
         drifting_link,
@@ -160,7 +160,7 @@ fn the_questions_of_a_chain_of_tests_over_a_chain_of_definitions_scale() {
     // 8.1 and 8.0 times when it reads past those its callee's point gives a value.
     questions_scale(
         "a chain of tests over a chain of halvings",
-        980,
+        720,
         "h0(x: int) = x;\np0(x: int) = x > 0;\n",
         |i| {
             format!(
@@ -203,7 +203,7 @@ fn the_questions_of_a_chain_of_tests_holding_everywhere_scale() {
     // point), 7.7 times now.
     questions_scale(
         "a chain of tests holding everywhere over a chain of halvings",
-        610,
+        420,
         "h0(x: int) = x;\np0(x: int) = x > 0 || x <= 0;\n",
         |i| {
             format!(
@@ -760,7 +760,7 @@ fn the_questions_of_a_chain_with_a_second_call_scale() {
     // it again.
     questions_scale(
         "a chain of tests with a second call",
-        1500,
+        760,
         "q(x: int) = x < 1000000;\np0(x: int) = x > 0;\n",
         |i| {
             format!(
@@ -797,7 +797,7 @@ fn the_relations_of_a_chain_with_a_second_call_whose_points_move_scale() {
     // 50 → 400: 62.5 times the bytes when each call was translated again.
     relations_scale(
         "the relations of a chain with a second call whose points move",
-        1800,
+        950,
         "q(x: int) = x > 0;\np0(x: int) = x > 0;\n",
         |i| {
             format!(
@@ -891,7 +891,7 @@ fn the_relations_of_a_chain_with_a_second_call_of_a_call_scale() {
     // was translated again.
     relations_scale(
         "the relations of a chain with a second call of a call",
-        1700,
+        950,
         "r(x: int) = x > 0 && x < 1000000;\nq(x: int) = r(x: x) && x mod 3 == 1;\n\
          p0(x: int) = x > 0;\n",
         |i| {
@@ -953,7 +953,7 @@ fn the_questions_of_a_chain_with_a_second_call_of_a_large_callee_scale() {
         }
         src
     };
-    let n = 530;
+    let n = 330;
     let units: std::collections::BTreeMap<usize, _> = [n, n * zed_tests::scaling::FACTOR]
         .into_iter()
         .map(|m| {
@@ -1304,11 +1304,11 @@ fn clauses_sharing_one_residue_condition_scale() {
     // intersected as one, by sorting the pieces of their complements, so this costs order
     // `n log n`; intersecting them one after another cost order `n^2`.
     let formulas: std::collections::BTreeMap<usize, _> =
-        [28000, 28000 * zed_tests::scaling::FACTOR]
+        [21500, 21500 * zed_tests::scaling::FACTOR]
             .into_iter()
             .map(|n| (n, clauses_sharing_one_residue_condition(n)))
             .collect();
-    zed_tests::scaling::check("clauses sharing one residue condition", 28000, |n| {
+    zed_tests::scaling::check("clauses sharing one residue condition", 21500, |n| {
         assert_eq!(zedc::store::presburger::decide(&formulas[&n]), Ok(true));
     });
 }

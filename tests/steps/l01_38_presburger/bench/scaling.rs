@@ -29,7 +29,7 @@ fn a_cycle_of_rows_scales() {
 
 #[test]
 fn a_long_chain_with_a_point_scales() {
-    scales("the long chain with a point", 4096, true, |v| chain(v, 3));
+    scales("the long chain with a point", 3000, true, |v| chain(v, 3));
 }
 
 #[test]

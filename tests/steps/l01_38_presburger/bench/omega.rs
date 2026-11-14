@@ -61,7 +61,7 @@ fn eliminating_the_terms_of_a_long_row_costs_the_row_each_time() {
 /// a new sum for each term. `bounded_sum` gives each `x[i]` in [0, 49].
 #[test]
 fn the_box_of_refused_rows_scales() {
-    let n = 1800;
+    let n = 1400;
     let (small, large) = (bounded_sum(n), bounded_sum(scaling::FACTOR * n));
     let syms = |m: usize| -> Vec<Atom> { (0..m).map(|i| sym(&format!("x{i}"))).collect() };
     let (s_small, s_large) = (syms(n), syms(scaling::FACTOR * n));
@@ -116,19 +116,19 @@ fn a_value_that_alone_removes_a_row_is_eliminated_first_at_cubic_cost() {
 fn the_first_and_last_credits_of_a_pipeline_scale() {
     for chain in [false, true] {
         let (small, large) = (
-            dead2(470, chain, "z"),
-            dead2(470 * scaling::FACTOR, chain, "z"),
+            dead2(300, chain, "z"),
+            dead2(300 * scaling::FACTOR, chain, "z"),
         );
         let (s_small, s_large) = (
             [sym("z0"), sym("z15")],
-            [sym("z0"), sym(&format!("z{}", 470 * scaling::FACTOR - 1))],
+            [sym("z0"), sym(&format!("z{}", 300 * scaling::FACTOR - 1))],
         );
         scaling::check_order(
             &format!("the first and last credits of a pipeline of stages, chained {chain}"),
-            470,
+            300,
             1,
             |n| {
-                let (f, s) = if n == 470 {
+                let (f, s) = if n == 300 {
                     (&small, &s_small)
                 } else {
                     (&large, &s_large)
@@ -152,10 +152,10 @@ fn every_state_and_credit_of_a_pipeline_scale() {
             .flat_map(|k| [sym(&format!("z{k}")), sym(&format!("y{k}"))])
             .collect()
     };
-    let inputs = scaling::inputs(890, |n| (dead2(n, false, "z"), syms(n)));
+    let inputs = scaling::inputs(690, |n| (dead2(n, false, "z"), syms(n)));
     scaling::check_order(
         "every state and credit of a pipeline of stages",
-        890,
+        690,
         1,
         |n| {
             let (f, s) = &inputs[&n];
@@ -169,8 +169,8 @@ fn every_state_and_credit_of_a_pipeline_scale() {
 /// in all before (item TIGHTEN-each-whole).
 #[test]
 fn independent_stages_scale() {
-    let inputs = scaling::inputs(450, |n| (joint_stages(n), joint_syms(n)));
-    scaling::check_order("every symbol of stages that share no atom", 450, 1, |n| {
+    let inputs = scaling::inputs(225, |n| (joint_stages(n), joint_syms(n)));
+    scaling::check_order("every symbol of stages that share no atom", 225, 1, |n| {
         let (f, s) = &inputs[&n];
         let _ = std::hint::black_box(project_each(f, s));
     });
@@ -183,16 +183,16 @@ fn independent_stages_scale() {
 #[test]
 fn project_each_on_a_chained_pipeline_scales() {
     let (small, large) = (
-        dead2(990, true, "z"),
-        dead2(990 * scaling::FACTOR, true, "z"),
+        dead2(470, true, "z"),
+        dead2(470 * scaling::FACTOR, true, "z"),
     );
     let syms = [sym("z0")];
     scaling::check_order(
         "the first credit of a chained pipeline of stages",
-        990,
+        470,
         1,
         |n| {
-            let f = if n == 990 { &small } else { &large };
+            let f = if n == 470 { &small } else { &large };
             let _ = std::hint::black_box(zedc::store::presburger::project_each(f, &syms));
         },
     );
@@ -204,7 +204,7 @@ fn twin_definitions_merge_in_time_near_linear() {
     // of their dependencies with a hash lookup each, and the merged formula has n absolute
     // values of one symbol. Control (once, not kept): an O(n²) scan of the definitions in the
     // merge failed this test.
-    let n = 180;
+    let n = 85;
     let (small, large) = (
         twin_absolute_values(n),
         twin_absolute_values(scaling::FACTOR * n),

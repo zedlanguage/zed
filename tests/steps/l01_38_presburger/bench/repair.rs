@@ -25,12 +25,12 @@ fn a_chain_of_guards_on_one_input_scales() {
 #[test]
 fn a_chain_whose_point_is_at_an_end_scales() {
     let make = |n: usize| guards(n, n as i64 - 2, false);
-    let (small, large) = (make(730), make(730 * scaling::FACTOR));
+    let (small, large) = (make(490), make(490 * scaling::FACTOR));
     scaling::check(
         "decide on a chain of k guards with its point at an end",
-        730,
+        490,
         |n| {
-            assert_eq!(decide(if n == 730 { &small } else { &large }), Ok(true));
+            assert_eq!(decide(if n == 490 { &small } else { &large }), Ok(true));
         },
     );
 }

@@ -2,7 +2,7 @@
 
 use crate::nest_empty::*;
 use zed_tests::scaling::{self};
-use zedc::store::presburger::satisfiable;
+use zedc::store::presburger::{project_each, satisfiable};
 
 #[test]
 fn a_nest_whose_every_path_is_empty_costs_its_depth() {
@@ -46,4 +46,36 @@ fn a_chain_of_two_tests_with_atoms_of_their_own_costs_its_depth() {
 #[test]
 fn two_tests_each_held_by_both_at_the_level_above_cost_their_depth() {
     costs("two tests held by both disjuncts of both", 1000, pair);
+}
+
+#[test]
+fn a_nest_is_projected_in_a_stack_its_depth_does_not_grow() {
+    // An unusual stack and depth, so a benchmark (author P178); the answers at ordinary depths
+    // are in `nest_empty::a_nest_with_one_path_that_has_a_point_is_projected_onto_it`.
+    // The projection read each level of the nest by a recursive call, about 3.9 kB of stack
+    // for each, so the nest of 512 levels overflowed a test thread's 2 MiB stack under some
+    // builds, and a 256 KiB stack at about 60 levels. The levels are now kept on an explicit
+    // stack (item MAIN-l01_38-failures). The answers are those of
+    // `nest_empty::a_nest_whose_every_path_is_empty_is_answered_false_at_every_depth`, and of the
+    // point's own values for the nest that has one.
+    let run = || {
+        for k in [64, 512] {
+            let (each, left_out) = project_each(&empty(k), &[v("x0"), v("z")]).expect("answered");
+            assert!(left_out.is_empty(), "depth {k}: {left_out:?}");
+            assert!(
+                each.iter().all(|p| p.as_ref().is_ok_and(|s| s.is_empty())),
+                "depth {k}: {each:?}"
+            );
+        }
+        let (each, left_out) = project_each(&near(512), &[v("x0"), v("z")]).expect("answered");
+        assert!(left_out.is_empty(), "{left_out:?}");
+        let one = |n: i64| zedc::store::interval::IntervalSet::of(n, n);
+        assert_eq!(each, vec![Ok(one(1)), Ok(one(1))]);
+    };
+    std::thread::Builder::new()
+        .stack_size(256 << 10)
+        .spawn(run)
+        .expect("a thread")
+        .join()
+        .expect("answered in a 256 KiB stack");
 }

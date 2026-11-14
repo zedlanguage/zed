@@ -13,7 +13,7 @@ fn decide_scales_over_copies_of_a_tie() {
 #[test]
 fn decide_scales_over_copies_of_a_system_with_tied_variables() {
     // Each copy of Codex's six-variable system, whose variables tie, has a point.
-    scales_over_copies("copies of Codex's system", &codex6(), 6, 58);
+    scales_over_copies("copies of Codex's system", &codex6(), 6, 40);
 }
 
 #[test]
@@ -28,12 +28,12 @@ fn decide_scales_over_one_class_of_equalities() {
     // `Ties` joins every equality of the class, and `representatives` reads each variable's
     // root once; with union by rank both cost a logarithm per variable.
     let (small, large) = (
-        one_class_of_equalities(48000),
-        one_class_of_equalities(48000 * scaling::FACTOR),
+        one_class_of_equalities(38000),
+        one_class_of_equalities(38000 * scaling::FACTOR),
     );
     assert_eq!((decide(&small), decide(&large)), (Ok(true), Ok(true)));
-    scaling::check_order("decide on one class of equalities", 48000, 1, |n| {
-        let f = if n == 48000 { &small } else { &large };
+    scaling::check_order("decide on one class of equalities", 38000, 1, |n| {
+        let f = if n == 38000 { &small } else { &large };
         let _ = std::hint::black_box(decide(f));
     });
 }

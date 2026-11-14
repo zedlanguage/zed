@@ -7,7 +7,7 @@ use zed_tests::scaling::{self, Meter};
 use zedc::store::presburger::extend::Extending;
 use zedc::store::presburger::{Atom, Con, Formula, Lin, Shared, decide, project_each, satisfiable};
 
-fn v(s: &str) -> Atom {
+pub(super) fn v(s: &str) -> Atom {
     Atom::Sym(Arc::from(s))
 }
 
@@ -80,32 +80,16 @@ fn a_nest_whose_every_path_is_empty_is_answered_false_at_every_depth() {
 }
 
 #[test]
-fn a_nest_is_projected_in_a_stack_its_depth_does_not_grow() {
-    // The projection read each level of the nest by a recursive call, about 3.9 kB of stack
-    // for each, so the nest of 512 levels overflowed a test thread's 2 MiB stack under some
-    // builds, and a 256 KiB stack at about 60 levels. The levels are now kept on an explicit
-    // stack (item MAIN-l01_38-failures). The answers are those of the test above, and of the
-    // point's own values for the nest that has one.
-    let run = || {
-        for k in [64, 512] {
-            let (each, left_out) = project_each(&empty(k), &[v("x0"), v("z")]).expect("answered");
-            assert!(left_out.is_empty(), "depth {k}: {left_out:?}");
-            assert!(
-                each.iter().all(|p| p.as_ref().is_ok_and(|s| s.is_empty())),
-                "depth {k}: {each:?}"
-            );
-        }
-        let (each, left_out) = project_each(&near(512), &[v("x0"), v("z")]).expect("answered");
-        assert!(left_out.is_empty(), "{left_out:?}");
-        let one = |n: i64| zedc::store::interval::IntervalSet::of(n, n);
-        assert_eq!(each, vec![Ok(one(1)), Ok(one(1))]);
-    };
-    std::thread::Builder::new()
-        .stack_size(256 << 10)
-        .spawn(run)
-        .expect("a thread")
-        .join()
-        .expect("answered in a 256 KiB stack");
+fn a_nest_with_one_path_that_has_a_point_is_projected_onto_it() {
+    // The answers of `bench::nest_empty::a_nest_is_projected_in_a_stack_its_depth_does_not_grow`,
+    // which runs depth 512 on a 256 KiB stack (author P178), at ordinary depths on the default
+    // stack.
+    let one = |n: i64| zedc::store::interval::IntervalSet::of(n, n);
+    for k in [1, 8, 64] {
+        let (each, left_out) = project_each(&near(k), &[v("x0"), v("z")]).expect("answered");
+        assert!(left_out.is_empty(), "depth {k}: {left_out:?}");
+        assert_eq!(each, vec![Ok(one(1)), Ok(one(1))], "depth {k}");
+    }
 }
 
 #[test]

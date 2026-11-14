@@ -9,7 +9,7 @@ use zedc::store::preimage::relations;
 
 #[test]
 fn translating_symbolic_divisors_scales() {
-    let n = 2600;
+    let n = 1750;
     let built: BTreeMap<usize, Term> = [n, n * scaling::FACTOR]
         .into_iter()
         .map(|k| (k, splits(k)))

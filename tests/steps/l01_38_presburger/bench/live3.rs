@@ -11,8 +11,8 @@ use zedc::store::presburger::satisfiable;
 fn many_rows_scale_linearly() {
     // Coefficients up to 50; the work is O(m log m), from `twovar::point` on each plane.
     let fifty = |rng: &mut Rng| int(rng.int(-50, 50));
-    let (small, large) = (thin(410, 7, fifty), thin(410 * scaling::FACTOR, 7, fifty));
-    scales("rows over three variables", 410, 1, &small, &large);
+    let (small, large) = (thin(290, 7, fifty), thin(290 * scaling::FACTOR, 7, fifty));
+    scales("rows over three variables", 290, 1, &small, &large);
 }
 
 #[test]

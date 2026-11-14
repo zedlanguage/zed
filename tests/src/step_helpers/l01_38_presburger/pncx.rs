@@ -640,11 +640,10 @@ pub fn pncx_front_scale(axis: &str, n: usize) {
 
 /// The 3,600 formulas of the T8 suite against enumeration, three families of 1,200 drawn from
 /// one generator: of family `only`, the formulas numbered in `part` are decided and checked,
-/// and the rest are only drawn, so each piece has the formulas it had when the three families
-/// ran as one test (47 s alone at load 32) and stays well under 60 s. At most `most_refused`
-/// are refused: 33 in families 1 and 2 and 34 in family 3, 100 in all, as the one test
-/// allowed, with family 3's 34 shared among its four parts by their refusals on
-/// 2026-11-12 (5, 3, 12 and 4).
+/// and the rest are only drawn, so each part has the formulas it has when the families run
+/// whole. At most `most_refused` are refused. The whole families are benchmarks in
+/// `bench::pncx_probe` (author P178), family 3 in eight parts of 150; `pncx_probe` runs the
+/// first formulas of each.
 pub fn t8_enum_suite(only: usize, part: std::ops::Range<usize>, most_refused: usize) {
     use std::sync::Arc;
     use zedc::store::int::Int;
