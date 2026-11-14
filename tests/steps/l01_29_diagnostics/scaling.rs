@@ -471,42 +471,6 @@ fn writing_the_literal_of_a_long_text_scales() {
     );
 }
 
-#[test]
-fn writing_a_long_text_beside_its_own_value_spelled_otherwise_scales() {
-    // A text of d digits ordered with the same number written with `_` every three digits (row
-    // REPAIR-text-cast-spelling): the repair writes the digits the text reads, not the
-    // literal's spelling of that value, so the work is the cast, its print and its reading
-    // back, each linear in d.
-    let digits = |d: usize| "7".repeat(d);
-    let spelled = |d: usize| {
-        let s = digits(d);
-        let mut out = String::with_capacity(d + d / 3);
-        for (i, c) in s.chars().enumerate() {
-            if i > 0 && (d - i) % 3 == 0 {
-                out.push('_');
-            }
-            out.push(c);
-        }
-        out
-    };
-    let srcs = scaling::inputs(3000, |d| {
-        format!(
-            "f() {{ c = \"{}\" < {}; return c; }}\n",
-            digits(d),
-            spelled(d)
-        )
-    });
-    scaling::check(
-        "the number a text of d digits reads, beside its value spelled with `_`",
-        3000,
-        |d| {
-            let out = rejected(&srcs[&d]);
-            let want = format!("Try `{} < {}` instead.", digits(d), spelled(d));
-            assert!(out.contains(&want), "{out}");
-        },
-    );
-}
-
 /// `n` functions, each comparing an `int` by `==` or `<` with a text the cast `int` takes, the
 /// text on either side, so each rejection offers first the literal the cast gives (row
 /// REPAIR-compare-order): at `==` up to three more trials of the comparison, one per number

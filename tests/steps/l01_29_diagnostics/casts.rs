@@ -987,6 +987,12 @@ fn a_text_ordered_with_a_literal_of_its_value_is_offered_the_number_the_text_rea
         ("1000", "0x3_E8", "1000"),
         ("-8", "-0x08", "-8"),
         ("0", "0x0", "0"),
+        // Past 64 bits.
+        (
+            "1234567890123456789012345",
+            "1_234_567_890_123_456_789_012_345",
+            "1234567890123456789012345",
+        ),
         // `rat` comes before `f64` in the menu, so the first repair is the `rat` literal.
         ("0.5", "5e-1", "0.5r"),
     ] {

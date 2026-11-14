@@ -6,6 +6,7 @@
 mod above;
 mod always_fails;
 mod batch;
+mod bench;
 mod binder_type;
 mod body_display;
 mod bug;
