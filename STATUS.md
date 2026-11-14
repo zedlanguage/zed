@@ -2309,7 +2309,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | CONST-coprime-base-shared-primes | impl attempt 1 | 2026-11-14 09:23 | started in /home/luke/Work/wt/coprime-2; load 43.52 |
 | CONST-coprime-check-many-sets | impl attempt 1 | 2026-11-14 09:23 | started in /home/luke/Work/wt/coprime-2; load 43.52 |
-| DOC-renamed-links | impl attempt 1 | 2026-11-14 09:50 | started in /home/luke/Work/wt/doc-refs; load 33.17 |
 | FAIL-check-decimal-past-f64-at-rat | running | 2026-11-14 07:10 |  |
 | FAIL-check-if-carrier-branch-literal-at-rat | running | 2026-11-14 07:10 |  |
 | FAIL-lattice-f32-literal | running | 2026-11-14 07:10 |  |

@@ -2,7 +2,7 @@
 # Tests tools/check_changed_docs.sh on a workspace of two small packages in a git repository of its
 # own, build/test-check-changed-docs, which it keeps from run to run (it deletes nothing; each run
 # writes every file again and commits it as the new origin/main). Run from a checkout's root, in a
-# worktree through zrun (`/home/luke/Work/wt/zrun tools/test_check_changed_docs.sh`); about 10 s.
+# worktree through zrun (`/home/luke/Work/wt/zrun tools/test_check_changed_docs.sh`); about 20 s.
 # Package a has a feature `extra` and a public function `gated` that exists only with it; package
 # b depends on a with `extra`, so the workspace build gives a that feature and a build of a alone
 # does not, as zed-tests gives zedc-preimage `preimage-ref` (DOC-private-links-3).
@@ -28,7 +28,7 @@ run() {
   out=$(pushd "$ws" >/dev/null && "$check" "$ws/doc.log" 2>&1)
   rc=$?
   echo "$rc"
-  echo "$out" | grep -E '^(Documenting|DOC FAILED|The doc check)' | sed 's/, whose doc comments this branch changes\.$//'
+  echo "$out" | grep -E '^(Documenting|DOC FAILED|The doc check)' | sed 's/, whose doc comments, or items they link, this branch changes\.$//'
 }
 lib_a='//! Package a.
 
@@ -45,7 +45,29 @@ pub fn gated() {}
 /// Uses `private_item`.
 pub fn uses() {
     private_item();
+    helper();
 }
+
+/// A private helper, whose name b gives a public item too.
+fn helper() {}
+
+/// A function that docs link.
+pub fn linked() {}
+
+/// A struct whose field a doc links.
+pub struct Holder {
+    /// A field.
+    pub field: u8,
+}
+
+/// An enum whose variant a doc links.
+pub enum Kind {
+    /// The one variant.
+    One,
+}
+
+/// Links [`linked`], [`Holder::field`] and [`Kind::One`].
+pub fn links() {}
 '
 # Writes the base state of every file and makes it origin/main. extra.rs is excluded from git, so
 # it is never committed, until a check lifts the exclusion to make it an untracked file.
@@ -59,7 +81,7 @@ base() {
   printf '[package]\nname = "a"\nversion = "0.0.0"\nedition = "2024"\n\n[features]\nextra = []\n' >a/Cargo.toml
   printf '[package]\nname = "b"\nversion = "0.0.0"\nedition = "2024"\n\n[dependencies]\na = { path = "../a", features = ["extra"] }\n' >b/Cargo.toml
   echo "$lib_a" >a/src/lib.rs
-  printf '//! Package b.\n\n/// Calls a.\npub fn call() {\n    a::gated();\n}\n' >b/src/lib.rs
+  printf '//! Package b.\n\n/// Calls a.\npub fn call() {\n    a::gated();\n}\n\n/// Links [`a::linked`], [`a::gated`] and [`helper`].\npub fn link() {}\n\n/// A helper of b.\npub fn helper() {}\n' >b/src/lib.rs
   printf '//! A test of a.\n\n/// A test.\n#[test]\nfn works() {\n    a::public_item();\n}\n' >a/tests/t.rs
   printf '/// Another public function.\npub fn other() {}\n' >a/src/extra.rs
   git add -A
@@ -147,6 +169,68 @@ base
 edit a/src/lib.rs 's|^//! Package a\.$|//! Package a.\n\nmod extra;|'
 printf '/// Another public function, beside [`nothing`].\npub fn other() {}\n' >"$ws/a/src/extra.rs"
 check "a new file git does not track yet is checked" "1" "$(run | head -1)"
+
+# Changes with no doc line that break a link (DOC-renamed-links): the packages whose docs link the
+# item are documented.
+a_b_fail="1
+Documenting a (alone, with its own default features)
+DOC FAILED: a (alone, with its own default features).
+Documenting a (with the workspace build's features extra)
+DOC FAILED: a (with the workspace build's features extra).
+Documenting b (alone, with its own default features)
+DOC FAILED: b (alone, with its own default features).
+DOC FAILED: documentation builds of changed packages that failed: 3, their output in $ws/doc.log."
+base
+edit a/src/lib.rs 's/^pub fn linked() {}$/pub fn renamed() {}/'
+check "renaming an item documents each package whose docs link it" "$a_b_fail" "$(run)"
+
+base
+edit a/src/lib.rs 's/^pub fn linked() {}$/fn linked() {}/'
+check "making a linked item private documents each package whose docs link it" "$a_b_fail" "$(run)"
+
+base
+edit a/src/lib.rs 's/^pub fn linked() {}$/#[cfg(feature = "extra")]\npub fn linked() {}/'
+check "putting a linked item behind a feature fails the build without it" "1
+Documenting a (alone, with its own default features)
+DOC FAILED: a (alone, with its own default features).
+Documenting a (with the workspace build's features extra)
+Documenting b (alone, with its own default features)
+DOC FAILED: documentation builds of changed packages that failed: 1, their output in $ws/doc.log." "$(run)"
+
+base
+edit a/src/lib.rs 's/^    pub field: u8,$/    pub value: u8,/'
+check "renaming a linked field documents the package whose docs link it" "1
+Documenting a (alone, with its own default features)
+DOC FAILED: a (alone, with its own default features).
+Documenting a (with the workspace build's features extra)
+DOC FAILED: a (with the workspace build's features extra).
+DOC FAILED: documentation builds of changed packages that failed: 2, their output in $ws/doc.log." "$(run)"
+
+base
+edit a/src/lib.rs 's/^    One,$/    Uno,/'
+check "renaming a linked variant documents the package whose docs link it" "1
+Documenting a (alone, with its own default features)
+DOC FAILED: a (alone, with its own default features).
+Documenting a (with the workspace build's features extra)
+DOC FAILED: a (with the workspace build's features extra).
+DOC FAILED: documentation builds of changed packages that failed: 2, their output in $ws/doc.log." "$(run)"
+
+base
+edit a/src/lib.rs 's/^pub fn linked() {}$/pub fn linked() -> u8 {\n    0\n}/'
+check "a changed signature keeps its links and builds no documentation" "0" "$(run)"
+
+base
+edit a/src/lib.rs 's/^fn private_item() {}$/fn hidden_item() {}/; s/^    private_item();$/    hidden_item();/'
+check "renaming an item no doc links builds no documentation" "0" "$(run)"
+
+base
+edit a/src/lib.rs 's/^fn helper() {}$/fn aid() {}/; s/^    helper();$/    aid();/'
+check "renaming a private item builds no documentation for a link in another module to an item of\
+ the same name" "0" "$(run)"
+
+base
+edit a/src/lib.rs '/^#\[cfg(feature = "extra")\]$/d'
+check "removing a cfg line builds no documentation" "0" "$(run)"
 base
 
 echo "checks failed: $fails"
