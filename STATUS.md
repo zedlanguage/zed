@@ -2192,7 +2192,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PERF-l139-family | impl attempt 3 | 2026-11-12 18:45 | step 1 pushed 40bb19caa: hull sides asked first at the real bound (real_end); hop 8.9, hopon 9.8 run again; 8 families still over 10.5 (ignored), work continues |
 | ST-churn-at-once | impl attempt 1 | 2026-11-13 16:18 | started; worktree from origin/main a42ee21d8 |
 | ST-class-case-reverse | impl attempt 1 | 2026-11-13 16:24 | started; load 44.00 |
-| STUDY-consume-on-success | impl attempt 1 | 2026-11-13 17:13 | started: study of take-on-success ownership (fdopen); load 34.32 33.97 37.19 |
 | TERM-report | impl attempt 1 | 2026-11-13 17:02 | started; reading DESIGN sec:staging, sec:memory, --total, report-switch sentence |
 | TESTS-defer-failing | impl attempt 1 | 2026-11-13 16:54 | started; load 41.38 47.39 48.09 |
 | XR-ffi-stateful | running |  |  |

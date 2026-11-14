@@ -107,7 +107,7 @@ rows! {
     TwoOrders => "Two declared orders meet in one key type",
     EmissionDisjointness => "Emission-disjointness",
     // No diagnostic uses these nineteen rows yet: plan rows L7.4 (the first, the third to the
-    // sixth, the eighth, and the nineteenth), the build of STUDY-consume-on-success (the
+    // sixth, the eighth, and the nineteenth), IMPL-consume-unless (the
     // seventh), FFI-release-failure (the ninth), FFI-release-zed (the tenth), FFI-teardown (the
     // eleventh and twelfth), FFI-held (the thirteenth to fifteenth), FFI-thread (the sixteenth
     // and seventeenth), TERM-1 and EXPORT-unique emit them.
