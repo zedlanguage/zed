@@ -139,8 +139,17 @@ pub enum Misfit<'s> {
     NoParam(&'s str),
     /// A named argument for a parameter already filled.
     Supplied(&'s str),
-    /// A `...` call that leaves out this positional parameter.
-    CurriedPositional(&'s str),
+    /// A `...` call that leaves out a positional parameter; the lambda of the repair puts it
+    /// in its own place among the arguments.
+    CurriedPositional {
+        /// The parameter left out.
+        name: &'s str,
+        /// The code of the arguments in the places before it, `…` where it is not at hand,
+        /// and `None` where it is the first.
+        before: Option<&'s str>,
+        /// Whether parameters follow it.
+        after: bool,
+    },
     /// A `...` call that leaves out no parameter.
     NothingLeftOut,
     /// A saturated call that leaves out this parameter, which has no default; `true` when the
@@ -159,7 +168,7 @@ impl Misfit<'_> {
                 None
             }
             Misfit::Named(_) | Misfit::Positional(_) => Some(Row::WrongForm),
-            Misfit::CurriedPositional(_) | Misfit::NothingLeftOut => Some(Row::NothingLeftOut),
+            Misfit::CurriedPositional { .. } | Misfit::NothingLeftOut => Some(Row::NothingLeftOut),
             Misfit::Missing(..) | Misfit::OpenDefault(_) => Some(Row::MissingArgument),
         }
     }
@@ -200,7 +209,7 @@ impl Misfit<'_> {
                 "this argument gives `{name}` of `{who}` a value, and an argument before it \
                  already gave `{name}` one; a call gives each parameter one value"
             ),
-            Misfit::CurriedPositional(name) => format!(
+            Misfit::CurriedPositional { name, .. } => format!(
                 "this call of `{who}` ends in `...`, which makes a function of the named \
                  parameters the call leaves out, and the call also leaves out `{name}`, a \
                  positional parameter, which `...` cannot leave out"
@@ -297,13 +306,24 @@ impl Misfit<'_> {
                 format!("repair: remove this second value for `{name}`"),
                 format!("repair: remove the first value for `{name}` and keep this one"),
             ],
-            (Misfit::CurriedPositional(name), _) => vec![
-                "repair: remove the `...`".into(),
-                format!(
-                    "repair: leave out the positional `{name}` with a bracket section or a \
-                     lambda, as `({name}) -> {f}({name}, …)`{where_f}"
-                ),
-            ],
+            (
+                Misfit::CurriedPositional {
+                    name,
+                    before,
+                    after,
+                },
+                _,
+            ) => {
+                let before = before.map(|b| format!("{b}, ")).unwrap_or_default();
+                let after = if after { ", …" } else { "" };
+                vec![
+                    "repair: remove the `...`".into(),
+                    format!(
+                        "repair: leave out the positional `{name}` with a bracket section or \
+                         a lambda, as `({name}) -> {f}({before}{name}{after})`{where_f}"
+                    ),
+                ]
+            }
             (Misfit::NothingLeftOut, _) => vec!["repair: remove the `...`".into()],
             (Misfit::Missing(name, positional), declared) => {
                 let mut menu = vec![format!("repair: pass a value for `{name}` in this call")];

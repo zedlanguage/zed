@@ -1184,9 +1184,15 @@ impl<'a> Elab<'a> {
         let span = ff.call.span;
         if ff.call.curry {
             if let Some(&j) = ff.missing.iter().find(|&&j| ff.callee.param(j).1) {
-                let name = ff.callee.param(j).0;
+                // Elaboration reports the message alone, which names the parameter only; the
+                // checker's menu writes the arguments before it.
+                let misfit = Misfit::CurriedPositional {
+                    name: ff.callee.param(j).0,
+                    before: (j > 0).then_some("…"),
+                    after: j + 1 < n,
+                };
                 let who = ff.callee.who();
-                let t = self.misfit(span, Misfit::CurriedPositional(name), &who);
+                let t = self.misfit(span, misfit, &who);
                 m.give(t);
                 return;
             }

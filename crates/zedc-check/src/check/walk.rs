@@ -4615,7 +4615,15 @@ impl<'t, 'a> Ck<'t, 'a> {
         // A call whose arguments do not fit the word's parameters is reported here, as a
         // call of a function value is, by the word's name and with the repairs
         // ([`Self::unfit`]); elaboration reports the same message, and the two merge.
-        if let Err(misfits) = fit(&sig, false, receiver.is_some(), &args, false, span) {
+        if let Err(misfits) = fit(
+            &sig,
+            false,
+            receiver.is_some(),
+            &args,
+            false,
+            span,
+            self.t.text,
+        ) {
             return self.unfit(m, &sig, false, &args, span, w, misfits);
         }
         let mut slots = vec![None; sig.params.len()];
@@ -4891,7 +4899,15 @@ impl<'t, 'a> Ck<'t, 'a> {
     ) {
         let sig = self.open(&sig);
         let has_receiver = receiver.is_some();
-        let (slots, missing) = match fit(&sig, declared, has_receiver, &args, curry, span) {
+        let (slots, missing) = match fit(
+            &sig,
+            declared,
+            has_receiver,
+            &args,
+            curry,
+            span,
+            self.t.text,
+        ) {
             Ok(fitted) => fitted,
             Err(misfits) => return self.unfit(m, &sig, declared, &args, span, &what, misfits),
         };
@@ -16513,7 +16529,8 @@ fn unparen(s: &str) -> &str {
 /// that keep the arguments from fitting, as elaboration finds them. `declared` is whether the
 /// call is of the declared function itself, which fills every default, and not of a value
 /// of its type, which fills only closed ones, and whose all-positional parameters take named
-/// arguments by position too; `curry` is whether the call ends in `...`.
+/// arguments by position too; `curry` is whether the call ends in `...`; `text` is the
+/// program's text, if the checker has it, from which a misfit quotes the arguments.
 ///
 /// Complexity: O(parameters + arguments), one hash map of the parameter names.
 #[allow(clippy::type_complexity)]
@@ -16524,6 +16541,7 @@ fn fit<'s>(
     args: &'s Args<'_>,
     curry: bool,
     span: Span,
+    text: Option<&'s str>,
 ) -> Result<(Vec<Option<At>>, Vec<usize>), Vec<(Span, Misfit<'s>)>> {
     let n = sig.params.len();
     let mut slots: Vec<Option<At>> = vec![None; n];
@@ -16577,7 +16595,30 @@ fn fit<'s>(
     // through a value, the first left out with no default it can fill.
     let misfits: Vec<(Span, Misfit)> = match curry {
         true => match missing.iter().find(|&&j| sig.params[j].positional) {
-            Some(&j) => vec![(span, Misfit::CurriedPositional(&sig.params[j].name))],
+            Some(&j) => {
+                // The arguments before `j` are written as they stand where they are the
+                // positional ones alone, each in the program's text, and as `…` otherwise.
+                let written = |e: &ArgSrc| match e {
+                    ArgSrc::Expr(e) => Some(e.span),
+                    ArgSrc::Got(_) => None,
+                };
+                let code = || {
+                    let (first, last) = (args.positional.first()?, args.positional.last()?);
+                    let (a, b) = (written(first)?, written(last)?);
+                    text?.get(a.start..b.end)
+                };
+                let before = match j {
+                    0 => None,
+                    _ if !has_receiver && j == args.positional.len() => code().or(Some("…")),
+                    _ => Some("…"),
+                };
+                let misfit = Misfit::CurriedPositional {
+                    name: &sig.params[j].name,
+                    before,
+                    after: j + 1 < n,
+                };
+                vec![(span, misfit)]
+            }
             None if missing.is_empty() => vec![(span, Misfit::NothingLeftOut)],
             None => Vec::new(),
         },
