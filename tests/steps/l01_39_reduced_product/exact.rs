@@ -96,21 +96,6 @@ fn an_exact_scope_with_no_point_meeting_its_constraints_is_bottom() {
 }
 
 #[test]
-fn a_point_inside_a_huge_range_is_excluded_without_listing_the_range() {
-    // Over `0..=10^12` the exact set of `n * n mod 10 == 9` has 4·10^11 members; excluding
-    // 4 assumes `n == 4`, a box of one point, and a witness for the whole range is found by
-    // halving toward the first point.
-    let t = product_mod_10("n", "n", 9);
-    let s = written(within(&[("n", 0, 1_000_000_000_000)], true), &[t]);
-    assert!(!s.bottom);
-    let t0 = zed_tests::scaling::cpu_time();
-    assert!(s.assume(&is("n", 4), true, &none()).bottom);
-    assert!(!s.assume(&is("n", 999_999_999_997), true, &none()).bottom);
-    let took = zed_tests::scaling::cpu_time() - t0;
-    assert!(took.as_secs() < 5, "took {took:?}");
-}
-
-#[test]
 fn constraints_that_share_no_name_are_searched_apart() {
     // Each of `a`, `b` and `c` has 10^6 values and a set of 4·10^5; searched together the
     // box would have 10^18 points, apart each search is a halving.
@@ -224,3 +209,5 @@ fn a_name_fixed_in_the_middle_of_a_chain_still_decides_both_sides() {
     assert_eq!(allowed(&three, "c", 0, 30), [7, 17, 27]);
     assert!(s.assume(&is("b", 5), true, &none()).bottom);
 }
+
+mod bench;

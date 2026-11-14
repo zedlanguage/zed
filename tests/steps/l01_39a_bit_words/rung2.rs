@@ -9,7 +9,6 @@
 use std::sync::Arc;
 
 use zed_kernel::{Prim, Term, Value};
-use zed_tests::scaling;
 use zed_tests::step_helpers::l01_25_preimage_catalog::function;
 use zedc::store::int::Int;
 use zedc::store::preimage::relations;
@@ -214,7 +213,7 @@ fn a_program_with_a_bit_and_in_a_test_is_checked_and_runs() {
 }
 
 /// `bitAnd(x{i}, x{i+1}) <= x{i+1}` for `i < k`, joined by `&&`, over `k + 1` inputs.
-fn chain(k: usize) -> Term {
+pub(super) fn chain(k: usize) -> Term {
     let var = |i: usize| Term::Var(format!("x{i}").into());
     let prim = |p: Prim, args: Vec<Term>| Term::Prim(p, args);
     (0..k)
@@ -227,7 +226,7 @@ fn chain(k: usize) -> Term {
 }
 
 /// `x{i} >= 0` for `i <= k`, joined by `&&`.
-fn signs(k: usize) -> Term {
+pub(super) fn signs(k: usize) -> Term {
     let var = |i: usize| Term::Var(format!("x{i}").into());
     let prim = |p: Prim, args: Vec<Term>| Term::Prim(p, args);
     (0..=k)
@@ -237,25 +236,14 @@ fn signs(k: usize) -> Term {
 }
 
 #[test]
-fn a_chain_of_bit_ands_is_proved_in_linear_time() {
-    // Complexity: each `bitAnd` is one auxiliary variable and one disjunction of four cases
-    // (O(1) to translate); the premise fixes every sign, so one case of each is left.
-    let n = 64;
-    let built = scaling::inputs(n, |k| (signs(k), chain(k)));
-    let inputs = scaling::inputs(n, |k| {
-        (0..=k)
-            .map(|i| Arc::<str>::from(format!("x{i}")))
-            .collect::<Vec<_>>()
-    });
-    let measure = move || {
-        scaling::check("a chain of bit ands proved by rung 2", n, |k| {
-            let (p, g) = &built[&k];
-            let rs = relations(&[p, g], &inputs[&k], true).expect("in the domain");
-            assert_eq!(rs[1].bit_ands.len(), k);
-            let e = entails(&rs[0], &rs[1]);
-            assert!(matches!(e, Entailment::Proved(_)), "{e}");
-        });
-    };
-    let thread = std::thread::Builder::new().stack_size(8 << 20);
-    thread.spawn(measure).unwrap().join().unwrap();
+fn a_short_chain_of_bit_ands_is_proved() {
+    // The small instance of `bench::rung2`: one bit and a link, each translated once.
+    for k in 1..=3 {
+        let names: Vec<Arc<str>> = (0..=k).map(|i| Arc::from(format!("x{i}"))).collect();
+        let (p, g) = (signs(k), chain(k));
+        let rs = relations(&[&p, &g], &names, true).expect("in the domain");
+        assert_eq!(rs[1].bit_ands.len(), k);
+        let e = entails(&rs[0], &rs[1]);
+        assert!(matches!(e, Entailment::Proved(_)), "k = {k}: {e}");
+    }
 }

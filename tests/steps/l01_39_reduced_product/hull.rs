@@ -233,35 +233,6 @@ fn a_join_of_hulls_that_differ_in_a_few_names_is_exact() {
 }
 
 #[test]
-fn a_join_costs_near_the_rows_that_differ() {
-    // n joins of hulls of n rows differing in one, whose pivot sorts before every other: near
-    // n log n in all.
-    let hulls: BTreeMap<usize, Hull> = [256, scaling::FACTOR * 256]
-        .into_iter()
-        .map(|m| (m, rows_of(m)))
-        .collect();
-    scaling::check("the join of hulls", 256, |m| {
-        loop_joins(&hulls[&m], m, |i| format!("x{i}"))
-    });
-}
-
-#[test]
-fn a_join_costs_near_the_rows_that_differ_wherever_they_sort() {
-    // As above, with the new row's pivot among the rows' pivots `y…` (`y12a` sorts between
-    // `y12` and `y120`) and after all of them.
-    let hulls: BTreeMap<usize, Hull> = [256, scaling::FACTOR * 256]
-        .into_iter()
-        .map(|m| (m, rows_of(m)))
-        .collect();
-    scaling::check("the join of hulls, a row among the others", 256, |m| {
-        loop_joins(&hulls[&m], m, |i| format!("y{i}a"))
-    });
-    scaling::check("the join of hulls, a row after the others", 256, |m| {
-        loop_joins(&hulls[&m], m, |i| format!("zz{i}"))
-    });
-}
-
-#[test]
 fn a_join_with_a_hull_narrowed_from_it_is_the_first_hull() {
     // A loop head joins the hull at entry with the hull after the body; here the body narrows
     // the hull by a few equalities, which may rewrite many of its rows, so the second hull
@@ -344,15 +315,4 @@ fn names_equal_to_one_name_and_then_fixed_are_all_fixed() {
     );
 }
 
-#[test]
-fn a_hull_is_built_row_by_row_in_time_near_its_rows() {
-    // Each row is added to a hull that no one else holds, so it is changed in place.
-    let rows: BTreeMap<usize, Vec<Lin>> = [512, scaling::FACTOR * 512]
-        .into_iter()
-        .map(|m| (m, star(m)))
-        .collect();
-    scaling::check("building a hull row by row", 512, |m| {
-        let h = Hull::of(&rows[&m]);
-        assert_eq!(h.rows().count(), m + 1);
-    });
-}
+mod bench;

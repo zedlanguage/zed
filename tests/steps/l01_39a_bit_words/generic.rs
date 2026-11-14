@@ -413,8 +413,8 @@ fn a_generic_sum_of_numbers_runs() {
     assert_eq!(prints("generic_sum", &src), "6 3.5");
 }
 
-/// The unit `text` lexed, parsed and resolved, for a test that times the check alone.
-fn resolved(text: &str) -> (Vec<zedc::ast::Stmt>, zedc::resolve::Resolution) {
+/// The unit `text` lexed, parsed and resolved, for a test that checks it alone.
+pub(super) fn resolved(text: &str) -> (Vec<zedc::ast::Stmt>, zedc::resolve::Resolution) {
     use zedc::parse::{TOP, parse};
     let tokens = zedc::lex::lex_fence(text).unwrap();
     let tree = parse(text, &tokens, "Unit", TOP).unwrap();
@@ -423,35 +423,34 @@ fn resolved(text: &str) -> (Vec<zedc::ast::Stmt>, zedc::resolve::Resolution) {
     (stmts, res)
 }
 
-/// Checks `make(n)` at `n` and `8n` with `check_order`, each input resolved before timing.
-fn check_scales(what: &str, n: usize, make: impl Fn(usize) -> String) {
-    let inputs = zed_tests::scaling::inputs(n, |m| resolved(&make(m)));
-    zed_tests::scaling::check_order(what, n, 1, |m| {
-        let (stmts, res) = &inputs[&m];
-        let info = zedc::check::walk::check(stmts, res);
-        assert!(info.errors.is_empty(), "{what}: {:?}", info.errors);
-    });
-}
-
 /// A function whose parameter takes three needs, from `^`, `popCount` and `bitNot`.
 const USES: &str = "f(positional n) = 2^n + popCount(n) + bitNot(n, width: 8);\n";
 
-#[test]
-fn call_sites_scale_linearly() {
-    check_scales("calls of a function with needs", 400, |n| {
-        let calls: String = (0..n)
-            .map(|i| format!("x{i} = f({});\n", i % 200))
-            .collect();
-        format!("{USES}w(positional k) = f(k);\n{calls}")
-    });
+/// `n` calls of a function with three needs, each on an int in its domain.
+pub(super) fn call_sites(n: usize) -> String {
+    let calls: String = (0..n)
+        .map(|i| format!("x{i} = f({});\n", i % 200))
+        .collect();
+    format!("{USES}w(positional k) = f(k);\n{calls}")
+}
+
+/// A chain of `n` wrappers, each passing the three needs of the function on, and one call.
+pub(super) fn wrapper_chain(n: usize) -> String {
+    let chain: String = (1..=n)
+        .map(|i| format!("w{i}(positional k) = w{}(k);\n", i - 1))
+        .collect();
+    format!("{USES}w0(positional k) = f(k);\n{chain}x = w{n}(7);\n")
 }
 
 #[test]
-fn a_chain_of_wrappers_scales_linearly() {
-    check_scales("a chain of wrappers passing a need on", 200, |n| {
-        let chain: String = (1..=n)
-            .map(|i| format!("w{i}(positional k) = w{}(k);\n", i - 1))
-            .collect();
-        format!("{USES}w0(positional k) = f(k);\n{chain}x = w{n}(7);\n")
-    });
+fn calls_and_a_chain_of_wrappers_of_a_function_with_three_needs_are_checked_clean() {
+    // The small instances of `bench::generic`: every call is in the domain of all three needs.
+    for n in 1..=3 {
+        for src in [call_sites(n), wrapper_chain(n)] {
+            let (stmts, res) = resolved(&src);
+            let info = zedc::check::walk::check(&stmts, &res);
+            assert!(info.errors.is_empty(), "{src}: {:?}", info.errors);
+            assert!(accepted(&src), "rejected: {src}");
+        }
+    }
 }

@@ -3,6 +3,7 @@
 //! primitives on the unbounded `int` with forward transfer on intervals. A negative operand, or
 //! an `x` wider than its width, is a type error at the call with its derivation.
 
+mod bench;
 mod corners;
 mod deep;
 mod errors;
@@ -14,7 +15,7 @@ mod nan;
 mod narrowing;
 mod reference;
 mod rung2;
-mod scaling;
+mod shapes;
 mod transfer;
 mod values;
 

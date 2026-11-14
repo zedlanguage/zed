@@ -6,10 +6,10 @@
 //! funnel shift's `k` that is not below `width`, and a width of `byteSwap` that is not a
 //! multiple of 8.
 
+mod bench;
 mod errors;
 mod native;
 mod reference;
-mod scaling;
 mod transfer;
 mod values;
 

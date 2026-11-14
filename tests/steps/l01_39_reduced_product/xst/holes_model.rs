@@ -702,32 +702,6 @@ fn scc_composition_refuses_a_component_that_is_not_one_cycle() {
     assert_eq!(greatest(&cycle), Ok(Some(vec![3, 3, 3])));
 }
 
-/// Codex round 4 (`measure`): the model's work on laps, the staircase and the mixed family
-/// grows near linearly from `n = 2048` to `8n`, and its answer satisfies every edge with
-/// each value in its domain.
-#[test]
-fn scc_composition_takes_near_linear_time_on_the_families() {
-    for name in ["laps", "staircase", "mixed"] {
-        let inputs = scaling::inputs(2048, |n| family(name, n));
-        for sys in inputs.values() {
-            let x = greatest(sys).expect("one cycle").expect("a solution");
-            assert!(
-                sys.edges.iter().all(|&(u, v, w)| x[v] <= x[u] + w),
-                "{name}"
-            );
-            assert!(
-                x.iter()
-                    .zip(&sys.domains)
-                    .all(|(&v, d)| predecessor(d, v) == Some(v)),
-                "{name}"
-            );
-        }
-        scaling::check_order(name, 2048, 1, |n| {
-            drop(greatest(&inputs[&n]));
-        });
-    }
-}
-
 /// All-pairs shortest distances by Floyd–Warshall, `None` on a negative cycle.
 fn distances(n: usize, edges: &[(usize, usize, i64)]) -> Option<Vec<Vec<Option<i64>>>> {
     let mut d = vec![vec![None; n]; n];
@@ -950,3 +924,5 @@ fn wrong_methods_fail_on_named_cases() {
         );
     }
 }
+
+mod bench;

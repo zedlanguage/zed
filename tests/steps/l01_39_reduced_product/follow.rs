@@ -95,30 +95,6 @@ fn chain(d: usize, plain: bool) -> String {
     format!("ok(positional n{ty}) = {inner};")
 }
 
-#[test]
-fn a_chain_of_following_comparisons_costs_what_the_plain_chain_costs() {
-    let d = 48;
-    let (ps, follow) = function(&chain(d, false));
-    assert!(follow.to_string().contains("is f64 -> 1.0"));
-    let (_, plain) = function(&chain(d, true));
-    assert!(!plain.to_string().contains("is f64"));
-    let scope = ints(&ps);
-    let (a, b) = (arms(&follow, &scope), arms(&plain, &scope));
-    assert_eq!(a.len(), b.len());
-    for (x, y) in a.iter().zip(&b) {
-        assert_eq!(x.scope.get("n").ints(), y.scope.get("n").ints());
-    }
-    // Finding each compared value again for each test around it cost 2^d; finding it once
-    // per test, d times the plain chain. The terms differ by the match of each level only.
-    scaling::compare_costs(
-        "the arms of a chain of 48 following comparisons against the plain chain",
-        "the value compared is found once, as in the plain chain",
-        3.0,
-        || _ = arms(&plain, &scope),
-        || _ = arms(&follow, &scope),
-    );
-}
-
 /// The terms of `ok` for sizes `n` and `8 n`, built before timing.
 fn sizes(n: usize, src: fn(usize) -> String) -> (Scope, [(usize, Arc<Term>); 2]) {
     let (ps, small) = function(&src(n));
@@ -160,26 +136,6 @@ fn differences(k: usize) -> String {
         "ok(positional a, positional b) = if {} {{ 10 }} else {{ 20 }};",
         tests.join(" && ")
     )
-}
-
-#[test]
-fn following_tests_scale() {
-    for (what, n, src) in [
-        (
-            "a conjunction of following tests of a name",
-            32,
-            excluded as fn(usize) -> String,
-        ),
-        ("a chain of bindings of following tests", 64, bound),
-        (
-            "a conjunction of following tests of a difference",
-            16,
-            differences,
-        ),
-    ] {
-        let (scope, terms) = sizes(n, src);
-        scaling::check(what, n, |k| _ = arms(at(&terms, k), &scope));
-    }
 }
 
 /// `ok(positional n: int, …) = if (if (… n …) == 1 { n } else { e }) == 1 { n } else { e }`,
@@ -373,40 +329,6 @@ fn ramps(d: usize) -> String {
     )
 }
 
-/// The arms of `d` nested tests of sums cost `O(d)`: each `if` is summarized once, as a
-/// function of `n` affine on each of a few intervals, where the sum `n + n` had no summary
-/// and each test fell to the linear stage, `O(d^3)` (16 to 128 levels: 12 ms to 1.53 s). A
-/// sum with an `if` adds its line by one tag, and a sum of `d` ramps adds each ramp by a
-/// split of the larger summary at two cuts, `O(d log d)` (16 to 128: 2.2 ms to 10.7 ms and
-/// 1.3 ms to 7.0 ms, where the projection and the linear stage took 24 ms to 195 ms and 11 ms
-/// to 126 ms and read every `n`).
-#[test]
-fn nested_sums_of_one_input_scale() {
-    for (what, n, src) in [
-        (
-            "the arms of nested tests of n + n",
-            16,
-            twice as fn(usize) -> String,
-        ),
-        (
-            "the arms of nested tests of n + n, following",
-            16,
-            following,
-        ),
-        ("the arms of nested tests of n - 3 * n + 4", 16, line),
-        ("the arms of nested tests of n + m", 16, two),
-        (
-            "the arms of nested tests of n + (if n > 0 { n } else { 0 })",
-            16,
-            with_an_if,
-        ),
-        ("the arms of a test of a sum of d ramps", 16, ramps),
-    ] {
-        let (scope, terms) = sizes(n, src);
-        scaling::check(what, n, |k| _ = arms(at(&terms, k), &scope));
-    }
-}
-
 /// `ok` with the block `y0 = 0; x0 = 0; y_k = y_(k-1) + ramp_k; x_k = x_(k-1) + y_k` for
 /// `k = 1..=d`, `ramp_k = if n > k - 1 { n } else { 0 }`, then `if x_d == 1 { 1 } else { 2 }`.
 /// `x_d` is 0 for `n <= 0` and `d (d + 1) / 2 * n` at `n >= d`, so at `d >= 2` no `n` meets
@@ -550,21 +472,6 @@ fn random_blocks_of_lets_are_read_exactly() {
     }
 }
 
-/// A block of `d` bindings `y_k = y_(k-1) + ramp_k; x_k = x_(k-1) + y_k` and a test of `x_d`
-/// ([`let_chain`]) costs `O(d log d)`: each binding is summarized once, as the sum of the
-/// summaries it adds kept unsummed, and the test forms the sum of `x_d` once. Before, each
-/// test in a ramp reduced every name bound since the last reduction, `Θ(d²)` (32 to 256: 27.6
-/// times the instructions), and the final test read every `n` (repair of PA-let-block). A
-/// block of 512 overflowed the stack of a run, since the walk of the arms recursed on the bound
-/// terms; it keeps them on the heap now (item PA-let-stack, `deep_let`).
-#[test]
-fn a_block_of_sums_of_ramps_scales() {
-    let (scope, terms) = sizes(32, let_chain);
-    scaling::check("the arms of a block of d sums of ramps", 32, |k| {
-        _ = arms(at(&terms, k), &scope)
-    });
-}
-
 /// The summary of `x_d` in the chain `x_0 = n; x_k = x_(k-1) + 1`, built one binding at a
 /// time ([`let_summary`]), and the inputs where `x_d == d + 5` read through it
 /// ([`let_preimage`]).
@@ -607,15 +514,6 @@ fn deep_chain(d: usize) -> Domains {
 fn a_deep_chain_of_summaries_is_formed_and_dropped() {
     let got = deep_chain(200_000);
     assert_eq!(got["n"].to_string(), "[5..=5]");
-}
-
-/// Forming the summary of `x_d` in a chain of `d` bindings costs `O(d)`: one sum per binding,
-/// each a constant added to a line.
-#[test]
-fn a_deep_chain_of_summaries_scales() {
-    scaling::check("forming a chain of d summaries", 10_000, |d| {
-        _ = deep_chain(d)
-    });
 }
 
 /// A random domain: one to three pieces with ends in `-40..=40`, an end now and then
@@ -847,3 +745,5 @@ fn random_tests_through_term_bounds_narrow_as_reading_every_input_does() {
          {shadowed} read over another domain"
     );
 }
+
+mod bench;

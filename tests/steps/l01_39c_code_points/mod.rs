@@ -3,10 +3,10 @@
 //! scalar and for an int that is not a scalar value; `fromUtf8` gives `#badUtf8` for bytes that
 //! are not well-formed UTF-8. The interpreter and native code give the same values.
 
+mod bench;
 mod bytes;
 mod checks;
 mod native;
-mod scaling;
 mod values;
 
 use zed_kernel::value::Family;

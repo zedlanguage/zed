@@ -4,12 +4,9 @@
 //! at sizes where writing it out is cheap, and the bit words' rules on widths near `i64::MAX`,
 //! whose ends `2 ^ w - 1` have about `2^63` digits, finish at once.
 
-use std::collections::HashMap;
-
 use num_bigint::BigInt;
 use num_integer::Integer;
 use zed_kernel::Prim;
-use zed_tests::scaling;
 use zedc::store::interval::{
     End::{self, Fin, PosInf},
     IntervalSet, Num, bit_word,
@@ -184,7 +181,7 @@ fn the_rules_on_widths_near_i64_max_read_the_bits_of_kept_ends() {
 /// Kept ends at the exponent `k`, each with the power of 2 that a shift right divides it by
 /// when its terms are multiples of that power (a shift of `3 ^ k` writes it out; see
 /// `Num::div_floor`).
-fn ends(k: i64) -> Vec<(Num, Option<Num>)> {
+pub(super) fn ends(k: i64) -> Vec<(Num, Option<Num>)> {
     let one = Num::ONE;
     let p = pow2(k);
     let e = u32::try_from(k).expect("an exponent of a scaling test");
@@ -202,31 +199,29 @@ fn ends(k: i64) -> Vec<(Num, Option<Num>)> {
 }
 
 #[test]
-fn bits_and_trailing_zeros_of_kept_ends_do_not_grow_with_the_exponent() {
-    // The bits, trailing zeros and shift right of kept ends of exponents k and 8k, and the
-    // rules that read the bits of 2 ^ k - 1. Written out, each grows with the digits, 8
-    // times or more.
-    let n = 1 << 20;
-    let built: HashMap<usize, Vec<(Num, Option<Num>)>> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| (m, ends(m as i64)))
-        .collect();
-    scaling::check_order(
-        "bits, trailing zeros and shr of kept ends of exponent k",
-        n,
-        0,
-        |m| {
-            let width = IntervalSet::single(m as i64);
-            let x = IntervalSet::range(End::of(1), PosInf);
-            for (v, p) in &built[&m] {
-                std::hint::black_box(v.bits());
-                std::hint::black_box(v.trailing_zeros());
-                if let Some(p) = p {
-                    std::hint::black_box(v.div_floor(p));
-                }
+fn the_kept_ends_of_the_benchmark_are_those_written_out() {
+    // The small instance of `bench::kept_ends`: each end's bits, trailing zeros and shift right
+    // against the value written out, at exponents where writing it out is cheap.
+    for k in [130i64, 301] {
+        for (v, p) in ends(k) {
+            let w = written(&v);
+            assert_eq!(
+                written(&v.bits()),
+                BigInt::from(w.bits()),
+                "the bits of {v}"
+            );
+            assert_eq!(
+                written(&v.trailing_zeros()),
+                BigInt::from(w.trailing_zeros().expect("not 0")),
+                "the trailing zeros of {v}"
+            );
+            if let Some(p) = p {
+                assert_eq!(
+                    written(&v.div_floor(&p)),
+                    w.div_floor(&written(&p)),
+                    "floor(({v}) / {p})"
+                );
             }
-            std::hint::black_box(bit_word(Prim::LeadingZeros, &[x.clone(), width.clone()]));
-            std::hint::black_box(bit_word(Prim::TrailingZeros, &[x, width]));
-        },
-    );
+        }
+    }
 }

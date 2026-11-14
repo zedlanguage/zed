@@ -21,7 +21,7 @@ fn u64s(rng: &mut Rng, n: usize) -> Vec<Value> {
 
 #[test]
 fn each_word_is_linear_in_the_number_of_u64_values() {
-    let n = 1 << 12;
+    let n = 1 << 14;
     let ops = scaling::inputs(n, |m| {
         let mut rng = Rng::new(m as u64);
         let (a, b) = (u64s(&mut rng, m), u64s(&mut rng, m));
@@ -51,7 +51,7 @@ fn each_word_is_linear_in_the_number_of_u64_values() {
 
 #[test]
 fn pdep_and_pext_are_linear_in_the_digits_of_the_mask() {
-    let n = 1 << 14;
+    let n = 1 << 22;
     let ops = scaling::inputs(n, |m| {
         let mut rng = Rng::new(m as u64);
         let digits = |rng: &mut Rng| {
@@ -74,7 +74,7 @@ fn the_width_words_are_linear_in_the_width() {
     // `bitReverse` and `byteSwap` build the digits of `x`; the funnel shifts are products and
     // quotients by powers of two: each grows with the digits of the width. `mulHi` is left out:
     // at width n it multiplies two n-digit ints, which costs what `*` does on them.
-    let n = 1 << 14;
+    let n = 1 << 22;
     let ops = scaling::inputs(n, |m| {
         let mut rng = Rng::new(m as u64);
         let wide = |rng: &mut Rng| {

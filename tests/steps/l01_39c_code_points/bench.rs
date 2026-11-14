@@ -32,7 +32,7 @@ fn inputs(n: usize) -> HashMap<usize, (Value, Value)> {
 
 #[test]
 fn utf8_is_linear_in_the_bytes() {
-    let n = 10 * (1 << 11);
+    let n = 10 * (1 << 16);
     let xs = inputs(n);
     scaling::check_order("utf8 of n bytes", n, 1, |m| {
         let (s, _) = &xs[&m];
@@ -44,7 +44,7 @@ fn utf8_is_linear_in_the_bytes() {
 
 #[test]
 fn from_utf8_is_linear_in_the_bytes() {
-    let n = 10 * (1 << 11);
+    let n = 10 * (1 << 19);
     let xs = inputs(n);
     assert_eq!(run(Prim::FromUtf8, &xs[&n].1), xs[&n].0);
     scaling::check_order("fromUtf8 of n bytes", n, 1, |m| {
