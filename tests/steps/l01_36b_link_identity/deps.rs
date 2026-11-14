@@ -480,7 +480,7 @@ fn a_record_naming_no_files_reads_back() {
 /// as they were: the output is not kept, and the build links again, after which it is kept.
 #[test]
 fn a_record_naming_a_file_that_is_gone_links_again() {
-    let d = dir("gone");
+    let d = dir("record_gone");
     let (src, out, copy) = (d.join("sign.zed"), d.join("sign"), d.join("sign-copy"));
     std::fs::write(&src, sign("closed")).unwrap();
     let tools = toolchain();
