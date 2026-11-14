@@ -2,6 +2,8 @@
 > **Zed is still under construction and is not yet ready for use, but it is coming soon.**
 > Releases will be announced at [x.com/zedlang](https://x.com/zedlang). This page describes the language as it will be when finished.
 
+[You can read about the design philosophy behind Zed here.](https://github.com/zedlanguage/zed/wiki/Motivations-and-Design-Philosophy-Behind-Zed)
+
 <p align="center">
   <img src="docs/assets/banner.svg" alt="Zed" width="512">
 </p>
