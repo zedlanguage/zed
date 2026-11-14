@@ -7,6 +7,7 @@
 //! The carriers here are `int`, `f32`, `f64` and `rat` (FLOAT-f32): `bf16` and `f16` join the
 //! bounds of these signatures with step L1.18a.
 
+mod bench;
 mod call_arguments;
 mod call_union_at_f64;
 mod cast_int_f64;

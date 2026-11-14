@@ -6,7 +6,6 @@
 //! `g(2.0f64)`, since `1 + 1` took `int` where the function ended, while
 //! `g(x: f64) = x == 1 + 1` gave `true`.
 
-use zed_tests::scaling;
 use zed_tests::step_helpers::l01_19_whole_file_ports::run;
 use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
 
@@ -150,34 +149,4 @@ fn an_operation_with_a_need_of_its_own_keeps_its_carrier() {
     let def = "g(positional x) = x == 2.0f64^-1;";
     let out = prints("l01_26a_param_follows_power_repair", def, &["g(0.5f64)"]);
     assert_eq!(out, "true\n");
-}
-
-/// A body of `n` comparisons of the parameter `x` with operations on literals alone:
-/// `g(positional x) = { c0 = x == 0 + 1; …; c0 };`.
-fn comparisons(n: usize) -> String {
-    let lines: String = (0..n)
-        .map(|i| format!("c{i} = x == {i} + {}; ", i % 7))
-        .collect();
-    format!("g(positional x) = {{ {lines}c0 }};\n")
-}
-
-#[test]
-fn comparisons_with_a_parameter_are_checked_in_linear_time() {
-    std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(|| {
-            assert_eq!(type_errors(&comparisons(4)), Vec::<String>::new());
-            let n = 1000;
-            let srcs = [comparisons(n), comparisons(scaling::FACTOR * n)];
-            scaling::check(
-                "checking a body of n comparisons of a parameter with operations on literals",
-                n,
-                |m| {
-                    type_errors(&srcs[usize::from(m != n)]);
-                },
-            );
-        })
-        .unwrap()
-        .join()
-        .unwrap();
 }
