@@ -4,6 +4,7 @@
 //! rules terminate on random graphs, each step lowering the tuple of ranks.
 
 mod bench;
+mod binders;
 mod facet_order;
 mod fuzz;
 mod scaling;
