@@ -5285,7 +5285,7 @@ impl<'a> Ck<'_, 'a> {
     /// The ints `e` may be here: what its text shows ([`Ck::known`]) met with what the tests
     /// the walk is in show of it; and whether a test narrowed it.
     ///
-    /// What the tests show is the scope's reading of `e` ([`Ck::ints_in_scope`]) met with its
+    /// What the tests show is the scope's reading of `e` ([`Ck::read_in_scope`]) met with its
     /// reading from its parts: an int power at the corners of its base and exponent read here
     /// ([`revision::forward_pow`]), an integer operator or `-` by the revision table over its
     /// operands read from their parts, a name as the scope reads it met with its value read
@@ -5293,6 +5293,9 @@ impl<'a> Ck<'_, 'a> {
     /// value read here is sound, since its names are the same binders and none is ever
     /// assigned again. So a test's narrowing of an exponent reaches the power: under `k > 0`, `2^k - 2`
     /// is at least 0 (POW-scope-exponent), where the scope reads `^` as opaque.
+    /// The questions a read of a part refuses are placed at `e`, which asks them
+    /// ([`Ck::read_in_scope_at`]): one warning for each, where `e` is read; those of a read
+    /// inside a name's value stand where the value is bound.
     ///
     /// Complexity tradeoff: each node is read once in the scope of each node it is read in,
     /// O(1) table operations per node and one scope read per name and per power operand,
@@ -5341,32 +5344,42 @@ impl<'a> Ck<'_, 'a> {
             Read::Whole(x) => (true, x.span),
             Read::Parts(x) => (false, x.span),
         };
-        let mut stack = vec![(Read::Whole(e), false)];
-        while let Some((r, ready)) = stack.pop() {
+        // Each read with where its refused questions are placed: at `e`, which asks them, or
+        // nowhere for a read inside a name's value, whose questions are placed where the
+        // value is bound (`Item::Bound`).
+        let mut stack = vec![(Read::Whole(e), Some(e.span), false)];
+        while let Some((r, at, ready)) = stack.pop() {
             if !ready {
                 if done(self, r) || !open.insert(key(r)) {
                     continue;
                 }
-                stack.push((r, true));
+                stack.push((r, at, true));
                 let needs = match r {
-                    Read::Whole(x) => vec![Read::Parts(x)],
+                    Read::Whole(x) => vec![(Read::Parts(x), at)],
                     Read::Parts(x) => match &x.kind {
                         _ if self.known(x).value.is_some() => vec![],
                         ExprKind::Binary(BinaryOp::Pow, a, b) => {
-                            vec![Read::Whole(a), Read::Whole(b)]
+                            vec![(Read::Whole(a), at), (Read::Whole(b), at)]
                         }
                         ExprKind::Binary(o, a, b) if int_op(*o).is_some() => {
-                            vec![Read::Parts(a), Read::Parts(b)]
+                            vec![(Read::Parts(a), at), (Read::Parts(b), at)]
                         }
-                        ExprKind::Unary(UnaryOp::Neg, a) => vec![Read::Parts(a)],
-                        ExprKind::Name(_) => {
-                            self.bound_value(x).map(Read::Parts).into_iter().collect()
-                        }
+                        ExprKind::Unary(UnaryOp::Neg, a) => vec![(Read::Parts(a), at)],
+                        ExprKind::Name(_) => self
+                            .bound_value(x)
+                            .map(|v| (Read::Parts(v), None))
+                            .into_iter()
+                            .collect(),
                         _ => vec![],
                     },
                 };
-                let fresh = |n: &Read<'_>| !done(self, *n) && !open.contains(&key(*n));
-                stack.extend(needs.into_iter().filter(fresh).map(|n| (n, false)));
+                let fresh = |n: &(Read<'_>, _)| !done(self, n.0) && !open.contains(&key(n.0));
+                stack.extend(
+                    needs
+                        .into_iter()
+                        .filter(fresh)
+                        .map(|(n, at)| (n, at, false)),
+                );
                 continue;
             }
             open.remove(&key(r));
@@ -5383,7 +5396,10 @@ impl<'a> Ck<'_, 'a> {
                     let k = self.known(x);
                     let ints = match k.value {
                         Some(_) => k.ints,
-                        None => k.ints.meet(&self.ints_in_scope(x)).meet(&part(self, x)),
+                        None => k
+                            .ints
+                            .meet(self.read_in_scope_at(x, at).0.ints())
+                            .meet(&part(self, x)),
                     };
                     self.arms.here_ints.insert((x.span, here), ints);
                 }
@@ -5401,7 +5417,7 @@ impl<'a> Ck<'_, 'a> {
                             forward(&Op::Neg, &part(self, a), &IntervalSet::top())
                         }
                         ExprKind::Name(_) => {
-                            let scope = self.ints_in_scope(x);
+                            let scope = self.read_in_scope_at(x, at).0.ints().clone();
                             match self.bound_value(x) {
                                 Some(v) => scope.meet(&part(self, v)),
                                 None => scope,
@@ -5653,11 +5669,6 @@ impl<'a> Ck<'_, 'a> {
         true
     }
 
-    /// The ints `e` may be in the scope of the node the walk is in.
-    fn ints_in_scope(&mut self, e: &'a Expr) -> IntervalSet {
-        self.read_in_scope(e).0.ints().clone()
-    }
-
     /// Whether `e` may be `v` here, as far as the tests the walk is in show: false only where a
     /// test keeps `v` from it, as `r != 0r` keeps `0r` from `r` in its arm. Outside every arm,
     /// or where the text shows the value of `e`, the tests say nothing and the answer is true.
@@ -5719,6 +5730,14 @@ impl<'a> Ck<'_, 'a> {
     /// The values `e` may have in the scope of the node the walk is in, and the scope as the
     /// read leaves it, with the questions the read refused.
     fn read_in_scope(&mut self, e: &'a Expr) -> (Product, Scope) {
+        self.read_in_scope_at(e, Some(e.span))
+    }
+
+    /// [`Ck::read_in_scope`] with the questions the read refuses placed at `at`, or nowhere: the
+    /// read of a part of an expression read from its parts ([`Ck::ints_here`]) asks them for
+    /// the read of the expression, so each is placed where that is read, once, and a read
+    /// inside a name's value asks those the value asked where it is bound.
+    fn read_in_scope_at(&mut self, e: &'a Expr, at: Option<Span>) -> (Product, Scope) {
         let t = self.term(e);
         let here = self.arms.here();
         let mut wanted = vec![Item::Scope(here)];
@@ -5729,7 +5748,9 @@ impl<'a> Ck<'_, 'a> {
         let mut s = self.with_bound(s, &t.binders);
         s.eager_on(&t.term);
         let p = product::forward(&t.term, &mut s);
-        self.place_refusals(e.span, &before, &s.refusals);
+        if let Some(at) = at {
+            self.place_refusals(at, &before, &s.refusals);
+        }
         (p, s)
     }
 
