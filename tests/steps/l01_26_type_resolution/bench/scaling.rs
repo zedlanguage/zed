@@ -142,6 +142,8 @@ fn the_union_of_many_atoms_with_payloads_scales() {
     });
 }
 
+/// Besides its ratio: no type error. Small instance, with the signature:
+/// `scaling::curried_lambdas_name_their_parameters_and_take_their_carriers`.
 #[test]
 fn curried_lambdas_using_every_parameter_check_in_linear_time() {
     // Each lambda names its parameter's class when it is closed. The name is kept on the
@@ -159,6 +161,8 @@ fn curried_lambdas_using_every_parameter_check_in_linear_time() {
     });
 }
 
+/// Besides its ratio: no type error. Small instance, with the signature:
+/// `scaling::curried_lambdas_name_their_parameters_and_take_their_carriers`.
 #[test]
 fn curried_lambdas_whose_parameters_take_a_carrier_check_in_linear_time() {
     // Each lambda's parameter takes int when the lambda ends. `generalize` replaced the class
@@ -219,6 +223,8 @@ fn a_chain_of_calls_on_one_value_checks_in_linear_time() {
     });
 }
 
+/// Besides its ratio: no type error, two signatures. Small instance:
+/// `scaling::overloads_passed_to_slots_of_arrows_check`.
 #[test]
 fn passing_an_overload_of_many_arrows_scales() {
     scales(
@@ -237,6 +243,9 @@ fn passing_an_overload_of_many_arrows_scales() {
 /// looked up by its parameter's atom in an index of the function's arrows, which gives the one
 /// arrow that takes it (COMPLEXITY.md F82). Before the index each was compared with every
 /// arrow of the function: 57.1 times the bytes at n = 100 and 800.
+///
+/// Besides its ratio: no type error. Small instance:
+/// `scaling::overloads_passed_to_slots_of_arrows_check`.
 #[test]
 fn passing_an_overload_to_a_slot_of_other_arrows_scales() {
     scales(
@@ -253,6 +262,9 @@ fn passing_an_overload_to_a_slot_of_other_arrows_scales() {
 /// The arrows share the piece of the parameter the slot's arrows need, so the index of arrows
 /// by parameter leaves every arrow; the index by result leaves one (COMPLEXITY.md F82; the
 /// parameter index alone cost n^2/2 comparisons, 57.6x at n and 8n).
+///
+/// Besides its ratio: no type error. Small instance:
+/// `scaling::overloads_passed_to_slots_of_arrows_check`.
 #[test]
 fn passing_an_overload_whose_arrows_share_a_parameter_piece_scales() {
     scales(
@@ -313,6 +325,8 @@ fn many_arrows_whose_results_intersect_within_the_slots_scale() {
     });
 }
 
+/// Besides its ratio: one error, that the work grows with the product of their number. Small
+/// instance: `scaling::results_of_arrows_meet_within_the_slots_or_are_refused`.
 #[test]
 fn many_arrows_whose_results_meet_only_on_different_sets_are_refused_in_linear_time() {
     scales(
@@ -330,6 +344,8 @@ fn many_arrows_whose_results_meet_only_on_different_sets_are_refused_in_linear_t
     );
 }
 
+/// Besides its ratio: no type error. Small instance:
+/// `scaling::results_of_arrows_meet_within_the_slots_or_are_refused`.
 #[test]
 fn an_overload_with_a_function_arrow_covering_a_slot_scales() {
     scales(
@@ -342,6 +358,8 @@ fn an_overload_with_a_function_arrow_covering_a_slot_scales() {
     );
 }
 
+/// Besides its ratio: one error, naming the places the arguments give. Small instance:
+/// `scaling::results_of_arrows_meet_within_the_slots_or_are_refused`.
 #[test]
 fn a_bounded_variable_at_many_parameters_is_refused_in_linear_time() {
     scales(
@@ -359,6 +377,8 @@ fn a_bounded_variable_at_many_parameters_is_refused_in_linear_time() {
     );
 }
 
+/// Besides its ratio: no type error. Small instance:
+/// `scaling::results_of_arrows_meet_within_the_slots_or_are_refused`.
 #[test]
 fn many_results_that_hold_a_variable_or_a_function_meet_in_linear_time() {
     scales(
@@ -435,6 +455,9 @@ fn many_parameters_each_destructured_check_in_linear_time() {
 /// share took 10.0 times. A row now keeps no set, only the bits of its variables and the range
 /// of its classes, `O(1)` a row, and the variables of the last row are listed by one walk that
 /// enters each row once (CK-data-memo, COMPLEXITY.md F93).
+///
+/// Besides its ratio: the last row holds every variable. Small instance:
+/// `scaling::rows_of_overlapping_or_disjoint_variable_sets_list_their_variables`.
 #[test]
 fn rows_made_from_overlapping_variable_sets_scale() {
     let n = 8000;
@@ -452,6 +475,9 @@ fn rows_made_from_overlapping_variable_sets_scale() {
 /// transitive closure of a DAG. A row now keeps flags, the bits of its variables and the
 /// range of its classes, `O(1)` a row, and the variables of the last row are listed by one
 /// walk (author's answer A8 as amended by A20; CK-data-memo, COMPLEXITY.md F93).
+///
+/// Besides its ratio: the last row holds every variable of both sets. Small instance:
+/// `scaling::rows_of_overlapping_or_disjoint_variable_sets_list_their_variables`.
 #[test]
 fn rows_made_from_disjoint_variable_sets_scale() {
     let n = 8000;
@@ -491,16 +517,22 @@ fn replacing_in_rows_shared_on_many_paths(
     });
 }
 
+/// Besides its ratio: every variable is replaced. Small instance, by each of the three:
+/// `scaling::replacing_in_rows_shared_on_many_paths_replaces_each_variable`.
 #[test]
 fn replacing_in_rows_shared_on_many_paths_scales_by_replace() {
     replacing_in_rows_shared_on_many_paths("Ty::replace in n shared rows", |t, b| t.replace(b));
 }
 
+/// Besides its ratio: every variable is replaced. Small instance, by each of the three:
+/// `scaling::replacing_in_rows_shared_on_many_paths_replaces_each_variable`.
 #[test]
 fn replacing_in_rows_shared_on_many_paths_scales_by_subst() {
     replacing_in_rows_shared_on_many_paths("Ty::subst in n shared rows", |t, b| t.subst(b));
 }
 
+/// Besides its ratio: every variable is replaced. Small instance, by each of the three:
+/// `scaling::replacing_in_rows_shared_on_many_paths_replaces_each_variable`.
 #[test]
 fn replacing_in_rows_shared_on_many_paths_scales_by_settle() {
     replacing_in_rows_shared_on_many_paths("Ty::settle in n shared rows", |t, b| {
@@ -551,11 +583,15 @@ fn rows_shared_on_many_paths(what: &str, call: bool) {
     });
 }
 
+/// Besides its ratio: no type error. Small instance, in a function and its call:
+/// `scaling::rows_shared_on_many_paths_check_in_a_function_and_its_call`.
 #[test]
 fn rows_shared_on_many_paths_scale_in_a_function() {
     rows_shared_on_many_paths("a function of n shared rows", false);
 }
 
+/// Besides its ratio: no type error. Small instance, in a function and its call:
+/// `scaling::rows_shared_on_many_paths_check_in_a_function_and_its_call`.
 #[test]
 fn rows_shared_on_many_paths_scale_in_its_call() {
     rows_shared_on_many_paths("its call", true);

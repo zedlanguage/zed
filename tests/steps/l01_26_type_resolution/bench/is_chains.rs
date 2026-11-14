@@ -15,6 +15,8 @@ fn scales(what: &str, text: impl Fn(usize) -> String + Sync) {
     });
 }
 
+/// Besides its ratio: no type error. Small instance, of each shape:
+/// `is_chains::chains_and_trees_of_is_tests_are_accepted`.
 #[test]
 fn a_chain_of_is_tests_nested_to_the_left_scales() {
     scales("a chain of n `x is int` joined by `&&`", |k| {
@@ -22,6 +24,8 @@ fn a_chain_of_is_tests_nested_to_the_left_scales() {
     });
 }
 
+/// Besides its ratio: no type error. Small instance, of each shape:
+/// `is_chains::chains_and_trees_of_is_tests_are_accepted`.
 #[test]
 fn a_chain_of_is_tests_nested_to_the_right_scales() {
     scales("a chain of n `x is int`, each `&&` with the rest", |k| {
@@ -29,6 +33,8 @@ fn a_chain_of_is_tests_nested_to_the_right_scales() {
     });
 }
 
+/// Besides its ratio: no type error. Small instance, of each shape:
+/// `is_chains::chains_and_trees_of_is_tests_are_accepted`.
 #[test]
 fn a_chain_of_is_tests_and_comparisons_scales() {
     scales("a chain of n `is` tests and comparisons", |k| {
@@ -36,6 +42,8 @@ fn a_chain_of_is_tests_and_comparisons_scales() {
     });
 }
 
+/// Besides its ratio: no type error. Small instance, of each shape:
+/// `is_chains::chains_and_trees_of_is_tests_are_accepted`.
 #[test]
 fn a_chain_of_is_tests_and_comparisons_nested_to_the_right_scales() {
     scales(
@@ -44,11 +52,15 @@ fn a_chain_of_is_tests_and_comparisons_nested_to_the_right_scales() {
     );
 }
 
+/// Besides its ratio: no type error. Small instance, of each shape:
+/// `is_chains::chains_and_trees_of_is_tests_are_accepted`.
 #[test]
 fn a_chain_of_is_tests_of_many_names_scales() {
     scales("a chain of `is` tests of n names", names_chain);
 }
 
+/// Besides its ratio: no type error. Small instance, of each shape:
+/// `is_chains::chains_and_trees_of_is_tests_are_accepted`.
 #[test]
 fn a_chain_of_is_tests_joined_by_or_scales() {
     scales("a chain of n `x is int` joined by `||`", |k| {
@@ -56,6 +68,8 @@ fn a_chain_of_is_tests_joined_by_or_scales() {
     });
 }
 
+/// Besides its ratio: no type error. Small instance, of each shape:
+/// `is_chains::chains_and_trees_of_is_tests_are_accepted`.
 #[test]
 fn a_balanced_tree_of_is_tests_scales() {
     // Each join moves the shorter list of facts onto the longer, so a fact moves once per

@@ -22,6 +22,9 @@ use super::super::scaling::{
     powers_of_two, product, quotients, squares_divisor, sum, sum_of_divisions,
 };
 
+/// Besides its ratio: `n` follows for `n` literals, and the elaboration of the checked unit
+/// equals that of the whole program. Small instance:
+/// `scaling::a_body_of_generic_literals_joins_one_class`.
 #[test]
 fn a_body_of_many_generic_literals_scales() {
     scaling::on_a_thread(1 << 29, || {
@@ -37,6 +40,8 @@ fn a_body_of_many_generic_literals_scales() {
     });
 }
 
+/// Besides its ratio: the check ends. Small instance, with no type error:
+/// `scaling::a_body_of_decimal_literals_of_19_digits_checks`.
 #[test]
 fn a_body_of_many_decimal_literals_of_19_digits_checks_in_linear_time() {
     scaling::on_a_thread(1 << 29, || {
@@ -52,6 +57,8 @@ fn a_body_of_many_decimal_literals_of_19_digits_checks_in_linear_time() {
     });
 }
 
+/// Besides its ratio: the check ends. Small instance, with no type error:
+/// `scaling::one_decimal_literal_of_many_digits_checks`.
 #[test]
 fn one_decimal_literal_of_many_digits_checks_in_linear_time() {
     let n = 20_000_000;
@@ -61,6 +68,9 @@ fn one_decimal_literal_of_many_digits_checks_in_linear_time() {
     });
 }
 
+/// Besides its ratio: `n` witnesses and `n` follows for `n` arguments, and the elaboration of the
+/// checked unit equals that of the whole program. Small instance:
+/// `scaling::generic_literal_arguments_take_the_carrier_of_the_callers_parameter`.
 #[test]
 fn a_body_of_many_generic_literal_arguments_scales() {
     scaling::on_a_thread(1 << 29, || {
@@ -89,6 +99,9 @@ fn a_body_of_many_generic_literal_arguments_scales() {
 /// place by `String::replace_range`, which moves the rest of the line each time, passed at 8.2
 /// times the work, since `memmove` costs a small fraction of an instruction per byte against
 /// the checker's work on each sum, so this test does not see that form.
+///
+/// Besides its ratio: one rejection, its fixes writing each sum in full. Small instance, with the
+/// value named: `scaling::a_menu_of_a_long_line_writes_each_fix_on_the_whole_line`.
 #[test]
 fn a_menu_of_a_long_line_scales() {
     scaling::on_a_thread(1 << 29, || {
@@ -112,6 +125,9 @@ fn a_menu_of_a_long_line_scales() {
 /// `f64` (`Ck::lit_op_meets`). Negative control (run once, not committed), at n = 500 and
 /// 4,000: testing each operand by walking it, at each `*`, failed at 44.4 times the bytes, and
 /// `a_menu_of_a_long_line_scales` with it at 42.6 times.
+///
+/// Besides its ratio: no type error. Small instance:
+/// `scaling::an_operation_on_literals_takes_the_carrier_it_meets`.
 #[test]
 fn an_operation_on_many_literals_takes_its_carrier_in_linear_time() {
     scaling::on_a_thread(1 << 29, || {
@@ -131,6 +147,9 @@ fn an_operation_on_many_literals_takes_its_carrier_in_linear_time() {
 /// errors kept at the end (`Ck::reject`): written as each was found, each fix the whole line of
 /// length of order n, the check cost O(n²) (0.40 s, 1.30 s and 19.3 s at n = 500, 1,000 and
 /// 4,000; COMPLEXITY.md F150).
+///
+/// Besides its ratio: one rejection. Small instance, with its fixes:
+/// `scaling::a_menu_writes_one_literal_for_many_divisions`.
 #[test]
 fn a_menu_that_writes_a_literal_in_each_of_many_divisions_scales() {
     scaling::on_a_thread(1 << 29, || {
@@ -147,6 +166,9 @@ fn a_menu_that_writes_a_literal_in_each_of_many_divisions_scales() {
 
 /// The walk that finds the literals a fix writes follows the path to the written literal
 /// alone (`unreached`), so it does not look into an operand again at the `/` around it.
+///
+/// Besides its ratio: one rejection, whose fix writes the first literal as `1r`. Small instance:
+/// `scaling::a_menu_of_nested_divisions_writes_the_first_literal`.
 #[test]
 fn a_menu_of_divisions_nested_deep_scales() {
     scaling::on_a_thread(1 << 29, || {
@@ -174,6 +196,9 @@ fn a_menu_of_divisions_nested_deep_scales() {
 /// Negative control (run once, not committed), at n = 500 and 4,000: `Ck::drop_met` testing
 /// each error against every dropped range, which is quadratic with a small step, passed at
 /// 9.3 times, below the limit of 11.74, so this test does not catch that form.
+///
+/// Besides its ratio: no type error. Small instance:
+/// `scaling::a_sum_of_divisions_of_literals_takes_its_carrier`.
 #[test]
 fn a_sum_of_many_divisions_of_literals_takes_its_carrier_in_linear_time() {
     scaling::on_a_thread(1 << 29, || {
@@ -196,6 +221,9 @@ fn a_sum_of_many_divisions_of_literals_takes_its_carrier_in_linear_time() {
 /// Negative control (run once, not committed), at n = 500 and 4,000: walking all of each
 /// operand at each `/`, without stopping at an operation recorded already, which is
 /// quadratic, failed at 45.4 times the bytes, above the limit of 11.7.
+///
+/// Besides its ratio: no type error. Small instance, with the value:
+/// `scaling::divisions_of_literals_nested_deep_take_their_carrier`.
 #[test]
 fn divisions_of_literals_nested_deep_record_their_operands_in_linear_time() {
     scaling::on_a_thread(1 << 29, || {
@@ -220,6 +248,9 @@ fn divisions_of_literals_nested_deep_record_their_operands_in_linear_time() {
 ///
 /// Negative control (run once, not committed), at n = 500 and 4,000: making the type again
 /// at each component changed, which is quadratic, did not end within 60 s.
+///
+/// Besides its ratio: no type error. Small instance:
+/// `scaling::a_comparison_of_tuples_of_operations_checks`.
 #[test]
 fn a_comparison_of_tuples_of_many_operations_scales() {
     scaling::on_a_thread(1 << 29, || {
@@ -245,6 +276,9 @@ fn a_comparison_of_tuples_of_many_operations_scales() {
 /// Negative control (run once, not committed), at n = 500 and 4,000: copying every operation
 /// on literals alone recorded so far at each call, which is quadratic, failed at 13.9 times the
 /// bytes, above the limit of 11.7, and so did the six other tests of literals here.
+///
+/// Besides its ratio: no type error. Small instance, with a value:
+/// `scaling::calls_given_divisions_of_literals_take_their_carriers`.
 #[test]
 fn many_calls_given_divisions_of_literals_take_their_carriers_in_linear_time() {
     scaling::on_a_thread(1 << 29, || {
@@ -270,6 +304,9 @@ fn many_calls_given_divisions_of_literals_take_their_carriers_in_linear_time() {
 /// (`Ck::lit_spared`). Built, with its repairs tried and its fixes checked, it made the bare
 /// calls cost 4.8 times the work and 4.4 times the bytes of the fixed ones; without it they cost
 /// 1.4 times both.
+///
+/// Besides its costs: no type error, with the bare divisor and with the suffixed one. Small
+/// instance: `scaling::a_division_of_literals_that_a_call_gives_a_carrier_is_accepted`.
 #[test]
 fn a_division_of_literals_that_a_call_gives_a_carrier_costs_no_rejection() {
     scaling::on_a_thread(1 << 29, || {
@@ -303,6 +340,9 @@ fn a_division_of_literals_that_a_call_gives_a_carrier_costs_no_rejection() {
 
 /// The argument takes the parameter's `f64` in one walk (`Ck::lit_takes`), which removes every
 /// operation in it from those with no type.
+///
+/// Besides its ratio: no type error. Small instance:
+/// `scaling::an_argument_of_divisions_of_literals_nested_deep_takes_its_carrier`.
 #[test]
 fn an_argument_of_divisions_of_literals_nested_deep_takes_its_carrier_in_linear_time() {
     scaling::on_a_thread(1 << 29, || {
@@ -349,6 +389,9 @@ fn accepted_scales(what: &str, n: usize, order: u32, make: fn(usize) -> String) 
 // 13.1 times the bytes at 8n on the body and 12.7 times on the base `2`, against the limit of
 // 11.7; COMPLEXITY.md row POW-rat-literal-ops.
 
+/// Besides its ratio: no type error. Small instance:
+/// `scaling::an_argument_of_divisions_of_literals_nested_deep_takes_its_carrier`, with the
+/// signatures and values in `scaling::operations_on_literals_are_typed_by_their_value`.
 #[test]
 fn operations_on_literals_typed_by_their_value_check_in_linear_time_in_a_body() {
     accepted_scales(
@@ -359,6 +402,9 @@ fn operations_on_literals_typed_by_their_value_check_in_linear_time_in_a_body() 
     );
 }
 
+/// Besides its ratio: no type error. Small instance:
+/// `scaling::an_argument_of_divisions_of_literals_nested_deep_takes_its_carrier`, with the
+/// signatures and values in `scaling::operations_on_literals_are_typed_by_their_value`.
 #[test]
 fn operations_on_literals_typed_by_their_value_check_in_linear_time_powers_of_two() {
     accepted_scales(
@@ -369,6 +415,9 @@ fn operations_on_literals_typed_by_their_value_check_in_linear_time_powers_of_tw
     );
 }
 
+/// Besides its ratio: no type error. Small instance:
+/// `scaling::an_argument_of_divisions_of_literals_nested_deep_takes_its_carrier`, with the
+/// signatures and values in `scaling::operations_on_literals_are_typed_by_their_value`.
 #[test]
 fn operations_on_literals_typed_by_their_value_check_in_linear_time_at_the_top_level() {
     accepted_scales(
@@ -379,6 +428,9 @@ fn operations_on_literals_typed_by_their_value_check_in_linear_time_at_the_top_l
     );
 }
 
+/// Besides its ratio: no type error. Small instance:
+/// `scaling::an_argument_of_divisions_of_literals_nested_deep_takes_its_carrier`, with the
+/// signatures and values in `scaling::operations_on_literals_are_typed_by_their_value`.
 #[test]
 fn operations_on_literals_typed_by_their_value_check_in_linear_time_divisors() {
     accepted_scales(
@@ -391,6 +443,10 @@ fn operations_on_literals_typed_by_their_value_check_in_linear_time_divisors() {
 
 /// The power, of about 95 n digits, is not computed, so the check does not grow with n
 /// (order 0).
+///
+/// Besides its ratio: no type error. Small instance:
+/// `scaling::an_argument_of_divisions_of_literals_nested_deep_takes_its_carrier`, with the
+/// signatures and values in `scaling::operations_on_literals_are_typed_by_their_value`.
 #[test]
 fn operations_on_literals_typed_by_their_value_check_in_linear_time_a_power_divisor() {
     accepted_scales(
@@ -401,6 +457,9 @@ fn operations_on_literals_typed_by_their_value_check_in_linear_time_a_power_divi
     );
 }
 
+/// Besides its ratio: no type error. Small instance:
+/// `scaling::an_argument_of_divisions_of_literals_nested_deep_takes_its_carrier`, with the
+/// signatures and values in `scaling::operations_on_literals_are_typed_by_their_value`.
 #[test]
 fn operations_on_literals_typed_by_their_value_check_in_linear_time_squares() {
     accepted_scales(
@@ -434,6 +493,7 @@ fn one_rejection_does_not_grow(what: &str, n: usize, make: fn(usize) -> String) 
 // the exponents 200,000 and 1,600,000 the comparisons took 4.9 times (`rat`) and 6.7 times
 // (`int`) the instructions (COMPLEXITY.md row MSG-fixnote-huge-value).
 
+/// Besides its ratio: one rejection. Small instance: `scaling::a_fix_names_a_power_of_literals`.
 #[test]
 fn a_fix_names_a_power_of_literals_without_computing_it_in_a_division() {
     one_rejection_does_not_grow(
@@ -443,6 +503,7 @@ fn a_fix_names_a_power_of_literals_without_computing_it_in_a_division() {
     );
 }
 
+/// Besides its ratio: one rejection. Small instance: `scaling::a_fix_names_a_power_of_literals`.
 #[test]
 fn a_fix_names_a_power_of_literals_without_computing_it_in_a_comparison() {
     one_rejection_does_not_grow(
@@ -452,6 +513,7 @@ fn a_fix_names_a_power_of_literals_without_computing_it_in_a_comparison() {
     );
 }
 
+/// Besides its ratio: one rejection. Small instance: `scaling::a_fix_names_a_power_of_literals`.
 #[test]
 fn a_fix_names_a_power_of_literals_without_computing_it_in_a_comparison_at_int() {
     one_rejection_does_not_grow(
@@ -472,6 +534,8 @@ fn a_fix_names_a_power_of_literals_without_computing_it_in_a_comparison_at_int()
 // its digits, 233M and about 2,500M instructions through `zedc run` at K = 200,000 and
 // 1,600,000; that item made the type `int` (COMPLEXITY.md row MSG-literal-type-huge-power).
 
+/// Besides its ratio: no type error, and the signature writes the power. Small instance:
+/// `scaling::the_type_of_an_if_holding_a_power_of_literals_prints_the_power`.
 #[test]
 fn the_type_of_an_if_holding_a_power_of_literals_prints_the_power_when_checked() {
     scaling::on_a_thread(1 << 29, || {
@@ -490,6 +554,8 @@ fn the_type_of_an_if_holding_a_power_of_literals_prints_the_power_when_checked()
     });
 }
 
+/// Besides its ratio: `zedc run` stops with status 1, its message writing the power. Small
+/// instance: `scaling::the_type_of_an_if_holding_a_power_of_literals_prints_the_power`.
 #[test]
 fn the_type_of_an_if_holding_a_power_of_literals_prints_the_power_when_run() {
     scaling::on_a_thread(1 << 29, || {
@@ -514,6 +580,8 @@ fn the_type_of_an_if_holding_a_power_of_literals_prints_the_power_when_run() {
 // (2026-11-13), under the limit but over 9, as O(n log^2 n) gives 8 * (log 8n / log n)^2, about
 // 10.5 at 1.6M bits.
 
+/// Besides its ratio: the check ends. Small instance, through `zedc run`:
+/// `scaling::the_type_of_an_if_holding_a_power_of_literals_prints_the_power`.
 #[test]
 fn the_type_of_an_if_holding_a_power_of_literals_prints_the_power_plus_one_when_checked() {
     scaling::on_a_thread(1 << 29, || {
@@ -525,6 +593,8 @@ fn the_type_of_an_if_holding_a_power_of_literals_prints_the_power_plus_one_when_
     });
 }
 
+/// Besides its ratio: `zedc run` stops with status 1, its message writing the signature. Small
+/// instance: `scaling::the_type_of_an_if_holding_a_power_of_literals_prints_the_power`.
 #[test]
 fn the_type_of_an_if_holding_a_power_of_literals_prints_the_power_plus_one_when_run() {
     scaling::on_a_thread(1 << 29, || {
@@ -559,21 +629,29 @@ fn exponent_scales(what: &str, shape: fn(usize, &str) -> String, e: &str, ok: bo
     });
 }
 
+/// Besides its ratio: rejected for a decimal exponent, accepted for an integer one. Small
+/// instance, of each shape: `scaling::a_power_at_rat_with_a_long_or_deep_exponent_checks`.
 #[test]
 fn a_power_at_rat_with_a_long_or_deep_exponent_checks_in_linear_time_long_rejected() {
     exponent_scales("long", flat_exponent, "0.5", false);
 }
 
+/// Besides its ratio: rejected for a decimal exponent, accepted for an integer one. Small
+/// instance, of each shape: `scaling::a_power_at_rat_with_a_long_or_deep_exponent_checks`.
 #[test]
 fn a_power_at_rat_with_a_long_or_deep_exponent_checks_in_linear_time_long_accepted() {
     exponent_scales("long", flat_exponent, "2", true);
 }
 
+/// Besides its ratio: rejected for a decimal exponent, accepted for an integer one. Small
+/// instance, of each shape: `scaling::a_power_at_rat_with_a_long_or_deep_exponent_checks`.
 #[test]
 fn a_power_at_rat_with_a_long_or_deep_exponent_checks_in_linear_time_deep_rejected() {
     exponent_scales("deep", deep_exponent, "0.5", false);
 }
 
+/// Besides its ratio: rejected for a decimal exponent, accepted for an integer one. Small
+/// instance, of each shape: `scaling::a_power_at_rat_with_a_long_or_deep_exponent_checks`.
 #[test]
 fn a_power_at_rat_with_a_long_or_deep_exponent_checks_in_linear_time_deep_accepted() {
     exponent_scales("deep", deep_exponent, "2", true);

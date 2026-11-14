@@ -16,6 +16,8 @@ fn many_bounded_casts_scale() {
     });
 }
 
+/// Besides its ratio: no type error. Small instance:
+/// `exact_casts::many_casts_under_tests_are_accepted`.
 #[test]
 fn a_chain_of_arms_each_a_bounded_cast_scales() {
     // One function of n arms, each arm a cast under the tests of the arms before it.

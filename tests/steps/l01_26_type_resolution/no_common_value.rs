@@ -349,8 +349,8 @@ fn carriers_of_shared_tuples_widen_each_component() {
 
 #[test]
 fn two_wide_types_that_share_no_value_are_rejected() {
-    // A small instance of the benchmark
-    // `bench::no_common_value::rejecting_two_wide_types_that_share_no_value_scales`.
+    // A small instance of each benchmark
+    // `bench::no_common_value::rejecting_two_wide_types_that_share_no_value_scales_for_…`.
     let errors = type_errors(&wide_union(2));
     assert_eq!(
         errors,

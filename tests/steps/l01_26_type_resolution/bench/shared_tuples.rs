@@ -5,6 +5,8 @@ use zed_tests::scaling;
 use super::super::Resolved;
 use super::super::shared_tuples::{by_bindings, by_calls};
 
+/// Besides its ratio: the value is data, with no error. Small instance:
+/// `shared_tuples::a_value_held_twice_at_each_level_is_data`.
 #[test]
 fn values_held_twice_at_each_level_are_checked_in_linear_time() {
     type Family = fn(usize, &str) -> String;

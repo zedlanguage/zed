@@ -28,6 +28,8 @@ fn elaborated(what: &str, n: usize, make: fn(usize) -> String) {
     });
 }
 
+/// Besides its ratio: no type error. Small instance:
+/// `tuple_arg_pair::many_decimal_components_and_nested_calls_check`.
 #[test]
 fn many_decimal_components_check_in_linear_time_each_added() {
     accepted(
@@ -37,6 +39,8 @@ fn many_decimal_components_check_in_linear_time_each_added() {
     );
 }
 
+/// Besides its ratio: no type error. Small instance:
+/// `tuple_arg_pair::many_decimal_components_and_nested_calls_check`.
 #[test]
 fn many_decimal_components_check_in_linear_time_summed() {
     accepted(
@@ -46,16 +50,22 @@ fn many_decimal_components_check_in_linear_time_summed() {
     );
 }
 
+/// Besides its ratio: no type error. Small instance:
+/// `tuple_arg_pair::many_decimal_components_and_nested_calls_check`.
 #[test]
 fn many_components_and_nested_calls_check_in_linear_time_components() {
     accepted("checking a call of n literal components", 490, picks);
 }
 
+/// Besides its ratio: no type error. Small instance:
+/// `tuple_arg_pair::many_decimal_components_and_nested_calls_check`.
 #[test]
 fn many_components_and_nested_calls_check_in_linear_time_nested_calls() {
     accepted("checking n nested calls of a pair of literals", 670, chain);
 }
 
+/// Besides its ratio: the check and elaboration end. Small instance, with the value elaborated:
+/// `tuple_arg_pair::literal_branches_beside_components_take_the_carriers_of_the_components`.
 #[test]
 fn many_branches_beside_components_check_and_elaborate_in_linear_time_components() {
     elaborated(
@@ -65,6 +75,8 @@ fn many_branches_beside_components_check_and_elaborate_in_linear_time_components
     );
 }
 
+/// Besides its ratio: the check and elaboration end. Small instance, with the value elaborated:
+/// `tuple_arg_pair::literal_branches_beside_components_take_the_carriers_of_the_components`.
 #[test]
 fn many_branches_beside_components_check_and_elaborate_in_linear_time_a_deep_read() {
     elaborated(
@@ -74,6 +86,8 @@ fn many_branches_beside_components_check_and_elaborate_in_linear_time_a_deep_rea
     );
 }
 
+/// Besides its ratio: the check and elaboration end. Small instance, with the value elaborated:
+/// `tuple_arg_pair::literal_branches_beside_components_take_the_carriers_of_the_components`.
 #[test]
 fn many_branches_beside_components_check_and_elaborate_in_linear_time_one_component() {
     elaborated(

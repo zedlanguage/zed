@@ -200,6 +200,12 @@ fn types_built_apart_compare_by_their_contents() {
             assert_ne!(levels(n, z()), levels(n - 1, z()), "{n} deep");
         }
     }
+    // The cases of the benchmark
+    // `bench::deep_types::shallow_types_compare_as_cheaply_as_a_plain_recursion` not above: a
+    // variable, and a chain of functions whose variables are kept.
+    assert_eq!(Ty::var("T".into()), Ty::var("T".into()));
+    assert_ne!(Ty::var("T".into()), Ty::var("U".into()));
+    assert_eq!(chain(5, &same), chain(5, &same));
     // The field of a payload, a function's parameter and a second component differ.
     let in_field = |f: Ty| atom(vec![z()], f);
     assert_ne!(in_field(z()), in_field(y()));

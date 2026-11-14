@@ -27,6 +27,8 @@ fn replacements_in_a_shared_type_take_linear_time() {
     });
 }
 
+/// Besides its ratio: shared types built apart are equal. Small instance:
+/// `deep_types::types_built_apart_compare_by_their_contents`.
 #[test]
 fn shared_types_built_apart_compare_in_linear_time() {
     // Each side holds `2^n` paths through `n` nodes, and no node is shared between the sides:
@@ -44,6 +46,8 @@ fn shared_types_built_apart_compare_in_linear_time() {
     });
 }
 
+/// Besides running on a shallow stack: each replacement equals the type built with it, hashes
+/// alike. Small instance: `deep_types::replacements_in_a_shallow_type_are_as_built`.
 #[test]
 fn replacements_in_a_deep_type_run_on_a_shallow_stack() {
     // Each recursed once a level and overflowed a 2 MiB stack a few thousand levels deep; the
@@ -55,6 +59,8 @@ fn replacements_in_a_deep_type_run_on_a_shallow_stack() {
     });
 }
 
+/// Besides running on a shallow stack: types built apart are equal, and unequal where they
+/// differ. Small instance: `deep_types::types_built_apart_compare_by_their_contents`.
 #[test]
 fn types_built_apart_deep_compare_on_a_shallow_stack() {
     // `==` recursed once a level through rows, payload shapes and signatures, and overflowed a
@@ -71,6 +77,8 @@ fn types_built_apart_deep_compare_on_a_shallow_stack() {
     });
 }
 
+/// Besides running on a shallow stack: tuples built apart are equal, and unequal where they
+/// differ. Small instance: `deep_types::types_built_apart_compare_by_their_contents`.
 #[test]
 fn tuples_built_apart_deep_compare_on_a_shallow_stack() {
     // The recursive `==` overflowed an 8 MiB stack 200,000 deep, about 42 bytes a level
@@ -130,6 +138,8 @@ fn plain(a: &Ty, b: &Ty) -> bool {
         })
 }
 
+/// Besides its cost: `==` agrees with a plain recursion on each case, equal and unequal. Small
+/// instance of each verdict: `deep_types::types_built_apart_compare_by_their_contents`.
 #[test]
 fn shallow_types_compare_as_cheaply_as_a_plain_recursion() {
     // `==` keeps a stack of its own for types nested as deep as the program, and records

@@ -31,56 +31,78 @@ pub(super) fn on_shallow_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
     scaling::on_a_thread(SHALLOW_STACK, f)
 }
 
+/// Besides running on a shallow stack: the checks of `deep_ops::clone_hash_and_drop`, run at a few
+/// levels by `deep_ops::the_operations_on_a_type_a_few_levels_deep_are_as_built`.
 #[test]
 fn clone_hash_and_drop_of_a_deep_type_run_on_a_shallow_stack() {
     on_shallow_stack(|| deep_ops::clone_hash_and_drop(DEEP));
 }
 
+/// Besides running on a shallow stack: the checks of `deep_ops::display_and_debug`, run at a few
+/// levels by `deep_ops::the_operations_on_a_type_a_few_levels_deep_are_as_built`.
 #[test]
 fn display_and_debug_of_a_deep_type_run_on_a_shallow_stack() {
     on_shallow_stack(|| deep_ops::display_and_debug(DEEP));
 }
 
+/// Besides running on a shallow stack: the checks of `deep_ops::union`, run at a few levels by
+/// `deep_ops::the_operations_on_a_type_a_few_levels_deep_are_as_built`.
 #[test]
 fn union_of_deep_types_runs_on_a_shallow_stack() {
     on_shallow_stack(|| deep_ops::union(DEEP));
 }
 
+/// Besides running on a shallow stack: the checks of `deep_ops::meet_meets_and_contains`, run at a
+/// few levels by `deep_ops::the_operations_on_a_type_a_few_levels_deep_are_as_built`.
 #[test]
 fn meet_meets_and_contains_of_deep_tuples_run_on_a_shallow_stack() {
     on_shallow_stack(|| deep_ops::meet_meets_and_contains(DEEP));
 }
 
+/// Besides running on a shallow stack: the checks of `deep_ops::subtype_of_types`, run at a few
+/// levels by `deep_ops::the_operations_on_a_type_a_few_levels_deep_are_as_built`.
 #[test]
 fn subtype_of_deep_types_runs_on_a_shallow_stack() {
     on_shallow_stack(|| deep_ops::subtype_of_types(DEEP));
 }
 
+/// Besides running on a shallow stack: the checks of `deep_ops::subtype_of_data`, run at a few
+/// levels by `deep_ops::the_operations_on_a_type_a_few_levels_deep_are_as_built`.
 #[test]
 fn subtype_of_deep_data_runs_on_a_shallow_stack() {
     on_shallow_stack(|| deep_ops::subtype_of_data(DEEP));
 }
 
+/// Besides running on a shallow stack: the checks of `deep_ops::diff`, run at a few levels by
+/// `deep_ops::the_operations_on_a_type_a_few_levels_deep_are_as_built`.
 #[test]
 fn diff_of_deep_types_runs_on_a_shallow_stack() {
     on_shallow_stack(|| deep_ops::diff(DEEP));
 }
 
+/// Besides running on a shallow stack: the checks of `deep_ops::kernel`, run at a few levels by
+/// `deep_ops::the_operations_on_a_type_a_few_levels_deep_are_as_built`.
 #[test]
 fn kernel_of_deep_tuples_runs_on_a_shallow_stack() {
     on_shallow_stack(|| deep_ops::kernel(DEEP));
 }
 
+/// Besides running on a shallow stack: the checks of `deep_ops::variables`, run at a few levels by
+/// `deep_ops::the_operations_on_a_type_a_few_levels_deep_are_as_built`.
 #[test]
 fn variables_of_a_deep_type_run_on_a_shallow_stack() {
     on_shallow_stack(|| deep_ops::variables(DEEP));
 }
 
+/// Besides running on a shallow stack: the checks of `deep_ops::signatures`, run at a few levels by
+/// `deep_ops::the_operations_on_a_type_a_few_levels_deep_are_as_built`.
 #[test]
 fn signatures_of_deep_types_run_on_a_shallow_stack() {
     on_shallow_stack(|| deep_ops::signatures(DEEP));
 }
 
+/// Besides running on a shallow stack: the checks of `deep_ops::signatures_that_differ`, run at a
+/// few levels by `deep_ops::the_operations_on_a_type_a_few_levels_deep_are_as_built`.
 #[test]
 fn signatures_of_deep_tuples_that_differ_run_on_a_shallow_stack() {
     on_shallow_stack(|| deep_ops::signatures_that_differ(DEEP));
@@ -96,6 +118,8 @@ fn linear<T: Sync>(what: &str, n: usize, build: impl Fn(usize) -> T, op: impl Fn
     on_small_stack(|| scaling::check_order(what, n, 1, |k| op(&made[&k])));
 }
 
+/// Besides its ratio: the meet of equal tuples is not empty. Small instance:
+/// `deep_ops::meet_meets_and_contains_of_shallow_tuples_are_as_built`.
 #[test]
 fn meet_takes_linear_time_in_the_depth() {
     linear(
@@ -106,6 +130,8 @@ fn meet_takes_linear_time_in_the_depth() {
     );
 }
 
+/// Besides its ratio: tuples that differ at the bottom do not meet. Small instance:
+/// `deep_ops::meet_meets_and_contains_of_shallow_tuples_are_as_built`.
 #[test]
 fn meets_takes_linear_time_in_the_depth() {
     linear(
@@ -116,6 +142,8 @@ fn meets_takes_linear_time_in_the_depth() {
     );
 }
 
+/// Besides its ratio: the tuples contain the value built alike. Small instance:
+/// `deep_ops::meet_meets_and_contains_of_shallow_tuples_are_as_built`.
 #[test]
 fn contains_takes_linear_time_in_the_depth() {
     linear(
@@ -129,6 +157,8 @@ fn contains_takes_linear_time_in_the_depth() {
 // Each side of the three checks below holds `2^n` paths through `n` tuples, and no tuple is
 // shared between the sides: a walk that followed the paths took `2^n` time.
 
+/// Besides its ratio: the meet of shared tuples with a wider bottom is not empty. Small instance:
+/// `deep_ops::meet_meets_and_contains_of_shallow_tuples_are_as_built`.
 #[test]
 fn meet_of_shared_tuples_takes_linear_time() {
     linear(
@@ -139,6 +169,8 @@ fn meet_of_shared_tuples_takes_linear_time() {
     );
 }
 
+/// Besides its ratio: shared tuples that differ at the bottom do not meet. Small instance:
+/// `deep_ops::meet_meets_and_contains_of_shallow_tuples_are_as_built`.
 #[test]
 fn meets_of_shared_tuples_takes_linear_time() {
     linear(
@@ -149,6 +181,8 @@ fn meets_of_shared_tuples_takes_linear_time() {
     );
 }
 
+/// Besides its ratio: shared tuples contain the shared value. Small instance:
+/// `deep_ops::meet_meets_and_contains_of_shallow_tuples_are_as_built`.
 #[test]
 fn contains_of_a_shared_value_takes_linear_time() {
     linear(
@@ -170,6 +204,8 @@ fn printing_a_type_with_a_function_at_every_place_takes_linear_time_in_the_depth
     );
 }
 
+/// Besides its ratio: `Debug` writes something. Small instance: `deep_ops::display_and_debug` in
+/// `deep_ops::the_operations_on_a_type_a_few_levels_deep_are_as_built`.
 #[test]
 fn debug_of_a_type_takes_linear_time_in_the_depth() {
     linear(
@@ -180,6 +216,9 @@ fn debug_of_a_type_takes_linear_time_in_the_depth() {
     );
 }
 
+/// Besides its ratio: tuples that differ at the bottom are no subtype. Small instance:
+/// `deep_ops::subtype_of_data` in
+/// `deep_ops::the_operations_on_a_type_a_few_levels_deep_are_as_built`.
 #[test]
 fn subtype_of_tuples_takes_linear_time_in_the_depth() {
     linear(
@@ -190,6 +229,8 @@ fn subtype_of_tuples_takes_linear_time_in_the_depth() {
     );
 }
 
+/// Besides its ratio: equal types are subtypes. Small instance: `deep_ops::subtype_of_types` in
+/// `deep_ops::the_operations_on_a_type_a_few_levels_deep_are_as_built`.
 #[test]
 fn subtype_of_types_takes_linear_time_in_the_depth() {
     linear(
@@ -200,6 +241,9 @@ fn subtype_of_types_takes_linear_time_in_the_depth() {
     );
 }
 
+/// Besides its ratio: the difference of tuples that differ at the bottom is not empty. Small
+/// instance: `deep_ops::diff` in
+/// `deep_ops::the_operations_on_a_type_a_few_levels_deep_are_as_built`.
 #[test]
 fn diff_takes_linear_time_in_the_depth() {
     linear(
@@ -210,6 +254,8 @@ fn diff_takes_linear_time_in_the_depth() {
     );
 }
 
+/// Besides its ratio: equal signatures fit. Small instance: `deep_ops::signatures` in
+/// `deep_ops::the_operations_on_a_type_a_few_levels_deep_are_as_built`.
 #[test]
 fn fits_sig_takes_linear_time_in_the_depth() {
     linear(
@@ -250,6 +296,11 @@ fn per_level<T: Sync>(n: usize, build: impl Fn(usize) -> T, op: impl Fn(&T) + Sy
 /// fails here, where the linear checks above pass it. Each bound is about 10% over the count of
 /// this test when it was set (2026-11-12), and below the count on main before
 /// PERF-deep-ops-slow, given beside it. The counts include the test allocator's counting.
+///
+/// Besides its bounds: the difference of tuples that differ at the bottom is the first, and the
+/// signatures do not fit. Small instances: `deep_ops::diff`, `deep_ops::subtype_of_data` (the
+/// verdict) and `deep_ops::signatures_that_differ` (`why_unfit`), in
+/// `deep_ops::the_operations_on_a_type_a_few_levels_deep_are_as_built`.
 #[test]
 fn subtype_fits_why_and_diff_cost_a_bounded_number_of_instructions_a_level() {
     let n = 2000;

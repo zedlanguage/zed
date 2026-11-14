@@ -3,6 +3,8 @@ use zed_tests::step_helpers::l01_26_type_resolution::Resolved;
 
 use super::super::cast_int_f64::many;
 
+/// Besides its ratio: the check ends. Small instance, with no atom in the signature:
+/// `cast_int_f64::casts_of_names_and_operations_on_literals_keep_no_atom`.
 #[test]
 fn casts_of_many_operations_on_literals_check_in_linear_time() {
     scaling::on_a_thread(1 << 28, || {

@@ -298,9 +298,14 @@ fn meet_meets_and_contains_of_shallow_tuples_are_as_built() {
             assert!(!a.contains(&value(n, "y")), "{n} deep");
             assert!(!a.contains(&value(n - 1, "z")), "{n} deep");
         }
+        // Small instances of the benchmarks `bench::deep_ops::meet_of_shared_tuples_…`,
+        // `meets_of_shared_tuples_…` and `contains_of_a_shared_value_…`, each in its order.
         let (s, t) = (shared(n, z()), shared(n, Ty::union(&z(), &y())));
         assert_eq!(t.meet(&s), s, "{n} deep");
+        assert_eq!(s.meet(&t), s, "{n} deep");
         assert!(t.meets(&s) && t.contains(&shared_value(n)), "{n} deep");
+        assert!(s.contains(&shared_value(n)), "{n} deep");
+        assert!(!s.meets(&shared(n, y())), "{n} deep");
     }
     // A variable meets every value and holds every value.
     let v = tuples(3, Ty::var("T".into()));

@@ -83,31 +83,43 @@ fn handled_calls_scale(call: &str) {
     );
 }
 
+/// Besides its ratio: no type error. Small instance, with each form of call:
+/// `atom_scaling::calls_passing_a_handled_parameter_on_give_no_atom_on_the_first_arrow`.
 #[test]
 fn many_calls_passing_a_handled_parameter_on_scale_as_arguments() {
     handled_calls_scale("r(x)");
 }
 
+/// Besides its ratio: no type error. Small instance, with each form of call:
+/// `atom_scaling::calls_passing_a_handled_parameter_on_give_no_atom_on_the_first_arrow`.
 #[test]
 fn many_calls_passing_a_handled_parameter_on_scale_as_receivers() {
     handled_calls_scale("x.r()");
 }
 
+/// Besides its ratio: no type error. Small instance, with each form of call:
+/// `atom_scaling::calls_passing_a_handled_parameter_on_give_no_atom_on_the_first_arrow`.
 #[test]
 fn many_calls_passing_a_handled_parameter_on_scale_as_receivers_without_parentheses() {
     handled_calls_scale("x.r");
 }
 
+/// Besides its ratio: no type error. Small instance, with each form of call:
+/// `atom_scaling::calls_passing_a_handled_parameter_on_give_no_atom_on_the_first_arrow`.
 #[test]
 fn many_calls_passing_a_handled_parameter_on_scale_through_a_higher_order_function() {
     handled_calls_scale("ap(r, x)");
 }
 
+/// Besides its ratio: no type error. Small instance, with each form of call:
+/// `atom_scaling::calls_passing_a_handled_parameter_on_give_no_atom_on_the_first_arrow`.
 #[test]
 fn many_calls_passing_a_handled_parameter_on_scale_through_a_computed_callee() {
     handled_calls_scale("(if true { r } else { r })(x)");
 }
 
+/// Besides its ratio: no type error. Small instance, with each form of call:
+/// `atom_scaling::calls_passing_a_handled_parameter_on_give_no_atom_on_the_first_arrow`.
 #[test]
 fn many_calls_passing_a_handled_parameter_on_scale_to_a_lambda() {
     handled_calls_scale("ap((positional y) -> trim(y), x)");
@@ -159,11 +171,17 @@ fn passing_calls_scale(call: &str) {
     );
 }
 
+/// Besides its ratio: no type error and one pass recorded a call. Small instance, to a function
+/// and to a lambda:
+/// `atom_scaling::calls_passing_some_atoms_of_their_argument_by_record_one_pass_each`.
 #[test]
 fn many_calls_passing_some_atoms_of_their_argument_by_scale_to_a_function() {
     passing_calls_scale("h(v)");
 }
 
+/// Besides its ratio: no type error and one pass recorded a call. Small instance, to a function
+/// and to a lambda:
+/// `atom_scaling::calls_passing_some_atoms_of_their_argument_by_record_one_pass_each`.
 #[test]
 fn many_calls_passing_some_atoms_of_their_argument_by_scale_to_a_lambda() {
     passing_calls_scale("ap((positional y) -> trim(y), v)");
@@ -222,16 +240,22 @@ fn chain_of_tests_scales(what: &str, text: fn(usize) -> String, n: usize) {
     });
 }
 
+/// Besides its ratio: no type error. Small instance, of each kind of test:
+/// `atom_scaling::chains_of_tests_that_leave_values_of_their_own_are_accepted`.
 #[test]
 fn chains_of_tests_that_leave_values_of_their_own_scale_elses() {
     chain_of_tests_scales("a chain of n elses", chain_of_elses, 6000);
 }
 
+/// Besides its ratio: no type error. Small instance, of each kind of test:
+/// `atom_scaling::chains_of_tests_that_leave_values_of_their_own_are_accepted`.
 #[test]
 fn chains_of_tests_that_leave_values_of_their_own_scale_equalities() {
     chain_of_tests_scales("a chain of n equalities", chain_of_equalities, 1200);
 }
 
+/// Besides its ratio: no type error. Small instance, of each kind of test:
+/// `atom_scaling::chains_of_tests_that_leave_values_of_their_own_are_accepted`.
 #[test]
 fn chains_of_tests_that_leave_values_of_their_own_scale_handled_keys() {
     // The key of `args[k]` is followed as an argument is.

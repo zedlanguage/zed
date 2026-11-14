@@ -37,31 +37,49 @@ fn many_casts_of_two_values(last: &str, word: &str) {
     });
 }
 
+/// Besides its ratio: the check ends. Small instance, of many values and many casts, with the
+/// errors of each last value and word:
+/// `cast_of_union::casts_of_a_call_of_many_values_take_each_value_at_its_arrow`.
 #[test]
 fn casts_of_a_call_of_many_values_check_in_linear_time_f64_of_a_suffixed_value() {
     one_cast_of_many_values("2.5f64", "f64");
 }
 
+/// Besides its ratio: the check ends. Small instance, of many values and many casts, with the
+/// errors of each last value and word:
+/// `cast_of_union::casts_of_a_call_of_many_values_take_each_value_at_its_arrow`.
 #[test]
 fn casts_of_a_call_of_many_values_check_in_linear_time_many_casts_f64_of_a_suffixed_value() {
     many_casts_of_two_values("2.5f64", "f64");
 }
 
+/// Besides its ratio: the check ends. Small instance, of many values and many casts, with the
+/// errors of each last value and word:
+/// `cast_of_union::casts_of_a_call_of_many_values_take_each_value_at_its_arrow`.
 #[test]
 fn casts_of_a_call_of_many_values_check_in_linear_time_f64_of_a_bare_decimal() {
     one_cast_of_many_values("2.5", "f64");
 }
 
+/// Besides its ratio: the check ends. Small instance, of many values and many casts, with the
+/// errors of each last value and word:
+/// `cast_of_union::casts_of_a_call_of_many_values_take_each_value_at_its_arrow`.
 #[test]
 fn casts_of_a_call_of_many_values_check_in_linear_time_many_casts_f64_of_a_bare_decimal() {
     many_casts_of_two_values("2.5", "f64");
 }
 
+/// Besides its ratio: the check ends. Small instance, of many values and many casts, with the
+/// errors of each last value and word:
+/// `cast_of_union::casts_of_a_call_of_many_values_take_each_value_at_its_arrow`.
 #[test]
 fn casts_of_a_call_of_many_values_check_in_linear_time_scalar_of_a_bare_decimal() {
     one_cast_of_many_values("2.5", "scalar");
 }
 
+/// Besides its ratio: the check ends. Small instance, of many values and many casts, with the
+/// errors of each last value and word:
+/// `cast_of_union::casts_of_a_call_of_many_values_take_each_value_at_its_arrow`.
 #[test]
 fn casts_of_a_call_of_many_values_check_in_linear_time_many_casts_scalar_of_a_bare_decimal() {
     many_casts_of_two_values("2.5", "scalar");

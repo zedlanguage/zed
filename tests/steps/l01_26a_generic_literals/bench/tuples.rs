@@ -41,11 +41,15 @@ fn a_wide_tuple(call: bool) {
     });
 }
 
+/// Besides its ratio: one rejection, naming the component that holds the decimal. Small instance:
+/// `tuples::the_decimal_of_a_wide_tuple_is_one_rejection_naming_its_component`.
 #[test]
 fn a_wide_tuple_checks_in_linear_time() {
     a_wide_tuple(false);
 }
 
+/// Besides its ratio: one rejection. Small instance, passed to a call and not:
+/// `tuples::the_decimal_of_a_wide_tuple_is_one_rejection_naming_its_component`.
 #[test]
 fn a_wide_tuple_checks_in_linear_time_passed_to_a_call() {
     a_wide_tuple(true);

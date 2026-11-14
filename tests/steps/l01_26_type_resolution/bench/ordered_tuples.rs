@@ -5,6 +5,8 @@ use zed_tests::scaling;
 use super::super::Resolved;
 use super::super::ordered_tuples::{doubled, lengths, nested, tagged};
 
+/// Besides its ratio: no type error. Small instance, of each shape:
+/// `ordered_tuples::tuples_of_numbers_and_atoms_compare`.
 #[test]
 fn rows_held_twice_at_each_level_compare_in_linear_time() {
     let units: BTreeMap<usize, Resolved> = [6000, scaling::FACTOR * 6000]
@@ -22,6 +24,8 @@ fn rows_held_twice_at_each_level_compare_in_linear_time() {
     );
 }
 
+/// Besides its ratio: no type error. Small instance, of each shape:
+/// `ordered_tuples::tuples_of_numbers_and_atoms_compare`.
 #[test]
 fn many_tuple_shapes_compare_in_linear_time() {
     let units: BTreeMap<usize, Resolved> = [16_000, scaling::FACTOR * 16_000]
@@ -34,6 +38,8 @@ fn many_tuple_shapes_compare_in_linear_time() {
     });
 }
 
+/// Besides its ratio: no type error. Small instance, of each shape:
+/// `ordered_tuples::tuples_of_numbers_and_atoms_compare`.
 #[test]
 fn tuples_of_every_length_compare_in_time_linear_in_their_components() {
     // The type holds n(n + 1)/2 components, so work linear in it is of order n².
@@ -67,6 +73,8 @@ fn a_mismatch_at_depth_n_is_reported_in_linear_time() {
     });
 }
 
+/// Besides its ratio: one error, whose repair rewrites the whole comparison. Small instance, with
+/// the repair accepted: `ordered_tuples::a_repair_at_depth_n_is_the_whole_comparison_rewritten`.
 #[test]
 fn a_repair_at_depth_n_is_written_in_time_linear_in_its_length() {
     // Complexity tradeoff: the repair is the whole comparison rewritten, and the component it

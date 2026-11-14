@@ -3,6 +3,8 @@ use zed_tests::scaling;
 use super::super::Resolved;
 use super::super::payload_variables::{in_atoms_in_a_tuple, in_atoms_twice_in_a_tuple};
 
+/// Besides its ratio: the equality is refused. Small instance:
+/// `payload_variables::a_function_deep_in_a_payload_in_a_tuple_is_refused_by_equality`.
 #[test]
 fn a_variable_deep_in_a_payload_in_a_tuple_is_checked_in_linear_time() {
     // Each row and payload shape keeps whether it holds a variable at any depth, so the need

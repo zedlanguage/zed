@@ -31,6 +31,8 @@ fn checks_deep(shapes: &[&str], n: usize) {
     });
 }
 
+/// Besides its ratio and stack: no type error. Small instance, each shape a few deep:
+/// `deep_scaling::sums_blocks_negations_calls_and_bit_words_a_few_deep_check`.
 #[test]
 fn blocks_nested_100000_deep_check_on_a_2_mib_stack() {
     checks_deep(&["nested blocks"], 12_500);
@@ -43,11 +45,15 @@ fn blocks_nested_100000_deep_check_on_a_2_mib_stack() {
 // (CHK-node-cost), and a `+` costs about 140,000 instructions, a negation or call about 70,000
 // to 80,000. They are checked 8,000 deep, eight times past the depth that overflowed.
 
+/// Besides its ratio and stack: no type error. Small instance, each shape a few deep:
+/// `deep_scaling::sums_blocks_negations_calls_and_bit_words_a_few_deep_check`.
 #[test]
 fn sums_8000_deep_check_on_a_2_mib_stack() {
     checks_deep(&["a left-nested sum", "a sum nested in parentheses"], 1_000);
 }
 
+/// Besides its ratio and stack: no type error. Small instance, each shape a few deep:
+/// `deep_scaling::long_bodies_else_if_chains_lambdas_and_tuples_a_few_deep_check`.
 #[test]
 fn long_bodies_and_else_if_chains_8000_deep_check_on_a_2_mib_stack() {
     checks_deep(
@@ -56,6 +62,8 @@ fn long_bodies_and_else_if_chains_8000_deep_check_on_a_2_mib_stack() {
     );
 }
 
+/// Besides its ratio and stack: no type error. Small instance, each shape a few deep:
+/// `deep_scaling::sums_blocks_negations_calls_and_bit_words_a_few_deep_check`.
 #[test]
 fn negations_and_calls_8000_deep_check_on_a_2_mib_stack() {
     checks_deep(&["nested negations", "nested calls"], 1_000);
@@ -84,6 +92,8 @@ fn checks_linear(shape: &str, n: usize) {
     });
 }
 
+/// Besides its ratio: no type error. Small instance, a few deep:
+/// `deep_scaling::long_bodies_else_if_chains_lambdas_and_tuples_a_few_deep_check`.
 #[test]
 fn lambdas_nested_8000_deep_check_in_linear_time() {
     // Each lambda's signature was walked again, copied and dropped by each lambda around it,
@@ -94,6 +104,8 @@ fn lambdas_nested_8000_deep_check_in_linear_time() {
     checks_linear("nested lambdas", 1_000);
 }
 
+/// Besides its ratio: no type error. Small instance, a few deep:
+/// `deep_scaling::long_bodies_else_if_chains_lambdas_and_tuples_a_few_deep_check`.
 #[test]
 fn tuples_nested_8000_deep_check_in_linear_time() {
     // Whether a tuple's components may hold a variable, the unknown or a function was found by
@@ -113,6 +125,8 @@ fn a_variable_nested_in_tuples_checks_in_linear_time() {
     });
 }
 
+/// Besides its ratio and stack: the function types are subtypes. Small instance:
+/// `deep_scaling::function_types_nested_a_few_deep_compare`.
 #[test]
 fn function_types_nested_16000_deep_compare_on_a_2_mib_stack() {
     // The comparison of function types (`Ty::sub`, `fits_sig` and the cover of rule 6 of
@@ -137,6 +151,8 @@ fn function_types_nested_16000_deep_compare_on_a_2_mib_stack() {
     });
 }
 
+/// Besides its ratio and stack: no type error. Small instance, a few deep:
+/// `deep_scaling::sums_blocks_negations_calls_and_bit_words_a_few_deep_check`.
 #[test]
 fn bit_words_8000_deep_check_on_a_2_mib_stack() {
     // A bit word's arguments are checked from the walk's frame `Bits`, so the nesting keeps
@@ -164,6 +180,8 @@ fn bit_words_8000_deep_check_on_a_2_mib_stack() {
     });
 }
 
+/// Besides its ratio: the wider function type is no subtype of the narrower. Small instance:
+/// `deep_scaling::function_types_nested_a_few_deep_compare`.
 #[test]
 fn a_refusal_of_function_types_nested_8000_deep_is_linear() {
     // `(int) -> … -> int | f64` is not `(int) -> … -> int`. At each level the arrow's fit

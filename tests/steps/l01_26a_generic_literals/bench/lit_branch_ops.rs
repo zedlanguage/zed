@@ -19,6 +19,8 @@ fn checks(what: &str, n: usize, make: fn(usize) -> String) {
     });
 }
 
+/// Besides its ratio: the check ends. Small instance, with no type error:
+/// `lit_branch_ops::many_operation_branches_take_f64_at_a_parameter_or_through_a_call`.
 #[test]
 fn scaling_an_if_of_operation_branches() {
     checks(
@@ -28,6 +30,8 @@ fn scaling_an_if_of_operation_branches() {
     );
 }
 
+/// Besides its ratio: the check ends. Small instance, with no type error:
+/// `lit_branch_ops::many_operation_branches_take_f64_at_a_parameter_or_through_a_call`.
 #[test]
 fn scaling_a_call_of_operation_branches() {
     checks(
@@ -39,6 +43,9 @@ fn scaling_a_call_of_operation_branches() {
 
 /// Item LIT-op-reads-call: each operator application reads its call once per arrow,
 /// O(A v log v) for A arrows and v values, so n products cost O(n).
+///
+/// Besides its ratio: the check ends. Small instance, with no type error:
+/// `lit_branch_ops::many_operation_branches_take_f64_at_a_parameter_or_through_a_call`.
 #[test]
 fn scaling_products_of_calls() {
     checks(
@@ -50,6 +57,9 @@ fn scaling_products_of_calls() {
 
 /// Item LIT-tuple-branch-ops: each tuple's components are read once, and each `if` there is
 /// walked once and adopts once, O(its size), so n calls cost O(n).
+///
+/// Besides its ratio: the check ends. Small instance, with no type error:
+/// `lit_branch_ops::many_operation_branches_take_f64_at_a_parameter_or_through_a_call`.
 #[test]
 fn scaling_ifs_in_tuple_arguments() {
     checks(

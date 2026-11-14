@@ -34,6 +34,8 @@ fn a_function_in_many_nested_tuples_is_one_error_in_linear_time() {
     }
 }
 
+/// Besides its ratio: one error where a payload holds a function, none where none does. Small
+/// instance: `held_functions::a_function_in_an_atom_s_payload_is_one_error`.
 #[test]
 fn a_function_in_payloads_is_found_in_linear_time() {
     // Each level makes a row, which reads the payload below it once; the payload walk reads

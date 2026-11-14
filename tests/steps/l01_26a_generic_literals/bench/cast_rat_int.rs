@@ -3,6 +3,8 @@ use zed_tests::step_helpers::l01_26_type_resolution::Resolved;
 
 use super::super::cast_rat_int::many;
 
+/// Besides its ratio: the check ends. Small instance, with no atom in the signature:
+/// `cast_rat_int::casts_of_a_name_of_literals_keep_no_atom`.
 #[test]
 fn casts_of_a_name_of_many_literals_check_in_linear_time() {
     // Each cast reads the class's flags and restricts its mask once: no walk of its literals.

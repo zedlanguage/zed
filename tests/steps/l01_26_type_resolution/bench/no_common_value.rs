@@ -32,6 +32,8 @@ fn rejects_linearly(what: &str, n: usize, text: fn(usize) -> String, row: Row) {
     });
 }
 
+/// Besides its ratio: one error, that the two share no value. Small instance:
+/// `no_common_value::two_wide_types_that_share_no_value_are_rejected`.
 #[test]
 fn rejecting_two_wide_types_that_share_no_value_scales_for_a_union() {
     rejects_linearly(
@@ -42,6 +44,8 @@ fn rejecting_two_wide_types_that_share_no_value_scales_for_a_union() {
     );
 }
 
+/// Besides its ratio: one error, that the two share no value. Small instance:
+/// `no_common_value::two_wide_types_that_share_no_value_are_rejected`.
 #[test]
 fn rejecting_two_wide_types_that_share_no_value_scales_for_tuples() {
     rejects_linearly(
@@ -52,6 +56,8 @@ fn rejecting_two_wide_types_that_share_no_value_scales_for_tuples() {
     );
 }
 
+/// Besides its ratio: one error, that the two share no value. Small instance:
+/// `no_common_value::two_wide_types_that_share_no_value_are_rejected`.
 #[test]
 fn rejecting_two_wide_types_that_share_no_value_scales_for_a_written_tuple() {
     rejects_linearly(
