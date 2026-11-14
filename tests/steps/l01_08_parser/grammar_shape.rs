@@ -129,23 +129,28 @@ fn a_mark_is_refused_outside_the_top_of_its_alternative() {
     }
 }
 
-/// Each tree below has one nesting per operator, so neither the parser nor the builder may
-/// recurse on the length of a chain, nor may `Drop`: a hundred thousand frames are far more than
-/// a test thread's 2 MiB stack holds.
-#[test]
-fn a_chain_of_a_hundred_thousand_operators_builds() {
-    let text = "1 + ".repeat(100_000) + "2";
-    let tokens = lex(&text).unwrap();
-    let parsed = parse(&text, &tokens, "Expr", TOP).unwrap();
-    build(&text, &tokens, &parsed).unwrap();
+/// `1 + 1 + ... + 2` and `a.b.b...b`, each of `n` operators.
+pub(super) fn chains(n: usize) -> [String; 2] {
+    ["1 + ".repeat(n) + "2", "a".to_string() + &".b".repeat(n)]
 }
 
+/// `text` is lexed, parsed and built.
+pub(super) fn builds(text: &str) {
+    let tokens = lex(text).unwrap();
+    let parsed = parse(text, &tokens, "Expr", TOP).unwrap();
+    build(text, &tokens, &parsed).unwrap();
+}
+
+/// Each tree of [`chains`] has one nesting per operator; here a few operators build, and a
+/// hundred thousand, far more frames than a test thread's 2 MiB stack holds, build in
+/// `bench/stack.rs`.
 #[test]
-fn a_chain_of_a_hundred_thousand_members_builds() {
-    let text = "a".to_string() + &".b".repeat(100_000);
-    let tokens = lex(&text).unwrap();
-    let parsed = parse(&text, &tokens, "Expr", TOP).unwrap();
-    build(&text, &tokens, &parsed).unwrap();
+fn a_chain_of_a_few_operators_and_members_builds() {
+    for n in [1, 2, 9] {
+        for text in chains(n) {
+            builds(&text);
+        }
+    }
 }
 
 /// `^` is written without spaces (`0..=2^48`), and spaces around it are accepted: each spaced

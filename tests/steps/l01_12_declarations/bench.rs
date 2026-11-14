@@ -10,7 +10,8 @@ use zed_tests::scaling::{check, inputs};
 use zed_tests::trees::parsed;
 
 use super::scaling::{
-    Case, ELSE_IF_CHAIN, MANY_FUNCTIONS, NESTED_FUNCTIONS, Parsed, builds, texts, texts_hold,
+    Case, ELSE_IF_CHAIN, MANY_FUNCTIONS, NESTED_FUNCTIONS, Parsed, builds, nested, statements,
+    texts, texts_hold,
 };
 
 /// The units of `case` at `n` and `8n`, lexed and parsed before any run is timed.
@@ -53,4 +54,15 @@ fn a_long_else_if_chain_scales() {
     check("building an else if chain of n links", 200, |n| {
         builds(&ELSE_IF_CHAIN, &built[&n], n)
     });
+}
+
+/// The text of functions nested 100,000 deep, deeper than a recursion fits on the call stack
+/// (author P178: an unusual size is a benchmark); the same at small depths is checked by
+/// `scaling::the_text_of_functions_nested_a_few_deep`.
+#[test]
+fn the_text_of_functions_nested_deeper_than_the_call_stack() {
+    let n = 100_000;
+    let text = statements(nested(n))[0].to_string();
+    assert!(text.starts_with(&"(def f (x) (block ".repeat(1000)));
+    assert!(text.ends_with(&format!("(block (return x))){}", "))".repeat(n - 1))));
 }

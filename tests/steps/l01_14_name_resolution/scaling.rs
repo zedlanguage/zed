@@ -1,6 +1,6 @@
 //! The programs the benchmarks of `bench/scaling.rs` resolve, and what each resolution must be,
-//! checked here at small sizes (TEST-bench-move-rest, P170), and deep programs resolved on a
-//! 2 MiB stack.
+//! checked here at small sizes (TEST-bench-move-rest, P170). The deep programs resolved 20,000
+//! deep on a 2 MiB stack are in `bench/deep.rs`.
 
 use zedc::ast::Stmt;
 use zedc::resolve::{Ref, Resolution};
@@ -166,19 +166,4 @@ fn each_deep_shape_resolves_at_small_depths() {
             deep_resolves(shape, &r, n);
         }
     }
-}
-
-/// Each deep shape resolves 20,000 deep on a 2 MiB stack, the stack of a test thread.
-/// Resolution recursed once per level of nesting, and overflowed this stack near 10,000;
-/// `bench/scaling.rs` resolves the same shapes 100,000 deep under the timing.
-#[test]
-fn each_deep_shape_resolves_20000_deep_on_a_2_mib_stack() {
-    use zed_tests::deep::{on_small_stack, program, statements};
-    let n = 20_000;
-    on_small_stack(|| {
-        for shape in DEEP_SHAPES {
-            let r = zedc::resolve::resolve(&statements(&program(shape, n).text)).unwrap();
-            deep_resolves(shape, &r, n);
-        }
-    });
 }

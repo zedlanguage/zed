@@ -8,3 +8,4 @@ mod grammar_scaling;
 mod lr4_assoc;
 mod reserved;
 mod scaling;
+mod stack;

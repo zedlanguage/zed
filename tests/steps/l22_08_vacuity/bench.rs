@@ -5,6 +5,8 @@
 //! run by `tools/run_tests.sh --bench`; `scaling.rs` runs each family at small sizes and checks
 //! the walk's counts of pairs, runs and steps.
 
+mod hardness;
+
 use zed_tests::scaling;
 
 use super::scaling::{

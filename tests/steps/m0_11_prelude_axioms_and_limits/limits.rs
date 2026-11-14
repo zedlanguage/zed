@@ -1,9 +1,9 @@
 //! The minimum resource limits: an evaluation within them is accepted by the reference
 //! evaluator with its default settings. The step program is sized to its limit, and one step
 //! more is shown to cross it, so the size is measured and not estimated. Nested calls have a
-//! minimum and no maximum: a chain past the minimum is accepted too.
+//! minimum and no maximum: a chain past the minimum is accepted too. The limits at their size
+//! are in `bench/limits.rs`; here the same programs run at small sizes.
 
-use zed_kernel::eval::{MIN_MEMORY, MIN_NESTED_CALLS};
 use zed_kernel::term::build::{app, if_, lam, lit, prim, var};
 use zed_kernel::{KernelError, Prim, Term, Value, eval};
 
@@ -26,7 +26,7 @@ fn the_step_past_the_fuel_is_refused() {
 
 /// A chain of `n` calls, each nested in the one before:
 /// `depth(k) = if k == 1 { 1 } else { 1 + depth(k - 1) }`.
-fn nested(n: i64) -> Term {
+pub(super) fn nested(n: i64) -> Term {
     let body = if_(
         prim(Prim::Eq, vec![var("k"), lit(1)]),
         lit(1),
@@ -45,18 +45,8 @@ fn nested(n: i64) -> Term {
     app(f.clone(), vec![f, lit(n)])
 }
 
-#[test]
-fn twenty_thousand_nested_calls_are_accepted() {
-    let n = MIN_NESTED_CALLS as i64;
-    assert_eq!(eval(&nested(n)), Ok(Value::Int(n)));
-    assert_eq!(eval(&nested(n + 1)), Ok(Value::Int(n + 1)));
-    assert_eq!(eval(&nested(50 * n)), Ok(Value::Int(50 * n)));
-}
-
-#[test]
-fn a_value_of_almost_a_gibibyte_is_accepted() {
-    // A string doubled 29 times reaches 512 MiB; with the halves the recursion still holds,
-    // the strings alive at the end total 2^30 - 1 bytes.
+/// `"z"` doubled `k` times by a recursion that holds each half until it returns.
+pub(super) fn doubled(k: i64) -> Term {
     let me = app(
         var("me"),
         vec![
@@ -67,10 +57,18 @@ fn a_value_of_almost_a_gibibyte_is_accepted() {
     );
     let body = if_(prim(Prim::Eq, vec![var("k"), lit(0)]), var("s"), me);
     let f = lam(&["me", "s", "k"], body);
-    let out = eval(&app(f.clone(), vec![f, lit("z"), lit(29)])).unwrap();
-    let Value::Str(s) = out else {
-        panic!("{out:?}")
-    };
-    assert_eq!(s.len() as u64, MIN_MEMORY / 2);
-    assert_eq!((1..=29).map(|k| 1u64 << k).sum::<u64>() + 1, MIN_MEMORY - 1);
+    app(f.clone(), vec![f, lit("z"), lit(k)])
+}
+
+/// A chain of a few nested calls, and a string doubled a few times, are accepted; the chain
+/// past the minimum of nested calls and the string of 512 MiB are in `bench/limits.rs`.
+#[test]
+fn a_few_nested_calls_and_a_short_doubled_string_are_accepted() {
+    for n in [1, 2, 9] {
+        assert_eq!(eval(&nested(n)), Ok(Value::Int(n)));
+        let Ok(Value::Str(s)) = eval(&doubled(n)) else {
+            panic!("a string")
+        };
+        assert_eq!(s.len(), 1 << n);
+    }
 }

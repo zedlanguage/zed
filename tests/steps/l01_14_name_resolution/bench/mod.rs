@@ -3,5 +3,6 @@
 //! sizes by a correctness test of the module whose name each file bears.
 
 mod above;
+mod deep;
 mod fences;
 mod scaling;

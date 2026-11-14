@@ -295,35 +295,42 @@ fn an_or_of_ands_is_refused() {
     }
 }
 
-/// The work limit counts steps of multiplying out, not the size of the law: one `||` of more
-/// comparisons than `BUDGET` is joined with nothing multiplied out and is not refused, while
-/// `&&`s of `(a && b) || c`, six atoms written each, are refused exactly when the steps pass
-/// the limit.
-#[test]
-fn the_work_limit_is_not_a_size_limit() {
-    let n = BUDGET as usize + 2;
+/// One law, the `||` of the `n` comparisons `x{i} != x{i+1}`.
+pub(super) fn long_or(n: usize) -> Theory {
     let mut t = Theory::new("Long");
     let body: Vec<String> = (0..n).map(|i| format!("x{i} != x{}", i + 1)).collect();
     let binders: Vec<String> = (0..=n).map(|i| format!("x{i}")).collect();
     t.law("long", &binders.join(" "), &body.join(" || "));
-    assert!(!t.laws[0].refused());
-    assert_eq!(t.laws[0].clauses().len(), 1);
-    assert_eq!(t.laws[0].clauses()[0].len(), n);
-    // Each conjunct writes its two-clause `&&` once (2 steps), then joins `y == z` to each of
-    // its two clauses (4 steps).
-    let many = |m: usize| {
-        let mut t = Theory::new("Many");
-        let body: Vec<String> = (0..m)
-            .map(|i| format!("((x{i} == y && x{i} != z) || y == z)"))
-            .collect();
-        let mut binders: Vec<String> = (0..m).map(|i| format!("x{i}")).collect();
-        binders.extend(["y".to_string(), "z".to_string()]);
-        t.law("many", &binders.join(" "), &body.join(" && "));
-        t
-    };
-    let m = BUDGET as usize / 6;
-    let t = many(m);
-    assert!(!t.laws[0].refused());
-    assert_eq!(t.laws[0].clauses().len(), 2 * m);
-    assert!(many(m + 1).laws[0].refused());
+    t
+}
+
+/// One law, the `&&` of `m` copies of `(a && b) || c`, six atoms written each. Each conjunct
+/// writes its two-clause `&&` once (2 steps), then joins `y == z` to each of its two clauses
+/// (4 steps).
+pub(super) fn many(m: usize) -> Theory {
+    let mut t = Theory::new("Many");
+    let body: Vec<String> = (0..m)
+        .map(|i| format!("((x{i} == y && x{i} != z) || y == z)"))
+        .collect();
+    let mut binders: Vec<String> = (0..m).map(|i| format!("x{i}")).collect();
+    binders.extend(["y".to_string(), "z".to_string()]);
+    t.law("many", &binders.join(" "), &body.join(" && "));
+    t
+}
+
+/// A short `||` of comparisons is joined with nothing multiplied out, one clause of all its
+/// comparisons, and a few `(a && b) || c`s multiply out to two clauses each, neither refused.
+/// The same at the size of `BUDGET`, where the second is refused one conjunct past the limit,
+/// is `bench/hardness.rs`; `an_or_of_ands_is_refused` refuses a small law past the limit.
+#[test]
+fn a_short_or_and_a_few_ands_are_joined_without_refusal() {
+    for n in [1, 2, 9] {
+        let t = long_or(n);
+        assert!(!t.laws[0].refused());
+        assert_eq!(t.laws[0].clauses().len(), 1);
+        assert_eq!(t.laws[0].clauses()[0].len(), n);
+        let t = many(n);
+        assert!(!t.laws[0].refused());
+        assert_eq!(t.laws[0].clauses().len(), 2 * n);
+    }
 }

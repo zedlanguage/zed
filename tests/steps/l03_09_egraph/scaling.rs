@@ -167,11 +167,9 @@ pub(super) fn linear_chain(n: usize) -> Id {
     }
 }
 
-/// The plan row's law, from Zed source: before the chain was read as one sum, its written side
-/// of 8192 monomials cost about 3.6 s and was refused by the limit.
-#[test]
-fn the_law_of_4096_names_times_a_sum_is_proved_from_source() {
-    let n = 4096;
+/// The source of the plan row's law for `n` names: `sides(x0: int, ..., y: int, z: int) =
+/// ((x0 + ... + x{n-1}) * (y + z), x0 * y + x0 * z + ...)`.
+pub(super) fn names_times_a_sum_source(n: usize) -> String {
     let xs: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
     let params: Vec<String> = xs
         .iter()
@@ -183,18 +181,22 @@ fn the_law_of_4096_names_times_a_sum_is_proved_from_source() {
         .iter()
         .flat_map(|x| [format!("{x} * y"), format!("{x} * z")])
         .collect();
-    let src = format!(
+    format!(
         "sides({}) = ({lhs}, {});\n",
         params.join(", "),
         rhs.join(" + ")
-    );
-    let sides = &super::sides_of(&src, &["sides"])[0];
-    // The elaboration of the source is not timed: only the decision is the row's.
-    let start = std::time::Instant::now();
-    let d = super::decide_sides(sides, Carrier::Int);
-    eprintln!("work {} limit {LIMIT}, {:?}", d.work, start.elapsed());
-    assert_eq!(d.verdict, Verdict::Proved);
-    assert!(d.work <= LIMIT / 10.0, "{} of {LIMIT}", d.work);
+    )
+}
+
+/// The plan row's law from Zed source at a few names, proved; the same at 4096 names, held
+/// within a tenth of the limit, is in `bench/scaling.rs`.
+#[test]
+fn the_law_of_a_few_names_times_a_sum_is_proved_from_source() {
+    for n in [1, 2, 9] {
+        let sides = &super::sides_of(&names_times_a_sum_source(n), &["sides"])[0];
+        let d = super::decide_sides(sides, Carrier::Int);
+        assert_eq!(d.verdict, Verdict::Proved);
+    }
 }
 
 /// `x0 * x1 * c0 + ... + x(n-1) * x0 * c(n-1) - x0` against the same monomials in reverse,

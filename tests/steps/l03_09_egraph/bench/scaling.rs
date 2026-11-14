@@ -1,6 +1,7 @@
 //! The rule of low complexity (DESIGN.md Part G): each family of `scaling.rs` at n and 8n, the
 //! work held to the order of its output. Each run asserts the identity proved.
 
+use zed_kernel::poly::{Carrier, LIMIT, Verdict};
 use zed_tests::scaling;
 
 use crate::scaling::{
@@ -83,4 +84,20 @@ fn the_square_of_a_power_of_a_sum_beside_one_name() {
         2,
         |n| proved(&ins[&n]),
     );
+}
+
+/// The plan row's law, from Zed source: before the chain was read as one sum, its written side
+/// of 8192 monomials cost about 3.6 s and was refused by the limit (author P178: a large input
+/// is a benchmark). `scaling::the_law_of_a_few_names_times_a_sum_is_proved_from_source` proves
+/// the same law at a few names.
+#[test]
+fn the_law_of_4096_names_times_a_sum_is_proved_from_source() {
+    let src = crate::scaling::names_times_a_sum_source(4096);
+    let sides = &crate::sides_of(&src, &["sides"])[0];
+    // The elaboration of the source is not timed: only the decision is the row's.
+    let start = std::time::Instant::now();
+    let d = crate::decide_sides(sides, Carrier::Int);
+    eprintln!("work {} limit {LIMIT}, {:?}", d.work, start.elapsed());
+    assert_eq!(d.verdict, Verdict::Proved);
+    assert!(d.work <= LIMIT / 10.0, "{} of {LIMIT}", d.work);
 }

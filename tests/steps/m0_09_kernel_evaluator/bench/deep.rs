@@ -1,8 +1,8 @@
 //! Deep programs at the rule of low complexity, each linear in its depth: a recursion, a
 //! tail-recursive loop, a chain of continuations, a recursion through regions, a traced
 //! recursion and a list built by recursion. Each program runs at small sizes in
-//! `deep::each_benchmark_program_returns_at_small_sizes`, and far deeper in the other tests of
-//! `deep.rs`.
+//! `deep::each_benchmark_program_returns_at_small_sizes`, and 40,000 deep in
+//! `bench/nested_calls.rs`.
 
 use zed_kernel::term::build::{app, lit};
 use zed_kernel::{Evaluator, World, eval};

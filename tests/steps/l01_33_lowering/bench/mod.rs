@@ -3,4 +3,5 @@
 //! sizes by a correctness test of the module whose name each file bears.
 
 mod asks;
+mod deep;
 mod scaling;

@@ -76,7 +76,7 @@ fn a_non_nfc_rejection_names_the_nfc_spelling_and_fixing_it_loads() {
     }
 }
 
-/// A fixed-seed generator, so a failure reproduces.
+/// A generator from a seed, so a failure reproduces.
 struct Lcg(u64);
 
 impl Lcg {
@@ -94,15 +94,16 @@ impl Lcg {
 /// NFC, the span is not, and no shorter end of the span that starts at a character of combining
 /// class 0 is not. (An end starting at a mark is not text a person writes: the span starts at the
 /// mark's base.)
-#[test]
-fn the_span_is_the_first_text_nfc_changes() {
+///
+/// `cases` texts from `seed`; at least a quarter are rejected and a twentieth accepted.
+pub(super) fn spans_of_random_texts(seed: u64, cases: usize) {
     let alphabet = [
         'a', 'e', 'n', 'x', ' ', '\u{301}', '\u{303}', '\u{323}', '\u{307}', '\u{212b}', '\u{c5}',
         '\u{1100}', '\u{1161}', '\u{11a8}', '\u{ac00}', '\u{b47}', '\u{b3e}', '\u{344}',
     ];
-    let mut rng = Lcg(29);
+    let mut rng = Lcg(seed);
     let (mut rejected, mut accepted) = (0, 0);
-    for _ in 0..20_000 {
+    for _ in 0..cases {
         let len = 1 + rng.next(8);
         let s: String = (0..len)
             .map(|_| alphabet[rng.next(alphabet.len())])
@@ -132,7 +133,14 @@ fn the_span_is_the_first_text_nfc_changes() {
         }
     }
     assert!(
-        rejected > 5_000 && accepted > 1_000,
+        rejected > cases / 4 && accepted > cases / 20,
         "{rejected} rejected, {accepted} accepted"
     );
+}
+
+/// 2,000 texts from a new seed each run; 20,000 are in `bench/random.rs`.
+#[test]
+fn the_span_is_the_first_text_nfc_changes() {
+    let seed = zed_tests::seed::seed("the_span_is_the_first_text_nfc_changes");
+    spans_of_random_texts(seed, 2_000);
 }

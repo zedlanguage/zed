@@ -3,6 +3,8 @@
 //! --bench`. Each check they make besides the ratio is made at small sizes by the correctness
 //! tests in `scaling.rs`.
 
+mod random;
+
 use zed_tests::scaling::{check, check_instructions_only, inputs};
 
 use super::scaling::{

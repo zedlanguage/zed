@@ -5,8 +5,6 @@
 //! The benchmarks of these values are in `bench/shared.rs`; their inputs are built here, and
 //! what each asserts besides its ratio is checked here at small sizes (TEST-bench-move-rest).
 
-use std::thread;
-
 use zed_kernel::term::build::{app, lam, let_, lit, prim, var};
 use zed_kernel::{Evaluator, Family, Prim, Term, Value, World};
 use zed_tests::kernel::*;
@@ -46,15 +44,6 @@ fn expected_list(n: usize) -> Value {
     })
 }
 
-/// Runs `f` on a thread with a 256 MiB stack: `foldl` is a definedness fix whose accumulators
-/// each read the one before, so the evaluator nests one call per element.
-pub(super) fn on_large_stack(f: impl FnOnce() + Send) {
-    thread::scope(|scope| {
-        let t = thread::Builder::new().stack_size(1 << 28);
-        t.spawn_scoped(scope, f).unwrap().join().unwrap()
-    })
-}
-
 #[test]
 fn a_record_read_once_per_field_gives_each_field() {
     let got = run(&reads(5));
@@ -64,11 +53,11 @@ fn a_record_read_once_per_field_gives_each_field() {
 
 #[test]
 fn an_accumulated_list_holds_every_element_in_order() {
-    on_large_stack(|| {
-        for n in [0, 1, 5, 50] {
-            assert_eq!(run(&cons_list(n)), expected_list(n), "n = {n}");
-        }
-    });
+    // On the default stack: the evaluator nests one call per element, so the lists of
+    // thousands of elements are in `bench/shared.rs`, on a 256 MiB stack.
+    for n in [0, 1, 2, 9] {
+        assert_eq!(run(&cons_list(n)), expected_list(n), "n = {n}");
+    }
 }
 
 #[test]

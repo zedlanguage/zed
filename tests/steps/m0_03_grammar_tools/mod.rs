@@ -822,10 +822,9 @@ fn nested_body(depth: usize) -> String {
     )
 }
 
-/// The tools parse on the machine's heap stack, so a nest runs on a test thread's 2 MiB stack.
-#[test]
-fn the_tools_take_a_deep_program_on_a_small_stack() {
-    let text = nested_body(4000);
+/// Runs the ring, layer and check tools on a program whose body nests `depth` parentheses.
+fn tools_take_a_nest(depth: usize) {
+    let text = nested_body(depth);
     let dir = spec_dir("deep_tools", &design(&fence(&text)), "");
     let file = dir.write("01-deep.zed", &format!("// layer L1\n{text}\n"));
     let (outcome, out) = tool(ring::run, &[&dir.root(), &file]);
@@ -836,14 +835,21 @@ fn the_tools_take_a_deep_program_on_a_small_stack() {
     assert_eq!(outcome, Ok(true), "{out}");
 }
 
-/// The lexical grammar goes through the same machine one character at a time.
-#[test]
-fn the_tools_lex_a_long_program_on_a_small_stack() {
-    let text = format!(
-        "double(x: int) -> int = {};",
-        vec!["x"; 200_000].join(" + ")
-    );
+/// Lexes a body that adds `n` names, one character at a time through the machine.
+fn lexes_a_sum(n: usize) {
+    let text = format!("double(x: int) -> int = {};", vec!["x"; n].join(" + "));
     let dir = spec_dir("long_lex", &design(""), "");
     let spec = Spec::open(&dir.root()).expect("the spec reads");
     assert!(zed_tools::syntax::lex(&spec.lexical, &text).is_ok());
+}
+
+/// A program nesting a few parentheses goes through the tools, and a short one is lexed; the
+/// same 4,000 deep and 200,000 names long, on a test thread's 2 MiB stack, are in
+/// `bench/stack.rs`.
+#[test]
+fn the_tools_take_a_nested_program_and_lex_a_sum() {
+    for n in [1, 2, 9] {
+        tools_take_a_nest(n);
+        lexes_a_sum(n);
+    }
 }

@@ -5,6 +5,7 @@
 //! `bench/deep.rs` and `bench/written.rs` (TEST-bench-move-rest).
 
 mod deep;
+mod stack;
 mod written;
 
 use std::sync::Mutex;

@@ -4,6 +4,8 @@
 //! benchmark of this step, run by `tools/run_tests.sh --bench`; `scaling.rs` makes its check at
 //! small widths.
 
+mod limits;
+
 use zed_tests::scaling::check_order;
 
 use super::scaling::{bitxor_associative, checks_every_triple};

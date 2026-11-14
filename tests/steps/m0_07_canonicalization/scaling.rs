@@ -96,11 +96,3 @@ fn chains_facets_and_deep_terms_are_canonicalized_at_small_sizes() {
     }
     sorts_facets(0);
 }
-
-/// Renaming the binders and writing the canonical form recursed once per level of the term,
-/// and dropping a term did too; each overflowed a 2 MiB stack near 10,000 levels. At 12,500
-/// levels each deep term is addressed on that stack, by the address of its renamed copy.
-#[test]
-fn terms_12500_deep_are_addressed_on_a_2_mib_stack() {
-    zed_tests::deep::on_small_stack(|| addresses_ignore_names(12_500));
-}

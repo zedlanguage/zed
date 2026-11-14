@@ -1,17 +1,14 @@
-//! A graph nested 20,000 deep, whose deepest region matches a value against a pattern that
-//! binds a written name: the canonicalizer renames the binder, normalizes, ranks and keys the
-//! graph on a thread of the default 2 MiB stack, in time linear in its depth. An edge of many
-//! facets in reverse order is canonicalized and keyed in `O(F log F)`, its facets sorted once.
-//! The benchmarks in `bench/scaling.rs` hold both orders; here each is checked at small sizes.
-//! A plain recursion takes at least 112 bytes a level (measured at opt-level 2), so 20,000
-//! levels, 2.2 MB, would overflow the 2 MiB stack.
+//! A graph nested a few levels deep, whose deepest region matches a value against a pattern
+//! that binds a written name: the canonicalizer renames the binder, normalizes, ranks and keys
+//! the graph. An edge of a few facets in reverse order is canonicalized and keyed, its facets
+//! sorted. The same graph 20,000 deep is in `bench/deep.rs`; the times, linear in the depth and
+//! `O(F log F)` in the facets, are in `bench/scaling.rs`.
 
 use std::sync::Arc;
 
 use zed_kernel::Value;
 use zed_kernel::term::Pattern;
 use zed_kernel::types::Type;
-use zed_tests::deep::on_small_stack;
 use zedc::canon::Facet;
 use zedc::zir::canon::{address, canonicalize, key, ranks, step};
 use zedc::zir::{Edge, Node, Op, Region, RegionKind, Src};
@@ -40,25 +37,6 @@ pub(super) fn deep_match(depth: usize, binder: &str) -> Region {
     }];
     r.results = vec![Src::Out(0, 0)];
     g
-}
-
-#[test]
-fn a_graph_nested_20000_deep_is_canonicalized_on_a_2_mib_stack() {
-    on_small_stack(|| {
-        let mut g = deep_match(20_000, "x");
-        assert_eq!(ranks(&g)[0], 1, "one written binder");
-        assert_eq!(
-            address(&g).expect("memory for the address"),
-            address(&deep_match(20_000, "y")).expect("memory for the address")
-        );
-        assert_eq!(
-            key(&canonicalize(&g)).expect("memory for the key"),
-            key(&canonicalize(&deep_match(20_000, "y"))).expect("memory for the key")
-        );
-        let normal = canonicalize(&g);
-        while step(&mut g).is_some() {}
-        assert_eq!(g, normal);
-    });
 }
 
 /// A function region whose one argument is an `int` with `n` facets in reverse order: units

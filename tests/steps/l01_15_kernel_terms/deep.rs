@@ -144,27 +144,6 @@ pub(super) fn nested(n: usize) -> Vec<(&'static str, Term)> {
     ]
 }
 
-#[test]
-fn a_term_far_deeper_than_the_stack_copies_compares_and_prints() {
-    // A derived `Clone`, `==` or `Debug` overflows a 2 MiB stack near 10,000 levels.
-    let n = 100_000;
-    zed_tests::deep::on_small_stack(|| {
-        for ((what, a), (_, b)) in nested(n).into_iter().zip(nested(n)) {
-            let copy = a.clone();
-            assert!(copy == a, "{what}: a copy equals its original");
-            assert!(a == b, "{what}: two builds are equal");
-            let text = format!("{a:?}");
-            assert_eq!(text, format!("{b:?}"), "{what}");
-            assert_eq!(text, format!("{copy:?}"), "{what}");
-            assert!(text.len() > n, "{what}: {} bytes", text.len());
-        }
-        // One leaf changed at the bottom is found.
-        let differ = (0..n).fold(var("z"), |b, _| Term::Lam(vec!["y".into()], sh(b)));
-        let (_, lams) = nested(n).swap_remove(0);
-        assert!(lams != differ);
-    });
-}
-
 /// `n` levels of `if s { s } else { s }`, each level's three parts one shared subterm: a DAG
 /// of `n + 1` nodes with `3^n` paths.
 pub(super) fn dag(n: usize) -> Term {
@@ -172,20 +151,6 @@ pub(super) fn dag(n: usize) -> Term {
         let s = sh(t);
         Term::If(s.clone(), s.clone(), s)
     })
-}
-
-#[test]
-fn equal_dags_compare_once_per_shared_pair() {
-    // Two DAGs built apart share no subterm, so no pair is equal by its id alone: a walk of
-    // the paths reads 3^60 of them.
-    zed_tests::deep::on_small_stack(|| {
-        assert!(dag(60) == dag(60));
-        assert!(dag(60) != dag(59));
-        // Each level holds its one subterm three times, so the drop of a level was the last
-        // holder of the level below inside its own drop, which recursed: a deep DAG
-        // overflowed the stack.
-        drop(dag(100_000));
-    });
 }
 
 /// Terms nested `n` deep through the other parts the printer nests through: `let` bodies, `else`
@@ -221,32 +186,6 @@ pub(super) fn indents(what: &str) -> bool {
     .contains(&what)
 }
 
-#[test]
-fn a_term_far_deeper_than_the_stack_is_displayed_and_broken() {
-    // The printer recursed over a tree of its layout and overflowed a 2 MiB stack near 10,000
-    // levels.
-    let n = 100_000;
-    zed_tests::deep::on_small_stack(|| {
-        for (what, t) in nested(n).into_iter().chain(printed(n)) {
-            let flat = t.to_string();
-            assert!(flat.len() > n, "{what}: {} bytes", flat.len());
-            assert_eq!(pretty(&t, usize::MAX), flat, "{what}");
-            if !indents(what) {
-                let broken = pretty(&t, 80);
-                assert_eq!(
-                    broken.split_whitespace().collect::<String>(),
-                    flat.split_whitespace().collect::<String>(),
-                    "{what}"
-                );
-            }
-        }
-        let tuple = (0..n).fold(Pattern::Bind("p".into()), |p, _| {
-            Pattern::Tuple(vec![p, Pattern::Wild])
-        });
-        assert_eq!(tuple.to_string().len(), "p".len() + n * "(, _)".len());
-    });
-}
-
 /// Every term the benchmarks of `bench/deep.rs` time, at a few levels: a copy and a second build
 /// equal the term and write the same `Debug` text, a DAG equals its second build, and the text
 /// broken to the width each benchmark uses holds the one-line text.
@@ -269,4 +208,23 @@ fn each_benchmark_term_copies_compares_and_prints_at_small_depths() {
             );
         }
     }
+}
+
+/// Two DAGs built apart share no subterm, so no pair is equal by its id alone: a walk of the
+/// paths would read 3^60 of them, where the comparison takes each shared pair once. A leaf
+/// changed at the bottom of a term is found, and a nested tuple pattern is written in full;
+/// the same 100,000 deep are in `bench/stack.rs`.
+#[test]
+fn equal_dags_compare_once_per_shared_pair_and_a_changed_leaf_is_found() {
+    assert!(dag(60) == dag(60));
+    assert!(dag(60) != dag(59));
+    drop(dag(9));
+    let n = 9;
+    let differ = (0..n).fold(var("z"), |b, _| Term::Lam(vec!["y".into()], sh(b)));
+    let (_, lams) = nested(n).swap_remove(0);
+    assert!(lams != differ);
+    let tuple = (0..n).fold(Pattern::Bind("p".into()), |p, _| {
+        Pattern::Tuple(vec![p, Pattern::Wild])
+    });
+    assert_eq!(tuple.to_string().len(), "p".len() + n * "(, _)".len());
 }

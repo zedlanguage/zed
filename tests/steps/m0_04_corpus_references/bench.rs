@@ -4,6 +4,9 @@
 //! input in `scaling.rs`: the power is what the problem forces, such as a full table in the
 //! output, not the algorithm of the corpus program. `scaling.rs` runs each input at small sizes.
 
+mod chains;
+mod digits;
+
 use std::fs;
 
 use zed_tests::scaling::check_order;

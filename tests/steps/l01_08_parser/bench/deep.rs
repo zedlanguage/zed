@@ -1,7 +1,7 @@
 //! Each stage of each deep form of `deep.rs`, from text to text, is linear in the depth, and a
 //! nest of blocks of lines is written at the order of its text: the benchmarks of `deep.rs`.
-//! Its tests run each form through every stage at a depth past what the old recursive code
-//! held, and write a small nest of blocks of lines.
+//! Its tests run each form through every stage at a few levels, and write a small nest of
+//! blocks of lines; `bench/stack.rs` runs each form far deeper.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};

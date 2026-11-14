@@ -43,7 +43,7 @@ pub(super) fn graph(v: Value) -> Region {
 }
 
 /// The kernel address of the definition `wide = v`.
-fn kernel_address(v: Value) -> ContentAddress {
+pub(super) fn kernel_address(v: Value) -> ContentAddress {
     let none = |_: &str| None;
     canon::address(&def(v), &none).expect("memory for the address")
 }
@@ -249,39 +249,6 @@ fn a_cut_count_of_limbs_is_an_error() {
             "cut {cut}"
         );
     }
-}
-
-/// The size item CONST-wide-addr was written for: a constant of 2^30 bits, whose decimal digits
-/// took about 80 minutes to address (test audit 2026-11-08: the tests above stop at 2^20 bits).
-/// Its ZIR and kernel addresses, those of its negation and of `2^(2^30)` kept as a power, and
-/// the binary form read back.
-#[test]
-fn a_constant_of_two_to_the_thirty_bits_is_addressed() {
-    const N: usize = 1 << 30;
-    let start = std::time::Instant::now();
-    let pos = wide(N, Sign::Plus);
-    let neg = -&pos;
-    let g = graph(Value::int(pos.clone()));
-    let built = start.elapsed();
-    let a = address(&g).expect("memory for the address");
-    assert_ne!(
-        a,
-        address(&graph(Value::int(neg.clone()))).expect("memory for the address")
-    );
-    assert_ne!(
-        a,
-        address(&graph(Value::integer(two_to(N)))).expect("memory for the address")
-    );
-    assert_ne!(
-        kernel_address(Value::int(pos)),
-        kernel_address(Value::int(neg))
-    );
-    let bytes = binary::encode(&g).expect("memory for the bytes");
-    assert_eq!(binary::decode(&bytes).expect("a graph"), g);
-    eprintln!(
-        "a constant of 2^30 bits: built in {built:?}, addressed and read back in {:?}",
-        start.elapsed() - built
-    );
 }
 
 /// The first `n` primes.

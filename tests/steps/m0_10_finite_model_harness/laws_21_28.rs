@@ -799,6 +799,40 @@ fn law_25_one_row_of_a_closure_is_a_search_from_its_source() {
     assert_eq!(n, 512 + 256);
 }
 
+/// The sides of the invariant form for the relation `pairs`: on the iterates of
+/// `x -> x ∪ E · x` from `E`, `E · x = x · E` holds, and with it the one identity the
+/// invariant form needs.
+pub(super) fn left_multiplied_invariant(pairs: &[(i64, i64)]) -> (Term, Term) {
+    let e = relation(pairs);
+    let mut checks = Vec::new();
+    let mut x = e.clone();
+    let mut binds = Vec::new();
+    for _ in 0..N {
+        let name = fresh("x");
+        binds.push((name.clone(), x));
+        let xv = var(&name);
+        let next = union(xv.clone(), compose(e.clone(), xv.clone()));
+        let commutes = eq(
+            compose(e.clone(), xv.clone()),
+            compose(xv.clone(), e.clone()),
+        );
+        let fused = eq(
+            row(next.clone(), 0),
+            union(row(xv.clone(), 0), successors(row(xv, 0), e.clone())),
+        );
+        checks.push(and(commutes, fused));
+        x = next;
+    }
+    let all = checks.into_iter().reduce(and).unwrap();
+    let term = binds
+        .into_iter()
+        .rev()
+        .fold(all, |body, (name, value)| let_(&name, value, body));
+    (term, lit(true))
+}
+
+/// The invariant form on every 48th relation, three points and four; all 768 relations are in
+/// `bench/laws.rs`, since they take about 9 s (TEST-law25-time).
 #[test]
 fn law_25_a_left_multiplied_step_takes_the_invariant_form() {
     // `r[s]` does not commute with `r -> E · r` on every relation.
@@ -813,37 +847,9 @@ fn law_25_a_left_multiplied_step_takes_the_invariant_form() {
             successors(row(r, 0), e),
         )
     });
-    // On the iterates of `x -> x ∪ E · x` from `E`, `E · x = x · E` holds, and with it the
-    // one identity the invariant form needs.
-    let n = holds(relations(), |pairs| {
-        let e = relation(pairs);
-        let mut checks = Vec::new();
-        let mut x = e.clone();
-        let mut binds = Vec::new();
-        for _ in 0..N {
-            let name = fresh("x");
-            binds.push((name.clone(), x));
-            let xv = var(&name);
-            let next = union(xv.clone(), compose(e.clone(), xv.clone()));
-            let commutes = eq(
-                compose(e.clone(), xv.clone()),
-                compose(xv.clone(), e.clone()),
-            );
-            let fused = eq(
-                row(next.clone(), 0),
-                union(row(xv.clone(), 0), successors(row(xv, 0), e.clone())),
-            );
-            checks.push(and(commutes, fused));
-            x = next;
-        }
-        let all = checks.into_iter().reduce(and).unwrap();
-        let term = binds
-            .into_iter()
-            .rev()
-            .fold(all, |body, (name, value)| let_(&name, value, body));
-        (term, lit(true))
-    });
-    assert_eq!(n, 512 + 256);
+    let some: Vec<_> = relations().into_iter().step_by(48).collect();
+    let n = holds(some, |pairs| left_multiplied_invariant(pairs));
+    assert_eq!(n, 16);
 }
 
 /// `x · e` for a set `x` and a relation `e` into `0..n`: the image of `x`, as a family of

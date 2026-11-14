@@ -2,6 +2,8 @@
 //! this step, run by `tools/run_tests.sh --bench`. `scaling.rs` makes each of their checks at
 //! small sizes.
 
+mod stack;
+
 use std::collections::HashMap;
 
 use zed_tests::scaling;

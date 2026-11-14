@@ -18,13 +18,13 @@ pub(super) struct Case {
 }
 
 /// The statements of the unit `text`.
-fn statements(text: String) -> Vec<Stmt> {
+pub(super) fn statements(text: String) -> Vec<Stmt> {
     let (text, tokens, tree) = parsed(text, "Unit");
     unit(&text, &tokens, &tree).unwrap()
 }
 
 /// `n` functions `f`, each nested in the block of the one before, around `x`.
-fn nested(n: usize) -> String {
+pub(super) fn nested(n: usize) -> String {
     format!("{}x{}", "f(x) { ".repeat(n), " }".repeat(n))
 }
 
@@ -120,10 +120,16 @@ fn each_benchmark_unit_builds_and_is_written_at_small_sizes() {
     }
 }
 
+/// The text of functions nested a few deep, each level a `def` whose block holds the next;
+/// the same 100,000 deep is in `bench.rs`.
 #[test]
-fn the_text_of_functions_nested_deeper_than_the_call_stack() {
-    let n = 100_000;
-    let text = statements(nested(n))[0].to_string();
-    assert!(text.starts_with(&"(def f (x) (block ".repeat(1000)));
-    assert!(text.ends_with(&format!("(block (return x))){}", "))".repeat(n - 1))));
+fn the_text_of_functions_nested_a_few_deep() {
+    for n in [1, 2, 9] {
+        let text = statements(nested(n))[0].to_string();
+        assert!(text.starts_with(&"(def f (x) (block ".repeat(n)), "{text}");
+        assert!(
+            text.ends_with(&format!("(block (return x))){}", "))".repeat(n - 1))),
+            "{text}"
+        );
+    }
 }

@@ -40,20 +40,6 @@ fn nested_shapes_break_as_before() {
     assert_eq!(pretty(&lam, 10), "y -> y -> y -> x");
 }
 
-/// Each shape `bench::the_printer_scales_with_depth` prints, on a small stack, at the larger
-/// depths it reaches: on one line with one level of text per level, and broken at width 80.
-#[test]
-fn each_shape_prints_deep_on_a_small_stack() {
-    zed_tests::deep::on_small_stack(|| {
-        for (k, depth) in [(0, 4_000), (1, 1_000), (2, 16_000)] {
-            let t = shape(k, depth);
-            let marks = [" -> ", "g(", "(a)"][k];
-            assert_eq!(t.to_string().matches(marks).count(), depth, "{}", SHAPES[k]);
-            std::hint::black_box(pretty(&shape(k, depth.min(4_000)), 80));
-        }
-    });
-}
-
 /// Each shape of term dropped, `n` nodes: four nested `n` deep, through an `Arc` (`let` bodies,
 /// lambda bodies, `else` branches) or a `Vec` of arguments (a left-nested sum), and two
 /// branching, a balanced tree of sums and one tuple of `n` parts.
@@ -90,51 +76,14 @@ pub(super) fn dropped_shapes(n: usize) -> Vec<(&'static str, Term)> {
     ]
 }
 
-/// Every shape `bench::dropping_deep_and_wide_terms_scales` drops, at its smaller size, 12,500,
-/// past the near 10,000 levels where a recursive drop overflows a 2 MiB stack.
-#[test]
-fn each_shape_drops_on_a_small_stack() {
-    zed_tests::deep::on_small_stack(|| {
-        for (_, t) in dropped_shapes(12_500) {
-            drop(t);
-        }
-    });
-}
-
 /// How many `Lam`s are nested at the top of `t`.
-fn lambda_depth(mut t: &Term) -> usize {
+pub(super) fn lambda_depth(mut t: &Term) -> usize {
     let mut d = 0;
     while let Term::Lam(_, body) = t {
         d += 1;
         t = body;
     }
     d
-}
-
-#[test]
-fn a_term_far_deeper_than_the_stack_drops_and_keeps_its_shared_parts() {
-    // A recursive drop overflows a 2 MiB stack near 10,000 levels. A part another owner still
-    // holds is left whole, and its own drop later frees it the same way.
-    let n = 1_000_000;
-    zed_tests::deep::on_small_stack(|| {
-        let inner =
-            Shared::new((0..n).fold(var("x"), |b, _| Term::Lam(vec!["y".into()], Shared::new(b))));
-        let outer = (0..n).fold(Term::Lam(vec!["z".into()], inner.clone()), |b, _| {
-            Term::Lam(vec!["y".into()], Shared::new(b))
-        });
-        assert_eq!(lambda_depth(&outer), 2 * n + 1);
-        drop(outer);
-        assert_eq!(Shared::strong_count(&inner), 1);
-        assert_eq!(lambda_depth(&inner), n);
-        drop(inner);
-        let wide = Term::Prim(
-            zed_kernel::term::Prim::Tuple,
-            (0..n)
-                .map(|_| Term::Lam(vec!["y".into()], Shared::new(var("x"))))
-                .collect(),
-        );
-        drop(wide);
-    });
 }
 
 /// Negations and indices nested `d` deep: `-(-(-x))` and `t[0][0][0]`, each operand checked
@@ -148,19 +97,48 @@ pub(super) fn prefix_shape(k: usize, d: usize) -> Term {
     })
 }
 
-/// The texts of `bench::negations_and_indices_print_in_linear_time`'s shapes, and both printed
-/// at its smaller depth on a small stack.
+/// The texts of `bench::negations_and_indices_print_in_linear_time`'s shapes, on one line and
+/// broken to a width; the same 2,000 deep are in `bench/stack.rs`.
 #[test]
 fn negations_and_indices_print_as_before() {
     assert_eq!(prefix_shape(0, 3).to_string(), "-(-(-x))");
     assert_eq!(prefix_shape(1, 3).to_string(), "x[0][0][0]");
-    zed_tests::deep::on_small_stack(|| {
-        for k in 0..2 {
-            let t = prefix_shape(k, 2_000);
-            assert_eq!(t.to_string().matches(["-", "[0]"][k]).count(), 2_000);
-            std::hint::black_box(pretty(&t, 80));
+    assert_eq!(pretty(&prefix_shape(0, 3), 80), "-(-(-x))");
+    assert_eq!(pretty(&prefix_shape(1, 3), 80), "x[0][0][0]");
+}
+
+/// Each shape of the benchmarks of `bench.rs` at a few levels: printed on one line with one
+/// level of text per level and broken at width 80, and dropped; the same far deeper than a
+/// plain recursion fits on a 2 MiB stack are in `bench/stack.rs`.
+#[test]
+fn each_shape_prints_and_drops_at_small_depths() {
+    for depth in [1, 2, 9] {
+        for k in 0..3 {
+            let t = shape(k, depth);
+            let marks = [" -> ", "g(", "(a)"][k];
+            assert_eq!(t.to_string().matches(marks).count(), depth, "{}", SHAPES[k]);
+            pretty(&t, 80);
         }
+        for (_, t) in dropped_shapes(depth) {
+            drop(t);
+        }
+    }
+}
+
+/// A term whose drop meets a part another owner still holds leaves that part whole, and its
+/// own drop later frees it; the same a million deep is in `bench/stack.rs`.
+#[test]
+fn a_term_dropped_keeps_its_shared_parts() {
+    let n = 3;
+    let inner =
+        Shared::new((0..n).fold(var("x"), |b, _| Term::Lam(vec!["y".into()], Shared::new(b))));
+    let outer = (0..n).fold(Term::Lam(vec!["z".into()], inner.clone()), |b, _| {
+        Term::Lam(vec!["y".into()], Shared::new(b))
     });
+    assert_eq!(lambda_depth(&outer), 2 * n + 1);
+    drop(outer);
+    assert_eq!(Shared::strong_count(&inner), 1);
+    assert_eq!(lambda_depth(&inner), n);
 }
 
 /// Item PRINT-group-site-defs: a match on `v` with `n` type tests that each write a part twice,

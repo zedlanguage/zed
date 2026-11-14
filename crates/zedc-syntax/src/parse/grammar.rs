@@ -484,8 +484,8 @@ impl Reader<'_> {
     // any depth; a complete solution also needs an iterative `Drop` for [`Expr`] and explicit
     // stacks in the fuzzer's `Depths::of`, `refs` and `Gen::gen_of` (zed-tools), which recurse
     // per level too. Test:
-    // `l01_08_parser::grammar_read::a_nest_of_separators_is_read_in_linear_time`; COMPLEXITY.md
-    // F88.
+    // `l01_08_parser::bench::grammar_read::a_nest_of_separators_is_read_in_linear_time`;
+    // COMPLEXITY.md F88.
     fn within(&mut self, read: fn(&mut Self) -> Result<Expr, String>) -> Result<Expr, String> {
         self.depth += 1;
         let e = read(self);

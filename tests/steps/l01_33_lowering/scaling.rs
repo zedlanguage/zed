@@ -6,7 +6,6 @@
 
 use zed_kernel::term::build::{app, lam, let_, lit, var};
 use zed_kernel::{Evaluator, Term, World};
-use zed_tests::deep::on_small_stack;
 use zed_tests::scaling;
 use zedc::zir::Region;
 use zedc::zir::lower::{lower, raise};
@@ -177,31 +176,6 @@ fn a_name_read_at_every_depth_keeps_its_meaning() {
     }
 }
 
-// A term nested 20,000 deep lowers, and its graph raises back, on a thread of the default
-// 2 MiB stack: the lowering, the walk that finds a lambda body's uses and the raise each keep
-// their work on the heap (step T2-mid). A plain recursion takes at least 112 bytes a level
-// (measured at opt-level 2), so 20,000 levels, 2.2 MB, would overflow that stack.
-
-#[test]
-fn a_term_nested_20000_deep_is_lowered_and_raised_on_a_2_mib_stack() {
-    on_small_stack(|| {
-        let t = nest(20_000);
-        let back = raise(&lower(&t).unwrap()).unwrap();
-        let run = |t: &Term| Evaluator::new(World::new()).run(t).unwrap();
-        assert_eq!(run(&back), run(&t));
-    });
-}
-
-#[test]
-fn lambdas_nested_20000_deep_are_lowered_on_a_2_mib_stack() {
-    on_small_stack(|| {
-        let t = lets_of_lambdas(20_000);
-        let back = raise(&lower(&t).unwrap()).unwrap();
-        let run = |t: &Term| Evaluator::new(World::new()).run(t).unwrap();
-        assert_eq!(run(&back), run(&t));
-    });
-}
-
 /// `f = (x) -> match x { 0 => 0, 1 => 10, … }; f(n - 1)`: a function over a match of `n`
 /// literal arms.
 pub(super) fn wide_match(n: usize) -> Term {
@@ -214,33 +188,39 @@ pub(super) fn wide_match(n: usize) -> Term {
 }
 
 /// The input of each benchmark in `bench/scaling.rs` lowers at small sizes, and a graph of pushes
-/// checks; the benchmarks hold the time of each linear in n.
+/// checks; the benchmarks hold the time of each linear in n. The same inputs 20,000 deep are in
+/// `bench/deep.rs`.
 #[test]
 fn each_benchmark_input_lowers_at_small_sizes() {
-    std::thread::Builder::new()
-        .stack_size(1 << 28)
-        .spawn(|| {
-            for n in [1, 2, 9] {
-                for t in [
-                    chain(n),
-                    nest(n),
-                    far(n),
-                    lets_of_lambdas(n),
-                    calls_in_place(n),
-                    pushes_to_many_ports(n),
-                    prices(n),
-                    push_under_ifs(n),
-                    wide_match(n),
-                ] {
-                    let g = lower(&t).unwrap();
-                    zedc::zir::validate::validate(&g).unwrap();
-                }
-                raise(&lower(&nest(n)).unwrap()).unwrap();
-            }
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    for n in [1, 2, 9] {
+        for t in [
+            chain(n),
+            nest(n),
+            far(n),
+            lets_of_lambdas(n),
+            calls_in_place(n),
+            pushes_to_many_ports(n),
+            prices(n),
+            push_under_ifs(n),
+            wide_match(n),
+        ] {
+            let g = lower(&t).unwrap();
+            zedc::zir::validate::validate(&g).unwrap();
+        }
+        raise(&lower(&nest(n)).unwrap()).unwrap();
+    }
+}
+
+/// A term nested a few deep lowers and raises back to the same value, and a port used a few
+/// regions deep lowers to a graph that checks; the same 20,000 deep is in `bench/deep.rs`.
+#[test]
+fn a_term_and_a_port_nested_a_few_deep_are_lowered_and_raised() {
+    let run = |t: &Term| Evaluator::new(World::new()).run(t).unwrap();
+    for d in [1, 2, 9] {
+        let t = nest(d);
+        assert_eq!(run(&raise(&lower(&t).unwrap()).unwrap()), run(&t));
+        zedc::zir::validate::validate(&lower(&push_under_ifs(d)).unwrap()).unwrap();
+    }
 }
 
 #[test]
@@ -263,14 +243,6 @@ fn a_few_functions_called_in_place_raise_to_the_same_pushes() {
     let (v, pushed) = run(&t);
     assert_eq!(pushed.len(), 3);
     assert_eq!(run(&back), (v, pushed));
-}
-
-#[test]
-fn a_port_used_20000_regions_deep_is_lowered_and_checked_on_a_2_mib_stack() {
-    on_small_stack(|| {
-        let g = lower(&push_under_ifs(20_000)).unwrap();
-        zedc::zir::validate::validate(&g).unwrap();
-    });
 }
 
 #[test]

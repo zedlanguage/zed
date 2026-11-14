@@ -187,11 +187,9 @@ pub(super) fn classes(n: usize) -> Value {
     Value::Family(Family::from_leaves(leaves).unwrap())
 }
 
-#[test]
-fn a_fold_over_many_levels_that_need_no_call_runs_in_constant_stack() {
-    // Each order's total, for 100 000 orders of one line or none: no level calls `+`, and
-    // the fold goes from one level to the next in a loop, not a call deeper each time.
-    let n = 100_000i64;
+/// Each order's total, for `n` orders of one line or none: no level calls `+`, and the fold
+/// goes from one level to the next in a loop, not a call deeper each time.
+pub(super) fn fold_over_levels(n: i64) {
     let leaves = (0..n).map(|c| match c % 2 {
         0 => (vec![Value::Int(c)], empty()),
         _ => (vec![Value::Int(c), Value::Int(0)], Value::Int(c)),
@@ -202,8 +200,18 @@ fn a_fold_over_many_levels_that_need_no_call_runs_in_constant_stack() {
         panic!("a fold of two levels gives a family")
     };
     assert_eq!(out.len(), n as usize);
-    assert_eq!(out.get(&Value::Int(4)), Some(&Value::Int(0)));
-    assert_eq!(out.get(&Value::Int(5)), Some(&Value::Int(5)));
+    for c in 0..n.min(6) {
+        let total = if c % 2 == 0 { 0 } else { c };
+        assert_eq!(out.get(&Value::Int(c)), Some(&Value::Int(total)));
+    }
+}
+
+/// The same over 100,000 levels, in constant stack, is in `bench/empty_levels.rs`.
+#[test]
+fn a_fold_over_a_few_levels_that_need_no_call_gives_each_total() {
+    for n in [1, 2, 9] {
+        fold_over_levels(n);
+    }
 }
 
 /// Outer keys `#notFound` and `#red`, atoms held as data, and `"b"`; with `full`, each over

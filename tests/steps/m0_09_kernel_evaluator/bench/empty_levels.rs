@@ -20,3 +20,11 @@ fn empty_levels_scale() {
         |n| empty_levels_pass(n, &inputs[&n]),
     );
 }
+
+/// A fold over 100,000 levels that need no call runs in constant stack (author P178: an
+/// unusual size is a benchmark); `a_fold_over_a_few_levels_that_need_no_call_gives_each_total`
+/// makes the same checks at a few levels.
+#[test]
+fn a_fold_over_many_levels_that_need_no_call_runs_in_constant_stack() {
+    crate::empty_levels::fold_over_levels(100_000);
+}

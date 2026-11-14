@@ -8,15 +8,24 @@
 //! `shared::an_accumulated_list_holds_every_element_in_order`.
 
 use std::collections::HashMap;
+use std::thread;
 
 use zed_kernel::{Term, Value};
 use zed_tests::scaling::check_order;
 
 use crate::shared::{
-    cons_list, families, families_compare, made, made_compare, nested_sets, on_large_stack,
-    one_part_compares, reads, row, run, shared_parts, shared_parts_compare, shows_nested_sets,
-    tuple, wide,
+    cons_list, families, families_compare, made, made_compare, nested_sets, one_part_compares,
+    reads, row, run, shared_parts, shared_parts_compare, shows_nested_sets, tuple, wide,
 };
+
+/// Runs `f` on a thread with a 256 MiB stack: `foldl` is a definedness fix whose accumulators
+/// each read the one before, so the evaluator nests one call per element.
+fn on_large_stack(f: impl FnOnce() + Send) {
+    thread::scope(|scope| {
+        let t = thread::Builder::new().stack_size(1 << 28);
+        t.spawn_scoped(scope, f).unwrap().join().unwrap()
+    })
+}
 
 /// Inputs for `check_order`, built before any timing: `make(n)` and `make(8n)`.
 fn built<T>(n: usize, make: impl Fn(usize) -> T) -> HashMap<usize, T> {

@@ -1,75 +1,29 @@
-//! Graphs nested 20,000 deep: an `if` whose `then` region holds the next `if`, as a chain of
-//! `else if` branches lowers. Each pass over the graph keeps its own stack on the heap, so such
-//! a graph is checked, compared, written and read back on a thread of the default 2 MiB stack,
-//! in time linear in its depth, as the benchmarks in `bench/scaling.rs` hold. Here each form
-//! is also written and read back at small sizes. A plain recursion takes at least 112 bytes a
-//! level (measured at opt-level 2), so 20,000 levels, 2.2 MB, would overflow that stack.
+//! Nested `if`s (an `if` whose `then` region holds the next `if`, as a chain of `else if`
+//! branches lowers), and values, patterns and types inside a graph, checked, compared, written
+//! and read back at small depths. The same forms far deeper than a plain recursion fits on a
+//! 2 MiB stack are in `bench/deep.rs`, and their times in `bench/scaling.rs`.
 
 use std::sync::Arc;
 
 use zed_kernel::Value;
 use zed_kernel::term::Pattern;
 use zed_kernel::types::Type;
-use zed_tests::deep::on_small_stack;
 use zedc::zir::validate::validate;
 use zedc::zir::{Edge, Node, Op, Region, RegionKind, Src, binary, text};
 
 pub(crate) use zed_tests::step_helpers::l01_31_zir::nested_ifs;
 
 #[test]
-fn a_graph_nested_20000_deep_is_checked_compared_and_freed_on_a_2_mib_stack() {
-    on_small_stack(|| {
-        let g = nested_ifs(20_000);
-        validate(&g).unwrap();
-        assert_eq!(g, nested_ifs(20_000));
-        assert_ne!(g, nested_ifs(99_999));
-    });
-}
-
-#[test]
 fn an_error_deep_in_a_graph_is_named_by_its_path() {
-    on_small_stack(|| {
-        let mut g = nested_ifs(3);
-        let then = Arc::get_mut(&mut g.nodes[0].regions[0]).expect("the graph is not shared");
-        let inner = Arc::get_mut(&mut then.nodes[0].regions[0]).expect("not shared");
-        inner.results = vec![Src::Arg(0)];
-        assert_eq!(
-            validate(&g).unwrap_err(),
-            "r.0/0.0/0: result 0: r.0/0.0/0^0: the region has 0 arguments, numbered from 0"
-        );
-    });
+    let mut g = nested_ifs(3);
+    let then = Arc::get_mut(&mut g.nodes[0].regions[0]).expect("the graph is not shared");
+    let inner = Arc::get_mut(&mut then.nodes[0].regions[0]).expect("not shared");
+    inner.results = vec![Src::Arg(0)];
+    assert_eq!(
+        validate(&g).unwrap_err(),
+        "r.0/0.0/0: result 0: r.0/0.0/0^0: the region has 0 arguments, numbered from 0"
+    );
 }
-
-#[test]
-fn a_graph_nested_20000_deep_is_written_and_read_in_binary_on_a_2_mib_stack() {
-    on_small_stack(|| {
-        let g = nested_ifs(20_000);
-        assert_eq!(
-            binary::decode(&binary::encode(&g).expect("memory for the bytes")),
-            Ok(g)
-        );
-    });
-}
-
-// Each line of the text form names its node or region by its whole path, so the text of a
-// graph `d` deep holds O(d^2) bytes, 80 MB at depth 4,000. So this test runs on a 64 KiB stack,
-// which a recursion of at least 112 bytes a level overflows at 585 levels, 1,000 deep: 5 MB of
-// text.
-
-#[test]
-fn a_graph_nested_1000_deep_is_written_and_read_as_text_on_a_64_kib_stack() {
-    std::thread::scope(|scope| {
-        let thread = std::thread::Builder::new().stack_size(1 << 16);
-        let run = || {
-            let g = nested_ifs(1_000);
-            assert_eq!(text::parse(&text::print(&g)), Ok(g));
-        };
-        thread.spawn_scoped(scope, run).unwrap().join().unwrap();
-    });
-}
-
-// The values, patterns and types inside a graph nest as deep as the program, so the text and
-// binary forms write and read them from stacks of their own (step T2-mid).
 
 /// A value `d` deep whose levels take turns being a pair, a named atom, a positional atom and
 /// a path.
@@ -107,57 +61,12 @@ pub(super) fn holding(value: usize, pattern: usize) -> Region {
     }
 }
 
-#[test]
-fn a_value_20000_deep_is_written_and_read_in_binary_and_as_text_on_a_2_mib_stack() {
-    on_small_stack(|| {
-        let g = holding(20_000, 1);
-        assert_eq!(
-            binary::decode(&binary::encode(&g).expect("memory for the bytes")).as_ref(),
-            Ok(&g)
-        );
-        let Src::Const(v) = &g.nodes[0].inputs[0] else {
-            unreachable!("a constant")
-        };
-        assert_eq!(text::parse_value(&v.to_string()).as_ref(), Ok(v));
-    });
-}
-
-// The kernel's `Pattern` drops, clones and compares by recursion, so a pattern 100,000 deep
-// overflows a 2 MiB stack whatever reads it (ZED_PORT_GAPS.md); these patterns are 10,000
-// deep, five times the depth at which the recursive writers and readers overflowed.
-
-#[test]
-fn a_pattern_10000_deep_is_written_and_read_in_binary_and_as_text_on_a_2_mib_stack() {
-    on_small_stack(|| {
-        let g = holding(1, 10_000);
-        let bytes = binary::encode(&g).expect("memory for the bytes");
-        assert_eq!(
-            binary::encode(&binary::decode(&bytes).unwrap()).expect("memory for the bytes"),
-            bytes
-        );
-        let Op::Match(ps) = &g.nodes[0].op else {
-            unreachable!("a match")
-        };
-        let s = text::pattern(&ps[0]);
-        assert_eq!(text::pattern(&text::parse_pattern(&s).unwrap()), s);
-    });
-}
-
 /// `(tuple (tuple … int …) int)`, `d` deep.
 pub(super) fn deep_type_text(d: usize) -> String {
     let mut s = "(tuple ".repeat(d);
     s.push_str("int");
     s.push_str(&" int)".repeat(d));
     s
-}
-
-#[test]
-fn a_type_20000_deep_is_read_as_text_on_a_2_mib_stack() {
-    // The kernel's `Type` drops its parts by recursion (ZED_PORT_GAPS.md), so a type this deep
-    // overflows when dropped, whatever the parser does; the test keeps it.
-    on_small_stack(|| {
-        std::mem::forget(text::parse_type(&deep_type_text(20_000)).unwrap());
-    });
 }
 
 /// A tuple of `n` generated binders, the elaborator's `$k` and the canonical level `k` in turn,
@@ -169,9 +78,6 @@ pub(super) fn generated_binders(n: usize) -> Pattern {
     };
     Pattern::Tuple((0..n).map(bind).collect())
 }
-
-// `Debug` writes a region from a stack of its own too, so an assertion that fails on a deep graph
-// can print it (step T2-mid).
 
 #[test]
 fn a_graph_prints_for_debugging_as_a_derived_debug_would() {
@@ -193,14 +99,6 @@ fn a_graph_prints_for_debugging_as_a_derived_debug_would() {
     );
     assert_eq!(format!("{:?}", nested_ifs(2)), expected);
     assert_eq!(format!("{:#?}", nested_ifs(2)), expected);
-}
-
-#[test]
-fn a_graph_nested_20000_deep_is_printed_for_debugging_on_a_2_mib_stack() {
-    on_small_stack(|| {
-        let text = format!("{:?}", nested_ifs(20_000));
-        assert_eq!(text.matches("Node { op: If").count(), 20_000);
-    });
 }
 
 /// A family literal of `n` entries `{k -> k, ...}`, its keys written from the largest down, and

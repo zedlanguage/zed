@@ -112,13 +112,6 @@ fn on_text(number: &str, name: &str, input: &str) -> (String, Result<(), String>
 }
 
 #[test]
-fn a_json_document_may_nest_as_deeply_as_its_line_is_long() {
-    let depth = 2_000_000;
-    let nested = format!("{}1{}\n", "[".repeat(depth), "]".repeat(depth));
-    assert_eq!(on_text("07", "json_deep", &nested), (nested, Ok(())));
-}
-
-#[test]
 fn a_json_failure_deep_in_a_list_reports_the_farthest_position() {
     let cases = [
         ("[[[1,]]]\n", "error at 5\n"),
@@ -136,40 +129,9 @@ fn a_json_failure_deep_in_a_list_reports_the_farthest_position() {
 }
 
 #[test]
-fn a_spreadsheet_cell_may_depend_on_a_chain_as_long_as_the_sheet() {
-    // Every edit prints every cell, so this is as long as a chain can be and stay a small test.
-    let n = 3000;
-    let mut input: String = (1..n)
-        .rev()
-        .map(|i| format!("c{i} = c{}+1\n", i - 1))
-        .collect();
-    input.push_str("c0 = 1\n");
-    let (out, result) = on_text("15", "sheet_chain", &input);
-    assert_eq!(result, Ok(()));
-    let last = out.lines().last().expect("a line per edit");
-    assert!(last.contains(&format!(" c{}={n}", n - 1)), "{last}");
-}
-
-#[test]
 fn a_spreadsheet_cell_that_depends_on_itself_is_an_error() {
     let (_, result) = on_text("15", "sheet_cycle", "a = b+1\nb = a+1\n");
     assert_eq!(result, Err("the cell a depends on itself".to_string()));
-}
-
-#[test]
-fn a_type_may_depend_on_a_chain_as_long_as_the_program() {
-    // Fifty thousand links, far more than a test thread's 2 MiB stack holds were the chain
-    // followed by recursion.
-    let n = 50_000;
-    let mut input: String = (1..n)
-        .rev()
-        .map(|i| format!("d{i} = d{} 1 +\n", i - 1))
-        .collect();
-    input.push_str("d0 = 1\n");
-    let (out, result) = on_text("31", "type_chain", &input);
-    assert_eq!(result, Ok(()));
-    assert_eq!(out.lines().count(), n);
-    assert!(out.lines().all(|l| l.ends_with(": int")));
 }
 
 #[test]
@@ -648,4 +610,50 @@ fn a_heat_stencil_prints_the_first_three_rows_and_the_last() {
     assert_eq!(result, Ok(()));
     let times: Vec<&str> = out.lines().filter_map(|l| l.split(':').next()).collect();
     assert_eq!(times, ["t=0", "t=1", "t=2", "t=5"]);
+}
+
+/// Reference 07 echoes a JSON document of one number in `depth` nested lists.
+fn json_nests(depth: usize) {
+    let nested = format!("{}1{}\n", "[".repeat(depth), "]".repeat(depth));
+    assert_eq!(on_text("07", "json_deep", &nested), (nested, Ok(())));
+}
+
+/// Reference 15 takes a sheet whose cell `c{i}` reads `c{i-1}`, `n` cells, the cell read first
+/// written last.
+fn sheet_chain(n: usize) {
+    let mut input: String = (1..n)
+        .rev()
+        .map(|i| format!("c{i} = c{}+1\n", i - 1))
+        .collect();
+    input.push_str("c0 = 1\n");
+    let (out, result) = on_text("15", "sheet_chain", &input);
+    assert_eq!(result, Ok(()));
+    let last = out.lines().last().expect("a line per edit");
+    let cell = format!("c{}={n}", n - 1);
+    assert!(last.split_whitespace().any(|f| f == cell), "{last}");
+}
+
+/// Reference 31 types a program whose definition `d{i}` reads `d{i-1}`, `n` definitions, the one
+/// read first written last.
+fn type_chain(n: usize) {
+    let mut input: String = (1..n)
+        .rev()
+        .map(|i| format!("d{i} = d{} 1 +\n", i - 1))
+        .collect();
+    input.push_str("d0 = 1\n");
+    let (out, result) = on_text("31", "type_chain", &input);
+    assert_eq!(result, Ok(()));
+    assert_eq!(out.lines().count(), n);
+    assert!(out.lines().all(|l| l.ends_with(": int")));
+}
+
+/// A JSON document nested a few levels, and a spreadsheet cell and a type that depend on a
+/// short chain; the same 2,000,000 deep and 3,000 and 50,000 long are in `bench/chains.rs`.
+#[test]
+fn a_short_nest_and_short_chains_are_followed() {
+    for n in [1, 2, 9] {
+        json_nests(n);
+        sheet_chain(n);
+        type_chain(n);
+    }
 }

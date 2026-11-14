@@ -41,51 +41,61 @@ fn arabic_indic(text: &str) -> String {
         .collect()
 }
 
-/// A number of 4300 digits (the old limit), of 4301 (refused before) and of 100,000 reads as
-/// num-bigint and the kernel's reader read its digits: plain, signed, with `_` between digits,
-/// with spaces around it, and in another script.
-#[test]
-fn a_number_of_any_length_reads_as_num_bigint_and_the_kernel_read_it() {
-    let mut rng = Rng::new(4301);
-    for len in [4300, 4301, 100_000] {
-        let plain = digits(&mut rng, len);
-        let expected: BigInt = plain.parse().expect("digits");
-        let kernel = BigInt::from_biguint(Sign::Plus, read_digits(&plain));
-        assert_eq!(kernel, expected, "{len} digits: the kernel's reader");
-        let negative = -expected.clone();
-        let padded = format!("000{plain}");
-        let texts = [
-            (plain.clone(), &expected),
-            (format!("+{plain}"), &expected),
-            (format!("-{plain}"), &negative),
-            (format!("-{}", marked(&mut rng, &padded)), &negative),
-            (format!(" \t{plain}\n"), &expected),
-            (
-                arabic_indic(&format!("-{}", marked(&mut rng, &plain))),
-                &negative,
-            ),
-        ];
-        for (text, value) in texts {
-            assert_eq!(try_parse_int(&text).as_ref(), Some(value), "{len} digits");
-        }
+/// A number of `len` random digits reads as num-bigint and the kernel's reader read its digits:
+/// plain, signed, with `_` between digits, with spaces around it, and in another script.
+pub(super) fn reads_a_number_of_length(rng: &mut Rng, len: usize) {
+    let plain = digits(rng, len);
+    let expected: BigInt = plain.parse().expect("digits");
+    let kernel = BigInt::from_biguint(Sign::Plus, read_digits(&plain));
+    assert_eq!(kernel, expected, "{len} digits: the kernel's reader");
+    let negative = -expected.clone();
+    let padded = format!("000{plain}");
+    let texts = [
+        (plain.clone(), &expected),
+        (format!("+{plain}"), &expected),
+        (format!("-{plain}"), &negative),
+        (format!("-{}", marked(rng, &padded)), &negative),
+        (format!(" \t{plain}\n"), &expected),
+        (
+            arabic_indic(&format!("-{}", marked(rng, &plain))),
+            &negative,
+        ),
+    ];
+    for (text, value) in texts {
+        assert_eq!(try_parse_int(&text).as_ref(), Some(value), "{len} digits");
     }
 }
 
-/// Zeros of any length and any sign read as 0, and the powers of ten and the nines either side
-/// of 4300 digits read exactly.
+/// A number of 4300 digits (the old limit) and of 4301 (refused before) reads as num-bigint
+/// read it; 100,000 digits are in `bench/digits.rs`.
+#[test]
+fn a_number_of_any_length_reads_as_num_bigint_and_the_kernel_read_it() {
+    let mut rng = Rng::new(4301);
+    for len in [1, 9, 4300, 4301] {
+        reads_a_number_of_length(&mut rng, len);
+    }
+}
+
+/// Zeros of length `len` and any sign read as 0, and the power of ten and the nines of that
+/// length read exactly.
+pub(super) fn zeros_nines_and_a_power_of_ten(len: usize) {
+    let zeros = "0".repeat(len);
+    for text in [zeros.clone(), format!("-{zeros}"), format!("+{zeros}")] {
+        assert_eq!(try_parse_int(&text), Some(BigInt::from(0)), "{len} zeros");
+    }
+    let nines = "9".repeat(len);
+    let ten = format!("1{zeros}");
+    for text in [nines, ten] {
+        let expected: BigInt = text.parse().expect("digits");
+        assert_eq!(try_parse_int(&text), Some(expected), "{text}");
+    }
+}
+
+/// Either side of 4300 digits; 20,000 digits are in `bench/digits.rs`.
 #[test]
 fn zeros_nines_and_powers_of_ten_read_exactly() {
-    for len in [1, 4300, 4301, 20_000] {
-        let zeros = "0".repeat(len);
-        for text in [zeros.clone(), format!("-{zeros}"), format!("+{zeros}")] {
-            assert_eq!(try_parse_int(&text), Some(BigInt::from(0)), "{len} zeros");
-        }
-        let nines = "9".repeat(len);
-        let ten = format!("1{zeros}");
-        for text in [nines, ten] {
-            let expected: BigInt = text.parse().expect("digits");
-            assert_eq!(try_parse_int(&text), Some(expected), "{text}");
-        }
+    for len in [1, 4300, 4301] {
+        zeros_nines_and_a_power_of_ten(len);
     }
 }
 

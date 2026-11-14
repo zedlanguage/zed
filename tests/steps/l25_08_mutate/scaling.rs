@@ -7,7 +7,6 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use zed_kernel::Term;
-use zed_tests::deep::on_main_sized_stack;
 use zedc::elab::Unit;
 use zedc::mutate::{self, Verdict};
 use zedc::query::Db;
@@ -110,33 +109,31 @@ pub(super) fn remixes_to_a_lambda(unit: &Arc<Unit>, remix: &Mutex<Remix>) {
 /// term `mix` gives, which `remixing_a_definition_costs_less_than_mixing_it` times at 400.
 #[test]
 fn the_mutants_of_each_benchmark_unit_at_small_sizes() {
-    on_main_sized_stack(|| {
-        for n in [1, 2, 9] {
+    for n in [1, 2, 9] {
+        let cache = Warm::default();
+        let (text, db) = warm(&cache, n, unit);
+        finds_the_mutants(&text, db.clone(), 3 * n);
+        runs_the_mutants_of_functions(&text, db, n);
+        let (text, db) = warm(&cache, n, chain);
+        finds_the_mutants(&text, db, 3 * n);
+        for make in [
+            chain_with_row as fn(usize) -> String,
+            generic_chain_with_row,
+        ] {
             let cache = Warm::default();
-            let (text, db) = warm(&cache, n, unit);
-            finds_the_mutants(&text, db.clone(), 3 * n);
-            runs_the_mutants_of_functions(&text, db, n);
-            let (text, db) = warm(&cache, n, chain);
-            finds_the_mutants(&text, db, 3 * n);
-            for make in [
-                chain_with_row as fn(usize) -> String,
-                generic_chain_with_row,
-            ] {
-                let cache = Warm::default();
-                let (text, db) = warm(&cache, n, make);
-                runs_the_mutants_of_a_chain(&text, db, n);
-            }
-            let text = generic_chain_with_row(n);
-            let mut db = Db::new();
-            let front = db.front(&text);
-            let (_, unit, _) = front.as_ref().as_ref().unwrap();
-            let (_, remix) = Remix::new(unit);
-            let remix = Mutex::new(remix);
-            assert_eq!(
-                remix.lock().unwrap().mix(&unit.defs[0].term).to_string(),
-                stage::mix(unit, &["f"]).0.defs[0].term.to_string()
-            );
-            remixes_to_a_lambda(unit, &remix);
+            let (text, db) = warm(&cache, n, make);
+            runs_the_mutants_of_a_chain(&text, db, n);
         }
-    });
+        let text = generic_chain_with_row(n);
+        let mut db = Db::new();
+        let front = db.front(&text);
+        let (_, unit, _) = front.as_ref().as_ref().unwrap();
+        let (_, remix) = Remix::new(unit);
+        let remix = Mutex::new(remix);
+        assert_eq!(
+            remix.lock().unwrap().mix(&unit.defs[0].term).to_string(),
+            stage::mix(unit, &["f"]).0.defs[0].term.to_string()
+        );
+        remixes_to_a_lambda(unit, &remix);
+    }
 }

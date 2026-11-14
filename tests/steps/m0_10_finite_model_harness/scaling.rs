@@ -193,24 +193,30 @@ fn facts(t: &Term, schedule: Schedule) -> (Value, Vec<String>) {
     (v, out)
 }
 
+/// An entry demanded where it is read records its facts at its own keypath, not inside the
+/// entry reading it, at any depth of nested demands, so each entry is one set of facts.
+pub(super) fn demanded_facts(d: usize) {
+    let t = reverse_chain(d);
+    let (v, pull) = facts(&t, Schedule::Pull);
+    let (w, rounds) = facts(&t, Schedule::Rounds);
+    assert_eq!(v, w, "d = {d}");
+    let f = v.as_family().unwrap();
+    for k in [0, d / 2, d - 1] {
+        assert_eq!(
+            f.get(&Value::Int(k as i64)),
+            Some(&Value::Int(tail_sum(d, k)))
+        );
+    }
+    assert!(pull == rounds, "d = {d}: the facts differ");
+    assert_eq!(run(&t, Schedule::Pull), v, "d = {d}, untraced");
+}
+
+/// Demands nested a few levels; the same past the nesting a test thread's stack holds were
+/// demands followed by recursion is in `bench/facts.rs`.
 #[test]
 fn a_demanded_entry_has_the_facts_it_has_in_rounds() {
-    // An entry demanded where it is read records its facts at its own keypath, not inside the
-    // entry reading it, at any depth of nested demands, so each entry is one set of facts.
-    for d in [5, 40, zed_kernel::eval::MIN_NESTED_CALLS + 500] {
-        let t = reverse_chain(d);
-        let (v, pull) = facts(&t, Schedule::Pull);
-        let (w, rounds) = facts(&t, Schedule::Rounds);
-        assert_eq!(v, w, "d = {d}");
-        let f = v.as_family().unwrap();
-        for k in [0, d / 2, d - 1] {
-            assert_eq!(
-                f.get(&Value::Int(k as i64)),
-                Some(&Value::Int(tail_sum(d, k)))
-            );
-        }
-        assert!(pull == rounds, "d = {d}: the facts differ");
-        assert_eq!(run(&t, Schedule::Pull), v, "d = {d}, untraced");
+    for d in [1, 5, 40] {
+        demanded_facts(d);
     }
 }
 

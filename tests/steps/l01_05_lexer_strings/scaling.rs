@@ -42,21 +42,25 @@ fn nested_holes_lex_as_one_string() {
     );
 }
 
-/// Tokens nest as their holes do, so what is done to them holds no thread stack.
-#[test]
-fn deep_tokens_compare_print_and_drop() {
-    let text = nested(100_000);
+/// Tokens nest as their holes do, so what is done to them holds no thread stack: holes nested
+/// `d` deep compare, print and drop, and an open hole at the bottom is reported at its place.
+pub(super) fn deep_tokens(d: usize) {
+    let text = nested(d);
     let (a, b) = (lex(&text).unwrap(), lex(&text).unwrap());
     assert_eq!(a, b);
     let other = lex(&text.replace('0', "1")).unwrap();
     assert_ne!(a, other);
-    assert!(format!("{a:?}").matches("Hole").count() == 100_000);
+    assert!(format!("{a:?}").matches("Hole").count() == d);
+    let open = "\"${".repeat(d);
+    assert_eq!(lex(&open).unwrap_err().span.start, open.len() - 2);
 }
 
+/// The same 100,000 deep is in `bench/stack.rs`.
 #[test]
-fn an_open_hole_at_the_bottom_of_a_deep_nest_is_reported() {
-    let text = "\"${".repeat(100_000);
-    assert_eq!(lex(&text).unwrap_err().span.start, text.len() - 2);
+fn tokens_a_few_holes_deep_compare_print_and_drop() {
+    for d in [1, 2, 9] {
+        deep_tokens(d);
+    }
 }
 
 /// `n` lines, each a one-line string whose hole holds a block comment and a `"""` string.

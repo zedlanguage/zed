@@ -1,17 +1,20 @@
 //! Deep programs, such as a generator writes: the parser, the syntax tree and the formatter hold
-//! their work on the heap, so a nest of any depth runs on a test thread's 2 MiB stack. Nothing
-//! here asks for a larger stack, and the old recursive code overflows on each form.
+//! their work on the heap, so a nest of any depth runs on a test thread's 2 MiB stack, and the
+//! old recursive code overflows on each form. Here each form and each error runs at a few
+//! levels; the same 4,000 deep, past what the old code held, are in `bench/stack.rs` (author
+//! P178: an unusual size is a benchmark), and their times in `bench/deep.rs`.
 
 use zedc::ast::build;
 use zedc::format::format_source;
 use zedc::lex::lex;
 use zedc::parse::{TOP, parse};
 
-/// How deep the forms below nest: far past what the 2 MiB stack held (200 parentheses).
-const DEEP: usize = 4_000;
+/// How deep `bench/stack.rs` nests the forms below: far past what the 2 MiB stack held (200
+/// parentheses).
+pub(super) const DEEP: usize = 4_000;
 
 /// `open` `n` times, `middle`, then `close` `n` times.
-fn nest(open: &str, middle: &str, close: &str, n: usize) -> String {
+pub(super) fn nest(open: &str, middle: &str, close: &str, n: usize) -> String {
     open.repeat(n) + middle + &close.repeat(n)
 }
 
@@ -86,7 +89,7 @@ pub(super) fn long_union(n: usize) -> String {
 }
 
 /// All the steps from text to text.
-fn every_stage(text: &str) {
+pub(super) fn every_stage(text: &str) {
     let tokens = lex(text).unwrap();
     let tree = parse(text, &tokens, "Expr", TOP).unwrap();
     let e = build(text, &tokens, &tree).unwrap();
@@ -112,9 +115,15 @@ macro_rules! deep_forms {
                 assert_eq!(shown(&$form(2)), $two);
                 let unit = format!("f(c) = {};\n", $form(2));
                 assert_eq!(format_source(unit.as_bytes()).unwrap(), $written);
-                every_stage(&$form(DEEP));
+                for n in [1, 2, 9] {
+                    every_stage(&$form(n));
+                }
             }
         )*
+
+        /// Each form by the name of its test, for `bench/stack.rs`.
+        pub(super) const FORMS: &[(&str, fn(usize) -> String)] =
+            &[$((stringify!($deep), $form as fn(usize) -> String)),*];
     };
 }
 
@@ -183,15 +192,14 @@ fn deep_blocks_of_lines_are_written_each_on_its_own_line() {
     }
 }
 
-/// A form of a later layer at the bottom of a deep nest is reported, with its own place.
-#[test]
-fn an_error_at_the_bottom_of_a_deep_nest_is_reported() {
-    let text = nest("(", "x >< f unordered", ")", DEEP);
+/// A form of a later layer at the bottom of a nest `depth` deep is reported, with its own place.
+pub(super) fn an_error_at_the_bottom(depth: usize) {
+    let text = nest("(", "x >< f unordered", ")", depth);
     let tokens = lex(&text).unwrap();
     let tree = parse(&text, &tokens, "Expr", TOP).unwrap();
     let e = build(&text, &tokens, &tree).unwrap_err();
     // The `unordered` starts 7 bytes after the `x`.
-    assert_eq!(e.span.start, DEEP + 7);
+    assert_eq!(e.span.start, depth + 7);
     assert_eq!(
         e.message,
         zed_tests::not_yet!("the reduction order `unordered`")
@@ -199,50 +207,51 @@ fn an_error_at_the_bottom_of_a_deep_nest_is_reported() {
 }
 
 /// The block at the bottom exports nothing; each block around it exports it.
-#[test]
-fn a_block_with_no_export_at_the_bottom_of_a_deep_nest_is_reported() {
-    let text = nest("{ return ", "{ a = 1; }", "; }", DEEP);
+pub(super) fn a_block_with_no_export_at_the_bottom(depth: usize) {
+    let text = nest("{ return ", "{ a = 1; }", "; }", depth);
     let tokens = lex(&text).unwrap();
     let tree = parse(&text, &tokens, "Expr", TOP).unwrap();
     let e = build(&text, &tokens, &tree).unwrap_err();
-    assert_eq!(e.span.start, 9 * DEEP);
+    assert_eq!(e.span.start, 9 * depth);
     assert!(e.message.starts_with("this block exports nothing"), "{e}");
 }
 
-#[test]
-fn an_error_in_a_deep_string_hole_is_reported() {
-    let text = nest("\"${", "x >< f unordered", "}\"", DEEP);
+pub(super) fn an_error_in_a_string_hole(depth: usize) {
+    let text = nest("\"${", "x >< f unordered", "}\"", depth);
     let tokens = lex(&text).unwrap();
     let tree = parse(&text, &tokens, "Expr", TOP).unwrap();
     let e = build(&text, &tokens, &tree).unwrap_err();
-    assert_eq!(e.span.start, 3 * DEEP + 7);
+    assert_eq!(e.span.start, 3 * depth + 7);
 }
 
-#[test]
-fn a_missing_bracket_after_a_deep_nest_is_reported() {
-    let text = "(".repeat(DEEP) + "1";
+pub(super) fn a_missing_bracket_after_a_nest(depth: usize) {
+    let text = "(".repeat(depth) + "1";
     let tokens = lex(&text).unwrap();
     let e = parse(&text, &tokens, "Expr", TOP).unwrap_err();
     assert_eq!(e.span.start, text.len());
 }
 
-/// A deep block and the holes in a string, in a unit of statements, with a comment kept at the
-/// bottom, which forces a block of lines.
-#[test]
-fn a_comment_at_the_bottom_of_a_nest_of_blocks_is_kept() {
-    let unit = format!("f(c) = {};\n", nest("{ return ", "// here\n1", "; }", 500));
+/// A block nested `depth` deep and the holes in a string, in a unit of statements, with a
+/// comment kept at the bottom, which forces a block of lines.
+pub(super) fn a_comment_at_the_bottom_of_blocks(depth: usize) {
+    let unit = format!(
+        "f(c) = {};\n",
+        nest("{ return ", "// here\n1", "; }", depth)
+    );
     let out = format_source(unit.as_bytes()).unwrap();
-    assert!(out.contains("// here\n"), "{}", &out[..200]);
+    assert!(out.contains("// here\n"), "{out}");
     assert_eq!(format_source(out.as_bytes()).unwrap(), out);
 }
 
-/// No depth is too great: a nest of twenty thousand parentheses, a hundred times what the 2 MiB
-/// stack held, is lexed, parsed, built, printed and dropped on the test thread's stack.
+/// Each error at the bottom of a nest a few levels deep is reported at its place, and a comment
+/// at the bottom of a few blocks is kept; the same 4,000 and 500 deep are in `bench/stack.rs`.
 #[test]
-fn twenty_thousand_parentheses() {
-    let text = parens(20_000);
-    let tokens = lex(&text).unwrap();
-    let tree = parse(&text, &tokens, "Expr", TOP).unwrap();
-    let e = build(&text, &tokens, &tree).unwrap();
-    assert_eq!(e.to_string(), "1");
+fn errors_and_a_comment_at_the_bottom_of_a_nest() {
+    for depth in [1, 2, 9] {
+        an_error_at_the_bottom(depth);
+        a_block_with_no_export_at_the_bottom(depth);
+        an_error_in_a_string_hole(depth);
+        a_missing_bracket_after_a_nest(depth);
+        a_comment_at_the_bottom_of_blocks(depth);
+    }
 }

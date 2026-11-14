@@ -368,7 +368,7 @@ impl Theory {
         // (`hardness::an_or_of_ands_is_refused` gives the reduction from 3-SAT), so every method
         // is exponential on some law of that shape. Structural trigger: an `||` whose operands
         // include several `&&`s. Tests: `hardness::an_or_of_ands_is_refused`,
-        // `hardness::the_work_limit_is_not_a_size_limit`; COMPLEXITY.md C32.
+        // `bench::hardness::the_work_limit_is_not_a_size_limit`; COMPLEXITY.md C32.
         let cnf = parsed.cnf(&mut 0);
         self.laws.push(Law {
             name: name.to_string(),

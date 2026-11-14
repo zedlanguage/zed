@@ -1,9 +1,9 @@
 //! Copying, comparing, writing the `Debug` text of, displaying and breaking a deep term are
 //! linear in its depth (COMPLEXITY.md K39): the benchmarks of `deep.rs`, run by
 //! `tools/run_tests.sh --bench`. What each run asserts, that two builds and a DAG compare equal,
-//! is checked 100,000 deep by `deep::a_term_far_deeper_than_the_stack_copies_compares_and_prints`,
-//! `deep::equal_dags_compare_once_per_shared_pair` and
-//! `deep::a_term_far_deeper_than_the_stack_is_displayed_and_broken`.
+//! is checked 100,000 deep by `stack::a_term_far_deeper_than_the_stack_copies_compares_and_prints`,
+//! `stack::equal_dags_compare_once_per_shared_pair` and
+//! `stack::a_term_far_deeper_than_the_stack_is_displayed_and_broken`.
 
 use zed_kernel::print::pretty;
 use zed_tests::scaling;

@@ -6,6 +6,9 @@
 //! a string joined by a `foldl` of `++`. What each asserts besides its ratio is checked at
 //! small sizes by a test of `scaling.rs`.
 
+mod facts;
+mod laws;
+
 use zed_kernel::Schedule;
 use zed_tests::scaling;
 

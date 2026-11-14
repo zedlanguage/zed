@@ -66,7 +66,7 @@ use zedc_base::address::ContentAddress;
 // O(log S) with a hash-trie constant, and keeping, restoring or swapping a whole scope is O(1),
 // since the map's nodes are shared. Tradeoffs: a lookup is a few times slower than in a
 // `std::collections::HashMap`, and each binding allocates the path of trie nodes it changes.
-// Nothing is refused. Tests `l01_33_lowering::scaling::reading_a_name_bound_far_out_scales`
+// Nothing is refused. Tests `l01_33_lowering::bench::scaling::reading_a_name_bound_far_out_scales`
 // and `lowering_many_functions_called_in_place_scales`.
 type Scope<'t> = imbl::HashMap<Arc<str>, Val<'t>>;
 
@@ -202,8 +202,8 @@ struct At<'t> {
 // distinct subterms: a term of `d` levels whose two parts share one subterm costs `2^d`. Every
 // term gets the right ids; only such a term pays more. Lowering itself walks the term as a
 // tree, so it already pays that size (it did before ADDR-keys), and the numbering keeps the
-// order of the whole. Tests: `l01_33_lowering::scaling` (`lowering_a_wide_match_scales` and the
-// rest, unchanged) and `l01_33_lowering::ports::ports_are_kept_by_place_not_address`;
+// order of the whole. Tests: `l01_33_lowering::bench::scaling` (`lowering_a_wide_match_scales`
+// and the rest, unchanged) and `l01_33_lowering::ports::ports_are_kept_by_place_not_address`;
 // COMPLEXITY.md K40. A complete solution needs hash-consed term ids, so that a shared subterm
 // is numbered once and the lowering walks it once.
 struct Places {
@@ -417,7 +417,7 @@ impl<'t> Lower<'t> {
         // that has the edge, and every region it passes takes the edge, so a read costs O(1)
         // amortized. Tradeoff: one map entry per region per edge carried, kept until the
         // region closes. Nothing is refused. Tests
-        // `l01_33_lowering::scaling::a_name_read_at_every_depth_scales` and
+        // `l01_33_lowering::bench::scaling::a_name_read_at_every_depth_scales` and
         // `a_name_read_at_every_depth_enters_each_region_once`.
         let key = (at, captured(&s));
         let top = self.frames.len() - 1;
@@ -515,7 +515,8 @@ impl<'t> Lower<'t> {
     // comparisons. Tradeoffs: the key alone is never trusted, so a lookup that hits pays the
     // comparisons of the shells' bytes as well as the hash; each shape is held until the
     // lowering ends. Nothing is refused. Tests
-    // `l01_33_lowering::scaling::lowering_a_deep_nest_scales`, `l01_37a_short_addresses::collide`,
+    // `l01_33_lowering::bench::scaling::lowering_a_deep_nest_scales`,
+    // `l01_37a_short_addresses::collide`,
     // `l01_32_canonical_zir::fuzz::the_key_agrees_with_the_address` and
     // `l01_37a_short_addresses::scaling::many_equal_nodes_are_found_by_their_keys`.
     fn add(
@@ -768,7 +769,7 @@ impl<'t> Lower<'t> {
                             // and each call is an `apply` threading the ports' states: O(1) nodes
                             // per call. Tradeoff: a call through `apply` is not specialized to
                             // its arguments as an inlined body is; a name used once is still
-                            // inlined. Nothing is refused. Test `l01_33_lowering::scaling`.
+                            // inlined. Nothing is refused. Test `l01_33_lowering::bench::scaling`.
                             s.jobs.push(Job::Closure {
                                 name: x,
                                 params: ps,
@@ -1446,7 +1447,7 @@ fn names(p: &Pattern) -> Vec<Arc<str>> {
 // lambda inside it, less the names bound around it. Cost: each body walked once, plus the uses
 // handed up from the bodies directly inside it. Tradeoff: the uses of every lambda body are
 // held until the lowering ends. Nothing is refused. Test
-// `l01_33_lowering::scaling::lowering_lambdas_bound_by_nested_lets_scales`.
+// `l01_33_lowering::bench::scaling::lowering_lambdas_bound_by_nested_lets_scales`.
 fn body_uses(b: At<'_>, bodies: &mut Bodies, places: &Places) -> Uses {
     if let Some(u) = bodies.get(&b.id) {
         return u.clone();
