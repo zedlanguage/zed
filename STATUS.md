@@ -2233,12 +2233,13 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | CONST-too-large-coprime-base | impl attempt 1 | 2026-11-14 00:07 | started; load 26.51 34.74 41.48 |
 | DOC-deferred-refs | running | 2026-11-14 00:03 |  |
-| FAIL-diag-wide-literals-notes | impl attempt 1 | 2026-11-14 06:06 | started; load 27.50 38.87 42.82 |
 | FAIL-scaling-cold-8n-bytes | impl attempt 1 | 2026-11-14 06:09 | started; worktree /home/luke/Work/wt/fail-scaling-cold-8n |
 | STAGE-generic-fold | impl attempt 1 | 2026-11-09 09:24 | started; worktree from 93fde8efa |
 | TEST-bench-move-l0123 | impl attempt 1 | 2026-11-14 01:43 | started; worktree made and seeded |
+| TEST-complete-crates | impl attempt 1 | 2026-11-14 06:21 | started; worktree test-complete-crates seeded / 65.87 56.46 48.35 |
+| TEST-complete-kernel | impl attempt 1 | 2026-11-14 06:21 | started; worktree created and seeded |
 | TEST-complete-lattices | impl attempt 1 | 2026-11-14 06:09 | started; worktree test-complete-lattices on 28be33f10 |
-| TEST-complete-m0 | impl attempt 1 | 2026-11-14 05:28 | m0_04 pushed 02a8f1c63: COMPLETENESS.md + 12 tests, corpus refs 97.5% -> 99.8% lines; FAIL-ref-text-reading filed |
+| TEST-complete-m0 | impl attempt 1 | 2026-11-14 05:28 | m0_10 pushed e87adb39d: COMPLETENESS.md + 8 tests (instances vs DESIGN, schedules, shortlex, partial maps, Rng, harness reports, law 14 to gen 16); instances.rs |
 | TEST-complete-misc | impl attempt 1 | 2026-11-14 05:46 | started; worktree seeded at a047ea74c |
 | TEST-complete-preimage | impl attempt 1 | 2026-11-14 06:10 | started; worktree made and seeded at 28be33f10 |
 | TEST-complete-reduced | impl attempt 1 | 2026-11-14 05:52 | started; worktree made and seeded; load 52.75 |
