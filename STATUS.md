@@ -2301,8 +2301,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-types-sig-reflexive | running | 2026-11-14 07:40 |  |
 | FAIL-xst-s4-box-only-seed | running | 2026-11-14 08:46 |  |
 | FAIL-xst-unbounded-holes-seed | running | 2026-11-14 08:46 |  |
-| MUTATE-generic-constants | running | 2026-11-14 09:08 | 2026-11-14: found by STAGE-generic-fold; sink given a consumer |
-| STAGE-generic-fold-div | running | 2026-11-14 09:08 | 2026-11-14: found by STAGE-generic-fold; sink given a consumer |
+| MUTATE-generic-constants | impl attempt 1 | 2026-11-14 09:08 | started in wt/generic-fold-2, load 64.11 |
+| STAGE-generic-fold-div | impl attempt 1 | 2026-11-14 09:08 | started in wt/generic-fold-2, load 64.11 |
 | TEST-bench-timeout-recheck | running | 2026-11-14 08:37 |  |
 | TEST-calibration-split-margin | running | 2026-11-14 08:37 |  |
 | TEST-cov-scaling-noise | running |  |  |
