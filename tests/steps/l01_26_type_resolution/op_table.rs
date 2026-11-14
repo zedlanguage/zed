@@ -32,8 +32,9 @@
 //! and single-file checking agree (sec:type_resolution).
 //!
 //! Cost: one check per file and one per sampled case, each over a unit linear in its cases; the
-//! comparison is one pass over the lines, O(n) in the cases. The two largest files, compare.txt
-//! and arith.txt, are checked in two halves, each half a test of its own and a unit of its own.
+//! comparison is one pass over the lines, O(n) in the cases. The three largest files,
+//! compare.txt (1,536 cases), arith.txt (768) and div_mod.txt (512), are checked in two halves,
+//! each half a test of its own and a unit of its own.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -526,8 +527,13 @@ fn power() {
 }
 
 #[test]
-fn div_mod() {
-    run("div_mod.txt");
+fn div_mod_first_half() {
+    run_part("div_mod.txt", 0, 2);
+}
+
+#[test]
+fn div_mod_second_half() {
+    run_part("div_mod.txt", 1, 2);
 }
 
 #[test]
