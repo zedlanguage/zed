@@ -408,7 +408,7 @@ fn addresses_agree_with_an_independent_alpha_equivalence_test() {
 
 /// `canonicalize` renames every binder in one pass; the rules rename one per step. Both must
 /// give the same definition.
-fn one_pass_is_stepwise(t: Term) {
+pub(super) fn one_pass_is_stepwise(t: Term) {
     let mut d = def("f", t);
     let one_pass = zedc::canon::canonicalize(&d);
     while zedc::canon::RULES.iter().any(|r| (r.apply)(&mut d)) {}

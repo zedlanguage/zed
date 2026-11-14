@@ -5,6 +5,7 @@
 
 mod alpha;
 mod bench;
+mod cases;
 mod domains;
 mod prim_codes;
 mod rules;
