@@ -12,7 +12,7 @@ error: Cannot map many values to one key: `into (region -> day -> r)`. Try `into
       merges each day's values with op, which must be associative
 ```
 
-<!-- DESIGN.md:1061; section [sec:level_names] 1 -->
+<!-- DESIGN.md:1062; section [sec:level_names] 1 -->
 ```text
 error: Too few names for the 4 levels of `Sales`: `names("region", "sku", "quantitySold")`. Try `names("_", "region", "sku", "quantitySold")` instead.
   1. the facet (1:55)
@@ -31,7 +31,7 @@ error: Too few names for the 4 levels of `Sales`: `names("region", "sku", "quant
     with names("region", "sku", "quantitySold", "_")
 ```
 
-<!-- DESIGN.md:1079; section [sec:level_names] 2 -->
+<!-- DESIGN.md:1080; section [sec:level_names] 2 -->
 ```text
 error: Not a Zed name: `"quantity sold"`. Try `names("region", "day", "sku", "quantitySold")` instead.
   1. the name (1:85)
@@ -43,7 +43,7 @@ error: Not a Zed name: `"quantity sold"`. Try `names("region", "day", "sku", "qu
     with names("region", "day", "sku", "quantity_sold")
 ```
 
-<!-- DESIGN.md:1090; section [sec:level_names] 3 -->
+<!-- DESIGN.md:1091; section [sec:level_names] 3 -->
 ```text
 error: Two names for one level: `(region: Utf8String) ->? int with names("area", "count")`. Try `(area: Utf8String) ->? int with names("area", "count")` instead.
   1. the name `area`, given by `names` (1:55)
@@ -59,7 +59,7 @@ error: Two names for one level: `(region: Utf8String) ->? int with names("area",
     type Counts = (region: Utf8String) ->? int with names("_", "count");
 ```
 
-<!-- DESIGN.md:1139; section [sec:level_names] 4 -->
+<!-- DESIGN.md:1140; section [sec:level_names] 4 -->
 ```text
 error: Two levels named `key` in `m : K ->? V` with `V : (key: int) ->? int`: `lookupOr(catalog, "top", { 0 -> 0 })`. Try `lookupOr(catalog as (shelf -> item -> count), "top", { 0 -> 0 })` instead.
   1. the argument (3:14)
@@ -78,7 +78,7 @@ error: Two levels named `key` in `m : K ->? V` with `V : (key: int) ->? int`: `l
     catalog: Utf8String ->? ((item: int) ->? int) with names("shelf", "_", "count") = { "top" -> { 7 -> 2 } };
 ```
 
-<!-- DESIGN.md:1261; section [sec:level_names] 5 -->
+<!-- DESIGN.md:1262; section [sec:level_names] 5 -->
 ```text
 region  day  sku    quantitySold
 "east"  0    "B7"   5
@@ -87,7 +87,7 @@ region  day  sku    quantitySold
 "west"  1    "A12"  2
 ```
 
-<!-- DESIGN.md:1294; section [sec:domains] 1 -->
+<!-- DESIGN.md:1295; section [sec:domains] 1 -->
 ```text
 error: No `f64` equals the literal: `x: f64 = 9007199254740993`. Try `x: int = 9007199254740993` instead.
   1. the literal (1:10)
@@ -108,7 +108,7 @@ error: No `f64` equals the literal: `x: f64 = 9007199254740993`. Try `x: int = 9
     x: f64 = round(9007199254740993r);                              x is the same f64
 ```
 
-<!-- DESIGN.md:2475; section [sec:theories] 1 -->
+<!-- DESIGN.md:2489; section [sec:theories] 1 -->
 ```text
 trivial models of CommRing
   on one value, #a, with every field returning #a: every law holds.
@@ -123,7 +123,7 @@ trivial models of CommRing
   So the model on one value is the only trivial model.
 ```
 
-<!-- DESIGN.md:2495; section [sec:theories] 2 -->
+<!-- DESIGN.md:2509; section [sec:theories] 2 -->
 ```text
 trivial models of Fano
   on one value, #a: law line1 (c1 != c2 || c2 != c3) does not hold, since on one value every two values are equal.
@@ -139,12 +139,12 @@ trivial models of Fano
         @exhaustive interface Fano(positional T) { ... }
 ```
 
-<!-- DESIGN.md:2562; section [sec:diagnostics] 1 -->
+<!-- DESIGN.md:2576; section [sec:diagnostics] 1 -->
 ```text
 error: Cannot compare unequal types: `x[1] : int < y[1] : rat`. Try `rat(x[1]) < y[1]` instead.
 ```
 
-<!-- DESIGN.md:2755; section [sec:diagnostics] 2 -->
+<!-- DESIGN.md:2769; section [sec:diagnostics] 2 -->
 ```text
 error: A decimal literal is never an `int`: `x : int * 2.0`. Try `twice(x: int) = x * 2` instead.
   1. the literal (1:21)
@@ -167,7 +167,7 @@ error: A decimal literal is never an `int`: `x : int * 2.0`. Try `twice(x: int) 
     twice(x) = x * 2.0;              twice is (x: T) -> T for T in bf16 | f16 | f32 | f64 | rat
 ```
 
-<!-- DESIGN.md:2781; section [sec:diagnostics] 3 -->
+<!-- DESIGN.md:2795; section [sec:diagnostics] 3 -->
 ```text
 error: Nothing gives the literal `2.5` a carrier. Try `y = inc(x: 2.5f64)` instead.
   1. the literal (2:12)
@@ -193,7 +193,7 @@ error: Nothing gives the literal `2.5` a carrier. Try `y = inc(x: 2.5f64)` inste
     y: rat = inc(x: 2.5);    the literal is then exactly 2.5, a rat
 ```
 
-<!-- DESIGN.md:2810; section [sec:diagnostics] 4 -->
+<!-- DESIGN.md:2824; section [sec:diagnostics] 4 -->
 ```text
 error: Nothing gives the integer literals a carrier, and `/` has none at `int`: `q = (1 + 2) / (3 + 4)`. Try `q = (1.0f64 + 2) / (3 + 4)` instead.
   1. the division (1:13)
@@ -221,7 +221,7 @@ error: Nothing gives the integer literals a carrier, and `/` has none at `int`: 
     q: rat = (1 + 2) / (3 + 4);    q is 3r/7r
 ```
 
-<!-- DESIGN.md:2841; section [sec:diagnostics] 5 -->
+<!-- DESIGN.md:2855; section [sec:diagnostics] 5 -->
 ```text
 c.zed:3:47: Cannot pass `#nf` to `ap`, which takes `(T1, T1)`: `k(y : (T1, T1) | #nf)`.
   T1 stands for a part written more than once:
@@ -233,7 +233,7 @@ c.zed:3:47: Cannot pass `#nf` to `ap`, which takes `(T1, T1)`: `k(y : (T1, T1) |
   [5] 3:47: repair: handle the values that are not (T1, T1) with `else` or `match`
 ```
 
-<!-- DESIGN.md:2858; section [sec:diagnostics] 6 -->
+<!-- DESIGN.md:2872; section [sec:diagnostics] 6 -->
 ```text
 error: A list level has no string key: `sales[day: "Monday" : Utf8String]`. Try `sales[day: 0]` instead.
   1. the key (3:16)
