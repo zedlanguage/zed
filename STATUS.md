@@ -2189,13 +2189,14 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | round 5 Claude seat merged 7c8f994b4 (core classes, repair memo; point_rows R 65.8 -> 7.92), plan/STATUS f23d3185a; load 46.10 45.93 45.05 |
 | MAIN-limits | impl attempt 1 | 2026-11-13 15:20 | started; load 36.82 |
 | MSG-cast-repair-parens | impl attempt 1 | 2026-11-13 18:06 | started; worktree from origin/main |
-| MSG-never-f64-wording | impl attempt 1 | 2026-11-13 17:20 | started; worktree made |
+| MSG-never-f64-wording | impl attempt 1 | 2026-11-13 17:20 | reproduced: zedc run of f(x: 1.0f32) at f64 prints 'makes the literal `1.0f32` an `f64`, never `f64`'; cause hard-coded f64 in check::menu; baseline 5 groups 30 |
 | PERF-l139-family | impl attempt 3 | 2026-11-12 18:45 | step 1 pushed 40bb19caa: hull sides asked first at the real bound (real_end); hop 8.9, hopon 9.8 run again; 8 families still over 10.5 (ignored), work continues |
+| POW-tower-exact-test | impl attempt 1 | 2026-11-13 18:58 | start; load 25.57 |
 | ST-churn-at-once | impl attempt 1 | 2026-11-13 16:18 | started; worktree from origin/main a42ee21d8 |
-| TERM-report | impl attempt 1 | 2026-11-13 17:02 | merged: zed dbeef3b, 852239b; zed-impl up to 1dece8d17 (resolver words @total, @teardown, @thread, held, handedBack, dropsHeld; rows TERM-verdicts, MEM-verdicts |
 | TESTS-defer-leftovers | impl attempt 1 | 2026-11-13 18:38 | started |
 | TESTS-l01_26a-calls-slow | impl attempt 1 | 2026-11-13 16:36 | started; worktree from origin/main db415023a |
 | XR-ffi-stateful | impl attempt 1 | 2026-11-13 18:25 | started: cross-review of STUDY-ffi-stateful design (zed 02a2ff3), seats Sol, Opus, Gemini (CD no seat: spec text, not scored code); load 32.07 38.66 44.54 |
+| XR-l139-family | running | 2026-11-13 18:59 |  |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
