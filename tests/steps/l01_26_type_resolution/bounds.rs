@@ -311,6 +311,48 @@ pub(super) fn many_bounds(n: usize) -> String {
     format!("({}) -> T0 for {}", ps.join(", "), bs.join(", "))
 }
 
+/// A signature of `n` parameters, parameter `i` taking `(Bi,) | (T,)` with `Bi` bounded to
+/// `int | f64` and `T` free, one variable for all (written at least twice, so `n` is 2 or more), returning `(B{n-1},)`; and the signature that passes `(String,)`
+/// to each parameter but the last, `(int,)` to the last, and returns `result`. A `(String,)`
+/// is held by `(T,)` alone, since `Bi`'s bound does not hold `String`
+/// (FAIL-types-overload-bounded-tuple), so the first fits the second exactly when `result`
+/// holds `(int,)`.
+pub(super) fn bounded_or_free(n: usize, result: &str) -> (String, String) {
+    let ps: Vec<String> = (0..n).map(|i| format!("x{i}: (B{i},) | (T,)")).collect();
+    let bs: Vec<String> = (0..n).map(|i| format!("B{i} in int | f64")).collect();
+    let qs: Vec<String> = (0..n)
+        .map(|i| format!("x{i}: ({},)", if i + 1 == n { "int" } else { "String" }))
+        .collect();
+    (
+        format!("({}) -> (B{},) for {}", ps.join(", "), n - 1, bs.join(", ")),
+        format!("({}) -> {result}", qs.join(", ")),
+    )
+}
+
+/// `bounded_or_free` at small sizes: each `(String,)` skips the bounded shape for the free one,
+/// and the last parameter binds `B{n-1}` to `int`, which the result `(f64,)` does not hold.
+#[test]
+fn a_bounded_variable_beside_a_free_one_takes_only_what_its_bound_holds() {
+    use zedc::check::ty::{fits_sig, why_unfit};
+    // From n = 2: `T` written once would not be read as a variable.
+    for n in 2..=5 {
+        for (result, fits) in [
+            ("(int,)", true),
+            ("(int,) | (String,)", true),
+            ("(f64,)", false),
+        ] {
+            let (s, q) = bounded_or_free(n, result);
+            let s = parse_type(&s).unwrap_or_else(|e| panic!("{e}"));
+            let q = parse_type(&q).unwrap_or_else(|e| panic!("{e}"));
+            let (s, q) = (&s.fns[0], &q.fns[0]);
+            assert_eq!(fits_sig(s, q), fits, "{q} in {s}");
+            if fits {
+                assert_eq!(why_unfit(s, q), None, "{q} in {s}");
+            }
+        }
+    }
+}
+
 #[test]
 fn the_checker_reads_a_one_tuple_and_a_morphism_type() {
     let one = "f(p: (int,)) = p;\n";

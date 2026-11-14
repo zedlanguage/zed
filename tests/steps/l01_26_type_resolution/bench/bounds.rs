@@ -6,8 +6,8 @@ use zedc::parse::{TOP, parse};
 use zedc::resolve::resolve;
 
 use super::super::bounds::{
-    bounded_chain, distinct_bounds_chain, many_bounds, nested, nested_lambdas, passed, passed_deep,
-    shared_bounded_chain, wide, wide_lambda,
+    bounded_chain, bounded_or_free, distinct_bounds_chain, many_bounds, nested, nested_lambdas,
+    passed, passed_deep, shared_bounded_chain, wide, wide_lambda,
 };
 use super::super::info;
 
@@ -207,6 +207,31 @@ fn reading_back_a_printed_type_of_many_distinct_bounded_variables_scales() {
         |m| {
             let (t, text) = &inputs[&m];
             assert_eq!(&parse_type(text).unwrap_or_else(|e| panic!("{e}")), t);
+        },
+    );
+}
+
+#[test]
+fn a_signature_of_many_bounded_variables_beside_a_free_one_fits_in_time_near_its_size() {
+    // `bounded_or_free`: n parameters, each `(Bi,) | (T,)`, given `(String,)` but the last.
+    // Each `(String,)` is refused by the shape `(Bi,)`, whose bound does not hold `String`,
+    // and taken by `(T,)` (FAIL-types-overload-bounded-tuple). The refusal looks the bound up
+    // in the signature's sorted bounds (`Binds::bound`, O(log n)) and checks the piece alone,
+    // so the comparison is O(n log n); a linear scan of the bounds per piece would be O(n^2).
+    // The signatures are read before timing.
+    let n = 9600;
+    let inputs = zed_tests::scaling::inputs(n, |m| {
+        let (s, q) = bounded_or_free(m, "(int,)");
+        let read = |t: &str| parse_type(t).unwrap_or_else(|e| panic!("{e}"));
+        (read(&s), read(&q))
+    });
+    zed_tests::scaling::check_order(
+        "a signature of n bounded variables beside a free one, given n tuples",
+        n,
+        1,
+        |m| {
+            let (s, q) = &inputs[&m];
+            assert!(zedc::check::ty::fits_sig(&s.fns[0], &q.fns[0]));
         },
     );
 }

@@ -3311,12 +3311,39 @@ impl Piece {
 pub struct Binds {
     map: BTreeMap<Arc<str>, Ty>,
     keys: std::sync::OnceLock<BindKeys>,
+    /// The bound of each bounded variable of the signature whose arrow binds these variables,
+    /// by name, when there is one: a variable is bound to a piece only where its bound holds
+    /// the piece ([`accepts`]). Shared, so a copy of the binding tried for one shape and
+    /// dropped copies no bound.
+    bounds: Option<SortedBounds>,
 }
+
+/// The bounds of a signature's bounded variables, each name with its mask, in the order of the
+/// names ([`Binds::bound`]).
+type SortedBounds = Arc<[(Arc<str>, u8)]>;
 
 impl Binds {
     /// No binding.
     pub fn new() -> Binds {
         Binds::default()
+    }
+
+    /// No binding, of the variables of a signature whose bounded variables have the bounds
+    /// `bounds`, by name.
+    fn bounded(bounds: &BTreeMap<Arc<str>, u8>) -> Binds {
+        Binds {
+            bounds: (!bounds.is_empty())
+                .then(|| bounds.iter().map(|(v, &m)| (v.clone(), m)).collect()),
+            ..Binds::default()
+        }
+    }
+
+    /// The bound of the variable `v`, if it has one: by binary search, as the bounds are in
+    /// the order of their names.
+    fn bound(&self, v: &str) -> Option<u8> {
+        let bounds = self.bounds.as_deref()?;
+        let at = bounds.binary_search_by(|(w, _)| (**w).cmp(v)).ok()?;
+        Some(bounds[at].1)
     }
 
     /// The index of its variables, made now if not yet.
@@ -3412,6 +3439,7 @@ impl FromIterator<(Arc<str>, Ty)> for Binds {
         Binds {
             map: iter.into_iter().collect(),
             keys: std::sync::OnceLock::new(),
+            bounds: None,
         }
     }
 }
@@ -3427,6 +3455,7 @@ impl From<BTreeMap<Arc<str>, Ty>> for Binds {
         Binds {
             map,
             keys: std::sync::OnceLock::new(),
+            bounds: None,
         }
     }
 }
@@ -3464,6 +3493,9 @@ enum Read {
 /// those of each given one that no parameter holds. Persistent, so that each function met
 /// keeps the reading of its own side at the cost of a pointer.
 type Env = imbl::OrdMap<Arc<str>, Read>;
+
+/// A mask for each variable named, as `Sig::bounds` and `Cx::rigid` keep them.
+type Masks = BTreeMap<Arc<str>, u8>;
 
 /// The type a class variable the checker solved stands for, if it was solved to one that
 /// holds no variable: a signature solved before the functions around it keeps such a
@@ -3536,6 +3568,14 @@ struct Cx<'s> {
     // Used: the count of each name, O(1) expected per variable. Tradeoff: one map entry per
     // name kept, dropped with the last entry of that name.
     owned: HashMap<Arc<str>, usize>,
+    /// The bound of each entry of `own` that has one, by name: a variable a comparison binds
+    /// within that bound, whose values are of its carriers, wherever it is held as a piece
+    /// ([`var_mask`]). A bounded own variable reads under a name of its own (an `s` variable
+    /// under a new name when the name is owned around it, a `q` variable as rigid or as its
+    /// mask), so one entry has the name; a name `owned` counts more than once is shared with an
+    /// unbounded own variable, which stands for every type, and is not read by this bound.
+    /// O(1) expected per variable opened or looked up, as for `owned`.
+    own_bounds: HashMap<Arc<str>, u8>,
 }
 
 /// A verdict kept in [`Cx::fitted`]: whether the function fits, and why the comparison was
@@ -3647,7 +3687,10 @@ impl Cx<'_> {
             self.rigid.remove(&w);
             self.fns.remove(&w);
         }
-        for (w, _) in self.own.drain(mark.own..) {
+        for (w, bound) in self.own.drain(mark.own..) {
+            if bound.is_some() {
+                self.own_bounds.remove(&w);
+            }
             if let Some(n) = self.owned.get_mut(&w) {
                 *n -= 1;
                 if *n == 0 {
@@ -7141,12 +7184,51 @@ async fn accepts<'m>(
     if ok {
         return true;
     }
+    // A variable whose bound does not hold the piece is not bound to it (FAIL-types-overload-
+    // bounded-tuple): bound so, it would fail [`bounds_hold`] once the parameters are compared,
+    // so the shape that holds the piece only by that binding holds it in no comparison that
+    // succeeds. Refused here, the shape does not hold the piece, and [`Comparing::search`] goes
+    // on to the next shape, which may hold it: `(U,)` in `(B,) | (U,)` for `B in int | f64`
+    // is held by `(U,)`, not by `(B,)`. Bound first and checked at the end, the search had
+    // committed to the first shape. The check is the one [`bounds_hold`] makes, on the piece
+    // with what the variable is bound to so far. Outside every tuple shape ([`Site::Other`])
+    // no other shape is searched, so a piece no variable admits is bound as before, to the
+    // first variable, and the message on [`bounds_hold`] names that binding. Cost: a binary
+    // search of the bounds of the signature ([`Binds::bound`]) and a check of the piece alone
+    // ([`var_mask`], O(log n) and O(1) expected), as what the variable is bound to was checked
+    // when bound; so the binding keeps the cost of a union.
     let cx = c.cx.borrow();
-    match t
-        .vars
-        .iter()
-        .find(|v| !cx.rigid.contains_key(*v) && !cx.fns.contains_key(*v))
-    {
+    let admits = |v: &Arc<str>| {
+        let Some(m) = binds.bound(v) else {
+            return true;
+        };
+        match binds.get(v).filter(|b| !b.is_empty()) {
+            None => match p {
+                Piece::Var(w) => match var_mask(w, &cx) {
+                    Some(mw) => mw & !m == 0,
+                    None => piece_within(p, m, &cx),
+                },
+                _ => piece_within(p, m, &cx),
+            },
+            // A variable of several carriers stands for one carrier; with anything else beside
+            // it, for one carrier and something else at once, which [`bounds_hold`] refuses,
+            // unless its mask is one carrier, of which the piece is ([`carrier_of`]).
+            Some(b) => match b.as_var().and_then(|w| Some((w, var_mask(w, &cx)?))) {
+                Some((w, mw)) => {
+                    matches!(p, Piece::Var(x) if x == w)
+                        || mask_carrier(mw).is_some_and(|c| carrier_of(p, &cx) == Some(c))
+                }
+                None => piece_within(p, m, &cx),
+            },
+        }
+    };
+    let bindable = |v: &&Arc<str>| !cx.rigid.contains_key(*v) && !cx.fns.contains_key(*v);
+    let found =
+        (t.vars.iter().filter(bindable).find(|v| admits(v))).or_else(|| match search.site {
+            Site::Other => t.vars.iter().find(bindable),
+            Site::In(..) => None,
+        });
+    match found {
         Some(v) => {
             let b = binds.or_insert_with(v.clone(), Ty::empty);
             *b = b.union(&of.of_piece(p));
@@ -7226,7 +7308,24 @@ async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, 
     if !same_params {
         return false;
     }
-    let (mark, sas, qas) = c.cx.borrow_mut().open(s, se, q, qe);
+    let (mark, sas, qas, renamed) = c.cx.borrow_mut().open(s, se, q, qe);
+    // The bounds of `s` by the names its arrows are read with: a function type inside another
+    // whose bounded variable has the name of one the comparison around it reads as itself is
+    // read under a new name, and its bound, kept under the name written, was not checked
+    // ([`bounds_hold`], [`Binds::bound`]): `(x0: (B,)) -> (B,)` for `B in int | f64`, returned
+    // by a signature with its own `B`, fit where `(x0: (String,)) -> (String,)` is returned.
+    // Cost: a copy of `s` only where so read, of the size reading its arrows already cost; the
+    // functions that check bounds take them from the signature, which keeps them by name.
+    let mut read;
+    let s = match renamed {
+        Some(bounds) => {
+            // A clone starts with no memo ([`Facts`]), so none is kept for the old bounds.
+            read = s.clone();
+            read.bounds = bounds;
+            &read
+        }
+        None => s,
+    };
     let fits = every_arrow_fits(s, &sas, &qas, c).await;
     if explain && !fits {
         // The first arrow of `q` not covered, compared again alone: only on the way to an
@@ -7257,9 +7356,16 @@ fn read_alike(s: &Sig, se: &Env, qe: &Env) -> bool {
 
 impl Cx<'_> {
     /// Opens the comparison of [`fits_in`] of `s`, read by `se`, with `q`, read by `qe`: the
-    /// mark of the names made and the own variables kept for it ([`Self::forget`]), and the
-    /// arrows of each as read.
-    fn open(&mut self, s: &Sig, se: &Env, q: &Sig, qe: &Env) -> (Mark, Vec<Arrow>, Vec<Arrow>) {
+    /// mark of the names made and the own variables kept for it ([`Self::forget`]), the arrows
+    /// of each as read, and the bounds of `s` by the names its variables are read as, where a
+    /// bounded variable of `s` is read under a new name ([`Self::own_name`]).
+    fn open(
+        &mut self,
+        s: &Sig,
+        se: &Env,
+        q: &Sig,
+        qe: &Env,
+    ) -> (Mark, Vec<Arrow>, Vec<Arrow>, Option<Masks>) {
         let cx = self;
         let mark = Mark {
             made: cx.made.len(),
@@ -7285,16 +7391,29 @@ impl Cx<'_> {
             }
         }
         let mut se = se.clone();
+        let mut renamed = None;
         for v in &s.own {
             match s.bounds.get(v) {
                 Some(&m) if !s.held.contains(v) => {
                     se.insert(v.clone(), Read::Mask(m));
                 }
-                bound => kept.push((cx.own_name(v, &mut se), bound.copied())),
+                bound => {
+                    let w = cx.own_name(v, &mut se);
+                    if bound.is_some() && w != *v {
+                        let bounds: &mut BTreeMap<_, _> =
+                            renamed.get_or_insert_with(|| s.bounds.clone());
+                        let m = bounds.remove(v).expect("a bounded variable has its bound");
+                        bounds.insert(w.clone(), m);
+                    }
+                    kept.push((w, bound.copied()));
+                }
             }
         }
         for (w, bound) in kept {
             *cx.owned.entry(w.clone()).or_default() += 1;
+            if let Some(m) = bound {
+                cx.own_bounds.insert(w.clone(), m);
+            }
             cx.own.push((w, bound));
         }
         let read = |a: &Arrow, env: &Env, cx: &mut Cx| Arrow {
@@ -7303,7 +7422,7 @@ impl Cx<'_> {
         };
         let sas: Vec<Arrow> = s.arrows.iter().map(|a| read(a, &se, cx)).collect();
         let qas: Vec<Arrow> = q.arrows.iter().map(|a| read(a, &qe, cx)).collect();
-        (mark, sas, qas)
+        (mark, sas, qas, renamed)
     }
 
     /// The name an own variable `v` of a function type opened is read as, in `env`, the
@@ -7514,7 +7633,7 @@ async fn refused_cover<'m>(
     let mut outside = Vec::new();
     let mut split = None;
     for (i, sa) in sas.iter().enumerate() {
-        let mut b = Binds::new();
+        let mut b = Binds::bounded(&s.bounds);
         let mut miss = Vec::new();
         for (j, (x, y)) in qa.params.iter().zip(&sa.params).enumerate() {
             if !c.sub_in(x, y, &mut b).await {
@@ -7540,7 +7659,7 @@ async fn refused_cover<'m>(
                 .bounds
                 .keys()
                 .filter_map(|v| Some((v, b.get(v)?)))
-                .find(|(v, t)| !one_carrier(t) && !one_place(sa, v, &cx));
+                .find(|(v, t)| !one_carrier(t, &cx) && !one_place(sa, v, &cx));
             if let Some((v, t)) = several {
                 shared.get_or_insert((i, v.clone(), t.clone(), Places::of(sa, v, &cx)));
             }
@@ -7767,7 +7886,7 @@ async fn part_of<'m>(
     qa: &Arrow,
     c: &'m Comparing<'m, '_>,
 ) -> Option<(Part, Binds)> {
-    let mut b = Binds::new();
+    let mut b = Binds::bounded(&s.bounds);
     let mut miss = None;
     for (j, (x, y)) in qa.params.iter().zip(&sa.params).enumerate() {
         if !c.sub_in(x, y, &mut b).await {
@@ -8387,7 +8506,7 @@ impl std::hash::Hash for Sig {
 /// Whether the arrow `sa` of `s` takes the parameters of the arrow `qa` and returns within its
 /// result, each bounded variable of `s` bound to carriers of its bound ([`fits_in`]).
 async fn arrow_fits<'m>(s: &Sig, sa: &Arrow, qa: &Arrow, c: &'m Comparing<'m, '_>) -> bool {
-    let mut b = Binds::new();
+    let mut b = Binds::bounded(&s.bounds);
     for (x, y) in qa.params.iter().zip(&sa.params) {
         if !c.sub_in(x, y, &mut b).await {
             return false;
@@ -8405,28 +8524,74 @@ async fn arrow_fits<'m>(s: &Sig, sa: &Arrow, qa: &Arrow, c: &'m Comparing<'m, '_
 fn bounds_hold(s: &Sig, sa: &Arrow, b: &Binds, cx: &Cx) -> bool {
     s.bounds.iter().all(|(v, &m)| {
         b.get(v)
-            .is_none_or(|t| match t.as_var().and_then(|w| cx.rigid.get(w)) {
-                // Each carrier the caller of `q` may pick is one `s` takes.
-                Some(&mq) => mq & !m == 0,
-                // `v` is one carrier at a call, so it cannot be a rigid variable and
-                // something else at once.
+            .is_none_or(|t| match t.as_var().and_then(|w| var_mask(w, cx)) {
+                // Each carrier the caller of `q` may pick, or the comparison that binds the
+                // variable may bind it to, is one `s` takes.
+                Some(mq) => mq & !m == 0,
+                // `v` is one carrier at a call, so it cannot be a variable of several carriers
+                // and something else at once.
                 None => {
-                    t.pieces().iter().all(|p| match p.carrier() {
-                        Some(c) => m & c.bit() != 0,
-                        None => {
-                            m & OTHER != 0
-                                && !matches!(p, Piece::Dyn)
-                                && !matches!(p, Piece::Var(w) if cx.rigid.contains_key(w))
-                        }
-                    }) && (one_carrier(t) || one_place(sa, v, cx))
+                    t.pieces().iter().all(|p| piece_within(p, m, cx))
+                        && (one_carrier(t, cx) || one_place(sa, v, cx))
                 }
             })
     })
 }
 
-/// Whether the values of `t` are of one carrier, or of none.
-fn one_carrier(t: &Ty) -> bool {
-    let mut carriers = t.pieces().into_iter().map(|p| p.carrier());
+/// Whether the piece `p` of what a variable of bound `m` is bound to, with other pieces or
+/// alone, is within the bound ([`bounds_hold`]): of a carrier of it ([`carrier_of`]), or of
+/// none where `m` holds [`OTHER`], neither the unknown nor a variable of a known mask of
+/// several carriers ([`var_mask`]), which with other pieces stands for one carrier and
+/// something else at once.
+fn piece_within(p: &Piece, m: u8, cx: &Cx) -> bool {
+    match carrier_of(p, cx) {
+        Some(c) => m & c.bit() != 0,
+        None => {
+            m & OTHER != 0
+                && !matches!(p, Piece::Dyn)
+                && !matches!(p, Piece::Var(w) if var_mask(w, cx).is_some())
+        }
+    }
+}
+
+/// The mask of the carriers the variable `w` is of, where the comparison knows it: a rigid
+/// variable's ([`Cx::rigid`]), or the bound of a bounded own variable of a comparison open now
+/// ([`Cx::own_bounds`]), which that comparison binds within its bound. A variable of no known
+/// mask, free or unbounded, may be of any type.
+fn var_mask(w: &str, cx: &Cx) -> Option<u8> {
+    (cx.rigid.get(w).copied()).or_else(|| {
+        cx.own_bounds
+            .get(w)
+            .filter(|_| cx.owned.get(w) == Some(&1))
+            .copied()
+    })
+}
+
+/// The carrier of the piece `p`: its own ([`Piece::carrier`]), or, for a variable whose mask
+/// ([`var_mask`]) is one carrier, that carrier, which each value it stands for is of. `V` of
+/// `for V in int` beside `int` is then one carrier, as `int` beside `int` is; read as a
+/// variable of no carrier, `T` bound to `V | int` failed [`bounds_hold`] though it is one
+/// carrier.
+fn carrier_of(p: &Piece, cx: &Cx) -> Option<Carrier> {
+    match p {
+        Piece::Var(w) => var_mask(w, cx).and_then(mask_carrier),
+        _ => p.carrier(),
+    }
+}
+
+/// The one carrier the mask `m` holds, if it holds one and nothing else.
+fn mask_carrier(m: u8) -> Option<Carrier> {
+    let mut carriers = Carrier::of_mask(m);
+    match (carriers.next(), carriers.next()) {
+        (Some(c), None) if m & OTHER == 0 => Some(c),
+        _ => None,
+    }
+}
+
+/// Whether the values of `t` are of one carrier, or of none, a rigid variable of one carrier
+/// read as that carrier ([`carrier_of`]).
+fn one_carrier(t: &Ty, cx: &Cx) -> bool {
+    let mut carriers = t.pieces().into_iter().map(|p| carrier_of(&p, cx));
     let first = carriers.next().flatten();
     carriers.all(|c| c == first)
 }
@@ -10766,6 +10931,251 @@ mod tests {
         ] {
             assert!(!fits_sig(&s, &q), "{q} in {s}");
         }
+    }
+
+    /// An overload with a bounded variable fits where one of its arrows is expected
+    /// (FAIL-types-overload-bounded-tuple): `(x0: (B,) | (U,)) -> (B,)` for `B in int | f64`,
+    /// with `(x0: String) -> String` beside it. The arrow of `q` is read with `B` under a new
+    /// name, so no arrow of `s` is equal to it, and the comparison finds the piece `(U,)` of
+    /// `q`'s parameter in the shapes of `s`'s. `(B,)`, the first in written order, held it
+    /// by binding `B` to `U`, which its bound does not hold, and the search kept that shape;
+    /// now `B` is bound only to what its bound holds, and `(U,)` is found in `(U,)`.
+    #[test]
+    fn an_overload_with_a_bounded_variable_fits_where_one_of_its_arrows_is_expected() {
+        let v = |x: &str| Ty::var(x.into());
+        let tup = |t: Ty| Ty::tuple(vec![t]);
+        let bu = tup(v("B")).union(&tup(v("U")));
+        let string = Arrow {
+            params: vec![Ty::carrier(Carrier::Str)],
+            result: Ty::carrier(Carrier::Str),
+        };
+        let q = one_param(bu.clone(), tup(v("B")), &[], true);
+        let s = one_param(bu, tup(v("B")), std::slice::from_ref(&string), true);
+        assert!(fits_sig(&s, &q), "{q} in {s}");
+        assert_eq!(why_unfit(&s, &q), None, "{q} in {s}");
+    }
+
+    /// `s` with its own variables `own` only, and the bound of `B` given to `to` instead.
+    fn owning(mut s: Sig, own: &[&str], to: &str) -> Sig {
+        s.own = own.iter().map(|&v| v.into()).collect();
+        if let Some(m) = s.bounds.remove("B") {
+            s.bounds.insert(to.into(), m);
+        }
+        s.note_held();
+        s
+    }
+
+    /// Neighbors of [`an_overload_with_a_bounded_variable_fits_where_one_of_its_arrows_is_expected`]:
+    /// a bounded variable is bound only to what its bound holds, so a piece its shape could
+    /// hold only by such a binding is found in a later shape, under any name of the expected
+    /// variables; and a binding the bound does hold is still made, and still checked against
+    /// the result. The last pair is the signature that fits itself only as a whole
+    /// ([`read_alike`]): its piece `(U,)` binds the unbounded `T` in `(T,)`.
+    #[test]
+    fn a_bounded_variable_is_bound_only_to_what_its_bound_holds() {
+        let v = |x: &str| Ty::var(x.into());
+        let tup = |t: Ty| Ty::tuple(vec![t]);
+        let int = Ty::carrier(Carrier::Int);
+        let string = Ty::carrier(Carrier::Str);
+        let bu = tup(v("B")).union(&tup(v("U")));
+        let bt = tup(v("B")).union(&tup(v("T")));
+        let cw = tup(v("C")).union(&tup(v("W")));
+        let btu = bt.union(&tup(v("U")));
+        let strings = tup(int.clone()).union(&tup(string.clone()));
+        let cases = [
+            (
+                one_param(bu.clone(), tup(v("B")), &[], true),
+                owning(one_param(cw, tup(v("C")), &[], true), &["C", "W"], "C"),
+                true,
+            ),
+            (
+                one_param(tup(v("B")), tup(v("B")), &[], true),
+                owning(one_param(tup(v("C")), tup(v("C")), &[], true), &["C"], "C"),
+                true,
+            ),
+            (
+                one_param(bt.clone(), tup(v("B")), &[], true),
+                one_param(strings.clone(), tup(int.clone()), &[], false),
+                true,
+            ),
+            (
+                one_param(bt.clone(), tup(v("T")), &[], true),
+                one_param(tup(string.clone()), tup(string.clone()), &[], false),
+                true,
+            ),
+            (
+                one_param(bt, tup(v("B")), &[], true),
+                one_param(strings, tup(string), &[], false),
+                false,
+            ),
+            (
+                one_param(btu.clone(), tup(v("T")), &[], true),
+                one_param(btu, tup(v("T")), &[], true),
+                true,
+            ),
+        ];
+        for (s, q, fits) in cases {
+            assert_eq!(fits_sig(&s, &q), fits, "{q} in {s}");
+            assert_eq!(why_unfit(&s, &q), None, "{q} in {s}");
+        }
+    }
+
+    /// Bounded variables beside variables of an enclosing scope (`V`, not own), inside the
+    /// function types a signature takes or returns, and beside class variables solved while
+    /// comparing ([`fits_sig_with`]). The outer `V` is the same variable on both sides, and
+    /// `B`, bound to the expected `B`, is not within it. A function type is compared as a
+    /// signature of its own, with its own bounded variable read under a new name where the
+    /// signature around it owns one of the same name, and checked against its bound under that
+    /// name: `(x0: (B,)) -> (B,)` for `B in int | f64` does not fit `(x0: (String,)) -> (String,)`
+    /// there either. A class variable reads as the type it is solved to, so `(C,)` holds
+    /// `(String,)` where `C` is `String`, and not where it is `int`.
+    #[test]
+    fn bounded_variables_beside_outer_variables_function_types_and_class_variables() {
+        let v = |x: &str| Ty::var(x.into());
+        let tup = |t: Ty| Ty::tuple(vec![t]);
+        let int = Ty::carrier(Carrier::Int);
+        let string = Ty::carrier(Carrier::Str);
+        let to_string = Arrow {
+            params: vec![string.clone()],
+            result: string.clone(),
+        };
+        let bu = tup(v("B")).union(&tup(v("U")));
+        let bv = tup(v("B")).union(&tup(v("V")));
+        let outer = [
+            (
+                one_param(
+                    bv.clone(),
+                    tup(v("B")),
+                    std::slice::from_ref(&to_string),
+                    true,
+                ),
+                one_param(bv.clone(), tup(v("B")), &[], true),
+                true,
+            ),
+            (
+                one_param(
+                    bv.clone(),
+                    tup(v("B")),
+                    std::slice::from_ref(&to_string),
+                    true,
+                ),
+                one_param(bv.clone(), tup(v("V")), &[], true),
+                false,
+            ),
+        ];
+        let func = |t: Sig| Ty::func(Arc::new(t));
+        let inner = one_param(bu.clone(), tup(v("B")), &[], true);
+        let inner_both = one_param(
+            bu.clone(),
+            tup(v("B")),
+            std::slice::from_ref(&to_string),
+            true,
+        );
+        let ints = one_param(tup(v("B")), tup(v("B")), &[], true);
+        let strings = one_param(tup(string.clone()), tup(string.clone()), &[], false);
+        let fns = [
+            (
+                one_param(tup(v("B")), func(inner_both.clone()), &[], true),
+                one_param(tup(v("B")), func(inner.clone()), &[], true),
+                true,
+            ),
+            (
+                one_param(tup(v("B")), func(inner.clone()), &[], true),
+                one_param(tup(v("B")), func(inner_both), &[], true),
+                false,
+            ),
+            (
+                one_param(tup(v("B")), func(ints.clone()), &[], true),
+                one_param(tup(v("B")), func(strings.clone()), &[], true),
+                false,
+            ),
+            (
+                one_param(tup(v("T")), func(ints), &[], false),
+                one_param(tup(v("T")), func(strings), &[], false),
+                false,
+            ),
+            (
+                one_param(
+                    func(inner.clone()),
+                    int.clone(),
+                    std::slice::from_ref(&to_string),
+                    true,
+                ),
+                one_param(func(inner), int.clone(), &[], true),
+                true,
+            ),
+        ];
+        for (s, q, fits) in outer.into_iter().chain(fns) {
+            assert_eq!(fits_sig(&s, &q), fits, "{q} in {s}");
+            if fits {
+                assert_eq!(why_unfit(&s, &q), None, "{q} in {s}");
+            }
+        }
+        let bc = tup(v("B")).union(&tup(v("C")));
+        let s = one_param(
+            bc.clone(),
+            tup(v("B")),
+            std::slice::from_ref(&to_string),
+            true,
+        );
+        let wants = one_param(bc, tup(v("B")), &[], true);
+        let takes_string = one_param(
+            tup(v("B")).union(&tup(string.clone())),
+            tup(v("B")),
+            &[],
+            true,
+        );
+        for (c, q, fits) in [
+            (string.clone(), &wants, true),
+            (int.clone(), &wants, true),
+            (string, &takes_string, true),
+            (int, &takes_string, false),
+        ] {
+            let solve = |x: &str| (x == "C").then(|| c.clone());
+            assert_eq!(fits_sig_with(&s, q, &solve), fits, "{q} in {s}, C = {c}");
+            if fits {
+                assert_eq!(why_unfit_with(&s, q, &solve), None, "{q} in {s}, C = {c}");
+            }
+        }
+    }
+
+    /// A bound that holds [`OTHER`] (written `_`) holds a piece of no carrier: the tuple
+    /// `(int,)` binds `B` in the first shape `(B,)`, where without `OTHER` it is held only by
+    /// `(U,)`, and the result `(B,)` then holds nothing of it. And a variable of several
+    /// carriers beside a tuple is refused even by such a bound ([`piece_within`]): `V` of
+    /// `for V in int | f64` stands for one carrier, so `V | (int,)` given to `B` stands for one
+    /// carrier and something else at once, which `B`, one type at a call, is not.
+    #[test]
+    fn a_bound_that_holds_other_values_takes_a_tuple_but_not_beside_a_variable_of_carriers() {
+        let v = |x: &str| Ty::var(x.into());
+        let tup = |t: Ty| Ty::tuple(vec![t]);
+        let int = Ty::carrier(Carrier::Int);
+        let bounded = |m: u8, p: Ty, r: Ty| {
+            let mut s = one_param(p, r, &[], true);
+            s.bounds.insert("B".into(), m);
+            s
+        };
+        let q = sig(
+            vec![Arrow {
+                params: vec![tup(tup(int.clone()))],
+                result: tup(tup(int.clone())),
+            }],
+            1,
+            false,
+        );
+        let bu = tup(v("B")).union(&tup(v("U")));
+        let s = bounded(B_MASK | OTHER, bu.clone(), tup(v("B")));
+        assert!(fits_sig(&s, &q), "{q} in {s}");
+        assert_eq!(why_unfit(&s, &q), None, "{q} in {s}");
+        let s = bounded(B_MASK, bu, tup(v("B")));
+        assert!(!fits_sig(&s, &q), "{q} in {s}");
+        let s = bounded(B_MASK | OTHER, v("B"), int.clone());
+        let q = owning(
+            one_param(v("V").union(&tup(int.clone())), int, &[], true),
+            &["V"],
+            "V",
+        );
+        assert!(!fits_sig(&s, &q), "{q} in {s}");
     }
 
     /// A refusal with no arrow left that fits refuses the whole comparison, and the same
