@@ -10,7 +10,9 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use super::arms::{Called, Item, Node, Reading, Summarized, Translated, prim_of, var};
+use super::arms::{
+    Called, Implicit, Item, Node, Parts, Reading, Summarized, Translated, prim_of, var,
+};
 use super::limits::{ADDRESS_BYTES_LOG2, target_text};
 use super::*;
 use zed_kernel::Shared;
@@ -6107,7 +6109,7 @@ impl<'a> Ck<'_, 'a> {
             if !seen.insert(b) {
                 continue;
             }
-            let Some(&value) = self.facts.get(&b) else {
+            let Some((v, _)) = self.value_of(b) else {
                 continue;
             };
             // A binder with a summary is also read through it over its inputs here
@@ -6115,7 +6117,6 @@ impl<'a> Ck<'_, 'a> {
             if let Some(Some(sum)) = self.arms.summaries.get(&b) {
                 out.extend(sum.summary.vars().iter().map(|x| (x.clone(), here)));
             }
-            let v = self.term_for(value, Reading::Defined);
             let at = self.arms.bound_at.get(&b).copied().unwrap_or(0);
             out.extend(v.vars.iter().map(|(x, _)| (x.clone(), at)));
             stack.extend_from_slice(&v.binders);
@@ -6623,11 +6624,10 @@ impl<'a> Ck<'_, 'a> {
             if self.arms.summaries.contains_key(&c) || (!ready && !entered.insert(c)) {
                 continue;
             }
-            let Some(&value) = self.facts.get(&c) else {
+            let Some((t, _)) = self.value_of(c) else {
                 self.arms.summaries.insert(c, None);
                 continue;
             };
-            let t = self.term_for(value, Reading::Defined);
             if !ready {
                 stack.push((c, true));
                 stack.extend(t.binders.iter().map(|&d| (d, false)));
@@ -6637,6 +6637,20 @@ impl<'a> Ck<'_, 'a> {
             self.arms.summaries.insert(c, s.map(Rc::new));
         }
         self.arms.summaries[&b].clone()
+    }
+
+    /// The value of binder `b` as a term and the place the questions its read refuses are
+    /// placed at: the value of a written `name = value` read as [`Reading::Defined`], or that
+    /// of a name of its own a test or an operand gave an `if` or a call ([`Implicit`]).
+    ///
+    /// [`Implicit`]: super::arms::Implicit
+    fn value_of(&mut self, b: usize) -> Option<(Rc<Translated>, Span)> {
+        if let Some(i) = b.checked_sub(self.t.res.binders.len()) {
+            let v = &self.arms.implicit[i];
+            return Some((v.value.clone(), v.span));
+        }
+        let &value = self.facts.get(&b)?;
+        Some((self.term_for(value, Reading::Defined), value.span))
     }
 
     /// The summary of the value `t` of binder `b`, the summaries of the binders it reads made
@@ -6767,10 +6781,9 @@ impl<'a> Ck<'_, 'a> {
                 Node::Join(a, b) => vec![Item::Scope(a), Item::Scope(b)],
             },
             Item::Bound(b) => {
-                let Some(&value) = self.facts.get(&b) else {
+                let Some((t, _)) = self.value_of(b) else {
                     return Vec::new();
                 };
-                let t = self.term_for(value, Reading::Defined);
                 let at = self.arms.bound_at.get(&b).copied().unwrap_or(0);
                 let mut out = vec![Item::Scope(at)];
                 out.extend(t.binders.iter().map(|&c| Item::Bound(c)));
@@ -6851,10 +6864,9 @@ impl<'a> Ck<'_, 'a> {
                 self.arms.scopes[n] = Some(s);
             }
             Item::Bound(b) => {
-                let Some(&value) = self.facts.get(&b) else {
+                let Some((t, span)) = self.value_of(b) else {
                     return;
                 };
-                let t = self.term_for(value, Reading::Defined);
                 let at = self.arms.bound_at.get(&b).copied().unwrap_or(0);
                 let s = self.scope_or_root(at);
                 let before = s.refusals.clone();
@@ -6885,7 +6897,7 @@ impl<'a> Ck<'_, 'a> {
                 if let Some(ty) = self.arms.bound_ty.get(&b) {
                     p.ty.element = p.ty.element.meet(ty);
                 }
-                self.place_refusals(value.span, &before, &s.refusals);
+                self.place_refusals(span, &before, &s.refusals);
                 self.arms.bound.insert(b, p);
             }
         }
@@ -6948,11 +6960,18 @@ impl<'a> Ck<'_, 'a> {
     /// `e` as a kernel term ([`Translated`]) read for `reading`: its int and bool literals and
     /// the values its text shows ([`Ck::known`]), its `rat` literals ([`Ck::rat_literal`]), its
     /// names, its unary `-` and `!`, its integer operators, its comparisons, `&&` and `||`,
-    /// the calls it keeps ([`Ck::callable`]) and, read as [`Reading::Defined`], its `if`s;
-    /// anything else is a name of its own, by its span, which the scope knows nothing of. Read
-    /// as [`Reading::Test`], a call is kept only on the test's spine: an operand of `!`, `&&`,
-    /// `||`, a comparison, `+`, `-`, `*`, the left operand of `div` or `mod`, or an argument of
-    /// a call kept, all the way from the root; read as [`Reading::Operand`], no call is kept.
+    /// its `if`s, and the calls it keeps ([`Ck::callable`]); anything else is a name of its
+    /// own, by its span, which the scope knows nothing of. Read as [`Reading::Defined`], every
+    /// `if` and call is kept in place. Read as [`Reading::Test`] or [`Reading::Operand`]:
+    /// - an `if` with no `if` inside it is kept in place, its condition read as a test and
+    ///   its arms as operands; one with an `if` inside it is a name of its own, one for its
+    ///   span, bound at the root to its value ([`Implicit`]);
+    /// - a call of a definition whose body has a summary over its parameters
+    ///   ([`Called::summed`]) is a name bound to the body under a `let` of each parameter to
+    ///   its argument, one for each callee and equal arguments, wherever it is read;
+    /// - another call is kept, read as a test, on the test's spine: an operand of `!`, `&&`,
+    ///   `||`, a comparison, `+`, `-`, `*`, the left operand of `div` or `mod`, or an argument
+    ///   of a call kept, all the way from the root; elsewhere it is a name of its own.
     /// Built children first on an explicit stack, once for `e` and `reading`.
     ///
     /// Complexity tradeoff: naive version (19514ef8c), every `if` and call kept in every term.
@@ -6961,49 +6980,113 @@ impl<'a> Ck<'_, 'a> {
     /// and each read of its divisor `t(x, n)`, is closed over the `k` remainders of `t`
     /// ([`Scope::close`]), so each of the O(k) atoms they make has O(k) parts, O(k²) in all:
     /// `guarded_arms` at k = 1040 and `with_an_if` at d = 1024 ran past 60 s, where they took
-    /// 6 s and 4 s before (FAIL-check-arm-call-bench-hang). Used: a test keeps an `if` as a
-    /// name of its own, as before that commit, and a call only where it can narrow through
-    /// it; an operand keeps neither; a body or a binder's value keeps both, read once, and a
-    /// test reads them through the name. Prior work: a per-function summary in abstract
-    /// interpretation reads a callee once for all its call sites (Sharir and Pnueli, "Two
-    /// approaches to interprocedural data flow analysis", 1981); here a test still reads each
-    /// body it reaches once (COMPLEXITY.md row S24), so `k` tests on a call of a body of size
-    /// `k` stay O(k²). Cost: a test `if (if c { a } else { b }) > 0` written in place, not
-    /// bound to a name, and a divisor that is a call, are not narrowed or checked through
-    /// the inner `if` or the call, as before that commit. Tests:
+    /// 6 s and 4 s before (FAIL-check-arm-call-bench-hang). Its repair (7b5ff433f) kept an
+    /// `if` in a test as a name of its own that the scope knows nothing of, and a call only
+    /// on the spine, where `Scope::close` reads the callee's body once for each test: `k`
+    /// tests `f(x) > c` on a body of `k` nested arms cost O(k²), 29 times the time at 8 times
+    /// the size (32 to 256 tests), and an `if` in a test, a divisor that is a call and a call
+    /// read in an atom were not read through at all. Used: an `if` with an `if` inside it,
+    /// and a call of a body with a summary, are names bound at the root to their values, so
+    /// that the scope summarizes each value once ([`Ck::summarized`]) and each test reads the
+    /// summary: `d` nested `if`s cost O(d), each one name, and `k` tests on calls of one body
+    /// at equal arguments cost the body once, O(k) in all as measured
+    /// (`arm_test_through_call::bench::tests_calling_one_deep_callee_scale`: 8.07 times the
+    /// instructions at 8 times `k`, where reading the body in each test took 54.0 times). An `if`
+    /// with none inside it is kept in place, since a test of a sum of `d` names, each with its
+    /// summary, costs O(d²) (CHECK-sum-of-summarized-names), where a sum of `d` such `if`s
+    /// costs O(d log d) (`follow::bench::nested_sums_of_one_input_scale`, "a sum of d
+    /// ramps"). Prior work: a per-function summary in abstract interpretation reads a callee
+    /// once for all its call sites (Sharir and Pnueli, "Two approaches to interprocedural
+    /// data flow analysis", 1981); equal calls are found by hashing the callee and the
+    /// printed arguments, as hash-consing finds equal terms. Cost: a call is read through
+    /// its callee only where the body has a summary; with a body that calls another, or one
+    /// that is not affine on pieces (`n * n`), or arguments whose terms differ, each call is
+    /// read as before, and each distinct argument term costs the body once
+    /// (CHECK-implicit-call-limits). Tests:
     /// `l01_38_presburger::bench::ladder::the_conditions_of_shared_divisors_scale`,
     /// `l01_39_reduced_product::follow::bench::nested_sums_of_one_input_scale`,
     /// `l01_39_reduced_product::arm_test_through_call`.
+    ///
+    /// [`Implicit`]: super::arms::Implicit
+    /// [`Called::summed`]: super::arms::Called::summed
     fn term_for(&mut self, e: &'a Expr, reading: Reading) -> Rc<Translated> {
         let defined = reading == Reading::Defined;
         if let Some(t) = self.arms.terms.get(&(e.span, reading)) {
             return t.clone();
         }
-        let (mut binders, mut vars, mut calls) = (Vec::new(), Vec::new(), Vec::new());
-        let mut opaque_seen = false;
+        let mut parts = Parts::default();
         let mut done: Vec<Term> = Vec::new();
-        // Each part, whether it waits on its operands, and whether it is on the spine.
-        let mut stack = vec![(e, false, reading != Reading::Operand)];
-        while let Some((x, ready, spine)) = stack.pop() {
-            let mut opaque = || {
-                opaque_seen = true;
-                Term::Var(format!("?{}:{}", x.span.start, x.span.end).into())
-            };
+        // Each part, whether it waits on its operands, whether it is on the spine, and the
+        // parts translated before its operands.
+        let mut stack = vec![(e, false, reading != Reading::Operand, parts.mark())];
+        while let Some((x, ready, spine, m)) = stack.pop() {
+            macro_rules! opaque {
+                () => {{
+                    parts.opaque += 1;
+                    Term::Var(format!("?{}:{}", x.span.start, x.span.end).into())
+                }};
+            }
             if ready {
                 let t = match &x.kind {
                     ExprKind::If { .. } => {
                         let b = done.pop().expect("an `else` arm");
                         let a = done.pop().expect("a `then` arm");
                         let c = done.pop().expect("a condition");
-                        Term::If(Shared::new(c), Shared::new(a), Shared::new(b))
+                        let t = Term::If(Shared::new(c), Shared::new(a), Shared::new(b));
+                        // An `if` with no `if` inside it, and no name bound to an `if` or a
+                        // call, is kept in place: a test of a sum of `d` such `if`s is read as
+                        // one sum, O(d log d), where `d` names, each with its summary, cost
+                        // O(d²) (CHECK-sum-of-summarized-names). An `if` with one inside it is
+                        // a name of its own, so that `d` nested in each other's tests cost
+                        // O(d) and not O(d²).
+                        match defined || parts.ifs == m[4] {
+                            true => {
+                                parts.ifs += 1;
+                                t
+                            }
+                            false => {
+                                let value = parts.since(m, t);
+                                let (b, name) = self.implicit(x, value);
+                                self.arms.implicit_ifs.insert(x.span, b);
+                                parts.named(b, name)
+                            }
+                        }
                     }
                     ExprKind::Call {
                         callee, positional, ..
                     } => {
                         let f = self.callable(callee, positional.len());
-                        let (_, f) = f.expect("a definition whose calls are kept");
+                        let (id, f) = f.expect("a definition whose calls are kept");
                         let args = done.split_off(done.len() - positional.len());
-                        Term::App(Shared::new(Term::Var(f.name.clone())), args)
+                        match defined || !f.summed {
+                            true => {
+                                parts.calls.push(id);
+                                Term::App(Shared::new(Term::Var(f.name.clone())), args)
+                            }
+                            false => {
+                                let printed: Vec<String> =
+                                    args.iter().map(|a| a.to_string()).collect();
+                                let key = format!("{}({})", f.name, printed.join(", "));
+                                let found = (self.arms.implicit_calls.get(&key))
+                                    .and_then(|v| v.iter().find(|(a, _)| *a == args))
+                                    .map(|&(_, b)| b);
+                                let b = match found {
+                                    Some(b) => {
+                                        parts.drop_since(m);
+                                        b
+                                    }
+                                    None => {
+                                        let value = parts.since(m, f.applied(args.clone()));
+                                        let (b, _) = self.implicit(x, value);
+                                        let at = self.arms.implicit_calls.entry(key).or_default();
+                                        at.push((args, b));
+                                        b
+                                    }
+                                };
+                                let name = self.arms.names[&b].clone();
+                                parts.named(b, name)
+                            }
+                        }
                     }
                     ExprKind::Unary(o, _) => {
                         let a = done.pop().expect("an operand");
@@ -7030,20 +7113,22 @@ impl<'a> Ck<'_, 'a> {
             // with it the `#divByZero` of `x / r + 1r` there (NARROW-ne-rat-divisor). The
             // operands of such an `x` are not visited.
             if let Some(v) = self.known(x).value {
-                done.push(match self.carrier_here(x, true) {
+                let t = match self.carrier_here(x, true) {
                     None | Some(Carrier::Int) => Term::Lit(v),
                     Some(Carrier::Rat) => match self.rat_fact(x) {
                         Some(RatFact::Value(v)) => Term::Lit(v),
-                        _ => opaque(),
+                        _ => opaque!(),
                     },
-                    Some(_) => opaque(),
-                });
+                    Some(_) => opaque!(),
+                };
+                done.push(t);
                 continue;
             }
             if let Some(v) = self.rat_literal(x) {
                 done.push(Term::Lit(v));
                 continue;
             }
+            let none = parts.mark();
             match &x.kind {
                 ExprKind::Bool(b) => done.push(Term::Lit(Value::Bool(*b))),
                 ExprKind::Name(n) => match self.t.res.uses.get(&x.span) {
@@ -7051,24 +7136,24 @@ impl<'a> Ck<'_, 'a> {
                         let id = ids[0];
                         let name = var(n, id);
                         if self.facts.contains_key(&id) {
-                            binders.push(id);
+                            parts.binders.push(id);
                             self.arms.names.insert(id, name.clone());
                         }
-                        vars.push((name.clone(), id));
+                        parts.vars.push((name.clone(), id));
                         done.push(Term::Var(name));
                     }
-                    _ => done.push(opaque()),
+                    _ => done.push(opaque!()),
                 },
                 ExprKind::Unary(UnaryOp::Neg | UnaryOp::Not, a) => {
-                    stack.push((x, true, spine));
-                    stack.push((a, false, spine));
+                    stack.push((x, true, spine, none));
+                    stack.push((a, false, spine, none));
                 }
                 ExprKind::Binary(o, a, b) if prim_of(*o).is_some() => {
                     // A divisor is not narrowed by a test of the quotient or the remainder.
                     let divisor = matches!(o, BinaryOp::IntDiv | BinaryOp::Mod);
-                    stack.push((x, true, spine));
-                    stack.push((b, false, spine && !divisor));
-                    stack.push((a, false, spine));
+                    stack.push((x, true, spine, none));
+                    stack.push((b, false, spine && !divisor, none));
+                    stack.push((a, false, spine, none));
                 }
                 // A block of its value alone, as an arm `{ x }`, is that value.
                 ExprKind::Block(stmts)
@@ -7076,49 +7161,72 @@ impl<'a> Ck<'_, 'a> {
                         && let StmtKind::Return(es) = &s.kind
                         && let [v] = &es[..] =>
                 {
-                    stack.push((v, false, spine));
+                    stack.push((v, false, spine, none));
+                }
+                // An `if` read in a test or an operand is read as one, its condition as a test
+                // and its arms as operands wherever it is; one with an `if` inside it is a name
+                // of its own, one for its span.
+                ExprKind::If { .. }
+                    if !defined && let Some(&b) = self.arms.implicit_ifs.get(&x.span) =>
+                {
+                    let name = self.arms.names[&b].clone();
+                    done.push(parts.named(b, name));
                 }
                 ExprKind::If {
                     cond,
                     then,
                     otherwise,
-                } if defined => {
-                    stack.push((x, true, spine));
-                    stack.extend([otherwise, then, cond].map(|p| (&**p, false, spine)));
+                } => {
+                    let (test, arm) = match defined {
+                        true => (spine, spine),
+                        false => (true, false),
+                    };
+                    stack.push((x, true, spine, none));
+                    stack.push((otherwise, false, arm, none));
+                    stack.push((then, false, arm, none));
+                    stack.push((cond, false, test, none));
                 }
                 ExprKind::Call {
                     callee,
                     positional,
                     named,
                     curry: false,
-                } if named.is_empty() && (defined || spine) => {
-                    match self.callable(callee, positional.len()) {
-                        Some((id, _)) => {
-                            calls.push(id);
-                            stack.push((x, true, spine));
-                            stack.extend(positional.iter().rev().map(|a| (a, false, spine)));
-                        }
-                        None => done.push(opaque()),
+                } if named.is_empty() => match self.callable(callee, positional.len()) {
+                    Some((_, f)) if defined || spine || f.summed => {
+                        stack.push((x, true, spine, none));
+                        stack.extend(positional.iter().rev().map(|a| (a, false, spine, none)));
                     }
-                }
-                _ => done.push(opaque()),
+                    _ => done.push(opaque!()),
+                },
+                _ => done.push(opaque!()),
             }
         }
-        binders.sort_unstable();
-        binders.dedup();
-        vars.sort_unstable();
-        vars.dedup();
-        calls.sort_unstable();
-        calls.dedup();
-        let t = Rc::new(Translated {
-            term: done.pop().expect("a term"),
-            binders,
-            vars,
-            calls,
-            opaque: opaque_seen,
-        });
+        let t = Rc::new(parts.since([0; 5], done.pop().expect("a term")));
         self.arms.terms.insert((e.span, reading), t.clone());
         t
+    }
+
+    /// A name of its own for `x`, an `if` or a call read in a test or an operand, bound at the
+    /// root to `value` ([`Implicit`]): its binder, apart from every written one, and its name,
+    /// which a message shows as the text of `x`.
+    ///
+    /// [`Implicit`]: super::arms::Implicit
+    fn implicit(&mut self, x: &Expr, value: Translated) -> (usize, Arc<str>) {
+        let b = self.t.res.binders.len() + self.arms.implicit.len();
+        let text = (self
+            .t
+            .text
+            .map(|t| t[x.span.start..x.span.end].split_whitespace()))
+        .map(|w| w.collect::<Vec<_>>().join(" "))
+        .filter(|t| !t.is_empty() && !t.contains('@'))
+        .unwrap_or_else(|| "the value".to_string());
+        let name = var(&text, b);
+        self.arms.implicit.push(Implicit {
+            value: Rc::new(value),
+            span: x.span,
+        });
+        self.arms.names.insert(b, name.clone());
+        (b, name)
     }
 
     /// The definition a call of `callee` with `n` positional arguments is kept as, with its
@@ -7138,9 +7246,11 @@ impl<'a> Ck<'_, 'a> {
     /// that reads the term ([`Ck::with_bound`]), so the preimage reads each function once
     /// per test through `Scope::close`, linear in that chain (the store's test
     /// `l01_39_reduced_product::scaling::tests_read_through_the_functions_they_call_scale`,
-    /// COMPLEXITY.md row S24). Tradeoff: the value of a call read as an operand is any value
-    /// (`forward` does not enter a call), so a test narrows the arguments, not the call:
-    /// `if clamp(x) > 10` narrows `x`, and `popCount(clamp(x) - 1)` under it is not read
+    /// COMPLEXITY.md row S24). Tradeoff: `forward` does not enter a call, so a call kept as
+    /// `App` and read as an operand is any value, and a test narrows its arguments, not the
+    /// call; where the body has a summary over its parameters ([`Called::summed`]), a call
+    /// read in a test or an operand is instead a name bound to the body
+    /// ([`Ck::term_for`]), so `popCount(clamp(x) - 1)` under `if clamp(x) > 10` is read
     /// through `clamp`. The bodies a call reaches are translated callees first, on an
     /// explicit stack ([`Ck::translate_called`]).
     fn callable(&mut self, callee: &'a Expr, n: usize) -> Option<(usize, Rc<Called>)> {
@@ -7263,11 +7373,21 @@ impl<'a> Ck<'_, 'a> {
             for (x, b) in &t.vars {
                 names[param_of(*b).expect("a parameter")] = x.clone();
             }
+            let name = var(&binders[id].name, id);
+            // A body that calls has no summary: the summary does not enter a call.
+            let summed = t.calls.is_empty() && {
+                let mut every = Domains::new();
+                for x in &names {
+                    every.insert(x.clone(), IntervalSet::top());
+                }
+                let_summary(&t.term, &every, Lets::new()).is_some()
+            };
             let f = Rc::new(Called {
-                name: var(&binders[id].name, id),
+                name,
                 arity: params.len(),
                 lambda: Shared::new(Term::Lam(names, Shared::new(t.term.clone()))),
                 calls: t.calls.clone(),
+                summed,
             });
             self.arms.called.insert(id, Some(f));
         }

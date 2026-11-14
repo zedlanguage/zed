@@ -19,20 +19,23 @@
 //!
 //! Complexity tradeoff: a test or operand is translated only through literals, names, integer
 //! and boolean operators, `if`, and calls of definitions whose bodies are of that kind
-//! ([`Ck::callable`](super::Ck::callable)), kept as applications that the preimage reads
-//! through; any other subexpression (another call, a field, an `is` test) is an opaque int of
-//! its own span, and a call read as an operand is any value of its type, so
-//! `if f(n) >= 0 { popCount(f(n)) }` is rejected, the two calls being different atoms, and
-//! an `is` test narrows only through `Facts`. Why: the translation is one pass per root,
-//! memoized by span, with no structural equality of subterms, which is what would make two
-//! equal calls one atom. Trigger: a test on a call or field that the operand repeats. Test:
-//! `l01_39a_bit_words::narrowing::a_test_on_a_call_the_operand_repeats_is_rejected_and_its_named_value_accepted`.
-//! COMPLEXITY.md row C26. A complete solution names the repeated value
-//! (`m = f(n); if m >= 0 { popCount(m) }` works today), or hash-conses the translated terms
-//! so equal calls are one atom.
+//! ([`Ck::callable`](super::Ck::callable)); any other subexpression (another call, a field,
+//! an `is` test) is an opaque int of its own span, and an `is` test narrows only through
+//! `Facts`. Two calls of one definition whose body has a summary over its parameters, at
+//! arguments that translate to equal terms, are one name ([`Implicit`]), so
+//! `if f(n) >= 0 { popCount(f(n)) }` is accepted; with a body that has no summary (one that
+//! calls another, or one not affine on pieces, `n * n`), each call is a value of its own and
+//! the program is rejected. Why: equal calls are found by hashing the callee and the printed
+//! arguments, O(size of the arguments) a call, and a call becomes a name only where the
+//! body's summary can stand for it. Trigger: a test on a call or field that the operand
+//! repeats, of a body with no summary. Tests:
+//! `l01_39a_bit_words::narrowing::a_test_on_a_call_the_operand_repeats_narrows_it_where_the_callee_has_a_summary`,
+//! `l01_39_reduced_product::arm_test_through_call`. COMPLEXITY.md row C26. Naming the
+//! repeated value (`m = f(n); if m >= 0 { popCount(m) }`) works for every body.
 //! Naive version: subterms compared by structure to find equal calls, O(size of the subterm)
-//! per pair; used: one pass per root, memoized by span, O(1) per node; hash-consing would make
-//! equal calls one atom at O(1) expected per node (inferred).
+//! per pair; used: one pass per root, memoized by span, O(1) per node, and a hash of the
+//! callee and the printed arguments of each call that becomes a name, compared by structure
+//! only against calls of equal hash.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
@@ -80,16 +83,92 @@ pub(super) struct Translated {
     pub(super) opaque: bool,
 }
 
+/// The binders, names, calls and opaque parts of the parts of an expression translated so far
+/// (`Ck::term_for` in walk.rs), in the order met.
+#[derive(Default)]
+pub(super) struct Parts {
+    pub(super) binders: Vec<usize>,
+    pub(super) vars: Vec<(Arc<str>, usize)>,
+    pub(super) calls: Vec<usize>,
+    /// How many parts were names of their own, by their spans.
+    pub(super) opaque: usize,
+    /// How many `if`s, and names bound to an `if` or a call ([`Implicit`]), were translated:
+    /// an `if` with none of them inside it is kept in place.
+    pub(super) ifs: usize,
+}
+
+/// Where the parts of an expression translated from some point on start ([`Parts::mark`]).
+pub(super) type Mark = [usize; 5];
+
+impl Parts {
+    /// Where the parts translated from here on start.
+    pub(super) fn mark(&self) -> Mark {
+        [
+            self.binders.len(),
+            self.vars.len(),
+            self.calls.len(),
+            self.opaque,
+            self.ifs,
+        ]
+    }
+
+    /// `term`, made of the parts translated since `m`, which are taken off.
+    pub(super) fn since(&mut self, m: Mark, term: Term) -> Translated {
+        let mut binders = self.binders.split_off(m[0]);
+        let mut vars = self.vars.split_off(m[1]);
+        let mut calls = self.calls.split_off(m[2]);
+        let opaque = self.opaque > m[3];
+        self.opaque = m[3];
+        self.ifs = m[4];
+        binders.sort_unstable();
+        binders.dedup();
+        vars.sort_unstable();
+        vars.dedup();
+        calls.sort_unstable();
+        calls.dedup();
+        Translated {
+            term,
+            binders,
+            vars,
+            calls,
+            opaque,
+        }
+    }
+
+    /// Takes off the parts translated since `m`.
+    pub(super) fn drop_since(&mut self, m: Mark) {
+        self.binders.truncate(m[0]);
+        self.vars.truncate(m[1]);
+        self.calls.truncate(m[2]);
+        self.opaque = m[3];
+        self.ifs = m[4];
+    }
+
+    /// The name `name` of binder `b`, bound to an `if` or a call ([`Implicit`]), read here, as a
+    /// term.
+    pub(super) fn named(&mut self, b: usize, name: Arc<str>) -> Term {
+        self.ifs += 1;
+        self.binders.push(b);
+        self.vars.push((name.clone(), b));
+        Term::Var(name)
+    }
+}
+
 /// What a term is read for (`Ck::term_for` in walk.rs): an expression has one term for each.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(super) enum Reading {
     /// The condition of an `if`, narrowed where it holds and where it fails, read at each
-    /// scope it narrows. An `if` in it is a name of its own, and a call is kept as a call only
-    /// where the test narrows through it, on its spine; a call elsewhere is a name of its own.
+    /// scope it narrows. An `if` in it with no `if` inside it is kept in place; one with an
+    /// `if` inside it, and a call of a definition whose body has a summary
+    /// ([`Called::summed`]), are names bound to their values ([`Implicit`]), read through
+    /// their summaries; another call is kept as a call where the test narrows through it, on
+    /// its spine, and is a name of its own, by its span, elsewhere.
     Test,
-    /// An operand read where the walk is, for its values. An `if` and a call in it are names
-    /// of their own: `forward` does not enter a call, so its values are any value either way,
-    /// and a check whether the operand may be 0 (`Scope::zero_reached`) does not read the body.
+    /// An operand read where the walk is, for its values. An `if` in it is kept in place as
+    /// in a test; one with an `if` inside it, and a call of a definition whose body has a
+    /// summary, are names bound to their values ([`Implicit`]),
+    /// so that its values and whether it may be 0 (`Scope::zero_reached`) are read through
+    /// them; another call is a name of its own, by its span: `forward` does not enter a call.
     Operand,
     /// The body of a definition whose calls are kept ([`Called`]) or the value of a binder:
     /// read once, where it is defined or bound, and through the name at each use. An `if`
@@ -113,6 +192,26 @@ pub(super) struct Called {
     pub(super) lambda: Shared,
     /// The definitions of this kind its body calls, by binder.
     pub(super) calls: Vec<usize>,
+    /// Whether its body has a summary over its parameters, each any int
+    /// ([`zedc_preimage::preimage::let_summary`]): then a call of it read in a test or an
+    /// operand is a name of its own ([`Implicit`]).
+    pub(super) summed: bool,
+}
+
+impl Called {
+    /// The value of a call of it at `args`: its body under a `let` of each parameter to its
+    /// argument, the body shared and not copied.
+    pub(super) fn applied(&self, args: Vec<Term>) -> Term {
+        let Term::Lam(params, body) = &*self.lambda else {
+            unreachable!("a lambda")
+        };
+        let mut t: Option<Term> = None;
+        for (p, a) in params.iter().zip(args).rev() {
+            let inner = t.take().map_or_else(|| body.clone(), Shared::new);
+            t = Some(Term::Let(p.clone(), Shared::new(a), inner));
+        }
+        t.unwrap_or_else(|| (**body).clone())
+    }
 }
 
 /// The piecewise-affine summary of a binder's value over the inputs it reads
@@ -129,6 +228,18 @@ pub(super) struct Summarized {
     /// map `inputs` was made from, and whose read ([`images::Read`](zedc_preimage::images::Read)) a
     /// read of this one starts from.
     pub(super) widest: Option<usize>,
+}
+
+/// An `if` with an `if` inside it, or a call, read in a test or an operand, taken as a name
+/// bound at the root to its value (`Ck::term_for` in walk.rs): an `if` to its condition and
+/// arms, a call to the callee's body under `let`s of its parameters to the arguments. It is
+/// read as a binder is, through its summary over the inputs it reads ([`Summarized`]), made
+/// once for all the places it is read.
+pub(super) struct Implicit {
+    /// Its value, read once.
+    pub(super) value: Rc<Translated>,
+    /// The first place it was read, where the questions its value refuses are placed.
+    pub(super) span: Span,
 }
 
 /// For one node, each name to the nearest node at or above it where a search of the tests
@@ -211,6 +322,17 @@ pub(super) struct Arms<'a> {
     /// parameters' binders, in order, and the node, once a need on their ints has read it
     /// ([`Ck::ints_as_int`](super::Ck::ints_as_int)).
     pub(super) int_scopes: HashMap<Vec<usize>, HashMap<usize, Scope>>,
+    /// The names of their own that a test or an operand gives an `if` or a call in it
+    /// ([`Implicit`]): the `i`th is binder `n + i` for the `n` binders the resolver made, so
+    /// that its id is apart from every written binder's.
+    pub(super) implicit: Vec<Implicit>,
+    /// The binder of the name each `if` with an `if` inside it, read in a test or an operand,
+    /// is, by its span.
+    pub(super) implicit_ifs: HashMap<Span, usize>,
+    /// The binder of the name each call read in a test or an operand is, with its arguments,
+    /// by the callee's name and the printed arguments: two calls are one name when their
+    /// callees and arguments are equal terms.
+    pub(super) implicit_calls: HashMap<String, Vec<(Vec<Term>, usize)>>,
 }
 
 impl<'a> Arms<'a> {
@@ -235,6 +357,9 @@ impl<'a> Arms<'a> {
             part_ints: HashMap::new(),
             called: HashMap::new(),
             int_scopes: HashMap::new(),
+            implicit: Vec::new(),
+            implicit_ifs: HashMap::new(),
+            implicit_calls: HashMap::new(),
         }
     }
 

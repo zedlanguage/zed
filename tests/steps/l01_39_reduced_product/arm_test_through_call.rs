@@ -8,6 +8,7 @@
 //! (crates/zedc-check/src/check/arms.rs) read a call, and a name bound to an `if`, as an
 //! opaque int, so the arm is checked as if every int reached it.
 
+use zed_tests::step_helpers::l01_26_type_resolution::sig;
 use zedc::run::load;
 
 fn check(src: &str) -> Option<String> {
@@ -127,3 +128,64 @@ fn a_test_is_narrowed_through_a_call_under_the_operators_of_its_spine() {
         .collect();
     rejected(&srcs.iter().map(|s| s.as_str()).collect::<Vec<_>>());
 }
+
+/// An `if` written inside a test is read as its arms' values under its own test, as a name
+/// bound to it is (CHECK-arm-test-if-and-operand-calls): `(if x > 0 { x } else { 0 }) > 10`
+/// holds for x >= 11 alone, kept in place, and so does the test of an `if` with an `if` inside
+/// it, a name of its own.
+#[test]
+fn a_test_is_narrowed_through_an_if_inside_it() {
+    let at = |c: i32| {
+        format!(
+            "f(positional x: int) = \
+             if (if x > 0 {{ x }} else {{ 0 }}) > 10 {{ popCount(x - {c}) }} else {{ 0 }};\n"
+        )
+    };
+    let under = |c: i32| {
+        format!(
+            "f(positional x: int) = \
+             if !((if x > 0 {{ x }} else {{ 0 }}) + 1 <= 11) {{ popCount(x - {c}) }} else {{ 0 }};\n"
+        )
+    };
+    // An `if` with an `if` inside it, a name of its own (`Ck::term_for`): `x` above 5, else 5.
+    let nested = |c: i32| {
+        format!(
+            "f(positional x: int) = \
+             if (if x > 0 {{ if x > 5 {{ x }} else {{ 5 }} }} else {{ 0 }}) > 10 \
+             {{ popCount(x - {c}) }} else {{ 0 }};\n"
+        )
+    };
+    // The boundary: x = 11 reaches the arm, where x - 11 is 0; one past it, x - 12 is -1.
+    accepted(&[&at(11), &under(11), &nested(11)]);
+    rejected(&[&at(12), &under(12), &nested(12)]);
+}
+
+/// A call in an operand position the test's spine does not cover, the divisor of `mod`, is
+/// read through the callee (CHECK-arm-test-if-and-operand-calls): `t(x)` is `x` where `x > 0`,
+/// so the divisor is not 0 in the arm and `f` gives no `#divByZero`; where `x = 0` reaches the
+/// arm, `t(0)` is 0 and it does.
+#[test]
+fn a_divisor_is_read_through_a_call() {
+    let t = "t(positional y: int) = if y > 0 { y } else { 0 };\n";
+    let at = |c: i32| {
+        let src = format!("{t}f(x: int, n: int) = if x > {c} {{ n mod t(x) }} else {{ 0 }};\n");
+        sig(&src, "f")
+    };
+    assert_eq!(at(0), "(x: int, n: int) -> int");
+    assert_eq!(at(-1), "(x: int, n: int) -> int | #divByZero");
+}
+
+/// A call read as the operand of an atom is read through the callee
+/// (CHECK-arm-test-if-and-operand-calls): `t(x) - 1` is `x - 1` where `x > 0`, never below 0;
+/// where `x = 0` reaches the arm it is -1.
+#[test]
+fn an_atom_reads_a_call_through_the_callee() {
+    let t = "t(positional y: int) = if y > 0 { y } else { 0 };\n";
+    let at = |c: i32| {
+        format!("{t}f(positional x: int) = if x > {c} {{ popCount(t(x) - 1) }} else {{ 0 }};\n")
+    };
+    accepted(&[&at(0)]);
+    rejected(&[&at(-1)]);
+}
+
+mod bench;

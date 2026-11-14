@@ -160,11 +160,23 @@ fn a_test_that_bounds_too_little_is_rejected_with_the_bound_it_gives() {
 }
 
 #[test]
-fn a_test_on_a_call_the_operand_repeats_is_rejected_and_its_named_value_accepted() {
-    // Each call is a value of its own to the checker (arms.rs, C26), so the test on one says
-    // nothing of the other; a name for the value carries the test to its read.
+fn a_test_on_a_call_the_operand_repeats_narrows_it_where_the_callee_has_a_summary() {
+    // Two calls of one callee at equal arguments are one name, bound to the callee's body
+    // (`Ck::term_for`), when the body has a summary over its parameters: the test on one
+    // narrows the other. The boundary: `g(n)` is at least 0 in the arm, and one past it -1.
+    let at = |c: i32| {
+        format!(
+            "g(positional n: int) = n - 3;\n\
+             f(positional n: int) = if g(n) >= {c} {{ popCount(g(n)) }} else {{ 0 }};\n"
+        )
+    };
+    assert!(accepted(&at(0)), "{}", at(0));
+    rejected(&at(-1));
+    // A callee with no summary (`n * n` is no affine piece) leaves each call a value of its
+    // own (arms.rs, C26), so the test on one says nothing of the other; a name for the value
+    // carries the test to its read.
     let out = rejected(
-        "g(positional n: int) = n - 3;\n\
+        "g(positional n: int) = n * n - 3;\n\
          f(positional n: int) = if g(n) >= 0 { popCount(g(n)) } else { 0 };\n",
     );
     assert!(
@@ -175,9 +187,9 @@ fn a_test_on_a_call_the_operand_repeats_is_rejected_and_its_named_value_accepted
         "{out}"
     );
     assert!(rows_pass(
-        "g(positional n: int) = n - 3;\n\
+        "g(positional n: int) = n * n - 3;\n\
          f(positional n: int) = { m = g(n); if m >= 0 { popCount(m) } else { 0 } }\n\
-         test { 5 -> 1, 1 -> 0 }\n"
+         test { 2 -> 1, 1 -> 0 }\n"
     ));
 }
 
