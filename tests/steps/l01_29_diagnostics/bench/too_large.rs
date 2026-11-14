@@ -4,7 +4,8 @@
 use zed_tests::scaling;
 
 use crate::too_large::{
-    chain, kept_sums, powers, product_chain, rat_product_chain, rejected_times,
+    chain, coprime_fourth_powers, even_chain, kept_sums, powers, product_chain, rat_product_chain,
+    rejected_times,
 };
 
 /// Checks that rejecting `make(n)`, with `per * n` rejections, scales as a pass of order n.
@@ -73,23 +74,6 @@ fn judging_many_builds_scales() {
     );
 }
 
-/// The fourth powers of the first `n` primes above 2^16: numbers of 65 to 72 bits, pairwise
-/// coprime.
-fn coprime_fourth_powers(n: usize) -> Vec<u128> {
-    let mut out = Vec::with_capacity(n);
-    let mut q: u128 = 1 << 16;
-    while out.len() < n {
-        q += 1;
-        if (2..)
-            .take_while(|d| d * d <= q)
-            .all(|d| !q.is_multiple_of(d))
-        {
-            out.push(q.pow(4));
-        }
-    }
-    out
-}
-
 /// Plan row CONST-too-large-coprime-base: `n` names from `y0 = rat(r0) ^ (2^60)`, each the one
 /// before times or divided by `rat(r_i)`, for `r_i` of [`coprime_fourth_powers`], and `y * y`
 /// for the last name `y`, past the address space.
@@ -118,6 +102,21 @@ fn bounding_a_chain_of_products_with_several_roots_scales() {
     let srcs = scaling::inputs(N_ROOTS, coprime_chain);
     scaling::check(
         "a chain of n products and quotients by coprime numbers, the square of the last rejected",
+        N_ROOTS,
+        |k| rejected_times(&srcs[&k], 1),
+    );
+}
+
+#[test]
+fn bounding_a_chain_of_products_whose_roots_all_share_a_prime_scales() {
+    // Plan row CONST-coprime-base-shared-primes: the `n / 2` even numerator roots all share 2,
+    // so the batch gcd leaves them all to the coprime base by halves (`coprime::coprime_base`),
+    // O(M(N) log^3 N), where factor refinement split each against every element before it,
+    // O(n^2) gcds.
+    let srcs = scaling::inputs(N_ROOTS, |n| even_chain(n, false));
+    scaling::check(
+        "a chain of n products by even numbers and quotients by odd ones, the square of the \
+         last rejected",
         N_ROOTS,
         |k| rejected_times(&srcs[&k], 1),
     );

@@ -672,6 +672,58 @@ fn a_part_with_several_roots_that_may_cancel_proves_nothing() {
     assert_eq!(built(&bc_pushed(x, "x * x")), None);
 }
 
+/// The fourth powers of the first `n` primes above 2^16: numbers of 65 to 72 bits, pairwise
+/// coprime.
+pub(super) fn coprime_fourth_powers(n: usize) -> Vec<u128> {
+    let mut out = Vec::with_capacity(n);
+    let mut q: u128 = 1 << 16;
+    while out.len() < n {
+        q += 1;
+        if (2..)
+            .take_while(|d| d * d <= q)
+            .all(|d| !q.is_multiple_of(d))
+        {
+            out.push(q.pow(4));
+        }
+    }
+    out
+}
+
+/// Plan row CONST-coprime-base-shared-primes: `n` names from `y0 = rat(r0) ^ (2^60)`, each the
+/// one before times `rat(2 r_i)` or divided by `rat(r_i)`, in turn, for `r_i` of
+/// [`coprime_fourth_powers`], and `y * y` for the last name `y`. Every numerator root is even,
+/// so they all share the prime 2; the denominator roots share none, with each other or with
+/// the numerator's, so `y * y` cancels nothing and is past the address space. With `meets`,
+/// the last denominator root is even too, and the product proves nothing.
+pub(super) fn even_chain(n: usize, meets: bool) -> String {
+    let r = coprime_fourth_powers(n);
+    let body: String = (1..n)
+        .map(|i| match i % 2 == 0 {
+            true => format!("    y{i} = y{} * rat({});\n", i - 1, 2 * r[i]),
+            false if meets && i + 2 >= n => format!("    y{i} = y{} / rat({});\n", i - 1, 2 * r[i]),
+            false => format!("    y{i} = y{} / rat({});\n", i - 1, r[i]),
+        })
+        .collect();
+    format!(
+        "main(m: MainArgs) {{\n    y0 = rat({}) ^ (2^60);\n{body}    \
+         m.stdout <- String(y{} * y{}) else \"\";\n}}\n",
+        r[0],
+        n - 1,
+        n - 1
+    )
+}
+
+#[test]
+fn a_product_through_parts_whose_roots_share_a_prime_is_decided_by_the_base() {
+    // The numerator's roots all share 2, which the coprime base of the end of the walk keeps
+    // as one element of them all, apart from each root's odd part: `y * y` is rejected, and
+    // with an even denominator root it may cancel and compiles.
+    for n in [3, 4, 5, 8, 9] {
+        rejected_times(&even_chain(n, false), 1);
+        assert_eq!(built(&even_chain(n, true)), None, "{n}");
+    }
+}
+
 // Plan row CONST-too-large-kept-powers: the size checked is the size of what each operation
 // builds, by the list of DESIGN's numbers section. A number is kept as `n/d · ∏ p^e`, so a
 // power of a base within 64 bits costs its exponents and compiles; an operation that writes
