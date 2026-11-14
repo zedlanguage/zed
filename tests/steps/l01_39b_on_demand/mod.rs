@@ -5,6 +5,7 @@
 //! costs the same in a program of n functions as in one of 8n.
 
 mod bench;
+mod completeness;
 mod exact;
 
 use zed_tests::{oracle, scaling};
