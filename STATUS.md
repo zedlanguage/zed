@@ -2219,7 +2219,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | TEST-bench-move-l0123 | impl attempt 1 | 2026-11-14 01:43 | started; worktree made and seeded |
 | TEST-bench-move-l0126 | impl attempt 1 | 2026-11-14 01:43 | started; worktree from origin/main 271806cab; 162 measuring tests listed in my groups; load 0.62 0.50 1.32 |
 | TEST-bench-move-l0139 | impl attempt 1 | 2026-11-14 01:43 | started; worktree from origin/main |
-| TEST-bench-move-rest | impl attempt 1 | 2026-11-14 01:43 | started; load 0.33 0.44 1.30 |
 | XR-ffi-stateful-r45 | impl attempt 1 | 2026-11-13 22:45 | round 4 seats launched (Sol, Opus, Gemini; Gemini quota OK); load 43.71 44.82 43.20 |
 | XR-l139-family | orchestrator attempt  | 2026-11-13 18:59 | round 1 merge: f9936c4fe hull sides over two atoms from twovar::ends; cuts_scale 7.1, boxstar_scales 8.8 back; 262 pieces pass; load 51.10 48.05 49.56 |
 
