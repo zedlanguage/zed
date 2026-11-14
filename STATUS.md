@@ -2197,13 +2197,14 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | CONST-too-large-kept-powers | impl attempt 1 | 2026-11-13 21:17 | reproduced on origin/main d353a0b07: 3^(2^70), 3r^(2^70), 2r^(2^70) compile (rc 0, widening warning only); control b^(2^64) rejected; load 23.03 |
-| FFI-token-check | impl attempt 1 | 2026-11-13 21:51 | started; worktree from 80890f52a; load 21.71 28.04 29.61 |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | CD round 6 launched (SHORT): experiment 6664553392322379777 from main 8a3e0859b, 56 cases, 3 regions (new PICK_RS); local main-vs-main 2,357.953, test run 8,535 |
-| LIT-rat-decimal-exponent | running | 2026-11-13 22:07 |  |
+| LIT-rat-decimal-exponent | impl attempt 1 | 2026-11-13 22:07 | started; worktree from origin/main e92e7e508 |
 | PRES-exact-side | impl attempt 1 | 2026-11-13 20:00 | started; worktree from 223aaf2e2 |
 | REPAIR-block-pow-negative | impl attempt 1 | 2026-11-13 20:38 | started; worktree seeded |
 | REPAIR-literal-text-spelling | impl attempt 1 | 2026-11-13 20:48 | start |
 | S1F-limits-cycle | impl attempt 1 | 2026-11-13 22:06 | started, worktree s1f-limits-cycle on origin/main 237da07e6 |
+| SPEC-blocking-default | running | 2026-11-13 22:19 |  |
+| SPEC-raw-keep-isig | running |  |  |
 | ST-chain-raise-reverse-log | impl attempt 1 | 2026-11-13 20:31 | started; worktree from origin/main f714c55fc |
 | ST-relation-case-written | impl attempt 1 | 2026-11-13 20:49 | started; load 29.88 26.92 32.21 |
 | XR-hub-moved-relation | impl attempt 1 | 2026-11-13 20:48 | started; rebasing wt/hub-moved-relation onto origin/main 252a4f1d4 |
