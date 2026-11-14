@@ -2,6 +2,7 @@
 //! split into parts, each hole lexed into its tokens.
 
 mod bench;
+mod edges;
 mod holes;
 mod scaling;
 mod strings;
