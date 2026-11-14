@@ -2344,8 +2344,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CHECK-arm-test-if-and-operand-calls | running |  |  |
-| CHECK-spine-tests-per-body | running |  |  |
+| CHECK-arm-test-if-and-operand-calls | impl attempt 1 | 2026-11-14 13:27 | started in wt/arm-reads at c95bec442; load 38 |
+| CHECK-spine-tests-per-body | impl attempt 1 | 2026-11-14 13:27 | started in wt/arm-reads at c95bec442; load 38 |
 | FAIL-linked-held-wider-seed | running | 2026-11-14 12:52 |  |
 | FAIL-or-ifs-no-longer-exact-seed | impl attempt 1 | 2026-11-14 12:17 | started, worktree fail-or-ifs |
 | FAIL-pendants-growth-scaled-seed | impl attempt 1 | 2026-11-14 11:58 | fix-growth started on d5d733341 |
@@ -2360,6 +2360,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-types-sub-shared-payloads | impl attempt 1 | 2026-11-14 12:37 | fix-types-4 started on 83c5eb9e9; load 29 |
 | FAIL-whole-projection-parity | impl attempt 1 | 2026-11-14 11:49 | fix applied, tests pass, sweep 1248 seeds 0 wrong; base worktree fix-parity-2-base at e8310066c for before counts / load 45.35 44.57 43.46 |
 | KERNEL-eval-step-cost | impl attempt 1 | 2026-11-14 12:21 | negative control B (each evaluated node spins steps/16, quadratic in steps): 18 of 66 m0_09/m0_10 bench pieces fail (ratios 11.5-60.4 or 20 s timeouts: lets 23. |
+| TEST-presburger-unreached-paths | impl attempt 2 | 2026-11-14 10:07 | started in wt/pres-unreached-2 at 12a632824; load 39.92 |
 | TESTS-split | impl attempt 1 | 2026-11-06 23:46 | started; worktree /home/luke/Work/wt/tests-split at 8895df00b; load 36.28 39.25 39.35 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
