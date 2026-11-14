@@ -16,7 +16,7 @@ use zed_kernel::{Evidence, Family, FixKind, KernelError, Pattern, Prim, Rat, Ter
 use zed_tests::kernel::{bin, get, path};
 
 pub(crate) use zed_tests::step_helpers::l01_17_value_representation::{
-    MARGIN, WIDE, in_child_at, lower_limit, lower_limit_by,
+    MARGIN, WIDE, in_child_at, lower_limit, lower_limit_by, margin,
 };
 
 /// In the parent, runs the test `name` of this module again in a child process and returns
@@ -68,8 +68,8 @@ pub(crate) fn show(t: Term) -> Term {
 
 /// The width, in bits, of the numbers of
 /// `ordering_numbers_that_agree_in_many_bits_is_refused_when_memory_is_short`, 16 MiB, under a
-/// limit of an eighth of [`MARGIN`], 8 MiB: an eighth of [`WIDE`] and its margin, the same
-/// ratio, so a copy is refused as it is there. At `WIDE` the test took 0.8 s.
+/// limit of its [`margin`], 8 MiB: an eighth of [`WIDE`] and its margin, the same ratio, so a
+/// copy is refused as it is there. At `WIDE` the test took 0.8 s.
 const CLOSE: u64 = WIDE / 8;
 
 /// Two numbers that agree in their first `2^27` bits, compared with each order operator, `min`
@@ -81,7 +81,7 @@ fn ordering_numbers_that_agree_in_many_bits_is_refused_when_memory_is_short() {
     }
     let a = num(built_above(CLOSE));
     let b = num(two_to(CLOSE));
-    lower_limit_by(MARGIN / 8);
+    lower_limit_by(margin(CLOSE));
     for (p, op) in [
         (Prim::Lt, "<"),
         (Prim::Le, "<="),

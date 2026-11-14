@@ -10,8 +10,17 @@ use std::process::Command;
 /// Set in the child process that runs a test under the lowered limit.
 const CHILD: &str = "ZED_L1_17A_UNDER_LIMIT";
 
-/// The address space the child may take beyond what it holds once its operands are built.
-pub const MARGIN: u64 = 64 << 20;
+/// The address space a child may take beyond what it holds once its operands of `width` bits
+/// are built: half the bytes of one of them, so building any of them again is refused, at
+/// every width. A test sized by it keeps its ratio of operand to margin when its width is
+/// made smaller to run faster.
+pub const fn margin(width: u64) -> u64 {
+    width / 16
+}
+
+/// The address space the child may take beyond what it holds once its operands of [`WIDE`]
+/// bits are built, 64 MiB.
+pub const MARGIN: u64 = margin(WIDE);
 
 /// The width, in bits, of the operands in the child: 128 MiB, twice [`MARGIN`], so building
 /// any of them again is refused.

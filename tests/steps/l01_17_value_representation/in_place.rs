@@ -15,7 +15,7 @@ use zed_kernel::term::build::{lit, prim};
 use zed_kernel::{KernelError, Prim, Rat, Term, Value, eval};
 use zed_tests::kernel::{bin, sub};
 
-use super::memory_check::{WIDE, in_child_at, lower_limit, lower_limit_by};
+use super::memory_check::{WIDE, in_child_at, lower_limit, lower_limit_by, margin};
 
 fn in_child(name: &str) -> bool {
     in_child_at(module_path!(), name)
@@ -174,9 +174,10 @@ fn dividing_a_wide_number_is_refused_when_memory_is_short() {
 }
 
 /// The width, in bits, of the dividend of
-/// `a_wide_number_modulo_a_small_one_answers_when_memory_is_short`: 2 MiB, under a margin of
-/// half that, so a copy of it is refused. With [`WIDE`], 2^30 bits, its nine passes took 15 s;
-/// they take a sixty-fourth of it here. As for `WIDE`, 2^24 is a multiple of 128, and of 3
+/// `a_wide_number_modulo_a_small_one_answers_when_memory_is_short` and of the tests that give a
+/// division its peak: 2 MiB, under a [`margin`] of half that, so a copy of it is refused. With
+/// [`WIDE`], 2^30 bits, the nine passes of the first took 15 s, and each of the others 0.8 to
+/// 2.3 s; they take a sixty-fourth of it here. As for `WIDE`, 2^24 is a multiple of 128, and of 3
 /// plus 1, so the residues below are those at `WIDE`.
 const NARROW: u64 = 1 << 24;
 
@@ -209,7 +210,7 @@ fn a_wide_number_modulo_a_small_one_answers_when_memory_is_short() {
         (bin(Prim::Mod, kept.clone(), num(3)), BigInt::from(1)),
         (bin(Prim::Mod, kept, num(above(64))), BigInt::from(64)),
     ];
-    lower_limit_by(NARROW / 16);
+    lower_limit_by(margin(NARROW));
     for (i, (t, want)) in cases.iter().enumerate() {
         let got = eval(t);
         assert!(
@@ -244,7 +245,8 @@ fn a_division_by_a_wide_divisor_is_refused_below_its_measured_peak() {
 
 /// The quotients of `a_division_by_a_wide_divisor_is_refused_below_its_measured_peak`, and one
 /// of a negative amount, each in its own process with the sixteen times the dividend's width
-/// that it asks for given, and 64 MiB more: each is computed. Each has its own process because
+/// that it asks for given, and the [`margin`] of its width more: each is computed, at the
+/// width [`NARROW`]. Each has its own process because
 /// the allocator does not give back all the address space a division leaves, so a second
 /// division in the same process can be refused. `2^n + 1` is `2` more than a multiple of
 /// `2^k + 1` when `n / k` is even, so `(2^n + 1) div (2^(n/2) + 1)` is `2^(n/2) - 1`, `n/2`
@@ -254,12 +256,12 @@ fn dividing_by_a_wide_divisor_answers_when_its_peak_is_given() {
     if !in_child("dividing_by_a_wide_divisor_answers_when_its_peak_is_given") {
         return;
     }
-    let t = bin(Prim::IntDiv, num(above(WIDE)), num(above(4096)));
+    let t = bin(Prim::IntDiv, num(above(NARROW)), num(above(4096)));
     // Sixteen times the dividend's width is twice its bits as bytes.
-    lower_limit_by(2 * (WIDE + 1) + (64 << 20));
+    lower_limit_by(2 * (NARROW + 1) + margin(NARROW));
     let q = integer(&t);
-    assert_eq!(q.integer_factors().0.bits(), WIDE - 4096);
-    assert_eq!(residue(&q), quotient_residue(WIDE, 4096, 2));
+    assert_eq!(q.integer_factors().0.bits(), NARROW - 4096);
+    assert_eq!(residue(&q), quotient_residue(NARROW, 4096, 2));
 }
 
 /// `-(2^n + 1) = -(q + 1) (2^k + 1) + (2^k - 1)`, under the limit of
@@ -269,11 +271,11 @@ fn dividing_a_negative_amount_by_a_wide_divisor_answers_when_its_peak_is_given()
     if !in_child("dividing_a_negative_amount_by_a_wide_divisor_answers_when_its_peak_is_given") {
         return;
     }
-    let t = bin(Prim::IntDiv, num(-above(WIDE)), num(above(4096)));
-    lower_limit_by(2 * (WIDE + 1) + (64 << 20));
+    let t = bin(Prim::IntDiv, num(-above(NARROW)), num(above(4096)));
+    lower_limit_by(2 * (NARROW + 1) + margin(NARROW));
     let q = integer(&t);
     assert!(q.is_negative());
-    let want = (MERSENNE - quotient_residue(WIDE, 4096, 2) + MERSENNE - 1) % MERSENNE;
+    let want = (MERSENNE - quotient_residue(NARROW, 4096, 2) + MERSENNE - 1) % MERSENNE;
     assert_eq!(residue(&q), want);
 }
 
@@ -284,28 +286,29 @@ fn dividing_by_half_the_width_answers_when_its_peak_is_given() {
     if !in_child("dividing_by_half_the_width_answers_when_its_peak_is_given") {
         return;
     }
-    let half = 1u64 << 29;
-    let t = bin(Prim::IntDiv, num(above(WIDE)), num(above(half)));
-    lower_limit_by(2 * (WIDE + 1) + (64 << 20));
+    let half = NARROW / 2;
+    let t = bin(Prim::IntDiv, num(above(NARROW)), num(above(half)));
+    lower_limit_by(2 * (NARROW + 1) + margin(NARROW));
     let q = integer(&t);
     let (coef, _) = q.integer_factors();
     assert_eq!((coef.bits(), coef.magnitude().count_ones()), (half, half));
-    assert_eq!(residue(&q), quotient_residue(WIDE, half, 2));
+    assert_eq!(residue(&q), quotient_residue(NARROW, half, 2));
 }
 
-/// `wide mod (2^(2^29) + 1)`, of the amount and of its negative, with the 24 times the
-/// divisor's width that a step of the remainder asks for given, and 64 MiB more: `2^(2^30) =
-/// 1` modulo `2^(2^29) + 1`, so the remainders are `2` and `2^(2^29) - 1`.
+/// `wide mod (2^(n/2) + 1)`, of the amount and of its negative, with the 24 times the
+/// divisor's width that a step of the remainder asks for given, and the [`margin`] of the
+/// dividend's width more, at the width [`NARROW`], `n`: `2^n = 1` modulo `2^(n/2) + 1`, so the
+/// remainders are `2` and `2^(n/2) - 1`.
 #[test]
 fn a_wide_number_modulo_a_wide_one_answers_when_its_peak_is_given() {
     if !in_child("a_wide_number_modulo_a_wide_one_answers_when_its_peak_is_given") {
         return;
     }
-    let half = 1u64 << 29;
-    let t = bin(Prim::Mod, num(above(WIDE)), num(above(half)));
-    let negative = bin(Prim::Mod, num(-above(WIDE)), num(above(half)));
+    let half = NARROW / 2;
+    let t = bin(Prim::Mod, num(above(NARROW)), num(above(half)));
+    let negative = bin(Prim::Mod, num(-above(NARROW)), num(above(half)));
     // 24 times the divisor's width is three times its bytes.
-    lower_limit_by(3 * (half + 1) + (64 << 20));
+    lower_limit_by(3 * (half + 1) + margin(NARROW));
     let got = eval(&t);
     assert!(matches!(&got, Ok(Value::Int(2))), "{}", outcome(&got));
     let r = integer(&negative);
@@ -313,28 +316,30 @@ fn a_wide_number_modulo_a_wide_one_answers_when_its_peak_is_given() {
     assert_eq!((coef.bits(), coef.magnitude().count_ones()), (half, half));
 }
 
-/// A dense divisor `d = (2^(64 w) - 1) / 3`, every word nonzero, of `w = 2^18 + 1` words, just
-/// above a power of two, where its transforms take the most points for its width, `2^20`:
+/// A dense divisor `d = (2^(64 w) - 1) / 3`, every word nonzero, of `w = 2^14 + 1` words, just
+/// above a power of two, where its transforms take the most points for its width, `2^16`:
 /// `a mod d` and `a div d` for a dense `a = (2^(64 (3 w + 5)) - 1) / 7` ask 16 words a point,
-/// 128 MiB, and the quotient twice the dividend's width more, a measured bound above their
+/// 8 MiB, and the quotient twice the dividend's width more, a measured bound above their
 /// peaks of 12.5 and 12.75 words a point (`num::POINT_WORDS`). Each answers with what it asks
-/// for given and 64 MiB more, checked by `q d + r = a` and `r < d` modulo 2^61 - 1, and each
+/// for given and the [`margin`] of the dividend's width more, checked by `q d + r = a` and `r < d` modulo 2^61 - 1, and each
 /// is refused, naming its ask, with half the remainder's ask given.
 #[test]
 fn a_dense_divisor_asks_for_its_transforms() {
     if !in_child("a_dense_divisor_asks_for_its_transforms") {
         return;
     }
-    let w = (1u64 << 18) + 1;
+    let k = 14;
+    let w = (1u64 << k) + 1;
     let d = ((BigInt::one() << (64 * w)) - 1u32) / 3u32;
     let a = ((BigInt::one() << (64 * (3 * w + 5))) - 1u32) / 7u32;
     let modulo = bin(Prim::Mod, num(a.clone()), num(d.clone()));
     let quotient = bin(Prim::IntDiv, num(a.clone()), num(d.clone()));
     let (residue_a, residue_d) = (residue(&int(a.clone())), residue(&int(d.clone())));
-    let rem_ask = BigUint::from(1u64 << 20) << 10u32;
+    // 16 words, 2^10 bits, a point.
+    let rem_ask = BigUint::from(1u64 << (k + 2)) << 10u32;
     let div_ask = &rem_ask + (BigUint::from(a.bits()) << 1u32);
-    let bytes = |bits: &BigUint| u64::try_from(bits >> 3u32).expect("a few hundred MiB");
-    lower_limit_by(bytes(&div_ask) + (64 << 20));
+    let bytes = |bits: &BigUint| u64::try_from(bits >> 3u32).expect("a few MiB");
+    lower_limit_by(bytes(&div_ask) + margin(a.bits()));
     let r = integer(&modulo);
     assert!(
         r.integer_factors().0 < &d,

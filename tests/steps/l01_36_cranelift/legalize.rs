@@ -163,13 +163,19 @@ fn native_stack() -> u64 {
     (kib("MemTotal:") + kib("SwapTotal:") + 8) << 10
 }
 
-/// Two weights that agree in their first `2^30` bits, compared with `>` and `>=` when the
+/// The width, in bits, of the weights of
+/// `an_order_refused_its_memory_names_the_operator_as_written`: 2 MiB, under a `margin` of
+/// half that, so building one again is refused, as at `WIDE`, 2^30 bits, where the test took
+/// 5 to 7 s.
+const WIDTH: u64 = 1 << 24;
+
+/// Two weights that agree in their first `WIDTH` bits, compared with `>` and `>=` when the
 /// system has too little memory left to tell them apart: each back end refuses with the
 /// operator the program wrote.
 #[test]
 fn an_order_refused_its_memory_names_the_operator_as_written() {
     use zed_tests::step_helpers::l01_17_value_representation::{
-        MARGIN, WIDE, in_child_at, lower_limit, lower_limit_by,
+        in_child_at, lower_limit_by, margin,
     };
     if !in_child_at(
         module_path!(),
@@ -178,11 +184,11 @@ fn an_order_refused_its_memory_names_the_operator_as_written() {
         return;
     }
     let heavy = Value::integer(zed_kernel::Rat::int(
-        (num_bigint::BigInt::from(1u32) << WIDE) + 1u32,
+        (num_bigint::BigInt::from(1u32) << WIDTH) + 1u32,
     ));
     let light = Value::integer(
         zed_kernel::Rat::int(num_bigint::BigInt::from(2))
-            .pow(&num_bigint::BigUint::from(WIDE))
+            .pow(&num_bigint::BigUint::from(WIDTH))
             .expect("a power of two is kept"),
     );
     // The graph is built here, not lowered: lowering gives each constant a content address
@@ -206,7 +212,7 @@ fn an_order_refused_its_memory_names_the_operator_as_written() {
         )
     });
     // A native run maps a stack as large as memory first, which leaves it the margin.
-    lower_limit_by(native_stack() + MARGIN);
+    lower_limit_by(native_stack() + margin(WIDTH));
     let native: Vec<_> = cases
         .iter()
         .map(|(_, n, _)| {
@@ -214,7 +220,7 @@ fn an_order_refused_its_memory_names_the_operator_as_written() {
             zed_native::run(n, &p, &mut Evaluator::new(World::new())).map(|o| o.value)
         })
         .collect();
-    lower_limit();
+    lower_limit_by(margin(WIDTH));
     for ((op, _, m), native) in cases.iter().zip(native) {
         let m = m.graph();
         let machine = memory::run(m, &plan(m, true), &mut Evaluator::new(World::new()));
