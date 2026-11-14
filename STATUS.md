@@ -2276,6 +2276,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | CONST-too-large-coprime-base | impl attempt 2 | 2026-11-14 00:07 | red-before-green: on origin/main (ctl tree) too_large::a_product_through_a_part_with_several_roots_is_rejected and main_limits::a_product_through_a_part_with_se |
+| FAIL-agree-few-arms-seed | running |  |  |
 | FAIL-bitword-arity-message | running | 2026-11-14 07:09 |  |
 | FAIL-bitword-curry-domain | running | 2026-11-14 07:09 |  |
 | FAIL-check-arm-test-through-call | running | 2026-11-14 07:10 |  |
@@ -2284,6 +2285,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-check-if-carrier-branch-literal-at-rat | running | 2026-11-14 07:10 |  |
 | FAIL-check-memory-limit-2-63 | running | 2026-11-14 07:40 |  |
 | FAIL-initial-reads-shadowed | running | 2026-11-14 07:40 |  |
+| FAIL-kernel-xor-firsts-seed | running |  |  |
 | FAIL-lattice-f32-literal | running | 2026-11-14 07:10 |  |
 | FAIL-linked-piled-holes-count | running | 2026-11-14 07:09 |  |
 | FAIL-memory-callee-no-plan | running | 2026-11-14 07:40 |  |
@@ -2292,6 +2294,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-queries-reorder | running | 2026-11-14 07:40 |  |
 | FAIL-trivial-stop-after-model | running |  |  |
 | FAIL-types-sig-reflexive | running | 2026-11-14 07:40 |  |
+| FAIL-xst-s4-box-only-seed | running |  |  |
+| FAIL-xst-unbounded-holes-seed | running |  |  |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | CD round 6 launched (SHORT): experiment 6664553392322379777 from main 8a3e0859b, 56 cases, 3 regions (new PICK_RS); local main-vs-main 2,357.953, test run 8,535 |
 | TEST-bench-timeout-recheck | running | 2026-11-14 08:37 |  |
 | TEST-calibration-split-margin | running | 2026-11-14 08:37 |  |
