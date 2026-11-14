@@ -462,7 +462,8 @@ fn a_recursive_type_nested_in_its_own_arguments_is_released() {
 }
 
 /// The text of `cases` random types holding instances of `Tree(…)` is the same made from the
-/// outside in and from the inside out.
+/// outside in and from the inside out, from a new seed each run, printed
+/// (`ZED_TEST_SEED=<seed>` repeats it).
 fn outside_in_is_inside_out_with_trees(cases: u64) {
     // `Tree(…)` stands among the other parts, its arguments random too. Two groups would give
     // two sets of recursive nodes, which order the parts of a type differently, so both texts
@@ -470,19 +471,30 @@ fn outside_in_is_inside_out_with_trees(cases: u64) {
     // the type built again with the text of each part made before it is used, which shares the
     // recursive nodes and makes the other parts' texts anew. Each name must spell out the text
     // of its argument. A group of its own for each type keeps the names of one from another.
+    let (mut rng, seed) = zed_tests::instances::Rng::fresh(
+        "types with recursive types made outside in and inside out",
+    );
     for k in 0..cases {
         let trees = Trees {
             group: tree(&format!("T{k}"), "A"),
             made: RefCell::new(Vec::new()),
         };
-        let mut seed = 23 + k;
-        let outside_in = random_in(&mut seed.clone(), 5, false, Some(&trees));
+        let case = rng.next_u64();
+        let outside_in = random_in(&mut case.clone(), 5, false, Some(&trees));
         let text = outside_in.to_string();
         for (t, arg) in trees.made.borrow().iter() {
-            assert_eq!(t.to_string(), format!("T{k}({arg})"));
+            assert_eq!(
+                t.to_string(),
+                format!("T{k}({arg})"),
+                "type {k}, case seed {case} (ZED_TEST_SEED={seed})"
+            );
         }
-        let inside_out = random_in(&mut seed, 5, true, Some(&trees));
-        assert_eq!(text, inside_out.to_string());
+        let inside_out = random_in(&mut case.clone(), 5, true, Some(&trees));
+        assert_eq!(
+            text,
+            inside_out.to_string(),
+            "type {k}, case seed {case} (ZED_TEST_SEED={seed})"
+        );
     }
 }
 

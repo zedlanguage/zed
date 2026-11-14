@@ -25,8 +25,11 @@ fn a_chain_of_operators_keeps_to_its_operands_pieces() {
     }
     assert!(acc.len() <= 2, "{acc}");
     // TEST-bench-move-l0123, author P169: n was 200, now 120_000; 1x 0.45 s at load 37.
+    // A new seed each run, printed; each size draws its operands from it anew, so the runs the
+    // check repeats at one size do the same work.
+    let (_, seed) = Rng::fresh("a chain of `+` over eight-piece operands");
     scaling::check("a chain of `+` over eight-piece operands", 120_000, |k| {
-        sum_chain(k);
+        sum_chain(&mut Rng::new(seed), k);
     });
 }
 

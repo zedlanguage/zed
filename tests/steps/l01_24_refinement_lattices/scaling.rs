@@ -99,11 +99,12 @@ fn sparse(rng: &mut Rng) -> IntervalSet {
 
 /// A sum of `k` operands of eight sparse pieces each, the way a chain of `+` builds one: each
 /// image keeps to its operands' eight pieces, so the chain's cost is linear in `k`.
-fn sum_chain(k: usize) -> IntervalSet {
-    let mut rng = Rng::new(k as u64);
-    let mut acc = sparse(&mut rng);
+/// The operands come from `rng`; the callers draw its seed afresh each run and print it
+/// (`ZED_TEST_SEED=<seed>` repeats the run). It was `Rng::new(k)` (TEST-l0123-leftovers).
+fn sum_chain(rng: &mut Rng, k: usize) -> IntervalSet {
+    let mut acc = sparse(rng);
     for _ in 0..k {
-        let next = sparse(&mut rng);
+        let next = sparse(rng);
         acc = revision::forward(&Op::Add, &acc, &next);
         assert!(acc.len() <= 8, "{acc}");
     }
@@ -432,8 +433,12 @@ fn a_short_chain_of_sums_keeps_its_members_in_few_pieces() {
         assert!(acc.contains(v), "{acc} has {v}");
     }
     assert!(acc.len() <= 2, "{acc}");
+    let (mut rng, seed) = Rng::fresh("a short chain of sums");
     for k in 1..=4 {
-        assert!(sum_chain(k).len() <= 8, "{k}");
+        assert!(
+            sum_chain(&mut rng, k).len() <= 8,
+            "{k} (ZED_TEST_SEED={seed})"
+        );
     }
 }
 

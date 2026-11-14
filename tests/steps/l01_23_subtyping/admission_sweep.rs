@@ -659,7 +659,13 @@ const SWEPT: u64 = 50_000;
 /// The false rejections among the groups of all `SWEPT` seeds: 14,200 among seeds 0..25,000 and
 /// 14,263 among 25,000..50,000, the counts the two sweeps over them gave and held as their
 /// limits.
-const FALSE_IN_SWEPT: usize = 14_200 + 14_263;
+const FALSE_IN_SWEPT: usize = FALSE_IN_FIRST_HALF + FALSE_IN_SECOND_HALF;
+
+/// The false rejections among the groups of seeds 0..25,000.
+const FALSE_IN_FIRST_HALF: usize = 14_200;
+
+/// The false rejections among the groups of seeds 25,000..50,000.
+const FALSE_IN_SECOND_HALF: usize = 14_263;
 
 /// The seeds one run draws.
 const DRAWN: usize = 3_000;
@@ -682,7 +688,10 @@ fn false_rejection_limit(drawn: usize) -> usize {
 /// seed each run, printed, held to the count those seeds are expected to give
 /// (`false_rejection_limit`) (TEST-bench-move-l0123, author P169: random tests run fewer
 /// cases). The groups and the checks on each are as before. A rise in the rate of false
-/// rejections smaller than some 9% of it no longer fails a run, as a rise of one did.
+/// rejections smaller than some 9% of it does not fail this test; the two exact sweeps, which
+/// fail on one false rejection more, run among the benchmarks
+/// (`bench::every_group_of_the_first_half_of_the_seeds_admitted_is_monotone` and the second
+/// half; TEST-l0123-leftovers).
 #[test]
 fn random_groups_admitted_are_monotone() {
     let (mut rng, seed) = Rng::fresh("admission sweep");

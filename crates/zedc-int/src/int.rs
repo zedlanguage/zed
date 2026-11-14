@@ -3216,7 +3216,10 @@ mod tests {
             });
         }
         // Powers of bases that are no powers, odd, even and with odd parts, to prime and
-        // composite exponents, and their neighbors, which are no powers.
+        // composite exponents, and their neighbors, which are no powers. No prime below
+        // FILTER_BOUND is 1 modulo an index above 511, so for 521 and 1042 = 2 * 521 a root
+        // wider than a word passes or fails by the one `Filter::wide` prime alone
+        // (TEST-l0123-leftovers); the bases of a few bits find theirs in one word.
         let mersenne = (BigUint::from(1u32) << 127u32) - 1u32;
         let bases = [
             mersenne.clone(),
@@ -3226,7 +3229,7 @@ mod tests {
             BigUint::from(10u32).pow(40) + 3u32,
         ];
         for r in &bases {
-            for m in [2u32, 3, 5, 6, 7, 12, 31, 97, 210] {
+            for m in [2u32, 3, 5, 6, 7, 12, 31, 97, 210, 521, 1042] {
                 let b = r.pow(m);
                 assert_eq!(least_root(b.clone()), (r.clone(), BigUint::from(m)));
                 for d in [1u32, 2] {

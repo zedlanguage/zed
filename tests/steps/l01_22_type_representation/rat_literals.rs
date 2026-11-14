@@ -154,10 +154,10 @@ fn literal_types_order_by_value_across_rat_and_int() {
 }
 
 /// Random exact numbers: their kept form and the plain rational built from their digits print
-/// alike and have one type.
+/// alike and have one type. A new seed each run, printed (`ZED_TEST_SEED=<seed>` repeats it).
 #[test]
 fn kept_and_built_forms_of_random_numbers_print_alike() {
-    let mut rng = Rng::new(0x7a7);
+    let (mut rng, seed) = Rng::fresh("random exact numbers, kept and built");
     for _ in 0..400 {
         let mantissa = rng.int(-99_999, 99_999);
         let point = rng.below(4);
@@ -173,11 +173,19 @@ fn kept_and_built_forms_of_random_numbers_print_alike() {
         let n: BigInt = kept.numer_text().unwrap().parse().unwrap();
         let d: BigInt = kept.denom_text().unwrap().parse().unwrap();
         let built = Rat::new(n, d).unwrap();
-        assert_eq!(kept, built);
+        assert_eq!(kept, built, "{sign}{text}e{exp} (ZED_TEST_SEED={seed})");
         let (a, b) = (lit(&Value::rat(kept)), lit(&Value::rat(built)));
-        assert_eq!(a, b, "{sign}{text}e{exp}");
-        assert_eq!(a.to_string(), b.to_string());
-        assert_eq!(parse_type(&a.to_string()), Ok(a));
+        assert_eq!(a, b, "{sign}{text}e{exp} (ZED_TEST_SEED={seed})");
+        assert_eq!(
+            a.to_string(),
+            b.to_string(),
+            "{sign}{text}e{exp} (ZED_TEST_SEED={seed})"
+        );
+        assert_eq!(
+            parse_type(&a.to_string()),
+            Ok(a),
+            "{sign}{text}e{exp} (ZED_TEST_SEED={seed})"
+        );
     }
 }
 

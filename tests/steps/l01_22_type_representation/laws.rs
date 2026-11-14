@@ -184,15 +184,19 @@ fn random(r: &mut Rng, depth: usize) -> E {
 #[test]
 fn membership_is_the_expression_read_as_a_predicate() {
     let vs = values();
-    let mut r = Rng::new(22);
+    let (mut r, seed) = Rng::fresh("membership read as a predicate");
     let (mut members, mut nonmembers) = (0, 0);
     for _ in 0..1500 {
         let e = random(&mut r, 3);
         let t = build(&e);
-        assert!(t.decidable(), "{e:?}");
+        assert!(t.decidable(), "{e:?} (ZED_TEST_SEED={seed})");
         for v in &vs {
             let want = holds(&e, Probe::Value(v));
-            assert_eq!(t.contains(v), want, "{v} in {t}, from {e:?}");
+            assert_eq!(
+                t.contains(v),
+                want,
+                "{v} in {t}, from {e:?} (ZED_TEST_SEED={seed})"
+            );
             if want {
                 members += 1;
             } else {
@@ -204,34 +208,44 @@ fn membership_is_the_expression_read_as_a_predicate() {
     // nothing would pass.
     assert!(
         members > 10_000 && nonmembers > 10_000,
-        "{members} {nonmembers}"
+        "{members} {nonmembers} (ZED_TEST_SEED={seed})"
     );
 }
 
 #[test]
 fn union_and_intersection_are_commutative_idempotent_and_canonical() {
-    let mut r = Rng::new(7);
+    let (mut r, seed) = Rng::fresh("union and intersection laws");
     for _ in 0..500 {
         let (a, b) = (build(&random(&mut r, 2)), build(&random(&mut r, 2)));
-        assert_eq!(&a | &b, &b | &a, "{a} | {b}");
-        assert_eq!(&a & &b, &b & &a, "{a} & {b}");
-        assert_eq!(&a | &a, a);
-        assert_eq!(&a & &a, a);
-        assert_eq!((&a | &b).to_string(), (&b | &a).to_string());
+        assert_eq!(&a | &b, &b | &a, "{a} and {b} (ZED_TEST_SEED={seed})");
+        assert_eq!(&a & &b, &b & &a, "{a} and {b} (ZED_TEST_SEED={seed})");
+        assert_eq!(&a | &a, a, "{a} and {b} (ZED_TEST_SEED={seed})");
+        assert_eq!(&a & &a, a, "{a} and {b} (ZED_TEST_SEED={seed})");
+        assert_eq!(
+            (&a | &b).to_string(),
+            (&b | &a).to_string(),
+            "{a} and {b} (ZED_TEST_SEED={seed})"
+        );
     }
 }
 
 #[test]
 fn a_type_and_its_complement_split_every_universe() {
-    let mut r = Rng::new(11);
+    let (mut r, seed) = Rng::fresh("a type and its complement");
     for _ in 0..300 {
         let a = build(&random(&mut r, 3));
         let (both, either) = (&a & &!&a, &a | &!&a);
         for v in values() {
-            assert!(!both.contains(&v), "{v} in {both}");
-            assert!(either.contains(&v), "{v} not in {either}");
+            assert!(!both.contains(&v), "{v} in {both} (ZED_TEST_SEED={seed})");
+            assert!(
+                either.contains(&v),
+                "{v} not in {either} (ZED_TEST_SEED={seed})"
+            );
         }
-        assert!(either.functions() && !both.functions(), "{a}");
+        assert!(
+            either.functions() && !both.functions(),
+            "{a} (ZED_TEST_SEED={seed})"
+        );
     }
 }
 
@@ -239,11 +253,15 @@ fn a_type_and_its_complement_split_every_universe() {
 fn the_scalar_part_is_exact() {
     // Within the scalars the representation is a normal form: two expressions that hold of
     // the same scalars build one type, so `a | !a` is every scalar exactly.
-    let mut r = Rng::new(3);
+    let (mut r, seed) = Rng::fresh("the scalar part");
     let scalars = Type::universe(Universe::Scalar);
     for _ in 0..500 {
         let a = build(&random(&mut r, 3)).part(Universe::Scalar);
-        assert_eq!(&a | &(&scalars - &a), scalars, "{a}");
-        assert_eq!((!&!&a).part(Universe::Scalar), a);
+        assert_eq!(&a | &(&scalars - &a), scalars, "{a} (ZED_TEST_SEED={seed})");
+        assert_eq!(
+            (!&!&a).part(Universe::Scalar),
+            a,
+            "{a} (ZED_TEST_SEED={seed})"
+        );
     }
 }

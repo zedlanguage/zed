@@ -368,11 +368,14 @@ impl Seed {
     }
 }
 
-/// The unions, differences and intersections of rows made from the first `cases` seeds read
-/// back as the same type.
+/// The unions, differences and intersections of rows made from `cases` seeds read back as the
+/// same type. The seeds come from a new generator each run, whose seed is printed
+/// (`ZED_TEST_SEED=<seed>` repeats the run); they were the fixed `s * 7919 + 1` for `s` below
+/// `cases` (TEST-l0123-leftovers).
 fn formulas_read_back(cases: u64) {
-    for s in 0..cases {
-        let mut seed = Seed(s * 7919 + 1);
+    let (mut rng, _) = zed_tests::instances::Rng::fresh("formulas over rows read back");
+    for _ in 0..cases {
+        let mut seed = Seed(rng.next_u64());
         let w = 1 + seed.next(3) as usize;
         round_trip(&seed.formula(w, 3));
     }
@@ -380,8 +383,7 @@ fn formulas_read_back(cases: u64) {
 
 /// Small instance of
 /// `bench::unions_differences_and_intersections_of_rows_read_back_as_the_same_type`
-/// (TEST-bench-move-l0123, author P178: many cases make a benchmark): the first 50 of its 400
-/// seeds.
+/// (TEST-bench-move-l0123, author P178: many cases make a benchmark): 50 cases to its 400.
 #[test]
 fn a_few_unions_differences_and_intersections_of_rows_read_back_as_the_same_type() {
     formulas_read_back(50);
@@ -505,12 +507,17 @@ fn a_payload_of_every_tuple_alone_or_every_struct_alone_is_marked_not_exact() {
     }
 }
 
+/// 100 formulas, from seeds drawn afresh each run (printed; `ZED_TEST_SEED=<seed>` repeats
+/// the run), print the same text with and without other types built before them. The seeds
+/// were the fixed `s * 7919 + 1` (TEST-l0123-leftovers).
 #[test]
 fn the_text_does_not_depend_on_what_was_built_before() {
+    let (mut rng, _) = zed_tests::instances::Rng::fresh("texts with and without types before");
+    let seeds: Vec<u64> = (0..100).map(|_| rng.next_u64()).collect();
     let text = |junk: bool| -> String {
         let mut out = String::new();
-        for s in 0..100 {
-            let mut seed = Seed(s * 7919 + 1);
+        for &s in &seeds {
+            let mut seed = Seed(s);
             let w = 1 + seed.next(3) as usize;
             let kept: Vec<Type> = match junk {
                 true => (0..50).map(|i| tuple(&[lit(9000 + i), lit(i)])).collect(),

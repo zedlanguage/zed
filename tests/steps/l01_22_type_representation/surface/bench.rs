@@ -110,7 +110,8 @@ fn the_text_of_meets_n_deep_scales() {
 }
 
 /// Moved here from `surface.rs` as it stood, 400 seeds (TEST-bench-move-l0123, author P178:
-/// many cases make a benchmark); its small instance, the first 50 seeds, is
+/// many cases make a benchmark), drawn afresh each run since TEST-l0123-leftovers; its small
+/// instance, 50 seeds, is
 /// `a_few_unions_differences_and_intersections_of_rows_read_back_as_the_same_type`.
 #[test]
 fn unions_differences_and_intersections_of_rows_read_back_as_the_same_type() {

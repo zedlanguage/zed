@@ -25,3 +25,28 @@ fn the_evaluator_scales() {
         std::hint::black_box(groups[&m].monotone().is_ok());
     });
 }
+
+/// The exact sweeps `random_groups_admitted_are_monotone` replaced (TEST-bench-move-l0123):
+/// every seed of 0..25,000 and of 25,000..50,000, each held to the false rejections its seeds
+/// gave, 14,200 and 14,263, so that one false rejection more fails, where the draw of
+/// `DRAWN` seeds lets a rise of some 9% pass (TEST-l0123-leftovers). They are the cases of
+/// that test in full, so they run here (author P178: many cases make a benchmark); about
+/// 2.2 s each alone.
+#[test]
+fn every_group_of_the_first_half_of_the_seeds_admitted_is_monotone() {
+    sweep(
+        "sweep of seeds 0..25,000",
+        0..SWEPT / 2,
+        FALSE_IN_FIRST_HALF,
+    );
+}
+
+/// The second half of the exact sweep; see the first.
+#[test]
+fn every_group_of_the_second_half_of_the_seeds_admitted_is_monotone() {
+    sweep(
+        "sweep of seeds 25,000..50,000",
+        SWEPT / 2..SWEPT,
+        FALSE_IN_SECOND_HALF,
+    );
+}
