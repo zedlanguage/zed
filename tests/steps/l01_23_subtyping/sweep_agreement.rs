@@ -338,38 +338,27 @@ fn families(heads: &[(u16, u16)], splits: &[bool]) -> Tally {
     tally
 }
 
-fn big<T: Send>(f: impl FnOnce() -> T + Send) -> T {
-    std::thread::scope(|s| {
-        std::thread::Builder::new()
-            .stack_size(1 << 28)
-            .spawn_scoped(s, f)
-            .unwrap()
-            .join()
-            .unwrap()
-    })
-}
-
 #[test]
 fn the_sweep_agrees_on_integer_families() {
-    let t = big(|| families(&HEADS[..1], &[false, true]));
+    let t = families(&HEADS[..1], &[false, true]);
     eprintln!("integer families: {t:?}");
 }
 
 #[test]
 fn the_sweep_agrees_on_boolean_families() {
-    let t = big(|| families(&HEADS[1..2], &[false, true]));
+    let t = families(&HEADS[1..2], &[false, true]);
     eprintln!("boolean families: {t:?}");
 }
 
 #[test]
 fn the_sweep_agrees_on_pair_head_families() {
-    let t = big(|| families(&HEADS[2..3], &[false, true]));
+    let t = families(&HEADS[2..3], &[false, true]);
     eprintln!("pair head families: {t:?}");
 }
 
 #[test]
 fn the_sweep_agrees_on_atom_head_families() {
-    let t = big(|| families(&HEADS[3..], &[false, true]));
+    let t = families(&HEADS[3..], &[false, true]);
     eprintln!("atom head families: {t:?}");
 }
 
@@ -377,7 +366,7 @@ fn the_sweep_agrees_on_atom_head_families() {
 /// with `m = n`.
 #[test]
 fn the_sweep_agrees_on_meets_and_pairs() {
-    let t = big(|| {
+    let t = {
         let mut tally = Tally::default();
         let mut id = 0;
         for &(all, one) in &HEADS[..2] {
@@ -413,7 +402,7 @@ fn the_sweep_agrees_on_meets_and_pairs() {
             }
         }
         tally
-    });
+    };
     eprintln!("meets and pairs: {t:?}");
 }
 
@@ -422,7 +411,7 @@ fn the_sweep_agrees_on_meets_and_pairs() {
 /// a random set of the definitions; one group, or two with the second's tails into itself.
 #[test]
 fn the_sweep_agrees_on_random_chains() {
-    let t = big(|| {
+    let t = {
         let mut tally = Tally::default();
         let (mut rng, _) = Rng::fresh("random chains");
         let palette = [
@@ -472,7 +461,7 @@ fn the_sweep_agrees_on_random_chains() {
             );
         }
         tally
-    });
+    };
     eprintln!("random chains: {t:?}");
 }
 
@@ -480,7 +469,7 @@ fn the_sweep_agrees_on_random_chains() {
 /// `nil` or not, over the integer cells or the boolean ones, less the union of most of them.
 #[test]
 fn the_sweep_agrees_on_random_links() {
-    let t = big(|| {
+    let t = {
         let mut tally = Tally::default();
         let (mut rng, _) = Rng::fresh("random links");
         let sets: [&[u16]; 2] = [
@@ -516,7 +505,7 @@ fn the_sweep_agrees_on_random_links() {
             );
         }
         tally
-    });
+    };
     eprintln!("random links: {t:?}");
 }
 
@@ -587,7 +576,7 @@ const CHAIN_HEADS: [u16; 6] = [HOLES[0], HOLES[1], HOLES[2], INT, ONE | TWO, TWO
 /// asked, in 5 s, until TEST-bench-move-l0123.
 #[test]
 fn the_sweep_agrees_on_redundant_rows_with_cofinite_heads() {
-    let t = big(|| {
+    let t = {
         let mut tally = Tally::default();
         let mut id = 0;
         let (mut rng, _) = Rng::fresh("redundant rows");
@@ -614,7 +603,7 @@ fn the_sweep_agrees_on_redundant_rows_with_cofinite_heads() {
             }
         }
         tally
-    });
+    };
     eprintln!("redundant rows: {t:?}");
 }
 
@@ -625,7 +614,7 @@ fn the_sweep_agrees_on_redundant_rows_with_cofinite_heads() {
 /// TEST-bench-move-l0123.
 #[test]
 fn the_sweep_agrees_on_union_links() {
-    let t = big(|| {
+    let t = {
         let mut tally = Tally::default();
         let mut id = 0;
         let (mut rng, _) = Rng::fresh("union links");
@@ -684,7 +673,7 @@ fn the_sweep_agrees_on_union_links() {
             }
         }
         tally
-    });
+    };
     eprintln!("union links: {t:?}");
 }
 
@@ -692,7 +681,7 @@ fn the_sweep_agrees_on_union_links() {
 /// `nil` or not, less the union of most of them; in both orders.
 #[test]
 fn the_sweep_agrees_on_random_cofinite_links() {
-    let t = big(|| {
+    let t = {
         let mut tally = Tally::default();
         let (mut rng, _) = Rng::fresh("random cofinite links");
         let palette = [
@@ -739,7 +728,7 @@ fn the_sweep_agrees_on_random_cofinite_links() {
             );
         }
         tally
-    });
+    };
     eprintln!("random cofinite links: {t:?}");
 }
 
@@ -758,7 +747,7 @@ const STAGGER_HEADS: [u16; 4] = [INT | ATOM, ATOM, HOLES[0] | ATOM, INT];
 /// Each run asks every case at m = 1, one in four at m = 2 and one in 32 at m = 3, drawn afresh
 /// (author P169); every case was asked, in 9 to 10 s, until TEST-bench-move-l0123.
 fn staggered(c: u16) -> Tally {
-    big(|| {
+    {
         let mut tally = Tally::default();
         let mut id = 0;
         let (mut rng, _) = Rng::fresh(&format!("staggered chains, carrier {c:#b}"));
@@ -827,7 +816,7 @@ fn staggered(c: u16) -> Tally {
             }
         }
         tally
-    })
+    }
 }
 
 /// [`staggered`] with the integers as the carrier's head: the heads are read without the atom.
@@ -851,7 +840,7 @@ fn the_sweep_agrees_on_staggered_chains_with_the_atom() {
 /// second carrier met in, so the carrier head is a meet.
 #[test]
 fn the_sweep_agrees_on_random_positive_chains() {
-    let t = big(|| {
+    let t = {
         let mut tally = Tally::default();
         let (mut rng, _) = Rng::fresh("random positive chains");
         let palette = [
@@ -915,7 +904,7 @@ fn the_sweep_agrees_on_random_positive_chains() {
             );
         }
         tally
-    });
+    };
     eprintln!("random positive chains: {t:?}");
     assert!(t.swept > 0, "the sweep decides some");
 }
@@ -926,7 +915,7 @@ fn the_sweep_agrees_on_random_positive_chains() {
 /// when two links share a hole, it is outside the class and left to the search.
 #[test]
 fn the_sweep_agrees_on_disjoint_and_overlapping_hole_spines() {
-    let t = big(|| {
+    let t = {
         let mut tally = Tally::default();
         let mut id = 0;
         for m in 2..=3usize {
@@ -972,7 +961,7 @@ fn the_sweep_agrees_on_disjoint_and_overlapping_hole_spines() {
             }
         }
         tally
-    });
+    };
     eprintln!("hole spines: {t:?}");
 }
 
@@ -980,7 +969,7 @@ fn the_sweep_agrees_on_disjoint_and_overlapping_hole_spines() {
 /// The DFA oracle reads masks only; no emptiness or membership query contributes to it.
 #[test]
 fn r6_random_carrier_chains_against_masks() {
-    let tally = big(|| {
+    let tally = {
         let mut tally = Tally::default();
         let (mut rng, _) = Rng::fresh("R6 carrier chains");
         let palette = [
@@ -1031,7 +1020,7 @@ fn r6_random_carrier_chains_against_masks() {
             );
         }
         tally
-    });
+    };
     eprintln!("R6 carrier chains: {tally:?}");
     assert!(tally.swept > 0);
 }
@@ -1042,7 +1031,7 @@ fn r6_random_carrier_chains_against_masks() {
 /// checked, drawn from a generator made with [`Rng::fresh`] (author P169); the 384 formulas of
 /// one fixed seed were checked, in four pieces of 4 to 5 s, until TEST-bench-move-l0123.
 pub(super) fn r6_two_predicate_reduction_matches_boolean_bruteforce(count: usize) {
-    big(|| {
+    {
         let (mut rng, _) = Rng::fresh("R6 two-predicate selector reduction");
         let domain = ONE | TWO | (1 << 8); // values 1,2,3
         for id in 0..count {
@@ -1114,14 +1103,14 @@ pub(super) fn r6_two_predicate_reduction_matches_boolean_bruteforce(count: usize
             "R6 two-predicate selector reduction: {} formulas checked",
             count
         );
-    });
+    };
 }
 
 /// R6-C2: avoiding the leaf head at an optional spine arrival is a
 /// commitment. Another negative chain can distinguish that choice.
 #[test]
 fn r6_optional_spine_arrival_must_not_force_a_later_empty() {
-    big(|| {
+    {
         // 0 L; 1 F1; 2 F2; 3 F3; 4 A4; 5 A3; 6 A2; 7 A1;
         // 8 P4; 9 P3; 10 P2; 11 P1.
         let ds = vec![
@@ -1188,12 +1177,12 @@ fn r6_optional_spine_arrival_must_not_force_a_later_empty() {
             "_r6optional",
             "optional spine arrival",
         );
-    });
+    };
 }
 
 #[test]
 fn r6_greedy_guard_admits_a_partially_compatible_unused_slot() {
-    big(|| {
+    {
         let spec = Spec {
             groups: vec![vec![
                 D {
@@ -1249,7 +1238,7 @@ fn r6_greedy_guard_admits_a_partially_compatible_unused_slot() {
             "_r6guardorder",
             "unused partial slot",
         );
-    });
+    };
 }
 
 /// R7: random cases of the X31 kind, against the masks. A positive straight chain of length 3
@@ -1261,7 +1250,7 @@ fn r6_greedy_guard_admits_a_partially_compatible_unused_slot() {
 /// (`optional_spine_choice`) the prefix chains say Empty on case 1479, which is Inhabited.
 #[test]
 fn r7_random_optional_spine_choices_against_masks() {
-    let tally = big(|| {
+    let tally = {
         let mut tally = Tally::default();
         let (mut rng, _) = Rng::fresh("R7 optional spine choices");
         // Cofinite heads for the positive chain, so that it can follow a negative chain past
@@ -1333,7 +1322,7 @@ fn r7_random_optional_spine_choices_against_masks() {
             );
         }
         tally
-    });
+    };
     eprintln!("R7 optional spine choices: {tally:?}");
     assert!(tally.swept > 0);
 }
@@ -1346,7 +1335,7 @@ fn r7_random_optional_spine_choices_against_masks() {
 /// so both decline Empty (R7, Q2).
 #[test]
 fn r7_optional_spine_arrival_with_no_active_negative() {
-    big(|| {
+    {
         // 0 L; 1 S1; 2 S2; 3 R1; 4 R2; 5 P3; 6 P2; 7 P1.
         let ds = vec![
             D {
@@ -1396,7 +1385,7 @@ fn r7_optional_spine_arrival_with_no_active_negative() {
             "_r7noactive",
             "optional arrival, no active negative",
         );
-    });
+    };
 }
 
 /// R7 Q2(a): when `active_neg` is empty at an optional spine arrival (`r0 != r0_without_h1`),
@@ -1405,7 +1394,7 @@ fn r7_optional_spine_arrival_with_no_active_negative() {
 /// declines.
 #[test]
 fn r7_can_prove_empty_admits_empty_active_neg_where_codex_flag_declines() {
-    big(|| {
+    {
         // Case A separation: `(P1 & Q1) \ F2` where `F2 = cons(int \ {3}, cons(1, L))` has an
         // optional spine arrival at step 2 with `active_neg` empty, and step 3 has `R_3 = {1} & {2} = empty`.
         let spec_a = Spec {
@@ -1522,7 +1511,7 @@ fn r7_can_prove_empty_admits_empty_active_neg_where_codex_flag_declines() {
             "_r7cpeb_ord",
             "Case B empty active_neg",
         );
-    });
+    };
 }
 
 /// R7 Q2(b) / Q7(iii) Bug A: a struct payload inside `#cons` (`#cons(k: 99)` via
@@ -1530,7 +1519,7 @@ fn r7_can_prove_empty_admits_empty_active_neg_where_codex_flag_declines() {
 /// `escape::decide`. On `cb709f13` both ignored `q.structs` and returned a wrong `Empty`.
 #[test]
 fn r7_bug_a_non_tuple_payload_in_cons_is_not_empty() {
-    big(|| {
+    {
         use zed_kernel::types::Universe;
         let lit = |i: i64| Type::lit(&Value::Int(i)).unwrap();
         let ts = Group::new(vec![
@@ -1611,7 +1600,7 @@ fn r7_bug_a_non_tuple_payload_in_cons_is_not_empty() {
         Type::forget_emptiness();
         assert_eq!(t_esc.verdict(), Verdict::Refused(Refusal::NoWitness));
         assert!(!t_esc.is_empty());
-    });
+    };
 }
 
 /// R7 Q2(b) / Q7(iii) Bug B: a tail union with two bare atoms (`#nil_a | #nil_z | #cons(0, L)`)
@@ -1619,7 +1608,7 @@ fn r7_bug_a_non_tuple_payload_in_cons_is_not_empty() {
 /// `escape::decide` returned a wrong `Empty`, although `#cons((0, #nil_a))` is in `t`.
 #[test]
 fn r7_bug_b_multiple_bare_atoms_in_tail_union_is_not_empty() {
-    big(|| {
+    {
         let lit = |i: i64| Type::lit(&Value::Int(i)).unwrap();
         let ts = Group::new(vec![
             Def {
@@ -1680,7 +1669,7 @@ fn r7_bug_b_multiple_bare_atoms_in_tail_union_is_not_empty() {
         Type::forget_emptiness();
         assert_eq!(t.verdict(), Verdict::Inhabited);
         assert!(!t.is_empty());
-    });
+    };
 }
 
 /// R7 Q7(i): in Gemini R6, `step_exact[step]` was false when `non_disjoint_stop_heads` was
@@ -1688,7 +1677,7 @@ fn r7_bug_b_multiple_bare_atoms_in_tail_union_is_not_empty() {
 /// returning a wrong `Empty` on `[7, 3, 7, 1]`.
 #[test]
 fn r7_gemini_r6_non_disjoint_stop_clause_omission_is_inhabited() {
-    big(|| {
+    {
         let lit = |i: i64| Type::lit(&Value::Int(i)).unwrap();
         let ts = Group::new(vec![
             Def {
@@ -1813,7 +1802,7 @@ fn r7_gemini_r6_non_disjoint_stop_clause_omission_is_inhabited() {
         assert_ne!(t.chain_verdict(), Some(Verdict::Empty));
         Type::forget_emptiness();
         assert_eq!(t.verdict(), Verdict::Inhabited);
-    });
+    };
 }
 
 /// R7 Q5(a): random carrier-plus-chains test (mixed finite/cofinite positive heads, 1-value and
@@ -1990,7 +1979,7 @@ fn r7_random_carrier_plus_chains_both_orders_against_bruteforce() {
         &p - &n
     }
 
-    big(|| {
+    {
         let (mut rng, _) = Rng::fresh("R7 carrier plus chains");
         let draw_pred = |rng: &mut Rng| -> Pred {
             match rng.below(7) {
@@ -2223,7 +2212,7 @@ fn r7_random_carrier_plus_chains_both_orders_against_bruteforce() {
             "R7 random carrier+chains: 300 cases, chain_decided={chain_decided} (empty={chain_empty}, inhab={chain_inhab})"
         );
         assert!(chain_empty > 50 && chain_inhab > 50);
-    });
+    };
 }
 
 /// R9 Q4: random chain families built to exercise the run-length tokens of the prefix-chain
@@ -2379,7 +2368,7 @@ fn r9_run_tokens_against_product_automaton() {
         &p - &n
     }
 
-    let tally = big(|| {
+    let tally = {
         let (mut rng, _) = Rng::fresh("R9 run tokens");
         let hole = |rng: &mut Rng| Pred {
             cof: true,
@@ -2509,7 +2498,7 @@ fn r9_run_tokens_against_product_automaton() {
             }
         }
         (decided, empty, inhab, exact_empty)
-    });
+    };
     eprintln!(
         "R9 run tokens: 300 cases, exact empty={}, chain decided={} (empty={}, inhab={})",
         tally.3, tally.0, tally.1, tally.2
