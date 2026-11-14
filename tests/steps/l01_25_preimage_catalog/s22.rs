@@ -935,7 +935,7 @@ fn chains_of_growing_constants_keep_their_preimages_altj_live() {
 /// sizes 0 and 1, and at one more of its sizes up to 13 drawn from a new seed each run (the
 /// families `cross`, `mod7`, `pow2`, `mul` and `t3_gaps` are timed at larger sizes by `bench::s22`).
 /// Until TEST-bench-move-l0125 (author P169) each ran at every size, 83 cases in 10 s; `mod7`
-/// now stops at k = 4 (k = 5 to 8 took 0.5 to 1.5 s each, debug build at load 30) and
+/// now stops at k = 4 (k = 5 to 8 took 0.5 to 1.5 s each, test build at load 30) and
 /// `indep_1` at k = 8 (k = 12 took 1.3 s).
 #[test]
 fn chains_of_slow_families_keep_their_preimages() {
@@ -2707,7 +2707,7 @@ fn wide_remainders_match_the_interpreter(test: &str, cases: &[(i64, i64, usize)]
 /// the comparison, most of it the solver's answers on whether the relation holds at each point
 /// of the box, which grow with the modulus, the periods and the number of guards. One case
 /// takes 90 ms on average, from under 1 ms to 1.6 s (modulus 13, 9 periods, the first shape,
-/// in a debug build at load 30). `ZED_REMAINDER_SEED` still reruns any one of the 900 cases.
+/// in the test build at load 30). `ZED_REMAINDER_SEED` still reruns any one of the 900 cases.
 #[test]
 fn wide_remainders_match_the_interpreter_at_random_moduli() {
     let test = "wide_remainders_match_the_interpreter_at_random_moduli";
@@ -2747,7 +2747,7 @@ const CORNER_MODULI: [i64; 5] = [1, -3, 1024, 1 << 62, i64::MIN];
 fn remainder_reads_outside_a_split_at_their_corners_on_a_longer_chain() {
     // k = 5, which repeats two guards' classes, runs at one modulus drawn from a new seed
     // each run; until TEST-bench-move-l0125 (author P169) k = 6 ran at every modulus, 0.7 s
-    // each. Two shapes are slow at sizes this test skips, with `x` unbounded (debug build,
+    // each. Two shapes are slow at sizes this test skips, with `x` unbounded (test build,
     // plan row PERF-wide-modulus-cliffs): `if x >= 0 { c } else { y } <= 2` at k = 4 alone
     // takes 2.4 s at `2^62`, 0.5 s at 1024, 0.2 s at -3 and 2.3 s at `i64::MIN`, where k = 3
     // and k = 5 take 30 ms and 1 ms; and `c <= 2 && y mod 2 == 0` at a modulus of `-2^62` or
