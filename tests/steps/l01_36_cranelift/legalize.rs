@@ -317,20 +317,22 @@ fn a_comparison_inside_a_lambda_and_a_branch_is_expanded() {
 
 #[test]
 fn each_back_end_refuses_what_it_declared_expanded_by_name() {
-    // Cranelift handed a `>` that legalization did not expand, the graph legalized for the
-    // machine, names it.
-    let t = prim(Prim::Gt, vec![lit(2i64), lit(1i64)]);
-    let g = legalize(lower(&t).unwrap(), memory::EXPANSIONS);
-    let err = zed_native::run(
-        &g,
-        &plan(g.graph(), true),
-        &mut Evaluator::new(World::new()),
-    );
-    let err = err.map(|o| o.value).unwrap_err();
-    assert!(
-        err.contains("`prim >` has no lowering here") && err.contains("(gt)"),
-        "{err}"
-    );
+    // Cranelift handed a `>` or `>=` that legalization did not expand, the graph legalized for
+    // the machine, names it and its expansion.
+    for (p, written, name) in [(Prim::Gt, ">", "(gt)"), (Prim::Ge, ">=", "(ge)")] {
+        let t = prim(p, vec![lit(2i64), lit(1i64)]);
+        let g = legalize(lower(&t).unwrap(), memory::EXPANSIONS);
+        let err = zed_native::run(
+            &g,
+            &plan(g.graph(), true),
+            &mut Evaluator::new(World::new()),
+        );
+        let err = err.map(|o| o.value).unwrap_err();
+        assert!(
+            err.contains(&format!("`prim {written}` has no lowering here")) && err.contains(name),
+            "{err}"
+        );
+    }
     // The machine handed a derived node it did not expand names it.
     let g = text::parse(PARCELS).unwrap();
     let err = memory::run(&g, &plan(&g, true), &mut Evaluator::new(World::new())).unwrap_err();
