@@ -72,6 +72,8 @@ fn step_names_by_stage_step_letter_and_description() {
         ("step of one digit", "m0_1_a"),
         ("step of three digits", "m0_001_a"),
         ("step with a sign", "m0_+1_a"),
+        ("layer with a sign", "l+1_01_a"),
+        ("layer with a minus sign", "l-1_01_a"),
         ("step with two letters", "m0_01ab_a"),
         ("step with an upper case letter", "m0_01A_a"),
         ("step that is only a letter", "m0_a_b"),

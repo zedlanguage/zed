@@ -119,6 +119,8 @@ pub fn is_step_name(name: &str) -> bool {
         || stage == "s"
         || (stage.len() == 3
             && stage.starts_with('l')
+            // Two ASCII digits, as for the step: `parse` alone also reads a sign, as in `l+1`.
+            && stage[1..].bytes().all(|b| b.is_ascii_digit())
             && stage[1..]
                 .parse::<u8>()
                 .is_ok_and(|n| (1..=LAST_LAYER).contains(&n)));
@@ -159,6 +161,8 @@ mod tests {
             "l1_07_fences",     // layer not two digits
             "l41_01_beyond",    // no layer 41
             "l99_01_beyond",    // no layer 99
+            "l+1_01_sign",      // a layer with a sign
+            "l-1_01_sign",      // a layer with a sign
             "l00_01_zero",      // no layer 0
             "l01_00_zero",      // steps count from 1
             "l01_07",           // no description
