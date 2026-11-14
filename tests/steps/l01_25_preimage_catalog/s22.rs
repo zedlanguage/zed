@@ -433,6 +433,38 @@ pub(super) fn first_refuted(
     })
 }
 
+/// Whether the relations `a` and `b` hold at the same points of the box `domains` within
+/// (-60, 60), the inputs ranging over `ds`: two relations that print differently, their
+/// auxiliary variables named anew, describe the same set there (item
+/// TEST-renamed-relation-same-set). Both absent is the same set; one absent is not, and
+/// neither is a point where the solver refuses either question. The points are listed, two
+/// solver questions at each, every input fixed: the boxes of these tests are small, and a
+/// symbolic check (the symmetric difference of the two relations' sets empty) would rest on
+/// the definitions fixing each auxiliary variable, which a `bitAnd` variable's do not.
+fn same_relation_set(
+    ds: &Domains,
+    domains: &Domains,
+    a: Option<&Relation>,
+    b: Option<&Relation>,
+) -> bool {
+    let (a, b) = match (a, b) {
+        (None, None) => return true,
+        (Some(a), Some(b)) => (a, b),
+        _ => return false,
+    };
+    let names: Vec<Arc<str>> = ds.keys().cloned().collect();
+    super::points(ds, &names, (-60, 60)).iter().all(|pt| {
+        let inside = names
+            .iter()
+            .zip(pt)
+            .all(|(n, &v)| domains.get(n).is_none_or(|s| s.contains(v)));
+        !inside || {
+            let held = relation_holds(a, &names, pt);
+            held.is_some() && held == relation_holds(b, &names, pt)
+        }
+    })
+}
+
 impl Diffs {
     /// Compares the preimage of `d` under `t` over `ds` with the one before. A difference
     /// counts as narrower when only the box differs, both are inexact, and the new box is a
@@ -522,15 +554,21 @@ impl Diffs {
         // `x mod c` of one input, so the auxiliary variables of a relation and the variables a
         // refusal names are numbered anew. Such a result differs from the one before only in
         // those names: the same box, exactness, listing and stops, a relation where there was
-        // one, and a refusal of the same kind.
+        // one, describing the same set on the box ([`same_relation_set`]), and a refusal of
+        // the same kind.
         let kind = |r: &Option<Refusal>| r.as_ref().map(std::mem::discriminant);
         if new != old
             && now.domains == then.domains
             && now.exact == then.exact
             && now.enumerated == then.enumerated
             && format!("{:?}", now.stops) == format!("{:?}", then.stops)
-            && now.relation.is_some() == then.relation.is_some()
             && kind(&now.refusal) == kind(&then.refusal)
+            && same_relation_set(
+                ds,
+                &now.domains,
+                now.relation.as_ref(),
+                then.relation.as_ref(),
+            )
         {
             self.cases += 1;
             self.renamed += 1;
@@ -655,19 +693,24 @@ impl Diffs {
             return;
         }
         // Item S22-transfer-rem, as [`Diffs::preimage_listed`] allows it: the same box,
-        // exactness, listing and stops, a relation where there was one, and a refusal of the
-        // same kind, the relation's variables named anew. Seed 16398544689257074035 of
-        // `random_terms` meets one: the relation before of `if (y >= x) { (1 + -4) } else { -x }
-        // > 5` is stated on `x` and `y`, where the transfer's names the `if` by an auxiliary
-        // variable.
+        // exactness, listing and stops, a relation where there was one, describing the same
+        // set on the box ([`same_relation_set`]), and a refusal of the same kind, the
+        // relation's variables named anew. Seed 16398544689257074035 of `random_terms` meets
+        // one: the relation before of `if (y >= x) { (1 + -4) } else { -x } > 5` is stated on
+        // `x` and `y`, where the transfer's names the `if` by an auxiliary variable.
         let kind = |r: &Option<Refusal>| r.as_ref().map(std::mem::discriminant);
         if now.domains == then.domains
             && now.exact == then.exact
             && now.enumerated == then.enumerated
             && format!("{:?}", now.stops) == format!("{:?}", then.stops)
-            && now.relation.is_some() == then.relation.is_some()
             && kind(&now.refusal) == kind(&then.refusal)
             && format!("{now:?}") != format!("{then:?}")
+            && same_relation_set(
+                ds,
+                &now.domains,
+                now.relation.as_ref(),
+                then.relation.as_ref(),
+            )
         {
             self.cases += 1;
             self.renamed += 1;
@@ -3445,4 +3488,43 @@ fn random_terms_of_seed_15838353310357058011_keep_their_preimages() {
 #[test]
 fn random_terms_of_seed_16398544689257074035_keep_their_preimages() {
     random_terms(16398544689257074035, 24);
+}
+
+/// The comparison of two relations' sets behind the renamed-relation allowances
+/// ([`same_relation_set`], item TEST-renamed-relation-same-set): `2 <= x <= 5` stated through
+/// an auxiliary variable equal to `x` is the same set with that variable numbered anew, and
+/// the same set stated on `x` alone, but not with one point added or one point taken away;
+/// a relation against none is not the same either. Points outside the box do not count.
+#[test]
+fn a_renamed_relation_counts_as_the_same_only_with_the_same_set() {
+    use zedc::store::presburger::{Con, Lin};
+    let x: Arc<str> = "x".into();
+    let ds: Domains = [(x.clone(), IntervalSet::of(0, 9))].into_iter().collect();
+    let through = |aux: u32, lo: i64, hi: i64| Relation {
+        body: member(&Atom::Aux(aux), &IntervalSet::of(lo, hi)),
+        defs: vec![(
+            aux,
+            "x".to_string(),
+            Formula::Con(Con::eq(
+                &Lin::atom(Atom::Aux(aux)),
+                &Lin::atom(Atom::Sym(x.clone())),
+            )),
+        )],
+        bit_ands: Vec::new(),
+    };
+    let on_x =
+        |lo: i64, hi: i64| Relation::of(member(&Atom::Sym(x.clone()), &IntervalSet::of(lo, hi)));
+    let same = |a: &Relation, b: &Relation, domains: &Domains| {
+        same_relation_set(&ds, domains, Some(a), Some(b))
+    };
+    let was = through(7, 2, 5);
+    assert!(same(&was, &through(3, 2, 5), &ds));
+    assert!(same(&was, &on_x(2, 5), &ds));
+    assert!(!same(&was, &through(3, 2, 6), &ds), "one point added");
+    assert!(!same(&was, &through(3, 3, 5), &ds), "one point taken away");
+    assert!(!same_relation_set(&ds, &ds, Some(&was), None));
+    assert!(same_relation_set(&ds, &ds, None, None));
+    // The point 6 lies outside the box 0..=5, so there the two sets agree.
+    let box5: Domains = [(x.clone(), IntervalSet::of(0, 5))].into_iter().collect();
+    assert!(same(&was, &through(3, 2, 6), &box5));
 }
