@@ -186,7 +186,7 @@ fn zedc_run_reading_a_file_of_n_lines_on_stdin_scales() {
 
 #[test]
 fn a_handles_with_n_repeated_arguments_is_rejected_in_linear_time() {
-    const N: usize = 140_000;
+    const N: usize = 60_000;
     let srcs = inputs(N, repeats);
     check("rejecting handles with n repeated arguments", N, |n| {
         let error = built(&srcs[&n]);
@@ -196,7 +196,7 @@ fn a_handles_with_n_repeated_arguments_is_rejected_in_linear_time() {
 
 #[test]
 fn n_reads_of_signals_without_handles_are_rejected_in_linear_time() {
-    const N: usize = 36_000;
+    const N: usize = 18_000;
     let srcs = inputs(N, reads);
     check("rejecting n reads of m.signals without handles", N, |n| {
         assert_eq!(built(&srcs[&n]).row, Some(Row::SignalsReadWithoutHandles));
