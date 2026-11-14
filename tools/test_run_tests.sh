@@ -94,10 +94,12 @@ check "--bench runs each benchmark of the selection as a piece" \
   "$(run --list --reuse-table --bench --only '^l01_15_' | sort)"
 check "a benchmark matches as <group>::<test>" "l01_15_kernel_terms::bench::the_printer_scales_with_depth" \
   "$(run --list --reuse-table --bench --only '^l01_15_kernel_terms::bench::the_printer')"
-out=$(run --list --reuse-table --bench --only '^l01_03_')
+# m0_08 is the one step folder with no benchmark (l01_03, used here before, has had some since
+# TEST-bench-move-rest, 97a4150e9); pick another if it gains one.
+out=$(run --list --reuse-table --bench --only '^m0_08_')
 rc=$?
 check "--bench on a group without benchmarks stops the run" \
-  "1 NO PIECE MATCHES --only '^l01_03_' among the benchmarks" "$rc $out"
+  "1 NO PIECE MATCHES --only '^m0_08_' among the benchmarks" "$rc $out"
 check "--each-test runs each correctness test of a step with benchmarks" \
   "$("$bin15" --list --format terse --skip bench:: | sed -n 's/: test$//p' | sed 's/^/l01_15_kernel_terms::/' | sort)" \
   "$(run --list --reuse-table --each-test --only '^l01_15_' | sort)"

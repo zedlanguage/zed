@@ -175,6 +175,30 @@ l01_26 at 0.61. The second folder keeps the step number with a description of it
 in one folder, the edits fall about evenly between the two, and helpers both use move to
 `tests/src/step_helpers/`. Compute c × L again when a folder grows or its edits move.
 
+Measured again after the four splits, on 2026-11-14 at load 19 to 24 (the first measurement
+ran at 40 to 56, so the times are compared through ratios measured in the same run): a
+one-line edit to a test rebuilds l01_09 in 0.3 s, l01_23_groups_and_refusals (20,100 lines) in
+1.3 to 1.5 s and l01_23_subtyping (13,100 lines) in 1.4 s, so an l01_23 edit went from 6.2 to
+7.5 times the small folder's build to 4.3 to 5. Building all 85 test binaries after an edit to
+zedc-check took 28 to 37 s (wall), after an edit to `tests/src` 9 s; the eight binaries of
+the split steps cost 0.31 to 0.46 of the 77 binaries no split touched (0.21 to 0.32 for their
+four binaries before) after the zedc-check edit, and 0.32 to 0.33 after the `tests/src` edit
+(0.24 to 0.29 before). So each new binary adds 0.7 % to 2 % of the other binaries' build (by
+the means of the runs: 2 % and 1.5 %), 0.5 to 1.5 s of CPU at the first measurement's load
+against the 0.58 s the rule assumes. The noise is as large as the effect: at 0.9 s the
+thresholds would be 1.1 and 3.4 and the four splits stand; at 1.5 s they would be 1.9 and 5.7,
+and only l01_38 (1.96) would be split. Measure again, at a steady load, before splitting more.
+
+Notes and plan rows written before the split name the old folder. The module names did not
+change; these moved:
+
+| Old folder | New folder | Its modules |
+|---|---|---|
+| l01_23_subtyping | l01_23_groups_and_refusals | bes, bes_families, cases, complete, cycle_dup, group_oracle, judgments, r6_reduction, refusals, sweep_agreement |
+| l01_29_diagnostics | l01_29_repairs_and_printing | casts, domain_repairs, kernel_names, menu_order, offered_repairs, order, parens, power_repairs, printed, rare, refused_in_rejection, refused_warning, rejection_addresses, repairs, scaling, stable, suppress, too_large, type_size, widen_test |
+| l01_38_presburger | l01_38_omega_test | completeness, decide_sat, disj_groups, extend, front_cost, live3, model, model_keys, names, omega, one_scope, preimage, probe, projection_oracle, q1_local, repair, scaling, stages, tight |
+| l01_39_reduced_product | l01_39_scope_relations | deep_condition, disjoint, families, holes, lazy, linked, nests, path_check, seed_edges, two_disjunctions, xst |
+
 **The design document's fences.** From step L1.7 on, every `zed` fence of DESIGN.md and
 EXAMPLES.md is a test. The spec repository is private and this one is public, so this
 repository builds and tests with no access to the spec: what the compiler and the tests need
