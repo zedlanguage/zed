@@ -633,16 +633,30 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   4 | @foreign ( str["lmdb"] , str["mdb_txn_begin"] ) @blocking begin : ( env : Ptr ( Env ) , parent : Ptr ( Txn ) | #none , flags : u32 ) -> ( i32 , Ptr ( Txn ) | #none «with» release ( abort ) ) ;
   5 | @foreign ( str["lmdb"] , str["mdb_txn_commit"] ) @blocking commit : ( txn : Ptr ( Txn ) «with» consumes ( ) ) -> i32 ;
 == DESIGN.md [sec:ffi] 5 L7
+  1 | @foreign «struct» Zip { }
+  2 | @foreign «struct» Source { }
+  3 | @foreign ( str["zip"] , str["zip_source_free"] ) @nonblocking sourceFree : ( source : Ptr ( Source ) ) -> #ok ;
+  4 | @foreign ( str["zip"] , str["zip_source_file"] ) @blocking sourceFile : ( archive : Ptr ( Zip ) , path : [ u8 ] «with» terminated ( 0₍10₎ ) , start : u64 , length : i64 ) -> Ptr ( Source ) | #none «with» release ( sourceFree ) ;
+  5 | @foreign ( str["zip"] , str["zip_file_add"] ) @blocking fileAdd : ( archive : Ptr ( Zip ) , name : [ u8 ] «with» terminated ( 0₍10₎ ) , source : Ptr ( Source ) «with» consumes ( unless : - 1₍10₎ ) , flags : u32 ) -> i64 ;
+== DESIGN.md [sec:ffi] 6 L2
+  1 | «match» sourceFile ( archive : , path : , start : 0₍10₎ , length : - 1₍10₎ ) {
+  2 | #none -> - 1₍10₎ ,
+  3 | source -> «match» fileAdd ( archive : , name : , source : , flags : 0₍10₎ ) {
+  4 | - 1₍10₎ -> fileAdd ( archive : , name : spare , source : , flags : 0₍10₎ ) ,
+  5 | index -> index ,
+  6 | } ,
+  7 | }
+== DESIGN.md [sec:ffi] 7 L7
   1 | @foreign «struct» File { }
   2 | @foreign ( str["c"] , str["fclose"] ) @blocking fclose : ( file : Ptr ( File ) «with» consumes ( ) ) -> i32 ;
   3 | @foreign ( str["c"] , str["fputs"] ) @blocking fputs : ( s : [ u8 ] «with» terminated ( 0₍10₎ ) , file : Ptr ( File ) ) -> i32 ;
   4 | @foreign ( str["c"] , str["fopen"] ) @blocking fopen : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) , mode : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( File ) | #none «with» release ( fclose ) ;
   5 | @foreign ( str["c"] , str["fopen"] ) @blocking openLog : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) , mode : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( File ) | #none «with» release ( file -> { _ = fclose ( file ) «else» #ok ; #ok } ) ;
-== DESIGN.md [sec:ffi] 6 L7
+== DESIGN.md [sec:ffi] 8 L7
   1 | @foreign «struct» Lock { }
   2 | @foreign ( str["locks"] , str["lock_release"] ) @nonblocking unlock : ( lock : Ptr ( Lock ) ) -> #ok ;
   3 | @foreign ( str["locks"] , str["lock_acquire"] ) @blocking acquire : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( Lock ) «with» release ( unlock ) ;
-== DESIGN.md [sec:ffi] 7 L7
+== DESIGN.md [sec:ffi] 9 L7
   1 | @foreign «struct» Db { }
   2 | @foreign «struct» Stmt { }
   3 | @foreign ( str["sqlite3"] , str["sqlite3_close_v2"] ) @blocking close : ( db : Ptr ( Db ) «with» consumes ( ) ) -> i32 ;
@@ -662,7 +676,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  21 | } ,
  22 | }
  23 | }
-== DESIGN.md [sec:ffi] 8 L7
+== DESIGN.md [sec:ffi] 10 L7
   1 | @foreign «struct» Curl { }
   2 | @teardown @foreign ( str["curl"] , str["curl_global_cleanup"] ) @nonblocking globalCleanup : ( ) -> #ok ;
   3 | @foreign ( str["curl"] , str["curl_global_init"] ) @blocking globalInit : ( flags : i64 ) -> i32 ;
@@ -670,7 +684,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   5 | @foreign ( str["curl"] , str["curl_easy_init"] ) @blocking easyInit : ( ) -> Ptr ( Curl ) | #none «with» release ( easyCleanup ) ;
   7 | @foreign ( str["python3"] , str["Py_FinalizeEx"] ) @blocking finalizeEx : ( ) -> i32 ;
   8 | @teardown ( str["python3"] ) endPython ( ) -> #ok { _ = finalizeEx ( ) «else» #ok ; #ok }
-== DESIGN.md [sec:ffi] 9 L7
+== DESIGN.md [sec:ffi] 11 L7
   1 | @foreign «struct» File { }
   2 | @foreign ( str["c"] , str["fclose"] ) @blocking fclose : ( file : Ptr ( File ) «with» consumes ( ) ) -> i32 ;
   3 | @foreign ( str["c"] , str["fopen"] ) @blocking fopen : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) , mode : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( File ) | #none «with» release ( file -> { _ = fclose ( file ) «else» #ok ; #ok } ) ;
@@ -683,7 +697,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  13 | @foreign ( str["uringshim"] , str["submit_read"] ) @blocking submitRead : ( ring : Ptr ( Ring ) , fd : i32 , offset : u64 , page : Ptr ( Page ) «with» held ( by : ring , aligned : 4096₍10₎ ) ) -> i32 ;
  14 | @foreign ( str["uringshim"] , str["wait_read"] ) @blocking waitRead : ( ring : Ptr ( Ring ) ) -> ( i32 , Ptr ( Page ) | #none «with» arg ( 1₍10₎ ) «with» handedBack ( ) ) ;
  15 | @foreign ( str["uringshim"] , str["unregister_pages"] ) @blocking unregisterPages : ( ring : Ptr ( Ring ) «with» dropsHeld ( ) ) -> i32 ;
-== DESIGN.md [sec:ffi] 10 L7
+== DESIGN.md [sec:ffi] 12 L7
   1 | @teardown @thread ( #main ) @foreign ( str["glfw"] , str["glfwTerminate"] ) @blocking terminate : ( ) -> #ok ;
   2 | @thread ( #main ) @foreign ( str["glfw"] , str["glfwInit"] ) @blocking glfwInit : ( ) -> i32 ;
   3 | @thread ( #main ) @foreign ( str["glfw"] , str["glfwPollEvents"] ) @blocking pollEvents : ( ) -> #ok ;

@@ -56,7 +56,7 @@ fn every_fence_key_is_its_own() {
 #[test]
 fn every_fence_has_a_layer_no_lower_than_its_label() {
     let all = fences::all();
-    assert_eq!(all.len(), 78 + 127);
+    assert_eq!(all.len(), 78 + 129);
     for f in &all {
         assert!((1..=29).contains(&f.layer), "{}", f.at);
         assert!(
@@ -70,7 +70,7 @@ fn every_fence_has_a_layer_no_lower_than_its_label() {
         .filter(|f| f.notation)
         .map(|f| f.at.as_str())
         .collect();
-    assert_eq!(notation.len(), 13, "{notation:?}");
+    assert_eq!(notation.len(), 14, "{notation:?}");
 }
 
 #[test]
