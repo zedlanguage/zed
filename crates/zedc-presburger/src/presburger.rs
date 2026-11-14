@@ -3770,6 +3770,10 @@ mod cell_sweep {
 
     /// Classifies an equality `c` (`Rel::Eq`) for involution overlap mode:
     /// - Two unit terms: `0` for `Id` (opposite signs, constant 0), `1` for `Flip` (same signs).
+    /// - Three unit terms: `1`, a `Flip` whose constant is affine in the parameter `k`
+    ///   (`q + u == k + c`). An `Id` has no `k` term, so it never has three terms; the sweep
+    ///   parses each equality again with `k` known and gives up on any that is not a `Flip`
+    ///   with the one shared constant.
     /// - One unit term (`u == val`, target assertion): returns solved `Int` value `val`.
     enum OverlapClass {
         TwoTerm(u8),
@@ -3806,6 +3810,12 @@ mod cell_sweep {
                     Some(OverlapClass::TwoTerm(1))
                 }
             }
+            3 => c
+                .lin
+                .terms
+                .values()
+                .all(Int::is_unit)
+                .then_some(OverlapClass::TwoTerm(1)),
             _ => None,
         }
     }
@@ -4829,6 +4839,24 @@ mod cell_sweep {
         })
     }
 
+    /// The atoms other than `x` that every equation of `it` holds with a unit coefficient: the
+    /// atoms `it` could define ([`try_orient`] takes one of them as its defined atom).
+    fn definable(it: &EqItem, x: &Atom) -> BTreeSet<Atom> {
+        let units = |c: &Con| -> BTreeSet<Atom> {
+            (c.lin.terms.iter())
+                .filter(|(a, k)| *a != x && k.is_unit())
+                .map(|(a, _)| a.clone())
+                .collect()
+        };
+        let mut eqs = it.eqs.iter();
+        let mut common = eqs.next().map(units).unwrap_or_default();
+        for c in eqs {
+            let next = units(c);
+            common.retain(|a| next.contains(a));
+        }
+        common
+    }
+
     /// Runs Kahn's topological peeling to orient functional definitions from `{x} ∪ param_k`.
     fn try_orient(
         items: &[EqItem],
@@ -5439,6 +5467,16 @@ mod cell_sweep {
                     .flat_map(|c| c.lin.terms.keys().cloned())
                     .filter(|a| a != x)
                     .collect();
+                if k_cands.len() > 1 {
+                    // A bound on a defined atom (a target `t_n >= v`, or a hull row on `t_j`)
+                    // is bounded too. An atom that every equation of some item holds with a
+                    // unit coefficient is one that item can define, so it is no parameter.
+                    for it in &items {
+                        for a in definable(it, x) {
+                            k_cands.remove(&a);
+                        }
+                    }
+                }
                 if k_cands.len() != 1 {
                     return None;
                 }
@@ -5457,6 +5495,25 @@ mod cell_sweep {
         } else {
             sweep_disjoint(p.ors.len(), &whole, x, &pure_ors, &items, &orient)
         }
+    }
+
+    /// The bounds `orient.leftover_ineqs` (not empty) put on one defined atom, when each of them
+    /// bounds that one atom alone: its id and its span, or `Some(None)` when they leave it no
+    /// value. `None` when the rows are of another shape.
+    fn sink_span(orient: &Orientation) -> Option<Option<(usize, Span)>> {
+        let mut sink_atom: Option<&Atom> = None;
+        for c in &orient.leftover_ineqs {
+            let mut terms = c.lin.terms.keys();
+            let (Some(a), None) = (terms.next(), terms.next()) else {
+                return None;
+            };
+            if !orient.known_defs.contains_key(a) || sink_atom.is_some_and(|prev| prev != a) {
+                return None;
+            }
+            sink_atom = Some(a);
+        }
+        let sa = sink_atom?;
+        Some(span_of(&orient.leftover_ineqs, sa).map(|sp| (orient.known_defs[sa], sp)))
     }
 
     fn sweep_disjoint(
@@ -5509,32 +5566,10 @@ mod cell_sweep {
             if orient.leftover_ineqs.is_empty() {
                 TargetSpec::None
             } else {
-                // Allow single-atom bounds on one sink atom `q_sink ∈ known_defs`.
-                let mut sink_atom: Option<Atom> = None;
-                for c in &orient.leftover_ineqs {
-                    if c.lin.terms.len() != 1 {
-                        return None;
-                    }
-                    let a = c.lin.terms.keys().next().expect("len 1");
-                    if !orient.known_defs.contains_key(a) {
-                        return None;
-                    }
-                    if let Some(prev) = &sink_atom {
-                        if prev != a {
-                            return None;
-                        }
-                    } else {
-                        sink_atom = Some(a.clone());
-                    }
-                }
-                let sa = sink_atom.expect("non-empty leftover_ineqs");
-                let Some(sp) = span_of(&orient.leftover_ineqs, &sa) else {
+                let Some((uid, span)) = sink_span(orient)? else {
                     return Some(Ok(false));
                 };
-                TargetSpec::SpanOn {
-                    uid: orient.known_defs[&sa],
-                    span: sp,
-                }
+                TargetSpec::SpanOn { uid, span }
             }
         } else {
             return None;
@@ -5774,7 +5809,18 @@ mod cell_sweep {
 
     /// Sweeps involution-overlapping definitions in `D_1(c_0)` (`q = u` or `q = c_0 - u`) by
     /// merging twin copies into canonical equivalence classes in topological order and maintaining
-    /// the 3-element monoid [`InvOp`] (`Id`, `Flip`, `Both`) in [`CellForest`].
+    /// the 3-element monoid [`InvOp`] (`Id`, `Flip`, `Both`) in [`CellForest`]. `c_0` is a
+    /// constant or `bk * k + c` in the bounded parameter `k`; since every flip has the same
+    /// `c_0`, two flips still compose to `Id`. The target is an equation on one defined atom, a
+    /// bound or range on one defined atom, or nothing.
+    // Complexity tradeoff (FAIL-pres-overlap-every-level-refused): naive version, a target
+    // that is a bound, or a parameter `k`, handed on to the later stages, whose search takes
+    // the first disjunct of each disjunction and so refuses with `Disjuncts` where the levels
+    // overlap (`mid` in l01_38 cell_sweep.rs, 5 to 9 disjunctions over 13 values of `i`);
+    // enumerating the choices instead costs 2^n for n levels. Used: in each cell the value set
+    // of the target's atom is exactly `{x}`, `{c_0 - x}` or both ([`InvOp`]), so a bound is
+    // checked on `x` and on `c_0 - x` over the cell in O(1) (with `k`, a system of two
+    // variables), the same O((n + cells) log n) sweep as an equation target.
     fn sweep_involution(
         num_ors: usize,
         whole: &Span,
@@ -5783,33 +5829,45 @@ mod cell_sweep {
         items: &[EqItem],
         orient: &Orientation,
     ) -> Option<Result<bool, Refusal>> {
-        if orient.param_k.is_some() || !orient.leftover_ineqs.is_empty() {
+        let pk = orient.param_k.as_ref();
+        // A bound target: rows that bound one defined atom alone, with no equation target.
+        let span_target = if orient.leftover_ineqs.is_empty() {
+            None
+        } else if orient.leftover_items.is_empty() {
+            let Some(found) = sink_span(orient)? else {
+                return Some(Ok(false));
+            };
+            Some(found)
+        } else {
             return None;
-        }
-        // Extract unique `c_0` across all `Flip` equalities (`q + u == c_0`) in `topo`.
-        let mut c0_opt: Option<Int> = None;
+        };
+        // Extract unique `c_0 = bk * k + c` across all `Flip` equalities (`q + u == c_0`) in
+        // `topo`, as the pair `(bk, c)`.
+        let mut c0_opt: Option<(Int, Int)> = None;
         for &(idx, _, ref q) in &orient.topo {
             for c in &items[idx].eqs {
-                let (pid, aff) = parse_def_eq(c, q, x, None, &orient.known_defs)?;
-                let (is_flip, cst) = if pid == 0 {
+                let (pid, aff) = parse_def_eq(c, q, x, pk, &orient.known_defs)?;
+                let is_id = aff.c.is_zero() && aff.bk.is_zero();
+                let is_flip = if pid == 0 {
                     // Base step on `x`: either `q = x` (`bx = 1, c = 0`) or `q = c_0 - x` (`bx = -1`).
-                    if aff.bx == Int::ONE && aff.c.is_zero() {
-                        (false, Int::ZERO)
+                    if aff.bx == Int::ONE && is_id {
+                        false
                     } else if aff.bx == -&Int::ONE {
-                        (true, aff.c.clone())
+                        true
                     } else {
                         return None;
                     }
                 } else if aff.bx.is_zero() {
                     match aff.a {
-                        Slope::Pos if aff.c.is_zero() => (false, Int::ZERO),
-                        Slope::Neg => (true, aff.c.clone()),
+                        Slope::Pos if is_id => false,
+                        Slope::Neg => true,
                         _ => return None,
                     }
                 } else {
                     return None;
                 };
                 if is_flip {
+                    let cst = (aff.bk, aff.c);
                     if let Some(prev) = &c0_opt {
                         if prev != &cst {
                             return None;
@@ -5820,7 +5878,7 @@ mod cell_sweep {
                 }
             }
         }
-        let c0 = c0_opt.unwrap_or(Int::ZERO);
+        let (c0_k, c0) = c0_opt.unwrap_or((Int::ZERO, Int::ZERO));
 
         // Canonicalize twin equivalence classes in topological order (`0` = base atom `x`).
         let mut rep_of_def: Vec<usize> = vec![0; orient.topo.len() + 1];
@@ -5838,7 +5896,7 @@ mod cell_sweep {
                 .eqs
                 .iter()
                 .map(|c| {
-                    let (pid, aff) = parse_def_eq(c, q, x, None, &orient.known_defs)?;
+                    let (pid, aff) = parse_def_eq(c, q, x, pk, &orient.known_defs)?;
                     let rep_u = if pid == 0 { 0 } else { rep_of_def[pid] };
                     let op =
                         if (pid == 0 && aff.bx == Int::ONE) || (pid != 0 && aff.a == Slope::Pos) {
@@ -5954,8 +6012,9 @@ mod cell_sweep {
         }
 
         // Parse optional target assertion (`Disjoint` or `Overlap` single-atom unit equalities).
-        // Each target option is `(rep_u, a_u, bx, cst)` representing `a_u * u + bx * x + cst == 0`.
-        type InvTargetOpt = (usize, Slope, Int, Int);
+        // Each target option is `(rep_u, a_u, bx, bk, cst)` representing
+        // `a_u * u + bx * x + bk * k + cst == 0`.
+        type InvTargetOpt = (usize, Slope, Int, Int, Int);
         let mut target_from_or = false;
         let mut target_pieces: Vec<(Span, Vec<InvTargetOpt>)> = Vec::new();
         let has_target = !orient.leftover_items.is_empty();
@@ -5964,17 +6023,17 @@ mod cell_sweep {
             target_from_or = it.from_or.is_some();
             match &it.pieces {
                 ItemPieces::Permanent => {
-                    let (uid, a_u, bx, _, cst) =
-                        parse_unit_target_eq(&it.eqs[0], x, None, &orient.known_defs)?;
+                    let (uid, a_u, bx, bk, cst) =
+                        parse_unit_target_eq(&it.eqs[0], x, pk, &orient.known_defs)?;
                     let ru = if uid == 0 { 0 } else { rep_of_def[uid] };
-                    target_pieces.push((whole.clone(), vec![(ru, a_u, bx, cst)]));
+                    target_pieces.push((whole.clone(), vec![(ru, a_u, bx, bk, cst)]));
                 }
                 ItemPieces::Disjoint(ps) => {
                     for (sp, eid) in ps {
-                        let (uid, a_u, bx, _, cst) =
-                            parse_unit_target_eq(&it.eqs[*eid], x, None, &orient.known_defs)?;
+                        let (uid, a_u, bx, bk, cst) =
+                            parse_unit_target_eq(&it.eqs[*eid], x, pk, &orient.known_defs)?;
                         let ru = if uid == 0 { 0 } else { rep_of_def[uid] };
-                        target_pieces.push((sp.clone(), vec![(ru, a_u, bx, cst)]));
+                        target_pieces.push((sp.clone(), vec![(ru, a_u, bx, bk, cst)]));
                     }
                 }
                 ItemPieces::Overlap {
@@ -5984,15 +6043,19 @@ mod cell_sweep {
                     // Each group has one target value `val_g` and must share one `rep_u`.
                     let mut grp_opt: [Option<InvTargetOpt>; 2] = [None, None];
                     for (eid, &grp) in group_of_eq.iter().enumerate() {
-                        let (uid, a_u, bx, _, cst) =
-                            parse_unit_target_eq(&it.eqs[eid], x, None, &orient.known_defs)?;
+                        let (uid, a_u, bx, bk, cst) =
+                            parse_unit_target_eq(&it.eqs[eid], x, pk, &orient.known_defs)?;
                         if uid == 0 || !bx.is_zero() {
                             return None;
                         }
                         let ru = rep_of_def[uid];
-                        // Normalize to `+1 * u + (-val) == 0`.
-                        let norm_cst = if a_u == Slope::Pos { cst } else { -&cst };
-                        let spec = (ru, Slope::Pos, Int::ZERO, norm_cst);
+                        // Normalize to `+1 * u + bk * k + (-val) == 0`.
+                        let (norm_bk, norm_cst) = if a_u == Slope::Pos {
+                            (bk, cst)
+                        } else {
+                            (-&bk, -&cst)
+                        };
+                        let spec = (ru, Slope::Pos, Int::ZERO, norm_bk, norm_cst);
                         let gi = usize::from(grp);
                         if let Some(prev) = &grp_opt[gi] {
                             if prev != &spec {
@@ -6122,36 +6185,62 @@ mod cell_sweep {
             if active_ors < num_ors {
                 continue;
             }
+            if let Some((uid, tspan)) = &span_target {
+                let op = forest.query(rep_of_def[*uid]);
+                // `u = x` when `Id` or `Both`.
+                if matches!(op, InvOp::Id | InvOp::Both)
+                    && holds_1var_span(&Int::ONE, &Int::ZERO, tspan, cell_span)
+                {
+                    return Some(Ok(true));
+                }
+                // `u = c0_k * k + c0 - x` when `Flip` or `Both`.
+                if matches!(op, InvOp::Flip | InvOp::Both) {
+                    let hit = match pk {
+                        Some(k) if !c0_k.is_zero() => {
+                            let flip = Aff {
+                                a: Slope::Zero,
+                                bx: -&Int::ONE,
+                                bk: c0_k.clone(),
+                                c: c0.clone(),
+                            };
+                            holds_2var_span(x, k, &flip, tspan, cell_span, &orient.k_span)?
+                        }
+                        _ => holds_1var_span(&-&Int::ONE, &c0, tspan, cell_span),
+                    };
+                    if hit {
+                        return Some(Ok(true));
+                    }
+                }
+                continue;
+            }
             if !has_target {
                 return Some(Ok(true));
             }
             let Some(opts) = &active_target else {
                 continue;
             };
-            for (ru, a_u, bx, cst) in opts {
+            // `m * x + kk * k + d == 0` for `x` in the cell (and `k` in its span).
+            let holds_eq = |m: &Int, kk: &Int, d: &Int| match pk {
+                None => holds_1var_eq(m, d, cell_span),
+                Some(_) => holds_2var_eq(m, kk, d, cell_span, &orient.k_span),
+            };
+            for (ru, a_u, bx, bk, cst) in opts {
                 let op = if *ru == 0 {
                     InvOp::Id
                 } else {
                     forest.query(*ru)
                 };
-                // Try `u = x` when `Id` or `Both`: `(a_u + bx) * x + cst == 0`.
-                if matches!(op, InvOp::Id | InvOp::Both) {
-                    let m = bx + &Int::from(a_u.as_i32());
-                    if holds_1var_eq(&m, cst, cell_span) {
-                        return Some(Ok(true));
-                    }
+                let a = Int::from(a_u.as_i32());
+                // Try `u = x` when `Id` or `Both`: `(a_u + bx) * x + bk * k + cst == 0`.
+                if matches!(op, InvOp::Id | InvOp::Both) && holds_eq(&(bx + &a), bk, cst) {
+                    return Some(Ok(true));
                 }
-                // Try `u = c0 - x` when `Flip` or `Both`: `(-a_u + bx) * x + (a_u * c0 + cst) == 0`.
-                if matches!(op, InvOp::Flip | InvOp::Both) {
-                    let m = bx - &Int::from(a_u.as_i32());
-                    let k = match a_u {
-                        Slope::Pos => &c0 + cst,
-                        Slope::Neg => cst - &c0,
-                        Slope::Zero => cst.clone(),
-                    };
-                    if holds_1var_eq(&m, &k, cell_span) {
-                        return Some(Ok(true));
-                    }
+                // Try `u = c0_k * k + c0 - x` when `Flip` or `Both`:
+                // `(bx - a_u) * x + (bk + a_u * c0_k) * k + (a_u * c0 + cst) == 0`.
+                if matches!(op, InvOp::Flip | InvOp::Both)
+                    && holds_eq(&(bx - &a), &(bk + &(&a * &c0_k)), &(cst + &(&a * &c0)))
+                {
+                    return Some(Ok(true));
                 }
             }
         }
