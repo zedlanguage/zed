@@ -2200,9 +2200,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FFI-token-check | impl attempt 1 | 2026-11-13 21:51 | started; worktree from 80890f52a; load 21.71 28.04 29.61 |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | CD round 6 launched (SHORT): experiment 6664553392322379777 from main 8a3e0859b, 56 cases, 3 regions (new PICK_RS); local main-vs-main 2,357.953, test run 8,535 |
 | PRES-exact-side | impl attempt 1 | 2026-11-13 20:00 | started; worktree from 223aaf2e2 |
-| QUESTIONS-A102-anythread | running | 2026-11-13 21:52 |  |
+| QUESTIONS-A102-anythread | impl attempt 1 | 2026-11-13 21:52 | started |
 | REPAIR-block-pow-negative | impl attempt 1 | 2026-11-13 20:38 | started; worktree seeded |
 | REPAIR-literal-text-spelling | impl attempt 1 | 2026-11-13 20:48 | start |
+| S1F-limits-cycle | running | 2026-11-13 22:06 |  |
 | ST-chain-raise-reverse-log | impl attempt 1 | 2026-11-13 20:31 | started; worktree from origin/main f714c55fc |
 | ST-relation-case-written | impl attempt 1 | 2026-11-13 20:49 | started; load 29.88 26.92 32.21 |
 | XR-hub-moved-relation | impl attempt 1 | 2026-11-13 20:48 | started; rebasing wt/hub-moved-relation onto origin/main 252a4f1d4 |
