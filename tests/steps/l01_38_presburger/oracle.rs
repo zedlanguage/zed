@@ -12,7 +12,7 @@ use zed_tests::instances::Rng;
 use zedc::store::presburger::{Atom, Con, Formula, Lin, Refusal, decide, satisfiable};
 
 /// A row `Σ c·x + k >= 0` over the variables by place.
-struct Row {
+pub(super) struct Row {
     c: Vec<i64>,
     k: i64,
 }
@@ -69,20 +69,48 @@ fn enumerate(rows: &[Row], n: usize, half: i64) -> bool {
 
 /// What the solver answered over a family.
 #[derive(Default, Debug)]
-struct Tally {
-    sat: usize,
-    unsat: usize,
-    growth: usize,
-    shadows: usize,
-    tie: usize,
+pub(super) struct Tally {
+    pub(super) sat: usize,
+    pub(super) unsat: usize,
+    pub(super) growth: usize,
+    pub(super) shadows: usize,
+    pub(super) tie: usize,
 }
 
-/// Checks `count` random systems from `make` against enumeration.
-fn run(seed: u64, count: usize, n: usize, half: i64, make: impl Fn(&mut Rng) -> Vec<Row>) -> Tally {
-    let mut rng = Rng::new(seed);
+/// Checks `count` random systems from `make` at `seed` against enumeration.
+pub(super) fn run(
+    seed: u64,
+    count: usize,
+    n: usize,
+    half: i64,
+    make: impl Fn(&mut Rng) -> Vec<Row>,
+) -> Tally {
+    run_on(&mut Rng::new(seed), count, n, half, make)
+}
+
+/// [`run`] on `count` systems drawn with a new seed each run (author P169).
+fn run_fresh(
+    what: &str,
+    count: usize,
+    n: usize,
+    half: i64,
+    make: impl Fn(&mut Rng) -> Vec<Row>,
+) -> Tally {
+    let (mut rng, _) = Rng::fresh(what);
+    run_on(&mut rng, count, n, half, make)
+}
+
+/// Checks `count` random systems from `make`, drawn from `rng`, against enumeration.
+fn run_on(
+    rng: &mut Rng,
+    count: usize,
+    n: usize,
+    half: i64,
+    make: impl Fn(&mut Rng) -> Vec<Row>,
+) -> Tally {
     let mut t = Tally::default();
     for _ in 0..count {
-        let rows = make(&mut rng);
+        let rows = make(rng);
         let f = formula(&rows, n, half);
         let truth = enumerate(&rows, n, half);
         let got = satisfiable(&f);
@@ -207,7 +235,7 @@ fn rows_over_three_variables_with_a_unit_side_match_enumeration() {
 
 /// 2 to 6 rows of three terms with coefficients up to 5 over `n` variables, half of them met
 /// only at a corner of the box `[-half, half]^n`.
-fn corner_rows(rng: &mut Rng, n: usize, half: i64) -> Vec<Row> {
+pub(super) fn corner_rows(rng: &mut Rng, n: usize, half: i64) -> Vec<Row> {
     let rows = 2 + rng.below(5);
     (0..rows)
         .map(|_| {
@@ -234,29 +262,16 @@ fn corner_rows(rng: &mut Rng, n: usize, half: i64) -> Vec<Row> {
 #[test]
 fn rows_of_three_terms_tight_at_a_corner_match_enumeration() {
     // Most eliminations of these rows are inexact or add terms, so the box of the bounds and
-    // its five points decide, with `live3` once three variables are left, and a bound one too tight or a point not checked against every row
-    // gives a wrong answer here. 12,000 systems; `run` fails at the first wrong answer.
-    let t = run(0x38_3b, 12_000, 4, 3, |rng| corner_rows(rng, 4, 3));
-    // The counts measured with design R and the five points of its box stage (XT3). Without
-    // the box test 5,074 are refused (control run once, STATUS.md, L1.38); the box shows most
-    // of the empty ones empty. With only the point nearest zero the counts were (2550, 9282,
-    // 168): the corners and midpoints find 36 more points, (2586, 9282, 132). The `hull3`
-    // stage (XT3 B4) decided 25 more with a point and showed 24 more empty. The row test of the
-    // box stage (Q1-ROWBOX) shows 14 more empty. Without the `hull3` stage it shows 23 of the
-    // 64 systems with no rational point empty that design R and the five points refused
-    // (2586, 9305, 109, as cross-review XR3 counted); `hull3` already decided 9 of those 23.
-    // `live3` decides 20 more with a point and shows 20 more empty: (2631, 9340, 29); without
-    // the row test it showed 25 more empty, 5 of them among the 14 the row test shows. Since
-    // the `hull3` stage was removed (HULL3-subsumed) `live3` decides its systems too, and the
-    // counts are unchanged. Exact eliminations counted by the rows they write
-    // (`System::shrink`, Q1-LOCAL) decide 3 more with a point and show 2 more empty: (2634,
-    // 9342, 24).
-    assert_eq!(
-        (t.sat, t.unsat, t.growth, t.shadows),
-        (2634, 9342, 24, 0),
-        "{t:?}"
-    );
-    eprintln!("three terms: {t:?}");
+    // its five points decide, with `live3` once three variables are left, and a bound one too
+    // tight or a point not checked against every row gives a wrong answer here. 600 systems
+    // of a new seed each run; `run` fails at the first wrong answer. The 12,000 systems of
+    // seed 0x383b and the counts measured on them are in `bench::oracle` (7.2 s at load 25).
+    // About 22% of the systems hold somewhere and 0.2% are refused (2634, 9342 and 24 of the
+    // 12,000), so both answers occur here at any seed.
+    let t = run_fresh("rows of three terms tight at a corner", 600, 4, 3, |rng| {
+        corner_rows(rng, 4, 3)
+    });
+    assert!(t.sat >= 60 && t.unsat >= 300 && t.shadows == 0, "{t:?}");
 }
 
 /// 2 to 5 rows `c·(p·a + q·b) + k >= 0` over `a = x0 + 2·x1` and `b = 2·x2 - 3·x3`, with `c` 1
@@ -532,7 +547,7 @@ fn fresh_reorderings(
 
 /// The refusals among the first `count` systems of [`reorderings`] at `seed`, each decided
 /// once.
-fn refusals_at(
+pub(super) fn refusals_at(
     seed: u64,
     count: usize,
     n: usize,
@@ -550,7 +565,7 @@ fn refusals_at(
 // the rows left after the eliminations, give no answer that depends on the names (XT3 report,
 // part E).
 
-fn small_coefficients(rng: &mut Rng) -> Vec<Row> {
+pub(super) fn small_coefficients(rng: &mut Rng) -> Vec<Row> {
     let rows = 2 + rng.below(4);
     small(rng, 4, rows, 7, 20)
 }
@@ -561,11 +576,9 @@ fn small_coefficients_answer_the_same_under_any_names_and_order() {
 }
 
 #[test]
-fn small_coefficients_over_four_variables_are_refused_839_times_in_3000() {
-    // The refusals, measured with the row test of the box stage (Q1-ROWBOX) and `live3`: 896;
-    // 839 since Q1-LOCAL, whose exact eliminations counted by the rows they write
-    // (`System::shrink`) decide 57 more.
-    assert_eq!(refusals_at(0x38_40, 3000, 4, 4, small_coefficients), 839);
+fn small_coefficients_over_four_variables_are_refused_81_times_in_300() {
+    // The first 300 systems of the 3000 in `bench::oracle` (839 refused there).
+    assert_eq!(refusals_at(0x38_40, 300, 4, 4, small_coefficients), 81);
 }
 
 #[test]
@@ -576,46 +589,43 @@ fn rows_of_three_terms_answer_the_same_under_any_names_and_order() {
 }
 
 #[test]
-fn rows_of_three_terms_over_four_variables_are_refused_13_times_in_4000() {
-    // 4000 systems, not 3000: since the row test of the box stage (Q1-ROWBOX), 3000 of them
-    // gave 17 refusals and 4000 gave 25. `live3` decides the parts left with three variables,
-    // which left 13 of 3000 refused without the row test (more than 20 before it). With both,
-    // 15 of the 4000 are refused, and each of them was compared under every naming and order.
-    // 14 since NAME-ties, whose eliminations go by color a batch at a time, which decides one more.
-    // 13 since Q1-LOCAL, whose exact eliminations counted by the rows they write
-    // (`System::shrink`) decide one more.
+fn rows_of_three_terms_over_four_variables_are_refused_3_times_in_1000() {
+    // The first 1000 systems of the 4000 in `bench::oracle` (13 refused there, with the history
+    // of that count).
     assert_eq!(
-        refusals_at(0x38_41, 4000, 4, 3, |rng| corner_rows(rng, 4, 3)),
-        13
+        refusals_at(0x38_41, 1000, 4, 3, |rng| corner_rows(rng, 4, 3)),
+        3
     );
 }
 
-fn three_variables(rng: &mut Rng) -> Vec<Row> {
+pub(super) fn three_variables(rng: &mut Rng) -> Vec<Row> {
     let rows = 2 + rng.below(4);
     small(rng, 3, rows, 9, 30)
 }
 
 #[test]
 fn rows_over_three_variables_answer_the_same_under_any_names_and_order() {
+    // The first 300 systems of the fixed seed here; all 3000 are in `bench::oracle`.
     assert_eq!(
         fresh_reorderings("rows over three variables", 200, 3, 3, three_variables),
         0
     );
-    assert_eq!(refusals_at(0x38_42, 3000, 3, 3, three_variables), 0);
+    assert_eq!(refusals_at(0x38_42, 300, 3, 3, three_variables), 0);
 }
 
-fn large_coefficients(rng: &mut Rng) -> Vec<Row> {
+pub(super) fn large_coefficients(rng: &mut Rng) -> Vec<Row> {
     let rows = 2 + rng.below(4);
     small(rng, 2, rows, 60, 400)
 }
 
 #[test]
 fn large_coefficients_answer_the_same_under_any_names_and_order() {
+    // The first 300 systems of the fixed seed here; all 3000 are in `bench::oracle`.
     assert_eq!(
         fresh_reorderings("large coefficients", 300, 2, 40, large_coefficients),
         0
     );
-    assert_eq!(refusals_at(0x38_43, 3000, 2, 40, large_coefficients), 0);
+    assert_eq!(refusals_at(0x38_43, 300, 2, 40, large_coefficients), 0);
 }
 
 /// Sixteen rows `a·v - 1 >= 0` over eight variables, each with two coefficients 6 and one -5:
@@ -651,7 +661,7 @@ fn regular() -> Vec<Row> {
 
 #[test]
 fn a_regular_system_is_decided_under_every_naming() {
-    // 1,000 of the 8! namings of the variables, drawn with a new seed each run (author P169;
+    // 400 of the 8! namings of the variables, drawn with a new seed each run (author P169;
     // all 40,320 took 13 s), in the box [-1, 1]^8. Before design R the answer changed with the
     // names (cross-review xt, round 2); with only the point nearest zero every naming was
     // refused with Growth. The upper corner of the box, (1, ..., 1), holds every row, and every
@@ -659,7 +669,7 @@ fn a_regular_system_is_decided_under_every_naming() {
     let rows = regular();
     let all: Vec<usize> = (0..rows.len() + 16).collect();
     let (mut rng, seed) = Rng::fresh("namings of the regular system");
-    for _ in 0..1000 {
+    for _ in 0..400 {
         let mut perm: Vec<usize> = (0..8).collect();
         for i in (1..8).rev() {
             perm.swap(i, rng.below(i + 1));

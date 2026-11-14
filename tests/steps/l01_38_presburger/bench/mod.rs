@@ -27,6 +27,7 @@ mod nest_empty;
 mod omega;
 mod one_row;
 mod one_scope;
+mod oracle;
 mod pncx_probe;
 mod probe;
 mod q1_local;
