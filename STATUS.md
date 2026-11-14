@@ -2352,7 +2352,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | KERNEL-eval-step-cost | impl attempt 1 | 2026-11-14 12:21 | baseline: 56 pieces 0 failed (m0_*, zed_kernel, op_table); instructions law_04 2.135G law_06 2.028G law_10 1.955G law_20(order) 2.143G law_28(sequence) 2.169G b |
 | MSG-range-error-class-spans | running |  |  |
 | MUTATE-follows-operation | running | 2026-11-14 11:29 | 2026-11-14: found by STAGE-generic-fold-div; sink given a consumer |
-| POLY-square-sparse-half | impl attempt 1 | 2026-11-14 11:26 | support test moved to k=640 (square now beats support at k=256: 6.4 vs 10.1 ms); crossover build for refit / load 40.93 38.65 42.23 |
+| POLY-square-sparse-half | merged and pushed (the commit "POLY-square-sparse-half: ..." that marks the row Done); no spec change | 2026-11-14 12:15 | `Poly::sparse_square` forms a square's `t (t + 1) / 2` pairs and doubles the cross sums once (exact); 0.48 to 0.67 of the general product's instructions, 0.50 to 0.57 of its bytes. New `SQUARE_PAIR_COST` = 20 per square pair (choice and charge); `PAIR_COST` 60, `SLOT_COST` 40, `DENSE_COST` 700 kept in the joint fit with `poly-square`. Worst ratio on `poly-square 256` 1.124 before, 1.000 after (sparse from gap 20, the measured crossover); other shapes unchanged. Wide-coefficient bound of the support product left on POLY-support-bench |
 | STAGE-generic-fold-int-arm | running | 2026-11-14 11:29 | 2026-11-14: found by STAGE-generic-fold-div; sink given a consumer |
 | TEST-generic-fold-bench-size | running | 2026-11-14 11:29 | 2026-11-14: found by STAGE-generic-fold-div; sink given a consumer |
 | TEST-l0124-fixed-seeds | impl attempt 1 | 2026-11-14 12:15 | start; worktree test-l0124-seeds on 43f9d4dcd; load 36.83 |

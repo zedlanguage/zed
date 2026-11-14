@@ -65,7 +65,8 @@ pub enum Carrier {
 /// packed integers (`Poly::plan`), so the dense product's charge grows with the exponents'
 /// span times the coefficients' bits. The other charges are that unit times their measured
 /// times: a sum or a negation `SUM_TERM` or `SPARSE_TERM` a term and `SUM_WORD` a word of
-/// its operands, the sparse product `PAIR` plus `w1 w2` for each of its `t1 t2` pairs, the
+/// its operands, the sparse product `PAIR` plus `w1 w2` for each of its `t1 t2` pairs (a
+/// square's `t (t + 1) / 2` pairs each `SQUARE_PAIR_COST` more, in the choice's units), the
 /// support product `SUPPORT` for each unit it counts, and a power of one term the words of
 /// its result.
 ///
@@ -76,8 +77,9 @@ pub enum Carrier {
 /// the time within a factor of 40. This limit refuses by the predicted time itself, at the cost
 /// of one constant measured on one machine, which a faster or idle machine spends in less than
 /// 250 ms; the counted work predicts the time within a factor of 2 on every family but one,
-/// a sparse product whose pairs merge into few terms (`((x + y) ^ 64 + x) ^ 2`, 52 ns a unit).
-/// Not counted: the reading of the identity, its points and its factors, linear in its size
+/// a sparse product whose pairs merge into few terms (`((x + y) ^ 64 + x) ^ 2`, 52 ns a unit,
+/// measured before a square formed each unordered pair once). Not counted: the reading of the
+/// identity, its points and its factors, linear in its size
 /// (about 0.2 ms for a size of 6000), so no identity is refused for its length alone. A refusal
 /// costs at most the limit, since each operation is charged before it runs. A complete
 /// solution would decide identity of arithmetic formulas deterministically in polynomial time,
@@ -108,20 +110,22 @@ const SUPPORT: f64 = 2.0;
 
 /// The cost of a pair of the sparse product besides its coefficients' product, in `Poly::mul`'s
 /// choice of method, in the units of `num::mul_cost` (one word product, about 16 instructions).
-/// Measured in instructions by `crossover poly-dense|poly-gaps|poly-wide <shape> pair` on
-/// 2026-11-13 (load about 60 on 32 cores; instruction counts do not depend on it), with
-/// [`SLOT_COST`] and [`DENSE_COST`] as set. Each shape alone fits: `poly-dense 1` 48 to 67,
-/// `poly-dense 4` 67 to 84, `poly-gaps 16` 72 to 96, `poly-gaps 64` 59 to 69, `poly-wide 2`
-/// up to 210, `poly-wide 8` from 48. No value fits all, so the choice is off somewhere by at
-/// most 1.09 times the cheaper method's instructions, at any value from 60 to 66; `poly-wide 8`
-/// is off by 1.30 at every value of all three constants, since `num::mul_cost` overcounts its
-/// packed product.
+/// Measured in instructions by `crossover poly-dense|poly-gaps|poly-square|poly-wide <shape>
+/// pair` on 2026-11-14 (POLY-square-sparse-half, load about 45 on 32 cores; instruction counts
+/// do not depend on it), with [`SLOT_COST`], [`DENSE_COST`] and [`SQUARE_PAIR_COST`] as set.
+/// Each shape alone fits: `poly-dense 1` 48 to 67, `poly-dense 4` 67 to 84, `poly-gaps 16` 72
+/// to 96, `poly-gaps 64` 59 to 69, `poly-square 256` 57 to 62, `poly-wide 2` up to 210,
+/// `poly-wide 8` from 48. No value fits all, so the choice is off somewhere by at most 1.09
+/// times the cheaper method's instructions, at any value from 59 to 65; `poly-wide 8` is off
+/// by 1.30 at every value of all three constants, since `num::mul_cost` overcounts its packed
+/// product.
 const PAIR_COST: f64 = 60.0;
 
 /// The cost of a slot of the dense product's output besides the product of the packed
 /// integers, in `Poly::mul`'s choice of method, in the units of `num::mul_cost`. Measured as
 /// [`PAIR_COST`], `... slot`: `poly-dense 1` fits 25 to 73, `poly-dense 4` up to 18,
-/// `poly-gaps 16` up to 19, `poly-gaps 64` 7 to 46, `poly-wide 8` up to 91; set within 1.09.
+/// `poly-gaps 16` up to 19, `poly-gaps 64` 7 to 46, `poly-square 256` 33 to 51, `poly-wide 8`
+/// up to 91; set within 1.09.
 const SLOT_COST: f64 = 40.0;
 
 /// The cost of the dense product besides its slots and its packed product (packing, the
@@ -131,6 +135,19 @@ const SLOT_COST: f64 = 40.0;
 /// `poly-wide 2` from 99, the rest up to 1158 or more; set within 1.09. Without this term
 /// (0) the best that `PAIR_COST` and `SLOT_COST` reach is 1.41.
 const DENSE_COST: f64 = 700.0;
+
+/// The cost a square adds to each of its pairs in `Poly::mul`'s choice of method, in the units
+/// of `num::mul_cost`: the sparse square ([`Poly::sparse_square`]) doubles each merged
+/// monomial's sum of cross products and merges in the diagonal, so its `t (t + 1) / 2` pairs
+/// cost more each than the general product's `t^2`. Measured as [`PAIR_COST`] by `crossover
+/// poly-square 256 pair` (POLY-square-sparse-half): without this term `poly-square 256` fits
+/// `PAIR_COST` only from 77 to 82, which no other shape allows (`poly-dense 1` takes the
+/// slower method by 1.41 at 68), and at 60 it took the sparse product from gap 17, at up to
+/// 1.16 times the dense product's instructions; at 17 to 22 its fit takes in 60, and the
+/// choice changes method at the measured crossover, gap 20. Fitted at 256 terms only: the
+/// sparse square took 0.48 to 0.67 of the general product's instructions at 63 to 511 terms
+/// of one word, the most at 511, so a square of far more terms is estimated a little low.
+const SQUARE_PAIR_COST: f64 = 20.0;
 
 /// The units of [`LIMIT`] in one unit of `num::mul_cost`, as [`PAIR`] and [`PAIR_COST`] measure
 /// the same cost of a pair in each: about 2 ns, a word product's 16 instructions.
@@ -1907,8 +1924,9 @@ impl<K: Key> Poly<K> {
         }
         let terms = match self.plan(o) {
             None => {
-                budget.spend(self.sparse_charge(o))?;
-                self.sparse_mul(o)
+                let square = self.squares(o);
+                budget.spend(self.sparse_charge(o, square))?;
+                self.sparse_mul(o, square)
             }
             Some(plan) => {
                 let cheaper = plan.dense.min(plan.sparse);
@@ -1922,12 +1940,12 @@ impl<K: Key> Poly<K> {
                         budget.spend(if plan.takes_dense {
                             plan.dense
                         } else {
-                            self.sparse_charge(o)
+                            self.sparse_charge(o, plan.square)
                         })?;
                         if plan.takes_dense {
                             self.dense_mul(o, plan.slot, plan.step)
                         } else {
-                            self.sparse_mul(o)
+                            self.sparse_mul(o, plan.square)
                         }
                     }
                 }
@@ -1936,22 +1954,41 @@ impl<K: Key> Poly<K> {
         Some(Poly { den, terms }.reduced())
     }
 
-    /// The cost of the sparse product with `o`: `t1 * t2` products of `w1 * w2` words, `w` the
-    /// widest coefficient's words.
-    fn sparse_cost(&self, o: &Poly<K>) -> f64 {
+    /// Whether `self * o` is a square: `o` is `self`, or has the same terms. `O(t)` at most, and
+    /// at the first unequal term for most products that are not squares.
+    fn squares(&self, o: &Poly<K>) -> bool {
+        std::ptr::eq(self, o) || self.terms == o.terms
+    }
+
+    /// The pairs the sparse product with `o` forms ([`Poly::sparse_mul`]): `t1 * t2`, or
+    /// `t (t + 1) / 2` for a `square`.
+    fn pairs(&self, o: &Poly<K>, square: bool) -> f64 {
+        let (ta, tb) = (self.terms.len() as f64, o.terms.len() as f64);
+        match square {
+            true => ta * (ta + 1.0) / 2.0,
+            false => ta * tb,
+        }
+    }
+
+    /// The cost of the sparse product with `o`: one product of `w1 * w2` words for each of its
+    /// pairs ([`Poly::pairs`]), `w` the widest coefficient's words.
+    fn sparse_cost(&self, o: &Poly<K>, square: bool) -> f64 {
         let w = |p: &Poly<K>| {
             let bits = p.terms.iter().map(|(_, c)| c.bits()).max().unwrap_or(0);
             bits.div_ceil(64).max(1) as f64
         };
-        self.terms.len() as f64 * o.terms.len() as f64 * w(self) * w(o)
+        self.pairs(o, square) * w(self) * w(o)
     }
 
-    /// The charge for the sparse product with `o`: [`PAIR`] plus `w1 * w2` for each of the
-    /// `t1 * t2` pairs, in units of the dense product's ([`LIMIT`]): a pair's allocation, sorting
-    /// and merge take about 8 of the dense product's units.
-    fn sparse_charge(&self, o: &Poly<K>) -> f64 {
-        let pairs = self.terms.len() as f64 * o.terms.len() as f64;
-        pairs * PAIR + self.sparse_cost(o)
+    /// The charge for the sparse product with `o`: [`PAIR`] plus `w1 * w2` for each of its pairs
+    /// ([`Poly::pairs`]), in units of the dense product's ([`LIMIT`]): a pair's allocation,
+    /// sorting and merge take about 8 of the dense product's units.
+    fn sparse_charge(&self, o: &Poly<K>, square: bool) -> f64 {
+        let pair = match square {
+            true => PAIR + CHOICE_UNIT * SQUARE_PAIR_COST,
+            false => PAIR,
+        };
+        self.pairs(o, square) * pair + self.sparse_cost(o, square)
     }
 
     /// The costs of the dense and the sparse product with `o`, the dense product's slot width in
@@ -2006,9 +2043,8 @@ impl<K: Key> Poly<K> {
         // A square's packed integers are equal, and the transforms square it with one forward
         // transform fewer (TEST-calibration-split-margin). The comparison is `O(t)` beside the
         // `O(t)` passes above.
-        let share = match (std::ptr::eq(self, o) || self.terms == o.terms)
-            && squares_by_transform(packed(hi_a, lo_a))
-        {
+        let square = self.squares(o);
+        let share = match square && squares_by_transform(packed(hi_a, lo_a)) {
             true => SQUARE_SHARE,
             false => 1.0,
         };
@@ -2016,7 +2052,7 @@ impl<K: Key> Poly<K> {
             .checked_mul(u128::from(slot_words))
             .map_or(f64::INFINITY, |w| share * ntt_cost(w as f64))
             + CHOICE_UNIT * (DENSE_COST + SLOT_COST * span as f64);
-        let sparse = self.sparse_cost(o);
+        let sparse = self.sparse_cost(o, square);
         let words =
             |p: &Poly<K>| usize::try_from(bits(p).div_ceil(64).max(1)).unwrap_or(usize::MAX);
         // Complexity tradeoff: the choice was `dense <= sparse` on the charges above, both with
@@ -2034,10 +2070,16 @@ impl<K: Key> Poly<K> {
         // crossover took the sparse product where the dense one was cheaper: `crossover
         // poly-square 256 pair` (POLY-square-choice-cost, 2026-11-14) took it from gap 25, at
         // up to 1.55 times the dense product's instructions; at the share, from gap 32, at up
-        // to 1.12 times, the rest the error of `PAIR_COST` (68 fits squares best).
+        // to 1.12 times. With the sparse square's `t (t + 1) / 2` pairs and
+        // `SQUARE_PAIR_COST` (POLY-square-sparse-half) it changes method at the measured
+        // crossover, gap 20.
         let choice = Choice {
-            pairs: ta as f64 * tb as f64,
+            pairs: self.pairs(o, square),
             pair: mul_cost(words(self), words(o)),
+            square_pair: match square {
+                true => SQUARE_PAIR_COST,
+                false => 0.0,
+            },
             slots: span as f64,
             packed: share * mul_cost(packed(hi_a, lo_a), packed(hi_b, lo_b)),
         };
@@ -2046,28 +2088,99 @@ impl<K: Key> Poly<K> {
             step,
             dense,
             sparse,
+            square,
             takes_dense: choice.takes_dense(),
             choice,
         })
     }
 
-    /// The sparse product: every pair's product, sorted by monomial and merged.
-    fn sparse_mul(&self, o: &Poly<K>) -> Vec<(K, BigInt)> {
+    /// The sparse product: every pair's product, sorted by monomial and merged. A `square`
+    /// ([`Poly::squares`]) forms each unordered pair once ([`Poly::sparse_square`]).
+    fn sparse_mul(&self, o: &Poly<K>, square: bool) -> Vec<(K, BigInt)> {
+        if square {
+            return self.sparse_square();
+        }
         let mut all: Vec<(K, BigInt)> = Vec::with_capacity(self.terms.len() * o.terms.len());
         for (ka, ca) in &self.terms {
             for (kb, cb) in &o.terms {
                 all.push((ka.times(kb), mul_int(ca, cb)));
             }
         }
-        all.sort_by(|a, b| a.0.cmp(&b.0));
-        let mut out: Vec<(K, BigInt)> = Vec::with_capacity(all.len());
-        for (k, c) in all {
-            match out.last_mut() {
-                Some((lk, lc)) if *lk == k => *lc += c,
-                _ => out.push((k, c)),
+        let mut out = merged(all);
+        out.retain(|(_, c)| !c.is_zero());
+        out
+    }
+
+    /// The sparse product of `self` with itself: for terms `c_i x^i`, the sum over `i` of
+    /// `c_i^2 x^(2i)` and over `i < j` of `2 c_i c_j x^(i+j)`.
+    ///
+    /// Complexity tradeoff: the general product forms all `t^2` pairs, and sorts and merges
+    /// them: `t^2` coefficient products and an `O(t^2 log t)` sort. Since `x^i x^j = x^j x^i`
+    /// and `c_i c_j = c_j c_i`, a square needs only the `t (t - 1) / 2` pairs `i < j`, each
+    /// counted twice, and the `t` pairs `i = j`: `t (t + 1) / 2` products and a sort of
+    /// `t (t - 1) / 2`, about half the work and half the memory. This is the halving of
+    /// schoolbook squaring of numbers carried to sparse polynomials, as in Monagan and
+    /// Pearce's heap powering ("Sparse polynomial powering using heaps", CASC 2012); their
+    /// heap merge (after Johnson, "Sparse polynomial arithmetic", 1974) is a sort and a merge
+    /// here. The doubling is done once per merged monomial, not once per pair: a shift costs a
+    /// pass over the coefficient's words, so per pair it would add `t (t - 1) / 2` passes where
+    /// a square with many equal monomials needs few; and doubling one factor before the
+    /// products widens a coefficient of 64 bits to two words for every pair it is in. Measured
+    /// in instructions by `crossover poly-square 256` (gaps 1 to 512): doubling each pair took
+    /// 1.00 to 1.28 times this method, and doubling each row's factor 0.97 to 1.31 times, the
+    /// most where many pairs share a monomial. Where few do (a probe of 63 to 511 terms about
+    /// every 4096 indices, not kept), they took 0.90 and 0.84 times, probably because this
+    /// method doubles after the sort, reading each coefficient out of allocation order. `BigInt` is
+    /// unbounded, so the doubling neither overflows nor loses exactness. The squares
+    /// `c_i^2 x^(2i)` come out sorted, as squaring a monomial keeps the order (a packed index
+    /// doubles; a sparse key's exponents double, which keeps the lexicographic order), so one
+    /// pass over the sorted cross products sums each monomial's, doubles the sum, adds the
+    /// square at that monomial and drops a zero: `O(t^2)` after the sort, with no second copy
+    /// of the cross products (merging them first and the squares after took 1.29 to 1.30 times
+    /// the bytes, at the same instructions within 3%). [`Poly::pairs`] counts `t (t + 1) / 2`
+    /// pairs for the choice and the charge, and each costs [`SQUARE_PAIR_COST`] more there.
+    fn sparse_square(&self) -> Vec<(K, BigInt)> {
+        let t = &self.terms;
+        let mut cross: Vec<(K, BigInt)> =
+            Vec::with_capacity(t.len() * t.len().saturating_sub(1) / 2);
+        for (i, (ka, ca)) in t.iter().enumerate() {
+            for (kb, cb) in &t[i + 1..] {
+                cross.push((ka.times(kb), mul_int(ca, cb)));
             }
         }
-        out.retain(|(_, c)| !c.is_zero());
+        cross.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut diagonal: Vec<(K, BigInt)> =
+            t.iter().map(|(k, c)| (k.times(k), mul_int(c, c))).collect();
+        diagonal.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut diagonal = diagonal.into_iter().peekable();
+        let mut out: Vec<(K, BigInt)> = Vec::with_capacity(cross.len() + t.len());
+        let mut emit = |out: &mut Vec<(K, BigInt)>, (k, mut c): (K, BigInt)| {
+            c <<= 1u32;
+            while let Some(d) = diagonal.next_if(|(kd, _)| *kd < k) {
+                out.push(d);
+            }
+            if let Some((_, dc)) = diagonal.next_if(|(kd, _)| *kd == k) {
+                c += dc;
+            }
+            if !c.is_zero() {
+                out.push((k, c));
+            }
+        };
+        let mut group: Option<(K, BigInt)> = None;
+        for (k, c) in cross {
+            match &mut group {
+                Some((gk, gc)) if *gk == k => *gc += c,
+                _ => {
+                    if let Some(g) = group.replace((k, c)) {
+                        emit(&mut out, g);
+                    }
+                }
+            }
+        }
+        if let Some(g) = group {
+            emit(&mut out, g);
+        }
+        out.extend(diagonal);
         out
     }
 
@@ -2308,6 +2421,20 @@ impl<K: Key> Poly<K> {
     }
 }
 
+/// `all` sorted by monomial, with the coefficients of equal monomials added. Zero sums are
+/// kept.
+fn merged<K: Key>(mut all: Vec<(K, BigInt)>) -> Vec<(K, BigInt)> {
+    all.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut out: Vec<(K, BigInt)> = Vec::with_capacity(all.len());
+    for (k, c) in all {
+        match out.last_mut() {
+            Some((lk, lc)) if *lk == k => *lc += c,
+            _ => out.push((k, c)),
+        }
+    }
+    out
+}
+
 /// The costs of the dense and the sparse product of two sums of packed keys ([`Poly::plan`]).
 struct Plan {
     /// The dense product's slot, in 32-bit words.
@@ -2318,6 +2445,8 @@ struct Plan {
     dense: f64,
     /// The sparse product's cost.
     sparse: f64,
+    /// Whether the product is a square ([`Poly::squares`]).
+    square: bool,
     /// Whether [`Poly::mul`] takes the dense product when the support product gives way.
     takes_dense: bool,
     /// The sizes that choice is made from.
@@ -2328,10 +2457,12 @@ struct Plan {
 /// the units of `num::mul_cost` (one word product).
 #[derive(Clone, Copy, Debug)]
 struct Choice {
-    /// The sparse product's pairs, `t1 t2`.
+    /// The sparse product's pairs ([`Poly::pairs`]): `t1 t2`, or `t (t + 1) / 2` for a square.
     pairs: f64,
     /// The cost of one pair's coefficient product, at the widest coefficients' words.
     pair: f64,
+    /// The cost a square adds to each pair, [`SQUARE_PAIR_COST`]; 0 for other products.
+    square_pair: f64,
     /// The dense product's output slots, its span.
     slots: f64,
     /// The cost of the product of the two packed integers, [`SQUARE_SHARE`] of it for a square
@@ -2347,7 +2478,7 @@ impl Choice {
 
     /// The sparse product's estimated cost.
     fn sparse(&self) -> f64 {
-        self.pairs * (PAIR_COST + self.pair)
+        self.pairs * (PAIR_COST + self.square_pair + self.pair)
     }
 
     /// Whether the dense product is estimated to cost no more than the sparse one.
@@ -2791,9 +2922,9 @@ pub mod crossover {
         a.0.dense_mul(&b.0, plan.slot, plan.step)
     }
 
-    /// `a * b` by the sparse product.
+    /// `a * b` by the sparse product, by its pairs `i <= j` when `a * b` is a square.
     pub fn sparse(a: &Sum, b: &Sum) -> Vec<(u128, BigInt)> {
-        a.0.sparse_mul(&b.0)
+        a.0.sparse_mul(&b.0, a.0.squares(&b.0))
     }
 
     /// Whether `Poly::mul` takes the dense product for `a * b` when the support product gives
@@ -2807,7 +2938,7 @@ pub mod crossover {
     /// dense product at or above it, the sparse one below.
     pub fn pair_flip(a: &Sum, b: &Sum) -> Option<f64> {
         let c = a.0.plan(&b.0).expect("packed keys").choice;
-        Some(c.dense() / c.pairs - c.pair)
+        Some(c.dense() / c.pairs - c.square_pair - c.pair)
     }
 
     /// The value of `super::SLOT_COST` at which `Poly::mul` changes method for `a * b`: the

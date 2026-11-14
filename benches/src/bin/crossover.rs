@@ -42,7 +42,7 @@
 //!
 //! In `zed_kernel::poly` (the normal form's product `Poly::mul`, its choice between the dense
 //! and the sparse product once the support product gives way): `PAIR_COST`, `SLOT_COST` and
-//! `DENSE_COST` of its cost estimates, each fitted over the six shapes below together, each
+//! `DENSE_COST` of its cost estimates, each fitted over the seven shapes below together, each
 //! shape run once per constant (`[shape args] pair|slot|fixed`):
 //!
 //! - `poly-dense [words]`: univariate sums of 2 to 256 terms at every index, coefficients of
@@ -52,8 +52,8 @@
 //! - `poly-wide [terms]`: univariate sums of `terms` terms (2 and 8), coefficients of 1 to
 //!   1024 words.
 //! - `poly-square [terms]`: the square of a sum of `terms` terms (256), one about every `g`
-//!   indices, `g` from 1 to 512; run for `pair` only, where a square charged
-//!   `SQUARE_SHARE` of its transform cost moves the crossover (POLY-square-choice-cost).
+//!   indices, `g` from 1 to 512: a square is charged `SQUARE_SHARE` of its transform cost
+//!   (POLY-square-choice-cost) and `t (t + 1) / 2` sparse pairs (POLY-square-sparse-half).
 //!
 //! In `zed_corpus_ref::zedrt` (the corpus's reference programs):
 //!
@@ -1009,7 +1009,8 @@ fn poly_wide(args: &[String]) -> ExitCode {
 /// one a gap of about `g` from the next as in [`poly_gaps`], `g` from 1 to 512 in eighths of a
 /// doubling: the packed
 /// integer is squared by transforms with one forward transform fewer than a product of two
-/// numbers, which `Poly::mul`'s choice counts (`SQUARE_SHARE`). The sparse product wins from
+/// numbers, which `Poly::mul`'s choice counts (`SQUARE_SHARE`), and the sparse product forms
+/// only the `t (t + 1) / 2` pairs `i <= j`, which it counts too. The sparse product wins from
 /// some gap on. At 64 terms the packed integer is squared by Toom in a release build, not by
 /// transforms, so the share does not apply and the choice is as for two numbers.
 fn poly_square(args: &[String]) -> ExitCode {
@@ -1108,7 +1109,7 @@ type Bench = (
 );
 
 /// Every benchmark, with its arguments in `all`; `print-never-slower` is not a threshold.
-const BENCHES: [Bench; 41] = [
+const BENCHES: [Bench; 43] = [
     ("mul", mul, &["1"]),
     ("mul", mul, &["4"]),
     ("mul", mul, &["32"]),
@@ -1144,12 +1145,14 @@ const BENCHES: [Bench; 41] = [
     ("poly-gaps", poly_gaps, &["16", "slot"]),
     ("poly-wide", poly_wide, &["2", "slot"]),
     ("poly-wide", poly_wide, &["8", "slot"]),
+    ("poly-square", poly_square, &["256", "slot"]),
     ("poly-dense", poly_dense, &["1", "fixed"]),
     ("poly-dense", poly_dense, &["4", "fixed"]),
     ("poly-gaps", poly_gaps, &["64", "fixed"]),
     ("poly-gaps", poly_gaps, &["16", "fixed"]),
     ("poly-wide", poly_wide, &["2", "fixed"]),
     ("poly-wide", poly_wide, &["8", "fixed"]),
+    ("poly-square", poly_square, &["256", "fixed"]),
 ];
 
 /// The limit on each benchmark of `all`.

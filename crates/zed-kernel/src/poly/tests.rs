@@ -580,7 +580,7 @@ fn the_dense_and_sparse_products_agree() {
         for (base_a, step_a, base_b, step_b) in [(0, 1, 0, 1), (3, 5, 7, 5), (2, 6, 1, 10)] {
             let a = p(n, 3, base_a, step_a);
             let b = p(n + 5, 11, base_b, step_b);
-            let sparse = a.sparse_mul(&b);
+            let sparse = a.sparse_mul(&b, a.squares(&b));
             let plan = a.plan(&b).expect("packed keys");
             if plan.takes_dense {
                 assert_eq!(a.dense_mul(&b, plan.slot, plan.step), sparse, "n = {n}");
@@ -628,7 +628,7 @@ fn the_choice_of_product_by_shape() {
     let plan = packed(&far, 1).plan(&packed(&far, 1)).expect("packed keys");
     assert_eq!(plan.choice.packed, f64::INFINITY);
     assert!(!plan.takes_dense);
-    assert_eq!(packed(&far, 1).sparse_mul(&packed(&far, 1)).len(), 6);
+    assert_eq!(packed(&far, 1).sparse_mul(&packed(&far, 1), true).len(), 6);
     // One term each: one pair against the fixed cost of the dense product.
     let plan = packed(&[7], 2).plan(&packed(&[9], 3)).expect("packed keys");
     assert!(!plan.takes_dense, "{:?}", plan.choice);
@@ -760,7 +760,7 @@ fn the_support_product_agrees_with_the_sparse_one() {
                 })
                 .chain([(1, 1)]),
         );
-        assert_eq!(support(&a, &a), a.sparse_mul(&a), "k = {k}");
+        assert_eq!(support(&a, &a), a.sparse_mul(&a, true), "k = {k}");
     }
     // (x + y)(x - y) = x^2 - y^2: the middle index cancels, and must not be kept as a zero.
     let (a, b) = (sum_at([(1, 1), (100, 1)]), sum_at([(1, 1), (100, -1)]));
@@ -771,7 +771,7 @@ fn the_support_product_agrees_with_the_sparse_one() {
     // One term on a side, and indices past 2^64, whose squares fill all eight digits.
     let wide = sum_at([(3, 2), (1 << 100, -3), ((1 << 120) + 7, 5)]);
     for b in [sum_at([(9, 4)]), wide.clone()] {
-        assert_eq!(support(&wide, &b), wide.sparse_mul(&b));
+        assert_eq!(support(&wide, &b), wide.sparse_mul(&b, wide.squares(&b)));
     }
     // Pseudo-random sums: few distinct sums (on a few progressions) and all distinct ones (the
     // primes must grow), with small coefficients that cancel. A slot test that took a slot of
@@ -799,7 +799,11 @@ fn the_support_product_agrees_with_the_sparse_one() {
         if a.terms.is_empty() || b.terms.is_empty() {
             continue;
         }
-        assert_eq!(support(&a, &b), a.sparse_mul(&b), "round {round}");
+        assert_eq!(
+            support(&a, &b),
+            a.sparse_mul(&b, a.squares(&b)),
+            "round {round}"
+        );
     }
 }
 
@@ -826,10 +830,13 @@ fn the_square_of_a_wide_index_is_exact() {
 
 #[test]
 fn the_product_takes_the_support_product_where_it_is_cheaper() {
-    // The shape of `(x + y) ^ k + x` at k = 256 with coefficients of about 256 bits, like its
-    // binomial ones: the sparse product pays (k + 2)^2 pairs of 4-word coefficients, the dense
-    // one a span of about 2k^2 slots, and the support product about 3k sums.
-    let k = 256u128;
+    // The shape of `(x + y) ^ k + x` at k = 640 with coefficients of about 256 bits, like its
+    // binomial ones, squared: the sparse product pays (k + 2) (k + 3) / 2 pairs of 4-word
+    // coefficients, the dense one a span of about 2k^2 slots, and the support product about 3k
+    // sums. At k = 256 the sparse square was the faster (6.4 ms to 10.1 ms; the support
+    // product beat only the product of all (k + 2)^2 pairs, 14.5 ms); at k = 512 the support
+    // product, 26 ms to 45 ms (POLY-square-sparse-half, 2026-11-14).
+    let k = 640u128;
     let r = 2 * k + 1;
     let wide = |i: u128| (BigInt::one() << 250u32) + BigInt::from(i);
     let mut terms: std::collections::BTreeMap<u128, BigInt> =
@@ -844,7 +851,7 @@ fn the_product_takes_the_support_product_where_it_is_cheaper() {
     let mut spent = 0.0;
     assert_eq!(
         a.support_mul(&a, &plan, budget, &mut spent),
-        Some(a.sparse_mul(&a))
+        Some(a.sparse_mul(&a, true))
     );
     assert!(spent < budget, "{spent} of {budget}");
     // Sides whose pairs are all distinct go to the sparse product: the sampled estimate says so.
@@ -943,9 +950,9 @@ fn a_square_is_chosen_at_its_share() {
         let at: Vec<u128> = (0..64).map(|i| g * i + (i * 7) % g).collect();
         packed(&at, 3)
     };
-    // About every 24 indices: the dense product at its share, where the whole cost would
+    // About every 18 indices: the dense product at its share, where the whole cost would
     // have taken the sparse one (POLY-square-choice-cost). Both give the same square.
-    let a = square(24);
+    let a = square(18);
     let plan = a.plan(&a).expect("packed keys");
     let whole = Choice {
         packed: plan.choice.packed / SQUARE_SHARE,
@@ -956,11 +963,135 @@ fn a_square_is_chosen_at_its_share() {
         "{:?}",
         plan.choice
     );
-    let sparse = a.sparse_mul(&a);
+    let sparse = a.sparse_mul(&a, true);
     assert_eq!(a.dense_mul(&a, plan.slot, plan.step), sparse);
     // About every 256 indices: past the crossover even at the share, the sparse product.
     let a = square(256);
     let plan = a.plan(&a).expect("packed keys");
     assert!(!plan.takes_dense, "{:?}", plan.choice);
-    assert_eq!(a.dense_mul(&a, plan.slot, plan.step), a.sparse_mul(&a));
+    assert_eq!(
+        a.dense_mul(&a, plan.slot, plan.step),
+        a.sparse_mul(&a, true)
+    );
+}
+
+/// The packed sum of `c * x^k` for each `(k, c)`, denominator 1, sorted and merged.
+fn sum_of(terms: &[(u128, BigInt)]) -> Poly<u128> {
+    Poly {
+        den: BigInt::one(),
+        terms: merged(terms.to_vec())
+            .into_iter()
+            .filter(|(_, c)| !c.is_zero())
+            .collect(),
+    }
+}
+
+#[test]
+fn a_square_by_its_pairs_once_agrees_with_the_general_product() {
+    let big = BigInt::one() << 200u32;
+    let int = BigInt::from;
+    let cases: Vec<(&str, Vec<(u128, BigInt)>)> = vec![
+        ("empty", vec![]),
+        ("one term", vec![(5, int(-7))]),
+        ("two terms", vec![(0, int(3)), (9, int(4))]),
+        // x^0 x^2 and x^1 x^1 meet at x^2, and the cross products meet at x^2, x^3 and x^4.
+        (
+            "equal exponents",
+            (0..5).map(|k| (k, int(k as i64 + 1))).collect(),
+        ),
+        // Coefficients of one, two and four words, of both signs.
+        (
+            "negative and large",
+            vec![
+                (0, -big.clone()),
+                (1, int(i64::MIN)),
+                (3, big.clone() * &big + 1),
+                (4, int(u64::MAX as i64) - big.clone()),
+            ],
+        ),
+        // (1 + 2x - 2x^2)^2: x^2 is 2^2 + 2 * 1 * -2 = 0, a square and a doubled cross product
+        // cancelling.
+        (
+            "cancel with a square",
+            vec![(0, int(1)), (1, int(2)), (2, int(-2))],
+        ),
+        // (1 + x - x^3 + x^4)^2: x^4 is 2 (1 * 1 + 1 * -1) = 0, cross products cancelling
+        // before the doubling.
+        (
+            "cancel across",
+            vec![(0, int(1)), (1, int(1)), (3, int(-1)), (4, int(1))],
+        ),
+    ];
+    for (name, terms) in cases {
+        let a = sum_of(&terms);
+        assert!(a.squares(&a.clone()), "{name}");
+        let square = a.sparse_mul(&a, true);
+        assert_eq!(square, a.sparse_mul(&a, false), "{name}");
+        assert!(square.iter().all(|(_, c)| !c.is_zero()), "{name}");
+        assert!(square.windows(2).all(|w| w[0].0 < w[1].0), "{name}");
+        // The same terms in another value are a square too, and `mul` gives the same.
+        let b = a.clone();
+        let mut budget = Budget::new(f64::INFINITY);
+        assert_eq!(
+            a.mul(&b, &mut budget).expect("no limit").terms,
+            square,
+            "{name}"
+        );
+    }
+    // The zero coefficients are gone: x^2 above, x^4 here.
+    let a = sum_of(&[(0, int(1)), (1, int(2)), (2, int(-2))]);
+    assert!(a.sparse_mul(&a, true).iter().all(|(k, _)| *k != 2));
+    // Sparse keys: x, y, x y, x^2 y^3, squared.
+    let key = |e: &[(u32, u64)]| Sparse(e.into());
+    let mut terms = vec![
+        (key(&[(0, 1)]), int(3)),
+        (key(&[(1, 1)]), -big.clone()),
+        (key(&[(0, 1), (1, 1)]), int(-5)),
+        (key(&[(0, 2), (1, 3)]), int(2)),
+    ];
+    terms.sort_by(|a, b| a.0.cmp(&b.0));
+    let a = Poly {
+        den: BigInt::one(),
+        terms,
+    };
+    assert_eq!(a.sparse_mul(&a, true), a.sparse_mul(&a, false));
+    // Keys that are not packed have no plan: `mul` takes the sparse square, charged its
+    // 4 * 5 / 2 pairs at a square's cost, each with a product of 4 by 4 words (2^200).
+    let charge = 10.0 * (PAIR + CHOICE_UNIT * SQUARE_PAIR_COST + 16.0);
+    assert!((a.sparse_charge(&a, true) - charge).abs() < 1e-9);
+    let mut budget = Budget::new(1e6);
+    let square = a.mul(&a.clone(), &mut budget).expect("within the budget");
+    assert_eq!(square.terms, a.sparse_mul(&a, false));
+    assert!((1e6 - budget.left() - charge).abs() < 1e-6);
+}
+
+#[test]
+fn a_square_counts_each_unordered_pair_once() {
+    // 64 terms about every 4096 indices: far past the crossover, the sparse product.
+    let at: Vec<u128> = (0..64).map(|i| 4096 * i + (i * 7) % 13).collect();
+    let a = packed(&at, 3);
+    let plan = a.plan(&a).expect("packed keys");
+    assert!(plan.square && !plan.takes_dense);
+    // 64 * 65 / 2 pairs, not 64 * 64.
+    assert_eq!(plan.choice.pairs, 2080.0);
+    assert_eq!(plan.sparse, 2080.0);
+    let pair = PAIR + CHOICE_UNIT * SQUARE_PAIR_COST;
+    assert!((a.sparse_charge(&a, true) - 2080.0 * (pair + 1.0)).abs() < 1e-6);
+    // Not a square: the same monomials with other coefficients, every ordered pair.
+    let b = packed(&at, -3);
+    let plan = a.plan(&b).expect("packed keys");
+    assert!(!plan.square);
+    assert_eq!(plan.choice.pairs, 4096.0);
+    assert_eq!(plan.sparse, 4096.0);
+    // Through the whole normal form: a sum of 20 names squared is charged its 210 pairs, each
+    // at a square's cost.
+    let names: Vec<String> = (0..20).map(|i| format!("x{i}")).collect();
+    let binders: Vec<&str> = names.iter().map(String::as_str).collect();
+    let sum = format!("({})", names.join(" + "));
+    let (square, _) = work_of(&t(&format!("{sum} * {sum}")), &binders);
+    let (sum, _) = work_of(&t(&sum), &binders);
+    assert!(
+        (square - 2.0 * sum - 210.0 * (pair + 1.0)).abs() < 1e-9,
+        "{square} {sum}"
+    );
 }
