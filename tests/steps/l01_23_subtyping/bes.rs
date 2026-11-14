@@ -117,20 +117,6 @@ fn scales(name: &str, n: usize) {
     });
 }
 
-#[test]
-fn the_families_scale() {
-    for name in FAMILIES {
-        scales(name, 512);
-    }
-}
-
-#[test]
-fn the_widened_families_scale() {
-    for name in WIDENED {
-        scales(name, 4096);
-    }
-}
-
 /// A ring of `kinds` (each node's first child the next node, the last's the first), with the
 /// edges `extra` added, as `(from, to)` by place, and for each `(v, w)` of `mors` a morphism
 /// node, a child of the node at place `v`, whose child is the node at place `w`. The morphism
@@ -283,16 +269,4 @@ fn a_long_run_of_union_edges_is_one_cycle() {
     }
 }
 
-/// Deciding [`long_run`] of `n` and `8n` unions: the test of union edges reads each edge once,
-/// with the run of unions after each node counted once (`bes::one_cycle_but_union_chords`),
-/// where walking each edge along the cycle would take `n` steps an edge.
-#[test]
-fn a_long_run_of_union_edges_scales() {
-    let n = 4096;
-    let small = long_run(n).bes();
-    let large = long_run(scaling::FACTOR * n).bes();
-    scaling::check_order("deciding a run of n unions with union edges", n, 1, |m| {
-        let g = if m == n { &small } else { &large };
-        std::hint::black_box(decide(std::hint::black_box(g)));
-    });
-}
+mod bench;

@@ -23,13 +23,14 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::ops::Range;
 
 use super::bes_families::{self, reference};
 use super::judgments::{bodies, group};
 use zed_kernel::types::bes::{Answer, decide};
 use zed_kernel::types::rec::{Def, Expr, Group};
 use zed_kernel::types::{Refusal, Type, Verdict};
-use zed_tests::instances::Rng;
+use zed_tests::instances::{Rng, pick_seeds};
 use zed_tests::scaling;
 use zedc::lex::lex_fence;
 use zedc::parse::{TOP, parse};
@@ -1301,96 +1302,59 @@ fn compare(sys: &[E], tag: &str, tally: &mut Tally) {
     }
 }
 
-/// The systems `generate` gives for `seeds`, each against the pool; panics on a wrong answer, and
-/// unless the refusals of members the pool shows inhabited number `missed`, so that a change in
-/// what the value builder finds is seen either way.
-fn sweep(
-    name: &str,
-    generate: fn(&mut Rng) -> Vec<E>,
-    seeds: std::ops::Range<u64>,
-    missed: usize,
-) -> Tally {
-    let mut tally = Tally::default();
-    for seed in seeds {
-        let sys = generate(&mut Rng::new(seed));
-        compare(&sys, &format!("{name}{seed}"), &mut tally);
-    }
-    eprintln!("{name}: {tally:?}");
-    assert!(
-        tally.members > 0 && tally.empty > 0 && tally.inhabited > 0,
-        "{name}: {tally:?}"
-    );
-    assert_eq!(
-        tally.missed, missed,
-        "{name}: refusals of inhabited members: {tally:?}"
-    );
-    tally
-}
-
-// Each sweep is a piece of the seeds, sized to finish well under 60 s.
-
-#[test]
-fn x14_family_groups_agree_with_the_values_0() {
-    sweep("claude", gen_claude, 0..150, 0);
-}
-
-#[test]
-fn x14_family_groups_agree_with_the_values_1() {
-    sweep("claude", gen_claude, 150..300, 0);
-}
-
-#[test]
-fn partial_morphism_groups_agree_with_the_values_0() {
-    sweep("mixed", gen_mixed, 0..150, 0);
-}
-
-#[test]
-fn partial_morphism_groups_agree_with_the_values_1() {
-    sweep("mixed", gen_mixed, 150..300, 0);
-}
-
-#[test]
-fn layered_groups_agree_with_the_values_0() {
-    sweep("layer", gen_layer, 0..100, 4);
-}
-
-#[test]
-fn layered_groups_agree_with_the_values_1() {
-    sweep("layer", gen_layer, 100..200, 3);
-}
-
-#[test]
-fn meets_and_differences_agree_with_the_values_0() {
-    sweep("cells", gen_cells, 0..150, 0);
-}
-
-#[test]
-fn meets_and_differences_agree_with_the_values_1() {
-    sweep("cells", gen_cells, 150..300, 0);
-}
-
 // ---------------------------------------------------------------------------------------------
-// Seeds 300 to 1500, every refusal listed (plan item TESTS-l01_23-group-oracle-sweep)
+// Seeds 0 to 1500, every refusal listed (plan items TESTS-l01_23-group-oracle-sweep and
+// TEST-bench-move-l0123)
 // ---------------------------------------------------------------------------------------------
 
-/// A refusal the wide sweep expects: the seed, the member, what the pool showed of it (as in
+/// A refusal a sweep expects: the seed, the member, what the pool showed of it (as in
 /// `Tally::refusals`) and the reason.
 type Listed = (u64, usize, char, Refusal);
 
-/// The systems `generate` gives for `seeds`, each against the pool as in `sweep`, and every
-/// refusal among their verdicts on `listed` (the entries of `listed` outside `seeds` are not
-/// read). Panics on a wrong answer, on a refusal not listed, and on a listed refusal that is
-/// now a verdict or has another reason or member, so that the lists shrink as the checker
-/// decides more.
-fn sweep_listed(
-    name: &str,
-    generate: fn(&mut Rng) -> Vec<E>,
-    seeds: std::ops::Range<u64>,
-    listed: &[Listed],
-) {
+/// The seeds `fixed`, asked each run, and `count` more of `all` drawn from `rng` and printed with
+/// `what`. Each test that asks these makes `rng` with [`Rng::fresh`], so that it asks other
+/// seeds each run (author P169: random tests run fewer cases, with a new seed each run;
+/// `ZED_SEED` repeats a run); each swept the whole of `all` until TEST-bench-move-l0123.
+fn seeds_of(
+    rng: &mut Rng,
+    what: &str,
+    fixed: Range<u64>,
+    all: Range<u64>,
+    count: usize,
+) -> Vec<u64> {
+    let mut seeds: Vec<u64> = fixed.collect();
+    seeds.extend(pick_seeds(rng, what, all, count));
+    seeds.sort();
+    seeds.dedup();
+    seeds
+}
+
+/// The seeds a sweep of family `name` runs: 8 of the seeds `listed` names and 24 of 0 to 1500,
+/// drawn from a generator made with [`Rng::fresh`] and printed (author P169: random tests run
+/// fewer cases, with a new seed each run; `ZED_SEED` repeats a run). Every seed of the range
+/// was swept, and its refusals listed, as of TEST-bench-move-l0123, when each sweep ran all
+/// 1500 seeds in 2 to 13 s.
+fn sweep_seeds(name: &str, listed: &[Listed]) -> Vec<u64> {
+    let (mut rng, _) = Rng::fresh(&format!("{name} sweep"));
+    let mut named: Vec<u64> = listed.iter().map(|&(seed, ..)| seed).collect();
+    named.dedup();
+    let picks = pick_seeds(&mut rng, "listed", 0..named.len() as u64, 8);
+    let mut seeds = pick_seeds(&mut rng, name, 0..1500, 24);
+    seeds.extend(picks.iter().map(|&i| named[i as usize]));
+    seeds.sort();
+    seeds.dedup();
+    seeds
+}
+
+/// The systems `generate` gives for `seeds`, each against the pool, and every refusal among
+/// their verdicts on `listed` (the entries of `listed` for other seeds are not read). Panics on
+/// a wrong answer, on a refusal not listed, on a listed refusal that is now a verdict or has
+/// another reason or member, so that the lists shrink as the checker decides more, and unless
+/// the systems have members the pool shows empty and members it shows inhabited.
+fn sweep_listed(name: &str, generate: fn(&mut Rng) -> Vec<E>, seeds: &[u64], listed: &[Listed]) {
     let mut tally = Tally::default();
     let mut got: Vec<Listed> = Vec::new();
-    for seed in seeds.clone() {
+    for &seed in seeds {
         let sys = generate(&mut Rng::new(seed));
         compare(&sys, &format!("{name}{seed}"), &mut tally);
         got.extend(
@@ -1401,7 +1365,11 @@ fn sweep_listed(
     let want: Vec<Listed> = (listed.iter().copied())
         .filter(|(seed, ..)| seeds.contains(seed))
         .collect();
-    eprintln!("{name} {seeds:?}: {tally:?}");
+    eprintln!("{name}: {tally:?}");
+    assert!(
+        tally.members > 0 && tally.empty > 0 && tally.inhabited > 0,
+        "{name}: {tally:?}"
+    );
     let new: Vec<_> = got.iter().filter(|r| !want.contains(r)).collect();
     let gone: Vec<_> = want.iter().filter(|r| !got.contains(r)).collect();
     assert!(
@@ -1415,11 +1383,13 @@ fn sweep_listed(
     );
 }
 
-// The lists as of plan item TESTS-l01_23-group-oracle-sweep (2026-11-12): 39 refusals among the
-// 13,751 admitted members of 4,800 systems, 35 of members the pool shows inhabited (`I`), 4 of
-// members it leaves open (`U`), none of a member it proves empty. On 2026-11-07 (plan item
-// EMPTY-key-search) the same sweep refused 54 members shown inhabited: layered 34, cells 9,
-// X14 7, mixed 4.
+// The lists as of plan item TESTS-l01_23-group-oracle-sweep (2026-11-12), seeds 300 to 1500: 39
+// refusals among the 13,751 admitted members of 4,800 systems, 35 of members the pool shows
+// inhabited (`I`), 4 of members it leaves open (`U`), none of a member it proves empty. Seeds 0
+// to 300, listed by TEST-bench-move-l0123 (2026-11-14): 11 more, all layered, all `I` (seeds 0
+// to 200 had been swept with these counted, 4 and 3, not listed). On 2026-11-07 (plan item
+// EMPTY-key-search) the sweep of seeds 300 to 1500 refused 54 members shown inhabited: layered
+// 34, cells 9, X14 7, mixed 4.
 
 /// The X14 family: every member decided.
 const LISTED_CLAUDE: &[Listed] = &[];
@@ -1431,6 +1401,17 @@ const LISTED_MIXED: &[Listed] = &[];
 /// is a closure that returns a pair holding itself. All are refused `NoWitness` (STATUS.md Open
 /// points, GROUP-oracle: the refusals in groups holding `\` or `&`).
 const LISTED_LAYER: &[Listed] = &[
+    (16, 3, 'I', Refusal::NoWitness),
+    (37, 3, 'I', Refusal::NoWitness),
+    (45, 4, 'I', Refusal::NoWitness),
+    (73, 4, 'I', Refusal::NoWitness),
+    (125, 2, 'I', Refusal::NoWitness),
+    (125, 4, 'I', Refusal::NoWitness),
+    (171, 3, 'I', Refusal::NoWitness),
+    (230, 3, 'I', Refusal::NoWitness),
+    (232, 3, 'I', Refusal::NoWitness),
+    (236, 2, 'I', Refusal::NoWitness),
+    (293, 3, 'I', Refusal::NoWitness),
     (332, 4, 'I', Refusal::NoWitness),
     (440, 3, 'I', Refusal::NoWitness),
     (508, 5, 'I', Refusal::NoWitness),
@@ -1475,43 +1456,27 @@ const LISTED_LAYER: &[Listed] = &[
 const LISTED_CELLS: &[Listed] = &[(1140, 0, 'I', Refusal::Fork), (1140, 2, 'I', Refusal::Fork)];
 
 #[test]
-fn x14_family_seeds_300_to_1500_agree_or_are_listed_0() {
-    sweep_listed("claude", gen_claude, 300..900, LISTED_CLAUDE);
+fn x14_family_seeds_agree_or_are_listed() {
+    let seeds = sweep_seeds("claude", LISTED_CLAUDE);
+    sweep_listed("claude", gen_claude, &seeds, LISTED_CLAUDE);
 }
 
 #[test]
-fn x14_family_seeds_300_to_1500_agree_or_are_listed_1() {
-    sweep_listed("claude", gen_claude, 900..1500, LISTED_CLAUDE);
+fn partial_morphism_seeds_agree_or_are_listed() {
+    let seeds = sweep_seeds("mixed", LISTED_MIXED);
+    sweep_listed("mixed", gen_mixed, &seeds, LISTED_MIXED);
 }
 
 #[test]
-fn partial_morphism_seeds_300_to_1500_agree_or_are_listed_0() {
-    sweep_listed("mixed", gen_mixed, 300..900, LISTED_MIXED);
+fn layered_seeds_agree_or_are_listed() {
+    let seeds = sweep_seeds("layer", LISTED_LAYER);
+    sweep_listed("layer", gen_layer, &seeds, LISTED_LAYER);
 }
 
 #[test]
-fn partial_morphism_seeds_300_to_1500_agree_or_are_listed_1() {
-    sweep_listed("mixed", gen_mixed, 900..1500, LISTED_MIXED);
-}
-
-#[test]
-fn layered_seeds_300_to_1500_agree_or_are_listed_0() {
-    sweep_listed("layer", gen_layer, 300..900, LISTED_LAYER);
-}
-
-#[test]
-fn layered_seeds_300_to_1500_agree_or_are_listed_1() {
-    sweep_listed("layer", gen_layer, 900..1500, LISTED_LAYER);
-}
-
-#[test]
-fn meets_and_differences_seeds_300_to_1500_agree_or_are_listed_0() {
-    sweep_listed("cells", gen_cells, 300..900, LISTED_CELLS);
-}
-
-#[test]
-fn meets_and_differences_seeds_300_to_1500_agree_or_are_listed_1() {
-    sweep_listed("cells", gen_cells, 900..1500, LISTED_CELLS);
+fn meets_and_differences_seeds_agree_or_are_listed() {
+    let seeds = sweep_seeds("cells", LISTED_CELLS);
+    sweep_listed("cells", gen_cells, &seeds, LISTED_CELLS);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1737,62 +1702,6 @@ fn chain_of(g: &mut Rng, n: usize) -> Vec<E> {
             E::Union(vec![back, next])
         })
         .collect()
-}
-
-/// The verdicts of every member of `n` random groups of the X14 family, the verdict of the
-/// first member of one chain group of `n` definitions, which its search reads whole, and the
-/// verdicts of every member of one group of `n` (plan item VERDICT-group-share), of the X14
-/// family and of the chain family, at `n` and `8n`, the groups built before the runs. The first
-/// verdict asked of a member decides the whole group in one search (`Type::verdict`), so the
-/// verdicts of all members cost what one does.
-#[test]
-fn verdicts_of_random_groups_scale() {
-    let many = |n: usize| -> Vec<Type> {
-        (0..n as u64)
-            .flat_map(|seed| kernel(&gen_claude(&mut Rng::new(seed)), &format!("many{n}_{seed}")))
-            .map(|t| t.expect("every definition of the X14 family is admitted"))
-            .collect()
-    };
-    let chain = |n: usize| -> Vec<Type> {
-        kernel(&chain_of(&mut Rng::new(7), n), &format!("chain{n}"))
-            .into_iter()
-            .map(|t| t.expect("a chain group is admitted"))
-            .collect()
-    };
-    let one = |n: usize| -> Vec<Type> {
-        kernel(&claude_of(&mut Rng::new(3), n), &format!("one{n}"))
-            .into_iter()
-            .map(|t| t.expect("every definition of the X14 family is admitted"))
-            .collect()
-    };
-    let every = |ts: &[Type]| {
-        Type::forget_emptiness();
-        for t in ts {
-            std::hint::black_box(t.verdict());
-        }
-    };
-    let n = 64;
-    let groups = scaling::inputs(n, many);
-    scaling::check("verdicts of the members of n random groups", n, |m| {
-        every(&groups[&m])
-    });
-    let n = 128;
-    let chains = scaling::inputs(n, chain);
-    scaling::check("the verdict of one member of a chain group of n", n, |m| {
-        Type::forget_emptiness();
-        std::hint::black_box(chains[&m][0].verdict());
-    });
-    scaling::check(
-        "the verdicts of every member of a chain group of n",
-        n,
-        |m| every(&chains[&m]),
-    );
-    let ones = scaling::inputs(n, one);
-    scaling::check(
-        "the verdicts of every member of one X14 group of n",
-        n,
-        |m| every(&ones[&m]),
-    );
 }
 
 /// Every member of a chain group of 512 is inhabited, by a chain of up to 512 values; before
@@ -2071,74 +1980,6 @@ fn largest_group(sys: &[E]) -> Vec<usize> {
         .unwrap_or_default()
 }
 
-/// The verdicts of every member of one group of `n` that the decider refuses, of the chain
-/// family and of the X14 family, at `n` and `8n`, the groups built before the runs: one search
-/// with every member as a root decides them all (plan item VERDICT-group-roots), where a search
-/// for each member read the group n times. Then the verdicts of every definition of the X14
-/// system, which read the group by its verdicts and values (plan item VERDICT-group-readers).
-#[test]
-fn verdicts_of_undecided_groups_scale() {
-    let chain = |n: usize| -> Vec<Type> {
-        kernel(
-            &undecided(chain_of(&mut Rng::new(7), n)),
-            &format!("chainu{n}"),
-        )
-        .into_iter()
-        .map(|t| t.expect("a chain group is admitted"))
-        .collect()
-    };
-    let one = |n: usize| -> Vec<Type> {
-        let sys = undecided(claude_of(&mut Rng::new(3), n));
-        let group = largest_group(&sys);
-        let ts = kernel(&sys, &format!("oneu{n}"));
-        (group.iter())
-            .map(|&i| {
-                ts[i]
-                    .clone()
-                    .expect("every definition of the X14 family is admitted")
-            })
-            .collect()
-    };
-    // Every definition, those outside the largest group too: such a definition reads the
-    // members of that group by their group's verdicts, so the system's verdicts cost one search
-    // of the group and one of each definition's own part (plan item VERDICT-group-readers),
-    // where a search for each definition decided again the part of the group it reaches.
-    let all = |n: usize| -> Vec<Type> {
-        kernel(
-            &undecided(claude_of(&mut Rng::new(3), n)),
-            &format!("allu{n}"),
-        )
-        .into_iter()
-        .map(|t| t.expect("every definition of the X14 family is admitted"))
-        .collect()
-    };
-    let every = |ts: &[Type]| {
-        Type::forget_emptiness();
-        for t in ts {
-            std::hint::black_box(t.verdict());
-        }
-    };
-    let n = 128;
-    let chains = scaling::inputs(n, chain);
-    scaling::check(
-        "the verdicts of every member of an undecided chain group of n",
-        n,
-        |m| every(&chains[&m]),
-    );
-    let ones = scaling::inputs(n, one);
-    scaling::check(
-        "the verdicts of the members of the largest undecided X14 group of n definitions",
-        n,
-        |m| every(&ones[&m]),
-    );
-    let alls = scaling::inputs(n, all);
-    scaling::check(
-        "the verdicts of every definition of an undecided X14 system of n",
-        n,
-        |m| every(&alls[&m]),
-    );
-}
-
 /// A definition outside a group the decider refuses reads each member of it by the group's
 /// verdict and the value the group's search built (plan item VERDICT-group-readers): its
 /// verdict agrees with the values, and with every order of the questions. In the layered system
@@ -2162,9 +2003,10 @@ fn readers_of_undecided_groups_agree_with_the_values() {
         "{}",
         show_system(&sys)
     );
+    let (mut rng, _) = Rng::fresh("readers of undecided groups");
     let gens: [fn(&mut Rng) -> Vec<E>; 4] = [gen_claude, gen_mixed, gen_layer, gen_cells];
     for (name, g) in ["claude", "mixed", "layer", "cells"].into_iter().zip(gens) {
-        for seed in 0..100 {
+        for seed in seeds_of(&mut rng, name, 0..4, 0..100, 8) {
             let sys = undecided(g(&mut Rng::new(seed)));
             let tag = format!("readers-{name}{seed}");
             let types = kernel(&sys, &tag);
@@ -2302,13 +2144,9 @@ fn the_layered_system_316_is_not_called_empty() {
 /// Each system `generate` gives for `seeds`, as written and with every body `b \ #none` (so the
 /// search decides each group, not the decider): `is_empty` never calls a member empty that the
 /// pool shows a value of. Gives how many members were checked.
-fn never_empty_with_a_value(
-    name: &str,
-    generate: fn(&mut Rng) -> Vec<E>,
-    seeds: std::ops::Range<u64>,
-) -> usize {
+fn never_empty_with_a_value(name: &str, generate: fn(&mut Rng) -> Vec<E>, seeds: &[u64]) -> usize {
     let mut checked = 0;
-    for seed in seeds.clone() {
+    for &seed in seeds {
         let sys = generate(&mut Rng::new(seed));
         // `b \ #none` holds the values of `b`, so one pool shows both forms.
         let seen = truth(&sys, CAP).seen;
@@ -2334,22 +2172,30 @@ fn never_empty_with_a_value(
 
 #[test]
 fn x14_family_is_never_called_empty_with_a_value() {
-    assert!(never_empty_with_a_value("claude", gen_claude, 0..600) > 0);
+    let (mut rng, _) = Rng::fresh("never empty: claude");
+    let seeds = seeds_of(&mut rng, "claude", 0..4, 0..600, 16);
+    assert!(never_empty_with_a_value("claude", gen_claude, &seeds) > 0);
 }
 
 #[test]
 fn partial_morphisms_are_never_called_empty_with_a_value() {
-    assert!(never_empty_with_a_value("mixed", gen_mixed, 0..600) > 0);
+    let (mut rng, _) = Rng::fresh("never empty: mixed");
+    let seeds = seeds_of(&mut rng, "mixed", 0..4, 0..600, 16);
+    assert!(never_empty_with_a_value("mixed", gen_mixed, &seeds) > 0);
 }
 
 #[test]
 fn layered_systems_are_never_called_empty_with_a_value() {
-    assert!(never_empty_with_a_value("layer", gen_layer, 0..600) > 0);
+    let (mut rng, _) = Rng::fresh("never empty: layer");
+    let seeds = seeds_of(&mut rng, "layer", 0..8, 0..600, 32);
+    assert!(never_empty_with_a_value("layer", gen_layer, &seeds) > 0);
 }
 
 #[test]
 fn meets_and_differences_are_never_called_empty_with_a_value() {
-    assert!(never_empty_with_a_value("cells", gen_cells, 0..600) > 0);
+    let (mut rng, _) = Rng::fresh("never empty: cells");
+    let seeds = seeds_of(&mut rng, "cells", 0..8, 0..600, 32);
+    assert!(never_empty_with_a_value("cells", gen_cells, &seeds) > 0);
 }
 
 /// The system of [`a_type_decided_again_is_not_read_as_empty_before_it_is`] with `n` morphism
@@ -2366,56 +2212,6 @@ fn key_chain(n: usize) -> Vec<Type> {
     (kernel(&sys, "key_chain").into_iter())
         .map(|t| t.expect("admitted"))
         .collect()
-}
-
-#[test]
-fn a_chain_decided_again_scales() {
-    let chains = scaling::inputs(64, key_chain);
-    for m in 1..=16 {
-        let ts = key_chain(m);
-        let empty: Vec<usize> = (0..=m)
-            .filter(|&k| {
-                Type::forget_emptiness();
-                ts[k].is_empty()
-            })
-            .collect();
-        assert_eq!(
-            empty,
-            (0..=m).step_by(2).collect::<Vec<_>>(),
-            "a key chain of {m}"
-        );
-    }
-    for (&m, ts) in &chains {
-        Type::forget_emptiness();
-        assert!(!ts[m - 1].is_empty(), "R{} of a key chain of {m}", m - 1);
-    }
-    scaling::check("is_empty of R(n - 1) of a key chain of n", 64, |m| {
-        Type::forget_emptiness();
-        std::hint::black_box(chains[&m][m - 1].is_empty());
-    });
-}
-
-/// `kernel` builds the groups of a system in time linear in its definitions and references
-/// (plan item VERDICT-meet-cost): a chain of n groups, each reading the next, and one group of
-/// n definitions (`chain_of`), at n and 8n, the systems written before the runs and each run
-/// under names of its own, so no run finds the groups of another. A search from each definition
-/// for what it reaches cost the square of the definitions, and a pass over every definition for
-/// each group built their cube: 1.57 s for a chain of 1000 groups.
-#[test]
-fn the_groups_of_a_system_are_built_in_its_size() {
-    let runs = std::sync::atomic::AtomicUsize::new(0);
-    let build = |sys: &[E]| {
-        let run = runs.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let types = kernel(sys, &format!("built{run}"));
-        assert!(types.iter().all(Option::is_some), "every group is admitted");
-    };
-    let n = 128;
-    let chains = scaling::inputs(n, |m| chain_of_groups(m, false));
-    scaling::check("the groups of a chain of n groups", n, |m| {
-        build(&chains[&m])
-    });
-    let groups = scaling::inputs(n, |m| chain_of(&mut Rng::new(7), m));
-    scaling::check("one group of n definitions", n, |m| build(&groups[&m]));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2524,27 +2320,6 @@ fn shared_chain(n: usize, marked: bool, tag: &str) -> Type {
         })
         .collect();
     kernel(&sys, tag).remove(0).expect("admitted")
-}
-
-/// The text of a chain of `n` cycles, each entered at a tuple part that a part kept
-/// unevaluated shares, takes time and bytes of order `n log n`: the parts are ordered by their
-/// contents, a sort.
-#[test]
-fn a_chain_of_shared_tuple_parts_prints_in_its_size() {
-    let chains = scaling::inputs(64, |n| {
-        let t = shared_chain(n, true, &format!("chain{n}"));
-        // The unfoldings are made once, before the runs.
-        prints_as_syntax(&t, &format!("a chain of {n}"));
-        t
-    });
-    for (&n, t) in &chains {
-        // `#a | #b`, the first pair and the part that names it, and one definition for each
-        // other cycle, its pair written inside it: n + 2 in all.
-        assert_eq!(t.surface().defs.len(), n + 2, "a chain of {n}");
-    }
-    scaling::check("the text of a chain of n shared tuple parts", 64, |n| {
-        std::hint::black_box(chains[&n].surface());
-    });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2759,38 +2534,14 @@ fn verdicts_of_copies_scale(what: &str, ring: bool) {
     });
 }
 
-/// The verdicts of every member of n copies of the group that hung the search, each its own
-/// group, at n and 8n: the search takes each function type at most once for each value it
-/// builds, and builds a value again only once a function taken after its build began holds it,
-/// so each copy costs the same.
-#[test]
-fn verdicts_of_copies_of_the_group_that_hung_the_search_scale() {
-    verdicts_of_copies_scale(
-        "the verdicts of every member of n copies of the group that hung the search",
-        false,
-    );
-}
-
-/// A ring of eight copies of the group that hung the search, one group of 24 definitions, is
-/// decided: each member is refused, as the one copy is.
+/// A ring of three copies of the group that hung the search, one group of nine definitions, is
+/// decided: each member is refused, as the one copy is. (Eight copies until
+/// TEST-bench-move-l0123; `bench::verdicts_of_a_ring_of_the_group_that_hung_the_search_scale`
+/// asks larger rings.)
 #[test]
 fn a_ring_of_the_group_that_hung_the_search_is_refused() {
-    let got = alone(&kernel(&hang_copies(8, true), "hang_ring8"));
-    assert_eq!(got, vec![Some(Verdict::Refused(Refusal::Group)); 24]);
-}
-
-/// The verdicts of every member of a ring of n copies of the group that hung the search, at n
-/// and 8n. Each copy's search tests whether two types overlap (COMPLEXITY.md K36), n tests
-/// that each reach the whole ring through the first parts of tuples. The ring is one strongly
-/// connected group of types, whose trie is made once and placed for each test, a node at a
-/// time where it is read; its types
-/// merge into one node, where a walk over the ring for each test cost n (GROUP-overlaps-unfold).
-#[test]
-fn verdicts_of_a_ring_of_the_group_that_hung_the_search_scale() {
-    verdicts_of_copies_scale(
-        "the verdicts of every member of a ring of n copies of the group that hung the search",
-        true,
-    );
+    let got = alone(&kernel(&hang_copies(3, true), "hang_ring3"));
+    assert_eq!(got, vec![Some(Verdict::Refused(Refusal::Group)); 9]);
 }
 
 /// The five definitions of cases J and L of GROUP-closure-order, which differ in the last:
@@ -2956,14 +2707,14 @@ fn verdict_class(v: Option<Verdict>, exact: bool) -> u8 {
 fn verdicts_agree_across_orders(
     name: &str,
     make: fn(&mut Rng) -> Vec<E>,
-    seeds: std::ops::Range<u64>,
+    seeds: &[u64],
     (parts, exact): (bool, bool),
 ) {
     let class = |vs: &[Option<Verdict>]| -> Vec<u8> {
         vs.iter().map(|&v| verdict_class(v, exact)).collect()
     };
     let mut differ = Vec::new();
-    for seed in seeds {
+    for &seed in seeds {
         let sys = make(&mut Rng::new(seed));
         let tag = format!("{name}{seed}");
         let want = alone(&kernel(&sys, &tag));
@@ -3014,7 +2765,7 @@ fn meets_whose_parts_differ_in_order_agree_across_orders() {
         5373, 5522, 5933, 6219, 6304, 7932, 8022, 8040, 8754, 8858, 9454, 10677, 11489, 12718,
         12856, 13004, 13161, 13383, 13665, 14180, 14382, 14702, 14813, 15093, 15218, 15717,
     ] {
-        verdicts_agree_across_orders("meets", gen_meets, seed..seed + 1, (true, true));
+        verdicts_agree_across_orders("meets", gen_meets, &[seed], (true, true));
     }
 }
 
@@ -3022,19 +2773,56 @@ fn meets_whose_parts_differ_in_order_agree_across_orders() {
 /// order tried, up to the reason of a refusal (GROUP-closure-order).
 #[test]
 fn x14_groups_agree_across_orders() {
-    verdicts_agree_across_orders("x14_4_", |g| claude_of(g, 4), 0..2000, (true, true));
-    verdicts_agree_across_orders("x14_5_", |g| claude_of(g, 5), 0..600, (true, true));
-    verdicts_agree_across_orders("x14_6_", |g| claude_of(g, 6), 0..250, (true, true));
+    let (mut rng, _) = Rng::fresh("x14 groups across orders");
+    verdicts_agree_across_orders(
+        "x14_4_",
+        |g| claude_of(g, 4),
+        &seeds_of(&mut rng, "x14_4_", 0..8, 0..2000, 120),
+        (true, true),
+    );
+    verdicts_agree_across_orders(
+        "x14_5_",
+        |g| claude_of(g, 5),
+        &seeds_of(&mut rng, "x14_5_", 0..8, 0..600, 60),
+        (true, true),
+    );
+    verdicts_agree_across_orders(
+        "x14_6_",
+        |g| claude_of(g, 6),
+        &seeds_of(&mut rng, "x14_6_", 0..8, 0..250, 40),
+        (true, true),
+    );
 }
 
 /// Systems of the other families give the same verdicts in every order tried, up to the reason
 /// of a refusal.
 #[test]
 fn other_families_agree_across_orders() {
-    verdicts_agree_across_orders("claude", gen_claude, 0..200, (true, true));
-    verdicts_agree_across_orders("mixed", gen_mixed, 0..200, (true, true));
-    verdicts_agree_across_orders("layer", gen_layer, 0..200, (true, true));
-    verdicts_agree_across_orders("cells", gen_cells, 0..200, (true, true));
+    let (mut rng, _) = Rng::fresh("other families across orders");
+    verdicts_agree_across_orders(
+        "claude",
+        gen_claude,
+        &seeds_of(&mut rng, "claude", 0..8, 0..200, 32),
+        (true, true),
+    );
+    verdicts_agree_across_orders(
+        "mixed",
+        gen_mixed,
+        &seeds_of(&mut rng, "mixed", 0..8, 0..200, 32),
+        (true, true),
+    );
+    verdicts_agree_across_orders(
+        "layer",
+        gen_layer,
+        &seeds_of(&mut rng, "layer", 0..8, 0..200, 32),
+        (true, true),
+    );
+    verdicts_agree_across_orders(
+        "cells",
+        gen_cells,
+        &seeds_of(&mut rng, "cells", 0..8, 0..200, 32),
+        (true, true),
+    );
 }
 
 /// Systems of the meets family, with their definitions, the arms of their unions and the parts
@@ -3042,10 +2830,17 @@ fn other_families_agree_across_orders() {
 /// to the reason of a refusal (item GROUP-search-canon-key). Before it, 13 of these 800 systems
 /// differed between orders, and 172 of the 15,691 seeds of 0..16,000 that finished within 60 s
 /// in the sweep of the item; after it none of the 16,000 differs, and 26 differ only in the
-/// reason of a refusal.
+/// reason of a refusal. Each run asks 8 of the 800 and 32 more chosen afresh
+/// (TEST-bench-move-l0123).
 #[test]
 fn meets_agree_across_orders() {
-    verdicts_agree_across_orders("meets", gen_meets, 0..800, (true, true));
+    let (mut rng, _) = Rng::fresh("meets across orders");
+    verdicts_agree_across_orders(
+        "meets",
+        gen_meets,
+        &seeds_of(&mut rng, "meets", 0..8, 0..800, 32),
+        (true, true),
+    );
 }
 
 /// The pool's rounds keep the first 36 tuples of the product of the values found for each
@@ -3093,20 +2888,6 @@ fn the_first_tuples_are_those_of_the_whole_product() {
     assert_eq!(
         (&kept[0], &kept[1], &kept[35]),
         (&vec![0, 0], &vec![0, 1], &vec![5, 5])
-    );
-}
-
-/// The first 36 tuples of a tuple type of `n` components with six values each, at `n` and `8n`:
-/// the product has `6^n` tuples, and only the 36 kept are built.
-#[test]
-fn the_first_tuples_of_a_wide_tuple_type_scale() {
-    let opts = scaling::inputs(64, |n| vec![(0..6).collect::<Vec<usize>>(); n]);
-    scaling::check(
-        "the first 36 tuples of a tuple type of n components",
-        64,
-        |m| {
-            std::hint::black_box(first_tuples(&opts[&m], 36));
-        },
     );
 }
 
@@ -3207,3 +2988,5 @@ fn a_group_prints_the_same_text_whatever_was_built_before_it() {
     assert_eq!(printed(false, true), fresh);
     assert_eq!(printed(true, true), fresh);
 }
+
+mod bench;

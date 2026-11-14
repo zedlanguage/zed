@@ -3,7 +3,8 @@
 //! them. The bounds are the harness's sample sizes, not a rule of Zed: the compiler has no
 //! enumeration budget or bounded-model instance (docs/thresholds.md, replacement 8).
 
-use std::ops::RangeInclusive;
+use std::collections::BTreeSet;
+use std::ops::{Range, RangeInclusive};
 
 use zed_kernel::{Family, Value};
 
@@ -143,6 +144,25 @@ pub fn map_value<T: Clone + Into<Value>>(m: &[(i64, T)]) -> Value {
     Value::Family(Family::of(m.iter().cloned()))
 }
 
+/// `count` distinct seeds of `seeds`, drawn from `rng` (made by [`Rng::fresh`]) and printed with
+/// `what` in increasing order: a sweep over a family of seeded random instances runs these few
+/// each run instead of every seed (author P169: random tests run fewer cases, with a new seed
+/// each run, printed; `ZED_TEST_SEED` repeats the run). Every seed of `seeds` is returned, and `rng`
+/// left as it was, when there are no more than `count`.
+pub fn pick_seeds(rng: &mut Rng, what: &str, seeds: Range<u64>, count: usize) -> Vec<u64> {
+    let len = seeds.end.saturating_sub(seeds.start);
+    if len <= count as u64 {
+        return seeds.collect();
+    }
+    let mut chosen = BTreeSet::new();
+    while chosen.len() < count {
+        chosen.insert(seeds.start + rng.next_u64() % len);
+    }
+    let chosen: Vec<u64> = chosen.into_iter().collect();
+    eprintln!("{what}: seeds {chosen:?}");
+    chosen
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,5 +219,24 @@ mod tests {
         bits.dedup();
         assert_eq!(bits.len(), 9);
         assert!(BMC_FLOATS.iter().any(|x| x.is_nan()));
+    }
+
+    #[test]
+    fn picked_seeds_are_distinct_in_the_range_and_repeat_from_the_seed() {
+        let (mut rng, seed) = Rng::fresh("picked seeds");
+        let seeds = pick_seeds(&mut rng, "a sweep", 100..200, 10);
+        assert_eq!(seeds.len(), 10);
+        assert!(seeds.windows(2).all(|w| w[0] < w[1]));
+        assert!(seeds.iter().all(|s| (100..200).contains(s)));
+        assert_eq!(
+            pick_seeds(&mut Rng::new(seed), "again", 100..200, 10),
+            seeds
+        );
+        // A range no larger than the count gives every seed.
+        assert_eq!(
+            pick_seeds(&mut rng, "a short sweep", 5..8, 10),
+            vec![5, 6, 7]
+        );
+        assert!(pick_seeds(&mut rng, "an empty sweep", 3..3, 2).is_empty());
     }
 }

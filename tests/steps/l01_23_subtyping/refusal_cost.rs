@@ -163,50 +163,8 @@ fn refusal_scales(
 // under a limit of 123. Before, a value read in from each group that built it was tested
 // against each type under a number of its own (Θ(n³) tests): 145M and 20.3G, 140 times.
 
-#[test]
-fn the_verdict_of_the_x_tail_family_is_refused_in_its_size() {
-    refusal_scales(
-        "verdict of the x_tail family, n places",
-        16,
-        Refusal::Fork,
-        false,
-        x_tail,
-    );
-}
-
-#[test]
-fn the_subtype_verdict_of_the_x_tail_family_is_refused_in_its_size() {
-    refusal_scales(
-        "subtype_verdict of the x_tail family, n places",
-        16,
-        Refusal::Fork,
-        true,
-        x_tail,
-    );
-}
-
 // Seed 2 is refused at shared cells at both sizes; other seeds are decided at one of them,
 // Empty or Inhabited by the instance, not by its size. Measured at 8d0bfe954: 61.0M
 // instructions at n = 8 and 3.82G at n = 64, 62.6 times, under a limit of 141.
 
-#[test]
-fn the_verdict_of_random_3_cnf_is_refused_in_its_size() {
-    refusal_scales(
-        "verdict of random 3-CNF, n bits",
-        8,
-        Refusal::SharedCells(0),
-        false,
-        |n, _| r3(n, 2),
-    );
-}
-
-#[test]
-fn the_subtype_verdict_of_random_3_cnf_is_refused_in_its_size() {
-    refusal_scales(
-        "subtype_verdict of random 3-CNF, n bits",
-        8,
-        Refusal::SharedCells(0),
-        true,
-        |n, _| r3(n, 2),
-    );
-}
+mod bench;

@@ -328,18 +328,6 @@ fn a_refusal_names_the_whole_path() {
     );
 }
 
-/// The refusal of a chain of `n` definitions, whose path names all of them, is found and
-/// written in time linear in `n`.
-#[test]
-fn a_refusal_through_a_long_path_scales() {
-    let n = 512;
-    let groups = zed_tests::scaling::inputs(n, chain);
-    zed_tests::scaling::check("refusing a group narrowed through a chain", n, |n| {
-        let message = Group::new(groups[&n].clone()).unwrap_err().message;
-        assert!(message.contains(&format!("`D{}` is named in `D{}`", n - 2, n - 1)));
-    });
-}
-
 /// The one-definition group `name(a) = body` at the argument `arg`.
 fn instance(name: &str, body: Expr, arg: Type) -> Type {
     let def = Def {
@@ -479,3 +467,5 @@ fn a_refused_group_writes_the_types_it_holds_as_a_program_would() {
         }
     }
 }
+
+mod bench;

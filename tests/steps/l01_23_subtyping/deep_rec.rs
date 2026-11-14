@@ -93,35 +93,6 @@ fn a_body_far_deeper_than_the_stack_is_copied_compared_written_and_checked() {
     });
 }
 
-#[test]
-fn copying_comparing_writing_and_checking_scale_with_depth() {
-    let n = 20_000;
-    zed_tests::deep::on_small_stack(|| {
-        let (small, large) = (
-            (nested(n, int), nested(n, int)),
-            (nested(8 * n, int), nested(8 * n, int)),
-        );
-        let at = |k: usize| if k == n { &small } else { &large };
-        for i in 0..small.0.len() {
-            let what = small.0[i].0;
-            scaling::check(&format!("copying {what}"), n, |k| {
-                drop(std::hint::black_box(at(k).0[i].1.clone()));
-            });
-            scaling::check(&format!("comparing {what}"), n, |k| {
-                let (a, b) = at(k);
-                assert!(std::hint::black_box(a[i].1 == b[i].1));
-            });
-            scaling::check(&format!("writing the Debug text of {what}"), n, |k| {
-                std::hint::black_box(format!("{:?}", at(k).0[i].1));
-            });
-            // The copy is linear, timed above.
-            scaling::check(&format!("checking a body of {what}"), n, |k| {
-                assert!(Group::new(vec![def(at(k).0[i].1.clone())]).is_ok());
-            });
-        }
-    });
-}
-
 /// Round 8 (X39): a deep type kept only by the thread's emptiness tables is freed when the
 /// thread ends. `forget_emptiness` uses those tables before the thread makes any type, so they
 /// were dropped after the queue that frees types in a loop, and the type was freed by
@@ -134,3 +105,5 @@ fn a_deep_type_kept_by_the_verdicts_is_freed_when_its_thread_ends() {
         assert_eq!(t.verdict(), zed_kernel::types::Verdict::Inhabited);
     });
 }
+
+mod bench;

@@ -143,30 +143,4 @@ fn a_long_run_of_checks_on_recursive_groups_holds_bounded_memory() {
     );
 }
 
-#[test]
-fn a_run_of_checks_on_recursive_groups_scales_by_its_length() {
-    // A check's cost does not grow with the recursive groups checked before it.
-    let next = AtomicU64::new(1 << 43);
-    scaling::check_order(
-        "a run of checks on recursive groups, by checks",
-        64,
-        1,
-        |m| {
-            for _ in 0..m {
-                rec_unit(next.fetch_add(64, Relaxed));
-            }
-        },
-    );
-}
-
-#[test]
-fn a_run_of_independent_checks_scales_by_its_length() {
-    // A check's cost does not grow with the checks run before it: the tables it searches hold
-    // only the nodes alive.
-    let next = AtomicU64::new(1 << 41);
-    scaling::check_order("a run of independent checks, by checks", 64, 1, |m| {
-        for _ in 0..m {
-            unit(next.fetch_add(64, Relaxed));
-        }
-    });
-}
+mod bench;
