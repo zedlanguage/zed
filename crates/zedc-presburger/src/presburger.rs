@@ -27017,10 +27017,33 @@ mod real_end_tests {
         assert_eq!(real_end(&f, &sym("a"), -1), Some(Int::from(0)));
     }
 
-    /// A name with two lower and three upper rows would make six rows of five, so it stays,
-    /// and the rows that hold it give no bound: only `a <= 9`, alone, does.
+    /// A name with two lower and three upper rows would make six rows of five; where its rows
+    /// also name another such name, both stay, and the rows that hold them give no bound: only
+    /// `a <= 9`, alone, does. `b`'s rows name `d` and `d`'s name `b`.
     #[test]
     fn a_name_whose_elimination_would_grow_the_rows_stays() {
+        let f = and(vec![
+            Con::ge(&v("b"), &v("a")),
+            Con::ge(&v("b"), &v("d")),
+            Con::ge(&c(4), &v("b")),
+            Con::ge(&c(5).plus(&v("a")), &v("b")),
+            Con::ge(&c(6), &v("b").plus(&v("a"))),
+            Con::ge(&v("d"), &c(-5)),
+            Con::ge(&v("d"), &v("a").minus(&c(3))),
+            Con::ge(&c(7), &v("d")),
+            Con::ge(&c(8), &v("d").plus(&v("a"))),
+            Con::ge(&c(9), &v("a")),
+        ]);
+        assert_eq!(real_end(&f, &sym("a"), 1), Some(Int::from(9)));
+        assert_eq!(real_end(&f, &sym("a"), -1), None);
+    }
+
+    /// A name whose rows name only itself and the symbol is taken out however many rows it
+    /// makes (PRES-exact-side): the rows over `a` left are its real bounds, `b >= a` with
+    /// `b <= 6 - a` giving `a <= 3`, and `b >= -5` with `b <= 5 + a` giving `a >= -10`, where
+    /// keeping `b` gave only `a <= 9`. `a = 3`, `b = 3` and `a = -10`, `b = -5` are points.
+    #[test]
+    fn a_name_with_rows_of_the_symbol_alone_is_taken_out_however_many_rows_it_makes() {
         let f = and(vec![
             Con::ge(&v("b"), &v("a")),
             Con::ge(&v("b"), &c(-5)),
@@ -27029,8 +27052,8 @@ mod real_end_tests {
             Con::ge(&c(6), &v("b").plus(&v("a"))),
             Con::ge(&c(9), &v("a")),
         ]);
-        assert_eq!(real_end(&f, &sym("a"), 1), Some(Int::from(9)));
-        assert_eq!(real_end(&f, &sym("a"), -1), None);
+        assert_eq!(real_end(&f, &sym("a"), 1), Some(Int::from(3)));
+        assert_eq!(real_end(&f, &sym("a"), -1), Some(Int::from(-10)));
     }
 
     /// A side of `persist` (PERF-l139-family): `s == x + y`, `x <= y - 1`, `x + y >= -1000`,
