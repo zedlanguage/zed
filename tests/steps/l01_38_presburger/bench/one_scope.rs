@@ -1131,7 +1131,7 @@ fn each_answer_of_30_random_chains_of_residue_intervals_is_the_answer_of_the_rel
 #[test]
 fn the_5000_one_variable_modular_formulas_of_seed_0x70dec1de_match_enumeration() {
     let mut rng = zed_tests::instances::Rng::new(0x70de_c1de);
-    let c = modular_formulas_match(&mut rng, 5000);
+    let c = modular_formulas_match(&mut rng, 0, 5000);
     assert!(c.sat >= 1000 && c.unsat >= 500, "{c:?}");
     println!(
         "one-variable cases: satisfiable={} empty={} refused={}",

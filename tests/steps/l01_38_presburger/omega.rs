@@ -514,6 +514,19 @@ fn the_answer_does_not_depend_on_the_order_of_the_disjuncts() {
     );
 }
 
+/// Formulas 900, 1081 and 1892 of seed 0x1380, each changed by the reordering and checked as
+/// [`reordered_formulas_agree`] checks it. They give a variable two upper bounds (900) or two
+/// lower bounds (1081, 1892) where `int_bounds` combines them, for `exact_side` and
+/// `substituted_difference_hulls`; of the 2000 formulas of the seed in `bench::omega` they are
+/// the first to reach these, and 40 formulas of a new seed may not.
+#[test]
+fn formulas_900_1081_and_1892_of_seed_0x1380_do_not_depend_on_the_order_of_their_disjuncts() {
+    for k in [900, 1081, 1892] {
+        let reordered = reordered_formulas_agree(&mut Rng::new(0x1380), k, k + 1);
+        assert_eq!(reordered, 1, "formula {k} is changed by the reordering");
+    }
+}
+
 /// `Σ x[i] >= 0` with `x[i] == x[i+1] + 1`: one long row, each equality substituted into it.
 pub(super) fn tied_sum(n: usize) -> Formula {
     let names: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();

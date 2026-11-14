@@ -249,6 +249,21 @@ fn every_point_returned_holds_with_products_parity_rows_and_disjunctions() {
     assert!(t.shapes.len() >= 3, "{t:?}");
 }
 
+/// Formula 1024 of seed 0x5eed0f9a417e5 (counted from 0), checked as [`points_returned_hold`]
+/// checks it: `x * y == 3 && x >= 2 && y >= -3` under case splits on `x * y >= 2` and on `q0`.
+/// It reaches the substitution, unit-coefficient and equality checks of
+/// `cell_sweep::piecewise_implies_ge`; of the 3000 formulas of the seed in
+/// `bench::product_parity` it is the first to, and 300 formulas of a new seed may not.
+#[test]
+fn the_point_returned_for_formula_1024_of_seed_0x5eed0f9a417e5_holds() {
+    let mut rng = Rng::new(0x0005_eed0_f9a4_17e5);
+    for _ in 0..1024 {
+        case(&mut rng);
+    }
+    let t = points_returned_hold(&mut rng, 1);
+    assert_eq!((t.points, t.empty, t.refused), (1, 0, 0), "{t:?}");
+}
+
 /// What [`points_returned_hold`] counted.
 #[derive(Debug)]
 pub(super) struct PointCounts {

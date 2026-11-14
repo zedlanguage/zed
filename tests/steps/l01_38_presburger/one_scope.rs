@@ -894,6 +894,24 @@ fn each_answer_of_a_random_disjunctive_chain_is_the_answer_of_the_relation_whole
     random_disjunctive_chains_are_answered(&mut rng, 4);
 }
 
+/// The 11th chain of seed 0xd15e, checked as the test above checks its chains: a hole with two
+/// upper bounds on its variable (`extend::holes::hole_of` combining the two).
+/// Of the 80 chains of the seed in `bench::one_scope`, it is the first to reach this; four
+/// chains of a fresh seed may not.
+#[test]
+fn the_11th_disjunctive_chain_of_seed_0xd15e_is_answered_as_the_whole() {
+    let mut rng = zed_tests::instances::Rng::new(0xd15e);
+    for _ in 0..10 {
+        random_disjunctive_chain(&mut rng);
+    }
+    let src = random_disjunctive_chain(&mut rng);
+    assert!(
+        src.contains("p6("),
+        "the 11th chain of seed 0xd15e has a `p6`\n{src}"
+    );
+    answers_with_faces_are_those_without(&src);
+}
+
 /// `count` chains of [`random_disjunctive_chain`]: each answer with faces is that without, and
 /// that of the whole where the whole is decided.
 pub(super) fn random_disjunctive_chains_are_answered(
@@ -2052,6 +2070,25 @@ fn each_answer_through_a_projection_kept_over_pairs_is_the_answer_of_the_relatio
     random_units_read_through_projections(&mut rng, 4);
 }
 
+/// The 11th unit of seed 0x1c4e, checked as [`random_units_read_through_projections`] checks
+/// its units: a chain `g0`..`g3` of guards read through `c1`..`c5`, where each end of a guarded
+/// chain's span is bounded by two guards (`GuardedChain::guard` keeping the tighter). Of the
+/// 80 units of the seed in `bench::one_scope`, it is the first to reach this; four units of a
+/// fresh seed may not.
+#[test]
+fn the_11th_unit_of_congruences_of_seed_0x1c4e_is_answered_as_its_bodies_read() {
+    let mut rng = zed_tests::instances::Rng::new(0x1c4e);
+    for _ in 0..10 {
+        random_congruence_unit(&mut rng);
+    }
+    let src = random_congruence_unit(&mut rng);
+    assert!(
+        src.contains("c5("),
+        "the 11th unit of seed 0x1c4e has a `c5`\n{src}"
+    );
+    answers_are_those_reading_bodies(&src);
+}
+
 /// `count` units of [`random_congruence_unit`]: each answer is the one read with each call
 /// reading its callee's body again, and the one of the whole where both are decided. The 80
 /// of seed 0x1c4e, as first written, are in `bench::one_scope` (5.1 s with the two fixed units
@@ -2943,6 +2980,24 @@ fn each_answer_of_a_random_chain_moving_holes_is_the_answer_of_the_relation_whol
     let (mut rng, _) = zed_tests::instances::Rng::fresh("random chains moving holes");
     let decided = random_hole_chains_decided(&mut rng, 3);
     assert!(decided >= 12, "{decided} answers of the whole");
+}
+
+/// The 12th chain of seed 0x401e5, checked as the test above checks its chains: holes in `q`
+/// and in five links, so that two cell sets of several runs each meet (`CellView::meet` through
+/// `cells_meet`, and `CellWalk::meet` storing a new meet). Of the 40 chains of the seed in
+/// `bench::one_scope`, it is the first to reach these; a few chains of a fresh seed may not.
+#[test]
+fn the_12th_chain_moving_holes_of_seed_0x401e5_is_answered_as_the_whole() {
+    let mut rng = zed_tests::instances::Rng::new(0x401e5);
+    for _ in 0..11 {
+        random_hole_chain(&mut rng);
+    }
+    let src = random_hole_chain(&mut rng);
+    assert!(
+        src.contains("p10("),
+        "the 12th chain of seed 0x401e5 has a `p10`\n{src}"
+    );
+    assert!(answers_with_faces_are_those_without(&src) > 0, "{src}");
 }
 
 /// The answers of the whole decided over `count` chains of [`random_hole_chain`], each checked
@@ -3992,11 +4047,31 @@ fn one_variable_modular_formulas_match_enumeration() {
     // with their counts of refusals and of empty answers, are in `bench::one_scope` (1.5 s at
     // load 25).
     let (mut rng, _) = zed_tests::instances::Rng::fresh("one-variable modular formulas");
-    let counts = modular_formulas_match(&mut rng, 800);
+    let counts = modular_formulas_match(&mut rng, 0, 800);
     assert!(
         counts.sat >= 80 && counts.unsat >= 40 && counts.empty_agreed >= 40,
         "{counts:?}"
     );
+}
+
+/// Formulas 246, 2037 and 2937 of seed 0x70de_c1de, checked as
+/// [`modular_formulas_match`] checks them: several divisions of `x` and its copies by moduli
+/// such as 3, 11, 12 and 16, which reach parts of the search over coprime moduli
+/// (`modular::holds_coprime_boxes`, `first_residue_at`, `solve_coprime_connected`) that the
+/// 5,000 formulas of the seed in `bench::one_scope` reach first at these three; 800 formulas of
+/// a fresh seed may not. The first two have a point. The third, over `x` in 10012..=10049, is
+/// refused on 2026-11-14 (it is one of the 64 refusals the benchmark allows), so only its count
+/// is checked here.
+#[test]
+fn modular_formulas_246_2037_and_2937_of_seed_0x70dec1de_match_enumeration() {
+    for k in [246, 2037, 2937] {
+        let mut rng = zed_tests::instances::Rng::new(0x70de_c1de);
+        let c = modular_formulas_match(&mut rng, k, k + 1);
+        assert_eq!(c.sat + c.unsat + c.refused, 1, "formula {k}: {c:?}");
+        if k != 2937 {
+            assert_eq!((c.sat, c.unsat), (1, 0), "formula {k}: {c:?}");
+        }
+    }
 }
 
 /// What [`modular_formulas_match`] counted: answers with a point and with none, refusals,
@@ -4012,23 +4087,28 @@ pub(super) struct ModularCounts {
     pub(super) empty_unchecked: usize,
 }
 
-/// `count` random one-variable modular formulas of [`modular_case`] with unit equalities
-/// (`x@k = ±x@{k-1} + c`), Euclidean divisions (`x + c == m * q + r && 0 <= r < m`), primes,
+/// Formulas `from..to` of the random one-variable modular formulas of [`modular_case`] (those
+/// before `from` are drawn and not checked, so that one case is checked alone), with unit
+/// equalities (`x@k = ±x@{k-1} + c`), Euclidean divisions (`x + c == m * q + r && 0 <= r < m`), primes,
 /// prime powers and composite moduli, negative, zero-crossing and large positive intervals,
 /// short, long and semi-bounded intervals, negated conjunctions and disjunctive clauses:
 /// `decide` and `satisfiable` agree with point-by-point enumeration, and every witness
 /// satisfies `f`, wherever they answer.
 pub(super) fn modular_formulas_match(
     rng: &mut zed_tests::instances::Rng,
-    count: usize,
+    from: usize,
+    to: usize,
 ) -> ModularCounts {
     use zedc::store::int::Int;
     use zedc::store::presburger::{Model, decide, satisfiable, with_modular_empty_checked};
     let (mut sat_count, mut unsat_count, mut refused) = (0usize, 0usize, 0usize);
     let (mut empty_agreed, mut empty_refused, mut empty_unchecked) = (0usize, 0usize, 0usize);
 
-    for case_idx in 0..count {
+    for case_idx in 0..to {
         let (f, x0, copies, divs, lo, hi, is_bounded) = modular_case(rng, case_idx);
+        if case_idx < from {
+            continue;
+        }
         // Each answer of the one-variable path that a formula asked has no point is asked again
         // of the general path, which must not find one (R3-CLAUDE-6). One the general path
         // refuses is checked by the enumeration below where `x` is bounded, and by nothing

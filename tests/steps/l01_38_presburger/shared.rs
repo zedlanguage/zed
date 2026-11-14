@@ -919,6 +919,22 @@ fn taking_a_shared_part_out_of_a_disjunction_loses_no_precision() {
     assert!(c.same > c.narrower, "seed {seed}: {c:?}");
 }
 
+/// Formula 122 of seed 0x5f5b, `c == 2 && (...)`, a disjunction of four, through
+/// [`factoring_loses_no_precision`]: its projection is the same as written. It gives a variable
+/// two upper bounds where `int_bounds` combines them for `substituted_difference_hulls`; of the
+/// 600 formulas of the seed in `bench::shared` it is the first to reach this, and 200 formulas
+/// of a new seed may not.
+#[test]
+fn formula_122_of_seed_0x5f5b_loses_no_precision_when_its_shared_part_is_taken_out() {
+    let mut rng = Rng::new(0x5F5B);
+    let f = (0..123)
+        .map(|_| random_tiers(&mut rng))
+        .last()
+        .expect("123 formulas");
+    let c = factoring_loses_no_precision([(122, f)]);
+    assert_eq!((c.same, c.narrower, c.answered), (1, 0, 0), "{c:?}");
+}
+
 /// Formula 9 of seed 0x5f5b, `2 c >= -4 && !(...)`, whose projection narrows when the shared
 /// part `2 b >= 2` is taken out of the negated disjunction: the narrower sets hold every value
 /// of a point in the window. The random tests reach this case about once in 200 formulas.
