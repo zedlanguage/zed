@@ -25,11 +25,20 @@ fn first(t: Term) -> Term {
     Term::Match(Shared::new(t), vec![(p, var("x"))])
 }
 
+/// A case: what it is, the term, the world it runs in, and the outcome expected (the value
+/// shown, or text the error contains).
+type Case = (
+    &'static str,
+    Term,
+    fn() -> World,
+    Result<&'static str, &'static str>,
+);
+
 #[test]
 fn the_machine_gives_the_kernels_outcome_on_failures_and_ports() {
     let nope = || lit(Value::atom("nope"));
     let read = || Term::Read("inp".into());
-    let cases: Vec<(&str, Term, fn() -> World, Result<&str, &str>)> = vec![
+    let cases: Vec<Case> = vec![
         (
             "an `if` on an atom, an arm borrowing a string",
             let_(

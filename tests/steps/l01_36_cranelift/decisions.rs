@@ -35,6 +35,15 @@ fn point() -> Term {
     )
 }
 
+/// A case: what it is, the term, the world it runs in, and the outcome expected (the value
+/// shown, or text the error contains).
+type Case = (
+    &'static str,
+    Term,
+    fn() -> World,
+    Result<&'static str, &'static str>,
+);
+
 #[test]
 fn native_code_gives_the_kernels_outcome_on_failures_ports_and_unmatched_values() {
     let nope = || lit(Value::atom("nope"));
@@ -42,7 +51,7 @@ fn native_code_gives_the_kernels_outcome_on_failures_ports_and_unmatched_values(
     let fields = |name: &str, field: &str| {
         Pattern::Fields(name.into(), vec![(field.into(), Pattern::Bind("v".into()))])
     };
-    let cases: Vec<(&str, Term, fn() -> World, Result<&str, &str>)> = vec![
+    let cases: Vec<Case> = vec![
         (
             "an `if` on an atom, an arm borrowing a string",
             let_(
