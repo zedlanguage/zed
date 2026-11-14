@@ -375,6 +375,13 @@ fn a_law_that_names_no_field_decides_for_every_group() {
         ),
         "{text}"
     );
+    // The count is 0, and since the model on one value holds, it is the only trivial model.
+    assert!(
+        text.ends_with(
+            "  models on two values: 0.\n  So the model on one value is the only trivial model.\n"
+        ),
+        "{text}"
+    );
     let mut t = Theory::new("ClosedHolds");
     t.field("f", 1)
         .law("idem", "x", "f(f(x)) == f(x)")
@@ -382,6 +389,41 @@ fn a_law_that_names_no_field_decides_for_every_group() {
     let r = report(&t, Mode::Exhaustive);
     assert!(r.closed_fail.is_empty());
     assert_eq!(expand(&t, &r).len(), 3);
+    assert!(
+        render(&t, &r).ends_with("  models on two values: 3.\n"),
+        "{}",
+        render(&t, &r)
+    );
+}
+
+/// A law that names no field and fails on two values gives the count 0 also when a group is
+/// not listed in full; where the law fails on one value too, the closing sentence about the
+/// model on one value is left out (DESIGN sec:theories, "The report's form").
+#[test]
+fn a_failed_law_that_names_no_field_gives_the_count_0_whatever_the_groups() {
+    let mut t = Theory::new("ClosedDefault");
+    t.field("f", 1)
+        .law("idem", "x", "f(f(x)) == f(x)")
+        .law("allEqual", "a b", "a == b");
+    let r = report(&t, Mode::Default);
+    assert_eq!(r.closed_fail, [1]);
+    assert!(r.groups.iter().any(|g| !matches!(g.end, End::Complete)));
+    let text = render(&t, &r);
+    assert!(
+        text.ends_with(
+            "  models on two values: 0.\n  So the model on one value is the only trivial model.\n"
+        ),
+        "{text}"
+    );
+    let mut t = Theory::new("ClosedBoth");
+    t.field("f", 1)
+        .law("idem", "x", "f(f(x)) == f(x)")
+        .law("apart", "a b", "a != b");
+    let r = report(&t, Mode::Default);
+    assert_eq!(r.closed_fail, [1]);
+    assert_eq!(r.one_value_fails, Some(1));
+    let text = render(&t, &r);
+    assert!(text.ends_with("  models on two values: 0.\n"), "{text}");
 }
 
 /// DESIGN: "`@exhaustive` on an interface lists every model of every group and counts the

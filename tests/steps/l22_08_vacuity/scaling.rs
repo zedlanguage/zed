@@ -664,6 +664,29 @@ fn the_frontier_agrees_with_brute_force() {
     }
 }
 
+/// A batch whose frontier shares classes with an earlier batch's: against the right side's
+/// `h(a, c)` (one class, met twice), the walk splits `k(..)` first and makes the lists for the
+/// classes of `h(a, b)` and `h(b, c)`; the batch for `g(..)` is still worth making for
+/// `h(c, a)` and `h(b, a)` (four choices each, more than the four of `h(a, c)`) and keeps the two
+/// lists already made rather than making them again (`Theory::pair_form`, the `Entry::Occupied`
+/// case of a batch: a counter put there for DOC-trivial-two-values-line counted 2 for each of
+/// these atoms, and 0 over 200000 atoms of `frontier`, whose frontiers hold at most two
+/// classes). The report agrees with brute force on each, with the sides swapped too.
+#[test]
+fn a_batch_keeps_the_lists_an_earlier_batch_made() {
+    let left = "s(k(h(a, b), h(b, c)), g(h(a, b), h(b, c), h(c, a), h(b, a)))";
+    let right = "s(h(a, c), h(a, c))";
+    for body in [format!("{left} == {right}"), format!("{right} == {left}")] {
+        let mut t = Theory::new("Shared");
+        t.field("s", 2)
+            .field("k", 2)
+            .field("g", 4)
+            .field("h", 2)
+            .law("l", "a b c", &body);
+        super::brute::check(&t);
+    }
+}
+
 /// One random atom of [`the_frontier_agrees_with_brute_force`].
 fn frontier(rng: &mut Rng) -> Theory {
     fn leaf(rng: &mut Rng) -> String {

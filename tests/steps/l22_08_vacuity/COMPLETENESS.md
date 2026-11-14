@@ -21,7 +21,7 @@ reason.
 | The count of models printed as a product over groups | `cases::the_count_is_printed_as_a_product` | |
 | A group with no model, one model, several models | `cases::each_group_prints_no_model_one_model_or_several`, `hardness::nae_fano_has_no_model` | |
 | A law that names no field and fails: no model for any group, its render line | `cases::a_law_that_names_no_field_decides_for_every_group` | |
-| A closed law fails: no "models on two values" line is printed | | DESIGN does not say whether this line is printed then; no test pins either form. |
+| A closed law fails: "models on two values: 0." is printed whatever the groups hold, decided or not, then the sentence about the model on one value where it holds (DESIGN sec:theories, "The report's form") | `cases::a_law_that_names_no_field_decides_for_every_group`, `cases::a_failed_law_that_names_no_field_gives_the_count_0_whatever_the_groups` | DOC-trivial-two-values-line: the line was left out before; DESIGN now says it is printed. |
 | Exhaustive mode: the count of choices and of wrong turns | `cases::the_exhaustive_report_counts_its_wrong_turns`, `hardness::dead_ends_grow_exponentially_on_pigeonholes`, `hardness::dead_ends_on_random_3_cnf` | |
 | Default mode stops at the first choice that leads to no model, after it found a model: "not decided", the chain of laws, the menu (DESIGN sec:theories item 3) | `stop::a_stop_after_one_model_prints_the_group_as_not_decided` | Fixed by FAIL-trivial-stop-after-model: the report printed "at least 1 model(s), for example" with the model. |
 | Default mode stops before any model: "not decided", the chain, the menu | `hardness::nae_fano_has_no_model` (the report DESIGN prints for Fano) | |
@@ -36,4 +36,4 @@ reason.
 | `trivial.rs` lines 504, 761, 3272 (`unreachable!`) | | Internal consistency checks; no theory reaches them. |
 | `trivial.rs` line 1676, a field node whose every child is dead | | Inferred not reachable: every field node has the leaves `#a` and `#b`, which are never dead. |
 | `trivial.rs` line 2057, a cube of `CubeSet::Listed` | | Dead code: `Listed` is only built empty (lines 2598, 2609, 2641). |
-| `trivial.rs` line 1243, a second class of one node whose joint key is already present | | Open: not reached by any theory tried (the random theories of `brute.rs` included); inferred to need two classes with the same list of children. |
+| `trivial.rs` `pair_form`, a batch that finds a pair of classes whose list is already made (`Entry::Occupied`; line 1243 as of 4592bc88a) | `scaling::a_batch_keeps_the_lists_an_earlier_batch_made` | Reached when an earlier batch of another node made some of the lists and the rest still cost more than the other side's live choices, so the node's frontier needs three or more classes; the random atoms of `frontier` have at most two and never reach it (0 in 200000). |

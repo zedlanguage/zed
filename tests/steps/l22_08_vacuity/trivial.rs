@@ -3661,8 +3661,11 @@ pub fn render(t: &Theory, r: &Report) -> String {
         );
     }
     // The count of models on two values, as a product of factors, when every list is complete.
+    // A law that names no field and fails on two values makes the count 0 whatever the groups
+    // hold, decided or not (DESIGN sec:theories, "The report's form").
     let mut factors: BTreeMap<u64, u64> = BTreeMap::new();
-    let mut complete = r.closed_fail.is_empty() && r.refused.is_empty();
+    let closed_fails = !r.closed_fail.is_empty();
+    let mut complete = r.refused.is_empty();
     for g in &r.groups {
         let law_names: Vec<&str> = g.laws.iter().map(|&l| t.laws[l].name.as_str()).collect();
         let s = if g.laws.len() == 1 { "" } else { "s" };
@@ -3765,8 +3768,8 @@ pub fn render(t: &Theory, r: &Report) -> String {
                 .or_default() += 1;
         }
     }
-    if complete {
-        let count = if factors.contains_key(&0) {
+    if complete || closed_fails {
+        let count = if closed_fails || factors.contains_key(&0) {
             "0".to_string()
         } else {
             let parts: Vec<String> = factors
