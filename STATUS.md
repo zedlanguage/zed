@@ -2355,15 +2355,17 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | CHECK-arm-test-if-and-operand-calls | impl attempt 1 | 2026-11-14 13:27 | started in wt/arm-reads at c95bec442; load 38 |
 | CHECK-spine-tests-per-body | impl attempt 1 | 2026-11-14 13:27 | started in wt/arm-reads at c95bec442; load 38 |
+| FAIL-check-finished-names-clash | running | 2026-11-14 13:54 |  |
 | FAIL-linked-case-group-wake | impl attempt 1 | 2026-11-14 14:17 | start, worktree /home/luke/Work/wt/lcgw; load 33.60 |
 | FAIL-pendants-growth-scaled-seed | impl attempt 1 | 2026-11-14 11:58 | fix-growth started on d5d733341 |
 | FAIL-print-function-in-union | impl attempt 1 | 2026-11-14 12:05 | started in wt/fix-need-print, load 35.50 |
 | FAIL-returned-generic-need-fit | impl attempt 1 | 2026-11-14 11:42 | started in wt/fix-need-print, load 35.50 |
 | FAIL-rewrite-growth-both | impl attempt 1 | 2026-11-14 12:03 | fix-growth started on d5d733341 |
+| FAIL-types-sub-level-variables | running | 2026-11-14 13:54 |  |
 | FAIL-types-three-variable-shapes | impl attempt 1 | 2026-11-14 12:16 | started in wt/fix-3var |
 | KERNEL-near-limit-benches | impl attempt 1 | 2026-11-14 14:05 | started; worktree /home/luke/Work/wt/kernel-near-limit; load 32.29 38.00 40.67 |
 | PERF-part-name-nested | impl attempt 1 | 2026-11-14 14:01 | started; worktree /home/luke/Work/wt/perf-part-name-nested |
-| PRESBURGER-or-if-disjuncts-refusal | running |  |  |
+| PRESBURGER-or-if-disjuncts-refusal | impl attempt 1 | 2026-11-14 14:24 | started; worktree pres-orif-disj at 49c35d07a |
 | PRES-switchover-not-race | impl attempt 1 | 2026-11-14 13:48 | started; worktree /home/luke/Work/wt/pres-switchover on d7c2f809c; load 42.36 |
 | TEST-presburger-unreached-paths | impl attempt 3 | 2026-11-14 10:07 | started part 3 in wt/pres-unreached-3; load 60.04 |
 | TEST-renamed-relation-same-set | running | 2026-11-14 14:17 |  |
