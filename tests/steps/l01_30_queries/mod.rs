@@ -3,6 +3,7 @@
 //! rows whose definitions changed, and every answer equals a fresh database's.
 
 mod bench;
+mod completeness;
 mod keys;
 mod report;
 mod reuse;
