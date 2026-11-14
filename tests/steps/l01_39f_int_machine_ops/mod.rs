@@ -7,6 +7,7 @@
 //! multiple of 8.
 
 mod bench;
+mod completeness;
 mod errors;
 mod native;
 mod reference;
