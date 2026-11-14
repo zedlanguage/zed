@@ -6972,6 +6972,7 @@ impl<'a> Ck<'_, 'a> {
     /// - another call is kept, read as a test, on the test's spine: an operand of `!`, `&&`,
     ///   `||`, a comparison, `+`, `-`, `*`, the left operand of `div` or `mod`, or an argument
     ///   of a call kept, all the way from the root; elsewhere it is a name of its own.
+    ///
     /// Built children first on an explicit stack, once for `e` and `reading`.
     ///
     /// Complexity tradeoff: naive version (19514ef8c), every `if` and call kept in every term.
