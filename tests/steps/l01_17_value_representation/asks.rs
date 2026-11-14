@@ -11,7 +11,6 @@ use num_traits::One;
 use zed_kernel::num::{TooLarge, bytes_of};
 use zed_kernel::term::build::{lit, prim};
 use zed_kernel::{KernelError, Prim, Rat, Value, eval};
-use zed_tests::scaling::check_order;
 
 use super::memory_check::{in_child_at, lower_limit_by, unread, unread_bits};
 
@@ -265,21 +264,21 @@ fn literal_errors(texts: &[String], margin: u64, check_short: bool) -> Vec<Strin
     out
 }
 
-/// A decimal literal of `2^22` nines asks six bytes a digit, 24 MiB, and a hexadecimal one
-/// of `2^22` `f`s three, 12 MiB: under a limit 2 MiB above what the child holds, the
+/// A decimal literal of `2^20` nines asks six bytes a digit, 6 MiB, and a hexadecimal one
+/// of `2^20` `f`s three, 3 MiB: under a limit 512 KiB above what the child holds, the
 /// elaborator reports each, where it copied the digits and read them with no ask and aborted.
 #[test]
 fn a_long_integer_literal_is_refused_when_memory_is_short() {
     if !in_child("a_long_integer_literal_is_refused_when_memory_is_short") {
         return;
     }
-    let n = 1usize << 22;
+    let n = 1usize << 20;
     let texts = [
         format!("x = {};\n", "9".repeat(n)),
         format!("y = 0x{};\n", "f".repeat(n)),
     ];
     assert_eq!(
-        literal_errors(&texts, 2 << 20, false),
+        literal_errors(&texts, 512 << 10, false),
         [unread(n, 6 * n), unread_bits(BigUint::from(4 * n), 3 * n)]
     );
 }
@@ -300,40 +299,17 @@ fn checking_a_long_literal_is_refused_when_memory_is_short() {
     );
 }
 
-/// Checking a float literal of `n` digits reads them where they are and copies its text once,
-/// in memory asked first: O(n), at `n = 2^16` and `8n`.
-#[test]
-fn checking_a_long_float_literal_costs_order_n() {
-    let unit = |n: usize| {
-        let text = format!("x = 0.{}f64;\n", "9".repeat(n));
-        let tokens = zedc::lex::lex_fence(&text).expect("the text lexes");
-        let tree = zedc::parse::parse(&text, &tokens, "Unit", zedc::parse::TOP).expect("it parses");
-        let stmts = zedc::ast::unit(&text, &tokens, &tree).expect("it is a unit");
-        let res = zedc::resolve::resolve(&stmts).expect("it resolves");
-        (n, stmts, res)
-    };
-    let n = 1 << 16;
-    let units = [unit(n), unit(8 * n)];
-    check_order("checking a float literal of n digits", n, 1, |m| {
-        let (_, stmts, res) = units
-            .iter()
-            .find(|(k, _, _)| *k == m)
-            .expect("a size built");
-        assert!(zedc::check::walk::check(stmts, res).errors.is_empty());
-    });
-}
-
 /// Item RAT-asks-rest: `x = 9_9_..._9;` of `n` nines with a `_` between each two. The lexer
 /// takes out the `_` into memory it asks first, a byte for each byte of the digits as written:
-/// at `n = 2^24`, 32 MiB, refused under a limit 8 MiB above what the child holds, and reported
+/// at `n = 2^22`, 8 MiB, refused under a limit 2 MiB above what the child holds, and reported
 /// as an unread literal, where `str::replace` copied them with no ask and aborted.
 #[test]
 fn a_long_literal_with_separators_is_refused_by_the_lexer_when_memory_is_short() {
     if !in_child("a_long_literal_with_separators_is_refused_by_the_lexer_when_memory_is_short") {
         return;
     }
-    let all = [1usize << 24, 1 << 27].map(|n| (n, format!("x = 9{};\n", "_9".repeat(n - 1))));
-    lower_limit_by(SHORT);
+    let all = [1usize << 22, 1 << 25].map(|n| (n, format!("x = 9{};\n", "_9".repeat(n - 1))));
+    lower_limit_by(SHORT / 4);
     for (n, text) in &all {
         match zedc::lex::lex_fence(text) {
             Err(e) => assert_eq!(e.to_string(), unread(*n, 2 * n - 1), "n = {n}"),
@@ -343,19 +319,19 @@ fn a_long_literal_with_separators_is_refused_by_the_lexer_when_memory_is_short()
 }
 
 /// Item RAT-asks-rest: the syntax tree shares the digits the lexer read, so building it for a
-/// literal of `n` digits, `2^24` and `2^27`, is answered under a limit 8 MiB above what the
+/// literal of `n` digits, `2^22` and `2^25`, is answered under a limit 2 MiB above what the
 /// child holds once the text is lexed, where it used to copy them with no ask and abort.
 #[test]
 fn the_syntax_tree_shares_a_literals_digits() {
     if !in_child("the_syntax_tree_shares_a_literals_digits") {
         return;
     }
-    let all = [1usize << 24, 1 << 27].map(|n| {
+    let all = [1usize << 22, 1 << 25].map(|n| {
         let text = format!("x = {};\n", "9".repeat(n));
         let tokens = zedc::lex::lex_fence(&text).expect("the text lexes");
         (n, text, tokens)
     });
-    lower_limit_by(SHORT);
+    lower_limit_by(SHORT / 4);
     for (n, text, tokens) in &all {
         let tree = zedc::parse::parse(text, tokens, "Unit", zedc::parse::TOP).expect("it parses");
         let stmts = zedc::ast::unit(text, tokens, &tree).expect("it is a unit");
@@ -365,7 +341,7 @@ fn the_syntax_tree_shares_a_literals_digits() {
 
 /// The string of `n` nines joined from two halves; `int`, `rat` and `f64` read it in one
 /// piece, and the copy of the halves into one asks a byte for each, `n` bytes.
-fn joined_nines(n: usize) -> Value {
+pub(crate) fn joined_nines(n: usize) -> Value {
     let half = zed_kernel::Text::from("9".repeat(n / 2));
     Value::Str(zed_kernel::Text::join(&half, &half).expect("a length that fits"))
 }
@@ -442,19 +418,20 @@ fn wide(v: Value) -> zedc::canon::Def {
 }
 
 /// Item RAT-asks-rest, revised by item ENGINE-one: a constant kept with prime powers, as
-/// [`three_primes`], is addressed by its powers with nothing built, so under a limit 8 MiB
+/// [`three_primes`], is addressed by its powers with nothing built, so under a limit 2 MiB
 /// above what the child holds the ZIR lowering, the kernel's address and the program's address
-/// all answer for `k = 2^22` and `2^25`, where each once asked a byte for each of the `9k + 2`
+/// all answer for `k = 2^20` and `2^23`, where each once asked a byte for each of the `9k + 2`
 /// bits of its two sides built and was refused. The same numbers written out, built before the
 /// limit, are written by their limbs, which reserve `8 (w + 2)` bytes for the `w` words of the
-/// numerator and the denominator 1: at `k = 2^22`, 4 MB, which the limit gives, and at
-/// `k = 2^25`, 33 MB, refused with that count.
+/// numerator and the denominator 1: at `k = 2^20`, 1 MB, which the limit gives, and at
+/// `k = 2^23`, 8 MB, refused with that count. The sizes and the limit are a quarter of those
+/// this test had (2^22, 2^25 and 8 MiB, 4.2 s), so each side keeps its ratio to the limit.
 #[test]
 fn addressing_a_wide_constant_is_refused_when_memory_is_short() {
     if !in_child("addressing_a_wide_constant_is_refused_when_memory_is_short") {
         return;
     }
-    let all = [1u64 << 22, 1 << 25].map(|k| {
+    let all = [1u64 << 20, 1 << 23].map(|k| {
         let kept = Value::integer(three_primes(k));
         let built = three_primes(k)
             .to_integer()
@@ -473,13 +450,13 @@ fn addressing_a_wide_constant_is_refused_when_memory_is_short() {
         inputs: Vec::new(),
         outputs: vec!["stdout".into()],
     };
-    lower_limit_by(SHORT);
+    lower_limit_by(SHORT / 4);
     for (k, words, [kept_t, built_t], [kept_d, built_d]) in &all {
         assert!(zedc::zir::lower::lower(kept_t).is_ok(), "k = {k}");
         assert!(zedc::canon::address(kept_d, &none).is_ok(), "k = {k}");
         assert!(ports.address(kept_t.clone()).is_ok(), "k = {k}");
         let bytes = 8 * (words + 2);
-        if *k == 1 << 22 {
+        if *k == 1 << 20 {
             assert!(zedc::zir::lower::lower(built_t).is_ok(), "k = {k}");
             assert!(zedc::canon::address(built_d, &none).is_ok(), "k = {k}");
             assert!(ports.address(built_t.clone()).is_ok(), "k = {k}");
@@ -517,7 +494,7 @@ fn addressing_a_wide_constant_is_refused_when_memory_is_short() {
 
 /// `n = 1; x = n + 0.99…9;` with `n` nines after the point: a decimal literal where an int is
 /// expected.
-fn float_at_int(n: usize) -> String {
+pub(crate) fn float_at_int(n: usize) -> String {
     format!("n = 1;\nx = n + 0.{};\n", "9".repeat(n))
 }
 
@@ -621,40 +598,16 @@ fn the_rest_of_k30_is_exact_when_its_ask_is_given() {
     );
 }
 
-/// The message for a decimal literal of `n` digits where an int is expected costs O(n): at
-/// `n = 2^16` and `8n`.
+/// What the benchmarks of `bench::asks` check at each size, at 100 digits: a float literal is
+/// checked with no error, a decimal literal where an int is expected gives one error, and
+/// `f64` of a joined string of nines reads it.
 #[test]
-fn the_message_for_a_long_literal_costs_order_n() {
-    let unit = |n: usize| {
-        let text = float_at_int(n);
-        let tokens = zedc::lex::lex_fence(&text).expect("the text lexes");
-        let tree = zedc::parse::parse(&text, &tokens, "Unit", zedc::parse::TOP).expect("it parses");
-        let stmts = zedc::ast::unit(&text, &tokens, &tree).expect("it is a unit");
-        let res = zedc::resolve::resolve(&stmts).expect("it resolves");
-        (n, stmts, res)
-    };
-    let n = 1 << 16;
-    let units = [unit(n), unit(8 * n)];
-    check_order("the message for a decimal literal of n digits", n, 1, |m| {
-        let (_, stmts, res) = units
-            .iter()
-            .find(|(k, _, _)| *k == m)
-            .expect("a size built");
-        assert_eq!(zedc::check::walk::check(stmts, res).errors.len(), 1);
-    });
-}
-
-/// Copying a string of `n` nines joined from two halves into one piece costs O(n): at
-/// `n = 2^16` and `8n`, through `f64`, whose reading of the text is one pass. `int` and `rat`
-/// copy it the same way, but their reading of the digits is O(n^1.47) (COMPLEXITY.md K41,
-/// measured by `l01_18_scalar_interpreter::scaling`), so they would measure that and not the
-/// copy.
-#[test]
-fn reading_a_joined_string_costs_order_n() {
-    let n = 1 << 16;
-    let all = [(n, joined_nines(n)), (8 * n, joined_nines(8 * n))];
-    check_order("f64 of a joined string of n digits", n, 1, |m| {
-        let (_, s) = all.iter().find(|(k, _)| *k == m).expect("a size built");
-        assert!(eval(&prim(Prim::CastF64, vec![lit(s.clone())])).is_ok());
-    });
+fn the_asks_benchmarks_give_their_results_at_a_small_size() {
+    let (stmts, res) = zed_tests::deep::resolved(&format!("x = 0.{}f64;\n", "9".repeat(100)));
+    assert!(zedc::check::walk::check(&stmts, &res).errors.is_empty());
+    let (stmts, res) = zed_tests::deep::resolved(&float_at_int(100));
+    let errors = zedc::check::walk::check(&stmts, &res).errors;
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    let x = eval(&prim(Prim::CastF64, vec![lit(joined_nines(100))])).expect("read");
+    assert_eq!(x, Value::float(1e100));
 }

@@ -2,15 +2,13 @@
 //! name and field names, a string's padded display, and a string literal's text copy a joined
 //! string only into memory asked first, or not at all. Each used to write the join out with
 //! `Text::flat`, or copy the literal's text, with no ask, so where the free memory was short
-//! the process aborted. Each refusal is checked in a child under a limit 8 MiB above what it
-//! holds, at 16 MiB and 128 MiB; the same work is exact when its memory is given.
+//! the process aborted. Each refusal is checked in a child under a limit 2 MiB above what it
+//! holds, at 4 MiB and 32 MiB; the same work is exact when its memory is given.
 
-use std::collections::HashMap;
 use std::fmt::{self, Write as _};
 
 use zed_kernel::term::build::{lit, prim};
 use zed_kernel::{KernelError, Prim, Text, Value, eval};
-use zed_tests::scaling::check_order;
 
 use super::memory_check::{in_child_at, lower_limit_by};
 
@@ -19,17 +17,19 @@ fn in_child(name: &str) -> bool {
 }
 
 /// The limit above what the child holds once its operands are built.
-const SHORT: u64 = 8 << 20;
+const SHORT: u64 = 2 << 20;
 
-/// The sizes of the refusals, 16 MiB and 128 MiB.
-const SIZES: [usize; 2] = [1 << 24, 1 << 27];
+/// The sizes of the refusals, 4 MiB and 32 MiB: each at least twice [`SHORT`], so a copy
+/// not asked for first would abort the child. They were 16 MiB and 128 MiB above a limit of
+/// 8 MiB, and the copies of the larger took 7 s in `the_copies_of_a_joined_string_are_exact_when_memory_is_given`.
+const SIZES: [usize; 2] = [1 << 22, 1 << 25];
 
 fn text(s: &str) -> Text {
     Text::from(s)
 }
 
 /// The join of `parts`, left to right.
-fn joined(parts: &[&str]) -> Text {
+pub(crate) fn joined(parts: &[&str]) -> Text {
     parts
         .iter()
         .map(|p| text(p))
@@ -38,17 +38,17 @@ fn joined(parts: &[&str]) -> Text {
 }
 
 /// `n` copies of `c`, joined from two halves.
-fn halves(c: char, n: usize) -> Text {
+pub(crate) fn halves(c: char, n: usize) -> Text {
     let half = text(&c.to_string().repeat(n / 2));
     Text::join(&half, &half).expect("a length that fits")
 }
 
-fn word(p: Prim, s: Text) -> Result<Value, KernelError> {
+pub(crate) fn word(p: Prim, s: Text) -> Result<Value, KernelError> {
     eval(&prim(p, vec![lit(Value::Str(s))]))
 }
 
 /// `#name(..)` with `args` by position, or by the field names `names` when there are any.
-fn atom(name: Text, names: Vec<Text>, args: Vec<Value>) -> Result<Value, KernelError> {
+pub(crate) fn atom(name: Text, names: Vec<Text>, args: Vec<Value>) -> Result<Value, KernelError> {
     let names = Value::tuple(names.into_iter().map(Value::Str).collect());
     let mut all = vec![lit(Value::Str(name)), lit(names)];
     all.extend(args.into_iter().map(lit));
@@ -240,7 +240,8 @@ fn the_copies_of_a_joined_string_are_exact_when_memory_is_given() {
     if !in_child("the_copies_of_a_joined_string_are_exact_when_memory_is_given") {
         return;
     }
-    let n = SIZES[1];
+    // The smaller size: at 32 MiB the four copies took 2.4 s.
+    let n = SIZES[0];
     let (a, big_a) = (halves('a', n), halves('A', n));
     let a_flat = "a".repeat(n / 2);
     let padded = joined(&[" ", &a_flat, &a_flat, " "]);
@@ -280,7 +281,7 @@ fn the_copies_of_a_joined_string_are_exact_when_memory_is_given() {
 
 /// A writer that counts what it is given and keeps none of it.
 #[derive(Default)]
-struct Count(usize);
+pub(crate) struct Count(pub(crate) usize);
 
 impl fmt::Write for Count {
     fn write_str(&mut self, s: &str) -> fmt::Result {
@@ -328,35 +329,4 @@ fn the_syntax_tree_shares_a_string_literals_text() {
         let stmts = zedc::ast::unit(text, tokens, &tree).expect("it is a unit");
         assert_eq!(stmts.len(), 1, "n = {n}");
     }
-}
-
-/// The work of `upper`, `lower`, `trim`, an atom's name and the display of a joined string with
-/// a width is linear in its bytes.
-#[test]
-fn the_copies_of_a_joined_string_scale() {
-    let (n, sizes) = (256usize << 10, [256usize << 10, 2 << 20]);
-    let inputs: HashMap<usize, (Text, Text, Text)> = sizes
-        .into_iter()
-        .map(|b| {
-            let a = "a".repeat(b / 2);
-            (
-                b,
-                (halves('a', b), halves('A', b), joined(&[" ", &a, &a, " "])),
-            )
-        })
-        .collect();
-    check_order(
-        "upper, lower, trim, an atom name and a display with a width of a joined string, by bytes",
-        n,
-        1,
-        |b| {
-            let (a, big_a, padded) = &inputs[&b];
-            word(Prim::Upper, a.clone()).expect("upper");
-            word(Prim::Lower, big_a.clone()).expect("lower");
-            word(Prim::Trim, padded.clone()).expect("trim");
-            atom(a.clone(), vec![], vec![]).expect("an atom");
-            let mut out = Count::default();
-            write!(out, "{a:>20}").expect("the writer takes it");
-        },
-    );
 }

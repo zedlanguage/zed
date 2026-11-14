@@ -14,7 +14,6 @@ use num_traits::{Euclid, One, Zero};
 use zed_kernel::term::build::{lit, prim};
 use zed_kernel::{KernelError, Prim, Rat, Term, Value, eval};
 use zed_tests::kernel::{bin, sub};
-use zed_tests::scaling::check_order;
 
 use super::memory_check::{WIDE, in_child_at, lower_limit, lower_limit_by};
 
@@ -23,7 +22,7 @@ fn in_child(name: &str) -> bool {
 }
 
 /// `2^s + 1`, built.
-fn above(s: u64) -> BigInt {
+pub(crate) fn above(s: u64) -> BigInt {
     (BigInt::one() << s) + 1u32
 }
 
@@ -31,7 +30,7 @@ fn int(n: impl Into<BigInt>) -> Rat {
     Rat::int(n.into())
 }
 
-fn num(n: impl Into<BigInt>) -> Term {
+pub(crate) fn num(n: impl Into<BigInt>) -> Term {
     lit(Value::int(n.into()))
 }
 
@@ -174,6 +173,13 @@ fn dividing_a_wide_number_is_refused_when_memory_is_short() {
     too_large(&kept_by_word, "div");
 }
 
+/// The width, in bits, of the dividend of
+/// `a_wide_number_modulo_a_small_one_answers_when_memory_is_short`: 2 MiB, under a margin of
+/// half that, so a copy of it is refused. With [`WIDE`], 2^30 bits, its nine passes took 15 s;
+/// they take a sixty-fourth of it here. As for `WIDE`, 2^24 is a multiple of 128, and of 3
+/// plus 1, so the residues below are those at `WIDE`.
+const NARROW: u64 = 1 << 24;
+
 /// The day of the week, the check digit and the residues of a wide number, `wide mod m`, read
 /// it where it is held: each answers under a limit that refuses any copy of it, for a divisor
 /// of one word, of two, of three, negative, and for a negative or kept-power dividend.
@@ -182,10 +188,10 @@ fn a_wide_number_modulo_a_small_one_answers_when_memory_is_short() {
     if !in_child("a_wide_number_modulo_a_small_one_answers_when_memory_is_short") {
         return;
     }
-    let wide = || num(above(WIDE));
-    let minus_wide = num(-above(WIDE));
+    let wide = || num(above(NARROW));
+    let minus_wide = num(-above(NARROW));
     let kept = lit(Value::integer(
-        Rat::int(above(WIDE)).mul(&two_to(5)).unwrap(),
+        Rat::int(above(NARROW)).mul(&two_to(5)).unwrap(),
     ));
     let mersenne = (1u64 << 61) - 1;
     // `2^3 = 1 (mod 7)`, `2^61 = 1 (mod 2^61 - 1)` and `2^64 = -1 (mod 2^64 + 1)`, and `n` is a multiple of 128.
@@ -196,14 +202,14 @@ fn a_wide_number_modulo_a_small_one_answers_when_memory_is_short() {
         (bin(Prim::Mod, wide(), num(7)), BigInt::from(3)),
         (
             bin(Prim::Mod, wide(), num(mersenne)),
-            BigInt::from((1u64 << (WIDE % 61)) + 1),
+            BigInt::from((1u64 << (NARROW % 61)) + 1),
         ),
         (bin(Prim::Mod, wide(), num(above(64))), BigInt::from(2)),
         (bin(Prim::Mod, wide(), num(above(128))), BigInt::from(2)),
         (bin(Prim::Mod, kept.clone(), num(3)), BigInt::from(1)),
         (bin(Prim::Mod, kept, num(above(64))), BigInt::from(64)),
     ];
-    lower_limit();
+    lower_limit_by(NARROW / 16);
     for (i, (t, want)) in cases.iter().enumerate() {
         let got = eval(t);
         assert!(
@@ -562,48 +568,36 @@ fn rational_differences_agree_with_the_cross_product() {
     );
 }
 
-/// `wide mod 3`, `wide mod (2^128 + 1)`, `1 - wide` and `wide div 3` at `n` and `8n` bits: one
-/// pass over the digits each, O(n), with the operands built before timing.
+/// What the benchmarks of `bench::in_place` check at each size, exactly at `2^(2^14) + 1`
+/// against num-bigint's answers: `wide mod 3`, `wide mod (2^128 + 1)`, `1 - wide`, `wide div 3`,
+/// and `wide mod` and `div (2^8192 + 1)`.
 #[test]
-fn wide_differences_quotients_and_remainders_cost_order_n() {
-    let n = 1 << 18;
-    let inputs: Vec<(usize, Term, Term, Term, Term, Term, Term)> = [n, 8 * n]
-        .into_iter()
-        .map(|m| {
-            let w = || num(above(m as u64));
-            (
-                m,
-                bin(Prim::Mod, w(), num(3)),
-                bin(Prim::Mod, w(), num(above(128))),
-                sub(num(1), w()),
-                bin(Prim::IntDiv, w(), num(3)),
-                bin(Prim::Mod, w(), num(above(8192))),
-                bin(Prim::IntDiv, w(), num(above(8192))),
-            )
-        })
-        .collect();
-    let at = |m: usize| {
-        inputs
-            .iter()
-            .find(|(k, ..)| *k == m)
-            .expect("each size was built")
-    };
-    check_order("2^n + 1 mod 3", n, 1, |m| {
-        assert_eq!(eval(&at(m).1).unwrap(), Value::Int(2));
-    });
-    check_order("2^n + 1 mod 2^128 + 1", n, 1, |m| {
-        assert!(matches!(eval(&at(m).2).unwrap(), Value::Int(_)));
-    });
-    check_order("1 - (2^n + 1)", n, 1, |m| {
-        assert!(matches!(eval(&at(m).3).unwrap(), Value::Big(_)));
-    });
-    check_order("2^n + 1 div 3", n, 1, |m| {
-        assert!(matches!(eval(&at(m).4).unwrap(), Value::Big(_)));
-    });
-    check_order("2^n + 1 mod 2^8192 + 1", n, 1, |m| {
-        assert!(eval(&at(m).5).is_ok());
-    });
-    check_order("2^n + 1 div 2^8192 + 1", n, 1, |m| {
-        assert!(matches!(eval(&at(m).6).unwrap(), Value::Big(_)));
-    });
+fn wide_differences_quotients_and_remainders_are_exact() {
+    let s = 1u64 << 14;
+    let w = || num(above(s));
+    let cases = [
+        (bin(Prim::Mod, w(), num(3)), above(s) % 3u32),
+        (
+            bin(Prim::Mod, w(), num(above(128))),
+            above(s).rem_euclid(&above(128)),
+        ),
+        (sub(num(1), w()), BigInt::one() - above(s)),
+        (bin(Prim::IntDiv, w(), num(3)), above(s) / 3u32),
+        (
+            bin(Prim::Mod, w(), num(above(8192))),
+            above(s).rem_euclid(&above(8192)),
+        ),
+        (
+            bin(Prim::IntDiv, w(), num(above(8192))),
+            above(s).div_euclid(&above(8192)),
+        ),
+    ];
+    for (i, (t, want)) in cases.into_iter().enumerate() {
+        let got = eval(&t);
+        assert!(
+            matches!(&got, Ok(v) if *v == Value::int(want)),
+            "case {i}: {}",
+            outcome(&got)
+        );
+    }
 }

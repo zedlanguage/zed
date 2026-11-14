@@ -9,16 +9,15 @@ use num_traits::One;
 use zed_kernel::term::build::lit;
 use zed_kernel::{KernelError, Prim, Rat, Term, Value, eval};
 use zed_tests::kernel::bin;
-use zed_tests::scaling::check_order;
 
-use super::memory_check::{in_child_at, lower_limit, lower_limit_by};
+use super::memory_check::{in_child_at, lower_limit_by};
 
 fn in_child(name: &str) -> bool {
     in_child_at(module_path!(), name)
 }
 
 /// `2^s + 1`, built.
-fn above(s: u64) -> BigInt {
+pub(crate) fn above(s: u64) -> BigInt {
     (BigInt::one() << s) + 1u32
 }
 
@@ -95,20 +94,21 @@ fn cases(s: u64) -> Vec<(Term, &'static str, BigUint)> {
     ]
 }
 
-/// Each product and quotient of [`cases`] at widths of `2^27` and `2^30` bits, 16 and 128 MiB,
-/// under a limit 64 MiB above what the child holds: each asks for more than that and is
+/// Each product and quotient of [`cases`] at widths of `2^24` and `2^27` bits, 2 and 16 MiB,
+/// under a limit 8 MiB above what the child holds: each asks for more than that and is
 /// refused, at both widths, where an unchecked product built its operands' width again and
-/// aborted the child.
+/// aborted the child. The widths and the limit are an eighth of those this test had (2^27,
+/// 2^30 and 64 MiB, 0.6 s), so each ask keeps its ratio to the limit, 4 or more.
 #[test]
 fn a_product_or_quotient_of_wide_numbers_is_refused_when_memory_is_short() {
     if !in_child("a_product_or_quotient_of_wide_numbers_is_refused_when_memory_is_short") {
         return;
     }
-    let all: Vec<_> = [1u64 << 27, 1 << 30]
+    let all: Vec<_> = [1u64 << 24, 1 << 27]
         .into_iter()
         .flat_map(|s| cases(s).into_iter().map(move |c| (s, c)))
         .collect();
-    lower_limit();
+    lower_limit_by(8 << 20);
     for (s, (t, op, bits)) in &all {
         assert_eq!(refused(t), (*op, bits.clone()), "{op} at 2^{}", s.ilog2());
     }
@@ -148,35 +148,22 @@ fn a_product_or_quotient_of_wide_numbers_is_exact_when_its_ask_is_given() {
     }
 }
 
-/// `(2^n + 1) * 3`, `(2^n + 1)/3 * 1/3` and `(2^n + 1) / 3` at n and 8n bits: a product or
-/// quotient by a word asks for its memory and builds the result in O(n), the gcd of the
-/// rationals by one division by the word.
+/// What the benchmark of `bench::products` checks at each size, exactly at `2^(2^14) + 1`:
+/// `(2^n + 1) * 3`, `(2^n + 1)/3 * 1/3` and `(2^n + 1) / 3`.
 #[test]
-fn a_product_or_quotient_by_a_word_costs_order_n() {
-    let n = 1usize << 20;
-    let inputs: Vec<(usize, Rat, Rat)> = [n, 8 * n]
-        .into_iter()
-        .map(|m| {
-            let a = above(m as u64);
-            let third = Rat::new(a.clone(), BigInt::from(3)).expect("3 is not zero");
-            (m, Rat::int(a), third)
-        })
-        .collect();
+fn a_product_or_quotient_by_a_word_is_exact() {
+    let a = above(1 << 14);
+    let third = Rat::new(a.clone(), BigInt::from(3)).expect("3 is not zero");
     let three = Rat::int(BigInt::from(3));
     let a_third = Rat::new(BigInt::one(), BigInt::from(3)).expect("3 is not zero");
-    check_order(
-        "(2^n + 1) * 3, (2^n + 1)/3 * 1/3 and (2^n + 1) / 3",
-        n,
-        1,
-        |m| {
-            let (_, wide, third) = inputs
-                .iter()
-                .find(|(k, _, _)| *k == m)
-                .expect("each size was built");
-            assert!(!wide.mul(&three).expect("memory is given").is_zero());
-            assert!(!third.mul(&a_third).expect("memory is given").is_zero());
-            let q = wide.div(&three).expect("memory is given");
-            assert!(q.is_some_and(|q| !q.is_zero()));
-        },
+    let wide = Rat::int(a.clone());
+    assert_eq!(
+        wide.mul(&three).expect("memory is given"),
+        Rat::int(&a * 3u32)
     );
+    assert_eq!(
+        third.mul(&a_third).expect("memory is given"),
+        Rat::new(a.clone(), BigInt::from(9)).expect("9 is not zero")
+    );
+    assert_eq!(wide.div(&three).expect("memory is given"), Some(third));
 }

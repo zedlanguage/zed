@@ -14,10 +14,9 @@ use zed_kernel::num::{TooLarge, bits_of_digits, bytes_of, bytes_text, memory_cla
 use zed_kernel::term::build::{lit, prim};
 use zed_kernel::{Evidence, Family, FixKind, KernelError, Pattern, Prim, Rat, Term, Value, eval};
 use zed_tests::kernel::{bin, get, path};
-use zed_tests::scaling::check_order;
 
 pub(crate) use zed_tests::step_helpers::l01_17_value_representation::{
-    WIDE, in_child_at, lower_limit, lower_limit_by,
+    MARGIN, WIDE, in_child_at, lower_limit, lower_limit_by,
 };
 
 /// In the parent, runs the test `name` of this module again in a child process and returns
@@ -31,21 +30,21 @@ fn int(n: u64) -> Rat {
 }
 
 /// `2^s`, kept as a power and not built.
-fn two_to(s: u64) -> Rat {
+pub(crate) fn two_to(s: u64) -> Rat {
     int(2)
         .pow(&BigUint::from(s))
         .expect("a power of two is kept")
 }
 
 /// `2^(2^100)`, kept: building it would take `2^100` bits.
-fn beyond_any_memory() -> Rat {
+pub(crate) fn beyond_any_memory() -> Rat {
     int(2)
         .pow(&(BigUint::from(1u32) << 100u32))
         .expect("a power of two is kept")
 }
 
 /// `2^s + 1`, built in full: a number that agrees with `2^s` in all its `s` leading bits.
-fn built_above(s: u64) -> Rat {
+pub(crate) fn built_above(s: u64) -> Rat {
     Rat::int((BigInt::from(1u32) << s) + 1u32)
 }
 
@@ -63,20 +62,26 @@ fn below_half_ulp(s: u64) -> Rat {
         .expect("a power of two is not zero")
 }
 
-fn show(t: Term) -> Term {
+pub(crate) fn show(t: Term) -> Term {
     prim(Prim::Show, vec![t])
 }
 
-/// Two numbers that agree in their first `2^30` bits, compared with each order operator, `min`
+/// The width, in bits, of the numbers of
+/// `ordering_numbers_that_agree_in_many_bits_is_refused_when_memory_is_short`, 16 MiB, under a
+/// limit of an eighth of [`MARGIN`], 8 MiB: an eighth of [`WIDE`] and its margin, the same
+/// ratio, so a copy is refused as it is there. At `WIDE` the test took 0.8 s.
+const CLOSE: u64 = WIDE / 8;
+
+/// Two numbers that agree in their first `2^27` bits, compared with each order operator, `min`
 /// and `max` when the system has too little memory left to tell them apart.
 #[test]
 fn ordering_numbers_that_agree_in_many_bits_is_refused_when_memory_is_short() {
     if !in_child("ordering_numbers_that_agree_in_many_bits_is_refused_when_memory_is_short") {
         return;
     }
-    let a = num(built_above(WIDE));
-    let b = num(two_to(WIDE));
-    lower_limit();
+    let a = num(built_above(CLOSE));
+    let b = num(two_to(CLOSE));
+    lower_limit_by(MARGIN / 8);
     for (p, op) in [
         (Prim::Lt, "<"),
         (Prim::Le, "<="),
@@ -107,7 +112,7 @@ fn ordering_numbers_that_agree_in_many_bits_is_refused_when_memory_is_short() {
     );
     // Numbers apart in their leading bits still order at once.
     assert_eq!(
-        eval(&bin(Prim::Lt, num(two_to(WIDE - 1)), a)).unwrap(),
+        eval(&bin(Prim::Lt, num(two_to(CLOSE - 1)), a)).unwrap(),
         Value::Bool(true)
     );
 }
@@ -458,56 +463,6 @@ fn printing_many_copies_of_a_number_asks_for_the_whole_text() {
     );
 }
 
-/// The memory check reads a sequence shared many times once: a number too large to build,
-/// read last, after `n` copies of one tuple of `n` numbers, is refused after reading `2n`
-/// values, not `n^2`.
-#[test]
-fn a_shared_tuple_is_checked_once_before_printing() {
-    let shared = |n: usize| {
-        let row = Value::tuple(vec![Value::Int(7); n]);
-        let mut outer = vec![Value::integer(beyond_any_memory())];
-        outer.extend(std::iter::repeat_n(row, n));
-        show(lit(Value::tuple(outer)))
-    };
-    let n = 1 << 12;
-    let inputs = [(n, shared(n)), (8 * n, shared(8 * n))];
-    check_order(
-        "String of n copies of one shared tuple of n numbers",
-        n,
-        1,
-        |m| {
-            let (_, t) = inputs
-                .iter()
-                .find(|(k, _)| *k == m)
-                .expect("each size was built");
-            let err = eval(t).unwrap_err();
-            assert!(
-                matches!(&err, KernelError::NumberTooLarge { op: "String", .. }),
-                "{err:?}"
-            );
-        },
-    );
-}
-
-/// Comparing `2^n + 1`, built, with `2^n`, kept, doubles the precision of the bounds until it
-/// reaches `n` bits and then builds the two once: O(n) in all.
-#[test]
-fn comparing_numbers_that_agree_in_n_bits_costs_order_n() {
-    let n = 1 << 22;
-    let inputs: Vec<(usize, Rat, Rat)> = [n, 8 * n]
-        .into_iter()
-        .map(|m| (m, built_above(m as u64), two_to(m as u64)))
-        .collect();
-    check_order("2^n + 1 against 2^n, compared", n, 1, |m| {
-        let (_, a, b) = inputs
-            .iter()
-            .find(|(k, _, _)| *k == m)
-            .expect("each size was built");
-        assert_eq!(a.try_cmp(b), Ok(std::cmp::Ordering::Greater));
-        assert!(a > b);
-    });
-}
-
 /// The plan's example `2 ^ 2 ^ 40 + 1 < 2 ^ 2 ^ 40 + 2` stops before the comparison: each
 /// sum needs `2^40` bits, and CAP-bits refuses the sum `+` itself.
 #[test]
@@ -752,5 +707,25 @@ fn negating_a_wide_number_gives_its_value_when_memory_is_given() {
     assert_eq!(
         eval(&prim(Prim::Abs, vec![lit(q)])).unwrap(),
         Value::rat(Rat::new(BigInt::from(2), BigInt::from(7)).unwrap())
+    );
+}
+
+/// A tuple of `n` copies of one tuple of `n` numbers, after a number too large to build: its
+/// `String` is refused. The benchmark `bench::memory_check` times it at large `n`.
+pub(crate) fn shared_tuple(n: usize) -> Term {
+    let row = Value::tuple(vec![Value::Int(7); n]);
+    let mut outer = vec![Value::integer(beyond_any_memory())];
+    outer.extend(std::iter::repeat_n(row, n));
+    show(lit(Value::tuple(outer)))
+}
+
+/// What the benchmark checks at each size, at four copies of four numbers: the `String` of
+/// [`shared_tuple`] is refused by `String`.
+#[test]
+fn the_string_of_a_shared_tuple_after_a_number_too_large_is_refused() {
+    let err = eval(&shared_tuple(4)).unwrap_err();
+    assert!(
+        matches!(&err, KernelError::NumberTooLarge { op: "String", .. }),
+        "{err:?}"
     );
 }

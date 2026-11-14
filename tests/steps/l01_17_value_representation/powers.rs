@@ -6,7 +6,6 @@ use num_bigint::{BigInt, BigUint};
 use zed_kernel::Rat;
 use zed_kernel::num::{LiteralRounding, TooLarge, literal_f32, literal_f64};
 use zed_tests::instances::Rng;
-use zed_tests::scaling::check_order;
 
 /// The value built out: the plain rational of its digits.
 fn built(r: &Rat) -> Rat {
@@ -68,11 +67,12 @@ fn random(rng: &mut Rng) -> Rat {
 
 #[test]
 fn kept_powers_agree_with_the_built_value() {
-    let mut rng = Rng::new(17);
+    let seed = super::seed("ZED_KEPT_POWERS_SEED");
+    let mut rng = Rng::new(seed);
     for _ in 0..2000 {
         let (a, b) = (random(&mut rng), random(&mut rng));
         let (ba, bb) = (built(&a), built(&b));
-        let at = format!("{a:?} and {b:?}");
+        let at = format!("{a:?} and {b:?}, seed {seed}");
         assert_eq!(
             built(&a.add(&b).unwrap()),
             ba.add(&bb).unwrap(),
@@ -98,14 +98,14 @@ fn kept_powers_agree_with_the_built_value() {
         }
         assert_eq!(a.cmp(&b), ba.cmp(&bb), "order of {at}");
         assert_eq!(a == b, ba == bb, "== of {at}");
-        assert!(a == ba, "{a:?} and its built value");
+        assert!(a == ba, "{a:?} and its built value, seed {seed}");
         assert_eq!(
             built(&a.pow(&3u32.into()).unwrap()),
             ba.pow(&3u32.into()).unwrap(),
-            "cube of {a:?}"
+            "cube of {a:?}, seed {seed}"
         );
-        assert_eq!(a.to_f64(), ba.to_f64(), "f64 of {a:?}");
-        assert_eq!(a.to_f32(), ba.to_f32(), "f32 of {a:?}");
+        assert_eq!(a.to_f64(), ba.to_f64(), "f64 of {a:?}, seed {seed}");
+        assert_eq!(a.to_f32(), ba.to_f32(), "f32 of {a:?}, seed {seed}");
         if a.is_integer() && b.is_integer() && !b.is_zero() {
             assert_eq!(
                 built(&a.rem_euclid(&b).unwrap()),
@@ -151,7 +151,8 @@ where
 
 #[test]
 fn projection_matches_the_standard_reading() {
-    let mut rng = Rng::new(33);
+    let seed = super::seed("ZED_PROJECTION_SEED");
+    let mut rng = Rng::new(seed);
     let digits = |rng: &mut Rng, n: usize| -> String {
         (0..n)
             .map(|_| char::from(b'0' + rng.below(10) as u8))
@@ -163,10 +164,18 @@ fn projection_matches_the_standard_reading() {
         let (whole, frac) = (digits(&mut rng, n), digits(&mut rng, f));
         let text = format!("{whole}.{frac}0e{}", rng.int(-360, 330));
         let bits = |r: Result<f64, LiteralRounding>| r.map(f64::to_bits);
-        assert_eq!(bits(literal_f64(&text)), bits(expected(&text)), "{text}");
+        assert_eq!(
+            bits(literal_f64(&text)),
+            bits(expected(&text)),
+            "{text}, seed {seed}"
+        );
         let text = format!("{whole}e{}", rng.int(-60, 50));
         let bits = |r: Result<f32, LiteralRounding>| r.map(f32::to_bits);
-        assert_eq!(bits(literal_f32(&text)), bits(expected(&text)), "{text}");
+        assert_eq!(
+            bits(literal_f32(&text)),
+            bits(expected(&text)),
+            "{text}, seed {seed}"
+        );
     }
     // Ties at full width, normal and subnormal, which round to the even neighbor.
     for _ in 0..400 {
@@ -174,12 +183,20 @@ fn projection_matches_the_standard_reading() {
         for k in [rng.int(-1100, -1076), rng.int(-1000, 900)] {
             let text = halfway(m >> (rng.below(30) * usize::from(k < -1074)), k);
             let bits = |r: Result<f64, LiteralRounding>| r.map(f64::to_bits);
-            assert_eq!(bits(literal_f64(&text)), bits(expected(&text)), "{text}");
+            assert_eq!(
+                bits(literal_f64(&text)),
+                bits(expected(&text)),
+                "{text}, seed {seed}"
+            );
         }
         let m = (1 << 23) | (rng.next_u64() >> 41);
         let text = halfway(m, rng.int(-170, 100));
         let bits = |r: Result<f32, LiteralRounding>| r.map(f32::to_bits);
-        assert_eq!(bits(literal_f32(&text)), bits(expected(&text)), "{text}");
+        assert_eq!(
+            bits(literal_f32(&text)),
+            bits(expected(&text)),
+            "{text}, seed {seed}"
+        );
     }
 }
 
@@ -396,57 +413,35 @@ fn a_power_of_a_wide_base_to_an_exponent_beyond_64_bits_is_refused() {
     }
 }
 
-/// Building, ordering, multiplying, dividing and projecting `10^n` costs a few products of
+/// `10^n` built, ordered, multiplied, divided and projected, each answer checked. The
+/// benchmark `bench::powers` times it at `n = 2^20`; at any `n` it costs a few products of
 /// numbers of `log n` bits, not the `3.3 n` bits of the value.
+pub(crate) fn ten_to_n_facts(n: usize) {
+    let a = int(10).pow(&(n as u64).into()).unwrap();
+    let b = dec(&format!("1.345e{n}"));
+    assert!(a < b);
+    let c = a.mul(&b).unwrap();
+    assert!(c > b);
+    assert_eq!(c.div(&a).unwrap().expect("10^n is not zero"), b);
+    assert_eq!(c.div_euclid(&a).unwrap(), b);
+    assert_eq!(c.rem_euclid(&b).unwrap(), int(0));
+    assert_eq!(a.to_f64(), Err(LiteralRounding::Infinite));
+    assert_eq!(dec(&format!("1e-{n}")).to_f64(), Err(LiteralRounding::Zero));
+}
+
+/// [`ten_to_n_facts`] at `n = 1000`, past the range of `f64` either way.
 #[test]
-fn ten_to_n_costs_its_exponent_and_not_its_digits() {
-    check_order(
-        "10^n built, compared, multiplied and projected",
-        1 << 20,
-        0,
-        |n| {
-            let a = int(10).pow(&(n as u64).into()).unwrap();
-            let b = dec(&format!("1.345e{n}"));
-            assert!(a < b);
-            let c = a.mul(&b).unwrap();
-            assert!(c > b);
-            assert_eq!(c.div(&a).unwrap().expect("10^n is not zero"), b);
-            assert_eq!(c.div_euclid(&a).unwrap(), b);
-            assert_eq!(c.rem_euclid(&b).unwrap(), int(0));
-            assert_eq!(a.to_f64(), Err(LiteralRounding::Infinite));
-            assert_eq!(dec(&format!("1e-{n}")).to_f64(), Err(LiteralRounding::Zero));
-        },
-    );
+fn ten_to_n_orders_multiplies_divides_and_projects() {
+    ten_to_n_facts(1000);
 }
 
 /// A kept power `3^n` and the built sum `3^n + 1` agree in every bit a bound reads, so their
-/// order builds `3^n`; that build and the sum's cost O(n log n) in the width (item
-/// KERNEL-sum-tower), not the O(n^1.47) of num-bigint's products they took before.
+/// order builds `3^n`. The benchmark `bench::powers` times it.
 #[test]
-fn a_kept_power_beside_its_built_successor_costs_n_log_n() {
+fn a_kept_power_beside_its_built_successor_orders() {
     let p = int(3).pow(&(1u64 << 18).into()).unwrap();
     let s = p.add(&int(1)).unwrap();
     assert!(p < s && s > p && p != s);
-    // `3^n` is built by squaring, so a run's work is a sum over squares of halving widths:
-    // those num-bigint's Toom-3 does faster (at most `fast::MUL_LEAF` = 459 words, and above
-    // it where `toom_cost` is the least of `fast::mul`'s computed costs), and the wider by
-    // transforms. The smaller run has three fewer squares by transforms than the larger, so
-    // its sum stops short and the ratio counts the change of method as growth. Measured with
-    // a leaf of 6144 words (SCALE-fix-crossover, 2026-11-07, load 47): from n = 2^18 (the
-    // last square of 3,250 words) 14.6 times against a limit of 10.3, from 2^21 10.12 against
-    // 10.06, from 2^22 9.72 against 10.0; with the cost model, 9.67 from 2^22 (2026-11-09).
-    // One comparison is timed, half the work of the three above, which builds `3^n` and the
-    // sum as they do. The SCALE-ratio limit tells num-bigint's O(n^1.47), 21 times at 8n,
-    // from O(n log n), so the comparison at n and 64n that stood in for it is gone.
-    check_order(
-        "3^n + 1 built and compared with the kept 3^n",
-        1 << 22,
-        1,
-        |n| {
-            let p = int(3).pow(&(n as u64).into()).unwrap();
-            assert!(p < p.add(&int(1)).unwrap());
-        },
-    );
 }
 
 /// `r ^ k`, a `rat` to an int power of either sign (POW-rat, DESIGN.md sec:lexical): exact, a
@@ -470,10 +465,17 @@ fn a_rat_takes_an_int_exponent_of_either_sign() {
     assert_eq!(p(&int(1), -7), Some(int(1)));
     // A base with kept powers of primes: `2^-200` to the `-2` is `2^400`.
     assert_eq!(p(&two_to(-200), -2), Some(two_to(400)));
-    let mut rng = Rng::new(17);
+    let seed = super::seed("ZED_RAT_POWER_SEED");
+    let mut rng = Rng::new(seed);
     for _ in 0..300 {
         let r = random(&mut rng);
         let k = rng.int(-6, 6);
+        // A mantissa of 0 draws zero, about one draw in 2,700, and `0r` to a negative power
+        // has no value.
+        if r.is_zero() && k < 0 {
+            assert_eq!(p(&r, k), None, "{r:?} ^ {k}, seed {seed}");
+            continue;
+        }
         let mut want = int(1);
         for _ in 0..k.unsigned_abs() {
             want = match k < 0 {
@@ -482,8 +484,8 @@ fn a_rat_takes_an_int_exponent_of_either_sign() {
             };
         }
         let got = p(&r, k).expect("a random value is not zero");
-        assert_eq!(got, want, "{r:?} ^ {k}");
-        assert_eq!(built(&got), built(&want), "{r:?} ^ {k}");
+        assert_eq!(got, want, "{r:?} ^ {k}, seed {seed}");
+        assert_eq!(built(&got), built(&want), "{r:?} ^ {k}, seed {seed}");
     }
 }
 
@@ -503,23 +505,23 @@ fn a_unit_or_zero_base_builds_no_exponent() {
     assert_eq!(p(0, &even.neg()), None);
 }
 
-/// A `rat` power costs the bits of its exponent, not the exponent: `(2r/3r)^-n` multiplies the
-/// kept exponents of 2 and 3 by `n`, and `(-1r)^(2^n)` reads the parity of `2^n` from its kept
-/// form (complexity tradeoff at `Rat::pow_int`, COMPLEXITY.md K30). Building `2^n`, or a
-/// product per unit of the exponent, grows with `n` and fails this check (negative controls
-/// run 2026-11-12, POW-rat).
-#[test]
-fn a_rat_power_costs_the_bits_of_its_exponent() {
+/// `(2r/3r)^-n` times `(2r/3r)^n` is 1, `(-1r)^-(2^n)` is 1 and `0r^-(2^n)` has no value, each
+/// checked. The benchmark `bench::powers` times it at `n = 2^20`.
+pub(crate) fn rat_power_facts(n: usize) {
     let r = int(2).div(&int(3)).unwrap().expect("3 is not zero");
-    check_order("(2r/3r)^-n and (-1r)^(2^n)", 1 << 20, 0, |n| {
-        let p = r
-            .pow_int(&int(n as i64).neg())
-            .unwrap()
-            .expect("2/3 is not zero");
-        let back = r.pow(&(n as u64).into()).unwrap();
-        assert_eq!(p.mul(&back).unwrap(), int(1));
-        let e = int(2).pow(&(n as u64).into()).unwrap();
-        assert_eq!(int(-1).pow_int(&e.neg()).unwrap(), Some(int(1)));
-        assert_eq!(int(0).pow_int(&e.neg()).unwrap(), None);
-    });
+    let p = r
+        .pow_int(&int(n as i64).neg())
+        .unwrap()
+        .expect("2/3 is not zero");
+    let back = r.pow(&(n as u64).into()).unwrap();
+    assert_eq!(p.mul(&back).unwrap(), int(1));
+    let e = int(2).pow(&(n as u64).into()).unwrap();
+    assert_eq!(int(-1).pow_int(&e.neg()).unwrap(), Some(int(1)));
+    assert_eq!(int(0).pow_int(&e.neg()).unwrap(), None);
+}
+
+/// [`rat_power_facts`] at `n = 100`.
+#[test]
+fn a_rat_power_of_a_kept_exponent_is_exact() {
+    rat_power_facts(100);
 }
