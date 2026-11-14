@@ -2328,13 +2328,14 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | FAIL-check-arm-call-bench-hang | impl attempt 1 | 2026-11-14 11:16 | started in wt/fix-arm-call-hang at 07af08b86, load 51.40 |
 | FAIL-judgments-query-order-seed | impl attempt 1 | 2026-11-14 10:45 | started in worktree fix-judg-range on origin/main b56f4fb5d |
+| FAIL-l139-wide-asum-scaling | running | 2026-11-14 11:32 |  |
 | FAIL-linked-holes-scratch-seed | running | 2026-11-14 07:58 |  |
 | FAIL-linked-sums-between-seed | running | 2026-11-14 11:43 |  |
 | FAIL-pendants-growth-scaled-seed | impl attempt 1 | 2026-11-14 11:58 | fix-growth started on d5d733341 |
 | FAIL-pendants-route-parity | impl attempt 1 | 2026-11-14 11:49 | started in wt/fix-parity at origin/main 3c9c29d5b, load 46 |
 | FAIL-preimage-stop-entry-seed | running | 2026-11-14 11:43 |  |
-| FAIL-print-function-in-union | running |  |  |
-| FAIL-returned-generic-need-fit | running | 2026-11-14 11:42 |  |
+| FAIL-print-function-in-union | impl attempt 1 | 2026-11-14 12:05 | started in wt/fix-need-print, load 35.50 |
+| FAIL-returned-generic-need-fit | impl attempt 1 | 2026-11-14 11:42 | started in wt/fix-need-print, load 35.50 |
 | FAIL-rewrite-growth-both | impl attempt 1 | 2026-11-14 12:03 | fix-growth started on d5d733341 |
 | FAIL-types-first-shape-unbounded | running | 2026-11-14 11:00 |  |
 | FAIL-types-own-same-name | running | 2026-11-14 11:00 |  |
@@ -2347,6 +2348,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | POLY-square-sparse-half | impl attempt 1 | 2026-11-14 11:26 | support test moved to k=640 (square now beats support at k=256: 6.4 vs 10.1 ms); crossover build for refit / load 40.93 38.65 42.23 |
 | STAGE-generic-fold-int-arm | running | 2026-11-14 11:29 | 2026-11-14: found by STAGE-generic-fold-div; sink given a consumer |
 | TEST-generic-fold-bench-size | running | 2026-11-14 11:29 | 2026-11-14: found by STAGE-generic-fold-div; sink given a consumer |
+| TEST-l0124-fixed-seeds | running |  |  |
 | TEST-law25-time | running | 2026-11-14 10:54 |  |
 | TEST-m0_10-slow-laws | running | 2026-11-14 10:54 |  |
 | TEST-op-table-div-mod | running | 2026-11-14 10:54 |  |
