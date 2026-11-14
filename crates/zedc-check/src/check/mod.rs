@@ -5257,6 +5257,68 @@ fn signed_number_at(src: &str, span: Span) -> Option<Cow<'_, str>> {
     }
 }
 
+/// The part of the code `s` inside the parentheses that group the whole of it, as a range of
+/// byte offsets into `s`: `2 + 13` for `(2 + 13)` and for `((2 + 13))`, from the first token
+/// inside to the last. Parentheses that are the code's own syntax are kept: those of a tuple,
+/// `(a, b)` or `(a,)`, of `()`, and of a lambda's parameters, `(x) -> f(x)`, whose `(` closes
+/// before the end. Code that does not start with `(`, or does not lex, is all of `s`.
+///
+/// A cast written around the code, `String(…)`, groups it by its own parentheses, and a call
+/// binds tighter than any operator, so a repair writes `String(2 + 13) < "a"` for
+/// `(2 + 13) < "a"`, as the program would be written (row MSG-cast-repair-parens).
+// Complexity tradeoff: code that does not start with `(` costs O(1); code that does is lexed
+// once, and each `(` is matched to its `)` and marked where a `,` stands directly inside it in
+// the same pass, with a stack of the brackets open, then the groups are taken off from the
+// outside in, one step each: O(t) for `t` tokens, at most the text a message quoting the code
+// prints. The naive way, stripping one pair and scanning the rest again for the next, costs
+// O(d·t) for `d` nested pairs, quadratic on `((…(x)…))`; counting `(` and `)` bytes, as
+// `unparen` in walk.rs does, is O(t) too but reads a parenthesis in a string or a comment as
+// code and takes a tuple's parentheses off.
+fn ungrouped(s: &str) -> std::ops::Range<usize> {
+    let all = 0..s.len();
+    if !s.starts_with('(') {
+        return all;
+    }
+    let Ok(tokens) = lex(s) else {
+        return all;
+    };
+    // For each token that opens a bracket, the index of the token that closes it, and whether
+    // a `,` stands directly inside it.
+    let mut closes = vec![None; tokens.len()];
+    let mut comma = vec![false; tokens.len()];
+    let mut open = Vec::new();
+    for (i, t) in tokens.iter().enumerate() {
+        match t.tok {
+            Tok::Op("(" | "[" | "{") => open.push(i),
+            Tok::Op(")" | "]" | "}") => {
+                if let Some(o) = open.pop() {
+                    closes[o] = Some(i);
+                }
+            }
+            Tok::Op(",") => {
+                if let Some(&o) = open.last() {
+                    comma[o] = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    // The tokens `lo..hi` are the code inside the groups taken off so far.
+    let (mut lo, mut hi) = (0, tokens.len());
+    while hi - lo > 2
+        && matches!(tokens[lo].tok, Tok::Op("("))
+        && closes[lo] == Some(hi - 1)
+        && !comma[lo]
+    {
+        lo += 1;
+        hi -= 1;
+    }
+    match lo {
+        0 => all,
+        _ => tokens[lo].span.start..tokens[hi - 1].span.end,
+    }
+}
+
 /// `e` as a numeric literal, perhaps under one `-`; `None` also where the system refuses the
 /// memory to read it, which [`Ck::expr_of`] reports through [`read_literal`]. `src` is the
 /// program's text, from which a message quotes the literal ([`Lit::spelling`]); `None` where
@@ -10154,6 +10216,36 @@ mod tests {
         Span {
             start,
             end: start + 1,
+        }
+    }
+
+    /// Only parentheses that group the whole code are taken off; a tuple's, `()`, a lambda's
+    /// parameters and a parenthesis in a string are kept (row MSG-cast-repair-parens).
+    #[test]
+    fn ungrouped_takes_off_only_the_parentheses_around_the_whole_code() {
+        for (code, inner) in [
+            ("2 + 13", "2 + 13"),
+            ("(2 + 13)", "2 + 13"),
+            ("((2 + 13))", "2 + 13"),
+            ("( ( 2 + 13 ) )", "2 + 13"),
+            ("(b)", "b"),
+            ("(a) + (b)", "(a) + (b)"),
+            ("((a) + (b))", "(a) + (b)"),
+            ("(a, b)", "(a, b)"),
+            ("((a, b))", "(a, b)"),
+            ("(a,)", "(a,)"),
+            ("()", "()"),
+            ("(())", "()"),
+            ("(x) -> f(x)", "(x) -> f(x)"),
+            ("((x) -> f(x))", "(x) -> f(x)"),
+            ("(f(a, b))", "f(a, b)"),
+            ("({ a: 1, b: 2 })", "{ a: 1, b: 2 }"),
+            ("([1, 2])", "[1, 2]"),
+            ("(\")\" + s)", "\")\" + s"),
+            ("(\"(\" + s)", "\"(\" + s"),
+            ("(2 + 13", "(2 + 13"),
+        ] {
+            assert_eq!(&code[ungrouped(code)], inner, "{code}");
         }
     }
 

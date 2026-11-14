@@ -8424,6 +8424,29 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.t.text?.get(at.start..at.end)
     }
 
+    /// The edits that cast the code at `at` to `w` where it stands, `String(` before it and
+    /// `)` after it, with the cast's parentheses written in place of those that group the
+    /// whole code ([`ungrouped`]): `String(2 + 13)` for `(2 + 13)`, not `String((2 + 13))`.
+    /// Also the code inside them, which the cast holds. Where the checker has no text, the
+    /// edits are the points at either end of `at`, and there is no code.
+    fn cast_edits(&self, at: Span) -> ([Span; 2], Option<&'a str>) {
+        let Some(c) = self.code(Some(at)) else {
+            return ([point(at.start), point(at.end)], None);
+        };
+        let inner = ungrouped(c);
+        let edits = [
+            Span {
+                start: at.start,
+                end: at.start + inner.start,
+            },
+            Span {
+                start: at.start + inner.end,
+                end: at.end,
+            },
+        ];
+        (edits, Some(&c[inner]))
+    }
+
     /// The code of `callee`, the callee of the call at `span`, as the program writes it: with
     /// the parentheses around it, which the tree does not keep, as `(if c { f } else { g })`;
     /// none when the checker has no text or the code runs over more than one line, which a
@@ -10840,13 +10863,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                         Some(n) => format!("repair: write `{w}({n})`; the checker accepts that"),
                         None => format!("repair: wrap this in `{w}(…)`; the checker accepts that"),
                     };
-                    // The fix casts the argument where it stands, `rat(n)`.
-                    let fix = self.code(Some(*at)).and_then(|c| {
+                    // The fix casts the argument where it stands, `rat(n)`, in place of the
+                    // parentheses around it, `String(2 + 13)` for `(2 + 13)`.
+                    let ([before, after], code) = self.cast_edits(*at);
+                    let fix = code.and_then(|c| {
                         let open = format!("{w}(");
                         let holds = format_args!("{c} is cast to {w}");
                         let alone = format_args!("{w}({c})");
                         let edits: [(Span, &dyn fmt::Display); 2] =
-                            [(point(at.start), &open), (point(at.end), &")")];
+                            [(before, &open), (after, &")")];
                         Rewrite::new(&edits, &holds, &alone)
                     });
                     // A cast of a literal no literal writes, `rat("1/3")`, rewrites only the
@@ -11607,16 +11632,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                 notes.push(Note { span: at, text });
                 // The comparison rewritten with the cast, `rat(n) == 1.5`, where the operand
                 // is a name; the headline ends with the first.
+                // A name in parentheses, `(n)`, is cast as `rat(n)` ([`Self::cast_edits`]).
                 if let (Some(n), Some(op)) = (name, op) {
+                    let ([before, after], _) = self.cast_edits(at);
                     let alone = match lit.span.start < at.start {
                         true => format!("{lit_text} {op} {w}({n})"),
                         false => format!("{w}({n}) {op} {lit_text}"),
                     };
                     fixes.push(Rewrite::new(
-                        &[
-                            (point(at.start), &format_args!("{w}(")),
-                            (point(at.end), &")"),
-                        ],
+                        &[(before, &format_args!("{w}(")), (after, &")")],
                         &format_args!("{n} is cast to {w}"),
                         &alone,
                     ));
@@ -12266,9 +12290,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 None => Mapped::Fails,
             };
         }
+        // The cast holds `was` itself, or `was` without the parentheses around the whole of
+        // it, which the cast's own take the place of ([`Self::cast_edits`]).
         if let Some(inner) = text.strip_suffix(')')
             && let Some((w, rest)) = inner.split_once('(')
-            && rest == was
+            && (rest == was || rest == &was[ungrouped(was)])
         {
             let Some(w) = ["String", "int", "rat", "f64"]
                 .into_iter()

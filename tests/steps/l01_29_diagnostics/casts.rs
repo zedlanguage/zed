@@ -539,3 +539,107 @@ fn the_menus_of_calls_literals_and_comparisons_cost_the_same_in_a_larger_program
         0,
     );
 }
+
+/// Row MSG-cast-repair-parens: a cast written around an operand in parentheses takes their
+/// place, `String(2 + 13) < "a"` for `(2 + 13) < "a"`, as the program would be written; it
+/// printed `String((2 + 13)) < "a"`. Each case is the operand as written, and the cast the
+/// headline, the fix and the program rewritten with it write.
+const IN_PARENTHESES: [(&str, &str); 6] = [
+    ("(2 + 13)", "String(2 + 13)"),
+    ("((2 + 13))", "String(2 + 13)"),
+    ("( (2 + 13) )", "String(2 + 13)"),
+    ("(b)", "String(b)"),
+    // A cast of an operand without parentheses around the whole of it is written as before.
+    ("b", "String(b)"),
+    ("(b + 1) * (b - 1)", "String((b + 1) * (b - 1))"),
+];
+
+#[test]
+fn a_cast_takes_the_place_of_the_parentheses_around_its_operand() {
+    // The row's program.
+    let out = rejected("f() { c = (2 + 13) < \"a\"; return c; }\n");
+    assert_eq!(
+        out.lines().next(),
+        Some(
+            "1:11: `<` does not take (int | f32 | f64 | rat, \"a\"): no arrow of `<` takes \
+             these types. Try `String(2 + 13) < \"a\"` instead."
+        ),
+        "{out}"
+    );
+    for (operand, cast) in IN_PARENTHESES {
+        let src = program(&format!(
+            "f() {{ b = 2 + 13; c = {operand} < \"a\"; return c; }}"
+        ));
+        let out = rejected(&src);
+        let headline = out.lines().next().expect("a headline");
+        let at = format!(
+            "1:{}: `<` does not take (",
+            src.find("c = ").expect("it") + 5
+        );
+        assert!(headline.starts_with(&at), "{out}");
+        let try_ = format!(" Try `{cast} < \"a\"` instead.");
+        assert!(headline.ends_with(&try_), "{out}");
+        let line = format!("f() {{ b = 2 + 13; c = {cast} < \"a\"; return c; }}");
+        checks(&program(&line));
+    }
+}
+
+#[test]
+fn a_numeric_cast_takes_the_place_of_the_parentheses_around_its_operand() {
+    // The cast of an operation's operand, and of a name compared with a literal of another
+    // carrier, which another part of the checker offers.
+    for (src, from, to) in [
+        (
+            "area(n: int, r: rat) = (n * n) + r;",
+            "(n * n)",
+            "rat(n * n)",
+        ),
+        ("area(n: int, r: rat) = n * n + r;", "n * n", "rat(n * n)"),
+        (
+            "area(n: int, r: rat) = (n) * (n) + r;",
+            "(n) * (n)",
+            "rat((n) * (n))",
+        ),
+        ("one(n: int) = (n) == 1.0;", "(n)", "rat(n)"),
+        ("one(n: int) = ((n)) == 1.0;", "((n))", "rat(n)"),
+    ] {
+        let src = program(src);
+        let out = rejected(&src);
+        let line = edited(&src, from, to);
+        let line = line.lines().next().expect("the function");
+        // An operation's repair ends the headline; a comparison's fix is a line of the menu.
+        let try_ = format!("Try `{to} ");
+        let in_headline = out.lines().next().is_some_and(|h| h.contains(&try_));
+        assert!(
+            in_headline || fixed(&src).iter().any(|l| l == line),
+            "{line}\n{out}"
+        );
+        checks(&edited(&src, from, to));
+    }
+}
+
+/// `f` comparing `2 + 13` in `d` pairs of parentheses with a string.
+fn nested(d: usize) -> String {
+    format!(
+        "f() {{ c = {}2 + 13{} < \"a\"; return c; }}\n",
+        "(".repeat(d),
+        ")".repeat(d)
+    )
+}
+
+#[test]
+fn a_cast_in_place_of_many_parentheses_scales() {
+    // The parentheses are matched in one pass over the operand's tokens: O(d) for `d` pairs.
+    let programs = scaling::inputs(777, nested);
+    scaling::check(
+        "the cast repair of an operand in n pairs of parentheses",
+        777,
+        |d| {
+            let out = on_a_thread(256 << 20, || rejected(&programs[&d]));
+            assert!(
+                out.contains("Try `String(2 + 13) < \"a\"` instead."),
+                "{out}"
+            );
+        },
+    );
+}
