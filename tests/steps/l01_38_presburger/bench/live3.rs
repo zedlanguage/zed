@@ -122,3 +122,12 @@ fn the_answers_to_the_400_systems_of_seed_0x13a06_do_not_depend_on_order() {
         "{sat} with a point, {unsat} without"
     );
 }
+
+/// `live3::random_unbounded_systems_match_enumeration_in_a_window` as first written, 0.78 s
+/// (2026-11-14, load 14): 1500 systems of seed 0x13a02.
+#[test]
+fn the_1500_unbounded_systems_of_seed_0x13a02_match_enumeration_in_a_window() {
+    let (inside, outside, none) =
+        unbounded_systems_match_enumeration(&mut Rng::new(0x1_3a02), 1500);
+    assert!(inside > 100 && none > 20, "{inside}, {outside}, {none}");
+}

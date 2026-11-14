@@ -168,3 +168,10 @@ fn tied_equalities_that_share_only_a_variable_they_do_not_define_are_solved_toge
         assert_eq!(namings(&rows, 7).into_keys().collect::<Vec<_>>(), [want]);
     }
 }
+
+/// `names::the_splinters_are_searched_a_batch_at_a_time` as first written, 0.68 s (2026-11-14,
+/// load 14), at a fixed seed: 60 namings of the chain of six and 20 of the chain of twelve.
+#[test]
+fn the_splinters_are_searched_a_batch_at_a_time_under_80_namings_of_seed_0x5b1() {
+    splinters_answer_alike(&mut zed_tests::instances::Rng::new(0x5b1), 60, 20, 0x5b1);
+}

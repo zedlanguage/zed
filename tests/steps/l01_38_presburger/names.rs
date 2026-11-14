@@ -549,16 +549,23 @@ fn pugh_chain(n: usize) -> Vec<Row> {
 #[test]
 fn the_splinters_are_searched_a_batch_at_a_time() {
     // The search ends after the first batch of dark eliminations with a refusal; the batches,
-    // and their order, are the same under every naming. 60 of the 720 namings of six variables
-    // and 20 namings of twelve, drawn with a new seed each run (author P169; all 720 and 200 of
-    // twelve at one seed took 13.6 s).
+    // and their order, are the same under every naming. 30 of the 720 namings of six variables
+    // and 10 namings of twelve, drawn with a new seed each run (author P169; all 720 and 200 of
+    // twelve at one seed took 13.6 s; 60 and 20 took 0.68 s at load 14 and are in
+    // `bench::names`).
     let (mut rng, seed) = Rng::fresh("namings of chains of six and twelve");
-    for (links, count) in [(5, 60), (11, 20)] {
+    splinters_answer_alike(&mut rng, 30, 10, seed);
+}
+
+/// [`pugh_chain`]s of 6 and 12 variables give one answer under `six` and `twelve` random
+/// namings from `rng`; `seed` is named on failure.
+pub(super) fn splinters_answer_alike(rng: &mut Rng, six: usize, twelve: usize, seed: u64) {
+    for (links, count) in [(5, six), (11, twelve)] {
         let rows = pugh_chain(links);
         let mut seen = BTreeMap::new();
         for _ in 0..count {
             *seen
-                .entry(answer(&formula(&rows, &shuffled(&mut rng, links + 1))))
+                .entry(answer(&formula(&rows, &shuffled(rng, links + 1))))
                 .or_insert(0) += 1;
         }
         assert_eq!(

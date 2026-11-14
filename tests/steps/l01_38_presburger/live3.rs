@@ -91,15 +91,31 @@ pub(super) fn bounded_systems_match_enumeration(rng: &mut Rng, count: usize) -> 
     (sat, unsat)
 }
 
+/// 400 unbounded systems of [`unbounded_systems_match_enumeration`] of a new seed each run;
+/// each outcome occurs: a point in the window, one only outside it, and none. The 1500 of seed
+/// 0x13a02 (0.78 s at load 14, 1.2 s at load 38) are in `bench::live3`.
 #[test]
 fn random_unbounded_systems_match_enumeration_in_a_window() {
-    // No bound: a point of the window is a point of the rows, and the rows have a point when
-    // the window holds one; with none in the window the rows may still have one outside.
-    let mut rng = Rng::new(0x1_3a02);
+    let (mut rng, seed) = Rng::fresh("live3 unbounded systems");
+    let (inside, outside, none) = unbounded_systems_match_enumeration(&mut rng, 400);
+    assert!(
+        inside > 100 && outside > 0 && none > 8,
+        "seed {seed}: {inside}, {outside}, {none}"
+    );
+}
+
+/// `count` systems of one to five rows with no bound: a point of the window `[-8, 8]^3` is a
+/// point of the rows, and the rows have a point when the window holds one; with none in the
+/// window the rows may still have one outside. The counts with a point inside the window, with
+/// one only outside it, and with none.
+pub(super) fn unbounded_systems_match_enumeration(
+    rng: &mut Rng,
+    count: usize,
+) -> (usize, usize, usize) {
     let (mut inside, mut outside, mut none) = (0, 0, 0);
-    for _ in 0..1500 {
+    for _ in 0..count {
         let n = 1 + rng.below(5);
-        let rows = random_rows(&mut rng, n, 5, 10);
+        let rows = random_rows(rng, n, 5, 10);
         let seen = enumerate(&rows, 8);
         match (solve(&rows), seen) {
             (Some(_), true) => inside += 1,
@@ -108,7 +124,7 @@ fn random_unbounded_systems_match_enumeration_in_a_window() {
             (None, true) => panic!("no point found in rows with one: {rows:?}"),
         }
     }
-    assert!(inside > 100 && none > 20, "{inside}, {outside}, {none}");
+    (inside, outside, none)
 }
 
 /// 600 equalities in the cube `[-3, 3]^3` of a new seed each run, against enumeration; both
