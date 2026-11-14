@@ -2303,12 +2303,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-curried-positional-lambda-order | running | 2026-11-14 08:57 |  |
 | FAIL-exact-oracle-mod-zero-seed | running | 2026-11-14 09:25 |  |
 | FAIL-fences-chain-count | impl attempt 2 | 2026-11-14 09:03 | Done, pushed: count 1044 confirmed by diffing chains over the fixtures before/after 7f5a483dc (+Current(), +makeCurrent(glfw:, window:), -terminate()); no code  |
-| FAIL-generic-fold-l0125 | running | 2026-11-14 09:25 |  |
+| FAIL-generic-fold-l0125 | impl attempt 1 | 2026-11-14 09:25 | reproduced (2 l01_25 tests red); cause traced: preimage follow_own took only literal arms, per-carrier match has operation arms; fix constant_arm; l01_25 134 pi |
 | FAIL-kernel-xor-firsts-seed | running | 2026-11-14 08:46 |  |
 | FAIL-lattice-f32-literal | running | 2026-11-14 07:10 |  |
-| FAIL-linked-piled-holes-count | running | 2026-11-14 07:09 |  |
-| FAIL-product-refused-box-renamed | running | 2026-11-14 07:09 |  |
-| FAIL-types-overload-bounded-tuple | running | 2026-11-14 09:32 |  |
+| FAIL-types-overload-bounded-tuple | impl attempt 1 | 2026-11-14 09:32 | started in wt/fix-types-overload at 9d4c6b7f1; load 37.18 49.72 50.76 |
 | FAIL-values-function-in-payload-run | impl attempt 2 | 2026-11-14 09:22 | start in /home/luke/Work/wt/fix-values, load 38.11 |
 | FAIL-values-function-in-tuple | impl attempt 2 | 2026-11-14 07:33 | start in /home/luke/Work/wt/fix-values, load 38.11 |
 | FAIL-window-two-shadows-seed | running | 2026-11-14 08:57 |  |
@@ -2318,7 +2316,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | STAGE-generic-fold-div | impl attempt 1 | 2026-11-14 09:08 | started in wt/generic-fold-2, load 64.11 |
 | TEST-bench-timeout-recheck | running | 2026-11-14 08:37 |  |
 | TEST-calibration-split-margin | running | 2026-11-14 08:37 |  |
-| TEST-types-unreached-paths | impl attempt 1 | 2026-11-14 08:15 | started in wt/types-unreached; scope: unreached regions of crates/zedc-types/src/kernel_type.rs; load 39.06 50.66 51.88 |
+| TEST-runtime-build-in-piece | running | 2026-11-14 08:37 |  |
+| TEST-time-pass-condition | running | 2026-11-14 08:37 |  |
+| TEST-types-unreached-paths | impl attempt 1 | 2026-11-14 08:15 | kernel_type.rs 7 to 2 regions unreached; committing, rebasing / load 21.19 34.16 43.34 |
 | XR-l139-family | impl attempt resume | 2026-11-13 18:59 | resumed after P169: rebased Opus R3 commit onto 751c46435 as bf4bf90a3 (clean), build + fmt pass, running l01_39/l01_25/zedc_preimage (336 pieces); load 48.27 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
