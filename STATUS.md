@@ -2290,6 +2290,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-check-decimal-past-f64-at-rat | running | 2026-11-14 07:10 |  |
 | FAIL-check-if-carrier-branch-literal-at-rat | running | 2026-11-14 07:10 |  |
 | FAIL-check-memory-limit-2-63 | running | 2026-11-14 07:40 |  |
+| FAIL-fences-chain-count | running | 2026-11-14 09:03 |  |
 | FAIL-initial-reads-shadowed | running | 2026-11-14 07:40 |  |
 | FAIL-kernel-xor-firsts-seed | running | 2026-11-14 08:46 |  |
 | FAIL-lattice-f32-literal | running | 2026-11-14 07:10 |  |
@@ -2299,6 +2300,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-product-refused-box-renamed | running | 2026-11-14 07:09 |  |
 | FAIL-queries-reorder | running | 2026-11-14 07:40 |  |
 | FAIL-types-sig-reflexive | running | 2026-11-14 07:40 |  |
+| FAIL-values-function-in-payload-run | running |  |  |
+| FAIL-values-function-in-tuple | impl attempt 1 | 2026-11-14 07:33 | start in /home/luke/Work/wt/fix-values, load 44.86 |
 | FAIL-xst-s4-box-only-seed | running | 2026-11-14 08:46 |  |
 | FAIL-xst-unbounded-holes-seed | running | 2026-11-14 08:46 |  |
 | MUTATE-generic-constants | impl attempt 1 | 2026-11-14 09:08 | started in wt/generic-fold-2, load 64.11 |
@@ -2312,6 +2315,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | TEST-runtime-build-in-piece | running | 2026-11-14 08:37 |  |
 | TEST-scaling-module-tests-once | running |  |  |
 | TEST-time-pass-condition | running | 2026-11-14 08:37 |  |
+| TEST-types-unreached-paths | running | 2026-11-14 08:15 |  |
 | XR-l139-family | impl attempt resume | 2026-11-13 18:59 | resumed after P169: rebased Opus R3 commit onto 751c46435 as bf4bf90a3 (clean), build + fmt pass, running l01_39/l01_25/zedc_preimage (336 pieces); load 48.27 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
