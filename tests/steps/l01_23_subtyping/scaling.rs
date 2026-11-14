@@ -25,16 +25,24 @@ fn pair(i: usize) -> Type {
     Type::tuple(vec![lit(i), Type::top()])
 }
 
+/// The offset of the atom each difference of [`union`] removes: 1000 up to `c = 1000`, as
+/// before, and `c` past it, where a fixed 1000 would remove atoms the union keeps; the
+/// benchmarks run `c` to 65536 (TEST-bench-move-l0123, author P169).
+fn far(c: usize) -> usize {
+    c.max(1000)
+}
+
 /// The union of `c` differences of the atoms `atom` makes.
 fn union(c: usize, atom: fn(usize) -> Type) -> Type {
-    (0..c).fold(Type::empty(), |u, i| &u | &(&atom(i) - &atom(i + 1000)))
+    (0..c).fold(Type::empty(), |u, i| &u | &(&atom(i) - &atom(i + far(c))))
 }
 
 fn run(c: usize, atom: fn(usize) -> Type) {
     let b = union(c, atom);
     let n = !&b;
-    assert!(!(&n & &atom(5000)).is_empty());
-    assert!(b.subtype(&(&b | &atom(5000))));
+    let outside = atom(5 * far(c));
+    assert!(!(&n & &outside).is_empty());
+    assert!(b.subtype(&(&b | &outside)));
 }
 
 #[test]
@@ -69,21 +77,29 @@ fn a_cell_left_out_is_found() {
     }
 }
 
-#[test]
-fn negated_types_disjoint_from_the_product_are_passed_over() {
-    // The decoy `(bits(i), 1000 + i)`, with `bits(i)` the numbers below 8192 with bit `i` set,
-    // misses `(0..8192, 0)` in the second component, and splitting on it would cut every piece
-    // in two in the first: `2^13` pieces for the 13 decoys, unless a disjoint one is passed
+/// The product `(0..2^d, 0)` less `d` decoys, and less the decoys and its two halves.
+fn negated_types_disjoint_from_the_product(d: usize) {
+    // The decoy `(bits(i), 1000 + i)`, with `bits(i)` the numbers below `2^d` with bit `i` set,
+    // misses `(0..2^d, 0)` in the second component, and splitting on it would cut every piece
+    // in two in the first: `2^d` pieces for the `d` decoys, unless a disjoint one is passed
     // over. The pieces are all met only when the answer is `true`, here once the two halves
-    // of the product are reached.
+    // of the product are reached. At `d = 13` in the benchmark
+    // `negated_types_disjoint_from_the_product_are_passed_over` (TEST-bench-move-l0123, author
+    // P178).
+    let all = 1 << d;
     let set = |r: std::ops::Range<usize>| Type::union_all(r.map(lit));
-    let bits = |i: usize| Type::union_all((0..8192).filter(|x| x >> i & 1 == 1).map(lit));
-    let p = Type::tuple(vec![set(0..8192), lit(0)]);
+    let bits = |i: usize| Type::union_all((0..all).filter(|x| x >> i & 1 == 1).map(lit));
+    let p = Type::tuple(vec![set(0..all), lit(0)]);
     let halves =
-        &Type::tuple(vec![set(0..4096), lit(0)]) | &Type::tuple(vec![set(4096..8192), lit(0)]);
-    let decoys = Type::union_all((0..13).map(|i| Type::tuple(vec![bits(i), lit(1000 + i)])));
+        &Type::tuple(vec![set(0..all / 2), lit(0)]) | &Type::tuple(vec![set(all / 2..all), lit(0)]);
+    let decoys = Type::union_all((0..d).map(|i| Type::tuple(vec![bits(i), lit(1000 + i)])));
     assert!(!(&p - &decoys).is_empty());
     assert!((&p - &(&decoys | &halves)).is_empty());
+}
+
+#[test]
+fn negated_types_disjoint_from_a_small_product_are_passed_over() {
+    negated_types_disjoint_from_the_product(4);
 }
 
 /// The tuple `(… ((b, b), b + 1) …, b + d - 1)`, nested `d` deep.
@@ -633,35 +649,6 @@ fn pinwheels_with_an_end_outside_every_tuple_type_are_decided() {
     // only the last pinwheel's ends (`overlaps`).
     for k in [1, 2, 4, 7] {
         check_pinwheels(&format!("an end outside, k = {k}"), negated_ends(k), true);
-    }
-}
-
-/// The checks of [`check_pinwheels`] as scaling checks on `k` pinwheels on `ends(k)`: the
-/// verdict of the full union at k = 32 and 256, the two subtype checks at 64 and 512, and the
-/// union less a box, empty and not, at 16 and 128.
-fn pinwheels_scale(what: &str, ends: fn(usize) -> Vec<[Type; 3]>, outside: bool) {
-    scaling::check(&format!("k pinwheels, {what}, empty, by k"), 32, |k| {
-        Type::forget_emptiness();
-        assert_eq!(pinwheels_on(ends(k), true).verdict(), Verdict::Empty);
-    });
-    scaling::check(&format!("k pinwheels, {what}, subtypes, by k"), 64, |k| {
-        Type::forget_emptiness();
-        let (full, open) = (pinwheels_on(ends(k), true), pinwheels_on(ends(k), false));
-        assert!(full.subtype(&open) && !open.subtype(&full));
-    });
-    for full in [true, false] {
-        let name = format!("k pinwheels, {what}, full = {full}, less a box, by k");
-        scaling::check(&name, 16, |k| {
-            Type::forget_emptiness();
-            let want = match full {
-                true => Verdict::Empty,
-                false => Verdict::Inhabited,
-            };
-            assert_eq!(
-                (&pinwheels_on(ends(k), full) - &far_box(outside)).verdict(),
-                want
-            );
-        });
     }
 }
 

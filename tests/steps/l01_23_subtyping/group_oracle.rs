@@ -1727,13 +1727,13 @@ fn chain_of(g: &mut Rng, n: usize) -> Vec<E> {
         .collect()
 }
 
-/// Every member of a chain group of 512 is inhabited, by a chain of up to 512 values; before
-/// the search kept a failure only until a type it read got a value, all but 8 were refused.
-/// The verdicts agree whatever order the members are asked in, and with the verdict of each
-/// member asked alone, for a few members.
-#[test]
-fn every_member_of_a_long_chain_is_inhabited() {
-    let ts: Vec<Type> = kernel(&chain_of(&mut Rng::new(7), 512), "long_chain")
+/// Every member of a chain group of `n` is inhabited, by a chain of up to `n` values; before
+/// the search kept a failure only until a type it read got a value, all but 8 of 512 were
+/// refused. The verdicts agree whatever order the members are asked in, and with the verdict
+/// of each member asked alone, for a few members. The chain of 512 is
+/// `bench::every_member_of_a_long_chain_is_inhabited` (TEST-bench-move-l0123, author P178).
+fn every_member_of_a_chain_is_inhabited(n: usize) {
+    let ts: Vec<Type> = kernel(&chain_of(&mut Rng::new(7), n), "long_chain")
         .into_iter()
         .map(|t| t.expect("a chain group is admitted"))
         .collect();
@@ -1749,10 +1749,15 @@ fn every_member_of_a_long_chain_is_inhabited() {
     for (i, v) in forward.iter().enumerate() {
         assert_eq!(*v, Verdict::Inhabited, "R{i} of the chain");
     }
-    for i in [0, 1, 255, 510, 511] {
+    for i in [0, 1, n / 2 - 1, n - 2, n - 1] {
         Type::forget_emptiness();
         assert_eq!(ts[i].verdict(), forward[i], "R{i} asked alone");
     }
+}
+
+#[test]
+fn every_member_of_a_short_chain_is_inhabited() {
+    every_member_of_a_chain_is_inhabited(16);
 }
 
 /// Two X14 groups whose values the shared search of plan item VERDICT-group-share missed, by
@@ -1958,17 +1963,23 @@ fn verdicts_do_not_depend_on_the_order_members_are_asked_in() {
     eprintln!("{members} members, {orders} orders");
 }
 
-/// Every member of a chain group of 512 that the decider refuses is inhabited, by a chain of up
-/// to 512 values, decided by one search with all 512 as roots.
-#[test]
-fn every_member_of_an_undecided_long_chain_is_inhabited() {
-    let ts = kernel(&undecided(chain_of(&mut Rng::new(7), 512)), "long_chain_u");
+/// Every member of a chain group of `n` that the decider refuses is inhabited, by a chain of up
+/// to `n` values, decided by one search with all `n` as roots. The chain of 512 is
+/// `bench::every_member_of_an_undecided_long_chain_is_inhabited` (TEST-bench-move-l0123,
+/// author P178).
+fn every_member_of_an_undecided_chain_is_inhabited(n: usize) {
+    let ts = kernel(&undecided(chain_of(&mut Rng::new(7), n)), "long_chain_u");
     for (i, v) in in_order(&ts, &(0..ts.len()).collect::<Vec<_>>())
         .iter()
         .enumerate()
     {
         assert_eq!(*v, Some(Verdict::Inhabited), "R{i} of the chain");
     }
+}
+
+#[test]
+fn every_member_of_an_undecided_short_chain_is_inhabited() {
+    every_member_of_an_undecided_chain_is_inhabited(16);
 }
 
 /// The definitions of the largest group of `sys`, those that reach each other, in order: a
@@ -2082,27 +2093,20 @@ fn chain_of_groups(n: usize, open: bool) -> Vec<E> {
         .collect()
 }
 
-/// A chain of 1000 groups (`chain_of_groups`), as the decider decides them and with every body
-/// written `b \ #none`, is decided on a thread of 1 MiB, asked of the first member and of a
-/// tuple outside the groups that holds it. Each group is decided before the group that reads it
-/// (`Type::decide_groups_read`), so no search starts inside another: deciding each group as the
-/// search above it reads it nested one search per group on the thread's stack, as the decider's
-/// verdicts of the parts it reads already did (plan item VERDICT-group-readers). The tuple runs
-/// first only the groups' deciders, and the groups' verdicts are decided when its search reads
-/// the first member (plan item VERDICT-meet-cost); asked first of the member's group, the
-/// deciders called each other one group deep at a time and overflowed the stack.
+/// A chain of 8 groups (`chain_of_groups`), as the decider decides them and with every body
+/// written `b \ #none`, asked of the first member and of a tuple outside the groups that holds
+/// it, on the test's own thread. The chain of 1000 groups on a thread of 1 MiB, which shows the
+/// groups are decided without nesting one search per group on the stack, is
+/// `bench::a_chain_of_groups_is_decided_on_a_small_stack` (TEST-bench-move-l0123, author P178).
 #[test]
-fn a_chain_of_groups_is_decided_on_a_small_stack() {
-    let n = 1000;
+fn a_short_chain_of_groups_is_decided() {
     for open in [false, true] {
-        let sys = chain_of_groups(n, open);
+        let sys = chain_of_groups(8, open);
         let first = kernel(&sys, "chain")[0].clone().expect("admitted");
         let outside = Type::tuple(vec![first.clone(), Type::int()]);
         for t in [first, outside] {
-            let v = scaling::on_a_thread(1 << 20, move || {
-                Type::forget_emptiness();
-                t.verdict()
-            });
+            Type::forget_emptiness();
+            let v = t.verdict();
             assert_eq!(v, Verdict::Inhabited, "with every body \\ #none: {open}");
         }
     }
@@ -2550,20 +2554,20 @@ fn the_group_that_hung_the_search_with_atoms_is_decided_in_every_order() {
     }
 }
 
-/// The verdicts of every member of `k` copies of the group that hung the search, at k and 8k
+/// The verdicts of every member of `n` copies of the group that hung the search, at n and 8n
 /// copies, in a ring when `ring` holds, the groups built before the runs. That each member is
 /// refused, as the one copy is, was checked here at 32 copies until TEST-bench-move-l0123
 /// (author P169); it is checked at 2 and 3 copies by
 /// [`a_few_copies_of_the_group_that_hung_the_search_are_refused`] and at a ring of 3 by
 /// [`a_ring_of_the_group_that_hung_the_search_is_refused`].
-fn verdicts_of_copies_scale(what: &str, ring: bool) {
+fn verdicts_of_copies_scale(what: &str, n: usize, ring: bool) {
     let make = |k: usize| -> Vec<Type> {
         (kernel(&hang_copies(k, ring), &format!("hang_{ring}_{k}")).into_iter())
             .map(|t| t.expect("the copies are admitted"))
             .collect()
     };
-    let copies = scaling::inputs(32, make);
-    scaling::check_order(what, 32, 1, |k| {
+    let copies = scaling::inputs(n, make);
+    scaling::check_order(what, n, 1, |k| {
         Type::forget_emptiness();
         for t in &copies[&k] {
             std::hint::black_box(t.verdict());

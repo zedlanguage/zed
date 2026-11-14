@@ -6,9 +6,12 @@ use super::*;
 
 /// The verdicts of a ring of `n` and `8n` closures, each returning the next; small instance
 /// `a_small_group_of_closures_is_witnessed`.
+///
+/// Size (TEST-bench-move-l0123, author P169): n 64 before, now 65536; 1x 245 ms at load
+/// 13.74.
 #[test]
 fn a_group_of_closures_is_witnessed_in_its_written_size() {
-    let n = 64;
+    let n = 65536;
     let inputs = scaling::inputs(n, |k| {
         Group::new(
             (0..k)
@@ -35,12 +38,15 @@ fn a_group_of_closures_is_witnessed_in_its_written_size() {
 /// timed; a run makes a fresh instance, whose group is decided anew. Building the instance
 /// costs about 57k instructions an arm, which hides a quadratic merge of equal arms at small
 /// `n`: one that looks each arm up in a list of the arms before it passed at `n` 1024 (10.2
-/// times) and failed at 2048 and 4096 (12.2 times), against 8.1 times here. It asserts nothing;
-/// what the decider answers is checked at small `n` by
-/// `many_arms_written_twice_and_nested_are_read_as_written_once`.
+/// times) and failed at 2048 and 4096 (12.2 times), against 8.1 times here at `n` 4096
+/// (measured at the old size). It asserts nothing; what the decider answers is checked at small
+/// `n` by `many_arms_written_twice_and_nested_are_read_as_written_once`.
+///
+/// Size (TEST-bench-move-l0123, author P169): n 4096 before, now 16384; 1x 99 ms at load
+/// 13.74.
 #[test]
 fn many_arms_scale() {
-    let n = 4096;
+    let n = 16384;
     let groups = scaling::inputs(n, |m| {
         let defs = (["Node", "Tree", "Thunk"].into_iter().zip(wide(m)))
             .map(|(name, body)| Def {
@@ -64,9 +70,12 @@ fn many_arms_scale() {
 /// canonical form stays within `n log n` (item GROUP-search-canon-key). It asserts nothing;
 /// what the decider answers is checked at small `n` by
 /// `many_meets_written_in_two_orders_are_decided`.
+///
+/// Size (TEST-bench-move-l0123, author P169): n 512 before, now 8192; 1x 85 ms at load
+/// 13.44.
 #[test]
 fn many_meets_in_two_orders_scale() {
-    let n = 512;
+    let n = 8192;
     let groups = scaling::inputs(n, |m| {
         let defs = (["Node", "Tree", "Thunk"]
             .into_iter()
@@ -91,9 +100,12 @@ fn many_meets_in_two_orders_scale() {
 /// with lowest common ancestors in `log n`, and one sort of the arms, so within `n log n`. It
 /// asserts nothing; what the decider answers is checked at small `n` by
 /// `a_chain_of_names_is_read_as_its_arms`.
+///
+/// Size (TEST-bench-move-l0123, author P169): n 128 before, now 32768; 1x 366 ms at load
+/// 13.74.
 #[test]
 fn a_chain_of_names_scales() {
-    let n = 128;
+    let n = 32768;
     let groups = scaling::inputs(n, |m| named(chain(m, false)));
     scaling::check_order("a chain of n names", n, 1, |m| {
         Type::forget_emptiness();
@@ -106,9 +118,12 @@ fn a_chain_of_names_scales() {
 /// Deciding [`copies`] of `n` and `8n`: one round of contraction, merging and dropping arms,
 /// within `m log m`. It asserts nothing; what the decider answers is checked at small `n` by
 /// `copies_of_parts_equal_once_arms_are_dropped_are_decided`.
+///
+/// Size (TEST-bench-move-l0123, author P169): n 64 before, now 4096; 1x 112 ms at load
+/// 13.74.
 #[test]
 fn copies_of_parts_equal_once_arms_are_dropped_scale() {
-    let n = 64;
+    let n = 4096;
     let groups = scaling::inputs(n, |m| named(copies(m)));
     scaling::check_order("n copies of parts equal once arms are dropped", n, 1, |m| {
         Type::forget_emptiness();
@@ -121,9 +136,12 @@ fn copies_of_parts_equal_once_arms_are_dropped_scale() {
 /// Deciding the group of [`two_chains`] of `n` and `8n` names, with the nodes that play alike
 /// found by the refinement of `names::merged`, within `m log m`. It asserts nothing; what the
 /// decider answers is checked at small `n` by `two_chains_written_alike_are_decided`.
+///
+/// Size (TEST-bench-move-l0123, author P169): n 512 before, now 16384; 1x 232 ms at load
+/// 17.27.
 #[test]
 fn two_chains_written_alike_scale() {
-    let n = 512;
+    let n = 16384;
     let groups = scaling::inputs(n, |m| named(two_chains(m)));
     scaling::check_order("two chains of n names written alike", n, 1, |m| {
         Type::forget_emptiness();
@@ -137,11 +155,15 @@ fn two_chains_written_alike_scale() {
 /// the walk that finds the groups a type depends on reads each part of the diagrams the members
 /// share once for the whole query, not once per member that holds it (item
 /// GROUP-search-canon-key). With a fresh scan per member the larger run took 35.2 times the
-/// work of the smaller, against a limit of 11.7. The groups are built before the work is
-/// counted. Small instance: `small_groups_with_shared_parts_are_inhabited`.
+/// work of the smaller, against a limit of 11.7 (measured at the old size, `n` 512). The groups
+/// are built before the work is counted. Small instance:
+/// `small_groups_with_shared_parts_are_inhabited`.
+///
+/// Size (TEST-bench-move-l0123, author P169): n 512 before, now 8192; 1x 27 ms at load
+/// 17.27.
 #[test]
 fn shared_parts_are_read_once_when_deciding_their_groups() {
-    let n = 512;
+    let n = 8192;
     let inputs = scaling::inputs(n, |m| {
         let defs = (["WalkNode", "WalkTree", "WalkThunk"]
             .into_iter()
@@ -169,12 +191,15 @@ fn shared_parts_are_read_once_when_deciding_their_groups() {
     );
 }
 
-/// [`morphisms_met_with_a_union`] at 64 and 512 arms, the groups built before the work is
+/// [`morphisms_met_with_a_union`] at `n` and `8n` arms, the groups built before the work is
 /// counted. Small instance:
 /// `morphism_types_met_with_a_union_of_morphism_types_are_inhabited`.
+///
+/// Size (TEST-bench-move-l0123, author P169): n 64 before, now 4096; 1x 149 ms at load
+/// 13.44.
 #[test]
 fn morphism_types_met_with_a_union_of_morphism_types_scale() {
-    let n = 64;
+    let n = 4096;
     let groups = scaling::inputs(n, morphisms_met_with_a_union);
     scaling::check_order("n morphism types met with a union of n", n, 1, |m| {
         Type::forget_emptiness();
@@ -184,11 +209,15 @@ fn morphism_types_met_with_a_union_of_morphism_types_scale() {
 
 /// Every arm has the same function constraint in its second component. It must be tested
 /// before unfolding each different literal context in its first component. This benchmark and
-/// the two after it have their small instance in `small_shared_morphism_constraints_are_decided`.
+/// those after it have their small instance in `small_shared_morphism_constraints_are_decided`.
+///
+/// Size (TEST-bench-move-l0123, author P169): n 16 before, now 4096; 1x 139 ms at load
+/// 12.92.
 #[test]
 fn shared_morphism_constraints_are_checked_in_the_size_of_the_union() {
-    let inputs = scaling::inputs(16, |m| arm_family(false, m).instance(vec![]));
-    scaling::check_order("shared morphism result constraints", 16, 1, |m| {
+    let n = 4096;
+    let inputs = scaling::inputs(n, |m| arm_family(false, m).instance(vec![]));
+    scaling::check_order("shared morphism result constraints", n, 1, |m| {
         Type::forget_emptiness();
         for t in &inputs[&m] {
             assert_eq!(t.verdict(), Verdict::Empty);
@@ -196,61 +225,94 @@ fn shared_morphism_constraints_are_checked_in_the_size_of_the_union() {
     });
 }
 
-#[test]
-fn shared_morphism_constraints_scale_without_a_group_query() {
-    for route in ["empty", "tuple", "value"] {
-        let inputs = scaling::inputs(16, |m| {
-            arm_family(false, m)
-                .instance(vec![])
-                .into_iter()
-                .map(|t| match route {
-                    "tuple" => Type::tuple(vec![t]),
-                    "value" => Type::morphism(Type::int(), Type::int(), t),
-                    _ => t,
-                })
-                .collect::<Vec<_>>()
-        });
-        scaling::check_order(
-            "shared morphism constraints outside group queries",
-            16,
-            1,
-            |m| {
-                Type::forget_emptiness();
-                for t in &inputs[&m] {
-                    if route == "empty" {
-                        assert!(t.is_empty());
-                    } else {
-                        assert_eq!(t.verdict(), Verdict::Empty);
-                    }
+/// The members of [`arm_family`] reached by `route` outside a group query, at `n` and `8n`:
+/// `"empty"` asks `is_empty` of each member, `"tuple"` the verdict of each in a one-tuple and
+/// `"value"` the verdict of a morphism type whose result is the member. One test per route.
+fn shared_morphism_constraints_without_a_group_query(route: &str, n: usize) {
+    let inputs = scaling::inputs(n, |m| {
+        arm_family(false, m)
+            .instance(vec![])
+            .into_iter()
+            .map(|t| match route {
+                "tuple" => Type::tuple(vec![t]),
+                "value" => Type::morphism(Type::int(), Type::int(), t),
+                _ => t,
+            })
+            .collect::<Vec<_>>()
+    });
+    scaling::check_order(
+        "shared morphism constraints outside group queries",
+        n,
+        1,
+        |m| {
+            Type::forget_emptiness();
+            for t in &inputs[&m] {
+                if route == "empty" {
+                    assert!(t.is_empty());
+                } else {
+                    assert_eq!(t.verdict(), Verdict::Empty);
                 }
-            },
-        );
-    }
+            }
+        },
+    );
 }
 
+/// Size (TEST-bench-move-l0123, author P169): n 16 before, now 4096; 1x 150 ms at load
+/// 12.77.
+#[test]
+fn shared_morphism_constraints_scale_without_a_group_query() {
+    shared_morphism_constraints_without_a_group_query("empty", 4096);
+}
+
+/// Size (TEST-bench-move-l0123, author P169): n 16 before, now 4096; 1x 151 ms at load
+/// 12.92.
+#[test]
+fn shared_morphism_constraints_in_a_tuple_scale_without_a_group_query() {
+    shared_morphism_constraints_without_a_group_query("tuple", 4096);
+}
+
+/// Size (TEST-bench-move-l0123, author P169): n 16 before, now 4096; 1x 162 ms at load
+/// 12.92.
+#[test]
+fn shared_morphism_constraints_as_a_result_scale_without_a_group_query() {
+    shared_morphism_constraints_without_a_group_query("value", 4096);
+}
+
+/// The members of [`arm_family`] with a refused member, at `n` and `8n`: their verdicts, or
+/// with `empty` their emptiness. One test for each.
+fn shared_morphism_constraints_beside_a_refused_member(n: usize, empty: bool) {
+    let inputs = scaling::inputs(n, |m| arm_family(true, m).instance(vec![]));
+    scaling::check_order(
+        "shared morphism constraints with a refused member",
+        n,
+        1,
+        |m| {
+            Type::forget_emptiness();
+            for (t, want) in inputs[&m].iter().zip([
+                Verdict::Refused(Refusal::Fork),
+                Verdict::Empty,
+                Verdict::Empty,
+            ]) {
+                if empty {
+                    assert_eq!(t.is_empty(), want == Verdict::Empty);
+                } else {
+                    assert_eq!(t.verdict(), want);
+                }
+            }
+        },
+    );
+}
+
+/// Size (TEST-bench-move-l0123, author P169): n 256 before, now 512; 1x 190 ms at load
+/// 12.92.
 #[test]
 fn shared_morphism_constraints_scale_beside_a_refused_member() {
-    let n = 256;
-    let inputs = scaling::inputs(n, |m| arm_family(true, m).instance(vec![]));
-    for empty in [false, true] {
-        scaling::check_order(
-            "shared morphism constraints with a refused member",
-            n,
-            1,
-            |m| {
-                Type::forget_emptiness();
-                for (t, want) in inputs[&m].iter().zip([
-                    Verdict::Refused(Refusal::Fork),
-                    Verdict::Empty,
-                    Verdict::Empty,
-                ]) {
-                    if empty {
-                        assert_eq!(t.is_empty(), want == Verdict::Empty);
-                    } else {
-                        assert_eq!(t.verdict(), want);
-                    }
-                }
-            },
-        );
-    }
+    shared_morphism_constraints_beside_a_refused_member(512, false);
+}
+
+/// Size (TEST-bench-move-l0123, author P169): n 256 before, now 512; 1x 255 ms at load
+/// 17.27.
+#[test]
+fn the_emptiness_of_shared_morphism_constraints_scales_beside_a_refused_member() {
+    shared_morphism_constraints_beside_a_refused_member(512, true);
 }
