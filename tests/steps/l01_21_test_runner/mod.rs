@@ -4,6 +4,7 @@
 
 mod bench;
 mod command;
+mod completeness;
 mod cones;
 mod fences;
 mod marks;
