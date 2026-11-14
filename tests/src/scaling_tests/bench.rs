@@ -1,14 +1,14 @@
-//! The two self-tests of [`super`] that time work at two sizes on purpose and expect a ratio
+//! The two self-tests of [`crate::scaling`] that time work at two sizes on purpose and expect a ratio
 //! far past the limit, so they take seconds (TEST-bench-move-crates, author P169): benchmarks,
 //! run with `tools/run_tests.sh --bench`. The checks of the meters and the limit in small
-//! steps are in `super::tests`: `a_reading_grows_by_the_work_between` and
+//! steps are in [`super`]: `a_reading_grows_by_the_work_between` and
 //! `work_a_power_of_n_above_the_order_given_fails` (instructions),
 //! `the_processor_time_of_a_thread_leaves_out_its_sleep` (processor time),
 //! `a_meter_counts_the_work_of_a_run_and_not_the_time_it_sleeps` and
 //! `the_bytes_of_a_bare_thread_a_run_starts_count` (a thread a run starts).
 
-use super::tests::{fails, work};
 use super::*;
+use super::{fails, work};
 
 /// Linear work passes and cubic work fails by processor time, at 100 and 800, where the
 /// limit is 10.5 (21 by time): 8 and 512 times the work. Measured at load about 25

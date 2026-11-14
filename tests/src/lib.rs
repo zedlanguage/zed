@@ -15,6 +15,8 @@ pub mod layout;
 pub mod oracle;
 pub mod readme;
 pub mod scaling;
+#[cfg(test)]
+mod scaling_tests;
 pub mod seed;
 pub mod step_helpers;
 pub mod tokens;
