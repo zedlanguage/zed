@@ -3951,12 +3951,9 @@ mod cell_sweep {
             .iter()
             .any(|d| nodes[&(std::ptr::from_ref(*d) as usize)].has_payload);
         if !any_top_pay && live_top.iter().all(|d| d.ors.is_empty()) {
-            let spans = resolve_pure_or(o, x, whole, pure_memo);
-            return Some(if spans.is_empty() {
-                ResolvedOr::Empty
-            } else {
-                ResolvedOr::PureX(spans)
-            });
+            // Never empty: a live top node with no ors has the span `nodes` gave it, and
+            // `pure_memo` holds the same span for it (one `cells_of` call, one `x` and `whole`).
+            return Some(ResolvedOr::PureX(resolve_pure_or(o, x, whole, pure_memo)));
         }
 
         // Collect distinct payload equalities and pure-`x` sibling guard spans on payload nodes.
@@ -3967,7 +3964,8 @@ mod cell_sweep {
 
         // Walk reachable payload skeleton (explicit stack + `visited_pay` set).
         // Reject diamond-shared payload nodes inside one disjunction so the segment-tree DFS walks
-        // a strict tree of size at most `s_j`.
+        // a strict tree of size at most `s_j`. This walk and the two passes below push only live
+        // nodes (`live_top`, and children filtered by `!dead`), so no node they reach is dead.
         let mut visited_pay = FxHashSet::default();
         let mut pstack: Vec<&'a Parts> = live_top.clone();
         while let Some(u) = pstack.pop() {
@@ -3976,9 +3974,6 @@ mod cell_sweep {
                 return None;
             }
             let info = &nodes[&ptr];
-            if info.dead {
-                continue;
-            }
             if let Some(sp) = &info.span {
                 collect_cuts_from_span(sp, whole, &mut cuts);
             }
@@ -4024,9 +4019,6 @@ mod cell_sweep {
         let mut node_leaf_eq: FxHashMap<usize, usize> = FxHashMap::default();
         for &ptr in &visited_pay {
             let info = &nodes[&ptr];
-            if info.dead {
-                continue;
-            }
             let mut blocks = Vec::new();
             if let Some(sp) = &info.span {
                 let r = span_cell_range(sp, whole, &cuts);
@@ -4071,9 +4063,6 @@ mod cell_sweep {
                 Frame::Enter(u) => {
                     let ptr = std::ptr::from_ref(u) as usize;
                     let info = &nodes[&ptr];
-                    if info.dead {
-                        continue;
-                    }
                     if let Some(bs) = node_blocks.get(&ptr) {
                         for &(l, r) in bs {
                             seg.add_range(l, r, 1);
@@ -4200,9 +4189,6 @@ mod cell_sweep {
                     Frame::Enter(u) => {
                         let ptr = std::ptr::from_ref(u) as usize;
                         let info = &nodes[&ptr];
-                        if info.dead {
-                            continue;
-                        }
                         if let Some(bs) = node_blocks.get(&ptr) {
                             for &(l, r) in bs {
                                 seg_g.add_range(l, r, 1);
@@ -4260,9 +4246,10 @@ mod cell_sweep {
                 pieces.push((sp.clone(), m));
             }
         }
-        if pieces.is_empty() {
-            return Some(ResolvedOr::Empty);
-        }
+        // `pieces` is never empty: pass 1 found an overlap, so it harvested at a leaf without
+        // changing `seg` (`single_eq` is false). Pass 2 for that leaf's group adds the same blocks
+        // and prunes the same nodes until its first harvest, so it harvests that leaf's cells or
+        // an earlier leaf's.
         Some(ResolvedOr::OverlapDef {
             eqs,
             pieces,
@@ -23175,14 +23162,16 @@ fn try_pick_disjoint_wide<'a>(
     let (ord_atoms, col_map) = colors(&red_cons);
     let ranks: HashMap<&Atom, usize> = ord_atoms.iter().enumerate().map(|(i, a)| (a, i)).collect();
 
+    // No row's target lies out of its reach here: every row is an equation with unit
+    // coefficients whose names off its disjunctions are fixed, so `base_dw` found it empty
+    // above, and the walk was not taken, where a row with no disjunction has a target other
+    // than 0 (its least and most sums are both that target, negated or not) or a bounded row
+    // has a target below 0 or past the sum of its weights (its least sum is above 0 or its most
+    // below). Test: `pick_wide_tests::a_row_its_bounds_cannot_meet_is_not_walked`.
     let mut states: Vec<PickRowState> = Vec::with_capacity(num_rows);
-    let mut infeasible_base = false;
     for (r_idx, disjs) in row_disjs.into_iter().enumerate() {
         let k_r = disjs.len();
         if k_r == 0 {
-            if !row_targets[r_idx].is_zero() {
-                infeasible_base = true;
-            }
             states.push(PickRowState::FixedEmpty);
             continue;
         }
@@ -23217,9 +23206,6 @@ fn try_pick_disjoint_wide<'a>(
                 active_sum = &active_sum + w;
             }
             let target = row_targets[r_idx].clone();
-            if target.is_negative() || target > active_sum {
-                infeasible_base = true;
-            }
             let mut bpr = BoundedPickRow {
                 disjs,
                 solve_ord,
@@ -23232,12 +23218,10 @@ fn try_pick_disjoint_wide<'a>(
                 split_pos: 0,
                 special: HashMap::new(),
             };
-            if !infeasible_base {
-                for pos in 0..k_r {
-                    let loc = bpr.solve_ord[pos];
-                    let w = bpr.w_of[loc].clone();
-                    bpr.bit_add(pos, &w);
-                }
+            for pos in 0..k_r {
+                let loc = bpr.solve_ord[pos];
+                let w = bpr.w_of[loc].clone();
+                bpr.bit_add(pos, &w);
             }
             states.push(PickRowState::Bounded(bpr));
         } else if all_unbounded && seen_cols.len() == 1 {
@@ -23255,9 +23239,6 @@ fn try_pick_disjoint_wide<'a>(
         }
     }
 
-    if infeasible_base {
-        return Some(Err(Refusal::Disjuncts));
-    }
     for st in &mut states {
         if let PickRowState::Bounded(bpr) = st
             && let Err(e) = bpr.recompute()
@@ -23278,17 +23259,10 @@ fn try_pick_disjoint_wide<'a>(
                 if !*ok {
                     return Some(Err(Refusal::Disjuncts));
                 }
-                atom_model.clear();
-                atom_model.insert(atom.clone(), val.clone());
-                held_buf.clear();
-                let holds = if deep {
-                    ds[0].witness(&atom_model, stamp, &mut held_buf)
-                } else {
-                    ds[0].cons.iter().all(|c| c.holds_linear(&atom_model))
-                };
-                if !holds {
-                    return Some(Err(Refusal::Disjuncts));
-                }
+                // The disjunct holds at `atom = val`, with or without `deep`, so it is not
+                // tested: `parse_one_point_disj` took it only with no disjunctions and with
+                // bounds on `atom` alone that meet at `val`, and `stamp` marks no failure on
+                // it, since no other disjunction is on `atom`.
                 final_vals.insert(atom.clone(), val.clone());
                 took.push(&*ds[0]);
                 continue;

@@ -1726,11 +1726,9 @@ pub(super) fn fill_row_model(plan: &RowPlan, loc: usize, arm_idx: usize, m: &mut
         HitKind::UnboundedFast { gmax, rem, at_gmax } => {
             take_high[loc] = arm_idx == plan.disjs[loc].high_arm;
             if *at_gmax {
-                if *rem == plan.disjs[*gmax].weight {
-                    take_high[*gmax] = true;
-                } else if !rem.is_zero() {
-                    return false;
-                }
+                // The sweep sets `at_gmax` only where `rem` is the weight of `gmax` (`gmax` is
+                // never `loc`), so the greatest name takes its high arm and the row is full.
+                take_high[*gmax] = true;
             } else {
                 let xl = if loc == 0 { 1 } else { 0 };
                 let mut cur = rem.clone();
