@@ -158,3 +158,173 @@ fn rejecting_many_powers_scales() {
         );
     });
 }
+
+/// `main` binding `b = 5 * 2^100 + 1` (103 bits) and `x` to `rat`, then the lines `body`
+/// (plan row CONST-too-large-rat-names).
+fn with_x(x: &str, body: &str) -> String {
+    format!("main(m: MainArgs) {{\n    b = 5 * 2^100 + 1;\n    x = {x};\n{body}}}\n")
+}
+
+#[test]
+fn a_rat_base_fixed_through_a_name_and_a_division_is_rejected() {
+    // The row's program. Before, it compiled and the run stopped with "Number too large for
+    // memory" (103 EiB). Both parts of `b / (b + 1)` have 103 bits, so `x ^ (2^62)` has at
+    // least `2 * (2^62 * 102 + 1)` bits, 102 EiB.
+    let src = with_x(
+        "rat(b) / rat(b + 1)",
+        "    m.stdout <- String(x ^ (2^62)) else \"\";\n",
+    );
+    assert_eq!(
+        rejected(&src),
+        r#"4:24: Number too large for any memory of the target: `x ^ (2^62)` needs at least 102 EiB; Linux x86_64 addresses 16 EiB. Try `m.stdout <- String(x ^ (2^59)) else ""` instead.
+  [1] 3:5: the numerator p of the base `x` is at least 2^102 in magnitude, so ⌊log₂ |p|⌋ is 102; the denominator p of the base `x` is at least 2^102 in magnitude, so ⌊log₂ |p|⌋ is 102
+      3 |     x = rat(b) / rat(b + 1);
+        |     ^^^^^^^^^^^^^^^^^^^^^^^^
+  [2] 4:28: the exponent k, `(2^62)`, is at least 2^62
+      4 |     m.stdout <- String(x ^ (2^62)) else "";
+        |                        ^^^^^^^^^^ [3, 4]
+        |                            ^^^^^^ [2]
+  [3] 4:24: so `x ^ (2^62)` has at least 2^62 * 102 + 1 bits from the base's numerator and 2^62 * 102 + 1 bits from the base's denominator: |k| * ⌊log₂ |p|⌋ + 1 at the least |p| and |k|
+  [4] 4:24: or read the exponent from the input: the run then stops if no memory holds the result
+  fixes, each checked here:
+    m.stdout <- String(x ^ (2^59)) else "";    needs at least 12 EiB"#
+    );
+}
+
+/// `with_x(x, …)` pushing `String(<power>)` to standard output.
+fn x_pushed(x: &str, power: &str) -> String {
+    with_x(x, &format!("    m.stdout <- String({power}) else \"\";\n"))
+}
+
+#[test]
+fn both_parts_of_a_rat_base_count() {
+    // With both parts of 103 bits, `x ^ k` has at least `k * 204 + 2` bits: `2^59` fits
+    // (12.75 EiB) and `2^60` does not (25.5 EiB). With the denominator 7, only the numerator
+    // is built, `k * 102 + 1` bits: `2^60` fits (12.75 EiB) and `2^61` does not.
+    let both = "rat(b) / rat(b + 1)";
+    let one = "rat(b) / 7";
+    for (x, power) in [
+        (both, "x ^ (2^59)"),
+        (one, "x ^ (2^60)"),
+        (one, "x ^ -(2^60)"),
+    ] {
+        assert_eq!(built(&x_pushed(x, power)), None, "{x}; {power}");
+    }
+    for (x, power, need) in [
+        (both, "x ^ (2^60)", "at least 25 EiB"),
+        (one, "x ^ (2^61)", "at least 25 EiB"),
+        (one, "x ^ -(2^61)", "at least 25 EiB"),
+    ] {
+        let out = rejected(&x_pushed(x, power));
+        let head = format!(
+            "4:24: Number too large for any memory of the target: `{power}` needs {need}; \
+             Linux x86_64 addresses 16 EiB."
+        );
+        assert!(out.starts_with(&head), "{x}; {power}:\n{out}");
+    }
+    let out = rejected(&x_pushed(one, "x ^ (2^61)"));
+    assert!(
+        out.contains(
+            "the numerator p of the base `x` is at least 2^102 in magnitude, so ⌊log₂ |p|⌋ \
+             is 102\n"
+        ) && !out.contains("denominator"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_rat_base_is_read_through_names_and_operations() {
+    // A name bound to a name, a negation, a sum, a product and a quotient of `rat`s: each is
+    // the kernel's value, so a quotient whose parts reduce is read reduced.
+    for (x, body) in [
+        (
+            "rat(b) / rat(b + 1)",
+            "    y = x;\n    z = -y;\n    m.stdout <- String(z ^ (2^62)) else \"\";\n",
+        ),
+        (
+            "rat(b) * rat(b)",
+            "    m.stdout <- String(x ^ (2^60)) else \"\";\n",
+        ),
+        (
+            "rat(b) + 1 / 3",
+            "    m.stdout <- String((x - 1) ^ (2^62)) else \"\";\n",
+        ),
+        (
+            "rat(b) / rat(b + 1)",
+            "    y = x / 7;\n    m.stdout <- String(y ^ (2^62)) else \"\";\n",
+        ),
+    ] {
+        let out = rejected(&with_x(x, body));
+        assert!(
+            out.contains("Number too large for any memory of the target"),
+            "{x}; {body}:\n{out}"
+        );
+    }
+    // `3b / b` is 3, which builds nothing, and `b / 2b` is 1/2.
+    for x in ["rat(3 * b) / rat(b)", "rat(b) / rat(2 * b)"] {
+        assert_eq!(built(&x_pushed(x, "x ^ (2^64)")), None, "{x}");
+    }
+    // `b` is 0 mod 3 (`2^100` is 1 mod 3), so `b / 3` is an integer of 101 bits.
+    let out = rejected(&x_pushed("rat(b) / 3", "x ^ (2^62)"));
+    assert!(
+        out.contains(
+            "the numerator p of the base `x` is at least 2^100 in magnitude, so ⌊log₂ |p|⌋ \
+             is 100\n"
+        ) && !out.contains("denominator"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_rat_base_the_text_does_not_fix_proves_nothing() {
+    // A parameter, a value read from the input and a division by zero fix no value.
+    let src = "f(x: rat) {\n    return x ^ (2^62);\n}\n\
+               main(m: MainArgs) {\n    b = 5 * 2^100 + 1;\n    \
+               m.stdout <- String(f(x: rat(b) / rat(b + 1))) else \"\";\n}\n";
+    assert_eq!(built(src), None);
+    let src = with_x(
+        "rat(b) / rat(int(m.args[0] else \"\") else 1)",
+        "    m.stdout <- String(x ^ (2^62)) else \"\";\n",
+    );
+    assert_eq!(built(&src), None);
+    let src = with_x(
+        "rat(b) / rat(b - b)",
+        "    m.stdout <- String(x ^ (2^62)) else \"\";\n",
+    );
+    let out = built(&src).unwrap_or_default();
+    assert!(!out.contains("Number too large"), "{out}");
+}
+
+/// `n` names after `x`, each `b` over the one before, so each is `x` or `1 / x` and has
+/// parts of 103 bits, and a power of each past the address space.
+fn chain(n: usize) -> String {
+    let body: String = (0..n)
+        .map(|i| {
+            let prev = if i == 0 {
+                "x".to_string()
+            } else {
+                format!("y{}", i - 1)
+            };
+            format!("    y{i} = rat(b) / {prev};\n    p{i} = y{i} ^ (2^62);\n")
+        })
+        .collect();
+    with_x("rat(b) / rat(b + 1)", &body)
+}
+
+#[test]
+fn reading_a_chain_of_names_and_divisions_scales() {
+    // Each name is read once, however many powers read it: the chain of `n` names costs `n`
+    // divisions of 103-bit numbers and `n` rejections.
+    scaling::check(
+        "a chain of n names and divisions, a power of each rejected",
+        200,
+        |n| {
+            let out = rejected(&chain(n));
+            assert_eq!(
+                out.matches("Number too large for any memory of the target")
+                    .count(),
+                n
+            );
+        },
+    );
+}

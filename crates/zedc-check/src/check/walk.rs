@@ -7881,17 +7881,94 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
-    /// The value the text fixes for `a`: what [`Self::known`] gives of an int, what
-    /// [`Self::rat_fact`] gives of a `rat` literal or an operation on them, and the int a
-    /// `rat(x)` cast of a fixed `x` widens, as in `rat(b) ^ (2^64)`.
+    /// The value the text fixes for `a`, an `int` or a `rat`: what [`Self::known`] gives of an
+    /// int, what [`Self::rat_fact`] gives of a `rat` literal or an operation on them, the int
+    /// a `rat(x)` cast of a fixed `x` widens, as in `rat(b) ^ (2^64)`, and, at `rat`, the value
+    /// of a name bound by `name = e` to such an expression and of a `-`, `+`, `*` or `/` of
+    /// such expressions, as `x` in `x = rat(b) / rat(b + 1); x ^ (2^62)` (plan row
+    /// CONST-too-large-rat-names). Each value is the kernel's, by its one evaluator, as for
+    /// [`Self::rat_folded`] ([`prim_folded`]); nothing is read of a function's body, a
+    /// parameter or the input.
+    ///
+    /// Complexity tradeoff: the naive method reads the base's text afresh at each power,
+    /// recursing through names and operations: a chain of `n` names, each bound to a `/` of the
+    /// one before, costs O(n) reads per power read through it, and O(n) native stack. Used: as
+    /// [`Self::known`] does, each expression is read once, by its span, operands before the
+    /// operation on an explicit stack, and kept ([`Ck::fixed`]), so the chain costs O(n) reads
+    /// in all, however many powers read it, and no stack depth. Each read costs one kernel
+    /// operation on the values of its operands, the operation the run makes too: a `/`
+    /// multiplies and reduces the product by the gcd (`Rat::div`: Burnikel-Ziegler
+    /// remainder, then Stein's binary gcd), so a chain whose values stay of one size costs
+    /// O(n) operations of that size, and one whose values grow at each step costs the
+    /// operations on all of their sizes, as the run's would: `y_i = y_{i-1} / rat(b + i)` with
+    /// `b` of 103 bits took 145 ms at 400 names and 980 ms at 3200 (2026-11-13, load 41), and
+    /// the same chain of `*` at `int`, which [`Self::known`] folds alike, 77 ms and 700 ms.
+    /// The kernel's `room` refuses a step
+    /// past the memory it allows, and the value is then none.
     fn fixed_value(&mut self, a: &'a Expr) -> Option<Value> {
-        if let Some(v) = self.known(a).value {
+        if !self.fixed.contains_key(&a.span) {
+            // Each node is entered once: the graph through binders is acyclic, as statements
+            // are checked in dependency order, and the set keeps it finite if not.
+            let mut entered = HashSet::new();
+            let mut stack = vec![(a, false)];
+            while let Some((x, ready)) = stack.pop() {
+                if ready {
+                    let v = self.fixed_uncached(x);
+                    self.fixed.insert(x.span, v);
+                } else if !self.fixed.contains_key(&x.span) && entered.insert(x.span) {
+                    stack.push((x, true));
+                    stack.extend(self.fixed_reads(x).into_iter().map(|c| (c, false)));
+                }
+            }
+        }
+        self.fixed[&a.span].clone()
+    }
+
+    /// The expressions [`Self::fixed_uncached`] reads to read `e`: the value a name is bound
+    /// to, or the operands of a `-`, `+`, `*` or `/`.
+    fn fixed_reads(&self, e: &'a Expr) -> Vec<&'a Expr> {
+        match &e.kind {
+            ExprKind::Name(_) => self.bound_value(e).into_iter().collect(),
+            ExprKind::Unary(UnaryOp::Neg, a) => vec![&**a],
+            ExprKind::Binary(
+                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div,
+                a,
+                b,
+            ) => vec![&**a, &**b],
+            _ => Vec::new(),
+        }
+    }
+
+    /// The value the text fixes for `e` ([`Self::fixed_value`]), from what has been read of
+    /// the expressions [`Self::fixed_reads`] gives. An `int` operation is [`Self::known`]'s:
+    /// a `-`, `+` or `*` is read here only where an operand is a `rat`, and a `/` always, as
+    /// `/` has no arrow at `int`; a bare literal beside a `rat` is read at `rat`.
+    fn fixed_uncached(&mut self, e: &'a Expr) -> Option<Value> {
+        if let Some(v) = self.known(e).value {
             return Some(v);
         }
-        if let Some(RatFact::Value(v)) = self.rat_fact(a) {
+        if let Some(RatFact::Value(v)) = self.rat_fact(e) {
             return Some(v);
         }
-        match &a.kind {
+        let memo = |x: &Expr| self.fixed.get(&x.span).cloned().flatten();
+        match &e.kind {
+            ExprKind::Name(_) => memo(self.bound_value(e)?),
+            ExprKind::Unary(UnaryOp::Neg, a) => match memo(a)? {
+                v @ Value::Rat(_) => prim_folded(Prim::Neg, vec![v]),
+                _ => None,
+            },
+            ExprKind::Binary(
+                op @ (BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div),
+                a,
+                b,
+            ) => {
+                let (x, y) = (memo(a)?, memo(b)?);
+                let rat = |v: &Value| matches!(v, Value::Rat(_));
+                if *op != BinaryOp::Div && !rat(&x) && !rat(&y) {
+                    return None;
+                }
+                prim_folded(binary_prim(*op)?, vec![at_rat(x)?, at_rat(y)?])
+            }
             ExprKind::Call {
                 callee,
                 positional,
@@ -7902,10 +7979,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 && matches!(self.t.res.uses.get(&callee.span), Some(Ref::Prelude(_))) =>
             {
                 match &positional[..] {
-                    [x] => match self.known(x).value? {
-                        Value::Big(r) => Some(Value::Rat(r)),
-                        _ => None,
-                    },
+                    [x] => at_rat(self.known(x).value?),
                     _ => None,
                 }
             }
@@ -13910,6 +13984,15 @@ fn target_text(target: &str) -> String {
         other => other,
     };
     format!("{os} {arch}")
+}
+
+/// The number `v` as a `rat`, as `rat(v)` widens an `int`; `None` for any other value.
+fn at_rat(v: Value) -> Option<Value> {
+    match v {
+        Value::Rat(_) => Some(v),
+        Value::Big(r) => Some(Value::Rat(r)),
+        _ => v.as_integer().map(|r| Value::rat(r.into_owned())),
+    }
 }
 
 /// The least magnitude of the integers in `ints`; `None` when they hold 0 or none, where a

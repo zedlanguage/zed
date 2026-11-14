@@ -1150,6 +1150,10 @@ struct Ck<'t, 'a> {
     alias: HashMap<usize, Span>,
     /// What the text of each expression shows of its `int` value, by its span.
     known: HashMap<Span, Known>,
+    /// The `int` or `rat` value the text fixes for each expression read as the base of a power,
+    /// and for each it reads to get it, by its span ([`Ck::fixed_value`]); `None` where the text
+    /// fixes none.
+    fixed: HashMap<Span, Option<Value>>,
     /// The expressions whose value is the result of `main`, its exit status ([`Ck::main_tails`]).
     main_tails: HashSet<Span>,
     /// The value of each binder `name = e`, read for what it shows of its `int` value only when
@@ -1473,6 +1477,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             made: HashMap::new(),
             alias: HashMap::new(),
             known: HashMap::new(),
+            fixed: HashMap::new(),
             facts: HashMap::new(),
             main_tails: HashSet::new(),
             whence: HashMap::new(),
