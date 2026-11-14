@@ -80,11 +80,20 @@ fn lambdas_whose_classes_are_read_inside_check_as_when_replaced_at_every_depth()
     assert_eq!(got.lines().count(), want.lines().count());
 }
 
+/// The lines `findings` gives `program` that start with `start`.
+fn lines_of(program: &str, start: &str) -> Vec<String> {
+    let got = findings(program);
+    (got.lines().filter(|l| l.starts_with(start)))
+        .map(String::from)
+        .collect()
+}
+
 /// A class merged into another after a call's signature was kept is finished through the
 /// binding of the one to the other (`Ck::finished`): the call `h(x)` keeps `h`'s signature
 /// `(y) -> (y, z)` with the class of `z`, which `x + z` then merges into that of `x`, named `T`
-/// as `p` ends. Only the signature of `p` is checked here: the call's signature names `h`'s own
-/// variable and `p`'s `T` alike (row FAIL-check-finished-names-clash).
+/// as `p` ends. The call's signature names `h`'s own variable `T` too; `p`'s, a variable of the
+/// function around that the call's signature does not bind, takes another name and prints as
+/// `_` (FAIL-check-finished-names-clash).
 #[test]
 fn a_class_merged_after_a_call_is_finished_as_the_class_it_joined() {
     let program = "p(x, z) = { h = (y) -> (y, z); r = h(x); s = x + z; r };\n";
@@ -95,9 +104,57 @@ fn a_class_merged_after_a_call_is_finished_as_the_class_it_joined() {
         Some("sig p = (x: T, z: T) -> (T, T) for T in int | f32 | f64 | rat"),
         "{got}"
     );
-    assert!(
-        got.lines().any(|l| l.starts_with("call \"h(x)\" = ")),
-        "{got}"
-    );
+    let call = got.lines().find(|l| l.starts_with("call \"h(x)\" = "));
+    assert_eq!(call, Some("call \"h(x)\" = (T) -> (T, _)"), "{got}");
     assert!(!got.lines().any(|l| l.starts_with("err ")), "{got}");
+}
+
+/// A call's signature names its own variable and one of the function around apart, though
+/// each function named its own `T` (FAIL-check-finished-names-clash): `h`'s `T` stays `T`,
+/// and `p`'s, which the signature holds but does not bind, prints as `_`. Before, both were
+/// named `T`, and the line read `(T) -> (T, T)`, as if `h` returned its argument twice.
+#[test]
+fn a_call_keeps_its_own_variable_apart_from_those_of_the_function_around() {
+    let calls = |p| lines_of(p, "call ");
+    assert_eq!(
+        calls("p(x) = { h = (y) -> (y, x); r = h(1); r };\n"),
+        ["call \"h(1)\" = (T) -> (T, _)"]
+    );
+    // The same when `p`'s variable sits inside a tuple, or comes through a name bound to it,
+    // or `h` is read again after the call.
+    assert_eq!(
+        calls("p(x) = { h = (y) -> (y, (x, 1)); r = h(1); r };\n"),
+        ["call \"h(1)\" = (T) -> (T, (_, 1))"]
+    );
+    assert_eq!(
+        calls("p(x) = { k = x; h = (y) -> (y, k); r = h(1); r };\n"),
+        ["call \"h(1)\" = (T) -> (T, _)"]
+    );
+    assert_eq!(
+        calls("p(x) = { h = (y) -> (y, x); r = h(x); s = h; r };\n"),
+        ["call \"h(x)\" = (T) -> (T, _)"]
+    );
+    // `p` has two variables, `x`'s and `z`'s; the call passes `z`, and `h` holds `x`'s.
+    let p = "p(x, z) = { h = (y) -> (y, x); r = h(z); s = x == (z, 1); r };\n";
+    assert_eq!(lines_of(p, "sig p = "), ["sig p = (x: T, z: U) -> (U, T)"]);
+    assert_eq!(calls(p), ["call \"h(z)\" = (T) -> (T, _)"]);
+    // Curried: the first call's signature has two variables of its own, `T` and `U`; the
+    // second's has `w`'s, named `T`, and `p`'s, bound in `h(x)`.
+    assert_eq!(
+        calls("p(x) = { h = (y) -> (w) -> (w, y); r = h(x)((x, 1)); r };\n"),
+        [
+            "call \"h(x)\" = (T) -> (U) -> (U, T)",
+            "call \"h(x)((x, 1))\" = (T) -> (T, _)"
+        ]
+    );
+}
+
+/// A call whose signature has one variable, of the function around, keeps its name: the
+/// renaming of [`a_call_keeps_its_own_variable_apart_from_those_of_the_function_around`]
+/// touches only a name that two variables share.
+#[test]
+fn a_call_of_one_variable_keeps_its_name() {
+    let p = "p(x) = { h = (y) -> y; r = h(x); r };\n";
+    assert_eq!(lines_of(p, "sig p = "), ["sig p = (x: T) -> T"]);
+    assert_eq!(lines_of(p, "call "), ["call \"h(x)\" = (T) -> T"]);
 }

@@ -3934,45 +3934,92 @@ impl<'t, 'a> Ck<'t, 'a> {
         t.renamed(&self.names(t.var_facts().classes))
     }
 
-    /// `s` with each class variable replaced by its type, as [`Self::finish`] puts it: a
-    /// type variable of the function around named as one of `s`'s own takes the next name
-    /// `s` does not use.
+    /// `s` with each class variable replaced by its type, as [`Self::finish`] puts it, and
+    /// each type variable it then prints given a name of its own: two that stand for different
+    /// variables never print as one. Each keeps its name where no variable before it took that
+    /// name; the others take the next names nothing in `s` uses. The variables are taken in
+    /// order: those `s` holds itself, in order of first appearance, its own and the classes of
+    /// functions that ended ([`Self::generalize`]) alike, and then those of the types its
+    /// classes were solved to, so `s`'s own keep their names before a variable of the
+    /// function around does. So a call `h(1)` of `h = (y) -> (y, x)` inside `p(x)` is
+    /// `(T) -> (T, U)` inside, though `h`'s variable and `p`'s are both named `T`, and prints
+    /// as `(T) -> (T, _)`, since `U` is not a variable of the signature's own
+    /// (FAIL-check-finished-names-clash; before, `p`'s class was given its name as `h`'s
+    /// was, and the line read `(T) -> (T, T)`).
+    ///
+    /// Complexity tradeoff: none is given up. One pass over the variables of `s` and of the
+    /// types bound, with a hash set and map, so linear in their size, as the renaming that
+    /// follows is.
     fn finished(&self, s: &Sig) -> Sig {
         // One that holds no class variable, as most do once settled, is as it is.
         if s.facts().classes.is_empty() {
             return s.clone();
         }
-        let mut b = self.solving(&sig_vars(s));
-        b.update_each(|t| *t = self.shown(t));
-        let s = &s.renamed(&self.names(sig_vars(s)));
         let vars = sig_vars(s);
-        let own: HashSet<Arc<str>> = vars
-            .iter()
-            .filter(|v| class_id(v).is_none())
-            .cloned()
-            .collect();
-        let mut used = own.clone();
-        for t in b.values() {
-            used.extend(t.vars.iter().cloned());
+        let b = self.solving(&vars);
+        // What each variable printed stands for, with the name it is printed by; a class that
+        // no function named prints as `_`, with no name to clash, and is left out.
+        let printed = |v: &Arc<str>, held: bool| -> Option<(Printed, Arc<str>)> {
+            match class_id(v).filter(|&k| k < self.classes.len()) {
+                Some(k) => {
+                    let r = self.find(k);
+                    Some((Printed::Class(r), self.classes[r].name.clone()?))
+                }
+                None if held => Some((Printed::Held(v.clone()), v.clone())),
+                None => Some((Printed::Own(v.clone()), v.clone())),
+            }
+        };
+        let mut order: Vec<(Printed, Arc<str>)> = Vec::new();
+        let mut seen: HashSet<Printed> = HashSet::new();
+        for v in vars.iter().filter(|v| b.get(*v).is_none()) {
+            order.extend(printed(v, false).filter(|(p, _)| seen.insert(p.clone())));
         }
-        let mut renamed: BTreeMap<Arc<str>, Arc<str>> = BTreeMap::new();
+        for v in &vars {
+            let Some(t) = b.get(v) else { continue };
+            let mut held = Vars::default();
+            t.vars_in(&mut held);
+            for w in &held.order {
+                order.extend(printed(w, true).filter(|(p, _)| seen.insert(p.clone())));
+            }
+        }
+        // The names to give: a name taken by a variable before keeps the later one from it.
+        let used: HashSet<Arc<str>> = order.iter().map(|(_, name)| name.clone()).collect();
+        let mut taken: HashSet<Arc<str>> = HashSet::new();
         let mut n = 0;
-        b.update_each(|t| {
-            let Some(v) = t.vars.iter().find(|v| own.contains(*v)).cloned() else {
-                return;
-            };
-            let to = renamed
-                .entry(v.clone())
-                .or_insert_with(|| {
-                    let name: Arc<str> =
-                        fresh_name(Names::Variables, &mut n, |name| used.contains(name));
-                    used.insert(name.clone());
+        let mut names: HashMap<Printed, Arc<str>> = HashMap::new();
+        for (p, name) in order {
+            let name = match taken.insert(name.clone()) {
+                true => name,
+                false => {
+                    let name: Arc<str> = fresh_name(Names::Variables, &mut n, |name| {
+                        used.contains(name) || taken.contains(name)
+                    });
+                    taken.insert(name.clone());
                     name
-                })
-                .clone();
-            *t = t.subst(&[(v, Ty::var(to))].into());
+                }
+            };
+            names.insert(p, name);
+        }
+        // Each variable to its name, where that is not the variable itself.
+        let rename = |v: &Arc<str>, held: bool| {
+            let (p, _) = printed(v, held)?;
+            let name = names.get(&p)?;
+            (name != v).then(|| (v.clone(), Ty::var(name.clone())))
+        };
+        let mut b = b;
+        b.update_each(|t| {
+            let mut held = Vars::default();
+            t.vars_in(&mut held);
+            let to: Binds = (held.order.iter())
+                .filter_map(|w| rename(w, true))
+                .collect();
+            *t = t.renamed(&to);
         });
-        s.replace(&b)
+        let to: Binds = (vars.iter())
+            .filter(|v| b.get(*v).is_none())
+            .filter_map(|v| rename(v, false))
+            .collect();
+        s.renamed(&to).replace(&b)
     }
 
     /// Puts each class's type in place of its variable in what the checker found. Each
@@ -10125,6 +10172,17 @@ fn port(key: Carrier, io: bool) -> Ty {
         named: 0,
         facts: Default::default(),
     }))
+}
+
+/// What a type variable that a finished signature prints stands for ([`Ck::finished`]).
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum Printed {
+    /// One of the signature's own, by name.
+    Own(Arc<str>),
+    /// One that a type a class of the signature was solved to holds, by name.
+    Held(Arc<str>),
+    /// The class of this root, named by the function that ended.
+    Class(usize),
 }
 
 /// The variables of `s`, in order of first appearance.

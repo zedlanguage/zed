@@ -5071,6 +5071,9 @@ impl<'m, 's> Comparing<'m, 's> {
 
     /// Keeps the answer `ok` and the binding `b` of the comparison `key`, unless it was refused
     /// ([`Self::refuse`]): a refused comparison's answer is not its own but the refusal's.
+    /// Kept, a false found after a refusal was read by a later attempt with nothing refused,
+    /// and a function that fits was found not to fit
+    /// (`l01_26_type_resolution::deep_ops::an_answer_found_after_a_refusal_is_not_read_by_a_later_attempt`).
     fn keep(&self, key: Compared, ok: bool, b: &Binds) {
         let mut cx = self.cx.borrow_mut();
         if cx.unchosen.is_none() {

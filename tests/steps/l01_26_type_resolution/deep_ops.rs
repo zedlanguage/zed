@@ -500,3 +500,72 @@ fn rows_compared_after_a_refusal_give_the_refusal() {
         Vec::<String>::new()
     );
 }
+
+/// An answer found after a refusal is not kept in the memo of rows (`Cx::compared`), where a
+/// later attempt, with nothing refused, would read it. `s` has the arrows
+/// `(x: #m(A) | #m(E) | int, y: #m(E) | int | V) -> int` and `(x: #m(X) | String, y: int) -> int`,
+/// `q` the arrows `(x: #m(X), y: int) -> int` and `(x: int, y: #m(X)) -> int`, where
+/// `X = #a(3, 5) | #a(4, 6)`, `A = #a(1 | 2, T) | #a(int, U)` and `E = #a(int, int)`, each
+/// payload shape `#m(X)` and `#m(E)` one node at each place (a shape with no variable is read
+/// as itself, `Cx::read`), and `V`, of `int`, keeps `#m(E) | int | V` from the kernel's forms.
+///
+/// The first arrow of `s`, tried for the first of `q`, is refused: `X` in `A` needs the second
+/// shape of one bucket for both payloads (`Comparing::search`). The search for `#m(X)` then
+/// goes on to `#m(E)`, whose payload search answers false at once, as each does after a
+/// refusal. Kept, that false was read when the same arrow was tried for the second arrow of
+/// `q`, as its own attempt with nothing refused; `#m(X)` was bound to `V`, outside its bound,
+/// and `s` did not fit `q`, though `X` is in `E` and that arrow takes it.
+#[test]
+fn an_answer_found_after_a_refusal_is_not_read_by_a_later_attempt() {
+    use zedc::check::read::parse_type;
+    let t = |s: &str| parse_type(s).unwrap_or_else(|e| panic!("{e}"));
+    let var = |s: &str| Ty::var(s.into());
+    let payloads = |name: &str, shapes: Vec<Vec<Ty>>| {
+        let mut t = Ty::set(Type::atom_with(name, &Type::top()));
+        let shapes = (shapes.into_iter())
+            .map(|cs| Shape::new(cs, Default::default()))
+            .collect();
+        t.payloads.insert(name.into(), Some(shapes));
+        t
+    };
+    let x = payloads("a", vec![vec![t("3"), t("5")], vec![t("4"), t("6")]]);
+    let a = payloads(
+        "a",
+        vec![vec![t("1 | 2"), var("T")], vec![t("int"), var("U")]],
+    );
+    let e = payloads("a", vec![vec![t("int"), t("int")]]);
+    let (mx, ma, me) = (
+        payloads("m", vec![vec![x]]),
+        payloads("m", vec![vec![a]]),
+        payloads("m", vec![vec![e]]),
+    );
+    let int = t("int");
+    let arrow = |x: &Ty, y: &Ty| ty::Arrow {
+        params: vec![x.clone(), y.clone()],
+        result: int.clone(),
+    };
+    let sig = |arrows: Vec<ty::Arrow>| {
+        let params = ["x", "y"].map(|n| SParam {
+            name: n.into(),
+            positional: false,
+            default: None,
+        });
+        let mut s = Sig::one(params.to_vec(), vec![], int.clone());
+        s.arrows = arrows;
+        s
+    };
+    let mut s = sig(vec![
+        arrow(
+            &Ty::union_all([&ma, &me, &int]),
+            &Ty::union_all([&me, &int, &var("V")]),
+        ),
+        arrow(&Ty::union_all([&mx, &t("String")]), &int),
+    ]);
+    s.own = ["T".into(), "U".into(), "V".into()].into();
+    s.bounds.insert("V".into(), ty::Carrier::Int.bit());
+    s.held.insert("V".into());
+    let q = sig(vec![arrow(&mx, &int), arrow(&int, &mx)]);
+    assert!(ty::fits_sig(&s, &q));
+    // The control: the second arrow of `q` alone, with no refusal before it.
+    assert!(ty::fits_sig(&s, &sig(vec![arrow(&int, &mx)])));
+}
