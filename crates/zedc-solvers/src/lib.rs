@@ -8,3 +8,8 @@ pub mod live3;
 pub mod negsssp;
 pub mod twovar;
 pub mod utvpi;
+
+/// The seed of a random test, new on each run and printed, shared with the step tests.
+#[cfg(test)]
+#[path = "../../../tests/src/seed.rs"]
+mod seed;

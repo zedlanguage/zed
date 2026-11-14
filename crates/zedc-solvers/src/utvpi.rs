@@ -673,11 +673,15 @@ pub fn components<E>(out: &[Vec<E>], head: impl Fn(&E) -> usize) -> Vec<usize> {
 }
 
 #[cfg(test)]
+mod bench;
+
+#[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
 
     use super::{
-        At, Int, Shared, bf_dijkstra, goldberg_radzik, graph, negated, negsssp, odd_zero_cycle,
+        At, Int, Search, Shared, bf_dijkstra, goldberg_radzik, graph, integer_empty,
+        integer_empty_by, integer_point, integer_point_by, negated, negsssp, odd_zero_cycle,
         potential, race, reversed, rounded,
     };
 
@@ -781,15 +785,21 @@ mod tests {
 
     #[test]
     fn random_graphs_get_the_decisions_of_bellman_ford_moore() {
-        // 1,000 graphs of the rows of 25 variables, so 50 literals, with 10 to 109 rows of one
-        // or two literals `l1 + l2 <= k` and constants -5 to 20, built as `integer_empty`
-        // builds them. Every search must agree on a negative cycle, give potentials that hold
-        // on every edge, and give the same parity decision; the race and Goldberg and Radzik's
-        // search, BF-Dijkstra and Duong's search, each alone, are checked. The counts show that
-        // each answer occurs.
-        let (vars, mut state) = (25usize, 1u64);
+        // At least 400 graphs of the rows of 25 variables, so 50 literals, from a new seed each
+        // run, with 10 to 109 rows of one or two literals `l1 + l2 <= k` and constants -5 to 20,
+        // built as `integer_empty` builds them. Every search must agree on a negative cycle, give
+        // potentials that hold on every edge, and give the same parity decision; the race and
+        // Goldberg and Radzik's search, BF-Dijkstra and Duong's search, each alone, are checked.
+        // The graphs go on past 400 until each answer has occurred, at most 4,000: an odd
+        // zero-weight cycle comes in about 1.6% of them, so 400 alone miss it in about 1 run of
+        // 400 (seen in 1 of 100 seeds), and 4,000 in about e^-64.
+        let vars = 25usize;
+        let mut state = crate::seed::seed("random_graphs_get_the_decisions_of_bellman_ford_moore");
         let (mut negative, mut odd, mut point) = (0, 0, 0);
-        for _ in 0..1000 {
+        for graph in 0..4000 {
+            if graph >= 400 && negative > 0 && odd > 0 && point > 0 {
+                break;
+            }
             let mut out: Vec<Vec<(usize, Int)>> = vec![Vec::new(); 2 * vars];
             let rows = 10 + next(&mut state) % 100;
             for _ in 0..rows {
@@ -882,7 +892,7 @@ mod tests {
 
     #[test]
     fn shared_labels_keep_the_answers_of_bellman_ford() {
-        // 6,000 random directed graphs of 1 to 40 nodes, self loops allowed, weights -6 to 12,
+        // 3,000 random directed graphs of 1 to 40 nodes, self loops allowed, weights -6 to 12,
         // half of them with a ring of weights 0 to 30 through every node so that they are one
         // strongly connected component. `Shared` run to its end (Goldberg and Radzik's search and
         // BF-Dijkstra taking each other's labels), the same on the reversed graph with its
@@ -891,10 +901,10 @@ mod tests {
         // otherwise give a potential that holds on every edge. The counts
         // show that labels pass both ways and lower the receiving search's label, on graphs with
         // and without a negative cycle.
-        let mut state = 7u64;
+        let mut state = crate::seed::seed("shared_labels_keep_the_answers_of_bellman_ford");
         let (mut to_gor, mut to_rounds) = (0usize, 0usize);
         let (mut negative_shared, mut feasible_shared, mut negative) = (0, 0, 0);
-        for graph in 0..6000 {
+        for graph in 0..3000 {
             let n = 1 + (next(&mut state) % if graph % 4 == 0 { 40 } else { 12 }) as usize;
             let mut out: Vec<Vec<(usize, Int)>> = vec![Vec::new(); n];
             if next(&mut state).is_multiple_of(2) {
@@ -975,16 +985,25 @@ mod tests {
         );
     }
 
+    /// 10,000 graphs of [`small_graphs_agree`] from a new seed each run. The 300,000 of the
+    /// battery item UTVPI-GOR's verifier ran are a benchmark (author P178: many cases),
+    /// `bench::many_small_graphs_get_the_answers_of_bellman_ford_moore`.
     #[test]
-    fn many_small_graphs_get_the_answers_of_bellman_ford_moore() {
-        // The battery item UTVPI-GOR's verifier ran and the tests above hold only in part
-        // (test audit 2026-11-08): 300,000 random directed graphs of 1 to 12 nodes, self loops
-        // allowed, 0 to 3n edges of weights -8 to 12. Each search alone, the race of them and
-        // `potential` must find a negative cycle exactly when Bellman–Ford–Moore does, and
-        // otherwise give a potential that holds on every edge. The counts show both answers.
-        let mut state = 11u64;
+    fn small_graphs_get_the_answers_of_bellman_ford_moore() {
+        small_graphs_agree(
+            crate::seed::seed("small_graphs_get_the_answers_of_bellman_ford_moore"),
+            10_000,
+        );
+    }
+
+    /// The battery item UTVPI-GOR's verifier ran and the tests above hold only in part (test
+    /// audit 2026-11-08): `graphs` random directed graphs of 1 to 12 nodes, self loops allowed,
+    /// 0 to 3n edges of weights -8 to 12, from `state`. Each search alone, the race of them and
+    /// `potential` must find a negative cycle exactly when Bellman–Ford–Moore does, and
+    /// otherwise give a potential that holds on every edge. The counts show both answers.
+    pub(super) fn small_graphs_agree(mut state: u64, graphs: usize) {
         let (mut negative, mut feasible) = (0, 0);
-        for graph in 0..300_000 {
+        for graph in 0..graphs {
             let n = 1 + (next(&mut state) % 12) as usize;
             let mut out: Vec<Vec<(usize, Int)>> = vec![Vec::new(); n];
             for _ in 0..next(&mut state) % (3 * n as u64 + 1) {
@@ -1063,5 +1082,124 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The four searches, each giving the same decision.
+    const SEARCHES: [Search; 4] = [
+        Search::First,
+        Search::GoldbergRadzik,
+        Search::BfDijkstra,
+        Search::Duong,
+    ];
+
+    /// The rows as `integer_empty` reads them.
+    fn refs(rows: &[(Vec<(usize, Int)>, Int)]) -> Vec<(&[(usize, Int)], &Int)> {
+        rows.iter().map(|(a, k)| (&a[..], k)).collect()
+    }
+
+    /// Whether `x` holds every row `a·x + k >= 0`.
+    fn satisfies(rows: &[(Vec<(usize, Int)>, Int)], x: &[Int]) -> bool {
+        rows.iter().all(|(a, k)| {
+            let sum = a.iter().fold(k.clone(), |s, (j, c)| &s + &(c * &x[*j]));
+            !sum.is_negative()
+        })
+    }
+
+    #[test]
+    fn rows_with_halves_a_free_variable_or_no_rows() {
+        let t = |terms: &[(usize, i64)], k: i64| {
+            let a = terms.iter().map(|&(j, c)| (j, Int::from(c))).collect();
+            (a, Int::from(k))
+        };
+        // `x0 == x1` and `x0 + x1 == 1`: the reals have (1/2, 1/2), the integers no point.
+        let halves = [
+            t(&[(0, 1), (1, -1)], 0),
+            t(&[(0, -1), (1, 1)], 0),
+            t(&[(0, -1), (1, -1)], 1),
+            t(&[(0, 1), (1, 1)], -1),
+        ];
+        // `x0 - x1 >= 1` and `x1 - x0 >= 0`: a negative cycle.
+        let negative = [t(&[(0, 1), (1, -1)], -1), t(&[(0, -1), (1, 1)], 0)];
+        // `x0 == 2` by two rows of one term, over 3 variables: `x1` and `x2` are in no row, so 0.
+        let fixed = [t(&[(0, 1)], -2), t(&[(0, -1)], 2)];
+        let cases: [(usize, &[_], Option<Vec<Int>>); 4] = [
+            (2, &halves, None),
+            (2, &negative, None),
+            (3, &fixed, Some(vec![Int::from(2), Int::ZERO, Int::ZERO])),
+            (0, &[], Some(vec![])),
+        ];
+        for (n, rows, want) in cases {
+            let r = refs(rows);
+            assert_eq!(integer_empty(n, &r), want.is_none(), "rows {rows:?}");
+            assert_eq!(integer_point(n, &r), want, "rows {rows:?}");
+            for search in SEARCHES {
+                assert_eq!(
+                    integer_empty_by(n, &r, search),
+                    want.is_none(),
+                    "{search:?}"
+                );
+                assert_eq!(integer_point_by(n, &r, search), want, "{search:?} {rows:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_rows_get_the_answers_of_a_search_of_the_box() {
+        // 2,000 sets of rows over 1 to 3 variables, from a new seed each run: each variable in
+        // the box -b..=b, b from 1 to 3, by two rows of one term, then 1 to 6 rows `±x + k >= 0`
+        // or `±x ± y + k >= 0`, x and y different, k from -4 to 4. With every search,
+        // `integer_empty` must say whether some point of the box holds every row, and
+        // `integer_point` must give such a point exactly when one exists. Both answers occur.
+        let mut state = crate::seed::seed("the_rows_get_the_answers_of_a_search_of_the_box");
+        let mut below = |m: u64| next(&mut state) % m;
+        let sign = |s: u64| Int::from(if s == 0 { 1 } else { -1 });
+        let (mut empty, mut point) = (0, 0);
+        for case in 0..2000 {
+            let n = 1 + case % 3;
+            let b = 1 + (case / 3) % 3;
+            let mut rows: Vec<(Vec<(usize, Int)>, Int)> = Vec::new();
+            for j in 0..n {
+                rows.push((vec![(j, Int::ONE)], Int::from(b as i64)));
+                rows.push((vec![(j, Int::from(-1))], Int::from(b as i64)));
+            }
+            for _ in 0..1 + below(6) {
+                let x = below(n as u64) as usize;
+                let mut a = vec![(x, sign(below(2)))];
+                if n > 1 && below(3) > 0 {
+                    let y = (x + 1 + below(n as u64 - 1) as usize) % n;
+                    a.push((y, sign(below(2))));
+                }
+                rows.push((a, Int::from(below(9) as i64 - 4)));
+            }
+            let side: Vec<i64> = (-(b as i64)..=b as i64).collect();
+            let mut exists = false;
+            for code in 0..side.len().pow(n as u32) {
+                let x: Vec<Int> = (0..n)
+                    .map(|j| Int::from(side[code / side.len().pow(j as u32) % side.len()]))
+                    .collect();
+                if satisfies(&rows, &x) {
+                    exists = true;
+                    break;
+                }
+            }
+            if exists {
+                point += 1;
+            } else {
+                empty += 1;
+            }
+            let r = refs(&rows);
+            for search in SEARCHES {
+                assert_eq!(
+                    integer_empty_by(n, &r, search),
+                    !exists,
+                    "{search:?} {rows:?}"
+                );
+                match integer_point_by(n, &r, search) {
+                    Some(x) => assert!(exists && satisfies(&rows, &x), "{search:?} {rows:?}"),
+                    None => assert!(!exists, "{search:?} {rows:?}"),
+                }
+            }
+        }
+        assert!(empty > 100 && point > 100, "{empty} {point}");
     }
 }

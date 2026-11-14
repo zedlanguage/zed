@@ -386,10 +386,10 @@ mod tests {
 
     #[test]
     fn the_ends_match_a_search_of_the_box() {
-        // Random rows over `x`, `y` in a box: the least and greatest `x` of the integer points,
-        // against every point of the box. The box rows come first and last, so the envelopes
-        // see them in both orders.
-        let mut seed: u64 = 7;
+        // Random rows over `x`, `y` in a box, from a new seed each run: the least and greatest
+        // `x` of the integer points, against every point of the box. The box rows come first
+        // and last, so the envelopes see them in both orders.
+        let mut seed = crate::seed::seed("the_ends_match_a_search_of_the_box");
         let mut next = |m: i64| -> i64 {
             seed = seed
                 .wrapping_mul(6364136223846793005)
@@ -448,5 +448,111 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The rows `c0·x + c1·y + k >= 0` as `point` reads them, over `x` and, when `y`, `y`.
+    fn point_of(rows: &[([i64; 2], i64)], y: bool, want: bool) -> Option<(Int, Int)> {
+        let terms: Vec<(Vec<Term>, Int)> = (rows.iter())
+            .map(|(c, k)| {
+                let t = (0..2).filter(|&i| c[i] != 0).map(|i| (i, Int::from(c[i])));
+                (t.collect(), Int::from(*k))
+            })
+            .collect();
+        let refs: Vec<(&[Term], &Int)> = terms.iter().map(|(t, k)| (&t[..], k)).collect();
+        point(&refs, 0, y.then_some(1), want)
+    }
+
+    #[test]
+    fn the_points_match_a_search_of_the_box() {
+        // Random rows over `x`, `y` in a box, from a new seed each run, as for the ends: `point`
+        // must give a point of the rows exactly when the box has one, and without `want` answer
+        // it by zeros. Both answers occur.
+        let mut seed = crate::seed::seed("the_points_match_a_search_of_the_box");
+        let mut next = |m: i64| -> i64 {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((seed >> 33) % (2 * m as u64 + 1)) as i64 - m
+        };
+        let (mut none, mut some) = (0, 0);
+        for case in 0..2000 {
+            let b = 1 + case % 9;
+            let mut rows: Vec<([i64; 2], i64)> = vec![([1, 0], b), ([0, -1], b)];
+            for _ in 0..(1 + case % 4) {
+                rows.push(([next(4), next(4)], next(12)));
+            }
+            rows.extend([([-1, 0], b), ([0, 1], b)]);
+            let holds = |x: i64, y: i64| rows.iter().all(|(c, k)| c[0] * x + c[1] * y + k >= 0);
+            let exists = (-b..=b).any(|x| (-b..=b).any(|y| holds(x, y)));
+            match point_of(&rows, true, true) {
+                Some((x, y)) => {
+                    // The box rows keep the point in the box.
+                    let at = (-b..=b)
+                        .flat_map(|i| (-b..=b).map(move |j| (i, j)))
+                        .find(|&(i, j)| Int::from(i) == x && Int::from(j) == y);
+                    let holds = at.is_some_and(|(i, j)| holds(i, j));
+                    assert!(exists && holds, "rows {rows:?} point {x:?} {y:?}");
+                    some += 1;
+                }
+                None => {
+                    assert!(!exists, "rows {rows:?}");
+                    none += 1;
+                }
+            }
+            let zeros = exists.then_some((Int::ZERO, Int::ZERO));
+            assert_eq!(point_of(&rows, true, false), zeros, "rows {rows:?}");
+        }
+        assert!(none > 100 && some > 100, "{none} {some}");
+    }
+
+    #[test]
+    fn a_point_of_one_variable_or_of_y_bounded_one_way() {
+        let p = |x: i64, y: i64| Some((Int::from(x), Int::from(y)));
+        // Over `x` alone: `3 <= x <= 5` gives the least; `-7 <= x <= -4` the greatest; an empty
+        // range or a row `-1 >= 0` with neither variable has none.
+        assert_eq!(
+            point_of(&[([1, 0], -3), ([-1, 0], 5)], false, true),
+            p(3, 0)
+        );
+        assert_eq!(
+            point_of(&[([1, 0], 7), ([-1, 0], -4)], false, true),
+            p(-4, 0)
+        );
+        assert_eq!(point_of(&[([1, 0], -3), ([-1, 0], 2)], false, true), None);
+        assert_eq!(point_of(&[([0, 0], -1)], false, true), None);
+        // `y >= x + 1` and `x <= -4`: `y` bounded below only, at `x = -4`.
+        assert_eq!(
+            point_of(&[([-1, 1], -1), ([-1, 0], -4)], true, true),
+            p(-4, -3)
+        );
+        // `y <= 2x` and `x >= 3`: `y` bounded above only, at `x = 3`.
+        assert_eq!(point_of(&[([2, -1], 0), ([1, 0], -3)], true, true), p(3, 6));
+        // `y <= 2x` alone, `x` free: at `x = 0`.
+        assert_eq!(point_of(&[([2, -1], 0)], true, true), p(0, 0));
+        // `0 <= y <= x`, no bound of `x`: the gap `x - 0` rises without end to the right, so
+        // the least `x` is 0 and there is no greatest; `0 <= y <= -x` is its mirror.
+        let rising = [([1, -1], 0), ([0, 1], 0)];
+        assert_eq!(ends_of(&rising), Some((Some(Int::ZERO), None)));
+        assert_eq!(point_of(&rising, true, true), p(0, 0));
+        let falling = [([-1, -1], 0), ([0, 1], 0)];
+        assert_eq!(ends_of(&falling), Some((None, Some(Int::ZERO))));
+        assert_eq!(point_of(&falling, true, true), p(-1, 0));
+        // `y >= 0` and `x >= 2`: `y` bounded one way, so the ends are those of `x`.
+        assert_eq!(
+            ends_of(&[([0, 1], 0), ([1, 0], -2)]),
+            Some((Some(Int::from(2)), None))
+        );
+        // `x == 3y`, points at every third `x`, with `x >= 4`: least 6, no greatest; with
+        // `x <= 10`: greatest 9, no least.
+        let third = [([1, -3], 0), ([-1, 3], 0)];
+        let from = [third[0], third[1], ([1, 0], -4)];
+        assert_eq!(ends_of(&from), Some((Some(Int::from(6)), None)));
+        let to = [third[0], third[1], ([-1, 0], 10)];
+        assert_eq!(ends_of(&to), Some((None, Some(Int::from(9)))));
+        assert_eq!(point_of(&from, true, true), p(6, 2));
+        assert_eq!(
+            point_of(&to, true, true).map(|(x, y)| x == &y * &Int::from(3)),
+            Some(true)
+        );
     }
 }

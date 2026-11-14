@@ -1617,12 +1617,13 @@ mod tests {
         assert_eq!(search(&out, n as u64), Some(expected));
     }
 
-    /// 20,000 graphs of 1 to 10 nodes, weights -6 to 9, with the round bound set to the node
-    /// count: [`bf_dijkstra`] gives the reference's labels exactly, or reports a negative
-    /// cycle exactly when the reference does. Both answers occur.
+    /// 20,000 graphs of 1 to 10 nodes, from a new seed each run, weights -6 to 9, with the round
+    /// bound set to the node count: [`bf_dijkstra`] gives the reference's labels exactly, or
+    /// reports a negative cycle exactly when the reference does. Both answers occur.
     #[test]
     fn the_round_bound_agrees_with_bellman_ford() {
-        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        // xorshift stays at 0 from 0, so the seed is made odd.
+        let mut state = crate::seed::seed("the_round_bound_agrees_with_bellman_ford") | 1;
         let mut below = |k: usize| {
             state ^= state << 13;
             state ^= state >> 7;
@@ -1645,5 +1646,15 @@ mod tests {
             assert_eq!(search(&out, n as u64), expected, "graph {out:?}");
         }
         assert!(negative > 1000 && feasible > 1000, "{negative} {feasible}");
+    }
+
+    /// The graph of no nodes: no labels and no cycle, from [`bf_dijkstra`] and from Duong's
+    /// search.
+    #[test]
+    fn the_empty_graph_has_the_empty_potential() {
+        let out: Vec<Vec<(usize, i64)>> = Vec::new();
+        assert_eq!(bellman_ford(&out), Some(Vec::new()));
+        assert_eq!(search(&out, 0), Some(Vec::new()));
+        assert_eq!(super::potential_alone(&[]), Some(Vec::new()));
     }
 }

@@ -95,3 +95,56 @@ impl PartialOrd for Q {
         Some(self.cmp(o))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Q;
+    use zedc_int::int::Int;
+
+    fn q(n: i64, d: i64) -> Q {
+        Q::new(Int::from(n), Int::from(d))
+    }
+
+    #[test]
+    fn rationals_stay_in_lowest_terms_with_a_positive_denominator() {
+        let i = |n: i64| Q::of(Int::from(n));
+        assert_eq!(
+            q(6, -4),
+            Q {
+                n: Int::from(-3),
+                d: Int::from(2)
+            }
+        );
+        assert_eq!(q(0, -5), i(0));
+        assert_eq!(q(-7, 7), i(-1));
+        // Each operation on whole numbers, which takes the short way, and on fractions.
+        assert_eq!(i(2).add(&i(-5)), i(-3));
+        assert_eq!(q(1, 2).add(&q(1, 3)), q(5, 6));
+        assert_eq!(q(1, 2).add(&q(-1, 2)), i(0));
+        assert_eq!(q(1, 3).sub(&q(1, 2)), q(-1, 6));
+        assert_eq!(i(3).mul(&i(-4)), i(-12));
+        assert_eq!(q(2, 3).mul(&q(-9, 4)), q(-3, 2));
+        assert_eq!(q(2, 3).div(&q(-4, 9)), q(-3, 2));
+        assert_eq!(q(-1, 3).neg(), q(1, 3));
+        // Floor and ceiling on both sides of zero and at a whole number.
+        assert_eq!(
+            (q(-7, 2).floor(), q(-7, 2).ceil()),
+            (Int::from(-4), Int::from(-3))
+        );
+        assert_eq!(
+            (q(7, 2).floor(), q(7, 2).ceil()),
+            (Int::from(3), Int::from(4))
+        );
+        assert_eq!(
+            (i(-3).floor(), i(-3).ceil()),
+            (Int::from(-3), Int::from(-3))
+        );
+        // Signs and order.
+        assert!(i(0).is_zero() && !q(1, 9).is_zero());
+        assert!(q(-1, 9).is_negative() && !q(-1, 9).is_positive());
+        assert!(q(1, 9).is_positive() && !i(0).is_negative() && !i(0).is_positive());
+        let sorted = [q(-1, 2), q(-1, 3), i(0), q(1, 3), q(1, 2), i(1)];
+        assert!(sorted.windows(2).all(|w| w[0] < w[1]));
+        assert_eq!(q(2, 4).cmp(&q(1, 2)), std::cmp::Ordering::Equal);
+    }
+}
