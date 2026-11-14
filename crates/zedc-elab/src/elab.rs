@@ -122,6 +122,7 @@ fn lower<'a>(
 ) -> (Unit, Option<Vec<Mark>>, Vec<Error>) {
     let mut e = Elab::new(t, info);
     e.marks = marks;
+    e.rejected = !errors.is_empty();
     // Which parameters of each declared function take only `int`s, for rung 2, which reads
     // arithmetic as integer arithmetic (`Sig::int_params`, RUNG2-carrier). O(functions ×
     // arrows × parameters).

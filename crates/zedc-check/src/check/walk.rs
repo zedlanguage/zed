@@ -3691,6 +3691,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     generic: true,
                     witness: false,
                     exponent: true,
+                    past_f64: None,
                 });
             }
             // Two generic operands, as in `1 + 2`, make a class of their own inside a

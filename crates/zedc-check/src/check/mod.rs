@@ -56,7 +56,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use num_bigint::BigUint;
-use zed_kernel::num::{FloatFormat, TooLarge, fixed_room, literal_f32, literal_f64, show_f32};
+use zed_kernel::num::{
+    FloatFormat, LiteralRounding, TooLarge, fixed_room, literal_f32, literal_f64, show_f32,
+    show_f64,
+};
 use zed_kernel::types::{Spell, Spelled, Type as KType, Universes, Verdict, defs};
 use zed_kernel::{KernelError, Prim, Rat, Term, Universe, Value, eval};
 
@@ -557,6 +560,14 @@ struct Lit {
     /// exponent at `int`, `rat` and `f32`, and an `f64` one at `f64` alone, so it follows the class
     /// only where it is an `f64` and does not restrict it ([`Ck::lit_follows`]).
     exponent: bool,
+    /// Why a decimal written without a suffix is no `f64`: its value rounds to infinity there,
+    /// as `1e400` does, or, being nonzero, to zero, as `1e-400` does. `value` then holds a
+    /// stand-in, `f64::INFINITY` or the least positive `f64`,
+    /// which is not zero, so no `/` by the literal is read as a division by zero. Such a
+    /// literal fits no float format and is exact at `rat` (DESIGN.md L1.26b: "In a class it
+    /// removes `int` and each format it does not fit"), so `x + 1e400` takes `rat`, and at
+    /// `f64` it is rejected ([`past`]).
+    past_f64: Option<LiteralRounding>,
 }
 
 impl Lit {
@@ -5547,13 +5558,22 @@ fn read_literal(e: &Expr, src: Option<&str>) -> Result<Option<Lit>, TooLarge> {
         ExprKind::Unary(UnaryOp::Neg, a) => &**a,
         _ => e,
     };
-    let (value, bare) = match &inner.kind {
+    let (value, bare, past_f64) = match &inner.kind {
         ExprKind::Int { radix, digits } => match Value::int_text(digits, *radix)? {
-            Some(v) => (v, true),
+            Some(v) => (v, true, None),
             None => return Ok(None),
         },
         ExprKind::Float { digits: s, forced } => match Value::literal_float(s, *forced) {
-            Ok(v) => (v, forced.is_none()),
+            Ok(v) => (v, forced.is_none(), None),
+            // A decimal with no suffix may still take `rat`, where it is exact; one with a
+            // suffix has no other carrier, and elaboration rejects it.
+            Err(r @ (LiteralRounding::Infinite | LiteralRounding::Zero)) if forced.is_none() => {
+                let stand_in = match r {
+                    LiteralRounding::Infinite => f64::INFINITY,
+                    _ => f64::from_bits(1),
+                };
+                (Value::float(stand_in), true, Some(r))
+            }
             Err(_) => return Ok(None),
         },
         _ => return Ok(None),
@@ -5575,6 +5595,7 @@ fn read_literal(e: &Expr, src: Option<&str>) -> Result<Option<Lit>, TooLarge> {
         generic: false,
         witness: false,
         exponent: false,
+        past_f64,
     }))
 }
 
@@ -5923,6 +5944,9 @@ fn lit_carrier(v: &Value) -> Carrier {
 /// ([`menu`]) when it cannot take `c`, being a decimal at `int` or written with a suffix, or is
 /// not exactly a `c`.
 fn adopt(l: &Lit, c: Carrier) -> Result<Option<Value>, Msg> {
+    if let Some(m) = past(l, c) {
+        return Err(m);
+    }
     if lit_carrier(&l.value) == c || !c.numeric() {
         return Ok(None);
     }
@@ -5954,6 +5978,45 @@ fn adopt(l: &Lit, c: Carrier) -> Result<Option<Value>, Msg> {
     match v {
         Some(v) if !matches!(v, Value::Atom(_)) => Ok(Some(v)),
         _ => Err(menu(l, &[c])),
+    }
+}
+
+/// The rejection of the decimal `l` at `c` when `c` is `f64` and `l` rounds there to infinity
+/// or, being nonzero, to zero ([`Lit::past_f64`]); `None` otherwise.
+fn past(l: &Lit, c: Carrier) -> Option<Msg> {
+    let r = l.past_f64.as_ref().filter(|_| c == Carrier::F64)?;
+    Some(Msg::from(float_range(l.spelling(), None, r)))
+}
+
+/// Why the decimal written `s`, with the suffix `forced` or none, is no value of the format
+/// it is read at, `f32` with that suffix and `f64` otherwise: it rounds there to infinity,
+/// or, being nonzero, to zero (`r`); with the fixes.
+pub fn float_range(s: &str, forced: Option<FloatFormat>, r: &LiteralRounding) -> String {
+    let f32 = forced == Some(FloatFormat::F32);
+    let f = if f32 { "f32" } else { "f64" };
+    match r {
+        LiteralRounding::Zero => {
+            let least = match f32 {
+                true => show_f32(f32::from_bits(1)),
+                false => show_f64(f64::from_bits(1)),
+            };
+            format!(
+                "`{s}` is not zero, and it lies nearer to zero than to the least positive {f}, \
+                 {least}, so as an {f} it rounds to zero. Write `{s}r` for the exact rational, \
+                 or `0.0` if zero is meant."
+            )
+        }
+        _ => {
+            let max = match f32 {
+                true => show_f32(f32::MAX),
+                false => show_f64(f64::MAX),
+            };
+            format!(
+                "`{s}` is larger than the largest {f}, {max}, so as an {f} it rounds to \
+                 infinity. Write `{s}r` for the exact rational, or a number within the range \
+                 of {f}."
+            )
+        }
     }
 }
 
@@ -6723,6 +6786,9 @@ fn carrier_names(cs: &[Carrier]) -> String {
 /// exactly a value of `c`, or is a decimal at `int`. A decimal's digits are read at `rat`,
 /// which costs O(n^1.47) in their number (COMPLEXITY.md K41).
 fn lit_value(l: &Lit, c: Carrier) -> Option<Value> {
+    if l.past_f64.is_some() && c == Carrier::F64 {
+        return None;
+    }
     let v = match (lit_carrier(&l.value), c) {
         (own, c) if own == c => l.value.clone(),
         (Carrier::F64, Carrier::Rat) => Value::rat(Rat::decimal(lit_digits(l)).ok()??),
@@ -7457,6 +7523,12 @@ fn with_carrier(l: &Lit, c: Carrier) -> impl fmt::Display + '_ {
 /// form where `rat` is, and at `f64`, for an integer, the nearest `f64` as an integer
 /// literal, by ties to even.
 fn menu(l: &Lit, held: &[Carrier]) -> Msg {
+    // A decimal past the range of `f64` where only `f64` is expected: the range is the reason.
+    if let [c] = held
+        && let Some(m) = past(l, *c)
+    {
+        return m;
+    }
     let names = carrier_names(held);
     let has = |c: Carrier| held.contains(&c);
     let sign = if l.neg() { "-" } else { "" };
@@ -7883,7 +7955,12 @@ fn unfixed(l: &Lit, cs: &[Carrier]) -> Msg {
     let decimal = is_decimal(&l.value);
     let mut fixes = Vec::new();
     let carriers = [Carrier::F64, Carrier::Rat].into_iter();
-    for c in carriers.filter(|&c| cs.contains(&c) && (c != Carrier::Rat || !decimal || l.bare)) {
+    // A decimal past the range of `f64` is offered no `f64` form, which would round it.
+    let at = |c: Carrier| match c {
+        Carrier::Rat => !decimal || l.bare,
+        _ => l.past_f64.is_none(),
+    };
+    for c in carriers.filter(|&c| cs.contains(&c) && at(c)) {
         let with = with_carrier(l, c);
         fixes.push(Rewrite::lit(l, &with, &lit_holds(l, c)));
     }
@@ -8240,15 +8317,28 @@ fn unfixed_binding(
     let is_decimal = |l: &&Lit| is_decimal(&l.value);
     if let Some(l) = lits.iter().find(is_decimal) {
         let mut m = unfixed(l, &[]);
-        // A decimal under a `^` with nothing to fix it is left to the fixes at `f64`, the
-        // default POW-domains settles.
-        let forms = forms.filter(|f| *f != Form::Cast && (!pow || f.carrier() != Carrier::Rat));
         let mut leaves = unreached(&roots, l.span, src, false);
         leaves.push(l.clone());
         leaves.sort_by_key(|l| l.span.start);
+        // A decimal under a `^` with nothing to fix it is left to the fixes at `f64`, the
+        // default POW-domains settles; and no `f64` form is offered where a decimal in the
+        // value is past the range of `f64`, which it would round.
+        let past = leaves.iter().find(|l| l.past_f64.is_some());
+        let forms = forms.filter(|f| {
+            *f != Form::Cast
+                && (!pow || f.carrier() != Carrier::Rat)
+                && !(past.is_some() && f.carrier() == Carrier::F64)
+        });
         m.fixes = forms
             .filter_map(|f| leaves_with(&leaves, f, place, whole.then_some(n), e, None, src))
             .collect();
+        // With no form left, as in `y = 1e400 ^ 2`, the range of `f64` is the reason to give.
+        if m.fixes.is_empty()
+            && let Some(p) = past
+            && let Some(r) = &p.past_f64
+        {
+            return Some((p.site, Msg::from(float_range(p.spelling(), None, r))));
+        }
         return Some((l.site, m));
     }
     let d = div?;

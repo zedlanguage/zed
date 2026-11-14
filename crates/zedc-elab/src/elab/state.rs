@@ -53,6 +53,9 @@ pub(super) struct Elab<'a> {
     pub(super) defaults: HashMap<(usize, usize), Term>,
     /// The marks of a marked elaboration ([`elaborate_marked`](super::elaborate_marked)), `None` for an ordinary one.
     pub(super) marks: Option<Vec<Mark>>,
+    /// Whether the checker rejected the unit, whose elaboration is then given up, its terms
+    /// never run: only its own errors are kept, with the checker's.
+    pub(super) rejected: bool,
     /// The shared parts given their source sites so far ([`zed_kernel::sites::mark`]).
     pub(super) sited: HashSet<u64>,
     /// The output ports of the unit's `main`, `m.stdout` and `m.stderr` where it pushes to
@@ -104,6 +107,7 @@ impl<'a> Elab<'a> {
             errors: Vec::new(),
             defaults: HashMap::new(),
             marks: None,
+            rejected: false,
             sited: HashSet::new(),
             outputs,
         }

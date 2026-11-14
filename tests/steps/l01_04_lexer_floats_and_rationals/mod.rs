@@ -2,6 +2,7 @@
 
 mod bench;
 mod edges;
+mod past_f64_at_rat;
 mod scaling;
 
 use zedc::lex::{Tok, lex};
