@@ -405,14 +405,20 @@ impl Show<'_> {
                     _ => {
                         todo.push(Step::Build(e, at, part));
                         let n = e.e.kids().count();
-                        todo.extend((e.e.kids().rev().zip((0..n).rev())).map(|(c, i)| {
-                            Step::Visit(c, kid_place(&e.e, i), kept_as_part(&e.e, c))
-                        }));
+                        todo.extend(
+                            (e.e.kids().rev().zip((0..n).rev()))
+                                .filter(|&(_, i)| !unwritten(&e.e, i))
+                                .map(|(c, i)| {
+                                    Step::Visit(c, kid_place(&e.e, i), kept_as_part(&e.e, c))
+                                }),
+                        );
                         continue;
                     }
                 },
                 Step::Build(e, at, part) => {
-                    let parts = done.split_off(done.len() - e.e.kids().count());
+                    let n = e.e.kids().count();
+                    let written = (0..n).filter(|&i| !unwritten(&e.e, i)).count();
+                    let parts = done.split_off(done.len() - written);
                     let r = if let Shape::Ref(i, _) = &e.e {
                         Rope::joined(&format!("{}(", self.defs[*i].name), parts, ", ", ")")
                     } else {
@@ -430,23 +436,23 @@ impl Show<'_> {
                             Shape::Atom(name, _) => {
                                 Rope::joined(&format!("#{name}("), parts, ", ", ")")
                             }
-                            Shape::Morphism(l, u, _) => {
+                            Shape::Morphism(..) if exact(&e.e) => {
+                                Rope::joined("", parts, " -> ", "")
+                            }
+                            Shape::Morphism(l, _, _) if partial(l) => {
+                                Rope::joined("", parts, " ->? ", "")
+                            }
+                            Shape::Morphism(..) => {
                                 let v = parts.pop().expect("the value type");
                                 let u_rope = parts.pop().expect("the permission");
                                 let l_rope = parts.pop().expect("the guarantee");
-                                if same(l, u) {
-                                    Rope::joined("(", [l_rope, v], ") -> ", "")
-                                } else if l.e == Shape::Type(Type::empty()) {
-                                    Rope::joined("", [u_rope, v], " ->? ", "")
-                                } else {
-                                    Rope::cat([
-                                        Piece::from(l_rope),
-                                        Piece::from(" .. "),
-                                        Piece::from(u_rope),
-                                        Piece::from(" -> "),
-                                        Piece::from(v),
-                                    ])
-                                }
+                                Rope::cat([
+                                    Piece::from(l_rope),
+                                    Piece::from(" .. "),
+                                    Piece::from(u_rope),
+                                    Piece::from(" -> "),
+                                    Piece::from(v),
+                                ])
                             }
                             Shape::Param(_) | Shape::Ref(..) | Shape::Type(_) => {
                                 unreachable!("a leaf is not built")
@@ -493,18 +499,42 @@ fn class(s: &Shape) -> Class {
     }
 }
 
-/// Where part `i` of the parts directly below an expression of shape `s` stands: `\` takes no `&` or `|` on either side and no `\` on its right, an arrow's key no
-/// arrow and no tuple, which would read as its parameters, and its bounds no arrow (DESIGN.md
-/// sec:grammar). A guarantee equal to the permission is written in parentheses, `(K) -> V`,
-/// so it may be any type.
+/// Whether `s` is an arrow whose guarantee is its permission, written `K -> V` with the key
+/// once: its text holds no part for the permission.
+fn exact(s: &Shape) -> bool {
+    matches!(s, Shape::Morphism(l, u, _) if same(l, u))
+}
+
+/// Whether `l`, the guarantee of an arrow, is `Never`: the arrow is written `U ->? V`.
+fn partial(l: &Node) -> bool {
+    l.e == Shape::Type(Type::empty())
+}
+
+/// Whether part `i` of an expression of shape `s` is left out of its text, and so is not
+/// visited: the permission of an exact arrow, written once as its key, and the guarantee of a
+/// partial one. A part printed and then dropped would drop with it the mark a message's naming
+/// pass reads as the start of its printed types, when it is the first ([`Type::surfaces_by_name`]).
+fn unwritten(s: &Shape, i: usize) -> bool {
+    match s {
+        Shape::Morphism(..) if exact(s) => i == 1,
+        Shape::Morphism(l, _, _) => i == 0 && partial(l),
+        _ => false,
+    }
+}
+
+/// Where part `i` of the parts directly below an expression of shape `s` stands: `\` takes no
+/// `&` or `|` on either side and no `\` on its right, an arrow's key no arrow and no tuple,
+/// which would read as its parameters, and its bounds no arrow (DESIGN.md sec:grammar). So a
+/// key is parenthesized only where the grammar needs it (author rule P191): `K -> V`, and
+/// `((A, B)) -> V` for a tuple key.
 fn kid_place(s: &Shape, i: usize) -> Place {
     let (each, fixed): (Place, [Option<Place>; 3]) = match s {
         Shape::Union(_) => (Place::Union, [None; 3]),
         Shape::And(_) => (Place::And, [None; 3]),
         Shape::Not(_) => (Place::Prim, [None; 3]),
         Shape::Diff(..) => (Place::Any, [Some(Place::DiffLeft), Some(Place::Prim), None]),
-        Shape::Morphism(l, u, _) if same(l, u) => (Place::Any, [None; 3]),
-        Shape::Morphism(l, _, _) if l.e == Shape::Type(Type::empty()) => (
+        Shape::Morphism(..) if exact(s) => (Place::Any, [Some(Place::Key), None, None]),
+        Shape::Morphism(l, _, _) if partial(l) => (
             Place::Any,
             [Some(Place::Any), Some(Place::Key), Some(Place::Any)],
         ),

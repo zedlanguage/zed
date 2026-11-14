@@ -15,10 +15,12 @@
 
 use std::collections::HashSet;
 
+use zed_kernel::types::rec::{Def, Expr, Group};
 use zed_kernel::types::{TextPlace, Type as KType};
 use zedc::check::read::parse_type;
 use zedc::check::ty::Ty;
-use zedc::parse::{Grammar, grammar, marked_rule};
+use zedc::lex::lex_fence;
+use zedc::parse::{Grammar, TOP, grammar, marked_rule, parse};
 
 use super::printed::stated;
 
@@ -348,4 +350,563 @@ fn function_types_print_with_exactly_the_parentheses_the_grammar_needs() {
         }
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+/// Whether the pair of parentheses at `a` and `b` in `text` groups: it is not a call's or an
+/// atom payload's (`#box(int)`), not the empty tuple `()`, and holds no comma of its own, which
+/// would make it a tuple (`(int,)`, `(int, bool)`). Deleting any other pair changes the tokens,
+/// not the grouping.
+fn grouping(text: &str, a: usize, b: usize) -> bool {
+    let called = text[..a]
+        .chars()
+        .next_back()
+        .is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '\'');
+    let mut depth = 0usize;
+    let comma = text[a + 1..b].chars().any(|c| {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            _ => {}
+        }
+        c == ',' && depth == 0
+    });
+    !called && b > a + 1 && !comma
+}
+
+/// The parse tree of `text` as a type, written out with each grouping pair taken away: a
+/// `GroupType`, `(T)`, stands for `T`, and a node that is all one child, a `~` alternative or
+/// a `Type` with no facet, for that child. So two texts have one shape exactly when they are
+/// one tree but for grouping pairs; none if `text` does not parse. Each node is entered once,
+/// from a stack.
+fn shape(text: &str) -> Option<String> {
+    let tokens = lex_fence(text).ok()?;
+    let tree = parse(text, &tokens, "Type", TOP).ok()?;
+    enum Item {
+        Node(usize),
+        Token(usize),
+        Close,
+    }
+    let mut out = String::new();
+    let mut todo = vec![Item::Node(tree.root)];
+    while let Some(item) = todo.pop() {
+        let mut n = match item {
+            Item::Token(i) => {
+                out += " ";
+                out += &text[tokens[i].span.start..tokens[i].span.end];
+                continue;
+            }
+            Item::Close => {
+                out += ")";
+                continue;
+            }
+            Item::Node(n) => n,
+        };
+        loop {
+            let node = &tree.nodes[n];
+            match node.kids[..] {
+                [k] if tree.name(n) == "GroupType" => n = k,
+                [k] if (tree.nodes[k].start, tree.nodes[k].end) == (node.start, node.end) => n = k,
+                _ => break,
+            }
+        }
+        let node = &tree.nodes[n];
+        out += &format!(" ({}/{}", tree.name(n), node.alt);
+        // Its own tokens and its children, in the order of the text.
+        let mut items = Vec::new();
+        let mut kids = node.kids.iter().peekable();
+        let mut at = node.start;
+        while at < node.end {
+            match kids.peek() {
+                Some(&&k) if tree.nodes[k].start == at => {
+                    items.push(Item::Node(k));
+                    at = tree.nodes[k].end;
+                    kids.next();
+                }
+                _ => {
+                    items.push(Item::Token(at));
+                    at += 1;
+                }
+            }
+        }
+        todo.push(Item::Close);
+        todo.extend(items.into_iter().rev());
+    }
+    Some(out)
+}
+
+/// What is wrong with `printed` as the text of the type `want`: it reads as another type or
+/// not at all (round trip), or a grouping pair of its parentheses can go and leave the same
+/// parse tree but for grouping pairs (minimality, [`shape`]). A kernel printer writes a type in
+/// its own form (a canonical union order), so the round trip compares by meaning, each side a
+/// subtype of the other. The deletion compares the trees, not what they read as: a group
+/// printer writes a part whose meaning the whole does not depend on, as `F` in `rat \ F` for a
+/// function type `F`, and a part that is empty whatever its grouping (`(#b,) & (#a,)`); the
+/// reader takes such parts away, so a comparison by meaning would call any pair in them
+/// needless.
+fn misprinted(printed: &str, want: &Ty) -> Vec<String> {
+    let back = match parse_type(printed) {
+        Ok(back) => back,
+        Err(e) => return vec![format!("`{printed}` does not parse: {e}")],
+    };
+    let mut wrong = Vec::new();
+    if !(back.subtype(want) && want.subtype(&back)) {
+        wrong.push(format!("`{printed}` reads as another type"));
+    }
+    let tree = shape(printed);
+    for (a, b) in pairs(printed) {
+        if !grouping(printed, a, b) {
+            continue;
+        }
+        let less = format!(
+            "{}{}{}",
+            &printed[..a],
+            &printed[a + 1..b],
+            &printed[b + 1..]
+        );
+        if shape(&less).is_some() && shape(&less) == tree {
+            wrong.push(format!("`{printed}`: `{less}` parses the same"));
+        }
+    }
+    wrong
+}
+
+/// A kernel type built by [`kernel_generated`], with the text it is built from, each operand
+/// in parentheses, whether it holds a function at any depth, whether it holds nothing
+/// else, and whether it is a union.
+struct Built {
+    t: KType,
+    text: String,
+    some_fn: bool,
+    all_fn: bool,
+    union: bool,
+}
+
+/// A kernel type built at random, `depth` levels deep at most, from one-token leaves (a leaf
+/// written twice is then never named by a definition) and every constructor the printer has a
+/// form for. Four readings of the reader stand apart from the printer, and the types that
+/// meet them are not built:
+/// - a part that comes out empty (`int & String`) is replaced by a leaf, since the kernel
+///   simplifies an arrow or tuple over an empty part (`Never -> V`) where the reader keeps it;
+/// - no complement or difference: the reader takes `_` as the unknown type, so `_ \ X` reads
+///   as `_`, and a difference the kernel keeps is one from `_`; the place of `\` is checked
+///   against the grammar by the first test of this file;
+/// - a meet only of two types that hold no function or of two arrows, neither a union, since
+///   the reader reads `(rat -> #b) & ((bool -> ()) | String)` as `rat -> #b` and
+///   `((f64 ->? int) | (int ->? bool)) & (String ->? #b)` as another type than the same meet
+///   with its sides swapped (row FAIL-types-meet-function-union);
+/// - no union of a type with a part of it, in a union or in the upper bound of `L .. U`: the
+///   reader finds `(String,) | (_,) | (#a -> f64,)` no subtype of
+///   `(#a -> f64,) | (_,) | (String,)` though each is equal to `(_,)`, and
+///   `(_ -> int, (_ -> int, int))` no subtype of `((_ -> int) & (_ -> int | #a), (_ -> int, int))`
+///   though `_ -> int` is a subtype of each side of the meet, as `_ .. (_ | rat) -> V` reads
+///   (row FAIL-types-tuple-subtype); such a union is written as its larger side.
+fn kernel_generated(rng: &mut Rng, depth: usize) -> Built {
+    let leaf = |rng: &mut Rng| {
+        let (t, text) = [
+            (KType::int(), "int"),
+            (KType::bool(), "bool"),
+            (KType::f64(), "f64"),
+            (KType::string(), "String"),
+            (KType::rat(), "rat"),
+            (KType::atom("a"), "#a"),
+            (KType::atom("b"), "#b"),
+            (KType::top(), "_"),
+            (KType::tuple(vec![]), "()"),
+        ]
+        .into_iter()
+        .nth(rng.below(9))
+        .expect("a leaf");
+        let some_fn = text == "_";
+        let text = text.to_string();
+        Built {
+            t,
+            text,
+            some_fn,
+            all_fn: false,
+            union: false,
+        }
+    };
+    if depth == 0 || rng.below(4) == 0 {
+        return leaf(rng);
+    }
+    let mut sub = || {
+        let b = kernel_generated(rng, depth - 1);
+        Built {
+            text: format!("({})", b.text),
+            ..b
+        }
+    };
+    let (a, b, v) = (sub(), sub(), sub());
+    let (at, bt, vt) = (&a.text, &b.text, &v.text);
+    let some_fn = a.some_fn || b.some_fn;
+    let data = |t: KType, text: String, some_fn: bool| Built {
+        t,
+        text,
+        some_fn,
+        all_fn: false,
+        union: false,
+    };
+    let arrow = |t: KType, text: String| Built {
+        t,
+        text,
+        some_fn: true,
+        all_fn: true,
+        union: false,
+    };
+    let built = match rng.below(10) {
+        0 if b.t.subtype(&a.t) => a,
+        0 if a.t.subtype(&b.t) => b,
+        0 => Built {
+            t: &a.t | &b.t,
+            text: format!("{at} | {bt}"),
+            some_fn,
+            all_fn: a.all_fn && b.all_fn,
+            union: true,
+        },
+        // Data types met mostly come out empty or as one side, so most meets are of arrows.
+        1 if (a.all_fn && b.all_fn && !a.union && !b.union) || !some_fn => Built {
+            t: &a.t & &b.t,
+            text: format!("{at} & {bt}"),
+            some_fn,
+            all_fn: a.all_fn && b.all_fn,
+            union: false,
+        },
+        1 => arrow(
+            &KType::exact(a.t.clone(), b.t.clone()) & &KType::partial(v.t.clone(), b.t.clone()),
+            format!("({at} -> {bt}) & ({vt} ->? {bt})"),
+        ),
+        2 => data(
+            KType::tuple(vec![a.t.clone(), b.t.clone(), v.t.clone()]),
+            format!("({at}, {bt}, {vt})"),
+            some_fn || v.some_fn,
+        ),
+        3 => data(
+            KType::tuple(vec![a.t.clone(), b.t.clone()]),
+            format!("({at}, {bt})"),
+            some_fn,
+        ),
+        4 => data(
+            KType::tuple(vec![a.t.clone()]),
+            format!("({at},)"),
+            a.some_fn,
+        ),
+        5 => data(
+            KType::atom_with("box", &KType::tuple(vec![a.t.clone()])),
+            format!("#box({at})"),
+            a.some_fn,
+        ),
+        6 => data(
+            KType::atom_with("pair", &KType::tuple(vec![a.t.clone(), b.t.clone()])),
+            format!("#pair({at}, {bt})"),
+            some_fn,
+        ),
+        7 => arrow(
+            KType::exact(a.t.clone(), b.t.clone()),
+            format!("{at} -> {bt}"),
+        ),
+        8 => arrow(
+            KType::partial(a.t.clone(), b.t.clone()),
+            format!("{at} ->? {bt}"),
+        ),
+        // A bound pair `L .. U` needs `L` within `U`. The upper bound is the union of `L` with
+        // another type, written as the larger side when one holds the other, as a union is.
+        _ => {
+            let (upper, text) = if b.t.subtype(&a.t) {
+                (a.t.clone(), format!("{at} .. {at} -> {vt}"))
+            } else if a.t.subtype(&b.t) {
+                (b.t.clone(), format!("{at} .. {bt} -> {vt}"))
+            } else {
+                (&a.t | &b.t, format!("{at} .. ({at} | {bt}) -> {vt}"))
+            };
+            arrow(KType::morphism(a.t.clone(), upper, v.t.clone()), text)
+        }
+    };
+    if built.t.is_empty() { leaf(rng) } else { built }
+}
+
+/// The kernel's surface printer (crates/zed-kernel/src/types/print.rs) over kernel types built
+/// at random: each printed text reads back as the type (round trip), and no grouping pair of
+/// its parentheses can go (minimality). Negative controls: a text with a pair too many and one
+/// with a pair too few are each caught, and a tuple's or payload's pair is not taken for one.
+#[test]
+fn the_kernel_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_need() {
+    let want = parse_type("(int -> int) | bool").unwrap();
+    assert_eq!(
+        misprinted("(int -> int) | (bool)", &want),
+        ["`(int -> int) | (bool)`: `(int -> int) | bool` parses the same"]
+    );
+    assert_eq!(
+        misprinted("int -> int | bool", &want),
+        ["`int -> int | bool` reads as another type"]
+    );
+    assert!(misprinted("bool | (int -> int)", &want).is_empty());
+    let payload = parse_type("#box((int,), ())").unwrap();
+    assert!(misprinted("#box((int,), ())", &payload).is_empty());
+    let mut rng = Rng(zed_tests::seed::seed(
+        "the_kernel_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_need",
+    ));
+    let (mut wrong, mut read, mut seen) = (Vec::new(), 0, HashSet::new());
+    let mut forms = [" -> ", " ->? ", " .. ", " | ", " & ", "#box(", ",)"].map(|f| (f, 0usize));
+    for _ in 0..3000 {
+        let Built { t: k, text, .. } = kernel_generated(&mut rng, 3);
+        let printed = k.surface();
+        if !printed.exact || !printed.defs.is_empty() || !seen.insert(printed.root.clone()) {
+            continue;
+        }
+        read += 1;
+        for (f, n) in forms.iter_mut() {
+            *n += usize::from(printed.root.contains(*f));
+        }
+        let want = match parse_type(&text) {
+            Ok(want) => want,
+            Err(e) => {
+                wrong.push(format!("the reference `{text}` does not parse: {e}"));
+                continue;
+            }
+        };
+        for w in misprinted(&printed.root, &want) {
+            wrong.push(format!("`{text}`: {w}"));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "{} of {read}:\n{}",
+        wrong.len(),
+        wrong.join("\n")
+    );
+    assert!(read >= 300, "only {read} distinct types read: {forms:?}");
+    assert!(
+        forms.iter().all(|(_, n)| *n > 0),
+        "a form never printed: {forms:?}"
+    );
+}
+
+/// A body expression of a recursive group built at random, `depth` levels deep at most, from
+/// one-token leaves and the definition `U` itself, with the text it is built from, each
+/// operand in parentheses and `U` written `#u`, and whether it holds a function at any depth
+/// and whether it holds nothing else. Left out for the reader's sake, as in
+/// [`kernel_generated`]: a complement, `_`, a difference from a type that may hold a function,
+/// and a meet of a type holding a function with one holding something else.
+fn body_generated(rng: &mut Rng, depth: usize) -> (Expr, String, bool, bool) {
+    if depth == 0 || rng.below(4) == 0 {
+        let (e, text) = [
+            (Expr::Type(KType::int()), "int"),
+            (Expr::Type(KType::bool()), "bool"),
+            (Expr::Type(KType::string()), "String"),
+            (Expr::Type(KType::rat()), "rat"),
+            (Expr::Type(KType::atom("a")), "#a"),
+            (Expr::Type(KType::tuple(vec![])), "()"),
+            (Expr::Ref(0, vec![]), "#u"),
+            (Expr::Ref(0, vec![]), "#u"),
+        ]
+        .into_iter()
+        .nth(rng.below(8))
+        .expect("a leaf");
+        return (e, text.to_string(), false, false);
+    }
+    let mut sub = || {
+        let (e, text, some_fn, all_fn) = body_generated(rng, depth - 1);
+        (e, format!("({text})"), some_fn, all_fn)
+    };
+    let ((a, at, a_some, a_all), (b, bt, b_some, b_all), (v, vt, ..)) = (sub(), sub(), sub());
+    let some_fn = a_some || b_some;
+    let all_fn = a_all && b_all;
+    let arrow = |e: Expr, text: String| (e, text, true, true);
+    match rng.below(9) {
+        0 => (
+            Expr::Union(vec![a, b]),
+            format!("{at} | {bt}"),
+            some_fn,
+            all_fn,
+        ),
+        1 if all_fn || !some_fn => (
+            Expr::And(vec![a, b]),
+            format!("{at} & {bt}"),
+            some_fn,
+            all_fn,
+        ),
+        1 => arrow(
+            Expr::And(vec![
+                Expr::exact(a, b.clone()),
+                Expr::Morphism(
+                    Box::new(Expr::Type(KType::empty())),
+                    Box::new(v),
+                    Box::new(b),
+                ),
+            ]),
+            format!("({at} -> {bt}) & ({vt} ->? {bt})"),
+        ),
+        2 => (
+            Expr::Diff(Box::new(Expr::Type(KType::rat())), Box::new(b)),
+            format!("rat \\ {bt}"),
+            false,
+            false,
+        ),
+        3 => (
+            Expr::Tuple(vec![a, b]),
+            format!("({at}, {bt})"),
+            some_fn,
+            false,
+        ),
+        4 => (Expr::Tuple(vec![a]), format!("({at},)"), a_some, false),
+        5 => (
+            Expr::Atom("box".into(), vec![a]),
+            format!("#box({at})"),
+            a_some,
+            false,
+        ),
+        6 => arrow(Expr::exact(a, b), format!("{at} -> {bt}")),
+        7 => arrow(
+            Expr::Morphism(
+                Box::new(Expr::Type(KType::empty())),
+                Box::new(a),
+                Box::new(b),
+            ),
+            format!("{at} ->? {bt}"),
+        ),
+        // A bound pair `L .. U` with `L` within `U`.
+        _ => arrow(
+            Expr::Morphism(
+                Box::new(a.clone()),
+                Box::new(Expr::Union(vec![a, b])),
+                Box::new(v),
+            ),
+            format!("{at} .. ({at} | {bt}) -> {vt}"),
+        ),
+    }
+}
+
+/// The text the recursive-group printer `Show` (crates/zed-kernel/src/types/rec/unfold.rs)
+/// writes for `e`, read from the message that rejects `type U = !(e)` when `e` names `U`, with
+/// `U` written `#u`; none when the group is rejected for another reason first or is admitted.
+fn shown(e: Expr) -> Option<String> {
+    let def = Def {
+        name: "U".into(),
+        params: Vec::new(),
+        body: Expr::Not(Box::new(e)),
+    };
+    let message = Group::new(vec![def]).err()?.message;
+    let (_, rest) = message.split_once("which is not monotone in `")?;
+    let (text, _) = rest.split_once("`: a larger")?;
+    let words = text.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '#'));
+    words
+        .clone()
+        .all(|w| w == "U" || !w.starts_with(char::is_uppercase) || w == "String" || w == "Never")
+        .then(|| {
+            let mut out = String::new();
+            let mut last = 0;
+            for (i, _) in text.match_indices('U') {
+                let alone = |c: Option<char>| !c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+                if alone(text[..i].chars().next_back()) && alone(text[i + 1..].chars().next()) {
+                    out += &text[last..i];
+                    out += "#u";
+                    last = i + 1;
+                }
+            }
+            out + &text[last..]
+        })
+}
+
+/// The recursive-group printer `Show` over body expressions built at random: each text it
+/// writes reads back as the expression it was built from (round trip), and no grouping pair of
+/// its parentheses can go (minimality). Author rule P191; row FAIL-print-kernel-parens, where
+/// `Show` wrote every key of `->` in a pair, `(U) -> U`. Negative control: the hand cases at the
+/// top, one key in a pair the grammar does not need, are caught.
+#[test]
+fn the_group_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_need() {
+    let u = || Expr::Ref(0, vec![]);
+    let key = shown(Expr::exact(u(), u())).expect("a complement message");
+    assert_eq!(key, "#u -> #u");
+    let want = parse_type("#u -> #u").unwrap();
+    assert_eq!(
+        misprinted("(#u) -> #u", &want),
+        ["`(#u) -> #u`: `#u -> #u` parses the same"]
+    );
+    let mut rng = Rng(zed_tests::seed::seed(
+        "the_group_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_need",
+    ));
+    let (mut wrong, mut read, mut seen) = (Vec::new(), 0, HashSet::new());
+    let mut forms =
+        [" -> ", " ->? ", " .. ", " | ", " & ", " \\ ", "#box(", ",)"].map(|f| (f, 0usize));
+    for _ in 0..3000 {
+        let (e, text, ..) = body_generated(&mut rng, 3);
+        let Some(printed) = shown(e) else { continue };
+        if !seen.insert(printed.clone()) {
+            continue;
+        }
+        read += 1;
+        for (f, n) in forms.iter_mut() {
+            *n += usize::from(printed.contains(*f));
+        }
+        let want = match parse_type(&text) {
+            Ok(want) => want,
+            Err(e) => {
+                wrong.push(format!("the reference `{text}` does not parse: {e}"));
+                continue;
+            }
+        };
+        for w in misprinted(&printed, &want) {
+            wrong.push(format!("`{text}`: {w}"));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "{} of {read}:\n{}",
+        wrong.len(),
+        wrong.join("\n")
+    );
+    assert!(read >= 300, "only {read} distinct texts read: {forms:?}");
+    assert!(
+        forms.iter().all(|(_, n)| *n > 0),
+        "a form never printed: {forms:?}"
+    );
+}
+
+/// A partial arrow first in a group message, `U ->? ()`, is written without its guarantee,
+/// which is `Never`. `Show` used to print that guarantee and then drop its text, and with it the
+/// mark the message's naming pass reads as the start of the printed types, so naming the
+/// message's parts panicked ("a type is opened before it is closed"). Found by the test below.
+#[test]
+fn a_group_message_opening_with_a_partial_arrow_is_written() {
+    let partial = |k: Expr, v: Expr| {
+        Expr::Morphism(
+            Box::new(Expr::Type(KType::empty())),
+            Box::new(k),
+            Box::new(v),
+        )
+    };
+    let u = || Expr::Ref(0, vec![]);
+    let (unit, int) = (
+        || Expr::Type(KType::tuple(vec![])),
+        || Expr::Type(KType::int()),
+    );
+    assert_eq!(shown(partial(u(), unit())).as_deref(), Some("#u ->? ()"));
+    assert_eq!(
+        shown(Expr::Atom("box".into(), vec![partial(int(), u())])).as_deref(),
+        Some("#box(int ->? #u)")
+    );
+    // Negative control: the arrow later in the text was written before the repair too.
+    assert_eq!(
+        shown(Expr::Tuple(vec![unit(), partial(int(), u())])).as_deref(),
+        Some("((), int ->? #u)")
+    );
+}
+
+/// A tuple key written by a name needs no parentheses: `T1 -> (T1,)`, not `(T1) -> (T1,)`.
+/// The printer used to put the pair a tuple key needs, `((A, B)) -> V`, around the reference
+/// to the tuple before the naming pass decided whether to name it, so a named key kept the
+/// pair. Found by `printed_types_read_back_and_hold_no_parentheses_the_grammar_does_not_need`,
+/// whose case depends on what other tests have printed in the process.
+#[test]
+fn a_tuple_key_written_by_a_name_has_no_parentheses() {
+    for (text, want) in [
+        (
+            "(((), rat)) -> (((), rat),)",
+            "type T1 = ((), rat);\nT1 -> (T1,)",
+        ),
+        // Negative controls: written in full, the key keeps the pair it needs.
+        ("(((), rat)) -> ((), rat)", "(((), rat)) -> ((), rat)"),
+        ("((int, int)) -> int", "((int, int)) -> int"),
+    ] {
+        assert_eq!(parse_type(text).unwrap().to_string(), want, "{text}");
+    }
 }

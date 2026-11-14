@@ -1870,16 +1870,14 @@ impl Printer<'_> {
             match piece {
                 Piece::Str(s) => out.push_str(s),
                 Piece::Node(i, at) => match &named[i] {
-                    // A part the message may write in full ([`defs::add_soft`]) binds as its
-                    // text does.
-                    Some(name) if defs::is_soft(name) && !at.admits(self.own_class(i)) => {
-                        out.push('(');
-                        out.push_str(name);
-                        out.push(')');
-                    }
-                    // A part named by count, which the message may write in full, is
-                    // parenthesized there if its text does not bind at `at`.
-                    Some(name) if defs::is_counted(name) && !at.admits(self.own_class(i)) => {
+                    // A part the message may write in full, a tuple ([`defs::add_soft`]) or a
+                    // part named by count ([`defs::add_counted`]), binds as its text does: it is
+                    // parenthesized if that text does not bind at `at` and the message writes it
+                    // in full, and not if the message names it, `T1 -> V` (author rule P191).
+                    Some(name)
+                        if (defs::is_soft(name) || defs::is_counted(name))
+                            && !at.admits(self.own_class(i)) =>
+                    {
                         out.push_str(&defs::wrapped(name));
                     }
                     Some(name) => out.push_str(name),

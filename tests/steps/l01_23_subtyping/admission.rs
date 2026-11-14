@@ -119,8 +119,8 @@ fn a_rejection_names_its_cause() {
         e.message,
         format!(
             "the type `R0` is outside the form the checker accepts: a recursive occurrence \
-             stands in the guarantee of `(R1) -> int`, in `R0`, which is narrowed where it is \
-             named: `R0` is named in `R1`, under `&` in `R0 & ((Never) -> int)`{SUFFICIENT}"
+             stands in the guarantee of `R1 -> int`, in `R0`, which is narrowed where it is \
+             named: `R0` is named in `R1`, under `&` in `R0 & (Never -> int)`{SUFFICIENT}"
         )
     );
 }
@@ -189,7 +189,7 @@ fn arms() -> Vec<(&'static str, String, String)> {
             refusal(&["U"], &[], vec![m(r(0), r(0), r(0))]),
             outside(
                 "U",
-                "a recursive occurrence stands in the guarantee of `(U) -> U`, whose value type \
+                "a recursive occurrence stands in the guarantee of `U -> U`, whose value type \
                  `U` mentions the group",
             ),
         ),
@@ -198,7 +198,7 @@ fn arms() -> Vec<(&'static str, String, String)> {
             refusal(&["H"], &["A"], vec![m(h(), h(), diff(int(), p()))]),
             outside(
                 "H",
-                "a recursive occurrence stands in the guarantee of `(H(A)) -> int \\ A`, whose \
+                "a recursive occurrence stands in the guarantee of `H(A) -> int \\ A`, whose \
                  value type `int \\ A` has a parameter under a complement or to the right of \
                  `\\`, where a larger argument gives a smaller type, so it may be empty",
             ),
@@ -208,7 +208,7 @@ fn arms() -> Vec<(&'static str, String, String)> {
             refusal(&["T"], &[], vec![m(r(0), r(0), ab)]),
             outside(
                 "T",
-                "a recursive occurrence stands in the guarantee of `(T) -> #a & #b`, whose \
+                "a recursive occurrence stands in the guarantee of `T -> #a & #b`, whose \
                  value type `#a & #b` is empty",
             ),
         ),
@@ -217,7 +217,7 @@ fn arms() -> Vec<(&'static str, String, String)> {
             refusal(&["F"], &["A"], vec![m(h(), h(), p())]),
             outside(
                 "F",
-                "a recursive occurrence stands in the guarantee of `(F(A)) -> A`, whose value \
+                "a recursive occurrence stands in the guarantee of `F(A) -> A`, whose value \
                  type `A` is empty when every parameter is `empty`",
             ),
         ),
@@ -226,8 +226,8 @@ fn arms() -> Vec<(&'static str, String, String)> {
             refusal(&["M6"], &[], vec![m(m(r(0), r(0), int()), empty(), int())]),
             outside(
                 "M6",
-                "a recursive occurrence stands in the guarantee of `((M6) -> int) .. Never -> \
-                 int`, whose guarantee `(M6) -> int` and permission `Never` differ",
+                "a recursive occurrence stands in the guarantee of `(M6 -> int) .. Never -> \
+                 int`, whose guarantee `M6 -> int` and permission `Never` differ",
             ),
         ),
         (
@@ -235,8 +235,8 @@ fn arms() -> Vec<(&'static str, String, String)> {
             refusal(&["W_andTop"], &[], vec![and(m(r(0), r(0), int()), top())]),
             outside(
                 "W_andTop",
-                "a recursive occurrence stands in the guarantee of `(W_andTop) -> int`, which \
-                 stands under `&` in `((W_andTop) -> int) & _`",
+                "a recursive occurrence stands in the guarantee of `W_andTop -> int`, which \
+                 stands under `&` in `(W_andTop -> int) & _`",
             ),
         ),
         (
@@ -244,8 +244,8 @@ fn arms() -> Vec<(&'static str, String, String)> {
             refusal(&["W"], &[], vec![diff(m(r(0), r(0), int()), f())]),
             outside(
                 "W",
-                "a recursive occurrence stands in the guarantee of `(W) -> int`, which stands \
-                 in an operand of `\\` in `((W) -> int) \\ ((Never) -> int)`",
+                "a recursive occurrence stands in the guarantee of `W -> int`, which stands \
+                 in an operand of `\\` in `(W -> int) \\ (Never -> int)`",
             ),
         ),
         (
@@ -253,8 +253,8 @@ fn arms() -> Vec<(&'static str, String, String)> {
             refusal(&["M5"], &[], vec![m(f(), m(r(0), r(0), int()), int())]),
             outside(
                 "M5",
-                "a recursive occurrence stands in the guarantee of `(M5) -> int`, which stands \
-                 in the domain bounds of `((Never) -> int) .. ((M5) -> int) -> int`, which differ",
+                "a recursive occurrence stands in the guarantee of `M5 -> int`, which stands \
+                 in the domain bounds of `(Never -> int) .. (M5 -> int) -> int`, which differ",
             ),
         ),
         (
@@ -266,9 +266,9 @@ fn arms() -> Vec<(&'static str, String, String)> {
             ),
             outside(
                 "A",
-                "a recursive occurrence stands in the guarantee of `(B) -> int`, in `A`, which \
+                "a recursive occurrence stands in the guarantee of `B -> int`, in `A`, which \
                  is narrowed where it is named: `A` is named in `B`; `B` is named in `C`, under \
-                 `&` in `B & ((Never) -> int)`",
+                 `&` in `B & (Never -> int)`",
             ),
         ),
     ]
@@ -321,9 +321,9 @@ fn a_refusal_names_the_whole_path() {
         message,
         format!(
             "the type `D0` is outside the form the checker accepts: a recursive occurrence \
-             stands in the guarantee of `(D1) -> int`, in `D0`, which is narrowed where it is \
+             stands in the guarantee of `D1 -> int`, in `D0`, which is narrowed where it is \
              named: `D0` is named in `D1`; `D1` is named in `D2`; `D2` is named in `D3`, under \
-             `&` in `D2 & ((Never) -> int)`{SUFFICIENT}"
+             `&` in `D2 & (Never -> int)`{SUFFICIENT}"
         )
     );
 }

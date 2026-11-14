@@ -139,14 +139,14 @@ fn a_mixed_component_is_refused_with_its_own_message() {
     assert_eq!(
         site.defs,
         [
-            "type A = (#k, C & A) | (B & (_, _), (int) -> C);",
+            "type A = (#k, C & A) | (B & (_, _), int -> C);",
             // MSG-derive-type-size: a tuple with no part of its own is written in full wherever
             // it stands, as `A` and `C` write it. Before, `B`, which writes `(_, _)` twice,
             // named it `T1`, declared after the definitions (PRINT-fmt-audit,
             // PRINT-group-site-defs): `type B = ((int) -> C & T1) | (B & ((int) -> C), B) |
             // (A & T1,);` and `type T1 = (_, _);`.
-            "type B = ((int) -> C & (_, _)) | (B & ((int) -> C), B) | (A & (_, _),);",
-            "type C = (B & (_, _), B) | ((int) -> A);",
+            "type B = (int -> C & (_, _)) | (B & (int -> C), B) | (A & (_, _),);",
+            "type C = (B & (_, _), B) | (int -> A);",
         ]
     );
     // The lines read as declarations at the top level of a file.
@@ -161,13 +161,13 @@ fn a_mixed_component_is_refused_with_its_own_message() {
          `B`; these references make 6 independent cycles; some of these cycles pass through a \
          tuple, which no value can go around forever since a value is finite, and some through \
          the result of a function type, which a value can, since a function can return without \
-         calling itself; the tuple `(B & (_, _), (int) -> C)` in `A` needs a value of both \
-         `B & (_, _)` and `(int) -> C`, and whether they have one is still open; the known ways \
+         calling itself; the tuple `(B & (_, _), int -> C)` in `A` needs a value of both \
+         `B & (_, _)` and `int -> C`, and whether they have one is still open; the known ways \
          to settle such a group take time that grows with the square of its size, while the \
          checker decides each group in time linear in it, so it does not settle this one; a \
          search for a value of `A` then neither finds one nor shows that there is none, so the \
          checker counts `A` as possibly having a value; adding the case `| #end` to `A`, as in \
-         `type A = (#k, C & A) | (B & (_, _), (int) -> C) | #end`, removes this obstacle, and \
+         `type A = (#k, C & A) | (B & (_, _), int -> C) | #end`, removes this obstacle, and \
          whether `A` has a value is then left to the search for one"
     );
     for (t, head) in types.iter().zip(["A", "B", "C"]) {
@@ -294,15 +294,15 @@ fn a_refused_member_read_through_a_meet_is_left_to_the_search_by_its_repair() {
     let m = message(&types[SIZE]);
     assert!(
         m.contains(
-            "the tuple `(B & (_, _), (int) -> C)` in `A` needs a value of both `B & (_, _)` and \
-             `(int) -> C`"
+            "the tuple `(B & (_, _), int -> C)` in `A` needs a value of both `B & (_, _)` and \
+             `int -> C`"
         ),
         "{m}"
     );
     assert!(
         m.ends_with(
             "adding the case `| #end` to `A`, as in `type A = (#k, C & A) | (B & (_, _), \
-             (int) -> C) | #end`, removes this obstacle, and whether `Both` has a value is then \
+             int -> C) | #end`, removes this obstacle, and whether `Both` has a value is then \
              left to the search for one"
         ),
         "{m}"
@@ -638,7 +638,7 @@ fn a_refused_member_read_through_a_meet_names_the_meet() {
              decides each group in time linear in it, so it does not settle this one; a search \
              for a value of `{member}` then neither finds one nor shows that there is none, so \
              the checker counts `{member}` as possibly having a value; adding the case `| #end` \
-             to `R`, as in `type R = (S & R,) | (S & Q,) | ((int) -> S) | #end`, removes \
+             to `R`, as in `type R = (S & R,) | (S & Q,) | (int -> S) | #end`, removes \
              this obstacle, and whether `{member}` has a value is then left to the search for \
              one"
         )
@@ -945,9 +945,9 @@ fn a_check_reading_a_refused_member_names_the_definition_the_cycles_and_the_tupl
         format!(
             "; the checker could not decide this, so it is not proved wrong\n  because {detail}\n  \
              the check reads the recursive type `B`, defined by:\n    \
-             type B = ((int) -> C & (_, _)) | (B & ((int) -> C), B) | (A & (_, _),);\n    \
-             type A = (#k, C & A) | (B & (_, _), (int) -> C);\n    \
-             type C = (B & (_, _), B) | ((int) -> A);"
+             type B = (int -> C & (_, _)) | (B & (int -> C), B) | (A & (_, _),);\n    \
+             type A = (#k, C & A) | (B & (_, _), int -> C);\n    \
+             type C = (B & (_, _), B) | (int -> A);"
         )
     );
     // The headline holds none of the reason, and the reason all three parts.
@@ -959,7 +959,7 @@ fn a_check_reading_a_refused_member_names_the_definition_the_cycles_and_the_tupl
     for part in [
         "deciding whether `B` has a value",
         "these references make 6 independent cycles",
-        "the tuple `(B & (_, _), (int) -> C)` in `A`",
+        "the tuple `(B & (_, _), int -> C)` in `A`",
     ] {
         assert!(reason.contains(part), "{part}: {reason}");
     }

@@ -151,7 +151,7 @@ fn the_plans_definitions() {
     assert_eq!(
         rejected(vec![def("T", &[], t)]),
         "the type `T` is outside the form the checker accepts: a recursive occurrence stands in \
-         the guarantee of `(T) -> #a & #b`, whose value type `#a & #b` is empty; the check is \
+         the guarantee of `T -> #a & #b`, whose value type `#a & #b` is empty; the check is \
          sufficient, not necessary, so a type it refuses may still be monotone in emptiness. To repair it, write the type so that no recursive occurrence \
          stands there; one inside a tuple, an atom's payload, a union or a function's value \
          type is always accepted"
@@ -175,7 +175,7 @@ fn an_irregular_occurrence_is_written_with_only_the_parentheses_it_needs() {
         ),
         (
             Expr::Tuple(vec![Expr::exact(a(), a()), or(vec![a(), bare("x")])]),
-            "Nest(((A) -> A, A | #x))",
+            "Nest((A -> A, A | #x))",
         ),
     ] {
         let nest = def(
@@ -214,7 +214,7 @@ fn other_rejections() {
     let diff = Expr::Diff(Box::new(ty(Type::int())), Box::new(atom("b", vec![n()])));
     assert!(msg(vec![def("N", &[], diff)]).contains("to the right of `\\`"));
     assert!(
-        msg(vec![def("U", &[], Expr::exact(n(), n()))]).contains("in the guarantee of `(U) -> U`")
+        msg(vec![def("U", &[], Expr::exact(n(), n()))]).contains("in the guarantee of `U -> U`")
     );
     // A value type that a parameter can make empty: `type F(A) = (F(A)) -> A`, and one that a
     // larger argument shrinks, `(H(A)) -> (int \ A)`.
@@ -594,7 +594,7 @@ fn an_irregular_occurrence_nested_in_turn_is_written_with_the_parentheses_it_nee
             .unwrap_or_else(|| panic!("{d}: {message}"));
         let shown = &message[at..at + end];
         if d == 3 {
-            assert_eq!(shown, "Nest(((A) -> A, A) | #x)");
+            assert_eq!(shown, "Nest((A -> A, A) | #x)");
         }
         let tokens = zedc::lex::lex_fence(shown).expect("tokens");
         zedc::parse::parse(shown, &tokens, "Type", zedc::parse::TOP)
@@ -710,5 +710,25 @@ fn a_group_writes_its_trees_for_debugging() {
         "e: Morphism(Node {",
     ] {
         assert!(text.contains(head), "{head} in {text}");
+    }
+}
+
+/// Author rule P191: a group's message writes parentheses exactly where the type grammar's
+/// precedence needs them. An arrow's key is a `TypeUnion` (`TypeUnion '->' Arrow`), so `U -> U`
+/// and `U | int -> U` hold no pair; a tuple key keeps one, `((U, int)) -> U`, since `Arrow`
+/// tries `ArrowParams` first and `(U, int) -> U` reads as two parameters.
+#[test]
+fn a_group_message_writes_an_arrow_key_bare() {
+    let n = || r(0, vec![]);
+    for (key, text) in [
+        (n(), "U -> U"),
+        (or(vec![n(), ty(Type::int())]), "U | int -> U"),
+        (Expr::Tuple(vec![n(), ty(Type::int())]), "((U, int)) -> U"),
+    ] {
+        let message = rejected(vec![def("U", &[], Expr::exact(key, n()))]);
+        assert!(
+            message.contains(&format!("in the guarantee of `{text}`")),
+            "{message}"
+        );
     }
 }

@@ -54,8 +54,11 @@ const SOFT: char = '\u{FDD4}';
 const COUNT: char = '\u{FDD3}';
 /// As [`COUNT`], where the part written in full is parenthesized, as `(1 | 2)[]`.
 const WRAP: char = '\u{FDD2}';
+/// As [`SOFT`], where the tuple written in full is parenthesized, as the key of
+/// `((A, B)) -> V`; written by a name it has no parentheses, `T1 -> V` (author rule P191).
+const SOFT_WRAP: char = '\u{FDDF}';
 /// Every mark that opens a reference.
-const MARKS: [char; 4] = [REF, SOFT, COUNT, WRAP];
+const MARKS: [char; 5] = [REF, SOFT, COUNT, WRAP, SOFT_WRAP];
 /// Closes a reference.
 const END: char = '\u{FDD6}';
 /// Opens the text of one print of types that holds a reference ([`enclose`]), the unit whose
@@ -64,7 +67,7 @@ const TYPE: char = '\u{FDD0}';
 /// Closes what [`TYPE`] opens.
 const TYPE_END: char = '\u{FDD1}';
 /// Every mark [`spell`] reads.
-const SPELLED: [char; 6] = [REF, SOFT, COUNT, WRAP, TYPE, TYPE_END];
+const SPELLED: [char; 7] = [REF, SOFT, COUNT, WRAP, SOFT_WRAP, TYPE, TYPE_END];
 /// A definition whose place is not known yet, written while the printer places the others.
 pub(super) const WAIT: &str = "\u{FDD7}";
 
@@ -219,10 +222,14 @@ pub(super) fn counted_reference(k: usize) -> String {
     format!("{COUNT}{k}{END}")
 }
 
-/// `name`, a reference by [`counted_reference`], at a place where the part written in full is
-/// parenthesized, as `(1 | 2)[]`.
+/// `name`, a reference by [`counted_reference`] or [`soft_reference`], at a place where the
+/// part written in full is parenthesized, as `(1 | 2)[]` or `((A, B)) -> V`; written by a name
+/// it is not.
 pub(super) fn wrapped(name: &str) -> String {
-    name.replacen(COUNT, &WRAP.to_string(), 1)
+    match name.strip_prefix(SOFT) {
+        Some(rest) => format!("{SOFT_WRAP}{rest}"),
+        None => name.replacen(COUNT, &WRAP.to_string(), 1),
+    }
 }
 
 /// Whether `name`, written for a node, is a reference by [`soft_reference`]: a text the
@@ -408,7 +415,7 @@ struct Spelling<'a> {
 
 /// Writes `text`, held by step `step` of a message, to `out`: each reference to a definition
 /// named in that step by its name, and each other by its body, written so in turn, with a stack
-/// of its own; one by [`WRAP`] written in full is parenthesized. The definitions under a
+/// of its own; one by [`WRAP`] or [`SOFT_WRAP`] written in full is parenthesized. The definitions under a
 /// message are written as by a step after the last, `usize::MAX`. Whether it wrote a name.
 ///
 /// Complexity tradeoff: a part written in full is written straight into `out`, in time linear
@@ -438,7 +445,7 @@ fn spell(text: &str, s: &Spelling, step: usize, out: &mut String) -> bool {
                 out.push_str(name);
                 holds = true;
             }
-            None if mark == WRAP => {
+            None if mark == WRAP || mark == SOFT_WRAP => {
                 out.push('(');
                 stack.push(")");
                 stack.push(s.full[&k]);
@@ -614,17 +621,24 @@ pub fn lift_holding(
     // The tuples the sentence writes whole, once per place; each is counted below as a use
     // of itself, as if not opened.
     let mut opened: Vec<usize> = Vec::new();
-    if let Some(first) = texts.first_mut().filter(|t| headline && t.contains(SOFT)) {
+    if let Some(first) = texts
+        .first_mut()
+        .filter(|t| headline && t.contains([SOFT, SOFT_WRAP]))
+    {
         **first = TABLE.with_borrow(|t| {
             let t = t.as_ref().expect("references are lifted while collecting");
             let mut out = String::with_capacity(first.len());
             let mut rest = first.as_str();
-            while let Some(i) = rest.find(SOFT) {
+            while let Some(i) = rest.find([SOFT, SOFT_WRAP]) {
                 out.push_str(&rest[..i]);
-                let after = &rest[i + SOFT.len_utf8()..];
+                let mark = rest[i..].chars().next().expect("a mark was found");
+                let after = &rest[i + mark.len_utf8()..];
                 let n = after.find(END).expect("a reference is closed");
                 let k: usize = after[..n].parse().expect("a reference is a number");
-                out.push_str(&t.bodies[k]);
+                match mark == SOFT_WRAP {
+                    true => out.extend(["(", &t.bodies[k], ")"]),
+                    false => out.push_str(&t.bodies[k]),
+                }
                 opened.push(k);
                 rest = &after[n + END.len_utf8()..];
             }
@@ -861,7 +875,7 @@ impl fmt::Display for Declaration<'_> {
 /// `text` alone, finished: each of its definitions declared on a line of its own
 /// ([`declare`]), then the text, as a type printed outside a message is.
 pub fn plain(text: &str) -> String {
-    if !text.contains([REF, SOFT, COUNT, WRAP, TYPE, VARS]) {
+    if !text.contains([REF, SOFT, COUNT, WRAP, SOFT_WRAP, TYPE, VARS]) {
         return text.into();
     }
     let mut root = text.to_string();
