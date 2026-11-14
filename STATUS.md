@@ -2203,9 +2203,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | CONST-too-large-kept-powers | impl attempt 1 | 2026-11-13 21:17 | reproduced on origin/main d353a0b07: 3^(2^70), 3r^(2^70), 2r^(2^70) compile (rc 0, widening warning only); control b^(2^64) rejected; load 23.03 |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | CD round 6 launched (SHORT): experiment 6664553392322379777 from main 8a3e0859b, 56 cases, 3 regions (new PICK_RS); local main-vs-main 2,357.953, test run 8,535 |
 | LIT-rat-decimal-exponent | impl attempt 1 | 2026-11-13 22:07 | started; worktree from origin/main e92e7e508 |
+| PERF-s22-sliced-regress | running | 2026-11-13 23:11 |  |
 | PRES-exact-side | impl attempt 1 | 2026-11-13 20:00 | started; worktree from 223aaf2e2 |
 | SPEC-blocking-default | impl attempt 1 | 2026-11-13 22:19 | started; worktrees spec-blocking-default and -spec from origin/main |
-| SPEC-ffi-state-param | running | 2026-11-13 23:04 |  |
+| SPEC-ffi-state-param | impl attempt 1 | 2026-11-13 23:04 | started; reading DESIGN sec:ffi token sections |
 | SPEC-raw-keep-isig | running |  |  |
 | SPEC-sigint-override | impl attempt 1 | 2026-11-13 22:56 | started; reading spec sec:ports/sec:ffi on Ctrl+C |
 | ST-relation-case-written | impl attempt 1 | 2026-11-13 20:49 | started; load 29.88 26.92 32.21 |
