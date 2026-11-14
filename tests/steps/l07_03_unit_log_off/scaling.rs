@@ -1,58 +1,54 @@
 //! Building, formatting and resolving unit items is linear in their number (DESIGN.md Part G,
 //! the rule of low complexity): `n` copies of `@log(#off);`, each after the first refused with
-//! a note naming the first, and `n` functions each with the item misplaced in its body. Each
-//! input is lexed and parsed before timing.
+//! a note naming the first, and `n` functions each with the item misplaced in its body. The
+//! benchmarks in `bench/scaling.rs` hold the times; here each unit passes at small sizes.
 
-use std::collections::HashMap;
-
-use zed_tests::scaling;
 use zedc::ast::unit;
 use zedc::format::format;
 use zedc::lex::{Token, lex};
 use zedc::parse::{TOP, Tree, parse};
 use zedc::resolve::resolve;
 
-struct Parsed {
+pub(super) struct Parsed {
     text: String,
     tokens: Vec<Token>,
     tree: Tree,
 }
 
-/// Checks that building, formatting and resolving `make(n)` is linear in `n`, from `base`;
-/// every unit made is refused, with `n - 1` or `n` errors.
-fn linear(what: &str, base: usize, make: impl Fn(usize) -> String) {
-    let units: HashMap<usize, Parsed> = [base, 8 * base]
-        .into_iter()
-        .map(|n| {
-            let text = make(n);
-            let tokens = lex(&text).unwrap();
-            let tree = parse(&text, &tokens, "Unit", TOP).unwrap();
-            (n, Parsed { text, tokens, tree })
-        })
-        .collect();
-    scaling::check(what, base, |n| {
-        let p = &units[&n];
-        let stmts = unit(&p.text, &p.tokens, &p.tree).unwrap();
-        std::hint::black_box(format(&p.text, &p.tokens, &stmts));
-        let errors = resolve(&stmts).unwrap_err();
-        assert!(errors.len() >= n - 1);
-    });
+/// The unit `text`, lexed and parsed.
+pub(super) fn parsed(text: String) -> Parsed {
+    let tokens = lex(&text).unwrap();
+    let tree = parse(&text, &tokens, "Unit", TOP).unwrap();
+    Parsed { text, tokens, tree }
+}
+
+/// Builds, formats and resolves the unit `p` of size `n`, which is refused with `n - 1` or `n`
+/// errors.
+pub(super) fn pass(p: &Parsed, n: usize) {
+    let stmts = unit(&p.text, &p.tokens, &p.tree).unwrap();
+    std::hint::black_box(format(&p.text, &p.tokens, &stmts));
+    let errors = resolve(&stmts).unwrap_err();
+    assert!(errors.len() >= n - 1);
+}
+
+/// `n` copies of the unit item, each before a function.
+pub(super) fn copies(n: usize) -> String {
+    (0..n)
+        .map(|i| format!("@log(#off);\nf{i}(x) = x;\n"))
+        .collect()
+}
+
+/// `n` functions, each with the unit item in its body.
+pub(super) fn misplaced(n: usize) -> String {
+    (0..n)
+        .map(|i| format!("f{i}(x) {{\n  @log(#off);\n  x\n}}\n"))
+        .collect()
 }
 
 #[test]
-fn many_unit_items_scale() {
-    linear("n copies of the unit item", 4000, |n| {
-        (0..n)
-            .map(|i| format!("@log(#off);\nf{i}(x) = x;\n"))
-            .collect()
-    });
-}
-
-#[test]
-fn many_misplaced_unit_items_scale() {
-    linear("n blocks holding the unit item", 4000, |n| {
-        (0..n)
-            .map(|i| format!("f{i}(x) {{\n  @log(#off);\n  x\n}}\n"))
-            .collect()
-    });
+fn each_unit_is_built_formatted_and_refused_at_small_sizes() {
+    for n in [2, 3, 9] {
+        pass(&parsed(copies(n)), n);
+        pass(&parsed(misplaced(n)), n);
+    }
 }

@@ -2,6 +2,7 @@
 //! resolution refuses it, naming the step that compiles it.
 
 mod arrays;
+mod bench;
 mod corners;
 mod formatting;
 mod forms;

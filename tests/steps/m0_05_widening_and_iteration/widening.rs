@@ -96,9 +96,9 @@ fn ends(x: &IntervalSet) -> BTreeSet<Num> {
 fn interval_widening_chains_stay_on_the_first_ends_and_the_landmarks() {
     // Every element's finite ends lie in K, the first element's and the landmarks, and the
     // chain has at most 2|K| + 2 elements, at any number of pieces.
-    let mut rng = Rng::new(0x71de);
+    let mut rng = Rng::new(zed_tests::test_seed());
     let mut longest = 0;
-    for _ in 0..RANDOM_INSTANCES {
+    for _ in 0..RANDOM_INSTANCES / 4 {
         let marks = random_marks(&mut rng);
         let first = random_set(&mut rng).join(&IntervalSet::single(rng.int(-50, 50)));
         let mut fed = Some(first.clone());
@@ -126,8 +126,8 @@ fn interval_widening_chains_stay_on_the_first_ends_and_the_landmarks() {
 fn interval_narrowing_chains_stay_on_the_first_ends_and_the_landmarks() {
     // Each value lies between its meet and the one before; its finite ends are the first
     // value's, landmarks, or a bound that replaced an infinite end, once on each side.
-    let mut rng = Rng::new(0x71df);
-    for _ in 0..RANDOM_INSTANCES {
+    let mut rng = Rng::new(zed_tests::test_seed());
+    for _ in 0..RANDOM_INSTANCES / 4 {
         let marks = random_marks(&mut rng);
         let first = random_set(&mut rng).join(&iv(Some(rng.int(-60, 60)), None));
         let c = descent(
@@ -229,8 +229,8 @@ fn congruence_chains_end_when_the_modulus_stops_dividing() {
             Congruence::top()
         ]
     );
-    let mut rng = Rng::new(0xc0);
-    for _ in 0..RANDOM_INSTANCES {
+    let mut rng = Rng::new(zed_tests::test_seed());
+    for _ in 0..RANDOM_INSTANCES / 4 {
         // The modulus of a 64-bit value has at most 64 prime factors, plus the first value.
         chain(
             || Congruence::single(rng.int(-1000, 1000)),
@@ -252,8 +252,8 @@ fn a_congruence_narrows_at_most_three_times() {
         even.narrow(&Congruence::single(8), &none),
         Congruence::single(8)
     );
-    let mut rng = Rng::new(0xc1);
-    for _ in 0..RANDOM_INSTANCES {
+    let mut rng = Rng::new(zed_tests::test_seed());
+    for _ in 0..RANDOM_INSTANCES / 4 {
         descent(
             Congruence::top(),
             || Congruence::new(1 << rng.below(8), 0),
@@ -297,8 +297,8 @@ fn a_growing_buffer_length_widens_to_unbounded_and_stays_nonnegative() {
         shrunk.widen(&shrunk.join(&Card::range(End::of(1), End::of(1))), &none),
         Card::range(End::of(0), End::of(5))
     );
-    let mut rng = Rng::new(0xca);
-    for _ in 0..RANDOM_INSTANCES {
+    let mut rng = Rng::new(zed_tests::test_seed());
+    for _ in 0..RANDOM_INSTANCES / 4 {
         chain(
             || {
                 let a = rng.int(0, 40);

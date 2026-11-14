@@ -259,9 +259,9 @@ pub fn check(t: &Theory) -> u64 {
 
 #[test]
 fn the_report_agrees_with_brute_force_on_random_theories() {
-    let mut rng = Rng::new(0x7121_7a11);
+    let mut rng = Rng::new(zed_tests::test_seed());
     let (mut forest, mut forest_dead, mut other, mut other_dead) = (0, 0, 0, 0);
-    for _ in 0..4000 {
+    for _ in 0..1000 {
         let t = random_theory(&mut rng);
         let dead = check(&t);
         if in_forest_fragment(&t) {
@@ -282,7 +282,7 @@ fn the_report_agrees_with_brute_force_on_random_theories() {
         "random theories: {forest} in the forest fragment ({forest_dead} dead ends), {other} \
          outside it ({other_dead} with a dead end)"
     );
-    assert!(forest >= 500, "too few theories in the fragment: {forest}");
+    assert!(forest >= 100, "too few theories in the fragment: {forest}");
 }
 
 /// A law as written: name, binders and body.

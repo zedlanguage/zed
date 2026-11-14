@@ -3,6 +3,7 @@
 //! stops at one that no longer matches, and pins the package's prelude unit, as it pins any
 //! unit, in the pin file `zed.pins` at the package root, the one file every later pin goes in.
 
+mod bench;
 mod command;
 mod imports;
 mod pin_file;

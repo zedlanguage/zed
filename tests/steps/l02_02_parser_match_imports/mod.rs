@@ -4,6 +4,7 @@
 //! layer.
 
 mod annotations;
+mod bench;
 mod formatting;
 mod imports;
 mod later;

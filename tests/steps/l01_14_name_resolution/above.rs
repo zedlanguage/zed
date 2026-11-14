@@ -177,7 +177,7 @@ fn parsed(text: &str) -> Vec<zedc::ast::Stmt> {
 
 /// A block of `n` bindings, each reading the one before it, in order or with each line using
 /// the next, which is below it; and a parameter list of `n` defaults, each naming the next.
-fn chains(n: usize) -> [(String, Vec<zedc::ast::Stmt>); 3] {
+pub(super) fn chains(n: usize) -> [(String, Vec<zedc::ast::Stmt>); 3] {
     let ordered = (1..n)
         .map(|i| format!("  b{i} = b{} + 1;\n", i - 1))
         .collect::<String>();
@@ -198,13 +198,10 @@ fn chains(n: usize) -> [(String, Vec<zedc::ast::Stmt>); 3] {
     })
 }
 
-#[test]
-fn checking_the_order_of_a_block_or_a_list_scales() {
-    // Complexity tradeoff (COMPLEXITY.md F16b): each use compares its binder's position in
-    // O(1); rescanning the block for each use was O(uses × bindings).
-    let n = 20_000;
-    let built = zed_tests::scaling::inputs(n, chains);
-    for (k, (what, errors)) in [
+/// What each of the [`chains`] of `n` is, and how many errors its resolution reports: none in
+/// order, and one for each use above its definition.
+pub(super) fn chain_errors(n: usize) -> [(&'static str, usize); 3] {
+    [
         ("a block of n bindings in order", 0),
         ("a block of n bindings each used above it", n - 1),
         (
@@ -212,15 +209,21 @@ fn checking_the_order_of_a_block_or_a_list_scales() {
             n - 1,
         ),
     ]
-    .into_iter()
-    .enumerate()
-    {
-        let (text, stmts) = &built[&n][k];
-        let got = resolve_text(stmts, Some(text)).err().unwrap_or_default();
-        assert_eq!(got.len(), errors, "{what}");
-        zed_tests::scaling::check(what, n, |m| {
-            let (text, stmts) = &built[&m][k];
-            let _ = resolve_text(stmts, Some(text));
-        });
+}
+
+/// Resolves `stmts` of `text`, the chain `what`, and checks that it reports `errors` errors.
+pub(super) fn reports(text: &str, stmts: &[zedc::ast::Stmt], what: &str, errors: usize) {
+    let got = resolve_text(stmts, Some(text)).err().unwrap_or_default();
+    assert_eq!(got.len(), errors, "{what}");
+}
+
+/// Short chains in order resolve, and in reverse order report each use above its definition;
+/// `bench/above.rs` holds the timing.
+#[test]
+fn short_chains_in_and_out_of_order_report_each_use_above_its_definition() {
+    for n in [1, 2, 9] {
+        for ((text, stmts), (what, errors)) in chains(n).iter().zip(chain_errors(n)) {
+            reports(text, stmts, what, errors);
+        }
     }
 }

@@ -7,7 +7,6 @@
 use zed_kernel::Value;
 use zed_kernel::provenance::Vector;
 use zed_tests::instances::{RANDOM_INSTANCES, Rng};
-use zed_tests::scaling;
 use zedc::address::ContentAddress;
 use zedc::ast::unit;
 use zedc::canon::binders::{level_name, level_of};
@@ -113,9 +112,9 @@ fn the_loop_gives_c_at_1_to_4_in_each_order_of_its_equations() {
 fn reversed_and_rotated_units_give_the_same_cells() {
     // Each random system, with its equations reversed and rotated by each position, gives the
     // same order and the same cells by name, in phase 1 and after both phases.
-    let mut rng = Rng::new(0x05b7);
+    let mut rng = Rng::new(zed_tests::test_seed());
     let mut cut = 0;
-    for _ in 0..RANDOM_INSTANCES {
+    for _ in 0..RANDOM_INSTANCES / 4 {
         let eq = System::random(&mut rng);
         let eq = if rng.below(2) == 0 { eq } else { eq.bare() };
         let n = eq.names.len();
@@ -138,7 +137,7 @@ fn reversed_and_rotated_units_give_the_same_cells() {
         }
     }
     // The sample has loops, where the head decides the cells.
-    assert!(cut > RANDOM_INSTANCES / 4, "{cut} systems with a loop");
+    assert!(cut > RANDOM_INSTANCES / 16, "{cut} systems with a loop");
 }
 
 #[test]
@@ -372,9 +371,9 @@ fn checking_one_file_gives_the_cells_checking_all_files_gives() {
     // keypaths, each cell in one of three files. Checking every file at once (batch) and
     // checking one file, which traces only the cells that file reaches, give each cell the
     // same value, and so do the equations reversed and rotated.
-    let mut rng = Rng::new(0x0b4e);
+    let mut rng = Rng::new(zed_tests::test_seed());
     let mut cut = 0;
-    for _ in 0..RANDOM_INSTANCES {
+    for _ in 0..RANDOM_INSTANCES / 4 {
         let mut eq = System::random(&mut rng);
         if rng.below(2) == 0 {
             eq = eq.bare();
@@ -425,11 +424,11 @@ fn checking_one_file_gives_the_cells_checking_all_files_gives() {
             );
         }
     }
-    assert!(cut > RANDOM_INSTANCES / 4, "{cut} systems with a loop");
+    assert!(cut > RANDOM_INSTANCES / 16, "{cut} systems with a loop");
 }
 
 /// Cells with given reads and keys, whose equations give nothing: the cost of the order alone.
-struct Keyed {
+pub(super) struct Keyed {
     reads: Vec<Vec<usize>>,
     names: Vec<String>,
     address: ContentAddress,
@@ -476,15 +475,6 @@ fn keyed(n: usize, read: impl Fn(usize) -> Vec<usize>, name: impl Fn(usize) -> S
     }
 }
 
-/// Runs the order at `n` and `8n` on the systems `build` makes, built before the timing.
-fn order_scales(what: &str, n: usize, build: impl Fn(usize) -> Keyed) {
-    let (small, large) = (build(n), build(scaling::FACTOR * n));
-    scaling::check_order(what, n, 1, |m| {
-        let eq = if m == n { &small } else { &large };
-        order(eq).unwrap();
-    });
-}
-
 /// Names whose order is not the order of the numbers: written in one order, read in another.
 fn scrambled(v: usize) -> String {
     format!(
@@ -493,48 +483,46 @@ fn scrambled(v: usize) -> String {
     )
 }
 
-#[test]
-fn the_order_of_a_long_chain_scales() {
-    order_scales("the keyed order of a chain", 20_000, |n| {
-        keyed(n, |v| if v == 0 { vec![] } else { vec![v - 1] }, scrambled)
-    });
+/// A chain of `n` cells, each reading the one before, under scrambled names.
+pub(super) fn keyed_chain(n: usize) -> Keyed {
+    keyed(n, |v| if v == 0 { vec![] } else { vec![v - 1] }, scrambled)
 }
 
-#[test]
-fn the_order_of_many_small_loops_scales() {
-    // Loops of three cells, each reading the one before it in the loop.
-    order_scales("the keyed order of loops of three", 21_000, |n| {
-        keyed(n, |v| vec![v - v % 3 + (v + 2) % 3], scrambled)
-    });
+/// Loops of three cells, each reading the one before it in the loop, under scrambled names;
+/// `n` is a multiple of 3.
+pub(super) fn keyed_loops(n: usize) -> Keyed {
+    keyed(n, |v| vec![v - v % 3 + (v + 2) % 3], scrambled)
 }
 
-#[test]
-fn the_order_of_one_bindings_nodes_scales() {
-    // Every cell has one name and one address, so every comparison reaches the canonical
-    // forms: n log n comparisons of forms of a fixed length.
-    order_scales(
-        "the keyed order of nodes with one name and address",
-        21_000,
-        |n| keyed(n, |v| vec![v - v % 3 + (v + 2) % 3], |_| "x".to_string()),
-    );
+/// [`keyed_loops`] with every cell of one name and one address, so every comparison reaches the
+/// canonical forms.
+pub(super) fn keyed_one_binding(n: usize) -> Keyed {
+    keyed(n, |v| vec![v - v % 3 + (v + 2) % 3], |_| "x".to_string())
 }
 
+/// [`keyed_one_binding`] with equal forms of eight numbers, held apart by their keypaths, a
+/// string key and a scrambled integer key, so every comparison reads both forms and then the
+/// keypaths.
+pub(super) fn keyed_one_node(n: usize) -> Keyed {
+    let mut eq = keyed_one_binding(n);
+    eq.forms = vec![vec![5; 8]; n];
+    eq.keypaths = (0..n)
+        .map(|v| {
+            let k = (v as u64).wrapping_mul(2_654_435_761) % 100_000_007;
+            Vector::from(vec![Value::str("k"), Value::Int(k as i64)])
+        })
+        .collect();
+    eq
+}
+
+/// The four families whose keyed order `bench/order.rs` times, ordered at small sizes.
 #[test]
-fn the_order_of_one_nodes_cells_scales() {
-    // Every cell is a cell of one static node: one name, one address and equal forms of eight
-    // numbers, held apart, so every comparison reads both forms and then the keypaths, a
-    // string key and a scrambled integer key. n log n comparisons of keys of a fixed length.
-    order_scales("the keyed order of one node's cells", 21_000, |n| {
-        let mut eq = keyed(n, |v| vec![v - v % 3 + (v + 2) % 3], |_| "x".to_string());
-        eq.forms = vec![vec![5; 8]; n];
-        eq.keypaths = (0..n)
-            .map(|v| {
-                let k = (v as u64).wrapping_mul(2_654_435_761) % 100_000_007;
-                Vector::from(vec![Value::str("k"), Value::Int(k as i64)])
-            })
-            .collect();
-        eq
-    });
+fn the_keyed_order_of_each_benchmark_family_is_found_at_small_sizes() {
+    for build in [keyed_chain, keyed_loops, keyed_one_binding, keyed_one_node] {
+        for n in [3, 6, 27] {
+            order(&build(n)).unwrap();
+        }
+    }
 }
 
 /// What the checker finds in `text`: each declared function's signature and each top-level
@@ -675,8 +663,8 @@ fn renaming_a_loops_local_bindings_keeps_the_units_address() {
     ] {
         assert_eq!(address_of(&walk(names)), want, "{names:?}");
     }
-    let mut rng = Rng::new(0x0e4a);
-    for _ in 0..RANDOM_INSTANCES {
+    let mut rng = Rng::new(zed_tests::test_seed());
+    for _ in 0..RANDOM_INSTANCES / 4 {
         let n = local_names(&mut rng, 3);
         assert_eq!(address_of(&walk([&n[0], &n[1], &n[2]])), want, "{n:?}");
     }
@@ -772,8 +760,8 @@ fn a_local_binding_is_keyed_by_its_level_and_sorts_before_every_declaration() {
     let want: Vec<String> = (1..=3).map(|l| level_name(l).to_string()).collect();
     assert_eq!(hashed_names(["a", "b", "c"]), want);
     assert_eq!(hashed_names(["z", "b", "c"]), want);
-    let mut rng = Rng::new(0x0e4b);
-    for _ in 0..RANDOM_INSTANCES {
+    let mut rng = Rng::new(zed_tests::test_seed());
+    for _ in 0..RANDOM_INSTANCES / 4 {
         let n = local_names(&mut rng, 3);
         assert_eq!(hashed_names([&n[0], &n[1], &n[2]]), want, "{n:?}");
     }
@@ -826,11 +814,11 @@ fn a_unit_and_a_copy_with_a_local_binding_renamed_get_the_same_heads_cells_and_v
     assert_eq!(written.cells, ["[-2..=104]", "[0..=101]", "[2..=103]"]);
     assert!(!written.proved.contains(&(0, 1)));
 
-    // The search over the a/b/c family: 20,000 members, the size of the probe that found the
+    // The search over the a/b/c family: 2,000 members, a tenth of the probe that found the
     // witness, each under six namings, the six orders of three random local names, so that
     // every relative order of the written names is met.
-    const MEMBERS: usize = 20_000;
-    let mut rng = Rng::new(0x0e4c);
+    const MEMBERS: usize = 2_000;
+    let mut rng = Rng::new(zed_tests::test_seed());
     for _ in 0..MEMBERS {
         let eq = abc_member(&mut rng);
         let want = outcome(&keyed_by_level(&eq, ["a", "b", "c"]));

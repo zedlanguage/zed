@@ -1,16 +1,14 @@
-//! The report at the rule of low complexity (DESIGN.md Part G), on families of k and 8k fields.
-//! Its work is O(fields + the sizes of the laws) plus, in each group, work proportional to the
-//! models it lists; the default report lists at most two per group and stops at the first
-//! choice that leads to no model, so on every family it is linear.
+//! The families the benchmarks of `bench.rs` report on, k and 8k fields each, and what the
+//! report must give on each, checked here at small sizes and, for the walk's counts of pairs,
+//! runs and steps, at the timed sizes, which cost no report (TEST-bench-move-rest, P170).
 
 use zed_tests::instances::Rng;
-use zed_tests::scaling;
 
 use super::hardness::{random_cnf, sat_theory};
 use super::trivial::{Mode, Theory, render, report, split};
 
 /// `k` fields of no arguments that no law names.
-fn free(k: usize) -> Theory {
+pub(super) fn free(k: usize) -> Theory {
     let mut t = Theory::new("Free");
     for i in 0..k {
         t.field(&format!("f{i}"), 0);
@@ -19,7 +17,7 @@ fn free(k: usize) -> Theory {
 }
 
 /// `k / 2` codecs side by side, each its own group with one model.
-fn codecs(k: usize) -> Theory {
+pub(super) fn codecs(k: usize) -> Theory {
     let mut t = Theory::new("Codecs");
     for i in 0..k / 2 {
         t.field(&format!("c{i}"), 1).field(&format!("d{i}"), 1).law(
@@ -33,7 +31,7 @@ fn codecs(k: usize) -> Theory {
 
 /// `k` fields of one argument chained by `f_i(x) == f_{i+1}(x)`: one group of three models,
 /// all `#a`, all `#b` and all the identity.
-fn chain(k: usize) -> Theory {
+pub(super) fn chain(k: usize) -> Theory {
     let mut t = Theory::new("Chain");
     for i in 0..k {
         t.field(&format!("f{i}"), 1);
@@ -50,7 +48,7 @@ fn chain(k: usize) -> Theory {
 
 /// `k` groups of a binary field with `p(x, y) == p(y, x)` (two models each, the constants) and
 /// a field of one argument with `q(q(x)) == q(x)` (all three).
-fn small_groups(k: usize) -> Theory {
+pub(super) fn small_groups(k: usize) -> Theory {
     let mut t = Theory::new("Groups");
     for i in 0..k / 2 {
         t.field(&format!("p{i}"), 2)
@@ -73,7 +71,7 @@ fn small_groups(k: usize) -> Theory {
 /// with 2^(k+1) models (`z` either value, each `f_i` the identity or the constant `z`). The
 /// default report makes one choice per field to reach its first model, so it measures the
 /// propagation of a choice; the exhaustive list is exponential in k, as the output is.
-fn star(k: usize) -> Theory {
+pub(super) fn star(k: usize) -> Theory {
     let mut t = Theory::new("Star");
     t.field("z", 0);
     for i in 0..k {
@@ -110,7 +108,7 @@ fn tree(prefix: &str, n: usize) -> String {
 /// One law, one atom: two trees of `k / 2` fields each, `f` on the left and `g` on the right,
 /// with `f(..) == g(..)`. Each side has about `3k / 2` paths, so the pairs of paths are about
 /// `k^2`; the sides name different fields, so the atom is split at its end symbol.
-fn one_large_atom(k: usize) -> Theory {
+pub(super) fn one_large_atom(k: usize) -> Theory {
     let mut t = Theory::new("Large");
     for i in 0..k / 2 {
         t.field(&format!("f{i}"), 2);
@@ -124,7 +122,7 @@ fn one_large_atom(k: usize) -> Theory {
 }
 
 /// k constants, not all equal: one law, an `||` of k - 1 comparisons, so one clause.
-fn one_long_or(k: usize) -> Theory {
+pub(super) fn one_long_or(k: usize) -> Theory {
     let mut t = Theory::new("LongOr");
     for i in 0..k {
         t.field(&format!("c{i}"), 0);
@@ -137,7 +135,7 @@ fn one_long_or(k: usize) -> Theory {
 /// k / 2 constants and, declared last, one field `w` of k / 2 arguments, in one clause:
 /// `w(c0, ..) != c0 || c0 != c1 || ..`. Once the constants are chosen `w` is the clause's one
 /// open field, and k / 2 of its k / 2 + 2 choices fail the clause.
-fn one_wide_field(k: usize) -> Theory {
+pub(super) fn one_wide_field(k: usize) -> Theory {
     let mut t = Theory::new("WideField");
     let m = k / 2;
     for i in 0..m {
@@ -151,91 +149,36 @@ fn one_wide_field(k: usize) -> Theory {
     t
 }
 
-fn run(t: &Theory, mode: Mode) {
+pub(super) fn run(t: &Theory, mode: Mode) {
     let r = report(t, mode);
     std::hint::black_box(render(t, &r));
 }
 
+/// Random 3-CNF of `n` variables at the density where satisfiable and unsatisfiable formulas
+/// are about as common, the seed fixed by `n`.
+pub(super) fn hard(n: usize) -> Theory {
+    let mut rng = Rng::new(0x3c_4f + n as u64);
+    sat_theory(n, &random_cnf(&mut rng, n, n * 426 / 100))
+}
+
+/// Every family the benchmarks of `bench.rs` time runs through the default report, and the four
+/// of `the_report_scales` through the exhaustive one too, and is split into groups, at small
+/// sizes; the timing of each is held in `bench.rs`.
 #[test]
-fn the_report_scales() {
-    let k = 1000;
-    for (what, make) in [
-        ("free fields", free as fn(usize) -> Theory),
-        ("codecs side by side", codecs),
-        ("a chain of equations", chain),
-        ("small groups", small_groups),
-    ] {
-        let inputs = scaling::inputs(k, make);
-        for mode in [Mode::Default, Mode::Exhaustive] {
-            scaling::check(&format!("{what}, {mode:?}, by fields"), k, |n| {
-                run(&inputs[&n], mode)
-            });
+fn each_benchmark_family_is_reported_at_small_sizes() {
+    let both: [fn(usize) -> Theory; 4] = [free, codecs, chain, small_groups];
+    let default: [fn(usize) -> Theory; 5] =
+        [star, one_large_atom, one_long_or, one_wide_field, hard];
+    for k in [3, 4, 9] {
+        for make in both {
+            run(&make(k), Mode::Default);
+            run(&make(k), Mode::Exhaustive);
         }
+        for make in default {
+            run(&make(k), Mode::Default);
+        }
+        assert_eq!(split(&small_groups(k)).groups.len(), 2 * (k / 2));
     }
-}
-
-#[test]
-fn the_default_report_scales_on_one_large_group() {
-    let inputs = scaling::inputs(1000, star);
-    scaling::check("a star, Default, by fields", 1000, |n| {
-        run(&inputs[&n], Mode::Default)
-    });
-}
-
-/// One atom of k fields: the report builds the atom in O(k log k), not as the k^2 pairs of
-/// paths, and its default search, which chooses every field, removes each choice and each path
-/// at most once per descent.
-#[test]
-fn one_large_atom_scales() {
-    let inputs = scaling::inputs(1000, one_large_atom);
-    scaling::check("one large atom, Default, by fields", 1000, |n| {
-        run(&inputs[&n], Mode::Default)
-    });
-}
-
-/// One clause of k atoms: the report checks it only once at most one of its fields is open,
-/// each time in O(k log k), not after every choice.
-#[test]
-fn one_long_or_scales() {
-    let inputs = scaling::inputs(1000, one_long_or);
-    scaling::check("one long `||`, Default, by fields", 1000, |n| {
-        run(&inputs[&n], Mode::Default)
-    });
-}
-
-/// One clause whose last open field has k / 2 arguments: the report checks the clause once per
-/// choice of that field only on the atoms whose paths reach it, and not again as the field's
-/// choices are removed, so the work is linear, not the choices times the clause. Default report
-/// only: the constants have exponentially many models, which `@exhaustive` would list.
-#[test]
-fn one_wide_field_scales() {
-    let inputs = scaling::inputs(1000, one_wide_field);
-    scaling::check("one wide field in an `||`, Default, by fields", 1000, |n| {
-        run(&inputs[&n], Mode::Default)
-    });
-}
-
-#[test]
-fn the_split_scales() {
-    let inputs = scaling::inputs(1000, small_groups);
-    scaling::check("the split into groups, by fields", 1000, |n| {
-        std::hint::black_box(split(&inputs[&n]));
-    });
-}
-
-/// On random 3-CNF at the density where satisfiable and unsatisfiable formulas are about as
-/// common, the default report stops at the first dead end, so it stays linear where the
-/// exhaustive search is exponential.
-#[test]
-fn the_default_report_scales_on_the_hard_family() {
-    let k = 1000;
-    let inputs = scaling::inputs(k, |n| {
-        let mut rng = Rng::new(0x3c_4f + n as u64);
-        sat_theory(n, &random_cnf(&mut rng, n, n * 426 / 100))
-    });
-    scaling::check("random 3-CNF, Default, by variables", k, |n| {
-        run(&inputs[&n], Mode::Default)
-    });
 }
 
 #[test]
@@ -265,35 +208,26 @@ fn the_families_report_what_they_should() {
 /// one argument. Its sides share every field, so the atom is held as the pairs of paths that
 /// agree: d^2 + d + 1 pairs, which hold about 2 d^3 / 3 choices. The pairs are numbered and
 /// written as runs, never one by one with their choices, so the default report is of order
-/// d^2 log d, the pairs times a log, by d at d and 8d; the walk that numbers the pairs takes
+/// d^2 log d, the pairs times a log (held in `bench.rs`); the walk that numbers the pairs takes
 /// 5 d^2 + 10 d steps and writes 3 d^2 + d runs.
-#[test]
-fn a_shared_field_atom_scales() {
-    let shared = |d: usize| {
-        let mut t = Theory::new("Shared");
-        for i in 1..=d {
-            t.field(&format!("f{i}"), 1);
-        }
-        let nest = |order: &mut dyn Iterator<Item = usize>| {
-            let names: Vec<String> = order.map(|i| format!("f{i}")).collect();
-            format!("{}(x{}", names.join("("), ")".repeat(d))
-        };
-        let body = format!("{} == {}", nest(&mut (1..=d)), nest(&mut (1..=d).rev()));
-        t.law("shared", "x", &body);
-        t
-    };
-    let d = 50;
-    let inputs = scaling::inputs(d, shared);
-    for (&d, t) in &inputs {
-        let atom = t.laws[0].clauses()[0][0];
-        let (pairs, runs, steps) = t.shared_atom_size(&atom).expect("the sides share fields");
-        assert_eq!(pairs, d * d + d + 1);
-        assert_eq!((runs, steps), (3 * d * d + d, (5 * d * d + 10 * d) as u64));
-        eprintln!("a shared-field atom at d = {d}: {pairs} pairs, {runs} runs, {steps} steps");
+pub(super) fn shared(d: usize) -> Theory {
+    let mut t = Theory::new("Shared");
+    for i in 1..=d {
+        t.field(&format!("f{i}"), 1);
     }
-    scaling::check_order("a shared-field atom, Default, by fields", d, 2, |n| {
-        run(&inputs[&n], Mode::Default)
-    });
+    let nest = |order: &mut dyn Iterator<Item = usize>| {
+        let names: Vec<String> = order.map(|i| format!("f{i}")).collect();
+        format!("{}(x{}", names.join("("), ")".repeat(d))
+    };
+    let body = format!("{} == {}", nest(&mut (1..=d)), nest(&mut (1..=d).rev()));
+    t.law("shared", "x", &body);
+    t
+}
+
+/// The pairs, runs and steps of the walk over the one atom of `t`.
+fn atom_size(t: &Theory) -> (usize, usize, u64) {
+    let atom = t.laws[0].clauses()[0][0];
+    t.shared_atom_size(&atom).expect("the sides share fields")
 }
 
 /// An atom whose left side fixes a field that cuts off the right side's subtrees:
@@ -304,43 +238,50 @@ fn a_shared_field_atom_scales() {
 /// fields once with the left side's whole tree, which tests none of them, splits at `g0`, and at
 /// each pair of `f` nodes enters only the projections whose keys meet, instead of walking the k
 /// fields down to each `f` once for each left leaf: 2 k + 8 pairs, 8 k + 17 runs, 18 k + 46
-/// steps, and work linear in k, not k^2.
+/// steps, and work linear in k, not k^2 (held in `bench.rs`).
+pub(super) fn cut(k: usize) -> Theory {
+    let mut t = Theory::new("Cut");
+    t.field("f", k).field("g0", 2);
+    for i in 1..=k {
+        t.field(&format!("g{i}"), 1);
+    }
+    let xs = vec!["x"; k].join(", ");
+    let last = format!("f({}x)", "y, ".repeat(k - 1));
+    let names: Vec<String> = (1..=k).map(|i| format!("g{i}")).collect();
+    let body = format!(
+        "f({xs}) == {}(g0({last}, {last}){}",
+        names.join("("),
+        ")".repeat(k)
+    );
+    t.law("cut", "x y", &body);
+    t
+}
+
+/// The walk over the shared-field atoms of `shared` and `cut` takes the pairs, runs and steps of
+/// their formulas at the sizes `bench.rs` times, the sizes the formulas were checked at, and the
+/// default report runs on each at small sizes.
 #[test]
-fn a_shared_field_atom_with_cut_subtrees_scales() {
-    let cut = |k: usize| {
-        let mut t = Theory::new("Cut");
-        t.field("f", k).field("g0", 2);
-        for i in 1..=k {
-            t.field(&format!("g{i}"), 1);
-        }
-        let xs = vec!["x"; k].join(", ");
-        let last = format!("f({}x)", "y, ".repeat(k - 1));
-        let names: Vec<String> = (1..=k).map(|i| format!("g{i}")).collect();
-        let body = format!(
-            "f({xs}) == {}(g0({last}, {last}){}",
-            names.join("("),
-            ")".repeat(k)
-        );
-        t.law("cut", "x y", &body);
-        t
-    };
-    let k = 200;
-    let inputs = scaling::inputs(k, cut);
-    for (&k, t) in &inputs {
-        let atom = t.laws[0].clauses()[0][0];
-        let (pairs, runs, steps) = t.shared_atom_size(&atom).expect("the sides share `f`");
-        eprintln!("a cut shared-field atom at k = {k}: {pairs} pairs, {runs} runs, {steps} steps");
+fn the_shared_field_atoms_take_the_steps_of_their_formulas() {
+    for d in [50, 400] {
+        let t = shared(d);
         assert_eq!(
-            (pairs, runs, steps),
-            (2 * k + 8, 8 * k + 17, 18 * k as u64 + 46),
-            "the walk takes only steps that reach a pair"
+            atom_size(&t),
+            (d * d + d + 1, 3 * d * d + d, (5 * d * d + 10 * d) as u64),
+            "shared at d = {d}"
         );
     }
-    scaling::check(
-        "a shared-field atom with cut subtrees, Default, by fields",
-        k,
-        |n| run(&inputs[&n], Mode::Default),
-    );
+    for k in [200, 1600] {
+        let t = cut(k);
+        assert_eq!(
+            atom_size(&t),
+            (2 * k + 8, 8 * k + 17, 18 * k as u64 + 46),
+            "the walk takes only steps that reach a pair, cut at k = {k}"
+        );
+    }
+    for n in [1, 2, 9] {
+        run(&shared(n), Mode::Default);
+        run(&cut(n), Mode::Default);
+    }
 }
 
 /// The four families of plan row TRIVIAL-walk-branches, each an atom whose sides share a field,
@@ -353,7 +294,7 @@ fn a_shared_field_atom_with_cut_subtrees_scales() {
 /// - same: `f1(..fm(x)..) == f1(..fm(x)..)`: a chain the left leaf fixed throughout;
 /// - ne: `g(f(x, z), ..) != h(f(z, x), ..)`, `g` and `h` of m arguments: under `!=` the same
 ///   field on both sides owns no pair.
-fn branches(family: &str, mirror: bool, m: usize) -> Theory {
+pub(super) fn branches(family: &str, mirror: bool, m: usize) -> Theory {
     let mut t = Theory::new("Branches");
     let xs = vec!["x"; m].join(", ");
     let chain = |p: &str, inner: &str| {
@@ -404,41 +345,40 @@ fn branches(family: &str, mirror: bool, m: usize) -> Theory {
     t
 }
 
-/// The default report on each family of [`branches`] and its mirror is of order m log m, by m at
-/// m and 8m: the walk over pairs of nodes, one of each side, follows a field the other side
-/// fixed, splits both sides on a field both test and enters only the choices that can hold a
-/// pair, and skips the rest of a class of children after one gave no pair, so its steps and runs
-/// are linear in m, the same on a family and its mirror (`Theory::pair_form`). The walk before
-/// plan row TRIVIAL-walk-branches, of the left side's tree and at each of its leaves the right
-/// side's, took steps or runs quadratic in m on brief, wide, same and ne, 26 to 72 times the
-/// instructions at m = 128 and 1024 (COMPLEXITY.md C32).
-#[test]
-fn the_shared_field_families_scale() {
-    let m = 128;
-    // The pairs, runs and steps of each family at m, the same for its mirror.
-    let size = |family: &str, m: usize| match family {
+/// The pairs, runs and steps of the walk on each family of [`branches`] at m, the same for its
+/// mirror. The walk before plan row TRIVIAL-walk-branches took steps or runs quadratic in m on
+/// brief, wide, same and ne (COMPLEXITY.md C32); its time is held in `bench.rs`.
+fn branches_size(family: &str, m: usize) -> (usize, usize, u64) {
+    let (p, r, s) = match family {
         "brief" => (6 * m + 15, 20 * m + 40, 38 * m + 95),
         "wide" => (3 * m + 2, 9 * m + 3, 22 * m + 11),
         "same" => (2 * m + 1, 4 * m, 12 * m + 2),
         _ => (4 * m + 2, 14 * m + 7, 30 * m + 21),
     };
-    for family in ["brief", "wide", "same", "ne"] {
+    (p, r, s as u64)
+}
+
+/// The four families of [`branches`] and their mirrors.
+pub(super) const BRANCHES: [&str; 4] = ["brief", "wide", "same", "ne"];
+
+/// The walk on each family of [`branches`] and its mirror takes the pairs, runs and steps of
+/// [`branches_size`] at the sizes `bench.rs` times, and the default report runs on each at
+/// small sizes.
+#[test]
+fn the_shared_field_families_take_the_steps_of_their_formulas() {
+    for family in BRANCHES {
         for mirror in [false, true] {
-            let inputs = scaling::inputs(m, |m| branches(family, mirror, m));
-            let name = format!("{family}{}", if mirror { "-m" } else { "" });
-            for (&m, t) in &inputs {
-                let atom = t.laws[0].clauses()[0][0];
-                let (pairs, runs, steps) =
-                    t.shared_atom_size(&atom).expect("the sides share fields");
-                eprintln!("{name} at m = {m}: {pairs} pairs, {runs} runs, {steps} steps");
-                let (p, r, s) = size(family, m);
-                assert_eq!((pairs, runs, steps), (p, r, s as u64), "{name} at m = {m}");
+            for m in [128, 1024] {
+                let got = atom_size(&branches(family, mirror, m));
+                assert_eq!(
+                    got,
+                    branches_size(family, m),
+                    "{family} {mirror} at m = {m}"
+                );
             }
-            scaling::check(
-                &format!("the shared-field family {name}, Default, by m"),
-                m,
-                |n| run(&inputs[&n], Mode::Default),
-            );
+            for m in [1, 2, 9] {
+                run(&branches(family, mirror, m), Mode::Default);
+            }
         }
     }
 }
@@ -449,43 +389,42 @@ fn the_shared_field_families_scale() {
 /// pairs with the right side's leaf `x_i`. Pairs, runs and steps are quadratic in m, the input's
 /// size: a pair of `h` nodes enters both sides together, only at the choices whose children may
 /// hold a pair, worked out once for each pair of classes, not all m (m^3 steps before).
-#[test]
-fn the_joint_splits_scale() {
-    let joint = |m: usize| {
-        let mut t = Theory::new("Joint");
-        t.field("s", 2 * m).field("t", 2 * m).field("h", m);
-        let xs: Vec<String> = (0..m).map(|i| format!("x{i}")).collect();
-        let ys: Vec<String> = (0..m).map(|i| format!("y{i}")).collect();
-        let side = |f: &str, inner: &[String], outer: &[String]| {
-            let h = format!("h({})", inner.join(", "));
-            format!("{f}({}, {})", vec![h; m].join(", "), outer.join(", "))
-        };
-        let body = format!("{} == {}", side("s", &xs, &ys), side("t", &ys, &xs));
-        t.law(
-            "joint",
-            &format!("{} {}", xs.join(" "), ys.join(" ")),
-            &body,
-        );
-        t
+pub(super) fn joint(m: usize) -> Theory {
+    let mut t = Theory::new("Joint");
+    t.field("s", 2 * m).field("t", 2 * m).field("h", m);
+    let xs: Vec<String> = (0..m).map(|i| format!("x{i}")).collect();
+    let ys: Vec<String> = (0..m).map(|i| format!("y{i}")).collect();
+    let side = |f: &str, inner: &[String], outer: &[String]| {
+        let h = format!("h({})", inner.join(", "));
+        format!("{f}({}, {})", vec![h; m].join(", "), outer.join(", "))
     };
-    let m = 16;
-    let inputs = scaling::inputs(m, joint);
-    for (&m, t) in &inputs {
-        let atom = t.laws[0].clauses()[0][0];
-        let (pairs, runs, steps) = t.shared_atom_size(&atom).expect("the sides share `h`");
-        eprintln!("the joint family at m = {m}: {pairs} pairs, {runs} runs, {steps} steps");
+    let body = format!("{} == {}", side("s", &xs, &ys), side("t", &ys, &xs));
+    t.law(
+        "joint",
+        &format!("{} {}", xs.join(" "), ys.join(" ")),
+        &body,
+    );
+    t
+}
+
+/// The walk on [`joint`] takes its quadratic pairs, runs and steps at the sizes `bench.rs`
+/// times, and the default report runs on it at small sizes.
+#[test]
+fn the_joint_family_takes_the_steps_of_its_formula() {
+    for m in [16, 128] {
         assert_eq!(
-            (pairs, runs, steps),
+            atom_size(&joint(m)),
             (
                 4 * m * m + 4 * m + 2,
                 10 * m * m + 16 * m + 7,
                 (20 * m * m + 34 * m + 21) as u64
-            )
+            ),
+            "joint at m = {m}"
         );
     }
-    scaling::check_order("the joint family, Default, by m", m, 2, |n| {
-        run(&inputs[&n], Mode::Default)
-    });
+    for m in [1, 2, 9] {
+        run(&joint(m), Mode::Default);
+    }
 }
 
 /// The families of plan row TRIVIAL-walk-picks, m copies of `h` of m arguments on each side,
@@ -507,7 +446,7 @@ fn the_joint_splits_scale() {
 /// - `crossed`: `s(h(g(x_i), x_i, g(x_i), ..)^m, y..) == t(h(x_j, p(x0, .., xm), x_j, ..)^m, y..)`,
 ///   so a leaf meets a subtree that holds its key at some pairs of classes and not at others, and
 ///   a subtree of one key or of all; `mirror` is `crossed` with its sides swapped.
-fn picks(family: &str, m: usize) -> Theory {
+pub(super) fn picks(family: &str, m: usize) -> Theory {
     let mut t = Theory::new("Picks");
     let names = |p: &str| (0..m).map(|i| format!("{p}{i}")).collect::<Vec<String>>();
     let (xs, ys, zs, ws) = (names("x"), names("y"), names("z"), names("w"));
@@ -616,21 +555,19 @@ fn picks(family: &str, m: usize) -> Theory {
     t
 }
 
-/// On each family of [`picks`] the walk's pairs, runs and steps are quadratic in m, linear in
-/// the input's size, and the default report is of that order, by m at m and 8m: at a node split
-/// against a node of `h`, the lists of the choices of all the pairs of classes it meets are made
-/// together from the other node's live children, a lookup each (`Theory::pair_form`). Before
-/// plan row TRIVIAL-walk-picks each list was made alone from the smaller side's live children,
-/// m^3 steps: at m = 64, 387214, 367246 and 321102 steps and 156, 93 and 81 million
-/// instructions, where these take 141970, 105874 and 63442 steps (COMPLEXITY.md C32). On `deep`
-/// and `deeper` the node of `t` meets each `h` of the left side only after `q_j` (and `r_j`), so
-/// the lists are made together for the whole frontier of `h` below the node of `t` (plan row
-/// TRIVIAL-walk-frontier); before, each `q_j` made its own, m^3 steps: at m = 64, 446482 and
-/// 521234 steps, where these take 180626 and 255378.
-#[test]
-fn the_picks_scale() {
-    let m = 8;
-    let size = |family: &str, m: usize| match family {
+/// The pairs, runs and steps of the walk on each family of [`picks`] at m: quadratic in m,
+/// linear in the input's size, since at a node split against a node of `h` the lists of the
+/// choices of all the pairs of classes it meets are made together from the other node's live
+/// children, a lookup each (`Theory::pair_form`). Before plan row TRIVIAL-walk-picks each list
+/// was made alone from the smaller side's live children, m^3 steps: at m = 64, 387214, 367246
+/// and 321102 steps and 156, 93 and 81 million instructions, where these take 141970, 105874
+/// and 63442 steps (COMPLEXITY.md C32). On `deep` and `deeper` the node of `t` meets each `h` of
+/// the left side only after `q_j` (and `r_j`), so the lists are made together for the whole
+/// frontier of `h` below the node of `t` (plan row TRIVIAL-walk-frontier); before, each `q_j`
+/// made its own, m^3 steps: at m = 64, 446482 and 521234 steps, where these take 180626 and
+/// 255378. The time is held in `bench.rs`.
+fn picks_size(family: &str, m: usize) -> (usize, usize, u64) {
+    let (p, r, s) = match family {
         "alternate" => (
             6 * m * m + 4 * m + 2,
             14 * m * m + 20 * m + 7,
@@ -657,25 +594,27 @@ fn the_picks_scale() {
             15 * m * m + 31 * m + 18,
         ),
     };
-    for family in ["alternate", "tagged", "rotations", "deep", "deeper"] {
-        let inputs = scaling::inputs(m, |m| picks(family, m));
-        for (&m, t) in &inputs {
-            let atom = t.laws[0].clauses()[0][0];
-            let (pairs, runs, steps) = t.shared_atom_size(&atom).expect("the sides share `h`");
-            eprintln!("{family} at m = {m}: {pairs} pairs, {runs} runs, {steps} steps");
-            let (p, r, s) = size(family, m);
-            assert_eq!(
-                (pairs, runs, steps),
-                (p, r, s as u64),
-                "{family} at m = {m}"
-            );
+    (p, r, s as u64)
+}
+
+/// The families of [`picks`] whose time `bench.rs` holds.
+pub(super) const PICKS: [&str; 5] = ["alternate", "tagged", "rotations", "deep", "deeper"];
+
+/// The walk on each timed family of [`picks`] takes the pairs, runs and steps of [`picks_size`]
+/// at the sizes `bench.rs` times; the report on each agrees with brute force at small sizes in
+/// `the_picks_agree_with_brute_force`.
+#[test]
+fn the_picks_take_the_steps_of_their_formulas() {
+    for family in PICKS {
+        for m in [8, 64] {
+            let got = atom_size(&picks(family, m));
+            assert_eq!(got, picks_size(family, m), "{family} at m = {m}");
         }
-        scaling::check_order(
-            &format!("the picks family {family}, Default, by m"),
-            m,
-            2,
-            |n| run(&inputs[&n], Mode::Default),
-        );
+    }
+    for family in PICKS {
+        for m in [2, 3] {
+            run(&picks(family, m), Mode::Default);
+        }
     }
 }
 
@@ -714,8 +653,8 @@ fn the_picks_agree_with_brute_force() {
 /// one by one (`Theory::pair_form`).
 #[test]
 fn the_frontier_agrees_with_brute_force() {
-    let mut rng = Rng::new(0x0f20_47e1);
-    for _ in 0..400 {
+    let mut rng = Rng::new(zed_tests::test_seed());
+    for _ in 0..100 {
         super::brute::check(&frontier(&mut rng));
     }
 }

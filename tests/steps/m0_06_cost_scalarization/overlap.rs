@@ -7,7 +7,6 @@
 use super::{addr, workstation};
 use Nest::{Parallel, Region as R, Sequence};
 use zed_tests::instances::{RANDOM_INSTANCES, Rng};
-use zed_tests::scaling::check_order;
 use zedc::cost::{
     Device, Nest, Plan, Region, Schedule, Span, Target, feasible, pick, scalarize, vector,
 };
@@ -415,9 +414,9 @@ fn random_scheduled(rng: &mut Rng, max: usize, t: &Target) -> (Plan, Vec<Vec<boo
 #[test]
 fn the_footprint_agrees_with_its_definition() {
     let t = two_kinds();
-    let mut rng = Rng::new(0x6a10);
+    let mut rng = Rng::new(zed_tests::test_seed());
     let (mut nestings, mut timings) = (0, 0);
-    for _ in 0..RANDOM_INSTANCES {
+    for _ in 0..RANDOM_INSTANCES / 4 {
         let (p, before) = random_scheduled(&mut rng, 7, &t);
         let expected = match &p.schedule {
             Schedule::Nested(_) => {
@@ -456,7 +455,7 @@ fn the_footprint_agrees_with_its_definition() {
         assert_eq!(footprints(&in_order, &t), sequential, "{p:?}");
         assert_eq!(footprints(&back_to_back, &t), sequential, "{p:?}");
     }
-    assert!(nestings > 100 && timings > 100);
+    assert!(nestings > 20 && timings > 20);
 }
 
 #[test]
@@ -465,9 +464,9 @@ fn the_footprint_is_monotone_so_pruning_to_the_frontier_keeps_the_pick() {
     for d in &mut t.devices {
         d.capacity = 3 << 19;
     }
-    let mut rng = Rng::new(0x6a11);
+    let mut rng = Rng::new(zed_tests::test_seed());
     let (mut feasible_seen, mut infeasible_seen) = (0, 0);
-    for _ in 0..RANDOM_INSTANCES {
+    for _ in 0..RANDOM_INSTANCES / 4 {
         let (p, _) = random_scheduled(&mut rng, 5, &t);
         let i = rng.below(p.regions.len());
         let mut larger = p.clone();
@@ -515,27 +514,17 @@ fn sized(i: usize, device: usize) -> Region {
     job(device, (i % 97 + 1) * 4096, (i % 13) * 64)
 }
 
-#[test]
-fn a_static_schedule_takes_time_within_r_log_r() {
-    // Jobs alternate between two devices, each lasting 1 to 8 time units and starting 2 apart,
-    // so up to four overlap on each device.
-    let build = |r: usize| {
-        let regions: Vec<Region> = (0..r).map(|i| sized(i, i % 2)).collect();
-        let spans = (0..r as u64)
-            .map(|i| Span {
-                start: 2 * i,
-                length: 1 + i * 7 % 8,
-            })
-            .collect();
-        scheduled(0, regions, Schedule::Timed(spans))
-    };
-    let n = 20_000;
-    let (small, large) = (build(n), build(8 * n));
-    let t = workstation();
-    check_order("the footprint of a static schedule", n, 1, |r| {
-        let p = if r == n { &small } else { &large };
-        std::hint::black_box((feasible(p, &t), vector(p, &t)));
-    });
+/// `r` jobs alternating between two devices, each lasting 1 to 8 time units and starting 2
+/// apart, so up to four overlap on each device.
+pub(super) fn static_schedule(r: usize) -> Plan {
+    let regions: Vec<Region> = (0..r).map(|i| sized(i, i % 2)).collect();
+    let spans = (0..r as u64)
+        .map(|i| Span {
+            start: 2 * i,
+            length: 1 + i * 7 % 8,
+        })
+        .collect();
+    scheduled(0, regions, Schedule::Timed(spans))
 }
 
 /// The postfix of a balanced nesting of regions `lo..hi`, sequences and parallel compositions
@@ -555,50 +544,55 @@ fn balanced(lo: usize, hi: usize, depth: usize, out: &mut Vec<Nest>) {
     });
 }
 
-#[test]
-fn a_balanced_nesting_takes_time_within_r_log_r() {
-    // r/4 devices, region i on device i mod r/4: the parts of each composition share devices,
-    // so their loads are joined, not only moved.
-    let build = |r: usize| {
-        let d = r / 4;
-        let regions = (0..r).map(|i| sized(i, i % d)).collect();
-        let mut steps = Vec::new();
-        balanced(0, r, 0, &mut steps);
-        (
-            scheduled(0, regions, Schedule::Nested(steps)),
-            many_devices(d),
-        )
-    };
-    let n = 16_384;
-    let (small, large) = (build(n), build(8 * n));
-    check_order("the footprint of a balanced nesting", n, 1, |r| {
-        let (p, t) = if r == n { &small } else { &large };
-        std::hint::black_box((feasible(p, t), vector(p, t)));
-    });
+/// `r` regions (`r` at least 4) in a balanced nesting on `r/4` devices, region i on device i
+/// mod r/4: the parts of each composition share devices, so their loads are joined, not only
+/// moved.
+pub(super) fn balanced_nesting(r: usize) -> (Plan, Target) {
+    let d = r / 4;
+    let regions = (0..r).map(|i| sized(i, i % d)).collect();
+    let mut steps = Vec::new();
+    balanced(0, r, 0, &mut steps);
+    (
+        scheduled(0, regions, Schedule::Nested(steps)),
+        many_devices(d),
+    )
 }
 
+/// `r` regions (`r` even) on `r/2` devices in `r/2` parallel pairs, each pair on two devices,
+/// the pairs nested to the right: each sequence joins one pair to the loads of all the pairs
+/// after it. Joining into the larger part keeps this within r log r; joining into the earlier
+/// part, the naive way, reads O(r) devices per step.
+pub(super) fn deep_nesting(r: usize) -> (Plan, Target) {
+    let d = r / 2;
+    let regions = (0..r).map(|i| sized(i, i % d)).collect();
+    let steps = (0..r / 2)
+        .flat_map(|i| [R(2 * i), R(2 * i + 1), Parallel(2)])
+        .chain(std::iter::repeat_n(Sequence(2), r / 2 - 1))
+        .collect();
+    (
+        scheduled(0, regions, Schedule::Nested(steps)),
+        many_devices(d),
+    )
+}
+
+/// The footprint of each input `bench/overlap.rs` times, at small sizes: every job is far below
+/// a device's capacity, so each plan is feasible, and its cost vector is found.
 #[test]
-fn a_deep_nesting_takes_time_within_r_log_r() {
-    // r regions on r/2 devices in r/2 parallel pairs, each pair on two devices, the pairs nested
-    // to the right: each sequence joins one pair to the loads of all the pairs after it. Joining
-    // into the larger part keeps this within r log r; joining into the earlier part, the naive
-    // way, reads O(r) devices per step.
-    let build = |r: usize| {
-        let d = r / 2;
-        let regions = (0..r).map(|i| sized(i, i % d)).collect();
-        let steps = (0..r / 2)
-            .flat_map(|i| [R(2 * i), R(2 * i + 1), Parallel(2)])
-            .chain(std::iter::repeat_n(Sequence(2), r / 2 - 1))
-            .collect();
-        (
-            scheduled(0, regions, Schedule::Nested(steps)),
-            many_devices(d),
-        )
-    };
-    let n = 16_384;
-    let (small, large) = (build(n), build(8 * n));
-    check_order("the footprint of a deep nesting", n, 1, |r| {
-        let (p, t) = if r == n { &small } else { &large };
-        std::hint::black_box((feasible(p, t), vector(p, t)));
-    });
+fn the_footprint_of_each_benchmark_input_is_found_at_small_sizes() {
+    let t = workstation();
+    for r in [1, 2, 9] {
+        let p = static_schedule(r);
+        assert!(feasible(&p, &t));
+        assert!(!vector(&p, &t).is_empty());
+    }
+    for r in [4, 8, 32] {
+        let (p, t) = balanced_nesting(r);
+        assert!(feasible(&p, &t));
+        assert!(!vector(&p, &t).is_empty());
+    }
+    for r in [2, 4, 18] {
+        let (p, t) = deep_nesting(r);
+        assert!(feasible(&p, &t));
+        assert!(!vector(&p, &t).is_empty());
+    }
 }

@@ -7,9 +7,8 @@
 //! form adds to sec:diagnostics is produced here with its message and notes in full, and each
 //! repair it offers, applied, is accepted.
 
-use super::initial::{accepted, notes, refusal, refused};
+use super::initial::{Parsed, accepted, notes, parsed, refusal, refused};
 use super::{check, fmt};
-use zed_tests::scaling;
 use zedc::ast::{Error, unit, unit_all_errors};
 use zedc::lex::lex;
 use zedc::parse::{TOP, parse};
@@ -933,23 +932,6 @@ fn a_word_after_with_elsewhere_keeps_the_parser_message() {
     }
 }
 
-/// The message for a word after `with` scans the statement and parses the repair once, so a
-/// loop of `n` statements whose `initial` value has `n` terms is refused in time of order `n`.
-#[test]
-fn the_carry_word_message_scales() {
-    let units = scaling::inputs(500, |n| {
-        let terms: String = (0..n).map(|i| format!(" + {i}")).collect();
-        let stmts: String = (0..n).map(|i| format!("x{i}' = {i}; ")).collect();
-        format!(
-            "r = loop t {{ while t < 9; {stmts}initial c = 0{terms} with carry; c' = c + 1; }};\n"
-        )
-    });
-    scaling::check("a word after `with`", 500, |n| {
-        let e = refusal(&units[&n]);
-        assert_eq!(e.row, Some(Row::CarryWord), "{e:?}");
-    });
-}
-
 /// Row "`with carryForward` on a keyed boundary entry", with each repair it offers. Decision:
 /// the facet keeps the value of the step before, `x[t-1]`, which at step 0 is the entry `x[-1]`,
 /// so it stands on the statement without keys that gives that entry; on a keyed entry it would
@@ -1259,91 +1241,6 @@ fn nested_keys(n: usize, missing: bool) -> String {
     )
 }
 
-/// The must-assign check is one walk of the body with sets merged smaller into larger, so `n`
-/// variables updated each on its own paths, `n` variables updated on both branches of one `if`,
-/// directly or in nested blocks, an update `n` constructs or blocks deep, `n` keyed writes in the
-/// value of one indexed definition, with or without `n` domains of one key, a write `n` indexed
-/// definitions deep, and a write whose key holds a `*.` call at each of `n` levels are each
-/// checked in time of order `n log n`, accepted or refused. `n` calls on paths of fields and
-/// entries, and `n` calls on the names of `n` imported units, which one pass over the tokens
-/// lists, are too.
-#[test]
-fn the_must_assign_check_scales() {
-    type Make = fn(usize) -> String;
-    let cases: [(&str, Make, Option<Row>); 18] = [
-        ("fields, accepted", |n| fields(n, ""), None),
-        (
-            "fields, refused at the end",
-            |n| fields(n, "y' = t > 1 && d.e[0]*.a();"),
-            Some(Row::NotEveryPath),
-        ),
-        ("qualified names, accepted", qualified, None),
-        ("wide, accepted", |n| wide(n, ""), None),
-        (
-            "wide, refused at the end",
-            |n| wide(n, "y' = t > 1 && d*.a();"),
-            Some(Row::NotEveryPath),
-        ),
-        ("branches, accepted", |n| branches(n, ""), None),
-        ("deep, refused", |n| deep(n, false), Some(Row::NotEveryPath)),
-        ("deep, carried", |n| deep(n, true), None),
-        (
-            "nested branches, accepted",
-            |n| nested_branches(n, ""),
-            None,
-        ),
-        (
-            "nested branches, refused at the end",
-            |n| nested_branches(n, "y' = t > 1 && { d' = 1; true };"),
-            Some(Row::NotEveryPath),
-        ),
-        ("nested blocks, accepted", |n| nested_blocks(n, false), None),
-        (
-            "nested blocks, refused",
-            |n| nested_blocks(n, true),
-            Some(Row::NotEveryPath),
-        ),
-        ("keyed writes, accepted", |n| keyed(n, ""), None),
-        (
-            "keyed writes, refused at the end",
-            |n| keyed(n, "e[j in 0..<2] = b*.a();"),
-            Some(Row::Collision),
-        ),
-        ("nested keys, accepted", |n| nested_keys(n, false), None),
-        (
-            "nested keys, refused",
-            |n| nested_keys(n, true),
-            Some(Row::Collision),
-        ),
-        (
-            "keyed writes after one-key domains, accepted",
-            keyed_after_single_keys,
-            None,
-        ),
-        (
-            "calls in keys at each level, refused",
-            nested_call_keys,
-            Some(Row::Collision),
-        ),
-    ];
-    for (what, make, row) in cases {
-        let units = scaling::inputs(500, |n| {
-            let text = make(n);
-            let tokens = lex(&text).unwrap();
-            let tree = parse(&text, &tokens, "Unit", TOP).unwrap();
-            (text, tokens, tree)
-        });
-        scaling::check(what, 500, |n| {
-            let (text, tokens, tree) = &units[&n];
-            match (unit(text, tokens, tree), row) {
-                (Ok(_), None) => {}
-                (Err(e), Some(r)) => assert_eq!(e.row, Some(r), "{what}: {e:?}"),
-                (got, _) => panic!("{what}: {:?}", got.err()),
-            }
-        });
-    }
-}
-
 /// A struct with methods that update their receiver (`tick`, `add`) and one that reads it
 /// (`peek`), for the loops below.
 const COUNTER: &str = "struct Counter { n: int }\nCounter.tick() { n' = n + 1; }\nCounter.add(positional by) { n' = n + by; }\nCounter.peek() = n;\n";
@@ -1596,7 +1493,7 @@ fn a_dot_call_finds_its_method_in_the_unit() {
 }
 
 /// `n` methods that each write a prime and `n` statements, each a `.` call of one of them.
-fn dot_calls(n: usize) -> String {
+pub(super) fn dot_calls(n: usize) -> String {
     let methods: String = (0..n)
         .map(|i| format!("Counter.m{i}() {{ n' = n + {i}; }}\n"))
         .collect();
@@ -1605,26 +1502,6 @@ fn dot_calls(n: usize) -> String {
         "struct Counter {{ n: int }}\n{methods}r = loop t {{ while t < 9; initial c = Counter(n: \
          0); {calls}}};\n"
     )
-}
-
-/// The `.` call notes cost one walk of the method declarations, one lookup per call and one
-/// more walk of the step for the repair: `n` methods and `n` calls of them are refused in time
-/// of order `n log n`.
-#[test]
-fn the_dot_call_notes_scale() {
-    let units = scaling::inputs(500, |n| {
-        let text = dot_calls(n);
-        let tokens = lex(&text).unwrap();
-        let tree = parse(&text, &tokens, "Unit", TOP).unwrap();
-        (text, tokens, tree)
-    });
-    scaling::check("dot calls, refused", 500, |n| {
-        let (text, tokens, tree) = &units[&n];
-        let e = unit(text, tokens, tree).unwrap_err();
-        assert_eq!(e.row, Some(Row::InitialNotUpdated), "{e:?}");
-        // The loop, the `initial` statement, one note per call and the one repair.
-        assert_eq!(e.notes.len(), n + 3, "{e:?}");
-    });
 }
 
 /// Row "Collision" in the body of a `for` over several keys: the body runs once for each key of
@@ -1928,14 +1805,134 @@ fn dot_calls_for_each_key(n: usize) -> String {
     format!("{NEXT}r = loop t {{ while t < 9; initial c = Counter(n: 0); {defs}}};\n")
 }
 
-/// The checks of writes in code run for each key cost one walk of the step: `n` `for` bodies
-/// with keyed writes, accepted or refused at the end; a write under `n` binders that hide its
-/// key, whose repair renames each; and `n` `.` calls each made once before its definition, each
-/// with a new name, are each checked in time of order `n log n`.
+/// A loop of `n` statements whose `initial` value has `n` terms, with a word after `with`.
+pub(super) fn carry_word(n: usize) -> String {
+    let terms: String = (0..n).map(|i| format!(" + {i}")).collect();
+    let stmts: String = (0..n).map(|i| format!("x{i}' = {i}; ")).collect();
+    format!("r = loop t {{ while t < 9; {stmts}initial c = 0{terms} with carry; c' = c + 1; }};\n")
+}
+
+/// Asserts the unit `text` refused with row "A word after `with`".
+pub(super) fn carry_word_refused(text: &str) {
+    let e = refusal(text);
+    assert_eq!(e.row, Some(Row::CarryWord), "{e:?}");
+}
+
+/// The message for a word after `with` at small sizes; its time is held in
+/// `bench/carry_forward.rs`.
 #[test]
-fn writes_run_for_each_key_scale() {
-    type Make = fn(usize) -> String;
-    let cases: [(&str, Make, Option<Row>, usize); 4] = [
+fn the_carry_word_message_at_small_sizes() {
+    for n in [0, 1, 2, 9] {
+        carry_word_refused(&carry_word(n));
+    }
+}
+
+/// A unit made from its size.
+pub(super) type Make = fn(usize) -> String;
+
+/// The inputs of the must-assign check: what each is, how it is made, and the row it is refused
+/// with, if any.
+pub(super) fn must_assign_cases() -> [(&'static str, Make, Option<Row>); 18] {
+    [
+        ("fields, accepted", |n| fields(n, ""), None),
+        (
+            "fields, refused at the end",
+            |n| fields(n, "y' = t > 1 && d.e[0]*.a();"),
+            Some(Row::NotEveryPath),
+        ),
+        ("qualified names, accepted", qualified, None),
+        ("wide, accepted", |n| wide(n, ""), None),
+        (
+            "wide, refused at the end",
+            |n| wide(n, "y' = t > 1 && d*.a();"),
+            Some(Row::NotEveryPath),
+        ),
+        ("branches, accepted", |n| branches(n, ""), None),
+        ("deep, refused", |n| deep(n, false), Some(Row::NotEveryPath)),
+        ("deep, carried", |n| deep(n, true), None),
+        (
+            "nested branches, accepted",
+            |n| nested_branches(n, ""),
+            None,
+        ),
+        (
+            "nested branches, refused at the end",
+            |n| nested_branches(n, "y' = t > 1 && { d' = 1; true };"),
+            Some(Row::NotEveryPath),
+        ),
+        ("nested blocks, accepted", |n| nested_blocks(n, false), None),
+        (
+            "nested blocks, refused",
+            |n| nested_blocks(n, true),
+            Some(Row::NotEveryPath),
+        ),
+        ("keyed writes, accepted", |n| keyed(n, ""), None),
+        (
+            "keyed writes, refused at the end",
+            |n| keyed(n, "e[j in 0..<2] = b*.a();"),
+            Some(Row::Collision),
+        ),
+        ("nested keys, accepted", |n| nested_keys(n, false), None),
+        (
+            "nested keys, refused",
+            |n| nested_keys(n, true),
+            Some(Row::Collision),
+        ),
+        (
+            "keyed writes after one-key domains, accepted",
+            keyed_after_single_keys,
+            None,
+        ),
+        (
+            "calls in keys at each level, refused",
+            nested_call_keys,
+            Some(Row::Collision),
+        ),
+    ]
+}
+
+/// Asserts the unit `p` accepted if `row` is `None`, and refused with `row` if not.
+pub(super) fn must_assign_verdict(what: &str, p: &Parsed, row: Option<Row>) {
+    let (text, tokens, tree) = p;
+    match (unit(text, tokens, tree), row) {
+        (Ok(_), None) => {}
+        (Err(e), Some(r)) => assert_eq!(e.row, Some(r), "{what}: {e:?}"),
+        (got, _) => panic!("{what}: {:?}", got.err()),
+    }
+}
+
+/// Each input of the must-assign check is accepted or refused as its benchmark in
+/// `bench/carry_forward.rs` expects, at small sizes.
+#[test]
+fn the_must_assign_check_at_small_sizes() {
+    for (what, make, row) in must_assign_cases() {
+        for n in [4, 9, 16] {
+            must_assign_verdict(what, &parsed(make(n)), row);
+        }
+    }
+}
+
+/// Asserts the unit `p` of `n` methods and `n` calls refused with a note for the loop, the
+/// `initial` statement, each call and the one repair.
+pub(super) fn dot_call_notes(p: &Parsed, n: usize) {
+    let (text, tokens, tree) = p;
+    let e = unit(text, tokens, tree).unwrap_err();
+    assert_eq!(e.row, Some(Row::InitialNotUpdated), "{e:?}");
+    assert_eq!(e.notes.len(), n + 3, "{e:?}");
+}
+
+/// The `.` call notes at small sizes; their time is held in `bench/carry_forward.rs`.
+#[test]
+fn the_dot_call_notes_at_small_sizes() {
+    for n in [1, 2, 9] {
+        dot_call_notes(&parsed(dot_calls(n)), n);
+    }
+}
+
+/// The inputs of the checks of writes run for each key: what each is, how it is made, the row
+/// it is refused with, if any, and the notes of its message that do not grow with its size.
+pub(super) fn for_each_key_cases() -> [(&'static str, Make, Option<Row>, usize); 4] {
+    [
         ("for bodies, accepted", |n| for_bodies(n, ""), None, 0),
         (
             "for bodies, refused at the end",
@@ -1955,31 +1952,43 @@ fn writes_run_for_each_key_scale() {
             Some(Row::InitialNotUpdated),
             3,
         ),
-    ];
-    for (what, make, row, fixed) in cases {
-        let units = scaling::inputs(500, |n| {
-            let text = make(n);
-            let tokens = lex(&text).unwrap();
-            let tree = parse(&text, &tokens, "Unit", TOP).unwrap();
-            (text, tokens, tree)
-        });
-        scaling::check(what, 500, |n| {
-            let (text, tokens, tree) = &units[&n];
-            match (unit_all_errors(text, tokens, tree), row) {
-                (Ok(_), None) => {}
-                (Err(es), Some(r)) => {
-                    let e = es.last().unwrap();
-                    assert_eq!(e.row, Some(r), "{what}: {e:?}");
-                    // A note for each binder renamed, and two for each call made once.
-                    let per = match r {
-                        Row::InitialNotUpdated => 2 * n,
-                        _ if what.starts_with("binders") => n,
-                        _ => 0,
-                    };
-                    assert_eq!(e.notes.len(), fixed + per, "{what}: {e:?}");
-                }
-                (got, _) => panic!("{what}: {:?}", got.err()),
-            }
-        });
+    ]
+}
+
+/// Asserts the unit `p` of size `n` accepted if `row` is `None`, and if not refused with `row`
+/// last, with `fixed` notes and a note for each binder renamed, and two for each call made
+/// once.
+pub(super) fn for_each_key_verdict(
+    what: &str,
+    p: &Parsed,
+    row: Option<Row>,
+    fixed: usize,
+    n: usize,
+) {
+    let (text, tokens, tree) = p;
+    match (unit_all_errors(text, tokens, tree), row) {
+        (Ok(_), None) => {}
+        (Err(es), Some(r)) => {
+            let e = es.last().unwrap();
+            assert_eq!(e.row, Some(r), "{what}: {e:?}");
+            let per = match r {
+                Row::InitialNotUpdated => 2 * n,
+                _ if what.starts_with("binders") => n,
+                _ => 0,
+            };
+            assert_eq!(e.notes.len(), fixed + per, "{what}: {e:?}");
+        }
+        (got, _) => panic!("{what}: {:?}", got.err()),
+    }
+}
+
+/// Each input of the checks of writes run for each key is accepted or refused, with its notes,
+/// as its benchmark in `bench/carry_forward.rs` expects, at small sizes.
+#[test]
+fn writes_run_for_each_key_at_small_sizes() {
+    for (what, make, row, fixed) in for_each_key_cases() {
+        for n in [1, 2, 9] {
+            for_each_key_verdict(what, &parsed(make(n)), row, fixed, n);
+        }
     }
 }

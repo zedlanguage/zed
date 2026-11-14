@@ -4,6 +4,7 @@
 //! graph cannot hold is refused with the reason.
 
 mod asks;
+mod bench;
 mod corpus;
 mod cse;
 mod errors;

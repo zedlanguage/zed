@@ -1,19 +1,25 @@
-//! Building blocks is of order n log n in the length of the text, and the depth of their
-//! nesting is bounded by memory alone (DESIGN.md Part G). Each text is lexed and parsed before
-//! timing, so the checks time the building alone.
+//! The texts the benchmarks of `bench.rs` build blocks from, and what each tree must be,
+//! checked here at small sizes (TEST-bench-move-rest, P170).
 
-use zed_tests::scaling::{check, inputs};
 use zed_tests::trees::parsed;
-use zedc::ast::{ExprKind, StmtKind, build};
+use zedc::ast::{Expr, ExprKind, StmtKind, build};
+use zedc::lex::Token;
+use zedc::parse::Tree;
 
-#[test]
-fn a_long_block_scales() {
-    let built = inputs(200, |n| {
-        parsed(format!("x -> {{ {}x }}", "a, _ = x; ".repeat(n)), "Expr")
-    });
-    check("building a block of n statements", 200, |n| {
-        let (text, tokens, tree) = &built[&n];
-        let e = build(text, tokens, tree).unwrap();
+/// A text, its tokens and its parse tree.
+pub(super) type Parsed = (String, Vec<Token>, Tree);
+
+/// A benchmark: its text of size `n`, and what the syntax tree built from it must be.
+pub(super) struct Case {
+    pub(super) text: fn(usize) -> String,
+    pub(super) holds: fn(&Expr, usize),
+}
+
+/// A lambda whose block holds `n` destructuring bindings; the block has `n` bindings and
+/// returns `x`.
+pub(super) const LONG_BLOCK: Case = Case {
+    text: |n| format!("x -> {{ {}x }}", "a, _ = x; ".repeat(n)),
+    holds: |e, n| {
         let ExprKind::Lambda { body, .. } = &e.kind else {
             panic!("a lambda")
         };
@@ -28,21 +34,15 @@ fn a_long_block_scales() {
             (binds, stmts.last().unwrap().to_string()),
             (n, "(return x)".into())
         );
-    });
-}
+    },
+};
 
-#[test]
-fn nested_blocks_scale() {
-    let built = inputs(200, |n| {
-        parsed(
-            format!("{}x{}", "x -> { y = 1; ".repeat(n), " }".repeat(n)),
-            "Expr",
-        )
-    });
-    check("building blocks nested n deep", 200, |n| {
-        let (text, tokens, tree) = &built[&n];
-        let e = build(text, tokens, tree).unwrap();
-        let (mut e, mut depth) = (&e, 0);
+/// Lambdas nested `n` deep, each a block of one binding and the next lambda; the tree has
+/// that shape `n` deep, down to `x`.
+pub(super) const NESTED_BLOCKS: Case = Case {
+    text: |n| format!("{}x{}", "x -> { y = 1; ".repeat(n), " }".repeat(n)),
+    holds: |e, n| {
+        let (mut e, mut depth) = (e, 0);
         while let ExprKind::Lambda { body, .. } = &e.kind
             && let ExprKind::Block(stmts) = &body.kind
             && let [bind, ret] = stmts.as_slice()
@@ -53,5 +53,22 @@ fn nested_blocks_scale() {
             (e, depth) = (v, depth + 1);
         }
         assert_eq!((depth, e.to_string()), (n, "x".into()));
-    });
+    },
+};
+
+/// Builds the syntax tree of `(text, tokens, tree)`, the text of `case` at size `n`, and checks
+/// it.
+pub(super) fn builds(case: &Case, (text, tokens, tree): &Parsed, n: usize) {
+    (case.holds)(&build(text, tokens, tree).unwrap(), n);
+}
+
+/// The tree of each benchmark's text is built and has its shape at small sizes; `bench.rs`
+/// holds the timing.
+#[test]
+fn each_benchmark_text_builds_its_tree_at_small_sizes() {
+    for case in [LONG_BLOCK, NESTED_BLOCKS] {
+        for n in [1, 2, 9] {
+            builds(&case, &parsed((case.text)(n), "Expr"), n);
+        }
+    }
 }

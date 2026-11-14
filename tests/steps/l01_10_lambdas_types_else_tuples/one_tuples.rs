@@ -6,7 +6,6 @@
 use super::{check, sx};
 use zed_kernel::term::build::var;
 use zed_kernel::{Evaluator, Pattern, Shared, Term, World};
-use zed_tests::scaling;
 use zed_tests::step_helpers::l01_13_formatter::{build, fmt};
 use zed_tests::step_helpers::l01_16_elaboration::{elab, value, with_prelude};
 use zedc::format::format;
@@ -104,29 +103,28 @@ fn an_empty_tuple_and_a_parenthesized_pattern_are_rejected() {
 }
 
 /// `x = ((…(1,)…),);`, a one-tuple nested `n` deep.
-fn nested(n: usize) -> String {
+pub(super) fn nested(n: usize) -> String {
     format!("x = {}1{};\n", "(".repeat(n), ",)".repeat(n))
 }
 
+/// Parses `text` and checks that it prints back as written.
+pub(super) fn prints_back(text: &str) {
+    let (tokens, stmts) = build(text).unwrap();
+    assert_eq!(&format(text, &tokens, &stmts), text);
+}
+
+/// Evaluates `text`, a one-tuple nested `n` deep, and checks the length of the printed value.
+pub(super) fn evaluates(text: &str, n: usize) {
+    assert_eq!(value(text, "x").len(), 1 + 3 * n);
+}
+
+/// A one-tuple nested a few deep prints back as written and evaluates to a value of its depth;
+/// `bench/one_tuples.rs` holds the timing.
 #[test]
-fn nested_one_tuples_scale() {
-    let texts = scaling::inputs(250, nested);
-    // Printing back and evaluating are timed apart, so that the cheaper one, printing,
-    // cannot hide a quadratic under the cost of the other.
-    scaling::check(
-        "a one-tuple nested n deep, parsed and printed back",
-        250,
-        |n| {
-            let text = &texts[&n];
-            let (tokens, stmts) = build(text).unwrap();
-            assert_eq!(&format(text, &tokens, &stmts), text);
-        },
-    );
-    scaling::check(
-        "a one-tuple nested n deep, evaluated and its value printed",
-        250,
-        |n| {
-            assert_eq!(value(&texts[&n], "x").len(), 1 + 3 * n);
-        },
-    );
+fn nested_one_tuples_print_back_and_evaluate_at_small_depths() {
+    for n in [1, 2, 9] {
+        prints_back(&nested(n));
+        evaluates(&nested(n), n);
+    }
+    assert_eq!(value(&nested(2), "x"), "((1,),)");
 }

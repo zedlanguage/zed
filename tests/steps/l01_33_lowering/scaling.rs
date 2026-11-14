@@ -1,15 +1,13 @@
 //! The size of the graph at the rule of low complexity (DESIGN.md Part G): a function that uses
 //! a port is one `lambda` node, called by `apply` nodes that thread the state, so a chain of
 //! such functions, each calling the one before twice, lowers to a graph linear in the chain's
-//! length and not exponential in it.
-
-use std::collections::BTreeMap;
+//! length and not exponential in it. The benchmarks in `bench/scaling.rs` hold the time of each
+//! lowering; here each input lowers at small sizes.
 
 use zed_kernel::term::build::{app, lam, let_, lit, var};
 use zed_kernel::{Evaluator, Term, World};
 use zed_tests::deep::on_small_stack;
 use zed_tests::scaling;
-use zed_tests::scaling::check_order;
 use zedc::zir::Region;
 use zedc::zir::lower::{lower, raise};
 
@@ -28,15 +26,6 @@ pub(crate) fn chain(k: usize) -> Term {
         t = let_(&format!("f{i}"), lam(&["m"], body), t);
     }
     let_("f0", lam(&["m"], push("stdout", var("m"))), t)
-}
-
-/// The terms `term(m)` at `n` and `FACTOR * n`, built before the timing, so that a test times
-/// the lowering alone.
-fn built(n: usize, term: impl Fn(usize) -> Term) -> BTreeMap<usize, Term> {
-    [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| (m, term(m)))
-        .collect()
 }
 
 fn nodes(g: &Region) -> usize {
@@ -76,40 +65,6 @@ fn the_chain_raises_to_a_term_that_pushes_as_often_as_the_original() {
     }
 }
 
-#[test]
-fn lowering_the_chain_scales() {
-    // The lowering recurses once for each nested `let`, so the chain of 800 runs on a stack
-    // large enough for a debug build.
-    std::thread::Builder::new()
-        .stack_size(1 << 28)
-        .spawn(|| {
-            let terms = built(100, chain);
-            scaling::check("lowering a chain of functions that push", 100, |k| {
-                lower(&terms[&k]).unwrap();
-            })
-        })
-        .unwrap()
-        .join()
-        .unwrap();
-}
-
-/// CSE keys each node by the hashes of its regions, so a nest is not canonicalized again at
-/// every level above it (COMPLEXITY.md Z2, Z3).
-#[test]
-fn lowering_a_deep_nest_scales() {
-    std::thread::Builder::new()
-        .stack_size(1 << 28)
-        .spawn(|| {
-            let terms = built(100, nest);
-            scaling::check("lowering a nest of `if`s", 100, |d| {
-                lower(&terms[&d]).unwrap();
-            })
-        })
-        .unwrap()
-        .join()
-        .unwrap();
-}
-
 /// `let x0 = 1 in let x1 = x0 + 1 in … in x{n-1}`: each binding reads the name bound
 /// farthest out.
 pub(crate) fn far(n: usize) -> Term {
@@ -126,25 +81,9 @@ pub(crate) fn far(n: usize) -> Term {
     let_("x0", lit(1), t)
 }
 
-/// A name is found by a map, not by searching the scope (COMPLEXITY.md Z6).
-#[test]
-fn reading_a_name_bound_far_out_scales() {
-    std::thread::Builder::new()
-        .stack_size(1 << 30)
-        .spawn(|| {
-            let terms = built(2000, far);
-            scaling::check("lowering lets that read the outermost name", 2000, |n| {
-                lower(&terms[&n]).unwrap();
-            })
-        })
-        .unwrap()
-        .join()
-        .unwrap();
-}
-
 /// `g{d} = (x{d}) -> (… (g1 = (x1) -> 1; g1(1)) …); g{d}(d)`: `let`-bound lambdas nested `d`
 /// deep.
-fn lets_of_lambdas(d: usize) -> Term {
+pub(super) fn lets_of_lambdas(d: usize) -> Term {
     (1..=d).fold(lit(1i64), |b, i| {
         let g = format!("g{i}");
         let_(
@@ -155,36 +94,9 @@ fn lets_of_lambdas(d: usize) -> Term {
     })
 }
 
-#[test]
-fn lowering_lambdas_bound_by_nested_lets_scales() {
-    // The ports of each `let`-bound lambda were found by reading its whole body, the lambdas
-    // nested in it included.
-    std::thread::Builder::new()
-        .stack_size(1 << 32)
-        .spawn(|| {
-            // `zir::validate`, which `lower` ends with, keeps one path buffer and copies it
-            // only into an error, so its bytes grow with n and not n·depth (COMPLEXITY.md Z17).
-            // At depth 500 one copy of the path per node still passed; at 4000 it fails.
-            let (small, large) = (
-                lets_of_lambdas(4000),
-                lets_of_lambdas(4000 * scaling::FACTOR),
-            );
-            scaling::check("lowering let-bound lambdas nested n deep", 4000, |d| {
-                lower(if d == 4000 { &small } else { &large }).unwrap();
-            });
-            let t = lets_of_lambdas(3);
-            let back = raise(&lower(&t).unwrap()).unwrap();
-            let run = |t: &Term| Evaluator::new(World::new()).run(t).unwrap();
-            assert_eq!(run(&back), run(&t));
-        })
-        .unwrap()
-        .join()
-        .unwrap();
-}
-
 /// `c{i} = (m) -> stdout <- m; r{i} = c{i}(i); …` for `i` from 1 to `n`, then `0`: functions that
 /// push, each called once, so each call lowers in place under the scope it was defined in.
-fn calls_in_place(n: usize) -> Term {
+pub(super) fn calls_in_place(n: usize) -> Term {
     (1..=n).rev().fold(lit(0i64), |t, i| {
         let c = format!("c{i}");
         let_(
@@ -195,86 +107,16 @@ fn calls_in_place(n: usize) -> Term {
     })
 }
 
-#[test]
-fn lowering_many_functions_called_in_place_scales() {
-    // Each such function kept a copy of the whole scope it was defined in, and its call rebuilt
-    // the index of that scope.
-    std::thread::Builder::new()
-        .stack_size(1 << 32)
-        .spawn(|| {
-            let terms = built(2000, calls_in_place);
-            scaling::check(
-                "lowering n functions each called once in place",
-                2000,
-                |n| {
-                    lower(&terms[&n]).unwrap();
-                },
-            );
-            let t = calls_in_place(3);
-            let back = raise(&lower(&t).unwrap()).unwrap();
-            let run = |t: &Term| {
-                let mut ev = Evaluator::new(World::new().output("stdout"));
-                let v = ev.run(t).unwrap();
-                (v, ev.world.log("stdout").to_vec())
-            };
-            let (v, pushed) = run(&t);
-            assert_eq!(pushed.len(), 3);
-            assert_eq!(run(&back), (v, pushed));
-        })
-        .unwrap()
-        .join()
-        .unwrap();
-}
-
-/// The graph of `n` pushes in a row is checked in time that scales: each state edge's uses
-/// are counted in a map, not by searching the edges counted before (COMPLEXITY.md Z10).
-#[test]
-fn checking_a_graph_of_many_pushes_scales() {
-    std::thread::Builder::new()
-        .stack_size(1 << 32)
-        .spawn(|| {
-            let graphs: std::collections::BTreeMap<usize, Region> = [N, N * scaling::FACTOR]
-                .into_iter()
-                .map(|n| (n, lower(&calls_in_place(n)).unwrap()))
-                .collect();
-            scaling::check("checking a graph of n pushes", N, |n| {
-                zedc::zir::validate::validate(&graphs[&n]).unwrap();
-            });
-        })
-        .unwrap()
-        .join()
-        .unwrap();
-}
-
-const N: usize = 4000;
-
 /// `r{i} = p{i} <- i; …` for `i` from 1 to `n`, then `0`: pushes to `n` different ports.
-fn pushes_to_many_ports(n: usize) -> Term {
+pub(super) fn pushes_to_many_ports(n: usize) -> Term {
     (1..=n).rev().fold(lit(0i64), |t, i| {
         let_(&format!("r{i}"), push(&format!("p{i}"), lit(i as i64)), t)
     })
 }
 
-/// The current state of each port is found by a map, not by searching the ports used before
-/// (COMPLEXITY.md Z13).
-#[test]
-fn lowering_pushes_to_many_ports_scales() {
-    std::thread::Builder::new()
-        .stack_size(1 << 32)
-        .spawn(|| {
-            let terms = built(2000, pushes_to_many_ports);
-            scaling::check("lowering pushes to n ports", 2000, |n| {
-                lower(&terms[&n]).unwrap();
-            });
-        })
-        .unwrap()
-        .join()
-        .unwrap();
-}
-
 /// A price table: `base = 2 * 5; if base < 0 then 0 else if base < 1 then 1 else …`, `d` tests
 /// in a chain, each reading `base` from outside its own region, ending at `d`.
-fn prices(d: usize) -> Term {
+pub(super) fn prices(d: usize) -> Term {
     use zed_kernel::Prim;
     use zed_kernel::term::build::{if_, prim};
     let chain = (0..d).rev().fold(lit(d as i64), |rest, i| {
@@ -335,25 +177,6 @@ fn a_name_read_at_every_depth_keeps_its_meaning() {
     }
 }
 
-#[test]
-fn a_name_read_at_every_depth_scales() {
-    // Each read carried the name through every region above it, as a new input of each.
-    std::thread::Builder::new()
-        .stack_size(1 << 30)
-        .spawn(|| {
-            // `zir::validate`, which `lower` ends with, keeps one path buffer and copies it
-            // only into an error, so its bytes grow with n and not n·depth (COMPLEXITY.md Z17).
-            // At depth 500 one copy of the path per node still passed; at 4000 it fails.
-            let (small, large) = (prices(4000), prices(4000 * scaling::FACTOR));
-            scaling::check("lowering n nested reads of one name", 4000, |d| {
-                lower(if d == 4000 { &small } else { &large }).unwrap();
-            });
-        })
-        .unwrap()
-        .join()
-        .unwrap();
-}
-
 // A term nested 100,000 deep lowers, and its graph raises back, on a thread of the default
 // 2 MiB stack: the lowering, the walk that finds a lambda body's uses and the raise each keep
 // their work on the heap (step T2-mid).
@@ -378,40 +201,9 @@ fn lambdas_nested_100000_deep_are_lowered_on_a_2_mib_stack() {
     });
 }
 
-#[test]
-fn lowering_and_raising_a_deep_term_is_linear_in_its_depth() {
-    on_small_stack(|| {
-        let (small, large) = (nest(5_000), nest(40_000));
-        check_order("lowering nested `if`s", 5_000, 1, |d| {
-            lower(if d == 5_000 { &small } else { &large }).unwrap();
-        });
-        let (small, large) = (lower(&small).unwrap(), lower(&large).unwrap());
-        check_order("raising nested `if` regions", 5_000, 1, |d| {
-            raise(if d == 5_000 { &small } else { &large }).unwrap();
-        });
-        let (small, large) = (lets_of_lambdas(5_000), lets_of_lambdas(40_000));
-        check_order("lowering nested let-bound lambdas", 5_000, 1, |d| {
-            lower(if d == 5_000 { &small } else { &large }).unwrap();
-        });
-    });
-}
-
-#[test]
-fn a_port_used_100000_regions_deep_is_lowered_on_a_2_mib_stack() {
-    on_small_stack(|| {
-        let g = lower(&push_under_ifs(100_000)).unwrap();
-        zedc::zir::validate::validate(&g).unwrap();
-        let small = push_under_ifs(5_000);
-        let large = push_under_ifs(40_000);
-        check_order("lowering a push under nested `if`s", 5_000, 1, |d| {
-            lower(if d == 5_000 { &small } else { &large }).unwrap();
-        });
-    });
-}
-
 /// `f = (x) -> match x { 0 => 0, 1 => 10, … }; f(n - 1)`: a function over a match of `n`
 /// literal arms.
-fn wide_match(n: usize) -> Term {
+pub(super) fn wide_match(n: usize) -> Term {
     use zed_kernel::{Pattern, Value};
     let arms = (0..n as i64)
         .map(|i| (Pattern::Lit(Value::Int(i)), lit(10 * i)))
@@ -420,18 +212,68 @@ fn wide_match(n: usize) -> Term {
     let_("f", f, app(var("f"), vec![lit(n as i64 - 1)]))
 }
 
-/// Each arm of a match is found by its index among the match's parts, once per arm; checking
-/// that index by listing the parts again made a match of `n` arms cost n² (ADDR-keys, COMPLEXITY
-/// K40).
+/// The input of each benchmark in `bench/scaling.rs` lowers at small sizes, and a graph of pushes
+/// checks; the benchmarks hold the time of each linear in n.
 #[test]
-fn lowering_a_wide_match_scales() {
-    let terms: std::collections::BTreeMap<usize, Term> = [N, N * scaling::FACTOR]
-        .into_iter()
-        .map(|n| (n, wide_match(n)))
-        .collect();
-    scaling::check("lowering a function over a match of n arms", N, |n| {
-        lower(&terms[&n]).unwrap();
+fn each_benchmark_input_lowers_at_small_sizes() {
+    std::thread::Builder::new()
+        .stack_size(1 << 28)
+        .spawn(|| {
+            for n in [1, 2, 9] {
+                for t in [
+                    chain(n),
+                    nest(n),
+                    far(n),
+                    lets_of_lambdas(n),
+                    calls_in_place(n),
+                    pushes_to_many_ports(n),
+                    prices(n),
+                    push_under_ifs(n),
+                    wide_match(n),
+                ] {
+                    let g = lower(&t).unwrap();
+                    zedc::zir::validate::validate(&g).unwrap();
+                }
+                raise(&lower(&nest(n)).unwrap()).unwrap();
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn let_bound_lambdas_nested_a_few_deep_raise_to_the_same_value() {
+    let t = lets_of_lambdas(3);
+    let back = raise(&lower(&t).unwrap()).unwrap();
+    let run = |t: &Term| Evaluator::new(World::new()).run(t).unwrap();
+    assert_eq!(run(&back), run(&t));
+}
+
+#[test]
+fn a_few_functions_called_in_place_raise_to_the_same_pushes() {
+    let t = calls_in_place(3);
+    let back = raise(&lower(&t).unwrap()).unwrap();
+    let run = |t: &Term| {
+        let mut ev = Evaluator::new(World::new().output("stdout"));
+        let v = ev.run(t).unwrap();
+        (v, ev.world.log("stdout").to_vec())
+    };
+    let (v, pushed) = run(&t);
+    assert_eq!(pushed.len(), 3);
+    assert_eq!(run(&back), (v, pushed));
+}
+
+#[test]
+fn a_port_used_100000_regions_deep_is_lowered_and_checked_on_a_2_mib_stack() {
+    on_small_stack(|| {
+        let g = lower(&push_under_ifs(100_000)).unwrap();
+        zedc::zir::validate::validate(&g).unwrap();
     });
+}
+
+#[test]
+fn a_match_of_four_arms_raises_to_the_same_value() {
     let t = wide_match(4);
     let back = raise(&lower(&t).unwrap()).unwrap();
     let run = |t: &Term| Evaluator::new(World::new()).run(t).unwrap();

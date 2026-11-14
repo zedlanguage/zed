@@ -2,6 +2,7 @@
 //! binds a written name: the canonicalizer renames the binder, normalizes, ranks and keys the
 //! graph on a thread of the default 2 MiB stack, in time linear in its depth. An edge of many
 //! facets in reverse order is canonicalized and keyed in `O(F log F)`, its facets sorted once.
+//! The benchmarks in `bench/scaling.rs` hold both orders; here each is checked at small sizes.
 
 use std::sync::Arc;
 
@@ -9,7 +10,6 @@ use zed_kernel::Value;
 use zed_kernel::term::Pattern;
 use zed_kernel::types::Type;
 use zed_tests::deep::on_small_stack;
-use zed_tests::scaling::check_order;
 use zedc::canon::Facet;
 use zedc::zir::canon::{address, canonicalize, key, ranks, step};
 use zedc::zir::{Edge, Node, Op, Region, RegionKind, Src};
@@ -17,7 +17,7 @@ use zedc::zir::{Edge, Node, Op, Region, RegionKind, Src};
 use zed_tests::step_helpers::l01_31_zir::nested_ifs;
 
 /// [`nested_ifs`] with the deepest `then` region holding `match 0 { binder => binder }`.
-fn deep_match(depth: usize, binder: &str) -> Region {
+pub(super) fn deep_match(depth: usize, binder: &str) -> Region {
     let mut g = nested_ifs(depth);
     let mut r = &mut g;
     while !r.nodes.is_empty() {
@@ -59,35 +59,9 @@ fn a_graph_nested_100000_deep_is_canonicalized_on_a_2_mib_stack() {
     });
 }
 
-#[test]
-fn canonicalizing_a_deep_graph_is_linear_in_its_depth() {
-    on_small_stack(|| {
-        let (small, large) = (deep_match(12_500, "x"), deep_match(100_000, "x"));
-        let pick = |k| if k == 12_500 { &small } else { &large };
-        check_order("canonicalizing nested `if` regions", 12_500, 1, |k| {
-            canonicalize(pick(k));
-        });
-        check_order("keying nested `if` regions", 12_500, 1, |k| {
-            key(pick(k)).expect("memory for the key");
-        });
-        check_order("ranking nested `if` regions", 12_500, 1, |k| {
-            ranks(pick(k));
-        });
-        check_order(
-            "renaming the binder of nested `if` regions",
-            12_500,
-            1,
-            |k| {
-                let mut g = pick(k).clone();
-                while step(&mut g).is_some() {}
-            },
-        );
-    });
-}
-
 /// A function region whose one argument is an `int` with `n` facets in reverse order: units
 /// and locales, each value twice, and every third facet a hint.
-fn many_facets(n: usize) -> Region {
+pub(super) fn many_facets(n: usize) -> Region {
     let facets = (0..n).rev().map(|i| Facet {
         hint: i % 3 == 0,
         kind: if i % 2 == 0 { "units" } else { "locale" }.into(),
@@ -105,24 +79,46 @@ fn many_facets(n: usize) -> Region {
     }
 }
 
+/// The edge of `g`'s argument, canonicalized: its facets strictly sorted and none a hint.
+pub(super) fn sorts_its_facets(g: &Region) {
+    let g = canonicalize(g);
+    let Edge::Value(v) = &g.args[0] else {
+        panic!("a value edge")
+    };
+    assert!(v.facets.windows(2).all(|w| w[0] < w[1]));
+    assert!(v.facets.iter().all(|f| !f.hint));
+}
+
+/// A shallow graph is canonicalized, keyed and ranked, and its binder renamed to the normal form;
+/// the time of each is held linear in its depth in `bench/scaling.rs`.
 #[test]
-fn canonicalizing_an_edge_of_many_facets_is_n_log_n() {
-    let (small, large) = (many_facets(100), many_facets(800));
-    let pick = |k| if k == 100 { &small } else { &large };
-    check_order(
-        "canonicalizing an edge of n facets in reverse order",
-        100,
-        1,
-        |k| {
-            let g = canonicalize(pick(k));
-            let Edge::Value(v) = &g.args[0] else {
-                panic!("a value edge")
-            };
-            assert!(v.facets.windows(2).all(|w| w[0] < w[1]));
-            assert!(v.facets.iter().all(|f| !f.hint));
-        },
-    );
-    check_order("keying an edge of n facets in reverse order", 100, 1, |k| {
-        key(pick(k)).expect("memory for the key");
-    });
+fn a_shallow_graph_is_canonicalized_keyed_and_ranked() {
+    for d in [1, 2, 9] {
+        let mut g = deep_match(d, "x");
+        assert_eq!(ranks(&g)[0], 1, "one written binder");
+        let y = deep_match(d, "y");
+        assert_eq!(
+            address(&g).expect("memory for the address"),
+            address(&y).expect("memory for the address")
+        );
+        assert_eq!(
+            key(&canonicalize(&g)).expect("memory for the key"),
+            key(&canonicalize(&y)).expect("memory for the key")
+        );
+        key(&g).expect("memory for the key");
+        let normal = canonicalize(&g);
+        while step(&mut g).is_some() {}
+        assert_eq!(g, normal);
+    }
+}
+
+/// An edge of a few facets in reverse order is canonicalized with its facets sorted and keyed;
+/// the time is held to `O(F log F)` in `bench/scaling.rs`.
+#[test]
+fn an_edge_of_a_few_facets_is_sorted_and_keyed() {
+    for n in [0, 1, 2, 9] {
+        let g = many_facets(n);
+        sorts_its_facets(&g);
+        key(&g).expect("memory for the key");
+    }
 }

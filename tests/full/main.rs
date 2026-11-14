@@ -4,5 +4,6 @@
 //! tool is missing, so no test here is ever skipped. Plain `cargo test` does not build them.
 
 mod l01_21_test_runner;
+mod m0_04_corpus_references;
 mod m0_09_kernel_evaluator;
 mod s00_01_tools;

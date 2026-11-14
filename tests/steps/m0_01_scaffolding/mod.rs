@@ -4,6 +4,7 @@
 //! their test targets in `tests/Cargo.toml` are checked here, and the list itself is an
 //! expected-output snapshot.
 
+mod bench;
 mod scaling;
 
 use std::collections::BTreeSet;

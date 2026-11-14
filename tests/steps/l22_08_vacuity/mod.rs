@@ -6,6 +6,7 @@
 //! rule of low complexity (`scaling`), and on the shapes where deciding a model is NP-complete
 //! (`hardness`).
 
+mod bench;
 mod brute;
 mod corpus;
 mod hardness;

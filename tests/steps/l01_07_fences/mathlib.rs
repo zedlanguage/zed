@@ -8,7 +8,6 @@
 
 use std::path::PathBuf;
 
-use zed_tests::scaling::{check, inputs};
 use zed_tools::spec_checks::PRELUDE;
 use zedc::fence::extract;
 use zedc::lex::lex_fence;
@@ -254,23 +253,27 @@ fn a_cited_law_that_is_not_written_is_found() {
     assert_eq!(law_text(page, "missing"), None);
 }
 
-#[test]
-fn parsing_the_fences_of_a_page_scales() {
+/// A page of `n` fences that each cite a law, then a last fence with `euclid`, which cites
+/// `anyIntro` and `dvdFact`, defined nowhere.
+pub(super) fn generated_page(n: usize) -> String {
     let one = "Text.\n\n```zed\nlaw minFacDvd(n: int[2..]) = dvd(minFac(n), n) proof { using(minFacAuxDvd) }\n```\n";
     let last = "```zed\nlaw euclid(n: int[0..]) = true proof { using(anyIntro, dvdFact) }\n```\n";
-    let pages = inputs(500, |n| one.repeat(n) + last);
-    check(
-        "lexing and parsing n fences of a page, and finding names in them",
-        500,
-        |n| {
-            let page = &pages[&n];
-            assert!(unparsed(page).is_empty());
-            // `euclid` is on the last line and `dvdFact` is defined nowhere, so both searches
-            // read the whole page.
-            assert_eq!(euclid_cites(page), ["anyIntro", "dvdFact"]);
-            assert!(!defines(page, "dvdFact"));
-            let text = law_text(page, "euclid").expect("`euclid` is on the last line");
-            assert_eq!(cited(&text), ["anyIntro", "dvdFact"]);
-        },
-    );
+    one.repeat(n) + last
+}
+
+/// Every fence of `page` parses. `euclid` is on the last line and `dvdFact` is defined nowhere,
+/// so both searches read the whole page.
+pub(super) fn reads_the_generated_page(page: &str) {
+    assert!(unparsed(page).is_empty());
+    assert_eq!(euclid_cites(page), ["anyIntro", "dvdFact"]);
+    assert!(!defines(page, "dvdFact"));
+    let text = law_text(page, "euclid").expect("`euclid` is on the last line");
+    assert_eq!(cited(&text), ["anyIntro", "dvdFact"]);
+}
+
+#[test]
+fn the_fences_of_a_generated_page_parse_and_their_citations_are_found() {
+    for n in [0, 1, 9] {
+        reads_the_generated_page(&generated_page(n));
+    }
 }

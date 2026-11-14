@@ -3,16 +3,19 @@
 //! attempt made a `fix` over `D` keys cost `O(D²)` even when each entry is tried at most twice.
 //! An entry postponed on an undefined key waits on it, so a chain, such as the accumulators of
 //! a `foldl`, costs `D` attempts under every schedule rather than `D²/2` in rounds.
+//!
+//! The benchmarks of these programs are in `bench.rs`, run by `tools/run_tests.sh --bench`;
+//! here each program they time runs at small sizes through the same checks
+//! (TEST-bench-move-rest).
 
 use zed_kernel::term::build::if_;
 use zed_kernel::term::build::lit;
 use zed_kernel::{Evaluator, Family, KernelError, Schedule, Term, Value, World};
 use zed_tests::kernel::*;
-use zed_tests::scaling;
 
 /// The family `k -> k` over `0..d`, each entry above 0 reading entry 0 (`star`) or the entry
 /// before it (`chain`).
-fn counts(d: usize, chain: bool) -> Term {
+pub(super) fn counts(d: usize, chain: bool) -> Term {
     let keys = lit(Value::Family(Family::set(0..d as i64)));
     fix_defined(keys, |this, k| {
         let from = if chain {
@@ -25,45 +28,46 @@ fn counts(d: usize, chain: bool) -> Term {
     })
 }
 
-fn run(t: &Term, schedule: Schedule) -> Value {
+pub(super) fn run(t: &Term, schedule: Schedule) -> Value {
     Evaluator::new(World::new())
         .with_schedule(schedule)
         .run(t)
         .unwrap()
 }
 
-#[test]
-fn the_definedness_fix_scales() {
-    // Two rounds: every entry but 0 is postponed once.
-    scaling::check("rounds, entries reading entry 0, by keys", 1000, |d| {
-        run(&counts(d, false), Schedule::Rounds);
-    });
-    scaling::check("chaotic, entries reading entry 0, by keys", 1000, |d| {
-        run(&counts(d, false), Schedule::Chaotic(7));
-    });
-    // Each entry waits on, or demands, the one before it.
-    for schedule in [Schedule::Rounds, Schedule::Chaotic(7), Schedule::Pull] {
-        scaling::check(&format!("{schedule:?}, a chain, by keys"), 1000, |d| {
-            run(&counts(d, true), schedule);
-        });
-    }
+/// The family `k -> k` over `0..d`, the value of [`counts`] under every schedule.
+fn count_family(d: usize) -> Value {
+    Value::Family(
+        Family::from_leaves((0..d as i64).map(|k| (vec![Value::Int(k)], Value::Int(k)))).unwrap(),
+    )
 }
 
 #[test]
 fn every_schedule_defines_the_counts() {
-    let want = |d: usize| {
-        Value::Family(
-            Family::from_leaves((0..d as i64).map(|k| (vec![Value::Int(k)], Value::Int(k))))
-                .unwrap(),
-        )
-    };
     for chain in [false, true] {
         for schedule in [Schedule::Rounds, Schedule::Pull, Schedule::Chaotic(3)] {
             assert_eq!(
                 run(&counts(50, chain), schedule),
-                want(50),
+                count_family(50),
                 "{schedule:?}, chain {chain}"
             );
+        }
+    }
+}
+
+/// The counts at small sizes under each schedule the benchmark `bench::the_definedness_fix_scales`
+/// times, `Chaotic(7)` among them.
+#[test]
+fn the_benchmarked_schedules_define_the_counts_at_small_sizes() {
+    for chain in [false, true] {
+        for schedule in [Schedule::Rounds, Schedule::Chaotic(7), Schedule::Pull] {
+            for d in [1, 2, 9] {
+                assert_eq!(
+                    run(&counts(d, chain), schedule),
+                    count_family(d),
+                    "{schedule:?}, chain {chain}, d = {d}"
+                );
+            }
         }
     }
 }
@@ -80,7 +84,7 @@ fn a_jacobi_round_reads_the_family_as_the_round_began() {
 }
 
 /// The family over `0..d` whose entry 0 sums the entries `1..d`, each `k` itself.
-fn fan_in(d: usize) -> Term {
+pub(super) fn fan_in(d: usize) -> Term {
     let keys = lit(Value::Family(Family::set(0..d as i64)));
     let rest = lit(Value::Family(Family::set(1..d as i64)));
     fix_defined(keys, |this, k| {
@@ -95,7 +99,7 @@ fn fan_in(d: usize) -> Term {
 
 /// The family over `0..2d` whose entry `k < d` reads the leaf `d + k`, then the entry
 /// after it: `f[k] = f[d + k] + f[k + 1]`, with `f[d - 1] = f[2d - 1]` and `f[d + k] = k`.
-fn reverse_chain(d: usize) -> Term {
+pub(super) fn reverse_chain(d: usize) -> Term {
     let n = d as i64;
     let keys = lit(Value::Family(Family::set(0..2 * n)));
     fix_defined(keys, |this, k| {
@@ -110,37 +114,41 @@ fn reverse_chain(d: usize) -> Term {
 }
 
 /// `Σ_{j=k}^{d-1} j`, the entry `k < d` of [`reverse_chain`].
-fn tail_sum(d: usize, k: usize) -> i64 {
+pub(super) fn tail_sum(d: usize, k: usize) -> i64 {
     ((k + d - 1) * (d - k) / 2) as i64
 }
 
-#[test]
-fn an_entry_reading_many_undefined_entries_scales_under_demand() {
-    // Each read of an undefined entry stopped the attempt, and the entry was tried again from
-    // the start once the entry read was defined: entry 0 of `fan_in(d)` was tried `d` times
-    // and read `d²/2` entries. Now the entry read is evaluated where it is read.
-    scaling::check("pull, one entry reading every other, by keys", 1000, |d| {
-        let v = run(&fan_in(d), Schedule::Pull);
-        let sum = (d * (d - 1) / 2) as i64;
-        assert_eq!(
-            v.as_family().unwrap().get(&Value::Int(0)),
-            Some(&Value::Int(sum))
-        );
-    });
-    scaling::check(
-        "pull, entries reading the ones after them, by keys",
-        1000,
-        |d| {
-            let v = run(&reverse_chain(d), Schedule::Pull);
-            let f = v.as_family().unwrap();
-            assert_eq!(f.get(&Value::Int(0)), Some(&Value::Int(tail_sum(d, 0))));
-        },
+/// Under demand, entry 0 of [`fan_in`]`(d)` sums the entries `1..d`.
+pub(super) fn fan_in_sums(d: usize) {
+    let v = run(&fan_in(d), Schedule::Pull);
+    let sum = (d * (d - 1) / 2) as i64;
+    assert_eq!(
+        v.as_family().unwrap().get(&Value::Int(0)),
+        Some(&Value::Int(sum))
     );
+}
+
+/// Under demand, entry 0 of [`reverse_chain`]`(d)` is [`tail_sum`]`(d, 0)`.
+pub(super) fn reverse_chain_sums(d: usize) {
+    let v = run(&reverse_chain(d), Schedule::Pull);
+    let f = v.as_family().unwrap();
+    assert_eq!(f.get(&Value::Int(0)), Some(&Value::Int(tail_sum(d, 0))));
+}
+
+/// One entry reading every other, and entries reading the ones after them, give their sums
+/// under demand at small sizes; their time is held in
+/// `bench::an_entry_reading_many_undefined_entries_scales_under_demand`.
+#[test]
+fn entries_reading_undefined_entries_give_their_sums_at_small_sizes() {
+    for d in [1, 2, 9] {
+        fan_in_sums(d);
+        reverse_chain_sums(d);
+    }
 }
 
 /// The chain of [`counts`] in reverse with its last entry reading the one before it, so that
 /// every demand begun at entry 0 nests down to a cycle of two.
-fn chain_to_a_cycle(d: usize) -> Term {
+pub(super) fn chain_to_a_cycle(d: usize) -> Term {
     let keys = lit(Value::Family(Family::set(0..d as i64)));
     fix_defined(keys, |this, k| {
         let last = eq(k.clone(), lit(d as i64 - 1));
@@ -149,21 +157,24 @@ fn chain_to_a_cycle(d: usize) -> Term {
     })
 }
 
+/// Under demand, `chain`, a [`chain_to_a_cycle`] of `d` entries, stalls on all `d`.
+pub(super) fn stalls_on_every_entry(chain: &Term, d: usize) {
+    let out = Evaluator::new(World::new())
+        .with_schedule(Schedule::Pull)
+        .run(chain);
+    let Err(KernelError::Stalled { keys }) = out else {
+        panic!("{out:?}")
+    };
+    assert_eq!(keys.len(), d);
+}
+
+/// A chain ending in a cycle stalls on every entry at small sizes (2, the cycle alone, and up);
+/// its time is held in `bench::a_chain_ending_in_a_cycle_stalls_in_linear_time_under_demand`.
 #[test]
-fn a_chain_ending_in_a_cycle_stalls_in_linear_time_under_demand() {
-    // When the cycle stops the nested demands, every entry on the chain has stalled. Trying
-    // each from the start again would walk the rest of the chain each time, `D²/2` reads.
-    let (small, large) = (chain_to_a_cycle(1000), chain_to_a_cycle(8000));
-    scaling::check("pull, a chain ending in a cycle, by keys", 1000, |d| {
-        let chain = if d == 1000 { &small } else { &large };
-        let out = Evaluator::new(World::new())
-            .with_schedule(Schedule::Pull)
-            .run(chain);
-        let Err(KernelError::Stalled { keys }) = out else {
-            panic!("{out:?}")
-        };
-        assert_eq!(keys.len(), d);
-    });
+fn a_chain_ending_in_a_cycle_stalls_on_every_entry_at_small_sizes() {
+    for d in [2, 3, 9] {
+        stalls_on_every_entry(&chain_to_a_cycle(d), d);
+    }
 }
 
 /// The address and value of every fact of a run of `t` under `schedule`, sorted.
@@ -205,7 +216,7 @@ fn a_demanded_entry_has_the_facts_it_has_in_rounds() {
 
 /// The ascent from `{}` whose step is the key `count(x)` alone, joined to `x`, until `x`
 /// has `n` keys.
-fn ascent(n: usize) -> Term {
+pub(super) fn ascent(n: usize) -> Term {
     let step = func(|[x]| {
         let c = count(x.clone());
         let one = reindex(
@@ -226,23 +237,23 @@ fn ascent(n: usize) -> Term {
     )
 }
 
+/// The ascent of [`ascent`]`(n)` ends with `n` keys.
+pub(super) fn ascent_has_its_keys(n: usize) {
+    let v = run(&ascent(n), Schedule::Rounds);
+    assert_eq!(v.as_family().unwrap().len(), n);
+}
+
+/// A lattice ascent adding a key a round ends with its keys at small sizes; its time is held in
+/// `bench::a_lattice_ascent_by_one_key_a_round_scales`.
 #[test]
-fn a_lattice_ascent_by_one_key_a_round_scales() {
-    // The test for the fixpoint compared the iterate with the one before in the total order
-    // of values, reading both in full each round: `n` rounds took `O(n²)` steps (ratio 40 to
-    // 44). Families are now equal by their maps, which differ at once in size.
-    scaling::check(
-        "a lattice ascent adding a key a round, by keys",
-        1000,
-        |n| {
-            let v = run(&ascent(n), Schedule::Rounds);
-            assert_eq!(v.as_family().unwrap().len(), n);
-        },
-    );
+fn a_lattice_ascent_by_one_key_a_round_ends_at_small_sizes() {
+    for n in [1, 2, 9] {
+        ascent_has_its_keys(n);
+    }
 }
 
 /// `"ab…"`, the `n` letters of the sequence `0..n -> letter` joined by a `foldl` of `++`.
-fn joined(n: usize) -> Term {
+pub(super) fn joined(n: usize) -> Term {
     let letters = Family::from_leaves((0..n as i64).map(|i| {
         (
             vec![Value::Int(i)],
@@ -257,21 +268,31 @@ fn joined(n: usize) -> Term {
     )
 }
 
-#[test]
-fn a_string_joined_by_a_fold_scales() {
-    // `++` copied both strings, and a `foldl` keeps every accumulator, so joining `n` pieces
-    // took `O(n²)` time and memory (8,000 against 64,000 pieces: ratio 26.5). A join is now
-    // the node of its two parts, written out once when it is read as text.
-    // The expected text, built by `push_str` and not by the code under test.
+/// `"abcab…"`, the letters [`joined`] gives for `n` pieces, built by `push_str` and not by the
+/// code under test.
+pub(super) fn letters(n: usize) -> String {
     let mut want = String::new();
-    for i in 0..scaling::FACTOR * 8000 {
+    for i in 0..n {
         want.push_str(["a", "b", "c"][i % 3]);
     }
-    scaling::check("a foldl of ++, by pieces", 8000, |n| {
-        let Value::Str(s) = run(&joined(n), Schedule::Rounds) else {
-            panic!("not a string")
-        };
-        assert_eq!(s.len(), n);
-        assert_eq!(s.flat(), &want[..n]);
-    });
+    want
+}
+
+/// [`joined`]`(n)` is a string of `n` letters, the first `n` of `want`.
+pub(super) fn joins_its_pieces(n: usize, want: &str) {
+    let Value::Str(s) = run(&joined(n), Schedule::Rounds) else {
+        panic!("not a string")
+    };
+    assert_eq!(s.len(), n);
+    assert_eq!(s.flat(), &want[..n]);
+}
+
+/// A string joined by a `foldl` of `++` reads as its pieces at small sizes; its time is held in
+/// `bench::a_string_joined_by_a_fold_scales`.
+#[test]
+fn a_string_joined_by_a_fold_reads_as_its_pieces_at_small_sizes() {
+    let want = letters(9);
+    for n in [1, 2, 9] {
+        joins_its_pieces(n, &want);
+    }
 }

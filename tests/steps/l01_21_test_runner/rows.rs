@@ -4,7 +4,6 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use zed_tests::scaling;
 use zedc::query::Db;
 use zedc::rejection::Row;
 
@@ -132,21 +131,27 @@ fn every_live_mark_of_the_spec_names_a_row() {
 }
 
 /// `n` names each bound twice, the second binding marked with its row.
-fn rebound(n: usize) -> String {
+pub(super) fn rebound(n: usize) -> String {
     (0..n)
         .map(|i| format!("a{i} = {i};\na{i} = 1;  // ✗ Rebinding in the same scope: a{i}\n"))
         .collect()
 }
 
-#[test]
-fn checking_n_marks_scales() {
-    let n = 200;
-    scaling::check_order("checking n marked lines against their rows", n, 1, |m| {
-        let got = checks(&rebound(m));
-        assert_eq!(got.len(), m);
-        assert!(got.iter().all(|c| c.ends_with(": ok")), "{got:?}");
-    });
+/// Each of `n` marked lines is checked against its row: all `n` say ok.
+pub(super) fn every_mark_is_ok(unit: &str, n: usize) {
+    let got = checks(unit);
+    assert_eq!(got.len(), n);
+    assert!(got.iter().all(|c| c.ends_with(": ok")), "{got:?}");
 }
+
+/// The time it takes is held linear in `bench/rows.rs`.
+#[test]
+fn each_of_a_few_marks_is_checked_against_its_row() {
+    for n in [1, 2, 9] {
+        every_mark_is_ok(&rebound(n), n);
+    }
+}
+
 /// A fee calculator called with its rate named before its positional base: the grammar takes
 /// either order, and the check names the row, the argument, the first named one and the call.
 #[test]
@@ -235,7 +240,7 @@ fn is_word_char(c: char) -> bool {
 /// Each of `words` in `text`, in order of place, matched whole: a word is a run of letters,
 /// digits and `_`, and a rule such as `T-Fold` is two words joined by one `-`, so `T-Folder`
 /// and `Boomerang` match nothing. O(length of `text`): one pass, a hash lookup per word.
-fn said<'w>(text: &str, words: &'w HashSet<String>) -> Vec<&'w str> {
+pub(super) fn said<'w>(text: &str, words: &'w HashSet<String>) -> Vec<&'w str> {
     let mut out = Vec::new();
     let (mut start, mut last) = (None, None);
     let ends = text
@@ -416,20 +421,26 @@ F ::= fam(D, i -> e)   -- introduce
 }
 
 /// `n` lines of a collision message, each naming one rule, as a message must not.
-fn messages(n: usize) -> String {
+pub(super) fn messages(n: usize) -> String {
     (0..n)
         .map(|i| format!("{i}:5: two keypaths land on `k{i}` (T-Reindex); owes op's laws\n"))
         .collect()
 }
 
-#[test]
-fn finding_the_unsaid_words_scales() {
-    let words: HashSet<String> = ["T-Reindex", "T-Fold", "Boom"]
+/// The words a message must not say.
+pub(super) fn unsaid_words() -> HashSet<String> {
+    ["T-Reindex", "T-Fold", "Boom"]
         .into_iter()
         .map(String::from)
-        .collect();
-    let texts = scaling::inputs(2000, messages);
-    scaling::check("finding kernel rule names in n message lines", 2000, |m| {
-        assert_eq!(said(&texts[&m], &words).len(), m);
-    });
+        .collect()
+}
+
+/// Each line of a few message lines says one rule name; the time it takes is held linear in
+/// `bench/rows.rs`.
+#[test]
+fn the_rule_name_of_each_message_line_is_found() {
+    let words = unsaid_words();
+    for n in [0, 1, 9] {
+        assert_eq!(said(&messages(n), &words).len(), n);
+    }
 }

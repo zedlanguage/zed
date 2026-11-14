@@ -22,7 +22,6 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use zed_tests::scaling;
 use zedc::ast::Error;
 use zedc::query::{Db, Query};
 use zedc::resolve::Resolution;
@@ -286,7 +285,7 @@ fn order(p: &Package) -> Vec<&str> {
 }
 
 /// What a step of a script gave.
-struct Ran {
+pub(super) struct Ran {
     /// How many times each of [`QUERIES`] had been computed in the kept database.
     computed: [usize; 5],
     /// The package's report, then each unit's checks as `file line:col: ok` or
@@ -347,7 +346,7 @@ fn same_as_fresh(db: &mut Db, files: &Memory, step: &str) -> Vec<String> {
 
 /// Runs `script` with one database kept across its steps and checks that after each step every
 /// answer equals a fresh database's. Returns what each step gave.
-fn run(script: &str) -> Vec<Ran> {
+pub(super) fn run(script: &str) -> Vec<Ran> {
     let mut db = Db::new();
     let mut files = Memory(HashMap::new());
     parse(script)
@@ -571,7 +570,7 @@ fn a_replace_without_its_with_stops_the_script() {
 
 /// A script of `k` steps after the first, each changing the tax rate of the pricing unit that a
 /// second unit imports from.
-fn rates(k: usize) -> String {
+pub(super) fn rates(k: usize) -> String {
     let mut s = format!(
         "%% step start\n%% write main.zed\nimport pricing.{{tax}};\nlevy = tax(100);\n\
          %% write pricing.zed\n{PRICING}"
@@ -588,11 +587,11 @@ fn rates(k: usize) -> String {
     s
 }
 
+/// A script of a few rate changes runs, each step agreeing with a fresh database; the time is
+/// held linear in its steps in `bench/reuse.rs`.
 #[test]
-fn a_script_runs_in_time_linear_in_its_steps() {
-    let n = 8;
-    let scripts: HashMap<usize, String> = [n, 8 * n].into_iter().map(|k| (k, rates(k))).collect();
-    scaling::check("an edit script of n steps", n, |k| {
-        std::hint::black_box(run(&scripts[&k]));
-    });
+fn a_script_of_a_few_rate_changes_runs() {
+    for k in [0, 1, 3] {
+        assert_eq!(run(&rates(k)).len(), k + 1);
+    }
 }

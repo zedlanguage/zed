@@ -5,9 +5,8 @@
 //! menu offers the case with the clause deleted, and with it written as an update of fields when
 //! that parses and the code before `with` is not a literal.
 
-use zed_tests::scaling;
 use zedc::ast::{Error, unit};
-use zedc::lex::lex;
+use zedc::lex::{Token, lex};
 use zedc::parse::{TOP, parse};
 use zedc::rejection::Row;
 
@@ -327,27 +326,32 @@ fn other_places_keep_their_messages() {
     assert_eq!(e.row, Some(Row::BareBoundary));
 }
 
-/// The case is found by a scan back to the table's `{` and forward to the case's end, one parse
-/// of the values and the case's left side, at most two parses of the unit with the clause
-/// rewritten, and one walk down the tree: linear in the unit, here in the cases before it.
+/// A unit whose test table holds `n` cases and then a case with a clause, lexed.
+pub(super) fn clause_after(n: usize) -> (String, Vec<Token>) {
+    let cases: String = (0..n).map(|i| format!("{i} -> {}, ", 2 * i)).collect();
+    let text = format!("double(positional x) = x * 2 test {{ {cases}1 with x = 0 -> 1 }}\n");
+    let tokens = lex(&text).unwrap();
+    (text, tokens)
+}
+
+/// Asserts the clause of the unit `u` found, with its message.
+pub(super) fn clause_found(u: &(String, Vec<Token>)) {
+    let (text, tokens) = u;
+    let e = parse(text, tokens, "Unit", TOP).unwrap_err();
+    let clause = e.clause.as_ref().unwrap();
+    assert!(
+        clause
+            .message
+            .starts_with("The test case `1 with x = 0 -> 1` of `double` holds"),
+        "{}",
+        clause.message
+    );
+}
+
+/// A clause after a few cases is found; the time is held in `bench/test_case.rs`.
 #[test]
-fn finding_a_clause_in_a_test_case_scales() {
-    let units = scaling::inputs(500, |n| {
-        let cases: String = (0..n).map(|i| format!("{i} -> {}, ", 2 * i)).collect();
-        let text = format!("double(positional x) = x * 2 test {{ {cases}1 with x = 0 -> 1 }}\n");
-        let tokens = lex(&text).unwrap();
-        (text, tokens)
-    });
-    scaling::check("a clause in a test case after n cases", 500, |n| {
-        let (text, tokens) = &units[&n];
-        let e = parse(text, tokens, "Unit", TOP).unwrap_err();
-        let clause = e.clause.as_ref().unwrap();
-        assert!(
-            clause
-                .message
-                .starts_with("The test case `1 with x = 0 -> 1` of `double` holds"),
-            "{}",
-            clause.message
-        );
-    });
+fn finding_a_clause_after_a_few_test_cases() {
+    for n in [0, 1, 2, 9] {
+        clause_found(&clause_after(n));
+    }
 }

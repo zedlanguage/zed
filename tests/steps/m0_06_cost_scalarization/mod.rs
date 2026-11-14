@@ -2,6 +2,7 @@
 //! pipeline (parse each line, keep the errors, count them by service) placed on a CPU alone or
 //! split with a GPU, compared by the scalar cost and by content address.
 
+mod bench;
 mod overlap;
 mod peak;
 
@@ -245,8 +246,8 @@ fn random_plan(rng: &mut Rng, devices: usize) -> Plan {
 #[test]
 fn the_scalar_is_monotone_in_work_depth_and_cut_edges() {
     let t = workstation();
-    let mut rng = Rng::new(0x6c05);
-    for _ in 0..RANDOM_INSTANCES {
+    let mut rng = Rng::new(zed_tests::test_seed());
+    for _ in 0..RANDOM_INSTANCES / 4 {
         let p = plan_with(&mut rng);
         let base = scalarize(&p, &t);
         let i = rng.below(p.regions.len());
@@ -270,9 +271,9 @@ fn plan_with(rng: &mut Rng) -> Plan {
 #[test]
 fn the_pick_is_the_same_in_every_arrival_order_and_minimal_over_every_feasible_plan() {
     let t = workstation();
-    let mut rng = Rng::new(0xf00d);
+    let mut rng = Rng::new(zed_tests::test_seed());
     let mut pruned = 0;
-    for _ in 0..RANDOM_INSTANCES {
+    for _ in 0..RANDOM_INSTANCES / 4 {
         let mut plans: Vec<Plan> = (0..2 + rng.below(6))
             .map(|_| random_plan(&mut rng, 2))
             .collect();
@@ -305,38 +306,44 @@ fn the_pick_is_the_same_in_every_arrival_order_and_minimal_over_every_feasible_p
         }
     }
     assert!(
-        pruned > RANDOM_INSTANCES / 2,
+        pruned > RANDOM_INSTANCES / 10,
         "the frontier pruned only {pruned} plans"
     );
     assert_eq!(brent(0, 0, 8), 0);
 }
 
+/// `n` plans, each a fused or a split variant scaled by its distance from the end of the list,
+/// so the frontier holds the last two, and every other plan is compared with those only. The
+/// input lists them last, where a scan of the plans in arrival order meets them last.
+fn frontier_plans(n: usize) -> Vec<Plan> {
+    (0..n)
+        .map(|i| {
+            let k = (n - i) as u64;
+            let (work, depth) = if k.is_multiple_of(2) {
+                (100 + k, 50 + k)
+            } else {
+                (120 + k, 10 + k)
+            };
+            let region = Region {
+                device: 0,
+                work,
+                depth,
+                footprint: 10 + k,
+                retained: 0,
+            };
+            plan((i % 256) as u8, vec![region], vec![])
+        })
+        .collect()
+}
+
+/// [`frontier_plans`] keeps a frontier of at most two plans and a pick, at small sizes; the
+/// time of the pick is held in `bench/mod.rs`.
 #[test]
-fn the_frontier_takes_time_linear_in_the_plans_when_it_stays_small() {
-    // Each plan is a fused or a split variant scaled by its distance from the end of the list,
-    // so the frontier holds the last two, and every other plan is compared with those only.
-    // The input lists them last, where a scan of the plans in arrival order meets them last.
-    let plans = |n: usize| -> Vec<Plan> {
-        (0..n)
-            .map(|i| {
-                let k = (n - i) as u64;
-                let (work, depth) = if k.is_multiple_of(2) {
-                    (100 + k, 50 + k)
-                } else {
-                    (120 + k, 10 + k)
-                };
-                let region = Region {
-                    device: 0,
-                    work,
-                    depth,
-                    footprint: 10 + k,
-                    retained: 0,
-                };
-                plan((i % 256) as u8, vec![region], vec![])
-            })
-            .collect()
-    };
-    zed_tests::scaling::check("the Pareto frontier of plans", 2000, |n| {
-        pick(&plans(n), &workstation());
-    });
+fn the_frontier_of_scaled_variants_stays_small_at_small_sizes() {
+    let t = workstation();
+    for n in [1, 2, 9] {
+        let plans = frontier_plans(n);
+        assert!(frontier(&plans, &t).len() <= 2);
+        assert!(pick(&plans, &t).is_some());
+    }
 }

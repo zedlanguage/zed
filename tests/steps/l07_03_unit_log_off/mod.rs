@@ -4,6 +4,7 @@
 //! the log port of step L7.3 to read. Each other way to write a unit item is refused with its
 //! reason.
 
+mod bench;
 mod items;
 mod modes;
 mod resolution;

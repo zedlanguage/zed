@@ -14,6 +14,7 @@
 //! The tests sit in the folder of step L3.9, whose group and ring normal forms this library
 //! gives; the row exists so that L3.9 does not wait.
 
+mod bench;
 mod calibration;
 mod choice;
 mod factored;

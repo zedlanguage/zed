@@ -11,7 +11,7 @@ use zedc::unit::{Dir, Files, load};
 
 /// A package directory of its own for test `name`, holding `files` as bytes, under the test
 /// target's scratch directory; files in it are overwritten by each run, never deleted.
-fn package_dir(name: &str, files: &[(&str, &[u8])]) -> PathBuf {
+pub(super) fn package_dir(name: &str, files: &[(&str, &[u8])]) -> PathBuf {
     let d = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
         .join("l02_03_source")
         .join(name);
@@ -157,30 +157,25 @@ fn an_imported_unit_with_crlf_line_ends_loads() {
     assert!(pricing.resolved.is_some());
 }
 
+/// A unit of `k` lines in NFC with `\r\n` line ends and accented strings, so that the UTF-8, NFC
+/// and line-end passes each read every byte.
+pub(super) fn accented_crlf(k: usize) -> Vec<u8> {
+    (0..k)
+        .flat_map(|i| format!("cafe{i} = \"crème brûlée\";\r\n").into_bytes())
+        .collect()
+}
+
+/// A unit of a few lines with `\r\n` line ends is read as source as one line per line, with no
+/// `\r` left; the time is held linear in its bytes in `bench/source.rs`.
 #[test]
-fn reading_a_unit_as_source_is_linear_in_its_bytes() {
-    // A unit of `k` lines in NFC with `\r\n` line ends and accented strings, so that the UTF-8,
-    // NFC and line-end passes each read every byte; the files are written before timing.
-    let n = 4000;
-    let unit = |k: usize| -> Vec<u8> {
-        (0..k)
-            .flat_map(|i| format!("cafe{i} = \"crème brûlée\";\r\n").into_bytes())
-            .collect()
-    };
-    let dirs: Vec<(usize, Dir)> = [n, 8 * n]
-        .into_iter()
-        .map(|k| {
-            let d = package_dir(&format!("scaling{k}"), &[("pricing.zed", &unit(k))]);
-            (k, Dir(d))
-        })
-        .collect();
-    let dir = |k: usize| &dirs.iter().find(|(m, _)| *m == k).unwrap().1;
-    for &(k, ref d) in &dirs {
+fn a_unit_of_a_few_lines_is_read_as_source() {
+    for k in [1, 2, 9] {
+        let d = Dir(package_dir(
+            &format!("small{k}"),
+            &[("pricing.zed", &accented_crlf(k))],
+        ));
         let text = d.read("pricing.zed").unwrap().unwrap();
         assert_eq!(text.lines().count(), k);
         assert!(!text.contains('\r'));
     }
-    zed_tests::scaling::check_order("Dir::read of a unit of n lines", n, 1, |k| {
-        std::hint::black_box(dir(k).read("pricing.zed"));
-    });
 }

@@ -1,6 +1,8 @@
 //! The evaluator's provenance walks (item T14-provenance): the origins of a failure, found in
 //! one backward pass over the run graph, and terms whose subterms are shared, as a term built
 //! by cloning is.
+//! The benchmarks of these walks are in `bench/provenance.rs`; their inputs are built here,
+//! and what each asserts besides its ratio is checked here at small sizes (TEST-bench-move-rest).
 
 use std::collections::BTreeSet;
 use zed_kernel::Shared;
@@ -8,10 +10,9 @@ use zed_kernel::Shared;
 use zed_kernel::term::build::{if_, let_, lit, prim, var};
 use zed_kernel::{Evaluator, Family, Prim, Provenance, Term, Value, World};
 use zed_tests::kernel::*;
-use zed_tests::scaling;
 
 /// The value of `t` and the provenance of its run.
-fn trace(t: &Term) -> (Value, Provenance) {
+pub(super) fn trace(t: &Term) -> (Value, Provenance) {
     let mut ev = Evaluator::new(World::new()).with_provenance(vec![Value::Int(0)]);
     let v = ev.run(t).unwrap();
     (v, ev.provenance().unwrap())
@@ -122,7 +123,7 @@ fn a_failure_taken_out_of_a_tuple_starts_at_its_literal() {
 /// `if true then D else D`, `depth` levels deep, each level's two branches one shared term, as
 /// cloning a branch into both arms builds: the term has `depth` distinct nodes and `2^depth`
 /// positions, and the run takes one branch per level.
-fn shared_branches(depth: usize) -> Term {
+pub(super) fn shared_branches(depth: usize) -> Term {
     let mut d = Shared::new(lit(1));
     for _ in 0..depth {
         d = Shared::new(Term::If(Shared::new(lit(true)), d.clone(), d));
@@ -157,30 +158,9 @@ fn two_uses_of_a_cloned_term_in_one_scope_are_two_facts() {
     assert_eq!(twos, 2);
 }
 
-#[test]
-fn a_term_shared_by_both_branches_of_each_level_scales() {
-    // The run takes `depth` branches, and a fact's position is its parent's and one child
-    // index, so recording its provenance is `O(depth)`. Copying the term to one node per
-    // position took `2^depth` steps (COMPLEXITY.md K25).
-    let n = 3;
-    let terms: Vec<(usize, Term)> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| (m, shared_branches(m)))
-        .collect();
-    scaling::check_order(
-        "a run with provenance of shared branches, by depth",
-        n,
-        1,
-        |m| {
-            let (_, t) = terms.iter().find(|(size, _)| *size == m).expect("built");
-            assert_eq!(trace(t).0, Value::Int(1));
-        },
-    );
-}
-
 /// `let row = (#missing0, …) in ((row.0 * row.1) * row.2) * …`: the readings multiplied one
 /// at a time, as a fold over a list does. The `k`-th product holds `k` members.
-fn missing_chain(n: usize) -> Term {
+pub(super) fn missing_chain(n: usize) -> Term {
     let row = prim(
         Prim::Tuple,
         (0..n)
@@ -203,55 +183,11 @@ fn each_missing_reading_of_a_chain_is_traced_to_its_literal() {
     );
 }
 
-#[test]
-fn the_origins_of_a_failure_built_one_reading_at_a_time_scale() {
-    // The `k`-th product's `#errs` set is made from the one before it by adding one member, so
-    // the failures it holds are found from that set's by their difference, and the common
-    // members of two sets likewise: `O(n log n)`. Reading every member of each set took
-    // `O(n² log n)` (COMPLEXITY.md K25). The runs are recorded before timing.
-    let n = 200;
-    let runs: Vec<(usize, Provenance)> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| (m, trace(&missing_chain(m)).1))
-        .collect();
-    scaling::check_order(
-        "the origins of a chain of n missing readings, by n",
-        n,
-        1,
-        |m| {
-            let (_, p) = runs.iter().find(|(size, _)| *size == m).expect("recorded");
-            assert_eq!(p.origins(p.result()).len(), m);
-        },
-    );
-}
-
-#[test]
-fn the_check_for_repeated_addresses_on_a_chain_of_products_scales() {
-    // A chain of n products is n deep, and two positions far apart in it are compared by a
-    // walk up to their common ancestor; a set ordered by position made the check `O(n²)`
-    // (54.7x at 250 vs 2000). Addresses are found by their hashes. The runs are recorded
-    // before timing.
-    let n = 250;
-    let runs: Vec<(usize, Provenance)> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| (m, trace(&missing_chain(m)).1))
-        .collect();
-    scaling::check_order(
-        "the check for repeated addresses on a chain of n products, by n",
-        n,
-        1,
-        |m| {
-            let (_, p) = runs.iter().find(|(size, _)| *size == m).expect("recorded");
-            assert!(p.repeated().is_empty());
-        },
-    );
-}
-
 /// `let f0 = #late in let f1 = fam({0, 1}, k -> f0) in … f{depth}[0]…[0]`: a table of
 /// `depth` levels whose two entries at each level are one shared value, read down to its
 /// bottom. The run takes `depth` steps; the value `f{depth}`, read as a tree, has `2^depth`
 /// leaves.
-fn shared_levels(depth: usize) -> Term {
+pub(super) fn shared_levels(depth: usize) -> Term {
     let keys = lit(Family::set([0, 1].map(Value::Int)));
     let mut read = var(&format!("f{depth}"));
     for _ in 0..depth {
@@ -273,38 +209,6 @@ fn a_failure_read_out_of_a_table_of_shared_levels_starts_at_its_literal() {
     assert_eq!(v, Value::atom("late"));
     unique(&p);
     assert_eq!(origin_terms(&p), ["#late"]);
-}
-
-#[test]
-fn the_origins_of_a_failure_read_out_of_shared_levels_scale() {
-    // The run takes `depth` steps, and the failures each value holds are found once per
-    // distinct tuple and family, keyed by its id: `O(depth)`. Walking each value as a tree took
-    // `2^depth` steps (COMPLEXITY.md K25). The runs are recorded before the timing.
-    shared_levels_scale(2);
-}
-
-#[test]
-fn the_origins_of_a_failure_read_out_of_deep_shared_levels_scale() {
-    // Each level's family holds the level below it, so comparing two levels' maps compares
-    // them whole: finding one level's set from another's by their difference made this
-    // `O(depth²)`. A family's set is found that way only from a family it was made from.
-    shared_levels_scale(128);
-}
-
-fn shared_levels_scale(n: usize) {
-    let runs: Vec<(usize, Provenance)> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| (m, trace(&shared_levels(m)).1))
-        .collect();
-    scaling::check_order(
-        "the origins of a failure read out of shared levels, by depth",
-        n,
-        1,
-        |m| {
-            let (_, p) = runs.iter().find(|(size, _)| *size == m).expect("recorded");
-            assert_eq!(p.origins(p.result()).len(), 1);
-        },
-    );
 }
 
 /// Whether `v` is `m` or holds it, read as a tree.
@@ -473,7 +377,7 @@ fn deep_entry(i: usize, depth: usize) -> Value {
 /// `let f0 = deep_entry(0) in let f1 = f0 ∪ deep_entry(1) in … f{n}[0]…[0][0]`: a table whose
 /// entry at key 0 is replaced at each of `n` steps by the union of it and a new value `depth`
 /// levels deep.
-fn deep_replacements(n: usize, depth: usize) -> Term {
+pub(super) fn deep_replacements(n: usize, depth: usize) -> Term {
     let mut read = var(&format!("f{n}"));
     for _ in 0..=depth {
         read = get(read, lit(0));
@@ -559,34 +463,11 @@ fn the_sets_of_a_table_changed_entry_by_entry_agree_with_a_search() {
     agrees_with_search(&t);
 }
 
-#[test]
-fn the_origins_of_a_failure_under_deep_replacements_scale() {
-    // Each of 32 steps replaces the entry at key 0 by a value `d` levels deep, so `d` nested
-    // families change per step, each found from the one it was made from. Comparing their
-    // values fully read each pair down to its difference, `O(d)` per level and `O(d²)` per
-    // step; a shallow comparison makes it `O(d log n)` per step (COMPLEXITY.md K25). The
-    // runs are recorded before timing.
-    let d = 24;
-    let runs: Vec<(usize, Provenance)> = [d, scaling::FACTOR * d]
-        .into_iter()
-        .map(|m| (m, trace(&deep_replacements(32, m)).1))
-        .collect();
-    scaling::check_order(
-        "the origins of a failure under 32 replacements d levels deep, by d",
-        d,
-        1,
-        |m| {
-            let (_, p) = runs.iter().find(|(size, _)| *size == m).expect("recorded");
-            assert_eq!(p.origins(p.result()).len(), 33);
-        },
-    );
-}
-
 /// `let r = (#m0, …, #m{n-1}) in let f0 = fam({0}, k -> r.0) in let f1 = f0 ∪ fam({1}, k ->
 /// f0[0] * r.1) in … f{n-1}[n-1]`: a table that gains one entry per step, each the product of
 /// the last entry and one more reading, so entry `i` holds a set of `i + 1` failures that
 /// holds the set of entry `i - 1`.
-fn growing_entries(n: usize) -> Term {
+pub(super) fn growing_entries(n: usize) -> Term {
     let row = prim(
         Prim::Tuple,
         (0..n).map(|i| lit(Value::atom(&format!("m{i}")))).collect(),
@@ -614,30 +495,6 @@ fn a_failure_read_out_of_a_table_of_growing_entries_is_traced_to_each_literal() 
     assert_eq!(v.errs().map(|e| e.len()), Some(6), "{v}");
     assert_eq!(origin_terms(&p), ["#m0", "#m1", "#m2", "#m3", "#m4", "#m5"]);
     agrees_with_search(&growing_entries(6));
-}
-
-#[test]
-fn the_origins_of_a_table_of_growing_entries_scale() {
-    // Entry `i` of table `f{i}` holds the `i` failures of entry `i - 1` and one more, and the
-    // fact of each `let` meets the result's `n` failures with its table's set. Found newest
-    // fact first, each set was read entry by entry and shared no nodes with the set it was
-    // made from, so each meet and join cost its size, `O(n²)` in all; found oldest fact
-    // first, each set is made from the last and each meet from the last meet, by their
-    // differences (COMPLEXITY.md K25). The runs are recorded before timing.
-    let n = 400;
-    let runs: Vec<(usize, Provenance)> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| (m, trace(&growing_entries(m)).1))
-        .collect();
-    scaling::check_order(
-        "the origins of a failure read out of n growing entries, by n",
-        n,
-        1,
-        |m| {
-            let (_, p) = runs.iter().find(|(size, _)| *size == m).expect("recorded");
-            assert_eq!(p.origins(p.result()).len(), m);
-        },
-    );
 }
 
 #[test]
@@ -682,32 +539,10 @@ fn the_sets_of_a_table_whose_first_entry_grows_agree_with_a_search() {
 
 /// `fam({0, …, n-1}, k -> (k, k))[2].1 * #late`: a failure read beside a table of `n` rows that
 /// hold none.
-fn late_beside_table(n: usize) -> Term {
+pub(super) fn late_beside_table(n: usize) -> Term {
     let keys = lit(Family::set((0..n as i64).map(Value::Int)));
     let table = fam(keys, "k", prim(Prim::Tuple, vec![var("k"), var("k")]));
     mul(nth(get(table, lit(2)), 1), lit(Value::atom("late")))
-}
-
-#[test]
-fn the_origins_of_a_failure_read_beside_a_table_holding_none_cost_nothing_for_the_table() {
-    // Found oldest fact first, the sets were found over every fact the failure's fact reaches,
-    // so the table's `n` rows were read, `O(n log n)`; facts whose values hold no failure are
-    // now left out, and the cost does not depend on `n` (COMPLEXITY.md K25). The runs are
-    // recorded before timing.
-    let n = 8000;
-    let runs: Vec<(usize, Provenance)> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| (m, trace(&late_beside_table(m)).1))
-        .collect();
-    scaling::check_order(
-        "the origins of a failure read beside a table of n rows holding none, by n",
-        n,
-        0,
-        |m| {
-            let (_, p) = runs.iter().find(|(size, _)| *size == m).expect("recorded");
-            assert_eq!(p.origins(p.result()).len(), 1);
-        },
-    );
 }
 
 #[test]
@@ -736,4 +571,30 @@ fn a_table_whose_rows_hold_failures_in_some_entries_agrees_with_a_search() {
     assert_eq!(v, Value::atom("late"));
     assert_eq!(origin_terms(&p), ["#late"]);
     agrees_with_search(&t);
+}
+
+/// The run's result has `k` origins.
+pub(super) fn has_origins(p: &Provenance, k: usize) {
+    assert_eq!(p.origins(p.result()).len(), k);
+}
+
+/// What each benchmark of `bench/provenance.rs` asserts besides its ratio, at small sizes: a run
+/// of shared branches gives its value; a chain of missing readings has one origin each and no
+/// repeated address; a failure read out of shared levels, or beside a table that holds none,
+/// has one origin; one under 32 deep replacements has 33; and one read out of growing entries
+/// has one per entry. The table beside the failure is read at key 2, so it has 3 rows or more.
+#[test]
+fn the_origins_of_each_benchmark_run_are_found_at_small_sizes() {
+    for n in [1, 2, 9] {
+        assert_eq!(trace(&shared_branches(n)).0, Value::Int(1));
+        let p = trace(&missing_chain(n)).1;
+        has_origins(&p, n);
+        assert!(p.repeated().is_empty());
+        has_origins(&trace(&shared_levels(n)).1, 1);
+        has_origins(&trace(&deep_replacements(32, n)).1, 33);
+        has_origins(&trace(&growing_entries(n)).1, n);
+    }
+    for n in [3, 4, 9] {
+        has_origins(&trace(&late_beside_table(n)).1, 1);
+    }
 }

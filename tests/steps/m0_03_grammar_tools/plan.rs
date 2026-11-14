@@ -3,7 +3,6 @@
 //! from the needs, and a first paragraph whose counts are out of date.
 
 use super::{Dir, tool};
-use zed_tests::scaling::check;
 use zed_tools::plan::{check_plan, fix_plan, run};
 
 /// A plan whose first paragraph states `head` and whose table holds `rows`, each
@@ -24,7 +23,7 @@ fn plan(head: &str, rows: &[(&str, &str, &str)]) -> String {
 }
 
 /// What the tool prints for `text`, and whether it passed.
-fn checked(text: &str) -> (bool, String) {
+pub(super) fn checked(text: &str) -> (bool, String) {
     let mut out = String::new();
     let ok = check_plan(text, &mut out).expect("the plan has its table");
     (ok, out)
@@ -150,7 +149,7 @@ fn a_file_with_no_table_stops_the_tool() {
 }
 
 /// The plan `text` after `fix_plan`, which must succeed.
-fn fixed(text: &str) -> String {
+pub(super) fn fixed(text: &str) -> String {
     fix_plan(text).unwrap_or_else(|e| panic!("{e}")).text
 }
 
@@ -307,7 +306,7 @@ fn this_repository_s_plan_passes() {
 }
 
 /// A chain of `n` items, each needing the one before, with the counts that match.
-fn chain(n: usize) -> String {
+pub(super) fn chain(n: usize) -> String {
     let rows: Vec<(String, String, String)> = (0..n)
         .map(|i| {
             let needs = if i == 0 {
@@ -332,35 +331,25 @@ fn chain(n: usize) -> String {
     )
 }
 
-#[test]
-fn plan_scales_with_the_number_of_rows() {
-    let n = 500;
-    let texts = [chain(n), chain(8 * n)];
-    check("plan, by rows", n, |m| {
-        let text = &texts[usize::from(m != n)];
-        assert_eq!(checked(text), (true, String::new()));
-    });
+/// [`chain`]`(m)` with every level written as 0, so the fix rewrites every row but the first.
+pub(super) fn stale_chain(m: usize) -> String {
+    chain(m)
+        .lines()
+        .map(|l| match l.strip_prefix("| ") {
+            Some(rest) if rest.starts_with(|c: char| c.is_ascii_digit()) => {
+                format!("| 0 |{}\n", rest.split_once(" |").expect("a row").1)
+            }
+            _ => format!("{l}\n"),
+        })
+        .collect()
 }
 
+/// A chain passes the check and its stale copy is fixed back to it, at small sizes; the time of
+/// both is held in `bench/plan.rs`.
 #[test]
-fn fix_scales_with_the_number_of_rows() {
-    // Every level written as 0, so the fix rewrites every row but the first.
-    let n = 500;
-    let stale = |m: usize| {
-        chain(m)
-            .lines()
-            .map(|l| match l.strip_prefix("| ") {
-                Some(rest) if rest.starts_with(|c: char| c.is_ascii_digit()) => {
-                    format!("| 0 |{}\n", rest.split_once(" |").expect("a row").1)
-                }
-                _ => format!("{l}\n"),
-            })
-            .collect::<String>()
-    };
-    let texts = [stale(n), stale(8 * n)];
-    let wants = [chain(n), chain(8 * n)];
-    check("plan --fix, by rows", n, |m| {
-        let k = usize::from(m != n);
-        assert_eq!(fixed(&texts[k]), wants[k]);
-    });
+fn a_chain_passes_and_its_stale_levels_are_fixed_at_small_sizes() {
+    for n in [1, 2, 9] {
+        assert_eq!(checked(&chain(n)), (true, String::new()));
+        assert_eq!(fixed(&stale_chain(n)), chain(n));
+    }
 }

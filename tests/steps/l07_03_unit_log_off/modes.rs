@@ -14,8 +14,6 @@
 
 use std::path::Path;
 
-use zed_tests::scaling;
-
 use zed_tests::step_helpers::l01_36a_executables::{Ran, built, dir, executable, interpreter};
 use zed_tools::spec_checks::{before_build, undefined_builds};
 
@@ -91,20 +89,25 @@ fn a_run_gives_the_same_outputs_in_each_build_with_and_without_the_log_off_item(
     }
 }
 
-#[test]
-fn finding_the_kinds_of_build_is_linear() {
-    let texts: Vec<(usize, String)> = [3000, 24000]
-        .into_iter()
-        .map(|n| {
-            let rest: String = (0..n)
-                .map(|i| format!("Line {i}: a debug build, the build, a counting build.\n"))
-                .collect();
-            (n, fixture(&rest))
-        })
+/// A DESIGN.md of `n` lines after the bullet, each naming three kinds of build it defines.
+pub(super) fn lines_of_builds(n: usize) -> String {
+    let rest: String = (0..n)
+        .map(|i| format!("Line {i}: a debug build, the build, a counting build.\n"))
         .collect();
-    scaling::check_order("finding the kinds of build in n lines", 3000, 1, |n| {
-        let (_, text) = texts.iter().find(|(m, _)| *m == n).unwrap();
-        assert!(undefined(text).is_empty());
-        assert_eq!(before_build(text).len(), 3 * n + 5);
-    });
+    fixture(&rest)
+}
+
+/// Asserts every kind of build the text `text` of [`lines_of_builds`]`(n)` names defined, and
+/// found before the word `build` `3n + 5` times.
+pub(super) fn kinds_found(text: &str, n: usize) {
+    assert!(undefined(text).is_empty());
+    assert_eq!(before_build(text).len(), 3 * n + 5);
+}
+
+/// The kinds of build in a few lines are found; the time is held linear in `bench/modes.rs`.
+#[test]
+fn finding_the_kinds_of_build_in_a_few_lines() {
+    for n in [0, 1, 2, 9] {
+        kinds_found(&lines_of_builds(n), n);
+    }
 }

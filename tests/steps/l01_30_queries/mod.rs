@@ -2,6 +2,7 @@
 //! text; a table row by the definitions its check reaches, so an edit recomputes only the
 //! rows whose definitions changed, and every answer equals a fresh database's.
 
+mod bench;
 mod keys;
 mod report;
 mod reuse;

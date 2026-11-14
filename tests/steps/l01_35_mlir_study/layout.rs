@@ -9,7 +9,7 @@ use zed_rt::Word;
 use zed_rt::heap::CELL_BYTES;
 use zed_tests::layout::{Native, Record, ast_stage, record};
 use zed_tests::oracle::step_units;
-use zed_tests::scaling::{self, check};
+use zed_tests::scaling;
 use zedc::ast::{Expr, ExprKind, Pattern, Stmt, Type};
 use zedc::zir::{Edge, Node, Op, Region, Src};
 
@@ -157,7 +157,7 @@ fn the_value_a_tables_clause_gives_is_a_node_of_a_function_and_of_a_method() {
 }
 
 /// A unit of `n` definitions, each with a table of one row.
-fn many(n: usize) -> String {
+pub(super) fn many(n: usize) -> String {
     (0..n)
         .map(|i| {
             format!(
@@ -185,9 +185,12 @@ fn the_peak_bytes_of_n_and_8n_definitions_scale() {
     );
 }
 
+/// The layout record of a unit of a few definitions is made, one native run per definition; the
+/// time is held linear in the definitions in `bench/layout.rs`.
 #[test]
-fn the_record_of_a_unit_scales() {
-    check("the layout record of a unit of n definitions", 100, |n| {
-        record(&many(n)).unwrap_or_else(|e| panic!("{e}"));
-    });
+fn the_record_of_a_unit_of_a_few_definitions_is_made() {
+    for n in [1, 2, 9] {
+        let r = record(&many(n)).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(r.native.runs, n as u64);
+    }
 }

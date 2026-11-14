@@ -4,7 +4,7 @@
 use std::fs;
 
 use zed_tests::fences::{self, DocFence};
-use zed_tests::scaling::check;
+
 use zed_tools::spec::{Spec, zed_fences_in};
 use zed_tools::sync;
 
@@ -12,7 +12,7 @@ use super::copies::{marks_by_key, tokens_by_key};
 use zed_tests::step_helpers::m0_03_grammar_tools::{KERNEL, design, fence, spec_dir, zed_dir};
 
 /// The section and place of each fence of the document `text`.
-fn keys(text: &str) -> Vec<(String, usize)> {
+pub(super) fn keys(text: &str) -> Vec<(String, usize)> {
     zed_fences_in(text, "DESIGN.md")
         .expect("the fences are closed")
         .into_iter()
@@ -121,7 +121,7 @@ fn a_fence_added_to_one_section_changes_only_its_keys() {
 }
 
 /// A document of `n` sections, each with a heading, a part and two fences.
-fn sections_of(n: usize) -> String {
+pub(super) fn sections_of(n: usize) -> String {
     (0..n)
         .map(|i| {
             format!(
@@ -132,14 +132,11 @@ fn sections_of(n: usize) -> String {
         .collect()
 }
 
+/// Two `zed` fences of each section are keyed, the `peg` fence is not; the time it takes is
+/// held linear in `bench/keys.rs`.
 #[test]
-fn keying_scales_with_the_document() {
-    let texts = [2000, 8 * 2000].map(|n| (n, sections_of(n)));
-    check("fence keys, by sections", 2000, |n| {
-        let (_, text) = texts
-            .iter()
-            .find(|t| t.0 == n)
-            .expect("a size that was built");
-        assert_eq!(keys(text).len(), 2 * n);
-    });
+fn each_section_of_a_generated_document_keys_its_zed_fences() {
+    for n in [1, 2, 9] {
+        assert_eq!(keys(&sections_of(n)).len(), 2 * n);
+    }
 }

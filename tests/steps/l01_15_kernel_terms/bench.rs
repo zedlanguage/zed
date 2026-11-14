@@ -1,7 +1,11 @@
 //! The printer and the drop of terms at the rule of low complexity (DESIGN.md Part G): the
 //! benchmarks of this step, run by `tools/run_tests.sh --bench` and left out of its default run
 //! (TEST-bench-split). Each check they make besides the ratio has a small instance among the
-//! correctness tests in `scaling.rs`.
+//! correctness tests in `scaling.rs`. The benchmarks of `deep.rs` and `written.rs` are in
+//! `bench/deep.rs` and `bench/written.rs` (TEST-bench-move-rest).
+
+mod deep;
+mod written;
 
 use std::sync::Mutex;
 

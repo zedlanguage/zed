@@ -1,9 +1,9 @@
 //! The `split` tool of plan row ZPARSE-par: one depth scan cuts a program into segments of whole
 //! items, each segment is parsed alone, and the items must be those of the whole-file parse. The
 //! tests run it on the impl corpus, on damaged copies of each corpus file, on small grammars
-//! that show which pairs keep a cut away, and at n and 8n.
+//! that show which pairs keep a cut away, and at small sizes of the input that `bench/split.rs`
+//! times.
 
-use zed_tests::scaling::{check, inputs};
 use zed_tools::spec::Spec;
 use zed_tools::split::{Parsed, Splitter, compare, run, split_parse, whole_parse, zed_files};
 use zed_tools::syntax::lex;
@@ -12,13 +12,13 @@ use zedc::parse::{Grammar, Kind};
 use super::{design, fence, spec_dir, tool};
 
 /// The real grammars, read from a spec written for the test.
-fn real(name: &str) -> Spec {
+pub(super) fn real(name: &str) -> Spec {
     let dir = spec_dir(name, &design(""), "");
     Spec::open(&dir.root()).expect("the real grammars")
 }
 
 /// The tokens of `text` without `END`, as kind and text.
-fn tokens(spec: &Spec, text: &str) -> Option<Vec<(Kind, String)>> {
+pub(super) fn tokens(spec: &Spec, text: &str) -> Option<Vec<(Kind, String)>> {
     let toks = lex(&spec.lexical, text).ok()?;
     let n = toks.0.len() - 1;
     Some(
@@ -30,7 +30,7 @@ fn tokens(spec: &Spec, text: &str) -> Option<Vec<(Kind, String)>> {
 }
 
 /// `toks` borrowed, as the tool takes them.
-fn view(toks: &[(Kind, String)]) -> Vec<(Kind, &str)> {
+pub(super) fn view(toks: &[(Kind, String)]) -> Vec<(Kind, &str)> {
     toks.iter().map(|(k, t)| (*k, t.as_str())).collect()
 }
 
@@ -231,7 +231,7 @@ fn a_grammar_the_scan_cannot_read_is_reported() {
 }
 
 /// `n` items, half with a block body.
-fn items(n: usize) -> String {
+pub(super) fn items(n: usize) -> String {
     (0..n)
         .map(|i| {
             if i % 2 == 0 {
@@ -243,21 +243,30 @@ fn items(n: usize) -> String {
         .collect()
 }
 
+/// The depth scan of `t`, the tokens of [`items`]`(n)`, cuts it into its `n` items.
+pub(super) fn cuts_between_items(sp: &Splitter, t: &[(Kind, &str)], n: usize) {
+    assert_eq!(sp.cuts(t).expect("balanced").len(), n);
+}
+
+/// The split parse of `t`, the tokens of [`items`]`(n)`, gives its `n` items.
+pub(super) fn split_parses_items(spec: &Spec, sp: &Splitter, t: &[(Kind, &str)], n: usize) {
+    let cuts = sp.cuts(t).expect("balanced");
+    assert!(matches!(
+        split_parse(&spec.syntactic, "Item", t, &cuts),
+        Ok(Parsed::Items(i)) if i.len() == n
+    ));
+}
+
+/// The scan and the split parse of [`items`] at small sizes; their time is held in
+/// `bench/split.rs`.
 #[test]
-fn the_scan_and_the_split_parse_scale_with_the_number_of_items() {
-    let spec = real("split_scaling");
+fn the_scan_and_the_split_parse_find_each_item_at_small_sizes() {
+    let spec = real("split_small");
     let sp = Splitter::new(&spec.syntactic, "Item").expect("the real grammar splits");
-    let toks = inputs(2000, |n| tokens(&spec, &items(n)).expect("lexes"));
-    check("split: the depth scan", 2000, |n| {
-        let t = view(&toks[&n]);
-        assert_eq!(sp.cuts(&t).expect("balanced").len(), n);
-    });
-    check("split: the split parse", 2000, |n| {
-        let t = view(&toks[&n]);
-        let cuts = sp.cuts(&t).expect("balanced");
-        assert!(matches!(
-            split_parse(&spec.syntactic, "Item", &t, &cuts),
-            Ok(Parsed::Items(i)) if i.len() == n
-        ));
-    });
+    for n in [1, 2, 9] {
+        let toks = tokens(&spec, &items(n)).expect("lexes");
+        let t = view(&toks);
+        cuts_between_items(&sp, &t, n);
+        split_parses_items(&spec, &sp, &t, n);
+    }
 }

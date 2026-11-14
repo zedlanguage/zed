@@ -2,7 +2,7 @@
 //! endings normalize to `\n`.
 
 mod accepted;
+mod bench;
 mod places;
 mod rejected;
-mod bench;
 mod scaling;

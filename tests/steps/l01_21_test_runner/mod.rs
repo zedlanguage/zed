@@ -2,6 +2,7 @@
 //! written in Zed: each step's `zed/` folder holds units whose tables and ✗ marks
 //! `zedc test` checks. The tests here check the runner itself.
 
+mod bench;
 mod command;
 mod cones;
 mod fences;

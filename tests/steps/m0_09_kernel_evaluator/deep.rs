@@ -1,12 +1,13 @@
 //! Programs far deeper than the minimum of 20,000 nested calls (DESIGN.md step M0.11). The
 //! evaluator keeps its frames on the heap, so each runs on a thread with a
 //! small stack: a test passes only if no part of the evaluator nests on the thread's stack.
+//! The benchmarks of these programs' time are in `bench/deep.rs`; each program they time runs
+//! here at small sizes as well (TEST-bench-move-rest).
 
 use zed_kernel::term::build::{app, if_, lam, lit, prim, var};
 use zed_kernel::{Evaluator, Family, KernelError, Prim, Schedule, Term, Value, World, eval};
 use zed_tests::deep::{linked_list, on_main_sized_stack};
 use zed_tests::kernel::*;
-use zed_tests::scaling;
 
 /// Far past [`zed_kernel::eval::MIN_NESTED_CALLS`].
 const DEEP: i64 = 1_000_000;
@@ -33,7 +34,7 @@ fn me(args: Vec<Term>) -> Term {
 }
 
 /// `total(k) = if k == 0 { 0 } else { k + total(k - 1) }`, which nests `k` calls.
-fn total(k: i64) -> Term {
+pub(super) fn total(k: i64) -> Term {
     let body = if_(
         eq(var("k"), lit(0)),
         lit(0),
@@ -44,7 +45,7 @@ fn total(k: i64) -> Term {
 
 /// `count(k, sum) = if k == 0 { sum } else { count(k - 1, sum + k) }`, a loop written as tail
 /// recursion.
-fn count_down(k: i64) -> Term {
+pub(super) fn count_down(k: i64) -> Term {
     let body = if_(
         eq(var("k"), lit(0)),
         var("sum"),
@@ -55,7 +56,7 @@ fn count_down(k: i64) -> Term {
 
 /// `go(k, then) = if k == 0 { end(then) } else { go(k - 1, x -> then(x + 1)) }`: a chain of
 /// `k` continuations, each the only holder of the one before.
-fn continuations(k: i64, end: impl FnOnce(Term) -> Term) -> Term {
+pub(super) fn continuations(k: i64, end: impl FnOnce(Term) -> Term) -> Term {
     let then = lam(&["x"], app(var("then"), vec![add(var("x"), lit(1))]));
     let body = if_(
         eq(var("k"), lit(0)),
@@ -70,7 +71,7 @@ fn continuations(k: i64, end: impl FnOnce(Term) -> Term) -> Term {
 
 /// `depth(k) = if k == 0 { 0 } else { sum of { 0 -> 1 + depth(k - 1) } }`: a recursion that
 /// passes through a `fam` and a `fold` at every level, as a tree walk does.
-fn through_regions(k: i64) -> Term {
+pub(super) fn through_regions(k: i64) -> Term {
     let once = lit(Value::Family(Family::set([0])));
     let inner = fam_with(once, |_| add(lit(1), me(vec![sub(var("k"), lit(1))])));
     let body = if_(
@@ -229,30 +230,6 @@ fn a_chain_of_demands_a_million_entries_long_is_defined() {
 }
 
 #[test]
-fn nested_calls_scale_with_depth() {
-    scaling::check("a recursion, by nested calls", 20_000, |n| {
-        eval(&total(n as i64)).unwrap();
-    });
-    scaling::check("a tail-recursive loop, by iterations", 20_000, |n| {
-        eval(&count_down(n as i64)).unwrap();
-    });
-    scaling::check("a chain of continuations, by length", 20_000, |n| {
-        eval(&continuations(n as i64, |then| app(then, vec![lit(0)]))).unwrap();
-    });
-    scaling::check("a recursion through regions, by depth", 5_000, |n| {
-        eval(&through_regions(n as i64)).unwrap();
-    });
-}
-
-#[test]
-fn provenance_of_a_deep_recursion_scales_with_depth() {
-    scaling::check("a traced recursion, by nested calls", 2_000, |n| {
-        let mut ev = Evaluator::new(World::new()).with_provenance(vec![]);
-        ev.run(&total(n as i64)).unwrap();
-    });
-}
-
-#[test]
 fn prim_and_tuple_results_are_the_arguments_in_order() {
     // The arguments of a primitive are evaluated left to right, each pushed before the next.
     let t = prim(Prim::Tuple, vec![lit(1), add(lit(1), lit(1)), lit(3)]);
@@ -276,13 +253,18 @@ fn a_list_as_deep_as_the_minimum_is_built_and_dropped() {
     });
 }
 
+/// Each program the benchmarks of `bench/deep.rs` time returns at small sizes: a recursion,
+/// with provenance and without, a tail-recursive loop, a chain of continuations, a recursion
+/// through regions and a list built by recursion.
 #[test]
-fn building_a_list_scales_with_its_length() {
-    // The tuple primitive copied its values, so each element copied the whole list behind it:
-    // 19,990 elements took 16 s. It now keeps the values it is given.
-    on_main_sized_stack(|| {
-        scaling::check("a list built by recursion, by length", 10_000, |n| {
-            eval(&linked_list(n as i64)).unwrap();
-        });
-    });
+fn each_benchmark_program_returns_at_small_sizes() {
+    for n in [1, 2, 9] {
+        eval(&total(n)).unwrap();
+        eval(&count_down(n)).unwrap();
+        eval(&continuations(n, |then| app(then, vec![lit(0)]))).unwrap();
+        eval(&through_regions(n)).unwrap();
+        eval(&linked_list(n)).unwrap();
+        let mut ev = Evaluator::new(World::new()).with_provenance(vec![]);
+        ev.run(&total(n)).unwrap();
+    }
 }

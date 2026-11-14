@@ -2,6 +2,7 @@
 //! and `return` with a value or a comma list, and the `;` rule: every statement ends in `;`
 //! but the trailing expression, which is the block's `return`.
 
+mod bench;
 mod blocks;
 mod empty_family;
 mod fences;

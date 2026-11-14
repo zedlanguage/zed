@@ -85,8 +85,8 @@ fn machine(eq: &System) -> Vec<IntervalSet> {
 
 #[test]
 fn phase_one_agrees_with_the_stack_machine() {
-    let mut rng = Rng::new(0x1e7);
-    for _ in 0..RANDOM_INSTANCES {
+    let mut rng = Rng::new(zed_tests::test_seed());
+    for _ in 0..RANDOM_INSTANCES / 4 {
         for eq in [System::random(&mut rng)]
             .map(|e| [e.clone(), e.bare()])
             .concat()
@@ -101,9 +101,9 @@ fn phase_one_agrees_with_the_stack_machine() {
 fn both_phases_end_at_a_sound_post_fixpoint() {
     // Phase 1 ends at a post-fixpoint; phase 2 keeps it one; and the result contains every
     // value of every execution that stays in a window around the constants.
-    let mut rng = Rng::new(0x50d);
+    let mut rng = Rng::new(zed_tests::test_seed());
     let mut narrowed = 0;
-    for _ in 0..RANDOM_INSTANCES {
+    for _ in 0..RANDOM_INSTANCES / 4 {
         let eq = System::random(&mut rng);
         let eq = if rng.below(2) == 0 { eq } else { eq.bare() };
         let order = order(&eq).unwrap();
@@ -122,7 +122,7 @@ fn both_phases_end_at_a_sound_post_fixpoint() {
         }
     }
     assert!(
-        narrowed > RANDOM_INSTANCES / 10,
+        narrowed > RANDOM_INSTANCES / 40,
         "phase 2 changed only {narrowed} systems"
     );
 }

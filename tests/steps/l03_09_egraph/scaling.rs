@@ -1,6 +1,7 @@
 //! The rule of low complexity (DESIGN.md Part G): each family at n and 8n, the work held to
 //! the order of its output. The terms are built as balanced trees of kernel terms, so their
-//! depth is `log n`, and before any run is timed.
+//! depth is `log n`, and before any run is timed. The benchmarks are in `bench/scaling.rs`; here
+//! each family is proved at small sizes.
 
 use std::sync::Arc;
 
@@ -10,7 +11,6 @@ use zed_kernel::term::build::{lit, prim, var};
 use zed_kernel::term::{Prim, Term};
 use zed_kernel::{Rat, Value};
 use zed_tests::instances::Rng;
-use zed_tests::scaling;
 
 /// The sum of `terms` as a balanced tree.
 fn sum(terms: &[Term]) -> Term {
@@ -61,13 +61,13 @@ fn less_x(a: Term) -> Term {
 }
 
 /// An identity and its binders.
-struct Id {
+pub(super) struct Id {
     lhs: Term,
     rhs: Term,
     names: Vec<String>,
 }
 
-fn proved(id: &Id) {
+pub(super) fn proved(id: &Id) {
     let names: Vec<&str> = id.names.iter().map(String::as_str).collect();
     let d = decide(&id.lhs, &id.rhs, &names, Carrier::Int);
     assert_eq!(d.verdict, Verdict::Proved);
@@ -77,7 +77,7 @@ fn proved(id: &Id) {
 }
 
 /// `(1 + x + ... + x ^ k) ^ 2` against its `2k + 1` written monomials: one dense product.
-fn square(k: usize) -> Id {
+pub(super) fn square(k: usize) -> Id {
     let x = || var("x");
     let ones: Vec<Term> = (0..=k).map(|i| pow(x(), i as i64)).collect();
     let written: Vec<Term> = (0..=2 * k)
@@ -94,7 +94,7 @@ fn square(k: usize) -> Id {
 }
 
 /// `A * B - x == B * A - x` for `A` and `B` of `n` random coefficients of 62 bits each in `x`.
-fn commute(n: usize) -> Id {
+pub(super) fn commute(n: usize) -> Id {
     let mut rng = Rng::new(7);
     let mut poly = || {
         let terms: Vec<Term> = (0..n)
@@ -115,7 +115,7 @@ fn commute(n: usize) -> Id {
 
 /// `(x0 + ... + x(n-1)) * (y + z)` against its `2n` written monomials: `n + 2` names, so the
 /// monomials are lists past `u128`'s Kronecker keys.
-fn linear(n: usize) -> Id {
+pub(super) fn linear(n: usize) -> Id {
     let mut names: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
     names.push("y".into());
     names.push("z".into());
@@ -132,33 +132,13 @@ fn linear(n: usize) -> Id {
 
 /// `(1 + x + ... + x ^ (n-1)) * (1 + y + ... + y ^ (n-1)) - x` and the same product commuted:
 /// `n^2` distinct monomials, so order 2 in `n`, `n log n` in the output.
-fn grid(n: usize) -> Id {
+pub(super) fn grid(n: usize) -> Id {
     let side = |w: &str| sum(&(0..n).map(|i| pow(var(w), i as i64)).collect::<Vec<_>>());
     Id {
         lhs: less_x(mul(side("x"), side("y"))),
         rhs: less_x(mul(side("y"), side("x"))),
         names: vec!["x".into(), "y".into()],
     }
-}
-
-#[test]
-fn the_square_of_a_sum_of_k_powers() {
-    let ins = scaling::inputs(1000, square);
-    scaling::check("(1 + x + ... + x ^ k) ^ 2 of k terms", 1000, |n| {
-        proved(&ins[&n])
-    });
-}
-
-#[test]
-fn a_dense_product_of_n_terms_commuted() {
-    let ins = scaling::inputs(1000, commute);
-    scaling::check("A * B == B * A, n terms each", 1000, |n| proved(&ins[&n]));
-}
-
-#[test]
-fn a_sum_of_n_names_times_a_sum() {
-    let ins = scaling::inputs(500, linear);
-    scaling::check("(x0 + ... + xn) * (y + z)", 500, |n| proved(&ins[&n]));
 }
 
 /// The sum of `terms` as written, `((t0 + t1) + t2) + …`: a left-deep chain of depth `n`.
@@ -172,7 +152,7 @@ fn chain(terms: impl IntoIterator<Item = Term>) -> Term {
 /// [`linear`] with both sums written as chains, as a law's source gives them: the chain is
 /// read as one sum of its summands, not as `n` sums of growing partial sums
 /// (POLY-sum-chain-fold).
-fn linear_chain(n: usize) -> Id {
+pub(super) fn linear_chain(n: usize) -> Id {
     let mut names: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
     names.push("y".into());
     names.push("z".into());
@@ -185,16 +165,6 @@ fn linear_chain(n: usize) -> Id {
         rhs: chain(written),
         names,
     }
-}
-
-#[test]
-fn a_written_chain_of_n_names_times_a_sum() {
-    let ins = scaling::inputs(500, linear_chain);
-    scaling::check(
-        "x0 + ... + xn written as a chain, times (y + z)",
-        500,
-        |n| proved(&ins[&n]),
-    );
 }
 
 /// The plan row's law, from Zed source: before the chain was read as one sum, its written side
@@ -231,7 +201,7 @@ fn the_law_of_4096_names_times_a_sum_is_proved_from_source() {
 /// `c` of two words each: `n` names, so the monomials are lists past `u128`'s Kronecker keys,
 /// and only sums are formed, each charged by its terms and words (`poly::LIMIT`, QUESTIONS
 /// A99), so order `n log n` with the balanced tree.
-fn ring_of_names(n: usize) -> Id {
+pub(super) fn ring_of_names(n: usize) -> Id {
     let names: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
     let c = |i: usize| Term::Lit(Value::Big(Arc::new(Rat::int(BigInt::from(i + 1) << 100))));
     let monomial = |i: usize| mul(c(i), mul(var(&names[i]), var(&names[(i + 1) % n])));
@@ -244,22 +214,6 @@ fn ring_of_names(n: usize) -> Id {
     }
 }
 
-#[test]
-fn a_sum_of_n_monomials_in_n_names() {
-    let ins = scaling::inputs(1000, ring_of_names);
-    scaling::check("x0 * x1 * c0 + ... + x(n-1) * x0 * c(n-1)", 1000, |n| {
-        proved(&ins[&n])
-    });
-}
-
-#[test]
-fn a_grid_of_n_squared_monomials() {
-    let ins = scaling::inputs(30, grid);
-    scaling::check_order("(sum x ^ i) * (sum y ^ j), n terms each", 30, 2, |n| {
-        proved(&ins[&n])
-    });
-}
-
 /// `(x + y) ^ k - x` against its `k + 1` monomials written out, less `x`: the power expands to
 /// `k + 1` monomials of up to `k` bits, so order 2 in `k`, linear in the output's bits. The
 /// squarings multiply homogeneous sums, whose packed indices are a common step apart
@@ -267,7 +221,7 @@ fn a_grid_of_n_squared_monomials() {
 /// powers, `(x + y) ^ k` costs about `k^2 / 64` words, which the size rule of QUESTIONS A98
 /// refused from k = 72 on; the limit of 250 ms (`poly::LIMIT`, QUESTIONS A99) is passed
 /// between k = 4096 and 8192 (`l03_09_egraph::calibration`).
-fn binomial(k: usize) -> Id {
+pub(super) fn binomial(k: usize) -> Id {
     let s = |a: &str, b: &str| sum(&[var(a), var(b)]);
     let c = binomials(k);
     Id {
@@ -283,7 +237,7 @@ fn binomial(k: usize) -> Id {
 /// factors written backward, each sum reversed, as balanced products: read as a product of
 /// powers of the same factors (POLY-nf-power-value), each factor expanded once and hashed, so
 /// order `n` (a hash map), though either side expanded has more than `2^n` monomials.
-fn factors(n: usize) -> Id {
+pub(super) fn factors(n: usize) -> Id {
     let mut names: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
     names.push("y".into());
     let product = |backward: bool| {
@@ -316,31 +270,13 @@ fn factors(n: usize) -> Id {
     }
 }
 
-#[test]
-fn a_product_of_powers_of_n_factors() {
-    let ins = scaling::inputs(500, factors);
-    scaling::check(
-        "(x0 + y) * ... * (xn + y) ^ n, n factors read as powers",
-        500,
-        |n| proved(&ins[&n]),
-    );
-}
-
-#[test]
-fn a_power_of_a_sum_of_two_names() {
-    let ins = scaling::inputs(500, binomial);
-    scaling::check_order("(x + y) ^ k, k + 1 monomials of k bits", 500, 2, |n| {
-        proved(&ins[&n])
-    });
-}
-
 /// `((x + y) ^ k + x) ^ 2` against its `3k + 3` monomials written out, `k >= 2`: the square
 /// multiplies a sum whose monomials are homogeneous of degree `k` apart from `x`, so its packed
 /// indices leave gaps that no common step removes, and its product is formed from its `3k + 3`
 /// output monomials, not from the `(k + 2)^2` pairs or the `(k + 1)^2` indices the pairs span
 /// (POLY-nf-sparse-product). The output has `3k + 3` monomials of up to `2k` bits: order 2 in
 /// `k`. Written out, the law is long enough to be expanded (`binomial`).
-fn gapped_square(k: usize) -> Id {
+pub(super) fn gapped_square(k: usize) -> Id {
     let xy = || sum(&[var("x"), var("y")]);
     let twice = binomials(2 * k)
         .into_iter()
@@ -358,15 +294,23 @@ fn gapped_square(k: usize) -> Id {
     }
 }
 
+/// Each family of the benchmarks in `bench/scaling.rs` is proved at small sizes.
 #[test]
-fn the_square_of_a_power_of_a_sum_beside_one_name() {
-    // At k = 2048 the square is about 2 s of work, refused (QUESTIONS A99); 8 * 32 = 256 is
-    // about 50 ms.
-    let ins = scaling::inputs(32, gapped_square);
-    scaling::check_order(
-        "((x + y) ^ k + x) ^ 2, 3k + 3 monomials of 2k bits",
-        32,
-        2,
-        |n| proved(&ins[&n]),
-    );
+fn each_family_is_proved_at_small_sizes() {
+    let families: [fn(usize) -> Id; 9] = [
+        square,
+        commute,
+        linear,
+        linear_chain,
+        ring_of_names,
+        grid,
+        factors,
+        binomial,
+        gapped_square,
+    ];
+    for family in families {
+        for n in [2, 3, 9] {
+            proved(&family(n));
+        }
+    }
 }

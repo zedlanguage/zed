@@ -2,6 +2,7 @@
 //! replaced at a time, mutants the build stage proves equal to the original are skipped, the
 //! tables run against the rest, and each mutant no row detects is reported.
 
+mod bench;
 mod command;
 mod examples;
 mod order;

@@ -1,23 +1,17 @@
-//! Elaboration at the rule of low complexity (DESIGN.md Part G).
-//!
-//! A test of elaboration times it alone, from units parsed, resolved and checked before timing
-//! ([`Checked`]): on all but one of these families the parser and the checker do 4 to 92 times
-//! the work of elaboration, and a test that times them too lets through an added quadratic
-//! whose cost at size n is less than 0.4 times all it times (COMPLEXITY.md F85, measured before
-//! F86 cut the parser's work by 3 to 4 times).
+//! Elaboration at the rule of low complexity (DESIGN.md Part G): the inputs of the benchmarks
+//! in `bench.rs` and the check each makes at each size, run here at small sizes, and the tests
+//! that the forms those benchmarks time give the right result.
 
-use std::collections::BTreeMap;
-
-use zed_tests::scaling::FACTOR;
-use zedc::ast::unit;
+use zed_tests::deep::{program, statements};
+use zedc::ast::{Stmt, unit};
 use zedc::lex::lex_fence;
 use zedc::parse::{TOP, parse};
-use zedc::resolve::resolve;
+use zedc::resolve::{Resolution, resolve};
 
 use super::{Checked, checked, elab, term, value};
 
 /// `h0(x = 1) = x;` and `h{i}(x = h{i-1}() + h{i-1}()) = x;` up to `k`, and `main = h{k}();`.
-fn chain(k: usize) -> String {
+pub(super) fn chain(k: usize) -> String {
     let mut src = "h0(x = 1) = x;\n".to_string();
     for i in 1..=k {
         src += &format!("h{i}(x = h{j}() + h{j}()) = x;\n", j = i - 1);
@@ -25,20 +19,16 @@ fn chain(k: usize) -> String {
     src + &format!("main = h{k}();\n")
 }
 
+/// The term of `main` in the elaborated chain of defaults is short: a call holds no copy of
+/// a default.
+pub(super) fn defaults_stay_short(u: &Checked) {
+    let u = u.elab();
+    let main = u.defs.iter().find(|d| d.name == "main").unwrap();
+    assert!(main.term.to_string().len() < 40, "{}", main.term);
+}
+
 #[test]
-fn defaults_calling_functions_with_defaults_scale() {
-    // A call leaving a parameter out held a copy of its default, and the copy's own calls
-    // copies of theirs, so the chain's term doubled with each function (2.9 million
-    // characters for `main` at `k = 16`).
-    let units: BTreeMap<usize, Checked> = [8, FACTOR * 8]
-        .into_iter()
-        .map(|k| (k, checked(&chain(k))))
-        .collect();
-    zed_tests::scaling::check("elaborating a chain of defaults, by length", 8, |k| {
-        let u = units[&k].elab();
-        let main = u.defs.iter().find(|d| d.name == "main").unwrap();
-        assert!(main.term.to_string().len() < 40, "{}", main.term);
-    });
+fn a_chain_of_defaults_calls_each_default_once() {
     assert_eq!(value(&chain(3), "main"), "8");
     assert_eq!(term(&chain(3), "main"), "{ x@4 = h3$x@4(); h3(x@4) }");
     assert_eq!(
@@ -112,51 +102,47 @@ fn the_dependency_order_is_the_first_ready_by_index() {
     );
 }
 
-#[test]
-fn the_dependency_order_scales() {
-    // Each item waits on the next, so the scan for the first ready item passed every item
-    // before it: `n²/2` steps.
-    zed_tests::scaling::check("a reversed chain of dependencies, by length", 4000, |n| {
-        let deps: Vec<Vec<usize>> = (0..n)
-            .map(|i| if i + 1 < n { vec![i + 1] } else { Vec::new() })
-            .collect();
-        assert_eq!(zedc::elab::topo(&deps).unwrap()[0], n - 1);
-    });
+/// `n` items, each waiting on the next.
+pub(super) fn reversed_chain(n: usize) -> Vec<Vec<usize>> {
+    (0..n)
+        .map(|i| if i + 1 < n { vec![i + 1] } else { Vec::new() })
+        .collect()
 }
 
-#[test]
-fn finding_every_cycle_scales() {
-    // `n` items: the first half one cycle, each item waiting on the next through a join of
-    // its own, so the search goes `n / 2` deep; the second half `n / 4` cycles of two, each
-    // with a join of both that the first item waits on. The graphs are built before timing.
-    let graph = |n: usize| {
-        let half = n / 2;
-        let mut deps: Vec<Vec<usize>> = vec![Vec::new(); n];
-        for i in 0..half {
-            let join = deps.len();
-            deps[i].push(join);
-            deps.push(vec![(i + 1) % half]);
-        }
-        for i in (half..n).step_by(2) {
-            let join = deps.len();
-            deps[i].push(join);
-            deps.push(vec![i, i + 1]);
-            deps[i + 1].push(i);
-        }
-        deps
-    };
-    let n = 10_000;
-    let graphs: BTreeMap<usize, Vec<Vec<usize>>> =
-        [n, FACTOR * n].into_iter().map(|k| (k, graph(k))).collect();
-    zed_tests::scaling::check("every cycle of n items with joins", n, |k| {
-        let cycles = zedc::elab::topo_joined(&graphs[&k], k).unwrap_err();
-        assert_eq!(cycles.len(), 1 + k / 4);
-        assert_eq!(cycles[0].len(), k / 2);
-    });
+/// The last item of a reversed chain is the first ready.
+pub(super) fn orders_reversed(deps: &[Vec<usize>]) {
+    assert_eq!(zedc::elab::topo(deps).unwrap()[0], deps.len() - 1);
+}
+
+/// `n` items, `n` a multiple of 4: the first half one cycle, each item waiting on the next
+/// through a join of its own; the second half `n / 4` cycles of two, each with a join of both
+/// that the first item waits on.
+pub(super) fn cycle_graph(n: usize) -> Vec<Vec<usize>> {
+    let half = n / 2;
+    let mut deps: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for i in 0..half {
+        let join = deps.len();
+        deps[i].push(join);
+        deps.push(vec![(i + 1) % half]);
+    }
+    for i in (half..n).step_by(2) {
+        let join = deps.len();
+        deps[i].push(join);
+        deps.push(vec![i, i + 1]);
+        deps[i + 1].push(i);
+    }
+    deps
+}
+
+/// `topo_joined` finds the one long cycle of [`cycle_graph`]`(k)` first and every short one.
+pub(super) fn finds_every_cycle(deps: &[Vec<usize>], k: usize) {
+    let cycles = zedc::elab::topo_joined(deps, k).unwrap_err();
+    assert_eq!(cycles.len(), 1 + k / 4);
+    assert_eq!(cycles[0].len(), k / 2);
 }
 
 /// Functions nested `n` deep, each declaring a local and the next function, which it calls.
-fn nested(n: usize) -> String {
+pub(super) fn nested(n: usize) -> String {
     let mut src = String::new();
     for i in 0..n {
         src += &format!("h{i}(positional x) {{\ny{i} = x + 1;\n");
@@ -171,8 +157,19 @@ fn nested(n: usize) -> String {
     src + "main = h0(1);\n"
 }
 
+/// The checker finds no error in `u`, checked again.
+pub(super) fn checks_clean(u: &Checked) {
+    assert!(u.check().errors.is_empty());
+}
+
+/// `u` elaborates and defines `main`.
+pub(super) fn elaborates_main(u: &Checked) {
+    let u = u.elab();
+    assert!(u.defs.iter().any(|d| d.name == "main"));
+}
+
 /// Functions nested `n` deep, each declaring `w` functions beside the next, and calling one.
-fn wide(n: usize, w: usize) -> String {
+pub(super) fn wide(n: usize, w: usize) -> String {
     let mut src = String::new();
     for i in 0..n {
         src += &format!("h{i}(positional x) {{\n");
@@ -193,7 +190,7 @@ fn wide(n: usize, w: usize) -> String {
 
 /// The type of `main` in `src` and the signature of `h{last}`, which a search stopped by
 /// its budget does not find.
-fn found(src: &str, last: usize) -> (Option<String>, Option<String>) {
+pub(super) fn found(src: &str, last: usize) -> (Option<String>, Option<String>) {
     let (i, names) = zed_tests::step_helpers::l01_26_type_resolution::info(src);
     assert!(i.errors.is_empty(), "{:?}", i.errors);
     let name = format!("h{last}");
@@ -204,59 +201,13 @@ fn found(src: &str, last: usize) -> (Option<String>, Option<String>) {
     )
 }
 
-#[test]
-fn checking_and_ordering_nested_functions_scales() {
-    // Each scope ordered its statements by the uses inside them, those of the scopes nested
-    // in them too, so a use was read once for each scope around it. Each run of a signature
-    // search checked the functions declared inside it again, so the runs multiplied with the
-    // depth; and once found, a nested function's writes were made again at each finding.
-    std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(|| {
-            // The checker and elaboration are timed apart, each from what comes before it,
-            // made before timing.
-            let units: BTreeMap<usize, Checked> = [100, FACTOR * 100]
-                .into_iter()
-                .map(|n| (n, checked(&nested(n))))
-                .collect();
-            zed_tests::scaling::check("checking functions nested n deep", 100, |n| {
-                assert!(units[&n].check().errors.is_empty());
-            });
-            zed_tests::scaling::check("elaborating functions nested n deep", 100, |n| {
-                let u = units[&n].elab();
-                assert!(u.defs.iter().any(|d| d.name == "main"));
-            });
-            assert_eq!(value(&nested(3), "main"), "3");
-            let want = (
-                Some("int".to_string()),
-                Some("(T) -> T for T in int | f32 | f64 | rat".to_string()),
-            );
-            assert_eq!(found(&nested(3), 2), want);
-            assert_eq!(found(&nested(100), 99), want);
-        })
-        .unwrap()
-        .join()
-        .unwrap();
-}
-
-#[test]
-fn checking_nested_functions_beside_many_others_scales() {
-    // A nested function's writes were made again each time its signature was found again,
-    // the writes of the functions inside it too.
-    std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(|| {
-            zed_tests::scaling::check("functions nested n deep beside 20 others", 50, |n| {
-                assert_eq!(found(&wide(n, 20), n - 1).0.as_deref(), Some("int"));
-            });
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+/// `main` of [`wide`]`(n, _)`, the text `text`, has type `int`.
+pub(super) fn wide_finds_main(text: &str, n: usize) {
+    assert_eq!(found(text, n - 1).0.as_deref(), Some("int"));
 }
 
 /// A function with `n` named parameters, and a call naming each of them, last first.
-fn named(n: usize) -> String {
+pub(super) fn named(n: usize) -> String {
     let params: Vec<String> = (0..n).map(|i| format!("d{i} = 0")).collect();
     let args: Vec<String> = (0..n).rev().map(|i| format!("d{i}: {i}")).collect();
     format!(
@@ -268,7 +219,7 @@ fn named(n: usize) -> String {
 
 /// A function whose parameter `g` has a type with `n` named parameters, and a call of `g`
 /// naming each of them, last first.
-fn named_through_a_value(n: usize) -> String {
+pub(super) fn named_through_a_value(n: usize) -> String {
     let params: Vec<String> = (0..n).map(|i| format!("d{i}: int")).collect();
     let args: Vec<String> = (0..n).rev().map(|i| format!("d{i}: {i}")).collect();
     format!(
@@ -278,38 +229,15 @@ fn named_through_a_value(n: usize) -> String {
     )
 }
 
-/// Checks that elaborating the unit `text(m)` is of order m, parsing and checking each size
-/// first, so that elaboration is timed alone, and that its last definition is `last`. (Until
-/// ELAB-scaling-isolation the checker, which `elaborate` runs first, was timed too: 9 and 16
-/// times elaboration's work on the two families below.)
-fn elaboration_scales(what: &str, n: usize, text: fn(usize) -> String, last: &str) {
-    let units: BTreeMap<usize, Checked> = [n, FACTOR * n]
-        .into_iter()
-        .map(|m| (m, checked(&text(m))))
-        .collect();
-    zed_tests::scaling::check(what, n, |m| {
-        let u = units[&m].elab();
-        assert_eq!(u.defs.last().unwrap().name, last);
-    });
+/// `u` elaborates and its last definition is `last`.
+pub(super) fn last_def_is(u: &Checked, last: &str) {
+    let u = u.elab();
+    assert_eq!(u.defs.last().unwrap().name, last);
 }
 
 #[test]
-fn a_call_naming_many_arguments_scales() {
-    // Each named argument was looked for among all the parameters, and the parameters each
-    // default reads among all of them.
-    elaboration_scales("a call naming n arguments", 8000, named, "y");
+fn an_argument_named_for_no_parameter_of_the_value_called_is_rejected() {
     assert_eq!(value(&named(3), "y"), "0");
-}
-
-#[test]
-fn a_call_through_a_value_naming_many_arguments_scales() {
-    // The same, where the parameter names come from the type of the value called.
-    elaboration_scales(
-        "a call of a value naming n arguments",
-        8000,
-        named_through_a_value,
-        "h",
-    );
     let e = elab(&named_through_a_value(2).replace("g(d1", "g(d2")).unwrap_err();
     assert_eq!(
         e,
@@ -321,7 +249,7 @@ fn a_call_through_a_value_naming_many_arguments_scales() {
 
 /// A function of `n` parameters declared `String`, and `g` calling it once on `n` arguments
 /// that may each be a string, `#a` or `#b`, so that each passes its atoms by.
-fn passing_many_arguments(n: usize) -> String {
+pub(super) fn passing_many_arguments(n: usize) -> String {
     let params: Vec<String> = (0..n).map(|i| format!("positional x{i}: String")).collect();
     format!(
         "h({}) = x0;\n\
@@ -332,44 +260,27 @@ fn passing_many_arguments(n: usize) -> String {
 }
 
 #[test]
-fn a_call_passing_the_atoms_of_many_arguments_by_scales() {
-    // Each argument found its atoms by a search of the call's recorded entries; they are now a
-    // map by argument span (PASS-at-args). The search costs a few instructions an entry
-    // against about 26,000 an argument for elaboration, so it shows only from 4,000
-    // arguments: 35.9 times the work at 4,000 and 32,000, and 14.7 at 1,000 and 8,000.
-    elaboration_scales(
-        "a call of n arguments that each pass atoms by",
-        4000,
-        passing_many_arguments,
-        "g",
-    );
-    // An atom passes by at the call and is its value; a string reaches the body.
+fn an_atom_passes_by_at_the_call_and_a_string_reaches_the_body() {
     for (k, want) in [(1, "#a"), (2, "#b"), (3, "\"s\"")] {
         let text = format!("{}y = g({k});\n", passing_many_arguments(3));
         assert_eq!(value(&text, "y"), want);
     }
 }
 
-#[test]
-fn ordering_a_function_with_many_rows_scales() {
-    // Each use in a row was tested against every row of the function.
-    let units: BTreeMap<usize, Checked> = [250, FACTOR * 250]
-        .into_iter()
-        .map(|n| {
-            let rows: Vec<String> = (0..n).map(|_| "c -> c".to_string()).collect();
-            let src = format!("c = 2;\nf(x) = x test {{ {} }}\n", rows.join(", "));
-            (n, checked(&src))
-        })
-        .collect();
-    zed_tests::scaling::check("elaborating a function with n rows", 250, |n| {
-        let u = units[&n].elab();
-        assert_eq!(u.tests.len(), n);
-    });
+/// `c = 2;` and a function `f` with `n` rows `c -> c`.
+pub(super) fn rows(n: usize) -> String {
+    let rows: Vec<String> = (0..n).map(|_| "c -> c".to_string()).collect();
+    format!("c = 2;\nf(x) = x test {{ {} }}\n", rows.join(", "))
+}
+
+/// `u` elaborates to `n` test cases.
+pub(super) fn has_a_test_per_row(u: &Checked, n: usize) {
+    assert_eq!(u.elab().tests.len(), n);
 }
 
 /// Functions nested `n` deep, each with a parameter of no declared type, the innermost
 /// adding all of them.
-fn open(n: usize) -> String {
+pub(super) fn open(n: usize) -> String {
     let mut src = String::new();
     for i in 0..n {
         src += &format!("h{i}(positional x{i}) {{\n");
@@ -385,48 +296,26 @@ fn open(n: usize) -> String {
     src + "main = h0(1);\n"
 }
 
-#[test]
-fn searches_through_nested_functions_scale() {
-    // A signature search checked the functions declared in its body again for each type it
-    // tried, so the contexts grew about 1.6 times with each level (167 s at 32 deep), until a
-    // cap of 64 contexts gave `_` past it. Each body is now checked once: the parameters
-    // added together share one class, of the outermost function, so the innermost one's
-    // signature is in terms of `h0`'s variable at every depth.
-    std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(|| {
-            zed_tests::scaling::check("searches through n nested functions", 128, |n| {
-                elab(&open(n)).unwrap();
-            });
-            assert_eq!(value(&open(4), "main"), "4");
-            // The variable is `h0`'s, which the inner signature neither binds nor bounds, so
-            // it prints `_` there.
-            let t = (Some("int".to_string()), Some("(_) -> _".to_string()));
-            assert_eq!(found(&open(6), 5), t);
-            assert_eq!(found(&open(64), 63), t);
-            for n in [6, 64] {
-                let h0 = zed_tests::step_helpers::l01_26_type_resolution::sig_of(&open(n), "h0");
-                let last = zed_tests::step_helpers::l01_26_type_resolution::sig_of(
-                    &open(n),
-                    &format!("h{}", n - 1),
-                );
-                let a = &last.arrows[0];
-                assert!(last.own.is_empty() && last.bounds.is_empty());
-                assert_eq!(
-                    (a.params[0].vars.len(), &a.params[0].vars),
-                    (1, &a.result.vars)
-                );
-                assert!(h0.own.is_superset(&a.result.vars), "the variable is h0's");
-            }
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+/// The signature of the innermost function of [`open`]`(n)` is in terms of `h0`'s variable,
+/// which it neither binds nor bounds, so it prints `_` there.
+pub(super) fn open_signature_is_h0s(n: usize) {
+    use zed_tests::step_helpers::l01_26_type_resolution::sig_of;
+    let t = (Some("int".to_string()), Some("(_) -> _".to_string()));
+    assert_eq!(found(&open(n), n - 1), t);
+    let h0 = sig_of(&open(n), "h0");
+    let last = sig_of(&open(n), &format!("h{}", n - 1));
+    let a = &last.arrows[0];
+    assert!(last.own.is_empty() && last.bounds.is_empty());
+    assert_eq!(
+        (a.params[0].vars.len(), &a.params[0].vars),
+        (1, &a.result.vars)
+    );
+    assert!(h0.own.is_superset(&a.result.vars), "the variable is h0's");
 }
 
 /// A function `f` of `n` terms, and a function `g` that calls it on one branch, with `n` rows
 /// that take the other.
-fn big_callee(n: usize) -> String {
+pub(super) fn big_callee(n: usize) -> String {
     let body: String = (0..n).map(|i| format!(" + x * {i}")).collect();
     let rows: Vec<String> = (0..n).map(|i| format!("{i} -> {i}")).collect();
     format!(
@@ -436,189 +325,143 @@ fn big_callee(n: usize) -> String {
     )
 }
 
-#[test]
-fn rows_reaching_a_large_definition_scale() {
-    // Each row's key printed every definition it reaches and its run closed it over a copy of
-    // each, so `n` rows reaching a function of `n` terms took `O(n²)`; a definition's digest is
-    // now made once and its term shared. The front end's result for each size is made before
-    // timing, so that the rows alone are timed.
-    let t = std::thread::Builder::new().stack_size(1 << 29).spawn(|| {
-        let warm: BTreeMap<usize, (String, zedc::query::Db)> = [100, FACTOR * 100]
-            .into_iter()
-            .map(|n| {
-                let text = big_callee(n);
-                let mut db = zedc::query::Db::new();
-                db.front(&text);
-                (n, (text, db))
-            })
-            .collect();
-        zed_tests::scaling::check_order("n rows reaching a function of n terms", 100, 1, |n| {
-            let (text, db) = &warm[&n];
-            let got = zedc::testing::test_in(&mut db.clone(), text);
-            assert_eq!(got.len(), n);
-            assert!(got.iter().all(|o| o.failure.is_none()), "{:?}", got[0]);
-        })
-    });
-    t.unwrap().join().unwrap();
+/// `text` and the front end's result on it.
+pub(super) fn front(text: &str) -> (String, zedc::query::Db) {
+    let mut db = zedc::query::Db::new();
+    db.front(text);
+    (text.to_string(), db)
 }
 
-#[test]
-fn ordering_many_uses_of_many_overloads_scales() {
-    // Each use of an overloaded name was recorded once for each overload, and each statement
-    // using it waited on each overload directly, so `k` uses of `k` overloads made `k²`
-    // entries and dependencies.
-    let built = |k: usize| {
-        let text = zed_tests::step_helpers::l01_14_name_resolution::overloads(k)
-            + "g = ("
-            + &vec!["f"; k].join(", ")
-            + ");\n";
-        let tokens = lex_fence(&text).unwrap();
-        let tree = parse(&text, &tokens, "Unit", TOP).unwrap();
-        let stmts = unit(&text, &tokens, &tree).unwrap();
-        let res = resolve(&stmts).unwrap();
-        (stmts, res)
-    };
-    // The statements and their resolution are built before the timing, so only the tables of
-    // uses and the order are measured.
-    let n = 1000;
-    let (small, large) = (built(n), built(FACTOR * n));
-    zed_tests::scaling::check("k uses of k overloads, ordered", n, |k| {
-        let (stmts, res) = if k == n { &small } else { &large };
-        let order = zedc::elab::top_order(stmts, res).unwrap();
-        // `g` comes after every overload.
-        assert_eq!(order.len(), k + 1);
-        assert_eq!(order[k], k);
-    });
+/// The `n` rows of `text` run on a copy of `db` and each passes.
+pub(super) fn rows_pass(text: &str, db: &zedc::query::Db, n: usize) {
+    let got = zedc::testing::test_in(&mut db.clone(), text);
+    assert_eq!(got.len(), n);
+    assert!(got.iter().all(|o| o.failure.is_none()), "{:?}", got[0]);
 }
 
-/// Orders the top-level statements of each program of `shapes` on a 2 MiB stack, 100,000 deep
-/// and 12,500 deep, and checks the time is linear. Finding the function declarations inside
-/// the statements recursed once per level of nesting, and overflowed this stack near 20,000.
-fn ordered_deep(shapes: &[&str]) {
-    use zed_tests::deep::{on_small_stack, program, statements};
-    let n = 12_500;
-    let deep = 8 * n;
-    on_small_stack(|| {
-        for &shape in shapes {
-            let small = statements(&program(shape, n).text);
-            let large = statements(&program(shape, deep).text);
-            let small_res = resolve(&small).unwrap();
-            let large_res = resolve(&large).unwrap();
-            zed_tests::scaling::check_order(&format!("ordering {shape}"), n, 1, |k| {
-                let (stmts, res) = match k == n {
-                    true => (&small, &small_res),
-                    false => (&large, &large_res),
-                };
-                let order = zedc::elab::top_order(stmts, res).unwrap();
-                assert_eq!(order.len(), stmts.len());
-            });
-        }
-    });
+/// `k` overloads of `f` and `g`, a tuple of `k` uses of `f`: the statements and their
+/// resolution.
+pub(super) fn uses_of_overloads(k: usize) -> (Vec<Stmt>, Resolution) {
+    let text = zed_tests::step_helpers::l01_14_name_resolution::overloads(k)
+        + "g = ("
+        + &vec!["f"; k].join(", ")
+        + ");\n";
+    let tokens = lex_fence(&text).unwrap();
+    let tree = parse(&text, &tokens, "Unit", TOP).unwrap();
+    let stmts = unit(&text, &tokens, &tree).unwrap();
+    let res = resolve(&stmts).unwrap();
+    (stmts, res)
 }
 
-#[test]
-fn sums_calls_and_long_bodies_100000_deep_are_ordered_on_a_2_mib_stack() {
-    ordered_deep(&[
-        "a left-nested sum",
-        "nested calls",
-        "a long sum in a function's body",
-    ]);
+/// The top-level order of [`uses_of_overloads`]`(k)` puts `g` after every overload.
+pub(super) fn orders_after_overloads(stmts: &[Stmt], res: &Resolution, k: usize) {
+    let order = zedc::elab::top_order(stmts, res).unwrap();
+    assert_eq!(order.len(), k + 1);
+    assert_eq!(order[k], k);
 }
 
-#[test]
-fn blocks_and_tuples_nested_100000_deep_are_ordered_on_a_2_mib_stack() {
-    ordered_deep(&["nested blocks", "nested tuples"]);
+/// The top-level order of `stmts` holds each of them.
+pub(super) fn orders_all(stmts: &[Stmt], res: &Resolution) {
+    let order = zedc::elab::top_order(stmts, res).unwrap();
+    assert_eq!(order.len(), stmts.len());
 }
 
-/// Elaborates each program of `shapes` on a 2 MiB stack, `n` deep and `8n` deep, and checks
-/// the time is linear. Elaboration recursed once per level of nesting. Each program is checked
-/// first, on the same stack, and elaboration is timed alone: the checker did 5 to 92 times its
-/// work on these shapes, and `l01_26_type_resolution::scaling` times the checker on each.
-fn elaborates_deep(shapes: &[&str], n: usize) {
-    use zed_tests::deep::{on_small_stack, program, statements};
-    on_small_stack(|| {
-        for &shape in shapes {
-            let units: BTreeMap<usize, Checked> = [n, 8 * n]
-                .into_iter()
-                .map(|k| (k, Checked::new(statements(&program(shape, k).text))))
-                .collect();
-            zed_tests::scaling::check_order(&format!("elaborating {shape}"), n, 1, |k| {
-                assert!(!units[&k].elab().defs.is_empty(), "{shape}");
-            });
-        }
-    });
-}
-
-#[test]
-fn blocks_nested_100000_deep_elaborate_on_a_2_mib_stack() {
-    elaborates_deep(&["nested blocks"], 12_500);
-}
-
-// The checker, which runs on each program before it is elaborated, costs about 140,000
-// instructions for each `+` and half that for each negation, branch or call (CHK-node-cost, in
-// `l01_26_type_resolution::scaling`), so these shapes elaborate 8,000 deep.
-
-#[test]
-fn sums_and_else_if_chains_8000_deep_elaborate_on_a_2_mib_stack() {
-    elaborates_deep(
-        &[
-            "a left-nested sum",
-            "a sum nested in parentheses",
-            "an `else if` chain",
-        ],
-        1_000,
-    );
-}
-
-#[test]
-fn negations_and_calls_8000_deep_elaborate_on_a_2_mib_stack() {
-    // Nested tuples are left out: the checker takes time superlinear in their depth (open).
-    elaborates_deep(&["nested negations", "nested calls"], 1_000);
+/// `u`, a program of shape `shape`, elaborates to at least one definition.
+pub(super) fn elaborates_some(u: &Checked, shape: &str) {
+    assert!(!u.elab().defs.is_empty(), "{shape}");
 }
 
 /// `t = x is int \ int \ … \ int;`, `n` differences nested to the left.
-fn differences(n: usize) -> String {
+pub(super) fn differences(n: usize) -> String {
     format!("x = 1;\nt = x is {};\n", vec!["int"; n + 1].join(" \\ "))
 }
 
 /// `t = x else #a(#a(…#a…)) -> 0;`, the pattern `n` atoms deep, its payloads by position, or
 /// by name when `named`.
-fn else_patterns(n: usize, named: bool) -> String {
+pub(super) fn else_patterns(n: usize, named: bool) -> String {
     let open = if named { "#a(f: " } else { "#a(" };
     let p = open.repeat(n) + "#a" + &")".repeat(n);
     format!("x = #b;\nt = x else {p} -> 0;\n")
 }
 
-/// Checks and elaborates `text(n)` and `text(8n)` on a 2 MiB stack, and checks that the time of
-/// each is linear, timed apart: the checker did up to 7 times the work of elaboration on these.
-fn elaborates_text_deep(what: &str, n: usize, text: fn(usize) -> String) {
-    use zed_tests::deep::{on_small_stack, statements};
-    on_small_stack(|| {
-        let units: BTreeMap<usize, Checked> = [n, 8 * n]
-            .into_iter()
-            .map(|k| (k, Checked::new(statements(&text(k)))))
-            .collect();
-        zed_tests::scaling::check_order(&format!("checking {what}"), n, 1, |k| {
-            assert!(units[&k].check().errors.is_empty(), "{what}");
-        });
-        zed_tests::scaling::check_order(&format!("elaborating {what}"), n, 1, |k| {
-            assert_eq!(units[&k].elab().defs.len(), 2, "{what}");
-        });
-    });
+/// `u`, of [`differences`] or [`else_patterns`], elaborates to its two definitions.
+pub(super) fn elaborates_two(u: &Checked, what: &str) {
+    assert_eq!(u.elab().defs.len(), 2, "{what}");
 }
 
+/// Each input of the benchmarks in `bench.rs` at a few sizes, through the check the benchmark
+/// makes at each size it times, and the values of the programs whose value is known: the
+/// timing of each family at large sizes is held in `bench.rs`.
 #[test]
-fn a_type_100000_deep_elaborates_on_a_2_mib_stack() {
-    elaborates_text_deep("a difference of types", 12_500, differences);
+fn each_benchmark_input_elaborates_at_small_sizes() {
+    let nested_signature = (
+        Some("int".to_string()),
+        Some("(T) -> T for T in int | f32 | f64 | rat".to_string()),
+    );
+    for n in [1, 2, 9] {
+        defaults_stay_short(&checked(&chain(n)));
+        orders_reversed(&reversed_chain(n));
+        finds_every_cycle(&cycle_graph(4 * n), 4 * n);
+        let u = checked(&nested(n));
+        checks_clean(&u);
+        elaborates_main(&u);
+        assert_eq!(value(&nested(n), "main"), n.to_string());
+        assert_eq!(found(&nested(n), n - 1), nested_signature, "{n}");
+        wide_finds_main(&wide(n, 20), n);
+        last_def_is(&checked(&named(n)), "y");
+        assert_eq!(value(&named(n), "y"), "0");
+        last_def_is(&checked(&named_through_a_value(n)), "h");
+        last_def_is(&checked(&passing_many_arguments(n)), "g");
+        has_a_test_per_row(&checked(&rows(n)), n);
+        elab(&open(n)).unwrap();
+        assert_eq!(value(&open(n), "main"), n.to_string());
+        let (text, db) = front(&big_callee(n));
+        rows_pass(&text, &db, n);
+        let (stmts, res) = uses_of_overloads(n);
+        orders_after_overloads(&stmts, &res, n);
+        for (what, text) in [
+            ("a difference of types", differences(n)),
+            ("a pattern by position", else_patterns(n, false)),
+            ("a pattern by name", else_patterns(n, true)),
+        ] {
+            let u = Checked::new(statements(&text));
+            checks_clean(&u);
+            elaborates_two(&u, what);
+        }
+    }
+    assert_eq!(value(&nested(3), "main"), "3");
+    assert_eq!(found(&nested(3), 2), nested_signature);
+    assert_eq!(value(&open(4), "main"), "4");
+    open_signature_is_h0s(6);
 }
 
-// The kernel's `Pattern` drops its parts by recursion (ZED_PORT_GAPS.md), so a pattern 100,000
-// deep overflows a 2 MiB stack whatever elaborates it; these go 10,000 deep.
-
+/// Each deep program the benchmarks in `bench.rs` order or elaborate, a few levels deep: its
+/// top-level order holds every statement, and it elaborates to a definition.
 #[test]
-fn else_patterns_10000_deep_elaborate_on_a_2_mib_stack() {
-    elaborates_text_deep("a pattern by position", 1_250, |n| else_patterns(n, false));
-    elaborates_text_deep("a pattern by name", 1_250, |n| else_patterns(n, true));
+fn each_deep_benchmark_program_is_ordered_and_elaborated_at_small_depths() {
+    for n in [4, 5, 9] {
+        for shape in [
+            "a left-nested sum",
+            "nested calls",
+            "a long sum in a function's body",
+            "nested blocks",
+            "nested tuples",
+        ] {
+            let stmts = statements(&program(shape, n).text);
+            let res = resolve(&stmts).unwrap();
+            orders_all(&stmts, &res);
+        }
+        for shape in [
+            "nested blocks",
+            "a left-nested sum",
+            "a sum nested in parentheses",
+            "an `else if` chain",
+            "nested negations",
+            "nested calls",
+        ] {
+            elaborates_some(&Checked::new(statements(&program(shape, n).text)), shape);
+        }
+    }
 }
 
 #[test]
@@ -645,9 +488,9 @@ fn errors_inside_types_and_patterns_keep_their_order() {
 
 #[test]
 fn elaborating_from_the_checkers_findings_gives_what_elaborate_gives() {
-    // The tests above time `elaborate_checked` on a unit checked before timing; it must give
-    // the definitions and test cases `elaborate` gives, and only the checker's warnings differ.
-    use zed_tests::deep::program;
+    // The benchmarks in `bench.rs` time `elaborate_checked` on a unit checked before timing; it
+    // must give the definitions and test cases `elaborate` gives, and only the checker's
+    // warnings differ.
     let mut texts = vec![
         chain(3),
         nested(3),

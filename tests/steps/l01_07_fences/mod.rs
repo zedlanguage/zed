@@ -2,6 +2,7 @@
 //! the `sync` tool, are lexed, their ✗ marks recorded, and each commented ✗ variant has
 //! its own fixture. From here on every step runs the fences of its layer.
 
+mod bench;
 mod copies;
 mod extractor;
 mod keys;

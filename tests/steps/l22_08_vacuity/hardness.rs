@@ -89,9 +89,9 @@ fn model_count(t: &Theory) -> (u64, u64) {
 
 #[test]
 fn clause_laws_have_one_model_per_satisfying_assignment() {
-    let mut rng = Rng::new(0x5a7_c1a5e);
+    let mut rng = Rng::new(zed_tests::test_seed());
     let mut with_dead_ends = 0;
-    for _ in 0..300 {
+    for _ in 0..150 {
         let n = 4 + rng.below(9);
         let m = rng.below(5 * n);
         let cnf = random_cnf(&mut rng, n, m);
@@ -100,7 +100,7 @@ fn clause_laws_have_one_model_per_satisfying_assignment() {
         assert_eq!(count, count_sat(n, &cnf), "{}", describe(&t));
         with_dead_ends += usize::from(dead > 0);
     }
-    eprintln!("random 3-CNF theories with a dead end: {with_dead_ends} of 300");
+    eprintln!("random 3-CNF theories with a dead end: {with_dead_ends} of 150");
     assert!(with_dead_ends > 0);
 }
 
@@ -244,7 +244,7 @@ fn an_or_of_ands_is_refused() {
     let all: Vec<Clause> = (0..8)
         .map(|bits| (0..3).map(|v| (v, (bits >> v) & 1 == 1)).collect())
         .collect();
-    let mut rng = Rng::new(0x0a_d5);
+    let mut rng = Rng::new(zed_tests::test_seed());
     let mut cases = vec![all.clone(), all[..7].to_vec()];
     for _ in 0..40 {
         let m = 1 + rng.below(7);

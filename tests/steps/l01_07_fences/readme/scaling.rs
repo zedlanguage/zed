@@ -1,13 +1,13 @@
-//! The time to read a page's stated results and compare them with the table of expected results
-//! is linear in the number of fences.
+//! A generated page and its table of expected results, whose benchmark in `bench/readme.rs`
+//! holds reading and comparing the stated results linear in the number of fences. Here a page of
+//! a few sections has no problems.
 
 use zed_tests::fences::DocFence;
 use zed_tests::readme::{self, Entry};
-use zed_tests::scaling::check;
 
 /// A page of `n` sections, each with a fence, a trailing comment, a text block and a captioned
 /// table with a cell spanning two rows; its fences; and its table of expected results.
-fn inputs(n: usize) -> (String, Vec<DocFence>, Vec<Entry>) {
+pub(crate) fn inputs(n: usize) -> (String, Vec<DocFence>, Vec<Entry>) {
     let mut page = String::new();
     let mut fences = Vec::with_capacity(n);
     for i in 0..n {
@@ -33,13 +33,9 @@ fn inputs(n: usize) -> (String, Vec<DocFence>, Vec<Entry>) {
 }
 
 #[test]
-fn reading_and_comparing_stated_results_is_linear() {
-    let n = 4_000;
-    let small = inputs(n);
-    let large = inputs(8 * n);
-    assert!(super::problems(&small.0, &small.1, &small.2).is_empty());
-    check("README stated results, by fences", n, |size| {
-        let (page, fences, table) = if size == n { &small } else { &large };
-        assert!(super::problems(page, fences, table).is_empty());
-    });
+fn a_generated_page_agrees_with_its_table_of_expected_results() {
+    for n in [1, 2, 9] {
+        let (page, fences, table) = inputs(n);
+        assert!(super::problems(&page, &fences, &table).is_empty());
+    }
 }

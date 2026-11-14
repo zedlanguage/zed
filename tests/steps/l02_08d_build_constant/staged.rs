@@ -206,7 +206,7 @@ fn branches(n: usize) -> PathBuf {
 }
 
 /// The words of `zedc run` of [`branches`]`(n)` with every other option turned on.
-fn run_words(n: usize) -> Vec<String> {
+pub(super) fn run_words(n: usize) -> Vec<String> {
     let file = branches(n).join("app/main.zed");
     let mut words = vec!["run".to_string(), file.to_str().unwrap().to_string()];
     for i in (0..n).step_by(2) {
@@ -215,21 +215,15 @@ fn run_words(n: usize) -> Vec<String> {
     words
 }
 
+/// The output of a run is the letters of the branches its build takes; the time of a run is
+/// held linear in the branches in `bench/staged.rs`.
 #[test]
-fn run_of_n_option_branches_is_linear() {
-    // The control: the output of a run is the letters of the branches its build takes.
-    let (mut out, mut err) = (Vec::new(), Vec::new());
-    let status = zedc::run::command(&run_words(6), &mut "".as_bytes(), &mut out, &mut err);
-    let err = String::from_utf8(err).unwrap();
-    assert_eq!(status, 0, "{err}");
-    assert_eq!(String::from_utf8(out).unwrap(), "ababab\n");
-    let inputs = zed_tests::scaling::inputs(250, run_words);
-    zed_tests::scaling::check_order("`zedc run` of n branches on `build.options`", 250, 1, |n| {
+fn run_of_a_few_option_branches_writes_the_letters_its_build_takes() {
+    for (n, letters) in [(1, "a"), (2, "ab"), (6, "ababab")] {
         let (mut out, mut err) = (Vec::new(), Vec::new());
-        let words = &inputs[&n];
-        assert_eq!(
-            zedc::run::command(words, &mut "".as_bytes(), &mut out, &mut err),
-            0
-        );
-    });
+        let status = zedc::run::command(&run_words(n), &mut "".as_bytes(), &mut out, &mut err);
+        let err = String::from_utf8(err).unwrap();
+        assert_eq!(status, 0, "{err}");
+        assert_eq!(String::from_utf8(out).unwrap(), format!("{letters}\n"));
+    }
 }

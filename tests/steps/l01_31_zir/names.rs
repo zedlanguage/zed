@@ -8,7 +8,6 @@ use std::sync::Arc;
 use zed_kernel::Value;
 use zed_kernel::term::{Grade, Pattern};
 use zed_kernel::types::Type;
-use zed_tests::scaling::check_order;
 use zedc::zir::{Edge, Node, Op, Region, RegionKind, Src, binary};
 
 /// A function of one node, `op` on the constant `input`.
@@ -198,7 +197,7 @@ fn names_by_the_lexers_rule_and_the_binders_the_compiler_makes_read_back() {
 /// A graph of one `match` on a tuple of `n / 8` atoms, each with a name and a field of 8
 /// bytes, and whose pattern binds one name `n` bytes long, so that the names hold about 3n
 /// bytes.
-fn names(n: usize) -> Region {
+pub(super) fn names(n: usize) -> Region {
     let atoms = (0..n / 8)
         .map(|i| {
             Value::atom_named(
@@ -214,14 +213,13 @@ fn names(n: usize) -> Region {
     )
 }
 
+/// A graph of a few long names is read back from binary; the time is held linear in the bytes
+/// of its names in `bench/names.rs`.
 #[test]
-fn reading_names_in_binary_is_linear_in_their_bytes() {
-    let (n, large) = (40_000, 320_000);
-    let (small_bytes, large_bytes) = (
-        binary::encode(&names(n)).expect("memory for the bytes"),
-        binary::encode(&names(large)).expect("memory for the bytes"),
-    );
-    check_order("reading the names of a graph in binary", n, 1, |k| {
-        binary::decode(if k == n { &small_bytes } else { &large_bytes }).unwrap();
-    });
+fn a_graph_of_long_names_is_read_back_from_binary() {
+    for n in [8, 16, 72] {
+        let g = names(n);
+        let bytes = binary::encode(&g).expect("memory for the bytes");
+        assert_eq!(binary::decode(&bytes), Ok(g));
+    }
 }

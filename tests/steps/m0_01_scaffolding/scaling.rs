@@ -1,26 +1,29 @@
-//! How `step_targets` scales with the number of step folders: writing the targets, reading them
-//! back and comparing them with the folders is O(n log n) in the folders.
+//! The folders the benchmark of `bench.rs` writes as targets, and what writing them must give,
+//! checked here at small sizes (TEST-bench-move-rest, P170).
 
 use std::collections::BTreeSet;
 
-use zed_tests::scaling::check;
 use zed_tools::step_targets::{BEGIN, END, block, drift, splice, targets};
 
 /// `n` folder names.
-fn names(n: usize) -> BTreeSet<String> {
+pub(super) fn names(n: usize) -> BTreeSet<String> {
     (0..n).map(|i| format!("l{i:06}_step")).collect()
 }
 
+/// A manifest with an empty block of targets.
+pub(super) fn toml() -> String {
+    format!("[package]\n{BEGIN}\n{END}\n[dev-dependencies]\n")
+}
+
+/// The targets of `folders`, written into `toml` and read back, have no drift from the folders.
+pub(super) fn round_trips(folders: &BTreeSet<String>, toml: &str) {
+    let written = splice(toml, &block(folders)).unwrap();
+    assert!(drift(folders, &targets(&written).unwrap()).is_empty());
+}
+
 #[test]
-fn step_targets_scales_with_the_number_of_folders() {
-    let n = 2000;
-    let inputs = [n, 8 * n].map(|m| {
-        let toml = format!("[package]\n{BEGIN}\n{END}\n[dev-dependencies]\n");
-        (m, names(m), toml)
-    });
-    check("step_targets, by folders", n, |m| {
-        let (_, folders, toml) = inputs.iter().find(|i| i.0 == m).expect("a built size");
-        let written = splice(toml, &block(folders)).unwrap();
-        assert!(drift(folders, &targets(&written).unwrap()).is_empty());
-    });
+fn the_targets_of_some_folders_are_written_and_read_back_without_drift() {
+    for n in [0, 1, 2, 9] {
+        round_trips(&names(n), &toml());
+    }
 }

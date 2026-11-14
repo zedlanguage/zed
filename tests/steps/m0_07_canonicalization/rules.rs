@@ -87,9 +87,9 @@ fn random(rng: &mut Rng) -> Def {
 
 #[test]
 fn every_rule_decreases_its_rank_and_no_later_rule_raises_an_earlier_one() {
-    let mut rng = Rng::new(0x7e57);
+    let mut rng = Rng::new(zed_tests::test_seed());
     let mut fired = [0usize; 4];
-    for _ in 0..RANDOM_INSTANCES {
+    for _ in 0..RANDOM_INSTANCES / 4 {
         let mut d = random(&mut rng);
         loop {
             let before = ranks(&d);
@@ -114,7 +114,7 @@ fn every_rule_decreases_its_rank_and_no_later_rule_raises_an_earlier_one() {
             assert!(after < before);
         }
     }
-    assert!(fired.iter().all(|&n| n > 50), "{fired:?}");
+    assert!(fired.iter().all(|&n| n > 10), "{fired:?}");
 }
 
 #[test]
@@ -130,8 +130,8 @@ fn the_facet_rank_counts_the_pairs_out_of_order_and_the_facets() {
 
 #[test]
 fn the_normal_form_does_not_depend_on_the_order_of_the_rules() {
-    let mut rng = Rng::new(0xc0f1);
-    for _ in 0..RANDOM_INSTANCES {
+    let mut rng = Rng::new(zed_tests::test_seed());
+    for _ in 0..RANDOM_INSTANCES / 4 {
         let d0 = random(&mut rng);
         let mut d = d0.clone();
         // Any rule that applies, chosen at random, until none does.

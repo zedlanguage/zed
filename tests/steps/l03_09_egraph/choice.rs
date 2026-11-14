@@ -5,11 +5,10 @@
 
 use num_bigint::BigInt;
 use zed_kernel::poly::crossover::{Sum, dense, sparse, takes_dense};
-use zed_tests::scaling;
 
 /// The sum of `c` times `2^60` plus the index at each index of `indices`: coefficients of one
 /// full word for `c` up to 7, and differing, so that no product cancels.
-fn sum(indices: impl IntoIterator<Item = u128>, c: i64) -> Sum {
+pub(super) fn sum(indices: impl IntoIterator<Item = u128>, c: i64) -> Sum {
     Sum::new(
         indices
             .into_iter()
@@ -46,19 +45,20 @@ fn two_wide_terms_take_the_sparse_product() {
     }
 }
 
+/// The product `Poly::mul` chooses for `a` and `b`.
+pub(super) fn chosen(a: &Sum, b: &Sum) -> Vec<(u128, BigInt)> {
+    match takes_dense(a, b) {
+        true => dense(a, b),
+        false => sparse(a, b),
+    }
+}
+
+/// The chosen product of two univariate sums of a few terms has `2n - 1` terms; its growth is
+/// held linear in `bench/choice.rs`.
 #[test]
-fn the_chosen_product_of_n_dense_terms() {
-    let ins = scaling::inputs(1000, |n| (sum(0..n as u128, 3), sum(0..n as u128, -5)));
-    scaling::check(
-        "the chosen product of two univariate sums of n terms",
-        1000,
-        |n| {
-            let (a, b) = &ins[&n];
-            let product = match takes_dense(a, b) {
-                true => dense(a, b),
-                false => sparse(a, b),
-            };
-            assert_eq!(product.len(), 2 * n - 1);
-        },
-    );
+fn the_chosen_product_of_a_few_dense_terms() {
+    for n in [1, 2, 9] {
+        let (a, b) = (sum(0..n as u128, 3), sum(0..n as u128, -5));
+        assert_eq!(chosen(&a, &b).len(), 2 * n - 1);
+    }
 }

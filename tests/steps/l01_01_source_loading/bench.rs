@@ -33,12 +33,9 @@ fn a_rejection_late_in_a_long_file_scales() {
     const N: usize = 4_000;
     let files = inputs(N, late_bad_byte);
     // The rejection allocates nothing: std finds the bad byte, and the span is two numbers.
-    check_instructions_only(
-        "loading n lines and a byte that is not UTF-8",
-        N,
-        1,
-        |n| rejects_late_bad_byte(&files[&n]),
-    );
+    check_instructions_only("loading n lines and a byte that is not UTF-8", N, 1, |n| {
+        rejects_late_bad_byte(&files[&n])
+    });
 }
 
 #[test]

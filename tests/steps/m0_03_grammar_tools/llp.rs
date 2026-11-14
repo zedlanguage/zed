@@ -3,7 +3,6 @@
 //! on the real grammar, on small grammars that show each kind of conflict and each rule, and at n
 //! and 8n.
 
-use zed_tests::scaling::{check, inputs};
 use zed_tools::llp::{self, Cfg, RULES, Report, read_rules, shared};
 use zedc::parse::Grammar;
 
@@ -221,7 +220,7 @@ fn bad_rules_are_reported() {
 }
 
 /// `n` rules that nest: `A0 = '(' A1 ')' T? | 'n'`, …, over a fixed set of terminals.
-fn nesting(n: usize) -> Grammar {
+pub(super) fn nesting(n: usize) -> Grammar {
     let mut text = String::from("Item = A0 ';'  L1\nT = ('+' 'n' T)?  L1\n");
     for i in 0..n {
         let inner = if i + 1 < n {
@@ -234,11 +233,16 @@ fn nesting(n: usize) -> Grammar {
     small(&text)
 }
 
+/// The pair table of [`nesting`]`(n)` has more than `n` cores.
+pub(super) fn pair_table_has_the_cores(g: &Grammar, n: usize) {
+    let r = llp::check(g, "Unit", &[]).expect("reads");
+    assert!(r.cores > n);
+}
+
+/// The checker reads [`nesting`] at small sizes; its time is held in `bench/llp.rs`.
 #[test]
-fn the_checker_scales_with_the_grammar() {
-    let grammars = inputs(200, nesting);
-    check("llp: the pair table of n nested rules", 200, |n| {
-        let r = llp::check(&grammars[&n], "Unit", &[]).expect("reads");
-        assert!(r.cores > n);
-    });
+fn the_checker_reads_nested_rules_at_small_sizes() {
+    for n in [1, 2, 9] {
+        pair_table_has_the_cores(&nesting(n), n);
+    }
 }

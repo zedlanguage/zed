@@ -3,6 +3,7 @@
 //! one per error a resolution reports.
 
 mod above;
+mod bench;
 mod fences;
 mod order;
 pub(crate) mod scaling;

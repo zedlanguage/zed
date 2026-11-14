@@ -3,11 +3,12 @@
 //! family differs from `{}`, its domain holds `"a"`, a fold gives `"a"` the empty level's
 //! result, and a remap keeps the key where its output keypath starts with levels computed from
 //! the keys the short keypath binds. A move that puts an unbound level first drops it.
+//! The benchmark of these levels' time is in `bench/empty_levels.rs`; its checks run here at
+//! small sizes (TEST-bench-move-rest).
 
 use zed_kernel::term::build::{if_, lit, prim};
 use zed_kernel::{Family, KernelError, Prim, Term, Value, eval};
 use zed_tests::kernel::*;
-use zed_tests::scaling;
 
 fn empty() -> Value {
     Value::Family(Family::new())
@@ -172,7 +173,7 @@ fn rank_over_the_outer_level_ranks_an_empty_level() {
 }
 
 /// `n` classes, every other one with no entries, the rest with two.
-fn classes(n: usize) -> Value {
+pub(super) fn classes(n: usize) -> Value {
     let mut leaves = Vec::with_capacity(n * 2);
     for c in 0..n as i64 {
         match c % 2 {
@@ -184,39 +185,6 @@ fn classes(n: usize) -> Value {
         }
     }
     Value::Family(Family::from_leaves(leaves).unwrap())
-}
-
-#[test]
-fn empty_levels_scale() {
-    let n = 2000;
-    let inputs = scaling::inputs(n, |n| lit(classes(n)));
-    // Build, read back, rekey, filter (emptying the levels with a negative entry) and fold.
-    scaling::check(
-        "empty levels: building, leaves, a rekey of the outer level, a discard and a fold, by \
-         classes",
-        n,
-        |n| {
-            let f = classes(n);
-            let Value::Family(fam) = &f else {
-                unreachable!()
-            };
-            assert_eq!(Family::from_leaves(fam.leaves()).unwrap().len(), n);
-            let m = &inputs[&n];
-            let up = rekey_outer(m.clone(), |k| add(k, lit(1)));
-            let kept = discard_with(up, |p, v| {
-                if_(
-                    eq(prim(Prim::PathLen, vec![p]), lit(1)),
-                    lit(true),
-                    lt(lit(0), v),
-                )
-            });
-            let total = fold_at(kept, 2, Term::PrimFn(Prim::Add), Some(lit(0)));
-            let Value::Family(out) = eval(&total).unwrap() else {
-                panic!("a fold of two levels gives a family")
-            };
-            assert_eq!(out.len(), n);
-        },
-    );
 }
 
 #[test]
@@ -338,4 +306,35 @@ fn rank_ranks_keys_that_hold_atoms_as_data() {
     let below = |x: Term| count(discard_with(keyset(m.clone()), |q, _| lt(key(q, 0), x)));
     let ranked = rekey_outer(m.clone(), below);
     assert_eq!(show(&ranked), "{0 -> {}, 1 -> {1 -> 7}, 2 -> {2 -> 8}}");
+}
+
+/// The `n` classes of [`classes`] read back from their leaves, and `m`, their literal, rekeyed
+/// one up, filtered (emptying the levels with a negative entry) and folded, keep `n` classes.
+pub(super) fn empty_levels_pass(n: usize, m: &Term) {
+    let f = classes(n);
+    let Value::Family(fam) = &f else {
+        unreachable!()
+    };
+    assert_eq!(Family::from_leaves(fam.leaves()).unwrap().len(), n);
+    let up = rekey_outer(m.clone(), |k| add(k, lit(1)));
+    let kept = discard_with(up, |p, v| {
+        if_(
+            eq(prim(Prim::PathLen, vec![p]), lit(1)),
+            lit(true),
+            lt(lit(0), v),
+        )
+    });
+    let total = fold_at(kept, 2, Term::PrimFn(Prim::Add), Some(lit(0)));
+    let Value::Family(out) = eval(&total).unwrap() else {
+        panic!("a fold of two levels gives a family")
+    };
+    assert_eq!(out.len(), n);
+}
+
+/// What the benchmark of `bench/empty_levels.rs` asserts besides its ratio, at small sizes.
+#[test]
+fn empty_levels_are_built_read_rekeyed_filtered_and_folded_at_small_sizes() {
+    for n in [1, 2, 9] {
+        empty_levels_pass(n, &lit(classes(n)));
+    }
 }

@@ -4,7 +4,6 @@
 //! the word's place when that line then parses. A name that only begins with a reserved word is
 //! an ordinary name.
 
-use zed_tests::scaling;
 use zedc::ast::Error;
 use zedc::lex::{KEYWORDS, Tok, lex};
 use zedc::parse::{RESERVED, TOP, parse};
@@ -37,7 +36,7 @@ fn notes_of(word: &str, what: &str, repair: &str) -> [String; 3] {
 }
 
 /// The error the unit `src` is refused with by the parser.
-fn refusal(src: &str) -> Error {
+pub(super) fn refusal(src: &str) -> Error {
     let tokens = lex(src).unwrap();
     Error::of_parse(src, parse(src, &tokens, "Unit", TOP).expect_err(src))
 }
@@ -315,41 +314,38 @@ fn every_quoted_example_parses() {
     }
 }
 
-/// Finding the word takes at most two more parses, each linear: the time is linear in the
-/// number of statements before the word, and in the length of its statement.
-#[test]
-fn finding_the_word_is_linear() {
-    let many = scaling::inputs(500, |n| {
-        let mut src: String = (0..n).map(|i| format!("a{i} = {i};\n")).collect();
-        src += "without = 3;\n";
-        src
-    });
-    scaling::check("n bindings before `without = 3;`", 500, |n| {
-        let src = &many[&n];
-        let e = refusal(src);
-        assert_eq!(e.row, Some(Row::ReservedWordAsName));
-    });
-    let long = scaling::inputs(500, |n| {
-        let terms: Vec<String> = (0..n).map(|i| format!("a{i}")).collect();
-        format!("x = {} + y.if;\n", terms.join(" + "))
-    });
-    scaling::check("a statement of n terms ending in `y.if`", 500, |n| {
-        let src = &long[&n];
-        let e = refusal(src);
-        assert_eq!(e.row, Some(Row::ReservedWordAsName));
-    });
+/// `n` bindings, then `without = 3;`.
+pub(super) fn bindings_before_a_word(n: usize) -> String {
+    let mut src: String = (0..n).map(|i| format!("a{i} = {i};\n")).collect();
+    src += "without = 3;\n";
+    src
 }
 
-/// A statement of n reserved words, none of them the cause: each word tried is one more parse,
-/// and at most three are tried, so the time stays linear (COMPLEXITY.md, MSG-keyword-as-name).
+/// A statement of `n` terms ending in `y.if`.
+pub(super) fn terms_before_a_word(n: usize) -> String {
+    let terms: Vec<String> = (0..n).map(|i| format!("a{i}")).collect();
+    format!("x = {} + y.if;\n", terms.join(" + "))
+}
+
+/// A statement of `n` words `true` ending in `is ;`, none of them the cause.
+pub(super) fn many_reserved_words(n: usize) -> String {
+    format!("x = {} is ;\n", vec!["true"; n].join(" && "))
+}
+
+/// The reserved word after many statements, or at the end of a long statement, is reported as a
+/// name; a statement of many reserved words that are not the cause is a syntax error. The time
+/// each takes is held linear in `bench/reserved.rs`.
 #[test]
-fn many_reserved_words_in_one_statement_are_linear() {
-    let long = scaling::inputs(500, |n| {
-        format!("x = {} is ;\n", vec!["true"; n].join(" && "))
-    });
-    scaling::check("a statement of n words `true` ending in `is ;`", 500, |n| {
-        let src = &long[&n];
-        let e = refusal(src);
-        assert_eq!(e.row, Some(Row::SyntaxError));
-    });
+fn the_word_is_found_after_many_statements_and_many_words() {
+    for n in [1, 2, 9] {
+        assert_eq!(
+            refusal(&bindings_before_a_word(n)).row,
+            Some(Row::ReservedWordAsName)
+        );
+        assert_eq!(
+            refusal(&terms_before_a_word(n)).row,
+            Some(Row::ReservedWordAsName)
+        );
+        assert_eq!(refusal(&many_reserved_words(n)).row, Some(Row::SyntaxError));
+    }
 }

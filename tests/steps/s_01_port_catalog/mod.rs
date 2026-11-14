@@ -4,9 +4,10 @@
 //! `rust-analyzer scip` takes more than a minute over this repository; the catalog was made with
 //! it, and step S.1 regenerates it the same way.
 
+mod bench;
+
 use std::collections::{HashMap, HashSet};
 
-use zed_tests::scaling::{check, inputs};
 use zed_tools::catalog::{self, Uses, check_zed, read_catalog, routine, scan, write_catalog};
 use zed_tools::layer::WordTable;
 use zed_tools::plan::row_ids;
@@ -389,45 +390,43 @@ fn check_zed_scopes_lambda_parameters_to_their_lambda() {
     }
 }
 
-/// The scope of lambda parameters costs no walk up a name's ancestors: lambdas nested `n` deep,
-/// whose innermost body reads the outermost lambda's parameter and the innermost one's `n`
-/// times each, are checked in time linear in `n`.
-#[test]
-fn check_zed_scales_linearly_with_lambda_nesting() {
-    let dir = spec_dir("catalog_zed_nesting");
-    let spec = Spec::open(&dir.root()).expect("the test spec");
-    let words = WordTable::read(&spec.design).expect("its table");
-    let rows = HashSet::new();
-    let texts = inputs(1000, |n| {
-        format!(
-            "`xs.map(w -> {}{}w{})`",
-            "ys.map(y -> ".repeat(n),
-            "w + y + ".repeat(n),
-            ")".repeat(n)
-        )
-    });
-    check("catalog check of n nested lambdas", 1000, |n| {
-        assert_eq!(check_zed(&texts[&n], &spec, &words, &rows), None);
-    });
+/// Lambdas nested `n` deep, whose innermost body reads the outermost lambda's parameter and the
+/// innermost one's `n` times each.
+fn nested_lambdas(n: usize) -> String {
+    format!(
+        "`xs.map(w -> {}{}w{})`",
+        "ys.map(y -> ".repeat(n),
+        "w + y + ".repeat(n),
+        ")".repeat(n)
+    )
 }
 
-/// The words-and-arguments check is linear in the text: a chain of `n` calls, each with a lambda
-/// and a named argument.
-#[test]
-fn check_zed_scales_linearly_with_the_text() {
-    let dir = spec_dir("catalog_zed_scaling");
+/// A chain of `n` calls, each with a lambda and a named argument.
+fn call_chain(n: usize) -> String {
+    format!(
+        "`xs{}`",
+        ".map(y -> bitNot(y, width: 8)).sort(by: f)".repeat(n)
+    )
+}
+
+/// The Zed check of `text` against a test spec named `name` finds no problem.
+fn zed_text_passes(name: &str, texts: impl IntoIterator<Item = String>) {
+    let dir = spec_dir(name);
     let spec = Spec::open(&dir.root()).expect("the test spec");
     let words = WordTable::read(&spec.design).expect("its table");
     let rows = HashSet::new();
-    let texts = inputs(500, |n| {
-        format!(
-            "`xs{}`",
-            ".map(y -> bitNot(y, width: 8)).sort(by: f)".repeat(n)
-        )
-    });
-    check("catalog check of a chain of n calls", 500, |n| {
-        assert_eq!(check_zed(&texts[&n], &spec, &words, &rows), None);
-    });
+    for text in texts {
+        assert_eq!(check_zed(&text, &spec, &words, &rows), None, "{text}");
+    }
+}
+
+/// The nests of lambdas and the chains of calls the benchmarks of `bench.rs` time pass the Zed
+/// check at small sizes; their time is held linear there.
+#[test]
+fn nested_lambdas_and_chains_of_calls_pass_the_zed_check() {
+    let sizes = [0, 1, 2, 9];
+    zed_text_passes("catalog_zed_nesting", sizes.map(nested_lambdas));
+    zed_text_passes("catalog_zed_scaling", sizes.map(call_chain));
 }
 
 #[test]
@@ -551,31 +550,39 @@ fn the_committed_catalog_is_well_formed() {
     );
 }
 
-/// The scan of an index of n documents, each with eight uses of routines out of n / 2.
+/// An index of `n` documents, each with eight uses of routines out of `n / 2` (`n` at least 2).
+fn many_documents(n: usize) -> Vec<u8> {
+    let docs: Vec<Vec<u8>> = (0..n)
+        .map(|d| {
+            let occs: Vec<Vec<u8>> = (0..8)
+                .map(|k| {
+                    let s = format!(
+                        "rust-analyzer cargo dep 1.0 m/T#f{}().",
+                        (d * 8 + k) % (n / 2)
+                    );
+                    occurrence(&s, k as u64, 0, true)
+                })
+                .collect();
+            document(&format!("crates/zedc/src/f{}.rs", d % 64), &occs)
+        })
+        .collect();
+    index(&docs)
+}
+
+/// The scan of `index`, built by [`many_documents`] at `n`, finds each of the `n / 2` routines.
+fn scan_finds_each_routine(index: &[u8], n: usize, ours: &HashSet<String>) {
+    let found = scan(index, &catalog::SOURCES, ours).expect("a well-formed index");
+    assert_eq!(found.len(), n / 2);
+}
+
+/// The index the benchmark of `bench.rs` scans, at small sizes, with one document per file and
+/// with more documents than files (64); its time is held linear there.
 #[test]
-fn scan_scales_linearly_with_the_index() {
+fn the_scan_of_many_documents_finds_each_routine_once() {
     let o = ours();
-    let built = inputs(2_000, |n| {
-        let docs: Vec<Vec<u8>> = (0..n)
-            .map(|d| {
-                let occs: Vec<Vec<u8>> = (0..8)
-                    .map(|k| {
-                        let s = format!(
-                            "rust-analyzer cargo dep 1.0 m/T#f{}().",
-                            (d * 8 + k) % (n / 2)
-                        );
-                        occurrence(&s, k as u64, 0, true)
-                    })
-                    .collect();
-                document(&format!("crates/zedc/src/f{}.rs", d % 64), &occs)
-            })
-            .collect();
-        index(&docs)
-    });
-    check("catalog scan of n documents", 2_000, |n| {
-        let found = scan(&built[&n], &catalog::SOURCES, &o).expect("a well-formed index");
-        assert_eq!(found.len(), n / 2);
-    });
+    for n in [2, 3, 9, 130] {
+        scan_finds_each_routine(&many_documents(n), n, &o);
+    }
 }
 
 /// The floor quotient and remainder of `a` by `b` (`b` not 0), the remainder having the sign

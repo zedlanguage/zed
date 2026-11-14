@@ -2,6 +2,7 @@
 //! fact address (static node address, dynamic keypath) no other fact of the run holds, with
 //! the facts it read; a failure's origins are the facts where each of its members appeared.
 
+mod bench;
 mod kernel;
 mod programs;
 mod scaling;

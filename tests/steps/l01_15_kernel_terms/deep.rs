@@ -8,7 +8,6 @@ use zed_kernel::print::pretty;
 use zed_kernel::term::{FixKind, Grade, GuardPos, Pattern, Prim, Witness};
 use zed_kernel::types::Type;
 use zed_kernel::{Shared, Term, Value};
-use zed_tests::scaling;
 
 fn var(x: &str) -> Term {
     Term::Var(x.into())
@@ -125,7 +124,7 @@ fn debug_writes_the_derived_text() {
 /// A term nested `n` deep through each kind of part that nests: lambda bodies (a [`Shared`]),
 /// the arguments of a sum (a `Vec`), the arms of a `match`, and a pattern of tuples, each built
 /// afresh so that no two builds share a subterm.
-fn nested(n: usize) -> Vec<(&'static str, Term)> {
+pub(super) fn nested(n: usize) -> Vec<(&'static str, Term)> {
     let lams = (0..n).fold(var("x"), |b, _| Term::Lam(vec!["y".into()], sh(b)));
     let sum = (0..n).fold(var("x"), |a, _| {
         Term::Prim(Prim::Add, vec![a, Term::Lit(Value::Int(1))])
@@ -168,7 +167,7 @@ fn a_term_far_deeper_than_the_stack_copies_compares_and_prints() {
 
 /// `n` levels of `if s { s } else { s }`, each level's three parts one shared subterm: a DAG
 /// of `n + 1` nodes with `3^n` paths.
-fn dag(n: usize) -> Term {
+pub(super) fn dag(n: usize) -> Term {
     (0..n).fold(var("x"), |t, _| {
         let s = sh(t);
         Term::If(s.clone(), s.clone(), s)
@@ -189,37 +188,9 @@ fn equal_dags_compare_once_per_shared_pair() {
     });
 }
 
-#[test]
-fn copying_comparing_and_printing_scale_with_size() {
-    let n = 20_000;
-    zed_tests::deep::on_small_stack(|| {
-        let built = |k: usize| (nested(k), nested(k));
-        let (small, large) = (built(n), built(8 * n));
-        let at = |k: usize| if k == n { &small } else { &large };
-        for i in 0..small.0.len() {
-            let what = small.0[i].0;
-            scaling::check(&format!("copying {what}"), n, |k| {
-                drop(std::hint::black_box(at(k).0[i].1.clone()));
-            });
-            scaling::check(&format!("comparing {what}"), n, |k| {
-                let (a, b) = at(k);
-                assert!(std::hint::black_box(a[i].1 == b[i].1));
-            });
-            scaling::check(&format!("writing the Debug text of {what}"), n, |k| {
-                std::hint::black_box(format!("{:?}", at(k).0[i].1));
-            });
-        }
-        let (small, large) = ((dag(n), dag(n)), (dag(8 * n), dag(8 * n)));
-        scaling::check("comparing a DAG of shared subterms", n, |k| {
-            let (a, b) = if k == n { &small } else { &large };
-            assert!(std::hint::black_box(a == b));
-        });
-    });
-}
-
 /// Terms nested `n` deep through the other parts the printer nests through: `let` bodies, `else`
 /// branches, call heads, negations, indices and an atom pattern.
-fn printed(n: usize) -> Vec<(&'static str, Term)> {
+pub(super) fn printed(n: usize) -> Vec<(&'static str, Term)> {
     let lets = (0..n).fold(var("x"), |b, _| Term::Let("y".into(), sh(var("v")), sh(b)));
     let ifs = (0..n).fold(var("x"), |b, _| Term::If(sh(var("c")), sh(var("a")), sh(b)));
     let heads = (0..n).fold(var("f"), |h, _| Term::App(sh(h), vec![var("a")]));
@@ -241,7 +212,7 @@ fn printed(n: usize) -> Vec<(&'static str, Term)> {
 
 /// Whether `what`, broken to a width, puts level `i` at indentation `2i`: its text is quadratic
 /// in its depth, so it is broken only where that text is small.
-fn indents(what: &str) -> bool {
+pub(super) fn indents(what: &str) -> bool {
     [
         "a left-nested sum",
         "nested `match` arms",
@@ -276,21 +247,26 @@ fn a_term_far_deeper_than_the_stack_is_displayed_and_broken() {
     });
 }
 
+/// Every term the benchmarks of `bench/deep.rs` time, at a few levels: a copy and a second build
+/// equal the term and write the same `Debug` text, a DAG equals its second build, and the text
+/// broken to the width each benchmark uses holds the one-line text.
 #[test]
-fn displaying_and_breaking_scale_with_depth() {
-    let n = 20_000;
-    zed_tests::deep::on_small_stack(|| {
-        let built = |k: usize| nested(k).into_iter().chain(printed(k)).collect::<Vec<_>>();
-        let (small, large) = (built(n), built(8 * n));
-        let at = |k: usize| if k == n { &small } else { &large };
-        for (i, (what, _)) in small.iter().enumerate() {
-            scaling::check(&format!("displaying {what}"), n, |k| {
-                std::hint::black_box(at(k)[i].1.to_string());
-            });
-            let width = if indents(what) { usize::MAX } else { 80 };
-            scaling::check(&format!("breaking {what} to width {width}"), n, |k| {
-                std::hint::black_box(pretty(&at(k)[i].1, width));
-            });
+fn each_benchmark_term_copies_compares_and_prints_at_small_depths() {
+    for n in [1, 2, 9] {
+        for ((what, a), (_, b)) in nested(n).into_iter().zip(nested(n)) {
+            let copy = a.clone();
+            assert!(copy == a && a == b, "{what} at {n}");
+            assert_eq!(format!("{a:?}"), format!("{b:?}"), "{what} at {n}");
         }
-    });
+        assert!(dag(n) == dag(n) && dag(n) != dag(n + 1), "a DAG at {n}");
+        for (what, t) in nested(n).into_iter().chain(printed(n)) {
+            let flat = t.to_string();
+            let width = if indents(what) { usize::MAX } else { 80 };
+            assert_eq!(
+                pretty(&t, width).split_whitespace().collect::<String>(),
+                flat.split_whitespace().collect::<String>(),
+                "{what} at {n}"
+            );
+        }
+    }
 }

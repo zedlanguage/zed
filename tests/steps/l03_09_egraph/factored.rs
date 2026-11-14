@@ -5,7 +5,6 @@ use std::sync::Arc;
 
 use zed_kernel::poly::{Carrier, LIMIT, Refused, Verdict};
 use zed_kernel::term::Term;
-use zed_tests::scaling;
 
 use super::{decide_sides, law, sides_of};
 
@@ -121,7 +120,7 @@ fn the_row_examples() {
 
 /// `(1 + x) ^ e == (1 + x) ^ h * (x + 1) ^ (e - h)` for `e = 2^bits - 1`, `h = 2^(bits - 1)`,
 /// elaborated from Zed source.
-fn split_of(bits: usize) -> (Term, Term, Vec<Arc<str>>) {
+pub(super) fn split_of(bits: usize) -> (Term, Term, Vec<Arc<str>>) {
     let e = (1u128 << (bits - 1)) - 1 + (1u128 << (bits - 1));
     let h = 1u128 << (bits - 1);
     let src = format!(
@@ -131,17 +130,17 @@ fn split_of(bits: usize) -> (Term, Term, Vec<Arc<str>>) {
     sides_of(&src, &["split"]).remove(0)
 }
 
+/// Asserts the split `s` proved as a product of powers of the same factors.
+pub(super) fn split_proved(s: &(Term, Term, Vec<Arc<str>>)) {
+    let d = decide_sides(s, Carrier::Int);
+    assert_eq!((d.verdict, d.factored), (Verdict::Proved, true));
+}
+
+/// The split of an exponent of a few bits is proved as a product of powers; the time is held
+/// to its digits in `bench/factored.rs`.
 #[test]
-fn the_split_scales_with_its_exponent_digits() {
-    // 16 and 128 bits: the work is the points' powers, one squaring a bit, and the factors'
-    // expansion, the same at both.
-    let ins = scaling::inputs(16, split_of);
-    scaling::check(
-        "(1 + x) ^ e == (1 + x) ^ h * (x + 1) ^ (e - h), e of n bits",
-        16,
-        |n| {
-            let d = decide_sides(&ins[&n], Carrier::Int);
-            assert_eq!((d.verdict, d.factored), (Verdict::Proved, true));
-        },
-    );
+fn the_split_of_a_few_bits_is_proved() {
+    for bits in [8, 12, 16] {
+        split_proved(&split_of(bits));
+    }
 }

@@ -2,6 +2,7 @@
 //! program of its number prints on the `.in` file of the same name. The references compute the
 //! outputs without the compiler, so the corpus tests the compiler rather than repeating it.
 
+mod bench;
 mod int_reading;
 mod lattice_circles;
 mod p14_oracle;
@@ -157,7 +158,9 @@ fn a_spreadsheet_cell_that_depends_on_itself_is_an_error() {
 
 #[test]
 fn a_type_may_depend_on_a_chain_as_long_as_the_program() {
-    let n = 200_000;
+    // Fifty thousand links, far more than a test thread's 2 MiB stack holds were the chain
+    // followed by recursion.
+    let n = 50_000;
     let mut input: String = (1..n)
         .rev()
         .map(|i| format!("d{i} = d{} 1 +\n", i - 1))
@@ -498,16 +501,16 @@ fn count_differences(inputs: impl Iterator<Item = String>) -> (usize, usize, Opt
     (seen, differ, first)
 }
 
-/// Every sequence of up to 5 points of the 3 by 3 grid, points repeated or not, and every count
+/// Every sequence of up to 4 points of the 3 by 3 grid, points repeated or not, and every count
 /// of clusters from -1 to n + 1. A sequence is a set in one order, and every order of every set
 /// is here, so this also checks that reordering the input lines renames the clusters as the
-/// O(n²) form does.
+/// O(n²) form does. The sequences of 5 points, nine times as many, run in tests/full.
 #[test]
 fn clustering_agrees_with_its_quadratic_form_on_every_small_grid_input() {
     let grid: Vec<String> = (0..9).map(|c| format!("{} {}\n", c % 3, c / 3)).collect();
     let mut inputs = Vec::new();
     let mut points = vec![String::new()];
-    for n in 0..=5 {
+    for n in 0..=4 {
         for body in &points {
             for k in -1..=n + 1 {
                 inputs.push(format!("{k}\n{body}"));
@@ -519,7 +522,7 @@ fn clustering_agrees_with_its_quadratic_form_on_every_small_grid_input() {
             .collect();
     }
     let (seen, differ, first) = count_differences(inputs.into_iter());
-    assert_eq!(seen, 523_137);
+    assert_eq!(seen, 50_745);
     assert_eq!((differ, first), (0, None), "of {seen} inputs");
 }
 
@@ -533,12 +536,13 @@ fn splitmix(seed: u64, i: u64) -> u64 {
 
 /// Random sets of up to 40 points: coordinates from ranges of 3, 10 and 1000 values, which give
 /// equal points and equal distances often, and from 2^40 values times 10^20, which needs more
-/// than 64 bits; a count of clusters from -1 to n + 1 at random.
+/// than 64 bits; a count of clusters from -1 to n + 1 at random. Each run draws new sets.
 #[test]
 fn clustering_agrees_with_its_quadratic_form_on_random_inputs() {
     let mut inputs = Vec::new();
-    for case in 0..6000u64 {
-        let draw = |i: u64| splitmix(case, i);
+    let seed = zed_tests::test_seed();
+    for case in 0..1500u64 {
+        let draw = |i: u64| splitmix(seed.wrapping_add(case), i);
         let n = draw(0) % 41;
         let (range, scale) = [
             (3, ""),

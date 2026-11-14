@@ -5,6 +5,7 @@
 //! forms. Each form builds and formats; name resolution refuses it, naming the later step that
 //! gives it meaning.
 
+mod bench;
 mod blocks;
 mod formatting;
 mod later;

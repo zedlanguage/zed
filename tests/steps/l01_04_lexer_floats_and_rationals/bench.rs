@@ -6,8 +6,8 @@
 use zed_tests::scaling::{check, inputs};
 
 use super::scaling::{
-    is_rejected, lexes_eight_tokens_each, lexes_one_token, literals,
-    long_float_into_a_name, long_float_with_a_long_exponent,
+    is_rejected, lexes_eight_tokens_each, lexes_one_token, literals, long_float_into_a_name,
+    long_float_with_a_long_exponent,
 };
 
 /// Checks `expect` on the text `make` builds, lexed at sizes `n` and `8n`.
@@ -18,7 +18,12 @@ fn scales(what: &str, n: usize, make: fn(usize) -> String, expect: fn(&str, usiz
 
 #[test]
 fn many_literals_scale() {
-    scales("lexing 6n literals", 2_000, literals, lexes_eight_tokens_each);
+    scales(
+        "lexing 6n literals",
+        2_000,
+        literals,
+        lexes_eight_tokens_each,
+    );
 }
 
 #[test]

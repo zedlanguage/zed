@@ -31,7 +31,12 @@ fn many_names_among_text_beyond_ascii_scale() {
 
 #[test]
 fn one_long_name_scales() {
-    scales("lexing a name of 2n letters", 20_000, long_name, lexes_one_name);
+    scales(
+        "lexing a name of 2n letters",
+        20_000,
+        long_name,
+        lexes_one_name,
+    );
 }
 
 #[test]

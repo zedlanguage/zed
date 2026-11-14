@@ -2,6 +2,7 @@
 //! `build.options.<name>` whether it turns the option `<name>` on; the options are those the
 //! manifest's entry `options` declares, and `--option <name>` turns one on.
 
+mod bench;
 mod branches;
 mod command;
 mod reads;

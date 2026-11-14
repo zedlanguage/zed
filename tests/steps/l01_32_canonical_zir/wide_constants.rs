@@ -9,7 +9,6 @@
 use num_bigint::{BigInt, BigUint, Sign};
 use zed_kernel::term::build::lit;
 use zed_kernel::{Rat, Term, Value};
-use zed_tests::scaling::check_order;
 use zedc::address::ContentAddress;
 use zedc::canon::{self, Def};
 use zedc::zir::canon::address;
@@ -18,7 +17,7 @@ use zedc::zir::{Region, binary};
 
 /// A number of `bits` bits whose bytes come from a fixed linear congruential generator, so
 /// every run and every machine builds the same one.
-fn wide(bits: usize, sign: Sign) -> BigInt {
+pub(super) fn wide(bits: usize, sign: Sign) -> BigInt {
     let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
     let bytes: Vec<u8> = (0..bits / 8)
         .map(|_| {
@@ -32,14 +31,14 @@ fn wide(bits: usize, sign: Sign) -> BigInt {
 }
 
 /// `2^bits`, kept as a power of 2.
-fn two_to(bits: usize) -> Rat {
+pub(super) fn two_to(bits: usize) -> Rat {
     Rat::int(BigInt::from(2))
         .pow(&BigUint::from(bits))
         .expect("a power of 2 that fits")
 }
 
 /// The graph that writes `v` to standard output.
-fn graph(v: Value) -> Region {
+pub(super) fn graph(v: Value) -> Region {
     lower(&Term::Push("stdout".into(), Term::Lit(v).into())).expect("a graph")
 }
 
@@ -50,7 +49,7 @@ fn kernel_address(v: Value) -> ContentAddress {
 }
 
 /// The definition `wide = v`, with no domain and no facets.
-fn def(v: Value) -> Def {
+pub(super) fn def(v: Value) -> Def {
     Def {
         name: "wide".into(),
         domain: None,
@@ -220,43 +219,6 @@ fn a_kept_power_out_of_its_form_is_an_error() {
     }
 }
 
-/// Writing a number kept as the product of the first n primes, each to the power 2^100, takes
-/// time and memory linear in n, the size of its form: its value has about 2^100 n bits.
-#[test]
-fn a_kept_power_is_written_in_time_linear_in_its_parts() {
-    const N: usize = 1 << 10;
-    let e = BigUint::from(1u32) << 100;
-    let primes: Vec<u64> = (2..)
-        .filter(|&p| zed_kernel::num::is_prime(p))
-        .take(8 * N)
-        .collect();
-    let product = |n: usize| {
-        Value::integer(primes[..n].iter().fold(Rat::int(BigInt::from(1)), |r, &p| {
-            r.mul(&Rat::int(BigInt::from(p)).pow(&e).expect("a power kept"))
-                .expect("kept")
-        }))
-    };
-    let (small, large) = (product(N), product(8 * N));
-    let gs = [graph(small.clone()), graph(large.clone())];
-    let pick = |k: usize| &gs[usize::from(k != N)];
-    check_order("the ZIR address of a product of n kept powers", N, 1, |k| {
-        address(pick(k)).expect("the powers");
-    });
-    check_order("the binary form of a product of n kept powers", N, 1, |k| {
-        binary::encode(pick(k)).expect("the powers");
-    });
-    let defs = [def(small), def(large)];
-    let none = |_: &str| None;
-    check_order(
-        "the kernel address of a product of n kept powers",
-        N,
-        1,
-        |k| {
-            canon::address(&defs[usize::from(k != N)], &none).expect("the powers");
-        },
-    );
-}
-
 #[test]
 fn the_binary_form_of_a_wide_number_reads_back() {
     let values = [
@@ -287,55 +249,6 @@ fn a_cut_count_of_limbs_is_an_error() {
             "cut {cut}"
         );
     }
-}
-
-/// The decimal digits cost about `n^1.5` here, 22.3 times the work at 8n: over the limit of 13,
-/// though under the 24 allowed until SCALE-ratio, when a second test held it at 64 times the
-/// bits (removed by TESTS-scaling-limit-13).
-#[test]
-fn addressing_a_wide_constant_is_linear_in_its_bits() {
-    const N: usize = 1 << 17;
-    let terms = |sign| {
-        [
-            graph(Value::int(wide(N, sign))),
-            graph(Value::int(wide(8 * N, sign))),
-        ]
-    };
-    let (random, negative) = (terms(Sign::Plus), terms(Sign::Minus));
-    let powers = [
-        graph(Value::integer(two_to(N))),
-        graph(Value::integer(two_to(8 * N))),
-    ];
-    fn pick(gs: &[Region; 2], k: usize) -> &Region {
-        &gs[usize::from(k != N)]
-    }
-    check_order("the ZIR address of a random number of n bits", N, 1, |k| {
-        address(pick(&random, k)).expect("memory for the address");
-    });
-    check_order(
-        "the ZIR address of a negative number of n bits",
-        N,
-        1,
-        |k| {
-            address(pick(&negative, k)).expect("memory for the address");
-        },
-    );
-    check_order("the ZIR address of 2^n kept as a power", N, 1, |k| {
-        address(pick(&powers, k)).expect("memory for the address");
-    });
-    let defs = [
-        def(Value::int(wide(N, Sign::Plus))),
-        def(Value::int(wide(8 * N, Sign::Plus))),
-    ];
-    let none = |_: &str| None;
-    check_order(
-        "the kernel address of a random number of n bits",
-        N,
-        1,
-        |k| {
-            canon::address(&defs[usize::from(k != N)], &none).expect("memory for the address");
-        },
-    );
 }
 
 /// The size item CONST-wide-addr was written for: a constant of 2^30 bits, whose decimal digits
@@ -369,4 +282,50 @@ fn a_constant_of_two_to_the_thirty_bits_is_addressed() {
         "a constant of 2^30 bits: built in {built:?}, addressed and read back in {:?}",
         start.elapsed() - built
     );
+}
+
+/// The first `n` primes.
+pub(super) fn primes(n: usize) -> Vec<u64> {
+    (2..)
+        .filter(|&p| zed_kernel::num::is_prime(p))
+        .take(n)
+        .collect()
+}
+
+/// The product of `primes`, each to the power 2^100, kept as its powers.
+pub(super) fn kept_product(primes: &[u64]) -> Value {
+    let e = BigUint::from(1u32) << 100;
+    Value::integer(primes.iter().fold(Rat::int(BigInt::from(1)), |r, &p| {
+        r.mul(&Rat::int(BigInt::from(p)).pow(&e).expect("a power kept"))
+            .expect("kept")
+    }))
+}
+
+/// A product of a few kept powers is addressed in the ZIR and the kernel and written in binary;
+/// the time of each is held linear in the number of powers in `bench/wide_constants.rs`.
+#[test]
+fn a_product_of_a_few_kept_powers_is_addressed_and_written() {
+    let ps = primes(9);
+    let none = |_: &str| None;
+    for n in [1, 2, 9] {
+        let v = kept_product(&ps[..n]);
+        let g = graph(v.clone());
+        address(&g).expect("the powers");
+        let bytes = binary::encode(&g).expect("the powers");
+        assert_eq!(binary::decode(&bytes).expect("a graph"), g);
+        canon::address(&def(v), &none).expect("the powers");
+    }
+}
+
+/// Random and negative numbers of a few bits, and `2^n` kept as a power, are addressed in the ZIR
+/// and the kernel; the time is held linear in the bits in `bench/wide_constants.rs`.
+#[test]
+fn a_few_numbers_of_a_few_bits_are_addressed() {
+    for bits in [8, 64, 1024] {
+        for sign in [Sign::Plus, Sign::Minus] {
+            address(&graph(Value::int(wide(bits, sign)))).expect("memory for the address");
+            kernel_address(Value::int(wide(bits, sign)));
+        }
+        address(&graph(Value::integer(two_to(bits)))).expect("memory for the address");
+    }
 }

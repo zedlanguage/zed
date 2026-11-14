@@ -4,10 +4,11 @@
 
 use std::collections::HashSet;
 
-use zed_tests::scaling::{check, check_order};
 use zed_tools::imports::{self, Graph};
 
 use zed_tests::step_helpers::m0_03_grammar_tools::{Dir, tool};
+
+mod bench;
 
 /// The graph of `files`, each a path and its text.
 fn graph(files: &[(&str, &str)]) -> Graph {
@@ -159,34 +160,32 @@ fn a_listed_file_outside_every_cycle_is_reported() {
     assert_eq!(against_known(&exact, &[]), (vec![], exact.to_vec()));
 }
 
+/// `m` files in cycles and a list of `m` entries, half of them the files, half stale, so both
+/// directions are searched in full.
+fn known_list(m: usize) -> (Vec<String>, Vec<String>) {
+    let found = (0..m).map(|i| format!("c/f{i}.rs")).collect();
+    let known = (0..m)
+        .map(|i| format!("c/f{}.rs", if i % 2 == 0 { i } else { m + i }))
+        .collect();
+    (found, known)
+}
+
+/// Against `known`, `m` entries, the `m` files of `found` give `m / 2` new files and `m / 2`
+/// stale entries.
+fn half_new_half_stale(known: &[&str], found: &[String], m: usize) {
+    let (new, stale) = against_known(known, found);
+    assert_eq!((new.len(), stale.len()), (m / 2, m / 2));
+}
+
+/// A list of known files half of which are stale gives its new files and stale entries at small
+/// even sizes; its time is held in `bench::comparing_with_the_known_list_scales_with_its_length`.
 #[test]
-fn comparing_with_the_known_list_scales_with_its_length() {
-    // Inputs are built before timing: n files in cycles and a list of n entries, half of them
-    // the files, half stale, so both directions are searched in full.
-    let n = 20_000;
-    let sizes = [n, 8 * n];
-    let inputs: Vec<(Vec<String>, Vec<String>)> = sizes
-        .iter()
-        .map(|&m| {
-            let found = (0..m).map(|i| format!("c/f{i}.rs")).collect();
-            let known = (0..m)
-                .map(|i| format!("c/f{}.rs", if i % 2 == 0 { i } else { m + i }))
-                .collect();
-            (found, known)
-        })
-        .collect();
-    let lists: Vec<Vec<&str>> = inputs
-        .iter()
-        .map(|(_, k)| k.iter().map(String::as_str).collect())
-        .collect();
-    check("against_known, by files and entries", n, |m| {
-        let at = sizes
-            .iter()
-            .position(|&s| s == m)
-            .expect("a size that was built");
-        let (new, stale) = against_known(&lists[at], &inputs[at].0);
-        assert_eq!((new.len(), stale.len()), (m / 2, m / 2));
-    });
+fn comparing_with_the_known_list_finds_new_files_and_stale_entries_at_small_sizes() {
+    for m in [2, 4, 10] {
+        let (found, known) = known_list(m);
+        let known: Vec<&str> = known.iter().map(String::as_str).collect();
+        half_new_half_stale(&known, &found, m);
+    }
 }
 
 #[test]
@@ -366,22 +365,21 @@ fn ring(n: usize) -> Vec<(String, String)> {
     files
 }
 
+/// `files`, a [`ring`] of `m` files, is one cycle whose shortest cycle has all `m`.
+fn one_ring_of(files: &[(String, String)], m: usize) {
+    let g = Graph::of(files).expect("the ring's graph");
+    let found = g.cycles();
+    assert_eq!(found.len(), 1);
+    assert_eq!(g.shortest_cycle(&found[0]).len(), m);
+}
+
+/// A ring of files is one cycle of them all at small sizes; its time is held in
+/// `bench::the_tool_scales_with_the_number_of_files`.
 #[test]
-fn the_tool_scales_with_the_number_of_files() {
-    // Inputs are built before timing. The ring is one long component, so Tarjan's explicit
-    // stack is as deep as the crate is large, and the report names all n files twice.
-    let n = 400;
-    let inputs = [ring(n), ring(8 * n)];
-    check("imports, by files in one cycle", n, |m| {
-        let files = inputs
-            .iter()
-            .find(|f| f.len() == m + 1)
-            .expect("a size that was built");
-        let g = Graph::of(files).expect("the ring's graph");
-        let found = g.cycles();
-        assert_eq!(found.len(), 1);
-        assert_eq!(g.shortest_cycle(&found[0]).len(), m);
-    });
+fn a_ring_of_files_is_one_cycle_at_small_sizes() {
+    for m in [2, 3, 9] {
+        one_ring_of(&ring(m), m);
+    }
 }
 
 #[test]
@@ -656,27 +654,26 @@ fn untyped_ring(n: usize) -> Vec<(String, String)> {
     files
 }
 
+/// `files`, a crate of `m` types whose methods are written apart, is one cycle of `m` files,
+/// with `unknown` calls the tool does not type.
+fn one_cycle_of_methods(files: &[(String, String)], m: usize, unknown: usize) {
+    let g = Graph::of(files).expect("the ring's graph");
+    assert_eq!(g.unknown_calls, unknown);
+    let found = g.cycles();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].len(), m);
+}
+
+/// Methods written apart in a ring, called on untyped and on typed values, make one cycle of
+/// their files at small sizes; their time is held in
+/// `bench::untyped_calls_scale_with_the_number_of_files` and
+/// `bench::typing_the_calls_scales_with_the_number_of_files`.
 #[test]
-fn untyped_calls_scale_with_the_number_of_files() {
-    // Every type has a method `go`, so each untyped call meets n type files; joined from the
-    // calling file's two imports of type files, it costs two lookups, and the imports are 2n.
-    let n = 200;
-    let inputs = [untyped_ring(n), untyped_ring(8 * n)];
-    check(
-        "imports, by untyped calls of methods written apart",
-        n,
-        |m| {
-            let files = inputs
-                .iter()
-                .find(|f| f.len() == 2 * m + 1)
-                .expect("a size that was built");
-            let g = Graph::of(files).expect("the ring's graph");
-            assert_eq!(g.unknown_calls, m);
-            let found = g.cycles();
-            assert_eq!(found.len(), 1);
-            assert_eq!(found[0].len(), m);
-        },
-    );
+fn methods_written_apart_in_a_ring_are_one_cycle_at_small_sizes() {
+    for m in [2, 3, 9] {
+        one_cycle_of_methods(&untyped_ring(m), m, m);
+        one_cycle_of_methods(&method_ring(m), m, 0);
+    }
 }
 
 /// A crate of `n` types `T0` to `T{n-1}`, each in a file `t{i}.rs` with its one method `go`
@@ -698,25 +695,6 @@ fn method_ring(n: usize) -> Vec<(String, String)> {
     files.push(("lib.rs".to_string(), lib));
     files.sort();
     files
-}
-
-#[test]
-fn typing_the_calls_scales_with_the_number_of_files() {
-    // Every type has a method of the same name, so a call whose receiver went untyped would
-    // import all n files with it, n^2 imports in all; typed, each call is one hash lookup.
-    let n = 200;
-    let inputs = [method_ring(n), method_ring(8 * n)];
-    check("imports, by methods written apart in one cycle", n, |m| {
-        let files = inputs
-            .iter()
-            .find(|f| f.len() == 2 * m + 1)
-            .expect("a size that was built");
-        let g = Graph::of(files).expect("the ring's graph");
-        assert_eq!(g.unknown_calls, 0);
-        let found = g.cycles();
-        assert_eq!(found.len(), 1);
-        assert_eq!(found[0].len(), m);
-    });
 }
 
 #[test]
@@ -860,30 +838,28 @@ fn many_hidden(k: usize) -> Vec<(String, String)> {
     files
 }
 
+/// `files`, [`many_calls`] of `m` open methods, has `m` untyped calls and `2m + 1` imports.
+fn many_calls_import_their_methods(files: &[(String, String)], m: usize) {
+    let g = Graph::of(files).expect("the crate's graph");
+    assert_eq!(g.unknown_calls, m);
+    assert_eq!(g.imports.iter().map(Vec::len).sum::<usize>(), 2 * m + 1);
+}
+
+/// `files`, [`many_hidden`], has no untyped call that may reach a method.
+fn hidden_methods_import_nothing(files: &[(String, String)]) {
+    let g = Graph::of(files).expect("the crate's graph");
+    assert_eq!(g.unknown_calls, 0);
+}
+
+/// Many untyped calls of one name import the methods open to them, and none hidden from them,
+/// at small sizes; their time is held in
+/// `bench::many_calls_of_a_name_cost_no_more_than_their_methods`.
 #[test]
-fn many_calls_of_a_name_cost_no_more_than_their_methods() {
-    // k calls of `go` in one file meet k methods of `go` through `t.rs`. Taken once for the pair
-    // of file and name, they cost O(k log k), not one walk over the k methods per call (k^2),
-    // whether the methods are open to the calls or not.
-    let n = 200;
-    let inputs = [many_calls(n, true), many_calls(8 * n, true)];
-    check("imports, by many untyped calls of one name", n, |m| {
-        let files = inputs
-            .iter()
-            .find(|f| f.len() == m + 3)
-            .expect("a size that was built");
-        let g = Graph::of(files).expect("the crate's graph");
-        assert_eq!(g.unknown_calls, m);
-        assert_eq!(g.imports.iter().map(Vec::len).sum::<usize>(), 2 * m + 1);
-    });
-    // Each hidden method costs the k^2 walk one check of a range, cheap beside reading its
-    // lines, so the walk shows in the ratio only from k = 600 on (14.1 times at 600 and 4800).
-    let n = 600;
-    let inputs = [many_hidden(n), many_hidden(8 * n)];
-    check("imports, by many untyped calls of hidden methods", n, |m| {
-        let g = Graph::of(&inputs[usize::from(m != n)]).expect("the crate's graph");
-        assert_eq!(g.unknown_calls, 0);
-    });
+fn many_calls_of_a_name_import_only_the_methods_open_to_them_at_small_sizes() {
+    for m in [1, 2, 9] {
+        many_calls_import_their_methods(&many_calls(m, true), m);
+        hidden_methods_import_nothing(&many_hidden(m));
+    }
     // Private methods in files of their own: no import either.
     let g = Graph::of(&many_calls(3, false)).expect("the crate's graph");
     assert_eq!(g.unknown_calls, 0);
@@ -924,21 +900,19 @@ fn no_triangle(s: usize) -> Vec<(String, String)> {
     files
 }
 
+/// `files`, [`no_triangle`] of `s`, has no untyped call that imports a file: its `s^2 + s`
+/// imports are the callers' `use` lines and `e.rs`'s.
+fn no_call_imports_without_a_triangle(files: &[(String, String)], s: usize) {
+    let g = Graph::of(files).expect("the crate's graph");
+    assert_eq!(g.unknown_calls, 0);
+    assert_eq!(g.imports.iter().map(Vec::len).sum::<usize>(), s * s + s);
+}
+
+/// Untyped calls with no triangle import no file at small sizes; their time is held in
+/// `bench::untyped_calls_without_a_triangle_scale_at_the_proven_bound`.
 #[test]
-fn untyped_calls_without_a_triangle_scale_at_the_proven_bound() {
-    // The join of the pairs of caller and name with the type files costs p √p for p pairs,
-    // imports and type files, and no method is near-linear unless triangles can be found in
-    // near-linear time (COMPLEXITY.md F103). At `s` and `8s` the input grows 64 times and the
-    // work by at most 8^3 = 512, held to n^3 log n in `s`, that is n^1.5 log n in the input.
-    let s = 24;
-    let inputs = [no_triangle(s), no_triangle(8 * s)];
-    check_order("imports, by untyped calls with no triangle", s, 3, |m| {
-        let files = inputs
-            .iter()
-            .find(|f| f.len() == 3 * m + 2)
-            .expect("a size that was built");
-        let g = Graph::of(files).expect("the crate's graph");
-        assert_eq!(g.unknown_calls, 0);
-        assert_eq!(g.imports.iter().map(Vec::len).sum::<usize>(), m * m + m);
-    });
+fn untyped_calls_without_a_triangle_import_nothing_at_small_sizes() {
+    for s in [1, 2, 9] {
+        no_call_imports_without_a_triangle(&no_triangle(s), s);
+    }
 }

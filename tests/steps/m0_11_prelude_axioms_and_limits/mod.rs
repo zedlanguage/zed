@@ -5,6 +5,7 @@
 //! (`limits.zed`, `zed_kernel::eval::MIN_*`).
 
 mod axioms;
+mod bench;
 mod limits;
 mod scaling;
 mod signed_zero;

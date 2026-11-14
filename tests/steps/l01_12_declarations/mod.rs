@@ -1,6 +1,7 @@
 //! Step L1.12: declarations, namely functions in equation and block form with their `test`
 //! tables, `main`'s port header, the whole-value push `p <- e`, and `if`/`else`.
 
+mod bench;
 mod fences;
 mod functions;
 mod ifs;

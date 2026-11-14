@@ -5,7 +5,7 @@
 //! `zed_tests::readme`). Every fence has an entry in the table, and every entry lists exactly
 //! the results the page states.
 
-mod scaling;
+pub(super) mod scaling;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;

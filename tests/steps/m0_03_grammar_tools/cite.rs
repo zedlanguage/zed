@@ -2,12 +2,11 @@
 //! is reported with its file and line, a fixture listed as exempt and a graph dagview saved are
 //! not read, and the plan DAG's steps to come are accepted. This file is itself one of the exempt fixtures.
 
-use zed_tests::scaling::check;
 use zed_tools::cite::{FIXTURES, PLAN, check_citations};
 
 /// A DESIGN.md with the labels `order` and `checking_in_zed`, and the steps L1.1, L1.2 and
 /// L1.2a, with `extra` at the end of its first section.
-fn design(extra: &str) -> String {
+pub(super) fn design(extra: &str) -> String {
     format!(
         "# (sec:overview) Part A\n\n## (sec:order) Order\n\nText.{extra}\n\n\
          ## (sec:checking_in_zed) Checking\n\nText.\n\n\
@@ -18,7 +17,7 @@ fn design(extra: &str) -> String {
 }
 
 /// The tree of `files`, each `(path, text)`, with the exempt fixtures added.
-fn tree(files: &[(&str, &str)]) -> Vec<(String, String)> {
+pub(super) fn tree(files: &[(&str, &str)]) -> Vec<(String, String)> {
     files
         .iter()
         .copied()
@@ -154,16 +153,20 @@ fn a_design_with_no_plan_stops_the_tool() {
     assert!(check_citations("## (sec:order) Order\n", &tree(&[]), &mut out).is_err());
 }
 
+/// A line of three citations, all defined by [`design`].
+pub(super) const CITATIONS: &str = "// sec:order at step L1.2a, sec:checking_in_zed at L1.1.\n";
+
+/// `files` pass against `design`.
+pub(super) fn cites_pass(design: &str, files: &[(String, String)]) {
+    let mut out = String::new();
+    assert_eq!(check_citations(design, files, &mut out), Ok(true));
+}
+
+/// A file of `n` lines of [`CITATIONS`] passes, at small sizes; the time is held in
+/// `bench/cite.rs`.
 #[test]
-fn cite_scales_with_the_number_of_citations() {
-    let n = 2000;
-    let line = "// sec:order at step L1.2a, sec:checking_in_zed at L1.1.\n";
-    let texts = [line.repeat(n), line.repeat(8 * n)];
-    let design = design("");
-    let trees = texts.each_ref().map(|t| tree(&[("src/a.rs", t)]));
-    check("cite, by citations", n, |m| {
-        let mut out = String::new();
-        let files = &trees[usize::from(m != n)];
-        assert_eq!(check_citations(&design, files, &mut out), Ok(true));
-    });
+fn many_lines_of_citations_pass_at_small_sizes() {
+    for n in [1, 2, 9] {
+        cites_pass(&design(""), &tree(&[("src/a.rs", &CITATIONS.repeat(n))]));
+    }
 }

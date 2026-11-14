@@ -11,6 +11,7 @@
 //! `zed_tests::instances`, with at most `ENUMERATION_BUDGET` per law, plus
 //! `RANDOM_INSTANCES` seeded random ones beyond those bounds.
 
+mod bench;
 mod derived;
 mod laws_01_10;
 mod laws_11_20;

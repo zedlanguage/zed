@@ -1,7 +1,8 @@
 //! Graphs nested 100,000 deep: an `if` whose `then` region holds the next `if`, as a chain of
 //! `else if` branches lowers. Each pass over the graph keeps its own stack on the heap, so such
 //! a graph is checked, compared, written and read back on a thread of the default 2 MiB stack,
-//! in time linear in its depth.
+//! in time linear in its depth, as the benchmarks in `bench/scaling.rs` hold. Here each form
+//! is also written and read back at small sizes.
 
 use std::sync::Arc;
 
@@ -9,7 +10,6 @@ use zed_kernel::Value;
 use zed_kernel::term::Pattern;
 use zed_kernel::types::Type;
 use zed_tests::deep::on_small_stack;
-use zed_tests::scaling::check_order;
 use zedc::zir::validate::validate;
 use zedc::zir::{Edge, Node, Op, Region, RegionKind, Src, binary, text};
 
@@ -40,25 +40,6 @@ fn an_error_deep_in_a_graph_is_named_by_its_path() {
 }
 
 #[test]
-fn checking_a_deep_graph_is_linear_in_its_depth() {
-    on_small_stack(|| {
-        let (small, large) = (nested_ifs(12_500), nested_ifs(100_000));
-        let twins = (nested_ifs(12_500), nested_ifs(100_000));
-        check_order("checking nested `if` regions", 12_500, 1, |k| {
-            validate(if k == 12_500 { &small } else { &large }).unwrap();
-        });
-        check_order("comparing nested `if` regions", 12_500, 1, |k| {
-            let (g, h) = if k == 12_500 {
-                (&small, &twins.0)
-            } else {
-                (&large, &twins.1)
-            };
-            assert!(g == h);
-        });
-    });
-}
-
-#[test]
 fn a_graph_nested_100000_deep_is_written_and_read_in_binary_on_a_2_mib_stack() {
     on_small_stack(|| {
         let g = nested_ifs(100_000);
@@ -66,24 +47,6 @@ fn a_graph_nested_100000_deep_is_written_and_read_in_binary_on_a_2_mib_stack() {
             binary::decode(&binary::encode(&g).expect("memory for the bytes")),
             Ok(g)
         );
-    });
-}
-
-#[test]
-fn writing_and_reading_a_deep_graph_in_binary_is_linear_in_its_depth() {
-    on_small_stack(|| {
-        let (small, large) = (nested_ifs(12_500), nested_ifs(100_000));
-        check_order("writing nested `if` regions in binary", 12_500, 1, |k| {
-            binary::encode(if k == 12_500 { &small } else { &large })
-                .expect("memory for the bytes");
-        });
-        let (small, large) = (
-            binary::encode(&small).expect("memory for the bytes"),
-            binary::encode(&large).expect("memory for the bytes"),
-        );
-        check_order("reading nested `if` regions in binary", 12_500, 1, |k| {
-            binary::decode(if k == 12_500 { &small } else { &large }).unwrap();
-        });
     });
 }
 
@@ -98,27 +61,12 @@ fn a_graph_nested_4000_deep_is_written_and_read_as_text_on_a_2_mib_stack() {
     });
 }
 
-#[test]
-fn writing_and_reading_a_deep_graph_as_text_is_linear_in_the_text() {
-    on_small_stack(|| {
-        let (small, large) = (nested_ifs(250), nested_ifs(2_000));
-        // Power 2: the text grows as the square of the depth.
-        check_order("writing nested `if` regions as text", 250, 2, |k| {
-            text::print(if k == 250 { &small } else { &large });
-        });
-        let (small, large) = (text::print(&small), text::print(&large));
-        check_order("reading nested `if` regions as text", 250, 2, |k| {
-            text::parse(if k == 250 { &small } else { &large }).unwrap();
-        });
-    });
-}
-
 // The values, patterns and types inside a graph nest as deep as the program, so the text and
 // binary forms write and read them from stacks of their own (step T2-mid).
 
 /// A value `d` deep whose levels take turns being a pair, a named atom, a positional atom and
 /// a path.
-fn deep_value(d: usize) -> Value {
+pub(super) fn deep_value(d: usize) -> Value {
     (0..d).fold(Value::Int(0), |v, i| match i % 4 {
         0 => Value::tuple(vec![v, Value::Int(1)]),
         1 => Value::atom_named("n", vec![("a".into(), Value::Int(2)), ("b".into(), v)]).unwrap(),
@@ -128,7 +76,7 @@ fn deep_value(d: usize) -> Value {
 }
 
 /// A pattern `d` deep whose levels take turns being a pair, an atom and a fields pattern.
-fn deep_pattern(d: usize) -> Pattern {
+pub(super) fn deep_pattern(d: usize) -> Pattern {
     (0..d).fold(Pattern::Bind("x".into()), |p, i| match i % 3 {
         0 => Pattern::Tuple(vec![p, Pattern::Wild]),
         1 => Pattern::Atom("a".into(), vec![p]),
@@ -138,7 +86,7 @@ fn deep_pattern(d: usize) -> Pattern {
 
 /// A graph of one node, a `match` on a constant: the value `value` deep and the pattern
 /// `pattern` deep.
-fn holding(value: usize, pattern: usize) -> Region {
+pub(super) fn holding(value: usize, pattern: usize) -> Region {
     Region {
         kind: RegionKind::Function,
         args: Vec::new(),
@@ -189,7 +137,7 @@ fn a_pattern_10000_deep_is_written_and_read_in_binary_and_as_text_on_a_2_mib_sta
 }
 
 /// `(tuple (tuple … int …) int)`, `d` deep.
-fn deep_type_text(d: usize) -> String {
+pub(super) fn deep_type_text(d: usize) -> String {
     let mut s = "(tuple ".repeat(d);
     s.push_str("int");
     s.push_str(&" int)".repeat(d));
@@ -205,83 +153,14 @@ fn a_type_100000_deep_is_read_as_text_on_a_2_mib_stack() {
     });
 }
 
-#[test]
-fn writing_and_reading_deep_values_patterns_and_types_is_linear_in_their_depth() {
-    on_small_stack(|| {
-        let (small, large) = (holding(12_500, 1_000), holding(100_000, 8_000));
-        let pick = |k: usize| if k == 12_500 { &small } else { &large };
-        check_order(
-            "writing deep values and patterns in binary",
-            12_500,
-            1,
-            |k| {
-                binary::encode(pick(k)).expect("memory for the bytes");
-            },
-        );
-        let (bs, bl) = (
-            binary::encode(&small).expect("memory for the bytes"),
-            binary::encode(&large).expect("memory for the bytes"),
-        );
-        check_order(
-            "reading deep values and patterns in binary",
-            12_500,
-            1,
-            |k| {
-                binary::decode(if k == 12_500 { &bs } else { &bl }).unwrap();
-            },
-        );
-        let text_of = |g: &Region| {
-            let Src::Const(v) = &g.nodes[0].inputs[0] else {
-                unreachable!("a constant")
-            };
-            v.to_string()
-        };
-        let (vs, vl) = (text_of(&small), text_of(&large));
-        check_order("reading a deep value as text", 12_500, 1, |k| {
-            text::parse_value(if k == 12_500 { &vs } else { &vl }).unwrap();
-        });
-        let pattern_of = |g: &Region| {
-            let Op::Match(ps) = &g.nodes[0].op else {
-                unreachable!("a match")
-            };
-            text::pattern(&ps[0])
-        };
-        check_order("writing a deep pattern as text", 1_000, 1, |k| {
-            pattern_of(if k == 1_000 { &small } else { &large });
-        });
-        let (ps, pl) = (pattern_of(&small), pattern_of(&large));
-        check_order("reading a deep pattern as text", 1_000, 1, |k| {
-            text::parse_pattern(if k == 1_000 { &ps } else { &pl }).unwrap();
-        });
-        let (ts, tl) = (deep_type_text(250), deep_type_text(2_000));
-        check_order("reading a deep type as text", 250, 1, |k| {
-            text::parse_type(if k == 250 { &ts } else { &tl }).unwrap();
-        });
-    });
-}
-
 /// A tuple of `n` generated binders, the elaborator's `$k` and the canonical level `k` in turn,
 /// as a wave of `n` values and its canonical form bind them.
-fn generated_binders(n: usize) -> Pattern {
+pub(super) fn generated_binders(n: usize) -> Pattern {
     let bind = |k: usize| match k % 2 {
         0 => Pattern::Bind(format!("${k}").into()),
         _ => Pattern::Bind(zedc::canon::binders::level_name(k)),
     };
     Pattern::Tuple((0..n).map(bind).collect())
-}
-
-#[test]
-fn writing_and_reading_generated_binders_is_linear_in_their_number() {
-    let (small, large) = (generated_binders(12_500), generated_binders(100_000));
-    let pick = |k: usize| if k == 12_500 { &small } else { &large };
-    check_order("writing generated binders as text", 12_500, 1, |k| {
-        text::pattern(pick(k));
-    });
-    let (ts, tl) = (text::pattern(&small), text::pattern(&large));
-    assert_eq!(text::parse_pattern(&ts).as_ref(), Ok(&small));
-    check_order("reading generated binders as text", 12_500, 1, |k| {
-        text::parse_pattern(if k == 12_500 { &ts } else { &tl }).unwrap();
-    });
 }
 
 // `Debug` writes a region from a stack of its own too, so an assertion that fails on a deep graph
@@ -317,24 +196,9 @@ fn a_graph_nested_100000_deep_is_printed_for_debugging_on_a_2_mib_stack() {
     });
 }
 
-#[test]
-fn printing_a_deep_graph_for_debugging_is_linear_in_its_depth() {
-    on_small_stack(|| {
-        let (small, large) = (nested_ifs(12_500), nested_ifs(100_000));
-        check_order(
-            "printing nested `if` regions for debugging",
-            12_500,
-            1,
-            |k| {
-                let _ = format!("{:?}", if k == 12_500 { &small } else { &large });
-            },
-        );
-    });
-}
-
 /// A family literal of `n` entries `{k -> k, ...}`, its keys written from the largest down, and
 /// with the key 0 written a second time when `repeat` is set.
-fn wide_family(n: usize, repeat: bool) -> String {
+pub(super) fn wide_family(n: usize, repeat: bool) -> String {
     let mut entries: Vec<String> = (0..n).rev().map(|k| format!("{k} -> {k}")).collect();
     if repeat {
         entries.push("0 -> 1".into());
@@ -342,36 +206,70 @@ fn wide_family(n: usize, repeat: bool) -> String {
     format!("{{{}}}", entries.join(", "))
 }
 
+/// The bytes of a graph whose one result is `family`.
+pub(super) fn family_graph(family: &str) -> Vec<u8> {
+    let src = format!("zir 1\nr region function ()\nr results ({family})\n");
+    binary::encode(&text::parse(&src).expect("a graph")).expect("memory for the bytes")
+}
+
+/// A few nested `if`s are checked, compared, written and read back in binary and as text, and
+/// printed for debugging; the time of each is held linear in its depth in `bench/scaling.rs`.
 #[test]
-fn reading_a_wide_family_and_refusing_a_repeated_key_is_n_log_n_in_its_entries() {
-    let (n, large) = (2_000, 16_000);
-    let pick = |k: usize, a, b| if k == n { a } else { b };
-    let (ok_small, ok_large) = (wide_family(n, false), wide_family(large, false));
-    let (bad_small, bad_large) = (wide_family(n, true), wide_family(large, true));
-    assert_eq!(
-        text::parse_value(&bad_small),
-        Err(format!(
-            "column {}: the family writes the key 0 twice",
-            bad_small.len() + 1
-        ))
-    );
-    check_order("reading a family of n entries as text", n, 1, |k| {
-        text::parse_value(pick(k, &ok_small, &ok_large)).unwrap();
-    });
-    check_order(
-        "refusing a family of n entries that repeats a key",
-        n,
-        1,
-        |k| {
-            text::parse_value(pick(k, &bad_small, &bad_large)).unwrap_err();
-        },
-    );
-    let graph = |family: &str| {
-        let src = format!("zir 1\nr region function ()\nr results ({family})\n");
-        binary::encode(&text::parse(&src).expect("a graph")).expect("memory for the bytes")
-    };
-    let (bin_small, bin_large) = (graph(&ok_small), graph(&ok_large));
-    check_order("reading a family of n entries in binary", n, 1, |k| {
-        binary::decode(if k == n { &bin_small } else { &bin_large }).unwrap();
-    });
+fn a_few_nested_ifs_are_checked_compared_written_read_and_printed() {
+    for d in [1, 2, 9] {
+        let g = nested_ifs(d);
+        validate(&g).unwrap();
+        assert!(g == nested_ifs(d));
+        let bytes = binary::encode(&g).expect("memory for the bytes");
+        assert_eq!(binary::decode(&bytes).as_ref(), Ok(&g));
+        assert_eq!(text::parse(&text::print(&g)).as_ref(), Ok(&g));
+        assert_eq!(format!("{g:?}").matches("Node { op: If").count(), d);
+    }
+}
+
+/// Shallow values, patterns and types are written and read back in binary and as text.
+#[test]
+fn shallow_values_patterns_and_types_are_written_and_read_back() {
+    for (value, pattern) in [(1, 1), (2, 3), (9, 9)] {
+        let g = holding(value, pattern);
+        let bytes = binary::encode(&g).expect("memory for the bytes");
+        assert_eq!(binary::decode(&bytes).as_ref(), Ok(&g));
+        let Src::Const(v) = &g.nodes[0].inputs[0] else {
+            unreachable!("a constant")
+        };
+        assert_eq!(text::parse_value(&v.to_string()).as_ref(), Ok(v));
+        let Op::Match(ps) = &g.nodes[0].op else {
+            unreachable!("a match")
+        };
+        let s = text::pattern(&ps[0]);
+        assert_eq!(text::pattern(&text::parse_pattern(&s).unwrap()), s);
+    }
+    for d in [0, 1, 9] {
+        text::parse_type(&deep_type_text(d)).unwrap();
+    }
+}
+
+#[test]
+fn generated_binders_are_written_and_read_back_as_text() {
+    for n in [0, 1, 2, 9] {
+        let p = generated_binders(n);
+        assert_eq!(text::parse_pattern(&text::pattern(&p)).as_ref(), Ok(&p));
+    }
+}
+
+/// A family is read as text and in binary, and one that repeats a key is refused, at its column.
+#[test]
+fn a_small_family_is_read_and_a_repeated_key_refused() {
+    for n in [1, 2, 9] {
+        text::parse_value(&wide_family(n, false)).unwrap();
+        let bad = wide_family(n, true);
+        assert_eq!(
+            text::parse_value(&bad),
+            Err(format!(
+                "column {}: the family writes the key 0 twice",
+                bad.len() + 1
+            ))
+        );
+        binary::decode(&family_graph(&wide_family(n, false))).unwrap();
+    }
 }

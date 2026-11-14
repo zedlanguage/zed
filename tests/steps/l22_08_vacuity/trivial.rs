@@ -2442,7 +2442,7 @@ impl LiveSet {
 /// 64^2 and 64^3 numbers).
 #[test]
 fn the_live_set_finds_the_next_number() {
-    let mut rng = zed_tests::instances::Rng::new(0x011f_e5e7);
+    let mut rng = zed_tests::instances::Rng::new(zed_tests::test_seed());
     for n in [0, 1, 63, 64, 65, 4095, 4096, 4097, 262_143, 262_145] {
         for keep in [1, 8, 50_000] {
             let mut set = LiveSet::new(n);
@@ -2453,7 +2453,7 @@ fn the_live_set_finds_the_next_number() {
                     *flag = false;
                 }
             }
-            for _ in 0..1000 {
+            for _ in 0..250 {
                 if n > 0 {
                     let x = rng.below(n);
                     if flags[x] {

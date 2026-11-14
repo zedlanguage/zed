@@ -7,13 +7,12 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use zed_tests::scaling::check_order;
-
 fn read(path: &str) -> String {
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path);
     std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))
 }
 
+mod bench;
 mod layout;
 
 fn record() -> String {
@@ -205,23 +204,23 @@ fn the_reader_takes_struct_and_tuple_variants_comments_and_attributes() {
     assert_eq!(variants(src, "Other"), ["Not"]);
 }
 
-#[test]
-fn reading_the_variants_is_linear_in_the_source() {
-    // An enum of k struct variants, each with a doc comment and two fields; built before timing.
-    fn source(k: usize) -> String {
-        let mut s = String::from("\npub enum Op {\n");
-        for i in 0..k {
-            s.push_str(&format!(
-                "    /// Variant {i}, with a comma.\n    V{i} {{\n        a: Vec<u8>,\n        b: (u8, u8),\n    }},\n"
-            ));
-        }
-        s.push_str("}\n");
-        s
+/// An enum of `k` struct variants, each with a doc comment and two fields.
+fn struct_variants(k: usize) -> String {
+    let mut s = String::from("\npub enum Op {\n");
+    for i in 0..k {
+        s.push_str(&format!(
+            "    /// Variant {i}, with a comma.\n    V{i} {{\n        a: Vec<u8>,\n        b: (u8, u8),\n    }},\n"
+        ));
     }
-    let n = 20_000;
-    let (small, large) = (source(n), source(8 * n));
-    check_order("reading the variants of an enum of n variants", n, 1, |k| {
-        let found = variants(if k == n { &small } else { &large }, "Op");
-        assert_eq!(found.len(), k);
-    });
+    s.push_str("}\n");
+    s
+}
+
+/// The reader finds each variant of a small enum of struct variants; the time is held linear in
+/// the source in `bench/mod.rs`.
+#[test]
+fn the_reader_finds_each_of_a_few_struct_variants() {
+    for k in [0, 1, 2, 9] {
+        assert_eq!(variants(&struct_variants(k), "Op").len(), k);
+    }
 }

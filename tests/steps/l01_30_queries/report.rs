@@ -3,7 +3,7 @@
 //! counting allocator. A row's work is its own, so the rows sum to the total; a test row that a
 //! query takes from its cache counts as cached, at no work.
 
-use zed_tests::scaling::{self, Meter};
+use zed_tests::scaling::Meter;
 use zedc::query::Db;
 use zedc::work::{self, Counter, Report, Row, Stage, Work};
 
@@ -144,7 +144,7 @@ fn the_work_of_a_definition_is_in_its_own_row() {
 }
 
 /// A unit of `n` definitions, each with a one-row table.
-fn definitions(n: usize) -> String {
+pub(super) fn definitions(n: usize) -> String {
     (0..n)
         .map(|i| {
             format!(
@@ -155,42 +155,44 @@ fn definitions(n: usize) -> String {
         .collect()
 }
 
-/// The recorder alone, with a counter that does no work of its own: n definitions in n / 8
-/// units, each marked once computed and once cached, then written as text. The front end's
-/// work hides the recorder's in the test below, so this one measures it apart.
-#[test]
-fn the_recorder_scales_with_its_rows() {
-    let n = 2000;
-    let names = |m: usize| -> Vec<(String, String)> {
-        (0..m)
-            .map(|i| (format!("u{}.zed", i / 8), format!("d{i}")))
-            .collect()
-    };
-    let (small, large) = (names(n), names(8 * n));
-    scaling::check("the recorder with n rows", n, |m| {
-        let marks = if m == n { &small } else { &large };
-        let ((), r) = work::with(Box::new(Work::default), || {
-            for (u, d) in marks {
-                work::unit(u);
-                work::stage(Stage::Test, Some(d), || ());
-                work::cached(Stage::Test, Some(d));
-            }
-        });
-        assert_eq!(test_rows(&r).len(), m);
-        std::hint::black_box(r.to_string());
-    });
+/// `m` definitions in `m / 8` units, as (unit, definition).
+pub(super) fn marks(m: usize) -> Vec<(String, String)> {
+    (0..m)
+        .map(|i| (format!("u{}.zed", i / 8), format!("d{i}")))
+        .collect()
 }
 
-#[test]
-fn a_report_scales_with_the_definitions() {
-    // The texts are built before any run is counted.
-    let n = 40;
-    let (small, large) = (definitions(n), definitions(8 * n));
-    scaling::check("a reported test of n definitions", n, |m| {
-        let text = if m == n { &small } else { &large };
-        let (got, r) = work::with(counter(), || checks(&mut Db::new(), text));
-        assert!(got.len() == m && got.iter().all(|c| c.ends_with(": ok")));
-        assert_eq!(test_rows(&r).len(), m);
-        std::hint::black_box(r.to_string());
+/// The recorder alone, with a counter that does no work of its own: each of `marks` marked
+/// once computed and once cached, then written as text. It holds a test row per mark.
+pub(super) fn records(marks: &[(String, String)]) {
+    let ((), r) = work::with(Box::new(Work::default), || {
+        for (u, d) in marks {
+            work::unit(u);
+            work::stage(Stage::Test, Some(d), || ());
+            work::cached(Stage::Test, Some(d));
+        }
     });
+    assert_eq!(test_rows(&r).len(), marks.len());
+    std::hint::black_box(r.to_string());
+}
+
+/// Checks `text` of `m` definitions with a counted report: every row passes, and the report
+/// holds a test row per definition.
+pub(super) fn reports(text: &str, m: usize) {
+    let (got, r) = work::with(counter(), || checks(&mut Db::new(), text));
+    assert!(got.len() == m && got.iter().all(|c| c.ends_with(": ok")));
+    assert_eq!(test_rows(&r).len(), m);
+    std::hint::black_box(r.to_string());
+}
+
+/// The recorder and a report at small sizes; the time each takes is held linear in
+/// `bench/report.rs`.
+#[test]
+fn the_recorder_and_a_report_hold_a_test_row_per_definition() {
+    for m in [0, 1, 9, 17] {
+        records(&marks(m));
+    }
+    for m in [1, 2, 9] {
+        reports(&definitions(m), m);
+    }
 }

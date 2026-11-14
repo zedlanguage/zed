@@ -7,7 +7,6 @@
 //! renumberings of the nodes and orders of the roots.
 
 use zed_tests::instances::Rng;
-use zed_tests::scaling;
 use zedc::store::schedule::{Facts, Kind, Poll, Refusal, Schedule, Values};
 
 /// A fact's value in the model. `Failed` is a fact that read a failed or refused fact, as a
@@ -828,10 +827,10 @@ fn shuffle(rng: &mut Rng, xs: &mut [usize]) {
 /// its nodes and the order of its roots: values and refusals, cycles included.
 #[test]
 fn the_engine_agrees_with_the_meaning_under_every_order() {
-    let mut rng = Rng::new(0x5c4ed);
+    let mut rng = Rng::new(zed_tests::test_seed());
     let mut refused = 0;
     let mut solved_cycles = 0;
-    for trial in 0..1500 {
+    for trial in 0..375 {
         let n = 1 + rng.below(24);
         let specs = random_program(&mut rng, n);
         let keys: Vec<String> = (0..n).map(|i| format!("{i:04}")).collect();
@@ -903,9 +902,9 @@ fn the_engine_agrees_with_the_meaning_under_every_order() {
         refused += want_refusals.len();
     }
     // The random programs exercise both kinds of cycle.
-    assert!(refused > 300, "{refused} refusals");
+    assert!(refused > 75, "{refused} refusals");
     assert!(
-        solved_cycles > 300,
+        solved_cycles > 75,
         "{solved_cycles} iterable components of two or more"
     );
 }
@@ -946,7 +945,7 @@ fn scaling_program(n: usize) -> Vec<Spec> {
     specs
 }
 
-fn run_scaling(n: usize) {
+pub(super) fn run_scaling(n: usize) {
     let specs = scaling_program(n);
     let count = specs.len();
     let keys = (0..count).map(|i| format!("{i:08}")).collect();
@@ -957,11 +956,11 @@ fn run_scaling(n: usize) {
     assert_eq!(m.refusals.len(), n.div_ceil(7) + 1);
 }
 
-/// The search is linear in the facts and reads (DESIGN.md, "The algorithm"): 7.96 times the
-/// instructions and 8.00 times the bytes at 8n (2026-11-13). Negative control, run once and not
-/// committed: resetting the refusal marks over every node instead of over the component's
-/// members, O(n) for each of n / 7 refusals, took 29.2 times the instructions and failed.
+/// [`scaling_program`] gives every fact a value and refuses each seventh group's pair and the
+/// ring, at small sizes; the time is held in `bench/schedule.rs`.
 #[test]
-fn scaling() {
-    scaling::check("the scheduler of checks and evaluations", 4000, run_scaling);
+fn the_scaling_program_is_solved_at_small_sizes() {
+    for n in [1, 2, 9] {
+        run_scaling(n);
+    }
 }

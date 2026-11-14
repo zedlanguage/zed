@@ -9,10 +9,11 @@
 //! The tests sit in the folder of step L2.12, the diagnostics rows of L2; L2.14-diag joins
 //! DIAG-control with them.
 
+mod bench;
+
 use std::path::{Path, PathBuf};
 
 use zed_kernel::Value;
-use zed_tests::scaling;
 use zedc::check::read::parse_type;
 use zedc::check::ty::{Ty, printed};
 use zedc::front::{Diagnostic, Quoted, Step, Unloaded};
@@ -287,19 +288,27 @@ fn long_line(n: usize) -> String {
     format!("x = \"{body}\" ++ y;")
 }
 
+/// A diagnostic quoting [`long_line`]`(n)`, and the type of the string literal on it.
+fn quoted(n: usize) -> (Diagnostic, Ty) {
+    let line = long_line(n);
+    let col = line.chars().count() - 1;
+    let d = diagnostic(&format!("message {}", &line[4..]), &line, col, 1);
+    let t = Ty::lit(&Value::str(&line[5..line.len() - 8]));
+    (d, t)
+}
+
+/// The diagnostic `d` and the type `t` each print with no ESC.
+fn prints_no_esc(d: &Diagnostic, t: &Ty) {
+    assert!(!d.to_string().contains(ESC));
+    assert!(!t.to_string().contains(ESC));
+}
+
+/// A diagnostic quoting a string of a few ESCs prints none; the time is held linear in the string
+/// in `bench.rs`.
 #[test]
-fn printing_a_quoted_string_scales() {
-    let inputs = scaling::inputs(4000, |n| {
-        let line = long_line(n);
-        let col = line.chars().count() - 1;
-        let d = diagnostic(&format!("message {}", &line[4..]), &line, col, 1);
-        let t = Ty::lit(&Value::str(&line[5..line.len() - 8]));
-        (d, t)
-    });
-    scaling::check_order("a diagnostic quoting a string of n bytes", 4000, 1, |n| {
-        let (d, t) = &inputs[&n];
-        let out = d.to_string();
-        assert!(!out.contains(ESC));
-        assert!(!t.to_string().contains(ESC));
-    });
+fn a_quoted_string_of_a_few_escapes_prints_escaped() {
+    for n in [8, 16, 72] {
+        let (d, t) = quoted(n);
+        prints_no_esc(&d, &t);
+    }
 }

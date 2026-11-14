@@ -2,21 +2,21 @@
 //! behind one reference count, so reading a variable, a literal or a part of a tuple is O(1)
 //! whatever the tuple's size, and a value is a DAG: a part can sit in many places at once.
 //! Equality, order, keys and the language's `==` must treat a shared part as they treat a copy.
+//! The benchmarks of these values are in `bench/shared.rs`; their inputs are built here, and
+//! what each asserts besides its ratio is checked here at small sizes (TEST-bench-move-rest).
 
-use std::collections::HashMap;
 use std::thread;
 
 use zed_kernel::term::build::{app, lam, let_, lit, prim, var};
 use zed_kernel::{Evaluator, Family, Prim, Term, Value, World};
 use zed_tests::kernel::*;
-use zed_tests::scaling::check_order;
 
-fn run(t: &Term) -> Value {
+pub(super) fn run(t: &Term) -> Value {
     Evaluator::new(World::new()).run(t).unwrap()
 }
 
 /// The tuple `(0, 1, ..., n - 1)`.
-fn tuple(n: usize) -> Value {
+pub(super) fn tuple(n: usize) -> Value {
     Value::tuple((0..n as i64).map(Value::Int).collect())
 }
 
@@ -27,14 +27,14 @@ fn keys(n: usize) -> Value {
 
 /// `(t -> fam(0..n, k -> t.0))((0, ..., n - 1))`: a function that reads its tuple argument
 /// once per element, as a loop over a record's fields reads the record.
-fn reads(n: usize) -> Term {
+pub(super) fn reads(n: usize) -> Term {
     let body = fam_with(lit(keys(n)), |_| nth(var("t"), 0));
     app(lam(&["t"], body), vec![lit(tuple(n))])
 }
 
 /// `xs.foldl((), (acc, x) -> (x, acc))` over `0..n`: the list `(n - 1, (..., (0, ())))` built
 /// by an accumulator, the form COMPLEXITY.md K21 measured.
-fn cons_list(n: usize) -> Term {
+pub(super) fn cons_list(n: usize) -> Term {
     let op = lam(&["acc", "x"], prim(Prim::Tuple, vec![var("x"), var("acc")]));
     foldl(lit(keys(n)), lit(Value::tuple(vec![])), op)
 }
@@ -48,7 +48,7 @@ fn expected_list(n: usize) -> Value {
 
 /// Runs `f` on a thread with a 256 MiB stack: `foldl` is a definedness fix whose accumulators
 /// each read the one before, so the evaluator nests one call per element.
-fn on_large_stack(f: impl FnOnce() + Send) {
+pub(super) fn on_large_stack(f: impl FnOnce() + Send) {
     thread::scope(|scope| {
         let t = thread::Builder::new().stack_size(1 << 28);
         t.spawn_scoped(scope, f).unwrap().join().unwrap()
@@ -154,103 +154,44 @@ fn a_struct_atom_copied_keeps_its_fields() {
     assert_eq!(b.to_string(), r#"#err(at: "f", code: 3)"#);
 }
 
-/// Inputs for `check_order`, built before any timing: `make(n)` and `make(8n)`.
-fn built(n: usize, make: impl Fn(usize) -> Term) -> HashMap<usize, Term> {
-    [n, 8 * n].into_iter().map(|m| (m, make(m))).collect()
-}
-
-#[test]
-fn reading_a_tuple_once_per_element_scales() {
-    // Each read copied the tuple: 100 reads of an n-tuple took 14.5, 127.6 and 1098 ms at
-    // n = 1000, 8000 and 64000 (T11).
-    let terms = built(2000, reads);
-    check_order("a tuple read once per element, by elements", 2000, 1, |n| {
-        run(&terms[&n]);
-    });
-}
-
-#[test]
-fn copying_a_tuple_once_per_element_scales() {
-    let tuples: HashMap<usize, Value> = [2000, 16000].map(|n| (n, tuple(n))).into();
-    check_order("n copies of a tuple of n, by n", 2000, 1, |n| {
-        let t = &tuples[&n];
-        let copies: Vec<Value> = (0..n).map(|_| t.clone()).collect();
-        assert_eq!(copies.len(), n);
-    });
-}
-
-#[test]
-fn a_list_built_by_an_accumulator_scales() {
-    // Each step copied the accumulator: through `zedc run`, 6,400, 12,800 and 25,600 elements
-    // took 1.60, 7.77 and 37.13 s (COMPLEXITY.md K21).
-    on_large_stack(|| {
-        let terms = built(1000, cons_list);
-        check_order(
-            "a foldl that conses onto its accumulator, by elements",
-            1000,
-            1,
-            |n| {
-                run(&terms[&n]);
-            },
-        );
-    });
-}
-
 /// `v(0) = bottom`, `v(i + 1) = (v(i), v(i))`: `depth` nodes and `2^depth` paths.
-fn doubled(depth: usize, bottom: Value) -> Value {
+pub(super) fn doubled(depth: usize, bottom: Value) -> Value {
     (0..depth).fold(bottom, |v, _| Value::tuple(vec![v.clone(), v]))
 }
 
-#[test]
-fn comparing_and_keying_values_that_share_their_parts_scales() {
-    // Read path by path, each walk took time 2^depth: past 60 s at depth 1,000,000.
-    let values: HashMap<usize, [Value; 3]> = [5000, 40000]
-        .map(|n| {
-            let one = doubled(n, Value::Int(1));
-            let same = doubled(n, Value::Int(1));
-            let zero = doubled(n, Value::float(-0.0));
-            (n, [one, same, zero])
-        })
-        .into();
-    check_order(
-        "equality, order and keys of shared parts, by depth",
-        5000,
-        1,
-        |n| {
-            let [one, same, zero] = &values[&n];
-            assert!(one == same);
-            assert_eq!(one.cmp(same), std::cmp::Ordering::Equal);
-            assert!(one.surface_eq(same));
-            assert!(!zero.is_key());
-            assert!(zero.key().is_key());
-        },
-    );
+/// Two equal values and a value of zeros, each `doubled` to `depth`, the zeros `-0.0`.
+pub(super) fn shared_parts(depth: usize) -> [Value; 3] {
+    let one = doubled(depth, Value::Int(1));
+    let same = doubled(depth, Value::Int(1));
+    let zero = doubled(depth, Value::float(-0.0));
+    [one, same, zero]
 }
 
-#[test]
-fn showing_sets_nested_inside_tuples_scales() {
-    // `{({(...,)},)}`: each set's member is its own key, so the test that writes a set by its
-    // members compares one shared value with itself, O(1) at each level.
-    let nest = |d: usize| {
-        (0..d).fold(Value::Int(0), |v, _| {
-            Value::Family(Family::set([Value::tuple(vec![v])]))
-        })
-    };
-    let values: HashMap<usize, Value> = [2000, 16000].map(|n| (n, nest(n))).into();
-    assert_eq!(nest(2).to_string(), "{({(0,)},)}");
-    check_order(
-        "Display of sets nested inside tuples, by depth",
-        2000,
-        1,
-        |n| {
-            assert!(values[&n].to_string().len() > 4 * n);
-        },
-    );
+/// The two equal values of [`shared_parts`] are equal under each relation, and the value of
+/// `-0.0`s is no key, while its key is.
+pub(super) fn shared_parts_compare([one, same, zero]: &[Value; 3]) {
+    assert!(one == same);
+    assert_eq!(one.cmp(same), std::cmp::Ordering::Equal);
+    assert!(one.surface_eq(same));
+    assert!(!zero.is_key());
+    assert!(zero.key().is_key());
+}
+
+/// `{({(...,)},)}`, `d` sets each holding a one-tuple of the set beneath, with `0` at the bottom.
+pub(super) fn nested_sets(d: usize) -> Value {
+    (0..d).fold(Value::Int(0), |v, _| {
+        Value::Family(Family::set([Value::tuple(vec![v])]))
+    })
+}
+
+/// The text of [`nested_sets`]`(d)` holds each of its levels.
+pub(super) fn shows_nested_sets(v: &Value, d: usize) {
+    assert!(v.to_string().len() > 4 * d);
 }
 
 /// `f(0) = bottom`, `f(i + 1) = {x: f(i), y: f(i)}`: a family `depth` levels deep whose levels
 /// each hold the one beneath twice, `depth` families and `2^depth` keypaths.
-fn doubled_family(depth: usize, bottom: Value) -> Value {
+pub(super) fn doubled_family(depth: usize, bottom: Value) -> Value {
     (0..depth).fold(bottom, |v, _| {
         Value::Family(Family::of([("x", v.clone()), ("y", v)]))
     })
@@ -316,59 +257,43 @@ fn a_part_compared_inside_two_families_is_read_once_per_comparison() {
     assert!(wide(5) != Value::Family(last));
 }
 
-#[test]
-fn comparing_families_that_share_their_levels_scales() {
-    // With no read set for pairs of families, a comparison read every keypath: 2^depth.
-    let values: HashMap<usize, [Value; 4]> = [2000, 16000]
-        .map(|n| {
-            let one = doubled_family(n, Value::Int(1));
-            let same = doubled_family(n, Value::Int(1));
-            let neg = doubled_family(n, Value::float(-0.0));
-            let pos = doubled_family(n, Value::float(0.0));
-            (n, [one, same, neg, pos])
-        })
-        .into();
-    check_order(
-        "equality, order and the language's relations of families, by depth",
-        2000,
-        1,
-        |n| {
-            let [one, same, neg, pos] = &values[&n];
-            assert!(one == same);
-            assert_eq!(one.cmp(same), std::cmp::Ordering::Equal);
-            assert!(one.surface_eq(same));
-            assert_eq!(one.surface_cmp(same), Some(std::cmp::Ordering::Equal));
-            assert!(neg != pos);
-            assert!(neg.surface_eq(pos));
-        },
-    );
+/// Two equal families and the families of `-0.0` and of `0.0`, each `doubled_family` to `depth`.
+pub(super) fn families(depth: usize) -> [Value; 4] {
+    let one = doubled_family(depth, Value::Int(1));
+    let same = doubled_family(depth, Value::Int(1));
+    let neg = doubled_family(depth, Value::float(-0.0));
+    let pos = doubled_family(depth, Value::float(0.0));
+    [one, same, neg, pos]
 }
 
-#[test]
-fn comparing_one_part_held_in_many_places_scales() {
-    let wide = |n: usize| {
-        let t = tuple(n);
-        Value::Family(Family::of((0..n as i64).map(|k| (k, t.clone()))))
-    };
-    let row = |n: usize| {
-        let f = Value::Family(Family::set(0..n as i64));
-        Value::tuple(vec![f; n])
-    };
-    let values: HashMap<usize, [Value; 4]> = [1000, 8000]
-        .map(|n| (n, [wide(n), wide(n), row(n), row(n)]))
-        .into();
-    check_order(
-        "equality of n entries holding one tuple of n, and the language's relations on a \
-         tuple of n copies of one family of n, by n",
-        1000,
-        1,
-        |n| {
-            let [a, b, c, d] = &values[&n];
-            assert!(a == b);
-            assert!(c.surface_eq(d));
-            assert_eq!(c.surface_cmp(d), Some(std::cmp::Ordering::Equal));
-        },
-    );
+/// The equal families of [`families`] are equal under each relation; those of `-0.0` and `0.0`
+/// differ as values and are equal under the language's `==`.
+pub(super) fn families_compare([one, same, neg, pos]: &[Value; 4]) {
+    assert!(one == same);
+    assert_eq!(one.cmp(same), std::cmp::Ordering::Equal);
+    assert!(one.surface_eq(same));
+    assert_eq!(one.surface_cmp(same), Some(std::cmp::Ordering::Equal));
+    assert!(neg != pos);
+    assert!(neg.surface_eq(pos));
+}
+
+/// `{0: t, 1: t, ..., n - 1: t}` for one tuple `t` of n numbers.
+pub(super) fn wide(n: usize) -> Value {
+    let t = tuple(n);
+    Value::Family(Family::of((0..n as i64).map(|k| (k, t.clone()))))
+}
+
+/// `(f, f, ..., f)` for one family `f` of n entries.
+pub(super) fn row(n: usize) -> Value {
+    let f = Value::Family(Family::set(0..n as i64));
+    Value::tuple(vec![f; n])
+}
+
+/// Two [`wide`] values are equal, and two [`row`] values equal under the language's relations.
+pub(super) fn one_part_compares([a, b, c, d]: &[Value; 4]) {
+    assert!(a == b);
+    assert!(c.surface_eq(d));
+    assert_eq!(c.surface_cmp(d), Some(std::cmp::Ordering::Equal));
 }
 
 /// A copy of `v` that shares no part, each tuple and family built anew.
@@ -440,46 +365,54 @@ fn a_part_read_under_two_relations_in_one_comparison_gets_each_answer() {
     assert!(a.surface_eq(&b));
 }
 
+/// `h_i = h_0 | {1000 + i: i}` for one family `h_0` of 101 entries, one of them the family
+/// `{first, ..., first + n - 1}`: the n families have n ids but share the map node that holds
+/// that family, so it is met n times though it is held in one entry of one map.
+fn made_from(n: usize, first: i64) -> Value {
+    let f = Value::Family(Family::set(first..first + n as i64));
+    let h0 = Family::of((0..=100i64).map(|k| (k, if k == 0 { f.clone() } else { Value::Int(k) })));
+    let h = (0..n as i64).map(|i| Value::Family(h0.union(&Family::of([(1000 + i, i)])).unwrap()));
+    Value::tuple(h.collect())
+}
+
+/// [`made_from`] the family `0..n`.
+pub(super) fn made(n: usize) -> Value {
+    made_from(n, 0)
+}
+
+/// Two [`made`] values, built apart, are equal under each relation.
+pub(super) fn made_compare([a, b]: &[Value; 2]) {
+    assert!(a == b);
+    assert_eq!(a.cmp(b), std::cmp::Ordering::Equal);
+    assert!(a.surface_eq(b));
+    assert_eq!(a.surface_cmp(b), Some(std::cmp::Ordering::Equal));
+}
+
+/// Families made from one family that holds a family of 3 are equal when built apart, and
+/// ordered by that family when it differs.
 #[test]
-fn comparing_families_made_from_one_family_scales() {
-    // `h_i = h_0 | {1000 + i: i}` for one family `h_0` of 101 entries, one of them a family `f`
-    // of n entries: the n families have n ids but share the map node that holds `f`, so `f` is
-    // met n times though it is held in one entry of one map. Each side is built apart.
-    let made = |n: usize| {
-        let f = Value::Family(Family::set(0..n as i64));
-        let h0 =
-            Family::of((0..=100i64).map(|k| (k, if k == 0 { f.clone() } else { Value::Int(k) })));
-        let h =
-            (0..n as i64).map(|i| Value::Family(h0.union(&Family::of([(1000 + i, i)])).unwrap()));
-        Value::tuple(h.collect())
-    };
+fn families_made_from_one_family_compare_by_what_it_holds() {
+    let other = made_from(3, 1);
     assert!(made(3) == made(3));
     assert_eq!(made(3).cmp(&made(3)), std::cmp::Ordering::Equal);
-    let other = |n: usize| {
-        let f = Value::Family(Family::set(1..=n as i64));
-        let h0 =
-            Family::of((0..=100i64).map(|k| (k, if k == 0 { f.clone() } else { Value::Int(k) })));
-        Value::tuple(
-            (0..n as i64)
-                .map(|i| Value::Family(h0.union(&Family::of([(1000 + i, i)])).unwrap()))
-                .collect(),
-        )
-    };
-    assert!(made(3) != other(3));
-    assert_eq!(made(3).cmp(&other(3)), std::cmp::Ordering::Less);
-    assert!(!made(3).surface_eq(&other(3)));
-    let values: HashMap<usize, [Value; 2]> = [1000, 8000].map(|n| (n, [made(n), made(n)])).into();
-    check_order(
-        "equality, order and the language's relations of n families made from one family \
-         that holds a family of n, by n",
-        1000,
-        1,
-        |n| {
-            let [a, b] = &values[&n];
-            assert!(a == b);
-            assert_eq!(a.cmp(b), std::cmp::Ordering::Equal);
-            assert!(a.surface_eq(b));
-            assert_eq!(a.surface_cmp(b), Some(std::cmp::Ordering::Equal));
-        },
-    );
+    assert!(made(3) != other);
+    assert_eq!(made(3).cmp(&other), std::cmp::Ordering::Less);
+    assert!(!made(3).surface_eq(&other));
+}
+
+/// What each benchmark of `bench/shared.rs` asserts besides its ratio, at small sizes: values
+/// and families that share their parts compare and key alike, nested sets are shown, one part
+/// held in many places compares, and families made from one family are equal. Reading a tuple
+/// once per element is checked by `a_record_read_once_per_field_gives_each_field`, and a list
+/// built by an accumulator by `an_accumulated_list_holds_every_element_in_order`.
+#[test]
+fn shared_values_compare_and_show_at_small_sizes() {
+    assert_eq!(nested_sets(2).to_string(), "{({(0,)},)}");
+    for n in [1, 2, 9] {
+        shared_parts_compare(&shared_parts(n));
+        shows_nested_sets(&nested_sets(n), n);
+        families_compare(&families(n));
+        one_part_compares(&[wide(n), wide(n), row(n), row(n)]);
+        made_compare(&[made(n), made(n)]);
+    }
 }

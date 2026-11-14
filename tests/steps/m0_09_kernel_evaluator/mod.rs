@@ -12,10 +12,10 @@ use zed_kernel::{
     Term, Value, World, eval,
 };
 use zed_tests::kernel::*;
-use zed_tests::scaling::check_order;
 
 // binary.rs is not a module of this target: crates/zed-native/Cargo.toml builds it as the test
 // `zedc_binary`, since only a test of that package can name the zedc executable.
+mod bench;
 mod deep;
 mod empty_levels;
 mod provenance;
@@ -896,39 +896,41 @@ fn a_fix_reads_its_entries_by_key() {
     }
 }
 
-/// A chain of `n` entries, each reading the one before by a key that holds `-0.0`. Each read is a
-/// search of an ordered family, O(log n), so the chain is O(n log n): 8 (log 8n / log n) times
-/// the work at 8n, 10.41 at n = 1000 (measured 10.0 to 10.5, failing in runs of the whole step)
-/// and 10.0 at n = 4000, the size used.
-#[test]
-fn reads_by_a_key_holding_negative_zero_scale() {
-    const N: usize = 4_000;
-    let chain = |n: usize| {
-        let key = |i: Term, x: f64| prim(Prim::Tuple, vec![lit(Value::float(x)), i]);
-        definedness(
-            lit(Family::set((0..n as i64).map(|i| {
-                Value::tuple(vec![Value::float(0.0), Value::Int(i)])
-            }))),
-            if_(
-                eq(nth(var("i"), 1), lit(0)),
-                lit(0),
-                add(
-                    get(var("this"), key(sub(nth(var("i"), 1), lit(1)), -0.0)),
-                    lit(1),
-                ),
+/// A chain of `n` entries, each reading the one before by a key that holds `-0.0`.
+fn neg_zero_chain(n: usize) -> Term {
+    let key = |i: Term, x: f64| prim(Prim::Tuple, vec![lit(Value::float(x)), i]);
+    definedness(
+        lit(Family::set((0..n as i64).map(|i| {
+            Value::tuple(vec![Value::float(0.0), Value::Int(i)])
+        }))),
+        if_(
+            eq(nth(var("i"), 1), lit(0)),
+            lit(0),
+            add(
+                get(var("this"), key(sub(nth(var("i"), 1), lit(1)), -0.0)),
+                lit(1),
             ),
-        )
+        ),
+    )
+}
+
+/// `t`, a [`neg_zero_chain`] of `n` entries, is defined under `schedule` and has `n` entries.
+fn neg_zero_chain_is_defined(t: &Term, schedule: Schedule, n: usize) {
+    let out = Evaluator::new(World::new()).with_schedule(schedule).run(t);
+    let Ok(Value::Family(f)) = out else {
+        panic!("a chain is defined")
     };
-    let (small, large) = (chain(N), chain(8 * N));
+    assert_eq!(f.len(), n);
+}
+
+/// A chain read by `-0.0` keys is defined under both schedules at small sizes; its time is held
+/// in `bench/mod.rs`.
+#[test]
+fn a_chain_read_by_negative_zero_keys_is_defined_at_small_sizes() {
     for schedule in [Schedule::Rounds, Schedule::Pull] {
-        check_order("a chain read by -0.0 keys", N, 1, |n| {
-            let t = if n == N { &small } else { &large };
-            let out = Evaluator::new(World::new()).with_schedule(schedule).run(t);
-            let Ok(Value::Family(f)) = out else {
-                panic!("a chain is defined")
-            };
-            assert_eq!(f.len(), n);
-        });
+        for n in [1, 2, 9] {
+            neg_zero_chain_is_defined(&neg_zero_chain(n), schedule, n);
+        }
     }
 }
 

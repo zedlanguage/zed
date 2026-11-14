@@ -1,8 +1,7 @@
-//! How the tools scale with the size of the spec or the program. Each input is built before
-//! timing, at n and 8n, and a tool's constant cost of reading the grammars is small beside the
-//! work at these sizes.
+//! The inputs of the tool benchmarks in `bench/scaling.rs` (how the tools scale with the size of
+//! the spec or the program), and what each benchmark asserts besides its ratio, checked here at
+//! small sizes (TEST-bench-move-rest, P170).
 
-use zed_tests::scaling::{check, inputs};
 use zed_tools::spec::Spec;
 use zed_tools::{
     audit, cases, check as check_tool, fence_layers, fences, fuzz, layer, progress, ring, sync,
@@ -12,276 +11,255 @@ use super::{Dir, design, fence, spec_dir};
 use zed_tests::step_helpers::m0_03_grammar_tools::KERNEL;
 
 /// `n` functions, each with its own name.
-fn functions(n: usize) -> String {
+pub(super) fn functions(n: usize) -> String {
     (0..n)
         .map(|i| format!("f{i}(x: int) -> int = x * {i};\n"))
         .collect()
 }
 
 /// `n` fences of one function each.
-fn many_fences(n: usize) -> String {
+pub(super) fn many_fences(n: usize) -> String {
     (0..n)
         .map(|i| fence(&format!("f{i}(x: int) -> int = x * {i};")))
         .collect()
 }
 
-/// A spec for each of the sizes `n` and `8n`, with `body` of the size as its `DESIGN.md` fences.
-fn specs(name: &str, n: usize, body: impl Fn(usize) -> String) -> [(usize, Dir); 2] {
-    [n, 8 * n].map(|m| (m, spec_dir(&format!("{name}_{m}"), &design(&body(m)), "")))
+/// `check` passes the spec in `d`.
+pub(super) fn check_passes(d: &Dir) {
+    assert_eq!(check_tool::run(&[d.root()], &mut String::new()), Ok(true));
 }
 
-/// Runs `run` at n and 8n on the directory built for the size.
-fn scales(what: &str, n: usize, dirs: &[(usize, Dir); 2], run: impl Fn(&Dir) + Sync) {
-    check(what, n, |m| {
-        let (_, dir) = dirs
-            .iter()
-            .find(|d| d.0 == m)
-            .expect("a size that was built");
-        run(dir);
-    });
+/// `fences` passes the spec in `d`.
+pub(super) fn fences_pass(d: &Dir) {
+    assert_eq!(fences::run(&[d.root()], &mut String::new()), Ok(true));
 }
 
-#[test]
-fn check_scales_with_the_number_of_fences() {
-    let dirs = specs("scale_check", 25, many_fences);
-    scales("check, by fences", 25, &dirs, |d| {
-        assert_eq!(check_tool::run(&[d.root()], &mut String::new()), Ok(true));
-    });
+/// `fence_layers` lays out at least `at_least` fences of the `DESIGN.md` in `d`.
+pub(super) fn lays_out_fences(d: &Dir, at_least: usize) {
+    let spec = Spec::open(&d.root()).expect("the spec reads");
+    let laid = fence_layers::of_document(&d.at("DESIGN.md"), &spec).expect("they lay out");
+    assert!(laid.len() >= at_least);
 }
 
-#[test]
-fn check_scales_with_the_length_of_one_fence() {
-    let dirs = specs("scale_check_long", 20, |n| fence(&functions(n)));
-    scales("check, by the length of a fence", 20, &dirs, |d| {
-        assert_eq!(check_tool::run(&[d.root()], &mut String::new()), Ok(true));
-    });
+/// A rejection table of `m` rows, each with a gloss in parentheses.
+pub(super) fn rejection_table(m: usize) -> String {
+    let rows: String = (0..m)
+        .map(|i| format!("| Row {i} (gloss) | a | b |\n"))
+        .collect();
+    format!("| Rejection | W | M |\n|---|---|---|\n{rows}")
 }
 
-#[test]
-fn fences_scales_with_the_size_of_the_documents() {
-    let dirs = specs("scale_fences", 1000, many_fences);
-    scales("fences", 1000, &dirs, |d| {
-        assert_eq!(fences::run(&[d.root()], &mut String::new()), Ok(true));
-    });
+/// `rejection_rows` names each of the `m` rows of `table`.
+pub(super) fn reads_each_row(table: &str, m: usize) {
+    assert_eq!(fence_layers::rejection_rows(table).len(), m);
 }
 
-#[test]
-fn fence_layers_scales_with_the_number_of_fences() {
-    let dirs = specs("scale_fence_layers", 25, many_fences);
-    scales("fence_layers", 25, &dirs, |d| {
-        let spec = Spec::open(&d.root()).expect("the spec reads");
-        let laid = fence_layers::of_document(&d.at("DESIGN.md"), &spec).expect("they lay out");
-        assert!(laid.len() >= 25);
-    });
+/// A directory named `{name}_{m}` whose `cases.txt` holds `m` cases and whose `leftrec.txt` is
+/// empty.
+pub(super) fn cases_dir(name: &str, m: usize) -> Dir {
+    let d = Dir::new(&format!("{name}_{m}"));
+    d.write(
+        "cases.txt",
+        &"Expr ::: a + b * c ::: (a + (b * c))\n".repeat(m),
+    );
+    d.write("leftrec.txt", "");
+    d
 }
 
-#[test]
-fn rejection_rows_scale_with_the_number_of_rows() {
-    let tables: [(usize, String); 2] = [2000, 16000].map(|m| {
-        let rows: String = (0..m)
-            .map(|i| format!("| Row {i} (gloss) | a | b |\n"))
-            .collect();
-        (m, format!("| Rejection | W | M |\n|---|---|---|\n{rows}"))
-    });
-    check("rejection_rows", 2000, |m| {
-        let (_, table) = tables
-            .iter()
-            .find(|t| t.0 == m)
-            .expect("a size that was built");
-        assert_eq!(fence_layers::rejection_rows(table).len(), m);
-    });
+/// `cases` passes the cases in `d` against `spec`.
+pub(super) fn cases_pass(spec: &Spec, d: &Dir) {
+    assert_eq!(
+        cases::run_files(spec, &d.root(), &mut String::new()),
+        Ok(true)
+    );
 }
 
-#[test]
-fn cases_scales_with_the_number_of_cases() {
-    let dir = spec_dir("scale_cases", &design(""), "");
-    let line = "Expr ::: a + b * c ::: (a + (b * c))\n";
-    let sized = [4000, 32000].map(|m| {
-        let d = Dir::new(&format!("scale_cases_{m}"));
-        d.write("cases.txt", &line.repeat(m));
-        d.write("leftrec.txt", "");
-        (m, d)
-    });
-    let spec = Spec::open(&dir.root()).expect("the spec reads");
-    scales("cases", 4000, &sized, |d| {
-        assert_eq!(
-            cases::run_files(&spec, &d.root(), &mut String::new()),
-            Ok(true)
-        );
-    });
+/// A directory named `{name}_{m}` holding `p.zed`, a program of layer L1 of `m` functions.
+pub(super) fn program_dir(name: &str, m: usize) -> Dir {
+    let d = Dir::new(&format!("{name}_{m}"));
+    d.write("p.zed", &format!("// layer L1\n{}", functions(m)));
+    d
 }
 
-/// A directory holding a program of `m` functions, for `m` in `n` and `8n`.
-fn programs(name: &str, n: usize) -> [(usize, Dir); 2] {
-    [n, 8 * n].map(|m| {
-        let d = Dir::new(&format!("{name}_{m}"));
-        d.write("p.zed", &format!("// layer L1\n{}", functions(m)));
-        (m, d)
-    })
+/// `ring` runs on the program in `d` against the spec in `spec`.
+pub(super) fn ring_runs(spec: &Dir, d: &Dir) {
+    assert!(ring::run(&[spec.root(), d.at("p.zed")], &mut String::new()).is_ok());
 }
 
-#[test]
-fn ring_scales_with_the_length_of_a_file() {
-    let spec = spec_dir("scale_ring", &design(""), "");
-    let sized = programs("scale_ring_p", 150);
-    scales("ring", 150, &sized, |d| {
-        let args = [spec.root(), d.at("p.zed")];
-        assert!(ring::run(&args, &mut String::new()).is_ok());
-    });
+/// `layer` runs on the program in `d` against the spec in `spec`.
+pub(super) fn layer_runs(spec: &Dir, d: &Dir) {
+    assert!(layer::run(&[spec.root(), d.at("p.zed")], &mut String::new()).is_ok());
 }
 
-#[test]
-fn layer_scales_with_the_length_of_a_program() {
-    let spec = spec_dir("scale_layer", &design(""), "");
-    let sized = programs("scale_layer_p", 2000);
-    scales("layer", 2000, &sized, |d| {
-        let args = [spec.root(), d.at("p.zed")];
-        assert!(layer::run(&args, &mut String::new()).is_ok());
-    });
+/// `audit` runs on the program in `d` against the spec in `spec`.
+pub(super) fn audit_runs(spec: &Dir, d: &Dir) {
+    assert!(audit::run(&[spec.root(), d.at("p.zed")], &mut String::new()).is_ok());
 }
 
-#[test]
-fn audit_scales_with_the_length_of_a_program() {
-    let spec = spec_dir("scale_audit", &design(""), "");
-    let sized = programs("scale_audit_p", 12);
-    scales("audit", 12, &sized, |d| {
-        let args = [spec.root(), d.at("p.zed")];
-        assert!(audit::run(&args, &mut String::new()).is_ok());
-    });
-}
-
-/// The audit's comparison of a checklist with what a program needs, at `n` needed alternatives
-/// and `n` needed words, all listed, `n` of each listed that are not needed (rules the grammar
-/// does not have, words the table does not list), so both directions are measured, and `n`
-/// needed words of L1 listed both in the row L1 and in the row L2, so every listed place of an
-/// entry is checked against its layer.
-#[test]
-fn the_checklist_comparison_scales_with_its_entries() {
-    let dir = spec_dir("scale_checklist", &design(""), "");
-    let spec = Spec::open(&dir.root()).expect("the spec reads");
-    let table = layer::WordTable::read(&spec.design).expect("the table reads");
-    let sized = inputs(2000, |m| {
-        let needs = audit::Needs {
-            program: "p.zed".into(),
-            alts: (0..m).map(|i| (1, format!("R{i}"), 0)).collect(),
-            words: (0..m)
-                .flat_map(|i| [(format!("w{i}"), 1), (format!("v{i}"), 1)])
-                .collect(),
-        };
-        let alts: String = (0..m).map(|i| format!(" `R{i}#0` `S{i}#0`")).collect();
-        let words: String = (0..m).map(|i| format!(" `w{i}` `x{i}` `v{i}`")).collect();
-        let wrong: String = (0..m).map(|i| format!(" `v{i}`")).collect();
-        let list = format!(
-            "## Part A\n\n| Layer | Alternatives | Words |\n|---|---|---|\n| L1 |{alts} |{words} |\n\
-             | L2 | — |{wrong} |\n"
-        );
-        (needs, list)
-    });
-    check("checklist comparison, by entries", 2000, |m| {
-        let (needs, list) = &sized[&m];
-        let mut out = String::new();
-        let outcome = audit::compare(&spec, &table, needs, "ZED0.md", list, &mut out);
-        assert_eq!(outcome, Ok(false));
-        assert!(out.contains(&format!(", {} not needed `", 2 * m)), "{out}");
-        assert!(
-            out.contains(&format!(
-                "checklist: {} needed entries listed, {m} in the row of another layer `",
-                3 * m
-            )),
-            "{out}"
-        );
-    });
-}
-
-/// The audit's reading of Part A at `n` lines it cannot read, each for three reasons, and one
-/// line it cannot read for `n` reasons, so every reason of every line is collected.
-#[test]
-fn the_checklist_reading_scales_with_its_unreadable_lines() {
-    let dir = spec_dir("scale_checklist_unread", &design(""), "");
-    let spec = Spec::open(&dir.root()).expect("the spec reads");
-    let table = layer::WordTable::read(&spec.design).expect("the table reads");
+/// What a program needs, `m` alternatives and `2m` words, and a checklist that lists them all,
+/// `m` of each that are not needed, and the `m` words `v{i}` in both the row L1 and the row L2.
+pub(super) fn checklist(m: usize) -> (audit::Needs, String) {
     let needs = audit::Needs {
+        program: "p.zed".into(),
+        alts: (0..m).map(|i| (1, format!("R{i}"), 0)).collect(),
+        words: (0..m)
+            .flat_map(|i| [(format!("w{i}"), 1), (format!("v{i}"), 1)])
+            .collect(),
+    };
+    let alts: String = (0..m).map(|i| format!(" `R{i}#0` `S{i}#0`")).collect();
+    let words: String = (0..m).map(|i| format!(" `w{i}` `x{i}` `v{i}`")).collect();
+    let wrong: String = (0..m).map(|i| format!(" `v{i}`")).collect();
+    let list = format!(
+        "## Part A\n\n| Layer | Alternatives | Words |\n|---|---|---|\n| L1 |{alts} |{words} |\n\
+         | L2 | — |{wrong} |\n"
+    );
+    (needs, list)
+}
+
+/// The audit fails [`checklist`]`(m)`, naming the `2m` entries not needed and the `m` in the row
+/// of another layer.
+pub(super) fn compares_checklist(
+    spec: &Spec,
+    table: &layer::WordTable,
+    needs: &audit::Needs,
+    list: &str,
+    m: usize,
+) {
+    let mut out = String::new();
+    let outcome = audit::compare(spec, table, needs, "ZED0.md", list, &mut out);
+    assert_eq!(outcome, Ok(false));
+    assert!(out.contains(&format!(", {} not needed `", 2 * m)), "{out}");
+    assert!(
+        out.contains(&format!(
+            "checklist: {} needed entries listed, {m} in the row of another layer `",
+            3 * m
+        )),
+        "{out}"
+    );
+}
+
+/// A Part A of `m` lines the audit cannot read, each for three reasons, and one line it cannot
+/// read for `m` reasons.
+pub(super) fn unreadable(m: usize) -> String {
+    let bad: String = (0..m)
+        .map(|i| format!("| L{i}–L{} | R{i}#0 | `w{i} |\n", i + 1))
+        .collect();
+    let long: String = (0..m).map(|i| format!(" x{i} `R{i}#0`")).collect();
+    format!(
+        "## Part A\n\n| Layer | Alternatives | Words |\n|---|---|---|\n{bad}| L1 |{long} | — |\n"
+    )
+}
+
+/// The audit fails [`unreadable`]`(m)`, naming its `m + 1` lines and the `m` reasons of the
+/// last.
+pub(super) fn reads_unreadable(
+    spec: &Spec,
+    table: &layer::WordTable,
+    needs: &audit::Needs,
+    list: &str,
+    m: usize,
+) {
+    let mut out = String::new();
+    let outcome = audit::compare(spec, table, needs, "ZED0.md", list, &mut out);
+    assert_eq!(outcome, Ok(false));
+    assert!(
+        out.contains(&format!("checklist: {} lines of Part A", m + 1)),
+        "{out}"
+    );
+    assert!(out.contains(&format!(", for {m} reasons: ")), "{out}");
+}
+
+/// The ring the fuzz benchmark's first pass runs at.
+pub(super) const LAST_RING: u32 = 22;
+
+/// The fuzz's first pass at [`LAST_RING`] over `m` programs accepts some.
+pub(super) fn first_pass_accepts(spec: &Spec, m: usize) {
+    let accepted = fuzz::first_pass(spec, LAST_RING.., m, 1, &mut String::new());
+    assert!(accepted.expect("the first pass runs") > 0);
+}
+
+/// A plan of `m` steps of L1 and its table of `m` rows marked done.
+pub(super) fn progress_plan(m: usize) -> (String, String) {
+    let steps: String = (1..=m).map(|i| format!("L1.{i}. Step {i}.\n")).collect();
+    let done: String = (1..=m)
+        .map(|i| format!("| L1.{i} | done | x |\n"))
+        .collect();
+    (
+        format!("## (sec:steps) The steps, layer by layer\n\n### L1\n\n{steps}"),
+        done,
+    )
+}
+
+/// `progress` renders `plan` with `done`.
+pub(super) fn renders_progress(plan: &str, done: &str) {
+    assert!(progress::render(plan, done, None).is_ok());
+}
+
+/// The `DESIGN.md` fences of `sync`'s benchmark: `m` `zed` fences, `m` `text` fences and the
+/// kernel.
+pub(super) fn sync_body(m: usize) -> String {
+    let texts: String = (0..m)
+        .map(|i| format!("- Item {i}:\n\n  ```text\n  report {i}\n  ```\n\n"))
+        .collect();
+    format!("{}\n{texts}{KERNEL}", many_fences(m))
+}
+
+/// The directories `sync` copies into under `d`.
+pub(super) fn sync_targets(d: &Dir) {
+    for sub in ["zed/fences", "zed/grammar"] {
+        std::fs::create_dir_all(d.at(sub)).expect("a copy directory");
+    }
+}
+
+/// `sync` lays out and copies the fences of the spec in `d` into its `zed/`.
+pub(super) fn syncs(d: &Dir) {
+    let spec = Spec::open(&d.root()).expect("the spec reads");
+    let mut out = String::new();
+    let outcome = sync::sync_into(&spec, &d.at("zed"), false, &mut out);
+    assert_eq!(outcome, Ok(true), "{out}");
+}
+
+/// Each benchmark of `bench/scaling.rs` at small sizes, through the same assertions: `check`,
+/// `fences`, `fence_layers`, `rejection_rows`, `cases`, `ring`, `layer`, `audit`, the
+/// checklist's comparison and reading, the fuzz's first pass, `progress` and `sync`.
+#[test]
+fn each_tool_benchmark_passes_at_small_sizes() {
+    let empty = spec_dir("small_scale_tools", &design(""), "");
+    let spec = Spec::open(&empty.root()).expect("the spec reads");
+    let table = layer::WordTable::read(&spec.design).expect("the table reads");
+    let no_needs = audit::Needs {
         program: "p.zed".into(),
         ..Default::default()
     };
-    let sized = inputs(16000, |m| {
-        let bad: String = (0..m)
-            .map(|i| format!("| L{i}–L{} | R{i}#0 | `w{i} |\n", i + 1))
-            .collect();
-        let long: String = (0..m).map(|i| format!(" x{i} `R{i}#0`")).collect();
-        format!(
-            "## Part A\n\n| Layer | Alternatives | Words |\n|---|---|---|\n{bad}| L1 |{long} | — |\n"
-        )
-    });
-    check("checklist reading, by unreadable lines", 16000, |m| {
-        let list = &sized[&m];
-        let mut out = String::new();
-        let outcome = audit::compare(&spec, &table, &needs, "ZED0.md", list, &mut out);
-        assert_eq!(outcome, Ok(false));
-        assert!(
-            out.contains(&format!("checklist: {} lines of Part A", m + 1)),
-            "{out}"
+    for m in [1, 2, 9] {
+        let d = spec_dir(
+            &format!("small_scale_fences_{m}"),
+            &design(&many_fences(m)),
+            "",
         );
-        assert!(out.contains(&format!(", for {m} reasons: ")), "{out}");
-    });
-}
-
-/// The second pass of the fuzz runs over the rules the first pass missed, a set that shrinks as
-/// `n` grows, so its cost at small `n` hides how the first pass grows. This test measures the
-/// first pass. It does so at the last ring: a sentence at ring k is parsed once per ring above k,
-/// which at low rings is so much work that a quadratic part stays out of sight below some
-/// thousands of sentences.
-#[test]
-fn the_fuzz_first_pass_scales_with_the_number_of_programs() {
-    let spec = spec_dir("scale_fuzz", &design(""), "");
-    const N: usize = 1000;
-    const LAST_RING: u32 = 22;
-    let opened = Spec::open(&spec.root()).expect("the spec reads");
-    check("fuzz first pass", N, |m| {
-        let accepted = fuzz::first_pass(&opened, LAST_RING.., m, 1, &mut String::new());
-        assert!(accepted.expect("the first pass runs") > 0);
-    });
-}
-
-#[test]
-fn progress_scales_with_the_length_of_the_plan() {
-    let text = |m: usize| {
-        let steps: String = (1..=m).map(|i| format!("L1.{i}. Step {i}.\n")).collect();
-        let done: String = (1..=m)
-            .map(|i| format!("| L1.{i} | done | x |\n"))
-            .collect();
-        (
-            format!("## (sec:steps) The steps, layer by layer\n\n### L1\n\n{steps}"),
-            done,
-        )
-    };
-    let (n, plans) = (2000, [text(2000), text(16000)]);
-    check("progress", n, |m| {
-        let (plan, done) = &plans[usize::from(m != n)];
-        assert!(progress::render(plan, done, None).is_ok());
-    });
-}
-
-/// `sync` lays out each `zed` fence and copies each `text` fence, so its work grows with the
-/// number of both; each size writes into a `zed/` of its own directory.
-#[test]
-fn sync_scales_with_the_number_of_fences() {
-    let body = |m: usize| {
-        let texts: String = (0..m)
-            .map(|i| format!("- Item {i}:\n\n  ```text\n  report {i}\n  ```\n\n"))
-            .collect();
-        format!("{}\n{texts}{KERNEL}", many_fences(m))
-    };
-    let dirs = specs("scale_sync", 25, body);
-    for (_, d) in &dirs {
-        for sub in ["zed/fences", "zed/grammar"] {
-            std::fs::create_dir_all(d.at(sub)).expect("a copy directory");
-        }
+        check_passes(&d);
+        fences_pass(&d);
+        lays_out_fences(&d, m);
+        let long = spec_dir(
+            &format!("small_scale_long_{m}"),
+            &design(&fence(&functions(m))),
+            "",
+        );
+        check_passes(&long);
+        reads_each_row(&rejection_table(m), m);
+        cases_pass(&spec, &cases_dir("small_scale_cases", m));
+        let p = program_dir("small_scale_p", m);
+        ring_runs(&empty, &p);
+        layer_runs(&empty, &p);
+        audit_runs(&empty, &p);
+        let (needs, list) = checklist(m);
+        compares_checklist(&spec, &table, &needs, &list, m);
+        reads_unreadable(&spec, &table, &no_needs, &unreadable(m), m);
+        first_pass_accepts(&spec, m);
+        let (plan, done) = progress_plan(m);
+        renders_progress(&plan, &done);
+        let s = spec_dir(&format!("small_scale_sync_{m}"), &design(&sync_body(m)), "");
+        sync_targets(&s);
+        syncs(&s);
     }
-    scales("sync", 25, &dirs, |d| {
-        let spec = Spec::open(&d.root()).expect("the spec reads");
-        let mut out = String::new();
-        let outcome = sync::sync_into(&spec, &d.at("zed"), false, &mut out);
-        assert_eq!(outcome, Ok(true), "{out}");
-    });
 }

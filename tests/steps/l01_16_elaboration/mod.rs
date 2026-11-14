@@ -2,6 +2,7 @@
 //! its definitions evaluated by the kernel evaluator; where a term's shape is the point, it is
 //! printed; and each error elaboration reports has a case.
 
+mod bench;
 mod calls;
 mod errors;
 mod handled;

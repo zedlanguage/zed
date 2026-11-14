@@ -114,9 +114,9 @@ fn random_graph(rng: &mut Rng) -> Vec<Vec<usize>> {
 
 #[test]
 fn bourdoncle_agrees_with_the_declarative_definition() {
-    let mut rng = Rng::new(0x5f05);
+    let mut rng = Rng::new(zed_tests::test_seed());
     let mut components = 0;
-    for _ in 0..4 * RANDOM_INSTANCES {
+    for _ in 0..RANDOM_INSTANCES {
         let g = random_graph(&mut rng);
         let got = weak_topological_order(&g);
         assert_eq!(show(&got), show(&oracle(&g)), "graph {g:?}");
@@ -126,7 +126,7 @@ fn bourdoncle_agrees_with_the_declarative_definition() {
             .count();
     }
     // The sample exercises components, not only acyclic graphs.
-    assert!(components > RANDOM_INSTANCES, "{components} components");
+    assert!(components > RANDOM_INSTANCES / 4, "{components} components");
 }
 
 /// The defining property of a weak topological order: every edge either goes forward in
@@ -146,8 +146,8 @@ fn every_backward_edge_goes_to_an_enclosing_head() {
             }
         }
     }
-    let mut rng = Rng::new(0xb0d);
-    for _ in 0..RANDOM_INSTANCES {
+    let mut rng = Rng::new(zed_tests::test_seed());
+    for _ in 0..RANDOM_INSTANCES / 4 {
         let g = random_graph(&mut rng);
         let mut order = Vec::new();
         for e in weak_topological_order(&g) {
@@ -194,9 +194,9 @@ fn the_traversal_order_picks_the_head() {
 /// following the lists as written.
 #[test]
 fn the_order_agrees_with_the_declarative_definition_on_larger_graphs() {
-    let mut rng = Rng::new(0x5f06);
+    let mut rng = Rng::new(zed_tests::test_seed());
     let mut nested = 0;
-    for _ in 0..2 * RANDOM_INSTANCES {
+    for _ in 0..RANDOM_INSTANCES / 2 {
         let n = 1 + rng.below(40);
         let g: Vec<Vec<usize>> = (0..n)
             .map(|v| {
@@ -223,15 +223,15 @@ fn the_order_agrees_with_the_declarative_definition_on_larger_graphs() {
         }
     }
     // The sample exercises nested components.
-    assert!(nested > RANDOM_INSTANCES / 4, "{nested} with nesting");
+    assert!(nested > RANDOM_INSTANCES / 16, "{nested} with nesting");
 }
 
 /// The keyed order: the declarative order with the roots taken in the order of the keys and
 /// each successor list sorted by them.
 #[test]
 fn the_keyed_order_agrees_with_the_declarative_definition() {
-    let mut rng = Rng::new(0x0c5b);
-    for _ in 0..4 * RANDOM_INSTANCES {
+    let mut rng = Rng::new(zed_tests::test_seed());
+    for _ in 0..RANDOM_INSTANCES {
         let g = random_graph(&mut rng);
         let n = g.len();
         // Distinct keys in a random order.

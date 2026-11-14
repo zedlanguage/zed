@@ -8,10 +8,9 @@
 //! notes in full, and each repair it offers, applied, is accepted.
 
 use super::{build, fmt};
-use zed_tests::scaling;
 use zedc::ast::{Error, ExprKind, Stmt, StmtKind, unit};
-use zedc::lex::lex;
-use zedc::parse::{TOP, parse};
+use zedc::lex::{Token, lex};
+use zedc::parse::{TOP, Tree, parse};
 use zedc::query::Db;
 use zedc::rejection::Row;
 
@@ -858,7 +857,7 @@ fn entries_inside_a_frame_are_found_against_the_whole_frame() {
 /// `f(n) = loop t { while t < n; x' = x + t; … }` with `3n` keys of `x` given by `2n` sites
 /// apart, `initial x[i in -3k-3..=-3k-2] = 0;` and `initial x[-3k-1] = 0;` for each `k`
 /// below `n`, written from the farthest key in, and `tail` last.
-fn many_entries(n: usize, tail: &str) -> String {
+pub(super) fn many_entries(n: usize, tail: &str) -> String {
     let sites: String = (0..n)
         .rev()
         .map(|k| {
@@ -873,39 +872,9 @@ fn many_entries(n: usize, tail: &str) -> String {
     format!("f(n) = loop t {{ while t < n; x' = x + t; {sites}{tail} }};\n")
 }
 
-/// Each site is one query and one insertion into a Fenwick tree over the first keys of its
-/// class (`crate::ast::sentinel` in zedc-syntax), so `2n` sites of one variable whose entries
-/// are apart are checked in time of order `n log n`, and a site after them that meets one is
-/// found in the same time.
-#[test]
-fn overlapping_entries_scale() {
-    for (what, tail, ok) in [
-        ("2n sites of one variable, apart", "", true),
-        (
-            "a site after 2n that meets one",
-            "initial x[i in -2..<0] = 1;",
-            false,
-        ),
-    ] {
-        let units = scaling::inputs(500, |n| {
-            let text = many_entries(n, tail);
-            let tokens = lex(&text).unwrap();
-            let tree = parse(&text, &tokens, "Unit", TOP).unwrap();
-            (text, tokens, tree)
-        });
-        scaling::check(what, 500, |n| {
-            let (text, tokens, tree) = &units[&n];
-            match unit(text, tokens, tree) {
-                Ok(_) => assert!(ok, "{what}: accepted"),
-                Err(e) => assert_eq!((ok, e.row), (false, Some(Row::TwoSentinels)), "{e:?}"),
-            }
-        });
-    }
-}
-
 /// `f(n) = loop t { while t < n; initial x0 = 0; x0' = x0 + t; … }` with `n` variables, and
 /// `tail` last.
-fn one_body(n: usize, tail: &str) -> String {
+pub(super) fn one_body(n: usize, tail: &str) -> String {
     let stmts: String = (0..n)
         .map(|i| format!("initial x{i} = 0; x{i}' = x{i} + t; "))
         .collect();
@@ -913,63 +882,112 @@ fn one_body(n: usize, tail: &str) -> String {
 }
 
 /// `n` loops, each with one `initial` statement.
-fn many_loops(n: usize) -> String {
+pub(super) fn many_loops(n: usize) -> String {
     (0..n)
         .map(|i| format!("r{i} = loop t {{ while t < 9; initial x = {i}; x' = x + t; }};\n"))
         .collect()
 }
 
-/// The checks of a loop body are one pass over its statements, with a Fenwick tree over the
-/// first keys of the sites of each variable, so `n` `initial` statements in one body, and `n`
-/// loops with one each, are built in time of order `n log n`; and a second site after `n` is
-/// found in the same time.
-#[test]
-fn initial_statements_scale() {
-    for (what, make) in [
-        (
-            "n initial statements in one loop body",
-            one_body as fn(usize, &str) -> String,
-        ),
-        ("n loops with one initial statement each", |n, _| {
-            many_loops(n)
-        }),
-    ] {
-        let units = scaling::inputs(500, |n| {
-            let text = make(n, "");
-            let tokens = lex(&text).unwrap();
-            let tree = parse(&text, &tokens, "Unit", TOP).unwrap();
-            (text, tokens, tree)
-        });
-        scaling::check(what, 500, |n| {
-            let (text, tokens, tree) = &units[&n];
-            assert!(unit(text, tokens, tree).is_ok());
-        });
-    }
-    let units = scaling::inputs(500, |n| {
-        let text = one_body(n, "initial x0 = 1;");
-        let tokens = lex(&text).unwrap();
-        let tree = parse(&text, &tokens, "Unit", TOP).unwrap();
-        (text, tokens, tree)
-    });
-    scaling::check("a second initial statement after n", 500, |n| {
-        let (text, tokens, tree) = &units[&n];
-        let e = unit(text, tokens, tree).unwrap_err();
-        assert_eq!(e.row, Some(Row::TwoSentinels));
-    });
+/// A unit's text, tokens and parse tree, made before a benchmark times its checking.
+pub(super) type Parsed = (String, Vec<Token>, Tree);
+
+/// The unit `text`, lexed and parsed.
+pub(super) fn parsed(text: String) -> Parsed {
+    let tokens = lex(&text).unwrap();
+    let tree = parse(&text, &tokens, "Unit", TOP).unwrap();
+    (text, tokens, tree)
 }
 
-/// A bare `with` item is found by the parser on the error path, which parses the unit again
-/// with each repair written in, a fixed number of times: linear in the unit's size.
+/// The inputs of the check of overlapping entries: what each is, the statement after the sites
+/// of [`many_entries`], and whether the unit is accepted.
+pub(super) const OVERLAPPING: [(&str, &str, bool); 2] = [
+    ("2n sites of one variable, apart", "", true),
+    (
+        "a site after 2n that meets one",
+        "initial x[i in -2..<0] = 1;",
+        false,
+    ),
+];
+
+/// Asserts the unit `p` accepted if `ok`, and refused with row "Two sentinels" if not.
+pub(super) fn overlapping_verdict(what: &str, p: &Parsed, ok: bool) {
+    let (text, tokens, tree) = p;
+    match unit(text, tokens, tree) {
+        Ok(_) => assert!(ok, "{what}: accepted"),
+        Err(e) => assert_eq!((ok, e.row), (false, Some(Row::TwoSentinels)), "{e:?}"),
+    }
+}
+
+/// Sites apart are accepted and a site after them that meets one is refused, at small sizes;
+/// the time is held in `bench/initial.rs`.
 #[test]
-fn finding_a_bare_item_scales() {
-    let units = scaling::inputs(500, |n| {
-        let text = one_body(n, "y' = y + 1 with y = 0;");
-        let tokens = lex(&text).unwrap();
-        (text, tokens)
-    });
-    scaling::check("a bare item after n statements", 500, |n| {
-        let (text, tokens) = &units[&n];
-        let e = Error::of_parse(text, parse(text, tokens, "Unit", TOP).unwrap_err());
-        assert_eq!(e.row, Some(Row::BareBoundary));
-    });
+fn overlapping_entries_at_small_sizes() {
+    for (what, tail, ok) in OVERLAPPING {
+        for n in [1, 2, 9] {
+            overlapping_verdict(what, &parsed(many_entries(n, tail)), ok);
+        }
+    }
+}
+
+/// A unit family: its name and its builder at size n.
+pub(super) type Family = (&'static str, fn(usize) -> String);
+
+/// The units of `n` `initial` statements in one loop body, and of `n` loops with one each.
+pub(super) const INITIALS: [Family; 2] = [
+    ("n initial statements in one loop body", |n| one_body(n, "")),
+    ("n loops with one initial statement each", many_loops),
+];
+
+/// Asserts the unit `p` built.
+pub(super) fn builds(p: &Parsed) {
+    let (text, tokens, tree) = p;
+    assert!(unit(text, tokens, tree).is_ok());
+}
+
+/// [`one_body`] with a second `initial` statement of `x0` last.
+pub(super) fn second_site(n: usize) -> String {
+    one_body(n, "initial x0 = 1;")
+}
+
+/// Asserts the unit `p` refused with row "Two sentinels".
+pub(super) fn second_site_refused(p: &Parsed) {
+    let (text, tokens, tree) = p;
+    let e = unit(text, tokens, tree).unwrap_err();
+    assert_eq!(e.row, Some(Row::TwoSentinels));
+}
+
+/// `initial` statements build and a second site is refused, at small sizes; the time is held
+/// in `bench/initial.rs`.
+#[test]
+fn initial_statements_at_small_sizes() {
+    for (_, make) in INITIALS {
+        for n in [1, 2, 9] {
+            builds(&parsed(make(n)));
+        }
+    }
+    for n in [1, 2, 9] {
+        second_site_refused(&parsed(second_site(n)));
+    }
+}
+
+/// [`one_body`] with a bare `with` item last, lexed.
+pub(super) fn bare_item(n: usize) -> (String, Vec<Token>) {
+    let text = one_body(n, "y' = y + 1 with y = 0;");
+    let tokens = lex(&text).unwrap();
+    (text, tokens)
+}
+
+/// Asserts the unit `u` refused by the parser with row "A bare boundary item".
+pub(super) fn bare_item_refused(u: &(String, Vec<Token>)) {
+    let (text, tokens) = u;
+    let e = Error::of_parse(text, parse(text, tokens, "Unit", TOP).unwrap_err());
+    assert_eq!(e.row, Some(Row::BareBoundary));
+}
+
+/// A bare `with` item is found at small sizes; the time is held in `bench/initial.rs`.
+#[test]
+fn finding_a_bare_item_at_small_sizes() {
+    for n in [0, 1, 2, 9] {
+        bare_item_refused(&bare_item(n));
+    }
 }

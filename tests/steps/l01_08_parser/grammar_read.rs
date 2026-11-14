@@ -2,9 +2,6 @@
 //! copy of `e`, so a chain or a nest of `%` is read in time linear in its length, and the
 //! parser matches it as the `e (sep e)*` it stands for, node for node.
 
-use std::collections::HashMap;
-
-use zed_tests::scaling::check;
 use zedc::lex::lex;
 use zedc::parse::{Error, Grammar, Node, TOP, parse_with};
 
@@ -53,31 +50,27 @@ fn a_list_of_lists_parses_as_the_repetition_it_stands_for() {
     assert!(parsed(&short, "[1, 2]; [3]; [4, 5, 6]").is_ok());
 }
 
-/// The grammar texts at `n` and `8n`, built before timing.
-fn texts(n: usize, text: impl Fn(usize) -> String) -> HashMap<usize, String> {
-    [n, 8 * n].into_iter().map(|m| (m, text(m))).collect()
+/// `'x' % ',' % ',' …`, `n` times: each `%` takes the whole expression before it as its
+/// operand. The old reader copied that operand into both of its places, which doubled the
+/// expression per `%`.
+pub(super) fn chain_of_separators(n: usize) -> String {
+    format!("List = 'x'{} L1\n", " % ','".repeat(n))
 }
 
-/// `'x' % ',' % ',' …`: each `%` takes the whole expression before it as its operand. The old
-/// reader copied that operand into both of its places, which doubled the expression per `%`.
-#[test]
-fn a_chain_of_separators_is_read_in_linear_time() {
-    let texts = texts(2_000, |n| format!("List = 'x'{} L1\n", " % ','".repeat(n)));
-    check("a grammar line of n chained `%`", 2_000, |n| {
-        Grammar::read(&[&texts[&n]]).unwrap();
-    });
+/// `(('x' % ',') % ',') …`, `n` deep: the same through groups.
+pub(super) fn nest_of_separators(n: usize) -> String {
+    let open = "(".repeat(n);
+    let close = " % ',')".repeat(n);
+    format!("List = {open}'x'{close} L1\n")
 }
 
-/// `(('x' % ',') % ',') …`: the same through groups. The reader recurses once per group (the
-/// `Complexity tradeoff:` comment at `Reader::within`), so the depths stay small.
+/// Chains and nests of `%` are read; their time is held linear in `bench/grammar_read.rs`.
 #[test]
-fn a_nest_of_separators_is_read_in_linear_time() {
-    let texts = texts(32, |n| {
-        let open = "(".repeat(n);
-        let close = " % ',')".repeat(n);
-        format!("List = {open}'x'{close} L1\n")
-    });
-    check("a grammar line of n nested `%`", 32, |n| {
-        Grammar::read(&[&texts[&n]]).unwrap();
-    });
+fn chains_and_nests_of_separators_are_read() {
+    for n in [1, 2, 9] {
+        for text in [chain_of_separators(n), nest_of_separators(n)] {
+            let g = Grammar::read(&[&text]).unwrap();
+            assert!(parsed(&g, "x, x").is_ok(), "{text}");
+        }
+    }
 }

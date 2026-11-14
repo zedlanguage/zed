@@ -8,7 +8,7 @@ use zed_kernel::types::Type;
 use zed_kernel::{Pattern, Prim, Value};
 
 /// The part of a kernel name before `@`, as `zedc::elab::written_name` gives it.
-fn before_at(k: &str) -> &str {
+pub(super) fn before_at(k: &str) -> &str {
     k.split_once('@').map_or(k, |(w, _)| w)
 }
 
@@ -67,31 +67,38 @@ fn the_elaborated_and_and_or_are_written_as_operators() {
     );
 }
 
-/// The text is linear in the term: `k` tests joined by `&&`, nested to the left and to the
-/// right, each name renamed.
-#[test]
-fn written_text_scales_with_the_term() {
-    let chain = |k: usize, left: bool| -> Term {
-        (1..k).fold(ge0("v@0"), |t, i| {
-            let next = ge0(&format!("v@{i}"));
-            if left {
-                if_(t, next, lit(false))
-            } else {
-                if_(next, t, lit(false))
-            }
-        })
-    };
-    zed_tests::deep::on_small_stack(|| {
-        for left in [true, false] {
-            let n = 2_000;
-            let inputs = [n, zed_tests::scaling::FACTOR * n].map(|k| chain(k, left));
-            let what = if left { "left" } else { "right" };
-            zed_tests::scaling::check(&format!("written, && nested to the {what}"), n, |k| {
-                let t = &inputs[usize::from(k != n)];
-                std::hint::black_box(written(t, before_at, &|_| true));
-            });
+/// `k` tests `v@i >= 0` joined by the elaborated `&&`, nested to the left or to the right.
+pub(super) fn chain(k: usize, left: bool) -> Term {
+    (1..k).fold(ge0("v@0"), |t, i| {
+        let next = ge0(&format!("v@{i}"));
+        if left {
+            if_(t, next, lit(false))
+        } else {
+            if_(next, t, lit(false))
         }
-    });
+    })
+}
+
+/// A chain of a few tests joined by `&&`, nested either way, is written with every `&&` and
+/// each name renamed; `bench/written.rs` holds the timing of long chains.
+#[test]
+fn a_short_chain_of_and_is_written_with_each_operator() {
+    for left in [true, false] {
+        for k in [1, 2, 9] {
+            let text = written(&chain(k, left), before_at, &|_| true);
+            assert_eq!(text.matches("(v >= 0)").count(), k, "{text}");
+            assert_eq!(text.matches(" && ").count(), k - 1, "{text}");
+            assert!(!text.contains('@') && !text.contains("if"), "{text}");
+        }
+    }
+    assert_eq!(
+        written(&chain(3, true), before_at, &|_| true),
+        "(((v >= 0) && (v >= 0)) && (v >= 0))"
+    );
+    assert_eq!(
+        written(&chain(3, false), before_at, &|_| true),
+        "((v >= 0) && ((v >= 0) && (v >= 0)))"
+    );
 }
 /// A type test in a pattern writes `is T`, sec:grammar's `IsPat`, with its type as a program
 /// writes it, the empty type as `Never` (DESIGN.md, the L1 row of "Defined words by layer"),

@@ -1,26 +1,26 @@
-//! The finite-model harness checks a bit word's law in work linear in the tuples it checks: the
-//! associativity of `bitXor` on the 8^w triples of the `w`-digit values, at 8^6 and 8^7
-//! triples. The table of the word costs 4^w evaluations, below the triples' count.
+//! The law the benchmark of `bench.rs` checks, and the count of triples checking it must give,
+//! checked here at small widths (TEST-bench-move-rest, P170).
 
-use zed_tests::scaling::check_order;
-use zedc::axioms::{AXIOMS, Law};
+use zedc::axioms::{AXIOMS, Axiom, Law};
 
 use super::axioms::check_word;
 
-#[test]
-fn the_harness_is_linear_in_the_tuples_it_checks() {
-    let assoc = AXIOMS
+/// The associativity of `bitXor`.
+pub(super) fn bitxor_associative() -> &'static Axiom {
+    AXIOMS
         .iter()
         .find(|a| a.op == "bitXor" && a.law == Law::Associative)
-        .expect("bitXor is associative by axiom");
-    check_order(
-        "harness: bitXor associative at n triples",
-        1 << 18,
-        1,
-        |n| {
-            let w = n.ilog2() / 3;
-            assert_eq!(n, 1 << (3 * w), "a count of triples is 8^w");
-            assert_eq!(check_word(assoc, w), Ok(n));
-        },
-    );
+        .expect("bitXor is associative by axiom")
+}
+
+/// The harness checks the law on each of the 8^w triples of `w`-digit values, and it holds.
+pub(super) fn checks_every_triple(assoc: &Axiom, w: u32) {
+    assert_eq!(check_word(assoc, w), Ok(1 << (3 * w)));
+}
+
+#[test]
+fn the_harness_checks_each_triple_of_a_narrow_word_once() {
+    for w in 1..=3 {
+        checks_every_triple(bitxor_associative(), w);
+    }
 }

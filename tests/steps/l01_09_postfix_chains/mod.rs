@@ -1,6 +1,7 @@
 //! Step L1.9: postfix chains become syntax trees (`zedc::ast`): calls with positional, named
 //! and curried arguments, `.`, `?.`, indexing, and the `5.double` rule of the lexer.
 
+mod bench;
 mod calls;
 mod chains;
 mod fences;

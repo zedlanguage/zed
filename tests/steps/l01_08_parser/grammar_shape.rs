@@ -130,18 +130,19 @@ fn a_mark_is_refused_outside_the_top_of_its_alternative() {
 }
 
 /// Each tree below has one nesting per operator, so neither the parser nor the builder may
-/// recurse on the length of a chain, nor may `Drop`.
+/// recurse on the length of a chain, nor may `Drop`: a hundred thousand frames are far more than
+/// a test thread's 2 MiB stack holds.
 #[test]
-fn a_chain_of_a_million_operators_builds() {
-    let text = "1 + ".repeat(1_000_000) + "2";
+fn a_chain_of_a_hundred_thousand_operators_builds() {
+    let text = "1 + ".repeat(100_000) + "2";
     let tokens = lex(&text).unwrap();
     let parsed = parse(&text, &tokens, "Expr", TOP).unwrap();
     build(&text, &tokens, &parsed).unwrap();
 }
 
 #[test]
-fn a_chain_of_a_million_members_builds() {
-    let text = "a".to_string() + &".b".repeat(1_000_000);
+fn a_chain_of_a_hundred_thousand_members_builds() {
+    let text = "a".to_string() + &".b".repeat(100_000);
     let tokens = lex(&text).unwrap();
     let parsed = parse(&text, &tokens, "Expr", TOP).unwrap();
     build(&text, &tokens, &parsed).unwrap();

@@ -1,6 +1,7 @@
 //! Step L1.10: lambdas with a declaration's parameter list, `is` and `is not` with the type
 //! expressions they test against, `else` with its atom-pattern form, and tuples.
 
+mod bench;
 mod elses;
 mod fences;
 mod lambdas;

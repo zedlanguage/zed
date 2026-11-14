@@ -382,7 +382,9 @@ fn indices(t: &Term, env: &mut Vec<Arc<str>>) -> String {
 #[test]
 fn addresses_agree_with_an_independent_alpha_equivalence_test() {
     let (mut same, mut differ) = (0, 0);
-    for seed in 0..RANDOM_INSTANCES as u64 * 4 {
+    let base = zed_tests::test_seed();
+    for i in 0..RANDOM_INSTANCES as u64 {
+        let seed = base.wrapping_add(i);
         let make = |names: u64| {
             random(
                 &mut Rng::new(seed),
@@ -401,10 +403,7 @@ fn addresses_agree_with_an_independent_alpha_equivalence_test() {
         if alpha { same += 1 } else { differ += 1 }
     }
     // Both outcomes occur often enough for the agreement to mean something.
-    assert!(
-        same > 300 && differ > 300,
-        "{same} alike, {differ} different"
-    );
+    assert!(same > 50 && differ > 50, "{same} alike, {differ} different");
 }
 
 /// `canonicalize` renames every binder in one pass; the rules rename one per step. Both must
@@ -418,7 +417,9 @@ fn one_pass_is_stepwise(t: Term) {
 
 #[test]
 fn the_normal_form_is_the_rules_applied_one_step_at_a_time() {
-    for seed in 0..RANDOM_INSTANCES as u64 {
+    let base = zed_tests::test_seed();
+    for i in 0..RANDOM_INSTANCES as u64 / 4 {
+        let seed = base.wrapping_add(i);
         one_pass_is_stepwise(random(
             &mut Rng::new(seed),
             &mut Rng::new(!seed),

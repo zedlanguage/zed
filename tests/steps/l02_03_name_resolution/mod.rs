@@ -5,6 +5,7 @@
 //! declarations: structs and their fields, types and their parameters, methods and their
 //! receiver `this`, and the binders of `match` arms and of every pattern.
 
+mod bench;
 mod binders;
 mod command;
 mod corpus_words;

@@ -3,6 +3,7 @@
 //! and respelling a set of integers leave the address alone; changing a value changes it. The
 //! rules terminate on random graphs, each step lowering the tuple of ranks.
 
+mod bench;
 mod facet_order;
 mod fuzz;
 mod scaling;

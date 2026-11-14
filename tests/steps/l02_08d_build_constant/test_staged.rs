@@ -25,7 +25,7 @@ fn dir(name: &str, files: &[(&str, &str)]) -> PathBuf {
 }
 
 /// What `zedc test <words>` gives: its status, standard output and standard error.
-fn test(words: &[&str]) -> (u8, String, String) {
+pub(super) fn test(words: &[&str]) -> (u8, String, String) {
     let words: Vec<String> = words.iter().map(|w| w.to_string()).collect();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let status = command(&words, &mut out, &mut err);
@@ -324,7 +324,7 @@ fn target_is_a_usage_error_when_it_names_no_target() {
 
 /// A program of `n` functions on the branch of the host's target and `n` on the branch of
 /// another, each with one row that passes, the functions of each branch called in one chain.
-fn branches(n: usize) -> PathBuf {
+pub(super) fn branches(n: usize) -> PathBuf {
     let mut text = String::new();
     for side in ["t", "u"] {
         for i in 0..n {
@@ -341,29 +341,22 @@ fn branches(n: usize) -> PathBuf {
     dir(&format!("scaling-{n}"), &[("main.zed", &text)]).join("main.zed")
 }
 
+/// The rows of the taken branch run, and those of the other are not run; the time of `zedc
+/// test` is held linear in the functions in `bench/test_staged.rs`.
 #[test]
-fn test_of_n_taken_and_n_dropped_functions_is_linear() {
-    // The control: the rows of the taken branch run, and those of the other are not run.
-    let file = branches(3);
-    let (status, out, err) = test(&[file.to_str().unwrap()]);
-    assert_eq!((status, err.as_str()), (0, ""), "{out}");
-    assert_eq!(out.matches(": not run, since").count(), 3, "{out}");
-    assert!(
-        out.ends_with("3 passed, 0 failed, 3 not run, 0 rejection units\n"),
-        "{out}"
-    );
-    let inputs = zed_tests::scaling::inputs(100, branches);
-    zed_tests::scaling::check_order(
-        "`zedc test` of n functions on a taken branch and n on a dropped one",
-        100,
-        1,
-        |n| {
-            let file = inputs[&n].to_str().unwrap();
-            let (status, out, _) = test(&[file]);
-            assert_eq!(status, 0);
-            assert!(out.ends_with(&format!("{n} not run, 0 rejection units\n")));
-        },
-    );
+fn test_of_a_few_taken_and_dropped_functions_runs_the_taken_rows_only() {
+    for n in [1, 2, 3, 9] {
+        let file = branches(n);
+        let (status, out, err) = test(&[file.to_str().unwrap()]);
+        assert_eq!((status, err.as_str()), (0, ""), "{out}");
+        assert_eq!(out.matches(": not run, since").count(), n, "{out}");
+        assert!(
+            out.ends_with(&format!(
+                "{n} passed, 0 failed, {n} not run, 0 rejection units\n"
+            )),
+            "{out}"
+        );
+    }
 }
 
 #[test]

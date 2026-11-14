@@ -250,11 +250,11 @@ fn clustering_of_lattice_circles_does_not_change_when_the_points_move_together()
             let outputs: Vec<String> = (1..=n)
                 .map(|k| cluster_text(&input(k as i64, points)).0)
                 .collect();
-            for (symmetry, scale, shift) in (0..8).flat_map(|s| {
-                [1, 3]
-                    .into_iter()
-                    .flat_map(move |c| shifts.map(|t| (s, c, t)))
-            }) {
+            // Each symmetry with every shift, the stretch by 3 on the odd symmetries: a
+            // stretch commutes with each symmetry, so every pair of them is not needed, and
+            // each shift still meets both stretches.
+            for (symmetry, shift) in (0..8).flat_map(|s| shifts.map(|t| (s, t))) {
+                let scale = if symmetry % 2 == 0 { 1 } else { 3 };
                 let image = moved(points, symmetry, scale, shift);
                 for k in 1..=n {
                     let (out, result) = cluster_text(&input(k as i64, &image));

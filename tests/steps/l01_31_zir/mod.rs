@@ -2,6 +2,7 @@
 //! facets, or order a port's effects; the text form is flat and sorted, read back in any line
 //! order, and the binary form gives back the same graph.
 
+mod bench;
 mod graphs;
 mod items;
 mod names;

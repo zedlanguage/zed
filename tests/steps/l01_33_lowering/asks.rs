@@ -5,12 +5,9 @@
 //! the comparison used to write the constant of each again, two at once, and stop the compiler
 //! when the system refused.
 
-use std::collections::HashMap;
-
 use num_bigint::{BigInt, Sign};
 use zed_kernel::term::build::{lam, var};
 use zed_kernel::{Prim, Term, Value};
-use zed_tests::scaling::check_order;
 use zed_tests::step_helpers::l01_17_value_representation::{in_child_at, lower_limit_by};
 use zedc::zir::lower::lower;
 
@@ -21,7 +18,7 @@ fn in_child(name: &str) -> bool {
 }
 
 /// A number of `bytes` bytes, each odd, from a fixed linear congruential generator.
-fn wide(bytes: usize) -> BigInt {
+pub(super) fn wide(bytes: usize) -> BigInt {
     let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
     let digits: Vec<u8> = (0..bytes)
         .map(|_| {
@@ -35,7 +32,7 @@ fn wide(bytes: usize) -> BigInt {
 }
 
 /// `((m) -> m + c, (m) -> m + c)`, the two lambdas built apart and the constant shared.
-fn two_lambdas(c: &Value) -> Term {
+pub(super) fn two_lambdas(c: &Value) -> Term {
     let one = || {
         lam(
             &["m"],
@@ -112,22 +109,12 @@ fn equal_lambdas_of_a_wide_constant_are_one_when_memory_is_given() {
     }
 }
 
-/// Lowering two equal lambdas is linear in the bits of the constant they hold: the second is
-/// found by its key and confirmed by the bytes of its own node and its region's number.
+/// Two equal lambdas of a constant of a few bytes lower to one node; the time is held linear in
+/// the constant's bytes in `bench/asks.rs`.
 #[test]
-fn lowering_equal_lambdas_of_a_wide_constant_scales() {
-    let (n, sizes) = (1usize << 20, [1usize << 20, 8 << 20]);
-    let inputs: HashMap<usize, Term> = sizes
-        .into_iter()
-        .map(|b| (b, two_lambdas(&Value::int(wide(b)))))
-        .collect();
-    check_order(
-        "lowering two equal lambdas of a wide constant, by its bytes",
-        n,
-        1,
-        |b| {
-            let g = lower(&inputs[&b]).expect("memory is given");
-            assert_eq!(count(&g, "lambda"), 1);
-        },
-    );
+fn equal_lambdas_of_a_narrow_constant_are_one() {
+    for bytes in [1, 8, 1024] {
+        let g = lower(&two_lambdas(&Value::int(wide(bytes)))).expect("memory is given");
+        assert_eq!(count(&g, "lambda"), 1, "{bytes} bytes");
+    }
 }

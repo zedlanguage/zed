@@ -3,6 +3,7 @@
 //! definitions, generation pushes `x' <- e`, expression statements `e;` and the call `*.`. Each
 //! form builds and formats; name resolution refuses it, naming the step that compiles it.
 
+mod bench;
 mod carry_forward;
 mod corners;
 mod formatting;

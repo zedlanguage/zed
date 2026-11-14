@@ -16,7 +16,6 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use zed_tests::scaling;
 use zedc::lex::Span;
 use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::iterate::{Equations, solve};
@@ -26,7 +25,7 @@ use zedc::store::wto::VertexKey;
 use super::{iv, line, name_key};
 
 /// The loop cell `y = start ⊔ ((a * y) div b + x)`, `0 < a < b`, `x` in `int[x.0..=x.1]`.
-struct Recurrence {
+pub(super) struct Recurrence {
     a: i64,
     b: i64,
     x: (i64, i64),
@@ -39,7 +38,7 @@ struct Recurrence {
 }
 
 impl Recurrence {
-    fn new(a: i64, b: i64, x: (i64, i64), start: IntervalSet) -> Self {
+    pub(super) fn new(a: i64, b: i64, x: (i64, i64), start: IntervalSet) -> Self {
         Recurrence {
             a,
             b,
@@ -84,7 +83,7 @@ impl Recurrence {
         (r * self.b + self.b - self.a - 1) / (self.b - self.a)
     }
 
-    fn solve(&self) -> IntervalSet {
+    pub(super) fn solve(&self) -> IntervalSet {
         solve(self).expect("one cell has one key").remove(0)
     }
 }
@@ -264,15 +263,5 @@ fn a_slowly_settling_coefficient_is_solved_without_a_step_per_iteration() {
     assert!(
         counts.iter().all(|&c| c == counts[0] && c <= 16),
         "evaluations at each magnitude: {counts:?}"
-    );
-    let inputs = scaling::inputs(1_000_000_000, |n| {
-        Recurrence::new(1023, 1024, (-100, 100), IntervalSet::single(n as i64))
-    });
-    scaling::check(
-        "solving y' = (1023 * y) div 1024 + x from a start of magnitude n",
-        1_000_000_000,
-        |n| {
-            inputs[&n].solve();
-        },
     );
 }

@@ -4,6 +4,7 @@
 //! addresses they get.
 
 mod alpha;
+mod bench;
 mod domains;
 mod prim_codes;
 mod rules;

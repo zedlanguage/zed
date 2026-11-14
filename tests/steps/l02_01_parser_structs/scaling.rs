@@ -1,46 +1,35 @@
 //! The L2 forms at the rule of low complexity (DESIGN.md Part G): building, formatting and
 //! dropping a unit is linear in its size, for a struct of `n` fields, `n` methods, a display
 //! nested `n` deep, and a chain of `n` updates. Each input is lexed and parsed before timing,
-//! so the work measured is this step's, which the parser's own cost would otherwise hide.
+//! so the work measured is this step's, which the parser's own cost would otherwise hide. The
+//! benchmarks in `bench.rs` hold each linear; here each is built and formatted at small sizes.
 
-use std::collections::HashMap;
-
-use zed_tests::scaling;
 use zedc::ast::unit;
 use zedc::format::format;
 use zedc::lex::{Token, lex};
 use zedc::parse::{TOP, Tree, parse};
 
 /// A unit's text, tokens and parse tree.
-struct Parsed {
+pub(super) struct Parsed {
     text: String,
     tokens: Vec<Token>,
     tree: Tree,
 }
 
-fn parsed(text: String) -> Parsed {
+pub(super) fn parsed(text: String) -> Parsed {
     let tokens = lex(&text).unwrap();
     let tree = parse(&text, &tokens, "Unit", TOP).unwrap();
     Parsed { text, tokens, tree }
 }
 
 /// Builds and formats the unit `p`, and drops what it built.
-fn pass(p: &Parsed) {
+pub(super) fn pass(p: &Parsed) {
     let stmts = unit(&p.text, &p.tokens, &p.tree).unwrap();
     std::hint::black_box(format(&p.text, &p.tokens, &stmts));
 }
 
-/// Checks that `pass` over `make(n)` is linear in `n`, from `n` = `base`.
-fn linear(what: &str, base: usize, make: impl Fn(usize) -> String) {
-    let units: HashMap<usize, Parsed> = [base, 8 * base]
-        .into_iter()
-        .map(|n| (n, parsed(make(n))))
-        .collect();
-    scaling::check(what, base, |n| pass(&units[&n]));
-}
-
 /// `struct Wide { f0: int = 0, f1: int = 1, … }` and a display giving every field.
-fn wide(n: usize) -> String {
+pub(super) fn wide(n: usize) -> String {
     let fields: Vec<String> = (0..n).map(|i| format!("f{i}: int = {i}")).collect();
     let given: Vec<String> = (0..n).map(|i| format!("f{i}: {i}")).collect();
     format!(
@@ -50,83 +39,46 @@ fn wide(n: usize) -> String {
     )
 }
 
-#[test]
-fn a_struct_of_many_fields_scales() {
-    linear("a struct and a display of n fields", 1000, wide);
-}
-
 /// `struct Many { import m.T0, import m .T1, … }`, `n` imports of distinct paths, some written
 /// with spaces around their `.`.
-fn imports(n: usize) -> String {
+pub(super) fn imports(n: usize) -> String {
     let paths: Vec<String> = (0..n)
         .map(|i| format!("import m{}T{i}", [".", " .", ". ", " . "][i % 4]))
         .collect();
     format!("struct Many {{ {} }}\n", paths.join(", "))
 }
 
-#[test]
-fn a_struct_of_many_imports_scales() {
-    linear("a struct of n imports", 1000, imports);
-}
-
 /// `struct Many { import m.T0, …, import m . T0, … }`: the `n` imports of `imports(n)`, then
 /// each path again, spaced another way, so the last `n` imports are repeats.
-fn repeated(n: usize) -> String {
+pub(super) fn repeated(n: usize) -> String {
     let again: Vec<String> = (0..n)
         .map(|i| format!("import m{}T{i}", [" . ", ". ", " .", "."][i % 4]))
         .collect();
     imports(n).replacen(" }", &format!(", {} }}", again.join(", ")), 1)
 }
 
-#[test]
-fn a_struct_that_imports_every_path_twice_scales() {
-    // Each repeat is found by one lookup and dropped, so the struct keeps `n` imports.
-    for n in [1000, 8000] {
-        let p = parsed(repeated(n));
-        let stmts = unit(&p.text, &p.tokens, &p.tree).unwrap();
-        let shown = stmts[0].to_string();
-        assert_eq!(shown.matches("(import ").count(), n, "{shown}");
-    }
-    linear("a struct of n imports, each written twice", 1000, repeated);
-}
-
 /// `n` methods on one struct, each with a parameter.
-fn methods(n: usize) -> String {
+pub(super) fn methods(n: usize) -> String {
     (0..n)
         .map(|i| format!("Acct.m{i}(k) = bal + k * {i};\n"))
         .collect()
 }
 
-#[test]
-fn many_methods_scale() {
-    linear("n methods", 500, methods);
-}
-
 /// `d = { a: { a: { … { a: 0 } … } } };`, nested `n` deep.
-fn deep(n: usize) -> String {
+pub(super) fn deep(n: usize) -> String {
     format!("d = {}0{};\n", "{ a: ".repeat(n), " }".repeat(n))
 }
 
-#[test]
-fn a_deep_display_scales() {
-    linear("a display nested n deep", 1000, deep);
-}
-
 /// `p with { x0 = 0 } with { x1 = 1 } …`, `n` updates long, and one `with` of `n` paths.
-fn chain(n: usize) -> String {
+pub(super) fn chain(n: usize) -> String {
     let chained: String = (0..n).map(|i| format!(" with {{ x{i} = {i} }}")).collect();
     let paths: Vec<String> = (0..n).map(|i| format!("c.x{i} = {i}")).collect();
     format!("q = p{chained};\nr = p with {{ {} }};\n", paths.join(", "))
 }
 
-#[test]
-fn a_chain_of_updates_scales() {
-    linear("a chain of n updates and an update of n paths", 1000, chain);
-}
-
 /// `w = { f0: v0, f1: v1, … };`, `n` fields whose values are bare names, and a display whose one
 /// value is a chain of `n` operands joined by `&&` and one of `n` operands joined by `else`.
-fn named(n: usize) -> String {
+pub(super) fn named(n: usize) -> String {
     let given: Vec<String> = (0..n).map(|i| format!("f{i}: v{i}")).collect();
     let and: Vec<String> = (0..n).map(|i| format!("b{i}")).collect();
     let or_else: Vec<String> = (0..n).map(|i| format!("e{i}")).collect();
@@ -138,11 +90,23 @@ fn named(n: usize) -> String {
     )
 }
 
+/// Every input of the benchmarks in `bench.rs` is built and formatted at small sizes.
 #[test]
-fn a_display_of_named_values_and_long_chains_scales() {
-    linear(
-        "a display of n bare-name values, and chains of n operands of && and else",
-        1000,
-        named,
-    );
+fn each_form_is_built_and_formatted_at_small_sizes() {
+    for make in [wide, imports, repeated, methods, deep, chain, named] {
+        for n in [1, 2, 9] {
+            pass(&parsed(make(n)));
+        }
+    }
+}
+
+/// Each repeat is found by one lookup and dropped, so the struct keeps `n` imports.
+#[test]
+fn a_struct_that_imports_every_path_twice_keeps_each_once() {
+    for n in [1, 2, 9, 1000] {
+        let p = parsed(repeated(n));
+        let stmts = unit(&p.text, &p.tokens, &p.tree).unwrap();
+        let shown = stmts[0].to_string();
+        assert_eq!(shown.matches("(import ").count(), n, "{shown}");
+    }
 }

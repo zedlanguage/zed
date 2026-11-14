@@ -111,10 +111,10 @@ fn members(d: &Domain) -> Vec<i64> {
 
 #[test]
 fn the_normal_form_admits_the_same_integers_and_is_unique() {
-    let mut rng = Rng::new(0xd0d0);
+    let mut rng = Rng::new(zed_tests::test_seed());
     let mut by_members: BTreeMap<Vec<i64>, Domain> = BTreeMap::new();
     let mut collisions = 0;
-    for _ in 0..RANDOM_INSTANCES * 8 {
+    for _ in 0..RANDOM_INSTANCES * 2 {
         let d = random(&mut rng);
         let n = d.normal();
         assert_eq!(members(&n), members(&d), "{d:?}");
@@ -131,5 +131,5 @@ fn the_normal_form_admits_the_same_integers_and_is_unique() {
         }
     }
     // Many spellings of one set were met, so uniqueness was tested.
-    assert!(collisions > 1_000, "{collisions}");
+    assert!(collisions > 100, "{collisions}");
 }

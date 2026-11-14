@@ -136,28 +136,34 @@ fn a_fence_with_one_main_or_none_is_one_program() {
     assert_eq!(programs(&[]).len(), 1);
 }
 
+/// A fence of `k` programs, each a function and a `main` that calls it, and its statements,
+/// for the benchmark of `bench/fences.rs`.
+pub(super) fn fence_of(k: usize) -> (String, Vec<Stmt>) {
+    let text = (0..k)
+        .map(|i| format!("step{i}(x: int) = x;\nmain(m: MainArgs) {{ m.stdout <- String(step{i}(x: {i})); }}\n"))
+        .collect::<String>();
+    let s = stmts(&text);
+    (text, s)
+}
+
+/// Splits `s`, the statements of the fence `text` of `k` programs, into its programs and checks
+/// that there are `k` and that each resolves on its own.
+pub(super) fn each_program_resolves(text: &str, s: &[Stmt], k: usize) {
+    let ps = programs(s);
+    assert_eq!(ps.len(), k);
+    for p in ps {
+        assert!(run_stmts(text, p).is_ok());
+    }
+}
+
+/// A fence of a few programs, each a function and its `main`, splits into its programs and
+/// each resolves; `bench/fences.rs` holds the timing.
 #[test]
-fn a_fence_of_many_programs_scales() {
-    // Each program is a slice of the fence's statements; a program that held every statement
-    // before its `main` would read k² statements for k programs.
-    let src = |k: usize| {
-        (0..k)
-            .map(|i| format!("step{i}(x: int) = x;\nmain(m: MainArgs) {{ m.stdout <- String(step{i}(x: {i})); }}\n"))
-            .collect::<String>()
-    };
-    let inputs = zed_tests::scaling::inputs(200, |k| {
-        let text = src(k);
-        let s = stmts(&text);
-        (text, s)
-    });
-    zed_tests::scaling::check("a fence of k programs, resolved one at a time", 200, |k| {
-        let (text, s) = &inputs[&k];
-        let ps = programs(s);
-        assert_eq!(ps.len(), k);
-        for p in ps {
-            assert!(run_stmts(text, p).is_ok());
-        }
-    });
+fn a_fence_of_a_few_programs_resolves_each_on_its_own() {
+    for k in [1, 2, 9] {
+        let (text, s) = fence_of(k);
+        each_program_resolves(&text, &s, k);
+    }
 }
 
 #[test]

@@ -1,13 +1,16 @@
-//! Name resolution at the rule of low complexity (DESIGN.md Part G).
+//! The programs the benchmarks of `bench/scaling.rs` resolve, and what each resolution must be,
+//! checked here at small sizes (TEST-bench-move-rest, P170), and deep programs resolved on a
+//! 2 MiB stack.
 
-use zedc::resolve::Ref;
+use zedc::ast::Stmt;
+use zedc::resolve::{Ref, Resolution};
 
 use super::{at, errors, run};
 pub(crate) use zed_tests::step_helpers::l01_14_name_resolution::overloads;
 
 /// Blocks nested `n` deep, each binding a name, the innermost reading the top-level `c` `n`
 /// times.
-fn nested(n: usize) -> String {
+pub(super) fn nested(n: usize) -> String {
     let mut src = "c = 1;\nmain = ".to_string();
     for i in 0..n {
         src += &format!("{{\ny{i} = c;\n");
@@ -17,28 +20,109 @@ fn nested(n: usize) -> String {
     src + ";\n"
 }
 
-#[test]
-fn names_read_inside_deeply_nested_blocks_scale() {
-    // A name was looked for in each open scope in turn, innermost first.
-    std::thread::Builder::new()
-        .stack_size(1 << 32)
-        .spawn(|| {
-            zed_tests::scaling::check("names read in blocks nested n deep", 800, |n| {
-                assert!(run(&nested(n)).is_ok());
-            });
-            assert_eq!(at(&nested(3), "c", 2), ["binding c = 1;"]);
+/// Resolves `k` overloads of one function and checks that each binds its name and its five
+/// parameters.
+pub(super) fn declares_overloads(k: usize) {
+    assert_eq!(run(&overloads(k)).unwrap().binders.len(), 6 * k);
+}
+
+/// The statements of `k` overloads of `f` and one tuple of `k` uses of `f`, so that little but
+/// the lookup is done for each use, built for the timing to measure resolution alone.
+pub(super) fn used(k: usize) -> Vec<Stmt> {
+    let text = overloads(k) + "g = (" + &vec!["f"; k].join(", ") + ");\n";
+    let tokens = zedc::lex::lex_fence(&text).unwrap();
+    let tree = zedc::parse::parse(&text, &tokens, "Unit", zedc::parse::TOP).unwrap();
+    zedc::ast::unit(&text, &tokens, &tree).unwrap()
+}
+
+/// Resolves `stmts`, the [`used`] of `k`, and checks that `k` uses are bound to `k` overloads
+/// each.
+pub(super) fn uses_resolve(stmts: &[Stmt], k: usize) -> Resolution {
+    let r = zedc::resolve::resolve(stmts).unwrap();
+    let sets = r
+        .uses
+        .values()
+        .filter(|f| matches!(f, Ref::Bound(ids) if ids.len() == k));
+    assert_eq!(sets.count(), k);
+    r
+}
+
+/// Checks that every use in `r`, the resolution of the [`used`] of `n`, holds the one list of
+/// overloads, not a copy of it. The timing alone does not tell a shared list from `n` copies at
+/// the benchmark's sizes. A list of three or fewer is stored inline and copied, which costs no
+/// more than a pointer, so `n` is more than 3.
+pub(super) fn uses_share_one_list(r: &Resolution, n: usize) {
+    assert!(n > 3, "a list of {n} is stored inline");
+    let lists: Vec<_> = r
+        .uses
+        .values()
+        .filter_map(|f| match f {
+            Ref::Bound(ids) if ids.len() == n => Some(ids),
+            _ => None,
         })
-        .unwrap()
-        .join()
-        .unwrap();
+        .collect();
+    assert_eq!(lists.len(), n);
+    assert!(lists.iter().all(|ids| ids.ptr_eq(lists[0])));
+}
+
+/// Checks `r`, the resolution of the deep program of `shape` nested `deep` deep, for what that
+/// shape binds: the `c` in nested blocks is the top level's, nested lambdas bind their
+/// parameters in written order, and each nested call names the one `f`. Every resolution binds
+/// some name.
+pub(super) fn deep_resolves(shape: &str, r: &Resolution, deep: usize) {
+    assert!(!r.binders.is_empty(), "{shape}");
+    match shape {
+        // The `c` inside every block is the top level's.
+        "nested blocks" => {
+            let c = r.binders.iter().position(|b| b.name == "c").unwrap();
+            let reads_c = r.uses.values().filter(|u| **u == Ref::Bound([c].into()));
+            assert_eq!(reads_c.count(), 1);
+        }
+        // Nested lambdas bind their parameters in written order, after `main`, its
+        // port and `t`.
+        "nested lambdas" => {
+            let names = r.binders[3..].iter().map(|b| b.name.as_str());
+            assert!(names.enumerate().all(|(i, x)| x == format!("x{i}")));
+            assert_eq!(r.binders.len(), 3 + deep);
+        }
+        // Each call names the one `f`.
+        "nested calls" => {
+            let f = r.binders.iter().position(|b| b.name == "f").unwrap();
+            let calls = r.uses.values().filter(|u| **u == Ref::Bound([f].into()));
+            assert_eq!(calls.count(), deep);
+        }
+        _ => {}
+    }
+}
+
+/// The deep shapes the benchmarks of `bench/scaling.rs` resolve.
+pub(super) const DEEP_SHAPES: [&str; 9] = [
+    "a left-nested sum",
+    "nested negations",
+    "nested lambdas",
+    "a long sum in a function's body",
+    "nested blocks",
+    "an `else if` chain",
+    "a sum nested in parentheses",
+    "nested calls",
+    "nested tuples",
+];
+
+/// Names read in nested blocks resolve, `k` overloads are declared and used, and every use
+/// holds the one list of overloads, at small sizes; `bench/scaling.rs` holds the timing.
+#[test]
+fn nested_blocks_and_overloads_resolve_at_small_sizes() {
+    for n in [1, 2, 9] {
+        assert!(run(&nested(n)).is_ok());
+        declares_overloads(n);
+        uses_resolve(&used(n), n);
+    }
+    assert_eq!(at(&nested(3), "c", 2), ["binding c = 1;"]);
+    uses_share_one_list(&uses_resolve(&used(9), 9), 9);
 }
 
 #[test]
-fn declaring_many_overloads_scales() {
-    // Each overload's parameter types were compared with those of every one before it.
-    zed_tests::scaling::check("k overloads of one function", 1000, |k| {
-        assert_eq!(run(&overloads(k)).unwrap().binders.len(), 6 * k);
-    });
+fn a_second_declaration_with_the_same_parameter_types_is_rejected() {
     assert_eq!(
         errors("f(x: int) = x;\nf(y: int) = 1;\ng = 1;\ng(x) = x;\n"),
         [
@@ -51,48 +135,11 @@ fn declaring_many_overloads_scales() {
     );
 }
 
+/// Each use of an overloaded name is bound to every overload, in declaration order; the types
+/// in the parameters are the prelude's.
 #[test]
-fn using_many_overloads_scales() {
-    // Each use of `f` copied the list of all `k` overloads, so `k` uses cost `k²`.
-    let src = |k: usize| {
-        // One tuple of `k` uses, so that little but the lookup is done for each.
-        overloads(k) + "g = (" + &vec!["f"; k].join(", ") + ");\n"
-    };
-    // The statements are built before the timing, so only resolution is measured.
-    let built = |k: usize| {
-        let text = src(k);
-        let tokens = zedc::lex::lex_fence(&text).unwrap();
-        let tree = zedc::parse::parse(&text, &tokens, "Unit", zedc::parse::TOP).unwrap();
-        zedc::ast::unit(&text, &tokens, &tree).unwrap()
-    };
-    let n = 1000;
-    let (small, large) = (built(n), built(zed_tests::scaling::FACTOR * n));
-    zed_tests::scaling::check_order("k overloads of one function used k times", n, 1, |k| {
-        let stmts = if k == n { &small } else { &large };
-        let r = zedc::resolve::resolve(stmts).unwrap();
-        let sets = r
-            .uses
-            .values()
-            .filter(|f| matches!(f, Ref::Bound(ids) if ids.len() == k));
-        assert_eq!(sets.count(), k);
-    });
-    // The timing alone does not tell a shared list from `k` copies at these sizes, so check
-    // the sharing itself: every use holds the one list of overloads, not a copy of it.
-    // (A list of three is stored inline and copied, which costs no more than a pointer.)
-    let r = zedc::resolve::resolve(&small).unwrap();
-    let lists: Vec<_> = r
-        .uses
-        .values()
-        .filter_map(|f| match f {
-            Ref::Bound(ids) if ids.len() == n => Some(ids),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(lists.len(), n);
-    assert!(lists.iter().all(|ids| ids.ptr_eq(lists[0])));
-    // Each use of the overloaded name is bound to every overload, in declaration order; the
-    // types in the parameters are the prelude's.
-    let r = zedc::resolve::resolve(&built(3)).unwrap();
+fn each_use_of_an_overloaded_name_is_bound_to_every_overload_in_order() {
+    let r = zedc::resolve::resolve(&used(3)).unwrap();
     let sets: Vec<Vec<usize>> = r
         .uses
         .values()
@@ -108,69 +155,30 @@ fn using_many_overloads_scales() {
     );
 }
 
-/// Resolves each program of `shapes` on a 2 MiB stack, 100,000 deep and 12,500 deep, and checks
-/// the time is linear. Resolution recursed once per level of nesting, and overflowed this stack
-/// near 10,000.
-fn resolves_deep(shapes: &[&str]) {
+/// Each deep shape resolves, with what it binds, at small depths (4 is the least a deep program
+/// has); `bench/scaling.rs` holds the timing at 12,500 and 100,000.
+#[test]
+fn each_deep_shape_resolves_at_small_depths() {
+    use zed_tests::deep::{program, statements};
+    for shape in DEEP_SHAPES {
+        for n in [4, 5, 9] {
+            let r = zedc::resolve::resolve(&statements(&program(shape, n).text)).unwrap();
+            deep_resolves(shape, &r, n);
+        }
+    }
+}
+
+/// Each deep shape resolves 20,000 deep on a 2 MiB stack, the stack of a test thread.
+/// Resolution recursed once per level of nesting, and overflowed this stack near 10,000;
+/// `bench/scaling.rs` resolves the same shapes 100,000 deep under the timing.
+#[test]
+fn each_deep_shape_resolves_20000_deep_on_a_2_mib_stack() {
     use zed_tests::deep::{on_small_stack, program, statements};
-    let n = 12_500;
-    let deep = 8 * n;
+    let n = 20_000;
     on_small_stack(|| {
-        for &shape in shapes {
-            let small = statements(&program(shape, n).text);
-            let large = statements(&program(shape, deep).text);
-            zed_tests::scaling::check_order(&format!("resolving {shape}"), n, 1, |k| {
-                let stmts = if k == n { &small } else { &large };
-                assert!(!zedc::resolve::resolve(stmts).unwrap().binders.is_empty());
-            });
-            let r = zedc::resolve::resolve(&large).unwrap();
-            match shape {
-                // The `c` inside every block is the top level's.
-                "nested blocks" => {
-                    let c = r.binders.iter().position(|b| b.name == "c").unwrap();
-                    let reads_c = r.uses.values().filter(|u| **u == Ref::Bound([c].into()));
-                    assert_eq!(reads_c.count(), 1);
-                }
-                // Nested lambdas bind their parameters in written order, after `main`, its
-                // port and `t`.
-                "nested lambdas" => {
-                    let names = r.binders[3..].iter().map(|b| b.name.as_str());
-                    assert!(names.enumerate().all(|(i, x)| x == format!("x{i}")));
-                    assert_eq!(r.binders.len(), 3 + deep);
-                }
-                // Each call names the one `f`.
-                "nested calls" => {
-                    let f = r.binders.iter().position(|b| b.name == "f").unwrap();
-                    let calls = r.uses.values().filter(|u| **u == Ref::Bound([f].into()));
-                    assert_eq!(calls.count(), deep);
-                }
-                _ => {}
-            }
+        for shape in DEEP_SHAPES {
+            let r = zedc::resolve::resolve(&statements(&program(shape, n).text)).unwrap();
+            deep_resolves(shape, &r, n);
         }
     });
-}
-
-#[test]
-fn sums_negations_lambdas_and_long_bodies_100000_deep_resolve_on_a_2_mib_stack() {
-    resolves_deep(&[
-        "a left-nested sum",
-        "nested negations",
-        "nested lambdas",
-        "a long sum in a function's body",
-    ]);
-}
-
-#[test]
-fn blocks_nested_100000_deep_resolve_on_a_2_mib_stack() {
-    resolves_deep(&["nested blocks"]);
-}
-
-#[test]
-fn else_if_chains_and_parenthesized_sums_100000_deep_resolve_on_a_2_mib_stack() {
-    resolves_deep(&["an `else if` chain", "a sum nested in parentheses"]);
-}
-
-#[test]
-fn calls_and_tuples_nested_100000_deep_resolve_on_a_2_mib_stack() {
-    resolves_deep(&["nested calls", "nested tuples"]);
 }

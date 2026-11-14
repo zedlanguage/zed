@@ -369,20 +369,22 @@ fn union_of(n: usize) -> String {
         .join(" | ")
 }
 
+/// The type `#a0 | #a1 | …` of `n` atoms, parsed, for the benchmark of `bench/layout.rs` to
+/// print.
+pub(super) fn union_type(n: usize) -> zedc::ast::Type {
+    let text = union_of(n);
+    let tokens = zedc::lex::lex(&text).unwrap();
+    let tree = zedc::parse::parse(&text, &tokens, "Type", zedc::parse::TOP).unwrap();
+    zedc::ast::ty(&text, &tokens, &tree).unwrap()
+}
+
+/// A union of a few atoms prints as it is written; `bench/layout.rs` holds the timing of
+/// printing a long one.
 #[test]
-fn printing_a_type_scales_with_its_size() {
-    let types: std::collections::HashMap<usize, zedc::ast::Type> = [200, 1600]
-        .into_iter()
-        .map(|n| {
-            let text = union_of(n);
-            let tokens = zedc::lex::lex(&text).unwrap();
-            let tree = zedc::parse::parse(&text, &tokens, "Type", zedc::parse::TOP).unwrap();
-            (n, zedc::ast::ty(&text, &tokens, &tree).unwrap())
-        })
-        .collect();
-    zed_tests::scaling::check("printing a union type, by atoms", 200, |n| {
-        zedc::format::format_type(&types[&n]);
-    });
+fn a_union_type_of_a_few_atoms_prints_as_it_is_written() {
+    for n in [1, 2, 9] {
+        assert_eq!(zedc::format::format_type(&union_type(n)), union_of(n));
+    }
 }
 
 /// `^` is written with no spaces, as in mathematics; spaces in the source change nothing.

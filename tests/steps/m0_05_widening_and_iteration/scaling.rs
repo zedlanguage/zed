@@ -5,10 +5,11 @@
 //! and the work grew fourfold per level. Counted over the phase, it still grew as the square
 //! of the depth, since every change of an enclosing head entered every inner loop again; a
 //! loop none of whose inputs changed is now skipped, and the work is linear.
+//! The time of phase 1 and of the order on the nest is held in `bench/scaling.rs`; here the
+//! work is counted at each depth up to 48, and [`evals`] checks that the order nests each loop.
 
 use std::cell::Cell;
 
-use zed_tests::scaling;
 use zedc::lex::Span;
 use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::iterate::{Equations, order, phase1};
@@ -18,14 +19,14 @@ use zedc::store::wto::{Element, VertexKey};
 use super::{line, name_key, numbered_names};
 
 /// `depth` nested counters; cell `k` reads itself, the loop around it and the loop inside it.
-struct Nest {
+pub(super) struct Nest {
     reads: Vec<Vec<usize>>,
     names: Vec<String>,
     evals: Cell<u64>,
 }
 
 impl Nest {
-    fn new(depth: usize) -> Self {
+    pub(super) fn new(depth: usize) -> Self {
         let reads = (0..depth)
             .map(|k| (k.saturating_sub(1)..(k + 2).min(depth)).collect())
             .collect();
@@ -82,7 +83,7 @@ fn depth_of(order: &[Element]) -> usize {
         .unwrap_or(0)
 }
 
-fn evals(depth: usize) -> u64 {
+pub(super) fn evals(depth: usize) -> u64 {
     let eq = Nest::new(depth);
     let order = order(&eq).unwrap();
     assert_eq!(depth_of(&order), depth, "the loops nest: {order:?}");
@@ -98,30 +99,6 @@ fn nested_loops_cost_linear_work_in_the_depth() {
         let n = evals(depth);
         assert!(n <= 16 * depth as u64, "depth {depth}: {n} evaluations");
     }
-}
-
-#[test]
-fn the_nest_scales() {
-    scaling::check("phase 1 on nested loops", 6, |depth| {
-        evals(depth);
-    });
-}
-
-/// The order of the nest: the recursive algorithm traversed each component again at every
-/// level, so its cost grew as the square of the depth (COMPLEXITY.md S9).
-#[test]
-fn the_order_of_nested_loops_takes_time_linear_in_the_depth() {
-    // A deep nest is dropped one level per stack frame.
-    std::thread::Builder::new()
-        .stack_size(1 << 28)
-        .spawn(|| {
-            scaling::check("the weak topological order of nested loops", 1000, |d| {
-                order(&Nest::new(d)).unwrap();
-            });
-        })
-        .expect("a thread")
-        .join()
-        .expect("the check passes");
 }
 
 /// One counter, `i = 0 ⊔ (i < 10·marks) + 1`, in a program that writes the literals 10, 20, …,
