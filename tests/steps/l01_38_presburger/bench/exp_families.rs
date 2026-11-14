@@ -85,3 +85,14 @@ window_costs!(windows_of_two_decide, 2, 3, 'd', 230);
 window_costs!(windows_of_two_satisfiable, 2, 3, 's', 290);
 window_costs!(windows_of_two_project_each, 2, 3, 'p', 260);
 window_costs!(windows_of_two_answers, 2, 3, 'a', 220);
+
+/// `exp_families::the_window_program_finds_the_points_of_the_box` as first written, 2.7 s
+/// (2026-11-14, load 25): over 4 variables, both shapes, seeds 0 to 2, 25^4 points each.
+#[test]
+fn the_window_program_finds_the_points_of_the_box_over_4_variables() {
+    for (width, per) in [(3, 2), (2, 3)] {
+        for seed in 0..3 {
+            window_program_finds_the_points_of_the_box(4, width, per, seed);
+        }
+    }
+}

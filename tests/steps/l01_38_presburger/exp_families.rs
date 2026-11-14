@@ -566,18 +566,35 @@ fn a_nest_whose_every_path_is_empty_has_no_point() {
     }
 }
 
+/// The window program's values of `x0` are those of every point of the box, counted one by one:
+/// over 3 variables for both shapes and three seeds, where windows of two chain a state across
+/// two windows and windows of three have one window; and over 4 variables for windows of three,
+/// which chain a state of two variables. Over 4 variables for both shapes and three seeds
+/// (2.7 s at load 25, 25^4 points each) is in `bench::exp_families`.
 #[test]
 fn the_window_program_finds_the_points_of_the_box() {
     for (width, per) in [(3, 2), (2, 3)] {
         for seed in 0..3 {
-            let (_, x0) = brute(&windows(4, seed, width, per), "x0", (-BOX, BOX));
-            assert_eq!(
-                x0,
-                windows_x0(4, seed, width, per),
-                "{width}, {per}, {seed}"
-            );
+            window_program_finds_the_points_of_the_box(3, width, per, seed);
         }
     }
+    window_program_finds_the_points_of_the_box(4, 3, 2, 0);
+}
+
+/// [`windows_x0`] over `n` variables is the values of `x0` at the points of [`windows`],
+/// counted one by one over the box.
+pub(super) fn window_program_finds_the_points_of_the_box(
+    n: usize,
+    width: usize,
+    per: usize,
+    seed: u64,
+) {
+    let (_, x0) = brute(&windows(n, seed, width, per), "x0", (-BOX, BOX));
+    assert_eq!(
+        x0,
+        windows_x0(n, seed, width, per),
+        "n = {n}, {width}, {per}, {seed}"
+    );
 }
 
 #[test]
