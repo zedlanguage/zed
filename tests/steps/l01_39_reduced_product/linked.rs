@@ -1557,6 +1557,12 @@ fn holes_piled_in_the_trees_of_seed_12717323168360931590() {
     met_after_four_trees(12717323168360931590, [101, 62, 32, 2]);
 }
 
+/// Holes 42, where more than 45 are asked for (found by FAIL-bitword-arity-message).
+#[test]
+fn holes_piled_in_the_trees_of_seed_9834632220024286056() {
+    met_after_four_trees(9834632220024286056, [112, 42, 13, 8]);
+}
+
 /// No holes piled at all, and holes 22, where more than 45 are asked for.
 #[test]
 fn holes_piled_in_the_trees_of_seed_1226() {
