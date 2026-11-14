@@ -4,6 +4,8 @@
 //! needs is the highest layer of Part A, program 31 is labeled at that layer, and every need
 //! of Part B lies within the core that Zed₀ is by the author's order of 2026-11-05.
 
+mod cases;
+
 const CHECKLIST: &str = include_str!("../../../zed/compiler/ZED0.md");
 const PROGRAM_31: &str = include_str!("../../../zed/corpus/31-typechecker.zed");
 

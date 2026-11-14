@@ -5,6 +5,7 @@
 //! expected-output snapshot.
 
 mod bench;
+mod cases;
 mod scaling;
 
 use std::collections::BTreeSet;
