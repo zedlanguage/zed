@@ -2185,16 +2185,16 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | CONST-too-large-rat-names | impl attempt 1 | 2026-11-13 16:26 | started; worktree from origin/main dc590de7b |
-| FENCE-checking-mains | running | 2026-11-13 18:38 |  |
+| FENCE-checking-mains | impl attempt 1 | 2026-11-13 18:38 | reproduced on origin/main: l01_14 39 passed 1 failed, DESIGN.md:2161 `main` is already declared (load 62.8) |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | round 5 Claude seat merged 7c8f994b4 (core classes, repair memo; point_rows R 65.8 -> 7.92), plan/STATUS f23d3185a; load 46.10 45.93 45.05 |
 | MAIN-limits | impl attempt 1 | 2026-11-13 15:20 | started; load 36.82 |
 | MSG-cast-repair-parens | impl attempt 1 | 2026-11-13 18:06 | started; worktree from origin/main |
-| MSG-never-f64-wording | running | 2026-11-13 17:20 |  |
+| MSG-never-f64-wording | impl attempt 1 | 2026-11-13 17:20 | started; worktree made |
 | PERF-l139-family | impl attempt 3 | 2026-11-12 18:45 | step 1 pushed 40bb19caa: hull sides asked first at the real bound (real_end); hop 8.9, hopon 9.8 run again; 8 families still over 10.5 (ignored), work continues |
 | ST-churn-at-once | impl attempt 1 | 2026-11-13 16:18 | started; worktree from origin/main a42ee21d8 |
-| TERM-report | impl attempt 1 | 2026-11-13 17:02 | started; reading DESIGN sec:staging, sec:memory, --total, report-switch sentence |
-| TESTS-defer-leftovers | running | 2026-11-13 18:38 |  |
-| TESTS-l01_26a-calls-slow | running | 2026-11-13 16:36 | slow scaling test of many calls in l01_26a (29 to 39 s alone at load 40 to 48); added by TESTS-l01_26a-split 2026-11-13 |
+| TERM-report | impl attempt 1 | 2026-11-13 17:02 | merged: zed dbeef3b, 852239b; zed-impl up to 1dece8d17 (resolver words @total, @teardown, @thread, held, handedBack, dropsHeld; rows TERM-verdicts, MEM-verdicts |
+| TESTS-defer-leftovers | impl attempt 1 | 2026-11-13 18:38 | started |
+| TESTS-l01_26a-calls-slow | impl attempt 1 | 2026-11-13 16:36 | started; worktree from origin/main db415023a |
 | XR-ffi-stateful | impl attempt 1 | 2026-11-13 18:25 | started: cross-review of STUDY-ffi-stateful design (zed 02a2ff3), seats Sol, Opus, Gemini (CD no seat: spec text, not scored code); load 32.07 38.66 44.54 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
