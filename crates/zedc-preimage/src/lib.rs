@@ -26,3 +26,8 @@ pub mod threshold;
     reason = "preimage's tests build no input before a timed run (`inputs`)"
 )]
 mod scaling;
+
+/// The seed of a random test, new on each run and printed, shared with the step tests.
+#[cfg(test)]
+#[path = "../../../tests/src/seed.rs"]
+mod seed;

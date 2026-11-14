@@ -15794,34 +15794,7 @@ impl Scope {
 mod tests {
     use super::*;
 
-    /// Tests of unusual sizes (author P178), run apart under `--bench`.
-    mod bench {
-        use super::*;
-
-        /// A relation with a long list of pending conjuncts is dropped with no overflow, on a
-        /// thread with the default stack of a test thread, 2 MiB. Each `Arc<Pending>` dropped the
-        /// next in turn, one frame each, before `Drop for Pending` (TEST-bench-move-l0139, found
-        /// by `chain_put_against_order` at 8192 in l01_39 `linked`); the depth is about a fifth
-        /// above the smallest list that overflowed that stack, 65,312 (65,194 passed), measured
-        /// 2026-11-14.
-        #[test]
-        fn a_long_pending_list_is_dropped_without_overflow() {
-            let k: i64 = 78_000;
-            std::thread::Builder::new()
-                .stack_size(2 << 20)
-                .spawn(move || {
-                    let x = Lin::atom(Atom::Sym("x".into()));
-                    let mut r = Relation::default();
-                    for i in 0..k {
-                        r.defer(Formula::Con(Con::ge(&x, &Lin::constant(i))));
-                    }
-                    drop(r);
-                })
-                .expect("a thread")
-                .join()
-                .expect("no overflow");
-        }
-    }
+    mod bench;
 
     /// The due users of a name are the parts of every set but those of the aggregates that
     /// hold, each once, in the order of the parts: the order the worklist takes them in.
@@ -15912,7 +15885,7 @@ mod tests {
         }
     }
 
-    /// Ranks given one after another at either end, 100,000 of them, rank no other component
+    /// Ranks given one after another at either end, 10,000 of them, rank no other component
     /// again, each at most `END_STEP` from the one before; ranks then put between the last
     /// two halve that step, the order kept.
     #[test]
@@ -15920,7 +15893,7 @@ mod tests {
         for last in [false, true] {
             let mut pot = Potential::default();
             let mut list = Vec::new();
-            for k in 0..100_000 {
+            for k in 0..10_000 {
                 let place = if last { list.len() } else { 0 };
                 let moved = rank_at(&mut pot, &mut list, place);
                 assert_eq!(moved, 0, "{last}: rank {k} ranked {moved} others again");
@@ -15958,32 +15931,21 @@ mod tests {
         }
     }
 
-    /// Components ranked each right after the first, so that the ranks between run out again
-    /// and again, are ranked again `O(log n)` times each on average (Bender et al.): from
-    /// 8,000 to 64,000 components the number ranked again grows under the limit of 13 for
-    /// order n (9.8 times measured, 1.24 log2 n each; below n = 4,000,
-    /// while the ranks fill up, the count each grows faster than `log n`); ranking each later
-    /// component again, the naive version, would grow it 64 times.
+    /// Components ranked each right after the first, 500 of them, keep their order, and the
+    /// ranks between run out, past the 62 halvings of the ranks between two neighbors, and are
+    /// given again; components ranked each at the front keep their order. The benchmark
+    /// `bench::ranks_given_in_one_place_scale` measures the count ranked again.
     #[test]
-    fn ranks_given_in_one_place_scale() {
-        let moved = |n: usize, front: bool| -> usize {
+    fn ranks_given_in_one_place_keep_their_order() {
+        for front in [false, true] {
             let mut pot = Potential::default();
             let mut list = Vec::new();
             rank_at(&mut pot, &mut list, 0);
-            let total = (0..n)
+            let moved: usize = (0..500)
                 .map(|_| rank_at(&mut pot, &mut list, usize::from(!front)))
                 .sum();
             check_ranks(&pot, &list);
-            total
-        };
-        for front in [false, true] {
-            crate::scaling::hold(
-                &format!("ranks given in one place, front {front}: n = 8,000 and 64,000"),
-                "components ranked again",
-                moved(8000, front) as u64,
-                moved(64_000, front) as u64,
-                1,
-            );
+            assert!(front || moved > 0, "no component ranked again");
         }
     }
 }

@@ -320,7 +320,9 @@ mod tests {
     /// chains of 6 random steps from random sets, 4,000 of them.
     #[test]
     fn made_sets_list_as_the_listed_operations_give() {
-        let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+        let mut rng = Rng(crate::seed::seed(
+            "made_sets_list_as_the_listed_operations_give",
+        ));
         for _ in 0..4000 {
             let mut lazy = vec![];
             let mut flat = vec![];

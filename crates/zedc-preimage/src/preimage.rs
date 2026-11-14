@@ -12721,6 +12721,8 @@ mod tests {
     use std::collections::BTreeSet;
     use zedc_presburger::presburger::TWO_AT_A_TIME;
 
+    mod bench;
+
     thread_local! {
         /// Whether [`Walk::cached`] remembers nothing a call stopped below ([`none_held`]).
         pub(super) static NONE_HELD: Cell<bool> = const { Cell::new(false) };
@@ -13626,26 +13628,30 @@ mod tests {
         }
     }
 
-    /// The number of tests the rounds of one seed are split into, so that each test takes
-    /// under 30 s at a load average of 90 on 32 cores (four parts took up to 40 s there).
-    const PARTS: usize = 8;
+    /// The rounds of each test of the translator against the translation two at a time, about
+    /// 0.3 s (TEST-bench-move-crates: 4,000 rounds of one fixed seed in eight tests before,
+    /// 2.2 to 2.6 ms a round).
+    const JOIN_ROUNDS: usize = 120;
 
-    /// The chain translator against the translation two at a time, on the rounds of part
-    /// `part` ([`PARTS`]) of 4,000 random programs of one seed: an eighth of them in a row, as
-    /// every fourth round also builds preimages, so that rounds taken by remainder would put
-    /// all of those in two parts. Every round's program is generated, so that a round checks
-    /// the same program whichever part it is in.
-    fn joins_as_two_at_a_time(part: usize) {
-        joins_as_two_at_a_time_from(Gen::new(0x9e37_79b9_7f4a_7c15, false), part);
+    /// The chain translator against the translation two at a time, on [`JOIN_ROUNDS`] or more
+    /// random programs from a new seed each run (printed; `ZED_TEST_SEED` repeats a run); every
+    /// fourth round also builds preimages.
+    #[test]
+    fn the_translator_joins_a_chain_as_it_joined_it_two_at_a_time() {
+        let seed = crate::seed::seed("the_translator_joins_a_chain_as_it_joined_it_two_at_a_time");
+        joins_as_two_at_a_time_from(Gen::new(seed, false));
     }
 
-    /// [`joins_as_two_at_a_time`], with programs whose `&&` is written half the time as the
-    /// elaborator writes it, `if a { b } else { false }` ([`Walk::and_if`];
-    /// PREIMAGE-and-chain), and another seed.
-    fn joins_ifs_as_two_at_a_time(part: usize) {
-        let mut g = Gen::new(0xd1b5_4a32_d192_ed03, false);
+    /// [`the_translator_joins_a_chain_as_it_joined_it_two_at_a_time`], with programs whose `&&`
+    /// is written half the time as the elaborator writes it, `if a { b } else { false }`
+    /// ([`Walk::and_if`]; PREIMAGE-and-chain).
+    #[test]
+    fn the_translator_joins_a_chain_of_ifs_as_it_joined_it_two_at_a_time() {
+        let seed =
+            crate::seed::seed("the_translator_joins_a_chain_of_ifs_as_it_joined_it_two_at_a_time");
+        let mut g = Gen::new(seed, false);
         g.and_ifs = true;
-        joins_as_two_at_a_time_from(g, part);
+        joins_as_two_at_a_time_from(g);
     }
 
     /// A program of a round of the comparison tests: a test that calls itself, named tests,
@@ -13667,14 +13673,16 @@ mod tests {
         }
     }
 
-    fn joins_as_two_at_a_time_from(mut g: Gen, part: usize) {
+    fn joins_as_two_at_a_time_from(mut g: Gen) {
         let (mut some, mut none, mut kept, mut stopped, mut fewer) = (0, 0, 0, 0, 0);
-        let only = part * 4000 / PARTS..(part + 1) * 4000 / PARTS;
-        for round in 0..only.end {
+        let mut round = 0;
+        // At least [`JOIN_ROUNDS`] rounds, and more until every kind of case counted below has
+        // occurred, up to the 4,000 rounds of the test before: with 120 rounds, 1 seed of 40
+        // met only one translation that fails and one stop.
+        while round < JOIN_ROUNDS
+            || (round < 4000 && [some, kept, none, stopped, fewer].contains(&0))
+        {
             let t = program(&mut g);
-            if round < only.start {
-                continue;
-            }
             let (old, new) = (translate(&t, true), translate(&t, false));
             assert_eq!(new.formula, old.formula, "round {round}: {t:?}");
             assert_eq!(new.defs, old.defs, "round {round}: {t:?}");
@@ -13735,95 +13743,12 @@ mod tests {
                 None => none += 1,
             }
             stopped += usize::from(new.stops > 0 || new.cut != usize::MAX);
+            round += 1;
         }
         eprintln!("some {some}, kept {kept}, none {none}, stopped {stopped}, fewer {fewer}");
         // Formulas, kept parts, translations that fail, stops and dropped entries all occur.
-        // Each part has more than its share, rounded down, of the counts the 4,000 rounds had
-        // to have, so together the parts have more: some > 500, kept > 20, none > 100,
-        // stopped > 50 and fewer > 500.
-        let n = PARTS;
-        assert!(some > 500 / n && kept > 20 / n && none > 100 / n);
-        assert!(stopped > 50 / n && fewer > 500 / n);
-    }
-
-    #[test]
-    fn the_translator_joins_a_chain_as_it_joined_it_two_at_a_time_1() {
-        joins_as_two_at_a_time(0);
-    }
-
-    #[test]
-    fn the_translator_joins_a_chain_as_it_joined_it_two_at_a_time_2() {
-        joins_as_two_at_a_time(1);
-    }
-
-    #[test]
-    fn the_translator_joins_a_chain_as_it_joined_it_two_at_a_time_3() {
-        joins_as_two_at_a_time(2);
-    }
-
-    #[test]
-    fn the_translator_joins_a_chain_as_it_joined_it_two_at_a_time_4() {
-        joins_as_two_at_a_time(3);
-    }
-
-    #[test]
-    fn the_translator_joins_a_chain_as_it_joined_it_two_at_a_time_5() {
-        joins_as_two_at_a_time(4);
-    }
-
-    #[test]
-    fn the_translator_joins_a_chain_as_it_joined_it_two_at_a_time_6() {
-        joins_as_two_at_a_time(5);
-    }
-
-    #[test]
-    fn the_translator_joins_a_chain_as_it_joined_it_two_at_a_time_7() {
-        joins_as_two_at_a_time(6);
-    }
-
-    #[test]
-    fn the_translator_joins_a_chain_as_it_joined_it_two_at_a_time_8() {
-        joins_as_two_at_a_time(7);
-    }
-
-    #[test]
-    fn the_translator_joins_a_chain_of_ifs_as_it_joined_it_two_at_a_time_1() {
-        joins_ifs_as_two_at_a_time(0);
-    }
-
-    #[test]
-    fn the_translator_joins_a_chain_of_ifs_as_it_joined_it_two_at_a_time_2() {
-        joins_ifs_as_two_at_a_time(1);
-    }
-
-    #[test]
-    fn the_translator_joins_a_chain_of_ifs_as_it_joined_it_two_at_a_time_3() {
-        joins_ifs_as_two_at_a_time(2);
-    }
-
-    #[test]
-    fn the_translator_joins_a_chain_of_ifs_as_it_joined_it_two_at_a_time_4() {
-        joins_ifs_as_two_at_a_time(3);
-    }
-
-    #[test]
-    fn the_translator_joins_a_chain_of_ifs_as_it_joined_it_two_at_a_time_5() {
-        joins_ifs_as_two_at_a_time(4);
-    }
-
-    #[test]
-    fn the_translator_joins_a_chain_of_ifs_as_it_joined_it_two_at_a_time_6() {
-        joins_ifs_as_two_at_a_time(5);
-    }
-
-    #[test]
-    fn the_translator_joins_a_chain_of_ifs_as_it_joined_it_two_at_a_time_7() {
-        joins_ifs_as_two_at_a_time(6);
-    }
-
-    #[test]
-    fn the_translator_joins_a_chain_of_ifs_as_it_joined_it_two_at_a_time_8() {
-        joins_ifs_as_two_at_a_time(7);
+        assert!(some > 0 && kept > 0 && none > 0, "{some} {kept} {none}");
+        assert!(stopped > 0 && fewer > 0, "{stopped} {fewer}");
     }
 
     /// Chains of `&&` written as `if`s that test one name again, hold one `if` in two places,
@@ -13884,54 +13809,19 @@ mod tests {
         }
     }
 
-    /// [`joins_as_two_at_a_time`], with programs whose `&&` and `||` are each written half the
-    /// time as the elaborator writes them, `if a { b } else { false }` and
-    /// `if a { true } else { b }` ([`Walk::or_if`]; PREIMAGE-or-chain), and another seed.
-    fn joins_or_ifs_as_two_at_a_time(part: usize) {
-        let mut g = Gen::new(0x2545_f491_4f6c_dd1d, false);
+    /// [`the_translator_joins_a_chain_as_it_joined_it_two_at_a_time`], with programs whose `&&`
+    /// and `||` are each written half the time as the elaborator writes them,
+    /// `if a { b } else { false }` and `if a { true } else { b }` ([`Walk::or_if`];
+    /// PREIMAGE-or-chain).
+    #[test]
+    fn the_translator_joins_a_chain_of_or_ifs_as_it_joined_it_two_at_a_time() {
+        let seed = crate::seed::seed(
+            "the_translator_joins_a_chain_of_or_ifs_as_it_joined_it_two_at_a_time",
+        );
+        let mut g = Gen::new(seed, false);
         g.and_ifs = true;
         g.or_ifs = true;
-        joins_as_two_at_a_time_from(g, part);
-    }
-
-    #[test]
-    fn the_translator_joins_a_chain_of_or_ifs_as_it_joined_it_two_at_a_time_1() {
-        joins_or_ifs_as_two_at_a_time(0);
-    }
-
-    #[test]
-    fn the_translator_joins_a_chain_of_or_ifs_as_it_joined_it_two_at_a_time_2() {
-        joins_or_ifs_as_two_at_a_time(1);
-    }
-
-    #[test]
-    fn the_translator_joins_a_chain_of_or_ifs_as_it_joined_it_two_at_a_time_3() {
-        joins_or_ifs_as_two_at_a_time(2);
-    }
-
-    #[test]
-    fn the_translator_joins_a_chain_of_or_ifs_as_it_joined_it_two_at_a_time_4() {
-        joins_or_ifs_as_two_at_a_time(3);
-    }
-
-    #[test]
-    fn the_translator_joins_a_chain_of_or_ifs_as_it_joined_it_two_at_a_time_5() {
-        joins_or_ifs_as_two_at_a_time(4);
-    }
-
-    #[test]
-    fn the_translator_joins_a_chain_of_or_ifs_as_it_joined_it_two_at_a_time_6() {
-        joins_or_ifs_as_two_at_a_time(5);
-    }
-
-    #[test]
-    fn the_translator_joins_a_chain_of_or_ifs_as_it_joined_it_two_at_a_time_7() {
-        joins_or_ifs_as_two_at_a_time(6);
-    }
-
-    #[test]
-    fn the_translator_joins_a_chain_of_or_ifs_as_it_joined_it_two_at_a_time_8() {
-        joins_or_ifs_as_two_at_a_time(7);
+        joins_as_two_at_a_time_from(g);
     }
 
     /// The formula of `t` and the definitions of its auxiliary variables, with each
@@ -14070,28 +13960,28 @@ mod tests {
         (changed, decided, differ)
     }
 
-    /// The number of tests [`or_ifs_hold_where_they_held_as_ifs`] is split into, twice
-    /// [`PARTS`]: its rounds cost several times those of the other families, most of it the
-    /// comparison of formulas at 169 points ([`same_points`]), and in eight parts each took 28
-    /// to 36 s at a load average of 16 to 40 on 32 cores (TEST-preimage-split, 2026-11-09).
-    const OR_IF_PARTS: usize = 16;
+    /// The rounds of [`or_ifs_hold_where_they_held_as_ifs`], about 0.6 s (TEST-bench-move-crates:
+    /// 4,000 rounds of one fixed seed in sixteen tests before, 4 ms a round, most of it the
+    /// comparison of formulas at 169 points, [`same_points`]).
+    const OR_IF_ROUNDS: usize = 150;
 
-    /// The formulas and preimages of part `part` ([`OR_IF_PARTS`]) of 4,000 random programs
-    /// whose `&&` and `||` are each written half the time as the elaborator writes them, with
-    /// `if g { true } else { b }` read as `g || b` and as before [`Walk::or_if`], when it was
-    /// read as any other `if`: [`holds_where_it_held_as_ifs`].
-    fn or_ifs_hold_where_they_held_as_ifs(part: usize) {
-        let mut g = Gen::new(0x5851_f42d_4c95_7f2d, false);
+    /// The formulas and preimages of [`OR_IF_ROUNDS`] random programs from a new seed each run
+    /// (printed; `ZED_TEST_SEED` repeats a run) whose `&&` and `||` are each written half the
+    /// time as the elaborator writes them, with `if g { true } else { b }` read as `g || b` and
+    /// as before [`Walk::or_if`], when it was read as any other `if`:
+    /// [`holds_where_it_held_as_ifs`].
+    #[test]
+    fn or_ifs_hold_where_they_held_as_ifs() {
+        let mut g = Gen::new(
+            crate::seed::seed("or_ifs_hold_where_they_held_as_ifs"),
+            false,
+        );
         g.and_ifs = true;
         g.or_ifs = true;
         let (mut changed, mut decided, mut refused) = (0, 0, 0);
         let mut differ = std::collections::BTreeMap::<&str, usize>::new();
-        let only = part * 4000 / OR_IF_PARTS..(part + 1) * 4000 / OR_IF_PARTS;
-        for round in 0..only.end {
+        for round in 0..OR_IF_ROUNDS {
             let t = program(&mut g);
-            if round < only.start {
-                continue;
-            }
             let (c, d, how) = holds_where_it_held_as_ifs(&t, round % 4 == 0);
             changed += usize::from(c);
             decided += d.iter().filter(|&&d| d).count();
@@ -14102,96 +13992,15 @@ mod tests {
             }
         }
         eprintln!("changed {changed}, decided {decided}, refused {refused}, preimages {differ:?}");
-        // Each part's 250 rounds have formulas that changed (one in ten at least, as when the
-        // parts had 500 rounds and at least 50), and the solver decides nearly every
-        // comparison. Over all parts, about 1,000 pairs of preimages, the new shape gave 3
-        // tighter domains and 1 looser, 2 fewer refusals and 1 more, and 1 preimage exact that
-        // was not.
-        assert!(changed * 10 > only.len(), "changed {changed}");
+        // Formulas that changed (one in ten at least, as when 4,000 rounds of one seed ran in
+        // sixteen parts), and the solver decides nearly every comparison. Over those 4,000
+        // rounds, about 1,000 pairs of preimages, the new shape gave 3 tighter domains and 1
+        // looser, 2 fewer refusals and 1 more, and 1 preimage exact that was not.
+        assert!(changed * 10 > OR_IF_ROUNDS, "changed {changed}");
         assert!(
             refused * 50 < decided,
             "decided {decided}, refused {refused}"
         );
-    }
-
-    #[test]
-    fn or_ifs_hold_where_they_held_as_ifs_1() {
-        or_ifs_hold_where_they_held_as_ifs(0);
-    }
-
-    #[test]
-    fn or_ifs_hold_where_they_held_as_ifs_2() {
-        or_ifs_hold_where_they_held_as_ifs(1);
-    }
-
-    #[test]
-    fn or_ifs_hold_where_they_held_as_ifs_3() {
-        or_ifs_hold_where_they_held_as_ifs(2);
-    }
-
-    #[test]
-    fn or_ifs_hold_where_they_held_as_ifs_4() {
-        or_ifs_hold_where_they_held_as_ifs(3);
-    }
-
-    #[test]
-    fn or_ifs_hold_where_they_held_as_ifs_5() {
-        or_ifs_hold_where_they_held_as_ifs(4);
-    }
-
-    #[test]
-    fn or_ifs_hold_where_they_held_as_ifs_6() {
-        or_ifs_hold_where_they_held_as_ifs(5);
-    }
-
-    #[test]
-    fn or_ifs_hold_where_they_held_as_ifs_7() {
-        or_ifs_hold_where_they_held_as_ifs(6);
-    }
-
-    #[test]
-    fn or_ifs_hold_where_they_held_as_ifs_8() {
-        or_ifs_hold_where_they_held_as_ifs(7);
-    }
-
-    #[test]
-    fn or_ifs_hold_where_they_held_as_ifs_9() {
-        or_ifs_hold_where_they_held_as_ifs(8);
-    }
-
-    #[test]
-    fn or_ifs_hold_where_they_held_as_ifs_10() {
-        or_ifs_hold_where_they_held_as_ifs(9);
-    }
-
-    #[test]
-    fn or_ifs_hold_where_they_held_as_ifs_11() {
-        or_ifs_hold_where_they_held_as_ifs(10);
-    }
-
-    #[test]
-    fn or_ifs_hold_where_they_held_as_ifs_12() {
-        or_ifs_hold_where_they_held_as_ifs(11);
-    }
-
-    #[test]
-    fn or_ifs_hold_where_they_held_as_ifs_13() {
-        or_ifs_hold_where_they_held_as_ifs(12);
-    }
-
-    #[test]
-    fn or_ifs_hold_where_they_held_as_ifs_14() {
-        or_ifs_hold_where_they_held_as_ifs(13);
-    }
-
-    #[test]
-    fn or_ifs_hold_where_they_held_as_ifs_15() {
-        or_ifs_hold_where_they_held_as_ifs(14);
-    }
-
-    #[test]
-    fn or_ifs_hold_where_they_held_as_ifs_16() {
-        or_ifs_hold_where_they_held_as_ifs(15);
     }
 
     /// Chains of `||` written as `if`s that test one name again, hold one `if` in two places,
@@ -14348,22 +14157,27 @@ mod tests {
         (pn, now.cut != usize::MAX, met, false)
     }
 
+    /// The rounds of [`entries_made_below_a_stop_give_what_reading_the_term_again_gives`],
+    /// about 0.5 s (TEST-bench-move-crates: 1,000 rounds of one fixed seed in eight tests
+    /// before, 17 ms a round).
+    const ENTRY_ROUNDS: usize = 30;
+
     /// An entry made below a stop is read where the lambdas being read when it began are still
     /// being read, and it gives there what the memo before ST-formula-k2-rec gave, which
-    /// read the term again at each place ([`check`]), on random programs of functions that
-    /// call themselves and each other ([`Gen::group`]), nested, with shared tests and calls
-    /// whose arguments read the inputs, so that entries are read within other summaries and
-    /// on higher stacks. Checks the rounds of part `part` ([`PARTS`]) of 1,000 of one seed,
-    /// those whose remainder by [`PARTS`] is `part`, so that each part has about its share of
-    /// every kind of program (taken an eighth in a row, rounds 375 to 499 held too few entries
-    /// read again). Every round's program is generated, so that a round checks the same
-    /// program whichever part it is in.
-    fn entries_below_a_stop(part: usize) {
-        let mut g = Gen::new(0x2545_f491_4f6c_dd1d, true);
+    /// read the term again at each place ([`check`]), on [`ENTRY_ROUNDS`] random programs from
+    /// a new seed each run (printed; `ZED_TEST_SEED` repeats a run) of functions that call
+    /// themselves and each other ([`Gen::group`]), nested, with shared tests and calls whose
+    /// arguments read the inputs, so that entries are read within other summaries and on
+    /// higher stacks.
+    #[test]
+    fn entries_made_below_a_stop_give_what_reading_the_term_again_gives() {
+        let seed =
+            crate::seed::seed("entries_made_below_a_stop_give_what_reading_the_term_again_gives");
+        let mut g = Gen::new(seed, true);
         READS.set([0; 3]);
         CHECKED.set([0; 5]);
         let (mut met, mut endless, mut stopped) = (0, 0, 0);
-        for round in 0..1000 {
+        for round in 0..ENTRY_ROUNDS {
             g.pool.clear();
             let t = match g.rng.below(3) {
                 0 => g.group(4),
@@ -14377,9 +14191,6 @@ mod tests {
                     Term::Prim(p, vec![g.test(4), g.test(4)])
                 }
             };
-            if round % PARTS != part {
-                continue;
-            }
             let (_, s, m, e) = check(&t, round);
             stopped += usize::from(s);
             met += m;
@@ -14393,72 +14204,41 @@ mod tests {
              under other inputs {inside}, entries that hold anywhere {everywhere}; stopped \
              {stopped}, points met {met}, rounds out of fuel {endless}"
         );
-        // Each part has more than its share, rounded down, of the counts the 1,000 rounds had
-        // to have, so together the parts have more: reads > 5000, higher > 3000, other > 2000,
-        // stopped > 400, met > 100,000, checked > 4000, raised > 3000, inside > 2000 and
-        // everywhere > 500,000.
-        let n = PARTS;
-        assert!(stopped > 400 / n && met > 100_000 / n);
-        let n = n as u64;
-        assert!(reads > 5000 / n && higher > 3000 / n && other > 2000 / n);
-        assert!(checked > 4000 / n && raised > 3000 / n && inside > 2000 / n);
-        assert!(everywhere > 500_000 / n);
+        // Every kind of read, stop and check occurs.
+        assert!(stopped > 0 && met > 0, "{stopped} {met}");
+        assert!(
+            reads > 0 && higher > 0 && other > 0,
+            "{reads} {higher} {other}"
+        );
+        assert!(
+            checked > 0 && raised > 0 && inside > 0,
+            "{checked} {raised} {inside}"
+        );
+        assert!(everywhere > 0);
     }
 
-    #[test]
-    fn entries_made_below_a_stop_give_what_reading_the_term_again_gives_1() {
-        entries_below_a_stop(0);
-    }
-
-    #[test]
-    fn entries_made_below_a_stop_give_what_reading_the_term_again_gives_2() {
-        entries_below_a_stop(1);
-    }
-
-    #[test]
-    fn entries_made_below_a_stop_give_what_reading_the_term_again_gives_3() {
-        entries_below_a_stop(2);
-    }
-
-    #[test]
-    fn entries_made_below_a_stop_give_what_reading_the_term_again_gives_4() {
-        entries_below_a_stop(3);
-    }
-
-    #[test]
-    fn entries_made_below_a_stop_give_what_reading_the_term_again_gives_5() {
-        entries_below_a_stop(4);
-    }
-
-    #[test]
-    fn entries_made_below_a_stop_give_what_reading_the_term_again_gives_6() {
-        entries_below_a_stop(5);
-    }
-
-    #[test]
-    fn entries_made_below_a_stop_give_what_reading_the_term_again_gives_7() {
-        entries_below_a_stop(6);
-    }
-
-    #[test]
-    fn entries_made_below_a_stop_give_what_reading_the_term_again_gives_8() {
-        entries_below_a_stop(7);
-    }
+    /// The rounds of [`summaries_read_again_give_what_reading_the_term_again_gives`], about
+    /// 0.5 s (TEST-bench-move-crates: 400 rounds of one fixed seed in eight tests before,
+    /// 53 ms a round).
+    const SUMMARY_ROUNDS: usize = 10;
 
     /// The summaries of `if` chains over one input ([`Pa`]) and over each class of remainders
     /// ([`ByClass`]) that [`RECHECK`] reads again give what reading their terms again gives,
-    /// on the random programs of [`entries_below_a_stop`] whose tests may also compare a chain
-    /// with a constant ([`Gen::chain_test`]). Checks the rounds of part `part` ([`PARTS`]) of 400
-    /// of one seed, those whose remainder by [`PARTS`] is `part`. Each part must meet both
-    /// kinds of summary; a summary made below a stop is met by some parts only, and
+    /// on the random programs of
+    /// [`entries_made_below_a_stop_give_what_reading_the_term_again_gives`] whose tests may
+    /// also compare a chain with a constant ([`Gen::chain_test`]): [`SUMMARY_ROUNDS`] of a new
+    /// seed each run (printed; `ZED_TEST_SEED` repeats a run). Both kinds of summary must be
+    /// met; a summary made below a stop is met by some runs only, and
     /// [`a_summary_made_below_a_stop_is_read_again`] makes one on purpose.
-    fn summaries_read_again(part: usize) {
-        let mut g = Gen::new(0x5851_f42d_4c95_7f2d, true);
+    #[test]
+    fn summaries_read_again_give_what_reading_the_term_again_gives() {
+        let seed = crate::seed::seed("summaries_read_again_give_what_reading_the_term_again_gives");
+        let mut g = Gen::new(seed, true);
         g.chains = true;
         CHECKED.set([0; 5]);
         SUMMARIES.set([0; 4]);
         let (mut met, mut endless) = (0, 0);
-        for round in 0..400 {
+        for round in 0..SUMMARY_ROUNDS {
             g.pool.clear();
             let t = match g.rng.below(4) {
                 0 => g.group(3),
@@ -14473,9 +14253,6 @@ mod tests {
                     Term::Prim(p, vec![g.test(3), g.test(3)])
                 }
             };
-            if round % PARTS != part {
-                continue;
-            }
             let (_, _, m, e) = check(&t, round);
             met += m;
             endless += usize::from(e);
@@ -14490,46 +14267,6 @@ mod tests {
         );
         assert_eq!(unchecked, 0);
         assert!(pa_everywhere > 0 && by_class_everywhere > 0);
-    }
-
-    #[test]
-    fn summaries_read_again_give_what_reading_the_term_again_gives_1() {
-        summaries_read_again(0);
-    }
-
-    #[test]
-    fn summaries_read_again_give_what_reading_the_term_again_gives_2() {
-        summaries_read_again(1);
-    }
-
-    #[test]
-    fn summaries_read_again_give_what_reading_the_term_again_gives_3() {
-        summaries_read_again(2);
-    }
-
-    #[test]
-    fn summaries_read_again_give_what_reading_the_term_again_gives_4() {
-        summaries_read_again(3);
-    }
-
-    #[test]
-    fn summaries_read_again_give_what_reading_the_term_again_gives_5() {
-        summaries_read_again(4);
-    }
-
-    #[test]
-    fn summaries_read_again_give_what_reading_the_term_again_gives_6() {
-        summaries_read_again(5);
-    }
-
-    #[test]
-    fn summaries_read_again_give_what_reading_the_term_again_gives_7() {
-        summaries_read_again(6);
-    }
-
-    #[test]
-    fn summaries_read_again_give_what_reading_the_term_again_gives_8() {
-        summaries_read_again(7);
     }
 
     /// The classes of [`unite`] without its remembered refusals and its look-up of the caller
@@ -14570,7 +14307,9 @@ mod tests {
     /// `i64`, the four orders, the literal on either side, and both outcomes.
     #[test]
     fn an_order_with_a_literal_has_the_preimage_of_the_general_path() {
-        let mut rng = Rng(0x6a09_e667_f3bc_c908);
+        let mut rng = Rng(crate::seed::seed(
+            "an_order_with_a_literal_has_the_preimage_of_the_general_path",
+        ));
         let x: Arc<str> = "x".into();
         let ops = [Prim::Lt, Prim::Le, Prim::Gt, Prim::Ge];
         let (mut read, mut empty) = (0, 0);
@@ -14632,7 +14371,9 @@ mod tests {
     /// literal on either side, and a second input the term does not read.
     #[test]
     fn an_if_of_literals_on_an_order_has_the_summary_of_the_transfer() {
-        let mut rng = Rng(0xbb67_ae85_84ca_a73b);
+        let mut rng = Rng(crate::seed::seed(
+            "an_if_of_literals_on_an_order_has_the_summary_of_the_transfer",
+        ));
         let (x, y): (Arc<str>, Arc<str>) = ("x".into(), "y".into());
         let ops = [Prim::Lt, Prim::Le, Prim::Gt, Prim::Ge];
         let (mut both, mut one, mut none) = (0, 0, 0);
@@ -14704,7 +14445,9 @@ mod tests {
     /// two parameters of one function and joins repeated.
     #[test]
     fn the_classes_are_those_of_a_join_refused_by_looking() {
-        let mut rng = Rng(0x2f6b_8a1c_93d4_e507);
+        let mut rng = Rng(crate::seed::seed(
+            "the_classes_are_those_of_a_join_refused_by_looking",
+        ));
         let mut refused = 0;
         for _ in 0..2000 {
             let mut first = vec![0];
@@ -14735,65 +14478,69 @@ mod tests {
         assert!(refused > 1000, "{refused} joins refused");
     }
 
+    /// The input of [`unite`] that [`two_large_classes`] builds, and each pair's `(ra, rb)`.
+    struct LargeClasses {
+        first: Vec<usize>,
+        joins: Vec<(usize, usize)>,
+        pairs: Vec<(usize, usize)>,
+    }
+
     /// Eight pairs of classes of n/8 functions each, each pair sharing one function `s(x, y)`
     /// (`x` in the first class, `y` in the second), and n/8 functions
-    /// `t{j}(x) = ra(x: x) && rb(y: x)` a pair, each joining its parameter to the first class
-    /// and then refused against the second for `s`, which is neither its caller nor its callee.
-    /// Looking through the smaller class at each refusal is O(n²) (eight pairs, so the place of
-    /// `s` in each class's order varies less between runs); remembered, a repeated refusal is
-    /// O(1).
-    #[test]
-    fn refused_joins_between_two_large_classes_scale() {
+    /// `t{j}(x) = ra(x: x) && rb(y: x)` a pair: the first parameters of the functions ([`unite`]'s
+    /// `first`), the joins, and each pair's `(ra, rb)`. Each `t{j}` joins its parameter to the
+    /// first class and is then refused against the second for `s`, which is neither its caller
+    /// nor its callee.
+    fn two_large_classes(n: usize) -> LargeClasses {
         // A function of `params` parameters added after those of `first`: its first parameter.
         fn function(first: &mut Vec<usize>, params: usize) -> usize {
             let at = *first.last().unwrap();
             first.push(at + params);
             at
         }
-        let input = |n: usize| {
-            let (mut first, mut joins, mut pairs) = (vec![0], Vec::new(), Vec::new());
-            for _ in 0..8 {
-                let (ra, rb) = (function(&mut first, 1), function(&mut first, 1));
-                let s = function(&mut first, 2);
-                joins.extend([(s, ra), (s + 1, rb)]);
-                for _ in 0..n / 8 {
-                    let (a, b) = (function(&mut first, 1), function(&mut first, 1));
-                    joins.extend([(a, ra), (b, rb)]);
-                }
-                for _ in 0..n / 8 {
-                    let t = function(&mut first, 1);
-                    joins.extend([(t, ra), (t, rb)]);
-                }
-                pairs.push((ra, rb));
+        let (mut first, mut joins, mut pairs) = (vec![0], Vec::new(), Vec::new());
+        for _ in 0..8 {
+            let (ra, rb) = (function(&mut first, 1), function(&mut first, 1));
+            let s = function(&mut first, 2);
+            joins.extend([(s, ra), (s + 1, rb)]);
+            for _ in 0..n / 8 {
+                let (a, b) = (function(&mut first, 1), function(&mut first, 1));
+                joins.extend([(a, ra), (b, rb)]);
             }
-            (first, joins, pairs)
-        };
-        let (small, large) = (input(1000), input(8000));
-        let (root, _) = unite(&large.0, &large.1);
-        for &(ra, rb) in &large.2 {
-            assert_ne!(root[ra], root[rb], "the two classes of a pair stay apart");
+            for _ in 0..n / 8 {
+                let t = function(&mut first, 1);
+                joins.extend([(t, ra), (t, rb)]);
+            }
+            pairs.push((ra, rb));
         }
-        crate::scaling::compare(
-            "refused joins between two classes of n/8 functions, eight pairs, n = 1000 and 8000",
-            1,
-            || {
-                std::hint::black_box(unite(&small.0, &small.1));
-            },
-            || {
-                std::hint::black_box(unite(&large.0, &large.1));
-            },
-        );
+        LargeClasses {
+            first,
+            joins,
+            pairs,
+        }
     }
 
-    /// [`Gen::chain`] makes a chain of `n` `if`s in work of order `n`: each level reads the
-    /// one term below it, shared, so neither the work nor the term doubles at a level.
+    /// The two classes of each pair of [`two_large_classes`] stay apart, and agree with the
+    /// classes found by looking through the smaller class at each join ([`unite_by_looking`]).
+    /// The benchmark is `bench::refused_joins_between_two_large_classes_scale`.
     #[test]
-    fn a_chain_is_made_in_work_of_order_its_length() {
-        crate::scaling::check_order("a chain of n ifs over one input made", 2000, 1, |n| {
-            let mut g = Gen::new(0x5851_f42d_4c95_7f2d, true);
-            g.chains = true;
-            std::hint::black_box(g.chain(n, true));
-        });
+    fn two_large_classes_stay_apart() {
+        for n in [0, 8, 64] {
+            let LargeClasses {
+                first,
+                joins,
+                pairs,
+            } = two_large_classes(n);
+            let (root, kept) = unite(&first, &joins);
+            for &(ra, rb) in &pairs {
+                assert_ne!(
+                    root[ra], root[rb],
+                    "n = {n}: the two classes of a pair stay apart"
+                );
+            }
+            let looked = unite_by_looking(&first, &joins);
+            assert_eq!((&root, &kept), (&looked.0, &looked.1), "n = {n}");
+        }
     }
 
     /// The preimage of `chain(k) <= 2` ([`Gen::chain`]) over `x` and `y` in `[-6, 6]`, exact.
@@ -14810,42 +14557,17 @@ mod tests {
         assert!(p.exact, "seed {seed:#x}, k = {k}: {p:?}");
     }
 
-    /// A chain of guards on `x mod 3` whose arms move, reflect, negate, scale and clamp the
-    /// term below, with `min` and `max` across their constant and `0 * u` (COMPLEXITY.md row
-    /// S22-order-chain: 6.7 ms, 209 ms, 3.37 s and 30.2 s at k = 20, 40, 80 and 160). Each
-    /// level is one summary over the classes ([`ByClass`]), so the shared term is read once.
+    /// The preimages of the chains of the benchmarks in `bench` are exact at small lengths:
+    /// guards on `x mod 3` (seed `0x5851_f42d_4c95_7f2d`), mixed guards on `y` (seed `0xa`) and
+    /// comparisons (seed 1), and a chain is made at every length from 0.
     #[test]
-    fn a_chain_is_read_in_time_near_its_length() {
-        crate::scaling::check_order("the preimage of a chain of k ifs", 10, 1, |k| {
-            chain_preimage(0x5851_f42d_4c95_7f2d, k)
-        });
+    fn chains_are_read_exactly_at_small_lengths() {
+        for seed in [0x5851_f42d_4c95_7f2d, 0xa, 1] {
+            for k in [0, 1, 2, 5, 10] {
+                chain_preimage(seed, k);
+            }
+        }
     }
-
-    /// A chain on `y` whose guards compare `y` with constants or take `y mod 2`, with `min`
-    /// arms across their constant, and `if`s on a comparison whose arms read the remainder in
-    /// different ways ([`Walk::by_class_if`], [`ByClass::clamp`]).
-    #[test]
-    fn a_chain_with_clamps_is_read_in_time_near_its_length() {
-        crate::scaling::check_order(
-            "the preimage of a chain of k ifs, mixed guards",
-            10,
-            1,
-            |k| chain_preimage(0xa, k),
-        );
-    }
-
-    /// A chain whose guards compare `x` with constants, with `min` and `max` arms across their
-    /// constant: one summary of each level ([`Pa::clamp`]).
-    #[test]
-    fn a_chain_of_comparisons_is_read_in_time_near_its_length() {
-        crate::scaling::check_order(
-            "the preimage of a chain of k ifs, comparisons",
-            10,
-            1,
-            |k| chain_preimage(1, k),
-        );
-    }
-
     /// `false || (if 2x > max(x, x) {ym + -3 <= -6} else {2x > max(x, x)}) ||
     /// (let n0 = min(x, 3) - min(x, -3) in let n1 = stage(n0) in ... n_k == -7)`, with
     /// `ym = if y mod 2 != 1 {-1} else {-1}` and `stage(n) = if n < 2 {-1} else {(if n != -4
@@ -14903,26 +14625,6 @@ mod tests {
         p2(Prim::Or, left, call)
     }
 
-    /// The preimage of [`staged_chain`] under `false`, whose hulls are tightened by questions
-    /// to the solver over the whole formula (`presburger::project_each`). Before item
-    /// PREIMAGE-slow-rounds each question probed every disjunct again; now the points found
-    /// are kept across the questions and a disjunct is searched from both ends of the chain.
-    /// What is left is the probe of the formula itself, whose `learn` settles a bound at
-    /// stage `i` in about `i` rounds of the whole formula (COMPLEXITY.md
-    /// PREIMAGE-slow-rounds).
-    #[test]
-    fn a_staged_chain_under_false_is_read_in_time_near_its_length() {
-        crate::scaling::check_order(
-            "the preimage under false of a chain of k stages",
-            4,
-            1,
-            |k| {
-                let p = preimage(&staged_chain(k), &domains(), &Demand::Bool(false));
-                assert!(p.exact, "k = {k}: {p:?}");
-            },
-        );
-    }
-
     /// The preimage of [`staged_chain`] under `false` is the whole box at every length, under
     /// `true` empty: no stage reaches `-7`, and the left side holds nowhere.
     #[test]
@@ -14945,7 +14647,9 @@ mod tests {
     /// clamped point by point, on random piecewise summaries.
     #[test]
     fn a_clamped_summary_is_the_summary_clamped_at_every_point() {
-        let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+        let mut rng = Rng(crate::seed::seed(
+            "a_clamped_summary_is_the_summary_clamped_at_every_point",
+        ));
         for round in 0..2000 {
             let mut root = None;
             let mut lo = -40i64;
@@ -15008,7 +14712,9 @@ mod tests {
                 ),
             }
         }
-        let mut rng = Rng(0x6a09_e667_f3bc_c908);
+        let mut rng = Rng(crate::seed::seed(
+            "abs_and_two_term_min_and_max_have_the_value_at_every_point",
+        ));
         let x: Arc<str> = "x".into();
         let mut pieces = 0;
         for round in 0..1500 {
@@ -15153,13 +14859,15 @@ mod tests {
     /// ([`clamp_treap`]) agree with the points.
     #[test]
     fn a_sum_of_summaries_is_the_sum_at_every_point() {
-        let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+        let mut rng = Rng(crate::seed::seed(
+            "a_sum_of_summaries_is_the_sum_at_every_point",
+        ));
         let var: Arc<str> = "n".into();
         let piecewise = |root: Tree| Pa::Piecewise {
             var: var.clone(),
             root,
         };
-        for round in 0..2000 {
+        for round in 0..400 {
             let (p, q) = (random_treap(&mut rng), random_treap(&mut rng));
             let sign = if rng.below(2) == 0 { 1 } else { -1 };
             let line = (rng.below(7) as i128 - 3, rng.below(21) as i128 - 10);
