@@ -8,7 +8,7 @@ mod order;
 pub(crate) mod scaling;
 mod scopes;
 
-use zedc::ast::unit;
+use zedc::ast::{Stmt, unit};
 use zedc::lex::lex_fence;
 use zedc::parse::{TOP, parse};
 use zedc::resolve::{Kind, Ref, Resolution, resolve};
@@ -18,8 +18,12 @@ use zedc::resolve::{Kind, Ref, Resolution, resolve};
 fn run(text: &str) -> Result<Resolution, Vec<String>> {
     let tokens = lex_fence(text).unwrap();
     let tree = parse(text, &tokens, "Unit", TOP).unwrap();
-    let stmts = unit(text, &tokens, &tree).unwrap();
-    resolve(&stmts).map_err(|es| {
+    run_stmts(text, &unit(text, &tokens, &tree).unwrap())
+}
+
+/// [`run`] on `stmts`, statements built from `text`.
+fn run_stmts(text: &str, stmts: &[Stmt]) -> Result<Resolution, Vec<String>> {
+    resolve(stmts).map_err(|es| {
         es.iter()
             .map(|e| {
                 let mut out = format!("{} [{}]", e.message, &text[e.span.start..e.span.end]);
