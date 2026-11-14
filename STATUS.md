@@ -2192,11 +2192,11 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | CONST-too-large-products | impl attempt 1 | 2026-11-13 16:26 | after fix: too_large 19/19; scaling products 7.995 (instr) 8.086 (time), divisions 7.978, powers 7.995; negative control (memo cleared per query) fails both cha |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | round 5 Claude seat merged 7c8f994b4 (core classes, repair memo; point_rows R 65.8 -> 7.92), plan/STATUS f23d3185a; load 46.10 45.93 45.05 |
 | POW-top-body-agree | impl attempt 1 | 2026-11-13 17:20 | started; worktree from origin/main 1e2d6855e |
-| PRES-exact-side | running | 2026-11-13 20:00 |  |
-| REPAIR-string-compare-offer | merged and pushed (the commit "REPAIR-string-compare-offer: an ordering with a text written as a number offers no comparison of texts" and spec zed "DESIGN sec:diagnostics (REPAIR-string-compare-offer)"); COMPLEXITY.md REPAIR-string-compare-offer; follow-up rows REPAIR-text-number-both-sides, CAST-rat-unreduced-text | 2026-11-13 19:50 | `x < "1/3"` offers no repair; `String(x) < "x8"` stays |
+| PRES-exact-side | impl attempt 1 | 2026-11-13 20:00 | started; worktree from 223aaf2e2 |
+| REPAIR-literal-string-order | running | 2026-11-13 20:06 |  |
 | ST-class-case-holes | impl attempt 1 | 2026-11-13 19:02 | started; worktree from origin/main f55860149 |
 | STUDY-release-token | impl attempt 1 | 2026-11-13 19:46 | started: reading A101, sec:ffi, sec:memory |
-| ST-walk-orders-nine | running | 2026-11-13 20:00 |  |
+| ST-walk-orders-nine | impl attempt 1 | 2026-11-13 20:00 | started; load 44.24 |
 | TEST-mutate-generic-time | impl attempt 1 | 2026-11-13 19:53 | started; worktree from origin/main d5f0ccb29; load 48.11 |
 | TESTS-l01_26a-calls-slow | impl attempt 1 | 2026-11-13 16:36 | fix done: rejection inside an argument that takes its call's carrier not built (Ck::lit_spares); n=100 calls bare vs 2.0f64: 4.8x instr / 4.4x bytes before, 1.4 |
 | XR-ffi-stateful | impl attempt 1 | 2026-11-13 18:25 | started: cross-review of STUDY-ffi-stateful design (zed 02a2ff3), seats Sol, Opus, Gemini (CD no seat: spec text, not scored code); load 32.07 38.66 44.54 |
