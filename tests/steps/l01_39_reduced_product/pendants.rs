@@ -2630,3 +2630,86 @@ fn rewritten_parts_of_five_seeds_are_decided_alike() {
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
+
+/// Case 39 of seed 15306138842172969565 is decided alike on every rewrite
+/// (FAIL-pendants-growth-scaled-seed). The part is
+///   2 * a == b + c + z0 - 2 && a + z0 >= b - 1 && z2 >= z5 - 7 && 2 * a + b + z5 >= 4
+///   && 2 * a + b + c >= z5 + 3 && a + z2 >= b + c - 5 && 2 * a + c + z5 >= -11
+///   && z0 <= z1 + 10 && 2 * a + c + z1 == b - 12
+/// with boxes a >= 0, z0 >= -3, z1 >= 3, z2 in -2..=11, z3 >= 3, z4 in 3..=21, z5 in 0..=13.
+/// As written, `decide` and `satisfiable` gave Ok(true); on one rewrite of 360 (rows times 2
+/// and 3, the first equation written twice, rows reordered) both refused with Err(Growth), from
+/// f0467a735, the first commit at which this seed draws this case, on. The cause is that of
+/// FAIL-rewrite-growth-both, and so is the fix.
+#[test]
+fn rewritten_parts_of_seed_15306138842172969565_are_decided_alike() {
+    let seed = 15306138842172969565u64;
+    let mut wrong = Vec::new();
+    for Rewrites {
+        case,
+        items,
+        bs,
+        rewrites,
+    } in random_rewrites(seed, 60)
+    {
+        let s = scope(&bs);
+        let syms = item_names(&items);
+        let f = formula(&items);
+        let want = decided(&s, &f, &syms);
+        for g in rewrites {
+            let got = decided(&s, &g, &syms);
+            if got != want {
+                wrong.push(format!(
+                    "seed {seed} case {case}\n  {f}\n  {g}\n  want {want}\n  got  {got}"
+                ));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// Case 39 of seed 15306138842172969565, with one change of writing at a time: its second
+/// equation times 3, its inequalities each times a factor, its first equation held twice (the
+/// second time times 2), and its rows in another order. Each gives the answer of the case as
+/// written, a point. Before `decide` and `satisfiable` wrote each formula one way (each row
+/// divided by the common factor of its coefficients, each equation with one sign), the rows
+/// times a factor got other colors in the solver's elimination order, and both questions were
+/// refused for growth (FAIL-rewrite-growth-both).
+#[test]
+fn each_change_of_writing_of_case_39_keeps_its_answer() {
+    let s = scope(&boxes(
+        "a=[0,inf] b=[-inf,inf] c=[-inf,inf] z0=[-3,inf] z1=[3,inf] z2=[-2,11] z5=[0,13]",
+    ));
+    let written = "2 * a == b + c + z0 - 2 && a + z0 >= b - 1 && z2 >= z5 - 7 && \
+                   2 * a + b + z5 >= 4 && 2 * a + b + c >= z5 + 3 && a + z2 >= b + c - 5 && \
+                   2 * a + c + z5 >= -11 && z0 <= z1 + 10 && 2 * a + c + z1 == b - 12";
+    let changed = [
+        // The second equation times 3.
+        "2 * a == b + c + z0 - 2 && a + z0 >= b - 1 && z2 >= z5 - 7 && 2 * a + b + z5 >= 4 && \
+         2 * a + b + c >= z5 + 3 && a + z2 >= b + c - 5 && 2 * a + c + z5 >= -11 && \
+         z0 <= z1 + 10 && 6 * a + 3 * c + 3 * z1 == 3 * b - 36",
+        // Each inequality times 2 or 3, its constant moved toward zero by less than the factor.
+        "2 * a == b + c + z0 - 2 && 3 * a + 3 * z0 >= 3 * b - 4 && 2 * z2 >= 2 * z5 - 14 && \
+         4 * a + 2 * b + 2 * z5 >= 8 && 4 * a + 2 * b + 2 * c >= 2 * z5 + 6 && \
+         2 * a + 2 * z2 >= 2 * b + 2 * c - 10 && 6 * a + 3 * c + 3 * z5 >= -34 && \
+         3 * z0 <= 3 * z1 + 32 && 2 * a + c + z1 == b - 12",
+        // The first equation held twice.
+        "2 * a == b + c + z0 - 2 && 4 * a == 2 * b + 2 * c + 2 * z0 - 4 && a + z0 >= b - 1 && \
+         z2 >= z5 - 7 && 2 * a + b + z5 >= 4 && 2 * a + b + c >= z5 + 3 && \
+         a + z2 >= b + c - 5 && 2 * a + c + z5 >= -11 && z0 <= z1 + 10 && \
+         2 * a + c + z1 == b - 12",
+        // The rows in another order.
+        "2 * a + c + z5 >= -11 && 2 * a + c + z1 == b - 12 && 2 * a == b + c + z0 - 2 && \
+         a + z2 >= b + c - 5 && a + z0 >= b - 1 && 2 * a + b + c >= z5 + 3 && z2 >= z5 - 7 && \
+         z0 <= z1 + 10 && 2 * a + b + z5 >= 4",
+    ];
+    let items = parse(written);
+    let syms = item_names(&items);
+    let want = decided(&s, &formula(&items), &syms);
+    assert_eq!(want, "decide Ok(true), satisfiable Ok(true)");
+    for text in changed {
+        let items = parse(text);
+        assert_eq!(item_names(&items), syms, "{text}: the names");
+        assert_eq!(decided(&s, &formula(&items), &syms), want, "{text}");
+    }
+}
