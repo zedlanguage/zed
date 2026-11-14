@@ -3721,17 +3721,9 @@ pub fn render(t: &Theory, r: &Report) -> String {
             }
             End::Stopped(why) => {
                 complete = false;
-                match g.models.as_slice() {
-                    [] => {
-                        let _ = writeln!(out, "{head} not decided.");
-                    }
-                    ms => {
-                        let _ = writeln!(out, "{head} at least {} model(s), for example", ms.len());
-                        for m in ms {
-                            let _ = writeln!(out, "      {}", model_line(t, &g.fields, m));
-                        }
-                    }
-                }
+                // Not decided also after a model: whether the group has one model or several
+                // is what the stop leaves open (DESIGN sec:theories, item 3).
+                let _ = writeln!(out, "{head} not decided.");
                 let _ = writeln!(
                     out,
                     "      The report stopped at a choice that leads to no model, so this list \

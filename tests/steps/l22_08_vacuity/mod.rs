@@ -12,4 +12,5 @@ mod cases;
 mod corpus;
 mod hardness;
 mod scaling;
+mod stop;
 mod trivial;
