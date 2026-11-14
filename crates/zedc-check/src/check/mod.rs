@@ -7239,7 +7239,7 @@ fn int_exponent_value(b: &Expr) -> Option<Value> {
 }
 
 /// Whether the text of `b`, the exponent of a `^` at `rat`, is that of an `int`, which `^`
-/// takes there (DESIGN.md sec:operators): each literal in it an `int` as written
+/// takes there (DESIGN.md sec:lexical): each literal in it an `int` as written
 /// ([`lit_value`]), under `+`, `-`, `*`, `^` and a `-`. A decimal, `0.5`, a `/`, as in `1/2`,
 /// or a `rat` literal, `2r`, makes it no `int`, so `2^0.5`, `2^(1/2)` and `2^2r` are no `rat`
 /// (plan row LIT-rat-decimal-exponent). [`Ck::lit_fit`] then folds it at `int`, which finds
