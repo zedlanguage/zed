@@ -2354,7 +2354,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | CHECK-arm-test-if-and-operand-calls | impl attempt 1 | 2026-11-14 13:27 | started in wt/arm-reads at c95bec442; load 38 |
 | CHECK-spine-tests-per-body | impl attempt 1 | 2026-11-14 13:27 | started in wt/arm-reads at c95bec442; load 38 |
-| FAIL-linked-case-group-wake | running |  |  |
+| FAIL-linked-case-group-wake | impl attempt 1 | 2026-11-14 14:17 | start, worktree /home/luke/Work/wt/lcgw; load 33.60 |
 | FAIL-pendants-growth-scaled-seed | impl attempt 1 | 2026-11-14 11:58 | fix-growth started on d5d733341 |
 | FAIL-print-function-in-union | impl attempt 1 | 2026-11-14 12:05 | started in wt/fix-need-print, load 35.50 |
 | FAIL-returned-generic-need-fit | impl attempt 1 | 2026-11-14 11:42 | started in wt/fix-need-print, load 35.50 |
@@ -2363,10 +2363,11 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-types-three-variable-shapes | impl attempt 1 | 2026-11-14 12:16 | started in wt/fix-3var |
 | KERNEL-near-limit-benches | impl attempt 1 | 2026-11-14 14:05 | started; worktree /home/luke/Work/wt/kernel-near-limit; load 32.29 38.00 40.67 |
 | PERF-part-name-nested | impl attempt 1 | 2026-11-14 14:01 | started; worktree /home/luke/Work/wt/perf-part-name-nested |
+| PRESBURGER-or-if-disjuncts-refusal | running |  |  |
 | PRES-switchover-not-race | impl attempt 1 | 2026-11-14 13:48 | started; worktree /home/luke/Work/wt/pres-switchover on d7c2f809c; load 42.36 |
 | TEST-presburger-unreached-paths | impl attempt 3 | 2026-11-14 10:07 | started part 3 in wt/pres-unreached-3; load 60.04 |
-| TEST-renamed-relation-same-set | running |  |  |
-| TESTS-split | impl attempt 1 | 2026-11-06 23:46 | started; worktree /home/luke/Work/wt/tests-split at 8895df00b; load 36.28 39.25 39.35 |
+| TEST-renamed-relation-same-set | running | 2026-11-14 14:17 |  |
+| TESTS-split | impl attempt 1 | 2026-11-06 23:46 | l01_29 split into l01_29_diagnostics + l01_29_repairs_and_printing, 637 tests, 444 pieces 525 passed before and after; pushed 9988932e6 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
