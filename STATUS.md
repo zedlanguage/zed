@@ -2348,8 +2348,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-rewrite-growth-both | impl attempt 1 | 2026-11-14 12:03 | fix-growth started on d5d733341 |
 | FAIL-row-sums-solver-alone-tie-seed | running | 2026-11-14 12:52 |  |
 | FAIL-s22-unlisted-class-members-seed | running | 2026-11-14 12:52 |  |
+| FAIL-types-sub-shared-payloads | running | 2026-11-14 12:37 |  |
 | FAIL-whole-projection-parity | impl attempt 1 | 2026-11-14 11:49 | fix applied, tests pass, sweep 1248 seeds 0 wrong; base worktree fix-parity-2-base at e8310066c for before counts / load 45.35 44.57 43.46 |
-| KERNEL-eval-step-cost | impl attempt 1 | 2026-11-14 12:21 | M4 spare vals Vec in Machine::prim (not for Tuple/Path): law_04 1,867.4M->1,841.5M (-1.4%), law_06 -1.0%, law_10 -2.1%, law_20 -1.8%, law_28 -3.3%, law_25 bench |
+| KERNEL-eval-step-cost | impl attempt 1 | 2026-11-14 12:21 | M5 one spare args Vec for Term::Prim nodes: law_04 -0.15%, law_06 -0.2%, law_10 -0.4%, law_20 0.0%, law_28 +0.6%, law_25 bench -0.3%; does not pay, reverted / 4 |
 | MSG-range-error-class-spans | impl attempt 1 | 2026-11-14 12:33 | started in wt/range-spans, load 48.46 |
 | MUTATE-follows-operation | running | 2026-11-14 11:29 | 2026-11-14: found by STAGE-generic-fold-div; sink given a consumer |
 | STAGE-generic-fold-int-arm | running | 2026-11-14 11:29 | 2026-11-14: found by STAGE-generic-fold-div; sink given a consumer |
