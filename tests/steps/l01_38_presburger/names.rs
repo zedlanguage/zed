@@ -113,12 +113,23 @@ fn each_permutation(n: usize, mut visit: impl FnMut(&[usize])) -> usize {
 
 /// The answers of `rows` under every naming of its `n` variables, with how many namings
 /// gave each.
-fn namings(rows: &[Row], n: usize) -> BTreeMap<String, usize> {
+pub(super) fn namings(rows: &[Row], n: usize) -> BTreeMap<String, usize> {
     let mut seen = BTreeMap::new();
     let visited = each_permutation(n, |perm| {
         *seen.entry(answer(&formula(rows, perm))).or_insert(0) += 1;
     });
     assert_eq!(visited, (1..=n).product::<usize>());
+    seen
+}
+
+/// The answers of `rows` under the naming as written and `count` random namings of its `n`
+/// variables from `rng`, with how many namings gave each.
+fn sampled_namings(rows: &[Row], n: usize, rng: &mut Rng, count: usize) -> BTreeMap<String, usize> {
+    let mut seen = BTreeMap::new();
+    let perms = std::iter::once((0..n).collect()).chain((0..count).map(|_| shuffled(rng, n)));
+    for perm in perms {
+        *seen.entry(answer(&formula(rows, &perm))).or_insert(0) += 1;
+    }
     seen
 }
 
@@ -652,23 +663,29 @@ fn three_reads_of_a_remainder(lo: i64, hi: i64, mid: (i64, i64)) -> Vec<Row> {
     rows
 }
 
+/// The first and last equality are alike and share `i`, but each defines its own remainder,
+/// which no other equality holds, so they are solved together, in no order; kept as rows
+/// instead, the coefficient 7 left a splinter of a splinter (Shadows), and the transfer before
+/// of S22 refused `mod7` at k = 3 to 8. The naming as written and 400 random namings of a new
+/// seed each run; all 5040 namings (1.19 s at load 25) are in `bench::names`.
 #[test]
 fn tied_equalities_that_share_only_a_variable_they_do_not_define_are_solved_together() {
-    // The first and last equality are alike and share `i`, but each defines its own
-    // remainder, which no other equality holds, so they are solved together, in no order;
-    // kept as rows instead, the coefficient 7 left a splinter of a splinter (Shadows), and the
-    // transfer before of S22 refused `mod7` at k = 3 to 8.
-    let rows = three_reads_of_a_remainder(-3, 0, (3, 6));
-    assert_eq!(
-        namings(&rows, 7).into_keys().collect::<Vec<_>>(),
-        ["Ok(true)"]
-    );
-    // `i` in `[-3, -1]` has remainder 4, 5 or 6, so a middle remainder in `[0, 3]` has none.
-    let rows = three_reads_of_a_remainder(-3, -1, (0, 3));
-    assert_eq!(
-        namings(&rows, 7).into_keys().collect::<Vec<_>>(),
-        ["Ok(false)"]
-    );
+    let (mut rng, seed) = Rng::fresh("names tied equalities");
+    for (rows, want) in tied_remainder_systems() {
+        let seen = sampled_namings(&rows, 7, &mut rng, 400);
+        assert_eq!(seen.into_keys().collect::<Vec<_>>(), [want], "seed {seed}");
+    }
+}
+
+/// The two systems of [`three_reads_of_a_remainder`] that
+/// [`tied_equalities_that_share_only_a_variable_they_do_not_define_are_solved_together`] asks,
+/// with their answers. In the second, `i` in `[-3, -1]` has remainder 4, 5 or 6, so a middle
+/// remainder in `[0, 3]` has none.
+pub(super) fn tied_remainder_systems() -> [(Vec<Row>, &'static str); 2] {
+    [
+        (three_reads_of_a_remainder(-3, 0, (3, 6)), "Ok(true)"),
+        (three_reads_of_a_remainder(-3, -1, (0, 3)), "Ok(false)"),
+    ]
 }
 
 #[test]

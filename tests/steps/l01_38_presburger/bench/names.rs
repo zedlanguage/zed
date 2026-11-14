@@ -158,3 +158,13 @@ fn decide_on_separate_tied_disjunctions_scales() {
         let _ = std::hint::black_box(decide(f));
     });
 }
+
+/// `names::tied_equalities_that_share_only_a_variable_they_do_not_define_are_solved_together`
+/// as first written, 1.19 s (2026-11-14, load 25): every one of the 5040 namings of each system.
+#[test]
+fn tied_equalities_that_share_only_a_variable_they_do_not_define_are_solved_together_in_any_naming()
+{
+    for (rows, want) in tied_remainder_systems() {
+        assert_eq!(namings(&rows, 7).into_keys().collect::<Vec<_>>(), [want]);
+    }
+}
