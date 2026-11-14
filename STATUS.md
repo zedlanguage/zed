@@ -2187,7 +2187,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | CONST-too-large-rat-names | impl attempt 1 | 2026-11-13 16:26 | started; worktree from origin/main dc590de7b |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | round 5 Claude seat merged 7c8f994b4 (core classes, repair memo; point_rows R 65.8 -> 7.92), plan/STATUS f23d3185a; load 46.10 45.93 45.05 |
 | MAIN-limits | impl attempt 1 | 2026-11-13 15:20 | started; load 36.82 |
-| MSG-cast-repair-parens | running |  |  |
+| MSG-cast-repair-parens | impl attempt 1 | 2026-11-13 18:06 | started; worktree from origin/main |
 | PERF-l139-family | impl attempt 3 | 2026-11-12 18:45 | step 1 pushed 40bb19caa: hull sides asked first at the real bound (real_end); hop 8.9, hopon 9.8 run again; 8 families still over 10.5 (ignored), work continues |
 | ST-churn-at-once | impl attempt 1 | 2026-11-13 16:18 | started; worktree from origin/main a42ee21d8 |
 | ST-class-case-reverse | impl attempt 1 | 2026-11-13 16:24 | started; load 44.00 |
