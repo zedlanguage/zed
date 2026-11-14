@@ -2,6 +2,7 @@
 //! whole, each output written once when the wave ends, and a record of the inputs replays
 //! the wave without the world.
 
+mod bench;
 mod blocking;
 mod blocking_word;
 mod files;

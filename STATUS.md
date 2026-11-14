@@ -2211,7 +2211,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | LIT-rat-int-op-exponent | impl attempt 1 | 2026-11-13 23:21 | started |
 | REPAIR-pow-use-f64-drops-rat | impl attempt 1 | 2026-11-13 23:20 | started; worktree from origin/main |
 | REPAIR-text-cast-spelling | impl attempt 1 | 2026-11-13 23:35 | started |
-| SPEC-sigint-override | impl attempt 1 | 2026-11-13 22:56 | started; reading spec sec:ports/sec:ffi on Ctrl+C |
 | STAGE-generic-fold | impl attempt 1 | 2026-11-09 09:24 | started; worktree from 93fde8efa |
 | ST-relation-case-written | impl attempt 1 | 2026-11-13 20:49 | started; load 29.88 26.92 32.21 |
 | XR-ffi-stateful-r45 | impl attempt 1 | 2026-11-13 22:45 | round 4 seats launched (Sol, Opus, Gemini; Gemini quota OK); load 43.71 44.82 43.20 |

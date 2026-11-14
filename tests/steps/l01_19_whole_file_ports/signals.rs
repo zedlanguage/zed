@@ -4,14 +4,13 @@
 //! time is plan row SIGNALS-rt, so a declaration that holds is a form this zedc does not compile
 //! yet.
 
-use zed_tests::scaling::{check, inputs};
 use zedc::ast::Error;
 use zedc::rejection::Row;
 
 use super::run;
 
 /// The first error of building the syntax of `text`.
-fn built(text: &str) -> Error {
+pub(super) fn built(text: &str) -> Error {
     let tokens = zedc::lex::lex(text).unwrap();
     let tree = zedc::parse::parse(text, &tokens, "Unit", zedc::parse::TOP).unwrap();
     zedc::ast::unit(text, &tokens, &tree).unwrap_err()
@@ -183,7 +182,7 @@ fn handles_with_another_facet_or_another_result_is_a_result_main_may_not_have() 
 
 /// `main` with `handles(#sigint, #sigterm, #sighup)` and then `n` more arguments, each a repeat:
 /// the repair lists the arguments once each.
-fn repeats(n: usize) -> String {
+pub(super) fn repeats(n: usize) -> String {
     let more = ", #sigint".repeat(n);
     format!(
         "main(m: MainArgs) -> int with handles(#sigint, #sigterm, #sighup{more}) {{\n  \
@@ -191,23 +190,25 @@ fn repeats(n: usize) -> String {
     )
 }
 
+/// The headline's end for [`repeats`]: every signal once, in the order first written.
+pub(super) const REPEATS_REPAIR: &str = "`with handles(#sigint, #sigterm, #sighup)`.";
+
 #[test]
-fn a_handles_with_n_repeated_arguments_is_rejected_in_linear_time() {
-    let srcs = inputs(3000, repeats);
-    check("rejecting handles with n repeated arguments", 3000, |n| {
-        let error = built(&srcs[&n]);
+fn a_handles_with_repeated_arguments_lists_each_once_in_the_repair() {
+    // The benchmark of `bench.rs` at a small size: n repeats after all three signals.
+    for n in [1, 2, 5] {
+        let error = built(&repeats(n));
+        assert_eq!(error.row, Some(Row::SignalDeclarationCannotHold), "{n}");
         assert!(
-            error
-                .message
-                .ends_with("`with handles(#sigint, #sigterm, #sighup)`."),
-            "{}",
+            error.message.ends_with(REPEATS_REPAIR),
+            "{n}: {}",
             error.message
         );
-    });
+    }
 }
 
 /// `main` without `handles` that reads `m.signals` `n` times.
-fn reads(n: usize) -> String {
+pub(super) fn reads(n: usize) -> String {
     let mut src = String::from("main(m: MainArgs) {\n");
     for i in 0..n {
         src.push_str(&format!("  s{i} = m.signals[{i}];\n"));
@@ -217,15 +218,13 @@ fn reads(n: usize) -> String {
 }
 
 #[test]
-fn n_reads_of_signals_without_handles_are_rejected_in_linear_time() {
-    let srcs = inputs(3000, reads);
-    check(
-        "rejecting n reads of m.signals without handles",
-        3000,
-        |n| {
-            assert_eq!(built(&srcs[&n]).row, Some(Row::SignalsReadWithoutHandles));
-        },
-    );
+fn several_reads_of_signals_without_handles_are_rejected_at_the_first() {
+    // The benchmark of `bench.rs` at a small size: the error names the first read.
+    let src = reads(3);
+    let error = built(&src);
+    assert_eq!(error.row, Some(Row::SignalsReadWithoutHandles));
+    assert_eq!(&src[error.span.start..error.span.end], "m.signals");
+    assert_eq!(error.span.start, src.find("m.signals").unwrap());
 }
 
 #[test]
