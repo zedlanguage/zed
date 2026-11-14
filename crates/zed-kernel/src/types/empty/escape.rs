@@ -1584,7 +1584,7 @@ mod windows_tests {
     /// with an atom or a kill at place 1: `cells_windows` gives each row the walk's cells.
     #[test]
     fn windows_agree_with_the_walk() {
-        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut seed = crate::seed::seed("windows_agree_with_the_walk") | 1;
         let mut rnd = |n: u64| {
             seed ^= seed << 13;
             seed ^= seed >> 7;

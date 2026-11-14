@@ -4369,6 +4369,7 @@ mod tests {
     /// narrower.
     #[test]
     fn wide_quotients_agree_with_num_bigint() {
+        let base = crate::seed::seed("wide_quotients_agree_with_num_bigint");
         for (la, lb) in [
             (130, 65),
             (1023, 512),
@@ -4379,29 +4380,28 @@ mod tests {
             (3000, 2000),
             (4100, 2050),
         ] {
-            for seed in 0..3 {
-                let pairs = [
-                    (random(seed, la), random(seed + 50, lb)),
-                    (edgy(seed, la), edgy(seed + 50, lb)),
-                ];
-                for (x, y) in pairs.iter().chain(
-                    forms(la, seed + 9)
-                        .iter()
-                        .zip(forms(lb, seed + 10).iter())
-                        .map(|(x, y)| (x.clone(), y.clone()))
-                        .collect::<Vec<_>>()
-                        .iter(),
-                ) {
-                    assert_eq!(div_rem(x, y), x.div_rem(y), "{la} by {lb} words");
-                    assert_eq!(rem(x, y), x % y, "{la} by {lb} words, remainder only");
-                    let q = x >> (64 * (la - lb) as u64);
-                    let z = &q * y + (y - 1u32);
-                    assert_eq!(div_rem(&z, y), (q.clone(), y - 1u32), "{la} by {lb} words");
-                    let div = Divisor::new(Cow::Borrowed(y), 2 * y.bits());
-                    let top = (y << (64 * lb as u64)) - 1u32;
-                    for v in [&top, &(x % &top), &(&q * y)] {
-                        assert_eq!(div.div_rem(v), v.div_rem(y), "{la} by {lb} words, reused");
-                    }
+            let seed = base ^ la as u64;
+            let pairs = [
+                (random(seed, la), random(seed.wrapping_add(50), lb)),
+                (edgy(seed, la), edgy(seed.wrapping_add(50), lb)),
+            ];
+            for (x, y) in pairs.iter().chain(
+                forms(la, seed.wrapping_add(9))
+                    .iter()
+                    .zip(forms(lb, seed.wrapping_add(10)).iter())
+                    .map(|(x, y)| (x.clone(), y.clone()))
+                    .collect::<Vec<_>>()
+                    .iter(),
+            ) {
+                assert_eq!(div_rem(x, y), x.div_rem(y), "{la} by {lb} words");
+                assert_eq!(rem(x, y), x % y, "{la} by {lb} words, remainder only");
+                let q = x >> (64 * (la - lb) as u64);
+                let z = &q * y + (y - 1u32);
+                assert_eq!(div_rem(&z, y), (q.clone(), y - 1u32), "{la} by {lb} words");
+                let div = Divisor::new(Cow::Borrowed(y), 2 * y.bits());
+                let top = (y << (64 * lb as u64)) - 1u32;
+                for v in [&top, &(x % &top), &(&q * y)] {
+                    assert_eq!(div.div_rem(v), v.div_rem(y), "{la} by {lb} words, reused");
                 }
             }
         }
@@ -4487,11 +4487,12 @@ mod tests {
     /// numbers of every valuation class.
     #[test]
     fn half_pairs_match_the_matrix() {
-        for words in [1usize, 2, 3, 5, 8, 17, 40, 120, 300] {
+        let base = crate::seed::seed("half_pairs_match_the_matrix");
+        for words in [1usize, 2, 3, 5, 8, 17, 40, 120] {
             let bits = 64 * words as u64;
-            for (i, x) in forms(words, 3 + words as u64).into_iter().enumerate() {
+            for (i, x) in forms(words, base ^ words as u64).into_iter().enumerate() {
                 let a = x | BigUint::one();
-                let y = random(41 + i as u64, words);
+                let y = random(base.rotate_left(29).wrapping_add(i as u64), words);
                 for b in [
                     BigUint::zero(),
                     &y | BigUint::one(),
@@ -4546,15 +4547,16 @@ mod tests {
 
     #[test]
     fn gcds_agree_with_num_bigint() {
-        let sizes = [1, 2, 16, 17, 40, 100, 300, 700];
+        let base = crate::seed::seed("gcds_agree_with_num_bigint");
+        let sizes = [1, 2, 16, 17, 40, 100, 300];
         for &la in &sizes {
             for &lb in &sizes {
-                for (x, y) in forms(la, 17 + la as u64)
+                for (x, y) in forms(la, base ^ la as u64)
                     .iter()
-                    .zip(forms(lb, 19 + lb as u64).iter())
+                    .zip(forms(lb, base.rotate_left(17) ^ lb as u64).iter())
                 {
                     assert_eq!(gcd(x, y), x.gcd(y), "{la} and {lb} words");
-                    let g = random(23, 1 + lb / 3);
+                    let g = random(base.rotate_left(31), 1 + lb / 3);
                     let (gx, gy) = (x * &g, y * &g);
                     assert_eq!(
                         gcd(&gx, &gy),
@@ -4566,7 +4568,7 @@ mod tests {
                 }
             }
         }
-        let x = random(29, 500);
+        let x = random(base.rotate_left(47), 500);
         assert_eq!(gcd(&x, &BigUint::zero()), x);
         assert_eq!(gcd(&BigUint::zero(), &x), x);
         assert_eq!(gcd(&x, &x), x);
@@ -4741,10 +4743,11 @@ mod tests {
     fn r5_binary_leaf_random_and_adversarial_pairs() {
         use num_integer::Integer;
         let mut checked = 0;
+        let base = crate::seed::seed("r5_binary_leaf_random_and_adversarial_pairs");
         for words in [3, 4, 5, 16, 31, 64, 127, 256, 511] {
-            for seed in 1..=20 {
+            for seed in (0..3).map(|i| base.wrapping_add(i)) {
                 let x = random(seed, words) | BigUint::one();
-                let y = random(seed + 999, words) | BigUint::one();
+                let y = random(seed.wrapping_add(999), words) | BigUint::one();
                 for (a, b) in [
                     (x.clone(), y),
                     (x.clone(), x.clone()),

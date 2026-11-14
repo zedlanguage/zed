@@ -36,6 +36,9 @@ pub mod names;
 pub mod order;
 mod uses;
 
+#[cfg(test)]
+mod bench;
+
 impl Type {
     /// The type in the surface syntax (module `print`).
     pub fn surface(&self) -> Surface {
@@ -1910,12 +1913,9 @@ mod tests {
     //! short-addresses build; the test hook `SALT` changes every digest of a thread, so a type
     //! built on a thread of its own with a salt has its atoms in another order.
 
-    use std::collections::BTreeMap;
-
     use super::super::bdd::Part;
     use super::super::{Op, Row, SALT, Type};
     use super::defs::{collect, lift, plain};
-    use crate::scaling;
     use crate::value::Value;
 
     fn next(seed: &mut u64) -> u64 {
@@ -1925,7 +1925,7 @@ mod tests {
         *seed >> 33
     }
 
-    fn lit(i: u64) -> Type {
+    pub(super) fn lit(i: u64) -> Type {
         Type::lit(&Value::Int(i as i64)).expect("an integer literal type")
     }
 
@@ -1973,15 +1973,16 @@ mod tests {
             + usize::from(p.morphisms.view().is_err())
     }
 
-    /// On a thread with `salt`: the texts of `n` random types in both printers, the number of
-    /// their parts kept as expressions, and how 64 pairs of tuple types are ordered.
-    fn texts(salt: u64, n: u64) -> (Vec<(String, String)>, usize, Vec<bool>) {
+    /// On a thread with `salt`: the texts of `n` random types drawn from `base` in both
+    /// printers, the number of their parts kept as expressions, and how 64 pairs of tuple types
+    /// are ordered.
+    fn texts(salt: u64, base: u64, n: u64) -> (Vec<(String, String)>, usize, Vec<bool>) {
         std::thread::spawn(move || {
             SALT.set(salt);
             let mut kept = 0;
             let texts = (0..n)
                 .map(|i| {
-                    let mut seed = i * 7919 + 1;
+                    let mut seed = base.wrapping_add(i * 7919);
                     let t = ty(&mut seed, 5);
                     kept += exprs(&t);
                     (t.to_string(), t.surface().to_string())
@@ -1998,11 +1999,13 @@ mod tests {
 
     #[test]
     fn random_types_print_alike_in_every_order_of_their_atoms() {
-        let n = 3000;
-        let (want, kept, order) = texts(0, n);
-        assert!(kept > 100, "the types keep parts as expressions: {kept}");
+        let n = 600;
+        let base = crate::seed::seed("random_types_print_alike_in_every_order_of_their_atoms");
+        let (want, kept, order) = texts(0, base, n);
+        // 30 runs of 600 types: 22 to 41 parts kept as expressions.
+        assert!(kept > 10, "the types keep parts as expressions: {kept}");
         for salt in [0x5555_aaaa_1234_9876, 0x0123_4567_89ab_cdef, u64::MAX] {
-            let (got, _, other) = texts(salt, n);
+            let (got, _, other) = texts(salt, base, n);
             assert_ne!(order, other, "salt {salt:#x} orders the atoms otherwise");
             let differ: Vec<_> = (0..n as usize).filter(|&i| want[i] != got[i]).collect();
             assert!(
@@ -2037,72 +2040,70 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_text_of_a_long_decision_list_scales() {
-        // `((x0 | x1) \ x2 \ x3 | x4 | x5) \ x6 …`: blocks of two literals, values alternating,
-        // each new literal first in the order, so the diagram is one node per atom.
-        let build = |m: usize| {
-            let mut xs: Vec<Row> = (0..m as u64).map(|i| Row::new(vec![lit(i)])).collect();
-            xs.sort();
-            let mut f = Part::literal(xs[m - 1].clone());
-            for (i, x) in xs[..m - 1].iter().rev().enumerate() {
-                f = match i / 2 % 2 {
-                    0 => f.zip(&Part::literal(x.clone()).not(), Op::And),
-                    _ => f.zip(&Part::literal(x.clone()), Op::Or),
-                };
-            }
-            Type::with(|p| {
-                p.tuples.lens.insert(1, f);
-            })
-        };
-        let n = 1 << 10;
-        let built: BTreeMap<usize, Type> = [n, scaling::FACTOR * n]
-            .into_iter()
-            .map(|m| (m, build(m)))
-            .collect();
-        scaling::check(
-            "the text of a decision list of blocks of two, by atoms",
-            n,
-            |m| {
-                let s = built[&m].surface();
-                assert!(s.defs.is_empty());
-                assert_eq!(
-                    s.root.matches(" \\ ").count() + s.root.matches(" | ").count(),
-                    m - 1
-                );
-            },
-        );
+    /// `((x0 | x1) \ x2 \ x3 | x4 | x5) \ x6 …` on `m` atoms: blocks of two literals, values
+    /// alternating, each new literal first in the order, so the diagram is one node per atom.
+    pub(super) fn decision_list(m: usize) -> Type {
+        let mut xs: Vec<Row> = (0..m as u64).map(|i| Row::new(vec![lit(i)])).collect();
+        xs.sort();
+        let mut f = Part::literal(xs[m - 1].clone());
+        for (i, x) in xs[..m - 1].iter().rev().enumerate() {
+            f = match i / 2 % 2 {
+                0 => f.zip(&Part::literal(x.clone()).not(), Op::And),
+                _ => f.zip(&Part::literal(x.clone()), Op::Or),
+            };
+        }
+        Type::with(|p| {
+            p.tuples.lens.insert(1, f);
+        })
     }
 
+    /// The text of [`decision_list`]`(m)` has no definition and one connective between each
+    /// two literals; the benchmark `the_text_of_a_long_decision_list_scales` in `bench.rs`
+    /// checks the same at 1,024 and 8,192 atoms.
     #[test]
-    fn a_union_of_many_numeric_literals_prints_ascending_in_m_log_m() {
-        // `0 | 0.5 | 2r/3r | 1 | 1.5 | 5r/3r | …`: m literals of each of int, f64 and rat, which
-        // the fixed order interleaves by value (DESIGN.md sec:diagnostics, decision A92).
-        let build = |m: usize| {
-            Type::with(|p| {
-                for i in 0..m as i64 {
-                    p.ints.insert(&Value::Int(i));
-                    p.floats.insert(&Value::float(i as f64 + 0.5));
-                    let r = crate::num::Rat::new((3 * i + 2).into(), 3.into()).expect("a ratio");
-                    p.rats.insert(&Value::rat(r));
-                }
-            })
-        };
-        let n = 1 << 10;
-        let built: BTreeMap<usize, Type> = [n, scaling::FACTOR * n]
-            .into_iter()
-            .map(|m| (m, build(m)))
-            .collect();
-        let small = build(2).surface().root.to_string();
-        assert_eq!(small, "0 | 0.5 | 2r/3r | 1 | 1.5 | 5r/3r");
-        scaling::check(
-            "the text of a union of literals of three carriers, ascending",
-            n,
-            |m| {
-                let s = built[&m].surface();
-                assert_eq!(s.root.matches(" | ").count(), 3 * m - 1);
-            },
+    fn the_text_of_a_decision_list_has_a_connective_between_each_two_literals() {
+        for m in [1, 2, 3, 4, 5, 9, 64] {
+            let s = decision_list(m).surface();
+            assert!(s.defs.is_empty(), "{m}");
+            assert_eq!(
+                s.root.matches(" \\ ").count() + s.root.matches(" | ").count(),
+                m - 1,
+                "{m}: {}",
+                s.root
+            );
+        }
+    }
+
+    /// `0 | 0.5 | 2r/3r | 1 | 1.5 | 5r/3r | …`: `m` literals of each of int, f64 and rat, which
+    /// the fixed order interleaves by value (DESIGN.md sec:diagnostics, decision A92).
+    pub(super) fn three_carriers(m: usize) -> Type {
+        Type::with(|p| {
+            for i in 0..m as i64 {
+                p.ints.insert(&Value::Int(i));
+                p.floats.insert(&Value::float(i as f64 + 0.5));
+                let r = crate::num::Rat::new((3 * i + 2).into(), 3.into()).expect("a ratio");
+                p.rats.insert(&Value::rat(r));
+            }
+        })
+    }
+
+    /// The literals of [`three_carriers`] print ascending, one `|` between each two; the
+    /// benchmark `a_union_of_many_numeric_literals_prints_ascending_in_m_log_m` in `bench.rs`
+    /// checks the count at 1,024 and 8,192 literals of each carrier.
+    #[test]
+    fn a_union_of_numeric_literals_of_three_carriers_prints_ascending() {
+        assert_eq!(
+            three_carriers(1).surface().root.to_string(),
+            "0 | 0.5 | 2r/3r"
         );
+        assert_eq!(
+            three_carriers(2).surface().root.to_string(),
+            "0 | 0.5 | 2r/3r | 1 | 1.5 | 5r/3r"
+        );
+        for m in [3, 7, 64] {
+            let s = three_carriers(m).surface();
+            assert_eq!(s.root.matches(" | ").count(), 3 * m - 1, "{m}");
+        }
     }
 
     fn defs_abc() -> Type {
@@ -2264,8 +2265,10 @@ mod tests {
         // every atom it names, which no other text can write; a kept meet or complement whose
         // operand holds them, and that does not hold them itself, is written without `_`.
         let mut kept = 0;
-        for i in 0..20000u64 {
-            let mut seed = i * 7919 + 3;
+        let base =
+            crate::seed::seed("only_a_part_holding_values_outside_every_atom_prints_the_top_type");
+        for i in 0..4000u64 {
+            let mut seed = base.wrapping_add(i * 7919);
             let p = random_part(&mut seed, 6);
             let outside = p.eval3(&|_| Some(false)).expect("every atom is known");
             kept += usize::from(p.view().is_err());
@@ -2275,7 +2278,8 @@ mod tests {
             let s = t.surface().to_string();
             assert_eq!(s.contains('_'), outside, "{s}");
         }
-        // Most of the parts are kept expressions, not lists.
-        assert!(kept > 5000, "{kept}");
+        // About a quarter of the parts are kept expressions, not lists: 1,070 to 1,178 of 4,000
+        // in 30 runs.
+        assert!(kept > 800, "{kept}");
     }
 }

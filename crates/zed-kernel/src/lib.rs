@@ -41,6 +41,11 @@ pub mod words;
 )]
 mod scaling;
 
+/// The seed of a random test, new on each run and printed, shared with the step tests.
+#[cfg(test)]
+#[path = "../../../tests/src/seed.rs"]
+mod seed;
+
 pub use eval::{Evaluator, Global, Globals, Lookup, Schedule, World, eval};
 pub use num::Rat;
 pub use provenance::{Fact, FactAddress, NodeAddress, Provenance};

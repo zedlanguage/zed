@@ -636,3 +636,6 @@ fn decide(ids: &[u64], ts: bool, te: bool) -> Vec<bool> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod bench;

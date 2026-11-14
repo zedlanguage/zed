@@ -646,7 +646,7 @@ mod tests {
     /// `-60..=60`, which holds every root by Cauchy's bound.
     #[test]
     fn agrees_with_evaluation_at_every_member() {
-        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut seed = crate::seed::seed("agrees_with_evaluation_at_every_member") | 1;
         let mut next = |m: u64| {
             seed ^= seed << 13;
             seed ^= seed >> 7;
@@ -727,7 +727,7 @@ mod tests {
     /// found by evaluation within Cauchy's bound of the factor.
     #[test]
     fn agrees_with_planted_roots_over_many_terms() {
-        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut seed = crate::seed::seed("agrees_with_planted_roots_over_many_terms") | 1;
         let mut next = |m: u64| {
             seed ^= seed << 13;
             seed ^= seed >> 7;

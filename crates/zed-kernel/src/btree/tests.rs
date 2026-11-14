@@ -1,5 +1,5 @@
 use super::*;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 impl Hole for u64 {
     fn hole() -> Self {
@@ -8,10 +8,10 @@ impl Hole for u64 {
 }
 
 /// splitmix64 from a seed.
-struct Draw(u64);
+pub(super) struct Draw(pub(super) u64);
 
 impl Draw {
-    fn next(&mut self) -> u64 {
+    pub(super) fn next(&mut self) -> u64 {
         self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
         let mut z = self.0;
         z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
@@ -24,7 +24,7 @@ impl Draw {
     }
 }
 
-type M = Map<u64, u64>;
+pub(super) type M = Map<u64, u64>;
 
 /// Checks the shape of `node`, `root` when it is the root, and appends its entries to `out`.
 /// Returns its height.
@@ -266,10 +266,11 @@ fn a_build_keeps_the_last_of_equal_keys() {
 
 #[test]
 fn random_changes_agree_with_the_model_and_keep_old_versions() {
-    for seed in 0..30 {
-        let mut d = Draw(seed);
+    let base = crate::seed::seed("random_changes_agree_with_the_model_and_keep_old_versions");
+    for i in 0..6u64 {
+        let mut d = Draw(base.wrapping_add(i));
         // Small domains make removals and replacements common, large ones deep trees.
-        let domain = [20, 300, 3000][seed as usize % 3];
+        let domain = [20, 300, 3000][i as usize % 3];
         let mut versions: Vec<(M, BTreeMap<u64, u64>)> = vec![(M::default(), BTreeMap::new())];
         for step in 0..800 {
             let from = d.below(versions.len() as u64) as usize;
@@ -366,37 +367,4 @@ fn shared_subtrees_are_passed_over() {
     let mc: BTreeMap<u64, u64> = c.iter().map(|(&k, &v)| (k, v)).collect();
     let ma: BTreeMap<u64, u64> = a.iter().map(|(&k, &v)| (k, v)).collect();
     compare(&a, &c, &ma, &mc);
-}
-
-#[test]
-fn insertion_lookup_and_difference_scale_as_n_log_n() {
-    // n keys inserted in a scattered order, each looked up, and n differences between the map
-    // and a copy with one key changed, each of which reads only the changed path: O(n log n).
-    let inputs: HashMap<usize, Vec<u64>> = [32_000, 256_000]
-        .into_iter()
-        .map(|n| {
-            let mut d = Draw(n as u64);
-            (n, (0..n).map(|_| d.next()).collect())
-        })
-        .collect();
-    crate::scaling::check_order(
-        "a B-tree: n insertions, n lookups and n one-change differences",
-        32_000,
-        1,
-        |n| {
-            let keys = &inputs[&n];
-            let mut m = M::default();
-            for &k in keys {
-                m.insert(k, k);
-            }
-            for k in keys {
-                assert_eq!(m.get(k), Some(k));
-            }
-            for &k in keys {
-                let mut c = m.clone();
-                c.insert(k, 0);
-                assert_eq!(c.diff(&m).count(), usize::from(k != 0));
-            }
-        },
-    );
 }

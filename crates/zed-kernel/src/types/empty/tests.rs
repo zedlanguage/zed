@@ -135,7 +135,7 @@ fn the_residue_length_agrees_with_a_scan() {
             assert_eq!(found, scanned, "the inverse of {a} modulo {m}");
         }
     }
-    let mut seed = 7u64;
+    let mut seed = crate::seed::seed("the_residue_length_agrees_with_a_scan");
     let mut next = |below: u64| {
         seed = seed
             .wrapping_mul(6364136223846793005)
@@ -276,7 +276,8 @@ fn holds2(x: &[bool], l: Literal2) -> bool {
 /// variables, and each solution it gives holds every clause.
 #[test]
 fn two_sat_solve_agrees_with_enumeration_and_its_solutions_hold() {
-    let mut s = 0x9e37_79b9_7f4a_7c15;
+    let mut s =
+        crate::seed::seed("two_sat_solve_agrees_with_enumeration_and_its_solutions_hold") | 1;
     let mut seen = [0usize; 2];
     for vars in 1..=12 {
         for _ in 0..40 {
@@ -307,7 +308,7 @@ fn two_sat_solve_agrees_with_enumeration_and_its_solutions_hold() {
 fn the_value_shown_for_a_two_cnf_holds_every_clause() {
     let lit = |i: i64| Type::lit(&Value::Int(i)).expect("an integer literal");
     let vars = 48;
-    let mut s = 0x2545_f491_4f6c_dd1d;
+    let mut s = crate::seed::seed("the_value_shown_for_a_two_cnf_holds_every_clause") | 1;
     let mut shown = 0;
     for _ in 0..12 {
         let cs: Vec<(Literal2, Literal2)> = (0..vars)
@@ -449,96 +450,30 @@ fn ring(
     Group::new(defs).expect("a group").instance(vec![])
 }
 
-/// k types that each reach one ring of k types with a name each, `T_j = #a_j((T_{j+1},)) | j`,
-/// cost order k log k, though each reaches all k: the ring placed for a type is read only where
-/// another type reaches it (the second tradeoff at `overlaps`). So do the types of the ring
-/// `U_j = (#a_j((U_{j+1},)),) | j`, which all share the node of `(..,)` at the root, and the
-/// ring of names beside `#a_j(any \ (0,))` for each j, whose every one-tuple under `#a_j` holds
-/// every value under the rest of the ring.
-#[test]
-fn types_that_each_reach_a_ring_of_names_scale() {
-    use super::super::rec::Expr;
-    let names = |j: usize, t: Expr| Expr::Atom(format!("a{j}"), vec![t]);
-    let ring_of_names = crate::scaling::inputs(64, |k| ring(k, names));
-    crate::scaling::check("k types that each reach a ring of k names", 64, |k| {
-        let classes = overlaps(ring_of_names[&k].iter());
-        assert_eq!(classes, (0..k).map(|j| vec![j]).collect::<Vec<_>>());
-    });
-    let tuples = |j: usize, t: Expr| Expr::Tuple(vec![names(j, t)]);
-    let tuple_ring = crate::scaling::inputs(64, |k| ring(k, tuples));
-    crate::scaling::check(
-        "k types that share a node and reach a ring of k names",
-        64,
-        |k| {
-            let classes = overlaps(tuple_ring[&k].iter());
-            assert_eq!(classes, (0..k).map(|j| vec![j]).collect::<Vec<_>>());
-        },
-    );
-    let zero = Type::tuple(vec![Type::lit(&Value::Int(0)).expect("0")]);
-    let beside = crate::scaling::inputs(64, |k| {
-        let mut ts = ring(k, names);
-        ts.extend((0..k).map(|j| Type::atom_with(&format!("a{j}"), &(&Type::top() - &zero))));
-        ts
-    });
-    crate::scaling::check(
-        "a ring of k names beside a whole under each name",
-        64,
-        |k| {
-            let classes = overlaps(beside[&k].iter());
-            assert_eq!(classes, (0..k).map(|j| vec![j, k + j]).collect::<Vec<_>>());
-        },
-    );
-}
+/// A family of rings: what it is, its k types and the classes they fall into.
+pub(super) type Ring = (&'static str, Vec<Type>, Vec<Vec<usize>>);
 
-/// The ring of names whose members each hold a type of a lower group,
-/// `T_j = #a_j((T_{j+1},)) | #b_j((int,)) | j`.
-fn ring_holding_a_lower_type(k: usize) -> Vec<Type> {
-    use super::super::rec::Expr;
-    let int = Type::tuple(vec![Type::int()]);
-    ring(k, |j, t| {
-        Expr::Union(vec![
-            Expr::Atom(format!("a{j}"), vec![t]),
-            Expr::Type(Type::atom_with(&format!("b{j}"), &int)),
-        ])
-    })
-}
-
-/// k types that each reach one ring of k names whose members hold types of lower groups cost
-/// order k log k: the lower types of a node of the ring are placed only when the node is read
-/// (the second tradeoff at `overlaps`). The rings: each member holding `#b_j((int,))`; each
-/// holding `#b((int,))`, one name for all, so every type shares the node of `#b` at the root
-/// and is in one class; and each holding `#c_j((L,))` for a list type `L`, a recursive lower
-/// group.
-#[test]
-fn types_that_each_reach_a_ring_holding_lower_types_scale() {
+/// The six families of rings of k types that the benchmarks in `bench.rs` scale, each with its
+/// name and the classes `overlaps` gives it:
+/// - `T_j = #a_j((T_{j+1},)) | j`, a ring of names, all apart;
+/// - `U_j = (#a_j((U_{j+1},)),) | j`, which all share the node of `(..,)` at the root, all apart;
+/// - the ring of names beside `#a_j(any \ (0,))` for each j, whose every one-tuple under `#a_j`
+///   holds every value under the rest of the ring: `T_j` joined with the j-th whole;
+/// - the ring of names, each member also holding `#b_j((int,))`, a type of a lower group;
+/// - each holding `#b((int,))`, one name for all, so every type shares the node of `#b` at the
+///   root and all are in one class;
+/// - each holding `#c_j((L,))` for the list type `L = #nil | #cons((int, L))`, a recursive
+///   lower group.
+pub(super) fn rings(k: usize) -> Vec<Ring> {
     use super::super::rec::{Def, Expr, Group};
-    let lower = crate::scaling::inputs(64, ring_holding_a_lower_type);
-    crate::scaling::check(
-        "k types that each reach a ring of k names holding a lower type",
-        64,
-        |k| {
-            let classes = overlaps(lower[&k].iter());
-            assert_eq!(classes, (0..k).map(|j| vec![j]).collect::<Vec<_>>());
-        },
-    );
+    let apart: Vec<Vec<usize>> = (0..k).map(|j| vec![j]).collect();
+    let names = |j: usize, t: Expr| Expr::Atom(format!("a{j}"), vec![t]);
+    let zero = Type::tuple(vec![Type::lit(&Value::Int(0)).expect("0")]);
+    let mut beside = ring(k, names);
+    beside.extend((0..k).map(|j| Type::atom_with(&format!("a{j}"), &(&Type::top() - &zero))));
     let int = Type::tuple(vec![Type::int()]);
-    let one_name = crate::scaling::inputs(64, |k| {
-        ring(k, |j, t| {
-            Expr::Union(vec![
-                Expr::Atom(format!("a{j}"), vec![t]),
-                Expr::Type(Type::atom_with("b", &int)),
-            ])
-        })
-    });
-    crate::scaling::check(
-        "k types that each reach a ring of k names holding one lower type under one name",
-        64,
-        |k| {
-            let classes = overlaps(one_name[&k].iter());
-            assert_eq!(classes, vec![(0..k).collect::<Vec<_>>()]);
-        },
-    );
-    // `L = #nil | #cons((int, L))`.
+    let holding =
+        |lower: &dyn Fn(usize) -> Expr| ring(k, |j, t| Expr::Union(vec![names(j, t), lower(j)]));
     let list = Group::new(vec![Def {
         name: "L".into(),
         params: vec![],
@@ -553,22 +488,49 @@ fn types_that_each_reach_a_ring_holding_lower_types_scale() {
     .expect("a group")
     .instance(vec![])
     .remove(0);
-    let lists = crate::scaling::inputs(64, |k| {
-        ring(k, |j, t| {
-            Expr::Union(vec![
-                Expr::Atom(format!("a{j}"), vec![t]),
-                Expr::Atom(format!("c{j}"), vec![Expr::Type(list.clone())]),
-            ])
-        })
-    });
-    crate::scaling::check(
-        "k types that each reach a ring of k names holding a list type",
-        64,
-        |k| {
-            let classes = overlaps(lists[&k].iter());
-            assert_eq!(classes, (0..k).map(|j| vec![j]).collect::<Vec<_>>());
-        },
-    );
+    vec![
+        (
+            "k types that each reach a ring of k names",
+            ring(k, names),
+            apart.clone(),
+        ),
+        (
+            "k types that share a node and reach a ring of k names",
+            ring(k, |j, t| Expr::Tuple(vec![names(j, t)])),
+            apart.clone(),
+        ),
+        (
+            "a ring of k names beside a whole under each name",
+            beside,
+            (0..k).map(|j| vec![j, k + j]).collect(),
+        ),
+        (
+            "k types that each reach a ring of k names holding a lower type",
+            holding(&|j| Expr::Type(Type::atom_with(&format!("b{j}"), &int))),
+            apart.clone(),
+        ),
+        (
+            "k types that each reach a ring of k names holding one lower type under one name",
+            holding(&|_| Expr::Type(Type::atom_with("b", &int))),
+            vec![(0..k).collect()],
+        ),
+        (
+            "k types that each reach a ring of k names holding a list type",
+            holding(&|j| Expr::Atom(format!("c{j}"), vec![Expr::Type(list.clone())])),
+            apart,
+        ),
+    ]
+}
+
+/// The classes of the ring families of [`rings`] at a few small sizes, each the one its
+/// benchmark in `bench.rs` checks at 64 and 512 types.
+#[test]
+fn the_rings_of_names_have_the_classes_their_shapes_give() {
+    for k in [1, 2, 3, 8] {
+        for (what, ts, classes) in rings(k) {
+            assert_eq!(overlaps(ts.iter()), classes, "{what}, k = {k}");
+        }
+    }
 }
 
 /// A number in `0..n`, from the generator [`next`].
@@ -698,7 +660,8 @@ fn check_classes(case: usize, ts: &[Type], met: &mut usize, apart: &mut usize) {
 /// ([`check_classes`]).
 #[test]
 fn types_that_meet_are_joined_in_random_groups_holding_lower_types() {
-    let mut s = 0x2545_f491_4f6c_dd1d;
+    let mut s =
+        crate::seed::seed("types_that_meet_are_joined_in_random_groups_holding_lower_types") | 1;
     let (mut met, mut apart) = (0, 0);
     for case in 0..400 {
         let ts = random_cells(&mut s);
@@ -743,7 +706,9 @@ fn random_tuples(s: &mut u64) -> Vec<Type> {
 /// components and the first components of a negated one-tuple type.
 #[test]
 fn types_that_meet_are_joined_in_random_unions_and_negations_of_tuples() {
-    let mut s = 0x9e37_79b9_7f4a_7c15;
+    let mut s =
+        crate::seed::seed("types_that_meet_are_joined_in_random_unions_and_negations_of_tuples")
+            | 1;
     let (mut met, mut apart) = (0, 0);
     for case in 0..1000 {
         let ts = random_tuples(&mut s);

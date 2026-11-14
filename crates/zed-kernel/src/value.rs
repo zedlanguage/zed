@@ -2938,6 +2938,9 @@ impl From<TooLong> for KernelError {
 }
 
 #[cfg(test)]
+mod bench;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -3336,7 +3339,7 @@ mod tests {
 
     /// The pairs `(k, k + 2^40)` for `k` from 1, as one comparison of two values built apart
     /// enters them: ids drawn in order from one counter on each side.
-    fn drawn_pairs(n: usize) -> Vec<Pair> {
+    pub(super) fn drawn_pairs(n: usize) -> Vec<Pair> {
         (1..=n as u64).map(|k| (k, k + (1 << 40))).collect()
     }
 
@@ -3347,7 +3350,7 @@ mod tests {
         // later pairs of its run back, and a pair must stay findable from its home slot.
         let mut table = ReadSet::new();
         let mut set = HashSet::new();
-        let mut x: u64 = 0x2545_f491_4f6c_dd1d;
+        let mut x: u64 = crate::seed::seed("the_table_of_pairs_holds_what_a_set_holds") | 1;
         for _ in 0..200_000 {
             x ^= x << 13;
             x ^= x >> 7;
@@ -3409,32 +3412,28 @@ mod tests {
     }
 
     #[test]
-    fn the_table_of_pairs_scales() {
-        // n pairs entered, every other one taken out again, as a walk that ends at a difference
-        // inside another comparison does, and all n met again. Each step is O(1) on average:
-        // the slots are at most half full and the hash spreads ids drawn in order.
-        let inputs: HashMap<usize, Vec<Pair>> = [20_000, 160_000]
-            .into_iter()
-            .map(|n| (n, drawn_pairs(n)))
-            .collect();
-        crate::scaling::check_order(
-            "the table of pairs: n entered, n/2 taken out, n met again",
-            20_000,
-            1,
-            |n| {
-                let pairs = &inputs[&n];
-                let mut table = ReadSet::new();
-                for &p in pairs {
-                    assert!(table.insert(p));
-                }
-                for &p in pairs.iter().step_by(2) {
-                    table.remove(p);
-                }
-                let again = pairs.iter().filter(|&&p| table.insert(p)).count();
-                assert_eq!(again, n.div_ceil(2));
-                table.clear();
-            },
-        );
+    fn the_pairs_of_one_comparison_are_entered_taken_out_and_met_again() {
+        // The input of the benchmark `the_table_of_pairs_scales` in `bench.rs` at small sizes:
+        // n pairs entered, every other one taken out, all n met again, and the table cleared.
+        let mut table = ReadSet::new();
+        for n in [1, 2, 3, 4, 100, 5_000] {
+            let pairs = drawn_pairs(n);
+            for &p in &pairs {
+                assert!(table.insert(p), "{n}");
+            }
+            assert_eq!(table.len, n);
+            for &p in pairs.iter().step_by(2) {
+                table.remove(p);
+            }
+            assert_eq!(table.len, n / 2);
+            let again = pairs.iter().filter(|&&p| table.insert(p)).count();
+            assert_eq!(again, n.div_ceil(2), "{n}");
+            assert_eq!(table.len, n);
+            table.clear();
+            assert_eq!(table.len, 0);
+            assert!(pairs.iter().all(|&p| table.insert(p)), "{n}: cleared");
+            table.clear();
+        }
     }
 
     /// splitmix64 from `seed`.
@@ -3571,7 +3570,7 @@ mod tests {
     /// kinds of pair were met, and that unequal values do not all share a hash.
     #[test]
     fn equal_values_hash_alike() {
-        let mut d = Draw(7);
+        let mut d = Draw(crate::seed::seed("equal_values_hash_alike"));
         let (mut same, mut by_chance, mut apart, mut collided) = (0, 0, 0, 0);
         let mut forms_differ = 0;
         let mut last: std::collections::VecDeque<Value> = Default::default();

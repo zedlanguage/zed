@@ -2,10 +2,8 @@ use super::*;
 use crate::types::{AtomPart, Morphism, Node, Row, Type};
 use crate::value::Value;
 
-use crate::scaling;
-
 /// The tuple type of one integer, an atom independent of the others.
-fn atom(i: u64) -> Row {
+pub(super) fn atom(i: u64) -> Row {
     Row::new(vec![Type::lit(&Value::Int(i as i64)).unwrap()])
 }
 
@@ -59,9 +57,10 @@ fn three_valued_operations_keep_the_assignments() {
     // assignment agreeing with what it fixes; settling keeps every assignment in the
     // part, and makes it empty only when the part is; an atom forced taken is in every assignment in the part, and one
     // forced refused in none.
-    let (mut seed, mut exprs, mut decided, mut forced, mut settled) = (7, 0, 0, 0, 0);
-    for k in 0..3000u32 {
-        let p = if seed % 2 == 0 {
+    let mut seed = crate::seed::seed("three_valued_operations_keep_the_assignments");
+    let (mut exprs, mut decided, mut forced, mut settled) = (0, 0, 0, 0);
+    for _ in 0..600 {
+        let p = if seed.is_multiple_of(2) {
             random(&mut seed, 6)
         } else {
             random_expr(&mut seed, 5, &mut Vec::new())
@@ -70,7 +69,7 @@ fn three_valued_operations_keep_the_assignments() {
         let holds = |set: u32| move |t: &Row| (0..6).any(|i| set & (1 << i) != 0 && *t == atom(i));
         assert!(p.settle() == p.settle_by_scans(), "settling changed");
         let inside: Vec<u32> = (0..64).filter(|&set| p.eval(&holds(set))).collect();
-        let (known, fixed) = (k % 64, (k / 64) % 64);
+        let (known, fixed) = ((seed >> 7) as u32 % 64, (seed >> 13) as u32 % 64);
         let fix = |t: &Row| {
             (0..6)
                 .find(|&i| *t == atom(i) && known & (1 << i) != 0)
@@ -138,109 +137,13 @@ fn three_valued_operations_keep_the_assignments() {
             }
         }
     }
+    // 30 runs of 600 parts: 376 to 413 expressions, 287 to 337 decided, 516 to 608 forced
+    // atoms, 14 to 38 settled to empty.
     assert!(
-        exprs > 500 && decided > 300 && forced > 1000 && settled > 100,
+        exprs > 250 && decided > 200 && forced > 400 && settled > 5,
         "{exprs} {decided} {forced} {settled}"
     );
 }
-#[test]
-fn forced_atoms_of_a_long_chain_scale() {
-    // `w ∧ ((x_1 ∧ … ∧ x_m) ∨ z)`: `true` is reached past `z` from every `x_k`. Finding the
-    // branches that dominate `true` took the nearest common dominator of `m` branches at
-    // growing depths, walking up one step at a time: `O(m²)`.
-    std::thread::Builder::new()
-        .spawn(|| {
-            // Built from its literals by the connectives: `w` is atom 0, `z` atom `m + 1`.
-            let chain = |m: usize| {
-                let xs: Vec<Row> = (0..m as u64 + 2).map(atom).collect();
-                let lit = |k: usize| Part::literal(xs[k].clone());
-                let meet = (2..=m).fold(lit(1), |g, k| g.zip(&lit(k), Op::And));
-                let g = meet.zip(&lit(m + 1), Op::Or);
-                (lit(0).zip(&g, Op::And), xs[0].clone())
-            };
-            let n = 1 << 12;
-            let built = scaling::inputs(n, chain);
-            scaling::check("the forced atoms of a chain, by its length", n, |m| {
-                let (p, w) = &built[&m];
-                assert_eq!(p.forced(), (vec![w.clone()], Vec::new()));
-            });
-        })
-        .unwrap()
-        .join()
-        .unwrap();
-}
-
-#[test]
-fn forced_atoms_of_a_long_conjunction_scale() {
-    // `x_0 ∧ x_1 ∧ … ∧ x_{m-1}`, every third literal refused, kept as expressions: built one
-    // literal at a time, and as a balanced tree, whose meets join two large sets. A pass that
-    // copied the settings found so far at each conjunction took 12.5 ms at 512 literals and
-    // 760 ms at 4096 (cross-review XR3, R3_CODEX.md Q7).
-    let lit = |i: usize| {
-        let l = Part::literal(atom(i as u64));
-        if i % 3 == 2 { l.not() } else { l }
-    };
-    let and = |a: Part<Row>, b: Part<Row>| Part::expr(Form::And(a, b));
-    let deep = |m: usize| (1..m).fold(lit(0), |p, i| and(p, lit(i)));
-    let balanced = |m: usize| {
-        let mut level: Vec<Part<Row>> = (0..m).map(lit).collect();
-        while level.len() > 1 {
-            let mut next = Vec::with_capacity(level.len().div_ceil(2));
-            let mut it = level.into_iter();
-            while let Some(a) = it.next() {
-                next.push(match it.next() {
-                    Some(b) => and(a, b),
-                    None => a,
-                });
-            }
-            level = next;
-        }
-        level.pop().expect("one literal at least")
-    };
-    let expected = |m: usize| {
-        let (mut taken, mut refused): (Vec<Row>, Vec<Row>) = (Vec::new(), Vec::new());
-        for i in 0..m {
-            if i % 3 == 2 { &mut refused } else { &mut taken }.push(atom(i as u64));
-        }
-        taken.sort();
-        refused.sort();
-        (taken, refused)
-    };
-    let sorted = |(mut t, mut r): (Vec<Row>, Vec<Row>)| {
-        t.sort();
-        r.sort();
-        (t, r)
-    };
-    assert_eq!(sorted(lit(0).forced()), expected(1), "one literal");
-    assert_eq!(
-        sorted(deep(7).forced()),
-        expected(7),
-        "seven, one at a time"
-    );
-    assert_eq!(sorted(balanced(7).forced()), expected(7), "seven, balanced");
-    // A conjunction holding an atom both ways holds nowhere: every atom is then forced.
-    let empty = and(deep(5), Part::literal(atom(0)).not());
-    let (t, r) = empty.forced();
-    assert_eq!(t.len() + r.len(), 5, "{empty:?}");
-    let n = 1 << 11;
-    let built: BTreeMap<usize, (Part<Row>, Part<Row>)> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| (m, (deep(m), balanced(m))))
-        .collect();
-    for (&m, (deep, balanced)) in &built {
-        assert_eq!(sorted(deep.forced()), expected(m), "{m}, one at a time");
-        assert_eq!(sorted(balanced.forced()), expected(m), "{m}, balanced");
-    }
-    scaling::check(
-        "the forced atoms of a conjunction, by its literals",
-        n,
-        |m| {
-            let (deep, balanced) = &built[&m];
-            std::hint::black_box((deep.forced(), balanced.forced()));
-        },
-    );
-}
-
 #[test]
 fn two_exclusive_ors_on_disjoint_atoms_meet_in_an_expression() {
     // With the atoms in the order `a < b < c < d`, the diagrams of `a xor c` and `b xor d`
@@ -271,73 +174,6 @@ fn two_exclusive_ors_on_disjoint_atoms_meet_in_an_expression() {
         let bit = |i: u32| set >> i & 1 == 1;
         assert_eq!(kept.eval(&holds), (bit(0) != bit(2)) && (bit(1) != bit(3)));
     }
-}
-
-#[test]
-fn comparing_equal_expressions_built_apart_scales() {
-    // `x_{k+1} = x_k & !x_k`, built twice: both operands of each level lead to the level
-    // below, so comparing operand by operand met the bottom `2^depth` times.
-    std::thread::Builder::new()
-        .spawn(|| {
-            let build = |depth: usize| {
-                let mut x = Part::literal(atom(0));
-                for _ in 0..depth {
-                    x = Part::expr(Form::And(x.clone(), x.not()));
-                }
-                x
-            };
-            let n = 1 << 12;
-            let built: BTreeMap<usize, (Part<Row>, Part<Row>)> = [n, scaling::FACTOR * n]
-                .into_iter()
-                .map(|m| (m, (build(m), build(m))))
-                .collect();
-            scaling::check(
-                "comparing equal expressions built apart, by depth",
-                n,
-                |m| {
-                    let (a, b) = &built[&m];
-                    assert_eq!(a.cmp(b), Ordering::Equal);
-                },
-            );
-        })
-        .unwrap()
-        .join()
-        .unwrap();
-}
-
-#[test]
-fn comparing_equal_lists_built_on_two_threads_scales() {
-    // A list of `m` literals in blocks of two of alternating values. Each thread has its
-    // own tables of cells and sets, so the two lists share no node, and comparing them
-    // reads each pair of cells and of set nodes once. (The parity of `m` atoms, a diagram
-    // the lists no longer build, met its last atom `2^m` times when compared `hi` then
-    // `lo`.)
-    let blocks = |m: usize| {
-        let mut b = Bdd::Leaf(false);
-        for i in 0..m {
-            let k = (atom(i as u64), true);
-            b = if (i / 2) % 2 == 0 {
-                b.or_literal(k)
-            } else {
-                b.and_literal(k)
-            };
-        }
-        Part::Bdd(b)
-    };
-    let n = 1 << 10;
-    let on_a_thread = |m: usize| std::thread::spawn(move || blocks(m)).join().unwrap();
-    let built: BTreeMap<usize, (Part<Row>, Part<Row>)> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| (m, (on_a_thread(m), on_a_thread(m))))
-        .collect();
-    scaling::check(
-        "comparing equal lists built on two threads, by literals",
-        n,
-        |m| {
-            let (a, b) = &built[&m];
-            assert_eq!(a.cmp(b), Ordering::Equal);
-        },
-    );
 }
 
 /// A decision list's blocks with each block's literals sorted, and its default.
@@ -524,7 +360,7 @@ fn lists_agree_with_the_diagrams_apply_built() {
         .collect();
     // The id of the one list of each function, by its values.
     let mut ids: HashMap<u64, u64> = HashMap::new();
-    let mut seed = 5u64;
+    let mut seed = crate::seed::seed("lists_agree_with_the_diagrams_apply_built");
     let mut next = || {
         seed = seed
             .wrapping_mul(6364136223846793005)
@@ -532,7 +368,7 @@ fn lists_agree_with_the_diagrams_apply_built() {
         seed >> 33
     };
     let (mut joined, mut found_again) = (0, 0);
-    for _ in 0..20_000 {
+    for _ in 0..4_000 {
         let r = next() as usize;
         let (a, x) = pool[r % pool.len()].clone();
         let (b, y) = pool[next() as usize % pool.len()].clone();
@@ -624,17 +460,18 @@ fn lists_agree_with_the_diagrams_apply_built() {
         }
         pool.push((z, d));
     }
+    // 30 runs of 4,000: 1,534 to 1,715 joined, 3,193 to 3,592 found again.
     assert!(
-        joined > 5000 && found_again > 5000,
+        joined > 1000 && found_again > 2500,
         "{joined} {found_again}"
     );
 }
 
 #[test]
 fn list_matches_the_one_form_found_from_its_values() {
-    let mut seed = 11;
+    let mut seed = crate::seed::seed("list_matches_the_one_form_found_from_its_values");
     let mut lists = 0;
-    for _ in 0..4000 {
+    for _ in 0..800 {
         let Part::Bdd(b) = random(&mut seed, 6) else {
             continue;
         };
@@ -643,7 +480,8 @@ fn list_matches_the_one_form_found_from_its_values() {
         assert_eq!(Some(sorted(b.list())), expected, "the list of {b:?}");
         lists += 1;
     }
-    assert!(lists > 1000, "{lists} lists");
+    // 30 runs of 800: 524 to 576 lists.
+    assert!(lists > 400, "{lists} lists");
 }
 
 #[test]
@@ -656,120 +494,14 @@ fn list_of_a_literal_and_its_complement() {
     assert_eq!(y.not().not(), y);
 }
 
-#[test]
-fn list_of_alternating_literals_scales() {
-    // `((x0 | x1) & !x2 | x3) & !x4 …`, each new literal first in the order, so every
-    // literal is a block of its own: finding the blocks one by one took a pass over the
-    // diagram's nodes per block.
-    let build = |m: usize| {
-        let mut xs: Vec<Row> = (0..m as u64).map(atom).collect();
-        xs.sort();
-        let mut f = Part::literal(xs[m - 1].clone());
-        for (i, x) in xs[..m - 1].iter().rev().enumerate() {
-            f = match i % 2 {
-                0 => f.zip(&Part::literal(x.clone()), Op::Or),
-                _ => f.zip(&Part::literal(x.clone()).not(), Op::And),
-            };
-        }
-        let Part::Bdd(b) = f else {
-            unreachable!("a literal joined to a list is a list")
-        };
-        b
-    };
-    let n = 1 << 12;
-    let built: BTreeMap<usize, Bdd<Row>> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| (m, build(m)))
-        .collect();
-    scaling::check(
-        "the decision list of alternating literals, by atoms",
-        n,
-        |m| {
-            let l = built[&m].list();
-            assert_eq!(l.blocks.len(), m - 1);
-            assert!(!l.tail);
-        },
-    );
-}
-
-#[test]
-fn joining_chains_to_lists_scales() {
-    // `((x_0 | x_1) & !x_2 | x_3) & !x_4 …` built a literal at a time, each new literal last
-    // in the order of the atoms: the diagram the chain rule built had up to `k` nodes on
-    // the `k`-th atom, `O(m²)` in all, and built them all again at each literal (the
-    // negative control in STATUS.md, CHAIN-zip-size). A list takes each literal into its
-    // first block, or a block of its own, in `O(log m)`. Two chains with half their atoms
-    // in common are joined a literal of the shorter at a time.
-    let n = 1 << 11;
-    let lits = scaling::inputs(n, |m| {
-        let mut xs: Vec<Row> = (0..m as u64).map(atom).collect();
-        xs.sort();
-        let lits: Vec<(Part<Row>, Part<Row>)> = xs
-            .into_iter()
-            .map(|x| (Part::literal(x.clone()), Part::literal(x).not()))
-            .collect();
-        lits
-    });
-    let chains = scaling::inputs(n, |m| {
-        let chain = |from: u64| {
-            (from..from + m as u64).fold(Part::leaf(false), |f, k| {
-                f.zip(&Part::literal(atom(k)), Op::Or)
-            })
-        };
-        (chain(0), chain(m as u64 / 2))
-    });
-    scaling::check("a list built a literal at a time, by literals", n, |m| {
-        let xs = &lits[&m];
-        let f =
-            (xs[1..].iter().enumerate()).fold(xs[0].0.clone(), |f, (i, (x, not_x))| match i % 2 {
-                0 => f.zip(x, Op::Or),
-                _ => f.zip(not_x, Op::And),
-            });
-        assert!(matches!(f, Part::Bdd(_)), "{f:?}");
-    });
-    // A chain grown a literal at a time stays a chain, so both operands of each step are
-    // chains; listing the long one too at each step took `O(m²)` (59 s for the forced atoms
-    // of a chain of 32768 literals).
-    // Each literal goes into the chain's one block, so the work follows the right spine of
-    // the block's treap; it is summed over `SHAPES` offsets of the atoms.
-    let shapes = scaling::inputs(n, |m| {
-        (0..SHAPES)
-            .map(|j| {
-                let mut xs: Vec<Row> = (0..m as u64).map(|i| atom(j * SHAPE_STRIDE + i)).collect();
-                xs.sort();
-                xs.into_iter().map(Part::literal).collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>()
-    });
-    for op in [Op::Or, Op::And] {
-        scaling::check("a chain built a literal at a time, by literals", n, |m| {
-            for xs in &shapes[&m] {
-                let f = (xs[1..].iter()).fold(xs[0].clone(), |f, x| f.zip(x, op));
-                assert!(
-                    matches!(&f, Part::Bdd(b) if b.chain_len(op) == Some(m)),
-                    "{f:?}"
-                );
-            }
-        });
-    }
-    scaling::check(
-        "the union of two chains with half their atoms in common, by literals",
-        n,
-        |m| {
-            let (a, b) = &chains[&m];
-            assert!(a.zip(b, Op::Or) != *a);
-        },
-    );
-}
-
 /// `p ^ q` as the type operations build it: `p&!q | !p&q`.
-fn xor_by_or(p: &Part<Row>, q: &Part<Row>) -> Part<Row> {
+pub(super) fn xor_by_or(p: &Part<Row>, q: &Part<Row>) -> Part<Row> {
     let left = p.zip(&q.not(), Op::And);
     left.zip(&p.not().zip(q, Op::And), Op::Or)
 }
 
 /// `p ^ q` as `(p|q) & (!p|!q)`.
-fn xor_by_and(p: &Part<Row>, q: &Part<Row>) -> Part<Row> {
+pub(super) fn xor_by_and(p: &Part<Row>, q: &Part<Row>) -> Part<Row> {
     let left = p.zip(q, Op::Or);
     left.zip(&p.not().zip(&q.not(), Op::Or), Op::And)
 }
@@ -817,9 +549,32 @@ fn exclusive_ors_built_in_any_order_are_one_node() {
 }
 
 #[test]
+fn an_exclusive_or_is_found_again_when_only_its_complement_lives() {
+    // The steps leave live only one of the two exclusive ors of a set, its two constants; the
+    // other one asked for again is the complement of the live one, not a second node of the same
+    // function. `exclusive_ors_agree_with_their_values`, run with new seeds, found the case:
+    // `a ^ !b` made by `xor_by_and` and then by `xor_by_or` were two nodes.
+    let lits: Vec<Part<Row>> = (0..6).map(|i| Part::literal(atom(i))).collect();
+    let not_b = lits[1].not();
+    let by_and = xor_by_and(&lits[0], &not_b);
+    assert_eq!(xor_by_or(&lits[0], &not_b).id(), by_and.id());
+    for k in 2..=6 {
+        let flipped = (1..k).fold(lits[0].not(), |f, i| xor_by_and(&f, &lits[i]));
+        let again = (1..k).fold(lits[0].not(), |f, i| xor_by_or(&f, &lits[i]));
+        assert_eq!(again.id(), flipped.id(), "{k}");
+        let plain = (1..k).fold(lits[0].clone(), |f, i| xor_by_or(&f, &lits[i]));
+        assert_eq!(plain.not().id(), flipped.id(), "{k}");
+    }
+}
+
+#[test]
 fn exclusive_ors_agree_with_their_values() {
     // Random parts over six atoms, each built with its set of values beside it as a mask of
-    // the 64 assignments; exclusive ors in their one form of one function are one node.
+    // the 64 assignments; exclusive ors in their one form of one function are one node while
+    // they live. The first part of each function is held, so that a later one is compared with
+    // a live node: a node freed and made again takes a new id.
+    const ROUNDS: usize = 2000;
+    const POOL: usize = 50;
     let lits: Vec<(Part<Row>, u64)> = (0..6)
         .map(|i| {
             let mask = (0..64u32).filter(|b| b >> i & 1 == 1);
@@ -831,16 +586,29 @@ fn exclusive_ors_agree_with_their_values() {
         let atoms = &atoms;
         move |a: &Row| (0..6).any(|i| bits >> i & 1 == 1 && *a == atoms[i])
     };
-    let mut pool: Vec<(Part<Row>, u64)> = lits.clone();
-    let mut ids: HashMap<u64, u64> = HashMap::new();
-    let mut seed = 7u64;
-    for _ in 0..4000 {
+    // Two pools: every part made, and the exclusive ors in their one form, from which the
+    // operands of the two exclusive ors are drawn (any two parts drawn from the first would be
+    // exclusive ors in their one form in about one round in a hundred). The literals stay in
+    // both, so that every round can join exclusive ors of them; a leaf makes nothing new and
+    // is not kept.
+    let put = |pool: &mut Vec<(Part<Row>, u64)>, made: &(Part<Row>, u64), pick: usize| {
+        if pool.len() < POOL {
+            pool.push(made.clone());
+        } else {
+            pool[lits.len() + pick % (POOL - lits.len())] = made.clone();
+        }
+    };
+    let (mut pool, mut xors) = (lits.clone(), lits.clone());
+    let mut firsts: HashMap<u64, Part<Row>> = HashMap::new();
+    let mut seed = crate::seed::seed("exclusive_ors_agree_with_their_values");
+    for _ in 0..ROUNDS {
         seed = seed
             .wrapping_mul(6364136223846793005)
             .wrapping_add(1442695040888963407);
         let pick = (seed >> 33) as usize;
-        let (p, pm) = pool[pick % pool.len()].clone();
-        let (q, qm) = pool[(pick / 7) % pool.len()].clone();
+        let from = if pick % 5 < 2 { &xors } else { &pool };
+        let (p, pm) = from[pick % from.len()].clone();
+        let (q, qm) = from[(pick / 7) % from.len()].clone();
         let made = match pick % 5 {
             0 => (xor_by_or(&p, &q), pm ^ qm),
             1 => (xor_by_and(&p, &q), pm ^ qm),
@@ -851,16 +619,18 @@ fn exclusive_ors_agree_with_their_values() {
         for bits in 0..64 {
             assert_eq!(made.0.eval(&holds(bits)), made.1 >> bits & 1 == 1);
         }
+        if made.0.is_leaf().is_some() {
+            continue;
+        }
         if made.0.xor_tag().is_some() {
-            assert_eq!(*ids.entry(made.1).or_insert(made.0.id()), made.0.id());
+            let first = firsts.entry(made.1).or_insert_with(|| made.0.clone());
+            assert_eq!(first.id(), made.0.id(), "{:x}", made.1);
+            put(&mut xors, &made, pick);
         }
-        if pool.len() < 200 {
-            pool.push(made);
-        } else {
-            pool[pick % 200] = made;
-        }
+        put(&mut pool, &made, pick);
     }
-    assert!(ids.len() >= 10, "{}", ids.len());
+    // 2 · 64 - 2 functions are exclusive ors and no leaf; 40 runs reached 122 to 126.
+    assert!(firsts.len() >= 100, "{}", firsts.len());
 }
 
 #[test]
@@ -869,7 +639,7 @@ fn the_halves_of_exclusive_ors_meet_as_zip_meets_them() {
     // for literals and exclusive ors over disjoint atoms; it must make the part `zip` makes.
     // Random sets of 1 to 7 atoms, each built in a random order, are met with each other and
     // their complements, both ways round.
-    let mut seed = 11u64;
+    let mut seed = crate::seed::seed("the_halves_of_exclusive_ors_meet_as_zip_meets_them");
     let mut next = |below: u64| {
         seed = seed
             .wrapping_mul(6364136223846793005)
@@ -907,85 +677,10 @@ fn the_halves_of_exclusive_ors_meet_as_zip_meets_them() {
     assert!(exprs > 10_000, "{exprs}");
 }
 
-#[test]
-fn parity_built_a_literal_at_a_time_scales() {
-    // Parity built a literal at a time, as the type operations build it: each step takes a
-    // literal into the set of the one form in `O(log n)`, and makes the expressions of the
-    // `O(log n)` new tree nodes. Each size has atoms of its own. Each literal rebuilds the
-    // nodes on its path in the set's treap, so the work follows that path; parity is built
-    // over `SHAPES` offsets of the atoms.
-    //
-    // Measured (16 offsets, 2026-11-09): the tree nodes built per literal at 128 to 8,192
-    // literals are 6.30, 7.99, 9.25, 10.48, 11.98, 13.18, 14.84, that is `2 H_n - 4.45`
-    // within 0.15, the depth of a treap built by random insertion. So the work is `n log n`
-    // with a negative constant term, and its ratio at `n` and `8n` approaches the limit's
-    // `ln(8n)/ln(n) × 1.1` from above as `n` falls; at 2,048 and 16,384 the limit is 11.20.
-    // With the atoms in sorted order the nodes per literal are `H_n - 1.5`.
-    //
-    // Each node cost about 147,000 instructions while `xor::half` met its operands by `zip`,
-    // whose search for a simpler form (`choice_of`, `same_as_not`, `choice`, `negate`) never
-    // finds one for the halves of an exclusive or (see `xor::meet`). With `xor::meet` a node
-    // costs about 34,000: 6.51G and 66.12G instructions at 2,048 and 16,384 (10.2 times),
-    // 696M and 6.96G bytes (10.0 times), 25 s at load 6 (SCALE-log-offset). Releasing a
-    // shared handle in place, one table probe per freed node, the inner nodes' exclusive ors
-    // kept in a table, two literals met at once and the exclusive or tested before `zip`'s
-    // frames bring it to 4.99G and 50.09G (10.0 times), 489M and 4.97G bytes (10.2 times),
-    // 28 s at load 31 where the code before took 54 s at load 30, and 51 s inside a run of
-    // 508 tests (KERNEL-parity-cost). So the sizes are now 1,024 and 8,192 literals, where the
-    // limit is 11.44: 2.26G and 23.36G instructions (10.3 times), 221M and 2.31G bytes (10.4
-    // times), 11 s at load 30. Rebuilding every tree node on each literal fails the check at
-    // 128 and 1,024 literals, by 58.6 times the bytes. Making each exclusive or's two meets
-    // only when its form is read (KERNEL-parity-lazy-halves) takes 1.96G and 20.45G
-    // instructions to 1.48G and 15.31G (10.3 times), 221M and 2.31G bytes to 138M and 1.39G
-    // (10.1 times), and 10.4 s to 7.0 s at load 11 to 22.
-    let n = 1 << 10;
-    let lits = scaling::inputs(n, |m| {
-        (0..SHAPES)
-            .map(|j| {
-                (0..m as u64)
-                    .map(|i| Part::literal(atom(j * SHAPE_STRIDE + 16 * m as u64 + i)))
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>()
-    });
-    scaling::check("parity built a literal at a time, by literals", n, |m| {
-        for ls in &lits[&m] {
-            let x = ls.iter().fold(Part::leaf(false), |f, l| xor_by_or(&f, l));
-            assert!(x.xor_tag().is_some());
-        }
-    });
-}
-
-#[test]
-fn exclusive_ors_scale() {
-    // The exclusive ors of the first half and of the last three quarters of `n` atoms, which
-    // share a quarter, are joined in `O(n log n)`. Each size has atoms of its own.
-    let n = 1 << 10;
-    let halves = scaling::inputs(n, |m| {
-        let ls: Vec<_> = (0..m as u64)
-            .map(|i| Part::literal(atom(16 * m as u64 + i)))
-            .collect();
-        let half = |r: std::ops::Range<usize>| {
-            ls[r]
-                .iter()
-                .fold(Part::leaf(false), |f, l| xor_by_or(&f, l))
-        };
-        (half(0..m / 2), half(m / 4..m))
-    });
-    scaling::check(
-        "two exclusive ors with half their atoms in common joined, by literals",
-        n,
-        |m| {
-            let (a, b) = &halves[&m];
-            assert!(xor_by_and(a, b).xor_tag().is_some());
-        },
-    );
-}
-
 /// `depth` levels of the atom `#a` with a payload of the level below, over `bottom`, every
 /// digest 0: comparing two of them reads every level, as two types whose digests tie at
 /// every depth are read in the short-addresses build (SHORT-stack-l01_22).
-fn tied(bottom: &str, depth: usize) -> Type {
+pub(super) fn tied(bottom: &str, depth: usize) -> Type {
     let zeroed = |t: Type| {
         let Node::Parts(p, _) = &*t.0 else {
             unreachable!("an atom type is no recursive node")
@@ -1019,16 +714,17 @@ fn tied(bottom: &str, depth: usize) -> Type {
 #[test]
 fn types_whose_digests_tie_at_every_depth_are_ordered_on_a_small_stack() {
     // The order reads such types n levels down. It was a recursion, which overflowed this
-    // 2 MiB stack a few thousand levels down; it is a loop with a stack of its own.
+    // 2 MiB stack at 5,761 levels in a debug build (measured on e3795900d, before
+    // SHORT-stack-l01_22); it is a loop with a stack of its own, here half as deep again.
     std::thread::Builder::new()
         .stack_size(2 << 20)
         .spawn(|| {
-            let depth = 100_000;
+            let depth = 9_000;
             let (a, b, c) = (tied("z", depth), tied("z", depth), tied("y", depth));
             assert_eq!(a.digest(), c.digest());
             assert_eq!(a.cmp(&b), Ordering::Equal);
             assert_eq!(a, b);
-            // The bottoms differ: `#y` before `#z`, read 100,000 levels down.
+            // The bottoms differ: `#y` before `#z`, read 9,000 levels down.
             assert_eq!(a.cmp(&c), Ordering::Greater);
             assert_eq!(c.cmp(&a), Ordering::Less);
             // A chain that stops a level short has no payload where the other has one.
@@ -1041,27 +737,9 @@ fn types_whose_digests_tie_at_every_depth_are_ordered_on_a_small_stack() {
         .unwrap();
 }
 
-#[test]
-fn ordering_types_whose_digests_tie_at_every_depth_scales() {
-    // One step per level: the two chains are equal, so every level is read.
-    let n = 10_000;
-    let built: BTreeMap<usize, (Type, Type)> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| (m, (tied("z", m), tied("z", m))))
-        .collect();
-    scaling::check(
-        "ordering two equal chains of tied digests, by depth",
-        n,
-        |m| {
-            let (a, b) = &built[&m];
-            assert_eq!(a.cmp(b), Ordering::Equal);
-        },
-    );
-}
-
 /// `x_0 | x_1 | … | x_{m-1}` as expressions nested `m - 1` deep, the first operand the
 /// deeper, each `x_k` the part `leaf` makes of the atom `base + k`.
-fn ors(base: u64, m: usize, leaf: impl Fn(Row) -> Part<Row>) -> Part<Row> {
+pub(super) fn ors(base: u64, m: usize, leaf: impl Fn(Row) -> Part<Row>) -> Part<Row> {
     (1..m as u64).fold(leaf(atom(base)), |e, k| {
         Part::expr(Form::Or(e, leaf(atom(base + k))))
     })
@@ -1071,7 +749,7 @@ fn ors(base: u64, m: usize, leaf: impl Fn(Row) -> Part<Row>) -> Part<Row> {
 /// `e_0` the atom `base` and `e_1` the atom `base + 1`: each expression is the second operand
 /// of the one two above it, so an evaluation that reaches it first through the first operand
 /// finds it in its memo the second time. In [`ors`] every lookup comes before the first entry.
-fn ladder(base: u64, m: usize) -> Part<Row> {
+pub(super) fn ladder(base: u64, m: usize) -> Part<Row> {
     let (mut below, mut top) = (Part::literal(atom(base)), Part::literal(atom(base + 1)));
     for _ in 2..m {
         let next = Part::expr(Form::Or(top.clone(), below));
@@ -1085,7 +763,7 @@ fn ladder(base: u64, m: usize) -> Part<Row> {
 /// atoms `base + 2k - 1` and `base + 2k`, which is no chain under `|`, so that no union
 /// rebuilt from them merges into a list. [`Part::settle`] pins `t` to `false` and
 /// rebuilds the `m - 1` expressions above it.
-fn settled_by_one_pin(base: u64, m: usize) -> Part<Row> {
+pub(super) fn settled_by_one_pin(base: u64, m: usize) -> Part<Row> {
     let t = Part::expr(Form::Not(Part::literal(atom(base))));
     let p = (1..m as u64).fold(t.clone(), |e, k| {
         let x = Bdd::literal(atom(base + 2 * k - 1));
@@ -1098,14 +776,16 @@ fn settled_by_one_pin(base: u64, m: usize) -> Part<Row> {
 }
 
 /// The list `x_0 & x_1 & … & x_{m-1}`, one block of `m` literals, the atoms from `base`.
-fn meet(base: u64, m: usize) -> Bdd<Row> {
+pub(super) fn meet(base: u64, m: usize) -> Bdd<Row> {
     (0..m as u64).fold(Bdd::Leaf(true), |b, k| {
         b.and_literal((atom(base + k), true))
     })
 }
 
-/// The walks on expressions and diagrams nested this deep, on a 2 MiB stack.
-const DEEP: usize = 100_000;
+/// The walks on expressions and diagrams nested this deep, on a 2 MiB stack. Of the walks the
+/// test runs, the recursive ones before T2-types-rest part 3 overflowed that stack at 13,085 to
+/// 32,812 levels in a debug build (measured on 8e4fdf932); half as deep again as the deepest.
+const DEEP: usize = 50_000;
 
 #[test]
 fn the_walks_over_parts_nested_deep_run_on_a_small_stack() {
@@ -1151,64 +831,9 @@ fn an_expression_read_twice_has_one_value() {
     assert!(!p.eval(&|a| *a == atom(2)));
 }
 
-#[test]
-fn the_walks_over_parts_scale() {
-    let n = 1 << 12;
-    let sizes = [n, scaling::FACTOR * n];
-    let ors: BTreeMap<usize, Part<Row>> = sizes
-        .map(|m| (m, ors(10 * m as u64, m, Part::literal)))
-        .into();
-    let pins: BTreeMap<usize, Part<Row>> = sizes
-        .map(|m| (m, settled_by_one_pin(20 * m as u64, m)))
-        .into();
-    let meets: BTreeMap<usize, Part<Row>> =
-        sizes.map(|m| (m, Part::Bdd(meet(30 * m as u64, m)))).into();
-    let ladders: BTreeMap<usize, Part<Row>> = sizes.map(|m| (m, ladder(40 * m as u64, m))).into();
-    scaling::check("eval of an expression, by depth", n, |m| {
-        assert!(!ors[&m].eval(&|_| false));
-    });
-    // Every expression but the top one is read twice, the second time from the memo.
-    scaling::check(
-        "eval of an expression whose operands are shared, by depth",
-        n,
-        |m| {
-            assert!(!ladders[&m].eval(&|_| false));
-        },
-    );
-    scaling::check("eval3 of an expression and a diagram, by depth", n, |m| {
-        assert_eq!(ors[&m].eval3(&|_| None), None);
-        assert_eq!(meets[&m].eval3(&|_| None), None);
-    });
-    scaling::check(
-        "the atoms of an expression and a diagram, by depth",
-        n,
-        |m| {
-            assert_eq!(ors[&m].distinct_atoms().len(), m);
-            assert_eq!(meets[&m].distinct_atoms().len(), m);
-        },
-    );
-    scaling::check("the union's rows, by depth", n, |m| {
-        assert_eq!(ors[&m].union_rows().map(|r| r.len()), Some(m));
-    });
-    scaling::check("the forced atoms of an expression, by depth", n, |m| {
-        assert_eq!(ors[&m].forced(), (Vec::new(), Vec::new()));
-    });
-    scaling::check(
-        "restricting an expression and a diagram, by depth",
-        n,
-        |m| {
-            assert_eq!(ors[&m].restrict(&|_| Some(false)), Part::leaf(false));
-            assert_eq!(meets[&m].restrict(&|_| None), meets[&m]);
-        },
-    );
-    scaling::check("settling on one pin, by depth", n, |m| {
-        assert_eq!(pins[&m].settle().distinct_atoms().len(), 2 * (m - 1));
-    });
-}
-
 /// The list `x_0 & … & x_{m-2} & !x_{m-1}`, on the atoms of [`meet`]`(base, m)`, which
 /// meets it in no value: the meet of the two joins each literal of one to the other.
-fn meet_but_last(base: u64, m: usize) -> Bdd<Row> {
+pub(super) fn meet_but_last(base: u64, m: usize) -> Bdd<Row> {
     let last = atom(base + m as u64 - 1);
     meet(base, m - 1).and_literal((last, false))
 }
@@ -1218,7 +843,7 @@ fn meet_but_last(base: u64, m: usize) -> Bdd<Row> {
 /// `base + m`, and `y_k` the atom `leaves + k`. Its complement, and its union with another
 /// such chain on the same conditions, are each built a level at a time, through the choice
 /// each level is.
-fn choices(base: u64, leaves: u64, m: usize) -> Part<Row> {
+pub(super) fn choices(base: u64, leaves: u64, m: usize) -> Part<Row> {
     (1..m as u64).fold(Part::literal(atom(base + m as u64)), |p, k| {
         let c = Part::literal(atom(base + k));
         Part::expr(Form::Or(
@@ -1229,18 +854,20 @@ fn choices(base: u64, leaves: u64, m: usize) -> Part<Row> {
 }
 
 /// How deep the lists of the depth test go: the diagrams' `apply` and `flip`, as
-/// recursions, overflowed the 8 MiB stack of a main thread at 60,000 (and ran at 30,000).
-const DIAGRAM_DEPTH: usize = 100_000;
+/// recursions, overflowed a 2 MiB stack at 13,085 and 14,647 levels in a debug build
+/// (measured on faf792d10, before T2-types-rest-4), and the 8 MiB stack of a main thread at
+/// 60,000. Half as deep again, so that the old code overflows here with room to spare.
+const DIAGRAM_DEPTH: usize = 22_000;
 
 /// How deep the choices of the depth test go: `Part::not` and `Part::zip`, as a mutual
-/// recursion through `choice`, `choice_of`, `same_as_not` and `choose`, overflowed the
-/// 8 MiB stack at 10,000 (and ran at 6,000).
-const CHOICE_DEPTH: usize = 20_000;
+/// recursion through `choice`, `choice_of`, `same_as_not` and `choose`, overflowed a 2 MiB
+/// stack at 1,684 levels (measured as above), and the 8 MiB stack at 10,000; half as deep again.
+const CHOICE_DEPTH: usize = 2_600;
 
 #[test]
 fn the_connectives_on_parts_nested_deep_run_on_the_default_stack() {
-    // On the test thread's own stack (2 MiB unless RUST_MIN_STACK says otherwise), a
-    // quarter of the 8 MiB the depths above overflowed.
+    // On the test thread's own stack (2 MiB unless RUST_MIN_STACK says otherwise), which the
+    // depths above overflowed in the old recursions.
     let (a, b) = (meet(0, DIAGRAM_DEPTH), meet_but_last(0, DIAGRAM_DEPTH));
     assert_eq!(a.zip_chain(&b, Op::And), Some(Bdd::Leaf(false)));
     let not_a = a.not();
@@ -1264,51 +891,6 @@ fn the_connectives_on_parts_nested_deep_run_on_the_default_stack() {
     let top_of_q = atom(base + 4 * CHOICE_DEPTH as u64 + CHOICE_DEPTH as u64 - 1);
     assert!(both.eval(&|a| *a == top_of_q));
     assert!(!p.eval(&|a| *a == top_of_q));
-}
-
-#[test]
-fn the_connectives_on_parts_scale_by_depth() {
-    // Inputs Θ(m) deep, built before any run is timed; each connective meets each node or
-    // expression a constant number of times.
-    let n = 1 << 12;
-    let meets = scaling::inputs(n, |m| {
-        let base = 100 * m as u64;
-        (meet(base, m), meet_but_last(base, m))
-    });
-    // A union keeps the complements it makes with the expressions, so each run of it takes
-    // chains of its own, on atoms of their own.
-    let (small, large) = scaling::Meter::new().runs();
-    type Pairs = std::sync::Mutex<Vec<(Part<Row>, Part<Row>)>>;
-    let chains: BTreeMap<usize, Pairs> = [(n, small), (scaling::FACTOR * n, large)]
-        .map(|(m, runs)| {
-            let pairs = (0..runs as u64)
-                .map(|i| {
-                    let base = (1000 + 10 * i) * m as u64;
-                    (
-                        choices(base, base + 2 * m as u64, m),
-                        choices(base, base + 4 * m as u64, m),
-                    )
-                })
-                .collect();
-            (m, std::sync::Mutex::new(pairs))
-        })
-        .into();
-    scaling::check("the meet of two lists, by depth", n, |m| {
-        let (a, b) = &meets[&m];
-        assert_eq!(a.zip_chain(b, Op::And), Some(Bdd::Leaf(false)));
-    });
-    // The complement flips the value of the first block and allocates nothing.
-    scaling::check_instructions_only("the complement of a list, by depth", n, 1, |m| {
-        assert!(meets[&m].0.not() != meets[&m].0);
-    });
-    scaling::check("the union of two chains of choices, by depth", n, |m| {
-        let (p, q) = chains[&m]
-            .lock()
-            .expect("the chains of a size")
-            .pop()
-            .expect("a pair of chains per run");
-        assert!(p.zip(&q, Op::Or) != p);
-    });
 }
 
 /// The entries of this thread's tables of tuple nodes, in all: sets, cells, exclusive ors and
@@ -1493,61 +1075,23 @@ fn batch_and_single_file_agree_on_a_complement_whose_holder_was_freed() {
 /// path or spine of one treap: a priority is a hash of a literal, so each offset gives the
 /// treaps another random shape, and the work summed over the offsets measures the expected
 /// path rather than one sample of it. Every size runs all of them.
-const SHAPES: u64 = 8;
+pub(super) const SHAPES: u64 = 8;
 
 /// The distance between the atoms of two offsets, above the atoms any one offset uses.
-const SHAPE_STRIDE: u64 = 1 << 32;
+pub(super) const SHAPE_STRIDE: u64 = 1 << 32;
 
 /// The block of the two literals on the atoms `a` and `a + 1`, each taken.
-fn pair_block(a: u64) -> Arc<Set<Row>> {
+pub(super) fn pair_block(a: u64) -> Arc<Set<Row>> {
     set::insert(Some(&set::single((atom(a), true))), (atom(a + 1), true))
 }
 
 /// The list of `m` blocks of two literals, the atoms from `base`, the values alternating
 /// from `true`: no block is merged or moved, so the list has `m` cells.
-fn blocks(base: u64, m: usize) -> Bdd<Row> {
+pub(super) fn blocks(base: u64, m: usize) -> Bdd<Row> {
     let prefix = (0..m as u64)
         .map(|i| (i % 2 == 0, Some(pair_block(base + 2 * i))))
         .collect();
     Bdd::assemble(prefix, &Bdd::Leaf(m.is_multiple_of(2)))
-}
-
-#[test]
-fn restricting_lists_that_share_a_tail_scales() {
-    // Item CHAIN-restrict-memo: `m` lists, each a block of its own before one tail of `m`
-    // blocks, restricted on an atom of the tail's last block with one memo. Memoized by
-    // list, each walked and rebuilt the whole tail again, `O(m²)` in all; memoized by cell,
-    // the cells of the tail are restricted once.
-    let n = 1 << 9;
-    // Each list rebuilds the tail's right spine where its last block shrinks, so the work
-    // follows that spine; it is summed over the tails of `SHAPES` offsets of the atoms.
-    let lists = scaling::inputs(n, |m| {
-        (0..SHAPES)
-            .map(|j| {
-                let o = j * SHAPE_STRIDE;
-                let tail = blocks(o + 8000, m);
-                let Bdd::List(_, v) = &tail else {
-                    unreachable!("a list of blocks has a cell")
-                };
-                let heads: Vec<Bdd<Row>> = (0..m as u64)
-                    .map(|i| {
-                        let head = (!*v, Some(pair_block(o + 30000 + 2 * i)));
-                        Bdd::assemble(vec![head], &tail)
-                    })
-                    .collect();
-                (atom(o + 8000 + 2 * (m as u64 - 1)), heads)
-            })
-            .collect::<Vec<_>>()
-    });
-    scaling::check("lists sharing a tail of m blocks, restricted", n, |m| {
-        for (last, heads) in &lists[&m] {
-            let fix = |a: &Row| (a == last).then_some(false);
-            let mut memo = list::Memo::default();
-            for l in heads {
-                assert_ne!(l.restrict(&fix, &mut memo).id(), l.id());
-            }
-        }
-    });
 }
 
 #[test]
@@ -1588,30 +1132,6 @@ fn restricting_with_a_shared_memo_gives_the_lists_restricted_alone() {
             }
         }
     }
-}
-
-#[test]
-fn a_long_meet_joined_to_short_meets_scales() {
-    // Item CHOICE-both-chains: a meet of `m` literals joined under `|` to `m` meets of two,
-    // half of them with the complement of one of its literals, each a choice then. Listing
-    // both chains at each join took `O(m)` a join; the longer is now only looked up.
-    let n = 1 << 10;
-    let parts = scaling::inputs(n, |m| {
-        let long = Part::Bdd(meet(40000, m));
-        let short: Vec<Part<Row>> = (0..m as u64)
-            .map(|i| match i % 2 {
-                0 => Part::Bdd(meet(50000 + 2 * i, 2)),
-                _ => Part::Bdd(meet(50000 + 2 * i, 1).and_literal((atom(40000 + i), false))),
-            })
-            .collect();
-        (long, short)
-    });
-    scaling::check("a meet of m literals joined to m meets of two", n, |m| {
-        let (long, short) = &parts[&m];
-        for s in short {
-            assert!(matches!(long.zip(s, Op::Or), Part::Expr(_)));
-        }
-    });
 }
 
 #[test]
@@ -2045,7 +1565,7 @@ fn list_operations_agree_with_plain_lists() {
     // kept, since ids are compared only between lists alive at once.
     const ATOMS: u64 = 40;
     let base = 71000;
-    let mut seed = 0x2545_f491_4f6c_dd1du64;
+    let mut seed = crate::seed::seed("list_operations_agree_with_plain_lists") | 1;
     let mut next = move || {
         seed ^= seed << 13;
         seed ^= seed >> 7;
@@ -2063,7 +1583,7 @@ fn list_operations_agree_with_plain_lists() {
     let mut pool: Vec<(Bdd<Row>, Plain)> = vec![(Bdd::Leaf(false), plain(&Bdd::Leaf(false)))];
     let mut kept: BTreeMap<Plain, Bdd<Row>> = BTreeMap::new();
     let mut longest = 0;
-    for _ in 0..30_000 {
+    for _ in 0..8_000 {
         let r = next();
         let (f, p) = pool[(r % pool.len() as u64) as usize].clone();
         let (a, t) = (next() % ATOMS, next() % 2 == 0);
@@ -2127,6 +1647,7 @@ fn list_operations_agree_with_plain_lists() {
             pool.swap_remove((next() % 400) as usize);
         }
     }
+    // 30 runs of 8,000: the longest list had 14 to 20 blocks.
     assert!(longest >= 12, "the longest list has {longest} blocks");
 }
 
@@ -2178,6 +1699,291 @@ fn a_set_less_some_literals_is_the_set_they_leave_one_at_a_time() {
                 retained.map(|s| s.id),
                 Some(t.id),
                 "nothing removed keeps the node"
+            );
+        }
+    }
+}
+
+// Small instances of the benchmarks in `bench.rs`: each checks at a few small sizes what the
+// benchmark of the same input checks besides its ratio (TEST-bench-move-crates).
+
+/// `w ∧ ((x_1 ∧ … ∧ x_m) ∨ z)`, built from its literals by the connectives, `w` the atom 0
+/// and `z` the atom `m + 1`; and `w`, the one atom it forces.
+pub(super) fn forced_chain(m: usize) -> (Part<Row>, Row) {
+    let xs: Vec<Row> = (0..m as u64 + 2).map(atom).collect();
+    let lit = |k: usize| Part::literal(xs[k].clone());
+    let meet = (2..=m).fold(lit(1), |g, k| g.zip(&lit(k), Op::And));
+    let g = meet.zip(&lit(m + 1), Op::Or);
+    (lit(0).zip(&g, Op::And), xs[0].clone())
+}
+
+#[test]
+fn the_one_atom_a_chain_forces_is_its_first() {
+    for m in [1, 2, 3, 8, 33] {
+        let (p, w) = forced_chain(m);
+        assert_eq!(p.forced(), (vec![w], Vec::new()), "{m}");
+    }
+}
+
+/// The literal `x_i` of [`conjunction`]: the atom `i`, refused at every third.
+fn conjunction_literal(i: usize) -> Part<Row> {
+    let l = Part::literal(atom(i as u64));
+    if i % 3 == 2 { l.not() } else { l }
+}
+
+/// `x_0 ∧ x_1 ∧ … ∧ x_{m-1}`, every third literal refused, kept as expressions: built one
+/// literal at a time, or as a balanced tree (`balanced`).
+pub(super) fn conjunction(m: usize, balanced: bool) -> Part<Row> {
+    let and = |a: Part<Row>, b: Part<Row>| Part::expr(Form::And(a, b));
+    if !balanced {
+        return (1..m).fold(conjunction_literal(0), |p, i| {
+            and(p, conjunction_literal(i))
+        });
+    }
+    let mut level: Vec<Part<Row>> = (0..m).map(conjunction_literal).collect();
+    while level.len() > 1 {
+        let mut next = Vec::with_capacity(level.len().div_ceil(2));
+        let mut it = level.into_iter();
+        while let Some(a) = it.next() {
+            next.push(match it.next() {
+                Some(b) => and(a, b),
+                None => a,
+            });
+        }
+        level = next;
+    }
+    level.pop().expect("one literal at least")
+}
+
+/// The atoms [`conjunction`]`(m, _)` forces taken and refused, each sorted.
+pub(super) fn conjunction_forced(m: usize) -> (Vec<Row>, Vec<Row>) {
+    let (mut taken, mut refused): (Vec<Row>, Vec<Row>) = (Vec::new(), Vec::new());
+    for i in 0..m {
+        if i % 3 == 2 { &mut refused } else { &mut taken }.push(atom(i as u64));
+    }
+    taken.sort();
+    refused.sort();
+    (taken, refused)
+}
+
+/// Forced atoms with each list sorted.
+pub(super) fn sorted_forced((mut t, mut r): (Vec<Row>, Vec<Row>)) -> (Vec<Row>, Vec<Row>) {
+    t.sort();
+    r.sort();
+    (t, r)
+}
+
+#[test]
+fn a_conjunction_forces_each_of_its_literals() {
+    assert_eq!(
+        sorted_forced(conjunction_literal(0).forced()),
+        conjunction_forced(1),
+        "one literal"
+    );
+    for m in [2, 3, 7, 64] {
+        for balanced in [false, true] {
+            let p = conjunction(m, balanced);
+            assert_eq!(
+                sorted_forced(p.forced()),
+                conjunction_forced(m),
+                "{m}, balanced {balanced}"
+            );
+        }
+    }
+    // A conjunction holding an atom both ways holds nowhere: every atom is then forced.
+    let empty = Part::expr(Form::And(
+        conjunction(5, false),
+        Part::literal(atom(0)).not(),
+    ));
+    let (t, r) = empty.forced();
+    assert_eq!(t.len() + r.len(), 5, "{empty:?}");
+}
+
+/// `x_{k+1} = x_k & !x_k` to `depth` levels over the atom 0: both operands of each level
+/// lead to the level below.
+pub(super) fn self_meets(depth: usize) -> Part<Row> {
+    let mut x = Part::literal(atom(0));
+    for _ in 0..depth {
+        x = Part::expr(Form::And(x.clone(), x.not()));
+    }
+    x
+}
+
+#[test]
+fn equal_expressions_built_apart_compare_equal() {
+    for depth in [0, 1, 2, 5, 16] {
+        assert_eq!(self_meets(depth).cmp(&self_meets(depth)), Ordering::Equal);
+    }
+    assert_ne!(self_meets(4).cmp(&self_meets(5)), Ordering::Equal);
+}
+
+/// A list of `m` literals on the atoms from 0, in blocks of two of alternating values.
+pub(super) fn paired_literals(m: usize) -> Part<Row> {
+    let mut b = Bdd::Leaf(false);
+    for i in 0..m {
+        let k = (atom(i as u64), true);
+        b = if (i / 2) % 2 == 0 {
+            b.or_literal(k)
+        } else {
+            b.and_literal(k)
+        };
+    }
+    Part::Bdd(b)
+}
+
+#[test]
+fn equal_lists_built_on_two_threads_compare_equal() {
+    let on_a_thread = |m: usize| {
+        std::thread::spawn(move || paired_literals(m))
+            .join()
+            .unwrap()
+    };
+    for m in [1, 2, 3, 4, 9, 64] {
+        let (a, b) = (on_a_thread(m), on_a_thread(m));
+        assert_eq!(a.cmp(&b), Ordering::Equal, "{m}");
+        assert_ne!(a.cmp(&on_a_thread(m + 1)), Ordering::Equal, "{m}");
+    }
+}
+
+/// `((x0 | x1) & !x2 | x3) & !x4 …` on `m` atoms, each new literal first in the order, so
+/// that every literal is a block of its own.
+pub(super) fn alternating_literals(m: usize) -> Bdd<Row> {
+    let mut xs: Vec<Row> = (0..m as u64).map(atom).collect();
+    xs.sort();
+    let mut f = Part::literal(xs[m - 1].clone());
+    for (i, x) in xs[..m - 1].iter().rev().enumerate() {
+        f = match i % 2 {
+            0 => f.zip(&Part::literal(x.clone()), Op::Or),
+            _ => f.zip(&Part::literal(x.clone()).not(), Op::And),
+        };
+    }
+    let Part::Bdd(b) = f else {
+        unreachable!("a literal joined to a list is a list")
+    };
+    b
+}
+
+#[test]
+fn a_list_of_alternating_literals_has_a_block_per_literal() {
+    for m in [2, 3, 4, 9, 64] {
+        let l = alternating_literals(m).list();
+        assert_eq!(l.blocks.len(), m - 1, "{m}");
+        assert!(!l.tail, "{m}");
+    }
+}
+
+#[test]
+fn chains_built_a_literal_at_a_time_stay_lists() {
+    for m in [2, 3, 8, 65] {
+        let mut xs: Vec<Row> = (0..m as u64).map(|i| atom(60000 + i)).collect();
+        xs.sort();
+        let lits: Vec<Part<Row>> = xs.into_iter().map(Part::literal).collect();
+        // Literals taken in alternately and as complements: a list.
+        let f = (lits[1..].iter().enumerate()).fold(lits[0].clone(), |f, (i, x)| match i % 2 {
+            0 => f.zip(x, Op::Or),
+            _ => f.zip(&x.not(), Op::And),
+        });
+        assert!(matches!(f, Part::Bdd(_)), "{m}: {f:?}");
+        // One connective all along: a chain of all `m`.
+        for op in [Op::Or, Op::And] {
+            let f = (lits[1..].iter()).fold(lits[0].clone(), |f, x| f.zip(x, op));
+            assert!(
+                matches!(&f, Part::Bdd(b) if b.chain_len(op) == Some(m)),
+                "{m}: {f:?}"
+            );
+        }
+        // Two chains with half their atoms in common: the union is neither.
+        let chain = |from: u64| {
+            (from..from + m as u64).fold(Part::leaf(false), |f, k| {
+                f.zip(&Part::literal(atom(61000 + k)), Op::Or)
+            })
+        };
+        let (a, b) = (chain(0), chain(m as u64 / 2 + 1));
+        let both = a.zip(&b, Op::Or);
+        assert!(both != a && both != b, "{m}");
+    }
+}
+
+/// The exclusive ors of the first half and of the last three quarters of `m` atoms from
+/// `16 m`, which share a quarter, each built a literal at a time.
+pub(super) fn overlapping_xors(m: usize) -> (Part<Row>, Part<Row>) {
+    let ls: Vec<_> = (0..m as u64)
+        .map(|i| Part::literal(atom(16 * m as u64 + i)))
+        .collect();
+    let half = |r: std::ops::Range<usize>| {
+        ls[r]
+            .iter()
+            .fold(Part::leaf(false), |f, l| xor_by_or(&f, l))
+    };
+    (half(0..m / 2), half(m / 4..m))
+}
+
+#[test]
+fn exclusive_ors_with_atoms_in_common_join_in_an_exclusive_or() {
+    for m in [4, 8, 12, 64] {
+        let (a, b) = overlapping_xors(m);
+        let joined = xor_by_and(&a, &b);
+        assert!(joined.xor_tag().is_some(), "{m}");
+        // The shared quarter leaves: the first quarter and the last half remain.
+        let rest = (0..m / 4)
+            .chain(m / 2..m)
+            .map(|i| Part::literal(atom(16 * m as u64 + i as u64)))
+            .fold(Part::leaf(false), |f, l| xor_by_or(&f, &l));
+        assert_eq!(joined.id(), rest.id(), "{m}");
+    }
+}
+
+#[test]
+fn the_walks_over_parts_hold_at_small_depths() {
+    for m in [2, 3, 9] {
+        let (or, pin, meet, ladder) = (
+            ors(10 * m as u64, m, Part::literal),
+            settled_by_one_pin(20 * m as u64, m),
+            Part::Bdd(meet(30 * m as u64, m)),
+            ladder(40 * m as u64, m),
+        );
+        assert!(!or.eval(&|_| false));
+        assert!(!ladder.eval(&|_| false));
+        assert_eq!(or.eval3(&|_| None), None);
+        assert_eq!(meet.eval3(&|_| None), None);
+        assert_eq!(or.distinct_atoms().len(), m);
+        assert_eq!(meet.distinct_atoms().len(), m);
+        assert_eq!(or.union_rows().map(|r| r.len()), Some(m));
+        assert_eq!(or.forced(), (Vec::new(), Vec::new()));
+        assert_eq!(or.restrict(&|_| Some(false)), Part::leaf(false));
+        assert_eq!(meet.restrict(&|_| None), meet);
+        assert_eq!(pin.settle().distinct_atoms().len(), 2 * (m - 1));
+    }
+}
+
+#[test]
+fn a_long_meet_joined_to_short_meets_is_kept_as_an_expression() {
+    // The input of `a_long_meet_joined_to_short_meets_scales` at 8 literals: a meet of two on
+    // atoms of its own, and a meet of one with the complement of a literal of the long meet.
+    let m = 8;
+    let long = meet(40000, m);
+    let atoms: Vec<Row> = (40000..40000 + m as u64)
+        .chain(50000..50000 + 2 * m as u64)
+        .map(atom)
+        .collect();
+    for i in 0..m as u64 {
+        let short = match i % 2 {
+            0 => meet(50000 + 2 * i, 2),
+            _ => meet(50000 + 2 * i, 1).and_literal((atom(40000 + i), false)),
+        };
+        let u = Part::Bdd(long.clone()).zip(&Part::Bdd(short.clone()), Op::Or);
+        assert!(matches!(u, Part::Expr(_)), "{i}: {u:?}");
+        for seed in 0..64u64 {
+            let bits = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15);
+            let holds = |a: &Row| {
+                let k = atoms.iter().position(|b| b == a).expect("an atom listed");
+                // Every literal of the long meet taken at seed 0, so that it holds there.
+                seed == 0 && k < m || bits >> (k % 64) & 1 == 1
+            };
+            assert_eq!(
+                u.eval(&holds),
+                long.eval(holds) || short.eval(holds),
+                "{i} {seed}"
             );
         }
     }

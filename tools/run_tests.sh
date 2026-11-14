@@ -754,21 +754,7 @@ step_pieces() {
           c=${c//_/-}
           if [ -d "$c" ]; then echo "$n $c $p"; else echo "$n tests $p"; fi
           ;;
-        zed_kernel-*)
-          # This test took 35 to 39 s alone (46 s at load 26), so the rest of the
-          # crate's tests ran past the old limit of 60 s with it in one process (LIST-xor-finite,
-          # 2026-11-07); it gets a process of its own.
-          # The exclusive-or scaling test sums 8 random shapes per size and took 38 to 46 s
-          # alone, so it gets one too (SCALE-fix-kernel, 2026-11-07). The parity test split
-          # out of it takes 25 to 37 s, and gets one as well (SCALE-log-offset, 2026-11-09).
-          slow=types::bdd::tests::exclusive_ors_agree_with_their_values
-          xors=types::bdd::tests::exclusive_ors_scale
-          parity=types::bdd::tests::parity_built_a_literal_at_a_time_scales
-          echo "$n crates/zed-kernel $p --skip $slow --skip $xors --skip $parity"
-          echo "$n::exclusive_ors crates/zed-kernel $p --exact $slow"
-          echo "$n::exclusive_ors_scale crates/zed-kernel $p --exact $xors"
-          echo "$n::parity_scale crates/zed-kernel $p --exact $parity"
-          ;;
+        zed_kernel-*) echo "$n crates/zed-kernel $p" ;;
         zed_native-*) echo "$n crates/zed-native $p" ;;
         zed_rt-*) echo "$n crates/zed-rt $p" ;;
         zed_cert-*) echo "$n crates/zed-cert $p" ;;

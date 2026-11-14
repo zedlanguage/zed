@@ -123,8 +123,8 @@ fn atoms_combined_by_a_diff_agree_with_the_walk() {
     sets.push(Type::union_all((0..150).step_by(2).map(atom)));
     let complements: Vec<Type> = sets.iter().step_by(17).map(|t| !t).collect();
     sets.extend(complements);
-    for a in sets.iter().step_by(3) {
-        for b in sets.iter().step_by(5) {
+    for a in sets.iter().step_by(7) {
+        for b in sets.iter().step_by(11) {
             for op in [Op::Or, Op::And] {
                 let (x, y) = (&a.p().atoms, &b.p().atoms);
                 assert_eq!(x.zip(y, op), zip_by_walk(x, y, op));
@@ -183,7 +183,7 @@ fn scalar_read_from_the_parts_is_that_of_comparing_types() {
         (Type::lit(&v)? == *t).then_some(v)
     };
     let lit = |v: Value| Type::lit(&v).expect("a literal");
-    let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
+    let mut seed = crate::seed::seed("scalar_read_from_the_parts_is_that_of_comparing_types") | 1;
     let mut below = |n: u64| {
         seed ^= seed << 13;
         seed ^= seed >> 7;

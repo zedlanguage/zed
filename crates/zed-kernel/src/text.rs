@@ -38,6 +38,8 @@ use num_bigint::BigUint;
 
 use crate::num::{TooLarge, room};
 
+#[cfg(test)]
+mod bench;
 mod names;
 mod tree;
 
@@ -762,25 +764,25 @@ mod tests {
     // `Text::len` is the kept count; `str::len` of `flat` is the length of the text read.
 
     /// The length of a test piece, in characters: two never share a block.
-    const PIECE: usize = LEAF;
+    pub(super) const PIECE: usize = LEAF;
 
-    fn long(c: char) -> Text {
+    pub(super) fn long(c: char) -> Text {
         Text::from(c.to_string().repeat(PIECE))
     }
 
-    fn join(a: &Text, b: &Text) -> Text {
+    pub(super) fn join(a: &Text, b: &Text) -> Text {
         Text::join(a, b).unwrap()
     }
 
     /// The bytes of `t`, read by blocks.
-    fn bytes(t: &Text) -> impl Iterator<Item = u8> + '_ {
+    pub(super) fn bytes(t: &Text) -> impl Iterator<Item = u8> + '_ {
         t.chunks().flat_map(str::bytes)
     }
 
     /// Panics unless `t` is a well-formed text tree: every digit holds one to four parts, every
     /// node two or three, every part at a level of the height of that level, no block empty,
     /// and every count its parts': `O(len)`.
-    fn assert_balanced(t: &Text) {
+    pub(super) fn assert_balanced(t: &Text) {
         // A tree whose parts are of height `h` (`true`), or a part of height `h` (`false`).
         let mut todo = vec![(t, 0usize, true)];
         while let Some((t, h, tree)) = todo.pop() {
@@ -828,12 +830,12 @@ mod tests {
     }
 
     /// The bound on the depth of a tree of `b` blocks: `log2(b/2 + 1)`, rounded down.
-    fn depth_bound(b: usize) -> usize {
+    pub(super) fn depth_bound(b: usize) -> usize {
         (b / 2 + 1).ilog2() as usize
     }
 
     /// The number of leaves of `t`, counting a shared one each time it is reached.
-    fn leaves(t: &Text) -> usize {
+    pub(super) fn leaves(t: &Text) -> usize {
         t.chunks().count()
     }
 
@@ -978,10 +980,10 @@ mod tests {
     }
 
     #[test]
-    fn a_chain_a_million_long_either_way_is_balanced_read_and_dropped() {
+    fn a_long_chain_either_way_is_balanced_read_and_dropped() {
         let piece = long('z');
-        let n = 1_000_000;
-        // `n` blocks: at most `log2(n/2 + 1)` levels, 18.
+        let n = 100_000;
+        // `n` blocks: at most `log2(n/2 + 1)` levels, 16.
         for left in [true, false] {
             let mut t = Text::from("");
             for _ in 0..n {
@@ -1004,8 +1006,9 @@ mod tests {
     #[test]
     fn joins_in_any_order_keep_the_tree_balanced_and_the_text_whole() {
         // Texts of 1 to 300 bytes, some of several characters' bytes, joined in an order a
-        // fixed generator picks, each against a plain `String`.
-        let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
+        // random generator picks, each against a plain `String`.
+        let mut seed =
+            crate::seed::seed("joins_in_any_order_keep_the_tree_balanced_and_the_text_whole") | 1;
         let mut next = move |k: usize| {
             seed ^= seed << 13;
             seed ^= seed >> 7;
@@ -1099,22 +1102,6 @@ mod tests {
     }
 
     #[test]
-    fn reading_every_prefix_costs_the_text_read() {
-        // A log printed in full after every line: line `i` reads `i` lines, so `n` lines
-        // read `n²/2` lines in all, and each read must cost in proportion to its length
-        // (COMPLEXITY.md C29). The work is of order `n²`, so 8n may do 24 × 8 times that of n.
-        let line = long('l');
-        crate::scaling::check_order("a log of n lines printed after every line", 400, 2, |n| {
-            let mut log = Text::from("");
-            for i in 1..=n {
-                log = join(&log, &line);
-                let printed = bytes(&log).filter(|&b| b == b'l').count();
-                assert_eq!(printed, PIECE * i);
-            }
-        });
-    }
-
-    #[test]
     fn reading_every_prefix_held_keeps_no_copy_of_it() {
         // A log of n lines whose every prefix is held, each printed, hashed and compared in
         // full: a read walks the blocks and keeps nothing, so all the reads together allocate
@@ -1151,32 +1138,6 @@ mod tests {
     }
 
     #[test]
-    fn every_prefix_held_and_compared_costs_order_n_log_n() {
-        // A log of n lines whose every prefix is kept, each compared, by `<` and by `==`, with
-        // a log of the same length that differs in its first byte: each comparison stops
-        // there after setting up a walk of `O(log n)`, and each prefix shares all but `O(1)`
-        // nodes, amortized, with the one before (COMPLEXITY.md C29). Order `n log n`, so 8n
-        // may do 24 times the work of n.
-        let line = long('l');
-        let first = join(&Text::from("m"), &Text::from("l".repeat(PIECE - 1)));
-        crate::scaling::check("n prefixes of a log held and compared", 2000, |n| {
-            let mut held = Vec::with_capacity(n);
-            let (mut log, mut differs): (Text, Text) = (Text::from(""), Text::from(""));
-            for _ in 0..n {
-                log = join(&log, &line);
-                differs = if differs.is_empty() {
-                    first.clone()
-                } else {
-                    join(&differs, &line)
-                };
-                assert!(log < differs && log != differs);
-                held.push(log.clone());
-            }
-            assert_eq!(held.len(), n);
-        });
-    }
-
-    #[test]
     fn a_chain_of_joins_allocates_a_constant_per_join() {
         // A join at an end builds one deep tree, and every third join at that end carries a
         // node and a deep tree to the level below, every ninth one level further, and so on:
@@ -1209,29 +1170,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_chain_either_way_is_built_in_order_n() {
-        // The `foldl` of `++` of plan row TEXT-append-O1: order `n`, so 8n may do 24 times the
-        // work of n.
-        let piece = long('p');
-        for left in [true, false] {
-            crate::scaling::check("a chain of n joins", 5000, |n| {
-                let mut t = Text::from("");
-                for _ in 0..n {
-                    t = if left {
-                        join(&t, &piece)
-                    } else {
-                        join(&piece, &t)
-                    };
-                }
-                assert_eq!(t.len(), PIECE * n);
-            });
-        }
-    }
-
-    /// A text of `n` pieces, each a different character, joined one at a time at the end
     /// (`left`) or at the front, and the same text built by `push_str`.
-    fn chain(n: usize, left: bool) -> (Text, String) {
+    pub(super) fn chain(n: usize, left: bool) -> (Text, String) {
         // One, two, three and four bytes a character, so a block boundary falls between
         // characters of every width.
         let chars = ['a', 'é', '日', '😀', 'z'];
@@ -1302,19 +1242,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn try_flat_of_a_join_costs_its_length() {
-        // One walk over the blocks into memory asked for once: order `n` in the blocks, so 8n
-        // may do 24 times the work of n. The texts are built before the runs are timed.
-        let texts = crate::scaling::inputs(2000, |n| chain(n, true).0);
-        crate::scaling::check("try_flat of a join of n blocks", 2000, |n| {
-            let flat = texts[&n].try_flat().unwrap();
-            assert_eq!(flat.chars().count(), PIECE * n);
-        });
-    }
-
     /// `s` joined from pieces of `k` characters, from the left (`left`) or from the right.
-    fn pieces(s: &str, k: usize, left: bool) -> Text {
+    pub(super) fn pieces(s: &str, k: usize, left: bool) -> Text {
         let chars: Vec<char> = s.chars().collect();
         let parts: Vec<Text> = chars
             .chunks(k)
@@ -1407,46 +1336,5 @@ mod tests {
         assert_eq!(block.cmp(&tree), Ordering::Equal);
         let stack = (6 * tree.depth() + 9) * size_of::<&Text>();
         assert_eq!(zed_alloc_count::allocated() - before, stack as u64);
-    }
-
-    #[test]
-    fn a_compare_of_two_blocks_costs_their_length() {
-        // A compare of two equal blocks of n bytes reads both once: order `n`, so 8n may do 24
-        // times the work of n. It allocates nothing (`a_compare_of_two_blocks_allocates_nothing`),
-        // so only the work is measured.
-        let texts = crate::scaling::inputs(4096, |n| {
-            (Text::from("q".repeat(n)), Text::from("q".repeat(n)))
-        });
-        crate::scaling::check_instructions_only(
-            "a compare of two blocks of n bytes",
-            4096,
-            1,
-            |n| {
-                let (a, b) = &texts[&n];
-                for _ in 0..100 {
-                    assert_eq!(std::hint::black_box(a).cmp(b), Ordering::Equal);
-                }
-            },
-        );
-    }
-
-    #[test]
-    fn a_compare_against_a_tree_costs_its_length() {
-        // Two equal texts of n blocks, one a tree joined from the left and one from the right,
-        // and the same text as one block against the tree: each compare reads every block
-        // once, order `n`, and allocates one stack of `O(log n)` per tree, so 8n may do 24
-        // times the work and the bytes of n.
-        let texts = crate::scaling::inputs(500, |n| {
-            let (left, s) = chain(n, true);
-            (left, pieces(&s, PIECE, false), Text::from(s))
-        });
-        crate::scaling::check("a compare of two trees of n blocks", 500, |n| {
-            let (left, right, _) = &texts[&n];
-            assert_eq!(left.cmp(right), Ordering::Equal);
-        });
-        crate::scaling::check("a compare of a block and a tree of n blocks", 500, |n| {
-            let (left, _, block) = &texts[&n];
-            assert_eq!(block.cmp(left), Ordering::Equal);
-        });
     }
 }

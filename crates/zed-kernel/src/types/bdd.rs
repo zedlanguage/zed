@@ -2257,9 +2257,14 @@ mod xor {
     /// visited before: when a node is built, those of its children are the top ones.
     fn node<A: Literal>(n: &Arc<Set<A>>) -> Part<A> {
         // A node with no children is the literal of its atom, and takes no entry in the table.
+        // When only the complement lives, the one asked for is its complement, made again from
+        // the complement's pair (`mate`): built anew, its pair's complement would replace the
+        // live one in the table, and one function would have two nodes (test
+        // `an_exclusive_or_is_found_again_when_only_its_complement_lives`). One lookup more on a
+        // miss.
         let known = |n: &Arc<Set<A>>| match (&n.left, &n.right) {
             (None, None) => Some(Part::literal(n.key.0.clone())),
-            _ => found(n.id, false),
+            _ => found(n.id, false).or_else(|| found(n.id, true).map(|t| t.not())),
         };
         if let Some(x) = known(n) {
             return x;
@@ -3453,5 +3458,7 @@ mod list {
     }
 }
 
+#[cfg(test)]
+mod bench;
 #[cfg(test)]
 mod tests;

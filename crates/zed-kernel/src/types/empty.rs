@@ -11477,10 +11477,12 @@ impl Placing {
 // and group, O(placements) memory. Why it is sound: merging nodes only joins more types, and a
 // value two types share lies on one path from the root, whose every node both types reach,
 // which reads it, so the keys that join them are read. Trigger: many cells that each reach
-// one large group. Tests: `types::empty::tests::types_that_each_reach_a_ring_of_names_scale`
+// one large group. Benchmarks: `types::empty::bench::types_that_each_reach_a_ring_of_names_scale`
 // (the ring of names, the same under a one-tuple, and beside a whole under each name),
 // `types_that_each_reach_a_ring_holding_lower_types_scale` (each member holding `#b_j((int,))`,
 // `#b((int,))` under one name, or `#c_j((L,))` for a recursive list type `L`),
+// small instances of both in
+// `types::empty::tests::the_rings_of_names_have_the_classes_their_shapes_give`; tests:
 // `types_that_meet_are_joined_in_random_groups_holding_lower_types` (400 random cases against
 // the meets), `types_that_each_reach_a_ring_of_names_are_apart`,
 // `classes_inside_a_recursive_group_follow_its_merged_nodes`, and
@@ -12461,6 +12463,9 @@ mod sweep;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod bench;
 
 fn carrier_root_order(members: &[Type]) -> Vec<usize> {
     let mut order: Vec<usize> = (0..members.len()).collect();

@@ -15,6 +15,7 @@ pub mod layout;
 pub mod oracle;
 pub mod readme;
 pub mod scaling;
+pub mod seed;
 pub mod step_helpers;
 pub mod tokens;
 pub mod trees;

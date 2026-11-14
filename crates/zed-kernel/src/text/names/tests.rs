@@ -121,7 +121,7 @@ fn adversarial(rng: &mut Rng, n: usize) -> Vec<u8> {
 fn random_and_adversarial_joins_match_bytes() {
     let mut names = Names::new();
     let mut corpus = Corpus::default();
-    let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+    let mut rng = Rng(crate::seed::seed("random_and_adversarial_joins_match_bytes") | 1);
     for _ in 0..150 {
         let n = rng.pick(&[5, 30, 100, 300, 1000, 3000]);
         let data = adversarial(&mut rng, n);
@@ -152,7 +152,7 @@ fn zimin_words_built_both_ways_agree() {
     // Checked against the bytes while short, and the two associations against each other after.
     let mut names = Names::new();
     let mut corpus = Corpus::default();
-    let mut rng = Rng(7);
+    let mut rng = Rng(crate::seed::seed("zimin_words_built_both_ways_agree") | 1);
     for _ in 0..4 {
         let base: Vec<u8> = (0..rng.int(1, 40)).map(|_| rng.pick(b"abc")).collect();
         let (mut x1, mut x2) = (names.leaf(&base), names.leaf(&base));
@@ -179,7 +179,7 @@ fn zimin_words_built_both_ways_agree() {
     }
 }
 
-fn join(a: &Text, b: &Text) -> Text {
+pub(super) fn join(a: &Text, b: &Text) -> Text {
     Text::join(a, b).expect("the test's texts are short of usize::MAX bytes")
 }
 
@@ -218,7 +218,7 @@ fn texts_joined_in_any_order_have_one_name() {
     // The finger tree's shape follows the order of the joins; the names must not. Pieces of 1 to
     // 300 bytes joined from the left, from the right, and as a balanced tree, and the text read
     // into one block, all one name; one byte changed gives another.
-    let mut rng = Rng(11);
+    let mut rng = Rng(crate::seed::seed("texts_joined_in_any_order_have_one_name") | 1);
     let mut names = Names::new();
     for _ in 0..30 {
         let n = rng.int(1, 60);
@@ -255,24 +255,6 @@ fn texts_joined_in_any_order_have_one_name() {
         assert_ne!(names.name(&Text::from(other)), want);
     }
     assert_eq!(names.name(&Text::from("")), Name(EMPTY));
-}
-
-#[test]
-fn naming_n_and_8n_nodes() {
-    // A text of n blocks of LEAF bytes, joined from the left, each block different: n nodes, each
-    // named once from its parts' summaries, O(n log N) dictionary steps.
-    let texts = crate::scaling::inputs(200, |n| {
-        (0..n).fold(Text::from(""), |t, i| {
-            let piece: String = (0..super::super::LEAF)
-                .map(|j| char::from(b'a' + ((i * 7 + j * j) % 23) as u8))
-                .collect();
-            join(&t, &Text::from(piece))
-        })
-    });
-    crate::scaling::check("naming a text of n blocks", 200, |n| {
-        let mut names = Names::new();
-        std::hint::black_box(names.name(&texts[&n]));
-    });
 }
 
 /// `ids` with no two neighbors equal: each id is drawn wide (any 64 bits) or narrow (below 8),
@@ -321,7 +303,7 @@ fn a_block_start_reads_8_symbols_left_and_4_right() {
     assert!(i - j <= CL, "a start reads 7 to its left");
 
     // A change outside `i - 8 ..= i + 4` leaves the start at `i` as it was.
-    let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+    let mut rng = Rng(crate::seed::seed("a_block_start_reads_8_symbols_left_and_4_right") | 1);
     for _ in 0..20_000 {
         let n = rng.int(14, 40);
         let ids = proper_ids(&mut rng, n);
@@ -356,7 +338,7 @@ fn a_block_at_the_true_end_may_hold_5_symbols() {
     let starts: Vec<usize> = (0..ids.len()).filter(|&i| st[i]).collect();
     assert_eq!(starts, [0, 3, 5, 8, 10, 12, 14, 17, 19]);
     assert_eq!(ids.len() - 19, 5);
-    let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+    let mut rng = Rng(crate::seed::seed("a_block_at_the_true_end_may_hold_5_symbols") | 1);
     for _ in 0..20_000 {
         let n = rng.int(2, 60);
         let ids = proper_ids(&mut rng, n);

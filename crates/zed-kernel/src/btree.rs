@@ -1097,3 +1097,6 @@ impl<'a, 'b, K: Ord, V: PartialEq> Iterator for Diff<'a, 'b, K, V> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod bench;
