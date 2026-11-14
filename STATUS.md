@@ -2313,17 +2313,14 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | DOC-sync-dangling-refs | impl attempt 1 | 2026-11-14 09:50 | started in /home/luke/Work/wt/doc-refs; load 33.17 |
 | FAIL-check-decimal-past-f64-at-rat | running | 2026-11-14 07:10 |  |
 | FAIL-check-if-carrier-branch-literal-at-rat | running | 2026-11-14 07:10 |  |
-| FAIL-curried-positional-lambda-order | running | 2026-11-14 08:57 |  |
-| FAIL-exact-oracle-mod-zero-seed | running | 2026-11-14 09:25 |  |
 | FAIL-lattice-f32-literal | running | 2026-11-14 07:10 |  |
 | FAIL-pendants-rewrite-empty-seed | running | 2026-11-14 10:10 |  |
 | FAIL-pendants-rewrite-growth-seed | running | 2026-11-14 10:10 |  |
 | FAIL-pendants-route-quarter-seed | running | 2026-11-14 10:10 |  |
 | FAIL-types-overload-bounded-tuple | impl attempt 1 | 2026-11-14 09:32 | started in wt/fix-types-overload at 9d4c6b7f1; load 37.18 49.72 50.76 |
-| FAIL-values-function-in-payload-run | impl attempt 2 | 2026-11-14 09:22 | start in /home/luke/Work/wt/fix-values, load 38.11 |
-| FAIL-values-function-in-tuple | impl attempt 2 | 2026-11-14 07:33 | start in /home/luke/Work/wt/fix-values, load 38.11 |
-| FAIL-window-two-shadows-seed | running | 2026-11-14 08:57 |  |
-| FIX-functions-in-tuples | running | 2026-11-11 16:34 |  |
+| FAIL-values-function-in-payload-run | impl attempt 3 | 2026-11-14 09:22 | start in /home/luke/Work/wt/fix-values (machine + native forms), load 54.65 66.85 52.33 |
+| FAIL-values-function-in-tuple | impl attempt 3 | 2026-11-14 07:33 | start in /home/luke/Work/wt/fix-values (machine + native forms), load 54.65 66.85 52.33 |
+| FIX-functions-in-tuples | impl attempt 3 | 2026-11-11 16:34 | start in /home/luke/Work/wt/fix-values (machine + native forms), load 54.65 66.85 52.33 |
 | MUTATE-generic-constants | impl attempt 1 | 2026-11-14 09:08 | bench finding generic chain 100/800 ratio 7.926 (instr), finding n functions 7.900, chain 7.946, running generic chain 25/200 54.142 (order 2); negative control |
 | STAGE-generic-fold-div | impl attempt 1 | 2026-11-14 09:08 | started in wt/generic-fold-2, load 64.11 |
 | TEST-cov-run-settings | running | 2026-11-14 09:42 |  |
