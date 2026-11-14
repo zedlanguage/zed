@@ -1827,6 +1827,11 @@ fn coordkk_scales() {
 // 10.0, cuts 11.1 and 11.0, boxstar 11.4 and 10.8, hopon 11.5 and 10.8, coordmix_floor 12.1 and
 // 10.7, hoponb 12.8 and 12.0. Each is ignored with PERF-l139-under9, the item that would bring
 // it under 9 (RED-l139-six); stair_holes_late passes.
+//
+// Since PERF-l139-family (2026-11-13) the solver asks each side of a hull first at the real
+// bound of its rows (`hull_side`), and hop and hopon pass again, at 8.9 and 8.5 (hop) and 9.8
+// and 9.4 (hopon) times the instructions and bytes at 8n; the questions for sides such as
+// `(1000 + c) / i` of hopb no longer grow with the tests.
 
 /// About `k^1.75` to `k^1.96`.
 #[test]
@@ -1888,13 +1893,11 @@ fn stair_cover_free_scales() {
 
 /// About `k^2` from `k = 8` to 16, each run of `k = 16` some 60 billion instructions.
 #[test]
-#[ignore = "PERF-l139-under9: hop, 10.6 times the instructions (295.2M and 3,139.5M) and 10.0 times the bytes (56.6M and 565.9M) at 8n on origin/main 783fd27c8, over the limit of 10.5; open"]
 fn hop_scales() {
     scales("hop", 2, 1);
 }
 
 #[test]
-#[ignore = "PERF-l139-under9: hopon, 11.5 times the instructions (260.8M and 2,987.5M) and 10.8 times the bytes (49.3M and 534.8M) at 8n on origin/main 783fd27c8, over the limit of 10.5; open"]
 fn hopon_scales() {
     scales("hopon", 2, 1);
 }

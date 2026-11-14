@@ -17885,6 +17885,29 @@ fn hull_side(c: &Formula, sym: &Atom, m: &Model, dir: i64) -> Result<Option<Int>
     // its questions are answered; where one is refused, the search below is run as before
     // (item PRES-project-each-cost: a disjunct `1024 * q <= x`, `1024 * q >= x - 1023`,
     // `x == 2 * e`, `x` in a gap's bounds, read about 20 questions for each side, and now 3).
+    // Complexity tradeoff: naive version, the search below from the point and the bound of
+    // the symbol alone, O(log d) questions for a side at distance d inside both: about 24
+    // questions for each side `(1000 + c) / i` of `hopb` (PERF-l139-family), whose number grows
+    // with the tests. Used: first the real bound of the rows ([`real_end`]), one question at
+    // its integer: true there, it is the side, since no point lies beyond a real bound; false,
+    // it is an end past which no point lies, and the search runs inside it. One elimination
+    // pass over the rows, O(a · r log r) for `a` atoms and `r` rows. A refused question falls
+    // through to the searches below, as a refusal of theirs does.
+    if let Some(at) = m.get(sym)
+        && let Some(end) = real_end(c, sym, dir)
+        && (if dir > 0 { *at <= end } else { *at >= end })
+    {
+        match holds(&end) {
+            Ok(true) => return Ok(Some(end)),
+            Ok(false) => {
+                let inside = &end - &Int::from(dir);
+                if let Ok(side) = side_within(&holds, at.clone(), inside, dir) {
+                    return Ok(Some(side));
+                }
+            }
+            Err(_) => {}
+        }
+    }
     if let Some(end) = alone_end(c, sym, dir)
         && let Some(at) = m.get(sym)
         && (if dir > 0 { *at <= end } else { *at >= end })
@@ -17963,6 +17986,96 @@ fn side_within(
         from_end = !from_end;
     }
     Ok(good)
+}
+
+/// An integer past which (going `dir`) no point of `c`, read as a conjunction of rows, has
+/// `sym`: the real bound of `sym` over the rows, rounded toward the rows, after the other atoms
+/// are eliminated by Fourier-Motzkin, each only where it takes out at least as many rows as it
+/// makes (`l · u <= l + u` for `l` lower and `u` upper bounds), so the rows never grow; an
+/// atom bounded on one side only takes its rows out. The bound comes from the rows of `sym`
+/// alone that are left, each a consequence of `c`. `None` when `c` holds anything other than
+/// rows, or no row left bounds that side. Eliminating an atom so gives the real projection
+/// (Fourier, 1827; Motzkin, "Beiträge zur Theorie der linearen Ungleichungen", 1936); the
+/// rows are divided by the gcd of their coefficients with the constant rounded down, which
+/// holds every integer point (Pugh, "The Omega test", Supercomputing '91, 1991).
+fn real_end(c: &Formula, sym: &Atom, dir: i64) -> Option<Int> {
+    type Row = (BTreeMap<Atom, Int>, Int);
+    let cons: Vec<&Con> = match c {
+        Formula::Con(k) => vec![k],
+        Formula::And(fs) => (fs.iter())
+            .map(|f| match f {
+                Formula::Con(k) => Some(k),
+                _ => None,
+            })
+            .collect::<Option<_>>()?,
+        _ => return None,
+    };
+    let norm = |(mut t, k): Row| -> Row {
+        let d = t.values().fold(Int::ZERO, |d, a| d.gcd(a));
+        if d > Int::ONE {
+            for a in t.values_mut() {
+                *a = a.div_floor(&d);
+            }
+            return (t, k.div_floor(&d));
+        }
+        (t, k)
+    };
+    let mut rows: Vec<Row> = Vec::new();
+    for k in cons {
+        rows.push((k.lin.terms.clone(), k.lin.constant.clone()));
+        if k.rel == Rel::Eq {
+            let neg = (k.lin.terms.iter()).map(|(a, v)| (a.clone(), -v)).collect();
+            rows.push((neg, -&k.lin.constant));
+        }
+    }
+    let mut stuck: BTreeSet<Atom> = BTreeSet::new();
+    loop {
+        let mut sides: BTreeMap<&Atom, (usize, usize)> = BTreeMap::new();
+        for (t, _) in &rows {
+            for (a, v) in t.iter().filter(|(a, _)| *a != sym && !stuck.contains(*a)) {
+                let s = sides.entry(a).or_default();
+                if v.is_positive() { s.0 += 1 } else { s.1 += 1 }
+            }
+        }
+        let Some((x, (l, u))) = sides.into_iter().next() else {
+            break;
+        };
+        let x = x.clone();
+        if l > 0 && u > 0 && l * u > l + u {
+            stuck.insert(x);
+            continue;
+        }
+        let (mut lower, mut upper) = (Vec::new(), Vec::new());
+        for r in std::mem::take(&mut rows) {
+            match r.0.get(&x).map(Int::is_positive) {
+                Some(true) => lower.push(r),
+                Some(false) => upper.push(r),
+                None => rows.push(r),
+            }
+        }
+        for (lt, lk) in &lower {
+            let a = &lt[&x];
+            for (ut, uk) in &upper {
+                let b = -&ut[&x];
+                let mut t: BTreeMap<Atom, Int> = BTreeMap::new();
+                for (y, v) in (lt.iter().map(|(y, v)| (y, v * &b)))
+                    .chain(ut.iter().map(|(y, v)| (y, v * a)))
+                    .filter(|(y, _)| *y != &x)
+                {
+                    let s = &t.remove(y).unwrap_or(Int::ZERO) + &v;
+                    if !s.is_zero() {
+                        t.insert(y.clone(), s);
+                    }
+                }
+                rows.push(norm((t, &(lk * &b) + &(uk * a))));
+            }
+        }
+    }
+    let alone = (rows.iter())
+        .filter(|(t, _)| t.len() == 1)
+        .filter_map(|(t, k)| Some((t.get(sym)?.clone(), k.clone(), Rel::Ge)));
+    let (lo, hi) = int_bounds(alone)?;
+    if dir > 0 { hi } else { lo }
 }
 
 /// The greatest value (`dir` 1) or the least (`dir` -1) of `sym` that the constraints of `c`
@@ -25359,5 +25472,137 @@ mod r4_cells_tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod real_end_tests {
+    use super::*;
+
+    fn v(s: &str) -> Lin {
+        Lin::atom(Atom::Sym(s.into()))
+    }
+
+    fn sym(s: &str) -> Atom {
+        Atom::Sym(s.into())
+    }
+
+    fn c(k: i64) -> Lin {
+        Lin::constant(k)
+    }
+
+    fn and(cons: Vec<Con>) -> Formula {
+        Formula::And(Shared::new(cons.into_iter().map(Formula::Con).collect()))
+    }
+
+    /// The bound of `a` in hopb's side `2a + b <= 13`, `b >= -1000`: `a <= 506`, after `b` is
+    /// eliminated; no lower bound.
+    #[test]
+    fn a_side_through_one_other_name() {
+        let f = and(vec![
+            Con::ge(&c(13), &v("a").times(2).plus(&v("b"))),
+            Con::ge(&v("b"), &c(-1000)),
+        ]);
+        assert_eq!(real_end(&f, &sym("a"), 1), Some(Int::from(506)));
+        assert_eq!(real_end(&f, &sym("a"), -1), None);
+    }
+
+    /// An equation gives both of its rows: `a == 2b`, `0 <= b <= 3` bound `a` to `0..=6`.
+    #[test]
+    fn an_equation_bounds_both_sides() {
+        let f = and(vec![
+            Con::eq(&v("a"), &v("b").times(2)),
+            Con::ge(&v("b"), &c(0)),
+            Con::ge(&c(3), &v("b")),
+        ]);
+        assert_eq!(real_end(&f, &sym("a"), 1), Some(Int::from(6)));
+        assert_eq!(real_end(&f, &sym("a"), -1), Some(Int::from(0)));
+    }
+
+    /// A name with two lower and three upper rows would make six rows of five, so it stays,
+    /// and the rows that hold it give no bound: only `a <= 9`, alone, does.
+    #[test]
+    fn a_name_whose_elimination_would_grow_the_rows_stays() {
+        let f = and(vec![
+            Con::ge(&v("b"), &v("a")),
+            Con::ge(&v("b"), &c(-5)),
+            Con::ge(&c(4), &v("b")),
+            Con::ge(&c(5).plus(&v("a")), &v("b")),
+            Con::ge(&c(6), &v("b").plus(&v("a"))),
+            Con::ge(&c(9), &v("a")),
+        ]);
+        assert_eq!(real_end(&f, &sym("a"), 1), Some(Int::from(9)));
+        assert_eq!(real_end(&f, &sym("a"), -1), None);
+    }
+
+    /// A disjunction is not read: no bound.
+    #[test]
+    fn a_disjunction_gives_none() {
+        let f = Formula::Or(Shared::new(vec![
+            Formula::Con(Con::ge(&c(3), &v("a"))),
+            Formula::Con(Con::ge(&c(5), &v("a"))),
+        ]));
+        assert_eq!(real_end(&f, &sym("a"), 1), None);
+    }
+
+    /// On random systems of three names within `-6..=6`, no integer point has `a` past the
+    /// bound.
+    #[test]
+    fn the_bound_never_cuts_an_integer_point() {
+        let mut seed: u64 = 0x5eed;
+        let mut next = |m: i64| {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((seed >> 33) % (2 * m as u64 + 1)) as i64 - m
+        };
+        let names = ["a", "b", "z"];
+        let mut bounded = 0;
+        for _ in 0..400 {
+            let mut cons: Vec<Con> = names
+                .iter()
+                .flat_map(|n| [Con::ge(&v(n), &c(-6)), Con::ge(&c(6), &v(n))])
+                .collect();
+            for _ in 0..1 + next(2).unsigned_abs() {
+                let mut l = c(next(8));
+                for n in names {
+                    l = l.plus(&v(n).times(next(3)));
+                }
+                cons.push(if next(4) == 0 {
+                    Con::eq(&l, &c(0))
+                } else {
+                    Con::ge(&l, &c(0))
+                });
+            }
+            let f = and(cons);
+            let mut values: Vec<i64> = Vec::new();
+            for a in -6..=6 {
+                for b in -6..=6 {
+                    for z in -6..=6 {
+                        let m: Model = [(sym("a"), a), (sym("b"), b), (sym("z"), z)]
+                            .into_iter()
+                            .map(|(k, x)| (k, Int::from(x)))
+                            .collect();
+                        if f.holds(&m) {
+                            values.push(a);
+                        }
+                    }
+                }
+            }
+            for dir in [1, -1] {
+                let Some(end) = real_end(&f, &sym("a"), dir) else {
+                    continue;
+                };
+                bounded += 1;
+                for x in &values {
+                    let x = Int::from(*x);
+                    assert!(
+                        if dir > 0 { x <= end } else { x >= end },
+                        "{f:?}: a = {x:?} past the bound {end:?} going {dir}"
+                    );
+                }
+            }
+        }
+        assert!(bounded > 400, "{bounded} bounds of 800");
     }
 }

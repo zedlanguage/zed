@@ -1560,7 +1560,9 @@ fn an_equation_held_once_twice_or_negated_gives_one_answer() {
 /// `c` was refused before item PRES-project-each-cost, with the box stage's bounds `[-3,6]`;
 /// its ends are exact: `c >= -3` from `a + 2 * c >= -4` and `a <= 3`, reached at
 /// `a=2 b=5 c=-3 z1=0 z2=-4`; `c <= 6` from `a + b + 2 * c == z2 + 5`, `z2 <= 6`, `a >= 2`
-/// and `b >= -4`, reached at `a=3 b=-4 c=6 z1=3 z2=6`.
+/// and `b >= -4`, reached at `a=3 b=-4 c=6 z1=3 z2=6`. The fifth left out a `Tie` on `c` and
+/// `z0` before item PERF-l139-family, with the same boxes: the question that the solver refused
+/// is not asked since each side is first asked at its real bound.
 const WRITTEN: &[(&str, &str, &str)] = &[
     (
         "a + b >= -2 && b + z2 <= 2 * c + 6 && !(a + 2 * b == z0 - 1) && !(a + z3 == 2 * c) && 2 * a + 2 * c >= b - 2 && 2 * a + 2 * b + c + z0 >= 5 && a + c >= -2 && b + c + z0 >= 3 && a + b + c + z3 == 0",
@@ -1585,7 +1587,7 @@ const WRITTEN: &[(&str, &str, &str)] = &[
     (
         "(2 * a >= b + 2 || z0 <= 4) && !(a + b + z0 == 2 * c - 8) && (2 * a + b + 2 * c >= -9 || z1 <= 6) && 2 * a + b == c + z0 - 1",
         "a=[-9,inf] b=[4,12] c=[-8,3 5,11] z0=[-inf,8] z1=[4,18] z2=[-inf,0]",
-        r#"a=[-9,7] b=[4,12] c=[-8,3 5,11] z0=[-24,8] z1=[4,18] left out: [Tie(Tie { vars: ["c", "z0"], rows: ["-c - z0 + 2 * a + b + 1 >= 0", "c + z0 - 2 * a - b - 1 >= 0"] })]"#,
+        "a=[-9,7] b=[4,12] c=[-8,3 5,11] z0=[-24,8] z1=[4,18] left out: []",
     ),
 ];
 
@@ -1893,12 +1895,14 @@ fn refused_names_in(
 /// Seeds 11 to 14 (of item PROJECT-each-canon), checked by [`refused_names_in`]. Item
 /// PRES-small-point answers one name refused before, `c` of seed 13 case 264,
 /// `(a + b + 2 * c >= 2 || z0 <= 6) && a + c >= -9 && a + b + z1 == c - 6` within
-/// `b >= -6`, `-1 <= z0 <= 8`, `z1 >= -4`, with the hull brute force finds, `c >= -6`.
+/// `b >= -6`, `-1 <= z0 <= 8`, `z1 >= -4`, with the hull brute force finds, `c >= -6`. Item
+/// PERF-l139-family answers the last name refused, with the hull brute force finds: each side
+/// is first asked at its real bound, and the question the solver refused is not asked.
 #[test]
 fn refused_projections_of_random_parts_keep_sound_boxes_first_half() {
     let count = refused_names_in(11..15, 0..400, false);
     eprintln!("{count:?} (parts refused, names refused, names narrower than the box)");
-    assert_eq!(count, (1, 1, 1));
+    assert_eq!(count, (0, 0, 0));
 }
 
 /// Seeds 15 to 18 (of item PROJECT-each-canon), checked by [`refused_names_in`]. Item
