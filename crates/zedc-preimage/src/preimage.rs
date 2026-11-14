@@ -7401,23 +7401,100 @@ impl<'m, 't> Walk<'m, 't> {
             }
             Node::If(g, a, b) => match self.residue_test(g, env).await {
                 Some(yes) => {
-                    let ca = self.by_class(a, env).await?;
-                    let cb = self.by_class(b, env).await?;
+                    // Each arm is read only in its own classes ([`Walk::by_class_on`]).
+                    let no = ranges_complement(&yes, n);
+                    let ca = self.by_class_on(a, env, &yes, n).await?;
+                    let cb = self.by_class_on(b, env, &no, n).await?;
                     ByClass::choose(&ca, &cb, &yes)
                 }
-                None => self.by_class_if(g, a, b, env).await,
+                None => self.by_class_if(g, a, b, env, None).await,
             },
             _ => None,
         }
     }
 
-    /// [`Walk::by_class`] of an `if` whose guard `g` is not on the split's remainder.
-    async fn by_class_if(&'m self, g: Tid, a: Tid, b: Tid, env: Eid) -> Option<ByClass> {
+    /// [`Walk::by_class`] of `t`, an arm of an `if` on the split's remainder that
+    /// [`ByClass::choose`] reads only in the classes of `ranges` (ranges `i..=j` of class
+    /// numbers, sorted and disjoint, out of `n`): the summaries in those classes, and a
+    /// placeholder that nothing reads in the others. Only an `if` on a test that reads no
+    /// remainder and `min` or `max` with a constant are read this way, each from the full
+    /// summaries of its operands; any other term, or a refusal, is [`Walk::by_class`].
+    ///
+    /// Complexity tradeoff: naive version, the arm's summaries in every class, which for these
+    /// two kinds clamps or slices each of the `L` leaves of the operand's tree, `O(L)` work, and
+    /// then [`ByClass::choose`] keeps the classes of `ranges` alone. In a chain of `k` levels
+    /// `x mod m != r(j)`, else `if x <= c { max(t, c(j)) } else { t }`, each level keeps one
+    /// class but read all `O(k)` leaves: `O(k^2)` clamps and slices (S22, rows S22e-quad and
+    /// S22-order-chain; `remainder_cases_sliced_by_a_test_scale` went from 0.13G to 1.38G
+    /// instructions, 10.7 times, from k = 8 to 64). Used: the operation applied only in the
+    /// nodes of the tree that meet `ranges` ([`cls_clamp`], [`cls_zip`]), the others replaced by
+    /// one placeholder leaf each: `O((r + L_r) log n)` for `r` ranges and the `L_r` leaves that
+    /// meet them, as a range query of a segment tree (Bentley, "Solutions to Klee's rectangle
+    /// problems", 1977) visits the nodes on the paths to the range's ends. Cost: the result is
+    /// not cached, as the full summary is ([`Walk::by_class`]), so an arm read in full
+    /// elsewhere too is read twice; and a bound ([`Bound`]) is checked only over the classes
+    /// read, which can accept a term the full summary refused for a class that no case reads.
+    async fn by_class_on(
+        &'m self,
+        t: Tid,
+        env: Eid,
+        ranges: &[(usize, usize)],
+        n: usize,
+    ) -> Option<ByClass> {
+        // Read in full where no case reads the arm, as before, or every case does.
+        let read = ranges.iter().map(|&(i, j)| j + 1 - i).sum::<usize>();
+        if ranges.is_empty() || read == n {
+            return self.by_class(t, env).await;
+        }
+        let read = match self.node(t) {
+            Node::If(g, a, b) if self.residue_test(g, env).await.is_none() => {
+                self.by_class_if(g, a, b, env, Some(ranges)).await
+            }
+            Node::Prim(p @ (Prim::Min | Prim::Max), args) if args.len() == 2 => {
+                self.by_class_clamp(p, args, env, n, Some(ranges)).await
+            }
+            _ => None,
+        };
+        match read {
+            Some(c) => Some(c),
+            None => self.by_class(t, env).await,
+        }
+    }
+
+    /// An arm of [`Walk::by_class_if`] read only in the classes of `on`, when it is `min` or
+    /// `max` with a constant ([`Walk::by_class_on`]), and otherwise in every class.
+    async fn by_class_arm(
+        &'m self,
+        t: Tid,
+        env: Eid,
+        on: Option<&[(usize, usize)]>,
+    ) -> Option<ByClass> {
+        if let Some(ranges) = on
+            && let Node::Prim(p @ (Prim::Min | Prim::Max), args) = self.node(t)
+            && args.len() == 2
+            && let Some(n) = self.with(|tx| tx.classes().map(|c| c.cuts.len() - 1))
+            && let Some(c) = self.by_class_clamp(p, args, env, n, Some(ranges)).await
+        {
+            return Some(c);
+        }
+        self.by_class(t, env).await
+    }
+
+    /// [`Walk::by_class`] of an `if` whose guard `g` is not on the split's remainder; with `on`,
+    /// only in the classes of those ranges ([`Walk::by_class_on`]).
+    async fn by_class_if(
+        &'m self,
+        g: Tid,
+        a: Tid,
+        b: Tid,
+        env: Eid,
+        on: Option<&[(usize, usize)]>,
+    ) -> Option<ByClass> {
         if self.reads_mod(g, env).await {
             return None;
         }
-        let ca = self.by_class(a, env).await?;
-        let cb = self.by_class(b, env).await?;
+        let ca = self.by_class_arm(a, env, on).await?;
+        let cb = self.by_class_arm(b, env, on).await?;
         let bound = ca.bound.max(cb.bound);
         if ca.adds
             && cb.adds
@@ -7466,11 +7543,15 @@ impl<'m, 't> Walk<'m, 't> {
             &cb.shifted()?,
             (ca.base.as_ref(), cb.base.as_ref()),
             (0, ca.n),
+            on,
             &mut pairs,
         )?;
         let mut leaves = Vec::with_capacity(pairs.len());
-        for (span, pa, pb) in pairs {
-            leaves.push((span, self.pa_select(g, env, &pa, &pb).await?));
+        for (span, pair) in pairs {
+            match pair {
+                Some((pa, pb)) => leaves.push((span, self.pa_select(g, env, &pa, &pb).await?)),
+                None => leaves.push((span, Pa::Const(Int::ZERO))),
+            }
         }
         let bound = leaves
             .iter()
@@ -7532,37 +7613,48 @@ impl<'m, 't> Walk<'m, 't> {
                 }
                 cu.affine((c.into(), 0))
             }
-            Prim::Min | Prim::Max => {
-                let b = self.arg(args, 1);
-                let (c, u) = match self.constant_int(a, env).await {
-                    Some(c) => (c, b),
-                    None => (self.constant_int(b, env).await?, a),
-                };
-                // The forward values are read over the box, the same in every class.
-                let f = self.fwd(u, env).await;
-                let (Fin(lo), Fin(hi)) = f.ints.bounds()? else {
-                    return None;
-                };
-                let c_num = Num::from(c);
-                let (below, above) = (*hi <= c_num, *lo >= c_num);
-                match (p, below, above) {
-                    (Prim::Min, true, _) | (Prim::Max, _, true) => self.by_class(u, env).await,
-                    (Prim::Min, _, true) | (Prim::Max, true, _) => ByClass::constant(c, n),
-                    _ => {
-                        let cu = self.by_class(u, env).await?;
-                        let min = p == Prim::Min;
-                        match &cu.var {
-                            None => cu.clamp(min, c, &IntervalSet::empty()),
-                            Some(v) => self.with(|tx| cu.clamp(min, c, tx.cx.get(v)?)),
-                        }
-                    }
-                }
-            }
+            Prim::Min | Prim::Max => self.by_class_clamp(p, args, env, n, None).await,
             Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Eq | Prim::Ne => {
                 let yes = self.residue_test(t, env).await?;
                 ByClass::choose(&ByClass::constant(1, n)?, &ByClass::constant(0, n)?, &yes)
             }
             _ => None,
+        }
+    }
+
+    /// [`Walk::by_class_prim`] of `min` or `max` (`p`) of a term and a constant, the arguments
+    /// `args`; with `on`, only in the classes of those ranges ([`Walk::by_class_on`]).
+    async fn by_class_clamp(
+        &'m self,
+        p: Prim,
+        args: Span,
+        env: Eid,
+        n: usize,
+        on: Option<&[(usize, usize)]>,
+    ) -> Option<ByClass> {
+        let (a, b) = (self.arg(args, 0), self.arg(args, 1));
+        let (c, u) = match self.constant_int(a, env).await {
+            Some(c) => (c, b),
+            None => (self.constant_int(b, env).await?, a),
+        };
+        // The forward values are read over the box, the same in every class.
+        let f = self.fwd(u, env).await;
+        let (Fin(lo), Fin(hi)) = f.ints.bounds()? else {
+            return None;
+        };
+        let c_num = Num::from(c);
+        let (below, above) = (*hi <= c_num, *lo >= c_num);
+        match (p, below, above) {
+            (Prim::Min, true, _) | (Prim::Max, _, true) => self.by_class(u, env).await,
+            (Prim::Min, _, true) | (Prim::Max, true, _) => ByClass::constant(c, n),
+            _ => {
+                let cu = self.by_class(u, env).await?;
+                let min = p == Prim::Min;
+                match &cu.var {
+                    None => cu.clamp(min, c, &IntervalSet::empty(), on),
+                    Some(v) => self.with(|tx| cu.clamp(min, c, tx.cx.get(v)?, on)),
+                }
+            }
         }
     }
 
@@ -10644,7 +10736,10 @@ impl ByClass {
 
     /// `min(self, c)`, or `max` where not `min`, in every class ([`Pa::clamp`]), each leaf
     /// clamped once for the classes it covers: `O(L (m + 1) log P)` for `L` leaves, at most
-    /// the `G` classes, and `m` crossings of `c` among `P` pieces.
+    /// the `G` classes, and `m` crossings of `c` among `P` pieces. With `on`, only the leaves
+    /// that meet those ranges of classes are clamped, and each node that meets none is one
+    /// placeholder leaf ([`Walk::by_class_on`]): `O((r + L_r) log n)` for `r` ranges and the
+    /// `L_r` leaves that meet them.
     ///
     /// Complexity tradeoff: each leaf is clamped by itself, not the tree's base once, so the
     /// classes share no step here, `O(L)` clamps for a tree of `L` leaves, at most `G`. Why: a
@@ -10654,8 +10749,15 @@ impl ByClass {
     /// remainder. Test: `store::preimage::tests::a_chain_with_clamps_is_read_in_time_near_its_length`.
     /// COMPLEXITY.md rows S22e-quad and S22-order-chain. A complete solution is the one named
     /// at [`Walk::by_class`]: the congruence facet in the transfer's sets.
-    fn clamp(&self, min: bool, c: i64, dom: &IntervalSet) -> Option<ByClass> {
-        let root = cls_clamp(&self.root, (1, self.shift), self.base.as_ref(), min, c, dom)?;
+    fn clamp(
+        &self,
+        min: bool,
+        c: i64,
+        dom: &IntervalSet,
+        on: Option<&[(usize, usize)]>,
+    ) -> Option<ByClass> {
+        let at = (self.base.as_ref(), (0, self.n), on);
+        let root = cls_clamp(&self.root, (1, self.shift), at, min, c, dom)?;
         let bound = Bound {
             b: self.bound.b.max(c.unsigned_abs().into()),
             ..self.bound
@@ -10740,23 +10842,30 @@ fn leaf_pa(leaf: &Leaf, base: Option<&Pa>) -> Option<Pa> {
 /// Appends to `out`, in the order of the classes, each range of classes `span` in which both
 /// `a` and `b`, trees over `span` with no map above them, are one summary, with those two
 /// summaries; `bases` are the summaries of their [`Leaf::Base`] leaves. A range is a node of
-/// either tree, so there are at most as many as the two trees have leaves together.
+/// either tree, so there are at most as many as the two trees have leaves together. With
+/// `on`, a range that meets none of those ranges comes without summaries, as one node of the
+/// halving ([`Walk::by_class_on`]).
 fn cls_zip(
     a: &Rc<Cls>,
     b: &Rc<Cls>,
     bases: (Option<&Pa>, Option<&Pa>),
     (lo, hi): (usize, usize),
-    out: &mut Vec<((usize, usize), Pa, Pa)>,
+    on: Option<&[(usize, usize)]>,
+    out: &mut Vec<((usize, usize), Option<(Pa, Pa)>)>,
 ) -> Option<()> {
+    if on.is_some_and(|r| !ranges_meet(r, (lo, hi))) {
+        out.push(((lo, hi), None));
+        return Some(());
+    }
     if let (Cls::Same(u), Cls::Same(v)) = (&**a, &**b) {
-        out.push(((lo, hi), leaf_pa(u, bases.0)?, leaf_pa(v, bases.1)?));
+        out.push(((lo, hi), Some((leaf_pa(u, bases.0)?, leaf_pa(v, bases.1)?))));
         return Some(());
     }
     let mid = lo + (hi - lo) / 2;
     let (al, ar) = cls_halves(a)?;
     let (bl, br) = cls_halves(b)?;
-    cls_zip(&al, &bl, bases, (lo, mid), out)?;
-    cls_zip(&ar, &br, bases, (mid, hi), out)
+    cls_zip(&al, &bl, bases, (lo, mid), on, out)?;
+    cls_zip(&ar, &br, bases, (mid, hi), on, out)
 }
 
 /// The tree over the classes `span` whose leaves are `leaves`, in order, each a range of
@@ -10776,16 +10885,21 @@ fn cls_build(
     })
 }
 
-/// The tree `node` with the map `f` applied above it and every leaf's summary clamped
-/// ([`ByClass::clamp`]); `base` is the summary of the leaves [`Leaf::Base`].
+/// The tree `node` over the classes `span` with the map `f` applied above it and every leaf's
+/// summary clamped ([`ByClass::clamp`]); `base` is the summary of the leaves [`Leaf::Base`].
+/// With `on`, a node that meets none of those ranges is a placeholder ([`Walk::by_class_on`]).
 fn cls_clamp(
     node: &Rc<Cls>,
     f: (i128, i128),
-    base: Option<&Pa>,
+    (base, (lo, hi), on): (Option<&Pa>, (usize, usize), Option<&[(usize, usize)]>),
     min: bool,
     c: i64,
     dom: &IntervalSet,
 ) -> Option<Rc<Cls>> {
+    if on.is_some_and(|r| !ranges_meet(r, (lo, hi))) {
+        return Some(cls_unread());
+    }
+    let mid = lo + (hi - lo) / 2;
     Some(Rc::new(match &**node {
         Cls::Same(leaf) => {
             let pa = match leaf {
@@ -10800,12 +10914,40 @@ fn cls_clamp(
         Cls::Split { left, right, tag } => {
             let f = compose(*tag, f)?;
             Cls::Split {
-                left: cls_clamp(left, f, base, min, c, dom)?,
-                right: cls_clamp(right, f, base, min, c, dom)?,
+                left: cls_clamp(left, f, (base, (lo, mid), on), min, c, dom)?,
+                right: cls_clamp(right, f, (base, (mid, hi), on), min, c, dom)?,
                 tag: (1, 0),
             }
         }
     }))
+}
+
+/// The leaf that stands for classes no case reads ([`Walk::by_class_on`]).
+fn cls_unread() -> Rc<Cls> {
+    Rc::new(Cls::Same(Leaf::Own(Pa::Const(Int::ZERO))))
+}
+
+/// Whether one of `ranges`, ranges `i..=j` of class numbers, sorted and disjoint, meets the
+/// classes `lo..hi`: `O(log r)` for `r` ranges.
+fn ranges_meet(ranges: &[(usize, usize)], (lo, hi): (usize, usize)) -> bool {
+    let k = ranges.partition_point(|&(_, j)| j < lo);
+    ranges.get(k).is_some_and(|&(i, _)| i < hi)
+}
+
+/// The classes `0..n` outside `ranges`, ranges `i..=j` sorted and disjoint, in the same form.
+fn ranges_complement(ranges: &[(usize, usize)], n: usize) -> Vec<(usize, usize)> {
+    let mut out = Vec::with_capacity(ranges.len() + 1);
+    let mut next = 0;
+    for &(i, j) in ranges {
+        if next < i {
+            out.push((next, i - 1));
+        }
+        next = j + 1;
+    }
+    if next < n {
+        out.push((next, n - 1));
+    }
+    out
 }
 
 /// Whether `u` and `v` are one summary: equal coefficients, or one shared treap.
