@@ -2361,6 +2361,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-pendants-growth-scaled-seed | impl attempt 1 | 2026-11-14 11:58 | fix-growth started on d5d733341 |
 | FAIL-rewrite-growth-both | impl attempt 1 | 2026-11-14 12:03 | fix-growth started on d5d733341 |
 | FAIL-types-sub-level-variables | running | 2026-11-14 13:54 |  |
+| FAIL-types-three-variable-shapes | impl attempt 1 | 2026-11-14 12:16 | started in wt/fix-3var |
+| KERNEL-near-limit-benches | impl attempt 1 | 2026-11-14 14:05 | started; worktree /home/luke/Work/wt/kernel-near-limit; load 32.29 38.00 40.67 |
 | PERF-part-name-nested | impl attempt 1 | 2026-11-14 14:01 | started; worktree /home/luke/Work/wt/perf-part-name-nested |
 | PRESBURGER-or-if-disjuncts-refusal | impl attempt 1 | 2026-11-14 14:24 | started; worktree pres-orif-disj at 49c35d07a |
 | PRES-switchover-not-race | impl attempt 1 | 2026-11-14 13:48 | started; worktree /home/luke/Work/wt/pres-switchover on d7c2f809c; load 42.36 |
