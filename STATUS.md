@@ -2186,12 +2186,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PERF-l139-family | impl attempt 3 | 2026-11-12 18:45 | start: worktree from origin/main 25a9b75b4, re-measuring all l01_39 families |
 | POW-scope-exponent | impl attempt 1 | 2026-11-13 14:51 | reproduced on 4a1a69d22 with zedc run: 2^(2^k - 2) under k > 0, 2^(3^k - 3) under k >= 1, 2^(5^(2^k + 1) - 10) under k >= 0 all rejected 'exponent that may be n |
 | PRES-overlap-coeffs | impl attempt 1 | 2026-11-13 14:10 | started; worktree from origin/main 64dfe1c61 |
-| REPAIR-past-binding | impl attempt 1 | 2026-11-13 14:51 | started; worktree from origin/main 8776f59cf |
 | SPEC-ffi-release-apply | impl attempt 1 | 2026-11-13 16:29 | started; spec worktree /home/luke/Work/wt/spec-ffi-release-apply-spec; load 63.31 57.12 51.32 |
 | ST-churn-at-once | impl attempt 1 | 2026-11-13 16:18 | started; worktree from origin/main a42ee21d8 |
 | ST-class-case-reverse | impl attempt 1 | 2026-11-13 16:24 | started; load 44.00 |
-| STUDY-eval-pull-body | impl attempt 1 | 2026-11-13 16:58 | DESIGN read; independent Opus review launched; drafting report |
-| STUDY-ffi-stateful | running |  |  |
+| STUDY-consume-on-success | running |  |  |
+| STUDY-eval-pull-body | impl attempt 1 | 2026-11-13 16:58 | reviewer agreed (C=R at 9); spec edits + DOCS-TODO 185 in study-eval-pull-body-spec; zed-tools check OK (200 parsed, 0 failed); plan row Done + IMPL-reached-eff |
+| STUDY-ffi-stateful | impl attempt 1 | 2026-11-13 17:06 | started; reading author answers E2 G2 L and DESIGN sec:ffi/memory/ports |
 | TERM-report | impl attempt 1 | 2026-11-13 17:02 | started; reading DESIGN sec:staging, sec:memory, --total, report-switch sentence |
 | TESTS-defer-failing | impl attempt 1 | 2026-11-13 16:54 | started; load 41.38 47.39 48.09 |
 
