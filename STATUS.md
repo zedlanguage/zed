@@ -1490,6 +1490,7 @@ LR4 added 27 tests (`lr4_assoc.rs` in `l01_08_parser`) and 23 bracketing cases t
 | FAIL-linked-held-wider-seed | Done: merged and pushed (97e69e64a "FAIL-linked-held-wider-seed: a star the join unmarks is placed against the order's own relation" and the commit that marks the row Done); no spec change | l01_39 linked: a star a join unmarked was placed against the join's relation while the order recorded another, so `Order::sync` never put it back and a later move of its hub did not project it again. `Order::unmark` places it against the order's own relation, O(log n), no copy. 3 seed tests and a minimal test, red before; 200 fresh seeds of each random tree test pass; linked/holes/join benchmarks 1.07 to 9.88. Two of the five seeds are another cause: FAIL-linked-case-group-wake. Also filed: PREIMAGE-scan-stack-blind (from reading only). |
 | FAIL-s22-unlisted-class-members-seed | Done: merged and pushed (9d5eb0d25 and the commit that marks the row Done); test only, no spec change | l01_25 s22: `Diffs::exact` allowed an unlisted preimage and one with the same class members, not both; and lacked the renamed-relation branch `preimage_listed` has (third seed from the sweep). 3 seed tests, red before; 600 fresh seeds pass. Not from eb20d534c. |
 | FAIL-row-sums-solver-alone-tie-seed | Done: merged and pushed (ce30769b8 and the commit that marks the row Done); test only, no spec change | l01_38 disj_groups: the solver alone refuses the whole projection with `Tie` (XR3 fix B); the comparison now skips and counts such a case. Seed test red before; 200 fresh seeds pass. |
+| FAIL-returned-generic-need-fit | merged and pushed (the commit "FAIL-returned-generic-need-fit: ..." that marks the row Done); no spec change | fits_slot and why_unfit (walk.rs) checked needs only when the passed signature had them, so a returned function with needs went to `fits_in`, which fits it only to an equal signature. `holds_needs`/`fit_needs`/`needs_hold` now call the function and those it returns at the types each expected arrow binds. New row FAIL-returned-chain-quadratic (a chain of named functions returning the one before is quadratic, pre-existing). |
 
 ## Decisions made
 
@@ -2359,7 +2360,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-linked-case-group-wake | impl attempt 1 | 2026-11-14 14:17 | start, worktree /home/luke/Work/wt/lcgw; load 33.60 |
 | FAIL-pendants-growth-scaled-seed | impl attempt 1 | 2026-11-14 11:58 | fix-growth started on d5d733341 |
 | FAIL-print-function-in-union | impl attempt 1 | 2026-11-14 12:05 | started in wt/fix-need-print, load 35.50 |
-| FAIL-returned-generic-need-fit | impl attempt 1 | 2026-11-14 11:42 | started in wt/fix-need-print, load 35.50 |
 | FAIL-rewrite-growth-both | impl attempt 1 | 2026-11-14 12:03 | fix-growth started on d5d733341 |
 | FAIL-types-sub-level-variables | running | 2026-11-14 13:54 |  |
 | FAIL-types-three-variable-shapes | impl attempt 1 | 2026-11-14 12:16 | started in wt/fix-3var |
