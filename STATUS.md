@@ -2352,16 +2352,18 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-linked-held-wider-seed | running | 2026-11-14 12:52 |  |
 | FAIL-or-ifs-no-longer-exact-seed | impl attempt 1 | 2026-11-14 12:17 | started, worktree fail-or-ifs |
 | FAIL-pendants-growth-scaled-seed | impl attempt 1 | 2026-11-14 11:58 | fix-growth started on d5d733341 |
+| FAIL-pendants-route-parity | impl attempt 2 | 2026-11-14 11:49 | fixed, pushed faf0c362b 24d072140; new row FAIL-tight-corner-shadows-seed; Growth seed 11479163432696490265 logged for FAIL-rewrite-growth-both; load 52.10 |
 | FAIL-print-function-in-union | impl attempt 1 | 2026-11-14 12:05 | started in wt/fix-need-print, load 35.50 |
 | FAIL-print-height-cycle-seed | impl attempt 1 | 2026-11-14 13:06 | started; worktree fix-print-cycle at fe86c2fa5, load 25.27 37.88 44.16 |
 | FAIL-returned-generic-need-fit | impl attempt 1 | 2026-11-14 11:42 | started in wt/fix-need-print, load 35.50 |
 | FAIL-rewrite-growth-both | impl attempt 1 | 2026-11-14 12:03 | fix-growth started on d5d733341 |
 | FAIL-row-sums-solver-alone-tie-seed | running | 2026-11-14 12:52 |  |
 | FAIL-s22-unlisted-class-members-seed | running | 2026-11-14 12:52 |  |
-| FAIL-tight-corner-shadows-seed | done | 2026-11-14 13:13 | merged and pushed from wt/fix-tight-corner |
+| FAIL-tight-corner-shadows-seed | impl attempt 1 | 2026-11-14 13:13 | started in wt/fix-tight-corner |
 | FAIL-types-sub-shared-payloads | impl attempt 1 | 2026-11-14 12:37 | fix-types-4 started on 83c5eb9e9; load 29 |
+| FAIL-whole-projection-parity | impl attempt 2 | 2026-11-14 11:49 | fixed, pushed faf0c362b 24d072140; new row FAIL-tight-corner-shadows-seed; Growth seed 11479163432696490265 logged for FAIL-rewrite-growth-both; load 52.10 |
 | KERNEL-eval-step-cost | impl attempt 1 | 2026-11-14 12:21 | negative control B (each evaluated node spins steps/16, quadratic in steps): 18 of 66 m0_09/m0_10 bench pieces fail (ratios 11.5-60.4 or 20 s timeouts: lets 23. |
-| TEST-presburger-unreached-paths | impl attempt 2 | 2026-11-14 10:07 | started in wt/pres-unreached-2 at 12a632824; load 39.92 |
+| TEST-presburger-unreached-paths | impl attempt 3 | 2026-11-14 10:07 | started part 3 in wt/pres-unreached-3; load 60.04 |
 | TESTS-split | impl attempt 1 | 2026-11-06 23:46 | started; worktree /home/luke/Work/wt/tests-split at 8895df00b; load 36.28 39.25 39.35 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
