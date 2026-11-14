@@ -190,6 +190,10 @@ pub(super) struct Arms<'a> {
     /// or none when they are not; none also while its body is being translated, so a call
     /// of it within its own body stays a name of its own.
     pub(super) called: HashMap<usize, Option<Rc<Called>>>,
+    /// Each node's scope with parameters of no declared type read as of type int, by the
+    /// parameters' binders, in order, and the node, once a need on their ints has read it
+    /// ([`Ck::ints_as_int`](super::Ck::ints_as_int)).
+    pub(super) int_scopes: HashMap<Vec<usize>, HashMap<usize, Scope>>,
 }
 
 impl<'a> Arms<'a> {
@@ -213,6 +217,7 @@ impl<'a> Arms<'a> {
             here_ints: HashMap::new(),
             part_ints: HashMap::new(),
             called: HashMap::new(),
+            int_scopes: HashMap::new(),
         }
     }
 

@@ -18,6 +18,7 @@ mod exact;
 mod families;
 mod finite_from_type;
 mod follow;
+mod generic_need_arm;
 mod helpers;
 mod holes;
 mod hull;

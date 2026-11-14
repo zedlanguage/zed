@@ -40,7 +40,7 @@ Tests in `completeness.rs` unless a file is named.
 | Binding time: meet and join, a binding from a parameter is run time | `spec.rs` `a_meet_takes_the_earlier_binding_time_and_a_join_the_later` | |
 | Disjunction, relation and nesting read by the checker | `a_disjunction_a_relation_and_a_nest_each_bound_the_arm` | |
 | A `let` binding narrowing its inputs; a typed lambda; a static width | `let_terms.rs`; `a_binding_a_typed_lambda_and_a_static_width_carry_the_arm_bound` | |
-| A function or lambda with an untyped parameter: the need it passes on reads its arm's tests | | fails: FAIL-check-generic-need-ignores-arm (`g(positional n) = if n >= 0 { popCount(n) } else { 0 }` makes `g(-5)` rejected) |
+| A function or lambda with an untyped parameter: the need it passes on reads its arm's tests | `generic_need_arm::*` | fixed by FAIL-check-generic-need-ignores-arm: the need is read under the arm with the parameters taken as int (`Ck::ints_as_int`, COMPLEXITY C26) |
 | Unreachable arms by parity, a self-contradicting relation, the `else` of a test every value meets, a static `false` | `an_arm_no_value_reaches_is_accepted_whatever_its_body` (each with a reached control) | |
 | Nests of tests in every grouping and order; random nests | `nests.rs` all | |
 | Tests on `||` alternatives that limit each other in a loop | `loops.rs` all | |

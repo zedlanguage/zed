@@ -612,3 +612,30 @@ fn the_checker_reads_a_test_through_a_chain_of_calls_in_time_linear_in_it() {
         },
     );
 }
+
+/// `g` of a parameter of no declared type, with `k` nested tests on it and a use of
+/// `popCount` under each, which the arms keep in its domain.
+fn generic_need_nest_program(k: usize) -> String {
+    let mut body = String::from("0");
+    for i in (0..k).rev() {
+        body = format!("if n >= {i} {{ popCount(n) + ({body}) }} else {{ 0 }}");
+    }
+    format!(
+        "g(positional n) = {body};\nf(positional x: int) = g(x);\n\
+         main(m: MainArgs) {{\n  m.stdout <- \"\";\n}}\n"
+    )
+}
+
+#[test]
+fn the_checker_reads_the_needs_of_a_generic_function_under_nested_tests_in_time_linear_in_them() {
+    // Each use reads the arms with `n` taken as int, each node's scope computed once for
+    // `n`, not again from the root at each of the `k` uses (FAIL-check-generic-need-ignores-arm).
+    let built = scaling::inputs(256, generic_need_nest_program);
+    scaling::check(
+        "k nested tests on a parameter of no declared type, a need under each",
+        256,
+        |k| {
+            assert!(zedc::run::load(built[&k].as_bytes()).is_ok());
+        },
+    );
+}

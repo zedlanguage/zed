@@ -6877,11 +6877,20 @@ impl<'a> Ck<'_, 'a> {
     /// The scope node `n`, an `Assume` whose items are computed ([`Ck::waits`]), narrows by its
     /// test, and the test.
     fn assumed(&mut self, n: usize) -> (Scope, Rc<Translated>) {
-        let Node::Assume { parent, test, .. } = self.arms.nodes[n] else {
+        let Node::Assume { parent, .. } = self.arms.nodes[n] else {
+            unreachable!("an assumption")
+        };
+        let p = self.scope_or_root(parent);
+        self.assumed_in(n, p, &[])
+    }
+
+    /// The scope the test of the assumption `n` is checked in, from its parent's scope `p`;
+    /// the parameters `int` read as of type int ([`Ck::ints_as_int`]).
+    fn assumed_in(&mut self, n: usize, p: Scope, int: &[usize]) -> (Scope, Rc<Translated>) {
+        let Node::Assume { test, .. } = self.arms.nodes[n] else {
             unreachable!("an assumption")
         };
         let t = self.term(test);
-        let p = self.scope_or_root(parent);
         // A bound name the scope has no product of is its value, and any other name any value
         // of its type where the test is checked. A scope no state reaches is told of none: it
         // stays unreachable.
@@ -6889,7 +6898,13 @@ impl<'a> Ck<'_, 'a> {
         if let Node::Assume { fresh, .. } = &self.arms.nodes[n]
             && !p.bottom
         {
-            for (x, q) in fresh.iter() {
+            // `fresh` holds the names of `t` in order ([`Ck::fresh`]).
+            debug_assert_eq!(fresh.len(), t.vars.len());
+            for ((x, q), (_, id)) in fresh.iter().zip(&t.vars) {
+                let q = match int.contains(id) {
+                    true => &Product::of_type(KType::int()),
+                    false => q,
+                };
                 match p.names.contains_key(x) {
                     false => {
                         p.bind(x, q.clone(), &Shared::new(Term::Var(x.clone())));
@@ -10014,7 +10029,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         if ints_in(&d, &self.ints_here(e).0) {
             return;
         }
-        match self.open_param(e) {
+        let open = self.open_param(e);
+        if !self.trying && ints_in(&d, &self.ints_as_int(e, open)) {
+            return;
+        }
+        match open {
             // A trial application is undone; the application that stays records the need.
             Some(_) if self.trying => {}
             Some(id) => self.floor_on(
@@ -10054,6 +10073,83 @@ impl<'t, 'a> Ck<'t, 'a> {
         if smaller {
             self.floors.insert(id, n);
         }
+    }
+
+    /// The ints of `e` here, read with the parameters of no declared type that `e` reads, or
+    /// `open` names, taken as of type int (FAIL-check-generic-need-ignores-arm). A use that
+    /// takes the ints of a value asks only which ints reach it; an operator on ints gives an
+    /// int only from ints (no value is converted implicitly), and an int value of a parameter
+    /// is one of type int. So in `g(positional n) = if n >= 0 { popCount(n) } else { 0 }` the
+    /// arm holds the ints of `n` at least 0, and in `if n > 3 && n < 2 { popCount(n - n - 1) }`
+    /// no int reaches the use, though `n` is of a class when the test is met (`popCount`
+    /// narrows it to int later) and a test on a name not of type int narrows nothing
+    /// ([`Ck::fresh`]). Only this question reads the parameters so: a scope that took them as
+    /// int would call an arm no int reaches unreachable, which a value of another type may
+    /// reach; and only those `e` reads, since a test on another parameter, as `m == "a"`,
+    /// may be what lets a value of `e` through.
+    ///
+    /// Complexity tradeoff: the naive way recomputes the scopes from the root to here at each
+    /// such use, O(d) narrowings for `d` tests above it and O(u·d) for `u` uses. Here each
+    /// node's scope is computed once per set of parameters ([`Arms::int_scopes`]), post-order
+    /// on an explicit stack, so the reads under one function cost O(q·s) narrowings for `q`
+    /// sets read so and `s` nodes: the cost of the scopes themselves, once per set. Cost: a
+    /// second scope per node and set, where a use reads it. Why: the class of a parameter is
+    /// settled only after its uses, while the scopes are computed as the walk reads them, and
+    /// a scope is not recomputed when a class narrows. Trigger: many uses that check a need,
+    /// each on a different set of parameters of no declared type, under many tests. Test:
+    /// `l01_39_reduced_product::generic_need_arm`. COMPLEXITY.md C26.
+    ///
+    /// [`Arms::int_scopes`]: super::arms::Arms::int_scopes
+    fn ints_as_int(&mut self, e: &'a Expr, open: Option<usize>) -> IntervalSet {
+        let here = self.arms.here();
+        let t = self.term(e);
+        let mut ids: Vec<usize> = (t.vars.iter().map(|&(_, id)| id))
+            .filter(|id| self.open_params.contains(id))
+            .chain(open)
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        if here == 0 || ids.is_empty() {
+            return IntervalSet::top();
+        }
+        let mut scopes = self.arms.int_scopes.remove(&ids).unwrap_or_default();
+        let mut stack = vec![(here, false)];
+        while let Some((n, ready)) = stack.pop() {
+            if scopes.contains_key(&n) {
+                continue;
+            }
+            if !ready {
+                stack.push((n, true));
+                match self.arms.nodes[n] {
+                    Node::Root => {}
+                    Node::Assume { parent, .. } => stack.push((parent, false)),
+                    Node::Join(a, b) => stack.extend([(a, false), (b, false)]),
+                }
+                continue;
+            }
+            let s = match self.arms.nodes[n] {
+                Node::Root => Scope::new([]).lazy(),
+                Node::Assume {
+                    parent, outcome, ..
+                } => {
+                    // The binders the test reads, as the scope proper reads them.
+                    let wanted = self.waits(Item::Scope(n));
+                    self.settle(wanted);
+                    let (p, t) = self.assumed_in(n, scopes[&parent].clone(), &ids);
+                    p.assume_case(&t.term, outcome, &Premises::new())
+                }
+                Node::Join(a, b) => scopes[&a].join(&scopes[&b]),
+            };
+            scopes.insert(n, s);
+        }
+        let wanted = t.binders.iter().map(|&b| Item::Bound(b)).collect();
+        self.settle(wanted);
+        let s = scopes[&here].clone();
+        self.arms.int_scopes.insert(ids, scopes);
+        let mut s = self.with_bound(s, &t.binders, &t.calls);
+        s.eager_on(&t.term);
+        let ints = product::forward(&t.term, &mut s).ints().clone();
+        self.known(e).ints.meet(&ints)
     }
 
     /// The binder of the parameter of no declared type of a function being checked that `e`
