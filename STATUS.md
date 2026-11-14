@@ -2191,13 +2191,14 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| CMP-class-int-unchecked | running | 2026-11-13 20:38 |  |
 | CONST-too-large-products-unproved | impl attempt 1 | 2026-11-13 20:23 | started; worktree from origin/main |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | CD round 6 launched (SHORT): experiment 6664553392322379777 from main 8a3e0859b, 56 cases, 3 regions (new PICK_RS); local main-vs-main 2,357.953, test run 8,535 |
 | HUB-moved-relation | impl attempt 1 | 2026-11-13 18:26 | started; load 27.06 |
 | PRES-exact-side | impl attempt 1 | 2026-11-13 20:00 | started; worktree from 223aaf2e2 |
-| REPAIR-literal-string-order | impl attempt 1 | 2026-11-13 20:06 | started; load 61.28 56.25 52.21 |
+| REPAIR-literal-string-order | impl attempt 1 | 2026-11-13 20:06 | red before (2 of 128 l01_29 pieces fail on origin/main), 499 pieces of 14 checker/message groups pass after; scaling 5.8x work 4.5x bytes at 8x digits; negative |
 | REPAIR-text-number-both-sides | impl attempt 1 | 2026-11-13 20:28 | started; load 40.28 39.26 43.11 |
-| ST-chain-raise-reverse-log | running | 2026-11-13 20:31 |  |
+| ST-chain-raise-reverse-log | impl attempt 1 | 2026-11-13 20:31 | started; worktree from origin/main f714c55fc |
 | ST-class-case-holes | impl attempt 1 | 2026-11-13 19:02 | started; worktree from origin/main f55860149 |
 | TEST-mutate-generic-time | impl attempt 1 | 2026-11-13 19:53 | started; worktree from origin/main d5f0ccb29; load 48.11 |
 | XR-ffi-stateful | impl attempt 1 | 2026-11-13 18:25 | started: cross-review of STUDY-ffi-stateful design (zed 02a2ff3), seats Sol, Opus, Gemini (CD no seat: spec text, not scored code); load 32.07 38.66 44.54 |
