@@ -1,10 +1,10 @@
 //! The time of checking programs nested thousands deep, on a 2 MiB stack with no recursion on
-//! the nesting (DESIGN.md Part G). The programs at the depths that overflowed a stack are checked
-//! in `deep_scaling`.
+//! the nesting (DESIGN.md Part G), and written function types 4,000 deep on 512 KiB. The
+//! checks of each shape a few levels deep are in `deep_scaling`.
 
 use zed_tests::scaling;
 
-use super::super::deep_scaling::{bit_words, curried_type, nested_around};
+use super::super::deep_scaling::{bit_words, checks_written, curried_type, nested_around};
 use super::super::scaling::resolved;
 
 /// Checks each program of `shapes` on a 2 MiB stack, `n` deep and `8n` deep, and checks the
@@ -187,4 +187,17 @@ fn a_refusal_of_function_types_nested_8000_deep_is_linear() {
             assert!(!wide.subtype(narrow), "{m} deep");
         });
     });
+}
+
+
+#[test]
+fn function_types_written_4000_deep_check_on_a_512_kib_stack() {
+    // The denotation of a written type (`Denote::ty`, zedc-check) recursed once per level of
+    // its nesting, and so did the variables of a signature, gathered from those of the
+    // functions it holds (`Sig::facts`): each overflowed a 2 MiB stack at 3,200 deep and needed
+    // 1 GiB (TY-sub-stack). Each now keeps a stack of its own (TY-write-stack). These ran
+    // 16,000 deep on 2 MiB and 64,000 deep on the 8 MiB stack of a main thread, on which zedc
+    // checks a program; 4,000 deep on 512 KiB is the same stack a level, so a recursion of one
+    // frame of 128 bytes a level overflows it too.
+    scaling::on_a_thread(512 << 10, || checks_written(4_000));
 }

@@ -3299,7 +3299,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// costs the size of `e` per trial. Over a nest of `n` operations, each rejected as it is
     /// walked with a fix whose trial gives the operation below it a carrier, as in
     /// `((1 + 1) / 1 + 1) / 1`, that is O(n²) (test
-    /// `l01_26a_generic_literals::scaling::an_argument_of_divisions_of_literals_nested_deep_takes_its_carrier_in_linear_time`).
+    /// `l01_26a_generic_literals::bench::scaling::an_argument_of_divisions_of_literals_nested_deep_takes_its_carrier_in_linear_time`).
     /// Kept by operation and carrier, each operation is read once per carrier, at three
     /// carriers at most: one kernel operation on its operands' values, besides copying them.
     fn lit_fit(&mut self, e: &Expr, c: Carrier) -> (bool, Option<Lit>) {
@@ -3862,7 +3862,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // an exponent; outside every arm `ints_here` returns at once. A read per arm
                 // opened above the division, the naive way to ask each test, costs O(n) a
                 // division and O(n^2) for n chained tests. Measured
-                // (`l01_26_type_resolution::divisors::chained_tests_and_divisions_check_in_linear_time`,
+                // (`l01_26_type_resolution::bench::divisors::chained_tests_and_divisions_check_in_linear_time`,
                 // n = 100 and 800 chained `if d != 0` arms each dividing by `d`): 8.0 times
                 // the work and 8.0 times the bytes; the per-arm read, 38.2 times the bytes.
                 //
@@ -6175,7 +6175,7 @@ impl<'a> Ck<'_, 'a> {
         // arm, without the subtype test, made
         // `l01_39a_bit_words::scaling::two_hubs_on_one_block_settle_in_time_linear_in_the_tests`
         // take 19.8 times the instructions. Test:
-        // `l01_26_type_resolution::scaling::a_chain_of_tests_is_linear_in_its_length`.
+        // `l01_26_type_resolution::bench::scaling::a_chain_of_tests_is_linear_in_its_length`.
         // COMPLEXITY.md C34.
         self.settle(vec![Item::Scope(here)]);
         if self.arms.scopes[here].as_ref().is_some_and(|s| s.bottom) {

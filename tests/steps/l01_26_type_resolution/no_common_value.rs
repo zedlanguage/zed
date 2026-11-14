@@ -13,7 +13,6 @@ use zed_kernel::types::Type;
 use zedc::check::ty::{Carrier, Ty};
 use zedc::rejection::Row;
 
-use super::deep_ops::{DEEP, on_shallow_stack};
 use super::type_errors;
 
 /// The rejection of `a op b`, of the types `ta` and `tb` at their carriers, that no repair
@@ -286,16 +285,24 @@ fn nested(d: usize, b: Ty) -> Ty {
     (0..d).fold(b, |t, _| Ty::tuple(vec![t, int(0)]))
 }
 
+/// The carriers of tuples nested `d` deep meet when their bottoms share a carrier and not
+/// otherwise.
+pub(super) fn carriers_of_nested_tuples(d: usize) {
+    let (a, b) = (
+        nested(d, int(1)).carriers(),
+        nested(d, Ty::carrier(Carrier::Str)).carriers(),
+    );
+    assert!(a.meets(&nested(d, int(7)).carriers()), "{d} deep");
+    assert!(!a.meets(&b), "{d} deep");
+}
+
 #[test]
-fn carriers_of_a_deep_tuple_run_on_a_shallow_stack() {
-    on_shallow_stack(|| {
-        let (a, b) = (
-            nested(DEEP, int(1)).carriers(),
-            nested(DEEP, Ty::carrier(Carrier::Str)).carriers(),
-        );
-        assert!(a.meets(&nested(DEEP, int(7)).carriers()));
-        assert!(!a.meets(&b));
-    });
+fn carriers_of_a_nested_tuple_meet_by_the_carrier_at_the_bottom() {
+    // Small instances of the benchmark
+    // `bench::no_common_value::carriers_of_a_deep_tuple_run_on_a_shallow_stack`.
+    for d in 0..5 {
+        carriers_of_nested_tuples(d);
+    }
 }
 
 /// `x == y` with `x` a union of `n` tuples `(#ak, String)` and `y` one of `n` tuples

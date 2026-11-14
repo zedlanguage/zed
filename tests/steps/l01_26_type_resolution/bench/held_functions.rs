@@ -5,6 +5,7 @@ use zed_tests::scaling;
 use super::super::held_functions::{
     in_a_wide_payload, in_atoms, in_atoms_and_tuples, in_atoms_by_bindings, in_atoms_by_calls,
     in_atoms_twice, in_atoms_twice_in_a_function, in_calls, in_named_steps, in_one_expression,
+    nested,
 };
 use super::super::{Resolved, type_errors};
 
@@ -121,3 +122,27 @@ fn atoms_nested_in_atoms_are_checked_in_linear_time() {
         });
     }
 }
+
+#[test]
+fn a_type_8000_tuples_deep_prints_and_drops_on_a_2_mib_stack() {
+    // `Ty::write` recursed once a level and overflowed a 2 MiB stack below 8,000 deep, as did
+    // the drop glue of the rows.
+    assert_eq!(nested(2).to_string(), "((_, _), _)");
+    scaling::on_a_thread(2 << 20, || {
+        let n = 8000;
+        let text = nested(n).to_string();
+        assert_eq!(text, format!("{}_{}", "(".repeat(n), ", _)".repeat(n)));
+    });
+}
+
+#[test]
+fn a_type_31250_tuples_deep_prints_and_drops_on_a_256_kib_stack() {
+    // It ran a million tuples deep on an 8 MiB stack, about 8 bytes a level; this is the same
+    // stack a level at a thirty-second of the depth.
+    scaling::on_a_thread((8 << 20) / 32, || {
+        let n = 1_000_000 / 32;
+        let text = nested(n).to_string();
+        assert!(text == format!("{}_{}", "(".repeat(n), ", _)".repeat(n)));
+    });
+}
+

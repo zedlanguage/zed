@@ -1,31 +1,34 @@
-//! The checker on programs nested as deep as overflowed a stack when it recursed once a level:
-//! each is checked on a 2 MiB stack, or on as small a stack a level as an 8 MiB one at the depth
-//! it ran at, with no recursion on the nesting. The time of each, linear in the depth, is
-//! measured in `bench::deep_scaling`.
+//! The checker on programs of every shape that nests, as overflowed a stack when it recursed
+//! once a level. The tests here check each shape a few levels deep on the default stack; the
+//! benchmarks in `bench::deep_scaling` check each thousands deep on a 2 MiB stack, or on as
+//! small a stack a level, and measure that the time is linear in the depth (author P178: a
+//! test that needs an unusual depth or stack is a benchmark).
 
-use zed_tests::deep::{on_small_stack, program, statements};
-use zed_tests::scaling;
+use zed_tests::deep::{program, statements};
 
 use super::sig;
 
-/// Checks each program of `shapes` `n` deep on a 2 MiB stack, and finds no type error.
-fn checks_on_a_small_stack(shapes: &[&str], n: usize) {
-    on_small_stack(|| {
-        for &shape in shapes {
-            let stmts = statements(&program(shape, n).text);
-            let res = zedc::resolve::resolve(&stmts).unwrap();
-            let info = zedc::check::walk::check(&stmts, &res);
-            assert!(info.errors.is_empty(), "{shape}: {:?}", info.errors);
-        }
-    });
+/// The depth of the programs checked here: each shape nests at least twice inside its
+/// outermost level.
+const SMALL: usize = 3;
+
+/// Checks each program of `shapes` `n` deep, and finds no type error.
+fn checks(shapes: &[&str], n: usize) {
+    for &shape in shapes {
+        let stmts = statements(&program(shape, n).text);
+        let res = zedc::resolve::resolve(&stmts).unwrap();
+        let info = zedc::check::walk::check(&stmts, &res);
+        assert!(info.errors.is_empty(), "{shape}: {:?}", info.errors);
+    }
 }
 
 #[test]
-fn sums_blocks_negations_calls_and_bit_words_1000_deep_check_on_a_2_mib_stack() {
-    // A small instance of the benchmarks in `bench::deep_scaling` on nested blocks, sums,
-    // negations, calls and bit words. The checker recursed once per level of nesting, and
-    // overflowed this stack at 1,000 deep, and the bit words below 1,000.
-    checks_on_a_small_stack(
+fn sums_blocks_negations_calls_and_bit_words_a_few_deep_check() {
+    // Small instances of the benchmarks in `bench::deep_scaling` on nested blocks, sums,
+    // negations, calls and bit words, which check each 1,000 deep and more on a 2 MiB stack.
+    // The checker recursed once per level of nesting, and overflowed that stack at 1,000 deep,
+    // and the bit words below 1,000.
+    checks(
         &[
             "nested blocks",
             "a left-nested sum",
@@ -33,27 +36,26 @@ fn sums_blocks_negations_calls_and_bit_words_1000_deep_check_on_a_2_mib_stack() 
             "nested negations",
             "nested calls",
         ],
-        1_000,
+        SMALL,
     );
-    on_small_stack(|| {
-        let info = super::info(&bit_words(1_000)).0;
-        assert!(info.errors.is_empty(), "{:?}", info.errors);
-    });
+    let info = super::info(&bit_words(SMALL)).0;
+    assert!(info.errors.is_empty(), "{:?}", info.errors);
 }
 
 #[test]
-fn long_bodies_else_if_chains_lambdas_and_tuples_4000_deep_check_on_a_2_mib_stack() {
-    // A small instance of the benchmarks in `bench::deep_scaling` on long bodies, `else if`
-    // chains, nested lambdas and nested tuples. `else if` chains overflowed this stack below
-    // 4,000 deep, and `Ty::replace` near 4,000 nested lambdas.
-    checks_on_a_small_stack(
+fn long_bodies_else_if_chains_lambdas_and_tuples_a_few_deep_check() {
+    // Small instances of the benchmarks in `bench::deep_scaling` on long bodies, `else if`
+    // chains, nested lambdas and nested tuples, which check each 1,000 deep and more on a 2 MiB
+    // stack. `else if` chains overflowed that stack below 4,000 deep, and `Ty::replace` near
+    // 4,000 nested lambdas.
+    checks(
         &[
             "a long sum in a function's body",
             "an `else if` chain",
             "nested lambdas",
             "nested tuples",
         ],
-        4_000,
+        SMALL,
     );
 }
 
@@ -71,10 +73,8 @@ fn a_variable_nested_in_tuples_is_kept_in_its_result() {
     // A small instance of the benchmark
     // `bench::deep_scaling::a_variable_nested_in_tuples_checks_in_linear_time`.
     assert_eq!(sig(&nested_around(2), "f"), "(T) -> ((T, 1), 1)");
-    on_small_stack(|| {
-        let info = super::info(&nested_around(4_000)).0;
-        assert!(info.errors.is_empty(), "{:?}", info.errors);
-    });
+    let info = super::info(&nested_around(SMALL)).0;
+    assert!(info.errors.is_empty(), "{:?}", info.errors);
 }
 
 /// `(int) -> ((int) -> (… (int) -> result))`, `n` arrows deep.
@@ -93,22 +93,21 @@ pub(super) fn curried_type(n: usize, result: zedc::check::ty::Ty) -> zedc::check
 }
 
 #[test]
-fn function_types_nested_1000_deep_compare_on_a_2_mib_stack() {
+fn function_types_nested_a_few_deep_compare() {
     // A small instance of the benchmarks in `bench::deep_scaling` on function types nested
-    // deep, compared and refused. The comparison of function types (`Ty::sub`, `fits_sig` and
-    // the cover of rule 6 of sec:type_resolution) recursed once per level of nesting, about 8
-    // frames a level, and overflowed a 2 MiB stack at 800 levels (TY-sub-stack).
+    // deep, compared and refused, 2,000 deep and more on a 2 MiB stack. The comparison of
+    // function types (`Ty::sub`, `fits_sig` and the cover of rule 6 of sec:type_resolution)
+    // recursed once per level of nesting, about 8 frames a level, and overflowed that stack at
+    // 800 levels (TY-sub-stack).
     use zed_kernel::types::Type;
     use zedc::check::ty::Ty;
     let int = || Ty::set(Type::int());
     let number = || Ty::set(&Type::int() | &Type::f64());
-    assert!(curried_type(3, int()).subtype(&curried_type(3, number())));
-    assert!(!curried_type(3, number()).subtype(&curried_type(3, int())));
-    on_small_stack(|| {
-        let (narrow, wide) = (curried_type(1_000, int()), curried_type(1_000, number()));
-        assert!(narrow.subtype(&wide));
-        assert!(!wide.subtype(&narrow));
-    });
+    for n in 1..=SMALL {
+        let (narrow, wide) = (curried_type(n, int()), curried_type(n, number()));
+        assert!(narrow.subtype(&wide), "{n} deep");
+        assert!(!wide.subtype(&narrow), "{n} deep");
+    }
 }
 
 /// Programs with a function type written `n` deep: `p(g: t) = 0; q(f: t) = p(g: f);` for `t`
@@ -137,7 +136,7 @@ fn written_deep(n: usize) -> [String; 3] {
 
 /// Resolves and checks each of [`written_deep`]`(n)`, its types denoted, their variables
 /// gathered, printed and dropped, on the thread it is called on.
-fn checks_written(n: usize) {
+pub(super) fn checks_written(n: usize) {
     for text in written_deep(n) {
         let stmts = zed_tests::deep::statements(&text);
         let res = zedc::resolve::resolve(&stmts).unwrap();
@@ -148,15 +147,14 @@ fn checks_written(n: usize) {
 }
 
 #[test]
-fn function_types_written_4000_deep_check_on_a_512_kib_stack() {
-    // The denotation of a written type (`Denote::ty`, zedc-check) recursed once per level of
-    // its nesting, and so did the variables of a signature, gathered from those of the
-    // functions it holds (`Sig::facts`): each overflowed a 2 MiB stack at 3,200 deep and needed
-    // 1 GiB (TY-sub-stack). Each now keeps a stack of its own (TY-write-stack). These ran
-    // 16,000 deep on 2 MiB and 64,000 deep on the 8 MiB stack of a main thread, on which zedc
-    // checks a program; 4,000 deep on 512 KiB is the same stack a level, so a recursion of one
-    // frame of 128 bytes a level overflows it too.
-    scaling::on_a_thread(512 << 10, || checks_written(4_000));
+fn function_types_written_a_few_deep_check() {
+    // A small instance of the benchmark
+    // `bench::deep_scaling::function_types_written_4000_deep_check_on_a_512_kib_stack`: a
+    // written function type, the same with a bounded result at each level, and a nest of bounds
+    // clauses are denoted, their variables gathered, printed and dropped.
+    for n in 1..=SMALL {
+        checks_written(n);
+    }
 }
 
 /// `x = bitAnd(bitAnd(… bitAnd(1, 1) …, 1), 1);`, `n` calls of the bit word nested.

@@ -5,7 +5,6 @@
 //! `O(n)` notes long, and the checker walked each binding's type again to solve and name its
 //! variables: `O(n^2)` in all.
 
-use zed_tests::scaling;
 use zedc::check::ty::Ty;
 
 use super::{info, type_errors};
@@ -85,32 +84,23 @@ pub(super) fn in_calls(n: usize) -> String {
 
 /// `((… (T, T) …, T), T)`, `n` tuples deep, printed `((… (_, _) …, _), _)` as `T` is named by
 /// no function around.
-fn nested(n: usize) -> Ty {
+pub(super) fn nested(n: usize) -> Ty {
     let t = Ty::var("T".into());
     (0..n).fold(t.clone(), |inner, _| Ty::tuple(vec![inner, t.clone()]))
 }
 
 #[test]
-fn a_type_8000_tuples_deep_prints_and_drops_on_a_2_mib_stack() {
-    // `Ty::write` recursed once a level and overflowed a 2 MiB stack below 8,000 deep, as did
-    // the drop glue of the rows.
+fn a_type_a_few_tuples_deep_prints_its_variables_as_underscores() {
+    // A small instance of the benchmarks
+    // `bench::held_functions::a_type_8000_tuples_deep_prints_and_drops_on_a_2_mib_stack` and
+    // `bench::held_functions::a_type_31250_tuples_deep_prints_and_drops_on_a_256_kib_stack`.
+    assert_eq!(nested(0).to_string(), "_");
     assert_eq!(nested(2).to_string(), "((_, _), _)");
-    scaling::on_a_thread(2 << 20, || {
-        let n = 8000;
-        let text = nested(n).to_string();
-        assert_eq!(text, format!("{}_{}", "(".repeat(n), ", _)".repeat(n)));
-    });
-}
-
-#[test]
-fn a_type_31250_tuples_deep_prints_and_drops_on_a_256_kib_stack() {
-    // It ran a million tuples deep on an 8 MiB stack, about 8 bytes a level; this is the same
-    // stack a level at a thirty-second of the depth.
-    scaling::on_a_thread((8 << 20) / 32, || {
-        let n = 1_000_000 / 32;
-        let text = nested(n).to_string();
-        assert!(text == format!("{}_{}", "(".repeat(n), ", _)".repeat(n)));
-    });
+    let n = 5;
+    assert_eq!(
+        nested(n).to_string(),
+        format!("{}_{}", "(".repeat(n), ", _)".repeat(n))
+    );
 }
 
 /// `leaf` in an atom at the bottom of `n` levels of an atom around a tuple, compared with `==`.

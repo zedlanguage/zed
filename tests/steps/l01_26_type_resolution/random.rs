@@ -4,8 +4,8 @@
 //! in its result; and no random program the checker accepts, of functions of no declared
 //! parameter types that destructure tuples, compute on the components of a pair, call their
 //! parameters, take lambdas and use `^` and the bit words, raises a kernel type error when it
-//! runs or gives a value outside the static type of its result. The seeds are fixed, so each
-//! run makes the same programs.
+//! runs or gives a value outside the static type of its result. Each run takes a new seed and
+//! prints it; `ZED_TEST_SEED=<seed>` makes the same programs again ([`zed_tests::seed::seed`]).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -14,6 +14,7 @@ use zed_kernel::{Evaluator, F64, KernelError, Term, Value, World};
 use zed_tests::instances::Rng;
 use zedc::check::ty::{Carrier, Piece};
 use zedc::elab::Cones;
+use zedc::rejection::Row;
 
 use super::info;
 use zed_tests::step_helpers::l01_16_elaboration::{elab, with_prelude};
@@ -57,22 +58,41 @@ fn args(c: Carrier) -> &'static [&'static str] {
     }
 }
 
-#[test]
-fn each_computed_value_is_in_its_arrows_result() {
-    let mut rng = Rng::new(26);
-    let (mut fns, mut checked, mut failed) = (0, 0, 0);
-    for _ in 0..700 {
+/// What the random functions of `x` and `y` of one seed gave ([`computed_values`]).
+#[derive(Default)]
+struct Computed {
+    /// Functions the checker accepted.
+    fns: usize,
+    /// Values run, each of which lies in the result of its arrow.
+    checked: usize,
+    /// Runs that stopped with another error than a type error.
+    failed: usize,
+    /// Arrows not called, since a decimal literal of the body reaches the call's value with
+    /// nothing to give it a carrier, as `2.5` of `if x == 2.5 { 2.5 } else { x }` at an `int`
+    /// `x`, which the checker rejects at the call (DESIGN.md L1.26b).
+    unfixed: usize,
+}
+
+/// The random functions of `x` and `y` from the seed `seed`, each checked and run at arguments
+/// of each arrow of its signature, until `enough` holds of what they gave, or at most `cap`
+/// functions.
+fn computed_values(seed: u64, enough: impl Fn(&Computed) -> bool, cap: usize) -> Computed {
+    let mut rng = Rng::new(seed);
+    let mut c = Computed::default();
+    for _ in 0..cap {
+        if enough(&c) {
+            break;
+        }
         let f = format!("f(positional x, positional y) = {};\n", body(&mut rng, 3));
         let (i, _) = info(&f);
         if !i.errors.is_empty() {
             continue;
         }
         let s = i.sigs.values().next().unwrap().clone();
-        fns += 1;
+        c.fns += 1;
         // One call for each arrow with carrier parameters and each pair of arguments.
-        let mut p = f.clone();
-        let mut calls = Vec::new();
         let arrows = s.expand();
+        let mut by_arrow = Vec::new();
         for a in &arrows {
             let cs: Option<Vec<Carrier>> = a
                 .params
@@ -83,14 +103,35 @@ fn each_computed_value_is_in_its_arrows_result() {
                 })
                 .collect();
             let Some(cs) = cs else { continue };
-            for x in args(cs[0]) {
-                for y in args(cs[1]) {
-                    p += &format!("r{} = f({x}, {y});\n", calls.len());
-                    calls.push((format!("f({x}, {y})"), &a.result));
-                }
-            }
+            let calls: Vec<String> = (args(cs[0]).iter())
+                .flat_map(|x| args(cs[1]).iter().map(move |y| format!("f({x}, {y})")))
+                .collect();
+            by_arrow.push((calls, &a.result));
         }
-        let u = elab(&p).unwrap_or_else(|e| panic!("{p}: {e:?}"));
+        // The program of `f` and the calls `calls`, the `k`th bound to `rk`.
+        let program = |calls: &mut dyn Iterator<Item = &String>| {
+            let mut p = f.clone();
+            for (k, call) in calls.enumerate() {
+                p += &format!("r{k} = {call};\n");
+            }
+            p
+        };
+        let u = match elab(&program(&mut by_arrow.iter().flat_map(|(cs, _)| cs))) {
+            Ok(u) => u,
+            Err(_) => {
+                // An arrow whose calls the checker rejects as holding a decimal literal that
+                // nothing gives a carrier is left out; any other rejection is a fault.
+                by_arrow.retain(|(calls, _)| {
+                    let (i, _) = info(&program(&mut calls.iter()));
+                    let unfixed = i.errors.iter().all(|e| e.row == Some(Row::UnfixedDecimal));
+                    assert!(unfixed, "seed {seed}: {f}{calls:?}: {:?}", i.errors);
+                    c.unfixed += usize::from(!i.errors.is_empty());
+                    i.errors.is_empty()
+                });
+                let p = program(&mut by_arrow.iter().flat_map(|(cs, _)| cs));
+                elab(&p).unwrap_or_else(|e| panic!("seed {seed}: {p}: {e:?}"))
+            }
+        };
         // One index of the unit for all its calls, where `Unit::get` makes one for each.
         let cones = Cones::new(&u);
         let kernels: HashMap<&str, &Arc<str>> = u
@@ -98,26 +139,43 @@ fn each_computed_value_is_in_its_arrows_result() {
             .iter()
             .map(|d| (d.name.as_str(), &d.kernel))
             .collect();
-        for (k, (call, result)) in calls.iter().enumerate() {
+        let calls = by_arrow.iter().flat_map(|(cs, r)| cs.iter().map(move |c| (c, *r)));
+        for (k, (call, result)) in calls.enumerate() {
             let t = cones.close(Term::Var(kernels[format!("r{k}").as_str()].clone()));
             match Evaluator::new(World::new()).run(&with_prelude(t)) {
                 Ok(v) => {
-                    assert!(result.contains(&v), "{f}{call}: {v} is not in {result}");
-                    checked += 1;
+                    assert!(result.contains(&v), "seed {seed}: {f}{call}: {v} is not in {result}");
+                    c.checked += 1;
                 }
                 // An accepted program never meets a type error (DESIGN.md rule 4).
-                Err(KernelError::Type(m)) => panic!("{f}{call}: type error: {m}"),
+                Err(KernelError::Type(m)) => panic!("seed {seed}: {f}{call}: type error: {m}"),
                 // Another run-time error; a division by zero is the atom, a value.
-                Err(_) => failed += 1,
+                Err(_) => c.failed += 1,
             }
         }
     }
-    println!("{fns} functions, {checked} values, {failed} failed");
-    assert!(
-        fns >= 300 && checked >= 650,
-        "{fns} functions, {checked} values"
+    c
+}
+
+/// The functions and values the test of computed values needs before it stops, and the most
+/// functions it makes. Over 48 seeds it made 40 to 80 functions and ran 100 to 335 values, in
+/// 0.15 to 0.4 s, eight runs at once at load 36; the cap is met only if the generator or the
+/// checker stops giving functions.
+const ENOUGH_FNS: usize = 40;
+const ENOUGH_CHECKED: usize = 100;
+const CAP: usize = 2_000;
+
+#[test]
+fn each_computed_value_is_in_its_arrows_result() {
+    let seed = zed_tests::seed::seed("each_computed_value_is_in_its_arrows_result");
+    let enough = |c: &Computed| c.fns >= ENOUGH_FNS && c.checked >= ENOUGH_CHECKED;
+    let c = computed_values(seed, enough, CAP);
+    println!(
+        "{} functions, {} values, {} failed, {} arrows not called",
+        c.fns, c.checked, c.failed, c.unfixed
     );
-    assert!(failed < checked / 4, "{failed} failed of {checked}");
+    assert!(enough(&c), "seed {seed}: {} functions, {} values", c.fns, c.checked);
+    assert!(c.failed < c.checked / 4, "seed {seed}: {} failed of {}", c.failed, c.checked);
 }
 
 #[test]
@@ -447,93 +505,110 @@ struct Runs {
     untyped: usize,
 }
 
-/// The runs of the programs of the seeds `seeds`: for each seed, `n` sets of functions and
-/// four definitions of `r` over each.
-fn run_programs(seeds: std::ops::Range<u64>, n: usize) -> Runs {
+/// The runs of the programs of the seed `seed`, sets of functions with four definitions of `r`
+/// over each, until `enough` holds of what they gave, or at most `cap` sets.
+fn run_programs(seed: u64, enough: impl Fn(&Runs) -> bool, cap: usize) -> Runs {
     let mut runs = Runs::default();
-    for seed in seeds {
-        let mut g = Gen::new(seed);
-        for _ in 0..n {
-            g.arity.clear();
-            let count = 1 + g.rng.below(3);
-            let helpers: String = (0..count).map(|_| g.helper()).collect();
-            for _ in 0..4 {
-                let p = format!("{helpers}r = {};\n", g.expr(&[], 3, false));
-                let (i, _) = info(&p);
-                if !i.errors.is_empty() {
-                    runs.rejected += 1;
-                    continue;
-                }
-                if i.tops["r"]
-                    .pieces()
-                    .iter()
-                    .any(|pc| matches!(pc, Piece::Fn(_)))
-                {
-                    runs.functions += 1;
-                    continue;
-                }
-                let u = elab(&p).unwrap_or_else(|e| panic!("{p}: {e:?}"));
-                let t = u.get("r").unwrap_or_else(|| panic!("{p}: no `r`"));
-                // Every run here takes far fewer steps; the fuel only stops a lambda that a
-                // checker fault let apply itself.
-                let mut ev = Evaluator::new(World::new()).with_fuel(1_000_000);
-                match ev.run(&with_prelude(t)) {
-                    Ok(v) => {
-                        runs.ran += 1;
-                        // The value lies in the static type of `r` (DESIGN.md rule 4).
-                        let ty = &i.tops["r"];
-                        match ty.kernel() {
-                            Some(k) if !k.contains(&v) => runs
-                                .outside
-                                .push(format!("{p}value {v} is not in its type {ty}")),
-                            Some(_) => {}
-                            None => runs.untyped += 1,
-                        }
-                        for (k, (_, marks)) in FORMS.iter().enumerate() {
-                            runs.forms[k] += usize::from(marks.iter().any(|m| p.contains(m)));
-                        }
+    let mut g = Gen::new(seed);
+    for _ in 0..cap {
+        if enough(&runs) {
+            break;
+        }
+        g.arity.clear();
+        let count = 1 + g.rng.below(3);
+        let helpers: String = (0..count).map(|_| g.helper()).collect();
+        for _ in 0..4 {
+            let p = format!("{helpers}r = {};\n", g.expr(&[], 3, false));
+            let (i, _) = info(&p);
+            if !i.errors.is_empty() {
+                runs.rejected += 1;
+                continue;
+            }
+            if i.tops["r"]
+                .pieces()
+                .iter()
+                .any(|pc| matches!(pc, Piece::Fn(_)))
+            {
+                runs.functions += 1;
+                continue;
+            }
+            let u = elab(&p).unwrap_or_else(|e| panic!("seed {seed}: {p}: {e:?}"));
+            let t = u.get("r").unwrap_or_else(|| panic!("seed {seed}: {p}: no `r`"));
+            // Every run here takes far fewer steps; the fuel only stops a lambda that a
+            // checker fault let apply itself.
+            let mut ev = Evaluator::new(World::new()).with_fuel(1_000_000);
+            match ev.run(&with_prelude(t)) {
+                Ok(v) => {
+                    runs.ran += 1;
+                    // The value lies in the static type of `r` (DESIGN.md rule 4).
+                    let ty = &i.tops["r"];
+                    match ty.kernel() {
+                        Some(k) if !k.contains(&v) => runs
+                            .outside
+                            .push(format!("{p}value {v} is not in its type {ty}")),
+                        Some(_) => {}
+                        None => runs.untyped += 1,
                     }
-                    Err(KernelError::Type(m)) => {
-                        runs.type_errors.push(format!("{p}type error: {m}"));
+                    for (k, (_, marks)) in FORMS.iter().enumerate() {
+                        runs.forms[k] += usize::from(marks.iter().any(|m| p.contains(m)));
                     }
-                    Err(_) => runs.stopped += 1,
                 }
+                Err(KernelError::Type(m)) => {
+                    runs.type_errors.push(format!("{p}type error: {m}"));
+                }
+                Err(_) => runs.stopped += 1,
             }
         }
     }
     runs
 }
 
-/// Runs the programs of the seeds `seeds`, a hundred sets of functions each, and fails on any
-/// accepted program whose run raises a kernel type error or gives a value its static type does
-/// not hold. Each form of [`FORMS`] must occur among the programs run, so a change that stopped
-/// the generator making one, or the checker accepting it, fails here rather than testing less
+/// The programs run and the programs of each form of [`FORMS`] that the test of random
+/// programs needs before it stops, and the most sets of functions it makes. Over 48 seeds it
+/// ran 20 to 49 of 150 to 430 programs made, in 0.33 to 1.7 s, eight runs at once at load 40.
+const ENOUGH_RAN: usize = 20;
+const ENOUGH_OF_EACH_FORM: usize = 1;
+const SETS_CAP: usize = 2_000;
+
+/// Runs random programs and fails on any accepted program whose run raises a kernel type error
+/// or gives a value its static type does not hold. The programs are made until enough of them
+/// ran and each form of [`FORMS`] occurs among them, so a change that stopped the generator
+/// making one, or the checker accepting it, fails here at the cap rather than testing less
 /// without notice.
-fn no_type_error(seeds: std::ops::Range<u64>) {
-    let r = run_programs(seeds.clone(), 100);
+#[test]
+fn accepted_random_programs_raise_no_type_error() {
+    let seed = zed_tests::seed::seed("accepted_random_programs_raise_no_type_error");
+    let enough = |r: &Runs| {
+        r.ran >= ENOUGH_RAN && r.forms.iter().all(|&f| f >= ENOUGH_OF_EACH_FORM)
+    };
+    let r = run_programs(seed, enough, SETS_CAP);
+    println!(
+        "{} ran, {} rejected, {} may give a function, {} stopped, forms {:?}",
+        r.ran, r.rejected, r.functions, r.stopped, r.forms
+    );
     assert!(
         r.type_errors.is_empty(),
-        "seeds {seeds:?}: {} accepted programs raised a kernel type error:\n{}",
+        "seed {seed}: {} accepted programs raised a kernel type error:\n{}",
         r.type_errors.len(),
         r.type_errors.join("----\n")
     );
     assert!(
         r.outside.is_empty(),
-        "seeds {seeds:?}: {} accepted programs gave a value outside the type of `r`:\n{}",
+        "seed {seed}: {} accepted programs gave a value outside the type of `r`:\n{}",
         r.outside.len(),
         r.outside.join("----\n")
     );
     // Nearly every type of `r` has a kernel type, so the test above sees nearly every value.
     assert!(
         r.untyped * 10 < r.ran,
-        "seeds {seeds:?}: {} of {} values run have no kernel type to test",
+        "seed {seed}: {} of {} values run have no kernel type to test",
         r.untyped,
         r.ran
     );
     assert!(
-        r.ran >= 200,
-        "seeds {seeds:?}: only {} programs ran; {} were rejected, {} may give a function and {} \
-         stopped",
+        r.ran >= ENOUGH_RAN,
+        "seed {seed}: only {} programs ran in {SETS_CAP} sets; {} were rejected, {} may give a \
+         function and {} stopped",
         r.ran,
         r.rejected,
         r.functions,
@@ -541,29 +616,9 @@ fn no_type_error(seeds: std::ops::Range<u64>) {
     );
     for (k, (name, _)) in FORMS.iter().enumerate() {
         assert!(
-            r.forms[k] >= 10,
-            "seeds {seeds:?}: only {} programs run use {name}",
+            r.forms[k] >= ENOUGH_OF_EACH_FORM,
+            "seed {seed}: only {} programs run in {SETS_CAP} sets use {name}",
             r.forms[k]
         );
     }
-}
-
-#[test]
-fn accepted_random_programs_raise_no_type_error_seeds_0_to_7() {
-    no_type_error(0..8);
-}
-
-#[test]
-fn accepted_random_programs_raise_no_type_error_seeds_8_to_15() {
-    no_type_error(8..16);
-}
-
-#[test]
-fn accepted_random_programs_raise_no_type_error_seeds_16_to_23() {
-    no_type_error(16..24);
-}
-
-#[test]
-fn accepted_random_programs_raise_no_type_error_seeds_24_to_31() {
-    no_type_error(24..32);
 }

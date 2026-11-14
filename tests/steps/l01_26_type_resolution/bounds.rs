@@ -808,7 +808,9 @@ fn chain_bounding_w_first(n: usize) -> String {
 
 #[test]
 fn a_bound_deep_in_a_chain_is_found_and_a_bound_on_no_signature_is_rejected() {
-    let n = 300;
+    // The benchmark `bench::bounds::reading_a_chain_of_bounded_definitions_scales` reads
+    // chains of `bounded_chain` 200 and 1,600 long.
+    let n = 3;
     let chain = chain_bounding_w_first(n);
     assert!(parse_type(&chain).is_ok(), "{chain}");
     let ending = |clause: &str| {

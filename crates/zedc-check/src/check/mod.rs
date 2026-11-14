@@ -2161,7 +2161,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// dropped. The message is the same: [`Msg::written`] reads only the `Msg` and the unit's
     /// text, which does not change during the check. Memory: each error holds its edits
     /// until the end in place of its written menu. Test:
-    /// `l01_26a_generic_literals::scaling::a_menu_that_writes_a_literal_in_each_of_many_divisions_scales`;
+    /// `l01_26a_generic_literals::bench::scaling::a_menu_that_writes_a_literal_in_each_of_many_divisions_scales`;
     /// COMPLEXITY.md F150.
     ///
     /// The fixes of a rejection inside the construct being checked are each checked as
@@ -5718,7 +5718,7 @@ fn adopted(a: &Arg, p: &Ty, rough: bool) -> Result<Option<(Ty, Adoptions)>, (Spa
     // `Ty::union_all`, O(n log n); joining them one at a time costs O(n^2), since each union
     // copies the type so far. The naive form, the type `2 | 1` tested against the parameter,
     // fixes no literal and rejects the call. Tests:
-    // `l01_26a_generic_literals::lit_branches::scaling`. A branch that is an operation on
+    // `l01_26a_generic_literals::bench::lit_branches::scaling`. A branch that is an operation on
     // literals alone, `if c { 2 + 1 } else { 1 }`, takes the carrier as the operation alone
     // would at the parameter ([`Ck::lit_args_take`]): each of its literals adopts it, which
     // rejects one that is not exactly a value of it, and the operation, folded at it
@@ -5902,11 +5902,16 @@ fn adopt(l: &Lit, c: Carrier) -> Result<Option<Value>, Msg> {
     }
 }
 
-/// Whether [`adopt`] takes `l` at `c`. A decimal literal without a suffix is exactly a
-/// `rat` whenever its text reads as a number, so that case scans the text and reads none of
-/// its digits: reading them is O(n^1.47) (COMPLEXITY.md K41), and a literal is tried at
-/// every arrow and repair that holds `rat`. The digits are read when the literal adopts.
+/// Whether [`adopt`] takes `l` at `c`, which is a number: a literal is never a string or a
+/// `bool`, though [`adopt`] leaves it as it is there, so `0.0f64` fits `f64` alone of the
+/// carriers `<` takes. A decimal literal without a suffix is exactly a `rat` whenever its
+/// text reads as a number, so that case scans the text and reads none of its digits: reading
+/// them is O(n^1.47) (COMPLEXITY.md K41), and a literal is tried at every arrow and repair
+/// that holds `rat`. The digits are read when the literal adopts.
 fn fits(l: &Lit, c: Carrier) -> bool {
+    if !c.numeric() {
+        return false;
+    }
     match is_decimal(&l.value) && c == Carrier::Rat {
         true => adoptable(l, c) && Rat::is_decimal(&l.text),
         false => adopt(l, c).is_ok(),

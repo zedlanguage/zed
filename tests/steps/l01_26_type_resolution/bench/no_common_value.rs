@@ -2,7 +2,10 @@ use zed_tests::deep::statements;
 use zed_tests::scaling;
 use zedc::rejection::Row;
 
-use super::super::no_common_value::{shared, wide_tuples, wide_union, wide_written};
+use super::deep_ops::{DEEP, on_shallow_stack};
+use super::super::no_common_value::{
+    carriers_of_nested_tuples, shared, wide_tuples, wide_union, wide_written,
+};
 
 #[test]
 fn carriers_of_shared_tuples_scale() {
@@ -57,4 +60,9 @@ fn rejecting_two_wide_types_that_share_no_value_scales_for_a_written_tuple() {
         wide_written,
         Row::EqNoCommonCarrier,
     );
+}
+
+#[test]
+fn carriers_of_a_deep_tuple_run_on_a_shallow_stack() {
+    on_shallow_stack(|| carriers_of_nested_tuples(DEEP));
 }

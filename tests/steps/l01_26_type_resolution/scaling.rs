@@ -556,17 +556,16 @@ fn a_few_functions_beside_their_constants_find_their_signatures() {
 fn a_function_of_untyped_parameters_takes_one_class() {
     // A small instance of the benchmark
     // `bench::scaling::a_function_of_many_untyped_parameters_scales`.
-    zed_tests::deep::on_small_stack(|| {
-        assert_eq!(
-            sig(&sum(3), "f"),
-            "(T, T, T) -> T for T in int | f32 | f64 | rat"
-        );
-        let wide = sig(&sum(40), "f");
-        assert!(
-            wide.ends_with(") -> T for T in int | f32 | f64 | rat"),
-            "{wide}"
-        );
-    });
+    // Six parameters take more than the 256 combinations of carriers the old search tried
+    // before it gave `_`.
+    assert_eq!(
+        sig(&sum(3), "f"),
+        "(T, T, T) -> T for T in int | f32 | f64 | rat"
+    );
+    assert_eq!(
+        sig(&sum(6), "f"),
+        "(T, T, T, T, T, T) -> T for T in int | f32 | f64 | rat"
+    );
 }
 
 #[test]

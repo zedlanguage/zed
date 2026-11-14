@@ -564,7 +564,7 @@ impl<'a> Same<'a> {
     // is linear in the size of the two types as graphs either way; each pair pushed is compared
     // by `rest`, from the top of the stack again. Recursion is the faster: it keeps a shallow
     // type, the common case, as cheap to compare as the derived `==` was
-    // (l01_26_type_resolution deep_types::shallow_types_compare_as_cheaply_as_a_plain_recursion).
+    // (l01_26_type_resolution bench::deep_types::shallow_types_compare_as_cheaply_as_a_plain_recursion).
     // The switch is on the stack the recursion has taken, which bounds it whatever the types'
     // depth: types 100,000 deep compare on a 2 MiB stack
     // (types_built_apart_100000_deep_compare_on_a_2_mib_stack). The stack the thread has left
@@ -7337,7 +7337,7 @@ async fn every_arrow_fits<'m>(
     // still compared. So `s` and `q` of n arrows that all share one parameter piece and one
     // result piece, and differ in pieces of both, cost n^2/2 comparisons; arrows that share a
     // parameter piece and differ in their results cost n (scaling test
-    // l01_26_type_resolution::scaling::passing_an_overload_whose_arrows_share_a_parameter_piece_scales;
+    // l01_26_type_resolution::bench::scaling::passing_an_overload_whose_arrows_share_a_parameter_piece_scales;
     // COMPLEXITY.md F82). A tuple, a kind-wide part, a payload-only atom or a cofinite set of
     // atoms in `qa`'s parameter needs no key, since a parameter type may hold it without
     // offering one piece of it; a result that is open (a variable, the unknown, a cofinite set
@@ -8121,7 +8121,7 @@ impl<'t> ArrowIndex<'t> {
         // 2.5·10^9 instructions). Here each key's list is walked against the arrows from the
         // shorter side, counting the keys each arrow offers at each parameter: O(Σ min(l·log c,
         // c·log l) + c·p) for p parameters with a key, at most the naive cost. Measured by
-        // `l01_26_type_resolution::scaling::many_arrows_whose_results_meet_only_on_different_sets_are_refused_in_linear_time`:
+        // `l01_26_type_resolution::bench::scaling::many_arrows_whose_results_meet_only_on_different_sets_are_refused_in_linear_time`:
         // 12.3 times the instructions from 400 to 3200 arrows before, 8.3 times now.
         let mut params: Vec<usize> = need.iter().map(|e| e.0).collect();
         params.sort_unstable();

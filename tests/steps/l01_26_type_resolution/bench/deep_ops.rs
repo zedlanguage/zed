@@ -1,3 +1,7 @@
+//! The operations on types nested deep: each runs on a type [`DEEP`] levels deep on a stack of
+//! [`SHALLOW_STACK`] bytes, and each costs time linear in the depth. Their results on types a
+//! few levels deep are checked in `deep_ops`.
+
 use std::collections::BTreeMap;
 
 use zed_tests::deep::on_small_stack;
@@ -5,8 +9,82 @@ use zed_tests::scaling;
 use zedc::check::ty;
 
 use super::super::deep_ops::{
-    functions, levels, on_shallow_stack, shared, shared_value, sig, tuples, value, y, z,
+    self, functions, levels, shared, shared_value, sig, tuples, value, y, z,
 };
+
+/// The depth of the deep checks here. They ran 100,000 deep on a 2 MiB stack (T2-ty), and the
+/// two slowest 20,000 deep on a fifth of it, after taking 73 s and over 80 s alone at load 42
+/// (TESTS-l01_29-split); their time is linear in the depth, and they need no more stack at
+/// 20,000 levels than at 100. Each now runs 13,000 deep, about an eighth of 100,000, on the
+/// same fraction of 2 MiB; 13,000 and 100,000 leave the same remainder by 6, so the outermost
+/// level of [`levels`] and the parity of the depth are as they were
+/// (TEST-bench-move-l0126).
+pub(super) const DEEP: usize = 13_000;
+
+/// A 2 MiB stack scaled by [`DEEP`] / 100,000, so a check that takes stack a level overflows it
+/// as it would overflow 2 MiB at 100,000 levels: a walk of two tuples that recurses once a
+/// level, about 30 bytes a level, overflows both.
+const SHALLOW_STACK: usize = (2 << 20) * DEEP / 100_000;
+
+/// Runs `f` on a thread with a stack of [`SHALLOW_STACK`] bytes.
+pub(super) fn on_shallow_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+    scaling::on_a_thread(SHALLOW_STACK, f)
+}
+
+#[test]
+fn clone_hash_and_drop_of_a_deep_type_run_on_a_shallow_stack() {
+    on_shallow_stack(|| deep_ops::clone_hash_and_drop(DEEP));
+}
+
+#[test]
+fn display_and_debug_of_a_deep_type_run_on_a_shallow_stack() {
+    on_shallow_stack(|| deep_ops::display_and_debug(DEEP));
+}
+
+#[test]
+fn union_of_deep_types_runs_on_a_shallow_stack() {
+    on_shallow_stack(|| deep_ops::union(DEEP));
+}
+
+#[test]
+fn meet_meets_and_contains_of_deep_tuples_run_on_a_shallow_stack() {
+    on_shallow_stack(|| deep_ops::meet_meets_and_contains(DEEP));
+}
+
+#[test]
+fn subtype_of_deep_types_runs_on_a_shallow_stack() {
+    on_shallow_stack(|| deep_ops::subtype_of_types(DEEP));
+}
+
+#[test]
+fn subtype_of_deep_data_runs_on_a_shallow_stack() {
+    on_shallow_stack(|| deep_ops::subtype_of_data(DEEP));
+}
+
+#[test]
+fn diff_of_deep_types_runs_on_a_shallow_stack() {
+    on_shallow_stack(|| deep_ops::diff(DEEP));
+}
+
+#[test]
+fn kernel_of_deep_tuples_runs_on_a_shallow_stack() {
+    on_shallow_stack(|| deep_ops::kernel(DEEP));
+}
+
+#[test]
+fn variables_of_a_deep_type_run_on_a_shallow_stack() {
+    on_shallow_stack(|| deep_ops::variables(DEEP));
+}
+
+#[test]
+fn signatures_of_deep_types_run_on_a_shallow_stack() {
+    on_shallow_stack(|| deep_ops::signatures(DEEP));
+}
+
+#[test]
+fn signatures_of_deep_tuples_that_differ_run_on_a_shallow_stack() {
+    on_shallow_stack(|| deep_ops::signatures_that_differ(DEEP));
+}
 
 /// Checks that `op` on what `build` makes for each size takes time linear in the size, on a
 /// 2 MiB stack; what is built is not measured.

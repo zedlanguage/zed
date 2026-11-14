@@ -105,6 +105,32 @@ fn a_literal_argument_that_nothing_fixes_is_an_int() {
 }
 
 #[test]
+fn a_literal_with_a_suffix_at_a_parameter_that_lt_bounds_keeps_its_carrier() {
+    // `<` takes strings and `bool` as well as numbers, and a literal is none of those, so a
+    // literal written with a suffix takes the carrier it names at `x` and `y`: `0.5f64` was
+    // rejected as one nothing gives a carrier, and offered no fix.
+    let min = "f(positional x, positional y) = if y < x { y } else { x };\n";
+    for (args, ty, r) in [
+        ("0.5f64, 0.25f64", "f64", "0.25"),
+        ("0.5f32, 0.25f32", "f32", "0.25f32"),
+        ("1r, 2r", "rat", "1r"),
+        ("2, 1", "int", "1"),
+        ("\"b\", \"a\"", "String", "\"a\""),
+    ] {
+        let text = format!("{min}r = f({args});\nk = r is {ty};\n");
+        assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
+        assert_eq!(value(&text, "k"), "true", "{text}");
+        assert_eq!(value(&text, "r"), r, "{text}");
+    }
+    let text = "f(positional x) = x < x;\nr = f(0.0f64);\n";
+    assert_eq!(value(text, "r"), "false");
+    // A decimal with no suffix is still rejected there: `f64`, `f32` and `rat` all take it.
+    let errors = type_errors(&format!("{min}r = f(0.5, 0.25);\n"));
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("Nothing gives the literal `0.5` a carrier"), "{}", errors[0]);
+}
+
+#[test]
 fn a_literal_at_a_union_with_one_numeric_member_takes_it() {
     let text = "f(positional x: f64 | String) = x is f64;\ny = f(1);\n";
     assert_eq!(adopted(text), [f64(1.0)]);
@@ -818,17 +844,14 @@ fn literals_at_many_tuple_shapes_and_in_wide_and_deep_tuples_are_adopted() {
 #[test]
 fn a_wide_tuple_compared_with_a_literal_has_one_repair_per_component() {
     // A small instance of the benchmark
-    // `bench::literals::the_component_repairs_of_a_wide_tuple_scale`.
-    let (info, _) = info(&wide_tuple(3));
+    // `bench::literals::the_component_repairs_of_a_wide_tuple_scale`, checked as it checks.
+    let stmts = zed_tests::deep::statements(&wide_tuple(3));
+    let res = zedc::resolve::resolve(&stmts).unwrap();
+    let info = zedc::check::walk::check(&stmts, &res);
     assert_eq!(info.errors.len(), 1, "{:?}", info.errors);
-    assert!(
-        info.errors[0].message.contains("`x[2] == 1`"),
-        "{}",
-        info.errors[0].message
-    );
-    let errors = type_errors(&wide_tuple(3));
     for i in 0..3 {
-        assert!(errors[0].contains(&format!("x[{i}] == 1;")), "{}", errors[0]);
+        let fix = format!("`x[{i}] == 1`");
+        assert!(info.errors[0].message.contains(&fix), "{}", info.errors[0].message);
     }
 }
 
