@@ -19,6 +19,7 @@ mod bench;
 mod complete;
 mod deep;
 mod empty_levels;
+mod hash_keys;
 mod provenance;
 mod scaling;
 mod shared;

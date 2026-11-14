@@ -41,6 +41,9 @@ use crate::value::Value;
 mod env;
 use env::Env;
 
+#[cfg(test)]
+mod tests;
+
 /// The minimum depth of nested calls the evaluator reaches (DESIGN.md step M0.11, prelude unit
 /// `limits`): a conforming compiler never rejects an evaluation for nesting calls this deep. It
 /// is a minimum and not a maximum: the evaluator's frames are on the heap, so it is bounded only
@@ -1953,7 +1956,7 @@ impl<'t> Machine<'_, 't> {
                 return give(k);
             }
             let fix = &part.of;
-            let Some(&i) = fix.index.get(&*as_key(&k)) else {
+            let Some(i) = position(&fix.index, &k) else {
                 return give(Value::atom("notFound"));
             };
             return match &fix.settled.borrow()[i] {
@@ -2304,8 +2307,7 @@ impl<'t> Machine<'_, 't> {
         env: Env<'t>,
     ) -> R<Step<'t>> {
         let domain: Box<[Value]> = family(init)?.keys().cloned().collect();
-        let index = domain.iter().cloned().enumerate().map(|(i, k)| (k, i));
-        let index: HashMap<Value, usize> = index.collect();
+        let index = key_index(&domain);
         let settled = domain.iter().map(|_| Settled::Open).collect();
         self.ev.fixes += 1;
         let (calls, trace_keys) = match &self.ev.trace {
@@ -2874,6 +2876,19 @@ fn as_key(k: &Value) -> Cow<'_, Value> {
         true => Cow::Borrowed(k),
         false => Cow::Owned(k.key()),
     }
+}
+
+/// The position of each key of `domain`, a fix's domain: keys, distinct and in order.
+fn key_index(domain: &[Value]) -> HashMap<Value, usize> {
+    let index = domain.iter().cloned().enumerate().map(|(i, k)| (k, i));
+    index.collect()
+}
+
+/// The position in a fix's domain of the entry a read of key `k` names, found in the domain's
+/// `index`: the position `Family::get` and a binary search of the domain find (tests
+/// TEST-kernel-hash-keys, in `eval/tests.rs`).
+fn position(index: &HashMap<Value, usize>, k: &Value) -> Option<usize> {
+    index.get(&*as_key(k)).copied()
 }
 
 /// An integer `+`, `-`, `*`, `div`, `mod` or `^` of two integers, either of either width:
