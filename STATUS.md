@@ -2324,11 +2324,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | STAGE-generic-fold-div | impl attempt 1 | 2026-11-14 09:08 | started in wt/generic-fold-2, load 64.11 |
 | TEST-cov-run-settings | running | 2026-11-14 09:42 |  |
 | TEST-fixture-write-race | running | 2026-11-14 09:42 |  |
-| TEST-presburger-unreached-paths | running |  |  |
-| TEST-runtime-build-in-piece | running | 2026-11-14 08:37 |  |
+| TEST-presburger-unreached-paths | impl attempt 1 | 2026-11-14 10:07 | started in wt/presburger-unreached on cac7c04ca, load 31.97 35.46 37.89 |
 | TEST-seed-test-once | running | 2026-11-14 09:42 |  |
 | TEST-shared-tmpdir-race | running | 2026-11-14 08:57 |  |
-| TEST-time-pass-condition | running | 2026-11-14 08:37 |  |
 | TEST-types-unreached-paths | impl attempt 2 | 2026-11-14 08:15 | started in /home/luke/Work/wt/types-unreached-2; load 26.18 30.39 36.84 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
