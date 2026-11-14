@@ -2280,8 +2280,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CONST-too-large-coprime-base | impl attempt 2 | 2026-11-14 00:07 | red-before-green: on origin/main (ctl tree) too_large::a_product_through_a_part_with_several_roots_is_rejected and main_limits::a_product_through_a_part_with_se |
-| FAIL-agree-few-arms-seed | running |  |  |
+| FAIL-agree-few-arms-seed | running | 2026-11-14 08:46 |  |
 | FAIL-bitword-arity-message | running | 2026-11-14 07:09 |  |
 | FAIL-bitword-curry-domain | running | 2026-11-14 07:09 |  |
 | FAIL-check-arm-test-through-call | running | 2026-11-14 07:10 |  |
@@ -2290,24 +2289,24 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-check-if-carrier-branch-literal-at-rat | running | 2026-11-14 07:10 |  |
 | FAIL-check-memory-limit-2-63 | running | 2026-11-14 07:40 |  |
 | FAIL-initial-reads-shadowed | running | 2026-11-14 07:40 |  |
-| FAIL-kernel-xor-firsts-seed | running |  |  |
+| FAIL-kernel-xor-firsts-seed | running | 2026-11-14 08:46 |  |
 | FAIL-lattice-f32-literal | running | 2026-11-14 07:10 |  |
 | FAIL-linked-piled-holes-count | running | 2026-11-14 07:09 |  |
 | FAIL-memory-callee-no-plan | running | 2026-11-14 07:40 |  |
 | FAIL-pext-transfer-popcount | running | 2026-11-14 07:09 |  |
 | FAIL-product-refused-box-renamed | running | 2026-11-14 07:09 |  |
-| FAIL-queries-reorder | merged and pushed (the commit "FAIL-queries-reorder: ..." that marks the row Done); no spec change | Found by TEST-complete-diagnostics. Moving whole definitions with their tables recomputed their rows: a row's key held the unit-wide binder numbers of elaboration (`n@2`, not the temporaries alone as the row guessed) and the reached definitions in unit order. Keys now name binders by level and written name, definitions by written name where unique, and sort the definition numbers. Still position-dependent but sound: top-level temporary definitions and definitions whose written name is shared, which keep their numbered kernel names. |
+| FAIL-queries-reorder | running | 2026-11-14 07:40 |  |
 | FAIL-trivial-stop-after-model | running |  |  |
 | FAIL-types-sig-reflexive | running | 2026-11-14 07:40 |  |
-| FAIL-xst-s4-box-only-seed | running |  |  |
-| FAIL-xst-unbounded-holes-seed | running |  |  |
-| HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | round 6 merged (2026-11-14, Claude seat parts only; META6.md I6.1-I6.31): read-once stamp in `pick_by` (shared_rows R 62.9 -> 7.23), cross-term meet of one main set through two windows (distinct_extras_skew R 14.6 -> 8.21), galloping `cells_without` in `CellWalk::spread` (shared_guard R 11.4 -> 6.45); five groups 732 of 733 pieces pass, the one failure the load flake TEST-flaky-constant-spin; CD round 6 (6664553392322379777) completed, best candidate 55 not merged; open: HAS-point-overlap2c-mid; round 7 waits for QUESTIONS A104 |
+| FAIL-xst-s4-box-only-seed | running | 2026-11-14 08:46 |  |
+| FAIL-xst-unbounded-holes-seed | running | 2026-11-14 08:46 |  |
 | TEST-bench-timeout-recheck | running | 2026-11-14 08:37 |  |
 | TEST-calibration-split-margin | running | 2026-11-14 08:37 |  |
 | TEST-cov-scaling-noise | running |  |  |
 | TEST-flaky-constant-spin | running |  |  |
 | TEST-l01_29-widen-flake | running |  |  |
 | TEST-malloc-state-under-cov | running |  |  |
+| TEST-runtime-build-in-piece | running | 2026-11-14 08:37 |  |
 | TEST-scaling-module-tests-once | running |  |  |
 | TEST-time-pass-condition | running | 2026-11-14 08:37 |  |
 | XR-l139-family | impl attempt resume | 2026-11-13 18:59 | resumed after P169: rebased Opus R3 commit onto 751c46435 as bf4bf90a3 (clean), build + fmt pass, running l01_39/l01_25/zedc_preimage (336 pieces); load 48.27 |
