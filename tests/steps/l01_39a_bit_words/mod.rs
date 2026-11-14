@@ -4,6 +4,7 @@
 //! an `x` wider than its width, is a type error at the call with its derivation.
 
 mod bench;
+mod completeness;
 mod corners;
 mod deep;
 mod errors;
