@@ -13,7 +13,7 @@ use zed_tests::kernel::*;
 
 /// Every schedule the harness runs: the wavefront, memoized pull, and chaotic iteration in
 /// eight seeded orders.
-fn schedules() -> Vec<Schedule> {
+pub(super) fn schedules() -> Vec<Schedule> {
     let mut out = vec![Schedule::Rounds, Schedule::Pull];
     out.extend((0..8).map(Schedule::Chaotic));
     out

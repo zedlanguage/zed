@@ -309,6 +309,61 @@ fn law_14_a_counted_affine_loop_is_one_power_of_its_step() {
     assert_ne!(a, b);
 }
 
+#[test]
+fn law_14_holds_out_to_the_sixteenth_generation() {
+    // DESIGN.md M0.10 bounds the instances at 16 generations, and the test above stops at 10:
+    // here every rate of `int[-8..=8]` from generation 11 to 16 (8^16 = 2^48, inside an i64),
+    // with the fees and starts of `-2..=2`, 2,550 instances within the budget of 4,096. Each
+    // square is bound to a name and read twice, where `power` writes it out twice, so the term
+    // grows with the number of squarings and not five-fold at each.
+    let shared_power = |step: Term, n: u32| {
+        let mut binds = Vec::new();
+        let (mut acc, mut square, mut k) = (
+            lit(Value::tuple(vec![Value::Int(1), Value::Int(0)])),
+            step,
+            n,
+        );
+        while k > 0 {
+            if k & 1 == 1 {
+                let a = fresh("acc");
+                binds.push((a.clone(), affine_then(acc, square.clone())));
+                acc = var(&a);
+            }
+            let s = fresh("sq");
+            binds.push((s.clone(), affine_then(square.clone(), square)));
+            square = var(&s);
+            k >>= 1;
+        }
+        (binds, acc)
+    };
+    let mut cases = Vec::new();
+    for a in -8..=8 {
+        for b in -2..=2 {
+            for x0 in -2..=2 {
+                for n in 11..=16 {
+                    cases.push((a, b, x0, n));
+                }
+            }
+        }
+    }
+    let n = holds(cases, |&(a, b, x0, n)| {
+        let step = lit(Value::tuple(vec![Value::Int(a), Value::Int(b)]));
+        let (binds, p) = shared_power(step, n);
+        let rhs = binds.into_iter().rev().fold(
+            add(mul(nth(p.clone(), 0), lit(x0)), nth(p, 1)),
+            |body, (name, value)| let_(&name, value, body),
+        );
+        (counted(x0, n, |_, x| add(mul(lit(a), x), lit(b))), rhs)
+    });
+    assert_eq!(n, 2_550);
+    // And the left side is the generation-16 value computed in Rust, for one rate and start.
+    let x16 = (0..16).fold(1i64, |x, _| -8 * x + 2);
+    assert_eq!(
+        eval(&counted(1, 16, |_, x| add(mul(lit(-8), x), lit(2)))),
+        Ok(Value::Int(x16))
+    );
+}
+
 // Law 15: fix runs semi-naive.
 
 /// A relation on the nodes `0..N` as the two-level family `u -> v -> true`.

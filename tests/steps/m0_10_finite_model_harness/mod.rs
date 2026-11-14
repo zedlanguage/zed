@@ -12,6 +12,7 @@
 //! `RANDOM_INSTANCES` seeded random ones beyond those bounds.
 
 mod bench;
+mod cases;
 mod derived;
 mod laws_01_10;
 mod laws_11_20;
