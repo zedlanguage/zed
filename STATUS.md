@@ -327,7 +327,7 @@ fences changed, so test `l01_07` needs its expected output accepted at the next 
   use `zed_tests::scaling::check` (n against 8n, under 10.5 times the work and the bytes since
   TESTS-scaling-limit-10_5, author 2026-11-13, which replaced the 13 of earlier that day; a ratio from 9 to 10.5 passes with a note naming the test), or `check_order`
   for work defined to be of order n^k (under 10.5 × 8^(k−1), `scaling::limit`); a test over the limit is ignored with its owner row. Work is user-mode instructions
-  from the hardware counter, the least of two runs of each size, one measurement; with no counter
+  from the hardware counter, one run of each size after a warm-up at n, one measurement (TEST-scaling-runs); with no counter
   (`perf_event_paranoid` above 2, or a VM with no PMU) it is the task clock, the processor time of the thread and the threads it starts, and a
   test allows twice the limit and fails only when three measurements in a row are over; with `perf_event_open` refused the check stops with its own error. That is Linux; on macOS work is
   the process's instructions (`proc_pid_rusage`, else its cycles) and on Windows its cycles

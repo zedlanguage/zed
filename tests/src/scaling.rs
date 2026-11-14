@@ -361,9 +361,27 @@ impl Meter {
     }
 
     /// How many runs to take the least of, and how many measurements must all be over a limit.
+    ///
+    /// A count of instructions takes one run of each size and one measurement: with the warm-up
+    /// at n, a check runs n twice and 8n once, about 10 times the time at n. Until
+    /// TEST-scaling-runs it took the least of two runs of each size, 3 runs at n and 2 at 8n,
+    /// about 19 times the time at n, so a benchmark whose time at n was the 1 s the author asks
+    /// for (P169, P175) did not fit in the 20 s a piece may take. The least of two was meant to
+    /// remove the spread of single runs, but measured it barely changes the ratio: 58 checks in
+    /// 57 benchmarks sampled from 19 groups (checker, runtime, Presburger, e-graph, parser,
+    /// lowering, the kernel), each run in 5 processes, 295 comparisons (2026-11-14, under
+    /// tools/run_tests.sh's malloc and memcpy settings, load 23 to 32). The ratio of the first
+    /// run at 8n to the second at n differed from the ratio of the least of two runs at each
+    /// size by at most 0.88% in instructions (mean 0.03%, the largest in `l01_29_diagnostics`'
+    /// `rejecting_many_binders_that_name_types_scales`, whose single runs differ by up to 1.4%
+    /// in one process) and by at most 0.05% in bytes, both under the 1% the row allowed. Across
+    /// the 5 processes the single-run ratio of each check spread by at most 0.52%, the
+    /// least-of-two ratio by up to 1.26%. The warm-up stays, held against the first run at 8n,
+    /// which is now also the measured run at 8n (see [`compare_by`]). Processor time and cycles
+    /// change with load, so they keep the fastest of five and [`TRIES`] measurements.
     fn repeats(&self) -> (usize, usize) {
         if self.instructions {
-            (2, 1)
+            (1, 1)
         } else {
             (5, TRIES)
         }
@@ -711,9 +729,9 @@ enum Bound<'a> {
 }
 
 /// [`compare`] by the given meter and measures. Each run is [`alone`]. Counts of instructions
-/// need the least of two runs and one measurement, and processor time the fastest of five and
-/// three measurements. The bytes do not change with load, so the first measurement over the
-/// limit fails.
+/// need one run of each size and one measurement (see [`Meter::repeats`]), and processor time
+/// the fastest of five and three measurements. The bytes do not change with load, so the first
+/// measurement over the limit fails.
 ///
 /// Before the least is taken, the first run of each size is held to the same limit: the warm-up
 /// at the smaller size against the first run at the larger. A memo that outlives a run's thread
@@ -1542,7 +1560,7 @@ mod tests {
         assert_eq!(meter.runs(), (1 + 5 * TRIES, 5 * TRIES));
         let meter =
             Meter::first_that_moves([(moving(), "instructions", true)]).expect("the counter moves");
-        assert_eq!(meter.runs(), (3, 2));
+        assert_eq!(meter.runs(), (2, 1));
         assert!(
             Meter::first_that_moves([(zero(), "instructions", true), (zero(), "cycles", false)])
                 .is_none()
@@ -1583,6 +1601,187 @@ mod tests {
             message
                 .contains("the first runs took 1000000 and 64000000 passes, 64.0 times the work"),
             "{message}"
+        );
+    }
+
+    /// Compares a small run that adds `small(i)` passes to `passes` at its `i`th call with a large
+    /// one that adds `large(i)`, by `meter`, which must read `passes`; gives the message if the
+    /// comparison fails, and how often each size ran.
+    fn compare_counted(
+        meter: &mut Meter,
+        passes: &'static std::sync::atomic::AtomicU64,
+        small: impl Fn(usize) -> u64 + Sync,
+        large: impl Fn(usize) -> u64 + Sync,
+    ) -> (Option<String>, usize, usize) {
+        use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+        let (smalls, larges) = (AtomicUsize::new(0), AtomicUsize::new(0));
+        let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            compare_by(
+                meter,
+                Measures::WorkOnly,
+                None,
+                "counted passes",
+                Bound::Order(1),
+                || _ = passes.fetch_add(small(smalls.fetch_add(1, Relaxed)), Relaxed),
+                || _ = passes.fetch_add(large(larges.fetch_add(1, Relaxed)), Relaxed),
+            )
+        }));
+        let message = failed
+            .err()
+            .map(|e| *e.downcast::<String>().expect("a message"));
+        (message, smalls.into_inner(), larges.into_inner())
+    }
+
+    /// A meter of a count that changes with load, processor time or cycles, here given a counter
+    /// that does not. A comparison under the limit times [`TIME_ALLOWANCE`] stops after its first
+    /// measurement, the fastest of five runs of each size after the warm-up; one over it in its
+    /// first measurement only is measured again and passes; one over it in every measurement
+    /// takes all [`TRIES`], the runs [`Meter::runs`] gives, and fails naming the allowance. On a
+    /// machine with an instruction counter no other test takes these paths.
+    #[test]
+    fn a_meter_of_a_count_that_changes_with_load_measures_up_to_three_times() {
+        static PASSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let mut meter = Meter {
+            read: Box::new(|| PASSES.load(std::sync::atomic::Ordering::Relaxed)),
+            unit: "ns",
+            instructions: false,
+        };
+        assert_eq!(meter.runs(), (1 + 5 * TRIES, 5 * TRIES));
+        let (message, smalls, larges) = compare_counted(&mut meter, &PASSES, |_| 1000, |_| 8000);
+        assert_eq!((message, smalls, larges), (None, 1 + 5, 5));
+        // 64 times in the five runs of the first measurement, 8 times after.
+        let (message, smalls, larges) = compare_counted(
+            &mut meter,
+            &PASSES,
+            |_| 1000,
+            |i| if i < 5 { 64_000 } else { 8000 },
+        );
+        assert_eq!((message, smalls, larges), (None, 1 + 2 * 5, 2 * 5));
+        let (message, smalls, larges) = compare_counted(&mut meter, &PASSES, |_| 1000, |_| 64_000);
+        assert_eq!((smalls, larges), meter.runs());
+        let message = message.expect("64 times fails");
+        assert!(
+            message.contains(
+                "took 1000 and 64000, 64.0 times the work; then 1000 and 64000, 64.0 times the \
+                 work; then 1000 and 64000, 64.0 times the work in ns"
+            ),
+            "{message}"
+        );
+        assert!(
+            message.contains(", times 2 for a count that changes with load"),
+            "{message}"
+        );
+    }
+
+    /// On a count of instructions a check runs the smaller size twice, the warm-up and the run
+    /// measured, and the larger once, the run both held against the warm-up and measured. The
+    /// measured ratio is the second run at n against that one run at 8n: a first run at n that
+    /// costs as much as the run at 8n, as one building what the process keeps does, passes the
+    /// check of the first runs and does not hide work 64 times the second run at n.
+    #[test]
+    fn a_count_of_instructions_measures_the_second_run_at_n_against_the_run_at_8n() {
+        static PASSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let mut meter = Meter {
+            read: Box::new(|| PASSES.load(std::sync::atomic::Ordering::Relaxed)),
+            unit: "passes",
+            instructions: true,
+        };
+        assert_eq!(meter.runs(), (2, 1));
+        let first_dear = |i: usize| if i == 0 { 64_000 } else { 1000 };
+        let (message, smalls, larges) = compare_counted(&mut meter, &PASSES, first_dear, |_| 8000);
+        assert_eq!((message, smalls, larges), (None, 2, 1));
+        let (message, smalls, larges) =
+            compare_counted(&mut meter, &PASSES, first_dear, |_| 64_000);
+        assert_eq!((smalls, larges), (2, 1));
+        let message = message.expect("64 times fails");
+        assert!(
+            message.contains("counted passes: took 1000 and 64000, 64.0 times the work in passes"),
+            "{message}"
+        );
+    }
+
+    /// The bytes as [`a_count_of_instructions_measures_the_second_run_at_n_against_the_run_at_8n`]
+    /// the work: a first run at n that allocates as much as the run at 8n passes the check of the
+    /// first runs, and the run at 8n, 64 times the bytes of the second run at n, fails the check
+    /// of the runs measured.
+    #[test]
+    fn the_bytes_of_the_second_run_at_n_are_held_against_the_run_at_8n() {
+        use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed};
+        static PASSES: AtomicU64 = AtomicU64::new(0);
+        let mut meter = Meter {
+            read: Box::new(|| PASSES.load(Relaxed)),
+            unit: "passes",
+            instructions: true,
+        };
+        let smalls = AtomicUsize::new(0);
+        let message = message_of(|| {
+            compare_by(
+                &mut meter,
+                Measures::Both,
+                None,
+                "counted bytes",
+                Bound::Order(1),
+                || {
+                    PASSES.fetch_add(1000, Relaxed);
+                    let first = smalls.fetch_add(1, Relaxed) == 0;
+                    black_box(vec![0u8; if first { 64_000 } else { 1000 }]);
+                },
+                || {
+                    PASSES.fetch_add(8000, Relaxed);
+                    black_box(vec![0u8; 64_000]);
+                },
+            )
+        });
+        assert!(
+            message.contains("counted bytes: allocated 1000 and 64000 bytes, 64.0 times the bytes"),
+            "{message}"
+        );
+    }
+
+    /// A comparison of two runs that are not one pass at n and 8n holds its ratio to the limit
+    /// given, in the check of the first runs and in that of the runs measured: a ratio equal to
+    /// it passes, one over it fails with the reason given, whichever check it is over in.
+    #[test]
+    fn a_comparison_to_a_given_limit_passes_at_the_limit_and_fails_over_it() {
+        use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed};
+        static PASSES: AtomicU64 = AtomicU64::new(0);
+        let mut meter = Meter {
+            read: Box::new(|| PASSES.load(Relaxed)),
+            unit: "passes",
+            instructions: true,
+        };
+        // The first method's first run does `warm` passes, its later runs 1000.
+        let given = |meter: &mut Meter, warm: u64, second: u64| {
+            let firsts = AtomicUsize::new(0);
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                compare_by(
+                    meter,
+                    Measures::WorkOnly,
+                    None,
+                    "two methods",
+                    Bound::Given(3.0, "the second method is at most 3 times the first"),
+                    || {
+                        let first = firsts.fetch_add(1, Relaxed) == 0;
+                        PASSES.fetch_add(if first { warm } else { 1000 }, Relaxed);
+                    },
+                    || _ = PASSES.fetch_add(second, Relaxed),
+                )
+            }))
+            .map_err(|e| *e.downcast::<String>().expect("a message"))
+        };
+        assert_eq!(given(&mut meter, 1000, 3000), Ok(()));
+        let message = given(&mut meter, 1000, 3001).expect_err("first runs over the limit");
+        assert!(
+            message.contains(
+                "two methods: the first runs took 1000 and 3001 passes, 3.0 times the work; "
+            ) && message.ends_with("; the second method is at most 3 times the first"),
+            "{message}"
+        );
+        let message = given(&mut meter, 3000, 3001).expect_err("runs measured over the limit");
+        assert_eq!(
+            message,
+            "two methods: took 1000 and 3001, 3.0 times the work in passes; the second method is \
+             at most 3 times the first"
         );
     }
 
