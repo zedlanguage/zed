@@ -2,9 +2,10 @@
 //! members, and the evaluation and naming of a definition's body at its arguments.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock, PoisonError, Weak};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 
 use super::{At, Def, Env, Key, Node, Shape, same};
 use crate::types::print::Class;
@@ -99,6 +100,7 @@ impl Env {
             members: Vec::new(),
             judged: OnceLock::new(),
             diagonal_empty: OnceLock::new(),
+            part_names: Mutex::default(),
         }
     }
 
@@ -172,6 +174,54 @@ impl Env {
                 ")",
             ),
         }
+    }
+
+    /// The name of the part kept unevaluated at `e`: the text of `e` at the arguments, made once
+    /// per instance and kept in [`Env::part_names`] with the names of the parts inside it.
+    // Complexity tradeoff (COMPLEXITY.md, row PERF-part-name-nested): a part's name spells out
+    // its whole subexpression, so the parts nested inside it are spelled out again in each name
+    // around them. Before, each part's name was made by its own walk of its subexpression: `k`
+    // nested parts took O(k^2) time and memory (printing `print::tests::part_cycle` took 42.4
+    // times the instructions and 46.4 times the bytes at 800 parts against 100). Used: the
+    // names are shared as a DAG of ropes, the way hash-consing shares equal subterms (Goto,
+    // "Monocopy and associative algorithms in extended Lisp", University of Tokyo, 1974) and a
+    // rope holds its substrings by reference (Boehm, Atkinson and Plass, "Ropes: an alternative
+    // to strings", Software: Practice and Experience, 1995). The walk for one part's name keeps
+    // the name of each part met inside it, and takes the name of a part already kept as one
+    // leaf, so the names of an instance's parts cost O(body) in all, each made once (building
+    // and printing `part_cycle` now takes 9.98 times the instructions at 16,000 parts against
+    // 2,000, within the printer's O(t log t) sort; `print::bench`). The text
+    // is byte for byte the one spelled out, parentheses included, so the printer's ranking of
+    // names (`Tok::Rec`) is unchanged, and `Key` and `canon` do not read names. Costs: one map
+    // entry per part named, kept with the instance; a try that read a text not yet made keeps
+    // nothing and is made again ([`Type::rope`]). Reading a name in full is still linear in
+    // its text, which is quadratic in the nesting, as before.
+    fn part_name(&self, e: &Node) -> Rope {
+        let kept = || {
+            self.part_names
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+        };
+        if let Some(r) = kept().get(&e.at) {
+            return r.clone();
+        }
+        let show = Show {
+            defs: &self.group().0.defs,
+            params: &[],
+            args: Some(&self.args),
+            e,
+            surface: false,
+        };
+        let mut found = Vec::new();
+        let r = show.rope_with(&mut |t, _| t.rope(), Some((&self.part_names, &mut found)));
+        if types::showing_complete() {
+            let mut kept = kept();
+            for (at, inner) in found {
+                kept.entry(at).or_insert(inner);
+            }
+            kept.entry(e.at).or_insert_with(|| r.clone());
+        }
+        r
     }
 }
 
@@ -277,21 +327,21 @@ fn component(e: &Arc<Node>, env: &Arc<Env>) -> Type {
     let (named, at) = (e.clone(), env.clone());
     let key = Key::new(env.clone(), At::Part(e.at));
     let (e, env) = (e.clone(), env.clone());
-    Type::rec(
-        key,
-        move || {
-            Show {
-                defs: &at.group().0.defs,
-                params: &[],
-                args: Some(&at.args),
-                e: &named,
-                surface: false,
-            }
-            .rope()
-        },
-        move || eval(&e, &env),
-    )
+    Type::rec(key, move || at.part_name(&named), move || eval(&e, &env))
 }
+
+/// Whether `e`, a part directly below an expression of shape `parent`, is kept unevaluated
+/// ([`component`]) when the expression is evaluated.
+fn kept_as_part(parent: &Shape, e: &Node) -> bool {
+    matches!(
+        parent,
+        Shape::Tuple(_) | Shape::Atom(..) | Shape::Morphism(..)
+    ) && !eager(e)
+}
+
+/// The names of an instance's parts kept so far, and those a walk made that were not kept
+/// ([`Env::part_name`]).
+type PartNames<'a> = (&'a Mutex<HashMap<u32, Rope>>, &'a mut Vec<(u32, Rope)>);
 
 /// An expression in the surface syntax, its parameters by name or, with `args`, by value.
 pub(super) struct Show<'a> {
@@ -306,27 +356,44 @@ pub(super) struct Show<'a> {
 }
 
 impl Show<'_> {
-    /// The text as a rope, which holds the texts of the types it names without copying them,
-    /// so that the name of `Tree(Tree(..))` takes time linear in its text.
-    /// Each expression's rope is built once its parts' are, from a stack. Each part is
-    /// parenthesized only where the type grammar (DESIGN.md sec:grammar) would not read it as
-    /// one operand of the part around it.
+    /// The text spelled out in full, each part inside walked again rather than read from the
+    /// names kept ([`Env::part_name`]).
     fn rope(&self) -> Rope {
-        self.rope_with(&mut |t, _| t.rope())
+        self.rope_with(&mut |t, _| t.rope(), None)
     }
 
-    /// The rope of the expression, each type in it given by `leaf` from the type and its place,
-    /// called on the types in the order they are written.
-    fn rope_with(&self, leaf: &mut dyn FnMut(&Type, Place) -> Rope) -> Rope {
+    /// The text as a rope, which holds the texts of the types it names without copying them,
+    /// so that the name of `Tree(Tree(..))` takes time linear in its text. Each expression's
+    /// rope is built once its parts' are, from a stack. Each part is parenthesized only where
+    /// the type grammar (DESIGN.md sec:grammar) would not read it as one operand of the part
+    /// around it. Each type in the expression is given by `leaf` from the type and its place,
+    /// called on the types in the order they are written. With `names`, the expression is a
+    /// part of an instance at its arguments ([`Env::part_name`]): a part inside it kept
+    /// unevaluated whose name is kept is written by that rope, and the name of each other one
+    /// is added to the list.
+    fn rope_with(
+        &self,
+        leaf: &mut dyn FnMut(&Type, Place) -> Rope,
+        mut names: Option<PartNames<'_>>,
+    ) -> Rope {
+        /// A node, where it stands, and whether it is a part kept unevaluated.
         enum Step<'a> {
-            Visit(&'a Node, Place),
-            Build(&'a Node, Place),
+            Visit(&'a Node, Place, bool),
+            Build(&'a Node, Place, bool),
         }
-        let mut todo = vec![Step::Visit(self.e, Place::Any)];
+        let mut todo = vec![Step::Visit(self.e, Place::Any, false)];
         let mut done: Vec<Rope> = Vec::new();
         while let Some(step) = todo.pop() {
             let r = match step {
-                Step::Visit(e, at) => match &e.e {
+                Step::Visit(e, at, true)
+                    if let Some((kept, _)) = &names
+                        && let Some(r) = (kept.lock().unwrap_or_else(PoisonError::into_inner))
+                            .get(&e.at)
+                            .cloned() =>
+                {
+                    bracketed(r, &e.e, at)
+                }
+                Step::Visit(e, at, part) => match &e.e {
                     Shape::Param(i) => match self.args {
                         Some(args) => args[*i].rope(),
                         None => Rope::cat([Piece::from(self.params[*i].as_str())]),
@@ -336,16 +403,15 @@ impl Show<'_> {
                     }
                     Shape::Type(t) => leaf(t, at),
                     _ => {
-                        todo.push(Step::Build(e, at));
+                        todo.push(Step::Build(e, at, part));
                         let n = e.e.kids().count();
-                        todo.extend(
-                            (e.e.kids().rev().zip((0..n).rev()))
-                                .map(|(c, i)| Step::Visit(c, kid_place(&e.e, i))),
-                        );
+                        todo.extend((e.e.kids().rev().zip((0..n).rev())).map(|(c, i)| {
+                            Step::Visit(c, kid_place(&e.e, i), kept_as_part(&e.e, c))
+                        }));
                         continue;
                     }
                 },
-                Step::Build(e, at) => {
+                Step::Build(e, at, part) => {
                     let parts = done.split_off(done.len() - e.e.kids().count());
                     let r = if let Shape::Ref(i, _) = &e.e {
                         Rope::joined(&format!("{}(", self.defs[*i].name), parts, ", ", ")")
@@ -387,15 +453,24 @@ impl Show<'_> {
                             }
                         }
                     };
-                    match at.admits(class(&e.e)) {
-                        true => r,
-                        false => Rope::joined("(", [r], "", ")"),
+                    if part && let Some((_, found)) = &mut names {
+                        found.push((e.at, r.clone()));
                     }
+                    bracketed(r, &e.e, at)
                 }
             };
             done.push(r);
         }
         done.pop().expect("the rope of the expression")
+    }
+}
+
+/// The rope `r` of an expression of shape `s` that is not a leaf, parenthesized where it stands
+/// at `at` only if the type grammar would not read it there as one operand.
+fn bracketed(r: Rope, s: &Shape, at: Place) -> Rope {
+    match at.admits(class(s)) {
+        true => r,
+        false => Rope::joined("(", [r], "", ")"),
     }
 }
 
@@ -453,19 +528,26 @@ impl fmt::Display for Show<'_> {
             return self.rope().strs().try_for_each(|s| f.write_str(s));
         }
         let mut leaves = Vec::new();
-        self.rope_with(&mut |t, at| {
-            leaves.push((t.clone(), at));
-            Rope::cat([])
-        });
+        self.rope_with(
+            &mut |t, at| {
+                leaves.push((t.clone(), at));
+                Rope::cat([])
+            },
+            None,
+        );
         let texts = Type::surfaces_by_name(&leaves);
         for (name, body) in &texts.defs {
             crate::types::defs::declare(f, name, body)?;
         }
         let mut roots = texts.roots.into_iter();
-        self.rope_with(&mut |_, _| {
-            Rope::cat([Piece::from(roots.next().expect("a text for each type"))])
-        })
+        self.rope_with(
+            &mut |_, _| Rope::cat([Piece::from(roots.next().expect("a text for each type"))]),
+            None,
+        )
         .strs()
         .try_for_each(|s| f.write_str(s))
     }
 }
+
+#[cfg(test)]
+mod tests;

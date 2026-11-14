@@ -271,7 +271,8 @@ struct Rec {
     /// The name, made when first printed: a name spells out its part of the definition, so
     /// making every part's name at once cost the product of the definition's size and depth.
     /// It is a rope holding the texts of the argument types, which [`Type::rope`] makes in its
-    /// loop like any other text.
+    /// loop like any other text, and the names of the parts inside it, made once per instance
+    /// (`rec::unfold::Env::part_name`).
     name: OnceLock<Rope>,
     naming: Box<dyn Fn() -> Rope + Send + Sync>,
     /// The names of the unfolding's atoms, when first asked ([`Type::atom_names`]).
@@ -3080,6 +3081,12 @@ struct Showing {
 thread_local! {
     /// The making of a text under way on this thread, if any.
     static SHOWING: RefCell<Option<Showing>> = const { RefCell::new(None) };
+}
+
+/// Whether the try under way on this thread has found every text it read so far, so that what it
+/// makes is kept and not thrown away ([`Type::rope`]); always so outside the making of a text.
+fn showing_complete() -> bool {
+    SHOWING.with_borrow(|s| s.as_ref().is_none_or(|s| s.missing.is_empty()))
 }
 
 /// Ends the making of a text, also when it panics.
@@ -6532,6 +6539,10 @@ pub mod rec {
         /// would outlive `Type::forget_emptiness` and make the cost of a first decision depend
         /// on what other units and threads decided before (item GSX-unsolved, I6.7).
         diagonal_empty: OnceLock<Vec<bool>>,
+        /// The names made so far of the parts kept unevaluated at these arguments, by their nodes'
+        /// numbers (`Node::at`), which the name of a part around them holds rather than spells
+        /// out again (`unfold::Env::part_name`).
+        part_names: Mutex<HashMap<u32, super::Rope>>,
     }
 
     impl Env {

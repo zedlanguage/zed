@@ -547,6 +547,7 @@ impl Group {
             members: (0..self.0.defs.len()).map(|_| Mutex::new(None)).collect(),
             judged: OnceLock::new(),
             diagonal_empty: OnceLock::new(),
+            part_names: Mutex::default(),
         });
         // A plain member names only plain members, each set before it. A recursive member is
         // made when first read ([`Env::member`]).
