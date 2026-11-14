@@ -6,6 +6,8 @@ in docs/layout.md.
 
 ## Current position
 
+**2026-11-14 (AUDIT-p184).** 78 of 528 DESIGN steps are done (`PROGRESS.md`). dagview holds 2,307 items: 1,152 done, 1,083 unstarted, 39 active, 30 blocked by open author questions, 3 waiting; one component, no cycle; 337 ready. The bench split is finished, and the work follows the author's order P181: the FAIL-* rows first, then the completeness passes and the six handoff items, then the DAG. zed/IMPL.md section 7 in the spec repository has the same summary. The paragraphs below are history from 2026-11-05 onward.
+
 **Zed₀ moved after the core (2026-11-05).** By the author's order, every core language feature goes
 before Zed₀. `docs/plan_dag.md` had 826 items at that rework and has 815 items, 2685 edges and 89 levels after the later merges; S.1, which confirms
 Zed₀, is at level 61. The merge took 938 findings from two audits of earlier
@@ -342,6 +344,8 @@ fences changed, so test `l01_07` needs its expected output accepted at the next 
   dirty nodes, values in place with visualizers), steps L30.1–L30.6.
 
 ## Test baseline
+
+**2026-11-14 (AUDIT-p184).** No whole-suite run has been recorded here since 2026-11-03. Since the bench split, `tools/run_tests.sh` runs the correctness tests and `--bench` runs the benchmarks apart; each agent records the pieces it ran in `wt/running-log.md`. The counts below are history.
 
 OSP-diag repair #1 (branch wt/osp-diag, 2026-11-03): `tools/run_tests.sh 4` gave 96 pieces and 0 failed at a
 load average of 7.5 to 13.6; `cargo fmt --all --check` and clippy with `-D warnings` are clean.
