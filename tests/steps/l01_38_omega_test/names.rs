@@ -1040,6 +1040,24 @@ fn the_formulas_whose_atoms_share_a_color_that_changed_answer_with_the_naming_gi
     assert_eq!(differ, Vec::new());
 }
 
+/// System 6 of seed 16475671021983193007, under `disjunctions_whose_atoms_share_a_color`: its
+/// layer holds `t >= 0` beside `-t >= 0` for a `t` like `a - b`, which `decide` joins into the
+/// equation `t == 0` (FAIL-rewrite-growth-both). Written with the sign of the first name, as
+/// project_each writes such an equation, it gave `true` under 12 of the 24 namings and
+/// `Refusal::Unordered` under the others; `decide` now holds such an equation with both signs.
+#[test]
+fn a_joined_equation_whose_sign_only_the_names_choose_gives_one_answer() {
+    let mut rng = Rng::new(16475671021983193007);
+    let differ = name_dependent(
+        &mut rng,
+        4,
+        7,
+        |s| s == 6,
+        |rng| regular_with_disjunctions(rng, 4),
+    );
+    assert_eq!(differ, Vec::new());
+}
+
 #[test]
 fn pncx_gained_color_systems_match_enumeration() {
     // The 21 systems accounting for all 504 gains of this family in R4's

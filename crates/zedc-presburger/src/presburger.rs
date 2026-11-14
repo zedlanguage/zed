@@ -679,10 +679,10 @@ fn reduced(facts: &Facts) -> Option<Formula> {
 /// reject it (PRES-model-products).
 /// The solver is given `f` with each atom propagation fixed replaced by its value; a formula it
 /// refuses so is asked again as written (PRES-small-point).
-/// Like [`decide`], it first writes `f` one way (`signed` with the chosen signs), so that how
+/// Like [`decide`], it first writes `f` one way (`signed` with `Signs::Free`), so that how
 /// a row or an equation is written cannot change the answer (FAIL-rewrite-growth-both).
 pub fn satisfiable(f: &Formula) -> Result<Option<Model>, Refusal> {
-    let f = &signed(f, Signs::Chosen);
+    let f = &signed(f, Signs::Free);
     if let Some(g) = factored(f)
         && let Ok(m) = satisfiable_written(&g)
     {
@@ -812,9 +812,16 @@ fn satisfiable_inner(f: &Formula) -> Result<Option<Model>, Refusal> {
 /// ends settle (module `row_domains`); any other goes to the solver with each atom propagation
 /// fixed replaced by its value, and as written if the solver refuses that.
 ///
-/// Before any of that, `f` is written one way (`signed` with the chosen signs): each row
+/// Before any of that, `f` is written one way (`signed` with `Signs::Free`): each row
 /// divided by the common factor of its coefficients, each equation with one sign, and `t >= 0`
-/// beside `-t >= 0` as `t == 0`. The solver's elimination order reads the coefficients and signs
+/// beside `-t >= 0` as `t == 0`. An equation whose sign only the names could choose, as
+/// `a - b == 0`, is kept as written, and `t >= 0` beside `-t >= 0` for such a `t` is not
+/// joined: with the sign of the first name the answer changed with the naming (12 of 24
+/// namings refused for `Refusal::Unordered`, l01_38
+/// `names::a_joined_equation_whose_sign_only_the_names_choose_gives_one_answer`), and held
+/// with both signs it made benchmarks of reflections and overlaps (l01_38 `cell_sweep`,
+/// zedc_presburger `r5_hull_tests`, `r5_orbit_tests`) two to four times slower. So the
+/// writing of such an equation can still change the answer (PRES-solve-equation-sign). The solver's elimination order reads the coefficients and signs
 /// of the rows (`stable_colors`, `canonical`), so without this step the same formula with a
 /// row times 3, or an equation written as two rows, could be answered one way and refused for
 /// [`Refusal::Growth`] or [`Refusal::Shadows`] the other (FAIL-rewrite-growth-both,
@@ -833,7 +840,7 @@ fn satisfiable_inner(f: &Formula) -> Result<Option<Model>, Refusal> {
 /// One writing does not answer every question another does: the census has one condition the
 /// chosen sign refuses for Shadows that its writing as given answered (PRES-solve-equation-sign).
 pub fn decide(f: &Formula) -> Result<bool, Refusal> {
-    let f = &signed(f, Signs::Chosen);
+    let f = &signed(f, Signs::Free);
     // The formula with each shared part taken out of the disjunctions that hold it in every
     // disjunct ([`factored`]) holds at the same points, so its answer is the answer; the
     // formula as written is asked where it is refused, so a refusal names the formula as
@@ -1608,6 +1615,11 @@ pub fn with_parts_reversed<T>(f: impl FnOnce() -> T) -> T {
 enum Signs {
     /// The sign [`flips`] chooses.
     Chosen,
+    /// The sign [`flips`] chooses where the coefficients or the constant decide it; where only
+    /// the names would ([`sign_by_terms`], as for `a - b == 0`), the equation as written, and
+    /// `t >= 0` beside `-t >= 0` left as the two rows, so that a renaming does not change the
+    /// formula.
+    Free,
     /// Each equation held with both signs (one, as chosen, under a negation).
     Both,
     /// The sign opposite to the one [`flips`] chooses.
@@ -1631,8 +1643,6 @@ enum Signs {
 /// sign of an equation and answers them with the other, and [`project_each`] asks with the
 /// second writing only where the first is refused, and with the third only where both are.
 fn signed(f: &Formula, how: Signs) -> Formula {
-    let both = how == Signs::Both;
-    let opposite = how == Signs::Opposite;
     // Each node's writing, or `None` where it is written so already: an unchanged node is kept
     // as it is, with its id, so that what later steps keep by id still finds it.
     let changed = f.fold(
@@ -1641,12 +1651,10 @@ fn signed(f: &Formula, how: Signs) -> Formula {
         |g, negated, parts: Vec<Option<Formula>>| match g {
             Formula::Con(c) => match c.reduced() {
                 Some(r) => Some(match &r {
-                    Formula::Con(e) if e.rel == Rel::Eq => {
-                        equation(e, negated, both, opposite).unwrap_or(r)
-                    }
+                    Formula::Con(e) if e.rel == Rel::Eq => equation(e, negated, how).unwrap_or(r),
                     _ => r,
                 }),
-                None if c.rel == Rel::Eq => equation(c, negated, both, opposite),
+                None if c.rel == Rel::Eq => equation(c, negated, how),
                 None => None,
             },
             Formula::And(gs) => {
@@ -1662,12 +1670,15 @@ fn signed(f: &Formula, how: Signs) -> Formula {
                 }
                 let kids = (rows.iter().enumerate())
                     .map(|(i, k)| match k {
-                        Formula::Con(c) if paired.contains(&i) => {
+                        Formula::Con(c)
+                            if paired.contains(&i)
+                                && !(how == Signs::Free && sign_by_terms(&c.lin).is_eq()) =>
+                        {
                             let eq = Con {
                                 lin: c.lin.clone(),
                                 rel: Rel::Eq,
                             };
-                            equation(&eq, negated, both, opposite).unwrap_or(Formula::Con(eq))
+                            equation(&eq, negated, how).unwrap_or(Formula::Con(eq))
                         }
                         k => (*k).clone(),
                     })
@@ -1745,17 +1756,20 @@ fn opposite_lins(a: &Lin, b: &Lin) -> bool {
         && (a.terms.iter().zip(&b.terms)).all(|((x, k), (y, m))| x == y && *k == -m)
 }
 
-/// The equation `c`, `t == 0`, with the sign [`flips`] chooses, or with `opposite` the other
-/// sign, which no writing of the equation and no name changes, or `None` when that is `c` as
-/// written. With `both`, and not under a negation (`negated`), `t == 0 && -t == 0`; under a
-/// negation, where `!(t == 0)` reads as `t - 1 >= 0 || -t - 1 >= 0` whichever sign `t` has,
-/// the one sign.
-fn equation(c: &Con, negated: bool, both: bool, opposite: bool) -> Option<Formula> {
+/// The equation `c`, `t == 0`, with the sign [`flips`] chooses (`how` is `Signs::Chosen`), or
+/// the other sign (`Signs::Opposite`), or `None` when that is `c` as written. With
+/// `Signs::Both`, and not under a negation (`negated`), `t == 0 && -t == 0`; under a negation,
+/// where `!(t == 0)` reads as `t - 1 >= 0 || -t - 1 >= 0` whichever sign `t` has, the one
+/// sign. With `Signs::Free`, the chosen sign, or `None` where only the names would choose it.
+fn equation(c: &Con, negated: bool, how: Signs) -> Option<Formula> {
     let eq = |lin: Lin| Formula::Con(Con { lin, rel: Rel::Eq });
-    if both && !negated {
+    if how == Signs::Free && sign_by_terms(&c.lin).is_eq() {
+        return None;
+    }
+    if how == Signs::Both && !negated {
         return Some(Formula::and(vec![eq(c.lin.clone()), eq(c.lin.times(-1))]));
     }
-    (flips(&c.lin) != opposite).then(|| eq(c.lin.times(-1)))
+    (flips(&c.lin) != (how == Signs::Opposite)).then(|| eq(c.lin.times(-1)))
 }
 
 /// Whether the equation `t == 0` is written `-t == 0`: the sign whose coefficients, sorted, are
@@ -1785,6 +1799,17 @@ fn equation(c: &Con, negated: bool, both: bool, opposite: bool) -> Option<Formul
 // the random parts of l01_39 `pendants` (seeds 11 to 18, 4,000 parts) no answer depends on the
 // naming under this rule.
 fn flips(t: &Lin) -> bool {
+    match sign_by_terms(t) {
+        Ordering::Less => true,
+        Ordering::Greater => false,
+        Ordering::Equal => t.terms.values().next().is_some_and(Int::is_negative),
+    }
+}
+
+/// The order of `t` against `-t` that [`flips`] reads before the names: of their coefficients,
+/// sorted, then of their constants; `Less` where `-t` is chosen, and `Equal` where only the
+/// names could choose (`a - b == 0`). O(k log k) for the k terms of `t`.
+fn sign_by_terms(t: &Lin) -> Ordering {
     // The coefficients of `-t`, sorted, are those of `t`, sorted, negated and reversed, so one
     // sorted list of references serves both and no coefficient is copied, where two copied and
     // sorted lists cost two vectors per equation (bench `decide_scales_over_one_class_of_equalities`).
@@ -1795,11 +1820,7 @@ fn flips(t: &Lin) -> bool {
         .map(|i| up[i].cmp(&-up[n - 1 - i]))
         .find(|o| o.is_ne())
         .unwrap_or(Ordering::Equal);
-    match lists.then_with(|| t.constant.cmp(&Int::ZERO)) {
-        Ordering::Less => true,
-        Ordering::Greater => false,
-        Ordering::Equal => t.terms.values().next().is_some_and(Int::is_negative),
-    }
+    lists.then_with(|| t.constant.cmp(&Int::ZERO))
 }
 
 /// `run`, and when the solver refuses it, `run` again on the path before DISJ-diff-fast and

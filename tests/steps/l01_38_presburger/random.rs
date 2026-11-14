@@ -206,12 +206,10 @@ fn random_tests_agree_with_the_interpreter() {
     // stays so with `live3` alone, since that stage was removed (HULL3-subsumed).
     assert_eq!(wider, 0, "projections wider than the hull of their values");
     // Since NAME-ties repair 2, one entailment of the 60, from `x != y` in the window to
-    // `-x == y - 1`, was refused: `x` and `y` occurred alike, and two disjunctions were left that
-    // only an order chosen by name would search. Since `decide` and `satisfiable` write each
-    // formula one way (FAIL-rewrite-growth-both), the rows `x >= y` and `x <= y` under the
-    // negation are one equation, and the entailment is answered again.
+    // `-x == y - 1`, is refused: `x` and `y` occur alike, and two disjunctions are left that only
+    // an order chosen by name would search. Before, it was answered.
     assert_eq!(
-        unordered, 0,
+        unordered, 1,
         "entailments refused for a search order only names fix"
     );
     // Both answers occur, so neither check passes by never being asked.
