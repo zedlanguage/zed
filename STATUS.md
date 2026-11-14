@@ -2266,7 +2266,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CONST-too-large-coprime-base | impl attempt 2 | 2026-11-14 00:07 | resumed; WIP committed (566a0d3a5) and rebased on origin/main; bench moved into bench/too_large.rs |
+| CONST-too-large-coprime-base | impl attempt 2 | 2026-11-14 00:07 | red-before-green: on origin/main (ctl tree) too_large::a_product_through_a_part_with_several_roots_is_rejected and main_limits::a_product_through_a_part_with_se |
 | DOC-deferred-refs | running | 2026-11-14 00:03 | author P174/P181 2026-11-14: held until every TEST-bench-move item merges, then the FAIL rows, then the six handoff items; AUDIT-p184 2026-11-14: P174 hold lift |
 | FAIL-ambiguous-qualifier-repair | running | 2026-11-14 07:10 |  |
 | FAIL-bitword-arity-message | running | 2026-11-14 07:09 |  |
@@ -2280,21 +2280,18 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-diagnostics-member-headline | running | 2026-11-14 07:10 |  |
 | FAIL-initial-reads-shadowed | running | 2026-11-14 07:40 |  |
 | FAIL-lattice-f32-literal | running | 2026-11-14 07:10 |  |
-| FAIL-lex-deep-blank-line | running | 2026-11-14 07:09 |  |
-| FAIL-lex-doc-in-hole | running | 2026-11-14 07:09 |  |
-| FAIL-lex-escape-invisible | running | 2026-11-14 07:09 |  |
 | FAIL-linked-piled-holes-count | running | 2026-11-14 07:09 |  |
 | FAIL-memory-callee-no-plan | running | 2026-11-14 07:40 |  |
 | FAIL-pext-transfer-popcount | running | 2026-11-14 07:09 |  |
 | FAIL-product-refused-box-renamed | running | 2026-11-14 07:09 |  |
 | FAIL-queries-reorder | running | 2026-11-14 07:40 |  |
-| FAIL-source-lvt-jamo | running | 2026-11-14 07:09 |  |
 | FAIL-trivial-stop-after-model | running |  |  |
 | FAIL-types-sig-reflexive | running | 2026-11-14 07:40 |  |
 | STAGE-generic-fold | impl attempt 2 | 2026-11-09 09:24 | resumed from handoff; committing WIP tests, rebasing onto origin/main (386 behind); load 45.39 |
 | TEST-complete-types | impl attempt 1 | 2026-11-14 07:09 | committed 3 COMPLETENESS.md + 13 tests, rebased, row Done text and TEST-types-unreached-paths added; plan --fix, tests, clippy next / load 47.10 50.62 49.91 |
 | TEST-m0_03-flake | running |  |  |
 | TEST-m0-layer-label | running |  |  |
+| XR-l139-family | orchestrator attempt  | 2026-11-13 18:59 | round 1 merge: f9936c4fe hull sides over two atoms from twovar::ends; cuts_scale 7.1, boxstar_scales 8.8 back; 262 pieces pass; load 51.10 48.05 49.56 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
