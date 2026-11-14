@@ -825,7 +825,7 @@ fn chains_reach_only_arms_that_hold_them(
             panic!(
                 "seed {seed}, draw {draw} of {draws}, a chain of {} of depth {depth}:\n{body}\n{e}\n\
                  To run this test again, from the root of the checkout:\n  \
-                 ZED_SEED={seed} tools/run_tests.sh --no-doc --only 'l01_39_reduced_product::random::{test}$'",
+                 ZED_TEST_SEED={seed} tools/run_tests.sh --no-doc --only 'l01_39_reduced_product::random::{test}$'",
                 if calls { "calls" } else { "bindings" }
             )
         });

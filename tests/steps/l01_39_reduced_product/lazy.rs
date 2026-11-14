@@ -175,7 +175,7 @@ fn run(
 // each event the loop counted occurs, so that the random runs are known to reach it
 // (TEST-bench-move-l0139; seeds found 2026-11-14 over the first 30 to 200 seeds of each).
 
-/// `count` seeds in a row from a new one each run, which [`Rng::fresh`] prints and `ZED_SEED`
+/// `count` seeds in a row from a new one each run, which [`Rng::fresh`] prints and `ZED_TEST_SEED`
 /// repeats. Each check names the seed it failed at.
 fn fresh_seeds(what: &str, count: u64) -> std::ops::Range<u64> {
     let (_, seed) = Rng::fresh(what);
