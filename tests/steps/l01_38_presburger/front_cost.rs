@@ -48,15 +48,26 @@ fn holds_in_box(f: &Formula) -> bool {
     })
 }
 
-/// 600 random conjunctions of one to six rows of one or two unit terms, inequalities and
-/// equalities, some of no term, with every variable bounded to `-3..=3` by rows of one term:
-/// `decide` answers as enumeration over the box does and as `satisfiable`, which takes the
-/// whole path, does.
+/// 200 conjunctions of [`unit_rows_agree`] of a new seed each run; both answers occur. The 600
+/// of seed 0x544 (1.1 s at load 25) are in `bench::front_cost`.
 #[test]
 fn unit_rows_are_decided_as_enumeration_and_the_whole_path_decide_them() {
-    let mut rng = Rng::new(0x544);
+    let (mut rng, seed) = Rng::fresh("front_cost unit rows");
+    let (with, without) = unit_rows_agree(&mut rng, 200);
+    assert!(
+        with >= 30 && without >= 30,
+        "seed {seed}: {with} with a point, {without} without"
+    );
+}
+
+/// `count` random conjunctions of one to six rows of one or two unit terms, inequalities and
+/// equalities, some of no term, with every variable bounded to `-3..=3` by rows of one term:
+/// `decide` answers as enumeration over the box does and as `satisfiable`, which takes the
+/// whole path, does, and the point `satisfiable` gives holds. The counts with and without a
+/// point.
+pub(super) fn unit_rows_agree(rng: &mut Rng, count: usize) -> (usize, usize) {
     let (mut with, mut without) = (0, 0);
-    for _ in 0..600 {
+    for _ in 0..count {
         let mut rows: Vec<Formula> = (0..4)
             .flat_map(|i| [row(&[(i, 1)], 3, false), row(&[(i, -1)], 3, false)])
             .collect();
@@ -75,16 +86,14 @@ fn unit_rows_are_decided_as_enumeration_and_the_whole_path_decide_them() {
         assert_eq!(decide(&f), Ok(point), "{f}");
         let found = satisfiable(&f).expect("answered");
         assert_eq!(found.is_some(), point, "{f}");
-        if point {
+        if let Some(m) = found {
+            assert!(f.holds(&m), "{m:?} fails {f}");
             with += 1;
         } else {
             without += 1;
         }
     }
-    assert!(
-        with >= 100 && without >= 100,
-        "{with} with a point, {without} without"
-    );
+    (with, without)
 }
 
 /// Rows a checker meets, with the answer of each: a bound of no variable, an equality that ties

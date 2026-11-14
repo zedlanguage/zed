@@ -37,3 +37,14 @@ fn decide_on_unit_rows_costs_a_constant_times_the_search() {
         "{report} the ratio grows"
     );
 }
+
+/// `front_cost::unit_rows_are_decided_as_enumeration_and_the_whole_path_decide_them` as first
+/// written, 1.1 s (2026-11-14, load 25): 600 conjunctions of seed 0x544.
+#[test]
+fn the_600_unit_row_conjunctions_of_seed_0x544_are_decided_as_enumeration() {
+    let (with, without) = unit_rows_agree(&mut zed_tests::instances::Rng::new(0x544), 600);
+    assert!(
+        with >= 100 && without >= 100,
+        "{with} with a point, {without} without"
+    );
+}
