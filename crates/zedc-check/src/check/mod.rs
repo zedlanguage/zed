@@ -38,6 +38,7 @@
 
 pub(crate) use zedc_types::kernel_type;
 pub mod blocking;
+mod coprime;
 mod limits;
 pub mod ports;
 pub mod read;
@@ -56,7 +57,7 @@ use std::sync::Arc;
 
 use num_bigint::BigUint;
 use zed_kernel::num::{
-    FloatFormat, TooLarge, fixed_room, gcd_uint, literal_f32, literal_f64, show_f32,
+    FloatFormat, TooLarge, fixed_room, literal_f32, literal_f64, show_f32,
 };
 use zed_kernel::types::{Spell, Spelled, Type as KType, Universes, Verdict, defs};
 use zed_kernel::{KernelError, Prim, Rat, Term, Universe, Value, eval};
@@ -405,6 +406,8 @@ struct WidePower<'a> {
     k: Num,
     negative: bool,
     bits: Num,
+    /// What the base's bounds rest on, left to the end of the walk ([`Built::proof`]).
+    proof: Option<coprime::ProofId>,
 }
 
 /// An operation at `span` on operands the text fixes that builds a number in full, `p`, whose
@@ -1289,6 +1292,9 @@ struct Ck<'t, 'a> {
     /// What the text proves of the coefficients the kernel holds for each expression read as an
     /// operand of `*` or `/`, and for each it reads to get it, by its span ([`Ck::least_built`]).
     built: HashMap<Span, Built>,
+    /// The roots of the coefficients in [`Ck::built`], the sets the products make of them and
+    /// the proofs left to the end of the walk ([`coprime::Roots`]).
+    roots: coprime::Roots,
     /// The expressions whose value is the result of `main`, its exit status ([`Ck::main_tails`]).
     main_tails: HashSet<Span>,
     /// The value of each binder `name = e`, read for what it shows of its `int` value only when
@@ -1649,6 +1655,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             known: HashMap::new(),
             fixed: HashMap::new(),
             built: HashMap::new(),
+            roots: coprime::Roots::default(),
             facts: HashMap::new(),
             main_tails: HashSet::new(),
             whence: HashMap::new(),
@@ -9272,22 +9279,26 @@ impl IntRange {
 
 /// What the text proves of the coefficients the kernel holds for an exact value, its numerator
 /// and denominator ([`Rat::kept`]): for each, a lower bound on its bit length, whether it is 1
-/// in magnitude and a number every prime of it divides; a number every prime the value keeps
-/// as a power divides; and whether the bit lengths are the coefficients' own
-/// ([`Ck::least_built`]).
+/// in magnitude and numbers every prime of it divides one of; numbers every prime the value
+/// keeps as a power divides one of; whether the bit lengths are the coefficients' own
+/// ([`Ck::least_built`]); and the proof, left to the end of the walk, that the bounds hold.
 #[derive(Clone)]
 struct Built {
     /// The numerator, then the denominator.
     parts: [Coef; 2],
-    /// A number every prime the value keeps as a power beside its coefficients divides, 1 where
-    /// it keeps none; `None` where the text proves none. The kernel moves a product's factors of
-    /// each such prime out of its coefficients (`Rat::extract`), so a product's coefficients
-    /// are the factors' products only where no factor shares a prime with it.
-    kept: Option<Rc<BigUint>>,
+    /// Numbers every prime the value keeps as a power beside its coefficients divides one of,
+    /// none where it keeps none; `None` where the text proves none. The kernel moves a
+    /// product's factors of each such prime out of its coefficients (`Rat::extract`), so a
+    /// product's coefficients are the factors' products only where no factor shares a prime
+    /// with them.
+    kept: Option<coprime::SetId>,
     /// Whether the bit lengths and the numbers of `parts` are the coefficients themselves, as
     /// for a value the text fixes, so a part within 64 bits is known to be one, which a power
     /// factors into kept primes (`Rat::pow`).
     exact: bool,
+    /// What the bounds rest on that the walk could not decide, the coprimality of roots made
+    /// by products ([`coprime::Roots::settle`]); `None` where nothing is left to prove.
+    proof: Option<coprime::ProofId>,
 }
 
 /// What [`Built`] proves of one coefficient.
@@ -9297,10 +9308,11 @@ struct Coef {
     bits: Num,
     /// Whether it is 1 in magnitude.
     one: bool,
-    /// A number every prime of the coefficient divides, as the base `b` for `b ^ (2^60)`: the
-    /// coefficient itself for a value the text fixes; `None` where the text proves none. Two
-    /// coefficients share no factor where their numbers share none.
-    root: Option<Rc<BigUint>>,
+    /// Numbers every prime of the coefficient divides one of, its roots, as the base `b` for
+    /// `b ^ (2^60)` and `b` and `c` for `b ^ (2^59) * c ^ (2^59)`: the coefficient itself for a
+    /// value the text fixes; `None` where the text proves none. Two coefficients share no
+    /// factor where no root of one shares a prime with a root of the other.
+    root: Option<coprime::SetId>,
 }
 
 /// What the text of an expression shows of its `int` value: an interval holding it and, for an

@@ -16,7 +16,7 @@ fn built(src: &str) -> Option<String> {
 }
 
 /// The rendered diagnostics of `src`, which the checker rejects.
-fn rejected(src: &str) -> String {
+pub(super) fn rejected(src: &str) -> String {
     built(src).unwrap_or_else(|| panic!("accepted:\n{src}"))
 }
 
@@ -607,6 +607,69 @@ pub(super) fn rat_product_chain(n: usize) -> String {
         "main(m: MainArgs) {{\n    b = 2^64 + 13;\n    c = 2^64 + 15;\n    \
          x = rat(b) ^ (2^59) / rat(c);\n{body}}}\n"
     )
+}
+
+// Plan row CONST-too-large-coprime-base: a part that is a product of powers of different
+// numbers, as the numerator `b ^ (2^59) * c ^ (2^59)`, keeps the set of those numbers, its
+// roots, and a later `*` or `/` through it is bounded where no root of one part shares a
+// prime with a root of the part it must not cancel against. Before, such a part kept no root
+// and the program compiled. `d = 2^64 + 17` shares no factor with `b` or `c`.
+
+#[test]
+fn a_product_through_a_part_with_several_roots_is_rejected() {
+    // `x` has a numerator of `2^66 + 1` bits, with roots `b` and `c`, and the denominator `d`,
+    // so `x * x` has a numerator of `2^67 + 1` bits.
+    for (lets, out) in [
+        (
+            "    d = 2^64 + 17;\n    x = rat(b) ^ (2^59) * (rat(c) ^ (2^59)) / rat(d);\n",
+            "x * x",
+        ),
+        // The kept prime 2 against the roots `b` and `c`, both odd.
+        (
+            "    x = rat(2) ^ (2^70) * (rat(b) ^ (2^59) * (rat(c) ^ (2^59)));\n",
+            "x * x",
+        ),
+        // A power of `x`, by a negative exponent and by 2.
+        (
+            "    d = 2^64 + 17;\n    x = (rat(b) ^ (2^59) * (rat(c) ^ (2^59)) / rat(d)) ^ -1;\n",
+            "x * x",
+        ),
+        (
+            "    d = 2^64 + 17;\n    x = rat(b) ^ (2^59) * (rat(c) ^ (2^59)) / rat(d);\n",
+            "x ^ 2",
+        ),
+    ] {
+        let src = bc_pushed(lets, out);
+        let line = 4 + lets.matches('\n').count();
+        let got = rejected(&src);
+        assert!(
+            got.starts_with(&format!(
+                "{line}:24: Number too large for any memory of the target: `{out}` needs more \
+                 than 16 EiB; Linux x86_64 addresses 16 EiB."
+            )),
+            "{lets}{out}:\n{got}"
+        );
+    }
+}
+
+#[test]
+fn a_part_with_several_roots_that_may_cancel_proves_nothing() {
+    // `x / (rat(c) ^ (2^59))` cancels `c ^ (2^59)`: its numerator is `b ^ (2^59)`, so the
+    // products and powers of it below fit, though a bound that read the factors alone, of
+    // `2^66 + 1` bits, would reject them. Each is decided at the end of the walk, through the
+    // operand whose proof failed.
+    let x = "    x = rat(b) ^ (2^59) * (rat(c) ^ (2^59));\n";
+    for out in [
+        "x * (x / (rat(c) ^ (2^59)))",
+        "(x / (rat(c) ^ (2^59))) ^ 2",
+        "(x / (rat(c) ^ (2^59))) * (x / (rat(c) ^ (2^59)))",
+    ] {
+        assert_eq!(built(&bc_pushed(x, out)), None, "{out}");
+    }
+    // The kept prime 2 divides the root `2^64 + 16 = 2^4 * (2^60 + 1)`: the kernel moves its
+    // factors of 2 out, and the numerator of `x * x`, about `2^59 * 248` bits, fits.
+    let x = "    x = rat(2) ^ (2^70) * (rat(b) ^ (2^59) * (rat(2^64 + 16) ^ (2^59)));\n";
+    assert_eq!(built(&bc_pushed(x, "x * x")), None);
 }
 
 // Plan row CONST-too-large-kept-powers: the size checked is the size of what each operation

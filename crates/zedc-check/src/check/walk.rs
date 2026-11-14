@@ -64,6 +64,7 @@ pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
         ck.bounds();
         ck.walk(unit);
         ck.main_limits(unit);
+        ck.judge_proved();
         ck.powers_over_main_limit();
     }
     // A function marked `@nonblocking` that can block (DESIGN.md sec:ports), decided from the
@@ -8500,13 +8501,13 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// same O(1) comparison as for a fixed base.
     fn too_large_power(&mut self, a: &'a Expr, e: &'a Expr, span: Span) -> bool {
         let space_bits = 1u128 << (ADDRESS_BYTES_LOG2 + 3);
-        let (rat, widths, exact) = match self.fixed_value(a) {
+        let (rat, widths, exact, proof) = match self.fixed_value(a) {
             Some(base) => {
                 let (Value::Big(r) | Value::Rat(r)) = &base else {
                     return false;
                 };
                 let widths = r.built_widths().map(|l| l.map(u128::from));
-                (matches!(base, Value::Rat(_)), widths, true)
+                (matches!(base, Value::Rat(_)), widths, true, None)
             }
             None => {
                 let w = self.least_built(a);
@@ -8519,7 +8520,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     Some(l) if !c.one && l > 64 => Some(l as u128),
                     _ => None,
                 });
-                (!w.parts[1].one, widths, false)
+                (!w.parts[1].one, widths, false, w.proof)
             }
         };
         // `F`, the sum of `L - 1` over the built parts, at least 64 for each, and their count.
@@ -8550,7 +8551,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             // Every exponent below 0, as `x ^ -(2^64)` on a `rat`: the repair keeps the sign.
             negative: matches!(ints.bounds(), Some((_, Fin(hi))) if hi.signum() < 0),
             k,
+            proof,
         };
+        if p.proof.is_some() {
+            // The base's bounds rest on roots made by products, judged once the walk has met
+            // every root ([`Self::judge_proved`]); a repair tried judges none.
+            if !self.trying {
+                self.wide_powers.entry(span).or_insert(p);
+            }
+            return false;
+        }
         if over_space {
             self.power_too_large(&p, None);
         } else if !self.trying {
@@ -8638,6 +8648,60 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn limit_value(&mut self, e: &'a Expr) -> (&'a str, Option<Value>) {
         let code = self.code(Some(e.span)).unwrap_or("the limit");
         (code, self.fixed_value(self.through_names(e)))
+    }
+
+    /// Judges the powers and products whose bounds rest on roots made by products
+    /// ([`Built::proof`]), once the walk has met every root (plan row
+    /// CONST-too-large-coprime-base): one whose proof fails is dropped, as the kernel may
+    /// cancel there and the run decides; one past the address space is rejected, as
+    /// [`Self::too_large_power`] and [`Self::too_large_product`] reject one at once; the rest
+    /// are left to [`Self::powers_over_main_limit`]. Called after the walk and
+    /// [`Self::main_limits`], before [`Self::powers_over_main_limit`].
+    ///
+    /// Complexity tradeoff: deciding each proof as the walk meets it would split each new
+    /// root against every root before it, O(n^2) gcds for `n` roots; used: one coprime base of
+    /// every root and one pass over the proofs in the order they were made
+    /// ([`coprime::Roots::settle`]), then one lookup per judged operation. Nothing is built
+    /// where no operation waits for a proof.
+    pub(super) fn judge_proved(&mut self) {
+        let powers: Vec<Span> = (self.wide_powers.iter())
+            .filter(|(_, p)| p.proof.is_some())
+            .map(|(s, _)| *s)
+            .collect();
+        let products: Vec<Span> = (self.wide_products.iter())
+            .filter(|(_, p)| p.r.proof.is_some())
+            .map(|(s, _)| *s)
+            .collect();
+        if powers.is_empty() && products.is_empty() {
+            return;
+        }
+        let holds = self.roots.settle();
+        let held = |p: Option<coprime::ProofId>| p.is_none_or(|p| holds[p as usize]);
+        let room = Num::pow2(&Num::from(i64::from(ADDRESS_BYTES_LOG2 + 3)));
+        for s in powers {
+            let Some(p) = self.wide_powers.remove(&s) else {
+                continue;
+            };
+            if !held(p.proof) {
+                continue;
+            }
+            match p.bits > room {
+                true => self.power_too_large(&p, None),
+                false => _ = self.wide_powers.insert(s, p),
+            }
+        }
+        for s in products {
+            let Some(p) = self.wide_products.remove(&s) else {
+                continue;
+            };
+            if !held(p.r.proof) {
+                continue;
+            }
+            match p.r.size() > room {
+                true => self.product_too_large(&p, None),
+                false => _ = self.wide_products.insert(s, p),
+            }
+        }
     }
 
     /// The powers [`Self::too_large_power`] found within the address space, rejected where
@@ -8760,6 +8824,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             ref bits,
             negative,
             ref k,
+            proof: _,
         } = *p;
         let space_bits = 1u128 << (ADDRESS_BYTES_LOG2 + 3);
         let room_bits = main_limit.map_or(space_bits, |(b, ..)| b * 8);
@@ -8935,7 +9000,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// divides a part of the other. The text proves it where one of each pair is 1, as every
     /// pair of an `int` product is, or where the numbers the parts are powers of share no
     /// factor, as `b ^ (2^60) / c` and `b ^ (2^60)` for `b = 2^64 + 13` and `c = 2^64 + 15`
-    /// (plan row CONST-too-large-products-unproved, cases (a) and (b)). GMP's `mpq_mul` and
+    /// (plan row CONST-too-large-products-unproved, cases (a) and (b)), and where a part is a
+    /// product of such powers, as `x * x` for `x = b ^ (2^59) * c ^ (2^59) / d` (plan row
+    /// CONST-too-large-coprime-base): no root of one part shares a prime with a root of the
+    /// other. A check between roots made by products is decided once the walk is over, with
+    /// every root met ([`Self::judge_proved`]), and the operation is judged then. GMP's `mpq_mul` and
     /// `mpq_div` (after Knuth, TAOCP vol. 2, §4.5.1) cancel the cross gcds before multiplying,
     /// so `x / x` builds nothing there, and a bound on the factors alone would reject it. The
     /// kernel's `Rat::mul` and `Rat::div` build the unreduced products first, so a quotient of
@@ -8948,12 +9017,13 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Complexity tradeoff: the naive method builds the product, as the run would, at the cost
     /// of its size (24 EiB for the product of three such powers) and depending on the memory
     /// of the machine that builds. Used: the operands' bounds, each expression read once
-    /// ([`Self::least_built`]), and a few additions and comparisons of bit lengths and at most
-    /// six gcds of numbers the text fixes ([`product_built`]) per `*` or `/`, plus the size of
+    /// ([`Self::least_built`]), and a few additions and comparisons of bit lengths, at most six
+    /// gcds of numbers the text fixes and six unions of roots ([`product_built`]) per `*` or
+    /// `/`, the checks between sets made by products at the end of the walk, plus the size of
     /// the numbers a rejection's message writes.
     fn too_large_product(&mut self, op: BinaryOp, a: &'a Expr, b: &'a Expr, span: Span) -> bool {
         let (x, y) = (self.least_built(a), self.least_built(b));
-        let Some(r) = product_built(op, &x, &y) else {
+        let Some(r) = product_built(&mut self.roots, op, &x, &y) else {
             return false;
         };
         let room = Num::pow2(&Num::from(i64::from(ADDRESS_BYTES_LOG2 + 3)));
@@ -8969,6 +9039,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             y,
             r,
         };
+        if p.r.proof.is_some() {
+            // The bounds rest on roots made by products, judged once the walk has met every
+            // root ([`Self::judge_proved`]); a repair tried judges none.
+            if !self.trying {
+                self.wide_products.entry(span).or_insert(p);
+            }
+            return false;
+        }
         let over_space = p.r.size() > room;
         if over_space {
             self.product_too_large(&p, None);
@@ -9405,7 +9483,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// been read of the expressions [`Self::built_reads`] gives.
     fn built_uncached(&mut self, e: &'a Expr) -> Built {
         if let Some(v) = self.fixed_value(e) {
-            return Built::of(&v);
+            return Built::of(&v, &mut self.roots);
         }
         if let ExprKind::Binary(BinaryOp::Pow, a, k) = &e.kind {
             return self.power_built(a, k);
@@ -9420,7 +9498,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             ExprKind::Name(_) => self.bound_value(e).map_or_else(Built::unknown, memo),
             ExprKind::Unary(UnaryOp::Neg, a) => memo(a),
             ExprKind::Binary(op @ (BinaryOp::Mul | BinaryOp::Div), a, b) => {
-                product_built(*op, &memo(a), &memo(b)).unwrap_or_else(Built::unknown)
+                product_built(&mut self.roots, *op, &memo(a), &memo(b)).unwrap_or_else(Built::unknown)
             }
             _ => self.rat_cast_operand(e).map_or_else(Built::unknown, memo),
         }
@@ -9449,15 +9527,15 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// magnitude, as the kernel's `Rat::pow` makes them, from what the text proves of the base
     /// ([`Self::least_built`]): a part proved beyond 64 bits, at least `L` bits, is built, of
     /// at least `|k| * (L - 1) + 1` bits, the bound of [`Self::too_large_power`], with the
-    /// base's root; a part the text fixes within 64 bits, other than 1, is factored into kept
-    /// prime powers, leaving 1, and the primes are its own, so its value joins the number the
-    /// kept primes divide; a part proved neither is at least 1 bit, and the kept primes are
+    /// base's roots; a part the text fixes within 64 bits, other than 1, is factored into kept
+    /// prime powers, leaving 1, and the primes are its own, so its value joins the roots of the
+    /// kept primes; a part proved neither is at least 1 bit, and the kept primes are
     /// then not proved. A negative exponent swaps the parts, and one that may take either sign
     /// gives each part the lesser of the two.
     ///
     /// Complexity tradeoff: the naive method builds the power, at the cost of its size; used:
-    /// a product and a subtraction of bit lengths per part, and at most two products of the
-    /// kept number by a word, as the text fixes it.
+    /// a product and a subtraction of bit lengths per part, and at most two unions of the kept
+    /// roots with a part's, O(1) each ([`coprime::Roots::union`]).
     fn power_built(&mut self, a: &'a Expr, k: &'a Expr) -> Built {
         let base = self
             .built
@@ -9472,7 +9550,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             return Built::unknown();
         }
         let word = Num::from(64i64);
-        let mut kept = base.kept.as_deref().cloned();
+        let mut kept = base.kept;
+        let roots = &mut self.roots;
         let [n, d] = base.parts.map(|c| {
             if c.one {
                 return c;
@@ -9484,15 +9563,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                     root: c.root,
                 };
             }
-            match (base.exact, &c.root, &mut kept) {
-                (true, Some(r), Some(kept)) => *kept *= &**r,
+            match (base.exact, c.root, &mut kept) {
+                (true, Some(r), Some(kept)) => *kept = roots.union(*kept, r),
                 _ => kept = None,
             }
             match base.exact {
                 true => Coef {
                     bits: Num::ONE,
                     one: true,
-                    root: Some(Rc::new(BigUint::from(1u8))),
+                    root: Some(coprime::EMPTY),
                 },
                 false => Coef {
                     bits: Num::ONE,
@@ -9507,18 +9586,19 @@ impl<'t, 'a> Ck<'t, 'a> {
             (true, _) => [n, d],
             (_, true) => [d, n],
             _ => {
-                let lesser = |x: &Coef, y: &Coef| Coef {
+                let mut lesser = |x: &Coef, y: &Coef| Coef {
                     bits: x.bits.clone().min(y.bits.clone()),
                     one: x.one && y.one,
-                    root: either_root(x, y),
+                    root: either_root(&mut self.roots, x, y),
                 };
                 [lesser(&n, &d), lesser(&d, &n)]
             }
         };
         Built {
             parts,
-            kept: kept.map(Rc::new),
+            kept,
             exact: false,
+            proof: base.proof,
         }
     }
 
@@ -16063,22 +16143,23 @@ impl Built {
             ],
             kept: None,
             exact: false,
+            proof: None,
         }
     }
 
     /// The coefficients of the exact value `v`, as the kernel holds them ([`Rat::kept`]): an
-    /// `int` within 64 bits is its own numerator over 1. Each coefficient is its own root, and
-    /// the kept primes' product is the number they divide.
+    /// `int` within 64 bits is its own numerator over 1. Each coefficient other than 0 is its
+    /// own root, and the kept primes' product is the root they divide.
     ///
     /// Complexity tradeoff: a copy of each coefficient, O(n) in its bits, as
     /// [`Ck::fixed_value`] copies the value, and the product of the `m` kept primes by halves,
     /// O(M(m) log m), where a product one prime at a time is O(m^2) words. Kept as roots, the
     /// copies are shared by every product and power that reads them.
-    fn of(v: &Value) -> Built {
-        let coef = |m: BigUint| Coef {
+    fn of(v: &Value, roots: &mut coprime::Roots) -> Built {
+        let mut coef = |m: BigUint| Coef {
             bits: Num::from(i128::from(m.bits())),
             one: m.bits() == 1,
-            root: Some(Rc::new(m)),
+            root: (m.bits() != 0).then(|| roots.leaf(m)),
         };
         match v {
             Value::Int(i) => Built {
@@ -16086,16 +16167,19 @@ impl Built {
                     coef(BigUint::from(i.unsigned_abs())),
                     coef(BigUint::from(1u8)),
                 ],
-                kept: Some(Rc::new(BigUint::from(1u8))),
+                kept: Some(coprime::EMPTY),
                 exact: true,
+                proof: None,
             },
             Value::Big(r) | Value::Rat(r) => {
                 let (num, den, pows) = r.kept();
                 let primes: Vec<u64> = pows.iter().map(|(p, _)| *p).collect();
+                let parts = [coef(num.magnitude().clone()), coef(den.magnitude().clone())];
                 Built {
-                    parts: [coef(num.magnitude().clone()), coef(den.magnitude().clone())],
-                    kept: Some(Rc::new(product_of(&primes))),
+                    parts,
+                    kept: Some(roots.leaf(product_of(&primes))),
                     exact: true,
+                    proof: None,
                 }
             }
             _ => Built::unknown(),
@@ -16124,39 +16208,14 @@ fn product_of(ps: &[u64]) -> BigUint {
     }
 }
 
-/// Whether `n` is 1, as a gcd is when its operands share no factor.
-fn is_one(n: &BigUint) -> bool {
-    n.bits() == 1
-}
-
-/// Whether the text proves that the coefficients `a` and `b` share no factor: one of them is 1
-/// in magnitude, or their roots share none.
-fn share_none(a: &Coef, b: &Coef) -> bool {
-    a.one || b.one || matches!((&a.root, &b.root), (Some(x), Some(y)) if is_one(&gcd_uint(x, y)))
-}
-
-/// Whether the text proves that no prime the number `kept` lists divides the coefficient `c`.
-fn clear_of(c: &Coef, kept: &BigUint) -> bool {
-    c.one || is_one(kept) || c.root.as_ref().is_some_and(|r| is_one(&gcd_uint(r, kept)))
-}
-
-/// A number every prime of `a` and of `b` divides, where one is 1 or both are the same number;
-/// `None` otherwise, so that a number never grows by a product.
-fn union_of(a: Option<&Rc<BigUint>>, b: Option<&Rc<BigUint>>) -> Option<Rc<BigUint>> {
-    match (a, b) {
-        (Some(x), Some(y)) if is_one(x) => Some(y.clone()),
-        (Some(x), Some(y)) if is_one(y) || Rc::ptr_eq(x, y) || x == y => Some(x.clone()),
+/// The roots of a coefficient that is `a` or `b`, or their product: both sets of roots, as one
+/// set ([`coprime::Roots::union`]); a part of magnitude 1 adds no prime.
+fn either_root(roots: &mut coprime::Roots, a: &Coef, b: &Coef) -> Option<coprime::SetId> {
+    match (a.one, b.one, a.root, b.root) {
+        (true, ..) => b.root,
+        (_, true, ..) => a.root,
+        (_, _, Some(x), Some(y)) => Some(roots.union(x, y)),
         _ => None,
-    }
-}
-
-/// The root of a coefficient that is `a` or `b`, or their product ([`union_of`]); a part of
-/// magnitude 1 adds no prime.
-fn either_root(a: &Coef, b: &Coef) -> Option<Rc<BigUint>> {
-    match (a.one, b.one) {
-        (true, _) => b.root.clone(),
-        (_, true) => a.root.clone(),
-        _ => union_of(a.root.as_ref(), b.root.as_ref()),
     }
 }
 
@@ -16170,49 +16229,75 @@ fn either_root(a: &Coef, b: &Coef) -> Option<Rc<BigUint>> {
 /// as for every product of two `int`s); and no prime either operand keeps as a power divides a
 /// coefficient of the other, since the kernel moves the product's factors of each such prime
 /// out of its coefficients (`Rat::extract`; a prime of `x`'s list divides neither `p` nor `q`
-/// by the kernel's form). `None` where any of these is not proved.
+/// by the kernel's form). Two coefficients share no factor where no root of one shares a prime
+/// with a root of the other. `None` where any of these is disproved or cannot be shown; a
+/// check between roots made by products is left to the end of the walk, in the result's
+/// proof ([`Built::proof`]).
 ///
 /// Complexity tradeoff: the naive method builds the product, as the run would, at the cost of
 /// its size; one that proves coprimality by keeping, for each part, the product of every number
 /// it was multiplied from costs a gcd of the whole chain's numbers at each `*`, O(n^2) for a
-/// chain of `n` products. Used: each part's root is one number the text fixes, kept through a
-/// product only where the other factor is 1 or has the same root ([`union_of`]), so no root
-/// grows: at most six gcds a product (`gcd_uint`, the half gcd, O(M(b) log b) in the bits `b`
-/// of the numbers the text fixes), and a chain of `n` products costs `n` such operations, as
-/// [`Ck::fixed_value`] costs on the same numbers. What it gives up: a product of two parts
-/// with different roots has none, so a later product with it proves nothing where the parts
-/// could share a factor. A complete solution would keep a coprime base of the roots
-/// (Bernstein, "Factoring into coprimes in essentially linear time", J. Algorithms 54, 2005),
-/// each part a product of its powers.
-fn product_built(op: BinaryOp, x: &Built, y: &Built) -> Option<Built> {
+/// chain of `n` products; one that keeps a single number per part, kept through a product only
+/// where the other factor is 1 or has the same number (plan row
+/// CONST-too-large-products-unproved), proves nothing past a product of two parts with
+/// different numbers. Used: each part keeps the set of its roots, the union of its factors'
+/// in O(1) ([`coprime::Roots::union`]); a check between two single roots is one gcd, decided
+/// at once as before, and one between sets made by products waits for the coprime base of
+/// every root the walk met (Bernstein, "Factoring into coprimes in essentially linear time",
+/// J. Algorithms 54, 2005), where it costs set lookups ([`coprime::Roots::settle`]): a chain
+/// of `n` products costs O(n) here and O(n log^2 n) lookups at the end.
+fn product_built(
+    roots: &mut coprime::Roots,
+    op: BinaryOp,
+    x: &Built,
+    y: &Built,
+) -> Option<Built> {
     let [p, q] = &x.parts;
     let [r, s] = match op {
         BinaryOp::Div => [&y.parts[1], &y.parts[0]],
         _ => [&y.parts[0], &y.parts[1]],
     };
     let nonzero = [p, q, r, s].iter().all(|c| c.bits >= Num::ONE);
-    let (Some(kx), Some(ky)) = (&x.kept, &y.kept) else {
+    let (Some(kx), Some(ky)) = (x.kept, y.kept) else {
         return None;
     };
-    let proved = nonzero
-        && share_none(p, s)
-        && share_none(r, q)
-        && clear_of(p, ky)
-        && clear_of(q, ky)
-        && clear_of(r, kx)
-        && clear_of(s, kx);
-    if !proved {
+    if !nonzero {
         return None;
     }
-    let times = |a: &Coef, b: &Coef| Coef {
+    // The roots of each side of a pair that must share no prime: `None` for a part of
+    // magnitude 1, which has none to share, and `Some(None)` where the text proves none.
+    let side = |c: &Coef| (!c.one).then_some(c.root);
+    let pairs = [
+        (side(p), side(s)),
+        (side(r), side(q)),
+        (side(p), Some(Some(ky))),
+        (side(q), Some(Some(ky))),
+        (side(r), Some(Some(kx))),
+        (side(s), Some(Some(kx))),
+    ];
+    let mut checks = Vec::new();
+    for pair in pairs {
+        let (Some(a), Some(b)) = pair else { continue };
+        let (Some(a), Some(b)) = (a, b) else {
+            return None;
+        };
+        match roots.coprime_now(a, b) {
+            Some(true) => {}
+            Some(false) => return None,
+            None => checks.push((a, b)),
+        }
+    }
+    let mut times = |a: &Coef, b: &Coef| Coef {
         bits: &(&a.bits + &b.bits) - &Num::ONE,
         one: a.one && b.one,
-        root: either_root(a, b),
+        root: either_root(roots, a, b),
     };
+    let parts = [times(p, r), times(q, s)];
     Some(Built {
-        parts: [times(p, r), times(q, s)],
-        kept: union_of(Some(kx), Some(ky)),
+        parts,
+        kept: Some(roots.union(kx, ky)),
         exact: false,
+        proof: roots.proof([x.proof, y.proof], checks),
     })
 }
 

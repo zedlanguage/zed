@@ -72,3 +72,44 @@ fn judging_many_builds_scales() {
         kept_sums,
     );
 }
+
+/// Plan row CONST-too-large-coprime-base: `n` names from `y0 = rat(r0) ^ (2^60)`, each the one
+/// before times or divided by `rat(r_i)`, for `r_i` the fourth powers of the first `n` primes
+/// above 2^16, of 65 to 72 bits and pairwise coprime, and `y * y` for the last name `y`, past
+/// the address space.
+fn coprime_chain(n: usize) -> String {
+    let mut primes = Vec::with_capacity(n);
+    let mut q: u128 = 1 << 16;
+    while primes.len() < n {
+        q += 1;
+        if (2..).take_while(|d| d * d <= q).all(|d| q % d != 0) {
+            primes.push(q);
+        }
+    }
+    let body: String = (primes.iter().enumerate().skip(1))
+        .map(|(i, q)| {
+            let op = if i % 2 == 0 { "*" } else { "/" };
+            format!("    y{i} = y{} {op} rat({});\n", i - 1, q.pow(4))
+        })
+        .collect();
+    format!(
+        "main(m: MainArgs) {{\n    y0 = rat({}) ^ (2^60);\n{body}    \
+         m.stdout <- String(y{} * y{}) else \"\";\n}}\n",
+        primes[0].pow(4),
+        n - 1,
+        n - 1
+    )
+}
+
+#[test]
+fn bounding_a_chain_of_products_with_several_roots_scales() {
+    // Each `*` and `/` joins the roots in O(1) and leaves its check between a set and a root
+    // to the end of the walk; the coprime base of the `n` roots costs O(M(N) log n) for `N`
+    // bits in all, and the checks a lookup per root of the smaller side: one rejection.
+    let srcs = scaling::inputs(200, coprime_chain);
+    scaling::check(
+        "a chain of n products and quotients by coprime numbers, the square of the last rejected",
+        200,
+        |k| rejected_times(&srcs[&k], 1),
+    );
+}
