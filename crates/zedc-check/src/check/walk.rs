@@ -7903,8 +7903,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// operations on all of their sizes, as the run's would: `y_i = y_{i-1} / rat(b + i)` with
     /// `b` of 103 bits took 145 ms at 400 names and 980 ms at 3200 (2026-11-13, load 41), and
     /// the same chain of `*` at `int`, which [`Self::known`] folds alike, 77 ms and 700 ms.
-    /// The kernel's `room` refuses a step
-    /// past the memory it allows, and the value is then none.
+    /// A step past [`FOLD_ASK_BITS`] fails ([`prim_folded`]), whatever the machine, and the
+    /// value is then none.
     fn fixed_value(&mut self, a: &'a Expr) -> Option<Value> {
         if !self.fixed.contains_key(&a.span) {
             // Each node is entered once: the graph through binders is acyclic, as statements
