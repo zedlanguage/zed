@@ -392,23 +392,22 @@ fn blocks_by_definition(gs: &[Arc<Formula>]) -> Vec<BTreeSet<Arc<Formula>>> {
 
 #[test]
 fn the_blocks_kept_as_conjuncts_come_and_go_are_those_of_the_definition() {
-    let mut r = Rng::new(0xb10c);
+    let (mut r, seed) = Rng::fresh("blocks kept as conjuncts");
     // How many states had a block of several conjuncts beside another block, so that the
     // test is known to reach blocks that are neither one conjunct nor the whole relation.
     let mut mixed = 0;
-    // How many states had a star of two hubs or more, and a star of two conjuncts or more.
+    // How many states had a star of two hubs or more.
     let mut starred = 0;
-    let mut wide = 0;
     // How many states had a star of two hubs that a conjunct of no leaf relates.
     let mut related = 0;
     // The names marked as having holes or a class ([`Conjuncts::gapped`]), drawn apart so that
-    // the other draws stay as they were, and how many states had a tree of difference
-    // constraints and bounds of two conjuncts or more, and one held back by a name with holes
-    // (32 and 36 states; [`the_counts_of_a_tree_of_differences_are_those_of_the_definition`]
-    // draws mostly differences).
-    let mut gr = Rng::new(0x6a95);
-    let (mut differences, mut gapped) = (0, 0);
-    for case in 0..200 {
+    // the other draws stay as they were. Over 30 cases a star of two conjuncts, a tree of
+    // difference constraints and bounds of two conjuncts or more, and one held back by a name
+    // with holes come 1 to 27, 1 to 7 and 0 to 15 times (10 seeds), too few to assert;
+    // [`the_counts_of_a_tree_of_differences_are_those_of_the_definition`] draws mostly
+    // differences and counts the trees.
+    let mut gr = Rng::new(seed.wrapping_add(0x6a95));
+    for case in 0..30 {
         let mut c = Conjuncts::default();
         let mut log: Vec<String> = Vec::new();
         let mut gaps: BTreeSet<Arc<str>> = BTreeSet::new();
@@ -473,8 +472,8 @@ fn the_blocks_kept_as_conjuncts_come_and_go_are_those_of_the_definition() {
             // is decided when added: a false one makes the conjunction `false`, which has no
             // blocks. The case then goes on from `true`.
             if c.is_bottom() {
-                assert_eq!(c.set().len(), 1, "case {case}");
-                assert!(c.blocks().all().next().is_none(), "case {case}");
+                assert_eq!(c.set().len(), 1, "seed {seed} case {case}");
+                assert!(c.blocks().all().next().is_none(), "seed {seed} case {case}");
                 c = Conjuncts::default();
                 gaps.clear();
                 log.push("false; from true again".into());
@@ -490,7 +489,6 @@ fn the_blocks_kept_as_conjuncts_come_and_go_are_those_of_the_definition() {
                     .len()
                     > 2
             }));
-            wide += usize::from(stars.values().any(|gs| gs.len() > 1));
             related += usize::from(stars.iter().any(|(x, gs)| {
                 let hubs: BTreeSet<Arc<str>> = gs
                     .iter()
@@ -508,19 +506,22 @@ fn the_blocks_kept_as_conjuncts_come_and_go_are_those_of_the_definition() {
                     .star(x)
                     .unwrap_or_else(|| panic!("{x} is a star's leaf after {log:#?}"));
                 let got: BTreeSet<Arc<Formula>> = c.blocks().members(b).cloned().collect();
-                assert_eq!(&got, gs, "case {case}: the star of {x} after {log:#?}");
+                assert_eq!(
+                    &got, gs,
+                    "seed {seed} case {case}: the star of {x} after {log:#?}"
+                );
             }
             for x in c.names() {
                 assert_eq!(
                     c.star(x).is_some(),
                     stars.contains_key(x),
-                    "case {case}: {x} after {log:#?}"
+                    "seed {seed} case {case}: {x} after {log:#?}"
                 );
             }
             assert_eq!(
                 got,
                 partition_by_definition(&c),
-                "case {case} after {log:#?}"
+                "seed {seed} case {case} after {log:#?}"
             );
             // The same conjuncts added afresh, in the reverse order, give the same blocks.
             let mut fresh = Conjuncts::default();
@@ -532,30 +533,28 @@ fn the_blocks_kept_as_conjuncts_come_and_go_are_those_of_the_definition() {
             for g in c.set().iter().rev() {
                 fresh.and(Formula::clone(g));
             }
-            assert_eq!(fresh.set(), c.set(), "case {case}");
-            assert_eq!(partition(&fresh), got, "case {case} afresh after {log:#?}");
+            assert_eq!(fresh.set(), c.set(), "seed {seed} case {case}");
+            assert_eq!(
+                partition(&fresh),
+                got,
+                "seed {seed} case {case} afresh after {log:#?}"
+            );
             for g in c.set() {
                 assert!(names(g).iter().all(|n| c.mentioning(n).any(|h| h == g)));
             }
-            let (alone, held) = differences_only_by_definition(&c, &gaps, &log, case);
-            differences += usize::from(alone);
-            gapped += usize::from(held);
+            differences_only_by_definition(&c, &gaps, &log, seed, case);
         }
     }
-    assert!(mixed > 500, "{mixed} states with mixed blocks");
+    // Over 10 seeds: mixed 227 to 287, starred 44 to 71, related 15 to 35; seeds 48 and 60 gave
+    // related 3 and 4.
+    assert!(mixed > 100, "seed {seed}: {mixed} states with mixed blocks");
     assert!(
-        differences > 20,
-        "{differences} states with a tree of differences alone"
+        starred > 20,
+        "seed {seed}: {starred} states with a star of two hubs"
     );
     assert!(
-        gapped > 20,
-        "{gapped} states with a tree of differences and a name with holes"
-    );
-    assert!(starred > 75, "{starred} states with a star of two hubs");
-    assert!(wide > 40, "{wide} states with a star of two conjuncts");
-    assert!(
-        related > 100,
-        "{related} states with a star of related hubs"
+        related > 0,
+        "seed {seed}: {related} states with a star of related hubs"
     );
 }
 
@@ -564,7 +563,7 @@ fn the_counts_of_a_tree_of_differences_are_those_of_the_definition() {
     // Mostly difference constraints and bounds, now and then another conjunct, added,
     // removed, swapped and forgotten, with names marked as having holes: each tree's counts
     // ([`zedc::store::conjuncts::Blocks::differences_only`]) say what the definition says.
-    let mut r = Rng::new(0xd1ff);
+    let (mut r, seed) = Rng::fresh("counts of a tree of differences");
     let (mut alone, mut held) = (0, 0);
     let difference = |r: &mut Rng| {
         let (x, y) = (
@@ -584,7 +583,7 @@ fn the_counts_of_a_tree_of_differences_are_those_of_the_definition() {
             k
         })
     };
-    for case in 0..300 {
+    for case in 0..150 {
         let mut c = Conjuncts::default();
         let mut log: Vec<String> = Vec::new();
         let mut gaps: BTreeSet<Arc<str>> = BTreeSet::new();
@@ -635,18 +634,19 @@ fn the_counts_of_a_tree_of_differences_are_those_of_the_definition() {
                 log.push("false; from true again".into());
                 continue;
             }
-            let (a, h) = differences_only_by_definition(&c, &gaps, &log, case);
+            let (a, h) = differences_only_by_definition(&c, &gaps, &log, seed, case);
             alone += usize::from(a);
             held += usize::from(h);
         }
     }
+    // Over 10 seeds: alone 821 to 1002, held 352 to 460.
     assert!(
-        alone > 1000,
-        "{alone} states with a tree of differences alone"
+        alone > 400,
+        "seed {seed}: {alone} states with a tree of differences alone"
     );
     assert!(
-        held > 500,
-        "{held} states with a tree of differences and a name with holes"
+        held > 150,
+        "seed {seed}: {held} states with a tree of differences and a name with holes"
     );
 }
 
@@ -658,11 +658,12 @@ fn differences_only_by_definition(
     c: &Conjuncts,
     gaps: &BTreeSet<Arc<str>>,
     log: &[String],
+    seed: u64,
     case: usize,
 ) -> (bool, bool) {
     let blocks = c.blocks();
     if let Err(e) = blocks.well_formed() {
-        panic!("case {case}: the forest: {e} after {log:#?}");
+        panic!("seed {seed} case {case}: the forest: {e} after {log:#?}");
     }
     let mut trees: BTreeMap<_, Vec<&Arc<Formula>>> = BTreeMap::new();
     for g in c.set() {
@@ -678,14 +679,22 @@ fn differences_only_by_definition(
         assert_eq!(
             blocks.differences_only(*t),
             want,
-            "case {case}: the tree of {gs:?} after {log:#?}"
+            "seed {seed} case {case}: the tree of {gs:?} after {log:#?}"
         );
         // A name inside a product of names is no node of the forest; its conjunct links it
         // through the product (`Blocks::shared`).
         for a in gs.iter().flat_map(|g| g.atoms()) {
             let Atom::Sym(n) = a else { continue };
-            assert_eq!(blocks.tree_of_name(&n), Some(*t), "case {case}: {n}");
-            assert_eq!(c.differences_only_at(&n), want, "case {case}: {n}");
+            assert_eq!(
+                blocks.tree_of_name(&n),
+                Some(*t),
+                "seed {seed} case {case}: {n}"
+            );
+            assert_eq!(
+                c.differences_only_at(&n),
+                want,
+                "seed {seed} case {case}: {n}"
+            );
         }
         alone |= want && gs.len() > 1;
         held |= !want && gs.len() > 1 && gs.iter().all(|g| edges(g).is_some());
@@ -698,9 +707,9 @@ fn differences_only_by_definition(
 /// of the definition when a block loses several conjuncts in one removal.
 #[test]
 fn the_blocks_stay_those_of_the_definition_when_many_conjuncts_go_at_once() {
-    let mut r = Rng::new(0x5a1e);
+    let (mut r, seed) = Rng::fresh("many conjuncts go at once");
     let mut many = 0;
-    for case in 0..200 {
+    for case in 0..100 {
         let mut c = Conjuncts::default();
         let mut log: Vec<String> = Vec::new();
         for _ in 0..16 {
@@ -730,11 +739,15 @@ fn the_blocks_stay_those_of_the_definition_when_many_conjuncts_go_at_once() {
             assert_eq!(
                 partition(&c),
                 partition_by_definition(&c),
-                "case {case} after {log:#?}"
+                "seed {seed} case {case} after {log:#?}"
             );
         }
     }
-    assert!(many > 250, "{many} removals of three conjuncts or more");
+    // Over 10 seeds: 133 to 159.
+    assert!(
+        many > 60,
+        "seed {seed}: {many} removals of three conjuncts or more"
+    );
 }
 
 const PAIR_NAMES: [&str; 8] = ["a", "b", "c", "d", "e", "f", "g", "h"];
@@ -774,11 +787,11 @@ fn pair_conjunct(r: &mut Rng) -> Formula {
 /// pieces or more (`Blocks::peel`) and a tree in two (`Blocks::bridge`).
 #[test]
 fn the_blocks_stay_those_of_the_definition_as_constraints_on_two_names_come_and_go() {
-    let mut r = Rng::new(0x9ee1);
+    let (mut r, seed) = Rng::fresh("constraints on two names come and go");
     // States where one removal split a block in three pieces or more, or split a tree, and
     // removals of several constraints on two names at once (196, 500 and 434 states).
     let (mut pieces, mut trees, mut several) = (0, 0, 0);
-    for case in 0..400 {
+    for case in 0..40 {
         let mut b = Blocks::default();
         let mut set: BTreeSet<Arc<Formula>> = BTreeSet::new();
         let mut log: Vec<String> = Vec::new();
@@ -828,7 +841,7 @@ fn the_blocks_stay_those_of_the_definition_as_constraints_on_two_names_come_and_
                 }
             }
             if let Err(e) = b.well_formed() {
-                panic!("case {case}: {e} after {log:#?}");
+                panic!("seed {seed} case {case}: {e} after {log:#?}");
             }
             let gs: Vec<Arc<Formula>> = set.iter().cloned().collect();
             let mut got: BTreeMap<u64, BTreeSet<Arc<Formula>>> = BTreeMap::new();
@@ -838,12 +851,19 @@ fn the_blocks_stay_those_of_the_definition_as_constraints_on_two_names_come_and_
             }
             for (id, ms) in &got {
                 let members: BTreeSet<Arc<Formula>> = b.members(*id).cloned().collect();
-                assert_eq!(&members, ms, "case {case}: block {id} after {log:#?}");
+                assert_eq!(
+                    &members, ms,
+                    "seed {seed} case {case}: block {id} after {log:#?}"
+                );
             }
-            assert_eq!(b.all().count(), got.len(), "case {case} after {log:#?}");
+            assert_eq!(
+                b.all().count(),
+                got.len(),
+                "seed {seed} case {case} after {log:#?}"
+            );
             let want: BTreeSet<_> = blocks_by_definition(&gs).into_iter().collect();
             let got: BTreeSet<_> = got.into_values().collect();
-            assert_eq!(got, want, "case {case} after {log:#?}");
+            assert_eq!(got, want, "seed {seed} case {case} after {log:#?}");
             // The trees: the conjuncts linked by any atom they share.
             let mut comp: Vec<usize> = (0..gs.len()).collect();
             let mut first: BTreeMap<Atom, usize> = BTreeMap::new();
@@ -857,17 +877,32 @@ fn the_blocks_stay_those_of_the_definition_as_constraints_on_two_names_come_and_
             let (mut tree_of, mut comp_of) = (BTreeMap::new(), BTreeMap::new());
             for (i, g) in gs.iter().enumerate() {
                 let (c, t) = (find(&mut comp, i), b.tree(b.of(g).expect("a block")));
-                assert_eq!(*tree_of.entry(c).or_insert(t), t, "case {case}: {g}");
-                assert_eq!(*comp_of.entry(t).or_insert(c), c, "case {case}: {g}");
+                assert_eq!(
+                    *tree_of.entry(c).or_insert(t),
+                    t,
+                    "seed {seed} case {case}: {g}"
+                );
+                assert_eq!(
+                    *comp_of.entry(t).or_insert(c),
+                    c,
+                    "seed {seed} case {case}: {g}"
+                );
             }
         }
     }
+    // Over 10 seeds: pieces 16 to 25, trees 34 to 57, several 37 to 52.
     assert!(
-        pieces > 130,
-        "{pieces} removals that split a block in three"
+        pieces > 6,
+        "seed {seed}: {pieces} removals that split a block in three"
     );
-    assert!(trees > 330, "{trees} removals that split a tree");
-    assert!(several > 290, "{several} removals of several pairs at once");
+    assert!(
+        trees > 15,
+        "seed {seed}: {trees} removals that split a tree"
+    );
+    assert!(
+        several > 15,
+        "seed {seed}: {several} removals of several pairs at once"
+    );
 }
 
 /// Random constraints on two names come and go as in the test above, and after each removal
@@ -881,10 +916,10 @@ fn the_blocks_stay_those_of_the_definition_as_constraints_on_two_names_come_and_
 /// the definition by the test above.
 #[test]
 fn the_blocks_an_earlier_block_went_to_and_the_names_of_a_block_are_those_of_its_conjuncts() {
-    let mut r = Rng::new(0x51ab);
+    let (mut r, seed) = Rng::fresh("blocks an earlier block went to");
     // Removals of a constraint on two names with a twin left in its block, and without one.
     let (mut twins, mut alone) = (0, 0);
-    for case in 0..300 {
+    for case in 0..200 {
         let mut b = Blocks::default();
         let mut set: BTreeSet<Arc<Formula>> = BTreeSet::new();
         for step in 0..40 {
@@ -928,7 +963,7 @@ fn the_blocks_an_earlier_block_went_to_and_the_names_of_a_block_are_those_of_its
                     assert_eq!(
                         b.now_of(&old, ob),
                         want,
-                        "case {case} step {step}: block {ob}"
+                        "seed {seed} case {case} step {step}: block {ob}"
                     );
                 }
             } else {
@@ -940,12 +975,13 @@ fn the_blocks_an_earlier_block_went_to_and_the_names_of_a_block_are_those_of_its
             for id in b.all() {
                 let want: BTreeSet<Arc<str>> = b.members(id).flat_map(|h| names(h)).collect();
                 let got: BTreeSet<Arc<str>> = b.names_of(id).cloned().collect();
-                assert_eq!(got, want, "case {case} step {step}: block {id}");
+                assert_eq!(got, want, "seed {seed} case {case} step {step}: block {id}");
             }
         }
     }
-    assert!(twins > 300, "{twins} removals with a twin left");
-    assert!(alone > 300, "{alone} removals without one");
+    // Over 10 seeds: twins 189 to 245, alone 1837 to 1940.
+    assert!(twins > 90, "seed {seed}: {twins} removals with a twin left");
+    assert!(alone > 900, "seed {seed}: {alone} removals without one");
 }
 
 /// `x - y >= 0` as a conjunct.
@@ -1199,10 +1235,10 @@ fn shortest_paths_give_the_intervals_of_the_projection_block_by_block() {
     // negation or an `if` joined, assumed in one order and in the other: each step's
     // intervals are those the projection block by block finds from scratch
     // (`Scope::forget_projections`), which never uses the potential.
-    let mut r = Rng::new(0x1add);
+    let (mut r, seed) = Rng::fresh("shortest paths block by block");
     let p = Premises::new();
     let (mut moved, mut empty) = (0, 0);
-    for case in 0..150 {
+    for case in 0..20 {
         let k = 3 + r.below(6);
         let ns = named(k, "x");
         let mut tests: Vec<(Term, bool, bool)> = Vec::new();
@@ -1244,7 +1280,7 @@ fn shortest_paths_give_the_intervals_of_the_projection_block_by_block() {
                 assert_eq!(
                     intervals(&got, &ns),
                     intervals(&want, &ns),
-                    "case {case} reverse {reverse} step {step}: {order:?}"
+                    "seed {seed} case {case} reverse {reverse} step {step}: {order:?}"
                 );
                 moved += usize::from(intervals(&got, &ns) != before);
                 if got.bottom {
@@ -1255,8 +1291,9 @@ fn shortest_paths_give_the_intervals_of_the_projection_block_by_block() {
             }
         }
     }
-    assert!(moved > 500, "{moved} steps moved an interval");
-    assert!(empty > 50, "{empty} ladders became empty");
+    // Over 10 seeds: moved 75 to 134, empty 12 to 26.
+    assert!(moved > 30, "seed {seed}: {moved} steps moved an interval");
+    assert!(empty > 4, "seed {seed}: {empty} ladders became empty");
 }
 
 #[test]
@@ -1265,10 +1302,10 @@ fn shortest_paths_with_holes_and_sums_between_give_the_projection_block_by_block
     // difference constraints: `x != c`, which gives `x` a hole until a bound closes it, and
     // `x + y >= c`, not a difference constraint. An edge that comes while its tree goes block
     // by block is in the potential before any later edge is read (`Scope::repair`).
-    let mut r = Rng::new(0x401e);
+    let (mut r, seed) = Rng::fresh("shortest paths with holes and sums");
     let p = Premises::new();
     let (mut moved, mut empty, mut holes) = (0, 0, 0);
-    for case in 0..150 {
+    for case in 0..15 {
         let k = 3 + r.below(6);
         let ns = named(k, "x");
         let mut tests: Vec<(Term, bool, bool)> = Vec::new();
@@ -1312,7 +1349,7 @@ fn shortest_paths_with_holes_and_sums_between_give_the_projection_block_by_block
                 assert_eq!(
                     intervals(&got, &ns),
                     intervals(&want, &ns),
-                    "case {case} reverse {reverse} step {step}: {order:?}"
+                    "seed {seed} case {case} reverse {reverse} step {step}: {order:?}"
                 );
                 moved += usize::from(intervals(&got, &ns) != before);
                 holes += usize::from(ns.iter().any(|n| got.get(n).ints().len() > 1));
@@ -1324,9 +1361,13 @@ fn shortest_paths_with_holes_and_sums_between_give_the_projection_block_by_block
             }
         }
     }
-    assert!(moved > 500, "{moved} steps moved an interval");
-    assert!(empty > 50, "{empty} ladders became empty");
-    assert!(holes > 200, "{holes} steps left a name with holes");
+    // Over 10 seeds: moved 129 to 168, empty 12 to 20, holes 92 to 161.
+    assert!(moved > 60, "seed {seed}: {moved} steps moved an interval");
+    assert!(empty > 4, "seed {seed}: {empty} ladders became empty");
+    assert!(
+        holes > 40,
+        "seed {seed}: {holes} steps left a name with holes"
+    );
 }
 
 /// Counts of [`holes_in_trees`]: tests that moved an interval, left a name with holes, left
@@ -1348,15 +1389,12 @@ struct HoleCounts {
 /// (`Scope::raise`); holes of two integers, cycles lighter than the sum of their names' gaps,
 /// and cycles of weight 0 from equalities and from two inequalities go block by block. With
 /// `pile`, the step's own test is the hole test half the time, so that holes pile up in many
-/// names of one tree. Only the trees `cases` (of 0 to 149) are checked and counted; the trees
-/// before them are drawn and built unchecked, so that each tree is that of its seed and case
-/// whatever range a test checks.
-fn holes_in_trees(seed: u64, pile: bool, cases: std::ops::Range<usize>) -> HoleCounts {
+/// names of one tree. The first `cases` trees of `seed` are checked and counted.
+fn holes_in_trees(seed: u64, pile: bool, cases: usize) -> HoleCounts {
     let mut r = Rng::new(seed);
     let p = Premises::new();
     let mut out = HoleCounts::default();
-    for case in 0..cases.end {
-        let checked = case >= cases.start;
+    for case in 0..cases {
         let k = 3 + r.below(6);
         let ns = named(k, "x");
         let mut s = ints(&ns);
@@ -1388,7 +1426,7 @@ fn holes_in_trees(seed: u64, pile: bool, cases: std::ops::Range<usize>) -> HoleC
             };
             let asked = [hole(&mut r), hole(&mut r), hole(&mut r)];
             let checks = asked.iter().flat_map(|h| [(h, true), (h, false)]);
-            for (hole, holds) in checks.filter(|_| checked) {
+            for (hole, holds) in checks {
                 let got = s.assume(hole, holds, &p);
                 let mut fresh = s.clone();
                 fresh.forget_projections();
@@ -1398,7 +1436,7 @@ fn holes_in_trees(seed: u64, pile: bool, cases: std::ops::Range<usize>) -> HoleC
                 assert_eq!(
                     intervals(&got, &ns),
                     intervals(&want, &ns),
-                    "case {case} step {step} {holds}: {hole:?} on {:?}",
+                    "seed {seed} case {case} step {step} {holds}: {hole:?} on {:?}",
                     s.relation
                 );
                 let holed = ns.iter().filter(|n| got.get(n).ints().len() > 1).count();
@@ -1421,7 +1459,7 @@ fn holes_in_trees(seed: u64, pile: bool, cases: std::ops::Range<usize>) -> HoleC
                 // An `if` whose arms join: the join keeps the last projection of the arm that
                 // held, with the hole, and the next steps are projected from it.
                 3 => {
-                    out.joined += usize::from(checked);
+                    out.joined += 1;
                     let mut j = s
                         .assume(&asked[1], true, &p)
                         .join(&s.assume(&asked[1], false, &p));
@@ -1433,7 +1471,7 @@ fn holes_in_trees(seed: u64, pile: bool, cases: std::ops::Range<usize>) -> HoleC
                     continue;
                 }
                 2 if i != j => {
-                    out.tied += usize::from(checked);
+                    out.tied += 1;
                     s = s.assume(&ge(&ns[i], &ns[j], c), true, &p);
                     ge(&ns[j], &ns[i], -c)
                 }
@@ -1450,71 +1488,40 @@ fn holes_in_trees(seed: u64, pile: bool, cases: std::ops::Range<usize>) -> HoleC
     out
 }
 
-/// [`holes_in_trees`] of seed 0x1e4e, without piling, in three parts of 50 trees, each a test.
-/// As one test of the 150 trees it took 19.5 to 20.8 s alone at load 23 to 25, and as part of
-/// the module's one piece it is the reason the piece took 55.4 s at load 27 in a full run
-/// (item SPLIT-l01_39-linked). Each part asserts its counts above a third of the limits the one
-/// test had (moved 5000, holes 2000, empty 500, tied 60, joined 80), so the three together
-/// assert at least what it did; the 150 trees counted moved 6096, holes 2330, empty 662, tied
-/// 77, joined 109.
-mod holes_in_a_tree_of_differences_give_the_projection_from_scratch {
-    use super::*;
-
-    /// The trees `cases`, with each count above its least in `[moved, holes, empty, tied,
-    /// joined]`.
-    fn part(cases: std::ops::Range<usize>, least: [usize; 5]) {
-        let n = holes_in_trees(0x1e4e, false, cases);
-        let counts = [n.moved, n.holes, n.empty, n.tied, n.joined];
-        assert!(counts.iter().zip(least).all(|(&c, l)| c > l), "{n:?}");
-    }
-
-    #[test]
-    fn cases_0_to_49() {
-        part(0..50, [1666, 666, 166, 20, 26]);
-    }
-
-    #[test]
-    fn cases_50_to_99() {
-        part(50..100, [1667, 667, 167, 20, 27]);
-    }
-
-    #[test]
-    fn cases_100_to_149() {
-        part(100..150, [1667, 667, 167, 20, 27]);
-    }
+/// [`holes_in_trees`] without piling, on 4 trees of a new seed each run. As one test of the
+/// 150 trees of seed 0x1e4e it took about 20 s alone at load 23 to 25, and as three tests of
+/// 50 trees about 5 s each (item SPLIT-l01_39-linked); those 150 trees counted moved 6096,
+/// holes 2330, empty 662, tied 77, joined 109. Each tree has about one tied pair and one joined
+/// `if`, too few in 4 trees to assert a count; each run asserts the counts met in every tree.
+/// 4 trees took 0.15 to 1.3 s alone at load 49 on 32 cores.
+#[test]
+fn holes_in_a_tree_of_differences_give_the_projection_from_scratch() {
+    let (_, seed) = Rng::fresh("holes in a tree of differences");
+    let n = holes_in_trees(seed, false, 4);
+    // Over 17 seeds: moved 66 to 275, holes 15 to 137, empty 6 to 41; piled, 0 to 21, is not
+    // asserted.
+    let counts = [n.moved, n.holes, n.empty];
+    assert!(
+        counts.iter().zip([30, 6, 2]).all(|(&c, l)| c > l),
+        "seed {seed}: {n:?}"
+    );
 }
 
 /// As [`holes_in_a_tree_of_differences_give_the_projection_from_scratch`], with the holes piled
-/// up in many names of each tree: [`holes_in_trees`] of seed 0x9a1e in three parts of 50 trees,
-/// each a test. As one test it took 22.0 to 22.8 s alone at load 23 to 25 (item
-/// SPLIT-l01_39-linked). Each part asserts its counts above a third of the limits the one test
-/// had (moved 5000, holes 4000, piled 2000, empty 500, tied 30, joined 30); the 150 trees
-/// counted moved 6773, holes 4803, piled 2296, empty 763, tied 45, joined 45.
-mod holes_piled_in_many_names_of_a_tree_give_the_projection_from_scratch {
-    use super::*;
-
-    /// The trees `cases`, with each count above its least in `[moved, holes, piled, empty,
-    /// tied, joined]`.
-    fn part(cases: std::ops::Range<usize>, least: [usize; 6]) {
-        let n = holes_in_trees(0x9a1e, true, cases);
-        let counts = [n.moved, n.holes, n.piled, n.empty, n.tied, n.joined];
-        assert!(counts.iter().zip(least).all(|(&c, l)| c > l), "{n:?}");
-    }
-
-    #[test]
-    fn cases_0_to_49() {
-        part(0..50, [1666, 1333, 666, 166, 10, 10]);
-    }
-
-    #[test]
-    fn cases_50_to_99() {
-        part(50..100, [1667, 1333, 667, 167, 10, 10]);
-    }
-
-    #[test]
-    fn cases_100_to_149() {
-        part(100..150, [1667, 1334, 667, 167, 10, 10]);
-    }
+/// up in many names of each tree, on 4 trees of a new seed each run (6 took 0.8 s at load 42).
+/// As one test of the 150 trees of seed 0x9a1e it took about 22 s alone at load 23 to 25 (item
+/// SPLIT-l01_39-linked); those trees counted moved 6773, holes 4803, piled 2296, empty 763,
+/// tied 45, joined 45.
+#[test]
+fn holes_piled_in_many_names_of_a_tree_give_the_projection_from_scratch() {
+    let (_, seed) = Rng::fresh("holes piled in many names of a tree");
+    let n = holes_in_trees(seed, true, 4);
+    // Over 12 seeds: moved 125 to 243, holes 92 to 180, piled 23 to 111, empty 8 to 31.
+    let counts = [n.moved, n.holes, n.piled, n.empty];
+    assert!(
+        counts.iter().zip([60, 45, 10, 3]).all(|(&c, l)| c > l),
+        "seed {seed}: {n:?}"
+    );
 }
 
 /// A star goes when one step both takes a conjunct from its hub and gives one to its leaf:
@@ -1752,6 +1759,510 @@ fn a_chain_put_in_against_the_order_keeps_its_bounds_and_its_cycles() {
         assert_eq!(bound(&tied), format!("[{}..]", k - 1), "k = {k}: {tied}");
         let empty = s.assume(&ge("x0", &last, -(k as i64 - 2)), true, &p);
         assert!(empty.bottom, "k = {k}: {empty}");
+    }
+}
+
+/// A satellite related to `d + 1` hubs, each a hub of leaves of two hubs: no leaf is a star,
+/// as by the definition, and the needs held across the hubs stay within three per hub
+/// ([`Conjuncts::needs_held`]). With bounds on the hubs, the satellite's conjuncts taken away
+/// one by one make leaves stars as the definition says at each step. The time of building it
+/// is `bench::a_satellite_of_every_hub_costs_its_related_names_once`.
+#[test]
+fn a_satellite_of_every_hub_costs_its_related_names_once() {
+    for first in [true, false] {
+        let c = satellite_of_every_hub(12, first);
+        let stars = stars_by_definition(&c);
+        for i in 0..12 {
+            let a = format!("a{i}");
+            assert_eq!(c.star(&a).is_some(), stars.contains_key(&*a), "{a} in {c}");
+            assert!(c.star(&a).is_none(), "{a} in {c}");
+        }
+        for d in [12, 96] {
+            let held = satellite_of_every_hub(d, first).needs_held();
+            assert!(
+                held <= 3 * (d + 1),
+                "{held} names needed across {} hubs (satellite first: {first})",
+                d + 1
+            );
+        }
+        // The satellite's conjuncts taken away one by one, its anchor first, until its related
+        // names fit the hubs of the last leaves, which become stars: as by the definition at
+        // each step, and with bounds on the hubs, so that they have more conjuncts than a leaf.
+        let mut c = satellite_of_every_hub(4, first);
+        for i in 0..=4 {
+            let h = Lin::atom(Atom::Sym(format!("h{i}").into()));
+            c.and(Formula::Con(Con::ge(&h, &Lin::constant(0))));
+        }
+        let mut starred = 0;
+        for i in 0..=4 {
+            let stars = stars_by_definition(&c);
+            let found: BTreeSet<Arc<str>> = c.stars().keys().cloned().collect();
+            assert_eq!(found, stars.keys().cloned().collect(), "{c}");
+            starred += found.len();
+            let g = c.set().iter().find(|g| {
+                let ns = names(g);
+                ns.contains("y") && ns.contains(&*format!("h{i}"))
+            });
+            let g = g.cloned().expect("the satellite's conjunct");
+            c.remove(&g);
+        }
+        let stars = stars_by_definition(&c);
+        let found: BTreeSet<Arc<str>> = c.stars().keys().cloned().collect();
+        assert_eq!(found, stars.keys().cloned().collect(), "{c}");
+        assert!(starred + found.len() > 0, "no leaf became a star: {c}");
+    }
+}
+
+/// Holes piled in the names of one chain, each held, with each rung an `if` whose arms join:
+/// each name keeps its hole. The time is `bench::holes_piled_in_the_names_of_a_chain_take_
+/// quadratic_time`.
+#[test]
+fn holes_piled_in_the_names_of_a_chain_take_quadratic_time() {
+    let p = Premises::new();
+    let s = piled_holes_run(12, &p);
+    assert!(!s.bottom);
+    for i in 0..11 {
+        let base = 10 * (12 - i) as i64;
+        let ints = s.get(&format!("x{i}")).ints().clone();
+        assert!(!ints.contains(base + 5), "x{i}: {ints:?}");
+        assert!(ints.contains(base + 4), "x{i}: {ints:?}");
+    }
+}
+
+/// A hole in every name of a grid of difference constraints: each name keeps its hole. The
+/// time is `bench::holes_in_every_name_of_a_grid_take_time_m_cubed`.
+#[test]
+fn holes_in_every_name_of_a_grid_take_time_m_cubed() {
+    let p = Premises::new();
+    let s = grid_holes(4, &p);
+    assert!(!s.bottom);
+    for (i, b) in [(0usize, 60i64), (5, 40), (15, 0)] {
+        let ints = s.get(&format!("g{i}")).ints().clone();
+        assert!(!ints.contains(b + 5), "g{i}: {ints:?}");
+        assert!(ints.contains(b + 4), "g{i}: {ints:?}");
+    }
+}
+
+/// `s` after each of `tests` as an `if` whose two arms are joined (taken by `assume_case` when
+/// `case`, as the checker takes them), each step's intervals at `ns` checked against the same
+/// step on the scope with its projections forgotten.
+fn joined_as_from_scratch(
+    s: &Scope,
+    tests: &[Term],
+    ns: &[Arc<str>],
+    case: bool,
+    what: &str,
+) -> Scope {
+    let p = Premises::new();
+    let step = |s: &Scope, t: &Term| {
+        let (yes, no) = if case {
+            (s.assume_case(t, true, &p), s.assume_case(t, false, &p))
+        } else {
+            (s.assume(t, true, &p), s.assume(t, false, &p))
+        };
+        let mut j = yes.join(&no);
+        j.reduce();
+        j
+    };
+    tests.iter().enumerate().fold(s.clone(), |s, (i, t)| {
+        let got = step(&s, t);
+        let mut fresh = s.clone();
+        fresh.forget_projections();
+        let mut want = step(&fresh, t);
+        want.forget_projections();
+        want.reduce();
+        assert_eq!(
+            intervals(&got, ns),
+            intervals(&want, ns),
+            "{what}, test {i}: {t:?}"
+        );
+        got
+    })
+}
+
+/// The point giving each name its value.
+fn point(vs: &[(&str, i64)]) -> BTreeMap<Arc<str>, Value> {
+    vs.iter().map(|&(n, v)| (n.into(), Value::Int(v))).collect()
+}
+
+/// Each shape of `bench::tests_assumed_one_by_one_on_one_linked_component_take_time_near_their_
+/// number`, small: its tests assumed one by one give the intervals of the projection from
+/// scratch, hold a point of the tests and leave out one that breaks a test.
+#[test]
+fn each_shape_assumed_one_by_one_keeps_its_points_and_its_projection() {
+    let p = Premises::new();
+    let xs = named(4, "x");
+    let star: Vec<Arc<str>> = named(3, "y").into_iter().chain(["x".into()]).collect();
+    // The shape, its names, a point it holds and a point it does not.
+    let cases = [
+        (
+            "chain",
+            &xs,
+            point(&[("x0", 3), ("x1", 2), ("x2", 1), ("x3", 0)]),
+            point(&[("x0", 0), ("x1", 0), ("x2", 0), ("x3", 0)]),
+        ),
+        (
+            "bounded chain",
+            &xs,
+            point(&[("x0", 10), ("x1", 9), ("x2", 8), ("x3", 7)]),
+            point(&[("x0", -1), ("x1", -2), ("x2", -3), ("x3", -4)]),
+        ),
+        (
+            "star",
+            &star,
+            point(&[("y0", -1), ("y1", 0), ("y2", -5), ("x", 0)]),
+            point(&[("y0", 1), ("y1", 0), ("y2", 0), ("x", 0)]),
+        ),
+        (
+            "or chain",
+            &xs,
+            point(&[("x0", 0), ("x1", 1), ("x2", 0), ("x3", 1)]),
+            point(&[("x0", 0), ("x1", 0), ("x2", 1), ("x3", 2)]),
+        ),
+    ];
+    for (which, ns, holds, fails) in cases {
+        let (s, ts) = shape(which, 3);
+        let got = ts.iter().fold(s.clone(), |s, t| s.assume(t, true, &p));
+        let mut want = s;
+        for t in &ts {
+            want.forget_projections();
+            want = want.assume(t, true, &p);
+        }
+        want.forget_projections();
+        want.reduce();
+        assert!(!got.bottom, "{which}: {got}");
+        assert_eq!(intervals(&got, ns), intervals(&want, ns), "{which}");
+        assert!(got.contains(&holds), "{which}: {got}");
+        assert!(!got.contains(&fails), "{which}: {got}");
+    }
+}
+
+/// The shape of `bench::a_constraint_taken_from_a_block_beside_a_name_of_many_blocks_takes_
+/// time_near_the_block`, small: a name `h` in `d` blocks of one constraint, beside a block of
+/// five that loses `a - b >= 0` and gets it back. After each step the forest is well formed
+/// and its blocks are those of the definition.
+#[test]
+fn a_constraint_taken_from_a_block_beside_a_name_of_many_blocks_and_put_back_keeps_the_blocks() {
+    let check = |b: &Blocks, gs: &[Arc<Formula>], when: &str| {
+        if let Err(e) = b.well_formed() {
+            panic!("{when}: {e}");
+        }
+        let mut got: BTreeMap<u64, BTreeSet<Arc<Formula>>> = BTreeMap::new();
+        for g in gs {
+            let id = b
+                .of(g)
+                .unwrap_or_else(|| panic!("{when}: {g} has no block"));
+            got.entry(id).or_default().insert(g.clone());
+        }
+        for (id, ms) in &got {
+            let members: BTreeSet<Arc<Formula>> = b.members(*id).cloned().collect();
+            assert_eq!(&members, ms, "{when}: block {id}");
+        }
+        assert_eq!(b.all().count(), got.len(), "{when}");
+        let want: BTreeSet<_> = blocks_by_definition(gs).into_iter().collect();
+        assert_eq!(got.into_values().collect::<BTreeSet<_>>(), want, "{when}");
+    };
+    for d in 1..=3 {
+        let mut b = Blocks::default();
+        let mut gs: Vec<Arc<Formula>> = (0..d).map(|i| at_least("h", &format!("y{i}"))).collect();
+        let ab = at_least("a", "b");
+        gs.extend([
+            at_least("h", "a"),
+            ab.clone(),
+            at_least("b", "h"),
+            at_least("a", "x"),
+            at_least("x", "b"),
+        ]);
+        for g in &gs {
+            b.add(g);
+        }
+        check(&b, &gs, &format!("d = {d}, built"));
+        let without: Vec<Arc<Formula>> = gs.iter().filter(|g| **g != ab).cloned().collect();
+        for round in 0..2 {
+            b.remove(std::slice::from_ref(&ab));
+            check(&b, &without, &format!("d = {d}, round {round}, a - b gone"));
+            b.add(&ab);
+            check(&b, &gs, &format!("d = {d}, round {round}, a - b back"));
+        }
+    }
+}
+
+/// The joins of `bench::if_statements_joined_one_after_another_on_a_linked_chain_take_time_
+/// near_their_number` on an unbounded chain, small: each step gives the projection from
+/// scratch, and the chain stays.
+#[test]
+fn if_statements_joined_on_an_unbounded_chain_keep_the_chain() {
+    let p = Premises::new();
+    let (s, chain) = shape("chain", 4);
+    let s = chain.iter().fold(s, |s, t| s.assume(t, true, &p));
+    let n = named(5, "x");
+    let tests: Vec<Term> = (0..4).map(|i| ge(&n[i], &n[i + 1], 2)).collect();
+    let r = joined_as_from_scratch(&s, &tests, &n, false, "joins on a chain");
+    assert!(!r.bottom, "{r}");
+    // Each join keeps x_i - x_{i+1} >= 1, which both arms hold.
+    let at = |v: [i64; 5]| {
+        point(&[
+            ("x0", v[0]),
+            ("x1", v[1]),
+            ("x2", v[2]),
+            ("x3", v[3]),
+            ("x4", v[4]),
+        ])
+    };
+    assert!(r.contains(&at([4, 3, 2, 1, 0])), "{r}");
+    assert!(!r.contains(&at([0, 0, 0, 0, 0])), "{r}");
+}
+
+/// The map of `bench::a_nested_or_and_formula_is_built_and_mapped_in_time_near_its_size`, which
+/// changes each constraint, small: the nest mapped holds where the nest of the mapped
+/// constraints holds.
+#[test]
+fn a_nested_or_and_formula_mapped_is_the_nest_of_the_mapped_constraints() {
+    let at = |n: &str| Lin::atom(Atom::Sym(n.into()));
+    let side = |n: &str| -> Vec<Formula> {
+        (0..6)
+            .map(|i| Formula::Con(Con::ge(&at(n), &Lin::constant(i))))
+            .collect()
+    };
+    let (xs, ys) = (side("x"), side("y"));
+    let shift = |c: &Con| Formula::Con(Con::ge(&c.lin, &Lin::constant(1)));
+    let shifted = |fs: &[Formula]| -> Vec<Formula> {
+        fs.iter()
+            .map(|f| match f {
+                Formula::Con(c) => shift(c),
+                _ => unreachable!("{f}"),
+            })
+            .collect()
+    };
+    let got = nested(&xs, &ys).map_cons(&shift);
+    let want = nested(&shifted(&xs), &shifted(&ys));
+    for x in -8..9i64 {
+        for y in -8..9i64 {
+            let model = [
+                (Atom::Sym("x".into()), x.into()),
+                (Atom::Sym("y".into()), y.into()),
+            ]
+            .into();
+            assert_eq!(
+                got.holds(&model),
+                want.holds(&model),
+                "({x}, {y}): {got} against {want}"
+            );
+        }
+    }
+}
+
+/// The test of `bench::one_test_on_a_ladder_takes_time_near_its_size`, small, implied and not:
+/// the intervals are those of the projection from scratch.
+#[test]
+fn one_test_on_a_ladder_gives_the_intervals_of_the_projection() {
+    let p = Premises::new();
+    let n = named(4, "x");
+    let s = ladder(3, &p);
+    assert!(!s.bottom, "{s}");
+    // x0 - x3 >= 3 is implied by the chain; >= 4 and >= 7 are not.
+    for c in [3, 4, 7] {
+        let got = s.assume(&ge("x0", "x3", c), true, &p);
+        let mut fresh = s.clone();
+        fresh.forget_projections();
+        let mut want = fresh.assume(&ge("x0", "x3", c), true, &p);
+        want.forget_projections();
+        want.reduce();
+        assert!(!got.bottom, "c = {c}: {got}");
+        assert_eq!(intervals(&got, &n), intervals(&want, &n), "c = {c}");
+        let at = point(&[("x0", 3), ("x1", 2), ("x2", 1), ("x3", 0)]);
+        assert_eq!(got.contains(&at), c <= 3, "c = {c}: {got}");
+    }
+}
+
+/// The ladder of `bench::a_ladder_grown_by_k_if_statements_is_linear`, small, in either order:
+/// each step gives the projection from scratch, and the rungs hold.
+#[test]
+fn a_ladder_grown_by_if_statements_in_either_order_gives_the_projection() {
+    let p = Premises::new();
+    let (s, chain) = shape("chain", 4);
+    let s = chain.iter().fold(s, |s, t| s.assume(t, true, &p));
+    let n = named(5, "x");
+    let at = |v: [i64; 5]| {
+        point(&[
+            ("x0", v[0]),
+            ("x1", v[1]),
+            ("x2", v[2]),
+            ("x3", v[3]),
+            ("x4", v[4]),
+        ])
+    };
+    for reverse in [false, true] {
+        let mut tests: Vec<Term> = (0..3).map(|i| ge(&n[i], &n[i + 2], 2)).collect();
+        if reverse {
+            tests.reverse();
+        }
+        let r = joined_as_from_scratch(&s, &tests, &n, false, &format!("reverse {reverse}"));
+        assert!(!r.bottom, "{r}");
+        assert!(r.contains(&at([4, 3, 2, 1, 0])), "reverse {reverse}: {r}");
+        assert!(!r.contains(&at([1, 0, 0, 0, 0])), "reverse {reverse}: {r}");
+    }
+}
+
+/// The ladder of `bench::if_statements_that_leave_a_ladder_block_by_block_between_rungs_are_
+/// linear`, small: each `if` on a sum and each rung gives the projection from scratch, and the
+/// chain still bounds each name from x0.
+#[test]
+fn if_statements_that_leave_a_ladder_block_by_block_give_the_projection() {
+    let p = Premises::new();
+    let k = 3;
+    let n = named(k + 1, "x");
+    let w = named(k, "w");
+    let all = [n.clone(), w.clone()].concat();
+    let s = ints(&all)
+        .assume(&prim(Prim::Ge, var("x0"), int(0)), true, &p)
+        .assume(&prim(Prim::Le, var("x0"), int(1_000_000_000)), true, &p);
+    let s = (0..k).fold(s, |s, i| s.assume(&ge(&n[i], &n[i + 1], 1), true, &p));
+    let mut tests: Vec<Term> = Vec::new();
+    for i in 0..k - 1 {
+        tests.push(prim(
+            Prim::Ge,
+            prim(Prim::Add, var(&n[i]), var(&w[i])),
+            int(0),
+        ));
+        tests.push(ge(&n[i], &n[i + 2], 2));
+    }
+    let r = joined_as_from_scratch(&s, &tests, &all, false, "sums between rungs");
+    assert!(!r.bottom, "{r}");
+    // Each x_i is at most x0 - i, so at most 10^9 - i.
+    assert_eq!(r.get("x3").ints().to_string(), "[..=999999997]", "{r}");
+}
+
+/// The boxed ladder of `bench::if_statements_that_put_a_hole_in_a_ladder_between_rungs_are_
+/// linear`, small: each hole and each rung, taken as the checker takes them, gives the
+/// projection from scratch, and the join of the arms gives each name its box back.
+#[test]
+fn holes_put_in_a_ladder_between_rungs_keep_each_box() {
+    let p = Premises::new();
+    let k = 3;
+    let n = named(k + 1, "x");
+    let base = |i: usize| (10 * (k - i)) as i64;
+    let s = (0..=k).fold(ints(&n), |s, i| {
+        s.assume(&prim(Prim::Ge, var(&n[i]), int(base(i))), true, &p)
+            .assume(&prim(Prim::Le, var(&n[i]), int(base(i) + 9)), true, &p)
+    });
+    let s = (0..k).fold(s, |s, i| s.assume(&ge(&n[i], &n[i + 1], 1), true, &p));
+    let mut tests: Vec<Term> = Vec::new();
+    for i in 0..k - 1 {
+        tests.push(prim(Prim::Ne, var(&n[i]), int(base(i) + 5)));
+        tests.push(ge(&n[i], &n[i + 2], 2));
+    }
+    let r = joined_as_from_scratch(&s, &tests, &n, true, "holes between rungs");
+    assert!(!r.bottom, "{r}");
+    for (i, x) in n.iter().enumerate() {
+        assert_eq!(
+            r.get(x).ints(),
+            &zedc::store::interval::IntervalSet::range(End::of(base(i)), End::of(base(i) + 9)),
+            "x{i}: {r}"
+        );
+    }
+}
+
+/// The ladder of `bench::holes_put_in_a_ladder_built_first_are_linear`, small, the holes in
+/// either order: each step gives the projection from scratch, and each name keeps its box.
+#[test]
+fn holes_put_in_a_ladder_built_first_keep_each_box() {
+    let p = Premises::new();
+    let k = 3;
+    let n = named(k + 1, "x");
+    let base = |i: usize| (10 * (k - i)) as i64;
+    let s = (0..=k).fold(ints(&n), |s, i| {
+        s.assume(&prim(Prim::Ge, var(&n[i]), int(base(i))), true, &p)
+            .assume(&prim(Prim::Le, var(&n[i]), int(base(i) + 9)), true, &p)
+    });
+    let s = (0..k).fold(s, |s, i| s.assume(&ge(&n[i], &n[i + 1], 1), true, &p));
+    let s = (0..k - 1).fold(s, |s, i| s.assume(&ge(&n[i], &n[i + 2], 2), true, &p));
+    for reverse in [false, true] {
+        let mut tests: Vec<Term> = (0..=k)
+            .map(|i| prim(Prim::Ne, var(&n[i]), int(base(i) + 5)))
+            .collect();
+        if reverse {
+            tests.reverse();
+        }
+        let r = joined_as_from_scratch(&s, &tests, &n, true, &format!("reverse {reverse}"));
+        assert!(!r.bottom, "{r}");
+        for (i, x) in n.iter().enumerate() {
+            assert_eq!(
+                r.get(x).ints(),
+                &zedc::store::interval::IntervalSet::range(End::of(base(i)), End::of(base(i) + 9)),
+                "reverse {reverse}, x{i}: {r}"
+            );
+        }
+    }
+}
+
+/// The chain of `bench::a_chain_linked_from_a_source_made_later_is_linear`, small: pinned
+/// names `u` and `v` made after the chain, linked into its head, and the chain's `if`
+/// statements joined. The order u >= v >= x0 >= … stays.
+#[test]
+fn a_chain_linked_from_a_source_made_later_keeps_its_order() {
+    let p = Premises::new();
+    let k = 3;
+    let n = named(k + 1, "x");
+    let mut s = ints(&[n.clone(), vec!["u".into(), "v".into()]].concat());
+    s.relation.pin(&"u".into(), true);
+    s.relation.pin(&"v".into(), true);
+    let s = (0..k).fold(s, |s, i| s.assume(&ge(&n[i], &n[i + 1], 1), true, &p));
+    let s = s
+        .assume(&ge("u", "v", 0), true, &p)
+        .assume(&ge("v", "x0", 0), true, &p);
+    assert!(!s.bottom, "{s}");
+    let r = (0..k).fold(s, |s, i| {
+        let t = ge(&n[i], &n[i + 1], 2);
+        let mut j = s.assume(&t, true, &p).join(&s.assume(&t, false, &p));
+        j.reduce();
+        j
+    });
+    assert!(!r.bottom, "{r}");
+    let at = |u, v| {
+        point(&[
+            ("x0", 3),
+            ("x1", 2),
+            ("x2", 1),
+            ("x3", 0),
+            ("u", u),
+            ("v", v),
+        ])
+    };
+    assert!(r.contains(&at(5, 4)), "{r}");
+    assert!(!r.contains(&at(4, 5)), "u >= v: {r}");
+    assert!(!r.contains(&at(5, 2)), "v >= x0: {r}");
+}
+
+/// The satellite of `bench::stars_formed_in_the_block_of_a_satellite_take_time_near_the_block`,
+/// small, built in a seeded random order and taken apart in another: after each step the
+/// stars and the blocks are those of the definition.
+#[test]
+fn stars_formed_in_the_block_of_a_satellite_in_a_random_order_are_those_of_the_definition() {
+    for d in 2..=4 {
+        let orders = satellite_orders(d, true);
+        let mut c = built(&orders, d);
+        let (gs, _, take) = &orders[&d];
+        let check = |c: &Conjuncts, when: &str| {
+            let found: BTreeSet<Arc<str>> = c.stars().keys().cloned().collect();
+            assert_eq!(
+                found,
+                stars_by_definition(c).keys().cloned().collect(),
+                "d = {d}, {when}: {c}"
+            );
+            assert_eq!(
+                partition(c),
+                partition_by_definition(c),
+                "d = {d}, {when}: {c}"
+            );
+        };
+        check(&c, "built");
+        let set: Vec<Arc<Formula>> = c.set().iter().cloned().collect();
+        assert_eq!(set.len(), gs.len(), "d = {d}: {c}");
+        for (step, &i) in take.iter().enumerate() {
+            c.remove(&set[i]);
+            check(&c, &format!("step {step}"));
+        }
     }
 }
 

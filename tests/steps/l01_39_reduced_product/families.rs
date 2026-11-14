@@ -11,9 +11,9 @@
 //! - by its growth in `k`, held to the rule of low complexity at `n` and `8n`
 //!   (`scaling::check`); a family on which main grows faster than linearly is moved to the
 //!   deferred tests of the item that would fix it;
-//! - and the 1152 records of the review's random audit, each checked for soundness, with the
-//!   three records that no candidate of the review recovered pinned (all three found since,
-//!   LAZY-hub-unsolved).
+//! - and the 1152 records of the review's random audit (the 9 of one seed, drawn at random,
+//!   on each run), each checked for soundness, with the three records that no candidate of the
+//!   review recovered pinned (all three found since, LAZY-hub-unsolved).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -216,15 +216,8 @@ fn family(name: &str, k: usize) -> Family {
             join = Some(ge(sub(var("x"), var("y")), int(0)));
             around(&xy, 20)
         }
-        // The star, then each split followed by a plain constraint `x + j * y >= -1000`.
-        "persist" => {
-            tests.push(star());
-            for j in 1..=ki {
-                tests.push(split_on_y(j));
-                tests.push(ge(add(var("x"), times(j, "y")), int(-1000)));
-            }
-            around(&xy, 2100)
-        }
+        // See [`persist_family`]; the bound of the deferred benchmarks of PERF-l139-family.
+        "persist" => return persist_family(k, 1000),
         // `k` steps `x >= i || y <= -1000 + i`, then `k` tests `x + y <= -j || x + 2 * y <=
         // -5000 - j`; `coordkk_y` starts with `y <= 0`.
         "coordkk" | "coordkk_y" => {
@@ -376,43 +369,8 @@ fn family(name: &str, k: usize) -> Family {
             names.extend(z);
             w
         }
-        // `x` in 0..=1, `y` and `z` in -1000..=1000, the star `a >= x + y + z`, then `k`
-        // parts `x <= 0 || y + i * z >= c + 1 || y + i * z <= c - 1` with `c = 4 + 5i`, so that
-        // the point (y, z) = (3, 5) is on no line `y + i * z = c`; on `hopon` the last `c` is
-        // `3 + 5k`, whose line holds it. `hop` and `hopon` then fix (y, z) = (3, 5) by
-        // `y + z == 8` and `y - z == -2`; `hopb` and `hoponb` stop before. The answer on
-        // `hop` is `x` in 0..=1, and on `hopon` `x` = 0.
-        "hop" | "hopon" | "hopb" | "hoponb" => {
-            names.push("z".into());
-            tests.push(ge(var("x"), int(0)));
-            tests.push(le(var("x"), int(1)));
-            for n in ["y", "z"] {
-                tests.push(ge(var(n), int(-1000)));
-                tests.push(le(var(n), int(1000)));
-            }
-            tests.push(ge(var("a"), add(add(var("x"), var("y")), var("z"))));
-            for i in 1..=ki {
-                let c = if name.starts_with("hopon") && i == ki {
-                    3 + 5 * i
-                } else {
-                    4 + 5 * i
-                };
-                let l = || add(var("y"), times(i, "z"));
-                tests.push(or(
-                    le(var("x"), int(0)),
-                    or(ge(l(), int(c + 1)), le(l(), int(c - 1))),
-                ));
-            }
-            if !name.ends_with('b') {
-                tests.push(eq(add(var("y"), var("z")), int(8)));
-                tests.push(eq(sub(var("y"), var("z")), int(-2)));
-            }
-            vec![
-                ("x".into(), -1, 2),
-                ("y".into(), -1001, 1001),
-                ("z".into(), -1001, 1001),
-            ]
-        }
+        // See [`hop_family`]; the benchmarks' bound.
+        "hop" | "hopon" | "hopb" | "hoponb" => return hop_family(name, k, 1000),
         // A step on `x` and `y`, then a test whose first arm links them again.
         "armlink" => {
             tests.push(step(10, -9));
@@ -559,11 +517,7 @@ fn family(name: &str, k: usize) -> Family {
                 }
                 _ => tests.push(le(var("x"), int(5))),
             }
-            vec![
-                ("a".into(), -60, 60),
-                ("x".into(), -120, 120),
-                ("y".into(), -120, 120),
-            ]
+            around(&["a", "x", "y"], 60)
         }
         // The step, then `x - y <= 3 || x <= -100` in its block, then `x <= 5`.
         "side5" => {
@@ -688,6 +642,62 @@ fn boxed_from(names: &[&str], lo: i64, hi: i64) -> Vec<Term> {
         .iter()
         .flat_map(|n| [ge(var(n), int(lo)), le(var(n), int(hi))])
         .collect()
+}
+
+/// The family `persist` at size `k`: the star, then each split followed by a plain constraint
+/// `x + j * y >= -c`. The oracle lists `(4.2c + 1)^2` points, so its test takes a small `c`.
+fn persist_family(k: usize, c: i64) -> Family {
+    let mut tests = vec![star()];
+    for j in 1..=k as i64 {
+        tests.push(split_on_y(j));
+        tests.push(ge(add(var("x"), times(j, "y")), int(-c)));
+    }
+    Family {
+        names: ["a", "x", "y"].into_iter().map(Arc::from).collect(),
+        tests,
+        join: None,
+        window: around(&["x", "y"], c * 21 / 10),
+    }
+}
+
+/// Family `name` of the hop families at size `k`, with `y` and `z` in `-b..=b`: `x` in
+/// 0..=1, the star `a >= x + y + z`, then `k` parts `x <= 0 || y + i * z >= c + 1 || y + i * z
+/// <= c - 1` with `c = 4 + 5i`, so that the point (y, z) = (3, 5) is on no line
+/// `y + i * z = c`; on `hopon` the last `c` is `3 + 5k`, whose line holds it. `hop` and `hopon`
+/// then fix (y, z) = (3, 5) by `y + z == 8` and `y - z == -2`; `hopb` and `hoponb` stop
+/// before. The answer on `hop` is `x` in 0..=1, and on `hopon` `x` = 0. The oracle lists
+/// `4 (2b + 3)^2` points, so its test takes a small `b`; the benchmarks take 1000.
+fn hop_family(name: &str, k: usize, b: i64) -> Family {
+    let ki = k as i64;
+    let mut tests = vec![ge(var("x"), int(0)), le(var("x"), int(1))];
+    tests.extend(boxed(&["y", "z"], b));
+    tests.push(ge(var("a"), add(add(var("x"), var("y")), var("z"))));
+    for i in 1..=ki {
+        let c = if name.starts_with("hopon") && i == ki {
+            3 + 5 * i
+        } else {
+            4 + 5 * i
+        };
+        let l = || add(var("y"), times(i, "z"));
+        tests.push(or(
+            le(var("x"), int(0)),
+            or(ge(l(), int(c + 1)), le(l(), int(c - 1))),
+        ));
+    }
+    if !name.ends_with('b') {
+        tests.push(eq(add(var("y"), var("z")), int(8)));
+        tests.push(eq(sub(var("y"), var("z")), int(-2)));
+    }
+    Family {
+        names: ["a", "x", "y", "z"].into_iter().map(Arc::from).collect(),
+        tests,
+        join: None,
+        window: vec![
+            ("x".into(), -1, 2),
+            ("y".into(), -b - 1, b + 1),
+            ("z".into(), -b - 1, b + 1),
+        ],
+    }
 }
 
 /// The scope of `f`: each test assumed true in order, then the arms of its join joined.
@@ -1176,12 +1186,15 @@ fn gcd(a: i64, b: i64) -> i64 {
 /// scope's facts and the oracle's are `want` and `exact`. Where the two differ the case
 /// pins a fact the oracle finds and the scope misses.
 fn check(name: &str, k: usize, want: &str, exact: &str) {
-    let f = family(name, k);
-    let s = run(&f);
+    check_family(&family(name, k), &format!("{name} at k = {k}"), want, exact);
+}
+
+/// [`check`] for the family `f`, named `what` in a failure.
+fn check_family(f: &Family, what: &str, want: &str, exact: &str) {
+    let s = run(f);
     let got = facts(&s, &f.names);
     let o = Oracle::of(&f.names, &f.tests, &f.window);
-    let what = format!("{name} at k = {k}");
-    o.check_sound(&what, &s, &got);
+    o.check_sound(what, &s, &got);
     let found = o.facts(&f.names);
     assert_eq!(
         (got.as_str(), found.as_str()),
@@ -1339,6 +1352,22 @@ fn drop_end_against_the_oracle() {
 }
 
 #[test]
+fn drop_ends_against_the_oracle() {
+    // drop_end's two disjunctions repeated k times, the j-th moved by j, so that several arms
+    // bound the end that is dropped (`bench::drop_ends_scale` at 8 and 64).
+    exact(
+        "drop_ends",
+        2,
+        "a=[-4..=3] x=[-7..=8] y=[-8..=8] z=[-8..=8]",
+    );
+    exact(
+        "drop_ends",
+        3,
+        "a=[-4..=3] x=[-6..=8] y=[-8..=8] z=[-8..=8]",
+    );
+}
+
+#[test]
 fn unary_arms_against_the_oracle() {
     // Each `zi` is at least 1 or at most -1; `x` is free, since `z0 + z(k-1) >= 5` holds
     // when every `zi` is 5.
@@ -1477,15 +1506,18 @@ fn hole_end_pad_against_the_oracle() {
 
 #[test]
 fn hop_families_against_the_oracle() {
+    // `y` and `z` in -30..=30 (the benchmarks take -1000..=1000): the lines `y + i * z = c`
+    // with `c` at most 14 still cross the box, and the oracle lists 15,876 points, not 16
+    // million.
     for k in 1..=2 {
-        exact("hop", k, "a=[8..] x=[0..=1] y=[3..=3] z=[5..=5]");
-        exact("hopon", k, "a=[8..] x=[0..=0] y=[3..=3] z=[5..=5]");
-        for name in ["hopb", "hoponb"] {
-            exact(
-                name,
-                k,
-                "a=[-2000..] x=[0..=1] y=[-1000..=1000] z=[-1000..=1000]",
-            );
+        let want = |name: &str| match name {
+            "hop" => "a=[8..] x=[0..=1] y=[3..=3] z=[5..=5]",
+            "hopon" => "a=[8..] x=[0..=0] y=[3..=3] z=[5..=5]",
+            _ => "a=[-60..] x=[0..=1] y=[-30..=30] z=[-30..=30]",
+        };
+        for name in ["hop", "hopon", "hopb", "hoponb"] {
+            let what = format!("{name} at k = {k}");
+            check_family(&hop_family(name, k, 30), &what, want(name), want(name));
         }
     }
 }
@@ -1506,8 +1538,14 @@ fn m1_trans_ce_against_the_oracle() {
 
 #[test]
 fn persist_against_the_oracle() {
-    exact("persist", 1, "a=[-1000..] x=[..] y=[..]");
-    exact("persist", 2, "a=[-666..] x=[..] y=[..]");
+    // At `c` = 60, not the benchmarks' 1000: the oracle lists 64,009 points, not 17.6 million.
+    for (k, want) in [
+        (1, "a=[-60..] x=[..] y=[..]"),
+        (2, "a=[-39..] x=[..] y=[..]"),
+    ] {
+        let what = format!("persist at k = {k}");
+        check_family(&persist_family(k, 60), &what, want, want);
+    }
 }
 
 #[test]
@@ -1580,44 +1618,102 @@ fn wide_against_the_oracle() {
     }
 }
 
-/// The audit's records of the even seeds `seeds`, checked for soundness, and how many give
-/// every name the oracle's least and greatest values (`ends`) and how many give the oracle's
-/// facts in full (`equal`). The odd seeds' records are checked for soundness only: their
-/// window is not every point.
-fn audit_counts(seeds: std::ops::Range<u64>, ends: usize, equal: usize) {
-    let even: Vec<Record> = audit(seeds)
-        .into_iter()
-        .filter(|r| r.seed % 2 == 0)
+/// For each even seed `2i` of the audit, `AUDIT_EVEN[i]`: how many of its 9 records give every
+/// name the oracle's least and greatest values, and how many give the oracle's facts in full.
+/// The sums over seeds 0..32, 32..64, 64..96 and 96..128 are the counts the review recorded,
+/// (134, 110), (128, 114), (130, 116) and (136, 119).
+const AUDIT_EVEN: [(usize, usize); 64] = [
+    (9, 9),
+    (9, 7),
+    (7, 3),
+    (9, 9),
+    (9, 9),
+    (9, 4),
+    (9, 9),
+    (7, 7),
+    (9, 8),
+    (8, 3),
+    (8, 8),
+    (8, 1),
+    (9, 9),
+    (6, 6),
+    (9, 9),
+    (9, 9),
+    (9, 4),
+    (6, 6),
+    (6, 6),
+    (9, 9),
+    (7, 0),
+    (9, 9),
+    (6, 6),
+    (9, 7),
+    (7, 7),
+    (6, 6),
+    (9, 9),
+    (9, 9),
+    (9, 9),
+    (9, 9),
+    (9, 9),
+    (9, 9),
+    (6, 6),
+    (9, 4),
+    (8, 8),
+    (9, 7),
+    (9, 9),
+    (9, 9),
+    (9, 9),
+    (6, 6),
+    (9, 5),
+    (9, 8),
+    (9, 9),
+    (8, 6),
+    (9, 9),
+    (6, 6),
+    (9, 9),
+    (6, 6),
+    (9, 9),
+    (9, 7),
+    (9, 9),
+    (9, 9),
+    (9, 9),
+    (4, 4),
+    (7, 7),
+    (8, 8),
+    (9, 9),
+    (9, 9),
+    (9, 6),
+    (9, 9),
+    (9, 9),
+    (9, 0),
+    (9, 9),
+    (9, 6),
+];
+
+/// The audit's records of one seed drawn at random, checked for soundness, and for an even seed
+/// the counts of [`AUDIT_EVEN`]. An odd seed's records are checked for soundness only: their
+/// window is not every point. One seed takes 0.23 s on average and 0.91 s at most (seed 122) at
+/// load 35 on 32 cores; the 128 seeds took 29.6 s, three seeds a run up to 1.4 s.
+#[test]
+fn audit_seeds_against_the_oracle() {
+    let sums: Vec<(usize, usize)> = AUDIT_EVEN
+        .chunks(16)
+        .map(|c| c.iter().fold((0, 0), |s, e| (s.0 + e.0, s.1 + e.1)))
         .collect();
-    let got = (
-        even.iter().filter(|r| r.ends).count(),
-        even.iter().filter(|r| r.got == r.found).count(),
-    );
-    assert_eq!(
-        got,
-        (ends, equal),
-        "records with the oracle's ends and facts"
-    );
-}
-
-#[test]
-fn audit_seeds_0_to_31() {
-    audit_counts(0..32, 134, 110);
-}
-
-#[test]
-fn audit_seeds_32_to_63() {
-    audit_counts(32..64, 128, 114);
-}
-
-#[test]
-fn audit_seeds_64_to_95() {
-    audit_counts(64..96, 130, 116);
-}
-
-#[test]
-fn audit_seeds_96_to_127() {
-    audit_counts(96..128, 136, 119);
+    assert_eq!(sums, [(134, 110), (128, 114), (130, 116), (136, 119)]);
+    let (mut rng, run) = zed_tests::instances::Rng::fresh("audit seeds");
+    let seed = rng.below(128) as u64;
+    let r = audit(seed..seed + 1);
+    if seed.is_multiple_of(2) {
+        let got = (
+            r.iter().filter(|r| r.ends).count(),
+            r.iter().filter(|r| r.got == r.found).count(),
+        );
+        assert_eq!(
+            got,
+            AUDIT_EVEN[seed as usize / 2],
+            "audit seed {seed} (run seed {run}): records with the oracle's ends and facts"
+        );
+    }
 }
 
 /// The record of the audit at `seed` and `step`, as the scope and the oracle give it.

@@ -1,5 +1,8 @@
 //! Benchmarks of `linked`: each times the work at a size and at 8 times it, run apart from
-//! the correctness tests (`tools/run_tests.sh --bench`).
+//! the correctness tests (`tools/run_tests.sh --bench`). The sizes were set on 2026-11-14 so
+//! that the run at `n` takes about 0.3 to 0.5 s and the run at `8n` about 3 to 4 s at load 20 to
+//! 30 on 32 cores (TEST-bench-move-l0139); a test with several checks runs each a little
+//! smaller.
 
 use super::*;
 
@@ -8,11 +11,11 @@ fn tests_assumed_one_by_one_on_one_linked_component_take_time_near_their_number(
     // Each test projects the block it joins and the blocks a moved bound reaches, not the
     // whole component. The scopes and tests are built before the timing.
     for which in ["chain", "bounded chain", "star", "or chain"] {
-        let built: BTreeMap<usize, (Scope, Vec<Term>)> = [50, 400]
+        let built: BTreeMap<usize, (Scope, Vec<Term>)> = [200, 1600]
             .into_iter()
             .map(|k| (k, shape(which, k)))
             .collect();
-        scaling::check_order(&format!("a {which} assumed one by one"), 50, 1, |k| {
+        scaling::check_order(&format!("a {which} assumed one by one"), 200, 1, |k| {
             let (s, ts) = &built[&k];
             let p = Premises::new();
             ts.iter().fold(s.clone(), |s, t| s.assume(t, true, &p));
@@ -26,12 +29,13 @@ fn tests_assumed_one_by_one_on_one_linked_component_take_time_near_their_number(
 /// this block alone, so each removal costs near the block, not near the blocks of `h`. Reading
 /// all of `h`'s conjuncts and skipping those of other blocks, as before, cost O(d) per removal:
 /// 31.4 times the bytes at 64 and 512. Now 9.0 times the instructions and 7.9 times the bytes,
-/// limit 13.2 (2026-11-09). COMPLEXITY.md C37.
+/// limit 13.2 (2026-11-09). 8.9 times the instructions and 8.0 times the bytes at 4096 and
+/// 32768 (2026-11-14). COMPLEXITY.md C37.
 #[test]
 fn a_constraint_taken_from_a_block_beside_a_name_of_many_blocks_takes_time_near_the_block() {
     scaling::check(
         "a constraint taken from a block beside a name of many blocks and put back",
-        64,
+        4096,
         |d| {
             let mut b = Blocks::default();
             for i in 0..d {
@@ -62,7 +66,7 @@ fn if_statements_joined_one_after_another_on_a_linked_chain_take_time_near_their
     // block; removing it first would cut the chain in two and build its blocks again, which
     // made the joins quadratic (COMPLEXITY.md S20).
     let p = Premises::new();
-    let built: BTreeMap<usize, (Scope, Vec<Term>)> = [50, 400]
+    let built: BTreeMap<usize, (Scope, Vec<Term>)> = [280, 2240]
         .into_iter()
         .map(|k| {
             let (s, chain) = shape("chain", k);
@@ -72,7 +76,7 @@ fn if_statements_joined_one_after_another_on_a_linked_chain_take_time_near_their
             (k, (s, tests))
         })
         .collect();
-    scaling::check_order("if statements joined on a chain", 50, 1, |k| {
+    scaling::check_order("if statements joined on a chain", 280, 1, |k| {
         let (s, tests) = &built[&k];
         tests.iter().fold(s.clone(), |s, t| {
             let mut j = s.assume(t, true, &p).join(&s.assume(t, false, &p));
@@ -87,7 +91,7 @@ fn a_nested_or_and_formula_is_built_and_mapped_in_time_near_its_size() {
     // Each `Formula::or` looks up only the constraints among its disjuncts, never a compound
     // disjunct through its depth, so building and mapping a nest of depth d costs O(d).
     let at = |n: &str| Lin::atom(Atom::Sym(n.into()));
-    let built: BTreeMap<usize, (Vec<Formula>, Vec<Formula>)> = [250, 2000]
+    let built: BTreeMap<usize, (Vec<Formula>, Vec<Formula>)> = [32000, 256000]
         .into_iter()
         .map(|d| {
             let side = |n: &str| -> Vec<Formula> {
@@ -99,7 +103,7 @@ fn a_nested_or_and_formula_is_built_and_mapped_in_time_near_its_size() {
         })
         .collect();
     let shift = |c: &Con| Formula::Con(Con::ge(&c.lin, &Lin::constant(1)));
-    scaling::check_order("a nested or/and formula built and mapped", 250, 1, |d| {
+    scaling::check_order("a nested or/and formula built and mapped", 32000, 1, |d| {
         let (xs, ys) = &built[&d];
         let f = nested(xs, ys);
         std::hint::black_box(f.map_cons(&shift));
@@ -113,7 +117,7 @@ fn if_statements_on_skip_links_of_a_chain_take_time_near_their_number() {
     // split into cases, about k^4 in all; and removing the test's conjunct from the cycle it
     // closed with x_{i+1} built the blocks of the whole chain again, k^2 (COMPLEXITY.md S20).
     let p = Premises::new();
-    let built: BTreeMap<usize, (Scope, Vec<Term>)> = [50, 400]
+    let built: BTreeMap<usize, (Scope, Vec<Term>)> = [400, 3200]
         .into_iter()
         .map(|k| {
             let (s, chain) = shape("chain", k);
@@ -123,7 +127,7 @@ fn if_statements_on_skip_links_of_a_chain_take_time_near_their_number() {
             (k, (s, tests))
         })
         .collect();
-    scaling::check_order("if statements on skip links of a chain", 50, 1, |k| {
+    scaling::check_order("if statements on skip links of a chain", 400, 1, |k| {
         let (s, tests) = &built[&k];
         tests.iter().fold(s.clone(), |s, t| {
             let mut j = s.assume(t, true, &p).join(&s.assume(t, false, &p));
@@ -162,7 +166,7 @@ fn a_ladder_grown_by_k_if_statements_is_linear() {
     // before (16/89/608/4,869 M at k = 5/10/20/40).
     let p = Premises::new();
     for reverse in [false, true] {
-        let built: BTreeMap<usize, (Scope, Vec<Term>)> = [40, 320]
+        let built: BTreeMap<usize, (Scope, Vec<Term>)> = [280, 2240]
             .into_iter()
             .map(|k| {
                 let (s, chain) = shape("chain", k);
@@ -180,7 +184,7 @@ fn a_ladder_grown_by_k_if_statements_is_linear() {
         } else {
             "a ladder grown by k if statements"
         };
-        scaling::check_order(name, 40, 1, |k| {
+        scaling::check_order(name, 280, 1, |k| {
             let (s, tests) = &built[&k];
             tests.iter().fold(s.clone(), |s, t| {
                 let mut j = s.assume(t, true, &p).join(&s.assume(t, false, &p));
@@ -202,7 +206,7 @@ fn if_statements_that_leave_a_ladder_block_by_block_between_rungs_are_linear() {
     // names below it, which the ladder bounds from x0 alone (COMPLEXITY.md row S25).
     // `if_statements_that_put_a_hole_in_a_ladder_between_rungs_are_linear` bounds each name.
     let p = Premises::new();
-    let built: BTreeMap<usize, (Scope, Vec<Term>)> = [40, 320]
+    let built: BTreeMap<usize, (Scope, Vec<Term>)> = [200, 1600]
         .into_iter()
         .map(|k| {
             let n = named(k + 1, "x");
@@ -224,7 +228,7 @@ fn if_statements_that_leave_a_ladder_block_by_block_between_rungs_are_linear() {
         })
         .collect();
     let name = "a ladder grown by k if statements, each after an if on a sum";
-    scaling::check_order(name, 40, 1, |k| {
+    scaling::check_order(name, 200, 1, |k| {
         let (s, tests) = &built[&k];
         tests.iter().fold(s.clone(), |s, t| {
             let mut j = s.assume(t, true, &p).join(&s.assume(t, false, &p));
@@ -244,9 +248,10 @@ fn if_statements_that_put_a_hole_in_a_ladder_between_rungs_are_linear() {
     // the potential (`Scope::raise`), and the join keeps that arm's last projection, whose tree
     // had a hole and is still read by shortest paths (`Seeds::unsure`). 9.6 times the work and
     // 8.6 times the bytes from k = 40 to 320; on the code before, which projected the tree's
-    // blocks one by one at each test, 62.2 times the bytes (COMPLEXITY.md row S25).
+    // blocks one by one at each test, 62.2 times the bytes (COMPLEXITY.md row S25). 9.2 times the
+    // work and 8.6 times the bytes from k = 400 to 3200 (2026-11-14).
     let p = Premises::new();
-    let built: BTreeMap<usize, (Scope, Vec<Term>)> = [40, 320]
+    let built: BTreeMap<usize, (Scope, Vec<Term>)> = [400, 3200]
         .into_iter()
         .map(|k| {
             let n = named(k + 1, "x");
@@ -265,7 +270,7 @@ fn if_statements_that_put_a_hole_in_a_ladder_between_rungs_are_linear() {
         })
         .collect();
     let name = "a ladder grown by k if statements, each after an if that puts a hole in a name";
-    scaling::check_order(name, 40, 1, |k| {
+    scaling::check_order(name, 400, 1, |k| {
         let (s, tests) = &built[&k];
         tests.iter().fold(s.clone(), |s, t| {
             let mut j = s
@@ -286,7 +291,7 @@ fn holes_put_in_a_ladder_built_first_are_linear() {
     // every name stay as they were.
     let p = Premises::new();
     for reverse in [false, true] {
-        let built: BTreeMap<usize, (Scope, Vec<Term>)> = [40, 320]
+        let built: BTreeMap<usize, (Scope, Vec<Term>)> = [640, 5120]
             .into_iter()
             .map(|k| {
                 let n = named(k + 1, "x");
@@ -311,7 +316,7 @@ fn holes_put_in_a_ladder_built_first_are_linear() {
         } else {
             "holes put in a ladder built first"
         };
-        scaling::check_order(name, 40, 1, |k| {
+        scaling::check_order(name, 640, 1, |k| {
             let (s, tests) = &built[&k];
             let s = tests.iter().fold(s.clone(), |s, t| {
                 let mut j = s
@@ -339,9 +344,10 @@ fn a_chain_linked_from_a_source_made_later_is_linear() {
     // names in, and every later repair at the chain's head must not search the chain through
     // them. u and v are pinned, as a bounded name is, so that they stay in the potential.
     // Each if statement is the chain test's `if x_i - x_{i+1} >= 2`. 9.2 times the work and 8.4
-    // times the bytes from k = 50 to 400; on the code before, 17.7 times the work.
+    // times the bytes from k = 50 to 400; on the code before, 17.7 times the work. 9.0 times the
+    // work and 8.4 times the bytes from k = 240 to 1920 (2026-11-14).
     let p = Premises::new();
-    let built: BTreeMap<usize, (Scope, Vec<Term>)> = [50, 400]
+    let built: BTreeMap<usize, (Scope, Vec<Term>)> = [240, 1920]
         .into_iter()
         .map(|k| {
             let n = named(k + 1, "x");
@@ -357,7 +363,7 @@ fn a_chain_linked_from_a_source_made_later_is_linear() {
             (k, (s, tests))
         })
         .collect();
-    scaling::check_order("a chain linked from a source made later", 50, 1, |k| {
+    scaling::check_order("a chain linked from a source made later", 240, 1, |k| {
         let (s, tests) = &built[&k];
         tests.iter().fold(s.clone(), |s, t| {
             let mut j = s.assume(t, true, &p).join(&s.assume(t, false, &p));
@@ -368,56 +374,15 @@ fn a_chain_linked_from_a_source_made_later_is_linear() {
 }
 
 /// A satellite related to `d + 1` hubs, each a hub of leaves of two hubs, costs near `d` in
-/// the names the hubs need, not `d` at each hub: the needs held across the hubs stay within
-/// three per hub ([`Conjuncts::needs_held`]), and building the conjunction is linear. No leaf
-/// is a star, since no leaf's hubs hold all the satellite's related names, as by the
-/// definition. COMPLEXITY.md C37.
+/// the names the hubs need, not `d` at each hub, and building the conjunction is linear. Its
+/// stars and the needs held across the hubs are checked by the test of the same name in
+/// `linked`. COMPLEXITY.md C37.
 #[test]
 fn a_satellite_of_every_hub_costs_its_related_names_once() {
     for first in [true, false] {
-        let c = satellite_of_every_hub(12, first);
-        let stars = stars_by_definition(&c);
-        for i in 0..12 {
-            let a = format!("a{i}");
-            assert_eq!(c.star(&a).is_some(), stars.contains_key(&*a), "{a} in {c}");
-            assert!(c.star(&a).is_none(), "{a} in {c}");
-        }
-        for d in [12, 96] {
-            let held = satellite_of_every_hub(d, first).needs_held();
-            assert!(
-                held <= 3 * (d + 1),
-                "{held} names needed across {} hubs (satellite first: {first})",
-                d + 1
-            );
-        }
-        // The satellite's conjuncts taken away one by one, its anchor first, until its related
-        // names fit the hubs of the last leaves, which become stars: as by the definition at
-        // each step, and with bounds on the hubs, so that they have more conjuncts than a leaf.
-        let mut c = satellite_of_every_hub(4, first);
-        for i in 0..=4 {
-            let h = Lin::atom(Atom::Sym(format!("h{i}").into()));
-            c.and(Formula::Con(Con::ge(&h, &Lin::constant(0))));
-        }
-        let mut starred = 0;
-        for i in 0..=4 {
-            let stars = stars_by_definition(&c);
-            let found: BTreeSet<Arc<str>> = c.stars().keys().cloned().collect();
-            assert_eq!(found, stars.keys().cloned().collect(), "{c}");
-            starred += found.len();
-            let g = c.set().iter().find(|g| {
-                let ns = names(g);
-                ns.contains("y") && ns.contains(&*format!("h{i}"))
-            });
-            let g = g.cloned().expect("the satellite's conjunct");
-            c.remove(&g);
-        }
-        let stars = stars_by_definition(&c);
-        let found: BTreeSet<Arc<str>> = c.stars().keys().cloned().collect();
-        assert_eq!(found, stars.keys().cloned().collect(), "{c}");
-        assert!(starred + found.len() > 0, "no leaf became a star: {c}");
         scaling::check(
             &format!("a satellite of every hub (satellite first: {first})"),
-            64,
+            1024,
             |d| {
                 std::hint::black_box(satellite_of_every_hub(d, first));
             },
@@ -445,18 +410,11 @@ fn stars_formed_in_the_block_of_a_satellite_take_time_near_the_block() {
 /// hole. Quadratic, open as item ST-holes-moves (COMPLEXITY.md S25): each hole lowers the
 /// potential at its name, and on a chain whose edges have no slack in the potential every name
 /// below it moves too, about k/2 names a hole (`Scope::raise`). Before, block by block, cubic.
+/// The holes each name keeps are checked by the test of the same name in `linked`.
 #[test]
 fn holes_piled_in_the_names_of_a_chain_take_quadratic_time() {
     let p = Premises::new();
-    let s = piled_holes_run(12, &p);
-    assert!(!s.bottom);
-    for i in 0..11 {
-        let base = 10 * (12 - i) as i64;
-        let ints = s.get(&format!("x{i}")).ints().clone();
-        assert!(!ints.contains(base + 5), "x{i}: {ints:?}");
-        assert!(ints.contains(base + 4), "x{i}: {ints:?}");
-    }
-    scaling::check_order("holes piled in the names of a chain", 40, 2, |k| {
+    scaling::check_order("holes piled in the names of a chain", 192, 2, |k| {
         piled_holes_run(k, &p);
     });
 }
@@ -465,17 +423,11 @@ fn holes_piled_in_the_names_of_a_chain_take_quadratic_time() {
 /// names of the potential, so `m^3`, `n^1.5` in the `n = m^2` names (order 3 in `m`). Open as
 /// item ST-holes-moves (COMPLEXITY.md S25): the names a hole moves are those within its shift
 /// of it by reduced distance, which on a grid are no range of one order of the names.
+/// The holes each name keeps are checked by the test of the same name in `linked`.
 #[test]
 fn holes_in_every_name_of_a_grid_take_time_m_cubed() {
     let p = Premises::new();
-    let s = grid_holes(4, &p);
-    assert!(!s.bottom);
-    for (i, b) in [(0usize, 60i64), (5, 40), (15, 0)] {
-        let ints = s.get(&format!("g{i}")).ints().clone();
-        assert!(!ints.contains(b + 5), "g{i}: {ints:?}");
-        assert!(ints.contains(b + 4), "g{i}: {ints:?}");
-    }
-    scaling::check_order("holes in every name of a grid, by its side", 4, 3, |m| {
+    scaling::check_order("holes in every name of a grid, by its side", 6, 3, |m| {
         grid_holes(m, &p);
     });
 }
@@ -487,13 +439,16 @@ fn a_chain_put_in_against_the_order_reads_only_what_it_moves() {
     // names before it. The search that ends first decides, and x{i+1} alone moves, to just
     // before x{i}. 9.2 times the work and 8.7 times the bytes from k = 64 to 512 (item
     // PERF-pk-one-sided); on the code before, which ran both searches to their ends, 36 times
-    // the work and 22.7 times the bytes (1,767 and 99,933 components read).
+    // the work and 22.7 times the bytes (1,767 and 99,933 components read). 8.7 times the work and
+    // 8.3 times the bytes from k = 2048 to 16384 (2026-11-14). At 8192 and 65536, and at 16384
+    // and 131072, the run overflows the stack of its thread as the scope is dropped: each
+    // `Arc<Pending>` drops the next in turn (`zedc_preimage::product::Pending`), one frame each.
     let p = Premises::new();
-    let built: BTreeMap<usize, (Scope, Vec<Term>)> = [64, 512]
+    let built: BTreeMap<usize, (Scope, Vec<Term>)> = [2048, 16384]
         .into_iter()
         .map(|k| (k, chain_against_the_order(k)))
         .collect();
-    scaling::check_order("a chain put in against the order", 64, 1, |k| {
+    scaling::check_order("a chain put in against the order", 2048, 1, |k| {
         let (s, tests) = &built[&k];
         tests.iter().fold(s.clone(), |s, t| s.assume(t, true, &p));
     });
