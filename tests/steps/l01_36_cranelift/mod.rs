@@ -4,6 +4,7 @@
 //! the counting machine's counts.
 
 mod aot;
+mod bench;
 mod checks;
 mod constants;
 mod corpus;

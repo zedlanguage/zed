@@ -10,14 +10,13 @@ use std::sync::Arc;
 use zed_kernel::term::build::{app, lit, prim};
 use zed_kernel::value::{Atom, Items};
 use zed_kernel::{Evaluator, Lookup, Prim, Term, Value, World};
-use zed_tests::scaling;
 use zedc::zir::memory;
 
 use super::planned;
 
 /// A song of `d` verses: the bottom verse is the line `"la"`, and each verse above it sings the
 /// verse below twice, `(below, below)`, the one value in both places.
-fn song(d: usize) -> Value {
+pub(crate) fn song(d: usize) -> Value {
     (0..d).fold(Value::str("la"), |below, _| {
         Value::tuple(vec![below.clone(), below])
     })
@@ -35,7 +34,7 @@ impl Lookup for Same {
 }
 
 /// `v` as the input `song` and as the record of port `db` for every key.
-fn world(v: &Value) -> World {
+pub(crate) fn world(v: &Value) -> World {
     let mut w = World::new();
     w.inputs.insert("song".into(), v.clone());
     let port: Arc<dyn Lookup> = Arc::new(Same(v.clone()));
@@ -49,7 +48,7 @@ fn read() -> Term {
 }
 
 /// `db(0)`, made by the kernel, which runs the port.
-fn looked_up() -> Term {
+pub(crate) fn looked_up() -> Term {
     app(Term::Read("db".into()), vec![lit(0i64)])
 }
 
@@ -143,35 +142,4 @@ fn a_tuple_and_atoms_over_one_sequence_are_each_their_own_cell() {
     ]);
     // The outer tuple, the inner tuple, `#pair` and `#span`, and the two strings of each.
     assert_eq!(cells(&read(), &world(&v)), (v, 10));
-}
-
-/// The depth of the scaling tests, and 8 times it.
-const D: usize = 2_000;
-
-#[test]
-fn the_machine_makes_a_shared_song_in_time_linear_in_its_verses() {
-    let programs = scaling::inputs(D, |d| (world(&song(d)), planned(&looked_up())));
-    scaling::check(
-        "memory::run of a port giving d verses each held twice",
-        D,
-        |d| {
-            let (w, (g, p)) = &programs[&d];
-            let (_, s) = memory::run(g.graph(), p, &mut Evaluator::new(w.clone())).unwrap();
-            assert_eq!(s.allocations, d as u64 + 2);
-        },
-    );
-}
-
-#[test]
-fn native_code_makes_a_shared_song_in_time_linear_in_its_verses() {
-    let programs = scaling::inputs(D, |d| (world(&song(d)), planned(&looked_up())));
-    scaling::check(
-        "native run of a port giving d verses each held twice",
-        D,
-        |d| {
-            let (w, (g, p)) = &programs[&d];
-            let o = zed_native::run(g, p, &mut Evaluator::new(w.clone())).unwrap();
-            assert_eq!(o.stats.allocations, d as u64 + 2);
-        },
-    );
 }

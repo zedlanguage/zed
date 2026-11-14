@@ -3,7 +3,7 @@
 //! writes counts as the machine does, with the scrutinee's release fused or not. A pattern
 //! that matches a function binds it whole or not at all, since data holds no function, so the
 //! binder is the scrutinee itself: one word or edge, whatever the function captured (O(1) per
-//! match; `binders_of_a_function_scale` measures it).
+//! match; `bench::function_binders` measures it).
 
 use zed_kernel::Shared;
 
@@ -14,19 +14,18 @@ use zedc::zir::lower::lower;
 use zedc::zir::memory;
 
 use super::kernel;
-use super::scaling::check_run;
 
 /// `match s { p -> body }`.
-fn match1(s: Term, p: Pattern, body: Term) -> Term {
+pub(crate) fn match1(s: Term, p: Pattern, body: Term) -> Term {
     Term::Match(Shared::new(s), vec![(p, body)])
 }
 
-fn bind(x: &str) -> Pattern {
+pub(crate) fn bind(x: &str) -> Pattern {
     Pattern::Bind(x.into())
 }
 
 /// `f = (y) -> y; g = (z) -> m; (g(0), g(1), …, g(n-1))`, with `m` the match under test.
-fn calls(n: usize, m: Term) -> Term {
+pub(crate) fn calls(n: usize, m: Term) -> Term {
     let_(
         "f",
         lam(&["y"], var("y")),
@@ -216,21 +215,5 @@ fn a_function_inside_a_tuple_pattern_is_the_kernels_error() {
     assert_eq!(
         got,
         Err(zed_kernel::KernelError::Type("`(..)` applied to a function".into()).to_string())
-    );
-}
-
-/// `n` matches of a function bound by a name and called: O(1) each, so the run is O(n).
-#[test]
-fn binders_of_a_function_scale() {
-    check_run(
-        "n matches of a function by a name",
-        500,
-        |n| {
-            calls(
-                n,
-                match1(var("f"), bind("h"), app(var("h"), vec![var("z")])),
-            )
-        },
-        |_| World::new(),
     );
 }

@@ -1,18 +1,12 @@
 //! The runtime's drop of a reference: one count write when the cell stays live, and work
-//! linear in the cells freed otherwise (COMPLEXITY.md R8).
-
-use std::collections::HashMap;
-use std::sync::Mutex;
+//! linear in the cells freed otherwise (COMPLEXITY.md R8). The measurements at two sizes are in
+//! `bench/drops.rs`; the tests here are their small instances.
 
 use zed_kernel::Value;
 use zed_rt::{Heap, Obj, Word};
-use zed_tests::scaling::{self, FACTOR, TRIES};
-
-/// The runs one measured size can take: a warming run and five for each measurement.
-const RUNS: usize = 1 + 5 * TRIES;
 
 /// A heap of `n` strings and a tuple holding them all.
-fn wide(n: usize) -> (Heap, Word) {
+pub(crate) fn wide(n: usize) -> (Heap, Word) {
     let mut h = Heap::new();
     let parts: Vec<Word> = (0..n).map(|_| h.fresh(&Value::str("a")).unwrap()).collect();
     let w = h.alloc(Obj::Tuple(parts.into()));
@@ -20,7 +14,7 @@ fn wide(n: usize) -> (Heap, Word) {
 }
 
 /// A heap of `n` tuples, each holding the next and a string, as a list is held.
-fn deep(n: usize) -> (Heap, Word) {
+pub(crate) fn deep(n: usize) -> (Heap, Word) {
     let mut h = Heap::new();
     let mut w = Word::int(0);
     for _ in 0..n {
@@ -31,7 +25,7 @@ fn deep(n: usize) -> (Heap, Word) {
 }
 
 /// A heap of `n` live strings, and the last with `n + 1` references.
-fn shared(n: usize) -> (Heap, Word) {
+pub(crate) fn shared(n: usize) -> (Heap, Word) {
     let mut h = Heap::new();
     let mut w = Word::int(0);
     for _ in 0..n {
@@ -43,51 +37,24 @@ fn shared(n: usize) -> (Heap, Word) {
     (h, w)
 }
 
-/// `what`, the time of `run` on heaps from `make`, all built before any timing starts.
-fn scales(what: &str, n: usize, make: fn(usize) -> (Heap, Word), run: fn(&mut Heap, Word, usize)) {
-    let heaps: HashMap<usize, Vec<(Heap, Word)>> = [n, FACTOR * n]
-        .into_iter()
-        .map(|m| (m, (0..RUNS).map(|_| make(m)).collect()))
-        .collect();
-    let heaps = Mutex::new(heaps);
-    // Each heap is freed after the timing ends.
-    let used = Mutex::new(Vec::new());
-    scaling::check(what, n, |m| {
-        let (mut h, w) = heaps.lock().unwrap().get_mut(&m).unwrap().pop().unwrap();
-        run(&mut h, w, m);
-        used.lock().unwrap().push(h);
-    });
-}
-
-fn free(h: &mut Heap, w: Word, _: usize) {
+/// The drop of the last reference to a tuple of strings or a list frees every cell; drops that
+/// leave a string held free nothing.
+#[test]
+fn a_last_drop_frees_every_cell_and_an_earlier_one_none() {
+    // Three strings and their tuple; three strings and the three tuples of the list.
+    for (make, cells) in [(wide as fn(usize) -> (Heap, Word), 4), (deep, 6)] {
+        let (mut h, w) = make(3);
+        assert_eq!(h.live(), cells);
+        h.dec(w).unwrap();
+        assert_eq!(h.live(), 0);
+    }
+    let (mut h, w) = shared(3);
+    for _ in 0..3 {
+        h.dec(w).unwrap();
+        assert_eq!(h.live(), 3);
+    }
     h.dec(w).unwrap();
-    assert_eq!(h.live(), 0);
-}
-
-#[test]
-fn freeing_a_wide_tuple_scales() {
-    scales("a tuple of n strings freed", 4_000, wide, free);
-}
-
-#[test]
-fn freeing_a_deep_list_scales() {
-    scales("a list of n strings freed", 4_000, deep, free);
-}
-
-#[test]
-fn drops_that_leave_a_cell_live_scale() {
-    scales(
-        "n drops of one string among n live cells",
-        4_000,
-        shared,
-        |h, w, n| {
-            let live = h.live();
-            for _ in 0..n {
-                h.dec(w).unwrap();
-            }
-            assert_eq!(h.live(), live);
-        },
-    );
+    assert_eq!(h.live(), 2);
 }
 
 #[test]

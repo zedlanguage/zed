@@ -2,18 +2,15 @@
 //! or string cell keeps the kernel value read from it until the cell is freed, so an order
 //! record checked against many rules is read once, not once per rule (COMPLEXITY.md R1).
 
-use std::sync::Mutex;
-
 use zed_kernel::term::build::{let_, lit, prim, var};
 use zed_kernel::{Evaluator, Prim, Term, Value};
 use zed_rt::{Heap, Obj, Word};
-use zed_tests::scaling;
 
 use super::planned;
 use super::scaling::{counted_in, strings};
 
 /// `x = read x; (x == 0, x == 1, …, x == n-1)`: the record `x` handed to the kernel `n` times.
-fn compared(n: usize) -> Term {
+pub(crate) fn compared(n: usize) -> Term {
     compared_as(n, var("x"))
 }
 
@@ -168,52 +165,4 @@ fn an_empty_tuple_and_an_empty_string_read_the_same_each_time() {
     assert_eq!(h.value(empty).unwrap(), Value::str(""));
     let none = h.fresh(&Value::tuple(Vec::new())).unwrap();
     assert_eq!(h.value(none).unwrap(), Value::tuple(Vec::new()));
-}
-
-/// The record holds `64n` strings and is handed to the kernel `n` times: read whole each time,
-/// the work would grow 64 times at `8n`.
-#[test]
-fn a_record_handed_to_the_kernel_many_times_scales() {
-    let n = 50;
-    let at = |m: usize| (planned(&compared(m)), strings(64 * m));
-    let (small, large) = (at(n), at(scaling::FACTOR * n));
-    scaling::check(
-        "a tuple of 64n strings handed to the kernel n times",
-        n,
-        |m| {
-            let ((g, p), w) = if m == n { &small } else { &large };
-            let o = zed_native::run(g, p, &mut Evaluator::new(w.clone())).unwrap();
-            std::hint::black_box(o);
-        },
-    );
-}
-
-/// A heap holding a shipping manifest the program built, `64n` lines in their own cells, and
-/// its word.
-fn manifest(n: usize) -> Mutex<(Heap, Word)> {
-    let mut h = Heap::new();
-    let lines: Vec<Word> = (0..64 * n)
-        .map(|i| h.alloc(Obj::Str(format!("crate {i}").into())))
-        .collect();
-    let w = h.alloc(Obj::Tuple(lines.into()));
-    Mutex::new((h, w))
-}
-
-/// A record whose cells the program built, not the kernel, keeps its value from its first read:
-/// read whole each time, the `n` reads of `64n` cells would grow 64 times at `8n`.
-#[test]
-fn a_record_the_program_built_read_many_times_scales() {
-    let n = 50;
-    let (small, large) = (manifest(n), manifest(scaling::FACTOR * n));
-    scaling::check(
-        "the value of a tuple of 64n strings, read n times",
-        n,
-        |m| {
-            let mut at = if m == n { &small } else { &large }.lock().unwrap();
-            let (h, w) = &mut *at;
-            for _ in 0..m {
-                std::hint::black_box(h.value(*w).unwrap());
-            }
-        },
-    );
 }

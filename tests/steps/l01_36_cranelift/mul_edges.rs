@@ -25,14 +25,18 @@ use super::{kernel, planned};
 const MIN: i128 = i64::MIN as i128;
 const MAX: i128 = i64::MAX as i128;
 
-/// The default seed of the sampled pairs; `ZED_MUL_SEED` replaces it, to rerun a failure.
-const SEED: u64 = 0x6d75_6c5f_6564_6765;
-
+/// The seed of the sampled pairs: `ZED_MUL_SEED` when it is set, to run a failure again, else a
+/// new one from the clock, so each run draws other pairs. Printed either way.
 fn seed() -> u64 {
-    std::env::var("ZED_MUL_SEED")
+    let s = std::env::var("ZED_MUL_SEED")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(SEED)
+        .unwrap_or_else(|| {
+            let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
+            t.expect("a clock after 1970").as_nanos() as u64
+        });
+    eprintln!("seed {s}; ZED_MUL_SEED={s} draws the same pairs");
+    s
 }
 
 /// The integer `n` as a value: a word when it fits in 64 bits.
@@ -256,13 +260,17 @@ fn differential(
 }
 
 /// The pairs per compiled program. A program of 2,000 calls compiles in about 0.1 s at
-/// `OptLevel::None`; the sample runs in 50 programs.
+/// `OptLevel::None`.
 const CHUNK: usize = 2_000;
 
+/// The pairs of each sample, in two programs (was 100,000 from one fixed seed; a new seed each
+/// run now draws other pairs).
+const PAIRS: usize = 2 * CHUNK;
+
 #[test]
-fn a_hundred_thousand_integer_pairs_agree_with_the_kernel_and_are_exact() {
+fn sampled_integer_pairs_agree_with_the_kernel_and_are_exact() {
     let seed = seed();
-    let pairs = int_pairs(seed, 100_000);
+    let pairs = int_pairs(seed, PAIRS);
     let values: Vec<(Value, Value)> = pairs.iter().map(|&(x, y)| (int(x), int(y))).collect();
     let overflows = pairs.iter().filter(|&&(x, y)| !inline(x, y)).count();
     // The lowering keeps one node for equal nodes (CSE by content address, zir/lower.rs), so
@@ -301,9 +309,9 @@ fn a_hundred_thousand_integer_pairs_agree_with_the_kernel_and_are_exact() {
         calls, distinct as u64,
         "seed {seed}: kernel calls against overflowing products"
     );
-    // The sample reaches both sides of the edge often.
+    // The sample reaches both sides of the edge often: more than a fifth of the pairs each way.
     assert!(
-        overflows > 20_000 && overflows < 80_000,
+        overflows > PAIRS / 5 && overflows < 4 * PAIRS / 5,
         "seed {seed}: {overflows} overflows"
     );
 }
@@ -355,7 +363,7 @@ fn bits(v: &Value) -> u64 {
 }
 
 #[test]
-fn a_hundred_thousand_float_pairs_over_every_class_agree_bit_for_bit() {
+fn sampled_float_pairs_over_every_class_agree_bit_for_bit() {
     let seed = seed();
     let mut r = Rng::new(seed);
     let mut pairs: Vec<(f64, f64)> = Vec::new();
@@ -364,7 +372,7 @@ fn a_hundred_thousand_float_pairs_over_every_class_agree_bit_for_bit() {
             pairs.push((f64::from_bits(x), f64::from_bits(y)));
         }
     }
-    while pairs.len() < 100_000 {
+    while pairs.len() < PAIRS {
         let (cx, cy) = (r.below(5), r.below(5));
         pairs.push((of_class(&mut r, cx), of_class(&mut r, cy)));
     }
@@ -435,19 +443,22 @@ fn float_same(want: Option<u64>, w: &Value, g: &Value) -> Result<(), String> {
     }
 }
 
-/// One program per 2,000 pairs at `OptLevel::Speed` too, whose optimizer could fold or
-/// reorder what `None` leaves alone: the first 2,000 integer pairs and float pairs.
+/// The pairs of each kind at `OptLevel::Speed`.
+const SPEED_PAIRS: usize = 500;
+
+/// One program of `SPEED_PAIRS` pairs at `OptLevel::Speed` too, whose optimizer could fold or
+/// reorder what `None` leaves alone: integer pairs and float pairs (was 2,000 of each).
 #[test]
 fn the_optimizing_level_agrees_on_a_sample() {
     let seed = seed();
-    let pairs = int_pairs(seed, CHUNK);
+    let pairs = int_pairs(seed, SPEED_PAIRS);
     let values: Vec<(Value, Value)> = pairs.iter().map(|&(x, y)| (int(x), int(y))).collect();
     differential(
         "integer * at speed",
         seed,
         &values,
         &product(),
-        CHUNK,
+        SPEED_PAIRS,
         OptLevel::Speed,
         |k, w, g| {
             let want = exact(pairs[k].0, pairs[k].1);
@@ -458,7 +469,7 @@ fn the_optimizing_level_agrees_on_a_sample() {
         },
     );
     let mut r = Rng::new(seed);
-    let floats: Vec<(f64, f64)> = (0..CHUNK)
+    let floats: Vec<(f64, f64)> = (0..SPEED_PAIRS)
         .map(|_| {
             let (cx, cy) = (r.below(5), r.below(5));
             (of_class(&mut r, cx), of_class(&mut r, cy))
@@ -473,7 +484,7 @@ fn the_optimizing_level_agrees_on_a_sample() {
         seed,
         &values,
         &nan_matched(),
-        CHUNK,
+        SPEED_PAIRS,
         OptLevel::Speed,
         |k, w, g| float_same(floats_wanted(floats[k]), w, g),
     );

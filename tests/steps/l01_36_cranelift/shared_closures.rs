@@ -6,8 +6,6 @@
 use zed_kernel::term::build::{app, if_, lam, let_, lit, prim, var};
 use zed_kernel::{Evaluator, Family, Prim, Term, Value, World};
 use zed_tests::kernel::{add, fold, lt, mul};
-use zed_tests::scaling;
-use zedc::zir::memory;
 
 use super::planned;
 use super::scaling::counted_in;
@@ -52,7 +50,7 @@ fn sum() -> Term {
 }
 
 /// The fold of `{0: 1, 1: 2}` by `d` layers each holding the layer below twice.
-fn doubled(d: usize) -> Term {
+pub(crate) fn doubled(d: usize) -> Term {
     layered(d, sum(), |r| r, |top| fold(pair(1, 2), top, None))
 }
 
@@ -103,35 +101,4 @@ fn a_rule_used_by_two_folds_is_built_again_for_each() {
         },
     );
     assert_eq!(everywhere(&t), ("(3, 30)".into(), 2));
-}
-
-/// The depth of the scaling tests, and 8 times it.
-const D: usize = 250;
-
-#[test]
-fn the_machine_hands_the_kernel_a_layered_rule_in_time_linear_in_its_layers() {
-    let programs = [D, scaling::FACTOR * D].map(|d| (d, planned(&doubled(d))));
-    scaling::check(
-        "memory::run of a fold by d layers of a rule held twice",
-        D,
-        |d| {
-            let (_, (g, p)) = programs.iter().find(|(m, _)| *m == d).unwrap();
-            let (v, _) = memory::run(g.graph(), p, &mut Evaluator::new(World::new())).unwrap();
-            assert_eq!(v, Value::Int(3));
-        },
-    );
-}
-
-#[test]
-fn native_code_hands_the_kernel_a_layered_rule_in_time_linear_in_its_layers() {
-    let programs = [D, scaling::FACTOR * D].map(|d| (d, planned(&doubled(d))));
-    scaling::check(
-        "native run of a fold by d layers of a rule held twice",
-        D,
-        |d| {
-            let (_, (g, p)) = programs.iter().find(|(m, _)| *m == d).unwrap();
-            let o = zed_native::run(g, p, &mut Evaluator::new(World::new())).unwrap();
-            assert_eq!(o.value, Value::Int(3));
-        },
-    );
 }

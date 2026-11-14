@@ -2,22 +2,19 @@
 //! or none of them, the runtime heap answers from the kind, without reading the text or the
 //! parts, so the cost of the test does not grow with the value (COMPLEXITY.md R13).
 
-use std::sync::Mutex;
-
 use zed_kernel::types::{Type, Universe};
 use zed_kernel::{Pattern, Text, Value};
 use zed_rt::{Heap, Obj, Paths, Word};
-use zed_tests::scaling;
 
 /// Whether `w` matches `is t`.
-fn is(h: &mut Heap, w: Word, t: &Type) -> bool {
+pub(crate) fn is(h: &mut Heap, w: Word, t: &Type) -> bool {
     let p = Pattern::Is(t.clone());
     h.matches(&p, w, &mut Paths::default(), &mut Vec::new())
         .unwrap()
 }
 
 /// A heap holding the tuple `("s0", "s1", …)` of `n` strings in `n + 1` cells, and its word.
-fn tuple_of_strings(n: usize) -> (Heap, Word) {
+pub(crate) fn tuple_of_strings(n: usize) -> (Heap, Word) {
     let mut h = Heap::new();
     let xs = (0..n).map(|i| Value::str(&format!("s{i}"))).collect();
     let w = h.fresh(&Value::tuple(xs)).unwrap();
@@ -86,31 +83,4 @@ fn an_atom_in_cells_is_tested_by_its_name() {
     let of = |t: Type| Type::atom_with("some", &Type::tuple(vec![t]));
     assert!(is(&mut h, w, &of(Type::string())));
     assert!(!is(&mut h, w, &of(Type::int())));
-}
-
-/// `TESTS` tests of a tuple of `n` strings, which the kind decides, at `n` and `8n`: the work
-/// is the same at both sizes. Each would read all `n` parts if the tuple were made a value.
-#[test]
-fn testing_the_kind_of_a_large_tuple_scales() {
-    const TESTS: usize = 64;
-    let n = 2000;
-    let small = Mutex::new(tuple_of_strings(n));
-    let large = Mutex::new(tuple_of_strings(scaling::FACTOR * n));
-    let types = [Type::universe(Universe::Tuple), Type::int(), Type::string()];
-    let run = |hw: &Mutex<(Heap, Word)>| {
-        let (h, w) = &mut *hw.lock().unwrap();
-        for i in 0..TESTS {
-            let t = &types[i % types.len()];
-            std::hint::black_box(is(h, *w, t));
-        }
-    };
-    scaling::compare(
-        &format!(
-            "{TESTS} tests by kind of a tuple of {n} and {} strings",
-            scaling::FACTOR * n
-        ),
-        0,
-        || run(&small),
-        || run(&large),
-    );
 }

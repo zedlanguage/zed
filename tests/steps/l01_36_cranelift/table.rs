@@ -9,7 +9,7 @@ use zed_kernel::types::Type;
 use zed_kernel::{Evaluator, Pattern, Prim, Term, Value, World};
 
 use super::planned;
-use super::scaling::{check_run, strings, unused};
+use super::scaling::{counted_in, strings, unused};
 
 /// `f = (y) -> y; g = (z) -> match f { p -> body }; (g(0), g(1), …, g(n-1))`: `n` matches of
 /// a function.
@@ -24,17 +24,17 @@ fn fun_match(n: usize, p: Pattern, body: Term) -> Term {
     )
 }
 
-fn fun_is(n: usize) -> Term {
+pub(crate) fn fun_is(n: usize) -> Term {
     fun_match(n, Pattern::Is(Type::top()), var("z"))
 }
 
-fn fun_wild(n: usize) -> Term {
+pub(crate) fn fun_wild(n: usize) -> Term {
     fun_match(n, Pattern::Wild, var("z"))
 }
 
 /// `f = (y) -> match (read x, #none(), y) { (a, b, c) -> c }; (f(0), …, f(n-1))`: each call
 /// reads the bare values of `x`, makes a bare atom, and drops both.
-fn bare(n: usize) -> Term {
+pub(crate) fn bare(n: usize) -> Term {
     let none = prim(Prim::Atom, vec![lit("none"), lit(Value::tuple(Vec::new()))]);
     let s = prim(Prim::Tuple, vec![Term::Read("x".into()), none, var("y")]);
     let p = Pattern::Tuple(["a", "b", "c"].map(|x| Pattern::Bind(x.into())).to_vec());
@@ -44,7 +44,7 @@ fn bare(n: usize) -> Term {
 }
 
 /// A world whose input port `x` holds `((), #nil, #some(()))`.
-fn bare_world(_: usize) -> World {
+pub(crate) fn bare_world(_: usize) -> World {
     let mut w = World::new();
     let some = Value::atom_with("some", vec![Value::tuple(Vec::new())]);
     let xs = vec![Value::tuple(Vec::new()), Value::atom("nil"), some];
@@ -89,16 +89,6 @@ fn matches_of_a_function_add_no_entry() {
     });
 }
 
-#[test]
-fn matches_of_a_function_scale() {
-    check_run("n matches of a function by is", 500, fun_is, |_| {
-        World::new()
-    });
-    check_run("n matches of a function by _", 500, fun_wild, |_| {
-        World::new()
-    });
-}
-
 /// The empty tuple and a bare atom read or made again are the entry they had, and the cells
 /// of a dropped tuple are used again, so `n` reads and drops need no free list of entries.
 #[test]
@@ -106,7 +96,11 @@ fn bare_values_made_and_dropped_use_their_entry_again() {
     fixed("n reads and drops of bare values", 50, bare, bare_world);
 }
 
+/// The small instances of the benchmarks of `bench/table.rs`: matches of a function and reads
+/// and drops of bare values run as the machine runs them.
 #[test]
-fn bare_values_made_and_dropped_scale() {
-    check_run("n reads and drops of bare values", 500, bare, bare_world);
+fn matches_of_a_function_and_bare_values_run_as_the_machine_does() {
+    assert_eq!(counted_in(&fun_is(3), World::new()), "(0, 1, 2)");
+    assert_eq!(counted_in(&fun_wild(3), World::new()), "(0, 1, 2)");
+    assert_eq!(counted_in(&bare(3), bare_world(3)), "(0, 1, 2)");
 }

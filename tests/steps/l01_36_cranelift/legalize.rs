@@ -5,12 +5,11 @@
 //! certificate that holds a `>` is put in the node's place and its `>` expanded in turn; and a
 //! back end handed an operation it declared expanded refuses it by name.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use zed_kernel::term::Shared;
 use zed_kernel::term::build::{app, if_, lam, let_, lit, prim};
 use zed_kernel::{Evaluator, Prim, Term, Value, World};
-use zed_tests::scaling;
 use zedc::zir::legalize::{Expansion, Expansions, legalize};
 use zedc::zir::lower::{lower, raise};
 use zedc::zir::memory::{self, plan};
@@ -346,7 +345,7 @@ fn the_declarations_are_fixed_sets() {
 
 /// `n` parcel checks in a row, each a derived node whose certificate compares with `>` and
 /// `>=`, and each reading the one before: legalization's work is linear in the graph.
-fn parcel_checks(n: usize) -> Region {
+pub(crate) fn parcel_checks(n: usize) -> Region {
     let int = || Edge::value(zed_kernel::types::Type::int());
     let certificate = Region {
         kind: RegionKind::Function,
@@ -390,13 +389,10 @@ fn parcel_checks(n: usize) -> Region {
     }
 }
 
+/// The small instance of `bench::legalize`: three parcel checks legalize to the six
+/// comparisons of their certificates, each `>` and `>=` swapped to `<` and `<=`.
 #[test]
-fn legalization_is_linear_in_the_graph() {
-    let n = 20_000;
-    let (small_runs, large_runs) = scaling::Meter::new().runs();
-    let pool = |k: usize, runs: usize| Mutex::new((0..runs).map(|_| parcel_checks(k)).collect());
-    let (small, large): (Mutex<Vec<Region>>, Mutex<Vec<Region>>) =
-        (pool(n, small_runs), pool(scaling::FACTOR * n, large_runs));
+fn parcel_checks_legalize_to_swapped_comparisons() {
     let l = zed_native::legalize(parcel_checks(3));
     let g = l.graph();
     assert_eq!((g.nodes.len(), l.nodes()), (6, 6));
@@ -406,9 +402,4 @@ fn legalization_is_linear_in_the_graph() {
             .iter()
             .all(|n| matches!(n.op, Op::Prim(Prim::Lt | Prim::Le)))
     );
-    scaling::check("legalizing parcel checks", n, |k| {
-        let pool = if k == n { &small } else { &large };
-        let g = pool.lock().expect("no run panicked").pop();
-        drop(zed_native::legalize(g.expect("a graph built for each run")));
-    });
 }

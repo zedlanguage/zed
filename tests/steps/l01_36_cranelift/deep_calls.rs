@@ -18,7 +18,7 @@ use super::planned;
 const CALLS: usize = 10_000;
 
 /// Runs `f` on a thread with a 2 MiB stack, the default of a spawned Rust thread.
-fn on_2_mib_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+pub(crate) fn on_2_mib_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
     std::thread::scope(|scope| {
         let thread = std::thread::Builder::new().stack_size(2 << 20);
         thread.spawn_scoped(scope, f).unwrap().join().unwrap()
@@ -31,7 +31,7 @@ fn kernel(t: &Term) -> Value {
 }
 
 /// `g` under `p` run natively.
-fn native(g: &Legalized, p: &Plan) -> Value {
+pub(crate) fn native(g: &Legalized, p: &Plan) -> Value {
     zed_native::run(g, p, &mut Evaluator::new(World::new()))
         .unwrap()
         .value
@@ -50,15 +50,4 @@ fn a_list_built_by_10000_nested_calls_runs_on_a_2_mib_stack() {
             "linked_list({k}) run natively differs from the kernel's value"
         );
     }
-}
-
-#[test]
-fn deep_recursion_runs_in_time_linear_in_its_depth() {
-    let programs = [CALLS, scaling::FACTOR * CALLS].map(|n| (n, planned(&linked_list(n as i64))));
-    on_2_mib_stack(|| {
-        scaling::check("native linked_list by its depth of calls", CALLS, |n| {
-            let (g, p) = &programs.iter().find(|(m, _)| *m == n).unwrap().1;
-            drop(native(g, p));
-        })
-    });
 }

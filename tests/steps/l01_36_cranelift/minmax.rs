@@ -197,35 +197,28 @@ fn fold(n: usize) -> Term {
     })
 }
 
-/// A fold of `min` compiles and runs natively in work linear in its length, inline, and gives
-/// the kernel's value (COMPLEXITY.md Z15, the passes of the code generator).
-#[test]
-fn a_fold_of_min_scales_linearly() {
-    let run = |n: usize| {
-        let t = fold(n);
-        let (g, p) = planned(&t);
-        let o = zed_native::run(&g, &p, &mut Evaluator::new(World::new()))
-            .unwrap_or_else(|e| panic!("{e}"));
-        assert_eq!(o.kernel_calls, 0);
-        assert_eq!(o.value, kernel(&t).unwrap());
-        let last_even = (n - 1) & !1;
-        let least = if last_even == 0 {
-            -0.0
-        } else {
-            last_even as f64 * -0.5
-        };
-        assert_eq!(bits(&o.value), least.to_bits());
+/// A fold of `min` over `n` floats runs natively, inline, and gives the kernel's value, the
+/// last negative one.
+pub(crate) fn fold_agrees(n: usize) {
+    let t = fold(n);
+    let (g, p) = planned(&t);
+    let o = zed_native::run(&g, &p, &mut Evaluator::new(World::new()))
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(o.kernel_calls, 0);
+    assert_eq!(o.value, kernel(&t).unwrap());
+    let last_even = (n - 1) & !1;
+    let least = if last_even == 0 {
+        -0.0
+    } else {
+        last_even as f64 * -0.5
     };
-    run(2);
-    run(3);
-    std::thread::scope(|s| {
-        std::thread::Builder::new()
-            .stack_size(1 << 29)
-            .spawn_scoped(s, || {
-                zed_tests::scaling::check("a fold of min over n floats", 1000, run)
-            })
-            .unwrap()
-            .join()
-            .unwrap()
-    });
+    assert_eq!(bits(&o.value), least.to_bits());
+}
+
+/// The small instances of `bench::minmax`: folds of two, three and six floats.
+#[test]
+fn a_short_fold_of_min_gives_the_least() {
+    for n in [2, 3, 6] {
+        fold_agrees(n);
+    }
 }

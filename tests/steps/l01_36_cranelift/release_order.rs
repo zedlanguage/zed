@@ -8,7 +8,6 @@
 use zed_kernel::term::build::{app, lam, let_, lit, prim, var};
 use zed_kernel::{Evaluator, Prim, Term, Text, Value, World};
 use zed_rt::{Heap, Obj, Parts, Released, Word};
-use zed_tests::scaling;
 use zedc::zir::lower::lower;
 use zedc::zir::memory::{self, Plan};
 
@@ -178,7 +177,7 @@ fn a_tuple_is_freed_before_its_parts_and_its_parts_in_order() {
 /// `n` values each read once early, then one held to the end:
 /// `s -> { h0 = s ++ "0"; w0 = h0.len; ...; body = s ++ s; (w0 + ... , (body ++ "!").len) }`,
 /// in which every `hi` is freed before `body` is made.
-fn many(n: usize) -> Term {
+pub(crate) fn many(n: usize) -> Term {
     let mut sum = lit(Value::Int(0));
     for i in 0..n {
         sum = prim(Prim::Add, vec![sum, var(&format!("w{i}"))]);
@@ -207,33 +206,9 @@ fn many_early_values_are_each_freed_before_the_later_one() {
     }
 }
 
-#[test]
-fn recording_the_release_order_scales() {
-    // O(1) per free: T(8n)/T(n) of a run of `many(n)` with the record on, compiled first.
-    scaling::on_a_thread(256 << 20, || {
-        let made = scaling::inputs(50, |m| {
-            let t = many(m);
-            let g = zed_native::legalize(lower(&t).unwrap_or_else(|e| panic!("{e}")));
-            let p = memory::plan(g.graph(), true);
-            (g, p)
-        });
-        scaling::check(
-            "the native run of n early values, with its frees recorded",
-            50,
-            |m| {
-                let (g, p) = &made[&m];
-                zed_native::record_releases(true);
-                let o = zed_native::run(g, p, &mut Evaluator::new(World::new())).unwrap();
-                zed_native::record_releases(false);
-                std::hint::black_box((o, zed_native::counted()));
-            },
-        );
-    });
-}
-
 /// `n` tuples of two strings, made in order and dropped in order, the heap recording what it
 /// frees: each tuple, then its parts, first to last, so the first made is the first freed.
-fn tuples_dropped(texts: &[(Text, Text)]) -> Vec<Released> {
+pub(crate) fn tuples_dropped(texts: &[(Text, Text)]) -> Vec<Released> {
     let mut h = Heap::new();
     h.record_releases();
     let ws: Vec<Word> = texts
@@ -251,7 +226,7 @@ fn tuples_dropped(texts: &[(Text, Text)]) -> Vec<Released> {
     h.released()
 }
 
-fn texts(n: usize) -> Vec<(Text, Text)> {
+pub(crate) fn texts(n: usize) -> Vec<(Text, Text)> {
     (0..n)
         .map(|i| (Text::from(format!("a{i}")), Text::from(format!("b{i}"))))
         .collect()
@@ -274,18 +249,5 @@ fn the_heap_frees_in_the_order_the_counts_reach_zero() {
             "tuple", "a0", "b0", "tuple", "a1", "b1", "tuple", "a2", "b2"
         ],
         "{order:?}"
-    );
-}
-
-#[test]
-fn the_heaps_record_of_frees_scales() {
-    // O(1) per free: T(8n)/T(n) of making and freeing n tuples of two strings, record on.
-    let made = scaling::inputs(20_000, texts);
-    scaling::check(
-        "making and freeing n tuples of two strings, frees recorded",
-        20_000,
-        |m| {
-            std::hint::black_box(tuples_dropped(&made[&m]));
-        },
     );
 }

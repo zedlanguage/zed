@@ -617,7 +617,8 @@ fi
 # (2026-11-10, SPLIT-l01_39-rest).
 # l01_36_cranelift mul_edges took 32.8 s whole at load 25: its differential of 100,000 integer
 # pairs takes 26 to 27 s alone and that of 100,000 float pairs 14 to 16 s at load 22 to 26; each
-# test is a piece (2026-11-11, TESTS-L1.36-mul-edges-and-differential).
+# test is a piece (2026-11-11, TESTS-L1.36-mul-edges-and-differential). Since TEST-bench-move-l0136
+# each draws 4,000 pairs from a new printed seed and takes under 1 s.
 # l01_39 families holds four audit parts of 7 to 8 s each, the hop families of 13 s and a
 # scaling test of 6 s at load 22 to 24, about 70 s together; each test is a piece
 # (2026-11-11, TESTS-lhx-families).

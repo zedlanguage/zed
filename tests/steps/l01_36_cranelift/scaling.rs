@@ -2,18 +2,18 @@
 //! complexity, DESIGN.md Part G): an atom of many named fields, many lookup ports,
 //! many constants, many lambdas and one value used many times each run in time near linear in
 //! their number (COMPLEXITY.md Z14); so do the runtime heap's match of a deep constant, many
-//! matches of one, and the value of cells that share their parts (COMPLEXITY.md R3).
+//! matches of one, and the value of cells that share their parts (COMPLEXITY.md R3). The
+//! measurements at two sizes are in `bench/scaling.rs`; the tests here are their small instances
+//! and the deep programs on a small stack.
 
 use std::mem::ManuallyDrop;
 use std::sync::Arc;
-use std::sync::Mutex;
 use zed_kernel::Shared;
 
 use zed_kernel::term::build::{app, if_, lam, let_, lit, prim, var};
 use zed_kernel::{Evaluator, Lookup, Pattern, Prim, Term, Value, World};
 use zed_rt::{Heap, Obj, Paths, Word};
 use zed_tests::deep::{in_tuple, nested};
-use zed_tests::scaling;
 use zedc::zir::memory;
 
 use super::planned;
@@ -29,7 +29,7 @@ impl Lookup for Same {
 }
 
 /// Lookup ports `p0`, `p1`, … `p{n-1}`.
-fn world(n: usize) -> World {
+pub(crate) fn world(n: usize) -> World {
     let mut w = World::new();
     for i in 0..n {
         let p: Arc<dyn Lookup> = Arc::new(Same(Value::Int(i as i64)));
@@ -39,7 +39,7 @@ fn world(n: usize) -> World {
 }
 
 /// `t` run by the counting machine and natively in `w`: both values, printed, which agree.
-fn both(t: &Term, w: &World) -> String {
+pub(crate) fn both(t: &Term, w: &World) -> String {
     let (g, p) = planned(t);
     let (v, _) = memory::run(g.graph(), &p, &mut Evaluator::new(w.clone()))
         .unwrap_or_else(|e| panic!("{t}: {e}"));
@@ -51,7 +51,7 @@ fn both(t: &Term, w: &World) -> String {
 
 /// `#a(f{n-1}: "x{n-1}" ++ "", …, f0: "x0" ++ "")`, the names given last first, matched by a
 /// pattern that binds every field, and the binders made a tuple.
-fn fields(n: usize) -> Term {
+pub(crate) fn fields(n: usize) -> Term {
     let name = |i: usize| format!("f{i:05}");
     let names = Value::Tuple((0..n).rev().map(|i| Value::str(&name(i))).collect());
     let mut ins = vec![lit("a"), lit(names)];
@@ -71,7 +71,7 @@ fn fields(n: usize) -> Term {
 }
 
 /// `(p0(0), p1(0), …)`: `n` lookup ports, each read once.
-fn ports(n: usize) -> Term {
+pub(crate) fn ports(n: usize) -> Term {
     prim(
         Prim::Tuple,
         (0..n)
@@ -81,7 +81,7 @@ fn ports(n: usize) -> Term {
 }
 
 /// `("s0", "s1", …)`: a tuple of `n` constant strings.
-fn consts(n: usize) -> Term {
+pub(crate) fn consts(n: usize) -> Term {
     prim(
         Prim::Tuple,
         (0..n).map(|i| lit(format!("s{i}").as_str())).collect(),
@@ -89,7 +89,7 @@ fn consts(n: usize) -> Term {
 }
 
 /// `f0 = (x) -> x ++ "0"; …; (f0("a"), f1("a"), …)`: `n` lambdas, each called once.
-fn lambdas(n: usize) -> Term {
+pub(crate) fn lambdas(n: usize) -> Term {
     let calls = prim(
         Prim::Tuple,
         (0..n)
@@ -106,7 +106,7 @@ fn lambdas(n: usize) -> Term {
 }
 
 /// `x = "a" ++ "b"; (x, x, …)`: one cell used `n` times by one node.
-fn dups(n: usize) -> Term {
+pub(crate) fn dups(n: usize) -> Term {
     let_(
         "x",
         zed_tests::step_helpers::l01_34_memory::cat("a", "b"),
@@ -124,69 +124,13 @@ fn small_programs_agree() {
     assert_eq!(both(&ports(3), &w), "(0, 1, 2)");
 }
 
-fn check(what: &str, n: usize, w: &World, make: fn(usize) -> Term) {
-    std::thread::scope(|s| {
-        std::thread::Builder::new()
-            .stack_size(1 << 29)
-            .spawn_scoped(s, || {
-                scaling::check(what, n, |n| {
-                    both(&make(n), w);
-                })
-            })
-            .unwrap()
-            .join()
-            .unwrap()
-    })
-}
-
-#[test]
-fn an_atom_of_many_named_fields_scales() {
-    check(
-        "an atom of n named fields, matched",
-        500,
-        &World::new(),
-        fields,
-    );
-}
-
-#[test]
-fn a_tuple_of_many_lookup_ports_scales() {
-    let n = 250;
-    check(
-        "a tuple of n lookup ports",
-        n,
-        &world(scaling::FACTOR * n),
-        ports,
-    );
-}
-
-#[test]
-fn many_constants_scale() {
-    check("a tuple of n constants", 1000, &World::new(), consts);
-}
-
-#[test]
-fn many_lambdas_scale() {
-    check("n lambdas, each called", 125, &World::new(), lambdas);
-}
-
-#[test]
-fn one_value_used_many_times_scales() {
-    check(
-        "one cell used n times by one node",
-        1000,
-        &World::new(),
-        dups,
-    );
-}
-
 /// `t` run by the counting machine and natively: both values and both counts agree.
 fn counted(t: &Term) -> String {
     counted_in(t, World::new())
 }
 
 /// [`counted`], with the ports of `w`.
-pub(super) fn counted_in(t: &Term, w: World) -> String {
+pub(crate) fn counted_in(t: &Term, w: World) -> String {
     let (g, p) = planned(t);
     let (v, s) = memory::run(g.graph(), &p, &mut Evaluator::new(w.clone()))
         .unwrap_or_else(|e| panic!("{t}: {e}"));
@@ -199,7 +143,7 @@ pub(super) fn counted_in(t: &Term, w: World) -> String {
 
 /// A rate table: `x = d * 1; if x < 0 then "t0" else if x < 1 then "t1" else …`, `d` tests in
 /// a chain, each in the other's `else`, ending at `"top"`, with `x` given by `at`.
-fn tiers(d: usize, at: i64) -> Term {
+pub(crate) fn tiers(d: usize, at: i64) -> Term {
     let chain = (0..d).rev().fold(lit("top"), |rest, i| {
         let c = prim(Prim::Lt, vec![var("x"), lit(i as i64)]);
         if_(c, lit(format!("t{i}").as_str()), rest)
@@ -209,7 +153,7 @@ fn tiers(d: usize, at: i64) -> Term {
 
 /// `if i < d then (y = (…) + 1; y) else i`, `d` deep through the first arms: each level holds
 /// a node after its arm, so the arm's parent frame has work left when the arm ends.
-fn nest(d: usize) -> Term {
+pub(crate) fn nest(d: usize) -> Term {
     (0..d).fold(lit(0i64), |t, i| {
         let y = format!("y{i}");
         if_(
@@ -221,7 +165,7 @@ fn nest(d: usize) -> Term {
 }
 
 /// A decoder of `d` cases: `match x { 0 -> "c0", _ -> match x { 1 -> "c1", _ -> … } }`.
-fn cases(d: usize, at: i64) -> Term {
+pub(crate) fn cases(d: usize, at: i64) -> Term {
     let chain = (0..d).rev().fold(lit("none"), |rest, i| {
         let hit = (
             Pattern::Lit(Value::Int(i as i64)),
@@ -233,7 +177,7 @@ fn cases(d: usize, at: i64) -> Term {
 }
 
 /// A curried sum: `(a0) -> (a1) -> … -> a0 + a{d-1}`, applied to `1, 2, …`, one at a time.
-fn curried(d: usize) -> Term {
+pub(crate) fn curried(d: usize) -> Term {
     let last = format!("a{}", d - 1);
     let sum = prim(Prim::Add, vec![var("a0"), var(&last)]);
     let f = (0..d).rev().fold(sum, |b, i| lam(&[&format!("a{i}")], b));
@@ -242,7 +186,7 @@ fn curried(d: usize) -> Term {
 
 /// Runs `f` with a stack that holds the recursive passes of a term thousands deep: lowering,
 /// planning and the drop of a graph.
-fn on_big_stack(f: impl FnOnce() + Send) {
+pub(crate) fn on_big_stack(f: impl FnOnce() + Send) {
     on_stack(1 << 30, f)
 }
 
@@ -330,8 +274,10 @@ fn on_stack(bytes: usize, f: impl FnOnce() + Send) {
     })
 }
 
-/// The depth of the terms below: far deeper than a thread of 128 KiB could hold in calls.
-const DEEP: usize = 4000;
+/// The depth of the terms below: above the depths at which the recursive code generator
+/// (before commit d5e160e51) overflowed a thread of 128 KiB, measured by bisection on each
+/// term: 107 for the rate table and the decoder, 106 for the nested `if`s.
+const DEEP: usize = 200;
 
 /// A rate table [`DEEP`] tiers long, read in the middle, and the tier it gives.
 fn deep_rate_table() -> (Term, String) {
@@ -378,32 +324,32 @@ fn runs_as_the_machine_does((t, want): (Term, String)) {
 }
 
 #[test]
-fn a_rate_table_thousands_deep_compiles_on_a_small_stack() {
+fn a_rate_table_hundreds_deep_compiles_on_a_small_stack() {
     compiles_on_a_small_stack(deep_rate_table().0);
 }
 
 #[test]
-fn a_rate_table_thousands_deep_runs_as_the_machine_does() {
+fn a_rate_table_hundreds_deep_runs_as_the_machine_does() {
     runs_as_the_machine_does(deep_rate_table());
 }
 
 #[test]
-fn a_decoder_thousands_deep_compiles_on_a_small_stack() {
+fn a_decoder_hundreds_deep_compiles_on_a_small_stack() {
     compiles_on_a_small_stack(deep_decoder().0);
 }
 
 #[test]
-fn a_decoder_thousands_deep_runs_as_the_machine_does() {
+fn a_decoder_hundreds_deep_runs_as_the_machine_does() {
     runs_as_the_machine_does(deep_decoder());
 }
 
 #[test]
-fn ifs_thousands_deep_compile_on_a_small_stack() {
+fn ifs_hundreds_deep_compile_on_a_small_stack() {
     compiles_on_a_small_stack(deep_ifs().0);
 }
 
 #[test]
-fn ifs_thousands_deep_run_as_the_machine_does() {
+fn ifs_hundreds_deep_run_as_the_machine_does() {
     runs_as_the_machine_does(deep_ifs());
 }
 
@@ -429,72 +375,9 @@ fn a_wrong_plan_deep_in_the_term_names_the_path() {
     );
 }
 
-/// `make` at each of `n` and `8n`, planned ahead of the timing, with the object file of each
-/// timed by `scaling::check`.
-fn check_depth(what: &str, n: usize, make: fn(usize) -> Term) {
-    on_big_stack(|| {
-        let at = |m: usize| planned(&make(m));
-        let (small, large) = (at(n), at(8 * n));
-        scaling::check(what, n, |m| {
-            let (g, p) = if m == n { &small } else { &large };
-            std::hint::black_box(zed_native::object(g, p).unwrap());
-        });
-    });
-}
-
-#[test]
-fn a_rate_table_of_many_tiers_scales() {
-    check_depth("a chain of n `if`s, to an object file", 250, |d| {
-        tiers(d, 0)
-    });
-}
-
-#[test]
-fn ifs_nested_through_the_first_arm_scale() {
-    check_depth("n nested `if`s, to an object file", 125, nest);
-}
-
-#[test]
-fn a_decoder_of_many_cases_scales() {
-    check_depth("a chain of n `match`es, to an object file", 500, |d| {
-        cases(d, 0)
-    });
-}
-
-#[test]
-fn a_curried_function_of_many_parameters_scales() {
-    check_depth("n nested lambdas, to an object file", 200, curried);
-}
-
-/// The runs one measured size can take: a warming run and five for each measurement.
-const RUNS: usize = 1 + 5 * scaling::TRIES;
-
-/// `make(m)` for each run at each of `n` and `8n`, built before any timing starts; `run` is timed
-/// on one of them per run, and each is dropped after the timing ends (COMPLEXITY.md R3).
-fn heap_scales<T: Send>(
-    what: &str,
-    n: usize,
-    make: impl Fn(usize) -> T,
-    run: impl Fn(&mut T, usize) + Sync,
-) {
-    let made = Mutex::new(
-        [n, scaling::FACTOR * n].map(|m| (m, (0..RUNS).map(|_| make(m)).collect::<Vec<_>>())),
-    );
-    let used = Mutex::new(Vec::new());
-    scaling::check_order(what, n, 1, |m| {
-        let mut x = {
-            let mut made = made.lock().unwrap();
-            let at = made.iter_mut().find(|(k, _)| *k == m).unwrap();
-            at.1.pop().expect("a heap for each run")
-        };
-        run(&mut x, m);
-        used.lock().unwrap().push(x);
-    });
-}
-
 /// A heap holding a shipping rate table `depth` deep as a constant, its word, and the pattern
 /// `(_, (_, … last))` that reads to its end, never dropped: a pattern drops by recursion.
-fn rate_table(depth: usize) -> (Heap, Word, ManuallyDrop<Pattern>) {
+pub(crate) fn rate_table(depth: usize) -> (Heap, Word, ManuallyDrop<Pattern>) {
     let mut h = Heap::new();
     let w = h.uncounted(nested(in_tuple, depth, Value::Int(0)));
     let p = (0..depth).fold(Pattern::Bind("last".into()), |p, _| {
@@ -504,39 +387,15 @@ fn rate_table(depth: usize) -> (Heap, Word, ManuallyDrop<Pattern>) {
 }
 
 /// Matches `p` against `w` and checks the end of the table is bound.
-fn read_to_the_end(h: &mut Heap, p: &Pattern, w: Word) {
+pub(crate) fn read_to_the_end(h: &mut Heap, p: &Pattern, w: Word) {
     let mut out = Vec::new();
     assert!(h.matches(p, w, &mut Paths::default(), &mut out).unwrap());
     assert_eq!(out[0].0, Word::int(0));
 }
 
-#[test]
-fn matching_a_deep_constant_scales() {
-    heap_scales(
-        "a match to the end of a constant n deep",
-        1000,
-        rate_table,
-        |(h, w, p), _| read_to_the_end(h, p, *w),
-    );
-}
-
-#[test]
-fn matching_one_constant_many_times_scales() {
-    heap_scales(
-        "n matches to the end of a constant 100 deep",
-        1000,
-        |_| rate_table(100),
-        |(h, w, p), n| {
-            for _ in 0..n {
-                read_to_the_end(h, p, *w);
-            }
-        },
-    );
-}
-
 /// A heap holding a summary paired with itself `depth` times: `depth + 1` cells, `2^depth`
 /// paths from the top.
-fn paired(depth: usize) -> (Heap, Word) {
+pub(crate) fn paired(depth: usize) -> (Heap, Word) {
     let mut h = Heap::new();
     let mut w = h.fresh(&Value::str("total 12")).unwrap();
     for _ in 0..depth {
@@ -546,23 +405,11 @@ fn paired(depth: usize) -> (Heap, Word) {
     (h, w)
 }
 
-#[test]
-fn reading_a_value_whose_parts_share_cells_scales() {
-    heap_scales(
-        "the value of n cells, each holding the one below twice",
-        1000,
-        paired,
-        |(h, w), _| {
-            std::hint::black_box(h.value(*w).unwrap());
-        },
-    );
-}
-
 /// A heap holding an invoice of `depth` lines, `("line 0", ("line 1", … "total"))`, and the
 /// pattern `(l0, (l1, … total))` that binds every line: a binder at each level, the one at
 /// level `k` at a path of `k + 1` parts. The pattern is never dropped: a pattern drops by
 /// recursion.
-fn invoice(depth: usize) -> (Heap, Word, ManuallyDrop<Pattern>) {
+pub(crate) fn invoice(depth: usize) -> (Heap, Word, ManuallyDrop<Pattern>) {
     let mut h = Heap::new();
     let v = (0..depth).rev().fold(Value::str("total"), |rest, k| {
         Value::tuple(vec![Value::str(&format!("line {k}")), rest])
@@ -575,7 +422,7 @@ fn invoice(depth: usize) -> (Heap, Word, ManuallyDrop<Pattern>) {
 }
 
 /// Matches an invoice against its pattern: the heap, the scrutinee, its paths and binders.
-fn matched_invoice(depth: usize) -> (Heap, Word, Paths, Vec<(Word, usize)>) {
+pub(crate) fn matched_invoice(depth: usize) -> (Heap, Word, Paths, Vec<(Word, usize)>) {
     let (mut h, w, p) = invoice(depth);
     let (mut paths, mut out) = (Paths::default(), Vec::new());
     assert!(h.matches(&p, w, &mut paths, &mut out).unwrap());
@@ -671,50 +518,8 @@ fn a_fused_release_keeps_exactly_the_kept_lines() {
     }
 }
 
-/// A binder at every level of a pattern `n` deep records its path without copying the path
-/// above it (HEAP-binder-paths): a copy per binder made `n²/2` parts.
-#[test]
-fn a_binder_at_every_level_of_a_deep_pattern_scales() {
-    heap_scales(
-        "a match binding each of n levels",
-        1000,
-        invoice,
-        |(h, w, p), n| {
-            let (mut paths, mut out) = (Paths::default(), Vec::new());
-            assert!(h.matches(p, *w, &mut paths, &mut out).unwrap());
-            assert_eq!(out.len(), n + 1);
-        },
-    );
-}
-
-/// The fused release of an invoice `n` deep keeping every line reads each node on the way to
-/// a kept line once, not each line's path from the top (HEAP-binder-paths), with the invoice
-/// held once (each spine cell freed) and held twice (each line given a reference).
-#[test]
-fn releasing_a_binder_at_every_level_scales() {
-    for shared in [false, true] {
-        heap_scales(
-            &format!("a fused release keeping each of n levels, shared {shared}"),
-            1000,
-            |n| {
-                let (mut h, w, paths, out) = matched_invoice(n);
-                if shared {
-                    h.inc(w).unwrap();
-                }
-                let kept: Vec<usize> = out.iter().map(|&(_, node)| node).collect();
-                (h, w, paths, kept)
-            },
-            |(h, w, paths, kept), n| {
-                h.release(*w, paths, kept).unwrap();
-                let live = if shared { 2 * n + 1 } else { n + 1 };
-                assert_eq!(h.live(), live as u64);
-            },
-        );
-    }
-}
-
 /// `#cons(n-1, #cons(…, #cons(0, #nil)))`: a list of `n` atoms, each built on the one before.
-fn list(n: usize) -> Term {
+pub(crate) fn list(n: usize) -> Term {
     (0..n).fold(lit(Value::atom("nil")), |rest, i| {
         prim(
             Prim::Atom,
@@ -730,7 +535,7 @@ fn list(n: usize) -> Term {
 
 /// A world whose input port `x` holds `("s0", "s1", …)`, `n` strings; a read makes them
 /// `n + 1` cells.
-pub(super) fn strings(n: usize) -> World {
+pub(crate) fn strings(n: usize) -> World {
     let mut w = World::new();
     let xs = (0..n).map(|i| Value::str(&format!("s{i}"))).collect();
     w.inputs.insert("x".into(), Value::tuple(xs));
@@ -739,7 +544,7 @@ pub(super) fn strings(n: usize) -> World {
 
 /// `x = read x; f = (y) -> match (x, y) { (a, b) -> b }; (f(0), f(1), …, f(n-1))`: `n`
 /// matches, each binding the tuple `x` to `a`, which the arm does not use.
-pub(super) fn unused(n: usize) -> Term {
+pub(crate) fn unused(n: usize) -> Term {
     let p = Pattern::Tuple(vec![Pattern::Bind("a".into()), Pattern::Bind("b".into())]);
     let s = prim(Prim::Tuple, vec![var("x"), var("y")]);
     let f = lam(&["y"], Term::Match(Shared::new(s), vec![(p, var("b"))]));
@@ -751,39 +556,41 @@ pub(super) fn unused(n: usize) -> Term {
     )
 }
 
-/// The native run of `make` in `world` at `n` and `8n`, planned and with its world built
-/// before the timing, against the counting machine's value and counts at `n`. The timed run
-/// clones the world, which copies the ports' maps and shares their values.
-pub(super) fn check_run(what: &str, n: usize, make: fn(usize) -> Term, world: fn(usize) -> World) {
-    on_big_stack(|| {
-        assert!(!counted_in(&make(n), world(n)).is_empty());
-        let at = |m: usize| (planned(&make(m)), world(m));
-        let (small, large) = (at(n), at(8 * n));
-        scaling::check(what, n, |m| {
-            let ((g, p), w) = if m == n { &small } else { &large };
-            let o = zed_native::run(g, p, &mut Evaluator::new(w.clone())).unwrap();
-            std::hint::black_box(o);
-        });
-    });
+/// The small instances of the benchmarks of `bench/scaling.rs` that compile to an object file:
+/// each shape compiles.
+#[test]
+fn each_deep_shape_compiles_to_an_object_file() {
+    for t in [tiers(3, 0), nest(3), cases(3, 0), curried(4)] {
+        let (g, p) = planned(&t);
+        assert!(!zed_native::object(&g, &p).unwrap().is_empty(), "{t}");
+    }
 }
 
-/// Each atom is made from its words, with no call to the kernel, which took the whole list
-/// built so far as its payload (COMPLEXITY.md R2).
+/// A match to the end of a constant binds its last element, and binds it again on a second
+/// match of the same constant.
 #[test]
-fn a_list_of_many_atoms_scales() {
-    check_run("a list of n atoms, built natively", 500, list, |_| {
-        World::new()
-    });
+fn a_match_reads_to_the_end_of_a_constant_each_time() {
+    let (mut h, w, p) = rate_table(3);
+    for _ in 0..2 {
+        read_to_the_end(&mut h, &p, w);
+    }
 }
 
-/// A binder the arm does not use is not copied out of the scrutinee (COMPLEXITY.md R7). The
-/// tuple holds `64n` strings, so the copy would outweigh the `n` calls.
+/// The value of cells that each hold the one below twice is the whole tree of paths.
 #[test]
-fn many_matches_with_an_unused_binder_scale() {
-    check_run(
-        "n matches, each binding a tuple of 64n cells unused",
-        50,
-        unused,
-        |n| strings(64 * n),
-    );
+fn the_value_of_cells_that_share_their_parts_is_every_path() {
+    let (mut h, w) = paired(2);
+    let s = Value::str("total 12");
+    let one = Value::tuple(vec![s.clone(), s]);
+    assert_eq!(h.value(w).unwrap(), Value::tuple(vec![one.clone(), one]));
+}
+
+/// A list of atoms built natively, and matches binding a tuple the arm does not use, run as
+/// the machine runs them and give the kernel's value.
+#[test]
+fn a_list_of_atoms_and_unused_binders_run_as_the_machine_does() {
+    let t = list(3);
+    let want = Evaluator::new(World::new()).run(&t).unwrap().to_string();
+    assert_eq!(counted(&t), want);
+    assert_eq!(counted_in(&unused(3), strings(4)), "(0, 1, 2)");
 }

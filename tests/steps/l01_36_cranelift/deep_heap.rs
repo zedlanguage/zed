@@ -3,7 +3,6 @@
 //! thread (COMPLEXITY.md R9). No test here sets a stack size, and no depth is refused.
 
 use std::sync::Arc;
-use std::sync::Mutex;
 
 use zed_kernel::term::build::{app, lam, lit, prim, var};
 use zed_kernel::{Evaluator, Lookup, Pattern, Prim, Term, Text, Value, World};
@@ -13,12 +12,14 @@ use zed_tests::scaling;
 use zedc::zir::lower::lower;
 use zedc::zir::memory::plan;
 
-/// How deep the values go; the recursive runtime overflowed its stack far above this.
-const DEPTH: usize = 1_000_000;
+#[path = "deep_heap_bench.rs"]
+mod bench;
 
-/// The depth of the scaling tests, and 8 times it; below about 160,000 cells the run is still
-/// in the fast caches (COMPLEXITY.md K22).
-const N: usize = 100_000;
+/// How deep the values go: above the depths at which the recursive runtime (before commit
+/// 220f60b69) overflowed the 2 MiB stack of a test thread, measured on a list of pairs: 2,143
+/// for `Heap::value`, 5,447 for `Heap::matches`, 6,225 for `Heap::release` and 7,691 for
+/// `Heap::fresh`.
+const DEPTH: usize = 10_000;
 
 /// `#order(customer: name, lines: (first, rest), total: "…")`, as a program's record holds it.
 fn order() -> Value {
@@ -352,83 +353,11 @@ fn a_state_word_is_not_data() {
     );
 }
 
-/// The runs of one measured size: a warming run and five for each measurement.
-const RUNS: usize = 1 + 5 * scaling::TRIES;
+/// The width of the wide function of the test on a small stack.
+const WIDE: usize = 5_000;
 
-/// A heap holding the list of `n` cells.
-fn list_heap(n: usize) -> (Heap, Word) {
-    let mut h = Heap::new();
-    let w = h.fresh(&nested(in_tuple, n, Value::Int(0))).unwrap();
-    (h, w)
-}
-
-#[test]
-fn making_a_deep_value_scales() {
-    let lists = [N, scaling::FACTOR * N].map(|n| (n, nested(in_tuple, n, Value::Int(0))));
-    let used = Mutex::new(Vec::new());
-    scaling::check("Heap::fresh on a list", N, |n| {
-        let v = &lists.iter().find(|(m, _)| *m == n).unwrap().1;
-        let mut h = Heap::new();
-        h.fresh(v).unwrap();
-        used.lock().unwrap().push(h);
-    });
-}
-
-#[test]
-fn reading_a_deep_value_scales() {
-    let heaps = Mutex::new([N, scaling::FACTOR * N].map(|n| (n, list_heap(n))));
-    let used = Mutex::new(Vec::new());
-    scaling::check("Heap::value on a list", N, |n| {
-        let mut heaps = heaps.lock().unwrap();
-        let (_, (h, w)) = heaps.iter_mut().find(|(m, _)| *m == n).unwrap();
-        used.lock().unwrap().push(h.value(*w).unwrap());
-    });
-}
-
-#[test]
-fn matching_a_deep_pattern_scales() {
-    let heaps = Mutex::new([N, scaling::FACTOR * N].map(|n| (n, list_heap(n))));
-    let patterns = [N, scaling::FACTOR * N].map(|n| (n, in_tuples(n, Pattern::Wild)));
-    scaling::check("Heap::matches on a list", N, |n| {
-        let mut heaps = heaps.lock().unwrap();
-        let (_, (h, w)) = heaps.iter_mut().find(|(m, _)| *m == n).unwrap();
-        let p = &patterns.iter().find(|(m, _)| *m == n).unwrap().1;
-        assert!(
-            h.matches(p, *w, &mut Paths::default(), &mut Vec::new())
-                .unwrap()
-        );
-    });
-}
-
-#[test]
-fn releasing_a_deep_value_scales() {
-    let paths = [N, scaling::FACTOR * N].map(|n| (n, one_path(&vec![1; n])));
-    let heaps = Mutex::new(
-        [N, scaling::FACTOR * N].map(|n| (n, (0..RUNS).map(|_| list_heap(n)).collect::<Vec<_>>())),
-    );
-    let used = Mutex::new(Vec::new());
-    scaling::check("Heap::release on a list", N, |n| {
-        let (paths, end) = &paths.iter().find(|(m, _)| *m == n).unwrap().1;
-        let (mut h, w) = {
-            let mut heaps = heaps.lock().unwrap();
-            heaps
-                .iter_mut()
-                .find(|(m, _)| *m == n)
-                .unwrap()
-                .1
-                .pop()
-                .unwrap()
-        };
-        h.release(w, paths, &[*end]).unwrap();
-        used.lock().unwrap().push(h);
-    });
-}
-
-/// The width of the wide function of the scaling test; the test also runs 8 times as wide.
-const WIDE: usize = 2_500;
-
-/// A stack of 256 KiB for a test thread, smaller than the frame of `wide(FACTOR * WIDE)`.
-const SMALL_STACK: usize = 256 << 10;
+/// A stack of 64 KiB for a test thread, smaller than the frame of `wide(WIDE)`.
+const SMALL_STACK: usize = 64 << 10;
 
 /// `(x -> (x ++ "0", x ++ "1", …))("a")` with `k` concatenations, whose results are all live
 /// until the tuple is built, as a generated report's lines are. Each result has a slot of 16
@@ -441,13 +370,13 @@ fn wide(k: usize) -> Term {
     )
 }
 
-/// A function of 20,000 concatenations has a frame of more than 312 KiB, larger than the stack
-/// of 256 KiB its thread runs on: before generated code had a stack of its own (COMPLEXITY.md
+/// A function of 5,000 concatenations has a frame of more than 78 KiB, larger than the stack
+/// of 64 KiB its thread runs on: before generated code had a stack of its own (COMPLEXITY.md
 /// R10), the run stopped at that stack's guard page. A thread of 2 MiB would need about 150,000
 /// concatenations, which compile in about 20 s alone and over 120 s at a load of 180.
 #[test]
-fn a_function_of_20000_concatenations_runs_on_a_smaller_thread_stack() {
-    let t = wide(scaling::FACTOR * WIDE);
+fn a_function_of_5000_concatenations_runs_on_a_smaller_thread_stack() {
+    let t = wide(WIDE);
     let want = Evaluator::new(World::new()).run(&t).unwrap();
     let g = zed_native::legalize(lower(&t).unwrap());
     let p = plan(g.graph(), true);
@@ -458,29 +387,6 @@ fn a_function_of_20000_concatenations_runs_on_a_smaller_thread_stack() {
         got.value == want,
         "the native value differs from the kernel's"
     );
-}
-
-/// Compiling and running the wide function natively, at 2,500 and 20,000 concatenations, on a
-/// thread of 256 KiB: the frame of the larger is larger than that thread's stack. The work is
-/// linear in the width: the code generator's passes, Cranelift's at `OptLevel::None`
-/// (COMPLEXITY.md Z15), and the stack probes, which touch each page of the frame once.
-#[test]
-fn a_wide_function_runs_in_time_linear_in_its_width() {
-    let programs = [WIDE, scaling::FACTOR * WIDE].map(|k| {
-        let g = zed_native::legalize(lower(&wide(k)).unwrap());
-        let p = plan(g.graph(), true);
-        (k, g, p)
-    });
-    scaling::on_a_thread(SMALL_STACK, || {
-        scaling::check(
-            "native compile and run of a function of n concatenations",
-            WIDE,
-            |k| {
-                let (_, g, p) = programs.iter().find(|(m, _, _)| *m == k).unwrap();
-                drop(zed_native::run(g, p, &mut Evaluator::new(World::new())).unwrap());
-            },
-        )
-    });
 }
 
 /// The levels of the list the bytes test makes: a power of two, so the table of cells has no
