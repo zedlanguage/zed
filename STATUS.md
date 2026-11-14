@@ -2196,6 +2196,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | POW-top-body-agree | impl attempt 1 | 2026-11-13 17:20 | started; worktree from origin/main 1e2d6855e |
 | PRES-exact-side | impl attempt 1 | 2026-11-13 20:00 | started; worktree from 223aaf2e2 |
 | REPAIR-literal-string-order | impl attempt 1 | 2026-11-13 20:06 | started; load 61.28 56.25 52.21 |
+| REPAIR-text-number-both-sides | running | 2026-11-13 20:28 |  |
 | ST-class-case-holes | impl attempt 1 | 2026-11-13 19:02 | started; worktree from origin/main f55860149 |
 | ST-walk-orders-nine | impl attempt 1 | 2026-11-13 20:00 | started; load 44.24 |
 | TEST-mutate-generic-time | impl attempt 1 | 2026-11-13 19:53 | started; worktree from origin/main d5f0ccb29; load 48.11 |
