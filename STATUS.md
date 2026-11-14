@@ -2216,9 +2216,13 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | CONST-too-large-coprime-base | impl attempt 1 | 2026-11-14 00:07 | started; load 26.51 34.74 41.48 |
 | DOC-deferred-refs | running | 2026-11-14 00:03 |  |
 | STAGE-generic-fold | impl attempt 1 | 2026-11-09 09:24 | started; worktree from 93fde8efa |
+| TEST-bench-cover-l0138 | running | 2026-11-14 04:03 |  |
 | TEST-bench-move-crates | impl attempt 1 | 2026-11-14 01:43 | started; worktree from origin/main 271806cab |
 | TEST-bench-move-l0123 | impl attempt 1 | 2026-11-14 01:43 | started; worktree made and seeded |
 | TEST-bench-move-l0139 | impl attempt 1 | 2026-11-14 01:43 | started; worktree from origin/main |
+| TEST-corr-slow-l0138 | running | 2026-11-14 04:03 |  |
+| TEST-slow-correctness-l0136 | running | 2026-11-14 04:03 |  |
+| TEST-unusual-sizes-l0136 | running | 2026-11-14 04:03 |  |
 | XR-ffi-stateful-r45 | impl attempt 1 | 2026-11-13 22:45 | round 4 seats launched (Sol, Opus, Gemini; Gemini quota OK); load 43.71 44.82 43.20 |
 | XR-l139-family | orchestrator attempt  | 2026-11-13 18:59 | round 1 merge: f9936c4fe hull sides over two atoms from twovar::ends; cuts_scale 7.1, boxstar_scales 8.8 back; 262 pieces pass; load 51.10 48.05 49.56 |
 
