@@ -2258,6 +2258,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-lex-deep-blank-line | running | 2026-11-14 07:09 |  |
 | FAIL-lex-doc-in-hole | running | 2026-11-14 07:09 |  |
 | FAIL-lex-escape-invisible | running | 2026-11-14 07:09 |  |
+| FAIL-limits-steps-memory | running |  |  |
 | FAIL-linked-piled-holes-count | running | 2026-11-14 07:09 |  |
 | FAIL-pext-transfer-popcount | running | 2026-11-14 07:09 |  |
 | FAIL-preimage-arity-stop-unreported | running | 2026-11-14 07:09 |  |
@@ -2266,12 +2267,14 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-product-refused-box-renamed | running | 2026-11-14 07:09 |  |
 | FAIL-ref-text-reading | running |  |  |
 | FAIL-source-lvt-jamo | running | 2026-11-14 07:09 |  |
+| FAIL-steps-name-layers | running | 2026-11-14 07:09 |  |
+| FAIL-steps-name-plus-sign | running |  |  |
 | FAIL-trivial-stop-after-model | running |  |  |
 | FAIL-zir-canon-misplaced-level-binder | running |  |  |
 | FAIL-zir-lower-port-in-family-message | running |  |  |
 | FAIL-zir-text-reader-messages | running |  |  |
 | POLY-trivial-base-folded | running |  |  |
-| TEST-complete-crates | impl attempt 1 | 2026-11-14 06:21 | zedc-int a05833ed6, zed-rt 9acbf09ae, zedc-solvers 10a4e923a, zed-native 241d4a7a8 pushed (hooks.rs 51.27% -> 94.79%, 26 tests, no FAIL row); next zedc-check, z |
+| TEST-complete-crates | impl attempt 1 | 2026-11-14 06:21 | zedc-check pushed 6a63521aa: 14 tests, COMPLETENESS.md, limits.rs 38.64% -> 88.64%; row FAIL-check-memory-limit-2-63 / 31.42 35.53 31.09 |
 | TEST-complete-types | impl attempt 1 | 2026-11-14 07:09 | started; worktree /home/luke/Work/wt/test-complete-types; load 6.96 13.08 18.93 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
