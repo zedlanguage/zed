@@ -11390,7 +11390,9 @@ impl Scope {
             // is not covered, are read as before, O(|part|).
             let start_part = (self.names.view().clone(), self.bottom);
             let part_before = (covered.is_none()).then(|| self.snapshot(&part.names));
-            self.project_part(&b.formula(part));
+            let projected_now = b.formula(part);
+            let refusals_before = self.refusals.clone();
+            self.project_part(&projected_now);
             certified.clear();
             certified_chains.clear();
             let after_part = self.names.view().clone();
@@ -11446,9 +11448,32 @@ impl Scope {
                 break;
             }
             if again {
-                let all = Formula::and(b.parts.values().map(|p| b.formula(p)).collect());
-                self.project_part(&compact_abs(&all));
-                self.cover(&mut b, covered.is_some());
+                let all = compact_abs(&Formula::and(
+                    b.parts.values().map(|p| b.formula(p)).collect(),
+                ));
+                // Complexity tradeoff (PERF-l139-persist-due): naive version, the conjunction
+                // of all parts always projected here. In `persist` (the star `a >= x + y` and
+                // the disjunctions `x + j * y >= 1 || x - j * y >= 1`) the abs forms make
+                // `compact_abs` keep only the part of j = 1, the part just projected, so each
+                // test projected that part twice: 4.1M instructions a test at k = 16, 57M of
+                // the 551M of the run. Used: the projection is left out when its formula has
+                // the conjuncts of the part just projected (`distinct_conjuncts`, O(r log r)
+                // for its r conjuncts), that projection refused nothing, and the cover after
+                // it moved no name. An exact projection meets the names `N` with the box of
+                // `F ∧ N`; the box holds `F ∧ N`, so a second projection of `F` meets with the
+                // same box and moves nothing, and `cover`, which reads only the names and the
+                // block, gives what it gave. A refusal keeps the box stage's bounds, which a
+                // second projection may narrow, so the projection is made then. Cost: one
+                // persistent-map clone (O(1)) per part projected, and the comparison.
+                // Measured (persist, k = 2 / 16): 65.5M / 551.3M instructions before,
+                // 62.4M / 494.5M after (perf stat, the whole test).
+                let repeat = aggregated.is_empty()
+                    && self.refusals.ptr_eq(&refusals_before)
+                    && distinct_conjuncts(&all) == distinct_conjuncts(&projected_now);
+                if !repeat {
+                    self.project_part(&all);
+                    self.cover(&mut b, covered.is_some());
+                }
                 break;
             }
         }
