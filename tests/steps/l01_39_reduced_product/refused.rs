@@ -21,7 +21,7 @@ fn ge(terms: &[(&str, i128)], k: i128) -> Formula {
 }
 
 /// Four constraints on four names whose integer points are not decided (the system of
-/// `Refusal::Growth` in tests/steps/l01_38_presburger/omega.rs).
+/// `Refusal::Growth` in tests/steps/l01_38_omega_test/omega.rs).
 fn growth() -> Formula {
     Formula::and(vec![
         ge(&[("x", 4), ("w", -12), ("y", -10), ("z", -12)], 11),

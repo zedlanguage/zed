@@ -229,8 +229,8 @@ impl Extending {
     // links, refused, before; 0.12 s now); one emptied only by two moduli together
     // (`x mod 2 == 1 && x mod 3 == 1` between holes) is left to the solver on the faces, and
     // decided whole where it refuses. Test
-    // `l01_38_presburger::extend::a_chain_whose_points_move_is_decided_whole`, which measures
-    // it, `l01_38_presburger::one_scope::the_questions_of_a_chain_of_tests_scale` for the
+    // `l01_38_omega_test::extend::a_chain_whose_points_move_is_decided_whole`, which measures
+    // it, `l01_38_omega_test::one_scope::the_questions_of_a_chain_of_tests_scale` for the
     // chain whose points serve, and
     // `one_scope::the_questions_of_a_chain_of_holes_beside_one_modulus_scale` for the chains
     // the faces show empty, and `one_scope::the_questions_of_a_chain_of_remainders_scale`.
@@ -352,7 +352,7 @@ impl Extending {
         // whole) before it is decided whole. Why: which part's point extends is not known
         // before it is tried. Trigger: a link whose callees' points all fall outside it; a link
         // calls few functions, so the factor is small. Test
-        // `l01_38_presburger::one_scope::each_answer_through_arguments_that_are_not_names_is_the_answer_of_the_relation_whole`
+        // `l01_38_omega_test::one_scope::each_answer_through_arguments_that_are_not_names_is_the_answer_of_the_relation_whole`
         // (the chain `p{i}(x) = q(x: x) && p{i-1}(x: x + 3)`).
         // COMPLEXITY.md row LOAD-chain-affine.
         // A part other than the largest is tried with each other kept part read through its face
@@ -360,7 +360,7 @@ impl Extending {
         // LOAD-call-summary), so the drifting chain `p{i}(x) = q(x: x) && p{i-1}(x: x + 3) && x
         // < 1000 * i`, whose `q` point serves each link, reads O(1) rows a link and not the
         // chain (160 links: 1.80 s before, 0.13 s now; test
-        // `l01_38_presburger::one_scope::the_questions_of_a_drifting_chain_scale`). Each face is exact, so the point is
+        // `l01_38_omega_test::one_scope::the_questions_of_a_drifting_chain_scale`). Each face is exact, so the point is
         // found where the whole one would be; where the solver refuses the question with faces,
         // or none is read, the question is asked with the parts themselves, as before.
         // A part with a disjunction or a negation (an `if`, `min`, `max`, `abs`, `!=`, an
@@ -369,7 +369,7 @@ impl Extending {
         // `q = (x mod 3 == 1 || x mod 5 == 2) && x > 0 && x < 1000000` keeps five clauses a
         // link, one for each residue of the shift modulo 5, and not one for each link (160
         // links: 5.40 s before, 0.27 s now; test
-        // `l01_38_presburger::one_scope::the_questions_of_a_drifting_disjunctive_chain_scale`).
+        // `l01_38_omega_test::one_scope::the_questions_of_a_drifting_disjunctive_chain_scale`).
         // The clauses over one atom that say it lies outside a hole (`x < 10 || x > 20`, moved
         // by each call) are kept as an ordered map of disjoint intervals, read through each
         // call's binding and merged in O(log n) ([`Holes`], LOAD-bound-holes); the clauses
@@ -389,7 +389,7 @@ impl Extending {
         // congruences is implied by others is co-NP-hard (simultaneous incongruences, Garey
         // and Johnson problem AN2). Trigger: `q = (x mod 1009 == 0 || x mod 3 == 1) && ...`
         // in the chain above. Test
-        // `l01_38_presburger::one_scope::each_answer_of_a_random_disjunctive_chain_is_the_answer_of_the_relation_whole`.
+        // `l01_38_omega_test::one_scope::each_answer_of_a_random_disjunctive_chain_is_the_answer_of_the_relation_whole`.
         // COMPLEXITY.md row LOAD-disj-residue.
         let mut holds = None;
         for &(j, k) in &parts {
@@ -586,7 +586,7 @@ impl Extending {
 // from 50 to 400 links). Tradeoffs: a face stands for its part only where nothing else in
 // the question reads an atom it projects out, checked where it is made and where it is read;
 // otherwise the question is asked with the parts, as before. Test
-// `l01_38_presburger::one_scope::the_questions_of_a_drifting_chain_scale`; COMPLEXITY.md row
+// `l01_38_omega_test::one_scope::the_questions_of_a_drifting_chain_scale`; COMPLEXITY.md row
 // LOAD-call-summary.
 #[derive(Default)]
 struct Faces {
@@ -1357,7 +1357,7 @@ fn projected(
 // and Johnson, problem AN2), so no exact projection of polynomial size is known for it.
 // Trigger: two disjunctions over one `x mod n`, as `(x mod 6 == 1 || y > 0) && (x mod 6 == 5
 // || z > 0)`. Test
-// `l01_38_presburger::one_scope::each_answer_of_a_random_disjunctive_chain_is_the_answer_of_the_relation_whole`.
+// `l01_38_omega_test::one_scope::each_answer_of_a_random_disjunctive_chain_is_the_answer_of_the_relation_whole`.
 // COMPLEXITY.md row LOAD-disj-residue. A complete solution needs a projection that keeps such
 // disjunctions in a shared form, a decision diagram over their cases.
 fn project(items: Vec<Formula>, keep: &mut HashSet<Atom>) -> Formula {
@@ -1773,7 +1773,7 @@ fn reached(f: &Formula, def: &dyn Fn(u32) -> Formula) -> Vec<Formula> {
 // read once, O(new parts and their definitions) a link (8.1 times). Tradeoffs: where the
 // point does not extend, or the shortened question does not settle it, the question is
 // decided with all it reaches, O(n) that link, as before; the answers are `decide`'s. Test
-// `l01_38_presburger::one_scope::the_questions_of_a_chain_of_tests_over_a_chain_of_definitions_scale`;
+// `l01_38_omega_test::one_scope::the_questions_of_a_chain_of_tests_over_a_chain_of_definitions_scale`;
 // COMPLEXITY.md row LOAD-chain-defs.
 fn reached_past(f: &Formula, def: &dyn Fn(u32) -> Formula, m: &Point) -> Vec<Formula> {
     reached_by(f, def, &|a| m.contains_key(a))
@@ -2064,7 +2064,7 @@ fn point(f: &Formula) -> Result<Option<Point>, Refusal> {
 /// tied to the caller's by equalities (`x@3 == x@4 + 3`), while the relation written whole
 /// reads the caller's atoms alone; the solver's search depends on that shape, and refused the
 /// first where it decided the second (Shadows on the chain of
-/// `l01_38_presburger::one_scope::a_link_decided_whole_is_answered_where_its_relation_is`).
+/// `l01_38_omega_test::one_scope::a_link_decided_whole_is_answered_where_its_relation_is`).
 // Complexity tradeoff: a question the solver refuses is asked twice, so it costs that refusal,
 // the substitution (time of `f`, times a logarithm) and the second ask. Why: neither shape is
 // refused less often, since the search depends on the rows it is given: over every whole
@@ -2076,7 +2076,7 @@ fn point(f: &Formula) -> Result<Option<Point>, Refusal> {
 // that tie). Asking the bound form alone would refuse those and print its own atoms in a tie,
 // so the form asked first is the one asked before and the second runs only on a refusal. Trigger: a
 // whole question refused with its bindings as rows. Tests
-// `l01_38_presburger::one_scope::a_link_decided_whole_is_answered_where_its_relation_is` and
+// `l01_38_omega_test::one_scope::a_link_decided_whole_is_answered_where_its_relation_is` and
 // `no_question_of_a_random_chain_with_negations_is_refused_where_its_relation_is_decided`.
 // COMPLEXITY.md row LOAD-extend-refuses. A complete solution is a solver whose answer does not
 // depend on how unit equalities are written, substituting them before its search.

@@ -148,6 +148,9 @@ path = "steps/l01_37_oracle/mod.rs"
 name = "l01_37a_short_addresses"
 path = "steps/l01_37a_short_addresses/mod.rs"
 [[test]]
+name = "l01_38_omega_test"
+path = "steps/l01_38_omega_test/mod.rs"
+[[test]]
 name = "l01_38_presburger"
 path = "steps/l01_38_presburger/mod.rs"
 [[test]]

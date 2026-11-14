@@ -248,7 +248,7 @@ fn following_each_repair_of_the_menu_makes_the_program_check() {
         ),
         // Two shifts in 0..=9, each early or late, with a total from 1 to 10: `x` and `y`
         // occur alike, so only their names could order the search
-        // (`l01_38_presburger::names`, the shifts with `1 <= x + y <= 10`). Without
+        // (`l01_38_omega_test::names`, the shifts with `1 <= x + y <= 10`). Without
         // `1 <= x + y`, the shifts at their lower bounds, `x == 0 && y == 0`, are a point,
         // found before any search.
         (

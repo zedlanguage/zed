@@ -113,7 +113,7 @@ fn last(t: &Tree) -> Option<&Node> {
 // O(log n) a cut, read through each call's binding (0.032/0.098/0.198 s). Tradeoffs: one
 // treap node per hole; the answers are main's, except that a link decided through the faces
 // with nothing fixed (`Faces::free`) may answer where the conjunction decided whole is
-// refused. Test `l01_38_presburger::one_scope::the_questions_of_a_chain_moving_a_hole_scale`;
+// refused. Test `l01_38_omega_test::one_scope::the_questions_of_a_chain_moving_a_hole_scale`;
 // COMPLEXITY.md row LOAD-bound-holes.
 #[derive(Clone)]
 pub(super) struct Holes {

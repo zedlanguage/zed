@@ -1078,7 +1078,7 @@ pub fn linear_questions(
             // (`presburger::extend`), so a chain of n tests `p{i}(x) = p{i-1}(x: x) && x > i`,
             // over one variable or several, costs O(n) in all. Complexity tradeoff: a chain
             // whose links each exclude the point found for their callee is decided whole at each
-            // link, O(n²) (at `Extending::defined`). Tests `l01_38_presburger::one_scope::
+            // link, O(n²) (at `Extending::defined`). Tests `l01_38_omega_test::one_scope::
             // the_questions_of_a_chain_of_tests_scale` and `..._over_two_variables_scale`.
             // COMPLEXITY.md rows LOAD-chain and LOAD-chain-share. A chain whose links define
             // auxiliary variables (`x mod 7`) costs O(n) as well: they are numbered once for the

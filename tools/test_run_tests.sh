@@ -60,11 +60,11 @@ check "a test of deep_heap matches as <step>::<test>" "$(echo "$heap" | head -1)
   "$(selected "^l01_36_cranelift::$(echo "$heap" | head -1)\$")"
 check "m0_09 selects deep_values and deep_scaling" \
   "$(by_binary m0_09_kernel_evaluator deep_values deep_scaling)" "$(selected '^m0_09_')"
-live3=$(echo "$all" | grep '^l01_38_presburger::live3::' | sort)
-bin38=$(echo "$pieces" | awk '$1 ~ /^l01_38_presburger/ { print $3; exit }')
+live3=$(echo "$all" | grep '^l01_38_omega_test::live3::' | sort)
+bin38=$(echo "$pieces" | awk '$1 ~ /^l01_38_omega_test/ { print $3; exit }')
 check "a split module is one piece per test" \
-  "$("$bin38" --list --format terse live3:: | sed -n 's/: test$//p' | sed 's/^/l01_38_presburger::/' | sort)" "$live3"
-check "a split module selects its tests" "$live3" "$(selected '^l01_38_presburger::live3::')"
+  "$("$bin38" --list --format terse --skip bench:: live3:: | sed -n 's/: test$//p' | sed 's/^/l01_38_omega_test::/' | sort)" "$live3"
+check "a split module selects its tests" "$live3" "$(selected '^l01_38_omega_test::live3::')"
 check "a split step selects all its pieces" "$(by_binary l01_38_presburger)" "$(selected '^l01_38_presburger')"
 check "zedc's unit tests are one piece" "$(by_binary zedc)" "$(selected '^zedc$')"
 check "a short-addresses piece is selected by its name" "short-l01_37_oracle" "$(selected '^short-l01_37_oracle$')"
@@ -113,8 +113,8 @@ built() {
 check "a listing with --only builds the binaries of its groups alone" "deep_heap l01_36_cranelift " "$(built)"
 run --list --only '^zedc$' >/dev/null
 check "zedc's unit tests are built from its library and its command" "zedc zedc " "$(built)"
-check "a module is built with its binary alone" "l01_38_presburger " \
-  "$(run --list --only '^l01_38_presburger::live3::' >/dev/null && built)"
+check "a module is built with its binary alone" "l01_38_omega_test " \
+  "$(run --list --only '^l01_38_omega_test::live3::' >/dev/null && built)"
 out=$(run --list --only '^zedc$|live3::')
 rc=$?
 check "a part naming no binary stops the run" "1 --only: no test binary is selected by the part 'live3::' of '^zedc\$|live3::'.

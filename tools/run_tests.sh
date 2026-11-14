@@ -637,6 +637,8 @@ fi
 # would pass 60 s (2026-11-09, PA-if-shortcut-diff).
 # l01_38 one_scope took 28.8 to 43.8 s whole under load, and 52.5 s at load 32; its 58 tests take
 # 168 s one by one, the slowest 15 to 37 s alone at load 28 to 46 (2026-11-10, SPLIT-one-scope).
+# l01_38 omega, scaling, names, live3, stages and one_scope moved to l01_38_omega_test, split the
+# same way (2026-11-14, TESTS-split).
 # l01_39 refused took 56 s whole on main and once ran past its limit of 83 s at load 44 to 64;
 # its test of many refused tests, 26 to 27 s alone at load 28 to 36, is now three tests, the
 # slowest the join check at 20 to 26 s at load 24 to 34 (2026-11-10, SPLIT-reduced-refused).
@@ -698,11 +700,11 @@ split="
   l01_29_repairs_and_printing::offered_repairs::every_offered_repair_inside_a_call_checks_as_written
   l01_36_cranelift l01_36_cranelift::scaling l01_36_cranelift::table
   l01_36_cranelift::mul_edges
-  l01_38_presburger l01_38_presburger::oracle l01_38_presburger::omega
-  l01_38_presburger::scaling l01_38_presburger::deep
-  l01_38_presburger::names l01_38_presburger::live3
-  l01_38_presburger::shared l01_38_presburger::stages
-  l01_38_presburger::one_scope
+  l01_38_omega_test l01_38_presburger l01_38_presburger::oracle
+  l01_38_presburger::deep l01_38_presburger::shared
+  l01_38_omega_test::omega l01_38_omega_test::scaling
+  l01_38_omega_test::names l01_38_omega_test::live3
+  l01_38_omega_test::stages l01_38_omega_test::one_scope
   l01_39_reduced_product l01_39_scope_relations l01_39_reduced_product::random
   l01_39_reduced_product::pendants l01_39_scope_relations::lazy
   l01_39_scope_relations::lazy::a_lazy_scope_settles_each_name_to_the_eager_product

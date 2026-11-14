@@ -2316,7 +2316,7 @@ fn a_refused_box_does_not_depend_on_the_names_seed_15900465239627589939() {
 /// point, was found empty by `decide` on each writing, but `satisfiable` refused it by growth as
 /// written and found it empty once the equation was written as two rows. `satisfiable` now
 /// removes the disjuncts the bounds show have no point before it settles, as `decide` does
-/// (`l01_38_presburger::decide_sat::an_equation_written_as_one_row_or_two_is_decided_by_both`).
+/// (`l01_38_omega_test::decide_sat::an_equation_written_as_one_row_or_two_is_decided_by_both`).
 #[test]
 fn rewritten_parts_of_seed_8087861239740142386_are_decided_alike() {
     let seed = 8087861239740142386u64;

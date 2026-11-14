@@ -651,7 +651,7 @@ fn reduced(facts: &Facts) -> Option<Formula> {
 /// atom of a disjunction that `absorb` removed where zero lies between its bounds (`repair`), an
 /// atom of a disjunct the search did not take, and an atom of a disjunct it took because its rows
 /// hold with that atom read as zero (`pick`). A caller that needs a value for every atom gives
-/// those left out zero (`l01_38_presburger::model_keys`). A product is read as an atom of its
+/// those left out zero (`l01_38_omega_test::model_keys`). A product is read as an atom of its
 /// own, as everywhere in the solver, so its value in the point need not be the product of its
 /// factors' values: the point satisfies `f` with each product read as a variable of its own
 /// (PRES-product-parity), and [`Formula::holds`], which reads a product through its factors, may
@@ -735,7 +735,7 @@ fn satisfiable_named(f: &Formula) -> Result<Option<Model>, Refusal> {
 /// the formula, so a point with them is a point of the formula; they keep [`pick`] from taking
 /// a disjunct that leaves the disjunctions after it no point within their hulls, which on a
 /// path of steps each up or down took two steps down that the rest could not balance
-/// (`l01_38_presburger::model::a_disjunction_of_unit_rows_is_decided_and_placed`).
+/// (`l01_38_omega_test::model::a_disjunction_of_unit_rows_is_decided_and_placed`).
 // Complexity tradeoff: as in [`decide_inner`], a formula refused with the implied rows is
 // asked twice, so it costs up to twice what it cost before; the first ask stops at the
 // refusal. No answer is given up: one refused with the rows is asked as before without them.
@@ -760,7 +760,7 @@ fn satisfiable_inner(f: &Formula) -> Result<Option<Model>, Refusal> {
         // O(n log n) pass of [`drop_by_bounds`] before it, which costs at most the same order as
         // the propagations `settle` makes and removes the disjuncts it would have to test. Tests:
         // `l01_39_reduced_product::pendants::rewritten_parts_of_seed_8087861239740142386_are_decided_alike`,
-        // `l01_38_presburger::probe::twin_chains_of_absolute_values_scale`. COMPLEXITY.md row C47.
+        // `l01_38_omega_test::probe::twin_chains_of_absolute_values_scale`. COMPLEXITY.md row C47.
         if drop_by_bounds(&mut p, &|_| false).is_none() {
             return Ok(None);
         }
@@ -1295,7 +1295,7 @@ fn met(a: Option<&values::Bounds>, b: &values::Bounds) -> Option<values::Bounds>
 // after a removal and ask again only the disjunctions whose projection changed; on the hub
 // that is still `r` projections changed per arm. Trigger: removals that pass back and forth
 // through shared atoms. Tests: `jointly_empty_order` (both families, in several orders) and
-// `l01_38_presburger::disj_groups` (the chains at `n` and `8n`). Also not done here: a
+// `l01_38_omega_test::disj_groups` (the chains at `n` and `8n`). Also not done here: a
 // disjunct empty only with a choice of disjuncts in other disjunctions (case reasoning, a
 // search that backtracks over the disjuncts) is kept; see the comment on the questions in
 // [`project_parts`].
@@ -1837,7 +1837,7 @@ fn decide_kept_status(
             // Given up: a run whose removals the bounds do not show still moves one disjunction
             // per round. A complete solution re-tests, when a disjunct joins the base, only the
             // disjunctions that share an atom with it. Tests:
-            // `l01_38_presburger::probe::twin_chains_of_absolute_values_scale`, COMPLEXITY.md row
+            // `l01_38_omega_test::probe::twin_chains_of_absolute_values_scale`, COMPLEXITY.md row
             // C47 (PROJECT-abs-chain-quadratic).
             if drop_by_bounds(&mut p, &|_| false).is_none() {
                 return Ok(false);
@@ -1938,8 +1938,8 @@ fn rename(to: &HashMap<Atom, Arc<str>>, a: &Atom) -> Atom {
 /// searching as written made the answer depend on the names (5 of 1,000 systems of the test
 /// below). Trigger: a formula with a disjunction, after negations are pushed in, two of whose
 /// atoms the coloring does not tell apart. Tests:
-/// `l01_38_presburger::names::disjunctions_whose_atoms_share_a_color` and
-/// `l01_38_presburger::names::a_formula_whose_atoms_share_a_color_is_settled_or_refused`.
+/// `l01_38_omega_test::names::disjunctions_whose_atoms_share_a_color` and
+/// `l01_38_omega_test::names::a_formula_whose_atoms_share_a_color_is_settled_or_refused`.
 /// COMPLEXITY.md row NAME-ties-or. A complete solution would rename by a canonical labeling,
 /// or search the disjunctions completely (DPLL(T)); each is exponential in the worst case.
 struct Renamed {
@@ -2169,7 +2169,7 @@ fn unordered(vars: Vec<Atom>, p: &Parts) -> Refusal {
 // atoms (`stage_kernels`, `by_halves`), O((m + k) log k) for k disjunctions on a chain or
 // tree of m rows (11.0 times). Tradeoffs: a projection the solver refuses sends the question
 // to the whole group, O(n) that disjunct, as before; the hulls are unchanged. Tests
-// `l01_38_presburger::omega::project_each_on_a_chained_pipeline_scales` and
+// `l01_38_omega_test::omega::project_each_on_a_chained_pipeline_scales` and
 // `omega::pipeline_stage_hulls_match_the_code_before`; COMPLEXITY.md row
 // PROJECT-dead2-quadratic.
 fn settle_as_sets(mut p: Parts) -> Result<Option<AsSets>, Refusal> {
@@ -2349,9 +2349,9 @@ enum Settled {
 /// [`solve`] after the settling, and the links are read once. Trigger: a formula with two
 /// linked disjunctions left after settling, two of whose atoms the coloring does not tell
 /// apart. Tests:
-/// `l01_38_presburger::names::a_formula_whose_atoms_share_a_color_is_settled_or_refused`,
-/// `l01_38_presburger::names::decide_on_tied_disjunctions_scales` and
-/// `l01_38_presburger::names::decide_on_separate_tied_disjunctions_scales`. COMPLEXITY.md row
+/// `l01_38_omega_test::names::a_formula_whose_atoms_share_a_color_is_settled_or_refused`,
+/// `l01_38_omega_test::names::decide_on_tied_disjunctions_scales` and
+/// `l01_38_omega_test::names::decide_on_separate_tied_disjunctions_scales`. COMPLEXITY.md row
 /// NAME-ties-or. A complete solution would search the disjunctions completely (DPLL(T)),
 /// exponential in the disjunctions in the worst case, or tell the atoms apart by a canonical
 /// labeling, exponential in the worst case too.
@@ -2553,7 +2553,7 @@ fn by_color<'a>(p: &'a Parts, color: &HashMap<Atom, usize>) -> Option<Vec<&'a Co
 // [`decide`] and [`satisfiable`] still agree on all 3,000 (`PDCX_SAT=1`), so it is not made.
 // What is lost is the argument that the two answer on the same formulas: it now rests on
 // those measurements, not on the code. Test:
-// `l01_38_presburger::decide_sat::decide_answers_where_satisfiable_answers`.
+// `l01_38_omega_test::decide_sat::decide_answers_where_satisfiable_answers`.
 fn found(p: Parts) -> Result<Option<Model>, Refusal> {
     if let Ok(m) = pick(&p, true) {
         return Ok(Some(m));
@@ -2601,7 +2601,7 @@ fn found(p: Parts) -> Result<Option<Model>, Refusal> {
 // times the instructions in the scaling test below). Tradeoffs: a probe that finds no point
 // still runs to the end; `satisfiable` still probes to the end, so its model is main's. Tests
 // `l01_25_preimage_catalog::s22::the_box_of_a_chain_over_many_holes_is_tested_in_linear_work`
-// and `l01_38_presburger::model::satisfiable_agrees_with_decide_on_disjunctions_of_unit_rows`;
+// and `l01_38_omega_test::model::satisfiable_agrees_with_decide_on_disjunctions_of_unit_rows`;
 // COMPLEXITY.md row S22-shapes-linear.
 //
 // Where the probe that stops refuses, the batched searches of [`found`]'s probe are made
@@ -2619,7 +2619,7 @@ fn found(p: Parts) -> Result<Option<Model>, Refusal> {
 // [`found`]'s probe first (one probe, the same answers as [`satisfiable`]), whose batched
 // searches cost 95.7 times the bytes at 8n on `s22::chain_cross_above_its_width_scales`
 // (limit 16.2) and 68.0 times on `chain_cross_dead_scales` (limit 17.6). Test:
-// `l01_38_presburger::decide_sat::decide_answers_where_satisfiable_answers`.
+// `l01_38_omega_test::decide_sat::decide_answers_where_satisfiable_answers`.
 //
 // Complexity tradeoff (HAS-point-probe, M5): naive version, main's order ([`by_cells`] after
 // a [`pick`] that fails, then the probe), O(n²) or worse on memberships in shared sets
@@ -8590,8 +8590,8 @@ pub(super) fn fresh_stamp() -> u64 {
 /// NP-complete (graph 3-coloring is such a formula: one disjunction of three colors per
 /// node, one row per edge), so a search that backtracks is exponential in the disjunctions.
 /// Trigger: two or more disjunctions whose disjuncts conflict through shared variables,
-/// whatever the size. Tests: `l01_38_presburger::omega::each_cause_of_a_refusal_has_its_own_message`
-/// (four tasks in three slots), `l01_38_presburger::omega::a_disjunct_refused_by_the_solver_is_reported_by_its_own_cause`.
+/// whatever the size. Tests: `l01_38_omega_test::omega::each_cause_of_a_refusal_has_its_own_message`
+/// (four tasks in three slots), `l01_38_omega_test::omega::a_disjunct_refused_by_the_solver_is_reported_by_its_own_cause`.
 /// COMPLEXITY.md rows S16 and S18. A complete solution would backtrack over the disjuncts
 /// (DPLL(T) with learned conflicts), exponential in the worst case.
 ///
@@ -9186,7 +9186,7 @@ type Eliminated = (Atom, Vec<Con>);
 // rows for an atom of l lower and u upper bounds, so a piece of r rows may grow to O(r²) at
 // each atom; a piece of a summary holds the rows of one case of one definition and of one
 // piece below, a few rows each, and is measured by the `separate_*_scale` tests
-// (l01_38_presburger::one_scope), COMPLEXITY.md row LOAD-chain-sep-rest.
+// (l01_38_omega_test::one_scope), COMPLEXITY.md row LOAD-chain-sep-rest.
 pub(super) fn shadow_whole(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>> {
     shadow_logged(rows, keep, true, true, None)
 }
@@ -10017,7 +10017,7 @@ fn probe_kept_status(
                 // 416.84 G against 420.73 G halving to one disjunct. Not used: no halves (413.73
                 // G, but 9 fewer hulls finer than main's), or every level but the leaves (7.19 G
                 // and 46.31 G, above main). Test:
-                // `l01_38_presburger::decide_sat::decide_answers_where_satisfiable_answers`.
+                // `l01_38_omega_test::decide_sat::decide_answers_where_satisfiable_answers`.
                 let sbh_failed = search_by_halves(
                     &p,
                     &mut held,
@@ -10101,7 +10101,7 @@ fn probe_kept_status(
                             // a `settle`. So when no learned bound removes a later disjunct, `r` refuted
                             // disjuncts cost up to `O(r log m)` settles, not `r`. Counted on
                             // 2026-11-12 (item TESTS-split-reversed-boxes): the projection onto `i`
-                            // of `l01_38_presburger::probe::projecting_guards_beyond_the_inputs_scales`
+                            // of `l01_38_omega_test::probe::projecting_guards_beyond_the_inputs_scales`
                             // makes one propagation here at 16 and at 128 guards, and 4 and 2 calls
                             // of [`learn`] in all, with 6 and 10 settles in them; `decide` on the
                             // same formula (`guards_beyond_the_inputs_scale`) and the preimage of
@@ -10491,7 +10491,7 @@ impl<'a> Unit<'a> {
 /// bounds' magnitude, not with the parts. Trigger: a proof that needs a bound carried back
 /// along a chain after it was carried there. Tests:
 /// `l01_25_preimage_catalog::s22::chain_cross_above_its_width_scales` (cross at 12 and 96,
-/// COMPLEXITY.md S22) and `l01_38_presburger::probe::projecting_guards_beyond_the_inputs_scales`
+/// COMPLEXITY.md S22) and `l01_38_omega_test::probe::projecting_guards_beyond_the_inputs_scales`
 /// (guards on symbols whose names do not sort in the chain's order). A complete solution is
 /// the exact projection of the formula onto `x`, which with disjunctions is exponential in
 /// them.
@@ -10578,9 +10578,9 @@ fn read_order(units: &[Unit<'_>], x: Option<&Atom>) -> Vec<usize> {
 // before, so it costs what it cost on main and no answer changes for it. Why: propagating
 // bounds until none moves can take rounds that grow with the constants, not the parts
 // ([`bounds_refute`]). Tests:
-// `l01_38_presburger::probe::a_nested_chain_of_absolute_values_scales`,
-// `l01_38_presburger::probe::twin_chains_of_absolute_values_scale` and
-// `l01_38_presburger::probe::a_nested_chain_of_absolute_values_is_projected_exactly`.
+// `l01_38_omega_test::probe::a_nested_chain_of_absolute_values_scales`,
+// `l01_38_omega_test::probe::twin_chains_of_absolute_values_scale` and
+// `l01_38_omega_test::probe::a_nested_chain_of_absolute_values_is_projected_exactly`.
 // COMPLEXITY.md row C47 (PROJECT-abs-chain-quadratic).
 fn drop_by_bounds(p: &mut Parts, spared: &dyn Fn(&Parts) -> bool) -> Option<bool> {
     // A conjunction has no disjunct to remove, and is left to [`settle`] as before. Its names
@@ -10851,7 +10851,7 @@ fn point_with(
 /// the propagation each of them costs anyway, a constant factor. The held marks come from
 /// the disjuncts [`pick`] took, read once each, not from a test of every disjunct at each
 /// point (`O(n)` per point). Tests: the scaling tests of
-/// `l01_38_presburger::disj_groups`, `l01_39_reduced_product::named_test` and
+/// `l01_38_omega_test::disj_groups`, `l01_39_reduced_product::named_test` and
 /// `l01_39_scope_relations::deep_condition`, and `ladder::a_chain_of_guarded_remainders_scales`
 /// (COMPLEXITY.md PROJECT-canon-precision).
 // Complexity tradeoff (PRES-stop-prefix): with `stop`, the searches end at the first point,
@@ -10898,7 +10898,7 @@ fn search_by_halves(
     // and the rest by the bound it learns. Each such failure costs [`learn`]'s tests, at least
     // one [`bounds_refute`] or [`settle`] of the whole formula for each bound of one atom it
     // writes, a constant factor on the search that failed, and `O(log m)` of them when they
-    // find a bound. Tests: `l01_38_presburger::probe::projecting_guards_beyond_the_inputs_scales`
+    // find a bound. Tests: `l01_38_omega_test::probe::projecting_guards_beyond_the_inputs_scales`
     // and `guards_are_projected_onto_each_input`.
     let found = RefCell::new(Near::clone(implied));
     let learn_at = |i: usize, at: usize| {
@@ -11892,9 +11892,9 @@ fn unit_bound<'a>(c: &'a Con, x: &Atom) -> Option<(bool, Vec<(&'a Atom, &'a Int)
 /// read the row once for each such atom in it. Why: removing a disjunction requires showing
 /// that it changes no projection, which in general is the projection itself; the unit case is
 /// the one where elimination is exact and reads only the bounds of one atom. Trigger: a star
-/// whose leaves each choose between two bounds (`l01_38_presburger::names::star_with_choices`)
+/// whose leaves each choose between two bounds (`l01_38_omega_test::names::star_with_choices`)
 /// is covered; the same with each choice over two leaves is not. Tests:
-/// `l01_38_presburger::names::decide_on_tied_disjunctions_scales`,
+/// `l01_38_omega_test::names::decide_on_tied_disjunctions_scales`,
 /// `satisfiable_on_tied_disjunctions_scales` and `project_each_on_tied_disjunctions_scales`.
 /// COMPLEXITY.md row DECIDE-disj-chain. A complete solution would be a projection that shares
 /// work between the disjuncts of one group (an incremental solver that keeps the eliminated
@@ -12156,7 +12156,7 @@ fn drain_unary(ors: &mut Vec<Vec<Rc<Parts>>>, base: &mut Linked, near: &mut Near
 /// disjunction ([`by_halves`], [`shadow`]), with the disjuncts of a round taken by halves, so
 /// that on a chain or a tree of `n` rows `n` such disjuncts cost O(n log n), not `n` solves of
 /// the group (COMPLEXITY.md DECIDE-disj-chain, DISJ-incremental; tests in
-/// `l01_38_presburger::disj_groups`). A disjunct the solver refuses with the projection is
+/// `l01_38_omega_test::disj_groups`). A disjunct the solver refuses with the projection is
 /// solved with every base row linked to it, as before.
 ///
 /// Complexity tradeoff: where [`shadow`] keeps a core of the group whole (a dense graph, a
@@ -13284,10 +13284,10 @@ fn search(
 /// rows with coefficient 2 on one side, the form that nests), so no visited set is kept.
 /// Trigger for the refusal: a dark elimination inside a splinter at as many live variables as
 /// the one it splits, which needs a gap of more than one value (a bound coefficient other than
-/// ±1 or 2). Tests: `l01_38_presburger::omega::each_cause_of_a_refusal_has_its_own_message`,
+/// ±1 or 2). Tests: `l01_38_omega_test::omega::each_cause_of_a_refusal_has_its_own_message`,
 /// `l01_38_presburger::checker::a_question_whose_point_lies_past_one_splinter_is_rejected`,
-/// `l01_38_presburger::scaling::pughs_example_in_a_chain_scales`,
-/// `l01_38_presburger::scaling::splinters_of_splinters_scale`. COMPLEXITY.md row S18. A
+/// `l01_38_omega_test::scaling::pughs_example_in_a_chain_scales`,
+/// `l01_38_omega_test::scaling::splinters_of_splinters_scale`. COMPLEXITY.md row S18. A
 /// complete solution would enumerate the gap of each such splinter by value, as Pugh's Omega
 /// test does, at a cost exponential in the coefficients as well as the depth.
 ///
@@ -13299,8 +13299,8 @@ fn search(
 /// structure, and so is their order, so ending after a whole batch keeps the answer the same
 /// under every naming, which ending inside one would not. Trigger: a dark elimination whose
 /// splinters are refused, before one whose splinters hold a point. Tests:
-/// `l01_38_presburger::scaling::pughs_example_in_a_chain_scales`,
-/// `l01_38_presburger::names::the_splinters_are_searched_a_batch_at_a_time`. COMPLEXITY.md row
+/// `l01_38_omega_test::scaling::pughs_example_in_a_chain_scales`,
+/// `l01_38_omega_test::names::the_splinters_are_searched_a_batch_at_a_time`. COMPLEXITY.md row
 /// NAME-ties.
 fn splinters(
     top: &Omega,
@@ -15214,7 +15214,7 @@ impl Omega {
     // a property of the system's shape: `Refusal::Shadows` when a splinter leaves a gray
     // shadow of its own, `Refusal::Growth` when every elimination left would add terms and
     // the box test decides nothing; the cases still above n log n are row S18. Tests in
-    // `l01_38_presburger::scaling` (`a_long_chain_with_a_point_scales` and the other chain
+    // `l01_38_omega_test::scaling` (`a_long_chain_with_a_point_scales` and the other chain
     // tests); COMPLEXITY.md row S5.
     fn run(&mut self) -> Leaf {
         // The values of the variables left when the loop ends, zero where none is given.
@@ -15446,15 +15446,15 @@ impl Omega {
             // variables, rows not all `±x ± y + k >= 0`, every inexact elimination adding terms
             // as `Sides::fill` counts them, and every exact one adding terms even counted by the
             // rows it writes (`System::shrink`); the size of the system plays no part. Measured
-            // in `l01_38_presburger::q1_local` (Q1-LOCAL, 2026-11-08): weighted sliding
+            // in `l01_38_omega_test::q1_local` (Q1-LOCAL, 2026-11-08): weighted sliding
             // windows, a band of four, blocks of five chained or as a tree, sums over grid
             // squares and sparse random rows, each with a point, are refused at every size.
             // (Three live variables are decided completely, by `live3` below.) Tests:
-            // `l01_38_presburger::omega::each_cause_of_a_refusal_has_its_own_message`,
+            // `l01_38_omega_test::omega::each_cause_of_a_refusal_has_its_own_message`,
             // `l01_38_presburger::checker::a_satisfiable_question_with_no_elimination_that_keeps_the_rows_is_refused`,
-            // `l01_38_presburger::scaling::the_shifted_sparse_family_scales`,
-            // `l01_38_presburger::stages::rows_the_one_pass_test_does_not_show_empty_stay_refused`,
-            // `l01_38_presburger::scaling::the_box_stage_with_a_hub_in_one_row_per_block_scales`.
+            // `l01_38_omega_test::scaling::the_shifted_sparse_family_scales`,
+            // `l01_38_omega_test::stages::rows_the_one_pass_test_does_not_show_empty_stay_refused`,
+            // `l01_38_omega_test::scaling::the_box_stage_with_a_hub_in_one_row_per_block_scales`.
             // COMPLEXITY.md rows S18, Q1-ROWBOX, Q1-LOCAL and Kept "Fourier–Motzkin pairs". A
             // complete solution would run the growing eliminations of the full Omega test (or another
             // complete Presburger procedure) and accept their exponential worst case, or find a
@@ -15490,8 +15490,8 @@ impl Omega {
             // the rows) has no known polynomial algorithm. Trigger: two variables of one
             // color, both of least fill, sharing a row, in a system no other stage decides;
             // the size of the system plays no part. Tests:
-            // `l01_38_presburger::names::a_tie_that_shares_a_row_is_refused`,
-            // `l01_38_presburger::names::every_naming_gives_one_answer_on_the_regular_family_of_five_103`.
+            // `l01_38_omega_test::names::a_tie_that_shares_a_row_is_refused`,
+            // `l01_38_omega_test::names::every_naming_gives_one_answer_on_the_regular_family_of_five_103`.
             // COMPLEXITY.md row NAME-ties. A complete solution would search every order of
             // the tied candidates, or decide the rows by a complete method (plan item
             // HULL3-GEN; three live variables are decided by `live3` above).
@@ -15910,8 +15910,8 @@ impl Omega {
     /// may be refused with `Refusal::Growth` though its cycles decide it. Trigger: a zero-sum
     /// cycle of difference rows with a weight below zero on it, or one closed by a step; the
     /// size of the system plays no part. Tests:
-    /// `l01_38_presburger::omega::a_cycle_of_rows_makes_its_variables_equal` and
-    /// `l01_38_presburger::scaling::a_cycle_of_rows_scales`. COMPLEXITY.md row
+    /// `l01_38_omega_test::omega::a_cycle_of_rows_makes_its_variables_equal` and
+    /// `l01_38_omega_test::scaling::a_cycle_of_rows_scales`. COMPLEXITY.md row
     /// OMEGA-cycle-growth. A complete solution would find a potential with
     /// [`utvpi::integer_empty`]'s search, take the zero-weight cycles among its tight edges,
     /// and keep the components up to date as steps add rows (incremental strongly connected
@@ -16591,8 +16591,8 @@ fn project_each_named(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
 // hashed copy of each conjunct that defines one atom, O(N log N) in all. Why: finding every
 // pair of equal atoms is deciding the equality of two terms of the formula, which is the
 // whole projection problem. Trigger: a projection whose atoms share a color. Tests:
-// `l01_38_presburger::omega::twin_definitions_are_merged_before_a_tied_projection` and
-// `l01_38_presburger::omega::twin_definitions_merge_in_time_near_linear` (control: the
+// `l01_38_omega_test::omega::twin_definitions_are_merged_before_a_tied_projection` and
+// `l01_38_omega_test::omega::twin_definitions_merge_in_time_near_linear` (control: the
 // pairwise comparison failed it, 16.2 times the bytes at 8 times the size, limit 14.1).
 // COMPLEXITY.md row PROJECT-box-half-open.
 fn twins_merged(f: &Formula, syms: &[Atom]) -> Option<Formula> {
@@ -16915,7 +16915,7 @@ impl Boxed {
 /// of rounds that grows with the constants, not the rows. Trigger: a question or a symbol the
 /// solver refuses. Tests: `l01_39_reduced_product::pendants::parts_once_answered_by_how_they_were_written_give_one_answer`,
 /// `l01_39_reduced_product::pendants::refused_projections_keep_the_box_of_their_rows`,
-/// `l01_38_presburger::omega::the_box_of_refused_rows_scales`. COMPLEXITY.md row
+/// `l01_38_omega_test::omega::the_box_of_refused_rows_scales`. COMPLEXITY.md row
 /// PROJECT-growth-box. A complete solution would decide the integer program (see
 /// `Omega::run`).
 pub fn project_each_boxed(f: &Formula, syms: &[Atom]) -> Boxed {
@@ -17462,7 +17462,7 @@ impl Level {
         // Complexity tradeoff: the naive way, each hull by its own questions ([`hull_from`]), is
         // O(log d) questions of the whole group of n rows for each side; the substitution and
         // the shortest paths are O(n log n) for the group, once. On the three-atom chain of
-        // `l01_38_presburger::disj_groups` that was 77% of the work at 2048 stages; now 2.2 times
+        // `l01_38_omega_test::disj_groups` that was 77% of the work at 2048 stages; now 2.2 times
         // less work in all, still of order n log n. Test:
         // `disj_groups::the_middle_of_a_chain_of_three_atom_rows_is_found_without_asking_for_a_side`.
         // COMPLEXITY.md row THREE-atom-exponent.
@@ -17942,7 +17942,7 @@ impl Level {
         // for each question. Why: finding a point of a conjunction of disjunctions of linear rows
         // is NP-complete, and a search that backtracks over the disjuncts (DPLL(T)) is exponential
         // in the worst case. Trigger: disjunctions that only by cases leave out the end of a hull
-        // that their rows allow. Tests: `l01_38_presburger::disj_groups` (the hulls of small chains
+        // that their rows allow. Tests: `l01_38_omega_test::disj_groups` (the hulls of small chains
         // against their points counted one by one, and the two chains above at `n` and `8n`);
         // COMPLEXITY.md row DISJ-incremental.
         // A hull with one finite end is tightened at that end too, searched toward the value of
@@ -18048,7 +18048,7 @@ impl Level {
             // where a removal fixed an atom that another row names, with its value put in, cost 1.96
             // times the instructions on that `overlap_rows` projection, and putting the values in on
             // every ask left two other `random2` hulls coarser than main (cases 1018 and 2306). Test:
-            // `l01_38_presburger::disj_groups::a_hull_question_refused_after_the_removals_by_bounds_keeps_its_point`.
+            // `l01_38_omega_test::disj_groups::a_hull_question_refused_after_the_removals_by_bounds_keeps_its_point`.
             let ask: Ask = if sets {
                 |f, _, status| {
                     let answer = decide(f);
@@ -18266,7 +18266,7 @@ fn hull_immunity(f: &Formula) -> bool {
 // Complexity tradeoff: each symbol was asked of the whole formula, its rows read again for each
 // symbol and a point of them searched for at each end, O(N) per symbol for a formula of size N,
 // so projecting the k symbols of a family cost O(k N), quadratic in the family (all states of a
-// pipeline of 16 and 128 stages, `l01_38_presburger::omega::dead2`: 56.1 times the bytes
+// pipeline of 16 and 128 stages, `l01_38_omega_test::omega::dead2`: 56.1 times the bytes
 // unchained, 61.6 chained, item TIGHTEN-each-whole). Now the groups cost O(N log N) to find, the
 // rows of each group are read once, with each hull's bounds added to them so that the point
 // with every atom least (or greatest) puts each symbol at its hull's end where the group allows
@@ -18284,10 +18284,10 @@ fn hull_immunity(f: &Formula) -> bool {
 // reading only the rows and disjunctions on that atom, with each row's value kept and changed
 // by the atom's coefficient, but [`point_of`] and [`Formula::holds`] read the whole group.
 // Trigger: one group whose symbols' ends are reached at different points. Tests:
-// `l01_38_presburger::omega::every_state_and_credit_of_a_pipeline_scale` (unchained; the
+// `l01_38_omega_test::omega::every_state_and_credit_of_a_pipeline_scale` (unchained; the
 // chained pipeline's tightening is O(n log n) too, but its projection of each disjunct onto
 // every symbol of the chain is not, item PROJECT-each-chain-all),
-// `l01_38_presburger::omega::independent_stages_scale` (ends shown only by questions);
+// `l01_38_omega_test::omega::independent_stages_scale` (ends shown only by questions);
 // COMPLEXITY.md row TIGHTEN-each-whole.
 // A hull with one finite end (item PRES-pendants-wider): the naive search walks from the end
 // one value at a time, `w` questions with `w` the distance from the end to the nearest value at
@@ -18307,7 +18307,7 @@ fn hull_immunity(f: &Formula) -> bool {
 // is finite at all asks whether the formula has points with the symbol past every bound, a
 // question with one more quantifier, and no search by values ends where it is not (item
 // PRES-cases-end). Tests
-// `l01_38_presburger::disj_groups::a_finite_end_whose_other_is_infinite_is_tightened_by_cases`,
+// `l01_38_omega_test::disj_groups::a_finite_end_whose_other_is_infinite_is_tightened_by_cases`,
 // `a_finite_end_is_tightened_where_the_solver_gives_no_point`,
 // `an_end_only_case_reasoning_bounds_is_read_from_a_disjunct`,
 // `an_end_that_cases_bound_at_a_value_no_disjunct_gives_is_left_open` and
@@ -19608,7 +19608,7 @@ fn difference_hulls(cons: &[&Con], m: &Model) -> Option<HashMap<Atom, IntervalSe
 /// together are each set so at once, which is a point by the same argument for each.
 // Complexity tradeoff: the naive way, which this replaces for such groups, is [`hull_from`]
 // for each symbol of the group, O(log d) questions of the whole group of `n` rows for a bound
-// at distance `d` (the three-atom chain of `l01_38_presburger::disj_groups`: 77% of the work
+// at distance `d` (the three-atom chain of `l01_38_omega_test::disj_groups`: 77% of the work
 // at 2048 stages). This is one pass over the terms and the two Dijkstra searches of
 // [`difference_hulls`], O(n log n). It refuses nothing: a group whose rows are not difference
 // rows after the substitution, or an atom bounded on both sides by rows with others, keeps the

@@ -81,7 +81,7 @@ pub fn integer_empty_by(n: usize, rows: &[(&[Term], &Int)], search: Search) -> b
 // components, linear); a literal in one component with its negation is an odd zero cycle, no
 // point. The cost is that of the potential plus linear work. Tradeoffs: unit two-variable rows
 // only; the point is one of many and need not be the one elimination would give. Tests in
-// `l01_38_presburger::model`; COMPLEXITY.md row S38.
+// `l01_38_omega_test::model`; COMPLEXITY.md row S38.
 pub fn integer_point(n: usize, rows: &[(&[Term], &Int)]) -> Option<Vec<Int>> {
     integer_point_by(n, rows, Search::First)
 }
@@ -216,7 +216,7 @@ fn potential(out: &[Vec<(usize, Int)>]) -> Option<Vec<Int>> {
     // weight 0, in O(V + E). A component with no edge inside it needs no search, so a graph
     // with no cycle is decided by this pass alone: on BAD-GOR and a fan with no cycle, 5.29M
     // instructions at k = 256 against 20.1M for the race over the whole graph and 44.6M for
-    // BF-Dijkstra alone (`l01_38_presburger::stages::bad_gor_and_a_fan_with_no_cycle_scale`).
+    // BF-Dijkstra alone (`l01_38_omega_test::stages::bad_gor_and_a_fan_with_no_cycle_scale`).
     // The race's searches also each see a smaller graph, and a component slow for one search
     // costs nothing in another component.
     let n = out.len();
@@ -1044,7 +1044,7 @@ mod tests {
         // give it, k = 64, with its nodes 1 to 2k + 1 at 0 to 2k: the graph on which the passes
         // of Goldberg and Radzik grow with the nodes (COMPLEXITY.md C24). Augmented as there,
         // with 5m random edges of one large weight and the labels permuted, from seed 1 as
-        // `l01_38_presburger::stages::bad_gor` builds it.
+        // `l01_38_omega_test::stages::bad_gor` builds it.
         let k = 64usize;
         let n = 2 * k + 1;
         let mut edges: Vec<(usize, usize, i64)> = vec![(0, 1, -3 * k as i64), (0, k, -1)];

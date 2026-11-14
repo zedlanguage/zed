@@ -1847,7 +1847,7 @@ pub fn relations(terms: &[&Term], inputs: &[Arc<str>], products: bool) -> Option
 // O(n) entries for the unit's lifetime; a link the kept point does not extend, or a refused
 // question in moved coordinates, is decided whole, O(n²) as before (the comments at
 // `presburger::extend::Extending` and `front::linear_questions`). Tests in
-// `l01_38_presburger::one_scope`: `the_questions_of_a_chain_of_calls_scale`,
+// `l01_38_omega_test::one_scope`: `the_questions_of_a_chain_of_calls_scale`,
 // `the_questions_of_a_chain_of_tests_scale`,
 // `the_questions_of_a_chain_defining_auxiliary_variables_scale` and
 // `the_questions_of_a_chain_moving_its_argument_scale`; COMPLEXITY.md rows LOAD-chain,
@@ -3667,7 +3667,7 @@ struct Projection {
 // definition chooses (a disjunction or a negation), reads a product, binds an atom of the key
 // or leaves a variable (a congruence such as `x mod 4 == 1`), the body is read again as
 // before. Test
-// `l01_38_presburger::one_scope::the_questions_of_a_chain_with_a_second_call_of_a_large_callee_scale`;
+// `l01_38_omega_test::one_scope::the_questions_of_a_chain_with_a_second_call_of_a_large_callee_scale`;
 // COMPLEXITY.md row LOAD-affine-cone.
 fn projected(tr: &Tr, r: &Formula, key: &[Lin]) -> Option<Projection> {
     use presburger::Atom;
@@ -4911,7 +4911,7 @@ impl<'t> Tx<'t> {
     /// below it again: O(n) per body, O(n²) for the n bodies (LOAD-chain-sep-nonlinear). Kept,
     /// a failure is found again in O(1), so the chain costs O(n). Tradeoff: a kept failure
     /// stays in the table for the scope's later bodies, as a success does. Test:
-    /// `l01_38_presburger::one_scope::separate_tests_over_a_chain_of_products_scale`;
+    /// `l01_38_omega_test::one_scope::separate_tests_over_a_chain_of_products_scale`;
     /// COMPLEXITY.md row LOAD-chain-sep-nonlinear.
     ///
     /// Undo log or persistent snapshot (T11-preimage-log, measured 2026-11-12). The undo log
@@ -8535,7 +8535,7 @@ impl<'m, 't> Walk<'m, 't> {
     // holds no claim costs its callee's projection or its cone for the relation
     // ([`Walk::formula_called`]). Trigger: a function whose condition is large called with
     // another argument list by each link of a chain. Test
-    // `l01_38_presburger::one_scope::the_relations_of_a_chain_dividing_by_its_argument_scale`.
+    // `l01_38_omega_test::one_scope::the_relations_of_a_chain_dividing_by_its_argument_scale`.
     // COMPLEXITY.md row RUNG2-definedness. A complete solution is the one of the relation
     // (LOAD-call-relation): the canonical atoms indexed by the call.
     #[allow(clippy::too_many_arguments)]
@@ -8977,7 +8977,7 @@ impl<'m, 't> Walk<'m, 't> {
     // argument list by each link of a chain, as `h(x: x)` in `p{i}(x) = h(x: x) && p{i-1}(x: x
     // + 1)` with `h` a chain of n links `h{j}(x) = h{j-1}(x: x) && x != j`: relations 0.051 s
     // at 50 links, 4.41 s at 400 (measured once). Congruences are kept: test
-    // `l01_38_presburger::one_scope::
+    // `l01_38_omega_test::one_scope::
     // the_questions_of_a_chain_calling_a_callee_that_keeps_a_congruence_scale`, deferred to plan
     // row PRES-scaling-10_5 in wt/scratch/deferred-tests/PRES-scaling-10_5.rs. COMPLEXITY.md
     // row LOAD-call-relation. A complete solution would index the canonical atoms by the call,
@@ -9066,7 +9066,7 @@ impl<'m, 't> Walk<'m, 't> {
     // needs a copy of its definition at each call, which no projection writes. Trigger: an
     // integer function with a large cone of such terms called with another argument list by
     // each link of a chain. Not measured. Quotients and remainders by constants are written
-    // at the call: test `l01_38_presburger::one_scope::
+    // at the call: test `l01_38_omega_test::one_scope::
     // the_relations_of_a_chain_calling_an_integer_function_scale`. Deciding such a chain's
     // questions (`presburger::extend`) still grows faster than n log n with the remainders
     // along it: 0.239 s at 50 links, 14.5 s at 400 (measured once), returned by item

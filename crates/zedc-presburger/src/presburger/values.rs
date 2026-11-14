@@ -82,8 +82,8 @@ pub(super) fn form_bounds<'a>(cons: impl IntoIterator<Item = &'a Con>) -> FormBo
 // disjunctions, a search exponential in their number in the worst case (finding a point of a
 // conjunction of disjunctions of linear rows is NP-complete). Trigger: a disjunct whose form is
 // a sum of forms the disjunctions bound with gaps. Tests:
-// `l01_38_presburger::omega::pipeline_stage_hulls_are_exact` (the forms read alone) and
-// `l01_38_presburger::omega::a_sum_of_forms_with_gaps_is_not_read`; COMPLEXITY.md row
+// `l01_38_omega_test::omega::pipeline_stage_hulls_are_exact` (the forms read alone) and
+// `l01_38_omega_test::omega::a_sum_of_forms_with_gaps_is_not_read`; COMPLEXITY.md row
 // PROJECT-hull-credit-lower. A complete answer would project each choice of disjuncts.
 pub(super) fn drop_outside_values<D>(
     base: &[Con],

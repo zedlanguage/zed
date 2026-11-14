@@ -39,7 +39,7 @@ fn all(rows: [Term; 4]) -> Term {
 }
 
 /// A group of four constraints on four names whose integer points the solver does not
-/// decide (the system of `Refusal::Growth` in tests/steps/l01_38_presburger/omega.rs).
+/// decide (the system of `Refusal::Growth` in tests/steps/l01_38_omega_test/omega.rs).
 fn refused(n: &[Arc<str>]) -> Term {
     all([
         row(n, [4, -10, -12, -12], 11),
