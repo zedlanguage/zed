@@ -2317,7 +2317,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-pendants-rewrite-empty-seed | running | 2026-11-14 10:10 |  |
 | FAIL-pendants-rewrite-growth-seed | running | 2026-11-14 10:10 |  |
 | FAIL-pendants-route-quarter-seed | running | 2026-11-14 10:10 |  |
-| FAIL-pres-overlap-every-level-refused | running | 2026-11-14 10:33 |  |
+| FAIL-pres-overlap-every-level-refused | impl attempt 1 | 2026-11-14 10:33 | started in wt/fix-pres-overlap at e329bf5f6, load 49.30 |
 | FAIL-product-refused-box-renamed | running | 2026-11-14 07:09 |  |
 | FAIL-types-overload-bounded-tuple | impl attempt 1 | 2026-11-14 09:32 | negative control (not committed): Binds::bound as a linear scan; bench::bounds::a_signature_of_many_bounded_variables_beside_a_free_one_fits_in_time_near_its_si |
 | FAIL-values-function-in-payload-run | impl attempt 3 | 2026-11-14 09:22 | start in /home/luke/Work/wt/fix-values (machine + native forms), load 54.65 66.85 52.33 |
@@ -2325,12 +2325,14 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FIX-functions-in-tuples | impl attempt 3 | 2026-11-11 16:34 | start in /home/luke/Work/wt/fix-values (machine + native forms), load 54.65 66.85 52.33 |
 | MSG-range-error-not-hidden | impl attempt 1 | 2026-11-14 10:45 | started in worktree fix-judg-range on origin/main b56f4fb5d |
 | MUTATE-generic-constants | impl attempt 1 | 2026-11-14 09:08 | merged and pushed 41b345ced (constant mutant changes every arm; l25_08 41 pass; bench instructions 7.93x at 8n; negative control clone 32.5x fails) / 59.43 49.2 |
-| SPEC-and-or-failing-operand | merged and pushed (the commit that marks the row Done); DESIGN 6771e26 | DESIGN decides it: `&&` and `||` are the `if`s of sec:grammar Kernel desugaring, so a failing operand fails the term only where it is taken (`false && d` is false, `true || d` is true); the strict kernel primitives `and`/`or` (L1.25) are never built from surface code. Kernel, machine, interpreter, native and preimage agree (tests l01_34_memory::and_or, l01_36a_executables::and_or, l01_25 exact_oracle); no FAIL rows. |  |
 | STAGE-generic-fold-div | impl attempt 1 | 2026-11-14 09:08 | started in wt/generic-fold-2, load 64.11 |
 | TEST-cov-run-settings | running | 2026-11-14 09:42 |  |
 | TEST-fixture-write-race | running | 2026-11-14 09:42 |  |
 | TEST-l0123-leftovers | running | 2026-11-14 10:33 |  |
 | TEST-l0123-slow-pieces | running | 2026-11-14 10:33 |  |
+| TEST-law25-time | running |  |  |
+| TEST-m0_10-slow-laws | running |  |  |
+| TEST-op-table-div-mod | running |  |  |
 | TEST-seed-test-once | running | 2026-11-14 09:42 |  |
 | TEST-shared-tmpdir-race | running | 2026-11-14 08:57 |  |
 | TEST-types-unreached-paths | impl attempt 2 | 2026-11-14 08:15 | started in /home/luke/Work/wt/types-unreached-2; load 26.18 30.39 36.84 |
